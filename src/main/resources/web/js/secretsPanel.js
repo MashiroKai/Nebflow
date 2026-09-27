@@ -279,6 +279,8 @@ function openEditor(name) {
   const state = document.getElementById('secrets-form-state');
   if (state) state.textContent = '';
   form.hidden = false;
+  // Grow the shell so the inset editor fits (css: #secrets-modal.editor-open).
+  modal()?.classList.add('editor-open');
   if (nameInput instanceof HTMLElement) nameInput.focus();
 }
 
@@ -288,6 +290,7 @@ function closeEditor() {
   editorTarget = '';
   const form = formEl();
   if (form) form.hidden = true;
+  modal()?.classList.remove('editor-open');
   const valueArea = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
   if (valueArea) valueArea.value = '';
   const nameInput = /** @type {HTMLInputElement|null} */ (document.getElementById('secrets-name-input'));
@@ -413,18 +416,39 @@ function onOverlayClick(ev) {
   if (ev.target === overlay()) closeSecretsPanel();
 }
 
-/** Esc closes the editor first, then the dialog; Tab must not escape the
- *  open dialog (two-stage contract, same shape as socialPanel.js). */
+/**
+ * Escape shield — CAPTURE phase (family precedent: main.js's global Esc
+ * handler shields #modal-overlay the same way). This is the first dialog
+ * that nests INSIDE the settings page, and the settings page carries its
+ * own bubble-phase document Esc (sidebar.js initNavTabs: any Escape with
+ * the settings overlay open closes it). Without the shield, one Esc inside
+ * this dialog would close BOTH the dialog and the settings page behind it,
+ * dropping the user back to the chat face. Capture on document runs before
+ * every bubble-phase listener, so handling + stopping the event here gives
+ * the two-stage contract (editor → dialog) exclusive ownership of Esc while
+ * this dialog is open. Scoped strictly to "this overlay is open": every
+ * other face keeps its existing Esc behavior untouched. When the unified
+ * confirm dialog (#modal-overlay, opened by the delete flow) is up, the
+ * global capture handler owns that Esc — this shield stands down.
+ */
+function onKeydownCapture(ev) {
+  if (ev.key !== 'Escape') return;
+  const ov = overlay();
+  if (!ov || !ov.classList.contains('on')) return;
+  const confirmOverlay = document.getElementById('modal-overlay');
+  if (confirmOverlay && confirmOverlay.classList.contains('on')) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const form = formEl();
+  if (form && !form.hidden) { closeEditor(); return; }
+  closeSecretsPanel();
+}
+
+/** Tab must not escape the open dialog (Escape is owned by the capture
+ *  shield above). */
 function onKeydown(ev) {
   const ov = overlay();
   if (!ov || !ov.classList.contains('on')) return;
-  if (ev.key === 'Escape') {
-    ev.preventDefault();
-    const form = formEl();
-    if (form && !form.hidden) { closeEditor(); return; }
-    closeSecretsPanel();
-    return;
-  }
   if (ev.key !== 'Tab') return;
   const m = modal();
   if (!m) return;
@@ -477,6 +501,7 @@ export function initSecretsPanel() {
   if (initialized) return;
   initialized = true;
   document.addEventListener('click', onDocumentClick);
+  document.addEventListener('keydown', onKeydownCapture, true);
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('input', onInput);
   overlay()?.addEventListener('click', onOverlayClick);
