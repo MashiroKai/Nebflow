@@ -82,6 +82,12 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
   private def post(path: String): Request[IO] =
     Request[IO](method = Method.POST, uri = Uri.unsafeFromString(path))
 
+  private def put(path: String): Request[IO] =
+    Request[IO](method = Method.PUT, uri = Uri.unsafeFromString(path))
+
+  private def delete(path: String): Request[IO] =
+    Request[IO](method = Method.DELETE, uri = Uri.unsafeFromString(path))
+
   private def served(req: Request[IO]): Boolean =
     mounted(authed(req)).value.unsafeRunSync().isDefined
 
@@ -211,7 +217,16 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     ("POST /api/plugins/:name/dispatch/clear", post("/plugins/visual-report/dispatch/clear")),
     ("GET /api/flows/list", get("/flows/list")),
     ("GET /api/teams/:teamName", get("/teams/research")),
-    ("GET /api/entity-agents", get("/entity-agents"))
+    ("GET /api/entity-agents", get("/entity-agents")),
+    // chain-face (modelcfg) takedown: the preset CRUD family and the
+    // preset-reference write face are gone with the preset concept.
+    ("GET /api/presets", get("/presets")),
+    ("POST /api/presets", post("/presets")),
+    ("PUT /api/presets/default", put("/presets/default")),
+    ("PUT /api/presets/:name", put("/presets/vision")),
+    ("DELETE /api/presets/:name", delete("/presets/vision")),
+    ("POST /api/presets/migrate-legacy", post("/presets/migrate-legacy")),
+    ("PUT /api/agents/:name/preset", put("/agents/Nebula/preset"))
   )
 
   private val stillServed: List[(String, Request[IO])] = List(
@@ -221,7 +236,6 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     ("GET /api/team/rules/:name", get("/team/rules/research")),
     ("GET /api/agents/:name", get("/agents/Nebula")),
     ("GET /api/agents/:name/model", get("/agents/Nebula/model")),
-    ("GET /api/presets", get("/presets")),
     ("GET /api/plugins", get("/plugins")),
     ("POST /api/plugins/:name/dispatch/grant", post("/plugins/visual-report/dispatch/grant"))
   )
@@ -230,8 +244,8 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     // POSITIVE CONTROL FIRST: the table must be answering at all before "None"
     // for a retired path means anything. Without it, a table that answered
     // nothing would read as a successful takedown (vacuous green).
-    val control = served(get("/presets"))
-    println(s"[RTE-R0] POSITIVE CONTROL GET /presets ⇒ served=$control")
+    val control = served(get("/agents"))
+    println(s"[RTE-R0] POSITIVE CONTROL GET /agents ⇒ served=$control")
     assert(control, "the route table answered nothing — the takedown readings would be vacuous")
 
     val alive = retired.collect { case (label, req) if served(req) => label }

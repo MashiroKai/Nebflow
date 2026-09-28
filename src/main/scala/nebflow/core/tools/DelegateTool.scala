@@ -7,7 +7,7 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.node.NodeRunner
-import nebflow.core.presets.{PresetStore, SchemePolicy}
+import nebflow.core.SchemePolicy
 import nebflow.core.seed.SeedService
 
 /**
@@ -229,13 +229,21 @@ If the task involves creating a Nebflow plugin, first read `~/.nebflow/plugins/n
     * Mechanism-fixed zero-config: tools carry the single-source constant
     * ([[AgentCore.KernelFixedTools]]; the runtime gate is `fixedToolsFor` for a
     * converged name regardless of this field), category pinned to "standalone"
-    * (ConvergedAgentNames), and preset/model resolved exactly like
-    * [[AgentLibrary.loadFromDir]] resolves a disk kernel without own references
-    * (SchemePolicy: kernel inherits Nebula's current ref; tolerant of a missing
-    * root). */
+    * (ConvergedAgentNames), and the model chain resolved exactly like
+    * [[AgentLibrary.loadFromDir]] resolves a disk kernel without own
+    * references (SchemePolicy: kernel inherits Nebula's primary chain; seed
+    * chain when unconfigured).
+    *
+    * Cross-batch face (kernelgen): the resolution call below is shared with
+    * the kernelgen batch — the fail-safe synthesis semantics (never refuses
+    * to start a kernel, tolerant of a missing/unreadable root) are preserved
+    * verbatim; only the resolution source moved to SchemePolicy.resolveModel.
+    */
   private def builtinKernelDef(systemPrompt: String): AgentDef =
-    val (effPreset, effModel) = SchemePolicy.effectiveRefs(KernelAgentName, None, None)
-    val (resolvedModel, _) = PresetStore().resolve(effPreset, effModel)
+    // Cross-batch face (kernelgen): fail-safe chain resolution — missing
+    // Nebula def degrades to the seed chain instead of throwing, keeping the
+    // "always spawnable" guarantee of this synthesized def.
+    val (resolvedModel, _) = SchemePolicy.resolveModel(KernelAgentName, None)
     AgentDef(
       name = KernelAgentName,
       description =
@@ -246,7 +254,6 @@ If the task involves creating a Nebflow plugin, first read `~/.nebflow/plugins/n
       systemPrompt = systemPrompt,
       voiceEnabled = false,
       model = Some(resolvedModel),
-      preset = effPreset,
       category = "standalone"
     )
 

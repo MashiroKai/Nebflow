@@ -423,8 +423,6 @@ object ContextRefresher:
    * reloaded disk def. The per-turn reload (panel edits take effect on the
    * running actor) must not silently drop spawn-time overrides:
    *
-   *  - modelOverride (#291: Delegate/SubTask `preset` param) — wins over
-   *    disk/panel edits for the actor's lifetime;
    *  - flowContract (FlowDagExecutor injects it per node via
    *    `baseDef.copy(...)`; the contract data survives reloads so the
    *    executor's verdict/slot resolution stays consistent). The FlowReport
@@ -432,16 +430,13 @@ object ContextRefresher:
    *    tool itself.
    */
   private def applyRuntimeOverrides(running: AgentDef, fresh: AgentDef): AgentDef =
-    val withModel = running.modelOverride match
-      case Some(cfg) => fresh.copy(model = Some(cfg), preset = running.preset, modelOverride = Some(cfg))
-      case None => fresh
-    withModel.copy(
-      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract,
+    fresh.copy(
+      flowContract = if running.flowContract.nonEmpty then running.flowContract else fresh.flowContract,
       // 阶段 2b Plugins（§B.4 第 3/4 步）：node 分配是 spawn 时运行时注入
       // （NodeEngine 写入 pluginMcpServers/pluginTools，不落 agent.json）——
       // 每 turn 热重载不得冲掉（flowContract 同款保活先例）。
-      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else withModel.pluginMcpServers,
-      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else withModel.pluginTools
+      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else fresh.pluginMcpServers,
+      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else fresh.pluginTools
     )
 
   def refreshTurn(

@@ -17,6 +17,10 @@ import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine
 // 复用既存的同族 helper（flowHelpers.authHeaders，全仓 6 处同族实例），**不新造**令牌读取
 // 机制。依赖方向安全：flowHelpers.js 只 import './branding.js'，无环。
 import { authHeaders } from './flowHelpers.js';
+// Conditional-display widget (modelcfg Phase 1 ruling ②-A): showOptions'
+// shouldShow/updateVisibility DOM mechanics live in depVisibility.js now, shared
+// with the /model panel. The visibility predicate and the answer-reset stay here.
+import { createDepVisibility } from './depVisibility.js';
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
 // upgrade toast must name the mode exactly like the header shield does, so both
@@ -2075,6 +2079,10 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const questionWrappers = [];
 
   // --- Conditional branching helpers ---
+  // The DOM mechanics (display toggle, reveal animation, hide-reset hooking)
+  // live in depVisibility.js (shared with the /model panel). This side keeps
+  // only what is AskUser-specific: the predicate (a question is visible when
+  // its dependsOn matches the referenced answer) and the answer reset.
   function shouldShow(qi) {
     const item = questions[qi];
     if (!item.dependsOn) return true;
@@ -2086,26 +2094,21 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     return Array.isArray(a) ? a.includes(dep.equals) : a === dep.equals;
   }
 
-  function updateVisibility() {
-    questionWrappers.forEach((wrapper, qi) => {
-      const visible = shouldShow(qi);
-      const wasHidden = wrapper.style.display === 'none';
-      wrapper.style.display = visible ? '' : 'none';
-      // A-2 (onboarding spec §7): dependsOn reveal animates in; hide is
-      // instant. The initial updateVisibility() runs before the box enters
-      // the DOM, so the reveal class cannot fire on first render.
-      if (visible && wasHidden) {
-        wrapper.classList.remove('ob-q-reveal');
-        void wrapper.offsetWidth; // reflow to restart the animation
-        wrapper.classList.add('ob-q-reveal');
-      }
-      if (!visible && answers[qi] !== null) {
+  const visibility = createDepVisibility({
+    isVisible: (qi) => shouldShow(qi),
+    onHide: (qi, wrapper) => {
+      // A-2 (onboarding spec §7): hiding a question resets its answer so a
+      // stale pick can never ride along on submit.
+      if (answers[qi] !== null) {
         answers[qi] = null;
         wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
-        const input = wrapper.querySelector('.option-custom-input');
+        const input = /** @type {HTMLTextAreaElement|null} */ (wrapper.querySelector('.option-custom-input'));
         if (input) input.value = '';
       }
-    });
+    },
+  });
+  function updateVisibility() {
+    visibility.update();
   }
 
   // --- Multi-select: recompute answers[qi] from the DOM picked state ---
@@ -2130,6 +2133,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const wrapper = document.createElement('div');
     wrapper.className = 'option-q-wrapper';
     questionWrappers.push(wrapper);
+    visibility.register(wrapper);
 
     const q = document.createElement('div');
     q.className = 'option-q';

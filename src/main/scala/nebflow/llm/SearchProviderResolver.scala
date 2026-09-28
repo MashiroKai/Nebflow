@@ -182,14 +182,15 @@ object SearchProviderResolver:
         None
 
   /** Full model-ref chain for a WebSearch decision: agent's preferred ++
-    * fallbacks, else the global default preset chain (mirrors
-    * ProviderRegistry.getCandidates' fallback semantics). */
+    * fallbacks, else the Nebula primary chain with seed-chain fallback
+    * (mirrors ProviderRegistry.getCandidates' fallback semantics). */
   private def modelChainRefs(agentModel: Option[AgentModelConfig]): List[String] =
     agentModel.toList.flatMap(m => m.preferred.toList ++ m.fallbacks) match
       case nonEmpty @ _ :: _ => nonEmpty
       case Nil =>
         try
-          val (am, _) = nebflow.core.presets.PresetStore().resolve(None, None)
+          val (am, _) =
+            nebflow.core.SchemePolicy.resolveModel(nebflow.core.SchemePolicy.NebulaName, None)
           am.preferred.toList ++ am.fallbacks
         catch case _: Exception => Nil
 

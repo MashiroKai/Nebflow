@@ -7,7 +7,6 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.node.NodeRunner
-import nebflow.core.presets.PresetStore
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 /**
@@ -71,18 +70,6 @@ A task with 2+ independent parts — different file domains, or different nature
 - Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the worker sees them directly. For other files, reference paths in the prompt text.
 - **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine; any write operation (signals, kills) is strictly forbidden."""
 
-  /**
-   * Dynamic preset parameter doc — same live-catalog rendering as
-   * DelegateTool.presetParamDescription (see note there: per-LLM-call
-   * re-evaluation, Settings edits reach workers without restart).
-   */
-  private def presetParamDescription: String =
-    val catalog = PresetStore.catalogLines()
-    val catalogText =
-      if catalog.isEmpty then ""
-      else " Available presets (name — the user's note on it):\n" + catalog.map(l => s"  $l").mkString("\n")
-    s"Optional named model preset — overrides the worker's own preset/model for this spawn. Pick by the catalog below when the task fits a preset's profile, or to fall back when your default provider is down.$catalogText"
-
   def inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
@@ -101,10 +88,6 @@ A task with 2+ independent parts — different file domains, or different nature
           "maxItems" -> 5.asJson,
           "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) attached to the prompt — the worker sees the images directly.".asJson,
           "default" -> io.circe.Json.arr()
-        ),
-        "preset" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> presetParamDescription.asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -121,7 +104,6 @@ A task with 2+ independent parts — different file domains, or different nature
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
     val description = input("description").flatMap(_.asString).getOrElse("subtask")
-    val presetName = input("preset").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
@@ -149,49 +131,44 @@ A task with 2+ independent parts — different file domains, or different nature
               ctx.agentDef match
                 case None => IO.pure(Left(ToolError("No agent definition available")))
                 case Some(agentDef) =>
-                  // #291: explicit preset param overrides the worker's own
-                  // preset/model — resolve before spawning so the worker's LLM
-                  // requests run on the requested provider chain. Missing
-                  // preset → self-describing error with the available list.
-                  PresetResolver.applyPreset(PresetStore(), agentDef, presetName) match
-                    case Left(err) => IO.pure(Left(ToolError(err)))
-                    case Right(effectiveDef) =>
-                      (ctx.actorSystem, ctx.sharedResources) match
-                        case (Some(system), Some(resources)) =>
-                          // permshield S1（2026-09-13）：worker 继承的档位 = 应用级全局
-                          // 持久值（唯一入口），不再读 `store.getSafetyMode` 的盘上遗留值
-                          // （同 DelegateTool）。
-                          // P2: resolve the caller's root session so interactions (askUser /
-                          // permission) render in the parent's window.
-                          val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
-                            case (Some(res), Some(sid)) =>
-                              res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-                            case _ => IO.pure(ctx.sessionId.getOrElse(""))
-                          for
-                            rootSid <- callerRootIO
-                            // permshield S1（2026-09-13）：档位 = 应用级全局持久值
-                            // （唯一入口；不再读 `store.getSafetyMode` 的盘上遗留值，
-                            // 同 DelegateTool）。
-                            safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-                            result <- spawnWorker(
-                              agentDef = effectiveDef,
-                              prompt = prompt,
-                              attachments = attachments,
-                              description = description,
-                              system = system,
-                              resources = resources,
-                              parentDepth = ctx.depth,
-                              parentRef = ctx.agentActorRef,
-                              wsSend = ctx.wsSend,
-                              projectRoot = ctx.projectRoot,
-                              parentSessionId = ctx.sessionId,
-                              safetyMode = safetyMode,
-                              rootSessionId = rootSid
-                            )
-                          yield result
-                          end for
-                        case _ =>
-                          IO.pure(Left(ToolError("SubTask requires ActorSystem and SharedResources")))
+                  // The worker inherits the caller's resolved model chain
+                  // (SchemePolicy: own chain > Nebula primary chain > seed).
+                  (ctx.actorSystem, ctx.sharedResources) match
+                    case (Some(system), Some(resources)) =>
+                      // permshield S1（2026-09-13）：worker 继承的档位 = 应用级全局
+                      // 持久值（唯一入口），不再读 `store.getSafetyMode` 的盘上遗留值
+                      // （同 DelegateTool）。
+                      // P2: resolve the caller's root session so interactions (askUser /
+                      // permission) render in the parent's window.
+                      val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
+                        case (Some(res), Some(sid)) =>
+                          res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                        case _ => IO.pure(ctx.sessionId.getOrElse(""))
+                      for
+                        rootSid <- callerRootIO
+                        // permshield S1（2026-09-13）：档位 = 应用级全局持久值
+                        // （唯一入口；不再读 `store.getSafetyMode` 的盘上遗留值，
+                        // 同 DelegateTool）。
+                        safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
+                        result <- spawnWorker(
+                          agentDef = agentDef,
+                          prompt = prompt,
+                          attachments = attachments,
+                          description = description,
+                          system = system,
+                          resources = resources,
+                          parentDepth = ctx.depth,
+                          parentRef = ctx.agentActorRef,
+                          wsSend = ctx.wsSend,
+                          projectRoot = ctx.projectRoot,
+                          parentSessionId = ctx.sessionId,
+                          safetyMode = safetyMode,
+                          rootSessionId = rootSid
+                        )
+                      yield result
+                      end for
+                    case _ =>
+                      IO.pure(Left(ToolError("SubTask requires ActorSystem and SharedResources")))
           }
 
     end if

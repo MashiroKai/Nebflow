@@ -2829,8 +2829,8 @@ onMessage('configUpdated', (msg, view) => {
 });
 
 // --- Model selection (input-bar picker) ---
-// modelOptions now just feeds the input-bar picker's "add model" list; the
-// /model slash command and the bubble chooser have been removed.
+// modelOptions feeds the input-bar picker's "add model" list; the same refs
+// are the /model panel's fallback static list (modelPanel.js getAllModelRefs).
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   state.allModelRefs = models.map(m => m.ref).filter(Boolean);

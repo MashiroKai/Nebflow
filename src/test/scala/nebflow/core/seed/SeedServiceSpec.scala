@@ -88,24 +88,29 @@ class SeedServiceSpec extends FunSuite:
     assert(!os.exists(home / "agents" / "kernel" / "agent.json"),
       "kernel ships NO seed agent.json (prompt-only item; def face is mechanism-fixed, kernelgen-ext 2026-09-26)")
 
-    // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准，
-    // preset/skills 字段合法入 seed——project-dispatcher（**可设两类之一**）: preset=general, skills=[]。
-    // panelscheme 批（2026-09-21）：可设性收敛为 Nebula + 任务分发器两类，种子只在这两类
-    // 下发自有 preset；general 见下（改钉缺键）。
+    // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准。
+    // 模型面契约（chain face）：种子不下发任何 `preset` 键——Nebula 的模型链由用户在
+    // /model 里配置（未配 ⇒ 引擎回落 provider 推导种子链），其余角色缺键 = 跟随
+    // Nebula 主链（SchemePolicy）。谁把 preset 键写回种子，以下三条即时红。
     val pd = io.circe.parser.parse(os.read(pdAgentJson)).toOption.get
-    assert(pd.hcursor.downField("preset").as[String].toOption.contains("general"),
-      "project-dispatcher preset=general")
+    assert(pd.hcursor.downField("preset").as[String].toOption.isEmpty,
+      "project-dispatcher must ship no preset key (follows the Nebula chain)")
     assert(pd.hcursor.downField("skills").as[List[String]].toOption.exists(_.isEmpty),
       "project-dispatcher skills=[]")
     assert(pd.hcursor.downField("name").as[String].toOption.contains("project-dispatcher"))
 
+    val neb = io.circe.parser.parse(os.read(nbAgentJson)).toOption.get
+    assert(neb.hcursor.downField("preset").as[String].toOption.isEmpty,
+      "Nebula must ship no preset key (its own model chain is the primary chain)")
+
     val gen = io.circe.parser.parse(os.read(genAgentJson)).toOption.get
-    // panelscheme 批（2026-09-21，作者令：节点无自有模型方案）：`general` 是节点
-    // worker/verify 的唯一执行 agent，模型方案由引擎动态继承**任务分发器当前方案**
-    // （SchemePolicy），种子不再下发自有 preset——下发即死键（引擎忽略），故此处改钉
-    // 「缺键」契约：谁把 general 的自有方案写回种子，本条即时红。
+    // `general` 是节点 worker/verify 的唯一执行 agent，模型链由引擎按 SchemePolicy
+    // 动态继承 **Nebula 主链**，种子不下发自有链——下发即死键，故此处钉「缺键」契约。
     assert(gen.hcursor.downField("preset").as[String].toOption.isEmpty,
-      "general must ship no self-owned preset (panelscheme 2026-09-21: nodes inherit the dispatcher's scheme)")
+      "general must ship no self-owned model reference (follows the Nebula chain)")
+    assert(!gen.hcursor.downField("model").succeeded ||
+      gen.hcursor.downField("model").focus.exists(_.isNull),
+      "general must ship no model chain")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
     // Default preinstall set = the manifest's seven plugin items (kernelgen-manifestfix

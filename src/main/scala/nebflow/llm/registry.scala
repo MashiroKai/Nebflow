@@ -67,13 +67,14 @@ class ProviderRegistry(
 
   def getCandidates(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
-      // #339：全局链来源 = 默认 preset（llm.model 已退役）。resolve(None,None)
-      // 走 terminal 第 3 级；preset 文件小、每次读新（与 PresetStore 设计一致）。
-      // onboarding 探针 probeLlm（不带 agentModel）自动跟随默认 preset——首配
-      // 后探针测的正是刚配置的模型。
+      // Global chain source = the Nebula primary chain (its own agent.json
+      // model key), seed chain (first provider's first model) when unconfigured.
+      // Read fresh per call (small file) — /model edits apply on the next call.
+      // The onboarding probe probeLlm (no agentModel) follows the primary
+      // chain, so it measures exactly the model the user just configured.
       val chain =
         try
-          val (am, _) = nebflow.core.presets.PresetStore().resolve(None, None)
+          val (am, _) = nebflow.core.SchemePolicy.resolveModel(nebflow.core.SchemePolicy.NebulaName, None)
           am.preferred.toList ++ am.fallbacks
         catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>

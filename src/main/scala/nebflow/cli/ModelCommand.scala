@@ -56,7 +56,7 @@ object ModelCommand extends CliCommand:
 
   private object ModelSet extends CliSubcommand:
     def name = "set"
-    def description = "Set default or session model"
+    def description = "Set the Nebula chain head or a session model"
 
     def params = List(
       CliParam("model-ref", None, "Model reference (provider/model)", required = true),
@@ -74,28 +74,28 @@ object ModelCommand extends CliCommand:
           if modelRef.isEmpty then
             IO.pure(CliResult.Error("Model reference required (e.g. anthropic/claude-sonnet-4-6)"))
           else if sessionId.isEmpty then
-            // #339：llm.model 已退役——「改全局默认模型」落点变为**默认 preset
-            // 的 preferred**（语义对旧用户不变）。GET /api/presets 取默认名 →
-            // PUT /api/presets/{name} 只换 preferred（fallbacks/description
-            // 服务端缺省保留）。
+            // Default-model write: reads the Nebula agent's chain, swaps its
+            // preferred model and writes the chain back (fallbacks survive).
             client
-              .get("/api/presets")
+              .get("/api/agents/Nebula/model")
               .flatMap { resp =>
-                val defaultName = resp.hcursor.downField("defaultPreset").as[String].getOrElse("")
-                if defaultName.isEmpty then
-                  IO.pure(CliResult.Error("No default preset found — start the app once to initialize presets"))
-                else
-                  client
-                    .put(s"/api/presets/$defaultName", Json.obj("preferred" -> modelRef.asJson))
-                    .flatMap { r =>
-                      r.hcursor.downField("error").as[String] match
-                        case Right(err) =>
-                          IO.pure(CliResult.Error(s"Failed to set default model: $err"))
-                        case Left(_) =>
-                          IO.pure(
-                            CliResult.text(s"Default model set to $modelRef (default preset \"$defaultName\")")
-                          )
-                    }
+                val chain = resp.hcursor.downField("chain").focus
+                val effChain = resp.hcursor.downField("effectiveChain").focus
+                val base = chain.orElse(effChain).flatMap(_.as[nebflow.shared.AgentModelConfig].toOption)
+                val fallbacks = base.map(_.fallbacks).getOrElse(Nil)
+                val updated = nebflow.shared.AgentModelConfig(Some(modelRef), fallbacks)
+                client
+                  .put(
+                    "/api/agents/Nebula/model",
+                    Json.obj("model" -> updated.asJson)
+                  )
+                  .flatMap { r =>
+                    r.hcursor.downField("error").as[String] match
+                      case Right(err) =>
+                        IO.pure(CliResult.Error(s"Failed to set default model: $err"))
+                      case Left(_) =>
+                        IO.pure(CliResult.text(s"Default model set to $modelRef (Nebula chain)"))
+                  }
               }
               .handleErrorWith(e =>
                 IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}"))

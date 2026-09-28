@@ -4,7 +4,6 @@ import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
 import nebflow.agent.AgentDef
-import nebflow.core.presets.PresetStore
 import nebflow.shared.AgentModelConfig
 
 // ============================================================
@@ -22,7 +21,7 @@ case class AgentEntry(
   category: String = "standalone", // computed by EntityLoader from path, NOT read from JSON
   mcpServers: List[String] = Nil,
   model: Option[AgentModelConfig] = None,
-  preset: Option[String] = None, // references a named preset in model-presets.json
+  preset: Option[String] = None, // legacy stored reference; audit-only, not read by the engine
   skills: List[String] = Nil, // skill names this agent can see (frontmatter injection)
   flows: List[String] = Nil // legacy flows whitelist (parsed per decision A①; FlowTrigger injection retired 2026-09-06)
 )
@@ -88,11 +87,9 @@ object AgentEntry:
    */
   extension (a: AgentEntry)
     def toAgentDef: AgentDef =
-      // panelscheme 批（2026-09-21）：输入先经 SchemePolicy 名称策略（与
-      // AgentLibrary.loadFromDir 同一单点）——kernel 继承 Nebula、general 继承
-      // project-dispatcher、其余引擎忽略存储引用；可设两类原样（红线不变）。
-      val (effPreset, effModel) = nebflow.core.presets.SchemePolicy.effectiveRefs(a.name, a.preset, a.model)
-      val (resolvedModel, _) = PresetStore().resolve(effPreset, effModel)
+      // SchemePolicy single point (same face as AgentLibrary.loadFromDir):
+      // own chain (settable roles) > Nebula primary chain > seed chain.
+      val (resolvedModel, _) = nebflow.core.SchemePolicy.resolveModel(a.name, a.model)
       AgentDef(
         name = a.name,
         description = a.description,
@@ -102,7 +99,6 @@ object AgentEntry:
         category = a.category,
         mcpServers = a.mcpServers,
         model = Some(resolvedModel),
-        preset = effPreset,
         skills = a.skills,
         flows = a.flows
       )

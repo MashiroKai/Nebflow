@@ -188,9 +188,9 @@ case class ServiceLlmConfig(
   // provider 缺失 → 空映射 = 未配置 LLM 的合法中间态（种子写 plugins.trust
   // 时可能只落 plugins 键、无 llm 节；解码缺省此处，见 NebflowServiceConfig.llm）。
   providers: Map[String, ProviderConfig] = Map.empty,
-  /** #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
-    * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
-    * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。 */
+  /** #339 D-b：llm.model 已退役——默认模型唯一来源是 Nebula 主链（agent.json
+    * `model` 键；未配 = provider 推导种子链，SchemePolicy 单点）。Option 化的
+    * schema 仅容忍存量文件的 llm.model 节（可解析但被忽略）。 */
   model: Option[ModelChainConfig] = None,
   streamTimeouts: Option[StreamTimeoutsConfig] = None
 )

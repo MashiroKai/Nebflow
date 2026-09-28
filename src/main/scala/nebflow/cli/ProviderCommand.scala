@@ -112,7 +112,8 @@ object ProviderCommand extends CliCommand:
 
   /** `provider remove <name>` —— 走既有 `updateConfig` 的删除标记（`<name>: null`，
     * ConfigService.scala:238 「null values mean explicit deletion」），并触发既有
-    * 引用清理（deletedProviderNames → scrubAgentModelRefs/scrubPresetRefs）。
+    * 引用清理（deletedProviderNames → scrubAgentModelRefs/rewriteAgentModelRefs，
+    * 仅 agent.json `model` 键）。
     *
     * 先读一次配置判存在性（同 `provider list` 的既有读面），不存在 ⇒ 明确报文 + 非零
     * 退出码（不是静默幂等：mergeConfig 对不存在的键是 no-op，只发删除帧会把「名字打错」

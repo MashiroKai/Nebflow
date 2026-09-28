@@ -6,7 +6,7 @@ import { renderMarkdownWithMath } from './utils.js';
 import state from './state.js';
 import { esc, authHeaders, fmtTime, fmtRelTime, overlayRoot, setMailPending } from './flowHelpers.js';
 import { t } from './i18n.js';
-import { fetchPresets, setAgentPreset, resolvedChainHtml, SCHEME_SETTABLE, schemeNoteKey } from './presets.js';
+import { chainRefs, resolvedChainChipsHtml, modelSourceNoteKey, SETTABLE_ROLES } from './modelPanel.js';
 
 // ── 内联 SVG/CSS 图标（2026-09-06 显示优化批：legacy viewer 域禁 emoji/符号字符）──
 // 关闭叉（替代 ✕ U+2715）、阻塞旗（替代 ⚑ U+2691）、收件箭头（替代 → U+2192）、
@@ -33,54 +33,39 @@ function mailBodyHtml(msg) {
  *  Called after agent blocks are rendered in openDefinition. */
 async function populateAgentModel(el, agentName) {
   try {
-    const [resp, presetData] = await Promise.all([
-      fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers: authHeaders() }),
-      fetchPresets(),
-    ]);
+    const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers: authHeaders() });
     if (!resp.ok) { el.innerHTML = '<span class="flow-agent-block-empty">无法加载</span>'; return; }
     const cfg = await resp.json();
-    renderAgentModelSection(el, agentName, cfg, presetData);
+    renderAgentModelSection(el, agentName, cfg);
   } catch (e) {
     el.innerHTML = '<span class="flow-agent-block-empty">无法加载</span>';
   }
 }
 
-/** Render model section: preset dropdown (settable agents only — panelscheme
- *  批 2026-09-21：仅 Nebula/任务分发器可设，其余只读链 + 来源注记) + read-only
- *  resolved chain + current indicator. */
-function renderAgentModelSection(el, agentName, cfg, presetData) {
-  const presetName = cfg.preset || '';
-  const current = cfg.current || cfg.preferred || cfg.default || '';
-  const preferred = cfg.preferred || cfg.default || '';
-  const isFallback = current && preferred && current !== preferred;
-  const presetList = presetData?.presets || [];
-  const defaultPreset = presetList.find(p => p.name === presetData?.defaultPreset);
+/** Render model section: source note (own chain / follows Nebula / seed) +
+ *  read-only effective chain + current indicator. Chain editing lives in the
+ *  /model panel — this viewer is display-only. */
+function renderAgentModelSection(el, agentName, cfg) {
+  const refs = chainRefs(cfg.effectiveChain);
+  const head = refs[0] || '';
+  const current = cfg.current || '';
+  const isFallback = !!current && head && current !== head;
 
   const currentHtml = isFallback
-    ? `<span class="flow-agent-model-current fallback">运行: ${esc(current)}</span>`
+    ? `<span class="flow-agent-model-current fallback">${esc(t('model.currentRun'))}: ${esc(current)}</span>`
     : '';
 
-  const editable = SCHEME_SETTABLE.has(agentName);
-  const pickerHtml = editable
-    ? `<select class="flow-agent-model-select" data-agent="${esc(agentName)}">
-        <option value=""${!presetName ? ' selected' : ''}>${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
-        ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
-      </select>`
-    : `<span class="flow-agent-model-note">${esc(t(schemeNoteKey(agentName)))}</span>`;
+  const hintHtml = SETTABLE_ROLES.has(agentName)
+    ? `<span class="flow-agent-model-note">${esc(t('model.viaSlash'))}</span>`
+    : '';
 
   el.innerHTML = `
     <div class="flow-agent-model-row">
-      ${pickerHtml}
+      <span class="flow-agent-model-note">${esc(t(modelSourceNoteKey(cfg)))}</span>
+      ${hintHtml}
       ${currentHtml}
     </div>
-    ${resolvedChainHtml(cfg)}`;
-
-  // Bind dropdown change → PUT /api/agents/:name/preset (settable agents only)
-  const sel = el.querySelector('.flow-agent-model-select');
-  sel?.addEventListener('change', async () => {
-    await setAgentPreset(agentName, sel.value || null);
-    populateAgentModel(el, agentName);
-  });
+    ${resolvedChainChipsHtml(cfg)}`;
 }
 
 export function closeViewer() {

@@ -1478,14 +1478,14 @@ object NodeEditTool extends Tool:
           "alone is valid; see the Plugin Catalog in your prompt). Existing flow-map nodes keep their old values for display only. " +
           "(NODE_AGENT_RETIRED)")))
     // preset 退役硬闸（panelscheme 批 2026-09-21，作者令：节点无自有模型方案设置）——
-    // 节点模型 = 项目分发器当前方案（派发时解析，SchemePolicy 单点）；存量节点保留
+    // 节点模型跟随 Nebula 主链（SchemePolicy 每 turn 现读单点）；存量节点保留
     // 其存储 preset 值仅作显示/审计（引擎已不再读取）。schema 层已删属性，此处运行时
     // 兜底给可行动错误。
     else if input.contains("preset") then
       IO.pure(Left(ToolError(
         "'preset' node param is RETIRED and no longer accepted (2026-09-21 panel model-scheme convergence) — nodes have no " +
-          "model-scheme setting of their own: a node runs on the project dispatcher's current model scheme (set it on the " +
-          "project-dispatcher agent in Settings; nodes pick it up at dispatch time). Existing nodes keep their stored preset " +
+          "model-scheme setting of their own: a node follows the Nebula primary chain (configure it on the Nebula agent " +
+          "via /model; nodes pick it up live). Existing nodes keep their stored preset " +
           "value for display only. (NODE_PRESET_RETIRED)")))
     // worktree 类型闸：布尔显式化（String→Boolean 改造）——传字符串（旧形态）不再
     // 宽容收编，直接拒绝（旧文案教「先建 worktree 再传裸名」的工作流已被

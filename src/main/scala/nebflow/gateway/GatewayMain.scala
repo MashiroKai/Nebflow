@@ -381,18 +381,13 @@ object GatewayMain extends IOApp:
                   defaultConfig
         }
         configRef.get.flatMap { config =>
-          // #311 (2026-08-19): enforce the preset invariant at boot — a usable
-          // default preset must always exist once any model is configured.
-          // Creates/seeds model-presets.json when absent (from llm.model, i.e.
-          // the user's first provider model) and repairs a dangling/chain-less
-          // default. Idempotent; healthy files are untouched.
-          try nebflow.core.presets.PresetStore().ensureDefaultPreset()
-          catch case e: Exception => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
-          // #339 D-b：llm.model 一次性迁移（先播种验证后剥离，原子写；失败
-          // 幂等重试）。种子源此时仍优先读 llm.model（迁移优先），剥离后新
-          // 安装的种子源走 providers 推导。
-          try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
-          catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
+          // Model-chain migration (one-time, idempotent): any legacy `preset`
+          // references on the four role agents become per-agent model chains
+          // (Nebula carries the primary chain; followers drop the key), and
+          // the preset catalog file is sealed in place with a timestamp
+          // suffix. A migrated home is a no-op.
+          try nebflow.core.ModelChainMigration.migrateLegacyPresetRefs()
+          catch case e: Exception => logger.warn(s"Model-chain migration failed: ${e.getMessage}")
           // LLM 日志记录（2026-09-13「默认关」批 + D-A 持久化）：启动时以
           // nebflow.json 顶层 `llmLog.enabled` 落盘值为准；**无落盘值 ⇒ 保持
           // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启
@@ -444,18 +439,20 @@ object GatewayMain extends IOApp:
                       // --- Fast path: only essential init before server start ---
                       val chatRoutes = new ChatRoutes(handle, token)
                       val isConfigured = config.llm.providers.nonEmpty
-                      // #339 D-c：contextWindow 改读默认 preset 链首个能解析到
-                      // provider 模型表的 ref（preferred 优先逐个试 fallbacks；
-                      // 全失败回 Defaults.ContextWindow + warn）。横幅同时暴露
-                      // preset 名 + 实际 ref，与设置页 preset 卡片逐字可对上。
-                      val (contextWindow, presetLabel): (Int, Option[(String, String)]) =
+                      // contextWindow bootstrap: resolve the Nebula primary
+                      // chain (its own model key; seed chain = first provider's
+                      // first model when unconfigured) and pick the first ref
+                      // that resolves to a configured provider model (preferred
+                      // first, then fallbacks; none resolvable →
+                      // Defaults.ContextWindow + warn). The banner exposes the
+                      // chain source + the actual ref.
+                      val (contextWindow, chainLabel): (Int, Option[(String, String)]) =
                         if !isConfigured then (Defaults.ContextWindow, None)
                         else
                           try
-                            val pFile = nebflow.core.presets.PresetStore().load()
-                            val dp = pFile.presets
-                              .getOrElse(pFile.defaultPreset, nebflow.core.presets.ModelPreset(pFile.defaultPreset))
-                            val chain = dp.preferred.toList ++ dp.fallbacks
+                            val (am, from) =
+                              nebflow.core.SchemePolicy.resolveModel(nebflow.core.SchemePolicy.NebulaName, None)
+                            val chain = am.preferred.toList ++ am.fallbacks
                             val resolved = chain.flatMap { ref =>
                               try
                                 val (providerId, modelId) = Config.parseModelRef(ref)
@@ -466,13 +463,13 @@ object GatewayMain extends IOApp:
                               catch case _: Exception => None
                             }
                             resolved.headOption match
-                              case Some((cw, ref)) => (cw, Some((pFile.defaultPreset, ref)))
+                              case Some((cw, ref)) => (cw, Some((from, ref)))
                               case None =>
                                 logger.warn(
-                                  s"Default preset '${pFile.defaultPreset}' resolves to no provider model; " +
+                                  s"Nebula chain resolves to no configured provider model; " +
                                     s"contextWindow falls back to ${Defaults.ContextWindow}"
                                 )
-                                (Defaults.ContextWindow, Some((pFile.defaultPreset, dp.preferred.getOrElse(""))))
+                                (Defaults.ContextWindow, Some((from, am.preferred.getOrElse(""))))
                           catch case _: Exception => (Defaults.ContextWindow, None)
                       val baseUrl = s"http://localhost:${cfg.port}"
                       val url = s"$baseUrl?token=$token"
@@ -525,9 +522,9 @@ object GatewayMain extends IOApp:
                         logger.info(
                           s"TASKLEDGER_ENABLED=${nebflow.shared.Defaults.TaskLedgerUplinkFailClosed} (nebflow.taskledger.enabled; fail-closed uplink attribution gate — false = legacy behaviour byte-for-byte)") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
-                         else presetLabel match
-                           case Some((name, ref)) =>
-                             logger.info(s"Context window: $contextWindow tokens (default preset \"$name\": $ref)")
+                         else chainLabel match
+                           case Some((from, ref)) =>
+                             logger.info(s"Context window: $contextWindow tokens ($from: $ref)")
                            case None =>
                              logger.info(s"Context window: $contextWindow tokens")) *>
                         RateLimiter.create().flatMap { rateLimiter =>
