@@ -679,17 +679,31 @@ function openFlowMapPanes() {
 function layoutNodes(fm, heights) {
   const nodes = fm?.nodes || [];
   const nodeIds = new Set(nodes.map((n) => n.id));
+  const byName = nodeNameIndex(nodes);
   const childrenMap = new Map();
   const addChild = (from, to) => {
     if (!childrenMap.has(from)) childrenMap.set(from, []);
     childrenMap.get(from).push(to);
   };
   nodes.forEach((n) => {
-    if (n.out && n.out !== 'Nebula' && nodeIds.has(n.out)) addChild(n.id, n.out);
-    // deps 边（下游单侧持有，deps 设计 §1.4）：并入流向图（上游 → 下游），
-    // 否则纯 deps 下游被当根放第 0 层、边画成逆向
-    (n.deps || []).forEach((d) => { if (nodeIds.has(d)) addChild(d, n.id); });
-    // in 边（barrier 输入）：v3 起参与层级推导（终态保留卡使上游在图）
+    // Upstream edges that feed the layer derivation. Three sources, same direction
+    // (upstream → downstream):
+    //   out   — resolved through outEdgesOf so the `[{to,on,mode}]` payload shape is
+    //           read as edges (loop control edges stay out: they run backwards by
+    //           design and are not part of the forward layering).
+    //   deps  — the scheduling gate ("this node waits for that one / that chain to
+    //           finish"); `chain:` refs resolve to the target chain's sinks.
+    //   in    — barrier inputs (v3: kept-pending cards put their upstream in the
+    //           graph, so in-edges must count, otherwise every such card collapses
+    //           to depth 0 — measured on the prototype).
+    for (const e of outEdgesOf(n)) {
+      if (e.mode === 'loop' || e.to === 'Nebula') continue;
+      const tid = resolveTargetId(nodeIds, byName, e.to);
+      if (tid) addChild(n.id, tid);
+    }
+    (n.deps || []).forEach((d) => {
+      for (const up of depTargetsOf(fm, d)) addChild(up, n.id);
+    });
     (n.in || []).forEach((x) => { if (nodeIds.has(x)) addChild(x, n.id); });
   });
   const depth = {};
@@ -703,7 +717,7 @@ function layoutNodes(fm, heights) {
   }
   nodes.forEach((n) => {
     const hasUpstream = (n.in || []).some((x) => nodeIds.has(x))
-      || (n.deps || []).some((x) => nodeIds.has(x));
+      || (n.deps || []).some((x) => depTargetsOf(fm, x).length > 0);
     if (!hasUpstream) visit(n.id, 0);
   });
   nodes.forEach((n) => visit(n.id, depth[n.id] || 0));
@@ -1090,23 +1104,38 @@ function collectEdges(fm, positions) {
   const vis = visibleNodes(fm);
   const ids = new Set(vis.map((n) => n.id));
   const byId = new Map(vis.map((n) => [n.id, n]));
-  // 名字索引（vchip r3 2026-09-15）：回边目标串的**第二形态**解析面。仅 `mode==='loop'`
-  // 分支消费（见下方回边遍历），其余三条边分支**逐字不变** ⇒ 非回路边集与 DOM 顺序
-  // 零影响。重名取 vis 序首个（与引擎侧同名时 Map 语义一致的「首个命中」口径）。
+  // Name index: the **second target-string shape**. Consumed by the out-edge pass,
+  // the loop back-edge pass and the deps resolution (`chainGateTargets`), so every
+  // target-bearing site resolves id-then-name in the same order. Duplicate names:
+  // first hit in `vis` order, matching the engine's "first match" Map semantics.
   const byName = new Map();
   for (const n of vis) {
     const nm = String(n?.name ?? '');
     if (nm && !byName.has(nm)) byName.set(nm, n.id);
   }
   const edges = new Map();
+  // Out edges (forward delivery). Read through `outEdgesOf` so the `[{to,on,mode}]`
+  // payload shape is understood (the old `ids.has(n.out)` read a bare string — and
+  // `Set.has(<array>)` is false for every node, so this branch drew zero edges on
+  // any snapshot since the array shape landed: the flattening bug this batch fixes).
+  // Two target classes stay out, both already covered elsewhere:
+  //   loop — drawn by the dedicated back-edge pass below (skipping it here keeps
+  //          each loop edge on exactly one key, i.e. never a double draw);
+  //   Nebula — the completion sink, not a graph node (no card, nothing to point at).
+  // No de-dup of its own: the in-edge pass below only fills gaps (`edges.has`), so
+  // the out edge wins the shared `${up}=>${down}` key, which is the existing order.
   for (const n of vis) {
-    if (!n.out || n.out === 'Nebula' || !ids.has(n.out)) continue;
-    const from = positions[n.id];
-    const to = positions[n.out];
-    if (!from || !to) continue;
-    edges.set(`${n.id}=>${n.out}`, {
-      x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: edgeStateOf(n),
-    });
+    for (const e of outEdgesOf(n)) {
+      if (e.mode === 'loop' || e.to === 'Nebula') continue;
+      const tid = resolveTargetId(ids, byName, e.to);
+      if (!tid) continue; // dangling target (neither id nor name form) — same skip as in/deps
+      const from = positions[n.id];
+      const to = positions[tid];
+      if (!from || !to) continue;
+      edges.set(`${n.id}=>${tid}`, {
+        x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: edgeStateOf(n),
+      });
+    }
   }
   for (const n of vis) {
     for (const up of (n.in || [])) {
@@ -1122,24 +1151,31 @@ function collectEdges(fm, positions) {
       });
     }
   }
+  // deps edges (scheduling gates, upstream → downstream arrow, `~>` key). Targets go
+  // through `depTargetsOf`, the single resolution point shared with the layout pass:
+  // a plain node id resolves when visible, a `chain:<chainId>` ref resolves to that
+  // chain's sink set (`ends` ∩ visible, else its visible in-chain sinks, else []).
+  // An unresolvable ref degrades gracefully — no edge, no throw, no fabricated node.
   for (const n of vis) {
     for (const d of n.deps || []) {
-      if (!ids.has(d)) continue;
-      const from = positions[d];
-      const to = positions[n.id];
-      if (!from || !to) continue;
-      edges.set(`${d}~>${n.id}`, {
-        x1: from.x, y1: from.y, x2: to.x, y2: to.y,
-        state: depsEdgeStateOf(byId.get(d)),
-        kind: 'deps',
-      });
+      for (const t of depTargetsOf(fm, d)) {
+        const from = positions[t];
+        const to = positions[n.id];
+        if (!from || !to) continue;
+        edges.set(`${t}~>${n.id}`, {
+          x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+          state: depsEdgeStateOf(byId.get(t)),
+          kind: 'deps',
+        });
+      }
     }
   }
   // ── 反馈回路边（`:loop` 控制边 = verifier → worker 的 (fail) 回边）──────────────
-  // 独立一遍、**只接 `mode === 'loop'` 的 out 边**，插在最后 ⇒ 既有边集与 DOM 顺序
-  // 逐项零变化（本批只**新增**回边）。为什么不走上面那条 out 分支：该分支按裸字符串
-  // 读 `n.out`（`ids.has(n.out)`），对 P1 起的 `[{to,on,mode}]` 数组载荷恒不命中——
-  // 那是未落地的 F3 out 数组适配面（见 foldView 的 card.out 注），本批不动它。
+  // 独立一遍、**只接 `mode === 'loop'` 的 out 边**，插在最后 ⇒ 既有两个 forward 分支
+  // （out / in 代理）都不产出 loop 键，本遍只**新增**回边条目。
+  // Key shape `${from}=>loop=>${to}` never collides with the forward `=>` key, and the
+  // out pass above skips `mode === 'loop'` — the two filters are exact duals, so a loop
+  // edge is drawn on exactly one key (no double draw) and no forward edge is lost.
   // 为什么必须走 out：loop 边**不进 `in` 镜像**（NodeTools.appendEdgeTo 的
   // `!OutEdge.isLoopEdge(e)` 豁免 = round-1 防死锁红线①）⇒ 上面的 in 代理兜不住它，
   // 这里是 loop 边进入边集的唯一入口。过滤口径 = 排除 Nebula + **目标串双形态解析**
@@ -1150,13 +1186,14 @@ function collectEdges(fm, positions) {
   // 原样落库）」，解析顺序「id 命中 → 名字命中 → None」；`NodeEngine.scala:4083` 的
   // 回边驱动方反查亦注明「目标串支持 id/名字两形态（与 resolveTargetId 同源）」。
   // ⇒ 回边可见性必须与引擎同序解析，否则「引擎认这条回边、图上却无此边」。
-  // 与 out 分支的 `ids.has(n.out)` 差异**刻意保留**：那条分支的漏画是存量面（其边集
-  // 决定非回路元素几何，本批禁动，见 §范围封顶），本批只收口回边。
+  // The flattening fix moved the out pass onto the same `outEdgesOf` + `resolveTargetId`
+  // pair, so both passes now resolve targets identically (previously the out pass read a
+  // bare string and silently dropped every array-shaped payload).
   for (const n of vis) {
     for (const e of outEdgesOf(n)) {
       if (e.mode !== 'loop' || e.to === 'Nebula') continue;
       // 双形态解析（与 OutEdge.resolveTargetId 同序：id 命中 → 名字命中 → 悬空跳过）。
-      const tid = ids.has(e.to) ? e.to : (byName.get(e.to) ?? null);
+      const tid = resolveTargetId(ids, byName, e.to);
       if (!tid) continue; // 悬空目标（两种形态都不命中）⇒ 与既有 in/deps 分支同款跳过
       if (tid === n.id) continue; // 自回边（引擎侧 NODE_LOOP_EDGE_ROLE 已拒；防御性跳过）
       const from = positions[n.id];
@@ -1387,6 +1424,97 @@ function outEdgesOf(n) {
   return out ? [{ to: String(out), on: ['pass'], mode: 'result' }] : [];
 }
 
+/** Resolve a `chain:<chainId>` deps reference to its **gate targets** — the ids the
+ *  depending node actually waits for. The wait is on *chain completion* (author's
+ *  wording: "the gate fires when the chain finishes"), so the target set is the
+ *  chain's sink/terminal members, not every member.
+ *
+ *  Source = the snapshot's own `fm.chains[]` side-car (backend
+ *  `FlowMapStore.payloadChains`; entries carry id/entries/ends/memberIds). Zero
+ *  front-end chain derivation (spec §6.1) — this only *reads* what the backend
+ *  shipped, and only over nodes that are visible in the current view.
+ *
+ *  Target set, in order: `ends` ∩ visible; when `ends` is empty, degrade to the
+ *  visible members that have no out-edge into another member of the same chain
+ *  (i.e. the in-chain sinks computed from visible data alone); still empty ⇒ [].
+ *
+ *  Returns [] for a chain that is unreachable in `fm.chains[]` (archived/compacted
+ *  chains are not side-carred) or whose members are all outside the visible set.
+ *  Callers treat [] as "no edge, no exception, no fabricated node" (graceful
+ *  degradation). */
+function chainGateTargets(fm, chainId) {
+  const chains = Array.isArray(fm?.chains) ? fm.chains : [];
+  const cid = String(chainId ?? '');
+  if (!cid) return [];
+  let chain = null;
+  for (const c of chains) if (c && String(c.id) === cid) { chain = c; break; }
+  if (!chain) return [];
+  const vis = visibleNodes(fm);
+  const ids = new Set(vis.map((n) => String(n.id)));
+  const ends = (Array.isArray(chain.ends) ? chain.ends : []).map(String).filter((x) => ids.has(x));
+  if (ends.length) return ends;
+  const memberIds = (Array.isArray(chain.memberIds) ? chain.memberIds : []).map(String);
+  const inChain = new Set(memberIds);
+  const byName = new Map();
+  for (const n of vis) {
+    const nm = String(n?.name ?? '');
+    if (nm && !byName.has(nm)) byName.set(nm, String(n.id));
+  }
+  const sinks = [];
+  for (const m of memberIds) {
+    if (!ids.has(m)) continue;
+    const node = vis.find((n) => String(n.id) === m);
+    if (!node) continue;
+    const intoChain = outEdgesOf(node).some((e) => {
+      if (e.mode === 'loop' || e.to === 'Nebula') return false;
+      const tid = ids.has(e.to) ? e.to : byName.get(e.to);
+      return !!tid && inChain.has(tid);
+    });
+    if (!intoChain) sinks.push(m);
+  }
+  return sinks;
+}
+
+/** deps reference → upstream node ids this node waits for (single resolution point;
+ *  the three deps consumers below all go through here, so `chain:` refs cannot be
+ *  observed differently by the edge pass and the layout pass).
+ *
+ *  `d` is either a plain node id (legacy form) or `chain:<chainId>` (cross-chain
+ *  reference introduced by 2026-09-19 `bedf4222d`). The `chain:` form resolves via
+ *  {@link chainGateTargets}; a plain id resolves only when it names a visible node
+ *  (dangling references are skipped, same as the in/out branches). */
+function depTargetsOf(fm, d) {
+  const ref = String(d ?? '');
+  if (!ref) return [];
+  if (ref.startsWith('chain:')) return chainGateTargets(fm, ref.slice('chain:'.length));
+  const vis = visibleNodes(fm);
+  return vis.some((n) => String(n.id) === ref) ? [ref] : [];
+}
+
+/** Name index built from the given visible-node list. Edge target strings come in
+ *  two historical shapes — node id (written by the engine's mirror) and node name
+ *  (how the LLM/dispatcher naturally wires by name, stored verbatim) — so every
+ *  target-resolution site needs the id-then-name lookup (`OutEdge.resolveTargetId`
+ *  order). First hit in list order wins for duplicate names, matching the engine's
+ *  "first match" Map semantics. */
+function nodeNameIndex(vis) {
+  const byName = new Map();
+  for (const n of vis) {
+    const nm = String(n?.name ?? '');
+    if (nm && !byName.has(nm)) byName.set(nm, n.id);
+  }
+  return byName;
+}
+
+/** Resolve an edge target string against the visible set: id hit → name hit →
+ *  dangling (null). Single shared form of the `ids.has(to) ? to : byName.get(to)`
+ *  idiom so no second target-resolution dialect creeps in. */
+function resolveTargetId(ids, byName, to) {
+  const t = String(to ?? '');
+  if (!t) return null;
+  return ids.has(t) ? t : (byName.get(t) ?? null);
+}
+
 /** chainId → 快照 chains 旁挂条目（{id,title,memberIds…}；未知 → null）。
  *  只读后端下发数据，零派生（spec §6.1）；供链定位跳转（highlightFlowMapChain）。 */
 function chainViewById(project, chainId) {
@@ -1514,8 +1642,10 @@ function foldView(project, fm) {
     }
     card.in = Array.from(ups);
     card.deps = Array.from(deps);
-    // out 以载荷形态（边对象数组）表达——现状 out 边渲染由 in 代理边兜底（spec §1.4：
-    // 前端 out 数组适配未落地），故本字段当前为惰性；F3 落地后即为成员出边并集。
+    // out 以载荷形态（边对象数组）表达 = 成员跨链出边并集（`mode:'result'`）。该字段
+    // 自 flattening fix 起**不再是惰性**：`collectEdges` 的 out 分支现经 `outEdgesOf`
+    // 读载荷，链卡的跨链出边因此成图（与 out 分支此前的裸字符串失配一并修掉）。
+    // 与 in 代理边共用 `${up}=>${down}` 键、out 先成键 ⇒ 同向边不双画（顺序即既有行为）。
     card.out = Array.from(outs).map((to) => ({ to, on: ['pass'], mode: 'result' }));
     nodes.push(card);
   }
