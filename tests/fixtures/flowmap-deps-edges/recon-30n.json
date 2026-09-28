@@ -1,0 +1,843 @@
+{
+ "nodes": [
+  {
+   "id": "n-f7f62f55",
+   "name": "pr48w2-impl",
+   "status": "blocked",
+   "in": [],
+   "out": [
+    {
+     "to": "n-9b647756",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-53ece9a0",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [
+    "chain:chain-n-9f4b6905"
+   ],
+   "chainId": "chain-n-f7f62f55",
+   "createdAt": 1790599344982
+  },
+  {
+   "id": "n-9b647756",
+   "name": "pr48w2-verify",
+   "status": "wiring",
+   "in": [
+    "n-f7f62f55"
+   ],
+   "out": [
+    {
+     "to": "n-53ece9a0",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-f7f62f55",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-f7f62f55",
+   "createdAt": 1790599386467
+  },
+  {
+   "id": "n-53ece9a0",
+   "name": "pr48w2-sink",
+   "status": "wiring",
+   "in": [
+    "n-f7f62f55",
+    "n-9b647756"
+   ],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-f7f62f55",
+   "createdAt": 1790599798209
+  },
+  {
+   "id": "n-f2124460",
+   "name": "pr48w3-impl",
+   "status": "pending",
+   "in": [],
+   "out": [
+    {
+     "to": "n-5fcf1c04",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-943572aa",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [
+    "chain:chain-n-f7f62f55"
+   ],
+   "chainId": "chain-n-w3",
+   "createdAt": 1790600133325
+  },
+  {
+   "id": "n-5fcf1c04",
+   "name": "pr48w3-verify",
+   "status": "wiring",
+   "in": [
+    "n-f2124460"
+   ],
+   "out": [
+    {
+     "to": "n-943572aa",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-f2124460",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-w3",
+   "createdAt": 1790600164231
+  },
+  {
+   "id": "n-943572aa",
+   "name": "pr48w3-sink",
+   "status": "wiring",
+   "in": [
+    "n-5fcf1c04",
+    "n-f2124460"
+   ],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-w3",
+   "createdAt": 1790600241111
+  },
+  {
+   "id": "n-8f54cbec",
+   "name": "pr48w4-impl",
+   "status": "pending",
+   "in": [],
+   "out": [
+    {
+     "to": "n-c8d56834",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-7b149e90",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [
+    "chain:chain-n-w3"
+   ],
+   "chainId": "chain-n-w4",
+   "createdAt": 1790600340577
+  },
+  {
+   "id": "n-c8d56834",
+   "name": "pr48w4-verify",
+   "status": "wiring",
+   "in": [
+    "n-8f54cbec"
+   ],
+   "out": [
+    {
+     "to": "n-7b149e90",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-8f54cbec",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-w4",
+   "createdAt": 1790600369735
+  },
+  {
+   "id": "n-7b149e90",
+   "name": "pr48w4-sink",
+   "status": "wiring",
+   "in": [
+    "n-c8d56834",
+    "n-8f54cbec"
+   ],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-w4",
+   "createdAt": 1790600511912
+  },
+  {
+   "id": "n-5d3ac7e7",
+   "name": "pr48w5-impl",
+   "status": "pending",
+   "in": [],
+   "out": [
+    {
+     "to": "n-ab8e0dfe",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-d56ced56",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [
+    "chain:chain-n-w4"
+   ],
+   "chainId": "chain-n-w5",
+   "createdAt": 1790600626822
+  },
+  {
+   "id": "n-ab8e0dfe",
+   "name": "pr48w5-verify",
+   "status": "wiring",
+   "in": [
+    "n-5d3ac7e7"
+   ],
+   "out": [
+    {
+     "to": "n-d56ced56",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-5d3ac7e7",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-w5",
+   "createdAt": 1790600675457
+  },
+  {
+   "id": "n-d56ced56",
+   "name": "pr48w5-sink",
+   "status": "wiring",
+   "in": [
+    "n-5d3ac7e7",
+    "n-ab8e0dfe"
+   ],
+   "out": [
+    {
+     "to": "n-4026723f",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-w5",
+   "createdAt": 1790600817414
+  },
+  {
+   "id": "n-4026723f",
+   "name": "pr48-absorb-accept",
+   "status": "wiring",
+   "in": [
+    "n-d56ced56"
+   ],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-n-absorb",
+   "createdAt": 1790600870785
+  },
+  {
+   "id": "n-a159f823",
+   "name": "chainview-engine-impl-r2",
+   "status": "pending",
+   "in": [],
+   "out": [
+    {
+     "to": "chainview-engine-verify-r2",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "chainview-sink-r2",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [
+    "chain:chain-n-absorb"
+   ],
+   "chainId": "chain-chainview",
+   "createdAt": 1790605306844
+  },
+  {
+   "id": "n-856c4886",
+   "name": "chainview-ui-impl-r2",
+   "status": "pending",
+   "in": [],
+   "out": [
+    {
+     "to": "chainview-ui-verify-r2",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "chainview-sink-r2",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [
+    "chain:chain-n-absorb"
+   ],
+   "chainId": "chain-chainview",
+   "createdAt": 1790605694141
+  },
+  {
+   "id": "n-ab08213f",
+   "name": "chainview-engine-verify-r2",
+   "status": "wiring",
+   "in": [
+    "n-a159f823"
+   ],
+   "out": [
+    {
+     "to": "chainview-sink-r2",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "chainview-engine-impl-r2",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-chainview",
+   "createdAt": 1790605784129
+  },
+  {
+   "id": "n-dab4c248",
+   "name": "chainview-ui-verify-r2",
+   "status": "wiring",
+   "in": [
+    "n-856c4886"
+   ],
+   "out": [
+    {
+     "to": "chainview-sink-r2",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "chainview-ui-impl-r2",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-chainview",
+   "createdAt": 1790605814053
+  },
+  {
+   "id": "n-831c146d",
+   "name": "chainview-sink-r2",
+   "status": "wiring",
+   "in": [
+    "n-a159f823",
+    "n-856c4886",
+    "n-ab08213f",
+    "n-dab4c248"
+   ],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-chainview",
+   "createdAt": 1790606000777
+  },
+  {
+   "id": "n-3c48db00",
+   "name": "jev-integration-impl",
+   "status": "pending",
+   "in": [],
+   "out": [],
+   "deps": [
+    "chain:chain-n-absorb"
+   ],
+   "chainId": "chain-jev-impl",
+   "createdAt": 1790606175177
+  },
+  {
+   "id": "n-7521a9a4",
+   "name": "secrets-consumption-impl",
+   "status": "pending",
+   "in": [],
+   "out": [],
+   "deps": [
+    "chain:chain-n-absorb",
+    "chain:chain-n-f9a1138c"
+   ],
+   "chainId": "chain-secrets-impl",
+   "createdAt": 1790606217300
+  },
+  {
+   "id": "n-2867f8ec",
+   "name": "nodeprogress-impl",
+   "status": "pending",
+   "in": [],
+   "out": [],
+   "deps": [
+    "chain:chain-n-absorb",
+    "chain:chain-nodeprogress"
+   ],
+   "chainId": "chain-nodetask-impl",
+   "createdAt": 1790606265823
+  },
+  {
+   "id": "n-82df6e1b",
+   "name": "secrets-panel-sink",
+   "status": "cancelled",
+   "in": [],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-secrets-land",
+   "createdAt": 1790606702971
+  },
+  {
+   "id": "n-096fa36a",
+   "name": "card-image-zoom-impl",
+   "status": "completed",
+   "in": [],
+   "out": [
+    {
+     "to": "card-image-zoom-verify",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "card-image-zoom-sink",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-cardzoom",
+   "createdAt": 1790607069490
+  },
+  {
+   "id": "n-0ba3e974",
+   "name": "card-image-zoom-verify",
+   "status": "completed",
+   "in": [
+    "n-096fa36a"
+   ],
+   "out": [
+    {
+     "to": "card-image-zoom-impl",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    },
+    {
+     "to": "n-d172b116",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-cardzoom",
+   "createdAt": 1790607100501
+  },
+  {
+   "id": "n-d172b116",
+   "name": "card-image-zoom-sink",
+   "status": "completed",
+   "in": [
+    "n-096fa36a",
+    "n-0ba3e974"
+   ],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-cardzoom",
+   "createdAt": 1790607170170
+  },
+  {
+   "id": "n-6a0482cb",
+   "name": "secrets-backend-impl-r2",
+   "status": "completed",
+   "in": [],
+   "out": [
+    {
+     "to": "n-5d9a12f4",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-fcbfc686",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-secrets-land",
+   "createdAt": 1790609452380
+  },
+  {
+   "id": "n-5d9a12f4",
+   "name": "secrets-backend-verify-r2",
+   "status": "completed",
+   "in": [
+    "n-6a0482cb"
+   ],
+   "out": [
+    {
+     "to": "secrets-land-sink-r2b",
+     "on": [
+      "pass"
+     ],
+     "mode": "result"
+    },
+    {
+     "to": "n-6a0482cb",
+     "on": [
+      "fail"
+     ],
+     "mode": "loop"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-secrets-land",
+   "createdAt": 1790610225288
+  },
+  {
+   "id": "n-f5840eb3",
+   "name": "secrets-land-sink-r2",
+   "status": "cancelled",
+   "in": [],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-secrets-land",
+   "createdAt": 1790610589344
+  },
+  {
+   "id": "n-fcbfc686",
+   "name": "secrets-land-sink-r2b",
+   "status": "completed",
+   "in": [
+    "n-6a0482cb",
+    "n-5d9a12f4",
+    "n-63e780fe"
+   ],
+   "out": [
+    {
+     "to": "Nebula",
+     "on": [
+      "pass",
+      "failed"
+     ],
+     "mode": "result"
+    }
+   ],
+   "deps": [],
+   "chainId": "chain-secrets-land",
+   "createdAt": 1790610828675
+  },
+  {
+   "id": "n-44fb020d",
+   "name": "fe-perf-render-opt-impl",
+   "status": "pending",
+   "in": [],
+   "out": [],
+   "deps": [
+    "chain:chain-n-absorb"
+   ],
+   "chainId": "chain-fe-perf-render",
+   "createdAt": 1790611109184
+  }
+ ],
+ "chains": [
+  {
+   "id": "chain-cardzoom",
+   "entries": [
+    "n-096fa36a"
+   ],
+   "ends": [
+    "n-d172b116"
+   ],
+   "memberIds": [
+    "n-096fa36a",
+    "n-0ba3e974",
+    "n-d172b116"
+   ]
+  },
+  {
+   "id": "chain-chainview",
+   "entries": [],
+   "ends": [
+    "n-831c146d"
+   ],
+   "memberIds": [
+    "n-a159f823",
+    "n-856c4886",
+    "n-ab08213f",
+    "n-dab4c248",
+    "n-831c146d"
+   ]
+  },
+  {
+   "id": "chain-fe-perf-render",
+   "entries": [],
+   "ends": [
+    "n-44fb020d"
+   ],
+   "memberIds": [
+    "n-44fb020d"
+   ]
+  },
+  {
+   "id": "chain-jev-impl",
+   "entries": [],
+   "ends": [
+    "n-3c48db00"
+   ],
+   "memberIds": [
+    "n-3c48db00"
+   ]
+  },
+  {
+   "id": "chain-n-absorb",
+   "entries": [],
+   "ends": [
+    "n-4026723f"
+   ],
+   "memberIds": [
+    "n-4026723f"
+   ]
+  },
+  {
+   "id": "chain-n-f7f62f55",
+   "entries": [],
+   "ends": [
+    "n-53ece9a0"
+   ],
+   "memberIds": [
+    "n-f7f62f55",
+    "n-9b647756",
+    "n-53ece9a0"
+   ]
+  },
+  {
+   "id": "chain-n-w3",
+   "entries": [],
+   "ends": [
+    "n-943572aa"
+   ],
+   "memberIds": [
+    "n-f2124460",
+    "n-5fcf1c04",
+    "n-943572aa"
+   ]
+  },
+  {
+   "id": "chain-n-w4",
+   "entries": [],
+   "ends": [
+    "n-7b149e90"
+   ],
+   "memberIds": [
+    "n-8f54cbec",
+    "n-c8d56834",
+    "n-7b149e90"
+   ]
+  },
+  {
+   "id": "chain-n-w5",
+   "entries": [],
+   "ends": [],
+   "memberIds": [
+    "n-5d3ac7e7",
+    "n-ab8e0dfe",
+    "n-d56ced56"
+   ]
+  },
+  {
+   "id": "chain-nodetask-impl",
+   "entries": [],
+   "ends": [
+    "n-2867f8ec"
+   ],
+   "memberIds": [
+    "n-2867f8ec"
+   ]
+  },
+  {
+   "id": "chain-secrets-impl",
+   "entries": [],
+   "ends": [
+    "n-7521a9a4"
+   ],
+   "memberIds": [
+    "n-7521a9a4"
+   ]
+  },
+  {
+   "id": "chain-secrets-land",
+   "entries": [
+    "n-82df6e1b",
+    "n-6a0482cb",
+    "n-f5840eb3"
+   ],
+   "ends": [
+    "n-82df6e1b",
+    "n-f5840eb3",
+    "n-fcbfc686"
+   ],
+   "memberIds": [
+    "n-82df6e1b",
+    "n-6a0482cb",
+    "n-5d9a12f4",
+    "n-f5840eb3",
+    "n-fcbfc686"
+   ]
+  }
+ ]
+}
