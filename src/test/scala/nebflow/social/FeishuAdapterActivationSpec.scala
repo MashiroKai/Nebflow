@@ -211,6 +211,102 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assertEquals(startsN, 2, "each resync starts a fresh instance (config may BE the credentials)")
   }
 
+  // ─────────── A1-boot (feishu-boot-seal rework): the boot leg rewrites nothing ───────────
+
+  /** The `channels.feishu` subtree, canonicalised identically on both sides of a
+    * measurement — the criterion's object (A1). */
+  private def feishuSubtree(root: os.Path): String =
+    SocialChannels.readChannels(root).hcursor
+      .downField("channels").downField("feishu").focus.getOrElse(Json.obj()).noSpaces
+
+  private def sha256(s: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes("UTF-8"))
+      .map("%02x".format(_)).mkString
+
+  private def configBytes(root: os.Path): String = os.read(nebflow.shared.PathUtil.configJsonWritePath(root))
+
+  test("A1-boot golden: `enabled ∧ verified` ⇒ sync activates AND the feishu subtree's " +
+    "canonical JSON hashes identically before/after the boot path (zero rewrite)") {
+    // The criterion the brief states for state ①: the BOOT leg (the ONE activation
+    // point, FeishuBridgePlugin.sync) is run to completion on a golden world
+    // (enabled=true ∧ verified=true) and the channel subtree must not move a byte.
+    // The `save` here is FIXTURE SETUP ONLY (the product's own write path) — the
+    // measurement brackets `sync`, exactly as the criterion demands.
+    //
+    // Read-only face, declared honestly: the boot leg consists of `isEnabled` /
+    // `verified` reads plus BridgeManager register/start, i.e. it has NO writer at
+    // all (main carries zero call sites that write config from a boot校验 failure).
+    // So this criterion cannot go red on its own and PASSES pre-change too; it is a
+    // guard against the regression ever ACQUIRING a writer. The red tooth for the
+    // same defect family lives at the writer that feeds this gate — A1-boot/red-tooth
+    // below and SocialChannelsBootSealSpec.A5-a.
+    posixOnly()
+    val (starts, stops) = newCounters
+    val root = tmpRoot()
+    for
+      _ <- IO(SocialChannels.save(root, "feishu", fullBody()))
+      verified <- IO(SocialChannels.verified(root, "feishu"))
+      enabled <- IO(SocialChannels.isEnabled(root, "feishu"))
+      beforeBytes <- IO(configBytes(root))
+      before <- IO(feishuSubtree(root))
+      beforeSha = sha256(before)
+      manager <- BridgeManager.create(noopCtx)
+      _ <- FeishuBridgePlugin.sync(manager, root, fakeFactory(starts, stops))
+      names <- manager.registeredNames
+      startsN <- starts.get
+      afterBytes <- IO(configBytes(root))
+      after <- IO(feishuSubtree(root))
+      afterSha = sha256(after)
+    yield
+      assert(verified, "precondition: the fixture world is verified=true")
+      assert(enabled, "precondition: the fixture world is enabled=true")
+      // Anti-tautology: the compared object must be a real, non-empty subtree.
+      assert(
+        before.nonEmpty && before.contains("\"enabled\":true"),
+        s"the fixture must carry a real feishu subtree, got '$before'"
+      )
+      assertEquals(names, Set("feishu"), "the boot leg must take the enabled ∧ verified arm")
+      assertEquals(startsN, 1, "the adapter is started exactly once by the boot leg")
+      assertEquals(after, before, "the subtree must be identical (same canonical JSON)")
+      assertEquals(afterSha, beforeSha, "A1: feishu 子树规范化 JSON 的 sha256 前后相等（boot 路径零改写）")
+      assertEquals(afterBytes, beforeBytes, "stronger: not one byte of the config file moves across the boot path")
+  }
+
+  test("A1-boot/red-tooth: a write with NO opinion about the switch must not close it — " +
+    "the boot gate still activates (red pre-change)") {
+    // The defect's reachable face at the boot boundary: the store is fed by a body
+    // that says nothing about `enabled` (the shape that flipped the live channel at
+    // 2026-09-28 18:00:06), and the NEXT boot leg then decides whether the adapter
+    // may run. Pre-change the write materialises `false` (`getOrElse(false)`), so the
+    // boot gate reads the channel as closed and never registers the adapter — the
+    // live incident's mechanism (a silently closed channel is a channel that stops
+    // coming up). A1's zero-rewrite criterion is measured on the same bracket.
+    posixOnly()
+    val (starts, stops) = newCounters
+    val root = tmpRoot()
+    for
+      _ <- IO(SocialChannels.save(root, "feishu", fullBody()))
+      _ <- IO(SocialChannels.save(root, "feishu", body("""{"fields":{"region":"lark"}}""")))
+      enabled <- IO(SocialChannels.isEnabled(root, "feishu"))
+      before <- IO(feishuSubtree(root))
+      beforeSha = sha256(before)
+      manager <- BridgeManager.create(noopCtx)
+      _ <- FeishuBridgePlugin.sync(manager, root, fakeFactory(starts, stops))
+      names <- manager.registeredNames
+      after <- IO(feishuSubtree(root))
+      afterSha = sha256(after)
+    yield
+      assert(enabled, "缺 `enabled` 的写不得关闭通道（引擎禁代用户决定）：boot 门的输入必须仍是 true")
+      assertEquals(names, Set("feishu"), "the boot gate must still activate the adapter")
+      assertEquals(afterSha, beforeSha, "A1: 子树 sha256 前后相等（boot 路径零改写）")
+      assertEquals(
+        SocialChannels.readChannels(root).hcursor.downField("channels").downField("feishu")
+          .downField("fields").downField("region").as[String].toOption,
+        Some("lark"),
+        "the field the body DID have an opinion about still lands (the write is not suppressed)"
+      )
+  }
+
   test("ACT-8 sync with a factory returning a non-feishu plugin instance completes — " +
     "the fingerprint guard is a no-op there (feishu-bind batch)") {
     // The lifecycle fakes are plain BridgePlugins, not FeishuBridgePlugin

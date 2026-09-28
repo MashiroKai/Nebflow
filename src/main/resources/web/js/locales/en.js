@@ -1835,6 +1835,7 @@ export default {
   'social.action.saving': 'Saving…',
   'social.action.saved': 'Saved',
   'social.action.saveFailed': 'Save failed ({code})',
+  'social.action.notReady': 'Channel state not loaded yet — reconnecting, please retry',
   'social.action.recheck': 'Check again',
   'social.action.close': 'Close',
   'social.secret.placeholder': 'Paste the credential (never echoed back)',

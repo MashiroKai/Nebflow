@@ -1786,6 +1786,7 @@ export default {
   'social.action.saving': '保存中…',
   'social.action.saved': '已保存',
   'social.action.saveFailed': '保存失败（{code}）',
+  'social.action.notReady': '通道状态尚未载入——正在重连，请稍后重试',
   'social.action.recheck': '重新检查',
   'social.action.close': '关闭',
   'social.secret.placeholder': '粘贴凭据（填入后不回显）',

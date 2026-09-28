@@ -3,7 +3,7 @@ package nebflow.social
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.{AtomicJson, CredentialFileAcl}
-import nebflow.shared.PathUtil
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path, StandardOpenOption}
@@ -41,6 +41,8 @@ import java.nio.file.{Files, Path, StandardOpenOption}
  * authority), so nothing in this batch can present a live channel.
  */
 object SocialChannels:
+
+  private val logger = NebflowLogger.forName("nebflow.social.channels")
 
   /** One config field. `kind` mirrors the frontend definition layer. */
   final case class FieldSpec(
@@ -125,9 +127,26 @@ object SocialChannels:
         case Right(j) => j
         case Left(_) => Json.obj() // unreadable config: the READ side answers `{}`; writes refuse below
 
-  /** The `socialChannels` subtree; absent key ⇒ `{}` (old installs, arch §7.2). */
+  /** The stored `socialChannels` subtree; absent key ⇒ `{}` (old installs, arch §7.2). */
   def readChannels(root: os.Path): Json =
     parseConfig(root).hcursor.downField("socialChannels").focus.getOrElse(Json.obj())
+
+  /**
+   * The RAW stored `enabled` of one channel: `None` = the entry (or the store)
+   * never carried the key. Deliberately distinct from `false`.
+   *
+   * 🔴 This distinction IS the feishu-boot-seal fix. On the READ side an absent
+   * key is read as "not enabled" (`channelsJson` / `isEnabled` — unchanged, and
+   * correct: an install that never enabled a channel is not enabled). On the
+   * WRITE side the same conflation was a defect: a request body that did not
+   * mention `enabled` was read with `getOrElse(false)` and therefore wrote
+   * `false` into the user's config — the engine closing the user's switch on
+   * its own authority. A writer must preserve what is here, so it has to be
+   * able to tell "stored false" apart from "never stored".
+   */
+  private def storedEnabled(root: os.Path, id: String): Option[Boolean] =
+    readChannels(root).hcursor.downField("channels").downField(id)
+      .downField("enabled").as[Boolean].toOption
 
   /**
    * GET /api/social/channels payload. Secret fields only ever surface their
@@ -345,6 +364,16 @@ object SocialChannels:
    * is persisted is the path. Fields absent from the body keep their stored
    * value (surgical merge — a toggle flip cannot wipe a schema).
    *
+   * 🔴 `enabled` is the USER's switch (feishu-boot-seal batch, 2026-09-28).
+   * The body key is honoured only when it is actually there: a body that omits
+   * `enabled` is a call with NO opinion about the switch, so the STORED value
+   * survives untouched — and a store that never carried the key does not gain
+   * one. This used to be `getOrElse(false)` on the request body, i.e. a body
+   * without the key silently CLOSED the channel (observed live: a POST with no
+   * `enabled` flipped a verified channel to `false` with zero log lines). The
+   * engine never closes a switch on the user's behalf — the same red line as
+   * "the engine never makes the dispatcher's or the user's decision for them".
+   *
    * `restrict` is the credential-narrowing step; production leaves it at
    * [[defaultRestrict]] (the shared `CredentialFileAcl` module) and only the
    * F1 regression test injects a failing one.
@@ -387,11 +416,22 @@ object SocialChannels:
                 val merged = Json.fromFields(
                   existing.asObject.getOrElse(JsonObject.empty).toList ++ secretRefs ++ plainJson
                 )
-                val enabled = body.hcursor.downField("enabled").as[Boolean].getOrElse(false)
-                val entry = Json.obj(
-                  "enabled" -> enabled.asJson,
-                  "fields" -> merged,
-                  "updatedAt" -> (System.currentTimeMillis() / 1000).asJson
+                // 4. the user's switch: a body that SAYS something about it is
+                // honoured verbatim; a body that does not mention it leaves the
+                // stored value — and a key that was never stored stays ABSENT
+                // rather than materialising as `false`. The old
+                // `getOrElse(false)` closed the channel on a body that simply
+                // had no opinion: the engine making the user's decision.
+                val enabled: Option[Boolean] =
+                  body.hcursor.downField("enabled").as[Boolean].toOption.orElse(storedEnabled(root, id))
+                val entry = Json.fromJsonObject(
+                  JsonObject.fromIterable(
+                    enabled.map(b => "enabled" -> b.asJson).toList ++
+                      List(
+                        "fields" -> merged,
+                        "updatedAt" -> (System.currentTimeMillis() / 1000).asJson
+                      )
+                  )
                 )
                 persist(root, id, entry) match
                   case Left(err) => Left(err)
@@ -404,7 +444,15 @@ object SocialChannels:
 
   /**
    * Surgical `socialChannels.channels.<id>` rewrite: every other key of
-   *  nebflow.json survives (same shape as PluginBlockPolicy's writer).
+   * nebflow.json survives (same shape as PluginBlockPolicy's writer).
+   *
+   * 🔴 This writer is the ONLY producer of the `version:1` + `updatedAt`
+   * (epoch-second) entry shape, and it used to be completely SILENT — the
+   * live incident (2026-09-28 18:00:06) showed the user's `enabled:true`
+   * flipped to `false` with zero log lines in the window, so the write could
+   * not be attributed after the fact. A config write is a user-visible state
+   * change; it now says so (channel id only — never a field value, never a
+   * credential; `app_secret` lives behind `_ref` and is not touched here).
    */
   private def persist(root: os.Path, id: String, entry: Json): Either[Failure, Unit] =
     val p = configPath(root)
@@ -417,6 +465,9 @@ object SocialChannels:
         case Right(rootJson) =>
           val social = rootJson.hcursor.downField("socialChannels").focus.getOrElse(Json.obj())
           val channelsObj = social.hcursor.downField("channels").focus.getOrElse(Json.obj())
+          val previous =
+            channelsObj.hcursor.downField(id).downField("enabled").as[Boolean].toOption
+          val next = entry.hcursor.downField("enabled").as[Boolean].toOption
           val nextChannels = Json.fromJsonObject(
             channelsObj.asObject.getOrElse(JsonObject.empty).add(id, entry)
           )
@@ -427,6 +478,9 @@ object SocialChannels:
             rootJson.asObject.getOrElse(JsonObject.empty).add("socialChannels", nextSocial)
           )
           AtomicJson.writeSync(p, out.noSpaces)
+          logger.infoSync(
+            s"socialChannels: channel '$id' config written (enabled ${previous.map(_.toString).getOrElse("<absent>")} -> ${next.map(_.toString).getOrElse("<absent>")})"
+          )
           Right(())
       end match
     catch case e: Exception => Left(Failure.Io(s"could not persist social channel config: ${e.getMessage}"))
