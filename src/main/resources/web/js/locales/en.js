@@ -1538,6 +1538,7 @@ export default {
   'lightbox.close': 'Close preview',
   'lightbox.loading': 'Loading…',
   'lightbox.loadError': 'Failed to load image',
+  'lightbox.clickHint': 'Click to view the full-size image',
 
   // === Usage dashboard (token consumption dashboard, spec §7.5) ===
   'usage.title': 'Usage Dashboard',

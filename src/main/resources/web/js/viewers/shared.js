@@ -322,10 +322,119 @@ function markUnsolvedLink(a) {
 }
 export { markUnsolvedLink };
 
+/** Dormant script injected into an HTML frame: an image click is forwarded to
+ *  the parent as `{ _nfImagePreview: { src, path, alt } }` so the app's own
+ *  lightbox opens it.
+ *
+ *  Why it lives HERE (card-image-zoom batch, 2026-09-28): the Canvas HTML
+ *  viewer (viewers/html.js) already carried this script as a private constant
+ *  and the chat card (cardRegistry.js) carried none — so an image embedded in
+ *  a Card was a dead click while the same image in the Canvas opened a preview.
+ *  The card now injects the SAME script: one producer for the channel, so the
+ *  two surfaces cannot drift into two message shapes (the rule this module
+ *  already follows for `localLinkNavScript` / `routeLocalHref` / nfTicket.js).
+ *
+ *  Payload contract (unchanged, `viewers/html.js` 2026-09-11 C batch ⑧): the
+ *  payload carries the PATH, not just a ready-made URL — the parent re-mints a
+ *  fresh ticket for that path when the lightbox opens, so the frame's injected
+ *  ticket is never reused, never outlives its TTL in the parent document and
+ *  never lands in the parent DOM at all. `src` stays, credential-stripped, as
+ *  the fallback for images that are not nf-file-proxied at all (a data-URI
+ *  inline image renders through it — the same experience the Canvas has, by
+ *  the §0 ruling of this batch: no blob conversion is invented here).
+ *
+ *  Also marks every image as clickable (cursor: zoom-in + the hover hint), so
+ *  the affordance is stated instead of discoverable only by trying. An
+ *  authored `title` is never overwritten.
+ *
+ *  @param {string} [hint] hover text (resolved from the locale dictionary)
+ *  @returns {string} */
+export function imgClickScript(hint = t('lightbox.clickHint')) {
+  // The hint is substituted into the literal below instead of being
+  // interpolated inside it, and that is deliberate: WebJsModuleSyntaxSpec's
+  // FRAME pass evaluates each template literal that carries a `<script>` body
+  // and compiles the EMITTED text, so a broken frame script (the `\+` →
+  // `/+/g` class this gate was built for) is caught. An interpolated literal
+  // cannot be evaluated statically, so the gate SKIPS it — substituting after
+  // the fact keeps this script under the gate. The replacer is a function so a
+  // `$` in a translation cannot be read as a replacement pattern, and the
+  // quoted placeholder is replaced WHOLE so the emitted line is a JSON string
+  // literal (double-quoted) — a translation containing an apostrophe stays
+  // valid JS.
+  return IMG_CLICK_SCRIPT.replace("'__NF_IMG_HINT__'", () => JSON.stringify(String(hint || '')));
+}
+
+/** Frame script for `imgClickScript` (template literal, no interpolation —
+ *  see the note in that function). */
+const IMG_CLICK_SCRIPT = `<script>
+(function(){
+  var HINT='__NF_IMG_HINT__';
+  function stripCredential(u){
+    return String(u||'').replace(/([?&])(token|ticket)=[^&]*/g,'$1').replace(/[?&]$/,'');
+  }
+  function pathOf(u){
+    var m=/[?&]path=([^&]*)/.exec(String(u||''));
+    if(!m) return '';
+    // Embedded by SOURCE (a frame script cannot import a module): fold a bare
+    // plus sign first, then percent-decode — byte-for-byte the criterion of
+    // nfTicket.js decodePathParam, which is the ONE statement of this
+    // discipline. Calling decodeURIComponent alone folded neither a plus sign
+    // nor %20, so a JVM-form-encoded space reached the parent as a literal plus
+    // and the lightbox re-minted its ticket for a path that does not exist.
+    // NOTE: this comment is INSIDE a template literal — never write an
+    // unescaped backtick here, and never write the two-character interpolation
+    // opener (dollar + brace): either one ends/starts an interpolation and the
+    // module stops parsing, which no Scala test used to see — see
+    // WebJsModuleSyntaxSpec, the JS-face gate added for exactly that miss.
+    // The regex below is spelled with a DOUBLED backslash on purpose: a template
+    // literal drops a lone one, so the single-backslash spelling emitted a
+    // pattern of just a plus sign into this frame script and the browser threw
+    // "Invalid regular expression: /+/g: Nothing to repeat" — the whole handler
+    // died while the module itself still parsed fine. The gate's frame-script
+    // pass pins this class (see WebJsModuleSyntaxSpec).
+    try{ return decodeURIComponent(m[1].replace(/\\+/g,' ')); }catch(e){ return ''; }
+  }
+  function markImg(el){
+    if(!el || el.nodeType!==1 || el.tagName!=='IMG') return;
+    if(el.getAttribute('data-nf-zoom-ready')) return;
+    el.setAttribute('data-nf-zoom-ready','1');
+    el.style.cursor='zoom-in';
+    if(HINT && !el.getAttribute('title')) el.setAttribute('title',HINT);
+  }
+  function markAll(){
+    var imgs=document.querySelectorAll('img');
+    for(var i=0;i<imgs.length;i++) markImg(imgs[i]);
+  }
+  document.addEventListener('click', function(e){
+    // A sibling capture listener that already claimed this click owns it:
+    // localLinkNavScript runs first (same document, registered earlier) and
+    // preventDefaults a link click, so an image inside a local/external link
+    // follows its link instead of ALSO opening a preview. This check is the
+    // whole precedence rule - registered order plus this guard - so an image
+    // that is not inside such a link still opens, and an in-page hash anchor
+    // keeps exactly the behaviour it had before this script was shared
+    // (nothing claims it). NOTE: this comment lives INSIDE a template literal
+    // - never write a backtick or the two-character interpolation opener here
+    // (WebJsModuleSyntaxSpec is the gate for that class).
+    if(e.defaultPrevented) return;
+    var img = e.target && e.target.closest ? e.target.closest('img') : null;
+    if (!img) return;
+    e.preventDefault();
+    var raw = img.currentSrc || img.src || '';
+    parent.postMessage({ _nfImagePreview: { src: stripCredential(raw), path: pathOf(raw), alt: img.alt || '' } }, '*');
+  }, true);
+  // Late-arriving images (a script, a lazy loader) get the affordance too.
+  window.addEventListener('load', function(e){ markImg(e.target); }, true);
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', markAll);
+  else markAll();
+})();
+<\/script>`;
+
 /** Dormant script injected into an HTML frame: local-file and external link
  *  clicks are routed to the parent instead of letting the frame navigate.
  *  Registered in the capture phase on `document` (the pattern html.js's
- *  `imgClickScript` uses), so page-level handlers cannot outrun it; covers
+ *  `imgClickScript` used to be — it now lives in this module, above), so
+ *  page-level handlers cannot outrun it; covers
  *  left-click, middle-click (`auxclick`) and keyboard activation (a synthetic
  *  click with detail 0). `#` anchors are left to the viewer's own in-frame
  *  scroll script, and an unresolvable local link gets a VISIBLE inline note

@@ -1487,6 +1487,7 @@ export default {
   'lightbox.close': '关闭预览',
   'lightbox.loading': '加载中…',
   'lightbox.loadError': '图片加载失败',
+  'lightbox.clickHint': '点击查看大图',
 
   // === Usage dashboard（Token 消耗看板，spec token-dashboard-spec.md §7.5） ===
   'usage.title': '用量看板',
