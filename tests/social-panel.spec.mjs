@@ -115,6 +115,7 @@ const WEB = process.env.SOCIAL_WEB_ROOT ? resolve(process.env.SOCIAL_WEB_ROOT) :
 // is served (the `web=` reading on the mode line below states the tree).
 const SUITE_ENV = String(process.env.SOCIAL_SUITE || '').toLowerCase();
 const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'fixture' || SUITE_ENV === 'redfilter'
+  || SUITE_ENV === 'nrs'
   ? SUITE_ENV.toUpperCase()
   : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE'
     : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE'
@@ -414,6 +415,8 @@ async function afterSuite(browser, base) {
     'src/test/scala/nebflow/social/FeishuBridgePluginSpec.scala',       // feishubridge spec
     'src/test/scala/nebflow/social/FeishuAdapterActivationSpec.scala',  // feishubridge spec
     'src/test/scala/nebflow/social/FeishuChannelSpec.scala',  // feishubridge: senderId joined the wire shape (additive)
+    'src/test/scala/nebflow/social/SocialChannelsBootSealSpec.scala', // feishu-boot-seal spec (A1–A5)
+    'src/test/scala/nebflow/social/FeishuBootSealRestore.scala',       // feishu-boot-seal: the restore entry point (Test scope)
     'tests/social-panel.spec.mjs',
   ];
   let diff = '';
@@ -1078,6 +1081,165 @@ async function withPanel(browser, base, theme, fn) {
   }
 }
 
+// ── NRS: the UNREADY panel must not hand the switch to the backend
+//    (feishu-boot-seal batch, 2026-09-28) ────────────────────────────────────
+// The frontend half of the boot-seal defect. The stored half is pinned in
+// `SocialChannelsBootSealSpec` (a body that does not MENTION `enabled` must keep
+// the stored value); this leg pins the OTHER producer of an unasked-for write:
+// a panel whose config read FAILED renders every card from an empty map, so the
+// card's switch line reads "not enabled" — on the pre-change tree that reading
+// was indistinguishable from a real OFF, and a click on it went straight to
+// `saveChannel`, which sent an `enabled` write derived from the failed read.
+//
+// Run under `SOCIAL_MUTATE=card-filter-off`: the plain-card switch only exists
+// on a card that RENDERS, and production renders the feishu scan-bind card
+// alone (wechat/telegram are sealed at the data layer). The mutation is this
+// spec's own sanctioned inverse-of-the-seal (see `redFilterSuite`), and it is
+// applied to `js/socialChannels.js` — the definition layer, NOT the file this
+// batch changed — so the switch under test is the real one, merely reachable.
+//
+// Discriminators (red on the pre-change tree, green after):
+//   NRS-1  unready ⇒ the switch is not OPERABLE (disabled; never an OFF claim);
+//   NRS-2  unready ⇒ clicking it emits ZERO writes carrying `enabled`.
+// Guards (expected green on both trees — stated as such, not as fix evidence):
+//   NRS-3  the exactly-one-legal explicit close path still works: a READY,
+//          created feishu card offers archive, and clicking it sends exactly one
+//          `{enabled:false, fields:{}}` — the archive semantics are untouched;
+//   NRS-4  with a ready config read the same probe finds an OPERABLE switch that
+//          IS on, and a click sends exactly one explicit write — proof that
+//          NRS-1/NRS-2 are not passing on a panel that never renders a switch.
+async function nrsSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  apiState.posts = [];
+  resetScanFace();
+  // 🔴 ONE handler owns the config GET for the whole leg, switched by `nrsReady`
+  // below. It is registered AFTER boot's routes (a later, exact-path handler
+  // wins), and it is deliberately NOT removed later: `page.unroute(url)` drops
+  // EVERY handler on that URL — including boot's own — which would silently
+  // route the "ready" leg to the `**/api/**` catch-all and hand the panel an
+  // empty channel map. The leg must fail for the reason it is testing.
+  let nrsReady = false;
+  await boot(page);
+  await page.route('**/api/social/channels', (r) => (nrsReady
+    ? r.fulfill({ json: { channels: apiState.channels, adapterRegistered: false } })
+    : r.fulfill({ status: 403, json: { error: 'forbidden' } })));
+  await page.goto(base);
+  await openPanel(page);
+
+  const probeSwitches = () => page.evaluate(() => {
+    const g = (id) => {
+      const card = document.querySelector(`.social-card[data-channel="${id}"]`);
+      if (!card) return { card: false, count: 0, disabled: null, on: null, archive: 0 };
+      const sw = card.querySelector(`[data-toggle-channel="${id}"]`);
+      return {
+        card: true,
+        count: card.querySelectorAll(`[data-toggle-channel="${id}"]`).length,
+        disabled: sw ? /** @type {HTMLButtonElement} */ (sw).disabled : null,
+        on: sw ? sw.classList.contains('on') : null,
+        archive: card.querySelectorAll('[data-archive]').length,
+      };
+    };
+    return { wechat: g('wechat'), feishu: g('feishu'), cards: document.querySelectorAll('#social-modal .social-card[data-channel]').length };
+  });
+
+  const unready = await probeSwitches();
+  const clickAll = async (id) => {
+    const loc = page.locator(`.social-card[data-channel="${id}"] [data-toggle-channel="${id}"]`);
+    const n = await loc.count();
+    for (let i = 0; i < n; i++) await loc.nth(i).click({ force: true });
+    await page.waitForTimeout(300);
+  };
+  await clickAll('wechat');
+  const unreadySaveState = await page.evaluate(() => (document.querySelector('[data-save-state="wechat"]') || {}).textContent || '');
+  const unreadyToggleWrites = {
+    posts: apiState.posts.length,
+    enabledWrites: apiState.posts.filter((p) => !!(p.body && 'enabled' in p.body)).length,
+    falseWrites: apiState.posts.filter((p) => p.body && p.body.enabled === false).length,
+    saveState: unreadySaveState,
+  };
+
+  // The close shape itself: the card's SAVE action carries no override, so it
+  // agrees with the rendered switch — on an unready panel the switch renders
+  // OFF, hence `enabled:false` for a channel the backend may have enabled.
+  const saveBtn = page.locator('.social-card[data-channel="wechat"] [data-save="wechat"]');
+  if (await saveBtn.count()) await saveBtn.first().click({ force: true });
+  await page.waitForTimeout(500);
+  const unreadySaveWrites = {
+    posts: apiState.posts.length,
+    falseWrites: apiState.posts.filter((p) => p.body && p.body.enabled === false).length,
+    enabledWrites: apiState.posts.filter((p) => !!(p.body && 'enabled' in p.body)).length,
+    saveState: await page.evaluate(() => (document.querySelector('[data-save-state="wechat"]') || {}).textContent || ''),
+  };
+
+  check('NRS-1 unready panel: the switch is not operable (disabled — never a rendered OFF claim)',
+    unready.wechat.count === 0 || unready.wechat.disabled === true,
+    `wechat card=${unready.wechat.card} switches=${unready.wechat.count} disabled=${unready.wechat.disabled} on=${unready.wechat.on} | cards=${unready.cards}`);
+  check('NRS-2 unready panel: the card SAVE action emits ZERO `enabled:false` writes (the close shape)',
+    unreadySaveWrites.falseWrites === 0,
+    `posts=${unreadySaveWrites.posts} writes carrying \`enabled\`=${unreadySaveWrites.enabledWrites} of which false=${unreadySaveWrites.falseWrites} saveState="${unreadySaveWrites.saveState}"`);
+  check('NRS-2b unready panel: clicking the switch emits ZERO writes carrying `enabled`',
+    unreadyToggleWrites.enabledWrites === 0,
+    `posts=${unreadyToggleWrites.posts} writes carrying \`enabled\`=${unreadyToggleWrites.enabledWrites} (of which false=${unreadyToggleWrites.falseWrites}) saveState="${unreadyToggleWrites.saveState}"`);
+  await shot(page, 'nrs-unready-1440-light');
+
+  // ── ready legs (config GET answers again) ─────────────────────────────────
+  apiState.channels = {
+    wechat: { enabled: true, fields: { app_id: 'wx0123456789abcdef' } },
+    feishu: { enabled: true, fields: { app_id: 'cli_aa32140e8af85d25', region: 'feishu' } },
+  };
+  apiState.probes = { wechat: { app_secret: { exists: true, modeOk: true, readable: true } } };
+  apiState.posts = [];
+  nrsReady = true;
+  await page.reload();
+  await openPanel(page);
+
+  const ready = await probeSwitches();
+  check('NRS-4 positive control: with a ready config read the SAME probe finds an OPERABLE switch that is ON',
+    ready.wechat.count === 1 && ready.wechat.disabled === false && ready.wechat.on === true,
+    `wechat card=${ready.wechat.card} switches=${ready.wechat.count} disabled=${ready.wechat.disabled} on=${ready.wechat.on}`);
+  await clickAll('wechat');
+  const readyWrite = (() => {
+    const p = apiState.posts[apiState.posts.length - 1];
+    return {
+      posts: apiState.posts.length,
+      enabled: p && p.body ? p.body.enabled : null,
+      appId: p && p.body && p.body.fields ? p.body.fields.app_id : null,
+      id: p ? p.id : null,
+    };
+  })();
+  check('NRS-4b positive control: the operable switch DOES write (one explicit user-action body, fields intact)',
+    readyWrite.posts === 1 && readyWrite.enabled === false && readyWrite.id === 'wechat'
+      && readyWrite.appId === 'wx0123456789abcdef',
+    `posts=${readyWrite.posts} id=${readyWrite.id} enabled=${readyWrite.enabled} app_id=${readyWrite.appId}`);
+
+  // ── NRS-3: the archive face is still the one explicit close (no regression) ─
+  const created = await probeSwitches();
+  check('NRS-3 ready + created ⇒ the archive control is reachable (the unready leg\'s 0 has teeth)',
+    created.feishu.archive === 1,
+    `feishu [data-archive] controls=${created.feishu.archive}`);
+  apiState.posts = [];
+  await page.locator('.social-card[data-channel="feishu"] [data-archive]').first().click({ force: true });
+  await page.waitForTimeout(400);
+  const archWrite = (() => {
+    const p = apiState.posts[apiState.posts.length - 1];
+    return {
+      posts: apiState.posts.length,
+      enabled: p && p.body ? p.body.enabled : null,
+      fieldKeys: p && p.body && p.body.fields ? Object.keys(p.body.fields).length : -1,
+      id: p ? p.id : null,
+    };
+  })();
+  check('NRS-3b archive semantics unchanged: exactly one explicit `{enabled:false, fields:{}}` write',
+    archWrite.posts === 1 && archWrite.id === 'feishu' && archWrite.enabled === false && archWrite.fieldKeys === 0,
+    `posts=${archWrite.posts} id=${archWrite.id} enabled=${archWrite.enabled} fieldKeys=${archWrite.fieldKeys}`);
+
+  await ctx.close();
+}
+
 // ── FIXTURE: W7 red proof (the same probe must fire when the flag is flipped) ─
 async function fixtureSuite(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
@@ -1256,6 +1418,7 @@ try {
   if (MODE === 'BEFORE') await beforeSuite(browser, base);
   else if (MODE === 'FIXTURE') await fixtureSuite(browser, base);
   else if (MODE === 'REDFILTER') await redFilterSuite(browser, base);
+  else if (MODE === 'NRS') await nrsSuite(browser, base);
   else { await afterSuite(browser, base); await apiSuite(); }
 } finally {
   await browser.close();

@@ -84,6 +84,15 @@ import {
 /** Last config truth read from the backend, keyed by channel id.
  *  @type {Record<string, {enabled?: boolean, fields?: Record<string, string>}>} */
 let configByChannel = {};
+/** Whether the last `fetchConfig()` SUCCEEDED (feishu-boot-seal, 2026-09-28).
+ *  🔴 Without this flag an unready panel is indistinguishable from an empty
+ *  one: `configByChannel` is `{}` both before the first read and after a failed
+ *  one, so `!!(configByChannel[id] && configByChannel[id].enabled)` renders an
+ *  OFF switch for a channel that IS enabled — and a save built off that face
+ *  writes `enabled:false`, closing the user's channel on the panel's guess.
+ *  Unready ⇒ the switch renders unknown/disabled and [[saveChannel]] refuses.
+ *  @type {boolean} */
+let configReady = false;
 /** Last probe triples (exists / modeOk / readable), keyed by channel id.
  *  @type {Record<string, Record<string, {exists?: boolean, modeOk?: boolean, readable?: boolean}>>} */
 let probeByChannel = {};
@@ -366,6 +375,20 @@ function faceCreated(ch) {
 }
 
 /**
+ * The switch position for one card, read off BACKEND truth only
+ * (feishu-boot-seal, 2026-09-28). While the config read is not ready there is
+ * no truth to render: the switch renders OFF but is DISABLED (the caller sets
+ * `disabled`), which is read as "unknown", never as "the user turned it off".
+ * A plain OFF here is what let an unready panel hand `enabled:false` to a save.
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {boolean}
+ */
+function switchOnFor(ch) {
+  if (!configReady) return false; // unknown ⇒ off-looking, but disabled (never a claim)
+  return !!(configByChannel[ch.id] && configByChannel[ch.id].enabled);
+}
+
+/**
  * Display status = the mechanical state machine ([[channelStatus]]) plus ONE
  * composed reading (contract C2): a fingerprint MISMATCH means the live
  * bridge is holding a DIFFERENT app than the stored credential — displayed as
@@ -456,7 +479,7 @@ function plainCardHTML(ch) {
   const status = channelStatus(ch, cfg, probeByChannel[ch.id], registeredByChannel[ch.id]);
   const hint = cardHint(ch, status);
   const fields = ch.fields.map((f) => fieldHTML(ch, f)).join('');
-  const on = !!(cfg && cfg.enabled);
+  const on = switchOnFor(ch);
   return `<div class="social-card" data-channel="${escapeHtml(ch.id)}">
       <div class="social-card-head">
         <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
@@ -465,6 +488,7 @@ function plainCardHTML(ch) {
         ${toggleHTML({
           on,
           label: t(ch.nameKey),
+          disabled: !configReady,
           attrs: `data-toggle-channel="${escapeHtml(ch.id)}"`,
         })}
       </div>
@@ -694,8 +718,12 @@ function refreshCard(channelId) {
     hintEl.textContent = hint;
     if (hint) hintEl.removeAttribute('hidden'); else hintEl.setAttribute('hidden', '');
   }
-  const toggle = card.querySelector('.nb-toggle');
-  setToggleState(toggle, !!(configByChannel[ch.id] && configByChannel[ch.id].enabled));
+  // The shared component only ever renders a <button> (toggle.js); assert it
+  // for checkJs so the touched file stays checkJs-clean (TS won't narrow a
+  // compound selector on its own — same shape as toggle.js's own note).
+  const toggle = /** @type {HTMLButtonElement | null} */ (card.querySelector('.nb-toggle'));
+  setToggleState(toggle, switchOnFor(ch));
+  if (toggle) toggle.disabled = !configReady;
   card.querySelectorAll('.social-field').forEach((label) => {
     const input = label.querySelector('[data-field]');
     if (!input) return;
@@ -737,8 +765,10 @@ function applyStaticText() {
 async function loadAll() {
   try {
     configByChannel = await fetchConfig();
+    configReady = true;
   } catch {
     configByChannel = {};
+    configReady = false; // unready ≠ "everything is off" — the switch must not lie
   }
   for (const ch of SOCIAL_CHANNELS) {
     try {
@@ -769,6 +799,14 @@ async function onToggleChange(el, on) {
   const id = el.dataset.toggleChannel || '';
   const ch = channelById(id);
   if (!ch) return;
+  // Not-ready panel: the switch is disabled, but a stale node from before the
+  // last failed read could still deliver a click here — restore the rendered
+  // state and refuse without a request (feishu-boot-seal, 2026-09-28).
+  if (!configReady) {
+    setToggleState(el, false);
+    setSaveState(id, t('social.action.notReady'));
+    return;
+  }
   const ok = await saveChannel(id, on);
   if (!ok) setToggleState(el, !on); // rollback to backend truth
 }
@@ -784,6 +822,15 @@ async function saveChannel(channelId, enabledOverride) {
   const ch = channelById(channelId);
   const card = cardEl(channelId);
   if (!ch || !card) return false;
+  // 🔴 Unready panel ⇒ REFUSE, do not guess (feishu-boot-seal, 2026-09-28). The
+  // switch renders off-disabled in that state, so a save here would send
+  // `enabled:false` for a channel the backend may well have enabled — the exact
+  // write that closed the user's channel on 2026-09-28 18:00:06. Only an
+  // explicit caller-supplied override (a real user action) may proceed.
+  if (!configReady && enabledOverride === undefined) {
+    setSaveState(channelId, t('social.action.notReady'));
+    return false;
+  }
   const toggle = card.querySelector('.nb-toggle');
   const enabled = enabledOverride !== undefined
     ? enabledOverride
