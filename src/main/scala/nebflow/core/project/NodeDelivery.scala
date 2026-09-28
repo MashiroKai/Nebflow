@@ -638,6 +638,18 @@ private[project] trait NodeDelivery:
       enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
     else markRootDelivered(node.id)
 
+  /** **Pre-W1 name for [[rootDelivery]]** (W2b' backfill; same W1 rename family as
+    * [[deliverToNebula]], attribution identical: `git log -SnebulaDelivery` lands on the
+    * synthetic PR head and on the main-side notifybatch batch whose body main re-spelled).
+    * Delegates to the single pass-edge/root-edge arbitration point -- re-deriving it here
+    * would fork the R5 notify-policy ruling (suppress vs. deliver vs. ledger-only). */
+  private[project] def nebulaDelivery(
+    node: NodeDef,
+    resultText: String,
+    nebulaEdges: List[OutEdge]
+  ): IO[Unit] =
+    rootDelivery(node, resultText, nebulaEdges)
+
   /**
    * out=Nebula：ImmediateInput 投 Nebula 根会话（source="node"，复用 flow 气泡语义）。
    * 气泡 header 契约（前端 chat.js injectedSourceLabel node 分支）：
@@ -667,6 +679,20 @@ private[project] trait NodeDelivery:
   ): IO[Unit] =
     offerRootNotify(text, nodeName, status, nodeId).void
 
+  /** **Pre-W1 name for [[deliverToRoot]]** (W2b' backfill; the `DeliverToNebula` spelling of the
+    * same single offer point). `git log -SdeliverToNebula` lands on the synthetic PR head plus
+    * the notifypack/notifybatch batches that main later re-spelled as `deliverToRoot`, so the
+    * divergence is W1 rename fallout rather than an organised main-side rename. Bound to the
+    * one implementation -- a second offer point would break the "single flush exit" contract
+    * that `enqueueRootNotify` and [[flushRootNotify]] rely on. */
+  private[project] def deliverToNebula(
+    text: String,
+    nodeName: String,
+    status: String,
+    nodeId: Option[String] = None
+  ): IO[Unit] =
+    deliverToRoot(text, nodeName, status, nodeId)
+
   /**
    * **offer 结果（F-1 修复面 · 2026-09-18 作者裁定 (a)：记账必须反映交付事实）**——
    * 三态穷尽 root 通道 offer 的全部出口；调用方据此决定**是否**逐件
@@ -679,7 +705,7 @@ private[project] trait NodeDelivery:
    *  - `Parked`：根 ref 缺失 ⇒ **未**发出、**不**记账，件滞留 `nebulaDeliveredAt` 空态
    *    ⇒ 30s 补投扫描重新入队（不丢件）。
    */
-  private enum RootNotifyOffer:
+  private[project] enum RootNotifyOffer:
     case Offered
     case Suppressed
     case Parked
@@ -687,12 +713,16 @@ private[project] trait NodeDelivery:
   /**
    * root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToRoot]]
    * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。
-   */
-  private def offerRootNotify(
+   *
+   * `windowItems`（notifypack 解 b 批 · 2026-09-23）：**默认 `None`** ⇒ 既有全部调用点
+   * （`deliverToRoot` 单件腿 / 两条旁路 / `deliverStaleSummary`）逐字保持改前形态
+   * （帧里不出现该键的载荷）；唯 [[flushRootNotify]] 的 `case many` 传 `Some(...)`。 */
+  private[project] def offerRootNotify(
     text: String,
     nodeName: String,
     status: String,
-    nodeId: Option[String]
+    nodeId: Option[String],
+    windowItems: Option[List[AgentCommand.WindowItem]] = None
   ): IO[RootNotifyOffer] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
@@ -713,7 +743,8 @@ private[project] trait NodeDelivery:
               source = Some("node"),
               eventType = Some(status),
               sender = Some(s"$projectName/$nodeName"),
-              fromUser = false // ② 服务端注入（节点状态），不是真人输入
+              fromUser = false, // ② 服务端注入（节点状态），不是真人输入
+              windowItems = windowItems
             )) *> nodeId.traverse_(id => markRootDelivered(id)) *>
               IO.pure(RootNotifyOffer.Offered)
         }
@@ -824,8 +855,9 @@ private[project] trait NodeDelivery:
   end enqueueRootNotify
 
   /**
-   * **窗口结束的唯一出口**（M-3）：按上限取队首 ≤N 件 → **一次** offer（N=1 ⇒ 文本
-   * 逐字不变；N≥2 ⇒ 正文分节 + header 保守）→ 逐件记账。
+   * **窗口结束的出口**：按上限取队首 ≤N 件 → 单件走 [[deliverToRoot]] 原路径、多件交
+   * [[NodeEngine.flushRootNotifyMerged]]（合并载体的构造面，原 `NodeEngine.flushRootNotify`
+   * 的 `case many` 分支——写入点与记账序逐字同源，见该方法头注）。
    *
    * **记账序（V8 tell-then-mark；F-1 修复面 · 2026-09-18 作者裁定 (a)：「记账必须反映
    * 交付事实」）**：合并腿**只有 offer 真的落地**（`RootNotifyOffer.Offered`，即
@@ -854,20 +886,9 @@ private[project] trait NodeDelivery:
             // 单件：文本 / header / 去重键 / 记账**逐字同今天**（A2 单件零漂移）
             case one :: Nil => deliverToRoot(one.text, one.nodeName, one.status, one.nodeId)
             // 多件：正文分节 + header 保守（T-6(a)：不新增 header 语义 ⇒ `NotificationHeader`
-            // 与前端 `chat.js` **零改动**；去重键 = 首件身份 × 合并状态）；**落地才**逐件记账
-            case many =>
-              offerRootNotify(
-                mergedRootNotifyText(many),
-                many.head.nodeName,
-                mergedRootNotifyStatus(many),
-                nodeId = None
-              ).flatMap {
-                // F-1（作者裁定 (a)）：`Offered` = 交付事实成立 ⇒ 逐件记账；`Parked`/`Suppressed`
-                // = 本批**没发出去** ⇒ 一件都不记（否则件被标已发却未发、补投判据
-                // `n.nebulaDeliveredAt.isEmpty` 永不命中 ⇒ 整窗永久丢失，宁重复不丢失）。
-                case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markRootDelivered)
-                case _ => IO.unit
-              }
+            // 与前端 `chat.js` **零改动**；去重键 = 首件身份 × 合并状态）；**落地才**逐件记账。
+            // 载体构造与记账序在 [[NodeEngine.flushRootNotifyMerged]]（唯一载荷写入点）。
+            case many => flushRootNotifyMerged(many.toList)
           offer *>
             logger.info(
               "root-notify batch flushed",
@@ -896,7 +917,7 @@ private[project] trait NodeDelivery:
    * 分节行形如 `── [i/N] [status] <nodeName> (<nodeId>) ──`（nodeId 缺失时回落
    * nodeName，与 [[RootNotifyEntry.identity]] 同口径）。
    */
-  private def mergedRootNotifyText(entries: List[RootNotifyEntry]): String =
+  private[project] def mergedRootNotifyText(entries: List[RootNotifyEntry]): String =
     val head = s"[Node 本批 ${entries.size} 件终态通知（root 通道打包窗合并，项目 $projectName）]"
     val body = entries.zipWithIndex
       .map((e, i) => s"── [${i + 1}/${entries.size}] [${e.status}] ${e.nodeName} (${e.identity}) ──\n${e.text}")
@@ -909,7 +930,7 @@ private[project] trait NodeDelivery:
    * failed > blocked > cancelled > 首件 status（全 completed ⇒ `completed`）。
    * ⚠ 逐件真实状态在**正文分节行**内（header 只表达本批的主状态）。
    */
-  private def mergedRootNotifyStatus(entries: List[RootNotifyEntry]): String =
+  private[project] def mergedRootNotifyStatus(entries: List[RootNotifyEntry]): String =
     if entries.exists(_.status == NodeLifecycle.Failed) then NodeLifecycle.Failed
     else if entries.exists(_.status == NodeLifecycle.Blocked) then NodeLifecycle.Blocked
     else if entries.exists(_.status == NodeLifecycle.Cancelled) then NodeLifecycle.Cancelled

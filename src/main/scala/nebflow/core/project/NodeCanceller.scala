@@ -703,68 +703,58 @@ private[project] trait NodeCanceller:
       clearReportPending(nodeId, Some(sessionId))
 
   /**
-   * 死会话 running 节点的自动收敛（僵尸收敛批 2026-09-06；与 NodeCancel-stale /
-   * abandon 的人力收殓区分——本方法走**自动** watchdog 路径）。收敛目标取 **failed**
-   * 而非 reapStaleRunning 的 cancelled：cancelled 不投递不通知（cancelNode 不调
-   * deliverFailed/settleDeps）且不可重激活——无人知情、无人可修；failed 沿
-   * deliverFailed 触发分发器通知（附停等等待者清单，wf1cde E-③）且可 reactivate
-   * 修复重跑——D5 零结算下下游停等可见，上游修好后等待者自动续跑。fresh 守卫
-   * （R2）：只在 `status==Running` 时收敛——节点已终态/状态已变 → 拒写（并发
-   * 完成/取消不被本路径覆盖成 failed）。审计事件独立（dead-session-reaped），
-   * 与既有 reaped/abandoned 区分。
-   */
+   * 死会话 running 节点的降档处置（killruling 批 2026-09-23 作者裁定 #19）。
+   *
+   * 🔴 **已降档**：本方法**不再写任何终态**。历史口径（僵尸收敛批 2026-09-06）为
+   * 「收敛目标取 failed 而非 cancelled：failed 沿 `deliverFailed` 触发分发器通知
+   * （附停等等待者清单，wf1cde E-③）且可 reactivate 修复重跑；cancelled 不投递不通知
+   * 且不可重激活」——🔴 **降档后该语义消失**（不再有 failed ⇒ 无分发器 failed 通知、
+   * 无「reactivate 修复重跑」的失败驱动）。这正是本批要显式登记的**代价**：
+   * 「死会话」这一形态改由 [[remindDeadSession]] 的提醒腿 + barrier 告警腿承载，
+   * 处置交人工（或分发器面）。
+   *
+   * barrier 面（同批处置）：`deliverFailed` 被删 ⇒ 下游不再收 failed ⇒ **barrier 永挂**；
+   * 出口 = [[checkBarriersNow]] 的**告警腿**（只写 `barrier-blocked` 事件 + WARN，
+   * **不**终态化下游，与 #27 mount-stalled 同族）。
+   *
+   * fresh 守卫（R2）保留：只在 `status==Running` 时提醒——节点已终态/状态已变 ⇒ 拒写
+   * （并发完成/取消不被本路径覆盖）。draining 守卫（中断恢复语义批）逐字保留。
+   * 审计事件独立（`dead-session-reaped` **改文案**：不再说 converged-to-failed）。 */
   private[project] def autoFailDeadRunning(nodeId: String, err: String): IO[Unit] =
     // draining 守卫（中断恢复语义批 2026-09-13，spec §2.3-3，与 failNode 头部同款）：
     // 优雅关机窗口内 watchdog 若把「内存态已蒸发」误读成死会话，会把节点的中断现场
-    // 收敛成 failed 终态 + 失败通知（方案 B 的噪音链复发形态）。置位时拒绝。
+    // 误报成失败链（方案 B 的噪音链复发形态）。置位时拒绝。
     if ShutdownState.draining then
       FlowMapEventLog.append(
         workspace,
         projectName,
         nodeId,
         NodeEngine.InterruptedEventType,
-        s"dead-session failed write suppressed while draining (graceful shutdown): ${err.take(200)}"
+        s"dead-session reminder suppressed while draining (graceful shutdown): ${err.take(200)}"
       ) *>
-        logger.warn(
-          s"Node $nodeId dead-session convergence suppressed while draining (graceful shutdown): ${err.take(200)}"
-        )
+        logger.warn(s"Node $nodeId dead-session reminder suppressed while draining (graceful shutdown): ${err.take(200)}")
     else
       for
         now <- IO(System.currentTimeMillis())
-        s <- store.mutate { st =>
-          st.nodes.get(nodeId) match
-            case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-              st.copy(nodes =
-                st.nodes.updated(
-                  nodeId,
-                  withoutReportPending(
-                    fresh.copy(
-                      status = NodeLifecycle.Failed,
-                      result = Some(err),
-                      completedAt = Some(now),
-                      // 2026-09-07 作者裁定：failed/cancelled 无 TTL 强制清（同 blocked 既
-                      // 有语义）——死亡现场保留主图待上层裁决取消/重跑，不静默消失。
-                      ttlExpireAt = None
-                    )
-                  )
-                )
-              )
-            case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
-        }
+        s <- store.snapshot
         _ <- s.nodes.get(nodeId) match
-          case Some(failed) if failed.status == NodeLifecycle.Failed =>
-            emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
-              logger.warn(s"Node '${failed.name}' auto-finalized failed (dead session): ${err.take(200)}") *>
-              FlowMapEventLog.append(
-                workspace,
-                projectName,
-                nodeId,
-                "dead-session-reaped",
-                s"dead-session node auto-converged to failed: ${err.take(220)}"
-              ) *>
-              deliverFailed(failed, err) *>
-              // R3：与 failNode 同款的终态写点即时 barrier 告警（failed 侧仅此新增）。
-              checkBarriersNow(failed.id, cause = "failed")
-          case _ => IO.unit
+          case Some(n) if n.status == NodeLifecycle.Running =>
+            // 会话 id：内存映射优先、持久 sessionRef 兜底（candidates 解析序同
+            // `remindUnreportedNode`）。
+            nodeSessions.get.map(_.get(nodeId).orElse(n.sessionRef)).flatMap { sid =>
+              emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(n, now)) *>
+                FlowMapEventLog.append(
+                  workspace,
+                  projectName,
+                  nodeId,
+                  "dead-session-reaped",
+                  s"dead-session node kept Running (no auto-fail, no delivery — killruling ruling #19 downgrade): ${err.take(220)}"
+                ) *>
+                remindDeadSession(n, sid.getOrElse("<session-gone>"), err) *>
+                // R3 保留：下游 barrier **告警腿**（只告警、不终态化——`deliverFailed`
+                // 已删，下游不再有 failed 结算，此处即其唯一出口）。
+                checkBarriersNow(n.id, cause = "dead-session")
+            }
+          case _ => IO.unit // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
       yield ()
 end NodeCanceller

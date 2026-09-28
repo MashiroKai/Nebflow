@@ -294,6 +294,17 @@ private[project] trait NodeGating:
       .flatMap(n => MergeMutexPolicy.queuePosOf(n, all).map(p => n.id -> p))
       .toMap
 
+  /** **Pre-W1 name for [[mergeVerdictHoldersOf]]** (taskunify / W2b' backfill). The PR-side
+    * tree carries `verdictGateHoldersOf`; the body was byte-identical to
+    * [[mergeVerdictHoldersOf]]'s (`in ++ deps` expansion over the combined two-zone node map,
+    * `.distinct`, resolved through `store.findNode`, then the shared [[mergeVerdictHolders]]
+    * predicate) -- `git log -SverdictGateHoldersOf` lands only on the synthetic PR head, so the
+    * divergence is W1 rename fallout, not an organised main-side rename. This alias binds to
+    * the single implementation rather than re-deriving the upstream set: a second derivation
+    * would be a second source of truth for the gate, which the batch forbids. */
+  private def verdictGateHoldersOf(n: NodeDef): IO[List[NodeDef]] =
+    mergeVerdictHoldersOf(n)
+
   /** **Verdict-gate visibility slot batch** (mergeverdictvis batch 2026-09-23; payload face
     * single point; pure mapping over the engine IO face, zero side effects, zero persisted
     * fields): nodeId → [[MergeMutexPolicy.VerdictGate]], **non-empty entries only** (a

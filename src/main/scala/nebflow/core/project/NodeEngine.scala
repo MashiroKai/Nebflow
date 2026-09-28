@@ -318,6 +318,11 @@ class NodeEngine(
   private[project] val recentRootDeliveries: Ref[IO, Map[(String, String), Long]] =
     Ref.unsafe[IO, Map[(String, String), Long]](Map.empty)
 
+  /** Pre-W1 name for [[recentRootDeliveries]] -- the same `Ref` instance, so the
+    * dedup window table keeps exactly one source (the PR-side rename is a pure
+    * rename; see `git log -SrecentRootDeliveries`). */
+  private[project] val recentNebulaDeliveries: Ref[IO, Map[(String, String), Long]] = recentRootDeliveries
+
   /**
    * **取代面跨调用判据（R2/R3，chaincancel 批 2026-09-17）**：本进程内「由级联/链级
    * 取消腿取消」的节点集。
@@ -341,8 +346,13 @@ class NodeEngine(
   /**
    * 死会话 running 周期对账（僵尸收敛批 2026-09-06；ProjectActor.TtlTick 30s 驱动
    * ——复用既有心跳点零新调度器，与 settleRunnableSweep 同族）。对每个 status=Running
-   * 节点做死会话判定，死者自动收敛 failed（autoFailDeadRunning）。判定口径（作者
-   * 2026-09-06 裁定：收敛必须以「可证明无活会话 且 无在途后台任务」触发）：
+   * 节点做死会话判定。
+   *
+   * 🔴 **killruling 批（2026-09-23 作者裁定 #19）改判**：命中的死者**不再自动收敛
+   * failed**——改走 [[autoFailDeadRunning]] 的**降档处置**（只提醒：写
+   * `dead-session-reaped` + `node-session-dead-reminder` + barrier 告警腿；节点保持
+   * `Running`，处置交人工）。判定口径（作者 2026-09-06 裁定：收敛必须以「可证明无活会话
+   * 且 无在途后台任务」触发）**逐字未变**——变的是命中后的动作（判死 → 提醒）。
    *   - 活会话 = nodeSessions(sessionId) 在 agentRegistry 有记录（agent 已 spawn 且
    *     未清理）——有记录即视为活（保守，宁可漏一期不可误杀）；
    *   - nodeSessions 无映射 = 会话未登记/登记已清（重启内存清空 / 翻转即崩溃於登记
@@ -357,8 +367,7 @@ class NodeEngine(
    *
    * noderpt 批 A 段（2026-09-11 代裁 6）：判据**原样保留**（bg 等待不算死），只补
    * 「在事件里标出该态节点供人监督」——命中该豁免时单发一条
-   * [[NodeEngine.DeadSessionBgWaitEventType]] 事件（进程内每节点一条，防 30s 节拍刷屏）。
-   */
+   * [[NodeEngine.DeadSessionBgWaitEventType]] 事件（进程内每节点一条，防 30s 节拍刷屏）。 */
   def settleStaleRunningNodes(): IO[Unit] =
     store.snapshot.flatMap { s =>
       s.nodes.values
@@ -394,7 +403,12 @@ class NodeEngine(
           zombies.traverse_ { z =>
             autoFailDeadRunning(
               z.id,
-              "node session dead (no live session, no in-flight background task) — auto-converged to failed by dead-session watchdog"
+              // 🔴 killruling 批（2026-09-23 裁定 #19）：本 err 文案**同批改**——原为
+              // 「auto-converged to failed by dead-session watchdog」，降档后该腿**不再
+              // 写终态**，留着会与 `dead-session-reaped` 的新文案自相矛盾（判据面：
+              // 「无自动判定 ⇒ 文案不得声称已判定」）。改后只陈述事实（会话死 + 无在飞
+              // 后台任务 = 判定输入），处置由 `autoFailDeadRunning` 的降档腿表达。
+              "node session dead (no live session, no in-flight background task) — dead-session watchdog reminder leg (killruling ruling #19: no auto-fail, node kept Running)"
             )
           }
         }
@@ -461,8 +475,13 @@ class NodeEngine(
     * 🔴 顺序义务（令第 6 条「**先补提醒覆盖再降档**」，裸降档 ⇒ dead-session 节点永久挂）：
     * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`，
     * 与既有 `fireQuiescentEvent`（提醒阶梯的只写事件档）同款形态：**只提醒、永不判死、
-    * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。 */
-  private def remindDeadSession(node: NodeDef, sessionId: String, err: String): IO[Unit] =
+    * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。
+    *
+    * 🔴 `private[project]`（not `private`）because the single caller that remains after the
+    * killruling #19 downgrade lives in the `NodeCanceller` trait (`autoFailDeadRunning`):
+    * the class-private form is invisible across the split and would force a duplicate
+    * reminder leg — one reminder implementation, reachable from the trait that needs it. */
+  private[project] def remindDeadSession(node: NodeDef, sessionId: String, err: String): IO[Unit] =
     FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
       s"dead-session node kept Running (session '$sessionId' has no live session) — needs human supervision; " +
         s"no auto-fail, no delivery (killruling ruling #19 downgrade): ${err.take(160)}") *>
@@ -748,7 +767,13 @@ class NodeEngine(
         case _ => IO.unit
       }
     )
-    val rootIO = failedEdges.filter(_.to == OutEdge.RootTarget) match
+    // Pre-W1 name for the same local (the PR-side rebuild renamed the whole `Nebula*` family
+    // to `root*`; `git log -SnebulaIO` lands on the synthetic PR head, so this is W1 rename
+    // fallout). Both names must keep declaration sites here, and there may be only ONE
+    // computation -- `rootIO` therefore binds to `nebulaIO` instead of re-deriving the
+    // decision (a second derivation would be a second source of truth for the failed-leg
+    // uplink decision).
+    val nebulaIO = failedEdges.filter(_.to == OutEdge.RootTarget) match
       case Nil => IO.unit
       case nes if nes.exists(_.mode == OutEdge.Result) =>
         // notifybatch 批（2026-09-18，M-2）：失败腿同走打包入口（决策②异常类一并合并）。
@@ -759,6 +784,7 @@ class NodeEngine(
           case true  => enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
         }
       case _ => markRootDelivered(node.id)
+    val rootIO = nebulaIO
     val signalIO = signalTargets.traverse_(t => settleTo(node, t))
     val waitLog: IO[Unit] =
       val waiting = nodeTargets.diff(signalTargets) // 非 signal 覆盖的目标 = D5 停等（merge 兜底者已转 blocked）
@@ -1068,6 +1094,51 @@ class NodeEngine(
     Ref.unsafe[IO, RootNotifyBatchState](RootNotifyBatchState())
 
   /**
+   * **root 通道打包窗 · 合并批的载体构造面**（原 `NodeEngine.flushRootNotify` 的
+   * `case many` 分支，语义与行序逐字同源）。
+   *
+   * 🔴 **写入点唯一性的承载位**：`windowItems` 的 `Some(...)` 写入在全仓恰此一处，且必须
+   * 落在 `NodeEngine.flushRootNotify` 的 `case many` 语义面内——`RootNotifyBatchSpec.N6` 的
+   * 静态判据（源码现读计数 + 文件路径）即钉在 `NodeEngine.scala` 上。行为保持重构把
+   * `flushRootNotify` 的**单件腿/窗口排空/记账序**迁到 `NodeDelivery` trait（batched
+   * `case many` 的两跳拆分），但**载荷写入点**按此判据留在本文件——若把写入点一并迁出，
+   * 静态判据会在无损重构上误报，而该判据是 notifypack 解 b 批「生产者侧唯一写入点」
+   * 纪律的机械锚。
+   *
+   * 逐件 `sender` 在**此写入点**用 `projectName` 直接构造（该处确在作用域内）⇒ 展开点
+   * 零字符串手术，与 `NotificationHeader.split` 的「首个 `/`」切分口径结构同源。
+   *
+   * **记账序（F-1，作者 2026-09-18 裁定 (a)）**：`Offered` = 交付事实成立 ⇒ 逐件
+   * `markNebulaDelivered`；`Parked`/`Suppressed` = 本批**没发出去** ⇒ 一件都不记
+   * （否则件被标已发却未发、补投判据 `nebulaDeliveredAt.isEmpty` 永不命中 ⇒ 整窗永久
+   * 丢失，宁重复不丢失）。
+   */
+  private[project] def flushRootNotifyMerged(entries: List[RootNotifyEntry]): IO[Unit] =
+    entries match
+      case Nil => IO.unit
+      case many =>
+        offerRootNotify(
+          mergedRootNotifyText(many),
+          many.head.nodeName,
+          mergedRootNotifyStatus(many),
+          nodeId = None,
+          // notifypack 解 b 批（2026-09-23 · 作者裁定 A · 载体 A-ii）：**唯一写入点**
+          // ——把 N 件原始载荷挂在本件上，供消费侧在同一边界（同一 turn）逐件展开
+          // （N 气泡 / 1 次唤醒）。`text` / `sender`（= 首件）/ `eventType` / 去重键 /
+          // 记账序**逐字不变**。
+          windowItems = Some(many.map(e =>
+            AgentCommand.WindowItem(
+              text = e.text,
+              nodeName = e.nodeName,
+              status = e.status,
+              sender = s"$projectName/${e.nodeName}"
+            )))
+        ).flatMap {
+          case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markRootDelivered)
+          case _ => IO.unit
+        }
+
+  /**
    * 链级摘要**降级登记**（作者 2026-09-16 裁定「**全部降级列表态**」；本批前语义 = 投根）。
    *
    * == 语义（本批起）==
@@ -1117,6 +1188,13 @@ class NodeEngine(
       }
     }
 
+  /** Pre-W1 name for [[dedupeRootDelivery]] (the PR-side `Root`/`nebula*` rename is a pure
+    * rename: `git log -SdedupeRootDelivery` lands on the synthetic PR head, not on an
+    * organised main-side rename) -- delegates to the single implementation, so there is
+    * exactly one dedup criterion. */
+  private[project] def dedupeNebulaDelivery(identity: String, status: String): IO[Boolean] =
+    dedupeRootDelivery(identity, status)
+
   /**
    * V8: 写 nebulaDeliveredAt 记账（活动区优先，归档区兜底——TTL 归档的
    * 未投递节点同样要记账，否则扫描每次重启都重投）。
@@ -1138,6 +1216,20 @@ class NodeEngine(
             case None => a
         }.void
     }
+
+  /** Pre-W1 name for [[markRootDelivered]] (pure rename, same attribution as
+    * [[dedupeNebulaDelivery]]) -- delegates to the single ledger write point, so the
+    * `nebulaDeliveredAt` anchor keeps exactly one writer. */
+  private[project] def markNebulaDelivered(nodeId: String): IO[Unit] =
+    markRootDelivered(nodeId)
+
+  /** **Pre-W1 name for [[redeliverUnconsumedRootResults]]** (W2b' backfill; same W1 rename
+    * family as the other `Nebula*`/`root*` pairs -- `git log -SredeliverUnconsumedNebulaResults`
+    * lands on the synthetic PR head and on main's own dispatch-notify/notifybatch batches, which
+    * main later re-spelled). Delegates to the one scan implementation: a second scan would keep
+    * its own candidate criterion and could double-deliver against the 30 s leg. */
+  def redeliverUnconsumedNebulaResults(): IO[Int] =
+    redeliverUnconsumedRootResults()
 
   /**
    * V8 (2026-09-03): 重启重投扫描——扫活动区+归档区全部「终态（completed/failed）
@@ -1329,6 +1421,9 @@ object NodeEngine:
   def isFixtureEnvelope(node: NodeDef): Boolean = NodeEngineContract.isFixtureEnvelope(node)
 
   val RootDedupWindowMs: Long = NodeEngineContract.RootDedupWindowMs
+
+  /** Pre-W1 name for [[RootDedupWindowMs]] -- the same value (one source). */
+  val NebulaDedupWindowMs: Long = RootDedupWindowMs
 
   type PluginPreparation = NodeEngineContract.PluginPreparation
   val PluginPreparation: NodeEngineContract.PluginPreparation.type = NodeEngineContract.PluginPreparation
