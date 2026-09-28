@@ -186,7 +186,7 @@ class NodeEngine(
     * uplink circuit** (delivery of node notifications). A node's own terminal declaration
     * goes through `NodeReportRegistry` (keyed by sessionId) and **never passes through this
     * function**. */
-  private def uplinkAllowed(node: NodeDef, kind: String): IO[Boolean] =
+  private[project] def uplinkAllowed(node: NodeDef, kind: String): IO[Boolean] =
     if !uplinkFailClosedEnabled then IO.pure(true)
     else if node.taskId.exists(_.trim.nonEmpty) then IO.pure(true)
     else
@@ -221,7 +221,7 @@ class NodeEngine(
     * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
     * exists but has no attribution", not "the node cannot be found" (the latter is the
     * existing chain's own alert face, which this gate does not take over). */
-  private def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
+  private[project] def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
     if !uplinkFailClosedEnabled then IO.pure(true)
     else
       store.snapshot.map(_.nodes.values.find(_.name == nodeName)).flatMap {
@@ -752,7 +752,12 @@ class NodeEngine(
       case Nil => IO.unit
       case nes if nes.exists(_.mode == OutEdge.Result) =>
         // notifybatch 批（2026-09-18，M-2）：失败腿同走打包入口（决策②异常类一并合并）。
-        enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+        // taskunify (2026-09-24 · U1): uplink attribution gate — no fingerprint ⇒ refused +
+        // double trace.
+        uplinkAllowed(node, "failed").flatMap {
+          case false => IO.unit
+          case true  => enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+        }
       case _ => markRootDelivered(node.id)
     val signalIO = signalTargets.traverse_(t => settleTo(node, t))
     val waitLog: IO[Unit] =
@@ -1019,11 +1024,23 @@ class NodeEngine(
             FlowMapEventLog.append(workspace, projectName, target.id, "merge-blocked", summary) *>
             // notifybatch 批（2026-09-18）：走 root 打包入口（blocked 通报同窗打包，
             // 决策②「异常类一并合并、不单列」）；`nodeId=None` fire-and-forget 口径不变。
-            enqueueRootNotify(
-              s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
-              bn.name,
-              NodeLifecycle.Blocked
-            )
+            // 🔴 taskunify (2026-09-24 · **U3 = landing / merge-class uplink**): uplink
+            // attribution gate; the class **must** be `landing` (the core of criterion
+            // 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`). This is exactly the
+            // face implplan §10.4 marks "easiest to miss" — the sink is allowed through,
+            // actually lands, then fails, and the failure "cannot be sent out"; U1/U2's
+            // no-loss argument does not cover it. ⇒ this item is **listed separately** and
+            // must never be counted together with U1/U2 (mutation red-anchor: commenting out
+            // this gate ⇒ 10.4.3 must go red).
+            uplinkAllowed(bn, "landing").flatMap {
+              case false => IO.unit
+              case true =>
+                enqueueRootNotify(
+                  s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
+                  bn.name,
+                  NodeLifecycle.Blocked
+                )
+            }
         case _ => IO.unit
     yield ()
 
@@ -1186,7 +1203,17 @@ class NodeEngine(
             // notifybatch 批（2026-09-18，M-4）：fresh 腿改走**同一打包入口**（与实时腿
             // 同窗同 digest 形态 ⇒ 补投扫描撞窗时合并而非逐件补投）；stale 腿
             // [[deliverStaleSummary]]（>24h 合并摘要，唯一现存合并点）**零行为改动**。
-            enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id))
+            // taskunify (2026-09-24 · U7): the redelivery scan is an uplink leg too, so the
+            // attribution gate must be on the **scan leg** too (not just the real-time leg) —
+            // otherwise, after the real-time leg refuses and leaves `nebulaDeliveredAt` unset,
+            // the 30 s scan would **revive and deliver** the very same unattributed node, which
+            // amounts to bypassing the U1/U2/U3 gates. Refused ⇒ not delivered and **not
+            // marked** (same semantics as the real-time leg: a refusal is not a delivery —
+            // leave the trace rather than drop silently).
+            uplinkAllowed(n, "redelivery").flatMap {
+              case false => IO.unit
+              case true  => enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id))
+            }
           )
           _ <- if stale.nonEmpty then deliverStaleSummary(stale) else IO.unit
           _ <-

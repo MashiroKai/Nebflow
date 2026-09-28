@@ -514,7 +514,14 @@ private[project] trait NodeDelivery:
             logger.info(
               s"[dedup] redelivery '${node.name}' -> Nebula suppressed: nebulaDeliveredAt already set (persistent anchor; result already delivered)"
             )
-          else enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+          // taskunify (2026-09-24 · U2): uplink attribution gate — no `taskId` fingerprint ⇒
+          // refused + double trace (**replacing** the notification, not adding to it; a refusal
+          // leaves `nebulaDeliveredAt` unset, but the redelivery scan itself passes the gate at
+          // U7, so it cannot revive the node by bypassing this gate).
+          else uplinkAllowed(node, "completed").flatMap {
+            case false => IO.unit
+            case true  => enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+          }
         case t => settleTo(node, t)
 
     end if
