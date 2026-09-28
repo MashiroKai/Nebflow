@@ -270,6 +270,20 @@ object FlowMapEventLog:
   def dispatcherTaskTerminalSummary(sessionId: String, taskId: String, state: String, reason: String): String =
     s"session=$sessionId task=$taskId state=$state reason=$reason"
 
+  /** Revive-evict teardown event type (Mail task-continuation batch, 2026-09-28): a Mail
+    * revive trigger found the task's dispatcher slot still occupied (the residue a 30 s
+    * task-terminal sweep window can leave behind) and evicted it so a FRESH bound session
+    * takes over — "dispatcher re-mounted" is only true if the old registration verifiably
+    * died. A **new type**, deliberately distinguishable from the sweep's
+    * `dispatcher-task-terminal` (different cause: revival, not expiry); the `nodeId` field
+    * carries the session id under the same precedent as the terminal/idle events. */
+  val DispatcherReviveEvictType = "dispatcher-revive-evict"
+
+  /** Revive-evict structured summary (`k=v`, single-space separated, values carry no
+    * whitespace). `reason=revived-by-mail` = the Mail task-continuation leg did this. */
+  def dispatcherReviveEvictSummary(sessionId: String, taskId: String, reason: String): String =
+    s"session=$sessionId task=$taskId reason=$reason"
+
   /** Concurrency-cap refusal event type (taskunify merge batch 2026-09-24; design §4d
     * mandatory anti-leak item).
     *

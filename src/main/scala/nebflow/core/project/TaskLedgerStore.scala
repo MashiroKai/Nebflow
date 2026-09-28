@@ -447,6 +447,58 @@ class TaskLedgerStore private ():
         Right(s"[OK] Task closed #$id ${existing.status}→closed (voided/withdrawn)$qNote$hist")
   }
 
+  /** revive: a terminal entry (`completed` / `closed`) flips back to `open` (Mail
+    * task-continuation batch, 2026-09-28 · the author's 10:49 order: a finished task is
+    * CONTINUED through `Mail(task=N)` instead of refused).
+    *
+    * Semantics:
+    *  - **legal from both terminal states** (`completed` and `closed` — a voided task the
+    *    author re-orders is re-opened by the same primitive); the state flip clears
+    *    `completedAt` / `closedAt` (the timestamps record "when a terminal state was
+    *    reached"; a revived entry has reached none) and stamps `updatedAt`;
+    *  - **audit face**: one `kind=revive` change-history event (never silent) + the
+    *    author's verbatim note-timeline line [[ReviveNoteText]] — the fresh dispatcher
+    *    session mounted by the revive reads it back as part of the inherited context
+    *    (`from=engine`, engine-side system event class);
+    *  - `already open` = no-op success (same-state idempotency, same family as
+    *    `completeSync` / `closeSync`; the MailTool gate never routes an open entry here —
+    *    a second continuation Mail takes the ordinary non-terminal path);
+    *  - unknown id ⇒ `TASK_NOT_FOUND` (a pruned entry's object is gone — the
+    *    non-continuable face stays an explicit error, unchanged);
+    *  - a revived entry (`open`) is outside the terminal-prune predicate, so the lazy
+    *    30-day cleanup cannot eat a task that came back. */
+  def reviveSync(
+    id: String,
+    actor: String = TaskLedgerHistory.Actors.System
+  ): Either[ToolError, String] = fileLock.synchronized {
+    val (store, quarantined) = readForWriteSync()
+    store.tasks.find(_.id == id) match
+      case None => Left(notFound(store, id))
+      case Some(existing) if existing.status == Status.Open =>
+        Right(s"[OK] Task #$id is already open — nothing to revive, no-op.")
+      case Some(existing) =>
+        val prior = existing.status
+        val now = nowStr
+        val updated = existing.copy(status = Status.Open, closedAt = None, completedAt = None, updatedAt = Some(now))
+        writeSync(store.copy(tasks = store.tasks.map(t => if t.id == id then updated else t)))
+        val qNote = quarantined.map(q => s" NOTE: previous tasks-v2.json was corrupted — quarantined as $q.").getOrElse("")
+        val hist = appendHistory(TaskLedgerEvent(
+          at = now, kind = TaskLedgerHistory.Kinds.Revive, id = Some(id), actor = actor,
+          detail = Some(s"$prior→open (Mail task continuation; context inherited)")))
+        // The note-timeline line (the author's verbatim body): appended in the same
+        // critical section as the flip, so the revived entry never exists in a state
+        // where the annotation is missing. A history-append failure does not roll the
+        // flip back but it MUST be stated explicitly (never silently).
+        val note = history.appendSync(TaskLedgerEvent(
+          at = now, kind = TaskLedgerHistory.Kinds.Note, id = Some(id),
+          actor = TaskLedgerHistory.Actors.System,
+          from = Some(TaskLedgerHistory.Origins.Engine),
+          text = Some(ReviveNoteText),
+          detail = Some(s"chars=${ReviveNoteText.length} title=${truncate(existing.title, 60)}")))
+          .map(r => s" NOTE: revive note append failed ($r)").getOrElse("")
+        Right(s"[OK] Task revived #$id $prior→open (context inherited)$qNote$hist$note")
+  }
+
   /** list: render entries (state + dependencies). Optional exact filters
     * (status/assignee/project). */
   def listSync(
@@ -622,6 +674,11 @@ object TaskLedgerStore:
 
   /** Terminal-entry retention (cleaned up lazily on `create`). */
   val TerminalTtlDays: Long = 30L
+
+  /** The note-timeline line the Mail revive path appends on a revived task (Mail
+    * task-continuation batch, 2026-09-28 · the author's 10:49 order, verbatim body).
+    * The fresh dispatcher session reads it back as part of the inherited context. */
+  val ReviveNoteText: String = "revived by Mail: context inherited, prior session torn down"
 
   /** The per-note cap = **16,000 characters** (the value fixed by ruling n; taken from the
     * board face's current code at `TaskBoardStore.scala:555`, abandoning the orchestration
