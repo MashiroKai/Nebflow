@@ -1213,6 +1213,16 @@ object NodeTools:
       // `rank=(readyAt,createdAt,id)`（[[MergeMutexPolicy.queuePosOf]] 单点）。与
       // `mergeQueueSlots` 分工：后者 = 闸判据「谁挡着我」，本项 = 队列序「我排第几」。
       mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(s.nodes)
+      // Verdict-gate visibility slot (mergeverdictvis batch 2026-09-23): a merge position
+      // held by the verdict gate produces NO `mergeQueue` slot at all, so the payload used
+      // to show `mergeQueuePos.position=1` with nobody listed anywhere — reading as "first
+      // in line and nobody blocks me" while an upstream verifier with a non-pass verdict is
+      // the real cause. This key lifts that state onto the payload face. Judging authority =
+      // the engine single point (`mergeVerdictGateBatch` -> `staleVerdictUps`, the very list
+      // the gate acts on) — 🔴 no frontend/dispatcher re-derivation, 🔴 no reading of the
+      // file ticket layer, 🔴 no replay from the event stream. Non-empty entries only ⇒
+      // unheld nodes are simply absent.
+      mergeVerdictGates <- rt.engine.mergeVerdictGateBatch(s.nodes)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
     yield
       val now = System.currentTimeMillis()
@@ -1266,8 +1276,12 @@ object NodeTools:
           // NodeEngine.loopRouteTargetId 同源，🔴 禁前端/分发器复刻、禁第二处派生）。
           // 注入活动区快照 ⇒ 仅**拒绝态**的 verifier 带键（值 "lost"）；合法节点与
           // 全部 WS 事件写点（不注入）字段集字节级零漂移。
-          nodes = Some(s.nodes)
-        )
+          nodes = Some(s.nodes),
+          // Verdict-gate visibility slot (mergeverdictvis batch 2026-09-23): single point =
+          // NodeEngine.mergeVerdictGateBatch (pure read of the gate's own holder list) — 🔴
+          // no re-derivation, 🔴 no file ticket layer, 🔴 no event-stream replay. Only held
+          // positions carry the key; a normally queued position never does.
+          mergeVerdictGate = mergeVerdictGates.get(n.id))
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
           case None => base
