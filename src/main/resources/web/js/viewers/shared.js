@@ -347,6 +347,16 @@ export { markUnsolvedLink };
  *  the affordance is stated instead of discoverable only by trying. An
  *  authored `title` is never overwritten.
  *
+ *  Precedence (the handler's leading `if(e.defaultPrevented) return;`): a
+ *  capture listener registered earlier — `localLinkNavScript` above, which both
+ *  surfaces also inject — claims a link click first, and this handler then
+ *  stands down. Consequence, measured (round-1 review, 2026-09-28): an `<img>`
+ *  inside a local-file `<a href>` FOLLOWS ITS LINK and does not also open the
+ *  preview. The Canvas leg gained this guard in this batch (its private copy
+ *  had none and emitted both messages); the card leg already behaved this way.
+ *  Pinned by Z8a/Z8b of tests/card-image-zoom.spec.mjs — do not remove the
+ *  guard without re-checking both legs.
+ *
  *  @param {string} [hint] hover text (resolved from the locale dictionary)
  *  @returns {string} */
 export function imgClickScript(hint = t('lightbox.clickHint')) {

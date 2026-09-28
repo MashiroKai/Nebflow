@@ -95,10 +95,25 @@ const anchorNavScript = `<script>
  *  this module. The chat card rendered the same kind of documents but injected
  *  no producer at all, so an image inside a Card was a dead click — the author
  *  asked for the Canvas behaviour there too. The script now lives in
- *  `viewers/shared.js` (`imgClickScript()`) and both surfaces inject it: one
- *  definition, so the payload shape cannot drift between the two legs. The
- *  wiring in the srcdoc below is unchanged — this is the same script text in
- *  the same position, plus the clickable affordance (cursor + hover hint). */
+ *  `viewers/shared.js` (`imgClickScript()`), and both surfaces inject it: one
+ *  definition, so the payload shape cannot drift between the two legs.
+ *
+ *  🔴 NOT behaviour-equivalent on one shape — measured (round-1 review,
+ *  2026-09-28). Sharing the script also brought this frame under the shared
+ *  handler's `if(e.defaultPrevented) return;` precedence guard, which the
+ *  private version did not have. An `<img>` wrapped in a local-file `<a href>`
+ *  is now claimed by `localLinkNavScript` (registered earlier, same capture
+ *  phase) and the image handler stands down; before this batch that click
+ *  emitted BOTH `_nfOpenLocalFile` (follow the link) and `_nfImagePreview`
+ *  (also open the preview). Both trees read out with identical fixtures in the
+ *  batch's READINGS.md; the linked shape is pinned by Z8a of
+ *  tests/card-image-zoom.spec.mjs. The tightening is deliberate (one click
+ *  doing two things at once), and it is the LINK that wins over a nested image.
+ *  Two shapes are unaffected: a bare image opens the preview as before, and an
+ *  image inside an in-page `#` anchor reads identically on both trees (nothing
+ *  claims that click, so the guard never fires). The open question of which
+ *  behaviour the author wants for a linked image is carried in the batch report
+ *  as a pending semantic decision — it is not settled by this comment. */
 const imgClickMarkup = imgClickScript();
 
 /** #303 B6: dormant element-select script, embedded in the srcdoc at assembly

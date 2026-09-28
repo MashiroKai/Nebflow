@@ -59,18 +59,29 @@ function isAppFrameSource(src) {
 
 /** The path gate: may `src` be opened as a viewer entry?
  *
- *  Rule (card-image-zoom batch): a `path`-bearing payload is accepted only when
+ *  Rule (card-image-zoom batch): a `path`-BEARING payload is accepted only when
  *  that path is one the SENDER frame actually renders — i.e. it is the decoded
  *  `path=` value of an `<img>` in that frame's own document, which is the set
  *  of references resolved/ticketed at that card's render time. An arbitrary
- *  path handed over from outside never becomes a viewer entry, so this channel
- *  cannot be used to name a file the frame does not already show.
+ *  path handed over from outside never becomes a viewer entry through the
+ *  `path` field.
  *
- *  A payload with no path (a data: URI or a remote URL) carries nothing to
- *  gate: it is the frame's own `src`, which the frame is already rendering in
- *  full, and the Canvas leg has opened those through the same `src` fallback
- *  since the C batch. Returns false only for a path that the frame does not
- *  render, or that cannot be verified (fail closed).
+ *  🔴 Scope, measured (round-1 review, 2026-09-28): this gate constrains the
+ *  `path` FIELD ONLY. A payload that omits `path` is passed through
+ *  unconditionally (`!msg.path`), and `openLightbox` below then derives the
+ *  entry from `nfPathOf(src)` — so a frame that is already an app frame CAN
+ *  still name a file it does not render by sending a src-only payload
+ *  (`{src: '/api/nf-file?path=%2Fetc%2F…'}`, no `path`). That is the
+ *  pre-existing `src` fallback (present on e6d2e0e8 and exercised by every
+ *  data-URI / remote-URL preview), not an entry this batch added: the batch
+ *  NARROWED the channel (a sender must now be an app frame at all, and a
+ *  `path` field must be a path that frame renders) without closing this leg.
+ *  Closing it — gating src-only payloads by requiring that the frame renders
+ *  that same `currentSrc` — is deferred to its own batch; it is not done here
+ *  because the data-URI leg of this batch rides on precisely this fallback.
+ *
+ *  Returns false only for a path the frame does not render, or one that cannot
+ *  be verified (fail closed).
  *  @param {Window} win @returns {(msg: {src: string, path?: unknown}) => boolean} */
 function senderRendersPath(win) {
   /** @type {Set<string>} */
