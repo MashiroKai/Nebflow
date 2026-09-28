@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.CatsEffectSuite
-import nebflow.shared.PeerInfo
+import nebflow.neblink.PeerInfo
 
 import scala.concurrent.duration.*
 

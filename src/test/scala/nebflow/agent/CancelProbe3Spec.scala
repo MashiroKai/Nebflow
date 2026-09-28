@@ -36,5 +36,4 @@ class CancelProbe3Spec extends FunSuite:
       Thread.sleep(500)
       assert(true, "forkTurn cancel must complete (no timeout raised)")
     finally system.stopAll.attempt.void.unsafeRunSync()
-    end try
 end CancelProbe3Spec

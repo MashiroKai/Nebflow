@@ -8,18 +8,14 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.actor.AgentCommand // W1 shim: main had nebflow.actor.AgentCommand; the merge moved it to actor (protocol.scala follow-move)
-import nebflow.actor.AgentDef // W1 shim: main had nebflow.actor.AgentDef; the merge moved it to actor
-import nebflow.actor.{AgentKind, AgentRecord} // W1 shim: main had them in nebflow.agent (AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
+import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had nebflow.gateway.{...}; PR re-homed both to core
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
-import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
-import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 
 import scala.concurrent.duration.*
 

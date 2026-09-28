@@ -5,11 +5,11 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.core.AgentRuntimePort
+import nebflow.agent.*
+import nebflow.core.NebflowLogger
 import nebflow.core.entity.{EntityLoader, TeamDef}
-import nebflow.shared.{Message, MessageRole, NebflowLogger}
+import nebflow.shared.{Message, MessageRole}
 
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
 // ============================================================
 // FlowTreeActor — manages TEAM mounting and session lifecycle
 // ============================================================
@@ -69,22 +69,20 @@ object TeamSessionRegistry:
   def registerActor(
     sid: String,
     ref: ActorRef[AgentCommand],
-    resources: AgentRuntimePort,
+    resources: SharedResources,
     rootSessionId: String
   ): IO[Unit] =
     actorMap.update(_ + (sid -> ref)) *>
       parentForRecord(sid).flatMap { parentOpt =>
-        resources.agentRegistry.update(
-          _ + (sid ->
-            AgentRecord(sid, ref, AgentKind.Team, rootSessionId, parentSessionId = parentOpt.getOrElse(rootSessionId)))
-        )
+        resources.agentRegistry.update(_ + (sid ->
+          AgentRecord(sid, ref, AgentKind.Team, rootSessionId, parentSessionId = parentOpt.getOrElse(rootSessionId))))
       }
 
   def unregisterActor(sid: String): IO[Unit] =
     actorMap.update(_ - sid)
 
   /** P1: also remove from the unified AgentRegistry. */
-  def unregisterActor(sid: String, resources: AgentRuntimePort): IO[Unit] =
+  def unregisterActor(sid: String, resources: SharedResources): IO[Unit] =
     actorMap.update(_ - sid) *> resources.agentRegistry.update(_ - sid)
 
   def getRunningActor(sid: String): IO[Option[ActorRef[AgentCommand]]] =
@@ -96,25 +94,21 @@ object TeamSessionRegistry:
   def isManager(sid: String): IO[Boolean] =
     managerMap.get.map(_.values.toSet.contains(sid))
 
-  /**
-   * Block 0 registration chain (supervision trio §B2): the Manager sessionId
-   * for a team instance, if registered.
-   */
+  /** Block 0 registration chain (supervision trio §B2): the Manager sessionId
+    * for a team instance, if registered. */
   def managerOf(instance: String): IO[Option[String]] =
     managerMap.get.map(_.get(instance))
 
-  /**
-   * Block 0 registration chain: resolve the parent session for a team agent
-   * record — a MEMBER's parent is its team Manager; the MANAGER's parent is
-   * the mounting root session (parentSessionMap). Unknown session → None
-   * (callers fall back to the activating/mounting session id).
-   */
+  /** Block 0 registration chain: resolve the parent session for a team agent
+    * record — a MEMBER's parent is its team Manager; the MANAGER's parent is
+    * the mounting root session (parentSessionMap). Unknown session → None
+    * (callers fall back to the activating/mounting session id). */
   def parentForRecord(sid: String): IO[Option[String]] =
     teamOfSession(sid).flatMap {
       case Some(inst) =>
         managerOf(inst).flatMap {
           case Some(mgr) if mgr != sid => IO.pure(Some(mgr))
-          case _ => parentSessionOf(inst)
+          case _                        => parentSessionOf(inst)
         }
       case None => IO.pure(None)
     }
@@ -150,7 +144,7 @@ object TeamSessionRegistry:
   def resolveSessionId(
     senderSid: String,
     address: String,
-    sessionStore: nebflow.core.SessionStorePort
+    sessionStore: nebflow.gateway.SessionStore
   ): IO[Either[String, Option[String]]] =
     // "team/agent" scoped format — exact match, no ambiguity.
     val slashIdx = address.indexOf('/')
@@ -162,7 +156,7 @@ object TeamSessionRegistry:
           case None =>
             // "team/Nebula" — Nebula is the top-level root agent, never a team
             // session; Right(None) lets the caller route it to Nebula directly.
-            if agent == RootAgentIdentity.Name then Right(None)
+            if agent == "Nebula" then Right(None)
             else if m.keys.exists(_._1 == team) then Right(None)
             else Left(s"Team '$team' not found or not mounted. Use Load(type: \"team\", name: \"$team\") first.")
       }
@@ -185,7 +179,7 @@ object TeamSessionRegistry:
             // team — a global pick is non-deterministic. Only team names
             // (handled by callers before reaching here), "Nebula", and
             // explicit "team/agent" are valid from outside.
-            if address == RootAgentIdentity.Name then IO.pure(Right(None))
+            if address == "Nebula" then IO.pure(Right(None))
             else
               IO.pure(
                 Left(
@@ -279,7 +273,7 @@ object FlowTreeActor:
     parentAgentRef: ActorRef[AgentCommand],
     wsSend: Option[Json => IO[Unit]],
     sessionId: Option[String],
-    resources: AgentRuntimePort,
+    resources: SharedResources,
     projectRoot: String,
     safetyMode: String,
     gatewayPort: Int = 8080,
@@ -704,13 +698,13 @@ object FlowTreeActor:
             for
               // permshield S1（2026-09-13）：档位 = 应用级全局持久值，走**唯一入口**
               // （`cfg.safetyMode` 仍是建树快照/展示用，非权威；不再作为兜底来源）。
-              safetyMode <- cfg.resources.effectiveSafetyMode
+              safetyMode <- cfg.resources
+                .effectiveSafetyMode
                 .map(nebflow.core.SafetyMode.toString)
-              // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):AgentActor 构造改经工厂
-              // 镜像(resources 以 this 代入,实参逐字,零行为差)。
               ref <- cfg.resources.actorSystem.spawn(
-                cfg.resources.agentActorBehavior(
+                AgentActor(
                   agentDef = agentDef,
+                  resources = cfg.resources,
                   wsSend = cfg.wsSend.getOrElse(_ => IO.unit),
                   depth = 1,
                   parentRef = Some(cfg.parentAgentRef),
@@ -739,9 +733,9 @@ object FlowTreeActor:
   // ============================================================
 
   private def startFileWatcher(ctx: ActorContext[TreeCommand], cfg: TreeConfig): IO[Unit] =
-    val flowsDir = (nebflow.shared.PathUtil.dataRoot / "flows").toIO.toPath
-    val agentsDir = (nebflow.shared.PathUtil.dataRoot / "agents").toIO.toPath
-    val teamsDir = (nebflow.shared.PathUtil.dataRoot / "teams").toIO.toPath
+    val flowsDir = (nebflow.core.PathUtil.dataRoot / "flows").toIO.toPath
+    val agentsDir = (nebflow.core.PathUtil.dataRoot / "agents").toIO.toPath
+    val teamsDir = (nebflow.core.PathUtil.dataRoot / "teams").toIO.toPath
     ctx.forkTurn(
       IO.blocking {
         if !java.nio.file.Files.exists(flowsDir) then java.nio.file.Files.createDirectories(flowsDir)

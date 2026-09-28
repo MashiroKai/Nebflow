@@ -7,12 +7,11 @@ import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.ModelCandidate
-import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
@@ -345,15 +344,14 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
         // (= the slot that already consumes the concurrency budget). This changes no production
         // code path — it is exactly `underConcurrencyCap`'s counting basis (the registry single point).
         ghostRef <- system.spawn(
-          // W1 shim: main wrote `nebflow.actor.AgentCommand` here; the merge moved it to actor.
-          nebflow.actor.Behaviors.receiveMessage[nebflow.actor.AgentCommand](_ =>
-            IO.pure(nebflow.actor.Behaviors.stopped[nebflow.actor.AgentCommand])),
+          nebflow.actor.Behaviors.receiveMessage[nebflow.agent.AgentCommand](_ =>
+            IO.pure(nebflow.actor.Behaviors.stopped[nebflow.agent.AgentCommand])),
           s"ghost-${scala.util.Random.nextInt(100000)}")
         _ <- resources.agentRegistry.update(_ + (
-          s"${ProjectActor.DispatcherSessionPrefix}ghost01" -> nebflow.actor.AgentRecord(
+          s"${ProjectActor.DispatcherSessionPrefix}ghost01" -> nebflow.agent.AgentRecord(
             s"${ProjectActor.DispatcherSessionPrefix}ghost01",
             ghostRef,
-            nebflow.actor.AgentKind.Flow,
+            nebflow.agent.AgentKind.Flow,
             "nebula-root",
             project = Some("anchor-cap-proj")
           )))
@@ -407,7 +405,7 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
         _ <- waitUntil(20.seconds)(llm.streamsDone.get.map(_ >= 1))
         // the count basis reads 1 after the spawn (the registry is the single counting point)
         activeAfter <- resources.agentRegistry.get.map(
-          _.values.count(r => r.kind == nebflow.actor.AgentKind.Flow && r.project.contains("anchor-cappass-proj")))
+          _.values.count(r => r.kind == nebflow.agent.AgentKind.Flow && r.project.contains("anchor-cappass-proj")))
         events <- eventLines(ws)
         sidAfter <- dispatcherEntries(resources)
         streamsDone <- llm.streamsDone.get

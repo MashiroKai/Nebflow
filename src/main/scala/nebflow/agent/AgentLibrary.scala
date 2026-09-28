@@ -3,23 +3,27 @@ package nebflow.agent
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.actor.{AgentDef, RootAgentIdentity}
-import nebflow.core.AgentLibraryView
-import nebflow.core.presets.{PresetStore, SchemePolicy}
-import nebflow.shared.*
+import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.SchemePolicy
+import nebflow.llm.NebflowServiceConfig
+import nebflow.shared.AgentModelConfig
 
 import scala.util.Try
 
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M3):原地混入 core 窄视图(消费面仅 get,签名镜像,行为保持)
 // Agent definitions loaded from disk (~/.nebflow/agents/<name>/agent.json + system.md).
 //
-// Only Nebula is hardcoded as a fallback — if its disk files are missing or
-// corrupted, the code definition keeps the system alive. All other agents
-// are defined exclusively on disk; deleting their directory removes them.
+// All agents — Nebula included — are defined exclusively on disk; deleting their
+// directory removes them. A missing manifest-declared agent is re-seeded from
+// the seed tree (seed/agents/<name>/) by SeedService.ensureSeeded at boot.
+// Since the govmemory batch (2026-09-25) the former in-code Nebula fallback
+// definition (AgentLibrary.Seeds) is retired — its prompt text had drifted
+// stale (retired mechanism names) and duplicated the tree seed. If Nebula's
+// directory is missing before that self-heal runs, loadAll logs a loud WARN
+// and Nebula is unavailable until the next boot's self-heal.
 class AgentLibrary(
   agentsDir: os.Path,
   serviceConfig: Option[NebflowServiceConfig] = None
-) extends AgentLibraryView:
+):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
   // globalMaxTokens was REMOVED here (maxcfg batch 2026-09-16): it read
@@ -32,34 +36,25 @@ class AgentLibrary(
   // Public API
   // ============================================================
 
-  /** Seed agent.json + system.md for default agents (first install only). */
-  def seedDefaults(): IO[Unit] = IO.blocking {
-    Seeds.all.foreach { agent =>
-      val dir = agentsDir / agent.name
-      os.makeDir.all(dir)
-      // Write agent.json if it doesn't exist (don't overwrite user edits)
-      val jsonPath = dir / "agent.json"
-      if !os.exists(jsonPath) then
-        os.write.over(jsonPath, agent.toJson)
-        logger.info(s"Seeded agent.json for: ${agent.name}")
-      // Write system.md if it doesn't exist
-      if agent.systemPrompt.nonEmpty && !os.exists(dir / "system.md") then
-        os.write.over(dir / "system.md", agent.systemPrompt)
-        logger.info(s"Seeded system.md for: ${agent.name}")
-    }
-  }
+  // seedDefaults() was retired 2026-09-25 (govmemory batch): its only seed was
+  // the in-code Nebula definition (AgentLibrary.Seeds), which is retired with
+  // it. Cold-start / self-heal seeding now runs exclusively through
+  // SeedService.ensureSeeded (manifest-declared tree seeds, guard #304).
 
   // Load all agents from disk. Scans all agent.json files in the agents directory.
-  // Nebula is guaranteed to exist — falls back to code definition if
-  // missing or corrupted on disk.
+  // Nebula is expected to exist on disk (seed self-heal at boot repairs a
+  // missing directory from the seed tree).
   def loadAll(): IO[Map[String, AgentDef]] = IO.blocking {
     val diskAgents = scanDisk()
 
-    // Ensure Nebula always exists (system survival guarantee)
-    if diskAgents.contains(Seeds.RootAgent.name) then diskAgents
+    // System survival note: Nebula missing on disk is no longer silently
+    // substituted by an in-code definition (that path retired with Seeds).
+    // Loud WARN so the gap is visible; SeedService.ensureSeeded self-heals it
+    // from the tree seed on the next boot.
+    if diskAgents.contains("Nebula") then diskAgents
     else
-      logger.warnSync("Nebula not found on disk — using code fallback")
-      diskAgents + (Seeds.RootAgent.name -> Seeds.RootAgent.toAgentDef)
+      logger.warnSync("Nebula not found on disk — unavailable until the seed self-heal restores it (next boot; see SeedService.ensureSeeded)")
+      diskAgents
   }
 
   /** Get a single agent by name. */
@@ -124,13 +119,10 @@ class AgentLibrary(
       parseAgentJson(jsonPath) match
         case Some(j) =>
           val prompt = readSystemMd(dir / "system.md")
-          // Resolve preset/legacy model into the final AgentModelConfig.
-          // Priority: explicit preset > legacy model > default preset > global chain.
-          // panelscheme 批（2026-09-21）：输入先经 SchemePolicy 名称策略——可设
-          // 两类（Nebula/project-dispatcher）原样；kernel 继承 Nebula 当前引用；
-          // general 继承 project-dispatcher 当前引用；其余忽略存储引用回落默认。
-          val (effPreset, effModel) = SchemePolicy.effectiveRefs(j.name, j.preset, j.model)
-          val (resolvedModel, _) = PresetStore().resolve(effPreset, effModel)
+          // Resolve the final model chain through SchemePolicy (own chain >
+          // Nebula primary chain > seed chain), fresh per load — a /model
+          // edit takes effect on the next agent-def reload.
+          val (resolvedModel, _) = SchemePolicy.resolveModel(j.name, j.model)
           Some(
             AgentDef(
               name = j.name,
@@ -141,7 +133,6 @@ class AgentLibrary(
               displayName = j.displayName,
               voiceEnabled = j.voice.getOrElse(false),
               model = Some(resolvedModel),
-              preset = effPreset,
               // ── 收敛名 category 收敛（2026-09-11 agentdef-tidy 批，安全优先）──
               // 本行是全树**唯一**读 agent.json `category` 的位置（EntityLoader
               // 按路径推断、不读 JSON）。收敛集四定义（AgentCore.ConvergedAgentNames
@@ -274,77 +265,6 @@ private object AgentJson:
       .deepMerge(j.flows.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
   }
 end AgentJson
-
-// ============================================================
-// Seed definitions (for initial install + Nebula fallback)
-// ============================================================
-
-private case class SeedAgent(
-  name: String,
-  displayName: Option[String],
-  description: String,
-  tools: List[String],
-  systemPrompt: String
-):
-
-  def toAgentDef: AgentDef = AgentDef(
-    name = name,
-    description = description,
-    tools = tools,
-    systemPrompt = systemPrompt,
-    displayName = displayName,
-    category = "standalone"
-  )
-
-  def toJson: String =
-    val agentJson = AgentJson(name, displayName, Some(description), None, tools, None, None)
-    agentJson.asJson.noSpaces
-
-end SeedAgent
-
-private object Seeds:
-
-  // Tool surface: deliberately empty — this field is NOT the authoritative face.
-  // Nebula is a converged agent name, so `buildToolList` short-circuits any
-  // `tools` declaration to the empty set (AgentCore.ConvergedAgentNames branch)
-  // and the field grants nothing. The single source of truth is
-  // AgentCore.RootOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
-  // Do not reintroduce a list here: it would read as authoritative while being
-  // dead data that silently drifts from the real tool surface.
-  val RootAgent = SeedAgent(
-    RootAgentIdentity.Name,
-    Some(RootAgentIdentity.Name),
-    "Orchestrator — delegates all execution to specialized Teams and Flows",
-    Nil,
-    """You are Nebula, the AI assistant in Nebflow. Your job is to understand the user's intent and help the user get the work done.
-
-Tool duties: ProjectCreate creates projects; Mail dispatches a task to a project or a remote device, choosing a suitable target from the project's and the device's descriptions; AgentControl supervises the running state of project sessions; Read reads results; TaskList manages task state and task memory; MemoryNote records long-term memory.
-
-Creating a project has three cases: (1) an old project whose folder you do not know the path of - leave it empty and let the user choose; (2) the user stated the project path explicitly in the conversation - create it directly; (3) a new project with no project folder - create it under {{data_root}}/projects/<project name> by preference. A project's description must be clear enough to say what the project is for. Create a project proactively to carry the work, unless it really is a single one-off execution task - those go to the general project.
-
-If you need to know the current state before you can decide, have the general project summarize the current state for you. general is the project for simple general tasks; when the user needs a skill, an MCP server or a plugin created, route it to the general project.
-
-Output: keep it terse, add a plain-language explanation when you use a technical term, no emoji. When relaying a task keep the user's original words, add no more than necessary, and stay on the task itself. Task results are shown to the user through Pop. Todos / questions / decisions always go through AskUserQuestion.
-
-Visualization: use the card tool actively to visualize results - humans read visual content more easily; for material you cannot produce yourself, such as drawing an image, ask general for help. Never draw a block diagram, flowchart or architecture diagram out of ASCII characters (box-drawing glyphs, `+---+` borders, dash-and-pipe trees). For plain-text content do not use the card tool - output it directly.
-
-Memory: record only what cannot be obtained from the project's code and helps future tasks, such as design preferences, design principles, the user's profile, the user's habits, the project's background.
-
-""" + "\n"
-  )
-
-  /**
-   * Seeds for initial installation — Nebula only (F.3 convergence, 2026-09-05).
-   * Nebula is both the only seed and the runtime fallback; every other agent
-   * is defined on disk only (git-tracked definitions, restorable outside the
-   * code). Archived agent dirs (agent.json renamed *.archived) must NOT be
-   * resurrected by seeding — seedDefaults() rewrites any in-list dir missing
-   * agent.json, so keeping retired names out of this list is what keeps them
-   * retired across restarts (GatewayMain calls seedDefaults() on startup).
-   */
-  val all = List(RootAgent)
-
-end Seeds
 
 object AgentLibrary:
   def defaultDir: os.Path = PathUtil.dataRoot / "agents"

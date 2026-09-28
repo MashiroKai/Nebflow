@@ -237,10 +237,10 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
     val home = sys.props.getOrElse("user.home", "/")
     assume(os.isDir(os.Path(home)), "no real home on this host")
     IO {
-      assertEquals(nebflow.shared.PathUtil.expandTilde("~"), home)
-      assertEquals(nebflow.shared.PathUtil.expandTilde("~/Downloads"), home + "/Downloads")
+      assertEquals(nebflow.core.PathUtil.expandTilde("~"), home)
+      assertEquals(nebflow.core.PathUtil.expandTilde("~/Downloads"), home + "/Downloads")
       // and the frame builder reports the RESOLVED path (the breadcrumb feed)
-      val tilde = os.Path(nebflow.shared.PathUtil.expandTilde("~"), os.pwd)
+      val tilde = os.Path(nebflow.core.PathUtil.expandTilde("~"), os.pwd)
       val f = frame(tilde)
       assertEquals(f.hcursor.get[String]("path").toOption, Some(home))
       assert(names(f).contains(".nebflow"), "~ root still lists dot directories")

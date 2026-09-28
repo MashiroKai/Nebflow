@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
-import nebflow.shared.NebflowLogger
+import nebflow.core.NebflowLogger
 import nebflow.shared.SessionMeta
 
 import java.util.concurrent.atomic.AtomicBoolean

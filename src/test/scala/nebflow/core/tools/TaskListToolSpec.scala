@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 
 import java.nio.file.Files
 import java.time.Instant
@@ -47,10 +47,8 @@ class TaskListToolSpec extends FunSuite:
   private def histFile: os.Path = home / "tasks-history.jsonl"
   private def archFile: os.Path = home / "tasks-history.1.jsonl"
 
-  /**
-   * 每用例从空库开始（无内存态——删文件即全新 store）。升级批：**连带删史文件**
-   * （否则跨用例串史：show 的时间线会带上上一用例的事件）。
-   */
+  /** 每用例从空库开始（无内存态——删文件即全新 store）。升级批：**连带删史文件**
+    * （否则跨用例串史：show 的时间线会带上上一用例的事件）。 */
   private def resetFile(): Unit =
     List(file, histFile, archFile).foreach(p => if os.exists(p) then os.remove(p))
     os.list(home).filter(_.last.startsWith("tasks.json.corrupt")).foreach(os.remove(_))
@@ -70,20 +68,14 @@ class TaskListToolSpec extends FunSuite:
     call(obj(Seq("action" -> Json.fromString("update"), "id" -> Json.fromString(id)) ++ extra*))
 
   private def close(id: String, note: Option[String] = None): Either[ToolError, String] =
-    call(
-      obj(
-        Seq("action" -> Json.fromString("close"), "id" -> Json.fromString(id)) ++
-          note.map(n => Seq("note" -> Json.fromString(n))).getOrElse(Seq.empty)*
-      )
-    )
+    call(obj(
+      Seq("action" -> Json.fromString("close"), "id" -> Json.fromString(id)) ++
+        note.map(n => Seq("note" -> Json.fromString(n))).getOrElse(Seq.empty)*))
 
   private def list(project: Option[String] = None): Either[ToolError, String] =
-    call(
-      obj(
-        Seq("action" -> Json.fromString("list")) ++
-          project.map(p => Seq("project" -> Json.fromString(p))).getOrElse(Seq.empty)*
-      )
-    )
+    call(obj(
+      Seq("action" -> Json.fromString("list")) ++
+        project.map(p => Seq("project" -> Json.fromString(p))).getOrElse(Seq.empty)*))
 
   private def show(id: String): Either[ToolError, String] =
     call(obj("action" -> Json.fromString("show"), "id" -> Json.fromString(id)))
@@ -122,19 +114,15 @@ class TaskListToolSpec extends FunSuite:
     val disk2 = readDisk.get
     assertEquals(disk2.tasks.find(_.id == "1").get.status, "done")
     assert(disk2.tasks.find(_.id == "1").get.closedAt.isDefined, "close 记 closedAt")
-    assert(
-      disk2.tasks.find(_.id == "1").get.note.exists(_.contains("[done] 方案已定稿")),
-      "close note 以 [done] 前缀追加，工作 note 保留"
-    )
+    assert(disk2.tasks.find(_.id == "1").get.note.exists(_.contains("[done] 方案已定稿")),
+      "close note 以 [done] 前缀追加，工作 note 保留")
 
   test("update：title/note 替换、project 空串清除、blocks 全量替换（[] 清空）"):
     resetFile()
     create("任务A")
     create("任务B")
     assert(update("1", "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("2"))).isRight)
-    assert(
-      update("1", "note" -> io.circe.Json.fromString("工作备注"), "project" -> io.circe.Json.fromString("projX")).isRight
-    )
+    assert(update("1", "note" -> io.circe.Json.fromString("工作备注"), "project" -> io.circe.Json.fromString("projX")).isRight)
     var disk = readDisk.get
     assertEquals(disk.tasks.find(_.id == "1").get.blocks, List("2"))
     assertEquals(disk.tasks.find(_.id == "1").get.project, Some("projX"))
@@ -208,8 +196,8 @@ class TaskListToolSpec extends FunSuite:
 
   test("依赖闸：被依赖条目未闭环时 in_progress/close 拒绝；闭环后放行；blocked 逃生通道"):
     resetFile()
-    create("上游任务") // #1
-    create("下游任务", "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1"))) // #2 depends on #1
+    create("上游任务")   // #1
+    create("下游任务", "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1")))  // #2 depends on #1
 
     // 未闭环 → in_progress 拒绝，错误列出未闭环依赖
     val r = update("2", "status" -> io.circe.Json.fromString("in_progress"))
@@ -287,8 +275,8 @@ class TaskListToolSpec extends FunSuite:
     // 手写老 closedAt（40 天前）
     val old = Instant.parse(java.time.Instant.now().minusSeconds(40L * 24 * 3600).toString)
     val disk = readDisk.get
-    val patched =
-      disk.copy(tasks = disk.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old.toString)) else t))
+    val patched = disk.copy(tasks = disk.tasks.map(t =>
+      if t.id == "1" then t.copy(closedAt = Some(old.toString)) else t))
     os.write.over(file, patched.asJson.noSpaces)
 
     val r = create("触发清理")
@@ -299,14 +287,10 @@ class TaskListToolSpec extends FunSuite:
 
     // closedAt 解析失败 → 保守保留
     val disk3 = readDisk.get
-    val patchedBad = disk3.copy(tasks = disk3.tasks.map(t => if t.id == "2" && t.status != "done" then t else t))
-    os.write.over(
-      file,
-      (patchedBad
-        .copy(tasks = patchedBad.tasks :+ TaskListStore.Entry("99", "坏时间戳", "done", closedAt = Some("not-a-time"))))
-        .asJson
-        .noSpaces
-    )
+    val patchedBad = disk3.copy(tasks = disk3.tasks.map(t =>
+      if t.id == "2" && t.status != "done" then t else t))
+    os.write.over(file, (patchedBad.copy(tasks =
+      patchedBad.tasks :+ TaskListStore.Entry("99", "坏时间戳", "done", closedAt = Some("not-a-time")))).asJson.noSpaces)
     assert(create("再触发").isRight)
     assert(readDisk.get.tasks.exists(_.id == "99"), "解析失败的 done 条目保守保留")
 
@@ -340,11 +324,8 @@ class TaskListToolSpec extends FunSuite:
     resetFile()
     create("甲", "project" -> io.circe.Json.fromString("projA"))
     create("乙", "project" -> io.circe.Json.fromString("projB"))
-    create(
-      "丙",
-      "project" -> io.circe.Json.fromString("projA"),
-      "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1"))
-    )
+    create("丙", "project" -> io.circe.Json.fromString("projA"),
+      "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1")))
     val filtered = list(Some("projA"))
     assert(filtered.toOption.get.contains("#1"), filtered.toOption.get)
     assert(filtered.toOption.get.contains("#3"), filtered.toOption.get)
@@ -357,27 +338,31 @@ class TaskListToolSpec extends FunSuite:
 
   // ===== ⑦ 工具面隔离（硬约束）的注册表侧事实 =====
 
-  test("TaskList 进注册表；schema 恰六 action（升级批：+log/show —— 本断言是既有面唯一被授权的改动，见交付申报）"):
-    assert(ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 挂 TaskList（Nebula 注入源）")
+  test("TaskList is deleted-retired (taskunify merge batch 2026-09-24): the registry does not mount the old name, the new names Task/TaskInfo are mounted -- the legacy schema face stays on the class for this spec's reference only"):
+    // taskunify merge batch (2026-09-24): `TaskList` and `TaskBoard` were merged into `Task`
+    // (the only write face) + the Nebula ledger read face; the old names are deliberately
+    // **not registered** (the registry layer cannot find them => the
+    // AgentCore.RetiredToolGuides migration guide fires), and "registering the old name as an
+    // alias" would create a second path to the write face => both are forbidden. The tool
+    // class body is kept (the other cases in this spec call it directly to verify the old
+    // data structure), but the **production path is unreachable**.
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "the registry deliberately does not mount TaskList (deleted-retired)")
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskBoard"), "the registry deliberately does not mount TaskBoard (deleted-retired)")
+    assert(ToolRegistry.TOOL_MAP.contains("Task"), "the registry mounts Task (the unified ledger's only write face)")
+    assert(ToolRegistry.TOOL_MAP.contains("TaskInfo"), "the registry mounts TaskInfo (the read-only single-entry attribution view)")
+    // the class body can still be called directly (proven by the rest of this spec), and the
+    // schema face keeps its existing shape
     val schema = TaskListTool.inputSchema
-    val actions = schema("properties").get.asObject
-      .get("action")
-      .get
-      .asObject
-      .get("enum")
-      .get
-      .asArray
-      .get
-      .map(j => j.asString.get)
-      .toList
-    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "恰六 action")
+    val actions = schema("properties").get.asObject.get("action").get
+      .asObject.get("enum").get.asArray.get.map(j => j.asString.get).toList
+    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "the legacy schema has exactly six actions (historical shape, referenced by this spec only)")
     // 新增字段进 schema（模型可见面）
     val props = schema("properties").get.asObject.get
     assert(props.contains("text"), "log 的 text 参数必须可见")
     assert(props.contains("links"), "links 参数必须可见")
     assert(props.contains("parentId"), "parentId 参数必须可见")
     // id 在 update/close/log/show 的必填校验在工具层（schema required 仅 action——与
-    // MemoryNoteTool 同款：参数组合校验在 call 内做结构化报错）
+    // 通用工具惯例同款：参数组合校验在 call 内做结构化报错）
 
   // ===== ⑧ 升级批新增 action（R1 log / R2 show / R3 提示更新）=====
 
@@ -467,6 +452,7 @@ class TaskListToolSpec extends FunSuite:
     val line = list().toOption.get.linesIterator.find(_.startsWith("#1 ")).get
     assert(line.contains("note: 摘要"), line)
     assert(!line.contains("补记不进 note 列"), s"log 不改 note，list 的 note 列不该变: $line")
-    assert(TaskListStore.openSummaryLine().contains("TaskList(action=list|show)"), TaskListStore.openSummaryLine())
+    assert(TaskListStore.openSummaryLine().contains("TaskList(action=list|show)"),
+      TaskListStore.openSummaryLine())
 
 end TaskListToolSpec

@@ -3,12 +3,11 @@ package nebflow.core.flow
 import cats.effect.{Deferred, IO}
 import io.circe.Json
 import nebflow.actor.*
-import nebflow.core.AgentRuntimePort
+import nebflow.agent.*
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 import java.util.UUID
 
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
 /**
  * Runs a standalone agent definition ephemerally.
  *
@@ -25,16 +24,14 @@ object EphemeralAgentRunner:
     replyTo: ActorRef[AgentCommand],
     depth: Int,
     projectRoot: String,
-    /**
-     * Block 0 registration chain (supervision trio §B2): the caller's
-     * session (parent) and root (permission bucket). Absent → legacy
-     * self-anchored behavior.
-     */
+    /** Block 0 registration chain (supervision trio §B2): the caller's
+      * session (parent) and root (permission bucket). Absent → legacy
+      * self-anchored behavior. */
     callerSessionId: Option[String] = None,
     callerRootSessionId: Option[String] = None
   )
 
-  def apply(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): Behavior[RunAgent] =
+  def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunAgent] =
     Behaviors.receiveMessage: msg =>
       val agentDef = msg.agentDef
       val replyTo = msg.replyTo
@@ -44,11 +41,10 @@ object EphemeralAgentRunner:
       for
         resultDeferred <- Deferred[IO, Either[String, List[Message]]]
         // Spawn AgentActor first — the bridge needs its ref for death-watch
-        // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):AgentActor 构造改经工厂
-        // 镜像(resources 以 this 代入,实参逐字,零行为差)。
         ref <- resources.actorSystem.spawn(
-          resources.agentActorBehavior(
+          AgentActor(
             agentDef = agentDef,
+            resources = resources,
             wsSend = rawWsSend,
             depth = msg.depth,
             parentRef = None,
@@ -92,9 +88,7 @@ object EphemeralAgentRunner:
                     case SystemSignal.Terminated(_) =>
                       // agent 死了（AgentControl cancel 的 Stop / 任何未通知死亡）
                       // ——以 cancelled 完成 deferred，runner 走正常清理返回。
-                      resultDeferred
-                        .complete(Left("cancelled"))
-                        .void
+                      resultDeferred.complete(Left("cancelled")).void
                         .handleErrorWith(_ => IO.unit)
                         .as(Behaviors.stopped)
             )

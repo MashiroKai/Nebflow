@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.kernel.Ref
 import cats.syntax.traverse.*
 import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
-import nebflow.shared.*
+import nebflow.shared.Defaults
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
 
@@ -27,7 +27,6 @@ case class ModelCandidate(
   provider: ProviderConfig,
   model: String,
   contextWindow: Int = Defaults.ContextWindow,
-  vision: Boolean = false,
   capabilities: Set[String] = Set.empty,
   modelMaxContext: Option[Int] = None
 )
@@ -68,13 +67,14 @@ class ProviderRegistry(
 
   def getCandidates(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
-      // #339：全局链来源 = 默认 preset（llm.model 已退役）。resolve(None,None)
-      // 走 terminal 第 3 级；preset 文件小、每次读新（与 PresetStore 设计一致）。
-      // onboarding 探针 probeLlm（不带 agentModel）自动跟随默认 preset——首配
-      // 后探针测的正是刚配置的模型。
+      // Global chain source = the Nebula primary chain (its own agent.json
+      // model key), seed chain (first provider's first model) when unconfigured.
+      // Read fresh per call (small file) — /model edits apply on the next call.
+      // The onboarding probe probeLlm (no agentModel) follows the primary
+      // chain, so it measures exactly the model the user just configured.
       val chain =
         try
-          val (am, _) = nebflow.core.presets.PresetStore().resolve(None, None)
+          val (am, _) = nebflow.core.SchemePolicy.resolveModel(nebflow.core.SchemePolicy.NebulaName, None)
           am.preferred.toList ++ am.fallbacks
         catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>
@@ -90,20 +90,10 @@ class ProviderRegistry(
                 modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow),
                 modelConfig.flatMap(_.modelMaxContext)
               )
-              val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-              Some(
-                ModelCandidate(
-                  providerId,
-                  provider,
-                  modelId,
-                  contextWindow,
-                  vision,
-                  caps,
-                  modelConfig.flatMap(_.modelMaxContext)
-                )
-              )
+              val caps = resolveCapabilities(providerId, modelId, modelConfig)
+              Some(ModelCandidate(providerId, provider, modelId, contextWindow, caps,
+                modelConfig.flatMap(_.modelMaxContext)))
             case None => None // Skip unknown provider
-          end match
         catch case _: Exception => None // Skip malformed ref
       }
       // Fallback: if model chain resolves to nothing (e.g. default points to a
@@ -114,39 +104,29 @@ class ProviderRegistry(
         config.llm.providers.headOption
           .map { case (providerId, provider) =>
             provider.models.headOption.map { mc =>
-              val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
+              val caps = resolveCapabilities(providerId, mc.id, Some(mc))
               // 案② B2 同点（**第三处构造点**，与上面两处同形；卡文只列了 :72/:122，
               // 本处一并收口以免留下「绕过 clamp」的形状——见报告「偏离登记」）：
-              ModelCandidate(
-                providerId,
-                provider,
-                mc.id,
-                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-                vision,
-                caps,
-                mc.modelMaxContext
-              )
+              ModelCandidate(providerId, provider, mc.id,
+                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), caps, mc.modelMaxContext)
             }
           }
           .flatten
           .toList
-      end if
     }
 
-  /**
-   * 案② B2（chain-llmstall-fix）：**生效上下文窗口的唯一算式**——
-   * `effective = modelMaxContext.fold(configured)(m => math.min(configured, m))`。
-   *
-   * 语义：配置值（用户在设置面板填写的 `provider.models[].contextWindow`）是**愿望
-   * 上界**；provider 上报的真值（`modelMaxContext`）是**物理上界**；取较小者。
-   * 真值未知（`None`：旧配置、或 provider 未上报）⇒ **逐字返回配置值** ⇒ 旧行为零
-   * 变化（禁「顺手收紧」——卡文 §三 向后兼容条）。
-   *
-   * 为什么必须是单点：`contextWindow` 有三个消费者（压缩门限
-   * `CompactThreshold.threshold`、硬截断 `AgentCore.hardLimit = 0.95 × cw`、回传前端的
-   * `LlmMeta.contextWindow`），任何一处拿到未 clamp 的值都会让整条压缩/截断链按错
-   * 的窗口计算（1M→200k 时门限应为 160k 而非 256k）。
-   */
+  /** 案② B2（chain-llmstall-fix）：**生效上下文窗口的唯一算式**——
+    * `effective = modelMaxContext.fold(configured)(m => math.min(configured, m))`。
+    *
+    * 语义：配置值（用户在设置面板填写的 `provider.models[].contextWindow`）是**愿望
+    * 上界**；provider 上报的真值（`modelMaxContext`）是**物理上界**；取较小者。
+    * 真值未知（`None`：旧配置、或 provider 未上报）⇒ **逐字返回配置值** ⇒ 旧行为零
+    * 变化（禁「顺手收紧」——卡文 §三 向后兼容条）。
+    *
+    * 为什么必须是单点：`contextWindow` 有三个消费者（压缩门限
+    * `CompactThreshold.threshold`、硬截断 `AgentCore.hardLimit = 0.95 × cw`、回传前端的
+    * `LlmMeta.contextWindow`），任何一处拿到未 clamp 的值都会让整条压缩/截断链按错
+    * 的窗口计算（1M→200k 时门限应为 160k 而非 256k）。 */
   private[llm] def effectiveContextWindow(configured: Int, modelMaxContext: Option[Int]): Int =
     modelMaxContext.fold(configured)(m => math.min(configured, m))
 
@@ -183,16 +163,9 @@ class ProviderRegistry(
             modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow),
             modelConfig.flatMap(_.modelMaxContext)
           )
-          val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-          ModelCandidate(
-            providerId,
-            provider,
-            modelId,
-            contextWindow,
-            vision,
-            caps,
-            modelConfig.flatMap(_.modelMaxContext)
-          )
+          val caps = resolveCapabilities(providerId, modelId, modelConfig)
+          ModelCandidate(providerId, provider, modelId, contextWindow, caps,
+            modelConfig.flatMap(_.modelMaxContext))
         }
       catch case _: Exception => None
     }
@@ -231,8 +204,6 @@ class ProviderRegistry(
       config <- configRef.get
     yield reserveTier(config, candidates)
 
-  end getCandidatesForAgent
-
   /**
    * 储备层（腿 a）：把 `config.llm.providers` 里**已存在但当前链未引用**的
    * provider/model 按确定序（providerId → model id 字典序，非 Map 迭代序）
@@ -257,19 +228,12 @@ class ProviderRegistry(
           .sortBy(_.id)
           .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
           .map { mc =>
-            val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
+            val caps = resolveCapabilities(providerId, mc.id, Some(mc))
             // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
             // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
             // 「偏离登记」）：
-            ModelCandidate(
-              providerId,
-              provider,
-              mc.id,
-              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-              vision,
-              caps,
-              mc.modelMaxContext
-            )
+            ModelCandidate(providerId, provider, mc.id,
+              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), caps, mc.modelMaxContext)
           }
       }
       // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）
@@ -277,32 +241,27 @@ class ProviderRegistry(
   end reserveTier
 
   /**
-   * Resolve vision + capabilities for a model.
-   * Priority: ModelConfig inline fields > ModelRegistry (models.json) >
-   * optimistic default (B3 Phase 1: unannotated models resolve vision=true —
-   * a wrong strip is visible and self-corrects via runtime detection, while
-   * a wrong pessimistic default silently degrades every image request).
+   * Resolve capabilities for a model.
+   * Priority: ModelConfig inline fields > ModelRegistry (models.json).
+   *
+   * visionfix (甲): the `vision` half of this resolver is retired — nothing
+   * consumes a per-candidate vision bit any more, so resolving one would produce
+   * a dead value. `ModelEntry.vision` in `models.json` is still read by the
+   * annotation channel (REST / the settings badge) but no longer feeds the send
+   * path: images are always sent, and whether an endpoint accepts them is
+   * decided by the provider.
    */
   private def resolveCapabilities(
     providerId: String,
     modelId: String,
     modelConfig: Option[ModelConfig]
-  ): (Boolean, Set[String]) =
+  ): Set[String] =
     val registryEntry = ModelRegistry.lookup(providerId, modelId)
-    // visionfix (甲, main-side): the ModelConfig inline `vision` bit is retired
-    // (the config field was removed with the batch) -- the models.json
-    // annotation channel (ModelRegistry ModelEntry.vision) remains the only
-    // source until this file's owning wave ports the full visionfix removal.
-    // (W1 provisional shim.)
-    val vision = registryEntry
-      .flatMap(_.vision)
-      .getOrElse(true)
-    val caps = modelConfig
+    modelConfig
       .flatMap(_.capabilities)
       .orElse(registryEntry.map(_.capabilities))
       .getOrElse(Nil)
       .toSet
-    (vision, caps)
 
   end resolveCapabilities
 

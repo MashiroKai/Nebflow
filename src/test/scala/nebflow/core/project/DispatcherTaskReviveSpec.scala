@@ -7,13 +7,12 @@ import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
+import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had them in nebflow.gateway; PR moved the family to core
-import nebflow.llm.ModelCandidate // W1 shim: ThinkingConfig split out — PR moved it to shared
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
-import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 
 import scala.concurrent.duration.*
 

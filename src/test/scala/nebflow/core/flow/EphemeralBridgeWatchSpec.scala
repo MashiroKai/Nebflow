@@ -6,16 +6,15 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, rootSessionId}
 import nebflow.agent.*
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
+import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
 
@@ -80,7 +79,7 @@ class EphemeralBridgeWatchSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true => IO.unit
+        case true  => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -135,7 +134,6 @@ class EphemeralBridgeWatchSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
-    end try
   }
 
   // ---- Block 0 registration chain (supervision trio §B2) ----
@@ -189,7 +187,6 @@ class EphemeralBridgeWatchSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
-    end try
   }
 
 end EphemeralBridgeWatchSpec

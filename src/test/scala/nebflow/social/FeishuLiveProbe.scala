@@ -1,7 +1,7 @@
 package nebflow.social
 
 import io.circe.Json
-import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
+import nebflow.core.PathUtil
 
 import java.io.{File, PrintWriter}
 import java.time.format.DateTimeFormatter
@@ -72,7 +72,7 @@ object FeishuLiveProbe:
     *  be skipped. */
   private def runMode(mode: String, rest: Array[String], evidenceDir: File): Int =
     // The credential is read from the ACTIVE data root (honours --home/NEBFLOW_HOME).
-    val root = nebflow.shared.PathUtil.dataRoot
+    val root = nebflow.core.PathUtil.dataRoot
     resolvedRoot(mode, rest, evidenceDir, root)
 
   private def resolvedRoot(mode: String, rest: Array[String], dir: File, root: os.Path): Int =

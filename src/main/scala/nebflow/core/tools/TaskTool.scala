@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 import nebflow.core.project.{TaskLedgerHistory, TaskLedgerRenderer, TaskLedgerStore}
 
 /**

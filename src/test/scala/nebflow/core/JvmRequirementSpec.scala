@@ -135,4 +135,3 @@ class JvmRequirementSpec extends FunSuite:
     // Guards the live no-arg path end to end.
     assertEquals(JvmRequirement.isSatisfied, JvmRequirement.detectedFeatureVersion.exists(_ >= 21))
   }
-end JvmRequirementSpec

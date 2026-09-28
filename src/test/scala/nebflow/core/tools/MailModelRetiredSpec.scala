@@ -8,14 +8,12 @@ import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.*
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
-import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
+import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had nebflow.gateway.{RateLimiter, SessionStore}; PR re-homed both to core
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
@@ -44,7 +42,7 @@ import scala.concurrent.duration.*
  *     the kernel START leg refuses `images` (text-only, B6 family);
  *  5. **model-visible text**: the base description carries the kernel-leg section, the
  *     device retirement note and the `[INTERRUPT]` window-bypass line; the
- *     `AddressFaceRoot` role projection carries the kernel forms (the dispatcher /
+ *     `AddressFaceNebulaRoot` role projection carries the kernel forms (the dispatcher /
  *     team faces must NOT - the kernel leg is Nebula-exclusive, so projecting it into
  *     other roles would advertise an address that only errors for them).
  *
@@ -263,7 +261,7 @@ class MailModelRetiredSpec extends FunSuite:
     assert(d.contains("[INTERRUPT]"), "the window-bypass literal must be documented")
 
   test("④ role projection: the kernel ADDRESS forms live ONLY in the Nebula-root face (other roles keep only the shared vision/attachment mentions of the word)"):
-    val root = MailTool.descriptionRoot
+    val root = MailTool.descriptionNebulaRoot
     val disp = MailTool.descriptionDispatcher
     val team = MailTool.descriptionBase
     assert(root.contains("## Kernel leg"), s"the root face must carry the kernel-leg section")
@@ -281,7 +279,7 @@ class MailModelRetiredSpec extends FunSuite:
       assert(team.contains("Nebula-exclusive"), "the base face must carry the exclusivity statement beside the section")
     // the projection contract stays intact: every role face is derived from the base by
     // pure section deletion (ToolFaceVariantSpec pins the byte-level form)
-    assert(MailTool.descriptionRoot.length <= MailTool.descriptionBase.length,
+    assert(MailTool.descriptionNebulaRoot.length <= MailTool.descriptionBase.length,
       "the projection must be deletion-only")
 
 end MailModelRetiredSpec

@@ -2,7 +2,7 @@ package nebflow.core.flow
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import nebflow.core.SessionStore
+import nebflow.gateway.SessionStore
 
 /**
  * Covers the Mail address-semantics rule (user requirement, on top of the

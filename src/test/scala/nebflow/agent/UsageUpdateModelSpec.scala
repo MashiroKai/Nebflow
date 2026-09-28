@@ -9,23 +9,14 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.actor.{AgentCommand, AgentDef, AgentStreamEvent, sessionId}
 import nebflow.core.FileChangeTracker
+import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{
-  FallbackAttempt,
-  LlmHandle,
-  LlmMeta,
-  LlmRequest,
-  LlmResponse,
-  PathUtil,
-  StreamChunk,
-  ThinkingConfig
-}
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, LlmMeta, StreamChunk}
 
 import scala.concurrent.duration.*
 
@@ -75,10 +66,8 @@ class UsageUpdateModelSpec extends CatsEffectSuite:
   // ── B1b 接线：真 AgentActor 一轮后事件携带实际模型 ─────────
 
   private class MetaLlm(model: String) extends LlmHandle[IO]:
-
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
-
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -88,22 +77,14 @@ class UsageUpdateModelSpec extends CatsEffectSuite:
         // meta.model = fallback 后实际命中的 candidate —— lastModel 的唯一来源。
         // lastModel 由 (providerId, model) 组合为 "providerId/model"，meta 里
         // model 只写裸模型名。
-        StreamChunk.Done(
-          None,
-          None,
-          meta = Some(
-            LlmMeta(
-              sessionId = req.sessionId,
-              agentId = "Tester",
-              providerId = "107",
-              model = "deepseek-v4-pro",
-              durationMs = 5L
-            )
-          )
-        )
+        StreamChunk.Done(None, None, meta = Some(LlmMeta(
+          sessionId = req.sessionId,
+          agentId = "Tester",
+          providerId = "107",
+          model = "deepseek-v4-pro",
+          durationMs = 5L
+        )))
       )
-
-  end MetaLlm
 
   test("actor wiring: usageUpdate event carries the round's actual model from Done meta") {
     val system = ActorSystem("usage-model-e2e")
@@ -119,7 +100,7 @@ class UsageUpdateModelSpec extends CatsEffectSuite:
         wsEvents.get.flatMap { evs =>
           val hit = evs.exists(e =>
             e.hcursor.get[String]("type").contains("usageUpdate") &&
-              e.hcursor.get[String]("model").contains("107/deepseek-v4-pro")
+            e.hcursor.get[String]("model").contains("107/deepseek-v4-pro")
           )
           if hit then IO.unit
           else if System.currentTimeMillis() >= deadline then
@@ -182,17 +163,14 @@ class UsageUpdateModelSpec extends CatsEffectSuite:
         }
         // done 事件的 model 契约不变（#308 验收 A5）
         val done = evs.filter(_.hcursor.get[String]("type").contains("done"))
-        assert(
-          done.exists(_.hcursor.get[String]("model").contains("107/deepseek-v4-pro")),
-          s"done event model unchanged path: $done"
-        )
+        assert(done.exists(_.hcursor.get[String]("model").contains("107/deepseek-v4-pro")),
+          s"done event model unchanged path: $done")
       program.unsafeRunSync()
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
-    end try
   }
 
 end UsageUpdateModelSpec

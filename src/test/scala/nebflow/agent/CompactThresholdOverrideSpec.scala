@@ -4,17 +4,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.Json
 import munit.FunSuite
-import nebflow.actor.{
-  AgentState,
-  CompactThresholdOverride,
-  SessionContext,
-  compactThresholdRatioOverride,
-  compactThresholdTokens,
-  effectiveCompactThresholdRatio,
-  withCompactThresholdRatio,
-  withContextWindow
-}
-import nebflow.shared.CompactThreshold
+import nebflow.core.compact.CompactThreshold
 import nebflow.shared.SessionMeta
 
 /**
@@ -23,8 +13,7 @@ import nebflow.shared.SessionMeta
  *
  * 本 spec 是**默认值不动**这一承重钉的机械证明之一（另一半 = 既有
  * `CompactThresholdSpec` / `CompactionPolicySpec` 逐字不改仍全绿），并逐条钉住
- * 值域/钳制/持久化三面。真值源 = `CompactThresholdOverride`（`AgentState.scala`；
- * re-pin 2026-09-25：随 protocol.scala 三拆迁入，定义逐字未动）。
+ * 值域/钳制/持久化三面。真值源 = `CompactThresholdOverride`（`protocol.scala`）。
  */
 class CompactThresholdOverrideSpec extends FunSuite:
 

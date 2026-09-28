@@ -8,26 +8,15 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus}
-import nebflow.agent.{AgentLibrary, SharedResources, StubLlm, SubAgentTaskStore}
-import nebflow.core.FileChangeTracker
+import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources, SubAgentTaskStore}
+import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.project.{
-  FlowMapStore,
-  NodeDef,
-  NodeEngine,
-  NodeLifecycle,
-  OutEdge,
-  ProjectDef,
-  ProjectRuntime,
-  ProjectRuntimeRegistry
-}
+import nebflow.core.project.{FlowMapStore, NodeDef, NodeEngine, NodeLifecycle, OutEdge, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.gateway.WsHub
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
 
@@ -59,11 +48,8 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tmp / "data")
   os.makeDir.all(tmp / "data" / "agents" / "general")
-
-  os.write.over(
-    tmp / "data" / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"watchdog self-monitor spec agent","tools":[],"category":"standalone"}"""
-  )
+  os.write.over(tmp / "data" / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"watchdog self-monitor spec agent","tools":[],"category":"standalone"}""")
   os.write.over(tmp / "data" / "agents" / "general" / "system.md", "# general\n")
   WatchdogEventLog.setLogDirForTest(wdLogDir.toNIO)
 
@@ -86,6 +72,12 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
   private val threshold = 10 * 60 * 1000L
 
   // ── 夹具 ────────────────────────────────────────────────────────────────
+
+  private class StubLlm:
+    def handle: LlmHandle[IO] = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+      def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem): IO[SharedResources] =
     for
@@ -138,20 +130,14 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     }.map(_.sortBy(j => j.hcursor.get[Long]("ts").getOrElse(0L)))
 
   private def fires(sid: String): IO[List[Json]] =
-    events().map(
-      _.filter(j =>
-        j.hcursor.get[String]("type").toOption.contains(WatchdogEventLog.StuckFireType) &&
-          j.hcursor.get[String]("sessionId").toOption.contains(sid)
-      )
-    )
+    events().map(_.filter(j =>
+      j.hcursor.get[String]("type").toOption.contains(WatchdogEventLog.StuckFireType) &&
+        j.hcursor.get[String]("sessionId").toOption.contains(sid)))
 
   private def l3Alerts(sid: String): IO[List[Json]] =
-    events().map(
-      _.filter(j =>
-        j.hcursor.get[String]("type").toOption.contains(WatchdogEventLog.L3IneffectiveType) &&
-          j.hcursor.get[String]("sessionId").toOption.contains(sid)
-      )
-    )
+    events().map(_.filter(j =>
+      j.hcursor.get[String]("type").toOption.contains(WatchdogEventLog.L3IneffectiveType) &&
+        j.hcursor.get[String]("sessionId").toOption.contains(sid)))
 
   private def str(j: Json, k: String): Option[String] = j.hcursor.get[String](k).toOption
   private def num(j: Json, k: String): Option[Long] = j.hcursor.get[Long](k).toOption
@@ -169,33 +155,17 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     supervisorRef: Option[ActorRef[AgentEvent]] = None,
     status: AgentStatus = AgentStatus.Processing
   ): AgentRecord =
-    AgentRecord(
-      sessionId = sid,
-      ref = ref,
-      kind = kind,
-      rootSessionId = rootSid,
-      parentRef = parentRef,
-      status = status,
-      lastActivityMs = lastActivityMs,
-      currentToolName = toolName,
-      currentToolStartedAt = toolStartedAt,
-      supervisorRef = supervisorRef
-    )
+    AgentRecord(sessionId = sid, ref = ref, kind = kind, rootSessionId = rootSid,
+      parentRef = parentRef, status = status, lastActivityMs = lastActivityMs,
+      currentToolName = toolName, currentToolStartedAt = toolStartedAt,
+      supervisorRef = supervisorRef)
 
   /** 挂载真实 NodeEngine（Root 会话 id 与记录一致——L3 恢复按 rootSessionId 反查 runtime）。 */
-  private def mountProject(
-    name: String,
-    ws: os.Path,
-    system: ActorSystem,
-    res: SharedResources,
-    rootSid: String
-  ): IO[ProjectRuntime] =
+  private def mountProject(name: String, ws: os.Path, system: ActorSystem, res: SharedResources, rootSid: String): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store,
-        system,
-        res,
+        store, system, res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = rootSid,
@@ -206,12 +176,8 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(
-        name = name,
-        workspace = ws.toString,
-        agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis()
-      )
+      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -221,8 +187,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
 
   /** logback ERROR 捕获器（`logger.error` 告警面的断言；列表内容由调用方消费）。 */
   private def withStuckAppender[A](body: => A): (A, List[String]) =
-    val lbLogger = org.slf4j.LoggerFactory
-      .getLogger("nebflow.core.processor.stuck")
+    val lbLogger = org.slf4j.LoggerFactory.getLogger("nebflow.core.processor.stuck")
       .asInstanceOf[ch.qos.logback.classic.Logger]
     val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
     appender.start()
@@ -235,7 +200,6 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
         .map(_.getFormattedMessage)
       (a, errs)
     finally lbLogger.detachAppender(appender)
-  end withStuckAppender
 
   // ── ① 事件面：三分支 + 反例四条 ─────────────────────────────────────────
 
@@ -245,36 +209,14 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       res <- mkResources(system)
       now <- IO(System.currentTimeMillis())
       ref0 <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "wd-b-ref")
-      _ <- res.agentRegistry.set(
-        Map(
-          "team-merged" -> mkRecord(
-            "team-merged",
-            AgentKind.Team,
-            ref0,
-            "root-1",
-            lastActivityMs = now - 20 * 60 * 1000L,
-            toolStartedAt = now - 30 * 60 * 1000L,
-            toolName = Some("Bash")
-          ),
-          "team-agent-stale" -> mkRecord(
-            "team-agent-stale",
-            AgentKind.Team,
-            ref0,
-            "root-1",
-            lastActivityMs = now - 20 * 60 * 1000L,
-            toolStartedAt = 0L
-          ),
-          "team-tool-overdue" -> mkRecord(
-            "team-tool-overdue",
-            AgentKind.Team,
-            ref0,
-            "root-1",
-            lastActivityMs = now - 1000L,
-            toolStartedAt = now - 30 * 60 * 1000L,
-            toolName = Some("Bash")
-          )
-        )
-      )
+      _ <- res.agentRegistry.set(Map(
+        "team-merged" -> mkRecord("team-merged", AgentKind.Team, ref0, "root-1",
+          lastActivityMs = now - 20 * 60 * 1000L, toolStartedAt = now - 30 * 60 * 1000L, toolName = Some("Bash")),
+        "team-agent-stale" -> mkRecord("team-agent-stale", AgentKind.Team, ref0, "root-1",
+          lastActivityMs = now - 20 * 60 * 1000L, toolStartedAt = 0L),
+        "team-tool-overdue" -> mkRecord("team-tool-overdue", AgentKind.Team, ref0, "root-1",
+          lastActivityMs = now - 1000L, toolStartedAt = now - 30 * 60 * 1000L, toolName = Some("Bash"))
+      ))
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold)
       merged <- fires("team-merged")
       stale <- fires("team-agent-stale")
@@ -302,7 +244,6 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       // 反 CPU 红线：事件里不得出现进程活性字段
       assert(!overdue.head.noSpaces.contains("processActivity"), "事件载荷不得含进程活性信号（红线 R6-4）")
       assert(!overdue.head.noSpaces.toLowerCase.contains("cpu"), "事件载荷不得含 CPU 信号（红线 R6-4）")
-    end for
   }
 
   test("R8-① 反例四条: Idle / WaitingForUser / lastActivityMs==0 / 无候选扫描 → 0 行事件") {
@@ -313,41 +254,21 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       ref0 <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "wd-ce-ref")
       rowsBefore <- events()
       // ① Idle 态（run_in_background 合法态）
-      _ <- res.agentRegistry.set(
-        Map(
-          "wd-idle" -> mkRecord(
-            "wd-idle",
-            AgentKind.Team,
-            ref0,
-            "root-1",
-            lastActivityMs = now - 30 * 60 * 1000L,
-            toolStartedAt = now - 30 * 60 * 1000L,
-            status = AgentStatus.Idle
-          )
-        )
-      )
+      _ <- res.agentRegistry.set(Map(
+        "wd-idle" -> mkRecord("wd-idle", AgentKind.Team, ref0, "root-1",
+          lastActivityMs = now - 30 * 60 * 1000L, toolStartedAt = now - 30 * 60 * 1000L, status = AgentStatus.Idle)))
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold)
       idleRows <- fires("wd-idle")
       // ② WaitingForUser（人在环等待：永不判卡死）
-      _ <- res.agentRegistry.set(
-        Map(
-          "wd-ask" -> mkRecord(
-            "wd-ask",
-            AgentKind.Team,
-            ref0,
-            "root-1",
-            lastActivityMs = now - 30 * 60 * 1000L,
-            toolStartedAt = now - 30 * 60 * 1000L,
-            status = AgentStatus.WaitingForUser
-          )
-        )
-      )
+      _ <- res.agentRegistry.set(Map(
+        "wd-ask" -> mkRecord("wd-ask", AgentKind.Team, ref0, "root-1",
+          lastActivityMs = now - 30 * 60 * 1000L, toolStartedAt = now - 30 * 60 * 1000L, status = AgentStatus.WaitingForUser)))
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold)
       askRows <- fires("wd-ask")
       // ③ lastActivityMs==0（刚注册未 touch）+ 无在飞工具
-      _ <- res.agentRegistry.set(
-        Map("wd-fresh" -> mkRecord("wd-fresh", AgentKind.Team, ref0, "root-1", lastActivityMs = 0L, toolStartedAt = 0L))
-      )
+      _ <- res.agentRegistry.set(Map(
+        "wd-fresh" -> mkRecord("wd-fresh", AgentKind.Team, ref0, "root-1",
+          lastActivityMs = 0L, toolStartedAt = 0L)))
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold)
       freshRows <- fires("wd-fresh")
       // ④ 无候选扫描（空 registry）——防「每轮一行心跳」把文件写成时间序列噪声
@@ -361,34 +282,18 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       assertEquals(freshRows, Nil, "lastActivityMs==0 不得写事件行")
       // ④：四次扫描**一行都没写**（以本用例开始前的文件行数为基线——看门狗日志目录
       // 是本 spec 共享的，事件数比较必须用「本用例区间」）
-      assertEquals(
-        afterEmpty.size,
-        rowsBefore.size,
-        s"无 stuck 候选的扫描不得写任何行（防 30s 心跳噪声）：before=${rowsBefore.size} after=${afterEmpty.size}"
-      )
-    end for
+      assertEquals(afterEmpty.size, rowsBefore.size,
+        s"无 stuck 候选的扫描不得写任何行（防 30s 心跳噪声）：before=${rowsBefore.size} after=${afterEmpty.size}")
   }
 
   // ── ② L3 有效性自检 ─────────────────────────────────────────────────────
 
-  /**
-   * L3 自检夹具：挂载项目 + 一个 sessionRef 绑定的 Cancelled 节点 + Flow 卡死记录。
-   * 返回**同一** stopCounts / pendingL3（阶梯 L1→L3 必须跨扫描累积）。
-   */
+  /** L3 自检夹具：挂载项目 + 一个 sessionRef 绑定的 Cancelled 节点 + Flow 卡死记录。
+    * 返回**同一** stopCounts / pendingL3（阶梯 L1→L3 必须跨扫描累积）。 */
   private def driveL3(
     tag: String,
     shadow: Boolean = false
-  ): IO[
-    (
-      SharedResources,
-      ProjectRuntime,
-      Ref[IO, List[AgentEvent]],
-      Ref[IO, List[TaskStuckWatcher.PendingL3]],
-      Ref[IO, Map[String, Int]],
-      String,
-      ActorSystem
-    )
-  ] =
+  ): IO[(SharedResources, ProjectRuntime, Ref[IO, List[AgentEvent]], Ref[IO, List[TaskStuckWatcher.PendingL3]], Ref[IO, Map[String, Int]], String, ActorSystem)] =
     val sid = s"node-$tag"
     val rootSid = s"root-$tag"
     val system = ActorSystem(s"wd-$tag")
@@ -397,19 +302,10 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       ws = tmp / s"ws-$tag"
       _ <- IO(os.makeDir.all(ws))
       rt <- mountProject(s"wd-$tag", ws, system, res, rootSid)
-      _ <- seed(
-        rt.store,
-        NodeDef(
-          id = s"n-$tag",
-          name = s"n-$tag",
-          agent = "general",
-          status = NodeLifecycle.Cancelled,
-          result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: x)"),
-          sessionRef = Some(sid),
-          out = List(OutEdge.root),
-          createdAt = System.currentTimeMillis() - 60_000L
-        )
-      )
+      _ <- seed(rt.store, NodeDef(id = s"n-$tag", name = s"n-$tag", agent = "general",
+        status = NodeLifecycle.Cancelled, result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: x)"),
+        sessionRef = Some(sid), out = List(OutEdge.nebula),
+        createdAt = System.currentTimeMillis() - 60_000L))
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), s"bridge-$tag")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), s"agent-$tag")
@@ -421,39 +317,13 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       // 观测「L3 开火 ⇒ 桥收到中断信号」，故必须给 A1 一份非空 transcript——这不是
       // 放松断言，而是让夹具满足恢复腿的真实前置条件（空 transcript 的分支由本 spec
       // 新增的「A1 不可用」用例单独覆盖）。
-      _ <- res.sessionStore.saveMessagesForSession(
-        sid,
-        List(
-          nebflow.shared
-            .Message(role = nebflow.shared.MessageRole.User, content = Left("fixture: stuck session transcript"))
-        )
-      )
-      _ <- res.agentRegistry.set(
-        Map(
-          sid -> mkRecord(
-            sid,
-            AgentKind.Flow,
-            agentRef,
-            rootSid,
-            lastActivityMs = System.currentTimeMillis() - threshold - 1000L,
-            toolStartedAt = 0L,
-            supervisorRef = Some(bridgeRef)
-          )
-        )
-      )
-    yield (
-      res,
-      rt,
-      bridgeReceived,
-      Ref.unsafe[IO, List[TaskStuckWatcher.PendingL3]](Nil),
-      Ref.unsafe[IO, Map[String, Int]](Map.empty),
-      sid,
-      system
-    )
-
-    end for
-
-  end driveL3
+      _ <- res.sessionStore.saveMessagesForSession(sid, List(
+        nebflow.shared.Message(role = nebflow.shared.MessageRole.User, content = Left("fixture: stuck session transcript"))))
+      _ <- res.agentRegistry.set(Map(sid -> mkRecord(sid, AgentKind.Flow, agentRef, rootSid,
+        lastActivityMs = System.currentTimeMillis() - threshold - 1000L, toolStartedAt = 0L,
+        supervisorRef = Some(bridgeRef))))
+    yield (res, rt, bridgeReceived, Ref.unsafe[IO, List[TaskStuckWatcher.PendingL3]](Nil),
+      Ref.unsafe[IO, Map[String, Int]](Map.empty), sid, system)
 
   test("R8-② 正例: 桥记录 Cancelled 但节点不迁移 → T+N 复查出 1 条 l3-ineffective（+ logger.error）") {
     val system = ActorSystem("wd-l3fail")
@@ -487,10 +357,8 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     assertEquals(str(alerts.head, "nodeId"), Some("n-l3fail"))
     assertEquals(num(alerts.head, "attempt"), Some(3L))
     // 事件与开火行可 join（同 sessionId + firedAt ≤ 事件 ts）
-    assert(
-      num(alerts.head, "firedAt").isDefined && num(alerts.head, "verifiedAt").isDefined,
-      s"复查事件必须带 firedAt/verifiedAt 供 join: ${alerts.head}"
-    )
+    assert(num(alerts.head, "firedAt").isDefined && num(alerts.head, "verifiedAt").isDefined,
+      s"复查事件必须带 firedAt/verifiedAt 供 join: ${alerts.head}")
     assert(bridgeEvts.exists(_.isInstanceOf[AgentEvent.Cancelled]), "L3 桥 Cancelled 必须已发出（本用例的前提）")
     // 一期告警第二档：logger.error（人肉排障入口）
     assert(errs.exists(_.contains("L3 INEFFECTIVE")), s"必须落 logger.error 告警，实得 ${errs.filter(_.nonEmpty)}")
@@ -506,9 +374,8 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts, pending)
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts, pending) // L3
       // 模拟 resume 已生效：节点被 CAS 翻回 Pending（设计 §3.6(iii)：只要求出现过 Pending/Running）
-      _ <- rt.store
-        .mutate(s => s.copy(nodes = s.nodes.updated("n-l3ok", s.nodes("n-l3ok").copy(status = NodeLifecycle.Pending))))
-        .void
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-l3ok",
+        s.nodes("n-l3ok").copy(status = NodeLifecycle.Pending)))).void
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts, pending, l3VerifyDelayMs = 0L)
       alerts <- l3Alerts(sid)
       // 无 project runtime（跨项目/未挂载）→ 裁决不可得 ⇒ 保守不告警（设计 §3.8 容忍重启丢 pending）
@@ -519,15 +386,9 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       // 的效果）。P2 把定位键改为「会话属于哪个 store」后，本用例必须**真的**清空
       // registry 才能构造出「无 runtime 拥有该会话」——故改为直接执行。
       _ <- ProjectRuntimeRegistry.clear
-      _ <- TaskStuckWatcher.scan(
-        res,
-        wsHub,
-        threshold,
-        cats.effect.Ref.unsafe(Map.empty[String, Int]),
-        cats.effect.Ref
-          .unsafe(List(TaskStuckWatcher.PendingL3(sid, "root-gone", 0L, TaskStuckWatcher.BranchMerged, 0L, 0L, 3))),
-        l3VerifyDelayMs = 0L
-      )
+      _ <- TaskStuckWatcher.scan(res, wsHub, threshold, cats.effect.Ref.unsafe(Map.empty[String, Int]),
+        cats.effect.Ref.unsafe(List(TaskStuckWatcher.PendingL3(sid, "root-gone", 0L, TaskStuckWatcher.BranchMerged, 0L, 0L, 3))),
+        l3VerifyDelayMs = 0L)
       allAlerts <- l3Alerts(sid)
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
     yield (alerts, allAlerts)
@@ -538,8 +399,15 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
 
   // ── ③ 影子模式守门 ─────────────────────────────────────────────────────
 
-  /** 单臂：3 次扫描（L1/L2/L3）于同一输入；返回（事件行数、桥事件、AgentCommand、inflight 是否被硬取消）。 */
-  private def driveShadowArm(tag: String, shadow: Boolean): IO[(Int, List[AgentEvent], List[AgentCommand], Boolean)] =
+  /** 单臂：4 次扫描（L1/L2/L3 + 复查拍）于同一输入；返回（事件行数、桥事件、AgentCommand、
+    * **L1 拍后在飞是否被硬取消**、**L2 拍后在飞是否被硬取消**）。
+    *
+    * 🔴 killruling 批（2026-09-23 裁定 #28）改读数点：L1 的 LLM-halt 动作已删 ⇒ 原
+    * 单点 `abortedAfterL1` 改为双点——`l1Aborted`（**必假**：第 1 拍零动作）与
+    * `l2Aborted`（**必真**：第 2 拍 L2 transport abort 接管）。两点合起来 = 「升级链
+    * 未被本批关掉」的同一强度读数（第 1 拍不动 / 第 2 拍动），且把「删 L1 动作」这件事
+    * 本身变成可断言的事实（不是靠注释）。 */
+  private def driveShadowArm(tag: String, shadow: Boolean): IO[(Int, List[AgentEvent], List[AgentCommand], Boolean, Boolean)] =
     val sid = s"node-$tag"
     val rootSid = s"root-$tag"
     val system = ActorSystem(s"wd-shadow-$tag")
@@ -550,19 +418,9 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       agentReceived <- Ref.of[IO, List[AgentCommand]](Nil)
       agentRef <- system.spawn(mkRecordingActor(agentReceived), s"sh-agent-$tag")
       _ <- IO(if shadow then sys.props.update(ShadowProp, "true") else sys.props.remove(ShadowProp))
-      _ <- res.agentRegistry.set(
-        Map(
-          sid -> mkRecord(
-            sid,
-            AgentKind.Flow,
-            agentRef,
-            rootSid,
-            lastActivityMs = System.currentTimeMillis() - threshold - 1000L,
-            toolStartedAt = 0L,
-            supervisorRef = Some(bridgeRef)
-          )
-        )
-      )
+      _ <- res.agentRegistry.set(Map(sid -> mkRecord(sid, AgentKind.Flow, agentRef, rootSid,
+        lastActivityMs = System.currentTimeMillis() - threshold - 1000L, toolStartedAt = 0L,
+        supervisorRef = Some(bridgeRef))))
       (_, halt) <- nebflow.llm.LlmInterface.registerInflight(Some(sid))
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[Json]](Nil)
@@ -571,27 +429,26 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts)
       abortedAfterL1 <- halt.tryGet
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts)
+      abortedAfterL2 <- halt.tryGet
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts)
       rows <- fires(sid)
       bridgeEvts <- bridgeReceived.get
       cmds <- agentReceived.get
       ws <- receivedWs.get
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
-    yield (rows.size, bridgeEvts, cmds, abortedAfterL1.isDefined)
+    yield (rows.size, bridgeEvts, cmds, abortedAfterL1.isDefined, abortedAfterL2.isDefined)
     io.guaranteeCase(_ => IO(sys.props.remove(ShadowProp)))
-
-  end driveShadowArm
 
   test("R8-③ shadow 守门: 0 AgentCommand / 0 AgentEvent / inflight 不变 / 0 WS 帧，且事件行数与 shadow=false 相等") {
     // 对照臂（shadow=false）：仍真实动作
     val control = driveShadowArm("ctl", shadow = false).unsafeRunSync()
     val shadow = driveShadowArm("shd", shadow = true).unsafeRunSync()
-    val (cRows, cBridge, cCmds, cAborted) = control
-    val (sRows, sBridge, sCmds, sAborted) = shadow
-    // 对照：生产链未被误关（L1 真硬取消在飞 LLM）
+    val (cRows, cBridge, cCmds, cL1Aborted, cL2Aborted) = control
+    val (sRows, sBridge, sCmds, sL1Aborted, sL2Aborted) = shadow
+    // 对照：生产链未被误关（**L1 拍零动作 / L2 拍真硬取消在飞 LLM**）
     //
     // ⚠ 2026-09-11 判据序改造（stuck 自动恢复批 P1，作者裁定 R-3）后的口径更新：
-    // 本臂刻意在会话上注册了一条**在飞 LLM 请求**（用作 L1 硬取消的可观测量）⇒ 按
+    // 本臂刻意在会话上注册了一条**在飞 LLM 请求**（用作硬取消的可观测量）⇒ 按
     // 新判据序 [[TaskStuckWatcher.classify]] 的第一档，该会话三拍**全部**归**类④
     // provider hang**（`inflightFor > 0`）。类④ 的硬约束（任务书负控③）=
     // 「不执行 L2 进程 kill / L3」⇒ 本臂**不应**再出现 L3 的桥 Cancelled——这正是
@@ -599,18 +456,25 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     // L2/L3 腿本身的覆盖不受影响：`l3-ineffective` 用例与本 spec 外的
     // `node-l3ok/node-l3fail` 用例都是**无在飞请求**的类① 会话，L3 腿照常开火；
     // 本用例保留的三条 `stuck-fire` 行（L1/L2/L3 三拍）亦证明升级链未被关掉。
-    assert(cAborted, "shadow=false 臂：L1 必须真实硬取消在飞 LLM（证明开关边界正确）")
-    assert(
-      !cBridge.exists(_.isInstanceOf[AgentEvent.Cancelled]),
-      s"shadow=false 臂：类④（inflight>0）不得发桥 Cancelled——节点级 L3 腿对类④ 被结构性跳过，得 $cBridge"
-    )
+    //
+    // 🔴 2026-09-23 killruling 批（裁定 #28「删」L1 动作）后的口径更新：
+    // L1 的 LLM-halt 动作**已删** ⇒ 第 1 拍**零动作**（`StuckAbort` 不再出现）；
+    // 「破坏性动作真的会开火」的证据改由**第 2 拍**（L2 `transportAbortFor` ⇒
+    // `RecoverableAbort`）承担。两条断言（第 1 拍不动 / 第 2 拍动）**断言数不减**，
+    // 且比原单点更强：它逐字锁住「L1 退役」这件事本身。
+    assert(!cL1Aborted,
+      "shadow=false 臂：第 1 拍（L1）必须**零动作**（killruling 批 #28 已删 LLM-halt 动作）")
+    assert(cL2Aborted,
+      "shadow=false 臂：第 2 拍（L2）必须真实硬取消在飞 LLM（证明开关边界正确、升级链未关）")
+    assert(!cBridge.exists(_.isInstanceOf[AgentEvent.Cancelled]),
+      s"shadow=false 臂：类④（inflight>0）不得发桥 Cancelled——节点级 L3 腿对类④ 被结构性跳过，得 $cBridge")
     // 守门：shadow=true 全部破坏性动作被禁
     assertEquals(sBridge, Nil, "shadow=true 不得发任何 AgentEvent（含 bridgeCancelled）")
     assertEquals(sCmds, Nil, "shadow=true 不得发任何 AgentCommand")
-    assert(!sAborted, "shadow=true 不得硬取消在飞 LLM（inflight 计数不变）")
+    assert(!sL1Aborted && !sL2Aborted, "shadow=true 不得硬取消在飞 LLM（inflight 计数不变）")
     // 防「shadow = 关掉监测」：同一输入下事件行数相等
     assertEquals(sRows, cRows, "shadow=true 与 false 在同一输入下事件行数必须相等（shadow 只关动作、不关监测）")
-    assertEquals(cRows, 3, s"三次扫描 = 三条 stuck-fire（L1/L2/L3），得 $cRows")
+    assertEquals(cRows, 3, s"三次扫描 = 三条 stuck-fire（L1/L2/L3，L1 为占位腿），得 $cRows")
   }
 
 end WatchdogSelfMonitorSpec

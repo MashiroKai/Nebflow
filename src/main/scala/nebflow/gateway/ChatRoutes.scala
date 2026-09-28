@@ -6,8 +6,9 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.NebflowError
 import nebflow.gateway.GatewayCodecs.given
-import nebflow.shared.*
+import nebflow.llm.FallbackExhaustedError
 import nebflow.shared.given
+import nebflow.shared.{LlmHandle, LlmRequest, StreamChunk}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.Authorization

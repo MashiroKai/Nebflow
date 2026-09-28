@@ -1,4 +1,4 @@
-package nebflow.shared
+package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite

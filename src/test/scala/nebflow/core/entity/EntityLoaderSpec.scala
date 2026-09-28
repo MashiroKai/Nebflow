@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 
 class EntityLoaderSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-entity-loader"

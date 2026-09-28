@@ -1,7 +1,6 @@
 package nebflow.dropbox
 
 import cats.effect.IO
-import nebflow.shared.AttachContract
 
 import java.security.MessageDigest
 
@@ -87,7 +86,6 @@ object ChunkedTransfer:
           n = if remaining > 0 then in.read(buf) else -1
       finally in.close()
     digestHex(digest)
-  end hashFileStreaming
 
   // ===== 校验（纯函数，可单测）=====
 
@@ -111,8 +109,6 @@ object ChunkedTransfer:
           actualHash = Some(computed)
         )
       )
-
-  end verifyChunkDigest
 
   /** 帧自洽性：offset 必须由 index 推导；bytes 必须与块计划一致。 */
   def verifyFrameShape(frame: ChunkFrame): Either[AttachContract.AttachError, Unit] =
@@ -155,12 +151,6 @@ object ChunkedTransfer:
         )
       else Right(())
 
-      end if
-
-    end if
-
-  end verifyFrameShape
-
   /**
    * 幂等 / gap 判定（契约 §3.4）：
    *   - index == 期望 ⇒ Proceed；
@@ -187,8 +177,6 @@ object ChunkedTransfer:
         )
       )
 
-  end decideChunk
-
   /** 整件摘要比对（唯一比对点 = 末块应用后、commit 前）。 */
   def verifyWholeDigest(
     declared: String,
@@ -207,8 +195,6 @@ object ChunkedTransfer:
           bytesReceived = Some(bytesReceived)
         )
       )
-
-end ChunkedTransfer
 
 /**
  * 发送侧游标：**单遍 IO** —— 逐块读盘，边算块摘要边增量更新整件摘要。
@@ -288,8 +274,6 @@ final class ChunkSender(
         Some((frame, buf))
     }
 
-end ChunkSender
-
 object ChunkSender:
 
   /**
@@ -338,8 +322,6 @@ object ChunkSender:
         finally in.close()
       new ChunkSender(source, transferId, totalBytes, chunkSize, digest, math.min(primed, totalBytes))
     }
-
-end ChunkSender
 
 /**
  * 接收侧会话。恢复权威 = **temp 文件实际长度 + 重算前缀 sha256**

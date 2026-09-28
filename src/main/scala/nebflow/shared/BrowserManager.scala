@@ -1,6 +1,7 @@
 package nebflow.shared
 
 import cats.effect.IO
+import nebflow.core.NebflowLogger
 
 import java.util.concurrent.{Executors, TimeUnit}
 

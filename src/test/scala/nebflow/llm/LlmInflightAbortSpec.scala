@@ -99,11 +99,10 @@ class LlmInflightAbortSpec extends CatsEffectSuite:
   }
 
   test("cancelAllInflightSync (hook entry) does not throw when idle") {
-    val result =
-      try
-        LlmInterface.cancelAllInflightSync()
-        "ok"
-      catch case e: Throwable => s"threw: ${e.getMessage}"
+    val result = try
+      LlmInterface.cancelAllInflightSync()
+      "ok"
+    catch case e: Throwable => s"threw: ${e.getMessage}"
     assertEquals(result, "ok")
   }
 

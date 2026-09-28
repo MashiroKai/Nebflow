@@ -3,7 +3,7 @@ package nebflow.neblink
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import munit.CatsEffectSuite
-import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
+import nebflow.core.PathUtil
 
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger

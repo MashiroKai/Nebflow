@@ -3,7 +3,7 @@ package nebflow.agent
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.shared.{AskItem, AskOption, AskPreview}
+import nebflow.core.{AskItem, AskOption, AskPreview}
 
 /**
  * #380 backend passthrough contract (V11): buildAskUserJson emits the optional
@@ -53,29 +53,9 @@ class AskUserBuildJsonSpec extends FunSuite:
   }
 
   test("V11c: preview with description keeps both keys in order") {
-    val items = List(
-      AskItem(
-        "Pick",
-        List(
-          AskOption(
-            "A",
-            description = Some("explain"),
-            preview = Some(AskPreview("swatch", colors = Some(List("#111"))))
-          )
-        )
-      )
-    )
-    val opts = frame(items).hcursor
-      .downField("items")
-      .as[List[Json]]
-      .toOption
-      .get
-      .head
-      .hcursor
-      .downField("options")
-      .as[List[Json]]
-      .toOption
-      .get
+    val items = List(AskItem("Pick", List(AskOption("A", description = Some("explain"), preview = Some(AskPreview("swatch", colors = Some(List("#111"))))))))
+    val opts = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head
+      .hcursor.downField("options").as[List[Json]].toOption.get
     val keys = opts.head.hcursor.keys.map(_.toSet).getOrElse(Set.empty)
     assertEquals(keys, Set("label", "description", "preview"))
     assertEquals(
@@ -89,13 +69,8 @@ class AskUserBuildJsonSpec extends FunSuite:
   test("F1a: project + nodeName are emitted when present (project node ask)") {
     val items = List(AskItem("Which scheme?", List(AskOption("A"), AskOption("B"))))
     val json = AgentActor.buildAskUserJson(
-      Some("root-1"),
-      "general",
-      items,
-      Some("general"),
-      Some("node-abc"),
-      project = Some("Nebflow"),
-      nodeName = Some("实施-F1F2")
+      Some("root-1"), "general", items, Some("general"), Some("node-abc"),
+      project = Some("Nebflow"), nodeName = Some("实施-F1F2")
     )
     assertEquals(json.hcursor.downField("project").as[String], Right("Nebflow"))
     assertEquals(json.hcursor.downField("nodeName").as[String], Right("实施-F1F2"))
@@ -104,13 +79,8 @@ class AskUserBuildJsonSpec extends FunSuite:
   test("F1b: dispatcher ask carries nodeName=dispatcher") {
     val items = List(AskItem("Proceed?", List(AskOption("yes"), AskOption("no"))))
     val json = AgentActor.buildAskUserJson(
-      Some("root-1"),
-      "dispatcher",
-      items,
-      Some("dispatcher"),
-      Some("disp-1"),
-      project = Some("Nebflow"),
-      nodeName = Some("dispatcher")
+      Some("root-1"), "dispatcher", items, Some("dispatcher"), Some("disp-1"),
+      project = Some("Nebflow"), nodeName = Some("dispatcher")
     )
     assertEquals(json.hcursor.downField("project").as[String], Right("Nebflow"))
     assertEquals(json.hcursor.downField("nodeName").as[String], Right("dispatcher"))

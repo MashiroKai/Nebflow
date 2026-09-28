@@ -1,7 +1,7 @@
 package nebflow.actor
 
 import cats.effect.*
-import nebflow.shared.NebflowLogger
+import nebflow.core.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
 

@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 
 object ModelCommand extends CliCommand:
   def name = "model"
@@ -97,7 +97,9 @@ object ModelCommand extends CliCommand:
                         IO.pure(CliResult.text(s"Default model set to $modelRef (Nebula chain)"))
                   }
               }
-              .handleErrorWith(e => IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}")))
+              .handleErrorWith(e =>
+                IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}"))
+              )
           else
             // Set session model
             client

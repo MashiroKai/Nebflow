@@ -1,7 +1,6 @@
 package nebflow.core
 
 import cats.effect.IO
-import nebflow.shared.AskItem
 
 /** REPL 与 UI 层的桥接接口 */
 trait ReplUi:

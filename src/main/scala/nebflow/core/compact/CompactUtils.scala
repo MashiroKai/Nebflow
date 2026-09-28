@@ -3,7 +3,8 @@ package nebflow.core.compact
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.shared.{NebflowLogger, *}
+import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.*
 
 object CompactUtils:
 
@@ -12,11 +13,9 @@ object CompactUtils:
   // Placeholder for stripped tool results
   private val ToolResultPlaceholder = "[Output removed to free context space]"
 
-  /**
-   * Persisted-output marker — mirrors ToolResultGuard's tag so previews that
-   * were already persisted by the write-path guard are recognized as such
-   * (they are small and must NOT be re-persisted or re-stripped).
-   */
+  /** Persisted-output marker — mirrors ToolResultGuard's tag so previews that
+    * were already persisted by the write-path guard are recognized as such
+    * (they are small and must NOT be re-persisted or re-stripped). */
   private val PersistedTag = "<persisted-output>"
 
   /**
@@ -213,10 +212,8 @@ object CompactUtils:
   // 本身体积小，不重复处理。产物形态（summary 替换历史）不动。
   // ============================================================
 
-  /**
-   * 扫描 messages 中 >maxChars 且未落盘的 ToolResult 全文（写路径守卫
-   * 上线前的存量，或任何漏网）。返回 (toolUseId, content) 列表。
-   */
+  /** 扫描 messages 中 >maxChars 且未落盘的 ToolResult 全文（写路径守卫
+    * 上线前的存量，或任何漏网）。返回 (toolUseId, content) 列表。 */
   private def collectOversized(
     messages: List[Message],
     maxChars: Int
@@ -229,11 +226,9 @@ object CompactUtils:
           (toolUseId, content)
       }
 
-  /**
-   * 确保所有 >maxChars 且未落盘的 ToolResult 全文已写盘。落盘目录与
-   * ToolResultGuard 一致：~/.nebflow/tool-results/{sessionId}/{toolUseId}.txt。
-   * 写路径已拦住的（<persisted-output> 预览）跳过。
-   */
+  /** 确保所有 >maxChars 且未落盘的 ToolResult 全文已写盘。落盘目录与
+    * ToolResultGuard 一致：~/.nebflow/tool-results/{sessionId}/{toolUseId}.txt。
+    * 写路径已拦住的（<persisted-output> 预览）跳过。 */
   def persistOversizedToolResults(
     messages: List[Message],
     sessionId: String,
@@ -251,10 +246,8 @@ object CompactUtils:
       }
     }
 
-  /**
-   * 纯函数：把 >maxChars 且未落盘的 ToolResult content 替换为占位符+落盘
-   * 路径提示。小结果、已落盘预览、非 ToolResult 块全部原样保留。
-   */
+  /** 纯函数：把 >maxChars 且未落盘的 ToolResult content 替换为占位符+落盘
+    * 路径提示。小结果、已落盘预览、非 ToolResult 块全部原样保留。 */
   def stripOversizedToolResults(
     messages: List[Message],
     sessionId: String,
@@ -267,7 +260,8 @@ object CompactUtils:
               if content.length > maxChars && !content.startsWith(PersistedTag) =>
             val path = s"${PathUtil.dataRoot / "tool-results" / sessionId / s"$toolUseId.txt"}"
             tr.copy(
-              content = s"""$PersistedTag
+              content =
+                s"""$PersistedTag
                    |Output too large (${content.length} chars). Full output saved to: $path
                    |</persisted-output>""".stripMargin
             )

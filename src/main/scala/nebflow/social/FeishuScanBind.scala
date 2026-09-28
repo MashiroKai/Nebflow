@@ -16,7 +16,7 @@ import com.lark.oapi.scene.registration.{
 }
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.NebflowLogger
+import nebflow.core.NebflowLogger
 
 import java.util.UUID
 import scala.collection.immutable.ListMap

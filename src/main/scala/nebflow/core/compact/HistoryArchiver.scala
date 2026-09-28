@@ -50,10 +50,8 @@ end HistoryArchiver
 
 object HistoryArchiver:
 
-  /**
-   * @param sessionsRoot the data-root `sessions/` directory (e.g.
-   *        `PathUtil.dataRoot / "sessions"` — see GatewayMain wiring).
-   */
+  /** @param sessionsRoot the data-root `sessions/` directory (e.g.
+   *        `PathUtil.dataRoot / "sessions"` — see GatewayMain wiring). */
   def fileSystem(sessionsRoot: os.Path): HistoryArchiver = new:
 
     def archiveCompaction(

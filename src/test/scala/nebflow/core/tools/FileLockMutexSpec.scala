@@ -87,6 +87,5 @@ end FileLockMutexSpec
 
 /** Tiny helper: a Ref-based depth counter. */
 private object Ref_Sugar:
-
   def withCounter[A](f: cats.effect.Ref[IO, Int] => IO[A]): IO[A] =
     cats.effect.Ref.of[IO, Int](0).flatMap(f)

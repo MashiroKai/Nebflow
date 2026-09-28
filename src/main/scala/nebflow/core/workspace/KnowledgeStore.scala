@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.shared.NebflowLogger
+import nebflow.core.NebflowLogger
 
 class KnowledgeStore(baseDir: os.Path):
 

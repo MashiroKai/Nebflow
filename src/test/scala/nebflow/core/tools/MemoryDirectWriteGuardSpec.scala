@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.shared.MemoryBudget // W1 shim: main had nebflow.service.MemoryBudget; the merge moved it to shared
+import nebflow.service.MemoryBudget
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files

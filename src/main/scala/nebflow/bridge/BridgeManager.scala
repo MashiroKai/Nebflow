@@ -3,7 +3,7 @@ package nebflow.bridge
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
-import nebflow.shared.NebflowLogger
+import nebflow.core.NebflowLogger
 
 /**
  * Manages the lifecycle of all bridge plugins.

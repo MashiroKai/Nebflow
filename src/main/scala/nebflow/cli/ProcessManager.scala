@@ -1,7 +1,7 @@
 package nebflow.cli
 
 import cats.effect.IO
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 
 object ProcessManager:
   private def pidFile: os.Path = PathUtil.dataRoot / ".pid"

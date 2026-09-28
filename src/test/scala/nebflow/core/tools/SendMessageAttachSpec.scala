@@ -2,14 +2,15 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.effect.std.Dispatcher
-import io.circe.{Json, JsonObject}
+import io.circe.Json
+import io.circe.JsonObject
 import munit.CatsEffectSuite
-import nebflow.actor.AgentDef
 import nebflow.agent.AgentCore
-import nebflow.dropbox.DropboxService
+import nebflow.agent.AgentDef
+import nebflow.core.PathUtil
+import nebflow.dropbox.{AttachContract, DropboxService}
 import nebflow.gateway.WsHub
-import nebflow.neblink.NeblinkService
-import nebflow.shared.{AttachContract, PathUtil, PeerInfo}
+import nebflow.neblink.{NeblinkService, PeerInfo}
 
 import scala.concurrent.duration.*
 
@@ -66,14 +67,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(err.message.contains("Use the exact deviceId"), err.message)
 
   test("device resolve: 唯一命中五档（精确/前缀/包含）"):
-    assertEquals(
-      FriendMessageTool.resolveDevice("d2", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId),
-      Right("d2")
-    )
-    assertEquals(
-      FriendMessageTool.resolveDevice("kai", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId),
-      Right("d2")
-    )
+    assertEquals(FriendMessageTool.resolveDevice("d2", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId), Right("d2"))
+    assertEquals(FriendMessageTool.resolveDevice("kai", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId), Right("d2"))
 
   // ===== 工具级负控（无 sharedResources ⇒ 服务缺席显式报错；前置拒在零网络处） =====
 
@@ -90,8 +85,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   test("device 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（服务访问之前，零网络）"):
     val res = callTool(
       obj(
-        "to" -> Json.fromString("device:KAI"),
-        "message" -> Json.fromString("hi"),
+        "to"          -> Json.fromString("device:KAI"),
+        "message"     -> Json.fromString("hi"),
         "attachments" -> Json.arr(Json.fromString("relative.bin"))
       )
     ).unsafeRunSync()
@@ -101,37 +96,46 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(msg.contains("relative.bin"), msg)
 
   test("friend 目标 + attachments ⇒ **不再**前置拒绝（4b 腿 A 解除该缺口）；服务缺席走既有显式报错"):
-    val res = callTool(
-      obj(
-        "to" -> Json.fromString("alice"),
-        "message" -> Json.fromString("hi"),
-        "attachments" -> Json.arr(Json.fromString("/tmp/a.bin"))
+    // friendseal flag injection (2026-09-25): the friend leg is sealed by default;
+    // lift the latch for the duration of this behavior probe (call is an eager def,
+    // so the guard must evaluate with the latch already lifted).
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val res = callTool(
+        obj(
+          "to"          -> Json.fromString("alice"),
+          "message"     -> Json.fromString("hi"),
+          "attachments" -> Json.arr(Json.fromString("/tmp/a.bin"))
+        )
+      ).unsafeRunSync()
+      assert(res.isLeft)
+      val msg = res.left.toOption.get.message
+      assert(!msg.contains("not supported for friend targets"), s"该前置拒绝已被 4b 腿 A 取代，got: $msg")
+      // 该 spec **不** initialize FriendMessageTool（`service` 是全局装配缝，其它并行 suite
+      // 可能已装配）⇒ 可接受的失败面有两种，但都必须是**可判读**的显式错误：
+      //   ① 服务缺席（未装配）⇒ "Friend messaging is unavailable"；
+      //   ② 已装配 ⇒ 走好友解析，本 spec 无名册 ⇒ "not found" + 候选。
+      assert(
+        msg.contains("Friend messaging is unavailable") || msg.contains("not found"),
+        s"失败必须可判读（服务缺席或解析失败二选一），got: $msg"
       )
-    ).unsafeRunSync()
-    assert(res.isLeft)
-    val msg = res.left.toOption.get.message
-    assert(!msg.contains("not supported for friend targets"), s"该前置拒绝已被 4b 腿 A 取代，got: $msg")
-    // 该 spec **不** initialize FriendMessageTool（`service` 是全局装配缝，其它并行 suite
-    // 可能已装配）⇒ 可接受的失败面有两种，但都必须是**可判读**的显式错误：
-    //   ① 服务缺席（未装配）⇒ "Friend messaging is unavailable"；
-    //   ② 已装配 ⇒ 走好友解析，本 spec 无名册 ⇒ "not found" + 候选。
-    assert(
-      msg.contains("Friend messaging is unavailable") || msg.contains("not found"),
-      s"失败必须可判读（服务缺席或解析失败二选一），got: $msg"
-    )
+    }
 
   test("friend 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（与设备支同判据，服务访问之前）"):
-    val res = callTool(
-      obj(
-        "to" -> Json.fromString("alice"),
-        "message" -> Json.fromString("hi"),
-        "attachments" -> Json.arr(Json.fromString("relative.bin"))
-      )
-    ).unsafeRunSync()
-    assert(res.isLeft)
-    val msg = res.left.toOption.get.message
-    assert(msg.contains("must be absolute"), msg)
-    assert(msg.contains("relative.bin"), msg)
+    // friendseal flag injection (2026-09-25): lift the latch — the raw-string gate
+    // lives on the friend arm, behind the seal guard.
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val res = callTool(
+        obj(
+          "to"          -> Json.fromString("alice"),
+          "message"     -> Json.fromString("hi"),
+          "attachments" -> Json.arr(Json.fromString("relative.bin"))
+        )
+      ).unsafeRunSync()
+      assert(res.isLeft)
+      val msg = res.left.toOption.get.message
+      assert(msg.contains("must be absolute"), msg)
+      assert(msg.contains("relative.bin"), msg)
+    }
 
   test("device 目标 + targetDir ⇒ 受控支持：不再走冻结契约拒绝（服务缺席时落到设备腿自己的报错）"):
     // 契约升版批（2026-09-14，spec §⑥①）：原显式拒绝已被作者「现在升版」取代 ⇒ 本钉
@@ -139,8 +143,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     // `FriendMessageToolTargetDirSpec` A2（真服务栈 + level-1 桩）与 `TargetDirGuardSpec`。
     val res = callTool(
       obj(
-        "to" -> Json.fromString("device:KAI"),
-        "message" -> Json.fromString("hi"),
+        "to"        -> Json.fromString("device:KAI"),
+        "message"   -> Json.fromString("hi"),
         "targetDir" -> Json.fromString("/tmp/whatever")
       )
     ).unsafeRunSync()
@@ -155,12 +159,12 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         prevRoot <- IO(PathUtil.dataRoot)
-        tempDir <- IO.blocking(os.temp.dir(prefix = "nb-sendmsg-attach-spec-"))
-        _ <- IO(PathUtil.setDataRoot(tempDir))
-        ms <- NeblinkService.create(0, dispatcher)
+        tempDir  <- IO.blocking(os.temp.dir(prefix = "nb-sendmsg-attach-spec-"))
+        _        <- IO(PathUtil.setDataRoot(tempDir))
+        ms  <- NeblinkService.create(0, dispatcher)
         svc <- DropboxService.createForTest(ms, new WsHub, 400.millis, 400.millis, 500.millis)
         out <- use(ms, svc)
-        _ <- IO { PathUtil.setDataRoot(prevRoot); os.remove.all(tempDir) }
+        _   <- IO { PathUtil.setDataRoot(prevRoot); os.remove.all(tempDir) }
       yield out
     }
 
@@ -224,7 +228,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
       IO.blocking(os.temp.dir(prefix = "nb-sendmsg-attach-dead-")).flatMap { dir =>
         val f = tmpFile(dir, "a.bin", 5)
         for
-          _ <- ms.upsertPeer(peer("dead-1", "DeadPeer"))
+          _   <- ms.upsertPeer(peer("dead-1", "DeadPeer"))
           res <- svc.sendLocalFiles("dead-1", List(f), acceptWait = 2.seconds, uploadWait = 5.seconds)
           txt <- svc.sendText("dead-1", "hello")
         yield
@@ -242,68 +246,79 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   // ===== local 显式分支（R3=3b） =====
 
   test("local: 复制进 targetDir（零网络；message 缺席也成立）"):
-    IO.blocking {
-      val src = os.temp.dir(prefix = "nb-sendmsg-local-src-")
-      val dst = src / "out"
-      (src, dst)
-    }.flatMap { case (src, dst) =>
-      val a = tmpFile(src, "a.txt", 3)
-      val b = tmpFile(src, "b.bin", 7)
-      callTool(
-        obj(
-          "to" -> Json.fromString("local"),
-          "attachments" -> Json.arr(Json.fromString(a.toString), Json.fromString(b.toString)),
-          "targetDir" -> Json.fromString(dst.toString)
-        )
-      ).unsafeRunSync() match
-        case Right(msg) =>
-          assert(msg.contains("已复制 2 件"), msg)
-          assert(os.exists(dst / "a.txt") && os.exists(dst / "b.bin"))
-          assertEquals(os.size(dst / "b.bin"), 7L)
-        case Left(err) => fail(s"expected copy success, got ${err.message}")
-      IO(os.remove.all(src))
-    }
+    // friendseal flag injection (2026-09-25): the local leg is sealed by default;
+    // lift the latch around the whole IO (call is an eager def — construction time
+    // is when the guard evaluates, so the lift must precede it).
+    nebflow.FriendsSealKit.withUnsealed(
+      IO.blocking {
+        val src = os.temp.dir(prefix = "nb-sendmsg-local-src-")
+        val dst = src / "out"
+        (src, dst)
+      }.flatMap { case (src, dst) =>
+        val a = tmpFile(src, "a.txt", 3)
+        val b = tmpFile(src, "b.bin", 7)
+        callTool(
+          obj(
+            "to"          -> Json.fromString("local"),
+            "attachments" -> Json.arr(Json.fromString(a.toString), Json.fromString(b.toString)),
+            "targetDir"   -> Json.fromString(dst.toString)
+          )
+        ).unsafeRunSync() match
+          case Right(msg) =>
+            assert(msg.contains("已复制 2 件"), msg)
+            assert(os.exists(dst / "a.txt") && os.exists(dst / "b.bin"))
+            assertEquals(os.size(dst / "b.bin"), 7L)
+          case Left(err) => fail(s"expected copy success, got ${err.message}")
+        IO(os.remove.all(src))
+      }
+    )
 
   test("local: 目标已存在且未 overwrite ⇒ 显式拒绝并回显路径；overwrite=true ⇒ 替换"):
-    IO.blocking {
-      val src = os.temp.dir(prefix = "nb-sendmsg-local-ow-src-")
-      val dst = src / "out"
-      os.makeDir.all(dst)
-      (src, dst)
-    }.flatMap { case (src, dst) =>
-      val a = tmpFile(src, "a.txt", 3)
-      os.write.over(dst / "a.txt", Array.fill(9)('y'.toByte))
-      val refused = callTool(
-        obj(
-          "to" -> Json.fromString("local"),
-          "attachments" -> Json.arr(Json.fromString(a.toString)),
-          "targetDir" -> Json.fromString(dst.toString)
-        )
-      ).unsafeRunSync()
-      assert(refused.isLeft)
-      assert(refused.left.toOption.get.message.contains("Target already exists"), refused.left.toOption.get.message)
-      assertEquals(os.size(dst / "a.txt"), 9L, "refused copy must not touch the existing target")
+    // friendseal flag injection (2026-09-25): lift the latch around the whole IO —
+    // both the refusal arm and the overwrite arm live behind the seal guard.
+    nebflow.FriendsSealKit.withUnsealed(
+      IO.blocking {
+        val src = os.temp.dir(prefix = "nb-sendmsg-local-ow-src-")
+        val dst = src / "out"
+        os.makeDir.all(dst)
+        (src, dst)
+      }.flatMap { case (src, dst) =>
+        val a = tmpFile(src, "a.txt", 3)
+        os.write.over(dst / "a.txt", Array.fill(9)('y'.toByte))
+        val refused = callTool(
+          obj(
+            "to"          -> Json.fromString("local"),
+            "attachments" -> Json.arr(Json.fromString(a.toString)),
+            "targetDir"   -> Json.fromString(dst.toString)
+          )
+        ).unsafeRunSync()
+        assert(refused.isLeft)
+        assert(refused.left.toOption.get.message.contains("Target already exists"), refused.left.toOption.get.message)
+        assertEquals(os.size(dst / "a.txt"), 9L, "refused copy must not touch the existing target")
 
-      val replaced = callTool(
-        obj(
-          "to" -> Json.fromString("local"),
-          "attachments" -> Json.arr(Json.fromString(a.toString)),
-          "targetDir" -> Json.fromString(dst.toString),
-          "overwrite" -> Json.fromBoolean(true)
-        )
-      ).unsafeRunSync()
-      assert(replaced.isRight, replaced.left.toOption.get.message)
-      assertEquals(os.size(dst / "a.txt"), 3L, "overwrite=true must replace")
-      IO(os.remove.all(src))
-    }
+        val replaced = callTool(
+          obj(
+            "to"          -> Json.fromString("local"),
+            "attachments" -> Json.arr(Json.fromString(a.toString)),
+            "targetDir"   -> Json.fromString(dst.toString),
+            "overwrite"   -> Json.fromBoolean(true)
+          )
+        ).unsafeRunSync()
+        assert(replaced.isRight, replaced.left.toOption.get.message)
+        assertEquals(os.size(dst / "a.txt"), 3L, "overwrite=true must replace")
+        IO(os.remove.all(src))
+      }
+    )
 
   test("local: 缺 targetDir / 缺 attachments ⇒ 显式必填报错"):
-    val noDir = callTool(obj("to" -> Json.fromString("local"), "attachments" -> Json.arr(Json.fromString("/tmp/x"))))
-      .unsafeRunSync()
-    assert(noDir.isLeft && noDir.left.toOption.get.message.contains("requires `targetDir`"))
-    val noFiles =
-      callTool(obj("to" -> Json.fromString("local"), "targetDir" -> Json.fromString("/tmp/x"))).unsafeRunSync()
-    assert(noFiles.isLeft && noFiles.left.toOption.get.message.contains("requires `attachments`"))
+    // friendseal flag injection (2026-09-25): the local leg's own required-field
+    // errors live behind the seal guard — lift the latch for both probes.
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val noDir = callTool(obj("to" -> Json.fromString("local"), "attachments" -> Json.arr(Json.fromString("/tmp/x")))).unsafeRunSync()
+      assert(noDir.isLeft && noDir.left.toOption.get.message.contains("requires `targetDir`"))
+      val noFiles = callTool(obj("to" -> Json.fromString("local"), "targetDir" -> Json.fromString("/tmp/x"))).unsafeRunSync()
+      assert(noFiles.isLeft && noFiles.left.toOption.get.message.contains("requires `attachments`"))
+    }
 
   // ===== 退役读数 =====
 
@@ -322,7 +337,9 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     val fixed = AgentCore.fixedToolsFor(AgentDef(name = "Nebula", description = "", tools = Nil))
     assert(!fixed.contains("TransferFile"))
     assert(fixed.contains("SendMessage"))
-    assertEquals(fixed.size, AgentCore.RootOrchestrationToolsExpectedSize)
+    // friendseal (2026-09-25): flag-aware via the single derivation point —
+    // constant − (sealed ? 1 : 0), derived from this same snapshot.
+    assertEquals(fixed.size, nebflow.FriendsSealKit.expectedNebulaSize(fixed))
 
   test("dimension guard: 1024 MB = 1 GiB = 1,073,741,824 B / ≤9 件 / 标签含 1,073,741,824（量纲写死）"):
     assertEquals(AttachContract.MaxFileBytes, 1_073_741_824L)
@@ -332,13 +349,17 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(AttachContract.MaxFileBytesLabel.contains("1,073,741,824"), AttachContract.MaxFileBytesLabel)
 
   test("schema surface: attachments/targetDir/overwrite 参数在面；to+message 必填"):
-    val schema = FriendMessageTool.inputSchema
-    val props = schema("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
-    assert(props.contains("attachments"))
-    assert(props.contains("targetDir"))
-    assert(props.contains("overwrite"))
-    val required = schema("required").flatMap(_.asArray).getOrElse(Vector.empty).map(_.asString.getOrElse(""))
-    assert(required.contains("to"))
-    assert(required.contains("message"))
+    // friendseal flag injection (2026-09-25): the sealed schema drops `overwrite`
+    // and narrows `to` — this test pins the FULL face, so it runs with the latch lifted.
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val schema = FriendMessageTool.inputSchema
+      val props  = schema("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
+      assert(props.contains("attachments"))
+      assert(props.contains("targetDir"))
+      assert(props.contains("overwrite"))
+      val required = schema("required").flatMap(_.asArray).getOrElse(Vector.empty).map(_.asString.getOrElse(""))
+      assert(required.contains("to"))
+      assert(required.contains("message"))
+    }
 
 end SendMessageAttachSpec

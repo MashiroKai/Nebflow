@@ -2,16 +2,39 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Codec, Decoder, Encoder}
-import nebflow.actor.status
-import nebflow.core.SubAgentTaskStorePort
-import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
+import io.circe.parser.decode
+import nebflow.core.NebflowLogger
+import nebflow.core.PathUtil
 
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-G/M4):SubAgentTask 模型与伴生 codec 已剪出
-// 下沉 nebflow.shared(新文件 shared/SubAgentTaskModels.scala,整块逐字);本文件 import 改指。
-// 同裁定 R-A/M1:本类原地 extends core 的窄口 SubAgentTaskStorePort(签名镜像,零行为差)。
+/**
+ * Persisted metadata for a sub-agent task (Delegate / SubTask).
+ *
+ * Written at spawn time, updated on completion/failure, used for:
+ *  - Crash recovery: if the process restarts, tasks in `Running` status
+ *    can be resumed or their parent agent notified.
+ *  - Observability: the frontend can show sub-agent task status.
+ *  - Auto-retry: the parent agent can look up the original prompt to
+ *    re-delegate after a retryable failure.
+ */
+case class SubAgentTask(
+  taskId: String, // = subagentId (delegate-xxx / subtask-xxx)
+  parentSessionId: String,
+  agentName: String,
+  prompt: String,
+  description: String,
+  status: String, // "running" | "completed" | "failed" | "restarting"
+  retryCount: Int, // how many times restarted by supervisor
+  spawnedAt: Long, // epoch millis
+  completedAt: Option[Long], // epoch millis
+  lastError: Option[String], // last error message if failed
+  source: String // "delegate" | "subtask"
+)
+
+object SubAgentTask:
+  given Encoder[SubAgentTask] = Encoder.derived
+  given Decoder[SubAgentTask] = Decoder.derived
 
 /**
  * File-based store for SubAgentTask records.
@@ -20,7 +43,7 @@ import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
  * parent session, containing a list of tasks. Completed/failed tasks are
  * retained for a short period for audit, then pruned.
  */
-class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
+class SubAgentTaskStore(baseDir: os.Path):
 
   private val logger = NebflowLogger.forName("nebflow.subagent-task.store")
 

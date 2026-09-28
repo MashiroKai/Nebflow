@@ -7,7 +7,7 @@ import cats.effect.unsafe.implicits.global
  *
  * 用法（同一命令跑两遍 = 改前 / 改后）：
  * {{{
- *   sbt -batch "Test/runMain nebflow.actor.AgentDefCategoryBackdoorProbe"
+ *   sbt -batch "Test/runMain nebflow.agent.AgentDefCategoryBackdoorProbe"
  * }}}
  *
  * 构造：隔离 scratch home `/tmp/agentdef-tidy-probe/home` 内的 agents 副本——
@@ -30,17 +30,15 @@ object AgentDefCategoryBackdoorProbe:
 
   /** 收敛名 → 机制固定集（**只引 AgentCore 常量**，零裸清单/零裸数字）。 */
   private val ExpectedFixed: Map[String, Set[String]] = Map(
-    "Nebula" -> AgentCore.RootOrchestrationTools,
+    "Nebula" -> AgentCore.NebulaOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
     "general" -> AgentCore.GeneralFixedTools,
     "kernel" -> AgentCore.KernelFixedTools
   )
 
-  /**
-   * team 面**独有**遗留件（legacyFixedTools 的 category=team 分支相对 BaseTools 的增量）。
-   * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 不再是 team 面独有件——它成为
-   * Nebula 与分发器机制固定集的一员，故从本诊断集摘除（SubTask/TeamTask* 不变）。
-   */
+  /** team 面**独有**遗留件（legacyFixedTools 的 category=team 分支相对 BaseTools 的增量）。
+    * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 不再是 team 面独有件——它成为
+    * Nebula 与分发器机制固定集的一员，故从本诊断集摘除（SubTask/TeamTask* 不变）。 */
   private val TeamFace = Set("SubTask", "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
 
   private val NonConvergedControls = List("LegacyTeamThing", "LegacyFlowThing")
@@ -99,15 +97,14 @@ object AgentDefCategoryBackdoorProbe:
       println(s"   team-face tools present      = ${TeamFace.intersect(fixed).toList.sorted.mkString("[", ", ", "]")}")
       println(s"   PromptContext.agentCategory  = ${ctx.agentCategory}")
       println(s"   identity段渲染 (order 395)   = $identityOn")
-      if identityOn then println(s"   identity段首行               = ${identityRendered.linesIterator.next()}")
+      if identityOn then
+        println(s"   identity段首行               = ${identityRendered.linesIterator.next()}")
 
       ExpectedFixed.get(name) match
         case Some(mech) =>
           val ok = defn.category == "standalone" && fixed == mech && !identityOn
           if !ok then red = true
-          println(
-            s"   [converged] expected         = category=standalone, fixedToolsFor==机制常量(${mech.size} 件), identity段空"
-          )
+          println(s"   [converged] expected         = category=standalone, fixedToolsFor==机制常量(${mech.size} 件), identity段空")
           println(s"   [converged] verdict          = ${if ok then "OK" else "BACKDOOR REACHABLE"}")
         case None =>
           // 非收敛对照：category=team 必须原样落 legacyFixedTools（parity）
@@ -117,11 +114,10 @@ object AgentDefCategoryBackdoorProbe:
           if !ok then red = true
           println(s"   [control]   expected         = category=team, legacyFixedTools(team), identity段非空")
           println(s"   [control]   verdict          = ${if ok then "OK (parity)" else "PARITY BROKEN"}")
-      end match
       println("")
     }
 
-    println("PROBE RootOrchestrationToolsExpectedSize = " + AgentCore.RootOrchestrationToolsExpectedSize)
+    println("PROBE NebulaOrchestrationToolsExpectedSize = " + AgentCore.NebulaOrchestrationToolsExpectedSize)
     println("PROBE VERDICT = " + (if red then "RED (category 后门可达)" else "GREEN (收敛名无视 JSON category，非收敛 parity 保持)"))
 
     os.remove.all(Home)

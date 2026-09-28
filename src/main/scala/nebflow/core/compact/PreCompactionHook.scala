@@ -1,6 +1,7 @@
 package nebflow.core.compact
 
 import cats.effect.IO
+import nebflow.agent.SharedResources
 import nebflow.shared.*
 
 // ═══════════════════════════════════════════════
@@ -18,10 +19,6 @@ import nebflow.shared.*
  *   - Failure must NOT block compaction (caller wraps with handleErrorWith).
  *   - Does not modify `messages` (read-only extraction → write to files).
  *   - May call LLM (independent request, not the agent's main loop).
- *
- * Phase 5 D 步:删除 `resources: SharedResources` 形参——两个实现
- * (RootMemoryHook / NoOpHook)均不消费它(抽取轮停用后仅剩置位信号),签名
- * 不再引 agent 定位器;调用点(AgentSessionExecution)同步去参,行为零差。
  */
 trait PreCompactionHook:
 
@@ -29,7 +26,8 @@ trait PreCompactionHook:
     messages: List[Message],
     agentName: String,
     sessionId: Option[String],
-    teamName: Option[String]
+    teamName: Option[String],
+    resources: SharedResources
   ): IO[Unit]
 end PreCompactionHook
 
@@ -47,7 +45,7 @@ object PreCompactionHooks:
    */
   def forProfile(profile: CompactionProfile): PreCompactionHook =
     profile match
-      case CompactionProfile.Root => RootMemoryHook
+      case CompactionProfile.Root => NebulaMemoryHook
       case _ => NoOpHook
 
 /** No-op hook for Legacy/unprofiled agents. */
@@ -57,5 +55,6 @@ object NoOpHook extends PreCompactionHook:
     messages: List[Message],
     agentName: String,
     sessionId: Option[String],
-    teamName: Option[String]
+    teamName: Option[String],
+    resources: SharedResources
   ): IO[Unit] = IO.unit

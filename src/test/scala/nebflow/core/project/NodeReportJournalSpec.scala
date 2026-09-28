@@ -26,7 +26,7 @@ import scala.concurrent.duration.*
  *
  * 与既有 [[NodeReportRegistrySpec]] 的分工：那个 spec 钉**进程内**语义（take-and-remove /
  * last-write-wins / remove 幂等 / 会话隔离），**两者断言不重叠**。
- */
+ **/
 class NodeReportJournalSpec extends CatsEffectSuite:
 
   private val root: os.Path = os.pwd / "target" / "test-node-report-journal"
@@ -65,19 +65,15 @@ class NodeReportJournalSpec extends CatsEffectSuite:
       ev <- IO(events(ws))
     yield
       assert(onDisk.contains("\"op\":\"declare\""), s"journal must hold a declare line, got: $onDisk")
-      assert(
-        onDisk.contains("sid-rec") && onDisk.contains("marker-J-A"),
-        s"journal line must carry session + the declaration text verbatim, got: $onDisk"
-      )
+      assert(onDisk.contains("sid-rec") && onDisk.contains("marker-J-A"),
+        s"journal line must carry session + the declaration text verbatim, got: $onDisk")
       assertEquals(peeked, Some(fbA), "declare must be visible in-memory right away")
-      assertEquals(peekAfter, Some(fbA), "RESTART: the declaration must be recovered from the journal (old code: None)")
+      assertEquals(peekAfter, Some(fbA),
+        "RESTART: the declaration must be recovered from the journal (old code: None)")
       assertEquals(drainedAfter, Some(fbA), "post-restart drain must return the recovered declaration")
       assert(outcome != NodeReportRegistry.LoadOutcome.Absent, s"journal exists, got $outcome")
-      assert(
-        ev.contains(NodeReportRegistry.StoreEventType) && ev.contains("kind=recovered"),
-        s"recovery must leave a greppable audit line, got: $ev"
-      )
-    end for
+      assert(ev.contains(NodeReportRegistry.StoreEventType) && ev.contains("kind=recovered"),
+        s"recovery must leave a greppable audit line, got: $ev")
   }
 
   test("② 消费落盘：drain 后重启，申报不得复活（consume 行 + 重放后 None）") {
@@ -116,10 +112,8 @@ class NodeReportJournalSpec extends CatsEffectSuite:
   test("④ fail-closed：损坏行/撕裂尾行 ⇒ Degraded + 可读部分照常恢复 + 盘上字节零漂移") {
     val ws = freshWs("corrupt")
     val p = journal(ws)
-    val good =
-      """{"op":"declare","ts":1,"project":"journal-spec","node":"n-k","session":"sid-keep","category":"blocked","detail":"marker-J-KEEP","suggestion":""}"""
-    val before =
-      s"$good\nnot-json-at-all\n{\"op\":\"future-op\",\"session\":\"sid-x\"}\n{\"op\":\"declare\",\"ts\":2,\"se" // 撕裂尾行
+    val good = """{"op":"declare","ts":1,"project":"journal-spec","node":"n-k","session":"sid-keep","category":"blocked","detail":"marker-J-KEEP","suggestion":""}"""
+    val before = s"$good\nnot-json-at-all\n{\"op\":\"future-op\",\"session\":\"sid-x\"}\n{\"op\":\"declare\",\"ts\":2,\"se" // 撕裂尾行
     os.write.over(p, before, createFolders = true)
     for
       _ <- NodeReportRegistry.resetForRestartSimulation()
@@ -130,22 +124,14 @@ class NodeReportJournalSpec extends CatsEffectSuite:
     yield
       outcome match
         case NodeReportRegistry.LoadOutcome.Degraded(reason) =>
-          assert(
-            reason.contains("torn") || reason.contains("unparseable"),
-            s"degraded reason must name the damage, got: $reason"
-          )
+          assert(reason.contains("torn") || reason.contains("unparseable"),
+            s"degraded reason must name the damage, got: $reason")
         case other => fail(s"corrupt/torn journal MUST degrade (conservative), got $other")
-      assertEquals(
-        kept,
-        Some(BlockedFeedback("blocked", "marker-J-KEEP", "")),
-        "the readable declare line must still be recovered"
-      )
+      assertEquals(kept, Some(BlockedFeedback("blocked", "marker-J-KEEP", "")),
+        "the readable declare line must still be recovered")
       assertEquals(after, before, "the journal must be left byte-for-byte untouched (never truncated/repaired)")
-      assert(
-        ev.contains("kind=degraded") && ev.contains("path="),
-        s"a degraded load must be visible as an event, got: $ev"
-      )
-    end for
+      assert(ev.contains("kind=degraded") && ev.contains("path="),
+        s"a degraded load must be visible as an event, got: $ev")
   }
 
   test("⑤ 写失败可见：append 失败 ⇒ 事件 kind=write-failed（可 grep），内存语义零变化") {
@@ -160,21 +146,14 @@ class NodeReportJournalSpec extends CatsEffectSuite:
       isDir <- IO(os.isDir(journal(ws)))
     yield
       assert(isDir, "the failure injection must still be in place")
-      assert(
-        ev.contains(NodeReportRegistry.StoreEventType) && ev.contains("kind=write-failed"),
-        s"a failed journal append MUST be visible by design, got: $ev"
-      )
-      assert(ev.contains("IN-MEMORY ONLY"), s"the failure line must state the consequence (in-memory only), got: $ev")
-      assertEquals(
-        drained,
-        Some(fbA),
-        "a failed append must not change in-memory semantics (the declaration is still consumable)"
-      )
-      assert(
-        NodeReportRegistry.WriteFailedLogToken.nonEmpty,
-        "the WARN token must exist as the second visible path (grep judge)"
-      )
-    end for
+      assert(ev.contains(NodeReportRegistry.StoreEventType) && ev.contains("kind=write-failed"),
+        s"a failed journal append MUST be visible by design, got: $ev")
+      assert(ev.contains("IN-MEMORY ONLY"),
+        s"the failure line must state the consequence (in-memory only), got: $ev")
+      assertEquals(drained, Some(fbA),
+        "a failed append must not change in-memory semantics (the declaration is still consumable)")
+      assert(NodeReportRegistry.WriteFailedLogToken.nonEmpty,
+        "the WARN token must exist as the second visible path (grep judge)")
   }
 
   test("⑥ 跨重启申报不得无声消失：remove 丢弃恢复项 ⇒ node-report-unconsumed（kind=recovered-discard）") {
@@ -190,12 +169,10 @@ class NodeReportJournalSpec extends CatsEffectSuite:
     yield
       assertEquals(recovered, Some(fbA), "precondition: the declaration must be recovered first")
       assertEquals(gone, None, "remove drops it")
-      assert(
-        ev.contains(NodeEngine.ReportUnconsumedEventType) && ev.contains("kind=recovered-discard"),
-        s"a recovered declaration dropped without consumption MUST leave a compensation line, got: $ev"
-      )
-      assert(ev.contains("marker-J-A"), s"the compensation line must carry the declaration text verbatim, got: $ev")
-    end for
+      assert(ev.contains(NodeEngine.ReportUnconsumedEventType) && ev.contains("kind=recovered-discard"),
+        s"a recovered declaration dropped without consumption MUST leave a compensation line, got: $ev")
+      assert(ev.contains("marker-J-A"),
+        s"the compensation line must carry the declaration text verbatim, got: $ev")
   }
 
   test("⑦ 进程内残留（非恢复项）的 remove 保持既有行为：零补偿行（零回归）") {
@@ -204,9 +181,8 @@ class NodeReportJournalSpec extends CatsEffectSuite:
       _ <- NodeReportRegistry.register(ws, "journal-spec", "n-i", "sid-i", fbA)
       _ <- NodeReportRegistry.remove("sid-i") // 未跨重启 ⇒ 既有对称清理语义，不产生补偿噪音
       ev <- IO(events(ws))
-    yield assert(
-      !ev.contains("kind=recovered-discard"),
-      s"in-process cleanup must NOT emit the cross-restart compensation line, got: $ev"
-    )
+    yield
+      assert(!ev.contains("kind=recovered-discard"),
+        s"in-process cleanup must NOT emit the cross-restart compensation line, got: $ev")
   }
 end NodeReportJournalSpec

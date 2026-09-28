@@ -7,7 +7,7 @@ import io.circe.parser.decode
 
 import java.time.Instant
 
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
  * TaskLedgerHistory -- the change history of the unified ledger (taskunify batch,

@@ -3,8 +3,7 @@ package nebflow.social
 import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
-import nebflow.core.CredentialFileAcl
-import nebflow.shared.{Branding, PathUtil}
+import nebflow.core.{Branding, CredentialFileAcl, PathUtil}
 
 import java.nio.file.{Files, Path}
 

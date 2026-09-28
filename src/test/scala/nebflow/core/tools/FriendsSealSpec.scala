@@ -6,8 +6,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.FriendsSealKit
-import nebflow.agent.AgentCore
-import nebflow.actor.AgentDef // W1 shim: main had nebflow.agent.AgentDef; the merge moved it to actor
+import nebflow.agent.{AgentCore, AgentDef}
 import nebflow.core.FriendsSeal
 
 /** friendseal batch (2026-09-25) — the seal's own contract (mechanical face of
@@ -100,7 +99,7 @@ class FriendsSealSpec extends CatsEffectSuite:
     assert(delivered.contains("SendMessage"), "SendMessage stays (device leg)")
     assertEquals(delivered.size, FriendsSealKit.expectedNebulaSize(delivered),
       "flag-aware size via the single derivation point (never a bare number)")
-    assertEquals(AgentCore.RootOrchestrationTools.size, AgentCore.RootOrchestrationToolsExpectedSize,
+    assertEquals(AgentCore.NebulaOrchestrationTools.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
       "the STATIC set is untouched (registry-full-set semantics)")
 
   // ══════════ unseal — every face restores ══════════
@@ -159,7 +158,7 @@ class FriendsSealSpec extends CatsEffectSuite:
     FriendsSealKit.withUnsealedSync {
       val delivered = AgentCore.fixedToolsFor(defNebula)
       assert(delivered.contains("ListFriends"), "the roster tool is back on the face")
-      assertEquals(delivered.size, AgentCore.RootOrchestrationToolsExpectedSize)
+      assertEquals(delivered.size, AgentCore.NebulaOrchestrationToolsExpectedSize)
     }
 
   // ══════════ the latch's config parse (unseal path contract) ══════════

@@ -3,7 +3,6 @@ package nebflow.agent
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.actor.{AgentState, recentMessageIds, withRecentMessageIds}
 
 /**
  * Session management helpers extracted from AgentActor.
@@ -15,7 +14,7 @@ private[agent] trait AgentSession:
    * Check for duplicate clientMessageId and update recentMessageIds.
    *  Returns (isDuplicate, updatedState).
    */
-  private[agent] def checkDuplicate(
+  protected def checkDuplicate(
     clientMessageId: Option[String],
     state: AgentState
   ): (Boolean, AgentState) =
@@ -29,7 +28,7 @@ private[agent] trait AgentSession:
         (false, state.withRecentMessageIds(newIds))
 
   /** Emit a sessionBusy event to the frontend. */
-  private[agent] def emitSessionBusy(
+  protected def emitSessionBusy(
     wsSend: Json => IO[Unit],
     sessionId: String,
     busy: Boolean

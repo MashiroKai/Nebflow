@@ -9,28 +9,17 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.actor.{AgentDef, FlowNodeContract}
-import nebflow.agent.SharedResources
+import nebflow.agent.{AgentDef, FlowNodeContract, SharedResources}
 import nebflow.core.FileChangeTracker
+import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.NodeStatus
 import nebflow.core.flow.RunningFlowRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, FlowReportStore, FlowReportData, ToolContext}
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{
-  ContentBlock,
-  LlmHandle,
-  LlmRequest,
-  LlmResponse,
-  Message,
-  MessageRole,
-  PathUtil,
-  StreamChunk,
-  ThinkingConfig,
-  ToolCall
-}
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ToolCall}
 
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -70,10 +59,8 @@ class StrictVerdictSpec extends CatsEffectSuite:
 
   /** Plain-text answerer — never reports a verdict. */
   private class PlainTextLlm(text: String, delay: FiniteDuration = 50.millis) extends LlmHandle[IO]:
-
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
-
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -88,10 +75,8 @@ class StrictVerdictSpec extends CatsEffectSuite:
   private class StoreReportingLlm(verdict: String, slots: Json, capture: Ref[IO, Map[String, List[Message]]])
       extends LlmHandle[IO]:
     private val reported = Ref.unsafe[IO, Set[String]](Set.empty)
-
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
-
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -107,8 +92,6 @@ class StrictVerdictSpec extends CatsEffectSuite:
           else IO.unit
         }) >>
         Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
-
-  end StoreReportingLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -161,8 +144,6 @@ class StrictVerdictSpec extends CatsEffectSuite:
         system.stopAll.attempt.void *>
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
-
-  end withFlowEnv
 
   /** n1 (switch pass→n2 / fail→$return) → n2 → $return */
   private def switchFlow(strict: Boolean, lenient: Boolean, n2Input: String = "second: $task"): FlowDagDef =

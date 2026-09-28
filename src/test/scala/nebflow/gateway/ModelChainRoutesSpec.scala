@@ -5,13 +5,11 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
+import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{NebflowServiceConfig, ServiceLlmConfig} // W1 shim: main had them in nebflow.llm; the PR moved config to shared
-import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.{Headers, HttpRoutes, Method, Request, Response, Status, Uri}
 import org.http4s.server.websocket.WebSocketBuilder2

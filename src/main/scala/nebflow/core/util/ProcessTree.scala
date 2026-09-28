@@ -1,10 +1,8 @@
 package nebflow.core.util
 
 import cats.effect.IO
-
-import java.util.concurrent.TimeUnit
-
 import scala.jdk.StreamConverters.*
+import java.util.concurrent.TimeUnit
 
 object ProcessTree:
 
@@ -111,6 +109,5 @@ object ProcessTree:
           val opt = ProcessHandle.of(pid)
           if opt.isPresent then List(opt.get()) else Nil
         }
-      end if
     catch case _: Exception => Nil
 end ProcessTree

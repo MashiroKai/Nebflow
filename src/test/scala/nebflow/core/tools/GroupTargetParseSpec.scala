@@ -79,61 +79,69 @@ class GroupTargetParseSpec extends FunSuite:
   // ── ② schema / 描述层（作者令：能力落在 schema 面，不靠运行时错误兜）──
 
   private def toDescription: String =
-    FriendMessageTool
-      .inputSchema("properties")
-      .flatMap(_.hcursor.downField("to").downField("description").as[String].toOption)
+    FriendMessageTool.inputSchema("properties").flatMap(_.hcursor.downField("to").downField("description").as[String].toOption)
       .getOrElse(fail("inputSchema.properties.to.description 缺席"))
 
   test("schema: `to.description` 显式声明四个合法前缀（含 `group:`）") {
-    val d = toDescription
-    assert(d.contains("`friend:<remark|username|email|displayName>`"), s"缺 friend 前缀声明: $d")
-    assert(d.contains("`device:<deviceName|deviceId>`"), s"缺 device 前缀声明: $d")
-    assert(d.contains("`group:<groupName|groupId>`"), s"🔴 缺 group 前缀声明（本批判据②）: $d")
-    assert(d.contains("`local`"), s"缺 local 形态声明: $d")
+    // friendseal flag injection (2026-09-25): the sealed schema narrows `to` — this
+    // test pins the FULL four-prefix face, so it runs with the latch lifted.
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val d = toDescription
+      assert(d.contains("`friend:<remark|username|email|displayName>`"), s"缺 friend 前缀声明: $d")
+      assert(d.contains("`device:<deviceName|deviceId>`"), s"缺 device 前缀声明: $d")
+      assert(d.contains("`group:<groupName|groupId>`"), s"🔴 缺 group 前缀声明（本批判据②）: $d")
+      assert(d.contains("`local`"), s"缺 local 形态声明: $d")
+    }
   }
 
   test("schema: `to.description` 写明群支的解析序与错误语义（禁靠运行时错误兜）") {
-    val d = toDescription
-    assert(d.contains("exact group id"), s"缺 L1 群 id 精确: $d")
-    assert(d.contains("exact group name"), s"缺 L2 群名精确: $d")
-    assert(d.contains("unique group-name prefix"), s"缺 L3 群名前缀: $d")
-    assert(d.contains("does not exist"), s"缺「群不存在」错误语义: $d")
-    assert(d.contains("disbanded"), s"缺「已解散」错误语义: $d")
-    assert(d.contains("not a member"), s"缺「非成员」错误语义: $d")
-    assert(d.contains("candidate list"), s"缺多命中/零命中的候选列表语义: $d")
-    assert(d.contains("no `attachments`"), s"缺一期纯文本声明（群 + 附件 ⇒ 不静默丢弃）: $d")
-    assert(d.contains("case-insensitive") || d.contains("case-insensitive"), s"缺前缀大小写口径: $d")
+    // friendseal flag injection (2026-09-25): the group-wording face only exists
+    // unsealed — lift the latch for this full-face pin.
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val d = toDescription
+      assert(d.contains("exact group id"), s"缺 L1 群 id 精确: $d")
+      assert(d.contains("exact group name"), s"缺 L2 群名精确: $d")
+      assert(d.contains("unique group-name prefix"), s"缺 L3 群名前缀: $d")
+      assert(d.contains("does not exist"), s"缺「群不存在」错误语义: $d")
+      assert(d.contains("disbanded"), s"缺「已解散」错误语义: $d")
+      assert(d.contains("not a member"), s"缺「非成员」错误语义: $d")
+      assert(d.contains("candidate list"), s"缺多命中/零命中的候选列表语义: $d")
+      assert(d.contains("no `attachments`"), s"缺一期纯文本声明（群 + 附件 ⇒ 不静默丢弃）: $d")
+      assert(d.contains("case-insensitive") || d.contains("case-insensitive"), s"缺前缀大小写口径: $d")
+    }
   }
 
   test("schema: description 面声明四类目标 + `group:` 的遮蔽后果（§6.3 变更说明）") {
-    val d = FriendMessageTool.description
-    assert(d.contains("Four target kinds"), s"目标类数必须是 Four（本批加性扩面）: ${d.take(120)}")
-    assert(d.contains("`group:<groupName|groupId>`"), "description 缺第 4 类目标声明")
-    assert(d.contains("MUST be one of `friend:`, `device:`, `group:`"), s"缺合法前缀集声明: $d")
-    assert(
-      d.contains("explicit `friend:` prefix"),
-      "🔴 §6.3 要求把 `group:` 的遮蔽后果写进描述面（否则模型永远试不出逃生口）"
-    )
-    assert(d.contains("local` has shadowed a friend of that name"), "既有 local 遮蔽作为同类先例同句声明")
+    // friendseal flag injection (2026-09-25): the four-kind description face only
+    // exists unsealed — lift the latch for this full-face pin.
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val d = FriendMessageTool.description
+      assert(d.contains("Four target kinds"), s"目标类数必须是 Four（本批加性扩面）: ${d.take(120)}")
+      assert(d.contains("`group:<groupName|groupId>`"), "description 缺第 4 类目标声明")
+      assert(d.contains("MUST be one of `friend:`, `device:`, `group:`"), s"缺合法前缀集声明: $d")
+      assert(
+        d.contains("explicit `friend:` prefix"),
+        "🔴 §6.3 要求把 `group:` 的遮蔽后果写进描述面（否则模型永远试不出逃生口）"
+      )
+      assert(d.contains("local` has shadowed a friend of that name"), "既有 local 遮蔽作为同类先例同句声明")
+    }
   }
 
   test("schema: required 面零变更（to + message；本批不新增必填键）") {
-    val req = FriendMessageTool
-      .inputSchema("required")
-      .flatMap(_.asArray)
-      .getOrElse(Vector.empty)
-      .map(_.asString.getOrElse(""))
-      .toSet
+    val req = FriendMessageTool.inputSchema("required").flatMap(_.asArray).getOrElse(Vector.empty)
+      .map(_.asString.getOrElse("")).toSet
     assertEquals(req, Set("to", "message"))
   }
 
   test("schema: `message` 描述补上群支空文本口径（群总是要正文）") {
-    val d = FriendMessageTool
-      .inputSchema("properties")
-      .flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
-      .getOrElse(fail("message description 缺席"))
-    assert(d.contains("friend/device/group targets"), s"message 描述未覆盖群支: $d")
-    assert(d.contains("a group target always requires non-empty text"), s"缺群支空文本口径: $d")
+    // friendseal flag injection (2026-09-25): the sealed schema's message description
+    // is the device-only face — lift the latch for this full-face pin.
+    nebflow.FriendsSealKit.withUnsealedSync {
+      val d = FriendMessageTool.inputSchema("properties").flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
+        .getOrElse(fail("message description 缺席"))
+      assert(d.contains("friend/device/group targets"), s"message 描述未覆盖群支: $d")
+      assert(d.contains("a group target always requires non-empty text"), s"缺群支空文本口径: $d")
+    }
   }
 
 end GroupTargetParseSpec

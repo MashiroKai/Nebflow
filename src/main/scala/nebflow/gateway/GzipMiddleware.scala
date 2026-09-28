@@ -5,7 +5,10 @@ import cats.effect.IO
 import cats.syntax.all.*
 import fs2.compression.Compression
 import org.http4s.*
-import org.http4s.headers.*
+import org.http4s.headers.`Content-Encoding`
+import org.http4s.headers.`Content-Length`
+import org.http4s.headers.`Accept-Encoding`
+import org.http4s.headers.ETag
 import org.typelevel.ci.CIString
 
 /**
@@ -50,7 +53,8 @@ object GzipMiddleware:
     else
       resp.status match
         case Status.Ok if hasCompressibleContentType(resp) =>
-          if acceptsGzip(req) && resp.headers.get[`Content-Encoding`].isEmpty then compress(resp)
+          if acceptsGzip(req) && resp.headers.get[`Content-Encoding`].isEmpty then
+            compress(resp)
           else
             // Compressible resource but the client does not accept gzip (or
             // the origin already encoded the body): still advertise Vary so

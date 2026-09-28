@@ -1,7 +1,5 @@
 package nebflow.core.entity
 
-import nebflow.actor.RootAgentIdentity
-
 /** Builds Team catalog strings for system prompt injection. */
 object TeamCatalog:
 
@@ -61,7 +59,7 @@ object TeamCatalog:
       .mkString("\n")
 
     val standaloneAgents = agents.values.toList
-      .filter(a => a.category == "standalone" && a.name != RootAgentIdentity.Name)
+      .filter(a => a.category == "standalone" && a.name != "Nebula")
       .sortBy(_.name)
     val agentLines = standaloneAgents
       .map { a =>

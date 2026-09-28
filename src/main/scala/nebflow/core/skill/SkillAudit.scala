@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -14,7 +14,6 @@ final case class SkillSubscriber(agent: String, scope: String):
   def display: String = if scope == "global" then agent else s"$agent (team: $scope)"
 
 object SkillSubscriber:
-
   given Encoder[SkillSubscriber] = Encoder.instance { s =>
     Json.obj("agent" -> s.agent.asJson, "scope" -> s.scope.asJson)
   }
@@ -23,7 +22,6 @@ object SkillSubscriber:
 final case class StaleSkill(skill: SkillInfo, lastVerified: LocalDate, ageDays: Long)
 
 object StaleSkill:
-
   given Encoder[StaleSkill] = Encoder.instance { s =>
     Json.obj(
       "name" -> s.skill.name.asJson,
@@ -52,7 +50,6 @@ final case class SkillAuditReport(
 )
 
 object SkillAuditReport:
-
   given Encoder[SkillAuditReport] = Encoder.instance { r =>
     Json.obj(
       "skills" -> r.skills.asJson,
@@ -78,9 +75,8 @@ object SkillAudit:
   def run(today: LocalDate = LocalDate.now()): IO[SkillAuditReport] =
     SkillService.listSkills().map { skills =>
       val declarations = scanDeclarations()
-      val wildcard = declarations.collect {
-        case (agent, scope, decl) if decl.contains("*") =>
-          SkillSubscriber(agent, scope)
+      val wildcard = declarations.collect { case (agent, scope, decl) if decl.contains("*") =>
+        SkillSubscriber(agent, scope)
       }.toList
       val bySkill = declarations
         .flatMap { case (agent, scope, decl) =>
@@ -89,26 +85,22 @@ object SkillAudit:
         .groupMap(_._1)(_._2)
         .map { case (name, subs) => name -> subs.distinctBy(s => (s.agent, s.scope)).toList }
 
-      val orphans = skills
-        .filter { s =>
-          s.modelInvocable &&
-          !SkillService.alwaysVisible.contains(s.name) &&
-          bySkill.get(s.name).forall(_.isEmpty) &&
-          wildcard.isEmpty
-        }
-        .sortBy(_.name)
+      val orphans = skills.filter { s =>
+        s.modelInvocable &&
+        !SkillService.alwaysVisible.contains(s.name) &&
+        bySkill.get(s.name).forall(_.isEmpty) &&
+        wildcard.isEmpty
+      }.sortBy(_.name)
 
       def parseDate(v: String): Option[LocalDate] = scala.util.Try(LocalDate.parse(v)).toOption
 
-      val stale = skills
-        .flatMap { s =>
-          s.lastVerified.flatMap(parseDate) match
-            case Some(date) =>
-              val age = ChronoUnit.DAYS.between(date, today)
-              if age > StaleAfterDays then Some(StaleSkill(s, date, age)) else None
-            case None => None
-        }
-        .sortBy(-_.ageDays)
+      val stale = skills.flatMap { s =>
+        s.lastVerified.flatMap(parseDate) match
+          case Some(date) =>
+            val age = ChronoUnit.DAYS.between(date, today)
+            if age > StaleAfterDays then Some(StaleSkill(s, date, age)) else None
+          case None => None
+      }.sortBy(-_.ageDays)
 
       SkillAuditReport(
         skills = skills.sortBy(_.name),

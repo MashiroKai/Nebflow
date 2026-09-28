@@ -1,9 +1,8 @@
 package nebflow.cli
 
 import cats.effect.{IO, Ref}
-import nebflow.core.ReplUi
+import nebflow.core.{ReplUi, UserAbort}
 import nebflow.shared.TerminalUtils.*
-import nebflow.shared.UserAbort
 import org.jline.reader.{LineReader, LineReaderBuilder}
 import org.jline.terminal.{Terminal, TerminalBuilder}
 

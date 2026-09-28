@@ -4,8 +4,7 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.core.ReplUi
-import nebflow.shared.PathUtil
+import nebflow.core.{PathUtil, ReplUi}
 
 enum Phase:
   case Prompt, Thinking, Streaming, ToolRunning, AskUser
@@ -34,7 +33,7 @@ case class UiState(
   phase: Phase,
   streamText: String,
   toolLabel: String,
-  askUserItems: Option[List[nebflow.shared.AskItem]] = None,
+  askUserItems: Option[List[nebflow.core.AskItem]] = None,
   completedRounds: List[CompletedRound] = Nil,
   inputHistory: List[HistoryEntry] = Nil,
   currentInput: String = "",
@@ -181,7 +180,7 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
       case Some(h) => h
       case None => IO.unit
 
-  def askUser(items: List[nebflow.shared.AskItem]): IO[List[String]] =
+  def askUser(items: List[nebflow.core.AskItem]): IO[List[String]] =
     Deferred[IO, List[String]].flatMap { deferred =>
       IO.delay { askUserPromise = Some(deferred) } *>
         stateRef.update(_.copy(phase = Phase.AskUser, askUserItems = Some(items))) *>

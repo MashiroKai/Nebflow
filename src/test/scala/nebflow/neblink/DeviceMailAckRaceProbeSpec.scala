@@ -7,7 +7,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import io.circe.parser.parse
 import munit.FunSuite
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.duration.*

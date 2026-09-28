@@ -3,14 +3,14 @@ package nebflow.gateway
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.shared.PathUtil
+import nebflow.core.PathUtil
 import org.http4s.{Method, Request, Status, Uri}
 
 import java.nio.file.Files
 import scala.jdk.CollectionConverters.*
 
 /**
- * Route-level tests for StaticRoutes.uploadsRoutes (G1): serving
+ * Route-level tests for WebSocketRoutes.uploadsRoutes (G1): serving
  * ~/.nebflow/uploads/<sid>/<file> so restored session history can render
  * image attachments.
  *
@@ -35,21 +35,14 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       if Files.exists(tmp) then
-        Files
-          .walk(tmp)
-          .sorted(java.util.Comparator.reverseOrder())
-          .iterator()
-          .asScala
-          .foreach(
-            Files.deleteIfExists
-          )
-
-  end withTempUploads
+        Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(
+          Files.deleteIfExists
+        )
 
   private def get(path: String, cookie: Option[(String, String)] = None) =
     val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
     val req = cookie.fold(base) { case (n, v) => base.addCookie(n, v) }
-    StaticRoutes.uploadsRoutes(gatewayToken)(req).value.unsafeRunSync()
+    WebSocketRoutes.uploadsRoutes(gatewayToken)(req).value.unsafeRunSync()
 
   test("rejects unauthenticated requests") {
     withTempUploads {
@@ -113,4 +106,3 @@ class UploadsRoutesSpec extends CatsEffectSuite:
       }
     }
   }
-end UploadsRoutesSpec

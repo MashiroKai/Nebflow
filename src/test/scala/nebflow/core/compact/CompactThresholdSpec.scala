@@ -1,7 +1,6 @@
 package nebflow.core.compact
 
 import munit.FunSuite
-import nebflow.shared.CompactThreshold
 
 class CompactThresholdSpec extends FunSuite:
 

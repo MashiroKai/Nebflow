@@ -28,9 +28,9 @@ class NodestateBashI2ParamsSpec extends FunSuite:
 
   /** 本批 prop 名总表（清场用；防跨 suite 泄漏影响其它 suite）。 */
   private val i2Props: List[String] = List(
-    "nebflow.shell.autoBackgroundMs", // 新参 ForegroundAutoBackgroundMs
-    "nebflow.shell.sleepExemptBudgetMs", // 新参 ForegroundSleepExemptBudgetMs
-    "nebflow.noderpt.reportFreezeGraceMs", // 新参 ReportFreezeGraceMs
+    "nebflow.shell.autoBackgroundMs",           // 新参 ForegroundAutoBackgroundMs
+    "nebflow.shell.sleepExemptBudgetMs",        // 新参 ForegroundSleepExemptBudgetMs
+    "nebflow.noderpt.reportFreezeGraceMs",      // 新参 ReportFreezeGraceMs
     "nebflow.noderpt.deadSessionBgWaitGraceMs", // 新参 DeadSessionBgWaitGraceMs（T8）
     "nebflow.stuck.suspectTickSec",             // 新参 StuckSuspectTickSec（G2）
     "nebflow.stuck.demandTickSec",              // 新参 StuckDemandTickSec（G3）
@@ -156,7 +156,7 @@ class NodestateBashI2ParamsSpec extends FunSuite:
   // 这三项在 I2 之前就已是现读 prop（Defaults.scala 内 `sys.props.getOrElse`），
   // I2 不触碰它们（只在本层索引里登记 file:line）。其默认值断言走 `assume` 守卫：
   // sbt 同 JVM 并行跑 suite 时，兄弟 suite 可能正持有同名 prop ⇒ 现值断言不可靠
-  // （静态断言见 tools 脚本 §2，不受并发影响）。
+  //（静态断言见 tools 脚本 §2，不受并发影响）。
 
   test("T1 ForegroundNoProgressTimeoutMs：默认 600000 = 旧行为（I2 零改动）") {
     assume(

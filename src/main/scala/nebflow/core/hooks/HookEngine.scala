@@ -3,7 +3,7 @@ package nebflow.core.hooks
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
-import nebflow.shared.NebflowLogger
+import nebflow.core.NebflowLogger
 
 /**
  * Hook engine — the core execution orchestrator.

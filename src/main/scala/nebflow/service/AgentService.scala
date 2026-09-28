@@ -1,8 +1,7 @@
 package nebflow.service
 
 import cats.effect.IO
-import nebflow.actor.AgentInfo
-import nebflow.agent.AgentLibrary
+import nebflow.agent.{AgentInfo, AgentLibrary}
 
 class AgentService(library: AgentLibrary):
 

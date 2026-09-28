@@ -3,7 +3,6 @@ package nebflow.gateway
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.SessionStore
 
 import java.nio.file.{Files, Path}
 

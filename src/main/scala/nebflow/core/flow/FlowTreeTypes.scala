@@ -34,7 +34,7 @@ object TreeCommand:
 
   /** Watch this agent actor for termination. */
   case class WatchAgent(
-    ref: nebflow.actor.ActorRef[nebflow.actor.AgentCommand],
+    ref: nebflow.actor.ActorRef[nebflow.agent.AgentCommand],
     sessionId: String
   ) extends TreeCommand
 

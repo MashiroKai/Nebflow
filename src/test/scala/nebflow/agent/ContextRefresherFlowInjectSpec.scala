@@ -6,22 +6,13 @@ import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.actor.{AgentDef, FlowNodeContract}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{
-  AgentModelConfig,
-  FallbackAttempt,
-  LlmHandle,
-  LlmRequest,
-  LlmResponse,
-  StreamChunk,
-  ThinkingConfig
-}
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.shared.{AgentModelConfig, FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 /**
  * Regression for #406 flow-node runtime injections surviving the per-turn
@@ -151,4 +142,3 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       assert(!d.tools.contains("FlowReport"), s"retired FlowReport re-appended by reload: ${d.tools}")
       assertEquals(d.flowContract, retired.flowContract, "flowContract must still survive the reload")
   }
-end ContextRefresherFlowInjectSpec
