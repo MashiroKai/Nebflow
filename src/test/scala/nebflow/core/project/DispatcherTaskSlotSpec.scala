@@ -226,6 +226,12 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
         _ <- IO(TaskLedgerStore.open().completeSync(tidA))
         _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.size == 1))
         sidsAfter <- dispatcherEntries(resources)
+        // the teardown's action order deregisters the registry row BEFORE the flow-map
+        // event append lands (expireTaskTerminalDispatcher), so a file read racing the
+        // size==1 beat can miss the event (observed once as a flake, 2026-09-28) — wait
+        // for the event to land, bounded, then read
+        _ <- waitUntil(20.seconds)(eventLines(ws).map(_.exists(l =>
+          l.contains("\"type\":\"dispatcher-task-terminal\"") && l.contains(s"task=$tidA"))))
         events <- eventLines(ws)
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield

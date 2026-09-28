@@ -23,9 +23,10 @@
 //    adaptation range. This file therefore renders NO link, NO QR image and NO
 //    guessed address FOR THE REMOTE-ACCESS SECTION. `[data-remote-url]` /
 //    `[data-copy-link]` do not exist — that is the intended, frozen state of
-//    that section, not an oversight. (feiscanbind, 2026-09-27: the FEISHU
-//    scan-bind QR sub-dialog below is a different face — it is the approved
-//    plan-card §5 main path and renders the platform verification URL only.)
+//    that section, not an oversight. (feiscanbind, 2026-09-27; social-fix,
+//    2026-09-28: the FEISHU scan-bind QR is a different face — the approved
+//    plan-card §5 main path. It renders the platform verification URL INSIDE
+//    the card: one view layer, no sub-dialog, no manual-fill fallback.)
 //
 // 🔴 HIDE RULING (author, 2026-09-23, Part A): the whole remote-access section
 //    is HIDDEN FROM THE VISIBLE FACE, NOT DELETED — `#social-section-remote`
@@ -49,9 +50,9 @@
 // Switch component: shared js/toggle.js (`nb-toggle`), never a private copy.
 //
 // feishu-panel batch: the scanBind card (feishu) renders TWO faces —
-//   · not-created: the scan QR is the primary entry (auto-opened when the
-//     panel opens on a not-created card, and again after an archive — the
-//     "recreate" leg); the manual form is a collapsed secondary entry.
+//   · not-created: the QR lives IN the card with its status line (auto-begins
+//     when the panel opens on a not-created card, and again after an archive
+//     — the "recreate" leg).
 //   · created: live-app block (contract C1 — which app the running bridge is
 //     actually holding, live fingerprint verdict), chat→session bindings +
 //     default-session selector (contracts C3/C4), archive (contract C5).
@@ -62,6 +63,14 @@
 //     (never an error, never a blank panel). The live-app line has NO fallback
 //     to the stored app_id — that fallback is exactly the green-pill gap
 //     (registered ≠ registered to THIS app) the diagnosis report pinned.
+//
+// social-fix batch (author ruling 2026-09-28, three changes over the landed
+// panel): ① ONE view layer — the QR sub-dialog is retired, the scan block
+// renders inside the card; ② the mechanical probe line never reaches the UI —
+// the same probe face renders as plain-language credential states; ③ the
+// manual-fill form and its collapsed entry are retired — scan-to-create is
+// the ONLY creation path. The probe endpoint, the state machine and the
+// sealed-channel data face are all unchanged (render layer only).
 
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn } from './utils.js';
@@ -110,14 +119,6 @@ let defaultSessionByChannel = {};
 /** Session list for the default-session selector (existing GET /api/sessions).
  *  @type {{available: boolean, items: Array<{id: string, name: string}>}|null} */
 let sessionsCache = null;
-/** Manual-fill expansion per channel id: the form is the SECONDARY entry and
- *  stays collapsed until the user asks for it.
- *  @type {Record<string, boolean>} */
-let manualExpanded = {};
-/** The user closed the scan overlay by hand during this panel session — the
- *  auto-open (not-created face ⇒ QR first) must not fight that choice. Reset
- *  on every panel open. */
-let scanManualChosen = false;
 
 // ── Backend adapter (same token pattern as plugins.js / agentManager.js) ──
 /**
@@ -338,9 +339,6 @@ function cardEl(channelId) {
   );
 }
 
-/** Yes/no reading of one probe bit, translated (avoids a bare `true` in the UI). */
-function bit(v) { return v === true ? t('social.value.yes') : t('social.value.no'); }
-
 /**
  * The panel's readiness state, exposed the standard way: `aria-busy` on the
  * channels section while a backend read/write is in flight. It is a real UI
@@ -386,21 +384,26 @@ function displayStatus(ch) {
 
 // ── Rendering ────────────────────────────────────────────────────────────
 /**
- * The mechanical probe line: exists / modeOk / readable (arch §5, unchanged by
- * the "fill and save directly" reshape — only its trigger moved to "after save").
+ * The human credential status line (social-fix, author ruling 2026-09-28):
+ * the probe FACE still answers the mechanical triples, but the card never
+ * shows internal check names — the reading renders as plain language, two
+ * states (+ empty when nothing was probed yet):
+ *   · any contradiction in the probed credential ⇒ "missing — scan again"
+ *   · otherwise ⇒ "configured · permissions normal".
+ * The triple-contradiction path ([[channelProblem]] ⇒ configInvalid) keeps
+ * its actionable hint with the file path — this line is the non-invalid
+ * reading only.
  * @param {Record<string, {exists?: boolean, modeOk?: boolean, readable?: boolean}>|undefined} probe
- * @returns {string} translated summary, or '' when nothing was probed yet
+ * @returns {string} translated status, or '' when nothing was probed yet
  */
-function probeSummary(probe) {
+function credentialLine(probe) {
   if (!probe) return '';
   const keys = Object.keys(probe);
   if (!keys.length) return '';
   const p = probe[keys[0]];
   if (!p) return '';
-  // 🔴 literal field names are kept for machine readability of the reading itself
-  return t('social.probe.summary', {
-    exists: bit(p.exists), modeOk: bit(p.modeOk), readable: bit(p.readable),
-  });
+  const broken = p.exists === false || p.modeOk === false || p.readable === false;
+  return t(broken ? 'social.credential.missing' : 'social.credential.ok');
 }
 
 /**
@@ -428,7 +431,7 @@ function cardHint(ch, status) {
     });
     return t('social.hint.pattern', { field: bad.map((f) => t(f.i18n)).join(', ') });
   }
-  return probeSummary(probeByChannel[ch.id]);
+  return credentialLine(probeByChannel[ch.id]);
 }
 
 /**
@@ -477,13 +480,13 @@ function plainCardHTML(ch) {
 }
 
 /**
- * The scanBind card (feishu-panel): two faces over one definition entry.
- *   · not-created — the scan action is the primary path, the manual form sits
- *     collapsed behind "改为手填"; the QR sub-dialog auto-opens when the panel
- *     opens on this face ([[maybeAutoScan]]) and again after an archive.
+ * The scanBind card (feishu-panel two faces; social-fix 2026-09-28): scan and
+ * configure share ONE view layer — no sub-dialog, no manual form.
+ *   · not-created — the QR lives IN the card with its status line
+ *     ([[beginInlineScan]] auto-runs on this face); scan-to-create is the
+ *     ONLY creation path.
  *   · created — the live-app block (C1), archive (C5) with its one-line
- *     semantics, the bindings block (C3/C4), then the same collapsed manual
- *     form for editing credentials.
+ *     semantics, and the bindings block (C3/C4).
  * The head keeps icon + name + status pill; the enable switch is folded into
  * archive (enabled=false IS the archive — no separate disabled face exists).
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
@@ -493,21 +496,16 @@ function scanBindCardHTML(ch) {
   const created = faceCreated(ch);
   const status = displayStatus(ch);
   const hint = cardHint(ch, status);
-  const fields = ch.fields.map((f) => fieldHTML(ch, f)).join('');
-  const manualOpen = !!manualExpanded[ch.id];
   const head = `<div class="social-card-head">
         <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
         <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
         <span class="social-status-pill plugins-state-pill" data-status="${status}">${escapeHtml(t(`social.status.${status}`))}</span>
       </div>`;
-  const manualBlock = `
-      <button type="button" class="social-scan-manual" data-manual-toggle="${escapeHtml(ch.id)}" aria-expanded="${manualOpen ? 'true' : 'false'}" aria-controls="social-manual-${escapeHtml(ch.id)}">${escapeHtml(t(manualOpen ? 'social.feishu.manualHide' : 'social.feishu.manualToggle'))}</button>
-      <div class="social-card-manual" id="social-manual-${escapeHtml(ch.id)}" data-manual="${escapeHtml(ch.id)}"${manualOpen ? '' : ' hidden'}>
-        <div class="social-card-fields">${fields}</div>
-        <div class="social-card-actions">
-          <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-primary" data-save="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.save'))}</button>
-          <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-recheck="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.recheck'))}</button>
-        </div>
+  const scanInline = `
+      <div class="social-scan-inline" data-scan-inline="${escapeHtml(ch.id)}">
+        <div class="social-scan-qr" data-scan-qr></div>
+        <div class="social-scan-code" data-scan-code hidden></div>
+        <div class="social-scan-status" data-scan-status role="status" aria-live="polite"></div>
       </div>`;
   const face = created
     ? `${liveBlockHTML(ch)}
@@ -516,13 +514,8 @@ function scanBindCardHTML(ch) {
          <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
        </div>
        <div class="social-archive-hint">${escapeHtml(t('social.feishu.archive.hint'))}</div>
-       ${bindingsHTML(ch)}
-       ${manualBlock}`
-    : `<div class="social-card-actions">
-         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-primary" data-scanbind="${escapeHtml(ch.id)}">${escapeHtml(t(`social.${ch.id}.scan.action`))}</button>
-         <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
-       </div>
-       ${manualBlock}`;
+       ${bindingsHTML(ch)}`
+    : scanInline;
   return `<div class="social-card" data-channel="${escapeHtml(ch.id)}">
       ${head}
       <div class="social-card-desc">${escapeHtml(t(ch.descKey))}</div>
@@ -765,7 +758,7 @@ async function loadAll() {
   await fetchSessions();
   renderAll();
   setBusy(false);
-  maybeAutoScan();
+  maybeBeginScan();
 }
 
 /**
@@ -886,10 +879,9 @@ async function archiveChannel(channelId) {
     for (const f of ch.fields) delete draftValues[`${channelId}.${f.key}`];
     configByChannel = await fetchConfig();
     try { probeByChannel[channelId] = await fetchProbe(channelId); } catch { /* keep */ }
-    manualExpanded[channelId] = false;
     renderAll();
     setSaveState(channelId, t('social.feishu.archive.done'));
-    maybeAutoScan(); // recreate: the archived face auto-begins the QR
+    maybeBeginScan(); // recreate: the archived face auto-begins the QR
   } catch {
     setSaveState(channelId, t('social.action.saveFailed', { code: 'io' }));
   } finally {
@@ -936,91 +928,43 @@ async function saveDefaultSession(channelId, sessionId) {
   }
 }
 
-// ── Manual-fill collapse + auto-scan ─────────────────────────────────────
+// ── Auto-scan (in-card, social-fix) ──────────────────────────────────────
 /**
- * Expand/collapse the manual-fill form (the secondary entry, contract §1.3).
- * @param {string} channelId
- */
-function toggleManual(channelId) {
-  manualExpanded[channelId] = !manualExpanded[channelId];
-  const card = cardEl(channelId);
-  if (!card) return;
-  const open = !!manualExpanded[channelId];
-  const wrap = card.querySelector('[data-manual]');
-  const btn = card.querySelector('[data-manual-toggle]');
-  if (wrap instanceof HTMLElement) wrap.hidden = !open;
-  if (btn instanceof HTMLElement) {
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    btn.textContent = t(open ? 'social.feishu.manualHide' : 'social.feishu.manualToggle');
-  }
-}
-
-/**
- * Auto-open the QR sub-dialog when a visible scanBind card sits on its
+ * Auto-begin the in-card scan when a visible scanBind card sits on its
  * not-created face (QR first on entry; the archive→recreate leg reuses this).
- * Never fights the user: a hand-closed overlay this panel session keeps the
- * auto-open quiet, and a created card or a closed panel never triggers it.
+ * A created card, a closed panel or an already-running session never
+ * triggers it.
  */
-function maybeAutoScan() {
-  if (scanManualChosen) return;
+function maybeBeginScan() {
   const ov = overlay();
   if (!ov || !ov.classList.contains('on')) return;
-  const current = scanOverlay();
-  if (current && !current.hidden) return;
   const ch = visibleChannels().find((c) => !!c.scanBind);
   if (!ch || faceCreated(ch)) return;
-  void openScanOverlay(ch.id);
+  void beginInlineScan(ch.id);
 }
 
-// ── Scan-bind overlay (feiscanbind batch, 2026-09-27) ────────────────────
-// The "scan to create" main path for the feishu card: a glass sub-dialog
-// (same family as the panel shell — no dimming backdrop) with the QR code,
-// the phone confirmation code, one status line and the manual-fill fallback.
-// Exactly ONE poll timer exists ([[scanPollTimer]]); it is cleared on every
-// terminal state and on close, so the overlay can never leave a loop behind.
-let scanOverlayEl = /** @type {HTMLElement|null} */ (null);
+// ── In-card scan block (feiscanbind 2026-09-27; social-fix 2026-09-28) ────
+// The "scan to create" main path for the feishu card renders INSIDE the card
+// (one view layer with the configuration — no sub-dialog, no overlay face,
+// no manual-fill fallback). Exactly ONE poll timer exists ([[scanPollTimer]]);
+// it is cleared on every terminal state and on panel close, so the card can
+// never leave a loop behind.
 let scanPollTimer = /** @type {number|null} */ (null);
 let scanActiveScanId = '';
-/** The channel the overlay was opened for. The overlay is a child of the
- *  modal, NOT of the card, so the manual-fill handover (a button inside the
- *  overlay) cannot find its card by DOM ancestry — it reads this instead. */
-let scanChannelId = '';
 const SCAN_POLL_MS = 2000;
 const SCAN_MAX_CONSECUTIVE_ERRORS = 5;
 
-/** @returns {HTMLElement|null} */
-function scanOverlay() { return document.getElementById('social-scan'); }
-
 /**
- * Build the overlay DOM once (a child of #social-modal, so the panel's focus
- * trap keeps covering it; renderAll only rewrites the card list, never this).
- * @returns {HTMLElement}
+ * One scan node of a card (the scan nodes live INSIDE the card since
+ * social-fix — renderAll may rebuild them between polls, so callers re-query
+ * instead of holding nodes).
+ * @param {string} channelId
+ * @param {string} sel
+ * @returns {HTMLElement|null}
  */
-function buildScanOverlay() {
-  const host = modal();
-  if (!host) throw new Error('social modal missing');
-  const el = document.createElement('div');
-  el.id = 'social-scan';
-  el.className = 'social-scan';
-  el.setAttribute('role', 'dialog');
-  el.setAttribute('aria-modal', 'true');
-  el.setAttribute('aria-labelledby', 'social-scan-title');
-  el.hidden = true;
-  el.innerHTML = `
-      <div class="social-scan-head">
-        <span id="social-scan-title" class="social-scan-title">${escapeHtml(t('social.feishu.scan.title'))}</span>
-        <button type="button" id="social-scan-close" class="panel-btn" data-scan-close title="${escapeHtml(t('social.action.close'))}"><i data-lucide="x"></i></button>
-      </div>
-      <div class="social-scan-body">
-        <div class="social-scan-qr" data-scan-qr></div>
-        <div class="social-scan-code" data-scan-code hidden></div>
-        <div class="social-scan-status" data-scan-status role="status" aria-live="polite"></div>
-        <button type="button" class="social-scan-manual" data-scan-manual>${escapeHtml(t('social.feishu.scan.manual'))}</button>
-      </div>`;
-  host.appendChild(el);
-  createIconsIn(el);
-  scanOverlayEl = el;
-  return el;
+function scanNode(channelId, sel) {
+  const card = cardEl(channelId);
+  return card ? /** @type {HTMLElement|null} */ (card.querySelector(sel)) : null;
 }
 
 /**
@@ -1068,79 +1012,99 @@ function renderQrFallback(container, url) {
   container.replaceChildren(note, link);
 }
 
-/** @param {string} text */
-function setScanStatus(text) {
-  const el = scanOverlay()?.querySelector('[data-scan-status]');
+/** @param {string} channelId @param {string} text */
+function setScanStatus(channelId, text) {
+  const el = scanNode(channelId, '[data-scan-status]');
   if (el) el.textContent = text;
 }
 
-/** @param {string} code empty hides the line */
-function setScanUserCode(code) {
-  const el = scanOverlay()?.querySelector('[data-scan-code]');
+/** @param {string} channelId @param {string} code empty hides the line */
+function setScanUserCode(channelId, code) {
+  const el = scanNode(channelId, '[data-scan-code]');
   if (!el) return;
   el.textContent = t('social.feishu.scan.userCode', { code });
   if (code) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
 }
 
-/** Open the overlay, fire `begin` and start polling. */
-async function openScanOverlay(channelId = 'feishu') {
-  scanChannelId = channelId;
-  const el = scanOverlay() || buildScanOverlay();
-  el.hidden = false;
-  setScanStatus(t('social.feishu.scan.starting'));
-  setScanUserCode('');
-  const qrBox = el.querySelector('[data-scan-qr]');
+/**
+ * Begin a scan-bind session and poll it INTO the card (one view layer — the
+ * status/QR nodes are re-queried from the card on every write, so renderAll
+ * rebuilding the card between polls never detaches a write). Terminal states
+ * clear the session handle; `done` re-reads backend truth, which flips the
+ * SAME card to its created face.
+ * @param {string} channelId
+ * @returns {Promise<void>}
+ */
+async function beginInlineScan(channelId) {
+  const ch = channelById(channelId);
+  const card = cardEl(channelId);
+  if (!ch || !ch.scanBind || !card) return;
+  if (faceCreated(ch)) return;  // the created face has no scan block
+  if (scanActiveScanId) return; // exactly one session at a time
+  setScanStatus(channelId, t('social.feishu.scan.starting'));
+  setScanUserCode(channelId, '');
+  const qrBox = scanNode(channelId, '[data-scan-qr]');
   if (qrBox) qrBox.replaceChildren();
-  const first = el.querySelector('button');
-  if (first instanceof HTMLElement) first.focus();
   let scanId = '';
   try {
-    const resp = await api('/api/social/channels/feishu/scan-bind/begin', { method: 'POST' });
+    const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}/scan-bind/begin`, { method: 'POST' });
     if (!resp.ok) throw new Error(`begin ${resp.status}`);
     const data = await resp.json();
     scanId = typeof data.scanId === 'string' ? data.scanId : '';
   } catch {
-    setScanStatus(t('social.feishu.scan.failed', { reason: 'io' }));
+    setScanStatus(channelId, t('social.feishu.scan.failed', { reason: 'io' }));
     return;
   }
-  if (!scanId || el.hidden) return; // closed while the request was in flight
+  if (!scanId || scanActiveScanId) return; // a session started while in flight
   scanActiveScanId = scanId;
   let lastQrUrl = '';
   let consecutiveErrors = 0;
-  /** One poll tick: reads the status face and drives the whole sub-dialog. */
+  /** The session is only live while the panel is open, the card exists and
+   *  still shows its not-created face. */
+  const sessionLive = () => scanActiveScanId === scanId
+    && !!cardEl(channelId)
+    && !faceCreated(ch)
+    && !!(overlay() && overlay().classList.contains('on'));
+  /** One poll tick: reads the status face and drives the in-card block. */
   const tick = async () => {
-    if (scanActiveScanId !== scanId || el.hidden) { stopScanPoll(); return; }
+    if (!sessionLive()) { stopScanPoll(); return; }
     /** @type {Record<string, any>|null} */
     let s = null;
     try {
-      const resp = await api(`/api/social/channels/feishu/scan-bind/status?scanId=${encodeURIComponent(scanId)}`);
+      const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}/scan-bind/status?scanId=${encodeURIComponent(scanId)}`);
       if (resp.ok) { s = await resp.json(); consecutiveErrors = 0; }
     } catch { /* transient — counted below */ }
-    if (scanActiveScanId !== scanId || el.hidden) { stopScanPoll(); return; }
+    if (!sessionLive()) { stopScanPoll(); return; }
     if (!s) {
       consecutiveErrors++;
       if (consecutiveErrors >= SCAN_MAX_CONSECUTIVE_ERRORS) {
         stopScanPoll();
-        setScanStatus(t('social.feishu.scan.failed', { reason: 'io' }));
+        scanActiveScanId = '';
+        setScanStatus(channelId, t('social.feishu.scan.failed', { reason: 'io' }));
       }
       return;
     }
     const state = typeof s.state === 'string' ? s.state : '';
     if (state === 'qr_ready' || state === 'polling') {
       const url = typeof s.qrUrl === 'string' ? s.qrUrl : '';
-      if (url && url !== lastQrUrl && qrBox) { lastQrUrl = url; renderQr(/** @type {HTMLElement} */ (qrBox), url); }
-      setScanUserCode(typeof s.userCode === 'string' ? s.userCode : '');
-      setScanStatus(t(state === 'polling' ? 'social.feishu.scan.confirmed' : 'social.feishu.scan.waiting'));
+      if (url && url !== lastQrUrl) {
+        const box = scanNode(channelId, '[data-scan-qr]');
+        if (box) { lastQrUrl = url; renderQr(box, url); }
+      }
+      setScanUserCode(channelId, typeof s.userCode === 'string' ? s.userCode : '');
+      setScanStatus(channelId, t(state === 'polling' ? 'social.feishu.scan.confirmed' : 'social.feishu.scan.waiting'));
     } else if (state === 'done') {
       stopScanPoll();
-      setScanStatus(t('social.feishu.scan.done'));
+      scanActiveScanId = '';
+      setScanStatus(channelId, t('social.feishu.scan.done'));
       // The card behind flips by backend truth: re-read config + probe so the
-      // pill/probe line/adapterRegistered come back current (plan card §5.7).
+      // pill/credential line/adapterRegistered come back current (plan card §5.7).
       setBusy(true);
       try { await loadAll(); } finally { setBusy(false); }
     } else if (state === 'failed') {
       stopScanPoll();
-      setScanStatus(t('social.feishu.scan.failed', { reason: typeof s.error === 'string' ? s.error : 'io' }));
+      scanActiveScanId = '';
+      setScanStatus(channelId, t('social.feishu.scan.failed', { reason: typeof s.error === 'string' ? s.error : 'io' }));
     }
   };
   stopScanPoll();
@@ -1153,35 +1117,11 @@ function stopScanPoll() {
   if (scanPollTimer !== null) { clearInterval(scanPollTimer); scanPollTimer = null; }
 }
 
-/** Hide the overlay and tear the poll down (D-2②: the closer owns the exit).
- *  A hand-close also quiets the panel-session auto-open ([[maybeAutoScan]]):
- *  the user just said "not now" and the panel must not reopen the QR behind
- *  their back. */
-function closeScanOverlay() {
-  scanManualChosen = true;
-  scanActiveScanId = '';
-  stopScanPoll();
-  const el = scanOverlay();
-  if (el) el.hidden = true;
-  // Focus back to the entry button (the card may have been re-rendered by a
-  // `done` refresh — query fresh instead of holding a stale node).
-  const btn = /** @type {HTMLElement|null} */ (
-    document.querySelector('.social-card[data-channel="feishu"] [data-scanbind]'));
-  if (btn) btn.focus();
-}
-
-/** Click path for the card button. @param {string} channelId */
-function onScanBind(channelId) {
-  if (channelId !== 'feishu') return; // single-channel face today (definition-layer flag gates the button)
-  void openScanOverlay(channelId);
-}
-
 // ── Open / close / focus ─────────────────────────────────────────────────
 export function openSocialPanel() {
   const ov = overlay();
   if (!ov) return;
   lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (document.activeElement);
-  scanManualChosen = false; // each panel open gets a fresh auto-scan decision
   ov.classList.add('on');
   renderAll();
   setBusy(true); // set BEFORE the load so an observer can never read the previous round's value
@@ -1193,7 +1133,9 @@ export function openSocialPanel() {
 export function closeSocialPanel() {
   const ov = overlay();
   if (!ov) return;
-  closeScanOverlay(); // the sub-dialog never outlives the panel (poll torn down)
+  // The in-card scan poll never outlives the panel (the closer owns the exit).
+  stopScanPoll();
+  scanActiveScanId = '';
   ov.classList.remove('on');
   // Esc/close always returns focus to the entry button (W13).
   const btn = document.getElementById('social-btn');
@@ -1213,11 +1155,6 @@ function onKeydown(ev) {
   if (!ov || !ov.classList.contains('on')) return;
   if (ev.key === 'Escape') {
     ev.preventDefault();
-    // Two stages (same contract as the message search dialog): with the scan
-    // overlay open, Esc closes ONLY the overlay; the panel closes from the
-    // panel level.
-    const scan = scanOverlay();
-    if (scan && !scan.hidden) { closeScanOverlay(); return; }
     closeSocialPanel();
     return;
   }
@@ -1245,22 +1182,8 @@ function onDocumentClick(ev) {
   if (!target) return;
   if (target.closest('#social-btn')) { openSocialPanel(); return; }
   if (target.closest('#social-modal-close')) { closeSocialPanel(); return; }
-  const scan = target.closest('[data-scanbind]');
-  if (scan instanceof HTMLElement && scan.dataset.scanbind) { onScanBind(scan.dataset.scanbind); return; }
-  if (target.closest('[data-scan-close]')) { closeScanOverlay(); return; }
-  // "改为手填" (scan overlay fallback): the card form behind the overlay IS
-  // the manual path — closing the overlay hands over AND opens the form so
-  // the user lands on usable fields, not on another collapsed toggle.
-  if (target.closest('[data-scan-manual]')) {
-    const id = scanChannelId || 'feishu';
-    closeScanOverlay();
-    toggleManual(id);
-    return;
-  }
   const arch = target.closest('[data-archive]');
   if (arch instanceof HTMLElement && arch.dataset.archive) { void archiveChannel(arch.dataset.archive); return; }
-  const mt = target.closest('[data-manual-toggle]');
-  if (mt instanceof HTMLElement && mt.dataset.manualToggle) { toggleManual(mt.dataset.manualToggle); return; }
   const save = target.closest('[data-save]');
   if (save instanceof HTMLElement && save.dataset.save) { saveChannel(save.dataset.save); return; }
   const re = target.closest('[data-recheck]');

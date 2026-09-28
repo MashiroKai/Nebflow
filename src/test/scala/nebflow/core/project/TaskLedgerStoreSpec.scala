@@ -109,6 +109,90 @@ class TaskLedgerStoreSpec extends FunSuite:
     assert(again2.exists(_.contains("no-op")), again2)
   }
 
+  // ------------------------------------------------------------------
+  // Mail task-continuation batch (2026-09-28): the `reviveSync` primitive
+  // (terminal → open; the ledger backend of the Mail revive path)
+  // ------------------------------------------------------------------
+
+  test("revive: completed → open; completedAt cleared; one revive history event + the author's verbatim note line (from=engine)") {
+    reset()
+    val s = store
+    s.createSync("revive-completed")
+    val id = s.entriesSync().head.id
+    assert(s.completeSync(id).isRight)
+    assert(statusOf(id) == TaskLedgerStore.Status.Completed)
+
+    val r = s.reviveSync(id)
+    assert(r.isRight, r)
+    assert(r.exists(_.contains("completed→open")), r)
+    assert(statusOf(id) == TaskLedgerStore.Status.Open, "a revived entry must be open again")
+    val entry = s.findSync(id).get
+    assertEquals(entry.completedAt, None, "completedAt records a reached terminal state — revive must clear it")
+    assertEquals(entry.closedAt, None)
+
+    val history = TaskLedgerHistory.open().readFor(id, 1000).events
+    assert(history.exists(e => e.kind == TaskLedgerHistory.Kinds.Revive && e.detail.exists(_.contains("completed→open"))),
+      s"one kind=revive change-history event must exist (audit face, never silent), got: ${history.map(_.kind).mkString(",")}")
+    val notes = history.filter(_.kind == TaskLedgerHistory.Kinds.Note)
+    assert(notes.count(_.text.exists(_.contains(TaskLedgerStore.ReviveNoteText))) == 1,
+      s"exactly one note line with the author's verbatim body must exist, got: ${notes.map(_.text).mkString(" | ")}")
+    assert(notes.exists(e => e.text.contains(TaskLedgerStore.ReviveNoteText) && e.from.contains(TaskLedgerHistory.Origins.Engine)),
+      "the revive note line is an engine-side system event (from=engine)")
+  }
+
+  test("revive: closed → open (a voided task the author re-orders is re-opened by the same primitive); closedAt cleared") {
+    reset()
+    val s = store
+    s.createSync("revive-closed")
+    val id = s.entriesSync().head.id
+    assert(s.closeSync(id).isRight)
+    assert(statusOf(id) == TaskLedgerStore.Status.Closed)
+
+    val r = s.reviveSync(id)
+    assert(r.isRight, r)
+    assert(r.exists(_.contains("closed→open")), r)
+    assert(statusOf(id) == TaskLedgerStore.Status.Open)
+    assertEquals(s.findSync(id).get.closedAt, None, "closedAt must be cleared by the revive")
+    val history = TaskLedgerHistory.open().readFor(id, 1000).events
+    assert(history.exists(e => e.kind == TaskLedgerHistory.Kinds.Revive && e.detail.exists(_.contains("closed→open"))),
+      s"one kind=revive event naming the closed→open edge must exist, got: ${history.map(_.kind).mkString(",")}")
+  }
+
+  test("revive: unknown id ⇒ TASK_NOT_FOUND (the non-continuable face — a pruned entry's object is gone — is unchanged)") {
+    reset()
+    val r = store.reviveSync("424242")
+    assert(r.isLeft, r)
+    assert(r.left.exists(_.message.contains(TaskLedgerStore.Codes.NotFound)), r)
+  }
+
+  test("revive: already-open ⇒ no-op success, no revive event, no revive note (idempotency stays on the store floor)") {
+    reset()
+    val s = store
+    s.createSync("revive-open-noop")
+    val id = s.entriesSync().head.id
+    val r = s.reviveSync(id)
+    assert(r.isRight, r)
+    assert(r.exists(_.contains("no-op")), r)
+    assert(statusOf(id) == TaskLedgerStore.Status.Open)
+    val history = TaskLedgerHistory.open().readFor(id, 1000).events
+    assert(!history.exists(_.kind == TaskLedgerHistory.Kinds.Revive), "no revive event on the no-op path")
+    assert(!history.exists(_.text.exists(_.contains(TaskLedgerStore.ReviveNoteText))), "no revive note on the no-op path")
+  }
+
+  test("revive: a revived entry is outside the terminal-prune predicate (the next create's lazy cleanup keeps it)") {
+    reset()
+    val s = store
+    s.createSync("revive-survives-prune")
+    val id = s.entriesSync().head.id
+    assert(s.completeSync(id).isRight)
+    assert(s.reviveSync(id).isRight)
+    // the lazy prune runs on the next create; an `open` entry (revivedAt cleared the
+    // terminal timestamps) must survive it
+    assert(s.createSync("prune trigger").isRight)
+    assert(statusOf(id) == TaskLedgerStore.Status.Open,
+      "a revived (open) entry must never be eaten by the 30-day terminal cleanup")
+  }
+
   test("three-state: `update` cannot change the state (no status parameter exists)") {
     reset()
     val s = store

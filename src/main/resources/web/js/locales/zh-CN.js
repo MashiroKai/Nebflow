@@ -1791,9 +1791,12 @@ export default {
   'social.secret.placeholder': '粘贴凭据（填入后不回显）',
   'social.secret.stored': '已写入 · 不回显',
   'social.secret.empty': '未写入',
-  'social.probe.summary': '凭据探针：exists={exists} · modeOk={modeOk} · readable={readable}',
-  'social.value.yes': '是',
-  'social.value.no': '否',
+  // social-fix (author ruling 2026-09-28): the mechanical probe line is
+  // retired from the UI — the same probe face renders as two plain-language
+  // states now (internal triples unchanged: data source untouched, render
+  // layer only).
+  'social.credential.ok': '凭据已配置 · 权限正常',
+  'social.credential.missing': '凭据缺失，请重新扫码',
   'social.hint.missingRef': '引用文件不存在：{path}',
   'social.hint.modeBad': '权限不正确（应为 rw-------）：{path}',
   'social.hint.pattern': '字段格式不符：{field}',
@@ -1809,7 +1812,8 @@ export default {
   'social.wechat.field.token': '消息校验 Token',
   'social.wechat.field.aesKey': '消息加解密密钥',
   'social.feishu.name': '飞书',
-  'social.feishu.desc': '绑定会话后，飞书消息进该会话并原路回发。租户内成员默认都可触达；如需限制，填「成员白名单」（open_id，逗号分隔，留空不限）。',
+  // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
+  'social.feishu.desc': '绑定会话后，飞书消息进该会话并原路回发。租户内成员默认都可触达。',
   'social.feishu.field.appId': '应用 ID',
   'social.feishu.field.appSecret': '应用密钥',
   'social.feishu.field.verificationToken': '事件订阅 Token',
@@ -1818,16 +1822,15 @@ export default {
   'social.feishu.field.region': '区域',
   'social.feishu.region.feishu': '飞书（中国）',
   'social.feishu.region.lark': 'Lark（国际）',
-  // feiscanbind（2026-09-27）：扫码创建主路径（文案已收 §16 出件）
-  'social.feishu.scan.action': '扫码创建',
-  'social.feishu.scan.title': '扫码创建应用',
+  // feiscanbind (2026-09-27): scan-to-create copy (§16-collected).
+  // social-fix (2026-09-28): the QR block lives INSIDE the card — no
+  // sub-dialog title, no scan action button, no manual fallback.
   'social.feishu.scan.starting': '正在获取二维码…',
   'social.feishu.scan.waiting': '请用飞书 App 扫码，并在手机上确认',
   'social.feishu.scan.confirmed': '手机已确认，正在创建应用…',
   'social.feishu.scan.done': '应用已创建并连接',
   'social.feishu.scan.failed': '扫码绑定失败：{reason}',
   'social.feishu.scan.userCode': '确认码：{code}',
-  'social.feishu.scan.manual': '改为手填',
   'social.feishu.scan.qrFallback': '若二维码未显示，请在手机上打开此链接：',
   'social.feishu.live.title': '连接的应用',
   'social.feishu.live.appUnknown': '未知 — 当前后端未上报实际连接的应用',
@@ -1842,8 +1845,6 @@ export default {
   'social.feishu.archive.doing': '封存中…',
   'social.feishu.archive.done': '已封存 — 凭据保留',
   'social.feishu.archive.hint': '停用桥接，卡面恢复未创建态。凭据保留，不做任何删除。',
-  'social.feishu.manualToggle': '改为手填',
-  'social.feishu.manualHide': '收起手填表单',
   'social.feishu.bindings.title': '会话绑定',
   'social.feishu.bindings.empty': '暂无绑定 — chat 的第一条消息会自动绑定到这里。',
   'social.feishu.bindings.unavailable': '当前后端暂不提供绑定数据。',

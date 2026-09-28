@@ -229,6 +229,7 @@ object TaskLedgerHistory:
     val Update     = "update"
     val Complete   = "complete"
     val Close      = "close"
+    val Revive     = "revive"     // terminal -> open (Mail task-continuation batch, 2026-09-28)
     val Prune      = "prune"
     val Quarantine = "quarantine"
     val Rotate     = "rotate"

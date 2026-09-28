@@ -520,6 +520,39 @@ object Defaults:
   /** Preview size in characters for persisted tool results. */
   val ToolResultPreviewSize: Int = 2048
 
+  // ---- Session UI cache bounds (gateway SessionStore, chain-uicache-lru 2026-09-25) ----
+
+  /**
+   * Max number of sessions whose UI messages (`<id>.ui.json` render history)
+   * stay cached in memory in `nebflow.core.SessionStore` (W1 re-anchor: was
+   * `nebflow.gateway.SessionStore`; the class moved with the PR48 refactor family). Once an insert
+   * pushes the cache past this count (or past `UiCacheMaxBytes`), the
+   * least-recently-used entries are evicted — in memory only: the disk files
+   * are untouched and are re-read on demand.
+   *
+   * Why 32: a cached entry runs ~10-15MB for a long session (the per-session
+   * replay file is already trimmed to `SessionStore.MaxStoredUiMessages`), so
+   * 32 entries is roughly 384-480MB before the byte gate below clamps the
+   * total — enough to keep the active session plus recently viewed sessions
+   * hot, while the cache no longer grows without bound over multi-day uptime
+   * (two runtime OOMs traced to this cache; rescue report residual risk #1).
+   */
+  val UiCacheMaxEntries: Int = 32
+
+  /**
+   * Byte budget for the SessionStore UI cache (see `UiCacheMaxEntries`). Each
+   * entry is charged a bounded estimate of its in-memory residency (2 bytes
+   * per char for UTF-16 strings plus fixed per-message overhead — see
+   * `SessionStore.estimateUiCacheBytes`); entries are evicted in LRU order
+   * until the estimated total is back under this cap.
+   *
+   * Why 256MB: pins the cache's heap footprint at a level comparable to the
+   * rest of the gateway's steady-state residency, so fat card-heavy entries
+   * (which the per-session trim does not shrink — card content is never
+   * truncated) cannot accumulate into a runtime OOM.
+   */
+  val UiCacheMaxBytes: Long = 256L * 1024 * 1024
+
   // ---- Mail queue delivery dedup (P0 投递层指纹去重) ----
 
   /**
