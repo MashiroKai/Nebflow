@@ -24,6 +24,9 @@ import scala.concurrent.duration.*
  * - T12 解析单点：热面别名逐跳 + 冷档下沉兜底（旧号永久可达）
  * - T13 **轮间链式红验（同拍）**：dissolve + compact 同拍 ⇒ 拍内链式成立（verify=Right）
  * - T14 **轮间链式红验（跨拍）**：两拍各出一轮 compact、其间仅有出生 ⇒ verify=Right
+ * - T15 **open-time cold-archive audit budget**: an over-budget archive skips the
+ *   cold read at store open (bounded startup memory); resolveDeep stays a lazy
+ *   fallback with unchanged semantics; the explicit verify full audit is intact
  *
  * **红验语义**（逐条钉死「把判据改坏 ⇒ 本测试必红」的变异）：
  * 每处 `// 变异:` 注释点名该断言对应哪一处判据；变异 = 把该判据改成永远不成立
@@ -534,6 +537,44 @@ class ChainLedgerSpec extends CatsEffectSuite:
         "跨拍读数差（其间出生 10 条 ⇒ entries 5000→5010）—— 这是**合法**变化，禁当链断"
       )
       assertEquals(check2, Right(()): Either[String, Unit], "跨拍读数差不得判为链断（否则该假警告因轮 append-only 而永不消解）")
+    end for
+  }
+
+  // ── T15 open-time cold-archive audit budget ────────────────
+  // The cold archive is append-only and unbounded; the mount-time self-check
+  // must not read it in full at every store open (startup memory stays
+  // bounded). `verify` remains the explicit full-audit entrypoint, and
+  // `resolveDeep` keeps old numbers reachable via a lazy per-file scan.
+
+  test("T15 open-time cold audit is budget-bounded: over-budget open skips the cold read; resolveDeep stays lazy-correct; explicit verify still audits") {
+    val dir = os.temp.dir(prefix = "nb-chain-ledger-budget-", deleteOnExit = false)
+    val path = dir / ChainLedger.FileName
+    val arch = dir / ChainLedger.ArchiveDirName
+    for
+      // Seed one dissolve round into the cold archive via the normal reconcile path.
+      seeded <- ChainLedgerStore.open("ledger-budget", path, arch)
+      _ <- seeded.reconcile(List(proto("chain-a", List("a"))), Set("a"), Map.empty, Set.empty, t0)
+      obs <- seeded.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 1000)
+      _ = assertEquals(obs.dissolved.map(_.chainId), List("chain-a"))
+      coldFiles <- IO.blocking(if os.exists(arch) then os.list(arch).toList else Nil)
+      _ = assert(coldFiles.nonEmpty, "dissolve round must be on disk")
+
+      // Over-budget open (budget = 1 byte): the mount-time self-check skips the
+      // cold read; the store still opens, and old numbers stay reachable.
+      skipped <- ChainLedgerStore.open("ledger-budget", path, arch, coldReadBudgetBytes = 1L)
+      hotAfterSkip <- skipped.snapshot
+      resolved <- skipped.resolveDeep("chain-a")
+      missing <- skipped.resolveDeep("chain-zzz")
+
+      // Under-budget open (default): the audit path still runs, and the explicit
+      // full audit over the archive stays available and clean.
+      audited <- ChainLedgerStore.open("ledger-budget", path, arch)
+      check <- audited.verify
+    yield
+      assertEquals(hotAfterSkip.entries.keySet, Set.empty[String], "hot state loads normally (row retired to cold)")
+      assertEquals(resolved, Some("chain-a"), "old number reachable via the lazy cold scan")
+      assertEquals(missing, None, "unresolvable ids stay unresolvable (no guessing)")
+      assertEquals(check, Right(()): Either[String, Unit], "explicit verify still audits the full archive")
     end for
   }
 end ChainLedgerSpec
