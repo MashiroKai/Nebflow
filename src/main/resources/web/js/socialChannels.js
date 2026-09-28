@@ -44,11 +44,20 @@
 //   machine) = the Scaladoc header of `nebflow.social.FeishuScanBind` + its
 //   `FeishuScanBindSpec`; the card-level regression note: the sealed channels
 //   (wechat / telegram, `hidden: true`) never render a card at all, hence
-//   never render the scan button either — no per-channel opt-out is needed,
+//   never render a scan face either — no per-channel opt-out is needed,
 //   and [[visibleChannels]] stays the single gate. `verification_token` moves
 //   to optional here (the long-connection path never consumes it — backend
 //   `SocialChannels` FieldSpec remains the enforcement point; this layer is
 //   its mirror).
+//
+// 🔴 PHASE 5 (social-fix batch, author ruling 2026-09-28) — RENDER FACE ONLY,
+//   data untouched. The manual-fill form and its collapsed entry are retired
+//   (scan-to-create is the ONLY creation path), and the QR lives inside the
+//   card (one view layer, no sub-dialog). This file keeps every data shape
+//   exactly as PHASE 3/4 left it: the feishu `fields` array stays the
+//   definition mirror of the backend schema — the status/probe composition
+//   and the hint naming still read it; no form is rendered from it any more.
+//   The sealed channels and their locale keys stay in place (hide ≠ delete).
 
 /**
  * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'|'failed'} SocialStatus

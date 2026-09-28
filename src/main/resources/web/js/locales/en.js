@@ -1840,9 +1840,12 @@ export default {
   'social.secret.placeholder': 'Paste the credential (never echoed back)',
   'social.secret.stored': 'Written · not echoed',
   'social.secret.empty': 'Not written',
-  'social.probe.summary': 'Credential probe: exists={exists} · modeOk={modeOk} · readable={readable}',
-  'social.value.yes': 'yes',
-  'social.value.no': 'no',
+  // social-fix (author ruling 2026-09-28): the mechanical probe line is
+  // retired from the UI — the same probe face renders as two plain-language
+  // states now (internal triples unchanged: data source untouched, render
+  // layer only).
+  'social.credential.ok': 'Credentials configured · permissions normal',
+  'social.credential.missing': 'Credential missing — scan to create again',
   'social.hint.missingRef': 'Referenced file does not exist: {path}',
   'social.hint.modeBad': 'Wrong permissions (expected rw-------): {path}',
   'social.hint.pattern': 'Field format mismatch: {field}',
@@ -1858,7 +1861,8 @@ export default {
   'social.wechat.field.token': 'Verification token',
   'social.wechat.field.aesKey': 'Encoding AES key',
   'social.feishu.name': 'Feishu',
-  'social.feishu.desc': 'Once a session is bound, Feishu messages enter it and replies go back the same way. Every tenant member can reach the gateway by default; to restrict, fill the member allowlist (open_id, comma-separated, empty = unrestricted).',
+  // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
+  'social.feishu.desc': 'Once a session is bound, Feishu messages enter it and replies go back the same way. Every tenant member can reach the gateway by default.',
   'social.feishu.field.appId': 'App ID',
   'social.feishu.field.appSecret': 'App secret',
   'social.feishu.field.verificationToken': 'Verification token',
@@ -1867,16 +1871,15 @@ export default {
   'social.feishu.field.region': 'Region',
   'social.feishu.region.feishu': 'Feishu (China)',
   'social.feishu.region.lark': 'Lark (international)',
-  // feiscanbind (2026-09-27): the scan-to-create main path (§16-collected copy)
-  'social.feishu.scan.action': 'Scan to create',
-  'social.feishu.scan.title': 'Create the app by scanning',
+  // feiscanbind (2026-09-27): scan-to-create copy (§16-collected).
+  // social-fix (2026-09-28): the QR block lives INSIDE the card — no
+  // sub-dialog title, no scan action button, no manual fallback.
   'social.feishu.scan.starting': 'Requesting a QR code…',
   'social.feishu.scan.waiting': 'Scan with the Feishu app, then confirm on your phone',
   'social.feishu.scan.confirmed': 'Confirmed on the phone — creating the app…',
   'social.feishu.scan.done': 'App created and connected',
   'social.feishu.scan.failed': 'Scan-bind failed: {reason}',
   'social.feishu.scan.userCode': 'Confirmation code: {code}',
-  'social.feishu.scan.manual': 'Fill in manually instead',
   'social.feishu.scan.qrFallback': 'If the code does not display, open this link on your phone:',
   'social.feishu.live.title': 'Connected app',
   'social.feishu.live.appUnknown': 'Unknown — this backend does not report the live app',
@@ -1891,8 +1894,6 @@ export default {
   'social.feishu.archive.doing': 'Archiving…',
   'social.feishu.archive.done': 'Archived — credentials kept',
   'social.feishu.archive.hint': 'Stops the bridge and returns the card to the not-created state. Credentials are kept — nothing is deleted.',
-  'social.feishu.manualToggle': 'Fill in manually',
-  'social.feishu.manualHide': 'Hide manual form',
   'social.feishu.bindings.title': 'Chat bindings',
   'social.feishu.bindings.empty': 'No chats bound yet — the first message from a chat will be bound here.',
   'social.feishu.bindings.unavailable': 'Binding data is not available on this backend.',
