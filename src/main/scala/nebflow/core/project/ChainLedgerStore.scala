@@ -45,7 +45,9 @@ class ChainLedgerStore private (
   private val path: os.Path,
   private val archiveDir: os.Path,
   private val state: Ref[IO, ChainLedger.State],
-  private val logger: NebflowLogger
+  private val logger: NebflowLogger,
+  /** Cold-archive byte budget for the open-time self-check (tests shrink it; see selfCheck). */
+  private[project] val coldReadBudgetBytes: Long = 32L * 1024 * 1024
 ):
 
   import ChainLedger.*
@@ -303,11 +305,29 @@ class ChainLedgerStore private (
       ChainLedger.resolve(st, id) match
         case some @ Some(_) => IO.pure(some)
         case None =>
-          readRounds.map { files =>
-            files.sortBy(_.round).reverse.foldLeft(Option.empty[String]) { (acc, f) =>
-              acc
-                .orElse(f.entries.find(_.chainId == id).map(_.chainId))
-                .orElse(f.aliases.find(_.alias == id).map(_.canonical))
+          // Same result as reading every round up front (newest round wins), but
+          // files are parsed one at a time so memory stays bounded by a single
+          // round file regardless of archive size.
+          IO.blocking {
+            if !os.exists(archiveDir) then Nil
+            else os.list(archiveDir).filter(_.last.endsWith(".json")).toList
+          }.flatMap { files =>
+            files.foldLeft(IO.pure(List.empty[(Int, Option[String])])) { (acc, f) =>
+              acc.flatMap { out =>
+                IO.blocking {
+                  jsonParse(os.read(f)).flatMap(_.as[RoundFile]) match
+                    case Right(r) =>
+                      val hit =
+                        r.entries.find(_.chainId == id).map(_.chainId)
+                          .orElse(r.aliases.find(_.alias == id).map(_.canonical))
+                      (r.round, hit) :: out
+                    case Left(e) =>
+                      logger.warnSync(s"chain-ledger[$project] cold file corrupt: ${f.last}: $e — skipped")
+                      out
+                }
+              }
+            }.map { out =>
+              out.sortBy(_._1).reverse.collectFirst { case (_, Some(canonical)) => canonical }
             }
           }
     }
@@ -458,6 +478,48 @@ class ChainLedgerStore private (
 
   // ── 自检（启动期 / verify 位）────────────────────────
 
+  /**
+   * Cold-archive byte size (metadata only — file names and sizes, zero content reads).
+   */
+  private def coldArchiveBytes: Long =
+    if !os.exists(archiveDir) then 0L
+    else
+      os.list(archiveDir)
+        .filter(_.last.endsWith(".json"))
+        .foldLeft(0L)((acc, f) => acc + os.size(f))
+
+  /**
+   * Mount-time self-check gate. The cold archive is append-only, so its size is
+   * unbounded; reading it in full at every store open makes startup memory
+   * unbounded (observed: ~600MB of archive JSON across the mounted projects
+   * parsed into millions of ledger entries, OOM-killing the JVM during
+   * startupMount). Over-budget archives skip the cold-file audit at open time —
+   * the hot state is still loaded and [[verify]] remains the explicit
+   * full-audit entrypoint.
+   */
+  private def selfCheck(tag: String): IO[Unit] =
+    IO.blocking(coldArchiveBytes).flatMap { coldBytes =>
+      if coldBytes > coldReadBudgetBytes then
+        IO(
+          logger.infoSync(
+            s"chain-ledger[$project] self-check ($tag): cold archive $coldBytes bytes exceeds the " +
+              s"$coldReadBudgetBytes-byte open-time read budget — skipping the cold-file audit " +
+              s"(hot state loaded; run verify for the full conservation audit)"
+          )
+        )
+      else
+        verify.flatMap {
+          case Right(()) => IO.unit
+          case Left(diag) =>
+            IO(
+              logger.warnSync(
+                s"chain-ledger[$project] self-check FAILED ($tag): $diag — 台账不自洽（只报不阻；" +
+                  s"排查面：${path} + ${archiveDir}）"
+              )
+            )
+        }
+    }
+
   /** 台账全量自检：结构 + 每轮守恒 + 轮间链式 + 压缩镜像（判据全在 [[ChainLedger]]）。 */
   def verify: IO[Either[String, Unit]] =
     for
@@ -479,19 +541,6 @@ class ChainLedgerStore private (
       .filter(_._2 == RoundCompact)
       .keySet
 
-  /** 启动期自检（best-effort：不过只 WARN，**绝不**因台账不自洽阻断项目挂载）。 */
-  private def selfCheck(tag: String): IO[Unit] =
-    verify.flatMap {
-      case Right(()) => IO.unit
-      case Left(diag) =>
-        IO(
-          logger.warnSync(
-            s"chain-ledger[$project] self-check FAILED ($tag): $diag — 台账不自洽（只报不阻；" +
-              s"排查面：${path} + ${archiveDir}）"
-          )
-        )
-    }
-
 end ChainLedgerStore
 
 object ChainLedgerStore:
@@ -502,7 +551,12 @@ object ChainLedgerStore:
    * **启动期载入**（与 `flow-map.json` 同生命周期）：文件缺失 ⇒ 空账；损坏 ⇒ WARN + 空账
    * 起步（台账是派生面 + 别名表，重建只丢历史别名，不丢图事实 ⇒ 不阻启动，但绝不静默）。
    */
-  def open(project: String, ledgerPath: os.Path, archivePath: os.Path): IO[ChainLedgerStore] =
+  def open(
+    project: String,
+    ledgerPath: os.Path,
+    archivePath: os.Path,
+    coldReadBudgetBytes: Long = 32L * 1024 * 1024
+  ): IO[ChainLedgerStore] =
     for
       loaded <- IO.blocking {
         if !os.exists(ledgerPath) then ChainLedger.State(project = project)
@@ -515,7 +569,14 @@ object ChainLedgerStore:
               )
               ChainLedger.State(project = project)
       }
-      store = new ChainLedgerStore(project, ledgerPath, archivePath, Ref.unsafe[IO, ChainLedger.State](loaded), logger)
+      store = new ChainLedgerStore(
+        project,
+        ledgerPath,
+        archivePath,
+        Ref.unsafe[IO, ChainLedger.State](loaded),
+        logger,
+        coldReadBudgetBytes
+      )
       _ <- store.selfCheck("open")
     yield store
 end ChainLedgerStore
