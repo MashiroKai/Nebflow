@@ -146,6 +146,89 @@ class NodeEngine(
     with NodeStarter:
   private[project] val logger = NebflowLogger.forName("nebflow.node.engine")
 
+  /** Uplink fail-closed effective value (re-read on every check; there is no online flip
+    * route ⇒ changing the prop in production requires a host restart). */
+  private def uplinkFailClosedEnabled: Boolean =
+    taskLedgerUplinkFailClosed.getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkFailClosed)
+
+  /** In-process count of uplink refusals (used **only** for the "first N loud alerts"
+    * window; the persistent criterion face is the event file, which does not depend on this
+    * counter). */
+  private val uplinkRefusals: java.util.concurrent.atomic.AtomicLong =
+    new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /** 🔴 **Uplink attribution gate (the common precondition of U1–U7; ruling T's single
+    * mechanism point)**.
+    *
+    * Semantics: when a node's **attribution cannot be resolved** (no `taskId` fingerprint),
+    * that node's uplink notifications are **all refused** (Q2ⓐ strict fail-closed, no grace
+    * period, no exemption). Returns `true` = **allowed**, `false` = already refused.
+    *
+    * 🔴 **Double trace + the three text elements (criteria 10.4.4/10.4.5 · ruling T ⓑ)**:
+    *   ① **event face** = one [[FlowMapEventLog.UplinkRefusedType]] (`grep uplink-refused`);
+    *   ② **log face** = one WARN (plus an extra ALERT inside the window, prefix
+    *      `[UPLINK-REFUSED]`);
+    *   ③ that same text carries the **node id** ∧ the **refusal reason**
+    *      (`no-attribution`) ∧ the **way out** (`register-attribution` / `node_report` /
+    *      `Flow Map` / `manual`).
+    * **Silence is forbidden, and a log line alone is forbidden** — criterion 10.4.5 states
+    * plainly "log only, no event face = red".
+    *
+    * 🔴 **One refusal ⇒ exactly one event** (criteria 10.4.1/10.4.2): **no same-key window
+    * suppression, no merging** ("two in a row ⇒ two events" is a hard criterion; this is
+    * **deliberately different** from `enqueueRootNotify`'s merging semantics).
+    *
+    * `kind` = the uplink class (`failed` / `completed` / `landing` / `reentry` / `escalate` /
+    * `cancelled` / `redelivery`). 🔴 **The landing/merge class must carry `landing`** (the
+    * core of criterion 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`).
+    *
+    * 🔴 **U8 (`node_report`) is unaffected**: this gate only intercepts the **engine-side
+    * uplink circuit** (delivery of node notifications). A node's own terminal declaration
+    * goes through `NodeReportRegistry` (keyed by sessionId) and **never passes through this
+    * function**. */
+  private def uplinkAllowed(node: NodeDef, kind: String): IO[Boolean] =
+    if !uplinkFailClosedEnabled then IO.pure(true)
+    else if node.taskId.exists(_.trim.nonEmpty) then IO.pure(true)
+    else
+      val n = uplinkRefusals.incrementAndGet()
+      val reason = "no-attribution"
+      val way = "register-attribution/fix the node's taskId, or report through node_report; visibility stays via the Flow Map"
+      val loud = taskLedgerUplinkLoudAlertFirstN
+        .getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN)
+      val text =
+        s"Node '${node.name}' (${node.id}) uplink REFUSED [kind=$kind reason=$reason] — this node has no task " +
+          s"attribution fingerprint (taskId), so its $kind notification cannot be attributed to a task and was not delivered. " +
+          s"Way out: $way."
+      FlowMapEventLog
+        .append(
+          workspace,
+          projectName,
+          node.id,
+          FlowMapEventLog.UplinkRefusedType,
+          FlowMapEventLog.uplinkRefusedSummary(node.id, node.name, kind, reason, way),
+          chainId = node.chainId
+        )
+        .handleErrorWith(e => logger.warn(s"uplink-refused audit append failed: ${e.getMessage}")) *>
+        (if loud > 0 && n <= loud then
+           logger.warn(s"[UPLINK-REFUSED] $text (refusal #$n of the first $loud — significant alert window)")
+         else logger.warn(text)) *>
+        IO.pure(false)
+
+  /** Name-resolving wrapper for the U5 uplink gate (implplan §10.4 U5 "the three escalate
+    * channels"): those three escalate seams only have the signature `(text, nodeName)` (the
+    * injection face of `FeedbackRouter` / `DispatchNotify`) ⇒ resolve the node by name first,
+    * then go through [[uplinkAllowed]] (**the same single-point gate**, no second criterion).
+    * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
+    * exists but has no attribution", not "the node cannot be found" (the latter is the
+    * existing chain's own alert face, which this gate does not take over). */
+  private def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
+    if !uplinkFailClosedEnabled then IO.pure(true)
+    else
+      store.snapshot.map(_.nodes.values.find(_.name == nodeName)).flatMap {
+        case Some(n) => uplinkAllowed(n, kind)
+        case None    => IO.pure(true)
+      }
+
   /** 完成门腿 1 生效值（每次判定现读；无在线翻转路由 ⇒ 生产侧改 prop 需重启宿主）。 */
   private[project] def bgGateHoldEnabled: Boolean =
     bgGateCompletionHold.getOrElse(nebflow.shared.Defaults.BgGateCompletionHold)
@@ -366,6 +449,59 @@ class NodeEngine(
             s"Node '${node.name}' (${node.id}) session '$sessionId' looks dead but still owns ${waiting.size} " +
               "in-flight background task(s) — kept Running for human supervision (bg-wait exemption, no auto-convergence)"
           )
+    }
+
+  /** 死会话 running 节点的**提醒腿**（killruling 批 2026-09-23 作者裁定 **#19**「降档」）。
+    *
+    * 改判前：`autoFailDeadRunning` 把死会话 running 节点收敛成 `failed` 终态 + 投递失败
+    * 通知（`deliverFailed`）。作者裁定降档：**不写终态**（复用 #30 L3 挂起腿形态 = 停旧
+    * 会话 / 节点留 `Running`）、`deliverFailed` 同删、`checkBarriersNow` 改**告警腿**
+    * （只告警不终态化，与 #27 mount-stalled 同族）。
+    *
+    * 🔴 顺序义务（令第 6 条「**先补提醒覆盖再降档**」，裸降档 ⇒ dead-session 节点永久挂）：
+    * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`，
+    * 与既有 `fireQuiescentEvent`（提醒阶梯的只写事件档）同款形态：**只提醒、永不判死、
+    * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。 */
+  private def remindDeadSession(node: NodeDef, sessionId: String, err: String): IO[Unit] =
+    FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
+      s"dead-session node kept Running (session '$sessionId' has no live session) — needs human supervision; " +
+        s"no auto-fail, no delivery (killruling ruling #19 downgrade): ${err.take(160)}") *>
+      logger.warn(
+        s"Node '${node.name}' (${node.id}) session '$sessionId' is dead — kept Running, reminder only " +
+          "(no failed convergence, no failed delivery — killruling ruling #19)")
+
+  /** 会话已死提醒腿（killruling 批 2026-09-23，作者裁定 #19「先补提醒覆盖再降档」）。
+    *
+    * 触发点 = 提醒阶梯的 `candidates.find(reg.contains) == None`（改前为 `IO.unit`
+    * 「注入不可达 ⇒ 跳过」）。语义与 [[fireQuiescentEvent]] 同款——**只写事件不注入**：
+    * 会话已死 ⇒ 注入物理不可达，但「该节点该拍仍未申报且会话已死」这一事实必须可见。
+    * 单发节流复用 [[quiescentNotified]]（与 quiescent 档同键记账）：
+    * `NodeReportReminderQuiescentMs`（现读默认 4h）一拍，防 30s 节拍刷屏——与
+    * quiescent 档「每拍一次事件」的纪律同源；`≤0` 亦同款（关闭节流 = 每拍都写）。
+    * 判据强度：`reportPendingSince` 已置 + 过了第 N 拍 + 无活会话 ⇒ 提醒**永不停**
+    * （节点保持 Running，处置交人工）。 */
+  private def deadSessionReminder(
+    node: NodeDef,
+    since: Long,
+    elapsed: Long,
+    rung: Int,
+    aliveProbe: String => Boolean,
+    candidates: List[String]
+  ): IO[Unit] =
+    val intervalMs = nebflow.shared.Defaults.NodeReportReminderQuiescentMs
+    IO(System.currentTimeMillis()).flatMap { now =>
+      quiescentNotified.get.map(_.getOrElse(node.id, 0L)).flatMap { last =>
+        if intervalMs > 0 && last > 0 && now - last < intervalMs then IO.unit
+        else
+          quiescentNotified.update(_ + (node.id -> now)) *>
+            FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
+              s"node_report still missing at reminder rung $rung and NO live session is registered " +
+                s"(candidates=[${candidates.mkString(",")}], alive=[${candidates.filter(aliveProbe).mkString(",")}]) — " +
+                s"waited ${elapsed / 1000}s since $since: reminder only, node stays Running (never failed, never killed)") *>
+            logger.warn(
+              s"Node '${node.name}' (${node.id}) has no live session at reminder rung $rung " +
+                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running (killruling ruling #19)")
+      }
     }
 
   /**
@@ -1116,6 +1252,14 @@ class NodeEngine(
 end NodeEngine
 
 object NodeEngine:
+
+  /** **会话已死提醒事件类型**（killruling 批 2026-09-23 作者裁定 **#19**「先补提醒覆盖
+    * 再降档」）：提醒阶梯碰上「节点 Running 且过了第 N 拍，但候会话在 `agentRegistry`
+    * 里**全无活记录**」时，改前是 `IO.unit`（注入不可达 ⇒ 静默跳过）⇒ 该形态在阶梯面
+    * **零可见性**。降档后 `autoFailDeadRunning` 也不再判死 ⇒ 若不补本腿，该形态将完全
+    * 无人管。本事件即覆盖补齐件（与 `fireQuiescentEvent` 同款：只写事件、不注入、
+    * 永不判死、永不杀）。 */
+  val NodeSessionDeadReminderEventType: String = "node-session-dead-reminder"
   // 伴生契约已整体迁至 NodeEngineContract.scala(行为保持重构,2026-09-25):
   // val/def 逐成员保留同名同签名委托;嵌套类型(FlipOutcome / StartRaceLost /
   // RetireDetach / PluginPreparation / RecoveryAnchor / NodeChainContext /
