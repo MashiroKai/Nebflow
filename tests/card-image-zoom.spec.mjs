@@ -230,10 +230,8 @@ const browser = await chromium.launch();
     /parent\.postMessage\(\{\s*_nfImagePreview/.test(srcdoc || ''), (srcdoc || '').slice(0, 80));
   ok('Z1 srcdoc bridge defines the credential stripper', /function stripCredential\(/.test(srcdoc || ''));
 
-  const before = { shots: 0 };
   if (SHOTS_DIR) {
     await page.screenshot({ path: join(SHOTS_DIR, 'z1-before-click.png') });
-    before.shots = 1;
   }
 
   const clicked = await clickFrameImg(page, 0);
