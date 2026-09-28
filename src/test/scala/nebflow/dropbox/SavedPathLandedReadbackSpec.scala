@@ -1,17 +1,18 @@
 package nebflow.dropbox
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
 import nebflow.neblink.NeblinkService
+import nebflow.shared.{AttachContract, PathUtil}
 
 import java.time.ZonedDateTime
+
 import scala.concurrent.duration.*
 
 /**
@@ -69,24 +70,24 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         prev <- IO(PathUtil.dataRoot)
-        tmp  <- IO.blocking(os.temp.dir(prefix = "nb-nfpath-"))
-        _    <- IO(PathUtil.setDataRoot(tmp))
+        tmp <- IO.blocking(os.temp.dir(prefix = "nb-nfpath-"))
+        _ <- IO(PathUtil.setDataRoot(tmp))
         _ <- IO.blocking(
-               os.write.over(tmp / "nebflow.json", s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}""")
-             )
-        ms   <- NeblinkService.create(0, dispatcher)
+          os.write.over(tmp / "nebflow.json", s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}""")
+        )
+        ms <- NeblinkService.create(0, dispatcher)
         seen <- Ref.of[IO, List[Json]](Nil)
         // 通报面 = WsHub 广播（`notifyFrontend`）；必须注册收集器，否则「通报路径」不可观测
-        hub  <- IO(new WsHub)
-        reg  <- hub.register(j => seen.update(_ :+ j))
+        hub <- IO(new WsHub)
+        reg <- hub.register(j => seen.update(_ :+ j))
         // 送达腿判真（否则 offer 会被 markTransferFailed 打成 failed）
-        _   <- ms.setSendDataFn((_, _, p) => seen.update(_ :+ p).as(true))
+        _ <- ms.setSendDataFn((_, _, p) => seen.update(_ :+ p).as(true))
         // 信令窗口放大到 30s：本 spec 只判命名/通报，禁让超时看门狗在序列中途插手
         svc <- DropboxService.createForTest(ms, hub, 30.seconds, 30.seconds, 30.seconds, clock)
         out <- use(ms, svc, seen)
-        _   <- hub.unregister(reg)
-        _   <- IO(PathUtil.setDataRoot(prev))
-        _   <- IO(os.remove.all(tmp))
+        _ <- hub.unregister(reg)
+        _ <- IO(PathUtil.setDataRoot(prev))
+        _ <- IO(os.remove.all(tmp))
       yield out
     }
 
@@ -98,23 +99,23 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
     proto: Int = AttachContract.ProtoAssignDir
   ): Json =
     Json.obj(
-      "kind"       -> "file-offer".asJson,
-      "senderId"   -> "kai-peer".asJson,
+      "kind" -> "file-offer".asJson,
+      "senderId" -> "kai-peer".asJson,
       "transferId" -> transferId.asJson,
-      "msgId"      -> s"$transferId-m".asJson,
-      "fileName"   -> fileName.asJson,
-      "fileSize"   -> size.asJson,
-      "mimeType"   -> "application/octet-stream".asJson,
-      "proto"      -> proto.asJson,
-      "targetDir"  -> targetDir.toString.asJson
+      "msgId" -> s"$transferId-m".asJson,
+      "fileName" -> fileName.asJson,
+      "fileSize" -> size.asJson,
+      "mimeType" -> "application/octet-stream".asJson,
+      "proto" -> proto.asJson,
+      "targetDir" -> targetDir.toString.asJson
     )
 
   private def completeFrame(transferId: String): Json =
     Json.obj(
-      "kind"       -> "file-complete".asJson,
+      "kind" -> "file-complete".asJson,
       "transferId" -> transferId.asJson,
-      "msgId"      -> s"$transferId-m".asJson,
-      "success"    -> true.asJson
+      "msgId" -> s"$transferId-m".asJson,
+      "success" -> true.asJson
     )
 
   /** 一帧整件（单块）走真实收块面：`receiveChunkFromPeer` 的入参即 HTTP PUT 的解析结果。 */
@@ -128,12 +129,13 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
       )
       .flatMap {
         case Left(err) => IO.raiseError(new AssertionError(s"chunk rejected: ${err.render}"))
-        case Right(_)  => IO.unit
+        case Right(_) => IO.unit
       }
 
   /** 通报面（WS 帧）里的 `savedPath` —— 即引用面/用户看到的那个串。 */
   private def reportedPaths(seen: List[Json]): List[String] =
-    seen.filter(_.hcursor.downField("type").as[String].toOption.contains("dropbox-file-complete"))
+    seen
+      .filter(_.hcursor.downField("type").as[String].toOption.contains("dropbox-file-complete"))
       .flatMap(_.hcursor.downField("msg").downField("savedPath").as[String].toOption)
       .filter(_.nonEmpty)
 
@@ -160,9 +162,9 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
 
   test("① 无冲突落地：通报 savedPath 必须**逐字等于**磁盘实际路径（禁预计算名）"):
     val parent = os.temp.dir(prefix = "nb-nfpath-a-")
-    val dir    = parent / "landing"
+    val dir = parent / "landing"
     os.makeDir.all(dir)
-    val tid  = "t-nfpath-noconflict"
+    val tid = "t-nfpath-noconflict"
     val name = "report.txt"
     val data = payload(4096)
     withReceiver(dir) { (ms, svc, seen) =>
@@ -171,10 +173,10 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         _ <- pushWholeFile(svc, tid, data)
         _ <- ms.handleDataMessage(completeFrame(tid))
         frames <- seen.get
-        hist   <- svc.getHistory("kai-peer")
+        hist <- svc.getHistory("kai-peer")
         onDisk <- IO(landed(dir))
         reported = reportedPaths(frames)
-        ledger   = hist.find(_.transferId == tid).map(_.savedPath).getOrElse("<no message>")
+        ledger = hist.find(_.transferId == tid).map(_.savedPath).getOrElse("<no message>")
       yield
         // 通报名与磁盘实际名同源：先钉「落点条目集」再钉「串逐字相等」
         assertEquals(onDisk, List(name), s"落点目录应有且仅有裸名一件，实际 $onDisk")
@@ -191,48 +193,51 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
 
   test("② 同名冲突落地：通报路径必须等于**冲突后实际落盘名**（带后缀且盘上存在）"):
     val parent = os.temp.dir(prefix = "nb-nfpath-b-")
-    val dir    = parent / "landing"
+    val dir = parent / "landing"
     os.makeDir.all(dir)
-    val tid   = "t-nfpath-conflict"
-    val name  = "report.txt"
+    val tid = "t-nfpath-conflict"
+    val name = "report.txt"
     val prior = "PRE-EXISTING-CONTENT".getBytes("UTF-8")
-    val data  = payload(2048, seed = 11L)
-    IO.blocking(os.write(dir / name, prior)).flatMap(_ =>
-      withReceiver(dir) { (ms, svc, seen) =>
-        for
-          _ <- ms.handleDataMessage(offerFrame(tid, name, data.length.toLong, dir))
-          _ <- pushWholeFile(svc, tid, data)
-          _ <- ms.handleDataMessage(completeFrame(tid))
-          frames <- seen.get
-          hist   <- svc.getHistory("kai-peer")
-          onDisk <- IO(landed(dir))
-          reported = reportedPaths(frames)
-          ledger   = hist.find(_.transferId == tid).map(_.savedPath).getOrElse("<no message>")
-        yield
-          assertEquals(onDisk.size, 2, s"冲突落点应有两件（既有 + 新落），实际 $onDisk")
-          val fresh = onDisk.filterNot(_ == name)
-          assertEquals(fresh.size, 1, s"除既有件外应恰有一件新落盘：$onDisk")
-          // 后缀形态：<stem>_<yyyyMMdd_HHmmss><ext>
-          assert(
-            fresh.head.matches("""report_\d{8}_\d{6}\.txt"""),
-            s"冲突落盘名应为 report_<yyyyMMdd_HHmmss>.txt，实际 ${fresh.head}"
-          )
-          assertEquals(reported.size, 1, s"必须有一条带 savedPath 的完成通报：$frames")
-          assertEquals(reported.head, canon(dir / fresh.head), "通报路径必须等于冲突后的实际落盘名")
-          assertEquals(ledger, reported.head, "ledger（引用面）与通报必须同源")
-          assert(os.exists(os.Path(reported.head, os.pwd)), s"按通报路径读取失败：${reported.head}")
-          assertEquals(os.read.bytes(os.Path(reported.head, os.pwd)).toSeq, data.toSeq, "新落件必须是本次字节")
-          // 既有件不得被覆盖（禁改名磁盘文件迎合通报）
-          assertEquals(os.read.bytes(dir / name).toSeq, prior.toSeq, "既有同名件必须逐字不变")
-    }).flatMap(_ => IO(os.remove.all(parent)))
+    val data = payload(2048, seed = 11L)
+    IO.blocking(os.write(dir / name, prior))
+      .flatMap(_ =>
+        withReceiver(dir) { (ms, svc, seen) =>
+          for
+            _ <- ms.handleDataMessage(offerFrame(tid, name, data.length.toLong, dir))
+            _ <- pushWholeFile(svc, tid, data)
+            _ <- ms.handleDataMessage(completeFrame(tid))
+            frames <- seen.get
+            hist <- svc.getHistory("kai-peer")
+            onDisk <- IO(landed(dir))
+            reported = reportedPaths(frames)
+            ledger = hist.find(_.transferId == tid).map(_.savedPath).getOrElse("<no message>")
+          yield
+            assertEquals(onDisk.size, 2, s"冲突落点应有两件（既有 + 新落），实际 $onDisk")
+            val fresh = onDisk.filterNot(_ == name)
+            assertEquals(fresh.size, 1, s"除既有件外应恰有一件新落盘：$onDisk")
+            // 后缀形态：<stem>_<yyyyMMdd_HHmmss><ext>
+            assert(
+              fresh.head.matches("""report_\d{8}_\d{6}\.txt"""),
+              s"冲突落盘名应为 report_<yyyyMMdd_HHmmss>.txt，实际 ${fresh.head}"
+            )
+            assertEquals(reported.size, 1, s"必须有一条带 savedPath 的完成通报：$frames")
+            assertEquals(reported.head, canon(dir / fresh.head), "通报路径必须等于冲突后的实际落盘名")
+            assertEquals(ledger, reported.head, "ledger（引用面）与通报必须同源")
+            assert(os.exists(os.Path(reported.head, os.pwd)), s"按通报路径读取失败：${reported.head}")
+            assertEquals(os.read.bytes(os.Path(reported.head, os.pwd)).toSeq, data.toSeq, "新落件必须是本次字节")
+            // 既有件不得被覆盖（禁改名磁盘文件迎合通报）
+            assertEquals(os.read.bytes(dir / name).toSeq, prior.toSeq, "既有同名件必须逐字不变")
+        }
+      )
+      .flatMap(_ => IO(os.remove.all(parent)))
 
   // ===== ③ KAI 场景回归对照：同名形态 + 同字节数，按通报路径读取必须成功 =====
 
   test(s"③ KAI 对照（$KaiName / $KaiSize B）：按通报路径读取必须成功"):
     val parent = os.temp.dir(prefix = "nb-nfpath-c-")
-    val dir    = parent / "landing"
+    val dir = parent / "landing"
     os.makeDir.all(dir)
-    val tid  = "t-nfpath-kai"
+    val tid = "t-nfpath-kai"
     val data = payload(KaiSize, seed = 20260917L)
     withReceiver(dir) { (ms, svc, seen) =>
       for
@@ -244,11 +249,11 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         reported = reportedPaths(frames)
         // 「按通报路径读取」= 前端 previewLocalPath 的实际动作（os.Path(通报串) 后读字节）
         readBack <- IO {
-                      reported.headOption.flatMap { p =>
-                        val f = os.Path(p, os.pwd)
-                        if os.exists(f) then Some(os.read.bytes(f).length.toLong) else None
-                      }
-                    }
+          reported.headOption.flatMap { p =>
+            val f = os.Path(p, os.pwd)
+            if os.exists(f) then Some(os.read.bytes(f).length.toLong) else None
+          }
+        }
       yield
         assertEquals(onDisk, List(KaiName), s"落点目录应有且仅有裸名一件，实际 $onDisk")
         assertEquals(reported.size, 1, s"必须有一条带 savedPath 的完成通报：$frames")
@@ -260,9 +265,9 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
 
   test("③b 迟到/重放的完成帧（temp 已不在）：通报仍须等于磁盘实际名，且不得覆盖已记录值"):
     val parent = os.temp.dir(prefix = "nb-nfpath-e-")
-    val dir    = parent / "landing"
+    val dir = parent / "landing"
     os.makeDir.all(dir)
-    val tid  = "t-nfpath-late"
+    val tid = "t-nfpath-late"
     val name = "late.txt"
     val data = payload(1024, seed = 33L)
     withReceiver(dir) { (ms, svc, seen) =>
@@ -275,18 +280,20 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         // 迟到/重放的完成帧：temp 已被首次 commit 搬走 ⇒ 本次没有任何 move
         _ <- ms.handleDataMessage(completeFrame(tid))
         second <- seen.get
-        hist2  <- svc.getHistory("kai-peer")
+        hist2 <- svc.getHistory("kai-peer")
         onDisk <- IO(landed(dir))
         r1 = reportedPaths(first)
         r2 = reportedPaths(second)
         saved1 = hist1.find(_.transferId == tid).map(_.savedPath).getOrElse("<no message>")
         saved2 = hist2.find(_.transferId == tid).map(_.savedPath).getOrElse("<no message>")
         readBack <- IO {
-                      r2.lastOption.map { p =>
-                        val f = os.Path(p, os.pwd)
-                        if os.exists(f) then Some(os.read.bytes(f).length) else None
-                      }.getOrElse(None)
-                    }
+          r2.lastOption
+            .map { p =>
+              val f = os.Path(p, os.pwd)
+              if os.exists(f) then Some(os.read.bytes(f).length) else None
+            }
+            .getOrElse(None)
+        }
       yield
         assertEquals(onDisk, List(name), s"落点目录应仍只有裸名一件，实际 $onDisk")
         assertEquals(r1.size, 1, s"首次完成帧必须带 savedPath：$first")
@@ -302,9 +309,9 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
 
   test("④ 落地后不得残留 `.*.dropbox-*` temp（commit 已搬走）"):
     val parent = os.temp.dir(prefix = "nb-nfpath-d-")
-    val dir    = parent / "landing"
+    val dir = parent / "landing"
     os.makeDir.all(dir)
-    val tid  = "t-nfpath-temp"
+    val tid = "t-nfpath-temp"
     val name = "clean.bin"
     val data = payload(512)
     withReceiver(dir) { (ms, svc, seen) =>
@@ -314,8 +321,8 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         _ <- ms.handleDataMessage(completeFrame(tid))
         frames <- seen.get
         onDisk <- IO(landed(dir))
-        all    <- IO(if os.exists(dir) then os.list(dir).map(_.last).toList else Nil)
-        hist   <- svc.getHistory("kai-peer")
+        all <- IO(if os.exists(dir) then os.list(dir).map(_.last).toList else Nil)
+        hist <- svc.getHistory("kai-peer")
       yield
         assertEquals(onDisk, List(name))
         assertEquals(all.filter(n => n.startsWith(".") && n.contains(".dropbox-")), Nil, s"temp 残留：$all")
@@ -323,7 +330,8 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         assertEquals(hist.find(_.transferId == tid).map(_.status), Some("completed"))
         assertEquals(hist.find(_.transferId == tid).map(_.kind), Some("file"))
         assertEquals(
-          frames.filter(_.hcursor.downField("type").as[String].toOption.contains("dropbox-file-complete"))
+          frames
+            .filter(_.hcursor.downField("type").as[String].toOption.contains("dropbox-file-complete"))
             .flatMap(_.hcursor.downField("msg").downField("success").as[Boolean].toOption),
           List(true)
         )
@@ -331,39 +339,41 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
 
   // ===== ⑤ 同一秒内连续 6 份同名件（固定时钟）⇒ 零丢失（dropnam 判据④a..④e）=====
 
-  /** 固定时钟（A4 可注入 clock）：把 6 次落名钉进**同一秒** ⇒ 判据是**确定性**判据
-    * （🔴 不用 sleep 撞运气 —— 那在慢机与变异验红中会假绿）。 */
+  /**
+   * 固定时钟（A4 可注入 clock）：把 6 次落名钉进**同一秒** ⇒ 判据是**确定性**判据
+   * （🔴 不用 sleep 撞运气 —— 那在慢机与变异验红中会假绿）。
+   */
   private val BurstClock: ZonedDateTime = ZonedDateTime.parse("2026-09-19T00:17:15+08:00")
 
   test("⑤ 同一秒 6 份同名件（固定时钟）⇒ 零丢失：④a 盘点 6 / ④b 通报全可达 / ④c 6/6 同源 / ④d 通报互异 / ④e 丢失 0"):
     val parent = os.temp.dir(prefix = "nb-nfpath-burst-")
-    val dir    = parent / "landing"
+    val dir = parent / "landing"
     os.makeDir.all(dir)
-    val name  = "burst.png"
+    val name = "burst.png"
     val sends = (1 to 6).map(k => payload(30000, seed = k.toLong)).toList
     withReceiver(dir, () => BurstClock) { (ms, svc, seen) =>
       for
         _ <- sends.zipWithIndex.foldLeftM(()) { case (_, (data, i)) =>
-               val tid = s"t-burst-${i + 1}"
-               for
-                 _ <- ms.handleDataMessage(offerFrame(tid, name, data.length.toLong, dir))
-                 _ <- pushWholeFile(svc, tid, data)
-                 _ <- ms.handleDataMessage(completeFrame(tid))
-               yield ()
-             }
+          val tid = s"t-burst-${i + 1}"
+          for
+            _ <- ms.handleDataMessage(offerFrame(tid, name, data.length.toLong, dir))
+            _ <- pushWholeFile(svc, tid, data)
+            _ <- ms.handleDataMessage(completeFrame(tid))
+          yield ()
+        }
         frames <- seen.get
         onDisk <- IO(landed(dir))
         reported = reportedPaths(frames)
         existsAll <- IO(reported.map(p => os.exists(os.Path(p, os.pwd))))
         hashes <- reported.traverse { p =>
-                    IO.blocking {
-                      val f = os.Path(p, os.pwd)
-                      if os.exists(f) then ChunkedTransfer.sha256Hex(os.read.bytes(f)) else ""
-                    }
-                  }
+          IO.blocking {
+            val f = os.Path(p, os.pwd)
+            if os.exists(f) then ChunkedTransfer.sha256Hex(os.read.bytes(f)) else ""
+          }
+        }
         expected = sends.map(ChunkedTransfer.sha256Hex)
-        lost     = expected.zip(hashes).count { case (e, a) => e != a }
-        sentSet  = expected.toSet
+        lost = expected.zip(hashes).count { case (e, a) => e != a }
+        sentSet = expected.toSet
       yield
         assertEquals(reported.size, 6, s"6 次投递必须 6 条带 savedPath 的通报：$frames")
         // ④a 落点非隐藏条目数 == 投递数（改前读数 = 2）
@@ -384,12 +394,12 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
 
   test("⑥ relay 腿撞名：既有件逐字不变 + 新件改名落盘 + 通报 == 新件实际名 + temp 零残留"):
     val parent = os.temp.dir(prefix = "nb-nfpath-relay-")
-    val dir    = parent / "landing"
+    val dir = parent / "landing"
     os.makeDir.all(dir)
-    val tid   = "t-relay-collide"
-    val name  = "relay.bin"
+    val tid = "t-relay-collide"
+    val name = "relay.bin"
     val prior = payload(4096, seed = 77L)
-    val data  = payload(2048, seed = 78L)
+    val data = payload(2048, seed = 78L)
     IO.blocking(os.write(dir / name, prior)).flatMap { _ =>
       withReceiver(dir, () => BurstClock) { (ms, svc, seen) =>
         for
@@ -401,8 +411,8 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
           _ <- ms.handleDataMessage(completeFrame(tid))
           frames <- seen.get
           onDisk <- IO(landed(dir))
-          all    <- IO(if os.exists(dir) then os.list(dir).map(_.last).toList else Nil)
-          hist   <- svc.getHistory("kai-peer")
+          all <- IO(if os.exists(dir) then os.list(dir).map(_.last).toList else Nil)
+          hist <- svc.getHistory("kai-peer")
           reported = reportedPaths(frames)
           priorNow <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(dir / name)))
         yield
@@ -425,36 +435,37 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
       }.flatMap(_ => IO(os.remove.all(parent)))
     }
 
-
   // ===== ⑦ 预测名分支「删除」的绝对化读数（终裁③）：任何路径都不得回退到预测裸名 =====
 
   test("⑦ 预测名分支已删除（绝对化）：对端等级 3 与 2 同样**不得**把盘上同名件当成本次落点"):
     val levels = List(AttachContract.ProtoRelayTemp, AttachContract.ProtoAssignDir)
     levels.traverse_ { level =>
       val parent = os.temp.dir(prefix = "nb-nfpath-nopredict-")
-      val dir    = parent / "landing"
+      val dir = parent / "landing"
       os.makeDir.all(dir)
-      val tid   = s"t-nopredict-$level"
-      val name  = "legacy-direct.bin"
+      val tid = s"t-nopredict-$level"
+      val name = "legacy-direct.bin"
       val prior = payload(1024, seed = 91L)
-      IO.blocking(os.write(dir / name, prior)).flatMap { _ =>
-        withReceiver(dir) { (ms, svc, seen) =>
-          for
-            _ <- ms.handleDataMessage(offerFrame(tid, name, prior.length.toLong, dir, proto = level))
-            // 本会话**没有任何字节落盘**（既无 session temp，也没有本次 move）⇒ 唯一还可能给出
-            // 「落点」的来源只剩「按裸名预测」那条旧分支；该分支已删除 ⇒ 通报必须为空串。
-            _ <- ms.handleDataMessage(completeFrame(tid))
-            frames   <- seen.get
-            hist     <- svc.getHistory("kai-peer")
-            priorNow <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(dir / name)))
-            saved = hist.find(_.transferId == tid)
-          yield
-            assertEquals(reportedPaths(frames), Nil, s"peerProto=$level 不得把盘上同名件预测成本次落点：$frames")
-            assertEquals(saved.map(_.savedPath), Some(""), s"peerProto=$level ledger 必须是空串（无本次观测）")
-            assert(os.exists(dir / name), s"peerProto=$level 既有件必须仍在")
-            assertEquals(priorNow, ChunkedTransfer.sha256Hex(prior), s"peerProto=$level 既有件必须逐字不变")
+      IO.blocking(os.write(dir / name, prior))
+        .flatMap { _ =>
+          withReceiver(dir) { (ms, svc, seen) =>
+            for
+              _ <- ms.handleDataMessage(offerFrame(tid, name, prior.length.toLong, dir, proto = level))
+              // 本会话**没有任何字节落盘**（既无 session temp，也没有本次 move）⇒ 唯一还可能给出
+              // 「落点」的来源只剩「按裸名预测」那条旧分支；该分支已删除 ⇒ 通报必须为空串。
+              _ <- ms.handleDataMessage(completeFrame(tid))
+              frames <- seen.get
+              hist <- svc.getHistory("kai-peer")
+              priorNow <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(dir / name)))
+              saved = hist.find(_.transferId == tid)
+            yield
+              assertEquals(reportedPaths(frames), Nil, s"peerProto=$level 不得把盘上同名件预测成本次落点：$frames")
+              assertEquals(saved.map(_.savedPath), Some(""), s"peerProto=$level ledger 必须是空串（无本次观测）")
+              assert(os.exists(dir / name), s"peerProto=$level 既有件必须仍在")
+              assertEquals(priorNow, ChunkedTransfer.sha256Hex(prior), s"peerProto=$level 既有件必须逐字不变")
+          }
         }
-      }.flatMap(_ => IO(os.remove.all(parent)))
+        .flatMap(_ => IO(os.remove.all(parent)))
     }
 
 end SavedPathLandedReadbackSpec

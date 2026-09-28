@@ -3,7 +3,7 @@ package nebflow.core.hooks
 import io.circe.syntax.*
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 class HooksConfigLoaderSpec extends FunSuite:
 

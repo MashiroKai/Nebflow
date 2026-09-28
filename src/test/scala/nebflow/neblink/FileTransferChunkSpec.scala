@@ -2,10 +2,11 @@ package nebflow.neblink
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
-import nebflow.dropbox.{AttachContract, ChunkedTransfer}
+import nebflow.dropbox.ChunkedTransfer
+import nebflow.shared.AttachContract
 
 /**
  * relay 兜底腿的接收端（`FileTransferAction`）—— 硬判据 ②③ 的 relay 面 + **零回归**面。
@@ -55,8 +56,7 @@ class FileTransferChunkSpec extends CatsEffectSuite:
     withTmp { dir =>
       val p = dir / "legacy.txt"
       val payload = "hello relay".getBytes("UTF-8")
-      for
-        res <- FileTransferAction.handle(
+      for res <- FileTransferAction.handle(
           JsonObject(
             "direction" -> "put".asJson,
             "path" -> p.toString.asJson,
@@ -126,12 +126,11 @@ class FileTransferChunkSpec extends CatsEffectSuite:
       val src = Array.tabulate(total.toInt)(i => (i * 7 % 251).toByte)
       val whole = ChunkedTransfer.sha256Hex(src)
       val plans = plan(total)
-      for
-        acks <- plans.foldLeftM(List.empty[Json]) { (acc, cp) =>
+      for acks <- plans.foldLeftM(List.empty[Json]) { (acc, cp) =>
           val payload = src.slice(cp.offset.toInt, cp.offset.toInt + cp.bytes)
           FileTransferAction.handle(putParams(p.toString, payload, cp.index, total, whole)).map {
             case Right(json) => acc :+ json
-            case Left(err)   => fail(s"chunk ${cp.index} rejected: $err")
+            case Left(err) => fail(s"chunk ${cp.index} rejected: $err")
           }
         }
       yield
@@ -165,8 +164,7 @@ class FileTransferChunkSpec extends CatsEffectSuite:
         "chunkSha256" -> ChunkedTransfer.sha256Hex(first).asJson,
         "wholeSha256" -> whole.asJson
       )
-      for
-        res <- FileTransferAction.handle(params)
+      for res <- FileTransferAction.handle(params)
       yield
         assert(res.isLeft)
         assert(res.left.toOption.get.contains("CHUNK_DIGEST_MISMATCH"), res.left.toOption.get)
@@ -179,8 +177,7 @@ class FileTransferChunkSpec extends CatsEffectSuite:
       val p = dir / "whole.bin"
       val total = 8L
       val src = Array.tabulate(total.toInt)(i => (i + 1).toByte)
-      for
-        res <- FileTransferAction.handle(putParams(p.toString, src, 0, total, "0" * 64, chunkSize = 32))
+      for res <- FileTransferAction.handle(putParams(p.toString, src, 0, total, "0" * 64, chunkSize = 32))
       yield
         assert(res.isLeft)
         assert(res.left.toOption.get.contains("WHOLE_DIGEST_MISMATCH"), res.left.toOption.get)
@@ -298,6 +295,7 @@ class FileTransferChunkSpec extends CatsEffectSuite:
           "R4 负控：不得回显请求参数（回显会让发送端的比对恒真）"
         )
         assertEquals(size, Chunk.toLong, "重放不得增长字节数")
+      end for
     }
   }
 
@@ -350,23 +348,23 @@ class FileTransferChunkSpec extends CatsEffectSuite:
     withTmp { dir =>
       val p = dir / "pre.bin"
       // 既有件 = 1 × Chunk（= D3 形态的触发前提：整数倍块长且 < 来件 total）
-      val prior    = Array.tabulate(Chunk)(i => (i * 3 + 1).toByte)
+      val prior = Array.tabulate(Chunk)(i => (i * 3 + 1).toByte)
       val incoming = Array.tabulate(Chunk * 2)(i => (i * 7 + 5).toByte)
-      val whole    = ChunkedTransfer.sha256Hex(incoming)
+      val whole = ChunkedTransfer.sha256Hex(incoming)
       for
-        _          <- IO.blocking(os.write(p, prior))
-        before     <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(p)))
+        _ <- IO.blocking(os.write(p, prior))
+        before <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(p)))
         sizeBefore <- IO.blocking(os.size(p))
         // 首块（index 0）撞已有件：改前 = 幂等 no-op 回**成功 ack**（进度面假 100%）
         r0 <- FileTransferAction.handle(putParams(p.toString, incoming.slice(0, Chunk), 0, Chunk * 2L, whole))
         // 续传起点（index 1 == expectedIndex）：改前 = 追加后整件不符 ⇒ os.remove.all **删掉对端原件**
         r1 <- FileTransferAction.handle(
-                putParams(p.toString, incoming.slice(Chunk, Chunk * 2), 1, Chunk * 2L, whole)
-              )
+          putParams(p.toString, incoming.slice(Chunk, Chunk * 2), 1, Chunk * 2L, whole)
+        )
         // 既有件状态读数（禁「件已消失 ⇒ os.size 抛异常」把读数吃掉）：消失时给出哨兵，
         // 并在下面的失败告警里**一并回带** ⇒ 变异验红时 ⑤b 的读数（件消失 / 字节被改）可读。
-        exists    <- IO.blocking(os.exists(p))
-        after     <- IO.blocking(if os.exists(p) then ChunkedTransfer.sha256Hex(os.read.bytes(p)) else "<file-gone>")
+        exists <- IO.blocking(os.exists(p))
+        after <- IO.blocking(if os.exists(p) then ChunkedTransfer.sha256Hex(os.read.bytes(p)) else "<file-gone>")
         sizeAfter <- IO.blocking(if os.exists(p) then os.size(p) else -1L)
       yield
         val state = s"既有件状态：exists=$exists size=$sizeAfter sha=${if after == before then "unchanged" else after}"
@@ -377,6 +375,7 @@ class FileTransferChunkSpec extends CatsEffectSuite:
         assert(exists, "⑤b 既有件必须仍在（禁 os.remove.all）")
         assertEquals(after, before, "⑤b 既有件字节必须逐字不变")
         assertEquals(sizeAfter, sizeBefore, "拒绝路径不得写入任何字节")
+      end for
     }
 
   test("⑤d 归属明确（transferId token 与路径内嵌 <tid8> 相符）⇒ 同一路径可正常分块续传"):
@@ -407,13 +406,13 @@ class FileTransferChunkSpec extends CatsEffectSuite:
       for
         _ <- IO.blocking(os.write(p, prior))
         res <- FileTransferAction.handle(
-                 JsonObject(
-                   "direction" -> "put".asJson,
-                   "path" -> p.toString.asJson,
-                   "content" -> b64(fresh).asJson,
-                   "overwrite" -> true.asJson
-                 )
-               )
+          JsonObject(
+            "direction" -> "put".asJson,
+            "path" -> p.toString.asJson,
+            "content" -> b64(fresh).asJson,
+            "overwrite" -> true.asJson
+          )
+        )
         names <- IO.blocking(os.list(dir).map(_.last).sorted.toList)
         originalNow <- IO.blocking(new String(os.read.bytes(p), "UTF-8"))
         freshName = names.find(_ != "legacy-exists.txt")
@@ -423,6 +422,7 @@ class FileTransferChunkSpec extends CatsEffectSuite:
         assertEquals(originalNow, "ORIGINAL-CONTENT-KEEP-ME", "既有件必须逐字不变（禁 truncate 覆盖）")
         assertEquals(freshNow, Some("NEW-CONTENT-FROM-PEER"), s"新件必须以新名落盘并保留内容：$names")
         assertEquals(names.size, 2, s"应恰有既有件 + 新件两名：$names")
+      end for
     }
 
 end FileTransferChunkSpec

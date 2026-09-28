@@ -2,7 +2,7 @@ package nebflow.core.plugin
 
 import cats.effect.IO
 import io.circe.Json
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * Plugins feature flag（§G.2 回滚约定）：`nebflow.json` 顶层 `plugins.enabled`。

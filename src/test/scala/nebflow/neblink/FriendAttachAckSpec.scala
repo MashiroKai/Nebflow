@@ -29,9 +29,9 @@ class FriendAttachAckSpec extends FunSuite:
 
   // 夹具：16 B；sha256 由 `printf 'friendattach-4b\n' | shasum -a 256` **独立**算得
   private val FixtureBody = "friendattach-4b\n"
-  private val FixtureSha  = "8db0362fc0a30b7b224dbc9306016d57bea5c5a0e4eb882c38d337dccde454e3"
-  private val OtherSha    = "0" * 64 // 合法形态、不同值
-  private val BadShapeSha = "ABC"    // 非法形态（非 64 位小写 hex）
+  private val FixtureSha = "8db0362fc0a30b7b224dbc9306016d57bea5c5a0e4eb882c38d337dccde454e3"
+  private val OtherSha = "0" * 64 // 合法形态、不同值
+  private val BadShapeSha = "ABC" // 非法形态（非 64 位小写 hex）
 
   private final class Stub(val e4Code: Int):
     private val requests = scala.collection.mutable.ListBuffer.empty[String]
@@ -54,7 +54,7 @@ class FriendAttachAckSpec extends FunSuite:
               e4Code match
                 case 200 => (200, """{"state":"deleted"}""")
                 case 404 => (404, """{"error":"attachment_not_found"}""")
-                case _   => (500, """{"error":"internal"}""")
+                case _ => (500, """{"error":"internal"}""")
             else (404, """{"error":"not found"}""")
           val bytes = resp.getBytes("UTF-8")
           ex.getResponseHeaders.add("Content-Type", "application/json")
@@ -65,6 +65,7 @@ class FriendAttachAckSpec extends FunSuite:
       s.setExecutor(null)
       s.start()
       server = s
+    end start
 
     def stop(): Unit = if server != null then server.stop(0)
 
@@ -75,6 +76,8 @@ class FriendAttachAckSpec extends FunSuite:
       requests.synchronized(requests.toList).filter(_.contains("/received"))
 
     def allRequests: List[String] = requests.synchronized(requests.toList)
+
+  end Stub
 
   private def withStub[A](e4Code: Int)(use: Stub => A): A =
     val stub = new Stub(e4Code)
@@ -113,7 +116,7 @@ class FriendAttachAckSpec extends FunSuite:
     withStub(200) { stub =>
       val fs = fsFor(loggedIn(stub.url))
       val res = fs.ackAttachmentReceived("att-1", goodEvidence).unsafeRunSync()
-      val e4  = stub.e4Requests
+      val e4 = stub.e4Requests
       evidence("a", s"result=$res", s"e4Count=${e4.size}", s"e4=${e4.mkString(" || ")}")
       assertEquals(res, AttachmentAck.Result.Acknowledged)
       assertEquals(e4.size, 1, "恰好一次：一次下载落盘 ⇒ 一次 E4，不得重复")
@@ -128,7 +131,7 @@ class FriendAttachAckSpec extends FunSuite:
 
   test("(b) sha 不符 ⇒ 零 E4（负控；服务端零副作用面不被触碰）") {
     withStub(200) { stub =>
-      val fs  = fsFor(loggedIn(stub.url))
+      val fs = fsFor(loggedIn(stub.url))
       val res = fs
         .ackAttachmentReceived("att-1", goodEvidence.copy(localSha256 = Some(OtherSha)))
         .unsafeRunSync()
@@ -140,7 +143,7 @@ class FriendAttachAckSpec extends FunSuite:
 
   test("(c) 落盘失败/未落最终位置 ⇒ 零 E4（负控）") {
     withStub(200) { stub =>
-      val fs  = fsFor(loggedIn(stub.url))
+      val fs = fsFor(loggedIn(stub.url))
       val res = fs
         .ackAttachmentReceived("att-1", goodEvidence.copy(landedFinal = false))
         .unsafeRunSync()
@@ -152,7 +155,7 @@ class FriendAttachAckSpec extends FunSuite:
 
   test("(d) 拿不到字节（OS 级下载器路径 / 非安全上下文无 WebCrypto）⇒ 零 E4（负控）") {
     withStub(200) { stub =>
-      val fs  = fsFor(loggedIn(stub.url))
+      val fs = fsFor(loggedIn(stub.url))
       val res = fs
         .ackAttachmentReceived("att-1", goodEvidence.copy(localSha256 = None, receivedBytes = None))
         .unsafeRunSync()
@@ -164,11 +167,11 @@ class FriendAttachAckSpec extends FunSuite:
 
   test("(g) 其余证据缺口 ⇒ 零 E4（字节数不符 / 字节数不可核 / digest 缺失 / digest 形态非法）") {
     val gaps = List(
-      goodEvidence.copy(receivedBytes = Some(15L))            -> AttachmentAck.Result.Skipped("bytes-incomplete"),
-      goodEvidence.copy(expectedBytes = None)                 -> AttachmentAck.Result.Skipped("bytes-incomplete-unverifiable"),
-      goodEvidence.copy(declaredSha256 = "")                  -> AttachmentAck.Result.Skipped("digest-missing"),
-      goodEvidence.copy(declaredSha256 = BadShapeSha)         -> AttachmentAck.Result.Skipped("digest-shape"),
-      goodEvidence.copy(localSha256 = Some(""))               -> AttachmentAck.Result.Skipped("bytes-unavailable")
+      goodEvidence.copy(receivedBytes = Some(15L)) -> AttachmentAck.Result.Skipped("bytes-incomplete"),
+      goodEvidence.copy(expectedBytes = None) -> AttachmentAck.Result.Skipped("bytes-incomplete-unverifiable"),
+      goodEvidence.copy(declaredSha256 = "") -> AttachmentAck.Result.Skipped("digest-missing"),
+      goodEvidence.copy(declaredSha256 = BadShapeSha) -> AttachmentAck.Result.Skipped("digest-shape"),
+      goodEvidence.copy(localSha256 = Some("")) -> AttachmentAck.Result.Skipped("bytes-unavailable")
     )
     withStub(200) { stub =>
       val fs = fsFor(loggedIn(stub.url))
@@ -197,9 +200,9 @@ class FriendAttachAckSpec extends FunSuite:
     stub.start()
     val cli = loggedIn(stub.url)
     stub.stop()
-    val fsNet   = fsFor(cli)
+    val fsNet = fsFor(cli)
     val netUnit = fsNet.ackAttachmentReceived("att-1", goodEvidence).void.attempt.unsafeRunSync()
-    val netRes  = fsNet.ackAttachmentReceived("att-1", goodEvidence).unsafeRunSync()
+    val netRes = fsNet.ackAttachmentReceived("att-1", goodEvidence).unsafeRunSync()
 
     evidence(
       "e",
@@ -220,7 +223,7 @@ class FriendAttachAckSpec extends FunSuite:
 
   test("(f) 404 ⇒ 无需回执（信息级）、零重试；幂等语义不靠客户端重发") {
     withStub(404) { stub =>
-      val fs  = fsFor(loggedIn(stub.url))
+      val fs = fsFor(loggedIn(stub.url))
       val res = fs.ackAttachmentReceived("att-1", goodEvidence).unsafeRunSync()
       evidence("f", s"result=$res", s"e4Count=${stub.e4Requests.size}")
       assertEquals(res, AttachmentAck.Result.Skipped("no-ack-needed-404"))
@@ -229,7 +232,7 @@ class FriendAttachAckSpec extends FunSuite:
   }
 
   test("(f) 未登录（无 client）⇒ 静默失败、不抛、零请求") {
-    val fs  = new FriendService(IO.pure(None), AgentMessagingConfig(mode = "auto"))
+    val fs = new FriendService(IO.pure(None), AgentMessagingConfig(mode = "auto"))
     val res = fs.ackAttachmentReceived("att-1", goodEvidence).unsafeRunSync()
     evidence("f-nologin", s"result=$res")
     assertEquals(res, AttachmentAck.Result.Failed("Not logged in"))
@@ -244,13 +247,34 @@ class FriendAttachAckSpec extends FunSuite:
       AttachmentAck.Decision.Fire(FixtureSha),
       "形态归一只做去空白/转小写；归一后仍须逐字相等"
     )
-    assertEquals(AttachmentAck.decide(goodEvidence.copy(localSha256 = None)), AttachmentAck.Decision.Skip("bytes-unavailable"))
-    assertEquals(AttachmentAck.decide(goodEvidence.copy(landedFinal = false)), AttachmentAck.Decision.Skip("not-landed-final"))
-    assertEquals(AttachmentAck.decide(goodEvidence.copy(declaredSha256 = "  ")), AttachmentAck.Decision.Skip("digest-missing"))
-    assertEquals(AttachmentAck.decide(goodEvidence.copy(localSha256 = Some(BadShapeSha))), AttachmentAck.Decision.Skip("digest-shape"))
-    assertEquals(AttachmentAck.decide(goodEvidence.copy(receivedBytes = Some(1L))), AttachmentAck.Decision.Skip("bytes-incomplete"))
-    assertEquals(AttachmentAck.decide(goodEvidence.copy(expectedBytes = None)), AttachmentAck.Decision.Skip("bytes-incomplete-unverifiable"))
-    assertEquals(AttachmentAck.decide(goodEvidence.copy(localSha256 = Some(OtherSha))), AttachmentAck.Decision.Skip("digest-mismatch"))
+    assertEquals(
+      AttachmentAck.decide(goodEvidence.copy(localSha256 = None)),
+      AttachmentAck.Decision.Skip("bytes-unavailable")
+    )
+    assertEquals(
+      AttachmentAck.decide(goodEvidence.copy(landedFinal = false)),
+      AttachmentAck.Decision.Skip("not-landed-final")
+    )
+    assertEquals(
+      AttachmentAck.decide(goodEvidence.copy(declaredSha256 = "  ")),
+      AttachmentAck.Decision.Skip("digest-missing")
+    )
+    assertEquals(
+      AttachmentAck.decide(goodEvidence.copy(localSha256 = Some(BadShapeSha))),
+      AttachmentAck.Decision.Skip("digest-shape")
+    )
+    assertEquals(
+      AttachmentAck.decide(goodEvidence.copy(receivedBytes = Some(1L))),
+      AttachmentAck.Decision.Skip("bytes-incomplete")
+    )
+    assertEquals(
+      AttachmentAck.decide(goodEvidence.copy(expectedBytes = None)),
+      AttachmentAck.Decision.Skip("bytes-incomplete-unverifiable")
+    )
+    assertEquals(
+      AttachmentAck.decide(goodEvidence.copy(localSha256 = Some(OtherSha))),
+      AttachmentAck.Decision.Skip("digest-mismatch")
+    )
     assert(AttachmentAck.isDigest(FixtureSha))
     assert(!AttachmentAck.isDigest(FixtureSha.toUpperCase))
     assert(!AttachmentAck.isDigest(BadShapeSha))

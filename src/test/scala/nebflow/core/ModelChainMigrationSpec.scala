@@ -2,6 +2,7 @@ package nebflow.core
 
 import munit.FunSuite
 import nebflow.shared.AgentModelConfig
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 
 /** ModelChainMigration — one-time preset→chain migration (boot call,
   * idempotent). Verifies the migration table: Nebula's effective preset

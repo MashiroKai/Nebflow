@@ -1,10 +1,9 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
-import nebflow.core.project.{BlockedFeedback, NodeReportRegistry, NodeRoles, ProjectRuntimeRegistry}
-import nebflow.core.project.BlockedReader
+import io.circe.{Json, JsonObject}
+import nebflow.core.project.*
 import nebflow.shared.ToolDefinition
 
 /**
@@ -45,25 +44,31 @@ object NodeReportToolDef extends Tool:
   /** 通用 blocked 泛值（六类细分之外的兜底；两个角色值域共有）。 */
   val BlockedValue: String = "blocked"
 
-  /** **值域按角色分化**（nrloop 一期 2026-09-12，设计 §3.3 #1 / 附 C2-R1·R2）：两个正交
-    * 维度不再压进一个 `category`——
-    *   ①「本节点执行成没成」：`finish`（完成，可选显式化）| `blocked`（做不成）；
-    *   ②「被判定对象合格不合格」：`pass` | `fail`（**仅 verifier**，verdict 面）。
-    * 执行节点拿不到 `pass`/`fail`（工具侧拒），校验节点拿不到 `finish`——分化面在
-    * `enumFor(role)` 单点，引擎分流判据（`isFinish`/`isPass`/`isFail`）与之同源。 */
+  /**
+   * **值域按角色分化**（nrloop 一期 2026-09-12，设计 §3.3 #1 / 附 C2-R1·R2）：两个正交
+   * 维度不再压进一个 `category`——
+   *   ①「本节点执行成没成」：`finish`（完成，可选显式化）| `blocked`（做不成）；
+   *   ②「被判定对象合格不合格」：`pass` | `fail`（**仅 verifier**，verdict 面）。
+   * 执行节点拿不到 `pass`/`fail`（工具侧拒），校验节点拿不到 `finish`——分化面在
+   * `enumFor(role)` 单点，引擎分流判据（`isFinish`/`isPass`/`isFail`）与之同源。
+   */
   val FinishValue: String = "finish"
   val PassValue: String = "pass"
   val FailValue: String = "fail"
 
-  /** blocked 泛值之外既有的六类细分（BlockedReader 现状枚举，降级面同源零漂移）。
-    * **必须定义在两个值域常量之前**（Scala object 初始化顺序 = 文本顺序；后置会让
-    * `BlockedDomain` 读到 null）。 */
+  /**
+   * blocked 泛值之外既有的六类细分（BlockedReader 现状枚举，降级面同源零漂移）。
+   * **必须定义在两个值域常量之前**（Scala object 初始化顺序 = 文本顺序；后置会让
+   * `BlockedDomain` 读到 null）。
+   */
   val BlockedCategories: Set[String] = BlockedReader.Categories
 
-  /** **blocked 面完整值域**（泛值 `blocked` + 六类细分）——两个角色共有（设计 §3.1
-    * 纪律②：blocked 保留全部既有语义）。单点定义以避免「泛值漏进角色值域」这类
-    * 静默收窄（旧 `EnumWhitelist` 是 9 值 = {blocked,pass,fail} ∪ 六类 ⇒ 本批必须
-    * 显式带上泛值才是等价面）。 */
+  /**
+   * **blocked 面完整值域**（泛值 `blocked` + 六类细分）——两个角色共有（设计 §3.1
+   * 纪律②：blocked 保留全部既有语义）。单点定义以避免「泛值漏进角色值域」这类
+   * 静默收窄（旧 `EnumWhitelist` 是 9 值 = {blocked,pass,fail} ∪ 六类 ⇒ 本批必须
+   * 显式带上泛值才是等价面）。
+   */
   val BlockedDomain: Set[String] = BlockedCategories + BlockedValue
 
   /** 执行节点（`role=task`）值域：`finish` + blocked 完整面（8 值）。 */
@@ -72,17 +77,21 @@ object NodeReportToolDef extends Tool:
   /** 校验节点（`role=verifier`）值域：`pass`/`fail`（verdict）+ blocked 完整面（9 值）。 */
   val VerifierCategories: Set[String] = BlockedDomain ++ Set(PassValue, FailValue)
 
-  /** 全值域（schema enum 白名单所载的 **10 值** = 两角色值域并集；**schema 拿不到会话
-    * 身份**——`Tool.inputSchema` 是无参 def（`tools/types.scala`），故 schema 只能写
-    * 并集 + 一句话说明「值域取决于节点角色」，真正的角色校验在 `call()` 里按
-    * `ctx.flowNodeRole` 单点判）。 */
+  /**
+   * 全值域（schema enum 白名单所载的 **10 值** = 两角色值域并集；**schema 拿不到会话
+   * 身份**——`Tool.inputSchema` 是无参 def（`tools/types.scala`），故 schema 只能写
+   * 并集 + 一句话说明「值域取决于节点角色」，真正的角色校验在 `call()` 里按
+   * `ctx.flowNodeRole` 单点判）。
+   */
   val StatusValues: Set[String] = TaskCategories ++ VerifierCategories
 
   /** 兼容名（既有消费方/测试的读面）：与 [[StatusValues]] 同值。 */
   val EnumWhitelist: Set[String] = StatusValues
 
-  /** 角色 → 合法值域（**单点**）：`verifier` ⇒ verdict 面值域；其余（含 None/未知）⇒
-    * 执行节点值域（缺省 = `task`，与 `NodeRoles.normalize` 同口径）。 */
+  /**
+   * 角色 → 合法值域（**单点**）：`verifier` ⇒ verdict 面值域；其余（含 None/未知）⇒
+   * 执行节点值域（缺省 = `task`，与 `NodeRoles.normalize` 同口径）。
+   */
   def enumFor(role: Option[String]): Set[String] =
     if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then VerifierCategories
     else TaskCategories
@@ -96,12 +105,13 @@ object NodeReportToolDef extends Tool:
   /** `finish` = 执行节点显式申报完成（R10：可选显式化——不申报也照常走完成链）。 */
   def isFinish(category: String): Boolean = category == FinishValue
 
-  def isPass(category: String): Boolean  = category == PassValue
-  def isFail(category: String): Boolean  = category == FailValue
+  def isPass(category: String): Boolean = category == PassValue
+  def isFail(category: String): Boolean = category == FailValue
 
-
-  /** fail 申报落 failNode 的 result 渲染串（BlockedReader.render 同款风格：
-    * 头部标记 + detail + 可选建议——观测面单点格式）。 */
+  /**
+   * fail 申报落 failNode 的 result 渲染串（BlockedReader.render 同款风格：
+   * 头部标记 + detail + 可选建议——观测面单点格式）。
+   */
   def renderFail(f: BlockedFeedback): String =
     val sugg = if f.suggestion.trim.isEmpty then "" else s" — 建议: ${f.suggestion}"
     s"[node-report:fail] ${f.detail}$sugg"
@@ -129,8 +139,10 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
   // 的「as above」指代被删的 task 段（纯删段的必然残留）⇒ 措辞待作者给。
   // ============================================================
 
-  /** **基础变体**（= 上面的 `description`）：**逐字节不变**——缺省/非法/未登记
-    * 节点角色看到的那一份（fail-closed 默认面）。 */
+  /**
+   * **基础变体**（= 上面的 `description`）：**逐字节不变**——缺省/非法/未登记
+   * 节点角色看到的那一份（fail-closed 默认面）。
+   */
   val descriptionBase: String = description
 
   /** 另角色段的**行首标记**（基础 `description` 里既有的字面量，非新造文案）。 */
@@ -141,21 +153,27 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
   private def withoutParagraph(prefix: String): String =
     description.split("\n", -1).filterNot(_.startsWith(prefix)).mkString("\n")
 
-  /** **分化变体 · 执行节点**（基础 − verifier 段，5 行 → 4 行）。 */
+  /**
+   * **分化变体 · 执行节点**（基础 − verifier 段，5 行 → 4 行）。
+   */
   val descriptionTask: String = withoutParagraph(VerifierParagraphPrefix)
 
-  /** **分化变体 · 校验节点**（基础 − task 段，5 行 → 4 行）。 */
+  /**
+   * **分化变体 · 校验节点**（基础 − task 段，5 行 → 4 行）。
+   */
   val descriptionVerifier: String = withoutParagraph(TaskParagraphPrefix)
 
-  /** 定义期变体（[[nebflow.agent.AgentCore.schemaVariantFor]] 消费）：**只替换
-    * `description`**（`inputSchema` 逐字节不变）。`nodeRole` 恒为
-    * `AgentCore.toolFaceIdentity` 归一 + 白名单校验后的值（`task` | `verifier`）；
-    * `None`（非节点会话 / 非法 / 未登记）⇒ **基础面**（fail-closed，不猜缺省即 task）。 */
+  /**
+   * 定义期变体（[[nebflow.agent.AgentCore.schemaVariantFor]] 消费）：**只替换
+   * `description`**（`inputSchema` 逐字节不变）。`nodeRole` 恒为
+   * `AgentCore.toolFaceIdentity` 归一 + 白名单校验后的值（`task` | `verifier`）；
+   * `None`（非节点会话 / 非法 / 未登记）⇒ **基础面**（fail-closed，不猜缺省即 task）。
+   */
   def roleVariant(base: ToolDefinition, nodeRole: Option[String]): ToolDefinition =
     nodeRole match
-      case Some(r) if r == NodeRoles.Task     => base.copy(description = descriptionTask)
+      case Some(r) if r == NodeRoles.Task => base.copy(description = descriptionTask)
       case Some(r) if r == NodeRoles.Verifier => base.copy(description = descriptionVerifier)
-      case _                                  => base
+      case _ => base
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -172,7 +190,8 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
           "blocked".asJson,
           "finish".asJson,
           "pass".asJson,
-          "fail".asJson),
+          "fail".asJson
+        ),
         "description" -> ("Terminal semantics — THE LEGAL SET DEPENDS ON YOUR NODE ROLE (the tool rejects a mismatch with the legal list for your role). " +
           "role=task: finish (explicit completion; optional — completing is the default) | upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other | blocked (blocked, reason unclassified). " +
           "role=verifier: pass (the judged target is verified) | fail (the judged target is REJECTED — a verdict about the target, never node failure: this node stays completed and the fail edge routes the re-run) | plus the blocked categories above. " +
@@ -210,16 +229,26 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
       // （非 flow 节点会话无此工具），此处兜底防御 allowedSet 配置漂移。
       ctx.flowNodeId match
         case None =>
-          IO.pure(Left(ToolError(
-            s"node_report: permission denied — this tool is exclusive to Flow Map node sessions (your session carries no node identity). " +
-              s"Finish your report as normal text output instead. (NODE_REPORT_FORBIDDEN)")))
+          IO.pure(
+            Left(
+              ToolError(
+                s"node_report: permission denied — this tool is exclusive to Flow Map node sessions (your session carries no node identity). " +
+                  s"Finish your report as normal text output instead. (NODE_REPORT_FORBIDDEN)"
+              )
+            )
+          )
         case Some(_) if category.isEmpty || !isValidCategory(category) =>
           // schema enum 白名单在工具层强制（入参层拒绝，比 BlockedReader 事后归一
           // 更强——spec §4-A ①）：非法值给可修正错误，节点可重调（spec §9.3）。
-          IO.pure(Left(ToolError(
-            s"node_report: invalid category '$category' — must be one of " +
-              s"${StatusValues.toList.sorted.mkString(" | ")} " +
-              s"(NODE_REPORT_CATEGORY). Fix and call again.")))
+          IO.pure(
+            Left(
+              ToolError(
+                s"node_report: invalid category '$category' — must be one of " +
+                  s"${StatusValues.toList.sorted.mkString(" | ")} " +
+                  s"(NODE_REPORT_CATEGORY). Fix and call again."
+              )
+            )
+          )
         // 角色值域门（nrloop 一期 2026-09-12，设计 §3.3 #4 / 附 C2-R1·R2）：值域合法
         // 但**不属于本节点角色**（task 报 pass/fail，或 verifier 报 finish）⇒ 拒，且
         // 错误里给出**本节点 role + 本角色合法值清单**（可行动：agent 据此自纠，
@@ -234,18 +263,25 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
             else
               "Your role is task: declare completion with 'finish' (optional — completing is the default) or blocked when the task cannot be completed. " +
                 "'pass'/'fail' are the verifier's verdict gate — a task node cannot route them; engine-side execution failure has no declaration channel."
-          IO.pure(Left(ToolError(
-            s"node_report: category '$category' is not allowed for this node — node role=${role}, legal categories for your role: $legal " +
-              s"(NODE_REPORT_CATEGORY_ROLE). $hint")))
+          IO.pure(
+            Left(
+              ToolError(
+                s"node_report: category '$category' is not allowed for this node — node role=${role}, legal categories for your role: $legal " +
+                  s"(NODE_REPORT_CATEGORY_ROLE). $hint"
+              )
+            )
+          )
         case Some(_) if detail.isEmpty =>
-          IO.pure(Left(ToolError(
-            s"node_report: 'detail' must be non-empty — say WHAT is the verdict and why " +
-              s"(blocked: the dispatcher reads it verbatim). (NODE_REPORT_DETAIL)")))
+          IO.pure(
+            Left(
+              ToolError(
+                s"node_report: 'detail' must be non-empty — say WHAT is the verdict and why " +
+                  s"(blocked: the dispatcher reads it verbatim). (NODE_REPORT_DETAIL)"
+              )
+            )
+          )
         case Some(nodeId) =>
-          val fb = BlockedFeedback(
-            category = category,
-            detail = detail,
-            suggestion = suggestion)
+          val fb = BlockedFeedback(category = category, detail = detail, suggestion = suggestion)
           // 确认文本：blocked 链沿用 v1 原文（测试/冒烟断言锚零漂移）；**verdict 面按
           // 角色/类别分支**（nrloop 一期 §3.3 #5「回执不误导」）——verifier 的 fail
           // 必须说清「节点本身照常 completed、结论沿 fail 边选通」，否则 agent 会把
@@ -271,8 +307,13 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
           // 留痕 NODE-REPORT-STORE-UNBOUND，不猜、不静默、控制流不变）。
           for
             ws <- reportWorkspaceFor(ctx)
-            _ <- NodeReportRegistry.register(ws, ctx.projectName.getOrElse(""), nodeId,
-              ctx.sessionId.getOrElse(nodeIdSessionKey(nodeId)), fb)
+            _ <- NodeReportRegistry.register(
+              ws,
+              ctx.projectName.getOrElse(""),
+              nodeId,
+              ctx.sessionId.getOrElse(nodeIdSessionKey(nodeId)),
+              fb
+            )
             // chainmodel 批三+：引用面 `report-usage` 计数钩子（轴 b）——申报登记成功后计数
             _ <- countReportUsage(ctx, detail, suggestion)
           yield Right(confirm)
@@ -281,36 +322,41 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
   /** chainmodel 批三+：引用面 id 字面量（与 `ChainLedger.ReferenceFaces` 登记逐字同值）。 */
   private val FaceReportUsage = "report-usage"
 
-  /** **引用面 `report-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的落点：「node_report
-    * detail / 结果正文引用该链号」。
-    *
-    * 计数在**申报登记成功之后**发生（登记失败 ⇒ 无正文落库 ⇒ 引用没发生）；扫描面 = 本次
-    * 申报写入的正文两件：`detail`（必填、已判非空）+ `suggestion`。命中判据 =
-    * `ChainLedger.referencedIds`（**已登记**链号逐字 + 边界命中；🔴 未登记号不计、不建条目
-    * ⇒ 禁回填）。best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReferencesIn`），
-    * 不回滚已登记的申报（申报是节点的终态语义，优先级高于计数）。
-    * 项目未挂载 ⇒ 无可计之处（`reportWorkspaceFor` 同款判据，不猜）。 */
+  /**
+   * **引用面 `report-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的落点：「node_report
+   * detail / 结果正文引用该链号」。
+   *
+   * 计数在**申报登记成功之后**发生（登记失败 ⇒ 无正文落库 ⇒ 引用没发生）；扫描面 = 本次
+   * 申报写入的正文两件：`detail`（必填、已判非空）+ `suggestion`。命中判据 =
+   * `ChainLedger.referencedIds`（**已登记**链号逐字 + 边界命中；🔴 未登记号不计、不建条目
+   * ⇒ 禁回填）。best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReferencesIn`），
+   * 不回滚已登记的申报（申报是节点的终态语义，优先级高于计数）。
+   * 项目未挂载 ⇒ 无可计之处（`reportWorkspaceFor` 同款判据，不猜）。
+   */
   private def countReportUsage(ctx: ToolContext, detail: String, suggestion: String): IO[Unit] =
     ctx.projectName.map(_.trim).filter(_.nonEmpty) match
       case None => IO.unit
       case Some(name) =>
         ProjectRuntimeRegistry.get(name).flatMap {
           case Some(rt) =>
-            rt.engine.noteChainReferencesIn(
-              List(detail, suggestion).filter(_.nonEmpty).mkString("\n"), FaceReportUsage)
+            rt.engine.noteChainReferencesIn(List(detail, suggestion).filter(_.nonEmpty).mkString("\n"), FaceReportUsage)
           case None => IO.unit
         }
 
-  /** 申报持久化归属工作区（#239②）：`ctx.projectName`（**引擎侧身份**——NodeEngine
-    * spawn 时注入，非客户端参数）→ 挂载面 [[ProjectRuntimeRegistry]] → `ProjectDef.workspace`。
-    * 解析不到（项目未挂载 / 非项目会话 / 名字漂移）⇒ `""`（无持久化位置）——工具面
-    * **不猜**工作区（猜错 = 把申报写到别人的日志里，比不写更糟）。 */
+  /**
+   * 申报持久化归属工作区（#239②）：`ctx.projectName`（**引擎侧身份**——NodeEngine
+   * spawn 时注入，非客户端参数）→ 挂载面 [[ProjectRuntimeRegistry]] → `ProjectDef.workspace`。
+   * 解析不到（项目未挂载 / 非项目会话 / 名字漂移）⇒ `""`（无持久化位置）——工具面
+   * **不猜**工作区（猜错 = 把申报写到别人的日志里，比不写更糟）。
+   */
   private def reportWorkspaceFor(ctx: ToolContext): IO[String] =
     ctx.projectName.map(_.trim).filter(_.nonEmpty) match
       case Some(name) => ProjectRuntimeRegistry.get(name).map(_.map(_.project.workspace).getOrElse(""))
-      case None       => IO.pure("")
+      case None => IO.pure("")
 
-  /** 会话 id 缺失（理论不可达：flow 节点会话恒有 sessionId）时的确定性兜底键——
-    * 保持 register 总有键可登记，避免 None 分支吞掉申报。 */
+  /**
+   * 会话 id 缺失（理论不可达：flow 节点会话恒有 sessionId）时的确定性兜底键——
+   * 保持 register 总有键可登记，避免 None 分支吞掉申报。
+   */
   private def nodeIdSessionKey(nodeId: String): String = s"node-identity:$nodeId"
 end NodeReportToolDef

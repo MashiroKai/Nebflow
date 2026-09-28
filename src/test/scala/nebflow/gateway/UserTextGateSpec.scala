@@ -32,10 +32,16 @@ import scala.io.Source
 class UserTextGateSpec extends FunSuite:
 
   private val repoRoot = new java.io.File(".").getAbsoluteFile
+
   private val wsRoutesFile =
     new java.io.File(repoRoot, "src/main/scala/nebflow/gateway/WebSocketRoutes.scala")
+
   private val hubFile =
     new java.io.File(repoRoot, "src/main/scala/nebflow/agent/InteractionHub.scala")
+  // 严格DAG第⑥步第三批A裁定(2026-09-27):InteractionHubCommand(含 Answered)随 dwfq-5c7a31ea-1
+  // R-B 移入 nebflow.actor,源码哨兵随迁新增此读面(先例 1c4cbb0/④路径钉串)。
+  private val hubCommandFile =
+    new java.io.File(repoRoot, "src/main/scala/nebflow/actor/InteractionHubCommand.scala")
   private val mainScalaDir = new java.io.File(repoRoot, "src/main/scala")
 
   private def read(f: java.io.File): String =
@@ -45,16 +51,20 @@ class UserTextGateSpec extends FunSuite:
     try src.mkString
     finally src.close()
 
-  /** 剥掉块注释与 `//` 行注释后的**代码面** —— 判据只认代码：注释里提到符号名
-    * 不得算「还在」，也不得靠注释凑出「已删」的假绿。 */
+  /**
+   * 剥掉块注释与 `//` 行注释后的**代码面** —— 判据只认代码：注释里提到符号名
+   * 不得算「还在」，也不得靠注释凑出「已删」的假绿。
+   */
   private def codeOnly(src: String): String =
     val noBlock = src.replaceAll("(?s)/\\*.*?\\*/", "")
     noBlock.linesIterator.map(l => l.replaceAll("//.*$", "")).mkString("\n")
 
   private lazy val wsRoutes: String = read(wsRoutesFile)
   private lazy val hub: String = read(hubFile)
+  private lazy val hubCommand: String = read(hubCommandFile)
   private lazy val wsRoutesCode: String = codeOnly(wsRoutes)
   private lazy val hubCode: String = codeOnly(hub)
+  private lazy val hubCommandCode: String = codeOnly(hubCommand)
 
   /** 递归收集目录下的 .scala 源文件（java.io 实现，零新依赖面）。 */
   private def scalaSourcesUnder(dir: java.io.File): List[java.io.File] =
@@ -129,7 +139,7 @@ class UserTextGateSpec extends FunSuite:
   // ---------------------------------------------------------------
 
   test("正控 ①：卡片入口作答仍在（Answered 命令 + handleAnswered + requestId 形态校验）") {
-    assert(hubCode.contains("case class Answered"), "卡片作答命令 Answered 丢失（越界删除）")
+    assert(hubCommandCode.contains("case class Answered"), "卡片作答命令 Answered 丢失（越界删除）")
     assert(hubCode.contains("handleAnswered"), "卡片作答处理 handleAnswered 丢失（越界删除）")
     assert(hubCode.contains("answerCompletes"), "requestId 形态校验 answerCompletes 丢失（越界删除）")
   }

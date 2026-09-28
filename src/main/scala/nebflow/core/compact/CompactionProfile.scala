@@ -8,8 +8,7 @@ package nebflow.core.compact
  * happens as a pre-compaction step, not via independent timers or turn hooks.
  *
  * 2026-08-31 memory-system redesign: only the Root profile has a hook anymore
- * (NebulaMemoryHook; its fact-extraction production face is retired — govmemory
- * batch — it now only raises the post-compaction hygiene signal). Manager/Worker
+ * (NebulaMemoryHook, merged-write fact extraction → User.md). Manager/Worker
  * hooks are retired — team agents have no memory to write to.
  *
  * 2026-09-03 per-level compaction prompts: Dispatcher / ProjectNode cover the
@@ -18,7 +17,7 @@ package nebflow.core.compact
  * NoOpHook via PreCompactionHooks' default case — dispatcher/node sessions
  * have no memory (2026-08-31 ruling).
  *
- *  - Root:        NebulaMemoryHook (post-compaction hygiene signal)
+ *  - Root:        RootMemoryHook (fact extraction → User.md)
  *  - Manager:     NoOpHook
  *  - Worker:      NoOpHook
  *  - Dispatcher:  NoOpHook (project dispatcher session, dispatcher-*)
@@ -60,3 +59,4 @@ object CompactionProfile:
       else if isLead then Manager
       else Worker
     else Worker
+end CompactionProfile

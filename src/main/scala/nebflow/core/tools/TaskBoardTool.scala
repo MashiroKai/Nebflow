@@ -1,9 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
-
+import io.circe.{Json, JsonObject}
 import nebflow.core.project.{ProjectRuntime, TaskBoardHistory, TaskBoardStore}
 
 /**
@@ -43,6 +42,7 @@ import nebflow.core.project.{ProjectRuntime, TaskBoardHistory, TaskBoardStore}
 
 /** 调用者身份（§1d 三值；从 ToolContext 引擎侧字段派生，不信客户端参数）。 */
 sealed trait BoardCaller extends Product with Serializable
+
 object BoardCaller:
   case object Dispatcher extends BoardCaller
   case class FlowNode(nodeId: String) extends BoardCaller
@@ -56,16 +56,18 @@ object BoardCaller:
 object TaskBoardTool:
 
   /** 权限拒绝（可行动文案：说身份、说越权点、给出路）。 */
-  private def forbidden(reason: String): ToolError = ToolError(
-    s"TaskBoard: permission denied — $reason (${TaskBoardStore.Codes.Forbidden})")
+  private def forbidden(reason: String): ToolError =
+    ToolError(s"TaskBoard: permission denied — $reason (${TaskBoardStore.Codes.Forbidden})")
 
   // ------------------------------------------------------------------
   // 权限判定 + 动作分派（同步核心；call 在 IO.blocking 内调用——可单测）
   // ------------------------------------------------------------------
 
-  /** 工具六动词分派（§1d 矩阵逐格落实 + 升级批 log/show；动作本体委托 store）。
-    * nodeTerminal 为 ⚠node-done join 映射（list/show 用；调用方从 Flow Map 快照取
-    * 真实终态）。`actor` 由身份派生后传给 store 写史（引擎侧，不信客户端参数）。 */
+  /**
+   * 工具六动词分派（§1d 矩阵逐格落实 + 升级批 log/show；动作本体委托 store）。
+   * nodeTerminal 为 ⚠node-done join 映射（list/show 用；调用方从 Flow Map 快照取
+   * 真实终态）。`actor` 由身份派生后传给 store 写史（引擎侧，不信客户端参数）。
+   */
   def dispatchSync(
     board: TaskBoardStore,
     nodeTerminal: Map[String, String],
@@ -91,8 +93,10 @@ object TaskBoardTool:
       case BoardCaller.FlowNode(nid) =>
         nodeDispatch(board, nodeTerminal, nid, action, title, id, status, assignee, nodeId, note, blocks, text, links)
 
-  /** 分发器：全权（§1d 列 1）——create 全量 / update 全板任意任务含结构字段 /
-    * close 全板 / list 全板 / **show 全板 / log 全板**。参数原样透传 store。 */
+  /**
+   * 分发器：全权（§1d 列 1）——create 全量 / update 全板任意任务含结构字段 /
+   * close 全板 / list 全板 / **show 全板 / log 全板**。参数原样透传 store。
+   */
   private def dispatcherDispatch(
     board: TaskBoardStore,
     nodeTerminal: Map[String, String],
@@ -109,35 +113,70 @@ object TaskBoardTool:
   ): Either[ToolError, String] =
     action match
       case "create" =>
-        board.createSync(title = title.getOrElse(""), assignee = assignee, nodeId = nodeId, note = note,
-          blocksRaw = blocks, linksRaw = links, actor = TaskBoardHistory.Actors.Dispatcher)
+        board.createSync(
+          title = title.getOrElse(""),
+          assignee = assignee,
+          nodeId = nodeId,
+          note = note,
+          blocksRaw = blocks,
+          linksRaw = links,
+          actor = TaskBoardHistory.Actors.Dispatcher
+        )
       case "update" =>
         id match
-          case None => Left(ToolError(s"TaskBoard: update requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})"))
-          case Some(i) => board.updateSync(i, title, status, assignee, nodeId, note, blocks, links,
-            actor = TaskBoardHistory.Actors.Dispatcher)
+          case None =>
+            Left(
+              ToolError(s"TaskBoard: update requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})")
+            )
+          case Some(i) =>
+            board.updateSync(
+              i,
+              title,
+              status,
+              assignee,
+              nodeId,
+              note,
+              blocks,
+              links,
+              actor = TaskBoardHistory.Actors.Dispatcher
+            )
       case "close" =>
         id match
-          case None => Left(ToolError(s"TaskBoard: close requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})"))
+          case None =>
+            Left(
+              ToolError(s"TaskBoard: close requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})")
+            )
           case Some(i) => board.closeSync(i, note, actor = TaskBoardHistory.Actors.Dispatcher)
       case "log" =>
         id match
-          case None => Left(ToolError(s"TaskBoard: log requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})"))
+          case None =>
+            Left(
+              ToolError(s"TaskBoard: log requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})")
+            )
           case Some(i) => board.logSync(i, text.getOrElse(""), links, actor = TaskBoardHistory.Actors.Dispatcher)
       case "show" =>
         id match
-          case None => Left(ToolError(s"TaskBoard: show requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})"))
+          case None =>
+            Left(
+              ToolError(s"TaskBoard: show requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})")
+            )
           case Some(i) => board.showSync(i, nodeTerminal)
       case "list" =>
         board.listSync(status = status, assignee = assignee, nodeTerminal = nodeTerminal)
       case other =>
-        Left(ToolError(s"TaskBoard: unknown action '$other' — one of create/update/list/close/log/show. (${TaskBoardStore.Codes.Param})"))
+        Left(
+          ToolError(
+            s"TaskBoard: unknown action '$other' — one of create/update/list/close/log/show. (${TaskBoardStore.Codes.Param})"
+          )
+        )
 
-  /** 节点：受限（§1d 列 2）——create 禁止（决策 b，拆活走 BLOCKED/needs-split 闭环）；
-    * update/close/log 仅自己名下（assignee=自身节点 id）且 update 仅 status+note
-    * 两字段（title/assignee/nodeId/blocks 与升级批新增的 links 均属结构字段，只读，
-    * 任一出现即拒）；list/show 全板只读（status/assignee 过滤参数与分发器同面——
-    * 只读过滤无越权面）。 */
+  /**
+   * 节点：受限（§1d 列 2）——create 禁止（决策 b，拆活走 BLOCKED/needs-split 闭环）；
+   * update/close/log 仅自己名下（assignee=自身节点 id）且 update 仅 status+note
+   * 两字段（title/assignee/nodeId/blocks 与升级批新增的 links 均属结构字段，只读，
+   * 任一出现即拒）；list/show 全板只读（status/assignee 过滤参数与分发器同面——
+   * 只读过滤无越权面）。
+   */
   private def nodeDispatch(
     board: TaskBoardStore,
     nodeTerminal: Map[String, String],
@@ -155,55 +194,82 @@ object TaskBoardTool:
   ): Either[ToolError, String] =
     action match
       case "create" =>
-        Left(forbidden("nodes cannot create tasks (planning authority is the dispatcher). " +
-          "If the task needs splitting, end your output with a BLOCKED result (category=needs-split) instead"))
+        Left(
+          forbidden(
+            "nodes cannot create tasks (planning authority is the dispatcher). " +
+              "If the task needs splitting, end your output with a BLOCKED result (category=needs-split) instead"
+          )
+        )
       case "list" =>
         board.listSync(status = status, assignee = assignee, nodeTerminal = nodeTerminal)
       case "show" =>
         id match
           case None =>
-            Left(ToolError(s"TaskBoard: show requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})"))
+            Left(
+              ToolError(s"TaskBoard: show requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})")
+            )
           case Some(i) => board.showSync(i, nodeTerminal)
       case "update" | "close" | "log" =>
         id match
           case None =>
-            Left(ToolError(s"TaskBoard: $action requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})"))
+            Left(
+              ToolError(
+                s"TaskBoard: $action requires `id` (entry id from action=list). (${TaskBoardStore.Codes.Param})"
+              )
+            )
           case Some(i) =>
             // 归属判定走读路径视图（单宿主内 TOCTOU 窗口可忽略——申报）；
             // 条目不存在 → 委托 store 返回带 open 清单指引的 TBOARD_NOT_FOUND。
             board.entriesSync().find(_.id == i) match
               case Some(e) if !e.assignee.contains(selfNodeId) =>
-                Left(forbidden(s"task #$i is assigned to '${e.assignee.getOrElse("(none)")}', not to your node id " +
-                  s"'$selfNodeId' — you may only touch tasks assigned to you (action=list to see yours)"))
+                Left(
+                  forbidden(
+                    s"task #$i is assigned to '${e.assignee.getOrElse("(none)")}', not to your node id " +
+                      s"'$selfNodeId' — you may only touch tasks assigned to you (action=list to see yours)"
+                  )
+                )
               case Some(_) =>
                 if action == "close" then board.closeSync(i, note, actor = TaskBoardHistory.Actors.Node)
-                else if action == "log" then board.logSync(i, text.getOrElse(""), links, actor = TaskBoardHistory.Actors.Node)
+                else if action == "log" then
+                  board.logSync(i, text.getOrElse(""), links, actor = TaskBoardHistory.Actors.Node)
                 else
                   // 结构字段只读（§1d）：节点 update 携带 title/assignee/nodeId/blocks/links
                   // 任一 → 拒绝（字段出现即改动请求，与值无关）。
-                  if title.isDefined || assignee.isDefined || nodeId.isDefined || blocks.isDefined || links.isDefined then
-                    Left(forbidden("nodes may only change `status` and `note` of their own tasks — " +
-                      "title/assignee/nodeId/blocks/links are dispatcher-only fields; request the change via your report channel"))
+                  if title.isDefined || assignee.isDefined || nodeId.isDefined || blocks.isDefined || links.isDefined
+                  then
+                    Left(
+                      forbidden(
+                        "nodes may only change `status` and `note` of their own tasks — " +
+                          "title/assignee/nodeId/blocks/links are dispatcher-only fields; request the change via your report channel"
+                      )
+                    )
                   else board.updateSync(i, status = status, note = note, actor = TaskBoardHistory.Actors.Node)
               case None =>
                 if action == "close" then board.closeSync(i, note, actor = TaskBoardHistory.Actors.Node)
-                else if action == "log" then board.logSync(i, text.getOrElse(""), links, actor = TaskBoardHistory.Actors.Node)
+                else if action == "log" then
+                  board.logSync(i, text.getOrElse(""), links, actor = TaskBoardHistory.Actors.Node)
                 else board.updateSync(i, actor = TaskBoardHistory.Actors.Node)
       case other =>
-        Left(ToolError(s"TaskBoard: unknown action '$other' — one of create/update/list/close/log/show. (${TaskBoardStore.Codes.Param})"))
+        Left(
+          ToolError(
+            s"TaskBoard: unknown action '$other' — one of create/update/list/close/log/show. (${TaskBoardStore.Codes.Param})"
+          )
+        )
 end TaskBoardTool
 
 /**
  * TaskBoard 工具实体（挂载面 §1c：分发器 DispatcherFixedTools 第九件 + project
- * 节点会话按身份追加；Nebula 一期不挂、plugins 声明不授能——NebulaExclusiveTools
+ * 节点会话按身份追加；Root 一期不挂、plugins 声明不授能——RootExclusiveTools
  * 防声明逃逸，双保险见 TaskBoardTool.dispatchSync 的 Other 拒绝）。
  */
 object TaskBoardToolDef extends Tool:
 
-  /** ⚠node-done 的 Flow Map join：项目运行时 → nodeId→终态映射（仅 completed/
-    * failed/cancelled 计入，§2d；映射构造单点 TaskBoardStore.nodeTerminalMap）。
-    * 批 2 接线点：批 1 renderer 的 nodeDone 是纯函数入参，本处从 Flow Map 快照
-    * 取真实终态（rt.engine.store.snapshot 现读，不缓存）。 */
+  /**
+   * ⚠node-done 的 Flow Map join：项目运行时 → nodeId→终态映射（仅 completed/
+   * failed/cancelled 计入，§2d；映射构造单点 TaskBoardStore.nodeTerminalMap）。
+   * 批 2 接线点：批 1 renderer 的 nodeDone 是纯函数入参，本处从 Flow Map 快照
+   * 取真实终态（rt.engine.store.snapshot 现读，不缓存）。
+   */
   private def nodeTerminalOf(rt: ProjectRuntime): IO[Map[String, String]] =
     rt.engine.store.snapshot.map(snap => TaskBoardStore.nodeTerminalMap(snap.nodes.values))
 
@@ -214,25 +280,29 @@ object TaskBoardToolDef extends Tool:
   /** chainmodel 批三+：引用面 id 字面量（与 `ChainLedger.ReferenceFaces` 登记逐字同值）。 */
   private val FaceBoardUsage = "board-usage"
 
-  /** 写动作集合：只有写动作的正文才可能**新增**引用（`list`/`show` 是只读面 ⇒ 零计数）。
-    * 动作名与 `dispatchSync` 的动词集同源（未知动作不在集合内 ⇒ 零计数）。 */
+  /**
+   * 写动作集合：只有写动作的正文才可能**新增**引用（`list`/`show` 是只读面 ⇒ 零计数）。
+   * 动作名与 `dispatchSync` 的动词集同源（未知动作不在集合内 ⇒ 零计数）。
+   */
   private val BoardWriteActions = Set("create", "update", "close", "log")
 
-  /** **引用面 `board-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的落点：「任务书或板卡
-    * 条目正文引用该链号」。
-    *
-    * 计数**只在写成功之后**发生（`Left` = 未写库 ⇒ 引用没发生）；扫描面 = 本次调用提交的正文
-    * 四件：`title` / `note` / `text`（log 正文）/ `links`（关联锚 —— 链号也可以只出现在锚里，
-    * 漏掉即漏计）。命中判据 = `ChainLedger.referencedIds`（**已登记**链号逐字 + 边界命中；
-    * 🔴 未登记号不计、不建条目 ⇒ 禁回填）。
-    * best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReferencesIn`），不回滚已写的板卡。 */
+  /**
+   * **引用面 `board-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的落点：「任务书或板卡
+   * 条目正文引用该链号」。
+   *
+   * 计数**只在写成功之后**发生（`Left` = 未写库 ⇒ 引用没发生）；扫描面 = 本次调用提交的正文
+   * 四件：`title` / `note` / `text`（log 正文）/ `links`（关联锚 —— 链号也可以只出现在锚里，
+   * 漏掉即漏计）。命中判据 = `ChainLedger.referencedIds`（**已登记**链号逐字 + 边界命中；
+   * 🔴 未登记号不计、不建条目 ⇒ 禁回填）。
+   * best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReferencesIn`），不回滚已写的板卡。
+   */
   private def countBoardUsage(
-      rt: ProjectRuntime,
-      action: String,
-      title: Option[String],
-      note: Option[String],
-      text: Option[String],
-      links: Option[List[String]]
+    rt: ProjectRuntime,
+    action: String,
+    title: Option[String],
+    note: Option[String],
+    text: Option[String],
+    links: Option[List[String]]
   ): IO[Unit] =
     if !BoardWriteActions.contains(action) then IO.unit
     else
@@ -272,52 +342,52 @@ Starting (→in_progress) or closing is REJECTED while any `blocks` dependency i
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "action" -> Json.obj(
-        "type"        -> "string".asJson,
-        "enum"        -> Json.arr("create".asJson, "update".asJson, "list".asJson, "close".asJson,
-          "log".asJson, "show".asJson),
+        "type" -> "string".asJson,
+        "enum" -> Json
+          .arr("create".asJson, "update".asJson, "list".asJson, "close".asJson, "log".asJson, "show".asJson),
         "description" -> "create / update / list / close / log / show (see description).".asJson
       ),
       "title" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Entry title (≤300 chars). Required for create; dispatcher-only replacement for update.".asJson
       ),
       "id" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Entry id (from list). Required for update/close/log/show.".asJson
       ),
       "status" -> Json.obj(
-        "type"        -> "string".asJson,
-        "enum"        -> Json.arr("open".asJson, "in_progress".asJson, "blocked".asJson),
+        "type" -> "string".asJson,
+        "enum" -> Json.arr("open".asJson, "in_progress".asJson, "blocked".asJson),
         "description" -> "New status for update. \"done\" is reached via action=close only.".asJson
       ),
       "assignee" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Node id | \"dispatcher\" | \"author\". create: optional (default \"dispatcher\"); update: dispatcher-only (empty string clears); list: exact filter.".asJson
       ),
       "nodeId" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Optional Flow Map node link (NodeDef.id). create: optional; update: dispatcher-only (empty string clears).".asJson
       ),
       "note" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "create: initial note; update: REPLACES the note; close: appended as a [done] outcome line; log: untouched. ≤16000 chars (long content → action=log).".asJson
       ),
       "text" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "action=log only: the record to APPEND to the entry's history (≤4000 chars; it never rewrites `note`).".asJson
       ),
       "links" -> Json.obj(
-        "type"        -> "array".asJson,
-        "items"       -> Json.obj("type" -> "string".asJson),
+        "type" -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
         "description" -> "Free-form anchors (doc path | commit | id), ≤20 items of ≤300 chars. create: initial list; update: FULL replacement ([] clears); log: anchors for that record. NOT validated for reachability.".asJson
       ),
       "blocks" -> Json.obj(
-        "type"        -> "array".asJson,
-        "items"       -> Json.obj("type" -> "string".asJson),
+        "type" -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
         "description" -> "Ids of entries this one depends on. create: initial list; update: FULL replacement ([] clears). Dispatcher-only.".asJson
       ),
       "project" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Optional project name override. Defaults to this session's project context.".asJson
       )
     ),
@@ -335,19 +405,19 @@ Starting (→in_progress) or closing is REJECTED while any `blocks` dependency i
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // 参数解析在 blocking 内（纯 CPU，亚毫秒）；resolveProject 走 IO（registry Ref）。
     IO.blocking {
-      val action  = input("action").flatMap(_.asString).getOrElse("")
-      val title   = input("title").flatMap(_.asString)
-      val id      = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-      val status  = input("status").flatMap(_.asString)
+      val action = input("action").flatMap(_.asString).getOrElse("")
+      val title = input("title").flatMap(_.asString)
+      val id = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+      val status = input("status").flatMap(_.asString)
       val project = input("project").flatMap(_.asString)
       val assignee = input("assignee").flatMap(_.asString)
-      val nodeId  = input("nodeId").flatMap(_.asString)
-      val note    = input("note").flatMap(_.asString)
-      val blocks  = input("blocks").flatMap(_.as[List[String]].toOption)
+      val nodeId = input("nodeId").flatMap(_.asString)
+      val note = input("note").flatMap(_.asString)
+      val blocks = input("blocks").flatMap(_.as[List[String]].toOption)
       // 升级批参数：log 的正文与关联锚（客户端传入的 actor/history 一律忽略——
       // actor 由身份派生，见 description）
-      val text    = input("text").flatMap(_.asString)
-      val links   = input("links").flatMap(_.as[List[String]].toOption)
+      val text = input("text").flatMap(_.asString)
+      val links = input("links").flatMap(_.as[List[String]].toOption)
       (action, title, id, status, project, assignee, nodeId, note, blocks, text, links)
     }.flatMap { case (action, title, id, status, project, assignee, nodeId, note, blocks, text, links) =>
       NodeTools.resolveProject(project, ctx).flatMap {
@@ -355,19 +425,39 @@ Starting (→in_progress) or closing is REJECTED while any `blocks` dependency i
         case Right(rt) =>
           rt.board match
             case None =>
-              IO.pure(Left(ToolError(
-                s"TaskBoard: project '${rt.project.name}' has no board mounted (runtime built without one). (${TaskBoardStore.Codes.Param})")))
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"TaskBoard: project '${rt.project.name}' has no board mounted (runtime built without one). (${TaskBoardStore.Codes.Param})"
+                  )
+                )
+              )
             case Some(board) =>
-              nodeTerminalOf(rt).flatMap { terminal =>
-                IO.blocking(TaskBoardTool.dispatchSync(
-                  board, terminal, BoardCaller.fromContext(ctx), action,
-                  title = title, id = id, status = status, assignee = assignee,
-                  nodeId = nodeId, note = note, blocks = blocks, text = text, links = links))
-              // chainmodel 批三+：引用面 `board-usage` 计数钩子（轴 b）——写成功后计数
-              }.flatMap { r =>
-                if r.isRight then countBoardUsage(rt, action, title, note, text, links).as(r)
-                else IO.pure(r)
-              }
+              nodeTerminalOf(rt)
+                .flatMap { terminal =>
+                  IO.blocking(
+                    TaskBoardTool.dispatchSync(
+                      board,
+                      terminal,
+                      BoardCaller.fromContext(ctx),
+                      action,
+                      title = title,
+                      id = id,
+                      status = status,
+                      assignee = assignee,
+                      nodeId = nodeId,
+                      note = note,
+                      blocks = blocks,
+                      text = text,
+                      links = links
+                    )
+                  )
+                  // chainmodel 批三+：引用面 `board-usage` 计数钩子（轴 b）——写成功后计数
+                }
+                .flatMap { r =>
+                  if r.isRight then countBoardUsage(rt, action, title, note, text, links).as(r)
+                  else IO.pure(r)
+                }
       }
     }
 end TaskBoardToolDef

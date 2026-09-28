@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
@@ -100,8 +100,10 @@ class NeblinkRelayTunnelBackoffWakeSpec extends CatsEffectSuite:
 
   // ── 行为面：唤醒 + 风暴上界 ─────────────────────────────
 
-  /** 只装 tunnel 的最小栈：URL 已配置但**永远没有 token** ⇒ 循环必然进
-    * 「no session token」分支并按梯子空转。tokenGetter 计数 = 空转节拍的可观测面。 */
+  /**
+   * 只装 tunnel 的最小栈：URL 已配置但**永远没有 token** ⇒ 循环必然进
+   * 「no session token」分支并按梯子空转。tokenGetter 计数 = 空转节拍的可观测面。
+   */
   private def withIdleTunnel[A](url: String)(body: (NeblinkRelayTunnel, AtomicInteger) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
@@ -143,8 +145,10 @@ class NeblinkRelayTunnelBackoffWakeSpec extends CatsEffectSuite:
     }
   }
 
-  /** fixture 生命周期必须挂在 IO 上（`try/finally` 会在 IO **构造期**就 close —— 那
-    * 会把 fixture 在测试真正跑之前关掉，症状是 login 直接 `ConnectException`）。 */
+  /**
+   * fixture 生命周期必须挂在 IO 上（`try/finally` 会在 IO **构造期**就 close —— 那
+   * 会把 fixture 在测试真正跑之前关掉，症状是 login 直接 `ConnectException`）。
+   */
   private def withFixture[A](body: RelayAuthFixtureServer => IO[A]): IO[A] =
     IO.blocking(new RelayAuthFixtureServer()).flatMap(f => body(f).guarantee(IO.blocking(f.close())))
 
@@ -162,7 +166,9 @@ class NeblinkRelayTunnelBackoffWakeSpec extends CatsEffectSuite:
           _ = ms.setRelayClient(Some(client))
           ps = new NeblinkPresenceService(ms, 0)(dispatcher)
           discovery = new NeblinkDiscovery(ms, 0, ps, Some(client))
-          tunnel = new NeblinkRelayTunnel(ms, () => discovery.currentClient.map(_.flatMap(_.currentSessionToken)))(dispatcher)
+          tunnel = new NeblinkRelayTunnel(ms, () => discovery.currentClient.map(_.flatMap(_.currentSessionToken)))(
+            dispatcher
+          )
           _ = ms.setRelayTunnel(tunnel)
           _ <- ms.setRelayTunnelStarter(tunnel.ensure())
           _ <- ms.updateConfig(

@@ -46,9 +46,12 @@ import WatchdogReplayCore.{Result, SessionCase, SessionExpectation, Status}
 class WatchdogCriteriaReplaySpec extends CatsEffectSuite:
 
   private val replayLog: os.Path =
-    os.Path(sys.props.getOrElse(
-      "nebflow.watchdog.replayLog",
-      (os.home / ".nebflow" / "logs" / "watchdog" / "2026-09-12_events.jsonl").toString))
+    os.Path(
+      sys.props.getOrElse(
+        "nebflow.watchdog.replayLog",
+        (os.home / ".nebflow" / "logs" / "watchdog" / "2026-09-12_events.jsonl").toString
+      )
+    )
 
   /** 无生产语料（CI / 干净工作区）⇒ 整 spec skip，不当失败（**该行为不得回退**）。 */
   override def munitIgnore: Boolean = !os.exists(replayLog)
@@ -57,10 +60,11 @@ class WatchdogCriteriaReplaySpec extends CatsEffectSuite:
   private val windowStartProp: Option[Long] =
     sys.props.get("nebflow.watchdog.replayWindowStart").map(WatchdogReplayCore.parseWindowStart)
 
-  /** 任务书 / 批报告点名的会话期望（语料特定数据，故留在 spec 而非核内）。
-    *   - 5 个生产误判会话：修复后**不得再判** true-stuck（口径不变式）；
-    *   - 2 个窗联动样本（声明 3600s）：修复后 true-stuck 必须减少。
-    */
+  /**
+   * 任务书 / 批报告点名的会话期望（语料特定数据，故留在 spec 而非核内）。
+   *   - 5 个生产误判会话：修复后**不得再判** true-stuck（口径不变式）；
+   *   - 2 个窗联动样本（声明 3600s）：修复后 true-stuck 必须减少。
+   */
   private val namedSessions: Vector[SessionCase] = Vector(
     SessionCase("node-eb8a9c70", SessionExpectation.NewTrueZero),
     SessionCase("node-3880729d", SessionExpectation.NewTrueZero),
@@ -87,8 +91,11 @@ class WatchdogCriteriaReplaySpec extends CatsEffectSuite:
       // ── 断言 ──────────────────────────────────────────────────────────────
       assert(rows.nonEmpty, "语料必须含 stuck-detected 行")
       val fails = verdicts.filter(_.status == Status.Fail)
-      assertEquals(fails.map(v => v.name + " → " + v.detail), Vector.empty[String],
-        "分段断言不得有 FAIL（分段机制见 [[WatchdogReplayCore]] 头注）")
+      assertEquals(
+        fails.map(v => v.name + " → " + v.detail),
+        Vector.empty[String],
+        "分段断言不得有 FAIL（分段机制见 [[WatchdogReplayCore]] 头注）"
+      )
     }
   }
 
@@ -112,42 +119,62 @@ class WatchdogCriteriaReplaySpec extends CatsEffectSuite:
     emit(segLine("窗口后段（修复构建出处 ⇒ 新判据保真度自证）", r.post))
     emit("")
     emit("── 前后对照（stuck-detected 判定面，两侧数字齐全）──")
-    emit("修复前（日志登记）    : true-stuck " + r.loggedTrue + " / false-positive " + r.loggedFalse +
-      "  (合计 " + r.total + ")")
-    emit("修复前（旧判据重放）  : true-stuck " + r.pre.oldTrue + " / false-positive " + r.pre.oldFalse +
-      "（窗口前段口径）")
+    emit(
+      "修复前（日志登记）    : true-stuck " + r.loggedTrue + " / false-positive " + r.loggedFalse +
+        "  (合计 " + r.total + ")"
+    )
+    emit(
+      "修复前（旧判据重放）  : true-stuck " + r.pre.oldTrue + " / false-positive " + r.pre.oldFalse +
+        "（窗口前段口径）"
+    )
     emit("修复后（新判据重放）  : true-stuck " + r.newTrue + " / false-positive " + r.newFalse)
-    emit("true-stuck 变化       : " + r.loggedTrue + " → " + r.newTrue +
-      "（" + r.trueStuckDelta + " 条）")
-    emit("false-positive → true-stuck 的翻转: " + r.fpToTrue.size +
-      " 条（必须为 0 —— 修法只准减少误判，不准新增真判）")
+    emit(
+      "true-stuck 变化       : " + r.loggedTrue + " → " + r.newTrue +
+        "（" + r.trueStuckDelta + " 条）"
+    )
+    emit(
+      "false-positive → true-stuck 的翻转: " + r.fpToTrue.size +
+        " 条（必须为 0 —— 修法只准减少误判，不准新增真判）"
+    )
     r.fpToTrue.foreach(s => emit("  VIOLATION " + s))
     emit("")
     emit("── 保真度自证（分段）──")
-    emit("窗口前段 旧判据重放 class 与日志不一致: " + r.pre.legacyMismatch.size + " 条（参与断言 " +
-      r.pre.asserted + " 行）")
+    emit(
+      "窗口前段 旧判据重放 class 与日志不一致: " + r.pre.legacyMismatch.size + " 条（参与断言 " +
+        r.pre.asserted + " 行）"
+    )
     r.pre.legacyMismatch.take(40).foreach(s => emit("  " + s))
     emit("窗口前段 重放 branch 与日志不一致: " + r.pre.branchMismatch.size + " 条")
     r.pre.branchMismatch.take(20).foreach(s => emit("  " + s))
-    emit("窗口前段 两侧计数: 旧判据重放 " + r.pre.oldTrue + "/" + r.pre.oldFalse + " vs 日志 " +
-      r.pre.loggedTrue + "/" + r.pre.loggedFalse)
-    emit("窗口后段 新判据重放 class 与日志不一致: " + r.post.newMismatch.size + " 条（参与断言 " +
-      r.post.asserted + " 行）")
+    emit(
+      "窗口前段 两侧计数: 旧判据重放 " + r.pre.oldTrue + "/" + r.pre.oldFalse + " vs 日志 " +
+        r.pre.loggedTrue + "/" + r.pre.loggedFalse
+    )
+    emit(
+      "窗口后段 新判据重放 class 与日志不一致: " + r.post.newMismatch.size + " 条（参与断言 " +
+        r.post.asserted + " 行）"
+    )
     r.post.newMismatch.take(40).foreach(s => emit("  " + s))
-    emit("旧形态读数（全语料一律断言旧判据保真）: " + r.allLegacyMismatch.size +
-      " 条 —— 该形态在含窗口后行的语料上必然非零（R1′ 现象本体）")
+    emit(
+      "旧形态读数（全语料一律断言旧判据保真）: " + r.allLegacyMismatch.size +
+        " 条 —— 该形态在含窗口后行的语料上必然非零（R1′ 现象本体）"
+    )
     emit("")
     emit("── 逐会话（总数 / 日志 true-stuck / 新 true-stuck / 翻走）──")
     r.bySession.toList.foreach { case (sid, t) =>
-      emit("  " + sid + ": n=" + t.n + " loggedTrue=" + t.loggedTrue + " newTrue=" + t.newTrue +
-        " flipped=" + t.flipped)
+      emit(
+        "  " + sid + ": n=" + t.n + " loggedTrue=" + t.loggedTrue + " newTrue=" + t.newTrue +
+          " flipped=" + t.flipped
+      )
     }
     emit("")
     emit("── 从 true-stuck 翻走的条目（共 " + r.flipped.size + " 条）──")
     r.flipped.groupBy(_.sid).toList.sortBy(_._1).foreach { case (sid, rs) =>
       val ages = rs.map(_.progressAgoMs).map(a => s"${a / 1000}s").distinct.sorted
-      emit("  " + sid + ": " + rs.size + " 条，正信号新鲜度 ∈ {" + ages.mkString(", ") +
-        "}，新窗 " + (rs.head.windowMs / 1000) + "s")
+      emit(
+        "  " + sid + ": " + rs.size + " 条，正信号新鲜度 ∈ {" + ages.mkString(", ") +
+          "}，新窗 " + (rs.head.windowMs / 1000) + "s"
+      )
     }
     emit("")
     emit("── 「放走真卡死」检查（日志 true-stuck ∧ 新窗下正信号不新鲜 ⇒ 必须仍 true-stuck）──")
@@ -158,23 +185,37 @@ class WatchdogCriteriaReplaySpec extends CatsEffectSuite:
     verdicts.foreach(v => emit("  " + WatchdogReplayCore.label(v) + v.name + " | " + v.detail))
     emit("")
     emit("── 未证 / 异常申报（显式，禁粉饰）──")
-    emit("未证① 出处不明的行（两构建文案逐字相同 ⇒ 不参与任何保真度断言）: " +
-      r.unknownRows.size + " 条" + (if r.unknownRows.isEmpty then "" else
-        "（" + r.unknownRows.take(10).mkString(", ") +
-          (if r.unknownRows.size > 10 then ", …" else "") + "）") +
-      " —— 缺证据: 事件行本身不含构建出处标记（该分支文案未被 wd-fix 改动）")
+    emit(
+      "未证① 出处不明的行（两构建文案逐字相同 ⇒ 不参与任何保真度断言）: " +
+        r.unknownRows.size + " 条" + (if r.unknownRows.isEmpty then ""
+                                     else
+                                       "（" + r.unknownRows.take(10).mkString(", ") +
+                                         (if r.unknownRows.size > 10 then ", …" else "") + "）") +
+        " —— 缺证据: 事件行本身不含构建出处标记（该分支文案未被 wd-fix 改动）"
+    )
     emit("未证② 语料自相矛盾行（出处与窗口分段不符）: " + r.anomalies.size + " 条")
     r.anomalies.take(10).foreach(s => emit("  ANOMALY " + s))
     verdicts.filter(_.status == Status.Skipped).foreach(v => emit("未证③ " + v.name + " | " + v.detail))
-    if verdicts.forall(_.status != Status.Skipped) then
-      emit("未证③ 无（窗口前段与后段均有出处已定的行 ⇒ 两段保真度自证均可判定）")
+    if verdicts.forall(_.status != Status.Skipped) then emit("未证③ 无（窗口前段与后段均有出处已定的行 ⇒ 两段保真度自证均可判定）")
     emit("")
     emit("── 任务书点名的生产误判会话（修复后必须不再判 true-stuck）──")
-    List("node-eb8a9c70", "node-3880729d", "node-6885c027", "dispatcher-ef548490",
-      "dispatcher-1f54460c", "node-8920254c", "node-35ad3b69").foreach { sid =>
+    List(
+      "node-eb8a9c70",
+      "node-3880729d",
+      "node-6885c027",
+      "dispatcher-ef548490",
+      "dispatcher-1f54460c",
+      "node-8920254c",
+      "node-35ad3b69"
+    ).foreach { sid =>
       r.bySession.get(sid) match
-        case Some(t) => emit("  " + sid + ": n=" + t.n + " loggedTrue=" + t.loggedTrue +
-          " → newTrue=" + t.newTrue + "（翻走 " + t.flipped + "）")
+        case Some(t) =>
+          emit(
+            "  " + sid + ": n=" + t.n + " loggedTrue=" + t.loggedTrue +
+              " → newTrue=" + t.newTrue + "（翻走 " + t.flipped + "）"
+          )
         case None => emit("  " + sid + ": 语料中无记录")
     }
     sb.toString
+  end render
+end WatchdogCriteriaReplaySpec

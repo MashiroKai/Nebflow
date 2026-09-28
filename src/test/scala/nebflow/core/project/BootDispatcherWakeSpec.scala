@@ -9,11 +9,10 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -47,9 +46,11 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(root)
   os.remove.all(root)
   os.makeDir.all(root / "agents" / "general")
+
   os.write.over(
     root / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(root / "agents" / "general" / "system.md", "# general\n")
   os.makeDir.all(root / "sessions")
   os.makeDir.all(root / "projects")
@@ -96,11 +97,12 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
 
   private class ScriptLlm(respond: String => String):
     val requests: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
       ): Stream[IO, StreamChunk] =
         val last = req.messages.lastOption.map(_.textContent).getOrElse("")
         Stream
@@ -142,7 +144,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     status: String,
     in: List[String] = Nil,
     deps: List[String] = Nil,
-    out: List[OutEdge] = List(OutEdge.nebula),
+    out: List[OutEdge] = List(OutEdge.root),
     task: Option[String] = None,
     result: Option[String] = None,
     sessionRef: Option[String] = None,
@@ -154,10 +156,23 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     createdAt: Long = hourAgo
   ): NodeDef =
     NodeDef(
-      id = id, name = name, agent = "general", task = task, in = in, deps = deps, out = out,
-      status = status, createdAt = createdAt, completedAt = completedAt, result = result,
-      sessionRef = sessionRef, pendingSuccession = pendingSuccession, blockCount = blockCount,
-      blockedFeedback = blockedFeedback, destroyAt = destroyAt, deliveredTo = Nil
+      id = id,
+      name = name,
+      agent = "general",
+      task = task,
+      in = in,
+      deps = deps,
+      out = out,
+      status = status,
+      createdAt = createdAt,
+      completedAt = completedAt,
+      result = result,
+      sessionRef = sessionRef,
+      pendingSuccession = pendingSuccession,
+      blockCount = blockCount,
+      blockedFeedback = blockedFeedback,
+      destroyAt = destroyAt,
+      deliveredTo = Nil
     )
 
   /** 落盘 flow-map.json（**直接写盘**——唤醒腿的判据面就是它，不经 store 内存态）。 */
@@ -190,7 +205,8 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
 
   private def diskState(pd: ProjectDef): IO[FlowMapState] =
     IO.blocking(os.read(dirOf(pd) / BootWakeInventory.FileName)).map { raw =>
-      jsonParse(raw).flatMap(_.as[FlowMapState])
+      jsonParse(raw)
+        .flatMap(_.as[FlowMapState])
         .fold(e => throw new AssertionError(s"bad flow-map.json: $e"), identity)
     }
 
@@ -234,8 +250,10 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       exists <- IO(os.exists(dirOf(pd) / BootWakeInventory.FileName))
       inv <- BootWakeInventory.fromDisk(dirOf(pd), pd.name, nowMs)
     yield
-      assert(exists,
-        s"store-written flow-map.json must be at ${dirOf(pd) / BootWakeInventory.FileName} (wake reader and store writer share one path expression)")
+      assert(
+        exists,
+        s"store-written flow-map.json must be at ${dirOf(pd) / BootWakeInventory.FileName} (wake reader and store writer share one path expression)"
+      )
       assert(inv.isRight, s"wake inventory must read the store-written file, got $inv")
       assertEquals(inv.toOption.map(_.items.map(_.nodeId)), Some(List("n-a0")))
   }
@@ -247,20 +265,38 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     val pd = pdOf("a1-main", ws)
     val nodes = List(
       // B4 待裁决 blocked（带 blockCount + 结构化反馈）
-      node("n-block", "gate-block", NodeLifecycle.Blocked, blockCount = 2, completedAt = Some(tenMinAgo),
+      node(
+        "n-block",
+        "gate-block",
+        NodeLifecycle.Blocked,
+        blockCount = 2,
+        completedAt = Some(tenMinAgo),
         blockedFeedback = Some(BlockedFeedback("upstream-incomplete", "waiting on X", "hand over")),
-        task = Some("守门节点：等待上游交付")),
+        task = Some("守门节点：等待上游交付")
+      ),
       // B2 待承接（pendingSuccession 非空；引用的上游已不在图 = 悬空）
-      node("n-succ", "collect", NodeLifecycle.Pending, in = List("n-block"),
-        pendingSuccession = List("n-gone"), task = Some("收口节点")),
+      node(
+        "n-succ",
+        "collect",
+        NodeLifecycle.Pending,
+        in = List("n-block"),
+        pendingSuccession = List("n-gone"),
+        task = Some("收口节点")
+      ),
       // B3 死 barrier（上游全终态，且含缺轨 failed 上游）
       node("n-bar", "bar", NodeLifecycle.Pending, in = List("n-fail")),
       node("n-fail", "up-fail", NodeLifecycle.Failed, completedAt = Some(tenMinAgo), result = Some("boom")),
       // B1 落单 running（目标会话 transcript 缺失 = 不可续）
       node("n-loose", "loose", NodeLifecycle.Running, sessionRef = Some("node-lost")),
       // 终态节点（R4 陷阱：transcript 仍在盘 —— 永不入选）
-      node("n-done", "done", NodeLifecycle.Completed, sessionRef = Some("node-live"),
-        completedAt = Some(tenMinAgo), result = Some("ALL DONE"))
+      node(
+        "n-done",
+        "done",
+        NodeLifecycle.Completed,
+        sessionRef = Some("node-live"),
+        completedAt = Some(tenMinAgo),
+        result = Some("ALL DONE")
+      )
     )
     val system = ActorSystem(s"bdw-a1-${scala.util.Random.nextInt(1000000)}")
     for
@@ -289,33 +325,51 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       // 零自动行为声明（方案判红：清单缺该声明 = 红）
       assert(t.contains("仅供处置，不产生任何自动行为"), s"manifest must carry the zero-auto-action declaration\n$t")
       // 四档逐条落位
-      assert(t.contains("B4") && hasItemLine(t, "n-block") && t.contains("blockCount=2"),
-        s"B4 blocked entry missing\n$t")
-      assert(t.contains("B2") && hasItemLine(t, "n-succ") && t.contains("n-gone"),
-        s"B2 handover entry missing\n$t")
+      assert(
+        t.contains("B4") && hasItemLine(t, "n-block") && t.contains("blockCount=2"),
+        s"B4 blocked entry missing\n$t"
+      )
+      assert(t.contains("B2") && hasItemLine(t, "n-succ") && t.contains("n-gone"), s"B2 handover entry missing\n$t")
       assert(t.contains("B3") && hasItemLine(t, "n-bar"), s"B3 dead-barrier entry missing\n$t")
-      assert(t.contains("B1") && hasItemLine(t, "n-loose") && t.contains("transcript-missing"),
-        s"B1 loose-running entry missing\n$t")
+      assert(
+        t.contains("B1") && hasItemLine(t, "n-loose") && t.contains("transcript-missing"),
+        s"B1 loose-running entry missing\n$t"
+      )
       // 落盘事实三面（任务书 / 结果件 / 会话现状 / 上游缺轨）
       assert(t.contains("tasks/n-block.md"), s"task-book pointer missing\n$t")
       assert(t.contains("results/n-block.md"), s"result-artifact pointer missing\n$t")
       assert(t.contains("缺轨(禁自动启动)"), s"upstream-gap flag missing (failed upstream)\n$t")
-      assert(t.contains("sessionState=transcript-missing") && t.contains("resumable=false"), s"session-state facts missing\n$t")
-      assert(t.contains("blocked=1") && t.contains("failed=1") && t.contains("completed=1"), s"B0 histogram missing\n$t")
+      assert(
+        t.contains("sessionState=transcript-missing") && t.contains("resumable=false"),
+        s"session-state facts missing\n$t"
+      )
+      assert(
+        t.contains("blocked=1") && t.contains("failed=1") && t.contains("completed=1"),
+        s"B0 histogram missing\n$t"
+      )
       // R4 陷阱负控：终态节点（transcript 仍在盘）绝不作为条目出现
-      assert(!t.linesIterator.exists(l => isItemLine(l, "n-done")),
-        s"terminal node must never be listed as a reentry target\n$t")
-      assert(!t.linesIterator.exists(l => isItemLine(l, "n-fail")),
-        s"terminal upstream must not itself be a candidate\n$t")
+      assert(
+        !t.linesIterator.exists(l => isItemLine(l, "n-done")),
+        s"terminal node must never be listed as a reentry target\n$t"
+      )
+      assert(
+        !t.linesIterator.exists(l => isItemLine(l, "n-fail")),
+        s"terminal upstream must not itself be a candidate\n$t"
+      )
       // 零节点写：磁盘 flow-map.json 逐字段不变（唤醒纯读）
       assertEquals(after, before, "wake must not write any node state (pure wake)")
       // 事件（谁 = project/nodeId、何时 = boot id + at、结果 = woken）
-      assertEquals(events.count(_.contains(FlowMapEventLog.DispatcherWakeType)), 1,
-        s"exactly one dispatcher-wake event, got $events")
+      assertEquals(
+        events.count(_.contains(FlowMapEventLog.DispatcherWakeType)),
+        1,
+        s"exactly one dispatcher-wake event, got $events"
+      )
       val ev = events.find(_.contains("dispatcher-wake")).getOrElse("")
-      assert(ev.contains("result=woken") && ev.contains("boot=boot-A1") && ev.contains("b4=1")
-        && ev.contains("b2=1") && ev.contains("b3=1") && ev.contains("b1=1") && ev.contains("nodes=6"),
-        s"event summary must carry who/when/result + bucket counts, got: $ev")
+      assert(
+        ev.contains("result=woken") && ev.contains("boot=boot-A1") && ev.contains("b4=1")
+          && ev.contains("b2=1") && ev.contains("b3=1") && ev.contains("b1=1") && ev.contains("nodes=6"),
+        s"event summary must carry who/when/result + bucket counts, got: $ev"
+      )
       // 落盘标记（幂等锚 + 清单审计面）
       val m = marker.getOrElse(fail("boot-wake.json marker must be persisted"))
       val entries = m.hcursor.downField("entries").as[List[Json]].getOrElse(Nil)
@@ -326,8 +380,11 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       assertEquals(entries.head.hcursor.downField("blocking").as[Boolean].toOption, Some(true))
       val items = entries.head.hcursor.downField("items").as[List[Json]].getOrElse(Nil)
       assert(items.size >= 4, s"marker must carry the manifest items (audit face), got $items")
-      assert(items.exists(_.hcursor.downField("resumable").as[Boolean].toOption.contains(false)),
-        s"terminal target must be recorded as non-resumable, got $items")
+      assert(
+        items.exists(_.hcursor.downField("resumable").as[Boolean].toOption.contains(false)),
+        s"terminal target must be recorded as non-resumable, got $items"
+      )
+    end for
   }
 
   // ══ A1 触发面：非 boot 腿零触发（不重启零触发负控）═══════════════════
@@ -338,11 +395,14 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bdw-a1b-${scala.util.Random.nextInt(1000000)}")
     for
       _ <- IO(os.makeDir.all(ws))
-      _ <- seedFlowMap(pd, List(
-        node("n-block", "gate-block", NodeLifecycle.Blocked, blockCount = 1, completedAt = Some(tenMinAgo)),
-        node("n-succ", "collect", NodeLifecycle.Pending, in = List("n-block"),
-          pendingSuccession = List("n-gone")),
-        node("n-fresh", "fresh", NodeLifecycle.Pending, task = Some("跑一个真实节点会话当负控"))))
+      _ <- seedFlowMap(
+        pd,
+        List(
+          node("n-block", "gate-block", NodeLifecycle.Blocked, blockCount = 1, completedAt = Some(tenMinAgo)),
+          node("n-succ", "collect", NodeLifecycle.Pending, in = List("n-block"), pendingSuccession = List("n-gone")),
+          node("n-fresh", "fresh", NodeLifecycle.Pending, task = Some("跑一个真实节点会话当负控"))
+        )
+      )
       res <- mkResources(system, new ScriptLlm(_ => "NODE-DONE").handle)
       rt <- mountRuntime("a1b-surface", ws, system, res)
       (trig, trigger) <- recorder
@@ -350,12 +410,13 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       _ <- rt.engine.settleRunnableSweep().handleErrorWith(_ => IO.unit)
       _ <- rt.engine.settleStaleRunningNodes().handleErrorWith(_ => IO.unit)
       _ <- rt.engine.sweepDestroyWindows().handleErrorWith(_ => IO.unit)
-      _ <- rt.engine.redeliverUnconsumedNebulaResults().handleErrorWith(_ => IO.unit)
+      _ <- rt.engine.redeliverUnconsumedRootResults().handleErrorWith(_ => IO.unit)
       _ <- rt.engine.dispatchNotify.redeliver().handleErrorWith(_ => IO.unit)
       // 会话层：真实起一个节点会话（AgentActor spawn 路径）
       _ <- rt.engine.startNode("n-fresh").handleErrorWith(_ => IO.unit)
       _ <- waitUntil(20.seconds)(
-        rt.store.getNode("n-fresh").map(_.exists(n => NodeLifecycle.Terminal.contains(n.status))))
+        rt.store.getNode("n-fresh").map(_.exists(n => NodeLifecycle.Terminal.contains(n.status)))
+      )
         .handleErrorWith(_ => IO.unit)
       preEvents <- readEvents(pd)
       preMarker <- readMarker(pd)
@@ -366,14 +427,21 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       postTexts <- trig.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(preEvents.count(_.contains(FlowMapEventLog.DispatcherWakeType)), 0,
-        s"no wake event may exist before the boot entry runs (no restart = zero trigger), got $preEvents")
+      assertEquals(
+        preEvents.count(_.contains(FlowMapEventLog.DispatcherWakeType)),
+        0,
+        s"no wake event may exist before the boot entry runs (no restart = zero trigger), got $preEvents"
+      )
       assertEquals(preMarker, None, "no boot-wake.json marker may exist before the boot entry runs")
       assertEquals(preTexts, Nil, "no wake trigger may fire from scan legs / session start")
       assertEquals(report.woken, 1, s"the boot entry wakes exactly once, got ${report.summary}")
       assertEquals(postTexts.size, 1, "exactly one trigger after the boot entry")
-      assertEquals(postEvents.count(_.contains(FlowMapEventLog.DispatcherWakeType)), 1,
-        "exactly one wake event after the boot entry (no duplicates from scan legs)")
+      assertEquals(
+        postEvents.count(_.contains(FlowMapEventLog.DispatcherWakeType)),
+        1,
+        "exactly one wake event after the boot entry (no duplicates from scan legs)"
+      )
+    end for
   }
 
   // ══ A2 幂等与防重（含连续重启风暴）════════════════════════════════════
@@ -396,9 +464,12 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       evAfterRepeat <- readEvents(pd)
       marker <- readMarker(pd)
       // 落盘标记去重（模拟进程内 Ref 为空的第二调用路径：预置同 bootId 的 blocking 条目）
-      _ <- IO(os.write.over(
-        BootDispatcherWake.markerPath(pd),
-        """{"v":1,"project":"a2-idem","lastBootId":"boot-A2-disk","entries":[{"bootId":"boot-A2-disk","project":"a2-idem","at":1,"result":"woken","reason":"","blocking":true,"nodes":1,"items":[]}]}"""))
+      _ <- IO(
+        os.write.over(
+          BootDispatcherWake.markerPath(pd),
+          """{"v":1,"project":"a2-idem","lastBootId":"boot-A2-disk","entries":[{"bootId":"boot-A2-disk","project":"a2-idem","at":1,"result":"woken","reason":"","blocking":true,"nodes":1,"items":[]}]}"""
+        )
+      )
       diskReport <- wake(pd, "boot-A2-disk", trigger)
       textsAfterDisk <- trig.get
       // 连续 5 次 boot（重启风暴 / 看门狗拉起形态）
@@ -412,25 +483,42 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     yield
       assertEquals(textsAfterRepeat.size, 1, "same boot must wake exactly once (in-process fast path)")
       assertEquals(evAfterRepeat.count(_.contains("dispatcher-wake")), 1, "no duplicate wake events within one boot")
-      assertEquals(marker.flatMap(_.hcursor.downField("entries").as[List[Json]].toOption).map(_.size), Some(1),
-        "exactly one marker entry per (boot, project)")
-      assertEquals(diskReport.outcomes.map(o => (o.result, o.reason)),
+      assertEquals(
+        marker.flatMap(_.hcursor.downField("entries").as[List[Json]].toOption).map(_.size),
+        Some(1),
+        "exactly one marker entry per (boot, project)"
+      )
+      assertEquals(
+        diskReport.outcomes.map(o => (o.result, o.reason)),
         List((BootDispatcherWake.ResultSkipped, BootDispatcherWake.ReasonDuplicate)),
-        "pre-seeded blocking marker entry must make the call idempotent")
+        "pre-seeded blocking marker entry must make the call idempotent"
+      )
       assertEquals(textsAfterDisk.size, 1, "disk marker dedup must not fire a second wake (Ref empty for that boot id)")
       // 风暴：每 boot 恰一条（线性，绝不累积/循环）
       assertEquals(textsAfterStorm.size, 6, s"each boot wakes exactly once (linear): ${textsAfterStorm.size}")
-      assertEquals(evAfterStorm.count(_.contains("dispatcher-wake")), 6, s"one event per boot, got ${evAfterStorm.size}")
-      val perBoot = evAfterStorm.filter(_.contains("dispatcher-wake")).groupBy(l =>
-        l.split("boot=").lift(1).map(_.takeWhile(c => c != ' ')).getOrElse("?"))
+      assertEquals(
+        evAfterStorm.count(_.contains("dispatcher-wake")),
+        6,
+        s"one event per boot, got ${evAfterStorm.size}"
+      )
+      val perBoot = evAfterStorm
+        .filter(_.contains("dispatcher-wake"))
+        .groupBy(l => l.split("boot=").lift(1).map(_.takeWhile(c => c != ' ')).getOrElse("?"))
       assert(perBoot.values.forall(_.size == 1), s"each boot must have exactly one wake event, got $perBoot")
       assert(
-        stormMarker.flatMap(_.hcursor.downField("entries").as[List[Json]].toOption)
+        stormMarker
+          .flatMap(_.hcursor.downField("entries").as[List[Json]].toOption)
           .exists(_.size <= BootDispatcherWake.MarkerKeepEntries),
-        "marker must roll (bounded audit window), not grow unbounded")
+        "marker must roll (bounded audit window), not grow unbounded"
+      )
       // 幂等零副作用物证：无重入循环（节点集与状态逐字段不变）
       assertEquals(finalState.nodes.keySet, Set("n-block"), "no node may be created/mutated by repeated wakes")
-      assertEquals(finalState.nodes("n-block").status, NodeLifecycle.Blocked, "blocked node must never be auto-reactivated")
+      assertEquals(
+        finalState.nodes("n-block").status,
+        NodeLifecycle.Blocked,
+        "blocked node must never be auto-reactivated"
+      )
+    end for
   }
 
   // ══ A3 落盘事实重建（内存态不可用/陈旧 ⇒ 以磁盘为准）══════════════════
@@ -446,16 +534,20 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       // 内存态：store 里挂一个 completed 节点（= 陈旧真相）
       _ <- rt.store.mutate(s => s.copy(nodes = Map("n-mem" -> node("n-mem", "mem-only", NodeLifecycle.Completed))))
       // 磁盘真相：与内存**不同**（一个 blocked 节点）——直接写盘（模拟另一实例/外部改动）
-      _ <- seedFlowMap(pd, List(node("n-disk", "disk-block", NodeLifecycle.Blocked, blockCount = 3,
-        completedAt = Some(tenMinAgo))))
+      _ <- seedFlowMap(
+        pd,
+        List(node("n-disk", "disk-block", NodeLifecycle.Blocked, blockCount = 3, completedAt = Some(tenMinAgo)))
+      )
       (trig, trigger) <- recorder
       report <- wake(pd, "boot-A3", trigger)
       texts <- trig.get
       mem <- rt.store.snapshot
       raw <- IO.blocking(os.read(dirOf(pd) / BootWakeInventory.FileName))
       pure <- IO.fromEither(
-        BootWakeInventory.fromJson(raw, dirOf(pd), "a3-pure", nowMs)
-          .leftMap(e => new AssertionError(s"pure rebuild failed: $e")))
+        BootWakeInventory
+          .fromJson(raw, dirOf(pd), "a3-pure", nowMs)
+          .leftMap(e => new AssertionError(s"pure rebuild failed: $e"))
+      )
       pureMounted <- ProjectRuntimeRegistry.get("a3-pure").map(_.isDefined)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -470,11 +562,14 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       assertEquals(pure.project, "a3-pure")
       assertEquals(pure.inBucket(BootWakeInventory.BucketBlocked).map(_.nodeId), List("n-disk"))
       assertEquals(pure.histogram.get(NodeLifecycle.Blocked), Some(1))
+    end for
   }
 
   // ══ A4 失败降级（显式记录 + 跳过；零重试）════════════════════════════
 
-  test("A4: degradation is explicit — not-mounted / terminal target / upstream gap / unreadable facts / trigger failure (no retry)") {
+  test(
+    "A4: degradation is explicit — not-mounted / terminal target / upstream gap / unreadable facts / trigger failure (no retry)"
+  ) {
     val wsA = root / "ws-a4-unmounted"
     val pdA = pdOf("a4-unmounted", wsA)
     val wsB = root / "ws-a4-degrade"
@@ -487,10 +582,14 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       _ <- IO(os.makeDir.all(wsB))
       _ <- IO(os.makeDir.all(wsC))
       // (b) 目标会话已终态（running 但 transcript 缺失）+ (c) 上游缺轨
-      _ <- seedFlowMap(pdB, List(
-        node("n-gone", "ghost", NodeLifecycle.Running, sessionRef = Some("node-reclaimed")),
-        node("n-bar", "bar", NodeLifecycle.Pending, in = List("n-fail")),
-        node("n-fail", "up-fail", NodeLifecycle.Failed, completedAt = Some(tenMinAgo), result = Some("boom"))))
+      _ <- seedFlowMap(
+        pdB,
+        List(
+          node("n-gone", "ghost", NodeLifecycle.Running, sessionRef = Some("node-reclaimed")),
+          node("n-bar", "bar", NodeLifecycle.Pending, in = List("n-fail")),
+          node("n-fail", "up-fail", NodeLifecycle.Failed, completedAt = Some(tenMinAgo), result = Some("boom"))
+        )
+      )
       // (a) 项目在册但未挂载
       _ <- seedFlowMap(pdA, List(node("n-block", "gate", NodeLifecycle.Blocked)))
       // (e) 落盘事实不可读：wsC 无 flow-map.json
@@ -519,39 +618,64 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // (a) 项目未挂载：显式记录 + 跳过、零触发
-      assertEquals(repA.outcomes.map(o => (o.result, o.reason)),
-        List((BootDispatcherWake.ResultSkipped, BootDispatcherWake.ReasonNotMounted)))
+      assertEquals(
+        repA.outcomes.map(o => (o.result, o.reason)),
+        List((BootDispatcherWake.ResultSkipped, BootDispatcherWake.ReasonNotMounted))
+      )
       assertEquals(textsA, Nil, "not-mounted project must not be woken")
-      assert(evA.exists(l => l.contains("dispatcher-wake") && l.contains(s"reason=${BootDispatcherWake.ReasonNotMounted}")),
-        s"not-mounted must be explicitly recorded in the event stream, got $evA")
+      assert(
+        evA.exists(l => l.contains("dispatcher-wake") && l.contains(s"reason=${BootDispatcherWake.ReasonNotMounted}")),
+        s"not-mounted must be explicitly recorded in the event stream, got $evA"
+      )
       // (b)(c) 可处置项目仍唤醒控制面，但清单把两处降级显式标出
       assertEquals(repB.woken, 1, s"degraded-but-addressable project still wakes the control plane: ${repB.summary}")
       val tB = textsB.head
-      assert(tB.contains("sessionState=transcript-missing") && tB.contains("已终态/不可续跑"),
-        s"terminal target must be explicitly marked as non-resumable\n$tB")
+      assert(
+        tB.contains("sessionState=transcript-missing") && tB.contains("已终态/不可续跑"),
+        s"terminal target must be explicitly marked as non-resumable\n$tB"
+      )
       assert(tB.contains("缺轨(禁自动启动)"), s"upstream gap must be flagged as no-auto-start\n$tB")
       // 跳过 = 真的没动：下游不自动启动、丢会话节点不自动续/判死、零会话 spawn、不碰 crash-recovery
-      assertEquals(stateB.nodes("n-bar").status, NodeLifecycle.Pending,
-        "downstream must NOT be auto-started (barrier gap)")
-      assertEquals(stateB.nodes("n-gone").status, NodeLifecycle.Running,
-        "lost-session node must NOT be auto-resumed/failed by the wake")
+      assertEquals(
+        stateB.nodes("n-bar").status,
+        NodeLifecycle.Pending,
+        "downstream must NOT be auto-started (barrier gap)"
+      )
+      assertEquals(
+        stateB.nodes("n-gone").status,
+        NodeLifecycle.Running,
+        "lost-session node must NOT be auto-resumed/failed by the wake"
+      )
       assert(sessionsB.isEmpty, s"no node session may be spawned by the wake, got ${sessionsB.keys}")
       assert(!eventsB.exists(_.contains("boot-recovery")), "wake must not touch the crash-recovery path")
       // (e) 落盘事实不可读 = 显式记录 + 跳过（不静默当成功）
-      assertEquals(repC.outcomes.map(o => (o.result, o.reason)),
-        List((BootDispatcherWake.ResultSkipped, "flow-map-missing")))
-      assert(evC.exists(l => l.contains("dispatcher-wake") && l.contains("result=skipped")
-        && l.contains("reason=flow-map-missing")),
-        s"unreadable facts must be recorded explicitly, got $evC")
+      assertEquals(
+        repC.outcomes.map(o => (o.result, o.reason)),
+        List((BootDispatcherWake.ResultSkipped, "flow-map-missing"))
+      )
+      assert(
+        evC.exists(l =>
+          l.contains("dispatcher-wake") && l.contains("result=skipped")
+            && l.contains("reason=flow-map-missing")
+        ),
+        s"unreadable facts must be recorded explicitly, got $evC"
+      )
       // (d) 触发失败 = 显式失败 + 一次尝试零重试
-      assertEquals(repD.outcomes.map(o => (o.result, o.reason)),
-        List((BootDispatcherWake.ResultFailed, BootDispatcherWake.ReasonNotifyFailed)))
+      assertEquals(
+        repD.outcomes.map(o => (o.result, o.reason)),
+        List((BootDispatcherWake.ResultFailed, BootDispatcherWake.ReasonNotifyFailed))
+      )
       assertEquals(attemptsAfter, 1, "trigger failure = exactly one attempt (no retry storm)")
       assertEquals(repD2.outcomes.head.reason, BootDispatcherWake.ReasonDuplicate)
       assertEquals(attemptsFinal, 1, "a repeated call in the same boot must not retry at all (bounded)")
-      assert(evD.exists(l => l.contains("dispatcher-wake") && l.contains("result=failed")
-        && l.contains("reason=notify-failed")),
-        s"trigger failure must be recorded explicitly, got $evD")
+      assert(
+        evD.exists(l =>
+          l.contains("dispatcher-wake") && l.contains("result=failed")
+            && l.contains("reason=notify-failed")
+        ),
+        s"trigger failure must be recorded explicitly, got $evD"
+      )
+    end for
   }
 
   // ══ A5 可观测 + 可关（对照读数）═══════════════════════════════════════
@@ -566,8 +690,12 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       res <- mkResources(system, new ScriptLlm(_ => "x").handle)
       _ <- mountRuntime("a5-switch", ws, system, res)
       (trig, trigger) <- recorder
-      off <- BootDispatcherWake.wakeAll(trigger = trigger, bootId = "boot-A5-off", enabled = false,
-        projects = Some(List(pd)))
+      off <- BootDispatcherWake.wakeAll(
+        trigger = trigger,
+        bootId = "boot-A5-off",
+        enabled = false,
+        projects = Some(List(pd))
+      )
       textsOff <- trig.get
       eventsOff <- readEvents(pd)
       markerOff <- readMarker(pd)
@@ -594,6 +722,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       assertEquals(eventsOn.count(_.contains("dispatcher-wake")), 1)
       assert(defaultProp, "default must be true (plan §2 A ⑤ recommended default + author ruling)")
       assertEquals(hotProp, (true, false, true), "prop is hot-read (kill-switch precedent)")
+    end for
   }
 
   // ══ A6 假阳负控 ═══════════════════════════════════════════════════════
@@ -603,16 +732,20 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     val pd = pdOf("a6-falsepositive", ws)
     for
       _ <- IO(os.makeDir.all(ws))
-      _ <- seedFlowMap(pd, List(
-        // 全终态成员：不唤醒
-        node("n-done", "done", NodeLifecycle.Completed, completedAt = Some(tenMinAgo)),
-        node("n-cancel", "cancelled", NodeLifecycle.Cancelled, completedAt = Some(tenMinAgo)),
-        // 合法等待：pending 而上游 running（引擎 mountStallReason 同款豁免）
-        node("n-wait", "waiter", NodeLifecycle.Pending, in = List("n-run")),
-        node("n-run", "runner", NodeLifecycle.Running, sessionRef = Some("node-live")),
-        // 未到 60s 档：上游 10s 前刚终态
-        node("n-early", "early", NodeLifecycle.Pending, in = List("n-just"), createdAt = nowMs - 300_000L),
-        node("n-just", "just", NodeLifecycle.Completed, completedAt = Some(nowMs - 10_000L))))
+      _ <- seedFlowMap(
+        pd,
+        List(
+          // 全终态成员：不唤醒
+          node("n-done", "done", NodeLifecycle.Completed, completedAt = Some(tenMinAgo)),
+          node("n-cancel", "cancelled", NodeLifecycle.Cancelled, completedAt = Some(tenMinAgo)),
+          // 合法等待：pending 而上游 running（引擎 mountStallReason 同款豁免）
+          node("n-wait", "waiter", NodeLifecycle.Pending, in = List("n-run")),
+          node("n-run", "runner", NodeLifecycle.Running, sessionRef = Some("node-live")),
+          // 未到 60s 档：上游 10s 前刚终态
+          node("n-early", "early", NodeLifecycle.Pending, in = List("n-just"), createdAt = nowMs - 300_000L),
+          node("n-just", "just", NodeLifecycle.Completed, completedAt = Some(nowMs - 10_000L))
+        )
+      )
       _ <- seedTranscript("node-live")
       (trig, trigger) <- recorder
       report <- wake(pd, "boot-A6", trigger)
@@ -621,15 +754,23 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       inv <- BootWakeInventory.fromDisk(dirOf(pd), pd.name, nowMs)
     yield
       val ins = inv.getOrElse(fail("inventory must build"))
-      assertEquals(ins.items.map(i => i.nodeId -> i.buckets), Nil,
-        "legitimate waits / terminal-only members must not be reported (plan §4 red: 假阳)")
+      assertEquals(
+        ins.items.map(i => i.nodeId -> i.buckets),
+        Nil,
+        "legitimate waits / terminal-only members must not be reported (plan §4 red: 假阳)"
+      )
       assertEquals(report.skipped, 1, s"no-work project must be skipped, got ${report.summary}")
       assertEquals(report.outcomes.head.reason, BootDispatcherWake.ReasonNoReentry)
       assertEquals(texts, Nil, "no wake for a project with no reentry need (no phantom cold-start turn)")
       // 跳过也必须留痕（可审计：不再是「缺失的日志行」）
-      assert(events.exists(l => l.contains("dispatcher-wake") && l.contains("result=skipped")
-        && l.contains(s"reason=${BootDispatcherWake.ReasonNoReentry}")),
-        s"skip must be auditable in the event stream, got $events")
+      assert(
+        events.exists(l =>
+          l.contains("dispatcher-wake") && l.contains("result=skipped")
+            && l.contains(s"reason=${BootDispatcherWake.ReasonNoReentry}")
+        ),
+        s"skip must be auditable in the event stream, got $events"
+      )
+    end for
   }
 
   // ══ A7 上限 ═══════════════════════════════════════════════════════════
@@ -640,12 +781,22 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       _ <- IO(os.makeDir.all(wsShared))
       pds = (0 until BootDispatcherWake.MaxProjectsPerBoot + 1).toList.map(i => pdOf(f"a7-p$i%03d", wsShared))
       (trig, trigger) <- recorder
-      report <- BootDispatcherWake.wakeAll(trigger = trigger, bootId = "boot-A7",
-        projects = Some(pds), nowMs = () => nowMs)
+      report <- BootDispatcherWake.wakeAll(
+        trigger = trigger,
+        bootId = "boot-A7",
+        projects = Some(pds),
+        nowMs = () => nowMs
+      )
       texts <- trig.get
     yield
       assertEquals(report.projects, BootDispatcherWake.MaxProjectsPerBoot + 1)
-      assertEquals(report.outcomes.count(_.reason == BootDispatcherWake.ReasonCapExceeded), 1,
-        s"exactly one project over the cap must be skipped with cap-exceeded, got ${report.outcomes.map(o => o.project -> o.reason)}")
+      assertEquals(
+        report.outcomes.count(_.reason == BootDispatcherWake.ReasonCapExceeded),
+        1,
+        s"exactly one project over the cap must be skipped with cap-exceeded, got ${report.outcomes
+            .map(o => o.project -> o.reason)}"
+      )
       assertEquals(texts, Nil, "no wake from a project list over the cap without a flow map")
+    end for
   }
+end BootDispatcherWakeSpec

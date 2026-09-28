@@ -2,6 +2,7 @@ package nebflow.agent
 
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.actor.{AgentStreamEvent, FreezeReason}
 
 /**
  * Wire-format contract for AgentStreamEvent usage/model fields (2026-08-18):

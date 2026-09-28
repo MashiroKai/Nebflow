@@ -47,36 +47,39 @@ class FriendMessageReconcileSpec extends FunSuite:
 
   /** 脚本化 stub：记录 `(conversationId, after, limit)`，按 `after` 给页。 */
   private final class ScriptedClient(
-      calls: Ref[IO, List[(String, Long, Int)]],
-      script: (String, Long) => List[MessageSummary]
+    calls: Ref[IO, List[(String, Long, Int)]],
+    script: (String, Long) => List[MessageSummary]
   ) extends NeblinkClient(
-    NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
-    serverPort = 1
-  ):
+        NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
+        serverPort = 1
+      ):
+
     override def listMessages(
-        conversationId: String,
-        after: Long,
-        limit: Int
+      conversationId: String,
+      after: Long,
+      limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
       calls.update(_ :+ ((conversationId, after, limit))) *> IO.pure(Right(script(conversationId, after)))
 
   /** 取数永远失败（探针失败面）。 */
-  private final class FailingClient(calls: Ref[IO, List[(String, Long, Int)]]) extends NeblinkClient(
-    NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
-    serverPort = 1
-  ):
+  private final class FailingClient(calls: Ref[IO, List[(String, Long, Int)]])
+      extends NeblinkClient(
+        NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
+        serverPort = 1
+      ):
+
     override def listMessages(
-        conversationId: String,
-        after: Long,
-        limit: Int
+      conversationId: String,
+      after: Long,
+      limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
       calls.update(_ :+ ((conversationId, after, limit))) *> IO.pure(Left("boom"))
 
   private def mkService(
-      calls: Ref[IO, List[(String, Long, Int)]],
-      frames: Ref[IO, List[Json]],
-      g: FriendMessagingGuard,
-      script: (String, Long) => List[MessageSummary] = (_, a) => List(msg(a + 1L))
+    calls: Ref[IO, List[(String, Long, Int)]],
+    frames: Ref[IO, List[Json]],
+    g: FriendMessagingGuard,
+    script: (String, Long) => List[MessageSummary] = (_, a) => List(msg(a + 1L))
   ): FriendService =
     new FriendService(
       IO.pure(Some(new ScriptedClient(calls, script))),
@@ -147,8 +150,11 @@ class FriendMessageReconcileSpec extends FunSuite:
     assertEquals(field(r, "reason"), Some("watermark_gap"), s"必须给出可判读原因：$r")
 
     // 「自动补齐」的可机械判读数：帧真的出来 + 锚真的前进到服务端水位。
-    assertEquals(fs.map(_.hcursor.get[Long]("messageId").toOption), List(Some(113L), Some(114L)),
-      s"差态必须**复用派发腿**补齐（拉取即派发）：${fs.mkString("\n")}")
+    assertEquals(
+      fs.map(_.hcursor.get[Long]("messageId").toOption),
+      List(Some(113L), Some(114L)),
+      s"差态必须**复用派发腿**补齐（拉取即派发）：${fs.mkString("\n")}"
+    )
     assertEquals(anchor, 114L, "补齐后 pullAnchor 前进到服务端最大 id")
     assertEquals(dmax, 114L, "dispatchedMax 与 pullAnchor 同值（批 A 不变量）")
     // 恒等式与批 A 同一份（对账行也在 assertIdentity 覆盖面内）。
@@ -200,7 +206,9 @@ class FriendMessageReconcileSpec extends FunSuite:
       _ <- g.advanceAnchor("bad", 5L)
       _ <- g.advanceAnchor("good", 5L)
       svc = mkService(
-        calls, frames, g,
+        calls,
+        frames,
+        g,
         (conv, a) => if conv == "bad" then throw new RuntimeException("upstream down") else List(msg(a + 1L))
       )
       _ <- svc.reconcileConversations()
@@ -209,10 +217,8 @@ class FriendMessageReconcileSpec extends FunSuite:
     yield (ls, fs)
 
     val (ls, fs) = prog.unsafeRunSync()
-    assert(linesWith(ls, "gate=reconcile_failed").nonEmpty,
-      s"整轮捕获层必须留一行（逐会话失败可见）：${ls.mkString("\n")}")
-    assertEquals(fs.map(_.hcursor.get[Long]("messageId").toOption), List(Some(6L)),
-      s"另一个会话必须仍被补齐：${fs.mkString("\n")}")
+    assert(linesWith(ls, "gate=reconcile_failed").nonEmpty, s"整轮捕获层必须留一行（逐会话失败可见）：${ls.mkString("\n")}")
+    assertEquals(fs.map(_.hcursor.get[Long]("messageId").toOption), List(Some(6L)), s"另一个会话必须仍被补齐：${fs.mkString("\n")}")
   }
 
   // ══ R4 · 冷锚不入对账面 ══════════════════════════════════════════════
@@ -243,7 +249,9 @@ class FriendMessageReconcileSpec extends FunSuite:
       _ <- g.advanceAnchor("c1", 10L)
       _ <- g.advanceAnchor("c2", 20L)
       svc = mkService(
-        calls, frames, g,
+        calls,
+        frames,
+        g,
         (conv, a) => if conv == "c1" then List(msg(a + 1L), msg(a + 2L)) else Nil
       )
       _ <- svc.reconcileConversations()
@@ -257,8 +265,11 @@ class FriendMessageReconcileSpec extends FunSuite:
     assertEquals(c1.get[Long]("dispatched").toOption, Some(2L), s"逐会话 dispatched：$js")
     assertEquals(c1.get[Long]("skipped").toOption, Some(0L), s"逐会话 skipped：$js")
     assertEquals(js.hcursor.downField("totals").get[Long]("pulled").toOption, Some(2L), s"总计：$js")
-    assertEquals(js.hcursor.get[String]("identity").toOption,
-      Some("pulled == dispatched + skipped"), s"判据式必须自述（消费方不必自己推）：$js")
+    assertEquals(
+      js.hcursor.get[String]("identity").toOption,
+      Some("pulled == dispatched + skipped"),
+      s"判据式必须自述（消费方不必自己推）：$js"
+    )
     // 留痕环：暴露的 `recentLines` 与 guard 的环**同一份**（不另建第二份读数）。
     val recent = js.hcursor.downField("recentLines").as[List[String]].getOrElse(Nil)
     assertEquals(recent, ls, s"暴露面无第二份读数（必须等于 guard 的环）：$js")
@@ -327,10 +338,11 @@ class FriendMessageReconcileSpec extends FunSuite:
 
   // ══ R8 · 触发源契约：reconcile 不是事件族 ════════════════════════════
   test("R8 触发源契约：reconcile 非事件族（不参与判据①配对），且对账行 eventId=<none>") {
-    assert(!FriendPullTrigger.isEventTriggered(FriendPullTrigger.Reconcile),
-      "对账拍**不得**被判成事件触发（否则批 A 判据①的配对不变式会在补拉侧出现无配对行）")
-    assertEquals(FriendPullTrigger.isEventTriggered(FriendPullTrigger.EventMessageNew), true,
-      "事件族判据单点未改")
+    assert(
+      !FriendPullTrigger.isEventTriggered(FriendPullTrigger.Reconcile),
+      "对账拍**不得**被判成事件触发（否则批 A 判据①的配对不变式会在补拉侧出现无配对行）"
+    )
+    assertEquals(FriendPullTrigger.isEventTriggered(FriendPullTrigger.EventMessageNew), true, "事件族判据单点未改")
     val prog = for
       calls <- Ref.of[IO, List[(String, Long, Int)]](Nil)
       frames <- Ref.of[IO, List[Json]](Nil)
@@ -351,15 +363,14 @@ class FriendMessageReconcileSpec extends FunSuite:
   test("R9 扫描面 dispatchedAnchors：只含已有派发水位的会话；冷锚（从未派发 / 只被读过）一律排除") {
     val prog = for
       g <- IO(new FriendMessagingGuard())
-      _ <- g.advanceAnchor("hot", 5L)   // 有派发水位 ⇒ 入面
-      _ <- g.bumpUnread("cold", 1)      // materialize 了条目但 dispatchedMax == 0 ⇒ 不得入面
-      _ <- g.setRead("readonly", 9L)    // 只动**已读**水位 ⇒ 同样不得入面
+      _ <- g.advanceAnchor("hot", 5L) // 有派发水位 ⇒ 入面
+      _ <- g.bumpUnread("cold", 1) // materialize 了条目但 dispatchedMax == 0 ⇒ 不得入面
+      _ <- g.setRead("readonly", 9L) // 只动**已读**水位 ⇒ 同样不得入面
       as <- g.dispatchedAnchors
     yield as
 
     val as = prog.unsafeRunSync()
-    assertEquals(as.map(_._1).sorted, List("hot"),
-      s"只有「已有派发水位」的会话可进对账面；冷锚的 after=0 会返回历史而非差态：$as")
+    assertEquals(as.map(_._1).sorted, List("hot"), s"只有「已有派发水位」的会话可进对账面；冷锚的 after=0 会返回历史而非差态：$as")
     assertEquals(as.find(_._1 == "hot").map(_._2), Some(5L), s"一次读取同时给出 id 与水位：$as")
   }
 

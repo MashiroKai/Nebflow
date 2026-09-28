@@ -1,13 +1,13 @@
 package nebflow.dropbox
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
-import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.neblink.NeblinkService
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
@@ -53,27 +53,29 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
     def probe(target: FileTransfer): IO[Either[AttachContract.AttachError, ChunkedTransfer.ReceiveState]] =
       receiver.flatMap(_.prime().map(Right(_)))
 
+  end DeferredLoopback
+
   private def withSender[A](
     use: (NeblinkService, DropboxService, Ref[IO, List[Json]], Ref[IO, List[Json]], os.Path) => IO[A]
   ): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
-        prev       <- IO(PathUtil.dataRoot)
-        root       <- IO.blocking(os.temp.dir(prefix = "nb-selfattach-spec-"))
-        _          <- IO(PathUtil.setDataRoot(root))
-        ms         <- NeblinkService.create(0, dispatcher)
+        prev <- IO(PathUtil.dataRoot)
+        root <- IO.blocking(os.temp.dir(prefix = "nb-selfattach-spec-"))
+        _ <- IO(PathUtil.setDataRoot(root))
+        ms <- NeblinkService.create(0, dispatcher)
         peerFrames <- Ref.of[IO, List[Json]](Nil)
         // 对端方向载荷捕获（**逐字** = 网关手写的那份 JSON；返回 true ⇒ 视为已投递）
-        _          <- ms.setSendDataFn((_, _, p) => peerFrames.update(_ :+ p).as(true))
-        hub        <- IO(new WsHub)
-        localSeen  <- Ref.of[IO, List[Json]](Nil)
-        reg        <- hub.register(j => localSeen.update(_ :+ j))
-        _          <- ms.upsertPeer(PeerInfo("dev-2", "Dev2", "macos", "http://127.0.0.1:9"))
-        svc        <- DropboxService.createForTest(ms, hub, 30.seconds, 30.seconds, 30.seconds)
-        out        <- use(ms, svc, peerFrames, localSeen, root)
-        _          <- hub.unregister(reg)
-        _          <- IO(PathUtil.setDataRoot(prev))
-        _          <- IO(os.remove.all(root))
+        _ <- ms.setSendDataFn((_, _, p) => peerFrames.update(_ :+ p).as(true))
+        hub <- IO(new WsHub)
+        localSeen <- Ref.of[IO, List[Json]](Nil)
+        reg <- hub.register(j => localSeen.update(_ :+ j))
+        _ <- ms.upsertPeer(PeerInfo("dev-2", "Dev2", "macos", "http://127.0.0.1:9"))
+        svc <- DropboxService.createForTest(ms, hub, 30.seconds, 30.seconds, 30.seconds)
+        out <- use(ms, svc, peerFrames, localSeen, root)
+        _ <- hub.unregister(reg)
+        _ <- IO(PathUtil.setDataRoot(prev))
+        _ <- IO(os.remove.all(root))
       yield out
     }
 
@@ -94,11 +96,13 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
       }
     poll
 
+  end awaitFrameId
+
   /** 递归键扫描（对端帧隐私面的唯一判据：任一深度出现该键即命中）。 */
   private def hasKeyDeep(j: Json, key: String): Boolean =
     j.asObject match
       case Some(o) => o.keys.exists(_ == key) || o.values.exists(v => hasKeyDeep(v, key))
-      case None    => j.asArray.exists(_.exists(v => hasKeyDeep(v, key)))
+      case None => j.asArray.exists(_.exists(v => hasKeyDeep(v, key)))
 
   /** 数据根下的全部普通文件（零留存判据的读数面）。 */
   private def filesUnder(root: os.Path): List[os.Path] =
@@ -114,34 +118,34 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
     withSender { (ms, svc, peerFrames, localSeen, root) =>
       for
         srcDir <- IO.blocking(os.temp.dir(prefix = "nb-selfattach-src-"))
-        src    = srcDir / "payload.png"
-        bytes  = Array.tabulate[Byte](70_000)(i => ((i * 31 + 7) % 251).toByte) // 2 块（> 64 KiB）
-        _      <- IO.blocking(os.write(src, bytes))
+        src = srcDir / "payload.png"
+        bytes = Array.tabulate[Byte](70_000)(i => ((i * 31 + 7) % 251).toByte) // 2 块（> 64 KiB）
+        _ <- IO.blocking(os.write(src, bytes))
         recvDir <- IO.blocking(os.temp.dir(prefix = "nb-selfattach-recv-"))
-        holder  <- Ref.of[IO, Option[ChunkReceiver]](None)
-        loop     = new DeferredLoopback(holder)
+        holder <- Ref.of[IO, Option[ChunkReceiver]](None)
+        loop = new DeferredLoopback(holder)
         fiber <- svc
-                   .sendLocalFiles(
-                     "dev-2",
-                     List(src),
-                     acceptWait = 30.seconds,
-                     uploadWait = 30.seconds,
-                     transportOverride = Some(loop),
-                     // 与两个工具调用点同值（`MailTool.scala:1057` / `FriendMessageTool.scala:372`）
-                     origin = DropboxMessage.OriginAgent
-                   )
-                   .start
+          .sendLocalFiles(
+            "dev-2",
+            List(src),
+            acceptWait = 30.seconds,
+            uploadWait = 30.seconds,
+            transportOverride = Some(loop),
+            // 与两个工具调用点同值（`MailTool.scala:1057` / `FriendMessageTool.scala:372`）
+            origin = DropboxMessage.OriginAgent
+          )
+          .start
         tid <- awaitFrameId(peerFrames, "file-offer", 20.seconds)
         _ <- holder.set(
-               Some(new ChunkReceiver(tid, bytes.length.toLong, AttachContract.ChunkSize, recvDir / "recv.bin"))
-             )
+          Some(new ChunkReceiver(tid, bytes.length.toLong, AttachContract.ChunkSize, recvDir / "recv.bin"))
+        )
         _ <- ms.handleDataMessage(
-               Json.obj(
-                 "kind"       -> "file-response".asJson,
-                 "transferId" -> tid.asJson,
-                 "accepted"   -> true.asJson
-               )
-             )
+          Json.obj(
+            "kind" -> "file-response".asJson,
+            "transferId" -> tid.asJson,
+            "accepted" -> true.asJson
+          )
+        )
         outcome <- fiber.joinWithNever
         _ = assert(outcome.isRight, s"harness: agent-leg send must complete, got $outcome")
         delivered = outcome.toOption.toList.flatten.headOption.exists(_.delivered)
@@ -151,7 +155,7 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
         ledgerPath = root / "dropbox" / "messages.json"
         ledgerRaw <- IO.blocking(os.read(ledgerPath))
         ledgerJson = io.circe.parser.parse(ledgerRaw).toOption.getOrElse(fail("ledger must be valid JSON"))
-        decoded    = DropboxLedger.decode(ledgerRaw).toOption.getOrElse(fail("ledger must decode"))
+        decoded = DropboxLedger.decode(ledgerRaw).toOption.getOrElse(fail("ledger must decode"))
         row = decoded.messages
           .getOrElse("dev-2", Nil)
           .find(_.transferId == tid)
@@ -161,11 +165,11 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
         histRow = history.find(_.transferId == tid).getOrElse(fail("history row must exist"))
 
         // ── ② 隐私：对端方向载荷逐帧递归扫描 + 检测器鉴别力对照 ────────────────
-        peerNow  <- peerFrames.get
+        peerNow <- peerFrames.get
         localNow <- localSeen.get
-        peerKinds  = peerNow.map(_.hcursor.downField("kind").as[String].getOrElse("?"))
-        peerHits   = peerNow.filter(f => hasKeyDeep(f, "deviceOutPath"))
-        ledgerHit  = hasKeyDeep(ledgerJson, "deviceOutPath") // 检测器对照（台账**必须**命中）
+        peerKinds = peerNow.map(_.hcursor.downField("kind").as[String].getOrElse("?"))
+        peerHits = peerNow.filter(f => hasKeyDeep(f, "deviceOutPath"))
+        ledgerHit = hasKeyDeep(ledgerJson, "deviceOutPath") // 检测器对照（台账**必须**命中）
 
         // ── ④ 本机首帧 ─────────────────────────────────────────────────────
         msgFrames = localNow.filter(_.hcursor.downField("type").as[String].toOption.contains("dropbox-message"))
@@ -178,26 +182,26 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
 
         // ── ③ 零字节复制 / 零留存 ───────────────────────────────────────────
         rootFiles = filesUnder(root)
-        copies    = rootFiles.filter(p => dirBytes(p).sameElements(bytes))
-        tmpDir    = root / "dropbox" / ".tmp"
-        tmpFiles  = if os.exists(tmpDir) then os.list(tmpDir).toList else Nil
+        copies = rootFiles.filter(p => dirBytes(p).sameElements(bytes))
+        tmpDir = root / "dropbox" / ".tmp"
+        tmpFiles = if os.exists(tmpDir) then os.list(tmpDir).toList else Nil
 
         readings = Json.obj(
-          "src"                     -> src.toString.asJson,
-          "srcBytes"                -> bytes.length.asJson,
-          "transferId"              -> tid.asJson,
-          "ledgerRowDeviceOutPath"  -> row.deviceOutPath.asJson,
-          "ledgerRowStatus"         -> row.status.asJson,
-          "ledgerRowOrigin"         -> row.origin.asJson,
-          "ledgerRowSavedPath"      -> row.savedPath.asJson,
+          "src" -> src.toString.asJson,
+          "srcBytes" -> bytes.length.asJson,
+          "transferId" -> tid.asJson,
+          "ledgerRowDeviceOutPath" -> row.deviceOutPath.asJson,
+          "ledgerRowStatus" -> row.status.asJson,
+          "ledgerRowOrigin" -> row.origin.asJson,
+          "ledgerRowSavedPath" -> row.savedPath.asJson,
           "historyRowDeviceOutPath" -> histRow.deviceOutPath.asJson,
-          "peerFrameKinds"          -> peerKinds.asJson,
-          "peerFramesWithKey"       -> peerHits.size.asJson,
-          "ledgerDetectorHit"       -> ledgerHit.asJson,
-          "localMsgFramePath"       -> framePath.asJson,
-          "rootFiles"               -> rootFiles.map(_.toString).asJson,
-          "byteCopiesOfSource"      -> copies.size.asJson,
-          "senderTempFiles"         -> tmpFiles.map(_.toString).asJson
+          "peerFrameKinds" -> peerKinds.asJson,
+          "peerFramesWithKey" -> peerHits.size.asJson,
+          "ledgerDetectorHit" -> ledgerHit.asJson,
+          "localMsgFramePath" -> framePath.asJson,
+          "rootFiles" -> rootFiles.map(_.toString).asJson,
+          "byteCopiesOfSource" -> copies.size.asJson,
+          "senderTempFiles" -> tmpFiles.map(_.toString).asJson
         )
         _ <- IO(println(s"[READING SELFATTACH-B1] $readings"))
         // 清理本 spec 自己的临时件（不跨用例残留）
@@ -227,15 +231,19 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
   test("B′ 负控：浏览器腿（offerFiles，无 outPath）⇒ 台账 deviceOutPath 恒空串"):
     withSender { (_, svc, peerFrames, _, root) =>
       for
-        _      <- svc.offerFiles("dev-2", List(DropboxService.FileSpec("browser.png", 10L, "image/png")))
-        tid    <- awaitFrameId(peerFrames, "file-offer", 10.seconds)
-        raw    <- IO.blocking(os.read(root / "dropbox" / "messages.json"))
+        _ <- svc.offerFiles("dev-2", List(DropboxService.FileSpec("browser.png", 10L, "image/png")))
+        tid <- awaitFrameId(peerFrames, "file-offer", 10.seconds)
+        raw <- IO.blocking(os.read(root / "dropbox" / "messages.json"))
         decoded = DropboxLedger.decode(raw).toOption.getOrElse(fail("ledger must decode"))
         row = decoded.messages
           .getOrElse("dev-2", Nil)
           .find(_.transferId == tid)
           .getOrElse(fail("browser-leg out row must exist"))
-        _ <- IO(println(s"[READING SELFATTACH-B2] browserLegDeviceOutPath='${row.deviceOutPath}' keys=${row.productElementNames.size}"))
+        _ <- IO(
+          println(
+            s"[READING SELFATTACH-B2] browserLegDeviceOutPath='${row.deviceOutPath}' keys=${row.productElementNames.size}"
+          )
+        )
       yield
         assertEquals(row.deviceOutPath, "", "浏览器腿无本机真实路径 ⇒ 恒空串（禁拼接/禁预测）")
         assertEquals(row.productElementNames.size, 16, "台账行键数 = 16（新键在编码面必在场）")

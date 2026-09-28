@@ -29,11 +29,14 @@ import munit.FunSuite
  */
 class PopToolSpec extends FunSuite:
 
-  /** Nebula 本体根会话身份（正常放行面）。 */
-  private val nebulaDef = nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
 
-  private def defNamed(name: String): nebflow.agent.AgentDef =
-    nebflow.agent.AgentDef(name = name, description = "", tools = Nil)
+  /** Nebula 本体根会话身份（正常放行面）。 */
+  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
+
+  private def defNamed(name: String): nebflow.actor.AgentDef =
+    nebflow.actor.AgentDef(name = name, description = "", tools = Nil)
 
   private def tempDir(name: String): os.Path =
     val d = os.pwd / "target" / s"test-pop-$name-${java.util.UUID.randomUUID().toString.take(6)}"
@@ -46,18 +49,20 @@ class PopToolSpec extends FunSuite:
     val data = Array.fill(bytes)(0x42.toByte)
     os.write.over(p, data)
 
-  /** Capture wsSend messages into a Ref-like buffer.
-    *
-    * 2026-09-10 身份闸批：harness 显式传 Nebula 本体 ctx（agentDef=Some(Nebula)、
-    * depth=0）——闸的 fail-closed 语义下 agentDef=None 会被拒，旧 harness 的
-    * None 不再是合法的内联行为测试上下文。 */
+  /**
+   * Capture wsSend messages into a Ref-like buffer.
+   *
+   * 2026-09-10 身份闸批：harness 显式传 Nebula 本体 ctx（agentDef=Some(Nebula)、
+   * depth=0）——闸的 fail-closed 语义下 agentDef=None 会被拒，旧 harness 的
+   * None 不再是合法的内联行为测试上下文。
+   */
   private def captureCtx(buf: scala.collection.mutable.ListBuffer[Json]): ToolContext =
     ctxWith(buf, agentDef = Some(nebulaDef), depth = 0)
 
   /** 身份参数化 harness——闸测试用（同一 wsSend 缓冲，身份/depth 可变）。 */
   private def ctxWith(
     buf: scala.collection.mutable.ListBuffer[Json],
-    agentDef: Option[nebflow.agent.AgentDef],
+    agentDef: Option[nebflow.actor.AgentDef],
     depth: Int
   ): ToolContext =
     ToolContext(
@@ -79,7 +84,7 @@ class PopToolSpec extends FunSuite:
     val item = buf.head.hcursor.downField("item")
     item.get[String]("itemType").toOption.getOrElse("") match
       case "html" => item.get[String]("content").toOption.getOrElse("")
-      case other  => fail(s"expected html itemType, got $other")
+      case other => fail(s"expected html itemType, got $other")
 
   test("file:/// absolute image src is inlined as a base64 data URI"):
     val dir = tempDir("file-abs")
@@ -195,15 +200,17 @@ class PopToolSpec extends FunSuite:
 
   private val gateInput = JsonObject("filePath" -> "/nonexistent/pop-gate-probe.html".asJson)
 
-  /** 拒答断言：右值缺席 + 文案命中 + 零副作用。
-    *
-    * 零副作用两点证明：
-    *  - wsSend 缓冲空（无 popFile 消息）；
-    *  - filePath 指向不存在的路径却报闸文案而非 "File not found" ⇒ 闸先于
-    *    resolvePath / Files.exists / 文件读 / HTML 内联（副作用全部未发生）。 */
+  /**
+   * 拒答断言：右值缺席 + 文案命中 + 零副作用。
+   *
+   * 零副作用两点证明：
+   *  - wsSend 缓冲空（无 popFile 消息）；
+   *  - filePath 指向不存在的路径却报闸文案而非 "File not found" ⇒ 闸先于
+   *    resolvePath / Files.exists / 文件读 / HTML 内联（副作用全部未发生）。
+   */
   private def assertDenied(
     label: String,
-    agentDef: Option[nebflow.agent.AgentDef],
+    agentDef: Option[nebflow.actor.AgentDef],
     depth: Int
   ): Unit =
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
@@ -211,10 +218,14 @@ class PopToolSpec extends FunSuite:
       case Left(err) =>
         assert(err.message.contains(VerbatimDeny), s"$label: verbatim author text missing in: ${err.message}")
         assert(err.message.contains("POP_NEBULA_ONLY"), s"$label: error code missing in: ${err.message}")
-        assert(!err.message.toLowerCase.contains("not found"),
-          s"$label: gate must run BEFORE path resolution/file read, got: ${err.message}")
+        assert(
+          !err.message.toLowerCase.contains("not found"),
+          s"$label: gate must run BEFORE path resolution/file read, got: ${err.message}"
+        )
         assertEquals(buf.size, 0, s"$label: zero WS side effects expected, got $buf")
       case Right(ok) => fail(s"$label: must be denied, got Right($ok)")
+
+  end assertDenied
 
   test("identity gate: Nebula root session (depth 0) is admitted — feature intact"):
     val dir = tempDir("gate-allow")
@@ -223,7 +234,7 @@ class PopToolSpec extends FunSuite:
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     PopTool.call(JsonObject("filePath" -> html.toString.asJson), ctxWith(buf, Some(nebulaDef), 0)).unsafeRunSync() match
       case Right(msg) => assert(msg.contains("Canvas"), msg)
-      case Left(err)  => fail(s"Nebula root session must be admitted: ${err.message}")
+      case Left(err) => fail(s"Nebula root session must be admitted: ${err.message}")
     assertEquals(buf.size, 1, "exactly one popFile message for the admitted caller")
     assertEquals(buf.head.hcursor.downField("type").as[String].toOption, Some("popFile"))
 
@@ -233,7 +244,7 @@ class PopToolSpec extends FunSuite:
     assertDenied("dream", Some(defNamed("dream")), 0)
 
   test("identity gate: Nebula-derived sessions are denied — node session (depth 1) never counts as Nebula itself"):
-    // NodeDef.agent="Nebula" 的节点会话 = depth 1（SandboxPolicy.isNebulaRootSession
+    // NodeDef.agent="Nebula" 的节点会话 = depth 1（SandboxPolicy.isSandboxRootSession
     // 同款判据）；SubTask worker / 子 agent 同理 —— 「Nebula 自己」只在 depth==0。
     assertDenied("Nebula node session (depth 1)", Some(nebulaDef), 1)
     assertDenied("Nebula sub-agent (depth 2)", Some(nebulaDef), 2)
@@ -241,7 +252,8 @@ class PopToolSpec extends FunSuite:
   test("identity gate: agentDef=None (REST direct / spec harness) fails closed"):
     // 决策：fail-closed。实测无合法非 agent 调用面被误伤——Pop 不在
     // RemoteExecutor.remoteableTools（RemoteExecutor.scala:658），remote-exec
-    // 接收侧（RestApiRoutes.scala:1154）不传 agentDef 也不传 wsSend。
+    // 接收侧（NeblinkRoutes.scala 的 remote-exec `ToolContext(projectRoot, isRemoteExec = true)`）
+    // 不传 agentDef 也不传 wsSend。
     assertDenied("agentDef=None", None, 0)
 
   test("identity gate: denial precedes even input validation (no filePath still POP_NEBULA_ONLY)"):
@@ -256,8 +268,10 @@ class PopToolSpec extends FunSuite:
     assert(PopTool.description.contains("Nebula-exclusive"), "exclusivity must be stated")
     assert(PopTool.description.contains("POP_NEBULA_ONLY"), "error code surfaced in the description")
     assert(PopTool.description.contains("out edge"), "node delivery protocol (hand over along the out edge)")
-    assert(!PopTool.description.contains("never hand-draw"),
-      "node-facing 'Pop right after generating' guidance must be gone")
+    assert(
+      !PopTool.description.contains("never hand-draw"),
+      "node-facing 'Pop right after generating' guidance must be gone"
+    )
 
   override def afterEach(context: munit.AfterEach): Unit =
     // test artifacts under target/ are cleaned by sbt; nothing else to do

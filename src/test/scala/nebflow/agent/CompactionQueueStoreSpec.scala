@@ -2,14 +2,17 @@ package nebflow.agent
 
 import munit.FunSuite
 import cats.effect.unsafe.implicits.global
-import nebflow.core.PathUtil
+import nebflow.actor.AgentCommand
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.shared.PathUtil
 import scala.compiletime.uninitialized
 
-/** F2 (2026-08-30, compact-injection-shield batch 2): durable queue store
-  * round-trip, clear-on-empty, corrupt-tolerance, and the codec field matrix
-  * (blocks / source / metadata survive the round trip). */
+/**
+ * F2 (2026-08-30, compact-injection-shield batch 2): durable queue store
+ * round-trip, clear-on-empty, corrupt-tolerance, and the codec field matrix
+ * (blocks / source / metadata survive the round trip).
+ */
 class CompactionQueueStoreSpec extends FunSuite:
 
   private var prevRoot: os.Path = uninitialized
@@ -34,8 +37,10 @@ class CompactionQueueStoreSpec extends FunSuite:
     delivery = Some("queue")
   )
   private val imm2 = AgentCommand.ImmediateInput("plain-imm", source = None)
+
   /** ② (2026-09-11): a REAL user text that travelled the ImmediateInput leg. */
   private val immHuman = AgentCommand.ImmediateInput("human text", source = None, fromUser = true)
+
   private val ev1 = AgentCommand.ExternalEvent(
     source = "subtask",
     eventType = "completed",

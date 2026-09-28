@@ -4,7 +4,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.RunningFlowRegistry.RunningFlow
 
 /**
@@ -150,8 +150,10 @@ class MailIdleGateSpec extends FunSuite:
     )
     assert(!MailIdleGate.isAgentTreeIdle("t", registry, checkStatus = false), "子树忙仍应判不空闲")
     val flowRegistry = Map("t" -> rec("t", status = AgentStatus.Processing))
-    assert(!MailIdleGate.isAgentTreeIdle("t", flowRegistry, List(runningFlow(Some("t"))), checkStatus = false),
-      "关联 running flow 仍应判不空闲")
+    assert(
+      !MailIdleGate.isAgentTreeIdle("t", flowRegistry, List(runningFlow(Some("t"))), checkStatus = false),
+      "关联 running flow 仍应判不空闲"
+    )
 
   // ---------- R2 分层地址面：node: 腿绕行本闸（必须显式钉死） ----------
 
@@ -204,5 +206,6 @@ class MailIdleGateSpec extends FunSuite:
           assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
         case Right(v) => fail(s"node: + queue 必须显式报错（不得落入 queue 闸），got: $v")
     finally system.stopAll.unsafeRunSync()
+    end try
 
 end MailIdleGateSpec

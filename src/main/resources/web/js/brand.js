@@ -12,7 +12,7 @@
  * @property {string} lowerName    Lowercase identifier, e.g. "nebflow"
  * @property {string} domain       Display-only product domain. NEVER build a
  *   URL from this: brand.conf ships the placeholder `neblink.example` and the
- *   server contract (WebSocketRoutes.brandScriptTag) declares the field
+ *   server contract (StaticRoutes.brandScriptTag) declares the field
  *   display-only. Use `getProfileUrl()` / a dedicated injected URL field for
  *   anything navigable.
  * @property {string} [homeDirName] User home directory name, e.g. ".nebflow".

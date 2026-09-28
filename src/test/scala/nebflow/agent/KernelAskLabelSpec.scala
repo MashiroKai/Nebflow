@@ -17,7 +17,8 @@ class KernelAskLabelSpec extends FunSuite:
     assert(!AgentActor.isKernelSession("node-41-session-abc"))
 
   test("label = 'subagent · <description>' and NEVER the bare agent name"):
-    val label = AgentActor.subagentAskLabel(Some("pull the last 20 lines of D:\\build\\out.log"), "delegate-kernel-a1b2c3d4")
+    val label =
+      AgentActor.subagentAskLabel(Some("pull the last 20 lines of D:\\build\\out.log"), "delegate-kernel-a1b2c3d4")
     assert(label.startsWith("subagent · "), label)
     assert(label != "kernel", "U3 否决裸 kernel（作者逐字）")
     assert(label != "delegate · kernel", "U3 亦否决 delegate · kernel 形态")

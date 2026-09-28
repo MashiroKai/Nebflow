@@ -2,7 +2,8 @@ package nebflow.agent
 
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.ToolExecResult
+import nebflow.actor.AgentCommand
+import nebflow.shared.ToolExecResult
 import nebflow.shared.ToolCall
 import munit.FunSuite
 
@@ -111,11 +112,11 @@ class SubAgentBarrierSpec extends FunSuite:
 
   test("countBarrierIncrements: mixed batch counts only ephemeral successes") {
     val batch = List(
-      call("Delegate") -> ok,                          // 1 (ephemeral)
-      call("Delegate", Some("persistent")) -> ok,      // 0 (persistent excluded)
-      call("SubTask") -> ok,                           // 1
-      call("Delegate") -> err,                         // 0 (failed)
-      call("Read") -> ok                               // 0 (not a sub-agent)
+      call("Delegate") -> ok, // 1 (ephemeral)
+      call("Delegate", Some("persistent")) -> ok, // 0 (persistent excluded)
+      call("SubTask") -> ok, // 1
+      call("Delegate") -> err, // 0 (failed)
+      call("Read") -> ok // 0 (not a sub-agent)
     )
     assertEquals(TurnBoundaryDrains.countBarrierIncrements(batch), 2)
   }

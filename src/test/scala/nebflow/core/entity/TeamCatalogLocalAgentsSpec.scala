@@ -3,23 +3,23 @@ package nebflow.core.entity
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
-  * Regression tests for the broken Team catalog injection: team members and
-  * leads live under teams/<team>/agents/, but the catalog builder used to be
-  * fed ONLY the global agents dir (EntityLoader.listAgents scans
-  * ~/.nebflow/agents). Result: every team agent's system prompt rendered
-  * "(agent not found)" for the lead and an empty member list — czt-project's
-  * Manager read that as "my members don't exist" and reported Mail
-  * activation failure without ever attempting a Mail (2026-08-17 report;
-  * session history shows zero Mail calls to members, the phrase "agent not
-  * found" quoted verbatim from the catalog).
-  *
-  * ContextRefresher now merges global ++ listTeamAgents(team) — team-local
-  * takes precedence, mirroring loadTeamAgent's resolution order. These
-  * tests pin the data layer that feeds the merge plus the pure renderer.
-  */
+ * Regression tests for the broken Team catalog injection: team members and
+ * leads live under teams/<team>/agents/, but the catalog builder used to be
+ * fed ONLY the global agents dir (EntityLoader.listAgents scans
+ * ~/.nebflow/agents). Result: every team agent's system prompt rendered
+ * "(agent not found)" for the lead and an empty member list — czt-project's
+ * Manager read that as "my members don't exist" and reported Mail
+ * activation failure without ever attempting a Mail (2026-08-17 report;
+ * session history shows zero Mail calls to members, the phrase "agent not
+ * found" quoted verbatim from the catalog).
+ *
+ * ContextRefresher now merges global ++ listTeamAgents(team) — team-local
+ * takes precedence, mirroring loadTeamAgent's resolution order. These
+ * tests pin the data layer that feeds the merge plus the pure renderer.
+ */
 class TeamCatalogLocalAgentsSpec extends FunSuite:
 
   private val tmpDir = os.temp.dir(prefix = "team-catalog-spec")
@@ -45,8 +45,8 @@ class TeamCatalogLocalAgentsSpec extends FunSuite:
     )
     val agents = Map(
       "Manager" -> AgentEntry(name = "Manager", description = "the lead", useWhen = "lead tasks"),
-      "alpha"   -> AgentEntry(name = "alpha", description = "does alpha", useWhen = "alpha work"),
-      "beta"    -> AgentEntry(name = "beta", description = "does beta", useWhen = "beta work")
+      "alpha" -> AgentEntry(name = "alpha", description = "does alpha", useWhen = "alpha work"),
+      "beta" -> AgentEntry(name = "beta", description = "does beta", useWhen = "beta work")
     )
     val catalog = TeamCatalog.buildCatalog(team, agents, Map.empty)
     assert(catalog.contains("- Manager: the lead"))
@@ -99,7 +99,7 @@ class TeamCatalogLocalAgentsSpec extends FunSuite:
 
     mergedIO.unsafeRunSync().get("writer").map(_.description) match
       case Some(desc) => assertEquals(desc, "TEAM-LOCAL writer")
-      case None       => fail("writer missing from merged map")
+      case None => fail("writer missing from merged map")
   }
 
 end TeamCatalogLocalAgentsSpec

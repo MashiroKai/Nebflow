@@ -6,8 +6,9 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentDef, AgentLibrary}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentDef, AgentStatus}
+import nebflow.agent.AgentLibrary
+import nebflow.shared.PathUtil
 
 /**
  * DelegateTool 前门（2026-09-11 Delegate 恢复批 · 极简内核形态）：
@@ -15,19 +16,12 @@ import nebflow.core.PathUtil
  *  1. schema 面：恰两参数 `task`/`description`（旧 `agent`/`lifecycle`/
  *     `taskDescription`/`images`/`preset`/`prompt` 全部退役——旧断言在本文件里
  *     逐条反向钉死；`device` 亦于 2026-09-14 作者裁定 U1/U2 随 schema 摘除）。
- *  2. Target resolution: the built-in `kernel` def. kernelgen-ext batch (2026-09-26): a missing disk
- *     def no longer refuses to start — resolveKernelDef synthesizes the built-in
- *     fail-safe def, prompt = runtime mirror system.md -> classpath seed
- *     (`seed/agents/kernel/system.md`, prompt-only manifest item `agents:kernel`)
- *     -> the embedded default. Availability first; the former "definition not
- *     found" refusal is retired (its negative is re-pinned below).
- *  3. Concurrency: NO cap (author decision 2026-09-26 — the former R9 gate U4=D1,
- *     limit 4 per root session, is retired; pinned at the source face below).
+ *  2. 目标解析：内置 `kernel` def；缺失给自描述错误（不再有 standalone 目录）。
+ *  3. R9 并发：每根会话 ≤ 4（U4=D1：等待答复占额度；错误含在飞清单 + 等待标注）。
  *  4. 设备面：**本工具已无 `device` 参数**（本地编排件；远端只发生在内核六件上）。
  *     本文件反向钉死该摘除：stray `device` 键**不被消费**（无预检、不拦、不出现在
  *     摘要），调用照常走到 spawn 前置检查。
- *  5. description hard facts: absolute paths / Bash cwd not guaranteed / no
- *     concurrency cap / 3600s budget.
+ *  5. description 硬事实：绝对路径 / Bash cwd 不保证 / 4 并发 / 3600s 预算。
  *
  * 无 ActorSystem 的用例停在「requires ActorSystem and SharedResources」——spawn
  * 链本身由隔离实例 e2e 覆盖（见交付结果 §②）。
@@ -44,9 +38,9 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   /** 写一个 agent 定义（默认写内核；`name` 可换以验证「目标恒为 kernel」）。 */
   private def writeAgent(
-      name: String = "kernel",
-      category: String = "standalone",
-      touchSystemMd: Boolean = true
+    name: String = "kernel",
+    category: String = "standalone",
+    touchSystemMd: Boolean = true
   ): Unit =
     val dir = agentsDir / name
     os.makeDir.all(dir)
@@ -62,6 +56,8 @@ class DelegateToolSpec extends CatsEffectSuite:
         .noSpaces
     )
     if touchSystemMd then os.write(dir / "system.md", s"You are $name.")
+
+  end writeAgent
 
   private def ctxWith(libOpt: Option[AgentLibrary] = Some(lib)): ToolContext =
     ToolContext(
@@ -96,12 +92,11 @@ class DelegateToolSpec extends CatsEffectSuite:
     assert(!props.contains("device"), s"device must be gone from the Delegate schema, got: $props")
     assertEquals(DelegateTool.name, "Delegate")
 
-  test("description carries the hard facts (absolute paths / cwd / no concurrency cap / 3600s budget)"):
+  test("description carries the hard facts (absolute paths / cwd / 4 in flight / 3600s budget)"):
     val d = DelegateTool.description
     assert(d.contains("ABSOLUTE paths"), "description must state the absolute-path fact")
     assert(d.toLowerCase.contains("working directory is not guaranteed"), "description must state the cwd fact")
-    assert(d.contains("No hard concurrency limit"), "description must state the author-directed no-limit face (2026-09-26)")
-    assert(!d.contains("at most 4"), "the retired 4-cap wording must be gone from the description")
+    assert(d.contains("4 kernel sessions in flight"), "description must state the R9 limit")
     assert(d.contains("3600s"), "description must state the wall-clock budget")
     // 旧语义残留守护：不再有 standalone 目标 / persistent 模式 / images 参数
     assert(!d.contains("standalone agent"), "standalone-target wording must be gone")
@@ -125,58 +120,25 @@ class DelegateToolSpec extends CatsEffectSuite:
       res <- DelegateTool.call(input, ctxWith())
     yield res match
       case Left(err) => assert(err.message.contains("Missing required parameter: task"), err.message)
-      case Right(v)  => fail(s"expected failure for empty task, got: $v")
+      case Right(v) => fail(s"expected failure for empty task, got: $v")
 
-  test("kernel definition missing => fail-safe built-in def, NOT a refusal (kernelgen-ext 2026-09-26)"):
+  test("kernel definition missing → self-describing error (no standalone catalog any more)"):
     for
       _ <- reset()
       input = JsonObject("task" -> "do work".asJson, "description" -> "x".asJson)
       res <- DelegateTool.call(input, ctxWith())
     yield res match
       case Left(err) =>
-        // The engine never refuses to start a kernel because the disk def is
-        // missing: resolveKernelDef synthesizes the built-in def (prompt chain:
-        // runtime mirror -> classpath seed -> embedded default) and the call
-        // reaches the spawn prerequisites — here failing only on the absent
-        // ActorSystem (suite runs without one by design).
-        assert(err.message.contains("requires ActorSystem"), err.message)
-        assert(!err.message.contains("Kernel agent definition"),
-          "the old kernel-missing refusal must be retired, got: " + err.message)
-        assert(!err.message.contains("Restore the definition and retry"),
-          "the old restore-and-retry refusal must be retired, got: " + err.message)
-      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
-
-  test("fail-safe tier 1: a mirror system.md without agent.json drives the synthesized def's prompt"):
-    for
-      _ <- reset()
-      _ = os.write.over(agentsDir / "kernel" / "system.md", "MIRROR-PROMPT-MARKER", createFolders = true)
-      res <- DelegateTool.resolveKernelDef(ctxWith())
-    yield res match
-      case Right(defn) =>
-        assertEquals(defn.name, "kernel")
-        assert(defn.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
-          "tier 1 = the seed-managed runtime mirror file (what the prompt editor reads/writes)")
-        assertEquals(defn.tools.toSet, nebflow.agent.AgentCore.KernelFixedTools,
-          "the synthesized def carries the mechanism-fixed tool face")
-        assertEquals(defn.category, "standalone", "converged name pins the category")
-      case Left(err) => fail(s"fail-safe def expected, got: ${err.message}")
-
-  test("fail-safe tier 2: no mirror => the classpath seed text drives the prompt (contract + plugin pointer present)"):
-    for
-      _ <- reset() // empty agents dir: no disk def, no mirror file
-      res <- DelegateTool.resolveKernelDef(ctxWith())
-    yield res match
-      case Right(defn) =>
-        assertEquals(defn.name, "kernel")
-        assert(defn.systemPrompt.contains("## ⑤ Creating plugins"),
-          "the seed text (with the author-directed plugin pointer) reached the prompt")
-        assert(defn.systemPrompt.contains("**Capability boundary (hard):**"),
-          "the verbatim migrated contract section reached the prompt")
-        // Note: like the three agents' mirrors, the seed file travels verbatim — its
-        // leading HTML comment (cold-start authority note) stays part of the file the
-        // prompt is read from. Only the embedded default tier (code constant) is
-        // comment-free by construction.
-      case Left(err) => fail(s"fail-safe def expected, got: ${err.message}")
+        assert(err.message.contains("Kernel agent definition 'kernel' not found"), err.message)
+        // 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：期望路径由运行期
+        // 数据根插值 —— 本 suite 已 setDataRoot(tempRoot)，故断言取渲染值（默认 home
+        // 下恰为旧字面 `~/.nebflow/agents/kernel`）。
+        assert(
+          err.message.contains(s"${PathUtil.dataRootRenderValue}/agents/kernel"),
+          err.message
+        )
+        assert(!err.message.contains("Targetable standalone agents"), "standalone catalog must be gone")
+      case Right(v) => fail(s"expected kernel-missing failure, got: $v")
 
   test("no agent library → self-describing error"):
     for res <- DelegateTool.call(JsonObject("task" -> "t".asJson), ctxWith(libOpt = None))
@@ -191,7 +153,7 @@ class DelegateToolSpec extends CatsEffectSuite:
       res <- DelegateTool.call(JsonObject("task" -> "do work".asJson, "description" -> "x".asJson), ctxWith())
     yield res match
       case Left(err) => assert(err.message.contains("requires ActorSystem"), err.message)
-      case Right(v)  => fail(s"expected spawn-prerequisite failure, got: $v")
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
 
   test("depth limit still applies (kernel is a leaf, depth < MaxDepth required)"):
     for
@@ -201,41 +163,32 @@ class DelegateToolSpec extends CatsEffectSuite:
       res <- DelegateTool.call(JsonObject("task" -> "t".asJson, "description" -> "x".asJson), deep)
     yield assert(res.left.exists(_.message.contains("Maximum sub-agent depth")), res.toString)
 
-  // ---------- 3. Concurrency cap retired (author decision 2026-09-26: no hard limit) ----------
-  // The former R9 gate (ruling U4=D1, limit 4 per root session) is gone: InFlight /
-  // concurrencyError / concurrencyCheck were removed from DelegateTool and nothing
-  // replaced them. The two tests below pin the retirement: the prompt faces carry the
-  // no-limit wording (three copies kept in sync), and the spawn-path source carries no
-  // cap code - re-adding a gate turns the source-face test red (consciousness gate for
-  // a cap comeback; the 2026-08 rate-limit incident note stays on the object comment).
+  // ---------- 3. R9 并发（U4=D1） ----------
 
-  test("no hard concurrency limit: description, embedded default and classpath seed carry the no-limit wording in sync"):
-    val d = DelegateTool.description
-    val seed = new String(
-      java.util.Objects.requireNonNull(
-        getClass.getClassLoader.getResourceAsStream("seed/agents/kernel/system.md")
-      ).readAllBytes(),
-      java.nio.charset.StandardCharsets.UTF_8
-    )
-    val seedBody = seed.linesIterator.dropWhile(_.startsWith("<!--")).mkString("\n").trim
-    val faces = List(
-      "description" -> d,
-      "embedded default" -> DelegateTool.BuiltinKernelSystemPrompt,
-      "classpath seed body" -> seedBody
-    )
-    for (name, text) <- faces do
-      assert(text.contains("No hard concurrency limit"),
-        s"$name must promise no hard concurrency limit (author 2026-09-26)")
-      assert(!text.contains("at most 4"), s"$name must not carry the retired 4-cap wording: $name")
-    assertEquals(DelegateTool.BuiltinKernelSystemPrompt.trim, seedBody,
-      "the embedded default (fail-safe tier 3) must stay verbatim-identical to the seed body")
+  test("R9: the 5th concurrent call is rejected with the in-flight list (4 already in flight)"):
+    val three =
+      (1 to 3).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
+    assert(DelegateTool.concurrencyError(three, now = 1000L).isEmpty, "3 in flight ⇒ the 4th call is admitted")
+    val four = three :+ DelegateTool.InFlight("delegate-kernel-00000004", AgentStatus.Processing, 1000L)
+    val err = DelegateTool.concurrencyError(four, now = 61_000L).getOrElse(fail("the 5th call must be rejected"))
+    assert(err.message.contains("Delegate concurrency limit reached"), err.message)
+    assertEquals(err.message.linesIterator.count(_.trim.startsWith("- delegate-kernel-")), 4)
+    assert(err.message.contains("status=Processing"), err.message)
 
-  test("the concurrency gate stays retired at the source face (the 5th concurrent spawn is admitted - nothing rejects it)"):
-    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "DelegateTool.scala")
-    assert(!src.contains("MaxConcurrentPerRoot"), "the retired cap constant must stay out of the spawn-path source")
-    assert(!src.contains("concurrencyCheck"), "the retired gate check must stay out of the spawn-path source")
-    assert(!src.contains("concurrencyError"), "the retired gate error must stay out of the spawn-path source")
-    assert(!src.contains("case class InFlight"), "the retired in-flight snapshot type must stay out of the spawn-path source")
+  test("R9/U4=D1: sessions waiting for an answer count toward the limit and are flagged"):
+    val waiting = DelegateTool.InFlight("delegate-kernel-wait0001", AgentStatus.WaitingForUser, 1000L)
+    val inFlight = waiting :: (2 to 4).toList.map(i =>
+      DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L)
+    )
+    val err = DelegateTool.concurrencyError(inFlight, now = 5000L).getOrElse(fail("limit must be enforced"))
+    assert(err.message.contains("delegate-kernel-wait0001"), err.message)
+    assert(err.message.contains("WAITING for the user's answer"), err.message)
+    assert(err.message.contains("ruling U4=D1"), err.message)
+
+  test("R9 负控: after one finishes (2 in flight) delegation is allowed again"):
+    val two = (1 to 2).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 0L))
+    assert(DelegateTool.concurrencyError(two, now = 0L).isEmpty)
+    assertEquals(DelegateTool.MaxConcurrentPerRoot, 4)
 
   // ---------- 4. 设备面摘除后的行为（2026-09-14 作者裁定 U1/U2） ----------
   // 摘除前本段 = 「设备预检 fail-fast 正控 + 负控」两条（预检函数已随 S1b 全删）。
@@ -281,7 +234,11 @@ class DelegateToolSpec extends CatsEffectSuite:
     Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail").foreach { t =>
       assert(!face.contains(t), s"kernel must not hold: $t")
     }
-    assertEquals(nebflow.agent.AgentCore.fixedToolsFor(AgentDef(name = "kernel", description = "", tools = Nil, systemPrompt = "")), face)
+    assertEquals(
+      nebflow.agent.AgentCore
+        .fixedToolsFor(AgentDef(name = "kernel", description = "", tools = Nil, systemPrompt = "")),
+      face
+    )
 
   test("kernel agent.json declaration is inert (ConvergedAgentNames) — mechanism-fixed only"):
     assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("kernel"))

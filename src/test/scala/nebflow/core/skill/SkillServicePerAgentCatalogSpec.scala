@@ -2,7 +2,7 @@ package nebflow.core.skill
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * buildPerAgentCatalog (B2): the opt-in catalog must mirror the global

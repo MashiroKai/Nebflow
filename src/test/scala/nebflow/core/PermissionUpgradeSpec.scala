@@ -18,8 +18,14 @@ class PermissionUpgradeSpec extends FunSuite:
   }
 
   test("allow + auto-edits / auto-all are the only valid escalations") {
-    assertEquals(PermissionUpgrade.parse(approved = true, upgradeMode = Some("auto-edits")), Right(Some(SafetyMode.AutoEdits)))
-    assertEquals(PermissionUpgrade.parse(approved = true, upgradeMode = Some("auto-all")), Right(Some(SafetyMode.AutoAll)))
+    assertEquals(
+      PermissionUpgrade.parse(approved = true, upgradeMode = Some("auto-edits")),
+      Right(Some(SafetyMode.AutoEdits))
+    )
+    assertEquals(
+      PermissionUpgrade.parse(approved = true, upgradeMode = Some("auto-all")),
+      Right(Some(SafetyMode.AutoAll))
+    )
   }
 
   test("deny + upgradeMode is rejected — a deny must not carry an upgrade") {

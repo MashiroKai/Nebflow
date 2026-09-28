@@ -1,0 +1,16 @@
+{
+  "_header": "Phase 5 解耦(行为保持重构,2026-09-25)。分层豁免基线:门禁断言『实测 (文件,目标包) 反向边集合 ⊆ 本基线』,基线只减不增;PR 减边须同步缩基线(node scripts/check-scala-layers.mjs --update 可重播种,既有 reason 按同 (from,to) 保留)。",
+  "generatedBy": "manual seed, PR48W1 reconciliation (2026-09-28): two main-only pre-existing edges re-created by the wholesale merge, per-edge reason below; ratchet discipline unchanged (base only shrinks)",
+  "entries": [
+    {
+      "from": "src/main/scala/nebflow/core/project/ProjectCreateService.scala",
+      "to": "agent",
+      "reason": "main-only pre-existing edge: the file does not exist at the merge-base 57097937 nor on the PR head 7adc7c8a; main tip c0c33aec carries it verbatim with `import nebflow.agent.SharedResources` (CreateIdentity.sharedResources feeds ProjectRuntimeRegistry.mount). W1 absorbed it wholesale from main, so the edge is main's own status quo, not new coupling introduced by the merge."
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/types.scala",
+      "to": "agent",
+      "reason": "main-only pre-existing edge: main tip c0c33aec imports nebflow.agent and delegates ToolContext.isNebulaRoot to AgentCore.isNebulaRoot (B1 identity batch); the PR head predates B1, so its copy of types.scala has no agent edge. W1 ported main's delegation back (single FQN reference, no wildcard import) to keep the merged ToolContext compatible with main-side consumers; edge shape identical to main's own."
+    }
+  ]
+}

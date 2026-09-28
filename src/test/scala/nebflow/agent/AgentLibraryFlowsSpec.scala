@@ -25,9 +25,11 @@ class AgentLibraryFlowsSpec extends CatsEffectSuite:
     }.bracket(_ => test(new AgentLibrary(tmp)))(_ => IO.delay(os.remove.all(tmp)).attempt.void)
 
   test("global agent.json flows + skills are parsed into AgentDef"):
-    withAgentsDir(Map(
-      "FlowCaller" -> """{"name":"FlowCaller","description":"x","tools":["Read"],"skills":["visual-style"],"flows":["code-review","release-beta"]}"""
-    )) { lib =>
+    withAgentsDir(
+      Map(
+        "FlowCaller" -> """{"name":"FlowCaller","description":"x","tools":["Read"],"skills":["visual-style"],"flows":["code-review","release-beta"]}"""
+      )
+    ) { lib =>
       lib.get("FlowCaller").map {
         case Some(defn) =>
           assertEquals(defn.flows, List("code-review", "release-beta"))
@@ -37,9 +39,11 @@ class AgentLibraryFlowsSpec extends CatsEffectSuite:
     }
 
   test("wildcard flows [\"*\"] survive the parse (Nebula's flows:['*'] case)"):
-    withAgentsDir(Map(
-      "Nebula" -> """{"name":"Nebula","description":"root","tools":["*"],"flows":["*"]}"""
-    )) { lib =>
+    withAgentsDir(
+      Map(
+        "Nebula" -> """{"name":"Nebula","description":"root","tools":["*"],"flows":["*"]}"""
+      )
+    ) { lib =>
       lib.get("Nebula").map {
         case Some(defn) =>
           assertEquals(defn.flows, List("*"), "the '*' wildcard must reach AgentDef verbatim")
@@ -48,9 +52,11 @@ class AgentLibraryFlowsSpec extends CatsEffectSuite:
     }
 
   test("agent.json without flows/skills fields defaults to Nil (back-compat)"):
-    withAgentsDir(Map(
-      "Legacy" -> """{"name":"Legacy","description":"old schema","tools":["Read"]}"""
-    )) { lib =>
+    withAgentsDir(
+      Map(
+        "Legacy" -> """{"name":"Legacy","description":"old schema","tools":["Read"]}"""
+      )
+    ) { lib =>
       lib.get("Legacy").map {
         case Some(defn) =>
           assertEquals(defn.flows, Nil)

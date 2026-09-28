@@ -8,38 +8,41 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentActor, AgentCommand, AgentDef, AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.actor.{AgentCommand, AgentDef}
+import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk, UiMessage}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig, UiMessage}
 import org.http4s.circe.CirceEntityCodec.*
 
 import scala.concurrent.duration.*
 
 /**
-  * TurnEndpoint tests (P0 benchmark headless — /tmp/headless-design.md §5).
-  * Drives the REAL AgentActor in a real ActorSystem with a scripted LlmHandle
-  * (SavePhaseZeroToolTurnSpec harness pattern), with the agent's wsSend wired
-  * through a REAL SessionRecorder into a REAL WsHub — the same recording
-  * chain production uses (agent wsSend = recording layer over wsHub.broadcast),
-  * so the completion signal and the UiMessage flush ordering are exercised
-  * end to end, not mocked.
-  *
-  * The WS "userMessage" ≡ "immediateInput" equivalence (same dispatch body)
-  * is covered by the E2E smoke script on a live gateway, not here —
-  * handleMessage is an instance method of the heavyweight WebSocketRoutes
-  * class (G1: not constructible in isolation).
-  */
+ * TurnEndpoint tests (P0 benchmark headless — /tmp/headless-design.md §5).
+ * Drives the REAL AgentActor in a real ActorSystem with a scripted LlmHandle
+ * (SavePhaseZeroToolTurnSpec harness pattern), with the agent's wsSend wired
+ * through a REAL SessionRecorder into a REAL WsHub — the same recording
+ * chain production uses (agent wsSend = recording layer over wsHub.broadcast),
+ * so the completion signal and the UiMessage flush ordering are exercised
+ * end to end, not mocked.
+ *
+ * The WS "userMessage" ≡ "immediateInput" equivalence (same dispatch body)
+ * is covered by the E2E smoke script on a live gateway, not here —
+ * handleMessage is an instance method of the heavyweight WebSocketRoutes
+ * class (G1: not constructible in isolation).
+ */
 class TurnEndpointSpec extends CatsEffectSuite:
 
   private class RecordingLlm(scripts: List[Stream[IO, StreamChunk]]) extends LlmHandle[IO]:
     val requests = Ref.unsafe[IO, List[LlmRequest]](Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -47,11 +50,16 @@ class TurnEndpointSpec extends CatsEffectSuite:
       Stream
         .eval(requests.modify { list => (req :: list, list.size) })
         .flatMap(idx =>
-          scripts.lift(idx).getOrElse(Stream.raiseError[IO](
-            new RuntimeException(s"unexpected LLM call #$idx"))))
+          scripts.lift(idx).getOrElse(Stream.raiseError[IO](new RuntimeException(s"unexpected LLM call #$idx")))
+        )
+
+  end RecordingLlm
 
   private def mkResources(
-    system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO], sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -82,8 +90,10 @@ class TurnEndpointSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** Spawn a real root agent whose wsSend is the production chain:
-    * SessionRecorder (UiMessage flush) over wsHub.broadcast. */
+  /**
+   * Spawn a real root agent whose wsSend is the production chain:
+   * SessionRecorder (UiMessage flush) over wsHub.broadcast.
+   */
   private def spawnAgent(
     system: ActorSystem,
     resources: SharedResources,
@@ -107,14 +117,19 @@ class TurnEndpointSpec extends CatsEffectSuite:
       s"turn-spec-$sessionId"
     )
 
-  /** The dispatch callback production wires in: persist the user bubble,
-    * then ImmediateInput the agent (mirror of wsRoutes.dispatchUserText). */
+  end spawnAgent
+
+  /**
+   * The dispatch callback production wires in: persist the user bubble,
+   * then ImmediateInput the agent (mirror of wsRoutes.dispatchUserText).
+   */
   private def dispatch(
     agent: nebflow.actor.ActorRef[AgentCommand],
     sessionStore: SessionStore
   ): (String, String) => IO[Unit] = (sid, content) =>
     sessionStore.appendUiMessages(
-      sid, List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
+      sid,
+      List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
     ) *> (agent ! AgentCommand.ImmediateInput(content))
 
   private def bodyJson(resp: org.http4s.Response[IO]): Json =
@@ -134,17 +149,18 @@ class TurnEndpointSpec extends CatsEffectSuite:
 
   test("happy path: turn completes with finalMessage from the recording chain") {
     withEnv("turn-happy") { (tmp, system) =>
-      val llm = new RecordingLlm(List(
-        Stream(StreamChunk.TextDelta("the answer is 42"), StreamChunk.Done(None, None))
-      ))
+      val llm = new RecordingLlm(
+        List(
+          Stream(StreamChunk.TextDelta("the answer is 42"), StreamChunk.Done(None, None))
+        )
+      )
       val sessionStore = new SessionStore(tmp / "sessions", tmp / "tasks")
       val wsHub = new WsHub()
       val sid = s"turn-happy-${System.currentTimeMillis()}"
       val program = for
         resources <- mkResources(system, tmp, llm, sessionStore)
         agent <- spawnAgent(system, resources, sessionStore, wsHub, sid, llm)
-        resp <- TurnEndpoint.runTurn(
-          wsHub, sessionStore, dispatch(agent, sessionStore), sid, "what is the answer?", 30)
+        resp <- TurnEndpoint.runTurn(wsHub, sessionStore, dispatch(agent, sessionStore), sid, "what is the answer?", 30)
       yield resp
 
       val resp = program.unsafeRunSync()
@@ -167,17 +183,18 @@ class TurnEndpointSpec extends CatsEffectSuite:
       // 错误（"provider exploded" → Unknown → Transient）不再 fatal → 进入
       // ErrorFrozen（退避到期自动续跑）。fatal 路径只剩 Permanent/Fatal——
       // 本测试改用 timeout（classifyError → Timeout → Permanent）验证 fatal 语义。
-      val llm = new RecordingLlm(List(
-        Stream.raiseError[IO](new RuntimeException("request timeout after 30s"))
-      ))
+      val llm = new RecordingLlm(
+        List(
+          Stream.raiseError[IO](new RuntimeException("request timeout after 30s"))
+        )
+      )
       val sessionStore = new SessionStore(tmp / "sessions", tmp / "tasks")
       val wsHub = new WsHub()
       val sid = s"turn-error-${System.currentTimeMillis()}"
       val program = for
         resources <- mkResources(system, tmp, llm, sessionStore)
         agent <- spawnAgent(system, resources, sessionStore, wsHub, sid, llm)
-        resp <- TurnEndpoint.runTurn(
-          wsHub, sessionStore, dispatch(agent, sessionStore), sid, "break loudly", 30)
+        resp <- TurnEndpoint.runTurn(wsHub, sessionStore, dispatch(agent, sessionStore), sid, "break loudly", 30)
       yield resp
 
       val resp = program.unsafeRunSync()
@@ -201,14 +218,14 @@ class TurnEndpointSpec extends CatsEffectSuite:
       val program = for
         resources <- mkResources(system, tmp, llm, sessionStore)
         agent <- spawnAgent(system, resources, sessionStore, wsHub, sid, llm)
-        resp <- TurnEndpoint.runTurn(
-          wsHub, sessionStore, dispatch(agent, sessionStore), sid, "hang forever", 1)
+        resp <- TurnEndpoint.runTurn(wsHub, sessionStore, dispatch(agent, sessionStore), sid, "hang forever", 1)
         // after the 504 the listener must be unregistered: broadcasting
         // busy=false for this session must NOT reach a stale Deferred
         // (observable only via idempotence — unregister is fire-and-mutex;
         // here we just assert the hub still functions)
-        _ <- wsHub.broadcast(Json.obj(
-          "type" -> "sessionBusy".asJson, "sessionId" -> sid.asJson, "busy" -> false.asJson))
+        _ <- wsHub.broadcast(
+          Json.obj("type" -> "sessionBusy".asJson, "sessionId" -> sid.asJson, "busy" -> false.asJson)
+        )
       yield resp
 
       val started = System.currentTimeMillis()

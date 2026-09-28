@@ -7,20 +7,20 @@ import munit.FunSuite
 import scala.concurrent.duration.*
 
 /**
-  * Regression tests for the awaitRestore fast-path fix: every
-  * /api/teams/mounted request used to hard-stall ~3s on an empty home
-  * (qa W3-m: networkidle dragged to 3.68s, six http/1.1 sockets hogged).
-  *
-  * Root cause: the completion Deferred's only producer is a FlowTreeActor
-  * setup, and on an empty home no FlowTreeActor is EVER created (the single
-  * creation path is LoadTool → getOrCreate) — so the wait always ran the
-  * full timeout with nothing to wait for.
-  *
-  * The wait core (awaitRestoreUsing) is tested over LOCAL state so the
-  * registry singleton is never polluted; the end-to-end fast path against
-  * the real singleton is covered by the isolated-instance smoke (curl
-  * /api/teams/mounted returns in milliseconds).
-  */
+ * Regression tests for the awaitRestore fast-path fix: every
+ * /api/teams/mounted request used to hard-stall ~3s on an empty home
+ * (qa W3-m: networkidle dragged to 3.68s, six http/1.1 sockets hogged).
+ *
+ * Root cause: the completion Deferred's only producer is a FlowTreeActor
+ * setup, and on an empty home no FlowTreeActor is EVER created (the single
+ * creation path is LoadTool → getOrCreate) — so the wait always ran the
+ * full timeout with nothing to wait for.
+ *
+ * The wait core (awaitRestoreUsing) is tested over LOCAL state so the
+ * registry singleton is never polluted; the end-to-end fast path against
+ * the real singleton is covered by the isolated-instance smoke (curl
+ * /api/teams/mounted returns in milliseconds).
+ */
 class AwaitRestoreSpec extends FunSuite:
 
   private def mkState: (cats.effect.Deferred[IO, Unit], Ref[IO, Boolean]) =
@@ -99,3 +99,4 @@ class AwaitRestoreSpec extends FunSuite:
     assert(dur >= 100.millis, "must have waited for the WS-triggered restore")
     assert(dur < 2000.millis, s"should wake on restore completion, took ${dur.toMillis}ms")
   }
+end AwaitRestoreSpec

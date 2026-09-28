@@ -7,15 +7,16 @@ import munit.FunSuite
 import java.net.{InetSocketAddress, ServerSocket}
 import java.util.concurrent.Executors
 
-/** Single-instance guard classifier (#guard, 2026-08-27 hard requirement).
-  * The classifier decides between boot / focus-existing / fail-loud — these
-  * tests pin each branch against a real socket / HTTP occupant:
-  *  - free port                     -> PortFree
-  *  - nebflow-style /api/health     -> NebflowInstance (product marker)
-  *  - legacy health (version only)  -> NebflowInstance (older build compat —
-  *    a pre-product-field instance must still be FOCUSED, not fought)
-  *  - foreign JSON / silent socket  -> ForeignOccupant
-  */
+/**
+ * Single-instance guard classifier (#guard, 2026-08-27 hard requirement).
+ * The classifier decides between boot / focus-existing / fail-loud — these
+ * tests pin each branch against a real socket / HTTP occupant:
+ *  - free port                     -> PortFree
+ *  - nebflow-style /api/health     -> NebflowInstance (product marker)
+ *  - legacy health (version only)  -> NebflowInstance (older build compat —
+ *    a pre-product-field instance must still be FOCUSED, not fought)
+ *  - foreign JSON / silent socket  -> ForeignOccupant
+ */
 class SingleInstanceGuardSpec extends FunSuite:
 
   private def freePort(): Int =
@@ -26,26 +27,27 @@ class SingleInstanceGuardSpec extends FunSuite:
     p
 
   private def withHttpServer(body: String)(f: Int => Unit): Unit =
-    val port  = freePort()
+    val port = freePort()
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
     server.setExecutor(Executors.newCachedThreadPool())
     server.createContext(
       "/api/health",
-      (ex: com.sun.net.httpserver.HttpExchange) => {
+      (ex: com.sun.net.httpserver.HttpExchange) =>
         val bytes = body.getBytes("UTF-8")
         ex.getResponseHeaders.add("Content-Type", "application/json")
         ex.sendResponseHeaders(200, bytes.length)
         ex.getResponseBody.write(bytes)
         ex.close()
-      }
     )
     server.start()
     try f(port)
     finally server.stop(0)
 
+  end withHttpServer
+
   private def withSilentSocket(f: Int => Unit): Unit =
     val port = freePort()
-    val ss   = new ServerSocket()
+    val ss = new ServerSocket()
     ss.bind(new InetSocketAddress("127.0.0.1", port), 1)
     try f(port)
     finally ss.close()
@@ -61,7 +63,7 @@ class SingleInstanceGuardSpec extends FunSuite:
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p).unsafeRunSync()
       st match
         case SingleInstanceGuard.NebflowInstance(url) => assertEquals(url, s"http://localhost:$p")
-        case other                                     => fail(s"expected NebflowInstance, got $other")
+        case other => fail(s"expected NebflowInstance, got $other")
     }
   }
 
@@ -106,10 +108,12 @@ class SingleInstanceGuardSpec extends FunSuite:
   // Fix: connect probe disambiguates — refused → TW only → drain & boot.
   // ============================================================
 
-  /** Build a real TIME_WAIT socket on an ephemeral port with NO listener:
-    * server accepts, closes its side FIRST (server side → TIME_WAIT on the
-    * local port), then the listener itself is closed — exactly the state a
-    * kill leaves behind (TW sockets, nothing listening). */
+  /**
+   * Build a real TIME_WAIT socket on an ephemeral port with NO listener:
+   * server accepts, closes its side FIRST (server side → TIME_WAIT on the
+   * local port), then the listener itself is closed — exactly the state a
+   * kill leaves behind (TW sockets, nothing listening).
+   */
   private def withTimeWaitSocket(f: Int => Unit): Unit =
     val ss = new ServerSocket()
     ss.bind(new InetSocketAddress("127.0.0.1", 0), 1)
@@ -118,7 +122,7 @@ class SingleInstanceGuardSpec extends FunSuite:
     val accepted = ss.accept()
     accepted.close() // server-side close first → this 4-tuple's TIME_WAIT lives on port p
     client.close()
-    ss.close()       // listener gone → only TIME_WAIT remains
+    ss.close() // listener gone → only TIME_WAIT remains
     try f(p)
     finally () // nothing to close — both sockets are gone; TW expires on its own
 
@@ -174,9 +178,11 @@ class SingleInstanceGuardSpec extends FunSuite:
     // (RestApiRoutes) delegates to it and no longer carries the literal.
     // Pinned here textually against that single source to survive
     // refactorings; the route itself is exercised E2E.
-    val source = scala.io.Source.fromFile(
-      java.nio.file.Path.of("src/main/scala/nebflow/core/hotrestart/HealthProbe.scala").toFile
-    ).mkString
+    val source = scala.io.Source
+      .fromFile(
+        java.nio.file.Path.of("src/main/scala/nebflow/core/hotrestart/HealthProbe.scala").toFile
+      )
+      .mkString
     assert(source.contains("\"product\" -> \"nebflow\""), "health product marker missing")
   }
 

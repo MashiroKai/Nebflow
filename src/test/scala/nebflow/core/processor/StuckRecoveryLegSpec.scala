@@ -6,15 +6,35 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.project.{FlowMapStore, NodeEngine, NodeLifecycle, NodeDef, OutEdge, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
+import nebflow.core.project.{
+  FlowMapStore,
+  NodeEngine,
+  NodeLifecycle,
+  NodeDef,
+  OutEdge,
+  ProjectDef,
+  ProjectRuntime,
+  ProjectRuntimeRegistry
+}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  StreamChunk,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -87,12 +107,19 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  private def mountProject(name: String, ws: os.Path, system: ActorSystem, res: SharedResources,
-                           rootSid: String): IO[ProjectRuntime] =
+  private def mountProject(
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources,
+    rootSid: String
+  ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = rootSid,
@@ -100,8 +127,12 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
         emitEvent = (_: String, _: String, _: Json) => IO.unit,
         notifyTriggerOverride = Some((_: String) => IO.unit)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -110,16 +141,34 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
     store.mutate(s => s.copy(nodes = s.nodes + (n.id -> n))).void
 
   private def node(id: String, sid: String, status: String = NodeLifecycle.Running): NodeDef =
-    NodeDef(id = id, name = id, agent = "general", status = status,
-      sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-      out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)
+    NodeDef(
+      id = id,
+      name = id,
+      agent = "general",
+      status = status,
+      sessionRef = Some(sid),
+      startedAt = Some(System.currentTimeMillis() - 60_000L),
+      out = List(OutEdge.root),
+      createdAt = System.currentTimeMillis() - 60_000L
+    )
 
-  private def flowRecord(sid: String, ref: ActorRef[AgentCommand], rootSid: String,
-                         bridge: Option[ActorRef[AgentEvent]]): AgentRecord =
-    AgentRecord(sessionId = sid, ref = ref, kind = AgentKind.Flow, rootSessionId = rootSid,
-      startedAt = System.currentTimeMillis() - 30 * 60 * 1000L, status = AgentStatus.Processing,
+  private def flowRecord(
+    sid: String,
+    ref: ActorRef[AgentCommand],
+    rootSid: String,
+    bridge: Option[ActorRef[AgentEvent]]
+  ): AgentRecord =
+    AgentRecord(
+      sessionId = sid,
+      ref = ref,
+      kind = AgentKind.Flow,
+      rootSessionId = rootSid,
+      startedAt = System.currentTimeMillis() - 30 * 60 * 1000L,
+      status = AgentStatus.Processing,
       lastActivityMs = System.currentTimeMillis() - threshold - 1000L,
-      supervisorRef = bridge, currentToolStartedAt = 0L)
+      supervisorRef = bridge,
+      currentToolStartedAt = 0L
+    )
 
   // ── ① runtime 定位键修正（硬依赖 2）─────────────────────────────────────
 
@@ -142,10 +191,10 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       // 旧定位键：两个引擎的 rootSessionId 相同 ⇒ find 结果与「谁是家」无关
       rts <- ProjectRuntimeRegistry.all
       _ <- IO(assert(rts.size == 2, s"两个 runtime 应均已挂载，得 ${rts.size}"))
-      _ <- IO(assert(rts.forall(_.engine.rootSessionId == sharedRoot),
-        "夹具前提：两个项目共享同一 rootSessionId（这正是旧定位键歧义的根因）"))
-      oldHits <- rts.filter(rt => rt.engine.rootSessionId == sharedRoot).foldLeft(IO.pure(0))((acc, rt) =>
-        acc.map(_ + 1))
+      _ <- IO(assert(rts.forall(_.engine.rootSessionId == sharedRoot), "夹具前提：两个项目共享同一 rootSessionId（这正是旧定位键歧义的根因）"))
+      oldHits <- rts
+        .filter(rt => rt.engine.rootSessionId == sharedRoot)
+        .foldLeft(IO.pure(0))((acc, rt) => acc.map(_ + 1))
       ownsA <- rtA.engine.ownsSession(sid)
       ownsB <- rtB.engine.ownsSession(sid)
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
@@ -154,16 +203,22 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       assertEquals(oldHits, 2, "旧键：两个 runtime 都「匹配」⇒ 任取其一 = 15/16 命错引擎的事故根因")
       assert(ownsA, "新键：会话 node-belongs-to-A 由 projA 拥有")
       assert(!ownsB, "新键：projB 不拥有该会话（旧键无法区分二者）")
+    end for
   }
 
   test("正控④ 负半: findNodeForSession 只认 sessionRef/sessionRefVerify，不认 rootSessionId") {
     val snap = nebflow.core.project.FlowMapState(
-      v = 1, project = "locator-spec", updatedAt = 0L,
-      nodes = Map("n1" -> NodeDef(id = "n1", name = "n1", agent = "general",
-        sessionRef = Some("node-x"), createdAt = 0L)))
+      v = 1,
+      project = "locator-spec",
+      updatedAt = 0L,
+      nodes =
+        Map("n1" -> NodeDef(id = "n1", name = "n1", agent = "general", sessionRef = Some("node-x"), createdAt = 0L))
+    )
     assert(NodeEngine.findNodeForSession(snap, "node-x").isDefined)
-    assert(NodeEngine.findNodeForSession(snap, "some-root-session").isEmpty,
-      "rootSessionId 不得再作为定位键（定位键 = 会话在哪个 store 里）")
+    assert(
+      NodeEngine.findNodeForSession(snap, "some-root-session").isEmpty,
+      "rootSessionId 不得再作为定位键（定位键 = 会话在哪个 store 里）"
+    )
   }
 
   // ── ② 恢复锚 / 挂起腿 ───────────────────────────────────────────────────
@@ -193,9 +248,8 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       bridgeEvts <- bridgeReceived.get
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
       _ <- ProjectRuntimeRegistry.clear
-    yield
-      assert(bridgeEvts.isEmpty,
-        s"无恢复锚 ⇒ 挂起腿不启动（负控①：不重试、直接一次上报），不得发任何桥信号，得 $bridgeEvts")
+    yield assert(bridgeEvts.isEmpty, s"无恢复锚 ⇒ 挂起腿不启动（负控①：不重试、直接一次上报），不得发任何桥信号，得 $bridgeEvts")
+    end for
   }
 
   test("正控②: A1 可用 → 挂起腿发出**带哨兵**的中断信号（只停 actor，不终态化）") {
@@ -212,8 +266,10 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "suspend-bridge")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "suspend-agent")
-      _ <- res.sessionStore.saveMessagesForSession(sid, List(
-        Message(role = MessageRole.User, content = Left("fixture transcript"))))
+      _ <- res.sessionStore.saveMessagesForSession(
+        sid,
+        List(Message(role = MessageRole.User, content = Left("fixture transcript")))
+      )
       _ <- res.agentRegistry.set(Map(sid -> flowRecord(sid, agentRef, "root-suspend", Some(bridgeRef))))
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
@@ -228,12 +284,14 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
     yield
       val cancels = bridgeEvts.collect { case c: AgentEvent.Cancelled => c }
       assertEquals(cancels.size, 1, s"挂起腿必须恰好发一条中断信号，得 $bridgeEvts")
-      assert(NodeEngine.isSuspendOutcome(cancels.head.reason),
-        s"信号必须带挂起哨兵（引擎侧据此走「只停 actor、不终态化」分支），得 ${cancels.head.reason}")
+      assert(
+        NodeEngine.isSuspendOutcome(cancels.head.reason),
+        s"信号必须带挂起哨兵（引擎侧据此走「只停 actor、不终态化」分支），得 ${cancels.head.reason}"
+      )
       // 挂起**不终态化**：本 spec 的桥是记录器、不驱动引擎 fiber，故节点停在 Running
       // ——断言「节点未被改成 Cancelled/Failed」正是 R-1=B 的可观测面。
-      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Running),
-        "挂起腿不得终态化节点（R-1=B：恢复动作放在终态之前，全程不进 Cancelled）")
+      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Running), "挂起腿不得终态化节点（R-1=B：恢复动作放在终态之前，全程不进 Cancelled）")
+    end for
   }
 
   // ── ③ hardResumeNode 的 CAS 前置条件收敛 ────────────────────────────────
@@ -249,16 +307,18 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       ws = tmp / "ws-cas"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("cas", ws, system, res, "root-cas")
       _ <- seed(rt.store, node("n-cas", sid, NodeLifecycle.Cancelled))
-      _ <- res.sessionStore.saveMessagesForSession(sid, List(
-        Message(role = MessageRole.User, content = Left("fixture transcript"))))
+      _ <- res.sessionStore.saveMessagesForSession(
+        sid,
+        List(Message(role = MessageRole.User, content = Left("fixture transcript")))
+      )
       cached <- rt.engine.hardResumeNode(sid)
       nodeAfter <- rt.store.getNode("n-cas")
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
       _ <- ProjectRuntimeRegistry.clear
     yield
       assertEquals(cached, None, "Cancelled 节点不得被 resume（CAS 只接受 Running）")
-      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Cancelled),
-        "节点状态不得被改动（cancelled 保持真终态语义）")
+      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Cancelled), "节点状态不得被改动（cancelled 保持真终态语义）")
+    end for
   }
 
   test("正控②: Running 节点 + A1 可用 → CAS 接受并翻回 Pending（恢复锚 = transcript）") {
@@ -273,8 +333,10 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       rt <- mountProject("casok", ws, system, res, "root-casok")
       // deps/barrier 无约束（in 空、deps 空）⇒ startNode 可推进
       _ <- seed(rt.store, node("n-casok", sid, NodeLifecycle.Running))
-      _ <- res.sessionStore.saveMessagesForSession(sid, List(
-        Message(role = MessageRole.User, content = Left("fixture transcript"))))
+      _ <- res.sessionStore.saveMessagesForSession(
+        sid,
+        List(Message(role = MessageRole.User, content = Left("fixture transcript")))
+      )
       anchor <- rt.engine.probeRecoveryAnchors(sid)
       ok <- rt.engine.hardResumeNode(sid, Some(anchor))
       _ <- IO.sleep(300.millis)
@@ -283,8 +345,11 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
     yield
       assertEquals(ok, Some("n-casok"), "Running → Pending 的 CAS 必须被接受（R-1=B 的唯一合法前置态）")
-      assert(nodeAfter.exists(n => n.status != NodeLifecycle.Cancelled),
-        s"恢复后节点必须离开 Running-未迁移形态，得 ${nodeAfter.map(_.status)}")
+      assert(
+        nodeAfter.exists(n => n.status != NodeLifecycle.Cancelled),
+        s"恢复后节点必须离开 Running-未迁移形态，得 ${nodeAfter.map(_.status)}"
+      )
+    end for
   }
 
   test("A3 锚探测: 非 git 目录 ⇒ worktreeAvailable=false（#159 形态降级），且探测零副作用") {
@@ -305,6 +370,7 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
     yield
       assert(!anchor.worktreeAvailable, "非 git 目录不得被当作可用 worktree（#159 形态：目录缺失/非工作树）")
       assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Running), "锚探测必须零副作用")
+    end for
   }
 
   // ── ④ 类⑦ bg-harvest 带 cause（R-5）─────────────────────────────────────

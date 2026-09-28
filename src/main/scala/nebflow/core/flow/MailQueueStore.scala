@@ -1,11 +1,11 @@
 package nebflow.core.flow
 
-import nebflow.core.AtomicJson
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.AtomicJson
+import nebflow.shared.{MailQueueItem, NebflowLogger, PathUtil}
 
 /**
  * Persistent FIFO queue for **legacy** queue-mode mails.
@@ -34,48 +34,9 @@ import nebflow.core.{NebflowLogger, PathUtil}
 object MailQueueStore:
   private val logger = NebflowLogger.forName("nebflow.flow.mailqueue")
 
-  case class MailQueueItem(
-    id: String,
-    from: String,
-    fromSession: String,
-    message: String,
-    /** Advisory type tag (INFO / RESULT etc.), same vocabulary as MailTool type. */
-    `type`: String,
-    timestamp: Long,
-    /**
-     * G3: image attachment paths. The queue persists paths (not base64 — queue
-     * files stay small); paths are re-read and re-compressed at drain time via
-     * ImageInject.drainImagePaths. A file that vanished between send and drain
-     * degrades to an `[attachment lost: path]` placeholder.
-     */
-    imagePaths: List[String] = Nil
-  )
-
-  given Encoder[MailQueueItem] = Encoder.instance { item =>
-    Json.obj(
-      "id" -> item.id.asJson,
-      "from" -> item.from.asJson,
-      "fromSession" -> item.fromSession.asJson,
-      "message" -> item.message.asJson,
-      "type" -> item.`type`.asJson,
-      "timestamp" -> item.timestamp.asJson,
-      // G3 attachment paths — old decoders ignore unknown fields (hand-written
-      // downField readers), so this is forward compatible.
-      "imagePaths" -> item.imagePaths.asJson
-    )
-  }
-
-  given Decoder[MailQueueItem] = Decoder.instance { c =>
-    for
-      id <- c.downField("id").as[String]
-      from <- c.downField("from").as[String]
-      fromSession <- c.downField("fromSession").as[String].orElse(Right(""))
-      message <- c.downField("message").as[String]
-      itemType <- c.downField("type").as[String].orElse(Right("INFO"))
-      timestamp <- c.downField("timestamp").as[Option[Long]].map(_.getOrElse(0L))
-      imagePaths <- c.downField("imagePaths").as[List[String]].orElse(Right(Nil))
-    yield MailQueueItem(id, from, fromSession, message, itemType, timestamp, imagePaths)
-  }
+  // 严格DAG第⑥步终批裁定(2026-09-27):MailQueueItem 剪出下沉 shared(nebflow.shared.MailQueueItem),
+  // 其 Encoder/Decoder 两 given 随迁新建伴生 object MailQueueItem(隐式作用域跟随伴生——本文件
+  // decode/落盘路径与 JSON 契约零变化)。
 
   private def sessionDir(sessionId: String): os.Path =
     PathUtil.dataRoot / "sessions" / sessionId
@@ -95,7 +56,7 @@ object MailQueueStore:
           if os.exists(file) then
             decode[List[MailQueueItem]](os.read(file)) match
               case Right(items) => items
-              case Left(_)      => Nil // corrupt file — start fresh
+              case Left(_) => Nil // corrupt file — start fresh
           else Nil
         val updated = current :+ item
         AtomicJson.writeSync(file, updated.asJson.noSpaces)

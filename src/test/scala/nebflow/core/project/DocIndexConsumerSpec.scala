@@ -92,22 +92,27 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
   test("A① chain-archived 事件：顶层可选 chainId + 结构化 summary，旧行零迁移兼容") {
     val ws = freshDir("nb-docidx-ev-").toString
     for
-      _ <- FlowMapEventLog.append(ws, "demo", "n1", FlowMapEventLog.ChainArchivedType,
-        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 3), Some("chain-n1"))
+      _ <- FlowMapEventLog.append(
+        ws,
+        "demo",
+        "n1",
+        FlowMapEventLog.ChainArchivedType,
+        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 3),
+        Some("chain-n1")
+      )
       _ <- FlowMapEventLog.append(ws, "demo", "n3", "node-ask", "ask") // 既有事件：默认 None
       raw <- IO.blocking(os.read.lines(os.Path(ws) / ".nebflow" / FlowMapEventLog.FileName).toList)
     yield
       assertEquals(raw.size, 2)
       val first = jsonParse(raw.head).toOption.getOrElse(fail("event line must be valid JSON"))
       assertEquals(first.hcursor.get[String]("chainId").toOption, Some("chain-n1"))
-      assertEquals(first.hcursor.get[String]("summary").toOption,
-        Some(s"chain=chain-n1 archivedAt=$atMs members=3"))
+      assertEquals(first.hcursor.get[String]("summary").toOption, Some(s"chain=chain-n1 archivedAt=$atMs members=3"))
       assertEquals(first.hcursor.get[String]("type").toOption, Some("chain-archived"))
       // 既有调用点零改动：chainId 缺省不写该键（append-only 零迁移）
       val second = jsonParse(raw(1)).toOption.getOrElse(fail("event line must be valid JSON"))
       assertEquals(second.hcursor.get[String]("chainId").toOption, None)
-      assertEquals(second.asObject.map(_.keys.toSet),
-        Some(Set("ts", "type", "project", "nodeId", "summary")))
+      assertEquals(second.asObject.map(_.keys.toSet), Some(Set("ts", "type", "project", "nodeId", "summary")))
+    end for
   }
 
   test("A② 消费侧解析：顶层 chainId 优先、summary 回退、非链族事件不入期望态") {
@@ -129,8 +134,10 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
     assertEquals(desired("chain-n1").archived, true)
     assertEquals(desired("chain-n2").archived, false)
     // 后写覆盖先写（archived → restored → archived 末态 = archived）
-    val e4 = DocIndexConsumer.parseEventLine(
-      s"""{"ts":12,"type":"chain-archived","project":"demo","nodeId":"n2","chainId":"chain-n2","summary":"chain=chain-n2 archivedAt=12 members=1"}""")
+    val e4 = DocIndexConsumer
+      .parseEventLine(
+        s"""{"ts":12,"type":"chain-archived","project":"demo","nodeId":"n2","chainId":"chain-n2","summary":"chain=chain-n2 archivedAt=12 members=1"}"""
+      )
       .getOrElse(fail("must parse"))
     assertEquals(DocIndexConsumer.desiredStates(List(e1, e2, e3, e4))("chain-n2").archived, true)
   }
@@ -138,12 +145,33 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
   // ── B sweep 明细（链级事实单点） ────────────────────────────
 
   private def seedChain(store: FlowMapStore, base: Long): IO[Unit] =
-    store.mutate(s => s.copy(nodes = Map(
-      "n1" -> NodeDef(id = "n1", name = "head", agent = "Backend", status = NodeLifecycle.Completed,
-        createdAt = base, completedAt = Some(base + 1), out = List(OutEdge.nebula)),
-      "n2" -> NodeDef(id = "n2", name = "tail", agent = "Backend", status = NodeLifecycle.Completed,
-        createdAt = base + 10, completedAt = Some(base + 20), in = List("n1"), out = List(OutEdge.nebula))
-    ))).void
+    store
+      .mutate(s =>
+        s.copy(nodes =
+          Map(
+            "n1" -> NodeDef(
+              id = "n1",
+              name = "head",
+              agent = "Backend",
+              status = NodeLifecycle.Completed,
+              createdAt = base,
+              completedAt = Some(base + 1),
+              out = List(OutEdge.root)
+            ),
+            "n2" -> NodeDef(
+              id = "n2",
+              name = "tail",
+              agent = "Backend",
+              status = NodeLifecycle.Completed,
+              createdAt = base + 10,
+              completedAt = Some(base + 20),
+              in = List("n1"),
+              out = List(OutEdge.root)
+            )
+          )
+        )
+      )
+      .void
 
   test("B① sweepCompletedChainsDetailed：chainId / nodeId（分量最早 createdAt）/ members / 移出成员") {
     val ws = freshDir("nb-docidx-sweep-").toString
@@ -183,8 +211,10 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
     assertEquals(r1.stateFlips, 2)
     assertEquals(r1.notes, Nil)
     val stamp = DocIndexConsumer.isoSeconds(atMs)
-    assert(r1.content.contains(s"### chain-n1 · 链标题一 · completed · 2 节点 · archived $stamp"),
-      s"heading must carry archived stamp, got:\n${r1.content}")
+    assert(
+      r1.content.contains(s"### chain-n1 · 链标题一 · completed · 2 节点 · archived $stamp"),
+      s"heading must carry archived stamp, got:\n${r1.content}"
+    )
     val archIdx = r1.content.indexOf("## 已归档链分区（archived）")
     val blockIdx = r1.content.indexOf("### chain-n1")
     assert(blockIdx > archIdx, "chain block must live in the archived section")
@@ -209,8 +239,10 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
     assert(r1.changed, "restore must move the block back")
     assertEquals(r1.blocksMoved, 1)
     assertEquals(r1.stateFlips, 2)
-    assert(r1.content.contains("### chain-n1 · 链标题一 · completed · 2 节点"),
-      s"archived stamp must be stripped:\n${r1.content}")
+    assert(
+      r1.content.contains("### chain-n1 · 链标题一 · completed · 2 节点"),
+      s"archived stamp must be stripped:\n${r1.content}"
+    )
     assert(!r1.content.contains("· archived"), s"no archived stamp left:\n${r1.content}")
     val actIdx = r1.content.indexOf("## 活跃链分区（active）")
     val archIdx = r1.content.indexOf("## 已归档链分区（archived）")
@@ -225,24 +257,34 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
   test("C③ 多链行与无链行：块内行随块整体翻（spec §6.3）；松散行按链集判定；查无条目零 diff") {
     val blockMulti = sampleIndex().replace(
       "| ./20260910_110500_b.md | stage | chain-n1 | tail | engine | active | |",
-      "| ./20260910_110500_b.md | stage | chain-n1, chain-n9 | tail | engine | active | |")
+      "| ./20260910_110500_b.md | stage | chain-n1, chain-n9 | tail | engine | active | |"
+    )
     // ① 块内多链行随块整体迁移（一次事件批量翻——链分区口径，非行级）
     val r1 = DocIndexConsumer.transformIndex(blockMulti, Map("chain-n1" -> archived("chain-n1")))
-    assert(r1.content.contains("| chain-n1, chain-n9 | tail | engine | archived |"),
-      s"block-scoped rows flip with the block:\n${r1.content}")
+    assert(
+      r1.content.contains("| chain-n1, chain-n9 | tail | engine | archived |"),
+      s"block-scoped rows flip with the block:\n${r1.content}"
+    )
     assertEquals(r1.stateFlips, 2)
 
     // ② 松散行（无链标题，如 unattributed 分区条目表）：全链归档才翻，部分归档不动
     val loose = sampleIndex().replace(
       "|  | ./笔记.md | live |  |  |  | active | |",
-      "| 2026-09-10T12:00:00+08:00 | ./20260910_120000_m.md | stage | chain-n1, chain-n9 | merge | engine | active | |")
+      "| 2026-09-10T12:00:00+08:00 | ./20260910_120000_m.md | stage | chain-n1, chain-n9 | merge | engine | active | |"
+    )
     val r2 = DocIndexConsumer.transformIndex(loose, Map("chain-n1" -> archived("chain-n1")))
-    assert(r2.content.contains("| chain-n1, chain-n9 | merge | engine | active |"),
-      s"partial archive must not flip a multi-chain loose row:\n${r2.content}")
-    val r3 = DocIndexConsumer.transformIndex(loose,
-      Map("chain-n1" -> archived("chain-n1"), "chain-n9" -> archived("chain-n9")))
-    assert(r3.content.contains("| chain-n1, chain-n9 | merge | engine | archived |"),
-      s"all-chains-archived flips the loose row in place:\n${r3.content}")
+    assert(
+      r2.content.contains("| chain-n1, chain-n9 | merge | engine | active |"),
+      s"partial archive must not flip a multi-chain loose row:\n${r2.content}"
+    )
+    val r3 = DocIndexConsumer.transformIndex(
+      loose,
+      Map("chain-n1" -> archived("chain-n1"), "chain-n9" -> archived("chain-n9"))
+    )
+    assert(
+      r3.content.contains("| chain-n1, chain-n9 | merge | engine | archived |"),
+      s"all-chains-archived flips the loose row in place:\n${r3.content}"
+    )
 
     // ③ 事件引用的链在索引里查无条目 → 零 diff
     val r4 = DocIndexConsumer.transformIndex(sampleIndex(), Map("chain-nope" -> archived("chain-nope")))
@@ -256,11 +298,23 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
     val ws = freshDir("nb-docidx-apply-").toString
     val root = freshDir("nb-docidx-root-")
     for
-      _ <- FlowMapEventLog.append(ws, "demo", "n1", FlowMapEventLog.ChainArchivedType,
-        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2), Some("chain-n1"))
+      _ <- FlowMapEventLog.append(
+        ws,
+        "demo",
+        "n1",
+        FlowMapEventLog.ChainArchivedType,
+        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2),
+        Some("chain-n1")
+      )
       // 事件引用的链在索引里查无条目 → 跳过 + 记日志
-      _ <- FlowMapEventLog.append(ws, "demo", "n9", FlowMapEventLog.ChainArchivedType,
-        FlowMapEventLog.chainArchivedSummary("chain-nope", atMs, 1), Some("chain-nope"))
+      _ <- FlowMapEventLog.append(
+        ws,
+        "demo",
+        "n9",
+        FlowMapEventLog.ChainArchivedType,
+        FlowMapEventLog.chainArchivedSummary("chain-nope", atMs, 1),
+        Some("chain-nope")
+      )
       (idx, docs) <- writeDomain(root, sampleIndex())
       before <- IO.blocking(docs.map(p => p -> os.read(p)))
       run1 <- DocIndexConsumer.applyChainEvents(ws, List(root.toString))
@@ -278,6 +332,7 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
       assertEquals(run2.results.map(_.changed), List(false), "同事件重放 = 幂等 no-op")
       // 未创建任何新文件（尤其不得新建 INDEX.md / 新分区文件）
       assertEquals(files, List("20260910_110000_a.md", "20260910_110500_b.md", "INDEX.md", "NOTES.md"))
+    end for
   }
 
   test("D② 白名单与非索引文件：scanIndexFiles 只收 INDEX.md；NOTES.md 永不被改写") {
@@ -289,8 +344,14 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
         os.makeDir.all(root / sampleDomain / "sub")
         os.write(root / sampleDomain / "sub" / "INDEX.md", sampleIndex("chain-n2"))
       }
-      _ <- FlowMapEventLog.append(ws, "demo", "n1", FlowMapEventLog.ChainArchivedType,
-        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2), Some("chain-n1"))
+      _ <- FlowMapEventLog.append(
+        ws,
+        "demo",
+        "n1",
+        FlowMapEventLog.ChainArchivedType,
+        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2),
+        Some("chain-n1")
+      )
       files <- DocIndexConsumer.scanIndexFiles(List(root.toString))
       notesBefore <- IO.blocking(os.read(root / sampleDomain / "NOTES.md"))
       run <- DocIndexConsumer.applyChainEvents(ws, List(root.toString))
@@ -300,20 +361,28 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
       assertEquals(run.indexFiles.size, 2)
       assertEquals(run.results.count(_.changed), 1, "只有含该链块的那份索引变化")
       assertEquals(notesBefore, notesAfter)
+    end for
   }
 
   test("D③ 索引不存在：跳过 + 记日志（不创建 INDEX.md）") {
     val ws = freshDir("nb-docidx-noindex-").toString
     val root = freshDir("nb-docidx-emptyroot-")
     for
-      _ <- FlowMapEventLog.append(ws, "demo", "n1", FlowMapEventLog.ChainArchivedType,
-        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2), Some("chain-n1"))
+      _ <- FlowMapEventLog.append(
+        ws,
+        "demo",
+        "n1",
+        FlowMapEventLog.ChainArchivedType,
+        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2),
+        Some("chain-n1")
+      )
       run <- DocIndexConsumer.applyChainEvents(ws, List(root.toString))
       files <- IO.blocking(os.walk(root).map(_.last).toList)
     yield
       assertEquals(run.indexFiles, Nil)
       assertEquals(run.skippedChains, List("chain-n1"))
       assertEquals(files, Nil, "绝不创建 INDEX.md")
+    end for
   }
 
   // ── E 对账兜底 ────────────────────────────────────────────
@@ -323,8 +392,8 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
     val root = freshDir("nb-docidx-recroot-")
     for
       _ <- writeDomain(root, sampleIndex()) // chain-n1 条目 state=active
-      _ <- writeBatch(ws, "chain-n1")       // 归档区有 chain-n1（索引 pending → stale）
-      _ <- writeBatch(ws, "chain-n9")       // 归档区有 chain-n9（索引无 → missing）
+      _ <- writeBatch(ws, "chain-n1") // 归档区有 chain-n1（索引 pending → stale）
+      _ <- writeBatch(ws, "chain-n9") // 归档区有 chain-n9（索引无 → missing）
       r <- DocIndexConsumer.reconcile(ws, List(root.toString))
       raw <- IO.blocking(os.read(os.Path(r.reportPath)))
       json <- IO.fromEither(jsonParse(raw))
@@ -342,6 +411,7 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
       assertEquals(json.hcursor.get[List[String]]("archiveChains").toOption, Some(List("chain-n1", "chain-n9")))
       // 对账只写报表：文档本体零改动
       assertEquals(os.read(root / sampleDomain / "INDEX.md"), sampleIndex())
+    end for
   }
 
   test("E② tick：索引区无 INDEX.md → 零开销 no-op；报表干净不落盘；有差异才落报表") {
@@ -375,6 +445,7 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
       assert(now.contains("chain-n9"))
       assertEquals(throttled, None)
       assertEquals(throttledReport, false)
+    end for
   }
 
   test("E③ tick catch-up：事件已写、apply 未落地（进程死亡窗口）→ 兜底补齐翻转 + 对账 clean") {
@@ -386,8 +457,14 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
       // 隔离：本用例只走 tick（生产兜底入口），不直接调 applyChainEvents
       _ <- writeDomain(root, sampleIndex())
       _ <- writeBatch(ws, "chain-n1") // 归档事实已落盘
-      _ <- FlowMapEventLog.append(ws, "demo", "n1", FlowMapEventLog.ChainArchivedType,
-        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2), Some("chain-n1")) // 事件已写
+      _ <- FlowMapEventLog.append(
+        ws,
+        "demo",
+        "n1",
+        FlowMapEventLog.ChainArchivedType,
+        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2),
+        Some("chain-n1")
+      ) // 事件已写
       before <- IO.blocking(os.read(idx))
       ticked <- DocIndexConsumer.tick(ws, minIntervalMs = 0, indexRoots = Some(List(root.toString)))
       after <- IO.blocking(os.read(idx))
@@ -398,4 +475,6 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
       assert(after.contains(s"### chain-n1 · 链标题一 · completed · 2 节点 · archived"), after)
       assert(ticked.exists(_.isClean), ticked.toString)
       assertEquals(reportExists, false, "catch-up 后事实一致 → 对账 clean → 不写报表")
+    end for
   }
+end DocIndexConsumerSpec

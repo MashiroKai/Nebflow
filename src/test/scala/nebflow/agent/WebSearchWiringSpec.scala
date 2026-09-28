@@ -9,52 +9,58 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentCommand, AgentDef, messages}
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ThinkingConfig
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
-/** WebSearch P0 wiring (E2-3 echo half + Tier 2 interception): drives the REAL
-  * AgentActor turn loop and pins the three dispatch points that unit tests
-  * cannot see:
-  *
-  *  1. kimi $web_search round-trip: the provider-native tool call passes the
-  *     allowed-tool whitelist (it is not an agent tool), skips the permission
-  *     gate (pure echo), and the tool result persisted into the conversation
-  *     is BYTE-IDENTICAL to the model's raw arguments — the echo the Moonshot
-  *     protocol requires. A filtered or re-serialized echo would show up here
-  *     as "Tool not available" / mangled JSON.
-  *  2. WebSearch interception: with a search-capable chain head (zhipu), the
-  *     tool result comes from the Tier 2 provider executor (provenance header
-  *     + URL), and the executor's sub-request was armed (tools=Some(Nil)).
-  */
+/**
+ * WebSearch P0 wiring (E2-3 echo half + Tier 2 interception): drives the REAL
+ * AgentActor turn loop and pins the three dispatch points that unit tests
+ * cannot see:
+ *
+ *  1. kimi $web_search round-trip: the provider-native tool call passes the
+ *     allowed-tool whitelist (it is not an agent tool), skips the permission
+ *     gate (pure echo), and the tool result persisted into the conversation
+ *     is BYTE-IDENTICAL to the model's raw arguments — the echo the Moonshot
+ *     protocol requires. A filtered or re-serialized echo would show up here
+ *     as "Tool not available" / mangled JSON.
+ *  2. WebSearch interception: with a search-capable chain head (zhipu), the
+ *     tool result comes from the Tier 2 provider executor (provenance header
+ *     + URL), and the executor's sub-request was armed (tools=Some(Nil)).
+ */
 class WebSearchWiringSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 90.seconds
 
-  /** Scripted handle: sendStream answers turn scripts by call index; send
-    * answers the Tier 2 executor's non-streaming sub-requests by index. */
+  /**
+   * Scripted handle: sendStream answers turn scripts by call index; send
+   * answers the Tier 2 executor's non-streaming sub-requests by index.
+   */
   private class RecordingLlm(
-      streamScripts: List[Stream[IO, StreamChunk]],
-      sendScripts: List[LlmResponse] = Nil
+    streamScripts: List[Stream[IO, StreamChunk]],
+    sendScripts: List[LlmResponse] = Nil
   ) extends LlmHandle[IO]:
     val requests = Ref.unsafe[IO, List[LlmRequest]](Nil)
     val sendRequests = Ref.unsafe[IO, List[LlmRequest]](Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       sendRequests.modify { list => (req :: list, list.size) }.flatMap { idx =>
         sendScripts.lift(idx) match
           case Some(resp) => IO.pure(resp)
           case None => IO.raiseError(new RuntimeException(s"unexpected send #$idx"))
       }
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream
         .eval(requests.modify { list => (req :: list, list.size) })
@@ -63,6 +69,8 @@ class WebSearchWiringSpec extends CatsEffectSuite:
             .lift(idx)
             .getOrElse(Stream.raiseError[IO](new RuntimeException(s"unexpected stream call #$idx")))
         }
+
+  end RecordingLlm
 
   private def text(s: String): Stream[IO, StreamChunk] =
     Stream(StreamChunk.TextDelta(s), StreamChunk.Done(None, None))
@@ -74,9 +82,9 @@ class WebSearchWiringSpec extends CatsEffectSuite:
     )
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO]
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO]
   ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -118,9 +126,11 @@ class WebSearchWiringSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** NOT named Nebula — an empty agents dir makes the per-turn def reload
-    * fall back to Seeds.Nebula for that name (different model/tools); a
-    * non-seed name keeps OUR def (with model + WebSearch tool). */
+  /**
+   * NOT named Nebula — an empty agents dir makes the per-turn def reload
+   * fall back to Seeds.RootAgent for that name (different model/tools); a
+   * non-seed name keeps OUR def (with model + WebSearch tool).
+   */
   private def probeDef(model: Option[AgentModelConfig]): AgentDef =
     AgentDef(
       name = "WsProbe",
@@ -145,17 +155,16 @@ class WebSearchWiringSpec extends CatsEffectSuite:
     }
 
   private def waitFor(
-      ref: Ref[IO, List[Json]],
-      pred: Json => Boolean,
-      msg: String,
-      timeoutMs: Long
+    ref: Ref[IO, List[Json]],
+    pred: Json => Boolean,
+    msg: String,
+    timeoutMs: Long
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       ref.get.map(_.exists(pred)).flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
-          if System.currentTimeMillis() >= deadline then
-            IO.raiseError(new AssertionError(s"$msg in time"))
+          if System.currentTimeMillis() >= deadline then IO.raiseError(new AssertionError(s"$msg in time"))
           else IO.sleep(100.millis) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeoutMs)
@@ -197,8 +206,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
           "ws-kimi-actor"
         )
         _ <- agent ! AgentCommand.UserInput("search for scala 3.5")
-        _ <- waitFor(wsEvents, j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)),
-          "turn did not finish", 30000)
+        _ <- waitFor(wsEvents, j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)), "turn did not finish", 30000)
         reqs <- llm.requests.get.map(_.reverse)
         evs <- wsEvents.get
       yield (reqs, evs)
@@ -217,6 +225,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
+    end try
   }
 
   // ── 2. WebSearch Tier 2 interception (zhipu chain head) ──────────────
@@ -266,8 +275,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
           "ws-tier2-actor"
         )
         _ <- agent ! AgentCommand.UserInput("look up scala 3.5")
-        _ <- waitFor(wsEvents, j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)),
-          "turn did not finish", 30000)
+        _ <- waitFor(wsEvents, j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)), "turn did not finish", 30000)
         reqs <- llm.requests.get.map(_.reverse)
         sendReqs <- llm.sendRequests.get.map(_.reverse)
       yield (reqs, sendReqs)
@@ -286,6 +294,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
+    end try
   }
 
   // ── 3. #356: deepseek-headed chain routes the search to a capable fallback ──
@@ -338,8 +347,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
           "ws-route356-actor"
         )
         _ <- agent ! AgentCommand.UserInput("search CZT pixel detector sub-pixel readout")
-        _ <- waitFor(wsEvents, j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)),
-          "turn did not finish", 30000)
+        _ <- waitFor(wsEvents, j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)), "turn did not finish", 30000)
         reqs <- llm.requests.get.map(_.reverse)
         sendReqs <- llm.sendRequests.get.map(_.reverse)
       yield (reqs, sendReqs)
@@ -360,10 +368,14 @@ class WebSearchWiringSpec extends CatsEffectSuite:
       assertEquals(results.size, 1)
       assert(results.head.contains("Search source: provider:kimi"), results.head.take(120))
       assert(results.head.contains("https://example.com/czt-pixel"))
-      assert(!results.head.contains("All search engines failed"), "Tier 3 degrade must NOT happen when kimi is available")
+      assert(
+        !results.head.contains("All search engines failed"),
+        "Tier 3 degrade must NOT happen when kimi is available"
+      )
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
+    end try
   }
 
 end WebSearchWiringSpec

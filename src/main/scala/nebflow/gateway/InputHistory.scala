@@ -39,5 +39,6 @@ object InputHistory:
     if session.nonEmpty && session != "-" then obj = obj.add("session", Json.fromString(session))
     if agent.nonEmpty then obj = obj.add("agent", Json.fromString(agent))
     Json.fromJsonObject(obj)
+  end buildEntry
 
 end InputHistory

@@ -175,7 +175,7 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       )
     )
     for
-      _ <- IO(os.write(nebflow.core.PathUtil.configJsonWritePath(root), cfg.noSpaces, createFolders = true))
+      _ <- IO(os.write(nebflow.shared.PathUtil.configJsonWritePath(root), cfg.noSpaces, createFolders = true))
       verified <- IO(SocialChannels.verified(root, "feishu"))
     yield assert(!verified, "a hand-edited pattern violation must not verify")
   }

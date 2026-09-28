@@ -3,7 +3,7 @@ package nebflow.core.daemon
 import cats.effect.IO
 import io.circe.Json
 import io.circe.parser.decode
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.{Files, Path, Paths}

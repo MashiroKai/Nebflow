@@ -3,15 +3,16 @@ package nebflow.cli
 import io.circe.Json
 import munit.FunSuite
 
-/** provider 段（D-H3 三案 / D-H4 ⒜ / H6-H8）防回归：
-  *   · 已批文案逐字锁（H6 两行 / H7 / H8 两形态）——任何改写即红；
-  *   · 写载荷落点 `llm.providers.<name>`（复用 ConfigCommand.buildNestedJson 的嵌套语义，
-  *     非法嵌套会把 provider 写错层：服务端 mergeConfig 整块替换，静默丢数据）；
-  *   · 删除标记 = `<name>: null`（ConfigService.scala:238「null = 显式删除」）；
-  *   · H8 失败形态的 HTTP 码/报文从 GatewayClient 既有报文体里取，取不到就退回原报文
-  *     （不伪造码位）。
-  * 纯函数面，不起网关、不触网。
-  */
+/**
+ * provider 段（D-H3 三案 / D-H4 ⒜ / H6-H8）防回归：
+ *   · 已批文案逐字锁（H6 两行 / H7 / H8 两形态）——任何改写即红；
+ *   · 写载荷落点 `llm.providers.<name>`（复用 ConfigCommand.buildNestedJson 的嵌套语义，
+ *     非法嵌套会把 provider 写错层：服务端 mergeConfig 整块替换，静默丢数据）；
+ *   · 删除标记 = `<name>: null`（ConfigService.scala:238「null = 显式删除」）；
+ *   · H8 失败形态的 HTTP 码/报文从 GatewayClient 既有报文体里取，取不到就退回原报文
+ *     （不伪造码位）。
+ * 纯函数面，不起网关、不触网。
+ */
 class ProviderCommandSpec extends FunSuite:
 
   private def parse(s: String): Json = io.circe.parser.parse(s).fold(e => throw e, identity)
@@ -76,7 +77,9 @@ class ProviderCommandSpec extends FunSuite:
     val got = ProviderCommand.providerConfigJson("p", "http://x/v1", "openai", "k-1", List("m1"))
     assertEquals(
       got,
-      parse("""{"llm":{"providers":{"p":{"baseUrl":"http://x/v1","protocol":"openai","apiKey":"k-1","models":[{"id":"m1"}]}}}}""")
+      parse(
+        """{"llm":{"providers":{"p":{"baseUrl":"http://x/v1","protocol":"openai","apiKey":"k-1","models":[{"id":"m1"}]}}}}"""
+      )
     )
     // 下钻回读对称（键名不是值）
     assertEquals(
@@ -101,7 +104,13 @@ class ProviderCommandSpec extends FunSuite:
   test("add 写载荷：同名不同名互不串层（provider 名不进值位）") {
     val got = ProviderCommand.providerConfigJson("weird.name", "u", "openai", "k", List("m"))
     assertEquals(
-      got.hcursor.downField("llm").downField("providers").downField("weird.name").downField("protocol").as[String].toOption,
+      got.hcursor
+        .downField("llm")
+        .downField("providers")
+        .downField("weird.name")
+        .downField("protocol")
+        .as[String]
+        .toOption,
       Some("openai")
     )
   }
@@ -111,7 +120,16 @@ class ProviderCommandSpec extends FunSuite:
       ProviderCommand.removePayload("p"),
       parse("""{"llm":{"providers":{"p":null}}}""")
     )
-    assert(ProviderCommand.removePayload("p").hcursor.downField("llm").downField("providers").downField("p").focus.contains(Json.Null))
+    assert(
+      ProviderCommand
+        .removePayload("p")
+        .hcursor
+        .downField("llm")
+        .downField("providers")
+        .downField("p")
+        .focus
+        .contains(Json.Null)
+    )
   }
 
   test("密钥环境变量名 = 已批文案第二行所载") {

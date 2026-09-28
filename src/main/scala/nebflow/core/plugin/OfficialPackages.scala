@@ -1,10 +1,11 @@
 package nebflow.core.plugin
 
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.net.JarURLConnection
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
+
 import scala.jdk.CollectionConverters.*
 
 /**
@@ -55,8 +56,10 @@ object OfficialPackages:
   /** 分发内置官方包目录（classpath 资源根）。 */
   val BuiltinRoot = "seed/plugins"
 
-  /** 锚点资源——用于定位资源根，覆盖「jar 无目录条目」场景；file:/jar: 双协议。
-    * （同款手法先例：`SeedService.resourceDirList`，锚定一个保证存在的文件。） */
+  /**
+   * 锚点资源——用于定位资源根，覆盖「jar 无目录条目」场景；file:/jar: 双协议。
+   * （同款手法先例：`SeedService.resourceDirList`，锚定一个保证存在的文件。）
+   */
   private val Anchor = "seed/manifest.json"
 
   private val logger = NebflowLogger.forName("nebflow.plugin.official")
@@ -67,8 +70,10 @@ object OfficialPackages:
   /** 允许列表覆盖——**仅测试钩子**（生产恒 `None`）。存在即优先于现算结果。 */
   private val allowlistOverride = new AtomicReference[Option[Map[String, String]]](None)
 
-  /** 资源定位 classloader —— 生产恒 `None` ⇒ = 本类自身 loader；**仅测试钩子**可临时替换，
-    * 用于以**真 jar 形态**（`jar:` 协议资源树）驱动同一条 `builtinPackages()` 分支。 */
+  /**
+   * 资源定位 classloader —— 生产恒 `None` ⇒ = 本类自身 loader；**仅测试钩子**可临时替换，
+   * 用于以**真 jar 形态**（`jar:` 协议资源树）驱动同一条 `builtinPackages()` 分支。
+   */
   private val loaderOverride = new AtomicReference[Option[ClassLoader]](None)
 
   private def resourceLoader: ClassLoader = loaderOverride.get().getOrElse(getClass.getClassLoader)
@@ -76,11 +81,13 @@ object OfficialPackages:
   /** 官方保留名前缀判定（纯函数，零 IO）。 */
   def isReserved(name: String): Boolean = name.startsWith(ReservedPrefix)
 
-  /** 分发内置官方允许列表：包名 → 目录内容 digest。
-    *
-    * 键 = 该包 manifest 的 `name`（与 `PluginRegistry.loadPlugin` 的判定键同源；
-    * manifest 不可读时退回目录名）。值 = 目录内容树 SHA-256（见类注释）。
-    * 目录缺失/枚举失败 ⇒ 空表（fail-closed：保留前缀包一律拒载，绝不 fail-open）。 */
+  /**
+   * 分发内置官方允许列表：包名 → 目录内容 digest。
+   *
+   * 键 = 该包 manifest 的 `name`（与 `PluginRegistry.loadPlugin` 的判定键同源；
+   * manifest 不可读时退回目录名）。值 = 目录内容树 SHA-256（见类注释）。
+   * 目录缺失/枚举失败 ⇒ 空表（fail-closed：保留前缀包一律拒载，绝不 fail-open）。
+   */
   def allowlist(): Map[String, String] =
     allowlistOverride.get() match
       case Some(overridden) => overridden
@@ -94,23 +101,30 @@ object OfficialPackages:
                 case e: Exception =>
                   logger.warnSync(
                     s"official allowlist unavailable (${e.getClass.getSimpleName}: ${e.getMessage}) — " +
-                      s"treating the built-in official package directory as empty (fail-closed: every '$ReservedPrefix'-prefixed package is refused)")
+                      s"treating the built-in official package directory as empty (fail-closed: every '$ReservedPrefix'-prefixed package is refused)"
+                  )
                   Map.empty[String, String]
             builtinCache.set(Some(computed))
             computed
 
-  /** 装载层判定（**纯函数**，零 IO；本批的判定单点）：
-    *  - 非保留前缀 ⇒ 恒 `true` —— 第三方包判定路径逐字不变（对照臂）；
-    *  - 保留前缀 ⇒ 必须在允许列表中**且 digest 逐字相等**（失配 = 用户手改/版本不符 ⇒ 拒载）。 */
+  /**
+   * 装载层判定（**纯函数**，零 IO；本批的判定单点）：
+   *  - 非保留前缀 ⇒ 恒 `true` —— 第三方包判定路径逐字不变（对照臂）；
+   *  - 保留前缀 ⇒ 必须在允许列表中**且 digest 逐字相等**（失配 = 用户手改/版本不符 ⇒ 拒载）。
+   */
   def admits(name: String, digest: String): Boolean =
     !isReserved(name) || allowlist().get(name).contains(digest)
 
-  /** 该保留前缀包是否出现在分发内置允许列表中（**仅供错误文案分流与报告读数**，
-    * 不参与准入判定——准入唯一判据是 [[admits]]）。 */
+  /**
+   * 该保留前缀包是否出现在分发内置允许列表中（**仅供错误文案分流与报告读数**，
+   * 不参与准入判定——准入唯一判据是 [[admits]]）。
+   */
   def knownOfficial(name: String): Boolean = allowlist().contains(name)
 
-  /** 拒载原因文案（进既有装载错误面；🔴 末段括注错误码逐字 `OFFICIAL_IMPERSONATION`）。
-    * 文案必须说清：错在哪（保留前缀被冒用）、期望是什么（允许列表中的 digest）、能给修法就给。 */
+  /**
+   * 拒载原因文案（进既有装载错误面；🔴 末段括注错误码逐字 `OFFICIAL_IMPERSONATION`）。
+   * 文案必须说清：错在哪（保留前缀被冒用）、期望是什么（允许列表中的 digest）、能给修法就给。
+   */
   def rejectionReason(name: String, digest: String): String =
     val table = allowlist()
     table.get(name) match
@@ -127,6 +141,7 @@ object OfficialPackages:
           s"official packages (on-disk digest ${digest.take(12)}…, allowlist holds ${table.size} package(s)). The " +
           s"'$ReservedPrefix' prefix is reserved for official packages — rename this package to a non-reserved name$rename " +
           s"and re-install it. (${ErrorCode})"
+  end rejectionReason
 
   /** 清 memo（测试钩子；与 [[PluginRegistry.invalidateCache]] 同族）。 */
   def invalidateCache(): Unit = builtinCache.set(None)
@@ -145,8 +160,10 @@ object OfficialPackages:
             None
     }.toMap
 
-  /** 分发内置官方包目录的资源树枚举：包目录名 → `[(相对路径, 字节)]`。
-    * 锚点 = `seed/manifest.json`（保证存在；file: = sbt/源码形态，jar: = 分发形态）。 */
+  /**
+   * 分发内置官方包目录的资源树枚举：包目录名 → `[(相对路径, 字节)]`。
+   * 锚点 = `seed/manifest.json`（保证存在；file: = sbt/源码形态，jar: = 分发形态）。
+   */
   private def builtinPackages(): List[(String, List[(String, Array[Byte])])] =
     val loader = resourceLoader
     Option(loader.getResource(Anchor)).toList.flatMap { url =>
@@ -165,7 +182,10 @@ object OfficialPackages:
         case "jar" =>
           val conn = url.openConnection().asInstanceOf[JarURLConnection]
           val base = s"$BuiltinRoot/"
-          val rels = conn.getJarFile.entries().asScala.toList
+          val rels = conn.getJarFile
+            .entries()
+            .asScala
+            .toList
             .filter(e => !e.isDirectory && e.getName.startsWith(base))
             .map(_.getName.stripPrefix(base))
             .filter(_.contains("/"))
@@ -190,6 +210,8 @@ object OfficialPackages:
         case _ => Nil
     }
 
+  end builtinPackages
+
   /** 包 manifest 的 `name`（不可读/缺失/非字符串 ⇒ None，调用方退回目录名）。 */
   private def manifestName(files: List[(String, Array[Byte])]): Option[String] =
     files.find(_._1 == "plugin.json").flatMap { (_, bytes) =>
@@ -201,9 +223,11 @@ object OfficialPackages:
         .filter(_.nonEmpty)
     }
 
-  /** 目录内容树 digest —— 与 `PluginRegistry.computeDigest` 同算法：
-    * 按相对路径排序，逐文件 `rel\0<bytes>\0` 喂 SHA-256，输出小写 hex。
-    * `private[plugin]` 以便 spec 直接做「算法等价」断言（对真实内置包逐包比对）。 */
+  /**
+   * 目录内容树 digest —— 与 `PluginRegistry.computeDigest` 同算法：
+   * 按相对路径排序，逐文件 `rel\0<bytes>\0` 喂 SHA-256，输出小写 hex。
+   * `private[plugin]` 以便 spec 直接做「算法等价」断言（对真实内置包逐包比对）。
+   */
   private[plugin] def digestOf(files: List[(String, Array[Byte])]): String =
     val md = MessageDigest.getInstance("SHA-256")
     files.sortBy(_._1).foreach { (rel, bytes) =>
@@ -226,8 +250,10 @@ object OfficialPackages:
     try body
     finally setAllowlistForTest(None)
 
-  /** 作用域内替换资源定位 classloader（**仅测试**：真 jar 形态资源树 + 独立 URLClassLoader），
-    * 退出时**无条件**恢复（含异常路径），并清 memo（换 loader = 换资源树）。 */
+  /**
+   * 作用域内替换资源定位 classloader（**仅测试**：真 jar 形态资源树 + 独立 URLClassLoader），
+   * 退出时**无条件**恢复（含异常路径），并清 memo（换 loader = 换资源树）。
+   */
   private[plugin] def withClassLoaderForTest[A](loader: ClassLoader)(body: => A): A =
     val prev = loaderOverride.get()
     loaderOverride.set(Some(loader))
@@ -236,3 +262,4 @@ object OfficialPackages:
     finally
       loaderOverride.set(prev)
       builtinCache.set(None)
+end OfficialPackages

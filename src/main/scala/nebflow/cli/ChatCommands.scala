@@ -15,26 +15,28 @@ object ChatCommand extends CliCommand:
     "nebflow chat --session abc-123 \"continue\""
   )
 
-  /** A16: resolve the session for a one-shot send.
-    *
-    * The first frame used to be a private shape
-    * `{"type":"command","command":"createSession"}` which is NOT in the WS
-    * vocabulary — WebSocketRoutes' `case "command"` handles clear/compact/fork
-    * only, so the gateway silently ignored it. The real vocabulary is
-    * `switchSession` / `createSession` (WebSocketRoutes.scala:2015, :2030).
-    */
+  /**
+   * A16: resolve the session for a one-shot send.
+   *
+   * The first frame used to be a private shape
+   * `{"type":"command","command":"createSession"}` which is NOT in the WS
+   * vocabulary — WebSocketRoutes' `case "command"` handles clear/compact/fork
+   * only, so the gateway silently ignored it. The real vocabulary is
+   * `switchSession` / `createSession` (WebSocketRoutes.scala:2015, :2030).
+   */
   private[cli] def sessionFrame(sessionArg: Option[String]): Json =
     sessionArg.filter(_.nonEmpty) match
       case Some(sid) => Json.obj("type" -> "switchSession".asJson, "sessionId" -> sid.asJson)
-      case None      => Json.obj("type" -> "createSession".asJson, "name" -> "New Session".asJson)
+      case None => Json.obj("type" -> "createSession".asJson, "name" -> "New Session".asJson)
 
-  /** The `createSession` reply carries no direct id — the gateway answers with
-    * a session-list frame (`sendSessionList` / `sendAgentSessionListByName`),
-    * because SessionService.createSession discards the meta it just created
-    * (SessionService.scala:38). The new meta is PREPENDED to the index
-    * (SessionStore.scala:712), so the first entry is the session just created;
-    * a name match is preferred in case the frame is ever filtered.
-    */
+  /**
+   * The `createSession` reply carries no direct id — the gateway answers with
+   * a session-list frame (`sendSessionList` / `sendAgentSessionListByName`),
+   * because SessionService.createSession discards the meta it just created
+   * (SessionService.scala:38). The new meta is PREPENDED to the index
+   * (SessionStore.scala:712), so the first entry is the session just created;
+   * a name match is preferred in case the frame is ever filtered.
+   */
   private[cli] def newSessionId(resp: Json, requestedName: String): String =
     val sessions = resp.hcursor.downField("sessions").as[List[Json]].getOrElse(Nil)
     sessions
@@ -73,8 +75,9 @@ object ChatCommand extends CliCommand:
                   "sessionId" -> sessionId.asJson
                 )
               )
-            yield if ctx.json then CliResult.Json(resp)
-            else CliResult.text(s"Message sent to session $sessionId")
+            yield
+              if ctx.json then CliResult.Json(resp)
+              else CliResult.text(s"Message sent to session $sessionId")
 
           end if
 
@@ -139,6 +142,7 @@ object AskCommand extends CliCommand:
                 if ctx.json then CliResult.Json(resp)
                 else CliResult.text(s"Question sent to session $sessionId")
               )
+          end if
 
   end AskRun
 

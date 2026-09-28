@@ -7,12 +7,15 @@ import fs2.Stream
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
-import nebflow.core.{FileChangeTracker, PathUtil}
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
+import nebflow.core.FileChangeTracker
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had nebflow.gateway.{RateLimiter, SessionStore}; PR re-homed both to core
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
@@ -138,18 +141,18 @@ class UplinkRefusedLedgerSpec extends FunSuite:
   private def unattributed(id: String, name: String, status: String = NodeLifecycle.Completed): NodeDef =
     NodeDef(id = id, name = name, agent = "general", task = Some(s"$name task"),
       status = status, result = Some(s"$name result"),
-      out = List(OutEdge.nebula), createdAt = now - 1000L, completedAt = Some(now))
+      out = List(OutEdge.root), createdAt = now - 1000L, completedAt = Some(now))
 
   /** An unattributed merge (landing) node: `merge=true` + `pending` ⇒ `haltsOnFailure` hits. */
   private def unattributedMerge(id: String, name: String, in: List[String]): NodeDef =
     NodeDef(id = id, name = name, agent = "general", merge = true, task = Some(s"$name landing task"),
-      status = NodeLifecycle.Pending, in = in, out = List(OutEdge.nebula), createdAt = now - 1000L)
+      status = NodeLifecycle.Pending, in = in, out = List(OutEdge.root), createdAt = now - 1000L)
 
   /** Control-group node with attribution (carrying the fingerprint). */
   private def attributed(id: String, name: String, taskId: String): NodeDef =
     NodeDef(id = id, name = name, agent = "general", task = Some(s"$name task"),
       status = NodeLifecycle.Completed, result = Some(s"$name result"), taskId = Some(taskId),
-      out = List(OutEdge.nebula), createdAt = now - 1000L, completedAt = Some(now))
+      out = List(OutEdge.root), createdAt = now - 1000L, completedAt = Some(now))
 
   private def refusals(ws: os.Path): List[String] =
     eventLines(ws).filter(_.contains("\"type\":\"uplink-refused\""))
@@ -223,7 +226,7 @@ class UplinkRefusedLedgerSpec extends FunSuite:
     withFixture("attributed", Some(true)) { (store, engine, ws) =>
       val a = attributed("n-ok-a", "ok-worker", "7")
       put(store, a)
-      engine.deliverOutTo(a, OutEdge.NebulaTarget, "fine").unsafeRunSync()
+      engine.deliverOutTo(a, OutEdge.RootTarget, "fine").unsafeRunSync()
       assertEquals(refusals(ws).size, 0,
         s"an attributed node must be allowed, got:\n${eventLines(ws).mkString("\n")}")
     }

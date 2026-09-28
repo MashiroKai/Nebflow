@@ -8,13 +8,12 @@ import io.circe.syntax.*
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -43,6 +42,7 @@ class TriggerChainSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"trigger chain regression agent","tools":[],"category":"standalone"}"""
@@ -50,8 +50,11 @@ class TriggerChainSpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -59,49 +62,23 @@ class TriggerChainSpec extends CatsEffectSuite:
 
   /** 按输入文本分派回复与延迟的捕获 LLM：inputs 记录每次请求 user 文本。 */
   private class DispatchLlm(
-      replyOf: String => String = _ => "ok",
-      delayOf: String => FiniteDuration = _ => 0.millis
+    replyOf: String => String = _ => "ok",
+    delayOf: String => FiniteDuration = _ => 0.millis
   ):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta(replyOf(text)), StreamChunk.Done(None, None)))
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
+  end DispatchLlm
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -116,7 +93,7 @@ class TriggerChainSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -129,7 +106,10 @@ class TriggerChainSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountProject(
     name: String,
@@ -152,7 +132,12 @@ class TriggerChainSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -161,7 +146,7 @@ class TriggerChainSpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[Option[NodeDef]] =
@@ -171,15 +156,19 @@ class TriggerChainSpec extends CatsEffectSuite:
     waitUntil(20.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
   private def readAuditTypes(ws: os.Path): IO[List[(String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => jsonParse(l).toOption.map(j =>
-        (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          jsonParse(l).toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))
+        )
+      )
       .handleError(_ => Nil)
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -187,7 +176,9 @@ class TriggerChainSpec extends CatsEffectSuite:
 
   // ── T-A 案例 A：触发链 fork 并行化 ─────────────────────────
 
-  test("T-A fork parallelism: 3 deps dependents all START before the first one FINISHES (serial chain = each starts at previous completion)") {
+  test(
+    "T-A fork parallelism: 3 deps dependents all START before the first one FINISHES (serial chain = each starts at previous completion)"
+  ) {
     val ws = tempRoot / "ws-ta"
     os.makeDir.all(ws)
     val system = ActorSystem(s"tc-ta-${scala.util.Random.nextInt(100000)}")
@@ -198,18 +189,35 @@ class TriggerChainSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("slow-up-ta") then 1200.millis else 600.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("tc-ta", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("tc-ta", "slow-up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-up-ta"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "tc-ta",
+          "slow-up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("slow-up-ta"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "slow-up")
       // 三个 deps 依赖者（闸门拦下，pending 等上游完成信号）
       _ <- List("d1", "d2", "d3").traverse_(dn =>
-        nodeEdit(nodeInput("tc-ta", dn, "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString(s"dep-work-$dn"), "deps" -> Json.fromString(upId),
-          "out" -> Json.fromString("Nebula")), ctx))
+        nodeEdit(
+          nodeInput(
+            "tc-ta",
+            dn,
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString(s"dep-work-$dn"),
+            "deps" -> Json.fromString(upId),
+            "out" -> Json.fromString("Nebula")
+          ),
+          ctx
+        )
+      )
       _ <- List("d1", "d2", "d3").traverse_(dn => waitStatus(rt, dn, Set(NodeLifecycle.Pending, NodeLifecycle.Wiring)))
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Completed))
       _ <- List("d1", "d2", "d3").traverse_(dn => waitStatus(rt, dn, Set(NodeLifecycle.Completed)))
@@ -229,33 +237,64 @@ class TriggerChainSpec extends CatsEffectSuite:
       // 本断言必红；fork 后 d3.startedAt ≈ d1.startedAt << d1.completedAt。
       val lastStart = starts.max
       val firstFinish = List(d1, d2, d3).flatMap(_.completedAt).min
-      assert(lastStart < firstFinish,
-        s"all dependents must START before the first one FINISHES (parallel fan-out); lastStart=$lastStart firstFinish=$firstFinish")
+      assert(
+        lastStart < firstFinish,
+        s"all dependents must START before the first one FINISHES (parallel fan-out); lastStart=$lastStart firstFinish=$firstFinish"
+      )
+    end for
   }
 
   // ── T-B 案例 B：孤儿 barrier 自愈（settleSweep）──────────────
 
-  test("T-B orphan barrier heal: C1 (in=[U] with delivery missing, edge-orphanded via store surgery) gets redelivery+start from settleRunnableSweep; deliveredTo dedup idempotent; settle-sweep event logged") {
+  test(
+    "T-B orphan barrier heal: C1 (in=[U] with delivery missing, edge-orphanded via store surgery) gets redelivery+start from settleRunnableSweep; deliveredTo dedup idempotent; settle-sweep event logged"
+  ) {
     val ws = tempRoot / "ws-tb"
     os.makeDir.all(ws)
     val system = ActorSystem(s"tc-tb-${scala.util.Random.nextInt(100000)}")
-    val llm = DispatchLlm(replyOf = t => if t.contains("up-tb") then "RESULT-OF-U" else "ok",
-      delayOf = t => if t.contains("up-tb") then 800.millis else 0.millis)
+    val llm = DispatchLlm(
+      replyOf = t => if t.contains("up-tb") then "RESULT-OF-U" else "ok",
+      delayOf = t => if t.contains("up-tb") then 800.millis else 0.millis
+    )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("tc-tb", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("tc-tb", "up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("up-tb"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "tc-tb",
+          "up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("up-tb"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "up")
       // C1 接 in=[U]（P1 追加语义：in 声明给 U.out 追加边，不再互相「夺走」——
       // 报告 §2.2 案例 B 的「后建者夺走 out」损伤形态已被结构性消除；孤儿改由
       // store 手术构造：只保 in 关系与投递缺失，边被移除 = 真实历史损伤等价形）
-      _ <- nodeEdit(nodeInput("tc-tb", "c1", "description" -> Json.fromString("test node purpose"),
-        "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- nodeEdit(nodeInput("tc-tb", "c2", "description" -> Json.fromString("test node purpose"),
-        "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "tc-tb",
+          "c1",
+          "description" -> Json.fromString("test node purpose"),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "tc-tb",
+          "c2",
+          "description" -> Json.fromString("test node purpose"),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       c1Id <- idOf(rt, "c1")
       c2Id <- idOf(rt, "c2")
       // U 完成：P1 追加语义下 C1/C2 双双即时获投递并启动（fan-out 兼容回归）
@@ -266,9 +305,16 @@ class TriggerChainSpec extends CatsEffectSuite:
       // 移除 U.out 中指向 C1 的边（deliveredTo 缺失 + completed 有 result 上游 =
       // settleRunnableSweep 的孤儿判定面）
       _ <- rt.store.mutate { s =>
-        val c1Reset = s.nodes(c1Id).copy(
-          status = NodeLifecycle.Wiring, deliveredTo = Nil, startedAt = None,
-          completedAt = None, result = None, ttlExpireAt = None)
+        val c1Reset = s
+          .nodes(c1Id)
+          .copy(
+            status = NodeLifecycle.Wiring,
+            deliveredTo = Nil,
+            startedAt = None,
+            completedAt = None,
+            result = None,
+            ttlExpireAt = None
+          )
         val uOrphan = s.nodes(upId).copy(out = s.nodes(upId).out.filterNot(_.to == c1Id))
         s.copy(nodes = s.nodes.updated(c1Id, c1Reset).updated(upId, uOrphan))
       }.void
@@ -286,42 +332,73 @@ class TriggerChainSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // P1 fan-out 兼容回归：追加语义下 U 完成即投递两个下游（旧「夺走」形态不存在）
-      assert(c2Pre.deliveredTo.contains(upId), "C2 must have received U's delivery at completion (event-driven path intact)")
+      assert(
+        c2Pre.deliveredTo.contains(upId),
+        "C2 must have received U's delivery at completion (event-driven path intact)"
+      )
       // 手术后 C1 孤儿：U 完成时未获投递（缺陷现场），回扫后自愈
-      assert(!c1Pre.deliveredTo.contains(upId),
-        "precondition: C1 must be orphaned after surgery (delivery bookkeeping missing)")
+      assert(
+        !c1Pre.deliveredTo.contains(upId),
+        "precondition: C1 must be orphaned after surgery (delivery bookkeeping missing)"
+      )
       assert(c1.deliveredTo.contains(upId), s"C1.deliveredTo must contain U after sweep, got ${c1.deliveredTo}")
-      assert(c1.deliveredTo.count(_ == upId) == 1,
-        s"deliveredTo dedup must stay idempotent across repeated sweeps, got ${c1.deliveredTo}")
+      assert(
+        c1.deliveredTo.count(_ == upId) == 1,
+        s"deliveredTo dedup must stay idempotent across repeated sweeps, got ${c1.deliveredTo}"
+      )
       assert(c1.startedAt.isDefined, "C1.startedAt must be non-empty after sweep (anchor)")
       assertEquals(c1.status, NodeLifecycle.Completed, "C1 must complete after orphan barrier heal")
       assert(c1Pre.startedAt.isEmpty, "C1 must NOT have started before the sweep (starvation reproduced)")
       // 留痕纪律：settle-sweep 事件落账（禁止静默自愈）
-      assert(audit.exists((t, id) => t == "settle-sweep" && id == c1Id),
-        s"settle-sweep audit event must be logged for C1, got: $audit")
+      assert(
+        audit.exists((t, id) => t == "settle-sweep" && id == c1Id),
+        s"settle-sweep audit event must be logged for C1, got: $audit"
+      )
+    end for
   }
 
   // ── T-C CAS 翻转守卫：同节点竞发单 spawn ─────────────────────
 
-  test("T-C CAS flip guard: in+deps mixed triggers race startNode on the same node — exactly one session spawns (loser exits quietly)") {
+  test(
+    "T-C CAS flip guard: in+deps mixed triggers race startNode on the same node — exactly one session spawns (loser exits quietly)"
+  ) {
     val ws = tempRoot / "ws-tc"
     os.makeDir.all(ws)
     val system = ActorSystem(s"tc-tc-${scala.util.Random.nextInt(100000)}")
-    val llm = DispatchLlm(replyOf = t => if t.contains("up-tc") then "RESULT-OF-U" else "ok",
-      delayOf = t => if t.contains("up-tc") then 800.millis else 0.millis)
+    val llm = DispatchLlm(
+      replyOf = t => if t.contains("up-tc") then "RESULT-OF-U" else "ok",
+      delayOf = t => if t.contains("up-tc") then 800.millis else 0.millis
+    )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("tc-tc", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("tc-tc", "up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("up-tc"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "tc-tc",
+          "up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("up-tc"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "up")
       // M 既 in 又 deps 同一上游：U 完成 → deliverOut 与 settleDeps 双路 fork 竞发
       // startNode(M)——翻转 CAS 守卫裁决唯一赢家
-      _ <- nodeEdit(nodeInput("tc-tc", "mixed", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("mixed-trigger"), "in" -> Json.fromString(upId),
-        "deps" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "tc-tc",
+          "mixed",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("mixed-trigger"),
+          "in" -> Json.fromString(upId),
+          "deps" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "mixed", Set(NodeLifecycle.Completed))
       spawns <- llm.inputs.get.map(_.count(_.contains("mixed-trigger")))
@@ -329,15 +406,17 @@ class TriggerChainSpec extends CatsEffectSuite:
       mixed <- nodeById(rt, mixedId).map(_.getOrElse(fail("mixed must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(spawns, 1,
-        s"exactly one session must spawn under concurrent triggers (CAS flip guard), got $spawns")
+      assertEquals(spawns, 1, s"exactly one session must spawn under concurrent triggers (CAS flip guard), got $spawns")
       assertEquals(mixed.status, NodeLifecycle.Completed, "M must complete normally (winner owns lifecycle)")
       assert(mixed.startedAt.isDefined, "winner must carry startedAt")
+    end for
   }
 
   // ── T-D mount 僵尸 running 对账 ─────────────────────────────
 
-  test("T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled, no TTL + reaped audit — 2026-09-07 ruling) at mount") {
+  test(
+    "T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled, no TTL + reaped audit — 2026-09-07 ruling) at mount"
+  ) {
     val ws = tempRoot / "ws-td"
     os.makeDir.all((ws / ".nebflow"))
     val system = ActorSystem(s"tc-td-${scala.util.Random.nextInt(100000)}")
@@ -345,16 +424,23 @@ class TriggerChainSpec extends CatsEffectSuite:
     val now = System.currentTimeMillis()
     // 预置持久化 flow-map.json：一个 status=running 的僵尸节点（重启窗口遗产，
     // 本进程无在飞 fiber）
-    val zombie = NodeDef(id = "n-zombie", name = "zombie", agent = "test-agent",
-      status = NodeLifecycle.Running, createdAt = now, startedAt = Some(now))
+    val zombie = NodeDef(
+      id = "n-zombie",
+      name = "zombie",
+      agent = "test-agent",
+      status = NodeLifecycle.Running,
+      createdAt = now,
+      startedAt = Some(now)
+    )
     val stateJson = Json.obj(
       "v" -> Json.fromInt(1),
       "project" -> "tc-td".asJson,
       "updatedAt" -> now.asJson,
-      "nodes" -> Json.obj("n-zombie" -> zombie.asJson))
+      "nodes" -> Json.obj("n-zombie" -> zombie.asJson)
+    )
     os.write.over(ws / ".nebflow" / "flow-map.json", stateJson.noSpaces)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       pd = ProjectDef(name = "tc-td", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = now)
       // ProjectRuntimeRegistry.mount（含僵尸对账）——非 mountProject 直挂路径
       rt <- ProjectRuntimeRegistry.mount(pd, system, res, None, "nebula-root")
@@ -368,10 +454,15 @@ class TriggerChainSpec extends CatsEffectSuite:
       assertEquals(z.status, NodeLifecycle.Cancelled, "zombie running node must be reaped to cancelled at mount")
       // 2026-09-07 作者裁定（df846488）：failed/cancelled 无 TTL 强制清——死亡现场
       // 保留主图待上层裁决，不静默消失。cancelNode 链 ttlExpireAt 恒 None。
-      assert(z.ttlExpireAt.isEmpty,
-        "reaped zombie must NOT carry display TTL (2026-09-07 ruling: cancelled retained on map, no forced cleanup)")
-      assert(audit.exists((t, id) => t == "reaped" && id == "n-zombie"),
-        s"reaped audit event must be logged, got: $audit")
+      assert(
+        z.ttlExpireAt.isEmpty,
+        "reaped zombie must NOT carry display TTL (2026-09-07 ruling: cancelled retained on map, no forced cleanup)"
+      )
+      assert(
+        audit.exists((t, id) => t == "reaped" && id == "n-zombie"),
+        s"reaped audit event must be logged, got: $audit"
+      )
+    end for
   }
 
 end TriggerChainSpec

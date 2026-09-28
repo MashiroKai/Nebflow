@@ -73,14 +73,15 @@ class McpToolGateSpec extends FunSuite:
   // A1-2 声明来源接缝：声明 auto 的 L1 在 AutoEdits 不出卡 vs 声明 confirm 的外域动作出卡（0 vs ≥1）
   // ============================================================
   test("A1-2 接缝注入 declare：同 server 两工具对照（auto→0 卡 / confirm→≥1 卡）") {
-    DeclarationSource.install(new DeclarationSource:
-      def lookup(surface: ToolSurface, serverId: String, tool: String): Option[Declared] =
-        if serverId != Server then None
-        else
-          tool match
-            case "tabs"     => Some(Declared.DeclaredAuto)
-            case "navigate" => Some(Declared.DeclaredConfirm)
-            case _          => None
+    DeclarationSource.install(
+      new DeclarationSource:
+        def lookup(surface: ToolSurface, serverId: String, tool: String): Option[Declared] =
+          if serverId != Server then None
+          else
+            tool match
+              case "tabs" => Some(Declared.DeclaredAuto)
+              case "navigate" => Some(Declared.DeclaredConfirm)
+              case _ => None
     )
     val autoCards = cards(L1Tool, AE)
     val confirmCards = cards(L2Tool, AE)
@@ -116,9 +117,10 @@ class McpToolGateSpec extends FunSuite:
   }
 
   test("A1-3(声明面) 声明 auto 亦不能豁免 L3（宿主红线优先于声明档）") {
-    DeclarationSource.install(new DeclarationSource:
-      def lookup(surface: ToolSurface, serverId: String, tool: String): Option[Declared] =
-        Some(Declared.DeclaredAuto)
+    DeclarationSource.install(
+      new DeclarationSource:
+        def lookup(surface: ToolSurface, serverId: String, tool: String): Option[Declared] =
+          Some(Declared.DeclaredAuto)
     )
     val o = decide(L3Tool, AA)
     assertEquals(o.declared, Declared.DeclaredAuto)
@@ -292,9 +294,21 @@ class McpToolGateSpec extends FunSuite:
     val card = McpToolGate.cardPayload(o, "confirm-edits")
     val keys = card.asObject.map(_.keys.toSet).getOrElse(Set.empty)
     List(
-      "type", "toolName", "serverId", "plugin", "tool", "inputSummary", "summary",
-      "riskTier", "declared", "tierSource", "execForm", "hostBanner", "allowUpgrade",
-      "dangerLevel", "safetyMode"
+      "type",
+      "toolName",
+      "serverId",
+      "plugin",
+      "tool",
+      "inputSummary",
+      "summary",
+      "riskTier",
+      "declared",
+      "tierSource",
+      "execForm",
+      "hostBanner",
+      "allowUpgrade",
+      "dangerLevel",
+      "safetyMode"
     ).foreach(k => assert(keys.contains(k), s"payload 缺字段 $k"))
     assertEquals(card.hcursor.downField("type").as[String].toOption, Some("mcpPermission"))
     assertEquals(card.hcursor.downField("hostBanner").as[Boolean].toOption, Some(false))
@@ -314,11 +328,13 @@ class McpToolGateSpec extends FunSuite:
     assertEquals(GateRedact.isSecretKey("url"), false)
     assertEquals(GateRedact.isSecretKey("path"), false)
 
-    val red = GateRedact.summarize(JsonObject(
-      "a" -> Json.fromString("keep-me"),
-      "token" -> Json.fromString("t0k3n"),
-      "list" -> Json.arr(Json.obj("secret" -> Json.fromString("s")), Json.fromString("plain"))
-    ))
+    val red = GateRedact.summarize(
+      JsonObject(
+        "a" -> Json.fromString("keep-me"),
+        "token" -> Json.fromString("t0k3n"),
+        "list" -> Json.arr(Json.obj("secret" -> Json.fromString("s")), Json.fromString("plain"))
+      )
+    )
     assert(red.contains("keep-me"))
     assert(red.contains("***"))
     assert(!red.contains("t0k3n"))
@@ -335,7 +351,18 @@ class McpToolGateSpec extends FunSuite:
   // ============================================================
   test("审计行：含 tier / declared / 来源 / 形态 / 决定") {
     val line = McpToolGate.auditLine(decide(L3Tool, AA, session = "sess-9"), AA, "sess-9")
-    List("event=mcpGate", "decision=ask", s"tool=$L3Tool", "tier=L3", "declared=undeclared",
-      "tierSource=", "form=host-executor", "safetyMode=auto-all", "hostBanner=true", "session=sess-9")
+    List(
+      "event=mcpGate",
+      "decision=ask",
+      s"tool=$L3Tool",
+      "tier=L3",
+      "declared=undeclared",
+      "tierSource=",
+      "form=host-executor",
+      "safetyMode=auto-all",
+      "hostBanner=true",
+      "session=sess-9"
+    )
       .foreach(frag => assert(line.contains(frag), s"审计行缺 $frag : $line"))
   }
+end McpToolGateSpec

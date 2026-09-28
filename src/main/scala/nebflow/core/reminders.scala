@@ -2,42 +2,20 @@ package nebflow.core
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.*
 
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-case class SystemReminder(
-  category: String,
-  content: String,
-  /** F-2 计数面（presdial 批 2026-09-19）：本条提醒所宣告的变化**身份** —— device
-    * 通道 = 设备**成员集合**键（deviceId 面，见 [[SystemReminders.deviceMemberKey]]）。
-    * `None`（缺省）= 无计数语义 ⇒ 行为与改前逐字相同。
-    *
-    * 🔴 **不进渲染**（[[render]] 只用 `content`）⇒ 模型可见字面零影响；只被
-    * [[SystemReminders.logAndReturn]] 用来对「同一变化」跨会话去重（M1）与对
-    * 文本轴抖动切零增量（M3）。 */
-  countKey: Option[String] = None
-):
-  def render: String = s"<system-reminder>\n$content\n</system-reminder>"
-
-/** Plugin-surface change payload (plugins-live 批 2026-09-12): the rendered
-  * `# Plugin Catalog` section as it was last visible to the session (`previous`,
-  * = the spawn-time first-message snapshot / the last announced value) versus the
-  * current render (`current`). Produced by AgentCore's change detection and
-  * consumed by [[SystemReminders.pluginSurfaceReminder]]. */
+/**
+ * Plugin-surface change payload (plugins-live 批 2026-09-12): the rendered
+ * `# Plugin Catalog` section as it was last visible to the session (`previous`,
+ * = the spawn-time first-message snapshot / the last announced value) versus the
+ * current render (`current`). Produced by AgentCore's change detection and
+ * consumed by [[SystemReminders.pluginSurfaceReminder]].
+ */
 case class PluginSurfaceChange(previous: String, current: String)
-
-object SystemReminder:
-
-  def renderAll(reminders: List[SystemReminder]): String =
-    if reminders.isEmpty then ""
-    else if reminders.length == 1 then reminders.head.render
-    else
-      val body = reminders.map(_.content).mkString("\n\n")
-      s"<system-reminder>\n$body\n</system-reminder>"
 
 object SystemReminders:
 
@@ -160,12 +138,14 @@ object SystemReminders:
           pluginSurfaceReminder(pluginSurfaceChange)
       yield reminders
 
-  /** Devices changed since systemStable was built (cache v2; delta lines 2026-08-20).
-    *
-    * F-2（presdial 批 2026-09-19）：`memberKey` 是变化的**身份**（成员集合），
-    * 作为 [[SystemReminder.countKey]] 交给 [[logAndReturn]] 去重计数；空键 ⇒ `None`
-    * （不参与去重 = 旧行为）。注入内容与字面**逐字不变**（`+/-` 条目形态保持原样 ——
-    * 条目字面属提示词面，本批零改动）。 */
+  /**
+   * Devices changed since systemStable was built (cache v2; delta lines 2026-08-20).
+   *
+   * F-2（presdial 批 2026-09-19）：`memberKey` 是变化的**身份**（成员集合），
+   * 作为 [[SystemReminder.countKey]] 交给 [[logAndReturn]] 去重计数；空键 ⇒ `None`
+   * （不参与去重 = 旧行为）。注入内容与字面**逐字不变**（`+/-` 条目形态保持原样 ——
+   * 条目字面属提示词面，本批零改动）。
+   */
   private def devicesReminder(deviceDelta: String, memberKey: String = ""): Option[SystemReminder] =
     if deviceDelta.isEmpty then None
     else
@@ -177,10 +157,12 @@ object SystemReminders:
         )
       )
 
-  /** F-2 计数键：设备的**成员集合**（deviceId 面；排序 + 去重 ⇒ 顺序抖动不换键）。
-    *
-    * 🔴 不得用渲染文本当计数键：条目文本会随画像轴 / `⚠stale` 标记变化（M3），
-    * 用文本当键会把「同一批设备的重渲染」计成新变化。 */
+  /**
+   * F-2 计数键：设备的**成员集合**（deviceId 面；排序 + 去重 ⇒ 顺序抖动不换键）。
+   *
+   * 🔴 不得用渲染文本当计数键：条目文本会随画像轴 / `⚠stale` 标记变化（M3），
+   * 用文本当键会把「同一批设备的重渲染」计成新变化。
+   */
   def deviceMemberKey(deviceIds: Iterable[String]): String =
     deviceIds.iterator.map(_.trim).filter(_.nonEmpty).toList.distinct.sorted.mkString("\u0001")
 
@@ -199,8 +181,10 @@ object SystemReminders:
     private val lastCountedKey = new java.util.concurrent.atomic.AtomicReference[String]("")
     private val counted = new java.util.concurrent.atomic.AtomicLong(0L)
 
-    /** true = 该键与上一次已计键不同 ⇒ **计一次**（调用方据此打计数行）；
-      * false = 同一变化已计过 ⇒ 零增量（不重复打行，注入不受影响）。 */
+    /**
+     * true = 该键与上一次已计键不同 ⇒ **计一次**（调用方据此打计数行）；
+     * false = 同一变化已计过 ⇒ 零增量（不重复打行，注入不受影响）。
+     */
     def claim(key: String): Boolean =
       val previous = lastCountedKey.getAndSet(key)
       if previous == key then false
@@ -216,8 +200,12 @@ object SystemReminders:
       lastCountedKey.set("")
       counted.set(0L)
 
-  /** Current task list — team-session user-turn reminder, never part of systemStable.
-    * The caller (AgentCore) supplies full / delta / unchanged text. */
+  end DeviceChangeCount
+
+  /**
+   * Current task list — team-session user-turn reminder, never part of systemStable.
+   * The caller (AgentCore) supplies full / delta / unchanged text.
+   */
   private def tasksReminder(taskListText: String): Option[SystemReminder] =
     if taskListText.isEmpty then None
     else Some(SystemReminder("tasks", taskListText))
@@ -226,10 +214,12 @@ object SystemReminders:
   private def languageReminder(language: Option[String]): Option[SystemReminder] =
     language.map(lang => SystemReminder("language", s"Language changed: respond in $lang"))
 
-  /** Mounted projects changed since systemStable was built (cache v2,
-    * progressive disclosure 2026-09-07). Nebula sees incremental +/-
-    * entries when a project is mounted/unmounted/created — the root-aware
-    * gate lives upstream (AgentCore only renders delta for the root agent). */
+  /**
+   * Mounted projects changed since systemStable was built (cache v2,
+   * progressive disclosure 2026-09-07). Nebula sees incremental +/-
+   * entries when a project is mounted/unmounted/created — the root-aware
+   * gate lives upstream (AgentCore only renders delta for the root agent).
+   */
   private def projectsReminder(mountedProjectsDelta: String): Option[SystemReminder] =
     if mountedProjectsDelta.isEmpty then None
     else Some(SystemReminder("projects", s"Mounted projects changed:\n$mountedProjectsDelta"))
@@ -238,12 +228,16 @@ object SystemReminders:
   // Plugin surface (plugins-live 批 2026-09-12)
   // ------------------------------------------------------------------
 
-  /** Reminder category for the plugin-surface delta (AgentCore splits it out of
-    * `collectAllIO`'s result and PERSISTS it — see [[isPluginSurfaceReminderMessage]]). */
+  /**
+   * Reminder category for the plugin-surface delta (AgentCore splits it out of
+   * `collectAllIO`'s result and PERSISTS it — see [[isPluginSurfaceReminderMessage]]).
+   */
   val PluginSurfaceCategory: String = "plugin-surface"
 
-  /** First line of every plugin-surface reminder body — the persisted-message
-    * marker ([[isPluginSurfaceReminderMessage]]) and the human/grep anchor. */
+  /**
+   * First line of every plugin-surface reminder body — the persisted-message
+   * marker ([[isPluginSurfaceReminderMessage]]) and the human/grep anchor.
+   */
   val PluginSurfaceMarker: String = "Plugin surface changed"
 
   /**
@@ -268,7 +262,9 @@ object SystemReminders:
    *  - re-opened plugins get their catalog line back.
    */
   def pluginSurfaceReminder(change: Option[PluginSurfaceChange]): Option[SystemReminder] =
-    change.filter(c => c.previous != c.current).map(c => SystemReminder(PluginSurfaceCategory, renderPluginSurfaceChange(c)))
+    change
+      .filter(c => c.previous != c.current)
+      .map(c => SystemReminder(PluginSurfaceCategory, renderPluginSurfaceChange(c)))
 
   /** Render the authoritative plugin-surface reminder body (pure — unit-testable). */
   private[core] def renderPluginSurfaceChange(c: PluginSurfaceChange): String =
@@ -293,9 +289,13 @@ object SystemReminders:
     if body.isEmpty then sb += "- （当前无可分配插件）" else sb += body
     sb.mkString("\n")
 
-  /** `- name: rest` line map of a rendered catalog section (header and the
-    * absence note are not `- ` lines and are skipped). Values are the line body
-    * WITHOUT the list prefix (callers add `- ` themselves). */
+  end renderPluginSurfaceChange
+
+  /**
+   * `- name: rest` line map of a rendered catalog section (header and the
+   * absence note are not `- ` lines and are skipped). Values are the line body
+   * WITHOUT the list prefix (callers add `- ` themselves).
+   */
   private def catalogEntries(catalog: String): Map[String, String] =
     catalog.linesIterator
       .filter(_.startsWith("- "))
@@ -313,11 +313,13 @@ object SystemReminders:
       case Left(text) => text.contains(PluginSurfaceMarker)
       case Right(_) => false)
 
-  /** Keep only the newest [[MaxPersistedPluginSurfaceReminders]] plugin-surface
-    * reminders in session history. Each reminder is authoritative and carries the
-    * full current catalog, so an older one is fully subsumed by the newer one —
-    * dropping it loses nothing and bounds history growth (mirrors
-    * [[pruneTimeReminders]]). Called at injection time. */
+  /**
+   * Keep only the newest [[MaxPersistedPluginSurfaceReminders]] plugin-surface
+   * reminders in session history. Each reminder is authoritative and carries the
+   * full current catalog, so an older one is fully subsumed by the newer one —
+   * dropping it loses nothing and bounds history growth (mirrors
+   * [[pruneTimeReminders]]). Called at injection time.
+   */
   def prunePluginSurfaceReminders(messages: List[Message]): List[Message] =
     val idx = messages.zipWithIndex.collect { case (m, i) if isPluginSurfaceReminderMessage(m) => i }
     if idx.size <= MaxPersistedPluginSurfaceReminders then messages
@@ -325,8 +327,10 @@ object SystemReminders:
       val dropSet = idx.take(idx.size - MaxPersistedPluginSurfaceReminders).toSet
       messages.zipWithIndex.collect { case (m, i) if !dropSet.contains(i) => m }
 
-  /** Max persisted plugin-surface reminders kept in session history (the newest
-    * one already supersedes every older one). */
+  /**
+   * Max persisted plugin-surface reminders kept in session history (the newest
+   * one already supersedes every older one).
+   */
   val MaxPersistedPluginSurfaceReminders: Int = 1
 
   /** Summary of this session's pending (untriggered) scheduled tasks. */
@@ -361,17 +365,19 @@ object SystemReminders:
       else zdt.format(DateTimeFormatter.ofPattern("MM-dd"))
     s"${zdt.format(fmt)} $day"
 
-  /** Log reminders and return them wrapped in IO.
-    *
-    * Reminder refactor (2026-08-20): the `time` category fires on nearly every
-    * user turn (~2.3K log lines/half-day) — downsampled to at most one log
-    * line per [[TimeLogSampleMs]]. The injection itself is unaffected.
-    *
-    * F-2（presdial 批 2026-09-19）：带 [[SystemReminder.countKey]] 的提醒（device
-    * 通道）**按变化身份计数** —— 同一变化（成员集合键相同）已经在别的会话计过 ⇒
-    * **零增量**（不打第二行）。计数面 = 这一行日志本身（「同一变化对应多条日志行」的源头即此处）。
-    * 🔴 注入不受影响（每会话仍各自收到它自己的差量）；`time` 的降采样次序不变
-    * （`countKey = None` ⇒ 无条件过闸）。 */
+  /**
+   * Log reminders and return them wrapped in IO.
+   *
+   * Reminder refactor (2026-08-20): the `time` category fires on nearly every
+   * user turn (~2.3K log lines/half-day) — downsampled to at most one log
+   * line per [[TimeLogSampleMs]]. The injection itself is unaffected.
+   *
+   * F-2（presdial 批 2026-09-19）：带 [[SystemReminder.countKey]] 的提醒（device
+   * 通道）**按变化身份计数** —— 同一变化（成员集合键相同）已经在别的会话计过 ⇒
+   * **零增量**（不打第二行）。计数面 = 这一行日志本身（「同一变化对应多条日志行」的源头即此处）。
+   * 🔴 注入不受影响（每会话仍各自收到它自己的差量）；`time` 的降采样次序不变
+   * （`countKey = None` ⇒ 无条件过闸）。
+   */
   def logAndReturn(reminders: List[SystemReminder]): IO[List[SystemReminder]] =
     reminders
       .traverse_ { r =>

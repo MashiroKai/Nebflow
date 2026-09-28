@@ -152,7 +152,9 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   test("extractToolCalls: unquoted ISO-8601 literal in arguments is rescued (issue #18)") {
     val args = """{"content":"report","triggerAt":2026-08-18T00:00:00+08:00}"""
     val json = parse(s"""{"choices":[{"message":{"tool_calls":[
-      {"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"${args.replace("\\", "\\\\").replace("\"", "\\\"")}"}}
+      {"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"${args
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")}"}}
     ]}}]}""").toOption.get
     val tcs = adapter.extractToolCalls(json)
     assertEquals(tcs.size, 1)
@@ -269,8 +271,10 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   test("processOpenAiData: providers repeating id+name per fragment accumulate all fragments") {
     val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
     val params = SendMessageParams(Nil, "gpt-4o")
-    val frag1 = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"{\"content\":\"x\","}}]},"finish_reason":null}]}"""
-    val frag2 = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"\"triggerAt\":\"in 2 hours\"}"}}]},"finish_reason":null}]}"""
+    val frag1 =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"{\"content\":\"x\","}}]},"finish_reason":null}]}"""
+    val frag2 =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"\"triggerAt\":\"in 2 hours\"}"}}]},"finish_reason":null}]}"""
     val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
     for
       _ <- adapter.processOpenAiData(frag1, state, params)
@@ -350,8 +354,10 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
           fs <- state.get
         yield
           // No empty-name ToolCallStart leaked from the degenerate start
-          assert(c1.collect { case StreamChunk.ToolCallStart(n) => n }.forall(_.nonEmpty),
-            s"degenerate start must not emit ToolCallStart, got $c1")
+          assert(
+            c1.collect { case StreamChunk.ToolCallStart(n) => n }.forall(_.nonEmpty),
+            s"degenerate start must not emit ToolCallStart, got $c1"
+          )
           // Flush emitted no degenerate ToolCallChunk at all — the call is dropped
           val toolChunks = (c1 ++ c2 ++ c3).collect { case StreamChunk.ToolCallChunk(tc) => tc }
           assert(toolChunks.isEmpty, s"expected no ToolCallChunk from degenerate fragments, got $toolChunks")
@@ -367,10 +373,14 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
             s"expected an orphan WARN log event, got ${warns.map(_.getFormattedMessage)}"
           )
           // No per-call summary without a flushed call; retired wording must not return
-          assert(!warns.exists(_.getFormattedMessage.contains("merged into tool")),
-            s"no summary WARN expected without a flushed call, got ${warns.map(_.getFormattedMessage)}")
-          assert(!warns.exists(_.getFormattedMessage.contains("degenerate tool-call fragment")),
-            s"retired per-frame wording must not reappear, got ${warns.map(_.getFormattedMessage)}")
+          assert(
+            !warns.exists(_.getFormattedMessage.contains("merged into tool")),
+            s"no summary WARN expected without a flushed call, got ${warns.map(_.getFormattedMessage)}"
+          )
+          assert(
+            !warns.exists(_.getFormattedMessage.contains("degenerate tool-call fragment")),
+            s"retired per-frame wording must not reappear, got ${warns.map(_.getFormattedMessage)}"
+          )
       } { _ => IO.delay(lbLogger.detachAppender(appender)) }
   }
 
@@ -424,7 +434,9 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     val parts = List("""{"command":"ec""", """ho hel""", """lo","fl""", """ag":tr""", """ue}""")
     def esc(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
     val conts = parts.map { p =>
-      s"""{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"${esc(p)}"}}]},"finish_reason":null}]}"""
+      s"""{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"${esc(
+          p
+        )}"}}]},"finish_reason":null}]}"""
     }
     val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
 
@@ -509,8 +521,9 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
 
   /** Minimal in-memory StreamBackend serving a canned SSE body. */
   private class CannedSseBackend(body: fs2.Stream[IO, Byte]) extends StreamBackend[IO, Fs2Streams[IO]]:
+
     def send[T](
-        request: GenericRequest[T, Fs2Streams[IO] & sttp.capabilities.Effect[IO]]
+      request: GenericRequest[T, Fs2Streams[IO] & sttp.capabilities.Effect[IO]]
     ): IO[Response[T]] =
       IO.pure(
         Response(
@@ -520,9 +533,12 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
           Nil
         )
       )
+
     def monad: sttp.monad.MonadError[IO] =
       new sttp.client4.impl.cats.CatsMonadError[IO](using IO.asyncForIO)
     def close(): IO[Unit] = IO.unit
+
+  end CannedSseBackend
 
   private def sseLines(frames: String*): fs2.Stream[IO, Byte] =
     fs2.Stream
@@ -532,6 +548,7 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   // Real production sequence: valid start, then name:"" continuations.
   private val prodStart =
     """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_r1","type":"function","function":{"name":"Bash","arguments":""}}]},"finish_reason":null}]}"""
+
   private def prodCont(args: String) =
     s"""{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"$args"}}]},"finish_reason":null}]}"""
   private val prodFinish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
@@ -552,6 +569,8 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
             .map(_.getFormattedMessage)
         )
       } { _ => IO.delay(lbLogger.detachAppender(appender)) }
+
+  end withAppender
 
   test("sendMessageStream: production qwen frame replay aggregates to ONE summary and merges args") {
     val backend = new CannedSseBackend(

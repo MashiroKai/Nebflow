@@ -7,11 +7,14 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeTools}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore}
+// W1 shim: main's `OutEdge.root` constructor was renamed PR-side to `OutEdge.root`
+// (same legacy {pass,failed}/result Nebula edge); usages below point at the new name.
+import nebflow.llm.ModelCandidate
+import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
@@ -197,19 +200,19 @@ class MergeVerdictGateVisibilitySpec extends CatsEffectSuite:
   /** Merge node (entry form: no in and no deps ⇒ arrival time readyAt = createdAt). */
   private def mergeNode(id: String, name: String, status: String, createdAt: Long): NodeDef =
     NodeDef(id = id, name = name, agent = "general", merge = true, task = Some(s"landing $name"),
-      status = status, out = List(OutEdge.nebula), createdAt = createdAt)
+      status = status, out = List(OutEdge.root), createdAt = createdAt)
 
   /** A plain (non-merge) executor node, still running ⇒ its downstream merge peers have not
     * arrived (rank primary = MaxValue) ⇒ they are queue contenders that hold nobody. */
   private def runningImpl(id: String, name: String, createdAt: Long): NodeDef =
     NodeDef(id = id, name = name, agent = "coder", task = Some("work"),
-      status = NodeLifecycle.Running, out = List(OutEdge.nebula), createdAt = createdAt,
+      status = NodeLifecycle.Running, out = List(OutEdge.root), createdAt = createdAt,
       startedAt = Some(createdAt + 10L))
 
   /** A running merge node inside the critical section (always the top-priority holder). */
   private def runningHolder(id: String, name: String, createdAt: Long): NodeDef =
     NodeDef(id = id, name = name, agent = "general", merge = true, task = Some(s"landing $name"),
-      status = NodeLifecycle.Running, out = List(OutEdge.nebula),
+      status = NodeLifecycle.Running, out = List(OutEdge.root),
       startedAt = Some(createdAt + 10L), createdAt = createdAt)
 
   /** Upstream verifier: `status` + a verdict in `lastVerdict`. */
@@ -312,7 +315,7 @@ class MergeVerdictGateVisibilitySpec extends CatsEffectSuite:
         verifier("n-pass", "verify-pass", NodeLifecycle.Completed, Some("pass"), now - 300_000L),
         // upstream executor (no verifier at all) ⇒ not a holder
         NodeDef(id = "n-up", name = "impl", agent = "coder", task = Some("work"),
-          status = NodeLifecycle.Completed, out = List(OutEdge.nebula), createdAt = now - 290_000L,
+          status = NodeLifecycle.Completed, out = List(OutEdge.root), createdAt = now - 290_000L,
           completedAt = Some(now - 200_000L)),
         runningHolder("n-holder", "attach-merge", now - 90_000L),
         // (a) all-pass verifier upstream ⇒ merely queued

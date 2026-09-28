@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import cats.effect.IO
 import munit.CatsEffectSuite
+import nebflow.shared.{AttachContract, FileTransfer}
 
 import java.security.MessageDigest
 
@@ -73,6 +74,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
     var puts: Int = 0
   ) extends ChunkTransport:
     def leg: String = "harness"
+
     def put(
       t: FileTransfer,
       frame: ChunkedTransfer.ChunkFrame,
@@ -92,8 +94,11 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
       else
         puts += 1
         receiver.applyChunk(frame, payload)
+
     def probe(t: FileTransfer): IO[Either[AttachContract.AttachError, ChunkedTransfer.ReceiveState]] =
       receiver.prime().map(Right(_))
+
+  end LoopbackTransport
 
   private def withDirs[A](f: (os.Path, os.Path) => IO[A]): IO[A] =
     IO.blocking(os.temp.dir(prefix = "nb-chunk-spec-")).flatMap { dir =>
@@ -114,26 +119,32 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
         receiver = new ChunkReceiver("tid-a", size, Chunk, tempPath)
         _ <- receiver.prime()
         transport = new LoopbackTransport(receiver)
-        outcome <- ChunkedSendLoop.run(transport, target("p1", "tid-a", "big.bin"), source, chunkSize = Chunk, retriesPerLeg = 0)
-      yield
-        outcome match
-          case Right(o) =>
-            val senderSha = sha256File(source)
-            val receiverSha = sha256File(tempPath)
-            assertEquals(o.bytesSent, size, "发送端字节数")
-            assertEquals(receiver.bytesReceived, size, "接收端字节数")
-            assertEquals(o.receiverComputedSha256, senderSha, "接收端自算整件 sha256 必须等于源文件 sha256")
-            assertEquals(receiverSha, senderSha, "落盘文件 sha256 必须等于源文件 sha256")
-            assertEquals(o.chunksSent, 16, "1,000,000 B / 65,536 B = 16 块（末块非满）")
-            assert(transport.puts == 16, s"每块恰好一次 put，实测 ${transport.puts}")
-            assert(senderSha.length == 64)
-            println(
-              s"[READING C2] source=$size B chunks=${o.chunksSent} puts=${transport.puts} leg=${o.leg}\n" +
-                s"[READING C2] sha256(sender)  =$senderSha\n" +
-                s"[READING C2] sha256(receiver)=$receiverSha (receiver self-computed: ${o.receiverComputedSha256})\n" +
-                s"[READING C2] bytes: source=$size sender=${o.bytesSent} receiver=${receiver.bytesReceived} onDisk=${os.size(tempPath)}"
-            )
-          case Left(err) => fail(s"自环往返必须成功，实得 ${err.render}")
+        outcome <- ChunkedSendLoop.run(
+          transport,
+          target("p1", "tid-a", "big.bin"),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
+      yield outcome match
+        case Right(o) =>
+          val senderSha = sha256File(source)
+          val receiverSha = sha256File(tempPath)
+          assertEquals(o.bytesSent, size, "发送端字节数")
+          assertEquals(receiver.bytesReceived, size, "接收端字节数")
+          assertEquals(o.receiverComputedSha256, senderSha, "接收端自算整件 sha256 必须等于源文件 sha256")
+          assertEquals(receiverSha, senderSha, "落盘文件 sha256 必须等于源文件 sha256")
+          assertEquals(o.chunksSent, 16, "1,000,000 B / 65,536 B = 16 块（末块非满）")
+          assert(transport.puts == 16, s"每块恰好一次 put，实测 ${transport.puts}")
+          assert(senderSha.length == 64)
+          println(
+            s"[READING C2] source=$size B chunks=${o.chunksSent} puts=${transport.puts} leg=${o.leg}\n" +
+              s"[READING C2] sha256(sender)  =$senderSha\n" +
+              s"[READING C2] sha256(receiver)=$receiverSha (receiver self-computed: ${o.receiverComputedSha256})\n" +
+              s"[READING C2] bytes: source=$size sender=${o.bytesSent} receiver=${receiver.bytesReceived} onDisk=${os.size(tempPath)}"
+          )
+        case Left(err) => fail(s"自环往返必须成功，实得 ${err.render}")
+      end for
     }
   }
 
@@ -161,6 +172,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
           case Right(_) => fail("篡改后的块必须被拒")
         assertEquals(receiver.bytesReceived, 0L, "拒绝后不得推进 offset")
         assert(!os.exists(tempPath) || os.size(tempPath) == 0L, "拒绝后不得落盘")
+      end for
     }
   }
 
@@ -187,6 +199,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
             assert(err.actualHash.exists(_.length == 64))
           case Right(_) => fail("整件摘要不符必须被拒（禁自证）")
         assert(!os.exists(tempPath), "整件不符必须删 temp（绝不 commit）")
+      end for
     }
   }
 
@@ -210,6 +223,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
           assertEquals(err.code, AttachContract.Codes.WholeDigestMismatch)
           assert(err.message.contains("without returning its self-computed whole-file digest"))
         case Right(_) => fail("缺接收端自算摘要必须失败（否则等于回到自证）")
+      end for
     }
   }
 
@@ -251,6 +265,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
         // 非末块的 ack 必须仍然只带自算块摘要（整件摘要留到末块）
         assertEquals(last.map(_.wholeSha256), Right(None))
         assertEquals(receiver.bytesReceived, Chunk.toLong, "重放不得推进 offset")
+      end for
     }
   }
 
@@ -275,7 +290,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
       yield
         r1 match
           case Left(err) => assertEquals(err.code, AttachContract.Codes.PeerUnreachable)
-          case Right(_)  => fail("第一次必须因模拟断连失败")
+          case Right(_) => fail("第一次必须因模拟断连失败")
         assertEquals(offsetAfterBreak, 2L * Chunk, "中断后权威 offset = 已应用块数 × 块大小")
         assert(offsetAfterBreak > 0, "断点续传前提：中断前已有进展")
         r2 match
@@ -297,6 +312,8 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
                 s"[READING C3] after resume: sha256(onDisk)=${sha256File(tempPath)}"
             )
           case Left(err) => fail(s"接续必须成功，实得 ${err.render}")
+        end match
+      end for
     }
   }
 
@@ -321,7 +338,8 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
         r <- ChunkedSendLoop.run(t, target("p6", "tid-f", "corrupt.bin"), source, chunkSize = Chunk, retriesPerLeg = 0)
       yield r match
         case Left(err) => assertEquals(err.code, AttachContract.Codes.WholeDigestMismatch)
-        case Right(_)  => fail("被篡改的前缀必须导致整件摘要不符 —— 静默拼接 = 交付损坏文件")
+        case Right(_) => fail("被篡改的前缀必须导致整件摘要不符 —— 静默拼接 = 交付损坏文件")
+      end for
     }
   }
 
@@ -345,6 +363,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
         assertEquals(after1, Chunk.toLong)
         assertEquals(after2, after1, "重放后字节数不得增长")
         assertEquals(os.size(tempPath), after1, "磁盘长度也必须不变")
+      end for
     }
   }
 
@@ -370,6 +389,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
             assertEquals(err.actualIndex, Some(2))
           case Right(_) => fail("跳号块必须被拒")
         assertEquals(receiver.bytesReceived, Chunk.toLong, "gap 拒绝后 offset 不得推进")
+      end for
     }
   }
 
@@ -384,9 +404,27 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
           new ChunkTransport:
             def leg = legName
             def put(t: FileTransfer, f: ChunkedTransfer.ChunkFrame, p: Array[Byte]) =
-              IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.PeerUnreachable, s"$legName down", phase = "transfer", path = Some(legName))))
+              IO.pure(
+                Left(
+                  AttachContract.AttachError(
+                    AttachContract.Codes.PeerUnreachable,
+                    s"$legName down",
+                    phase = "transfer",
+                    path = Some(legName)
+                  )
+                )
+              )
             def probe(t: FileTransfer) =
-              IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.PeerUnreachable, s"$legName probe down", phase = "transfer", path = Some(legName))))
+              IO.pure(
+                Left(
+                  AttachContract.AttachError(
+                    AttachContract.Codes.PeerUnreachable,
+                    s"$legName probe down",
+                    phase = "transfer",
+                    path = Some(legName)
+                  )
+                )
+              )
         transport = ChunkTransport.failover(failing("p2p"), failing("relay"))
         before = os.list(dst).size
         r <- ChunkedSendLoop.run(transport, target("p7", "tid-i", "unreach.bin"), source, retriesPerLeg = 0)
@@ -407,6 +445,7 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
             )
           case Right(_) => fail("对端不可达必须失败")
         assertEquals(after, before, "对端不可达时**不得**在本地落任何文件（禁静默本地执行）")
+      end for
     }
   }
 
@@ -423,7 +462,9 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
           def leg = "flaky"
           def put(t: FileTransfer, f: ChunkedTransfer.ChunkFrame, p: Array[Byte]) =
             if f.chunkIndex == 1 && attempts.getAndIncrement() < 2 then
-              IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.PeerUnreachable, "flaky blip", phase = "transfer")))
+              IO.pure(
+                Left(AttachContract.AttachError(AttachContract.Codes.PeerUnreachable, "flaky blip", phase = "transfer"))
+              )
             else receiver.applyChunk(f, p)
           def probe(t: FileTransfer) = receiver.prime().map(Right(_))
         r <- ChunkedSendLoop.run(
@@ -434,13 +475,13 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
           retriesPerLeg = 3,
           backoff = _ => scala.concurrent.duration.Duration.Zero
         )
-      yield
-        r match
-          case Right(o) =>
-            assertEquals(o.bytesSent, size)
-            assertEquals(o.receiverComputedSha256, sha256File(source))
-            assertEquals(attempts.get(), 3, "第 1 块先失败 2 次、第 3 次成功（重试不重置 offset）")
-          case Left(err) => fail(s"重试应当最终成功，实得 ${err.render}")
+      yield r match
+        case Right(o) =>
+          assertEquals(o.bytesSent, size)
+          assertEquals(o.receiverComputedSha256, sha256File(source))
+          assertEquals(attempts.get(), 3, "第 1 块先失败 2 次、第 3 次成功（重试不重置 offset）")
+        case Left(err) => fail(s"重试应当最终成功，实得 ${err.render}")
+      end for
     }
   }
 
@@ -456,7 +497,14 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
             IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.AttachTooLarge, "nope", phase = "transfer")))
           def probe(t: FileTransfer) =
             IO.pure(Right(ChunkedTransfer.ReceiveState("x", 0L, 10_000L, "")))
-        r <- ChunkedSendLoop.run(rejecting, target("p9", "tid-k", "nr.bin"), source, chunkSize = Chunk, retriesPerLeg = 3, backoff = _ => scala.concurrent.duration.Duration.Zero)
+        r <- ChunkedSendLoop.run(
+          rejecting,
+          target("p9", "tid-k", "nr.bin"),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 3,
+          backoff = _ => scala.concurrent.duration.Duration.Zero
+        )
       yield
         assert(r.isLeft)
         assertEquals(r.left.toOption.get.code, AttachContract.Codes.AttachTooLarge)

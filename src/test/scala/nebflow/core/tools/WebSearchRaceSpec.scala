@@ -6,11 +6,13 @@ import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
 
-/** WebSearch P1 (2026-08-25, docs/Nebflow/20260825_websearch-fetch-optimization.md):
-  * Tier 3 race-semantics fix (fast-fail poison) + engine priority by query
-  * language + error classification. All tests are scripted IOs / pure
-  * functions — no network. The real-engine smoke is an isolated-instance
-  * acceptance (P1-3/P1-4), not a unit test. */
+/**
+ * WebSearch P1 (2026-08-25, docs/Nebflow/20260825_websearch-fetch-optimization.md):
+ * Tier 3 race-semantics fix (fast-fail poison) + engine priority by query
+ * language + error classification. All tests are scripted IOs / pure
+ * functions — no network. The real-engine smoke is an isolated-instance
+ * acceptance (P1-3/P1-4), not a unit test.
+ */
 class WebSearchRaceSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 15.seconds
