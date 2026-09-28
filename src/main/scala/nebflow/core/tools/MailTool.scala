@@ -376,8 +376,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
           "description" -> ("Optional task id — continue THAT task's dispatcher instead of starting a new one. " +
             "OMIT it to have the engine CREATE a task for this Mail and return its number in the result header " +
             "(`[task #N] …`): pass that number on subsequent Mails about the same work so they continue the same " +
-            "task instead of spawning a parallel one. A `task` that does not exist, or is already terminal " +
-            "(`closed` / `completed`), is an explicit error and nothing is sent. " +
+            "task instead of spawning a parallel one. A `task` that reached a terminal state (`completed` / " +
+            "`closed`) is CONTINUED, not refused: the engine revives it — the task flips back to `open`, one " +
+            "`revived by Mail: context inherited, prior session torn down` line lands on its note timeline, any " +
+            "leftover dispatcher session is torn down and a fresh one mounts, inheriting the task file as its " +
+            "context (title, note timeline, state events); the receipt header reports " +
+            "`Task 上下文已继承（前态=<prior state>，已重启）· dispatcher re-mounted`. A `task` that does not exist " +
+            "(never created, or pruned after its terminal retention) is an explicit error and nothing is sent. " +
             "Only meaningful on the `project:<name>` leg. The Mail body is automatically appended " +
             "to that task's note timeline by the engine — there is no note parameter anywhere.").asJson
         ),
@@ -1254,6 +1259,17 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   // 与本批退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、
   // `RestApiRoutes` 的队列检视/取消端点 —— 本批禁碰）。摘除属另批另议。
 
+  /** The `[task #N] …` receipt header of the project leg (Mail task-continuation batch,
+    * 2026-09-28): the ordinary (non-revived) face is byte-for-byte the historical string;
+    * the revive face reports the author's verbatim continuation line — `前态=` carries the
+    * ACTUAL prior state (`completed` | `closed`), and the Chinese literal is the
+    * author-given receipt text quoted as-is (the one intentional non-English string in
+    * this batch). */
+  private def receiptHeader(taskId: String, address: String, revivedPrior: Option[String]): String =
+    revivedPrior match
+      case Some(prior) => s"[task #$taskId] Task 上下文已继承（前态=$prior，已重启）· dispatcher re-mounted"
+      case None        => s"[task #$taskId] Project '$address' dispatcher triggered"
+
   /** #28 阶段 0 §3.2：Mail(→project) 触发分发器（试点期新旧并存）。
     * queue/immediate 两个入口共用——address 是已挂载 project → 返回
     * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
@@ -1267,9 +1283,16 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     *      automatically** and spawns it, and the receipt header returns the **task number**
     *      (the caller continues from it);
     *   ② **with** `task` ⇒ **continue** that task's dispatcher (active ⇒ inject / inactive ⇒
-    *      append in the same way as a node message), 🔴 **never create a new one**;
-    *   ③ `task` pointing at a **non-existent / already terminal** task ⇒ **refused** + a
-    *      readable reason (fail-closed).
+    *      spawn or inject per the slot table), 🔴 **never create a new one**;
+    *   ③ **with** `task` pointing at a **terminal** task (`completed` / `closed`) ⇒ REVIVE
+    *      (Mail task-continuation batch, 2026-09-28 · the author's 10:49 order): the entry
+    *      flips back to `open` ([[TaskLedgerStore.reviveSync]] — state flip + change-history
+    *      event + the author's verbatim note line), a **fresh** dispatcher session is
+    *      mounted (`TriggerDispatcher(revive = true)` — residue slots are evicted inside
+    *      the single actor, never reused), and the receipt header reports
+    *      `Task 上下文已继承（前态=<prior>，已重启）· dispatcher re-mounted`;
+    *   ④ `task` pointing at a **non-existent / pruned** task ⇒ **refused** + a readable
+    *      reason (fail-closed — the non-continuable face is unchanged).
     * Also: after a successful delivery the engine **appends the Mail body as one record on
     * that task's note timeline** (structured: `from` + timestamp + body; the only write
     * path, and the tool layer has no note parameter). */
@@ -1291,12 +1314,19 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
             // address syntax is not extended).
             // ① without task ⇒ the engine creates a task automatically (new watermark; the
             //    "first Mail" concept is gone).
-            // ② with task ⇒ continue it (it must exist and not be terminal; otherwise
-            //    refused, fail-closed).
-            // ③ with task pointing at a non-existent / terminal task ⇒ refused + a readable
-            //    reason.
+            // ② with task ⇒ continue it (it must exist; an OPEN entry takes the ordinary
+            //    inject-or-spawn path, byte-for-byte unchanged).
+            // ③ with task pointing at a TERMINAL entry (`completed` / `closed`) ⇒ revive:
+            //    flip back to `open` + mount a FRESH dispatcher session (the author's
+            //    10:49 order, 2026-09-28 — a finished task is continued, not refused).
+            // ④ with task pointing at a non-existent / pruned entry ⇒ refused + a readable
+            //    reason (the non-continuable face, unchanged).
+            // The resolved value carries the prior state (`Some(prior)` iff a revive
+            // happened): the receipt header and the TriggerDispatcher revive flag both
+            // read from it, so "the receipt says re-mounted" and "the actor evicts any
+            // residue slot" can never drift apart.
             val ledger = nebflow.core.project.TaskLedgerStore.open()
-            val resolved: IO[Either[ToolError, String]] = task match
+            val resolved: IO[Either[ToolError, (String, Option[String])]] = task match
               case None =>
                 // r2 P0 fix (2026-09-25): the auto-create consumes the PURE ledger id
                 // (`createSyncReturningId`) -- never the rendered `[OK] ...` banner. The
@@ -1308,22 +1338,30 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                 // TASK_NOT_FOUND.)
                 IO.blocking(ledger.createSyncReturningId(
                   title = s"$address — ${message.take(120).replace("\n", " ")}",
-                  actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher))
+                  actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher)).map {
+                  case Left(err) => Left(err)
+                  case Right(id) => Right((id, None))
+                }
               case Some(tid) =>
-                IO.blocking(ledger.findSync(tid.stripPrefix("#").trim)).map {
+                IO.blocking(ledger.findSync(tid.stripPrefix("#").trim)).flatMap {
                   case None =>
-                    Left(ToolError(
+                    IO.pure(Left(ToolError(
                       s"Mail: no task '#${tid.stripPrefix("#")}' in the ledger — it was never created (or it was pruned after reaching " +
-                        s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})"))
+                        s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})")))
                   case Some(entry) if entry.status != nebflow.core.project.TaskLedgerStore.Status.Open =>
-                    Left(ToolError(
-                      s"Mail: task '#${entry.id}' is '${entry.status}' (terminal) — a terminal task cannot be continued. " +
-                        s"Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.Status})"))
-                  case Some(entry) => Right(entry.id)
+                    // Revive branch (the old TASK_STATUS terminal-refusal lived here —
+                    // 2026-09-28 batch): both terminal states (`completed` and `closed`)
+                    // are continuable through the same primitive; the non-existent /
+                    // pruned face above stays an explicit error.
+                    IO.blocking(ledger.reviveSync(entry.id)).map {
+                      case Left(err) => Left(err)
+                      case Right(_)  => Right((entry.id, Some(entry.status)))
+                    }
+                  case Some(entry) => IO.pure(Right((entry.id, None)))
                 }
             resolved.flatMap {
               case Left(err) => IO.pure(Some(Left(err)))
-              case Right(taskIdStr) =>
+              case Right((taskIdStr, revivedPrior)) =>
                 // Leg ① source annotation (bluebubble batch 2026-09-12): the sender travels
                 // with the trigger message into the dispatcher session's injection bubble
                 // header (source stays = task, ruling D-5: the value is not renamed).
@@ -1338,7 +1376,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                 // the root-injection side, not on a message type here).
                 mailAttribution("info", ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
                   (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
-                    message, rootSid, ProjectActor.SourceTask, Some(attribution), Some(taskIdStr))).void *>
+                    message, rootSid, ProjectActor.SourceTask, Some(attribution), Some(taskIdStr),
+                    revive = revivedPrior.isDefined)).void *>
                     // Automatic note append (ruling n: the only write path is engine-side,
                     // never through the tool layer): the Mail body becomes one record on that
                     // task's note timeline. A history-append failure does not fail the main
@@ -1348,7 +1387,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                       taskIdStr, message,
                       from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
                       actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula)) *>
-                    IO.pure(Some(Right(s"[task #$taskIdStr] Project '$address' dispatcher triggered")))
+                    IO.pure(Some(Right(receiptHeader(taskIdStr, address, revivedPrior))))
                 }
             }
     }

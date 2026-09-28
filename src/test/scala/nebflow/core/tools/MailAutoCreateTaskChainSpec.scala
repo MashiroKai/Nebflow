@@ -210,7 +210,7 @@ class MailAutoCreateTaskChainSpec extends FunSuite:
       assertEquals(entry.id, digits)
       assertEquals(entry.status, TaskLedgerStore.Status.Open)
       val carried = recordedCmds.collect {
-        case ProjectActor.ProjectCommand.TriggerDispatcher(_, _, _, _, tid) => tid
+        case ProjectActor.ProjectCommand.TriggerDispatcher(_, _, _, _, tid, _) => tid
       }.flatten
       assertEquals(carried, List(digits),
         s"the TriggerDispatcher must carry the PURE id (slot key / attach fingerprint source), got: $carried")

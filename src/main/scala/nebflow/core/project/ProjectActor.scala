@@ -283,7 +283,15 @@ object ProjectActor:
       /** **Task id** (taskunify batch 2026-09-24, ruling c②): the task this leg continues.
         * `None` = no attribution (legacy call sites / not wired) ⇒ no task is created and
         * the injection section is omitted. */
-      taskId: Option[String] = None
+      taskId: Option[String] = None,
+      /** **Revive leg** (Mail task-continuation batch, 2026-09-28 · the author's 10:49
+        * order): the Mail tool flipped this task from a terminal state back to `open`, so
+        * the delivery must mount a **fresh** dispatcher session — if the task's slot still
+        * holds a live session (residue inside the 30 s task-terminal sweep window), that
+        * residue is evicted (existing teardown semantics, audit event
+        * `dispatcher-revive-evict`) instead of receiving the injection. `false` (default)
+        * = the ordinary inject-or-spawn path, byte-for-byte unchanged. */
+      revive: Boolean = false
     )
     /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
       * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。 */
@@ -458,13 +466,13 @@ object ProjectActor:
       Ref.of[IO, Map[String, ActiveDispatcher]](Map.empty).map { active =>
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
-            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution, taskId) =>
+            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution, taskId, revive) =>
               // 热重启 draining 准入闸（hot-restart 批设计 §3.3 choke 点清单）：
               // draining 期间拒绝新分发器会话/新节点派发（新工作准入关闭）；
               // completion/failed 回流被拒时 notifySentAt 未标记 → 重启后
               // redeliver 扫描补投（延迟触发非丢失）。非 draining 零开销旁路。
               nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
-                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution, taskId)
+                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution, taskId, revive)
                 case Left(reason) =>
                   logger.warn(s"[hot-restart] dispatcher trigger refused during draining: $reason").as(behavior)
               }
@@ -965,7 +973,14 @@ object ProjectActor:
     /** **Task id** (taskunify batch 2026-09-24, ruling c①/c②): the task this leg delivers
       * to. `None` = no attribution (fallback / not wired) ⇒ the injection section is omitted
       * and the session's `taskId` is None (`TaskInfo` refuses fail-closed). */
-    taskId: Option[String] = None
+    taskId: Option[String] = None,
+    /** **Revive leg** (Mail task-continuation batch, 2026-09-28): `true` = the task was
+      * just flipped terminal→open by the Mail tool; a slot hit is RESIDUE (the 30 s
+      * task-terminal sweep has not collected it yet) and is evicted — a fresh bound
+      * session takes over. The evict-or-inject judgment happens in the SAME atomic
+      * `active.modify` as the ordinary claim, so the check-then-spawn serialization
+      * discipline is kept (single actor, one message at a time). */
+    revive: Boolean = false
   ): IO[Behavior[ProjectCommand]] =
     // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
     // TaskBoard 批 2（§3a）：spawn 形态追加任务板块（注入活跃会话形态
@@ -1002,13 +1017,27 @@ object ProjectActor:
     // the in-slot `taskId` is NEVER re-labelled (the key IS the attribution; the old
     // singleton's `taskId.orElse(a.taskId)` "relabel without re-picking" shape retired
     // together with the singleton).
+    // revive 腿（Mail task-continuation 批 2026-09-28）：revive=true 且槽命中 ⇒ 该槽是
+    // 残留（任务终态后 30s 扫描窗未及收殓）⇒ **逐出**而非注入——同一 CAS 原子判定
+    // （逐出与普通 claim 抢同一张表），随后按既有拆除语义收殓残留会话并 spawn 新绑定
+    // 会话（回执面「dispatcher re-mounted」的机制保证：旧会话绝不复用）。
     active.modify { m =>
       val key = slotKey(taskId)
       m.get(key) match
+        case Some(a) if revive =>
+          // residue eviction: drop the slot in the same atomic modify a normal claim
+          // would take; the teardown itself happens below, before the fresh spawn.
+          (m - key, Some(a))
         case Some(a) =>
           (m.updated(key, a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None)), Some(a))
         case None => (m, None)
     }.flatMap {
+      case Some(a) if revive =>
+        logger
+          .info(
+            s"Project '${cfg.project.name}' revive trigger for task ${slotKey(taskId)}: evicting residue dispatcher ${a.sessionId} — a fresh bound session takes over"
+          )
+          .as(same) *> expireRevivedDispatcher(cfg, a) *> spawnFresh
       case Some(a) =>
         // R7-(c) liveness pre-check before injecting (order 3): no registry row for the
         // （会话已被拆除/收殓），本次派发改走 spawn 新会话，绝不把任务投进死 actor
@@ -1389,6 +1418,38 @@ object ProjectActor:
           FlowMapEventLog.dispatcherTaskTerminalSummary(a.sessionId, taskId, state, "task-terminal")
         )
         .handleErrorWith(e => logger.warn(s"dispatcher-task-terminal audit append failed: ${e.getMessage}"))
+
+  /** The actual teardown for a REVIVED task's residue dispatcher (Mail task-continuation
+    * batch, 2026-09-28): the action set is the task-terminal expiry's **kept byte-for-byte**
+    * (unconsumed-item trace + registry deregister + `AgentCommand.Stop` + bridge stop);
+    * the only differences are the cause string (`revive`) and the audit event type
+    * ([[FlowMapEventLog.DispatcherReviveEvictType]] — distinguishable from the sweep's
+    * `dispatcher-task-terminal`, since this teardown is caused by a revival, not an
+    * expiry). Called from the revive leg of [[dispatchTask]] AFTER the slot was already
+    * evicted in the atomic modify — so a concurrent bridge cleanup finds no slot and is a
+    * no-op (the same ghost-safety the sweeps rely on). */
+  private def expireRevivedDispatcher(
+    cfg: ProjectConfig,
+    a: ActiveDispatcher
+  ): IO[Unit] =
+    val taskId = a.taskId.getOrElse("")
+    auditDispatcherQueueDrop(cfg, a.sessionId, "revive", a.pendingTaskTexts) *>
+      cfg.resources.agentRegistry.update(_ - a.sessionId) *>
+      (a.agentRef ! AgentCommand.Stop(s"dispatcher task #$taskId revived via Mail — a fresh session takes over")).void *>
+      cfg.system.stop(a.bridgeRef).handleErrorWith(_ => IO.unit) *>
+      logger
+        .info(
+          s"Project '${cfg.project.name}' dispatcher session ${a.sessionId} destroyed — task #$taskId was revived via Mail (residue evicted; a fresh bound session takes over)"
+        ) *>
+      FlowMapEventLog
+        .append(
+          cfg.project.workspace,
+          cfg.project.name,
+          a.sessionId,
+          FlowMapEventLog.DispatcherReviveEvictType,
+          FlowMapEventLog.dispatcherReviveEvictSummary(a.sessionId, taskId, "revived-by-mail")
+        )
+        .handleErrorWith(e => logger.warn(s"dispatcher-revive-evict audit append failed: ${e.getMessage}"))
 
   /** 空闲到期的实际拆除（设计 R3-(a)：逐字复用 `teardown` 动作集——registry 注销 +
     * `AgentCommand.Stop` + 桥停；唯一新增 = 一条 info 日志 + 一条 `dispatcher-idle-expired`
