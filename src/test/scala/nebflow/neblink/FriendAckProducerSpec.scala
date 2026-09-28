@@ -1,9 +1,10 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.Json
 import munit.FunSuite
+import nebflow.shared.FriendSummary
 
 /**
  * D-B ack 生产者（2026-09-13 好友推送修复批）· 真通路钉子。
@@ -21,9 +22,7 @@ import munit.FunSuite
 class FriendAckProducerSpec extends FunSuite:
 
   private def envelope(eventId: String, event: Json): Json =
-    Json.obj("type" -> Json.fromString("friend_event"),
-      "eventId" -> Json.fromString(eventId),
-      "event" -> event)
+    Json.obj("type" -> Json.fromString("friend_event"), "eventId" -> Json.fromString(eventId), "event" -> event)
 
   private def serverEvent(convId: String, messageId: Long, eventType: String = "message_new"): Json =
     Json.obj(
@@ -38,18 +37,24 @@ class FriendAckProducerSpec extends FunSuite:
       )
     )
 
-  private final class StubClient(pulls: Ref[IO, List[String]]) extends NeblinkClient(
-    NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
-    serverPort = 1
-  ):
+  private final class StubClient(pulls: Ref[IO, List[String]])
+      extends NeblinkClient(
+        NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
+        serverPort = 1
+      ):
+
     override def listMessages(
       conversationId: String,
       after: Long,
       limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
-      pulls.update(_ :+ conversationId).as(
-        Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
-      )
+      pulls
+        .update(_ :+ conversationId)
+        .as(
+          Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
+        )
+
+  end StubClient
 
   private def mkService(
     pulls: Ref[IO, List[String]],
@@ -141,9 +146,15 @@ class FriendAckProducerSpec extends FunSuite:
       acks <- Ref.of[IO, List[String]](Nil)
       g <- seed("c-nomessage")
       svc = mkService(pulls, order, Some(id => acks.update(_ :+ id).as(NeblinkRelayTunnel.AckOutcome.Sent)))
-      _ <- svc.onFriendEvent(envelope("friend-evt-12", Json.obj(
-        "type" -> Json.fromString("friend_request"), "payload" -> Json.obj()
-      )))
+      _ <- svc.onFriendEvent(
+        envelope(
+          "friend-evt-12",
+          Json.obj(
+            "type" -> Json.fromString("friend_request"),
+            "payload" -> Json.obj()
+          )
+        )
+      )
       _ <- svc.onFriendEvent(envelope("8c1f-uuid", serverEvent("c-nomessage", 13L, "message_new_self")))
       a <- acks.get
     yield a

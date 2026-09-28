@@ -2,8 +2,8 @@ package nebflow.core.flow
 
 import cats.effect.{IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.ToolContext
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 
@@ -64,7 +64,7 @@ object FlowTreeRegistry:
       case None =>
         started.get.flatMap {
           case false => IO.unit
-          case true  => done.get.timeoutTo(timeoutMs.millis, IO.unit).void
+          case true => done.get.timeoutTo(timeoutMs.millis, IO.unit).void
         }
     }
 
@@ -91,8 +91,7 @@ object FlowTreeRegistry:
             // permshield S1（2026-09-13）：建树快照的档位走**唯一入口** = 应用级全局
             // 持久值（不再读 `store.getSafetyMode` 的盘上遗留值，也无会话覆盖面）；
             // `TreeConfig.safetyMode` 因此是**展示用快照**，非权威。
-            val safetyModeIO = resources
-              .effectiveSafetyMode
+            val safetyModeIO = resources.effectiveSafetyMode
               .map(nebflow.core.SafetyMode.toString)
 
             // Mark restore in flight BEFORE the actor spawns (via the
@@ -104,7 +103,7 @@ object FlowTreeRegistry:
               val projectsDir = (ctx.sessionStore, ctx.folderId) match
                 case (Some(store), Some(fid)) =>
                   val folderName = store.getFolderName(fid).getOrElse(fid.take(8))
-                  Some((nebflow.core.PathUtil.dataRoot / "projects" / folderName).toString)
+                  Some((nebflow.shared.PathUtil.dataRoot / "projects" / folderName).toString)
                 case _ => None
 
               val config = FlowTreeActor.TreeConfig(

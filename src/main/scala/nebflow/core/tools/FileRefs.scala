@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.FilePolicyPort
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -25,15 +26,17 @@ import java.nio.file.{Files, Path, Paths}
  */
 private[tools] object FileRefs:
 
-  /** Max file size for HTTP-served files (200 MB) — the documented
-    * `/api/nf-file` proxy limit. */
+  /**
+   * Max file size for HTTP-served files (200 MB) — the documented
+   * `/api/nf-file` proxy limit.
+   */
   val MaxFileSize: Long = 200L * 1024 * 1024
 
   /**
    * Allowed extensions for /api/nf-file proxy — prevents reading arbitrary
    * files via src=.
    *
-   * 2026-09-05 恢复批对齐（以现行端点为准）：与 WebSocketRoutes.NfFileAllowedExt
+   * 2026-09-05 恢复批对齐（以现行端点为准）：与 NfFilePolicy.NfFileAllowedExt
    * （2026-09-03 Canvas interactive-HTML fix 版）逐项一致——删除了端点已不收的
    * avi/eot/wasm/obj/stl/gltf/glb（避免生成必然 400 的死链），补齐端点已放行的
    * docx/xlsx/xlsm/pptx/epub（此前 src 引用不会被转成代理 URL）。若端点白名单
@@ -96,7 +99,7 @@ private[tools] object FileRefs:
 
   /**
    * Tool-side MIRROR of the endpoint's data-root namespace allowlist
-   * (`WebSocketRoutes.NfDataRootAllowlist`, consumed by the pure judge
+   * (`NfFilePolicy.NfDataRootAllowlist`, consumed by the pure judge
    * `nfCredentialDeny` — the namespace step of `nfVerdictForReal`; the tool's own
    * pre-flight gate calls that same function, never this table).
    *
@@ -123,11 +126,13 @@ private[tools] object FileRefs:
   val DataRootServedNamespaces: List[String] =
     List("projects", "uploads", "plots", "workspace-items", "voice-models", "docs")
 
-  /** [[DataRootServedNamespaces]] rendered the way the tool face prints it (each
-    * entry followed by the recursive-glob suffix) — one string, so Card's prose
-    * and Pop's prose cannot drift from the endpoint's table. Pop's description
-    * is a plain (non-interpolated) literal, so it embeds the same text instead,
-    * and a `FileRefsWhitelistSpec` assertion keeps the two welded. */
+  /**
+   * [[DataRootServedNamespaces]] rendered the way the tool face prints it (each
+   * entry followed by the recursive-glob suffix) — one string, so Card's prose
+   * and Pop's prose cannot drift from the endpoint's table. Pop's description
+   * is a plain (non-interpolated) literal, so it embeds the same text instead,
+   * and a `FileRefsWhitelistSpec` assertion keeps the two welded.
+   */
   val DataRootServedNamespacesText: String =
     DataRootServedNamespaces.map(_ + "/**").mkString(", ")
 
@@ -163,54 +168,73 @@ private[tools] object FileRefs:
   enum FileRefFailure(val code: String, val what: String):
     /** 不存在 */
     case NotFound extends FileRefFailure("not-found", "the file does not exist")
+
     /** 不可解析 */
-    case Unresolvable
-        extends FileRefFailure("unresolvable", "the reference could not be resolved to a filesystem path")
+    case Unresolvable extends FileRefFailure("unresolvable", "the reference could not be resolved to a filesystem path")
+
     /** 扩展名不在白名单 */
     case ExtensionNotAllowed
         extends FileRefFailure("extension-not-allowed", "/api/nf-file does not serve this extension")
+
     /** 超过大小上限 */
     case SizeExceeded extends FileRefFailure("size-exceeded", "the file is larger than the proxy size limit")
+
     /** 非常规文件 */
     case NotRegularFile extends FileRefFailure("not-regular-file", "the path is not a regular file")
-    /** imgref 批（2026-09-18）：文件在、但**取不到字节**（0 字节 / 读不动 / realpath
-      * 解不出）。浏览器同样渲染不出来，所以它跟「文件不存在」是两件事，得分开报。 */
-    case NotReadable
-        extends FileRefFailure("not-readable", "the file is present but its bytes cannot be read")
-    /** imgref 批（2026-09-18）：文件在、可读，但 `/api/nf-file` 的**端点判据阶梯**
-      * 不会为它铸票（credential namespace / R2 硬链接 inode / realpath 上的扩展名）
-      * ⇒ 引用腿必然 401/403，`proxied` 不该为它计数（作者失败②的「计数绿而取回
-      * 红」）。判据由端点自己的**同一个**函数给出，见 [[servableByEndpoint]]。 */
-    case NotServable
-        extends FileRefFailure("not-servable", "the /api/nf-file endpoint cannot serve this location")
+
+    /**
+     * imgref 批（2026-09-18）：文件在、但**取不到字节**（0 字节 / 读不动 / realpath
+     * 解不出）。浏览器同样渲染不出来，所以它跟「文件不存在」是两件事，得分开报。
+     */
+    case NotReadable extends FileRefFailure("not-readable", "the file is present but its bytes cannot be read")
+
+    /**
+     * imgref 批（2026-09-18）：文件在、可读，但 `/api/nf-file` 的**端点判据阶梯**
+     * 不会为它铸票（credential namespace / R2 硬链接 inode / realpath 上的扩展名）
+     * ⇒ 引用腿必然 401/403，`proxied` 不该为它计数（作者失败②的「计数绿而取回
+     * 红」）。判据由端点自己的**同一个**函数给出，见 [[servableByEndpoint]]。
+     */
+    case NotServable extends FileRefFailure("not-servable", "the /api/nf-file endpoint cannot serve this location")
+
     /** 其它 */
     case Other extends FileRefFailure("other", "probing the file failed")
 
+  end FileRefFailure
+
   /** One rejected reference, as reported in the tool result + payload. */
   case class RejectedRef(
-      value: String,
-      resolved: Option[String],
-      failure: FileRefFailure,
-      detail: String,
-      /** For a [[FileRefFailure.NotServable]] refusal: which layer of the
-        * endpoint's ladder refused it (endpoint rework r2, 2026-09-18). Never
-        * serialised into `warnings` — it is the tool's own bookkeeping, read by
-        * [[inlineMayTakeOver]] so the inline leg can honour the identity layers
-        * while not honouring the endpoint's reach layer. */
-      layer: Option[nebflow.gateway.WebSocketRoutes.NfDenyLayer] = None
+    value: String,
+    resolved: Option[String],
+    failure: FileRefFailure,
+    detail: String,
+    /**
+     * For a [[FileRefFailure.NotServable]] refusal: which layer of the
+     * endpoint's ladder refused it (endpoint rework r2, 2026-09-18). Never
+     * serialised into `warnings` — it is the tool's own bookkeeping, read by
+     * [[inlineMayTakeOver]] so the inline leg can honour the identity layers
+     * while not honouring the endpoint's reach layer.
+     */
+    layer: Option[FilePolicyPort.NfDenyLayer] = None
   )
 
   /** What to do with one reference value. */
   enum RefDecision:
     /** rewrite the value to this URL */
     case Proxy(url: String)
+
     /** not a local file reference at all — nothing to do, nothing to report */
     case Ignore
-    /** a failing value that is simultaneously a route the gateway itself serves
-      * (see `appRoute`) — neither proxied nor reported, only counted */
+
+    /**
+     * a failing value that is simultaneously a route the gateway itself serves
+     * (see `appRoute`) — neither proxied nor reported, only counted
+     */
     case Exempt(route: String)
+
     /** unservable — reported in `warnings` */
     case Reject(rejected: RejectedRef)
+
+  end RefDecision
 
   /**
    * Reference kinds that are never local disk files: inline data, remote URLs,
@@ -262,16 +286,20 @@ private[tools] object FileRefs:
   /** Windows drive-letter absolute path (`C:/…`, `C:\…`). */
   def isWindowsDriveAbsolute(s: String): Boolean = WindowsDriveRoot.findFirstIn(s).isDefined
 
-  /** The backslash UNC form (`\\server\share\…`). Recognized only in order to
-    * REFUSE it with an accurate reason — never resolved (network semantics are
-    * outside this leg's face). The forward-slash form `//host/path` is left
-    * alone: that is `NonFileRefPrefixes`' protocol-relative URL, not a share. */
+  /**
+   * The backslash UNC form (`\\server\share\…`). Recognized only in order to
+   * REFUSE it with an accurate reason — never resolved (network semantics are
+   * outside this leg's face). The forward-slash form `//host/path` is left
+   * alone: that is `NonFileRefPrefixes`' protocol-relative URL, not a share.
+   */
   def isUncPath(s: String): Boolean = s.startsWith("\\\\")
 
-  /** The anchors this leg resolves from: `~` (expanded to the user's home), a
-    * POSIX absolute path (`/…`) and a Windows drive-letter absolute path
-    * (`C:/…`, `C:\…`). Everything else is a relative reference and the caller
-    * refuses it. */
+  /**
+   * The anchors this leg resolves from: `~` (expanded to the user's home), a
+   * POSIX absolute path (`/…`) and a Windows drive-letter absolute path
+   * (`C:/…`, `C:\…`). Everything else is a relative reference and the caller
+   * refuses it.
+   */
   def isAnchoredRefPath(s: String): Boolean =
     s.startsWith("~") || s.startsWith("/") || isWindowsDriveAbsolute(s)
 
@@ -287,7 +315,7 @@ private[tools] object FileRefs:
   def fileExtension(path: String): String =
     path.lastIndexOf('.') match
       case -1 => ""
-      case i  => path.substring(i + 1).toLowerCase
+      case i => path.substring(i + 1).toLowerCase
 
   /** Resolve a path string (supports ~ expansion) to a normalized java.nio.file.Path. */
   def resolvePath(s: String): Option[Path] =
@@ -297,9 +325,11 @@ private[tools] object FileRefs:
       if p.toString.nonEmpty then Some(p) else None
     catch case _: Exception => None
 
-  /** Closest existing ancestor of `p` — the single most useful hint when a
-    *  reference points at a path root that does not exist (author's case:
-    *  `~/projects/…` while the project workspace lives under `~/.nebflow/`). */
+  /**
+   * Closest existing ancestor of `p` — the single most useful hint when a
+   *  reference points at a path root that does not exist (author's case:
+   *  `~/projects/…` while the project workspace lives under `~/.nebflow/`).
+   */
   @annotation.tailrec
   def nearestExistingParent(p: Path, hops: Int = 0): Option[Path] =
     val parent = p.getParent
@@ -312,8 +342,10 @@ private[tools] object FileRefs:
   def hasTemplatePlaceholder(s: String): Boolean =
     s.contains("${") || s.contains("{{")
 
-  /** `Reject` with the shared `unresolvable` code — used by both wrappers for
-    *  "I could not turn this value into a filesystem path". */
+  /**
+   * `Reject` with the shared `unresolvable` code — used by both wrappers for
+   *  "I could not turn this value into a filesystem path".
+   */
   def unresolvable(value: String, detail: String): RefDecision.Reject =
     RefDecision.Reject(RejectedRef(value, None, FileRefFailure.Unresolvable, detail))
 
@@ -336,61 +368,71 @@ private[tools] object FileRefs:
   // `probeFile`（扩展名/存在性/大小）与端点 `nfFileVerdict`（realpath + credential
   // namespace + inode）施加 —— 见 [[servableByEndpoint]] 的复用声明。
 
-  /** The ONE path → URL query-parameter encoder (space → `%20`). Delegates to
-    *  [[nebflow.core.PathParamCodec]] — the shared single source the gateway legs
-    *  read too, so the two layers cannot drift. */
+  /**
+   * The ONE path → URL query-parameter encoder (space → `%20`). Delegates to
+   *  [[nebflow.core.PathParamCodec]] — the shared single source the gateway legs
+   *  read too, so the two layers cannot drift.
+   */
   def encodePathParam(path: String): String = nebflow.core.PathParamCodec.encode(path)
 
-  /** The ONE URL query-parameter → path decoder (fold bare `+`, then
-    *  percent-decode). `%2B` survives as a literal plus. */
+  /**
+   * The ONE URL query-parameter → path decoder (fold bare `+`, then
+   *  percent-decode). `%2B` survives as a literal plus.
+   */
   def decodePathParam(encoded: String): Option[String] = nebflow.core.PathParamCodec.decode(encoded)
 
-  /** Filesystem candidates named by ONE reference value, least-transformed first:
-    * the raw value, then its percent-decoded form, then its bare-`+`-folded form.
-    *
-    * 作者失败①的修法即此：`<link href="/Users/you/My%20Project/…/x.css">` 的
-    * **原样**串不是磁盘上的路径，解码形态才是。顺序是判据的一部分 —— 原样先试，
-    * 只有原样**没有命中**才会走到变形形态，因此一个真的含 `+` 或 `%` 的文件名
-    * 永远不会被变形形态顶掉。
-    *
-    * 变形只在串里**确实带** `%` 或 `+` 时产生（否则返回单元素表，零开销、零行为
-    * 变化）。 */
+  /**
+   * Filesystem candidates named by ONE reference value, least-transformed first:
+   * the raw value, then its percent-decoded form, then its bare-`+`-folded form.
+   *
+   * 作者失败①的修法即此：`<link href="/Users/you/My%20Project/…/x.css">` 的
+   * **原样**串不是磁盘上的路径，解码形态才是。顺序是判据的一部分 —— 原样先试，
+   * 只有原样**没有命中**才会走到变形形态，因此一个真的含 `+` 或 `%` 的文件名
+   * 永远不会被变形形态顶掉。
+   *
+   * 变形只在串里**确实带** `%` 或 `+` 时产生（否则返回单元素表，零开销、零行为
+   * 变化）。
+   */
   def pathFormCandidates(value: String): List[String] = nebflow.core.PathParamCodec.candidates(value)
 
   /** One reference taken through its candidate forms (see [[pathFormCandidates]]). */
   final case class CandidateHit(
-      /** the form that was actually probed (== the raw value when the raw form hit) */
-      form: String,
-      /** 0 = the raw value; >0 = a decoded form */
-      formIndex: Int,
-      /** the resolved path, when that form resolved to one */
-      path: Option[Path],
-      /** the verdict produced for `form` */
-      decision: RefDecision,
-      /** present only when a decoded form hit — the disclosure the author's order
-        * requires ("说明用了哪一形态") */
-      note: Option[String]
+    /** the form that was actually probed (== the raw value when the raw form hit) */
+    form: String,
+    /** 0 = the raw value; >0 = a decoded form */
+    formIndex: Int,
+    /** the resolved path, when that form resolved to one */
+    path: Option[Path],
+    /** the verdict produced for `form` */
+    decision: RefDecision,
+    /**
+     * present only when a decoded form hit — the disclosure the author's order
+     * requires ("说明用了哪一形态")
+     */
+    note: Option[String]
   )
 
   /** The note that must accompany a decoded-form hit. Empty when the raw form hit. */
   def formNote(value: String, form: String): String = nebflow.core.PathParamCodec.formNote(value, form)
 
-  /** Resolve ONE reference through its candidate forms, least-transformed first,
-    * returning the first form that yields anything other than "not found".
-    *
-    * 判据（作者失败①的修法）：**先试原样**；原样没有命中（`resolve` 解不出路径，或
-    * `probeFile` 报 `not-found`）才试解码形态。命中即用，并把用了哪一形态写进
-    * [[CandidateHit.note]]（回包/告警面必须显式说明）。
-    *
-    * 安全面：本函数只挑「去问哪个字符串」，它自己**不做任何准入**——每个候选形态都
-    * 原样过 `probeFile`（扩展名/存在性/大小/真可读/可服务），真准入仍由端点
-    * `nfFileVerdict`（realpath + credential namespace + inode）施加。变形形态因此
-    * 不可能造出「原串判不住、变形后判得住」的穿透：判据作用在 realpath 上，与
-    * 字符串形态无关。 */
+  /**
+   * Resolve ONE reference through its candidate forms, least-transformed first,
+   * returning the first form that yields anything other than "not found".
+   *
+   * 判据（作者失败①的修法）：**先试原样**；原样没有命中（`resolve` 解不出路径，或
+   * `probeFile` 报 `not-found`）才试解码形态。命中即用，并把用了哪一形态写进
+   * [[CandidateHit.note]]（回包/告警面必须显式说明）。
+   *
+   * 安全面：本函数只挑「去问哪个字符串」，它自己**不做任何准入**——每个候选形态都
+   * 原样过 `probeFile`（扩展名/存在性/大小/真可读/可服务），真准入仍由端点
+   * `nfFileVerdict`（realpath + credential namespace + inode）施加。变形形态因此
+   * 不可能造出「原串判不住、变形后判得住」的穿透：判据作用在 realpath 上，与
+   * 字符串形态无关。
+   */
   def resolveCandidates(
-      value: String,
-      resolve: String => Option[Path],
-      whenUnresolvable: String => RefDecision
+    value: String,
+    resolve: String => Option[Path],
+    whenUnresolvable: String => RefDecision
   ): CandidateHit =
     val candidates = pathFormCandidates(value)
     var index = 0
@@ -403,7 +445,7 @@ private[tools] object FileRefs:
           val decision = probeFile(value, p)
           val notFound = decision match
             case RefDecision.Reject(rejected) => rejected.failure == FileRefFailure.NotFound
-            case _                            => false
+            case _ => false
           if notFound && index < candidates.length - 1 then index += 1
           else
             hit = Some(
@@ -415,18 +457,21 @@ private[tools] object FileRefs:
                 Option(formNote(value, form)).filter(_.nonEmpty)
               )
             )
+      end match
+    end while
     hit.getOrElse(
       // Nothing resolved at all: report the raw form's own verdict (byte-identical
       // to the shipped behaviour for a value that never had a decodable sibling).
       CandidateHit(value, 0, None, whenUnresolvable(value), None)
     )
+  end resolveCandidates
 
   // ── the tool-side "can the endpoint actually serve this?" gate (②) ─────────
   //
   // 任务书 7(a)：`proxied` 不得再由「URL 字符串已发出」满足。判据四段：
   //   ① 解析成功（`probeFile` 既有：存在 + regular + 扩展名 + ≤200MB）；
   //   ② servability = **与端点同一份判据** —— 直接调**端点完整阶梯**的同一函数
-  //      `WebSocketRoutes.nfVerdictForReal`（= `nfFileVerdict` 在 `toRealPath` 之后的
+  //      `NfFilePolicy.nfVerdictForReal`（= `nfFileVerdict` 在 `toRealPath` 之后的
   //      全部步骤：credential namespace → R2 (dev,ino) 硬链接 → realpath 上的扩展名）
   //      + 同一份 `NfPathPolicy.memoized()`（同一 JVM、同一 data root、同一
   //      workspace），**零复制、零旁路**；判据抛异常时 fail-closed（当成不可服务），
@@ -442,11 +487,11 @@ private[tools] object FileRefs:
   // 「绿」而端点必然拒（真取回腿 401）——「计数绿而取回红」在本批修好的树上仍可
   // 发生。现在两侧调同一个函数，缺一条腿都不可能：判据的形状只有一份。
   //
-  // 依赖方向说明：`core` 引用 `gateway` 在本树有先例（`core/processor/
-  // TaskStuckWatcher.scala:8` 引 `gateway.WsHub`；`core/scheduler/
-  // ScheduledTaskActor.scala:10` 引 `gateway.SessionStore`），且任务书 7(a) 明文要求
-  // 「与端点同一份判据（🔴 复用，禁复制）」。复制一份白名单/判据才是本批明令禁止
-  // 的旁路，所以这里调同一个函数而不镜像它。
+  // 依赖方向说明（Phase 5 解耦更新）：判据本体仍在 `gateway.NfFilePolicy`（任务书
+  // 7(a) 明文要求「与端点同一份判据（🔴 复用，禁复制）」，复制一份白名单/判据是
+  // 明令禁止的旁路）；core 经窄端口 `nebflow.core.FilePolicyPort` 调**同一个函数**
+  // 而不镜像它（gateway 侧适配、GatewayMain 装配接线），不再直接引用
+  // `nebflow.gateway` 任何符号。
 
   // ── the two legs ask different questions (返工 r2, 2026-09-18 · 复核位 F1) ────
   //
@@ -460,79 +505,84 @@ private[tools] object FileRefs:
   // 只认「文件是不是凭据」那两层（判据与理由见 [[inlineMayTakeOver]]）。两腿的差异
   // 是有意的，逐条落在 spec 里（`CardToolPathFormSpec` / `FileRefsServabilityScopeSpec`）。
 
-  /** `None` = the endpoint's own judge would serve this real path; `Some(reason,
-    * message)` = it would refuse, in the endpoint's own words. Fail-closed: a
-    * judge that cannot be consulted counts as a refusal, never as permission.
-    *
-    * Projection of [[servableByEndpointLayered]] (same call, same policy) — the
-    * full ladder, i.e. the question the **URL leg** must pass. The policy is
-    * `NfPathPolicy.current()`: the roots in force NOW, never a snapshot taken at
-    * the first call of this JVM (that snapshot made the verdict a function of
-    * process history — verifier F1 ②). */
+  /**
+   * `None` = the endpoint's own judge would serve this real path; `Some(reason,
+   * message)` = it would refuse, in the endpoint's own words. Fail-closed: a
+   * judge that cannot be consulted counts as a refusal, never as permission.
+   *
+   * Projection of [[servableByEndpointLayered]] (same call, same policy) — the
+   * full ladder, i.e. the question the **URL leg** must pass. The policy is
+   * `NfPathPolicy.current()`: the roots in force NOW, never a snapshot taken at
+   * the first call of this JVM (that snapshot made the verdict a function of
+   * process history — verifier F1 ②).
+   */
   def servableByEndpoint(real: Path): Option[(String, String)] =
     servableByEndpointLayered(real).map((_, reason, message) => (reason, message))
 
-  /** [[servableByEndpoint]] with the refusing layer — see
-    * [[nebflow.gateway.WebSocketRoutes.NfDenyLayer]]. The URL leg reads the
-    * two-tuple above; the one caller that must honour some layers and not others
-    * (the inline leg) reads this. */
+  /**
+   * [[servableByEndpoint]] with the refusing layer — see
+   * [[nebflow.gateway.NfFilePolicy.NfDenyLayer]]. The URL leg reads the
+   * two-tuple above; the one caller that must honour some layers and not others
+   * (the inline leg) reads this.
+   */
   def servableByEndpointLayered(
-      real: Path
-  ): Option[(nebflow.gateway.WebSocketRoutes.NfDenyLayer, String, String)] =
-    try
-      nebflow.gateway.WebSocketRoutes
-        .nfVerdictForRealLayer(real, nebflow.gateway.WebSocketRoutes.NfPathPolicy.current())
-        .map((layer, denied) => (layer, denied.reason, denied.message))
+    real: Path
+  ): Option[(FilePolicyPort.NfDenyLayer, String, String)] =
+    try FilePolicyPort.port.endpointVerdictLayer(real)
     catch
       case e: Throwable =>
         Some(
           (
-            nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace,
+            FilePolicyPort.NfDenyLayer.Namespace,
             "servability-judge-unavailable",
             s"the servability judge could not be consulted (${e.getClass.getSimpleName}) — " +
               "the reference is treated as unservable rather than assumed servable"
           )
         )
 
-  /** May the INLINE leg (`data:` embed) take over a refusal the endpoint made?
-    *
-    * 判据（一句话）：**只接管「端点可达性」那一层，不接管「文件身份」那几层。**
-    *   · `Namespace` = 端点只从数据根 / 项目 `.nebflow` 的某些子树往外服务 —— 内联腿
-    *     从不问端点要字节（它自己在工具侧把字节读出来嵌进载荷），这一层对它不成立；
-    *   · `Credential` / `CredentialInode` = 这个文件**本身**是凭据（凭据形态 / 指向
-    *     凭据 inode 的硬链接）—— 内联恰恰在把字节复制进载荷，正是这几层要拦的事，
-    *     **一律不接管**；
-    *   · `FileType` = 端点按 **real path** 的扩展名服务（符号链接借不到名字）—— 内联腿
-    *     自己按图片扩展名判（`EmbeddableImageExtensions`），同样不接管。
-    *
-    * ⇒ `true` 当且仅当：拒绝来自 `Namespace` 层 **且** 该文件的 inode 不是凭据 inode。
-    *
-    * 🔴 为什么还要**独立复问 inode 层**：端点阶梯在 `Namespace` 层就短路，会掩盖后面
-    * 的 inode 层（放在数据根顶层的、指向 `auth.json` 的硬链接，第一层报的就是
-    * `Namespace`）。故接管前单独问一次 inode —— 读的是**端点策略自己的字段**
-    * （`credentialInodes` + 同一个 `inodeKey`），零白名单复制、零旁路；
-    * 数据根的 `secrets/` 子树下的每个文件都在该快照里，所以那条路同样进不来。
-    *
-    * 判据不可得（策略读不到 / realpath 解不出）⇒ `false`（fail-closed：宁可不接管）。 */
+  /**
+   * May the INLINE leg (`data:` embed) take over a refusal the endpoint made?
+   *
+   * 判据（一句话）：**只接管「端点可达性」那一层，不接管「文件身份」那几层。**
+   *   · `Namespace` = 端点只从数据根 / 项目 `.nebflow` 的某些子树往外服务 —— 内联腿
+   *     从不问端点要字节（它自己在工具侧把字节读出来嵌进载荷），这一层对它不成立；
+   *   · `Credential` / `CredentialInode` = 这个文件**本身**是凭据（凭据形态 / 指向
+   *     凭据 inode 的硬链接）—— 内联恰恰在把字节复制进载荷，正是这几层要拦的事，
+   *     **一律不接管**；
+   *   · `FileType` = 端点按 **real path** 的扩展名服务（符号链接借不到名字）—— 内联腿
+   *     自己按图片扩展名判（`EmbeddableImageExtensions`），同样不接管。
+   *
+   * ⇒ `true` 当且仅当：拒绝来自 `Namespace` 层 **且** 该文件的 inode 不是凭据 inode。
+   *
+   * 🔴 为什么还要**独立复问 inode 层**：端点阶梯在 `Namespace` 层就短路，会掩盖后面
+   * 的 inode 层（放在数据根顶层的、指向 `auth.json` 的硬链接，第一层报的就是
+   * `Namespace`）。故接管前单独问一次 inode —— 读的是**端点策略自己的字段**
+   * （`credentialInodes` + 同一个 `inodeKey`），零白名单复制、零旁路；
+   * 数据根的 `secrets/` 子树下的每个文件都在该快照里，所以那条路同样进不来。
+   *
+   * 判据不可得（策略读不到 / realpath 解不出）⇒ `false`（fail-closed：宁可不接管）。
+   */
   def inlineMayTakeOver(path: Path, rejected: RejectedRef): Boolean =
     rejected.failure == FileRefFailure.NotServable &&
-      rejected.layer.contains(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace) &&
+      rejected.layer.contains(FilePolicyPort.NfDenyLayer.Namespace) &&
       credentialInodeClean(path)
 
-  /** `true` = this file's inode is NOT one of the endpoint policy's credential
-    * inodes (R2). Fail-closed: anything that cannot be established answers `false`,
-    * i.e. "do not take the refusal over". Asks the endpoint's own helper
-    * (`WebSocketRoutes.nfCredentialInode`) with the endpoint's own policy — no
-    * second inode scan, no copied snapshot. */
+  /**
+   * `true` = this file's inode is NOT one of the endpoint policy's credential
+   * inodes (R2). Fail-closed: anything that cannot be established answers `false`,
+   * i.e. "do not take the refusal over". Asks the endpoint's own helper
+   * (`NfFilePolicy.nfCredentialInode`) with the endpoint's own policy — no
+   * second inode scan, no copied snapshot.
+   */
   def credentialInodeClean(path: Path): Boolean =
-    try
-      val policy = nebflow.gateway.WebSocketRoutes.NfPathPolicy.current()
-      !nebflow.gateway.WebSocketRoutes.nfCredentialInode(path.toRealPath(), policy)
+    try !FilePolicyPort.port.credentialInodeHit(path.toRealPath())
     catch case _: Throwable => false
 
-  /** The executable fix for one of the endpoint's own refusal reasons — a warning
-    * that only says "no" costs the agent a second round trip; one that says what
-    * to do instead does not. Keyed by the endpoint's `reason` (never by prose). */
+  /**
+   * The executable fix for one of the endpoint's own refusal reasons — a warning
+   * that only says "no" costs the agent a second round trip; one that says what
+   * to do instead does not. Keyed by the endpoint's `reason` (never by prose).
+   */
   def servabilityHint(reason: String): String =
     reason match
       case "credential-hardlink" =>
@@ -546,8 +596,10 @@ private[tools] object FileRefs:
           s"(data root: ${DataRootServedNamespacesText}; project .nebflow: evidence*/**) " +
           "and reference it from there"
 
-  /** HEAD-equivalent readability: regular file, non-zero size, first byte really
-    * readable. `None` = readable, `Some(reason)` = not. */
+  /**
+   * HEAD-equivalent readability: regular file, non-zero size, first byte really
+   * readable. `None` = readable, `Some(reason)` = not.
+   */
   def readableFirstByte(path: Path): Option[String] =
     try
       if !Files.isRegularFile(path) then Some("the path is not a regular file")
@@ -569,23 +621,35 @@ private[tools] object FileRefs:
 
   /**
    * Every prefix the gateway serves itself (never from disk through
-   * `/api/nf-file`): `WebSocketRoutes.jsRoutes:5218` (`/js/`), `assetsRoutes:5139`
+   * `/api/nf-file`): `StaticRoutes.jsRoutes:5218` (`/js/`), `assetsRoutes:5139`
    * (`/assets/`), `uploadsRoutes:5174`, `GET -> Root / "css" / file` (`/css/`),
    * the vendor cases `:719-755`, `agents:782`, `voice-models:805`.
    */
   val AppRoutePrefixes: List[String] =
     List("/js/", "/css/", "/assets/", "/vendor/", "/uploads/", "/voice-models/", "/agents/")
 
-  /** Root-level static files served by the `Root / fileName` case
-    *  (`WebSocketRoutes.scala:714`). A card/HTML that references `/favicon-32.png`
-    *  means the app's own asset, not a file at the filesystem root. */
+  /**
+   * Root-level static files served by the `Root / fileName` case
+   *  (`WebSocketRoutes.scala:714`). A card/HTML that references `/favicon-32.png`
+   *  means the app's own asset, not a file at the filesystem root.
+   */
   val AppRouteRootFiles: Set[String] =
-    Set("/style.css", "/app.js", "/favicon.ico", "/favicon-16.png", "/favicon-32.png",
-      "/favicon-180.png", "/favicon-192.png", "/favicon-512.png")
+    Set(
+      "/style.css",
+      "/app.js",
+      "/favicon.ico",
+      "/favicon-16.png",
+      "/favicon-32.png",
+      "/favicon-180.png",
+      "/favicon-192.png",
+      "/favicon-512.png"
+    )
 
-  /** The gateway route a value addresses, if any. A relative value is read as
-    *  web-root-relative (`js/app.js` → `/js/app.js`), which is how a browser
-    *  inside a card/Canvas iframe resolves it. */
+  /**
+   * The gateway route a value addresses, if any. A relative value is read as
+   *  web-root-relative (`js/app.js` → `/js/app.js`), which is how a browser
+   *  inside a card/Canvas iframe resolves it.
+   */
   def appRoute(value: String): Option[String] =
     val v = if value.startsWith("/") then value else "/" + value
     if v.startsWith("//") || v.contains(":") then None
@@ -611,7 +675,7 @@ private[tools] object FileRefs:
   def applyAppRouteExemption(value: String, verdict: RefDecision): RefDecision =
     verdict match
       case reject: RefDecision.Reject => appRoute(value).fold(verdict)(RefDecision.Exempt(_))
-      case other                      => other
+      case other => other
 
   /**
    * Probe an already-resolved absolute path — the shared core both tools use.
@@ -729,6 +793,8 @@ private[tools] object FileRefs:
                                   "path (encoder/decoder drift) — the endpoint would look for a different path"
                               )
                             )
+            end match
+          end if
       catch
         case e: Exception =>
           RefDecision.Reject(
@@ -739,6 +805,8 @@ private[tools] object FileRefs:
               s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
             )
           )
+    end if
+  end probeFile
 
   // ── inline policy (shared by Card and Pop) ────────────────────────────────
   //
@@ -748,7 +816,7 @@ private[tools] object FileRefs:
   //
   // Why the reference leg is not enough (author case, both faces):
   //   - a ticket is minted only for paths the read endpoint's namespace judge
-  //     allows (`WebSocketRoutes.nfCredentialDeny`): the data root served ONLY
+  //     allows (`NfFilePolicy.nfCredentialDeny`): the data root served ONLY
   //     `projects/uploads/plots/workspace-items/voice-models`, so a screenshot
   //     under `<dataRoot>/docs/**` was refused (`credential-path`) → no ticket
   //     → the credential-free URL answered 401 → placeholder / error panel.
@@ -779,65 +847,78 @@ private[tools] object FileRefs:
   // resource face: `src=`, `srcset` candidates, CSS `url(...)`) and Pop's HTML
   // `<img src>` face plus Pop's directly-opened-image face.
 
-  /** Max single image size to embed as a base64 data URI (5 MB). Larger images
-    * keep the `/api/nf-file` reference and are reported as `deferred`/`proxied`.
-    *
-    * This is the PER-ITEM gate and it is unchanged by the cumulative budget
-    * below: `isInlineImage` still answers exactly what it used to. */
+  /**
+   * Max single image size to embed as a base64 data URI (5 MB). Larger images
+   * keep the `/api/nf-file` reference and are reported as `deferred`/`proxied`.
+   *
+   * This is the PER-ITEM gate and it is unchanged by the cumulative budget
+   * below: `isInlineImage` still answers exactly what it used to.
+   */
   val MaxEmbedImageSize: Long = 5L * 1024 * 1024
 
-  /** Cumulative inline budget for ONE tool call (40,000 characters of
-    * `data:` URI text), 2026-09-16 img-ticket batch i / #687-C (author ruling).
-    *
-    * 判据（逐字）：**单次工具调用内所有内联项合计 ≤ 40,000 字符**。单图 5MB
-    * 上限（[[MaxEmbedImageSize]]）不变，两道闸是「与」关系：一项被内联，当且
-    * 仅当它自身过单图闸 **且** 其 `data:` URI 字数不超过**当时剩余**的累计预算。
-    *
-    * 确定性处置（可复算，见 [[embedImage]] / [[InlineBudget]]）：内联项按**扫描
-    * 顺序**（Card = 文档顺序；Pop = `<img src>` 出现的顺序；直开图片腿 = 唯一一
-    * 项）逐项累计，**先到先占**；某项当前剩余额度装不下 ⇒ 该项**不内联、零扣费、
-    * 不阻断后续**（回落既有引用腿 `/api/nf-file`，Pop 计入 `deferred`、Card 计入
-    * `deferred`），后续较小的项仍可占用剩余额度。同一份输入 ⇒ 同一组内联判定
-    * （无随机、无 I/O 顺序依赖）：费用 = `data:` URI 的**精确字符数** =
-    * `"data:" + mime + ";base64,"` 前缀长度 + `4 × ceil(size/3)`（JDK Base64 不折
-    * 行、不省略补位），见 [[dataUriChars]]。
-    *
-    * 用户可见语义：超限项在卡片/画布里显示为 `/api/nf-file` 引用（渲染时铸票），
-    * 而非内嵌字节 —— 于是它与所有引用腿一样依赖票据，路径不在可服务命名空间内
-    * 时会显示占位/错误而非图片；重放时由既有铸票机制重新取票（`data:` 内嵌项则
-    * 随标记持久化、无需请求）。 */
+  /**
+   * Cumulative inline budget for ONE tool call (40,000 characters of
+   * `data:` URI text), 2026-09-16 img-ticket batch i / #687-C (author ruling).
+   *
+   * 判据（逐字）：**单次工具调用内所有内联项合计 ≤ 40,000 字符**。单图 5MB
+   * 上限（[[MaxEmbedImageSize]]）不变，两道闸是「与」关系：一项被内联，当且
+   * 仅当它自身过单图闸 **且** 其 `data:` URI 字数不超过**当时剩余**的累计预算。
+   *
+   * 确定性处置（可复算，见 [[embedImage]] / [[InlineBudget]]）：内联项按**扫描
+   * 顺序**（Card = 文档顺序；Pop = `<img src>` 出现的顺序；直开图片腿 = 唯一一
+   * 项）逐项累计，**先到先占**；某项当前剩余额度装不下 ⇒ 该项**不内联、零扣费、
+   * 不阻断后续**（回落既有引用腿 `/api/nf-file`，Pop 计入 `deferred`、Card 计入
+   * `deferred`），后续较小的项仍可占用剩余额度。同一份输入 ⇒ 同一组内联判定
+   * （无随机、无 I/O 顺序依赖）：费用 = `data:` URI 的**精确字符数** =
+   * `"data:" + mime + ";base64,"` 前缀长度 + `4 × ceil(size/3)`（JDK Base64 不折
+   * 行、不省略补位），见 [[dataUriChars]]。
+   *
+   * 用户可见语义：超限项在卡片/画布里显示为 `/api/nf-file` 引用（渲染时铸票），
+   * 而非内嵌字节 —— 于是它与所有引用腿一样依赖票据，路径不在可服务命名空间内
+   * 时会显示占位/错误而非图片；重放时由既有铸票机制重新取票（`data:` 内嵌项则
+   * 随标记持久化、无需请求）。
+   */
   val MaxInlinePayloadChars: Int = 40000
 
   /** Why an image that passed the per-image gate was not embedded. */
   enum InlineSkip:
-    /** Not an embeddable image at all: extension outside
-      * [[EmbeddableImageExtensions]] or larger than [[MaxEmbedImageSize]]. */
+    /**
+     * Not an embeddable image at all: extension outside
+     * [[EmbeddableImageExtensions]] or larger than [[MaxEmbedImageSize]].
+     */
     case NotEmbeddable
 
-    /** Inside the per-image gate, but the cumulative budget
-      * ([[MaxInlinePayloadChars]]) could not cover its `data:` URI. */
+    /**
+     * Inside the per-image gate, but the cumulative budget
+     * ([[MaxInlinePayloadChars]]) could not cover its `data:` URI.
+     */
     case OverBudget
 
-    /** Inside the per-image gate and covered by the budget, but the bytes could
-      * not be read — the caller decides (Card falls back to the proxy URL, Pop
-      * reports the same `other` rejection it used to). */
+    /**
+     * Inside the per-image gate and covered by the budget, but the bytes could
+     * not be read — the caller decides (Card falls back to the proxy URL, Pop
+     * reports the same `other` rejection it used to).
+     */
     case Unreadable(detail: String)
+  end InlineSkip
 
   /** Image extensions that can be embedded as data URIs. */
   val EmbeddableImageExtensions: Set[String] = Set("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp")
 
   /** Map an image extension to its MIME type (the inline set only). */
   def mimeFromExt(ext: String): String = ext.toLowerCase match
-    case "png"          => "image/png"
+    case "png" => "image/png"
     case "jpg" | "jpeg" => "image/jpeg"
-    case "gif"          => "image/gif"
-    case "webp"         => "image/webp"
-    case "svg"          => "image/svg+xml"
-    case "bmp"          => "image/bmp"
-    case _              => "application/octet-stream"
+    case "gif" => "image/gif"
+    case "webp" => "image/webp"
+    case "svg" => "image/svg+xml"
+    case "bmp" => "image/bmp"
+    case _ => "application/octet-stream"
 
-  /** Pure size/extension verdict for the inline policy (no I/O side effect
-    * beyond a `stat`; an unreadable path answers `false`). */
+  /**
+   * Pure size/extension verdict for the inline policy (no I/O side effect
+   * beyond a `stat`; an unreadable path answers `false`).
+   */
   def isInlineImage(path: Path): Boolean =
     val ext = fileExtension(path.toString)
     EmbeddableImageExtensions.contains(ext) && {
@@ -845,14 +926,16 @@ private[tools] object FileRefs:
       catch case _: Exception => false
     }
 
-  /** `Right("data:<mime>;base64,…")` for an inlineable image, `Left(why)` when
-    * the bytes could not be read (the caller decides: Card falls back to the
-    * proxy URL, Pop reports the same `other` rejection it used to).
-    *
-    * 🔴 This is the BYTES-level step only — it does NOT consult the per-image
-    * gate or the cumulative budget. Callers go through [[embedImage]], which
-    * consults both; this entry point stays for the specs that pin the encoding
-    * itself. */
+  /**
+   * `Right("data:<mime>;base64,…")` for an inlineable image, `Left(why)` when
+   * the bytes could not be read (the caller decides: Card falls back to the
+   * proxy URL, Pop reports the same `other` rejection it used to).
+   *
+   * 🔴 This is the BYTES-level step only — it does NOT consult the per-image
+   * gate or the cumulative budget. Callers go through [[embedImage]], which
+   * consults both; this entry point stays for the specs that pin the encoding
+   * itself.
+   */
   def readAsDataUri(path: Path): Either[String, String] =
     try
       val ext = fileExtension(path.toString)
@@ -860,39 +943,45 @@ private[tools] object FileRefs:
       Right(s"data:${mimeFromExt(ext)};base64,$b64")
     catch case e: Exception => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
 
-  /** The EXACT character count of the `data:` URI [[readAsDataUri]] produces for
-    * a file of `size` bytes with extension `ext`: the `"data:<mime>;base64,"`
-    * prefix plus the JDK Base64 output length `4 × ceil(size/3)` (the encoder
-    * neither wraps lines nor omits padding, so this is an identity, not an
-    * estimate). Pure — that is what makes the budget rule recomputable by hand
-    * from `(ordered paths, sizes)` alone. */
+  /**
+   * The EXACT character count of the `data:` URI [[readAsDataUri]] produces for
+   * a file of `size` bytes with extension `ext`: the `"data:<mime>;base64,"`
+   * prefix plus the JDK Base64 output length `4 × ceil(size/3)` (the encoder
+   * neither wraps lines nor omits padding, so this is an identity, not an
+   * estimate). Pure — that is what makes the budget rule recomputable by hand
+   * from `(ordered paths, sizes)` alone.
+   */
   def dataUriChars(size: Long, ext: String): Int =
     val prefix = s"data:${mimeFromExt(ext)};base64,"
     if size < 0L then Int.MaxValue
     else
-      val b64   = 4L * ((size + 2L) / 3L)
+      val b64 = 4L * ((size + 2L) / 3L)
       val total = prefix.length.toLong + b64
       if total > Int.MaxValue.toLong then Int.MaxValue else total.toInt
 
-  /** Order-sensitive accumulator for [[MaxInlinePayloadChars]] — ONE instance
-    * per tool call (never a shared/static one: two calls must not spend each
-    * other's budget).
-    *
-    * Semantics (the deterministic rule, see [[MaxInlinePayloadChars]]): an item
-    * is charged its exact `data:` URI length when the REMAINING balance covers
-    * it, and charged NOTHING when it does not. Refusing is therefore side-effect
-    * free: a later, smaller item still fits ("first come, first served", not
-    * "the first big item ends the pass"). [[release]] exists for the one path
-    * that charges before it can fail (a read error) so the accounting stays
-    * exact. */
+  /**
+   * Order-sensitive accumulator for [[MaxInlinePayloadChars]] — ONE instance
+   * per tool call (never a shared/static one: two calls must not spend each
+   * other's budget).
+   *
+   * Semantics (the deterministic rule, see [[MaxInlinePayloadChars]]): an item
+   * is charged its exact `data:` URI length when the REMAINING balance covers
+   * it, and charged NOTHING when it does not. Refusing is therefore side-effect
+   * free: a later, smaller item still fits ("first come, first served", not
+   * "the first big item ends the pass"). [[release]] exists for the one path
+   * that charges before it can fail (a read error) so the accounting stays
+   * exact.
+   */
   final class InlineBudget(val maxChars: Int = MaxInlinePayloadChars):
     private var used: Int = 0
 
     /** Characters already spent by embedded inlines. */
     def usedChars: Int = used
 
-    /** What is left — never negative (an item that cannot fit is refused
-      * without charging). */
+    /**
+     * What is left — never negative (an item that cannot fit is refused
+     * without charging).
+     */
     def remainingChars: Int = math.max(0, maxChars - used)
 
     /** Charge `chars` when it fits, else refuse and leave the budget untouched. */
@@ -907,21 +996,27 @@ private[tools] object FileRefs:
     def release(chars: Int): Unit =
       used = math.max(0, used - math.max(0, chars))
 
-  /** The ONE inline decision both tools use (2026-09-16 img-ticket batch i):
-    * `Right(dataUri)` = embed these bytes; `Left(skip)` = leave the reference
-    * leg alone.
-    *
-    * Order of the two gates is deliberate and user-visible: the PER-IMAGE gate
-    * ([[isInlineImage]]) is asked first, so an oversize/wrong-format image is
-    * reported as [[InlineSkip.NotEmbeddable]] and consumes no budget (its bytes
-    * could not be embedded at any balance), while an image that is merely too
-    * big for the REMAINING budget answers [[InlineSkip.OverBudget]]. The two
-    * reasons are distinguishable in the counters, so a reader can tell "this
-    * file can never be inline" from "this call already spent its budget". */
+  end InlineBudget
+
+  /**
+   * The ONE inline decision both tools use (2026-09-16 img-ticket batch i):
+   * `Right(dataUri)` = embed these bytes; `Left(skip)` = leave the reference
+   * leg alone.
+   *
+   * Order of the two gates is deliberate and user-visible: the PER-IMAGE gate
+   * ([[isInlineImage]]) is asked first, so an oversize/wrong-format image is
+   * reported as [[InlineSkip.NotEmbeddable]] and consumes no budget (its bytes
+   * could not be embedded at any balance), while an image that is merely too
+   * big for the REMAINING budget answers [[InlineSkip.OverBudget]]. The two
+   * reasons are distinguishable in the counters, so a reader can tell "this
+   * file can never be inline" from "this call already spent its budget".
+   */
   def embedImage(path: Path, budget: InlineBudget): Either[InlineSkip, String] =
     if !isInlineImage(path) then Left(InlineSkip.NotEmbeddable)
     else
-      val sizeTry = try Some(Files.size(path)) catch case _: Exception => None
+      val sizeTry =
+        try Some(Files.size(path))
+        catch case _: Exception => None
       sizeTry match
         // A 0-byte file has an "empty" data URI, which the browser renders as a
         // broken element — embedding it would make `inlined` count a reference
@@ -932,7 +1027,7 @@ private[tools] object FileRefs:
         case other =>
           val cost = other match
             case Some(size) => dataUriChars(size, fileExtension(path.toString))
-            case None       => Int.MaxValue
+            case None => Int.MaxValue
           if !budget.tryCharge(cost) then Left(InlineSkip.OverBudget)
           else
             readAsDataUri(path) match
@@ -940,12 +1035,15 @@ private[tools] object FileRefs:
               case Left(detail) =>
                 budget.release(cost)
                 Left(InlineSkip.Unreadable(detail))
+      end match
 
   // ── warning + counter payload shapes (shared by Card and Pop) ─────────────
 
-  /** Distinct rejected references listed in a tool result; further ones are
-    *  counted but not listed, so a pathological document cannot blow up the
-    *  result. */
+  /**
+   * Distinct rejected references listed in a tool result; further ones are
+   *  counted but not listed, so a pathological document cannot blow up the
+   *  result.
+   */
   val MaxListedWarnings = 20
 
   /** Group identical (value, reason) rejections, preserving first-seen order. */
@@ -955,12 +1053,14 @@ private[tools] object FileRefs:
       val key = (rejected.value, rejected.failure.code)
       grouped.get(key) match
         case Some((first, count)) => grouped.update(key, (first, count + 1))
-        case None                 => grouped.update(key, (rejected, 1))
+        case None => grouped.update(key, (rejected, 1))
     }
     grouped.values.toList
 
-  /** The `warnings` array — one object per distinct rejected reference
-    *  (原始串 → 解析后路径 → 失败原因 + count). */
+  /**
+   * The `warnings` array — one object per distinct rejected reference
+   *  (原始串 → 解析后路径 → 失败原因 + count).
+   */
   def warningsJson(listed: List[(RejectedRef, Int)]): Json =
     Json.arr(
       listed.map { case (rejected, count) =>
@@ -974,20 +1074,24 @@ private[tools] object FileRefs:
       }*
     )
 
-  /** The `fileRefs` counter object. Key order is stable — `proxied`, `failed`,
-    *  `omitted` (as shipped by the carderr batch) then the additive `exempt` —
-    *  so a reader can diff payload heads across the change. `extra` carries a
-    *  tool-specific counter (`deferred` for Pop) after those. */
+  /**
+   * The `fileRefs` counter object. Key order is stable — `proxied`, `failed`,
+   *  `omitted` (as shipped by the carderr batch) then the additive `exempt` —
+   *  so a reader can diff payload heads across the change. `extra` carries a
+   *  tool-specific counter (`deferred` for Pop) after those.
+   */
   def fileRefsJson(proxied: Int, failed: Int, omitted: Int, exempt: Int, extra: List[(String, Int)] = Nil): Json =
     Json.obj(
       (List("proxied" -> proxied, "failed" -> failed, "omitted" -> omitted, "exempt" -> exempt) ++ extra)
         .map((k, v) => k -> v.asJson)*
     )
 
-  /** Marker for tools whose result is free text (Pop): the counters ride on a
-    *  single line `fileRefs: {…}` that `summarizeResult` can read back. It can
-    *  never collide with Card's payload, where the key appears as
-    *  `"fileRefs":{…}` inside one longer line. */
+  /**
+   * Marker for tools whose result is free text (Pop): the counters ride on a
+   *  single line `fileRefs: {…}` that `summarizeResult` can read back. It can
+   *  never collide with Card's payload, where the key appears as
+   *  `"fileRefs":{…}` inside one longer line.
+   */
   val CountsMarker = "fileRefs: "
 
   def countsIn(result: String): Option[Json] =

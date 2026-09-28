@@ -6,13 +6,13 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -26,7 +26,7 @@ import scala.concurrent.duration.*
  * 覆盖：
  *  - ① 三值语义 + legacy 解析（R1/R2/R3/R5；含存量两条腿 channel-additive 零漂移）
  *  - ② 值域校验可行动错误（NODE_NOTIFY_INVALID）+ 未声明 ⇒ 缺键 + 载荷条件键 `notify`
- *  - ③ R5 抑制实测（补投扫描腿：不投根 + 记账；**主路径腿**：真实引擎 nebulaDelivery）
+ *  - ③ R5 抑制实测（补投扫描腿：不投根 + 记账；**主路径腿**：真实引擎 rootDelivery）
  *  - ④ M1 signal 边不受策略影响（只记账不通报，策略不得升根）
  *  - ⑤ R14 failed 不豁免（silent 节点 failed 仍回流分发器）
  *  - ⑥ M2 链摘要 ≥2 成员（正控发 / 负控单成员链不发且不下发 chainId）
@@ -44,6 +44,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("test-agent", "project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -56,16 +57,17 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
-  override def afterEach(context: munit.AfterEach): Unit  = ProjectRuntimeRegistry.clear
+  override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
   // ── harness ────────────────────────────────────────────────────────────
 
   private class FuncLlm(respond: String => IO[String]):
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream.eval(respond(text)).flatMap(reply => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
@@ -112,7 +114,10 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def waitUntil(timeout: FiniteDuration, every: Long = 50)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
@@ -125,27 +130,50 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  private def mkEngine(store: FlowMapStore, system: ActorSystem, res: SharedResources,
-                       ws: os.Path, id: String): NodeEngine =
-    new NodeEngine(store, system, res, (_: Json) => IO.unit, ws.toString, "nebula-root", id,
-      emitEvent = (_, _, _) => IO.unit, reportGateHold = Some(false),
+  private def mkEngine(
+    store: FlowMapStore,
+    system: ActorSystem,
+    res: SharedResources,
+    ws: os.Path,
+    id: String
+  ): NodeEngine =
+    new NodeEngine(
+      store,
+      system,
+      res,
+      (_: Json) => IO.unit,
+      ws.toString,
+      "nebula-root",
+      id,
+      emitEvent = (_, _, _) => IO.unit,
+      reportGateHold = Some(false),
       // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
       // 本 fixture 主题 = 通知策略/投根判据本身（③ 补投扫描腿三态），其断言直接数
       // 注入条数 ⇒ 窗会改变「几件一起到」的读数。窗本体由 `RootNotifyBatchSpec` 专项覆盖；
       // 🔴 原断言一字未改。
-      rootNotifyQuietMs = Some(0))
+      rootNotifyQuietMs = Some(0)
+    )
 
-  /** 完整挂载（NodeEdit 的 ProjectRuntimeRegistry 前置；与 NotifyDispatcherSpec.mountReal 同款：
-    * `reportGateHold=false` 仅测试面）。 */
+  /**
+   * 完整挂载（NodeEdit 的 ProjectRuntimeRegistry 前置；与 NotifyDispatcherSpec.mountReal 同款：
+   * `reportGateHold=false` 仅测试面）。
+   */
   private def mountReal(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
-    val pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-      createdAt = System.currentTimeMillis())
+    val pd = ProjectDef(
+      name = name,
+      workspace = ws.toString,
+      agentFile = (ws / "AGENTS.md").toString,
+      createdAt = System.currentTimeMillis()
+    )
     for
       store <- FlowMapStore.open(name, ws.toString)
-      board <- IO(TaskBoardStore.open(name, ws.toString)).map(Some(_): Option[TaskBoardStore])
+      board <- IO(TaskBoardStore.open(name, ws.toString))
+        .map(Some(_): Option[TaskBoardStore])
         .handleErrorWith(_ => IO.pure(None))
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -167,57 +195,93 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
+    end for
+
+  end mountReal
+
   /** 根会话捕获 actor（ImmediateInput 三面：text / source / eventType）。 */
   private def registerNebulaCapture(
-      res: SharedResources, system: ActorSystem
+    res: SharedResources,
+    system: ActorSystem
   ): IO[Ref[IO, List[(String, Option[String], Option[String])]]] =
     Ref.of[IO, List[(String, Option[String], Option[String])]](Nil).flatMap { captured =>
       lazy val captureBehavior: nebflow.actor.Behavior[AgentCommand] = Behaviors.receive[AgentCommand] { (_, msg) =>
         msg match
-          case im: AgentCommand.ImmediateInput => captured.update(_ :+ ((im.text, im.source, im.eventType))).as(captureBehavior)
-          case _                               => IO.pure(captureBehavior)
+          case im: AgentCommand.ImmediateInput =>
+            captured.update(_ :+ ((im.text, im.source, im.eventType))).as(captureBehavior)
+          case _ => IO.pure(captureBehavior)
       }
       system.spawn(captureBehavior, s"b64-nebula-${scala.util.Random.nextInt(100000)}").flatMap { ref =>
         val now = System.currentTimeMillis()
         res.agentRegistry
-          .update(_ + ("nebula-root" -> AgentRecord(
-            sessionId = "nebula-root", ref = ref, kind = AgentKind.Root, rootSessionId = "nebula-root",
-            startedAt = now, lastActivityMs = now)))
+          .update(
+            _ + ("nebula-root" -> AgentRecord(
+              sessionId = "nebula-root",
+              ref = ref,
+              kind = AgentKind.Root,
+              rootSessionId = "nebula-root",
+              startedAt = now,
+              lastActivityMs = now
+            ))
+          )
           .as(captured)
       }
     }
 
-  private def nid(id: String, name: String, policy: Option[String], out: List[OutEdge],
-                  status: String = NodeLifecycle.Completed, flag: Boolean = false,
-                  result: Option[String] = Some("done"), delivered: Option[Long] = None): NodeDef =
-    NodeDef(id = id, name = name, agent = "general", status = status, out = out, createdAt = 1L,
-      notifyPolicy = policy, notifyDispatcher = flag, result = result, nebulaDeliveredAt = delivered)
+  private def nid(
+    id: String,
+    name: String,
+    policy: Option[String],
+    out: List[OutEdge],
+    status: String = NodeLifecycle.Completed,
+    flag: Boolean = false,
+    result: Option[String] = Some("done"),
+    delivered: Option[Long] = None
+  ): NodeDef =
+    NodeDef(
+      id = id,
+      name = name,
+      agent = "general",
+      status = status,
+      out = out,
+      createdAt = 1L,
+      notifyPolicy = policy,
+      notifyDispatcher = flag,
+      result = result,
+      nebulaDeliveredAt = delivered
+    )
 
-  private val nebulaResult = OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result)
-  private val nebulaSignal = OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)
+  private val nebulaResult = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result)
+  private val nebulaSignal = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)
   private val toDown = OutEdge("n-b", Set(OutEdge.Pass), OutEdge.Result)
 
   // ── ① 三值 + legacy 解析（R1/R2/R3/R5）────────────────────────────────
 
   test("① legacy 解析：out 含 :result pass Nebula 边 ⇒ 投根；否则 flag ⇒ dispatcher；否则 silent（两腿 additive）") {
     // 行 1：out 含 Nebula（:result pass）⇒ 根可见
-    assert(NotifyPolicy.completedRootVisible(nid("n1", "root-legacy", None, List(nebulaResult))),
-      "legacy 行 1：out 含 :result pass Nebula 边 ⇒ root（今天确实投根）")
+    assert(
+      NotifyPolicy.completedRootVisible(nid("n1", "root-legacy", None, List(nebulaResult))),
+      "legacy 行 1：out 含 :result pass Nebula 边 ⇒ root（今天确实投根）"
+    )
     // 行 2：out 无 Nebula ∧ flag ⇒ dispatcher（不是 root）
     val flagOnly = nid("n2", "flag-legacy", None, List(toDown), flag = true)
     assert(!NotifyPolicy.completedRootVisible(flagOnly), "legacy 行 2：不投根")
     assert(NotifyPolicy.completionNotifiesDispatcher(flagOnly), "legacy 行 2：回分发器 ✓")
     // 行 3：两者皆无 ⇒ silent
     val silentLegacy = nid("n3", "silent-legacy", None, List(toDown))
-    assert(!NotifyPolicy.completedRootVisible(silentLegacy) && !NotifyPolicy.completionNotifiesDispatcher(silentLegacy),
-      "legacy 行 3：两处皆不投（仅落 Flow Map）")
+    assert(
+      !NotifyPolicy.completedRootVisible(silentLegacy) && !NotifyPolicy.completionNotifiesDispatcher(silentLegacy),
+      "legacy 行 3：两处皆不投（仅落 Flow Map）"
+    )
     // 并存形态（out 含 Nebula ∧ flag=true）：单值表无格，两条腿各自沿用今天行为（channel-additive）
     val both = nid("n4", "both-legacy", None, List(nebulaResult), flag = true)
     assert(NotifyPolicy.completedRootVisible(both), "并存形态：根腿照旧（今天确实投根）")
     assert(NotifyPolicy.completionNotifiesDispatcher(both), "并存形态：分发器腿照旧——单值表会让这 4 个存量节点丢腿")
     // bare Nebula = 出口标记（:signal）⇒ 不是投根声明（与 redelivery 扫描 N3 收窄同源）
-    assert(!NotifyPolicy.completedRootVisible(nid("n5", "marker", None, List(nebulaSignal))),
-      "bare Nebula（:signal 出口标记）不构成投根声明")
+    assert(
+      !NotifyPolicy.completedRootVisible(nid("n5", "marker", None, List(nebulaSignal))),
+      "bare Nebula（:signal 出口标记）不构成投根声明"
+    )
   }
 
   test("① 显式声明覆盖 legacy：root/dispatcher/silent 各自裁决两条腿") {
@@ -227,22 +291,37 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
     // `(pass)Nebula` :result 边（R5）。旧判据的两条断言原文保留于批报告「判据变更登记」栏。
     // 新判据：`notify` 管辖分发器/链级通知通道；`(gates)Nebula` :result 边是**上根声明**，
     // 其效力不由 notify 裁决（与失败腿 R14 对称——`deliverFailed` 的 Nebula 腿从不查策略）。
-    assert(NotifyPolicy.completedRootVisible(nid("b", "b", Some(NotifyPolicy.Dispatcher), List(nebulaResult))),
-      "#226 RED 臂：显式 (pass)Nebula :result 边 + notify=dispatcher ⇒ 仍须投根（旧判据抑制）")
-    assert(NotifyPolicy.completedRootVisible(nid("c", "c", Some(NotifyPolicy.Silent), List(nebulaResult))),
-      "#226 RED 臂：显式 (pass)Nebula :result 边 + notify=silent ⇒ 仍须投根（旧判据抑制）")
+    assert(
+      NotifyPolicy.completedRootVisible(nid("b", "b", Some(NotifyPolicy.Dispatcher), List(nebulaResult))),
+      "#226 RED 臂：显式 (pass)Nebula :result 边 + notify=dispatcher ⇒ 仍须投根（旧判据抑制）"
+    )
+    assert(
+      NotifyPolicy.completedRootVisible(nid("c", "c", Some(NotifyPolicy.Silent), List(nebulaResult))),
+      "#226 RED 臂：显式 (pass)Nebula :result 边 + notify=silent ⇒ 仍须投根（旧判据抑制）"
+    )
     // GREEN 臂（零放宽）：**无**显式 :result 根出口时，notify 对根通道零影响（本就无投递）
-    assert(!NotifyPolicy.completedRootVisible(nid("b2", "b2", Some(NotifyPolicy.Dispatcher), List(toDown))),
-      "#226 GREEN：无 Nebula :result 边 ⇒ 不投根（notify=dispatcher 不制造投递）")
-    assert(!NotifyPolicy.completedRootVisible(nid("c2", "c2", Some(NotifyPolicy.Silent), List(toDown))),
-      "#226 GREEN：无 Nebula :result 边 ⇒ 不投根")
+    assert(
+      !NotifyPolicy.completedRootVisible(nid("b2", "b2", Some(NotifyPolicy.Dispatcher), List(toDown))),
+      "#226 GREEN：无 Nebula :result 边 ⇒ 不投根（notify=dispatcher 不制造投递）"
+    )
+    assert(
+      !NotifyPolicy.completedRootVisible(nid("c2", "c2", Some(NotifyPolicy.Silent), List(toDown))),
+      "#226 GREEN：无 Nebula :result 边 ⇒ 不投根"
+    )
     // GREEN 臂（零放宽，M1 口径逐字保留）：bare Nebula（:signal 出口标记）**不是**投根声明，
     // 策略（含 root）不得使之升根 —— 通道分立不得把出口标记误升为投根。
-    assert(!NotifyPolicy.completedRootVisible(nid("s1", "s1", Some(NotifyPolicy.Root), List(nebulaSignal))),
-      "#226 GREEN：notify=root 也不得把 :signal 出口标记升根（M1 逐字保留）")
-    assert(!NotifyPolicy.completedRootVisible(nid("s2", "s2", Some(NotifyPolicy.Dispatcher), List(nebulaSignal))),
-      "#226 GREEN：notify=dispatcher + :signal 出口标记 ⇒ 不投根")
-    assert(NotifyPolicy.completionNotifiesDispatcher(nid("d", "d", Some(NotifyPolicy.Dispatcher), Nil)), "dispatcher ⇒ 回流 ✓")
+    assert(
+      !NotifyPolicy.completedRootVisible(nid("s1", "s1", Some(NotifyPolicy.Root), List(nebulaSignal))),
+      "#226 GREEN：notify=root 也不得把 :signal 出口标记升根（M1 逐字保留）"
+    )
+    assert(
+      !NotifyPolicy.completedRootVisible(nid("s2", "s2", Some(NotifyPolicy.Dispatcher), List(nebulaSignal))),
+      "#226 GREEN：notify=dispatcher + :signal 出口标记 ⇒ 不投根"
+    )
+    assert(
+      NotifyPolicy.completionNotifiesDispatcher(nid("d", "d", Some(NotifyPolicy.Dispatcher), Nil)),
+      "dispatcher ⇒ 回流 ✓"
+    )
     assert(!NotifyPolicy.completionNotifiesDispatcher(nid("e", "e", Some(NotifyPolicy.Root), Nil)), "root ⇒ 不回流分发器")
     assert(!NotifyPolicy.completionNotifiesDispatcher(nid("f", "f", Some(NotifyPolicy.Silent), Nil)), "silent ⇒ 不回流")
     // 显式 silent 覆盖 legacy flag=true（写侧权威单点）
@@ -286,11 +365,21 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
     val now = System.currentTimeMillis()
     for
       res <- mkResources(system, tempRoot, new FuncLlm(_ => IO.pure("ok")).handle)
-      badPd = ProjectDef(name = "b64-m4-bad", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = now, notifyConfig = Some(NotifyConfig(quietMs = Some(60001L))))
+      badPd = ProjectDef(
+        name = "b64-m4-bad",
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = now,
+        notifyConfig = Some(NotifyConfig(quietMs = Some(60001L)))
+      )
       bad <- ProjectRuntimeRegistry.mount(badPd, system, res, None, "nebula-root").attempt
-      okPd = ProjectDef(name = "b64-m4-ok", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = now, notifyConfig = Some(NotifyConfig(quietMs = Some(20000L))))
+      okPd = ProjectDef(
+        name = "b64-m4-ok",
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = now,
+        notifyConfig = Some(NotifyConfig(quietMs = Some(20000L)))
+      )
       ok <- ProjectRuntimeRegistry.mount(okPd, system, res, None, "nebula-root").attempt
       _ <- ProjectRuntimeRegistry.unregister("b64-m4-ok")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -300,6 +389,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       assert(msg.contains(NotifyPolicy.QuietMsKey), s"报错必须指名键：$msg")
       assert(msg.contains("60000") && msg.contains("60001"), s"报错必须给区间与当前值：$msg")
       assert(ok.isRight, s"合法值挂载成功：$ok")
+    end for
   }
 
   // ── ③ R5 实测：抑制 + 记账 / 主路径 ───────────────────────────────────
@@ -313,25 +403,32 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       captured <- registerNebulaCapture(res, system)
       store <- FlowMapStore.open("b64-suppress", ws.toString)
       engine = mkEngine(store, system, res, ws, "b64-suppress")
-      _ <- store.mutate(s => s.copy(nodes = Map(
-        "n-disp" -> nid("n-disp", "disp", Some(NotifyPolicy.Dispatcher), List(nebulaResult)),
-        "n-silent" -> nid("n-silent", "silent", Some(NotifyPolicy.Silent), List(nebulaResult)),
-        "n-legacy" -> nid("n-legacy", "legacy", None, List(nebulaResult)),
-        // GREEN 臂（engine-defects 批 #226）：`:signal` 出口标记**不是**投根声明 ⇒
-        // 不被补投扫描选中（判据 = legacyRootVisible 的 `mode == Result` 合取项，逐字未动）
-        "n-marker" -> nid("n-marker", "marker", Some(NotifyPolicy.Root), List(nebulaSignal))
-      )))
-      _ <- engine.redeliverUnconsumedNebulaResults()
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          Map(
+            "n-disp" -> nid("n-disp", "disp", Some(NotifyPolicy.Dispatcher), List(nebulaResult)),
+            "n-silent" -> nid("n-silent", "silent", Some(NotifyPolicy.Silent), List(nebulaResult)),
+            "n-legacy" -> nid("n-legacy", "legacy", None, List(nebulaResult)),
+            // GREEN 臂（engine-defects 批 #226）：`:signal` 出口标记**不是**投根声明 ⇒
+            // 不被补投扫描选中（判据 = legacyRootVisible 的 `mode == Result` 合取项，逐字未动）
+            "n-marker" -> nid("n-marker", "marker", Some(NotifyPolicy.Root), List(nebulaSignal))
+          )
+        )
+      )
+      _ <- engine.redeliverUnconsumedRootResults()
       after1 <- store.snapshot
       capturedTexts1 <- captured.get
-      _ <- engine.redeliverUnconsumedNebulaResults() // 第二轮（记账后不应再投）
+      _ <- engine.redeliverUnconsumedRootResults() // 第二轮（记账后不应再投）
       capturedTexts2 <- captured.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // engine-defects 批 #226：显式 `(pass)Nebula` :result 边 = 上根声明 ⇒ dispatcher/silent
       // 也**照投**（与失败腿 R14 对称）；`:signal` 出口标记仍不投（M1 逐字保留）。
-      assertEquals(capturedTexts1.size, 3,
-        s"恰 3 条投根：disp/silent/legacy（皆为显式 :result 根出口），marker 被排除 —— 实收 ${capturedTexts1.map(_._1.take(40))}")
+      assertEquals(
+        capturedTexts1.size,
+        3,
+        s"恰 3 条投根：disp/silent/legacy（皆为显式 :result 根出口），marker 被排除 —— 实收 ${capturedTexts1.map(_._1.take(40))}"
+      )
       assert(capturedTexts1.exists(_._1.contains("disp")), "#226 RED 臂：dispatcher + 显式 :result 边 ⇒ 投根")
       assert(capturedTexts1.exists(_._1.contains("silent")), "#226 RED 臂：silent + 显式 :result 边 ⇒ 投根")
       assert(capturedTexts1.exists(_._1.contains("legacy")), "被投的是 legacy 对照节点（存量零漂移）")
@@ -339,12 +436,13 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       assertEquals(capturedTexts2.size, 3, "记账后第二轮零新增（记账防补投复活，判据恒同源）")
       // 扫描腿的抑制 = **结构性排除**（候选判据内裁决，根本不上投）：被抑制节点既不被投、
       // 也不被扫描「记账」——二者都靠同一策略判据，故「不复活」恒成立（判据恒同源）。
-      // 扫描腿记账的不变量：投递成功的节点必有账（legacy）。主路径（nebulaDelivery）的
+      // 扫描腿记账的不变量：投递成功的节点必有账（legacy）。主路径（rootDelivery）的
       // 「抑制 + 同时记账」由本 spec ③b 覆盖（spec §5 表尾推论 2）。
       assert(after1.nodes("n-disp").nebulaDeliveredAt.isDefined, "disp 投递后记账（防补投复活）")
       assert(after1.nodes("n-silent").nebulaDeliveredAt.isDefined, "silent 同上")
       assert(after1.nodes("n-legacy").nebulaDeliveredAt.isDefined, "legacy 投递后照旧记账")
       assertEquals(after1.nodes("n-marker").nebulaDeliveredAt, None, "`:signal` 出口标记不在候选（不投也不标记）")
+    end for
   }
 
   test("③b 主路径（真实引擎 nebulaDelivery）：显式 :result 边 + silent 仍投根（#226 判据变更）；出口标记完成不投根（且记账）；root 同形节点照旧投根") {
@@ -356,28 +454,49 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       captured <- registerNebulaCapture(res, system)
       rt <- mountReal("b64-suppress-real", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      silent <- nodeEdit(nodeInput("b64-suppress-real", "r5-silent",
-        "description" -> Json.fromString("silent node with nebula edge"),
-        "task" -> Json.fromString("silent task text"),
-        "out" -> Json.fromString("(pass)Nebula"),
-        "notify" -> Json.fromString("silent")), ctx)
+      silent <- nodeEdit(
+        nodeInput(
+          "b64-suppress-real",
+          "r5-silent",
+          "description" -> Json.fromString("silent node with nebula edge"),
+          "task" -> Json.fromString("silent task text"),
+          "out" -> Json.fromString("(pass)Nebula"),
+          "notify" -> Json.fromString("silent")
+        ),
+        ctx
+      )
       _ <- IO(assert(silent.isRight, s"silent 节点创建成功（R5 不阻断接线）：$silent"))
-      root <- nodeEdit(nodeInput("b64-suppress-real", "r5-root",
-        "description" -> Json.fromString("root node with nebula edge"),
-        "task" -> Json.fromString("root task text"),
-        "out" -> Json.fromString("(pass)Nebula"),
-        "notify" -> Json.fromString("root")), ctx)
+      root <- nodeEdit(
+        nodeInput(
+          "b64-suppress-real",
+          "r5-root",
+          "description" -> Json.fromString("root node with nebula edge"),
+          "task" -> Json.fromString("root task text"),
+          "out" -> Json.fromString("(pass)Nebula"),
+          "notify" -> Json.fromString("root")
+        ),
+        ctx
+      )
       _ <- IO(assert(root.isRight, s"root 节点创建成功：$root"))
       // ④ M1 主路径：bare `Nebula`（出口标记 :signal）+ 策略 root ⇒ 仍不投根（原判据保留）、只记账
-      marker <- nodeEdit(nodeInput("b64-suppress-real", "r5-marker",
-        "description" -> Json.fromString("bare nebula exit marker"),
-        "task" -> Json.fromString("marker task text"),
-        "out" -> Json.fromString("Nebula"),
-        "notify" -> Json.fromString("root")), ctx)
+      marker <- nodeEdit(
+        nodeInput(
+          "b64-suppress-real",
+          "r5-marker",
+          "description" -> Json.fromString("bare nebula exit marker"),
+          "task" -> Json.fromString("marker task text"),
+          "out" -> Json.fromString("Nebula"),
+          "notify" -> Json.fromString("root")
+        ),
+        ctx
+      )
       _ <- IO(assert(marker.isRight, s"bare Nebula 节点创建成功：$marker"))
       names = List("r5-silent", "r5-root", "r5-marker")
-      _ <- waitUntil(60.seconds)(rt.store.snapshot.map(s =>
-        names.forall(n => s.nodes.values.exists(x => x.name == n && x.status == NodeLifecycle.Completed))))
+      _ <- waitUntil(60.seconds)(
+        rt.store.snapshot.map(s =>
+          names.forall(n => s.nodes.values.exists(x => x.name == n && x.status == NodeLifecycle.Completed))
+        )
+      )
       _ <- waitUntil(30.seconds)(captured.get.map(_.exists(_._1.contains("r5-root"))))
       _ <- IO.sleep(400.millis) // 给被抑制腿的（不该存在的）投递留出观察窗
       texts <- captured.get
@@ -393,18 +512,22 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       // `notify=silent` 只抑制**分发器通道**（`completionNotifiesDispatcher` 仍 False），
       // 不再吞掉根投递 ⇒ 必须投根 1 条（旧判据要求 0 条，原文登记于批报告「判据变更登记」栏）。
       val silentTexts = texts.filter(_._1.contains("r5-silent"))
-      assertEquals(silentTexts.size, 1,
-        s"#226 RED 臂：silent + 显式 :result 边 ⇒ 仍投根恰 1 条：${texts.map(_._1.take(50))}")
+      assertEquals(silentTexts.size, 1, s"#226 RED 臂：silent + 显式 :result 边 ⇒ 仍投根恰 1 条：${texts.map(_._1.take(50))}")
       assertEquals(silentTexts.head._2, Some("node"), "source=node（节点级通道）")
       assertEquals(silentTexts.head._3, Some(NodeLifecycle.Completed), "eventType=completed")
-      assert(!NotifyPolicy.completionNotifiesDispatcher(byName("r5-silent")),
-        "#226 GREEN：silent 对**分发器通道**的抑制逐字保留（通道分立，零放宽）")
-      assert(!texts.exists(_._1.contains("r5-marker")),
-        s"M1：bare Nebula（出口标记）完成**不投根**——策略=root 也不得使之升根：${texts.map(_._1.take(50))}")
+      assert(
+        !NotifyPolicy.completionNotifiesDispatcher(byName("r5-silent")),
+        "#226 GREEN：silent 对**分发器通道**的抑制逐字保留（通道分立，零放宽）"
+      )
+      assert(
+        !texts.exists(_._1.contains("r5-marker")),
+        s"M1：bare Nebula（出口标记）完成**不投根**——策略=root 也不得使之升根：${texts.map(_._1.take(50))}"
+      )
       // spec §5 表尾推论 2：抑制必须同时记账（否则 30s 补投扫描会复活投递）
       assert(byName("r5-silent").nebulaDeliveredAt.isDefined, "silent 节点投递后记账（防补投复活）")
       assert(byName("r5-marker").nebulaDeliveredAt.isDefined, "出口标记节点记账（只记账不通报，M1 现网口径）")
       assert(byName("r5-root").nebulaDeliveredAt.isDefined, "root 节点投递后照旧记账")
+    end for
   }
 
   test("④ M1：`:signal` 出口标记恒「只记账不通报」，策略（含 root）不得使之升根") {
@@ -416,10 +539,14 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       captured <- registerNebulaCapture(res, system)
       store <- FlowMapStore.open("b64-signal", ws.toString)
       engine = mkEngine(store, system, res, ws, "b64-signal")
-      _ <- store.mutate(s => s.copy(nodes = Map(
-        "n-signal-root" -> nid("n-signal-root", "signal-root", Some(NotifyPolicy.Root), List(nebulaSignal))
-      )))
-      pending <- engine.redeliverUnconsumedNebulaResults()
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          Map(
+            "n-signal-root" -> nid("n-signal-root", "signal-root", Some(NotifyPolicy.Root), List(nebulaSignal))
+          )
+        )
+      )
+      pending <- engine.redeliverUnconsumedRootResults()
       texts <- captured.get
       after <- store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -427,6 +554,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       assertEquals(texts.size, 0, "signal 边不通报：策略=root 也不得升根（M1「先不定义，沿用现网口径」）")
       assertEquals(pending, 0, "signal 边不在补投候选集（mode == Result 前置判据原样保留）")
       assertEquals(after.nodes("n-signal-root").nebulaDeliveredAt, None, "扫描腿不认 signal 边（不投也不标记）")
+    end for
   }
 
   // ── ⑤ R14 failed 不豁免 ───────────────────────────────────────────────
@@ -438,15 +566,29 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       store <- FlowMapStore.open("b64-failed", ws.toString)
       triggered <- Ref.of[IO, List[String]](Nil)
       dn = new DispatchNotify(
-        store, ws.toString, "b64-failed",
-        escalate = (_, _) => IO.unit, emitUpdated = (_: NodeDef) => IO.unit,
+        store,
+        ws.toString,
+        "b64-failed",
+        escalate = (_, _) => IO.unit,
+        emitUpdated = (_: NodeDef) => IO.unit,
         trigger = (t: String) => triggered.update(_ :+ t),
-        windowMs = 0L)
-      _ <- store.mutate(s => s.copy(nodes = Map(
-        "n-silent-failed" -> nid("n-silent-failed", "silent-failed", Some(NotifyPolicy.Silent), Nil,
-          status = NodeLifecycle.Failed, result = Some("boom")),
-        "n-silent-done" -> nid("n-silent-done", "silent-done", Some(NotifyPolicy.Silent), Nil)
-      )))
+        windowMs = 0L
+      )
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          Map(
+            "n-silent-failed" -> nid(
+              "n-silent-failed",
+              "silent-failed",
+              Some(NotifyPolicy.Silent),
+              Nil,
+              status = NodeLifecycle.Failed,
+              result = Some("boom")
+            ),
+            "n-silent-done" -> nid("n-silent-done", "silent-done", Some(NotifyPolicy.Silent), Nil)
+          )
+        )
+      )
       failedNode <- store.getNode("n-silent-failed").map(_.getOrElse(fail("failed node must exist")))
       doneNode <- store.getNode("n-silent-done").map(_.getOrElse(fail("done node must exist")))
       _ <- dn.notifyTerminal(failedNode, NotifyReason.Failed)
@@ -455,6 +597,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
     yield
       assertEquals(seen.size, 1, s"恰 failed 一条（silent 只豁免 completed）：${seen.map(_.take(30))}")
       assert(seen.head.contains("silent-failed"), "被通知的是 failed 节点")
+    end for
   }
 
   // ── ⑥⑦⑧ 链摘要：M2 / 账本 / R11 ───────────────────────────────────────
@@ -467,8 +610,13 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       // 一条 2 成员链（n-chain-a → n-chain-b）+ 一条孤立单成员链（n-lone）
       _ <- store.mutate { s =>
-        val a = nid("n-chain-a", "chain-a", Some(NotifyPolicy.Dispatcher),
-          List(OutEdge("n-chain-b", Set(OutEdge.Pass), OutEdge.Result)), result = Some("A result line"))
+        val a = nid(
+          "n-chain-a",
+          "chain-a",
+          Some(NotifyPolicy.Dispatcher),
+          List(OutEdge("n-chain-b", Set(OutEdge.Pass), OutEdge.Result)),
+          result = Some("A result line")
+        )
           .copy(completedAt = Some(now - 60000), description = Some("first"))
         val b = nid("n-chain-b", "chain-b", Some(NotifyPolicy.Root), List(nebulaResult), result = Some("B result line"))
           .copy(completedAt = Some(now), description = Some("second"))
@@ -509,8 +657,12 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       moreStore <- FlowMapStore.open("b64-chain-r11", ws2.toString)
       _ <- moreStore.mutate { s =>
         val pairs = (1 to 5).flatMap { i =>
-          val a = nid(s"n-p$i-a", s"p$i-a", Some(NotifyPolicy.Dispatcher),
-            List(OutEdge(s"n-p$i-b", Set(OutEdge.Pass), OutEdge.Result))).copy(completedAt = Some(now - i * 1000))
+          val a = nid(
+            s"n-p$i-a",
+            s"p$i-a",
+            Some(NotifyPolicy.Dispatcher),
+            List(OutEdge(s"n-p$i-b", Set(OutEdge.Pass), OutEdge.Result))
+          ).copy(completedAt = Some(now - i * 1000))
           val b = nid(s"n-p$i-b", s"p$i-b", Some(NotifyPolicy.Dispatcher), Nil)
             .copy(completedAt = Some(now - i * 1000 + 1))
           List(a.id -> a, b.id -> b)
@@ -527,6 +679,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
         assert(overflow.contains("本回合另有 2 条链完成"), s"溢出合并为一条计数摘要：${overflow.take(80)}")
       }
     yield ()
+    end for
   }
 
   test("⑦ 存量批零补发：账本启用前归档的批文件（无 summaryLedgerOn 键）不成为候选") {
@@ -538,15 +691,34 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       // 手放一个「账本启用前」的批文件（形态 = 存量：无 summarySentAt/summaryLedgerOn 键）
       _ <- IO {
         val nodes = Json.obj(
-          "n-old-a" -> Json.obj("id" -> Json.fromString("n-old-a"), "name" -> Json.fromString("old-a"),
-            "agent" -> Json.fromString("general"), "status" -> Json.fromString("completed"),
-            "createdAt" -> Json.fromLong(1L), "result" -> Json.fromString("x")),
-          "n-old-b" -> Json.obj("id" -> Json.fromString("n-old-b"), "name" -> Json.fromString("old-b"),
-            "agent" -> Json.fromString("general"), "status" -> Json.fromString("completed"),
-            "createdAt" -> Json.fromLong(2L), "result" -> Json.fromString("y")))
-        os.write.over(ws / ".nebflow" / "flow-map-archive" / "chain-n-old-a.json",
-          Json.obj("project" -> Json.fromString("b64-legacy-batch"), "batch" -> Json.fromString("chain-n-old-a"),
-            "archivedAt" -> Json.fromLong(1L), "nodes" -> nodes).noSpaces)
+          "n-old-a" -> Json.obj(
+            "id" -> Json.fromString("n-old-a"),
+            "name" -> Json.fromString("old-a"),
+            "agent" -> Json.fromString("general"),
+            "status" -> Json.fromString("completed"),
+            "createdAt" -> Json.fromLong(1L),
+            "result" -> Json.fromString("x")
+          ),
+          "n-old-b" -> Json.obj(
+            "id" -> Json.fromString("n-old-b"),
+            "name" -> Json.fromString("old-b"),
+            "agent" -> Json.fromString("general"),
+            "status" -> Json.fromString("completed"),
+            "createdAt" -> Json.fromLong(2L),
+            "result" -> Json.fromString("y")
+          )
+        )
+        os.write.over(
+          ws / ".nebflow" / "flow-map-archive" / "chain-n-old-a.json",
+          Json
+            .obj(
+              "project" -> Json.fromString("b64-legacy-batch"),
+              "batch" -> Json.fromString("chain-n-old-a"),
+              "archivedAt" -> Json.fromLong(1L),
+              "nodes" -> nodes
+            )
+            .noSpaces
+        )
       }
       reopened <- FlowMapStore.open("b64-legacy-batch", ws.toString)
       candidates <- reopened.chainSummaryBatch(FlowMapStore.ChainSummaryMaxPerRound)
@@ -556,6 +728,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       assert(metas.contains("chain-n-old-a"), "批索引照旧入册")
       assert(!metas("chain-n-old-a").summaryLedgerOn, "无账本键 ⇒ 账本关闭")
       assertEquals(metas("chain-n-old-a").summarySentAt, None)
+    end for
   }
 
   // ── ⑨ R17 三件 ────────────────────────────────────────────────────────
@@ -567,12 +740,17 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       store <- FlowMapStore.open("b64-r17", ws.toString)
       triggered <- Ref.of[IO, List[String]](Nil)
       dn = new DispatchNotify(
-        store, ws.toString, "b64-r17",
-        escalate = (_, _) => IO.unit, emitUpdated = (_: NodeDef) => IO.unit,
+        store,
+        ws.toString,
+        "b64-r17",
+        escalate = (_, _) => IO.unit,
+        emitUpdated = (_: NodeDef) => IO.unit,
         trigger = (t: String) => triggered.update(_ :+ t),
-        windowMs = 300L)
-      nodes = (1 to 6).map(i =>
-        s"n-r17-$i" -> nid(s"n-r17-$i", s"r17-$i", Some(NotifyPolicy.Dispatcher), Nil, result = Some(s"r$i"))).toMap
+        windowMs = 300L
+      )
+      nodes = (1 to 6)
+        .map(i => s"n-r17-$i" -> nid(s"n-r17-$i", s"r17-$i", Some(NotifyPolicy.Dispatcher), Nil, result = Some(s"r$i")))
+        .toMap
       _ <- store.mutate(s => s.copy(nodes = nodes))
       snap <- store.snapshot
       _ <- snap.nodes.values.toList.traverse_(n => dn.notifyTerminal(n, NotifyReason.Completion))
@@ -587,6 +765,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
         assertEquals(DispatchNotify.completionTier(9, 5000L, 30_000L), 9, "基准档更高时取基准")
       }
     yield ()
+    end for
   }
 
   test("⑨ R17③：预算耗尽语义非静默（markSent + single-flight notice），且逐节点留持久审计") {
@@ -597,19 +776,26 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       triggered <- Ref.of[IO, List[String]](Nil)
       notices <- Ref.of[IO, List[String]](Nil)
       dn = new DispatchNotify(
-        store, ws.toString, "b64-r17c",
-        escalate = (t, _) => notices.update(_ :+ t), emitUpdated = (_: NodeDef) => IO.unit,
+        store,
+        ws.toString,
+        "b64-r17c",
+        escalate = (t, _) => notices.update(_ :+ t),
+        emitUpdated = (_: NodeDef) => IO.unit,
         trigger = (t: String) => triggered.update(_ :+ t),
-        budgetMax = 1, windowMs = 0L) // 窗口关 + 档 1：第 2 件起即耗尽
-      nodes = (1 to 3).map(i =>
-        s"n-ex-$i" -> nid(s"n-ex-$i", s"ex-$i", Some(NotifyPolicy.Dispatcher), Nil, result = Some(s"e$i"))).toMap
+        budgetMax = 1,
+        windowMs = 0L
+      ) // 窗口关 + 档 1：第 2 件起即耗尽
+      nodes = (1 to 3)
+        .map(i => s"n-ex-$i" -> nid(s"n-ex-$i", s"ex-$i", Some(NotifyPolicy.Dispatcher), Nil, result = Some(s"e$i")))
+        .toMap
       _ <- store.mutate(s => s.copy(nodes = nodes))
       snap <- store.snapshot
       _ <- snap.nodes.values.toList.traverse_(n => dn.notifyTerminal(n, NotifyReason.Completion))
       seen <- triggered.get
       esc <- notices.get
       after <- store.snapshot
-      audit <- IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
+      audit <- IO
+        .blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
         .map(_.linesIterator.filter(_.contains("budget exhausted")).toList)
         .handleError(_ => Nil)
       excluded <- store.findNode("n-ex-1").map(_.exists(_.notifySentAt.isDefined))
@@ -621,9 +807,9 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       assert(after.nodes.values.forall(_.status == NodeLifecycle.Completed), "节点保持 completed（不翻转）")
       assert(excluded, "注入成功件同样记账（tell-then-mark）")
       assertEquals(audit.size, 2, s"逐节点持久审计（每件一条，不止首件）：${audit.map(_.take(80))}")
-      assert(audit.exists(_.contains("n-ex-2")) && audit.exists(_.contains("n-ex-3")),
-        "耗尽件逐个留痕（可得「是谁」而非只有「有人被静默」）")
+      assert(audit.exists(_.contains("n-ex-2")) && audit.exists(_.contains("n-ex-3")), "耗尽件逐个留痕（可得「是谁」而非只有「有人被静默」）")
       assert(audit.forall(_.contains("kept completed")), "审计语义 = 保持 completed + notifySentAt set")
+    end for
   }
 
   // ── ⑩ NodeEdit 面：创建默认 / 编辑 / 警告 / legacy 兼容 ────────────────
@@ -637,10 +823,20 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       rt <- mountReal("b64-nodedit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 预置一个上游（wiring——非终态：策略/flag 仅 wiring/pending/running 可设）（b64）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-up" -> nid("n-up", "up", Some(NotifyPolicy.Dispatcher), Nil, status = NodeLifecycle.Wiring))))
-      plain <- nodeEdit(nodeInput("b64-nodedit", "plain",
-        "description" -> Json.fromString("purpose line"), "in" -> Json.fromString("n-up")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map("n-up" -> nid("n-up", "up", Some(NotifyPolicy.Dispatcher), Nil, status = NodeLifecycle.Wiring))
+        )
+      )
+      plain <- nodeEdit(
+        nodeInput(
+          "b64-nodedit",
+          "plain",
+          "description" -> Json.fromString("purpose line"),
+          "in" -> Json.fromString("n-up")
+        ),
+        ctx
+      )
       _ <- IO(assert(plain.isRight, s"创建应成功：$plain"))
       snap1 <- rt.store.snapshot
       plainId = snap1.nodes.values.find(_.name == "plain").map(_.id).getOrElse(fail("plain node must exist"))
@@ -657,8 +853,16 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
         // 依据 = 本任务书裁定三项之 B-3 + triage A-5 B-3 行（「NodeNotifyPolicySpec:588
         // 一例由『创建显式落 dispatcher』调整为『未显式声明 ⇒ 缺键』」）。
         // 显式声明的裁决力不受影响：编辑设撤（下）/ M3 警告 / flag legacy 路径三条**原样全绿**。
-        assertEquals(plainNode.notifyPolicy, None, "B-3：创建未传 notify ⇒ 缺键（默认值不再代填 Some；b64 批原期望 Some(Dispatcher)，按语义变更调整）")
-        assertEquals(payload.hcursor.get[String]("notify").toOption, None, "B-3：缺键 ⇒ 载荷无 notify 键（b64 批原期望 Some(\"dispatcher\")，同批调整）")
+        assertEquals(
+          plainNode.notifyPolicy,
+          None,
+          "B-3：创建未传 notify ⇒ 缺键（默认值不再代填 Some；b64 批原期望 Some(Dispatcher)，按语义变更调整）"
+        )
+        assertEquals(
+          payload.hcursor.get[String]("notify").toOption,
+          None,
+          "B-3：缺键 ⇒ 载荷无 notify 键（b64 批原期望 Some(\"dispatcher\")，同批调整）"
+        )
       }
       // 非法值拒（NODE_NOTIFY_INVALID）
       bad <- nodeEdit(nodeInput("b64-nodedit", "plain", "notify" -> Json.fromString("loud")), ctx)
@@ -679,10 +883,17 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
         assertEquals(cleared.notifyPolicy, None, "null = 显式清除（回落 legacy 解析）")
       }
       // M3：silent ∧ 链末端 → 只警告不拦（创建成功 + 尾部 ⚠ 行）
-      warnRes <- nodeEdit(nodeInput("b64-nodedit", "chain-end-silent",
-        "description" -> Json.fromString("chain end silent"),
-        "in" -> Json.fromString("n-up"), "notify" -> Json.fromString("silent"),
-        "out" -> Json.fromString("(pass)Nebula")), ctx)
+      warnRes <- nodeEdit(
+        nodeInput(
+          "b64-nodedit",
+          "chain-end-silent",
+          "description" -> Json.fromString("chain end silent"),
+          "in" -> Json.fromString("n-up"),
+          "notify" -> Json.fromString("silent"),
+          "out" -> Json.fromString("(pass)Nebula")
+        ),
+        ctx
+      )
       _ <- IO {
         assert(warnRes.isRight, s"M3 只警告不拦（不得拒）：$warnRes")
         val txt = warnRes.getOrElse("")
@@ -691,9 +902,16 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
         assert(txt.contains("does NOT exempt failures"), "R14 提示：silent 不豁免 failed")
       }
       // root ∧ 无根出口 → 警告（WARNING 族不阻断）
-      rootWarn <- nodeEdit(nodeInput("b64-nodedit", "root-nogate",
-        "description" -> Json.fromString("root without outlet"),
-        "in" -> Json.fromString("n-up"), "notify" -> Json.fromString("root")), ctx)
+      rootWarn <- nodeEdit(
+        nodeInput(
+          "b64-nodedit",
+          "root-nogate",
+          "description" -> Json.fromString("root without outlet"),
+          "in" -> Json.fromString("n-up"),
+          "notify" -> Json.fromString("root")
+        ),
+        ctx
+      )
       _ <- IO {
         assert(rootWarn.isRight, "不阻断")
         assert(rootWarn.getOrElse("").contains("no root outlet"), s"spec §4.2 root ∧ 无 Nebula 边 WARNING：$rootWarn")
@@ -711,4 +929,6 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       }
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield ()
+    end for
   }
+end NodeNotifyPolicySpec

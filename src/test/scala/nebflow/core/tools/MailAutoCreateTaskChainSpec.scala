@@ -6,13 +6,15 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentDef, AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.actor.AgentDef // W1 shim: main had nebflow.agent.AgentDef; the merge moved it to actor
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.project.{FlowMapStore, NodeEngine, ProjectActor, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry, TaskLedgerStore}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had nebflow.gateway.{RateLimiter, SessionStore}; PR re-homed both to core
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import java.nio.file.Files

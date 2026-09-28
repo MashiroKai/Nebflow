@@ -33,11 +33,12 @@ object JvmRequirement:
   /** Feature release of the running JVM, when it could be determined. */
   def detectedFeatureVersion: Option[Int] = detectFeatureVersion(defaultLookup)
 
-  /** Human-readable refusal text — printed verbatim by the startup gate.
-    *
-    * Shape follows the existing GatewayMain argument-gate message: an `ERROR:`
-    * headline, what to do about it, then two diagnostic lines.
-    */
+  /**
+   * Human-readable refusal text — printed verbatim by the startup gate.
+   *
+   * Shape follows the existing GatewayMain argument-gate message: an `ERROR:`
+   * headline, what to do about it, then two diagnostic lines.
+   */
   def errorText: String =
     errorTextFor(
       detectedFeatureVersion,
@@ -50,9 +51,10 @@ object JvmRequirement:
 
   private def defaultLookup(name: String): String = System.getProperty(name)
 
-  /** Read a property for *diagnostic* purposes only — never on the gate path,
-    * so a `SecurityException` degrades the banner instead of crashing it.
-    */
+  /**
+   * Read a property for *diagnostic* purposes only — never on the gate path,
+   * so a `SecurityException` degrades the banner instead of crashing it.
+   */
   private def safeProperty(name: String): String =
     try
       val v = System.getProperty(name)
@@ -63,7 +65,7 @@ object JvmRequirement:
   private[core] def isSatisfiedWith(lookup: String => String): Boolean =
     detectFeatureVersion(lookup) match
       case Some(v) => v >= MinimumFeatureVersion
-      case None    => false
+      case None => false
 
   private[core] def detectFeatureVersion(lookup: String => String): Option[Int] =
     fromSpecificationVersion(lookup) orElse fromLegacyVersion(lookup)
@@ -106,7 +108,7 @@ object JvmRequirement:
   ): String =
     val found = detected match
       case Some(v) => s"Java $v"
-      case None    => "an unreadable Java version"
+      case None => "an unreadable Java version"
     s"""ERROR: nebflow requires Java $MinimumFeatureVersion or newer — this JVM is $found.
        |The gateway will not start on an older JVM. Upgrade it, then start again:
        |  macOS:   brew install openjdk@21 && export JAVA_HOME=$$(/usr/libexec/java_home -v 21)
@@ -115,3 +117,5 @@ object JvmRequirement:
        |The CLI (`nebflow update`, `doctor`, `version`) still runs on this JVM.
        |Jar: $jar
        |Java: $javaVersion ($javaHome)""".stripMargin
+  end errorTextFor
+end JvmRequirement

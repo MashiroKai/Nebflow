@@ -1,22 +1,21 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Ref
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
-import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
+import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.dropbox.DropboxService
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.gateway.WsHub
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.neblink.NeblinkService
+import nebflow.shared.{PathUtil, PeerInfo, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -48,8 +47,8 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
   test("A1 工具边界：device + targetDir 不再命中冻结契约拒绝文案"):
     val res = callTool(
       obj(
-        "to"        -> Json.fromString("device:KAI"),
-        "message"   -> Json.fromString("x"),
+        "to" -> Json.fromString("device:KAI"),
+        "message" -> Json.fromString("x"),
         "targetDir" -> Json.fromString("/tmp/nb-targetdir-pin")
       ),
       ToolContext(projectRoot = "/tmp")
@@ -66,15 +65,20 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
 
   // ===== A2：设备腿（真服务栈 + level-1 桩对端） =====
 
-  private def mkResources(tmp: os.Path, system: ActorSystem, ms: NeblinkService, svc: DropboxService): IO[SharedResources] =
+  private def mkResources(
+    tmp: os.Path,
+    system: ActorSystem,
+    ms: NeblinkService,
+    svc: DropboxService
+  ): IO[SharedResources] =
     for
-      dispatcher     <- Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter    <- RateLimiter.create()
-      tracker        <- FileChangeTracker.create(os.pwd.toString)
-      fileLocks      <- FileLockManager.create
-      thinkingRef    <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
+      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+      rateLimiter <- RateLimiter.create()
+      tracker <- FileChangeTracker.create(os.pwd.toString)
+      fileLocks <- FileLockManager.create
+      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
       modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted     <- Ref.of[IO, Boolean](false)
+      voiceMuted <- Ref.of[IO, Boolean](false)
     yield SharedResources(
       llm = null,
       dispatcher = dispatcher,
@@ -102,28 +106,35 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       val system = ActorSystem(s"td-echo-${java.util.UUID.randomUUID().toString.take(6)}")
       for
-        _       <- IO(system)
-        prev    <- IO(PathUtil.dataRoot)
-        tmp     <- IO.blocking(os.temp.dir(prefix = "nb-targetdir-echo-"))
-        _       <- IO(PathUtil.setDataRoot(tmp))
-        ms      <- NeblinkService.create(0, dispatcher)
+        _ <- IO(system)
+        prev <- IO(PathUtil.dataRoot)
+        tmp <- IO.blocking(os.temp.dir(prefix = "nb-targetdir-echo-"))
+        _ <- IO(PathUtil.setDataRoot(tmp))
+        ms <- NeblinkService.create(0, dispatcher)
         // 投递桩：sendText / file-offer 都「已送达」，从而真的走到附件腿；
         // 但**没有任何对端回带 file-response.proto** ⇒ 等级 = 未知（§1.4 Q1 侧）。
-        _       <- ms.setSendDataFn((_, _, _) => IO.pure(true))
-        _       <- ms.upsertPeer(PeerInfo(deviceId = "lvl1-stub", deviceName = "Level1Stub", platform = "macos", address = "http://127.0.0.1:9"))
-        svc     <- DropboxService.createForTest(ms, new WsHub, 400.millis, 400.millis, 500.millis)
-        res     <- mkResources(tmp, system, ms, svc)
-        src     <- IO.blocking(os.temp.dir(prefix = "nb-targetdir-src-"))
-        a       <- IO.blocking { val p = src / "a.bin"; os.write.over(p, Array.fill(3)('x'.toByte)); p }
-        out     <- callTool(
-                     obj(
-                       "to"          -> Json.fromString("device:lvl1-stub"),
-                       "message"     -> Json.fromString("hi"),
-                       "attachments" -> Json.arr(Json.fromString(a.toString)),
-                       "targetDir"   -> Json.fromString("/tmp/nb-targetdir-pin")
-                     ),
-                     ToolContext(projectRoot = src.toString, sharedResources = Some(res))
-                   )
+        _ <- ms.setSendDataFn((_, _, _) => IO.pure(true))
+        _ <- ms.upsertPeer(
+          PeerInfo(
+            deviceId = "lvl1-stub",
+            deviceName = "Level1Stub",
+            platform = "macos",
+            address = "http://127.0.0.1:9"
+          )
+        )
+        svc <- DropboxService.createForTest(ms, new WsHub, 400.millis, 400.millis, 500.millis)
+        res <- mkResources(tmp, system, ms, svc)
+        src <- IO.blocking(os.temp.dir(prefix = "nb-targetdir-src-"))
+        a <- IO.blocking { val p = src / "a.bin"; os.write.over(p, Array.fill(3)('x'.toByte)); p }
+        out <- callTool(
+          obj(
+            "to" -> Json.fromString("device:lvl1-stub"),
+            "message" -> Json.fromString("hi"),
+            "attachments" -> Json.arr(Json.fromString(a.toString)),
+            "targetDir" -> Json.fromString("/tmp/nb-targetdir-pin")
+          ),
+          ToolContext(projectRoot = src.toString, sharedResources = Some(res))
+        )
         msg = out.fold(_.message, identity)
         _ <- IO {
           assert(!msg.contains(frozenRefusalFingerprint), s"冻结契约拒绝必须已解除，实际：$msg")
@@ -136,34 +147,42 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
         _ <- IO(os.remove.all(tmp))
         _ <- IO(os.remove.all(src))
       yield ()
+      end for
     }
 
   // ===== A3：模型可见文案钉（r2 返工项，判词 `fail` §F） =====
 
-  /** 复核位判词 `fail`（`n-f1e658c7` §F）：**模型可见契约**仍逐字写着 device 目标
-    * 「Rejected for device targets」（prose `:81` + JSON schema `:105`），与已落地的
-    * **受控支持**行为直接矛盾 ⇒ 新能力对主消费面不可达。本钉防该失效断言回归
-    * —— 🔴 两处必须**同时**改（只改一处即红）。 */
+  /**
+   * 复核位判词 `fail`（`n-f1e658c7` §F）：**模型可见契约**仍逐字写着 device 目标
+   * 「Rejected for device targets」（prose `:81` + JSON schema `:105`），与已落地的
+   * **受控支持**行为直接矛盾 ⇒ 新能力对主消费面不可达。本钉防该失效断言回归
+   * —— 🔴 两处必须**同时**改（只改一处即红）。
+   */
   private val staleDeviceRefusalClaims = List(
     "Rejected for device targets",
     "not supported for device targets"
   )
 
-  /** 🔴 口径锚（spec §4.1 禁静默 / §4.2 候选 1 / §⑥① 受控支持）：发送端只发**请求**、
-    * 落点由**接收端**判定；对端未确认支持 ⇒ 请求不上 wire、落对端 Downloads。 */
+  /**
+   * 🔴 口径锚（spec §4.1 禁静默 / §4.2 候选 1 / §⑥① 受控支持）：发送端只发**请求**、
+   * 落点由**接收端**判定；对端未确认支持 ⇒ 请求不上 wire、落对端 Downloads。
+   */
   private val requiredDeviceClaims = List("the receiver decides", "Downloads")
 
   test("A3 文案钉：description 与 targetDir schema 不再含失效 device 拒绝断言，且含接收端裁定口径"):
-    val schemaDirDesc = FriendMessageTool.inputSchema("properties").flatMap(_.asObject)
-      .flatMap(_.apply("targetDir")).flatMap(_.hcursor.get[String]("description").toOption)
+    val schemaDirDesc = FriendMessageTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_.apply("targetDir"))
+      .flatMap(_.hcursor.get[String]("description").toOption)
       .getOrElse(fail("inputSchema.properties.targetDir.description 缺失"))
     val surfaces = List(
-      "FriendMessageTool.description"                -> FriendMessageTool.description,
+      "FriendMessageTool.description" -> FriendMessageTool.description,
       "inputSchema.properties.targetDir.description" -> schemaDirDesc
     )
     for
       (label, text) <- surfaces
-      stale         <- staleDeviceRefusalClaims
+      stale <- staleDeviceRefusalClaims
     do
       assert(
         !text.contains(stale),
@@ -171,7 +190,7 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
       )
     for
       (label, text) <- surfaces
-      claim         <- requiredDeviceClaims
+      claim <- requiredDeviceClaims
     do
       assert(
         text.contains(claim),
@@ -181,3 +200,4 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
       FriendMessageTool.description.contains("off the wire"),
       "prose description 必须写明「对端未确认支持 ⇒ 请求不上 wire + 落对端 Downloads」（§4.2 候选 1）"
     )
+end FriendMessageToolTargetDirSpec

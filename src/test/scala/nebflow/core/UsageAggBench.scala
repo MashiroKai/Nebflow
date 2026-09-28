@@ -47,10 +47,21 @@ object UsageAggBench:
       s(math.min(s.size - 1, (s.size * 0.95).toInt))
 
   private def localStartOfDay(ts: Long): Long =
-    LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ts), zone).toLocalDate.atStartOfDay(zone).toInstant.toEpochMilli
+    LocalDateTime
+      .ofInstant(java.time.Instant.ofEpochMilli(ts), zone)
+      .toLocalDate
+      .atStartOfDay(zone)
+      .toInstant
+      .toEpochMilli
 
   private def localStartOfYear(ts: Long): Long =
-    LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ts), zone).toLocalDate.withDayOfYear(1).atStartOfDay(zone).toInstant.toEpochMilli
+    LocalDateTime
+      .ofInstant(java.time.Instant.ofEpochMilli(ts), zone)
+      .toLocalDate
+      .withDayOfYear(1)
+      .atStartOfDay(zone)
+      .toInstant
+      .toEpochMilli
 
   /** The query mix the dashboard actually issues (7 summary requests + 1 heatmap). */
   private def queryMix(maxTs: Long): List[Query] =
@@ -90,7 +101,9 @@ object UsageAggBench:
         case Array(n, p) => Some((n, os.Path(p, os.pwd)))
         case _ => None
     }
-    println(s"[bench] corpora=${corpora.map(_._1).mkString(",")} warm=$warmRounds prewarm=$prewarm refReps=$refReps append=$appendRows")
+    println(
+      s"[bench] corpora=${corpora.map(_._1).mkString(",")} warm=$warmRounds prewarm=$prewarm refReps=$refReps append=$appendRows"
+    )
 
     val corpusResults = ListBuffer.empty[Json]
 
@@ -107,7 +120,9 @@ object UsageAggBench:
       val coldDiag = store.cacheDiagnostics.unsafeRunSync()
       val maxTs = coldDiag.maxTimestamp
       val shapes = queryMix(maxTs)
-      println(s"[bench] $name: cold=${f"$coldMs%.1f"} ms cells=${coldDiag.cellCount} hours=${coldDiag.hourCount} rebuilds=${coldDiag.rebuilds} rows=${coldDiag.lineCount}")
+      println(
+        s"[bench] $name: cold=${f"$coldMs%.1f"} ms cells=${coldDiag.cellCount} hours=${coldDiag.hourCount} rebuilds=${coldDiag.rebuilds} rows=${coldDiag.lineCount}"
+      )
 
       // ── warm incremental: the steady state the dashboard lives in ──
       (1 to prewarm).foreach(_ => shapes.foreach(q => store.aggregate(q.dim, q.from, q.to).unsafeRunSync()))
@@ -124,7 +139,9 @@ object UsageAggBench:
         }
       }
       val warmDiag = store.cacheDiagnostics.unsafeRunSync()
-      println(s"[bench] $name: warm median=${f"${median(incTimes.toList)}%.3f"} ms p95=${f"${p95(incTimes.toList)}%.3f"} ms max=${f"${incTimes.max}%.3f"} ms consumedBytes=${incBytes.sum}")
+      println(
+        s"[bench] $name: warm median=${f"${median(incTimes.toList)}%.3f"} ms p95=${f"${p95(incTimes.toList)}%.3f"} ms max=${f"${incTimes.max}%.3f"} ms consumedBytes=${incBytes.sum}"
+      )
       // Per query shape: separates the shapes whose window cuts an hour (they pay an exact
       // re-read of that hour's byte span, so their cost tracks the boundary hour's density)
       // from the pure cache-hit shapes (cost flat in the ledger, which is the criterion).
@@ -143,12 +160,18 @@ object UsageAggBench:
       val (deltaAgg, deltaMs) = timed(store.aggregate(Some("day"), None, None).unsafeRunSync())
       val deltaDiag = store.cacheDiagnostics.unsafeRunSync()
       val newBytes = os.size(dir / "usage-records.jsonl") - ledgerSize
-      println(s"[bench] $name: delta=${f"$deltaMs%.1f"} ms consumed=${deltaDiag.lastDeltaBytes} B (appended $newBytes B) count=${deltaAgg.count}")
+      println(
+        s"[bench] $name: delta=${f"$deltaMs%.1f"} ms consumed=${deltaDiag.lastDeltaBytes} B (appended $newBytes B) count=${deltaAgg.count}"
+      )
 
       // ── before: the same corpus through the reference whole-ledger path ──
       val refTimes = ListBuffer.empty[Double]
-      (1 to refReps).foreach(_ => shapes.foreach(q => refTimes += timed(store.aggregateFull(q.dim, q.from, q.to).unsafeRunSync())._2))
-      println(s"[bench] $name: reference (full recompute) median=${f"${median(refTimes.toList)}%.1f"} ms p95=${f"${p95(refTimes.toList)}%.1f"} ms")
+      (1 to refReps).foreach(_ =>
+        shapes.foreach(q => refTimes += timed(store.aggregateFull(q.dim, q.from, q.to).unsafeRunSync())._2)
+      )
+      println(
+        s"[bench] $name: reference (full recompute) median=${f"${median(refTimes.toList)}%.1f"} ms p95=${f"${p95(refTimes.toList)}%.1f"} ms"
+      )
 
       corpusResults += Json.obj(
         "corpus" -> Json.fromString(name),
@@ -170,7 +193,9 @@ object UsageAggBench:
           "p95" -> Json.fromDoubleOrNull(p95(refTimes.toList)),
           "max" -> Json.fromDoubleOrNull(refTimes.max)
         ),
-        "warm_per_shape_ms" -> Json.obj(perShape.toList.map { case (k, v) => k -> Json.fromDoubleOrNull(median(v.toList)) }*),
+        "warm_per_shape_ms" -> Json.obj(perShape.toList.map { case (k, v) =>
+          k -> Json.fromDoubleOrNull(median(v.toList))
+        }*),
         "warm_consumed_source_bytes_total" -> Json.fromLong(incBytes.sum),
         "delta_append" -> Json.obj(
           "appended_bytes" -> Json.fromLong(newBytes),
@@ -228,5 +253,6 @@ object UsageAggBench:
     os.write.over(p, json.spaces2)
     println(s"[bench] wrote $p")
     ratios.foreach(r => println(s"[bench] J-P4: ${r.noSpaces}"))
+  end main
 
 end UsageAggBench

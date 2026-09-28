@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory
 
 import java.nio.file.Files
@@ -53,6 +53,7 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
   private final class RelayLogAppender
       extends ch.qos.logback.core.AppenderBase[ch.qos.logback.classic.spi.ILoggingEvent]:
     val lines = new ConcurrentLinkedQueue[String]()
+
     override def append(event: ch.qos.logback.classic.spi.ILoggingEvent): Unit =
       lines.add(event.getFormattedMessage)
 
@@ -100,10 +101,12 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
         client = mkClient(fix)
         _ = ms.setRelayClient(Some(client))
         _ <- client.login(Device, "qa-host", "macos", Nil)
-        _ <- ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+          )
+        )
         tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
         _ = ms.setRelayTunnel(tunnel)
         fiber <- tunnel.connect().start
@@ -111,14 +114,18 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
       yield out
     }
 
+  end withStack
+
   private def withFixture[A](body: RelayAuthFixtureServer => IO[A]): IO[A] =
     IO.blocking(new RelayAuthFixtureServer()).flatMap(f => body(f).guarantee(IO.blocking(f.close())))
 
-  /** r2 新增装配（生产同形）：自动登录门 `autoLoginParked = IO(ms.kickParked)` +
-    * 真 silent-re-login 钩子 + 存量 refresh 凭据 + 真 deviceToken ⇒ **register 腿在
-    * 解除停摆后确实能走通**（否则「显式登录解除停摆」这一态只是空断言）。
-    *
-    * 与既有 `withStack` 并列而非改写：既有三条已通过（复核位要点 2/3①）的钉逐字保留。 */
+  /**
+   * r2 新增装配（生产同形）：自动登录门 `autoLoginParked = IO(ms.kickParked)` +
+   * 真 silent-re-login 钩子 + 存量 refresh 凭据 + 真 deviceToken ⇒ **register 腿在
+   * 解除停摆后确实能走通**（否则「显式登录解除停摆」这一态只是空断言）。
+   *
+   * 与既有 `withStack` 并列而非改写：既有三条已通过（复核位要点 2/3①）的钉逐字保留。
+   */
   private def withGatedStack[A](
     fix: RelayAuthFixtureServer
   )(body: (NeblinkService, NeblinkClient, NeblinkRelayTunnel, String) => IO[A]): IO[A] =
@@ -140,11 +147,13 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
           autoLoginParked = IO(ms.kickParked)
         )
         _ = ms.setRelayClient(Some(client))
-        _ <- ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(cfg),
-          logto = Some(LogtoConfig(endpoint = fix.url, clientId = "", pkceClientId = Some("mock-pkce")))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(cfg),
+            logto = Some(LogtoConfig(endpoint = fix.url, clientId = "", pkceClientId = Some("mock-pkce")))
+          )
+        )
         _ <- DeviceCredential.save(
           DeviceCredential(fix.url, Net, dev, dtok, LogtoRefresh.of(Some("mock-refresh"), None))
         )
@@ -158,7 +167,9 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
 
   // ── ① + ②：帧 ⇒ 提示发射 + 停摆（零自动重连/重注册）──────
 
-  test("kick: a server `disconnect` frame emits the passive notice AND parks reconnects (zero attempts, zero re-login)") {
+  test(
+    "kick: a server `disconnect` frame emits the passive notice AND parks reconnects (zero attempts, zero re-login)"
+  ) {
     withFixture { fix =>
       captureRelayLog { lines =>
         withStack(fix) { (_, _, tunnel) =>
@@ -201,7 +212,11 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
               )
             )
             // ① 被动提示发射：本地状态面报告「已在别处登录」+ 停摆
-            notice = NeblinkRelayTunnel.statusJson(available = false, status = None, kickedAtMs = tunnel.signedOutElsewhereAt)
+            notice = NeblinkRelayTunnel.statusJson(
+              available = false,
+              status = None,
+              kickedAtMs = tunnel.signedOutElsewhereAt
+            )
             _ <- IO(assert(tunnel.signedOutElsewhereAt > 0L, "the kick timestamp must be recorded"))
             _ <- IO(
               assertEquals(notice.hcursor.downField("signedOutElsewhere").as[Boolean].toOption, Some(true))
@@ -243,9 +258,19 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
           stillParked <- IO(tunnel.parkedAfterKick)
           _ <- IO(assert(stillParked, "the automatic ensure()/start() signal must NOT lift the park"))
           _ <- IO(
-            assertEquals(fix.relayAttempts.size(), attemptsBefore, "an automatic ensure() must not produce a connect attempt while parked")
+            assertEquals(
+              fix.relayAttempts.size(),
+              attemptsBefore,
+              "an automatic ensure() must not produce a connect attempt while parked"
+            )
           )
-          _ <- IO(assertEquals(fix.logins.get(), loginsBefore, "an automatic ensure() must not produce a re-login while parked"))
+          _ <- IO(
+            assertEquals(
+              fix.logins.get(),
+              loginsBefore,
+              "an automatic ensure() must not produce a re-login while parked"
+            )
+          )
           // 唯一解除口
           _ <- tunnel.resumeAfterUserLogin()
           lifted <- waitUntil(5.seconds)(IO(!tunnel.parkedAfterKick))
@@ -266,7 +291,9 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
   // `NeblinkClient.doLogin` → `LogtoSilentRelogin.register`）未被堵。本钉用真帧
   // （`disconnect`）驱动停摆，然后**分别**读两条自动腿与唯一解除口。
 
-  test("kick: while parked the automatic legs are refused with ZERO HTTP; an explicit user login releases them and the register leg runs again") {
+  test(
+    "kick: while parked the automatic legs are refused with ZERO HTTP; an explicit user login releases them and the register leg runs again"
+  ) {
     withFixture { fix =>
       withGatedStack(fix) { (ms, client, tunnel, dev) =>
         for

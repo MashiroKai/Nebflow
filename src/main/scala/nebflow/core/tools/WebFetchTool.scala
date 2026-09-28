@@ -3,8 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 import sttp.client4.*
 
 import scala.concurrent.duration.*

@@ -1,6 +1,7 @@
 package nebflow.core
 
 import cats.effect.{IO, Ref}
+import nebflow.shared.SystemReminder
 
 import java.nio.file.{Files, Path, Paths}
 

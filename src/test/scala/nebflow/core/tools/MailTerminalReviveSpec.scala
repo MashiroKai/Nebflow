@@ -7,14 +7,16 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentDef, AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.actor.AgentDef // W1 shim: main had nebflow.agent.AgentDef; PR moved it to actor
+import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.project.{FlowMapStore, NodeEngine, ProjectActor, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry, TaskLedgerData, TaskLedgerHistory, TaskLedgerStore}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had them in nebflow.gateway; PR moved the family to core
+import nebflow.llm.ModelCandidate // W1 shim: ThinkingConfig split out — PR moved it to shared
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 
 import java.nio.file.Files
 import java.time.Instant

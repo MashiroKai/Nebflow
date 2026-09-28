@@ -2,6 +2,7 @@ package nebflow.core
 
 import munit.FunSuite
 import nebflow.shared.AgentModelConfig
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 
 /** SchemePolicy v2 — four-role model-chain resolution:
   * own chain (settable roles) > Nebula primary chain (everyone else, fresh

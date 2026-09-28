@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentState, sessionCwd}
+import nebflow.actor.{AgentState, sessionCwd}
 import nebflow.core.tools.{BashTool, ToolContext}
 
 import scala.concurrent.duration.*
@@ -47,8 +47,10 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
   private def lines(out: String): List[String] =
     out.linesIterator.map(_.trim).filter(_.nonEmpty).toList
 
-  /** Bash 结果首行是 `(cwd: <dir>)` 前缀（BashTool.formatResult 的既有形态）——它是
-    * 「本调用在哪个目录里跑」的第二读数，断言单独取用；`pwd` 读数取其后的命令行。 */
+  /**
+   * Bash 结果首行是 `(cwd: <dir>)` 前缀（BashTool.formatResult 的既有形态）——它是
+   * 「本调用在哪个目录里跑」的第二读数，断言单独取用；`pwd` 读数取其后的命令行。
+   */
   private def cwdPrefix(out: String): String =
     lines(out).find(_.startsWith("(cwd:")).getOrElse("")
 
@@ -66,8 +68,10 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
       assertEquals(ls.size, 2, s"two pwd readings expected, raw output:\n$out")
       assertEquals(ls.head, seat.toString, s"`pwd` must be the seat verbatim; raw output:\n$out")
       assertEquals(ls(1), seat.toString, s"`pwd -P` (physical cwd) must be the seat verbatim; raw output:\n$out")
-      assert(cwdPrefix(out).contains(seat.toString),
-        s"the tool's own cwd stamp must name the seat too; raw output:\n$out")
+      assert(
+        cwdPrefix(out).contains(seat.toString),
+        s"the tool's own cwd stamp must name the seat too; raw output:\n$out"
+      )
   }
 
   test("A② 缺口② fail-closed：座椅目录缺失 ⇒ 该会话 Bash 显式失败（不回落工作区根）") {
@@ -89,8 +93,11 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
     for r <- bashCall("pwd -P", ctxFor(s, None))
     yield
       val out = r.fold(e => fail(s"plain Bash must still work without a seat signal, got: $e"), identity)
-      assertEquals(cmdLines(out).headOption.getOrElse(""), os.pwd.toString,
-        s"absent the seat signal the shell keeps the legacy cwd; raw output:\n$out")
+      assertEquals(
+        cmdLines(out).headOption.getOrElse(""),
+        os.pwd.toString,
+        s"absent the seat signal the shell keeps the legacy cwd; raw output:\n$out"
+      )
   }
 
   test("A④ 缺口② 透传链 + 消费点接线：AgentState → SessionContext，且三处接线在位（静态断言）") {
@@ -100,12 +107,31 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
     assertEquals(AgentState().sessionCwd, None, "absent the signal the field stays None (zero change)")
 
     val bashSrc = os.read(os.pwd / "src/main/scala/nebflow/core/tools/BashTool.scala")
-    assert(bashSrc.contains("ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))"),
-      "BashTool must derive the shell initialDir from ctx.sessionCwd (fallback = sandbox root)")
-    val coreSrc = os.read(os.pwd / "src/main/scala/nebflow/agent/AgentCore.scala")
-    assert(coreSrc.contains("sessionCwd = state.session.sessionCwd"),
-      "AgentCore must thread SessionContext.sessionCwd into ToolContext")
-    val engineSrc = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala")
-    assertEquals("sessionCwd = Some\\(projectRoot\\),".r.findAllIn(engineSrc).size, 2,
-      "both NodeEngine spawn points (normal node / loop session) must pass the seat signal")
+    assert(
+      bashSrc.contains("ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))"),
+      "BashTool must derive the shell initialDir from ctx.sessionCwd (fallback = sandbox root)"
+    )
+    // 2026-09-25 拆分重钉：AgentCore 拆为合成层后，该接线（pipeToolExecutions 内
+    // sessionCwd 透传）随会话与工具执行族迁至 AgentSessionExecution.scala（行为保持
+    // 重构）——读取目标改为新文件（接线文本逐字未动，判据语义不变）。
+    val coreSrc = os.read(os.pwd / "src/main/scala/nebflow/agent/AgentSessionExecution.scala")
+    assert(
+      coreSrc.contains("sessionCwd = state.session.sessionCwd"),
+      "AgentCore must thread SessionContext.sessionCwd into ToolContext"
+    )
+    // 2026-09-25 F 步重钉：loop 会话 spawn 点（spawnLoopSession）随 loop 簇自 NodeEngine
+    // 迁至 NodeLoopRunner（self-type trait，行为保持重构）——计数扩为跨文件聚合（先例
+    // SubAgentInboxMirrorSpec 2.3 增补），合计仍 2，判据语义不变。
+    // 2026-09-25 H 步重钉：普通节点 spawn 点（runWithAgent）随启动簇自 NodeEngine 迁至
+    // NodeStarter（self-type trait，行为保持重构）——聚合再纳入 NodeStarter.scala，合计
+    // 仍 2，判据语义不变。
+    val engineSrc = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala") +
+      os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeLoopRunner.scala") +
+      os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeStarter.scala")
+    assertEquals(
+      "sessionCwd = Some\\(projectRoot\\),".r.findAllIn(engineSrc).size,
+      2,
+      "both spawn points (normal node in NodeStarter / loop session in NodeLoopRunner) must pass the seat signal"
+    )
   }
+end NodeSeatCwdSpec

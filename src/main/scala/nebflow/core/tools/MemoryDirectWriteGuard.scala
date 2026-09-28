@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
-import nebflow.service.MemoryBudget
-import nebflow.service.MemoryWriteGate
+import nebflow.shared.MemoryBudget
+import nebflow.shared.MemoryWriteGate
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files

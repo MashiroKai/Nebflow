@@ -41,8 +41,7 @@ class LlmLogWriterStreamSpec extends FunSuite:
     LlmLogWriter.flushSync()
     LlmLogWriter.setEnabled(true)
     // best-effort cleanup
-    try
-      Files.walk(dir).sorted(java.util.Comparator.reverseOrder[Path]()).forEach(p => Files.deleteIfExists(p))
+    try Files.walk(dir).sorted(java.util.Comparator.reverseOrder[Path]()).forEach(p => Files.deleteIfExists(p))
     catch case _: Throwable => ()
     super.afterEach(context)
 
@@ -64,21 +63,25 @@ class LlmLogWriterStreamSpec extends FunSuite:
     parse(line).toOption.getOrElse(fail(s"non-JSON log line: $line"))
 
   private def tsOf(json: io.circe.Json): Instant =
-    json.hcursor.get[String]("timestamp").toOption
+    json.hcursor
+      .get[String]("timestamp")
+      .toOption
       .map(Instant.parse)
       .getOrElse(fail(s"no timestamp in: ${json.noSpaces.take(200)}"))
 
   test("T1: logRequest writes request line at dispatch; logResponse appends the response line after") {
     LlmLogWriter.logRequest(requestFixture, "req-T1", isSubagent = false, isCompaction = false).unsafeRunSync()
-    LlmLogWriter.logResponse(
-      requestId = "req-T1",
-      resultText = "hello",
-      resultToolCalls = Nil,
-      resultThinking = None,
-      resultStopReason = Some("end_turn"),
-      resultUsage = Some(TokenUsage(10, 20000)),
-      resultModel = Some("test-model")
-    ).unsafeRunSync()
+    LlmLogWriter
+      .logResponse(
+        requestId = "req-T1",
+        resultText = "hello",
+        resultToolCalls = Nil,
+        resultThinking = None,
+        resultStopReason = Some("end_turn"),
+        resultUsage = Some(TokenUsage(10, 20000)),
+        resultModel = Some("test-model")
+      )
+      .unsafeRunSync()
 
     val summary = readLines("summary").map(parseLine)
     assertEquals(summary.count(_.hcursor.get[String]("type").contains("request")), 1)
@@ -98,10 +101,12 @@ class LlmLogWriterStreamSpec extends FunSuite:
     Thread.sleep(80)
     LlmLogWriter.logStreamEvent(encoder, StreamChunk.TextDelta("more")).unsafeRunSync()
     // 完成行：t2（meta 携带 model——逐事件 model 归因面）
-    LlmLogWriter.logStreamEvent(
-      encoder,
-      StreamChunk.Done(Some("end_turn"), Some(TokenUsage(10, 20000)), None, None)
-    ).unsafeRunSync()
+    LlmLogWriter
+      .logStreamEvent(
+        encoder,
+        StreamChunk.Done(Some("end_turn"), Some(TokenUsage(10, 20000)), None, None)
+      )
+      .unsafeRunSync()
     LlmLogWriter.flushSync()
 
     val sse = readLines("sse").map(parseLine)
@@ -110,7 +115,10 @@ class LlmLogWriterStreamSpec extends FunSuite:
     val mid = tsOf(sse(1))
     val done = tsOf(sse(2))
     val gap1 = java.time.Duration.between(first, mid).toMillis
-    assert(gap1 >= 50, s"first-token → next-event gap must reflect real arrival times (≥50ms), got ${gap1}ms — timestamps would be indistinguishable under batch flushing")
+    assert(
+      gap1 >= 50,
+      s"first-token → next-event gap must reflect real arrival times (≥50ms), got ${gap1}ms — timestamps would be indistinguishable under batch flushing"
+    )
     assert(done.isAfter(mid), "Done line must be after the last delta")
     // 完成行（message_delta）与首 token 行（content_block_delta）类型可区分。
     assertEquals(sse.head.hcursor.get[String]("sse_event_type").toOption, Some("content_block_delta"))
@@ -135,8 +143,7 @@ class LlmLogWriterStreamSpec extends FunSuite:
       val encoder = new LlmLogWriter.StreamEventEncoder("req-T4", "stream-log-agent")
       val t0 = System.nanoTime()
       // 3 行入队；若同步写将 ≥180ms 阻塞调用方。
-      for i <- 1 to 3 do
-        LlmLogWriter.logStreamEvent(encoder, StreamChunk.TextDelta(s"chunk-$i")).unsafeRunSync()
+      for i <- 1 to 3 do LlmLogWriter.logStreamEvent(encoder, StreamChunk.TextDelta(s"chunk-$i")).unsafeRunSync()
       val elapsedMs = (System.nanoTime() - t0) / 1000000
       assert(
         elapsedMs < 50,
@@ -152,17 +159,20 @@ class LlmLogWriterStreamSpec extends FunSuite:
     // decrement（从未 increment）→ 每次直写 -2，累计负基座让 flushSync 的
     // `pendingWrites > 0` 在飞行等待整体失效——worker「已take未append」窗口
     // 裸奔，高负载 CI 上 T2 偶发少行（期望 3 行只见 2）。
-    LlmLogWriter.logRequest(requestFixture, "req-T5a", isSubagent = false, isCompaction = false)
+    LlmLogWriter
+      .logRequest(requestFixture, "req-T5a", isSubagent = false, isCompaction = false)
       .unsafeRunSync()
-    LlmLogWriter.logResponse(
-      requestId = "req-T5a",
-      resultText = "hello",
-      resultToolCalls = Nil,
-      resultThinking = None,
-      resultStopReason = Some("end_turn"),
-      resultUsage = Some(TokenUsage(1, 2)),
-      resultModel = Some("m")
-    ).unsafeRunSync()
+    LlmLogWriter
+      .logResponse(
+        requestId = "req-T5a",
+        resultText = "hello",
+        resultToolCalls = Nil,
+        resultThinking = None,
+        resultStopReason = Some("end_turn"),
+        resultUsage = Some(TokenUsage(1, 2)),
+        resultModel = Some("m")
+      )
+      .unsafeRunSync()
     // 队列零积压：同步直写路径不得动队列在飞行计数（pre-fix 此处 = -4，红）。
     assertEquals(LlmLogWriter.ssePendingWritesForTest, 0L)
 

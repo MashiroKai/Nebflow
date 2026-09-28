@@ -107,7 +107,10 @@ class WtMoveGuardSpec extends CatsEffectSuite:
    * The loader chain (the actual test classpath) is child-first, so it wins.
    */
   private lazy val childClasspathResolved: (String, String) =
-    sys.env.get("WTMOVE_CHILD_CLASSPATH").filter(_.nonEmpty).map(cp => (cp, "env"))
+    sys.env
+      .get("WTMOVE_CHILD_CLASSPATH")
+      .filter(_.nonEmpty)
+      .map(cp => (cp, "env"))
       .orElse(sys.props.get("wtmove.child.classpath").filter(_.nonEmpty).map(cp => (cp, "prop")))
       .orElse {
         val (urls, _) = urlChain()
@@ -126,10 +129,10 @@ class WtMoveGuardSpec extends CatsEffectSuite:
 
   private case class Case(
     id: String,
-    root: Path,   // <tmp>/wtmove-<id>-XXXX
+    root: Path, // <tmp>/wtmove-<id>-XXXX
     victim: Path, // child cwd
-    home: Path,   // -Duser.home; the Downloads target is home/Downloads
-    tmpIn: Path,  // holds the "real" temp file for the cases that need one
+    home: Path, // -Duser.home; the Downloads target is home/Downloads
+    tmpIn: Path, // holds the "real" temp file for the cases that need one
     tempArg: String // what the child puts into FileTransfer.tempPath
   ):
     def downloads: Path = home.resolve("Downloads")
@@ -178,6 +181,8 @@ class WtMoveGuardSpec extends CatsEffectSuite:
     val c = Case(id, root, victim, home, tmpIn, "")
     c.copy(tempArg = tempArgOf(c))
 
+  end makeCase
+
   /** Launch the child JVM: cwd = victim, user.home = disposable home, output to a file. */
   private def runChild(c: Case): (Int, String) =
     val cmd = new java.util.ArrayList[String]()
@@ -202,6 +207,8 @@ class WtMoveGuardSpec extends CatsEffectSuite:
       proc.destroyForcibly()
       fail(s"[${c.id}] child JVM did not finish in 120s; partial log:\n${readLog(c)}")
     (proc.exitValue(), readLog(c))
+
+  end runChild
 
   private def readLog(c: Case): String =
     if Files.exists(c.log) then new String(Files.readAllBytes(c.log), StandardCharsets.UTF_8) else "<no child log>"
@@ -277,10 +284,14 @@ class WtMoveGuardSpec extends CatsEffectSuite:
           assertEquals(probeField(out, k), v, s"[${c.id}] probe field $k wrong — $report\n$out")
         }
         expectWarn.foreach(w =>
-          assert(out.contains(w), s"[${c.id}] expected a logged WARN containing `$w` (the no-op must be visible):\n$out")
+          assert(
+            out.contains(w),
+            s"[${c.id}] expected a logged WARN containing `$w` (the no-op must be visible):\n$out"
+          )
         )
         extra(c)
       finally cleanup(c)
+      end try
     }
 
   // ===== 0 : the child JVM must actually start (classpath preflight) =====
@@ -324,7 +335,12 @@ class WtMoveGuardSpec extends CatsEffectSuite:
   test("④ tempPath is an ancestor of the working directory ⇒ refused + WARN (pre-fix: ancestor renamed away)") {
     // victim lives under <root>/movable/, so the ancestor IS movable and the
     // (disposable) Downloads target sits outside it.
-    val c = makeCase("commit-ancestor", x => x.victim.getParent.toString, homeInsideVictim = false, victimUnder = Some("movable"))
+    val c = makeCase(
+      "commit-ancestor",
+      x => x.victim.getParent.toString,
+      homeInsideVictim = false,
+      victimUnder = Some("movable")
+    )
     check(
       c,
       expectWarn = Some("REFUSED"),
@@ -335,7 +351,12 @@ class WtMoveGuardSpec extends CatsEffectSuite:
   test("⑤ the Downloads destination lies inside the working directory ⇒ refused + WARN") {
     // user.home inside the cwd ⇒ downloadsDir ⊂ cwd. Source is fine, destination is
     // not: the temp file must stay where it is.
-    val c = makeCase("commit-dest-inside", x => x.tmpIn.resolve("probe-target").toString, homeInsideVictim = true, victimUnder = None)
+    val c = makeCase(
+      "commit-dest-inside",
+      x => x.tmpIn.resolve("probe-target").toString,
+      homeInsideVictim = true,
+      victimUnder = None
+    )
     Files.write(c.tmpIn.resolve("probe-target"), "payload".getBytes(StandardCharsets.UTF_8))
     check(c, expectTmpIn = List("probe-target"), expectWarn = Some("destination"))
   }
@@ -343,7 +364,12 @@ class WtMoveGuardSpec extends CatsEffectSuite:
   // ===== ⑥ : the normal path still works (zero functional regression) =====
 
   test("⑥ a real temp file is still moved into Downloads, content intact") {
-    val c = makeCase("commit-normal", x => x.tmpIn.resolve("probe-target").toString, homeInsideVictim = false, victimUnder = None)
+    val c = makeCase(
+      "commit-normal",
+      x => x.tmpIn.resolve("probe-target").toString,
+      homeInsideVictim = false,
+      victimUnder = None
+    )
     Files.write(c.tmpIn.resolve("probe-target"), "payload".getBytes(StandardCharsets.UTF_8))
     check(
       c,
@@ -367,7 +393,8 @@ class WtMoveGuardSpec extends CatsEffectSuite:
 
   test("⑦b deleteTempFile whose tempPath is the working directory ⇒ refused + WARN (pre-fix: cwd deleted)") {
     // the victim is left empty on purpose: pre-fix `os.remove(cwd)` succeeds only then
-    val c = makeCase("delete-cwd", x => x.victim.toString, homeInsideVictim = false, victimUnder = None, seedVictim = false)
+    val c =
+      makeCase("delete-cwd", x => x.victim.toString, homeInsideVictim = false, victimUnder = None, seedVictim = false)
     check(c, expectWarn = Some("REFUSED"))
   }
 

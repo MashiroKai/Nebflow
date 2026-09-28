@@ -2,6 +2,7 @@ package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
+import nebflow.actor.AgentDef
 
 /**
  * agentdef-tidy 批（2026-09-11）安全回归：**收敛名无视 agent.json `category`**。
@@ -27,34 +28,28 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   /** 收敛名 → 机制固定集（**只引 AgentCore 常量**，零裸清单 / 零裸数字）。 */
   private val MechanismFixed: Map[String, Set[String]] = Map(
-    "Nebula" -> AgentCore.NebulaOrchestrationTools,
+    "Nebula" -> AgentCore.RootOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
     "general" -> AgentCore.GeneralFixedTools,
-    "kernel" -> AgentCore.KernelFixedTools
-    // govmemory 批（2026-09-25）：记忆整理 agent 整体退役，收敛集回收一席
+    "kernel" -> AgentCore.KernelFixedTools,
+    // 2026-09-12 记忆改造批：记忆整理 agent（压缩双轨第二轨）——与内核同集合恰七件
+    AgentDef.MemoryConsolidatorName -> AgentCore.KernelFixedTools
   )
 
-  /** legacyFixedTools 的 category=team 分支产物（逐字抄自实现：BaseTools + Mail
-    *  + SubTask ++ TeamTaskTools）——用常量拼装，不写裸清单。 */
+  /**
+   * legacyFixedTools 的 category=team 分支产物（逐字抄自实现：BaseTools + Mail
+   *  + SubTask ++ TeamTaskTools）——用常量拼装，不写裸清单。
+   */
   private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
 
-  /** friendseal (2026-09-25): flag-aware expectation for the Nebula face — the
-    * MechanismFixed registry above stays UNTOUCHED; the sealed default strips
-    * ListFriends at the single delivery point (AgentCore.friendsSealedStrip), so
-    * every expectation compared against a delivered face subtracts the same strip
-    * derived from the snapshot it is compared against. Never a bare number. */
-  private def mechanismFace(name: String): Set[String] =
-    val face = MechanismFixed.getOrElse(name, fail(s"$name 无机制固定集常量登记"))
-    if name == "Nebula" then
-      face -- (if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String])
-    else face
-
-  /** team 面**独有**件（相对 BaseTools 的增量：SubTask / TeamTask 三件）。
-    * 收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），故「遗留件
-    * 零出现」只能按 team 面独有件判定，不能拿整集求交。
-    * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 从本集合摘除——它已是 Nebula
-    * （NebulaOrchestrationTools）与分发器（DispatcherFixedTools）机制固定集的
-    * 正当成员，不再标志「team 面遗留件」。SubTask/TeamTask* 维持原判。 */
+  /**
+   * team 面**独有**件（相对 BaseTools 的增量：SubTask / TeamTask 三件）。
+   * 收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），故「遗留件
+   * 零出现」只能按 team 面独有件判定，不能拿整集求交。
+   * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 从本集合摘除——它已是 Nebula
+   * （NebulaOrchestrationTools）与分发器（DispatcherFixedTools）机制固定集的
+   * 正当成员，不再标志「team 面遗留件」。SubTask/TeamTask* 维持原判。
+   */
   private val LegacyTeamOnlyTools: Set[String] = Set("SubTask") ++ AgentCore.TeamTaskTools
 
   private def fixture(name: String, json: String): os.Path =
@@ -65,17 +60,22 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   private def loadFromDisk(name: String, json: String): AgentDef =
     val dir = fixture(name, json)
-    try new AgentLibrary(dir / os.up, None).loadFromDir(dir).getOrElse(
-      fail(s"fixture for $name failed to load")
-    )
+    try
+      new AgentLibrary(dir / os.up, None)
+        .loadFromDir(dir)
+        .getOrElse(
+          fail(s"fixture for $name failed to load")
+        )
     finally os.remove.all(dir / os.up)
 
   /** 收敛名 keeper：显式声明 JSON category 的后门形态。 */
   private def keeper(name: String, category: String): AgentDef =
     loadFromDisk(name, s"""{"name":"$name","description":"fixture","category":"$category","tools":[]}""")
 
-  /** order-395 段（身份段载体）在 buildConditionalBlocks 同款 filter+render 下的产物。
-    * 条件 `guardrailsOn && !isSubTaskWorker`（:281）；渲染体内层 `agentCategory == "team"`（:284）。 */
+  /**
+   * order-395 段（身份段载体）在 buildConditionalBlocks 同款 filter+render 下的产物。
+   * 条件 `guardrailsOn && !isSubTaskWorker`（:281）；渲染体内层 `agentCategory == "team"`（:284）。
+   */
   private def identitySectionOutput(defn: AgentDef, guardrailsOn: Boolean = true, isTeamLead: Boolean = false): String =
     val ctx = PromptSections.PromptContext(
       agentCategory = defn.category,
@@ -94,7 +94,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     AgentCore.ConvergedAgentNames.toList.sorted.foreach { name =>
       val defn = keeper(name, "team")
       assertEquals(defn.category, "standalone", s"$name: 收敛名 category 必须恒 standalone（无视 JSON）")
-      val expected = mechanismFace(name)
+      val expected = MechanismFixed.getOrElse(name, fail(s"$name 无机制固定集常量登记"))
       val fixed = AgentCore.fixedToolsFor(defn)
       assertEquals(fixed, expected, s"$name: 工具面必须等于机制固定集常量（不得走 legacyFixedTools）")
       assertEquals(fixed.intersect(LegacyTeamOnlyTools), Set.empty[String], s"$name: team 面独有件必须零出现")
@@ -104,14 +104,14 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     AgentCore.ConvergedAgentNames.toList.sorted.foreach { name =>
       val defn = keeper(name, "flow")
       assertEquals(defn.category, "standalone", s"$name: flow category 也必须被无视")
-      assertEquals(AgentCore.fixedToolsFor(defn), mechanismFace(name), s"$name: 工具面恒为机制固定集")
+      assertEquals(AgentCore.fixedToolsFor(defn), MechanismFixed(name), s"$name: 工具面恒为机制固定集")
     }
 
   test("收敛名 keeper 的 JSON category 为未知值 / 显式 standalone 时同样收敛"):
     List("standalone", "something-unknown").foreach { cat =>
       val defn = keeper("Nebula", cat)
       assertEquals(defn.category, "standalone", s"category=$cat 时收敛名须恒 standalone")
-      assertEquals(AgentCore.fixedToolsFor(defn), mechanismFace("Nebula"))
+      assertEquals(AgentCore.fixedToolsFor(defn), MechanismFixed("Nebula"))
     }
 
   // ===== ② 收敛名 × JSON category 后门：身份段 =====
@@ -173,7 +173,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
         AgentCore.fixedToolsFor(asTeam),
         s"$name: 固定面必须与 category 无关（收敛名 category 短路）"
       )
-      assertEquals(AgentCore.fixedToolsFor(asStandalone), mechanismFace(name))
+      assertEquals(AgentCore.fixedToolsFor(asStandalone), MechanismFixed(name))
     }
 
 end AgentDefCategoryBackdoorSpec

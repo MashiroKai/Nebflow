@@ -240,17 +240,19 @@ class HealthMonitorSpec extends CatsEffectSuite:
   private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
 
-  /** Registry that resolves a whitelist of model refs (simulates a config with
-    * a default chain that does NOT include the Down candidate — the 2026-08-25
-    * kimi scenario where kimi/k3-256k lives only in the Vision preset). */
-  private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String])
-      extends ProviderRegistry(null, null):
+  /**
+   * Registry that resolves a whitelist of model refs (simulates a config with
+   * a default chain that does NOT include the Down candidate — the 2026-08-25
+   * kimi scenario where kimi/k3-256k lives only in the Vision preset).
+   */
+  private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       if known.contains(ref) then
         ref.split("/").toList match
           case pid :: m :: Nil => IO.pure(Some(candidate(pid, m)))
-          case _               => IO.pure(None)
+          case _ => IO.pure(None)
       else IO.pure(None)
 
   test("probe marks Up on a successful response (empty reply OK — thinking-only)") {

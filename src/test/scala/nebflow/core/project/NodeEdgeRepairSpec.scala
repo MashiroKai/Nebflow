@@ -6,13 +6,12 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -43,15 +42,17 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 180.seconds
 
-  /** 每跑唯一夹具根（与 `MergeDesignGapSpec` 同模板同修法）。
-    *
-    * 旧形态 = 仓内**固定共享路径** `os.pwd/target/test-node-edge-repair` + 类初始化器里
-    * 「`setDataRoot(tempRoot)` → `os.remove.all(tempRoot)`」。该删除与**晚解析
-    * `PathUtil.dataRoot` 的异步写入者**（`LlmLogWriter` 的队列 fiber，写点
-    * `dataRoot/logs/router`）竞态 ⇒ 走查期间根目录被写回 ⇒
-    * `DirectoryNotEmptyException` ⇒ `initializationError`。
-    *
-    * 唯一化即根治：新目录本就为空，**无需删除** ⇒ 竞态窗口结构性消失。 */
+  /**
+   * 每跑唯一夹具根（与 `MergeDesignGapSpec` 同模板同修法）。
+   *
+   * 旧形态 = 仓内**固定共享路径** `os.pwd/target/test-node-edge-repair` + 类初始化器里
+   * 「`setDataRoot(tempRoot)` → `os.remove.all(tempRoot)`」。该删除与**晚解析
+   * `PathUtil.dataRoot` 的异步写入者**（`LlmLogWriter` 的队列 fiber，写点
+   * `dataRoot/logs/router`）竞态 ⇒ 走查期间根目录被写回 ⇒
+   * `DirectoryNotEmptyException` ⇒ `initializationError`。
+   *
+   * 唯一化即根治：新目录本就为空，**无需删除** ⇒ 竞态窗口结构性消失。
+   */
   private val tempRoot: os.Path =
     val scratchBase = os.pwd / "target"
     os.makeDir.all(scratchBase)
@@ -60,6 +61,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"edge-repair regression agent","tools":[],"category":"standalone"}"""
@@ -67,8 +69,11 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -77,45 +82,17 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
   /** 捕获输入 LLM：记录每次请求的 user 文本。 */
   private class CaptureLlm(delayOf: String => FiniteDuration = _ => 0.millis):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -130,7 +107,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -143,16 +120,20 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
-  /** **编辑面**输入（不带 `plugins` 键）——键的语义面是分开的：
-    *  - 建位（create）：必须**显式声明**能力面，省略键 ⇒ `NODE_PLUGINS_UNDECLARED`
-    *    （NodeTools.scala:1424）；
-    *  - 编辑（edit）：`plugins` 是 replace-on-provide 的**可选**键，省略 = 不改动能力面
-    *    （NodeTools.scala:2596）；而**归档**节点编辑分支把「带 plugins 键」列入
-    *    forbidden（NodeTools.scala:1396 `pluginsProvided`），带键的归档 out 改接会落进
-    *    通用「只放行 out 改接」拒 ⇒ 只改 out 的归档编辑调用一律按编辑形态发。
-    */
+  /**
+   * **编辑面**输入（不带 `plugins` 键）——键的语义面是分开的：
+   *  - 建位（create）：必须**显式声明**能力面，省略键 ⇒ `NODE_PLUGINS_UNDECLARED`
+   *    （NodeEditTool.scala:115）；
+   *  - 编辑（edit）：`plugins` 是 replace-on-provide 的**可选**键，省略 = 不改动能力面
+   *    （NodeEditTool.scala:1287）；而**归档**节点编辑分支把「带 plugins 键」列入
+   *    forbidden（NodeEditTool.scala:87 `pluginsProvided`），带键的归档 out 改接会落进
+   *    通用「只放行 out 改接」拒 ⇒ 只改 out 的归档编辑调用一律按编辑形态发。
+   */
   private def editInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
@@ -177,7 +158,12 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -186,7 +172,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist in active area")
+      case None => fail(s"node '$name' must exist in active area")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[Option[NodeDef]] =
@@ -196,55 +182,75 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     waitUntil(15.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
-  /** 让指定已完成节点悬空化（out 断开）并走真实链级归档路径移入归档区。
-    * 链级抽象 P0 拓扑口径（C4）：整链全终态才归档——夹具断开 out（目标节点无
-    * in/deps）→ 自成单成员孤立链 → 全终态 → 即时归档。幂等容错：同项目内其他
-    * 孤立 completed 节点会在同一次 sweep 一并出库（拓扑口径下归档边界=连通性，
-    * 旧时间批口径的「与 running 兄弟同批幸存」不存在）——目标已不在活动区时
-    * 直接回其归档 id。 */
+  /**
+   * 让指定已完成节点悬空化（out 断开）并走真实链级归档路径移入归档区。
+   * 链级抽象 P0 拓扑口径（C4）：整链全终态才归档——夹具断开 out（目标节点无
+   * in/deps）→ 自成单成员孤立链 → 全终态 → 即时归档。幂等容错：同项目内其他
+   * 孤立 completed 节点会在同一次 sweep 一并出库（拓扑口径下归档边界=连通性，
+   * 旧时间批口径的「与 running 兄弟同批幸存」不存在）——目标已不在活动区时
+   * 直接回其归档 id。
+   */
   private def archiveDangling(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.flatMap { s =>
       s.nodes.values.find(_.name == name) match
         case Some(n) =>
           waitStatus(rt, name, Set(NodeLifecycle.Completed)) *>
-            rt.store.mutate { st =>
-              st.nodes.get(n.id) match
-                case Some(fresh) =>
-                  st.copy(nodes = st.nodes.updated(n.id, fresh.copy(
-                    out = Nil, // 悬空（陈旧 out 覆盖时代的历史损伤形态 / LLM 断开写法）
-                    createdAt = System.currentTimeMillis() - 600000)))
-                case None => st
-            }.flatMap { _ =>
-              rt.store.sweepCompletedChains(System.currentTimeMillis()).flatMap { removed =>
-                assert(removed.contains(n.id), "node must be swept into archive")
-                rt.store.findNode(n.id).flatMap {
-                  case Some(archived) =>
-                    IO(assertEquals(archived.status, NodeLifecycle.Completed, "archived copy must keep completed status")).as(n.id)
-                  case None => IO.raiseError(new AssertionError("archived copy missing after sweep"))
+            rt.store
+              .mutate { st =>
+                st.nodes.get(n.id) match
+                  case Some(fresh) =>
+                    st.copy(nodes =
+                      st.nodes.updated(
+                        n.id,
+                        fresh.copy(
+                          out = Nil, // 悬空（陈旧 out 覆盖时代的历史损伤形态 / LLM 断开写法）
+                          createdAt = System.currentTimeMillis() - 600000
+                        )
+                      )
+                    )
+                  case None => st
+              }
+              .flatMap { _ =>
+                rt.store.sweepCompletedChains(System.currentTimeMillis()).flatMap { removed =>
+                  assert(removed.contains(n.id), "node must be swept into archive")
+                  rt.store.findNode(n.id).flatMap {
+                    case Some(archived) =>
+                      IO(
+                        assertEquals(
+                          archived.status,
+                          NodeLifecycle.Completed,
+                          "archived copy must keep completed status"
+                        )
+                      ).as(n.id)
+                    case None => IO.raiseError(new AssertionError("archived copy missing after sweep"))
+                  }
                 }
               }
-            }
         case None =>
           // 已被同 sweep 带进归档区（拓扑口径：孤立 completed 即时归档）→ 直接回 id
           rt.store.archiveSnapshot.flatMap { a =>
             a.nodes.values.find(_.name == name) match
               case Some(n) => IO.pure(n.id)
-              case None    => IO.raiseError(new AssertionError(s"node '$name' not found in active or archive"))
+              case None => IO.raiseError(new AssertionError(s"node '$name' not found in active or archive"))
           }
     }
 
-  /** 子集启动断言（变异验红锚「不提前触发」）：任何携带上游结果头的已启动输入
-    * 必须携带全部预期头——只出现一部分 = 以不完整 barrier 提前启动。 */
+  /**
+   * 子集启动断言（变异验红锚「不提前触发」）：任何携带上游结果头的已启动输入
+   * 必须携带全部预期头——只出现一部分 = 以不完整 barrier 提前启动。
+   */
   private def assertNoSubsetStart(inputs: List[String], headers: String*): Unit =
     inputs.foreach { in =>
       val hits = headers.count(in.contains)
       if hits > 0 then
-        assert(hits == headers.length,
-          s"premature start detected — an input carried $hits/${headers.length} upstream headers (subset barrier): ${in.take(220)}")
+        assert(
+          hits == headers.length,
+          s"premature start detected — an input carried $hits/${headers.length} upstream headers (subset barrier): ${in.take(220)}"
+        )
     }
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -252,27 +258,56 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
 
   // ── ②-a 多 barrier + 归档上游补建边：等齐才触发 ──────────
 
-  test("②-a append ARCHIVED upstream into partial barrier: delivered immediately, downstream waits for the RUNNING upstream (no premature start)") {
+  test(
+    "②-a append ARCHIVED upstream into partial barrier: delivered immediately, downstream waits for the RUNNING upstream (no premature start)"
+  ) {
     val ws = tempRoot / "ws-arch-append"
     os.makeDir.all(ws)
     val system = ActorSystem(s"edge-apa-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(text => if text.contains("slow-r") then 2500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-append", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W（wiring）先建，R 入口 out→W（R 运行 2.5s → W 的 barrier 挂起等 R）
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-arch-append", "run-r", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-r"), "out" -> Json.fromString(wId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-arch-append",
+          "run-r",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("slow-r"),
+          "out" -> Json.fromString(wId)
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "run-r", Set(NodeLifecycle.Running))
       // A 完成后悬空化 + 真实 TTL 归档
-      _ <- nodeEdit(nodeInput("edge-arch-append", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-arch-append",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       aId <- archiveDangling(rt, "done-a")
       rId <- idOf(rt, "run-r")
       // fix a：补建 in 边指向已归档上游——修复前 setOut 崩溃（NoSuchElementException）
@@ -288,41 +323,86 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(edited.isRight, s"edit must succeed against archived upstream, got: $edited")
-      assert(partial.deliveredTo.contains(aId), s"archived upstream must be delivered right after append, got ${partial.deliveredTo}")
-      assertEquals(partial.status, NodeLifecycle.Wiring, s"W must still wait for R at the checkpoint (no premature start), got ${partial.status}")
+      assert(
+        partial.deliveredTo.contains(aId),
+        s"archived upstream must be delivered right after append, got ${partial.deliveredTo}"
+      )
+      assertEquals(
+        partial.status,
+        NodeLifecycle.Wiring,
+        s"W must still wait for R at the checkpoint (no premature start), got ${partial.status}"
+      )
       assertEquals(w.deliveredTo.toSet, Set(rId, aId), s"W must receive both, got ${w.deliveredTo}")
       assert(wInput.isDefined, s"W input must carry BOTH results, got inputs=${allInputs.map(_.take(150))}")
       assertNoSubsetStart(allInputs, "=== Node run-r ===", "=== Node done-a ===")
+    end for
   }
 
   // ── ②-b 双归档上游 + deps 等待：等齐 in + deps 一次性启动 ──
 
-  test("②-b two ARCHIVED upstreams appended under a deps wait: starts ONCE with full input when deps completes (no subset start)") {
+  test(
+    "②-b two ARCHIVED upstreams appended under a deps wait: starts ONCE with full input when deps completes (no subset start)"
+  ) {
     val ws = tempRoot / "ws-arch-deps"
     os.makeDir.all(ws)
     val system = ActorSystem(s"edge-apd-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(text => if text.contains("slow-x") then 2500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-deps", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W（wiring）+ X（deps 等待对象，运行 2.5s）。W store 直种（20260903 创建必带
       // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-arch-deps", "slow-x", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-x"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-arch-deps",
+          "slow-x",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("slow-x"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       xId <- idOf(rt, "slow-x")
       _ <- waitStatus(rt, "slow-x", Set(NodeLifecycle.Running))
       // W 挂 deps（X 运行中 → deps 未满足，W 保持 wiring）
       _ <- nodeEdit(nodeInput("edge-arch-deps", "w-w", "deps" -> Json.fromString(xId)), ctx)
       // A、B 完成后悬空化 + 归档
-      _ <- nodeEdit(nodeInput("edge-arch-deps", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- nodeEdit(nodeInput("edge-arch-deps", "done-b", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-result-B"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-arch-deps",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-arch-deps",
+          "done-b",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-result-B"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       aId <- archiveDangling(rt, "done-a")
       bId <- archiveDangling(rt, "done-b")
       // 逐条补建归档 in 边（每次补投递都计入 barrier，deps 未满足期间不得启动）
@@ -345,26 +425,48 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       assertEquals(w.status, NodeLifecycle.Completed, "W must complete after deps settle")
       assert(wInput.isDefined, s"W input must carry BOTH archived results, got inputs=${allInputs.map(_.take(150))}")
       assertNoSubsetStart(allInputs, "=== Node done-a ===", "=== Node done-b ===")
+    end for
   }
 
   // ── ③ 悬空结果节点（归档变体）接线补投递 ────────────────
 
-  test("③ archived dangling result wired via NodeEdit(out=downstream): re-delivered, barrier settles, downstream starts") {
+  test(
+    "③ archived dangling result wired via NodeEdit(out=downstream): re-delivered, barrier settles, downstream starts"
+  ) {
     val ws = tempRoot / "ws-arch-wire"
     os.makeDir.all(ws)
     val system = ActorSystem(s"edge-aw-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-wire", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-arch-wire", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-arch-wire",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dangling-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       aId <- archiveDangling(rt, "done-a") // 悬空 + 归档
       // fix b：按名编辑归档节点设 out → 补投递（修复前：按名只在活动区找 → 落
       // createNode 同名重复节点，结果永不补投）。**编辑形态**（无 plugins 键，见
@@ -384,28 +486,54 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       assertEquals(w.status, NodeLifecycle.Completed, "W must start after re-delivery and complete")
       assert(wInput.isDefined, s"W input must carry A's result header, got inputs=${allInputs.map(_.take(150))}")
       // 归档副本的 out 单权威补写（setOut 归档感知）
-      assertEquals(archA.map(_.out), Some(List(OutEdge(wId))), "archived A.out must be rewritten to W (single-authority kept in archive)")
+      assertEquals(
+        archA.map(_.out),
+        Some(List(OutEdge(wId))),
+        "archived A.out must be rewritten to W (single-authority kept in archive)"
+      )
       // 不产生同名重复节点：活动区不得出现新的 done-a（归档原件保持在归档区）
       assertEquals(activeNames, Nil, "no duplicate active node may be created for an archived name edit")
       assert(archA.map(_.id).contains(aId), "archived original must keep its id")
+    end for
   }
 
-  test("③-b ACTIVE dangling result wired via NodeEdit(out=downstream): still re-delivered (existing branch regression)") {
+  test(
+    "③-b ACTIVE dangling result wired via NodeEdit(out=downstream): still re-delivered (existing branch regression)"
+  ) {
     val ws = tempRoot / "ws-active-wire"
     os.makeDir.all(ws)
     val system = ActorSystem(s"edge-acw-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-active-wire", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-active-wire", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-active-wire",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dangling-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "done-a")
       edited <- nodeEdit(nodeInput("edge-active-wire", "done-a", "out" -> Json.fromString(wId)), ctx)
@@ -419,33 +547,55 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       assert(w.deliveredTo.contains(aId), s"W must have received A's result, got ${w.deliveredTo}")
       assertEquals(w.status, NodeLifecycle.Completed, "W must start after re-delivery and complete")
       assert(wInput.isDefined, s"W input must carry A's result header, got inputs=${allInputs.map(_.take(150))}")
+    end for
   }
 
   // ── ④ 已存在边 + 归档上游：补投递且 barrier 结算正确 ─────
 
-  test("④ pre-existing edge + archived upstream (n-219106db damage shape): NodeEdit(out=) re-delivers, no duplicate in entry") {
+  test(
+    "④ pre-existing edge + archived upstream (n-219106db damage shape): NodeEdit(out=) re-delivers, no duplicate in entry"
+  ) {
     val ws = tempRoot / "ws-preedge"
     os.makeDir.all(ws)
     val system = ActorSystem(s"edge-pe-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-preedge", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-preedge", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-preedge",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dangling-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       aId <- archiveDangling(rt, "done-a")
       // 播种实证损伤形态（陈旧 out 覆盖时代遗留，同 n-219106db）：下游 in 已含
       // 上游、deliveredTo 恒空、上游归档悬空——边存在但投递永不发生
       _ <- rt.store.mutate { s =>
         s.nodes.get(wId) match
           case Some(fresh) => s.copy(nodes = s.nodes.updated(wId, fresh.copy(in = List(aId))))
-          case None        => s
+          case None => s
       }.void
       before <- nodeById(rt, wId).map(_.getOrElse(fail("W must exist")))
       // NodeEdit(归档 A, out=W) → 补投递（edge already exists 分支）——编辑形态（见 `editInput`）
@@ -463,35 +613,65 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       assert(w.deliveredTo.contains(aId), s"W must have received A's result, got ${w.deliveredTo}")
       assertEquals(w.status, NodeLifecycle.Completed, "W must start after re-delivery and complete")
       assert(wInput.isDefined, s"W input must carry A's result header, got inputs=${allInputs.map(_.take(150))}")
+    end for
   }
 
   // ── ④-c 补投递完整性：不在 adds 里的未投递归档上游也被补投 ─
 
-  test("④-c append catches up ALL undelivered in-upstreams: pre-existing archived edge delivered by appending ANOTHER upstream") {
+  test(
+    "④-c append catches up ALL undelivered in-upstreams: pre-existing archived edge delivered by appending ANOTHER upstream"
+  ) {
     val ws = tempRoot / "ws-catchup"
     os.makeDir.all(ws)
     val system = ActorSystem(s"edge-cu-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-catchup", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-catchup", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- nodeEdit(nodeInput("edge-catchup", "done-b", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-result-B"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-catchup",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-catchup",
+          "done-b",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-result-B"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       aId <- archiveDangling(rt, "done-a")
       bId <- archiveDangling(rt, "done-b")
       // 损伤形态：A 边已存在但从未投递（in 有 A、deliveredTo 空）
       _ <- rt.store.mutate { s =>
         s.nodes.get(wId) match
           case Some(fresh) => s.copy(nodes = s.nodes.updated(wId, fresh.copy(in = List(aId))))
-          case None        => s
+          case None => s
       }.void
       // 只追加 B——fix b 扩展：补投递扫描全部 in（A 虽不在 adds 里也被补投），
       // 随后 barrier 结算一次性启动。修复前（只投 adds=B）：A 永不投递 → W 永久
@@ -507,6 +687,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       assertEquals(w.status, NodeLifecycle.Completed, "W must start only after full barrier")
       assert(wInput.isDefined, s"W input must carry BOTH results, got inputs=${allInputs.map(_.take(150))}")
       assertNoSubsetStart(allInputs, "=== Node done-a ===", "=== Node done-b ===")
+    end for
   }
 
   // ── 归档编辑域守卫 ──────────────────────────────────────
@@ -517,11 +698,19 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-ag-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-guard", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("edge-arch-guard", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "edge-arch-guard",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dangling-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       aId <- archiveDangling(rt, "done-a")
       rTask <- nodeEdit(nodeInput("edge-arch-guard", "done-a", "task" -> Json.fromString("new-task")), ctx)
       rIn <- nodeEdit(nodeInput("edge-arch-guard", "done-a", "in" -> Json.fromString(aId)), ctx)
@@ -531,12 +720,22 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       archAfter <- rt.store.findNode(aId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(rTask.isLeft && rTask.left.exists(_.contains("archived")), s"task edit on archived must be rejected, got: $rTask")
+      assert(
+        rTask.isLeft && rTask.left.exists(_.contains("archived")),
+        s"task edit on archived must be rejected, got: $rTask"
+      )
       assert(rIn.isLeft && rIn.left.exists(_.contains("archived")), s"in edit on archived must be rejected, got: $rIn")
-      assert(rAbandon.isLeft && rAbandon.left.exists(_.contains("archived")), s"abandon on archived must be rejected, got: $rAbandon")
-      assert(rNoOut.isLeft && rNoOut.left.exists(_.contains("archived")), s"no-op edit on archived must be rejected, got: $rNoOut")
+      assert(
+        rAbandon.isLeft && rAbandon.left.exists(_.contains("archived")),
+        s"abandon on archived must be rejected, got: $rAbandon"
+      )
+      assert(
+        rNoOut.isLeft && rNoOut.left.exists(_.contains("archived")),
+        s"no-op edit on archived must be rejected, got: $rNoOut"
+      )
       assertEquals(archAfter.map(_.out), Some(Nil), "rejected edits must not touch the archived node")
       assertEquals(archAfter.flatMap(_.result), Some("ok"), "result must be untouched (CaptureLlm echoes 'ok')")
+    end for
   }
 
 end NodeEdgeRepairSpec

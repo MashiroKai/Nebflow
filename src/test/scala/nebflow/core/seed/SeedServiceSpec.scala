@@ -2,45 +2,20 @@ package nebflow.core.seed
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.plugin.PluginRegistry
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（3 manifest agents + 4 默认预装插件，Nebula 由
- * manifest 种子树下发，govmemory 批 2026-09-25 起 memory agent 退役；projects/general
- * is NO LONGER seeded since the kernelgen batch 2026-09-26 — the manifest carries
- * zero `project:` items）、
- * ② 幂等 / 不覆盖用户编辑、
+ * 覆盖定稿四项：① fresh home 完整播种（3 keeper agent + 4 默认预装插件 + projects/general，
+ * Nebula 由 seedDefaults 管、不在本 spec 断言面）、② 幂等 / 不覆盖用户编辑、
  * ③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）；
- * ⑤ project-face contract (FLIPPED by the kernelgen batch 2026-09-26, superseding the
- * author's 2026-09-17 rulings ①② seeding posture): the manifest declares ZERO
- * `project:` items ⇒ a cold start does not create projects/general; an existing home
- * missing general is NOT backfilled (reconcileProjects dormant); the
- * `seed/projects/general/` template tree stays in the repo as a dormant piece
- * (rollback-friendly).
- *
- * kernelgen-ext batch (2026-09-26, author directive "kernel into the seed tree"):
- * the manifest gains a FOURTH agent item `agents:kernel` as a PROMPT-ONLY seed
- * (seed/agents/kernel/system.md, no seed agent.json — the kernel def face is
- * mechanism-fixed via AgentCore.KernelFixedTools + ConvergedAgentNames). Marker
- * count 7 -> 8; the fresh-home mirror for kernel is system.md-only; kernel
- * availability in homes without a full disk def is carried by the spawn-time
- * fail-safe def (DelegateTool.resolveKernelDef: runtime mirror -> classpath seed
- * -> embedded default), verified here through the seed-reader utility contract
- * (SeedService.readAgentSeedPrompt).
- *
- * kernelgen-manifestfix batch (2026-09-26, author correction "computer use,
- * browser-use, document-production are missing"): the manifest face is the UNION
- * of main's current list with the kernelgen changes (+agents:kernel,
- * -project:general) = 11 items = 4 agents + 7 plugins, zero project items. The
- * seed tree already carried the three plugin directories (manually-installable
- * set, byte-identical to main), so a fresh home installs all seven plugins and
- * the marker records all 11 items.
+ * ⑤ 项目面种子在位不变量（作者 2026-09-17 裁定①恢复内置 general 项目播种：
+ * manifest 恰一条 `project:general` + 种子资源树在位）。
  *
  * classpath 资源（src/main/resources/seed/）在 sbt test classpath 上，`getResourceAsStream`
  * 直接命中——即「载体 A = 资源打包」在测试环境下被真实走通。
@@ -64,67 +39,41 @@ class SeedServiceSpec extends FunSuite:
   private def dataRoot: os.Path = PathUtil.dataRoot
 
   // ── ① fresh home：完整播种（agent + plugin + project）├────────
-  test("fresh home seeds four agents (kernel = prompt-only item) + seven plugins (union manifest), and NO project (general retired from cold start)"):
+  test("fresh home seeds four keepers + plugins + project:general"):
     ensure()
 
-    // The four manifest agents: kernel / Nebula / project-dispatcher / general all
-    // land from the seed tree (kernel as a PROMPT-ONLY item: system.md without any
-    // agent.json, kernelgen-ext 2026-09-26).
+    // 四 keeper：Nebula 由 seedDefaults 管（本测不触发）；补的两个在此断言
     val pdAgentJson = home / "agents" / "project-dispatcher" / "agent.json"
     val genAgentJson = home / "agents" / "general" / "agent.json"
-    val nbAgentJson = home / "agents" / "Nebula" / "agent.json"
     assert(os.exists(pdAgentJson), "project-dispatcher/agent.json seeded")
     assert(os.exists(home / "agents" / "project-dispatcher" / "system.md"), "project-dispatcher/system.md seeded")
     assert(os.exists(genAgentJson), "general/agent.json seeded")
     assert(os.exists(home / "agents" / "general" / "system.md"), "general/system.md seeded")
-    assert(os.exists(nbAgentJson), "Nebula/agent.json seeded")
-    assert(os.exists(home / "agents" / "Nebula" / "system.md"), "Nebula/system.md seeded")
-    // kernelgen-ext 2026-09-26: kernel is a prompt-only seed item — the mirror is
-    // system.md only. The def face is mechanism-fixed (KernelFixedTools +
-    // ConvergedAgentNames make agent.json declarations dead letters for kernel), so
-    // no seed agent.json ships; the spawn-time fail-safe def covers availability.
-    assert(os.exists(home / "agents" / "kernel" / "system.md"),
-      "kernel/system.md seeded (prompt-only item, kernelgen-ext 2026-09-26)")
-    assert(!os.exists(home / "agents" / "kernel" / "agent.json"),
-      "kernel ships NO seed agent.json (prompt-only item; def face is mechanism-fixed, kernelgen-ext 2026-09-26)")
 
-    // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准。
-    // 模型面契约（chain face）：种子不下发任何 `preset` 键——Nebula 的模型链由用户在
-    // /model 里配置（未配 ⇒ 引擎回落 provider 推导种子链），其余角色缺键 = 跟随
-    // Nebula 主链（SchemePolicy）。谁把 preset 键写回种子，以下三条即时红。
+    // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准，
+    // preset/skills 字段合法入 seed——project-dispatcher（**可设两类之一**）: preset=general, skills=[]。
+    // panelscheme 批（2026-09-21）：可设性收敛为 Nebula + 任务分发器两类，种子只在这两类
+    // 下发自有 preset；general 见下（改钉缺键）。
     val pd = io.circe.parser.parse(os.read(pdAgentJson)).toOption.get
-    assert(pd.hcursor.downField("preset").as[String].toOption.isEmpty,
-      "project-dispatcher must ship no preset key (follows the Nebula chain)")
-    assert(pd.hcursor.downField("skills").as[List[String]].toOption.exists(_.isEmpty),
-      "project-dispatcher skills=[]")
+    assert(pd.hcursor.downField("preset").as[String].toOption.contains("general"), "project-dispatcher preset=general")
+    assert(pd.hcursor.downField("skills").as[List[String]].toOption.exists(_.isEmpty), "project-dispatcher skills=[]")
     assert(pd.hcursor.downField("name").as[String].toOption.contains("project-dispatcher"))
 
-    val neb = io.circe.parser.parse(os.read(nbAgentJson)).toOption.get
-    assert(neb.hcursor.downField("preset").as[String].toOption.isEmpty,
-      "Nebula must ship no preset key (its own model chain is the primary chain)")
-
     val gen = io.circe.parser.parse(os.read(genAgentJson)).toOption.get
-    // `general` 是节点 worker/verify 的唯一执行 agent，模型链由引擎按 SchemePolicy
-    // 动态继承 **Nebula 主链**，种子不下发自有链——下发即死键，故此处钉「缺键」契约。
-    assert(gen.hcursor.downField("preset").as[String].toOption.isEmpty,
-      "general must ship no self-owned model reference (follows the Nebula chain)")
-    assert(!gen.hcursor.downField("model").succeeded ||
-      gen.hcursor.downField("model").focus.exists(_.isNull),
-      "general must ship no model chain")
+    // panelscheme 批（2026-09-21，作者令：节点无自有模型方案）：`general` 是节点
+    // worker/verify 的唯一执行 agent，模型方案由引擎动态继承**任务分发器当前方案**
+    // （SchemePolicy），种子不再下发自有 preset——下发即死键（引擎忽略），故此处改钉
+    // 「缺键」契约：谁把 general 的自有方案写回种子，本条即时红。
+    assert(
+      gen.hcursor.downField("preset").as[String].toOption.isEmpty,
+      "general must ship no self-owned preset (panelscheme 2026-09-21: nodes inherit the dispatcher's scheme)"
+    )
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
-    // Default preinstall set = the manifest's seven plugin items (kernelgen-manifestfix
-    // 2026-09-26 union: main's seven plugin entries incl. browser-use / computer-use /
-    // document-production; the seed tree already carried those three directories,
-    // byte-identical to main). Directory in place + trusted.
-    for name <- List(
-        "visual-report",
-        "slideblocks",
-        "nebflow-plugin-creator",
-        "web-search-toolkit",
-        "browser-use",
-        "computer-use",
-        "document-production")
+    // 现行默认插件集 = 3 包（manifest.json:8-10，作者 2026-09-12 裁定回退）：
+    // c7501470 收缩为 2 包 → nebflow-plugin-creator 批扩为 3 包（09-10）→ seed7 批再扩 5 包
+    // （09-11，非预期扩张）→ 本批回退为 3 包。目录就位 + trusted
+    for name <- List("visual-report", "slideblocks", "nebflow-plugin-creator")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"plugin '$name'/plugin.json present")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"plugin '$name' trusted")
@@ -134,30 +83,48 @@ class SeedServiceSpec extends FunSuite:
     // 也绝不落 home（默认集收缩不删种子文件，但也不预装——既有 home 面积不扩张到 8 条）。
     for name <- List("no-such-plugin-in-manifest", "design-cards")
     do
-      assert(!os.exists(home / "plugins" / name),
-        s"plugin '$name' NOT seeded (absent from manifest + seed/plugins tree)")
-    for name <- List(
-        "nebflow-qa",
-        "nebflow-frontend-dev",
-        "engineering-methods",
-        "explorer-toolkit",
-        "design-spec")
+      assert(
+        !os.exists(home / "plugins" / name),
+        s"plugin '$name' NOT seeded (absent from manifest + seed/plugins tree)"
+      )
+    for name <- List("nebflow-qa", "nebflow-frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
     do
-      assert(!os.exists(home / "plugins" / name),
-        s"plugin '$name' NOT seeded (in seed tree but not in default preinstall set)")
+      assert(
+        !os.exists(home / "plugins" / name),
+        s"plugin '$name' NOT seeded (in seed tree but not in default preinstall set)"
+      )
     // skill 包实际复制实证（默认集中抽验两包，plugin.json 锚点 + 整目录递归）
-    assert(os.exists(home / "plugins" / "visual-report" / "skills" / "visual-report" / "SKILL.md"),
-      "visual-report skill copied")
-    assert(os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
-      "slideblocks skill copied")
+    assert(
+      os.exists(home / "plugins" / "visual-report" / "skills" / "visual-report" / "SKILL.md"),
+      "visual-report skill copied"
+    )
+    assert(
+      os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
+      "slideblocks skill copied"
+    )
 
-    // ── Project face (kernelgen 2026-09-26, flipped contract): a fresh home does NOT
-    // scaffold projects/general — the manifest carries zero `project:` items, so
-    // neither the full-seeding pass nor reconcileProjects ever creates it. Non-vacuous:
-    // under the baseline manifest (one `project:` item for general) this assertion goes RED
-    // (seedProject would scaffold the directory) — that red run is the C4 red-proof.
-    assert(!os.exists(home / "projects" / "general"),
-      "fresh home must NOT scaffold projects/general (general retired from cold start, kernelgen 2026-09-26)")
+    // ── 项目面：默认通用项目 general 恢复播种（作者 2026-09-17 裁定①，撤销 09-16 摘除令）──
+    // 正向断言（本批改写面）：干净 home 建 projects/general 脚手架——S1 前是同一位置的
+    // 路径级负向断言（`!os.exists(home / "projects" / "general")`）。**禁恒真**：逐级读
+    // 真值（文件存在 + project.json 的 name/workspace + AGENTS.md 存在且为 **0 字节**——
+    // 作者 2026-09-18 裁定 (A)：种子文本面置空，不再预填/不再带占位），播种面
+    // 被摘掉即红（S5① 变异红证已实测）。
+    val projectJson = home / "projects" / "general" / "project.json"
+    assert(os.exists(projectJson), "project:general scaffolded")
+    val proj = io.circe.parser.parse(os.read(projectJson)).toOption.get
+    assert(proj.hcursor.downField("name").as[String].toOption.contains("general"))
+    assert(
+      proj.hcursor.downField("workspace").as[String].toOption.contains((home / "projects" / "general").toString),
+      "workspace points at projects/general"
+    )
+    assert(os.exists(home / "projects" / "general" / "AGENTS.md"), "AGENTS.md scaffolded")
+    // 2026-09-18 作者裁定 (A)（promptopt W3 · L2 = 种子文本置空，取代原「含本工作区路径 /
+    // <DATA_ROOT> 已替换」口径）：种子面不再预填任何内容 ⇒ 判据 = 文件**存在且 0 字节**。
+    // **禁恒真**：把种子资源回填旧预填文本（非空）⇒ 本条必红（回填红轮已实测，报告 round-2 §3）。
+    assert(
+      os.size(home / "projects" / "general" / "AGENTS.md") == 0,
+      "seed project AGENTS.md is empty (0 bytes = no pre-filled template content)"
+    )
 
     // marker
     val marker = home / ".seed-state.json"
@@ -165,43 +132,48 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // Marker count = items actually written this run = **11** = the full current
-    // union manifest (kernelgen-manifestfix 2026-09-26): 4 agents (project-dispatcher
-    // / general / Nebula / kernel) + 7 default plugins (visual-report / slideblocks /
-    // nebflow-plugin-creator / web-search-toolkit / browser-use / computer-use /
-    // document-production), ZERO project items. History: 7 (pre-kernelgen, with the
-    // project:general entry) -> 8 (ext: +agents:kernel -project:general) -> 11
-    // (manifestfix union: + the three plugin items from main's list).
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 11),
-      "marker records 11 items (4 agents + 7 plugins, zero project items)")
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.contains("agents:kernel")),
-      "marker records the agents:kernel item (kernelgen-ext 2026-09-26)")
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(items =>
-      List("plugins:browser-use", "plugins:computer-use", "plugins:document-production")
-        .forall(items.contains)),
-      "marker records the three union plugins restored from main's list (kernelgen-manifestfix 2026-09-26)")
+    // marker 记录 = 本轮实际写入 item 数 = **8** = 现行 manifest items 全量：3 agents
+    // （project-dispatcher / general / memory-consolidator）+ 4 默认插件（visual-report /
+    // slideblocks / nebflow-plugin-creator / web-search-toolkit）+ 1 project（general，
+    // 作者 2026-09-17 裁定①恢复播种）。S1 前 = 7（同集去 project 条目）。
+    assert(
+      state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 8),
+      "marker records 8 items (3 agents + 4 plugins + 1 project:general)"
+    )
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
-    ensure()  // first seed
+    ensure() // first seed
     // 用户编辑 general/agent.json（写一个自定义标记）
     val agentPath = home / "agents" / "general" / "agent.json"
     val custom = """{"name":"general","description":"用户改写","customMarker":true}"""
     os.write.over(agentPath, custom)
-    ensure()  // re-seed
+    ensure() // re-seed
     assert(os.read(agentPath).contains("customMarker"), "user edit preserved across re-seed")
 
-    // Project face (kernelgen 2026-09-26): projects/general no longer exists on a
-    // cold start, so the old "re-seed never silently overwrites an existing
-    // project.json" subject is gone with the retired manifest item — the contract
-    // here flips to the negative: a re-seed on a marker-current home still creates
-    // nothing. The user-edit-preservation invariant stays pinned on the agent face
-    // above (the general AGENT is not retired; its seed tree still ships).
-    assert(!os.exists(home / "projects" / "general"),
-      "re-seed still does not create projects/general (zero backfill, kernelgen 2026-09-26)")
+    // 项目面（本批改写的第二处 + S5② 补钉）：重播既**不重复 create**也**不静默覆盖**
+    // 既有 project.json —— 用户改写的内容逐字存活。本行钉的是**项目面「无静默覆盖」不变量**
+    // （三重守卫：既有 home 门 + marker 门 + seedProject 的「已存在」分支；红证 = 三处全中和
+    // 的朴素播种面，见报告 S5② —— 单独变异 seedProject 分支不可达、恒绿，理由同报告）。
+    val projPath = home / "projects" / "general" / "project.json"
+    assert(os.exists(projPath), "project:general scaffolded on a fresh home")
+    os.write.over(
+      projPath,
+      io.circe.parser
+        .parse(os.read(projPath))
+        .toOption
+        .get
+        .deepMerge(io.circe.Json.obj("customMarker" -> io.circe.Json.True))
+        .noSpaces
+    )
+    ensure()
+    assert(
+      os.read(projPath).contains("customMarker"),
+      "user-edited project.json kept across re-seed (no silent overwrite of an existing project definition)"
+    )
 
   // ── ③ fresh-home 守卫：已有用户数据 → 不完整播种（但默认集 agent + 项目自愈）──
-  test("existing user data skips full seeding, add-only self-heals the default set (agents); general is NOT backfilled"):
+  test("existing user data skips full seeding, add-only self-heals the default set (agents + project:general)"):
     // 模拟已有项目（非 fresh home）
     val myproj = home / "projects" / "myproj"
     os.makeDir.all(myproj)
@@ -222,55 +194,74 @@ class SeedServiceSpec extends FunSuite:
     val marker = home / ".seed-state.json"
     assert(os.exists(marker), "marker recorded")
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
-    assert(state.hcursor.downField("items").as[List[String]].toOption.contains(Nil), "no items for existing-user-data run")
+    assert(
+      state.hcursor.downField("items").as[List[String]].toOption.contains(Nil),
+      "no items for existing-user-data run"
+    )
     // 2026-09-13 语义变更（作者令「改成缺失自愈」，取代 D-8「缺失不新装」）：默认集 agent
-    // 在既有 home 也要自愈补装。原断言「no dispatcher seeded when user data present」已按
-    // 新口径改写（这是预期的判红样例：改测试，不改守卫）。govmemory 批（2026-09-25）：
-    // memory 消费 agent 退役，默认集第三席 = Nebula（manifest 种子树下发）。
-    for name <- List("project-dispatcher", "Nebula")
-    do assert(os.exists(home / "agents" / name / "agent.json"), s"default-set agent '$name' self-healed under the guard")
+    // 在既有 home 也要自愈补装——否则消费链（memory-consolidator）在既有 home 永不可能
+    // 就位，记忆队列只进不出。原断言「no dispatcher seeded when user data present」已按
+    // 新口径改写（这是预期的判红样例：改测试，不改守卫）。
+    for name <- List("project-dispatcher", "memory-consolidator")
+    do
+      assert(os.exists(home / "agents" / name / "agent.json"), s"default-set agent '$name' self-healed under the guard")
 
-    // kernelgen-ext 2026-09-26: kernel is a PROMPT-ONLY seed item (no seed
-    // agent.json), so the self-heal anchor (agent.json) is absent and the agents
-    // reconcile pass writes NOTHING for kernel here (loud WARN, zero files on
-    // disk). Kernel availability in such a home is carried by the spawn-time
-    // fail-safe def (DelegateTool.resolveKernelDef), not by a mirror directory.
-    assert(!os.exists(home / "agents" / "kernel"),
-      "kernel is NOT self-healed into an existing home (prompt-only item, no agent.json anchor; the spawn-time fail-safe def covers availability)")
-
-    // ── Project face (kernelgen 2026-09-26, flipped again — full circle): the manifest
-    // carries zero `project:` items ⇒ reconcileProjects is dormant ⇒ an existing home
-    // missing general is NOT backfilled. This re-asserts the negative that the
-    // 2026-09-17 ruling ② had flipped to positive, but this time the flip lives in the
-    // manifest (data), not in a guard change. Non-vacuous: the baseline manifest
-    // (with its general `project:` item) makes this RED (reconcileProjects backfills
-    // the directory) — covered by the C4 red-proof run.
-    assert(!os.exists(home / "projects" / "general"),
-      "missing default project 'general' is NOT backfilled in an existing home (reconcileProjects dormant: zero project: manifest items, kernelgen 2026-09-26)")
+    // ── 项目面（本批新口径，作者 2026-09-17 裁定②：既有 home 亦 add-only 补种）──
+    // 改前口径为「不补种既有 home」（原断言 = 路径级负向 `!os.exists(home/projects/general)`
+    // + 同块注释「不建 general 项目脚手架」）；后令治前论 ⇒ 该负面陈述作废，随口径翻转为
+    // 正向。判据非恒真：**改前树跑本用例必红**（无 reconcileProjects ⇒ general 不被补出），
+    // 改后绿；且既有一切内容逐字节不变（下两条）。
+    val genDir = home / "projects" / "general"
+    assert(
+      os.exists(genDir / "project.json"),
+      "missing default project 'general' is backfilled in an existing home (add-only reconcile)"
+    )
+    assert(os.exists(genDir / "AGENTS.md"), "general/AGENTS.md backfilled in an existing home")
+    val genAgentsText = os.read(genDir / "AGENTS.md")
+    // 同口径改写（2026-09-18 作者裁定 (A)）：原两条同源断言 = 「文本含本工作区绝对路径
+    // （<DATA_ROOT> 占位已替换）」+「无未替换 <DATA_ROOT> 残留」——种子文本置空后二者在空文本上
+    // **恒真**，按变异纪律（断言禁恒真）折入本条的 0 字节读数：回填旧预填文本（非空）⇒ 本条必红。
+    assert(
+      genAgentsText.isEmpty && os.size(genDir / "AGENTS.md") == 0,
+      "seed project AGENTS.md is empty (0 bytes) after add-only backfill — no pre-filled template content"
+    )
+    val genProj = io.circe.parser.parse(os.read(genDir / "project.json")).toOption.get
+    assert(
+      genProj.hcursor.downField("workspace").as[String].toOption.contains(genDir.toString),
+      "backfilled project.json points its workspace at projects/general"
+    )
 
     // ③ 零覆盖：既有 `projects/myproj/project.json` 内容逐字不变（既有内容零覆盖/零搬移/零删除）
     val myprojAfter = os.read(myprojJson)
     assert(myprojAfter == myprojBefore, "existing project file byte-identical after the add-only reconcile")
-    // (2) no new directory under `projects/` (kernelgen 2026-09-26: nothing is backfilled, so the
-    // listing is exactly the pre-existing 'myproj')
-    assert(os.list(home / "projects").map(_.last).sorted == List("myproj"),
-      "no project directory beyond the pre-existing 'myproj' (general is not backfilled)")
-    println(s"[DIAG-ZERO-OVERWRITE] projects/myproj/project.json sha256 before=${sha256(myprojBefore)} " +
-      s"after=${sha256(myprojAfter)} byteIdentical=${myprojAfter == myprojBefore}")
+    // ② `projects/` 除预期补种的 `general` 之外零新增目录
+    assert(
+      os.list(home / "projects").map(_.last).sorted == List("general", "myproj"),
+      "no project directory beyond the expected backfilled 'general'"
+    )
+    println(
+      s"[DIAG-ZERO-OVERWRITE] projects/myproj/project.json sha256 before=${sha256(myprojBefore)} " +
+        s"after=${sha256(myprojAfter)} byteIdentical=${myprojAfter == myprojBefore}"
+    )
 
-    // (2) Idempotence (kernelgen 2026-09-26 reshaped this check: with general gone from the
-    // project face there is no general mtime left to pin ⇒ the idempotence criterion folds
-    // onto the pre-existing myproj — the second boot adds zero directories and performs
-    // zero writes to existing files)
-    val myprojMtime = os.mtime(myprojJson)
+    // ② 幂等：第二次 boot 对该面零写盘（mtime 逐字不变 ⇒ 无写入）
+    val genProjJson = genDir / "project.json"
+    val genProjMtime = os.mtime(genProjJson)
+    val genAgentsMtime = os.mtime(genDir / "AGENTS.md")
     ensure()
-    assert(os.list(home / "projects").map(_.last).sorted == List("myproj"),
-      "second boot still creates no project directory (no backfilled 'general')")
-    assert(os.mtime(myprojJson) == myprojMtime,
-      "second boot leaves the existing project file untouched (mtime unchanged ⇒ zero writes)")
+    assert(
+      os.mtime(genProjJson) == genProjMtime,
+      "second boot leaves projects/general/project.json untouched (mtime unchanged ⇒ zero writes)"
+    )
+    assert(
+      os.mtime(genDir / "AGENTS.md") == genAgentsMtime,
+      "second boot leaves projects/general/AGENTS.md untouched (mtime unchanged ⇒ zero writes)"
+    )
     assert(os.read(myprojJson) == myprojBefore, "existing project file still byte-identical after the second boot")
-    println(s"[DIAG-IDEMPOTENT] projects/myproj/project.json mtime before=$myprojMtime " +
-      s"after=${os.mtime(myprojJson)} unchanged=${os.mtime(myprojJson) == myprojMtime}")
+    println(
+      s"[DIAG-IDEMPOTENT] projects/general/project.json mtime before=$genProjMtime " +
+        s"after=${os.mtime(genProjJson)} unchanged=${os.mtime(genProjJson) == genProjMtime}"
+    )
 
   // ── ④ 升级 add-only：低版本 marker + 已有文件 → 只补缺失 ──
   test("upgrade run is add-only: fills missing files, does not rewrite existing"):
@@ -283,8 +274,7 @@ class SeedServiceSpec extends FunSuite:
     os.makeDir.all(home / "agents" / "general")
     os.write.over(home / "agents" / "general" / "agent.json", """{"name":"general","preUpgrade":true}""")
     // 低版本 marker
-    os.write.over(home / ".seed-state.json",
-      """{"version":"0.5.0","seededAt":123,"items":[]}""")
+    os.write.over(home / ".seed-state.json", """{"version":"0.5.0","seededAt":123,"items":[]}""")
 
     ensure()
 
@@ -293,23 +283,9 @@ class SeedServiceSpec extends FunSuite:
     assert(agentContent.contains("preUpgrade"), "pre-existing agent.json not rewritten (user wins)")
     // 缺失的补齐：project-dispatcher、插件（补种集 = 现行 manifest 默认集，manifest 驱动 SeedService.runSeed）
     assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"), "missing dispatcher added")
-    // kernelgen-ext 2026-09-26: the upgrade run plants the kernel prompt mirror too
-    // (prompt-only item: the full-seeding pass writes system.md; agent.json stays absent).
-    assert(os.exists(home / "agents" / "kernel" / "system.md"),
-      "upgrade run plants the kernel prompt mirror (prompt-only item, kernelgen-ext 2026-09-26)")
-    assert(!os.exists(home / "agents" / "kernel" / "agent.json"),
-      "kernel still ships no agent.json on the upgrade run (prompt-only item)")
-    // Upgrade add-only replants the full current default set = seven plugins
-    // (kernelgen-manifestfix 2026-09-26 union manifest).
-    for name <- List(
-        "visual-report",
-        "slideblocks",
-        "nebflow-plugin-creator",
-        "web-search-toolkit",
-        "browser-use",
-        "computer-use",
-        "document-production")
-    do assert(os.exists(home / "plugins" / name / "plugin.json"), s"missing plugin '$name' added")
+    assert(os.exists(home / "plugins" / "visual-report" / "plugin.json"), "missing plugin added")
+    assert(os.exists(home / "plugins" / "slideblocks" / "plugin.json"), "missing plugin added")
+    assert(os.exists(home / "plugins" / "nebflow-plugin-creator" / "plugin.json"), "missing plugin added")
     // 升级 add-only 的语义是「补齐 manifest 全集」，不是「冻结旧集」——但「全集」= 现行
     // **默认预装集**（3 包），不是种子树可手动装全集：seed7 批新入 manifest 的 5 包
     // （nebflow-qa / nebflow-frontend-dev / engineering-methods / explorer-toolkit /
@@ -317,47 +293,48 @@ class SeedServiceSpec extends FunSuite:
     // 非默认集种子包的手动安装面由 `SeedManifestCoverageSpec` 的 b/c 两条锚定（文件保留）。
     for name <- List("explorer-toolkit", "design-spec")
     do
-      assert(!os.exists(home / "plugins" / name / "plugin.json"),
-        s"non-default seed plugin '$name' NOT replanted on upgrade run (out of default set)")
-    // Project face (kernelgen 2026-09-26, flipped): the upgrade add-only run no longer
-    // replants any project — the manifest has zero `project:` items, so after the
-    // pre-run `os.remove.all(home / "projects")` NOTHING is recreated (the old
-    // positive "missing project added" assertion is superseded together with the
-    // retired manifest item). Non-vacuous: the baseline manifest makes this RED
-    // (runSeed would replant general) — covered by the C4 red-proof.
-    assert(!os.exists(home / "projects" / "general"),
-      "upgrade run does NOT replant projects/general (zero project: manifest items, kernelgen 2026-09-26)")
+      assert(
+        !os.exists(home / "plugins" / name / "plugin.json"),
+        s"non-default seed plugin '$name' NOT replanted on upgrade run (out of default set)"
+      )
+    // 项目面（本批改写）：升级 add-only run 同样补齐缺失的默认集项目——本用例在 run 前
+    // `os.remove.all(home / "projects")`，故此处是「缺失 ⇒ 补建」的正面断言
+    // （S1 前是路径级负向断言「no project scaffold added by the upgrade run」）
+    assert(os.exists(home / "projects" / "general" / "project.json"), "missing project added")
     // marker 升级到当前版本
     val marker = io.circe.parser.parse(os.read(home / ".seed-state.json")).toOption.get
     assert(marker.hcursor.downField("version").as[String].toOption.contains("1.0.0"), "marker bumped to 1.0.0")
 
-  // ── ⑤ Project-face manifest contract (kernelgen 2026-09-26: zero project items;
-  //    the dormant scaffold tree stays in the repo) ────
-  test("manifest declares ZERO project items (general retired from cold start) and the dormant seed tree stays in the repo"):
-    // 判据 = 真值读取（classpath 上的同一份资源），**禁恒真**：任一方向漂移即红——
-    // putting a `project:*` item back into the manifest ⇒ this test goes red (re-entering
-    // seeding is a product decision that needs the author's explicit sign-off); deleting
-    // the dormant template tree ⇒ this test goes red all the same (the mechanical face is
-    // kept, not deleted — a rollback-friendly contract).
-    val manifestText = {
+  // ── ⑤ 项目面种子在位不变量（作者 2026-09-17 裁定①，撤销 09-16 摘除令）────
+  test(
+    "built-in project seed is in place: manifest declares exactly one 'project:general' item and the seed tree ships with it"
+  ):
+    // 判据 = 真值读取（classpath 上的同一份资源），**禁恒真**：条目/资源树任一消失，本测红。
+    val manifestText =
       val in = Option(getClass.getClassLoader.getResourceAsStream("seed/manifest.json")).getOrElse(
         fail("classpath resource 'seed/manifest.json' not found")
       )
-      try new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) finally in.close()
-    }
-    val items = io.circe.parser.parse(manifestText).toOption
-      .flatMap(_.hcursor.downField("items").as[List[String]].toOption).getOrElse(fail("manifest.items unreadable"))
+      try new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+      finally in.close()
+    val items = io.circe.parser
+      .parse(manifestText)
+      .toOption
+      .flatMap(_.hcursor.downField("items").as[List[String]].toOption)
+      .getOrElse(fail("manifest.items unreadable"))
     val projectItems = items.filter(_.startsWith("project:"))
-    assert(projectItems.isEmpty,
-      s"seed manifest must declare ZERO 'project:' items (got ${projectItems.mkString(", ")} of " +
-        s"${items.size} item(s)) — kernelgen batch 2026-09-26 retired the general project from " +
-        "cold start (kernel replaces general); re-adding a project item is a product decision")
-    // Dormant scaffold tree stays on the classpath (the mechanical face is kept, not deleted:
-    // the seed-tree template does not travel with the manifest item — rollback-friendly).
-    // Criterion matches the sibling spec = classpath
+    assert(
+      projectItems == List("project:general"),
+      s"seed manifest must declare exactly one 'project:general' item (got ${projectItems.mkString(", ")} of " +
+        s"${items.size} item(s)) — the built-in project seed was restored by the author on 2026-09-17 " +
+        "(reversing the 2026-09-16 removal); dropping it again is a product decision"
+    )
+    // 种子资源树在位（缺 `seed/projects/general/AGENTS.md` ⇒ seedProject 只剩 defaultAgentTemplate
+    // 短模板兜底，真实项目指令文本到不了新 home）。判据与兄弟 spec 同口径 = classpath
     // （sbt test = target/classes 拷贝，assembly = jar）。
-    assert(getClass.getClassLoader.getResource("seed/projects/general/AGENTS.md") != null,
-      "dormant seed project resource tree (seed/projects/general/AGENTS.md) is still on the classpath (kept, not deleted)")
+    assert(
+      getClass.getClassLoader.getResource("seed/projects/general/AGENTS.md") != null,
+      "seed project resource tree (seed/projects/general/AGENTS.md) is on the classpath"
+    )
 
   // ── ⑥ 零覆盖负控：既有（手工版）projects/general 逐字节不变 ──────────
   test("a pre-existing hand-made projects/general survives boot byte-identical (add-only, zero overwrite)"):
@@ -367,10 +344,6 @@ class SeedServiceSpec extends FunSuite:
     // .gitignore）逐字节钉住。判红面 = 任何「对齐种子 / 镜像覆盖 / 按 workspace 纠正既有定义 /
     // 经 `ProjectStore.ensureScaffold` 打补丁（该路径会**追加** `.gitignore`）」的实现
     // ——本批禁：不得 seed→runtime 覆写既有 general 的任何文件。
-    // kernelgen 2026-09-26: this negative control now doubles as the SEALED-FAMILY
-    // guarantee — with reconcileProjects dormant (zero `project:` manifest items), a
-    // pre-existing hand-made projects/general is untouched on every boot (no seed
-    // pass even iterates it; it is likewise never deleted).
     os.remove.all(home / "projects")
     os.remove.all(home / ".seed-state.json")
     val handGeneral = home / "projects" / "general"
@@ -390,34 +363,26 @@ class SeedServiceSpec extends FunSuite:
     ensure() // 连续两次 boot（幂等面一并覆盖）
 
     for case (name, text) <- handFiles do
-      assert(os.read(handGeneral / name) == text,
-        s"hand-made projects/general/$name byte-identical across boots (directory-level guard ⇒ zero action)")
-    assert(os.list(home / "projects").map(_.last).sorted == projectsBefore,
-      "add-only reconcile creates no extra project directory")
-    println("[DIAG-HANDMADE-GENERAL] " + handFiles.map { case (name, text) =>
-      val after = os.read(handGeneral / name)
-      s"$name sha256 before=${shasBefore(name)} after=${sha256(after)} identical=${sha256(after) == shasBefore(name)}"
-    }.mkString("; "))
-
-  // ── ⑦ kernel seed prompt face (kernelgen-ext 2026-09-26) ──────────
-  // The spawn-side fail-safe chain (DelegateTool.resolveKernelDef) reads the kernel
-  // prompt through SeedService.readAgentSeedPrompt; this pins the reader contract:
-  // seed present => the seed text (carrying the verbatim contract + the plugin
-  // pointer); seed absent => None => the caller's embedded default. The tier that
-  // picks the embedded constant is a DelegateTool concern and is pinned over there
-  // (DelegateToolSpec, fail-safe resolution tests).
-  test("readAgentSeedPrompt: seed present => text, absent => None (spawn falls back to the embedded default)"):
-    val kernelPrompt = SeedService.readAgentSeedPrompt("kernel")
-    assert(kernelPrompt.exists(_.contains("## ⑤ Creating plugins")),
-      "kernel seed prompt is on the classpath and carries the author-directed plugin-creation pointer")
-    assert(kernelPrompt.exists(_.contains("**Capability boundary (hard):**")),
-      "kernel seed prompt carries the verbatim migrated contract section")
-    assert(kernelPrompt.exists(!_.trim.isEmpty), "blank seed text must read as absent (corrupt-face fallback)")
-    assert(SeedService.readAgentSeedPrompt("no-such-agent-in-seed").isEmpty,
-      "missing seed prompt => None (caller falls back to its embedded default — fail-safe tier 3)")
+      assert(
+        os.read(handGeneral / name) == text,
+        s"hand-made projects/general/$name byte-identical across boots (directory-level guard ⇒ zero action)"
+      )
+    assert(
+      os.list(home / "projects").map(_.last).sorted == projectsBefore,
+      "add-only reconcile creates no extra project directory"
+    )
+    println(
+      "[DIAG-HANDMADE-GENERAL] " + handFiles
+        .map { case (name, text) =>
+          val after = os.read(handGeneral / name)
+          s"$name sha256 before=${shasBefore(name)} after=${sha256(after)} identical=${sha256(after) == shasBefore(name)}"
+        }
+        .mkString("; ")
+    )
 
   private def sha256(text: String): String =
-    java.security.MessageDigest.getInstance("SHA-256")
+    java.security.MessageDigest
+      .getInstance("SHA-256")
       .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8))
       .map("%02x".format(_))
       .mkString

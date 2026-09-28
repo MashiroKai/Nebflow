@@ -4,8 +4,7 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{JsonObject, parser}
-import nebflow.core.Branding
-import nebflow.shared.{HttpUtils, SharedBackend}
+import nebflow.shared.{Branding, HttpUtils, SharedBackend}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -15,16 +14,18 @@ object WebSearchTool extends Tool:
   val DEFAULT_MAX_CHARS = 15_000
   val BATCH_SIZE = 3 // race this many engines at a time
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.websearch")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.websearch")
 
-  /** Anti-scraping garbage fingerprints (WebSearch P0, C4). A result entry
-    * whose text hits one of these is an anti-bot interstitial (JS
-    * cookie/captcha machinery), not a search result — dropping the entry
-    * beats shipping it to the agent as a "successful" result (2026-08-22
-    * Sogou incident: a checkSNUID cookie script was extracted and passed
-    * through as the Sogou "results" with zero user-visible anomaly).
-    * Lowercase contains-match; entries are dropped individually so a single
-    * false positive (e.g. a JS tutorial snippet) cannot kill a whole batch. */
+  /**
+   * Anti-scraping garbage fingerprints (WebSearch P0, C4). A result entry
+   * whose text hits one of these is an anti-bot interstitial (JS
+   * cookie/captcha machinery), not a search result — dropping the entry
+   * beats shipping it to the agent as a "successful" result (2026-08-22
+   * Sogou incident: a checkSNUID cookie script was extracted and passed
+   * through as the Sogou "results" with zero user-visible anomaly).
+   * Lowercase contains-match; entries are dropped individually so a single
+   * false positive (e.g. a JS tutorial snippet) cannot kill a whole batch.
+   */
   private val GarbageFingerprints: List[String] = List(
     "checksnuid",
     "document.cookie",
@@ -33,10 +34,12 @@ object WebSearchTool extends Tool:
     "antispider"
   )
 
-  /** Drop garbage entries from an extraction. Returns the cleaned text —
-    * empty when EVERYTHING was garbage, which makes searchOne treat the
-    * engine as failed (batch-level degradation per C4: "parsed something
-    * trustworthy" is the bar, not "parsed something"). */
+  /**
+   * Drop garbage entries from an extraction. Returns the cleaned text —
+   * empty when EVERYTHING was garbage, which makes searchOne treat the
+   * engine as failed (batch-level degradation per C4: "parsed something
+   * trustworthy" is the bar, not "parsed something").
+   */
   private[tools] def stripGarbageResults(text: String, engine: String): String =
     val entries = text.split("\n\n")
     val kept = entries.filter { entry =>
@@ -53,21 +56,28 @@ object WebSearchTool extends Tool:
     }
     kept.mkString("\n\n")
 
-  /** Tier 3 provenance annotation — the builtin aggregation is a zero-config
-    * fallback, not a product-grade search (keyless HTML scraping, no SLA).
-    * Every Tier 3 result says so; provider-routed results carry their own
-    * "Search source: provider:<id>" header instead. */
+  end stripGarbageResults
+
+  /**
+   * Tier 3 provenance annotation — the builtin aggregation is a zero-config
+   * fallback, not a product-grade search (keyless HTML scraping, no SLA).
+   * Every Tier 3 result says so; provider-routed results carry their own
+   * "Search source: provider:<id>" header instead.
+   */
   private[tools] def tier3Annotation(academic: Boolean): String =
     if academic then "Source: builtin academic API (non-guaranteed fallback tier)"
-    else "Source: builtin aggregation (non-guaranteed — keyless HTML scraping, no SLA; verify before relying on results)"
+    else
+      "Source: builtin aggregation (non-guaranteed — keyless HTML scraping, no SLA; verify before relying on results)"
 
   case class SearchEngine(name: String, url: String, region: String)
 
-  /** General engines that currently serve anti-bot interstitial pages in the
-    * CN network (Sogou antispider / Baidu captcha — verified 2026-08-25).
-    * They stay in the roster (their behavior may change; a pinned engine= is
-    * still honored) but sink below the primary batch in orderedEngines so a
-    * known-dead slot never occupies a racing position that 360/DDG could use. */
+  /**
+   * General engines that currently serve anti-bot interstitial pages in the
+   * CN network (Sogou antispider / Baidu captcha — verified 2026-08-25).
+   * They stay in the roster (their behavior may change; a pinned engine= is
+   * still honored) but sink below the primary batch in orderedEngines so a
+   * known-dead slot never occupies a racing position that 360/DDG could use.
+   */
   private val ANTI_BOT_PRONE: Set[String] = Set("Sogou", "Baidu")
 
   // P1 engine priority (2026-08-25, empirical): 360 is the only consistently
@@ -88,11 +98,13 @@ object WebSearchTool extends Tool:
     SearchEngine("Crossref", "https://api.crossref.org/works", "academic")
   )
 
-  /** Engine ordering by query language (P1-5, 2026-08-25): 360 leads for both
-    * languages (the only consistently-reachable general engine); English /
-    * technical queries put DuckDuckGo second (reachable via the platform
-    * proxy), Chinese queries put the CN engines next. Anti-bot-prone engines
-    * sink to the tail. Returns only the general (non-academic) engines. */
+  /**
+   * Engine ordering by query language (P1-5, 2026-08-25): 360 leads for both
+   * languages (the only consistently-reachable general engine); English /
+   * technical queries put DuckDuckGo second (reachable via the platform
+   * proxy), Chinese queries put the CN engines next. Anti-bot-prone engines
+   * sink to the tail. Returns only the general (non-academic) engines.
+   */
   private[tools] def orderedEngines(query: String): List[SearchEngine] =
     val latin = query.count(c => c.isLetter && c < 128)
     val total = query.count(_.isLetter)
@@ -260,18 +272,19 @@ Usage:
 
   // ── Single-engine fetch ───────────────────────────────────────────
 
-  /** P1 error classification (1d, 2026-08-25): replace the opaque
-    * "No meaningful results" with the actual failure mode so the agent/user
-    * can act on it (anti-bot page → try another engine / pinned engine;
-    * JS-rendered → the engine is unusable by keyless scraping). */
+  /**
+   * P1 error classification (1d, 2026-08-25): replace the opaque
+   * "No meaningful results" with the actual failure mode so the agent/user
+   * can act on it (anti-bot page → try another engine / pinned engine;
+   * JS-rendered → the engine is unusable by keyless scraping).
+   */
   private[tools] def classifyEmpty(html: String, engine: SearchEngine): String =
     val lower = html.toLowerCase
     val mode =
       if lower.contains("antispider") then "anti-bot blocked (antispider)"
       else if lower.contains("wappass") || lower.contains("captcha") || lower.contains("验证码") then
         "anti-bot blocked (captcha)"
-      else if engine.name == "WeChat" || lower.contains("javascript:void(0)") then
-        "no parseable links (JS-rendered)"
+      else if engine.name == "WeChat" || lower.contains("javascript:void(0)") then "no parseable links (JS-rendered)"
       else "no parseable results"
     s"${engine.name}: $mode"
 
@@ -470,16 +483,18 @@ Usage:
 
   // ── Main call: parallel batch search ──────────────────────────────
 
-  /** P1 race semantics (fast-fail poison fix, 2026-08-25): all runs in a
-    * batch execute CONCURRENTLY; the FIRST SUCCESS wins and cancels the
-    * still-running peers; a failure does NOT cancel its peers — the old
-    * `IO.race(...).map(_.merge)` let the fastest failure (Sogou's 415B
-    * antispider page) murder a slow real result (360's 467KB page).
-    * Only when EVERY run in the batch has failed does the batch count as
-    * failed, with all errors aggregated. Extracted at object level so the
-    * race semantics are unit-testable with scripted IOs (no network). */
+  /**
+   * P1 race semantics (fast-fail poison fix, 2026-08-25): all runs in a
+   * batch execute CONCURRENTLY; the FIRST SUCCESS wins and cancels the
+   * still-running peers; a failure does NOT cancel its peers — the old
+   * `IO.race(...).map(_.merge)` let the fastest failure (Sogou's 415B
+   * antispider page) murder a slow real result (360's 467KB page).
+   * Only when EVERY run in the batch has failed does the batch count as
+   * failed, with all errors aggregated. Extracted at object level so the
+   * race semantics are unit-testable with scripted IOs (no network).
+   */
   private[tools] def raceFirstSuccess(
-      runs: List[IO[Either[String, (SearchEngine, String)]]]
+    runs: List[IO[Either[String, (SearchEngine, String)]]]
   ): IO[Either[String, (SearchEngine, String)]] =
     if runs.isEmpty then IO.pure(Left("empty engine batch"))
     else
@@ -489,13 +504,13 @@ Usage:
         done <- Deferred[IO, Unit]
         remaining <- Ref.of[IO, Int](runs.size)
         countdown = remaining.modify(n => (n - 1, n == 1)).flatMap {
-          case true  => done.complete(()).void
+          case true => done.complete(()).void
           case false => IO.unit
         }
         fibers <- runs.traverse { run =>
           (run.attempt.flatMap {
             case Right(Right(res)) => success.complete(res).void
-            case Right(Left(err))  => errors.update(_ :+ err)
+            case Right(Left(err)) => errors.update(_ :+ err)
             case Left(ex) =>
               errors.update(_ :+ Option(ex.getMessage).map(_.take(120)).getOrElse(ex.getClass.getSimpleName))
           } *> countdown).start
@@ -515,7 +530,7 @@ Usage:
         _ <- fibers.traverse_(_.cancel)
         result <- success.tryGet.flatMap {
           case Some(res) => IO.pure(Right(res))
-          case None      => errors.get.map(errs => Left(errs.mkString("\n")))
+          case None => errors.get.map(errs => Left(errs.mkString("\n")))
         }
       yield result
 
@@ -540,7 +555,9 @@ Usage:
       // General engines: batch racing
       val enginesToTry: List[SearchEngine] = engineName match
         case Some(name) =>
-          engineMap.get(name).toList ++ orderedEngines(query).filter(e => e.name != name && !ACADEMIC_NAMES.contains(e.name))
+          engineMap.get(name).toList ++ orderedEngines(query).filter(e =>
+            e.name != name && !ACADEMIC_NAMES.contains(e.name)
+          )
         case None => orderedEngines(query)
 
       // When a specific engine is specified, try it ALONE first (batch size 1),

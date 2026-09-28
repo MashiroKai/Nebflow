@@ -2,9 +2,7 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-
-import nebflow.core.NebflowLogger
-import nebflow.shared.UiMessage
+import nebflow.shared.{NebflowLogger, UiMessage}
 
 /**
  * 子代理收件（卡08 裁点 2，作者 2026-09-20 07:33 批「建」）—— **投递侧增量**。
@@ -143,9 +141,7 @@ object InjectedInboxMirror:
     val tgts = targets(emitterSid, source, candidates)
     tgts.traverse { t =>
       append(t, ui)
-        .handleErrorWith(e =>
-          logger.warn(s"injected inbox mirror failed: target=${t.take(32)} err=${e.getMessage}")
-        )
+        .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: target=${t.take(32)} err=${e.getMessage}"))
         .as(t)
     }
 end InjectedInboxMirror

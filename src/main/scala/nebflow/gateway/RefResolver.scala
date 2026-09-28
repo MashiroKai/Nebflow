@@ -21,29 +21,37 @@ import io.circe.Json
  */
 object RefResolver:
 
-  /** QC follow-up (#303): every client-provided string interpolated into the
-    * block passes through sanitize — strip control chars (\n \r \t, C0/C1,
-    * U+2028/U+2029) so a crafted title from an external source (web page
-    * title, canvas doc) cannot forge extra injection lines such as a fake
-    * [打回任务…] block. Spaces are preserved (legitimate in paths/titles). */
+  /**
+   * QC follow-up (#303): every client-provided string interpolated into the
+   * block passes through sanitize — strip control chars (\n \r \t, C0/C1,
+   * U+2028/U+2029) so a crafted title from an external source (web page
+   * title, canvas doc) cannot forge extra injection lines such as a fake
+   * [打回任务…] block. Spaces are preserved (legitimate in paths/titles).
+   */
   def sanitize(s: String): String =
     s.filter(ch => ch >= ' ' && ch != '\u007F' && ch != '\u2028' && ch != '\u2029')
 
-  /** Titles are the only free-text field with no length bound of its own —
-    * cap at 80 chars to honor the ≤ ~100 token pointer budget (D5). */
+  /**
+   * Titles are the only free-text field with no length bound of its own —
+   * cap at 80 chars to honor the ≤ ~100 token pointer budget (D5).
+   */
   def cleanTitle(s: String): String =
     val t = sanitize(s)
     if t.length <= 80 then t else t.take(80)
 
-  /** QC follow-up (#303): the same task referenced twice (double-pushed refs
-    * or legacy+unified duplicate) must fire the return flow once — the second
-    * `return` would hit IllegalStateException (task already in_progress) and
-    * emit a spurious taskError frame. First occurrence wins, order stable. */
+  /**
+   * QC follow-up (#303): the same task referenced twice (double-pushed refs
+   * or legacy+unified duplicate) must fire the return flow once — the second
+   * `return` would hit IllegalStateException (task already in_progress) and
+   * emit a spurious taskError frame. First occurrence wins, order stable.
+   */
   def dedupeTaskRefs(refs: List[(String, String)]): List[(String, String)] =
     refs.distinct
 
-  /** Build the [引用: …] injection block, or None when the ref cannot be
-    * resolved (unknown refType / missing identity). Pure — no IO, no state. */
+  /**
+   * Build the [引用: …] injection block, or None when the ref cannot be
+   * resolved (unknown refType / missing identity). Pure — no IO, no state.
+   */
   def resolve(ref: Json): Option[String] =
     val c = ref.hcursor
     val refType = c.downField("refType").as[String].getOrElse("")
@@ -55,7 +63,9 @@ object RefResolver:
         if path.isEmpty then None
         else
           val title = cleanTitle(
-            src.downField("title").as[String]
+            src
+              .downField("title")
+              .as[String]
               .orElse(src.downField("fileName").as[String])
               .getOrElse(fileNameOf(path))
           )
@@ -65,7 +75,9 @@ object RefResolver:
         if path.isEmpty then None
         else
           val title = cleanTitle(
-            src.downField("title").as[String]
+            src
+              .downField("title")
+              .as[String]
               .orElse(src.downField("fileName").as[String])
               .getOrElse(fileNameOf(path))
           )
@@ -80,7 +92,9 @@ object RefResolver:
         if loc.isEmpty then None
         else
           val title = cleanTitle(
-            src.downField("title").as[String]
+            src
+              .downField("title")
+              .as[String]
               .orElse(src.downField("fileName").as[String])
               .getOrElse(if url.nonEmpty then url else fileNameOf(path))
           )
@@ -99,17 +113,26 @@ object RefResolver:
         val date = sanitize(ref.hcursor.downField("meta").downField("date").as[String].getOrElse(""))
         // Body: keep newlines (legitimate message content) but strip other
         // control chars - same anti-forgery rationale as sanitize().
-        val body = c.downField("content").downField("fullText").as[String].getOrElse("")
-          .filter(ch => ch >= ' ' || ch == '\n').take(4000)
+        val body = c
+          .downField("content")
+          .downField("fullText")
+          .as[String]
+          .getOrElse("")
+          .filter(ch => ch >= ' ' || ch == '\n')
+          .take(4000)
         if body.isEmpty then None
         else
           val datePart = if date.nonEmpty then s" | $date" else ""
           Some(s"[引用 · 好友消息 | 来自 $name($nl)$datePart]\n$body")
       case _ => None // "task" → return flow (processTaskReturns); unknown → skip
+    end match
+  end resolve
 
-  /** Anchor summary " · p.3–4" / " · L12–45" / " · Sheet1!A1:D10" / " · <p>"
-    * — empty for kind=none. Mirrors the frontend pageBadge rules (reference.js)
-    * so both layers render the same badge. En dash (U+2013) matches the spec. */
+  /**
+   * Anchor summary " · p.3–4" / " · L12–45" / " · Sheet1!A1:D10" / " · <p>"
+   * — empty for kind=none. Mirrors the frontend pageBadge rules (reference.js)
+   * so both layers render the same badge. En dash (U+2013) matches the spec.
+   */
   def anchorText(anchor: io.circe.ACursor): String =
     val kind = anchor.downField("kind").as[String].getOrElse("none")
     kind match
@@ -132,10 +155,18 @@ object RefResolver:
         val rng = sanitize(anchor.downField("cellRange").as[String].getOrElse(""))
         if sheet.nonEmpty then s" · $sheet!$rng" else ""
       case "element" =>
-        anchor.downField("selector").as[String].toOption
+        anchor
+          .downField("selector")
+          .as[String]
+          .toOption
           .flatMap(tagOf)
-          .map(t => s" · <$t>").getOrElse("")
+          .map(t => s" · <$t>")
+          .getOrElse("")
       case _ => ""
+
+    end match
+
+  end anchorText
 
   /** First tag of a CSS selector path: "html>body>div.c>p:nth-of-type(2)" → "p". */
   def tagOf(selector: String): Option[String] =

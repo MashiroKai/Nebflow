@@ -10,14 +10,13 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, PathUtil, StreamChunk, ThinkingConfig}
 
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -97,6 +96,8 @@ class FlowSessionIdSpec extends CatsEffectSuite:
         system.stopAll.attempt.void *>
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
+
+  end withFlowEnv
 
   /** n1 → $return — the minimal DAG. */
   private def sidFlow: FlowDagDef =

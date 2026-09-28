@@ -1,10 +1,10 @@
 package nebflow.core.flow
 
-import nebflow.core.AtomicJson
 import cats.effect.IO
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Persists the list of mounted flows per session.

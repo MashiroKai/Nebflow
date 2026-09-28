@@ -5,10 +5,12 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem}
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus, SharedResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
+import nebflow.agent.SharedResources
 import nebflow.core.project.NodeEngine
 import nebflow.gateway.WsHub
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ThinkingConfig
 
 import scala.concurrent.duration.*
 
@@ -35,11 +37,13 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
   // 本 spec 会驱动真实 `TaskStuckWatcher.scan`（写 stuck-fire / stuck-detected）⇒
   // 看门狗事件日志必须落到 spec 自己的临时目录，不得写进真实 ~/.nebflow。
   private val watchdogLogTmp = os.temp.dir(prefix = "wtsurv-env-lost-events")
+
   override def beforeAll(): Unit =
     nebflow.core.processor.WatchdogEventLog.setLogDirForTest(watchdogLogTmp.toNIO)
   override def afterAll(): Unit = nebflow.core.processor.WatchdogEventLog.resetLogDirForTest()
 
   private val Sid = "node-envlost-0001"
+
   /** 生产判死阈值（600s）——本 spec 的会话静默 **90s**（< 阈值）⇒ 只有类③ 判据能开火。 */
   private val StuckThresholdMs = 10 * 60 * 1000L
   private val Silence90s = 90_000L
@@ -104,8 +108,10 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
       else os.read.lines(f).toList.flatMap(l => io.circe.parser.parse(l).toOption)
     }.map(_.filter(_.hcursor.get[String]("type").toOption.contains(tpe)))
 
-  /** 本用例**新增**的事件（ts ≥ t0）——事件文件是**按日共享**的，跨用例必须按 ts
-    * 切片，否则前一个用例的行会污染后一个用例的否定断言。 */
+  /**
+   * 本用例**新增**的事件（ts ≥ t0）——事件文件是**按日共享**的，跨用例必须按 ts
+   * 切片，否则前一个用例的行会污染后一个用例的否定断言。
+   */
   private def eventsOfTypeSince(tpe: String, sinceMs: Long): IO[List[Json]] =
     eventsOfType(tpe).map(_.filter(_.hcursor.get[Long]("ts").toOption.exists(_ >= sinceMs)))
 
@@ -142,8 +148,7 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
     val now = System.currentTimeMillis()
     val r = record(now, withTool = true, progressAgoMs = 1_000L)
     val c = TaskStuckWatcher.classify(r, assessmentOf(r, now), now, inflight = 0, cwdAlive = Some(false))
-    assertEquals(c.cls, TaskStuckWatcher.ClassFalsePositive,
-      "红线：有正信号不得促成判死——目录被删不会让**已启动**的进程停下")
+    assertEquals(c.cls, TaskStuckWatcher.ClassFalsePositive, "红线：有正信号不得促成判死——目录被删不会让**已启动**的进程停下")
     assertEquals(c.recoverable, false)
   }
 
@@ -162,9 +167,7 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
         now = System.currentTimeMillis()
         _ <- resources.agentRegistry.set(Map(Sid -> record(now)))
         t0 = System.currentTimeMillis()
-        _ <- TaskStuckWatcher.scan(
-          resources, wsHub, StuckThresholdMs,
-          cwdProbe = _ => IO.pure(Some(false)))
+        _ <- TaskStuckWatcher.scan(resources, wsHub, StuckThresholdMs, cwdProbe = _ => IO.pure(Some(false)))
         _ <- IO.sleep(300.millis)
         events <- wsEvents.get
         fires <- eventsOfTypeSince("stuck-fire", t0)
@@ -179,14 +182,17 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
         assert(reason.contains("J1"), s"明确错误必须含判据号（J1）：$reason")
         assert(reason.contains("NodeEdit"), s"明确错误必须给处置（NodeEdit 重激活）：$reason")
         val idle = f.hcursor.get[Long]("idleSecs").toOption.getOrElse(-1L)
-        assert(idle < StuckThresholdMs / 1000,
-          s"快速失败：不得等到 600s 判死阈值才动作（实得 ${idle}s）")
+        assert(idle < StuckThresholdMs / 1000, s"快速失败：不得等到 600s 判死阈值才动作（实得 ${idle}s）")
         assertEquals(
-          fires.count(_.hcursor.get[String]("level").toOption.contains("env-lost")), 1,
-          s"开火面留痕必须恰好一行 level=env-lost，实得 ${fires.map(_.noSpaces)}")
+          fires.count(_.hcursor.get[String]("level").toOption.contains("env-lost")),
+          1,
+          s"开火面留痕必须恰好一行 level=env-lost，实得 ${fires.map(_.noSpaces)}"
+        )
         assertEquals(
-          detected.count(_.hcursor.get[String]("class").toOption.contains(TaskStuckWatcher.ClassEnvLost)), 1,
-          "检出面必须留一行 class=env-lost")
+          detected.count(_.hcursor.get[String]("class").toOption.contains(TaskStuckWatcher.ClassEnvLost)),
+          1,
+          "检出面必须留一行 class=env-lost"
+        )
     body.guarantee(system.stopAll.attempt.void)
   }
 
@@ -203,9 +209,7 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
         now = System.currentTimeMillis()
         _ <- resources.agentRegistry.set(Map(Sid -> record(now)))
         t0 = System.currentTimeMillis()
-        _ <- TaskStuckWatcher.scan(
-          resources, wsHub, StuckThresholdMs,
-          cwdProbe = _ => IO.pure(Some(true)))
+        _ <- TaskStuckWatcher.scan(resources, wsHub, StuckThresholdMs, cwdProbe = _ => IO.pure(Some(true)))
         _ <- IO.sleep(300.millis)
         events <- wsEvents.get
         detected <- eventsOfTypeSince(TaskStuckWatcher.StuckDetectedType, t0)
@@ -227,9 +231,7 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
         _ <- wsHub.register(json => wsEvents.update(_ :+ json))
         now = System.currentTimeMillis()
         _ <- resources.agentRegistry.set(Map(Sid -> record(now)))
-        _ <- TaskStuckWatcher.scan(
-          resources, wsHub, StuckThresholdMs,
-          cwdProbe = _ => IO.pure(None))
+        _ <- TaskStuckWatcher.scan(resources, wsHub, StuckThresholdMs, cwdProbe = _ => IO.pure(None))
         _ <- IO.sleep(300.millis)
         events <- wsEvents.get
       yield assert(stuckFrames(events).isEmpty, s"探针未知 ⇒ 零动作，实得 $events")
@@ -243,7 +245,8 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
       worktreeAvailable = false,
       probeDir = "/tmp/wtsurv-gone-worktree",
       hasOutput = false,
-      outputEvidence = "git status --porcelain = clean, commits since node start = 0")
+      outputEvidence = "git status --porcelain = clean, commits since node start = 0"
+    )
     val note = NodeEngine.stuckResumeNote(Some(anchor))
     assert(note.contains("UNAVAILABLE"), note)
     assert(note.contains("/tmp/wtsurv-gone-worktree"), s"必须写出消失的目录原文：$note")
@@ -257,10 +260,12 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
       worktreeAvailable = true,
       probeDir = "/tmp/wtsurv-live-worktree",
       hasOutput = true,
-      outputEvidence = "git status --porcelain = non-empty, commits since node start = 2")
+      outputEvidence = "git status --porcelain = non-empty, commits since node start = 2"
+    )
     val note = NodeEngine.stuckResumeNote(Some(anchor))
     assert(note.contains("Output exists"), note)
     assert(!note.contains("UNAVAILABLE"), note)
     assert(!note.contains("UNRELIABLE"), note)
     assert(!note.contains("J1"), note)
   }
+end EnvLostFastFailSpec

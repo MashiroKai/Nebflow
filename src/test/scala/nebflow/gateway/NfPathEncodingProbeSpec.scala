@@ -61,29 +61,33 @@ import scala.jdk.CollectionConverters.*
  */
 class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   import NfPathEncodingProbeSpec.*
 
   private val gatewayToken = "probe-gateway-token"
   private val store = NfTicketStore.unsafeCreate(1800)
 
-  /** Ember's default graceful-shutdown wait (30s) collides with munit's default
-    * 30s test timeout: the JDK HttpClient keeps its connection alive, so the
-    * server's finalizer waits out the whole budget and the test dies in cleanup
-    * AFTER every assertion already passed. The server's shutdown bound is
-    * therefore lowered in `server(...)` (see `withShutdownTimeout`); the suite
-    * inherits munit's per-test timeout unchanged. */
+  /**
+   * Ember's default graceful-shutdown wait (30s) collides with munit's default
+   * 30s test timeout: the JDK HttpClient keeps its connection alive, so the
+   * server's finalizer waits out the whole budget and the test dies in cleanup
+   * AFTER every assertion already passed. The server's shutdown bound is
+   * therefore lowered in `server(...)` (see `withShutdownTimeout`); the suite
+   * inherits munit's per-test timeout unchanged.
+   */
 
-  private val echo = HttpRoutes.of[IO] {
-    case req @ GET -> Root / "probe" / "echo" =>
-      val raw = req.uri.query.renderString
-      val seen = req.params.get("path").getOrElse("<absent>")
-      Ok(s"queryString=$raw\nparam=[$seen]")
+  private val echo = HttpRoutes.of[IO] { case req @ GET -> Root / "probe" / "echo" =>
+    val raw = req.uri.query.renderString
+    val seen = req.params.get("path").getOrElse("<absent>")
+    Ok(s"queryString=$raw\nparam=[$seen]")
   }
 
-  private def server(policy: WebSocketRoutes.NfPathPolicy): IO[(Int, IO[Unit])] =
+  private def server(policy: NfFilePolicy.NfPathPolicy): IO[(Int, IO[Unit])] =
     val app = Router(
-      "/" -> (WebSocketRoutes.nfFileRoutes(gatewayToken, store, policy) <+>
-        WebSocketRoutes.nfTicketRoutes(gatewayToken, store, policy) <+> echo)
+      "/" -> (NfFileRoutes.nfFileRoutes(gatewayToken, store, policy) <+>
+        NfFileRoutes.nfTicketRoutes(gatewayToken, store, policy) <+> echo)
     ).orNotFound
     EmberServerBuilder
       .default[IO]
@@ -118,12 +122,17 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
           .sorted(java.util.Comparator.reverseOrder())
           .iterator()
           .asScala
-          .foreach(x => try Files.deleteIfExists(x) catch case _: Throwable => ())
+          .foreach(x =>
+            try Files.deleteIfExists(x)
+            catch case _: Throwable => ()
+          )
     catch case _: Throwable => ()
 
-  /** A real fixture dir whose ANCESTOR segment contains a space, exactly like
-    * `/Users/kaiyu/Claude code/…`, inside ONE served namespace. `own` = the
-    * directory is ours to remove wholesale. */
+  /**
+   * A real fixture dir whose ANCESTOR segment contains a space, exactly like
+   * `/Users/kaiyu/Claude code/…`, inside ONE served namespace. `own` = the
+   * directory is ours to remove wholesale.
+   */
   private def withFixture(root: Path, namespace: String, own: Boolean)(test: (Path, Path) => IO[Unit]): IO[Unit] =
     val dir = root.resolve(namespace).resolve("space dir")
     Files.createDirectories(dir)
@@ -138,16 +147,18 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
     test(root, file).guarantee(cleanup)
 
-  private def policyFor(dataRoot: Path, workspaceRoot: Path): WebSocketRoutes.NfPathPolicy =
+  private def policyFor(dataRoot: Path, workspaceRoot: Path): NfFilePolicy.NfPathPolicy =
     val ws =
       if workspaceRoot.toString.startsWith("/nonexistent") then workspaceRoot
       else
         Files.createDirectories(workspaceRoot)
         workspaceRoot.toRealPath()
-    WebSocketRoutes.NfPathPolicy(dataRoot.toRealPath(), ws, Set.empty)
+    NfFilePolicy.NfPathPolicy(dataRoot.toRealPath(), ws, Set.empty)
 
-  /** Four wire forms of ONE real path containing two spaces. A browser sends the
-    * URL byte-for-byte as authored, so each form is built explicitly. */
+  /**
+   * Four wire forms of ONE real path containing two spaces. A browser sends the
+   * URL byte-for-byte as authored, so each form is built explicitly.
+   */
   private def forms(plain: String): List[(String, String)] =
     require(plain.contains("space dir") && plain.contains("probe shot"), s"fixture path: $plain")
     List(
@@ -247,7 +258,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     // a spec cannot assume which data root the process was launched with; deriving
     // it keeps this spec correct under `NEBFLOW_HOME` / `setDataRoot` redirection
     // too (rework r1, verifier item C4).
-    val policy = WebSocketRoutes.NfPathPolicy.memoized() // the tool reads the same value
+    val policy = NfFilePolicy.NfPathPolicy.memoized() // the tool reads the same value
     val root = policy.dataRoot.resolve("plots/imgref-spec")
     val image = root.resolve("space dir/tool shot.png")
     Files.createDirectories(image.getParent)
@@ -325,7 +336,6 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       }.guarantee(stop).guarantee(cleanup)
     }
 
-
   // ── F. 顺序判据：原样形态先试，「不过度解码」 ──────────────────────────────
 
   test("F. least-transformed first: a real literal-plus file wins over the space form"):
@@ -373,7 +383,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   // 判据），漏掉 `nfFileVerdict` 在该步**之后**的两步 —— **R2 (dev,ino) 硬链接判据**
   // 与**按 realpath 取扩展名** ⇒ 真件被计 `proxied` 而端点必然拒（真取回 401），
   // 即「计数绿而取回红」在本批修好的树上仍可发生。修法 = 两侧调同一个
-  // `WebSocketRoutes.nfVerdictForReal`（端点阶梯 `toRealPath` 之后的全部步骤）。
+  // `NfFilePolicy.nfVerdictForReal`（端点阶梯 `toRealPath` 之后的全部步骤）。
   //
   // 🔴 **收编申报（返工令 B②）**：G/H 的判据与夹具形态**收编自复核位第 1 轮的判词
   // spec**：`ImgrefVerifyR1Spec.scala` 的
@@ -393,11 +403,13 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   // rejected reason **与工具警告同码**，无票 `GET` ⇒ 401。阳性方向的同款等价性
   // （工具判绿 ⇔ 真端点 200 + 字节 sha 相等）由 test D 承担。
 
-  /** 端点 R2 集是**进程启动时的一次扫描快照**：后造的 credential 文件不在里面，
-    * 所以硬链接腿必须用**既有 seed** 搭 —— data root 的 `auth.json` / `nebflow.json`、
-    * 数据根 `secrets/` 子树、`~/.ssh/` 子树中确实在快照里的那一件。
-    * （注意：Scala 块注释里不能出现「斜杠 + 双星号」的通配写法，那会开一个嵌套注释。） */
-  private def snapshotCredential(policy: WebSocketRoutes.NfPathPolicy): Path =
+  /**
+   * 端点 R2 集是**进程启动时的一次扫描快照**：后造的 credential 文件不在里面，
+   * 所以硬链接腿必须用**既有 seed** 搭 —— data root 的 `auth.json` / `nebflow.json`、
+   * 数据根 `secrets/` 子树、`~/.ssh/` 子树中确实在快照里的那一件。
+   * （注意：Scala 块注释里不能出现「斜杠 + 双星号」的通配写法，那会开一个嵌套注释。）
+   */
+  private def snapshotCredential(policy: NfFilePolicy.NfPathPolicy): Path =
     val home = Paths.get(sys.props.getOrElse("user.home", "/"))
     def filesUnder(dir: Path): List[Path] =
       if !Files.isDirectory(dir) then Nil
@@ -411,7 +423,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         filesUnder(home.resolve(".ssh"))
     seeds
       .filter(p => Files.isRegularFile(p))
-      .find(p => WebSocketRoutes.NfPathPolicy.inodeKey(p).exists(policy.credentialInodes.contains))
+      .find(p => NfFilePolicy.NfPathPolicy.inodeKey(p).exists(policy.credentialInodes.contains))
       .getOrElse(
         fail(
           "no seeded credential file (data-root auth.json / nebflow.json, <dataRoot>/secrets/**, " +
@@ -419,6 +431,8 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
             "the hard-link leg needs one to exist"
         )
       )
+
+  end snapshotCredential
 
   /** Tool face of ONE reference: (`proxied`, `inlined`, warnings as (reason, detail)). */
   private def toolFace(refValue: String): (Int, Int, List[(String, String)]) =
@@ -449,9 +463,13 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       warnings
     )
 
-  /** The REAL frontend chain for ONE plain path: mint a real ticket over HTTP, then
-    * fetch with it (no ticket when the mint was rejected — that is what a browser
-    * gets). Returns `(mintStatus, rejectedReason | "-", getStatus, bytes)`. */
+  end toolFace
+
+  /**
+   * The REAL frontend chain for ONE plain path: mint a real ticket over HTTP, then
+   * fetch with it (no ticket when the mint was rejected — that is what a browser
+   * gets). Returns `(mintStatus, rejectedReason | "-", getStatus, bytes)`.
+   */
   private def mintAndFetch(port: Int, plain: String): (Int, String, Int, Array[Byte]) =
     val body =
       Json
@@ -480,29 +498,33 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     val pathParam = plain.replace(" ", "%20")
     val (getStatus, bytes) = ticket match
       case Some(t) => httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$pathParam&ticket=$t")
-      case None    => httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$pathParam")
+      case None => httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$pathParam")
     (mintResp.statusCode(), reason, getStatus, bytes)
 
-  private def endpointReason(path: String, policy: WebSocketRoutes.NfPathPolicy): String =
-    WebSocketRoutes.nfFileVerdict(path, policy).unsafeRunSync() match
-      case WebSocketRoutes.NfVerdict.Denied(_, r, _) => r
-      case _                                         => "allowed"
+  end mintAndFetch
 
-  /** The endpoint's OWN verdict, over the wire, WITH A VALID TICKET — the reading
-    * the rework order asks for by name ("端点确为 403/400").
-    *
-    * A ticket is minted directly from the store for the fixture's **realpath**
-    * (`nfFileRoutes` short-circuits a missing ticket with 401 *before* the
-    * verdict, so a ticket-less GET could never show the verdict at all): with a
-    * valid ticket the route reaches `nfFileVerdictTolerant` and the status is
-    * the verdict's own — 403 for the R2 credential-inode leg, 400 for the
-    * realpath-extension leg. Reading the canonical path is required because the
-    * ticket is keyed on `real.toString` and `/tmp` is a symlink to `/private/tmp`
-    * on this host.
-    *
-    * 🔴 This is the SAME shape as the verifier's own T10/T11 assertions
-    * (`store.issue(... realOf(link))` then GET with that ticket ⇒ 403 / 400) —
-    * see the G/H header for the collection declaration. */
+  private def endpointReason(path: String, policy: NfFilePolicy.NfPathPolicy): String =
+    NfFilePolicy.nfFileVerdict(path, policy).unsafeRunSync() match
+      case NfFilePolicy.NfVerdict.Denied(_, r, _) => r
+      case _ => "allowed"
+
+  /**
+   * The endpoint's OWN verdict, over the wire, WITH A VALID TICKET — the reading
+   * the rework order asks for by name ("端点确为 403/400").
+   *
+   * A ticket is minted directly from the store for the fixture's **realpath**
+   * (`nfFileRoutes` short-circuits a missing ticket with 401 *before* the
+   * verdict, so a ticket-less GET could never show the verdict at all): with a
+   * valid ticket the route reaches `nfFileVerdictTolerant` and the status is
+   * the verdict's own — 403 for the R2 credential-inode leg, 400 for the
+   * realpath-extension leg. Reading the canonical path is required because the
+   * ticket is keyed on `real.toString` and `/tmp` is a symlink to `/private/tmp`
+   * on this host.
+   *
+   * 🔴 This is the SAME shape as the verifier's own T10/T11 assertions
+   * (`store.issue(... realOf(link))` then GET with that ticket ⇒ 403 / 400) —
+   * see the G/H header for the collection declaration.
+   */
   private def endpointWithTicket(port: Int, plain: String): (Int, String) =
     val canonical = Paths.get(plain).toRealPath().toString
     val ticket = store.issue("spec", canonical).unsafeRunSync().token
@@ -510,26 +532,28 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       httpGet(s"http://127.0.0.1:$port/api/nf-file?path=${plain.replace(" ", "%20")}&ticket=$ticket")
     (status, text(body))
 
-  /** ONE refused path taken through BOTH faces, for EVERY spelling of the fixture.
-    *
-    * Two spellings per leg, on purpose: the two ways this defect used to hide are
-    * "counted as proxied" (a reference left on the `/api/nf-file` leg) and
-    * "silently inlined" (the bytes embedded as a `data:` URI, bypassing the
-    * endpoint entirely). A `.json`-named link is never inlined (not an image), so
-    * a broken gate shows up as `proxied=1`; a `.png`-named one is inlinable, so a
-    * broken gate shows up as `inlined=1`. Both must be refused, and the real
-    * fetch leg must refuse the same path with the SAME reason — that equality is
-    * the whole point of the case (`计数绿 ⇔ 取回绿` may never diverge). */
+  /**
+   * ONE refused path taken through BOTH faces, for EVERY spelling of the fixture.
+   *
+   * Two spellings per leg, on purpose: the two ways this defect used to hide are
+   * "counted as proxied" (a reference left on the `/api/nf-file` leg) and
+   * "silently inlined" (the bytes embedded as a `data:` URI, bypassing the
+   * endpoint entirely). A `.json`-named link is never inlined (not an image), so
+   * a broken gate shows up as `proxied=1`; a `.png`-named one is inlinable, so a
+   * broken gate shows up as `inlined=1`. Both must be refused, and the real
+   * fetch leg must refuse the same path with the SAME reason — that equality is
+   * the whole point of the case (`计数绿 ⇔ 取回绿` may never diverge).
+   */
   private def assertLegRefused(
-      leg: String,
-      names: List[String],
-      dir: Path,
-      build: (Path, Path) => Unit,
-      port: Int,
-      policy: WebSocketRoutes.NfPathPolicy,
-      expectReason: String,
-      expectHint: String,
-      expectEndpointStatus: Int
+    leg: String,
+    names: List[String],
+    dir: Path,
+    build: (Path, Path) => Unit,
+    port: Int,
+    policy: NfFilePolicy.NfPathPolicy,
+    expectReason: String,
+    expectHint: String,
+    expectEndpointStatus: Int
   ): Unit =
     names.foreach { name =>
       val link = dir.resolve(name)
@@ -579,7 +603,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
 
   test("G. equivalence (leg 1/2): a HARD LINK to a credential inode — tool gate and endpoint agree"):
-    val policy = WebSocketRoutes.NfPathPolicy.memoized()
+    val policy = NfFilePolicy.NfPathPolicy.memoized()
     val target = snapshotCredential(policy)
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-hardlink")
     val dir = subtree.resolve("space dir")
@@ -587,9 +611,11 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     server(policy).flatMap { (port, stop) =>
       IO {
         Files.createDirectories(dir)
-        println(s"PROBE[leg-inode] target=$target size=${Files.size(target)} inode=" +
-          s"${WebSocketRoutes.NfPathPolicy.inodeKey(target)} snapshot=" +
-          s"${WebSocketRoutes.NfPathPolicy.inodeKey(target).exists(policy.credentialInodes.contains)}")
+        println(
+          s"PROBE[leg-inode] target=$target size=${Files.size(target)} inode=" +
+            s"${NfFilePolicy.NfPathPolicy.inodeKey(target)} snapshot=" +
+            s"${NfFilePolicy.NfPathPolicy.inodeKey(target).exists(policy.credentialInodes.contains)}"
+        )
         assertLegRefused(
           leg = "leg-inode",
           names = List("hard link big.png", "hard link big.json"),
@@ -606,7 +632,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
 
   test("H. equivalence (leg 2/2): a symlink refused by its REAL extension — tool gate and endpoint agree"):
-    val policy = WebSocketRoutes.NfPathPolicy.memoized()
+    val policy = NfFilePolicy.NfPathPolicy.memoized()
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-symlink")
     val dir = subtree.resolve("space dir")
     val cleanup = IO { deleteTree(subtree); () }
@@ -630,12 +656,16 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       }.guarantee(stop).guarantee(cleanup)
     }
 
+end NfPathEncodingProbeSpec
+
 object NfPathEncodingProbeSpec:
 
-  /** The exact bytes of `.nebflow/evidence/20260918_imgref/r1/space dir/fail space.png`
-    * as produced by that directory's `make_fixtures.py`: a REAL 8x6 RGB PNG,
-    * 205 bytes, sha256 5ad35da434c4ea3e3a740b5c6d4493cf9b47b7f145df7a05c1507a74148d42b8.
-    * Regenerate with that script — never a mock / 0-byte / placeholder image. */
+  /**
+   * The exact bytes of `.nebflow/evidence/20260918_imgref/r1/space dir/fail space.png`
+   * as produced by that directory's `make_fixtures.py`: a REAL 8x6 RGB PNG,
+   * 205 bytes, sha256 5ad35da434c4ea3e3a740b5c6d4493cf9b47b7f145df7a05c1507a74148d42b8.
+   * Regenerate with that script — never a mock / 0-byte / placeholder image.
+   */
   val PngBase64: String =
     "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAlElEQVR42gXBOQpCMRAA0Jwv" +
       "ffr06adPn6lzgcFGBBFFdMQV/Squ44oLoogw2HgE3zMWSg4qHuoBGGAYYZZgk+FkLJYd1jy2" +
@@ -644,10 +674,12 @@ object NfPathEncodingProbeSpec:
 
   val PngBytes: Array[Byte] = Base64.getDecoder.decode(PngBase64)
 
-  /** A SECOND real 8x6 RGB PNG with deliberately different bytes (seed 3 of
-    * `make_fixtures.py`: 207 bytes, sha256
-    * 8775d43a7e1fe5abd31ae721f28b5e1666788767b6d697071846962214c05b88) so
-    * "which file was served" is decidable by sha256 alone. */
+  /**
+   * A SECOND real 8x6 RGB PNG with deliberately different bytes (seed 3 of
+   * `make_fixtures.py`: 207 bytes, sha256
+   * 8775d43a7e1fe5abd31ae721f28b5e1666788767b6d697071846962214c05b88) so
+   * "which file was served" is decidable by sha256 alone.
+   */
   val PngBytes2: Array[Byte] =
     Base64.getDecoder.decode(
       "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAlklEQVR42gXBO4oCMBAA" +
@@ -659,3 +691,4 @@ object NfPathEncodingProbeSpec:
 
   val FixtureSha: String =
     java.security.MessageDigest.getInstance("SHA-256").digest(PngBytes).map("%02x".format(_)).mkString
+end NfPathEncodingProbeSpec

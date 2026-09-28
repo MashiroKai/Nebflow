@@ -45,7 +45,11 @@ class LlmHttpErrorLogSpec extends CatsEffectSuite:
       Files.walk(tmp).iterator().asScala.toList.sortBy(_.getNameCount).reverse.foreach(p => Files.deleteIfExists(p))
 
   private def lines(): List[String] =
-    Files.list(tmp).iterator().asScala.toList
+    Files
+      .list(tmp)
+      .iterator()
+      .asScala
+      .toList
       .filter(_.getFileName.toString.endsWith("_httperror.jsonl"))
       .flatMap(p => Files.readAllLines(p).asScala.toList)
 
@@ -70,6 +74,7 @@ class LlmHttpErrorLogSpec extends CatsEffectSuite:
       assert(line.contains("enable_search is not supported"), s"响应体原文必须保留：$line")
       assert(line.contains("\"provider\":\"qwen\""), line)
       assert(line.contains("\"request_id\":\"req-1\""), line)
+    end for
   }
 
   test("T2: 非 4xx（2xx / 5xx）一行不写") {

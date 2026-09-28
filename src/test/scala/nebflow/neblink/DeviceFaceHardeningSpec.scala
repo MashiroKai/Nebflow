@@ -4,10 +4,12 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.{CredentialFileAcl, PathUtil}
+import nebflow.core.CredentialFileAcl
+import nebflow.shared.PathUtil
 
 import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
 import java.nio.file.{Files, Path}
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -15,7 +17,7 @@ import scala.jdk.CollectionConverters.*
  * Device-face hardening batch (chain-devsec-bleed), neblink-side legs:
  *
  *  - **A1 second half** — the presence WS dial no longer puts our `deviceId` in
- *    the URL; it rides the handshake header (`Protocol.DeviceHeader`), the same
+ *    the URL; it rides the handshake header (`nebflow.shared.DeviceHeader /* W1 shim: R6 moved the constant to shared (PeerModels) */`), the same
  *    channel the REST peer criterion already reads.
  *  - **A6** — the owner-only ACL is bound to the credential WRITE path
  *    (`DeviceIdentity.save` / `NeblinkConfig.save`), not applied out of band,
@@ -59,11 +61,13 @@ class DeviceFaceHardeningSpec extends FunSuite:
   private def mode(p: Path): String =
     PosixFilePermissions.toString(Files.getPosixFilePermissions(p))
 
-  /** True when ANY group/other bit is still set (what "owner-only" forbids).
-    *
-    * Matching on the enum CONSTANT rather than on a name string: a Java enum's
-    * only name accessor is `Enum.name()`, and `OWNER_*` is the exact set the
-    * product allows, so the complement is what must be empty. */
+  /**
+   * True when ANY group/other bit is still set (what "owner-only" forbids).
+   *
+   * Matching on the enum CONSTANT rather than on a name string: a Java enum's
+   * only name accessor is `Enum.name()`, and `OWNER_*` is the exact set the
+   * product allows, so the complement is what must be empty.
+   */
   private def widerThanOwner(p: Path): Boolean =
     Files
       .getPosixFilePermissions(p)
@@ -77,7 +81,8 @@ class DeviceFaceHardeningSpec extends FunSuite:
   private val id = DeviceIdentity(deviceId = "dev-abc", deviceName = "Testbox", platform = "macos")
 
   private def withPresence[A](use: NeblinkPresenceService => A): A =
-    Dispatcher.parallel[IO]
+    Dispatcher
+      .parallel[IO]
       .use { dispatcher =>
         NeblinkService.createForTest(0, dispatcher, 400.millis).map { ms =>
           use(new NeblinkPresenceService(ms, 8099)(dispatcher))
@@ -99,8 +104,8 @@ class DeviceFaceHardeningSpec extends FunSuite:
         s"deviceId must NOT travel in the upgrade URL (it is the id the peer criterion trusts): $uri"
       )
       assert(uri.contains("deviceName="), s"peer display metadata stays on the URL: $uri")
-      assertEquals(headers, List(Protocol.DeviceHeader -> "dev-abc"))
-      assertEquals(Protocol.DeviceHeader, "X-Neblink-Device")
+      assertEquals(headers, List(nebflow.shared.DeviceHeader -> "dev-abc"))
+      assertEquals(nebflow.shared.DeviceHeader, "X-Neblink-Device")
     }
   }
 
@@ -134,7 +139,7 @@ class DeviceFaceHardeningSpec extends FunSuite:
       )
       assert(compat.contains("deviceName="), s"peer display metadata stays on the compat URL: $compat")
       // header contract is byte-identical on the compat path (header semantics unchanged)
-      assertEquals(ps.presenceHandshakeHeaders(id), List(Protocol.DeviceHeader -> "dev-abc"))
+      assertEquals(ps.presenceHandshakeHeaders(id), List(nebflow.shared.DeviceHeader /* W1 shim: R6 moved the constant to shared (PeerModels) */ -> "dev-abc"))
       // and the PRIMARY URI form stays clean (A1② above re-asserts it too)
       assert(!ps.buildWsUri("10.0.0.5", 8099, id).contains("deviceId"), "primary URI must stay free of deviceId")
     }
@@ -217,3 +222,4 @@ class DeviceFaceHardeningSpec extends FunSuite:
     assert(os.exists(file), "the credential is on disk either way")
     assert(os.read(file).contains("dev-abc"), "content intact")
   }
+end DeviceFaceHardeningSpec

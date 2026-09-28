@@ -22,7 +22,10 @@ object FriendsSealKit:
 
   /** constant − (sealed ? 1 : 0), derived from the delivered snapshot itself. */
   def expectedNebulaSize(delivered: Set[String]): Int =
-    val constant = nebflow.agent.AgentCore.NebulaOrchestrationToolsExpectedSize
+    // W1 provisional shim: the constant was renamed PR-side
+    // (NebulaOrchestrationToolsExpectedSize -> RootOrchestrationToolsExpectedSize,
+    // same single-point discipline); point at the merged tree's single source.
+    val constant = nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize
     if delivered.contains("ListFriends") then constant else constant - 1
 
   /** Lift the seal for the duration of `ioa` (ref-counted, restored on every

@@ -2,7 +2,7 @@ package nebflow.core.processor
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.agent.AgentEvent
+import nebflow.actor.AgentEvent
 import nebflow.core.project.NodeLifecycle
 
 import scala.concurrent.duration.*
@@ -47,24 +47,29 @@ class StuckRecoveryLedgerWritePointSpec extends StuckRecoveryFixture:
         led = ledMap.getOrElse(sid, TaskStuckWatcher.RecoveryLedger())
         gate = TaskStuckWatcher.recoveryGate(rec, led, now)
         strikeRise = TaskStuckWatcher.loopDetectedAfterRecovery(
-          rec.copy(loopStrikeCount = rec.loopStrikeCount + 1), led, now)
-        fpChange = TaskStuckWatcher.loopDetectedAfterRecovery(
-          rec.copy(lastLoopFp = "fp-new-after-resume"), led, now)
+          rec.copy(loopStrikeCount = rec.loopStrikeCount + 1),
+          led,
+          now
+        )
+        fpChange = TaskStuckWatcher.loopDetectedAfterRecovery(rec.copy(lastLoopFp = "fp-new-after-resume"), led, now)
         _ <- IO(println(s"[FIX-READING] T1 casSeen=$casSeen resumedAlive=$live node=${node.map(_.status)} led=$led"))
-        _ <- IO(println(s"[FIX-READING] T1 recoveryGate=${gate.map(g => (g.kind, g.report))} " +
-          s"loopDetected(strikeRise=$strikeRise, fpChange=$fpChange) rec.baseline(loopStrikeCount=${rec.loopStrikeCount}, " +
-          s"lastLoopFp='${rec.lastLoopFp}')"))
+        _ <- IO(
+          println(
+            s"[FIX-READING] T1 recoveryGate=${gate.map(g => (g.kind, g.report))} " +
+              s"loopDetected(strikeRise=$strikeRise, fpChange=$fpChange) rec.baseline(loopStrikeCount=${rec.loopStrikeCount}, " +
+              s"lastLoopFp='${rec.lastLoopFp}')"
+          )
+        )
       yield
         assert(casSeen, "前提：CAS 必须已接受（事件面 'resumed from stuck' 留痕）")
         assert(live, s"观察臂要求被恢复会话**仍在运行**（resumedAlive=true）——否则不构成观察条件；实际=$live")
-        assert(led.lastRecoveryAt != 0L,
-          s"硬约束②：恢复已接受 ⇒ lastRecoveryAt 必须在会话存活期即置位（不得等会话终态）；实际=$led")
+        assert(led.lastRecoveryAt != 0L, s"硬约束②：恢复已接受 ⇒ lastRecoveryAt 必须在会话存活期即置位（不得等会话终态）；实际=$led")
         assertEquals(led.strikeBaseline, rec.loopStrikeCount, "互斥点 2 的 strike 基线必须在 CAS 接受瞬间写入")
         assertEquals(led.fpBaseline, rec.lastLoopFp, "互斥点 2 的指纹基线必须在 CAS 接受瞬间写入")
-        assertEquals(gate.map(_.kind), Some(TaskStuckWatcher.GateCooldown),
-          s"冷却窗必须在被恢复会话运行期即生效；实际 gate=$gate")
+        assertEquals(gate.map(_.kind), Some(TaskStuckWatcher.GateCooldown), s"冷却窗必须在被恢复会话运行期即生效；实际 gate=$gate")
         assert(strikeRise, "互斥点 2（跨轮命中计数上升）必须在会话运行期生效")
         assert(fpChange, "互斥点 2（指纹变化）必须在会话运行期生效")
+      end for
     }
   }
 
@@ -78,8 +83,11 @@ class StuckRecoveryLedgerWritePointSpec extends StuckRecoveryFixture:
         _ <- seedTranscript(fx.res, sid)
         acked <- Ref.of[IO, List[AgentEvent]](Nil)
         // 并发终态化：挂起 ack 的同一瞬间把节点翻成 cancelled ⇒ CAS 前置条件（Running）不再成立
-        concurrentTerminal = fx.rt.store.mutate(s => s.copy(nodes =
-          s.nodes.updated("n-rej", s.nodes("n-rej").copy(status = NodeLifecycle.Cancelled)))).void
+        concurrentTerminal = fx.rt.store
+          .mutate(s =>
+            s.copy(nodes = s.nodes.updated("n-rej", s.nodes("n-rej").copy(status = NodeLifecycle.Cancelled)))
+          )
+          .void
         bridge <- fx.system.spawn(mkSuspendAckEvt(fx.res, acked, concurrentTerminal), "t2-bridge")
         cmdSink <- mkCommandSink(fx.system, "t2-agent")
         rec <- putStuckRecord(fx.res, sid, fx.rt.engine.rootSessionId, cmdSink, Some(bridge))
@@ -92,8 +100,12 @@ class StuckRecoveryLedgerWritePointSpec extends StuckRecoveryFixture:
         now <- IO(System.currentTimeMillis())
         led = ledMap.getOrElse(sid, TaskStuckWatcher.RecoveryLedger())
         gate = TaskStuckWatcher.recoveryGate(rec, led, now)
-        _ <- IO(println(s"[FIX-READING] T2 node=${node.map(_.status)} led=$led gate=${gate.map(g => (g.kind, g.report))} " +
-          s"resumeLog=$resumeLog"))
+        _ <- IO(
+          println(
+            s"[FIX-READING] T2 node=${node.map(_.status)} led=$led gate=${gate.map(g => (g.kind, g.report))} " +
+              s"resumeLog=$resumeLog"
+          )
+        )
       yield
         assert(led.chainAttempts == 1, s"前提：恢复尝试已被消费（= 恢复腿确实推进到 CAS 关卡）；实际=$led")
         assertEquals(node.map(_.status), Some(NodeLifecycle.Cancelled), "并发终态保持（恢复不得复活真终态）")
@@ -102,5 +114,7 @@ class StuckRecoveryLedgerWritePointSpec extends StuckRecoveryFixture:
         assertEquals(led.fpBaseline, "", "负控：CAS 被拒 ⇒ 指纹基线零写入")
         assert(gate.map(_.kind) != Some(TaskStuckWatcher.GateCooldown), s"CAS 被拒 ⇒ 不得出现冷却窗误设；实际 gate=$gate")
         assert(!resumeLog, "CAS 被拒 ⇒ 事件面不得出现 'resumed from stuck' 留痕")
+      end for
     }
   }
+end StuckRecoveryLedgerWritePointSpec

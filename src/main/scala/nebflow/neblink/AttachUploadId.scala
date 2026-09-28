@@ -49,15 +49,19 @@ import java.nio.charset.StandardCharsets.UTF_8
  */
 object AttachUploadId:
 
-  /** 长度上限（UTF-8 字节）。远低于 POSIX `NAME_MAX`(255) —— 上限的用途是把**无界输入**
-    * 挡在文件系统之外：超长 id 会让临时件名撞 `ENAMETOOLONG`，而那是另一条
-    * 「不可判读的失败」路（本批实测：5000 字节 id ⇒ `413 attach_too_large`，形状误导）。
-    * 实测客户端 id ≈ 30 字节（`att-<13 位 ms>-<1 位 seq>-<6 位 base36>`）⇒ 128 留足余量。 */
+  /**
+   * 长度上限（UTF-8 字节）。远低于 POSIX `NAME_MAX`(255) —— 上限的用途是把**无界输入**
+   * 挡在文件系统之外：超长 id 会让临时件名撞 `ENAMETOOLONG`，而那是另一条
+   * 「不可判读的失败」路（本批实测：5000 字节 id ⇒ `413 attach_too_large`，形状误导）。
+   * 实测客户端 id ≈ 30 字节（`att-<13 位 ms>-<1 位 seq>-<6 位 base36>`）⇒ 128 留足余量。
+   */
   val MaxLength: Int = 128
 
-  /** 错误码 = 网关既有 4xx 信封沿用的码（同路由 `:1694` / `:1696` 的两条 400 用的就是它）。
-    * 形状 `{ok:false, code, error}` **不新造第二套**；`code` 也不新造（前端/调用方已有该码的
-    * 处理面）。 */
+  /**
+   * 错误码 = 网关既有 4xx 信封沿用的码（同路由 `:1694` / `:1696` 的两条 400 用的就是它）。
+   * 形状 `{ok:false, code, error}` **不新造第二套**；`code` 也不新造（前端/调用方已有该码的
+   * 处理面）。
+   */
   val ErrorCode: String = "invalid_argument"
 
   /** 允许字符集 = `[A-Za-z0-9._-]`（正集，见类头 ③）。 */
@@ -65,11 +69,13 @@ object AttachUploadId:
     (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
       c == '.' || c == '_' || c == '-'
 
-  /** 回显安全化：不可打印字符渲染成 `\uXXXX`。错误体与日志**不得**被 NUL / 控制字符
-    * 污染（原样回显等于把输入里的控制序列搬进日志与 JSON 体）。 */
+  /**
+   * 回显安全化：不可打印字符渲染成 `\uXXXX`。错误体与日志**不得**被 NUL / 控制字符
+   * 污染（原样回显等于把输入里的控制序列搬进日志与 JSON 体）。
+   */
   private def render(raw: String, max: Int = 64): String =
     val sb = new StringBuilder
-    var i  = 0
+    var i = 0
     while i < raw.length && sb.length < max do
       val c = raw.charAt(i)
       if c >= ' ' && c <= '~' then sb.append(c) else sb.append(f"\\u${c.toInt}%04x")
@@ -77,9 +83,11 @@ object AttachUploadId:
     if i < raw.length then sb.append("…") // 截断回显（回显不得无界放大）
     sb.toString
 
-  /** 单个字符的**安全**回显：控制字符只给码位（不得原样搬进错误体 / 日志），其余原样给
-    * 字形 + 码位（非 ASCII 的可打印字符也是可打印的 —— 拒因文案不得把人读得懂的字说成
-    * 「不可打印」）。 */
+  /**
+   * 单个字符的**安全**回显：控制字符只给码位（不得原样搬进错误体 / 日志），其余原样给
+   * 字形 + 码位（非 ASCII 的可打印字符也是可打印的 —— 拒因文案不得把人读得懂的字说成
+   * 「不可打印」）。
+   */
   private def showChar(c: Char): String =
     val cp = f"U+${c.toInt}%04X"
     if Character.isISOControl(c) then s"$cp (control character)" else s"$cp ('$c')"
@@ -93,11 +101,14 @@ object AttachUploadId:
    *         入参）；`Left(reason)` = 拒因（英文、自描述，供错误体的 `error` 字段**直接透出**）。
    */
   def validate(raw: String): Either[String, String] =
-    val id  = Option(raw).getOrElse("").trim
+    val id = Option(raw).getOrElse("").trim
     val len = id.getBytes(UTF_8).length
-    if id.isEmpty then Left(s"Invalid uploadId: it is empty; use a non-empty id (letters, digits, '.', '_', '-') or omit it$Tail")
+    if id.isEmpty then
+      Left(s"Invalid uploadId: it is empty; use a non-empty id (letters, digits, '.', '_', '-') or omit it$Tail")
     else if len > MaxLength then
-      Left(s"Invalid uploadId: $len UTF-8 bytes exceeds the $MaxLength-byte limit (value starts with '${render(id)}')$Tail")
+      Left(
+        s"Invalid uploadId: $len UTF-8 bytes exceeds the $MaxLength-byte limit (value starts with '${render(id)}')$Tail"
+      )
     else if id.forall(_ == '.') then
       Left(s"Invalid uploadId: '${render(id)}' is a dots-only name ('.' / '..' and friends are not valid ids)$Tail")
     else
@@ -109,5 +120,7 @@ object AttachUploadId:
             s"omit the parameter for an upload that cannot be cancelled$Tail"
         )
       else Right(id)
+    end if
+  end validate
 
 end AttachUploadId

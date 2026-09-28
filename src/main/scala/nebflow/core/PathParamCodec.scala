@@ -25,7 +25,7 @@ package nebflow.core
  *
  * 🔴 **解码不参与任何权限判定**。它只回答「去问哪个字符串」：工具侧每个候选形态仍
  * 原样过 `FileRefs.probeFile`（扩展名 / 存在性 / 大小 / 真可读 / 可服务），端点侧每个
- * 候选形态仍原样过 `WebSocketRoutes.nfFileVerdict`（词法归一 → `exists`/`isRegularFile`
+ * 候选形态仍原样过 `NfFilePolicy.nfFileVerdict`（词法归一 → `exists`/`isRegularFile`
  * → `toRealPath` → R2 inode → credential namespace → realpath 上的扩展名）。判据全部
  * 作用在 **realpath** 上，与字符串形态无关 ⇒ 变形形态**造不出**「原串判不住、变形后
  * 判得住」的穿透：`%2e%2e` / `%2F` 解出来只是 `..` / `/`，与直接写 `..` / `/` 得到
@@ -37,21 +37,25 @@ object PathParamCodec:
   def encode(path: String): String =
     java.net.URLEncoder.encode(String.valueOf(path), "UTF-8").replace("+", "%20")
 
-  /** URL query-parameter value → path. Folds a bare `+` (form-encoded space)
-    * BEFORE percent-decoding, so `%2B` still means a literal plus.
-    * `None` when the escapes are malformed. */
+  /**
+   * URL query-parameter value → path. Folds a bare `+` (form-encoded space)
+   * BEFORE percent-decoding, so `%2B` still means a literal plus.
+   * `None` when the escapes are malformed.
+   */
   def decode(encoded: String): Option[String] =
     try Some(java.net.URLDecoder.decode(String.valueOf(encoded).replace("+", " "), "UTF-8"))
     catch case _: Exception => None
 
-  /** Filesystem-path candidates named by ONE value, **least-transformed first**:
-    * the raw value, then its percent-decoded form, then its bare-`+`-folded form.
-    *
-    * 顺序是判据的一部分：原样先试，只有在原样**没有命中**时才轮到变形形态 —— 因此
-    * 一个真的含 `+` 或 `%` 的文件名永远不会被变形形态顶掉。
-    *
-    * 变形只在串里**确实带** `%` 或 `+` 时产生（否则返回单元素表：零开销、零行为
-    * 变化，既有全绿面逐字不动）。 */
+  /**
+   * Filesystem-path candidates named by ONE value, **least-transformed first**:
+   * the raw value, then its percent-decoded form, then its bare-`+`-folded form.
+   *
+   * 顺序是判据的一部分：原样先试，只有在原样**没有命中**时才轮到变形形态 —— 因此
+   * 一个真的含 `+` 或 `%` 的文件名永远不会被变形形态顶掉。
+   *
+   * 变形只在串里**确实带** `%` 或 `+` 时产生（否则返回单元素表：零开销、零行为
+   * 变化，既有全绿面逐字不动）。
+   */
   def candidates(value: String): List[String] =
     val v = String.valueOf(value)
     val out = scala.collection.mutable.ListBuffer.empty[String]
@@ -61,9 +65,11 @@ object PathParamCodec:
     if v.indexOf('+') >= 0 then add(v.replace('+', ' '))
     out.toList
 
-  /** The disclosure line the author's order requires whenever a NON-raw form is
-    * the one that worked ("命中时必须在回包/告警里显式说明用了哪一形态").
-    * `""` when the raw form is the one that hit. */
+  /**
+   * The disclosure line the author's order requires whenever a NON-raw form is
+   * the one that worked ("命中时必须在回包/告警里显式说明用了哪一形态").
+   * `""` when the raw form is the one that hit.
+   */
   def formNote(value: String, form: String): String =
     if form == value then ""
     else

@@ -7,12 +7,19 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
-import nebflow.neblink.{AgentMessagingConfig, AvatarProxy, FriendService, NeblinkClient, NeblinkServerConfig, NeblinkService}
+import nebflow.llm.ModelCandidate
+import nebflow.neblink.{
+  AgentMessagingConfig,
+  AvatarProxy,
+  FriendService,
+  NeblinkClient,
+  NeblinkServerConfig,
+  NeblinkService
+}
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.`Content-Type`
@@ -22,26 +29,29 @@ import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 
-/** `GET /api/avatars/{userId}` —— 对端头像同源只读路由的契约钉（sessperf Phase B
-  * 前置项，方案卡 §3 / §4③；作者 2026-09-20 18:55 令 B「出生即包 apiguard 鉴权闸」）。
-  *
-  * 钉死五组：
-  *  1. **出生即包鉴权**：无令牌 ⇒ 403（先于任何分派，零上游往返）；NebLink 未配置
-  *     ⇒ 404；上游 `Not logged in` ⇒ 401 + `code=neblink_not_logged_in`（与网关 403
-  *     的**有意分化**，见 `friendErr` 注释）。
-  *  2. **不是开放代理**：客户端只给 `userId`，URL 由网关从本账号好友档案解出 ⇒
-  *     非好友 / 好友无头像 ⇒ 404 `no avatar`；请求方无法指定任意 URL（SSRF 面为零）。
-  *  3. **内容指纹面**：`X-Avatar-Sha256` == sha256(bytes) == 强 `ETag` 的内容；
-  *     `Cache-Control: private` 在场（客户端「hash 未变 ⇒ 复用旧 blob」的判据面）。
-  *  4. **协商**：`If-None-Match` 命中 ⇒ **304 且零重传**；不命中 ⇒ 200 全量。
-  *  5. 上游非 200 ⇒ 502（客户端按失败退避，不污染既有缓存）。
-  *
-  * 时序注意（沿用 FriendApiRoutesSpec / AvatarProxyRouteSpec 教训）：mock server 的
-  * stop 必须挂在 IO 的 guarantee 上，不能写同步 finally。 */
+/**
+ * `GET /api/avatars/{userId}` —— 对端头像同源只读路由的契约钉（sessperf Phase B
+ * 前置项，方案卡 §3 / §4③；作者 2026-09-20 18:55 令 B「出生即包 apiguard 鉴权闸」）。
+ *
+ * 钉死五组：
+ *  1. **出生即包鉴权**：无令牌 ⇒ 403（先于任何分派，零上游往返）；NebLink 未配置
+ *     ⇒ 404；上游 `Not logged in` ⇒ 401 + `code=neblink_not_logged_in`（与网关 403
+ *     的**有意分化**，见 `friendErr` 注释）。
+ *  2. **不是开放代理**：客户端只给 `userId`，URL 由网关从本账号好友档案解出 ⇒
+ *     非好友 / 好友无头像 ⇒ 404 `no avatar`；请求方无法指定任意 URL（SSRF 面为零）。
+ *  3. **内容指纹面**：`X-Avatar-Sha256` == sha256(bytes) == 强 `ETag` 的内容；
+ *     `Cache-Control: private` 在场（客户端「hash 未变 ⇒ 复用旧 blob」的判据面）。
+ *  4. **协商**：`If-None-Match` 命中 ⇒ **304 且零重传**；不命中 ⇒ 200 全量。
+ *  5. 上游非 200 ⇒ 502（客户端按失败退避，不污染既有缓存）。
+ *
+ * 时序注意（沿用 FriendApiRoutesSpec / AvatarProxyRouteSpec 教训）：mock server 的
+ * stop 必须挂在 IO 的 guarantee 上，不能写同步 finally。
+ */
 class PeerAvatarRouteSpec extends CatsEffectSuite:
 
   private val TestToken = "peer-avatar-spec-token"
   private val AvatarBytes = Array[Byte](1, 2, 3, 4, 5)
+
   /** 指纹面（sha256 已知向量在下方单测里另钉）。 */
   private val AvatarSha = AvatarProxy.sha256Hex(AvatarBytes)
 
@@ -79,8 +89,10 @@ class PeerAvatarRouteSpec extends CatsEffectSuite:
       (server, s"http://127.0.0.1:${server.getAddress.getPort}")
     }
 
-  /** mock 好友服务：`u1.avatar = <originBase>/a.jpg`（或调用方给的路径）、
-    *  `u2.avatar = null`（好友但无头像）。 */
+  /**
+   * mock 好友服务：`u1.avatar = <originBase>/a.jpg`（或调用方给的路径）、
+   *  `u2.avatar = null`（好友但无头像）。
+   */
   private def startMockFriends(avatarUrl: String): IO[(HttpServer, String)] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
@@ -156,9 +168,11 @@ class PeerAvatarRouteSpec extends CatsEffectSuite:
   private def header(resp: Response[IO], name: String): Option[String] =
     resp.headers.headers.find(_.name.toString.equalsIgnoreCase(name)).map(_.value)
 
-  /** 起 mock 好友服务 + **已登录**的 FriendService（`sessionToken` 必须在位：
-    * `NeblinkClient.withSessionPlain` 对 None 直接 `Left("Not logged in")`，
-    * 见 FriendApiRoutesSpec 的同款前置），并在收尾收割 mock server。 */
+  /**
+   * 起 mock 好友服务 + **已登录**的 FriendService（`sessionToken` 必须在位：
+   * `NeblinkClient.withSessionPlain` 对 None 直接 `Left("Not logged in")`，
+   * 见 FriendApiRoutesSpec 的同款前置），并在收尾收割 mock server。
+   */
   private def withFriendService[A](avatarUrl: String)(use: Option[FriendService] => IO[A]): IO[A] =
     startMockFriends(avatarUrl).flatMap { case (server, base) =>
       val client = mkClient(base)
@@ -174,15 +188,19 @@ class PeerAvatarRouteSpec extends CatsEffectSuite:
         .guarantee(IO.blocking(origin.stop(0)))
     }
 
-  /** 一个「已配置但无会话」的 NeblinkService（401 分态判据需要它：`friendErr` 的
-    * 「已配置 + Not logged in ⇒ 401」分支）。隔离 dataRoot，绝不读写真实 ~/.nebflow。 */
+  /**
+   * 一个「已配置但无会话」的 NeblinkService（401 分态判据需要它：`friendErr` 的
+   * 「已配置 + Not logged in ⇒ 401」分支）。隔离 dataRoot，绝不读写真实 ~/.nebflow。
+   */
   private def withConfiguredService[A](use: NeblinkService => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       NeblinkService.create(0, dispatcher).flatMap { ms =>
-        ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"))
-        )) *> use(ms)
+        ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"))
+          )
+        ) *> use(ms)
       }
     }
 
@@ -206,9 +224,7 @@ class PeerAvatarRouteSpec extends CatsEffectSuite:
   test("friendService absent -> 404 NebLink not enabled（fail-closed）") {
     runWith(None)(authed("/avatars/u1")).flatMap { resp =>
       assertEquals(resp.status, Status.NotFound)
-      resp.as[Json].map(body =>
-        assert(body.hcursor.downField("error").as[String].exists(_ == "NebLink not enabled"))
-      )
+      resp.as[Json].map(body => assert(body.hcursor.downField("error").as[String].exists(_ == "NebLink not enabled")))
     }
   }
 
@@ -265,9 +281,9 @@ class PeerAvatarRouteSpec extends CatsEffectSuite:
     withBoth("/broken.jpg") { fs =>
       runWith(fs)(authed("/avatars/u1")).flatMap { resp =>
         assertEquals(resp.status, Status.BadGateway)
-        resp.as[Json].map(body =>
-          assert(body.hcursor.downField("error").as[String].exists(_.contains("upstream HTTP 500")))
-        )
+        resp
+          .as[Json]
+          .map(body => assert(body.hcursor.downField("error").as[String].exists(_.contains("upstream HTTP 500"))))
       }
     }
   }

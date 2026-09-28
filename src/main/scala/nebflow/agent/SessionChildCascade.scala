@@ -2,7 +2,8 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import nebflow.actor.*
+import nebflow.shared.NebflowLogger
 
 /**
  * V1 (2026-09-03, 结果投递链丢失向量修复): session-delete cascade for
@@ -26,18 +27,19 @@ import nebflow.core.NebflowLogger
 object SessionChildCascade:
   private val logger = NebflowLogger.forName("nebflow.agent.session-cascade")
 
-  /** Stop every Delegate/SubTask/Ephemeral child of `sessionId` (registry
-    * lookup by parentSessionId), unregister it, and terminalize its in-flight
-    * task records. Returns the stopped child session ids.
-    *
-    * 停止走 AgentControl doCancel 同款正路：有 supervisorRef 的（Delegate/
-    * SubTask = BackoffSupervisor）→ `sup ! Cancelled`——supervisor 统一结算
-    * （父 ExternalEvent cancelled 通知 → barrier 正确释放、taskStore 终态化、
-    * registry 移除、child Stop、自停）；直接 Stop 子 actor 会绕过 supervisor
-    * 被当成 crash 触发重启，绝不走这条。无 supervisor 的（Ephemeral 等）→
-    * doCancel 同款降级：直接 Stop + registry 移除。cancelRunningForParent
-    * 兜底终态化任务记录（supervisor 路已终态化的记录此处天然为空集）。
-    */
+  /**
+   * Stop every Delegate/SubTask/Ephemeral child of `sessionId` (registry
+   * lookup by parentSessionId), unregister it, and terminalize its in-flight
+   * task records. Returns the stopped child session ids.
+   *
+   * 停止走 AgentControl doCancel 同款正路：有 supervisorRef 的（Delegate/
+   * SubTask = BackoffSupervisor）→ `sup ! Cancelled`——supervisor 统一结算
+   * （父 ExternalEvent cancelled 通知 → barrier 正确释放、taskStore 终态化、
+   * registry 移除、child Stop、自停）；直接 Stop 子 actor 会绕过 supervisor
+   * 被当成 crash 触发重启，绝不走这条。无 supervisor 的（Ephemeral 等）→
+   * doCancel 同款降级：直接 Stop + registry 移除。cancelRunningForParent
+   * 兜底终态化任务记录（supervisor 路已终态化的记录此处天然为空集）。
+   */
   def stopChildDelegateActors(resources: SharedResources, sessionId: String): IO[List[String]] =
     resources.agentRegistry.get.flatMap { registry =>
       val children = registry.values.filter { rec =>
@@ -54,14 +56,16 @@ object SessionChildCascade:
             case None =>
               (rec.ref ! AgentCommand.Stop(s"parent session $sessionId deleted"))
                 .handleErrorWith(e =>
-                  logger.warn(s"deleteSession: child stop offer failed for ${rec.sessionId}: ${e.getMessage}")) *>
+                  logger.warn(s"deleteSession: child stop offer failed for ${rec.sessionId}: ${e.getMessage}")
+                ) *>
                 resources.agentRegistry.update(_ - rec.sessionId)
           ).as(rec.sessionId)
       } <* resources.subAgentTaskStore
         .cancelRunningForParent(sessionId, s"parent session $sessionId deleted (cascade stop)")
         .flatMap {
           case Nil => IO.unit
-          case ids => logger.info(s"deleteSession: cascade-cancelled in-flight task(s) of $sessionId: ${ids.mkString(", ")}")
+          case ids =>
+            logger.info(s"deleteSession: cascade-cancelled in-flight task(s) of $sessionId: ${ids.mkString(", ")}")
         }
     }
 end SessionChildCascade

@@ -70,7 +70,10 @@ class MultiEditToolSpec extends CatsEffectSuite:
       case Left(err) =>
         assert(err.message.contains("edits[2]"), s"must name failing index: ${err.message}")
         assert(err.message.contains("not found"), s"must say not found: ${err.message}")
-        assert(err.message.toLowerCase.contains("unmodified") || err.message.contains("No changes"), s"must state file untouched: ${err.message}")
+        assert(
+          err.message.toLowerCase.contains("unmodified") || err.message.contains("No changes"),
+          s"must state file untouched: ${err.message}"
+        )
         // byte-level identity — the core atomicity assertion
         assert(java.util.Arrays.equals(Files.readAllBytes(p), originalBytes), "file bytes must be unchanged")
         // mtime must be unchanged too (no write happened)
@@ -87,8 +90,8 @@ class MultiEditToolSpec extends CatsEffectSuite:
     val p = tempFile("alpha\nbeta\n")
     val input = multiEditInput(
       p,
-      ("beta", "BETA", false),   // edit[0] produces "BETA"
-      ("BETA", "delta", false)   // edit[1] can only match after edit[0]
+      ("beta", "BETA", false), // edit[0] produces "BETA"
+      ("BETA", "delta", false) // edit[1] can only match after edit[0]
     )
     MultiEditTool.call(input, ctx).map {
       case Right(res) =>

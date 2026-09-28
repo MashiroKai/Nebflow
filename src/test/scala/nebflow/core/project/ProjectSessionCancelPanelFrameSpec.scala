@@ -6,14 +6,15 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentKind, AgentRecord, AgentStatus}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{AgentControlTool, FileLockManager}
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -46,6 +47,7 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"cancel frame test dispatcher","tools":[],"category":"standalone"}"""
@@ -58,9 +60,10 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
   /** 挂死 LLM：流永不产出（取消必须在 turn 存活窗口内发生）。 */
   private class HungLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(IO.never)
 
@@ -94,7 +97,7 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -106,7 +109,13 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  private def mount(name: String, ws: os.Path, system: ActorSystem, res: SharedResources, wsSend: Json => IO[Unit]): IO[ProjectRuntime] =
+  private def mount(
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources,
+    wsSend: Json => IO[Unit]
+  ): IO[ProjectRuntime] =
     val pd = ProjectDef(
       name = name,
       workspace = ws.toString,
@@ -134,7 +143,9 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
       // AgentControl cancel（工具路径同链路——supervisorRef=观察桥）
       recs <- resources.agentRegistry.get
-      sid = recs.keys.toList.find(_.startsWith(ProjectActor.DispatcherSessionPrefix)).getOrElse(sys.error("dispatcher session missing"))
+      sid = recs.keys.toList
+        .find(_.startsWith(ProjectActor.DispatcherSessionPrefix))
+        .getOrElse(sys.error("dispatcher session missing"))
       rec = recs(sid)
       outcome <- AgentControlTool.doCancel(resources, rec, "spec cancel")
       // 桥 Cancelled → 补发面板帧 + 清 registry + 停 agent
@@ -163,6 +174,7 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
         done.forall(e => e.hcursor.get[String]("type").toOption.contains("agentDone")),
         "no stray frame types from teardown"
       )
+    end for
   }
 
   /** 哑 actor 行为：收到任何消息原样驻留（收 Cancelled 但不复刻桥的清理语义）。 */
@@ -177,8 +189,8 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
       // 哑 actor：cmdRef 填 AgentRecord.ref（Some(sup) 路径不触达）；evtRef 作
       // 哑监督者只收 Cancelled（node 桥的引擎侧语义不属本 spec——本轨禁改
       // NodeEngine，帧补发在 doCancel 出口，与桥解耦）
-      cmdRef <- system.spawn(dumbBehavior[nebflow.agent.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
-      evtRef <- system.spawn(dumbBehavior[nebflow.agent.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
+      cmdRef <- system.spawn(dumbBehavior[nebflow.actor.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
+      evtRef <- system.spawn(dumbBehavior[nebflow.actor.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
       sid = "node-abc12345"
       _ <- resources.agentRegistry.update(
         _ + (sid -> AgentRecord(
@@ -211,6 +223,7 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
       assertEquals(f.hcursor.get[String]("nodeSessionId").toOption, Some(sid), "row/popup key")
       assertEquals(f.hcursor.get[String]("rootSessionId").toOption, Some("nebula-root"), "bucket key")
       assertEquals(f.hcursor.get[String]("sessionId").toOption, Some("nebula-root"), "routing key")
+    end for
   }
 
   test("node-* watcher 分级接管：L1→L4 升级扫描，L3 桥 Cancelled 释放点 wsHub 补发 agentDone 面板帧") {
@@ -220,8 +233,8 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
     for
       resources <- mkResources(system, tempRoot, new HungLlm)
       _ <- wsHub.register(j => broadcasts.update(j :: _))
-      cmdRef <- system.spawn(dumbBehavior[nebflow.agent.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
-      evtRef <- system.spawn(dumbBehavior[nebflow.agent.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
+      cmdRef <- system.spawn(dumbBehavior[nebflow.actor.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
+      evtRef <- system.spawn(dumbBehavior[nebflow.actor.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
       sid = "node-feedbeef"
       // 卡死形态：Processing + lastActivityMs 远超阈值（scan threshold=300ms）
       _ <- resources.agentRegistry.update(
@@ -260,9 +273,11 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
       )
       val done = frames.filter(_.hcursor.get[String]("type").toOption.contains("agentDone"))
       assert(done.nonEmpty, s"giveUp must emit the panel done frame, got: $frames")
-      val f = done.find(_.hcursor.get[String]("nodeSessionId").toOption.contains(sid)).getOrElse(sys.error("frame missing"))
+      val f =
+        done.find(_.hcursor.get[String]("nodeSessionId").toOption.contains(sid)).getOrElse(sys.error("frame missing"))
       assertEquals(f.hcursor.get[String]("agentId").toOption, Some(sid))
       assertEquals(f.hcursor.get[String]("rootSessionId").toOption, Some("nebula-root"))
+    end for
   }
 
 end ProjectSessionCancelPanelFrameSpec

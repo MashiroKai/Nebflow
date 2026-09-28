@@ -1,26 +1,24 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.Codec
-import io.circe.Json
-import io.circe.syntax.*
-import io.circe.JsonObject
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.decode
+import io.circe.syntax.*
+import io.circe.{Codec, Json, JsonObject}
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.time.Instant
 
 import scala.collection.mutable
-
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 /**
  * TaskList 任务工具（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）。
  *
  * 动机（设计文档 ~/.nebflow/memory/tasklist-design.md）：「Nebula 把记忆当任务
  * 工具用」根因 = 记忆是唯一持久外部存储。三边界：记忆 = T1 慢变事实（永久）；
- * 任务 = 快变状态（闭环即退役）；Flow Map = 单次派发执行。本工具是 Nebula 专属
- * 编排件（工具面隔离：仅 NebulaOrchestrationTools 携带 + NebulaExclusiveTools
+ * 任务 = 快变状态（闭环即退役）；Flow Map = 单次派发执行。本工具是 Root 专属
+ * 编排件（工具面隔离：仅 RootOrchestrationTools 携带 + RootExclusiveTools
  * 防声明逃逸剥离，dispatcher/general 面零出现），首期纯工具面、零 web/ 改动。
  *
  * 存储：`<dataRoot>/tasks.json`（~/.nebflow/tasks.json）——运行时数据层：
@@ -80,16 +78,17 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
  *   - id 水位（`TaskListData.nextId`）：id **永不回收**（对齐 TaskBoard 侧形态）——
  *     否则 prune/隔离后的 id 复用会把两代任务的史混成一条时间线。
  */
-/** TaskList 条目（TaskModel.scala 同款顶层 case class + companion givens——嵌套
-  * object 内 ConfiguredCodec.derived 在 Scala 3.5 下触发镜像前向引用错误）。
-  * withDefaults：缺字段回默认（零迁移）；未知键容忍（strictDeserialization 关）。
-  *
-  * 升级批新增两字段（旧 9 键文件零迁移：缺字段回默认 `links=Nil` / `parentId=None`）：
-  *   - `links` = 自由关联锚（文档路径 / commit 短 hash / 任意字符串），**不校验可达性**
-  *     （路径会随提交移动、短 hash 可能 rebase 后消失——硬校验会拒掉合法写入）；
-  *   - `parentId` = 父子（包含）关系，与 `blocks`（依赖）语义正交、可共存；父链深度 ≤ 5。
-  * 注意：旧二进制回写本文件会丢新字段（withDefaults + 未知键容忍）——史文件不受影响。
-  */
+/**
+ * TaskList 条目（TaskModel.scala 同款顶层 case class + companion givens——嵌套
+ * object 内 ConfiguredCodec.derived 在 Scala 3.5 下触发镜像前向引用错误）。
+ * withDefaults：缺字段回默认（零迁移）；未知键容忍（strictDeserialization 关）。
+ *
+ * 升级批新增两字段（旧 9 键文件零迁移：缺字段回默认 `links=Nil` / `parentId=None`）：
+ *   - `links` = 自由关联锚（文档路径 / commit 短 hash / 任意字符串），**不校验可达性**
+ *     （路径会随提交移动、短 hash 可能 rebase 后消失——硬校验会拒掉合法写入）；
+ *   - `parentId` = 父子（包含）关系，与 `blocks`（依赖）语义正交、可共存；父链深度 ≤ 5。
+ * 注意：旧二进制回写本文件会丢新字段（withDefaults + 未知键容忍）——史文件不受影响。
+ */
 case class TaskListEntry(
   id: String,
   title: String,
@@ -103,18 +102,21 @@ case class TaskListEntry(
   links: List[String] = Nil,
   parentId: Option[String] = None
 )
+
 object TaskListEntry:
   given Configuration = Configuration.default.withDefaults
   given Codec[TaskListEntry] = ConfiguredCodec.derived
 
-/** tasks.json 顶层结构：version + tasks + `nextId`（id 水位）。
-  *
-  * `nextId` = **单调 id 水位**（升级批 id 复用修正，形态对齐 TaskBoard 侧
-  * `TaskBoardStore.TaskBoardData.nextId`）：create 取 `max(存量数字 id max, 水位) + 1`
-  * 并回写水位 ⇒ 被 prune 掉或损坏隔离掉的 id **永不回收**。缺键回默认 0 ⇒ 旧库零迁移
-  * 读入（首次 create 即自愈：水位推进到已用最大值+1 并落盘）。
-  */
+/**
+ * tasks.json 顶层结构：version + tasks + `nextId`（id 水位）。
+ *
+ * `nextId` = **单调 id 水位**（升级批 id 复用修正，形态对齐 TaskBoard 侧
+ * `TaskBoardStore.TaskBoardData.nextId`）：create 取 `max(存量数字 id max, 水位) + 1`
+ * 并回写水位 ⇒ 被 prune 掉或损坏隔离掉的 id **永不回收**。缺键回默认 0 ⇒ 旧库零迁移
+ * 读入（首次 create 即自愈：水位推进到已用最大值+1 并落盘）。
+ */
 case class TaskListData(version: Int = 1, tasks: List[TaskListEntry] = Nil, nextId: Int = 0)
+
 object TaskListData:
   given Configuration = Configuration.default.withDefaults
   given Codec[TaskListData] = ConfiguredCodec.derived
@@ -125,10 +127,10 @@ object TaskListStore:
 
   // ---- 状态常量（wire 格式唯一来源）----
   object Status:
-    val Open       = "open"
+    val Open = "open"
     val InProgress = "in_progress"
-    val Done       = "done"
-    val Blocked    = "blocked"
+    val Done = "done"
+    val Blocked = "blocked"
     val all: Set[String] = Set(Open, InProgress, Done, Blocked)
 
   /** done 条目保留期（create 时惰性清理，「闭环即删」T2 精神）。 */
@@ -142,22 +144,26 @@ object TaskListStore:
   // ---- `show` 窗口上限（升级批 D4/R5：全部为「展示预算」，非删除）----
   /** 主区（note/log 内容变更 —— 作者 17:27 口径的史主体）预算。 */
   val TimelineShowMaxEvents: Int = 50
-  val TimelineShowMaxChars: Int  = 20000
-  val TimelineShowMaxBytes: Int  = 32 * 1024
+  val TimelineShowMaxChars: Int = 20000
+  val TimelineShowMaxBytes: Int = 32 * 1024
+
   /** 次要区（状态/结构类事件）预算：独立且更小——退居次要，不得淹没 note 主线。 */
-  val StateShowMaxEvents: Int   = 50
-  val StateShowMaxChars: Int    = 4000
-  val StateShowMaxBytes: Int    = 6 * 1024
+  val StateShowMaxEvents: Int = 50
+  val StateShowMaxChars: Int = 4000
+  val StateShowMaxBytes: Int = 6 * 1024
+
   /** 单次读取窗口（按 id 保留最近 ≤ N 条；计数在整文件范围统计 ⇒ 未显示数可对账）。 */
   val TimelineReadWindow: Int = 2000
-  val ReverseDepsShowMax: Int    = 20
-  val ChildrenShowMax: Int       = 20
+  val ReverseDepsShowMax: Int = 20
+  val ChildrenShowMax: Int = 20
+
   /** 父链深度上限（root = 1 层）。 */
   val ParentMaxDepth: Int = 5
-  val LinksMax: Int       = 20
-  val LinkMaxChars: Int   = 300
+  val LinksMax: Int = 20
+  val LinkMaxChars: Int = 300
+
   /** `show` 最终硬截断（结果硬顶 50_000 之下的自保线）。 */
-  val ShowHardCapChars: Int    = 48000
+  val ShowHardCapChars: Int = 48000
   val GlobalEventsShowMax: Int = 3
 
   type Entry = TaskListEntry
@@ -182,8 +188,8 @@ object TaskListStore:
       // 读取本身抛异常（权限/目录顶替等）与解码失败同归损坏路径——不崩
       scala.util.Try(decode[Store](os.read(file))) match
         case scala.util.Success(Right(store)) => Right(store)
-        case scala.util.Success(Left(err))    => Left(err.getMessage)
-        case scala.util.Failure(e)            => Left(e.getMessage)
+        case scala.util.Success(Left(err)) => Left(err.getMessage)
+        case scala.util.Failure(e) => Left(e.getMessage)
 
   /** 读路径视图：损坏 → 空视图 + WARN（零副作用）。 */
   private def readViewSync(): Store =
@@ -193,8 +199,10 @@ object TaskListStore:
         logger.warnSync(s"[tasklist] tasks.json corrupted, read path degrades to empty view: $reason")
         Store()
 
-  /** 写路径读：损坏 → 隔离（改名保旧字节）+ 全新空库 + 1 条 `quarantine` 史行。
-    * 返回 (库, 隔离文件名?)。 */
+  /**
+   * 写路径读：损坏 → 隔离（改名保旧字节）+ 全新空库 + 1 条 `quarantine` 史行。
+   * 返回 (库, 隔离文件名?)。
+   */
   private def readForWriteSync(hist: HistoryLog): (Store, Option[String]) =
     readSync() match
       case Right(store) => (store, None)
@@ -206,12 +214,16 @@ object TaskListStore:
             Some(quarantine.last)
           catch case _: Exception => None
         logger.warnSync(
-          s"[tasklist] tasks.json corrupted ($reason) — quarantined to ${renamed.getOrElse("(rename failed, proceeding on empty store)")}, starting fresh store")
-        hist.append(TaskListEvent(
-          at = nowStr,
-          actor = TaskListActor.System,
-          kind = TaskListEventKind.Quarantine,
-          detail = Some(s"${renamed.getOrElse("(rename failed)")} reason=$reason")))
+          s"[tasklist] tasks.json corrupted ($reason) — quarantined to ${renamed.getOrElse("(rename failed, proceeding on empty store)")}, starting fresh store"
+        )
+        hist.append(
+          TaskListEvent(
+            at = nowStr,
+            actor = TaskListActor.System,
+            kind = TaskListEventKind.Quarantine,
+            detail = Some(s"${renamed.getOrElse("(rename failed)")} reason=$reason")
+          )
+        )
         (Store(), renamed)
 
   private def writeSync(store: Store): Unit =
@@ -224,13 +236,13 @@ object TaskListStore:
   /** 状态迁移矩阵（TeamTask 四态机精神落地）。同态 = no-op 放行。 */
   private[tools] def isValidTransition(from: String, to: String): Boolean =
     (from, to) match
-      case (f, t) if f == t                  => true // no-op（含 done→done 幂等）
-      case (Status.Open, Status.InProgress)  => true
-      case (Status.Open, Status.Blocked)     => true
+      case (f, t) if f == t => true // no-op（含 done→done 幂等）
+      case (Status.Open, Status.InProgress) => true
+      case (Status.Open, Status.Blocked) => true
       case (Status.InProgress, Status.Blocked) => true
-      case (Status.Blocked, Status.Open)     => true
+      case (Status.Blocked, Status.Open) => true
       case (Status.Blocked, Status.InProgress) => true
-      case _                                 => false // done→任何（终态）、in_progress→open 等
+      case _ => false // done→任何（终态）、in_progress→open 等
 
   /** 依赖图环检测（id → blocks 边；含自依赖）。TeamTask #3 DFS 同款。 */
   private[tools] def hasCycle(tasks: List[Entry]): Boolean =
@@ -263,7 +275,8 @@ object TaskListStore:
       val knownList = if known.isEmpty then "(none — store is empty)" else known.map("#" + _).mkString(", ")
       ToolError(
         s"TaskList: dependency id '#$unknown' does not exist. Known ids: $knownList. " +
-          s"Fix the id or drop it. (TASKLIST_BLOCK_UNKNOWN)")
+          s"Fix the id or drop it. (TASKLIST_BLOCK_UNKNOWN)"
+      )
     }
 
   /** 依赖闸（TeamTask 精神落地）：blocks 内全部条目须 done 才可 in_progress/done。 */
@@ -272,9 +285,12 @@ object TaskListStore:
     if open.isEmpty then None
     else
       val listing = open.map(e => s"#${e.id}[${e.status}] ${truncate(e.title, 40)}").mkString(", ")
-      Some(ToolError(
-        s"TaskList: cannot $action #$id — dependency(ies) not closed yet: $listing. " +
-          s"Close them first, or set status=\"blocked\" on #$id to record the wait. (TASKLIST_BLOCKED)"))
+      Some(
+        ToolError(
+          s"TaskList: cannot $action #$id — dependency(ies) not closed yet: $listing. " +
+            s"Close them first, or set status=\"blocked\" on #$id to record the wait. (TASKLIST_BLOCKED)"
+        )
+      )
 
   private def truncate(s: String, max: Int): String =
     if s.length <= max then s else s.take(max) + "…"
@@ -285,15 +301,20 @@ object TaskListStore:
 
   private def utf8Len(s: String): Int = s.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
 
-  /** 文本参数写入侧上限（D3）：≤ maxChars 字符且 ≤ maxBytes 字节（先到为准）。
-    * 超限 → `TASKLIST_PARAM` + 修法（错误文案必须给出路）。读路径零校验。 */
+  /**
+   * 文本参数写入侧上限（D3）：≤ maxChars 字符且 ≤ maxBytes 字节（先到为准）。
+   * 超限 → `TASKLIST_PARAM` + 修法（错误文案必须给出路）。读路径零校验。
+   */
   private def checkTextLimit(field: String, value: String, hint: String): Option[ToolError] =
     val bytes = utf8Len(value)
     if value.length <= NoteMaxChars && bytes <= TextMaxBytes then None
     else
-      Some(ToolError(
-        s"TaskList: `$field` is ${value.length} char(s) / $bytes byte(s) — over the per-entry limit " +
-          s"($NoteMaxChars chars / $TextMaxBytes bytes). $hint (TASKLIST_PARAM)"))
+      Some(
+        ToolError(
+          s"TaskList: `$field` is ${value.length} char(s) / $bytes byte(s) — over the per-entry limit " +
+            s"($NoteMaxChars chars / $TextMaxBytes bytes). $hint (TASKLIST_PARAM)"
+        )
+      )
 
   /** links 规整：去空白、去空串、去重（与 normalizeBlocks 同形）。 */
   private def normalizeLinks(raw: List[String]): List[String] =
@@ -302,18 +323,24 @@ object TaskListStore:
   /** links 限额：≤ 20 条、单条 ≤ 300 字符。**不做可达性校验**（见 case class 注释）。 */
   private def checkLinks(links: List[String]): Option[ToolError] =
     if links.size > LinksMax then
-      Some(ToolError(
-        s"TaskList: too many `links` (${links.size}) — max $LinksMax. Keep the most relevant ones, " +
-          s"or put the rest in `note` / an action=log entry. (TASKLIST_PARAM)"))
+      Some(
+        ToolError(
+          s"TaskList: too many `links` (${links.size}) — max $LinksMax. Keep the most relevant ones, " +
+            s"or put the rest in `note` / an action=log entry. (TASKLIST_PARAM)"
+        )
+      )
     else
       links.find(_.length > LinkMaxChars).map { long =>
         ToolError(
           s"TaskList: a `links` entry is ${long.length} chars — max $LinkMaxChars per link. " +
-            s"Shorten it (e.g. a repo-relative path or a short commit hash). (TASKLIST_PARAM)")
+            s"Shorten it (e.g. a repo-relative path or a short commit hash). (TASKLIST_PARAM)"
+        )
       }
 
-  /** 自 id 向上取祖先链（不含自身，近→远）；悬空父一并收入（渲染为 `[gone]`）。
-    * 防御性环保护：存量损坏数据存在回指时不死循环。 */
+  /**
+   * 自 id 向上取祖先链（不含自身，近→远）；悬空父一并收入（渲染为 `[gone]`）。
+   * 防御性环保护：存量损坏数据存在回指时不死循环。
+   */
   private[tools] def ancestorsOf(tasks: List[Entry], id: String): List[String] =
     val byId = tasks.map(t => t.id -> t).toMap
     val out = mutable.ListBuffer[String]()
@@ -332,29 +359,43 @@ object TaskListStore:
   /** parent 链深度（root = 1 层）；含环保护与悬空父（计入一层后停）。 */
   private[tools] def parentDepthOf(tasks: List[Entry], id: String): Int = 1 + ancestorsOf(tasks, id).size
 
-  /** parent 校验（create / update 共用）：存在性 + 自环/回指 + 深度 ≤ ParentMaxDepth。
-    * `selfId` = update 时为被改条目 id（create 为 None）。 */
+  /**
+   * parent 校验（create / update 共用）：存在性 + 自环/回指 + 深度 ≤ ParentMaxDepth。
+   * `selfId` = update 时为被改条目 id（create 为 None）。
+   */
   private def checkParent(store: Store, selfId: Option[String], parentId: String): Option[ToolError] =
     val known = store.tasks.map(_.id)
     if selfId.contains(parentId) then
-      Some(ToolError(
-        s"TaskList: #$parentId cannot be its own parent. (TASKLIST_PARENT_CYCLE)"))
+      Some(ToolError(s"TaskList: #$parentId cannot be its own parent. (TASKLIST_PARENT_CYCLE)"))
     else if !known.contains(parentId) then
       val knownList = if known.isEmpty then "(none — store is empty)" else known.map("#" + _).mkString(", ")
-      Some(ToolError(
-        s"TaskList: parent id '#$parentId' does not exist. Known ids: $knownList. " +
-          s"Fix the id or drop it. (TASKLIST_PARENT_UNKNOWN)"))
+      Some(
+        ToolError(
+          s"TaskList: parent id '#$parentId' does not exist. Known ids: $knownList. " +
+            s"Fix the id or drop it. (TASKLIST_PARENT_UNKNOWN)"
+        )
+      )
     else if selfId.exists(sid => ancestorsOf(store.tasks, parentId).contains(sid)) then
       val self = selfId.getOrElse("?")
-      Some(ToolError(
-        s"TaskList: parentId=$parentId would create a parent cycle (#$self is an ancestor of #$parentId). (TASKLIST_PARENT_CYCLE)"))
+      Some(
+        ToolError(
+          s"TaskList: parentId=$parentId would create a parent cycle (#$self is an ancestor of #$parentId). (TASKLIST_PARENT_CYCLE)"
+        )
+      )
     else
       val depth = parentDepthOf(store.tasks, parentId) + 1
       if depth > ParentMaxDepth then
-        Some(ToolError(
-          s"TaskList: parent chain would become $depth level(s) deep — max $ParentMaxDepth. " +
-            s"Flatten the tree (attach to a shallower parent) or keep the remaining work as a dependency (blocks). (TASKLIST_PARENT_DEPTH)"))
+        Some(
+          ToolError(
+            s"TaskList: parent chain would become $depth level(s) deep — max $ParentMaxDepth. " +
+              s"Flatten the tree (attach to a shallower parent) or keep the remaining work as a dependency (blocks). (TASKLIST_PARENT_DEPTH)"
+          )
+        )
       else None
+
+    end if
+
+  end checkParent
 
   /** 后代（子/孙…，含环保护）；用于 `show` 的计数行与 `⚠children-open` 标记。 */
   private[tools] def descendantsOf(tasks: List[Entry], id: String): List[Entry] =
@@ -377,14 +418,23 @@ object TaskListStore:
 
   private def jsonList(l: List[String]): Json = Json.arr(l.map(Json.fromString)*)
 
-  /** 逐字段 diff → `update` 史行（单次调用最多 7 条：title/status/note/project/blocks/links/parentId）。
-    * **note 变更的 `from`/`to` 是两侧全文**（作者 17:27 口径：覆盖动作必须可还原）。 */
+  /**
+   * 逐字段 diff → `update` 史行（单次调用最多 7 条：title/status/note/project/blocks/links/parentId）。
+   * **note 变更的 `from`/`to` 是两侧全文**（作者 17:27 口径：覆盖动作必须可还原）。
+   */
   private def updateEvents(old: Entry, next: Entry, actor: String, at: String): List[TaskListEvent] =
     val buf = mutable.ListBuffer[TaskListEvent]()
     def ev(field: String, from: Json, to: Json): Unit =
       if from != to then
-        buf += TaskListEvent(at = at, actor = actor, kind = TaskListEventKind.Update,
-          id = Some(next.id), field = Some(field), from = Some(from), to = Some(to))
+        buf += TaskListEvent(
+          at = at,
+          actor = actor,
+          kind = TaskListEventKind.Update,
+          id = Some(next.id),
+          field = Some(field),
+          from = Some(from),
+          to = Some(to)
+        )
     ev("title", Json.fromString(old.title), Json.fromString(next.title))
     ev("status", Json.fromString(old.status), Json.fromString(next.status))
     ev("note", jsonOf(old.note), jsonOf(next.note))
@@ -394,28 +444,52 @@ object TaskListStore:
     ev("parentId", jsonOf(old.parentId), jsonOf(next.parentId))
     buf.toList
 
-  /** note 内容变更行（`create` 的初始 note / `close` 的 `[done] outcome` 追加走这里）：
-    * `field="note"` + `from`/`to` 两侧全文 ⇒ 「每一次补充的内容」都可还原。 */
-  private def noteEvent(id: String, old: Option[String], next: Option[String], actor: String, at: String): Option[TaskListEvent] =
+  end updateEvents
+
+  /**
+   * note 内容变更行（`create` 的初始 note / `close` 的 `[done] outcome` 追加走这里）：
+   * `field="note"` + `from`/`to` 两侧全文 ⇒ 「每一次补充的内容」都可还原。
+   */
+  private def noteEvent(
+    id: String,
+    old: Option[String],
+    next: Option[String],
+    actor: String,
+    at: String
+  ): Option[TaskListEvent] =
     if old == next then None
-    else Some(TaskListEvent(at = at, actor = actor, kind = TaskListEventKind.Update,
-      id = Some(id), field = Some("note"), from = Some(jsonOf(old)), to = Some(jsonOf(next))))
+    else
+      Some(
+        TaskListEvent(
+          at = at,
+          actor = actor,
+          kind = TaskListEventKind.Update,
+          id = Some(id),
+          field = Some("note"),
+          from = Some(jsonOf(old)),
+          to = Some(jsonOf(next))
+        )
+      )
 
   /** `TASKLIST_NO_ID` 文案（update/close/show/log 四处同源：说错在哪 + 给 open 清单出路）。 */
   private def noIdError(store: Store, id: String): ToolError =
     val open = store.tasks.filterNot(_.status == Status.Done)
-    val hint = if open.isEmpty then "(no open entries)" else open.map(e => s"#${e.id}[${e.status}] ${truncate(e.title, 40)}").mkString(", ")
+    val hint =
+      if open.isEmpty then "(no open entries)"
+      else open.map(e => s"#${e.id}[${e.status}] ${truncate(e.title, 40)}").mkString(", ")
     ToolError(s"""TaskList: no entry #$id. Open entries: $hint — pick an id from action=list. (TASKLIST_NO_ID)""")
 
   /** 引用渲染（`#id[status] title`；未知 id 用既有形态 `[?]` / `[gone]`）。 */
   private def refOf(store: Store, otherId: String, missingMark: String): String =
     store.tasks.find(_.id == otherId) match
       case Some(t) => s"#$otherId[${t.status}] ${truncate(t.title, 40)}"
-      case None    => s"#$otherId[$missingMark]"
+      case None => s"#$otherId[$missingMark]"
 
-  /** done 条目惰性清理（closedAt 超 30d；解析失败保守保留）。返回 (库, 被清条目)。
-    * 每条被清条目追加 1 条 `prune` 史行（`actor=system`）——「任务条目消亡」本身有留痕，
-    * 且史文件**不参与** prune（「任务没了、史还在」，事后仍可按 id 查回）。 */
+  /**
+   * done 条目惰性清理（closedAt 超 30d；解析失败保守保留）。返回 (库, 被清条目)。
+   * 每条被清条目追加 1 条 `prune` 史行（`actor=system`）——「任务条目消亡」本身有留痕，
+   * 且史文件**不参与** prune（「任务没了、史还在」，事后仍可按 id 查回）。
+   */
   private def pruneDone(store: Store, hist: HistoryLog): (Store, List[Entry]) =
     val cutoff = Instant.now().minusSeconds(DoneTtlDays * 24 * 3600)
     val pruned = mutable.ListBuffer[Entry]()
@@ -426,14 +500,20 @@ object TaskListStore:
       !expired
     }
     pruned.foreach { t =>
-      hist.append(TaskListEvent(
-        at = nowStr,
-        actor = TaskListActor.System,
-        kind = TaskListEventKind.Prune,
-        id = Some(t.id),
-        detail = Some(s"closedAt=${t.closedAt.getOrElse("(unknown)")} ttl=${DoneTtlDays}d title=${truncate(t.title, 80)}")))
+      hist.append(
+        TaskListEvent(
+          at = nowStr,
+          actor = TaskListActor.System,
+          kind = TaskListEventKind.Prune,
+          id = Some(t.id),
+          detail =
+            Some(s"closedAt=${t.closedAt.getOrElse("(unknown)")} ttl=${DoneTtlDays}d title=${truncate(t.title, 80)}")
+        )
+      )
     }
     (store.copy(tasks = kept), pruned.toList)
+
+  end pruneDone
 
   /**
    * id 分配（升级批 id 复用修正，形态对齐 TaskBoard 侧 `nextNumId`）：
@@ -459,8 +539,7 @@ object TaskListStore:
     actor: String = TaskListActor.Unknown
   ): Either[ToolError, String] = fileLock.synchronized {
     val hist = new HistoryLog
-    if title.trim.isEmpty then
-      Left(ToolError("TaskList: create requires a non-empty `title`. (TASKLIST_PARAM)"))
+    if title.trim.isEmpty then Left(ToolError("TaskList: create requires a non-empty `title`. (TASKLIST_PARAM)"))
     else
       val (base, quarantined) = readForWriteSync(hist)
       val (store, pruned) = pruneDone(base, hist)
@@ -470,8 +549,16 @@ object TaskListStore:
       for
         _ <- checkBlockIds(store, blocks).toLeft(())
         _ <- checkLinks(links).toLeft(())
-        _ <- note.filter(_.trim.nonEmpty).flatMap(n => checkTextLimit("note", n.trim,
-          "Keep `note` as the current-state summary and append long content with action=log.")).toLeft(())
+        _ <- note
+          .filter(_.trim.nonEmpty)
+          .flatMap(n =>
+            checkTextLimit(
+              "note",
+              n.trim,
+              "Keep `note` as the current-state summary and append long content with action=log."
+            )
+          )
+          .toLeft(())
         _ <- parent.flatMap(p => checkParent(store, None, p)).toLeft(())
         nextId = nextNumId(store)
         now = nowStr
@@ -487,26 +574,38 @@ object TaskListStore:
           links = links,
           parentId = parent
         )
-        _ <- {
+        _ <-
           // 水位随取用回写（id 不回收）
           writeSync(store.copy(tasks = store.tasks :+ entry, nextId = nextId))
           Right(())
-        }
       yield
-        hist.append(TaskListEvent(at = now, actor = actor, kind = TaskListEventKind.Create,
-          id = Some(entry.id), detail = Some(entry.title)))
+        hist.append(
+          TaskListEvent(
+            at = now,
+            actor = actor,
+            kind = TaskListEventKind.Create,
+            id = Some(entry.id),
+            detail = Some(entry.title)
+          )
+        )
         // 初始 note 也是一版「内容」（内容线起点），单独落一条 note 内容行
         noteEvent(entry.id, None, entry.note, actor, now).foreach(hist.append)
         val depsNote = if blocks.nonEmpty then s" (deps: ${blocks.map("#" + _).mkString(", ")})" else ""
         val linksNote = if links.nonEmpty then s" (links: ${links.size})" else ""
         val parentNote = parent.map(p => s" (parent: #$p)").getOrElse("")
         val pruneNote = (pruned.size, quarantined) match
-          case (0, None)       => ""
-          case (n, None)       => s" Pruned $n done entr${if n == 1 then "y" else "ies"} older than ${DoneTtlDays}d."
-          case (0, Some(q))    => s" NOTE: previous tasks.json was corrupted — quarantined as $q; fresh store started."
-          case (n, Some(q))    => s" NOTE: previous tasks.json was corrupted — quarantined as $q. Pruned $n stale done entries."
-        s"""[OK] TaskList created #$nextId [open] ${truncate(entry.title, 60)}$depsNote$linksNote$parentNote$pruneNote${hist.note}
+          case (0, None) => ""
+          case (n, None) => s" Pruned $n done entr${if n == 1 then "y" else "ies"} older than ${DoneTtlDays}d."
+          case (0, Some(q)) => s" NOTE: previous tasks.json was corrupted — quarantined as $q; fresh store started."
+          case (n, Some(q)) =>
+            s" NOTE: previous tasks.json was corrupted — quarantined as $q. Pruned $n stale done entries."
+        s"""[OK] TaskList created #$nextId [open] ${truncate(
+            entry.title,
+            60
+          )}$depsNote$linksNote$parentNote$pruneNote${hist.note}
            |Start it with action=update status=in_progress (blocked until all deps are done); close it with action=close.""".stripMargin
+      end for
+    end if
   }
 
   def updateSync(
@@ -528,44 +627,63 @@ object TaskListStore:
       case Some(existing) =>
         // 终态单通道：update 不得进 done（close 专属），错误给可行动出路
         if status.contains(Status.Done) && existing.status != Status.Done then
-          Left(ToolError(
-            s"TaskList: status=\"done\" is not settable via update — use action=close (the single path into the terminal state). (TASKLIST_DONE_VIA_CLOSE)"))
+          Left(
+            ToolError(
+              s"TaskList: status=\"done\" is not settable via update — use action=close (the single path into the terminal state). (TASKLIST_DONE_VIA_CLOSE)"
+            )
+          )
         else
           val target = status.getOrElse(existing.status)
           if !Status.all.contains(target) then
-            Left(ToolError(
-              s"TaskList: unknown status '$target' — one of open | in_progress | blocked (done is reached via action=close). (TASKLIST_STATUS)"))
+            Left(
+              ToolError(
+                s"TaskList: unknown status '$target' — one of open | in_progress | blocked (done is reached via action=close). (TASKLIST_STATUS)"
+              )
+            )
           else if !isValidTransition(existing.status, target) then
-            Left(ToolError(
-              s"TaskList: illegal transition ${existing.status} → $target for #$id. " +
-                "Legal: open→in_progress, open→blocked, in_progress→blocked, blocked→open, blocked→in_progress; done is terminal (no transitions out). (TASKLIST_STATUS)"))
+            Left(
+              ToolError(
+                s"TaskList: illegal transition ${existing.status} → $target for #$id. " +
+                  "Legal: open→in_progress, open→blocked, in_progress→blocked, blocked→open, blocked→in_progress; done is terminal (no transitions out). (TASKLIST_STATUS)"
+              )
+            )
           else
             val newBlocks = blocksRaw.map(normalizeBlocks).getOrElse(existing.blocks)
             val newLinks = linksRaw.map(normalizeLinks).getOrElse(existing.links)
             // parentId：空串 = 清除；缺省 = 保留
             val newParent = parentId match
               case Some(p) => Some(p.trim).filter(_.nonEmpty)
-              case None    => existing.parentId
+              case None => existing.parentId
             val parentChanged = newParent != existing.parentId
             for
               _ <- checkBlockIds(store, newBlocks).toLeft(())
               _ <- checkLinks(newLinks).toLeft(())
-              _ <- note.filter(_.trim.nonEmpty).flatMap(n => checkTextLimit("note", n.trim,
-                "Keep `note` as the current-state summary and append long content with action=log.")).toLeft(())
+              _ <- note
+                .filter(_.trim.nonEmpty)
+                .flatMap(n =>
+                  checkTextLimit(
+                    "note",
+                    n.trim,
+                    "Keep `note` as the current-state summary and append long content with action=log."
+                  )
+                )
+                .toLeft(())
               _ <- (if parentChanged then newParent.flatMap(p => checkParent(store, Some(id), p)) else None).toLeft(())
               // 环检测：以「改动后」的边集跑 DFS（含自依赖）
               _ <-
-                val candidate = Entry(id = existing.id, title = existing.title, status = target,
-                  blocks = newBlocks) // 只取边集，其余字段无关环检测
+                val candidate =
+                  Entry(id = existing.id, title = existing.title, status = target, blocks = newBlocks) // 只取边集，其余字段无关环检测
                 val edgeSet = store.tasks.map(t => if t.id == existing.id then candidate else t)
                 if hasCycle(edgeSet) then
-                  Left(ToolError(
-                    s"TaskList: blocks update for #$id would create a dependency cycle (self-reference or loop). (TASKLIST_CYCLE)"))
+                  Left(
+                    ToolError(
+                      s"TaskList: blocks update for #$id would create a dependency cycle (self-reference or loop). (TASKLIST_CYCLE)"
+                    )
+                  )
                 else Right(())
               // 依赖闸：目标 in_progress 时 blocks 全部须闭环
               _ <-
-                if target == Status.InProgress then
-                  checkDepsClosed(store, newBlocks, "start", id).toLeft(())
+                if target == Status.InProgress then checkDepsClosed(store, newBlocks, "start", id).toLeft(())
                 else Right(())
               now = nowStr
               updated = existing.copy(
@@ -573,20 +691,20 @@ object TaskListStore:
                 note = note.map(_.trim).filter(_.nonEmpty).orElse(existing.note),
                 project = project match
                   case Some(p) => Some(p.trim).filter(_.nonEmpty) // 空串 = 清除
-                  case None    => existing.project,
+                  case None => existing.project,
                 blocks = newBlocks,
                 links = newLinks,
                 parentId = newParent,
                 status = target,
                 updatedAt = Some(now)
               )
-              _ <- {
+              _ <-
                 writeSync(store.copy(tasks = store.tasks.map(t => if t.id == id then updated else t)))
                 Right(())
-              }
             yield
               updateEvents(existing, updated, actor, now).foreach(hist.append)
-              val statusNote = if target != existing.status then s" ${existing.status}→$target" else " (no status change)"
+              val statusNote =
+                if target != existing.status then s" ${existing.status}→$target" else " (no status change)"
               val fieldNote =
                 val changed = List(
                   Option.when(updated.title != existing.title)("title"),
@@ -594,10 +712,15 @@ object TaskListStore:
                   Option.when(updated.project != existing.project)("project"),
                   Option.when(updated.blocks != existing.blocks)("blocks"),
                   Option.when(updated.links != existing.links)("links"),
-                  Option.when(updated.parentId != existing.parentId)("parentId")).flatten
+                  Option.when(updated.parentId != existing.parentId)("parentId")
+                ).flatten
                 if changed.isEmpty then "" else s" (changed: ${changed.mkString(", ")})"
-              val qNote = quarantined.map(q => s" NOTE: previous tasks.json was corrupted — quarantined as $q.").getOrElse("")
+              val qNote =
+                quarantined.map(q => s" NOTE: previous tasks.json was corrupted — quarantined as $q.").getOrElse("")
               s"[OK] TaskList updated #$id$statusNote$fieldNote$qNote${hist.note}"
+            end for
+          end if
+    end match
   }
 
   def closeSync(id: String, note: Option[String], actor: String = TaskListActor.Unknown): Either[ToolError, String] =
@@ -613,8 +736,12 @@ object TaskListStore:
         case Some(existing) =>
           for
             _ <- checkDepsClosed(store, existing.blocks, "close", id).toLeft(())
-            _ <- note.filter(_.trim.nonEmpty).flatMap(n => checkTextLimit("note", n.trim,
-              "Append long content with action=log instead of a giant close note.")).toLeft(())
+            _ <- note
+              .filter(_.trim.nonEmpty)
+              .flatMap(n =>
+                checkTextLimit("note", n.trim, "Append long content with action=log instead of a giant close note.")
+              )
+              .toLeft(())
             now = nowStr
             // close 的 note = 结果备注，追加保留工作 note（update 语义是替换，close 语义是追加）
             newNote = note.map(_.trim).filter(_.nonEmpty) match
@@ -627,28 +754,39 @@ object TaskListStore:
               closedAt = Some(now),
               updatedAt = Some(now)
             )
-            _ <- {
+            _ <-
               writeSync(store.copy(tasks = store.tasks.map(t => if t.id == id then updated else t)))
               Right(())
-            }
           yield
-            hist.append(TaskListEvent(at = now, actor = actor, kind = TaskListEventKind.Close,
-              id = Some(id),
-              from = Some(Json.fromString(existing.status)),
-              to = Some(Json.fromString(Status.Done)),
-              detail = note.map(_.trim).filter(_.nonEmpty)))
+            hist.append(
+              TaskListEvent(
+                at = now,
+                actor = actor,
+                kind = TaskListEventKind.Close,
+                id = Some(id),
+                from = Some(Json.fromString(existing.status)),
+                to = Some(Json.fromString(Status.Done)),
+                detail = note.map(_.trim).filter(_.nonEmpty)
+              )
+            )
             // close 的 `[done] outcome` 追加 = 一次 note 内容变更（可还原新旧两侧）
             noteEvent(id, existing.note, newNote, actor, now).foreach(hist.append)
-            val qNote = quarantined.map(q => s" NOTE: previous tasks.json was corrupted — quarantined as $q.").getOrElse("")
+            val qNote =
+              quarantined.map(q => s" NOTE: previous tasks.json was corrupted — quarantined as $q.").getOrElse("")
             // 9.5A：无级联——存在 open 子不阻断 close，但结果行给提示（父状态不派生）
             val openKids = store.tasks.filter(t => t.parentId.contains(id) && t.status != Status.Done)
             val kidsNote =
               if openKids.isEmpty then ""
               else
-                val shown = openKids.take(ChildrenShowMax).map(k => s"#${k.id}[${k.status}] ${truncate(k.title, 40)}").mkString(", ")
-                val more = if openKids.size > ChildrenShowMax then s" (+${openKids.size - ChildrenShowMax} more)" else ""
+                val shown = openKids
+                  .take(ChildrenShowMax)
+                  .map(k => s"#${k.id}[${k.status}] ${truncate(k.title, 40)}")
+                  .mkString(", ")
+                val more =
+                  if openKids.size > ChildrenShowMax then s" (+${openKids.size - ChildrenShowMax} more)" else ""
                 s" NOTE: ${openKids.size} open child(ren) remain — not cascaded (close children explicitly): $shown$more."
             s"[OK] TaskList closed #$id ${existing.status}→done$qNote$kidsNote${hist.note}"
+      end match
     }
 
   /**
@@ -677,10 +815,20 @@ object TaskListStore:
           _ <- checkTextLimit("text", body, "Split it into several action=log calls.").toLeft(())
           _ <- checkLinks(links).toLeft(())
         yield
-          hist.append(TaskListEvent(at = nowStr, actor = actor, kind = TaskListEventKind.Log,
-            id = Some(id), text = Some(body), links = links))
+          hist.append(
+            TaskListEvent(
+              at = nowStr,
+              actor = actor,
+              kind = TaskListEventKind.Log,
+              id = Some(id),
+              text = Some(body),
+              links = links
+            )
+          )
           val linksNote = if links.nonEmpty then s" links: ${links.size}." else ""
           s"[OK] TaskList logged ${body.length} char(s) to #$id (note untouched).$linksNote${hist.note}"
+        end for
+    end match
   }
 
   /**
@@ -721,9 +869,9 @@ object TaskListStore:
 
   private def brief(j: Option[Json]): String =
     val s = j match
-      case None                => "(none)"
+      case None => "(none)"
       case Some(v) if v.isNull => "(none)"
-      case Some(v)             => v.asString.getOrElse(v.noSpaces)
+      case Some(v) => v.asString.getOrElse(v.noSpaces)
     truncate(s.replace("\n", " ⏎ "), 60)
 
   /** 内容行单段渲染（多行内容逐行缩进；本段被截断时**明示**截断与原文长度）。 */
@@ -734,7 +882,7 @@ object TaskListStore:
       else content.take(math.max(0, budget)) + s"… (truncated: ${content.length} chars total)"
     body.split("\n", -1).toList match
       case head :: tail => (s"    $label| $head" :: tail.map(l => s"    $label| $l")).mkString("\n")
-      case Nil          => s"    $label| (empty)"
+      case Nil => s"    $label| (empty)"
 
   /** 一条 note/log 内容变更的可见块（内容可见 = 可还原；块内截断必须明示）。 */
   private def noteBlock(ev: TaskListEvent, budget: Int): String =
@@ -746,13 +894,15 @@ object TaskListStore:
           contentBlock("", ev.text.getOrElse(""), inner)
       case TaskListEventKind.Update =>
         val old = ev.from.flatMap(v => if v.isNull then None else v.asString)
-        val nw  = ev.to.flatMap(v => if v.isNull then None else v.asString)
+        val nw = ev.to.flatMap(v => if v.isNull then None else v.asString)
         s"note (${old.map(_.length).getOrElse(0)} → ${nw.map(_.length).getOrElse(0)} chars)\n" +
           contentBlock("old", old.getOrElse("(none)"), inner / 2) + "\n" +
           contentBlock("new", nw.getOrElse("(none)"), inner / 2)
       case _ =>
         s"${ev.kind}\n" + contentBlock("", ev.detail.getOrElse(""), inner)
     head + body
+
+  end noteBlock
 
   /** 主区：note/log 内容变更（作者 17:27 口径的史主体）——时间序、内容可见。 */
   private def renderNoteTimeline(sb: StringBuilder, hist: TaskListHistory.ReadResult): Unit =
@@ -780,6 +930,8 @@ object TaskListStore:
       val notShown = hist.matchedNote - kept.size
       if notShown > 0 then sb.append(s"(+$notShown older change(s) not shown)\n")
 
+  end renderNoteTimeline
+
   /** 次要区：状态/结构类事件（极简行、独立小节 —— 不与 note 主线平铺混杂）。 */
   private def renderStateTimeline(sb: StringBuilder, hist: TaskListHistory.ReadResult): Unit =
     val stateEvents = hist.events.filterNot(TaskListHistory.isNoteEvent)
@@ -804,15 +956,19 @@ object TaskListStore:
       val notShown = hist.matchedState - kept.size
       if notShown > 0 then sb.append(s"(+$notShown older event(s) not shown)\n")
 
+  end renderStateTimeline
+
   /** 主库有该条目：全量渲染。 */
   private def renderShow(store: Store, e: Entry, hist: TaskListHistory.ReadResult): String =
     val sb = new StringBuilder
     sb.append(s"TaskList #${e.id} [${e.status}] ${e.title}\n")
     sb.append(s"project: ${e.project.getOrElse("-")}\n")
-    sb.append(s"created: ${e.createdAt.getOrElse("-")}  updated: ${e.updatedAt.getOrElse("-")}  closed: ${e.closedAt.getOrElse("-")}\n")
+    sb.append(
+      s"created: ${e.createdAt.getOrElse("-")}  updated: ${e.updatedAt.getOrElse("-")}  closed: ${e.closedAt.getOrElse("-")}\n"
+    )
     e.note.filter(_.nonEmpty) match
       case Some(n) => sb.append(s"note (${n.length} chars):\n$n\n")
-      case None    => sb.append("note: (none)\n")
+      case None => sb.append("note: (none)\n")
     if e.links.nonEmpty then sb.append(s"links (${e.links.size}): ${e.links.mkString(", ")}\n")
     // 父链（根在前）+ 直接子 + 后代计数（D4：不展开整棵子树）
     val chain = ancestorsOf(store.tasks, e.id)
@@ -832,8 +988,11 @@ object TaskListStore:
       val warn = if openDeps && e.status != Status.Done then " ⚠deps-open" else ""
       sb.append(s"deps (${e.blocks.size}): ${e.blocks.map(d => refOf(store, d, "?")).mkString(", ")}$warn\n")
     val dependents = store.tasks.filter(t => t.id != e.id && t.blocks.contains(e.id))
-    val depMore = if dependents.size > ReverseDepsShowMax then s" (+${dependents.size - ReverseDepsShowMax} more)" else ""
-    val depShown = if dependents.isEmpty then "none" else dependents.take(ReverseDepsShowMax).map(d => refOf(store, d.id, "gone")).mkString(", ")
+    val depMore =
+      if dependents.size > ReverseDepsShowMax then s" (+${dependents.size - ReverseDepsShowMax} more)" else ""
+    val depShown =
+      if dependents.isEmpty then "none"
+      else dependents.take(ReverseDepsShowMax).map(d => refOf(store, d.id, "gone")).mkString(", ")
     val depWarn = if dependents.exists(_.status != Status.Done) then " ⚠dependents-open" else ""
     sb.append(s"dependents (${dependents.size}): $depShown$depMore$depWarn\n")
     renderNoteTimeline(sb, hist)
@@ -841,6 +1000,8 @@ object TaskListStore:
     renderGlobals(sb, hist)
     if hist.unreadable > 0 then sb.append(s"history: ${hist.unreadable} unreadable line(s) skipped\n")
     hardCap(sb.toString)
+
+  end renderShow
 
   /** 主库已无该 id、史文件仍有事件：降级渲染（[gone] + 主库字段如实不可得，禁回填）。 */
   private def renderGone(id: String, hist: TaskListHistory.ReadResult): String =
@@ -868,7 +1029,7 @@ object TaskListStore:
     val store = readViewSync()
     val filtered = project.map(_.trim).filter(_.nonEmpty) match
       case Some(p) => store.tasks.filter(_.project.contains(p))
-      case None    => store.tasks
+      case None => store.tasks
     val open = filtered.filterNot(_.status == Status.Done)
     if filtered.isEmpty then
       val scopeNote = project.map(p => s" for project '$p'").getOrElse("")
@@ -882,7 +1043,7 @@ object TaskListStore:
             val parts = t.blocks.map { depId =>
               store.tasks.find(_.id == depId) match
                 case Some(d) => s"#$depId[${d.status}]"
-                case None    => s"#$depId[?]"
+                case None => s"#$depId[?]"
             }
             val openDeps = t.blocks.flatMap(dep => store.tasks.find(_.id == dep)).exists(_.status != Status.Done)
             val warn = if openDeps && t.status != Status.Done then " ⚠deps-open" else ""
@@ -893,9 +1054,14 @@ object TaskListStore:
         val kidWarn = if kidsOpen && t.status != Status.Done then " ⚠children-open" else ""
         s"#${t.id} [${t.status}] ${truncate(t.title, 60)}$proj$deps$kidWarn$note"
       }
-      Right(
-        s"""TaskList — ${filtered.size} entr${if filtered.size == 1 then "y" else "ies"} (${open.size} open)${project.map(p => s" for project '$p'").getOrElse("")}
+      Right(s"""TaskList — ${filtered.size} entr${
+          if filtered.size == 1 then "y" else "ies"
+        } (${open.size} open)${project.map(p => s" for project '$p'").getOrElse("")}
            |${lines.mkString("\n")}""".stripMargin)
+
+    end if
+
+  end listSync
 
   /**
    * 生命周期注入摘要行（ContextRefresher.buildMemoryBlock 消费）：open 条目存在
@@ -912,7 +1078,8 @@ object TaskListStore:
         s"#${t.id}[${t.status}] ${truncate(t.title, 40)}$proj"
       }
       val more = if open.size > 5 then s" (+${open.size - 5} more)" else ""
-      val line = s"[TaskList] ${open.size} open task(s): ${shown.mkString(" | ")}$more — details: TaskList(action=list|show)"
+      val line =
+        s"[TaskList] ${open.size} open task(s): ${shown.mkString(" | ")}$more — details: TaskList(action=list|show)"
       truncate(line, 600)
   end openSummaryLine
 end TaskListStore
@@ -965,47 +1132,48 @@ In `show`, note/log changes are rendered in a `## Note timeline` section (time o
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "action" -> Json.obj(
-        "type"        -> "string".asJson,
-        "enum"        -> Json.arr("create".asJson, "update".asJson, "list".asJson, "close".asJson, "log".asJson, "show".asJson),
+        "type" -> "string".asJson,
+        "enum" -> Json
+          .arr("create".asJson, "update".asJson, "list".asJson, "close".asJson, "log".asJson, "show".asJson),
         "description" -> "create / update / list / close / log / show (see description).".asJson
       ),
       "title" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Entry title. Required for create; optional replacement for update.".asJson
       ),
       "id" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Entry id (from list). Required for update/close/log/show.".asJson
       ),
       "text" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "log only: the remark to append to the change history (≤2,000 chars / ≤8 KiB). Never modifies `note`.".asJson
       ),
       "status" -> Json.obj(
-        "type"        -> "string".asJson,
-        "enum"        -> Json.arr("open".asJson, "in_progress".asJson, "blocked".asJson),
+        "type" -> "string".asJson,
+        "enum" -> Json.arr("open".asJson, "in_progress".asJson, "blocked".asJson),
         "description" -> "New status for update. \"done\" is reached via action=close only.".asJson
       ),
       "project" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Project tag. create: optional; update: empty string clears; list: exact-match filter.".asJson
       ),
       "note" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "create: initial note; update: REPLACES the note (≤2,000 chars; use log for long content); close: appended as a [done] outcome line.".asJson
       ),
       "blocks" -> Json.obj(
-        "type"        -> "array".asJson,
-        "items"       -> Json.obj("type" -> "string".asJson),
+        "type" -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
         "description" -> "Ids of entries this one depends on. create: initial list; update: FULL replacement ([] clears).".asJson
       ),
       "links" -> Json.obj(
-        "type"        -> "array".asJson,
-        "items"       -> Json.obj("type" -> "string".asJson),
+        "type" -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
         "description" -> "Free-form references (paths / commit hashes), max 20. create: initial list; update: FULL replacement ([] clears); log: optional, attached to that history entry. Reachability is NOT validated.".asJson
       ),
       "parentId" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Parent entry id (sub-task relation). create: optional; update: empty string clears; depth ≤5, cycles and unknown ids rejected.".asJson
       )
     ),
@@ -1022,19 +1190,19 @@ In `show`, note/log changes are rendered in a `## Note timeline` section (time o
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     IO.blocking {
-      val action   = input("action").flatMap(_.asString).getOrElse("")
-      val title    = input("title").flatMap(_.asString)
-      val id       = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-      val status   = input("status").flatMap(_.asString)
-      val project  = input("project").flatMap(_.asString)
-      val note     = input("note").flatMap(_.asString)
-      val blocks   = input("blocks").flatMap(_.as[List[String]].toOption)
-      val links    = input("links").flatMap(_.as[List[String]].toOption)
-      val text     = input("text").flatMap(_.asString)
+      val action = input("action").flatMap(_.asString).getOrElse("")
+      val title = input("title").flatMap(_.asString)
+      val id = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+      val status = input("status").flatMap(_.asString)
+      val project = input("project").flatMap(_.asString)
+      val note = input("note").flatMap(_.asString)
+      val blocks = input("blocks").flatMap(_.as[List[String]].toOption)
+      val links = input("links").flatMap(_.as[List[String]].toOption)
+      val text = input("text").flatMap(_.asString)
       // parentId 空串 = 清除（原样传 None 表示「保留」）——两者语义在 updateSync 内区分
       val parentId = input("parentId").flatMap(_.asString)
       // 身份引擎侧派生（D5）：客户端传 actor/history 一律忽略（不进任何分支）
-      val actor    = TaskListHistory.actorOf(ctx)
+      val actor = TaskListHistory.actorOf(ctx)
 
       action match
         case "create" =>
@@ -1045,14 +1213,24 @@ In `show`, note/log changes are rendered in a `## Note timeline` section (time o
             blocksRaw = blocks,
             linksRaw = links,
             parentId = parentId,
-            actor = actor)
+            actor = actor
+          )
         case "update" =>
           id match
             case None =>
               Left(ToolError("TaskList: update requires `id` (entry id from action=list). (TASKLIST_PARAM)"))
             case Some(i) =>
-              TaskListStore.updateSync(i, title, note, project, blocks, status,
-                linksRaw = links, parentId = parentId, actor = actor)
+              TaskListStore.updateSync(
+                i,
+                title,
+                note,
+                project,
+                blocks,
+                status,
+                linksRaw = links,
+                parentId = parentId,
+                actor = actor
+              )
         case "list" =>
           TaskListStore.listSync(project)
         case "close" =>
@@ -1074,7 +1252,11 @@ In `show`, note/log changes are rendered in a `## Note timeline` section (time o
             case Some(i) =>
               TaskListStore.showSync(i)
         case other =>
-          Left(ToolError(
-            s"TaskList: unknown action '$other' — one of create/update/list/close/log/show. (TASKLIST_ACTION)"))
+          Left(
+            ToolError(
+              s"TaskList: unknown action '$other' — one of create/update/list/close/log/show. (TASKLIST_ACTION)"
+            )
+          )
+      end match
     }
 end TaskListTool

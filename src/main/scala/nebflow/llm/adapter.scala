@@ -18,16 +18,20 @@ case class SendMessageParams(
   sessionId: Option[String] = None,
   /** Agent identifier for LLM provider metadata. */
   agentId: Option[String] = None,
-  /** WebSearch P0: provider-native search injection kind for this request
-    * (resolved per-candidate in interface.scala — fallback switches provider
-    * mid-request and must not carry the previous provider's injection).
-    * Consumed by OpenAiAdapter; Anthropic-protocol candidates never set it. */
+  /**
+   * WebSearch P0: provider-native search injection kind for this request
+   * (resolved per-candidate in interface.scala — fallback switches provider
+   * mid-request and must not carry the previous provider's injection).
+   * Consumed by OpenAiAdapter; Anthropic-protocol candidates never set it.
+   */
   providerSearch: Option[ProviderSearchKind] = None,
-  /** Hard-recovery P1 (2026-09-07, 设计 D-1 方案 A): per-attempt backend for
-    * STREAMING requests — a dedicated HttpClient whose shutdownNow() aborts
-    * exactly this request (the only primitive proven to unblock a parked body
-    * read). None = use the adapter's shared backend (legacy behavior; also the
-    * non-streaming sendMessage path). */
+  /**
+   * Hard-recovery P1 (2026-09-07, 设计 D-1 方案 A): per-attempt backend for
+   * STREAMING requests — a dedicated HttpClient whose shutdownNow() aborts
+   * exactly this request (the only primitive proven to unblock a parked body
+   * read). None = use the adapter's shared backend (legacy behavior; also the
+   * non-streaming sendMessage path).
+   */
   attemptBackend: Option[StreamBackend[IO, Fs2Streams[IO]]] = None
 )
 
@@ -35,8 +39,10 @@ case class AdapterResponse(
   reply: String,
   toolCalls: List[ToolCall],
   usage: Option[TokenUsage] = None,
-  /** WebSearch P0: structured provider search results (zhipu `web_search` /
-    * qwen `search_info` response field), when the provider returned them. */
+  /**
+   * WebSearch P0: structured provider search results (zhipu `web_search` /
+   * qwen `search_info` response field), when the provider returned them.
+   */
   searchInfo: Option[io.circe.Json] = None
 )
 

@@ -80,9 +80,13 @@ This tool is strictly read-only — team task changes happen via TeamTaskCreate/
             store.list(scopeKey).map { tasks =>
               val filtered = statusFilter match
                 case Some(s) => tasks.filter(t => TaskStatus.wireName(t.status) == s)
-                case None    => tasks
+                case None => tasks
               Right(render(name, filtered))
             }
+
+    end match
+
+  end call
 
   private def render(teamName: String, tasks: List[Task]): String =
     if tasks.isEmpty then s"No team tasks for '$teamName'."

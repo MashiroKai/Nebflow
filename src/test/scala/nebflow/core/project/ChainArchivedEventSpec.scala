@@ -7,13 +7,12 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import java.nio.file.Files as NFiles
 import java.nio.file.Paths as NPaths
@@ -47,20 +46,22 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
   private var prevRoot: os.Path = null
   private var home: os.Path = null
 
-  /** 批 3（C08，2026-09-16）· **确定性时基**（夹具显式钉 TZ）：
-    *
-    * 归档分区标题的时间戳由 `DocIndexConsumer.isoSeconds`（`DocIndexConsumer.scala:282-284`）
-    * 渲染 = `DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")` 作用于
-    * `OffsetDateTime.ofInstant(ms, ZoneId.systemDefault())` ⇒ **渲染形态随环境 TZ 变**：
-    * UTC 环境（Linux CI 实测 `…T02:11:36Z`）给 `Z`，非 UTC 给数字偏移（本机 `+08:00`）。
-    * 故旧锚（要求 `[+-]\d{2}:\d{2}$`）在 CI 恒红 —— 这是**环境依赖**，不是产品漂移。
-    *
-    * 修法（任务书硬约束：禁平台条件跳过）：夹具**显式钉住固定偏移 TZ**（`GMT+08:00`
-    * 为固定偏移形态，不依赖 tzdata）⇒ 两环境渲染形态一致 ⇒ 断言本体逐字不动、强度不减
-    *（仍要求「秒级 ISO-8601 + 时区偏移」全形态）。⚠ 字符串形态**必须**是 `GMT+08:00`：
-    * `TimeZone.getTimeZone("+08:00")` 会**静默回落成 GMT**（偏移归零 ⇒ 渲染又变 `Z`），
-    * 故本夹具自带「钉住生效」自证断言（偏移读数，非 id 字面）。
-    * 还原 = `afterEach` 无条件执行（用例中途失败也不把 TZ 泄漏给后续用例）。 */
+  /**
+   * 批 3（C08，2026-09-16）· **确定性时基**（夹具显式钉 TZ）：
+   *
+   * 归档分区标题的时间戳由 `DocIndexConsumer.isoSeconds`（`DocIndexConsumer.scala:282-284`）
+   * 渲染 = `DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")` 作用于
+   * `OffsetDateTime.ofInstant(ms, ZoneId.systemDefault())` ⇒ **渲染形态随环境 TZ 变**：
+   * UTC 环境（Linux CI 实测 `…T02:11:36Z`）给 `Z`，非 UTC 给数字偏移（本机 `+08:00`）。
+   * 故旧锚（要求 `[+-]\d{2}:\d{2}$`）在 CI 恒红 —— 这是**环境依赖**，不是产品漂移。
+   *
+   * 修法（任务书硬约束：禁平台条件跳过）：夹具**显式钉住固定偏移 TZ**（`GMT+08:00`
+   * 为固定偏移形态，不依赖 tzdata）⇒ 两环境渲染形态一致 ⇒ 断言本体逐字不动、强度不减
+   * （仍要求「秒级 ISO-8601 + 时区偏移」全形态）。⚠ 字符串形态**必须**是 `GMT+08:00`：
+   * `TimeZone.getTimeZone("+08:00")` 会**静默回落成 GMT**（偏移归零 ⇒ 渲染又变 `Z`），
+   * 故本夹具自带「钉住生效」自证断言（偏移读数，非 id 字面）。
+   * 还原 = `afterEach` 无条件执行（用例中途失败也不把 TZ 泄漏给后续用例）。
+   */
   private val PinnedTzId = "GMT+08:00"
   private val PinnedTzOffsetSeconds = 8 * 3600
   private var prevTz: java.util.TimeZone = null
@@ -85,8 +86,10 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
 
   private val ChainId = "chain-n1"
 
-  /** 一域索引 fixture：活跃链分区（含 chain-n1 块 + 两条 state=active 条目）+
-   * 空「已归档链分区」+ 无归属表（无链行，翻动不得波及其他行）。 */
+  /**
+   * 一域索引 fixture：活跃链分区（含 chain-n1 块 + 两条 state=active 条目）+
+   * 空「已归档链分区」+ 无归属表（无链行，翻动不得波及其他行）。
+   */
   private def domainIndex(domain: String): String =
     s"""# $domain 文档索引
        |
@@ -127,46 +130,20 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
 
   /** 被索引文档的 mtime 与内容（零触碰断言用；不含 INDEX.md——它本来就该被改写）。 */
   private def docsOf(dirs: List[os.Path]): IO[List[(String, Long)]] =
-    IO.blocking(dirs.flatMap(d => List(
-      os.read(d / "20260910_110000_a.md"), os.read(d / "20260910_110500_b.md"))).zip(
-      dirs.flatMap(d => List(os.mtime(d / "20260910_110000_a.md"), os.mtime(d / "20260910_110500_b.md")))))
+    IO.blocking(
+      dirs
+        .flatMap(d => List(os.read(d / "20260910_110000_a.md"), os.read(d / "20260910_110500_b.md")))
+        .zip(dirs.flatMap(d => List(os.mtime(d / "20260910_110000_a.md"), os.mtime(d / "20260910_110500_b.md"))))
+    )
 
   private class NoopLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
@@ -185,9 +162,12 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
     val system = ActorSystem(s"charch-$tag-${scala.util.Random.nextInt(100000)}")
     val base = System.currentTimeMillis() - 100000
     for
-      res <- mkResources(system, tempRoot, new NoopLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new NoopLlm)
       store <- FlowMapStore.open("charch", ws.toString)
-      engine = new NodeEngine(store, system, res,
+      engine = new NodeEngine(
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -195,43 +175,79 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
         emitEvent = (_: String, _: String, _: Json) => IO.unit,
         // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
-        reportGateHold = Some(false))
-      pd = ProjectDef(name = "charch", workspace = ws.toString,
-        agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+        reportGateHold = Some(false)
+      )
+      pd = ProjectDef(
+        name = "charch",
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
-      _ <- store.mutate(s => s.copy(nodes = Map(
-        "n1" -> NodeDef(id = "n1", name = "head", agent = "Backend", status = NodeLifecycle.Completed,
-          createdAt = base, completedAt = Some(base + 1), out = List(OutEdge.nebula)),
-        "n2" -> NodeDef(id = "n2", name = "tail", agent = "Backend", status = NodeLifecycle.Completed,
-          createdAt = base + 10, completedAt = Some(base + 20), in = List("n1"), out = List(OutEdge.nebula))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          Map(
+            "n1" -> NodeDef(
+              id = "n1",
+              name = "head",
+              agent = "Backend",
+              status = NodeLifecycle.Completed,
+              createdAt = base,
+              completedAt = Some(base + 1),
+              out = List(OutEdge.root)
+            ),
+            "n2" -> NodeDef(
+              id = "n2",
+              name = "tail",
+              agent = "Backend",
+              status = NodeLifecycle.Completed,
+              createdAt = base + 10,
+              completedAt = Some(base + 20),
+              in = List("n1"),
+              out = List(OutEdge.root)
+            )
+          )
+        )
+      )
       ref <- system.spawn(
         ProjectActor(ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, "nebula-root")),
-        s"proj-charch-$tag-${scala.util.Random.nextInt(100000)}")
+        s"proj-charch-$tag-${scala.util.Random.nextInt(100000)}"
+      )
     yield (ws, system, ref)
+
+    end for
+
+  end fixture
 
   test("TtlTick：整链出库 → chain-archived 事件 + 归档批文件 + 两域 INDEX.md 自动翻转（幂等）") {
     val homeDomain = "链路域A"
     val wsDomain = "链路域B"
     for
       // 批 3（C08）：确定性时基（见类头 PinnedTzId 注释）——先钉 TZ 再自证钉住生效
-      //（夹具前提「断言」化，非 assume/跳过；偏移读数为判据，可识破静默回落），
+      // （夹具前提「断言」化，非 assume/跳过；偏移读数为判据，可识破静默回落），
       // 随后所有写盘/读回都在同一 TZ 下。
       _ <- IO(java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(PinnedTzId)))
-      _ <- IO(assertEquals(
-        java.time.ZoneId.systemDefault().getRules.getOffset(java.time.Instant.now()).getTotalSeconds,
-        PinnedTzOffsetSeconds,
-        "夹具钉住的 TZ 必须生效（否则归档标题的时间戳形态随环境漂移）"))
+      _ <- IO(
+        assertEquals(
+          java.time.ZoneId.systemDefault().getRules.getOffset(java.time.Instant.now()).getTotalSeconds,
+          PinnedTzOffsetSeconds,
+          "夹具钉住的 TZ 必须生效（否则归档标题的时间戳形态随环境漂移）"
+        )
+      )
       (ws, system, ref) <- fixture("flip")
       // 两域 fixture：home 域 `<dataRoot>/docs/<域>/INDEX.md`，ws 域 `<ws>/.nebflow/Spec/INDEX.md`
       (homeIdx, homeDir) <- writeDomain(home / "docs", homeDomain)
       (wsIdx, wsDir) <- writeDomain(ws / ".nebflow" / "Spec", wsDomain)
       // roots 单点：两域固定计算（home 域 + ws 域）——前置断言（缺 ws 域即刻红，不靠超时）
       roots <- IO(DocIndexConsumer.indexRootsFor(ws.toString))
-      _ <- IO(assertEquals(roots,
-        List((home / "docs").toString, (ws / ".nebflow" / "Spec").toString),
-        "roots 单点 = home 域 + ws 域（固定计算，无配置文件）"))
+      _ <- IO(
+        assertEquals(
+          roots,
+          List((home / "docs").toString, (ws / ".nebflow" / "Spec").toString),
+          "roots 单点 = home 域 + ws 域（固定计算，无配置文件）"
+        )
+      )
       homeBefore <- IO.blocking(os.read(homeIdx))
       wsBefore <- IO.blocking(os.read(wsIdx))
       docsBefore <- docsOf(List(homeDir, wsDir))
@@ -287,16 +303,20 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
         val archSec = content.indexOf("## 已归档链分区（archived）")
         val blockPos = content.indexOf(s"### $ChainId")
         val liveSec = content.indexOf("## 无归属（unattributed）")
-        assert(archSec > 0 && blockPos > archSec && blockPos < liveSec,
-          s"[$domain] 链块必须迁入「已归档链分区」且在无归属分区之前:\n$content")
-        assert(!content.substring(0, archSec).contains(s"### $ChainId"),
-          s"[$domain] 活跃链分区不得再留链块:\n$content")
+        assert(archSec > 0 && blockPos > archSec && blockPos < liveSec, s"[$domain] 链块必须迁入「已归档链分区」且在无归属分区之前:\n$content")
+        assert(!content.substring(0, archSec).contains(s"### $ChainId"), s"[$domain] 活跃链分区不得再留链块:\n$content")
         val heading = content.linesIterator.find(_.startsWith(s"### $ChainId")).getOrElse(fail(s"[$domain] 链标题缺失"))
-        assert(heading.matches("""\Q### chain-n1\E · .* · archived \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$"""),
-          s"[$domain] 归档分区标题须带归档时间戳，got: $heading")
-        assertEquals(content.sliding("| archived |".length).count(_ == "| archived |"), 2,
-          s"[$domain] 两条链条目 state 均翻 archived:\n$content")
+        assert(
+          heading.matches("""\Q### chain-n1\E · .* · archived \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$"""),
+          s"[$domain] 归档分区标题须带归档时间戳，got: $heading"
+        )
+        assertEquals(
+          content.sliding("| archived |".length).count(_ == "| archived |"),
+          2,
+          s"[$domain] 两条链条目 state 均翻 archived:\n$content"
+        )
         assert(content.contains("|  | active | "), s"[$domain] 无归属行不得被波及:\n$content")
+      end assertFlipped
       assertFlipped(homeDomain, homeIdx1)
       assertFlipped(wsDomain, wsIdx1)
       // 被索引文档与目录文件集零触碰（未新建分区/未自建索引/未改写文档）
@@ -313,6 +333,7 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
       assertEquals(lines1.size, 1, "重复 tick 零重复事件")
       // 原始 fixture 与翻转后内容确不相同（防「翻转没发生」假绿）
       assert(homeBefore != homeIdx1 && wsBefore != wsIdx1)
+    end for
   }
 
   test("容错：INDEX.md 写盘失败（只读）→ 仅 WARN + 不炸 TtlTick + 归档不回滚 + 索引零变化") {
@@ -345,8 +366,11 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
       assertEquals(batches, List(s"$ChainId.json"), "归档不回滚（批文件已落盘）")
       assertEquals(lines.size, 1, "审计事件照常（事件追加先于翻转，best-effort 互不影响）")
       assert(reportRaw.contains("\"staleInIndex\""), reportRaw)
-      assert(reportJson.hcursor.get[List[String]]("staleInIndex").toOption.exists(_.nonEmpty),
-        s"未落地的翻转由对账检出 stale（人工可见）: $reportRaw")
-      assertEquals(reportJson.hcursor.get[List[String]]("missingInIndex").toOption, Some(Nil),
-        "链在索引里有条目 → 非 missing")
+      assert(
+        reportJson.hcursor.get[List[String]]("staleInIndex").toOption.exists(_.nonEmpty),
+        s"未落地的翻转由对账检出 stale（人工可见）: $reportRaw"
+      )
+      assertEquals(reportJson.hcursor.get[List[String]]("missingInIndex").toOption, Some(Nil), "链在索引里有条目 → 非 missing")
+    end for
   }
+end ChainArchivedEventSpec

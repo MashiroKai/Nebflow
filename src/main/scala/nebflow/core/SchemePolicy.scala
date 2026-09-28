@@ -1,6 +1,7 @@
 package nebflow.core
 
 import nebflow.shared.AgentModelConfig
+import nebflow.shared.PathUtil
 
 /**
  * Name-aware model-chain resolution policy (single source of truth for "which

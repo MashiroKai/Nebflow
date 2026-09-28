@@ -66,19 +66,21 @@ case class SessionMeta(
 
 object SessionMeta:
 
-  /** 会话列表**出口**的权威 overlay（公共 helper 本体）；调用方经
-    * `SharedResources.overlaySessionList` 取全局档位后落到这里，全仓只此一处
-    * 构造这个 JSON。逐会话 `safetyMode` **显式写出**（三档值在 wire 上恒存在，
-    * 不再依赖 Encoder「= confirm-edits 时省略键」的隐式契约），取值 = 有效档位
-    * = **应用级全局值**（permshield S1：已无会话覆盖面，故无 per-session 入参）。
-    *
-    * ⚠ 线上出口专用，**禁**用于 `SessionStore.saveIndex` 的落盘序列化（盘上零改动）。 */
+  /**
+   * 会话列表**出口**的权威 overlay（公共 helper 本体）；调用方经
+   * `SharedResources.overlaySessionList` 取全局档位后落到这里，全仓只此一处
+   * 构造这个 JSON。逐会话 `safetyMode` **显式写出**（三档值在 wire 上恒存在，
+   * 不再依赖 Encoder「= confirm-edits 时省略键」的隐式契约），取值 = 有效档位
+   * = **应用级全局值**（permshield S1：已无会话覆盖面，故无 per-session 入参）。
+   *
+   * ⚠ 线上出口专用，**禁**用于 `SessionStore.saveIndex` 的落盘序列化（盘上零改动）。
+   */
   def withEffectiveSafetyModes(
     sessions: List[SessionMeta],
-    global: nebflow.core.SafetyMode
+    global: String
   ): Json =
     import io.circe.syntax.*
-    val modeJson = nebflow.core.SafetyMode.toString(global).asJson
+    val modeJson = global.asJson
     sessions
       .map(s => s.asJson.deepMerge(Json.obj("safetyMode" -> modeJson)))
       .asJson

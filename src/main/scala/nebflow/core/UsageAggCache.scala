@@ -18,6 +18,7 @@ import java.time.{LocalDateTime, ZoneId}
  * totals (see [[UsageAggCache.build]]).
  */
 final case class UsageCounters(count: Long, input: Long, output: Long, cacheRead: Long, cacheWrite: Long):
+
   def +(other: UsageCounters): UsageCounters =
     UsageCounters(
       count + other.count,
@@ -163,9 +164,12 @@ object UsageAggCache:
   def mergeSpans(base: Map[String, HourSpan], delta: Map[String, HourSpan]): Map[String, HourSpan] =
     val acc = scala.collection.mutable.LinkedHashMap.empty[String, HourSpan]
     def add(k: String, s: HourSpan): Unit =
-      acc.update(k, acc.get(k) match
-        case Some(o) => HourSpan(math.min(o.start, s.start), math.max(o.end, s.end))
-        case None => s)
+      acc.update(
+        k,
+        acc.get(k) match
+          case Some(o) => HourSpan(math.min(o.start, s.start), math.max(o.end, s.end))
+          case None => s
+      )
     base.foreach { case (k, s) => add(k, s) }
     delta.foreach { case (k, s) => add(k, s) }
     acc.toMap
@@ -261,6 +265,7 @@ object UsageAggCache:
       costEquivalent = costEquivalent,
       buckets = buckets
     )
+  end build
 
 end UsageAggCache
 

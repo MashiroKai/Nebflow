@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
+import nebflow.actor.AgentCommand // W1 shim: main had nebflow.actor.AgentCommand; the merge moved it to actor
 
 /**
  * 用户消息队列 burst 缺陷批（2026-09-15，root 裁定）：**排队消息按序逐条注入、每条

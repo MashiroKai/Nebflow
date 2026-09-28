@@ -2,13 +2,12 @@ package nebflow.core.tools
 
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
-import io.circe.{Json, JsonObject}
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.agent.AgentCommand
-import nebflow.core.NebflowLogger
-import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}
-import nebflow.shared.ContentBlock
+import io.circe.{Json, JsonObject}
+import nebflow.actor.AgentCommand
+import nebflow.core.{NeblinkClientPort, NeblinkServicePort}
+import nebflow.shared.{ContentBlock, NebflowLogger, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -114,6 +113,8 @@ private[nebflow] object P2pPathDecision:
         m // no renewal — see scaladoc
       case _ => PathMemory(method, nowMs, key)
 
+end P2pPathDecision
+
 /**
  * A1（作者裁定 2026-09-16）：设备腿 `Read` 的「标记 → 既有回拉通道 → 视觉块」。
  *
@@ -169,6 +170,8 @@ private[nebflow] object RemoteImage:
       catch case _: Exception => None
     }
 
+end RemoteImage
+
 /**
  * Executes tool calls on remote devices via direct P2P over NebLink.
  *
@@ -178,9 +181,9 @@ private[nebflow] object RemoteImage:
  * NebLink provides the connectivity layer — no relay server needed.
  */
 class RemoteExecutor(
-  neblinkService: NeblinkService,
+  neblinkService: NeblinkServicePort,
   dispatcher: Dispatcher[IO],
-  relayClient: Option[NeblinkClient] = None
+  relayClient: Option[NeblinkClientPort] = None
 ):
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
@@ -200,7 +203,7 @@ class RemoteExecutor(
    * The constructor argument stays as a fallback for tests / non-gateway
    * wiring, where the service pointer is never set.
    */
-  private def currentRelayClient: IO[Option[NeblinkClient]] =
+  private def currentRelayClient: IO[Option[NeblinkClientPort]] =
     IO(neblinkService.relayClientOpt).map(_.orElse(relayClient))
 
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
@@ -278,7 +281,7 @@ class RemoteExecutor(
   private val ReadOnlyTools = Set("Read", "Glob", "Grep")
 
   /** Expose NeblinkService for system prompt generation (device list). */
-  def neblinkServiceOpt: Option[NeblinkService] = Some(neblinkService)
+  def neblinkServiceOpt: Option[NeblinkServicePort] = Some(neblinkService)
 
   def execute(
     deviceName: String,
@@ -304,12 +307,12 @@ class RemoteExecutor(
         profOpt <- ensureProfile(peer)
         (effectiveParams, rewriteNote) = prepareBashParams(toolName, params, profOpt)
         _ <- rewriteNote match
-               case Some(n) => XdevRewrite.logNote(peer.deviceName, n)
-               case None    => IO.unit
+          case Some(n) => XdevRewrite.logNote(peer.deviceName, n)
+          case None => IO.unit
         raw <- runOnPeer(peer, effectiveParams)
         pulled <- raw match
-                    case Right(out) if toolName == "Bash" => pullCaptures(peer, out, isBackground)
-                    case other                            => IO.pure(other)
+          case Right(out) if toolName == "Bash" => pullCaptures(peer, out, isBackground)
+          case other => IO.pure(other)
       yield pulled.map { out =>
         rewriteNote.fold(out)(n => out + s"\n[xdev-rewrite] $n")
       }
@@ -338,8 +341,10 @@ class RemoteExecutor(
   /** 探测去重：同一 deviceId 同时只允许一个在飞探测（并发首触只发一条探针）。 */
   private val probeInFlight = new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
 
-  /** 探测专用短超时（探针是单条只读命令，20s 网络层兜底足够；对端 BashTool
-    * timeout 参数给 15s）。 */
+  /**
+   * 探测专用短超时（探针是单条只读命令，20s 网络层兜底足够；对端 BashTool
+   * timeout 参数给 15s）。
+   */
   private val ProbeTimeout = 20.seconds
 
   /**
@@ -389,6 +394,10 @@ class RemoteExecutor(
             }
             .guarantee(IO(probeInFlight.remove(peer.deviceId)))
 
+    end match
+
+  end ensureProfile
+
   /** ⑤ 改写决策（下发前）。仅 Bash、仅画像确证 MSYS、仅白名单形态；默认关。 */
   private def prepareBashParams(
     toolName: String,
@@ -403,10 +412,12 @@ class RemoteExecutor(
           (if note.nonEmpty then params.add("command", c2.asJson) else params, note)
         case None => (params, None)
 
-  /** ② NEBFLOW_PULL 回拉：扫描对端 Bash 输出里的标记行，逐个把对端文件经既有
-    * FileTransfer direction=get 通道拉回本机 captures/。成功/失败都**追加可读行**
-    * （🔴 禁静默：拉取失败显式留痕，模型可自纠）。后台腿 v1 不接（其真实输出
-    * 走通知路径，占位符上无意义）。 */
+  /**
+   * ② NEBFLOW_PULL 回拉：扫描对端 Bash 输出里的标记行，逐个把对端文件经既有
+   * FileTransfer direction=get 通道拉回本机 captures/。成功/失败都**追加可读行**
+   * （🔴 禁静默：拉取失败显式留痕，模型可自纠）。后台腿 v1 不接（其真实输出
+   * 走通知路径，占位符上无意义）。
+   */
   private def pullCaptures(
     peer: PeerInfo,
     output: String,
@@ -431,13 +442,15 @@ class RemoteExecutor(
             }
           }
 
-  /** 经既有 FileTransfer direction=get 通道拉单件：P2P remote-exec 优先，transient
-    * 失败回落 relay（与 executeViaBestPath 同族判定）。两条腿的接收端都路由到
-    * FileTransferAction.handle（RestApiRoutes / NeblinkRelayTunnel）——**零 wire
-    * 变更、零新 action**。大小闸 [[CapturePull.MaxCaptureBytes]]。
-    *
-    * 2026-09-16（A1 批）：解析/取字节抽成 [[transferGetBytes]] 单点后本方法只剩
-    * 「落盘」——行为逐字不变（同一闸、同一 dispatch、同一落位）。 */
+  /**
+   * 经既有 FileTransfer direction=get 通道拉单件：P2P remote-exec 优先，transient
+   * 失败回落 relay（与 executeViaBestPath 同族判定）。两条腿的接收端都路由到
+   * FileTransferAction.handle（RestApiRoutes / NeblinkRelayTunnel）——**零 wire
+   * 变更、零新 action**。大小闸 [[CapturePull.MaxCaptureBytes]]。
+   *
+   * 2026-09-16（A1 批）：解析/取字节抽成 [[transferGetBytes]] 单点后本方法只剩
+   * 「落盘」——行为逐字不变（同一闸、同一 dispatch、同一落位）。
+   */
   private def transferGetToFile(
     peer: PeerInfo,
     remotePath: String
@@ -451,9 +464,11 @@ class RemoteExecutor(
       case Left(err) => IO.pure(Left(err))
     }
 
-  /** 经既有 FileTransfer direction=get 通道取**字节**（不落盘；A1 批新增变体）。
-    * dispatch（P2P → relay 回落）与解析闸（[[parseTransferBody]]）与
-    * [[transferGetToFile]] **同一单点**——禁第二份实现。 */
+  /**
+   * 经既有 FileTransfer direction=get 通道取**字节**（不落盘；A1 批新增变体）。
+   * dispatch（P2P → relay 回落）与解析闸（[[parseTransferBody]]）与
+   * [[transferGetToFile]] **同一单点**——禁第二份实现。
+   */
   private def transferGetBytes(
     peer: PeerInfo,
     remotePath: String
@@ -463,7 +478,15 @@ class RemoteExecutor(
       "path" -> remotePath.asJson
     )
 
-    p2pExecuteWithRetry(peer, "FileTransfer", params, 60.seconds, "", P2pPathDecision.probeBudget(true), kind = "capture")
+    p2pExecuteWithRetry(
+      peer,
+      "FileTransfer",
+      params,
+      60.seconds,
+      "",
+      P2pPathDecision.probeBudget(true),
+      kind = "capture"
+    )
       .flatMap {
         case Right(out) => IO.blocking(parseTransferBody(out))
         case Left(p2pErr) =>
@@ -478,8 +501,12 @@ class RemoteExecutor(
           }
       }
 
-  /** `direction=get` 回执体解析（**唯一单点**，两条消费腿共用）：大小闸
-    * [[CapturePull.MaxCaptureBytes]]（🔴 既有常量，零自造阈值）→ base64 解码。 */
+  end transferGetBytes
+
+  /**
+   * `direction=get` 回执体解析（**唯一单点**，两条消费腿共用）：大小闸
+   * [[CapturePull.MaxCaptureBytes]]（🔴 既有常量，零自造阈值）→ base64 解码。
+   */
   private def parseTransferBody(output: String): Either[String, Array[Byte]] =
     decode[Json](output) match
       case Right(json) =>
@@ -531,19 +558,21 @@ class RemoteExecutor(
               (for
                 peerOpt <- resolvePeerByName(deviceName)
                 out <- peerOpt match
-                         case None =>
-                           logger.warn(
-                             s"[device-image] $deviceName not resolvable — pull of $remotePath skipped (text marker kept)"
-                           ).as(None)
-                         case Some(peer) =>
-                           transferGetBytes(peer, remotePath).map {
-                             case Right(bytes) => RemoteImage.buildBlocks(bytes, marker.fileName)
-                             case Left(err) =>
-                               logger.warn(
-                                 s"[device-image] pull failed for ${peer.deviceName}:$remotePath (${err.take(120)}, declared ${marker.declaredMime}) — text marker kept, no vision block"
-                               )
-                               None
-                           }
+                  case None =>
+                    logger
+                      .warn(
+                        s"[device-image] $deviceName not resolvable — pull of $remotePath skipped (text marker kept)"
+                      )
+                      .as(None)
+                  case Some(peer) =>
+                    transferGetBytes(peer, remotePath).map {
+                      case Right(bytes) => RemoteImage.buildBlocks(bytes, marker.fileName)
+                      case Left(err) =>
+                        logger.warn(
+                          s"[device-image] pull failed for ${peer.deviceName}:$remotePath (${err.take(120)}, declared ${marker.declaredMime}) — text marker kept, no vision block"
+                        )
+                        None
+                    }
               yield out).handleErrorWith { e =>
                 logger
                   .warn(
@@ -552,8 +581,10 @@ class RemoteExecutor(
                   .as(None)
               }
 
-  /** 按设备名解析 peer（与 `execute` 同一先例：名册可能陈旧 ⇒ 一次即时扫描重试）。
-    * 解析不到 ⇒ None（调用方降级，不报错——回拉本就是尽力而为的附加面）。 */
+  /**
+   * 按设备名解析 peer（与 `execute` 同一先例：名册可能陈旧 ⇒ 一次即时扫描重试）。
+   * 解析不到 ⇒ None（调用方降级，不报错——回拉本就是尽力而为的附加面）。
+   */
   private def resolvePeerByName(deviceName: String): IO[Option[PeerInfo]] =
     neblinkService.peers.flatMap { peers =>
       RemoteExecutor.resolvePeer(deviceName, peers) match
@@ -596,15 +627,15 @@ class RemoteExecutor(
       // 1. Emit "running" to frontend + register in global registry
       _ <- emitBgTaskStarted(ctx, jobId, description)
       _ <- BgTaskRegistry.register(
-             jobId,
-             ctx.sessionId.getOrElse(""),
-             description,
-             "remote",
-             ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
-             false,
-             bgOrigin,
-             bgOriginLabel
-           )
+        jobId,
+        ctx.sessionId.getOrElse(""),
+        description,
+        "remote",
+        ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+        false,
+        bgOrigin,
+        bgOriginLabel
+      )
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
       _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
@@ -613,6 +644,7 @@ class RemoteExecutor(
     yield Right(
       s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
     )
+    end for
 
   end executeRemoteBackground
 
@@ -653,8 +685,10 @@ class RemoteExecutor(
     yield r
   end executeForegroundSync
 
-  /** 刷新 registry 的 **进程侧** 活动戳（远程等待期间保持「对端还在跑」的旁证）。
-    * 2026-09-10 换轴：目标字段 = processActivityMs——本戳不参与卡死判据。 */
+  /**
+   * 刷新 registry 的 **进程侧** 活动戳（远程等待期间保持「对端还在跑」的旁证）。
+   * 2026-09-10 换轴：目标字段 = processActivityMs——本戳不参与卡死判据。
+   */
   private def touchAgentActivity(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
@@ -757,6 +791,8 @@ class RemoteExecutor(
         )
       ).handleErrorWith(e => logger.warn(s"WS send failed for remote job $jobId: ${e.getMessage}"))
     )
+
+  end emitBgTaskStarted
 
   private def emitBgTaskFinished(
     ctx: ToolContext,
@@ -878,14 +914,13 @@ class RemoteExecutor(
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(s"$endpoint/api/neblink/remote-exec"))
         .contentType("application/json")
-        .header(nebflow.neblink.Protocol.DeviceHeader, selfDeviceId)
+        .header(nebflow.shared.DeviceHeader, selfDeviceId)
         .body(body.noSpaces)
         .readTimeout(timeout)
         .response(asStringAlways)
         .send(backendFor(budget))
 
-      if !resp.code.isSuccess then
-        Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
+      if !resp.code.isSuccess then Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
       else
         decode[io.circe.Json](resp.body) match
           case Right(json) =>
@@ -997,10 +1032,11 @@ class RemoteExecutor(
         // the P2P HTTP path is down (presence WS and remote-exec HTTP are
         // different transports), and with no relay there is nothing to fall
         // back to, so retries remain this path's only recovery.
-        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, P2pPathDecision.probeBudget(true), kind).flatMap {
-          case r @ Right(_) => recordPathMemory(peer, "p2p").as(r)
-          case l @ Left(_)  => IO.pure(l)
-        }
+        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, P2pPathDecision.probeBudget(true), kind)
+          .flatMap {
+            case r @ Right(_) => recordPathMemory(peer, "p2p").as(r)
+            case l @ Left(_) => IO.pure(l)
+          }
 
       case Some(client) =>
         val relayAvailable = neblinkService.relayTunnelOpt.exists(_.isAlive)
@@ -1012,13 +1048,12 @@ class RemoteExecutor(
         val skipP2p = P2pPathDecision.shouldSkipP2pForRelay(memoryOpt, recentP2pFailure, relayAvailable)
         val budget = P2pPathDecision.probeBudget(directOnline)
 
-        for
-          result <-
+        for result <-
             if skipP2p then
               // Relay only — with cold-start retry for tunnel reconnection latency
               relayWithColdStartRetry(client, peer, toolName, params, projectRoot, kind).flatMap {
                 case Right(output) => recordPathMemory(peer, "relay").as(Right(output))
-                case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
+                case Left(err) => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
               }
             else if ReadOnlyTools.contains(toolName) then
               // P1: parallel race for read-only tools (safe cancellation)
@@ -1080,7 +1115,7 @@ class RemoteExecutor(
 
   /** relay 下发 + 审计（唯一 relay 出口——避免某条分支漏记）。 */
   private def relayExecAudited(
-    client: NeblinkClient,
+    client: NeblinkClientPort,
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
@@ -1100,7 +1135,7 @@ class RemoteExecutor(
    * A short 150ms delay + second attempt covers this window.
    */
   private def relayWithColdStartRetry(
-    client: NeblinkClient,
+    client: NeblinkClientPort,
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
@@ -1109,11 +1144,11 @@ class RemoteExecutor(
   ): IO[Either[String, String]] =
     relayExecAudited(client, peer, toolName, params, projectRoot, kind).flatMap {
       case Right(output) => IO.pure(Right(output))
-      case Left(err)     =>
+      case Left(err) =>
         // Cold start retry — relay tunnel might have just reconnected
         IO.sleep(150.millis) *> client.relayExec(peer.deviceId, toolName, params).map {
-          case Right(output)   => Right(output)
-          case Left(err2)      => Left(s"$err; $err2 (2 attempts)")
+          case Right(output) => Right(output)
+          case Left(err2) => Left(s"$err; $err2 (2 attempts)")
         }
     }
 
@@ -1132,7 +1167,7 @@ class RemoteExecutor(
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    client: NeblinkClient,
+    client: NeblinkClientPort,
     projectRoot: String,
     budget: P2pPathDecision.ProbeBudget,
     kind: String = ""
@@ -1142,11 +1177,11 @@ class RemoteExecutor(
     val relayIO: IO[Either[ToolError, String]] =
       relayExecAudited(client, peer, toolName, params, projectRoot, kind).map {
         case Right(output) => Right(output)
-        case Left(err)     => Left(ToolError(s"Relay failed: $err"))
+        case Left(err) => Left(ToolError(s"Relay failed: $err"))
       }
 
     for
-      p2pFiber   <- p2pIO.start
+      p2pFiber <- p2pIO.start
       relayFiber <- relayIO.start
       // Race to see which fiber finishes first (success or failure).
       // IO.race cancels the losing *join* IO but NOT the underlying fiber.
@@ -1157,18 +1192,15 @@ class RemoteExecutor(
           relayFiber.cancel *> recordPathMemory(peer, "p2p").as(r)
         case Left(Left(_)) =>
           // P2P failed first — wait for relay
-          relayFiber.joinWithNever.flatMap(r =>
-            recordPathMemory(peer, if r.isRight then "relay" else "p2p").as(r)
-          )
+          relayFiber.joinWithNever.flatMap(r => recordPathMemory(peer, if r.isRight then "relay" else "p2p").as(r))
         case Right(r @ Right(_)) =>
           // Relay won with success — cancel P2P fiber, record memory
           p2pFiber.cancel *> recordPathMemory(peer, "relay").as(r)
         case Right(Left(_)) =>
           // Relay failed first — wait for P2P
-          p2pFiber.joinWithNever.flatMap(r =>
-            recordPathMemory(peer, if r.isRight then "p2p" else "relay").as(r)
-          )
+          p2pFiber.joinWithNever.flatMap(r => recordPathMemory(peer, if r.isRight then "p2p" else "relay").as(r))
     yield result
+    end for
   end raceP2PAndRelay
 
   // ---- Helpers ----
@@ -1194,9 +1226,9 @@ object RemoteExecutor:
 
   /** Wire the RemoteExecutor with a NeblinkService, Dispatcher, and optional relay client. Called on startup. */
   def initialize(
-    neblinkService: NeblinkService,
+    neblinkService: NeblinkServicePort,
     dispatcher: Dispatcher[IO],
-    relayClient: Option[NeblinkClient] = None
+    relayClient: Option[NeblinkClientPort] = None
   ): Unit =
     instance = Some(new RemoteExecutor(neblinkService, dispatcher, relayClient))
     // ④ captures TTL 清扫（xdev 批 2026-09-15）：启动即清一次 + 每 6h 周期清。
@@ -1248,6 +1280,8 @@ object RemoteExecutor:
               "Re-dispatch with the exact device name or the full deviceId of the intended target."
           )
         )
+    end match
+  end resolvePeer
 
   /**
    * Tools that support remote execution. Only these tools get the `device` parameter

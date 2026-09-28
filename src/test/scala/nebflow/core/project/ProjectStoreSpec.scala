@@ -2,7 +2,7 @@ package nebflow.core.project
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 
@@ -50,8 +50,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
     for
       _ <- ProjectStore.create("dup", ws.toString, None, template)
       second <- ProjectStore.create("dup", ws.toString, None, template)
-    yield
-      assert(second.isLeft)
+    yield assert(second.isLeft)
   }
 
   test("invalid name (path traversal) rejected") {
@@ -68,16 +67,14 @@ class ProjectStoreSpec extends CatsEffectSuite:
     for
       _ <- ProjectStore.create("listme", (ws / "listme").toString, None, template)
       all <- ProjectStore.list()
-    yield
-      assert(all.exists(_.name == "listme"))
+    yield assert(all.exists(_.name == "listme"))
   }
 
   test("R6: existing workspace .gitignore keeps user content and appends .nebflow/") {
     val ws2 = tempRoot / "ws-existing-gi"
     os.makeDir.all(ws2)
     os.write.over(ws2 / ".gitignore", "# user rules\nnode_modules/\n") // 无尾换行
-    for
-      created <- ProjectStore.create("gi-append", ws2.toString, None, template)
+    for created <- ProjectStore.create("gi-append", ws2.toString, None, template)
     yield
       assert(created.isRight)
       val content = os.read(ws2 / ".gitignore")
@@ -90,8 +87,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
     val ws3 = tempRoot / "ws-has-gi"
     os.makeDir.all(ws3)
     os.write.over(ws3 / ".gitignore", "node_modules/\n.nebflow/\n")
-    for
-      created <- ProjectStore.create("gi-existing", ws3.toString, None, template)
+    for created <- ProjectStore.create("gi-existing", ws3.toString, None, template)
     yield
       assert(created.isRight)
       val content = os.read(ws3 / ".gitignore")
@@ -101,8 +97,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
   test("R6: fresh workspace gets root .gitignore with .nebflow/ entry") {
     val ws4 = tempRoot / "ws-ignore-check"
     os.makeDir.all(ws4)
-    for
-      created <- ProjectStore.create("gi-ignore-check", ws4.toString, None, template)
+    for created <- ProjectStore.create("gi-ignore-check", ws4.toString, None, template)
     yield
       assert(created.isRight)
       val gi = ws4 / ".gitignore"
@@ -117,8 +112,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
     os.makeDir.all(ws5)
     val userMd = "# 用户自定 AGENTS.md\n别动我\n"
     os.write.over(ws5 / "AGENTS.md", userMd)
-    for
-      created <- ProjectStore.create("agents-keep", ws5.toString, None, template)
+    for created <- ProjectStore.create("agents-keep", ws5.toString, None, template)
     yield
       assert(created.isRight)
       assertEquals(os.read(ws5 / "AGENTS.md"), userMd, "既有 AGENTS.md 必须逐字节不变")
@@ -128,8 +122,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
     val ws6 = tempRoot / "ws-existing-nebflow"
     os.makeDir.all(ws6 / ".nebflow")
     os.write.over(ws6 / ".nebflow" / "user-note.md", "keep\n")
-    for
-      created <- ProjectStore.create("nebflow-keep", ws6.toString, None, template)
+    for created <- ProjectStore.create("nebflow-keep", ws6.toString, None, template)
     yield
       assert(created.isRight)
       assertEquals(os.read(ws6 / ".nebflow" / "user-note.md"), "keep\n", "既有 .nebflow/ 内容必须不动")
@@ -160,6 +153,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
       assertEquals(second.render.contains("AGENTS.md created"), true, second.render)
       assert(second.render.contains("1 created, 2 skipped"), second.render)
       assert(!os.exists(ws7 / ".nebflow" / "flow-map.json"), "创建面禁预写 flow-map.json（由挂载首写）")
+    end for
   }
 
   test("③-9: .gitignore append / already-present is reported honestly (no duplicate line, user bytes kept)") {

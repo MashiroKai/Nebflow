@@ -8,9 +8,10 @@ import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.daemon.{DaemonPanelSchema, DaemonService}
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, ServiceLlmConfig} // W1 shim: main had them in nebflow.llm; the PR moved config to shared
 import org.http4s.*
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.typelevel.ci.CIString

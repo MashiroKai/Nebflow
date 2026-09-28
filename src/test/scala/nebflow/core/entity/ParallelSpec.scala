@@ -9,14 +9,13 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
 
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -47,20 +46,25 @@ class ParallelSpec extends CatsEffectSuite:
 
   /** Node-keyed fake LLM: behavior selected by the node id of the requesting session. */
   private class NodeLlm(behavior: PartialFunction[String, Stream[IO, StreamChunk]]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-    ): Stream[IO, StreamChunk] = behavior.applyOrElse(nodeIdOf(req.sessionId), (_: String) => answerAfter(30.millis, "ok"))
+    ): Stream[IO, StreamChunk] =
+      behavior.applyOrElse(nodeIdOf(req.sessionId), (_: String) => answerAfter(30.millis, "ok"))
 
   /** Same, but records every request's messages for input-resolution assertions. */
   private class CapturingNodeLlm(
     behavior: PartialFunction[String, Stream[IO, StreamChunk]],
     capture: Ref[IO, Map[String, List[Message]]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -126,8 +130,13 @@ class ParallelSpec extends CatsEffectSuite:
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
 
+  end withFlowEnv
+
   /** p → parallel(r1, r2) → j → $return. r2 agent optionally swapped for "ghost". */
-  private def diamondFlow(onFail: NodeRoute.OnFailMode = NodeRoute.OnFailMode.Abort, r2Agent: String = "worker"): FlowDagDef =
+  private def diamondFlow(
+    onFail: NodeRoute.OnFailMode = NodeRoute.OnFailMode.Abort,
+    r2Agent: String = "worker"
+  ): FlowDagDef =
     FlowDagDef(
       name = "tflow",
       description = "parallel test",
@@ -179,8 +188,8 @@ class ParallelSpec extends CatsEffectSuite:
   test("P2 onFail=abort (default): sibling branch pierced, flow fails fast with root cause") {
     // r2 references a missing agent → deterministic immediate failure;
     // r1's LLM would answer at 5s — fail-fast must stop it long before.
-    val llm = new NodeLlm({
-      case "r1" => answerAfter(5.seconds, "R1-LATE")
+    val llm = new NodeLlm({ case "r1" =>
+      answerAfter(5.seconds, "R1-LATE")
     })
     withFlowEnv(llm) { (resources, system) =>
       val instId = s"par2-${UUID.randomUUID().toString.take(6)}"
@@ -209,7 +218,14 @@ class ParallelSpec extends CatsEffectSuite:
     withFlowEnv(llm) { (resources, system) =>
       val instId = s"par3-${UUID.randomUUID().toString.take(6)}"
       FlowDagExecutor
-        .execute(diamondFlow(onFail = NodeRoute.OnFailMode.Collect, r2Agent = "ghost"), "work", resources, system, None, instId)
+        .execute(
+          diamondFlow(onFail = NodeRoute.OnFailMode.Collect, r2Agent = "ghost"),
+          "work",
+          resources,
+          system,
+          None,
+          instId
+        )
         .timeout(30.seconds)
         .flatMap { result =>
           capture.get.map { captured =>
@@ -248,7 +264,7 @@ class ParallelSpec extends CatsEffectSuite:
         result <- execFiber.join
           .flatMap {
             case Outcome.Succeeded(ioa) => ioa
-            case other                  => IO.raiseError(new RuntimeException(s"flow fiber ended abnormally: $other"))
+            case other => IO.raiseError(new RuntimeException(s"flow fiber ended abnormally: $other"))
           }
           .timeout(6.seconds)
           .attempt
@@ -259,6 +275,7 @@ class ParallelSpec extends CatsEffectSuite:
         assertEquals(rfOpt.map(_.status), Some(NodeStatus.Cancelled), "flow status cancelled")
         assertEquals(rfOpt.flatMap(_.nodes.get("r1").map(_.status)), Some(NodeStatus.Cancelled))
         assertEquals(rfOpt.flatMap(_.nodes.get("r2").map(_.status)), Some(NodeStatus.Cancelled))
+      end for
     }
   }
 

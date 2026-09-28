@@ -3,7 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * BootWakeInventory —— 宿主启动自动重入的「落盘事实清单」构建器（选项 A 档的输入面，
@@ -37,13 +37,16 @@ import nebflow.core.PathUtil
  */
 object BootWakeInventory:
 
-  /** 活动区落盘文件名（与 `FlowMapStore.open` 的 statePath 同名同目录；常量在此
-    * 显式声明以免读方与写方口径漂移）。
-    */
+  /**
+   * 活动区落盘文件名（与 `FlowMapStore.open` 的 statePath 同名同目录；常量在此
+   * 显式声明以免读方与写方口径漂移）。
+   */
   val FileName: String = "flow-map.json"
 
-  /** 单次清单条目上限（超出部分进 `truncated` 计数并由渲染层标 `... N more`——
-    * 不静默丢弃，工具结果风格先例）。 */
+  /**
+   * 单次清单条目上限（超出部分进 `truncated` 计数并由渲染层标 `... N more`——
+   * 不静默丢弃，工具结果风格先例）。
+   */
   val MaxItems: Int = 20
 
   /** 逐条字段的字符上限（详情行长控制：清单要进分发器首条输入 = LLM 上下文）。 */
@@ -53,10 +56,10 @@ object BootWakeInventory:
   def stallMs: Long = NodeEngine.MountStalledMs
 
   // ── 档位（方案 §2 B 表逐档同码）────────────────────────────────────────
-  val BucketLooseRunning: String = "B1"      // 落单 running（无活会话/transcript 缺失）
-  val BucketAwaitingHandover: String = "B2"  // 待承接（pendingSuccession 非空）
-  val BucketDeadBarrier: String = "B3"       // 死 barrier（上游全终态 ∧ 超 60 s 未触发）
-  val BucketBlocked: String = "B4"           // 待裁决 blocked
+  val BucketLooseRunning: String = "B1" // 落单 running（无活会话/transcript 缺失）
+  val BucketAwaitingHandover: String = "B2" // 待承接（pendingSuccession 非空）
+  val BucketDeadBarrier: String = "B3" // 死 barrier（上游全终态 ∧ 超 60 s 未触发）
+  val BucketBlocked: String = "B4" // 待裁决 blocked
 
   /** 会话（节点 transcript）现状三分——落盘存在性判据，不含任何进程内状态。 */
   val SessionPresent: String = "transcript-present"
@@ -86,6 +89,8 @@ object BootWakeInventory:
   ):
     def bucketLabel: String = buckets.mkString("+")
 
+  end Item
+
   /** 清单（项目级）。`histogram` 覆盖全部七态（缺失态计 0——判红判据「不得漏报」的可核面）。 */
   final case class Inventory(
     project: String,
@@ -97,16 +102,18 @@ object BootWakeInventory:
   ):
     def needWake: Boolean = items.nonEmpty
     def inBucket(b: String): List[Item] = items.filter(_.buckets.contains(b))
+
     /** 需人工/分发器裁决的目标会话中，已不可续（会话已终态/已回收）的条数。 */
     def terminalTargets: Int = items.count(!_.resumable)
     def upstreamGaps: Int = items.count(_.upstreamGap)
 
-  /** 读盘构建清单（唯一生产入口）。workspace 下的 `.nebflow` 目录由调用方给出
-    * （与 `FlowMapStore.open` / `ProjectMemory.path` 同规解析）。
-    *
-    * 返回 `Left(reason)` = 落盘事实不可用（缺失/损坏）——调用方**显式记录并跳过**，
-    * 禁止当作「无工作」静默成功（方案 §4 判红「漏报」）。
-    */
+  /**
+   * 读盘构建清单（唯一生产入口）。workspace 下的 `.nebflow` 目录由调用方给出
+   * （与 `FlowMapStore.open` / `ProjectMemory.path` 同规解析）。
+   *
+   * 返回 `Left(reason)` = 落盘事实不可用（缺失/损坏）——调用方**显式记录并跳过**，
+   * 禁止当作「无工作」静默成功（方案 §4 判红「漏报」）。
+   */
   def fromDisk(
     nebflowDir: os.Path,
     project: String,
@@ -129,11 +136,14 @@ object BootWakeInventory:
               case Right(st) => Right(build(st, nebflowDir, project, nowMs, maxItems, sessionsDir))
     }.handleErrorWith(e =>
       // 读盘异常（权限/IO）= 落盘事实不可用，同样走显式降级面（不抛给 boot 链）。
-      IO.pure(Left(s"flow-map-unreadable (read failed: ${Option(e.getMessage).getOrElse(e.toString)})")))
+      IO.pure(Left(s"flow-map-unreadable (read failed: ${Option(e.getMessage).getOrElse(e.toString)})"))
+    )
 
-  /** 纯重建入口（spec 接缝 + 「内存态不可用仍可重建」的直接证据）：给一段
-    * flow-map.json **原文**即可产出整张清单——不需要 store / engine / registry /
-    * 任何进程内状态。 */
+  /**
+   * 纯重建入口（spec 接缝 + 「内存态不可用仍可重建」的直接证据）：给一段
+   * flow-map.json **原文**即可产出整张清单——不需要 store / engine / registry /
+   * 任何进程内状态。
+   */
   def fromJson(
     raw: String,
     nebflowDir: os.Path,
@@ -147,7 +157,8 @@ object BootWakeInventory:
       .flatMap(
         _.as[FlowMapState]
           .leftMap(e => s"flow-map-unreadable (decode failed: ${Option(e.getMessage).getOrElse(e.toString)})")
-          .map(st => build(st, nebflowDir, project, nowMs, maxItems, sessionsDir)))
+          .map(st => build(st, nebflowDir, project, nowMs, maxItems, sessionsDir))
+      )
 
   /** 清单构建（纯）。 */
   def build(
@@ -171,6 +182,7 @@ object BootWakeInventory:
       items = items.take(maxItems),
       truncated = math.max(0, items.size - maxItems)
     )
+  end build
 
   // ── 逐节点分档（判据逐条对齐方案 §2 B1–B4）────────────────────────────
 
@@ -221,7 +233,8 @@ object BootWakeInventory:
       val upIds = (n.in ++ targets.ids ++ n.pendingSuccession).distinct
       val chainRefNote =
         if unresolvedRefs.isEmpty then ""
-        else s" [chain ref(s) not resolvable from the active map: ${unresolvedRefs.map(c => s"chain:$c").mkString(",")}]"
+        else
+          s" [chain ref(s) not resolvable from the active map: ${unresolvedRefs.map(c => s"chain:$c").mkString(",")}]"
       val upstreamDesc =
         if upIds.isEmpty then "none (entry node)" + chainRefNote
         else
@@ -229,17 +242,19 @@ object BootWakeInventory:
             .map { id =>
               all.get(id) match
                 case Some(u) => s"'${u.name}'($id):${u.status}"
-                case None    => s"$id:missing(dangling)"
+                case None => s"$id:missing(dangling)"
             }
             .mkString(", ") + chainRefNote
       val upGap = upIds.exists(id =>
-        all.get(id).exists(u => NodeLifecycle.Terminal.contains(u.status) && u.status != NodeLifecycle.Completed))
+        all.get(id).exists(u => NodeLifecycle.Terminal.contains(u.status) && u.status != NodeLifecycle.Completed)
+      )
       // cancelsem 批 1（R4 · agent 面抑制）：本条目引用的槽位（in / deps / pendingSuccession）
       // 里是否存在**用户主动取消**的节点——判据单点 CancelSource.isUserCancelled（由节点
       // 自身 result 反解，与引擎侧 retryOrNotify 抑制、R1 通知文本分流同源）。
       // 仅用于 recommend 分流（清单文本面）；**不**改 reasons/buckets/直方图（零膨胀）。
       val userCancelSlot = upIds.exists(id =>
-        all.get(id).exists(u => u.status == NodeLifecycle.Cancelled && CancelSource.isUserCancelled(u.result)))
+        all.get(id).exists(u => u.status == NodeLifecycle.Cancelled && CancelSource.isUserCancelled(u.result))
+      )
       val blockedFeedback = n.blockedFeedback
         .map(f => s" feedback=${oneLine(f.category + ": " + f.detail, 80)}")
         .getOrElse("")
@@ -261,17 +276,20 @@ object BootWakeInventory:
           taskFile = taskInfo,
           resultFile = resultInfo,
           recommend = recommend(n, buckets.toList, upGap, resumeOk, userCancelSlot),
-          detail = oneLine(
-            s"${n.task.orElse(n.description).getOrElse("-")}$blockedFeedback", DetailCap)
-        ))
+          detail = oneLine(s"${n.task.orElse(n.description).getOrElse("-")}$blockedFeedback", DetailCap)
+        )
+      )
+    end if
   end itemFor
 
-  /** B3 停滞判据（与 `NodeEngine.mountStallReason` 逐条同款，只读落盘字段）。
-    * 返回 None = 不判（非 pending/wiring / 有合法等待 / 悬空引用 / 未到 60 s 档）。
-    * ③（chainmodel 批一）：`deps` 的 `chain:<id>` 引用展开为目标链成员集（判据单点；
-    * 否则「等整链」的节点会被读成悬空 ⇒ B3 死 barrier 档漏报）。**解析不到的链引用保守
-    * 不判**（与「悬空引用不判」同族）：本清单只读活动区，跨区链（成员已归档）在此视角下
-    * 解析不到，据此判「死 barrier」即假阳。 */
+  /**
+   * B3 停滞判据（与 `NodeEngine.mountStallReason` 逐条同款，只读落盘字段）。
+   * 返回 None = 不判（非 pending/wiring / 有合法等待 / 悬空引用 / 未到 60 s 档）。
+   * ③（chainmodel 批一）：`deps` 的 `chain:<id>` 引用展开为目标链成员集（判据单点；
+   * 否则「等整链」的节点会被读成悬空 ⇒ B3 死 barrier 档漏报）。**解析不到的链引用保守
+   * 不判**（与「悬空引用不判」同族）：本清单只读活动区，跨区链（成员已归档）在此视角下
+   * 解析不到，据此判「死 barrier」即假阳。
+   */
   private[project] def stallReason(n: NodeDef, all: Map[String, NodeDef], nowMs: Long): Option[String] =
     if n.status != NodeLifecycle.Pending && n.status != NodeLifecycle.Wiring then None
     else
@@ -298,8 +316,12 @@ object BootWakeInventory:
               else ""
             Some(s"stalled(${stalledMs / 1000L}s past triggerable point, all upstreams terminal)$gapNote")
 
-  /** 会话现状（落盘判据）：`sessionRef` + `<sessionsDir>/<sid>.json` 存在性。
-    * `resumable` = transcript 在盘 ∧ 状态非终态（★① 红线：终态节点恒 false）。 */
+      end if
+
+  /**
+   * 会话现状（落盘判据）：`sessionRef` + `<sessionsDir>/<sid>.json` 存在性。
+   * `resumable` = transcript 在盘 ∧ 状态非终态（★① 红线：终态节点恒 false）。
+   */
   private[project] def sessionState(n: NodeDef, sessionsDir: os.Path): (String, String, Boolean) =
     n.sessionRef match
       case None => ("", SessionAbsentRef, false)
@@ -310,34 +332,40 @@ object BootWakeInventory:
         val resumable = present && !NodeLifecycle.Terminal.contains(n.status)
         (sid, state, resumable)
 
-  /** 建议动作（决策仍归分发器/人；本字段是提示不是动作——零自动行为）。
-    * 取值口径对齐方案 §2 B 表输出形态：承接 | 改接 | 重激活 | 放弃 | 忽略。
-    *
-    * **cancelsem 批 1（R4 · agent 面）**：`userCancelSlot`（本条目引用的槽位里有**用户
-    * 主动取消**的节点）⇒ **不得再建议「承接」**（承接 = 新建 `<原名>-retry` 之类重新派发
-    * 用户刚停下的工作）；改接/放弃照旧。权威判据见 `NodeEngine.retryOrNotify` 的引擎侧
-    * 抑制与 `DispatchNotify` 的 user 变体通知文本——三面同源同一条用户意图。
-    * 引擎发起取消（source=engine）/ source 不可判定（旧数据 / abandon 不写 result）
-    * ⇒ 保持既有建议逐字不变（语义选择项，见批报告待拍板栏）。 */
-  private def recommend(n: NodeDef, buckets: List[String], upGap: Boolean, resumable: Boolean,
-      userCancelSlot: Boolean = false): String =
-    if buckets.contains(BucketBlocked) then
-      "重激活|承接|改接|放弃 (blocked=需裁决, 永不自动重激活)"
+  /**
+   * 建议动作（决策仍归分发器/人；本字段是提示不是动作——零自动行为）。
+   * 取值口径对齐方案 §2 B 表输出形态：承接 | 改接 | 重激活 | 放弃 | 忽略。
+   *
+   * **cancelsem 批 1（R4 · agent 面）**：`userCancelSlot`（本条目引用的槽位里有**用户
+   * 主动取消**的节点）⇒ **不得再建议「承接」**（承接 = 新建 `<原名>-retry` 之类重新派发
+   * 用户刚停下的工作）；改接/放弃照旧。权威判据见 `NodeEngine.retryOrNotify` 的引擎侧
+   * 抑制与 `DispatchNotify` 的 user 变体通知文本——三面同源同一条用户意图。
+   * 引擎发起取消（source=engine）/ source 不可判定（旧数据 / abandon 不写 result）
+   * ⇒ 保持既有建议逐字不变（语义选择项，见批报告待拍板栏）。
+   */
+  private def recommend(
+    n: NodeDef,
+    buckets: List[String],
+    upGap: Boolean,
+    resumable: Boolean,
+    userCancelSlot: Boolean = false
+  ): String =
+    if buckets.contains(BucketBlocked) then "重激活|承接|改接|放弃 (blocked=需裁决, 永不自动重激活)"
     else if userCancelSlot then
       s"改接|放弃 (上游为用户主动取消 source=${CancelSource.UserCode} — ${DispatchNotify.NoReDispatchPhrase}/承接" +
         (if upGap then "; 上游缺轨, 禁自动启动)" else "; 待承接槽位)")
     else if upGap then "改接|承接|放弃 (上游缺轨, 禁自动启动)"
     else if buckets.contains(BucketAwaitingHandover) then "承接(把新上游 append 进 in)|改接|放弃"
     else if buckets.contains(BucketDeadBarrier) then
-      if n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring then
-        "承接|改接 (barrier 已清仍停滞, 需人工介入)"
+      if n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring then "承接|改接 (barrier 已清仍停滞, 需人工介入)"
       else "改接|放弃"
-    else if buckets.contains(BucketLooseRunning) then
-      if resumable then "重激活|承接 (会话可续)" else "重激活|承接|放弃 (目标会话已终态, 不可续跑)"
+    else if buckets.contains(BucketLooseRunning) then if resumable then "重激活|承接 (会话可续)" else "重激活|承接|放弃 (目标会话已终态, 不可续跑)"
     else "忽略"
 
-  /** 文件事实（相对路径 + 字节数；缺失文件标 `-`）——「任务书 / 结果件」两面的
-    * 可核读数（方案 B 表：`sessionRef 与 transcript 现状` 同条规定）。 */
+  /**
+   * 文件事实（相对路径 + 字节数；缺失文件标 `-`）——「任务书 / 结果件」两面的
+   * 可核读数（方案 B 表：`sessionRef 与 transcript 现状` 同条规定）。
+   */
   private def fileInfo(dir: os.Path, sub: String, id: String, summary: Option[String]): String =
     val rel = s"$sub/$id.md"
     val f = dir / sub / s"$id.md"
@@ -354,3 +382,4 @@ object BootWakeInventory:
   private def oneLine(s: String, cap: Int): String =
     val t = Option(s).getOrElse("").replaceAll("\\s+", " ").trim
     if t.length > cap then t.take(cap) + "…" else t
+end BootWakeInventory

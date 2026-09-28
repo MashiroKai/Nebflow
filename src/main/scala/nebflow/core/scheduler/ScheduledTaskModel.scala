@@ -20,10 +20,12 @@ case class ScheduledTask(
   repeat: Option[String] = None,
   /** When false, the task is skipped by fireDueTasks but kept in storage. */
   enabled: Boolean = true,
-  /** Stable upsert key（2026-09-06 定时任务升级，事故根因修复）：同 name 再建
-    * = 替换不叠加（ScheduledTaskStore.upsertTaskByName），重启后 re-arm 例行
-    * 任务自动去重。None = 匿名任务，行为同旧版（永不参与去重）。匹配为全库
-    * 跨会话精确等值。 */
+  /**
+   * Stable upsert key（2026-09-06 定时任务升级，事故根因修复）：同 name 再建
+   * = 替换不叠加（ScheduledTaskStore.upsertTaskByName），重启后 re-arm 例行
+   * 任务自动去重。None = 匿名任务，行为同旧版（永不参与去重）。匹配为全库
+   * 跨会话精确等值。
+   */
   name: Option[String] = None
 )
 

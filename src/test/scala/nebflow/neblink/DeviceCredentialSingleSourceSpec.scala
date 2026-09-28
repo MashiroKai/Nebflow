@@ -3,29 +3,30 @@ package nebflow.neblink
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 
-/** kaiauth 修法批 ②（2026-09-16 作者「治本」已批）—— **死副本单源化**的真钉。
-  *
-  * 缺陷形态（诊断报告 §2 / §5）：`<dataRoot>/neblink/device.json` 的 `deviceToken`
-  * **只写不读**（写入点两处、4 个读点全部只取 `logto` 块），而出站唯一来源 = `config.json`
-  * 的 `neblinkServer.deviceToken` ⇒ 两份不一致时「写盘成功但对发送值无效」**必然**成立，
-  * 2026-09-16 的排障正被这份死副本误导。
-  *
-  * 修法 = **写径收敛单源化**：`deviceToken` 的唯一权威写面 = `config.json`；
-  * `neblink/device.json` 侧**停写**该字段（编码器结构性停写 ⇒ 任何构造面都写不出去）。
-  * **零删除纪律（迁移式）**：字段不删、文件不删、内容不清洗；旧文件**照旧可解码**
-  * （值被读取时**仅忽略**，并发**一次** WARN）。
-  *
-  * 四条钉：
-  *  N5-1 新写入**不含** `deviceToken` 键（身份面 / `logto` 面逐字保真）；
-  *  N5-2 **旧文件**（含该键）仍可解码（向后兼容），值不参与任何逻辑，WARN 恰一次；
-  *  N5-3 出站凭据**只**来自 `config.json`（盘上旧副本的值零影响）—— 报告 §② 的
-  *       9 出站点表「逐行不变」的可测形态；
-  *  N5-4 新文件自己也能解码回来（否则 `load` 恒 None ⇒ 身份面/refresh 腿全断）。
-  */
+/**
+ * kaiauth 修法批 ②（2026-09-16 作者「治本」已批）—— **死副本单源化**的真钉。
+ *
+ * 缺陷形态（诊断报告 §2 / §5）：`<dataRoot>/neblink/device.json` 的 `deviceToken`
+ * **只写不读**（写入点两处、4 个读点全部只取 `logto` 块），而出站唯一来源 = `config.json`
+ * 的 `neblinkServer.deviceToken` ⇒ 两份不一致时「写盘成功但对发送值无效」**必然**成立，
+ * 2026-09-16 的排障正被这份死副本误导。
+ *
+ * 修法 = **写径收敛单源化**：`deviceToken` 的唯一权威写面 = `config.json`；
+ * `neblink/device.json` 侧**停写**该字段（编码器结构性停写 ⇒ 任何构造面都写不出去）。
+ * **零删除纪律（迁移式）**：字段不删、文件不删、内容不清洗；旧文件**照旧可解码**
+ * （值被读取时**仅忽略**，并发**一次** WARN）。
+ *
+ * 四条钉：
+ *  N5-1 新写入**不含** `deviceToken` 键（身份面 / `logto` 面逐字保真）；
+ *  N5-2 **旧文件**（含该键）仍可解码（向后兼容），值不参与任何逻辑，WARN 恰一次；
+ *  N5-3 出站凭据**只**来自 `config.json`（盘上旧副本的值零影响）—— 报告 §② 的
+ *       9 出站点表「逐行不变」的可测形态；
+ *  N5-4 新文件自己也能解码回来（否则 `load` 恒 None ⇒ 身份面/refresh 腿全断）。
+ */
 class DeviceCredentialSingleSourceSpec extends FunSuite:
 
   private var tmpDir: java.nio.file.Path = null
@@ -44,7 +45,7 @@ class DeviceCredentialSingleSourceSpec extends FunSuite:
     super.afterEach(context)
 
   private def credPath: os.Path = os.Path(tmpDir, os.pwd) / "neblink" / "device.json"
-  private def raw: String       = os.read(credPath)
+  private def raw: String = os.read(credPath)
 
   /** 本批**之前**的落盘形态（含被停写的那份副本）。 */
   private def writeLegacyFile(token: String): Unit =

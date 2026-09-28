@@ -19,20 +19,24 @@ import java.nio.file.{Files, Path, Paths}
  */
 object CardTool extends Tool:
 
-  /** Card LLM content is always a compact summary — exempt from guard.
-    * 注意（2026-09-05 恢复批核对）：2026-09-01 #38 起 ToolResultGuard 对
-    * ∞ 声明不再豁免——math.min(declaredMax, Defaults.DefaultMaxResultSizeChars)
-    * 将本声明 clamp 到系统级 50K 上限。本行保留仅表达"Card 结果设计上紧凑"
-    * 的意图，实际由 guard 统一兜底（大 card 持久化+preview，frontendContent
-    * 全文保留）。 */
+  /**
+   * Card LLM content is always a compact summary — exempt from guard.
+   * 注意（2026-09-05 恢复批核对）：2026-09-01 #38 起 ToolResultGuard 对
+   * ∞ 声明不再豁免——math.min(declaredMax, Defaults.DefaultMaxResultSizeChars)
+   * 将本声明 clamp 到系统级 50K 上限。本行保留仅表达"Card 结果设计上紧凑"
+   * 的意图，实际由 guard 统一兜底（大 card 持久化+preview，frontendContent
+   * 全文保留）。
+   */
   override val maxResultSizeChars: Int = Int.MaxValue
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.card")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.card")
 
-  /** The shared local-reference policy (failure enum, file probe, app-route
-    *  exemption, warning/counter JSON shapes) lives in `FileRefs` — the same
-    *  one Pop uses, so the two tools cannot drift apart. Card contributes only
-    *  the resolution policy below (a Card has no containing directory). */
+  /**
+   * The shared local-reference policy (failure enum, file probe, app-route
+   *  exemption, warning/counter JSON shapes) lives in `FileRefs` — the same
+   *  one Pop uses, so the two tools cannot drift apart. Card contributes only
+   *  the resolution policy below (a Card has no containing directory).
+   */
   import FileRefs.*
 
   /** Regex matching src= attributes with both single and double quotes. */
@@ -41,51 +45,59 @@ object CardTool extends Tool:
   /** Regex matching href= attributes — for <link> stylesheets and other references. */
   private val HrefAttrRegex = """(?i)href\s*=\s*["']([^"']+)["']""".r
 
-  /** `srcset=` attribute value.
-    *
-    *  2026-09-11 (toolfail batch): `srcset` was outside the scan face, so a
-    *  responsive `<img srcset="…">` whose candidates all failed stayed silent.
-    *  The lookbehind keeps `data-srcset=` out — the two legacy regexes above
-    *  carry no such boundary (pre-existing over-match, registered as a
-    *  follow-up rather than widened here). */
+  /**
+   * `srcset=` attribute value.
+   *
+   *  2026-09-11 (toolfail batch): `srcset` was outside the scan face, so a
+   *  responsive `<img srcset="…">` whose candidates all failed stayed silent.
+   *  The lookbehind keeps `data-srcset=` out — the two legacy regexes above
+   *  carry no such boundary (pre-existing over-match, registered as a
+   *  follow-up rather than widened here).
+   */
   private val SrcsetAttrRegex = """(?i)(?<![-\w])srcset\s*=\s*["']([^"']+)["']""".r
 
-  /** A CSS `url(...)` token, quoted or bare. One pattern covers `<style>`
-    *  blocks, inline `style` attributes, `@import url(…)`,
-    *  `image-set(url(…))` and `@font-face src:` — all reduce to this token. */
+  /**
+   * A CSS `url(...)` token, quoted or bare. One pattern covers `<style>`
+   *  blocks, inline `style` attributes, `@import url(…)`,
+   *  `image-set(url(…))` and `@font-face src:` — all reduce to this token.
+   */
   private val CssUrlRegex = """(?i)url\(\s*(['"]?)([^'")]+)\1\s*\)""".r
 
   /** A bare `@import "…"` — the `url(…)` form is already covered above. */
   private val ImportBareRegex = """(?i)@import\s+(['"])([^'"]+)\1""".r
 
-  /** One card's local-file pass: rewritten HTML plus every rejected reference
-    *  and the count of suppressed app-route exemptions.
-    *
-    *  `inlined` (2026-09-16 imgfix batch) counts the references rewritten to a
-    *  `data:` URI instead of an `/api/nf-file` URL — see the inline policy in
-    *  `FileRefs` (`MaxEmbedImageSize` / `isInlineImage`). `proxied` keeps its
-    *  meaning as "reference rewritten to an `/api/nf-file` URL", so the two
-    *  counters never overlap.
-    *
-    *  `deferred` (2026-09-16 img-ticket batch i, #687-C) counts the references
-    *  that were ELIGIBLE for embedding (extension + ≤5MB) but did not fit the
-    *  cumulative 40,000-character inline budget for this call, so they kept the
-    *  `/api/nf-file` URL. They are also counted in `proxied` (that is what they
-    *  are now); `deferred` is the extra bit of information — "the budget, not
-    *  the file, is why this is a reference" — and it is why a rare over-budget
-    *  card is not mistaken for a card that was never embeddable. */
+  /**
+   * One card's local-file pass: rewritten HTML plus every rejected reference
+   *  and the count of suppressed app-route exemptions.
+   *
+   *  `inlined` (2026-09-16 imgfix batch) counts the references rewritten to a
+   *  `data:` URI instead of an `/api/nf-file` URL — see the inline policy in
+   *  `FileRefs` (`MaxEmbedImageSize` / `isInlineImage`). `proxied` keeps its
+   *  meaning as "reference rewritten to an `/api/nf-file` URL", so the two
+   *  counters never overlap.
+   *
+   *  `deferred` (2026-09-16 img-ticket batch i, #687-C) counts the references
+   *  that were ELIGIBLE for embedding (extension + ≤5MB) but did not fit the
+   *  cumulative 40,000-character inline budget for this call, so they kept the
+   *  `/api/nf-file` URL. They are also counted in `proxied` (that is what they
+   *  are now); `deferred` is the extra bit of information — "the budget, not
+   *  the file, is why this is a reference" — and it is why a rare over-budget
+   *  card is not mistaken for a card that was never embeddable.
+   */
   private[tools] case class EmbedOutcome(
-      html: String,
-      proxied: Int,
-      inlined: Int,
-      deferred: Int,
-      rejects: List[RejectedRef],
-      exempt: Int,
-      /** Disclosure lines, one per DISTINCT decoded-form hit (imgref batch
-        *  2026-09-18): "this reference was spelled with URL escapes; it was
-        *  resolved as the decoded form …". Never silent — 作者令要求命中时
-        *  必须在回包/告警里说明用了哪一形态。 */
-      notes: List[String] = Nil
+    html: String,
+    proxied: Int,
+    inlined: Int,
+    deferred: Int,
+    rejects: List[RejectedRef],
+    exempt: Int,
+    /**
+     * Disclosure lines, one per DISTINCT decoded-form hit (imgref batch
+     *  2026-09-18): "this reference was spelled with URL escapes; it was
+     *  resolved as the decoded form …". Never silent — 作者令要求命中时
+     *  必须在回包/告警里说明用了哪一形态。
+     */
+    notes: List[String] = Nil
   )
 
   /**
@@ -183,34 +195,40 @@ object CardTool extends Tool:
       val decision = applyAppRouteExemption(value, verdict.decision)
       decision match
         case RefDecision.Exempt(route) => logger.debug(s"Card: exempted app-route reference '$value' (route $route)")
-        case _                         => ()
+        case _ => ()
       // An exempted reference is not servable as a file, so it carries no inline
       // candidate either (the verdict it was exempted from was already a failure).
       decision match
         case _: RefDecision.Exempt => RefVerdict(decision, None)
-        case _                     => verdict
+        case _ => verdict
+    end if
+  end decideRef
 
-  /** A verdict plus the resolved file it was computed from (`None` whenever the
-    *  value did not resolve to an existing regular file, or the verdict is one the
-    *  inline leg will not act on) plus, when the raw reference did not name the
-    *  file but a decoded form did, the disclosure note (imgref batch 2026-09-18 —
-    *  作者失败①). */
+  /**
+   * A verdict plus the resolved file it was computed from (`None` whenever the
+   *  value did not resolve to an existing regular file, or the verdict is one the
+   *  inline leg will not act on) plus, when the raw reference did not name the
+   *  file but a decoded form did, the disclosure note (imgref batch 2026-09-18 —
+   *  作者失败①).
+   */
   private case class RefVerdict(decision: RefDecision, path: Option[Path], note: Option[String] = None)
 
-  /** One scanned reference: where it sits in the document, the verdict, the
-    *  resolved file (carried for a `Proxy` **and** for a refusal the inline leg
-    *  may take over — see [[embedLocalFiles]]) and whether its face may embed
-    *  bytes.
-    *
-    *  `resourceFace` is the only difference between the five scan patterns
-    *  inside [[embedLocalFiles]]. */
+  /**
+   * One scanned reference: where it sits in the document, the verdict, the
+   *  resolved file (carried for a `Proxy` **and** for a refusal the inline leg
+   *  may take over — see [[embedLocalFiles]]) and whether its face may embed
+   *  bytes.
+   *
+   *  `resourceFace` is the only difference between the five scan patterns
+   *  inside [[embedLocalFiles]].
+   */
   private case class ScannedRef(
-      start: Int,
-      end: Int,
-      decision: RefDecision,
-      path: Option[Path],
-      resourceFace: Boolean,
-      note: Option[String] = None
+    start: Int,
+    end: Int,
+    decision: RefDecision,
+    path: Option[Path],
+    resourceFace: Boolean,
+    note: Option[String] = None
   )
 
   /**
@@ -236,7 +254,7 @@ object CardTool extends Tool:
           val rest = candidate.substring(lead)
           val urlLen = rest.indexWhere(ch => ch.isWhitespace) match
             case -1 => rest.length
-            case i  => i
+            case i => i
           if urlLen > 0 then
             val start = base + cursor + lead
             val value = rest.substring(0, urlLen)
@@ -247,6 +265,10 @@ object CardTool extends Tool:
         cursor += candidate.length + 1
       }
       out.toList
+
+    end if
+
+  end srcsetCandidates
 
   /**
    * Drop (never merge) any span that an earlier accepted span already covers.
@@ -287,23 +309,31 @@ object CardTool extends Tool:
    */
   private def embedLocalFiles(html: String): EmbedOutcome =
     val matches: List[ScannedRef] =
-      (SrcAttrRegex.findAllMatchIn(html).map(m => {
-        val scanned = decideRef(m.group(1))
-        ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = true, scanned.note)
-      }) ++
-        HrefAttrRegex.findAllMatchIn(html).map(m => {
+      (SrcAttrRegex
+        .findAllMatchIn(html)
+        .map(m =>
           val scanned = decideRef(m.group(1))
-          ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = false, scanned.note)
-        }) ++
+          ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = true, scanned.note)
+        ) ++
+        HrefAttrRegex
+          .findAllMatchIn(html)
+          .map(m =>
+            val scanned = decideRef(m.group(1))
+            ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = false, scanned.note)
+          ) ++
         SrcsetAttrRegex.findAllMatchIn(html).flatMap(srcsetCandidates) ++
-        CssUrlRegex.findAllMatchIn(html).map(m => {
-          val scanned = decideRef(m.group(2))
-          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = true, scanned.note)
-        }) ++
-        ImportBareRegex.findAllMatchIn(html).map(m => {
-          val scanned = decideRef(m.group(2))
-          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = false, scanned.note)
-        })).toList
+        CssUrlRegex
+          .findAllMatchIn(html)
+          .map(m =>
+            val scanned = decideRef(m.group(2))
+            ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = true, scanned.note)
+          ) ++
+        ImportBareRegex
+          .findAllMatchIn(html)
+          .map(m =>
+            val scanned = decideRef(m.group(2))
+            ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = false, scanned.note)
+          )).toList
         .sortBy(_.start)
 
     val exempts = matches.count { case ScannedRef(_, _, RefDecision.Exempt(_), _, _, _) => true; case _ => false }
@@ -359,14 +389,14 @@ object CardTool extends Tool:
         if !ref.resourceFace then Left(InlineSkip.NotEmbeddable)
         else
           ref.path match
-            case None    => Left(InlineSkip.NotEmbeddable)
+            case None => Left(InlineSkip.NotEmbeddable)
             case Some(p) => embedImage(p, budget)
       attempt match
         case Right(dataUri) =>
           inlined += 1
           ref.decision match
             case RefDecision.Reject(rejected) => takenOver += rejected
-            case _                            => ()
+            case _ => ()
           Some((start, end, dataUri))
         case Left(skip) =>
           ref.decision match
@@ -381,6 +411,7 @@ object CardTool extends Tool:
             // refusal stands, so the raw value stays in the markup and the
             // rejection is reported (`failed` + a `warnings` entry with a fix).
             case _ => None
+      end match
     }
     // One entry per distinct rejected reference, minus the ones the inline leg
     // took over. (The counters keep their shipped split: `proxied` = "an
@@ -403,23 +434,28 @@ object CardTool extends Tool:
     if rewritten != html then
       logger.debug(
         s"Embedded ${proxied} local file(s) via /api/nf-file, ${inlined} image(s) inline" +
-          (if budgetDeferred > 0 then s", $budgetDeferred deferred by the ${budget.maxChars}-char inline budget" else "")
+          (if budgetDeferred > 0 then s", $budgetDeferred deferred by the ${budget.maxChars}-char inline budget"
+           else "")
       )
     EmbedOutcome(rewritten, proxied, inlined, budgetDeferred, rejects, exempts, notes)
   end embedLocalFiles
 
-  /** The sentinel prefix the frontend splits the JSON payload on (cardRegistry.js
-    *  `^___\w+_HTML___`); nothing may be appended after the JSON. */
+  /**
+   * The sentinel prefix the frontend splits the JSON payload on (cardRegistry.js
+   *  `^___\w+_HTML___`); nothing may be appended after the JSON.
+   */
   private val CardSentinel = "___CARD_HTML___"
 
-  /** One integer counter out of an already-built card result's `fileRefs`.
-    *
-    * 2026-09-16 (imgticket batch ii): reads **either** face — the raw card
-    * payload (sentinel-prefixed, the frontend face) **or** the model-facing
-    * summary this tool now produces (a plain JSON object that keeps `fileRefs`
-    * and `warnings`). Without that, the chat header would silently lose its
-    * "N file reference(s) NOT proxied" note the moment the model face stopped
-    * being the payload (`AgentCore` computes the header from the model face). */
+  /**
+   * One integer counter out of an already-built card result's `fileRefs`.
+   *
+   * 2026-09-16 (imgticket batch ii): reads **either** face — the raw card
+   * payload (sentinel-prefixed, the frontend face) **or** the model-facing
+   * summary this tool now produces (a plain JSON object that keeps `fileRefs`
+   * and `warnings`). Without that, the chat header would silently lose its
+   * "N file reference(s) NOT proxied" note the moment the model face stopped
+   * being the payload (`AgentCore` computes the header from the model face).
+   */
   private def fileRefCount(result: String, field: String): Int =
     val json =
       if result.startsWith(CardSentinel) then result.substring(CardSentinel.length)
@@ -437,9 +473,11 @@ object CardTool extends Tool:
 
   private def unresolvedFileRefs(result: String): Int = fileRefCount(result, "failed")
 
-  /** App-route references the exemption suppressed — surfaced in the chat
-    *  header whenever it is non-zero, so a suppressed reference is never
-    *  invisible (see `FileRefs.applyAppRouteExemption`). */
+  /**
+   * App-route references the exemption suppressed — surfaced in the chat
+   *  header whenever it is non-zero, so a suppressed reference is never
+   *  invisible (see `FileRefs.applyAppRouteExemption`).
+   */
   private def exemptFileRefs(result: String): Int = fileRefCount(result, "exempt")
 
   val name = "Card"
@@ -450,12 +488,14 @@ object CardTool extends Tool:
   /** Cached design prompt (reloaded on each access via mtime check). */
   @volatile private var designPromptCache: (Long, String) = (0L, "")
 
-  /** Default design guidelines — written to disk on first access if file doesn't exist.
-    *
-    * `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：路径示例
-    * 里的 `{{data_root}}` 由 PathUtil.dataRootRenderValue 插值——默认 home 渲染为
-    * `~/.nebflow`（字节与旧字面一致），隔离实例渲染为本实例 home 的绝对路径。
-    * `def` on purpose：dataRoot 可在对象初始化后被换根（--home / 测试）。 */
+  /**
+   * Default design guidelines — written to disk on first access if file doesn't exist.
+   *
+   * `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：路径示例
+   * 里的 `{{data_root}}` 由 PathUtil.dataRootRenderValue 插值——默认 home 渲染为
+   * `~/.nebflow`（字节与旧字面一致），隔离实例渲染为本实例 home 的绝对路径。
+   * `def` on purpose：dataRoot 可在对象初始化后被换根（--home / 测试）。
+   */
   private def defaultDesignPrompt: String =
     s"""## Card Visual Design Guidelines
 
@@ -550,7 +590,7 @@ dot -Tsvg -o /tmp/output.svg input.dot
 
 HTML must be self-contained (all styles/tags inline, no external CSS/JS).
 
-Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either.
+Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either.
 
 **Images are embedded, not referenced** (2026-09-16): a local `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` referenced by `src=`, a `srcset` candidate or a CSS `url(...)` is embedded in the card as a base64 `data:` URI when it is ≤5MB — it renders with no request at all, and keeps rendering on replay. Inline bytes are capped **per card in TOTAL**: at most 40,000 characters of `data:` URI (≈30 KB of source bytes) go inline in one card, counted in document order — once that budget is spent, further images of the same card keep the `/api/nf-file?path=…` reference instead (they still render, but need the ticket below). Everything else (larger images, video/audio/fonts/PDF/office/CSS/JS) is referenced as `/api/nf-file?path=…` and needs a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves `${DataRootServedNamespacesText}` and the project `.nebflow/` serves `evidence*/**`. A >5MB image or a non-image asset in a location the gateway does not serve cannot be shown. To show such a file, put it under one of the served locations above — `projects/**` is the usual route, but not the only one: a path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/output.svg` renders), as long as it is not credential-shaped. (Shrinking the image below 5MB also works.)
 
@@ -578,11 +618,13 @@ Every reference that could not be proxied is reported in this tool's result unde
         else designPromptCache._2
     catch case _: Exception => designPromptCache._2
 
-  /** Base description without user design prompt.
-    *
-    * `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：路径示例
-    * 走 PathUtil.dataRootRenderValue（默认 home ⇒ `~/.nebflow`，隔离实例 ⇒ 实例
-    * 绝对路径）。`def` on purpose：dataRoot 可被换根，val 会在对象初始化时冻结。 */
+  /**
+   * Base description without user design prompt.
+   *
+   * `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：路径示例
+   * 走 PathUtil.dataRootRenderValue（默认 home ⇒ `~/.nebflow`，隔离实例 ⇒ 实例
+   * 绝对路径）。`def` on purpose：dataRoot 可被换根，val 会在对象初始化时冻结。
+   */
   private def baseDescription =
     s"""Renders an interactive HTML card embedded in the chat.
 
@@ -661,7 +703,7 @@ Rule of thumb: **if the card would contain only sentences, do not use Card.** Th
 - html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
 
-Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request — up to a TOTAL of 40,000 characters of `data:` URI per card, spent in document order (images past that total keep the `/api/nf-file?path=…` reference); every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `${DataRootServedNamespacesText}`; project `.nebflow/`: `evidence*/`).
+Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request — up to a TOTAL of 40,000 characters of `data:` URI per card, spent in document order (images past that total keep the `/api/nf-file?path=…` reference); every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `${DataRootServedNamespacesText}`; project `.nebflow/`: `evidence*/`).
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable / other, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (the server reads a bare `+` in a URL's `path=` parameter as a space, and `%20` also works). If a reference you wrote used URL escapes or a `+` and the tool resolved it in the decoded form, `notes` in this result says so.
 
@@ -712,7 +754,9 @@ Example (interactive 3D with Three.js):
           if distinct.nonEmpty then
             logger.warn(
               s"Card: ${outcome.rejects.size} local file reference(s) NOT proxied (" +
-                listed.map { case (rejected, count) => s"${rejected.value} [${rejected.failure.code}]x$count" }.mkString(", ") +
+                listed
+                  .map { case (rejected, count) => s"${rejected.value} [${rejected.failure.code}]x$count" }
+                  .mkString(", ") +
                 ")"
             )
           val payload = Json
@@ -813,30 +857,32 @@ Example (interactive 3D with Three.js):
       else ""
     s"$title rendered$note"
 
-  /** The **model-facing projection** of a card result (imgticket batch ii,
-    * 作者 #687-D 2026-09-16「做」）。
-    *
-    * 卡片载荷是给**浏览器**的：`html` 是整张卡片的标记，内联图还是 base64
-    * （单图可达 ≈700 K 字符）。语言模型从那些字节里得不到任何信息，而载荷的体量
-    * 恰恰是把结果推过 `Defaults.DefaultMaxResultSizeChars`（50,000）的那件事——
-    * 过线之后 `ToolResultGuard` 把模型面换成「2,048 字符预览 + 磁盘全文副本」，
-    * 模型看到的只是一段被切断的 JSON。
-    *
-    * 本投影因此**只保留模型能据以行动的事实**（与工具描述对模型的承诺逐条对齐）：
-    *   - `card`      —— 卡片标识（标题；空标题回 `"Card"`）；
-    *   - `fileRefs`  —— 计数器，与载荷内**同一对象逐字同源**；
-    *   - `warnings`  —— 未代理引用的逐条原因，与载荷内**同一数组逐字同源**
-    *                    （工具描述要求模型「读 warnings 并修好引用」）；
-    *   - `htmlChars` —— 卡片正文本体长度（句柄/可核事实）；
-    *   - `note`      —— 一句话说明全文只在前端面，避免模型误以为卡片没渲染。
-    *
-    * 🔴 移出模型面的字段 = `html`（含内联 base64 图）与 `title` 正文；二者仍逐字
-    * 留在用户面（`frontendContent` = [[call]] 的原样返回，由 `AgentCore` 的
-    * ToolEnd 发射点投给前端与 `.ui.json`）。🔴 本方法**不新建任何通道**、不动
-    * WS 帧形状、不动载荷构造 —— 它只回答「模型该看到什么」。
-    *
-    * 机械可核：投影长度与 `html` 体量**无关**（只随 `htmlChars` 的位数变化），
-    * 且恒不含 HTML 标签序列与 `data:` URI（见 `CardModelFaceSpec`）。 */
+  /**
+   * The **model-facing projection** of a card result (imgticket batch ii,
+   * 作者 #687-D 2026-09-16「做」）。
+   *
+   * 卡片载荷是给**浏览器**的：`html` 是整张卡片的标记，内联图还是 base64
+   * （单图可达 ≈700 K 字符）。语言模型从那些字节里得不到任何信息，而载荷的体量
+   * 恰恰是把结果推过 `Defaults.DefaultMaxResultSizeChars`（50,000）的那件事——
+   * 过线之后 `ToolResultGuard` 把模型面换成「2,048 字符预览 + 磁盘全文副本」，
+   * 模型看到的只是一段被切断的 JSON。
+   *
+   * 本投影因此**只保留模型能据以行动的事实**（与工具描述对模型的承诺逐条对齐）：
+   *   - `card`      —— 卡片标识（标题；空标题回 `"Card"`）；
+   *   - `fileRefs`  —— 计数器，与载荷内**同一对象逐字同源**；
+   *   - `warnings`  —— 未代理引用的逐条原因，与载荷内**同一数组逐字同源**
+   *                    （工具描述要求模型「读 warnings 并修好引用」）；
+   *   - `htmlChars` —— 卡片正文本体长度（句柄/可核事实）；
+   *   - `note`      —— 一句话说明全文只在前端面，避免模型误以为卡片没渲染。
+   *
+   * 🔴 移出模型面的字段 = `html`（含内联 base64 图）与 `title` 正文；二者仍逐字
+   * 留在用户面（`frontendContent` = [[call]] 的原样返回，由 `AgentCore` 的
+   * ToolEnd 发射点投给前端与 `.ui.json`）。🔴 本方法**不新建任何通道**、不动
+   * WS 帧形状、不动载荷构造 —— 它只回答「模型该看到什么」。
+   *
+   * 机械可核：投影长度与 `html` 体量**无关**（只随 `htmlChars` 的位数变化），
+   * 且恒不含 HTML 标签序列与 `data:` URI（见 `CardModelFaceSpec`）。
+   */
   override def modelFacingResult(result: String): String =
     val json =
       if result.startsWith(CardSentinel) then result.substring(CardSentinel.length)
@@ -865,9 +911,10 @@ Example (interactive 3D with Three.js):
         Json
           .obj(
             "card" -> "Card".asJson,
-            "note" -> "Card rendered; its payload was not summarizable for the model (the user still got the full card)."
-              .asJson
+            "note" -> "Card rendered; its payload was not summarizable for the model (the user still got the full card).".asJson
           )
           .noSpaces
+    end match
+  end modelFacingResult
 
 end CardTool

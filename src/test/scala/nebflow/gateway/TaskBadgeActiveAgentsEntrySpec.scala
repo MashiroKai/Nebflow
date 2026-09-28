@@ -1,9 +1,10 @@
 package nebflow.gateway
 
+
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent; the merge moved them to actor
 
 /** Task-badge contract on the activeAgents restore reply (taskbadge batch,
   * 2026-09-27): the snapshot face of the sub-agents panel task attribution.

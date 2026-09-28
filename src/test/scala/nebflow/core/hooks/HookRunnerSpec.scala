@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 /**
  * HookRunner against REAL processes (bash on macOS/Linux CI path).
@@ -53,7 +53,9 @@ class HookRunnerSpec extends FunSuite:
     }
 
     test("stdout state 1: valid JSON object is parsed into a structured HookResult") {
-      val out = run("""echo '{"decision":"block","reason":"forbidden zone","updated_input":{"file_path":"/tmp/ok.txt"},"additional_context":"note","continue":false,"stop_reason":"halt"}'""")
+      val out = run(
+        """echo '{"decision":"block","reason":"forbidden zone","updated_input":{"file_path":"/tmp/ok.txt"},"additional_context":"note","continue":false,"stop_reason":"halt"}'"""
+      )
       assertEquals(out.decision, HookDecision.Block)
       assertEquals(out.reason, Some("forbidden zone"))
       assertEquals(
@@ -99,5 +101,6 @@ class HookRunnerSpec extends FunSuite:
       val out = run("exit 3", timeout = 5, continueOnError = true)
       assertEquals(out.decision, HookDecision.Allow)
     }
+  end if
 
 end HookRunnerSpec
