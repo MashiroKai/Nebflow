@@ -787,7 +787,7 @@ export default {
   'settings.providers': 'LLM 服务商',
   'settings.addProvider': '+ 添加服务商',
   'settings.modelChainHint': '模型方案已退役——输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
-  // /model 面板（modelcfg Phase 1；文案草案 = 交互卡 v2 §7，定稿待作者逐字过目）
+  // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',
   'model.modeSeparate': '分开配置',

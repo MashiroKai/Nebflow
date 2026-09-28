@@ -823,7 +823,7 @@ export default {
   'settings.providers': 'LLM Providers',
   'settings.addProvider': '+ Add Provider',
   'settings.modelChainHint': 'Model presets are retired — type the /model command to configure per-role model chains in unified or per-role mode.',
-  // /model panel (modelcfg Phase 1; drafts = interaction card v2 §7, pending the author's final wording review)
+  // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
   'model.modeUnified': 'Unified',
   'model.modeSeparate': 'Per-role',
