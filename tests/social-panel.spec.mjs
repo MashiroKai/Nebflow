@@ -62,6 +62,19 @@
 //    machine is definition-driven and channel-agnostic; the REAL apiSuite leg
 //    still POSTs telegram, proving sealed ≠ deleted on the server face too).
 //
+// 🔴 SOCIAL-FIX (author ruling 2026-09-28, three changes over the landed
+//    panel): ① the scan QR lives INSIDE the feishu card — one view layer, the
+//    `#social-scan` sub-dialog is gone; ② the manual-fill form and its two
+//    entries are retired — scan-to-create is the ONLY creation path; ③ the
+//    mechanical probe triples stop rendering as field names — the card shows
+//    a plain-language credential state. Flipped anchors, each red-proven
+//    against the pre-change tree (SOCIAL_SUITE=after + SOCIAL_WEB_ROOT):
+//    W4's control face ([data-scan-inline] / [data-archive]), W14's fill flow
+//    (replaced by the in-card scan flow SF-1), FB1/FB2 (form fields flip to
+//    absence), W16 B-3/B-6 (form geometry → in-card QR geometry), SF-3
+//    (retired faces stay retired). BEFORE / FIXTURE / RED-FILTER keep their
+//    original judgement.
+//
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
@@ -225,7 +238,17 @@ const apiState = {
   registered: {},
   posts: [],
   failPost: false,
+  /** social-fix: the scan-bind face the in-card block polls (state-machine
+   *  mirror of the real contract: qr_ready → polling → done|failed). A
+   *  `done` reading writes the created config ONCE — the backend side-effect
+   *  the real endpoint carries. */
+  scan: { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false },
 };
+
+/** Fresh scan face (leg setup / teardown between modes). */
+function resetScanFace() {
+  apiState.scan = { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false };
+}
 
 const SECRET_FILE = {
   wechat: { app_secret: 'social-wechat-app-secret', token: 'social-wechat-token', aes_key: 'social-wechat-aes-key' },
@@ -268,6 +291,27 @@ function stubApi(page) {
   page.route('**/api/social/channels', (r) => r.fulfill({
     json: { channels: apiState.channels, adapterRegistered: false },
   }));
+  // social-fix: the scan-bind face (registered LAST ⇒ highest priority above
+  // the catch-all; `*` never crosses `/`, so the deeper scan paths cannot be
+  // shadowed by the channel POST route).
+  page.route('**/api/social/channels/*/scan-bind/begin*', (r) => {
+    if (r.request().method() !== 'POST') return r.fallback();
+    if (apiState.scan.failBegin) return r.fulfill({ status: 503, json: { error: 'io' } });
+    return r.fulfill({ json: { scanId: 'mock-scan-1' } });
+  });
+  page.route('**/api/social/channels/*/scan-bind/status*', (r) => {
+    if (apiState.scan.state === 'done' && !apiState.scan.doneWrites) {
+      // the backend side-effect of a finished scan: the app exists now
+      apiState.scan.doneWrites = true;
+      apiState.channels.feishu = { enabled: true, fields: {
+        app_id: 'cli_mock0123456789ab',
+        app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      } };
+      apiState.probes.feishu = { app_secret: { exists: true, modeOk: true, readable: true } };
+      apiState.registered.feishu = true;
+    }
+    return r.fulfill({ json: { state: apiState.scan.state, qrUrl: apiState.scan.qrUrl, userCode: apiState.scan.userCode } });
+  });
 }
 
 async function boot(page, opts = {}) {
@@ -329,20 +373,14 @@ async function openPanel(page) {
   }, undefined, { timeout: 8000 });
 }
 
-/** Arrange step for the W14 and W16 legs: reach the fillable state through the
- *  design's own handover. On the not-created feishu face the panel auto-opens
- *  the QR scan overlay (maybeAutoScan, fired right after aria-busy clears), and
- *  the overlay's "fill in manually" control is the one designed path to the
- *  form — it closes the overlay AND expands the collapsed `[data-manual]` wrap
- *  (toggleManual), where all six field inputs/selects live. Filling or
- *  measuring before this handover reads the collapsed resting face (hidden
- *  fields), which is the design's default state, not a layout defect. */
-async function openManualFormViaScanOverlay(page) {
-  await page.waitForSelector('#social-scan:not([hidden])', { timeout: 8000 });
-  await page.click('[data-scan-manual]');
+/** Wait for the in-card scan block to reach its QR face (social-fix: the QR
+ *  renders INSIDE the not-created card — no sub-dialog exists any more). The
+ *  canvas is the expected form; the fallback link is accepted so the anchor
+ *  survives a missing vendor QR lib. */
+async function waitInlineScanQr(page) {
   await page.waitForFunction(() => {
-    const wrap = document.querySelector('.social-card[data-channel="feishu"] [data-manual]');
-    return !!wrap && wrap.hidden === false;
+    const box = document.querySelector('.social-card[data-channel="feishu"] [data-scan-qr]');
+    return !!box && !!box.querySelector('canvas, a');
   }, undefined, { timeout: 8000 });
 }
 
@@ -480,12 +518,13 @@ async function afterSuite(browser, base) {
               // scanBind card (feishu, the only visible channel): the head
               // keeps icon + name + status and carries NO switch — enabled=false
               // IS the archive, so the card has no `.nb-toggle` anywhere; its
-              // state control lives in the actions row instead:
-              // [data-scanbind] (not-created) / [data-archive] (created).
-              // Plain cards keep the head switch; sealed channels never render.
+              // state control lives in the card body — social-fix 2026-09-28:
+              // the in-card QR block ([data-scan-inline], not-created) or the
+              // archive button ([data-archive], created). Plain cards keep the
+              // head switch; sealed channels never render.
               // See js/socialPanel.js scanBindCardHTML / plainCardHTML.
               noCardToggle: !c.querySelector('.nb-toggle'),
-              control: !!c.querySelector('[data-scanbind], [data-archive]'),
+              control: !!c.querySelector('[data-scan-inline], [data-archive]'),
             } : null;
           }),
         };
@@ -500,6 +539,22 @@ async function afterSuite(browser, base) {
         JSON.stringify(cards.ids) === JSON.stringify(['feishu'])
         && !cards.ids.includes('wechat') && !cards.ids.includes('telegram'),
         `ids=[${cards.ids.join(',')}]`);
+      // social-fix SF-3 — the retired faces stay retired on the visible face:
+      // no sub-dialog, no scan action button, no manual entries, and the
+      // mechanical probe vocabulary never reaches the rendered text.
+      const retired = await page.evaluate(() => {
+        const m = document.getElementById('social-modal');
+        const text = m ? m.innerText : '';
+        return {
+          subDialog: document.querySelectorAll('#social-scan').length,
+          scanBtn: document.querySelectorAll('[data-scanbind]').length,
+          manual: document.querySelectorAll('[data-manual], [data-manual-toggle], [data-scan-manual]').length,
+          probeVocab: (text.match(/exists=|modeOk=|readable=|凭据探针|Credential probe/g) || []).length,
+        };
+      });
+      check(`SF-3 retired faces stay retired (${tag})`,
+        retired.subDialog === 0 && retired.scanBtn === 0 && retired.manual === 0 && retired.probeVocab === 0,
+        JSON.stringify(retired));
       // 🔴 W4 flipped to HIDE semantics (author ruling 2026-09-23, Part A).
       //
       // JUDGEMENT — why this assertion is RED on the pre-change tree: before the
@@ -640,52 +695,88 @@ async function afterSuite(browser, base) {
       pill.status === 'configInvalid' && pill.hint.includes('~/.nebflow/secrets/social-feishu-app-secret'),
       JSON.stringify(pill));
 
-    // W14 the full "fill → save → probe re-read" flow (令④), incl. the negative
-    // assertion: no "go edit the file" step anywhere in the panel.
-    // (socialhide: driven on the FEISHU card — the only production-visible face.)
+    // SF-1 the in-card scan flow (social-fix): the not-created card auto-begins
+    // the scan INSIDE the card — QR + status + confirmation code, one view
+    // layer; a finished scan flips the SAME card to its created face. The
+    // retired faces (sub-dialog / scan button / manual entries) stay absent,
+    // and the panel offers no "go edit the file" step anywhere.
     apiState.channels = {};
     apiState.probes = {};
+    apiState.registered = {};
     apiState.posts = [];
+    resetScanFace();
     await page.reload();
     await openPanel(page);
-    // Arrange through the design's handover: the not-created card auto-opens
-    // the QR overlay; its manual control closes it and expands the fill form.
-    await openManualFormViaScanOverlay(page);
-    await page.fill('.social-card[data-channel="feishu"] [data-field="app_id"]', 'cli_0123456789abcdef');
-    await page.fill('.social-card[data-channel="feishu"] [data-field="app_secret"]', 'PLAINTEXT-SECRET-MARKER');
-    await page.fill('.social-card[data-channel="feishu"] [data-field="verification_token"]', 'PLAINTEXT-TOKEN-MARKER');
-    await page.click('.social-card[data-channel="feishu"] [data-save]');
-    await page.waitForFunction(() => {
-      const c = document.querySelector('.social-card[data-channel="feishu"]');
-      return c && c.querySelector('.social-status-pill').dataset.status === 'configuredNotLinked';
-    }, undefined, { timeout: 6000 });
-    const step3 = await page.evaluate(() => {
-      const c = document.querySelector('.social-card[data-channel="feishu"]');
+    await waitInlineScanQr(page);
+    const scanFace = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const status = card.querySelector('[data-scan-status]');
+      const code = card.querySelector('[data-scan-code]');
       return {
-        status: c.querySelector('.social-status-pill').dataset.status,
-        hint: c.querySelector('.social-card-hint').textContent,
-        secretInput: c.querySelector('[data-field="app_secret"]').value,
-        secretState: c.querySelector('.social-secret-state').textContent,
+        inline: !!card.querySelector('[data-scan-inline]'),
+        canvas: !!card.querySelector('[data-scan-qr] canvas'),
+        statusText: status ? status.textContent : '',
+        codeShown: !!code && !code.hasAttribute('hidden'),
+        codeText: code ? code.textContent : '',
+        noSubDialog: document.querySelectorAll('#social-scan').length,
+        noScanBtn: document.querySelectorAll('[data-scanbind]').length,
+        noManual: document.querySelectorAll('[data-manual], [data-manual-toggle], [data-scan-manual]').length,
+        noFormFields: document.querySelectorAll('.social-card[data-channel="feishu"] [data-field]').length,
         noFileStep: !/编辑文件|手动放置|去配置|Bot Channels/.test(document.getElementById('social-modal').innerText),
       };
     });
-    check('W14 填 → 存 → 探针读回',
-      step3.status === 'configuredNotLinked' && /exists/.test(step3.hint) && /modeOk/.test(step3.hint),
-      JSON.stringify(step3));
-    check('W14b panel discards the credential and offers no file step',
-      step3.secretInput === '' && step3.noFileStep, JSON.stringify({ value: step3.secretInput, noFileStep: step3.noFileStep }));
-    check('W10② POST body carries the plaintext exactly once (the only place it ever appears)',
-      apiState.posts.length === 1
-      && JSON.stringify(apiState.posts[0].body).includes('PLAINTEXT-SECRET-MARKER'),
-      `posts=${apiState.posts.length}`);
+    check('SF-1 not-created face: QR + status INSIDE the card (one view layer)',
+      scanFace.inline && scanFace.canvas && scanFace.codeShown
+      && scanFace.codeText.includes('MCCK-1234')
+      && [ZH['social.feishu.scan.waiting'], EN['social.feishu.scan.waiting'],
+          ZH['social.feishu.scan.starting'], EN['social.feishu.scan.starting']].includes(scanFace.statusText)
+      && scanFace.noSubDialog === 0 && scanFace.noScanBtn === 0 && scanFace.noManual === 0
+      && scanFace.noFormFields === 0,
+      JSON.stringify(scanFace));
+    check('SF-1b the panel offers no file step on the scan face',
+      scanFace.noFileStep, `noFileStep=${scanFace.noFileStep}`);
+
+    // the phone side confirms ⇒ the SAME card flips to its created face
+    apiState.scan.state = 'done';
+    await page.waitForFunction(
+      () => !!document.querySelector('.social-card[data-channel="feishu"] [data-archive]'),
+      undefined, { timeout: 10000 });
+    const createdFace = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const hint = card.querySelector('.social-card-hint');
+      return {
+        pill: card.querySelector('.social-status-pill').dataset.status,
+        archive: !!card.querySelector('[data-archive]'),
+        scanInlineGone: !card.querySelector('[data-scan-inline]'),
+        liveBlock: !!card.querySelector('[data-live]'),
+        bindings: !!card.querySelector('[data-bindings]'),
+        hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        probeVocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=|凭据探针|Credential probe/g) || []).length,
+      };
+    });
+    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card)',
+      createdFace.pill === 'connected' && createdFace.archive && createdFace.scanInlineGone
+      && createdFace.liveBlock && createdFace.bindings
+      && (createdFace.hint === ZH['social.credential.ok'] || createdFace.hint === EN['social.credential.ok'])
+      && createdFace.probeVocab === 0,
+      JSON.stringify(createdFace));
 
     const afterGet = await page.evaluate(async () => {
       const r = await fetch('/api/social/channels');
       return await r.text();
     });
-    check('W10② config surface never carries credential content',
-      !afterGet.includes('PLAINTEXT-SECRET-MARKER') && !afterGet.includes('PLAINTEXT-TOKEN-MARKER'),
-      `bodyHasPlaintext=${afterGet.includes('PLAINTEXT-SECRET-MARKER')}`);
+    check('SF-1d config surface never carries credential content',
+      !/PLAINTEXT-/.test(afterGet) && afterGet.includes('app_secret_ref'),
+      `hasRef=${afterGet.includes('app_secret_ref')}`);
+
+    // park the face back on not-created for the focus / negative-control legs
+    // (a connected pill would legitimately carry the banned caption 已接入).
+    resetScanFace();
+    apiState.channels = {};
+    apiState.probes = {};
+    apiState.registered = {};
+    await page.reload();
+    await openPanel(page);
 
     // W13 keyboard / focus
     await page.keyboard.press('Escape');
@@ -748,24 +839,20 @@ async function afterSuite(browser, base) {
     apiState.channels = {};
     apiState.probes = {};
     apiState.registered = {};
+    resetScanFace();
     await page.reload();
     await openPanel(page);
 
-    // FB1 lark hide: the sealed lark entry stays in the data (hidden flag) but
-    // the visible region choice is feishu-only, selected by default.
+    // FB1 lark hide — FLIPPED by social-fix (2026-09-28): the region choice
+    // was a manual-form field; with the form retired the face renders no form
+    // select at all. The seal itself is data-level (FB1b below).
     const region = await page.evaluate(() => {
       const card = document.querySelector('.social-card[data-channel="feishu"]');
       const sel = card && card.querySelector('select[data-field="region"]');
-      if (!sel) return { present: 0 };
-      return {
-        present: 1,
-        options: [...sel.options].map((o) => o.value),
-        selected: sel.value,
-        larkHiddenInData: true,
-      };
+      return { present: sel ? 1 : 0 };
     });
-    check('FB1 lark option is not rendered; region choice is feishu-only and selected',
-      region.present === 1 && region.options.length === 1 && region.options[0] === 'feishu' && region.selected === 'feishu',
+    check('FB1 (flipped, social-fix) the region choice has no manual-form face',
+      region.present === 0,
       JSON.stringify(region));
     const larkInData = await page.evaluate(() => import('/js/socialChannels.js').then((m) => {
       const ch = m.channelById('feishu');
@@ -775,14 +862,15 @@ async function afterSuite(browser, base) {
     check('FB1b lark survives in the definition layer as hidden data (sealed ≠ deleted)',
       larkInData.inData && larkInData.hidden, JSON.stringify(larkInData));
 
-    // FB2 the member allowlist slot renders on the feishu card.
+    // FB2 — FLIPPED by social-fix (2026-09-28): the allowlist slot was a
+    // manual-form field; the form is retired (scan-to-create is the only
+    // creation path), so the card renders NO [data-field] controls at all.
     const allowlist = await page.evaluate(() => {
       const card = document.querySelector('.social-card[data-channel="feishu"]');
-      const input = card && card.querySelector('[data-field="allowed_open_ids"]');
-      return { present: input ? 1 : 0, type: input ? input.type : '', value: input ? input.value : '' };
+      return { fields: card ? card.querySelectorAll('[data-field]').length : -1 };
     });
-    check('FB2 allowlist slot renders as an empty optional text field',
-      allowlist.present === 1 && allowlist.type === 'text' && allowlist.value === '',
+    check('FB2 (flipped, social-fix) manual form retired — no [data-field] controls render',
+      allowlist.fields === 0,
       JSON.stringify(allowlist));
 
     // FB3 runtime flip, positive direction: config complete + probes clean +
@@ -812,6 +900,56 @@ async function afterSuite(browser, base) {
     st = await statuses(page);
     check('FB3b probe adapterRegistered=false ⇒ feishu pill reads configuredNotLinked',
       feishu(st).status === 'configuredNotLinked', JSON.stringify(st));
+  });
+
+  // SF-2 the probe line renders as human language (social-fix): same probe
+  // face, same triples — the card shows a plain-language credential state,
+  // never the mechanical field names. The W9 legs above keep the actionable
+  // path hints for a contradicting ref (configInvalid); these two states
+  // cover the non-invalid cards.
+  await withPanel(browser, base, 'light', async (page) => {
+    // ① configured + clean probe ⇒ "credentials configured · permissions normal"
+    apiState.channels = { feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+    } } };
+    apiState.probes = { feishu: { app_secret: { exists: true, modeOk: true, readable: true } } };
+    apiState.registered = { feishu: false };
+    await page.reload();
+    await openPanel(page);
+    const ok = await page.evaluate(() => {
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
+      const hint = c.querySelector('.social-card-hint');
+      return {
+        status: c.querySelector('.social-status-pill').dataset.status,
+        hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        vocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=/g) || []).length,
+      };
+    });
+    check('SF-2① clean probe ⇒ human credential status, zero probe vocabulary',
+      ok.status === 'configuredNotLinked'
+      && (ok.hint === ZH['social.credential.ok'] || ok.hint === EN['social.credential.ok'])
+      && ok.vocab === 0, JSON.stringify(ok));
+
+    // ② the probe contradicts but the card holds no ref — the author's exact
+    //    quoted confusion (triples answering 否 on a live card) ⇒ "missing"
+    apiState.channels = {};
+    apiState.probes = { feishu: { app_secret: { exists: false, modeOk: false, readable: false } } };
+    await page.reload();
+    await openPanel(page);
+    const missing = await page.evaluate(() => {
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
+      const hint = c.querySelector('.social-card-hint');
+      return {
+        status: c.querySelector('.social-status-pill').dataset.status,
+        hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        vocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=/g) || []).length,
+      };
+    });
+    check('SF-2② contradicted probe ⇒ "missing — scan again" human state',
+      missing.status === 'notConfigured'
+      && (missing.hint === ZH['social.credential.missing'] || missing.hint === EN['social.credential.missing'])
+      && missing.vocab === 0, JSON.stringify(missing));
   });
 
   // W16 / B-1..B-7 — 375×812, both themes.
@@ -866,19 +1004,20 @@ async function afterSuite(browser, base) {
       `${JSON.stringify(closed.entry)} — elementFromPoint lands inside the entry (${closed.entry.hitTag})`);
 
     await openPanel(page);
-    // Measure the fillable state: the same designed handover expands the
-    // collapsed form, so B-3/B-6 read real fields, not the resting face.
-    await openManualFormViaScanOverlay(page);
+    // social-fix: the fillable state no longer exists (manual form retired);
+    // the measured face is the not-created card with its in-card QR.
+    await waitInlineScanQr(page);
     const geo = await page.evaluate(() => {
       const vw = window.innerWidth;
       const m = document.getElementById('social-modal').getBoundingClientRect();
-      const fields = [...document.querySelectorAll('#social-modal input, #social-modal select')]
+      const controls = [...document.querySelectorAll('#social-modal input, #social-modal select, #social-modal button')]
         .map((el) => el.getBoundingClientRect());
       const cards = [...document.querySelectorAll('.social-card')].map((c) => ({ sw: c.scrollWidth, cw: c.clientWidth }));
       // socialhide: read on the FEISHU card (the only production-visible one;
       // the sealed telegram card no longer has a DOM face).
       const card = document.querySelector('.social-card[data-channel="feishu"]');
-      const labels = [...card.querySelectorAll('.social-field')].map((l) => Math.round(l.getBoundingClientRect().left));
+      const canvas = card ? card.querySelector('[data-scan-qr] canvas') : null;
+      const cardBox = card ? card.getBoundingClientRect() : null;
       const panel = document.getElementById('social-modal');
       const overlay = document.getElementById('social-overlay');
       const offenders = [...document.querySelectorAll('body *')].filter((el) => {
@@ -889,9 +1028,9 @@ async function afterSuite(browser, base) {
         collapsed: document.body.classList.contains('sidebar-collapsed'),
         scrollWidth: document.documentElement.scrollWidth,
         modal: { left: Math.round(m.left), right: Math.round(m.right), top: Math.round(m.top), bottom: Math.round(m.bottom) },
-        clipped: fields.filter((r) => r.width <= 0 || r.right > vw).length,
+        clipped: controls.filter((r) => r.width <= 0 || r.right > vw).length,
         overflowCards: cards.filter((c) => c.sw > c.cw + 1).length,
-        labels,
+        canvasFits: !!canvas && !!cardBox && canvas.getBoundingClientRect().width <= cardBox.width + 1,
         offenders: offenders.length,
         offendersInPanel: offenders.filter((el) => panel.contains(el) || overlay.contains(el)).length,
       };
@@ -904,9 +1043,10 @@ async function afterSuite(browser, base) {
       `document.scrollWidth closed=${closed.scrollWidth} open=${geo.scrollWidth}; elements sticking out INSIDE the panel/overlay=${geo.offendersInPanel} (whole-document offenders, incl. the shell's own off-screen sliders: closed=${closed.offenders} open=${geo.offenders})`);
     check(`W16 B-2 modal inside the viewport (${theme})`,
       geo.modal.left >= 0 && geo.modal.right <= 375 && geo.modal.top >= 0 && geo.modal.bottom <= 812, JSON.stringify(geo.modal));
-    check(`W16 B-3 no clipped field (${theme})`, geo.clipped === 0, `clipped=${geo.clipped}`);
+    check(`W16 B-3 no clipped control (${theme})`, geo.clipped === 0, `clipped=${geo.clipped}`);
     check(`W16 B-4 no card overflow (${theme})`, geo.overflowCards === 0, `overflowCards=${geo.overflowCards}`);
-    check(`W16 B-6 fields single column (${theme})`, geo.labels.length > 1 && new Set(geo.labels).size === 1, `lefts=${JSON.stringify(geo.labels)}`);
+    check(`W16 B-6 (re-anchored, social-fix) in-card QR fits its card (${theme})`,
+      geo.canvasFits, `canvasFits=${geo.canvasFits}`);
     // context readings (never assertions): the two configurations the design's
     // probe did NOT measure, printed so the deviation is on the record.
     if (theme === 'light') await shot(page, 'after-375-light');
