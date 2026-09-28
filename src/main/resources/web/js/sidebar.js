@@ -833,6 +833,15 @@ export function renderSettings() {
     </div>
     <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
     <div class="settings-section">
+      <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
+           2026-09-27 19:20): one row / one button only — the list itself
+           lives in the standalone dedicated dialog (#secrets-overlay, owned
+           by js/secretsPanel.js), not inside #settings-modal. Placement per
+           brief §三: after MODEL PRESETS, before ADVANCED. -->
+      <div class="settings-section-title">${t('settings.secrets')}</div>
+      <button class="cfg-btn cfg-btn-add" id="btn-open-secrets">${t('settings.secrets')}</button>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
       ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>` : ''}

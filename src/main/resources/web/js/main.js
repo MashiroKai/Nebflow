@@ -109,6 +109,10 @@ import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBa
 // config dialog. Wiring is document-level, so it survives the friends gate
 // detaching/re-attaching the entry (see socialPanel.js initSocialPanel).
 import { initSocialPanel } from './socialPanel.js';
+// Secrets dialog (secrets-frontend batch, 2026-09-27): standalone modal opened
+// from the settings page entry row (#btn-open-secrets). Document-level wiring,
+// so it survives the settings re-renders that rebuild that button.
+import { initSecretsPanel } from './secretsPanel.js';
 import { friendsEnabled } from './featureFlags.js';
 
 // Friends release gating latch (2026-09-08): false until the first configData
@@ -4024,6 +4028,7 @@ initChatSearch();
 initUsageDashboard();
 initNeblink();
 initSocialPanel();
+initSecretsPanel();
 initUpdateCheck();
 initDropbox();
 // initContacts()/initMessages() are NOT called here — they are friends-feature
