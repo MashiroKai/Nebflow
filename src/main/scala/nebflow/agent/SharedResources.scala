@@ -248,6 +248,7 @@ case class SharedResources(
           isDispatcher = p.isDispatcher,
           flowNodeRole = p.flowNodeRole,
           projectName = p.projectName,
+          taskId = p.taskId,
           flowNodeName = p.flowNodeName,
           flowChainId = p.flowChainId,
           sandboxEnabled = p.sandboxEnabled,
