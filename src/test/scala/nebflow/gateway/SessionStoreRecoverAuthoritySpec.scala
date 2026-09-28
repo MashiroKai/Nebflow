@@ -1,7 +1,9 @@
 package nebflow.gateway
 
 import munit.CatsEffectSuite
-import nebflow.core.{GlobalSafety, PathUtil, SafetyMode}
+import nebflow.core.SessionStore
+import nebflow.core.{GlobalSafety, SafetyMode}
+import nebflow.shared.{PathUtil, SessionMeta}
 
 import java.nio.file.Files
 
@@ -49,14 +51,16 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
   private def writeGlobal(mode: String): Unit =
     os.write.over(tmp / "nebflow.json", s"""{"safety": {"defaultMode": "$mode"}}""", createFolders = true)
 
-  /** 一个索引在册的会话 + 一个磁盘上的孤儿（`<uuid>.json` 不在索引里 ⇒
-    * `loadFromIndex` → `recoverOrphans` 重建它）。孤儿**不写 safetyMode** ——
-    * 正是恢复路径要填的那一格。
-    *
-    * @param indexedSafetyMode 索引里那个在册会话的 `safetyMode`（`None` = 不写键）。
-    *   `Some("auto-all")` = **存量形态**：盘上写着顶档、全局却是 confirm-edits ——
-    *   A-10 用例用它证明"逐会话键不构成权威"，同时让该用例的观测面**可分辨**
-    *   （没有这个"盘上值 ≠ 全局值"的会话，任何断言都只能恒真）。 */
+  /**
+   * 一个索引在册的会话 + 一个磁盘上的孤儿（`<uuid>.json` 不在索引里 ⇒
+   * `loadFromIndex` → `recoverOrphans` 重建它）。孤儿**不写 safetyMode** ——
+   * 正是恢复路径要填的那一格。
+   *
+   * @param indexedSafetyMode 索引里那个在册会话的 `safetyMode`（`None` = 不写键）。
+   *   `Some("auto-all")` = **存量形态**：盘上写着顶档、全局却是 confirm-edits ——
+   *   A-10 用例用它证明"逐会话键不构成权威"，同时让该用例的观测面**可分辨**
+   *   （没有这个"盘上值 ≠ 全局值"的会话，任何断言都只能恒真）。
+   */
   private def seedDir(indexedSafetyMode: Option[String] = None): os.Path =
     val sessionsDir = tmp / "sessions"
     os.makeDir.all(sessionsDir)
@@ -73,6 +77,7 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
       """[{"role":"user","content":[{"type":"text","text":"orphan session"}]}]"""
     )
     sessionsDir
+  end seedDir
 
   private def newStore(sessionsDir: os.Path): SessionStore = SessionStore(sessionsDir, tmp / "tasks")
 
@@ -143,7 +148,7 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
       //    变异（出口 overlay 改读 meta.safetyMode / 塞回 R-1=A 撤销形态）⇒ 红。
       val exitModes: Map[String, Option[String]] =
         SessionMeta
-          .withEffectiveSafetyModes(loaded, global)
+          .withEffectiveSafetyModes(loaded, SafetyMode.toString(global))
           .asArray
           .getOrElse(Vector.empty)
           .map(j => j.hcursor.get[String]("id").toOption.getOrElse("") -> j.hcursor.get[String]("safetyMode").toOption)
@@ -163,6 +168,8 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
       )
       // ④ 对照：盘上键**没有被改写**（方案 A「读时忽略」，不是把数据改了）
       assertEquals(indexed.safetyMode, "auto-all", "reads must not rewrite the stale disk value")
+
+    end for
 
   test("recovery persists the authority value (re-read from disk after an index write)"):
     writeGlobal("confirm-edits")

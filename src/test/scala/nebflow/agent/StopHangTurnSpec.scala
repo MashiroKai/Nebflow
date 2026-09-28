@@ -7,14 +7,14 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -28,8 +28,10 @@ class StopHangTurnSpec extends CatsEffectSuite:
 
   /** 首请求永久挂起，后续请求正常回复——模拟 mock-stuck 的 stuck 语义。 */
   private class StuckThenOkLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -160,14 +162,15 @@ class StopHangTurnSpec extends CatsEffectSuite:
         _ <- childRef ! AgentCommand.Stop("stuck-task-test")
         // Stop → cancelCurrentTurn（杀挂起流）→ Behaviors.stopped → Terminated →
         // supervisor 重启 → 第二次请求（counter==2）正常回复 → child 完成 → parent 收 Completed
-        stopResult <- {
+        stopResult <-
           def go(deadline: Long): IO[Unit] =
             counter.get.flatMap { n =>
               parentEvents.get.flatMap { evs =>
                 if n >= 2 && evs.exists {
-                  case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "completed"
-                  case _ => false
-                } then IO.unit
+                    case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "completed"
+                    case _ => false
+                  }
+                then IO.unit
                 else if System.currentTimeMillis() > deadline then
                   Thread
                     .getAllStackTraces()
@@ -189,7 +192,6 @@ class StopHangTurnSpec extends CatsEffectSuite:
               }
             }
           go(System.currentTimeMillis() + 5000L).attempt
-        }
         // 诊断对比：Stop 消息未生效时，system.stop 直接终止能否触发 supervisor 重启
         _ <- stopResult match
           case Right(_) => IO.unit
@@ -215,6 +217,7 @@ class StopHangTurnSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
 end StopHangTurnSpec

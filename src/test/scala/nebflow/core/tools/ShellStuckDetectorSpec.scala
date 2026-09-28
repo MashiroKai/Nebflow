@@ -7,20 +7,20 @@ import munit.FunSuite
 import scala.concurrent.duration.*
 
 /**
-  * Issue #17 regression: the background stuck detector must not false-kill a
-  * redirected-output job whose work happens in a CHILD process.
-  *
-  * Shape (sbt run > log 2>&1 in miniature): the direct bash process is idle
-  * (waiting on its child) and the PIPE carries zero output (everything goes
-  * to a file) — but the process TREE is burning CPU in the grandchild.
-  * Pre-fix the detector sampled only the direct process → "no output AND no
-  * CPU" → false kill at ~30s+sample. Post-fix sampleProcessCpuTime sums the
-  * whole tree (ProcessHandle descendants + ps fallback) → busy tree survives.
-  *
-  * Observed live on the pre-fix host (2026-08-20 10:04): the exact issue #17
-  * error — "Command produced no output within 30 seconds and no CPU activity
-  * was detected" — while /tmp/issue17.log showed the gateway booting fine.
-  */
+ * Issue #17 regression: the background stuck detector must not false-kill a
+ * redirected-output job whose work happens in a CHILD process.
+ *
+ * Shape (sbt run > log 2>&1 in miniature): the direct bash process is idle
+ * (waiting on its child) and the PIPE carries zero output (everything goes
+ * to a file) — but the process TREE is burning CPU in the grandchild.
+ * Pre-fix the detector sampled only the direct process → "no output AND no
+ * CPU" → false kill at ~30s+sample. Post-fix sampleProcessCpuTime sums the
+ * whole tree (ProcessHandle descendants + ps fallback) → busy tree survives.
+ *
+ * Observed live on the pre-fix host (2026-08-20 10:04): the exact issue #17
+ * error — "Command produced no output within 30 seconds and no CPU activity
+ * was detected" — while /tmp/issue17.log showed the gateway booting fine.
+ */
 class ShellStuckDetectorSpec extends FunSuite:
 
   // The burner runs ~45s by design; munit's default per-test timeout is 30s.

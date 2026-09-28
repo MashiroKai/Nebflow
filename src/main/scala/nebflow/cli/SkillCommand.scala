@@ -118,5 +118,6 @@ object SkillCommand extends CliCommand:
           s"\n${r.skillsWithoutVerifiedDate} skill(s) have no parseable last_verified date.",
           "Report only — retirement decisions belong to Nebula/Manager (eco decision 1)."
         )
+    end formatAudit
   end SkillAuditCmd
 end SkillCommand

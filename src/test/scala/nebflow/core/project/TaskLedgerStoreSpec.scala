@@ -7,7 +7,7 @@ import munit.FunSuite
 
 import java.nio.file.Files
 
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.tools.{TaskTool, ToolContext}
 
 /**

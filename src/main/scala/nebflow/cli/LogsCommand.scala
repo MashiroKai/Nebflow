@@ -4,18 +4,20 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 
-/** `nebflow logs` — 日志取数面（定位 / 尾读 / 筛选），**纯读**。
-  *
-  * 禁改既有日志写面：本命令不写、不截断、不轮转、不删任何日志文件，只 `os.list`
-  * / `RandomAccessFile(read)`；logback 的 FILE appender 与各 *LogWriter 一字未动。
-  *
-  * 目录取 `ctx.configDir / "logs"`（= `PathUtil.dataRoot / "logs"`，与 logback.xml
-  * `${NEBFLOW_HOME}/logs`、各 LogWriter 的落点同源；`--home` 因此天然隔离）。
-  */
+/**
+ * `nebflow logs` — 日志取数面（定位 / 尾读 / 筛选），**纯读**。
+ *
+ * 禁改既有日志写面：本命令不写、不截断、不轮转、不删任何日志文件，只 `os.list`
+ * / `RandomAccessFile(read)`；logback 的 FILE appender 与各 *LogWriter 一字未动。
+ *
+ * 目录取 `ctx.configDir / "logs"`（= `PathUtil.dataRoot / "logs"`，与 logback.xml
+ * `${NEBFLOW_HOME}/logs`、各 LogWriter 的落点同源；`--home` 因此天然隔离）。
+ */
 object LogsCommand extends CliCommand:
   def name = "logs"
   def description = "Locate and read log files (read-only)"
   def subcommands = List(LogsPath, LogsList, LogsTail)
+
   def examples = List(
     "nebflow logs path",
     "nebflow logs list",
@@ -24,10 +26,12 @@ object LogsCommand extends CliCommand:
 
   // ── 取数面常量（纯，供 spec 直测）────────────────────────────────────────
 
-  /** 活动日志文件名 = logback.xml 的 `<file>` 末段（src/main/resources/logback.xml
-    * 的 FILE appender，唯一权威；轮转件为 `nebflow.<date>.<i>.log`）。此处刻意留
-    * 字面量并指回该处，不做第二套推导 —— logback 实际写的是哪个文件，本命令就读
-    * 哪个文件。 */
+  /**
+   * 活动日志文件名 = logback.xml 的 `<file>` 末段（src/main/resources/logback.xml
+   * 的 FILE appender，唯一权威；轮转件为 `nebflow.<date>.<i>.log`）。此处刻意留
+   * 字面量并指回该处，不做第二套推导 —— logback 实际写的是哪个文件，本命令就读
+   * 哪个文件。
+   */
   private[cli] val ActiveLogName = "nebflow.log"
 
   private[cli] val DefaultTailLines = 50
@@ -42,10 +46,11 @@ object LogsCommand extends CliCommand:
   /** `logs list` 的条目上限：目录超大时截断并显式标注剩余条数。 */
   private[cli] val MaxListEntries = 500
 
-  /** `--file` 只接受 logs 目录下的**裸文件名**：拒绝路径分隔符 / `..` / 绝对路径
-    * （路径穿越面 fail-closed）。合法日志名（`nebflow.log`、
-    * `nebflow.2026-09-19.0.log`）均不含这些形态。
-    */
+  /**
+   * `--file` 只接受 logs 目录下的**裸文件名**：拒绝路径分隔符 / `..` / 绝对路径
+   * （路径穿越面 fail-closed）。合法日志名（`nebflow.log`、
+   * `nebflow.2026-09-19.0.log`）均不含这些形态。
+   */
   private[cli] def validateLogFileName(raw: String): Either[String, String] =
     val name = raw.trim
     if name.isEmpty then Left("Log file name is empty")
@@ -56,12 +61,13 @@ object LogsCommand extends CliCommand:
       )
     else Right(name)
 
-  /** 从文件尾部向前按块读，返回最后 `n` 行（不含结尾换行产生的空行）。
-    *
-    * 有界：最多读 [[MaxTailBytes]] 或到文件头为止，**不做整文件读** —— 生产
-    * `logs/` 下单文件 20–40MB、已有 7 个轮转件。反向读保证 `-n 50` 只碰尾部
-    * 一两块；块先缓存后拼接再解码，多字节字符被块边界切开也不会碎。
-    */
+  /**
+   * 从文件尾部向前按块读，返回最后 `n` 行（不含结尾换行产生的空行）。
+   *
+   * 有界：最多读 [[MaxTailBytes]] 或到文件头为止，**不做整文件读** —— 生产
+   * `logs/` 下单文件 20–40MB、已有 7 个轮转件。反向读保证 `-n 50` 只碰尾部
+   * 一两块；块先缓存后拼接再解码，多字节字符被块边界切开也不会碎。
+   */
   private[cli] def tailLines(f: java.io.File, n: Int): List[String] =
     if n <= 0 then Nil
     else
@@ -99,7 +105,10 @@ object LogsCommand extends CliCommand:
           val split = raw.split("\n", -1).toList
           val noTrailingBlank = if split.nonEmpty && split.last.isEmpty then split.init else split
           noTrailingBlank.map(_.stripSuffix("\r")).takeRight(n)
+        end if
       finally raf.close()
+
+      end try
 
   private object LogsPath extends CliSubcommand:
     def name = "path"
@@ -120,6 +129,8 @@ object LogsCommand extends CliCommand:
           )
         else CliResult.text(file.toString) // 单行：`cat "$(nebflow logs path)"` 可直接用
       }
+
+  end LogsPath
 
   private object LogsList extends CliSubcommand:
     def name = "list"
@@ -165,7 +176,11 @@ object LogsCommand extends CliCommand:
               if truncated > 0 then List(s"  ... $truncated more entries")
               else Nil
             CliResult.Text(head :: lines ::: tail)
+          end if
+        end if
       }
+
+  end LogsList
 
   private object LogsTail extends CliSubcommand:
     def name = "tail"
@@ -184,7 +199,7 @@ object LogsCommand extends CliCommand:
         val pattern: Either[String, Option[java.util.regex.Pattern]] =
           ctx.args.get("grep") match
             case Some(g) => compilePattern(g)
-            case None    => Right(None)
+            case None => Right(None)
         validateLogFileName(rawFile) match
           case Left(err) => CliResult.Error(err)
           case Right(name) =>
@@ -213,11 +228,15 @@ object LogsCommand extends CliCommand:
                       )
                     )
                   else CliResult.Text(kept)
+            end if
+        end match
       }
     end run
 
-    /** 非法正则 ⇒ 可描述报错（说出出错位置），不让 `PatternSyntaxException` 冒到
-      * CliRouter 的通用 `Error:` 面上丢信息。 */
+    /**
+     * 非法正则 ⇒ 可描述报错（说出出错位置），不让 `PatternSyntaxException` 冒到
+     * CliRouter 的通用 `Error:` 面上丢信息。
+     */
     private def compilePattern(raw: String): Either[String, Option[java.util.regex.Pattern]] =
       if raw.isEmpty then Right(None)
       else

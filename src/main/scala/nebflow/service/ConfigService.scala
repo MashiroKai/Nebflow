@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{AtomicJson, PathUtil}
-import nebflow.llm.Config
+import nebflow.core.AtomicJson
+import nebflow.shared.{Config, PathUtil}
 
 object ConfigService:
 
@@ -83,9 +83,9 @@ object ConfigService:
       }
     }
 
-    // #339：llm.model 链校验段已删——字段退役（decoder 容忍但忽略）。模型链引用的
-    // 清理/改写由 scrubAgentModelRefs / rewriteAgentModelRefs 承担（仅 agent.json
-    // model 键，见 updateConfig 的引用清理段）。
+    // #339：llm.model 链校验段已删——字段退役（decoder 容忍但忽略；boot 迁移
+    // 播种成默认 preset 后原子剥离）。preset 引用的清理/改写由 scrubPresetRefs
+    // / rewritePresetRefs 承担（已存在）。
 
     errors.toList
   end validateConfigJson
@@ -110,7 +110,7 @@ object ConfigService:
         // content is a rename. Masked apiKeys on renamed providers are restored
         // from the old entry (mergeConfig cannot preserve them — the new name has
         // no existing twin). (#339：llm.model 链的 rename 改写已删——字段退役；
-        // agent.json model 键的改写在下方的 rewriteAgentModelRefs。)
+        // preset 引用的改写在下方的 rewritePresetRefs。)
         val renames = detectProviderRenames(existing, incomingRaw)
         val incoming0 = restoreRenamedSecrets(incomingRaw, existing, renames)
         (existing, incoming0, renames)
@@ -148,31 +148,35 @@ object ConfigService:
               .flatMap {
                 case Left(e) => IO.pure(Left(e.getMessage))
                 case Right(_) =>
-                  // Reference cleanup across agent.json (all three layers):
-                  // pure deletes scrub, renames rewrite old→new.
+                  // Reference cleanup across agent.json (all three layers) and
+                  // model presets: pure deletes scrub, renames rewrite old→new.
                   scrubAgentModelRefs(pureDeletes) *>
-                    rewriteAgentModelRefs(renames).as(Right(()))
+                    rewriteAgentModelRefs(renames) *>
+                    scrubPresetRefs(pureDeletes) *>
+                    rewritePresetRefs(renames).as(Right(()))
               }
+        end if
       }
     }
   end updateConfig
 
-  /** 定向写 `safety.defaultMode`（= 应用的权限模式，全局唯一持久权威源）。
-    *
-    * 2026-09-12 权限全局单一权威源批（设计 §5.1 / §13 #16）：REST
-    * `PUT /api/safety/mode` 与 Settings UI 的写入口。
-    *
-    * 形态 = 「读双读路径 → parse → 定向覆写子树 → 写品牌名」，照
-    * `WebSocketRoutes.persistMcpServerEnabled` 的既有先例：
-    *   · **整体包在 `writeLocked`** 内 —— 与其它 read-modify-write 写者（updateConfig
-    *     / persistWorkSchedule / persistThinkingConfig / persistMcpServerEnabled /
-    *     setToolResultTtl）串行，避免同秒双写互踩（`:14-23` 注释记载的踩踏族）；
-    *   · **不走 `mergeConfig`** ⇒ `null = 删键`语义不参与（调用方已做枚举白名单校验，
-    *     只传三档显式值）；
-    *   · 密钥遮蔽 / `***` 规则不涉及 `safety` 子树；
-    *   · 写盘失败**上浮**（fail-loud，与冻结修复批同族）——调用方据此回 4xx/5xx，
-    *     不让用户看到"已保存"而实际未落盘。
-    */
+  /**
+   * 定向写 `safety.defaultMode`（= 应用的权限模式，全局唯一持久权威源）。
+   *
+   * 2026-09-12 权限全局单一权威源批（设计 §5.1 / §13 #16）：REST
+   * `PUT /api/safety/mode` 与 Settings UI 的写入口。
+   *
+   * 形态 = 「读双读路径 → parse → 定向覆写子树 → 写品牌名」，照
+   * `WebSocketRoutes.persistMcpServerEnabled` 的既有先例：
+   *   · **整体包在 `writeLocked`** 内 —— 与其它 read-modify-write 写者（updateConfig
+   *     / persistWorkSchedule / persistThinkingConfig / persistMcpServerEnabled /
+   *     setToolResultTtl）串行，避免同秒双写互踩（`:14-23` 注释记载的踩踏族）；
+   *   · **不走 `mergeConfig`** ⇒ `null = 删键`语义不参与（调用方已做枚举白名单校验，
+   *     只传三档显式值）；
+   *   · 密钥遮蔽 / `***` 规则不涉及 `safety` 子树；
+   *   · 写盘失败**上浮**（fail-loud，与冻结修复批同族）——调用方据此回 4xx/5xx，
+   *     不让用户看到"已保存"而实际未落盘。
+   */
   def setSafetyDefaultMode(mode: String): IO[Unit] =
     writeLocked {
       IO.blocking {
@@ -183,17 +187,19 @@ object ConfigService:
       }
     }
 
-  /** 定向写顶层 `llmLog` 节（LLM 日志记录开关的持久化权威源）。
-    *
-    * 2026-09-13「LLM 日志记录默认关」批（D-A：开关不持久化 ⇒ 宿主重启回落 true）：
-    * WS `setLlmLog` 的写入口。只有落盘成功，调用方才热更 `LlmLogWriter` 内存态
-    * （持久化优先排序，镜像 `setToolResultTtl` 的「persist 成功才热更 ref」）——
-    * 保证「显式改动过的值跨重启保持」不被「内存已改、盘上未改」的窗口破坏。
-    *
-    * 形态照 [[setSafetyDefaultMode]]：整体包在 `writeLocked` 内与其它
-    * read-modify-write 写者串行；只覆写顶层 `llmLog` 节的 `enabled`（**其余顶层
-    * 键与本节其它字段原样保留**；`llmLog` 无其它写者）；写盘走既有
-    * [[nebflow.core.AtomicJson]]（temp + ATOMIC_MOVE）；失败**上浮**（fail-loud）。 */
+  /**
+   * 定向写顶层 `llmLog` 节（LLM 日志记录开关的持久化权威源）。
+   *
+   * 2026-09-13「LLM 日志记录默认关」批（D-A：开关不持久化 ⇒ 宿主重启回落 true）：
+   * WS `setLlmLog` 的写入口。只有落盘成功，调用方才热更 `LlmLogWriter` 内存态
+   * （持久化优先排序，镜像 `setToolResultTtl` 的「persist 成功才热更 ref」）——
+   * 保证「显式改动过的值跨重启保持」不被「内存已改、盘上未改」的窗口破坏。
+   *
+   * 形态照 [[setSafetyDefaultMode]]：整体包在 `writeLocked` 内与其它
+   * read-modify-write 写者串行；只覆写顶层 `llmLog` 节的 `enabled`（**其余顶层
+   * 键与本节其它字段原样保留**；`llmLog` 无其它写者）；写盘走既有
+   * [[nebflow.core.AtomicJson]]（temp + ATOMIC_MOVE）；失败**上浮**（fail-loud）。
+   */
   def setLlmLogEnabled(enabled: Boolean): IO[Unit] =
     writeLocked {
       IO.blocking {
@@ -359,35 +365,49 @@ object ConfigService:
         val keyA = str(a, "apiKey"); val keyB = str(b, "apiKey")
         keyA == keyB || keyB == "***" || keyB.isEmpty
       }
-    existingProviders.keys.toSet.diff(incomingProviders.keys.toSet).toList.sorted
+    existingProviders.keys.toSet
+      .diff(incomingProviders.keys.toSet)
+      .toList
+      .sorted
       .foldLeft((List.empty[(String, String)], added)) { case ((acc, candidates), old) =>
         candidates.find(newName => sameProvider(existingProviders(old), incomingProviders(newName))) match
           case Some(newName) => ((old, newName) :: acc, candidates - newName)
           case None => (acc, candidates)
-      }._1.reverse
+      }
+      ._1
+      .reverse
   end detectProviderRenames
 
-  /** Restore masked/empty apiKeys on renamed providers. The frontend sends a
-    * renamed provider with apiKey "***" (redacted round-trip); mergeConfig's
-    * secret-preserving "***" rule only fires on same-key recursive merge, so a
-    * delete-old + add-new rename would write the mask literally — and the old
-    * provider (holding the real key) is being deleted. Copy the real key from
-    * the existing old-name provider into the incoming new-name one. */
+  /**
+   * Restore masked/empty apiKeys on renamed providers. The frontend sends a
+   * renamed provider with apiKey "***" (redacted round-trip); mergeConfig's
+   * secret-preserving "***" rule only fires on same-key recursive merge, so a
+   * delete-old + add-new rename would write the mask literally — and the old
+   * provider (holding the real key) is being deleted. Copy the real key from
+   * the existing old-name provider into the incoming new-name one.
+   */
   private def restoreRenamedSecrets(incoming: String, existing: String, renames: List[(String, String)]): String =
     if renames.isEmpty then incoming
     else
       def providerApiKey(raw: String, name: String): Option[String] =
         parse(raw).toOption.flatMap(
-          _.hcursor.downField("llm").downField("providers").downField(name).downField("apiKey").as[Option[String]].toOption.flatten
+          _.hcursor
+            .downField("llm")
+            .downField("providers")
+            .downField(name)
+            .downField("apiKey")
+            .as[Option[String]]
+            .toOption
+            .flatten
         )
       renames.foldLeft(incoming) { (acc, rename) =>
         val (oldName, newName) = rename
         (providerApiKey(acc, newName), providerApiKey(existing, oldName)) match
           case (Some(masked), Some(real)) if masked == "***" || masked.isEmpty =>
             (for
-              json    <- parse(acc).toOption
-              root    <- json.asObject
-              llmObj  <- json.hcursor.downField("llm").focus.flatMap(_.asObject)
+              json <- parse(acc).toOption
+              root <- json.asObject
+              llmObj <- json.hcursor.downField("llm").focus.flatMap(_.asObject)
               provObj <- llmObj.toMap.get("providers").flatMap(_.asObject)
               newProv <- provObj.toMap.get(newName).flatMap(_.asObject)
             yield
@@ -397,12 +417,15 @@ object ConfigService:
               Json.fromFields(root.toMap.updated("llm", newLlm)).noSpaces
             ).getOrElse(acc)
           case _ => acc
+        end match
       }
   end restoreRenamedSecrets
 
-  /** Rewrite `oldName/…` refs to `newName/…` in an agent.json model config.
-    * Structural mirror of scrubAgentJson — refs are rewritten in place, the
-    * model selection survives the rename. */
+  /**
+   * Rewrite `oldName/…` refs to `newName/…` in an agent.json model config.
+   * Structural mirror of scrubAgentJson — refs are rewritten in place, the
+   * model selection survives the rename.
+   */
   private def rewriteAgentJson(json: Json, oldName: String, newName: String): Json =
     val oldPrefix = s"$oldName/"; val newPrefix = s"$newName/"
     def rw(ref: String) = if ref.startsWith(oldPrefix) then newPrefix + ref.stripPrefix(oldPrefix) else ref
@@ -438,4 +461,105 @@ object ConfigService:
           case Left(_) => () // skip unparseable file, never clobber it
       }
     }
+
+  // ============================================================
+  // Provider delete/rename → model-presets.json cleanup (B2)
+  // ============================================================
+
+  // def (not val) — 同 `configPath` 的既有理由（`:31-33`）：val 会把**首个触碰
+  // ConfigService 对象时**的 dataRoot 冻进路径（object 初始化逐 val 求值），
+  // 后续 setDataRoot 重定向失效 ⇒ 跨 suite 顺序相关的假红（实测：新 spec 在自己
+  // 的隔离 home 下触碰本对象 ⇒ 本路径被冻到该临时目录，ConfigServiceSpec 的
+  // preset 改写断言随即失败）。生产端 dataRoot 启动即定，行为零变。
+  private def presetsPath: os.Path = PathUtil.dataRoot / "model-presets.json"
+
+  /** Atomically write a JSON file (temp + rename), mirroring PresetStore.save. */
+  private def atomicWriteJson(path: os.Path, json: Json): Unit =
+    os.makeDir.all(path / os.up)
+    val tmp = path / os.up / s".${path.last}.${System.nanoTime()}.tmp"
+    os.write(tmp, json.noSpaces)
+    os.move.over(tmp, path)
+
+  /**
+   * Apply a JSON transform to model-presets.json. Skips when the file is
+   * absent — provider cleanup must NOT initialize the presets store
+   * (PresetStore.load owns the create/re-init semantics). Never clobbers an
+   * unparseable file. Writes back only when something actually changed.
+   */
+  private def editPresets(transform: Json => Json): IO[Unit] = IO.blocking {
+    if os.exists(presetsPath) then
+      parse(os.read(presetsPath)) match
+        case Right(json) =>
+          val updated = transform(json)
+          if updated != json then atomicWriteJson(presetsPath, updated)
+        case Left(_) => ()
+  }
+
+  /**
+   * Transform every preset's {preferred, fallbacks} chain. Presets whose
+   * chain is unchanged are left byte-identical; the file object is rebuilt
+   * only when at least one preset actually changed.
+   */
+  private def mapPresetChains(
+    json: Json,
+    f: (Option[String], List[String]) => (Option[String], List[String])
+  ): Json =
+    json.hcursor.downField("presets").focus.flatMap(_.asObject) match
+      case None => json
+      case Some(presetsObj) =>
+        var touched = false
+        val newPresets: List[(String, Json)] = presetsObj.toList.map { case (key, preset) =>
+          val updated = preset.asObject match
+            case Some(pObj) =>
+              val preferred = pObj.toMap.get("preferred").flatMap(_.asString)
+              val fallbacks = pObj.toMap
+                .get("fallbacks")
+                .flatMap(_.asArray.map(_.toList.flatMap(_.asString)))
+                .getOrElse(Nil)
+              val (newPref, newFbs) = f(preferred, fallbacks)
+              if newPref != preferred || newFbs != fallbacks then
+                touched = true
+                Json.fromFields(
+                  pObj.toMap.updated("preferred", newPref.asJson).updated("fallbacks", newFbs.asJson)
+                )
+              else preset
+            case None => preset
+          key -> updated
+        }
+        if !touched then json
+        else
+          json.asObject
+            .map(o => Json.fromFields(o.toMap.updated("presets", Json.fromFields(newPresets))))
+            .getOrElse(json)
+
+  /**
+   * Scrub deleted-provider refs from every preset chain. A scrubbed
+   * preferred promotes from the fallbacks head (mirrors the global-chain
+   * scrub); a fully emptied chain resolves to the default preset / global
+   * chain at agent-load time.
+   */
+  private def scrubPresetRefs(deleted: List[String]): IO[Unit] =
+    editPresets(json =>
+      deleted.foldLeft(json) { (acc, provider) =>
+        val prefix = s"$provider/"
+        mapPresetChains(
+          acc,
+          (preferred, fallbacks) =>
+            val prefTouched = preferred.exists(_.startsWith(prefix))
+            val fbs = fallbacks.filterNot(_.startsWith(prefix))
+            if prefTouched then (fbs.headOption, fbs.drop(1)) else (preferred, fbs)
+        )
+      }
+    )
+
+  /** Rewrite renamed-provider refs old→new in every preset chain. */
+  private def rewritePresetRefs(renames: List[(String, String)]): IO[Unit] =
+    editPresets(json =>
+      renames.foldLeft(json) { (acc, rename) =>
+        val (oldName, newName) = rename
+        val oldPrefix = s"$oldName/"; val newPrefix = s"$newName/"
+        def rw(ref: String) = if ref.startsWith(oldPrefix) then newPrefix + ref.stripPrefix(oldPrefix) else ref
+        mapPresetChains(acc, (preferred, fallbacks) => (preferred.map(rw), fallbacks.map(rw)))
+      }
+    )
 end ConfigService

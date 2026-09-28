@@ -117,7 +117,7 @@ class SessionMetaTaskBadgeSpec extends FunSuite:
         meta("dispatcher-aaa", taskId = Some("12")),
         meta("dispatcher-bbb", taskId = Some("35"))
       ),
-      nebflow.core.SafetyMode.ConfirmEdits
+      "confirm-edits"
     )
     val enriched = SessionMeta.withTaskAttribution(base, Map("dispatcher-aaa" -> "12", "dispatcher-bbb" -> "35"), titles)
     val arr = enriched.asArray.get
@@ -132,7 +132,7 @@ class SessionMetaTaskBadgeSpec extends FunSuite:
   test("(c) unattributed session in a mixed list stays byte-identical (empty state)") {
     val base = SessionMeta.withEffectiveSafetyModes(
       List(meta("dispatcher-aaa", taskId = Some("12")), meta("uuid-main")),
-      nebflow.core.SafetyMode.ConfirmEdits
+      "confirm-edits"
     )
     val enriched = SessionMeta.withTaskAttribution(base, Map("dispatcher-aaa" -> "12"), titles)
     val arr = enriched.asArray.get
@@ -142,7 +142,7 @@ class SessionMetaTaskBadgeSpec extends FunSuite:
   }
 
   test("(c) title-map miss degrades to taskId alone (ledger read failure never fails the exit)") {
-    val base = SessionMeta.withEffectiveSafetyModes(List(meta("dispatcher-aaa")), nebflow.core.SafetyMode.ConfirmEdits)
+    val base = SessionMeta.withEffectiveSafetyModes(List(meta("dispatcher-aaa")), "confirm-edits")
     val enriched = SessionMeta.withTaskAttribution(base, Map("dispatcher-aaa" -> "99"), Map.empty)
     val s = enriched.asArray.get.head
     assertEquals(s.hcursor.get[String]("taskId"), Right("99"))
@@ -150,7 +150,7 @@ class SessionMetaTaskBadgeSpec extends FunSuite:
   }
 
   test("(c) empty attribution map = identity (no keys anywhere, zero waste)") {
-    val base = SessionMeta.withEffectiveSafetyModes(List(meta("a"), meta("b")), nebflow.core.SafetyMode.ConfirmEdits)
+    val base = SessionMeta.withEffectiveSafetyModes(List(meta("a"), meta("b")), "confirm-edits")
     val enriched = SessionMeta.withTaskAttribution(base, Map.empty, Map.empty)
     assertEquals(enriched, base)
   }

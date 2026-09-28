@@ -8,13 +8,13 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk, ToolCall}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig, ToolCall}
 
 import scala.concurrent.duration.*
 
@@ -38,6 +38,7 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "bg-e2e-agent")
+
   // tools:["Bash"]：非收敛 agent 的声明式授予（buildAllowedToolSet legacy 分支）
   os.write.over(
     tempRoot / "agents" / "bg-e2e-agent" / "agent.json",
@@ -47,38 +48,50 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent。
   // E2E 需真调 Bash：general 声明 tools:["Bash"]（非收敛 agent 声明式授予）。
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":["Bash"],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":["Bash"],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 三段式 stub：r1 = Bash 工具调用（真后台命令）；r2 = turn 1 收尾文本；
-    * r3+（通知唤醒轮）= 记录请求全文（断言真实后台输出到达）+ 最终文本。 */
+  /**
+   * 三段式 stub：r1 = Bash 工具调用（真后台命令）；r2 = turn 1 收尾文本；
+   * r3+（通知唤醒轮）= 记录请求全文（断言真实后台输出到达）+ 最终文本。
+   */
   private class BgE2eLlm:
     val requests: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         Stream.eval(requests.update(_ :+ req.messages.map(_.textContent).mkString("\n"))).drain ++
           Stream.eval(requests.get.map(_.size)).flatMap { n =>
             val chunk: StreamChunk = n match
               case 1 =>
                 StreamChunk.ToolCallChunk(
-                  ToolCall("tu-bg-1", "Bash", JsonObject(
-                    "command" -> Json.fromString("echo bg-gate-e2e-ok && sleep 6"),  // 6s 窗口：hold 断言轮询从容
-                    "description" -> Json.fromString("e2e bg marker task"),
-                    "run_in_background" -> Json.fromBoolean(true)
-                  ))
+                  ToolCall(
+                    "tu-bg-1",
+                    "Bash",
+                    JsonObject(
+                      "command" -> Json.fromString("echo bg-gate-e2e-ok && sleep 6"), // 6s 窗口：hold 断言轮询从容
+                      "description" -> Json.fromString("e2e bg marker task"),
+                      "run_in_background" -> Json.fromBoolean(true)
+                    )
+                  )
                 )
               case 2 => StreamChunk.TextDelta("turn1-done")
               case _ => StreamChunk.TextDelta("final-after-bg")
             Stream(chunk, StreamChunk.Done(None, None))
           }
+
+  end BgE2eLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -114,7 +127,11 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
       sandboxConfig = nebflow.core.sandbox.SandboxConfig(enabled = false)
     )
 
-  private def registerRecorder(res: SharedResources, system: ActorSystem, sid: String): IO[Ref[IO, List[AgentCommand]]] =
+  private def registerRecorder(
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String
+  ): IO[Ref[IO, List[AgentCommand]]] =
     for
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
       behavior =
@@ -135,7 +152,9 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
       recorded <- registerRecorder(res, system, "nebula-root")
       store <- FlowMapStore.open("bg-e2e", ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -149,7 +168,12 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
         reportGateHold = Some(false),
         bgGateCompletionHold = Some(true)
       )
-      pd = ProjectDef(name = "bg-e2e", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = "bg-e2e",
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
       ctx = ToolContext(
@@ -159,27 +183,38 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
         sharedResources = Some(res),
         actorSystem = Some(system)
       )
-      _ <- NodeEditTool.call(
-        Json.obj("project" -> "bg-e2e".asJson, "nodename" -> "e2e-a".asJson,
-          "description" -> "e2e bg gate node".asJson, "task" -> "run the marker bg task".asJson,
-          "plugins" -> Json.arr(),
-          // 2026-09-12 批 A1：投递到根的断言需要**显式门集**（`{pass,failed}/result`）；
-          // bare `"Nebula"` 今日 = 纯出口标记（零根投递）。
-          "out" -> "(pass,failed)Nebula".asJson).asObject.get,
-        ctx
-      ).map {
-        case Left(err) => fail(s"NodeEdit failed: $err")
-        case Right(_)  => ()
-      }
+      _ <- NodeEditTool
+        .call(
+          Json
+            .obj(
+              "project" -> "bg-e2e".asJson,
+              "nodename" -> "e2e-a".asJson,
+              "description" -> "e2e bg gate node".asJson,
+              "task" -> "run the marker bg task".asJson,
+              "plugins" -> Json.arr(),
+              // 2026-09-12 批 A1：投递到根的断言需要**显式门集**（`{pass,failed}/result`）；
+              // bare `"Nebula"` 今日 = 纯出口标记（零根投递）。
+              "out" -> "(pass,failed)Nebula".asJson
+            )
+            .asObject
+            .get,
+          ctx
+        )
+        .map {
+          case Left(err) => fail(s"NodeEdit failed: $err")
+          case Right(_) => ()
+        }
       // turn 1 结束（agent Idle）——此时真后台任务（sleep 2）仍在跑
       _ <- waitUntil(20.seconds) {
         res.agentRegistry.get.map { reg =>
           reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-            case Some(rec) => rec.status == nebflow.agent.AgentStatus.Idle
-            case None      => false
+            case Some(rec) => rec.status == nebflow.actor.AgentStatus.Idle
+            case None => false
         }
       }
-      nodeSid <- res.agentRegistry.get.map(_.values.find(r => r.kind == AgentKind.Flow).map(_.sessionId)).map(_.getOrElse(fail("node session missing")))
+      nodeSid <- res.agentRegistry.get
+        .map(_.values.find(r => r.kind == AgentKind.Flow).map(_.sessionId))
+        .map(_.getOrElse(fail("node session missing")))
       // 桥 hold 铁证：真实 BashTool 登记（emitBgTaskStarted）可见 + 节点未终态。
       // 注意：AgentRecord.status 默认 Idle（spawn 即 Idle，turn 开始才翻
       // Processing）——上面的 Idle 轮询可能停在 turn 前窗口，等登记完成再快照。
@@ -190,7 +225,7 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
       _ <- waitUntil(30.seconds) {
         store.snapshot.map(_.nodes.values.find(_.name == "e2e-a")).flatMap {
           case Some(n) => IO.pure(NodeLifecycle.Terminal.contains(n.status))
-          case None    => IO.pure(false)
+          case None => IO.pure(false)
         }
       }
       done <- store.snapshot.map(_.nodes.values.find(_.name == "e2e-a")).map(_.getOrElse(fail("node missing")))
@@ -201,7 +236,7 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
       _ <- waitUntil(10.seconds) {
         recorded.get.map(_.exists {
           case m: AgentCommand.ImmediateInput => m.text.contains("[Node 'e2e-a' completed]")
-          case _                              => false
+          case _ => false
         })
       }
       imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
@@ -212,15 +247,22 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
     yield
       assert(waitingMid.nonEmpty, s"real bg task must be registered and visible to the gate: ${waitingMid}")
       assertEquals(mid.status, NodeLifecycle.Running, "node must stay Running while real bg task pending (hold)")
-      assertEquals(done.status, NodeLifecycle.Completed, s"node must complete after real bg task finished: ${done.result}")
+      assertEquals(
+        done.status,
+        NodeLifecycle.Completed,
+        s"node must complete after real bg task finished: ${done.result}"
+      )
       assertEquals(done.result, Some("final-after-bg"), "result must be the last turn text")
-      assert(reqs.exists(r => r.contains("[Background task completed]") && r.contains("bg-gate-e2e-ok")),
-        "wake turn must receive the completion notification carrying REAL bg output")
+      assert(
+        reqs.exists(r => r.contains("[Background task completed]") && r.contains("bg-gate-e2e-ok")),
+        "wake turn must receive the completion notification carrying REAL bg output"
+      )
       assert(imms.exists(_.text.contains("[Node 'e2e-a' completed]")), "delivery must happen after release")
+    end for
   }
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {

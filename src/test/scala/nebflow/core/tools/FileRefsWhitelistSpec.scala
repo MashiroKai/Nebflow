@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.gateway.WebSocketRoutes
+import nebflow.gateway.NfFilePolicy
 
 /**
  * A14（C 批 / 票据腿）——工具侧扩展名白名单表与端点侧白名单表必须逐项相等。
@@ -18,8 +18,8 @@ import nebflow.gateway.WebSocketRoutes
  */
 class FileRefsWhitelistSpec extends FunSuite:
 
-  test("A14: FileRefs.AllowedExtensions == WebSocketRoutes.NfFileAllowedExt (no table drift)") {
-    assertEquals(FileRefs.AllowedExtensions, WebSocketRoutes.NfFileAllowedExt)
+  test("A14: FileRefs.AllowedExtensions == NfFilePolicy.NfFileAllowedExt (no table drift)") {
+    assertEquals(FileRefs.AllowedExtensions, NfFilePolicy.NfFileAllowedExt)
   }
 
   test("A14: the mirrored table is non-empty and covers the Canvas companions") {
@@ -57,8 +57,8 @@ class FileRefsWhitelistSpec extends FunSuite:
   // impossible to ship: the tool-side constant must equal the endpoint's list
   // item for item, and the prose the model reads must name it.
 
-  test("A1-mirror: FileRefs.DataRootServedNamespaces == WebSocketRoutes.NfDataRootAllowlist (no namespace drift)") {
-    assertEquals(FileRefs.DataRootServedNamespaces, WebSocketRoutes.NfDataRootAllowlist)
+  test("A1-mirror: FileRefs.DataRootServedNamespaces == NfFilePolicy.NfDataRootAllowlist (no namespace drift)") {
+    assertEquals(FileRefs.DataRootServedNamespaces, NfFilePolicy.NfDataRootAllowlist)
   }
 
   test("A1-mirror: non-empty, carries `docs`, keeps the pre-batch entries, renders to the tool-face text") {
@@ -69,7 +69,9 @@ class FileRefsWhitelistSpec extends FunSuite:
     assert(List("projects", "uploads", "plots", "workspace-items", "voice-models").forall(ns.contains))
     assertEquals(FileRefs.DataRootServedNamespacesText, ns.map(_ + "/**").mkString(", "))
     assert(FileRefs.DataRootServedNamespacesText.contains("docs/**"))
-    assert(!FileRefs.DataRootServedNamespacesText.startsWith(",") && !FileRefs.DataRootServedNamespacesText.contains("  "))
+    assert(
+      !FileRefs.DataRootServedNamespacesText.startsWith(",") && !FileRefs.DataRootServedNamespacesText.contains("  ")
+    )
   }
 
   test("A1-mirror: the shipped tool descriptions name every served namespace (prose cannot drift)") {
@@ -87,12 +89,12 @@ class FileRefsWhitelistSpec extends FunSuite:
     // Pure reads (nfCredentialDeny touches no filesystem: it normalizes and
     // compares prefixes), so this pins the widening without writing anything.
     val root = java.nio.file.Paths.get("/tmp/nebflow-ns-mirror-spec/dataroot").normalize()
-    val policy = WebSocketRoutes.NfPathPolicy(
+    val policy = NfFilePolicy.NfPathPolicy(
       root,
       java.nio.file.Paths.get("/tmp/nebflow-ns-mirror-spec/ws"),
       Set.empty
     )
-    def deny(rel: String): Option[String] = WebSocketRoutes.nfCredentialDeny(root.resolve(rel), policy)
+    def deny(rel: String): Option[String] = NfFilePolicy.nfCredentialDeny(root.resolve(rel), policy)
     assertEquals(deny("docs/x.svg"), None, "the batch: docs/** is served")
     assertEquals(deny("docs/nested/deep/x.svg"), None, "…including nested subtrees")
     List(
@@ -107,3 +109,4 @@ class FileRefsWhitelistSpec extends FunSuite:
       "docsx/x.svg"
     ).foreach(rel => assert(deny(rel).isDefined, s"$rel must STAY refused (one-entry widening)"))
   }
+end FileRefsWhitelistSpec

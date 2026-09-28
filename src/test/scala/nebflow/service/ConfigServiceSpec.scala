@@ -5,7 +5,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.Json
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.compiletime.uninitialized
 
@@ -154,8 +154,8 @@ class ConfigServiceSpec extends FunSuite:
   }
 
   test("updateConfig ignores dangling llm.model refs (#339: field retired, validation removed)") {
-    // #339：llm.model 链校验段已删——字段退役（decoder 容忍）。
-    // 悬空引用不再拒绝。
+    // #339：llm.model 链校验段已删——字段退役（decoder 容忍、boot 迁移剥离）。
+    // 悬空引用不再拒绝：preset 引用的清理由 scrubPresetRefs 承担。
     val cfg =
       """{"llm":{"providers":{"Zai":null},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     val result = ConfigService.updateConfig(cfg).unsafeRunSync()
@@ -180,7 +180,7 @@ class ConfigServiceSpec extends FunSuite:
     // 死字段原样保留（不在 updateConfig 的清理职责内）
     assertEquals(modelHc.downField("default").as[String], Right("Zai/m1"))
     // 整个配置仍可解码（llm.model → Option，Some 容忍）
-    assert(nebflow.llm.Config.loadServiceConfig().llm.model.map(_.default).contains("Zai/m1"))
+    assert(nebflow.shared.Config.loadServiceConfig().llm.model.map(_.default).contains("Zai/m1"))
   }
 
   // ── B2: provider rename → reference rewrite ─────────────
@@ -238,7 +238,8 @@ class ConfigServiceSpec extends FunSuite:
 
     // #339：llm.model 校验/改写均已删——incoming 带旧名 refs 直接接受（无
     // 校验可触发拒绝），死字段按 merge 原样保留。
-    val incoming = s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
+    val incoming =
+      s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
@@ -249,29 +250,111 @@ class ConfigServiceSpec extends FunSuite:
     )
   }
 
+  test("updateConfig pure delete does not create model-presets.json when absent") {
+    val seed =
+      s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
+          "glm"
+        ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
+    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    val presetsFile = PathUtil.dataRoot / "model-presets.json"
+    if os.exists(presetsFile) then os.remove(presetsFile)
+
+    val result = ConfigService.updateConfig("""{"llm":{"providers":{"Zai":null}}}""").unsafeRunSync()
+    assertEquals(result, Right(()))
+    // Provider cleanup must NOT initialize the presets store (PresetStore.load
+    // owns the create/re-init semantics)
+    assert(!os.exists(presetsFile), "model-presets.json must not be created by provider cleanup")
+  }
+
+  test("updateConfig pure delete scrubs preset refs with fallback promotion") {
+    val seed =
+      s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
+          "glm"
+        ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
+    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+
+    val presets =
+      """{"defaultPreset":"general","presets":{
+        "coding":{"name":"coding","description":"d","preferred":"Zai/m1","fallbacks":["glm/m1","Zai/m2"]},
+        "writing":{"name":"writing","description":"w","preferred":"glm/m1","fallbacks":["Zai/m2"]},
+        "clean":{"name":"clean","description":"c","preferred":"glm/m1","fallbacks":["glm/m2"]}
+      }}""".replaceAll("\n\\s*", "")
+    os.write.over(PathUtil.dataRoot / "model-presets.json", presets)
+
+    val result = ConfigService.updateConfig("""{"llm":{"providers":{"Zai":null}}}""").unsafeRunSync()
+    assertEquals(result, Right(()))
+
+    val saved = parse(os.read(PathUtil.dataRoot / "model-presets.json")).toOption.get
+    assertEquals(saved.hcursor.downField("defaultPreset").as[String], Right("general"))
+    val presetsHc = saved.hcursor.downField("presets")
+    // coding: scrubbed preferred promotes from fallbacks head; Zai/m2 filtered
+    assertEquals(presetsHc.downField("coding").downField("preferred").as[String], Right("glm/m1"))
+    assertEquals(presetsHc.downField("coding").downField("fallbacks").as[List[String]], Right(Nil))
+    // writing: preferred kept, Zai fallback filtered
+    assertEquals(presetsHc.downField("writing").downField("preferred").as[String], Right("glm/m1"))
+    assertEquals(presetsHc.downField("writing").downField("fallbacks").as[List[String]], Right(Nil))
+    // clean: untouched — other fields preserved
+    assertEquals(presetsHc.downField("clean").downField("preferred").as[String], Right("glm/m1"))
+    assertEquals(presetsHc.downField("clean").downField("fallbacks").as[List[String]], Right(List("glm/m2")))
+    assertEquals(presetsHc.downField("clean").downField("description").as[String], Right("c"))
+  }
+
+  test("updateConfig rename rewrites preset refs and preserves other fields") {
+    val seed =
+      s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
+          "glm"
+        ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
+    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+
+    val presets =
+      """{"defaultPreset":"general","presets":{
+        "coding":{"name":"coding","description":"d","preferred":"Zai/m1","fallbacks":["glm/m1","Zai/m2"]}
+      }}""".replaceAll("\n\\s*", "")
+    os.write.over(PathUtil.dataRoot / "model-presets.json", presets)
+
+    val incoming = s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked}}}"""
+    val result = ConfigService.updateConfig(incoming).unsafeRunSync()
+    assertEquals(result, Right(()))
+
+    val saved = parse(os.read(PathUtil.dataRoot / "model-presets.json")).toOption.get
+    val coding = saved.hcursor.downField("presets").downField("coding")
+    assertEquals(coding.downField("preferred").as[String], Right("zai-new/m1"))
+    assertEquals(coding.downField("fallbacks").as[List[String]], Right(List("glm/m1", "zai-new/m2")))
+    // untouched sibling fields survive the rewrite
+    assertEquals(coding.downField("name").as[String], Right("coding"))
+    assertEquals(coding.downField("description").as[String], Right("d"))
+  }
 
   // ── runtime-authoritative overrides（冻结修复 2026-08-27）：陈旧快照不得回滚 ──
 
-  /** Seed nebflow.json with a frozen schedule + provider, mirroring the on-disk
-    * state after the user has configured a freeze schedule. */
+  /**
+   * Seed nebflow.json with a frozen schedule + provider, mirroring the on-disk
+   * state after the user has configured a freeze schedule.
+   */
   private def seedConfigWithSchedule(enabled: Boolean, segs: String): Unit =
     os.write.over(
       PathUtil.dataRoot / "nebflow.json",
-      s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider("glm").noSpaces}}}}""",
+      s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider(
+          "glm"
+        ).noSpaces}}}}""",
       createFolders = true
     )
 
   private def readWorkSchedule(): Option[Json] =
     parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
 
-  test("updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)") {
+  test(
+    "updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)"
+  ) {
     seedConfigWithSchedule(enabled = true, segs = """[{"start":"09:00","end":"12:00"}]""")
     // The authoritative in-memory ref says: disabled BUT segments preserved (08-25 ruling).
     val authoritative = parse("""{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}""").toOption.get
     // A stale full-config snapshot captured BEFORE the user toggled off — it still
     // carries enabled=true. Any provider save flushes this back; without the
     // override the disk rolls back and freeze resurrects after restart.
-    val staleIncoming = s"""{"workSchedule":{"enabled":true,"segments":[]},"llm":{"providers":{"newp":${validProvider("newp").noSpaces}}}}"""
+    val staleIncoming = s"""{"workSchedule":{"enabled":true,"segments":[]},"llm":{"providers":{"newp":${validProvider(
+        "newp"
+      ).noSpaces}}}}"""
     val result = ConfigService.updateConfig(staleIncoming, Map("workSchedule" -> authoritative)).unsafeRunSync()
     assertEquals(result, Right(()))
     val ws = readWorkSchedule().get
@@ -283,7 +366,8 @@ class ConfigServiceSpec extends FunSuite:
       """{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}"""
     )
     // The non-runtime part of the update still landed (deep merge unchanged).
-    val providers = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("llm").downField("providers")
+    val providers =
+      parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("llm").downField("providers")
     assertEquals(providers.downField("newp").as[Json].isRight, true)
   }
 

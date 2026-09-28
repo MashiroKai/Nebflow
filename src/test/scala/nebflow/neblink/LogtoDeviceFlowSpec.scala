@@ -102,7 +102,8 @@ class LogtoDeviceFlowSpec extends FunSuite:
 
   test("classifyPoll: 200 without access_token is Failed") {
     assert(
-      LogtoDeviceFlow.classifyPoll(200, """{"token_type":"Bearer"}""")
+      LogtoDeviceFlow
+        .classifyPoll(200, """{"token_type":"Bearer"}""")
         .isInstanceOf[LogtoDeviceFlow.PollOutcome.Failed]
     )
   }
@@ -157,7 +158,10 @@ class LogtoDeviceFlowSpec extends FunSuite:
   test("start surfaces the provider error string on failure") {
     val send: LogtoDeviceFlow.Send = _ => IO.pure((400, """{"error":"invalid_client"}"""))
     val err =
-      LogtoDeviceFlow.start(send)("https://auth.example", "app-1").unsafeRunSync().fold(identity, j => fail(s"expected Left, got $j"))
+      LogtoDeviceFlow
+        .start(send)("https://auth.example", "app-1")
+        .unsafeRunSync()
+        .fold(identity, j => fail(s"expected Left, got $j"))
     assertEquals(err, "invalid_client")
   }
 
@@ -169,8 +173,7 @@ class LogtoDeviceFlowSpec extends FunSuite:
       requests += req
       IO.pure(
         if req.url.endsWith("/oidc/token") then
-          if requests.count(_.url.endsWith("/oidc/token")) < 3 then
-            (400, """{"error":"authorization_pending"}""")
+          if requests.count(_.url.endsWith("/oidc/token")) < 3 then (400, """{"error":"authorization_pending"}""")
           else (200, """{"access_token":"at-final"}""")
         else if req.url.endsWith("/api/device/register") then
           (
@@ -188,10 +191,9 @@ class LogtoDeviceFlowSpec extends FunSuite:
     assertEquals(pending2, LogtoDeviceFlow.PollOutcome.Pending("authorization_pending"))
 
     val success =
-      LogtoDeviceFlow.pollOnce(send)("https://auth.example", "app-1", "dc").unsafeRunSync()
-      match
+      LogtoDeviceFlow.pollOnce(send)("https://auth.example", "app-1", "dc").unsafeRunSync() match
         case LogtoDeviceFlow.PollOutcome.Success(at) => at
-        case other                                   => fail(s"expected Success, got $other")
+        case other => fail(s"expected Success, got $other")
     assertEquals(success, "at-final")
 
     val enroll = LogtoDeviceFlow
@@ -208,8 +210,7 @@ class LogtoDeviceFlowSpec extends FunSuite:
   }
 
   test("register surfaces the server error on rejection") {
-    val send: LogtoDeviceFlow.Send = _ =>
-      IO.pure((403, """{"error":"Invalid or expired token"}"""))
+    val send: LogtoDeviceFlow.Send = _ => IO.pure((403, """{"error":"Invalid or expired token"}"""))
     val err = LogtoDeviceFlow
       .register(send)("https://server.example", "bad-token", "d", "n", "p")
       .unsafeRunSync()
@@ -220,7 +221,10 @@ class LogtoDeviceFlowSpec extends FunSuite:
   test("transport failure (status 0) surfaces the exception message, not HTTP 0") {
     val send: LogtoDeviceFlow.Send = _ => IO.pure((0, "connect timed out"))
     val err =
-      LogtoDeviceFlow.start(send)("https://auth.example", "app-1").unsafeRunSync().fold(identity, j => fail(s"expected Left, got $j"))
+      LogtoDeviceFlow
+        .start(send)("https://auth.example", "app-1")
+        .unsafeRunSync()
+        .fold(identity, j => fail(s"expected Left, got $j"))
     assertEquals(err, "connect timed out")
     assertEquals(
       LogtoDeviceFlow.classifyPoll(0, "connect timed out"),

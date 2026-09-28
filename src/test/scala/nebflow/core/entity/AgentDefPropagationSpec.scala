@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * 2026-08-15 FlowTrigger outage regression guard.

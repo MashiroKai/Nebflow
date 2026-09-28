@@ -41,8 +41,12 @@ class FeedbackRouterSpec extends CatsEffectSuite:
   private def readAuditEvents(ws: os.Path): IO[List[(String, String)]] = // (type, nodeId)
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => jsonParse(l).toOption.map(j =>
-        (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          jsonParse(l).toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))
+        )
+      )
       .handleError(_ => Nil) // 无审计文件的场景（纯 Reenter 路径不落盘）返回空
 
   // ── 节点级循环上限（§7.2：MaxBlockRoundsPerNode = 2）─────────────
@@ -56,16 +60,19 @@ class FeedbackRouterSpec extends CatsEffectSuite:
     yield
       assertEquals(v1._1, FeedbackDecision.Reenter: FeedbackDecision, "round 1 must reenter")
       assertEquals(v2._1, FeedbackDecision.Reenter: FeedbackDecision, "round 2 must reenter")
-      assertEquals(v3._1, FeedbackDecision.Escalate(FeedbackDecision.EscalateReason.LoopCap): FeedbackDecision,
-        "round 3 must escalate (no more reentry)")
+      assertEquals(
+        v3._1,
+        FeedbackDecision.Escalate(FeedbackDecision.EscalateReason.LoopCap): FeedbackDecision,
+        "round 3 must escalate (no more reentry)"
+      )
     // 常量哨兵：上限 = 2（§7.2 建议值）
     assertEquals(NodeEngine.MaxBlockRoundsPerNode, 2)
   }
 
   test("cap: escalate-only mode escalates even at round 1 (§7.1 档位 B)") {
     val r = mkRouter(tempRoot / "ws-mode", mode = FeedbackRouter.ModeEscalateOnly)
-    r.decide(mkNode("n-1", 1)).map(v =>
-      assertEquals(v._1, FeedbackDecision.Escalate(FeedbackDecision.EscalateReason.Mode): FeedbackDecision))
+    r.decide(mkNode("n-1", 1))
+      .map(v => assertEquals(v._1, FeedbackDecision.Escalate(FeedbackDecision.EscalateReason.Mode): FeedbackDecision))
   }
 
   // ── 项目级频率保护（§7.3：10min ≥5 → 30min cooldown）─────────────
@@ -84,8 +91,11 @@ class FeedbackRouterSpec extends CatsEffectSuite:
       after <- r.decide(node)
     yield
       assert(verdicts.forall(v => v == FeedbackDecision.Reenter), s"first 4 must reenter, got $verdicts")
-      assertEquals(fifth._1, FeedbackDecision.Escalate(FeedbackDecision.EscalateReason.CooldownOn): FeedbackDecision,
-        "5th blocked must trigger cooldown-on escalation")
+      assertEquals(
+        fifth._1,
+        FeedbackDecision.Escalate(FeedbackDecision.EscalateReason.CooldownOn): FeedbackDecision,
+        "5th blocked must trigger cooldown-on escalation"
+      )
       assert(fifth._2, "cooldown-on flag must be set on transition")
       assertEquals(during._1, FeedbackDecision.Suppress: FeedbackDecision, "during cooldown must suppress")
       assertEquals(after._1, FeedbackDecision.Reenter: FeedbackDecision, "cooldown expiry must restore auto")
@@ -93,6 +103,7 @@ class FeedbackRouterSpec extends CatsEffectSuite:
       assertEquals(FeedbackRouter.WindowMs, 10 * 60 * 1000L)
       assertEquals(FeedbackRouter.CooldownMs, 30 * 60 * 1000L)
       assertEquals(FeedbackRouter.WindowThreshold, 5)
+    end for
   }
 
   // ── 执行：escalate 通道 + cooldown 合并单条（验收⑤）─────────────
@@ -113,15 +124,22 @@ class FeedbackRouterSpec extends CatsEffectSuite:
       assertEquals(nodeName, "节点-n-cap")
       assert(text.startsWith("[Node '节点-n-cap' blocked]"), s"escalation must carry [Node 'x' blocked] head, got: $text")
       assert(text.contains("第 3 次 blocked") && text.contains("上限 2"), s"loop-cap text must carry round+cap, got: $text")
-      assert(text.contains("历史轮次反馈") && text.contains("缺交付物定义") && text.contains("能力不匹配"),
-        s"escalation must carry full-round feedback history, got: $text")
+      assert(
+        text.contains("历史轮次反馈") && text.contains("缺交付物定义") && text.contains("能力不匹配"),
+        s"escalation must carry full-round feedback history, got: $text"
+      )
   }
 
   test("route: cooldown merges blocked events into a SINGLE escalation (验收⑤) + suppress silent") {
     val ws = tempRoot / "ws-route-cooldown"
     os.makeDir.all(ws / ".nebflow")
     val delivered = Ref.unsafe[IO, List[(String, String)]](Nil)
-    val r = mkRouter(ws, windowMs = 60_000L, cooldownMs = 60_000L, escalate = (text, name) => delivered.update(_ :+ (text -> name)))
+    val r = mkRouter(
+      ws,
+      windowMs = 60_000L,
+      cooldownMs = 60_000L,
+      escalate = (text, name) => delivered.update(_ :+ (text -> name))
+    )
     val node = mkNode("n-merge", 1)
     for
       _ <- (1 to 7).toList.traverse(_ => r.route(node, BlockedFeedback("other", "blocked in cooldown", "")))
@@ -167,8 +185,11 @@ class FeedbackRouterSpec extends CatsEffectSuite:
         assert(j.hcursor.get[String]("nodeId").isRight, s"line must carry nodeId: $j")
         assert(j.hcursor.get[String]("summary").isRight, s"line must carry summary: $j")
       }
-      assert(parsed.exists(_.hcursor.get[String]("type").toOption.contains("escalated")),
-        s"escalated line must exist, got: ${parsed.map(_.hcursor.get[String]("type").toOption)}")
+      assert(
+        parsed.exists(_.hcursor.get[String]("type").toOption.contains("escalated")),
+        s"escalated line must exist, got: ${parsed.map(_.hcursor.get[String]("type").toOption)}"
+      )
+    end for
   }
 
 end FeedbackRouterSpec

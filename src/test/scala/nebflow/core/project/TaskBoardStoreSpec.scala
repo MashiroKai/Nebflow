@@ -36,8 +36,10 @@ class TaskBoardStoreSpec extends FunSuite:
 
   private def file: os.Path = home / ".nebflow" / "task-board.json"
 
-  /** 每用例从空库开始（无内存态——删文件即全新 store；隔离文件**与变更史**一并清
-    *（升级批：史是 per-workspace 独立文件，不隔离会跨用例串味））。 */
+  /**
+   * 每用例从空库开始（无内存态——删文件即全新 store；隔离文件**与变更史**一并清
+   * （升级批：史是 per-workspace 独立文件，不隔离会跨用例串味））。
+   */
   private def resetFile(): Unit =
     if os.exists(file) then os.remove(file)
     if os.exists(home / ".nebflow") then
@@ -67,8 +69,14 @@ class TaskBoardStoreSpec extends FunSuite:
     blocks: List[String] = Nil,
     links: List[String] = Nil
   ): Either[ToolError, String] =
-    store.createSync(title, assignee, nodeId, note, if blocks.isEmpty then None else Some(blocks),
-      linksRaw = if links.isEmpty then None else Some(links))
+    store.createSync(
+      title,
+      assignee,
+      nodeId,
+      note,
+      if blocks.isEmpty then None else Some(blocks),
+      linksRaw = if links.isEmpty then None else Some(links)
+    )
 
   private def update(
     id: String,
@@ -90,8 +98,15 @@ class TaskBoardStoreSpec extends FunSuite:
   test("create→update→close 全链路：字段完整落盘（含缺省 assignee=dispatcher）；重建实例逐字段相等"):
     resetFile()
     assert(create("设计方案").isRight)
-    assert(create("实现后端", assignee = Some("n-impl"), nodeId = Some("n-impl"),
-      note = Some("工作备注"), blocks = List("1")).isRight)
+    assert(
+      create(
+        "实现后端",
+        assignee = Some("n-impl"),
+        nodeId = Some("n-impl"),
+        note = Some("工作备注"),
+        blocks = List("1")
+      ).isRight
+    )
     // 依赖闸：#2 依赖 #1，先闭环 #1 才能开工（闸行为顺带验证）
     assert(store.closeSync("1").isRight)
     assert(update("2", status = Some("in_progress")).isRight)
@@ -150,9 +165,7 @@ class TaskBoardStoreSpec extends FunSuite:
 
   test("isValidTransition 迁移矩阵逐格：4 同态 no-op + 5 条合法边 + 其余 7 格全拒"):
     import TaskBoardStore.Status.*
-    val legal = Set(
-      (Open, InProgress), (Open, Blocked), (InProgress, Blocked),
-      (Blocked, Open), (Blocked, InProgress))
+    val legal = Set((Open, InProgress), (Open, Blocked), (InProgress, Blocked), (Blocked, Open), (Blocked, InProgress))
     val states = List(Open, InProgress, Done, Blocked)
     states.foreach { from =>
       states.foreach { to =>
@@ -221,11 +234,15 @@ class TaskBoardStoreSpec extends FunSuite:
     val triangle = List(
       TaskBoardStore.Entry("a", "a", blocks = List("b")),
       TaskBoardStore.Entry("b", "b", blocks = List("c")),
-      TaskBoardStore.Entry("c", "c", blocks = List("a")))
+      TaskBoardStore.Entry("c", "c", blocks = List("a"))
+    )
     assert(TaskBoardStore.hasCycle(triangle), "三节点环")
-    assert(!TaskBoardStore.hasCycle(List(
-      TaskBoardStore.Entry("a", "a", blocks = List("b")),
-      TaskBoardStore.Entry("b", "b"))), "无环链")
+    assert(
+      !TaskBoardStore.hasCycle(
+        List(TaskBoardStore.Entry("a", "a", blocks = List("b")), TaskBoardStore.Entry("b", "b"))
+      ),
+      "无环链"
+    )
 
   test("验收⑥：close 幂等——重复 close = no-op 成功回显 closedAt；close note 以 [done] 前缀追加保留工作 note"):
     resetFile()
@@ -274,12 +291,14 @@ class TaskBoardStoreSpec extends FunSuite:
     val s = store
     assert(create("初始任务").isRight) // #1
     // 两 fiber 各 50 次 create 交错（同实例、实例锁串行化覆盖磁盘写完成）
-    val creates = IO.blocking { (1 to 50).toList.map(i => s.createSync(s"A任务$i")).forall(_.isRight) }
+    val creates = IO
+      .blocking { (1 to 50).toList.map(i => s.createSync(s"A任务$i")).forall(_.isRight) }
       .both(IO.blocking { (1 to 50).toList.map(i => s.createSync(s"B任务$i")).forall(_.isRight) })
     val (aOk, bOk) = creates.unsafeRunSync()
     assert(aOk && bOk, "全部 create 成功")
     // 并发 update/close：两 fiber 并发 close 不同任务各 10 个（update 族并发以 close 落点验证）
-    val closes = IO.blocking { (2 to 11).toList.map(i => s.closeSync(i.toString)).forall(_.isRight) }
+    val closes = IO
+      .blocking { (2 to 11).toList.map(i => s.closeSync(i.toString)).forall(_.isRight) }
       .both(IO.blocking { (12 to 21).toList.map(i => s.closeSync(i.toString)).forall(_.isRight) })
     val (cOk, dOk) = closes.unsafeRunSync()
     assert(cOk && dOk, "全部 close 成功")
@@ -306,8 +325,7 @@ class TaskBoardStoreSpec extends FunSuite:
     val listed = store.listSync()
     assert(listed.isRight, "读路径不崩")
     assert(listed.toOption.get.contains("empty"), listed.toOption.get)
-    assertEquals(os.list(home / ".nebflow").count(_.last.startsWith("task-board.json.corrupt")), 0,
-      "读路径零写副作用")
+    assertEquals(os.list(home / ".nebflow").count(_.last.startsWith("task-board.json.corrupt")), 0, "读路径零写副作用")
 
   test("写路径遇损坏：隔离 quarantaine（旧字节保留）+ 空库续写、id 从 1 重起算；损坏视图下更新报 NOT_FOUND 不误写"):
     resetFile()
@@ -315,8 +333,7 @@ class TaskBoardStoreSpec extends FunSuite:
     os.write(file, "{{{ broken")
     // 写路径第一个动作（即使后续失败）按同构语义先隔离——与 TaskListStore 一致
     val r = update("1", status = Some("in_progress"))
-    assert(r.isLeft && r.swap.toOption.get.message.contains("TBOARD_NOT_FOUND"),
-      s"损坏视图为空库 → 未找到，绝不误写: $r")
+    assert(r.isLeft && r.swap.toOption.get.message.contains("TBOARD_NOT_FOUND"), s"损坏视图为空库 → 未找到，绝不误写: $r")
     val quarantined = os.list(home / ".nebflow").filter(_.last.startsWith("task-board.json.corrupt"))
     assertEquals(quarantined.size, 1, "恰好一个隔离文件")
     assertEquals(os.read(quarantined.head), "{{{ broken", "旧字节完整保留（可人工恢复）")
@@ -336,15 +353,23 @@ class TaskBoardStoreSpec extends FunSuite:
     assert(store.closeSync("1").isRight)
     val old = Instant.now().minusSeconds(40L * 24 * 3600).toString
     val disk = readDisk.get
-    os.write.over(file, disk.copy(
-      tasks = disk.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces)
+    os.write.over(
+      file,
+      disk.copy(tasks = disk.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces
+    )
     assert(create("触发清理").isRight)
     val disk2 = readDisk.get
     assert(!disk2.tasks.exists(_.id == "1"), "超期 done 条目被惰性清理")
     // closedAt 解析失败 → 保守保留
-    os.write.over(file, disk2.copy(
-      tasks = disk2.tasks :+ TaskBoardStore.Entry("99", "坏时间戳", status = "done", closedAt = Some("not-a-time"))
-    ).asJson.noSpaces)
+    os.write.over(
+      file,
+      disk2
+        .copy(
+          tasks = disk2.tasks :+ TaskBoardStore.Entry("99", "坏时间戳", status = "done", closedAt = Some("not-a-time"))
+        )
+        .asJson
+        .noSpaces
+    )
     assert(create("再触发").isRight)
     assert(readDisk.get.tasks.exists(_.id == "99"), "解析失败的 done 条目保守保留")
 
@@ -427,8 +452,7 @@ class TaskBoardStoreSpec extends FunSuite:
   test("R2 links：create/update 往返 + 去空白去重 + 不校验可达性 + [] 清除 + 容量上限"):
     resetFile()
     assert(create("任务A", links = List("/tmp/does-not-exist.md", "abc1234", "   ", "abc1234")).isRight)
-    assertEquals(readDisk.get.tasks.head.links, List("/tmp/does-not-exist.md", "abc1234"),
-      "规整去重；**路径不存在不报错**（不校验可达性）")
+    assertEquals(readDisk.get.tasks.head.links, List("/tmp/does-not-exist.md", "abc1234"), "规整去重；**路径不存在不报错**（不校验可达性）")
     assertEquals(store.entriesSync().head.links, List("/tmp/does-not-exist.md", "abc1234"), "读回一致")
     assert(store.showSync("1").toOption.get.contains("abc1234"), "show 回读 link")
     assert(update("1", links = Some(List("only-one"))).isRight)
@@ -438,7 +462,10 @@ class TaskBoardStoreSpec extends FunSuite:
     val many = update("1", links = Some((1 to TaskBoardStore.LinksWriteMax + 1).map(i => s"link-$i").toList))
     assert(many.isLeft && many.swap.toOption.get.message.contains("too many `links`"), many)
     val long = update("1", links = Some(List("x" * (TaskBoardStore.LinkWriteMaxChars + 1))))
-    assert(long.isLeft && long.swap.toOption.get.message.contains(s"max ${TaskBoardStore.LinkWriteMaxChars} per link"), long)
+    assert(
+      long.isLeft && long.swap.toOption.get.message.contains(s"max ${TaskBoardStore.LinkWriteMaxChars} per link"),
+      long
+    )
     // links 变更在史里留痕
     assert(historyEvents().exists(e => e.field.contains("links")), "links 变更留痕")
 
@@ -447,8 +474,15 @@ class TaskBoardStoreSpec extends FunSuite:
   test("R3 show：全字段 + note 全文（不截 60）+ links/依赖 + 时间线；不存在 id → TBOARD_NOT_FOUND 列 open 清单"):
     resetFile()
     val longNote = "第一行正文\n" + ("细节" * 40)
-    assert(create("任务A", assignee = Some("n-a"), nodeId = Some("n-a"), note = Some(longNote),
-      links = List("docs/x.md")).isRight)
+    assert(
+      create(
+        "任务A",
+        assignee = Some("n-a"),
+        nodeId = Some("n-a"),
+        note = Some(longNote),
+        links = List("docs/x.md")
+      ).isRight
+    )
     val out = store.showSync("1").toOption.get
     assert(out.startsWith("#1[open @n-a] 任务A"), out)
     assert(out.contains("status: open"), out)
@@ -479,16 +513,20 @@ class TaskBoardStoreSpec extends FunSuite:
     assert(msg.contains("action=log"), s"错误必须给修法（长内容走 log）: $msg")
     assert(msg.contains("max 10,993"), s"上限依据（存量读数）应可读: $msg")
     assert(msg.contains("TBOARD_PARAM"), msg)
-    assertEquals(readDisk.get.tasks.head.note.map(_.length), Some(TaskBoardStore.NoteWriteMaxChars),
-      "被拒写入零副作用")
+    assertEquals(readDisk.get.tasks.head.note.map(_.length), Some(TaskBoardStore.NoteWriteMaxChars), "被拒写入零副作用")
     assert(create("丙" * (TaskBoardStore.TitleWriteMaxChars + 1)).isLeft, "title 超限拒绝")
     assert(create("丙" * TaskBoardStore.TitleWriteMaxChars).isRight, "title 恰在上限放行")
     assert(store.logSync("1", "丁" * (TaskBoardStore.LogTextWriteMaxChars + 1)).isLeft, "log text 超限拒绝")
     assert(store.logSync("1", "丁" * TaskBoardStore.LogTextWriteMaxChars).isRight)
     // 读路径零校验：手写超限存量 note（>16000）→ list/show 照常（存量数据不受影响）
     val disk = readDisk.get
-    os.write.over(file, disk.copy(tasks = disk.tasks.map(t =>
-      if t.id == "1" then t.copy(note = Some("戊" * 20_000)) else t)).asJson.noSpaces)
+    os.write.over(
+      file,
+      disk
+        .copy(tasks = disk.tasks.map(t => if t.id == "1" then t.copy(note = Some("戊" * 20_000)) else t))
+        .asJson
+        .noSpaces
+    )
     assert(store.listSync().isRight, "存量超限不阻断读")
     val shown = store.showSync("1").toOption.get
     assert(shown.contains("showing first 16000"), s"超限存量 note 可见截断（明示）: ${shown.take(200)}")
@@ -505,14 +543,18 @@ class TaskBoardStoreSpec extends FunSuite:
     // 幂等 close（已 done）：早返分支逐字保留，不改板、不写史
     val noop = store.closeSync("1", Some("第二次 outcome 应被丢弃"))
     assert(noop.isRight && noop.toOption.get.contains("no-op"), noop)
-    assert(!readDisk.get.tasks.find(_.id == "1").get.note.exists(_.contains("第二次 outcome")),
-      "RK-5：已 done 条目的 note 实参被静默丢弃（既有契约逐字保留）")
+    assert(
+      !readDisk.get.tasks.find(_.id == "1").get.note.exists(_.contains("第二次 outcome")),
+      "RK-5：已 done 条目的 note 实参被静默丢弃（既有契约逐字保留）"
+    )
     assertEquals(historyLines().size, linesClosed, "幂等早返分支零史行")
     // 把 #1 closedAt 改到 40 天前 → 下次 create 惰性 prune
     val old = Instant.now().minusSeconds(40L * 24 * 3600).toString
     val disk = readDisk.get
-    os.write.over(file, disk.copy(tasks = disk.tasks.map(t =>
-      if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces)
+    os.write.over(
+      file,
+      disk.copy(tasks = disk.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces
+    )
     assert(create("触发清理").isRight)
     assert(!readDisk.get.tasks.exists(_.id == "1"), "超期 done 条目被清")
     assert(historyLines().size > linesClosed, "史行数不减（史不随任务消失）")
@@ -555,8 +597,10 @@ class TaskBoardStoreSpec extends FunSuite:
     assert(store.closeSync("1", Some("收尾")).isRight)
     val old = Instant.now().minusSeconds(40L * 24 * 3600).toString
     val disk = readDisk.get
-    os.write.over(file, disk.copy(tasks = disk.tasks.map(t =>
-      if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces)
+    os.write.over(
+      file,
+      disk.copy(tasks = disk.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces
+    )
     assert(create("触发清理").isRight)
     assert(!readDisk.get.tasks.exists(_.id == "1"), "条目已被 prune")
     val out = store.showSync("1")
@@ -564,12 +608,10 @@ class TaskBoardStoreSpec extends FunSuite:
     val s = out.toOption.get
     assert(s.contains("#1[gone]"), s)
     assert(s.contains("cleaned up — NOT available"), s"主库字段如实标不可得（禁编造回填）")
-    assert(s.contains("第一版：做法 A") && s.contains("第二版：做法 B"),
-      s"pruned 后仍可还原 note 版本时间线:\n$s")
+    assert(s.contains("第一版：做法 A") && s.contains("第二版：做法 B"), s"pruned 后仍可还原 note 版本时间线:\n$s")
     assert(s.contains("[done] 收尾"), s"close 的 [done] 追加可还原: $s")
     val none = store.showSync("999")
-    assert(none.isLeft && none.swap.toOption.get.message.contains("TBOARD_NOT_FOUND"),
-      s"库与史皆无 ⇒ 原报错路径: $none")
+    assert(none.isLeft && none.swap.toOption.get.message.contains("TBOARD_NOT_FOUND"), s"库与史皆无 ⇒ 原报错路径: $none")
 
   // ===== ⑭ 升级批 · 零迁移 + 事件构成占比读数 =====
 
@@ -604,16 +646,18 @@ class TaskBoardStoreSpec extends FunSuite:
     val states = evs.filterNot(TaskBoardHistory.isNoteChange)
     def bytes(xs: List[TaskBoardEvent]): Int = xs.map(_.asJson.noSpaces.getBytes("UTF-8").length + 1).sum
     val nb = bytes(notes); val sb = bytes(states)
-    println(f"[composition] events: note/log=${notes.size} state=${states.size} total=${evs.size} " +
-      f"(${100.0 * notes.size / evs.size}%.1f%% lines); bytes: note/log=$nb state=$sb total=${nb + sb} " +
-      f"(${100.0 * nb / (nb + sb)}%.1f%% bytes); file=${os.size(hist.file)}B lines=${historyLines().size}")
+    println(
+      f"[composition] events: note/log=${notes.size} state=${states.size} total=${evs.size} " +
+        f"(${100.0 * notes.size / evs.size}%.1f%% lines); bytes: note/log=$nb state=$sb total=${nb + sb} " +
+        f"(${100.0 * nb / (nb + sb)}%.1f%% bytes); file=${os.size(hist.file)}B lines=${historyLines().size}"
+    )
     assert(states.nonEmpty && notes.nonEmpty)
     assert(nb > sb, s"状态类不得主导（字节 note=$nb state=$sb）⇒ 否则须给精简方案")
     assert(sb * 3 < nb, s"状态类占比应远低于主线（state=$sb vs note=$nb）")
 
   // ===== ⑮ 修复轮（独立复核判红 2 项）=====
   // 红项 1：logSync 结果行的史落地提示曾被 Scala 插值里的方法引用 eta-expansion 吃掉
-  //（打出 lambda 身份串，非确定性）；本用例锁死文案（含史路径 + show 提示，且零对象身份特征）。
+  // （打出 lambda 身份串，非确定性）；本用例锁死文案（含史路径 + show 提示，且零对象身份特征）。
   test("修复轮①log 结果行文案：逐字含 `History: <path> (see it with action=show id=N)`，且绝不含 lambda/对象身份串"):
     resetFile()
     assert(create("任务A").isRight)
@@ -622,15 +666,15 @@ class TaskBoardStoreSpec extends FunSuite:
     val txt = r.toOption.get
     println("[fix-1] log 结果行原文:\n" + txt)
     assert(txt.contains("#1 (4 chars appended; note untouched, board unchanged)"), txt)
-    assert(txt.contains(s"History: ${hist.file} (see it with action=show id=1)."),
-      s"史落地提示必须逐字在结果行（点明史路径才能被后续 show 找到）:\n$txt")
-    assert(!txt.contains("Lambda") && !txt.contains("histNoteFor("),
-      s"不得出现方法引用/eta-expansion 泄漏:\n$txt")
+    assert(
+      txt.contains(s"History: ${hist.file} (see it with action=show id=1)."),
+      s"史落地提示必须逐字在结果行（点明史路径才能被后续 show 找到）:\n$txt"
+    )
+    assert(!txt.contains("Lambda") && !txt.contains("histNoteFor("), s"不得出现方法引用/eta-expansion 泄漏:\n$txt")
     assert(!txt.contains("@"), s"不得把 JVM 对象身份串（@<hash>，非确定性）写进工具结果:\n$txt")
     // 带 links 的路径同样成立（linkNote 与史提示并存）
     val r2 = store.logSync("1", "带锚记录", Some(List("docs/x.md", "abc1234")))
-    assert(r2.isRight && r2.toOption.get.contains("links=2") && r2.toOption.get.contains("History: "),
-      r2.toString)
+    assert(r2.isRight && r2.toOption.get.contains("links=2") && r2.toOption.get.contains("History: "), r2.toString)
 
   // 红项 2：prune 后 id 复用（旧 nextId = 现存 max+1）⇒ 新条目 show 混入已剪旧任务的
   // note 版本、被剪 id 查不回 [gone]。本用例 = 复核方最自然构造的回归版。
@@ -641,8 +685,10 @@ class TaskBoardStoreSpec extends FunSuite:
     assert(store.closeSync("1", Some("旧任务收尾")).isRight)
     val old = Instant.now().minusSeconds(40L * 24 * 3600).toString
     val disk = readDisk.get
-    os.write.over(file, disk.copy(tasks = disk.tasks.map(t =>
-      if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces)
+    os.write.over(
+      file,
+      disk.copy(tasks = disk.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces
+    )
     assert(create("新任务ZZNEW", note = Some("新任务当前 note")).isRight) // 顺带 prune 掉 #1
     val ids = store.entriesSync().map(_.id)
     println("[fix-2] prune 后板面 id = " + ids.mkString(","))
@@ -657,12 +703,16 @@ class TaskBoardStoreSpec extends FunSuite:
     val gone = store.showSync("1").toOption.get
     println("[fix-2] 已剪旧 id 的降级视图头行 = " + gone.split("\n").head)
     assert(gone.startsWith("#1[gone]"), gone.split("\n").head)
-    assert(gone.contains("旧任务版本一") && gone.contains("旧任务版本二") && gone.contains("旧任务收尾"),
-      s"旧任务史仍完整挂在 #1 上（史不随任务消失，禁回填禁编造）:\n$gone")
+    assert(
+      gone.contains("旧任务版本一") && gone.contains("旧任务版本二") && gone.contains("旧任务收尾"),
+      s"旧任务史仍完整挂在 #1 上（史不随任务消失，禁回填禁编造）:\n$gone"
+    )
     assert(!gone.contains("新任务ZZNEW") && !gone.contains("新任务当前 note"), "降级视图不得混入他任务事件")
     val absent = store.showSync("99999")
-    assert(absent.isLeft && absent.swap.toOption.get.message.contains("TBOARD_NOT_FOUND"),
-      s"库史皆无的随机 id 仍走原报错路径: $absent")
+    assert(
+      absent.isLeft && absent.swap.toOption.get.message.contains("TBOARD_NOT_FOUND"),
+      s"库史皆无的随机 id 仍走原报错路径: $absent"
+    )
 
   test("修复轮②零迁移：旧库无 nextId 键照常解码（回默认 0）；create 续接存量 max+1 并回写水位"):
     resetFile()

@@ -33,7 +33,8 @@ import scala.concurrent.duration.*
  */
 class HardRecoveryTransportSpec extends CatsEffectSuite:
 
-  private def startBlackholeSse(): (java.util.concurrent.ExecutorService, com.sun.net.httpserver.HttpServer, CountDownLatch, Int) =
+  private def startBlackholeSse()
+    : (java.util.concurrent.ExecutorService, com.sun.net.httpserver.HttpServer, CountDownLatch, Int) =
     val latch = CountDownLatch(1)
     val pool = java.util.concurrent.Executors.newCachedThreadPool { r =>
       val t = new Thread(r, "blackhole-sse")
@@ -42,20 +43,25 @@ class HardRecoveryTransportSpec extends CatsEffectSuite:
     }
     val server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
     server.setExecutor(pool)
-    server.createContext("/sse", { ex =>
-      val resp = ex.getResponseBody
-      ex.getResponseHeaders.add("Content-Type", "text/event-stream")
-      ex.sendResponseHeaders(200, 0)
-      resp.write("data: {\"x\":1}\n\n".getBytes("UTF-8"))
-      resp.flush()
-      resp.write("data: {\"x\":2}\n\n".getBytes("UTF-8"))
-      resp.flush()
-      // 流中黑洞：持有 socket，永不发 FIN/RST，永不返回——半开连接复刻。
-      latch.await()
-      resp.close()
-    })
+    server.createContext(
+      "/sse",
+      { ex =>
+        val resp = ex.getResponseBody
+        ex.getResponseHeaders.add("Content-Type", "text/event-stream")
+        ex.sendResponseHeaders(200, 0)
+        resp.write("data: {\"x\":1}\n\n".getBytes("UTF-8"))
+        resp.flush()
+        resp.write("data: {\"x\":2}\n\n".getBytes("UTF-8"))
+        resp.flush()
+        // 流中黑洞：持有 socket，永不发 FIN/RST，永不返回——半开连接复刻。
+        latch.await()
+        resp.close()
+      }
+    )
     server.start()
     (pool, server, latch, server.getAddress.getPort)
+
+  end startBlackholeSse
 
   private def sseBody(backend: StreamBackend[IO, Fs2Streams[IO]], url: String): fs2.Stream[IO, Byte] =
     fs2.Stream.force(
@@ -67,7 +73,7 @@ class HardRecoveryTransportSpec extends CatsEffectSuite:
         .flatMap { resp =>
           resp.body match
             case Right(bs) => IO.pure(bs)
-            case Left(e)   => IO.raiseError(new RuntimeException(e))
+            case Left(e) => IO.raiseError(new RuntimeException(e))
         }
     )
 
@@ -94,18 +100,17 @@ class HardRecoveryTransportSpec extends CatsEffectSuite:
       _ <- transport.release
       terminated = outcome match
         case cats.effect.Outcome.Succeeded(_) => false
-        case _                                => true
+        case _ => true
     yield
       // 楔死解开：fiber 到达终态（错误完成），不再悬挂。
-      assert(terminated,
-        s"parked read must terminate after transport abort, got $outcome")
+      assert(terminated, s"parked read must terminate after transport abort, got $outcome")
       // 确定性映射条件成立（sendStream 内 handleErrorWith 据 abortedRef 重抛
       // RecoverableAbort——本 spec 不经 sendStream，此处断言其触发条件）。
       assert(abortedFlag, "abortedRef must flip so the surfaced error maps to RecoverableAbort")
       // belt 通道：halt 已被 transportAbortFor 以 RecoverableAbort 完成。
       haltOutcome match
         case Right(Left(e: RecoverableAbort)) => // expected
-        case other                            => fail(s"halt must complete with RecoverableAbort, got $other")
+        case other => fail(s"halt must complete with RecoverableAbort, got $other")
     )
       .guarantee(IO {
         latch.countDown()
@@ -121,12 +126,20 @@ class HardRecoveryTransportSpec extends CatsEffectSuite:
 
   test("RecoverableAbort: stream-level Fatal + no evict; agent-level retryable (P6 dual semantics)") {
     val cls = Fallback.classifyError(new RecoverableAbort("s1"))
-    assertEquals(cls.permanence, ErrorPermanence.Fatal, "no provider fallback after a transport abort (seam guard semantics)")
+    assertEquals(
+      cls.permanence,
+      ErrorPermanence.Fatal,
+      "no provider fallback after a transport abort (seam guard semantics)"
+    )
     assertEquals(cls.evict, false, "the provider is innocent — never marked down")
-    assert(nebflow.agent.AgentActor.llmFailureRetryable(new RecoverableAbort("s1")),
-      "agent layer must retry (re-send whole turn) after a recoverable abort")
-    assert(!nebflow.agent.AgentActor.llmFailureRetryable(new StuckAbort("s1")),
-      "StuckAbort stays non-retryable (watcher kill semantics) — the two must never regress into each other")
+    assert(
+      nebflow.agent.AgentActor.llmFailureRetryable(new RecoverableAbort("s1")),
+      "agent layer must retry (re-send whole turn) after a recoverable abort"
+    )
+    assert(
+      !nebflow.agent.AgentActor.llmFailureRetryable(new StuckAbort("s1")),
+      "StuckAbort stays non-retryable (watcher kill semantics) — the two must never regress into each other"
+    )
     IO.unit
   }
 end HardRecoveryTransportSpec

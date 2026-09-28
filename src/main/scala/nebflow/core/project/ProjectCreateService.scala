@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.Json
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import nebflow.core.tools.ToolError
 
 import scala.util.Try

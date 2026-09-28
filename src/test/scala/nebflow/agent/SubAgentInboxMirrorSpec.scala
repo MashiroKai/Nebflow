@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import munit.FunSuite
 
-import nebflow.gateway.SessionStore
+import nebflow.core.SessionStore
 import nebflow.shared.UiMessage
 
 import scala.io.Source
@@ -41,6 +41,21 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     finally src.close()
 
   private lazy val agentActor: String = read("src/main/scala/nebflow/agent/AgentActor.scala")
+  // re-pin（2026-09-25 收尾族迁移）：finishTurnCont 连同其 2 处 emitInjectedUserEvent
+  // 调用点迁至 AgentFinishTurn.scala —— ③-2 的计数判据改为跨文件聚合（见该测试内注释）。
+  private lazy val agentFinishTurn: String = read("src/main/scala/nebflow/agent/AgentFinishTurn.scala")
+  // re-pin（2026-09-25 冻结域迁移）：frozen 的 SkillActivate 唤醒分支连同其 1 处
+  // emitInjectedUserEvent 调用点迁至 AgentFrozen.scala —— ③-2 的计数判据再扩一文件。
+  private lazy val agentFrozen: String = read("src/main/scala/nebflow/agent/AgentFrozen.scala")
+  // re-pin（2026-09-25 idle 域迁移）：idle 行为（UserInput 注入判源 /
+  // SkillActivate / ExternalEvent 三分支）连同其 3 处 emitInjectedUserEvent
+  // 调用点迁至 AgentIdle.scala —— ③-2 的计数判据再扩一文件。
+  private lazy val agentIdle: String = read("src/main/scala/nebflow/agent/AgentIdle.scala")
+  // re-pin（2026-09-25 processing 域迁移）：processing 行为的 3 处调用
+  // （recoverable-abort 注入 / tools-complete 注入 / external-event 气泡）随实现
+  // 迁至 AgentProcessing.scala，聚合再扩该文件（合计仍 12 = 11 处调用 + 1 处
+  // def，调用点文本逐字未动）。
+  private lazy val agentProcessing: String = read("src/main/scala/nebflow/agent/AgentProcessing.scala")
   private lazy val mirrorSrc: String = read("src/main/scala/nebflow/agent/InjectedInboxMirror.scala")
   private lazy val utilsJs: String = read("src/main/resources/web/js/utils.js")
   private lazy val chatJs: String = read("src/main/resources/web/js/chat.js")
@@ -68,7 +83,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     finally
       prev match
         case Some(v) => sys.props(InjectedInboxMirror.SwitchProp) = v
-        case None    => sys.props.remove(InjectedInboxMirror.SwitchProp)
+        case None => sys.props.remove(InjectedInboxMirror.SwitchProp)
 
   // ============================================================
   // ① 纯路由（路由表逐行）
@@ -105,8 +120,23 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   }
 
   test("① -2 反例：豁免族逐族零命中（原生族 / node / ask / 非注入族）") {
-    for src <- List("tool", "system", "delegate", "subtask", "task", "dispatch", "flow", "background",
-        "skill", "node", "ask", "chain", "deviceMail", "") do
+    for src <- List(
+        "tool",
+        "system",
+        "delegate",
+        "subtask",
+        "task",
+        "dispatch",
+        "flow",
+        "background",
+        "skill",
+        "node",
+        "ask",
+        "chain",
+        "deviceMail",
+        ""
+      )
+    do
       assertEquals(
         InjectedInboxMirror.targets("root-1", src, candidates),
         Nil,
@@ -168,7 +198,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     val evidenceOverride = sys.env.get("NEBFLOW_SUBINBOX_EVIDENCE_DIR").map(d => os.Path(d))
     val tempRoot = evidenceOverride match
       case Some(d) => d / "green_store"
-      case None    => os.pwd / "target" / "test-subinbox-mirror"
+      case None => os.pwd / "target" / "test-subinbox-mirror"
     if os.exists(tempRoot) then os.remove.all(tempRoot)
     os.makeDir.all(tempRoot)
 
@@ -232,8 +262,8 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       assertEquals(target.head.header, None)
       val nodeRows = rowsOrEmpty("node-B").collect { case u: UiMessage.User => u }
       assertEquals(nodeRows.map(_.text), List(row.text), "多目标并发时每个窗口各得一行")
-    else
-      assertEquals(target, Nil, "开关关闭态下目标子代理会话流仍有镜像行（假绿）")
+    else assertEquals(target, Nil, "开关关闭态下目标子代理会话流仍有镜像行（假绿）")
+    end if
 
     // ② -变异（同批次内）：开关关 ⇒ 零目标 + 目标会话流零新增
     val before = rowsOrEmpty("delegate-A").size
@@ -288,12 +318,30 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       1,
       "AgentActor 内 `\"injected\" -> true.asJson` 不再单命中 —— 注入行出现了第二个写者"
     )
+    // re-pin（2026-09-25 收尾族迁移）：finishTurnCont 的 2 处调用随实现迁至
+    // AgentFinishTurn.scala，计数改为 AgentActor + AgentFinishTurn 两文件聚合
+    // （合计仍 12 = 11 处调用 + 1 处 def，调用点文本逐字未动）；def 前缀随
+    // private → private[agent] 放宽同步改写，def 本体仍留驻 AgentActor。
+    // re-pin（2026-09-25 冻结域迁移）：frozen 的 SkillActivate 唤醒分支 1 处调用
+    // 随实现迁至 AgentFrozen.scala，聚合再扩该文件（合计仍 12 = 11 处调用 +
+    // 1 处 def，调用点文本逐字未动）。
+    // re-pin（2026-09-25 idle 域迁移）：idle 行为的 3 处调用（UserInput 注入
+    // 判源 / SkillActivate / ExternalEvent）随实现迁至 AgentIdle.scala，聚合
+    // 再扩该文件（合计仍 12 = 11 处调用 + 1 处 def，调用点文本逐字未动）。
+    // re-pin（2026-09-25 processing 域迁移）：processing 行为的 3 处调用
+    // （recoverable-abort 注入 / tools-complete 注入 / external-event 气泡）
+    // 随实现迁至 AgentProcessing.scala，聚合再扩该文件（合计仍 12 = 11 处
+    // 调用 + 1 处 def，调用点文本逐字未动）。
     assertEquals(
-      "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size,
+      "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size +
+        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size +
+        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size +
+        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentIdle).size +
+        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentProcessing).size,
       12,
-      "`emitInjectedUserEvent(` 命中数漂移（应为 11 处调用 + 1 处 def）——本批禁改调用点"
+      "`emitInjectedUserEvent(` 命中数漂移（应为 11 处调用 + 1 处 def，跨 AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing 聚合）——本批禁改调用点"
     )
-    val emitStart = agentActor.indexOf("private def emitInjectedUserEvent(")
+    val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)
     assert(emitStart > 0 && applyStart > emitStart, "发射点边界定位失败")
     val emitBody = agentActor.substring(emitStart, applyStart)

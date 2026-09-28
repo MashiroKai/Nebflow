@@ -5,11 +5,12 @@ import cats.effect.unsafe.implicits.global
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.AgentRecord
+import nebflow.agent.SharedResources
 import nebflow.core.flow.TeamSessionRegistry
-import nebflow.gateway.SessionStore
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.core.SessionStore
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 /**
  * User ruling 2026-08-24: root/outside-team senders mail TEAM names only.
@@ -92,7 +93,7 @@ class MailToolRootSenderSpec extends FunSuite:
     ToolContext(
       projectRoot = tempRoot.toString,
       sessionId = Some(rootSid),
-      agentDef = Some(nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)),
+      agentDef = Some(nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)),
       actorSystem = Some(system)
     )
 
@@ -100,7 +101,10 @@ class MailToolRootSenderSpec extends FunSuite:
     val system = ActorSystem(s"mail-r2-neb-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
-        .call(JsonObject("address" -> Json.fromString("node:n-1"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .call(
+          JsonObject("address" -> Json.fromString("node:n-1"), "message" -> Json.fromString("hi")),
+          nebulaCtx(system)
+        )
         .unsafeRunSync()
       res match
         case Left(err) =>
@@ -126,7 +130,10 @@ class MailToolRootSenderSpec extends FunSuite:
     val system = ActorSystem(s"mail-r2-unk-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
-        .call(JsonObject("address" -> Json.fromString("no-such-project-xyz"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .call(
+          JsonObject("address" -> Json.fromString("no-such-project-xyz"), "message" -> Json.fromString("hi")),
+          nebulaCtx(system)
+        )
         .unsafeRunSync()
       res match
         case Left(err) =>
@@ -193,7 +200,10 @@ class MailToolRootSenderSpec extends FunSuite:
     res match
       case Left(err) =>
         assert(err.message.contains("Backend"), s"should route within the team: ${err.message}")
-        assert(!err.message.contains("TEAM names only"), s"team-internal short name must not hit the rule: ${err.message}")
+        assert(
+          !err.message.contains("TEAM names only"),
+          s"team-internal short name must not hit the rule: ${err.message}"
+        )
       case Right(_) => fail(s"expected queueToSession outcome, got success: $res")
 
   test("team member: same-team team/agent route unaffected"):

@@ -55,12 +55,14 @@ object ImageInject:
 
   /** Result of preparing an image for LLM injection. */
   sealed trait ImagePrep
+
   /** Bytes ready to send — either the originals or a compressed JPEG re-encode. */
   final case class Prepared(
     bytes: Array[Byte],
     mediaType: String,
     note: Option[String]
   ) extends ImagePrep
+
   /** Still above the post-compression cap — caller must surface an error. */
   final case class TooLarge(detail: String) extends ImagePrep
 
@@ -110,11 +112,15 @@ object ImageInject:
                   s"Please downscale or re-save the image manually, then Read it again."
               )
             else
-              val note = s"compressed ${bytes.length / 1024}KB→${encoded.length / 1024}KB, ${longSide}px→${math.max(w, h)}px"
+              val note =
+                s"compressed ${bytes.length / 1024}KB→${encoded.length / 1024}KB, ${longSide}px→${math.max(w, h)}px"
               Prepared(encoded, "image/jpeg", Some(note))
-      catch case _: Exception =>
-        // Compression failed for any reason — inject the original bytes
-        Prepared(bytes, mediaType, None)
+          end if
+        end if
+      catch
+        case _: Exception =>
+          // Compression failed for any reason — inject the original bytes
+          Prepared(bytes, mediaType, None)
 
   /** Encode a BufferedImage as JPEG at the given quality (0..1). */
   private def encodeJpeg(img: java.awt.image.BufferedImage, quality: Float): Array[Byte] =
@@ -168,6 +174,8 @@ object ImageInject:
       else Right(paths)
     )
 
+  end parseImagesParam
+
   /**
    * Resolve image attachment paths at send time. Fail-fast: any invalid path
    * aborts the whole call (nothing is sent), mirroring ReadTool's guards.
@@ -179,7 +187,7 @@ object ImageInject:
 
   /** Load one attachment into dual-channel blocks, or a descriptive error. */
   private def loadOne(path: String): Either[ToolError, List[ContentBlock]] =
-    if !nebflow.core.PathUtil.isAbsolute(path) then
+    if !nebflow.shared.PathUtil.isAbsolute(path) then
       Left(ToolError(s"Attachment path must be absolute, got: '$path'."))
     else
       val filePath = Paths.get(path)
@@ -206,19 +214,30 @@ object ImageInject:
           case Some(mediaType) =>
             if Files.size(filePath) > MAX_IMAGE_BYTES then
               val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
-              Left(ToolError(s"Attachment too large: $fileName (${f"$sizeMb%.1f"}MB, limit ${MAX_IMAGE_BYTES / 1024 / 1024}MB)."))
+              Left(
+                ToolError(
+                  s"Attachment too large: $fileName (${f"$sizeMb%.1f"}MB, limit ${MAX_IMAGE_BYTES / 1024 / 1024}MB)."
+                )
+              )
             else
               try
                 val bytes = Files.readAllBytes(filePath)
                 prepareImage(bytes, mediaType, fileName) match
                   case TooLarge(detail) => Left(ToolError(detail))
                   case Prepared(prepared, preparedMime, _) =>
-                    Right(List(
-                      ContentBlock.Text(attachmentLabel(path)),
-                      ContentBlock.Image(Base64.getEncoder.encodeToString(prepared), preparedMime)
-                    ))
-              catch case e: Exception =>
-                Left(ToolError(s"Failed to read attachment '$path': ${e.getMessage}"))
+                    Right(
+                      List(
+                        ContentBlock.Text(attachmentLabel(path)),
+                        ContentBlock.Image(Base64.getEncoder.encodeToString(prepared), preparedMime)
+                      )
+                    )
+              catch
+                case e: Exception =>
+                  Left(ToolError(s"Failed to read attachment '$path': ${e.getMessage}"))
+
+        end match
+
+      end if
 
   /**
    * Re-resolve persisted attachment paths at queue drain time (D6: the queue

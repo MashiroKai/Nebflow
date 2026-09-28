@@ -165,7 +165,7 @@ class DropboxUtilSpec extends CatsEffectSuite:
         IO.blocking(os.write(temp, s"payload-$k".getBytes("UTF-8"))) *>
           DropboxUtil.reserveAndPlace(dir, "burst.png", temp, now).flatMap {
             case Left(reason) => IO.raiseError(new AssertionError(reason))
-            case Right(p)     => IO.pure(acc :+ p)
+            case Right(p) => IO.pure(acc :+ p)
           }
       }
       .map { placed =>

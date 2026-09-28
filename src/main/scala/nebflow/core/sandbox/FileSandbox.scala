@@ -1,8 +1,8 @@
 package nebflow.core.sandbox
 
-import java.nio.file.Path
-
 import nebflow.core.tools.{ToolContext, ToolError, ToolPathUtil}
+
+import java.nio.file.Path
 
 /**
  * 文件工具层路径接缝（阶段 2a 沙箱 → 沙箱拆围栏批 S2 退役形态）。
@@ -64,11 +64,26 @@ object FileSandbox:
           // canonical 域比较（symlink 间接路径同样拦截）。
           val canonical = SandboxPolicy.canonicalize(resolved)
           if SandboxPolicy.readDenied(canonical) then
-            Left(ToolError(deniedMessage(
-              "write", rawPath, canonical, policy,
-              reason = Some("path matches the private-memory rule (agents/<agent>/memory.md is denied; the only exception is the audit-read-only whitelist for Nebula's own memory.md)")
-            )))
+            Left(
+              ToolError(
+                deniedMessage(
+                  "write",
+                  rawPath,
+                  canonical,
+                  policy,
+                  reason = Some(
+                    "path matches the private-memory rule (agents/<agent>/memory.md is denied; the only exception is the audit-read-only whitelist for Nebula's own memory.md)"
+                  )
+                )
+              )
+            )
           else Right(canonical)
+
+          end if
+
+    end match
+
+  end checkWrite
 
   /**
    * 读路径解析（Read）。[R3=c1 读侧放开] 读拒判定（`readDenied`）与 `readableRoots`
@@ -95,10 +110,18 @@ object FileSandbox:
     if policy.pathRoot.isEmpty then Right(root)
     else Right(os.Path(SandboxPolicy.canonicalize(root.wrapped)))
 
-  /** 私有记忆写拒的结构化错误（§A.5 模板）。[沙箱拆围栏批 S2] 当前唯一消费者 =
-    * checkWrite 的 memory.md 写拒——写根/读根列表已是退役概念的残留文案，改写属
-   * 清理批（②/③），本批按最小改动不扩面。 */
-  private def deniedMessage(op: String, raw: String, canonical: Path, policy: SandboxPolicy, reason: Option[String] = None): String =
+  /**
+   * 私有记忆写拒的结构化错误（§A.5 模板）。[沙箱拆围栏批 S2] 当前唯一消费者 =
+   * checkWrite 的 memory.md 写拒——写根/读根列表已是退役概念的残留文案，改写属
+   * 清理批（②/③），本批按最小改动不扩面。
+   */
+  private def deniedMessage(
+    op: String,
+    raw: String,
+    canonical: Path,
+    policy: SandboxPolicy,
+    reason: Option[String] = None
+  ): String =
     val writable = SandboxPolicy.writableRoots(policy).mkString(", ")
     val readable = SandboxPolicy.readableRoots(policy).mkString(", ")
     val reasonLine = reason.map(r => s"\nReason: $r").getOrElse("")
@@ -107,5 +130,6 @@ object FileSandbox:
        |cannot $op "$raw" (resolves to $canonical, outside sandbox root ${policy.root}).$reasonLine
        |Writable roots: $writable. Readable roots: $readable.
        |Write within the sandbox root, or report to the dispatcher if the task genuinely requires a path outside the project.""".stripMargin
+  end deniedMessage
 
 end FileSandbox

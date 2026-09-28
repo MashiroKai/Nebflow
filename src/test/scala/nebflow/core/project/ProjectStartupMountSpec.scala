@@ -5,8 +5,8 @@ import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -76,6 +76,7 @@ class ProjectStartupMountSpec extends CatsEffectSuite:
       assertEquals(rt1.get.engine.rootSessionId, "nebula-root", "engine must anchor to top-level root")
       assertEquals(rt2.get.engine.rootSessionId, "nebula-root")
       assertEquals(mounted2, 0, "already-mounted projects must be skipped (idempotent)")
+    end for
   }
 
   test("mountAll fail-soft: unmountable project workspace is skipped with warn; other projects still mount") {
@@ -96,7 +97,8 @@ class ProjectStartupMountSpec extends CatsEffectSuite:
     os.makeDir.all(badDir)
     os.write(
       badDir / "project.json",
-      s"""{"name":"p-fs-bad","description":null,"workspace":"$badWorkspace","agentFile":"$badWorkspace/AGENTS.md","feedbackMode":null,"createdAt":${System.currentTimeMillis()}}"""
+      s"""{"name":"p-fs-bad","description":null,"workspace":"$badWorkspace","agentFile":"$badWorkspace/AGENTS.md","feedbackMode":null,"createdAt":${System
+          .currentTimeMillis()}}"""
     )
     val system = ActorSystem(s"sm-${scala.util.Random.nextInt(100000)}")
     val res = testResources(wsGood)

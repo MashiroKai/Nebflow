@@ -1,11 +1,14 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentCore, AgentDef, SharedResources}
-import nebflow.neblink.{AgentMessagingConfig, ConversationSummary, FriendListResponse, FriendRoster, FriendService, FriendSummary, MessageSummary, NeblinkClient, NeblinkServerConfig}
+import nebflow.actor.AgentDef
+import nebflow.agent.{AgentCore, SharedResources}
+import nebflow.core.FriendRosterPort
+import nebflow.neblink.*
+import nebflow.shared.{FriendListResponse, FriendSummary}
 
 /**
  * ListFriends 注册 / 授能 / 调用面契约（好友消息改造批 ⑩，方案
@@ -36,9 +39,11 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
 
   private val emptyInput = JsonObject.empty
 
-  /** 只读 `sharedResources.friendService` 的 ToolContext。本工具不读 SharedResources
-    * 的任何其它字段 ⇒ 其余槽位一律 `null`（`AgentControlToolSpec` 先例：`llm = null`
-    * / `providerRegistry = null`），无需真 ActorSystem / Dispatcher。 */
+  /**
+   * 只读 `sharedResources.friendService` 的 ToolContext。本工具不读 SharedResources
+   * 的任何其它字段 ⇒ 其余槽位一律 `null`（`AgentControlToolSpec` 先例：`llm = null`
+   * / `providerRegistry = null`），无需真 ActorSystem / Dispatcher。
+   */
   private def ctx(fs: Option[FriendService]): ToolContext =
     ToolContext(
       projectRoot = "/tmp",
@@ -109,8 +114,10 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
         replyToMessageId: Option[Long]
       ): IO[Either[String, Json]] = unexpected("sendFriendMessage")
 
+  end StubClient
+
   private def withStub[A](reply: Either[String, FriendListResponse])(
-      use: (FriendService, StubClient) => IO[A]
+    use: (FriendService, StubClient) => IO[A]
   ): IO[A] =
     IO.delay {
       val stub = StubClient(reply)
@@ -138,60 +145,63 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
   test("schema：零参数契约（properties={} / required=[]），不加 filter、不加 limit"):
     val schema = ListFriendsTool.inputSchema
     assertEquals(schema("type").flatMap(_.asString), Some("object"))
-    assertEquals(schema("properties").flatMap(_.asObject).map(_.keys.toList), Some(List.empty[String]),
-      "零参数：properties 必须显式给空对象（不加 filter —— 会与 FriendRoster.resolve 分叉；不加 limit —— 静默截断会让模型误判）")
-    assertEquals(schema("required").flatMap(_.asArray).map(_.toList), Some(List.empty[io.circe.Json]),
-      "required = []（显式给出）")
+    assertEquals(
+      schema("properties").flatMap(_.asObject).map(_.keys.toList),
+      Some(List.empty[String]),
+      "零参数：properties 必须显式给空对象（不加 filter —— 会与 FriendRoster.resolve 分叉；不加 limit —— 静默截断会让模型误判）"
+    )
+    assertEquals(
+      schema("required").flatMap(_.asArray).map(_.toList),
+      Some(List.empty[io.circe.Json]),
+      "required = []（显式给出）"
+    )
     // 交付面 schema 也不得被 device 注入污染（见下方 L3 用例）
 
   // ══════════ 2. 不越界面（L3） ══════════
 
-  test("L3：插件白名单不含 ListFriends（否则绕过 NebulaExclusiveTools 剥离面）"):
+  test("L3：插件白名单不含 ListFriends（否则绕过 RootExclusiveTools 剥离面）"):
     assert(
       !nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.contains("ListFriends"),
-      "插件通道不得授 ListFriends（授能面仅 NebulaOrchestrationTools 单点）"
+      "插件通道不得授 ListFriends（授能面仅 RootOrchestrationTools 单点）"
     )
 
   test("L3：RemoteExecutor.remoteableTools 不含 ListFriends，augmentSchema 不注入 device"):
-    assert(!RemoteExecutor.remoteableTools.contains("ListFriends"),
-      "ListFriends 无 device 参数语义（好友面 ≠ 设备面，两者正交）")
+    assert(!RemoteExecutor.remoteableTools.contains("ListFriends"), "ListFriends 无 device 参数语义（好友面 ≠ 设备面，两者正交）")
     val augmented = RemoteExecutor.augmentSchema("ListFriends", ListFriendsTool.inputSchema)
     assertEquals(augmented, ListFriendsTool.inputSchema, "schema 逐字不变")
-    assert(augmented("properties").flatMap(_.asObject).forall(o => !o.contains("device")),
-      "零参数 schema 不得被注入 device 参数")
+    assert(augmented("properties").flatMap(_.asObject).forall(o => !o.contains("device")), "零参数 schema 不得被注入 device 参数")
 
   // ══════════ 3. 授能面（L2） ══════════
 
-  test("L2：Nebula 固定面携带 ListFriends（flag-aware，friendseal 2026-09-25）；dispatcher / general 均不携带"):
-    // friendseal：交付面随唯一 `features.friends` 闸翻面（单一剥离点
-    // `AgentCore.friendsSealedStrip`）；静态集 `NebulaOrchestrationTools`
-    // 原样不动（注册表=全集语义）。封存 = 摘名（模型不可见），解封 = 复名。
-    val delivered = AgentCore.fixedToolsFor(mkDef("Nebula"))
-    assertEquals(delivered.contains("ListFriends"), !nebflow.core.FriendsSeal.isSealed,
-      "Nebula 交付面：flag 开 ⇒ 携带；flag 关（封存缺省）⇒ 摘名")
+  test("L2：Nebula 固定面携带 ListFriends；dispatcher / general 均不携带"):
+    assert(AgentCore.fixedToolsFor(mkDef("Nebula")).contains("ListFriends"), "Nebula 携带 ListFriends")
     assert(!AgentCore.fixedToolsFor(mkDef("project-dispatcher")).contains("ListFriends"), "dispatcher 不授 ListFriends")
     assert(!AgentCore.fixedToolsFor(mkDef("general")).contains("ListFriends"), "general 不授 ListFriends")
     assert(!AgentCore.DispatcherFixedTools.contains("ListFriends"), "DispatcherFixedTools 零 ListFriends")
     assert(!AgentCore.BaseTools.contains("ListFriends"), "BaseTools 零 ListFriends（不得进全 agent 面）")
 
-  test("L2：防声明逃逸单点——NebulaExclusiveTools 含之，dream 无豁免，其余身份剥全集"):
-    assert(AgentCore.NebulaExclusiveTools.contains("ListFriends"),
-      "ListFriends 进 NebulaExclusiveTools（runtime 剥离 + AgentLibrary 面板/保存侧 strip 共用单点）")
-    assert(!AgentCore.exclusiveToolsFor("Nebula").contains("ListFriends"),
-      "Nebula 自身无剥离（静态集单点授能）")
-    assert(AgentCore.exclusiveToolsFor("general").contains("ListFriends"),
-      "其余身份剥全集 ⇒ general 声明无效")
-    assert(AgentCore.exclusiveToolsFor("dream").contains("ListFriends"),
-      "dream 无豁免（govmemory 批：旧准入例外面已随其唯一成员退役摘除）⇒ dream 声明无效")
-    assert(AgentCore.exclusiveToolsFor("dream") == AgentCore.NebulaExclusiveTools,
-      "dream 剥集 == 全集（例外面已摘，govmemory 批）")
-    // legacy 面（team / flow / catch-all）同样零 ListFriends：机制固定集 = NebulaOrchestrationTools 单点
-    assert(!AgentCore.fixedToolsFor(mkDef("member", List("*")).copy(category = "team")).contains("ListFriends"),
-      "legacy team 成员不携带")
-    assert(!AgentCore.fixedToolsFor(mkDef("leaf", List("*")).copy(category = "flow")).contains("ListFriends"),
-      "legacy flow 节点不携带")
-    assert(!AgentCore.fixedToolsFor(mkDef("standalone-x", List("*"))).contains("ListFriends"),
-      "legacy catch-all 不携带（BaseTools 面）")
+  test("L2：防声明逃逸单点——RootExclusiveTools 含之，dream 无豁免，其余身份剥全集"):
+    assert(
+      AgentCore.RootExclusiveTools.contains("ListFriends"),
+      "ListFriends 进 RootExclusiveTools（runtime 剥离 + AgentLibrary 面板/保存侧 strip 共用单点）"
+    )
+    assert(!AgentCore.exclusiveToolsFor("Nebula").contains("ListFriends"), "Nebula 自身无剥离（静态集单点授能）")
+    assert(AgentCore.exclusiveToolsFor("general").contains("ListFriends"), "其余身份剥全集 ⇒ general 声明无效")
+    assert(AgentCore.exclusiveToolsFor("dream").contains("ListFriends"), "dream 无豁免（豁免面恰 MemoryNote 一件）⇒ dream 声明无效")
+    assert(!AgentCore.DreamAdmittedTools.contains("ListFriends"), "DreamAdmittedTools 不含 ListFriends")
+    // legacy 面（team / flow / catch-all）同样零 ListFriends：机制固定集 = RootOrchestrationTools 单点
+    assert(
+      !AgentCore.fixedToolsFor(mkDef("member", List("*")).copy(category = "team")).contains("ListFriends"),
+      "legacy team 成员不携带"
+    )
+    assert(
+      !AgentCore.fixedToolsFor(mkDef("leaf", List("*")).copy(category = "flow")).contains("ListFriends"),
+      "legacy flow 节点不携带"
+    )
+    assert(
+      !AgentCore.fixedToolsFor(mkDef("standalone-x", List("*"))).contains("ListFriends"),
+      "legacy catch-all 不携带（BaseTools 面）"
+    )
 
   // ══════════ 4. 调用面 ══════════
 
@@ -204,6 +214,9 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     }
 
   test("调用面：零参数工具可调用（空输入对象与未知参数均不阻断）"):
+    // 严格DAG第⑥步第三批A裁定(2026-09-27):ListFriendsTool 名册面经 FriendRosterPort 注册器
+    // (dwfq-5c7a31ea-1 R10);测试触达真实 FriendRoster(对象初始化自注册,与 NeblinkWiring 生产同款)。
+    FriendRosterPort.install(FriendRoster)
     withStub(Right(emptyRoster)) { (fs, _) =>
       ListFriendsTool.call(emptyInput, ctx(Some(fs))).flatMap { empty =>
         val withUnknown =
@@ -237,32 +250,37 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     }
 
   test("调用面：空名册 → Right，首行计数行 + 显式空名册说明"):
+    FriendRosterPort.install(FriendRoster) // 名册面注册器,见上方裁定注释
     withStub(Right(emptyRoster)) { (fs, _) =>
       ListFriendsTool.call(emptyInput, ctx(Some(fs))).map { res =>
         assert(res.isRight, s"空名册是成功结果，got: ${res.left.toOption.map(_.message)}")
         val lines = res.toOption.get.linesIterator.toList
         assertEquals(lines.head, "Friends: 0", "首行恒为计数行")
-        assertEquals(lines(1), "The friend list is empty (no accepted friendships).",
-          "空名册显式说明（与「读不到」区分）")
+        assertEquals(lines(1), "The friend list is empty (no accepted friendships).", "空名册显式说明（与「读不到」区分）")
         assertEquals(lines.size, 2)
       }
     }
 
   test("调用面：正常名册 → 首行计数 + 逐行 == FriendRoster.candidateLine（blocked 标记在位）"):
+    FriendRosterPort.install(FriendRoster) // 名册面注册器,见上方裁定注释
     withStub(Right(twoFriends)) { (fs, _) =>
       ListFriendsTool.call(emptyInput, ctx(Some(fs))).map { res =>
         val out = res match
           case Right(v) => v
-          case Left(e)  => fail(s"expected Right, got ${e.message}")
+          case Left(e) => fail(s"expected Right, got ${e.message}")
         val lines = out.linesIterator.toList
         assertEquals(lines.head, "Friends: 2")
         assertEquals(lines(1), "林小满 (lin@example.com) [blocked]")
         assertEquals(lines(2), "王选 (wangxuan)")
         assertEquals(lines.size, 3)
         // 逐行 == candidateLine（成功路径与失败路径同一套词表）
-        assertEquals(lines.tail,
-          List(FriendRoster.candidateLine(FriendSummary("u1", "lin@example.com", "林小满", blocked = Some(true))),
-            FriendRoster.candidateLine(FriendSummary("u2", "wangxuan", "王选"))))
+        assertEquals(
+          lines.tail,
+          List(
+            FriendRoster.candidateLine(FriendSummary("u1", "lin@example.com", "林小满", blocked = Some(true))),
+            FriendRoster.candidateLine(FriendSummary("u2", "wangxuan", "王选"))
+          )
+        )
       }
     }
 
@@ -293,8 +311,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     assert(line.contains(s"($username)"), "用户名以括号键形式在位（可直接整键取用）")
     assertEquals(FriendRoster.resolve(username, List(f)).map(_.userId), Right("u1"), "username 键可寻址")
     assertEquals(FriendRoster.resolve(displayName, List(f)).map(_.userId), Right("u1"), "displayName 键可寻址")
-    assertEquals(FriendRoster.resolve(line, List(f)).isLeft, true,
-      "整行不是合法 to 值（模型须取行内键，不得整行复制——L4 输出行形的用途说明）")
+    assertEquals(FriendRoster.resolve(line, List(f)).isLeft, true, "整行不是合法 to 值（模型须取行内键，不得整行复制——L4 输出行形的用途说明）")
 
   test("L4①（⑦ 待落地欠项）：remark 预留槽与 displayName 可区分——本批不加任何模型字段"):
     val f = FriendSummary("u1", "lin@example.com", "林小满")
@@ -302,8 +319,10 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     assertEquals(FriendRoster.candidateLine(f), "林小满 (lin@example.com)")
     // 预留槽的形状：备注不顶替显示名，两者可区分（⑦ 落地后由此入参供水）
     assertEquals(FriendRoster.candidateLine(f, Some("老林")), "林小满 (lin@example.com) [remark: 老林]")
-    assertEquals(FriendRoster.candidateLine(f.copy(blocked = Some(true)), Some("老林")),
-      "林小满 (lin@example.com) [remark: 老林] [blocked]")
+    assertEquals(
+      FriendRoster.candidateLine(f.copy(blocked = Some(true)), Some("老林")),
+      "林小满 (lin@example.com) [remark: 老林] [blocked]"
+    )
     assertEquals(FriendRoster.candidateLine(f, Some("")), "林小满 (lin@example.com)", "空备注不渲染")
 
   test("L5：名册输出与 description 均不含在线/可达/最后在线字段"):
@@ -314,10 +333,8 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
       assert(!roster.toLowerCase.contains(forbidden.toLowerCase), s"名册输出不得含 $forbidden（数据面无该字段）")
     }
     val d = ListFriendsTool.description
-    assert(d.contains("No online / reachable / last-seen state is reported"),
-      "description 必须显式声明不报告在线/可达状态")
-    assert(d.contains("Do not assume a friend is reachable from this list"),
-      "description 必须含硬句子（L5/L8）")
+    assert(d.contains("No online / reachable / last-seen state is reported"), "description 必须显式声明不报告在线/可达状态")
+    assert(d.contains("Do not assume a friend is reachable from this list"), "description 必须含硬句子（L5/L8）")
 
   test("超长名册：代码内封顶 + 显式尾行（计数行仍报总数）"):
     val n = ListFriendsTool.MaxRows
@@ -339,8 +356,11 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     withStub(Right(twoFriends)) { (fs, stub) =>
       ListFriendsTool.call(emptyInput, ctx(Some(fs))).map { res =>
         assert(res.isRight)
-        assertEquals(stub.calls.toList, List("listFriends"),
-          "唯一一次调用 = 读名册（不刷本地态 / 不动未读游标 / 不触发任何写——写面与会话/消息面被遮蔽记账，触碰即失败）")
+        assertEquals(
+          stub.calls.toList,
+          List("listFriends"),
+          "唯一一次调用 = 读名册（不刷本地态 / 不动未读游标 / 不触发任何写——写面与会话/消息面被遮蔽记账，触碰即失败）"
+        )
       }
     }
 
@@ -349,8 +369,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
   test("description：好友 ≠ 设备 + 用途 + 各段齐 + blocked 语义 + 只读零副作用 + SendMessage 复用"):
     val d = ListFriendsTool.description
     assert(d.contains("Friends are NOT devices"), "摘要段必须写清好友 ≠ 设备")
-    assert(d.contains("a device is one of the user's own other machines on the same NebLink account"),
-      "设备定义（同账号的其它机器）")
+    assert(d.contains("a device is one of the user's own other machines on the same NebLink account"), "设备定义（同账号的其它机器）")
     assert(d.contains("this tool never lists"), "明写本工具永不列出设备")
     assert(d.contains("before calling SendMessage"), "用途：发消息前先看谁能发")
     assert(d.contains("## Output"), "Output 段在位")
@@ -360,8 +379,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     assert(d.contains("no accepted friendships"), "空名册文案写清")
     assert(d.contains("unreadable roster"), "读不到与空名册分别报告")
     assert(d.contains("[blocked]"), "blocked 语义位在位")
-    assert(d.contains("read-only") && d.contains("does not refresh local state"),
-      "只读零副作用（不刷本地态 / 不动未读游标 / 不触发写）")
+    assert(d.contains("read-only") && d.contains("does not refresh local state"), "只读零副作用（不刷本地态 / 不动未读游标 / 不触发写）")
     assert(d.contains("`SendMessage`'s `to`") || d.contains("SendMessage"), "本列表的值原样交给 SendMessage 的 to")
 
 end ListFriendsToolRegistrationSpec

@@ -7,8 +7,8 @@ import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.{RemoteExecutor, ToolError}
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets
@@ -53,6 +53,7 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
     private val bodies = new ConcurrentLinkedQueue[String]()
 
     server.setExecutor(pool)
+
     server.createContext(
       "/api/neblink/remote-exec",
       (ex: HttpExchange) =>
@@ -70,12 +71,14 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
 
     def hitCount: Int = requests.size()
 
-    /** 只读画像探针的命中数（xdev 批 2026-09-15）。判别锚 = 探针请求体里的字面
-      * `xdev read-only profile probe`（生产侧 `RemoteExecutor.scala:306` 的
-      * `"description" -> "xdev read-only profile probe"`，随 `p2pExecuteAt`
-      * `RemoteExecutor.scala:732-735` 的 `{"action":…,"params":…}` 信封下发）。
-      * 探针与业务走**同一**候选轮转/短路逻辑 ⇒ 用它能把这 2 次下发拆开核对，
-      * 而不是只对一个合计数。 */
+    /**
+     * 只读画像探针的命中数（xdev 批 2026-09-15）。判别锚 = 探针请求体里的字面
+     * `xdev read-only profile probe`（生产侧 `RemoteExecutor.scala:306` 的
+     * `"description" -> "xdev read-only profile probe"`，随 `p2pExecuteAt`
+     * `RemoteExecutor.scala:732-735` 的 `{"action":…,"params":…}` 信封下发）。
+     * 探针与业务走**同一**候选轮转/短路逻辑 ⇒ 用它能把这 2 次下发拆开核对，
+     * 而不是只对一个合计数。
+     */
     def probeHitCount: Int =
       bodies.stream().filter(_.contains("xdev read-only profile probe")).count().toInt
 
@@ -83,6 +86,8 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
       server.stop(0)
       pool.shutdownNow()
       ()
+
+  end StubPeerServer
 
   private def freeTcpPort(): Int =
     val s = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
@@ -101,19 +106,21 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
    */
   private def dispatch(mkPeer: String => PeerInfo): IO[(Either[ToolError, String], Int, Int)] =
     IO.blocking(new StubPeerServer()).flatMap { stub =>
-      Dispatcher.parallel[IO].use { dispatcher =>
-        for
-          ms <- NeblinkService.create(0, dispatcher)
-          _ = ms.setRelayClient(None)
-          _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
-          _ <- ms.upsertPeer(mkPeer(stub.address))
-          res <- RemoteExecutor.current
-            .get
-            .execute("peer-one", "Bash", JsonObject("command" -> "uname -a".asJson), None)
-          hits <- IO.blocking(stub.hitCount)
-          probes <- IO.blocking(stub.probeHitCount)
-        yield (res, hits, probes)
-      }.guarantee(IO.blocking(stub.close()))
+      Dispatcher
+        .parallel[IO]
+        .use { dispatcher =>
+          for
+            ms <- NeblinkService.create(0, dispatcher)
+            _ = ms.setRelayClient(None)
+            _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
+            _ <- ms.upsertPeer(mkPeer(stub.address))
+            res <- RemoteExecutor.current.get
+              .execute("peer-one", "Bash", JsonObject("command" -> "uname -a".asJson), None)
+            hits <- IO.blocking(stub.hitCount)
+            probes <- IO.blocking(stub.probeHitCount)
+          yield (res, hits, probes)
+        }
+        .guarantee(IO.blocking(stub.close()))
     }
 
   test("C1: 首候选不可达、次候选可达 ⇒ 轮转后成功（改前只打 peer.address ⇒ 必失败）") {
@@ -151,12 +158,11 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
   }
 
   test("C1: peer.endpoints 为空 ⇒ 退回单 address（legacy peer 行为不回归）") {
-    dispatch(stub =>
-      PeerInfo(deviceId = "peer-1", deviceName = "peer-one", platform = "macos", address = stub)
-    ).map { case (res, hits, probes) =>
-      assertEquals(res, Right("p2p-ok"), s"无 endpoints 时仍按 address 下发: $res")
-      assertEquals(probes, 1, "首触只读画像探针恰 1 次（单端点形态同样下发探针）")
-      assertEquals(hits, 2, "退回单 address 后仍是探针 + 业务各 1 次")
+    dispatch(stub => PeerInfo(deviceId = "peer-1", deviceName = "peer-one", platform = "macos", address = stub)).map {
+      case (res, hits, probes) =>
+        assertEquals(res, Right("p2p-ok"), s"无 endpoints 时仍按 address 下发: $res")
+        assertEquals(probes, 1, "首触只读画像探针恰 1 次（单端点形态同样下发探针）")
+        assertEquals(hits, 2, "退回单 address 后仍是探针 + 业务各 1 次")
     }
   }
 

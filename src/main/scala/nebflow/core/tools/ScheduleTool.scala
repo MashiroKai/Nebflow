@@ -4,10 +4,9 @@ import cats.effect.IO
 import cats.syntax.foldable.toFoldableOps
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.agent.SharedResources
-import nebflow.core.scheduler.ScheduledTask
+import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
 
-import java.time.{Instant, LocalDate, LocalDateTime, OffsetDateTime, ZoneId, ZonedDateTime}
+import java.time.*
 
 object ScheduleTool extends Tool:
   val name = "Schedule"
@@ -118,39 +117,49 @@ as an instruction — you then execute it.
   def summarizeResult(input: JsonObject, result: String): String =
     val action = input("action").flatMap(_.asString).getOrElse("create")
     action match
-      case "list"    => if result.startsWith("Pending") || result.toLowerCase.contains("no pending") then "listed" else "failed"
-      case "cancel"  => if result.startsWith("Cancelled") then "cancelled" else "failed"
+      case "list" =>
+        if result.startsWith("Pending") || result.toLowerCase.contains("no pending") then "listed" else "failed"
+      case "cancel" => if result.startsWith("Cancelled") then "cancelled" else "failed"
       case _ =>
-        if result.startsWith("Scheduled task") then
-          if result.contains("replaced") then "replaced" else "scheduled"
+        if result.startsWith("Scheduled task") then if result.contains("replaced") then "replaced" else "scheduled"
         else "failed"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val action = input("action").flatMap(_.asString).getOrElse("create")
     if !validActions.contains(action) then
-      IO.pure(Left(ToolError(
-        s"Unknown action \"$action\" — expected one of ${validActions.toList.sorted.mkString(", ")} " +
-          "(omit action for create; use list to inspect, cancel by id)."
-      )))
+      IO.pure(
+        Left(
+          ToolError(
+            s"Unknown action \"$action\" — expected one of ${validActions.toList.sorted.mkString(", ")} " +
+              "(omit action for create; use list to inspect, cancel by id)."
+          )
+        )
+      )
     else
       ctx.sharedResources match
         case None => IO.pure(Left(ToolError("SharedResources not available")))
         case Some(sr) =>
+          // Phase 5 D 步:scheduledTaskStore / scheduledTaskService 均为 core.scheduler
+          // 类型——以底层值直传,不再以 agent 定位器类型流经本文件。
+          val taskStore = sr.scheduledTaskStore
+          val taskService = sr.scheduledTaskService
           action match
-            case "list"    => listAction(sr)
-            case "cancel"  => cancelAction(sr, input, ctx)
-            case "create"  =>
+            case "list" => listAction(taskStore)
+            case "cancel" => cancelAction(taskStore, taskService, input, ctx)
+            case "create" =>
               ctx.sessionId match
                 case None => IO.pure(Left(ToolError("No session ID available")))
-                case Some(sessionId) => createAction(sr, input, ctx, sessionId)
-            case other     => IO.pure(Left(ToolError(s"Unhandled action $other"))) // unreachable (guarded above)
+                case Some(sessionId) => createAction(taskStore, taskService, input, ctx, sessionId)
+            case other => IO.pure(Left(ToolError(s"Unhandled action $other"))) // unreachable (guarded above)
+    end if
+  end call
 
   // ---------------------------------------------------------------------------
   // action = list — all pending tasks across ALL sessions
   // ---------------------------------------------------------------------------
 
-  private def listAction(sr: SharedResources): IO[Either[ToolError, String]] =
-    sr.scheduledTaskStore.getAllPendingTasks.map { tasks =>
+  private def listAction(taskStore: ScheduledTaskStore): IO[Either[ToolError, String]] =
+    taskStore.getAllPendingTasks.map { tasks =>
       if tasks.isEmpty then Right("No pending scheduled tasks.")
       else
         val lines = tasks.sortBy(_.triggerAt).map { t =>
@@ -168,47 +177,59 @@ as an instruction — you then execute it.
   // action = cancel — by id, across sessions
   // ---------------------------------------------------------------------------
 
-  private def cancelAction(sr: SharedResources, input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+  private def cancelAction(
+    taskStore: ScheduledTaskStore,
+    taskService: Option[ScheduledTaskService],
+    input: JsonObject,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
     val idOpt = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     idOpt match
       case None =>
         IO.pure(Left(ToolError("cancel requires id — call Schedule {action:\"list\"} first, then pass the task's id.")))
       case Some(id) =>
-        sr.scheduledTaskStore.findTaskById(id).flatMap {
+        taskStore.findTaskById(id).flatMap {
           case None =>
-            sr.scheduledTaskStore.getAllPendingTasks.map { pending =>
+            taskStore.getAllPendingTasks.map { pending =>
               val ids = if pending.isEmpty then "(none)" else pending.map(_.id).mkString(", ")
-              Left(ToolError(
-                s"No scheduled task with id \"$id\". Pending ids: $ids — if this looks stale, call action=list to refresh."
-              ))
+              Left(
+                ToolError(
+                  s"No scheduled task with id \"$id\". Pending ids: $ids — if this looks stale, call action=list to refresh."
+                )
+              )
             }
           case Some(t) =>
             for
-              _ <- sr.scheduledTaskStore.deleteTask(t.sessionId, id)
-              _ <- sr.scheduledTaskService match
+              _ <- taskStore.deleteTask(t.sessionId, id)
+              _ <- taskService match
                 case Some(svc) => svc.notifyTaskChange()
                 case None => IO.unit
               // Broadcast so the frontend reminder panel updates in real-time
               _ <- ctx.wsSend match
                 case Some(send) =>
-                  send(Json.obj(
-                    "type" -> "scheduledTaskDeleted".asJson,
-                    "id" -> id.asJson,
-                    "sessionId" -> t.sessionId.asJson
-                  ))
+                  send(
+                    Json.obj(
+                      "type" -> "scheduledTaskDeleted".asJson,
+                      "id" -> id.asJson,
+                      "sessionId" -> t.sessionId.asJson
+                    )
+                  )
                 case None => IO.unit
             yield Right(
               s"Cancelled task $id (was ${formatTime(t.triggerAt)}${t.repeat.map(r => s", $r").getOrElse("")}): " +
                 s"${t.content.take(60)} — it will not fire."
             )
         }
+    end match
+  end cancelAction
 
   // ---------------------------------------------------------------------------
   // action = create — legacy behavior + name upsert
   // ---------------------------------------------------------------------------
 
   private def createAction(
-    sr: SharedResources,
+    taskStore: ScheduledTaskStore,
+    taskService: Option[ScheduledTaskService],
     input: JsonObject,
     ctx: ToolContext,
     sessionId: String
@@ -221,27 +242,40 @@ as an instruction — you then execute it.
     parseTriggerAt(input("triggerAt"), now, ZoneId.systemDefault()) match
       case Left(msg) => IO.pure(Left(ToolError(msg)))
       case Right(triggerAt) =>
-        if content.isBlank then IO.pure(Left(ToolError("content is required and must not be blank (for list/cancel use action=\"list\"/\"cancel\")")))
+        if content.isBlank then
+          IO.pure(
+            Left(
+              ToolError("content is required and must not be blank (for list/cancel use action=\"list\"/\"cancel\")")
+            )
+          )
         else if triggerAt <= now then
-          IO.pure(Left(ToolError(s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, current ${formatTime(now)}).")))
+          IO.pure(
+            Left(
+              ToolError(
+                s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, current ${formatTime(now)})."
+              )
+            )
+          )
         else
           val task = ScheduledTask.create(sessionId, content, triggerAt, None, repeat, taskName)
           for
             removed <- taskName match
-              case Some(n) => sr.scheduledTaskStore.upsertTaskByName(task)
-              case None    => sr.scheduledTaskStore.addTask(task).as(Nil)
-            _ <- sr.scheduledTaskService match
+              case Some(n) => taskStore.upsertTaskByName(task)
+              case None => taskStore.addTask(task).as(Nil)
+            _ <- taskService match
               case Some(svc) => svc.notifyTaskChange()
               case None => IO.unit
             // Broadcast removed (possibly cross-session) so other panels drop them
             _ <- ctx.wsSend match
               case Some(send) =>
                 removed.traverse_(old =>
-                  send(Json.obj(
-                    "type" -> "scheduledTaskDeleted".asJson,
-                    "id" -> old.id.asJson,
-                    "sessionId" -> old.sessionId.asJson
-                  ))
+                  send(
+                    Json.obj(
+                      "type" -> "scheduledTaskDeleted".asJson,
+                      "id" -> old.id.asJson,
+                      "sessionId" -> old.sessionId.asJson
+                    )
+                  )
                 )
               case None => IO.unit
             // Broadcast to frontend so the reminder panel updates in real-time
@@ -277,6 +311,7 @@ as an instruction — you then execute it.
           end for
         end if
     end match
+  end createAction
 
   // ---------------------------------------------------------------------------
   // triggerAt parsing: epoch-ms integer, ISO 8601, or natural language
@@ -293,7 +328,9 @@ as an instruction — you then execute it.
           case None =>
             json.asString match
               case None =>
-                Left(s"triggerAt must be an epoch-ms integer or a time string, got JSON ${json.getClass.getSimpleName}.")
+                Left(
+                  s"triggerAt must be an epoch-ms integer or a time string, got JSON ${json.getClass.getSimpleName}."
+                )
               case Some(raw) => parseTimeString(raw, now, zone)
 
   private def parseTimeString(raw: String, now: Long, zone: ZoneId): Either[String, Long] =
@@ -315,12 +352,22 @@ as an instruction — you then execute it.
               s"Current time: ${formatTime(now)} (${now} ms, zone ${zone.getId})."
           )
 
+    end if
+
+  end parseTimeString
+
   /** ISO 8601 with offset/Z, ISO local (T or space separated), or bare date. */
   private def tryIso(s: String, zone: ZoneId): Option[Long] =
-    scala.util.Try(OffsetDateTime.parse(s)).toOption.map(_.toInstant.toEpochMilli)
+    scala.util
+      .Try(OffsetDateTime.parse(s))
+      .toOption
+      .map(_.toInstant.toEpochMilli)
       .orElse(scala.util.Try(LocalDateTime.parse(s)).toOption.map(_.atZone(zone).toInstant.toEpochMilli))
       .orElse(
-        scala.util.Try(LocalDateTime.parse(s, SpaceDateTimeFormatter)).toOption.map(_.atZone(zone).toInstant.toEpochMilli)
+        scala.util
+          .Try(LocalDateTime.parse(s, SpaceDateTimeFormatter))
+          .toOption
+          .map(_.atZone(zone).toInstant.toEpochMilli)
       )
       .orElse(scala.util.Try(LocalDate.parse(s)).toOption.map(_.atStartOfDay(zone).toInstant.toEpochMilli))
 
@@ -347,7 +394,11 @@ as an instruction — you then execute it.
   private def tryTomorrow(s: String, nowZdt: ZonedDateTime): Option[Long] =
     s.toLowerCase match
       case TomorrowRegex(h, m, sec) =>
-        val (hh, mm, ss) = (Option(h).map(_.toInt).getOrElse(9), Option(m).map(_.toInt).getOrElse(0), Option(sec).map(_.toInt).getOrElse(0))
+        val (hh, mm, ss) = (
+          Option(h).map(_.toInt).getOrElse(9),
+          Option(m).map(_.toInt).getOrElse(0),
+          Option(sec).map(_.toInt).getOrElse(0)
+        )
         if hh <= 23 && mm <= 59 && ss <= 59 then
           val t = nowZdt.toLocalDate.plusDays(1).atTime(hh, mm, ss).atZone(nowZdt.getZone)
           Some(t.toInstant.toEpochMilli)

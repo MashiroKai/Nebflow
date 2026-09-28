@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
+import nebflow.actor.AgentDef
 import nebflow.core.tools.{AskUserQuestionTool, MailTool, NodeReportToolDef, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
@@ -28,6 +29,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
 
   /** protected `buildToolList` 的探针（先例：`AskUserDualModeSchemaSpec.CoreProbe`）。 */
   private object CoreProbe extends AgentCore:
+
     def face(
       defn: AgentDef,
       depth: Int = 0,
@@ -45,6 +47,8 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         projectBoardSession = projectBoardSession
       ).getOrElse(Nil)
 
+  end CoreProbe
+
   private def defNamed(name: String, category: String = "standalone"): AgentDef =
     AgentDef(name = name, description = "", tools = Nil, category = category)
 
@@ -61,8 +65,10 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   private def find(tds: List[ToolDefinition], name: String): Option[ToolDefinition] =
     tds.find(_.name == name)
 
-  /** 载荷序列化（与 `AnthropicAdapter.toAnthropicTools` 同形；spec 内单一实现）：
-    * 用于「工具载荷字节数 / sha256」读数（cache 前缀代价的字节面）。 */
+  /**
+   * 载荷序列化（与 `AnthropicAdapter.toAnthropicTools` 同形；spec 内单一实现）：
+   * 用于「工具载荷字节数 / sha256」读数（cache 前缀代价的字节面）。
+   */
   private def payload(tds: List[ToolDefinition]): String =
     tds
       .map(t => s"""{"name":${t.name},"description":${t.description},"input_schema":${t.inputSchema}}""")
@@ -72,12 +78,27 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   // 身份横断面（六个）
   // ============================================================
   private val nebulaRootFace = CoreProbe.face(defNamed("Nebula"), depth = 0)
+
   private val dispatcherFace =
     CoreProbe.face(defNamed("project-dispatcher"), isDispatcher = true, projectBoardSession = true)
+
   private val taskNodeFace =
-    CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, projectBoardSession = true, flowNodeRole = Some("task"))
+    CoreProbe.face(
+      defNamed("general"),
+      depth = 1,
+      flowNodeSession = true,
+      projectBoardSession = true,
+      flowNodeRole = Some("task")
+    )
+
   private val verifierNodeFace =
-    CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, projectBoardSession = true, flowNodeRole = Some("verifier"))
+    CoreProbe.face(
+      defNamed("general"),
+      depth = 1,
+      flowNodeSession = true,
+      projectBoardSession = true,
+      flowNodeRole = Some("verifier")
+    )
   private val kernelFace = CoreProbe.face(defNamed("kernel"), depth = 1)
   private val teamFace = CoreProbe.face(defNamed("Coder", category = "team"))
 
@@ -102,9 +123,9 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assertEquals(NodeReportToolDef.description, baseOf(NodeReportToolDef.Name).description)
 
     // 分化变体存在且与基础面不同、且更短（纯删段 ⇒ 不可能更长）
-    assert(MailTool.descriptionNebulaRoot != MailTool.descriptionBase, "Mail root 分化变体与基础面相同（机制空转）")
+    assert(MailTool.descriptionRoot != MailTool.descriptionBase, "Mail root 分化变体与基础面相同（机制空转）")
     assert(MailTool.descriptionDispatcher != MailTool.descriptionBase, "Mail dispatcher 分化变体与基础面相同（机制空转）")
-    assert(MailTool.descriptionNebulaRoot.length < MailTool.descriptionBase.length, "root 变体未变短")
+    assert(MailTool.descriptionRoot.length < MailTool.descriptionBase.length, "root 变体未变短")
     assert(MailTool.descriptionDispatcher.length < MailTool.descriptionBase.length, "dispatcher 变体未变短")
     assert(NodeReportToolDef.descriptionTask != NodeReportToolDef.descriptionBase, "task 变体与基础面相同")
     assert(NodeReportToolDef.descriptionVerifier != NodeReportToolDef.descriptionBase, "verifier 变体与基础面相同")
@@ -115,18 +136,26 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   test("① 选择逻辑可证: 同一 ToolDefinition 输入按身份产出不同定义；基础身份恒等映射") {
     val mail = baseOf("Mail")
     assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity()), mail, "基础身份未恒等映射")
-    assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isNebulaRoot = true)).description,
-      MailTool.descriptionNebulaRoot)
-    assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
-      MailTool.descriptionDispatcher)
+    assertEquals(
+      AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isRootAgent = true)).description,
+      MailTool.descriptionRoot
+    )
+    assertEquals(
+      AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
+      MailTool.descriptionDispatcher
+    )
     val nr = baseOf(NodeReportToolDef.Name)
-    assertEquals(AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))).description,
-      NodeReportToolDef.descriptionTask)
-    assertEquals(AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier"))).description,
-      NodeReportToolDef.descriptionVerifier)
+    assertEquals(
+      AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))).description,
+      NodeReportToolDef.descriptionTask
+    )
+    assertEquals(
+      AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier"))).description,
+      NodeReportToolDef.descriptionVerifier
+    )
     // 变体选择**只**动 description（Q5 判据 + 试点口径）
     for (td, id) <- List(
-        (mail, AgentCore.ToolFaceIdentity(isNebulaRoot = true)),
+        (mail, AgentCore.ToolFaceIdentity(isRootAgent = true)),
         (mail, AgentCore.ToolFaceIdentity(isDispatcher = true)),
         (nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))),
         (nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier")))
@@ -139,7 +168,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val mainSrc = root / "src" / "main" / "scala"
     assert(os.exists(mainSrc), s"源码根不存在：$mainSrc（本 spec 必须在仓根运行）")
     val callers = Map(
-      "nebulaRootVariant(" -> "AgentCore.scala",
+      "rootVariant(" -> "AgentCore.scala",
       "roleVariant(" -> "AgentCore.scala",
       "addressFaceVariant(" -> "AgentCore.scala"
     )
@@ -149,7 +178,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         .filter(p => p.ext == "scala")
         .filter { p =>
           val src = os.read(p)
-          // 定义行（`def nebulaRootVariant(`）不算调用；其余出现处必须是单点文件。
+          // 定义行（`def rootVariant(`）不算调用；其余出现处必须是单点文件。
           src.linesIterator.exists(l => l.contains(needle) && !l.contains("def " + needle))
         }
         .map(_.last)
@@ -167,15 +196,19 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       .toList
     assertEquals(roleFilterFiles, Nil, "节点角色判据出现了第二份表达式（规格：一处实现、单点消费）")
 
-    // 既有 root 判据仍单点（与 AskUser 批同一纪律；此处复验不回归）
-    val pred = """(?s)name\s*==\s*"Nebula"\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
+    // 既有 root 判据仍单点（与 AskUser 批同一纪律；此处复验不回归）。
+    // re-pin（2026-09-25 身份谓词单点化批）：判据名分字面量 "Nebula" 收敛为常量
+    // RootAgentIdentity.Name（值不变），正则同步钉常量形态。
+    val pred = """(?s)name\s*==\s*RootAgentIdentity\.Name\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
     val holders = os
       .walk(mainSrc)
       .filter(p => p.ext == "scala")
       .filter { p =>
         val noBlock = """(?s)/\*.*?\*/""".r.replaceAllIn(os.read(p), " ")
         val noLine = noBlock.linesIterator
-          .map { l => val i = l.indexOf("//"); if i < 0 then l else l.take(i) }
+          .map { l =>
+            val i = l.indexOf("//"); if i < 0 then l else l.take(i)
+          }
           .mkString("\n")
         pred.findFirstIn(noLine).isDefined
       }
@@ -238,8 +271,11 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     for role <- List(None, Some(""), Some("unknown-role"), Some("verifier-x"))
     do
       val face = CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, flowNodeRole = role)
-      assertEquals(find(face, NodeReportToolDef.Name).getOrElse(fail("节点面丢了 node_report")), baseOf(NodeReportToolDef.Name),
-        s"role=$role 拿到了分化面（未登记形态必须落基础面）")
+      assertEquals(
+        find(face, NodeReportToolDef.Name).getOrElse(fail("节点面丢了 node_report")),
+        baseOf(NodeReportToolDef.Name),
+        s"role=$role 拿到了分化面（未登记形态必须落基础面）"
+      )
   }
 
   // ============================================================
@@ -267,7 +303,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val rootMail = find(nebulaRootFace, "Mail").getOrElse(fail("Nebula 面丢了 Mail"))
     val dispMail = find(dispatcherFace, "Mail").getOrElse(fail("dispatcher 面丢了 Mail"))
     val taskMail = find(taskNodeFace, "Mail")
-    assertEquals(rootMail.description, MailTool.descriptionNebulaRoot, "root 未拿到地址面变体")
+    assertEquals(rootMail.description, MailTool.descriptionRoot, "root 未拿到地址面变体")
     assertEquals(dispMail.description, MailTool.descriptionDispatcher, "dispatcher 未拿到地址面变体")
     assertEquals(rootMail.inputSchema, baseOf("Mail").inputSchema, "root 变体改了 inputSchema（Q5 判据）")
     assertEquals(dispMail.inputSchema, baseOf("Mail").inputSchema, "dispatcher 变体改了 inputSchema（Q5 判据）")
@@ -280,7 +316,11 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assert(!dispMail.description.contains("**Team context (legacy)**"), "dispatcher 地址面仍含 team 段")
     // 参数级 address description 属于 inputSchema ⇒ 本批按 Q5 口径冻结（登记在交付说明）
     assert(
-      rootMail.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("address")).exists(_.noSpaces.contains("Project dispatcher")),
+      rootMail
+        .inputSchema("properties")
+        .flatMap(_.asObject)
+        .flatMap(_.apply("address"))
+        .exists(_.noSpaces.contains("Project dispatcher")),
       "参数级 address description 被改动了 —— Q5 口径 = inputSchema 逐字节不变（若作者要放开须先裁）"
     )
   }
@@ -303,24 +343,36 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assertEquals(AgentCore.toolFaceIdentity(defNamed("general"), 1, Some("nope"), false).nodeRole, None)
     // 归一（大小写宽容）走 NodeRoles 单点 ⇒ 合法值归一后仍是白名单值
     assertEquals(AgentCore.toolFaceIdentity(defNamed("general"), 1, Some("VERIFIER"), false).nodeRole, Some("verifier"))
-    assertEquals(AgentCore.toolFaceIdentity(defNamed("general"), 1, Some(" Verifier "), false).nodeRole, Some("verifier"))
+    assertEquals(
+      AgentCore.toolFaceIdentity(defNamed("general"), 1, Some(" Verifier "), false).nodeRole,
+      Some("verifier")
+    )
   }
 
   test("⑤③ 身份维度完整: depth 分量 + 角色维度缺失即误取变体（判红面）") {
     // depth 分量：Nebula 名 + depth=1（节点会话）绝不拿 root 变体
-    val nebulaNamedNode = CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true, flowNodeRole = Some("task"))
+    val nebulaNamedNode =
+      CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true, flowNodeRole = Some("task"))
     val mail = find(nebulaNamedNode, "Mail")
     assert(mail.forall(_.description == MailTool.descriptionBase), "depth=1 的 Nebula 节点会话拿到了 root 地址面（谓词丢 depth）")
-    assertEquals(find(nebulaNamedNode, NodeReportToolDef.Name).map(_.description), Some(NodeReportToolDef.descriptionTask))
+    assertEquals(
+      find(nebulaNamedNode, NodeReportToolDef.Name).map(_.description),
+      Some(NodeReportToolDef.descriptionTask)
+    )
 
     // dispatcher 维度：只有 isDispatcher 才拿 dispatcher 面
-    assert(CoreProbe.face(defNamed("project-dispatcher")).forall(td => td.description == baseOf(td.name).description),
-      "未标 isDispatcher 的分发器名会话拿到了 dispatcher 面")
+    assert(
+      CoreProbe.face(defNamed("project-dispatcher")).forall(td => td.description == baseOf(td.name).description),
+      "未标 isDispatcher 的分发器名会话拿到了 dispatcher 面"
+    )
 
     // 角色维度：角色互斥（task 面不得含 verifier 段，反之亦然）+ 大小写宽容
     val upper = CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, flowNodeRole = Some("Verifier"))
-    assertEquals(find(upper, NodeReportToolDef.Name).map(_.description), Some(NodeReportToolDef.descriptionVerifier),
-      "大写角色名未归一（判据丢归一维度）")
+    assertEquals(
+      find(upper, NodeReportToolDef.Name).map(_.description),
+      Some(NodeReportToolDef.descriptionVerifier),
+      "大写角色名未归一（判据丢归一维度）"
+    )
   }
 
   // ============================================================
@@ -331,7 +383,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val base = MailTool.descriptionBase
     for seg <- List(
         MailTool.AddressFaceHeader,
-        MailTool.AddressFaceNebulaRoot,
+        MailTool.AddressFaceRoot,
         MailTool.AddressFaceDispatcher,
         MailTool.AddressFaceTeam,
         MailTool.AddressFaceClosing
@@ -339,12 +391,12 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     do assert(base.contains(seg), s"地址面段常量不是基础文本的逐字子串（含新造字）：${seg.take(60)}…")
     assertEquals(
       base.replace(MailTool.AddressFaceDispatcher + MailTool.AddressFaceTeam, ""),
-      MailTool.descriptionNebulaRoot,
+      MailTool.descriptionRoot,
       "root 变体 ≠ 基础删去另两段（出现了改写/新造字）"
     )
     // dispatcher 变体：基础里两段**不相邻**（Nebula 段在题首、team 段在题尾）⇒ 两次定点删除
     assertEquals(
-      base.replace(MailTool.AddressFaceNebulaRoot, "").replace(MailTool.AddressFaceTeam, ""),
+      base.replace(MailTool.AddressFaceRoot, "").replace(MailTool.AddressFaceTeam, ""),
       MailTool.descriptionDispatcher,
       "dispatcher 变体 ≠ 基础删去另两段（出现了改写/新造字）"
     )

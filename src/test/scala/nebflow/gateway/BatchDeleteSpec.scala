@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 class BatchDeleteSpec extends FunSuite:
 
@@ -18,7 +18,7 @@ class BatchDeleteSpec extends FunSuite:
       os.write(root / "a.txt", "x")
       os.makeDir.all(root / "sub")
       os.write(root / "sub" / "b.txt", "y")
-      val (deleted, failed) = WebSocketRoutes.deletePathsSafely(List("a.txt", "sub"), root).unsafeRunSync()
+      val (deleted, failed) = FsOps.deletePathsSafely(List("a.txt", "sub"), root).unsafeRunSync()
       assertEquals(deleted, List("a.txt", "sub"))
       assert(failed.isEmpty)
       assert(!os.exists(root / "a.txt"))
@@ -30,7 +30,7 @@ class BatchDeleteSpec extends FunSuite:
     withTempRoot { root =>
       val outside = root / os.up / "nb-outside-marker.txt"
       os.write.over(outside, "keep me")
-      val (deleted, failed) = WebSocketRoutes
+      val (deleted, failed) = FsOps
         .deletePathsSafely(List("../nb-outside-marker.txt", "ok.txt"), root)
         .unsafeRunSync()
       try
@@ -47,7 +47,7 @@ class BatchDeleteSpec extends FunSuite:
 
   test("deletePathsSafely refuses to delete the project root itself") {
     withTempRoot { root =>
-      val (deleted, failed) = WebSocketRoutes.deletePathsSafely(List(".", ""), root).unsafeRunSync()
+      val (deleted, failed) = FsOps.deletePathsSafely(List(".", ""), root).unsafeRunSync()
       assert(deleted.isEmpty)
       assert(failed.nonEmpty)
       assert(os.exists(root))
@@ -58,7 +58,7 @@ class BatchDeleteSpec extends FunSuite:
     withTempRoot { root =>
       os.write(root / "keep.txt", "x")
       // first path already gone (vanished), second is fine
-      val (deleted, failed) = WebSocketRoutes.deletePathsSafely(List("vanished.txt", "keep.txt"), root).unsafeRunSync()
+      val (deleted, failed) = FsOps.deletePathsSafely(List("vanished.txt", "keep.txt"), root).unsafeRunSync()
       // vanished paths delete as no-op success (mirrors single deletePath semantics)
       assertEquals(deleted, List("vanished.txt", "keep.txt"))
       assert(failed.isEmpty)
@@ -72,7 +72,7 @@ class BatchDeleteSpec extends FunSuite:
       os.write(root / "d1" / "d2" / "f.txt", "x")
       val nested = root / "d1" / "d2" / "f.txt"
       assertEquals(
-        WebSocketRoutes.resolveGuardedForDelete("d1/d2/f.txt", root).map(_.toString),
+        FsOps.resolveGuardedForDelete("d1/d2/f.txt", root).map(_.toString),
         Right(nested.toString)
       )
       // craft a symlink pointing outside the root — canonical resolution must reject
@@ -80,7 +80,7 @@ class BatchDeleteSpec extends FunSuite:
       try
         val link = root / "link"
         os.symlink(link, outsideDir)
-        val res = WebSocketRoutes.resolveGuardedForDelete("link/anything", root)
+        val res = FsOps.resolveGuardedForDelete("link/anything", root)
         assert(res.isLeft)
       finally os.remove.all(outsideDir)
     }
@@ -88,7 +88,7 @@ class BatchDeleteSpec extends FunSuite:
 
   test("deletePathsSafely is safe on empty batch") {
     withTempRoot { root =>
-      val (deleted, failed) = WebSocketRoutes.deletePathsSafely(Nil, root).unsafeRunSync()
+      val (deleted, failed) = FsOps.deletePathsSafely(Nil, root).unsafeRunSync()
       assert(deleted.isEmpty)
       assert(failed.isEmpty)
     }

@@ -1,9 +1,9 @@
 package nebflow.core.tools
 
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Path}
 
@@ -40,6 +40,9 @@ import java.nio.file.{Files, Path}
  */
 class FileRefsServabilityScopeSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   private val sentinel = "___CARD_HTML___"
   private val ctx = ToolContext(projectRoot = os.pwd.toString)
 
@@ -69,8 +72,10 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     made += d
     d
 
-  /** A REAL, browser-decodable PNG (ImageIO), pseudo-random so its `data:` URI is
-    * far below the 40,000-char inline budget for these sizes. */
+  /**
+   * A REAL, browser-decodable PNG (ImageIO), pseudo-random so its `data:` URI is
+   * far below the 40,000-char inline budget for these sizes.
+   */
   private def writePng(path: Path, w: Int = 32, h: Int = 24, seed: Int = 11): Path =
     Files.createDirectories(path.getParent)
     val img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
@@ -106,10 +111,13 @@ class FileRefsServabilityScopeSpec extends FunSuite:
 
   private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
+
   private def refs(p: Json, field: String): Int =
     p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
+
   private def reasons(p: Json): List[String] =
     warningsOf(p).flatMap(_.hcursor.get[String]("reason").toOption)
+
   private def details(p: Json): String =
     warningsOf(p).flatMap(_.hcursor.get[String]("detail").toOption).mkString(" | ")
 
@@ -131,7 +139,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val aTop = FileRefs.servableByEndpointLayered(topReal)
     val aServed = FileRefs.servableByEndpointLayered(servedReal)
     println(s"[SCOPE-READING] rootA top=${aTop.map(t => (t._1, t._2))} served=${aServed.map(t => (t._1, t._2))}")
-    assertEquals(aTop.map(_._1), Some(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace))
+    assertEquals(aTop.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
     assertEquals(aTop.map(_._2), Some("credential-path"))
     assertEquals(aServed, None, "plots/** is served from this data root")
 
@@ -150,7 +158,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     PathUtil.setDataRoot(os.Path(rootA))
     val again = FileRefs.servableByEndpointLayered(topReal)
     println(s"[SCOPE-READING] rootA again top=${again.map(t => (t._1, t._2))}")
-    assertEquals(again.map(_._1), Some(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace))
+    assertEquals(again.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
 
   // ── single source: the gate IS the endpoint's own ladder ──────────────────
 
@@ -172,18 +180,18 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val sshPng = writePng(sshDir.resolve("shot 2.png"))
 
     PathUtil.setDataRoot(os.Path(root))
-    val policy = nebflow.gateway.WebSocketRoutes.NfPathPolicy.current()
+    val policy = nebflow.gateway.NfFilePolicy.NfPathPolicy.current()
     println(
       s"[SCOPE-READING] policy dataRoot=${policy.dataRoot} workspaceRoot=${policy.workspaceRoot} " +
         s"credentialInodes=${policy.credentialInodes.size}"
     )
 
-    val expectations: List[(Path, Option[(nebflow.gateway.WebSocketRoutes.NfDenyLayer, String)])] = List(
+    val expectations: List[(Path, Option[(nebflow.gateway.NfFilePolicy.NfDenyLayer, String)])] = List(
       realOf(servedPng) -> None,
-      realOf(topPng) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace, "credential-path")),
-      realOf(secretPng) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace, "credential-path")),
-      realOf(alias) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.FileType, "file-type")),
-      realOf(sshPng) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.Credential, "credential-path"))
+      realOf(topPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace, "credential-path")),
+      realOf(secretPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace, "credential-path")),
+      realOf(alias) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.FileType, "file-type")),
+      realOf(sshPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Credential, "credential-path"))
     )
 
     expectations.foreach { (path, expected) =>
@@ -191,7 +199,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
       // the endpoint's own function, with the policy the tool itself reads:
       // one judgement, two readers (`nfVerdictForReal` is the projection of
       // `nfVerdictForRealLayer`, so this equality also pins that neither drifts)
-      val endpoint = nebflow.gateway.WebSocketRoutes
+      val endpoint = nebflow.gateway.NfFilePolicy
         .nfVerdictForRealLayer(path, policy)
         .map((layer, denied) => (layer, denied.reason))
       // the two-tuple projection the URL leg reads must agree as well
@@ -260,7 +268,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     // The endpoint's credential step runs FIRST and reports the NAMESPACE layer for
     // this path, so the layer alone says "reach" — the inode answer is the one that
     // says "credential", and the inline leg must ask it separately.
-    assertEquals(layered.map(_._1), Some(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace))
+    assertEquals(layered.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
     assertEquals(FileRefs.credentialInodeClean(link), false, "the inode layer must be consulted independently")
 
     // the reference is the LINK's own name (`shot link 4.png`): the endpoint
@@ -285,7 +293,11 @@ class FileRefsServabilityScopeSpec extends FunSuite:
       s"[SCOPE-READING] layered=${FileRefs.servableByEndpointLayered(realOf(secretPng)).map(t => (t._1, t._2))} " +
         s"inodeClean=${FileRefs.credentialInodeClean(secretPng)}"
     )
-    assertEquals(FileRefs.credentialInodeClean(secretPng), false, "everything under <dataRoot>/secrets/** is a credential inode")
+    assertEquals(
+      FileRefs.credentialInodeClean(secretPng),
+      false,
+      "everything under <dataRoot>/secrets/** is a credential inode"
+    )
     val p = card(s"""<img src="${realOf(secretPng).toString}"/>""")
     assertEquals(refs(p, "inlined"), 0, "a readable image inside the credential directory is still a credential")
     assertEquals(refs(p, "proxied"), 0)
@@ -300,7 +312,9 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val alias = root.resolve("plots/alias 6.png")
     Files.createSymbolicLink(alias, target)
     PathUtil.setDataRoot(os.Path(root))
-    println(s"[SCOPE-READING] alias=${realOf(alias)} layered=${FileRefs.servableByEndpointLayered(realOf(alias)).map(t => (t._1, t._2))}")
+    println(
+      s"[SCOPE-READING] alias=${realOf(alias)} layered=${FileRefs.servableByEndpointLayered(realOf(alias)).map(t => (t._1, t._2))}"
+    )
     // the reference is the SYMLINK's name (`alias 6.png`): its own extension is a
     // served image, and the refusal comes from the extension of the REAL path —
     // which is exactly the layer this test pins
@@ -310,3 +324,4 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     assertEquals(refs(p, "failed"), 1)
     assertEquals(reasons(p), List("not-servable"))
     assert(details(p).contains("file-type"), s"the refusal quotes the endpoint's own reason: ${details(p)}")
+end FileRefsServabilityScopeSpec

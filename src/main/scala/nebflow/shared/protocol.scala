@@ -74,13 +74,14 @@ case class ToolDefinition(
 
 // ===== Tool Call =====
 
-/** Raw wire-format arguments string as received from the provider, kept
-  * byte-faithful alongside the parsed JsonObject. Needed by provider-native
-  * round-trip semantics (kimi $web_search: the caller must echo the model's
-  * arguments back verbatim as the tool result — re-serializing the parsed
-  * object would break byte-identity, and rescued/malformed inputs would
-  * degrade to "{}").
-  */
+/**
+ * Raw wire-format arguments string as received from the provider, kept
+ * byte-faithful alongside the parsed JsonObject. Needed by provider-native
+ * round-trip semantics (kimi $web_search: the caller must echo the model's
+ * arguments back verbatim as the tool result — re-serializing the parsed
+ * object would break byte-identity, and rescued/malformed inputs would
+ * degrade to "{}").
+ */
 case class ToolCall(id: String, name: String, input: JsonObject, rawArguments: Option[String] = None)
 
 // ===== LLM =====
@@ -107,10 +108,12 @@ case class LlmRequest(
    * candidate chain is built from this instead of the global model chain.
    */
   agentModel: Option[AgentModelConfig] = None,
-  /** WebSearch P0: provider-native search injection is allowed for this
-    * request. Housekeeping turns (compaction / save-turn) and
-    * maintenance LLM calls set this to false so a server-side search tool
-    * never leaks into summarization or memory-extraction requests. */
+  /**
+   * WebSearch P0: provider-native search injection is allowed for this
+   * request. Housekeeping turns (compaction / save-turn) and
+   * maintenance LLM calls set this to false so a server-side search tool
+   * never leaks into summarization or memory-extraction requests.
+   */
   searchAllowed: Boolean = true
 )
 
@@ -136,9 +139,11 @@ case class LlmResponse(
   toolCalls: List[ToolCall],
   usage: Option[TokenUsage],
   meta: LlmMeta,
-  /** WebSearch P0: structured search results from a provider-native search
-    * (zhipu `web_search` response field / qwen `search_info`), when present.
-    * None on providers/paths without structured search output. */
+  /**
+   * WebSearch P0: structured search results from a provider-native search
+   * (zhipu `web_search` response field / qwen `search_info`), when present.
+   * None on providers/paths without structured search output.
+   */
   searchInfo: Option[Json] = None
 )
 
@@ -267,36 +272,44 @@ object UiMessage:
     sender: Option[String] = None,
     senderTeam: Option[String] = None,
     delivery: Option[String] = None,
-    /** 收件通道判别（mailbadge 批 2026-09-13，选项 C）：与
-      * [[nebflow.agent.InjectionAttribution.intake]] 同一批名字（帧 ↔ 落盘同源）。
-      * 前端历史恢复路径靠它重建注入气泡标签（缺席 ⇒ 回落 `source` 表，
-      * 旧历史行渲染逐字节不变）。 */
+    /**
+     * 收件通道判别（mailbadge 批 2026-09-13，选项 C）：与
+     * [[nebflow.agent.InjectionAttribution.intake]] 同一批名字（帧 ↔ 落盘同源）。
+     * 前端历史恢复路径靠它重建注入气泡标签（缺席 ⇒ 回落 `source` 表，
+     * 旧历史行渲染逐字节不变）。
+     */
     intake: Option[String] = None,
-    /** **已渲染的四段式 header**（「气泡四段式统一」批 2026-09-15，作者 12:33 令）：
-      * 引擎侧唯一格式化函数 `nebflow.core.project.NotificationHeader` 在唯一发射点
-      * （`AgentActor#emitInjectedUserEvent`）产出的整串 `KIND · PROJECT · SUBJECT ·
-      * STATE` 随注入帧与 .ui.json **同源落盘** ⇒ live 渲染与历史恢复逐字节一致。
-      * 缺席（旧历史行 / 词表外 source）⇒ 前端回落 `injectedSourceLabel`（逐字节不变）。 */
+    /**
+     * **已渲染的四段式 header**（「气泡四段式统一」批 2026-09-15，作者 12:33 令）：
+     * 引擎侧唯一格式化函数 `nebflow.core.project.NotificationHeader` 在唯一发射点
+     * （`AgentActor#emitInjectedUserEvent`）产出的整串 `KIND · PROJECT · SUBJECT ·
+     * STATE` 随注入帧与 .ui.json **同源落盘** ⇒ live 渲染与历史恢复逐字节一致。
+     * 缺席（旧历史行 / 词表外 source）⇒ 前端回落 `injectedSourceLabel`（逐字节不变）。
+     */
     header: Option[String] = None,
-    /** **作答行的显式来源标记**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：
-      * 值 = 本条 user 行所**作答的那个 requestId** —— 即「这是一次卡片作答」的**数据**
-      * 证据（不再靠「askUser 条目后面第一条 user 行」的邻接启发式）。
-      *
-      * WHY：卡片作答落盘原本是一条无标记的裸 `User(answerText)`，前端重建历史时必须
-      * 用 run 启发式猜（`persistence.js askUserAnswerText`：遇第一个非 user 行即
-      * break）。非阻塞提问（pending 期间 agent 仍产出 ai/tool 行 ⇒ run 被截断 ⇒ 取样
-      * null）与「作答后继续打字」两种形态下取样会偏 —— 取样 null 又被
-      * `renderAskUserHistory` 渲染成「已作答」（无条件补 `.option-answer`）⇒ 重放腿
-      * 的去重判据被击穿 ⇒ 同 id 双卡（首卡死）。同一处缺口也是 uiclean 批登记项
-      * 「#272 残余边界」的可见后果 ⇒ 本条字段一次关掉三件事：双开、#272 取值、
-      * 「历史卡不可按 id 关闭」。
-      *
-      * 缺席即不落键（`.ui.json` 旧行字节形态与旧读法**逐字不变**）：旧行无标记 ⇒
-      * 前端**必须回落「未作答」**（禁把历史一律读成「已作答」，方向见
-      * `persistence.js askUserAnswerText`）。单一构造点 = [[UiMessage.askUserAnswer]]。 */
+    /**
+     * **作答行的显式来源标记**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：
+     * 值 = 本条 user 行所**作答的那个 requestId** —— 即「这是一次卡片作答」的**数据**
+     * 证据（不再靠「askUser 条目后面第一条 user 行」的邻接启发式）。
+     *
+     * WHY：卡片作答落盘原本是一条无标记的裸 `User(answerText)`，前端重建历史时必须
+     * 用 run 启发式猜（`persistence.js askUserAnswerText`：遇第一个非 user 行即
+     * break）。非阻塞提问（pending 期间 agent 仍产出 ai/tool 行 ⇒ run 被截断 ⇒ 取样
+     * null）与「作答后继续打字」两种形态下取样会偏 —— 取样 null 又被
+     * `renderAskUserHistory` 渲染成「已作答」（无条件补 `.option-answer`）⇒ 重放腿
+     * 的去重判据被击穿 ⇒ 同 id 双卡（首卡死）。同一处缺口也是 uiclean 批登记项
+     * 「#272 残余边界」的可见后果 ⇒ 本条字段一次关掉三件事：双开、#272 取值、
+     * 「历史卡不可按 id 关闭」。
+     *
+     * 缺席即不落键（`.ui.json` 旧行字节形态与旧读法**逐字不变**）：旧行无标记 ⇒
+     * 前端**必须回落「未作答」**（禁把历史一律读成「已作答」，方向见
+     * `persistence.js askUserAnswerText`）。单一构造点 = [[UiMessage.askUserAnswer]]。
+     */
     answerOf: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
+
+  end User
 
   case class Ai(
     text: String,
@@ -319,25 +332,29 @@ object UiMessage:
   case class Agent(
     agentId: String,
     text: String,
-    /** R1 数据面（2026-09-14 作者七答「footer 统一 · R1 = 带时间」）：历史行的
-      * footer 时间需要**落盘的真实时间戳**（live 行传 `Date.now()`、历史行原先传 `0`
-      * ⇒ 刷新后时间消失）。缺省 0 = 不落键（`.ui.json` 旧行字节形态与旧读法逐字不变）。 */
+    /**
+     * R1 数据面（2026-09-14 作者七答「footer 统一 · R1 = 带时间」）：历史行的
+     * footer 时间需要**落盘的真实时间戳**（live 行传 `Date.now()`、历史行原先传 `0`
+     * ⇒ 刷新后时间消失）。缺省 0 = 不落键（`.ui.json` 旧行字节形态与旧读法逐字不变）。
+     */
     timestamp: Long = 0L
   ) extends UiMessage:
     val typeName = "agent"
 
-  /** 落盘的 AskUser 提问行。
-    *
-    * `requestId`（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：提问卡在 hub 里的
-    * 唯一身份，随行落盘 ⇒ 历史恢复出的卡**可 id 寻址**（重放腿按 id 替换、`askUserClosed`
-    * 关卡可达、#272 取值由数据决定）。
-    *
-    * 改前只落 `{type, items}` ⇒ 历史卡永远无 `data-request-id`：前端既无法按 id 去重
-    * （只能看「卡上有没有作答行」的 DOM 启发式，被伪造的作答行击穿），引擎也关不掉它
-    * （`chat.js closeAskUserCard` 只认 `[data-request-id]`）。
-    *
-    * 缺席即不落键（旧 `.ui.json` 行字节形态与旧读法逐字不变；旧行 ⇒ 前端回落
-    * 「按形态兜底」的去重腿，见 `chat.js sameAskCards`）。 */
+  /**
+   * 落盘的 AskUser 提问行。
+   *
+   * `requestId`（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：提问卡在 hub 里的
+   * 唯一身份，随行落盘 ⇒ 历史恢复出的卡**可 id 寻址**（重放腿按 id 替换、`askUserClosed`
+   * 关卡可达、#272 取值由数据决定）。
+   *
+   * 改前只落 `{type, items}` ⇒ 历史卡永远无 `data-request-id`：前端既无法按 id 去重
+   * （只能看「卡上有没有作答行」的 DOM 启发式，被伪造的作答行击穿），引擎也关不掉它
+   * （`chat.js closeAskUserCard` 只认 `[data-request-id]`）。
+   *
+   * 缺席即不落键（旧 `.ui.json` 行字节形态与旧读法逐字不变；旧行 ⇒ 前端回落
+   * 「按形态兜底」的去重腿，见 `chat.js sameAskCards`）。
+   */
   case class AskUser(items: List[Json], requestId: Option[String] = None) extends UiMessage:
     val typeName = "askUser"
 
@@ -346,11 +363,12 @@ object UiMessage:
     answer: String,
     durationMs: Option[Long] = None,
     model: Option[String] = None,
-    /** R1 数据面：同 [[Agent.timestamp]] —— ask 行（问句 + 答案）历史 footer 的
-      * 时间取自此字段；缺省 0 = 不落键（旧行读法不变）。 */
+    /**
+     * R1 数据面：同 [[Agent.timestamp]] —— ask 行（问句 + 答案）历史 footer 的
+     * 时间取自此字段；缺省 0 = 不落键（旧行读法不变）。
+     */
     timestamp: Long = 0L
-  )
-      extends UiMessage:
+  ) extends UiMessage:
     val typeName = "ask"
 
   case class AskPermission(
@@ -365,16 +383,17 @@ object UiMessage:
   case class System(content: String, i18nKey: Option[String] = None, params: Option[Json] = None) extends UiMessage:
     val typeName = "system"
 
-  /** 卡片作答的**落盘行构造单点**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）。
-    *
-    * 唯一消费者 = `WebSocketRoutes` 的 `askUserAnswer` 帧处理（落盘 + 转发 hub）。
-    * 收敛成一处的理由：行的形状（text = 各 answer 槽用 '\n' join + `answerOf` 标记 +
-    * timestamp）与「这是本 requestId 的作答」这一语义必须**同源**——散在调用点手写
-    * 就会再次漂移出无标记的行（正是本缺陷的成因面）。
-    *
-    * `requestId` 为空/空白 ⇒ `answerOf = None`（缺席即不落键）：无从标记来源时宁可
-    * 不标记，让前端回落邻接启发式，而不是落一个空串把「有标记」的语义也污染掉。
-    */
+  /**
+   * 卡片作答的**落盘行构造单点**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）。
+   *
+   * 唯一消费者 = `WebSocketRoutes` 的 `askUserAnswer` 帧处理（落盘 + 转发 hub）。
+   * 收敛成一处的理由：行的形状（text = 各 answer 槽用 '\n' join + `answerOf` 标记 +
+   * timestamp）与「这是本 requestId 的作答」这一语义必须**同源**——散在调用点手写
+   * 就会再次漂移出无标记的行（正是本缺陷的成因面）。
+   *
+   * `requestId` 为空/空白 ⇒ `answerOf = None`（缺席即不落键）：无从标记来源时宁可
+   * 不标记，让前端回落邻接启发式，而不是落一个空串把「有标记」的语义也污染掉。
+   */
   def askUserAnswer(answerText: String, requestId: String, timestamp: Long): User =
     val rid = requestId.trim
     User(answerText, timestamp = timestamp, answerOf = if rid.isEmpty then None else Some(rid))
@@ -501,7 +520,7 @@ object UiMessage:
         for
           agentId <- cursor.downField("agentId").as[String]
           text <- cursor.downField("text").as[String]
-          timestamp <- cursor.downField("timestamp").as[Option[Long]]   // R1：旧行缺席 ⇒ 0
+          timestamp <- cursor.downField("timestamp").as[Option[Long]] // R1：旧行缺席 ⇒ 0
         yield Agent(agentId, text, timestamp.getOrElse(0L))
       case "askUser" =>
         for
@@ -515,7 +534,7 @@ object UiMessage:
           answer <- cursor.downField("answer").as[String]
           durationMs <- cursor.downField("durationMs").as[Option[Long]]
           model <- cursor.downField("model").as[Option[String]]
-          timestamp <- cursor.downField("timestamp").as[Option[Long]]   // R1：旧行缺席 ⇒ 0
+          timestamp <- cursor.downField("timestamp").as[Option[Long]] // R1：旧行缺席 ⇒ 0
         yield Ask(question, answer, durationMs, model, timestamp.getOrElse(0L))
       case "askPermission" =>
         for

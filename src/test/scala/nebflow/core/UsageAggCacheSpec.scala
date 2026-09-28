@@ -172,9 +172,17 @@ class UsageAggCacheSpec extends FunSuite:
     store.aggregate(None, None, None).unsafeRunSync()
     val sizeA = os.size(dir / "usage-records.jsonl")
     writeLedger(dir, corpusB)
-    assertEquals(os.size(dir / "usage-records.jsonl"), sizeA, "the rewrite must keep the byte length for this test to be meaningful")
+    assertEquals(
+      os.size(dir / "usage-records.jsonl"),
+      sizeA,
+      "the rewrite must keep the byte length for this test to be meaningful"
+    )
     val after = store.aggregate(Some("provider"), None, None).unsafeRunSync()
-    assertEquals(after, store.aggregateFull(Some("provider"), None, None).unsafeRunSync(), "a rewritten prefix must not be served from the stale cache")
+    assertEquals(
+      after,
+      store.aggregateFull(Some("provider"), None, None).unsafeRunSync(),
+      "a rewritten prefix must not be served from the stale cache"
+    )
   }
 
   test("V5 timezone change → rebuild (day/hour keys are local)") {
@@ -204,7 +212,16 @@ class UsageAggCacheSpec extends FunSuite:
     writeLedger(dir, sampleRecords)
     val store = new UsageRecordStore(dir)
     val expected = store.aggregate(None, None, None).unsafeRunSync()
-    patchCache(dir, j => j.mapObject(_.add("watermark", j.hcursor.downField("watermark").focus.get.mapObject(_.add("byteOffset", Json.fromLong(3L))))))
+    patchCache(
+      dir,
+      j =>
+        j.mapObject(
+          _.add(
+            "watermark",
+            j.hcursor.downField("watermark").focus.get.mapObject(_.add("byteOffset", Json.fromLong(3L)))
+          )
+        )
+    )
     assertEquals(store.aggregate(None, None, None).unsafeRunSync(), expected)
     val diag = store.cacheDiagnostics.unsafeRunSync()
     assertEquals(diag.byteOffset, os.size(dir / "usage-records.jsonl"))
@@ -251,7 +268,11 @@ class UsageAggCacheSpec extends FunSuite:
     os.write.append(dir / "usage-records.jsonl", text)
     val inc = store.aggregate(None, None, None).unsafeRunSync()
     val diag = store.cacheDiagnostics.unsafeRunSync()
-    assertEquals(diag.lastDeltaBytes, text.getBytes("UTF-8").length.toLong, "the cost must be the delta, not the ledger")
+    assertEquals(
+      diag.lastDeltaBytes,
+      text.getBytes("UTF-8").length.toLong,
+      "the cost must be the delta, not the ledger"
+    )
     assertEquals(diag.increments, 1L)
     assert(diag.byteOffset > wBefore)
     assertEquals(inc, store.aggregateFull(None, None, None).unsafeRunSync())
@@ -271,11 +292,12 @@ class UsageAggCacheSpec extends FunSuite:
     val out = new java.util.concurrent.ConcurrentLinkedQueue[UsageAggregate]()
     try
       (0 until 8).foreach { _ =>
-        pool.submit(new Runnable {
-          def run(): Unit =
-            try out.add(store.aggregate(Some("provider"), None, None).unsafeRunSync())
-            finally latch.countDown()
-        })
+        pool.submit(
+          new Runnable:
+            def run(): Unit =
+              try out.add(store.aggregate(Some("provider"), None, None).unsafeRunSync())
+              finally latch.countDown()
+        )
       }
       assert(latch.await(120, TimeUnit.SECONDS), "concurrent aggregates must complete")
     finally pool.shutdown()
@@ -297,19 +319,22 @@ class UsageAggCacheSpec extends FunSuite:
     val latch = new CountDownLatch(9)
     try
       (0 until 8).foreach { k =>
-        pool.submit(new Runnable {
-          def run(): Unit =
-            try store.aggregate(Some("day"), None, None).unsafeRunSync()
-            finally latch.countDown()
-        })
+        pool.submit(
+          new Runnable:
+            def run(): Unit =
+              try store.aggregate(Some("day"), None, None).unsafeRunSync()
+              finally latch.countDown()
+        )
       }
-      pool.submit(new Runnable {
-        def run(): Unit =
-          try (0 until 50).foreach(i => store.record(rec(base + (200 + i) * 60_000L)).unsafeRunSync())
-          finally latch.countDown()
-      })
+      pool.submit(
+        new Runnable:
+          def run(): Unit =
+            try (0 until 50).foreach(i => store.record(rec(base + (200 + i) * 60_000L)).unsafeRunSync())
+            finally latch.countDown()
+      )
       assert(latch.await(120, TimeUnit.SECONDS), "mixed read/write load must complete")
     finally pool.shutdown()
+    end try
     // Final state must equal a from-scratch read of the (now larger) ledger.
     val direct = store.aggregateFull(None, None, None).unsafeRunSync()
     assertEquals(store.aggregate(None, None, None).unsafeRunSync(), direct)
@@ -329,7 +354,11 @@ class UsageAggCacheSpec extends FunSuite:
       Files.setPosixFilePermissions(dir.toNIO, PosixFilePermissions.fromString("r-xr-xr-x"))
       val agg = store.aggregate(None, None, None).unsafeRunSync()
       assertEquals(agg, expected, "a failed cache write must not change the answer")
-      assertEquals(store.cacheDiagnostics.unsafeRunSync().fallbacks, 0L, "the cache layer must absorb the write failure")
+      assertEquals(
+        store.cacheDiagnostics.unsafeRunSync().fallbacks,
+        0L,
+        "the cache layer must absorb the write failure"
+      )
     finally Files.setPosixFilePermissions(dir.toNIO, perms)
   }
 

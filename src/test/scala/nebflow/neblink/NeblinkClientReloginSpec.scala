@@ -5,19 +5,20 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.parse
 import munit.FunSuite
 
-/** Regression nails for the 401 silent re-login anti-loop gate (qa-backend
-  * 打回 2026-08-28: the single-shot guarantee shipped with zero test coverage
-  * — a refactor flipping `allowRelogin` on the retry call would loop forever,
-  * re-sending the login and re-running the refresh-token rotation, burning
-  * provider tokens).
-  *
-  * Two independent layers, because each catches a different regression vector:
-  *  - pure gate quadrants (`NeblinkClient.reloginAllowed` / `reloginOutcome`) —
-  *    catches edits to the gate predicate itself;
-  *  - full-chain single-shot (stub transport subclass driving the REAL
-  *    doLogin path) — catches edits to the `allowRelogin = false` call-site
-  *    constant that the pure layer cannot see.
-  */
+/**
+ * Regression nails for the 401 silent re-login anti-loop gate (qa-backend
+ * 打回 2026-08-28: the single-shot guarantee shipped with zero test coverage
+ * — a refactor flipping `allowRelogin` on the retry call would loop forever,
+ * re-sending the login and re-running the refresh-token rotation, burning
+ * provider tokens).
+ *
+ * Two independent layers, because each catches a different regression vector:
+ *  - pure gate quadrants (`NeblinkClient.reloginAllowed` / `reloginOutcome`) —
+ *    catches edits to the gate predicate itself;
+ *  - full-chain single-shot (stub transport subclass driving the REAL
+ *    doLogin path) — catches edits to the `allowRelogin = false` call-site
+ *    constant that the pure layer cannot see.
+ */
 class NeblinkClientReloginSpec extends FunSuite:
 
   private val cfg = NeblinkServerConfig(
@@ -55,12 +56,14 @@ class NeblinkClientReloginSpec extends FunSuite:
 
   // ===== Full chain: single-shot through the real doLogin path =====
 
-  /** Real NeblinkClient with a canned transport; counts hook entries and
-    * records every request body so the retry's token swap is observable. */
+  /**
+   * Real NeblinkClient with a canned transport; counts hook entries and
+   * records every request body so the retry's token swap is observable.
+   */
   private class ChainClient(reply: Either[String, String], hookToken: Option[String]):
     var transportCalls = 0
-    var hookCalls      = 0
-    var requestBodies  = List.empty[String]
+    var hookCalls = 0
+    var requestBodies = List.empty[String]
 
     val client = new NeblinkClient(
       cfg,
@@ -81,8 +84,10 @@ class NeblinkClientReloginSpec extends FunSuite:
       ): IO[Either[String, String]] =
         IO { transportCalls += 1; requestBodies = requestBodies :+ body } *> IO.pure(reply)
 
+  end ChainClient
+
   test("chain: 401 -> hook exactly ONCE -> one retry carrying the fresh token -> original error surfaced") {
-    val c   = new ChainClient(Left("HTTP 401: device token rejected"), hookToken = Some("fresh-token"))
+    val c = new ChainClient(Left("HTTP 401: device token rejected"), hookToken = Some("fresh-token"))
     val out = c.client
       .login("dev", "name", "platform", List(NeblinkEndpoint("10.0.0.5", 1, "lan")))
       .unsafeRunSync()
@@ -93,7 +98,7 @@ class NeblinkClientReloginSpec extends FunSuite:
     assert(c.requestBodies.size == 2)
     val retryBody = parse(c.requestBodies(1)) match
       case Right(json) => json
-      case Left(e)     => fail(s"retry body not JSON: ${c.requestBodies(1)} ($e)")
+      case Left(e) => fail(s"retry body not JSON: ${c.requestBodies(1)} ($e)")
     assertEquals(
       retryBody.hcursor.downField("deviceToken").as[String].toOption,
       Some("fresh-token"),
@@ -103,7 +108,7 @@ class NeblinkClientReloginSpec extends FunSuite:
   }
 
   test("chain: hook returns None -> no retry, original error surfaced") {
-    val c   = new ChainClient(Left("HTTP 401: device token rejected"), hookToken = None)
+    val c = new ChainClient(Left("HTTP 401: device token rejected"), hookToken = None)
     val out = c.client
       .login("dev", "name", "platform", List(NeblinkEndpoint("10.0.0.5", 1, "lan")))
       .unsafeRunSync()
@@ -114,7 +119,7 @@ class NeblinkClientReloginSpec extends FunSuite:
   }
 
   test("chain: non-401 error never reaches the hook") {
-    val c   = new ChainClient(Left("HTTP 500: boom"), hookToken = Some("fresh-token"))
+    val c = new ChainClient(Left("HTTP 500: boom"), hookToken = Some("fresh-token"))
     val out = c.client
       .login("dev", "name", "platform", List(NeblinkEndpoint("10.0.0.5", 1, "lan")))
       .unsafeRunSync()

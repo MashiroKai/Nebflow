@@ -73,9 +73,18 @@ class CanvasTabStoreSpec extends CatsEffectSuite:
     assert(CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":7,"title":"T","type":"x"}]}""")).isLeft, "non-string id")
     assert(CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"T"}]}""")).isLeft, "missing type")
     assert(CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","type":"x"}]}""")).isLeft, "missing title")
-    assert(CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"T","type":"x","absPath":5}]}""")).isLeft, "absPath must be string or null")
-    assert(CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"T","type":"x","pinned":"yes"}]}""")).isLeft, "pinned must be boolean")
-    assert(CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"T","type":"x","closable":1}]}""")).isLeft, "closable must be boolean")
+    assert(
+      CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"T","type":"x","absPath":5}]}""")).isLeft,
+      "absPath must be string or null"
+    )
+    assert(
+      CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"T","type":"x","pinned":"yes"}]}""")).isLeft,
+      "pinned must be boolean"
+    )
+    assert(
+      CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"T","type":"x","closable":1}]}""")).isLeft,
+      "closable must be boolean"
+    )
     assert(CanvasTabs.validate(json("""{"v":2,"tabs":["not-an-object"]}""")).isLeft, "entry must be object")
   }
 

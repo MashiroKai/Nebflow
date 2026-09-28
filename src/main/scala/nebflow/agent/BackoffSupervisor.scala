@@ -2,12 +2,10 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.Json
 import io.circe.syntax.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.core.NebflowLogger
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
@@ -84,29 +82,31 @@ object BackoffSupervisor:
           DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
         else IO.unit
       budgetArmedIO *> ctx.watch(childRef) *>
-        logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)").as(
-          active(
-            childRef,
-            childSpawnFn,
-            childName,
-            parentRef,
-            description,
-            agentName,
-            subagentId,
-            parentSessionId,
-            resources,
-            initialPrompt,
-            source,
-            extraMetadata,
-            wsSend,
-            restartCount = 0,
-            restartHistory = Nil,
-            minBackoff,
-            maxBackoff,
-            maxRestarts,
-            withinTimeRange
+        logger
+          .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")
+          .as(
+            active(
+              childRef,
+              childSpawnFn,
+              childName,
+              parentRef,
+              description,
+              agentName,
+              subagentId,
+              parentSessionId,
+              resources,
+              initialPrompt,
+              source,
+              extraMetadata,
+              wsSend,
+              restartCount = 0,
+              restartHistory = Nil,
+              minBackoff,
+              maxBackoff,
+              maxRestarts,
+              withinTimeRange
+            )
           )
-        )
     }
 
   /** Active state: forwards completion/failure to parent, restarts on Terminated. */
@@ -188,12 +188,11 @@ object BackoffSupervisor:
             val currentRestarts = recentRestarts.length
 
             if currentRestarts < maxRestarts then
-              val backoffMs = math.min(
-                minBackoff.toMillis * (1L << currentRestarts),
-                maxBackoff.toMillis
-              )
-              val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 1000)
-              val delay = backoffMs + jitter
+              // Phase 3 去重(行为保持重构,2026-09-25):原三行手写延迟计算
+              // (min(minBackoff×2^n, maxBackoff) + 抖动[0,1000)ms)收口为
+              // restartDelayMs 纯函数——指数+封顶复用 shared Retry.delayAfter,
+              // 事后抖动留站点。delay 语义/单位(ms)不变。
+              val delay = restartDelayMs(currentRestarts, minBackoff, maxBackoff)
               val newRestartCount = restartCount + 1
               val newHistory = now :: recentRestarts
 
@@ -215,9 +214,7 @@ object BackoffSupervisor:
               )
               val notifyIO = wsSend match
                 case Some(send) =>
-                  send(retryEvent).handleErrorWith(e =>
-                    logger.warn(s"subagentRetry WS event failed: ${e.getMessage}")
-                  )
+                  send(retryEvent).handleErrorWith(e => logger.warn(s"subagentRetry WS event failed: ${e.getMessage}"))
                 case None => IO.unit
 
               for
@@ -281,23 +278,25 @@ object BackoffSupervisor:
                 // If we recovered messages, send a "continue" instruction so the
                 // child picks up where it left off. Otherwise re-inject the
                 // original prompt (fresh start fallback).
-                _ <- if recoveredMessages.nonEmpty then
-                  newChild ! AgentCommand.UserInput(
-                    "[system] Your previous turn was interrupted by a crash. " +
-                      "Please continue your task from where you left off.",
-                    Some(ctx.self)
-                  )
-                else
-                  newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
+                _ <-
+                  if recoveredMessages.nonEmpty then
+                    newChild ! AgentCommand.UserInput(
+                      "[system] Your previous turn was interrupted by a crash. " +
+                        "Please continue your task from where you left off.",
+                      Some(ctx.self)
+                    )
+                  else newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
                 _ <- logger.info(
                   s"BackoffSupervisor: respawned $childName, " +
                     s"recovered ${recoveredMessages.size} messages" +
-                    (if recoveredMessages.nonEmpty then " (resuming from checkpoint)" else " (re-injected original prompt)")
+                    (if recoveredMessages.nonEmpty then " (resuming from checkpoint)"
+                     else " (re-injected original prompt)")
                 )
                 // respawn 后重新装配预算（Delegate 轨）——上一条已在释放时退出。
-                _ <- if source == "delegate" then
-                  DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
-                else IO.unit
+                _ <-
+                  if source == "delegate" then
+                    DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
+                  else IO.unit
               yield active(
                 newChild,
                 childSpawnFn,
@@ -386,9 +385,11 @@ object BackoffSupervisor:
 
       end notifyParentAndStop
 
-      /** source-death 清理（InteractionHub.CleanupForSession 的第二个调用点；
-        * 第一个是项目引擎 NodeEngine）：终态 / respawn 时清掉该会话的 pending
-        * ask 槽并广播 askUserClosed。hub 未装配（早期 boot / 测试）或无槽 = no-op。 */
+      /**
+       * source-death 清理（InteractionHub.CleanupForSession 的第二个调用点；
+       * 第一个是项目引擎 NodeEngine）：终态 / respawn 时清掉该会话的 pending
+       * ask 槽并广播 askUserClosed。hub 未装配（早期 boot / 测试）或无槽 = no-op。
+       */
       private def cleanupPendingAsks(resources: SharedResources, sessionId: String): IO[Unit] =
         resources.interactionHubRef.get.flatMap {
           case Some(hub) =>
@@ -396,6 +397,33 @@ object BackoffSupervisor:
               .handleErrorWith(e => logger.warn(s"CleanupForSession($sessionId) failed: ${e.getMessage}"))
           case None => IO.unit
         }
+
+  /**
+   * Crash 重启退避延迟(纯函数,单位 ms)。
+   *
+   * Phase 3 去重(行为保持重构,2026-09-25):指数部分 min(minBackoff ×
+   * 2^currentRestarts, maxBackoff) 复用 shared Retry.delayAfter(初值 minBackoff、
+   * ×2、封顶 maxBackoff、无抖动);抖动 [0,1000)ms 在封顶**之后**相加——总延迟
+   * 可超 maxBackoff 至多 999ms,与公共层 Jitter.Additive「先加抖动再封顶」
+   * (llm/fallback 口径)不同,故抖动留在本站点。监督循环本体(watch/Terminated、
+   * 重启计数、消息重注入、maxRestarts 放弃)是 actor 监督语义、IO 重试组合子的
+   * 超集,保持原样。jitterMs 可注入做确定性测试
+   * (BackoffSupervisorRestartDelaySpec)。
+   */
+  private[agent] def restartDelayMs(
+    currentRestarts: Int,
+    minBackoff: FiniteDuration,
+    maxBackoff: FiniteDuration,
+    jitterMs: () => Long = () => java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 1000)
+  ): Long =
+    Retry
+      .delayAfter(
+        initialDelay = minBackoff,
+        failedAttemptNo = currentRestarts + 1,
+        multiplier = 2.0,
+        maxDelay = maxBackoff
+      )
+      .toMillis + jitterMs()
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse

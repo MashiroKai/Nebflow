@@ -72,35 +72,38 @@ class FriendPulledDispatchSpec extends FunSuite:
 
   /** 脚本化 stub：记录 `(conversationId, after, limit)` 并按 `after` 给页。 */
   private final class ScriptedClient(
-      calls: Ref[IO, List[(String, Long, Int)]],
-      script: Long => List[MessageSummary]
+    calls: Ref[IO, List[(String, Long, Int)]],
+    script: Long => List[MessageSummary]
   ) extends NeblinkClient(
-    NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
-    serverPort = 1
-  ):
+        NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
+        serverPort = 1
+      ):
+
     override def listMessages(
-        conversationId: String,
-        after: Long,
-        limit: Int
+      conversationId: String,
+      after: Long,
+      limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
       calls.update(_ :+ ((conversationId, after, limit))) *> IO.pure(Right(script(after)))
 
-  private final class FailingClient(calls: Ref[IO, List[(String, Long, Int)]]) extends NeblinkClient(
-    NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
-    serverPort = 1
-  ):
+  private final class FailingClient(calls: Ref[IO, List[(String, Long, Int)]])
+      extends NeblinkClient(
+        NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
+        serverPort = 1
+      ):
+
     override def listMessages(
-        conversationId: String,
-        after: Long,
-        limit: Int
+      conversationId: String,
+      after: Long,
+      limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
       calls.update(_ :+ ((conversationId, after, limit))) *> IO.pure(Left("boom"))
 
   private def mkService(
-      calls: Ref[IO, List[(String, Long, Int)]],
-      frames: Ref[IO, List[Json]],
-      g: FriendMessagingGuard,
-      script: Long => List[MessageSummary] = a => List(msg(a + 1L))
+    calls: Ref[IO, List[(String, Long, Int)]],
+    frames: Ref[IO, List[Json]],
+    g: FriendMessagingGuard,
+    script: Long => List[MessageSummary] = a => List(msg(a + 1L))
   ): FriendService =
     new FriendService(
       IO.pure(Some(new ScriptedClient(calls, script))),
@@ -121,8 +124,10 @@ class FriendPulledDispatchSpec extends FunSuite:
 
   private def linesWith(ls: List[String], needle: String): List[String] = ls.filter(_.contains(needle))
 
-  /** **判据③**（逐行不变式）：每一行对账/跳过行都必须满足
-    * `pullAnchor <= dispatchedMax`（🔴 禁 `pullAnchor > dispatchedMax`）。 */
+  /**
+   * **判据③**（逐行不变式）：每一行对账/跳过行都必须满足
+   * `pullAnchor <= dispatchedMax`（🔴 禁 `pullAnchor > dispatchedMax`）。
+   */
   private def assertAnchorInvariant(ls: List[String]): Unit =
     val checked = ls.filter(l => field(l, "pullAnchor").isDefined && field(l, "dispatchedMax").isDefined)
     assert(checked.nonEmpty, s"至少应有一行带 pullAnchor/dispatchedMax：${ls.mkString("\n")}")
@@ -132,7 +137,9 @@ class FriendPulledDispatchSpec extends FunSuite:
       assert(pa <= dm, s"🔴 禁 pullAnchor > dispatchedMax（pa=$pa dm=$dm）：$l")
     }
 
-  /** **判据④**（恒等式）：逐行 `pulled == dispatched + skipped`。 */
+  /**
+   * **判据④**（恒等式）：逐行 `pulled == dispatched + skipped`。
+   */
   private def assertIdentity(ls: List[String]): Unit =
     val checked = ls.filter(l => field(l, "pulled").isDefined)
     assert(checked.nonEmpty, s"至少应有一行带 pulled/dispatched/skipped：${ls.mkString("\n")}")
@@ -143,7 +150,9 @@ class FriendPulledDispatchSpec extends FunSuite:
       assertEquals(p, d + k, s"恒等式 pulled == dispatched + skipped 不成立：$l")
     }
 
-  /** **判据②**：一条 WARN 行必须**同时**含三字段（键名存在即算，值可为 `<none>`）。 */
+  /**
+   * **判据②**：一条 WARN 行必须**同时**含三字段（键名存在即算，值可为 `<none>`）。
+   */
   private def assertThreeFields(l: String): Unit =
     val hasId = l.contains("messageId=") || l.contains("eventId=")
     assert(hasId, s"WARN 行缺 messageId/eventId：$l")
@@ -232,7 +241,12 @@ class FriendPulledDispatchSpec extends FunSuite:
       // W6：message_new_self 无 conversationId
       _ <- svc.onFriendEvent(envelope("e-w6", serverEvent(None, 6L, "message_new_self")))
       // W7：未知事件类型
-      _ <- svc.onFriendEvent(envelope("e-w7", Json.obj("type" -> "brand_new_thing".asJson, "payload" -> Json.obj("conversationId" -> "c".asJson))))
+      _ <- svc.onFriendEvent(
+        envelope(
+          "e-w7",
+          Json.obj("type" -> "brand_new_thing".asJson, "payload" -> Json.obj("conversationId" -> "c".asJson))
+        )
+      )
       // W8：畸形帧（缺 eventId/event.type）
       _ <- svc.onFriendEvent(Json.obj("type" -> "friend_event".asJson, "nope" -> Json.fromInt(1)))
       // W3：同 eventId 重放（去重路径，INFO 级但同样入环）
@@ -468,23 +482,25 @@ class FriendPulledDispatchSpec extends FunSuite:
 
   // ══ A8 · 设备会话：补拉（回放）帧必须与主腿（真 push）**同源携带**
   //        `senderDeviceId`；legacy 直聊/群聊行不得长出该键 ══════════════════
-  /** 病灶（P0，本用例的主靶）：主腿真 push 由服务端 `friends.rs` 的**唯一** payload
-    * builder 条件携带该键（非 NULL 才带），而补拉腿的帧装配是 `dispatchPulled` 里的
-    * **手写键白名单** ⇒ 漏一行即静默丢字段，回放帧与原帧在**同一字段**上形态不一致。
-    *
-    * 为什么这个键不能丢：设备会话两端是同一账号 ⇒ 方向（out/in）**不落库、不上线**，
-    * 前端唯一的重算输入就是 `senderDeviceId`（契约 §8.3 逐字「方向由
-    * `sender_device_id == 本机 id` 重算」）。回放帧缺键 ⇒ 该条回放只能落到
-    * 「不可判」分支（保守向：气泡方向错/未读不涨），而**同一实例的主腿帧**带键——
-    * 一枚消息经两条腿在 UI 上呈现两种形态。
-    *
-    * 断言面 = 本夹具既有缝（`mkService` 的 `onFriendEvent` 捕获 + `ScriptedClient`
-    * 脚本页），断言对象 = `FriendEvent.frontendFrame` 展平后的**帧**（与前端所见同一形态）。
-    *
-    * 双面（同一条「与主腿同源」纪律的两侧）：
-    *  · 设备消息（`senderDeviceId = Some(…)`）⇒ 帧**含**该键且值 == 上游给入的设备 id；
-    *  · legacy 消息（`None`）⇒ 帧**不含**该键（省键，不是 `null`）——防修复顺手
-    *    把 legacy 形态改成多一个 `null` 键。 */
+  /**
+   * 病灶（P0，本用例的主靶）：主腿真 push 由服务端 `friends.rs` 的**唯一** payload
+   * builder 条件携带该键（非 NULL 才带），而补拉腿的帧装配是 `dispatchPulled` 里的
+   * **手写键白名单** ⇒ 漏一行即静默丢字段，回放帧与原帧在**同一字段**上形态不一致。
+   *
+   * 为什么这个键不能丢：设备会话两端是同一账号 ⇒ 方向（out/in）**不落库、不上线**，
+   * 前端唯一的重算输入就是 `senderDeviceId`（契约 §8.3 逐字「方向由
+   * `sender_device_id == 本机 id` 重算」）。回放帧缺键 ⇒ 该条回放只能落到
+   * 「不可判」分支（保守向：气泡方向错/未读不涨），而**同一实例的主腿帧**带键——
+   * 一枚消息经两条腿在 UI 上呈现两种形态。
+   *
+   * 断言面 = 本夹具既有缝（`mkService` 的 `onFriendEvent` 捕获 + `ScriptedClient`
+   * 脚本页），断言对象 = `FriendEvent.frontendFrame` 展平后的**帧**（与前端所见同一形态）。
+   *
+   * 双面（同一条「与主腿同源」纪律的两侧）：
+   *  · 设备消息（`senderDeviceId = Some(…)`）⇒ 帧**含**该键且值 == 上游给入的设备 id；
+   *  · legacy 消息（`None`）⇒ 帧**不含**该键（省键，不是 `null`）——防修复顺手
+   *    把 legacy 形态改成多一个 `null` 键。
+   */
   test("A8 设备会话补拉帧携带 senderDeviceId（值 == 上游设备 id）；legacy 行不含该键") {
     // 上游给入的设备 id：跨仓 §8.3 会话 id = `dev:<发送设备>`，两处必须同值。
     val peerDevice = "dev-peer"

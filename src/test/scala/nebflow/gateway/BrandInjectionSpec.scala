@@ -7,7 +7,7 @@ import munit.FunSuite
 class BrandInjectionSpec extends FunSuite:
 
   test("brandScriptTag: valid script element with parseable JSON contract") {
-    val tag = WebSocketRoutes.brandScriptTag
+    val tag = StaticRoutes.brandScriptTag
     assert(clue(tag).startsWith("<script>window.__BRAND__="))
     assert(clue(tag).endsWith(";</script>"))
     val jsonStr = tag
@@ -25,13 +25,13 @@ class BrandInjectionSpec extends FunSuite:
         // frontend's ONLY URL input (activityBar.js builds the profile link).
         assertEquals(
           json.hcursor.get[String]("profileUrl"),
-          Right("https://nebflow.space/profile"),
+          Right("https://nebflow.space/profile")
         )
   }
 
   test("brandScriptJson: '</' inside values is escaped (script breakout hardening)") {
     val hostile = """a"</script>b"""
-    val json = WebSocketRoutes.brandScriptJson(hostile, "x", "y", "z", "https://nebflow.space/profile")
+    val json = StaticRoutes.brandScriptJson(hostile, "x", "y", "z", "https://nebflow.space/profile")
     assert(!clue(json).contains("</script>"))
     assert(clue(json).contains("<\\/"))
     // '<\/' is a legal JSON escape for '/' — the value round-trips intact
@@ -41,7 +41,7 @@ class BrandInjectionSpec extends FunSuite:
   test("injectBeforeHeadClose: inserts directly before the closing head tag") {
     val html = "<!DOCTYPE html><html><head><title>t</title></head><body></body></html>"
     val snippet = "<script>1;</script>"
-    val injected = WebSocketRoutes.injectBeforeHeadClose(html, snippet)
+    val injected = StaticRoutes.injectBeforeHeadClose(html, snippet)
     injected match
       case Some(out) =>
         assertEquals(out, "<!DOCTYPE html><html><head><title>t</title><script>1;</script></head><body></body></html>")
@@ -50,8 +50,8 @@ class BrandInjectionSpec extends FunSuite:
 
   test("injectBeforeHeadClose: None when the anchor tag is absent") {
     assertEquals(
-      WebSocketRoutes.injectBeforeHeadClose("<html><body></body></html>", "<script>1;</script>"),
-      None,
+      StaticRoutes.injectBeforeHeadClose("<html><body></body></html>", "<script>1;</script>"),
+      None
     )
   }
 
@@ -59,8 +59,8 @@ class BrandInjectionSpec extends FunSuite:
     val html = "<head></head><head></head>"
     val snippet = "X"
     assertEquals(
-      WebSocketRoutes.injectBeforeHeadClose(html, snippet),
-      Some("<head></head><head>X</head>"),
+      StaticRoutes.injectBeforeHeadClose(html, snippet),
+      Some("<head></head><head>X</head>")
     )
   }
 
@@ -69,13 +69,13 @@ class BrandInjectionSpec extends FunSuite:
     // dist entry when a webdist build is present (same transform origin).
     val source = scala.io.Source.fromInputStream(
       getClass.getClassLoader.getResourceAsStream("web/index.html"),
-      "UTF-8",
+      "UTF-8"
     )
     val html =
       try source.mkString
       finally source.close()
     assert(clue(html).contains("</head>"))
-    assert(WebSocketRoutes.injectBeforeHeadClose(html, "<script>x</script>").isDefined)
+    assert(StaticRoutes.injectBeforeHeadClose(html, "<script>x</script>").isDefined)
   }
 
 end BrandInjectionSpec

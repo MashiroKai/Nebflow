@@ -48,7 +48,7 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
     os.makeDir.all(root / "sub")
     os.write(root / "sub" / "b.txt", "y")
     val (out, logs) = capturedLogs {
-      WebSocketRoutes
+      FsOps
         .deletePathsSafely(List("a.txt", "sub"), root, "sess-audit-1")
         .unsafeRunSync()
     }
@@ -60,13 +60,17 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
     assert(
       mine.exists(l =>
         l.contains("deletePaths: removed '") && l.contains("a.txt") &&
-          l.contains("kind=file") && l.contains("session=sess-audit-1")),
-      mine.toString)
+          l.contains("kind=file") && l.contains("session=sess-audit-1")
+      ),
+      mine.toString
+    )
     assert(
       mine.exists(l =>
         l.contains((root / "sub").toString) && l.contains("kind=dir-recursive") &&
-          l.contains("session=sess-audit-1")),
-      mine.toString)
+          l.contains("session=sess-audit-1")
+      ),
+      mine.toString
+    )
     os.remove.all(root)
   }
 
@@ -74,28 +78,27 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
     val root = os.temp.dir(prefix = "wtsurv-del-audit-neg")
     os.write(root / "keep.txt", "k")
     val (out, logs) = capturedLogs {
-      WebSocketRoutes
+      FsOps
         .deletePathsSafely(List("../outside.txt", ".", "vanished.txt"), root, "sess-audit-2")
         .unsafeRunSync()
     }
     val (deleted, failed) = out
-    assertEquals(deleted, List("vanished.txt"),
-      "不存在的路径仍是「no-op 成功」（既有 BatchDeleteSpec 契约，零行为变更）")
+    assertEquals(deleted, List("vanished.txt"), "不存在的路径仍是「no-op 成功」（既有 BatchDeleteSpec 契约，零行为变更）")
     assertEquals(failed.size, 2, s"越界与项目根自身各落一条 failed，实得 $failed")
     assert(failed.map(_._1).toSet == Set("../outside.txt", "."), failed.toString)
-    assert(auditLines(logs).isEmpty,
-      s"失败 / 未实存路径不得写成功日志（不误报），实得 ${auditLines(logs)}")
+    assert(auditLines(logs).isEmpty, s"失败 / 未实存路径不得写成功日志（不误报），实得 ${auditLines(logs)}")
     assert(os.exists(root / "keep.txt"), "被拒绝的删除不得触碰同级文件")
     os.remove.all(root)
   }
 
   test("④(文案单点) deleteAuditLine：单删与批删同源同形（防两处漂移）") {
-    val one = WebSocketRoutes.deleteAuditLine("deletePath", "/p/x.txt", "s1", isDir = false)
-    val many = WebSocketRoutes.deleteAuditLine("deletePaths", "/p/x.txt", "s1", isDir = false)
+    val one = FsOps.deleteAuditLine("deletePath", "/p/x.txt", "s1", isDir = false)
+    val many = FsOps.deleteAuditLine("deletePaths", "/p/x.txt", "s1", isDir = false)
     assert(one.startsWith("deletePath: removed '/p/x.txt'"), one)
     assert(many.startsWith("deletePaths: removed '/p/x.txt'"), many)
     assert(one.contains("(session=s1, kind=file, channel=ui-file-explorer)"), one)
     assert(many.contains("(session=s1, kind=file, channel=ui-file-explorer)"), many)
-    val dir = WebSocketRoutes.deleteAuditLine("deletePath", "/p/d", "s2", isDir = true)
+    val dir = FsOps.deleteAuditLine("deletePath", "/p/d", "s2", isDir = true)
     assert(dir.contains("kind=dir-recursive"), dir)
   }
+end DeletePathAuditLogSpec

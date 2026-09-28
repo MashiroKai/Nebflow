@@ -145,7 +145,11 @@ class DaemonLifecycleSpec extends FunSuite:
       val foreign = new ProcessBuilder("sleep", "60").start()
       val foreignPid = foreign.pid()
       val wrongStart = System.currentTimeMillis() - 60000
-      os.write(markerFile, DaemonPidMarkerFile(List(DaemonPidMarker("web", foreignPid, "Stale Web", None, wrongStart))).asJson.noSpaces, createFolders = true)
+      os.write(
+        markerFile,
+        DaemonPidMarkerFile(List(DaemonPidMarker("web", foreignPid, "Stale Web", None, wrongStart))).asJson.noSpaces,
+        createFolders = true
+      )
 
       store.add(DaemonConfig("web", "Web", List("sleep", "30"), autoStart = true)).unsafeRunSync()
 
@@ -267,13 +271,12 @@ class DaemonLifecycleSpec extends FunSuite:
       // Pre-fix, `new Socket().connect(::1:port)` phantom-succeeded on
       // macOS+JDK23 → EVERY free port looked open → daemon stayed
       // Stopped+portOpen forever ("Dev Server 无法打开").
-      val port = {
+      val port =
         val ss = new java.net.ServerSocket()
         try
           ss.bind(new java.net.InetSocketAddress("127.0.0.1", 0))
           ss.getLocalPort
         finally ss.close()
-      }
       val state = svc.start(DaemonConfig("web", "Web", List("sleep", "30"), port = Some(port))).unsafeRunSync()
       assertEquals(state.status, DaemonStatus.Running, s"port $port is free — daemon must start (got $state)")
       svc.stopAll().unsafeRunSync()

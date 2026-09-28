@@ -10,14 +10,24 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, FlowReportData, FlowReportStore}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ToolCall}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  ContentBlock,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  ToolCall
+}
 
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -53,8 +63,10 @@ class BarrierSpec extends CatsEffectSuite:
     answered: Ref[IO, Set[String]]
   ) extends LlmHandle[IO]:
     private def nodeIdOf(sessionId: String): String = sessionId.split("-").apply(2)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -62,20 +74,30 @@ class BarrierSpec extends CatsEffectSuite:
       Stream.eval(capture.update(m => m.updated(req.sessionId, req.messages))) >>
         Stream.eval(IO(nodeIdOf(req.sessionId))).flatMap {
           case "verify" =>
-            Stream.eval(answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true))).flatMap {
-              case true => // first request of this verify session → report the queued verdict
-                Stream.eval(verdictQueue.modify {
-                  case v :: rest => (rest, v)
-                  case Nil       => (Nil, "pass")
-                }).evalTap { verdict =>
-                  FlowReportStore.set(req.sessionId, FlowReportData(verdict, "verified"))
-                } >> Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
-              case false => Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
-            }
+            Stream
+              .eval(
+                answered.get.flatMap(a =>
+                  if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)
+                )
+              )
+              .flatMap {
+                case true => // first request of this verify session → report the queued verdict
+                  Stream
+                    .eval(verdictQueue.modify {
+                      case v :: rest => (rest, v)
+                      case Nil => (Nil, "pass")
+                    })
+                    .evalTap { verdict =>
+                      FlowReportStore.set(req.sessionId, FlowReportData(verdict, "verified"))
+                    } >> Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
+                case false => Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
+              }
           case "r1" => answerAfter(200.millis, "R1-OUT")
           case "r2" => answerAfter(700.millis, "R2-OUT")
-          case _    => answerAfter(30.millis, "ok")
+          case _ => answerAfter(30.millis, "ok")
         }
+
+  end VerifyLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -128,6 +150,8 @@ class BarrierSpec extends CatsEffectSuite:
         system.stopAll.attempt.void *>
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
+
+  end withFlowEnv
 
   /**
    * p → parallel(r1, r2) → verify (2-in-edge barrier) → switch:

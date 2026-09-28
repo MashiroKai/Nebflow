@@ -7,32 +7,35 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.NebflowLogger
-import nebflow.llm.{AdapterResponse, ProviderAdapter, ProviderSearchKind, SendMessageParams}
-import nebflow.shared.*
+import nebflow.llm.*
+import nebflow.shared.{NebflowLogger, *}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 
 import scala.collection.mutable
 import scala.concurrent.duration.*
 
-/** Per-index accumulator for one streaming tool call (OpenAI adapter).
-  * The StringBuilder and the empty-id/name counters are deliberately mutable
-  * and updated in place inside Ref.modify — SSE lines are evaluated
-  * sequentially per request (evalMap), the Ref only threads state across
-  * chunks, so there is no concurrent access.
-  *
-  * The empty-id/name bookkeeping aggregates qwen's argument-stream
-  * continuation frames (literal "" id/name) so the adapter can emit ONE
-  * summary WARN per tool call at the finish flush instead of one WARN per
-  * frame (~26 frames/call flooded logs at peak 1038 lines/min, 2026-08-21).
-  */
+/**
+ * Per-index accumulator for one streaming tool call (OpenAI adapter).
+ * The StringBuilder and the empty-id/name counters are deliberately mutable
+ * and updated in place inside Ref.modify — SSE lines are evaluated
+ * sequentially per request (evalMap), the Ref only threads state across
+ * chunks, so there is no concurrent access.
+ *
+ * The empty-id/name bookkeeping aggregates qwen's argument-stream
+ * continuation frames (literal "" id/name) so the adapter can emit ONE
+ * summary WARN per tool call at the finish flush instead of one WARN per
+ * frame (~26 frames/call flooded logs at peak 1038 lines/min, 2026-08-21).
+ */
 private[providers] final class ToolCallEntry(val id: String, val name: String, initialArgs: String = ""):
   val sb = new StringBuilder(initialArgs)
+
   /** Continuation frames with literal empty id/name merged into this call. */
   var emptyIdNameFrames = 0
+
   /** Total argument chars contributed by those frames. */
   var emptyIdNameChars = 0
+
   /** Raw frame samples for the aggregated summary (first few only). */
   val emptyIdNameSamples = mutable.ListBuffer.empty[String]
 end ToolCallEntry
@@ -199,27 +202,31 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         )
       case ProviderSearchKind.QwenEnableSearch => Nil
 
-  /** Merge tools: agent function tools first, provider search tool APPENDED —
-    * deepMerge would REPLACE the array, clobbering the agent's tool
-    * definitions (the P0 spec's explicit deepMerge-order regression point). */
+  /**
+   * Merge tools: agent function tools first, provider search tool APPENDED —
+   * deepMerge would REPLACE the array, clobbering the agent's tool
+   * definitions (the P0 spec's explicit deepMerge-order regression point).
+   */
   private[providers] def bodyWithSearchTools(
-      body: Json,
-      tools: Option[List[ToolDefinition]],
-      search: Option[ProviderSearchKind]
+    body: Json,
+    tools: Option[List[ToolDefinition]],
+    search: Option[ProviderSearchKind]
   ): Json =
     val agentTools = tools.getOrElse(Nil)
     val extra = search.toList.flatMap(searchToolEntries)
     if agentTools.isEmpty && extra.isEmpty then body
     else body.deepMerge(Json.obj("tools" -> Json.fromValues(agentTools.map(toolDefJson) ++ extra)))
 
-  /** Thinking with kimi-search interplay: $web_search is mutually exclusive
-    * with thinking — when kimi search is armed, skip the model's thinking
-    * body entirely (incl. reasoning_effort) and force thinking disabled. */
+  /**
+   * Thinking with kimi-search interplay: $web_search is mutually exclusive
+   * with thinking — when kimi search is armed, skip the model's thinking
+   * body entirely (incl. reasoning_effort) and force thinking disabled.
+   */
   private[providers] def bodyWithSearchThinking(
-      body: Json,
-      model: String,
-      thinking: Option[io.circe.Json],
-      search: Option[ProviderSearchKind]
+    body: Json,
+    model: String,
+    thinking: Option[io.circe.Json],
+    search: Option[ProviderSearchKind]
   ): Json =
     if search.contains(ProviderSearchKind.KimiBuiltinWebSearch) then
       body.deepMerge(Json.obj("thinking" -> Json.obj("type" -> "disabled".asJson)))
@@ -227,16 +234,18 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
   /** Non-tools request-level extras (qwen enable_search). */
   private[providers] def searchRequestExtras(
-      search: Option[ProviderSearchKind]
+    search: Option[ProviderSearchKind]
   ): Json =
     search match
       case Some(ProviderSearchKind.QwenEnableSearch) =>
         Json.obj("enable_search" -> true.asJson)
       case _ => Json.obj()
 
-  /** Observability for provider-native search (smoke diagnostics): which
-    * injection was armed for this request — one INFO line per request, only
-    * when injection is active (no log spam in normal traffic). */
+  /**
+   * Observability for provider-native search (smoke diagnostics): which
+   * injection was armed for this request — one INFO line per request, only
+   * when injection is active (no log spam in normal traffic).
+   */
   private def logSearchInjection(params: SendMessageParams): Unit =
     params.providerSearch.foreach { kind =>
       logger.infoSync(
@@ -245,16 +254,20 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       )
     }
 
-  /** Structured search results from the response (zhipu `web_search` array /
-    * qwen `search_info` object) — the Tier 2 evidence source. Both top-level
-    * and message-level placements are checked (zhipu returns top-level
-    * `web_search`; DashScope nests `search_info` under choices[0].message).
-    * Streaming responses don't capture this in P0 (only the non-streaming
-    * executor path consumes it). */
+  /**
+   * Structured search results from the response (zhipu `web_search` array /
+   * qwen `search_info` object) — the Tier 2 evidence source. Both top-level
+   * and message-level placements are checked (zhipu returns top-level
+   * `web_search`; DashScope nests `search_info` under choices[0].message).
+   * Streaming responses don't capture this in P0 (only the non-streaming
+   * executor path consumes it).
+   */
   private[providers] def extractSearchInfo(response: Json): Option[Json] =
     val message = response.hcursor.downField("choices").downN(0).downField("message")
     def both(h: io.circe.ACursor): Option[Json] =
-      h.downField("web_search").as[Json].toOption
+      h.downField("web_search")
+        .as[Json]
+        .toOption
         .orElse(h.downField("search_info").as[Json].toOption)
     both(response.hcursor)
       .orElse(both(message))
@@ -343,61 +356,61 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       .header("content-type", "application/json")
       .body(bodyWithMetadata.noSpaces)
     IO.delay(logSearchInjection(params)) *>
-    backend.send(request).flatMap { response =>
-      response.body match
-        case Left(error) =>
-          // 审计 20260903 子项②：结构化 HttpError（与 AnthropicAdapter 同款）——
-          // classifyError 据状态码区分 400 Format（不驱逐）与 Auth/配额（驱逐）。
-          IO.raiseError(sttp.client4.HttpError(error, response.code))
-        case Right(bodyStr) =>
-          IO.defer {
-            parse(bodyStr) match
-              case Left(err) => IO.raiseError(new RuntimeException(s"Failed to parse response: ${err.message}"))
-              case Right(json) =>
-                IO.defer {
-                  val reply = json.hcursor
-                    .downField("choices")
-                    .downN(0)
-                    .downField("message")
-                    .downField("content")
-                    .as[String]
-                    .getOrElse("")
-                  val toolCalls = extractToolCalls(json)
-                  val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-                    TokenUsage(
-                      inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
-                      outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
-                    )
-                  }
-                  // Thinking models (GLM-5.2, DeepSeek reasoning) may return a
-                  // response whose `content` is empty because all tokens went to
-                  // reasoning (reasoning_content / thinking fields). That is NOT
-                  // an empty response — treat it as a successful reply so probes
-                  // and real calls don't falsely fail or fall back.
-                  val reasoning = hasReasoningContent(json)
-
-                  // Empty response with no tool calls — treat as error to trigger fallback
-                  if reply.isEmpty && toolCalls.isEmpty && !reasoning then
-                    val finishReason = json.hcursor
+      backend.send(request).flatMap { response =>
+        response.body match
+          case Left(error) =>
+            // 审计 20260903 子项②：结构化 HttpError（与 AnthropicAdapter 同款）——
+            // classifyError 据状态码区分 400 Format（不驱逐）与 Auth/配额（驱逐）。
+            IO.raiseError(sttp.client4.HttpError(error, response.code))
+          case Right(bodyStr) =>
+            IO.defer {
+              parse(bodyStr) match
+                case Left(err) => IO.raiseError(new RuntimeException(s"Failed to parse response: ${err.message}"))
+                case Right(json) =>
+                  IO.defer {
+                    val reply = json.hcursor
                       .downField("choices")
                       .downN(0)
-                      .downField("finish_reason")
+                      .downField("message")
+                      .downField("content")
                       .as[String]
-                      .toOption
                       .getOrElse("")
-                    val detail = if finishReason.nonEmpty then s" (finish_reason: $finishReason)" else ""
-                    IO.raiseError(
-                      new RuntimeException(
-                        s"LLM returned empty response$detail"
+                    val toolCalls = extractToolCalls(json)
+                    val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+                      TokenUsage(
+                        inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
+                        outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
                       )
-                    )
-                  else
-                    val searchInfo = extractSearchInfo(json)
-                    IO.pure(AdapterResponse(reply, toolCalls, usage, searchInfo))
-                  end if
-                }
-          }
-    }
+                    }
+                    // Thinking models (GLM-5.2, DeepSeek reasoning) may return a
+                    // response whose `content` is empty because all tokens went to
+                    // reasoning (reasoning_content / thinking fields). That is NOT
+                    // an empty response — treat it as a successful reply so probes
+                    // and real calls don't falsely fail or fall back.
+                    val reasoning = hasReasoningContent(json)
+
+                    // Empty response with no tool calls — treat as error to trigger fallback
+                    if reply.isEmpty && toolCalls.isEmpty && !reasoning then
+                      val finishReason = json.hcursor
+                        .downField("choices")
+                        .downN(0)
+                        .downField("finish_reason")
+                        .as[String]
+                        .toOption
+                        .getOrElse("")
+                      val detail = if finishReason.nonEmpty then s" (finish_reason: $finishReason)" else ""
+                      IO.raiseError(
+                        new RuntimeException(
+                          s"LLM returned empty response$detail"
+                        )
+                      )
+                    else
+                      val searchInfo = extractSearchInfo(json)
+                      IO.pure(AdapterResponse(reply, toolCalls, usage, searchInfo))
+                    end if
+                  }
+            }
+      }
 
   end sendMessage
 
@@ -410,7 +423,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       "messages" -> Json.fromValues(allMessages),
       "stream" -> true.asJson,
       "stream_options" -> Json.obj("include_usage" -> true.asJson)
-    )    // maxTokens dropped from the request body (maxcfg batch 2026-09-16) — see
+    ) // maxTokens dropped from the request body (maxcfg batch 2026-09-16) — see
     // sendMessage above: o-series / GPT-5 reject `max_tokens` with a 400.
     // WebSearch P0: same injection chain as the non-streaming path (see
     // sendMessage) — the main conversation is streaming, so provider-native
@@ -437,33 +450,33 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
     Stream.eval(IO.delay(logSearchInjection(params))).drain ++
       Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
-      val request = basicRequest
-        .post(uri"$endpoint")
-        .header("Authorization", s"Bearer $apiKey")
-        .header("content-type", "application/json")
-        .body(bodyWithMetadata.noSpaces)
-        .response(asStreamUnsafe(Fs2Streams[IO]))
-        .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
+        val request = basicRequest
+          .post(uri"$endpoint")
+          .header("Authorization", s"Bearer $apiKey")
+          .header("content-type", "application/json")
+          .body(bodyWithMetadata.noSpaces)
+          .response(asStreamUnsafe(Fs2Streams[IO]))
+          .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
-      // Hard-recovery P1: per-attempt backend when provided (per-request
-      // HttpClient whose shutdownNow aborts exactly this request).
-      Stream.eval(params.attemptBackend.getOrElse(backend).send(request)).flatMap { response =>
-        response.body match
-          case Left(error) =>
-            // 同 sendMessage：结构化 HttpError（子项②）。
-            Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
-          case Right(byteStream) =>
-            // If the stream dies mid-tool-call (transport error, or downstream
-            // cancellation from the no-progress watchdog / a fallback switch),
-            // the finish flush never runs — this finalizer emits whatever
-            // empty-id/name summaries were already counted so aggregation
-            // never silently loses content (日志完整性优先). After a normal
-            // finish flush the state map is empty and this is a no-op;
-            // getAndSet makes it idempotent under any termination path.
-            parseOpenAiSseIncrementally(byteStream, toolCallState, params)
-              .onFinalize(flushEmptyIdNameSummaries(toolCallState, params))
+        // Hard-recovery P1: per-attempt backend when provided (per-request
+        // HttpClient whose shutdownNow aborts exactly this request).
+        Stream.eval(params.attemptBackend.getOrElse(backend).send(request)).flatMap { response =>
+          response.body match
+            case Left(error) =>
+              // 同 sendMessage：结构化 HttpError（子项②）。
+              Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
+            case Right(byteStream) =>
+              // If the stream dies mid-tool-call (transport error, or downstream
+              // cancellation from the no-progress watchdog / a fallback switch),
+              // the finish flush never runs — this finalizer emits whatever
+              // empty-id/name summaries were already counted so aggregation
+              // never silently loses content (日志完整性优先). After a normal
+              // finish flush the state map is empty and this is a no-op;
+              // getAndSet makes it idempotent under any termination path.
+              parseOpenAiSseIncrementally(byteStream, toolCallState, params)
+                .onFinalize(flushEmptyIdNameSummaries(toolCallState, params))
+        }
       }
-    }
 
   end sendMessageStream
 
@@ -606,8 +619,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       val args = tc.hcursor.downField("function").downField("arguments").as[String].toOption
 
                       (id, name) match
-                        case (Some(toolId), Some(toolName))
-                            if toolId.nonEmpty && toolName.nonEmpty =>
+                        case (Some(toolId), Some(toolName)) if toolId.nonEmpty && toolName.nonEmpty =>
                           toolCallState
                             .modify { m =>
                               // Some OpenAI-compatible providers repeat id+name
@@ -687,17 +699,19 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         end if
     end match
   end processOpenAiData
+
   /** Raw frame samples kept per tool call for the aggregated summary. */
   private val MaxEmptyIdNameSamples = 3
 
-  /** Emit ONE aggregated WARN per flushed tool call that received qwen-style
-    * empty-id/name continuation frames — replaces the per-frame WARN that
-    * flooded logs at ~26 lines per tool call (peak 1038 lines/min,
-    * 2026-08-21). Content preserved: frame count, argument char volume,
-    * merge health of the accumulated args, session/agent correlation (the
-    * old per-frame WARN had none — multi-stream attribution was guesswork),
-    * and the first raw frames (≤160 chars each, same truncation as before).
-    */
+  /**
+   * Emit ONE aggregated WARN per flushed tool call that received qwen-style
+   * empty-id/name continuation frames — replaces the per-frame WARN that
+   * flooded logs at ~26 lines per tool call (peak 1038 lines/min,
+   * 2026-08-21). Content preserved: frame count, argument char volume,
+   * merge health of the accumulated args, session/agent correlation (the
+   * old per-frame WARN had none — multi-stream attribution was guesswork),
+   * and the first raw frames (≤160 chars each, same truncation as before).
+   */
   private def logEmptyIdNameSummaries(m: Map[Int, ToolCallEntry], params: SendMessageParams): IO[Unit] =
     m.toList.traverse_ { case (index, entry) =>
       IO.whenA(entry.emptyIdNameFrames > 0) {
@@ -715,10 +729,11 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       }
     }
 
-  /** Flush aggregated empty-id/name summaries when the stream terminates
-    * abnormally (error or cancellation) so the finish-flush aggregation
-    * never silently loses content it already counted.
-    */
+  /**
+   * Flush aggregated empty-id/name summaries when the stream terminates
+   * abnormally (error or cancellation) so the finish-flush aggregation
+   * never silently loses content it already counted.
+   */
   private def flushEmptyIdNameSummaries(
     toolCallState: Ref[IO, Map[Int, ToolCallEntry]],
     params: SendMessageParams
@@ -727,19 +742,20 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
 end OpenAiAdapter
 
-/** Model-list endpoints of the OpenAI-compatible face — declared here, not
-  * derived by the gateway from a raw `baseUrl` (see `ModelListFaces`).
-  *
-  *   1. `{base}/models` — for this face `baseUrl` IS the version root (chat goes
-  *      to `{base}/chat/completions`), which is also the shape the settings
-  *      dialog's placeholder suggests (`https://api.example.com/v1`). Measured
-  *      200 with 12 models on the Aliyun compatible-mode root.
-  *   2. `{base}/v1/models` — declared for a `baseUrl` that stops above the
-  *      version segment (vendor origin or a non-version prefix), where the
-  *      implied segment still resolves the list: measured 200 on
-  *      `https://api.deepseek.com/v1/models`. Omitted when `baseUrl` already
-  *      ends in `/v1`, where it would build `…/v1/v1/models`.
-  */
+/**
+ * Model-list endpoints of the OpenAI-compatible face — declared here, not
+ * derived by the gateway from a raw `baseUrl` (see `ModelListFaces`).
+ *
+ *   1. `{base}/models` — for this face `baseUrl` IS the version root (chat goes
+ *      to `{base}/chat/completions`), which is also the shape the settings
+ *      dialog's placeholder suggests (`https://api.example.com/v1`). Measured
+ *      200 with 12 models on the Aliyun compatible-mode root.
+ *   2. `{base}/v1/models` — declared for a `baseUrl` that stops above the
+ *      version segment (vendor origin or a non-version prefix), where the
+ *      implied segment still resolves the list: measured 200 on
+ *      `https://api.deepseek.com/v1/models`. Omitted when `baseUrl` already
+ *      ends in `/v1`, where it would build `…/v1/v1/models`.
+ */
 object OpenAiAdapter:
 
   def modelListUrls(baseUrl: String): List[String] =

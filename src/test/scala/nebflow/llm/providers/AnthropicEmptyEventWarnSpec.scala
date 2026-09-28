@@ -31,8 +31,9 @@ class AnthropicEmptyEventWarnSpec extends CatsEffectSuite:
 
   /** Minimal in-memory StreamBackend serving a canned SSE body. */
   private class CannedSseBackend(body: fs2.Stream[IO, Byte]) extends StreamBackend[IO, Fs2Streams[IO]]:
+
     def send[T](
-        request: GenericRequest[T, Fs2Streams[IO] & sttp.capabilities.Effect[IO]]
+      request: GenericRequest[T, Fs2Streams[IO] & sttp.capabilities.Effect[IO]]
     ): IO[Response[T]] =
       IO.pure(
         Response(
@@ -42,9 +43,12 @@ class AnthropicEmptyEventWarnSpec extends CatsEffectSuite:
           Nil
         )
       )
+
     def monad: sttp.monad.MonadError[IO] =
       new sttp.client4.impl.cats.CatsMonadError[IO](using IO.asyncForIO)
     def close(): IO[Unit] = IO.unit
+
+  end CannedSseBackend
 
   /** Wire shape of the canned body: each frame followed by the SSE blank line. */
   private def sse(frames: String*): fs2.Stream[IO, Byte] =
@@ -89,6 +93,7 @@ class AnthropicEmptyEventWarnSpec extends CatsEffectSuite:
     """{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0}}}"""
   )
   private def textFrame(text: String): String = eventFrame("content_block_delta", deltaPayload(text))
+
   private val stopFrame = eventFrame(
     "message_delta",
     """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}"""
@@ -117,6 +122,7 @@ class AnthropicEmptyEventWarnSpec extends CatsEffectSuite:
       // Anti-payload: no raw wire text in the log line.
       assert(!w.contains(marker), s"raw payload leaked into WARN: $w")
       assert(!w.contains("{"), s"raw JSON leaked into WARN: $w")
+    end for
   }
 
   test("negative control: frames carrying their `event:` line (known, unknown, ping) never warn") {
@@ -156,6 +162,7 @@ class AnthropicEmptyEventWarnSpec extends CatsEffectSuite:
         List.empty[String],
         s"named-but-unknown events must stay silent, got $warnsNamed"
       )
+    end for
   }
 
 end AnthropicEmptyEventWarnSpec

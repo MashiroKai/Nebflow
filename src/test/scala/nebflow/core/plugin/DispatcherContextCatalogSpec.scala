@@ -2,7 +2,7 @@ package nebflow.core.plugin
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 
@@ -50,21 +50,30 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
 
   private def writeSkill(dir: os.Path, skill: String): Unit =
     os.makeDir.all(dir / "skills" / skill)
-    os.write.over(dir / "skills" / skill / "SKILL.md",
+    os.write.over(
+      dir / "skills" / skill / "SKILL.md",
       s"""---
          |name: $skill
          |description: $skill test skill
          |---
          |# $skill
-         |body""".stripMargin)
+         |body""".stripMargin
+    )
 
-  /** 手术式置 flag（不抹 trust 表——approve 会把 trust 写进 nebflow.json，
-    * 整体覆写会重演「审批后 setFlag 抹 trust」的踩坑路径）。 */
+  /**
+   * 手术式置 flag（不抹 trust 表——approve 会把 trust 写进 nebflow.json，
+   * 整体覆写会重演「审批后 setFlag 抹 trust」的踩坑路径）。
+   */
   private def setFlagMerged(enabled: Boolean): IO[Unit] =
     IO.blocking {
       val p = tempRoot / "nebflow.json"
-      val root = if os.exists(p) then io.circe.parser.parse(os.read(p)).toOption.flatMap(_.asObject).getOrElse(io.circe.JsonObject.empty) else io.circe.JsonObject.empty
-      val plugins = root("plugins").flatMap(_.asObject).getOrElse(io.circe.JsonObject.empty)
+      val root =
+        if os.exists(p) then
+          io.circe.parser.parse(os.read(p)).toOption.flatMap(_.asObject).getOrElse(io.circe.JsonObject.empty)
+        else io.circe.JsonObject.empty
+      val plugins = root("plugins")
+        .flatMap(_.asObject)
+        .getOrElse(io.circe.JsonObject.empty)
         .add("enabled", io.circe.Json.fromBoolean(enabled))
       val next = io.circe.Json.fromJsonObject(root.add("plugins", io.circe.Json.fromJsonObject(plugins)))
       os.write.over(p, next.noSpaces)
@@ -74,40 +83,54 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
   // cap-plugin：capability（deprecated 键）+ description 并存（目录应只出
   // description、capability 文本不出现、装载零告警）
   private val capPlugin = pluginDir("cap-plugin")
-  writeManifest(capPlugin,
+
+  writeManifest(
+    capPlugin,
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"cap-plugin","version":"1.0.0",""" +
       """"description":"描述单源探针：本句应出现在目录行",""" +
-      """"capability":"旧能力句：已退役，目录不得渲染本句"}""")
+      """"capability":"旧能力句：已退役，目录不得渲染本句"}"""
+  )
   writeSkill(capPlugin, "probe")
 
   // desc-fallback：无 capability 键（单源形态）→ description 正常渲染
   private val descFallback = pluginDir("desc-fallback")
-  writeManifest(descFallback,
+
+  writeManifest(
+    descFallback,
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"desc-fallback","version":"1.0.0",""" +
-      """"description":"回落描述：解析方法论能力包"}""")
+      """"description":"回落描述：解析方法论能力包"}"""
+  )
   writeSkill(descFallback, "fallback-skill")
 
   // cap-blank：capability 为空白串（存量形态）→ 宽容容忍 + description 正常渲染
   private val capBlank = pluginDir("cap-blank")
-  writeManifest(capBlank,
+
+  writeManifest(
+    capBlank,
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"cap-blank","version":"1.0.0",""" +
-      """"description":"空白回落描述句","capability":"   "}""")
+      """"description":"空白回落描述句","capability":"   "}"""
+  )
   writeSkill(capBlank, "blank-skill")
 
   // blocked-plugin：skill 齐全 + deny-list 封禁 → 目录不得出现（无审批批：受信已不再需要
   // 审批记录，唯一的「点名不可用」手段 = 封禁）
   private val blockedPkg = pluginDir("blocked-plugin")
-  writeManifest(blockedPkg,
+
+  writeManifest(
+    blockedPkg,
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"blocked-plugin","version":"1.0.0",""" +
-      """"description":"被封禁插件描述（不应出现）"}""")
+      """"description":"被封禁插件描述（不应出现）"}"""
+  )
   writeSkill(blockedPkg, "never")
 
   // model-presets.json：含 description 与不含 description 各一
   private def writePresets(): Unit =
-    os.write.over(tempRoot / "model-presets.json",
+    os.write.over(
+      tempRoot / "model-presets.json",
       """{"defaultPreset":"general","presets":{""" +
         """"general":{"name":"general","description":"","preferred":"mock/m1","fallbacks":[]},""" +
-        """"deep-analyze":{"name":"deep-analyze","description":"深度分析场景：调研/审阅/方案设计节点","preferred":"mock/m1","fallbacks":[]}}}""")
+        """"deep-analyze":{"name":"deep-analyze","description":"深度分析场景：调研/审阅/方案设计节点","preferred":"mock/m1","fallbacks":[]}}}"""
+    )
 
   private def approveAll: IO[Unit] =
     for
@@ -129,9 +152,7 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       warnings <- PluginRegistry.scan().map(_.find(_.name == "cap-plugin").map(_.warnings).getOrElse(Nil))
     yield
       assert(rendered.contains("# Plugin Catalog"), s"header must present: $rendered")
-      assert(
-        rendered.contains("- cap-plugin: 描述单源探针：本句应出现在目录行"),
-        s"description line must render: $rendered")
+      assert(rendered.contains("- cap-plugin: 描述单源探针：本句应出现在目录行"), s"description line must render: $rendered")
       assert(!rendered.contains("旧能力句"), "deprecated capability text must NOT appear in catalog")
       // capability 键已登记 KnownManifestKeys：存量包带键装载零 unknown-field 告警
       assert(warnings.isEmpty, s"capability key must be tolerated silently, got warnings: $warnings")
@@ -151,15 +172,21 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       _ <- approveAll
       _ <- PluginBlockPolicy.block("blocked-plugin", "spec", "spec")
       rendered <- DispatcherContextCatalog.render()
-      item <- PluginRegistry.listWithRejected().map(_._1.find(_.name == "blocked-plugin").map(PluginRegistry.approvalManifest))
+      item <- PluginRegistry
+        .listWithRejected()
+        .map(_._1.find(_.name == "blocked-plugin").map(PluginRegistry.approvalManifest))
       _ <- PluginBlockPolicy.unblock("blocked-plugin", "spec")
       after <- DispatcherContextCatalog.render()
     yield
       assert(!rendered.contains("blocked-plugin"), "a blocked plugin must not appear")
-      assert(rendered.contains("另有 1 个插件未载入（已封禁 1）"),
-        s"the blocked package must be counted in the tail note: $rendered")
-      assert(item.exists(_.hcursor.downField("blocked").as[Boolean].getOrElse(false)),
-        "the blocked flag must be visible in the approval manifest")
+      assert(
+        rendered.contains("另有 1 个插件未载入（已封禁 1）"),
+        s"the blocked package must be counted in the tail note: $rendered"
+      )
+      assert(
+        item.exists(_.hcursor.downField("blocked").as[Boolean].getOrElse(false)),
+        "the blocked flag must be visible in the approval manifest"
+      )
       assert(after.contains("blocked-plugin"), s"unblock must restore the catalog line: $after")
   }
 
@@ -170,8 +197,10 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
     yield
       // cap-plugin / desc-fallback / cap-blank 均已 approve，blocked-plugin 未 approve
       // 但**未被封禁** ⇒ 在位即信任 ⇒ 必须出现在目录里
-      assert(rendered.contains("- blocked-plugin: 被封禁插件描述（不应出现）"),
-        s"a record-less (but unblocked) package must render: $rendered")
+      assert(
+        rendered.contains("- blocked-plugin: 被封禁插件描述（不应出现）"),
+        s"a record-less (but unblocked) package must render: $rendered"
+      )
   }
 
   test("调试渲染收敛：PluginRegistry.renderCatalog 与注入段插件部分同字节") {
@@ -182,8 +211,10 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
     yield
       // D10 双渲染器收敛：插件段字节一致（panelscheme 批后 render() = 插件段的
       // substituteDataRoot 包装，调试输出与其相等——保留前缀断言容真实 data_root 渲染差异）
-      assert(viaDispatcher.startsWith(viaDebug) || viaDebug.isEmpty,
-        s"debug catalog must equal the injected plugin section prefix\n--debug--\n$viaDebug\n--injected--\n$viaDispatcher")
+      assert(
+        viaDispatcher.startsWith(viaDebug) || viaDebug.isEmpty,
+        s"debug catalog must equal the injected plugin section prefix\n--debug--\n$viaDebug\n--injected--\n$viaDispatcher"
+      )
       assert(viaDebug.contains("# Plugin Catalog"), s"debug header must present: $viaDebug")
       assert(viaDebug.contains("- cap-plugin: 描述单源探针：本句应出现在目录行"), s"debug line single-source: $viaDebug")
       assert(!viaDebug.contains("旧能力句"), "debug renderer must ignore deprecated capability too")
@@ -194,10 +225,11 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       _ <- approveAll
       rendered <- DispatcherContextCatalog.render()
     yield
-      assert(!rendered.contains("# Model Preset Catalog"),
-        s"preset catalog section is retired (panelscheme 2026-09-21): $rendered")
-      assert(!rendered.contains("deep-analyze"),
-        s"preset lines must not leak into the dispatcher prompt: $rendered")
+      assert(
+        !rendered.contains("# Model Preset Catalog"),
+        s"preset catalog section is retired (panelscheme 2026-09-21): $rendered"
+      )
+      assert(!rendered.contains("deep-analyze"), s"preset lines must not leak into the dispatcher prompt: $rendered")
       assert(rendered.contains("# Plugin Catalog"), s"plugin section must still render: $rendered")
   }
 

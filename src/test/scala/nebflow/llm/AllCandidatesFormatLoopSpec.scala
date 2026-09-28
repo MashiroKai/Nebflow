@@ -49,6 +49,7 @@ class AllCandidatesFormatLoopSpec extends CatsEffectSuite:
 
   /** 自设终止上界（见类注释末段）。正例路径每个候选都是**秒回 400** ⇒ 毫秒级终止。 */
   private val TerminateBound = 20.seconds
+
   private object TerminateBoundExceeded
       extends RuntimeException(
         "spec self-bound exceeded: the stream neither produced chunks nor failed"
@@ -59,8 +60,8 @@ class AllCandidatesFormatLoopSpec extends CatsEffectSuite:
 
   /** 400 常驻 mock（每个请求都回 400，并计命中数）。 */
   private def startMock400(
-      port: Int,
-      hits: java.util.concurrent.atomic.AtomicInteger
+    port: Int,
+    hits: java.util.concurrent.atomic.AtomicInteger
   ): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
@@ -178,12 +179,9 @@ class AllCandidatesFormatLoopSpec extends CatsEffectSuite:
           s"每个 attempt 都应是 Format（400），实际 ${attempts.map(_.reason)}"
         )
         // ③ 每候选命中数 == 上限 —— 证明确实循环过（不是「根本没试」）。
-        assertEquals(hitsA.get(), Fallback.MaxChainRounds,
-          s"a/m1 命中数应恰好等于轮次上限（证明循环过且被上限截断）")
-        assertEquals(hitsB.get(), Fallback.MaxChainRounds,
-          s"b/m1 命中数应恰好等于轮次上限（证明循环过且被上限截断）")
-        assertEquals(attempts.size, candidates * Fallback.MaxChainRounds,
-          "attempt 记录数应等于 候选数 × 轮次上限（每候选每轮一条）")
+        assertEquals(hitsA.get(), Fallback.MaxChainRounds, s"a/m1 命中数应恰好等于轮次上限（证明循环过且被上限截断）")
+        assertEquals(hitsB.get(), Fallback.MaxChainRounds, s"b/m1 命中数应恰好等于轮次上限（证明循环过且被上限截断）")
+        assertEquals(attempts.size, candidates * Fallback.MaxChainRounds, "attempt 记录数应等于 候选数 × 轮次上限（每候选每轮一条）")
     }
   }
 

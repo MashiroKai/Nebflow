@@ -7,9 +7,9 @@ import io.circe.syntax.*
 import munit.FunSuite
 
 /**
-  * PKCE login single-flight state machine + DeviceCredential backward
-  * compatibility (stage 2, 2026-08-28).
-  */
+ * PKCE login single-flight state machine + DeviceCredential backward
+ * compatibility (stage 2, 2026-08-28).
+ */
 class PkceLoginSessionSpec extends FunSuite:
 
   private def statusName(s: PkceLoginSession.Status): String = s.name

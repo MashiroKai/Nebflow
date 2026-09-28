@@ -26,11 +26,18 @@ class AttachmentPreviewContractSpec extends FunSuite:
   private def jsonOf(s: String): Json =
     parse(s) match
       case Right(j) => j
-      case Left(e)  => fail(s"bad test json: ${e.getMessage}")
+      case Left(e) => fail(s"bad test json: ${e.getMessage}")
 
   /** 真源（未改）编码器产出 —— 所有「字节不变」对照的**唯一**参照。 */
   private val legacySummary =
-    AttachmentSummary(id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready", mime = Some("image/jpeg"))
+    AttachmentSummary(
+      id = "a1",
+      name = "p.jpg",
+      size = 900000L,
+      sha256 = "ab12",
+      state = "ready",
+      mime = Some("image/jpeg")
+    )
   private val legacyBytes = legacySummary.asJson.noSpaces
 
   private val goodPreviewJson =
@@ -66,14 +73,26 @@ class AttachmentPreviewContractSpec extends FunSuite:
 
     // 镜像编码器在 preview=None 时与真源编码器**逐字节相等**（skip_serializing_if 等价语义）。
     val mirror = AttachmentPreviewContract.MirrorAttachment(
-      id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready", mime = Some("image/jpeg"), preview = None
+      id = "a1",
+      name = "p.jpg",
+      size = 900000L,
+      sha256 = "ab12",
+      state = "ready",
+      mime = Some("image/jpeg"),
+      preview = None
     )
     assertEquals(mirror.asJson.noSpaces, legacyBytes)
 
     // mime 缺席那一支同样逐字节相等（键序 = id,name,size,sha256,state）。
     val noMime = AttachmentSummary(id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready")
     val mirrorNoMime = AttachmentPreviewContract.MirrorAttachment(
-      id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready", mime = None, preview = None
+      id = "a1",
+      name = "p.jpg",
+      size = 900000L,
+      sha256 = "ab12",
+      state = "ready",
+      mime = None,
+      preview = None
     )
     assertEquals(mirrorNoMime.asJson.noSpaces, noMime.asJson.noSpaces)
     assert(!mirror.asJson.noSpaces.contains("preview"), "省键约束：preview=None ⇒ 不得出现该键")
@@ -109,18 +128,18 @@ class AttachmentPreviewContractSpec extends FunSuite:
 
   test("empty values: null / blank / empty object / out-of-range all fall back to no-preview") {
     val bad: List[(String, String)] = List(
-      "preview-null"          -> """{"id":"a1","preview":null}""",
-      "preview-string"        -> """{"id":"a1","preview":"image/webp"}""",
-      "preview-array"         -> """{"id":"a1","preview":[]}""",
-      "preview-empty-object"  -> """{"id":"a1","preview":{}}""",
-      "mime-empty"            -> """{"id":"a1","preview":{"mime":"","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
-      "mime-out-of-set"       -> """{"id":"a1","preview":{"mime":"image/png","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
-      "b64-empty"             -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":9,"b64":""}}""",
-      "b64-length-mismatch"   -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":9,"b64":"AQIDBAU"}}""",
-      "size-zero"             -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":0,"b64":""}}""",
-      "size-over-hard-cap"    -> s"""{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":${AttachmentPreviewContract.HardCapBytes + 1},"b64":"AQIDBAUGBwgJ"}}""",
-      "w-zero"                -> """{"id":"a1","preview":{"mime":"image/webp","w":0,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
-      "w-string"              -> """{"id":"a1","preview":{"mime":"image/webp","w":"4","h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}"""
+      "preview-null" -> """{"id":"a1","preview":null}""",
+      "preview-string" -> """{"id":"a1","preview":"image/webp"}""",
+      "preview-array" -> """{"id":"a1","preview":[]}""",
+      "preview-empty-object" -> """{"id":"a1","preview":{}}""",
+      "mime-empty" -> """{"id":"a1","preview":{"mime":"","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
+      "mime-out-of-set" -> """{"id":"a1","preview":{"mime":"image/png","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
+      "b64-empty" -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":9,"b64":""}}""",
+      "b64-length-mismatch" -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":9,"b64":"AQIDBAU"}}""",
+      "size-zero" -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":0,"b64":""}}""",
+      "size-over-hard-cap" -> s"""{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":${AttachmentPreviewContract.HardCapBytes + 1},"b64":"AQIDBAUGBwgJ"}}""",
+      "w-zero" -> """{"id":"a1","preview":{"mime":"image/webp","w":0,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
+      "w-string" -> """{"id":"a1","preview":{"mime":"image/webp","w":"4","h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}"""
     )
     for (label, raw) <- bad do
       val j = jsonOf(raw)
@@ -133,14 +152,22 @@ class AttachmentPreviewContractSpec extends FunSuite:
 
   test("present field: legacy key prefix is byte-identical and preview is appended last") {
     val mirror = AttachmentPreviewContract.MirrorAttachment(
-      id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready", mime = Some("image/jpeg"),
+      id = "a1",
+      name = "p.jpg",
+      size = 900000L,
+      sha256 = "ab12",
+      state = "ready",
+      mime = Some("image/jpeg"),
       preview = AttachmentPreviewContract.parsePreview(goodPreview)
     )
     val out = mirror.asJson.noSpaces
     // 既有六键的**前缀**逐字节不变（把真源输出末尾的 `}` 换成 `,` 即为期望前缀）。
     assert(out.startsWith(legacyBytes.dropRight(1) + ","), s"legacy prefix changed: $out")
     assert(out.endsWith("}"), s"unexpected tail: $out")
-    assert(out.contains("," + "\"" + AttachmentPreviewContract.PreviewKey + "\":"), s"preview must be appended last: $out")
+    assert(
+      out.contains("," + "\"" + AttachmentPreviewContract.PreviewKey + "\":"),
+      s"preview must be appended last: $out"
+    )
     // 往返：镜像编码 → 镜像解码，preview 逐字段等价。
     assertEquals(AttachmentPreviewContract.readPreview(jsonOf(out)).map(_.b64), Some("AQIDBAUGBwgJ"))
     // 申报体（去程）：None ⇒ 空对象（零键）；Some ⇒ 单键对象。
@@ -170,3 +197,4 @@ class AttachmentPreviewContractSpec extends FunSuite:
     assert(!decoded.asJson.noSpaces.contains(AttachmentPreviewContract.PreviewKey))
     assertEquals(decoded.asJson.noSpaces, legacyBytes)
   }
+end AttachmentPreviewContractSpec

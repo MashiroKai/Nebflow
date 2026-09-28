@@ -1,6 +1,7 @@
 package nebflow.dropbox
 
 import munit.FunSuite
+import nebflow.shared.AttachContract
 import org.http4s.{Header, Headers}
 import org.typelevel.ci.CIString
 
@@ -12,9 +13,9 @@ import org.typelevel.ci.CIString
  * P2P 腿的 `X-Dropbox-Proto` HTTP 头**恒为 1**。
  *
  * 🔴 为什么这条必须钉死：接收端 `parseDropboxChunkHeaders` 的判据是**等值**
- * （`proto == AttachContract.ProtoChunked`，`RestApiRoutes.scala:3089`）。若本题把该头
+ * （`proto == AttachContract.ProtoChunked`，`NeblinkRoutes.parseDropboxChunkHeaders`）。若本题把该头
  * 升成 `2`，**旧接收端**的 for-comprehension guard 为假 ⇒ 返回 `None` ⇒ 走 legacy 整件
- * 路径（`RestApiRoutes.scala:1355-1359` → `receiveLegacyWholeFile`）⇒ **把第一块当整件
+ * 路径（`NeblinkRoutes` 接收 case 判 `None` ⇒ `DropboxService.receiveLegacyWholeFile`）⇒ **把第一块当整件
  * 落盘**（静默数据损坏，旧端无从自纠）。把 `==` 改成 `>=` 也无法救旧端，只会掩盖破坏面。
  *
  * 常绿语义：**修正前与修正后都必须绿** —— 它的价值是阻止后来者「顺手把 `>=` 放宽」
@@ -30,18 +31,18 @@ class AttachProtoHeaderPinSpec extends FunSuite:
   private def todayJudge(proto: String): Option[Int] =
     proto.toIntOption.filter(_ == AttachContract.ProtoChunked)
 
-  /** 与 `RestApiRoutes.parseDropboxChunkHeaders` 逐字等价的头集合判定（修正前复制版）。 */
+  /** 与 `NeblinkRoutes.parseDropboxChunkHeaders` 逐字等价的头集合判定（修正前复制版）。 */
   private def replicatedParse(all: List[(String, String)]): Option[DropboxService.ChunkHeaders] =
     def h(name: String): Option[String] =
       all.find(_._1.equalsIgnoreCase(name)).map(_._2.trim).filter(_.nonEmpty)
     for
-      proto     <- h("x-dropbox-proto").flatMap(_.toIntOption)
+      proto <- h("x-dropbox-proto").flatMap(_.toIntOption)
       if proto == AttachContract.ProtoChunked
-      index     <- h("x-dropbox-index").flatMap(_.toIntOption)
-      total     <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
+      index <- h("x-dropbox-index").flatMap(_.toIntOption)
+      total <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
       chunkSize <- h("x-dropbox-chunk-size").flatMap(_.toIntOption)
-      chunkSha  <- h("x-dropbox-chunk-sha256")
-      wholeSha  <- h("x-dropbox-whole-sha256")
+      chunkSha <- h("x-dropbox-chunk-sha256")
+      wholeSha <- h("x-dropbox-whole-sha256")
     yield DropboxService.ChunkHeaders(index, total, chunkSize, chunkSha, wholeSha)
 
   private val fullHeaderSet: List[(String, String)] = List(
@@ -98,3 +99,4 @@ class AttachProtoHeaderPinSpec extends FunSuite:
       val missing = fullHeaderSet.patch(i, Nil, 1)
       assertEquals(DropboxChunkHeaderParser.parse(headers(missing)), None, s"缺 ${fullHeaderSet(i)._1} 必须落 legacy")
     }
+end AttachProtoHeaderPinSpec

@@ -2,7 +2,7 @@ package nebflow.core.skill
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.time.LocalDate
 

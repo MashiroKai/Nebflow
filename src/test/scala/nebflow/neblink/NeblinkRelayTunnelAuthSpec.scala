@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory
 
 import java.nio.file.Files
@@ -68,6 +68,7 @@ class NeblinkRelayTunnelAuthSpec extends CatsEffectSuite:
   private final class RelayLogAppender
       extends ch.qos.logback.core.AppenderBase[ch.qos.logback.classic.spi.ILoggingEvent]:
     val lines = new ConcurrentLinkedQueue[String]()
+
     override def append(event: ch.qos.logback.classic.spi.ILoggingEvent): Unit =
       lines.add(event.getFormattedMessage)
 
@@ -111,9 +112,11 @@ class NeblinkRelayTunnelAuthSpec extends CatsEffectSuite:
       loop
     }
 
-  /** Fixture + service + client + tunnel, wired like GatewayMain: the client is
-    * registered as the live relay client (the pointer every relay consumer
-    * reads) and the tunnel's token getter reads it live on each reconnect. */
+  /**
+   * Fixture + service + client + tunnel, wired like GatewayMain: the client is
+   * registered as the live relay client (the pointer every relay consumer
+   * reads) and the tunnel's token getter reads it live on each reconnect.
+   */
   private def withStack[A](
     fix: RelayAuthFixtureServer,
     mode: RelayAuthFixtureServer.RelayMode = RelayAuthFixtureServer.RelayMode.Auth403
@@ -127,16 +130,20 @@ class NeblinkRelayTunnelAuthSpec extends CatsEffectSuite:
         _ <- client.login(Device, "qa-host", "macos", Nil)
         // 2026-09-11：URL 由构造期死值改为连接期 live 解析（构造参已移除）
         // ⇒ 把 server 址写进 config ref（生产里 updateConfig/enrollment 的等价物）。
-        _ <- ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+          )
+        )
         tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
         _ = ms.setRelayTunnel(tunnel)
         fiber <- tunnel.connect().start
         out <- body(ms, client, tunnel).guarantee(fiber.cancel *> tunnel.stop())
       yield out
     }
+
+  end withStack
 
   private def withFixture[A](body: RelayAuthFixtureServer => IO[A]): IO[A] =
     IO.blocking(new RelayAuthFixtureServer()).flatMap(f => body(f).guarantee(IO.blocking(f.close())))
@@ -257,6 +264,7 @@ class NeblinkRelayTunnelAuthSpec extends CatsEffectSuite:
           )
           _ <- IO(assert(tunnel.isAlive, "the tunnel must be up at the end of the shared-heal sequence"))
         yield ()
+        end for
       }
     }
   }

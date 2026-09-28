@@ -39,10 +39,13 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
   private def readJson(p: os.Path): io.circe.Json =
     jsonParse(os.read(p)) match
       case Right(j) => j
-      case Left(e)  => fail(s"corrupt json at $p: $e")
+      case Left(e) => fail(s"corrupt json at $p: $e")
 
   private def nodeObj(j: io.circe.Json, id: String): io.circe.Json =
-    j.hcursor.downField("nodes").downField(id).focus
+    j.hcursor
+      .downField("nodes")
+      .downField(id)
+      .focus
       .getOrElse(fail(s"node '$id' missing in json"))
 
   private def keysOf(n: io.circe.Json): Set[String] =
@@ -55,10 +58,18 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
     val full = longTask
     for
       store <- FlowMapStore.open("demo", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-big" -> node("n-big", "big").copy(
-          description = Some("拆分验收节点"), task = Some(full),
-          status = NodeLifecycle.Pending, ttlExpireAt = Some(now + 100000)))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-big" -> node("n-big", "big").copy(
+              description = Some("拆分验收节点"),
+              task = Some(full),
+              status = NodeLifecycle.Pending,
+              ttlExpireAt = Some(now + 100000)
+            )
+          )
+        )
+      )
       raw <- IO.blocking(os.read(ws / ".nebflow" / "flow-map.json"))
       j = readJson(ws / ".nebflow" / "flow-map.json")
       nBig = nodeObj(j, "n-big")
@@ -68,7 +79,11 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
       fileFull <- IO.blocking(os.read(ws / ".nebflow" / "tasks" / "n-big.md"))
       snap <- store.snapshot
     yield
-      assertEquals(jsonTask.length, 501, "JSON task must be take(500)+… (≤501 chars) — task full text must NOT leak into flow-map.json")
+      assertEquals(
+        jsonTask.length,
+        501,
+        "JSON task must be take(500)+… (≤501 chars) — task full text must NOT leak into flow-map.json"
+      )
       assert(jsonTask.endsWith("…"), "summary must end with ellipsis")
       assert(!raw.contains("END-MARKER-TASK-FULL"), "raw JSON must not contain the full-text tail marker")
       assertEquals(pointer, "tasks/n-big.md")
@@ -77,14 +92,16 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
       // 内存仍是全文（buildInput/重入同源）
       assertEquals(snap.nodes("n-big").task, Some(full))
       assert(os.exists(ws / ".nebflow" / "tasks"), "tasks dir must exist after split")
+    end for
   }
 
   test("persist split: short task keeps full text in JSON (summary == full) + file materialized") {
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-small" -> node("n-small", "small").copy(task = Some("短任务原文")))))
+      _ <- store.mutate(s =>
+        s.copy(nodes = s.nodes ++ Map("n-small" -> node("n-small", "small").copy(task = Some("短任务原文"))))
+      )
       j = readJson(ws / ".nebflow" / "flow-map.json")
       nSmall = nodeObj(j, "n-small")
       jsonTask <- IO.fromEither(nSmall.hcursor.downField("task").as[String])
@@ -103,8 +120,11 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
     val full = longTask
     for
       store <- FlowMapStore.open("demo", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-h2" -> node("n-h2", "hydrate2", NodeLifecycle.Pending).copy(task = Some(full)))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map("n-h2" -> node("n-h2", "hydrate2", NodeLifecycle.Pending).copy(task = Some(full)))
+        )
+      )
       reopened <- FlowMapStore.open("demo", ws.toString)
       snap <- reopened.snapshot
       fromArchive <- reopened.findNode("n-h2")
@@ -119,9 +139,13 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     val full = longTask
     // 旧格式：节点记录携带 task 全文（= 升级前的存量形态； circe 解码容忍 = 兼容自证）
-    val legacyJson = FlowMapState(project = "legacy", updatedAt = now, nodes = Map(
-      "n-old" -> node("n-old", "old", NodeLifecycle.Pending).copy(task = Some(full))
-    )).asJson.noSpaces
+    val legacyJson = FlowMapState(
+      project = "legacy",
+      updatedAt = now,
+      nodes = Map(
+        "n-old" -> node("n-old", "old", NodeLifecycle.Pending).copy(task = Some(full))
+      )
+    ).asJson.noSpaces
     for
       _ <- IO.blocking {
         os.makeDir.all(ws / ".nebflow")
@@ -137,7 +161,9 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
       hasFile <- IO.blocking(os.exists(ws / ".nebflow" / "tasks" / "n-old.md"))
       fileFull <- IO.blocking(os.read(ws / ".nebflow" / "tasks" / "n-old.md"))
       bakExists <- IO.blocking(os.exists(ws / ".nebflow" / "flow-map.json.bak"))
-      bakHasFull <- IO.blocking { val bak = os.read(ws / ".nebflow" / "flow-map.json.bak"); bak.contains(full.take(100)) }
+      bakHasFull <- IO.blocking {
+        val bak = os.read(ws / ".nebflow" / "flow-map.json.bak"); bak.contains(full.take(100))
+      }
     yield
       assertEquals(snap.nodes("n-old").task, Some(full), "migrated memory must hold full task (旧格式按现状行为供 task)")
       assertEquals(jsonTask.length, 501, "converged JSON must carry summary")
@@ -145,14 +171,19 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
       assertEquals(fileFull, full)
       assertEquals(bakExists, true, "first migration must back up the original JSON")
       assertEquals(bakHasFull, true, ".bak must contain the pre-migration (full-text) form")
+    end for
   }
 
   test("legacy migration idempotent: second open does not overwrite .bak, task files stable") {
     val ws = freshWorkspace()
     val full = longTask
-    val legacyJson = FlowMapState(project = "legacy2", updatedAt = now, nodes = Map(
-      "n-old2" -> node("n-old2", "old2", NodeLifecycle.Pending).copy(task = Some(full))
-    )).asJson.noSpaces
+    val legacyJson = FlowMapState(
+      project = "legacy2",
+      updatedAt = now,
+      nodes = Map(
+        "n-old2" -> node("n-old2", "old2", NodeLifecycle.Pending).copy(task = Some(full))
+      )
+    ).asJson.noSpaces
     for
       _ <- IO.blocking {
         os.makeDir.all(ws / ".nebflow")
@@ -172,9 +203,14 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
   test("old-format compat: task field + unknown taskFile key tolerated, task served as-is") {
     val ws = freshWorkspace()
     // 旧格式 + 不认识的 taskFile 键（外部残留）+ 未知顶层键 → 解码容忍不炸
-    val legacyJson = FlowMapState(project = "legacy3", updatedAt = now, nodes = Map(
-      "n-old3" -> node("n-old3", "old3", NodeLifecycle.Pending).copy(task = Some("存量短任务"))
-    )).asJson.noSpaces.replace("\"task\":\"存量短任务\"", "\"task\":\"存量短任务\",\"taskFile\":\"tasks/nowhere.md\"")
+    val legacyJson = FlowMapState(
+      project = "legacy3",
+      updatedAt = now,
+      nodes = Map(
+        "n-old3" -> node("n-old3", "old3", NodeLifecycle.Pending).copy(task = Some("存量短任务"))
+      )
+    ).asJson.noSpaces
+      .replace("\"task\":\"存量短任务\"", "\"task\":\"存量短任务\",\"taskFile\":\"tasks/nowhere.md\"")
       .replace("\"nodes\":{", "\"legacyMarker\":1,\"nodes\":{")
     for
       _ <- IO.blocking {
@@ -196,9 +232,14 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
     val full = longTask
     for
       store <- FlowMapStore.open("demo-arch", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-done" -> node("n-done", "done", NodeLifecycle.Completed).copy(
-          task = Some(full), result = Some("归档结果"), ttlExpireAt = Some(now - 1)))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-done" -> node("n-done", "done", NodeLifecycle.Completed)
+              .copy(task = Some(full), result = Some("归档结果"), ttlExpireAt = Some(now - 1))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now)
       fromArchive <- store.findNode("n-done") // 同进程内存：task 未丢（读旧格式行为同源）
       archRaw <- IO.blocking(os.read(ws / ".nebflow" / "flow-map-archive" / "chain-n-done.json"))
@@ -212,11 +253,16 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
       assertEquals(keysOf(nDone).contains("task"), false, "archive JSON must NOT carry task key (直接剥)")
       assertEquals(keysOf(nDone).contains("taskFile"), false, "archive JSON must NOT carry taskFile pointer")
       assert(!archRaw.contains("END-MARKER-TASK-FULL"), "archive raw JSON must not contain task full text")
-      assertEquals(nDone.hcursor.get[String]("resultFile").toOption, Some("results/n-done.md"), "result pointer untouched")
+      assertEquals(
+        nDone.hcursor.get[String]("resultFile").toOption,
+        Some("results/n-done.md"),
+        "result pointer untouched"
+      )
       assertEquals(fromArchive.flatMap(_.result), Some("归档结果"))
       // 重开后：归档内存节点 task = None（磁盘已剥）；result 仍水合全文
       assertEquals(archReopened.nodes("n-done").task, None, "reopened archive node has no task (stripped at rest)")
       assertEquals(archReopened.nodes("n-done").result, Some("归档结果"))
+    end for
   }
 
   // ── 5. taskFile 指针不进内存模型 + 空任务不落文件 ──────────
@@ -225,8 +271,9 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-notask" -> node("n-notask", "notask").copy(description = Some("只有描述")))))
+      _ <- store.mutate(s =>
+        s.copy(nodes = s.nodes ++ Map("n-notask" -> node("n-notask", "notask").copy(description = Some("只有描述"))))
+      )
       snap <- store.snapshot
       files <- IO.blocking(os.list(ws / ".nebflow").map(_.last).toList)
     yield

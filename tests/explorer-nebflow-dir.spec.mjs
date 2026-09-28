@@ -6,7 +6,7 @@
 //
 // 本 harness 用真实前端资源（src/main/resources/web 下真实 explorer.js/ws.js/
 // canvas.js）+ routeWebSocket mock 驱动完整分发链（ws.js → explorer.js →
-// canvas.js）。mock dirListing 帧形态与修复后 WebSocketRoutes.listDirEntries
+// canvas.js）。mock dirListing 帧形态与修复后 FsOps.listDirEntries
 // 输出严格一致：目录在前、文件按名（大小写不敏感）排序，条目含
 // {name,type,size,broken}，悬空条目 flowmap-anim 为 type=file/size=0/broken=true。
 //
