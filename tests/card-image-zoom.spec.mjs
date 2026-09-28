@@ -30,6 +30,10 @@
 //      hover hint (that single §16 string)
 //   Z7 srcdoc zero regression: the existing message shapes (_nfCardH /
 //      _nfThemeVars / _nfOpenLocalFile) are unchanged
+//   Z8 linked-image precedence (round-1 review, 2026-09-28): an <img> inside a
+//      local-file <a href> follows its link and does NOT also open the viewer —
+//      the one behaviour this batch changed on the Canvas leg, pinned here so
+//      the change has a test guarding it.
 //
 // Screenshots: with SHOTS_DIR=<dir> the before/after click pair is written
 // (nothing is written by default).
@@ -99,6 +103,18 @@ async function bootPage(browser, opts = {}) {
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
+    // Passive recorder for every `_nf*` message reaching the PARENT window —
+    // an independent listener, so a test can assert WHICH channels a click
+    // emitted, not just the end state. Needed by Z8 (the linked-image
+    // precedence rule is a statement about the message SET: the link leg fires
+    // and the preview leg does not), and harmless elsewhere: it observes only.
+    window.__nfMsgs = [];
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      const keys = Object.keys(d).filter((k) => k.startsWith('_nf'));
+      if (keys.length) window.__nfMsgs.push(keys.join('+'));
+    });
   });
   const page = await ctx.newPage();
   const pageErrors = [];
@@ -197,6 +213,11 @@ const lightboxState = (page) => page.evaluate(() => {
     status: (document.querySelector('.nf-lightbox-status') || {}).textContent || '',
   };
 });
+
+/** The `_nf*` message channels that reached the parent window so far (the
+ *  passive recorder installed by bootPage). Each entry is the joined key list
+ *  of one message, e.g. `_nfOpenLocalFile` or `_nfCardH`. */
+const msgsOf = (page) => page.evaluate(() => (window.__nfMsgs || []).slice());
 
 /** Wait for the viewer to open (returns the readings) — for positive cases. */
 async function waitLightbox(page, ms = 8000) {
@@ -475,6 +496,99 @@ const browser = await chromium.launch();
   ok('Z7 no second preview contract introduced',
     !/_nfImage(?!Preview)|_nfImg|_nfZoomImg/.test(srcdoc), JSON.stringify(shapes));
   ok('Z7 no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
+  await ctx.close();
+}
+
+// ── Z8 linked-image precedence: a linked image follows its link ───────────
+// Round-1 review (2026-09-28) issue ①: the shared frame script carries
+// `if(e.defaultPrevented) return;` at the head of its click handler, so an
+// <img> wrapped in a link that a sibling capture listener already claimed
+// follows the LINK and no longer ALSO opens the preview. The pre-change Canvas
+// frame script had no such guard and emitted BOTH messages (measured on both
+// trees — see the batch's READINGS.md). That is an intentional tightening: one
+// click doing two things at once is the failure mode the guard removes, and the
+// link's own destination wins over a nested image. It is a Canvas-leg behaviour
+// change all the same, so it is pinned here instead of left implicit.
+//
+// The LINKED shape is the ordinary authored form (`<a href=…><img …></a>`), and
+// it is worth distinguishing from the two shapes that MUST keep opening the
+// preview: a bare image (Z1–Z5) and an image inside an in-page `#` anchor
+// (nothing claims those, so `defaultPrevented` stays false). Measured: the `#`
+// anchor shape reads identically on both trees — no difference to pin.
+{
+  // 8a. Canvas HTML viewer: the linked image routes to its link only. This goes
+  // RED on the pre-change tree (which emitted `_nfOpenLocalFile` AND
+  // `_nfImagePreview` for this very click), so it doubles as a discriminating
+  // anchor proving the precedence rule is in force rather than untested.
+  const { ctx, page, pageErrors } = await bootPage(browser);
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent('workspace-open-item', {
+      detail: {
+        id: 'file:/tmp/cz/linked.html', itemType: 'html', title: 'linked.html',
+        content: '<a href="/tmp/cz/target.md" id="lnk"><img id="inner" '
+          + 'src="/api/nf-file?path=%2Ftmp%2Fcz%2Flinked.png" alt="linked" width="120"></a>',
+        absPath: '/tmp/cz/linked.html', pinned: false,
+      },
+    }));
+  });
+  let clicked = false;
+  for (let i = 0; i < 40 && !clicked; i++) {
+    await sleep(250);
+    clicked = await page.evaluate(() => {
+      const f = document.querySelector('iframe[data-nf-canvas-html]');
+      const doc = f && f.contentDocument;
+      const img = doc && doc.querySelector('#inner');
+      if (!img) return false;
+      img.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: doc.defaultView }));
+      return true;
+    }).catch(() => false);
+  }
+  ok('Z8a canvas linked image clicked', clicked === true);
+  await sleep(900);
+  const msgs = await msgsOf(page);
+  const st = await lightboxState(page);
+  ok('Z8a canvas linked image routes to its LINK (_nfOpenLocalFile)',
+    msgs.includes('_nfOpenLocalFile'), JSON.stringify(msgs));
+  ok('Z8a canvas linked image does NOT also open the preview (no _nfImagePreview)',
+    !msgs.some((m) => m.includes('_nfImagePreview')), JSON.stringify(msgs));
+  ok('Z8a lightbox stays closed for a linked image', !st.on, JSON.stringify(st));
+  ok('Z8a no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
+  await ctx.close();
+}
+{
+  // 8b. Card leg, same shape. This one is a regression PIN rather than a red
+  // anchor: the card injected no image producer before this batch, so its
+  // linked-image behaviour was already "link only" (measured on both trees —
+  // the pre-change card emitted `_nfOpenLocalFile` and nothing else). Asserting
+  // it here states both legs in one place and fails if a later change makes the
+  // card emit a second message for one click.
+  const { ctx, page, pageErrors } = await bootPage(browser);
+  await renderCard(page,
+    '<a href="/tmp/cz/target.md" id="lnk"><img id="inner" '
+    + 'src="/api/nf-file?path=%2Ftmp%2Fcz%2Flinked.png" alt="linked" width="120"></a>');
+  await srcdocOf(page);
+  let clicked = false;
+  for (let i = 0; i < 40 && !clicked; i++) {
+    await sleep(200);
+    clicked = await page.evaluate(() => {
+      const f = document.querySelector('iframe[data-nf-card-id]');
+      const doc = f && f.contentDocument;
+      const img = doc && doc.querySelector('#inner');
+      if (!img) return false;
+      img.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: doc.defaultView }));
+      return true;
+    }).catch(() => false);
+  }
+  ok('Z8b card linked image clicked', clicked === true);
+  await sleep(900);
+  const msgs = await msgsOf(page);
+  const st = await lightboxState(page);
+  ok('Z8b card linked image routes to its LINK (_nfOpenLocalFile)',
+    msgs.includes('_nfOpenLocalFile'), JSON.stringify(msgs));
+  ok('Z8b card linked image does NOT also open the preview',
+    !msgs.some((m) => m.includes('_nfImagePreview')), JSON.stringify(msgs));
+  ok('Z8b lightbox stays closed for a linked image', !st.on, JSON.stringify(st));
+  ok('Z8b no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
   await ctx.close();
 }
 
