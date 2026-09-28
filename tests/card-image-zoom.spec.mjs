@@ -1,27 +1,40 @@
-// card-image-zoom.spec.mjs — Card 内嵌图片点击开查看器（chain-cardzoom，2026-09-28）
+// card-image-zoom.spec.mjs — a Card's embedded images open in the viewer
+// (chain-cardzoom, 2026-09-28).
 //
-// 作者令（逐字）：「让Card工具里，如果嵌入了图片，也可以像Canvas里嵌入图片一样，点击
-// 能打开。」⇒ 本件验的是**行为面**：Card iframe 内 <img> 点击 → 打开既有 lightbox。
+// Author's order (verbatim, Chinese): an image embedded in the Card tool must
+// open on click exactly as an image embedded in Canvas does. This spec tests
+// the BEHAVIOUR: a click on an <img> inside the Card iframe opens the existing
+// lightbox.
 //
-// 被测真实链路：静态服务器 serve src/main/resources/web → 动态 import
-// /js/cardRegistry.js → renderWithRegistry（Card 工具的真实入口）→ renderHtmlCard
-// → srcdoc（含 viewers/shared.js `imgClickScript()` 产出的帧脚本）→ iframe
-// （sandbox allow-scripts allow-same-origin）→ 帧内 click 捕获 → parent.postMessage
-// `_nfImagePreview` → lightbox.js initLightbox 的 message 处理（来源校验 + 路径闸）
-// → openLightbox → reMint（path 图）/ src 直用（data-URI 图）。
+// The real chain under test: a static server serves src/main/resources/web →
+// dynamic import of /js/cardRegistry.js → renderWithRegistry (the Card tool's
+// real entry point) → renderHtmlCard → srcdoc (carrying the frame script that
+// viewers/shared.js `imgClickScript()` produces) → iframe (sandbox
+// allow-scripts allow-same-origin) → in-frame click capture →
+// parent.postMessage `_nfImagePreview` → lightbox.js initLightbox's message
+// handler (source check + path gate) → openLightbox → re-mint (path image) or
+// direct `src` use (data-URI image).
 //
-// 覆盖面（对照任务书 §2 四条验收 + 负例）：
-//   Z1 path 图（/api/nf-file?path=…）：点击开查看器，且查看器取的 path == 图 src 的 path
-//   Z2 data-URI 内联图：点击按 §0 定案**可打开**（经 src 回退，不新做 blob 转换）
-//   Z3 非授权来源拒绝（负例）：非本应用帧的窗口伪造 `_nfImagePreview` ⇒ 不打开
-//   Z4 Canvas 腿未回归：Canvas HTML viewer 内嵌图点击仍可开（同件内断言）
-//   Z5 路径闸：帧内**未渲染**的任意 path ⇒ 不打开；帧内已渲染的 path ⇒ 开
-//   Z6 可点击范围提示：帧内 <img> 挂 cursor:zoom-in + hover 提示（§16 那一条文案）
-//   Z7 srcdoc 零回归：既有消息形态（_nfCardH / _nfThemeVars / _nfOpenLocalFile）不变
+// Coverage (mapped to the task brief §2's four acceptance items + negatives):
+//   Z1 path image (/api/nf-file?path=…): the click opens the viewer, and the
+//      path the viewer resolved equals the image src's path
+//   Z2 data-URI inline image: opens on click per the §0 ruling (via the src
+//      fallback; no blob conversion is invented)
+//   Z3 unauthorised source refused (negative): any window that is not an app
+//      frame forging `_nfImagePreview` does not open the viewer
+//   Z4 Canvas leg not regressed: an image inside the Canvas HTML viewer still
+//      opens (asserted in the same file)
+//   Z5 path gate: an arbitrary path the frame does not render never opens the
+//      viewer; a path the frame does render does open it
+//   Z6 click affordance: the in-frame <img> carries cursor:zoom-in plus the
+//      hover hint (that single §16 string)
+//   Z7 srcdoc zero regression: the existing message shapes (_nfCardH /
+//      _nfThemeVars / _nfOpenLocalFile) are unchanged
 //
-// 截图：SHOTS_DIR=<dir> 时落点击前后对照图（默认不落）。
-// 运行：node tests/card-image-zoom.spec.mjs
-// 可选 env：PORT=8137（非 8080）、CARDZOOM_SHOTS_DIR=<dir>
+// Screenshots: with SHOTS_DIR=<dir> the before/after click pair is written
+// (nothing is written by default).
+// Run: node tests/card-image-zoom.spec.mjs
+// Optional env: PORT=8137 (never 8080), CARDZOOM_SHOTS_DIR=<dir>
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -38,7 +51,7 @@ const SHOTS_DIR = process.env.CARDZOOM_SHOTS_DIR || '';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (SHOTS_DIR) mkdirSync(SHOTS_DIR, { recursive: true });
 
-// 1×1 PNG（真实可解码字节，让 <img> 走 onload 而不是 onerror）。
+// A 1×1 PNG (real decodable bytes, so the <img> takes onload not onerror).
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64'
@@ -79,7 +92,8 @@ function ok(name, cond, extra = '') {
   else { fail++; failures.push(name); console.log(`FAIL  ${name}${extra ? '  — ' + extra : ''}`); }
 }
 
-/** 启动一个页面：静态 web/ + WS mock + mint/nf-file 替身（沿用既有套件同一套）。 */
+/** Boot one page: static web/ + WS mock + the mint/nf-file doubles (the same
+ *  set the existing suites use). */
 async function bootPage(browser, opts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await ctx.addInitScript(() => {
@@ -116,7 +130,7 @@ async function bootPage(browser, opts = {}) {
   return { ctx, page, mint, pageErrors, nfRequests };
 }
 
-/** 渲染一张 Card（走 Card 工具的同一个入口 renderWithRegistry）。 */
+/** Render one Card through the Card tool's own entry point renderWithRegistry. */
 async function renderCard(page, html, title = 'card') {
   return page.evaluate(async ([h, t]) => {
     const mod = await import('/js/cardRegistry.js');
@@ -134,7 +148,7 @@ async function renderCard(page, html, title = 'card') {
   }, [html, title]);
 }
 
-/** 等第 n 张卡片的 srcdoc 落地。 */
+/** Wait for the nth card's srcdoc to land. */
 async function srcdocOf(page, index = 0) {
   for (let i = 0; i < 40; i++) {
     const s = await page.evaluate((idx) => {
@@ -147,7 +161,8 @@ async function srcdocOf(page, index = 0) {
   return null;
 }
 
-/** 等帧内第 index 个 img 出现，返回其读数；点它（真实用户路径 = 帧内 click）。 */
+/** Wait for the frame's nth img, return its readings; click it (the real user
+ *  path = an in-frame click). */
 async function clickFrameImg(page, index = 0) {
   for (let i = 0; i < 40; i++) {
     const done = await page.evaluate((idx) => {
@@ -171,7 +186,7 @@ async function clickFrameImg(page, index = 0) {
   return false;
 }
 
-/** 查看器状态读数（父文档侧，可序列化面）。 */
+/** Viewer readings (parent-document side, serialisable face). */
 const lightboxState = (page) => page.evaluate(() => {
   const ov = document.querySelector('.nf-lightbox');
   const img = document.querySelector('.nf-lightbox-img');
@@ -183,7 +198,7 @@ const lightboxState = (page) => page.evaluate(() => {
   };
 });
 
-/** 等查看器打开（返回读数）——用于正例。 */
+/** Wait for the viewer to open (returns the readings) — for positive cases. */
 async function waitLightbox(page, ms = 8000) {
   const t0 = Date.now();
   let st = await lightboxState(page);
@@ -197,7 +212,7 @@ async function waitLightbox(page, ms = 8000) {
 
 const browser = await chromium.launch();
 
-// ── Z1 path 图点击 → 查看器开正确路径（验收 1） ────────────────────────
+// ── Z1 path image click → the viewer opens the right path (acceptance 1) ──
 {
   const { ctx, page, mint, pageErrors } = await bootPage(browser);
   await renderCard(page,
@@ -205,9 +220,12 @@ const browser = await chromium.launch();
   const srcdoc = await srcdocOf(page);
   ok('Z1 card mounted (srcdoc set)', !!srcdoc);
 
-  // 帧内确实注入了点击桥（生产腿在位的直接读数）。判据取**桥自己的 postMessage
-  // 调用**而非函数名子串：`stripCredentialParams`（既有失败占位符脚本，卡与 Canvas
-  // 都注）里也含 "stripCredential"，只比子串会在改前树假绿（实测已踩）。
+  // The click bridge really is injected in the frame (a direct reading that the
+  // production leg is in place). The criterion is the bridge's OWN postMessage
+  // call, not a function-name substring: `stripCredentialParams` (the existing
+  // failure-placeholder script, injected by both the card and Canvas) also
+  // contains "stripCredential", so a substring match goes falsely green on the
+  // pre-change tree (measured).
   ok('Z1 srcdoc carries the image-click bridge',
     /parent\.postMessage\(\{\s*_nfImagePreview/.test(srcdoc || ''), (srcdoc || '').slice(0, 80));
   ok('Z1 srcdoc bridge defines the credential stripper', /function stripCredential\(/.test(srcdoc || ''));
@@ -225,8 +243,9 @@ const browser = await chromium.launch();
   ok('Z1 lightbox shows a blob: preview (no credential in parent DOM)',
     st.src.startsWith('blob:'), st.src.slice(0, 80));
   ok('Z1 alt text forwarded', st.alt === 'photo.png', st.alt);
-  // 查看器取的 path == 该图 src 的 path（本批核心判据）：帧内 img 的 path 与
-  // re-mint 轮次问的 path 必须逐字相等 —— re-mint 后取回的就是同一文件。
+  // The path the viewer resolved == the image src's path (this batch's core
+  // criterion): the in-frame img's path and the path asked for in the re-mint
+  // round must be byte-identical — after re-mint the same file comes back.
   const rounds = mint.calls.map((p) => p.join(','));
   const framePath = await page.evaluate(() => {
     const f = document.querySelector('iframe[data-nf-card-id]');
@@ -235,9 +254,12 @@ const browser = await chromium.launch();
     const m = /[?&]path=([^&]*)/.exec(u);
     return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
   });
-  // 判据三合一：帧内 img 的 path 正确（防夹具漂移）∧ 查看器**开在**该路径上
-  // （st.on 提供判别力——「有卡渲染的 re-mint 轮」在改前树同样存在，只断 mint
-  // 会在改前树假绿）∧ 该路径正是查看器 re-mint 轮问的那个。
+  // Three criteria in one: the in-frame img's path is right (guards against
+  // fixture drift) ∧ the viewer is OPEN on that path (st.on carries the
+  // discriminating power — a "card rendered, a re-mint round happened" reading
+  // also exists on the pre-change tree, so asserting on mint alone would go
+  // falsely green) ∧ that path is exactly the one the viewer's re-mint round
+  // asked for.
   ok('Z1 viewer path == the image src path (same file after re-mint)',
     st.on && framePath === '/tmp/cz/photo.png' && mint.calls.some((p) => p.includes(framePath)),
     JSON.stringify({ on: st.on, framePath, rounds }));
@@ -248,7 +270,7 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-// ── Z2 data-URI 内联图 → 点击可打开（§0 定案：经 src 回退） ──────────────
+// ── Z2 data-URI inline image → opens on click (§0 ruling: via src) ────────
 {
   const { ctx, page, mint, pageErrors } = await bootPage(browser);
   const dataUri = 'data:image/png;base64,' + PNG.toString('base64');
@@ -267,10 +289,11 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-// ── Z3 非授权来源拒绝（负例，验收 3） ──────────────────────────────────
+// ── Z3 unauthorised source refused (negative, acceptance 3) ───────────────
 {
   const { ctx, page, pageErrors } = await bootPage(browser);
-  // 3a. 应用文档自身（非任何 iframe）伪造同形态消息 ⇒ 必须被拒。
+  // 3a. The app document itself (not any iframe) forges the same message shape
+  // ⇒ must be refused.
   await page.evaluate(() => {
     window.postMessage({ _nfImagePreview: { src: '/api/nf-file?path=%2Ftmp%2Fcz%2Fevil.png', path: '/tmp/cz/evil.png', alt: 'evil' } }, '*');
   });
@@ -278,7 +301,8 @@ const browser = await chromium.launch();
   let st = await lightboxState(page);
   ok('Z3 (a) foreign same-origin window is REFUSED', !st.on, JSON.stringify(st));
 
-  // 3b. 一个非本应用 iframe（用户自建）伪造消息 ⇒ 必须被拒。
+  // 3b. A frame that is not one this app renders (user-created) forges the
+  // message ⇒ must be refused.
   await page.evaluate(async () => {
     const f = document.createElement('iframe');
     f.id = 'nf-evil-frame';
@@ -291,7 +315,8 @@ const browser = await chromium.launch();
   st = await lightboxState(page);
   ok('Z3 (b) non-app iframe is REFUSED', !st.on, JSON.stringify(st));
 
-  // 3c. 正例对照（同页）：真卡片的图**仍可**打开 ⇒ 拒绝不是「把通道整个关掉」。
+  // 3c. Positive control (same page): a real card's image STILL opens ⇒ the
+  // refusal is not "the whole channel was switched off".
   await renderCard(page, '<img src="/api/nf-file?path=%2Ftmp%2Fcz%2Fok.png" alt="ok" width="120">');
   await srcdocOf(page);
   await clickFrameImg(page, 0);
@@ -301,7 +326,7 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-// ── Z4 Canvas 腿未回归（验收 3 后半） ──────────────────────────────────
+// ── Z4 Canvas leg not regressed (acceptance 3, second half) ───────────────
 {
   const { ctx, page, pageErrors } = await bootPage(browser);
   await page.evaluate(() => {
@@ -329,11 +354,14 @@ const browser = await chromium.launch();
   const st = await waitLightbox(page);
   ok('Z4 Canvas leg NOT regressed (lightbox still opens)', st.on, JSON.stringify(st));
   ok('Z4 canvas preview is a blob: (re-mint leg intact)', st.src.startsWith('blob:'), st.src.slice(0, 60));
-  // Z4b: 帧自己伪造一条**非它渲染**的 path ⇒ 路径闸必须拦下。改前树此处必红
-  // （当时无路径闸），所以这条同时是「闸在位」的可判红锚 —— 防「接收面被删光而
-  // 无网」。注意两件事：(1) 发送者必须是帧本身（e.source = 该帧窗口），否则只考到
-  // 来源校验；(2) 必须先把 Z4 打开的那个查看器**关掉**，否则「仍然开着」会冒充
-  // 「拒绝」——负例的前置状态必须显式归零（实测已踩此坑）。
+  // Z4b: the frame itself forges a path it does NOT render ⇒ the path gate must
+  // stop it. This goes red on the pre-change tree (there was no path gate), so
+  // it doubles as a discriminating red anchor proving the gate exists — a guard
+  // against "the receiving face was deleted and nothing covers it". Two things
+  // to note: (1) the sender must be the frame itself (e.source = that frame's
+  // window), otherwise only the source check gets exercised; (2) the viewer Z4
+  // opened must be CLOSED first, else "still open" impersonates "refused" — a
+  // negative case's precondition must be explicitly zeroed (measured pitfall).
   await page.keyboard.press('Escape');
   await sleep(500);
   const closed = !(await lightboxState(page)).on;
@@ -351,10 +379,11 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-// ── Z5 路径闸：帧内未渲染的任意 path 不得成为查看器入口 ─────────────────
-// 关键：消息必须**由该帧自己**发出（frame.evaluate ⇒ e.source = 该帧窗口，
-// 来源校验通过），闸才真的被考到。用 page.evaluate 发只会落在「来源非本应用帧」
-// 那条拒绝上——那是 Z3 的面，不是路径闸的面。
+// ── Z5 path gate: a path the frame does not render is not a viewer entry ──
+// Key point: the message must be sent BY THE FRAME ITSELF (frame.evaluate ⇒
+// e.source = that frame's window, so the source check passes); only then is the
+// gate really exercised. Sending it via page.evaluate lands on the "source is
+// not an app frame" refusal instead — that is Z3's face, not the gate's.
 {
   const { ctx, page, pageErrors } = await bootPage(browser);
   await renderCard(page, '<img src="/api/nf-file?path=%2Ftmp%2Fcz%2Fshown.png" alt="shown" width="120">');
@@ -366,8 +395,9 @@ const browser = await chromium.launch();
   }
   ok('Z5 card frame available for a frame-origin send', !!frame);
 
-  // 该帧发出一个 path 不在它自己文档里的消息（模拟帧被注入脚本 / 载荷被篡改）
-  // ⇒ 来源是合法的本应用帧，闸必须凭「该帧不渲染这个 path」拦下。
+  // The frame sends a message whose path is not in its own document (simulating
+  // an injected script / tampered payload) ⇒ the source is a legitimate app
+  // frame, so the gate must stop it on "that frame does not render this path".
   await frame.evaluate(() => {
     parent.postMessage(
       { _nfImagePreview: { src: '/api/nf-file?path=%2Fetc%2Fsecrets', path: '/etc/secrets', alt: 'x' } }, '*');
@@ -376,7 +406,8 @@ const browser = await chromium.launch();
   let st = await lightboxState(page);
   ok('Z5 path the frame does NOT render is REFUSED', !st.on, JSON.stringify(st));
 
-  // 同帧、同通道，path 是它确实渲染的那个 ⇒ 必须打开（闸不是「全拒」）。
+  // Same frame, same channel, but the path is one it really renders ⇒ must open
+  // (the gate is not "refuse everything").
   await frame.evaluate(() => {
     parent.postMessage(
       { _nfImagePreview: { src: '/api/nf-file?path=%2Ftmp%2Fcz%2Fshown.png', path: '/tmp/cz/shown.png', alt: 'shown' } }, '*');
@@ -389,7 +420,7 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-// ── Z6 可点击范围提示（§16 那一条文案 + cursor） ───────────────────────
+// ── Z6 click affordance (that single §16 string + cursor) ─────────────────
 {
   const { ctx, page, pageErrors } = await bootPage(browser);
   await renderCard(page,
@@ -416,13 +447,13 @@ const browser = await chromium.launch();
   ok('Z6 image carries the hover hint (§16 key)', read.title.length > 0, read.title);
   ok('Z6 authored title is never overwritten', read.authored === 'authored title', read.authored);
 
-  // 中英齐 + 无孤儿键（与渲染面一致）。
+  // Present in both locales + no orphan key (matching the rendering face).
   const locales = await page.evaluate(async () => {
     const en = (await import('/js/locales/en.js')).default;
     const zh = (await import('/js/locales/zh-CN.js')).default;
     return { en: en['lightbox.clickHint'] || '', zh: zh['lightbox.clickHint'] || '' };
   });
-  ok('Z6 hint key present in BOTH locales (中英齐)', !!locales.en && !!locales.zh,
+  ok('Z6 hint key present in BOTH locales (en + zh-CN)', !!locales.en && !!locales.zh,
     JSON.stringify(locales));
   ok('Z6 rendered hint matches the active locale', read.title === locales.zh || read.title === locales.en,
     JSON.stringify({ rendered: read.title, locales }));
@@ -430,7 +461,7 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-// ── Z7 srcdoc 既有消息形态零回归（写入面无新增/无改写） ─────────────────
+// ── Z7 srcdoc existing message shapes not regressed (no add / no rewrite) ─
 {
   const { ctx, page, pageErrors } = await bootPage(browser);
   await renderCard(page, '<img src="/api/nf-file?path=%2Ftmp%2Fcz%2Fshape.png" alt="s" width="120">');
@@ -439,7 +470,7 @@ const browser = await chromium.launch();
   ok('Z7 theme channel unchanged (_nfThemeVars)', /_nfThemeVars/.test(srcdoc));
   ok('Z7 link channel unchanged (_nfOpenLocalFile)', /_nfOpenLocalFile/.test(srcdoc));
   ok('Z7 media fallback unchanged (data-nf-load-error)', /data-nf-load-error/.test(srcdoc));
-  // 点击桥只产出一条消息形态（禁另立第二套契约）。
+  // The click bridge produces exactly one message shape (no second contract).
   const shapes = [...new Set((srcdoc.match(/_nf[A-Za-z]+/g) || []))].sort();
   ok('Z7 image channel reuses the existing _nfImagePreview key',
     shapes.includes('_nfImagePreview'), JSON.stringify(shapes));
