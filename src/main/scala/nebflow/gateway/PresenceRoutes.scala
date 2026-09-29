@@ -603,7 +603,49 @@ private[gateway] object PresenceRoutes:
       // All three endpoints sit behind the shared auth gate (withAuth).
       case req @ GET -> Root / "social" / "channels" =>
         withAuth(req) {
-          IO.blocking(nebflow.social.SocialChannels.channelsJson(PathUtil.dataRoot)).flatMap(json => Ok(json))
+          // feishubridge: the LIVE adapter registration set (BridgeManager) feeds
+          // the per-channel adapterRegistered flags; without a manager the
+          // phase-1 answer (none registered) is served unchanged.
+          val registered: IO[Set[String]] = sharedResources.bridgeManager match
+            case Some(m) => m.registeredNames
+            case None    => IO.pure(Set.empty)
+          registered.flatMap { set =>
+            IO.blocking(nebflow.social.SocialChannels.channelsJson(PathUtil.dataRoot, set)).flatMap(json => Ok(json))
+          }
+        }
+
+      // feishubridge: the session ↔ chat binding primitive. Upstream design
+      // (socchannel-plan, the "which session receives a message" section):
+      // bindings persist through SessionStore.updateSessionBridge and a UI
+      // settings face manages them later — until that face exists this route is
+      // the persistence primitive on the same social face. Body
+      // {"sessionId": "...", "chatId": "oc_..."} binds; omitting chatId unbinds.
+      case req @ POST -> Root / "social" / "channels" / "feishu" / "bind" =>
+        withAuth(req) {
+          req.as[Json].attempt.flatMap {
+            case Left(_) =>
+              BadRequest(Json.obj(
+                "error" -> "invalid_field".asJson,
+                "reason" -> "request body must be a JSON object".asJson
+              ))
+            case Right(body) =>
+              val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("").trim
+              val chatId = body.hcursor.downField("chatId").as[String].getOrElse("").trim
+              if sessionId.isEmpty then
+                BadRequest(Json.obj(
+                  "error" -> "invalid_field".asJson,
+                  "reason" -> "sessionId is required".asJson
+                ))
+              else
+                val cfg = if chatId.isEmpty then None else Some(Json.obj("chat_id" -> chatId.asJson))
+                sessionStore.updateSessionBridge(sessionId, "feishu", cfg) *>
+                  Ok(Json.obj(
+                    "ok" -> true.asJson,
+                    "sessionId" -> sessionId.asJson,
+                    "chatId" -> chatId.asJson,
+                    "bound" -> cfg.isDefined.asJson
+                  ))
+          }
         }
 
       case req @ POST -> Root / "social" / "channels" / channelId =>
@@ -618,7 +660,19 @@ private[gateway] object PresenceRoutes:
               )
             case Right(body) =>
               IO.blocking(nebflow.social.SocialChannels.save(PathUtil.dataRoot, channelId, body)).flatMap {
-                case Right(json) => Ok(json)
+                case Right(json) =>
+                  // feishubridge: the config→verify→activate closed loop fires on
+                  // the save path — feishu only, every other channel's save is
+                  // untouched. Background fiber: the adapter's WebSocket
+                  // handshake must never sit inside the HTTP response; the
+                  // panel's next probe re-read picks up the flipped flag.
+                  val resync =
+                    if channelId == "feishu" then
+                      sharedResources.bridgeManager match
+                        case Some(m) => nebflow.social.FeishuBridgePlugin.sync(m, PathUtil.dataRoot)
+                        case None    => IO.unit
+                    else IO.unit
+                  resync.start.void *> Ok(json)
                 case Left(err) => socialErrorResponse(err)
               }
           }
@@ -627,9 +681,14 @@ private[gateway] object PresenceRoutes:
       case req @ GET -> Root / "social" / "probe" =>
         withAuth(req) {
           val channelId = req.params.getOrElse("channel", "")
-          IO.blocking(nebflow.social.SocialChannels.probeJson(PathUtil.dataRoot, channelId)).flatMap {
-            case Right(json) => Ok(json)
-            case Left(err) => socialErrorResponse(err)
+          val registered: IO[Set[String]] = sharedResources.bridgeManager match
+            case Some(m) => m.registeredNames
+            case None    => IO.pure(Set.empty)
+          registered.flatMap { set =>
+            IO.blocking(nebflow.social.SocialChannels.probeJson(PathUtil.dataRoot, channelId, set)).flatMap {
+              case Right(json) => Ok(json)
+              case Left(err)   => socialErrorResponse(err)
+            }
           }
         }
 
