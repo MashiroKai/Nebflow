@@ -342,6 +342,36 @@ final class NeblinkRelayTunnel(
         )
         .flatMap(_ => nap(NeblinkRelayTunnel.KickParkNap) *> connectLoop(attempt))
     else
+      // 🔴 腿 A 活动面闸（2026-09-22 作者二择裁定 A 腿）——**第四条**自动外发腿。
+      //
+      // 为什么它必须入闸：装配点 `GatewayMain.scala:990` 的 `relayTunnel.connect()`
+      // 是**无条件**的（与登录态无关），而登出**刻意保留** `neblinkServer`（含
+      // `deviceToken`）以便「下次登录」（`RestApiRoutes.performLocalLogout` 第 5 步
+      // 注释：keep neblinkServer address for next login）⇒ 登出后重启，boot 客户端
+      // 仍带着有效 deviceToken，隧道一旦拿到会话就重拨、把本机重新挂回服务端。
+      // 「enabled=false 不得跨重启」这条判词若不覆盖本腿，就会从这条缝里漏掉。
+      //
+      // 逐拍**现读**（不是启动期快照）⇒ 重新登录（`NeblinkEnrollment.scala:201`
+      // 写 `enabled = true`）后本闸立刻张开；`ensureRelayTunnel` 的 `signalWake()`
+      // 还会掐断这一段空转 ⇒ 无需重启。空转形态 = **不拨号**（零升级尝试、零注册
+      // 流量），与既有「未配置 server URL」分支同族的安静梯子。
+      neblinkService.activityEnabled.flatMap {
+        case false => idleWhileDisabled(attempt)
+        case true  => connectConfigured(attempt)
+      }
+
+  /** 「未启用」空转腿（腿 A 闸的 false 分支）。与 `currentServerUrl = None` 分支
+    * 同族的安静节拍：DEBUG（登出后的稳态，禁 INFO 噪声）+ 可被 `ensure()`/`stop()`
+    * 掐断的 `nap`（用户再登录即时恢复）。 */
+  private def idleWhileDisabled(attempt: Int): IO[Unit] =
+    val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
+    logger
+      .debug(
+        s"Relay tunnel: NebLink is disabled (enabled=false) — no dial, retrying the gate in ${wait.toSeconds}s..."
+      )
+      .flatMap(_ => nap(wait) *> connectLoop(attempt + 1))
+
+  private def connectConfigured(attempt: Int): IO[Unit] =
       // 每拍**只睡一次**（clientconn item 1）：修前是「拍首 delay + 分支 wait」双睡，
       // 而唤醒只能掐断其中一次 ⇒ 唤醒语义被打折（掐断 300s 空转后还要再睡一拍的
       // 30s 上限）。现在按状态选等待：未配置 / 无 token 走各自的安静梯子（可被
