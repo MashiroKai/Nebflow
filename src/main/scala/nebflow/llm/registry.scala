@@ -27,7 +27,6 @@ case class ModelCandidate(
   provider: ProviderConfig,
   model: String,
   contextWindow: Int = Defaults.ContextWindow,
-  vision: Boolean = false,
   capabilities: Set[String] = Set.empty,
   modelMaxContext: Option[Int] = None
 )
@@ -90,18 +89,9 @@ class ProviderRegistry(
                 modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow),
                 modelConfig.flatMap(_.modelMaxContext)
               )
-              val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-              Some(
-                ModelCandidate(
-                  providerId,
-                  provider,
-                  modelId,
-                  contextWindow,
-                  vision,
-                  caps,
-                  modelConfig.flatMap(_.modelMaxContext)
-                )
-              )
+              val caps = resolveCapabilities(providerId, modelId, modelConfig)
+              Some(ModelCandidate(providerId, provider, modelId, contextWindow, caps,
+                modelConfig.flatMap(_.modelMaxContext)))
             case None => None // Skip unknown provider
           end match
         catch case _: Exception => None // Skip malformed ref
@@ -114,18 +104,11 @@ class ProviderRegistry(
         config.llm.providers.headOption
           .map { case (providerId, provider) =>
             provider.models.headOption.map { mc =>
-              val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
+              val caps = resolveCapabilities(providerId, mc.id, Some(mc))
               // 案② B2 同点（**第三处构造点**，与上面两处同形；卡文只列了 :72/:122，
               // 本处一并收口以免留下「绕过 clamp」的形状——见报告「偏离登记」）：
-              ModelCandidate(
-                providerId,
-                provider,
-                mc.id,
-                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-                vision,
-                caps,
-                mc.modelMaxContext
-              )
+              ModelCandidate(providerId, provider, mc.id,
+                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), caps, mc.modelMaxContext)
             }
           }
           .flatten
@@ -183,16 +166,9 @@ class ProviderRegistry(
             modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow),
             modelConfig.flatMap(_.modelMaxContext)
           )
-          val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-          ModelCandidate(
-            providerId,
-            provider,
-            modelId,
-            contextWindow,
-            vision,
-            caps,
-            modelConfig.flatMap(_.modelMaxContext)
-          )
+          val caps = resolveCapabilities(providerId, modelId, modelConfig)
+          ModelCandidate(providerId, provider, modelId, contextWindow, caps,
+            modelConfig.flatMap(_.modelMaxContext))
         }
       catch case _: Exception => None
     }
@@ -257,19 +233,12 @@ class ProviderRegistry(
           .sortBy(_.id)
           .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
           .map { mc =>
-            val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
+            val caps = resolveCapabilities(providerId, mc.id, Some(mc))
             // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
             // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
             // 「偏离登记」）：
-            ModelCandidate(
-              providerId,
-              provider,
-              mc.id,
-              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-              vision,
-              caps,
-              mc.modelMaxContext
-            )
+            ModelCandidate(providerId, provider, mc.id,
+              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), caps, mc.modelMaxContext)
           }
       }
       // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）
@@ -277,32 +246,27 @@ class ProviderRegistry(
   end reserveTier
 
   /**
-   * Resolve vision + capabilities for a model.
-   * Priority: ModelConfig inline fields > ModelRegistry (models.json) >
-   * optimistic default (B3 Phase 1: unannotated models resolve vision=true —
-   * a wrong strip is visible and self-corrects via runtime detection, while
-   * a wrong pessimistic default silently degrades every image request).
+   * Resolve capabilities for a model.
+   * Priority: ModelConfig inline fields > ModelRegistry (models.json).
+   *
+   * visionfix (甲): the `vision` half of this resolver is retired — nothing
+   * consumes a per-candidate vision bit any more, so resolving one would produce
+   * a dead value. `ModelEntry.vision` in `models.json` is still read by the
+   * annotation channel (REST / the settings badge) but no longer feeds the send
+   * path: images are always sent, and whether an endpoint accepts them is
+   * decided by the provider.
    */
   private def resolveCapabilities(
     providerId: String,
     modelId: String,
     modelConfig: Option[ModelConfig]
-  ): (Boolean, Set[String]) =
+  ): Set[String] =
     val registryEntry = ModelRegistry.lookup(providerId, modelId)
-    // visionfix (甲, main-side): the ModelConfig inline `vision` bit is retired
-    // (the config field was removed with the batch) -- the models.json
-    // annotation channel (ModelRegistry ModelEntry.vision) remains the only
-    // source until this file's owning wave ports the full visionfix removal.
-    // (W1 provisional shim.)
-    val vision = registryEntry
-      .flatMap(_.vision)
-      .getOrElse(true)
-    val caps = modelConfig
+    modelConfig
       .flatMap(_.capabilities)
       .orElse(registryEntry.map(_.capabilities))
       .getOrElse(Nil)
       .toSet
-    (vision, caps)
 
   end resolveCapabilities
 
