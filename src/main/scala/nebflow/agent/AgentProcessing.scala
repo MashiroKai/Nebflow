@@ -242,11 +242,10 @@ private[agent] object AgentProcessing:
             // （stream 层禁 provider 拼接），fatal 会连队列一起丢且 UI 报错，
             // 「恢复」退化成「失败」（round-5 隔离冒烟实证：kick 后零恢复请求、
             // agent 直接 idle、队列滞留）。
-            val (immHeadAfterAbort, remainingImmAfterAbort) = TurnBoundaryDrains.drainHead(
+            val (immInputs, remainingImmAfterAbort) = TurnBoundaryDrains.drainHeadExpanded(
               state.execution.pendingImmediateInputs,
               compactionPending = false
-            )
-            val immInputs = immHeadAfterAbort.toList
+            )(expandRootNotify)
             val immMessages = immInputs.map(imm =>
               (imm.blocks match
                 case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
