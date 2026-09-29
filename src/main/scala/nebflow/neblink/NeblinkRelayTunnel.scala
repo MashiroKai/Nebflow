@@ -402,67 +402,60 @@ final class NeblinkRelayTunnel(
           // （那样会凭空多一次 403 自愈——实测在 R3 上复现过）。
           val pre =
             if attempt == 0 then 0.seconds
-            else
-              NeblinkRelayTunnel.jittered(
-                NeblinkRelayTunnel.backoffSeconds(attempt).seconds,
-                scala.util.Random.nextDouble()
-              )
-          nap(pre) *> (if !running.get() then IO.unit
-                       else
-                         tokenGetter().flatMap {
-                           case None =>
-                             val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
-                             // R2 visibility: this branch used to log at DEBUG only — a login
-                             // that never completes left the tunnel dark for hours with zero
-                             // trace. INFO keeps the retry loop observable (≤2 lines/min).
-                             // N3: this state is STEADY after logout (the server URL is
-                             // kept), so only the FIRST occurrence is INFO.
-                             val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
-                             val voice =
-                               if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
-                               else logger.debug(line)
-                             voice.flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
-                           case Some(token) =>
-                             val attemptConnect =
-                               IO(System.currentTimeMillis()).flatMap { startedAtMs =>
-                                 neblinkService.identity
-                                   .flatMap(id => connectOnce(id, url, token))
-                                   .flatMap { _ =>
-                                     if running.get() then
-                                       // Backoff RESET is stability-gated (clientconn item 1):
-                                       // pre-fix every disconnect went back to `connectLoop(0)` —
-                                       // a 0-delay reconnect even for a connection the server
-                                       // accepted and dropped immediately (kick-after-upgrade,
-                                       // half-open flap) ⇒ unbounded upgrade storm at wire speed.
-                                       // Now the FIRST short-lived drop still retries immediately
-                                       // (transient blips recover at pre-fix speed), while a
-                                       // REPEATED short-lived streak escalates the ladder.
-                                       val heldMs = System.currentTimeMillis() - startedAtMs
-                                       val streakBefore = shortLivedStreak.get()
-                                       val next = NeblinkRelayTunnel.nextAttemptAfterDrop(attempt, heldMs, streakBefore)
-                                       if heldMs >= NeblinkRelayTunnel.StableConnectionMs then shortLivedStreak.set(0)
-                                       else shortLivedStreak.incrementAndGet()
-                                       logger
-                                         .info(
-                                           s"Relay tunnel disconnected after ${heldMs / 1000}s, reconnecting (step $next, short-lived streak $streakBefore)..."
-                                         )
-                                         .flatMap { _ => connectLoop(next) }
-                                     else IO.unit
-                                   }
-                               }
-                             attemptConnect.handleErrorWith { e =>
-                               // F3 (report §3): never log e.getMessage here — it is null for
-                               // WebSocketHandshakeException and carries only the class NAME
-                               // when wrapped in ExecutionException. describe() extracts the
-                               // HTTP status (+ a redacted body snippet) instead.
-                               val failure = RelayTunnelDiagnostics.describe(e)
-                               if failure.authRejected then handleAuthRejection(failure, attempt)
-                               else
-                                 logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
-                                   if running.get() then connectLoop(attempt + 1) else IO.unit
-                                 }
-                             }
-                         })
+            else NeblinkRelayTunnel.jittered(NeblinkRelayTunnel.backoffSeconds(attempt).seconds, scala.util.Random.nextDouble())
+          nap(pre) *> (if !running.get() then IO.unit else
+          tokenGetter().flatMap {
+            case None =>
+              val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
+              // R2 visibility: this branch used to log at DEBUG only — a login
+              // that never completes left the tunnel dark for hours with zero
+              // trace. INFO keeps the retry loop observable (≤2 lines/min).
+              // N3: this state is STEADY after logout (the server URL is
+              // kept), so only the FIRST occurrence is INFO.
+              val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
+              val voice =
+                if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
+                else logger.debug(line)
+              voice.flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
+            case Some(token) =>
+              val attemptConnect =
+                IO(System.currentTimeMillis()).flatMap { startedAtMs =>
+                  neblinkService.identity
+                    .flatMap(id => connectOnce(id, url, token))
+                    .flatMap { _ =>
+                      if running.get() then
+                        // Backoff RESET is stability-gated (clientconn item 1):
+                        // pre-fix every disconnect went back to `connectLoop(0)` —
+                        // a 0-delay reconnect even for a connection the server
+                        // accepted and dropped immediately (kick-after-upgrade,
+                        // half-open flap) ⇒ unbounded upgrade storm at wire speed.
+                        // Now the FIRST short-lived drop still retries immediately
+                        // (transient blips recover at pre-fix speed), while a
+                        // REPEATED short-lived streak escalates the ladder.
+                        val heldMs = System.currentTimeMillis() - startedAtMs
+                        val streakBefore = shortLivedStreak.get()
+                        val next = NeblinkRelayTunnel.nextAttemptAfterDrop(attempt, heldMs, streakBefore)
+                        if heldMs >= NeblinkRelayTunnel.StableConnectionMs then shortLivedStreak.set(0)
+                        else shortLivedStreak.incrementAndGet()
+                        logger
+                          .info(s"Relay tunnel disconnected after ${heldMs / 1000}s, reconnecting (step $next, short-lived streak $streakBefore)...")
+                          .flatMap { _ => connectLoop(next) }
+                      else IO.unit
+                    }
+                }
+              attemptConnect.handleErrorWith { e =>
+                // F3 (report §3): never log e.getMessage here — it is null for
+                // WebSocketHandshakeException and carries only the class NAME
+                // when wrapped in ExecutionException. describe() extracts the
+                // HTTP status (+ a redacted body snippet) instead.
+                val failure = RelayTunnelDiagnostics.describe(e)
+                if failure.authRejected then handleAuthRejection(failure, attempt)
+                else
+                  logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
+                    if running.get() then connectLoop(attempt + 1) else IO.unit
+                  }
+              }
+          })
       }
 
   /**
