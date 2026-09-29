@@ -934,40 +934,50 @@ private[gateway] object WsFileOpsHandlers:
     watchSession: ExplorerWatchSession
   ): IO[Unit] =
     import ctx.*
-    // Directory browser for project root selection
+    // Directory browser for project root selection.
+    // picker-trunc (2026-09-22 author ruling, A+B+C): the old body ended in
+    // a silent `entries.take(200)` with no truncation word — the author
+    // could not find `~/Downloads` and got no hint that anything was cut.
+    // Now: real cap ([[browseEntryCap]]) + explicit `truncated`/`total`
+    // (A), server-side `query` filtering before the cap (B), and
+    // `~`/`~/` expansion via the shared expandTilde with a typed inline
+    // error on an unusable path (C).
     val json = parsedJson(text)
-    val path = json.hcursor.downField("path").as[String].getOrElse("~")
-    val expanded = if path.startsWith("~") then System.getProperty("user.home") + path.drop(1) else path
+    val rawPath = json.hcursor.downField("path").as[String].getOrElse("~")
+    val query = json.hcursor.downField("query").as[String].getOrElse("")
     IO.blocking {
-      val dir = os.Path(expanded, os.pwd)
-      if os.isDir(dir) then
-        val entries = os.list(dir).filter(os.isDir).sortBy(_.last)
-        val result = entries.take(200).map { p =>
-          io.circe.Json.obj("name" -> p.last.asJson, "path" -> p.toString.asJson)
-        }
-        io.circe.Json.obj(
-          "type" -> "browseResult".asJson,
-          "path" -> dir.toString.asJson,
-          "entries" -> result.asJson
-        )
-      else
-        io.circe.Json.obj(
-          "type" -> "browseResult".asJson,
-          "path" -> path.asJson,
-          "entries" -> io.circe.Json.arr()
-        )
-      end if
-    }.flatMap(wsSend)
-      .handleErrorWith { e =>
-        wsSend(
-          io.circe.Json.obj(
-            "type" -> "browseResult".asJson,
-            "path" -> path.asJson,
-            "entries" -> io.circe.Json.arr(),
-            "error" -> e.getMessage.asJson
-          )
-        )
-      }
+      // C: `~` forms resolve through the shared expandTilde (same helper
+      // wsBrowse.list / wsBrowse.mkdir use), so `~` and `~/...` agree.
+      val expanded = expandTilde(rawPath.trim)
+      scala.util.Try(os.Path(expanded, os.pwd)).toOption match
+        case None =>
+          (None, browseErrorFrame(rawPath, "invalid-path", s"Invalid path: $rawPath", query))
+        case Some(dir) if !os.exists(dir) =>
+          (None, browseErrorFrame(rawPath, "invalid-path", s"No such directory: $rawPath", query))
+        case Some(dir) if !os.isDir(dir) =>
+          (None, browseErrorFrame(rawPath, "not-a-directory", s"Not a directory: $rawPath", query))
+        case Some(dir) =>
+          // The frame reports the RESOLVED path (the frontend breadcrumb
+          // has always consumed `path`); the raw `~` form stays in the
+          // error arm only.
+          (Some(dir), browseResultFrame(dir, dir.toString, query, browseEntryCap))
+    }.flatMap {
+      case (dirOpt, frame) =>
+        dirOpt match
+          case Some(dir) =>
+            logger.info(
+              s"browsePath: path=$rawPath query=$query cap=$browseEntryCap " +
+                s"total=${frame.hcursor.get[Int]("total").getOrElse(-1)} " +
+                s"truncated=${frame.hcursor.get[Boolean]("truncated").getOrElse(false)} resolved=${dir.toString}"
+            )
+          case None => ()
+        wsSend(frame)
+    }.handleErrorWith { e =>
+      // An unreadable directory (permissions, I/O error) is reported with
+      // the same typed frame — never silently an empty list.
+      logger.warn(s"browsePath failed: path=$rawPath query=$query ${e.getMessage}")
+      wsSend(browseErrorFrame(rawPath, "unreadable", s"${e.getClass.getSimpleName}: ${e.getMessage}", query))
+    }
   end handleBrowsePath
 
 end WsFileOpsHandlers

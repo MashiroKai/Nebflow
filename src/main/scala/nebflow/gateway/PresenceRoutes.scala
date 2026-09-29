@@ -10,11 +10,10 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.{AgentCore, SharedResources}
 import nebflow.core.*
-import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
+import nebflow.core.daemon.{DaemonConfig, DaemonPanelSchema, DaemonPanelStore, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
-import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.project.*
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
@@ -25,7 +24,7 @@ import nebflow.llm.providers.ModelListFaces
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given
 import nebflow.service.ConfigService
-import nebflow.shared.{LlmProtocol, PathUtil}
+import nebflow.shared.{LlmProtocol, NebflowServiceConfig, PathUtil}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -38,13 +37,189 @@ import scala.concurrent.duration.*
 
 /**
  * 在线状态域(presence):原 RestApiRoutes.presenceWsRoutes 的全部 case 逐字迁入
- * (presence WS 受理臂 + teams/agents/plugins/social/team-rules/presets/provider/daemons
+ * (presence WS 受理臂 + teams/agents/plugins/social/team-rules/provider/daemons
  * 等 REST 臂),行为保持;经 RestApiRoutes.presenceWsRoutes 委托挂载,GatewayMain 零改动。
  */
 private[gateway] object PresenceRoutes:
 
   def routes(wsb: WebSocketBuilder2[IO], ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
+
+    /** Feishu scan-bind session manager (feiscanbind batch, 2026-09-27): carries
+      * the single-flight registry for POST …/scan-bind/begin and the read-only
+      * status projection for GET …/scan-bind/status. The SDK leg stays behind
+      * the production thunk; the activation leg is the ONE sync point
+      * ([[nebflow.social.FeishuBridgePlugin.sync]]) — identical wiring to the
+      * save endpoint's resync below, so runtime state is never assembled two
+      * different ways.
+      *
+      * LAZY on purpose (two distinct reasons, both load-bearing):
+      *   - construction reads `sharedResources.bridgeManager`, and the gateway
+      *     route harnesses that only exercise the agents arms build a
+      *     `RestApiRoutes` with `sharedResources = null` (the /agents and /model
+      *     route specs, e.g. `AgentPanelConvergenceSpec` / `ModelChainRoutesSpec`).
+      *     An eager val would NPE those arms the moment `presenceWsRoutes` is
+      *     mounted — a spec-only de-registration, not a behavior change.
+      *   - the single-flight registry must outlive a single request (one manager
+      *     per mounted routes value, exactly the class-member lifetime it had
+      *     before the domain split), so it cannot move inside the handler. */
+    lazy val feishuScanBind = new nebflow.social.FeishuScanBind(
+      PathUtil.dataRoot,
+      registerFn = nebflow.social.FeishuScanBind.sdkRegister,
+      activate = sharedResources.bridgeManager.fold(IO.unit)(
+        m => nebflow.social.FeishuBridgePlugin.sync(m, PathUtil.dataRoot))
+    )
+
+    // ── Daemon config-panel helpers (daemonpanel Phase A) ──────────────────
+    //
+    // 以下三个助手随 daemonpanel 端点一波自 RestApiRoutes 类内迁入本域(形态为
+    // **迁移**而非逐字搬运:原为类内 private def,直接取类字段 configRef / logger;
+    // 此处为 routes 局部 def,层级不变地经 `import ctx.*` 取同两个成员,调用面仅
+    // 三类 config-panel 端点 + GET /daemons 的 hasConfigPanel 旗)。
+
+    /** Read a `kind:"web"` panel's `htmlFile` so the HOST can carry the document
+      * into `srcdoc` and inject the local `<meta CSP>` (F-7).
+      *
+      * Why the host carries it instead of pointing an iframe at a URL: the
+      * browser-facing `/api/nf-file` whitelist deliberately omits `html`/`htm`,
+      * so there is no URL that serves a panel document — and even if there were,
+      * a cross-origin/standalone document cannot be given a `<meta CSP>` by its
+      * embedder. Reading the bytes host-side is the only path on which the policy
+      * can actually be attached.
+      *
+      * 🔴 ONE path judge, no second policy: each candidate is resolved to a
+      * realpath and put through the SAME credential-namespace ladder as
+      * `/api/nf-file` ([[nebflow.gateway.NfFilePolicy.nfVerdictForRealLayer]] —
+      * the ladder that used to be reached as `WebSocketRoutes.*` before the
+      * Phase-5 decoupling moved it into `NfFilePolicy`). Only the extension LEG
+      * differs — that endpoint answers for browser-renderable asset types, while
+      * a panel document is `html`/`htm`. Reading the refusing layer from the
+      * single source (instead of re-implementing the ladder) is exactly the
+      * pattern that function documents: a path refused for a
+      * credential/namespace/inode reason is refused here too, and only a
+      * `FileType` refusal may be re-judged against `PanelHtmlExtensions`.
+      *
+      * Candidate roots follow the two namespaces the endpoint can serve (the
+      * design's "servable namespace" requirement): `<dataRoot>/<htmlFile>` and the
+      * project's own `.nebflow/<htmlFile>`. A relative `htmlFile` cannot escape
+      * either root lexically (`..` is rejected by the validator, and the realpath
+      * ladder re-checks the result) — and a symlink out of an allowlisted subtree
+      * is refused by the namespace layer, not followed.
+      *
+      * Fail-closed: every refusal is a `Left`, and an oversized document is refused
+      * rather than truncated (truncation could drop the panel's own closing tags).
+      */
+    def readPanelHtml(htmlFile: String): IO[Either[String, String]] =
+      IO.blocking {
+        val policy = nebflow.gateway.NfFilePolicy.NfPathPolicy.current()
+        val roots = List(
+          java.nio.file.Paths.get(PathUtil.dataRoot.toString),
+          java.nio.file.Paths.get(os.pwd.toString).resolve(".nebflow")
+        )
+        def extOf(p: java.nio.file.Path): String =
+          val name = p.getFileName.toString
+          val dot = name.lastIndexOf('.')
+          if dot < 0 then "" else name.substring(dot + 1).toLowerCase
+
+        // The first candidate that EXISTS decides: a denial is final, never
+        // "shop the next root until one gets past the judge".
+        val existing = roots.map(_.resolve(htmlFile).normalize()).find { p =>
+          java.nio.file.Files.exists(p) && java.nio.file.Files.isRegularFile(p)
+        }
+        existing match
+          case None => Left(s"panel file not found: $htmlFile")
+          case Some(lexical) =>
+            val real =
+              try Right(lexical.toRealPath())
+              catch case e: Throwable => Left(s"panel file could not be resolved: ${e.getMessage}")
+            real match
+              case Left(err) => Left(err)
+              case Right(r) =>
+                nebflow.gateway.NfFilePolicy.nfVerdictForRealLayer(r, policy) match
+                  case Some((layer, denied)) if layer != nebflow.gateway.NfFilePolicy.NfDenyLayer.FileType =>
+                    // Namespace / credential / credential-inode refusal is FINAL:
+                    // `secrets/*.html`, a hard link to a credential file, or any
+                    // path outside the servable namespaces never becomes a panel.
+                    Left(s"panel file refused ($layer): ${denied.message}")
+                  case _ =>
+                    val name = r.getFileName.toString
+                    val ext = extOf(r)
+                    val size = java.nio.file.Files.size(r)
+                    if !DaemonPanelSchema.PanelHtmlExtensions.contains(ext) then
+                      Left(s"panel file must be .html/.htm (got '$name')")
+                    else if size > DaemonPanelSchema.MaxPanelHtmlBytes then
+                      Left(s"panel file is too large: $size bytes > ${DaemonPanelSchema.MaxPanelHtmlBytes}")
+                    else Right(new String(java.nio.file.Files.readAllBytes(r), java.nio.charset.StandardCharsets.UTF_8))
+      }.handleErrorWith(e => IO.pure(Left(s"panel file could not be read: ${e.getMessage}")))
+
+    /** Is this daemon's config panel actually usable right now?
+      *
+      * The single answer behind both `hasConfigPanel` (the row button, F1/C7) and
+      * the config-panel endpoints (F-8 fail-closed): a declaration that does not
+      * validate is hidden, and so is a `kind:"web"` + `htmlFile` declaration whose
+      * file cannot be carried. Sharing one question is what keeps the button and
+      * the endpoint from disagreeing (a button that always answers 409 is not a
+      * fail-closed hidden entry).
+      */
+    def panelUsable(
+      cfg: Option[DaemonConfig],
+      svcCfg: NebflowServiceConfig
+    ): IO[Option[DaemonPanelSchema.Declaration]] =
+      cfg.flatMap(_.configPanel) match
+        case None => IO.pure(None)
+        case Some(raw) =>
+          DaemonPanelSchema.validate(raw, DaemonPanelSchema.allowWeb(svcCfg.daemonPanel)) match
+            case Left(_) => IO.pure(None)
+            case Right(decl) =>
+              decl.htmlFile match
+                case None    => IO.pure(Some(decl))
+                case Some(f) => readPanelHtml(f).map(_.toOption.map(_ => decl))
+
+    /** Resolve a daemon id to its validated config-panel declaration.
+      *
+      * Shared by the three config-panel endpoints so their degradation is
+      * uniform and mechanical:
+      *   - daemon unknown                    -> 404
+      *   - no `configPanel` key              -> 409 `no config panel`   (F-8)
+      *   - declaration fails validation      -> 409 `no config panel`   (F-8,
+      *     fail-closed: an invalid declaration is hidden, never partially used)
+      *   - `kind:"web"` without the explicit  -> 409 `no config panel`   (F-5/F-9,
+      *     nebflow.json switch                    default-closed escape hatch)
+      *   - `kind:"web"`+`htmlFile` unreadable -> 409 `no config panel`   (F-7,
+      *     fail-closed: an unusable panel document hides the entry too)
+      */
+    def daemonPanelContext(
+      daemonId: String
+    ): IO[Either[Response[IO], (DaemonPanelSchema.Declaration, DaemonConfig)]] =
+      // Bare `Response` values (not the DSL constructors, which yield
+      // `IO[Response[IO]]`) so callers can uniformly `IO.pure` the error branch.
+      def jsonResponse(status: Status, body: Json): Response[IO] =
+        Response[IO](status).withEntity(body)
+      val noPanel: Response[IO] =
+        jsonResponse(
+          Status.Conflict,
+          Json.obj("error" -> "no config panel".asJson, "id" -> daemonId.asJson)
+        )
+      new DaemonStore().load().flatMap { configs =>
+        configs.find(_.id == daemonId) match
+          case None =>
+            IO.pure(Left(jsonResponse(Status.NotFound, Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))))
+          case Some(cfg) =>
+            if cfg.configPanel.isEmpty then IO.pure(Left(noPanel))
+            else
+              configRef.get.flatMap { svcCfg =>
+                // The SAME question behind `hasConfigPanel` (F1/C7) — so the row
+                // button and these endpoints can never disagree: an unusable panel
+                // is hidden from BOTH, never a button that always answers 409.
+                panelUsable(Some(cfg), svcCfg).map {
+                  case Some(decl) => Right((decl, cfg))
+                  case None =>
+                    logger.warn(s"Rejected configPanel declaration for daemon '$daemonId' (invalid or unusable)")
+                    Left(noPanel)
+                }
+              }
+      }
+
     HttpRoutes.of[IO] {
       case req @ GET -> Root / "neblink" / "presence" =>
         neblinkService match
@@ -301,7 +476,23 @@ private[gateway] object PresenceRoutes:
             yield result
         }
 
-      // GET /agents/:name/model — get agent's model configuration — searches all three layers
+      // GET /agents/:name/model — the agent's model-chain read face (the /model
+      // contract). mode = "explicit" when the agent carries a non-empty own
+      // chain, "follow" otherwise; chain = the own stored chain (null when
+      // following); effectiveChain = what the engine resolves (own chain >
+      // Nebula primary chain > seed chain); resolvedFrom names the resolution
+      // source; current = the healthy head of the effective chain; settable =
+      // whether PUT accepts writes for this agent.
+      //
+      // chain-face (modelcfg batch): this is the ONE shape the /model panel and
+      // the CLI read (`web/js/modelPanel.js` keys on `effectiveChain` and
+      // `resolvedFrom`; `cli/ModelCommand.scala` builds its write body from
+      // `chain | effectiveChain`). The older flat shape it replaces (model /
+      // preferred / fallbacks / default / preset) has no consumer left in the
+      // tree, and its `resolvedFrom` vocabulary was a different one
+      // ("preset"|"legacy-model"|…) — the chain face reports
+      // own-chain|nebula-chain|seed, so merging the two would make the field
+      // mean two things at once.
       case req @ GET -> Root / "agents" / agentName / "model" =>
         withAuth(req) {
           if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
@@ -310,30 +501,24 @@ private[gateway] object PresenceRoutes:
               agentOpt <- EntityLoader.findAgentByName(agentName)
               result <- agentOpt match
                 case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-                case Some(defn) =>
-                  val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
-                  // Determine resolvedFrom: check the raw AgentEntry for preset/legacy.
-                  // AgentDef.preset tells us the explicit preset (if any). If absent,
-                  // check whether the original agent.json had a non-empty legacy model.
-                  val resolvedFrom = computeResolvedFrom(defn.preset, agentName)
-                  // Resolve the model this agent would actually use: candidates =
-                  // [preferred, ...fallbacks] (or the global chain), filtered by
-                  // provider health. Previously this read runtimeModels.values.headOption —
-                  // an arbitrary session from a GLOBAL session→model map — which
-                  // showed the wrong model for every agent except the first LLM caller.
+                case Some(_) =>
+                  val policy = nebflow.core.SchemePolicy
+                  val own = policy.ownChainOf(agentName).filter(policy.hasChain)
+                  val (effective, resolvedFrom) = policy.resolveModel(agentName, own)
+                  val mode = if own.isDefined then "explicit" else "follow"
                   for
-                    candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(modelConfig))
+                    candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(effective))
                     (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
                     current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
                     result <- Ok(
                       Json.obj(
-                        "model" -> modelConfig.asJson,
+                        "name" -> agentName.asJson,
+                        "mode" -> mode.asJson,
+                        "chain" -> own.asJson,
+                        "effectiveChain" -> effective.asJson,
+                        "resolvedFrom" -> resolvedFrom.asJson,
                         "current" -> current.asJson,
-                        "preferred" -> modelConfig.preferred.asJson,
-                        "fallbacks" -> modelConfig.fallbacks.asJson,
-                        "default" -> modelConfig.preferred.asJson,
-                        "preset" -> defn.preset.asJson,
-                        "resolvedFrom" -> resolvedFrom.asJson
+                        "settable" -> policy.isSettable(agentName).asJson
                       )
                     )
                   yield result
@@ -341,106 +526,94 @@ private[gateway] object PresenceRoutes:
             yield result
         }
 
-      // PUT /agents/:name/model — update agent's model configuration
-      // panelscheme 批（2026-09-21）：与 PUT /preset 同闸——仅 Nebula/任务分发器可写
-      // （legacy model 引用是两类的自有方案面；其余 agent 的存储引用引擎已忽略）。
+      // PUT /agents/:name/model — write the agent's own model chain (the /model
+      // write face; gate = SchemePolicy.SettableAgents, the four roles). Body:
+      // {"model": {"preferred": "...", "fallbacks": ["...", ...]}} sets an own
+      // chain (Nebula = the primary chain, a follower write = a fork); null
+      // model or an empty chain returns the agent to the follow state (the
+      // key is removed). Takes effect on the next turn via the per-turn def
+      // reload.
       case req @ PUT -> Root / "agents" / agentName / "model" =>
         withAuth(req) {
           if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-          else if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
-            BadRequest(
-              Json.obj(
-                "error" ->
-                  (s"Agent '$agentName' does not accept a model config (2026-09-21 panel convergence): only Nebula and " +
-                    "project-dispatcher are settable. Existing stored values are kept but ignored by the engine.").asJson
-              )
-            )
+          else if !nebflow.core.SchemePolicy.isSettable(agentName) then
+            BadRequest(Json.obj("error" ->
+              (s"Agent '$agentName' does not accept a model chain: only Nebula, project-dispatcher, " +
+                "kernel and general are settable. Other agents follow the Nebula primary chain.").asJson))
           else
             req.as[Json].flatMap { body =>
-              // Parse the model config from request body
-              io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
-                case Right(modelConfig) =>
+              // Accept {"model": {...}|null}; a bare {preferred, fallbacks}
+              // body (no "model" key) is decoded as the chain itself.
+              val parsed: Either[String, Option[nebflow.shared.AgentModelConfig]] =
+                body.asObject.flatMap(_.apply("model")) match
+                  case Some(m) =>
+                    m.as[Option[nebflow.shared.AgentModelConfig]].left
+                      .map(e => s"Invalid model chain: ${e.getMessage}")
+                  case None =>
+                    io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces).left
+                      .map(e => s"Invalid model chain: ${e.getMessage}")
+                      .map(Some(_))
+              parsed match
+                case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+                case Right(chainOpt) =>
+                  // An empty chain (no preferred, no fallbacks) means follow:
+                  // normalize it to key removal so agent.json carries no dead data.
+                  val own = chainOpt.filter(nebflow.core.SchemePolicy.hasChain)
                   for
                     dirOpt <- EntityLoader.findAgentDir(agentName)
                     result <- dirOpt match
                       case Some(dir) =>
                         IO.blocking {
                           val jsonPath = dir / "agent.json"
-                          val json = os.read(jsonPath)
-                          io.circe.parser.parse(json) match
-                            case Right(parsed) =>
-                              val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
+                          io.circe.parser.parse(os.read(jsonPath)) match
+                            case Right(parsedJson) =>
+                              val stripped = parsedJson.asObject
+                                .map(obj => Json.fromFields(obj.toMap.removed("model")))
+                                .getOrElse(parsedJson)
+                              val updated = own match
+                                case Some(c) => stripped.deepMerge(Json.obj("model" -> c.asJson))
+                                case None    => stripped
                               AtomicJson.writeSync(jsonPath, updated.noSpaces)
                               true
                             case Left(_) => false
                         }.flatMap {
                           case true =>
-                            Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                            val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(agentName, own)
+                            val mode = if own.isDefined then "explicit" else "follow"
+                            Ok(
+                              Json.obj(
+                                "updated" -> true.asJson,
+                                "mode" -> mode.asJson,
+                                "chain" -> own.asJson,
+                                "effectiveChain" -> effective.asJson,
+                                "resolvedFrom" -> resolvedFrom.asJson
+                              )
+                            )
                           case false =>
                             InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
                         }
                       case None =>
                         NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
                   yield result
-                case Left(err) =>
-                  BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
+                  end for
             }
         }
 
-      // PUT /agents/:name/preset — set or remove the agent's preset reference.
-      // Body: {"preset": "vision"} or {"preset": null} (removes the field, falls
-      // back to default preset). Uses EntityLoader.findAgentDir to locate the
-      // agent.json across all three layers.
-      // panelscheme 批（2026-09-21，作者令）：面板只有 Nebula 与任务分发器两类可设
-      // 模型方案——其余 agent 拒写（引擎侧 SchemePolicy 已忽略其存储引用，写入只会
-      // 造死数据）；kernel/general 由继承机制决定、其余回落默认方案，均不可设。
-      case req @ PUT -> Root / "agents" / agentName / "preset" =>
-        withAuth(req) {
-          if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-          else if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
-            BadRequest(
-              Json.obj(
-                "error" ->
-                  (s"Agent '$agentName' does not accept a model-scheme setting (2026-09-21 panel convergence): only Nebula and " +
-                    "project-dispatcher are settable. kernel inherits Nebula's current scheme; nodes inherit the project " +
-                    "dispatcher's; everything else follows the default preset. Existing stored values are kept but ignored by the engine.").asJson
-              )
-            )
-          else
-            req.as[Json].flatMap { body =>
-              val presetOpt = body.hcursor.downField("preset").as[Option[String]].toOption.flatten
-              for
-                dirOpt <- EntityLoader.findAgentDir(agentName)
-                result <- dirOpt match
-                  case Some(dir) =>
-                    IO.blocking {
-                      val jsonPath = dir / "agent.json"
-                      val json = os.read(jsonPath)
-                      parser.parse(json) match
-                        case Right(parsed) =>
-                          val updated = presetOpt match
-                            case Some(name) =>
-                              parsed.deepMerge(Json.obj("preset" -> name.asJson))
-                            case None =>
-                              // Remove the preset field entirely
-                              parsed.asObject
-                                .map(obj => Json.fromFields(obj.toMap.removed("preset")))
-                                .getOrElse(parsed)
-                          AtomicJson.writeSync(jsonPath, updated.noSpaces)
-                          true
-                        case Left(_) => false
-                    }.flatMap {
-                      case true =>
-                        Ok(Json.obj("updated" -> true.asJson, "preset" -> presetOpt.asJson))
-                      case false =>
-                        InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
-                    }
-                  case None =>
-                    NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-              yield result
-              end for
-            }
-        }
+      // PUT /agents/:name/model — SUPERSEDED by the chain-face arm above.
+      //
+      // This second PUT for the same path was dead code: the chain-face PUT is
+      // mounted first, so this arm never ran (the compiler's
+      // "-Werror Unreachable case" is what surfaced it). It carried the
+      // pre-modelcfg shape, and its companions are gone from the merged tree —
+      // the `PUT /agents/:name/preset` sibling and the `/presets` CRUD family
+      // were both PR-side-only (absent from MAINPRE) and are removed with this
+      // wave, as is `computeResolvedFrom`, this arm's GET-side twin, which had
+      // no remaining caller at all. Two handlers for one path is a routing
+      // hazard regardless of reachability (a future reorder silently flips the
+      // write contract), so the wave removes the stale copy rather than leaving
+      // the pair. No merged-tree functionality is lost: its shape has no live
+      // consumer — `/model` panel (`web/js/modelPanel.js`) and the CLI
+      // (`cli/ModelCommand.scala`) both read the chain face.
 
       // ===== Entity API (Team/Flow/Agent management) =====
 
@@ -614,6 +787,85 @@ private[gateway] object PresenceRoutes:
           }
         }
 
+      // (C4) Feishu-only. All logic lives in `nebflow.social`, these cases only
+      // compose it. 🔴 No response ever carries a secret — appId is an
+      // identifier (displayable, same face as the scan-bind done payload);
+      // secret material stays behind the `_ref` triple.
+      case req @ GET -> Root / "social" / "channels" / "feishu" / "connection" =>
+        withAuth(req) {
+          val live: IO[Option[nebflow.social.FeishuBridgePlugin]] =
+            sharedResources.bridgeManager match
+              case Some(m) =>
+                m.plugin(nebflow.social.FeishuBridgePlugin.Name)
+                  .map(_.collect { case p: nebflow.social.FeishuBridgePlugin => p })
+              case None => IO.pure(None)
+          live.flatMap(p =>
+            Ok(nebflow.social.FeishuBridgePlugin.connectionJson(PathUtil.dataRoot, p)))
+        }
+
+      case req @ GET -> Root / "social" / "channels" / "feishu" / "bindings" =>
+        withAuth(req) {
+          sessionStore.listSessions.flatMap(metas =>
+            Ok(nebflow.social.FeishuBridgePlugin.bindingsJson(metas)))
+        }
+
+      // Body {"sessionId": "..."} sets (durable); {"sessionId": null} / a blank
+      // value clears (unset = null again). Auto-bind only fires while a default
+      // session is set (C4).
+      case req @ PUT -> Root / "social" / "channels" / "feishu" / "default-session" =>
+        withAuth(req) {
+          req.as[Json].attempt.flatMap {
+            case Left(_) =>
+              BadRequest(Json.obj(
+                "error" -> "invalid_field".asJson,
+                "reason" -> "request body must be a JSON object".asJson
+              ))
+            case Right(body) =>
+              val sid = body.hcursor.downField("sessionId").as[Option[String]].getOrElse(None)
+                .map(_.trim).filter(_.nonEmpty)
+              IO.blocking(nebflow.social.SocialChannels.setDefaultSessionId(PathUtil.dataRoot, "feishu", sid))
+                .flatMap {
+                  case Right(_)  => Ok(Json.obj("ok" -> true.asJson, "sessionId" -> sid.asJson))
+                  case Left(err) => socialErrorResponse(err)
+                }
+          }
+        }
+
+      // The read leg of the pair above: the panel needs the current default
+      // without a write, and `null` here means "unset" (not "unreadable").
+      case req @ GET -> Root / "social" / "channels" / "feishu" / "default-session" =>
+        withAuth(req) {
+          IO.blocking(nebflow.social.SocialChannels.defaultSessionId(PathUtil.dataRoot, "feishu"))
+            .flatMap(sid => Ok(Json.obj("sessionId" -> sid.asJson)))
+        }
+
+      // feiscanbind (2026-09-27): the scan-bind main path, on the same social
+      // face and behind the same auth gate. `begin` starts a BACKGROUND fiber
+      // (the SDK register call blocks — it must never sit inside the HTTP
+      // response) and answers with a scanId at once; `status` is a read-only
+      // registry projection (state / qrUrl / userCode / remainSec / appId /
+      // error). 🔴 Neither response ever carries a secret — `done` surfaces only
+      // the appId (cli_ prefix); the credential pair itself goes from the SDK
+      // result through the EXISTING SocialChannels.save write path on the
+      // background fiber, never through these responses or the logs.
+      case req @ POST -> Root / "social" / "channels" / "feishu" / "scan-bind" / "begin" =>
+        withAuth(req) {
+          feishuScanBind.begin().flatMap(json => Ok(json))
+        }
+
+      case req @ GET -> Root / "social" / "channels" / "feishu" / "scan-bind" / "status" =>
+        withAuth(req) {
+          val scanId = req.params.getOrElse("scanId", "").trim
+          if scanId.isEmpty then
+            BadRequest(Json.obj("error" -> "invalid_field".asJson,
+              "reason" -> "scanId is required".asJson))
+          else
+            feishuScanBind.status(scanId).flatMap {
+              case Some(json) => Ok(json)
+              case None       => NotFound(Json.obj("error" -> "unknown_scan".asJson))
+            }
+        }
+
       // feishubridge: the session ↔ chat binding primitive. Upstream design
       // (socchannel-plan, the "which session receives a message" section):
       // bindings persist through SessionStore.updateSessionBridge and a UI
@@ -738,122 +990,19 @@ private[gateway] object PresenceRoutes:
 
       // (2026-09-20 device-face hardening batch) 11-route takedown: GET /entity-agents
       // was RETIRED here — 仓内零调用点 in the classify pass. Live agent faces are
-      // /agents/:name, /agents/:name/model and /agents/:name/preset.
-
-      // ===== Model Presets =====
-
-      // GET /presets — list all presets + default name + agent references
-      case req @ GET -> Root / "presets" =>
-        withAuth(req) {
-          val store = new PresetStore()
-          for
-            file <- IO.blocking(store.load())
-            // Build agent → preset mapping by scanning all agent.json files
-            agentPresets <- IO.blocking(scanAgentPresets())
-            result <- Ok(
-              Json.obj(
-                "defaultPreset" -> file.defaultPreset.asJson,
-                "presets" -> file.presets.values.toList.asJson,
-                "agents" -> agentPresets.asJson
-              )
-            )
-          yield result
-        }
-
-      // POST /presets — create a new preset (409 on duplicate name)
-      case req @ POST -> Root / "presets" =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            val name = body.hcursor.downField("name").as[String].getOrElse("")
-            if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
-            else
-              val store = new PresetStore()
-              IO.blocking(store.load()).flatMap { file =>
-                if file.presets.contains(name) then
-                  Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
-                else
-                  val description = body.hcursor.downField("description").as[String].getOrElse("")
-                  val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
-                  val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(Nil)
-                  val preset = ModelPreset(name, description, preferred, fallbacks)
-                  val updated = file.copy(presets = file.presets + (name -> preset))
-                  IO.blocking(store.save(updated)) *>
-                    Created(preset.asJson)
-              }
-            end if
-          }
-        }
-
-      // PUT /presets/default — set the default preset (must exist)
-      case req @ PUT -> Root / "presets" / "default" =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            val name = body.hcursor.downField("name").as[String].getOrElse("")
-            if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
-            else
-              val store = new PresetStore()
-              IO.blocking(store.load()).flatMap { file =>
-                if !file.presets.contains(name) then NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
-                else
-                  val updated = file.copy(defaultPreset = name)
-                  IO.blocking(store.save(updated)) *>
-                    Ok(Json.obj("defaultPreset" -> name.asJson))
-              }
-          }
-        }
-
-      // PUT /presets/:name — update an existing preset (name immutable)
-      case req @ PUT -> Root / "presets" / presetName =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            val store = new PresetStore()
-            IO.blocking(store.load()).flatMap { file =>
-              file.presets.get(presetName) match
-                case None =>
-                  NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
-                case Some(existing) =>
-                  val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
-                  val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
-                  val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
-                  val updated = existing.copy(description = description, preferred = preferred, fallbacks = fallbacks)
-                  val newFile = file.copy(presets = file.presets + (presetName -> updated))
-                  IO.blocking(store.save(newFile)) *>
-                    Ok(updated.asJson)
-            }
-          }
-        }
-
-      // DELETE /presets/:name — delete a preset (409 if default; scrub agent refs)
-      case req @ DELETE -> Root / "presets" / presetName =>
-        withAuth(req) {
-          val store = new PresetStore()
-          IO.blocking(store.load()).flatMap { file =>
-            if file.defaultPreset == presetName then
-              Conflict(Json.obj("error" -> "Cannot delete the default preset; set another as default first".asJson))
-            else if !file.presets.contains(presetName) then
-              NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
-            else
-              // 1. Delete preset from file
-              val newFile = file.copy(presets = file.presets - presetName)
-              // 2. Scrub all agent.json files that reference this preset
-              for
-                _ <- IO.blocking(store.save(newFile))
-                _ <- scrubPresetRefs(presetName)
-                result <- Ok(Json.obj("deleted" -> true.asJson))
-              yield result
-          }
-        }
-
-      // POST /presets/migrate-legacy — migrate per-agent model configs to presets
-      // Body: {"agentNames": ["Coder", "qa-frontend", ...]}
-      case req @ POST -> Root / "presets" / "migrate-legacy" =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            val agentNames = body.hcursor.downField("agentNames").as[List[String]].getOrElse(Nil)
-            if agentNames.isEmpty then BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
-            else migrateLegacyModels(agentNames)
-          }
-        }
+      // /agents/:name and /agents/:name/model.
+      //
+      // (chain-face take-down, W5 wave) The retired preset face is gone in full:
+      // `PUT /agents/:name/preset` (the write face this note used to advertise)
+      // together with the whole /presets CRUD family that used to be mounted
+      // right here — GET /presets, POST /presets, PUT /presets/default,
+      // PUT /presets/:name, DELETE /presets/:name and POST /presets/migrate-legacy.
+      // Lineage and the zero-功能-loss argument are in the W5 batch report
+      // (.nebflow/reports/20260928_pr48w5-impl-r2.md §退役面): the family and its
+      // `PanelSchemeRoutesSpec` were retired by `0d714ef66` — a commit that is an
+      // ancestor of MAINPRE — and came back only through the W1 reapply
+      // (`ee1c8058c`) plus PR-side content pre-dating that retirement. The
+      // per-role model chain (GET/PUT /agents/:name/model) is the live face.
 
       // ===== Provider model discovery =====
 
@@ -919,15 +1068,30 @@ private[gateway] object PresenceRoutes:
                 // no longer reach it (id changed/removed → 404).
                 svc.reconcile(configs) *> svc.getStates(configs).flatMap { states =>
                   val cfgById = configs.map(c => c.id -> c).toMap
-                  val statesJson = states.map { st =>
-                    st.asJson.deepMerge(
-                      Json.obj(
-                        "autoStart" -> cfgById.get(st.id).exists(_.autoStart).asJson,
-                        "restartOnExit" -> cfgById.get(st.id).exists(_.restartOnExit).asJson
-                      )
-                    )
+                  configRef.get.flatMap { svcCfg =>
+                    // daemonpanel Phase A: publish the panel flag ONLY when the
+                    // declaration is USABLE (validated, and for `htmlFile` panels
+                    // actually carryable). A daemon without a usable panel keeps
+                    // its response key set byte-for-byte identical to the baseline
+                    // — that is the F1 / C7 zero-regression pin (an invalid
+                    // declaration is rejected whole, so its entry is hidden rather
+                    // than partially rendered).
+                    val flags: IO[List[Boolean]] =
+                      states.toList.traverse(st => panelUsable(cfgById.get(st.id), svcCfg).map(_.isDefined))
+                    flags.flatMap { flagsByIndex =>
+                      val statesJson: Json = states.zip(flagsByIndex).map { case (st, hasPanel) =>
+                        val cfg = cfgById.get(st.id)
+                        val base: Json = Json.obj(
+                          "autoStart" -> cfg.exists(_.autoStart).asJson,
+                          "restartOnExit" -> cfg.exists(_.restartOnExit).asJson
+                        )
+                        val merged: Json =
+                          if hasPanel then base.deepMerge(Json.obj("hasConfigPanel" -> true.asJson)) else base
+                        st.asJson.deepMerge(merged)
+                      }.asJson
+                      Ok(Json.obj("daemons" -> statesJson))
+                    }
                   }
-                  Ok(Json.obj("daemons" -> statesJson.asJson))
                 }
               }
         }
@@ -1072,219 +1236,154 @@ private[gateway] object PresenceRoutes:
                 case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
               }
         }
+
+      // ===== Daemon config panel (daemonpanel Phase A) =====
+      //
+      // Three endpoints, all `withAuth` (same discipline as the seven above).
+      // The declaration is inline in daemons.json; values live outside it. A
+      // declaration that fails validation hides the daemon's entry entirely
+      // (fail-closed, never a partial render), and a daemon without a valid
+      // declaration answers 409 `no config panel` — not 400 (F-8).
+      //
+      // E4 white-list note: a panel may reach ONLY {its own daemon origin} ∪
+      // {these config-panel endpoints, relayed by the host}. The read-only probe
+      // GET .../config-panel/credentials is the explicitly named second
+      // read-only endpoint (F-9); `/api/config` and `/api/daemons` are NOT in
+      // the panel white-list.
+
+      // GET /daemons/:id/config-panel — declaration + current values (secrets masked)
+      case req @ GET -> Root / "daemons" / daemonId / "config-panel" =>
+        withAuth(req) {
+          if daemonId == "credentials" then NotFound(Json.obj("error" -> "Daemon 'credentials' not found".asJson))
+          else
+            daemonPanelContext(daemonId).flatMap {
+              case Left(resp) => IO.pure(resp)
+              case Right((decl, _)) =>
+                val store = new DaemonPanelStore()
+                // F-7: a `kind:"web"` + `htmlFile` panel is carried HOST-SIDE into
+                // `srcdoc` with the local <meta CSP> injected, because no URL can
+                // serve an `.html` panel and a standalone document cannot be given
+                // a meta by its embedder. A `url` panel stays a plain `src` (the
+                // host cannot reach into a remote document at all).
+                val carried: IO[Either[String, String]] =
+                  decl.htmlFile.fold(IO.pure(Right("")): IO[Either[String, String]])(
+                    readPanelHtml(_).map(_.map(DaemonPanelSchema.panelSrcdoc))
+                  )
+                carried.flatMap { carriedHtml =>
+                  store.readMasked(decl, daemonId).flatMap { values =>
+                    Ok(
+                      Json.obj(
+                        "id" -> daemonId.asJson,
+                        "version" -> decl.version.asJson,
+                        "kind" -> decl.kind.asJson,
+                        "title" -> decl.title.asJson,
+                        "fields" -> decl.fields
+                          .map(f =>
+                            Json.obj(
+                              "key" -> f.key.asJson,
+                              "label" -> f.label.asJson,
+                              "type" -> f.ftype.asJson,
+                              "required" -> f.required.asJson
+                            )
+                              .deepMerge(f.min.fold(Json.obj())(m => Json.obj("min" -> m.asJson)))
+                              .deepMerge(f.max.fold(Json.obj())(m => Json.obj("max" -> m.asJson)))
+                              .deepMerge(if f.options.nonEmpty then Json.obj("options" -> f.options.asJson) else Json.obj())
+                          )
+                          .asJson,
+                        "values" -> values.asJson,
+                        "sandbox" -> decl.sandboxTokens.asJson,
+                        // Only ever a same-origin host-minted handle, NEVER a
+                        // credential: the panel URL carries zero token=/ticket=.
+                        "panelUrl" -> (if decl.isWeb then decl.url.getOrElse("") else "").asJson,
+                        // The host-carried document with the injected local CSP.
+                        // Empty unless the declaration is `kind:"web"`+`htmlFile`.
+                        "srcdoc" -> carriedHtml.getOrElse("").asJson,
+                        // Explicitly report whether the policy actually landed, so
+                        // "the CSP is present" is an assertion on the wire rather
+                        // than an inference from the client's markup.
+                        "cspInjected" -> carriedHtml.exists(DaemonPanelSchema.hasPanelCsp).asJson
+                      )
+                    )
+                  }
+                }
+            }
+        }
+
+      // GET /daemons/:id/config-panel/credentials — read-only credential probe
+      case req @ GET -> Root / "daemons" / daemonId / "config-panel" / "credentials" =>
+        withAuth(req) {
+          daemonPanelContext(daemonId).flatMap {
+            case Left(resp) => IO.pure(resp)
+            case Right((decl, _)) =>
+              val store = new DaemonPanelStore()
+              store.credentialStates(decl, daemonId).flatMap { states =>
+                Ok(
+                  Json.obj(
+                    "id" -> daemonId.asJson,
+                    "credentials" -> states
+                      .map(s =>
+                        Json.obj("key" -> s.key.asJson, "name" -> s.name.asJson, "state" -> s.state.asJson)
+                          .deepMerge(s.mode.fold(Json.obj())(m => Json.obj("mode" -> m.asJson)))
+                      )
+                      .asJson
+                  )
+                )
+              }
+          }
+        }
+
+      // PUT /daemons/:id/config-panel — write values
+      case req @ PUT -> Root / "daemons" / daemonId / "config-panel" =>
+        withAuth(req) {
+          daemonPanelContext(daemonId).flatMap {
+            case Left(resp) => IO.pure(resp)
+            case Right((decl, _)) =>
+              req.as[Json].flatMap { body =>
+                val raw = body.hcursor.downField("values").focus.getOrElse(body)
+                raw.asObject match
+                  case None => BadRequest(Json.obj("error" -> "invalid value: expected a 'values' object".asJson))
+                  case Some(obj) =>
+                    val store = new DaemonPanelStore()
+                    val incoming = obj.toMap
+                    store.writeValues(decl, daemonId, incoming).flatMap {
+                      case Left(err) =>
+                        // "unknown field"/"invalid value" are client errors; a
+                        // credential-permission refusal is also 400 with a reason
+                        // (never a silent success, never a 200 on a failed write).
+                        if err.startsWith("unknown field") then
+                          BadRequest(Json.obj("error" -> "unknown field".asJson, "detail" -> err.asJson))
+                        else BadRequest(Json.obj("error" -> "invalid value".asJson, "detail" -> err.asJson))
+                      case Right(_) =>
+                        store.readMasked(decl, daemonId).flatMap { values =>
+                          Ok(Json.obj("id" -> daemonId.asJson, "saved" -> true.asJson, "values" -> values.asJson))
+                        }
+                    }
+              }
+          }
+        }
     }
   end routes
 
   // 以下助手(F 步 2026-09-24 自 RestApiRoutes 类内逐字迁入,调用面全部在本
-  // object 的 routes 内):preset/teams/plugins 校验与写回族 + social 渠道错误
+  // object 的 routes 内):teams/plugins 校验与写回族 + social 渠道错误
   // 映射 + provider baseUrl SSRF 闸。可见性 private 原样(迁入 object 后仅本
   // 域可见,与原类内 private 等价)。
 
-  // ── Preset helpers ──────────────────────────────────────
-
-  /** All agent.json paths across the three layers. */
-  private def allAgentJsonFiles(): List[os.Path] =
-    val root = PathUtil.dataRoot
-    def agentJsons(parent: os.Path): List[os.Path] =
-      if !os.exists(parent) then Nil
-      else os.list(parent).filter(os.isDir).map(_ / "agent.json").filter(os.exists).toList
-    val standalone = agentJsons(root / "agents")
-    val teamAgents =
-      if !os.exists(root / "teams") then Nil
-      else os.list(root / "teams").filter(os.isDir).flatMap(t => agentJsons(t / "agents")).toList
-    val flowAgents =
-      if !os.exists(root / "flows") then Nil
-      else os.list(root / "flows").filter(os.isDir).flatMap(f => agentJsons(f / "agents")).toList
-    standalone ++ teamAgents ++ flowAgents
-
-  /**
-   * Scan all agent.json files and build a map of agentName → presetName (or null
-   * if no preset field). Used by GET /presets to show which agents reference
-   * which presets.
-   *
-   * panelscheme 批（2026-09-21）：映射的是**有效**引用（SchemePolicy 名称策略）——
-   * 可设两类（Nebula/任务分发器）= 自有原始引用；kernel/general = 继承根
-   * （Nebula/project-dispatcher）的当前引用；其余 agent 引擎已忽略其存储引用 →
-   * null（usedBy 计数不再把「死数据」算进引用者）。
-   */
-  private def scanAgentPresets(): Map[String, Option[String]] =
-    val raw: Map[String, Option[String]] = allAgentJsonFiles().flatMap { path =>
-      parser.parse(os.read(path)).toOption.flatMap { json =>
-        val name = json.hcursor
-          .downField("name")
-          .as[String]
-          .toOption
-          .getOrElse((path / os.up).last) // fall back to directory name
-        val preset = json.hcursor.downField("preset").as[Option[String]].toOption.flatten
-        Some(name -> preset)
-      }
-    }.toMap
-    raw.map { (name, own) =>
-      val (effPreset, _) = nebflow.core.presets.SchemePolicy.effectiveRefs(name, own, None)
-      name -> effPreset
-    }
-
-  end scanAgentPresets
-
-  /**
-   * Determine the resolvedFrom value for an agent by reading the raw agent.json.
-   * Returns "preset" | "legacy-model" | "default-preset" | "global".
-   *
-   * panelscheme 批（2026-09-21）名称策略感知：非可设两类（kernel/general/其余）
-   * 的存储 preset/model 引用引擎已忽略——kernel/general 的 AgentDef.preset 携带
-   * 继承根（Nebula/project-dispatcher）的引用名，按引用是否存在如实报告；其余
-   * 不再做 legacy-model 探测（那会把「已忽略的死数据」误报为生效来源，误触发
-   * 前端迁移横幅）。可设两类走既有逻辑逐字不变（回归红线）。
-   */
-  private def computeResolvedFrom(preset: Option[String], agentName: String): String =
-    val store = new PresetStore()
-    def defaultOrGlobal: String =
-      val file = store.load()
-      if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
-        "default-preset"
-      else "global"
-    if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
-      preset match
-        case Some(p) =>
-          if store.load().presets.contains(p) then "preset" else defaultOrGlobal
-        case None => defaultOrGlobal
-    else
-      // If AgentDef has a preset, it was resolved from preset (or dangling → fallback)
-      if preset.isDefined then
-        val file = store.load()
-        if file.presets.contains(preset.get) then "preset"
-        else
-          // Dangling preset — check if there's a legacy model
-          EntityLoader.findAgentDir(agentName).unsafeRunSync() match
-            case Some(dir) =>
-              val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
-              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
-              else defaultOrGlobal
-            case None => "global"
-      else
-        // No preset — check legacy model
-        EntityLoader.findAgentDir(agentName).unsafeRunSync() match
-          case Some(dir) =>
-            val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
-            val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-            if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
-            else defaultOrGlobal
-          case None => "global"
-
-    end if
-
-  end computeResolvedFrom
-
-  /**
-   * Remove the `preset` field from all agent.json files that reference the given
-   * preset name. Called when a preset is deleted so agents fall back to the
-   * default preset instead of holding a dangling reference.
-   */
-  private def scrubPresetRefs(presetName: String): IO[Unit] =
-    IO.blocking {
-      allAgentJsonFiles().foreach { path =>
-        val content = os.read(path)
-        parser.parse(content) match
-          case Right(json) =>
-            json.hcursor.downField("preset").as[Option[String]].toOption.flatten match
-              case Some(p) if p == presetName =>
-                val updated = json.asObject
-                  .map(obj => Json.fromFields(obj.toMap.removed("preset")))
-                  .getOrElse(json)
-                if updated != json then AtomicJson.writeSync(path, updated.noSpaces)
-              case _ => ()
-          case Left(_) => () // skip unparseable file
-      }
-    }
-
-  /**
-   * Migrate per-agent legacy model configs to named presets.
-   * Groups agents by model-config fingerprint, creates a preset per group
-   * (mig-<n>), writes the preset reference, and removes the legacy model field.
-   * Agents with empty model configs ({preferred: null, fallbacks: []}) are
-   * skipped (treated as "no config" — they already use the default preset).
-   */
-  private def migrateLegacyModels(agentNames: List[String]): IO[Response[IO]] =
-    IO.blocking {
-      val store = new PresetStore()
-      val file = store.load()
-      // Load each agent's raw model config
-      val agentsWithConfig = agentNames.flatMap { name =>
-        EntityLoader.findAgentDir(name).unsafeRunSync() match
-          case None => None
-          case Some(dir) =>
-            parser.parse(os.read(dir / "agent.json")).toOption.flatMap { json =>
-              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-              // Only migrate non-empty configs
-              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then Some((name, dir, model.get))
-              else None
-            }
-      }
-      // Group by fingerprint (preferred + fallbacks)
-      def fingerprint(m: nebflow.shared.AgentModelConfig): String =
-        s"${m.preferred.getOrElse("")}|${m.fallbacks.mkString(",")}"
-      val groups = agentsWithConfig.groupBy { case (_, _, m) => fingerprint(m) }
-      // Generate preset names (mig-<n>, avoiding collisions with existing)
-      var migN = 1
-      val existingNames = file.presets.keySet
-      val newPresets = scala.collection.mutable.Map.empty[String, ModelPreset]
-      val agentToPreset = scala.collection.mutable.Map.empty[String, String]
-      groups.toList.sortBy(_._1).foreach { (fp, agents) =>
-        val model = agents.head._3
-        // Skip if this fingerprint already matches an existing preset
-        val existingMatch =
-          file.presets.values.find(p => p.preferred == model.preferred && p.fallbacks == model.fallbacks)
-        val presetName = existingMatch match
-          case Some(p) => p.name
-          case None =>
-            var name = s"mig-$migN"
-            while existingNames.contains(name) || newPresets.contains(name) do
-              migN += 1
-              name = s"mig-$migN"
-            migN += 1
-            val agentList = agents.map(_._1).mkString(", ")
-            val preset = ModelPreset(
-              name = name,
-              description = s"Auto-migrated from: $agentList",
-              preferred = model.preferred,
-              fallbacks = model.fallbacks
-            )
-            newPresets += (name -> preset)
-            name
-        agents.foreach { (name, _, _) => agentToPreset += (name -> presetName) }
-      }
-      // Write: update presets file + update each agent.json
-      val updatedFile = file.copy(presets = file.presets ++ newPresets)
-      store.save(updatedFile)
-      agentToPreset.toList.foreach { (name, presetName) =>
-        EntityLoader.findAgentDir(name).unsafeRunSync() match
-          case Some(dir) =>
-            val jsonPath = dir / "agent.json"
-            parser.parse(os.read(jsonPath)) match
-              case Right(json) =>
-                // Remove model, add preset
-                val withoutModel = json.asObject
-                  .map(obj => Json.fromFields(obj.toMap.removed("model")))
-                  .getOrElse(json)
-                val updated = withoutModel.deepMerge(Json.obj("preset" -> presetName.asJson))
-                AtomicJson.writeSync(jsonPath, updated.noSpaces)
-              case Left(_) => ()
-          case None => ()
-      }
-      // Build response data (plain values, not IO)
-      (agentToPreset.toList, newPresets.values.toList)
-    }.flatMap { (migrated, createdPresets) =>
-      val migratedAgents = migrated.map { (name, preset) =>
-        Json.obj("agent" -> name.asJson, "preset" -> preset.asJson)
-      }
-      Ok(
-        Json.obj(
-          "migratedAgents" -> migratedAgents.asJson,
-          "createdPresets" -> createdPresets.map(_.asJson).asJson
-        )
-      )
-    }.handleErrorWith(e => InternalServerError(Json.obj("error" -> s"Migration failed: ${e.getMessage}".asJson)))
+  // ── Preset helpers ── RETIRED with the preset face (chain-face take-down) ──
+  //
+  // The /presets CRUD family and the `PUT /agents/:name/preset` sibling are gone
+  // (see the take-down note in `routes`), and their five helpers went with them:
+  // `allAgentJsonFiles` / `scanAgentPresets` / `scrubPresetRefs` were reached
+  // only by GET /presets and DELETE /presets/:name; `computeResolvedFrom` was the
+  // flat /model read shape's resolution label with no caller left after the
+  // chain-face GET replaced it; `migrateLegacyModels` was the body of
+  // POST /presets/migrate-legacy. All five were PR-side-only — MAINPRE carries
+  // no `nebflow.core.presets` package and no `/presets` arm at all (see the W5
+  // batch report §退役面 for the four-tree readings) — so removing them is the
+  // zero-功能-loss terminal disposition of the retired face, never a feature
+  // removal. The live face is the per-role model chain
+  // (GET/PUT /agents/:name/model), which reads agent.json directly through
+  // `SchemePolicy`.
 
   /**
    * Build mounted teams JSON for the frontend (GET /api/teams/mounted).

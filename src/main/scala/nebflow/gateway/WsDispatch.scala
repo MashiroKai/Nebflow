@@ -113,12 +113,31 @@ final class WsDispatchCtx(
   sendMemoryStatusImpl: (io.circe.Json => IO[Unit], String) => IO[Unit],
   expandTildeImpl: String => String,
   wsBrowseEventImpl: (String, String, Option[String], List[String], Option[String]) => Json,
+  /**
+   * picker-trunc batch (main-side 2026-09-22): the `browsePath` frame builders,
+   * seam-injected from the WebSocketRoutes companion object (pure core). The
+   * handler composes the frames; the object owns their shape so
+   * `PickerBrowseFrameSpec` can pin them directly.
+   */
+  browseResultFrameImpl: (os.Path, String, String, Int) => Json,
+  browseErrorFrameImpl: (String, String, String, String) => Json,
+  browseEntryCapImpl: Int,
   resolveExplorerBaseRootImpl: (String, Option[String]) => IO[String],
   admitWorkOrRefuseImpl: (io.circe.Json => IO[Unit]) => IO[Unit] => IO[Unit],
   handleUserTextImpl: (String, String, String, Boolean) => IO[Unit],
   skipCurrentFreezeWindowImpl: () => IO[Unit],
   executeAskImpl: (String, String, io.circe.Json => IO[Unit]) => IO[Unit],
-  executeSkillImpl: (String, String, String, io.circe.Json => IO[Unit]) => IO[Unit]
+  executeSkillImpl: (String, String, String, io.circe.Json => IO[Unit]) => IO[Unit],
+  /**
+   * `projectCreate` WS command (main-side, projcreate-redesign `372b54d54`):
+   * the direct frontend creation face. Both seams come from WebSocketRoutes —
+   * `resolveRootSessionId` is the server-side delivery-root resolution the tool
+   * face shares (identity is VERIFIED, never fabricated), and the broadcast
+   * channel is the same `wsHub` the created project's `projectCreated` frame
+   * travels on (one push face, never a second one).
+   */
+  resolveRootSessionIdImpl: String => IO[String],
+  projectCreateBroadcastImpl: io.circe.Json => IO[Unit]
 ):
 
   def replayPendingAsks(
@@ -189,6 +208,18 @@ final class WsDispatchCtx(
   ): Json =
     wsBrowseEventImpl(evType, path, parent, entries, err)
 
+  /** picker-trunc batch: the `browsePath` success frame (see the seam doc above). */
+  def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    browseResultFrameImpl(dir, displayPath, query, cap)
+
+  /** picker-trunc batch: the `browsePath` failure frame (typed `errorKind`). */
+  def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    browseErrorFrameImpl(displayPath, kind, msg, query)
+
+  /** How many entries a `browsePath` frame carries before `truncated` turns on —
+    * the ONE ruler for that leg (was a literal `take(200)`). */
+  def browseEntryCap: Int = browseEntryCapImpl
+
   def resolveExplorerBaseRoot(
     sessionId: String,
     overrideRoot: Option[String]
@@ -221,4 +252,13 @@ final class WsDispatchCtx(
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     executeSkillImpl(skillName, input, sessionId, wsSend)
+
+  /** Resolve the permission-policy bucket (delivery root) of a sessionId — the
+    * same server-side judge `ensureAgent`/`askUserAnswer` use, so `projectCreate`
+    * never invents a root. */
+  def resolveRootSessionId(sessionId: String): IO[String] = resolveRootSessionIdImpl(sessionId)
+
+  /** The `projectCreate` broadcast channel: the SAME `wsHub` the node events and
+    * the created project's `projectCreated` frame use. */
+  def projectCreateBroadcast(json: io.circe.Json): IO[Unit] = projectCreateBroadcastImpl(json)
 end WsDispatchCtx

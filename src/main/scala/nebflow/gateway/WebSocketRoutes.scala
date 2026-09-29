@@ -1626,12 +1626,17 @@ class WebSocketRoutes(
       sendMemoryStatusImpl = sendMemoryStatus,
       expandTildeImpl = expandTilde,
       wsBrowseEventImpl = wsBrowseEvent,
+      browseResultFrameImpl = WebSocketRoutes.browseFrame,
+      browseErrorFrameImpl = WebSocketRoutes.browseErrorFrame,
+      browseEntryCapImpl = WebSocketRoutes.BrowseEntryCap,
       resolveExplorerBaseRootImpl = resolveExplorerBaseRoot,
       admitWorkOrRefuseImpl = admitWorkOrRefuse,
       handleUserTextImpl = handleUserText,
       skipCurrentFreezeWindowImpl = () => skipCurrentFreezeWindow,
       executeAskImpl = executeAsk,
-      executeSkillImpl = executeSkill
+      executeSkillImpl = executeSkill,
+      resolveRootSessionIdImpl = resolveRootSessionId,
+      projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json)
     )
   end wsDispatchContext
 
@@ -2528,7 +2533,7 @@ object WebSocketRoutes:
    * (ActiveAgentsEntrySpec).
    */
   def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None,
-    taskTitle: Option[String] = None // W1 shim: taskbadge batch (main-side) -- title resolved by the caller via the ledger
+    taskTitle: Option[String] = None // taskbadge batch (main-side): title resolved by the caller via the ledger
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
@@ -2556,17 +2561,20 @@ object WebSocketRoutes:
       // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
       "project" -> rec.project.getOrElse("").asJson,
       // taskbadge batch 2026-09-27: sub-agents panel task attribution on the
-      // snapshot face; taskTitle = resolved by the caller via the unified
-      // ledger. Empty string = no badge rendered (falsy contract, same as
-      // `project`).
+      // snapshot face; taskId = the registration-time snapshot (dispatcher slot /
+      // NodeDef), taskTitle = resolved by the caller via the unified ledger.
+      // Empty string = no badge rendered (falsy contract, same as `project`).
+      "taskId" -> rec.taskId.getOrElse("").asJson,
       "taskTitle" -> taskTitle.getOrElse("").asJson
     )
 
   // ============================================================
-  // (W1 provisional shim) picker-trunc batch (main-side 2026-09-22): the
-  // browsePath frame builders, ported verbatim from main's WebSocketRoutes
-  // object so main-side specs compile. The WS `browsePath` command wiring
-  // (the call site that emits these frames) lands with the owning wave.
+  // picker-trunc batch (main-side 2026-09-22): the browsePath frame
+  // builders — pure core, owned by this object so `PickerBrowseFrameSpec`
+  // can call them directly. The WS `browsePath` command wiring (the call
+  // site that emits these frames) lives in WsFileOpsHandlers.handleBrowsePath,
+  // which reaches them through the class-level seams (browseResultFrame /
+  // browseErrorFrame / BrowseEntryCap).
   // ============================================================
 
   /** How many entries a `browsePath` frame carries before `truncated` turns on —
