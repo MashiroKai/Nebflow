@@ -526,34 +526,97 @@ private[agent] object AgentIdle:
       // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
       // here is exactly what made a real human text land in the
       // `clientMessageId=None ⇒ source="tool"` fallback (diagnosis §1.4 idle row).
-      case AgentCommand.ImmediateInput(
-            text,
-            blocks,
-            source,
-            eventType,
-            sender,
-            senderTeam,
-            delivery,
-            fromUser,
-            project,
-            _
-          ) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(
-            text,
-            None,
-            None,
-            blocks,
-            0,
-            source,
-            sender,
-            senderTeam,
-            delivery,
-            eventType,
-            None,
-            fromUser,
-            project
-          )
-        yield idle(agentDef, resources, depth, parentRef, state)
+      // notifypack 解 b 批（2026-09-23 · r4 rework）：idle 到达是本链的**生产常态**
+      // （节点终态通知在上一个 turn 结束之后才到）⇒ 本分支不再是「逐字忽略第 10 槽」，
+      // 而是**同一个判据的第二处接线点**：带窗标记的 carrier 在此走 [[expandRootNotify]]
+      // 展开为 N 件，于**同一 turn** 内逐件注入（N 气泡 / 1 次唤醒）；无标记件（`None`
+      // 与空载荷 `Some(Nil)` —— 与 `expandWindowFlush` 的恒等分支同口径）走下方**逐字
+      // 未变**的旧路径（`ctx.self ! UserInput` ⇒ 一次唤醒一件）。
+      //
+      // 🔴 展开器仍是唯一判据源（本分支不自造谓词）：载体识别 = 元素自带
+      // `ImmediateInput.windowItems`，与其余各接线点共用 [[expandRootNotify]]。
+      // 🔴 唤醒数：N 件载荷共享**同一次** `pipeLlmCall`（一次 sendStream）——把 N 件各自
+      // 转成 `UserInput` 再回投 self 会开 N 个 turn（正是本批要消灭的形态）。
+      case imm @ AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser, project, windowItems) =>
+        windowItems match
+          case Some(items) if items.nonEmpty =>
+            val expanded = expandRootNotify(imm)
+            // Per-item context messages (each carries its OWN body — never the merged digest).
+            val carrierMessages = expanded.map(item =>
+              (item.blocks match
+                case Some(b) if b.nonEmpty => Message(MessageRole.User, Right(b))
+                case _                     => Message(MessageRole.User, Left(item.text))
+              ).copy(source = injectionSourceFor(item.fromUser, item.source)))
+            for
+              _ <- IO(
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "window-carrier-expanded-in-idle",
+                  s"batch=${expanded.size} texts=${expanded.map(_.text.take(40)).mkString(" | ").take(200)}"
+                )
+              )
+              _ <-
+                if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+                else IO.unit
+              // One injected frame per payload item — each carries its own text / sender /
+              // status, so the frontend renders N bubbles with zero frontend change
+              // (same single emission point as every other injected leg).
+              _ <- expanded.traverse_ { item =>
+                injectionSourceFor(item.fromUser, item.source) match
+                  case Some(src) =>
+                    emitInjectedUserEvent(
+                      resources,
+                      state.wsSend,
+                      state.sessionId,
+                      item.text,
+                      src,
+                      item.eventType,
+                      item.sender,
+                      item.senderTeam,
+                      item.delivery,
+                      project = item.project,
+                      sessionProject = state.projectName
+                    )
+                  case None => IO.unit
+              }
+              // ONE wake for the whole payload (same state preparation as the idle
+              // UserInput leg / the turn-boundary immediate-input drain).
+              result <- pipeLlmCall(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state
+                  .withMessages(state.messages ++ carrierMessages)
+                  .withEmptyResponseRetries(0)
+                  .withMailUsedThisTurn(false)
+                  .withNextLoopTurn,
+                None,
+                // Same cause as the legacy forward below: an ImmediateInput carries no
+                // clientMessageId ⇒ system injection ⇒ Gated (freeze window still applies).
+                DispatchCause.Gated
+              )
+            yield result
+          case _ =>
+            for _ <- ctx.self ! AgentCommand.UserInput(
+                text,
+                None,
+                None,
+                blocks,
+                0,
+                source,
+                sender,
+                senderTeam,
+                delivery,
+                eventType,
+                None,
+                fromUser,
+                project
+              )
+            yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn.
       // Idempotent guard (#22): activation sends a head-trigger MailQueued AND

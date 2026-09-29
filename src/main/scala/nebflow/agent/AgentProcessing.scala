@@ -563,9 +563,11 @@ private[agent] object AgentProcessing:
         // immediate input（原缺陷⑥ 合批 = 整队塞进同一次续轮，已按 root 裁定删除）。
         // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
-        val (immHeadInput, remainingImmInputs) =
-          TurnBoundaryDrains.drainHead(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
-        val immInputs = immHeadInput.toList
+        val (immInputs, remainingImmInputs) =
+          TurnBoundaryDrains.drainHeadExpanded(
+            state.execution.pendingImmediateInputs,
+            state.pendingCompaction.isDefined
+          )(expandRootNotify)
         val immediateMessages = immInputs match
           case Nil => Nil
           case inputs =>

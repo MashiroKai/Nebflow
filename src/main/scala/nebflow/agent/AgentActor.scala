@@ -316,6 +316,26 @@ object AgentActor extends AgentCore with AgentSession:
         case _ => true
     }
 
+  /** root 通知窗载荷展开的**单点绑定**（notifypack 解 b 批 · 作者裁定 A）：全部消费侧
+    * 接线点共用同一个展开器 ⇒ 语义只有一处定义（与仓内「单一来源」纪律同源）。
+    * 判据（`windowItems.isDefined`）与幂等性全在
+    * [[TurnBoundaryDrains.expandWindowFlush]] 内（唯一定义处），此处不做任何额外判断：
+    * `windowItems = None` 的件恒等返回（1→1）⇒ 用户消息腿与其余全部注入腿零影响。
+    *
+    * 接线点（6）＝turn 边界三处（`AgentFinishTurn.finishTurnCont`、
+    * `AgentProcessing` 的 recoverable-abort 腿与 tools-complete 腿）、压缩后恢复
+    * （[[drainQueuesAfterCompaction]]，经本单点绑定）与 **idle 直投腿**
+    * （`AgentIdle.idle` —— 本链的生产常态到达路径）。
+    *
+    * W3 回填（2026-09-29）：`0b26aa857`/`ee1c8058c` 那对 Revert/Reapply 把本成员与它的
+    * 全部接线一起从合并树里抹掉（载体 `TurnBoundaryDrains.expandWindowFlush` 因 W1
+    * shim 留在树上，但生产调用点归零）。本件按 MAINPRE `6903f202a` 的语义逐字恢复；
+    * 可见性取 `private[agent]`（MAINPRE 为 `private` —— 该处三处接线都在本 object 内，
+    * 现树同域实现已按 2026-09-25 行为保持重构拆至 `AgentIdle` / `AgentProcessing` /
+    * `AgentFinishTurn` 三件，与同域助手 `drainQueuesAfterCompaction` 的可见性同款）。 */
+  private[agent] def expandRootNotify(imm: AgentCommand.ImmediateInput): List[AgentCommand.ImmediateInput] =
+    TurnBoundaryDrains.expandWindowFlush(imm)
+
   private[agent] def drainQueuesAfterCompaction(compactedState: AgentState): PostCompactDrain =
     val exec = compactedState.execution
     // 排队消息逐条注入（2026-09-15 ub 缺陷批，禁合并语义）：压缩窗口之后的续轮请求
@@ -326,7 +346,7 @@ object AgentActor extends AgentCore with AgentSession:
     // replyTo-bearing UserInput / 非 UserInput 命令（SkillActivate / AskQuestion）
     // 依旧只走全元数据路径（turn 末 head-forward），完成目标不搁浅。
     val (imms, immTail) = exec.pendingImmediateInputs match
-      case head :: tail => (List(head), tail)
+      case head :: tail => (expandRootNotify(head), tail)
       case Nil => (Nil, Nil)
     val (injectedUsers, userTail): (List[AgentCommand.UserInput], List[AgentCommand]) =
       if imms.nonEmpty then (Nil, exec.pendingUserInputs)
