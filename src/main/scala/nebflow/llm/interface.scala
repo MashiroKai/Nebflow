@@ -728,7 +728,7 @@ object LlmInterface extends LlmRuntime:
                                       // 本轮所有候选都已试过（或本轮起始候选集为空）。
                                       //
                                       // 病（2026-09-21 硬杀波定谳）：全链 provider 永久错误（400 Format ⇒
-                                      // fallback.scala:107 `evict=false`）时无人被 markDown ⇒
+                                      // fallback.scala `formatClassification` 恒 `evict=false`）时无人被 markDown ⇒
                                       // `attemptWithHealthCheck` 的 filterCandidates 返回**同一全链** ⇒
                                       // `tryCandidate(up)` 重投全链 ⇒ 无计数 / 无退避 / 无终态的闭环：
                                       // 不产 chunk、不抛错 ⇒ AgentActor.lastActivityMs 冻结 ⇒
