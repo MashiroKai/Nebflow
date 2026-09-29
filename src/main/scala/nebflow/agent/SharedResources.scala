@@ -197,8 +197,30 @@ case class SharedResources(
    * `SessionStore.saveIndex` 的落盘序列化——盘上字节零改动。
    */
   def overlaySessionList(sessions: List[nebflow.shared.SessionMeta]): IO[io.circe.Json] =
-    effectiveSafetyMode.map { global =>
-      nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, nebflow.core.SafetyMode.toString(global))
+    effectiveSafetyMode.flatMap { global =>
+      val base = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, nebflow.core.SafetyMode.toString(global))
+      // taskbadge batch 2026-09-27: task-attribution enrichment (wire-only).
+      // Attribution source = AgentRegistry (AgentRecord.taskId: snapshot taken at
+      // spawn from the Project-domain registration site, cleared at the same point
+      // as the dispatcher slot table -- slot cleared => registry cleared => both
+      // keys absent = empty state); title source = the unified ledger (deduped,
+      // read once -- at most one ledger-file read per task id across N sessions).
+      // 🔴 An attribution-query failure must **never take down the session-list
+      // endpoint**: the whole enrichment degrades to the un-enriched base (keys
+      // absent = empty state), matching the "the list endpoint never fails because
+      // an attribution query failed" contract.
+      agentRegistry.get.flatMap { reg =>
+        val attribution =
+          sessions.flatMap(m => reg.get(m.id).flatMap(_.taskId).map(tid => m.id -> tid)).toMap
+        val ids = attribution.values.toList.distinct
+        val titlesIo: IO[Map[String, String]] =
+          if ids.isEmpty then IO.pure(Map.empty[String, String])
+          else IO.blocking(ids.map(id =>
+            id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap)
+        titlesIo
+          .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+          .map(titles => nebflow.shared.SessionMeta.withTaskAttribution(base, attribution, titles))
+      }
     }
 
   // ── Phase 5 D 步窄能力面(core ← agent 倒置,见 core/capabilities.scala)──────

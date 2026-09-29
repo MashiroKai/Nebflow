@@ -72,12 +72,31 @@ object FriendMessageTool extends Tool:
   private val TimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
   private val MaxMessageLength = 4000
 
-  /** friendseal batch (2026-09-25): error code carried by the sealed-posture
-    * refusal message. (W1 provisional shim: only the constant is ported from
-    * main so main-side specs compile; the sealed-posture gate itself —
-    * `nebflow.core.FriendsSeal.isSealed` checks in the send/description/schema
-    * paths — lands with the owning wave.) */
+  // ============================================================
+  // friendseal batch (2026-09-25) — the friends-feature seal (single source of
+  // the error word; specs cite this same value). The seal = the ONE
+  // `features.friends` config key (`FriendsSeal`, startup latch): the device
+  // leg stays; friend/group/local calls are refused BEFORE any resolution or
+  // send work (fail-closed: nothing sent, nothing queued, zero silent
+  // downgrade). The error deliberately does NOT echo the raw `to` value
+  // (friend remarks/emails are private data — the same no-echo rule as the
+  // resolution path's R3); it names the target KIND only.
+  // ============================================================
   val ErrFriendsSealed: String = "FRIENDS_SEALED"
+
+  private def sealedTargetMessage(targetKind: String): String =
+    s"[$ErrFriendsSealed] The '$targetKind' target is sealed: the friends feature of this tool " +
+        "(friend targets, group targets, and the local this-machine copy) is currently sealed by " +
+        "configuration, so nothing was sent and nothing was queued. The device leg is unaffected — " +
+        "use `device:<deviceName|deviceId>` to move text or files to another of the user's machines. " +
+        "Unsealing is a config change (\"features\": { \"friends\": true } in nebflow.json) followed " +
+        "by an instance restart; until then every friend/group/local call returns this error."
+
+  private def sealedKindLabel(kind: ToKind): String = kind match
+    case ToKind.Local     => "local"
+    case ToKind.Friend(_) => "friend"
+    case ToKind.Group(_)  => "group"
+    case ToKind.Device(_) => "device"
 
   @volatile private var service: Option[FriendServicePort] = None
 
@@ -86,10 +105,16 @@ object FriendMessageTool extends Tool:
 
   val name = "SendMessage"
 
-  val description =
+  // Two-state word table: both constants are built once; `description` /
+  // `inputSchema` pick between them per latch read (the latch is a boot-time
+  // constant, so the pick is stable within a process lifetime).
+  def description: String =
+    if FriendsSeal.isSealed then SealedDescription else FullDescription
+
+  private val FullDescription =
     """Send a message on the user's behalf, or move files. Four target kinds are selected by the prefix of `to`:
 1. A NebLink friend (bare name, or `friend:<remark|username|email|displayName>`) — delivered as the user over established friend relationships; text and/or files. Files ride the server's attachment channel (create session → chunked upload with per-chunk checksum + whole-file SHA-256 → sent as attachment ids), and the receiver downloads them over an authenticated in-app route. Subject to permission tiers and rate limits, and (depending on configuration) a confirmation card. Before uploading, the client probes whether the server even has the attachment route (no capability self-report exists): unsupported or unverifiable ⇒ the send is refused outright with a readable reason — attachments are never dropped silently.
-2. Another of the user's own devices (`device:<deviceName|deviceId>`) — **PURE TRANSPORT: files and text reach the peer MACHINE, and the peer's AGENT is NOT aware of either** (nothing is injected into the peer's agent session or its LLM context — the peer's agent cannot read it and will not act on it; only the machine and its user-facing device panel show it). Files are chunked+streamed over the Dropbox device channel (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel); the message text appears in the peer's device panel. This target kind is the face that carries file transfer (`attachments`) — including files moved to another machine. Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback). **If the peer's agent must be told, use `Mail` with the `device` parameter — Mail delivers into the peer's Nebula session and that device's agent receives it directly; `SendMessage` never reaches the peer's agent.**
+2. Another of the user's own devices (`device:<deviceName|deviceId>`) — **PURE TRANSPORT: files and text reach the peer MACHINE, and the peer's AGENT is NOT aware of either** (nothing is injected into the peer's agent session or its LLM context — the peer's agent cannot read it and will not act on it; only the machine and its user-facing device panel show it). Files are chunked+streamed over the Dropbox device channel (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel); the message text appears in the peer's device panel. This target kind is the face that carries file transfer (`attachments`) — including files moved to another machine. Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
 3. `local` — copy `attachments` into `targetDir` on this machine (no network, no message delivered).
 4. A NebLink group (`group:<groupName|groupId>`) — delivered as the user into a group conversation the user is a member of; every member of that group sees it (the sender is never counted as a new message for themselves). Text only in phase 1. The group is resolved against the groups the user is a member of: the exact group id (`grp-…`), then the exact group name, then a unique group-name prefix; a name that matches several groups, or none, comes back as a candidate list rather than a silent guess. A group that does not exist, has been disbanded, or that the user is not a member of fails with a readable reason (the decision is the server's; the tool never reports a send that did not happen). Subject to the same permission tiers, rate limits, and (depending on configuration) the confirmation card as friend sends.
 
@@ -105,33 +130,85 @@ Target-kind prefixes are case-insensitive and MUST be one of `friend:`, `device:
 ## Confirmation (ask tier, friend and group targets)
 When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the friend or group send first raises a confirmation card in the chat, naming the recipient (a friend's label, or the group name). The message is sent ONLY after the user approves it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back as an error saying so. Device sends and local copies are not gated by this tier. Wait for the tool result — do not assume anything went out."""
 
-  val inputSchema: JsonObject = JsonObject(
+  /** Sealed-state face (friendseal batch, 2026-09-25): device leg only. The
+    * friend/group/local kinds are named once, as SEALED, so a model that
+    * remembers the wider face understands the refusal instead of retrying.
+    * Written in full sentences with the same transport facts as the full face
+    * (single behavior, two wordings). */
+  private val SealedDescription =
+    """Send a message (or move files) to another of the user's own devices. One target kind is available, selected by the prefix of `to`:
+1. Another of the user's own devices (`device:<deviceName|deviceId>`) — **PURE TRANSPORT: files and text reach the peer MACHINE, and the peer's AGENT is NOT aware of either** (nothing is injected into the peer's agent session or its LLM context). Files are chunked+streamed over the Dropbox device channel (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel); the message text appears in the peer's device panel. Not subject to permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
+
+The friend, group, and local targets this tool formerly offered are currently SEALED by configuration: calling any of them is an explicit `FRIENDS_SEALED` error (nothing is sent, nothing is queued) — do not retry them; the device target above is the only available kind. `to` must carry the `device:` prefix; anything else (a bare name, the literal `local`, or a `friend:`/`group:` prefix) is refused with `FRIENDS_SEALED`.
+
+## Parameters
+- to (string, required): `device:<deviceName|deviceId>`.
+- message (string, required): text shown in the peer's device panel, max 4000 characters, plain text; must be non-empty.
+- attachments (array of string, optional): ABSOLUTE paths of files on this machine, transferred over the device channel — max 9 files, each up to 1024 MB = 1 GiB (1,073,741,824 bytes), chunked with per-chunk checksum + whole-file SHA-256 on both sides.
+- targetDir (string, optional): a request only — the receiver decides (it accepts only directories on its own allow-list; anything else is rejected with a structured code and nothing is written). Sent only after the peer confirms support; if the peer does not, the request stays off the wire and the files land in the peer's Downloads (the result says so).
+
+## Confirmation
+Device sends are not gated by any confirmation tier. Wait for the tool result — do not assume anything went out."""
+
+  def inputSchema: JsonObject =
+    if FriendsSeal.isSealed then SealedSchema else FullSchema
+
+  private val FullSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "to" -> Json.obj(
-        "type" -> "string".asJson,
+        "type"        -> "string".asJson,
         "description" -> """The target, selected by an explicit prefix (case-insensitive; anything else is a bare friend name):
 - `friend:<remark|username|email|displayName>` — one friend (a bare remark/username/email/displayName works too).
-- `device:<deviceName|deviceId>` — another of the user's own devices (pure transport: files land in the peer's Downloads, the text shows in the peer's device panel — the peer's agent is NOT aware of either; use `Mail` when the peer's agent must know).
+- `device:<deviceName|deviceId>` — another of the user's own devices (pure transport: files land in the peer's Downloads, the text shows in the peer's device panel — the peer's agent is NOT aware of either).
 - `group:<groupName|groupId>` — a group conversation the user is a member of. Resolved by exact group id (`grp-…`), then exact group name, then unique group-name prefix. A group that does not exist, was disbanded, or that the user is not a member of fails with a readable reason; several/none matching come back as a candidate list. Text only (no `attachments`) in this phase.
 - `local` — copy `attachments` into `targetDir` on this machine.""".asJson
       ),
       "message" -> Json.obj(
-        "type" -> "string".asJson,
+        "type"        -> "string".asJson,
         "description" -> s"Message text (max $MaxMessageLength characters) for friend/device/group targets; ignored for `local`. Empty is allowed for a friend target only when `attachments` is non-empty; a group target always requires non-empty text.".asJson
       ),
       "attachments" -> Json.obj(
-        "type" -> "array".asJson,
+        "type"  -> "array".asJson,
         "items" -> Json.obj("type" -> "string".asJson),
-        "description" -> "Absolute local file paths — this parameter is how a file is moved (including to another machine, with a `device:` target). Friend and device: ≤9 files, each ≤1024 MB = 1 GiB (1,073,741,824 bytes); friend uploads go in 4 MiB chunks with per-chunk checksum + whole-file SHA-256. Friend sends are refused (nothing uploaded) when the server lacks the attachment route. Device transfers are pure transport — the peer's Downloads receives the files and the peer's agent is NOT told (use `Mail` if that agent must know). Local: required (copied into targetDir).".asJson
+        "description" -> "Absolute local file paths — this parameter is how a file is moved (including to another machine, with a `device:` target). Friend and device: ≤9 files, each ≤1024 MB = 1 GiB (1,073,741,824 bytes); friend uploads go in 4 MiB chunks with per-chunk checksum + whole-file SHA-256. Friend sends are refused (nothing uploaded) when the server lacks the attachment route. Device transfers are pure transport — the peer's Downloads receives the files and the peer's agent is NOT told. Local: required (copied into targetDir).".asJson
       ),
       "targetDir" -> Json.obj(
-        "type" -> "string".asJson,
+        "type"        -> "string".asJson,
         "description" -> "Destination directory for `local` (created if missing). Device targets: a request the receiver decides on (only its own allow-listed directories; otherwise rejected with a structured code, nothing written); if the peer does not confirm support, the files land in its Downloads.".asJson
       ),
       "overwrite" -> Json.obj(
-        "type" -> "boolean".asJson,
+        "type"        -> "boolean".asJson,
         "description" -> "`local` only — replace existing files in targetDir. Default: false.".asJson
+      )
+    ),
+    "required" -> List("to", "message").asJson
+  )
+
+  /** Sealed-state schema (friendseal batch, 2026-09-25): `to` names the device
+    * kind only; `overwrite` (local-copy-only parameter) is dropped from the
+    * face. The engine performs zero JSON-Schema validation, so narrowing the
+    * schema never blocks a stale caller from reaching `call` — where the
+    * `FRIENDS_SEALED` gate is the fail-closed half of this narrowing. */
+  private val SealedSchema: JsonObject = JsonObject(
+    "type" -> "object".asJson,
+    "properties" -> Json.obj(
+      "to" -> Json.obj(
+        "type"        -> "string".asJson,
+        "description" -> "The target: `device:<deviceName|deviceId>` — another of the user's own devices (pure transport: files land in the peer's Downloads, the text shows in the peer's device panel — the peer's agent is NOT aware of either). The friend/group/local target kinds are sealed (FRIENDS_SEALED) and unavailable.".asJson
+      ),
+      "message" -> Json.obj(
+        "type"        -> "string".asJson,
+        "description" -> s"Message text (max $MaxMessageLength characters) shown in the peer's device panel; must be non-empty.".asJson
+      ),
+      "attachments" -> Json.obj(
+        "type"  -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
+        "description" -> "Absolute local file paths — this parameter is how a file is moved to another machine. Max 9 files, each up to 1024 MB = 1 GiB (1,073,741,824 bytes); chunked with per-chunk checksum + whole-file SHA-256 on both sides. Pure transport — the peer's Downloads receives the files and the peer's agent is NOT told.".asJson
+      ),
+      "targetDir" -> Json.obj(
+        "type"        -> "string".asJson,
+        "description" -> "Device targets: a request the receiver decides on (only its own allow-listed directories; otherwise rejected with a structured code, nothing written); if the peer does not confirm support, the files land in its Downloads.".asJson
       )
     ),
     "required" -> List("to", "message").asJson
@@ -541,6 +618,13 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       case Some(t) =>
         parseToKind(t) match
           case Left(reason) => bad(reason)
+          // friendseal gate (2026-09-25): ONE fail-closed point ahead of every
+          // sealed arm (local / friend / group) — before any resolution, roster
+          // read, or send work. The DEVICE arm never matches this guard (the
+          // leg that stays). Parsing still runs first, so malformed input keeps
+          // its existing parse error even in the sealed posture.
+          case Right(kind @ (ToKind.Local | ToKind.Friend(_) | ToKind.Group(_))) if FriendsSeal.isSealed =>
+            bad(sealedTargetMessage(sealedKindLabel(kind)))
           case Right(ToKind.Local) => copyLocal(attachments, targetDir, overwrite)
           case Right(ToKind.Device(q)) =>
             message match

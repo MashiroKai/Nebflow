@@ -63,10 +63,15 @@ class AgentConvergenceSpec extends FunSuite:
       "Write",
       "Edit"
     )
+    // friendseal (2026-09-25): flag-aware expectation — the literal above stays
+    // UNTOUCHED; the sealed default strips ListFriends at the single delivery point
+    // (AgentCore.friendsSealedStrip), so the expected face removes the same entry
+    // only when the latch reads sealed on this snapshot. Never a bare number.
+    val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
     assertEquals(
       delivered,
-      expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue）"
+      expected -- sealStrip,
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue；friendseal 封存期按单点 strip 派生）"
     )
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含

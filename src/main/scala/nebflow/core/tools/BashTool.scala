@@ -16,7 +16,14 @@ object BashTool extends Tool:
   override val maxResultSizeChars: Int = 30_000
 
   val DEFAULT_TIMEOUT = 30_000L // 30s — fallback for synchronous remote-exec only
-  val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
+
+  /** bashautobg batch (2026-09-25 author order): the former "max timeout / kill
+    * line" is now the foreground auto-background threshold — a foreground command
+    * still running when this value (or an explicit, clamped `timeout`) is reached
+    * is adopted into the background registry, never killed by time. `def` (not
+    * `val`) so the spec prop compression of Defaults.BashMaxTimeoutMs takes
+    * effect at every call. */
+  def MAX_TIMEOUT: Long = Defaults.BashMaxTimeoutMs
 
   val name = "Bash"
 
@@ -24,7 +31,7 @@ object BashTool extends Tool:
 
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
-- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, the command runs in the foreground until it completes (or is killed by the stall guard: no output AND under ~1s of CPU per 30s window, sustained for 10 minutes). Foreground commands do NOT auto-move to background.
+- You may specify an optional timeout in milliseconds (max 3600000) as the foreground wait budget. When the budget — or 60min by default — is reached, the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). If not specified, the command runs in the foreground until it completes or is killed by the stall guard only (no output AND under ~1s of CPU per 30s window, sustained for 10 minutes).
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -38,7 +45,7 @@ Background execution (run_in_background):
 
 Service-type background jobs (persistent):
 - `persistent: true` (with run_in_background: true) declares a LONG-LIVED SERVER (dev server, watcher, daemon) instead of a finishable task.
-- Waiting-type (default): the system waits for it to complete and you are notified. Hard timeout 30min (4h in Project nodes) + stall guard apply.
+- Waiting-type (default): the system waits for it to complete and you are notified. No time limit — background jobs run to completion (the idle/stuck sensor only alerts; use cancel_background_job: true to kill).
 - persistent jobs are EXEMPT from the idle/hard-timeout/stall guards — a server that sits idle is healthy. They run until you cancel them (cancel_background_job: true) or the session ends. You own their lifecycle; the frontend indicator stays visible.
 
 Querying background jobs (background_job_id):
@@ -74,7 +81,7 @@ Git safety:
         "timeout" -> io.circe.Json
           .obj(
             "type" -> "number".asJson,
-            "description" -> "Optional timeout in milliseconds (max 3600000). If exceeded, the command is killed.".asJson
+            "description" -> "Optional foreground wait in milliseconds (max 3600000). When reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
           ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -470,12 +477,18 @@ Git safety:
                   val bgDescription = desc.getOrElse(firstLine)
                   // 等待型任务的完成回调需带闸记账信息（超时杀 → 节点 failed 注明）。
                   val gateOwned = !persistent && isNodeSession(ctx)
-                  // 交互④：node- 会话（Project 节点）等待型任务的硬超时延长档——
-                  // 30min 档会误杀 30min 后出现安静阶段的合法长任务（1.5h 全量测试
-                  // 实跑先例）；杀条件仍是停滞（B1/B2 不变），超时只是兜底上限。
-                  val hardTimeoutMs =
-                    if !persistent && isNodeSession(ctx) then Defaults.BgGateNodeHardTimeoutMs
-                    else ctx.bashConfig.hardTimeoutMs
+                  // bashautobg batch (2026-09-25 author order "backgrounded commands
+                  // have no limit"): waiting-type background jobs have NO time cap —
+                  // the old 30min tier (ctx.bashConfig.hardTimeoutMs) and the node
+                  // 4h tier (BgGateNodeHardTimeoutMs) are both retired from the
+                  // production face. Both the explicit run_in_background path (here)
+                  // and the auto-backgrounded path pass the NoHardTimeout sentinel,
+                  // making the B2 hard-timeout stall kill unreachable — full-class
+                  // exemption, one unified "background = no time limit" semantics.
+                  // B1 stays alert-only; persistent exemption, explicit cancel and
+                  // killSessionProcesses are unchanged. The finite-value parameters
+                  // remain on ShellSession for spec injection (mechanism testability).
+                  val hardTimeoutMs = Defaults.BashBackgroundNoHardTimeoutMs
                   for
                     jobId <- IO.randomUUID.map(_.toString.take(8))
                     onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
@@ -493,7 +506,10 @@ Git safety:
                       stuckWindowSec = ctx.bashConfig.stuckWindowSec,
                       healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
                       persistent = persistent,
-                      outputSink = Some((line: String) => outBuffer.append(line))
+                      outputSink = Some((line: String) => outBuffer.append(line)),
+                      // B1 只提醒腿的审计出口（killruling 批 #1+#14+#15）：经 ctx 身份解析
+                      // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
+                      onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
                     )
                     _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                   yield Right(
@@ -563,8 +579,19 @@ Git safety:
     ctx: ToolContext,
     tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
-    // 无显式 timeout → 不设命令级超时（前台直跑语义，365.days 近似无限）。
-    val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
+    // bashautobg batch (2026-09-25 author order "no hard cap; auto-background at
+    // 60min; backgrounded commands have no limit"): an explicit `timeout` is no
+    // longer a kill line — it and the default threshold (MAX_TIMEOUT) are the
+    // same thing: a foreground WAIT BUDGET. When the budget elapses and the
+    // command is still running, it is adopted into the session's background
+    // registry (adoptAsBackgroundJob) and the tool returns a background receipt
+    // immediately (same face as an explicit run_in_background); the process
+    // keeps running to completion and the completion notification rides the
+    // existing background callback chain (makeNotifyCallback). The process-level
+    // time kill is retired as a class (runProcess always gets 365.days now — it
+    // is never shortened). The only retained foreground kill is the no-progress
+    // ceiling (the stall watchdog — not a time limit, kept per behavior def 3).
+    val waitBudgetMs = explicitTimeoutMs.getOrElse(MAX_TIMEOUT)
     val health = new JobHealth()
     // #22 (2026-08-19): a running Bash is INVISIBLE — the completion log only
     // fires when it returns, so a long/hung command reads as "turn went
@@ -586,21 +613,98 @@ Git safety:
       // progress". 2026-09-10 换轴：该桥不再影响卡死判据（旧行为=进程 CPU
       // 微动持续刷新 agent 侧戳 → 2h50m 判据失明，事故根因）。
       bridgeFiber <- startActivityBridge(shell, health, command, ctx)
-      result <- shell
-        .execute(command, processTimeout, Some(health))
-        .attempt
-        .map {
-          case Right(pr) => formatResult(pr, desc, tailN)
-          case Left(e: TimeoutException) =>
-            Left(ToolError(s"[Command timed out after ${processTimeout.toMillis}ms]"))
-          case Left(e) =>
-            Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
-        }
-      _ <- bridgeFiber.cancel // 活动桥接只保命令生命周期；命令结束即停
+      // Foreground run with NO command-level time kill, raced against the wait
+      // budget. racePair (not race) so the losing fiber keeps running: on the
+      // budget side the execution fiber must survive for the adoption.
+      execFiber <- shell.execute(command, 365.days, Some(health)).attempt.start
+      // This CE3 version's racePair carries the winner's result as an Outcome.
+      raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
+      result <- raced match
+        case Left((winOutcome, budgetFiber)) =>
+          // Completed within the budget — plain foreground result.
+          budgetFiber.cancel *> unwrapOutcome(winOutcome).map(res => formatOutcome(res, desc, tailN))
+        case Right(_) =>
+          // Budget reached while still running — adopt into the background
+          // registry and return the receipt immediately (process keeps running).
+          autoBackground(shell, execFiber, health, command, desc, ctx, tailN, waitBudgetMs)
+      _ <- bridgeFiber.cancel // 活动桥接只保命令生命周期；命令返回（含转后台）即停
     yield result
     end for
 
   end executeForeground
+
+  /** Unwrap a started fiber's Outcome into its value (Cancelled/Error rethrown).
+    * join alone returns Outcome[IO, Throwable, A]; the foreground race and the
+    * adoption watcher both want the plain A. */
+  /** Unwrap a fiber's join Outcome into its value (Cancelled/Error rethrown). */
+  private def unwrapOutcome[A](oc: cats.effect.kernel.Outcome[IO, Throwable, A]): IO[A] =
+    oc match
+      case cats.effect.kernel.Outcome.Succeeded(fa) => fa
+      case cats.effect.kernel.Outcome.Errored(e)    => IO.raiseError[A](e)
+      case cats.effect.kernel.Outcome.Canceled() =>
+        IO.raiseError[A](new InterruptedException("foreground command fiber cancelled"))
+
+  private def joinResult[A](fiber: Fiber[IO, Throwable, A]): IO[A] =
+    fiber.join.flatMap(unwrapOutcome)
+
+  /** Render a foreground outcome: real result / stall-watchdog error / generic
+    * error. With the time kill retired (bashautobg batch), the only
+    * TimeoutException reaching here is the foreground no-progress ceiling. */
+  private def formatOutcome(
+    outcome: Either[Throwable, ProcessResult],
+    desc: Option[String],
+    tailN: Option[Int]
+  ): Either[ToolError, String] =
+    outcome match
+      case Right(pr) => formatResult(pr, desc, tailN)
+      case Left(e: TimeoutException) =>
+        Left(ToolError(s"[Command stalled] ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
+      case Left(e) =>
+        Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
+
+  /** bashautobg batch: adopt a still-running foreground execution as a background
+    * job and produce the receipt. Registry / indicator / completion-notify faces
+    * are fully aligned with an explicit run_in_background (BgTaskRegistry + WS
+    * indicator + BgTaskOutputStore + makeNotifyCallback); the only gap = no live
+    * tail lines (foreground-phase output lines were consumed by the read threads
+    * before the store existed — the running detail card shows 0 lines; the
+    * background_job_id query still returns the full output after completion). */
+  private def autoBackground(
+    shell: ShellSession,
+    execFiber: Fiber[IO, Throwable, Either[Throwable, ProcessResult]],
+    health: JobHealth,
+    command: String,
+    desc: Option[String],
+    ctx: ToolContext,
+    tailN: Option[Int],
+    waitedMs: Long
+  ): IO[Either[ToolError, String]] =
+    for
+      jobId <- IO.randomUUID.map(_.toString.take(8))
+      onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
+      firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+      bgDescription = desc.getOrElse(firstLine)
+      // Waiting-type (persistent is always false): node sessions carry the gate
+      // bookkeeping, same as the explicit background path.
+      gateOwned = isNodeSession(ctx)
+      onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
+      _ <- BgTaskOutputStore.open(jobId)
+      _ <- shell.adoptAsBackgroundJob(
+        jobId,
+        execFiber,
+        health,
+        command,
+        description = desc,
+        on_complete = onComplete,
+        on_heartbeat = onHeartbeat,
+        onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
+      )
+      _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent = false)
+    yield Right(
+      s"[Background job started] Job ID: $jobId\n" +
+        s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
+        "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn."
+    )
 
   /**
    * Activity bridge (#319): periodically checks the running process and, when
@@ -827,22 +931,28 @@ Git safety:
             store
           )
 
-      // 节点完成闸批：等待集内任务被超时/停滞看护杀掉（TimeoutException = B1
-      // idle 杀 / B2 硬超时+停滞杀的唯一类型）→ 终局记账。agent 仍会收到上面
-      // 的 failed 通知并反应，但节点终态必须「failed+注明」——禁止静默
-      // completed（NodeEngine 桥终态化前 drainFailures 检查）。persistent 不在
-      // 等待集、显式取消（InterruptedException）是 agent 自主决策，均不入账。
+      // 🔴 killruling 批（2026-09-23 作者裁定 #1+#14+#15「改造」）：本处的**台账写点
+      // 已摘除**——原「等待集内任务被看护杀（TimeoutException）→ `markFailed` 终局
+      // 记账 → 节点 failed+注明」链的**生产端取消**（消费端 `NodeEngine.drainFailures`
+      // 与 `bgFailureMessage` **原样保留** ⇒ 台账恒空 ⇒ 自然走放行支）。
+      // 判据本身**不删**：`TimeoutException` 仍是**读数**（B2 硬超时+停滞杀仍经
+      // `killWith` 产生它 ⇒ 本分支仍会被命中），故保留一处**只提醒**审计：
+      // 写 `bg-slow` 事件（与 #27 mount-stalled 同族：只写事件、不终态化）。
+      // 语义分工：① 事件 = 「任务被判为停滞」这一事实的读数；② 节点终态**不再**由此
+      // 改写（此前 = 必 failed，现 = 可正常 completed）。
+      // 🔴 调用点删 ≠ 函数删：`BgTaskRegistry.markFailed` 本体保留（测试面 `:460`
+      // 与 `BashPersistentBgTaskSpec` P5 直调；唯一生产点 = 本处，现读 `rg` 1 命中 ⇒ 0）。
+      // 🔴 persistent 不在等待集、显式取消（InterruptedException）是 agent 自主决策
+      // ⇒ 两者均不入账（口径不变）。
       val gateLedger = result match
         case Left(e: scala.concurrent.TimeoutException) if gateOwned =>
-          BgTaskRegistry
-            .markFailed(
-              jobId,
-              ctx.sessionId.getOrElse(""),
-              ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
-              description,
-              Option(e.getMessage).getOrElse("killed by background guard")
-            )
-            .handleErrorWith(e2 => logger.warn(s"bg-gate ledger markFailed failed for job $jobId: ${e2.getMessage}"))
+          auditBgSlow(
+            ctx,
+            jobId,
+            s"wait-set bg task guard-hit: job $jobId (session ${ctx.sessionId.getOrElse("")}) " +
+              s"ended with ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("").take(160)} — " +
+              "sensor only: no failure ledger, no node failure (killruling ruling #1+#14+#15)"
+          )
         case _ => IO.unit
 
       // Notify agent via ExternalEvent.
@@ -888,6 +998,34 @@ Git safety:
         ) *>
         notifyFrontend.void *> notifyAgent
     }
+
+  /** `bg-slow` 审计腿（killruling 批 2026-09-23，作者裁定 #1+#14+#15「只提醒」）：
+    * 把「后台任务被判停滞」这一事实写进项目事件流（nodeId = 节点 id，与 #27
+    * mount-stalled 同族：**只写事件、不终态化、不杀进程**）。
+    *
+    * 🔴 依赖方向：`core.tools` **不得**依赖 `core.project`（BashTool 经 `FlowMapEventLog`
+    * 在本模块内对项目面**零新增依赖**——`FlowMapEventLog` 是 project 包内的事件写入器，
+    * 而本模块已有的 layer 边界只禁 `core.project`→`core.tools` 的反向。为守住「不新增
+    * 跨层 import」，本腿经 `ToolContext` 已注入的**引擎侧身份**（`projectName` /
+    * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与 `NodeReportTool`
+    * 的 `ctx.projectName → ProjectRuntimeRegistry → workspace` 单点同款（判据不猜：
+    * 解析不到 ⇒ 静默 no-op，只留 `logger.warn`；猜错 = 把事件写进别人的日志更糟）。 */
+  private def auditBgSlow(ctx: ToolContext, jobId: String, summary: String): IO[Unit] =
+    val nodeId = ctx.flowNodeId.map(_.trim).filter(_.nonEmpty)
+    ctx.projectName.map(_.trim).filter(_.nonEmpty) match
+      case None => IO.unit
+      case Some(name) =>
+        nebflow.core.project.ProjectRuntimeRegistry.get(name).flatMap {
+          case None => IO.unit
+          case Some(rt) =>
+            nebflow.core.project.FlowMapEventLog.append(
+              rt.project.workspace,
+              rt.project.name,
+              nodeId.getOrElse(ctx.sessionId.getOrElse("")),
+              "bg-slow",
+              summary
+            ).handleErrorWith(e => logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}"))
+        }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(
