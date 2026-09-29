@@ -71,6 +71,14 @@ object NodeRunner:
      */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task
+      * id this session is attributed to -- a NodeEngine node spawn sets `node.taskId` (at
+      * creation time it lands in `NodeDef.taskId` from the engine-side `ctx.taskId`); a
+      * ProjectActor dispatcher spawn sets the task it was created to serve. Passed through
+      * the whole chain SessionContext → AgentCore → ToolContext.taskId, it is the source of
+      * `TaskInfo`'s zero-parameter attribution resolution and of the uplink refusal face.
+      * Default None = no attribution (zero change). */
+    taskId: Option[String] = None,
     /**
      * D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
      * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。

@@ -631,6 +631,8 @@ private[project] object NodeEngineContract:
       |Values by role: task = `finish` / `blocked`; verifier = `pass` / `fail` (verdict — evidence in `detail`) / `blocked`; a wrong value is rejected with your role's legal list.
       |Cannot finish (upstream not ready / brief incomplete / capability mismatch / missing external condition)? Never fabricate: `blocked`, category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other | blocked — then still write your wrap-up report; a normal result is no substitute.
       |Unreported ⇒ stays running, result undelivered, reminders only — never auto-failed. No tool ⇒ first line exactly `BLOCKED` + JSON {"category":"…","detail":"…","suggestion":"…"}.
+      |**Your last output is the deliverable** (the engine takes your last assistant text and hands it downstream): it must be your own completion report for this node — what you did, the result, where the artifacts are, what is still open. `node_report` is the terminal declaration, not that report: declare first, then write this one.
+      |**Keep it self-contained — no pointing**: downstream receives only this last text, none of your earlier messages, tool output or history. Never close with "see above" / "same as above" / "as mentioned above" — restate the conclusion, the artifact paths and the numbers in full.
       |TaskBoard work order ⇒ close = done, blocked = stuck.""".stripMargin
 
   /**

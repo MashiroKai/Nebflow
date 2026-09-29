@@ -347,6 +347,13 @@ object OutEdge:
   val RootDefaultOn: Set[String] = Set(Pass, Failed)
   val RootTarget = "Nebula"
 
+  /** Pre-W1 names for the same two declarations (`NebulaTarget` / `NebulaDefaultOn`,
+    * see the block comment above). Bound directly to the current declarations so the
+    * literal `"Nebula"` and the `{pass,failed}` gate set have exactly **one** source
+    * and cannot drift apart. */
+  val NebulaDefaultOn: Set[String] = RootDefaultOn
+  val NebulaTarget = RootTarget
+
   given Configuration = Configuration.default.withDefaults
   given Codec[OutEdge] = ConfiguredCodec.derived
 
@@ -355,6 +362,9 @@ object OutEdge:
    * 字面构造（测试/工具直建）用；与 fromLegacyString("Nebula") 同形。
    */
   def root: OutEdge = OutEdge(RootTarget, RootDefaultOn)
+
+  /** Pre-W1 name for [[root]] (`nebula`); same equivalent construction, one source. */
+  def nebula: OutEdge = root
 
   /**
    * 旧字符串单边解码（codec 双读与表面语法共用单点）："A"→OutEdge("A",{pass},result)；
@@ -1112,7 +1122,12 @@ object NodePayload:
     // （与 mergeQueue/mergeQueuePos 同款）——缺省 None ⇒ 既有调用方
     // （全部 WS 事件写点）字段集**字节级零漂移**；快照面
     // （NodeList 工具 / REST flow-map）传活动区节点表后按下述判据求值。
-    nodes: Option[Map[String, NodeDef]] = None
+    nodes: Option[Map[String, NodeDef]] = None,
+    // mergeverdictvis batch (2026-09-23): snapshot-only conditional key, the
+    // same discipline as mergeQueue/mergeQueuePos — appended at the end so
+    // existing positional callers stay untouched; default None keeps every
+    // existing caller (all WS event write sites) byte-level zero drift.
+    mergeVerdictGate: Option[MergeMutexPolicy.VerdictGate] = None
   ): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
@@ -1391,8 +1406,50 @@ object NodePayload:
     // 🔴 禁复刻判据（前端/分发器/第二处派生）：真源单点 = 本函数。
     val verifierRouteFields =
       nodes.filter(ns => verifierRouteInvalid(node, ns)).toList.map(_ => "verifierRoute" -> VerifierRouteLost.asJson)
+    // mergeVerdictGate conditional serialization (mergeverdictvis batch 2026-09-23):
+    // carried **only by a merge node whose upstream verifiers hold it at the verdict
+    // gate** (the caller injects [[NodeEngine.mergeVerdictGateBatch]]'s non-empty entries)
+    // — an unheld merge node and every non-merge node keep a **byte-level zero-drift**
+    // field set (same conditional-field discipline as mergeQueue/mergeQueuePos/merge/deps);
+    // 🔴 the judging authority is the engine single point (never re-derived by the
+    // frontend/dispatcher).
+    //
+    // Why it cannot be merged into the two existing keys (wording boundary, verbatim):
+    //   · it cannot go into `mergeQueue` — a verdict-held position produces no
+    //     `mergeQueue` slot at all (the admission narrowing in
+    //     [[NodeEngine.mergeQueueHolders]] drops such candidates before the slot batch
+    //     iterates them), so there is no slot to merge into;
+    //   · it must not go into `mergeQueuePos` — that key is the **queue order** ("which
+    //     place am I"), which deliberately does **not** apply the verdict admission
+    //     filter; putting the gate judgement there would break the frozen split of
+    //     duties and turn a place into a mixed "place + gate" quantity.
+    // Value shape (verbatim contract; the frontend reads it, never derives it):
+    //   blocked  = `true` (this key is only carried when held ⇒ the flag is explicit for
+    //              consumers that would otherwise read a missing holder list as "free")
+    //   heldBy[] = the upstream verifiers that block this position, each
+    //              {id, name, role, lastVerdict}; `lastVerdict` is verbatim, or the
+    //              literal "none" when the upstream declared none / an empty one (same
+    //              wording as the engine's verdict-gate hold message)
+    //   reason   = "verdict-not-pass" (frozen literal; see
+    //              [[MergeMutexPolicy.VerdictGateReason]])
+    // 🔴 This key is a **pure derived quantity**: it writes no NodeDef field and enters
+    //    neither flow-map.json nor the archive batch (same discipline as
+    //    mergeQueue/mergeQueuePos/wiringGap).
+    val mergeVerdictGateFields = mergeVerdictGate.filter(_.heldBy.nonEmpty).toList.map { g =>
+      val held = g.heldBy.map { h =>
+        Json.obj(
+          "id" -> h.id.asJson,
+          "name" -> h.name.asJson,
+          "role" -> h.role.asJson,
+          "lastVerdict" -> h.lastVerdict.asJson)
+      }
+      "mergeVerdictGate" -> Json.obj(
+        "blocked" -> true.asJson,
+        "heldBy" -> held.asJson,
+        "reason" -> MergeMutexPolicy.VerdictGateReason.asJson)
+    }
     Json.obj(
-      (baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields ++ verifierRouteFields)*
+      (baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields ++ mergeVerdictGateFields ++ verifierRouteFields)*
     )
 
   end buildNodeJson

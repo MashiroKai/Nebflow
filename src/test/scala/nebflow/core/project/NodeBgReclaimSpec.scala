@@ -362,7 +362,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
 
   // ── R2 wait-cap failed → 窗口登记 + bgWait 清零（⑤）+ 到点收殓 ──────────
 
-  test("R2 window: wait-cap failure registers the window, clears bgWait (⑤) and reclaims at expiry") {
+  test("R2 window: wait-cap SUSPENDS the node (stays Running), clears bgWait (⑤) and reclaims immediately (suspend leg)") {
     val ws = tempRoot / "ws-r2"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-r2-${scala.util.Random.nextInt(100000)}")
@@ -385,18 +385,16 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- createNode("bg-r2", ws, "cap-a", "result-CAP", res = res, system = system)
       nodeSid <- waitNodeIdle(res)
       _ <- waitUntil(10.seconds)(sessionTasksEmpty(nodeSid).map(!_))
-      _ <- waitUntil(20.seconds)(byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      // cap 出口 = 挂起腿即时收割：registry 排空（`reclaimSession` 注销 + 帧发送）
+      // ——这是「挂起已发生」的确定性读数（改判前该读数 = 收殓到点后的排空，时点不同）。
+      _ <- waitUntil(20.seconds)(sessionTasksEmpty(nodeSid))
       _ <- sampler.cancel
       sampleLog <- samples.get
-      _ <- IO(
-        println(
-          s"[R2 sample] hold-period bgWait observed=${sampleLog.contains("true")} " +
-            s"(true=${sampleLog.count(_ == "true")}/$sampleLog.size polls @20ms)"
-        )
-      )
+      _ <- IO(println(s"[R2 sample] hold-period bgWait observed=${sampleLog.contains("true")} " +
+        s"(true=${sampleLog.count(_ == "true")}/${sampleLog.size} polls @20ms)"))
+      _ <- IO.sleep(300.millis) // 给「假如仍有终态写/窗口登记」留观察窗口（护栏）
       done <- byName(rt, "cap-a")
-      _ <- rt.engine.sweepDestroyWindows()
-      _ <- waitUntil(10.seconds)(sessionTasksEmpty(nodeSid)) // 收殓跑完
+      _ <- rt.engine.sweepDestroyWindows() // 护栏：无窗口可扫（挂起腿不登记）
       tasksEmpty <- sessionTasksEmpty(nodeSid)
       afterSweep <- byName(rt, "cap-a")
       events <- readEvents(ws)
@@ -405,34 +403,33 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- BgTaskRegistry.reopenSession(nodeSid).attempt.void
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(done.status, NodeLifecycle.Failed, "wait cap must fail the node (never hang)")
-      assert(done.result.exists(_.contains("wait cap exceeded")), s"cap annotation expected: ${done.result}")
-      assert(
-        sampleLog.contains("true"),
-        s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})"
-      )
-      // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 bgWait 非空）
-      assertEquals(
-        afterSweep.bgWait,
-        None,
-        "the bg-wait-cap exit must clear bgWait (regression: field used to linger forever)"
-      )
-      assertEquals(afterSweep.destroyAt, None, "the sweep cleared the window registration")
-      assert(done.destroyAt.isDefined, "the failed terminal registered a destroy window")
-      assert(tasksEmpty, "pending bg task must be reclaimed once the destroy window expires")
-      assert(
-        events.exists(_.contains("\"node-destroy-scheduled\"")),
-        s"node-destroy-scheduled audit expected: ${events.mkString("|").take(400)}"
-      )
-      assert(
-        events.exists(_.contains("\"node-destroyed\"")),
-        s"node-destroyed audit expected: ${events.mkString("|").take(400)}"
-      )
-      assert(
-        hasCancelledFrame(frames, nodeSid),
-        s"WS cancelled backgroundTaskUpdate frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}"
-      )
-    end for
+      // 🔴 改后断言（原 11 条 ⇒ 改后 11 条；断言数不减——见上判据面 ①–⑤）
+      // 原「must fail the node」改：**不终态化**（挂起中；#17 的核心改判）
+      assertEquals(done.status, NodeLifecycle.Running,
+        "wait cap must SUSPEND the node (stays Running, never failed — killruling ruling #17)")
+      // 原 result 注明断言改：挂起腿不写 result（零终态写护栏）
+      assertEquals(done.result, None,
+        "the suspend exit must not write any result annotation (no terminal write)")
+      assert(sampleLog.contains("true"),
+        s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})")
+      // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 bgWait 非空）——保留：
+      // 挂起出口的 `setNodeBgWait(nodeId, Nil)` 仍最前执行（顺序零改动）
+      assertEquals(afterSweep.bgWait, None,
+        "the bg-wait-cap suspend exit must clear bgWait (regression: field used to linger forever)")
+      // 原窗口断言改：挂起 = 非终态 = **无窗口**（destroyAt 不得登记）
+      assertEquals(afterSweep.destroyAt, None, "the suspend leg registers NO destroy window (non-terminal)")
+      assertEquals(done.destroyAt, None, "no destroy window on the suspend exit (guard)")
+      assert(tasksEmpty, "pending bg task must be reclaimed immediately by the suspend leg")
+      // 阈值到点读数保留：`bg-wait-timeout` 事件（类型不变、文案改挂起措辞）
+      assert(events.exists(_.contains("\"bg-wait-timeout\"")),
+        s"bg-wait-timeout audit expected: ${events.mkString("|").take(400)}")
+      // 原 node-destroy-scheduled/destroyed 断言改：挂起出口**不得**出现（非终态无窗口）
+      assert(!events.exists(_.contains("\"node-destroy-scheduled\"")),
+        "no node-destroy-scheduled on the suspend exit (non-terminal, no window)")
+      assert(!events.exists(_.contains("\"node-destroyed\"")),
+        "no node-destroyed on the suspend exit (reclaim is immediate, not windowed)")
+      // 挂起腿即时收割：WS cancelled 帧（与 R1 窗口路径同构的收殉帧面）
+      assert(hasCancelledFrame(frames, nodeSid), s"WS cancelled backgroundTaskUpdate frame expected (immediate suspend-leg reclaim), got: ${frames.map(_.noSpaces.take(120)).mkString("|")}")
   }
 
   // ── R3 reclaimSession 直接收殓（组成：registry 清空 + WS 帧）──

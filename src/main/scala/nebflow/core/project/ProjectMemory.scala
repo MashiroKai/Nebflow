@@ -34,8 +34,8 @@ import nebflow.shared.{MemoryBudget, MemoryWriteGate, PathUtil}
  *     统计+整理指引（不注正文——超限文件的内容质量已不可信，全文注入是税）。
  *
  * Nebula 本人在场处理项目事务时**不自动注入**（全局上下文珍贵），按需
- * `Read <workspace>/.nebflow/memory.md` 单文件即可；写入口 = MemoryNote
- * `target=project:<name>`（预算闸与全局同纪律、常量独立）。
+ * `Read <workspace>/.nebflow/memory.md` 单文件即可；写入口 = Edit/Write 直写本文件
+ * （预算闸与全局同纪律、常量独立——govmemory 批起直写为唯一写法）。
  */
 object ProjectMemory:
 
@@ -94,11 +94,11 @@ object ProjectMemory:
           val bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong
           MemoryBudget.verdict("project", bytes) match
             case MemoryBudget.Within =>
-              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，MemoryNote target=project:$projectName 维护）
+              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，Edit/Write 直写维护）
                  |
                  |$content""".stripMargin
             case MemoryBudget.Warn(_, _, _) =>
-              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，MemoryNote target=project:$projectName 维护）
+              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，Edit/Write 直写维护）
                  |
                  |$content
                  |
@@ -109,7 +109,7 @@ object ProjectMemory:
                  |
                  |（file OVER the ${hard}-byte hard budget: $bytes bytes, $entries entries — full text NOT inlined this session. Largest sections:
                  |${MemoryBudget.topSections(content)}
-                 |Consolidate first via MemoryNote target=project:$projectName remove/replace_section.）"""
+                 |Consolidate first with an in-place shrink: delete stale `- ` entries or rewrite the largest `## ` section down (the append and the remove/update are paired in the same round).）"""
           end match
       end match
     }
