@@ -312,7 +312,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     )
   }
 
-  test("③ -2 单点收口：注入行唯一发射点仍在，11 处调用点零改，镜像腿挂在发射点内") {
+  test("③ -2 单点收口：注入行唯一发射点仍在，12 处调用点零改（含 idle 窗载体腿），镜像腿挂在发射点内") {
     assertEquals(
       "\"injected\" -> true.asJson".r.findAllMatchIn(agentActor).size,
       1,
@@ -332,14 +332,24 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // （recoverable-abort 注入 / tools-complete 注入 / external-event 气泡）
     // 随实现迁至 AgentProcessing.scala，聚合再扩该文件（合计仍 12 = 11 处
     // 调用 + 1 处 def，调用点文本逐字未动）。
+    // re-pin (w3-r4 rework, 2026-09-30): the idle window-carrier expansion leg
+    // (notifypack, 03724bd1d 2026-09-24) added a 12th CALL SITE inside the idle
+    // branch of AgentActor. That commit raised the tree-wide call-site count
+    // 11 -> 12. The pin below is therefore re-stated as settlement:
+    //   call sites = 12 (11 pinned by b32fbdee5 + 1 from the idle window leg),
+    //   plus 1 `def` = 13 occurrences tree-wide.
+    // The 12 constant was never re-synced after 03724bd1d (stale on every rev
+    // from that commit on, including pre-W1 main); the 2026-09-25 domain moves
+    // preserved the call sites verbatim and merely re-homed them across the
+    // five files below.
     assertEquals(
       "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentIdle).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentProcessing).size,
-      12,
-      "`emitInjectedUserEvent(` 命中数漂移（应为 11 处调用 + 1 处 def，跨 AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing 聚合）——本批禁改调用点"
+      13,
+      "`emitInjectedUserEvent(` occurrence-count drift (expected 12 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
     )
     val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)
