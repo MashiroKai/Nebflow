@@ -1307,13 +1307,6 @@ class WebSocketRoutes(
     Json.obj(fields.toList*)
   end wsBrowseEvent
 
-  /** picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
-    * `browsePath` frame builders. Body lives in the companion object (pure core,
-    * spec-callable — `deletePathsSafely` precedent), these are the seam the
-    * handler uses. */
-  private[gateway] def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
-    WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
-
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   /**
