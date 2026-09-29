@@ -46,6 +46,12 @@ class FriendMessageToolSpec extends CatsEffectSuite:
   override def beforeAll(): Unit =
     super.beforeAll()
     nebflow.core.FriendsSeal.testUnseal()
+    // Registration self-sufficiency (111.8): the resolve/send examples below go through
+    // FriendRosterPort / SendConfirmPort, installed only on the production boot path
+    // (NeblinkWiring.scala:31 / SharedResources.scala:391) and fail CLOSED when absent.
+    // Install the real faces here so this suite does not depend on another suite's
+    // side effect (test-order coupling).
+    RosterFaceSpecKit.install()
 
   override def afterAll(): Unit =
     try super.afterAll()
