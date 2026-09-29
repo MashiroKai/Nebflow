@@ -31,8 +31,8 @@ import scala.concurrent.duration.*
  * - G4 超时/停滞杀 → failed 注明：等待集内任务被看护杀（registry 终局记账）
  *   → 节点 Failed（非 Cancelled——杀因原文措辞净化）+ result 含杀因与 agent
  *   消化失败通知后的最终输出
- * - G5 等待总上限兜底：等待期超 bgWaitCapMs → Failed + 注明（后台任务不能
- *   卡死节点）
+ * - G5 等待总上限兜底 → **转挂起**（killruling 批裁定 #17）：等待期超 bgWaitCapMs →
+ *   节点**保持 Running**（挂起中，不再 failed）+ `bg-wait-timeout` 事件
  * - G6 下游 out 交互：节点（out 指向下游节点）先等后台（bg-wait 留痕）再
  *   finalize completed——bg 等待先于终态投递发生
  * - G7 卡死防护：等待期 agent=Idle，TaskStuckWatcher 不命中（Idle 永不判
@@ -527,7 +527,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
 
   // ── G5 等待总上限兜底：后台任务不能卡死节点 ──────────────────
 
-  test("G5: wait cap (small injected) finalizes node as FAILED with annotation while task pending") {
+  test("G5: wait cap (small injected) SUSPENDS the node — stays Running, never failed") {
     val ws = tempRoot / "ws-g5"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-g5-${scala.util.Random.nextInt(100000)}")
@@ -540,18 +540,23 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- createNode("bg-g5", ws, "cap-a", "result-CAP", res = res, system = system)
       _ <- waitIdle(res)
       jobs <- awaitJobs(llm)
-      // 任务一直不完成 → 1.2s 兜底 → failed
-      _ <- waitUntil(20.seconds)(byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      // 任务一直不完成 → 1.2s 兜底 → **转挂起**（节点保持 Running）
+      // 判据 = `bg-wait-timeout` 事件出现（阈值到点的确定性读数）——不再等终态
+      //（改判后本路径**不产生终态**，等 Terminal 会永久挂）。
+      _ <- waitUntil(20.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait-timeout\""))))
+      _ <- IO.sleep(500.millis) // 给「假如仍有终态写」留观察窗口（护栏）
       done <- byName(rt, "cap-a")
       events <- readEvents(ws)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(done.status, NodeLifecycle.Failed, "wait cap must fail the node (never hang)")
-      assert(done.result.exists(_.contains("wait cap exceeded")), s"cap annotation expected: ${done.result}")
+      // 🔴 改后断言（原 2 条 :502-503 ⇒ 改后仍 2 条 + 保留 :504/:505 两条 = 4 条，断言数不减）
+      assertEquals(done.status, NodeLifecycle.Running,
+        "wait cap must SUSPEND the node (kept Running) — never finalize it failed (killruling ruling #17)")
+      assert(done.result.forall(!_.contains("wait cap exceeded")),
+        s"no failed cap annotation may be written any more: ${done.result}")
       assert(events.exists(_.contains("\"bg-wait\"")), "bg-wait audit expected")
       assert(events.exists(_.contains("\"bg-wait-timeout\"")), "bg-wait-timeout audit expected")
-    end for
   }
 
   // ── G6 下游 out 交互：bg 等待先于终态投递 ──────────────────────
