@@ -525,7 +525,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── G5 等待总上限兜底：后台任务不能卡死节点 ──────────────────
+  // ── G5 等待总上限 → **转挂起**（killruling 批裁定 #17）────────────────────
 
   test("G5: wait cap (small injected) SUSPENDS the node — stays Running, never failed") {
     val ws = tempRoot / "ws-g5"
