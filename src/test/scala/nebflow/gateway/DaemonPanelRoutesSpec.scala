@@ -82,7 +82,7 @@ class DaemonPanelRoutesSpec extends FunSuite:
       // PRODUCTION MOUNT FORM (GatewayMain: `Router("/api" -> routes.routes <+>
       // presenceWsRoutes(wsb))`). The daemon arms live in the presenceWsRoutes
       // block, so calling `inner.routes` alone falls through spuriously
-      // (PanelSchemeRoutesSpec / DeviceFaceHardeningRoutesSpec same finding).
+      // (DeviceFaceHardeningRoutesSpec / ModelChainRoutesSpec same finding).
       // The placeholder builder is only closed over — these arms never touch WS.
       val wsb = null.asInstanceOf[WebSocketBuilder2[IO]]
       f(inner.routes <+> inner.presenceWsRoutes(wsb))

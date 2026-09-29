@@ -47,8 +47,101 @@ private[gateway] object WsTasksWorkspaceHandlers:
     "getTaskList" -> handleGetTaskList,
     "completeTask" -> handleCompleteTask,
     "listWorkspaceItems" -> handleListWorkspaceItems,
-    "deleteWorkspaceItem" -> handleDeleteWorkspaceItem
+    "deleteWorkspaceItem" -> handleDeleteWorkspaceItem,
+    "projectCreate" -> handleProjectCreate
   )
+
+  /**
+   * `projectCreate` — the direct frontend creation face of the projects panel
+   * (projcreate-redesign `372b54d54`, main-side): the panel's create dialog
+   * sends the workspace returned by the picker chain above, and this leg turns
+   * it into a project through the ONE creation core
+   * ([[nebflow.core.project.ProjectCreateService]]) the agent/tool face also
+   * uses, so occupancy gates, idempotent re-mount and the per-file scaffold
+   * report cannot drift between the two faces.
+   *
+   * IDENTITY IS VERIFIED, NEVER FABRICATED (freshinstall-rootsessionid ruling):
+   * the frame's `sessionId` is only accepted after the server-side session index
+   * confirms it exists, and the delivery root then comes from the server-side
+   * agent registry via `resolveRootSessionId` — never from a frame field, never
+   * a placeholder.
+   */
+  private def handleProjectCreate(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val hc = json.hcursor
+    val pcSessionId = hc.downField("sessionId").as[String].getOrElse("")
+    val pcWorkspaceRaw = hc.downField("workspace").as[String].getOrElse("").trim
+    val pcName = hc.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    val pcDesc = hc.downField("description").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    val pcWs = PathUtil.expandTilde(pcWorkspaceRaw)
+    if pcSessionId.nonEmpty && pcWs.nonEmpty then
+      (for
+        // Fail-closed identity check (the session must really exist).
+        metaOpt <- sharedResources.sessionStore.getSessionMeta(pcSessionId)
+        _ <- IO.raiseUnless(metaOpt.isDefined)(
+          new RuntimeException(
+            s"unknown session '$pcSessionId' — refusing to attribute the project's delivery root"
+          )
+        )
+        // Absolute-path check mirrors the tool face / the panel answer parser
+        // (PathUtil.isAbsolute: POSIX, Windows drive, UNC). A project workspace
+        // is by design unrestricted in location — the frontend picker hands
+        // back an absolute directory — so the only shape rejected here is
+        // "not an absolute path".
+        _ <- IO.raiseUnless(PathUtil.isAbsolute(pcWs))(
+          new RuntimeException(s"workspace must be an absolute path (got '$pcWorkspaceRaw')")
+        )
+        root <- resolveRootSessionId(pcSessionId)
+        outcome <- nebflow.core.project.ProjectCreateService.create(
+          pcName,
+          pcWs,
+          pcDesc,
+          nebflow.core.project.ProjectCreateService.CreateIdentity(
+            actorSystem = Some(sharedResources.actorSystem),
+            sharedResources = Some(sharedResources),
+            // The server-resolved root, not the raw frame field: the same
+            // upline-root semantics the tool face has.
+            rootSessionId = Some(root),
+            sessionId = Some(pcSessionId),
+            wsSend = Some(projectCreateBroadcast)
+          )
+        )
+        _ <- outcome match
+          case Right(msg) =>
+            wsSend(io.circe.Json.obj(
+              "type" -> "projectCreateResult".asJson,
+              "ok" -> true.asJson,
+              "message" -> msg.asJson
+            ))
+          case Left(err) =>
+            wsSend(io.circe.Json.obj(
+              "type" -> "projectCreateResult".asJson,
+              "ok" -> false.asJson,
+              "error" -> err.message.asJson
+            ))
+      yield ())
+        .handleErrorWith { e =>
+          logger.warn(s"projectCreate failed: ${e.getMessage}")
+          wsSend(io.circe.Json.obj(
+            "type" -> "projectCreateResult".asJson,
+            "ok" -> false.asJson,
+            "error" -> e.getMessage.asJson
+          ))
+        }
+    else
+      logger.warn(
+        "projectCreate: dropped frame missing sessionId or workspace " +
+          s"(sessionId=${if pcSessionId.nonEmpty then "present" else "absent"}, " +
+          s"workspace=${if pcWorkspaceRaw.nonEmpty then "present" else "absent"})"
+      ) *> IO.unit
+    end if
+  end handleProjectCreate
 
   private def handlePickWorkspaceDir(
     ctx: WsDispatchCtx,
