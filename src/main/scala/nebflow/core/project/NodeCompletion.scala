@@ -825,6 +825,13 @@ private[project] trait NodeCompletion:
    *      [[checkBarriersNow]] 的去重口径）。
    *   ⑤ **R1 回流分发器**：`notifyTerminal(_, Cancelled)`（不查 notifyDispatcher flag，
    *      与 failed 完全对称；账务与通知文本见 DispatchNotify）。
+   *   ⑥ **descriptionLong spill file leaves with the node** (desc300 batch 2026-09-30): as soon
+   *      as the node leaves the active map, delete
+   *      `<workspace>/.nebflow/results/descriptionLong-<nodeId>.md` (one file per node, never
+   *      accumulating). **best-effort**: a delete failure must NOT fail the cancel — it is only
+   *      recorded (audit event + WARN); NodeCancel is the dispatcher's stop-loss tool, so losing
+   *      a stop-loss to a stale file would be worse. No file (nothing was ever truncated) =>
+   *      zero event, zero log: the cancel path of an ordinary node is byte-identical to before.
    *
    * 幂等：detach 幂等（out 已无节点目标即零写）、notify 由 notifySentAt 去重、
    * barrier 告警由即时/回扫共享单发记账去重——重复调用不产生重复副作用。
@@ -898,6 +905,31 @@ private[project] trait NodeCompletion:
         case None =>
           logger.warn(s"Node '$nodeId' vanished before cancel finalize — skipped")
       _ <- checkBarriersNow(nodeId, cause = "cancelled") // R3 即时告警
+      // desc300 batch (2026-09-30): the node leaves the map (or is on its way out), so its
+      // descriptionLong spill file goes with it. BEST-EFFORT by contract: a delete failure
+      // must NEVER fail the cancel — the reading is recorded (audit event + WARN), never
+      // raised (NodeCancel is the dispatcher's stop-loss tool; losing a stop-loss to a stale
+      // file would be worse). The usual case (no truncation ever happened => no file) stays
+      // completely silent: zero event, zero log, so the cancel path of an ordinary node is
+      // byte-identical to before this batch.
+      spillReading <- IO.blocking(FlowMapStore.deleteDescriptionLongSpill(workspace, nodeId)).attempt.map {
+        case Right(Right(true)) => Some("deleted")
+        case Right(Right(false)) => None
+        case Right(Left(err)) => Some(s"NOT deleted ($err)")
+        case Left(e) => Some(s"NOT deleted (${Option(e.getMessage).getOrElse(e.toString)})")
+      }
+      _ <- spillReading.fold(IO.unit) { reading =>
+        (if reading.startsWith("NOT deleted") then
+           logger.warn(s"Node $nodeId descriptionLong spill file $reading on cancel — best-effort, cancel unaffected")
+         else IO.unit) *>
+          FlowMapEventLog.append(
+            workspace,
+            projectName,
+            nodeId,
+            "descriptionLong-spill-cleanup",
+            s"descriptionLong spill file on cancel: $reading (best-effort; cancel unaffected)"
+          )
+      }
       _ <-
         // R1 回流（notify=true）；L3 路径（notify=false）改以占位推迟——见方法头注
         // 「notify = false」段（中间态不是终局，终局腿负责真实回流）。
