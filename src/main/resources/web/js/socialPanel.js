@@ -55,7 +55,7 @@
 //     — the "recreate" leg).
 //   · created: live-app block (contract C1 — which app the running bridge is
 //     actually holding, live fingerprint verdict), chat→session bindings +
-//     default-session selector (contracts C3/C4), archive (contract C5).
+//     default session (contracts C3/C4), archive (contract C5).
 //     The enable switch is folded into archive on this card: enabled=false IS
 //     the archive, so no separate disabled face exists.
 //   · C1/C3/C4 data comes from the backend contract; an older backend answers
@@ -63,6 +63,14 @@
 //     (never an error, never a blank panel). The live-app line has NO fallback
 //     to the stored app_id — that fallback is exactly the green-pill gap
 //     (registered ≠ registered to THIS app) the diagnosis report pinned.
+//
+// social-feishu-fixed batch (author ruling 2026-09-30): the archive control is
+// renamed to "unbind" (copy only — identifiers, attributes and the endpoint are
+// untouched; the credential-keeping semantics do not change), and the default
+// session is FIXED to the Nebula session: the control renders as a single
+// selected+disabled option (no picker, no "not set" exit), and boot converges a
+// backend still holding another value onto the Nebula id via the existing write
+// path ([[pinDefaultSessions]]). Zero backend change rides along.
 //
 // social-fix batch (author ruling 2026-09-28, three changes over the landed
 // panel): ① ONE view layer — the QR sub-dialog is retired, the scan block
@@ -126,8 +134,22 @@ let bindingsByChannel = {};
  *  @type {Record<string, {available: boolean, sessionId: string|null, sessionName: string}>} */
 let defaultSessionByChannel = {};
 /** Session list for the default-session selector (existing GET /api/sessions).
- *  @type {{available: boolean, items: Array<{id: string, name: string}>}|null} */
+ *  `agentName` is retained next to id+name (author ruling 2026-09-30): the
+ *  default-session control is pinned to the Nebula session, so the pane has to
+ *  be able to tell that session apart. The payload omits the field when it
+ *  equals the root identity's name, hence the '' fallback on read.
+ *  @type {{available: boolean, items: Array<{id: string, name: string, agentName: string}>}|null} */
 let sessionsCache = null;
+
+/** The root agent's identity name — the frontend mirror of the backend's single
+ *  source `RootAgentIdentity.Name` (src/main/scala/nebflow/actor/
+ *  RootAgentIdentity.scala). A session IS the Nebula session when its
+ *  `agentName` is absent or equals this name: the backend reads an absent
+ *  agentName as the root identity (SessionStore.listSessionsByAgent,
+ *  WebSocketRoutes.isRootIdentitySession). New chats are pinned to it (author
+ *  ruling 2026-09-30) — the control offers no other choice.
+ *  @type {string} */
+const ROOT_AGENT_NAME = 'Nebula';
 
 // ── Backend adapter (same token pattern as plugins.js / agentManager.js) ──
 /**
@@ -323,11 +345,27 @@ async function fetchSessions() {
       items: raw.map((s) => ({
         id: firstString(s && s.id, s && s.sessionId),
         name: firstString(s && s.name, s && s.displayName, s && s.title),
+        // Retained for the pinned default-session control (author ruling
+        // 2026-09-30): '' = absent on the wire = the root identity's session.
+        agentName: firstString(s && s.agentName),
       })).filter((s) => s.id),
     };
   } catch {
     sessionsCache = { available: false, items: [] };
   }
+}
+
+/**
+ * The Nebula session out of the cached session list: a session whose
+ * `agentName` is absent (omitted by the encoder when it equals the root name)
+ * or names the root identity. Where several qualify, the payload's own order
+ * decides — /api/sessions already sorts by recency, so this stays deterministic
+ * and never picks a non-root session by name coincidence.
+ * @returns {{id: string, name: string, agentName: string}|null}
+ */
+function nebulaSession() {
+  if (!sessionsCache || !sessionsCache.available) return null;
+  return sessionsCache.items.find((s) => !s.agentName || s.agentName === ROOT_AGENT_NAME) || null;
 }
 
 // ── Selection helpers ────────────────────────────────────────────────────
@@ -586,12 +624,20 @@ function liveBlockHTML(ch) {
 }
 
 /**
- * Chat→session bindings + the default-session selector (C3/C4). Everything
+ * Chat→session bindings + the default-session control (C3/C4). Everything
  * degrades: an endpoint absent on this backend renders an explicit
  * "unavailable" line; a present-but-empty list renders the readable empty
- * state. The selector only renders when both the C4 face and the session
- * list are available; the persisted-but-unknown session id still shows as
- * its own option so the selector never lies about what is set.
+ * state.
+ *
+ * Default session is FIXED to the Nebula session (author ruling 2026-09-30:
+ * 「不要可选择会话，就只能绑定到 nebula」— one choice, no picker). The control
+ * renders as a single selected+disabled option, so the bounced chat frames land
+ * in the Nebula session and are answered back on the same route without the
+ * user making a choice. The `data-default-session` attribute is deliberately
+ * NOT reused (it is now `data-default-session-fixed`): the old name was the
+ * change listener's hook, and a disabled control must never be able to PUT.
+ * Degradation (no Nebula session in the list): the readable "unavailable" line
+ * — never a picker, never a guessed session id.
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
  * @returns {string}
  */
@@ -612,19 +658,16 @@ function bindingsHTML(ch) {
       ? lines.join('')
       : `<div class="social-binding-empty">${escapeHtml(t('social.feishu.bindings.empty'))}</div>`);
   const d = defaultSessionByChannel[ch.id] || { available: false, sessionId: null, sessionName: '' };
+  const neb = nebulaSession();
+  // The control is fixed to Nebula. Its label reads the session's own name when
+  // the backend supplied one, else the root identity's name (zero new copy: the
+  // static label social.feishu.defaultSession.label is reused below).
+  const nebLabel = neb ? (neb.name || ROOT_AGENT_NAME) : '';
   let selector;
-  if (d.available && sessionsCache && sessionsCache.available) {
-    const known = sessionsCache.items.some((s) => s.id === d.sessionId);
-    const current = d.sessionId
-      ? [`<option value="${escapeHtml(d.sessionId)}" selected>${escapeHtml(d.sessionName || d.sessionId)}</option>`]
-      : [];
-    const opts = (known ? [] : current)
-      .concat([`<option value=""${d.sessionId ? '' : ' selected'}>${escapeHtml(t('social.feishu.defaultSession.none'))}</option>`])
-      .concat(sessionsCache.items.map((s) => `<option value="${escapeHtml(s.id)}"${s.id === d.sessionId ? ' selected' : ''}>${escapeHtml(s.name || s.id)}</option>`))
-      .join('');
+  if (d.available && neb) {
     selector = `<label class="social-field social-default-session" for="social-feishu-default-session">
         <span class="social-field-label">${escapeHtml(t('social.feishu.defaultSession.label'))}</span>
-        <select id="social-feishu-default-session" class="social-input" data-default-session="${escapeHtml(ch.id)}">${opts}</select>
+        <select id="social-feishu-default-session" class="social-input" data-default-session-fixed="${escapeHtml(ch.id)}" disabled><option value="${escapeHtml(neb.id)}" selected>${escapeHtml(nebLabel)}</option></select>
       </label>`;
   } else {
     selector = `<div class="social-binding-empty">${escapeHtml(t('social.feishu.defaultSession.unavailable'))}</div>`;
@@ -789,6 +832,9 @@ async function loadAll() {
   renderAll();
   setBusy(false);
   maybeBeginScan();
+  // AFTER the render: the write-back's "saved" feedback lands in the live
+  // render, and the card already shows the pinned Nebula option.
+  await pinDefaultSessions();
 }
 
 /**
@@ -938,8 +984,17 @@ async function archiveChannel(channelId) {
 
 // ── Default session (contract C4) ────────────────────────────────────────
 /**
- * PUT the default session ('' clears it → null). Failure rolls the select
- * back to the last backend truth and says so — the selector never lies.
+ * PUT the default session ('' clears it → null). Failure restores the last
+ * backend truth and says so — the face never lies about what is set.
+ *
+ * Called from two places: the automatic write-back after boot (the backend
+ * still holding a non-Nebula value is converged onto the Nebula session) and
+ * the change listener. Since author ruling 2026-09-30 the rendered control is
+ * the pinned, disabled single option — there is no picker to roll back, so the
+ * `[data-default-session]` lookup below no longer resolves and the failure path
+ * only reports itself. The lookup is kept as the seam a real picker would use
+ * (it must NOT be re-pointed at the pinned control: rolling a fixed value back
+ * to a stale one would render a value the backend never accepted).
  * @param {string} channelId
  * @param {string} sessionId
  * @returns {Promise<void>}
@@ -972,6 +1027,26 @@ async function saveDefaultSession(channelId, sessionId) {
     };
     if (select instanceof HTMLSelectElement) select.value = prev.sessionId || '';
     setSaveState(channelId, t('social.feishu.defaultSession.saveFailed', { code: 'io' }));
+  }
+}
+
+/**
+ * Converge the backend on the pin (author ruling 2026-09-30): every scanBind
+ * channel whose stored default session is not the Nebula session gets a PUT to
+ * the Nebula id through the EXISTING write path. Idempotent by construction —
+ * once converged the condition is false and no request is made, so repeated
+ * boots do not re-write. Each channel is independent: a backend that has no
+ * Nebula session (or no session list at all) is left exactly as it is, and a
+ * failure already reports itself in the card (saveDefaultSession).
+ */
+async function pinDefaultSessions() {
+  const neb = nebulaSession();
+  if (!neb) return; // no Nebula session ⇒ degrade silently, never guess an id
+  for (const ch of SOCIAL_CHANNELS) {
+    if (!ch.scanBind) continue;
+    const d = defaultSessionByChannel[ch.id];
+    if (!d || !d.available || d.sessionId === neb.id) continue;
+    await saveDefaultSession(ch.id, neb.id);
   }
 }
 
@@ -1246,7 +1321,12 @@ function onInput(ev) {
   if (el.dataset.secret === '1') draftValues[`${id}.${el.dataset.field}`] = el.value;
 }
 
-/** Select changes (the default-session picker; text inputs go through onInput). */
+/** Select changes. There is no user-choosable select left on this face (the
+ *  default session is pinned to Nebula and disabled), and the pinned control
+ *  carries `data-default-session-fixed` — deliberately NOT the old
+ *  `data-default-session`, which was this listener's hook. Keeping the listener
+ *  has no effect on the fixed control, and it stays the seam any future
+ *  genuine picker would use. */
 function onChange(ev) {
   const el = /** @type {HTMLSelectElement|null} */ (ev.target instanceof HTMLSelectElement ? ev.target : null);
   if (!el || !el.hasAttribute('data-default-session')) return;
