@@ -30,6 +30,17 @@ import nebflow.core.tools.{FriendMessageTool, ToolContext}
  */
 class FriendAttachGateSpec extends FunSuite:
 
+  // Registration self-sufficiency (111.8): the A-5 1b tool-face example goes through
+  // FriendMessageTool -> FriendRosterPort / SendConfirmPort. Both registrars are
+  // installed only on the production boot path (NeblinkWiring.scala:31 /
+  // SharedResources.scala:391) and fail CLOSED when absent, so a narrow or regrouped
+  // batch went red here purely because no earlier spec had constructed
+  // SharedResources. Install the real faces in this suite's own fixture instead of
+  // depending on another suite's side effect.
+  override def beforeAll(): Unit =
+    super.beforeAll()
+    RosterFaceSpecKit.install()
+
   // ===== 夹具：本机回环桩 =====
 
   private val FixtureBody = "friendattach-4b\n" // 16 B；sha256 由 shasum 独立算得
