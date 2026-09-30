@@ -254,7 +254,12 @@ final class FeishuBridgePlugin(
           creds match
             case None => IO(logger.warn(s"feishu bridge: reply for chat $chatId dropped — no credential resolved"))
             case Some(c) =>
-              send(c.appId, c.appSecret, region, chatId, text).flatMap { res =>
+              // Channel-adapter-side text conversion (socoutbound batch, author
+              // ruling #299): the OUTBOUND copy is de-marked-up so Feishu shows
+              // no bare markdown syntax and keeps links alive as bare URLs. The
+              // in-session original above is never rewritten — only this copy is.
+              val outbound = nebflow.social.outbound.OutboundText.toPlain(text)
+              send(c.appId, c.appSecret, region, chatId, outbound).flatMap { res =>
                 if res.ok then
                   IO(logger.info(s"feishu bridge: reply delivered to chat $chatId (${res.messageId.getOrElse("-")})"))
                 else
