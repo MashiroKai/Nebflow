@@ -418,6 +418,33 @@ object FlowMapEventLog:
     append(workspace, project, view.owner, EdgeChangedType, edgeChangedSummary(view))
 
   /**
+   * **重激活触发源判定单点**（缺陷③批 2026-10-01 · 案 A 写点 10，纯函数、零 IO）。
+   *
+   * 此前 `reactivated` 的 `source=` 是**硬编码 `human`**（`NodeEditTool`），于是「谁把
+   * 这个终态节点放回重跑」在审计面恒不可区分——节点会话、分发器会话与真人工三个来源
+   * 同形。本函数按调用方身份三面判定（优先级自上而下）：
+   *
+   *   - `isDispatcher` ⇒ `dispatcher`（分发器会话）；
+   *   - `flowNodeId` 非空 ⇒ `node`（**project 节点会话**）；
+   *   - `sessionId` 非空 ⇒ `machine`（其余具名会话：宿主/REST 直调等）；
+   *   - **零身份面**（三者皆空）⇒ `human`——**回落语义，不是「未知」**（既有调用方
+   *     多为人工/工具直调，保守归到 human 与旧口径一致）。
+   */
+  def reactivateSource(isDispatcher: Boolean, flowNodeId: Option[String], sessionId: Option[String]): String =
+    if isDispatcher then "dispatcher"
+    else if flowNodeId.exists(_.trim.nonEmpty) then "node"
+    else if sessionId.exists(_.trim.nonEmpty) then "machine"
+    else "human"
+
+  /**
+   * `actor=` 尾段（会话 id；🔴 **键非空才发**——缺身份面时返回空串，禁发空值键，与
+   * `chainMembershipChangedSummary` 的「不变则 Nil」同款「不写无信息键」纪律）。
+   * 值经 [[noWs]]（行内不得含空白，与 [[edgeChangedSummary]] 同源纪律）。
+   */
+  def reactivateActorSuffix(sessionId: Option[String]): String =
+    sessionId.map(noWs).filter(_.nonEmpty).map(id => s" actor=$id").getOrElse("")
+
+  /**
    * `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿
    * [[dispatcherWakeSummary]] 的 [[noWs]] 纪律，reason 全文进通知文本/节点 result）。
    */

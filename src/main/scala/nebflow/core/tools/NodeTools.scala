@@ -643,6 +643,34 @@ object NodeTools:
     outViews ++ inViews
 
   /**
+   * **编辑期拒绝面留痕**（缺陷③批 2026-10-01 · 案 A 写点 12/13，IO 包装 = 唯一 IO 点）。
+   *
+   * 形态 12（`ensureMergePassOnly` / `ensureTargetNotRunning` / `verdictRouteGate` 及
+   * create 侧同族）的编辑期硬拒此前**零事件**——「谁被谁拒、按哪个码」在审计面查无。
+   * 本函数落一笔 `edge-changed` + `reason=refused`（🔴 不新造平行类型），payload =
+   * `owner=<被编辑节点> kind=<被拒门类> reason=refused detail=<既有错误码>`；
+   * `from`/`to` 恒 `-`（拒绝面不写边）。
+   *
+   * 🔴 幂等 / 零副作用：本函数**不写任何状态**（拒本身已保证零残留），只追加一行审计。
+   */
+  def emitRefused(rt: ProjectRuntime, owner: String, gateKind: String, errorCode: String): IO[Unit] =
+    FlowMapEventLog.appendEdgeChange(
+      rt.project.workspace,
+      rt.project.name,
+      FlowMapEventLog.refusedView(owner, gateKind, errorCode)
+    )
+
+  /**
+   * `NODE_MERGE_PASS_ONLY` 等既有错误码抽取（错误文本 → 码）的单点：门函数返回的是
+   * **完整文案**（含空白，禁进 payload），本函数从中取出行尾括号里的**错误码常量**
+   * （`(CODE)` 形态，沿本文件既有约定）。无括号码 ⇒ 回落门类名（可行动性优先于精确性：
+   * 宁可记一个明确的门类名，也不记一坨含空白文案）。
+   */
+  def errorCodeOf(message: String, fallback: String): String =
+    val re = raw"\(([A-Z][A-Z0-9_]{3,})\)".r
+    re.findFirstMatchIn(message).map(_.group(1)).getOrElse(fallback)
+
+  /**
    * P1 校验层①（spec §2.2，wf3 §3.7 护栏）：指向 merge 节点的 on-failed 边 → 硬拒
    * （NODE_MERGE_PASS_ONLY）。merge 触发语义 = 全部上游 completed（in-barrier）；
    * 上游 failed 由 D5+MergeNodePolicy 转 blocked 可见终态——failed 门控入边与该语义
