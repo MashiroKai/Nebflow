@@ -734,7 +734,7 @@ object GatewayMain extends IOApp:
                                   val hostWakeSensor: IO[Unit] = nebflow.core.project.WakeSensor.launch
                                   // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                   // 在 startupMount 前就绪默认最小集（project-dispatcher /
-                                  // general / memory-consolidator agents + 4 系统插件 +
+                                  // general agents + 4 系统插件 +
                                   // projects/general）——通用项目需于挂载前存在，干净 home
                                   // 启动即自动挂载、Mail(address="project:general") 直达分发器
                                   // （作者 2026-09-17 裁定①：撤销 09-16「移除内置 general

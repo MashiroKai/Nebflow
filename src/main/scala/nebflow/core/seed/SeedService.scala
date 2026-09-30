@@ -55,8 +55,8 @@ import scala.jdk.CollectionConverters.*
  *  2. else（fresh home）：marker 缺失 → 完整冷启动播种；marker.version < seedVersion
  *     → 升级 add-only 补种（每条 `!os.exists` 守卫，只补缺失文件）；>= → no-op。
  *  3. 最后（所有分支、不受守卫/marker 门控）：插件一致性 reconcile（见下）
- *     + agents 一致性 reconcile（缺失自愈）+ 项目一致性 reconcile（缺失补建）
- *     + 记忆消费链启动校验（消费链缺失 ⇒ 响亮 WARN）。
+ *     + agents 一致性 reconcile（缺失自愈）+ 项目一致性 reconcile（缺失补建）。
+ *     （记忆消费链启动校验曾列此步，已于 2026-10-01 E5 批随该名族整组退役。）
  *
  * 插件一致性 reconcile（「始终保持一致」机制，2026-09-09 批）：完整播种只解决
  * fresh home；既有 home 的已装插件会因 add-only 语义永久冻结（2026-09-09 断点：
@@ -120,9 +120,8 @@ object SeedService:
   private val PluginLedgerFileName = ".plugin-presence.json"
   private val PluginLedgerVersion = 1
 
-  /** 记忆队列的消费者 agent 名（单点引用 `AgentCore` 常量，不复制字面量）。 */
-  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):常量已下沉 actor.AgentDef(AgentCore 不留转发别名)。
-  private val MemoryConsumptionAgent: String = nebflow.actor.AgentDef.MemoryConsolidatorName
+  // 记忆队列消费链的常量与启动期校验（2026-09-13 缺失自愈批 / 方案 D）已随 E5 批
+  // 2026-10-01 **整组退役**——依据与影响见 `ensureSeeded()` 原调用点注记。
 
   // ── 插件存在台账（#105 P-1「用户主动删除」标记）──────────
   /**
@@ -244,8 +243,20 @@ object SeedService:
       // reconcile 同构，**与 `hasExistingProjects` 门无关**——既有 home 分支同样走到本行，
       // 迭代面 = manifest items；缺 ⇒ 建、已在 ⇒ 零动作零写盘（见 reconcileProjects）。
       reconcileProjects(root, manifest)
-      // 启动期消费链校验（2026-09-13 批）：把「记忆队列没有消费者」变成启动即可见的告警
-      verifyMemoryConsumptionChain(root)
+      // E5 批 2026-10-01（悬空名族收口 / 选 (b) 整组退役）：此处原调用一个启动期
+      // 「消费链就位」校验（2026-09-13 缺失自愈批 / 方案 D），其判据对象 = 2026-09-25
+      // govmemory 批已退役的记忆整理 agent（工具与 `memory/queue.jsonl` 队列删除、
+      // 种子 agent 资源 ABSENT、manifest `agents:` 清单零该名，退役提交 `aa371d68f`）。
+      // 退役依据：该判据「目标 agent 的 agent.json ∧ system.md 就位」在**任何 home 上
+      // 都不可能为真**（自愈分支 `installAgentFromSeed` 因种子资源缺失必然 WARN + 零写盘）
+      // ⇒ 该校验自此**结构性恒 WARN**，且告警文案所指的队列实体已不存在（把不存在的东西
+      // 说成还在积压）。三选一决定：❌(c) 保留悬空告警 = 留「永不触发的真分支 + 恒触发的
+      // 假告警」，违反「禁留永不触发的告警」；❌(a) 改判据面 = 只因「校验函数」而发明一个
+      // 新的启动期健康检查（无需求驱动、扩面）；✅(b) 整组退役 = 常量 + 调用 + 定义三件一并
+      // 删除。影响（具名报备作者）：①启动日志少一行恒定假告警（真实缺件由 `reconcileAgent`
+      // 的 per-name `reconcile failed` WARN 与 `installAgentFromSeed` 的 `cannot self-heal`
+      // WARN 覆盖，覆盖面零损失）；②该启动期记忆链自检能力**不可逆删除**（若要恢复记忆
+      // 消费链，须带回一个真消费者）。
     catch
       case e: Exception =>
         // 种子全程 best-effort：单点失败绝不阻止 gateway 启动（与 startupMount fail-soft 同构）
@@ -631,9 +642,9 @@ object SeedService:
    *
    * 为什么要改（取证件 §0-3 的鸡生蛋）：既有 home 受 `projects/` 非空守卫**永不完整播种**，
    * 而旧 reconcile 遇缺失直接 return ⇒ 「seed 只填新 home、reconcile 只修旧 home，交集为空」
-   * ⇒ 默认集 agent（`memory-consolidator`）在既有 home **永不可能就位** ⇒ 记忆队列的
-   * 唯一消费者结构性缺席，队列只进不出。插件面对同类缺口已于 2026-09-12 自愈，agents 面
-   * 本批对齐。
+   * ⇒ 默认集 agent 在既有 home **永不可能就位**（旧取证例 = 记忆队列消费者，该 agent 已于
+   * 2026-09-25 退役；本批 E5 2026-10-01 已把该名族的所有引用收口）。插件面对同类缺口已于
+   * 2026-09-12 自愈，agents 面本批对齐。
    *
    * **落点纪律**：本机制**只**落代码；不在 `~/.nebflow/bin/` 或任何运维文档面
    * 新建护栏载体，也不回改任何既有留痕件（作者 2026-09-12 裁定）。
@@ -654,7 +665,8 @@ object SeedService:
     val targetDir = root / "agents" / name
     if !os.exists(targetDir) then
       // 缺失 → 自愈补装（2026-09-13 批，见 reconcileAgents 文档）：既有 home 受 projects/
-      // 非空守卫永不完整播种，缺失目录因此永久不愈（本机 memory-consolidator 实例）。
+      // 非空守卫永不完整播种，缺失目录因此永久不愈（取证例 = 记忆队列消费者，该 agent 已
+      // 于 2026-09-25 退役；E5 批 2026-10-01 已收口其全部名面引用）。
       // 安装面 = manifest 声明的默认集；已存在目录绝不进此分支（零覆盖）。
       installAgentFromSeed(root, name, "self-healed (missing in existing home)")
     else
@@ -713,10 +725,18 @@ object SeedService:
   end reconcileAgent
 
   /**
+   * Spec-only hook（E5 批 2026-10-01）：把 `reconcileAgent` 暴露给 `SeedAgentSelfHealSpec`
+   * 的启动面告警核验（root 四条之末）——以「真缺件 ⇒ 响亮 WARN」充当日志捕获的**正向
+   * 控制**（证明捕获有载力，而非恒空）。`private[seed]`：除该 spec 外零调用者。
+   */
+  private[seed] def reconcileAgentForTest(root: os.Path, name: String): Unit =
+    reconcileAgent(root, name)
+
+  /**
    * 从种子整目录安装一个 agent（[[reconcileAgent]] 的缺失自愈路径与 [[seedAgent]] 的
    * 播种路径共用单点）。缺种子资源（jar 陈旧 / 资源缺失）⇒ WARN 且**不落盘**——
-   * 消费链缺失必须以响亮日志收口，绝不留静默空目录（否则 `AgentLibrary.get` 仍解析
-   * 不到、队列仍无消费者，而现场看起来「装过了」）。
+   * 缺件必须以响亮日志收口，绝不留静默空目录（否则 `AgentLibrary.get` 仍解析不到、
+   * 现场看起来「装过了」而机制侧一无所获）。
    */
   private def installAgentFromSeed(root: os.Path, name: String, outcome: String): Boolean =
     val targetDir = root / "agents" / name
@@ -725,7 +745,7 @@ object SeedService:
     if files.isEmpty then
       logger.warnSync(
         s"Seed: agent '$name' is missing in this home but has no seed resources on the classpath — cannot self-heal " +
-          s"(stale jar / missing seed/agents/$name). The memory queue would then have no consumer; nothing was written"
+          s"(stale jar / missing seed/agents/$name); nothing was written"
       )
       false
     else
@@ -744,25 +764,6 @@ object SeedService:
     end if
 
   end installAgentFromSeed
-
-  /**
-   * 启动期消费链校验（2026-09-13 缺失自愈批 / 方案 D「启动明确告警」）：播种 + reconcile
-   * 跑完之后，默认集里**记忆队列的消费者**（[[MemoryConsumptionAgent]]）是否真的就位。
-   * 不就位 ⇒ 响亮 WARN（说明后果：队列只进不出、`MemoryNote` 是纯记账、没有任何东西会
-   * 被应用）——这是把「静默 no-op」变成「启动即可见」的最后一道门。
-   * 零副作用：只读文件系统，不建目录、不写 marker。`private[seed]`：spec 直测面。
-   */
-  private[seed] def verifyMemoryConsumptionChain(root: os.Path): Unit =
-    val dir = root / "agents" / MemoryConsumptionAgent
-    val ok = os.exists(dir / "agent.json") && os.exists(dir / "system.md")
-    if !ok then
-      logger.warnSync(
-        s"Seed: MEMORY CONSUMPTION CHAIN MISSING — 'agents/$MemoryConsumptionAgent/{agent.json,system.md}' is not in this home " +
-          s"(seed = src/main/resources/seed/agents/$MemoryConsumptionAgent/). The memory queue (${root.toString}/memory/queue.jsonl) " +
-          s"therefore has NO consumer: every recorded MemoryNote note stays pending forever, nothing is ever applied to the " +
-          s"memory files, and the queue only accumulates. Fix = restore the seed resources and restart, or install that agent manually."
-      )
-    else logger.infoSync(s"Seed: memory consumption chain present (agents/$MemoryConsumptionAgent)")
 
   /** 同 [[seedResources]]，anchor 参数化（agents 面 = `agent.json`）。 */
   private def seedResourcesIn(base: os.SubPath, anchorFile: String): Option[SortedMap[String, Array[Byte]]] =

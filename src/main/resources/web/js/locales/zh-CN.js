@@ -1743,8 +1743,6 @@ export default {
   'content.agent.general.desc': '通用执行 agent——能力由分配的 plugins 决定',
   'content.agent.kernel.name': 'kernel',
   'content.agent.kernel.desc': '极简内核（Delegate 内核）：Nebula 经 Delegate 派发的一次性任务执行者——六件基础工具（Read/Write/Edit/Glob/Grep/Bash，均支持 device= 远端）+ AskUserQuestion，共七件；无项目上下文、无记忆、不派发子代理。用于「不属任何项目 ∧ 需实际执行动作 ∧ 单次」的任务。工具面为机制固定（AgentCore.KernelFixedTools = BaseTools + AskUserQuestion；本文件 tools/skills 声明因 ConvergedAgentNames 含 kernel 而整体失效）。',
-  'content.agent.memory-consolidator.name': 'memory-consolidator',
-  'content.agent.memory-consolidator.desc': '记忆整理智能体——负责把对话中值得长期保留的信息整理进记忆，供之后的会话继续使用。',
   'content.plugin.visual-report.name': 'visual-report',
   'content.plugin.visual-report.desc': '可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归 Nebula，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给项目负责人的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算；人读交付体例：四段骨架、体量预算；md 规则：图片嵌入、可跳转目录、LaTeX 公式）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.slideblocks.name': 'slideblocks',
