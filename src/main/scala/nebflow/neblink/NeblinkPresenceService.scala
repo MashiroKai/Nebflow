@@ -515,6 +515,26 @@ final class NeblinkPresenceService(
     id: DeviceIdentity,
     budgetMs: Long
   ): Either[DialFailure, Unit] =
+    // deviceId-compat (2026-09-22, chain neblink-lifecycle-fix leg B): the dial
+    // walks the handshake in a small local closure so the legacy-400 retry gets
+    // a FRESH builder/slot/listener — a rejected attempt's earlyClose must never
+    // leak into the retry's publish decision.
+    def handshakeAttempt(wsUri: String): (WebSocket, ConnSlot) =
+      val slot = new ConnSlot
+      val listener = new PresenceWsListener(this, peer, slot)
+      val client = HttpClient
+        .newBuilder()
+        .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
+        .build()
+      val wsBuilder = client.newWebSocketBuilder()
+      // A1: our deviceId rides the handshake HEADER (primary carrier on every
+      // attempt — the compat retry below only ADDS the query carrier).
+      presenceHandshakeHeaders(id).foreach { case (k, v) => wsBuilder.header(k, v); () }
+      val ws = wsBuilder
+        .buildAsync(URI.create(wsUri), listener)
+        .get(budgetMs, TimeUnit.MILLISECONDS)
+      (ws, slot)
+
     val wsUri = buildWsUri(host, port, id)
     try
       val alive = new AtomicBoolean(true)
@@ -534,18 +554,29 @@ final class NeblinkPresenceService(
         t
       }
 
-      val slot = new ConnSlot
-      val listener = new PresenceWsListener(this, peer, slot)
-      val client = HttpClient
-        .newBuilder()
-        .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
-        .build()
-      val wsBuilder = client.newWebSocketBuilder()
-      // A1: our deviceId rides the handshake HEADER, not the URL query.
-      presenceHandshakeHeaders(id).foreach { case (k, v) => wsBuilder.header(k, v); () }
-      val ws = wsBuilder
-        .buildAsync(URI.create(wsUri), listener)
-        .get(budgetMs, TimeUnit.MILLISECONDS)
+      val (ws, slot) =
+        try handshakeAttempt(wsUri)
+        catch
+          case e: Exception if isLegacyMissingDeviceIdRejection(e) =>
+            // A1-compat (deviceId-compat leg, 2026-09-22): the peer answered
+            // HTTP 400 on the upgrade — on the presence route that shape has
+            // exactly one producer, the empty-deviceId branch (current tree
+            // RestApiRoutes.scala:2610; tag 2026.9.19 :2441), and a pre-A1
+            // listener reads the query ONLY (tag RestApiRoutes.scala:2433 — no
+            // header read anywhere in that file). Our header was unreadable to
+            // it, so retry ONCE with deviceId also in the query; the header
+            // stays (header semantics unchanged). 403/timeouts/refusals are
+            // NOT retried: 403 is the trust gate firing before deviceId
+            // validation (tag :2437-2441) — retrying it with more identity
+            // material would mask a denial as a transport retry.
+            // 🔴 同步语境里必须走 *Sync logger：`logger.info` 返回 IO 描述，
+            // 在这个纯同步方法里没人运行它 ⇒ 兼容证据行会静默蒸发（实装 arm ①
+            // 首轮实证：重试确已发生（dial-ok），行却一个字都没落盘）。
+            logger.infoSync(
+              s"Presence dial to ${peer.deviceName}: legacy listener (HTTP 400 on upgrade) — " +
+                "retrying once with deviceId in the query (A1-compat dial)"
+            )
+            handshakeAttempt(buildCompatWsUri(host, port, id))
 
       val conn = PresenceConnection(peer.deviceId, gen, ws, alive, lastPong, heartbeat)
       slot.conn = conn

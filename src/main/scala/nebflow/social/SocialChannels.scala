@@ -82,15 +82,23 @@ object SocialChannels:
       List(
         FieldSpec("app_id", "text", required = true, pattern = Some("^cli_[0-9a-zA-Z]{16,}$")),
         FieldSpec("app_secret", "secret", required = true, pattern = None, Some("social-feishu-app-secret")),
-        FieldSpec(
-          "verification_token",
-          "secret",
-          required = true,
-          pattern = None,
-          Some("social-feishu-verification-token")
-        ),
+        // feiscanbind (approved pending-decision ⑤, 2026-09-27): optional. The
+        // long-connection path never consumes this field (read side
+        // `FeishuCredentials` reads only app_id/app_secret_ref; the runtime runs
+        // with an empty token — `FeishuChannel` dispatch), so requiring it would
+        // block a scan-bind-created app (which has none) from ever reaching
+        // `verified`. The manual-fill path keeps the field: optional now, exact
+        // same write path as before.
+        FieldSpec("verification_token", "secret", required = false, pattern = None,
+          Some("social-feishu-verification-token")),
         FieldSpec("encrypt_key", "secret", required = false, pattern = None, Some("social-feishu-encrypt-key")),
-        FieldSpec("region", "select", required = true, pattern = Some("^(feishu|lark)$"))
+        FieldSpec("region", "select", required = true, pattern = Some("^(feishu|lark)$")),
+        // feishubridge batch: member-level allowlist SLOT (feishu is a tenant model
+        // — every tenant member can reach the gateway by default). Empty = no
+        // restriction, which is the shipped default; filling it (comma-separated
+        // open_ids) turns the bridge gate fail-closed. Whether to enable remains
+        // the author's call — the slot exists so enabling later needs no migration.
+        FieldSpec("allowed_open_ids", "text", required = false, pattern = None)
       )
     ),
     ChannelSpec(

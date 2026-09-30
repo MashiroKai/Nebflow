@@ -263,14 +263,28 @@ class NeblinkService private (
 
   def neblinkConfig: IO[NeblinkConfig] = configRef.get
 
-  /** Activity-face gate (leg A: "`enabled=false` must not survive restarts";
-    * author ruling 2026-09-22, leg A). Zero change to the existing `enabled`
-    * semantics -- this only ADDS a read point for the activity face.
-    * Re-read every beat from `configRef` (not a boot-time snapshot), so
-    * logout/login takes effect within one beat without a restart.
-    * Consumers: syncLoop / NeblinkDiscovery / NeblinkPresenceService /
-    * NeblinkRelayTunnel. (W1 provisional shim: the def is ported from main;
-    * wiring it into syncLoop stays with this file's owning wave.) */
+  /** 活动面闸（腿 A「`enabled=false` 不得跨重启」；作者 2026-09-22 二择裁定 A 腿）。
+    *
+    * 🔴 `enabled` 的**既有语义零改动** —— 它仍只是 `/api/neblink/status` 的登录态
+    * 上报位（`RestApiRoutes.scala:768`：`loggedIn = cred.isDefined && cfg.enabled`）。
+    * 本方法只**新增一个读取点**，用于「活动面」gate；本腿明禁动其语义。
+    *
+    * 为什么闸落在 `enabled` 而不是「启动时不建 service」（作者给定的修法方向）：
+    * `/api/neblink/enroll` 等登录面挂在 `neblinkService` 上（`RestApiRoutes.scala:1106`
+    * 的 enroll 路由与 `:3841` 的 `withNeblink` 公共前置），不建 service ⇒ 用户
+    * **再也无法重新登录**。
+    * 正解 = **服务照建**（保住登录能力），只让**活动面**在 `enabled=false` 时空转。
+    * 登出后重启：服务在、地址在、可重新登录；但不再拨号、不再灌连接表。
+    *
+    * **运行期可判（非仅启动期）**：本方法每拍现读 `configRef`；`enabled` 的两个运行期
+    * 写面 = 登录成功（`NeblinkEnrollment.scala:201`，`enabled = true`）与登出第 5 步
+    * （`RestApiRoutes.scala:4484` 的 `updateConfig(_.copy(enabled = false))`，登出第 5 步）。
+    * ⇒ 重新登录后活动面**无需重启**
+    * 即恢复（该形态由 `NeblinkActivityGateSpec` 钉住）。
+    *
+    * 消费面（活动面四腿，逐条见报告 §2）：`syncLoop`（本文件）／
+    * `NeblinkDiscovery.discoverCycle` / `heartbeatCycle`／`NeblinkPresenceService.syncPeers`
+    * （presence 拨号）／`NeblinkRelayTunnel.connectLoop`（relay 隧道外发）。 */
   def activityEnabled: IO[Boolean] = configRef.get.map(_.enabled)
 
   def updateConfig(fn: NeblinkConfig => NeblinkConfig): IO[Unit] =
@@ -537,16 +551,31 @@ class NeblinkService private (
 
   private def syncLoop(running: Boolean): IO[Unit] =
     for
+      // 🔴 腿 A 活动面闸（2026-09-22 作者二择裁定 A 腿）：`enabled=false` 时本拍
+      // **不跑任何外发腿**（discovery 钩子 = 服务端登录/心跳 + syncPeers 拨号）。
+      // 逐拍**现读**（不是启动期快照）⇒ 登出/重登的运行期变化一拍内生效，无需重启：
+      //   · 登出第 5 步 `enabled=false` ⇒ 本闸合上（`RestApiRoutes.scala:4484`）；
+      //   · 登录成功 `enabled=true`（`NeblinkEnrollment.scala:201`）⇒ 本闸张开。
+      // 空转形态 = **仍在同一 45s 拍上醒来**（下面 sleepIO 不动）⇒ 只是本拍两个
+      // cycle 体被跳过；这样重登后最多等一拍（45s）即恢复，且 45s 唤醒本身不触网。
+      active <- activityEnabled
       _ <-
-        if running then runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}").void)
+        if running && active then
+          runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}").void)
         else IO.unit
       // 批 C（§3.6）：同一拍上再跑一次**好友消息面对账**。独立 try/catch ⇒ 消息面
       // 故障不会吃掉 discovery 腿，反之亦然（两腿共用拍但语义隔离）。未装配
       // friendService 时 runMessageReconcile 是显式 no-op。
+      // 腿 A 闸同时覆盖本腿：它同样是**外发**（上游 REST 补拉）⇒ `enabled=false` 时不跑。
       _ <-
-        if running then
-          runMessageReconcile.handleErrorWith(e => logger.warn(s"Message reconcile cycle failed: ${e.getMessage}").void)
-        else IO.unit
+        if running && active then
+          runMessageReconcile.handleErrorWith(e =>
+            logger.warn(s"Message reconcile cycle failed: ${e.getMessage}").void
+          )
+        else
+          logger.debug(
+            "sync beat suppressed: NebLink is disabled (enabled=false) — zero outbound legs this beat"
+          )
       interval <- configRef.get.map(_.syncIntervalSec.max(10).seconds)
       sleepIO: IO[Unit] = if running then IO.sleep(interval) else IO.never
       result <- IO.race(sleepIO, syncQueue.take)

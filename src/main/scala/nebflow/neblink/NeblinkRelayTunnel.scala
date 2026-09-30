@@ -342,6 +342,36 @@ final class NeblinkRelayTunnel(
         )
         .flatMap(_ => nap(NeblinkRelayTunnel.KickParkNap) *> connectLoop(attempt))
     else
+      // 🔴 腿 A 活动面闸（2026-09-22 作者二择裁定 A 腿）——**第四条**自动外发腿。
+      //
+      // 为什么它必须入闸：装配点 `GatewayMain.scala:990` 的 `relayTunnel.connect()`
+      // 是**无条件**的（与登录态无关），而登出**刻意保留** `neblinkServer`（含
+      // `deviceToken`）以便「下次登录」（`RestApiRoutes.performLocalLogout` 第 5 步
+      // 注释：keep neblinkServer address for next login）⇒ 登出后重启，boot 客户端
+      // 仍带着有效 deviceToken，隧道一旦拿到会话就重拨、把本机重新挂回服务端。
+      // 「enabled=false 不得跨重启」这条判词若不覆盖本腿，就会从这条缝里漏掉。
+      //
+      // 逐拍**现读**（不是启动期快照）⇒ 重新登录（`NeblinkEnrollment.scala:201`
+      // 写 `enabled = true`）后本闸立刻张开；`ensureRelayTunnel` 的 `signalWake()`
+      // 还会掐断这一段空转 ⇒ 无需重启。空转形态 = **不拨号**（零升级尝试、零注册
+      // 流量），与既有「未配置 server URL」分支同族的安静梯子。
+      neblinkService.activityEnabled.flatMap {
+        case false => idleWhileDisabled(attempt)
+        case true  => connectConfigured(attempt)
+      }
+
+  /** 「未启用」空转腿（腿 A 闸的 false 分支）。与 `currentServerUrl = None` 分支
+    * 同族的安静节拍：DEBUG（登出后的稳态，禁 INFO 噪声）+ 可被 `ensure()`/`stop()`
+    * 掐断的 `nap`（用户再登录即时恢复）。 */
+  private def idleWhileDisabled(attempt: Int): IO[Unit] =
+    val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
+    logger
+      .debug(
+        s"Relay tunnel: NebLink is disabled (enabled=false) — no dial, retrying the gate in ${wait.toSeconds}s..."
+      )
+      .flatMap(_ => nap(wait) *> connectLoop(attempt + 1))
+
+  private def connectConfigured(attempt: Int): IO[Unit] =
       // 每拍**只睡一次**（clientconn item 1）：修前是「拍首 delay + 分支 wait」双睡，
       // 而唤醒只能掐断其中一次 ⇒ 唤醒语义被打折（掐断 300s 空转后还要再睡一拍的
       // 30s 上限）。现在按状态选等待：未配置 / 无 token 走各自的安静梯子（可被
@@ -372,67 +402,60 @@ final class NeblinkRelayTunnel(
           // （那样会凭空多一次 403 自愈——实测在 R3 上复现过）。
           val pre =
             if attempt == 0 then 0.seconds
-            else
-              NeblinkRelayTunnel.jittered(
-                NeblinkRelayTunnel.backoffSeconds(attempt).seconds,
-                scala.util.Random.nextDouble()
-              )
-          nap(pre) *> (if !running.get() then IO.unit
-                       else
-                         tokenGetter().flatMap {
-                           case None =>
-                             val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
-                             // R2 visibility: this branch used to log at DEBUG only — a login
-                             // that never completes left the tunnel dark for hours with zero
-                             // trace. INFO keeps the retry loop observable (≤2 lines/min).
-                             // N3: this state is STEADY after logout (the server URL is
-                             // kept), so only the FIRST occurrence is INFO.
-                             val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
-                             val voice =
-                               if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
-                               else logger.debug(line)
-                             voice.flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
-                           case Some(token) =>
-                             val attemptConnect =
-                               IO(System.currentTimeMillis()).flatMap { startedAtMs =>
-                                 neblinkService.identity
-                                   .flatMap(id => connectOnce(id, url, token))
-                                   .flatMap { _ =>
-                                     if running.get() then
-                                       // Backoff RESET is stability-gated (clientconn item 1):
-                                       // pre-fix every disconnect went back to `connectLoop(0)` —
-                                       // a 0-delay reconnect even for a connection the server
-                                       // accepted and dropped immediately (kick-after-upgrade,
-                                       // half-open flap) ⇒ unbounded upgrade storm at wire speed.
-                                       // Now the FIRST short-lived drop still retries immediately
-                                       // (transient blips recover at pre-fix speed), while a
-                                       // REPEATED short-lived streak escalates the ladder.
-                                       val heldMs = System.currentTimeMillis() - startedAtMs
-                                       val streakBefore = shortLivedStreak.get()
-                                       val next = NeblinkRelayTunnel.nextAttemptAfterDrop(attempt, heldMs, streakBefore)
-                                       if heldMs >= NeblinkRelayTunnel.StableConnectionMs then shortLivedStreak.set(0)
-                                       else shortLivedStreak.incrementAndGet()
-                                       logger
-                                         .info(
-                                           s"Relay tunnel disconnected after ${heldMs / 1000}s, reconnecting (step $next, short-lived streak $streakBefore)..."
-                                         )
-                                         .flatMap { _ => connectLoop(next) }
-                                     else IO.unit
-                                   }
-                               }
-                             attemptConnect.handleErrorWith { e =>
-                               // F3 (report §3): never log e.getMessage here — it is null for
-                               // WebSocketHandshakeException and carries only the class NAME
-                               // when wrapped in ExecutionException. describe() extracts the
-                               // HTTP status (+ a redacted body snippet) instead.
-                               val failure = RelayTunnelDiagnostics.describe(e)
-                               if failure.authRejected then handleAuthRejection(failure, attempt)
-                               else
-                                 logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
-                                   if running.get() then connectLoop(attempt + 1) else IO.unit
-                                 }
-                             }
-                         })
+            else NeblinkRelayTunnel.jittered(NeblinkRelayTunnel.backoffSeconds(attempt).seconds, scala.util.Random.nextDouble())
+          nap(pre) *> (if !running.get() then IO.unit else
+          tokenGetter().flatMap {
+            case None =>
+              val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
+              // R2 visibility: this branch used to log at DEBUG only — a login
+              // that never completes left the tunnel dark for hours with zero
+              // trace. INFO keeps the retry loop observable (≤2 lines/min).
+              // N3: this state is STEADY after logout (the server URL is
+              // kept), so only the FIRST occurrence is INFO.
+              val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
+              val voice =
+                if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
+                else logger.debug(line)
+              voice.flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
+            case Some(token) =>
+              val attemptConnect =
+                IO(System.currentTimeMillis()).flatMap { startedAtMs =>
+                  neblinkService.identity
+                    .flatMap(id => connectOnce(id, url, token))
+                    .flatMap { _ =>
+                      if running.get() then
+                        // Backoff RESET is stability-gated (clientconn item 1):
+                        // pre-fix every disconnect went back to `connectLoop(0)` —
+                        // a 0-delay reconnect even for a connection the server
+                        // accepted and dropped immediately (kick-after-upgrade,
+                        // half-open flap) ⇒ unbounded upgrade storm at wire speed.
+                        // Now the FIRST short-lived drop still retries immediately
+                        // (transient blips recover at pre-fix speed), while a
+                        // REPEATED short-lived streak escalates the ladder.
+                        val heldMs = System.currentTimeMillis() - startedAtMs
+                        val streakBefore = shortLivedStreak.get()
+                        val next = NeblinkRelayTunnel.nextAttemptAfterDrop(attempt, heldMs, streakBefore)
+                        if heldMs >= NeblinkRelayTunnel.StableConnectionMs then shortLivedStreak.set(0)
+                        else shortLivedStreak.incrementAndGet()
+                        logger
+                          .info(s"Relay tunnel disconnected after ${heldMs / 1000}s, reconnecting (step $next, short-lived streak $streakBefore)...")
+                          .flatMap { _ => connectLoop(next) }
+                      else IO.unit
+                    }
+                }
+              attemptConnect.handleErrorWith { e =>
+                // F3 (report §3): never log e.getMessage here — it is null for
+                // WebSocketHandshakeException and carries only the class NAME
+                // when wrapped in ExecutionException. describe() extracts the
+                // HTTP status (+ a redacted body snippet) instead.
+                val failure = RelayTunnelDiagnostics.describe(e)
+                if failure.authRejected then handleAuthRejection(failure, attempt)
+                else
+                  logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
+                    if running.get() then connectLoop(attempt + 1) else IO.unit
+                  }
+              }
+          })
       }
 
   /** 「未启用」空转腿（腿 A 闸的 false 分支）。与 `currentServerUrl = None` 分支
@@ -1257,11 +1280,24 @@ private final class RelayWsListener(
               // root 裁定）：设备邮件的收件**唯一入口** = 本事件流信封内
               // `event.type == "agent_mail"` 的帧（实证形态：
               // `{"type":"friend_event","eventId":"message-<id>","event":{"payload":{…},"type":"agent_mail"}}`）。
-              // 它**不进** `FriendService`——那不是好友消息事件（进它会被当好友消息
-              // 解析/入账）⇒ 独占路由，单一入场、零双消费。载荷仍是同一份五键契约
-              // （`DeviceMail.parse` 逐字校验，fail-closed）。
               // 契约 v2 时期的隧道顶层 `case "agent_mail"` 分支**已删**（禁双入口）。
-              if DeviceMail.isAgentMailEnvelope(json) then dispatcher.unsafeRunAndForget(DeviceMailInbox.handle(json))
+              //
+              // mailmodel batch (2026-09-25, ruling (e-1)): this intake leg is retired
+              // on BOTH ends in the same batch — the send side (the Mail tool's
+              // `device` parameter, refused by the MAIL_DEVICE_RETIRED tombstone) and
+              // this injection side go offline together. This branch stays as a
+              // retirement tombstone: an `agent_mail` frame => log WARN and ignore
+              // (it must NOT fall into `FriendService` — that would parse/credit it
+              // as a friend message; double consumption is worse than dropping);
+              // the payload is no longer parsed and no session is injected.
+              // `nebflow.neblink.DeviceMail*` objects remain only as tombstones (zero
+              // production callers).
+              if DeviceMail.isAgentMailEnvelope(json) then
+                logger.warnSync(
+                  "agent_mail frame ignored: the cross-device agent-mail intake leg was retired " +
+                    "on 2026-09-25 (mailmodel batch) — the sender side refuses with MAIL_DEVICE_RETIRED; " +
+                    f"frame dropped branch=agent_mail_retired conversationId=${conversationIdOfFrame(json).getOrElse("<none>")}"
+                )
               else
                 tunnel.friendService match
                   case Some(fs) =>
