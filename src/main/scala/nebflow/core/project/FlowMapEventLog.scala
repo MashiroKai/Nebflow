@@ -379,6 +379,12 @@ object FlowMapEventLog:
    * **`deps` 替换视图（纯函数，零 IO）**：`NodeDef.deps` 是**替换**语义（非增删）——
    * 逐项 diff 记 `kind=deps from=<旧> to=<新>`（`NodeEdit(deps="X")` → `NodeEdit(deps="Y")`
    * 恰好一行 `from=X to=Y`）。
+   *
+   * 🔴 **成对渲染**（本批 §2.4 R3 的判据面）：替换语义下「旧项 → 新项」是**同一槽位的
+   * 一次改写**，不是「一条边被摘 + 另一条边被加」两件独立事实 ⇒ 逐对发一行
+   * （`from` / `to` 同时非空）。集合大小不等时余项各自单侧（新增：`from=-`；移除：
+   * `to=-`），序确定（配对按 canonical 序，余项接续）。
+   * 两集合相等 ⇒ `Nil`（**零行**——R5 负控的机械承担点）。
    */
   def depsViews(owner: String, beforeDeps: List[String], afterDeps: List[String], reason: String): List[EdgeChangeView] =
     val b = beforeDeps.distinct
@@ -387,8 +393,18 @@ object FlowMapEventLog:
     else
       val removed = b.filterNot(a.contains)
       val added = a.filterNot(b.contains)
-      removed.map(d => EdgeChangeView(owner, Some(d), None, EdgeChangeKind.Deps, None, None, reason)) ++
-        added.map(d => EdgeChangeView(owner, None, Some(d), EdgeChangeKind.Deps, None, None, reason))
+      val paired = removed.zipAll(added, "", "").map { (oldD, newD) =>
+        EdgeChangeView(
+          owner,
+          if oldD.isEmpty then None else Some(oldD),
+          if newD.isEmpty then None else Some(newD),
+          EdgeChangeKind.Deps,
+          None,
+          None,
+          reason
+        )
+      }
+      paired
 
   /**
    * 拒绝面视图（纯函数，零 IO）：编辑期硬拒**落一笔事件**（🔴 不新造平行类型，沿 `kind` /
