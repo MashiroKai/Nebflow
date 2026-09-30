@@ -167,3 +167,35 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 - 改口径：**并置**新条目并注明日期与理由，原条目保留（与代码注释同款规则）。
 - 术语与代码冲突时：以落点处的代码为准，同时把本表修订提交在同一批里。
 - 本表不含一次性事实（版本号、提交哈希、行号、环境相关路径）；这类信息请写在对应的 Spec / PR 描述里。
+
+## 11. 南北分离（B0 批次，2026-09-30 规划态）
+
+> **批次说明（2026-09-30）**：本区词条统一为**规划态**——代码落点尚未成形，B3/B4 落地后回锚为仓内路径。
+> **出处（2026-09-30 裁定链）**：bridge 归北 → capability-server 定名 → server 内含 engine → 四行拓扑（信息流向）→ app×wheel 模型。
+> **与 §10 维护规约的冲突（并置注明，不删改上文）**：§10 要求「新增术语必须带权威落点」；本批是裁定先行的
+> 规划词汇（先入表、后入码），仓内暂无版本化落点——裁定文本与 IR 标准母本均在 gitignored 的 `.zcode/plans/`
+> （`../nebflow-src/.zcode/plans/north-south-architecture.md`），独立仓规范文本跨仓可寻址。落点列暂记规划去向
+> 与规范文本现址，随批次回锚。
+
+**五级词汇**（app×wheel 模型的词层；裁定称 GLOSSARY 为唯一术语源）：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| app | app | 常驻进程原型：薄 main，只做装配与服面；既裁三例 = `gateway` / `capability-server` / `organic-server`。类比：C 实际运行的只有 main。 | 规划态：三例成形后回锚（B3/B4） |
+| server | server | 角色名：某 app 的服务面角色。裁定：server 内含 engine 驱动（engine 不独立成进程）。 | 规划态：B3/B4 回锚 |
+| engine | engine | 域语义：域驱动件（如 `mem-engine` / `skill-engine` / llm 运行时），被 server 装配驱动。 | 规划态：B3/B4 回锚 |
+| wheel | wheel | 物理形态：无 main 的库包；零依赖纯库 = 理想 wheel。`skill-engine` 与 `document-based-memory` 两独立仓已是 wheel 形态。 | 规划态；两独立仓现址 `../skill-engine/`、`../document-based-memory/`（跨仓） |
+| 底座与契约面 | `shared` + `contract` | 底座（`shared`）与北向契约面（`contract`）：UiMessage 密封族等北向契约落此处。 | 规划态：`contract` 面 B5 析出后回锚；现 UiMessage 密封族在 `src/main/scala/nebflow/shared/protocol.scala` |
+
+**组件词条**（app / wheel / 契约面已收于五级词汇表，不重复立目）：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| capability-server | capability-server | 南面之一：ir 两平面（身份面 + 能力面）+ 执行围栏（sandbox / VFS / worktree）+ 能力后端域（tools / mcp / plugin / llm 运行时 / neblink / dropbox / usage）。 | 规划态：B3 新顶层域包 `nebflow.capability` 成形后回锚 |
+| organic-server | organic-server | 南面之二：project / flow / entity / processor / agent / compact / scheduler / task / SessionStore。 | 规划态：B4 新顶层域包 `nebflow.organic` 成形后回锚 |
+| mem-engine | mem-engine | 记忆域 engine（域驱动件），挂 capability-server 的 direct-call 面。 | 规划态：随 P1/B7 回锚 |
+| skill-engine | skill-engine | 技能域 engine；独立仓，已是 wheel 形态（无 main 库包）。 | `../skill-engine/`（跨仓）；spec = `../skill-engine/docs/skill-engine-spec.md` |
+| direct-call | direct-call | 应用间协议：IR 标准 §9 候审稿升格为总线；现阶段 = 包间协议（单 JVM 内），§5.5 loopback IPC 为未来物理承载。 | 候审稿 = `../skill-engine/docs/direct-call-spec.md`（跨仓）；dbm spec §5.5 = `../document-based-memory/docs/20260927_nebflow-sandbox.md` |
+| 四行拓扑 | four-line topology | 终态信息流向四行：north(web, cli, bridge, social)→gateway；gateway→organic-server & capability-server；organic-server→capability-server & shared；capability-server→shared；`mem-engine` / `skill-engine` 挂 capability 的 direct-call 面。 | 规划态：终态机器落点 = `scripts/check-scala-layers.mjs` 的 `LAYER_ORDER`（B1 起渐次成形） |
+
+**大小写裁定（2026-09-30，B0）**：组件名全小写（`organic-server`、`capability-server` 等）；句首位置按英文惯例首字母大写。已核：两仓 src / scripts / tests / docs 内组件名 organic 零出现（seed 插件设计语料含英文语义词 organic，非代码标识符），无存量需扫。
