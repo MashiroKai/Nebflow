@@ -121,7 +121,10 @@ object RichRenderer:
     *  this helper exists so no call site is tempted into one. The line carries a
     *  path and a reason, zero credentials. */
   private def logged(r: RenderResult): RenderResult =
-    logger.warn(s"outbound render failed path=${r.path.map(_.toString).getOrElse("<none>")} reason=${r.reason} detail=${r.detail}")
+    // `warnSync` (not `warn`): this helper is called from synchronous contexts, and
+    // `NebflowLogger.warn` returns an `IO[Unit]` — a bare `logger.warn(...)`
+    // statement evaluates to that uncalled IO and the line never reaches the log.
+    logger.warnSync(s"outbound render failed path=${r.path.map(_.toString).getOrElse("<none>")} reason=${r.reason} detail=${r.detail}")
     r
 
   /**

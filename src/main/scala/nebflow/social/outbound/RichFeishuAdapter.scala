@@ -102,7 +102,7 @@ final class RichFeishuAdapter(
     withSizeGate(p) { bytes =>
       uploadImageFn(p).flatMap { up =>
         if !up.ok then
-          IO(logger.warn(s"outbound: image upload refused for $p (code=${up.code})")) *>
+          logger.warn(s"outbound: image upload refused for $p (code=${up.code})") *>
             sendDegrade(RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), p, bytes),
               okDetail = s"image upload refused (code=${up.code})")
         else
@@ -122,7 +122,7 @@ final class RichFeishuAdapter(
       val fileName = p.last
       uploadFileFn(p, fileName).flatMap { up =>
         if !up.ok then
-          IO(logger.warn(s"outbound: file upload refused for $p (code=${up.code})")) *>
+          logger.warn(s"outbound: file upload refused for $p (code=${up.code})") *>
             sendDegrade(RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), p, bytes),
               okDetail = s"file upload refused (code=${up.code})")
         else
@@ -153,14 +153,14 @@ final class RichFeishuAdapter(
     renderCardPng(content).flatMap {
       case Left(reason) =>
         val line = RichDegrade.cardNotRendered(reason, content.getBytes("UTF-8").length.toLong)
-        IO(logger.warn(s"outbound: card render failed — $reason")) *>
+        logger.warn(s"outbound: card render failed — $reason") *>
           sendDegrade(s"$line\n${RichPlanner.InteractivePanelNote}", okDetail = "card degrade text delivered")
       case Right(png) =>
         uploadImageFn(png).flatMap { up =>
           if !up.ok then
             val pngBytes = if Files.exists(png.toNIO) then Files.size(png.toNIO) else 0L
             val line = RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), png, pngBytes)
-            IO(logger.warn(s"outbound: card screenshot upload refused (code=${up.code})")) *>
+            logger.warn(s"outbound: card screenshot upload refused (code=${up.code})") *>
               sendDegrade(s"$line\n${RichPlanner.InteractivePanelNote}",
                 okDetail = s"card screenshot upload refused (code=${up.code})")
           else
@@ -201,7 +201,7 @@ final class RichFeishuAdapter(
         AttachContract.checkFileSize(size).left.map(err => RichDegrade.tooLarge(err, p)).map(_ => size)
     }.flatMap {
       case Left(text) =>
-        IO(logger.warn(s"outbound: product refused before upload — $text")) *>
+        logger.warn(s"outbound: product refused before upload — $text") *>
           sendDegrade(text, okDetail = "size/unreadable refusal delivered")
       case Right(bytes) => body(bytes)
     }
