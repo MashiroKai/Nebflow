@@ -279,7 +279,13 @@ val x = 1
       _ <- p.onAgentEvent("s1", done("s1"))
     yield
       val wire = sent.get().headOption.getOrElse(fail("nothing reached the send seam"))
-      val body = wire.split('|', 2).lift(1).getOrElse(fail(s"malformed record: $wire"))
+      // Split on the first separator by index: the deprecated Char overload of
+      // String.split is fatal under -Xfatal-warnings, and a regex separator would
+      // make `|` an alternation.
+      val sep = wire.indexOf('|')
+      val body =
+        if sep >= 0 then wire.substring(sep + 1)
+        else fail(s"malformed record: $wire")
       // The red-by-construction core: without the reply() conversion this is raw
       // markdown and bareMarkers is non-empty.
       assertEquals(OutboundText.bareMarkers(body), List.empty,
