@@ -58,6 +58,25 @@
 //   definition mirror of the backend schema — the status/probe composition
 //   and the hint naming still read it; no form is rendered from it any more.
 //   The sealed channels and their locale keys stay in place (hide ≠ delete).
+//
+// 🔴 PHASE 6 (wechat-ilink batch, chain-wechat-impl, author ruling 2026-09-30) —
+//   a SECOND WeChat card, `weixin-ilink`, is added ALONGSIDE the official-account
+//   `wechat` card. Author ruling ② selected option (B) — "a separate channel id,
+//   the existing card stays as it is" — so the `wechat` entry above is left
+//   byte-for-byte untouched and the two cards coexist in the data. The new card
+//   carries the iLink credential set of the side-car Node client (ruling ① =
+//   option (i), the official ClawBot plugin keeps speaking the protocol and this
+//   repo only meets it at the bridge seam). Its `allowed_ilink_user_ids` slot
+//   mirrors the backend's fail-closed admission gate: the official plugin's own
+//   sender check is provably never wired (design card §2 末), so the gate has to
+//   be held on this side. `context_token` is deliberately NOT a field — it is
+//   runtime state (an in-process map plus a per-account file), not a stored
+//   configuration credential.
+//   The card is SEALED (`hidden: true`) — same sealed family as wechat and
+//   telegram above, HIDDEN, NOT DELETED: the real-device QR login has not been
+//   performed and the channel is unverified, so it must not present itself on
+//   the panel yet; restoring the card = dropping this ONE flag. This is why the
+//   visible face is still feishu-only and [[socialChannelCount]] is still 1.
 
 /**
  * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'|'failed'} SocialStatus
@@ -133,6 +152,42 @@ export const SOCIAL_CHANNELS = [
         i18n: 'social.wechat.field.token', secretName: 'social-wechat-token' },
       { key: 'aes_key', kind: 'secret', required: true,
         i18n: 'social.wechat.field.aesKey', secretName: 'social-wechat-aes-key' },
+    ],
+  },
+  {
+    // ★ wechat-ilink (chain-wechat-impl, author ruling 2026-09-30): the SEPARATE
+    //   iLink channel id — author ruling ② option (B). It sits next to the
+    //   official-account `wechat` card above (which is deliberately unchanged:
+    //   option (B) asks for coexistence, and disposing of the old card is not
+    //   this batch's business). Field set mirrors the backend FieldSpec of
+    //   `weixin-ilink` one for one (key / kind / required / pattern /
+    //   secretName); this layer is the mirror, the backend stays the
+    //   enforcement point.
+    //   SEALED (`hidden: true`): hide ≠ delete — the fields, the locale keys and
+    //   any stored config all stay addressable; a real-device QR login has not
+    //   happened yet and the channel is unverified, so it must not show up on
+    //   the panel before it can work. Restoring the card = dropping this flag.
+    //   `allowed_ilink_user_ids` is the fail-closed admission SLOT (same shape
+    //   as the feishu card's `allowed_open_ids`): empty = the allowlist is not
+    //   enforced; filled = senders outside the list are dropped by the bridge.
+    //   Whether to enable is the author's call; the slot itself is data.
+    hidden: true,
+    id: 'weixin-ilink',
+    icon: 'message-circle',
+    nameKey: 'social.weixinIlink.name',
+    descKey: 'social.weixinIlink.desc',
+    adapterRegistered: false,
+    fields: [
+      { key: 'bot_token', kind: 'secret', required: true,
+        i18n: 'social.weixinIlink.field.botToken', secretName: 'social-weixin-bot-token' },
+      { key: 'ilink_bot_id', kind: 'text', required: true,
+        i18n: 'social.weixinIlink.field.ilinkBotId' },
+      { key: 'ilink_user_id', kind: 'text', required: true,
+        i18n: 'social.weixinIlink.field.ilinkUserId' },
+      { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://',
+        i18n: 'social.weixinIlink.field.baseurl' },
+      { key: 'allowed_ilink_user_ids', kind: 'text', required: false,
+        i18n: 'social.weixinIlink.field.allowedIlinkUserIds' },
     ],
   },
   {

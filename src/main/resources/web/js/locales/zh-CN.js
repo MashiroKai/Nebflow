@@ -1816,6 +1816,16 @@ export default {
   'social.wechat.field.appSecret': '应用密钥',
   'social.wechat.field.token': '消息校验 Token',
   'social.wechat.field.aesKey': '消息加解密密钥',
+  // wechat-ilink（chain-wechat-impl，作者 2026-09-30 裁定 ② 选 (B)）：另立的
+  // iLink 渠道 id，与上方公众号卡并存。真机登录完成前处于封存态，故这段文案
+  // 暂不上面板——留在表内是为了封存条目不产生孤儿键（W11）。
+  'social.weixinIlink.name': '微信（iLink）',
+  'social.weixinIlink.desc': '微信 iLink 机器人的接口凭据。一期只做配置落盘，不建立任何对外通道。',
+  'social.weixinIlink.field.botToken': 'Bot Token',
+  'social.weixinIlink.field.ilinkBotId': '机器人 ID',
+  'social.weixinIlink.field.ilinkUserId': '登录用户 ID',
+  'social.weixinIlink.field.baseurl': 'API 基址',
+  'social.weixinIlink.field.allowedIlinkUserIds': '发送者名单（可选）',
   'social.feishu.name': '飞书',
   // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
   'social.feishu.desc': '绑定会话后，飞书消息进该会话并原路回发。租户内成员默认都可触达。',
