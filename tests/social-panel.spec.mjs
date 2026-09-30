@@ -20,7 +20,7 @@
 //                               dropped (in memory, byte change reported). The
 //                               socialhide red-proof: the SAME visible-card
 //                               probes that read {feishu} in production must
-//                               read all three cards here, in array order.
+//                               read every sealed card here, in array order.
 //   · ILINK-RED (SOCIAL_MUTATE=ilink-unseal | ilink-fields) — the wechat-ilink
 //                               batch's red proof, mutation-safe in the same
 //                               sense as the two above: the served definition
@@ -63,7 +63,7 @@
 //    ③): wechat + telegram are SEALED — `hidden: true` at the CHANNEL level,
 //    data retained. W4's count now reads the VISIBLE single source
 //    (socialChannelCount() = 1); SH1–SH3 pin the visible set = {feishu}, the
-//    sealed data face (3 entries, both flags in place, feishu unflagged) and
+//    sealed data face (every entry, all flags in place, feishu unflagged) and
 //    the DOM absence of the sealed ids. The red leg is MUTATION-SAFE
 //    (SOCIAL_MUTATE=card-filter-off): the served definition layer loses its
 //    one visible filter and the SAME probes must read 3 cards. W6 (production
@@ -139,7 +139,7 @@ const API_TOKEN = process.env.SOCIAL_API_TOKEN || '';
 // ── Fixed references taken from THIS repo (independent of the served tree) ──
 const CHANNELS_MOD = await import(pathToFileURL(join(REPO_WEB, 'js', 'socialChannels.js')).href);
 // socialhide: the two §F.2 faces are pinned SEPARATELY — the sealed data set
-// (3 entries, hide ≠ delete) and the visible single source (count = 1).
+// (every entry, hide ≠ delete) and the visible single source (count = 1).
 const EXPECTED_DEFINITION_CHANNELS = CHANNELS_MOD.SOCIAL_CHANNELS.length;
 const EXPECTED_CARDS = CHANNELS_MOD.socialChannelCount();
 // Over the FULL set on purpose: W11 keeps proving that the sealed channels'
@@ -1440,7 +1440,7 @@ async function fixtureSuite(browser, base) {
 
 // ── RED-FILTER: socialhide red proof (drop the ONE visible filter ⇒ the seal
 //    opens; the SAME probes that read {feishu} in production must read all
-//    three cards here) ────────────────────────────────────────────────────────
+//    every sealed card here) ───────────────────────────────────────────────────
 async function redFilterSuite(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   const page = await ctx.newPage();
