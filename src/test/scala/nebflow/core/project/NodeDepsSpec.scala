@@ -1354,4 +1354,298 @@ class NodeDepsSpec extends CatsEffectSuite:
     end for
   }
 
+  // ── T11 死链闸（案 a · chain-engdef-deadgate 2026-10-01）───────────────────────
+  //
+  // **第三态**：`deps: chain:<id>` 的链号**可解析**（⇒ 非 UNKNOWN）但成员集含 `cancelled`
+  // ⇒ 闸**构造性不可满足**（永不结算）。判据**只看** `status == cancelled`：`archived` /
+  // `compacted` / `archivedAt` 既非充分亦非必要（**归档可结算** = T11c）；`failed` 成员
+  // **可重激活** ⇒ RISKY 档（放行 + WARN，**禁**硬拒——硬拒会封死自愈路）。
+  //
+  // 验收矩阵：R1 运行面文案点名（T11a）/ R2 满足性不变量 + R3 写路径拒建 + R4·R5 防误伤
+  // 护栏（T11b）/ R6 归档可结算（T11c）。
+
+  /** T11 夹具：直种节点（绕过写闸——运行面与写闸两腿各自检验）。 */
+  private def t11Seed(
+    id: String,
+    status: String,
+    now: Long,
+    chainId: Option[String] = None,
+    deps: List[String] = Nil,
+    at: Long = 0L,
+    completedAt: Option[Long] = None
+  ): NodeDef =
+    NodeDef(
+      id = id,
+      name = id,
+      agent = "general",
+      status = status,
+      chainId = chainId,
+      deps = deps,
+      createdAt = now + at,
+      completedAt = completedAt
+    )
+
+  /** 审计事件三元组（type / nodeId / summary）——停滞文案取证（同 NodeMountEnforceSpec）。 */
+  private def readAuditEvents(ws: os.Path): IO[List[(String, String, String)]] =
+    readAuditLines(ws).map(
+      _.flatMap(l =>
+        jsonParse(l).toOption.map(j =>
+          (
+            j.hcursor.get[String]("type").getOrElse(""),
+            j.hcursor.get[String]("nodeId").getOrElse(""),
+            j.hcursor.get[String]("summary").getOrElse("")
+          )
+        )
+      )
+    )
+
+  test(
+    "T11a dead chain ref (R1 runtime face): deps=[chain:<id>] onto a RESOLVABLE chain holding a `cancelled` member stays unsettled and the mount-stalled text states `constructively unsatisfiable` + names the member id"
+  ) {
+    val ws = tempRoot / "ws-t11a"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"deps-t11a-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- SpecResources.mkResources(system, tempRoot, DispatchLlm().handle)
+      rt <- mountProject("deps-t11a", ws, system, res)
+      // 死链形态：链号可解析（声明链 dead-chain）+ 成员 n-d1 已 `cancelled`（不可重激活的
+      // 终态、引擎零删除路径）⇒ 闸永不结算。等待位 n-wd 直种为 wiring（绕过写闸）。
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-d1" -> t11Seed(
+              "n-d1",
+              NodeLifecycle.Cancelled,
+              now,
+              chainId = Some("dead-chain"),
+              at = 1,
+              completedAt = Some(now - 300_000L)
+            ),
+            "n-wd" -> t11Seed("n-wd", NodeLifecycle.Wiring, now, deps = List("chain:dead-chain"), at = 2)
+          )
+        )
+      )
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- IO.sleep(100.millis)
+      _ <- rt.engine.settleRunnableSweep() // 第二轮回扫：单发纪律（不刷屏）
+      wd <- rt.store.getNode("n-wd").map(_.getOrElse(fail("n-wd must exist")))
+      audit <- readAuditEvents(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val events = audit.filter((t, id, _) => t == "mount-stalled" && id == "n-wd")
+      assert(
+        events.nonEmpty,
+        s"a dead chain ref must be VISIBLE (fail-loud) via mount-stalled, got audit: ${audit.map(e => (e._1, e._2))}"
+      )
+      val summaries = events.map(_._3)
+      assert(
+        summaries.exists(_.contains("constructively unsatisfiable")),
+        s"the stall text must carry the readable CONCLUSION (`constructively unsatisfiable`), got: $summaries"
+      )
+      assert(
+        summaries.exists(s => s.contains("constructively unsatisfiable") && s.contains("n-d1")),
+        s"the stall text must NAME the cancelled member id, got: $summaries"
+      )
+      assertEquals(wd.status, NodeLifecycle.Wiring, "the dead-ref waiter must NOT be started (gate never settles)")
+      assert(wd.startedAt.isEmpty, "the dead-ref waiter must have no session")
+    end for
+  }
+
+  test(
+    "T11b dead chain ref (R2/R3/R4/R5): depsSatisfied false on the dead ref and true on the live ref; the write path refuses the dead chain with NODE_CHAIN_REF_DEAD on BOTH write points, still accepts the live chain, and accepts the failed-member chain with a RISKY warning"
+  ) {
+    val ws = tempRoot / "ws-t11b"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"deps-t11b-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- SpecResources.mkResources(system, tempRoot, DispatchLlm().handle)
+      rt <- mountProject("deps-t11b", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // FIX-DEAD / FIX-LIVE / FIX-FAILED 三组夹具：链号**都可解析**（区别于 UNKNOWN），
+      // 差别只在成员状态（cancelled 死链 / completed 活链 / failed RISKY 档）。
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-d1" -> t11Seed(
+              "n-d1",
+              NodeLifecycle.Cancelled,
+              now,
+              chainId = Some("dead-chain"),
+              at = 1,
+              completedAt = Some(now - 300_000L)
+            ),
+            "n-wd" -> t11Seed("n-wd", NodeLifecycle.Wiring, now, deps = List("chain:dead-chain"), at = 2),
+            "n-l1" -> t11Seed(
+              "n-l1",
+              NodeLifecycle.Completed,
+              now,
+              chainId = Some("live-chain"),
+              at = 3,
+              completedAt = Some(now + 10)
+            ),
+            "n-l2" -> t11Seed(
+              "n-l2",
+              NodeLifecycle.Completed,
+              now,
+              chainId = Some("live-chain"),
+              at = 4,
+              completedAt = Some(now + 20)
+            ),
+            "n-wl" -> t11Seed("n-wl", NodeLifecycle.Wiring, now, deps = List("chain:live-chain"), at = 5),
+            "n-f1" -> t11Seed("n-f1", NodeLifecycle.Failed, now, chainId = Some("failed-chain"), at = 6),
+            "n-free" -> t11Seed("n-free", NodeLifecycle.Wiring, now, at = 7)
+          )
+        )
+      )
+      wd <- rt.store.snapshot.map(_.nodes("n-wd"))
+      wl <- rt.store.snapshot.map(_.nodes("n-wl"))
+      // R2 满足性不变量（判据零变化：闸仍只认 completed）
+      satDead <- rt.engine.depsSatisfied(wd)
+      satLive <- rt.engine.depsSatisfied(wl)
+      // R3 写路径拒建（create 写点）
+      rDead <- nodeEdit(
+        nodeInput(
+          "deps-t11b",
+          "new-dead",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("never-runs-dead"),
+          "deps" -> Json.fromString("chain:dead-chain"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      deadCreated <- rt.store.snapshot.map(_.nodes.values.exists(_.name == "new-dead"))
+      // R3 写路径拒建（edit 写点——单点即覆盖双写点）
+      rDeadEdit <- nodeEdit(nodeInput("deps-t11b", "n-free", "deps" -> Json.fromString("chain:dead-chain")), ctx)
+      freeAfter <- rt.store.getNode("n-free")
+      // R4 防误伤护栏：全 completed 的活链 ⇒ 放行
+      rLive <- nodeEdit(
+        nodeInput(
+          "deps-t11b",
+          "new-live",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("after-live-chain"),
+          "deps" -> Json.fromString("chain:live-chain"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      // R5 防误伤护栏：failed 成员 ⇒ **放行** + RISKY ⚠ 行（可重激活 ⇒ 非死链）
+      rFailed <- nodeEdit(
+        nodeInput(
+          "deps-t11b",
+          "new-failed",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("after-failed-chain"),
+          "deps" -> Json.fromString("chain:failed-chain"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // ── R2 满足性不变量（改前改后同绿）──
+      assertEquals(satDead, false, "R2: a dead chain ref is NEVER satisfied (the gate waits for EVERY member)")
+      assertEquals(satLive, true, "R2: an all-completed chain ref IS satisfied")
+      // ── R3 写路径拒建（两条写点）──
+      assert(rDead.isLeft, s"R3: a dead chain ref must be refused at create, got: $rDead")
+      assert(rDead.left.exists(_.contains("NODE_CHAIN_REF_DEAD")), s"R3: expected NODE_CHAIN_REF_DEAD, got: $rDead")
+      assert(
+        rDead.left.exists(_.contains("n-d1")),
+        s"R3: the refusal must name the cancelled member id (fail-loud, actionable), got: $rDead"
+      )
+      // 复核位 r1 缺陷锁（2026-10-01）：文案的「去哪读」指引必须指向**真实存在**的键。
+      // 原稿写 `NodeList chains[].members` —— 该键不存在（真源一 = 序列化单点
+      // NodeTools.buildNodeListPayload 的 chainsJson 只产 {id,title,entries,ends,memberIds}；
+      // 真源二 = NodeList 工具描述逐字作 `chains: [{id, title, entries, ends, memberIds}]`）。
+      // 指针指错键 ⇒ 分发器撞新错时拿不到可照做的指引（本批的存在理由即「当场可照做」）。
+      assert(
+        rDead.left.exists(_.contains("chains[].memberIds")),
+        s"R3: the read-path guidance must name the REAL NodeList payload key (`chains[].memberIds`), got: $rDead"
+      )
+      assert(
+        !rDead.left.exists(_.contains("chains[].members")),
+        s"R3: the guidance must NOT name the non-existent key `chains[].members` (r1 verifier finding), got: $rDead"
+      )
+      assertEquals(deadCreated, false, "R3: the refused create must leave ZERO side effect (no node)")
+      assert(rDeadEdit.isLeft, s"R3: the same refusal must hold on the edit write point, got: $rDeadEdit")
+      assert(
+        rDeadEdit.left.exists(_.contains("NODE_CHAIN_REF_DEAD")),
+        s"R3: expected NODE_CHAIN_REF_DEAD on edit, got: $rDeadEdit"
+      )
+      assertEquals(freeAfter.map(_.deps), Some(Nil), "R3: the refused edit must not write deps")
+      // ── R4 防误伤：活链放行 ──
+      assert(rLive.isRight, s"R4: an all-completed chain ref must STILL be accepted, got: $rLive")
+      // ── R5 防误伤：failed 成员放行 + RISKY WARN ──
+      assert(rFailed.isRight, s"R5: a failed-member chain ref must be ACCEPTED (reactivatable ⇒ not dead), got: $rFailed")
+      assert(
+        rFailed.exists(_.contains("⚠ chain 'failed-chain'")),
+        s"R5: the receipt must carry the RISKY warning line, got: $rFailed"
+      )
+      assert(
+        rFailed.exists(_.contains("n-f1")),
+        s"R5: the RISKY warning must name the failed member id, got: $rFailed"
+      )
+      assert(
+        rFailed.exists(_.contains("NOT a dead ref")),
+        s"R5: the warning must state that this is NOT a dead ref (no false positive), got: $rFailed"
+      )
+    end for
+  }
+
+  test(
+    "T11c archived completed chain (R6 guardrail): a deps chain ref onto an all-completed chain whose members are already TTL-archived is STILL satisfied (archived is neither necessary nor sufficient)"
+  ) {
+    val ws = tempRoot / "ws-t11c"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"deps-t11c-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- SpecResources.mkResources(system, tempRoot, DispatchLlm().handle)
+      rt <- mountProject("deps-t11c", ws, system, res)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-a1" -> t11Seed(
+              "n-a1",
+              NodeLifecycle.Completed,
+              now,
+              chainId = Some("arch-chain"),
+              at = 1,
+              completedAt = Some(now + 10)
+            ),
+            "n-a2" -> t11Seed(
+              "n-a2",
+              NodeLifecycle.Completed,
+              now,
+              chainId = Some("arch-chain"),
+              at = 2,
+              completedAt = Some(now + 20)
+            ),
+            "n-wa" -> t11Seed("n-wa", NodeLifecycle.Wiring, now, deps = List("chain:arch-chain"), at = 3)
+          )
+        )
+      )
+      swept <- rt.store.sweepCompletedChains(now)
+      archived <- rt.store.archiveSnapshot
+      wa <- rt.store.snapshot.map(_.nodes("n-wa"))
+      sat <- rt.engine.depsSatisfied(wa)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(
+        swept.toSet,
+        Set("n-a1", "n-a2"),
+        "precondition: the all-completed declared chain must be TTL-archived"
+      )
+      assert(archived.nodes.contains("n-a1"), "precondition: the member now lives in the archive area")
+      assertEquals(
+        sat,
+        true,
+        "R6: `archived` is NEITHER sufficient NOR necessary — an all-completed ARCHIVED chain still satisfies the gate"
+      )
+    end for
+  }
+
 end NodeDepsSpec

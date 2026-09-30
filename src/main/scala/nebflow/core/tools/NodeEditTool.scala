@@ -1222,6 +1222,10 @@ object NodeEditTool extends Tool:
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
       stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
+      // 链引用 RISKY 档回执行（判据 D 二档；本批）：`deps` 里的 `chain:<id>` 目标链含
+      // `failed` 成员 ⇒ **放行**（可重激活）+ ⚠ 行。🔴 死链（含 `cancelled` 成员）在
+      // `depsOk` 已硬拒（`NODE_CHAIN_REF_DEAD`），不会走到这里。
+      chainRefWarn <- deps.filter(FlowMapStore.isChainRef).flatTraverse(r => NodeTools.chainRefWarnings(rt, r))
       // 通知策略自检（b64 批；M3/R14/spec §4.2 三条，仅 WARNING 不阻断）
       // B-3 修（2026-09-14）：此处传**未声明即缺键**（不再用 `NotifyPolicy.Default` 填
       // `Some`）。本函数的 `policy` 形参语义即「生效策略（缺键 ⇒ legacy 三态推断）」
@@ -1562,6 +1566,8 @@ object NodeEditTool extends Tool:
                           case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
                           case None => "") +
                         (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "") +
+                        // 链引用 RISKY 档（判据 D 二档；本批）：failed 成员 ⇒ 放行 + ⚠ 行
+                        (if chainRefWarn.nonEmpty then "\n" + chainRefWarn.mkString("\n") else "") +
                         // 通知策略自检（b64 批；WARNING 族，含 M3「silent ∧ 链末端只警告」）
                         (if notifyWarn.nonEmpty then "\n" + notifyWarn.mkString("\n") else "") +
                         // 悬空提示（O-B 必做 4 + C-ii 升级，本批四项②）：声明了 dangling ⇒
@@ -2916,8 +2922,15 @@ object NodeEditTool extends Tool:
                                           if notify.provided then notify.flag else node.notifyDispatcher,
                                           finalOut
                                         )
+                                        // 链引用 RISKY 档回执行（判据 D 二档；本批）：编辑后的
+                                        // `deps` 里 `chain:<id>` 目标链含 `failed` 成员 ⇒ **放行**
+                                        // （可重激活）+ ⚠ 行。🔴 死链（含 `cancelled` 成员）已在
+                                        // `dChecks` 硬拒（`NODE_CHAIN_REF_DEAD`），走不到这里。
+                                        chainRefWarn <- finalDeps
+                                          .filter(FlowMapStore.isChainRef)
+                                          .flatTraverse(r => NodeTools.chainRefWarnings(rt, r))
                                       yield inResult.map { r =>
-                                        val warn = stallWarn ++ notifyWarn
+                                        val warn = stallWarn ++ notifyWarn ++ chainRefWarn
                                         if warn.isEmpty then r else r + "\n" + warn.mkString("\n")
                                       }
                                       end for

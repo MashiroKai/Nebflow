@@ -1148,18 +1148,75 @@ object NodeTools:
       "would wait forever). Read the real ids from NodeList chains[].id. (NODE_CHAIN_REF_UNKNOWN)"
 
   /**
+   * **链引用构造性不可满足**的可行动报错（判据 D · 死链；错误码 `NODE_CHAIN_REF_DEAD`）。
+   *
+   * 与 [[chainRefUnknownError]] **互补分桶，非替代**：`UNKNOWN` = 「链号在给定节点集上不
+   * 存在」；`DEAD` = 「链号**存在**，但成员集含**不可挽回**成员（`cancelled`）⇒ 闸永不结算」。
+   * 二者**互斥且穷尽**。
+   *
+   * 为什么 `cancelled` 是「永不」而 `failed` 不是：闸只认 `completed`，`cancelled` 是**不可
+   * 重激活**的终态（重激活闸只放行 `blocked`/`failed`），且引擎**零节点删除路径** ⇒ 该成员
+   * 永久留在节点集里。`failed` 可经重激活转 `completed` ⇒ **不**构成死链（放行 + WARN）。
+   *
+   * 文案**自带改锚指引**（照 [[chainRefUnknownError]] 的成熟形态：说清**怎么改**，不只说
+   * 「不许」）：把「等整链」换成**字面成员 id 的『完成事实锚』**——`deps` 里直接写那些**确实
+   * 承载落地事实**、且已 `completed` 的成员 id（既有字面 `deps` 语法，零新原语）。
+   */
+  def chainRefDeadError(ref: String, deadMembers: Map[String, Set[String]]): String =
+    val named = deadMembers.toList
+      .sortBy(_._1)
+      .map((cid, ids) => s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}")
+      .mkString("; ")
+    s"Dead chain reference '${chainRefShown(ref)}' in deps: the chain EXISTS but its member set is constructively unsatisfiable — " +
+      s"$named. `cancelled` is a non-reactivatable terminal (unlike `failed`, which can be re-activated): the gate waits for EVERY " +
+      "member to be completed, so as written this node would wait forever. Fix it by rewiring the deps ref to a COMPLETION FACT " +
+      "ANCHOR — a literal member id that actually carries the landing fact and is already `completed` (deps = [\"n-...\"]), instead of " +
+      "the whole-chain ref; or drop the ref if the gate is no longer meaningful. Read the member ids from NodeList " +
+      "chains[].memberIds, then each member's own status via NodeList detail=<memberId> (that read path resolves a " +
+      "member even after it has left the active map) — or from `nodes[].status` for members still on the active map. (NODE_CHAIN_REF_DEAD)"
+
+  /**
    * 单条链引用可达性（create/edit 两条写路径共用；判据单点，数据源 = 双区合并集
    * ——与启动闸/停滞面同源；零链引用时零派生成本）。`in` 里的链引用由
    * [[chainRefInInputError]] 静态拒（不经本闸）。
+   *
+   * 两档判据（同源 = `FlowMapStore.resolveDepTargets` 单点，零第二解析器）：
+   *   - 链号**不存在**（`unknownChainRefs`）⇒ 拒，[[chainRefUnknownError]]（既有行为）；
+   *   - 链号**存在但构造性不可满足**（`deadChainRefs`，判据 D：成员含 `cancelled`）⇒
+   *     **拒**，[[chainRefDeadError]]（本批新增；fail-loud + 点名 + 改锚指引）。
+   * 🔴 判据**只看** `status == cancelled`——`failed` 成员**放行**（可重激活，禁止硬拒以免
+   * 封死自愈路）；🔴 **禁**以 `archived` / `compacted` / `archivedAt` / ledger 任何键作判据。
    */
   def chainRefExists(rt: ProjectRuntime, ref: String): IO[Either[String, Unit]] =
     if !FlowMapStore.isChainRef(ref) then IO.pure(Right(()))
     else
       rt.store.combinedNodes.map { combined =>
-        val known = FlowMapStore.topologicalChains(combined.values).map(_.id).toSet
+        val targets = FlowMapStore.resolveDepTargets(List(ref), combined)
         val t = FlowMapStore.chainRefTarget(ref)
-        if t.nonEmpty && known.contains(t) then Right(())
+        if targets.deadChainRefs.nonEmpty then Left(chainRefDeadError(ref, targets.deadChainRefs))
+        else if t.nonEmpty && !targets.unknownChainRefs.nonEmpty then Right(())
         else Left(chainRefUnknownError(ref))
+      }
+
+  /**
+   * 链引用的 **RISKY 档**回执行（⚠ 行；空 = 无该形态）。**放行但告警**——`failed` 成员
+   * **可重激活**（与 `cancelled` 不同域）⇒ 🔴 **禁**在写路径硬拒（那会封死自愈路），只把
+   * 「这条闸现在挡着、且要靠重激活才能通」说在决策当下（形式仿 [[stalledInWarning]]：成功
+   * 回执尾部附 ⚠ 行，非阻断）。判据源 = 同一解析单点 [[FlowMapStore.resolveDepTargets]]。
+   */
+  def chainRefWarnings(rt: ProjectRuntime, ref: String): IO[List[String]] =
+    if !FlowMapStore.isChainRef(ref) then IO.pure(Nil)
+    else
+      rt.store.combinedNodes.map { combined =>
+        val targets = FlowMapStore.resolveDepTargets(List(ref), combined)
+        targets.riskyChainRefs.toList
+          .sortBy(_._1)
+          .map((cid, ids) =>
+            s"⚠ chain '$cid' has FAILED member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Failed}").mkString(", ")} — " +
+              "the gate waits for every member to be completed, and `failed` IS reactivatable (unlike `cancelled`, which would " +
+              "refuse this edit outright), so this is NOT a dead ref: re-activate the member, or rewire to a completion fact " +
+              "anchor (literal member ids). (warning only)"
+          )
       }
 
   /**
