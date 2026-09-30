@@ -164,6 +164,22 @@ object RichRenderProbe:
             ((bytes(o) & 0xff) << 24) | ((bytes(o + 1) & 0xff) << 16) |
               ((bytes(o + 2) & 0xff) << 8) | (bytes(o + 3) & 0xff)
           val w = be32(16); val h = be32(20)
+          // Two independent readings: the raw file's byte statistics (cheap, and
+          // deliberately NOT the production criterion — see richrenderer.inspect)
+          // and the decoded pixel count (what production actually judges).
+          val decoded = javax.imageio.ImageIO.read(outPng.toNIO.toFile)
+          val distinctPixels =
+            if decoded == null then -1
+            else
+              val seen = scala.collection.mutable.HashSet.empty[Int]
+              var y = 0
+              while y < decoded.getHeight do
+                var x = 0
+                while x < decoded.getWidth do
+                  seen += (decoded.getRGB(x, y) & 0x00ffffff)
+                  x += 1
+                y += 1
+              seen.size
           s""""file": "${esc(outPng.toString)}",
              |    "bytes": ${bytes.length},
              |    "magicHex8": "$magicHex",
@@ -171,6 +187,7 @@ object RichRenderProbe:
              |    "ihdrWidth": $w,
              |    "ihdrHeight": $h,
              |    "distinctByteValues": ${bytes.distinct.length},
+             |    "distinctPixelColours": $distinctPixels,
              |    "geometryMatchesDeclared": ${w == RichFeishuAdapter.DefaultWidth && h == RichFeishuAdapter.DefaultHeight}""".stripMargin
 
       write(evidenceDir, "render-reading.json",
@@ -187,7 +204,7 @@ object RichRenderProbe:
            |  "renderHeight": ${r.height},
            |  "renderReason": "${esc(r.reason)}",
            |  "renderDetail": "${esc(r.detail)}",
-           |  "minDistinctBytes": ${RichRenderer.MinDistinctBytes},
+           |  "minDistinctPixels": ${RichRenderer.MinDistinctPixels},
            |  "timeoutMs": ${RichRenderer.DefaultTimeoutMs},
            |  "stableWindowMs": ${RichRenderer.StableWindowMs},
            |  "chromeProcsBefore": $before,

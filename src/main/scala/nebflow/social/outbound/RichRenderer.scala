@@ -27,7 +27,7 @@ import scala.jdk.CollectionConverters.*
  *     `destroyForcibly`, and **no child is ever left running**. No `nohup`, no
  *     `&`.
  *   - HC-3 success judgement = the `\x89PNG` magic AND declared dimensions AND
- *     more than a handful of distinct byte values (a solid colour fails). Any
+ *     more than a handful of distinct pixel colours (a solid colour fails). Any
  *     miss is a RENDER FAILURE and flows into §7.1.
  *   - HC-4 output lands under the caller-supplied temporary face, never in the
  *     repository.
@@ -61,11 +61,13 @@ object RichRenderer:
     *  enough; the guard exists so a partially-written file is never judged. */
   val StableWindowMs: Long = 150L
 
-  /** HC-3: the distinct-byte floor. The design card's probe produced 256; a
-    *  single-colour bitmap produces 1–2. The threshold is deliberately tiny (any
-    *  real content clears it) so it cannot be mistaken for a quality score — it
-    *  only rejects empty/solid output. */
-  val MinDistinctBytes: Int = 5
+  /** HC-3: the content floor, over DISTINCT DECODED PIXEL COLOURS (not file
+    *  bytes — see [[RichRenderer.inspect]] for why the byte-statistics version
+    *  does not work). The design card's probe produced a full-colour page; a
+    *  single-colour bitmap produces exactly 1. The threshold is deliberately tiny
+    *  (any real content clears it) so it cannot be mistaken for a quality score —
+    *  it only rejects empty/solid output. */
+  val MinDistinctPixels: Int = 5
 
   /** Outcome of a render attempt. Both branches are readings; a failure is never
     *  thrown past this boundary — the caller needs to degrade, not to crash a
@@ -285,14 +287,19 @@ object RichRenderer:
     catch case _: java.io.IOException => ()
 
   /**
-   * HC-3, the success judgement, as a pure reading over a produced file: PNG
-   * magic + declared dimensions + distinct-byte floor. Shared by the production
-   * renderer and the spec so both sides judge identically — a spec that judged
-   * differently from production would prove nothing.
+   * HC-3, the success judgement, as a reading over a produced file: PNG magic +
+   * declared dimensions + a content floor. Shared by the production renderer and
+   * the spec so both sides judge identically — a spec that judged differently
+   * from production would prove nothing.
    *
-   * 🔴 Distinct bytes over the WHOLE file, not decoded pixels: that is
-   * deliberately a cheap structural gate (it rejects empty and solid-colour
-   * output) and explicitly NOT a quality score — see [[MinDistinctBytes]].
+   * 🔴 The content floor is measured on DECODED PIXELS, not on the file's byte
+   * statistics. Counting distinct bytes in the file does not work: PNG compresses
+   * its rows, so even a perfectly uniform image yields a large stream of varying
+   * filter and entropy bytes — measured here, a 32×24 pure-white PNG carries well
+   * over the old floor as distinct byte values and sailed past it.
+   * The judgement therefore decodes the image and counts distinct RGB values.
+   *
+   * A file that cannot be decoded at all is a render failure, not a pass.
    */
   def inspect(p: os.Path, expectedWidth: Int, expectedHeight: Int): Either[RenderResult, RenderResult] =
     if !Files.exists(p.toNIO) then Left(RenderResult.engineUnavailable(s"no render product at $p"))
@@ -306,16 +313,39 @@ object RichRenderer:
           "render output is not a PNG (the first four bytes are not \\x89PNG)"))
       else
         val (w, h) = pngSize(bytes)
-        val distinct = bytes.distinct.length
         if w != expectedWidth || h != expectedHeight then
           Left(RenderResult.invalidProduct(p, size, w, h,
             s"render output geometry $w×$h does not match the declared ${expectedWidth}×${expectedHeight}"))
-        else if distinct <= MinDistinctBytes then
-          Left(RenderResult.invalidProduct(p, size, w, h,
-            s"render output is empty/solid: $distinct distinct byte value(s), floor is > $MinDistinctBytes"))
         else
-          Right(RenderResult(true, Some(p), size, w, h, "",
-            s"PNG $w×$h, $size bytes, $distinct distinct byte values"))
+          distinctPixels(p) match
+            case None =>
+              Left(RenderResult.invalidProduct(p, size, w, h,
+                "render output carries a PNG header but could not be decoded as an image"))
+            case Some(distinct) if distinct <= MinDistinctPixels =>
+              Left(RenderResult.invalidProduct(p, size, w, h,
+                s"render output is empty/solid: $distinct distinct pixel colour(s), floor is > $MinDistinctPixels"))
+            case Some(distinct) =>
+              Right(RenderResult(true, Some(p), size, w, h, "",
+                s"PNG $w×$h, $size bytes, $distinct distinct pixel colours"))
+
+  /** Distinct RGB values in a decoded image, or `None` if it will not decode. */
+  private def distinctPixels(p: os.Path): Option[Int] =
+    try
+      val img = javax.imageio.ImageIO.read(p.toNIO.toFile)
+      if img == null then None
+      else
+        val seen = scala.collection.mutable.HashSet.empty[Int]
+        val w = img.getWidth
+        val h = img.getHeight
+        var y = 0
+        while y < h && seen.size <= MinDistinctPixels + 1 do
+          var x = 0
+          while x < w && seen.size <= MinDistinctPixels + 1 do
+            seen += (img.getRGB(x, y) & 0x00ffffff)
+            x += 1
+          y += 1
+        Some(seen.size)
+    catch case _: Throwable => None
 
   /** IHDR width/height, big-endian at offsets 16..24 of a PNG. */
   private def pngSize(b: Array[Byte]): (Int, Int) =

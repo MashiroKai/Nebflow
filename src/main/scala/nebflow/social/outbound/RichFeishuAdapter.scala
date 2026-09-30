@@ -65,7 +65,8 @@ final class RichFeishuAdapter(
     uploadFileFn: RichFeishuAdapter.UploadFile,
     sendMsgFn: RichFeishuAdapter.SendMsg,
     sendTextFn: RichFeishuAdapter.SendText,
-    renderer: RichRenderer.Renderer
+    renderer: RichRenderer.Renderer,
+    renderOutputDir: () => os.Path = RichFeishuAdapter.defaultRenderOutputDir
 ):
 
   private val logger = NebflowLogger.forName("nebflow.social.outbound.feishu")
@@ -151,14 +152,16 @@ final class RichFeishuAdapter(
   private def deliverCard(content: String): IO[List[RichCallResult]] =
     renderCardPng(content).flatMap {
       case Left(reason) =>
+        val line = RichDegrade.cardNotRendered(reason, content.getBytes("UTF-8").length.toLong)
         IO(logger.warn(s"outbound: card render failed — $reason")) *>
-          sendDegrade(s"$reason\n${RichPlanner.InteractivePanelNote}", okDetail = "card degrade text delivered")
+          sendDegrade(s"$line\n${RichPlanner.InteractivePanelNote}", okDetail = "card degrade text delivered")
       case Right(png) =>
         uploadImageFn(png).flatMap { up =>
           if !up.ok then
+            val pngBytes = if Files.exists(png.toNIO) then Files.size(png.toNIO) else 0L
+            val line = RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), png, pngBytes)
             IO(logger.warn(s"outbound: card screenshot upload refused (code=${up.code})")) *>
-              sendDegrade(
-                s"${RichDegrade.Reason.channelRejected(up.code)}\n${RichPlanner.InteractivePanelNote}",
+              sendDegrade(s"$line\n${RichPlanner.InteractivePanelNote}",
                 okDetail = s"card screenshot upload refused (code=${up.code})")
           else
             for
@@ -215,13 +218,23 @@ final class RichFeishuAdapter(
    * line stays matchable while the operator still gets the specifics.
    */
   private def renderCardPng(content: String): IO[Either[String, os.Path]] =
-    val out = PathUtil.dataRoot / "tmp" / "outbound-render" / s"card-${java.util.UUID.randomUUID()}.png"
-    IO.blocking(Files.createDirectories(out.toNIO.getParent))
-      .flatMap(_ => renderer.render(htmlOf(content), out, DefaultWidth, DefaultHeight))
-      .map {
-        case r if r.ok => Right(out)
+    prepareRenderOutput().flatMap { out =>
+      renderer.render(htmlOf(content), out, DefaultWidth, DefaultHeight).map {
+        // The renderer reports the path it actually produced; uploading anything
+        // else would send a file we never verified. `out` is only the fallback for
+        // a renderer that reports no path (the stubs in the offline spec).
+        case r if r.ok => Right(r.path.getOrElse(out))
         case r         => Left(if r.reason.trim.isEmpty then RichDegrade.Reason.EngineUnavailable else r.reason)
       }
+    }
+
+  /** Where a card's render lands: under the data root's temporary face, never in
+    *  the repository (HC-4). Resolved through an injected thunk so the offline spec
+    *  can point it at a temp directory instead of the process-global data root,
+    *  which other suites mutate. */
+  private def prepareRenderOutput(): IO[os.Path] =
+    val out = renderOutputDir() / s"card-${java.util.UUID.randomUUID().toString.take(12)}.png"
+    IO.blocking(Files.createDirectories(out.toNIO)).as(out)
 
   /**
    * The card's page source. A card product is the sentinel followed by a JSON
@@ -257,6 +270,10 @@ object RichFeishuAdapter:
   def defaultRenderer: RichRenderer.Renderer =
     val chrome = new RichRenderer.ChromeRenderer()
     if chrome.available then chrome else RichRenderer.Unavailable
+
+  /** HC-4: cards render into the data root's temporary face, never the repo. A
+    *  fresh thunk per call so a `--home` change after construction is honoured. */
+  def defaultRenderOutputDir(): os.Path = PathUtil.dataRoot / "tmp" / "outbound-render"
 
   /** Outcome of an upload leg. `key` = `image_key` / `file_key`. Never carries a
     *  credential or a signed URL. */

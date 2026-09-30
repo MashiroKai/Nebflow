@@ -59,6 +59,20 @@ object RichDegrade:
   def renderFailed(reason: String, path: os.Path, bytes: Long): String =
     s"[未渲染] $reason — 原件：$path（$bytes 字节）"
 
+  /**
+   * §7.1 for a CARD, whose "original" is not a file on disk but the HTML payload
+   * the product arrived as. The template shape is kept (`[未渲染]` + reason +
+   * `原件：…` + byte count) so §7.3 #3's machine-checkable placeholder still
+   * fires and a reader sees the same shape it sees for the file kinds — the
+   * `原件` slot simply names the payload instead of a path.
+   *
+   * 🔴 Without this the card degrade path emitted the bare reason, which contains
+   * no `[未渲染]` and would therefore have slipped past the "never drop silently"
+   * check. The offline spec pins it (R-5/R-5b).
+   */
+  def cardNotRendered(reason: String, payloadBytes: Long): String =
+    s"[未渲染] $reason — 原件：卡片内容（HTML 载荷，$payloadBytes 字节）"
+
   /** §7.2: `[未知类型] <reason> — 原件：<path>`. `path` may be absent (an event
     *  with no product path at all still gets a line, never a silence). */
   def unknown(reason: String, path: Option[os.Path]): String =

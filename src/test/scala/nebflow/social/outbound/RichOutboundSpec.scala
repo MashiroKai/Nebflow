@@ -35,7 +35,7 @@ class RichOutboundSpec extends CatsEffectSuite:
   private def tmpDir(): os.Path = os.temp.dir(prefix = "nb-rich-outbound-")
 
   /** A REAL PNG of the requested size, written through the JDK's own encoder —
-    *  noise, not a solid colour, so it clears the distinct-byte floor the way a
+    *  noise, not a solid colour, so it clears the distinct-pixel floor the way a
     *  browser screenshot does. Hand-writing bytes would risk a file that is not
     *  actually decodable, which would make the judgement vacuous. */
   private def writeNoisePng(path: os.Path, w: Int, h: Int): os.Path =
@@ -126,7 +126,11 @@ class RichOutboundSpec extends CatsEffectSuite:
       rec: Recorder,
       renderer: RichRenderer.Renderer = RichRenderer.Unavailable
   ): RichFeishuAdapter =
-    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer)
+    // The render-output face is injected as a temp directory: the production
+    // default reads the process-global data root, which other suites mutate, so a
+    // spec that used it would be coupled to their state.
+    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer,
+      () => tmpDir())
 
   private val CardHtml = """<!doctype html><html><body><h1>hello card</h1></body></html>"""
   private def cardPayload(html: String = CardHtml): String =
@@ -416,6 +420,14 @@ class RichOutboundSpec extends CatsEffectSuite:
 
   test("R-8b HC-3 rejects a solid-colour PNG (the empty-render shape)") {
     val p = writeSolidPng(tmpDir() / "blank.png", 32, 24, 0xffffff)
+    // The reason this row exists at all: a uniform PNG still contains MANY
+    // distinct file bytes (row filters and entropy coding produce them), so a
+    // file-level byte count accepts it. Measured here: bytes are large, decoded
+    // colours are exactly 1. HC-3 must judge the pixels.
+    val distinctBytes = Files.readAllBytes(p.toNIO).distinct.length
+    assert(distinctBytes > RichRenderer.MinDistinctPixels,
+      s"fixture sanity: a solid PNG is expected to have many distinct BYTES ($distinctBytes), " +
+        "which is exactly why byte statistics cannot be the criterion")
     RichRenderer.inspect(p, 32, 24) match
       case Right(_)  => fail("a solid-colour image must NOT be accepted as a successful render")
       case Left(err) => assert(err.detail.contains("empty/solid"), err.detail)
@@ -517,8 +529,22 @@ class RichOutboundSpec extends CatsEffectSuite:
     val sources = os.list(dir).filter(p => p.last.endsWith(".scala"))
     assert(sources.nonEmpty, s"expected source files under $dir")
     sources.foreach { f =>
-      val text = os.read(f)
-      assert(!text.contains("case _ => IO.unit"), s"${f.last}: silent-drop idiom `case _ => IO.unit`")
-      assert(!text.contains("case _ => ()"), s"${f.last}: silent-drop idiom `case _ => ()`")
+      // Scan CODE, not prose. These idioms are named in the files' own doc
+      // comments (that is how the contract is documented), so a raw grep would
+      // flag the documentation instead of the code. Block comments are removed
+      // and trailing `//` comments are stripped per line before matching.
+      val code = stripComments(os.read(f))
+      assert(!code.contains("case _ => IO.unit"), s"${f.last}: silent-drop idiom `case _ => IO.unit`")
+      assert(!code.contains("case _ => ()"), s"${f.last}: silent-drop idiom `case _ => ()`")
     }
   }
+
+  /** Remove Scala block comments and per-line `//` trailing comments. Good enough
+    *  for an idiom scan: string literals containing `//` would only make the scan
+    *  *weaker* on that line, never produce a false positive. */
+  private def stripComments(src: String): String =
+    val noBlocks = src.replaceAll("(?s)/\\*.*?\\*/", "")
+    noBlocks.linesIterator.map { line =>
+      val i = line.indexOf("//")
+      if i >= 0 then line.substring(0, i) else line
+    }.mkString("\n")
