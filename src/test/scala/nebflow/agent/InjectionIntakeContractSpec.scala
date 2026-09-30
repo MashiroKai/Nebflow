@@ -69,8 +69,12 @@ class InjectionIntakeContractSpec extends FunSuite:
     if needle.isEmpty then 0 else hay.sliding(needle.length).count(_ == needle)
 
   test("② 置位侧单点：intake 只在腿①（→project）置位，腿②（→node）/腿③（非 project 面）不置位"):
-    val leg1Call = "mailAttribution(mailType, ctx, Some(InjectionAttribution.IntakeMail))"
-    val bareCall = "mailAttribution(mailType, ctx)"
+    // mailmodel batch (2026-09-25): the `type` key is retired => mailAttribution's
+    // first argument changed from `mailType` to eventType; leg 1 is pinned to "info"
+    // (the P0 exemption is now judged on the root injection side via the leading
+    // [INTERRUPT] literal).
+    val leg1Call = "mailAttribution(\"info\", ctx, Some(InjectionAttribution.IntakeMail))"
+    val bareCall = "mailAttribution(\"info\", ctx)"
     assertEquals(
       countLiteral(mailTool, leg1Call),
       1,
@@ -83,9 +87,11 @@ class InjectionIntakeContractSpec extends FunSuite:
       s"`$bareCall`（默认 intake=None）必须恰好一处（腿② deliverToNode）——腿① 应用带 IntakeMail 的重载"
     )
     assert(
-      // 2026-09-24:钉死文本更新为 scalafmt 全树重排后的形态(续行 4 空格;判据语义不变)。
+      // 2026-09-30 (mailmodel batch): the first parameter is renamed mailType -> eventType
+      // (the `type` key retired). The pin keeps the file's own 4-space continuation style
+      // (PR-side form; byte-level scalafmt re-flow is out of this batch's face).
       mailTool.contains(
-        "private def mailAttribution(\n    mailType: String,\n    ctx: ToolContext,\n    intake: Option[String] = None\n  )"
+        "private def mailAttribution(\n    eventType: String,\n    ctx: ToolContext,\n    intake: Option[String] = None\n  )"
       ),
       "mailAttribution 必须保留 `intake: Option[String] = None` 默认参数（默认 None ⇒ 未置位腿零行为变化）"
     )

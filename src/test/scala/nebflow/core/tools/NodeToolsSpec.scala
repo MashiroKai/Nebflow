@@ -199,13 +199,16 @@ class NodeToolsSpec extends FunSuite:
     // `Mail(address="node:<id>", message=...)`。
     // device-mail 批（2026-09-15）：Mail 的目标面从「address 必填」扩成
     // **`address` XOR `device`**（两者各自可空、由运行期互斥闸判，见 MailTool 的
-    // MAIL_TARGET_EXCLUSIVE / _MISSING）⇒ required 只剩 message。本断言同批 re-pin：
-    // 仍然钉「address 不再是唯一必填面」与「退役参数不得回流」，未放宽任何既有约束。
+    // MAIL_TARGET_EXCLUSIVE / _MISSING）⇒ required 只剩 message。
+    // mailmodel batch (2026-09-25, ruling (e)): the whole `device` leg is retired =>
+    // the target face returns to the **single `address` target** (the required face is
+    // unchanged, still message only; the address key must stay present and `device`
+    // must NOT come back).
     val mailReq = requiredOf(MailTool)
     assertEquals(
       mailReq,
       List("message"),
-      s"Mail required should be message only (address/device are mutually exclusive targets); got $mailReq"
+      s"Mail required should be message only (the target face is address-only); got $mailReq"
     )
     assert(
       !mailReq.contains("nodeId") && !mailReq.contains("project"),
@@ -213,8 +216,8 @@ class NodeToolsSpec extends FunSuite:
     )
     val mailProps = MailTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
     assert(
-      mailProps.contains("address") && mailProps.contains("device"),
-      s"Mail must declare both target parameters (address + device); got ${mailProps.toList.sorted}"
+      mailProps.contains("address") && !mailProps.contains("device"),
+      s"Mail must declare `address` and must NOT carry the retired `device` key; got ${mailProps.toList.sorted}"
     )
   }
 
