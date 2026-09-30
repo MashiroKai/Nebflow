@@ -108,6 +108,28 @@ To build from source (Java 21+, sbt):
 sbt assembly
 ```
 
+## Weixin (iLink) channel
+
+Nebflow connects to Weixin through the official ClawBot plugin, which runs attached to your OpenClaw host. Nebflow itself hosts only the seam: it does not implement the iLink protocol (long polling, auth headers, media decryption, cursors and session backoff all live in the official plugin).
+
+**Requirements**
+
+- Node.js **22.13.0 or newer** on the host that runs the plugin.
+- OpenClaw host **2026.5.12 or newer** (the plugin's declared minimum).
+- The plugin package **`@tencent-weixin/openclaw-weixin` at version 2.4.9**, installed and enabled in that host.
+
+**How it runs**
+
+The plugin process is resident in the host and owns the whole Weixin side, including account credentials: it keeps them under the host state directory (`~/.openclaw/openclaw-weixin/accounts/<ilink_bot_id>.json`). Nebflow keeps **no copy of any credential** — the `weixin-ilink` channel card stores the `bot_token` behind a path reference and never renders, echoes or serves a secret value; every probe answers only whether the stored path exists, is correctly permissioned, and is readable. A session pause on the Weixin side (a `-14` response, which parks that account for one hour) is contained to the plugin's own leg and never interrupts other Nebflow work.
+
+**Enable it**
+
+1. Install and enable the plugin in the host, then sign in once with a QR scan — **run the scan on the same machine that runs the Nebflow gateway**, since the credentials it produces are read from that machine's host state directory.
+2. Open the social panel, select the **Weixin (iLink)** card and fill in: `bot_token` (the bot credential), `ilink_bot_id` (the bot account id) and `ilink_user_id` (the scanning user's id). `baseurl` is optional and defaults to the official API base.
+3. Fill `allowed_ilink_user_ids` with the sender ids that may talk to the bot, comma-separated. **Leaving it empty allows every sender that can reach the plugin; filling it makes the gate fail-closed** — only listed senders pass, and a message whose sender identity cannot be resolved is dropped like any non-member. Enabling the card registers the channel so it reports as connected.
+
+The inbound leg is `POST /api/social/channels/weixin-ilink/ingress`, behind the gateway's normal auth gate: the plugin-side side-car posts one message at a time, and the response is the observable verdict (`injected` with the target session, or `dropped` with a reason). Restricting senders at this seam matters because the official plugin performs no sender admission of its own.
+
 ## Documentation
 
 Full documentation lives at [nebflow.space](https://nebflow.space).

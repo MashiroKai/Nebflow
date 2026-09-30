@@ -77,6 +77,31 @@ object SocialChannels:
         FieldSpec("aes_key", "secret", required = true, pattern = None, Some("social-wechat-aes-key"))
       )
     ),
+    // wechat iLink batch: the official ClawBot plugin's channel. A SEPARATE card
+    // on purpose — the `wechat` card above carries the Official-Account webhook
+    // model (app_id/app_secret/token/aes_key) and replacing those fields would
+    // destroy that semantics irreversibly. This card describes the side-car
+    // deployment: the official plugin runs attached to the host and this repo
+    // only grows the seam, so the card holds identifiers + one runtime URL only.
+    // `bot_token` is the ONE credential and lives behind `_ref` like every other
+    // secret; the official plugin's own credential copy stays in the host state
+    // directory and is never mirrored into this repo.
+    // `allowed_ilink_user_ids` is the sender-gate SLOT: empty = no restriction
+    // (the shipped default), filling it (comma-separated sender ids) makes the
+    // seam's gate fail-closed — a sender that is not on the list, INCLUDING one
+    // whose identity cannot be resolved, is dropped.
+    // `context_token` is deliberately NOT a field: it is runtime state of the
+    // official plugin's session, not configuration.
+    ChannelSpec(
+      "weixin-ilink",
+      List(
+        FieldSpec("bot_token", "secret", required = true, pattern = None, Some("social-weixin-bot-token")),
+        FieldSpec("ilink_bot_id", "text", required = true, pattern = None),
+        FieldSpec("ilink_user_id", "text", required = true, pattern = None),
+        FieldSpec("baseurl", "url", required = false, pattern = Some("^https?://")),
+        FieldSpec("allowed_ilink_user_ids", "text", required = false, pattern = None)
+      )
+    ),
     ChannelSpec(
       "feishu",
       List(

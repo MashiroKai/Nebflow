@@ -1417,6 +1417,13 @@ object GatewayMain extends IOApp:
                                                           // pass below is a no-op for it. Otherwise this is an
                                                           // unregister no-op and boot behaves exactly as before.
                                                           _ <- nebflow.social.FeishuBridgePlugin.sync(bridgeManager, PathUtil.dataRoot)
+                                                          // wechat iLink batch: boot-time resync for the
+                                                          // weixin-ilink side-car seam — same closed loop
+                                                          // (enabled ∧ verified ⇒ registered and started),
+                                                          // same shape as the feishu line above. The seam
+                                                          // holds no socket, so this never blocks boot and
+                                                          // an unconfigured install is an unregister no-op.
+                                                          _ <- nebflow.social.WeixinIlinkBridgePlugin.sync(bridgeManager, PathUtil.dataRoot)
                                                           // Register bridge as WsHub listener for agent events
                                                           _ <- wsHub.register(json =>
                                                             val sessionId =
