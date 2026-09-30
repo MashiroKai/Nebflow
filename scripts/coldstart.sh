@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # coldstart.sh — Nebflow 冷启动脚本
 #
-# 用途：先清理旧残留（占端口的旧实例 + 旧 data home），再启动一个全新的冷启动实例。
+# 用途：先清理旧残留（占端口的旧实例 + 旧 data home 中【非模型配置】的条目），
+#       再启动一个全新的冷启动实例（已配置的模型跨冷启动保留，不必重配）。
 # 解决原命令 `sbt "run --home /tmp/nebflow-coldstart --port 8097"` 的路径/端口被脏
 # （旧 sessions / 注册 / 锁 残留导致"不是真正冷启动"）的问题。
 #
@@ -30,12 +31,23 @@
 #      使用者已设该变量时脚本一律原样保留、绝不覆盖。
 #      真值口径与 Scala 端 EnrollGuard.explicitAllowEnv 逐字对齐：1 / true / yes（大小写不敏感）；
 #      其它值（含 0 / false / 空）都等同未放行。
+#   5) 步骤 2 是【选择性清理】而非 rm -rf 整个 home —— 模型配置文件原地保留，免得每跑一次冷启动
+#      就要重新配一遍模型。保留件 = 顶层三件、精确名匹配：nebflow.json（provider×model 定义）、
+#      models.json（provider/model 能力注记）、model-presets.json（preset 链）；其余顶层条目
+#      （sessions / 注册 / 锁 / 点目录等）照旧清空，真·冷启动语义不变。选「就地删非保留件」而非
+#      「先搬走三件→rm -rf→再搬回」：搬移形态一旦在清理与恢复之间中断，配置会滞留在暂存目录；
+#      就地清理的中断方向只会留下残留条目，配置始终在原位（fail-safe）。
+#      首次冷启动（保留件尚未生成）下三件均未命中，脚本照常启动；每轮都逐条打印保留清单与
+#      删除清单，便于作者由 stdout 核对「哪些留、哪些删」。
 #
 # 用法：
 #   ./scripts/coldstart.sh                                            # 真实冷启动（默认【不】进生产网）
 #   DRY_RUN=1 ./scripts/coldstart.sh                                  # 只预览，不启动 sbt
 #   COLDSTART_PORT=<port> COLDSTART_HOME=<path> ./scripts/coldstart.sh  # 覆盖默认
 #   NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh                # 显式放行：注册到生产 NebLink
+#
+# 说明：已配置的模型（home 顶层的 nebflow.json / models.json / model-presets.json）
+#       在冷启动时原地保留，只有其余 home 条目被清空。
 #
 set -euo pipefail
 
@@ -122,14 +134,47 @@ else
   fi
 fi
 
-# ── 步骤 2：清空旧 home，保证真·冷启动 ──
+# ── 步骤 2：清空旧 home（保留已配置的模型），保证真·冷启动 ──
+# 保留列 = 顶层精确名匹配的三个模型配置件（详见文件头 5)）；其余顶层条目（含点文件/点目录）
+# 一律真删。home 不存在 ⇒ 只建不删（mkdir -p，原语义照旧）。
+# 保留清单与删除清单每轮都打印（DRY_RUN 下亦打印），使外部可由 stdout 核对留/删。
+KEEP_FILES="nebflow.json models.json model-presets.json"
+print_keep_report() {
+  local f
+  echo "[coldstart] 保留清单（顶层精确名匹配）:"
+  for f in $KEEP_FILES; do
+    if [ -e "$COLDSTART_HOME/$f" ]; then
+      echo "[coldstart]   保留 $COLDSTART_HOME/$f （命中）"
+    else
+      echo "[coldstart]   保留 $COLDSTART_HOME/$f （未命中：本次未生成，跳过）"
+    fi
+  done
+}
 if [ "$DRY_RUN" = "1" ]; then
-  echo "[coldstart] [DRY_RUN] 将 rm -rf 并重建 HOME=${COLDSTART_HOME}（清旧 sessions/注册/锁）"
+  echo "[coldstart] [DRY_RUN] 将选择性清理 HOME=${COLDSTART_HOME}（清旧 sessions/注册/锁；保留模型配置件）"
+  print_keep_report
+  if [ -d "$COLDSTART_HOME" ]; then
+    echo "[coldstart] [DRY_RUN] 将删除以下顶层条目:"
+    find "$COLDSTART_HOME" -maxdepth 1 -mindepth 1 \
+      ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
+      -print 2>/dev/null | sed 's/^/[coldstart]   - /'
+  else
+    echo "[coldstart] [DRY_RUN] $COLDSTART_HOME 不存在，将仅 mkdir -p（无条目可删）"
+  fi
 else
-  echo "[coldstart] 清空旧 home: $COLDSTART_HOME"
-  rm -rf "$COLDSTART_HOME"
+  echo "[coldstart] 选择性清理旧 home: ${COLDSTART_HOME}（保留模型配置件）"
   mkdir -p "$COLDSTART_HOME"
-  echo "[coldstart] home 已清空重建: $COLDSTART_HOME"
+  print_keep_report
+  # 删除清单先落 stdout、再执行删除（同谓词、无并发写者 ⇒ 两遍所见一致）：即使清理中途中断，
+  # 配置也只是留在原位，不会滞留在别处。
+  echo "[coldstart] 删除清单（顶层非保留条目，实删）:"
+  find "$COLDSTART_HOME" -maxdepth 1 -mindepth 1 \
+    ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
+    -print 2>/dev/null | sed 's/^/[coldstart]   - /'
+  find "$COLDSTART_HOME" -maxdepth 1 -mindepth 1 \
+    ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
+    -exec rm -rf {} + || true
+  echo "[coldstart] home 已选择性清理: $COLDSTART_HOME"
 fi
 
 # ── 步骤 3：启动全新实例（DRY_RUN 跳过）──
