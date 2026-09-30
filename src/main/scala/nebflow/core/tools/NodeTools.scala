@@ -320,6 +320,139 @@ object NodeTools:
     )
 
   /**
+   * **The pass-consumer judgement single point** (design card §1.3 / §3.1, verbatim):
+   *
+   * ```
+   * declaredOut(v) = canonical(v.out) ++ v.pendingOut
+   * passOutlet(v) ≜ ∃ e ∈ declaredOut(v): mode(e) ≠ loop ∧ pass ∈ on(e)
+   *                ∧ ( e.to = "Nebula" ∧ mode(e) = result
+   *                    ∨ resolveTargetId(nodes, e.to).isDefined )
+   * ```
+   *
+   * Three boundary readings, verbatim from the card, on the same discipline as
+   * `NodePayload.verifierRouteInvalid` (derived quantity, zero new persisted field,
+   * recovery removes the condition with no bookkeeping):
+   *  - `pendingOut` **counts** as declared (the rewire window must not report — the
+   *    observed window is up to 24.5 minutes long);
+   *  - a `mode=loop` edge **does not count** (a re-run back edge is a control signal,
+   *    not a delivery leg);
+   *  - a bare `(pass)Nebula:signal` exit marker **does not count** (it delivers
+   *    nothing); only `(pass)Nebula` in `:result` mode does.
+   *
+   * 🔴 Both consumers — (a) the create/rewire receipt warning and (b) the chain archive
+   * gate — call THIS function. Deriving a second copy per consumer would be exactly the
+   * twin-derivation the engine forbids (`NodeGating.scala:302-306`).
+   *
+   * @param nodes the resolution face (caller reads one snapshot; never mix snapshots).
+   */
+  def passOutlet(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    declaredOutOf(v).exists { e =>
+      !OutEdge.isLoopEdge(e) && e.on.contains(OutEdge.Pass) && {
+        (e.to == OutEdge.RootTarget && e.mode == OutEdge.Result) ||
+        OutEdge.resolveTargetId(nodes, e.to).isDefined
+      }
+    }
+
+  /**
+   * `declaredOut` reading single point for the pass-consumer judgement: the same
+   * `canonical(out) ++ pendingOut` shape `NodePayload.verifierRouteInvalid` uses (one
+   * point, several readers) — so (a) and (b) can never disagree on what "declared" means.
+   */
+  def declaredOutOf(v: NodeDef): List[OutEdge] = OutEdge.canonical(v.out) ++ v.pendingOut
+
+  /**
+   * `inConsumer` — the second half of the strict V-0 form (design card §1.3, verbatim):
+   *
+   * ```
+   * inConsumer(v) ≜ ∃ n ∈ nodes: v.id ∈ resolve(n.in) ∨ v.id ∈ resolve(n.deps)
+   * ```
+   *
+   * "resolve" for `deps` is the chain-reference expansion single point
+   * (`FlowMapStore.resolveDepTargets`) — a `chain:<id>` reference expanding onto this
+   * verifier counts as a consumer exactly as a plain node id would. The batch form is the
+   * only implementation (a per-candidate singular would re-expand the chain table once
+   * per node — O(n·chains) on a 4000-node view), so callers scan the referrer set once.
+   *
+   * 🔴 (a) deliberately does NOT use this — at create time "who will reference me later"
+   * is unknowable, and judging the strict V-0 there would fire on every normally created
+   * verifier (noise flood). (b) does — at archive time the `in`/`deps` references are
+   * settled facts, and dropping the clause would hit the 15 legitimate landing-position
+   * shapes on record. That asymmetry is the card's hard ruling (§3.1), not an oversight.
+   */
+  def inConsumersOf(nodes: Map[String, NodeDef]): Set[String] =
+    nodes.values.iterator
+      .flatMap { n =>
+        val fromDeps =
+          if n.deps.isEmpty then Nil else FlowMapStore.resolveDepTargets(n.deps, nodes).ids
+        (n.in ++ fromDeps).distinct
+      }
+      .toSet
+
+  /** Singular reading of [[inConsumersOf]] (does not re-expand anything beyond the scan). */
+  def inConsumerOf(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    inConsumersOf(nodes).contains(v.id)
+
+  /**
+   * **The create/rewire-face judgement single point** (design card §2.1 body + §2.2
+   * exemption 4, verbatim):
+   *
+   * ```
+   * verifierPassOutletMissing(v) ≜ role(v) = verifier
+   *                              ∧ declaredOut(v) non-empty   ← an empty out goes to the existing two-phase token face, not judged here
+   *                              ∧ ¬passOutlet(v)
+   * ```
+   *
+   * Two clauses need their boundary spelled out, because the card states them as
+   * exemptions rather than as part of the formula (§2.2 exemption face, shared by both tiers):
+   *
+   *  - **empty `out` is never judged** (exemption 5): that window belongs to the existing
+   *    two-phase token face (`verifierRoutePending`), already owned by
+   *    `NODE_VERIFIER_NEEDS_ROUTE`. Tested on the node's OWN edge list, not on
+   *    `declaredOut` — the two are equivalent here because a `pendingOut`-only node has an
+   *    empty own list.
+   *  - **`pendingOut` non-empty ⇒ do not report** (exemption 4): a control edge queued
+   *    behind a running target is the *rewire window* (measured up to 24.5 minutes), during
+   *    which the user is actively wiring; reporting there would be a false positive. This
+   *    is the exact counterpart of the fail-face (iii) boundary in
+   *    [[NodePayload.verifierRouteInvalid]] — same window, same "do not report".
+   *
+   * 🔴 The `lastVerdict` clause is deliberately absent here. At create/rewire time the node
+   * is being DECLARED, not judged — demanding a written verdict would make the warning
+   * unreachable for every newly created verifier (R1 of the acceptance list requires the ⚠
+   * line at creation). The verdict clause belongs to the archive face, where it composes
+   * with `¬inConsumer` into the strict `V-0` form (`FlowMapStore.unconsumedVerdictsOf`).
+   * Both faces share the SAME `passOutlet` single point — only the composition differs,
+   * and that asymmetry is the card's hard ruling (§3.1), not an oversight.
+   */
+  def verifierPassOutletMissing(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    NodeRoles.normalize(v.role) == NodeRoles.Verifier &&
+      OutEdge.canonical(v.out).nonEmpty &&
+      v.pendingOut.isEmpty &&
+      !passOutlet(v, nodes)
+
+  /**
+   * **pass-outlet gap hint (candidate (a), warning tier)** — mirrors [[wiringGapHint]]
+   * line for line: one ⚠ line appended to the tail of a SUCCESS receipt, non-blocking,
+   * **zero rejection paths**.
+   *
+   * Judgement = `role(v)=verifier ∧ declaredOut(v) non-empty ∧ ¬passOutlet(v)` (the
+   * card's `V-0prime`, §2.1): an empty `declaredOut` is deliberately exempt — that window
+   * belongs to the existing two-phase token face (`verifierRoutePending`) and is already
+   * owned by `NODE_VERIFIER_NEEDS_ROUTE`. `pendingOut` counting as declared (§2.2 exempt
+   * 4) is what keeps the rewire window from reporting a false positive.
+   *
+   * 🔴 This judges the **pass** face (where a positive verdict goes). It runs in parallel
+   * with — never instead of — the **fail** face family (`NODE_VERIFIER_NEEDS_ROUTE` /
+   * `verifierRouteInvalid` / `verifier-route-lost`): both can hold at the same time.
+   */
+  def verifierPassOutletGapHint(nodeName: String, nodeId: String): List[String] =
+    List(
+      s"⚠ verifier '$nodeName' ($nodeId) declares no pass outlet — its pass verdict has no consumer to route to (unconsumed). " +
+        "A verifier's pass leg must reach either a landing node ('(pass)<landing>') or the root exit ('(pass)Nebula'); " +
+        "declare it with NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\". (verifier-pass-unconsumed)"
+    )
+
+  /**
    * loop 门集不变量（**P-2 强读法**，2026-09-12 裁定 2/3）——判定单点（纯函数）。
    *
    * 判据（写死）：`loop.exists(_.enabled)`（与引擎实际路由键 `NodeEngine.spawnAndRun`

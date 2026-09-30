@@ -63,6 +63,18 @@ import nebflow.shared.PathUtil
  *   致某 verifier 失去 fail 路由时的**可行动**留痕——主语 = **受害 verifier**（非退役
  *   节点）；按批聚合、摘要逐位载被摘目标/保留 pass 面/恢复文案；见
  *   [[VerifierRouteLostType]]）/
+ *   verifier-pass-unconsumed（**verdict-consumer batch 2026-10-01 · case A tier (a),
+ *   warning only**：the PASS-face defect — after a verifier is created/rewired its
+ *   declaration face carries **no pass outlet** (a positive verdict nobody receives).
+ *   Sits BESIDE — never instead of — the fail-face `verifier-route-lost` (both
+ *   judgements can hold at once). Write point = the successful legs of `NodeEditTool`
+ *   create/rewire; summary = that verifier's name/id; see
+ *   [[VerifierPassUnconsumedType]]）/
+ *   chain-archive-held（**same batch · case A tier (b) release + warn**：the chain
+ *   archives as usual, but its component holds a "pass verdict with zero consumer"
+ *   (V-0) member ⇒ the conclusion is carried out on this line, and the summary spells
+ *   out both manual exits verbatim. Same family as `chain-archived`, DIFFERENT fact —
+ *   the two must never be merged into one line; see [[ChainArchiveHeldType]]）/
  *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：`node_report` 申报
  *   已被 `drain` take-and-remove 取走、而终态写按 R2 fresh-read 纪律**拒写**（节点已
  *   消失 / 状态已变 / 关机期 draining 抑制）时的**补偿写回**——summary 含 sessionId +
@@ -168,6 +180,45 @@ object FlowMapEventLog:
       s"$detail — the verifier is in the REJECTION STATE: it declares no usable '(fail)<target>:loop' route, " +
       "so a fail verdict can no longer re-run anything and the chain stops there. " +
       "Restore the route with NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)"
+
+  /**
+   * **zero-consumer pass verdict** event type (verdict-consumer batch 2026-10-01 ·
+   * case A warning tier · design card §2.1 / §3.3). Registered-style extension: the
+   * `append` API takes no schema change — a new type is one word in the list above plus
+   * a writing point.
+   *
+   * Semantics = "this verifier judged `pass`, and its declaration face carries **no pass
+   * outlet at all** — the positive verdict has nowhere to go". The subject (`nodeId`
+   * field) is the **verifier itself** (same discipline as [[VerifierRouteLostType]]:
+   * the victim is the subject, never the silent actor).
+   *
+   * 🔴 It sits **beside**, never instead of, the fail-face family: `NODE_VERIFIER_NEEDS_ROUTE`
+   * / `verifierRouteInvalid` / [[VerifierRouteLostType]] all judge whether a **rejected**
+   * target can be re-run. This one judges where an **accepted** verdict is delivered —
+   * both conditions can hold at once, and neither may be merged into the other.
+   *
+   * The judging authority is the single point [[NodeTools.passOutlet]] (never re-derived
+   * here, in the frontend, or in the dispatcher). Idempotent by construction: on a
+   * create/rewire call the line is appended only when the judgement holds at that call's
+   * close, and it is a pure derived quantity ⇒ re-wiring the pass leg removes the
+   * condition with no bookkeeping. Warning tier only: **zero rejection paths**, no new
+   * Mail face (a node has no Mail identity).
+   */
+  val VerifierPassUnconsumedType = "verifier-pass-unconsumed"
+
+  /**
+   * **chain archived with unconsumed verdicts** event type (same batch · case A (b)
+   * release + warn). The chain is archived **as usual** (the release behaviour is
+   * deliberately unchanged: a blocking gate would manufacture "the chain never archives",
+   * the same family as #1180 "waiting ≠ no progress"); this line carries the conclusion
+   * outward so the state is not silent.
+   *
+   * The symmetric precedent is [[ChainRestoredType]] (`chain-restored`): chain-family
+   * events grow by one type rather than being merged, and "the whole chain went out" vs
+   * "the whole chain went out while carrying unconsumed verdicts" are **two different
+   * facts** — 🔴 never merged into one line.
+   */
+  val ChainArchiveHeldType = "chain-archive-held"
 
   /**
    * 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
@@ -537,6 +588,31 @@ object FlowMapEventLog:
    */
   def chainArchivedSummary(chainId: String, archivedAt: Long, members: Int): String =
     s"chain=$chainId archivedAt=$archivedAt members=$members"
+
+  /**
+   * `chain-archive-held` structured summary single point (verdict-consumer batch ·
+   * case A (b)), mirroring [[chainArchivedSummary]] line for line: `k=v` pairs, single
+   * spaces, values carrying no whitespace.
+   *
+   * 🔴 **append-only**: the new key `unconsumedVerdicts` is appended **after** the frozen
+   * `chain=` / `archivedAt=` / `members=` triple, whose keys and order stay byte-for-byte
+   * unchanged — and it rides **this** event, never `chain-archived` (that event's summary
+   * is frozen for its existing consumers). Old readers keep parsing these lines because
+   * [[parseChainSummary]] accepts unknown keys as-is (zero migration).
+   *
+   * The summary must carry the two manual exits **verbatim** (same actionable-trace
+   * discipline as [[verifierRouteLostSummary]]): ① wire `(pass)<landing>` — the condition
+   * is a pure derived quantity, so the next sweep releases the chain with no extra action;
+   * ② retire the verifier with `NodeEdit(abandon=true)`.
+   */
+  def chainArchiveHeldSummary(chainId: String, archivedAt: Long, members: Int, unconsumed: List[String]): String =
+    val ids = unconsumed.distinct.sorted
+    val detail = if ids.isEmpty then "-" else ids.mkString(",")
+    s"chain=$chainId archivedAt=$archivedAt members=$members unconsumedVerdicts=${noWs(detail)} " +
+      "reason=pass-verdict-unconsumed — the chain was archived as usual; these verifiers judged `pass` with no pass outlet " +
+      "(nothing consumes their positive verdict). Manual exits: (1) wire '(pass)<landing>' on the verifier " +
+      "(pure derived judgement — the next sweep releases it with no further action); " +
+      "(2) retire the verifier with NodeEdit(abandon=true)."
 
   /** 拉回事件结构化 summary（对称口径；restoredAt 与 archivedAt 同键位语义）。 */
   def chainRestoredSummary(chainId: String, restoredAt: Long, members: Int): String =

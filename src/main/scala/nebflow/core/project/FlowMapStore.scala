@@ -5,6 +5,7 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
+import nebflow.core.tools.NodeTools
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
@@ -465,7 +466,12 @@ class FlowMapStore private (
         nodeId = c.memberIds.headOption.getOrElse(""),
         nodeIds = members.map(_.id),
         members = c.memberIds.size,
-        archivedAt = now
+        archivedAt = now,
+        // Archive outcome is unchanged (release): this only carries the conclusion out
+        // of the class (caller-side re-derivation is the twin derivation banned above).
+        // The judgement reads the union view — the same `s.nodes ++ a.nodes` the
+        // components were derived from — so an archived referrer still counts.
+        unconsumedVerdicts = FlowMapStore.unconsumedVerdictsOf(members, s.nodes ++ a.nodes)
       )
     }
 
@@ -1218,8 +1224,63 @@ object FlowMapStore:
     nodeId: String,
     nodeIds: List[String],
     members: Int,
-    archivedAt: Long
+    archivedAt: Long,
+    /**
+     * Unconsumed pass verdicts carried by this chain (verdict-consumer batch 2026-10-01 ·
+     * case A (b), design card §3.1 V-0): the verifier ids in the component whose verdict
+     * is written and whose positive verdict has neither an outlet nor a consumer.
+     * Derived **inside this class** (see [[FlowMapStore.unconsumedVerdictsOf]]) — the
+     * caller only carries the conclusion outward; a caller-side re-derivation would be
+     * the twin derivation this file forbids. Default `Nil` keeps the existing shape for
+     * every construction site outside the sweep.
+     */
+    unconsumedVerdicts: List[String] = Nil
   )
+
+  /**
+   * **Unconsumed-verdict derivation single point** (verdict-consumer batch 2026-10-01 ·
+   * design card §3.1, verbatim V-0):
+   *
+   * ```
+   * V-0(v) ≜ role(v) = verifier
+   *        ∧ lastVerdict(v) written
+   *        ∧ ¬passOutlet(v)
+   *        ∧ ¬ inConsumer(v)
+   * ```
+   *
+   * Why V-0 (and not `V-0prime`) belongs to the ARCHIVE face: at archive time both the
+   * `in`/`deps` references and the declared edge set are settled facts. A verifier that
+   * has a referrer already sits in the verdict gate's upstream set
+   * (`mergeVerdictHoldersOf`), so its verdict has a structural destination even when the
+   * edge-less fallback bypasses that gate — counting it would hit the 15 legitimate
+   * landing-position shapes on record. Dropping the `¬inConsumer` clause is therefore
+   * **not** an oversight; the card's asymmetry ruling is deliberate ((a) uses the
+   * `V-0prime` form, (b) uses this one).
+   *
+   * Both halves come from one place: `NodeTools.passOutlet` / `NodeTools.inConsumerOf`
+   * are the shared predicates (a single point — deriving a second copy per consumer is
+   * exactly the twin derivation banned at `NodeGating.scala:302-306`).
+   *
+   * @param members the component's active members (the same list the archive eligibility
+   *                judgement consumed) — never a re-derived component.
+   * @param nodes   the resolution face (union of the active and archived maps, i.e. the
+   *                same view the sweep derived its components from; the referrer scan
+   *                must see archived referrers too, otherwise a chain whose sink already
+   *                went out would be misjudged as consumer-less).
+   */
+  private def unconsumedVerdictsOf(members: Iterable[NodeDef], nodes: Map[String, NodeDef]): List[String] =
+    val referrers = NodeTools.inConsumersOf(nodes)
+    members
+      .filter { v =>
+        NodeRoles.normalize(v.role) == NodeRoles.Verifier &&
+        v.lastVerdict.exists(_.trim.nonEmpty) &&
+        !NodeTools.passOutlet(v, nodes) &&
+        !referrers.contains(v.id)
+      }
+      .map(_.id)
+      .toList
+      .distinct
+      .sorted
 
   /** ── 链级摘要载体与常量（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13）──────────── */
 
