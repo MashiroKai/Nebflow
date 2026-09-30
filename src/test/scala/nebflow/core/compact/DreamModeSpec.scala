@@ -2,74 +2,32 @@ package nebflow.core.compact
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.tools.MemoryQueue
-import nebflow.shared.{MemoryStore, PathUtil}
-
-import java.nio.file.Files
 
 /**
  * DreamMode 停用（落法 ii「连机制一起停」）后的新语义 spec。
  *
  * 原文件覆盖的是**合并核**（`t3Evolve` / `mergeFactsIntoSection` / `updateMemory` /
  * `promotedTexts` / sidecar 时钟）——那些 API 已随 DreamMode 机制整体删除 ⇒ 本文件
- * **按新语义改写**（不删文件、不放宽断言、不 skip），钉四条现在成立的事实：
+ * **按新语义改写**（不删文件、不放宽断言、不 skip）。
  *
- *   ① 引擎不再拥有具名节：生产者（`RootMemoryHook.enqueueFacts`）入队的条目
- *      `section` 恒 `None`；
- *   ② 该条在**不含** `## Dream Extract` 的文件上照旧可落（文件尾追加）——「缺具名节
- *      ⇒ 永不能落」这一旧约束不再适用于生产者；
- *   ③ 反向钉：`## Dream Extract` **不再是可落节**——以它为落点的条目在无该节的文件上
- *      判 `would-retry`（零落笔 ⇒ 引擎**不创建**该节；即「系统默认创建文件
- *      时也不要有这个 section」的机械面）；
- *   ④ 仍在用（生产者/队列识别子）的两件纯函数 `parseFact` / `entryHash` 语义直测。
+ * ═══════════════════════════════════════════════════════════════════════
+ * 记忆族退役批（memory-family-retirement，2026-09-29）——本次收窄
+ * ═══════════════════════════════════════════════════════════════════════
  *
- * dataRoot 经 `PathUtil.setDataRoot` 钉临时目录（RootMemoryHookRouteSpec / MemoryTrackSpec
- * 先例）⇒ 现场真实记忆文件与 `queue.jsonl` **零接触**。
+ * DreamMode 机制停用批时，本 spec 钉的四条事实里有三条**以队列为被试物**
+ * （生产者入队条目 `section` 恒 `None`；无具名节文件上照旧可落；`## Dream Extract`
+ * 不再是可落节 ⇒ 判 `would-retry`）。队列族（含 plan / Note / State / TargetFile /
+ * Bucket 等 API）已在本批整体退役 ⇒ **那三条的被试物不存在** ⇒ 逐条删除（不
+ * 放宽、不 skip、不改成空断言——退役即退役）。这是**既有政策的机械后果**，非新
+ * 裁定。
+ *
+ * **留面（本 spec 现存全部覆盖）**：DreamMode 仍活着的两件纯函数
+ * `[[DreamMode.parseFact]]` / `[[DreamMode.entryHash]]` 的语义直测。二者原为
+ * 生产者链路的解析/识别子；队列退役后**零生产调用方**，但仍属 DreamMode 的
+ * 公开面，收口与否归 DreamMode 自身的批（不在本批六族范围）⇒ 断言保留。
+ * dataRoot 不再需要重定向（本文件已不触任何记忆文件与队列）。
  */
 class DreamModeSpec extends FunSuite:
-
-  private var prevRoot: os.Path = os.Path("/tmp")
-  private var home: os.Path = os.Path("/tmp")
-
-  override def beforeAll(): Unit =
-    prevRoot = PathUtil.dataRoot
-    home = os.Path(Files.createTempDirectory("nb-dreammode-retired"))
-    PathUtil.setDataRoot(home)
-
-  override def afterAll(): Unit =
-    PathUtil.setDataRoot(prevRoot)
-    os.remove.all(home)
-
-  private def reset(): Unit =
-    os.remove.all(home / "memory")
-    os.remove.all(home / "User.md")
-    os.remove.all(home / "agents")
-    MemoryStore.invalidateUserCache()
-    MemoryStore.invalidateAgentCache("Nebula")
-
-  private def noteOf(
-    id: String,
-    section: Option[String],
-    content: Option[String]
-  ): MemoryQueue.Note =
-    MemoryQueue.Note(
-      id,
-      1L,
-      "2026-09-12T00:00:00Z",
-      "user",
-      "append",
-      section,
-      None,
-      content,
-      Some("s"),
-      MemoryQueue.TriggerDream
-    )
-
-  private def stateOf(notes: Vector[MemoryQueue.Note]): MemoryQueue.State =
-    MemoryQueue.State(notes, Vector.empty, Set.empty, 0, 0)
-
-  private def targetFile(content: String): Map[String, MemoryQueue.TargetFile] =
-    Map("user" -> MemoryQueue.TargetFile("/tmp/x/User.md", content))
 
   // ===== ① 仍在用的纯函数：fact 行解析 =====
 
@@ -85,42 +43,5 @@ class DreamModeSpec extends FunSuite:
     assertEquals(DreamMode.entryHash("  abc  "), DreamMode.entryHash("abc"))
     assert(DreamMode.entryHash("abc") != DreamMode.entryHash("abd"))
     assertEquals(DreamMode.entryHash("abc").length, 64, "sha256 十六进制全长")
-
-  // ===== ③ 生产者入队：无落点节（新语义）=====
-
-  test("生产者：facts 入队条目 section 恒 None（引擎不再拥有具名节）"):
-    reset()
-    os.write.over(MemoryStore.userMemoryPath, "# User\n\n## 工作风格\n\n- 早睡早起\n", createFolders = true)
-    RootMemoryHook
-      .enqueueFacts(List("FACT 1: [PATTERN] 新事实甲", "FACT 2: [DECISION] 新裁定乙"), Some("sess-1"))
-      .unsafeRunSync()
-    val notes = MemoryQueue.readState().notes
-    assertEquals(notes.size, 2)
-    assertEquals(
-      notes.map(_.section).distinct,
-      Vector[Option[String]](None),
-      "无具名节：`## Dream Extract` 已随 DreamMode 机制停用退役"
-    )
-
-  test("无具名节的文件上照旧可落：两条 pending 判 would-apply（文件尾追加），零缺节重试族"):
-    reset()
-    os.write.over(MemoryStore.userMemoryPath, "# User\n\n## 工作风格\n\n- 早睡早起\n", createFolders = true)
-    RootMemoryHook
-      .enqueueFacts(List("FACT 1: [PATTERN] 新事实甲", "FACT 2: [DECISION] 新裁定乙"), Some("sess-1"))
-      .unsafeRunSync()
-    val path = MemoryStore.userMemoryPath
-    val plan =
-      MemoryQueue.plan(MemoryQueue.readState(), Map("user" -> MemoryQueue.TargetFile(path.toString, os.read(path))))
-    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 2, s"两条都可落（section=None ⇒ 文件尾追加）: ${plan.items}")
-    assertEquals(plan.retryable, Vector.empty[String], "不落缺节重试族（引擎无具名节可缺）")
-
-  // ===== ④ 反向钉：该节不再是可落节 ⇒ 引擎不创建它 =====
-
-  test("退役面反向钉：以 `## Dream Extract` 为落点的 append 在无该节的文件上判 would-retry（零落笔 ⇒ 不创建该节）"):
-    val note = noteOf("q-1", Some("## Dream Extract"), Some("- [PATTERN] 旧语义落点"))
-    val plan = MemoryQueue.plan(stateOf(Vector(note)), targetFile("# User\n\n## 工作风格\n\n- 早睡早起\n"))
-    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 0, s"该节不再是可落节（无节 ⇒ 不落、不新建）: ${plan.items}")
-    assertEquals(plan.retryable, Vector("q-1"), "落点节不存在 ⇒ 可重试族（保持 pending，零落笔）")
-    assert(!plan.render().contains("## Dream Extract"), "计划输出不含该节名（引擎侧无该节概念）")
 
 end DreamModeSpec

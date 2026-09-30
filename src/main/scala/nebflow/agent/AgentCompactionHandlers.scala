@@ -69,138 +69,14 @@ private[agent] object AgentCompactionHandlers:
                         sessionId
                       )
                       .handleErrorWith(_ => IO.unit)
-                    // 记忆轨（压缩双轨第二轨，2026-09-12 记忆改造批 / spec §5 R3 O-A）：
-                    // 在本 fork 内、CompactionComplete **之前** join ⇒ 装机点
-                    // （processing 的 CompactionComplete(Right) → state.withMessages）
-                    // 天然晚于两轨完成，零新增状态位（复用 pendingCompaction 作窗口守卫）。
-                    // 硬超时在 MemoryTrack 内（IO.timeoutTo，无 timeout 的 join 已被 spec
-                    // 明文否决）；失败/超时 = fail-open 降级：照常装机（用旧记忆）+ 队列
-                    // 条目保留 + 事件 memory-track-failed / memory-track-timeout。
-                    // 口径只对根会话（depth 0）生效——与前置 hook 的 Root profile 同域
-                    // （子会话压缩没有记忆面，跑轨即纯浪费；空队列时轨内谓词亦会跳过）。
-                    //
-                    // B 腿（2026-09-15）：把本会话的 wsSend 交给轨 ⇒ 轨内整理的 subagent
-                    // 走标准子代理事件契约（NodeRunner.routeSubagentWsSend）进 subagent
-                    // 面板（`agentStart` 建行 / `agentDone` 收行）。改动前轨内 wsSend 恒
-                    // `IO.unit` ⇒ 面板永不建行（作者现场疑问的解）。wsSend 不可得时轨内
-                    // 自动回落恒 no-op（见 MemoryTrack.panelWsSend），零行为漂移。
-                    val memoryTrackIO: IO[Unit] =
-                      if depth != 0 then IO.unit
-                      else
-                        MemoryTrack
-                          .run(resources, state.sessionId, depth, parentWsSend = Some(state.wsSend))
-                          .handleErrorWith { e =>
-                            IO {
-                              logAgentEvent(
-                                agentDef,
-                                depth,
-                                state.sessionId,
-                                state.sessionName,
-                                "memory-track-failed",
-                                s"err=${e.getMessage}"
-                              )
-                              MemoryTrack.Result(
-                                MemoryTrack.Status.Failed,
-                                e.getMessage,
-                                0,
-                                alert = Some(
-                                  s"Memory queue is NOT being consumed: the memory-track run crashed (${e.getClass.getSimpleName}: ${e.getMessage}) — no note was marked rejected, everything stays pending and will be retried on the next compaction."
-                                )
-                              )
-                            }
-                          }
-                          .flatMap { r =>
-                            // 告警面（2026-09-13 缺失自愈批 / 方案 D「响亮失败」）：infra
-                            // 失败/拒绝不再只躺在 lifecycle 日志里等着被 grep——同一句推进
-                            // 前端（`memoryQueueAlert` → 常驻通知条，前端 main.js 订阅）。
-                            val alertIO: IO[Unit] = r.alert match
-                              case None => IO.unit
-                              case Some(text) =>
-                                state.wsSend(
-                                  io.circe.Json.obj(
-                                    "type" -> "memoryQueueAlert".asJson,
-                                    "sessionId" -> state.sessionId.asJson,
-                                    "level" -> "warn".asJson,
-                                    "text" -> text.asJson
-                                  )
-                                )
-                            val logIO: IO[Unit] = r.status match
-                              case MemoryTrack.Status.Failed =>
-                                IO(
-                                  logAgentEvent(
-                                    agentDef,
-                                    depth,
-                                    state.sessionId,
-                                    state.sessionName,
-                                    "memory-track-failed",
-                                    s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} detail=${r.detail.take(200)}"
-                                  )
-                                )
-                              case MemoryTrack.Status.Timeout =>
-                                IO(
-                                  logAgentEvent(
-                                    agentDef,
-                                    depth,
-                                    state.sessionId,
-                                    state.sessionName,
-                                    "memory-track-timeout",
-                                    s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} reconciled=${r.reconciled} drift=${r.reconcileDrift} hardMs=${MemoryTrack.hardTimeoutMs} detail=${r.detail.take(200)}"
-                                  )
-                                )
-                              case MemoryTrack.Status.Completed =>
-                                IO(
-                                  logAgentEvent(
-                                    agentDef,
-                                    depth,
-                                    state.sessionId,
-                                    state.sessionName,
-                                    "memory-track-completed",
-                                    s"pendingAtStart=${r.pendingAtStart} changed=${r.changed}"
-                                  )
-                                )
-                              case MemoryTrack.Status.Refused =>
-                                IO(
-                                  logAgentEvent(
-                                    agentDef,
-                                    depth,
-                                    state.sessionId,
-                                    state.sessionName,
-                                    "memory-track-refused",
-                                    s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"
-                                  )
-                                )
-                              case MemoryTrack.Status.DryRun =>
-                                IO(
-                                  logAgentEvent(
-                                    agentDef,
-                                    depth,
-                                    state.sessionId,
-                                    state.sessionName,
-                                    "memory-track-dry-run",
-                                    s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"
-                                  )
-                                )
-                              case MemoryTrack.Status.Skipped => IO.unit
-                              // 暂停轮（#440 ①）：跳过是**有意为之**、不是空转 ⇒ 必须有
-                              // 事件行（与兄弟事件同族同处落；`Status.Skipped` 保持
-                              // IO.unit 不动——它是「无触发」的静默轮）。
-                              // 行形：`… event=memory-track-skipped detail=reason=paused: …`
-                              case MemoryTrack.Status.Paused =>
-                                IO(
-                                  logAgentEvent(
-                                    agentDef,
-                                    depth,
-                                    state.sessionId,
-                                    state.sessionName,
-                                    "memory-track-skipped",
-                                    s"${r.detail.take(300)} pendingAtStart=${r.pendingAtStart}"
-                                  )
-                                )
-                            logIO *> alertIO
-                          }
+                    // 记忆轨已退役（memory-family-retirement 批，2026-09-29）：压缩双轨
+                    // 第二轨随队列族一并删除 ⇒ 本 handler 只跑前置/后置 compaction hook，
+                    // 随即装机。行为面收窄为「原轨恒 no-op 形态」：旧轨在 depth != 0 /
+                    // 空队列 / 暂停态下本就 IO.unit ⇒ 该三段零行为漂移；有 pending 条目
+                    // 时的消耗动作随队列机制停用而消失（如实登记：队列文件不再被消费，
+                    // 见 retire 报告 §两特殊件处置）。
                     for
                       _ <- ctx.forkTurn(postHookIO)
-                      _ <- memoryTrackIO
                       _ <- ctx.self ! AgentCommand.CompactionComplete(Right(outcome.messages))
                     yield ()
           }

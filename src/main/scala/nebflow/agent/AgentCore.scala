@@ -187,7 +187,8 @@ object AgentCore:
    * - MemoryNote（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
    *   裁定①）。2026-09-05 作者签准修订：写面 = Nebula + dream——dream 仅准入
    *   修订动作（remove/update/replace_section），append 在工具执行层拒绝
-   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryNoteTool 强制）。
+   *   （DREAM_APPEND_DENIED——实现该铁律的记账工具本体已随 govmemory 批
+   *   2026-09-25 整体退役，故动作面白名单现无机械面承载，见 registry 的退役注）。
    *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
    *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
@@ -233,8 +234,9 @@ object AgentCore:
    * dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
    * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
    * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
-   * 本集只放开【授能/剥离面】；动作面白名单在 MemoryNoteTool（两道闸独立，
-   * 摘任一道 spec 即红）。
+   * 本集只放开【授能/剥离面】；动作面白名单原在该记账工具内（两道闸独立，
+   * 摘任一道 spec 即红）——该工具与队列族已退役（memory-family-retirement 批
+   * 2026-09-29）⇒ 动作面白名单随之消失，本集仅存授能/剥离语义。
    */
   val DreamAdmittedTools = Set("MemoryNote")
 

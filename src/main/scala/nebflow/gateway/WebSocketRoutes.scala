@@ -170,7 +170,7 @@ class WebSocketRoutes(
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
       // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
       // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
-      // 非 root spawn（NodeRunner / EphemeralAgentRunner / MemoryTrack / MailTool /
+      // 非 root spawn（NodeRunner / EphemeralAgentRunner / MailTool /
       // FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
       // ⇒ 走 CompactThreshold 现值函数（口径②）。
       //
