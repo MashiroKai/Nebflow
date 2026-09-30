@@ -29,6 +29,14 @@
 //   · The list carries METADATA ONLY (name/size/mtime/mode/refs); there is
 //     no read-value endpoint on the contract and none is called.
 //
+// Apple-style redesign (author order 2026-09-30, apple-ui batch): the create
+// entry is a floating bottom-right「+」on the shell (#secrets-fab, the Canvas
+// `.proj-create-fab` precedent), and the value field gains an eye toggle
+// masking the value THE USER IS TYPING in this form. 🔴 The toggle's entire
+// subject is the typed draft: it is a presentation-layer mask on the local
+// textarea, so the zero-value-exposure rule above is untouched — nothing is
+// fetched, nothing stored is rendered.
+//
 // Precedents: socialPanel.js (module shape, glass dialog family, api()),
 // daemons.js:454-456 (window.__showConfirm), sidebar.js renderSettings
 // (entry row, .cfg-btn-add), css/secrets.css (this batch; sapphire.css
@@ -38,6 +46,15 @@
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn } from './utils.js';
 import { getAuthToken } from './neblink.js';
+
+// ── Eye toggle glyphs ────────────────────────────────────────────────────
+// Inline SVG (stroke: currentColor, so the button's colour token drives the
+// ink in both themes). Path data is the vendored lucide set the rest of the
+// app uses (vendor/lucide.min.js, v0.454.0) — `data-lucide` is not usable
+// here because createIconsIn REPLACES the element, which would defeat the
+// two-state swap; sidebar.js draws its eye pair the same way (:69-70).
+const EYE_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>';
 
 // ── State ────────────────────────────────────────────────────────────────
 /** Last list truth read from the backend (metadata only — no value field
@@ -52,6 +69,11 @@ let editorTarget = '';
 let draftValue = '';
 /** Focusable-element trap state (which element opened the dialog). */
 let lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (null);
+/** Whether the value field is masked. Default TRUE — the field starts masked
+ *  in BOTH modes (create and replace), and a toggle flips it. The state is
+ *  a presentation flag over the local textarea only; the text itself is never
+ *  touched by a toggle (no value is read, moved or re-set here). */
+let valueMasked = true;
 let initialized = false;
 
 // ── Backend adapter (same token pattern as socialPanel.js) ───────────────
@@ -208,8 +230,6 @@ function applyStaticText() {
     if (!el) continue;
     if (attr) el.setAttribute(attr, t(key)); else el.textContent = t(key);
   }
-  const addBtn = document.getElementById('secrets-modal-add');
-  if (addBtn) addBtn.textContent = t('secrets.add');
   const nameLabel = document.getElementById('secrets-name-label');
   if (nameLabel) nameLabel.textContent = t('secrets.name');
   const nameInput = /** @type {HTMLInputElement|null} */ (document.getElementById('secrets-name-input'));
@@ -224,6 +244,35 @@ function applyStaticText() {
   if (saveBtn) saveBtn.textContent = t('secrets.save');
   const cancelBtn = document.getElementById('secrets-form-cancel');
   if (cancelBtn) cancelBtn.textContent = t('secrets.cancel');
+  // Create entry = the shell's floating「+」(Canvas FAB precedent: title and
+  // aria-label carry the SAME key, so hover and screen reader cannot diverge).
+  const fab = document.getElementById('secrets-fab');
+  if (fab) {
+    fab.title = t('secrets.add');
+    fab.setAttribute('aria-label', t('secrets.add'));
+    fab.setAttribute('aria-haspopup', 'dialog');
+  }
+  applyMask();
+}
+
+/**
+ * Paint the current mask state onto the value field and its toggle. This is
+ * the ONLY place the mask is applied, so the class, the button label and the
+ * glyph can never disagree.
+ */
+function applyMask() {
+  const area = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
+  const eye = document.getElementById('secrets-value-eye');
+  if (area) area.classList.toggle('masked', valueMasked);
+  if (eye) {
+    // The label names the ACTION the click performs (reveal while masked,
+    // mask while revealed) — the standard disclosure-toggle reading.
+    const key = valueMasked ? 'secrets.showValue' : 'secrets.hideValue';
+    eye.innerHTML = valueMasked ? EYE_SVG : EYE_OFF_SVG;
+    eye.setAttribute('aria-label', t(key));
+    eye.title = t(key);
+    eye.setAttribute('aria-pressed', valueMasked ? 'false' : 'true');
+  }
 }
 
 // ── Load ─────────────────────────────────────────────────────────────────
@@ -272,6 +321,9 @@ function openEditor(name) {
     valueArea.value = '';
     valueArea.placeholder = t(name ? 'secrets.replacePlaceholder' : 'secrets.valuePlaceholder');
   }
+  // Every open starts masked, whatever the previous session left behind.
+  valueMasked = true;
+  applyMask();
   const nameHint = document.getElementById('secrets-name-hint');
   if (nameHint) nameHint.textContent = t('secrets.nameHint');
   const err = document.getElementById('secrets-form-error');
@@ -293,6 +345,9 @@ function closeEditor() {
   modal()?.classList.remove('editor-open');
   const valueArea = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
   if (valueArea) valueArea.value = '';
+  // The mask resets with the draft: the next open starts masked.
+  valueMasked = true;
+  applyMask();
   const nameInput = /** @type {HTMLInputElement|null} */ (document.getElementById('secrets-name-input'));
   if (nameInput) nameInput.value = '';
   const err = document.getElementById('secrets-form-error');
@@ -341,6 +396,7 @@ async function saveEditor() {
     // re-reads backend truth (metadata only).
     draftValue = '';
     if (valueArea) valueArea.value = '';
+    valueMasked = true;
     closeEditor();
     if (stateEl) stateEl.textContent = '';
     await loadAll();
@@ -473,8 +529,12 @@ function onDocumentClick(ev) {
   if (!target) return;
   if (target.closest('#btn-open-secrets')) { openSecretsPanel(); return; }
   if (target.closest('#secrets-modal-close')) { closeSecretsPanel(); return; }
-  if (target.closest('#secrets-modal-add')) { openEditor(''); return; }
+  // Create entry (author order 2026-09-30): the shell's floating「+」. The
+  // `data-add` path below stays live as the SECONDARY entry (empty-state
+  // guidance button) — it routes to the same openEditor('').
+  if (target.closest('#secrets-fab')) { openEditor(''); return; }
   if (target.closest('[data-add]')) { openEditor(''); return; }
+  if (target.closest('#secrets-value-eye')) { valueMasked = !valueMasked; applyMask(); return; }
   if (target.closest('#secrets-form-close')) { closeEditor(); return; }
   if (target.closest('#secrets-form-cancel')) { closeEditor(); return; }
   if (target.closest('#secrets-form-save')) { void saveEditor(); return; }

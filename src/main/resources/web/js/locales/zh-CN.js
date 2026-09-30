@@ -1875,6 +1875,8 @@ export default {
   'secrets.name': '名称',
   'secrets.nameHint': '小写「服务-用途」，例如 aliyun-oss',
   'secrets.value': '值',
+  'secrets.showValue': '显示值',
+  'secrets.hideValue': '隐藏值',
   'secrets.valuePlaceholder': '粘贴值。只写一次，之后不再显示。',
   'secrets.replacePlaceholder': '保存后整体替换已存值。旧值不会显示。',
   'secrets.replace': '替换值',
