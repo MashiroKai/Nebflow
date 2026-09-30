@@ -3,9 +3,11 @@ package nebflow.social
 import cats.effect.IO
 import io.circe.Json
 import munit.CatsEffectSuite
+import nebflow.bridge.BridgeContext
 import nebflow.gateway.NfFilePolicy
 import nebflow.social.outbound.*
 import nebflow.shared.AttachContract
+import nebflow.shared.SessionMeta
 
 /**
  * Offline spec for the outbound rich-content definition layer + the Feishu text
@@ -235,4 +237,64 @@ val x = 1
       val out = sent.get().headOption.getOrElse(fail("nothing reached the send seam"))
       assertEquals(OutboundText.bareMarkers(out), List.empty)
       assert(out.contains("https://e.com/x"), s"the link must stay alive: $out")
+  }
+
+  // ───────── the WIRED bridge leg (the only production file this batch edits) ─────────
+
+  /** Recording BridgeContext: the bridge spec's shape, reused here so the wired
+    * leg is judged through the real event entry rather than a private method. */
+  private final class BridgeCtx(sessions: List[SessionMeta]) extends BridgeContext:
+    def injectMessage(sessionId: String, content: String, senderId: Option[String]): IO[Unit] = IO.unit
+    def interruptAgent(sessionId: String): IO[Unit] = IO.unit
+    def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
+    def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
+    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+
+  private def boundMeta(id: String, chatId: String): SessionMeta =
+    SessionMeta(
+      id = id, name = id, createdAt = 0L, updatedAt = 0L, hasUnread = false,
+      bridges = Map("feishu" -> Json.obj("chat_id" -> Json.fromString(chatId)))
+    )
+
+  test("OB-R13 the WIRED bridge text leg ships a de-marked-up copy, and the in-session original is untouched") {
+    val sent = new java.util.concurrent.atomic.AtomicReference[List[String]](Nil)
+    val p = new FeishuBridgePlugin(
+      os.temp.dir(prefix = "nb-socoutbound-bridge-"),
+      send = (_, _, _, receiveId, text) =>
+        IO { sent.updateAndGet(_ :+ s"$receiveId|$text"); FeishuChannel.SendResult(true, Some("om_1"), 0, "ok", "t", "chat_id") },
+      pinnedAllowedOpenIds = None,
+      pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")))
+    // The model's own writing: raw markdown, exactly as the session shows it.
+    val raw = "**bold** and `code` — see [docs](https://e.com/x) and # heading"
+
+    def delta(s: String): Json =
+      Json.obj("type" -> Json.fromString("textDelta"), "sessionId" -> Json.fromString(s),
+        "delta" -> Json.fromString(s))
+    def done(s: String): Json =
+      Json.obj("type" -> Json.fromString("done"), "sessionId" -> Json.fromString(s))
+
+    for
+      _ <- p.rebuildRoutes(BridgeCtx(List(boundMeta("s1", "oc_bound"))))
+      _ <- p.onAgentEvent("s1", delta(raw))
+      _ <- p.onAgentEvent("s1", done("s1"))
+    yield
+      val wire = sent.get().headOption.getOrElse(fail("nothing reached the send seam"))
+      val body = wire.split('|', 2).lift(1).getOrElse(fail(s"malformed record: $wire"))
+      // The red-by-construction core: without the reply() conversion this is raw
+      // markdown and bareMarkers is non-empty.
+      assertEquals(OutboundText.bareMarkers(body), List.empty,
+        s"bare markdown reached the wire: ${OutboundText.bareMarkers(body)}")
+      assert(!body.contains("**"), s"emphasis delimiter survived: $body")
+      assert(!body.contains("`"), s"inline-code delimiter survived: $body")
+      // Links stay alive as bare URLs, labels stay as words.
+      assertEquals(OutboundText.links(body), List("https://e.com/x"),
+        s"the link must survive the wired leg: $body")
+      assert(body.contains("docs"), s"the link label survives as words: $body")
+      // The conversion is applied to the SENT COPY only: the wire body is exactly
+      // toPlain(original), and the original the session shows still carries its
+      // own markup (asserted so the red above cannot be vacuous).
+      assertEquals(body, OutboundText.toPlain(raw),
+        "the wire copy is exactly toPlain(original) — the conversion is on the outbound copy")
+      assert(OutboundText.bareMarkers(raw).nonEmpty,
+        "the original really does carry bare markers (else the red above is vacuous)")
   }
