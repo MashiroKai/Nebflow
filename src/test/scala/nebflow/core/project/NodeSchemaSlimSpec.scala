@@ -208,6 +208,11 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // 退役条与既有 `NODE_AGENT_RETIRED` 条**并成一行**（两条同属「已退役参数」族，
     // 原尾部独立一条为重复）——净增 43 字符，实测 6,991（**未抬预算**，仍守 7,000；
     // 余量 9 字符，下批新增语义须先压缩或按先例抬预算）。
+    // desc300 batch (2026-09-30): S16-1 (+109 chars) pushed the literal to 7,100, i.e. 109 over.
+    // Resolved by COMPRESSION only (task / Edit / worktree / reactivateCompleted lines
+    // de-duplicated, zero semantic loss) => measured 6,981 (baseline before the batch: 6,991);
+    // the 7,000 budget is UNCHANGED (no budget raise needed). All semantic anchors below
+    // re-read in place.
     assert(
       d.length <= 7000,
       s"NodeEdit description must stay ≤7000 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸+chainmodel 批一 chainId/deps链引用条款+panelscheme 批 retired 行合并), got ${d.length}"
@@ -236,7 +241,13 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         "NODE_CHAIN_ID_INVALID",
         // panelscheme 批（2026-09-21）：preset 参数退役契约——退役错误码必须常驻描述
         // （分发器不读代码；丢这条 = 它会继续按旧习惯传 preset 吃一次硬拒往返）。
-        "NODE_PRESET_RETIRED"
+        "NODE_PRESET_RETIRED",
+        // desc300 batch (2026-09-30): the new descriptionLong contract must stay resident —
+        // a dispatcher that cannot see "longer text is truncated + spilled to a file whose path
+        // comes back" would keep believing over-300 input is rejected.
+        "≤300 chars",
+        "stored truncated to 300",
+        "written to a file whose path the result returns"
       )
     do assert(d.contains(anchor), s"compressed description must keep '$anchor'")
     end for
@@ -285,13 +296,49 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         ),
         ctx
       )
+      // desc300 batch: over-length is no longer an error. 301 chars must succeed with the
+      // stored value capped at 300 and the FULL 301-char text spilled to a per-node file.
       longDesc <- nodeEdit(
         nodeInput(
           "slim-desc",
           "n-longd",
           "description" -> Json.fromString("short"),
-          "descriptionLong" -> Json.fromString("L" * 201),
+          "descriptionLong" -> Json.fromString("L" * 301),
           "task" -> Json.fromString("task-longd"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      // Boundary trio: 299 / 300 / 301 (at and below the cap nothing is spilled).
+      len299 <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-len299",
+          "description" -> Json.fromString("short"),
+          "descriptionLong" -> Json.fromString("M" * 299),
+          "task" -> Json.fromString("task-len299"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      len300 <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-len300",
+          "description" -> Json.fromString("short"),
+          "descriptionLong" -> Json.fromString("M" * 300),
+          "task" -> Json.fromString("task-len300"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      blankLong <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-blanklong",
+          "description" -> Json.fromString("short"),
+          "descriptionLong" -> Json.fromString("   "),
+          "task" -> Json.fromString("task-blanklong"),
           "out" -> Json.fromString("Nebula")
         ),
         ctx
@@ -323,11 +370,56 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         s">60 must be rejected (裁定⑤c), got: $tooLong"
       )
       assert(ok60.isRight, s"exactly-60 description must pass, got: $ok60")
+      // desc300 batch: 301 chars is ACCEPTED; the stored value is capped at 300 and the full
+      // untruncated text lands in a per-node spill file whose absolute path the receipt carries.
+      assert(longDesc.isRight, s"descriptionLong 301 must pass (truncated), got: $longDesc")
       assert(
-        longDesc.isLeft && longDesc.left.exists(_.contains("NODE_DESCRIPTION_LONG_TOO_LONG")),
-        s"descriptionLong >200 must be rejected, got: $longDesc"
+        longDesc.exists(_.contains("Full descriptionLong text (untruncated) written to: ")),
+        s"truncated descriptionLong must return the spill path line, got: $longDesc"
+      )
+      val longdId = snap.nodes.values.find(_.name == "n-longd").map(_.id).getOrElse("")
+      assertEquals(
+        snap.nodes.values.find(_.name == "n-longd").flatMap(_.descriptionLong),
+        Some("L" * 300),
+        "stored descriptionLong must be truncated to 300 chars"
+      )
+      val longdSpill = ws / ".nebflow" / "results" / s"descriptionLong-$longdId.md"
+      assert(os.exists(longdSpill), s"spill file must exist at $longdSpill")
+      val longdSpillText = os.read(longdSpill)
+      assertEquals(longdSpillText, "L" * 301, "spill file must hold the full untruncated text")
+      assertEquals(longdSpillText.length, 301, "spill file char count must be 301")
+      assert(
+        longDesc.exists(_.contains(longdSpill.toString)),
+        s"receipt must carry the absolute spill path, got: $longDesc"
+      )
+      // Boundary: at / below the cap (299, 300) => stored trimmed, NO spill file.
+      assert(len299.isRight, s"299 chars must pass, got: $len299")
+      assert(len300.isRight, s"300 chars must pass, got: $len300")
+      assertEquals(
+        snap.nodes.values.find(_.name == "n-len299").flatMap(_.descriptionLong),
+        Some("M" * 299),
+        "299-char value stored as-is (trimmed)"
+      )
+      assertEquals(
+        snap.nodes.values.find(_.name == "n-len300").flatMap(_.descriptionLong),
+        Some("M" * 300),
+        "300-char value stored as-is (trimmed)"
+      )
+      val id299 = snap.nodes.values.find(_.name == "n-len299").map(_.id).getOrElse("")
+      val id300 = snap.nodes.values.find(_.name == "n-len300").map(_.id).getOrElse("")
+      val idOkLong = snap.nodes.values.find(_.name == "n-oklong").map(_.id).getOrElse("")
+      assert(!os.exists(ws / ".nebflow" / "results" / s"descriptionLong-$id299.md"), "299 must not spill")
+      assert(!os.exists(ws / ".nebflow" / "results" / s"descriptionLong-$id300.md"), "300 must not spill")
+      // Blank-after-trim keeps its original semantics (unchanged error code).
+      assert(
+        blankLong.isLeft && blankLong.left.exists(_.contains("NODE_DESCRIPTION_LONG_REQUIRED")),
+        s"blank descriptionLong must be rejected (unchanged semantics), got: $blankLong"
       )
       assert(okLong.isRight, s"valid descriptionLong must pass, got: $okLong")
+      assert(
+        !os.exists(ws / ".nebflow" / "results" / s"descriptionLong-$idOkLong.md"),
+        "a non-truncated value must not leave a spill file behind"
+      )
       // 双层落库：短文进 NodeDef.description，长文进 descriptionLong（均 trim 归一）
       assertEquals(
         snap.nodes.values.find(_.name == "n-oklong").map(n => (n.description, n.descriptionLong)),

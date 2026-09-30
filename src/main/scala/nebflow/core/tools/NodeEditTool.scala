@@ -81,6 +81,69 @@ object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
   /**
+   * descriptionLong stored-length cap (desc300 batch 2026-09-30, author order #281): the
+   * stored value is truncated to this many characters; longer input is NOT an error — the
+   * full (trimmed, untruncated) text is spilled to a per-node file and its absolute path is
+   * returned in the success receipt so the agent can read it.
+   */
+  private val DescriptionLongMaxChars = 300
+
+  /** Truncation = trimmed length beyond the cap. Pure predicate (single judgement point). */
+  private def descriptionLongTruncated(d: Option[String]): Boolean =
+    d.exists(_.trim.length > DescriptionLongMaxChars)
+
+  /**
+   * The ack line appended to the NodeEdit receipt when truncation happened (author-verbatim
+   * S16-4 sentence + the ABSOLUTE spill path). Only the receipt matters here: this line is NOT
+   * written to stdout only, it is returned to the caller (the agent can then Read the file).
+   */
+  private val DescriptionLongFullTextLine = "Full descriptionLong text (untruncated) written to: "
+
+  /** Stored value: trimmed then capped. Pure (single normalisation point). */
+  private def storeDescriptionLong(d: Option[String]): Option[String] =
+    d.map(_.trim.take(DescriptionLongMaxChars))
+
+  /**
+   * Sync the per-node spill file with the value just written (called only when descriptionLong
+   * was rewritten: every create/edit write point). One file per node, zero accumulation:
+   *   - truncated => overwrite the same path with the full untruncated text, and return the
+   *     receipt line S16-4 carrying the ABSOLUTE path (so the agent can read it itself);
+   *   - not truncated => remove any stale spill file (a rewrite to a short value must not leave
+   *     the previous full text behind pointing at a value the node no longer holds).
+   * Best-effort: a disk failure never fails the NodeEdit call (the stored value is already
+   * correct) — it downgrades to a warning line, so the truncation is never silent.
+   */
+  private def syncDescriptionLongSpill(rt: ProjectRuntime, nodeId: String, d: Option[String]): IO[String] =
+    IO.blocking {
+      val trimmed = d.map(_.trim).getOrElse("")
+      if descriptionLongTruncated(d) then
+        FlowMapStore.writeDescriptionLongSpill(rt.project.workspace, nodeId, trimmed) match
+          case Right(path) => "\n" + DescriptionLongFullTextLine + path
+          case Left(err) =>
+            s"\n⚠ descriptionLong was truncated to $DescriptionLongMaxChars chars but the full text could NOT be written to disk ($err) — the untruncated remainder is not readable."
+      else
+        val _ = FlowMapStore.deleteDescriptionLongSpill(rt.project.workspace, nodeId)
+        ""
+    }
+
+  /**
+   * Delete the spill file on the node's terminal exit (abandon / cancel) and return a short
+   * receipt note. BEST-EFFORT by contract: a delete failure must not fail the abandon or the
+   * cancel — it only downgrades to a warning note that the caller records (event / receipt),
+   * so the reading is never silently lost.
+   */
+  private def dropDescriptionLongSpill(workspace: String, nodeId: String): IO[String] =
+    IO.blocking(FlowMapStore.deleteDescriptionLongSpill(workspace, nodeId))
+      .map {
+        case Right(true)  => "; descriptionLong spill file deleted"
+        case Right(false) => ""
+        case Left(err)    => s"; ⚠ descriptionLong spill file could not be deleted ($err)"
+      }
+      .handleErrorWith(e =>
+        IO.pure(s"; ⚠ descriptionLong spill file could not be deleted (${Option(e.getMessage).getOrElse(e.toString)})")
+      )
+
+  /**
    * 观测面上下文经济学批（20260907 裁定⑤b）：描述 7,438 → 3,742 字符（-50%，
    * 压措辞不改语义——参数面/动作语义/错误码/校验/重激活规则全保留）；合并
    * 观测面P0P1引擎批时统一进基线后落的 main 语义（failed 重激活条款 / abandon
@@ -110,27 +173,27 @@ object NodeEditTool extends Tool:
 ## Parameters
 - project (optional; current project by default).
 - nodename: unique display name — missing = create, existing = edit.
-- description (required on create, ≤60 chars): one-line purpose (card/payload metadata). descriptionLong (optional, ≤200 chars): longer summary — detail channel only. Both replace on edit.
-- task (optional): node task; an entry node (task, no in) runs on create.
+- description (required on create, ≤60 chars): one-line purpose (card/payload metadata). descriptionLong (optional, ≤300 chars; longer text is stored truncated to 300 and the full text is written to a file whose path the result returns): longer summary — detail channel only. Both replace on edit.
+- task (optional): node task.
 - in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each gains a default pass edge here.
 - deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null clears; failed/cancelled/blocked never trigger; deps edits on RUNNING nodes rejected. A ref may be "chain:<id>" = wait for that WHOLE chain (all members completed) — a pure scheduling gate, NEVER a membership edge, deps-only (not 'in'); unknown id ⇒ NODE_CHAIN_REF_UNKNOWN.
 - retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ that upstream re-runs (fresh result over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
 - out (optional; edit rewrites the edge set; empty/null = dangling (state the intent with dangling=true): result retained, auto-delivered once wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
-- worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name> (same-name branch off main); fail-fast; refused on edits.
+- worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name>; fail-fast; refused on edits.
 - Retired (rejected): agent/skill/mcp (NODE_AGENT_RETIRED) ⇒ plugins; preset (NODE_PRESET_RETIRED) — no per-node scheme; dispatcher's applies.
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
-- reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ edit only rewires + auto-delivers the retained result.
+- reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered). Omitted ⇒ rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
 - notify (optional; unset = legacy: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. Legacy one-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
 ## Semantics
-- Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task) runs at create, async.
+- Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task, no in) runs at create, async.
 - Verdict routing (role=verifier): fail is a VERDICT — THE VERIFIER STILL COMPLETES; "(fail)<worker>:loop" re-runs the target. Its out: distinct pass/fail targets (NODE_VERDICT_ROUTE_COLLISION), one fail target (NODE_VERIFY_MULTI_FAIL_TARGET), never "Nebula" (NODE_LOOP_TARGET_NEBULA), no retry (NODE_RETRY_LOOP_CONFLICT); the engine owns the round/wall-clock budget and fails it on exhaustion (loop-budget).
 - out delivery: completed ⇒ pass edges fire (:result payload / :signal bare start; ≤1 per (target,mode)); failed ⇒ on-failed :signal edges fire, the rest waits (D5); wiring into a FAILED upstream with no on-failed edge ⇒ warning.
 - merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure ⇒ blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM); with no out yet it REQUIRES dangling=true (NODE_MERGE_SINK_NEEDS_OUT).
-- Edit: in appends; deps replaces; out rewrites the edge set; description(s) replace. Removing a consumed target (running/terminal) rejected — NodeCancel first; other terminal rewires auto-deliver the retained result to new targets.
+- Edit: in appends; deps/out/description replace; removing a consumed target (running/terminal) rejected — NodeCancel first; other terminal rewires auto-deliver the retained result to new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
 - Failed node edit: a real change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED edit (SIGINT/SIGTERM left it non-terminal): a real change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED re-runs only with reactivateCompleted=true; cancelled not reactivatable (create successor).
 - Archived nodes (TTL-expired, result retained): only 'out' rewiring is accepted; other edits refused (restoreChain=true overrides).
@@ -152,7 +215,7 @@ object NodeEditTool extends Tool:
         ),
         "descriptionLong" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional longer summary, ≤200 chars — detail channel only (NodeList detail= / REST), never in default payloads".asJson
+          "description" -> "Optional longer summary, ≤300 chars — longer text is stored truncated to 300 and the full text is written to a file whose path the result returns — detail channel only (NodeList detail= / REST), never in default payloads".asJson
         ),
         "task" -> Json.obj(
           "type" -> "string".asJson,
@@ -560,14 +623,11 @@ object NodeEditTool extends Tool:
       )
     else if descriptionLong.exists(d => d.trim.isEmpty) then
       IO.pure(Left(ToolError("'descriptionLong' must be non-empty when provided (NODE_DESCRIPTION_LONG_REQUIRED)")))
-    else if descriptionLong.exists(_.trim.length > 200) then
-      IO.pure(
-        Left(
-          ToolError(
-            s"'descriptionLong' must be ≤200 characters (got ${descriptionLong.map(_.trim.length).getOrElse(0)}) (NODE_DESCRIPTION_LONG_TOO_LONG)"
-          )
-        )
-      )
+    // desc300 batch (2026-09-30): over-long is NO LONGER an error — it is truncated on store
+    // (storeDescriptionLong) with the full text spilled to a file. The old over-length reject
+    // branch AND its error code are deleted outright: zero surviving error path for
+    // over-length, so the code appears nowhere in src/ (see the repo-wide grep in the batch
+    // report). The trim-empty contract above is the only surviving descriptionLong rejection.
     else
       val plugins = pluginsParsed.getOrElse(Nil)
       // flag off（§G.2 回滚语义）：NodeEdit 忽略 plugins 参数——不校验不存储
@@ -823,17 +883,15 @@ object NodeEditTool extends Tool:
         )
       case _ => None
 
-  /** descriptionLong 校验单点（裁定⑤c，可选参数：传了才校验；≤200 字符）。 */
+  /**
+   * descriptionLong validation single point (author ruling #5c) — optional parameter, validated
+   * only when provided. desc300 batch (2026-09-30): the cap is 300 and over-length is NOT an
+   * error (see the constants above); only the trim-empty contract survives.
+   */
   private def validateDescriptionLong(descriptionLong: Option[String]): Option[ToolError] =
     descriptionLong match
       case Some(d) if d.trim.isEmpty =>
-        Some(ToolError("'descriptionLong' must be non-empty (trim) — ≤200 chars (NODE_DESCRIPTION_LONG_REQUIRED)"))
-      case Some(d) if d.trim.length > 200 =>
-        Some(
-          ToolError(
-            s"'descriptionLong' must be ≤200 characters (got ${d.trim.length}) (NODE_DESCRIPTION_LONG_TOO_LONG)"
-          )
-        )
+        Some(ToolError("'descriptionLong' must be non-empty (trim) (NODE_DESCRIPTION_LONG_REQUIRED)"))
       case _ => None
 
   /**
@@ -1293,7 +1351,7 @@ object NodeEditTool extends Tool:
             // 方案（NodeDef.preset 字段保留，存量数据显示/审计用）。
             task = task,
             description = description.map(_.trim),
-            descriptionLong = descriptionLong.map(_.trim),
+            descriptionLong = storeDescriptionLong(descriptionLong),
             in = Nil,
             deps = deps,
             merge = merge,
@@ -1495,7 +1553,13 @@ object NodeEditTool extends Tool:
                         (if pluginsFlagWarn.isDefined then "\n" + pluginsFlagWarn.get else "") +
                         (if pluginsTextWarn.nonEmpty then "\n" + pluginsTextWarn.mkString("\n") else "")
                     )
-                  )
+                  ).flatMap { created0 =>
+                    // desc300 batch (create write point): the spill file follows the value just
+                    // written, so the receipt carries a path that is true now (S16-4 sentence +
+                    // ABSOLUTE path). Appended only on success — a rejected create leaves no file.
+                    NodeEditTool.syncDescriptionLongSpill(rt, nodeId, descriptionLong)
+                      .map(dlSpill => created0.map(_ + dlSpill))
+                  }
                 end if
               }
             }
@@ -1595,7 +1659,13 @@ object NodeEditTool extends Tool:
                   ) *>
                     // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks（与
                     // cancelNode/reap 同款单点——问出问题的节点被放弃，卡片必须关闭）。
-                    rt.engine.cleanupPendingAsks(c.sessionRef).as(abandonReceipt(c))
+                    // desc300 batch: the node leaves the map here, so its descriptionLong
+                    // spill file goes with it (best-effort — a delete failure must not fail
+                    // the abandon; the reading is recorded in the abandoned event).
+                    rt.engine.cleanupPendingAsks(c.sessionRef) *>
+                      NodeEditTool.dropDescriptionLongSpill(rt.project.workspace, c.id).map { spillNote =>
+                        abandonReceipt(c) + spillNote
+                      }
                 }
             }
           case _ =>
@@ -2307,7 +2377,7 @@ object NodeEditTool extends Tool:
                                                         s.copy(nodes =
                                                           s.nodes.updated(
                                                             node.id,
-                                                            fresh.copy(descriptionLong = descriptionLong.map(_.trim))
+                                                            fresh.copy(descriptionLong = storeDescriptionLong(descriptionLong))
                                                           )
                                                         )
                                                       case None => s
@@ -2470,8 +2540,7 @@ object NodeEditTool extends Tool:
                                                                 task = appliedTask,
                                                                 description =
                                                                   description.map(_.trim).orElse(fresh.description),
-                                                                descriptionLong = descriptionLong
-                                                                  .map(_.trim)
+                                                                descriptionLong = storeDescriptionLong(descriptionLong)
                                                                   .orElse(fresh.descriptionLong),
                                                                 deps = appliedDeps,
                                                                 loop =
@@ -2705,6 +2774,17 @@ object NodeEditTool extends Tool:
                                               // 与写后现读的**有效链归属视图**比对（判据单点 =
                                               // FlowMapStore.chainIdView，与载荷 chainId 同源）。
                                               _ <- NodeTools.emitChainMembershipChanges(rt, chainBefore)
+                                              // descriptionLong spill (desc300 batch, edit write points):
+                                              // ONLY when this call rewrites descriptionLong (both shapes —
+                                              // the plain metadata write and the reactivate write — assign the
+                                              // same final value: storeDescriptionLong(descriptionLong) orElse
+                                              // the existing one). Not provided => zero action, the file for the
+                                              // node's current stored value stays. A rewrite to an untruncated
+                                              // value clears the stale file (one file per node, no accumulation).
+                                              dlSpill <-
+                                                if descriptionLong.isDefined then
+                                                  NodeEditTool.syncDescriptionLongSpill(rt, node.id, descriptionLong)
+                                                else IO.pure("")
                                             yield Right(
                                               s"Node '${node.name}' updated" +
                                                 (if didReactivate then
@@ -2739,7 +2819,10 @@ object NodeEditTool extends Tool:
                                                 // 形态 ⇒ 尾部 ⚠ 行（与 stalledInWarning 同款形态）。
                                                 (if outProvided && finalOut.isEmpty then
                                                    "\n" + NodeTools.wiringGapHint(node.name, node.id).mkString("\n")
-                                                 else "")
+                                                 else "") +
+                                                // desc300 batch: the ack line S16-4 (truncated ⇒ full text
+                                                // spilled, absolute path) rides the success receipt.
+                                                dlSpill
                                             )
                                         // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed
                                         // 边且非 merge → WARNING 级提示（不阻断，附成功结果尾部；死锁持续
