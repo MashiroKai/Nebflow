@@ -1189,6 +1189,15 @@ object NodeTools:
     for
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
+      // 🔴 Two-zone combined map, evaluated up here on purpose: the three merge-window
+      // derived batches below (`mergeQueueSlots` / `mergeQueuePositions` /
+      // `mergeVerdictGate`) MUST share one source with the mutex gate
+      // (`NodeEngine.mergeMutexHoldersOf`, which reads `store.combinedNodes`). Gate and
+      // payload holding different zones means the same node reports one rank through the
+      // gate and another through the payload. This value used to be evaluated inside the
+      // `yield` block, i.e. after the three call sites. Zero new IO: `s` and `arch` are
+      // already in hand above.
+      combined = s.nodes ++ arch.nodes
       // 清场 c-①（20260903 03:04 清场误杀事故复盘）：running 节点携带 liveness
       // 字段——true = 有在飞执行 fiber（活会话，取消信号可达）；false = 无在飞
       // fiber（死会话残留/实例重启泄漏，可经 NodeCancel / abandon 收殓）。非
@@ -1208,11 +1217,11 @@ object NodeTools:
       // 排队位次**显示槽**（engine-defects 批 #2/#227 2026-09-15）：与闸**同一判据**
       // （mergeQueueHolders → MergeMutexPolicy.holders + verdict 准入过滤），只把持有者
       // 富化成 {rank 依据(readyAt/createdAt), 是否真在临界区, 为何未点火}。
-      mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(s.nodes)
+      mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(combined)
       // 排队**位次**派生（queuepos 批 2026-09-15）：纯函数、零副作用，真源 = SEM-2 次序键
       // `rank=(readyAt,createdAt,id)`（[[MergeMutexPolicy.queuePosOf]] 单点）。与
       // `mergeQueueSlots` 分工：后者 = 闸判据「谁挡着我」，本项 = 队列序「我排第几」。
-      mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(s.nodes)
+      mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(combined)
       // Verdict-gate visibility slot (mergeverdictvis batch 2026-09-23): a merge position
       // held by the verdict gate produces NO `mergeQueue` slot at all, so the payload used
       // to show `mergeQueuePos.position=1` with nobody listed anywhere — reading as "first
@@ -1222,12 +1231,13 @@ object NodeTools:
       // the gate acts on) — 🔴 no frontend/dispatcher re-derivation, 🔴 no reading of the
       // file ticket layer, 🔴 no replay from the event stream. Non-empty entries only ⇒
       // unheld nodes are simply absent.
-      mergeVerdictGates <- rt.engine.mergeVerdictGateBatch(s.nodes)
+      mergeVerdictGates <- rt.engine.mergeVerdictGateBatch(combined)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
     yield
       val now = System.currentTimeMillis()
       // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
-      val combined = s.nodes ++ arch.nodes
+      // `combined` is evaluated in the for-comprehension above (two-zone map, shared by the
+      // three merge-derived batches).
       // chainmodel 批一 ①（判据同源收口）：旁挂判据由写死的「分量成员数 ≥2」改为判据单点
       // [[FlowMapStore.chainVisible]]（**声明链不论成员数都可见**、派生分量仍需 ≥2 成员
       // ——payload 零膨胀口径逐字保留），并保持既有「旁挂仅收含活动成员的链」约束。

@@ -109,12 +109,28 @@ object MergeMutexPolicy:
    * 展开为目标链**成员集**后再取 NodeDef —— 「整链完成才到达」因此进得了 `readyAt`
    * （到达时刻 = 目标链最晚成员终态时刻）与 `holders`（挡住我的候选）。
    *
-   * 口径（登记）：本闸是**活动区单区**判据（`all` = 活动区节点表，与既有口径逐字一致），
-   * 链引用也按该表解析 ⇒ 目标链的号在活动区视角下找不到时（该链最早成员已归档的
-   * 「跨区续做」形态）本闸取不到成员、`readyAt` 会偏小；**启动面不受影响**——权威闸是
-   * `NodeEngine.depsSatisfied`（`findNode` **双区**口径，链引用按合并集解析，未全终态恒
-   * false）。该跨区口径差 = 既有 `upsOf`（单区）与 `depsSatisfied`（双区）差异的同一族，
-   * 根治面 = 批二的链号台账（区无关的链号 → 成员表）。零链引用时逐字等于改造前行为。
+   * 🔴 **Zone contract for `all`**: `all` MUST be the **two-zone combined map** (active zone
+   * ∪ archive zone — the caller passes `store.combinedNodes` or an equivalent). Before this
+   * batch the mutex gate chain handed this function the active zone only
+   * (`NodeGating.scala` read `store.snapshot`): once a chain-level sweep moved an upstream
+   * into the archive zone, `all.get` missed it, `readyAt` took the entry-node branch and
+   * returned `n.createdAt`, and the rank primary key stopped tracking arrival order
+   * (fingerprint `readyAt == createdAt`). When such an upstream completes LATER than this
+   * sink was created the rank comes out too small, so the sink can jump the queue — a
+   * behaviour-face defect. With the combined map this gate and `NodeEngine.depsSatisfied`
+   * (`combinedNodes`) share one source. This object is a pure predicate with no store
+   * dependency, so it CANNOT supply the two-zone map itself: the contract is on the caller.
+   *
+   * The paragraph below (the active-zone-only wording registered by the chainmodel batch) is
+   * SUPERSEDED by this batch and kept only as history. Verbatim: "this gate is an
+   * active-zone-only predicate … that cross-zone difference is the same family as the
+   * existing gap between `upsOf` (single zone) and `depsSatisfied` (two zones), and the
+   * root fix is the chain-id ledger of batch two". 🔴 The "root fix = chain-id ledger" part
+   * NO LONGER holds: this batch closes the gap directly by handing `all` the two-zone map
+   * (chain refs are resolved against the same map as `depsSatisfied`), so no separate
+   * chain-id ledger face is needed. Chain refs still resolve through the single point
+   * [[FlowMapStore.resolveDepTargets]] (never a second resolver). With zero chain refs the
+   * behaviour is byte-identical to before.
    */
   def upsOf(n: NodeDef, all: Map[String, NodeDef]): List[NodeDef] =
     (n.in ++ FlowMapStore.resolveDepTargets(n.deps, all).ids).distinct.flatMap(all.get)
