@@ -481,7 +481,17 @@ object ProjectActor:
     // actor 内串行化（LocalActorRef 逐条处理，上一条 handler IO 跑完才取下一
     // 条）+ modify 原子占位，双 spawn 竞态关闭。
     Behaviors.setup { _ =>
-      Ref.of[IO, Map[String, ActiveDispatcher]](Map.empty).map { active =>
+      (
+        Ref.of[IO, Map[String, ActiveDispatcher]](Map.empty),
+        // Single-shot ledger for the chain archive warning (verdict-consumer batch ·
+        // case A (b)): key = chain id + sorted member set, so "the same chain with the
+        // same member set fires exactly once" (same single-shot discipline as
+        // `NodeGating.logVerdictGateBreach`'s `m.get(n.id).contains(key)`). What it
+        // stops: the 30 s sweep re-judging the same unresolved component every pass —
+        // without the ledger one fact would be re-emitted as 2/3/4 lines (the #1180
+        // "waiting != no progress" family).
+        Ref.of[IO, Set[String]](Set.empty)
+      ).mapN { (active, heldChainsLogged) =>
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
             case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution, taskId, revive) =>
@@ -629,6 +639,45 @@ object ProjectActor:
                         logger.warn(s"chain-archived audit append failed (${c.chainId}): ${e.getMessage}")
                       )
                   }
+                  // ②′ Unconsumed-verdict archive warning (verdict-consumer batch ·
+                  //     case A (b) "release + warn"): the ARCHIVE ITSELF HAPPENS AS
+                  //     USUAL (the removals/audits above already released the chain
+                  //     unchanged — a blocking gate would trade a completion
+                  //     declaration for "never completes", exactly the #1180 family
+                  //     error); this leg only carries the conclusion out as a
+                  //     parallel event. Judgement = SweptChain.unconsumedVerdicts
+                  //     (derived inside FlowMapStore; must NOT be re-derived here).
+                  //     Single-shot = the heldChainsLogged ledger (exactly one line
+                  //     per chain + member set). Best-effort: a failure only WARNS,
+                  //     never rolls back the archive, never affects later legs.
+                  val heldAudits = swept
+                    .filter(_.unconsumedVerdicts.nonEmpty)
+                    .traverse_ { c =>
+                      val key = s"${c.chainId}:${c.nodeIds.sorted.mkString(",")}"
+                      heldChainsLogged
+                        .modify(m => if m.contains(key) then (m, false) else (m + key, true))
+                        .flatMap { first =>
+                          if !first then IO.unit
+                          else
+                            FlowMapEventLog
+                              .append(
+                                cfg.project.workspace,
+                                cfg.project.name,
+                                c.nodeId,
+                                FlowMapEventLog.ChainArchiveHeldType,
+                                FlowMapEventLog.chainArchiveHeldSummary(
+                                  c.chainId,
+                                  c.archivedAt,
+                                  c.members,
+                                  c.unconsumedVerdicts
+                                ),
+                                Some(c.chainId)
+                              )
+                              .handleErrorWith(e =>
+                                logger.warn(s"chain-archive-held audit append failed (${c.chainId}): ${e.getMessage}")
+                              )
+                        }
+                    }
                   // ③ 索引翻转（事件驱动、幂等）：出库后把链块/条目 state 在 active ↔
                   //    archived 间迁移。swept 空 → 不调用（零开销，禁 30s 空扫）。
                   val flip =
@@ -648,7 +697,7 @@ object ProjectActor:
                   //    （零 root 注入）+ **照记** `summarySentAt`（R-9），并顺带扫描历史
                   //    欠账批。承载面 = 链级列表/明细面（Flow Map 归档面板，用户主动查看）。
                   //    best-effort：失败仅 WARN，不回滚归档、不影响后续 tick。
-                  removals *> audits *> flip *> reconcile *> deliverChainSummaries(cfg)
+                  removals *> audits *> heldAudits *> flip *> reconcile *> deliverChainSummaries(cfg)
                 } *>
                 // ⑤ 链号台账 reconcile 腿（chainmodel 批二，2026-09-19）：一拍内完成
                 //    「出生 / 承继 / 合并（显式改号 + 别名）/ 拆分 → 引用计数**覆盖式**复算

@@ -3,6 +3,7 @@ package nebflow.core.project
 import io.circe.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.syntax.*
+import nebflow.core.tools.NodeTools
 
 /**
  * Project + Node + Flow Map 数据模型（#28 阶段 0，方案文档 20260831_project-node-architecture.md §2.1）。
@@ -1074,6 +1075,52 @@ object NodePayload:
 
   /** 拒绝态派生键的值（唯一取值；**缺键 = 合法**，见 [[buildNodeJson]] 头注）。 */
   val VerifierRouteLost: String = "lost"
+
+  /** Value of the pass-face gap derived key (the only value; **absent key = legal**, see the [[buildNodeJson]] header). */
+  val VerifierPassUnconsumed: String = "unconsumed"
+
+  /**
+   * **Judgement E: verifier pass face has zero consumer** (verdict-consumer batch
+   * 2026-10-01 · case A · design card §1.3 / §3.3, verbatim):
+   *
+   * ```
+   * verifierPassUnconsumed(v) ≜ role(v) = verifier
+   *                            ∧ lastVerdict(v) written
+   *                            ∧ declaredOut(v) non-empty
+   *                            ∧ ¬passOutlet(v)
+   * ```
+   *
+   * Sits BESIDE — never instead of — [[verifierRouteInvalid]] (judgement D, the fail
+   * face): D judges "the verdict came back negative, can it re-run?", this one judges
+   * "the verdict came back positive, where does it go?". Both can hold at once; never
+   * merged, never substituted one for the other.
+   *
+   * **No `¬inConsumer` clause** (the same reading as the card's §3.1 tier (a)): an `in`
+   * referrer is a NECESSARY but not a SUFFICIENT condition for the verdict gate (card
+   * §1.5 — the 15 "middle tier" instances share the same root cause, merely masked by
+   * the sink's `in` bookkeeping). This key is therefore a VISIBILITY carrier and the 15
+   * carry it too; the archive face (b) has a separate strict V-0 form, and the
+   * difference between the two is the card's §3.1 hard ruling, not an omission.
+   *
+   * **Pure function, no IO, zero new persisted field** (same discipline as
+   * [[verifierRouteInvalid]]: a derived quantity, declaring the pass edge lifts it
+   * automatically). Same three boundaries as [[NodeTools.passOutlet]] (`pendingOut`
+   * counts; `:loop` does not; `(pass)Nebula:signal` does not) plus "empty declaredOut
+   * does not count" — that window belongs to the existing two-phase token face
+   * (`verifierRoutePending`).
+   *
+   * 🔴 The judgement single point is `NodeTools.passOutlet` (never re-implemented
+   * inside this function; card §5.1 states verbatim "reuse tier (a)'s single point").
+   *
+   * @param nodes the active-zone node table (the resolution face; callers read one
+   *              snapshot and never mix snapshots).
+   */
+  def verifierPassUnconsumed(node: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    if NodeRoles.normalize(node.role) != NodeRoles.Verifier then false
+    else
+      !node.lastVerdict.forall(_.trim.isEmpty) &&
+      NodeTools.declaredOutOf(node).nonEmpty &&
+      !NodeTools.passOutlet(node, nodes)
 
   /**
    * **判据 D：verifier 拒绝态**（failroute-guard 批 2026-09-21 · 案 A · 设计卡 §2.1 逐字）：

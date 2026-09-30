@@ -1431,6 +1431,14 @@ object NodeEditTool extends Tool:
               mutateIO.flatMap { s =>
                 val created = s.nodes(nodeId)
                 val missingIn = ins.filterNot(created.in.contains)
+                // pass-consumer gap (verdict-consumer batch 2026-10-01 · case A warning
+                // tier, design card §2.1): the verifier declares edges but no pass outlet
+                // — its pass verdict has no consumer. Derived ONCE here from the same
+                // post-write snapshot the receipt reads, and shared by the audit line and
+                // the receipt hint (a second derivation would be the twin-derivation the
+                // engine forbids). Judgement authority = NodeTools.verifierPassOutletMissing
+                // (single point; the pass-edge resolution runs on the full active map).
+                val passOutletGap = NodeTools.verifierPassOutletMissing(created, s.nodes)
                 if missingIn.nonEmpty then
                   val msg =
                     s"engine consistency tripwire: node '$nodename' ($nodeId) was created but in edge(s) [${missingIn.mkString(", ")}] are missing from the persisted state " +
@@ -1458,6 +1466,22 @@ object NodeEditTool extends Tool:
                            nodeId,
                            "verifier-route-deferred",
                            "verifier created without fail route (verifierRoutePending=true) — wire '(fail)<worker>:loop' to enable re-run routing"
+                         )
+                       else IO.unit) *>
+                      // Pass-face zero-consumer trace (verdict-consumer batch · case A
+                      // tier (a) warning only): sits BESIDE the fail-face
+                      // `verifier-route-deferred` (both judgements can hold at once,
+                      // never merged). Judgement single point = NodeTools.passOutlet
+                      // (already computed above; never re-derived here). Written on the
+                      // success leg, zero rejection paths.
+                      (if passOutletGap then
+                         FlowMapEventLog.append(
+                           rt.project.workspace,
+                           rt.project.name,
+                           nodeId,
+                           FlowMapEventLog.VerifierPassUnconsumedType,
+                           s"verifier '${created.name}' ($nodeId) created without a pass outlet — its pass verdict has no consumer " +
+                             "to route to; declare '(pass)<landing>' or '(pass)Nebula' (NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\")"
                          )
                        else IO.unit) *>
                       // 新节点事件（NodeList 同构 payload，in/out 以 store 最终态为准）
@@ -1546,6 +1570,13 @@ object NodeEditTool extends Tool:
                            "\n" +
                              (if dangling then NodeTools.wiringGapHintDeclared(nodename, nodeId)
                               else NodeTools.wiringGapHint(nodename, nodeId)).mkString("\n")
+                         else "") +
+                        // Pass-outlet gap hint (verdict-consumer batch · case A tier (a)
+                        // warning only, design card §2.1): a verifier with a non-empty
+                        // declaredOut but no pass outlet ⇒ one ⚠ line on the tail
+                        // (the `wiringGapHint` shape: non-blocking, zero rejection
+                        // paths).
+                        (if passOutletGap then "\n" + NodeTools.verifierPassOutletGapHint(nodename, nodeId).mkString("\n")
                          else "") +
                         // pending verifier ⚠（C-i ②，本批四项③）+ plugins 声明面警告
                         // （P2a flag-off / P3 文本扫描，本批四项④）——WARNING 族同款形态
@@ -2785,6 +2816,37 @@ object NodeEditTool extends Tool:
                                                 if descriptionLong.isDefined then
                                                   NodeEditTool.syncDescriptionLongSpill(rt, node.id, descriptionLong)
                                                 else IO.pure("")
+                                              // pass-consumer gap (verdict-consumer batch 2026-10-01 ·
+                                              // case A warning tier, design card §2.1): read the
+                                              // POST-write node, so a rewire that drops the pass leg is
+                                              // caught here exactly as one that adds it clears the
+                                              // condition (pure derived judgement, zero bookkeeping).
+                                              // Judgement authority = NodeTools.passOutlet (the same
+                                              // single point the create leg uses) — a second derivation
+                                              // would be the twin-derivation the engine forbids.
+                                              // Resolution face = the full post-write node map, exactly
+                                              // as the create leg uses: a pass edge names a landing node
+                                              // id/name that must be RESOLVED here, so a node-local face
+                                              // would report a false positive on every correctly wired
+                                              // verifier (the R2 "rewire clears the warning" semantics).
+                                              passOutletGap <-
+                                                rt.store.snapshot.map { s =>
+                                                  s.nodes
+                                                    .get(node.id)
+                                                    .exists(fresh => NodeTools.verifierPassOutletMissing(fresh, s.nodes))
+                                                }
+                                              _ <-
+                                                if passOutletGap then
+                                                  FlowMapEventLog.append(
+                                                    rt.project.workspace,
+                                                    rt.project.name,
+                                                    node.id,
+                                                    FlowMapEventLog.VerifierPassUnconsumedType,
+                                                    s"verifier '${node.name}' (${node.id}) has no pass outlet after this edit — its pass " +
+                                                      "verdict has no consumer to route to; declare '(pass)<landing>' or '(pass)Nebula' " +
+                                                      "(NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\")"
+                                                  )
+                                                else IO.unit
                                             yield Right(
                                               s"Node '${node.name}' updated" +
                                                 (if didReactivate then
@@ -2819,6 +2881,17 @@ object NodeEditTool extends Tool:
                                                 // 形态 ⇒ 尾部 ⚠ 行（与 stalledInWarning 同款形态）。
                                                 (if outProvided && finalOut.isEmpty then
                                                    "\n" + NodeTools.wiringGapHint(node.name, node.id).mkString("\n")
+                                                 else "") +
+                                                // pass outlet gap hint (verdict-consumer batch · case A
+                                                // warning tier, card §2.1): same shape as the wiring-gap
+                                                // hint above — one ⚠ line on a SUCCESS receipt, zero
+                                                // rejection paths. Without this leg the condition would
+                                                // be unfixable once observed (a receipt-only face cannot
+                                                // see a rewire that RE-introduces it).
+                                                (if passOutletGap then
+                                                   "\n" + NodeTools
+                                                     .verifierPassOutletGapHint(node.name, node.id)
+                                                     .mkString("\n")
                                                  else "") +
                                                 // desc300 batch: the ack line S16-4 (truncated ⇒ full text
                                                 // spilled, absolute path) rides the success receipt.
