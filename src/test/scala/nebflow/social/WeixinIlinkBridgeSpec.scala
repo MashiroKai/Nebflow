@@ -2,6 +2,7 @@ package nebflow.social
 
 import cats.effect.IO
 import cats.effect.Ref
+import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.bridge.BridgeContext
@@ -131,6 +132,138 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     yield
       assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNotOnAllowlist))
       assertEquals(got, List.empty)
+  }
+
+  // ─────────────── drop observability (source-level appender assertion) ───────────────
+  //
+  // Every assertion above reads the RETURNED Verdict, which a built-but-discarded
+  // `IO[IO[Unit]]` cannot affect: with the outer wrapper in place the drop log
+  // never executes and the whole spec would still be green. The four tests below
+  // close that hole by attaching a ListAppender to the seam's own logger and
+  // asserting the line actually reaches an appender (precedent:
+  // `nebflow.core.DeadLoggingResurrectionSpec`). They cover every drop arm the
+  // seam can take: not-on-allowlist (listed sender AND unresolvable identity),
+  // no-session-bound, and inject-failed.
+  //
+  // The logger level is left alone on purpose: `nebflow.social.weixin-ilink-bridge`
+  // has no explicit level in `logback-test.xml` (root = INFO), so both the WARN
+  // and the INFO arms pass the effective-level check and neither assertion can be
+  // satisfied by a filter artefact.
+
+  /** The seam's logger, as logback sees it (the plugin uses
+    * `NebflowLogger.forName("nebflow.social.weixin-ilink-bridge")`). */
+  private def seamLogger(): ch.qos.logback.classic.Logger =
+    org.slf4j.LoggerFactory.getLogger("nebflow.social.weixin-ilink-bridge")
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+
+  private def withAppender[A](body: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent] => A): A =
+    val lb = seamLogger()
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    appender.start()
+    lb.addAppender(appender)
+    try body(appender)
+    finally lb.detachAppender(appender)
+
+  private def messages(appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent])
+      : List[String] =
+    import scala.jdk.CollectionConverters.*
+    appender.list.asScala.toList.map(_.getFormattedMessage)
+
+  test("WI-G3L a sender OFF the allowlist really logs its drop line (not a dead IO[IO[Unit]])") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_mallory"))))
+    val p = plugin(allowed = Some(List("wx_alice")))
+    withAppender { appender =>
+      val before = messages(appender).length
+      val v = (for
+        _ <- started(p, c)
+        v <- p.intake(c, inbound(Some("wx_mallory")))
+      yield v).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNotOnAllowlist))
+      assert(
+        fired.exists(l => l.contains("weixin-ilink bridge: inbound message") && l.contains("dropped")),
+        s"the drop line must actually reach an appender, got $fired"
+      )
+      // The stable reason string is carried in the TEXT so an operator can
+      // reconcile the log against the Verdict without reading the response body.
+      assert(
+        fired.exists(_.contains(WeixinIlinkBridgePlugin.ReasonNotOnAllowlist)),
+        s"the drop line must carry the stable reason '${WeixinIlinkBridgePlugin.ReasonNotOnAllowlist}', got $fired"
+      )
+    }
+  }
+
+  test("WI-G4L an UNRESOLVABLE sender really logs its drop line (the fail-closed arm is observable)") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin(allowed = Some(List("wx_alice")))
+    withAppender { appender =>
+      val before = messages(appender).length
+      val v = (for
+        _ <- started(p, c)
+        v <- p.intake(c, inbound(None))
+      yield v).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNotOnAllowlist))
+      assert(
+        fired.exists(l => l.contains("dropped") && l.contains("unresolvable")),
+        s"the fail-closed drop must say the identity was unresolvable, got $fired"
+      )
+      assert(
+        fired.exists(_.contains(WeixinIlinkBridgePlugin.ReasonNotOnAllowlist)),
+        s"the drop line must carry the stable reason '${WeixinIlinkBridgePlugin.ReasonNotOnAllowlist}', got $fired"
+      )
+    }
+  }
+
+  test("WI-R1L the no-session-bound drop is observable too (that arm logs)") {
+    val c = new RecordingCtx(Nil)
+    val p = plugin()
+    withAppender { appender =>
+      val before = messages(appender).length
+      (for
+        _ <- started(p, c)
+        v <- p.intake(c, inbound(Some("wx_none")))
+      yield v).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assert(
+        fired.exists(_.contains(WeixinIlinkBridgePlugin.ReasonNoSession)),
+        s"the no-session drop must reach an appender with its reason, got $fired"
+      )
+    }
+  }
+
+  test("WI-R3L the no-text-body drop is observable too (that arm logs)") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin()
+    withAppender { appender =>
+      val before = messages(appender).length
+      (for
+        _ <- started(p, c)
+        v <- p.intake(c, inbound(Some("wx_alice"), text = None))
+      yield v).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assert(
+        fired.exists(_.contains(WeixinIlinkBridgePlugin.ReasonNoText)),
+        s"the no-text drop must reach an appender with its reason, got $fired"
+      )
+    }
+  }
+
+  test("WI-R4L the contained injection failure is observable (crash isolation is not silent)") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))), raiseOnInject = true)
+    val p = plugin()
+    withAppender { appender =>
+      val before = messages(appender).length
+      (for
+        _ <- started(p, c)
+        v <- p.intake(c, inbound(Some("wx_alice")))
+      yield v).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assert(
+        fired.exists(_.contains(WeixinIlinkBridgePlugin.ReasonInjectFailed)),
+        s"the containment WARN must reach an appender with its reason, got $fired"
+      )
+    }
   }
 
   // ───────────────────────── routing / containment ─────────────────────────

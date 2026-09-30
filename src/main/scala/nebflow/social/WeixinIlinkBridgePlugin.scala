@@ -100,7 +100,7 @@ final class WeixinIlinkBridgePlugin(
           )
         yield ()
       body.handleErrorWith(e =>
-        IO(logger.error(s"weixin-ilink bridge: start failed: ${e.getClass.getSimpleName}: ${e.getMessage}"))
+        logger.error(s"weixin-ilink bridge: start failed: ${e.getClass.getSimpleName}: ${e.getMessage}")
       ) *> IO(if !started then starting.set(false)) // failed start ⇒ a later sync may retry
 
   /** Idempotent teardown — the single exit path; safe to call twice. */
@@ -138,10 +138,11 @@ final class WeixinIlinkBridgePlugin(
             // Fail-closed when the list is non-empty: an absent/unresolvable
             // sender identity is as good as a non-member. Ordered FIRST so the
             // gate also rules the default-session arm below.
-            IO(logger.warn(
-              s"weixin-ilink bridge: inbound message${in.messageId.fold("")(id => s" $id")} dropped — " +
-                s"sender identity is ${if in.senderId.isEmpty then "unresolvable" else "not"} on the allowed_ilink_user_ids list"
-            )) *> IO.pure(Verdict.Dropped(ReasonNotOnAllowlist))
+            logger.warn(
+              s"weixin-ilink bridge: inbound message${in.messageId.fold("")(id => s" $id")} dropped " +
+                s"[$ReasonNotOnAllowlist] — sender identity is " +
+                s"${if in.senderId.isEmpty then "unresolvable" else "not"} on the allowed_ilink_user_ids list"
+            ) *> IO.pure(Verdict.Dropped(ReasonNotOnAllowlist))
           case (_, None, _) =>
             // No explicit binding for this sender: fall back to the channel's
             // default session when one is configured (cold read — a REST save can
@@ -152,23 +153,24 @@ final class WeixinIlinkBridgePlugin(
                   case Some(text) => inject(ctx, in, sessionId)
                   case None       => IO.pure(Verdict.Dropped(ReasonNoText))
               case None =>
-                IO(logger.info(
-                  s"weixin-ilink bridge: no session is bound to sender ${in.routeKey} and no default session is " +
-                    "configured — message dropped"
-                )) *> IO.pure(Verdict.Dropped(ReasonNoSession))
+                logger.info(
+                  s"weixin-ilink bridge: dropped [$ReasonNoSession] — no session is bound to sender " +
+                    s"${in.routeKey} and no default session is configured"
+                ) *> IO.pure(Verdict.Dropped(ReasonNoSession))
             }
           case (_, _, None) =>
-            IO(logger.info(
-              s"weixin-ilink bridge: inbound message${in.messageId.fold("")(id => s" $id")} has no text body — nothing injected"
-            )) *> IO.pure(Verdict.Dropped(ReasonNoText))
+            logger.info(
+              s"weixin-ilink bridge: dropped [$ReasonNoText] — inbound message" +
+                s"${in.messageId.fold("")(id => s" $id")} has no text body, nothing injected"
+            ) *> IO.pure(Verdict.Dropped(ReasonNoText))
           case (_, Some(sessionId), Some(text)) =>
             inject(ctx, in, sessionId)
       yield verdict
     body.handleErrorWith(e =>
-      IO(logger.warn(
-        s"weixin-ilink bridge: inbound injection failed (${e.getClass.getSimpleName}: ${e.getMessage}) — " +
-          "contained, the seam stays up"
-      )) *> IO.pure(Verdict.Dropped(ReasonInjectFailed))
+      logger.warn(
+        s"weixin-ilink bridge: dropped [$ReasonInjectFailed] — inbound injection failed " +
+          s"(${e.getClass.getSimpleName}: ${e.getMessage}), contained, the seam stays up"
+      ) *> IO.pure(Verdict.Dropped(ReasonInjectFailed))
     )
 
   private def inject(ctx: BridgeContext, in: Inbound, sessionId: String): IO[Verdict] =
