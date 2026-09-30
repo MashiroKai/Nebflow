@@ -67,7 +67,7 @@ object FeishuChannel:
   /** Map the `region` config value onto the SDK's base-URL enum. Unknown values
     *  fall back to Feishu rather than throwing: a bad region must not make the
     *  channel unstartable, and the chosen face is reported in the readings. */
-  private def baseUrlFor(region: String): BaseUrlEnum =
+  private[social] def baseUrlFor(region: String): BaseUrlEnum =
     if region.equalsIgnoreCase("lark") then BaseUrlEnum.LarkSuite else BaseUrlEnum.FeiShu
 
   /**
