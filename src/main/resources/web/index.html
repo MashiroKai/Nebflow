@@ -506,7 +506,6 @@
     <div id="secrets-modal" role="dialog" aria-modal="true" aria-labelledby="secrets-modal-title">
       <div class="secrets-modal-header">
         <span id="secrets-modal-title"></span>
-        <button type="button" id="secrets-modal-add" class="glass-control cfg-btn cfg-btn-sm"></button>
         <button type="button" id="secrets-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
       </div>
       <div class="secrets-modal-body">
@@ -514,6 +513,14 @@
           <div id="secrets-list" class="secrets-list"></div>
         </div>
       </div>
+      <!-- Create entry: the floating bottom-right「+」of the shell (author
+           order 2026-09-30), same 40px glass circle as the Canvas pane's
+           `.proj-create-fab`. Built statically here (NOT inside the list
+           subtree, which `renderList` rewrites) so it survives every list
+           re-render; js/secretsPanel.js applies its label and wiring. It sits
+           BEFORE #secrets-form in the DOM so the editor's inset glass layer
+           paints over it. Icon is injected by js (masked/revealed pair). -->
+      <button type="button" id="secrets-fab" class="secrets-fab"><i data-lucide="plus"></i></button>
       <div id="secrets-form" class="secrets-form" role="dialog" aria-modal="true" aria-labelledby="secrets-form-title" hidden>
         <div class="secrets-form-head">
           <span id="secrets-form-title" class="secrets-form-title"></span>
@@ -525,10 +532,20 @@
             <input id="secrets-name-input" class="secrets-input" type="text" autocomplete="off" spellcheck="false">
             <span id="secrets-name-hint" class="cfg-hint"></span>
           </label>
-          <label class="secrets-field" for="secrets-value-input">
-            <span id="secrets-value-label" class="secrets-field-label"></span>
-            <textarea id="secrets-value-input" class="secrets-input secrets-value" autocomplete="off" spellcheck="false"></textarea>
-          </label>
+          <!-- Value row: caption + the eye toggle on one line, the textarea
+               beneath it. The toggle is a SIBLING of the caption (not inside
+               the <label>, which would re-activate the field on every click).
+               It stays IN the tab order on purpose (no tabindex="-1", unlike
+               the sidebar's input-overlay eye): a keyboard user must be able
+               to reach the reveal control, and it carries a focus-visible ring
+               for exactly that path. Tab order = name → eye → value → actions.
+               It controls the mask of the TYPED value in this field only — the
+               stored value is never fetched (write-only semantics, §二.2). -->
+          <div class="secrets-value-head">
+            <label id="secrets-value-label" class="secrets-field-label" for="secrets-value-input"></label>
+            <button type="button" id="secrets-value-eye" class="secrets-value-eye"></button>
+          </div>
+          <textarea id="secrets-value-input" class="secrets-input secrets-value" autocomplete="off" spellcheck="false"></textarea>
           <div id="secrets-form-error" class="secrets-form-error" role="alert" hidden></div>
           <div class="secrets-form-actions">
             <button type="button" id="secrets-form-save" class="btn-save"></button>

@@ -1925,6 +1925,8 @@ export default {
   'secrets.name': 'Name',
   'secrets.nameHint': 'Lowercase service-purpose, e.g. aliyun-oss',
   'secrets.value': 'Value',
+  'secrets.showValue': 'Show value',
+  'secrets.hideValue': 'Hide value',
   'secrets.valuePlaceholder': 'Paste the value. It is written once and never displayed again.',
   'secrets.replacePlaceholder': 'Saving replaces the stored value entirely. The old value is never displayed.',
   'secrets.replace': 'Replace Value',
