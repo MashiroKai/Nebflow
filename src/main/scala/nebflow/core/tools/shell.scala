@@ -122,7 +122,24 @@ final class ShellSession private (
    * None/off = 旧行为（初 cwd=user.dir，无包装）。会话内不可变（root 会话级
    * 不可变，§A.2）。
    */
-  private val sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+  private val sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None,
+  /**
+   * Secrets-consumption batch (2026-10-01): the allowlisted secret values to
+   * inject into every command this session spawns, as name -> value.
+   *
+   * The DEFAULT is the empty map, and an empty map is a no-op — it is what
+   * every session gets when the `secrets.inject` allowlist is empty, which is
+   * its default state. Session-scoped on purpose (resolved once, at session
+   * creation): the value is read from disk once per session rather than once
+   * per command, so rotation takes effect when the session is recreated — the
+   * same lifetime the cwd and sandbox policy already have.
+   *
+   * 🔴 Values stored here are JAVA STRINGS on the heap. That is an accepted,
+   * designed cost of this face, and it is exactly why the allowlist defaults
+   * to empty: no allowlisted key means this map is empty and no value is ever
+   * read into this process.
+   */
+  private val secretEnv: Map[String, String] = Map.empty
 ):
 
   private val SessionTTL = 30.minutes.toMillis
@@ -434,6 +451,14 @@ final class ShellSession private (
       env.put("PYTHONUTF8", "1")
       env.put("PYTHONIOENCODING", "utf-8")
     else pb.redirectInput(new File("/dev/null"))
+    // Secrets-consumption batch (2026-10-01): the C-case allowlisted injection.
+    // 🔴 The ONE spawn point for all agent Bash traffic (foreground, background
+    // and the post-command `pwd` re-read all reach this method through
+    // `runProcess`), so a credential enters a command environment here and
+    // nowhere else. An empty `secretEnv` (the default) leaves the environment
+    // exactly as it was — the inherited parent environment, unfiltered, as
+    // before this batch.
+    if secretEnv.nonEmpty then secretEnv.foreach { case (k, v) => pb.environment().put(k, v) }
     pb.redirectErrorStream(false) // stdout/stderr separated
     pb
 
@@ -1259,18 +1284,24 @@ object ShellSession:
   def forSession(
     sessionId: String,
     initialDir: Option[String] = None,
-    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None,
+    /** Allowlisted secret values for this session's command environments
+      * (secrets-consumption batch). Default empty = no injection; resolved by
+      * the caller at session creation, so an existing session keeps the
+      * environment it was created with. */
+    secretEnv: Map[String, String] = Map.empty
   ): IO[ShellSession] =
-    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir, sandbox)))
+    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir, sandbox, secretEnv)))
 
   private def doGetOrCreate(
     sessionId: String,
     initialDir: Option[String],
-    sandbox: Option[nebflow.core.sandbox.SandboxPolicy]
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy],
+    secretEnv: Map[String, String]
   ): IO[ShellSession] =
     def replace(old: ShellSession): IO[ShellSession] =
       old.cancelCleanupFiber() *> old.kill() *> sessions.update(_ - sessionId) *>
-        ShellSession.create(sessionId, initialDir, sandbox).flatMap { newS =>
+        ShellSession.create(sessionId, initialDir, sandbox, secretEnv).flatMap { newS =>
           sessions.update(_ + (sessionId -> newS)).as(newS)
         }
     sessions.get.flatMap { m =>
@@ -1290,7 +1321,7 @@ object ShellSession:
               }
           }
         case None =>
-          ShellSession.create(sessionId, initialDir, sandbox).flatMap { newS =>
+          ShellSession.create(sessionId, initialDir, sandbox, secretEnv).flatMap { newS =>
             sessions.update(_ + (sessionId -> newS)).as(newS)
           }
     }
@@ -1330,7 +1361,8 @@ object ShellSession:
   private[tools] def create(
     sessionId: String,
     initialDir: Option[String] = None,
-    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None,
+    secretEnv: Map[String, String] = Map.empty
   ): IO[ShellSession] =
     // 终态延迟销毁窗口的禁 spawn 守卫：**新会话
     // 一律拒绝**——节点终态后其会话已交还（窗口内实体仍在，走 doGetOrCreate 的
@@ -1339,13 +1371,14 @@ object ShellSession:
     // 等读/操作面），创建才是「新 spawn」。
     for
       _ <- BgTaskRegistry.denySpawnIfFinalized(sessionId)
-      s <- createUnchecked(sessionId, initialDir, sandbox)
+      s <- createUnchecked(sessionId, initialDir, sandbox, secretEnv)
     yield s
 
   private def createUnchecked(
     sessionId: String,
     initialDir: Option[String],
-    sandbox: Option[nebflow.core.sandbox.SandboxPolicy]
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy],
+    secretEnv: Map[String, String]
   ): IO[ShellSession] =
     for
       dirRef <- Ref.of[IO, String](
@@ -1363,7 +1396,7 @@ object ShellSession:
       accessRef <- Clock[IO].realTime.map(_.toMillis).flatMap(Ref.of[IO, Long])
       aliveRef <- Ref.of[IO, Boolean](true)
       mutex <- Mutex[IO]
-    yield new ShellSession(sessionId, dirRef, jobsRef, procsRef, fiber, accessRef, aliveRef, mutex, sandbox)
+    yield new ShellSession(sessionId, dirRef, jobsRef, procsRef, fiber, accessRef, aliveRef, mutex, sandbox, secretEnv)
 
   private def startCleanupFiber(jobsRef: Ref[IO, Map[String, BackgroundJob]]): IO[Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =

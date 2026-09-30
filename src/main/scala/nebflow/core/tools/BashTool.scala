@@ -413,11 +413,33 @@ Git safety:
     // 显式失败（经下方 `Error: …` 通道回到模型），**禁**静默回落工作区根。围栏面
     // （sandbox=工作区根）不动。
     val sessionInitialDir = ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))
+    // Secrets-consumption batch (2026-10-01): the C-case allowlist, resolved
+    // for THIS agent. Empty allowlist (the default) => `Map.empty` => the
+    // session's command environments are byte-identical to the pre-batch
+    // behaviour. 🔴 `materialize` is the only place a credential value is read
+    // for injection, and it is not reached at all when the list is empty.
+    val secretEnv: Map[String, String] =
+      val injection = nebflow.core.secrets.SecretInjection.load(nebflow.shared.PathUtil.dataRoot)
+      val entries = nebflow.core.secrets.SecretInjection.resolve(injection, ctx.agentDef.map(_.name))
+      val env = nebflow.core.secrets.SecretInjection.materialize(
+        nebflow.shared.PathUtil.dataRoot / "secrets", entries)
+      // Audible, name-only: which allowlisted secrets did NOT resolve. A
+      // silently absent variable is the failure mode that costs an hour of
+      // debugging, and a NAME never leaks anything.
+      val missing = nebflow.core.secrets.SecretInjection.unresolved(entries, env)
+      if missing.nonEmpty then
+        NebflowLogger.forName("nebflow.secrets")
+          .warn(s"allowlisted secrets did not resolve (absent / unreadable / oversized): ${missing.mkString(", ")}")
+      env
 
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
       case Some(jobId) =>
-        ShellSession.forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt).flatMap { shell =>
+        // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
+        // sessionId, so a query that created the session first would otherwise
+        // hand the later execute path a session created without injection.
+        ShellSession.forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt,
+          secretEnv = secretEnv).flatMap { shell =>
           if cancelBg then
             shell.cancelBackgroundJob(jobId).map { cancelled =>
               if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
@@ -468,7 +490,8 @@ Git safety:
             )
           else
             ShellSession
-              .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt)
+              .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt,
+                secretEnv = secretEnv)
               .flatMap { shell =>
                 if background then
                   val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)

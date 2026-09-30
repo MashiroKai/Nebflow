@@ -38,6 +38,44 @@ private[gateway] object SecretsRoutes:
       PathUtil.dataRoot / "secrets"
     )
 
+    /** One consumption pointer as wire JSON. 🔴 `location` is a PATH — the
+      * field carries where to query, never what is stored there. */
+    def pointerJson(p: nebflow.core.secrets.SecretsStore.Pointer): Json =
+      Json.obj(
+        "name" -> p.name.asJson,
+        "variableName" -> p.variableName.asJson,
+        "description" -> p.description.asJson,
+        "location" -> p.location.asJson
+      )
+
+    /** Parse the metadata body of `PATCH /secrets/{name}`.
+      *
+      * Contract: the body REPLACES the two non-value catalogue fields — the
+      * values it carries are the values the secret ends up with, and a field
+      * that is absent or `null` is cleared (the derived variable name / an
+      * empty description). A wholesale replace is deliberately preferred over a
+      * three-state set/clear/leave merge: a body whose meaning depends on which
+      * keys the client happened to omit is exactly the kind of contract that
+      * silently half-applies an edit.
+      *
+      * A body that is not an object is `400 invalid_metadata`; the reason names
+      * the SHAPE, never any content. */
+    def secretsMetadataBody(req: Request[IO])(
+      f: (Option[String], Option[String]) => IO[Response[IO]]
+    ): IO[Response[IO]] =
+      val shapeReason =
+        "request body must be a JSON object carrying 'variableName' and 'description'"
+      req.as[Json].attempt.flatMap {
+        case Left(_) =>
+          BadRequest(Json.obj("error" -> "invalid_metadata".asJson, "reason" -> shapeReason.asJson))
+        case Right(body) if !body.isObject =>
+          BadRequest(Json.obj("error" -> "invalid_metadata".asJson, "reason" -> shapeReason.asJson))
+        case Right(body) =>
+          def field(key: String): Option[String] =
+            body.hcursor.downField(key).as[String].toOption.filter(_.nonEmpty)
+          f(field("variableName"), field("description"))
+      }
+
     /** Parse the `{"value": "…"}` write body. A non-object / non-string body is
       * `400 invalid_value` — the reason names the SHAPE, never the content. */
     def secretsBody(req: Request[IO])(f: String => IO[Response[IO]]): IO[Response[IO]] =
@@ -73,6 +111,10 @@ private[gateway] object SecretsRoutes:
         case Failure.InvalidValue(name, reason) =>
           BadRequest(Json.obj("error" -> "invalid_value".asJson, "name" -> name.asJson,
             "reason" -> reason.asJson))
+        case Failure.InvalidVariableName(name, variableName) =>
+          BadRequest(Json.obj("error" -> "invalid_variable_name".asJson, "name" -> name.asJson,
+            "variableName" -> variableName.asJson,
+            "reason" -> "must match ^[A-Za-z_][A-Za-z0-9_]*$ (a shell identifier)".asJson))
         case Failure.UnknownSecret(name) =>
           NotFound(Json.obj("error" -> "unknown_secret".asJson, "name" -> name.asJson))
         case Failure.AlreadyExists(name) =>
@@ -111,10 +153,50 @@ private[gateway] object SecretsRoutes:
                   "size" -> e.size.asJson,
                   "mtime" -> e.mtime.asJson,
                   "mode" -> e.mode.asJson,
-                  "refs" -> e.refs.asJson
+                  "refs" -> e.refs.asJson,
+                  // Catalogue fields (secrets-consumption batch): ADDITIVE —
+                  // an existing panel ignores unknown keys, and neither field
+                  // is derived from a stored value.
+                  "variableName" -> e.variableName.asJson,
+                  "description" -> e.description.asJson
                 )
               }.asJson))
             case Left(err) => secretsErrorResponse(err)
+          }
+        }
+
+      // Consumption face (secrets-consumption batch, 2026-10-01). 🔴 Pointer
+      // semantics: this answers "where do I query this credential", by PATH.
+      // There is deliberately still NO endpoint that returns a stored value —
+      // the whole point of the C-case model is that a consumer is told the
+      // location, not handed the secret.
+      case req @ GET -> Root / "secrets" / "catalog" =>
+        withAuth(req) {
+          secretsStore.pointers().flatMap {
+            case Right(ps) => Ok(Json.obj("secrets" -> ps.map(pointerJson).asJson))
+            case Left(err) => secretsErrorResponse(err)
+          }
+        }
+
+      case req @ GET -> Root / "secrets" / secretName / "pointer" =>
+        withAuth(req) {
+          secretsStore.pointer(secretName).flatMap {
+            case Right(p)  => Ok(pointerJson(p))
+            case Left(err) => secretsErrorResponse(err)
+          }
+        }
+
+      // Metadata edit: the two non-value catalogue fields. The value reaches
+      // this face nowhere — the body schema has no value field, and the store
+      // call it lands on writes the sidecar only.
+      case req @ PATCH -> Root / "secrets" / secretName =>
+        withAuth(req) {
+          secretsMetadataBody(req) { (variableName, description) =>
+            secretsStore.setMetadata(secretName, variableName, description).flatMap {
+              case Right(_) =>
+                Ok(Json.obj("ok" -> true.asJson, "name" -> secretName.asJson))
+              case Left(err) => secretsErrorResponse(err)
+            }
           }
         }
 
