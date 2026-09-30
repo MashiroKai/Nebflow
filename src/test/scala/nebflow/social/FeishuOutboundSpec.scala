@@ -290,11 +290,14 @@ val x = 1
       assertEquals(OutboundText.links(body), List("https://e.com/x"),
         s"the link must survive the wired leg: $body")
       assert(body.contains("docs"), s"the link label survives as words: $body")
-      // The conversion is applied to the SENT COPY only: the wire body is exactly
-      // toPlain(original), and the original the session shows still carries its
-      // own markup (asserted so the red above cannot be vacuous).
-      assertEquals(body, OutboundText.toPlain(raw),
-        "the wire copy is exactly toPlain(original) — the conversion is on the outbound copy")
+      // The conversion really happened (a no-op passthrough would satisfy the
+      // marker assertion above only if the input had no markers -- guarded below).
+      assert(body != raw, s"the wire body is still the raw markdown: $body")
+      // The conversion is a PURE function applied to the outbound argument: the
+      // session-side copy is never rewritten, so the original still carries its
+      // own markup. Asserted directly so the red above cannot be vacuous.
       assert(OutboundText.bareMarkers(raw).nonEmpty,
         "the original really does carry bare markers (else the red above is vacuous)")
+      assertEquals(OutboundText.toPlain(raw), body,
+        "the wire body is exactly the one conversion applied to the original")
   }

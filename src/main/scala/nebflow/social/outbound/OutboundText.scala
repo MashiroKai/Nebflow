@@ -114,14 +114,26 @@ object OutboundText:
       else
         sb.append(if inCode then rest.substring(0, tick) else stripSyntax(rest.substring(0, tick)))
         val tail = rest.substring(tick + 1)
-        if !tail.contains('`') then
-          // an unmatched backtick: punctuation, keep it and finish the line
-          sb.append(if inCode then "`" else stripSyntax("`"))
+        if inCode then
+          // This backtick CLOSES the span: drop the delimiter (the code between
+          // the fences is content and has already been carried through verbatim).
+          if tail.contains('`') then
+            rest = tail
+            inCode = false
+          else
+            // The span never closed: the text after it is prose again, not code.
+            sb.append(stripSyntax(tail))
+            carryOn = false
+        else if tail.contains('`') then
+          // This backtick OPENS a span: drop the delimiter and carry the code.
+          rest = tail
+          inCode = true
+        else
+          // A genuinely unmatched backtick is punctuation, not a delimiter:
+          // keep it and finish the line rather than swallowing what follows.
+          sb.append(stripSyntax("`"))
           sb.append(stripSyntax(tail))
           carryOn = false
-        else
-          rest = tail
-          inCode = !inCode
     sb.toString
 
   /** The per-span reshaping for content OUTSIDE inline code. */
