@@ -36,8 +36,10 @@ import scala.concurrent.duration.*
  *      该面**成立的前提** = 引擎零 JSON-Schema 校验（面外参数静默忽略，`AgentCommand.scala`
  *      自陈；re-pin 2026-09-25：该自陈随 AskMode 自 protocol.scala 迁入）⇒ 旧键照样到达 `call()`，
  *      故「删 schema 键 + 墓碑判」是 fail-closed 一侧，而「删键 + 删判」才是静默降级。
- *   3. **设备腿零改动**：`deliverToDevice` 的 v2.1「显式拒 queue」契约**逐字保持**
- *      （自有字面量，**不**走退役文案；本条以**逐字相等**断言钉死）。
+ *   3. **设备腿（mailmodel 批 2026-09-25 重新钉）**：整条设备腿**已退役** —— 旧
+ *      「`deliverToDevice` 的 v2.1 显式拒 queue 契约」随腿一并消亡；`device=` 的
+ *      唯一可能读法现在是 `MAIL_DEVICE_RETIRED` 墓碑（fail-closed，先于 delivery
+ *      墓碑与一切路由闸；见本文件 ③ 面）。
  *   4. **残差面（本批如实登记）**：非 `queue` 的旧值（`"immediate"` / 陌生值如 `"ask"`）
  *      与「键缺席」**逐字同一结果** —— 该键被静默忽略，且原「陌生值 ⇒ WARN 后收敛到
  *      immediate」分支随 `delivery match` 一并删除（设计件 §4.4(a)「其余值不再需要分支」）。
