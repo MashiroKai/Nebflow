@@ -138,24 +138,22 @@ object OutboundText:
 
   /** The per-span reshaping for content OUTSIDE inline code. */
   private def stripSyntax(span: String): String =
-    {
-      var s = span
-      // blockquote marker (leading, possibly repeated)
-      s = s.replaceAll("^\\s*>+\\s?", "")
-      // heading markers
-      s = s.replaceAll("^\\s{0,3}#{1,6}\\s+", "")
-      // horizontal rule -> a single visible separator
-      if s.trim.matches("(-{3,}|\\*{3,}|_{3,})") then s = "—"
-      else
-        // unordered list marker
-        s = s.replaceAll("^\\s*[-*+]\\s+", "· ")
-        // ordered list marker: keep the number (it is meaning), drop the dot-noise
-        s = s.replaceAll("^\\s*(\\d+)\\.\\s+", "$1. ")
-        // emphasis / strikethrough / leftover inline code delimiters
-        s = s.replace("**", "").replace("__", "")
-        s = s.replace("*", "").replace("~~", "").replace("~", "")
-        s
-    }
+    var s = span
+    // blockquote marker (leading, possibly repeated)
+    s = s.replaceAll("^\\s*>+\\s?", "")
+    // heading markers
+    s = s.replaceAll("^\\s{0,3}#{1,6}\\s+", "")
+    // horizontal rule -> a single visible separator
+    if s.trim.matches("(-{3,}|\\*{3,}|_{3,})") then "—"
+    else
+      // unordered list marker
+      s = s.replaceAll("^\\s*[-*+]\\s+", "· ")
+      // ordered list marker: keep the number (it is meaning), drop the dot-noise
+      s = s.replaceAll("^\\s*(\\d+)\\.\\s+", "$1. ")
+      // emphasis / strikethrough / leftover inline code delimiters
+      s = s.replace("**", "").replace("__", "")
+      s = s.replace("*", "").replace("~~", "").replace("~", "")
+      s
 
   /**
    * Does this text still carry a bare markdown syntax marker? This is the
