@@ -47,11 +47,11 @@ import java.nio.charset.StandardCharsets
  *   - `shrinkChannel = false`（缺省 = WS `saveMemory` 生产调用方）⇒ **永不豁免**
  *     （整文件覆盖不是收缩通道：超限文件的自救路径 = Edit/Write 直写收缩）。
  *   - 🔴 govmemory 批后现场读数：本闸**自身**的落盘调用面（[[MemoryStore.saveFile]] /
- *     `ProjectMemory.save`）**零生产调用方**（原调用方 MemoryNoteTool 已随队列退役）；
+ *     `ProjectMemory.save`）**零生产调用方**（原调用方（已退役记账工具）已随队列退役）；
  *     WS `saveMemory` 的整文件覆盖**不是**收缩通道（缺省 `shrinkChannel = false`）。
  *     直写侧的前置检查 = [[nebflow.core.tools.MemoryDirectWriteGuard]]，它以
  *     `shrinkChannel = true` 声明收缩通道身份并共用本判据（判据单源，防两面漂移）。
- *     原消费侧前置计划（MemoryQueue plan）已随队列机制整体退役。
+ *     原消费侧前置计划（队列 plan）已随队列机制整体退役。
  *
  * 判据来源（零新语义）：硬顶 / 软线一律取自 [[MemoryBudget]]（唯一常量源），本对象
  * 不复制数值、不新增阈值、不改判据函数。

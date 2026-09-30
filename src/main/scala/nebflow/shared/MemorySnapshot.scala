@@ -11,7 +11,7 @@ import java.time.{LocalDateTime, ZoneId}
  * 快照先行=硬护栏：记忆白名单写路径在落盘前必须先经过本对象
  * ——把【当前磁盘内容】备份到
  * `<dataRoot>/memory-backups/<时间戳>/`，备份失败则写入整体中止（fail-closed）。
- * 「绕不过去」的结构依据：两文件的全部写入面单点（原调用方 MemoryNoteTool 已随
+ * 「绕不过去」的结构依据：两文件的全部写入面单点（原调用方（已退役记账工具）已随
  * govmemory 批退役；现存调用面 = WS `saveMemory` 旁路与 MemoryWriteGate.decide 的
  * 快照腿；Edit/Write 直写侧的快照纪律 = 提示词成文纪律（先快照后落笔），非机械闸
  * ——govmemory 批口径）。git 面实测

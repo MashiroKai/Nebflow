@@ -74,7 +74,9 @@ object AgentDef:
   /**
    * 记忆整理 agent 定义名（spec §5 R5 O-A；seed = `src/main/resources/seed/agents/
    * <name>/`，运行时 `~/.nebflow/agents/<name>/`）。压缩双轨的第二轨按此名解析
-   * def（[[MemoryTrack]]）——名字缺失 ⇒ 轨失败降级（照常装机，队列保留）。
+   * def——名字缺失 ⇒ 轨失败降级（照常装机，队列保留）。
+   * （六族退役批 2026-09-29：原注释内的轨符号链接已随轨本体退役删除；本常量
+   * 自身的收口归 e5-memconsolidator 批，本批一字不动。）
    */
   val MemoryConsolidatorName = "memory-consolidator"
 

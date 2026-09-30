@@ -17,7 +17,7 @@ package nebflow.shared
  *   - ProjectMemory.injectionBlock（project-memory 批 2026-09-05）：项目记忆
  *     注入渲染共用三态判据——预算内全文、软警区全文+WARN 脚注、超硬顶头部+统计。
  *     project 维度常量独立（10KB/8KB，见常量处定值依据）。
- *     （旧消费方 MemoryNoteTool 与 DreamMode.updateMemory 已随各自机制退役——
+ *     （旧消费方（已退役记账工具 与 DreamMode.updateMemory）已随各自机制退役——
  *     govmemory 批 / DreamMode 停用批。）
  *
  * 纯函数、零 IO、零 ToolError 依赖（service 不反向依赖 core.tools——错误包装由

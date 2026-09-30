@@ -122,20 +122,13 @@ lazy val root = (project in file("."))
     // Tests share PathUtil global state — sequential execution prevents interference
     Test / parallelExecution := false,
 
-    // 阶段 2c（MemoryNoteToolSpec 引入）：MemoryStore 的 MtimeCache val 在首次
-    // 触碰时把当时的 dataRoot 路径钉进缓存对象——串行化挡不住「先跑的 suite 已
-    // 在默认 dataRoot 下初始化 MemoryStore」的跨 suite 污染。MemoryNoteToolSpec
-    // 全程依赖 dataRoot 重定向 → 独占 forked JVM（组内唯一 suite，初始化顺序
-    // 可控）；其余 suite 维持原 in-process 单组不变。
-    Test / testGrouping := {
-      val tests = (Test / definedTests).value
-      val isolated = tests.filter(_.name == "nebflow.core.tools.MemoryNoteToolSpec")
-      val rest = tests.filterNot(_.name == "nebflow.core.tools.MemoryNoteToolSpec")
-      Seq(
-        Tests.Group("in-process-suites", rest, Tests.InProcess),
-        Tests.Group("memorynote-isolated", isolated, Tests.SubProcess(ForkOptions()))
-      )
-    },
+    // 阶段 2c（MemoryNoteToolSpec 引入）的 `Test / testGrouping` 特例已随该 spec
+    // 退役一并删除（memory-family-retirement 批 2026-09-29）：当时引入独占 forked
+    // JVM 的唯一理由 = 「MemoryNoteToolSpec 全程依赖 dataRoot 重定向，需把
+    // MemoryStore MtimeCache 的首触钉定与其余 suite 隔开」。该 spec 本体已删净 ⇒
+    // 分组无成员 ⇒ 整块移除。**其余 suite 的执行形态零变化**：原 `rest` 组本就是
+    // 「除该 spec 外的全部 suite + InProcess」，使 in-process 组的成员集合与顺序
+    // 在删除前后逐一相同。
 
     // Java options —— 本工程 JVM 选项的唯一来源（🔴 禁在第二处散落同名选项）。
     // JVM 不会自建 -Xlog:gc:file / -XX:HeapDumpPath 的父目录，而 fork 的 JVM 是在

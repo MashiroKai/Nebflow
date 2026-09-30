@@ -40,7 +40,7 @@ import scala.util.Try
  *     agent `~/.nebflow/agents/Nebula/memory.md`, project
  *     `<workspace>/.nebflow/memory.md`). Detail files (`~/.nebflow/memory/<id>.md`)
  *     and other agents' memory files are outside the budget whitelist (same
- *     scope as the old MemoryNoteTool targets).
+ *     scope as the retired bookkeeping tool's targets).
  *   - Bash writes remain structurally unguarded (completeness argument
  *     unchanged; documented in MemoryWriteGate's boundary note).
  */
