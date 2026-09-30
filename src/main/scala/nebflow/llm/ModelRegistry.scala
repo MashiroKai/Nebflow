@@ -12,10 +12,14 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  *
  * Priority for capability resolution:
  *   1. ModelConfig inline fields (nebflow.json)
- *   2. ModelRegistry (models.json) — `vision` is Option: Some(x) is an
- *      explicit annotation (respected), None means "unknown" and resolves
- *      optimistically to vision=true (B3 Phase 1)
- *   3. Defaults (vision=true for unannotated, capabilities=empty)
+ *   2. ModelRegistry (models.json) — `ModelEntry.vision` is Option: Some(x) is
+ *      an explicit human annotation, None means "unknown"
+ *   3. Defaults (capabilities=empty)
+ *
+ * visionfix (甲): `ModelEntry.vision` remains the human annotation (REST PUT
+ * from the settings UI), but it no longer feeds the send path — there is no
+ * per-candidate vision bit any more, so an annotation can only be read as a
+ * fact by the UI. Resolution therefore covers `capabilities` only.
  *
  * The registry is loaded once at startup and can be reloaded via `reload()`.
  */
@@ -108,20 +112,17 @@ object ModelRegistry:
     ensureLoaded.models.get(key)
 
   /**
-   * Persist a vision annotation for one model (B3 Phase 2: runtime vision
-   * overrides are written back to models.json so they survive restarts).
-   * Preserves the entry's other fields; creates the entry if absent.
+   * visionfix (甲): `persistVision` was deleted here. It was the single write-back
+   * path that turned a keyword-heuristic mis-diagnosis into a durable
+   * `vision: false` annotation in `models.json`, surviving restarts. Its only
+   * caller was EmptyCompletionTracker.setVisionOverrideFalse, also deleted.
+   * ⇒ after this batch there is NO producer that writes `vision` back, so the
+   * heuristic can no longer be persisted as if it were an authoritative fact.
+   *
+   * `ModelEntry.vision` itself, `save`, and the REST channel are deliberately
+   * KEPT: they are the human annotation surface, and they are what keeps the
+   * on-disk `models.json` format unchanged.
    */
-  def persistVision(providerId: String, modelId: String, vision: Boolean): Unit =
-    val key = s"$providerId/$modelId"
-    val current = ensureLoaded
-    val updatedEntry = current.models.get(key) match
-      case Some(existing) => existing.copy(vision = Some(vision))
-      case None => ModelEntry(vision = Some(vision))
-    val updated = current.copy(models = current.models + (key -> updatedEntry))
-    AtomicJson.writeSync(configPath, updated.asJson.noSpaces)
-    cache = Some(updated)
-    logger.infoSync(s"Persisted vision=$vision for $key in models.json")
 
   /** Get all capability tag definitions. */
   def capabilityTags: Map[String, CapabilityTag] =
