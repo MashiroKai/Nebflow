@@ -1107,6 +1107,55 @@ object FlowMapStore:
   /** per-node 结果文件目录名（相对 workspace/.nebflow/）。 */
   val ResultsDirName: String = "results"
 
+  /** descriptionLong spill-file name prefix (`descriptionLong-<nodeId>.md`) — same dir as results. */
+  val DescriptionLongPrefix: String = "descriptionLong-"
+
+  /**
+   * SINGLE POINT for the descriptionLong spill-file path (desc300 batch 2026-09-30):
+   * `<workspace>/.nebflow/results/descriptionLong-<nodeId>.md`. It sits in the same
+   * directory as the result/task full-text files ([[ResultsDirName]]), so it lives under
+   * `.nebflow/` (git-ignored) and travels with the project workspace.
+   *
+   * Resolved against the PROJECT WORKSPACE ROOT, not the node cwd / the worktree's own
+   * `.nebflow`: consumers read result files off the workspace, so a file landed inside a
+   * node worktree would be unreachable by path.
+   *
+   * Lifecycle = bound to the node, zero accumulation: one file per node (rewrite
+   * overwrites the same path) + deleted when the node is abandoned or cancelled
+   * ([[deleteDescriptionLongSpill]]).
+   */
+  def descriptionLongSpillPath(workspace: String, nodeId: String): os.Path =
+    os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / ResultsDirName / s"$DescriptionLongPrefix$nodeId.md"
+
+  /**
+   * Write the full descriptionLong text to disk (called by the caller ONLY when truncation
+   * happened; an untruncated value produces no file). Overwrite, never append (one file per
+   * node); UTF-8. Returns the absolute path so the caller can hand it back in the ack.
+   * Best-effort contract: failures come back as `Left(errorText)`, never thrown through.
+   */
+  def writeDescriptionLongSpill(workspace: String, nodeId: String, full: String): Either[String, String] =
+    try
+      val p = descriptionLongSpillPath(workspace, nodeId)
+      os.makeDir.all(p / os.up)
+      os.write.over(p, full)
+      Right(p.toString)
+    catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+
+  /**
+   * Delete the descriptionLong spill file (lifecycle close-out, best-effort): called when a
+   * node is abandoned or cancelled. A missing file is the normal case (no truncation ever
+   * happened) => `Right(false)`. A failure must NOT fail the caller (abandon/cancel); the
+   * caller only records the reading.
+   */
+  def deleteDescriptionLongSpill(workspace: String, nodeId: String): Either[String, Boolean] =
+    try
+      val p = descriptionLongSpillPath(workspace, nodeId)
+      if os.exists(p) then
+        os.remove(p)
+        Right(true)
+      else Right(false)
+    catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+
   /**
    * **链解析载体（R2，chaincancel 批 2026-09-17）**：[[FlowMapStore.chainMembersOf]] 的
    * 返回值——`info` = 分量派生（id/entries/ends/memberIds/edges）、`members` =
