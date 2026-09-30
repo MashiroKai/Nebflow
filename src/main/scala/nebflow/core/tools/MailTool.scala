@@ -47,6 +47,26 @@ import nebflow.shared.{MailQueueItem, NebflowLogger, *}
  * caller's key still reaches the tool and is judged there, which is exactly why the
  * tombstone is the fail-closed side of this change.
  *
+ * mailmodel batch (2026-09-25, rulings (b)/(d)/(e)):
+ * - the `device` **key is removed from `inputSchema`** (parameter face **8 → 7**):
+ *   the cross-device agent-mail leg is retired both ways (outbound leg deleted; the
+ *   relay-tunnel `agent_mail` intake no longer injects). A stale caller that still
+ *   passes `device=` gets the explicit `MAIL_DEVICE_RETIRED` error (tombstone read —
+ *   same fail-closed shape as the `delivery` tombstone above), never a silent ignore.
+ * - the `type` **key is removed from `inputSchema`** (parameter face **7 → 6**):
+ *   the five mail-type tags were prompt-level semantics with only two engine branches,
+ *   both re-homed (the device-leg INFO-only branch died with the leg; the
+ *   dispatcher-to-root P0 window exemption is now judged on the **body's first-line
+ *   `[INTERRUPT]` literal**, keeping the A3/R7 bypass pair intact — mechanism, not a
+ *   message type).
+ * - the **`kernel` address leg** is added (Nebula-exclusive, ruling (b)):
+ *   `address="kernel"` starts a Kernel instance (the Delegate inner-core sub-agent)
+ *   and the receipt carries the continuation address `kernel:<id>`; a later Mail to
+ *   `kernel:<id>` continues that live instance. Non-Nebula callers are refused
+ *   (`MAIL_KERNEL_EXCLUSIVE`) — the kernel trigger face belongs to the Nebula root
+ *   only. The result of a kernel instance is delivered back to the Nebula session by
+ *   the existing `source="delegate"` uplink (zero tool-face change on the return leg).
+ *
  * The former `ask` mode (synchronous context fork) was removed entirely
  * (2026-08-27 user ruling) — see git history if that mechanism is ever needed.
  */
