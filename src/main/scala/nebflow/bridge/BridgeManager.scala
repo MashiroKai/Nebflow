@@ -24,14 +24,19 @@ class BridgeManager private (
   /** Stop one plugin (if present) and remove it from the map (feishubridge
     * batch). Stop errors are logged, never swallowed into silence, and the
     * removal happens regardless — a plugin whose stop failed must not stay
-    * registered. Absent name = no-op, so callers can resync unconditionally. */
+    * registered. Absent name = no-op, so callers can resync unconditionally.
+    *
+    * Completion is logged on the success / absent-name path too: the only
+    * previous trace of a deactivation was the ABSENCE of a `started` line,
+    * which cannot tell "never attempted" from "verdict false" from "start
+    * failed". Every path through this method is now readable from the log. */
   def unregister(name: String): IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       plugins.get(name).traverse_ { p =>
         p.stop.handleErrorWith { e =>
           logger.warn(s"Bridge plugin '$name' stop error during unregister: ${e.getMessage}")
         }
-      } *> pluginsRef.update(_ - name)
+      } *> pluginsRef.update(_ - name) *> logger.info(s"Bridge plugin '$name' unregistered")
     }
 
   /** Start one registered plugin by name (feishubridge batch). Errors are
@@ -67,12 +72,15 @@ class BridgeManager private (
         }
     }
 
+  /** Stop every plugin. Mirrors [[startAll]]'s per-plugin log discipline: the
+    * success of each stop is readable, not only its failure — a shutdown that
+    * logged nothing was indistinguishable from one that never ran. */
   def stopAll: IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       plugins.values.toList.traverse_ { p =>
         p.stop.handleErrorWith { e =>
           logger.warn(s"Bridge plugin '${p.name}' stop error: ${e.getMessage}")
-        }
+        } *> logger.info(s"Bridge plugin '${p.name}' stopped")
       }
     }
 
