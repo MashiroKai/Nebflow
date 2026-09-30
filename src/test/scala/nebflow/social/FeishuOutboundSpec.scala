@@ -152,6 +152,21 @@ val x = 1
       s"bare markdown markers survived: ${OutboundText.bareMarkers(plain)}")
     assert(!plain.contains("**"), "no emphasis delimiters")
     assert(!plain.contains("~~"), "no strikethrough delimiters")
+    // The underscore family is the one the fixture above already carried while
+    // the reading stayed green: `_em_` was in `md` and `bareMarkers` did not
+    // look at it. Asserting both halves -- the pair is unwrapped, the in-word
+    // lone underscore is left alone -- is what makes the family falsifiable.
+    assert(!plain.contains("_em_"), s"underscore emphasis delimiter survived: $plain")
+    assert(plain.contains(" and em and "), s"the emphasis content must survive as words: $plain")
+    val idents = OutboundText.toPlain("call snake_case and x__y and https://e.example/a_b_c now")
+    assertEquals(idents, "call snake_case and x__y and https://e.example/a_b_c now",
+      "an underscore inside a word (or a URL) is punctuation, not a delimiter")
+    assertEquals(OutboundText.bareMarkers(idents), List.empty,
+      s"the pair rule must not flag ordinary identifiers: ${OutboundText.bareMarkers(idents)}")
+    // ... while a genuine, wire-visible pair IS flagged: the predicate would be
+    // worthless if it were silent on the very family it was extended for.
+    assert(OutboundText.bareMarkers("a _em_ b").nonEmpty,
+      "the predicate must see a bare underscore pair")
     val urls = OutboundText.links(plain)
     assert(urls.contains("https://example.com/a"), s"the labelled link died: $urls")
     assert(urls.contains("https://bare.example/b"), s"the bare link died: $urls")
@@ -231,12 +246,13 @@ val x = 1
       creds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec"))
     )
     for
-      results <- a.dispatch(List(ChannelCall.SendText(OutboundText.toPlain("**hi** [d](https://e.com/x)"))))
+      results <- a.dispatch(List(ChannelCall.SendText(OutboundText.toPlain("**hi** and _em_ [d](https://e.com/x)"))))
     yield
       assert(results.forall(_.ok))
       val out = sent.get().headOption.getOrElse(fail("nothing reached the send seam"))
       assertEquals(OutboundText.bareMarkers(out), List.empty)
       assert(out.contains("https://e.com/x"), s"the link must stay alive: $out")
+      assert(!out.contains("_em_"), s"underscore emphasis reached the wire: $out")
   }
 
   // ───────── the WIRED bridge leg (the only production file this batch edits) ─────────
@@ -265,7 +281,9 @@ val x = 1
       pinnedAllowedOpenIds = None,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")))
     // The model's own writing: raw markdown, exactly as the session shows it.
-    val raw = "**bold** and `code` — see [docs](https://e.com/x) and # heading"
+    // The underscore pair is in here on purpose: it is the family that reached
+    // the wire verbatim while the asterisk family was already being unwrapped.
+    val raw = "**bold** and `code` and _em_ — see [docs](https://e.com/x) and # heading"
 
     def delta(s: String): Json =
       Json.obj("type" -> Json.fromString("textDelta"), "sessionId" -> Json.fromString(s),
@@ -292,6 +310,8 @@ val x = 1
         s"bare markdown reached the wire: ${OutboundText.bareMarkers(body)}")
       assert(!body.contains("**"), s"emphasis delimiter survived: $body")
       assert(!body.contains("`"), s"inline-code delimiter survived: $body")
+      assert(!body.contains("_em_"), s"underscore emphasis reached the wire: $body")
+      assert(body.contains(" and em "), s"the emphasis content must survive as words: $body")
       // Links stay alive as bare URLs, labels stay as words.
       assertEquals(OutboundText.links(body), List("https://e.com/x"),
         s"the link must survive the wired leg: $body")

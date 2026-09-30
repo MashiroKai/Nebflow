@@ -21,9 +21,14 @@ object OutboundText:
 
   /** Every character class this conversion is responsible for. Exposed so the
     * acceptance reading can name what it looks for; the actual judgement lives
-    * in [[bareMarkers]], which distinguishes delimiters from prose. */
+    * in [[bareMarkers]], which distinguishes delimiters from prose.
+    *
+    * The `_` family is listed here for the same reason as the rest: it is a
+    * markdown emphasis delimiter (`_em_`, `__st__`), and leaving it out of this
+    * list is exactly how the underscore leg stayed invisible to the reading
+    * while the asterisk leg was covered. */
   val markers: List[String] =
-    List("`", "*", "~~", "# ", "> ", "```")
+    List("`", "*", "~~", "# ", "> ", "```", "_", "__")
 
   /**
    * Convert one markdown-ish line/block into Feishu-visible plain text.
@@ -151,9 +156,73 @@ object OutboundText:
       // ordered list marker: keep the number (it is meaning), drop the dot-noise
       s = s.replaceAll("^\\s*(\\d+)\\.\\s+", "$1. ")
       // emphasis / strikethrough / leftover inline code delimiters
-      s = s.replace("**", "").replace("__", "")
+      s = s.replace("**", "")
+      s = unwrapUnderscores(s)
       s = s.replace("*", "").replace("~~", "").replace("~", "")
       s
+
+  /** Unwrap the underscore emphasis family (`_em_`, `__st__`), PAIR-wise.
+    *
+    * `_` is the only markdown delimiter that also occurs INSIDE ordinary words,
+    * so a bare `.replace("_", "")` would destroy `snake_case` and `__name__`-ish
+    * identifiers. The rule here is the same discipline [[plainLine]] already
+    * applies to backticks -- a delimiter is a delimiter only when it comes in a
+    * PAIR, a lone one is punctuation and stays -- with one extra condition for
+    * this family: a run of underscores may only open (and a closing run may only
+    * close) when it sits OUTSIDE a word. `_em_` is therefore unwrapped, while
+    * `a_b_c`, `x__y` and `https://e.example/a_b_c` are left exactly as written.
+    *
+    * Known limit, stated rather than hidden: `__init__` and `__strong__` have
+    * byte-identical local structure (word-char content between two double runs,
+    * non-word neighbours outside), so no local rule can unwrap one and keep the
+    * other. This conversion keeps the emphasis reading -- a bare `__` is markdown
+    * syntax on the wire and is the case the acceptance criterion is about. */
+  private def unwrapUnderscores(s: String): String =
+    val sb = new StringBuilder
+    var i = 0
+    while i < s.length do
+      if s.charAt(i) == '_' then
+        val n = underscoreRun(s, i)
+        val close = if opensDelimiter(s, i, n) then closingRun(s, i + n, n) else -1
+        if close >= 0 then
+          sb.append(s.substring(i + n, close)) // the delimiters go, the content stays
+          i = close + n
+        else
+          sb.append(s.substring(i, i + n))
+          i += n
+      else
+        sb.append(s.charAt(i))
+        i += 1
+    sb.toString
+
+  private def isWordChar(c: Char): Boolean =
+    Character.isLetterOrDigit(c) || c == '_'
+
+  /** Length of the run of underscores starting at `i` (>= 1). */
+  private def underscoreRun(s: String, i: Int): Int =
+    var j = i
+    while j < s.length && s.charAt(j) == '_' do j += 1
+    j - i
+
+  /** May the run at `i` (of length `n`) OPEN a delimiter pair? Only outside a
+    * word, and only when content follows it. */
+  private def opensDelimiter(s: String, i: Int, n: Int): Boolean =
+    (i == 0 || !isWordChar(s.charAt(i - 1))) &&
+      i + n < s.length && !s.charAt(i + n).isWhitespace
+
+  /** Index of the run that CLOSES the pair opened before `from`, or -1 when
+    * there is none. Pair means: at least as long, outside a word on its right,
+    * and with non-empty content in between. */
+  private def closingRun(s: String, from: Int, n: Int): Int =
+    var j = from
+    var found = -1
+    while j < s.length && found < 0 do
+      if s.charAt(j) == '_' then
+        val m = underscoreRun(s, j)
+        if j > from && m >= n && (j + m >= s.length || !isWordChar(s.charAt(j + m))) then found = j
+        else j += m
+      else j += 1
+    found
 
   /**
    * Does this text still carry a bare markdown syntax marker? This is the
@@ -165,15 +234,38 @@ object OutboundText:
    * Every bare marker found -- for the failure reading, so a red check names
    * exactly what it tripped on instead of just saying "red".
    *
-   * Two families, because a wide sweep would flag ordinary prose:
+   * Three families, because a wide sweep would flag ordinary prose:
    *   - `anywhere`: a character that is only ever markdown in this context;
    *   - `atLineStart`: a genuine markdown prefix (a `>` comparison in prose is
-   *     not a blockquote).
+   *     not a blockquote);
+   *   - the underscore family, which is the one exception to `anywhere`: `_` is
+   *     also ordinary punctuation inside words, so it is read PAIR-wise by the
+   *     same rule the conversion applies.
    */
   def bareMarkers(s: String): List[String] =
     val anywhere = List("`", "*", "~~", "```").filter(s.contains)
     val atLineStart = List("> ", "# ").filter(p => s.linesIterator.exists(_.startsWith(p)))
-    (anywhere ++ atLineStart).distinct
+    (anywhere ++ atLineStart ++ bareUnderscores(s)).distinct
+
+  /** Paired underscore delimiters still on the wire, if any. Deliberately NOT a
+    * bare `s.contains("_")`: that would flag `snake_case`, `a_b_c` in a URL and
+    * every ordinary identifier -- a false-positive alarm, not a reading. The
+    * scan reuses [[opensDelimiter]] / [[closingRun]], the same pair-plus-
+    * word-boundary rule the conversion applies, so the judgement and the
+    * conversion cannot drift apart on this family. */
+  private def bareUnderscores(s: String): List[String] =
+    val found = scala.collection.mutable.ListBuffer.empty[String]
+    var i = 0
+    while i < s.length do
+      if s.charAt(i) == '_' then
+        val n = underscoreRun(s, i)
+        val close = if opensDelimiter(s, i, n) then closingRun(s, i + n, n) else -1
+        if close >= 0 then
+          found += (if n >= 2 then "__" else "_")
+          i = close + n
+        else i += n
+      else i += 1
+    found.toList.distinct
 
   /** URLs surviving in the text: `label (url)` outputs plus bare URLs. */
   def links(s: String): List[String] =
