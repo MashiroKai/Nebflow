@@ -1393,7 +1393,11 @@ object NodeEditTool extends Tool:
           // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out 追加 → 本节点）
           // + out 边（每个非 Nebula 目标 in 追加本节点）。P1 多边：in 声明为上游 out **追加**
           // 指向本节点的缺省 pass 边（不覆盖既有门控，扇出拓扑零扰动）。
-          val mutateIO = rt.store.mutate { s =>
+          //
+          // 缺陷③批 2026-10-01（案 A 写点 5）：本事务同时产出 `edge-changed` 视图——**建位落边
+          // 也是边集变更**（此前建位期的 out 声明与 in 镜像零审计）。视图从 `(写前, 写后)`
+          // 两张 Map 纯函数算出（`mutateWithResult`，f 在 CAS 自旋下可能重入 ⇒ 必须纯）。
+          val mutateIO = rt.store.mutateWithResult { s =>
             val withNode = s.copy(nodes = s.nodes + (nodeId -> node))
             val insNodes = ins.foldLeft(withNode.nodes)((acc, upId) => NodeTools.appendEdgeTo(acc, upId, nodeId))
             val withIns = withNode.copy(nodes = insNodes)
@@ -1417,7 +1421,9 @@ object NodeEditTool extends Tool:
                   case None => acc
               else acc
             )
-            withInList.copy(nodes = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out))))
+            val nodesAfter =
+              withInList.nodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out)))
+            (s.copy(nodes = nodesAfter), NodeTools.createdEdgeViews(nodeId, s.nodes, nodesAfter))
           }
           // create 回执一致性断言（20260909 in 丢失事故护栏①）：回执返回前写后读，
           // 断言 in 已随节点同事务落定。现实现里 in 追加与节点插入在同一 Ref 事务
@@ -1428,7 +1434,7 @@ object NodeEditTool extends Tool:
             // mutate（IO 顺序保证快照早于任何写动作）。`chainIdView` 是纯派生（分量 +
             // 声明），读快照即得写前归属；写后视图由 emit 内部现读 ⇒ 两次读数各有其时点。
             rt.store.combinedNodes.flatMap { chainBefore =>
-              mutateIO.flatMap { s =>
+              mutateIO.flatMap { case (s, edgeViews) =>
                 val created = s.nodes(nodeId)
                 val missingIn = ins.filterNot(created.in.contains)
                 if missingIn.nonEmpty then
@@ -1438,7 +1444,10 @@ object NodeEditTool extends Tool:
                   IO(logger.errorSync(s"[node.tools] $msg")).as(Left(ToolError(msg)))
                 else
                   (
-                    // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：两类显式许可
+                    // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 5）：**逐边一行**
+                    // （建位期的 out 与 in 镜像此前零事件）。
+                    FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, edgeViews) *>
+                      // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：两类显式许可
                     // 必须可事后对齐——被拒面查无事件、被放行面有迹可循（校验失败现况零
                     // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
                     // reactivated，零载荷漂移）。

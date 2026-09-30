@@ -362,6 +362,20 @@ object FlowMapEventLog:
       added.map(up => EdgeChangeView(owner, None, Some(up), EdgeChangeKind.In, None, None, reason))
 
   /**
+   * **`in` 镜像的批量视图**（多个节点的 in 列表同时变化 ⇒ 逐节点、逐项一行）。
+   * `before`/`after` = 「节点 id → 该节点的 in 列表现值」两时点各取一次；只对**真正变化**
+   * 的节点出声（未变节点零行——R5 负控的机械承担点）。
+   */
+  def inMirrorViewsBatch(
+    before: Map[String, List[String]],
+    after: Map[String, List[String]],
+    reason: String
+  ): List[EdgeChangeView] =
+    (before.keySet ++ after.keySet).toList.sorted.flatMap { id =>
+      inMirrorViews(id, before.getOrElse(id, Nil), after.getOrElse(id, Nil), reason)
+    }
+
+  /**
    * **`deps` 替换视图（纯函数，零 IO）**：`NodeDef.deps` 是**替换**语义（非增删）——
    * 逐项 diff 记 `kind=deps from=<旧> to=<新>`（`NodeEdit(deps="X")` → `NodeEdit(deps="Y")`
    * 恰好一行 `from=X to=Y`）。
@@ -391,6 +405,17 @@ object FlowMapEventLog:
       reason = EdgeChangeReason.Refused,
       detail = Some(errorCode)
     )
+
+  /**
+   * 逐条落 `edge-changed`（**逐边一行**，逐条 append ⇒ 一行一 `os.write.append`）。
+   * `Nil` ⇒ 零 IO（幂等出口的机械承担点：无变更视图就不落任何字节）。
+   */
+  def appendEdgeChanges(workspace: String, project: String, views: List[EdgeChangeView]): IO[Unit] =
+    views.foldLeft(IO.unit)((acc, v) => acc *> append(workspace, project, v.owner, EdgeChangedType, edgeChangedSummary(v)))
+
+  /** 单条落 `edge-changed`（拒绝面 / 单点写点的便捷入口）。 */
+  def appendEdgeChange(workspace: String, project: String, view: EdgeChangeView): IO[Unit] =
+    append(workspace, project, view.owner, EdgeChangedType, edgeChangedSummary(view))
 
   /**
    * `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿

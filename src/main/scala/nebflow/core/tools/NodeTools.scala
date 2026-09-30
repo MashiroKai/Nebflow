@@ -479,13 +479,51 @@ object NodeTools:
       afterAdded.updated(fromId, from.copy(out = newEdges, pendingOut = pendingOut.getOrElse(from.pendingOut)))
     end rewire
     def sinkGuard(node: NodeDef): Option[String] = NodeTools.loopGateViolation(node, newEdges)
+
+    // ── 边集变更留痕（缺陷③批 2026-10-01 · 案 A）───────────────────────────────
+    // `setOut` 是 out 边集的**落盘 choke point**（调用点埋点必漏）⇒ 在收口处对
+    // before(out) ↔ after(newEdges) 逐边 diff，**逐边一行**发 `edge-changed`。
+    // 目标解析统一经 `resolveTargetId`（20260909 in 丢失事故口径：diff 在**节点身份**
+    // 空间进行——旧 id 形态边 → 新名字形态边指向同一节点时**零行**，不误报「改接」）。
+    def resolve(nodes: Map[String, NodeDef])(target: String): String =
+      OutEdge.resolveTargetId(nodes, target).getOrElse(target)
+
+    /** 两时点快照（写前 / 写后）⇒ 本节点 out 的逐边视图 + 受影响节点 in 镜像的逐项视图。 */
+    def edgeTrace(
+      before: Map[String, NodeDef],
+      after: Map[String, NodeDef],
+      owner: String,
+      beforeOut: List[OutEdge]
+    ): List[FlowMapEventLog.EdgeChangeView] =
+      val reason = FlowMapEventLog.EdgeChangeReason.Machine
+      val outViews = FlowMapEventLog.outEdgeViews(owner, beforeOut, newEdges, reason, resolve(after))
+      val touched = (before.keySet ++ after.keySet).toList.sorted
+      val inViews = FlowMapEventLog.inMirrorViewsBatch(
+        touched.map(id => id -> before.get(id).map(_.in).getOrElse(Nil)).toMap,
+        touched.map(id => id -> after.get(id).map(_.in).getOrElse(Nil)).toMap,
+        reason
+      )
+      outViews ++ inViews
+
+    /** `None` ⇒ 零写（幂等出口）；`Some` ⇒ 逐边/逐项一行落 `edge-changed`。 */
+    def emit(views: List[FlowMapEventLog.EdgeChangeView]): IO[Unit] =
+      FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, views)
+
     rt.store.getNode(fromId).flatMap {
       case Some(from) =>
         sinkGuard(from) match
           case Some(err) =>
             IO(logger.errorSync(s"[loop-gate] setOut REFUSED (write skipped, sink invariant): $err"))
           case None =>
-            rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, s.nodes(fromId))) }.void
+            rt.store
+              .mutateWithResult { s =>
+                val nodesAfter = rewire(s.nodes, s.nodes(fromId))
+                (
+                  s.copy(nodes = nodesAfter),
+                  edgeTrace(s.nodes, nodesAfter, fromId, s.nodes.get(fromId).map(_.out).getOrElse(Nil))
+                )
+              }
+              .flatMap { case (_, trace) => emit(trace) }
       case None =>
         rt.store.findNode(fromId).flatMap {
           case None => IO.unit // 两区皆无（并发 TTL 迁移已删）→ no-op
@@ -497,10 +535,21 @@ object NodeTools:
               case Some(err) =>
                 IO(logger.errorSync(s"[loop-gate] setOut REFUSED (archive write skipped, sink invariant): $err"))
               case None =>
-                rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, archFrom) - fromId) }.void *>
-                  rt.store
-                    .mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges)))))
-                    .void
+                // 🔴 **归档分支也要发**（设计卡 §6.3 风险 R-1 的漏点：归档区 out 补写此前
+                // 完全静默——本行是那处「我没动过它、它的边为什么变了」的唯一观测面）。
+                rt.store
+                  .mutateWithResult { s =>
+                    val nodesAfter = rewire(s.nodes, archFrom) - fromId
+                    (
+                      s.copy(nodes = nodesAfter),
+                      edgeTrace(s.nodes, nodesAfter, fromId, archFrom.out)
+                    )
+                  }
+                  .flatMap { case (_, trace) =>
+                    rt.store
+                      .mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges)))))
+                      .void *> emit(trace)
+                  }
         }
     }
 
@@ -525,6 +574,73 @@ object NodeTools:
       case Some(up) if !up.out.exists(_.to == toNodeId) =>
         nodes.updated(upId, up.copy(out = up.out :+ OutEdge(toNodeId)))
       case _ => nodes
+
+  /**
+   * 纯函数：镜像追加视图（缺陷③批 2026-10-01 · 案 A 写点 4）。
+   *
+   * `appendEdgeTo` 是**纯函数**（返回新 Map，无 IO），故其留痕在调用方收口：本函数从
+   * 「追加前 / 追加后」两张 `Map` 抽出该上游 out 的逐边 diff 视图 ⇒ 调用方逐边发一行。
+   * `kind=in`（上游 out 追加 = 下游 in 镜像追加的**同一事实的另一面**）：
+   * `owner` = **被追加镜像的目标节点**（toNodeId），`from=-` `to=<上游>`。
+   *
+   * 🔴 幂等：`appendEdgeTo` 未追加（上游已有指向该目标的边）⇒ 零视图 ⇒ 零行。
+   */
+  def appendEdgeViews(
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef],
+    upId: String,
+    toNodeId: String,
+    reason: String
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val beforeOut = before.get(upId).map(_.out).getOrElse(Nil)
+    val afterOut = after.get(upId).map(_.out).getOrElse(Nil)
+    if OutEdge.canonical(beforeOut) == OutEdge.canonical(afterOut) then Nil
+    else
+      val resolvedTo = OutEdge.resolveTargetId(after, toNodeId).getOrElse(toNodeId)
+      List(
+        FlowMapEventLog.EdgeChangeView(
+          owner = resolvedTo,
+          from = None,
+          to = Some(upId),
+          kind = FlowMapEventLog.EdgeChangeKind.In,
+          reason = reason
+        )
+      )
+
+  /**
+   * 纯函数：**建位（create）事务的边集变更视图**（缺陷③批 2026-10-01 · 案 A 写点 5）。
+   *
+   * 建位本身也是边集变更：新节点的 `out` 声明、以及**所有被改动的 `in` 镜像**（新节点自身
+   * 的 `in`、以及 `appendEdgeTo` 在上游 out 追加后在**新节点**侧映出的入边）。此前建位期
+   * 完全静默——「我没动过它、它的边为什么变了」在审计面零观测。
+   *
+   * 输入 = `(写前, 写后)` 两张 `Map`（`mutateWithResult` 的 f 在 CAS 自旋下可能重入 ⇒ 本
+   * 函数**必须纯**：零 IO、零外部状态）。`out` 视图恒为「新增」（新节点建位前不存在 ⇒
+   * `before.get(nodeId).map(_.out).getOrElse(Nil)` = `Nil` 起 diff，同一实现对幂等重入也自洽）。
+   *
+   * 🔴 幂等：两时点 canonical 相等 ⇒ `Nil`（零行）；未变节点的 `in` 零行。
+   */
+  def createdEdgeViews(
+    nodeId: String,
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef]
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val reason = FlowMapEventLog.EdgeChangeReason.Machine
+    val resolve: String => String = t => OutEdge.resolveTargetId(after, t).getOrElse(t)
+    val outViews = FlowMapEventLog.outEdgeViews(
+      nodeId,
+      before.get(nodeId).map(_.out).getOrElse(Nil),
+      after.get(nodeId).map(_.out).getOrElse(Nil),
+      reason,
+      resolve
+    )
+    val touched = (before.keySet ++ after.keySet).toList.sorted
+    val inViews = FlowMapEventLog.inMirrorViewsBatch(
+      touched.map(id => id -> before.get(id).map(_.in).getOrElse(Nil)).toMap,
+      touched.map(id => id -> after.get(id).map(_.in).getOrElse(Nil)).toMap,
+      reason
+    )
+    outViews ++ inViews
 
   /**
    * P1 校验层①（spec §2.2，wf3 §3.7 护栏）：指向 merge 节点的 on-failed 边 → 硬拒
