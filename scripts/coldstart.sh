@@ -162,7 +162,7 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "[coldstart] [DRY_RUN] $COLDSTART_HOME 不存在，将仅 mkdir -p（无条目可删）"
   fi
 else
-  echo "[coldstart] 选择性清理旧 home: $COLDSTART_HOME（保留模型配置件）"
+  echo "[coldstart] 选择性清理旧 home: ${COLDSTART_HOME}（保留模型配置件）"
   mkdir -p "$COLDSTART_HOME"
   print_keep_report
   # 删除清单先落 stdout、再执行删除（同谓词、无并发写者 ⇒ 两遍所见一致）：即使清理中途中断，
