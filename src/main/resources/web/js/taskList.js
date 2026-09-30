@@ -16,7 +16,7 @@ import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect } from './ws.js';
-import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
+import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS, controlChain } from './nodeData.js';
 
 // ── Flow Map 节点条目（2026-09-02 作者裁定：节点作为条目并入任务列表）──────
 // [节点区块 · 独立命名空间] 数据 = WS 节点广播帧（nodeCreated/Updated/Completed/
@@ -43,12 +43,19 @@ const nodeCache = new Map();
 //   缓存生命周期与 nodeCache 同（项目粒度，随快照整体替换）。WS 无链级帧 → 链标题
 //   随快照到达；WS 帧携带陌生 chainId（新链首现）时防抖拉一次快照补齐（下方
 //   scheduleChainSnapshot），避免「新链徽标永不出现」。
-/** @type {Map<string, Map<string, {id: string, title: string, memberIds: string[]}>>} */
+/** @type {Map<string, Map<string, {id: string, title: string, memberIds: string[], status: string, pausedAt: number|null, cancelledAt: number|null}>>} */
 const chainCache = new Map();
 let nodeSnapshotLoaded = false;
 let nodeSnapshotSeq = 0;
 /** 最近一次渲染面板的会话：WS 事件到达时按它判断是否重渲（Nebula 统一面板）。 */
 let lastPanelSessionId = null;
+/** 展开的链 id 集合（面板内折叠态记忆；跨重渲保留，同 chainId 恒同态）。 */
+const expandedChains = new Set();
+/** 链控动作在途集合（`project:chainId`）——防重复点击，动作落地/失败后释放。 */
+const chainActionPending = new Set();
+/** 「未分组」组被手动收起的项目集合（§二.1.5：默认展开；手动收起后跨重渲保留
+ *  ——面板每次 WS 事件都整块重绘，不记忆则用户收起的组下一秒又张开）。 */
+const ungroupedCollapsed = new Set();
 
 /** 节点时间戳：契约 §4 是 epoch ms 数字；容忍 ISO 字符串（旧帧兼容）。 */
 function nodeTs(n) {
@@ -122,7 +129,7 @@ function rerenderWithNodes() {
 /** NodeList 全量快照对齐（连接建立首渲一次 + 断线重连收敛事件缺口）。逐项目容错：
  *  单项目拉取失败不连累其他项目。防回滚：快照在途期间落地的 WS 增量（_wsTs 晚于
  *  本次刷新起点）比快照新，保留缓存版本——否则旧快照会把已完成的节点滚回 running。 */
-async function refreshNodeSnapshot() {
+export async function refreshNodeSnapshot() {
   const seq = ++nodeSnapshotSeq;
   const fetchStart = Date.now();
   let projects;
@@ -147,7 +154,7 @@ async function refreshNodeSnapshot() {
     // 链标题缓存（spec §7-B）：快照 chains 旁挂整体替换（同 nodeCache 粒度与生命周期）。
     // 键缺失（旧后端/中间态）→ 保留现缓存（与 ingestNodes 的 undefined 语义一致）。
     if (Array.isArray(fm.chains)) {
-      /** @type {Map<string, {id: string, title: string, memberIds: string[]}>} */
+      /** @type {Map<string, {id: string, title: string, memberIds: string[], status: string, pausedAt: number|null, cancelledAt: number|null}>} */
       const chains = new Map();
       for (const c of fm.chains) {
         if (!c || !c.id) continue;
@@ -155,6 +162,11 @@ async function refreshNodeSnapshot() {
           id: String(c.id),
           title: String(c.title || ''),
           memberIds: (Array.isArray(c.memberIds) ? c.memberIds : []).map(String),
+          // 链控三态条件键（chainview 批，engine-impl 位）：既有五键之外的新增键，
+          // 旧后端缺键 ⇒ 归一为 'active' 零值（缺键 = 未受链控，不是错误态）。
+          status: normalizeChainStatus(c.status),
+          pausedAt: typeof c.pausedAt === 'number' ? c.pausedAt : null,
+          cancelledAt: typeof c.cancelledAt === 'number' ? c.cancelledAt : null,
         });
       }
       if (chains.size) chainCache.set(name, chains); else chainCache.delete(name);
@@ -176,6 +188,22 @@ async function refreshNodeSnapshot() {
 for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']) {
   onMessage(evt, applyNodeWsEvent);
 }
+// 链控状态广播（chainview 批 · 引擎面 `ProjectActor.chainStateFrame` 单点）：
+// {type:'chainState', project, chainId, status, pausedAt, cancelledAt} —— 引擎面每条链控
+// 成功腿（含他端发起的动作）发一帧。前端只更新链缓存三态键并重渲（🔴 零派生、零判定；
+// 状态权威恒在后端）。帧内无链标题/成员 —— 从既有快照缓存取，未知链忽略（下次快照补齐）。
+onMessage('chainState', (msg) => {
+  const project = msg && msg.project;
+  const cid = msg && msg.chainId ? String(msg.chainId) : '';
+  if (!project || !cid) return;
+  const byId = chainCache.get(project);
+  const meta = byId ? byId.get(cid) : null;
+  if (!meta) return; // 未知链（标题/成员皆无）→ 忽略；防抖快照会补齐
+  meta.status = normalizeChainStatus(msg.status);
+  meta.pausedAt = typeof msg.pausedAt === 'number' ? msg.pausedAt : null;
+  meta.cancelledAt = typeof msg.cancelledAt === 'number' ? msg.cancelledAt : null;
+  rerenderWithNodes();
+});
 onReconnect(() => { if (nodeSnapshotLoaded) refreshNodeSnapshot(); });
 
 // ── §15.7 relative time (任务区) ─────────────────────────────────────────
@@ -226,8 +254,12 @@ const REDUCED_MOTION = typeof matchMedia === 'function' &&
 // 状态词映射（2026-09-05 作者裁定：wiring/pending→待处理、running→进行中、
 // blocked→阻塞、completed→已完成、failed→失败、cancelled→已取消）。
 // 复用既有键 running→task.inProgressShort（进行中）、completed→flowmap.done、
-// failed→flowmap.fail、cancelled→flows.status.cancelled；新增两键（zh/en 成对）：
-// task.nodePending / task.nodeBlocked。
+// failed→flowmap.fail；新增两键（zh/en 成对）：task.nodePending / task.nodeBlocked。
+// 🔴 chainview 批（2026-10-01）就地修一处**先于本批**的悬挂键：`cancelled` 原指
+// `flows.status.cancelled`，该键在 zh-CN.js / en.js **均不存在**（`flows.` 域只有
+// `flows.cancel`）⇒ `t()` 回落到键名本身，面板渲染出字面量 `flows.status.cancelled`。
+// 本批展开态成员行与既有节点行都走本表 ⇒ 改指既有键 `flowmap.st.cancelled`
+// （「已取消」，zh/en 成对在册）。零新增键、零新权威，仅去掉一处可见残缺。
 const NODE_WORD_KEY = {
   wiring: 'task.nodePending',
   pending: 'task.nodePending',
@@ -235,7 +267,7 @@ const NODE_WORD_KEY = {
   blocked: 'task.nodeBlocked',
   completed: 'flowmap.done',
   failed: 'flowmap.fail',
-  cancelled: 'flows.status.cancelled',
+  cancelled: 'flowmap.st.cancelled',
 };
 
 /**
@@ -267,6 +299,333 @@ function buildNodeGlyph(st, cls) {
     g.className = 'task-node-dot task-node-dot-neutral'; // 未知状态中性降级
   }
   return g;
+}
+
+/** 链控状态归一（缺键/未知值 → 'active'）。合法值域 = 引擎面 `ChainLedger.statusOf`
+ *  三态单点（active / paused / cancelled）；前端只读不派生。 @param {any} s @returns {string} */
+function normalizeChainStatus(s) {
+  const v = String(s || '');
+  return v === 'paused' || v === 'cancelled' ? v : 'active';
+}
+// `_` 前缀标记：本模块内部件（首渲前的 hoisting 引用点，见下）。
+
+// ── 类型五色（chainview 批 §二.1.4 · **单源**）────────────────────────────
+// mockup 已批五值。🔴 载荷**无 node type 字段**（后端 `NodePayload.buildNodeJson`
+// 无类型键，`agent` 恒 'general' —— 见本批报告「假设」节的现读读数）⇒ 类型由
+// **角色 + merge + 链内位置**派生（下方 `nodeTypeOf`），色值**只此一处**定义；
+// CSS 侧同名变量（taskList.css `:root --task-node-type-*`）与 JS 常量逐字同值，
+// 由本批证据脚本 `assert-type-color-single-source.cjs` 断言两处相等（防漂移）。
+// 中文类型名（分发器/实现/验证/落地/诊断设计）只作 aria/title 文案 —— 见 §16 草案键表。
+const NODE_TYPE = {
+  dispatcher: { key: 'dispatcher', color: '#8a93a5' },
+  impl: { key: 'impl', color: '#4a8fd4' },
+  verify: { key: 'verify', color: '#e0a03c' },
+  sink: { key: 'sink', color: '#9b6fd4' },
+  design: { key: 'design', color: '#3aa8a0' },
+};
+
+// ── 尺寸常量（§二.1.1/1.2 · 单源）──────────────────────────────────────────
+// 折叠链行 28px / 展开节点行 22px / 图标钮 22×20。CSS 侧同名变量逐字同值
+// （同上，证据脚本断言两处相等）。返回值用于渲染后像素读数核验（≤30px 预算）。
+const ROW_H_CHAIN_COLLAPSED = 28;
+const ROW_H_NODE_EXPANDED = 22;
+const BTN_W = 22;
+const BTN_H = 20;
+/** 点图节点圆点直径（折叠链行内联拓扑缩略）。 */
+const DOT_R = 3;
+
+/**
+ * 节点类型派生（**假设已申报** —— 载荷无 node type 字段，见报告「假设」节）：
+ *   1. 链入口（`in` 为空且无 deps）= 分发器位（把任务发出去的那一位）
+ *   2. `merge === true` = 落地位（合并 sink）
+ *   3. `role === 'verifier'` = 验证位
+ *   4. 名字含 design/诊断类词根 = 诊断设计位
+ *   5. 其余 = 实现位
+ * 命名约定只作**末位回落**（前三条为载荷面判据）；判据顺序即优先级（首命中即返回）。
+ * @param {{role?: string, merge?: boolean, in?: string[], deps?: string[], name?: string}} n
+ * @param {string} _project @returns {string} NODE_TYPE 键
+ */
+function nodeTypeOf(n, _project) {
+  const inLen = Array.isArray(n.in) ? n.in.length : 0;
+  const depsLen = Array.isArray(n.deps) ? n.deps.length : 0;
+  const name = String(n.name || '');
+  if (n.merge === true) return 'sink';
+  if (inLen === 0 && depsLen === 0) return 'dispatcher';
+  if (String(n.role || '') === 'verifier') return 'verify';
+  if (/design|diag|forensic|audit|probe|recon|survey|investigat/i.test(name)) return 'design';
+  return 'impl';
+}
+
+/** 五态状态徽标映射（§二.1.3 运行/暂停/完成/失败/取消 ← 节点 status）。 */
+const NODE_BADGE_KEY = {
+  running: 'task.chain.badge.running',
+  paused: 'task.chain.badge.paused',
+  completed: 'task.chain.badge.completed',
+  failed: 'task.chain.badge.failed',
+  cancelled: 'task.chain.badge.cancelled',
+};
+
+/**
+ * 状态徽标五态（§二.1.3）：链三态（引擎面 `status`）+ 成员聚合态。
+ * 判据（**顺序即优先级**，首命中即返回，纯读载荷 + 链态缓存，🔴 零后端复刻）：
+ *   取消：链 status==='cancelled' 或存在成员 cancelled
+ *   暂停：链 status==='paused'
+ *   失败：存在成员 status==='failed'
+ *   运行：存在成员 status==='running'
+ *   完成：其余（含全 completed；空成员视作完成——链已收敛）
+ * @param {{status?: string}} chainMeta @param {any[]} members @returns {string} 五态字面量
+ */
+function chainBadgeState(chainMeta, members) {
+  const status = normalizeChainStatus(chainMeta && chainMeta.status);
+  if (status === 'cancelled') return 'cancelled';
+  if (status === 'paused') return 'paused';
+  const list = Array.isArray(members) ? members : [];
+  if (list.some((m) => m && m.status === 'cancelled')) return 'cancelled';
+  if (list.some((m) => m && m.status === 'failed')) return 'failed';
+  if (list.some((m) => m && m.status === 'running')) return 'running';
+  return 'completed';
+}
+
+/** 链聚合进度 n/N：N = 成员数，n = 终态成员数（completed/failed/cancelled）。
+ *  @param {any[]} members @returns {{done: number, total: number}} */
+function chainProgress(members) {
+  const list = Array.isArray(members) ? members : [];
+  const done = list.filter((m) => m && (m.status === 'completed' || m.status === 'failed' || m.status === 'cancelled')).length;
+  return { done, total: list.length };
+}
+
+/** 链时刻（§二.1.1 折叠行的「· 时长」）：最早成员 createdAt → 当下（运行中链的
+ *  墙钟时长）。格式与 `formatLastActive` 同族（<1min = task.justNow，否则 `${n}m`
+ *  字面量——与任务行既有口径一致，零新增文案键）。无可用时刻 → ''（不渲染该段）。 */
+function chainElapsed(chainMeta, members) {
+  const list = Array.isArray(members) ? members : [];
+  const stamps = list.map(nodeTs).filter((v) => v > 0);
+  if (stamps.length === 0) return '';
+  const start = Math.min(...stamps);
+  const end = (normalizeChainStatus(chainMeta && chainMeta.status) === 'active')
+    ? Date.now()
+    : Math.max(start, ...list.map((m) => nodeTs(m) || 0));
+  const mins = Math.max(0, Math.floor((end - start) / 60_000));
+  return mins < 1 ? t('task.justNow') : `${mins}m`;
+}
+
+/**
+ * 内联点图（§二.1.1）：节点拓扑缩略 —— 每位成员一个圆点（按类型着色）+ 相邻位连线。
+ *   空心（背景色填充 + 类型色描边）= 未起跑；实心 = 已完成/失败/取消；
+ *   实心 + 描边放大 = 运行中（`--running` 类，CSS 侧 stroke-width/尺寸放大）。
+ * 宽度封顶溢出省略（CSS `overflow:hidden` + `flex-shrink`）——点图只作缩略，不作判据。
+ * @param {any[]} members @returns {HTMLElement} */
+function buildChainDotmap(members) {
+  const map = document.createElement('span');
+  map.className = 'task-chain-map';
+  map.setAttribute('aria-hidden', 'true');
+  const list = Array.isArray(members) ? members : [];
+  const sorted = [...list].sort((a, b) => nodeTs(a) - nodeTs(b));
+  sorted.forEach((m, i) => {
+    if (i > 0) {
+      const link = document.createElement('span');
+      link.className = 'task-chain-map-link';
+      map.appendChild(link);
+    }
+    const dot = document.createElement('span');
+    const type = nodeTypeOf(m, '');
+    dot.className = `task-chain-map-dot t-${type}`;
+    const st = String(m.status || 'pending');
+    if (st === 'running') dot.classList.add('is-running');
+    else if (st === 'completed' || st === 'failed' || st === 'cancelled') dot.classList.add('is-done');
+    map.appendChild(dot);
+  });
+  return map;
+}
+
+/** 链控图标钮（22×20 · §二.1.2）：pause/resume 同钮双态 + cancel。lucide 名由调用方给。 */
+function buildChainIconBtn(icon, label, cls) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `task-chain-btn ${cls}`;
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.innerHTML = `<i data-lucide="${icon}"></i>`;
+  return btn;
+}
+
+/** 链控动作（REST 三条 + 状态刷新）：调 `controlChain`，失败仅提示（面板不中断）。
+ *  成功后**不**就地改缓存 —— 状态权威 = 引擎面 `chainState` 帧（本帧到达即刷新，
+ *  与 WS 单点同源；REST 响应体只用于错误分流）。 */
+async function runChainAction(project, chainId, action) {
+  const key = `${project}:${chainId}`;
+  if (chainActionPending.has(key)) return;
+  chainActionPending.add(key);
+  try {
+    const res = await controlChain(project, chainId, action);
+    if (res.state === 'http') {
+      // 可行动说明（404 携带 CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER / CHAIN_CANCELLED）
+      const detail = res.data && res.data.error ? String(res.data.error) : '';
+      console.warn(`[tasklist] chain ${action} refused (http ${res.status}): ${detail}`);
+    } else if (res.state === 'network') {
+      console.warn(`[tasklist] chain ${action} refused (network)`);
+    }
+  } finally {
+    chainActionPending.delete(key);
+  }
+}
+
+/** 取消 = 不可逆 ⇒ 必须过二次确认（§二.1.6）。确认组件复用既有 `window.__showConfirm`
+ *  （与 flowMapTab 的链级取消同范式）；🔴 缺席 ⇒ **什么都不做**（绝不无确认直发不可逆腿）。 */
+function confirmChainCancel(project, chainId, title) {
+  const label = String(title || chainId);
+  if (typeof window.__showConfirm !== 'function') {
+    console.warn('[tasklist] chain cancel needs the confirm dialog (window.__showConfirm) — refused');
+    return;
+  }
+  window.__showConfirm(t('task.chain.cancel.title'), t('task.chain.cancel.confirm', { chain: label }), () => {
+    runChainAction(project, chainId, 'cancel');
+  });
+}
+
+/**
+ * 折叠链行（§二.1.1 · 28px）：`▸ 名称 [状态徽标] [内联点图] n/N · 时长 ⏸ ✕`。
+ * 行点击 = 展开/折叠该链（`expandedChains` 记忆）；三钮 stopPropagation（各自语义）。
+ * @param {string} project
+ * @param {{id: string, title: string, memberIds: string[], status?: string, pausedAt?: number|null, cancelledAt?: number|null}} chainMeta
+ * @param {any[]} members @returns {HTMLElement} */
+function buildChainRow(project, chainMeta, members) {
+  const cid = String(chainMeta.id);
+  const expanded = expandedChains.has(cid);
+  const badge = chainBadgeState(chainMeta, members);
+  const { done, total } = chainProgress(members);
+  const title = String(chainMeta.title || cid);
+
+  const row = document.createElement('div');
+  row.className = 'task-chain';
+  row.dataset.chainKey = `${project}:${cid}`;
+  row.dataset.chainId = cid;
+  row.dataset.project = project;
+  row.dataset.chainState = badge;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+
+  const twisty = document.createElement('span');
+  twisty.className = 'task-chain-twisty' + (expanded ? ' is-open' : '');
+  twisty.setAttribute('aria-hidden', 'true');
+  twisty.innerHTML = '<i data-lucide="chevron-right"></i>';
+  row.appendChild(twisty);
+
+  const name = document.createElement('span');
+  name.className = 'task-chain-name';
+  name.textContent = title;
+  row.appendChild(name);
+
+  const badgeEl = document.createElement('span');
+  badgeEl.className = `task-chain-badge s-${badge}`;
+  badgeEl.textContent = t(NODE_BADGE_KEY[badge]);
+  row.appendChild(badgeEl);
+
+  row.appendChild(buildChainDotmap(members));
+
+  const meta = document.createElement('span');
+  meta.className = 'task-chain-meta';
+  const elapsed = chainElapsed(chainMeta, members);
+  meta.textContent = `${done}/${total}${elapsed ? ` · ${elapsed}` : ''}`;
+  row.appendChild(meta);
+
+  const actions = document.createElement('span');
+  actions.className = 'task-chain-actions';
+  const isPaused = badge === 'paused';
+  const isCancelled = badge === 'cancelled';
+  const pauseBtn = buildChainIconBtn(
+    isPaused ? 'play' : 'pause',
+    isPaused ? t('task.chain.resume') : t('task.chain.pause'),
+    'task-chain-btn-pause',
+  );
+  if (isCancelled) pauseBtn.disabled = true;
+  pauseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runChainAction(project, cid, isPaused ? 'resume' : 'pause');
+  });
+  actions.appendChild(pauseBtn);
+  const cancelBtn = buildChainIconBtn('x', t('task.chain.cancel'), 'task-chain-btn-cancel');
+  if (isCancelled) cancelBtn.disabled = true;
+  cancelBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    confirmChainCancel(project, cid, title);
+  });
+  actions.appendChild(cancelBtn);
+  row.appendChild(actions);
+
+  row.title = t('task.chain.rowHint', { chain: title, n: String(total) });
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (expandedChains.has(cid)) expandedChains.delete(cid); else expandedChains.add(cid);
+    rerenderWithNodes();
+  });
+  return row;
+}
+
+/** 展开态下的节点行（§二.1.2 · 22px）：色点 + 名 + 状态 + 时长。点色 = 类型色（单源）。 */
+function buildChainMemberRow(node, project, chainMeta) {
+  const st = String(node.status || 'pending');
+  const cls = NODE_STATUS_CLS[st] || '';
+  const type = nodeTypeOf(node, project);
+  const row = document.createElement('div');
+  row.className = 'task-chain-member' + (cls ? ` task-node-${cls}` : '');
+  row.dataset.nodeKey = `${project}:${node.id}`;
+  row.dataset.project = project;
+  row.dataset.nodeId = String(node.id);
+  row.setAttribute('role', 'button');
+  const wordKey = NODE_WORD_KEY[st];
+  row.setAttribute('aria-label', `${node.name || node.id}${wordKey ? ` — ${t(wordKey)}` : ''}`);
+  row.title = t('project.openFlowMap', { name: project });
+
+  const dot = document.createElement('span');
+  dot.className = `task-chain-dot t-${type}`;
+  dot.setAttribute('aria-hidden', 'true');
+  row.appendChild(dot);
+
+  const label = document.createElement('span');
+  label.className = 'task-chain-member-name';
+  label.textContent = node.name || node.id;
+  row.appendChild(label);
+
+  if (wordKey) {
+    const word = document.createElement('span');
+    word.className = 'task-chain-member-word';
+    word.setAttribute('aria-hidden', 'true');
+    word.textContent = t(wordKey);
+    row.appendChild(word);
+  }
+
+  const ms = nodeTs(node);
+  if (ms > 0) {
+    const time = document.createElement('span');
+    time.className = 'task-chain-member-time';
+    time.setAttribute('aria-hidden', 'true');
+    time.dataset.ts = new Date(ms).toISOString();
+    time.textContent = formatLastActive(time.dataset.ts);
+    row.appendChild(time);
+  }
+
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    import('./projectTab.js').then(({ openProjectFlowMapAt }) => {
+      openProjectFlowMapAt(project, node.id);
+    }).catch(() => {});
+  });
+  return row;
+}
+
+/** 链控件组（折叠行 + 展开时的成员行）。`chainMeta.status` 供徽标/按钮双态判定。 */
+function buildChainBlock(project, chainMeta, members) {
+  const block = document.createElement('div');
+  block.className = 'task-chain-block';
+  block.appendChild(buildChainRow(project, chainMeta, members));
+  if (expandedChains.has(String(chainMeta.id))) {
+    const body = document.createElement('div');
+    body.className = 'task-chain-body';
+    for (const m of members) body.appendChild(buildChainMemberRow(m, project, chainMeta));
+    block.appendChild(body);
+  }
+  return block;
 }
 
 // ── 链徽标（P1 · spec §7-B ⭐ 任务面板标识）──────────────────────────────
@@ -399,7 +758,11 @@ function buildNodeRow(node, project) {
   return row;
 }
 
-/** 节点区块分区装配（独立于 redraw 的 team 分组逻辑）：按项目分组直排。
+/** 节点区块分区装配（chainview 批 2026-10-01 · 链视图）。
+ *  结构：项目分组 → [链块（折叠行 28px；展开=成员行 22px）…] → 「未分组」折叠组（置底）。
+ *  🔴 判据单源：链归属 = 后端下发的 `chainId` + 快照 `chains` 旁挂（前端零派生，spec §7-B
+ *  红线）；`chainId` 存在但链标题缓存未到 ⇒ 回落到「未分组」区（**不臆造链名**，
+ *  快照到达后自然归位）。
  *  2026-09-06 显示优化批：「Flow Map」分区标题元素整体移除（作者 00:35 裁定；
  *  flowmap.title i18n 键保留——Flow Map 标签页域共用）。无节点返回 null。 */
 function buildNodeSection(nodes) {
@@ -418,7 +781,55 @@ function buildNodeSection(nodes) {
     h.className = 'task-node-group-header';
     h.textContent = project;
     group.appendChild(h);
-    for (const { node } of items) group.appendChild(buildNodeRow(node, project));
+
+    // 1) 链块：按链在列表中的首现顺序（列表已按最近活动排序 ⇒ 链序 = 活动序）。
+    const chainsById = chainCache.get(project) || new Map();
+    const byChain = new Map();
+    /** @type {Array<{node: any, project: string}>} */
+    const loose = [];
+    for (const it of items) {
+      const cid = it.node && it.node.chainId ? String(it.node.chainId) : '';
+      if (cid && chainsById.has(cid)) {
+        if (!byChain.has(cid)) byChain.set(cid, []);
+        byChain.get(cid).push(it.node);
+      } else {
+        loose.push(it);
+      }
+    }
+    for (const [cid, members] of byChain) {
+      group.appendChild(buildChainBlock(project, chainsById.get(cid), members));
+    }
+
+    // 2) 未分组折叠组（§二.1.5）：无链节点（含 chainId 未知标题者）收拢，**置底**。
+    //    默认展开（内核/无链实例的面板内容与改动前保持可见——折叠能力保留，行行可见）。
+    if (loose.length > 0) {
+      const isCollapsed = ungroupedCollapsed.has(project);
+      const ung = document.createElement('div');
+      ung.className = 'task-node-ungrouped' + (isCollapsed ? ' is-collapsed' : '');
+      const uh = document.createElement('div');
+      uh.className = 'task-node-ungrouped-header';
+      uh.setAttribute('role', 'button');
+      uh.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+      const twisty = document.createElement('span');
+      // 默认展开 ⇒ twisty 初值即 is-open（与 aria-expanded="true" 同口径）。
+      twisty.className = 'task-chain-twisty' + (isCollapsed ? '' : ' is-open');
+      twisty.setAttribute('aria-hidden', 'true');
+      twisty.innerHTML = '<i data-lucide="chevron-right"></i>';
+      uh.appendChild(twisty);
+      const uhLabel = document.createElement('span');
+      uhLabel.textContent = t('task.chain.ungrouped');
+      uh.appendChild(uhLabel);
+      uh.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const collapsed = ung.classList.toggle('is-collapsed');
+        uh.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        twisty.classList.toggle('is-open', !collapsed);
+        if (collapsed) ungroupedCollapsed.add(project); else ungroupedCollapsed.delete(project);
+      });
+      ung.appendChild(uh);
+      for (const { node } of loose) ung.appendChild(buildNodeRow(node, project));
+      group.appendChild(ung);
+    }
     section.appendChild(group);
   }
   return section;

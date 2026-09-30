@@ -1270,6 +1270,23 @@ export default {
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
   'task.nodeBlocked': 'Blocked',
+  // === Chain view (chain-view compact v2 batch, 2026-10-01 · front-end face,
+  //     §16 draft key table) ===
+  // Five badge states (§II.1.3) + three hover labels + cancel dialog + ungrouped.
+  // 🔴 Final wording is extracted by the verify node and presented to the author
+  //    (this node only drafts against the mockup wording).
+  'task.chain.badge.running': 'Running',
+  'task.chain.badge.paused': 'Paused',
+  'task.chain.badge.completed': 'Done',
+  'task.chain.badge.failed': 'Failed',
+  'task.chain.badge.cancelled': 'Cancelled',
+  'task.chain.pause': 'Pause this chain',
+  'task.chain.resume': 'Resume this chain',
+  'task.chain.cancel': 'Cancel this chain',
+  'task.chain.cancel.title': 'Cancel the whole chain',
+  'task.chain.cancel.confirm': 'Cancel "{chain}"? This cannot be undone — members that have not started will no longer be dispatched.',
+  'task.chain.ungrouped': 'Ungrouped',
+  'task.chain.rowHint': 'Chain "{chain}" ({n} nodes) — click to expand',
   // Generic "Remove" accessible name (visup-b batch: the main window's attachment ❌
   // — the icon-only ❌ carries no text, so it must have an accessible name; kept
   // separate from `ref.remove`, which is the semantic "Remove reference").

@@ -1223,6 +1223,21 @@ export default {
   'task.inProgressShort': '进行中',
   'task.nodePending': '待处理',
   'task.nodeBlocked': '阻塞',
+  // === 链视图（链视图紧凑 v2 批 2026-10-01 · 前端面 §16 草案键表）===
+  // 徽标五态（§二.1.3）+ 悬停三条 + 取消确认框一条 + 未分组一条。
+  // 🔴 定稿由复核位抽取呈作者（本位只按 mockup 措辞起草）。
+  'task.chain.badge.running': '运行',
+  'task.chain.badge.paused': '暂停',
+  'task.chain.badge.completed': '完成',
+  'task.chain.badge.failed': '失败',
+  'task.chain.badge.cancelled': '取消',
+  'task.chain.pause': '暂停该链',
+  'task.chain.resume': '继续该链',
+  'task.chain.cancel': '取消该链',
+  'task.chain.cancel.title': '取消整条链',
+  'task.chain.cancel.confirm': '取消「{chain}」？取消不可逆，链内未起跑节点将不再派发。',
+  'task.chain.ungrouped': '未分组',
+  'task.chain.rowHint': '链「{chain}」（{n} 节点）— 点击展开',
   // 通用「移除」可访问名（visup-b 批：主窗口附件 ❌ 的 aria-label/title —— 图形式 ❌
   // 无文本可读，必须挂可访问名；与 `ref.remove`（语义化「移除引用」）分开）。
   'common.remove': '移除',
