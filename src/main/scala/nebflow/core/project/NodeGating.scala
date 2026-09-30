@@ -216,9 +216,19 @@ private[project] trait NodeGating:
     if !MergeNodePolicy.isMerge(n) then IO.pure(Nil)
     else
       for
-        s <- store.snapshot
+        // 🔴 Data source = the **two-zone combined map**. This gate used to read
+        // `store.snapshot` (active zone only), while `MergeMutexPolicy.upsOf` resolves the
+        // upstreams through `all.get`: once a chain-level sweep moves the upstream into the
+        // archive zone the lookup misses, `readyAt` falls back to `createdAt` (the entry-node
+        // branch) and the rank primary key stops tracking arrival order (fingerprint
+        // `readyAt == createdAt`) — i.e. a later arrival can jump the queue. The combined map
+        // makes this gate share one source with [[depsSatisfied]] (`store.combinedNodes`).
+        // 🔴 Single-predicate discipline: do NOT add a second predicate and do NOT take a
+        // second, active-zone-only snapshot inside this gate.
+        // The `all` passed to `mergeQueueHolders` below is therefore the two-zone map.
+        combined <- store.combinedNodes
         _ <- alarmSameGitDirProjects()
-      yield mergeQueueHolders(n, s.nodes)
+      yield mergeQueueHolders(n, combined)
 
   /**
    * 阻塞清单纯判据（**闸与显示面的共同单点**）：[[MergeMutexPolicy.holders]] 出「同键
