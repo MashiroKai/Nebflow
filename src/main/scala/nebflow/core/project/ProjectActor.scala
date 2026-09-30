@@ -295,6 +295,35 @@ object ProjectActor:
       "archivedAt" -> archivedAt.asJson
     )
 
+  /**
+   * **链控三态帧单点**（chainview 批 2026-10-01）：链 pause / resume / cancel 后广播的
+   * `chainState` 帧 —— 与上文两个项目级帧同族（同一 [[Json]] 构造函数纪律：🔴 禁调用点
+   * 各拼帧形）。推送面复用**既有** `wsHub.broadcast`（REST 腿）与 `engine.wsSendFn`
+   * （引擎腿），🔴 **不自建第二套推送面**。
+   *
+   * 载荷（前端据此刷新链的暂停/取消态，无需重拉快照）：
+   * {{{
+   *   type        : "chainState"
+   *   project     : <string>   项目名
+   *   chainId     : <string>   链号（调用方给的原号，可能是改号前的旧号）
+   *   status      : "active" | "paused" | "cancelled"   （判据单点 ChainLedger.statusOf）
+   *   pausedAt    : <long>|null    仅 paused 态为非 null
+   *   cancelledAt : <long>|null    仅 cancelled 态为非 null
+   * }}}
+   *
+   * 🔴 帧形只**加** `chainId` 一个顶层键（除 `type`/`project` 两个既有外套键）——
+   * 既有 `projectCreated` / `projectArchived` 两帧字节级零改动。
+   */
+  def chainStateFrame(project: String, control: ChainLedger.ChainControl): Json =
+    Json.obj(
+      "type" -> "chainState".asJson,
+      "project" -> project.asJson,
+      "chainId" -> control.chainId.asJson,
+      "status" -> control.status.asJson,
+      "pausedAt" -> control.pausedAt.map(_.asJson).getOrElse(Json.Null),
+      "cancelledAt" -> control.cancelledAt.map(_.asJson).getOrElse(Json.Null)
+    )
+
   enum ProjectCommand:
 
     /**

@@ -83,6 +83,21 @@ object ChainLedger:
   val StatusActive: String = "active"
   val StatusArchived: String = "archived"
 
+  // ── 链控状态（chainview 批 2026-10-01；链控三原语的**状态面**）──────────
+  //
+  // 与上两值同域（同一条链的状态机），但载体不同：`StatusActive` / `StatusArchived`
+  // 由轴(a) 归档绑定写在 **Entry.status**（生命周期），`paused` / `cancelled` 由链控
+  // 三原语写在 **State.pausedChains / cancelledChains**（控制意图）。分开的理由是硬的：
+  // ① Entry 可能**不存在**（链未跑过 reconcile 拍点）⇒ 暂停标志不能寄生在行上；
+  // ② 轴(c) 压缩会把 `Entry.members` 清空（`compacted = true`，载荷下沉冷档）⇒
+  //    挂在行载荷上的成员集会在压缩后消失，暂停闸会**静默失效**；
+  // ③ 控制意图必须比「链的成员集」长寿 —— 链收缩成一个节点、再长回来，暂停不因此丢。
+  /** 链已暂停（settle 派发面短路，见 `NodeEngine.chainGateOf`）。 */
+  val StatusPaused: String = "paused"
+
+  /** 链已取消（级联取消已执行 + 台账留痕；**不可逆**，`resume` 拒绝）。 */
+  val StatusCancelled: String = "cancelled"
+
   // ── 冷档轮类型（留痕形态判据）────────────────────────
   /** 轴(c)：载荷搬迁（热行保留身份，`members` 清空 + `compacted=true`）。 */
   val RoundCompact: String = "compact"
@@ -213,12 +228,109 @@ object ChainLedger:
     /** 外部引用面已计的增量（`noteReference` 写入；面登记见 [[ReferenceFaces]]） */
     externalRefs: Map[String, Int] = Map.empty,
     /** 压缩/退役/离场轮清单（append-only，按轮号升序） */
-    rounds: List[RoundManifest] = Nil
+    rounds: List[RoundManifest] = Nil,
+    /**
+     * **链控 · 已暂停链**（chainId → 暂停时刻；chainview 批）。链控三原语的状态面
+     * （头注见 [[StatusPaused]]）：命中的链**零后续节点派发**（闸 = [[stateOf]] 的
+     * `paused` ⇒ `NodeEngine.chainGateOf`），运行中节点跑完自然停（🔴 禁「暂停即杀
+     * 运行中节点」——那是 cancel 的语义）。
+     *
+     * 🔴 与「条目」分开存（呼应 [[StatusPaused]] 头注）：未 reconcile 的链没有条目，
+     * 压缩会清空条目载荷 ⇒ 控制意图不能寄生在 `Entry` 上。键 = **稳定链号**（出生即定、
+     * 永不重归；改号经 `aliases` 解析，调用方先过 [[resolve]] 再落键）。
+     *
+     * 不进 [[Totals]] ⇒ `roundConservation` / `verifyLedger` 结构性不受影响（读数面
+     * 只量 entries / aliases）。
+     */
+    pausedChains: Map[String, Long] = Map.empty,
+    /**
+     * **链控 · 已取消链**（chainId → 取消时刻；chainview 批）。留痕面：取消语义**全部**
+     * 由既有 `NodeEngine.cancelChain` 承担（级联闭包 / 通知 / 审计），本表只记「这条链
+     * 被链级取消过」这个**意图事实**，供 REST/WS 三态读数与「resume 对已取消链拒绝」
+     * 的判据。状态投影优先级见 [[stateOf]]（cancelled > paused > active）。
+     */
+    cancelledChains: Map[String, Long] = Map.empty
   )
 
   object State:
     given Configuration = Configuration.default.withDefaults
     given Codec[State] = ConfiguredCodec.derived
+
+  // ── 链控状态投影（chainview 批 2026-10-01；**判据单点**）────────────────
+  //
+  // 三态（active / paused / cancelled）是**投影**，不是第三张表：真源只有
+  // [[State.pausedChains]] 与 [[State.cancelledChains]] 两张时刻表，优先级
+  // cancelled > paused > active（已取消链即便残留暂停键也报 cancelled —— 取消是
+  // 不可逆的终局意图，见 [[NodeCanceller.cancelChainAndRecord]] 的写点）。
+  //
+  // 🔴 派发闸**只认本单点**（[[blocksDispatch]]）：settle sweep / barrier 结算 /
+  // 启动收口三处都不得另写 `pausedChains.contains(...)` 式的第二判据（先例：
+  // `DocIndexConsumer` 头注「同一条链在两处各派生一次 = 必然漂移」）。
+
+  /** 已取消链 → 取消时刻（别名逐跳解析；查无 ⇒ `None`）。 */
+  def cancelledAtOf(st: State, chainId: String): Option[Long] =
+    st.cancelledChains.get(canonicalKey(st, chainId))
+
+  /** 已暂停链 → 暂停时刻（别名逐跳解析；查无 ⇒ `None`）。 */
+  def pausedAtOf(st: State, chainId: String): Option[Long] =
+    st.pausedChains.get(canonicalKey(st, chainId))
+
+  /**
+   * 链控三态投影（**判据单点**）：`cancelled` > `paused` > `active`。
+   * 别名（改号遗留旧号）先经 [[resolve]] 折到稳定链号再查表 —— 改号后旧号照样报对态。
+   */
+  def statusOf(st: State, chainId: String): String =
+    val cid = canonicalKey(st, chainId)
+    if st.cancelledChains.contains(cid) then StatusCancelled
+    else if st.pausedChains.contains(cid) then StatusPaused
+    else StatusActive
+
+  /**
+   * **派发闸判据单点**：本链当前是否短路后续节点派发（`paused` ∨ `cancelled`）。
+   * 回调方据此跳过启动 —— 🔴 **静默跳过、零日志**（复用了 `logMutexHold` 之类的
+   * 停等留痕会把日志行混进暂停链的装配文本；「暂停」是用户显式意图，不是异常态，
+   * 其可见性由 REST/WS 三态面承担，不由引擎事件流承担）。
+   */
+  def blocksDispatch(st: State, chainId: String): Boolean =
+    val s = statusOf(st, chainId)
+    s == StatusPaused || s == StatusCancelled
+
+  /** 链号规范化键（查表用）：可解析 ⇒ 稳定链号；查无（未出生/无条目）⇒ 原文 trim。 */
+  private def canonicalKey(st: State, chainId: String): String =
+    resolve(st, chainId).getOrElse(chainId.trim)
+
+  /** 写入/清除控制意图（**纯函数**；落盘由 `ChainLedgerStore.setChainControl` 承担）。 */
+  def withChainControl(st: State, chainId: String, status: String, now: Long): State =
+    val cid = canonicalKey(st, chainId)
+    status match
+      case StatusCancelled =>
+        st.copy(
+          updatedAt = now,
+          cancelledChains = st.cancelledChains.updated(cid, now),
+          pausedChains = st.pausedChains - cid
+        )
+      case StatusPaused => st.copy(updatedAt = now, pausedChains = st.pausedChains.updated(cid, now))
+      case _            => st.copy(updatedAt = now, pausedChains = st.pausedChains - cid)
+
+  /**
+   * **链控状态读数载体**（chainview 批 2026-10-01）：链控三原语的返回面 / REST 响应体 /
+   * WS 帧载荷的**同一份**状态投影（判据单点 [[State.statusOf]]；禁调用点各自拼）。
+   *
+   * @param chainId     调用方给出的链号（原样回显；可能是改号前的旧号）
+   * @param status      `active` | `paused` | `cancelled`（投影，见 [[StatusPaused]] 头注）
+   * @param pausedAt    暂停时刻（`status=paused` 时有值）
+   * @param cancelledAt 取消时刻（`status=cancelled` 时有值）
+   */
+  final case class ChainControl(
+    chainId: String,
+    status: String = StatusActive,
+    pausedAt: Option[Long] = None,
+    cancelledAt: Option[Long] = None
+  )
+
+  object ChainControl:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[ChainControl] = ConfiguredCodec.derived
 
   /**
    * **归属变更留痕**（字段与批一 `ChainMembershipChangedType` 逐字同构：节点 id + 旧号 +

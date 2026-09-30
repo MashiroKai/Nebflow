@@ -116,14 +116,36 @@ private[project] trait NodeStarter:
                     // 同样被本收口点挡住（「不通过」结论不得作为正向交付补投下游）。旧形态
                     // （越闸启动）此后**结构性不可能**：若仍发生，[[logVerdictGateBreach]] 会
                     // 单发一行回退告警（不变式告警，与闸共用 staleVerdictUps 单点）。
-                    mergeVerdictHoldersOf(node).flatMap { holders =>
-                      if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
-                      else
-                        logVerdictGateBreach("startNode", node) *>
-                          mergeMutexHoldersOf(node).flatMap { queued =>
-                            if queued.nonEmpty then logMutexHold("startNode", node, queued)
-                            else pastVerdictGate
-                          }
+                    // chainview 批 2026-10-01：**链控闸**逐字接在同一收口点**最前**（闸序 =
+                    // 链控 → verdict → 互斥；链控是**用户显式意图**，优先级高于两个自动停等闸
+                    // ——暂停链上的节点不该被记进 verdict/mutex 的停等留痕）。命中 ⇒ 静默
+                    // `IO.unit`：零日志、零事件、零状态写（可见性由 REST/WS 三态面承担，
+                    // 见 `NodeCanceller.chainGateOf` 头注）。
+                    chainGateOf(node.id).flatMap {
+                      case Some(_) => IO.unit
+                      case None =>
+                        // verdict 闸收口（merge-verdict-gate 批 2026-09-12）——**单权威落点**：
+                        // 全部启动入口（barrier 结算 settleTo / settleDeps 反结算 / 重激活补投
+                        // redeliverInAndStart / D1 补投 / settleRunnableSweep 资格回扫 / crash-recovery
+                        // 续跑 / 直接调用）都汇到本函数，闸在此处即对全部入口生效（与上方 deps/barrier
+                        // 「单闸门自动保护全部启动入口」同款纪律）。命中 ⇒ 零动作返回：节点保持
+                        // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
+                        // mergefifo-engine 批 2026-09-13：**互斥闸**逐字接在同一收口点之后（先 verdict
+                        // 后互斥，与设计件 §7.2 状态机同序；verdict 闸判据/留痕零改动）。
+                        // engine-defects 批 #238（2026-09-15）：**闸面泛化**——判据不再按 merge 分叉
+                        // ⇒ 非 merge 收口位（O-1 缝：`bpm-verify`(fail) → `bpm-report`(merge=False)）
+                        // 同样被本收口点挡住（「不通过」结论不得作为正向交付补投下游）。旧形态
+                        // （越闸启动）此后**结构性不可能**：若仍发生，[[logVerdictGateBreach]] 会
+                        // 单发一行回退告警（不变式告警，与闸共用 staleVerdictUps 单点）。
+                        mergeVerdictHoldersOf(node).flatMap { holders =>
+                          if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
+                          else
+                            logVerdictGateBreach("startNode", node) *>
+                              mergeMutexHoldersOf(node).flatMap { queued =>
+                                if queued.nonEmpty then logMutexHold("startNode", node, queued)
+                                else pastVerdictGate
+                              }
+                        }
                     }
             }
     }
