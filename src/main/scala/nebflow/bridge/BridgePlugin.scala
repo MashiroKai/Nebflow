@@ -1,7 +1,8 @@
 package nebflow.bridge
 
 import cats.effect.IO
-import io.circe.Json
+import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.shared.SessionMeta
 
 /**
@@ -93,11 +94,63 @@ object BridgeOrigin:
        |以下消息来自${origin.channelDisplay}（社交接口 · 渠道 ${origin.channelId}）· 发送方：$sender · 会话：$chat
        |$MarkerClose""".stripMargin
 
-  /** Compose the injected string: **marker block (1) then content (2/3)**, one
-    * blank line between them — the composition order the inbound-parse design
+  /** Compose the **model-context** string: **marker block (1) then content (2/3)**,
+    * one blank line between them — the composition order the inbound-parse design
     * card fixes at §10.4. `None` origin leaves the content byte-identical to the
-    * pre-batch behaviour. */
+    * pre-batch behaviour.
+    *
+    * 🔴 **This is the MODEL face, never the session-display face** (source-marker
+    * relocation batch, 2026-10-01). The rendered value carries the marker block
+    * and is only ever allowed to reach the agent's context (the `ExternalEvent`
+    * payload). The string a session record or a `bridgeUser` frame carries is
+    * [[BridgeMessageFaces.sessionDisplay]] — the bare content. An earlier revision
+    * fed this same value to both faces, which is the reported defect (the author
+    * saw the marker rendered inside the chat stream: 「现在飞书消息的 system
+    * reminder 会在会话消息中显示，system reminder 永远不显示在会话中」). Callers
+    * must go through [[faces]], which keeps the two apart by construction. */
   def compose(origin: Option[BridgeOrigin], senderId: Option[String], content: String): String =
     origin.map(o => marker(o, senderId) + "\n\n" + content).getOrElse(content)
+
+  /** The structured origin fields that ride along in the event `metadata`. The
+    * `senderId` key is the pre-existing contract and is emitted in both modes
+    * (including `None` values), so an `origin = None` injection produces a
+    * byte-identical metadata object. An announced origin adds the channel id, the
+    * human display label and — only when it is non-blank — the conversation
+    * reference; a blank reference adds no key rather than a guessed name. */
+  def originMetadata(origin: Option[BridgeOrigin], senderId: Option[String]): JsonObject =
+    val base = JsonObject("senderId" -> senderId.asJson)
+    origin.fold(base) { o =>
+      val withChannel =
+        base.add("channelId", o.channelId.asJson).add("channelDisplay", o.channelDisplay.asJson)
+      o.chatRef
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .fold(withChannel)(chat => withChannel.add("chatRef", chat.asJson))
+    }
+
+  /** One inbound message split into the faces it is allowed to appear on.
+    *
+    *   - [[sessionDisplay]] — the session display face: the `.ui.json` row and the
+    *     `bridgeUser` broadcast. Bare content, marker-free by construction.
+    *   - [[modelPayload]] — the model-context face: the `ExternalEvent` payload,
+    *     marker retained so the model keeps its source attribution.
+    *   - [[metadata]] — the structured origin, for later faces to consume.
+    *
+    * `origin = None` (the default, and every channel that does not announce
+    * itself) leaves all three byte-identical to the pre-batch values. */
+  final case class BridgeMessageFaces(
+      sessionDisplay: String,
+      modelPayload: String,
+      metadata: JsonObject
+  )
+
+  /** Split one injected message at the single seam, so the two faces can never be
+    * conflated again: the marker goes to the model and only to the model. */
+  def faces(origin: Option[BridgeOrigin], senderId: Option[String], content: String): BridgeMessageFaces =
+    BridgeMessageFaces(
+      sessionDisplay = content,
+      modelPayload = compose(origin, senderId, content),
+      metadata = originMetadata(origin, senderId)
+    )
 
 end BridgeOrigin

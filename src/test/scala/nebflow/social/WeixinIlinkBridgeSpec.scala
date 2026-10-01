@@ -49,7 +49,8 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       extends BridgeContext:
     val injected: Ref[IO, List[(String, String, Option[String])]] =
       Ref.unsafe[IO, List[(String, String, Option[String])]](Nil)
-    def injectMessage(sessionId: String, content: String, senderId: Option[String]): IO[Unit] =
+    def injectMessage(sessionId: String, content: String, senderId: Option[String],
+        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
       if raiseOnInject then IO.raiseError(new RuntimeException("injected: peer leg failed"))
       else injected.update(_ :+ ((sessionId, content, senderId)))
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
