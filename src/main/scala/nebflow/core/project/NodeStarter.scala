@@ -431,7 +431,8 @@ private[project] trait NodeStarter:
    * 判定点是 NodeEdit 落库时刻，一次性；落库之后对该节点的开关变更无效。作者的关闭
    * 动作走派发面（`plugins.dispatch`），内容面不动 ⇒ 本函数对已派发节点**零影响**。
    * 要收回已派发的包，用封禁（`POST /api/plugins/:name/revoke`，会停用运行中 MCP）。
-   * 闸 A（新派发）在 `NodeTools.dispatchFaceCheck`；闸 D 在 `PluginMcpManager.revalidate`。
+   * 闸 A（新派发）在 `NodeEditTool.dispatchFaceCheck`（旧文件名 `NodeTools` 系 PR#48
+   * 文件拆分前的引用，已订正）；闸 D 在 `PluginMcpManager.revalidate`。
    */
   private def prepareNodePlugins(node: NodeDef): IO[Either[String, NodeEngine.PluginPreparation]] =
     PluginsConfig.enabled.flatMap {

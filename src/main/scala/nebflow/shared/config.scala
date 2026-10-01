@@ -174,6 +174,64 @@ object SearchConfig:
   given Decoder[SearchConfig] = deriveDecoder[SearchConfig]
 
 /**
+ * JeV decision-allocation config — the top-level `jev` block of nebflow.json
+ * (JeV integration Face A / P1-A2; form precedent = [[SearchConfig]] above).
+ *
+ *   "jev": { "enabled": true, "provider": "typesafe-jev",
+ *            "endpoint": "https://api.typesafe.ai/v1/systemone",
+ *            "model": "jev-latest", "keyRef": "typesafe-api-key",
+ *            "timeoutMs": 15000, "choiceHighBasePolicy": "warn" }
+ *
+ * ==Every field is optional ON PURPOSE==
+ * `SearchConfig` requires `provider` + `apiKey`, so a partially written
+ * `search` block fails to decode. The `jev` block must not repeat that: the
+ * seed can write a partial block (e.g. only `{"enabled":true}`) during a cold
+ * start, and a decode failure there would send `GatewayMain` down the
+ * crash-recovery path and restore a `{}` snapshot — the exact failure mode the
+ * `ensureLlmDefaults` note on [[NebflowServiceConfig]] documents for `llm`.
+ * With everything optional, a partial/seed block decodes to its defaults and
+ * the absence of the whole block decodes to `None`.
+ *
+ * ==Graceful degrade (zero migration)==
+ * `enabled=false`, or a missing/empty `keyRef`, or a `keyRef` that resolves to
+ * no readable secret all mean "the face is skipped" — existing users need no
+ * migration, exactly as with `search`.
+ *
+ * @param keyRef
+ *   NAME of a secret under `~/.nebflow/secrets/` (the social/daemon reference
+ *   form: the config stores a POINTER, never a value). Being a pointer rather
+ *   than a credential, it is intentionally NOT matched by
+ *   `ConfigService.sensitiveKeyPattern`; the pattern still covers any key
+ *   adjacent to it that WOULD carry a value (e.g. `apiKey`).
+ * @param timeoutMs
+ *   ALLOCATION-CALL deadline (how long dispatch waits for a decision before
+ *   falling back). This is a DIFFERENT axis from the R6 tool-authorization
+ *   budget (`Delegate.timeout` -> `Defaults.declaredToolTimeoutMs`), which is
+ *   the blocking-tool judgement window. Do not conflate the two.
+ * @param choiceHighBasePolicy
+ *   What to do when a choice question exceeds the provider's precision range
+ *   (LAYA degrades above ~20 options). Carried as an opaque policy string for
+ *   now: it feeds a WARNING in the adaptation layer, and promoting it to a
+ *   typed enum would fix a product decision that is still open.
+ */
+case class JevConfig(
+  enabled: Option[Boolean] = None,
+  provider: Option[String] = None,
+  endpoint: Option[String] = None,
+  model: Option[String] = None,
+  keyRef: Option[String] = None,
+  timeoutMs: Option[Long] = None,
+  choiceHighBasePolicy: Option[String] = None
+):
+  /** Toggle semantics: absent means OFF is the SAFE default for a face that
+    * sends node task text off-machine. (Contrast `plugins.enabled`, which
+    * defaults true — there the safe direction is the other way.) */
+  def isEnabled: Boolean = enabled.getOrElse(false)
+
+object JevConfig:
+  given Decoder[JevConfig] = deriveDecoder[JevConfig]
+
+/**
  * Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
  * independently optional; None → Defaults. Applied at boot (LlmInterface
@@ -279,7 +337,15 @@ case class NebflowServiceConfig(
     * 现读唯一消费者 = `DaemonPanelSchema.allowWeb`：`kind:"web"` 逃生口**默认
     * 关闭**，只有本节显式 `{"allowWeb":true}` 才生效（缺省/非法 ⇒ 拒绝，fail-closed）。
     * 开关本身是作者动作，agent 改它会留下可见 diff。无效值不影响其它键解码。 */
-  daemonPanel: Option[io.circe.Json] = None
+  daemonPanel: Option[io.circe.Json] = None,
+  /**
+   * JeV 决策分配面（Face A / P1-A2）的顶层 `jev` 节——见 [[JevConfig]]。
+   * `None` = 未配置 ⇒ 整个面短路走现行路径（零迁移）；本节**全字段可选**，
+   * 种子中间态（只落 `{"enabled":true}` 等半节）解码为缺省而非抛
+   * `Missing required field` ⇒ 防 GatewayMain 走 crash-recovery 用 `{}` 快照
+   * 打回（同 `llm` 节的既有教训）。
+   */
+  jev: Option[JevConfig] = None
 )
 
 object NebflowServiceConfig:

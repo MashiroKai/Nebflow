@@ -223,6 +223,63 @@ object ConfigService:
   private val sensitiveKeyPattern = "(?i)(api[_-]?key|secret|app[_-]?secret|encrypt[_-]?key|token|password)".r
 
   /**
+   * 定向写顶层 `jev` 节（JeV 决策分配面，Face A / P1-A3）。
+   *
+   * 形态照 [[setLlmLogEnabled]]：整体包在 `writeLocked` 内与其它
+   * read-modify-write 写者串行；只覆写调用方显式给出的键（**`None` 的键原样
+   * 保留**，本节无其它写者）；写盘走既有 [[nebflow.core.AtomicJson]]；失败
+   * **上浮**（fail-loud）。
+   *
+   * 🔴 凭据纪律：`keyRef` 是 secrets 目录里的**名**（指针），**不是**凭据值。
+   * 故本条**允许**携带 `keyRef`；若将来本面真的收值型凭据键，须先过
+   * `sensitiveKeyPattern` 遮蔽与 `"***"` 保留规则（见 [[mergeConfig]]），
+   * 🔴 本函数当前**不**接受值型凭据（无 `apiKey` 入参，形态上不可表达）。
+   *
+   * @param values
+   *   键名 → JSON 值（值必须已是 JSON；`None` 键不动）。调用方只能给
+   *   [[JEV_WRITABLE_KEYS]] 里的键，越界键被拒（防错键静默写入）。
+   */
+  def setJevSection(values: Map[String, Json]): IO[Either[String, Unit]] =
+    val unknown = values.keySet.diff(JEV_WRITABLE_KEYS.toSet)
+    if unknown.nonEmpty then
+      IO.pure(Left(s"jev section write refused — unknown key(s): ${unknown.toList.sorted.mkString(", ")}"))
+    else if values.isEmpty then IO.pure(Left("jev section write refused — no keys given"))
+    else
+      writeLocked {
+        IO.blocking {
+          val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+          parse(existing) match
+            case Left(err) =>
+              Left(s"nebflow.json unparseable — refusing to rewrite for jev update: ${err.message}")
+            case Right(parsed) =>
+              val section = parsed.hcursor
+                .downField(JEV_SECTION)
+                .focus
+                .flatMap(_.asObject)
+                .getOrElse(JsonObject.empty)
+              val updatedSection = values.foldLeft(section) { case (acc, (k, v)) => acc.add(k, v) }
+              val updated = parsed.mapObject(_.add(JEV_SECTION, Json.fromJsonObject(updatedSection)))
+              AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+              Right(())
+        }
+      }
+
+  /** 顶层节名（写侧单点，避免字符串散落）。 */
+  private val JEV_SECTION = "jev"
+
+  /**
+   * `jev` 节可写键白名单。
+   *
+   * 🔴 `keyRef` 在册（指针形态）；**值型凭据键一律不在册**——本白名单同时是
+   * 「本面不收凭据值」的机械表达（缺键 ⇒ 写入被拒）。
+   */
+  private val JEV_WRITABLE_KEYS: List[String] =
+    List("enabled", "provider", "endpoint", "model", "keyRef", "timeoutMs", "choiceHighBasePolicy")
+
+  /** 只读回程：过滤掉任何可能含凭据值的键（本面当前无此类键，作为结构性护栏）。 */
+  def jevWritableKeys: List[String] = JEV_WRITABLE_KEYS
+
+  /**
    * Deep-merge incoming config into existing file.
    *
    * Merge rules:
