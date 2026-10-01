@@ -559,7 +559,27 @@ private[project] trait NodeCompletion:
               "payload / NodeList); until the deps ref is fixed this node can never start (fail-closed, no silent settle)"
           )
         )
-      else mountStallReasonOf(n, now, (n.in ++ targets.ids ++ n.pendingSuccession).distinct)
+      else
+        // 判据 D（死链；案 b 文案分支）：链号**可解析**但成员集含不可挽回成员（`cancelled`）
+        // ⇒ 闸**构造性不可满足**、**永不结算**。既有文案只把成员列成 `'name'(id):status`
+        // （数据在列、**结论不在**，且 `blocked` 与 `cancelled` 在文案上同形）⇒ 读者必须自行
+        // 推断「这是死链」。本分支**纯追加子串**：既有前缀逐字保留，只在尾部补一句可判读结论
+        // （结论词 `constructively unsatisfiable` + 点名成员 id/状态 + 可行动指引）。判据源 =
+        // 同一解析单点（零第二解析器）；只认 `cancelled`（`failed` 可重激活 ⇒ 不构成死链）。
+        val deadNote =
+          if targets.deadChainRefs.isEmpty then ""
+          else
+            val named = targets.deadChainRefs.toList
+              .sortBy(_._1)
+              .map((cid, ids) =>
+                s"chain '$cid' ({${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}})"
+              )
+              .mkString("; ")
+            s", deps chain ref(s) are constructively unsatisfiable: $named — `cancelled` is a " +
+              "non-reactivatable terminal (the gate waits for EVERY member to be completed), so this " +
+              "gate will never settle; rewire the deps ref to a completion FACT ANCHOR (literal member " +
+              "ids that already carry the landing fact) or drop the ref"
+        mountStallReasonOf(n, now, (n.in ++ targets.ids ++ n.pendingSuccession).distinct).map(_.map(_ + deadNote))
     }
 
   /**

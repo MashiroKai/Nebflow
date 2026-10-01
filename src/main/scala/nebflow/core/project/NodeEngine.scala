@@ -581,6 +581,14 @@ class NodeEngine(
     Ref.unsafe[IO, Map[String, List[String]]](Map.empty)
 
   /**
+   * 死链 / RISKY 链引用**单发记账**（nodeId → 上次留痕的文案）：`depsSatisfied` 在资格回扫 /
+   * 启动腿被高频调用，而判据是**声明式状态查询**（幂等）⇒ 无去重会每次调用都打一行。
+   * 与 [[verdictGapLogged]] 同款形态（`deps` 文案变化时再留一条，同形态不刷屏）。
+   */
+  private[project] val deadChainWarned: Ref[IO, Map[String, String]] =
+    Ref.unsafe[IO, Map[String, String]](Map.empty)
+
+  /**
    * 同键多项目告警单发记账（mark = 他项目名清单；进程内、每挂载一份——只防 30 s
    * 节拍刷屏，不承担持久幂等）。
    */

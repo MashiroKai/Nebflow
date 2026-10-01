@@ -27,13 +27,53 @@ private[project] trait NodeGating:
           s"[$projectName] node '${node.name}' (${node.id}) deps=[${node.deps.mkString(",")}] carries " +
             s"unresolvable chain reference(s) [${targets.unknownChainRefs.mkString(",")}] — the dependency can never " +
             "satisfy (fail-closed); fix the deps ref (chains come from the Flow Map `chains[]` payload)"
-        )
-        IO.pure(false)
+        ).as(false)
       else
-        targets.ids
-          .traverse(store.findNode)
-          .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
+        // 判据 D（死链；案 b 运行期可见面）：链号**可解析**但成员含 `cancelled` ⇒ 闸**构造性
+        // 不可满足**。**判据零变化**（下方 `forall(completed)` 早已返回 false）；本分支只补
+        // **点名面**：既有 `unknownChainRefs` 分支不覆盖该形态 ⇒ 否则该形态在启动闸上**静默**。
+        // 🔴 **带单发去重**（复用 [[verdictGapLogged]] 式 `Ref[IO, Map]` 记账，见 [[deadChainWarned]]）
+        // ——既有 `unknownChainRefs` 分支本就无去重（逐次调用逐次 WARN），是既有隐患；本分支
+        // **不继承**该隐患（`depsSatisfied` 在资格回扫/启动腿被高频调用 ⇒ 无去重会刷屏）。
+        // RISKY 档（`failed` 成员）同源并列：**放行**（下方判定照旧，可重激活）+ 一条警告，
+        // 🔴 **禁**在此硬拒（那会封死自愈路）。
+        val deadNote = deadChainRefNote(node, targets)
+        val warnDead: IO[Unit] =
+          if deadNote.isEmpty then IO.unit
+          else
+            deadChainWarned
+              .modify(m => if m.get(node.id).contains(deadNote) then (m, false) else (m.updated(node.id, deadNote), true))
+              .flatMap(first => if first then logger.warn(s"[$projectName] node '${node.name}' (${node.id}) $deadNote") else IO.unit)
+        warnDead *>
+          targets.ids
+            .traverse(store.findNode)
+            .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
     }
+
+  /**
+   * 死链 / RISKY 链引用的**单点文案**（运行面 WARN 与 [[NodeTools.chainRefDeadError]] 同口径）。
+   * 空串 = 无该形态。判据源 = [[FlowMapStore.resolveDepTargets]] 的第三/第四桶（唯一解析点）。
+   */
+  private[project] def deadChainRefNote(node: NodeDef, targets: FlowMapStore.DepTargets): String =
+    val parts = scala.collection.mutable.ListBuffer.empty[String]
+    if targets.deadChainRefs.nonEmpty then
+      val named = targets.deadChainRefs.toList
+        .sortBy(_._1)
+        .map((cid, ids) => s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}")
+        .mkString("; ")
+      parts +=
+        (s"deps chain ref(s) are constructively unsatisfiable: $named — `cancelled` is a non-reactivatable terminal " +
+          "(the gate waits for EVERY member to be completed), so this dependency can NEVER be satisfied; rewire the deps " +
+          "ref to a completion FACT ANCHOR (literal member ids that already carry the landing fact) or drop the ref")
+    if targets.riskyChainRefs.nonEmpty then
+      val named = targets.riskyChainRefs.toList
+        .sortBy(_._1)
+        .map((cid, ids) => s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Failed}").mkString(", ")}")
+        .mkString("; ")
+      parts +=
+        (s"deps chain ref(s) are RISKY: $named — `failed` members block the gate until they are re-activated (failed IS " +
+          "reactivatable, so this is NOT a dead ref); re-activate them or rewire to a completion fact anchor")
+    if parts.isEmpty then "" else s"deps=[${node.deps.mkString(",")}] ${parts.mkString("; ")}"
 
   // ── verdict 闸（merge-verdict-gate 批 2026-09-12 作者裁定；**engine-defects #238 泛化
   //    2026-09-15**：闸面从「仅 merge 节点」扩到**全部收口位**）────────────────────────
