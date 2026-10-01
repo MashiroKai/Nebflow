@@ -80,11 +80,74 @@
 //    mechanical probe triples stop rendering as field names — the card shows
 //    a plain-language credential state. Flipped anchors, each red-proven
 //    against the pre-change tree (SOCIAL_SUITE=after + SOCIAL_WEB_ROOT):
-//    W4's control face ([data-scan-inline] / [data-archive]), W14's fill flow
+//    W4's control face (the in-card block / [data-archive] — an ATTRIBUTE then,
+//    the `.social-scan-inline` container class since the socpanel-min wave-2
+//    removed that attribute), W14's fill flow
 //    (replaced by the in-card scan flow SF-1), FB1/FB2 (form fields flip to
 //    absence), W16 B-3/B-6 (form geometry → in-card QR geometry), SF-3
 //    (retired faces stay retired). BEFORE / FIXTURE / RED-FILTER keep their
 //    original judgement.
+//
+// 🔴 SOCPANEL-MIN (author ruling 2026-10-01): the created face's SESSION-
+//    BINDINGS display block is removed — the chat→session list (contract C3)
+//    and the default-session control (contract C4's rendered half) no longer
+//    render. Binding BEHAVIOUR is untouched: routing, the fixed Nebula pin and
+//    the boot-time convergence write-back ([[pinDefaultSessions]] →
+//    [[saveDefaultSession]] PUT) all stay. Flipped anchor: SF-1c's `bindings`
+//    leg, which asserted the block's PRESENCE and now asserts its ABSENCE (red
+//    on the pre-change tree, where a created card always renders
+//    `[data-bindings]` — see the judgement comment at the assertion).
+//    New anchors, all in [[minSuite]] on a created card with a full mock
+//    backend: MIN-A1/A2/A3 (the removed surface is absent from the DOM and its
+//    copy from the rendered text; the vocabulary is read from the repo locale
+//    tables, never hard-coded) and MIN-B1 (behaviour invariance: a backend
+//    holding a NON-Nebula default session still gets converged onto the Nebula
+//    id by exactly the same PUT). MIN-A* are RED on the pre-change tree;
+//    MIN-B1 is expected GREEN on BOTH trees — it is the control that says the
+//    removal was display-only.
+//
+// 🔴 SOCPANEL-MIN WAVE-3 (author ruling #442, 2026-10-01: "clear all 11, in the
+//    same branch, riding the existing verify/sink program"): the 11 locale keys
+//    the wave-2 minimal-face removals ORPHANED are deleted from BOTH tables —
+//    `social.channels.title`, `social.credential.ok`, and the nine
+//    `social.feishu.live.*` keys (title/appUnknown/fingerprint/fpMatch/
+//    fpMismatch/fpUnknown/bridge/bridgeOn/bridgeOff). Same governance reading the
+//    K-group applied to its own 8 direct siblings: the row that consumed the copy
+//    is gone, so the key has no consumer left. Removal only — ZERO new copy
+//    (AGENTS §16), 0 inserted lines in both tables.
+//    New anchors: [[MIN-K2]] — ONE PER KEY (11), each asserting absence on BOTH
+//    the SERVED and the REPO locale faces; plus [[MIN-K2P]] (symmetric deletion,
+//    0 carrier lines per table). All RED on the pre-change tree.
+//
+// 🔴 WHY THE A6/A7 NEEDLES ARE NOW FROZEN LITERALS ([[RETIRED_W3_COPY]]): three
+//    of the 11 deleted keys were in use AS LIVE NEEDLES by the wave-2 anchors
+//    (`A6_LABEL`/`A6_UNKNOWN`/`A7_TITLE`, read as `ZH[k] || EN[k] || ''`).
+//    After the deletion those reads yield `''` — and the empty string is
+//    contained in EVERY string, so `text.includes(A6_UNKNOWN)` becomes `true`
+//    unconditionally while `!text.includes(A7_TITLE)` becomes `false`
+//    unconditionally. The anchors would not merely weaken, they would INVERT;
+//    MIN2-0 is the guard that catches it. This is not a hypothetical: the
+//    mutation is recorded in `.nebflow/evidence/20261001_socpanel-min/
+//    mutation-vacuity-proof.txt` (reverting the three constants to the live-read
+//    form turns MIN2-0 / MIN2-A6 / MIN2-A6b / MIN2-A7 red — 120/124).
+//    The values were captured from the merge-base tree just before deletion and
+//    are the zh-CN readings, which is what `ZH[k] || EN[k]` resolved to on every
+//    leg of this suite (all of them boot with `locale: 'zh-CN'`), so the
+//    judgement carried by those four anchors is unchanged.
+//
+// 🔴 WHY MIN-K2 ASSERTS ON THE SERVED FACE, NOT ONLY THE IMPORTS: `ZH`/`EN` are
+//    imported from `REPO_WEB` — the tree this SPEC file lives in. On a RED leg
+//    (new spec, pre-change served tree) the repo tables ALREADY carry the
+//    deletion, so a table-only check like `!(k in ZH) && !(k in EN)` passes on
+//    BOTH trees and can never go red. The served half is what gives the anchor
+//    teeth; the repo half is kept because it is the deployment reading a reviewer
+//    wants. MIN-K1 (wave-2) takes the same shape for the same reason.
+//
+//    Pending (registered, NOT changed this round): `js/socialPanel.js:111`
+//    still NAMES `social.feishu.live.appUnknown` inside a comment. It is a
+//    source-comment face, not rendered and not read by any check — the wave-3
+//    brief explicitly leaves it alone and asks for it to be registered instead.
+//    It is reported as 「注释面待清」 for a separate ruling.
 //
 // Run:
 //   node tests/social-panel.spec.mjs
@@ -101,7 +164,12 @@
 //      (SOCIAL_SUITE only SELECTS which suite runs; SOCIAL_WEB_ROOT still says
 //       which tree is served. Without it, SOCIAL_WEB_ROOT implies BEFORE, whose
 //       suite is red-by-absence and never reaches the flipped assertions — see
-//       the note on MODE below.)
+//       the note on MODE below.) The socpanel-min batch's RED leg is the same
+//       command with its own snapshot dir:
+//   SOCIAL_SUITE=after SOCIAL_WEB_ROOT=/tmp/nb-socmin-baseline/web \
+//     SOCIAL_SHOT_DIR=/tmp/nb-socmin-red node tests/social-panel.spec.mjs
+//      (SF-1c's flipped leg + MIN-A1/A2/A3 must FAIL there; MIN-B1 must PASS
+//       there — it is the behaviour-invariance control, not a flipped anchor.)
 
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
@@ -675,12 +743,20 @@ async function afterSuite(browser, base) {
               // keeps icon + name + status and carries NO switch — enabled=false
               // IS the archive, so the card has no `.nb-toggle` anywhere; its
               // state control lives in the card body — social-fix 2026-09-28:
-              // the in-card QR block ([data-scan-inline], not-created) or the
-              // archive button ([data-archive], created). Plain cards keep the
-              // head switch; sealed channels never render.
+              // the in-card QR block (not-created) or the archive button
+              // ([data-archive], created).
+              // 🔴 RE-POINTED by socpanel-min wave-2: the in-card block is now
+              // read by its CONTAINER CLASS (`.social-scan-inline`), because the
+              // batch removed the `data-scan-inline` ATTRIBUTE (P4) while the
+              // container and its `data-scan-qr` / `data-scan-code` /
+              // `data-scan-status` children stay. This replaces the judging
+              // surface, it does not add an absence probe: the created face
+              // swaps the whole block out for the live block + archive, so the
+              // class discriminates exactly as the attribute did.
+              // Plain cards keep the head switch; sealed channels never render.
               // See js/socialPanel.js scanBindCardHTML / plainCardHTML.
               noCardToggle: !c.querySelector('.nb-toggle'),
-              control: !!c.querySelector('[data-scan-inline], [data-archive]'),
+              control: !!c.querySelector('.social-scan-inline, [data-archive]'),
             } : null;
           }),
         };
@@ -869,7 +945,11 @@ async function afterSuite(browser, base) {
       const status = card.querySelector('[data-scan-status]');
       const code = card.querySelector('[data-scan-code]');
       return {
-        inline: !!card.querySelector('[data-scan-inline]'),
+        // 🔴 RE-POINTED by socpanel-min wave-2: the `data-scan-inline` ATTRIBUTE
+        //    was removed (P4); the container class it sat on stayed, so the
+        //    in-card QR block is read off the class. Same judging surface, new
+        //    selector — not a new absence probe.
+        inline: !!card.querySelector('.social-scan-inline'),
         canvas: !!card.querySelector('[data-scan-qr] canvas'),
         statusText: status ? status.textContent : '',
         codeShown: !!code && !code.hasAttribute('hidden'),
@@ -903,17 +983,41 @@ async function afterSuite(browser, base) {
       return {
         pill: card.querySelector('.social-status-pill').dataset.status,
         archive: !!card.querySelector('[data-archive]'),
-        scanInlineGone: !card.querySelector('[data-scan-inline]'),
+        // 🔴 RE-POINTED by socpanel-min wave-2: the `data-scan-inline` ATTRIBUTE
+        //    was removed (P4) while the container class stayed, so "the scan
+        //    block is gone from the created face" is read off the class now.
+        scanInlineGone: !card.querySelector('.social-scan-inline'),
         liveBlock: !!card.querySelector('[data-live]'),
         bindings: !!card.querySelector('[data-bindings]'),
+        // 🔴 socpanel-min wave-2 (A5): the happy-path credential line is gone,
+        //    so this anchors ABSENCE. `hint` is '' both when the node is hidden
+        //    and when its text is empty, so `hintHidden` is read alongside it —
+        //    together they say the node really took the hidden branch rather
+        //    than merely carrying no text.
         hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        hintHidden: !!hint && hint.hasAttribute('hidden'),
         probeVocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=|凭据探针|Credential probe/g) || []).length,
       };
     });
-    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card)',
+    // 🔴 FLIPPED by socpanel-min (author ruling 2026-10-01): this leg used to
+    //    assert the bindings block's PRESENCE (`createdFace.bindings === true`).
+    //    The display block is now removed, so the SAME reading asserts ABSENCE.
+    //    JUDGEMENT — why this is RED on the pre-change tree: a created card
+    //    always rendered `bindingsHTML(ch)`, i.e. a `[data-bindings]` element,
+    //    as the last child of its created face. On the pre-change tree the
+    //    reading below is therefore `bindings === true` and the check FAILS;
+    //    after the change no branch of scanBindCardHTML emits it and the check
+    //    PASSES. Everything else in the check is unchanged — the created face
+    //    must still flip, keep its archive control, drop the scan block and
+    //    still render the C1 live block.
+    // 🔴 FLIPPED AGAIN by wave-2 (A5): the hint clause used to require the
+    //    happy-path credential COPY; a healthy created card now says nothing, so
+    //    it asserts the empty+hidden form instead. RED on both pre-change trees
+    //    (wave-1's tree renders the ok copy; the merge-base tree renders it too).
+    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card; bindings block absent since socpanel-min)',
       createdFace.pill === 'connected' && createdFace.archive && createdFace.scanInlineGone
-      && createdFace.liveBlock && createdFace.bindings
-      && (createdFace.hint === ZH['social.credential.ok'] || createdFace.hint === EN['social.credential.ok'])
+      && createdFace.liveBlock && createdFace.bindings === false
+      && createdFace.hint === '' && createdFace.hintHidden === true
       && createdFace.probeVocab === 0,
       JSON.stringify(createdFace));
 
@@ -1064,7 +1168,15 @@ async function afterSuite(browser, base) {
   // path hints for a contradicting ref (configInvalid); these two states
   // cover the non-invalid cards.
   await withPanel(browser, base, 'light', async (page) => {
-    // ① configured + clean probe ⇒ "credentials configured · permissions normal"
+    // ① configured + clean probe ⇒ a healthy card says NOTHING
+    //    🔴 FLIPPED by socpanel-min wave-2 (A5): this leg used to require the
+    //    happy-path copy ("credentials configured · permissions normal"). That
+    //    line is gone — a healthy card carries no hint, and the status pill is
+    //    what states the state — so the SAME reading now asserts ABSENCE.
+    //    JUDGEMENT (why it is RED on both pre-change trees): neither the wave-1
+    //    tree nor the merge-base tree ever renders a healthy card without that
+    //    line, so `hint === ''` fails there and passes here. `hintHidden` rides
+    //    along so "no text" cannot be confused with "node still on screen".
     apiState.channels = { feishu: { enabled: true, fields: {
       app_id: 'cli_0123456789abcdef',
       app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
@@ -1079,12 +1191,13 @@ async function afterSuite(browser, base) {
       return {
         status: c.querySelector('.social-status-pill').dataset.status,
         hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        hintHidden: !!hint && hint.hasAttribute('hidden'),
         vocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=/g) || []).length,
       };
     });
-    check('SF-2① clean probe ⇒ human credential status, zero probe vocabulary',
+    check('SF-2① clean probe ⇒ human credential status, zero probe vocabulary (happy-path line removed by socpanel-min wave-2)',
       ok.status === 'configuredNotLinked'
-      && (ok.hint === ZH['social.credential.ok'] || ok.hint === EN['social.credential.ok'])
+      && ok.hint === '' && ok.hintHidden === true
       && ok.vocab === 0, JSON.stringify(ok));
 
     // ② the probe contradicts but the card holds no ref — the author's exact
@@ -1219,6 +1332,464 @@ async function afterSuite(browser, base) {
     console.log(`  · context ${theme} @375 (never asserted): document.scrollWidth with Canvas panel OPEN = ${ctxRead.canvasOpen}; + side bar expanded = ${ctxRead.canvasOpenSidebarExpanded} — both are the app shell's own pre-existing behaviour (same numbers on the pre-change tree, see beforeSuite).`);
     await ctx.close();
   }
+}
+
+// ── SOCPANEL-MIN: the removed session-bindings display block ────────────────
+// Author ruling 2026-10-01: the created face shows no session-bindings block —
+// the chat→session list (C3) and the default-session control (C4's rendered
+// half) leave the VISIBLE face while every binding BEHAVIOUR stays.
+//
+// Two kinds of anchor live here, and their expectations differ ON PURPOSE:
+//
+//   · MIN-A1/A2/A3 + MIN-K1 — ABSENCE anchors. Each is RED on the pre-change
+//     tree: a created feishu card on that tree always rendered `<div class="social-
+//     bindings" data-bindings="feishu">`, whose subtree carries the fixed
+//     default-session control (`[data-default-session-fixed]`) and the copy of
+//     the four locale keys listed in [[RETIRED_BINDINGS_COPY]]. On this tree the
+//     card renders neither.
+//
+//   · MIN-B1 — a BEHAVIOUR-INVARIANCE control, and therefore GREEN ON BOTH
+//     TREES. It is deliberately NOT an absence anchor: it proves the ruling
+//     removed a DISPLAY and not a binding. The mock backend is told to hold a
+//     NON-Nebula default session, and the panel's boot must converge it onto
+//     the Nebula session through the pre-existing write path
+//     ([[pinDefaultSessions]] → [[saveDefaultSession]] → PUT). The assertion is
+//     order-insensitive (it asks whether the PUT happened at all, with the
+//     Nebula id, after boot) because the exact interleaving of the boot GETs is
+//     not the subject — the subject is "the convergence write still fires".
+//
+// 🔴 WHY THE VOCABULARY IS FROZEN RATHER THAN READ (wave-2 K-group, root ruling
+//    2026-10-01 — "clear every orphan"). MIN-A3 used to read its needles off the
+//    live locale tables. The K-group then DELETED the 8 keys those needles came
+//    from, so `ZH[k]`/`EN[k]` are `undefined` now and the old check would have
+//    degenerated into a VACUOUS one: a vocabulary of `undefined`s filters to an
+//    empty needle list, which can never hit anything, which passes forever. The
+//    needles are therefore frozen as literals (see [[RETIRED_BINDINGS_COPY]],
+//    captured from the merge-base tree at deletion time) and the deletion itself
+//    is pinned from the other side by [[RETIRED_BINDING_KEYS]] / MIN-K1, which
+//    reads the SERVED locale files. The pair is what keeps MIN-A3 meaningful:
+//    MIN-K1 proves the keys are gone, MIN-A3 proves their copy is not on screen.
+const RETIRED_BINDINGS_COPY = [
+  // zh — the sentences the removed block rendered (bindings title/empty/
+  // unavailable + the default-session label/unavailable).
+  '会话绑定',
+  '暂无绑定 — chat 的第一条消息会自动绑定到这里。',
+  '当前后端暂不提供绑定数据。',
+  '新 chat 的默认会话',
+  '当前后端暂不支持默认会话设置。',
+  // en — the same five readings.
+  'Chat bindings',
+  'No chats bound yet — the first message from a chat will be bound here.',
+  'Binding data is not available on this backend.',
+  'Default session for new chats',
+  'Default-session setting is not available on this backend.',
+];
+
+/** The 8 locale keys the wave-2 K-group deleted from BOTH tables — MIN-K1's
+ *  subject, and the reason MIN-A3's needles had to be frozen. Frozen at
+ *  2026-10-01 (deletion time), captured from the merge-base tree
+ *  `5e8b3a932ebdc3fa8d181add39281ed67b0ffffe`. */
+const RETIRED_BINDING_KEYS = [
+  'social.feishu.bindings.title',
+  'social.feishu.bindings.empty',
+  'social.feishu.bindings.unavailable',
+  'social.feishu.bindings.source.auto',
+  'social.feishu.bindings.source.manual',
+  'social.feishu.defaultSession.label',
+  'social.feishu.defaultSession.none',
+  'social.feishu.defaultSession.unavailable',
+];
+
+/** The 11 locale keys the wave-3 leg deleted from BOTH tables (author ruling
+ *  `#442`, 2026-10-01 — "clear all 11 in the same branch, ride the existing
+ *  verify/sink program"). Each is a WAVE-2-PRODUCED ORPHAN: the minimal-face
+ *  removals took its last consumer, so nothing renders it any more — the same
+ *  governance reading the K-group above applied to its own 8 direct siblings.
+ *  Frozen at 2026-10-01 (deletion time), captured from the merge-base tree
+ *  `002f4732a34fcbcafe2578d7162c8b44765e8579`.
+ *
+ *  🔴 RED-PROOF NOTE: the 11 anchors below ([[MIN-K2]]) are the ones this leg
+ *     must show FAILING on the pre-change tree, so they are built on the
+ *     SERVED locale bytes (as MIN-K1 is), NOT only on the imported `ZH`/`EN`
+ *     tables. The reason is worth stating: `ZH`/`EN` are imported from
+ *     `REPO_WEB` — the tree the SPEC lives in — so on the red leg (new spec,
+ *     old served tree) the repo tables are ALREADY post-deletion and a
+ *     repo-only check would pass on both trees, i.e. it could never go red.
+ *     The served half is what discriminates; the repo half is asserted too so
+ *     the reading names the deployment face and the source face separately. */
+const RETIRED_W3_KEYS = [
+  'social.channels.title',
+  'social.credential.ok',
+  'social.feishu.live.title',
+  'social.feishu.live.appUnknown',
+  'social.feishu.live.fingerprint',
+  'social.feishu.live.fpMatch',
+  'social.feishu.live.fpMismatch',
+  'social.feishu.live.fpUnknown',
+  'social.feishu.live.bridge',
+  'social.feishu.live.bridgeOn',
+  'social.feishu.live.bridgeOff',
+];
+
+/** The wave-3 orphan COPY, frozen for the same reason [[RETIRED_BINDINGS_COPY]]
+ *  is: three of the 11 deleted keys were being used AS LIVE NEEDLES by the
+ *  wave-2 anchors (A6_LABEL / A6_UNKNOWN / A7_TITLE). Leaving them as
+ *  `ZH[k] || EN[k] || ''` reads would turn those three anchors into `''`
+ *  comparisons — a needle that matches everything (every string contains the
+ *  empty string), which passes forever. Freezing them as the literals captured
+ *  at deletion time keeps MIN2-A6 / MIN2-A6b / MIN2-A7 discriminating; the
+ *  non-vacuous guard MIN2-0 pins that the literals are really there.
+ *  Values are the zh-CN readings — the locale every one of these legs boots
+ *  with (`boot(page, { locale: 'zh-CN' })`), which is also what `ZH[k] || EN[k]`
+ *  resolved to before the freeze, so the judgement is unchanged. */
+const RETIRED_W3_COPY = {
+  A6_LABEL: '连接的应用',
+  A6_UNKNOWN: '未知 — 当前后端未上报实际连接的应用',
+  A7_TITLE: '渠道配置',
+};
+
+async function minSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  const NEBULA_ID = 'sess-nebula-0001';
+  const FOREIGN_ID = 'sess-somewhere-else-9';
+  // The C4 read the panel performs at boot, plus the PUT it must still issue.
+  // Registered AFTER boot's routes (a later, exact-path handler wins) and
+  // deliberately WITHOUT `fulfill` on the GET side for anything else — the
+  // catch-all keeps owning every other endpoint.
+  /** @type {Array<{method: string, body: any}>} */
+  const defaultSessionCalls = [];
+  await boot(page, { locale: 'zh-CN' });
+  await page.route('**/api/social/channels/feishu/default-session', async (r) => {
+    const req = r.request();
+    const body = req.postData() ? JSON.parse(req.postData() || '{}') : null;
+    defaultSessionCalls.push({ method: req.method(), body });
+    if (req.method() === 'PUT') return r.fulfill({ json: { ok: true } });
+    // The foreign id: exactly the state the 2026-09-30 ruling says boot must
+    // converge away from.
+    return r.fulfill({ json: { sessionId: FOREIGN_ID, sessionName: 'Somewhere else' } });
+  });
+  // The session list the panel reads to identify the Nebula session: one
+  // non-root session plus the root one (agentName omitted = root identity, per
+  // the encoder contract socialPanel.js documents on `nebulaSession`).
+  await page.route('**/api/sessions', (r) => r.fulfill({
+    json: { sessions: [
+      { id: FOREIGN_ID, name: 'Somewhere else', agentName: 'SomeoneElse' },
+      { id: NEBULA_ID, name: 'Nebula' },
+    ] },
+  }));
+  // A created feishu card: the ONLY face that ever carried the removed block.
+  apiState.channels = { feishu: { enabled: true, fields: {
+    app_id: 'cli_0123456789abcdef',
+    region: 'feishu',
+    app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+    verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
+  } } };
+  apiState.probes = { feishu: {
+    app_secret: { exists: true, modeOk: true, readable: true },
+    verification_token: { exists: true, modeOk: true, readable: true },
+  } };
+  apiState.registered = { feishu: true };
+  await page.goto(base);
+  await openPanel(page);
+
+  // `openPanel` returns on `aria-busy=false`, which the panel sets BEFORE the
+  // convergence write (loadAll: setBusy(false) → renderAll → maybeBeginScan →
+  // pinDefaultSessions). So the PUT can still be in flight — wait for it with a
+  // bounded poll instead of a bare timer, and report the deadline as a reading
+  // rather than hanging the suite.
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !defaultSessionCalls.some((c) => c.method === 'PUT')) {
+    await page.waitForTimeout(50);
+  }
+
+  const cardPresent = await page.evaluate(() => !!document.querySelector('.social-card[data-channel="feishu"] [data-archive]'));
+  check('MIN-0 the leg drives the CREATED face (the only face that ever carried the block)',
+    cardPresent, `created face present = ${cardPresent}`);
+
+  // MIN-A1/A2/A3 — one scope (`#social-modal`), three readings. The scope is
+  // the same one the other absence anchors of this spec use.
+  const min = await page.evaluate((needles) => {
+    const m = document.getElementById('social-modal');
+    const text = m ? m.innerText : '';
+    return {
+      bindings: m.querySelectorAll('[data-bindings]').length,
+      defaultSessionFixed: m.querySelectorAll('[data-default-session-fixed]').length,
+      // The copy the removed block rendered. The needles are the FROZEN
+      // literals from the merge-base tree (the keys they came from were deleted
+      // by the K-group, so reading them off the live tables would now yield
+      // `undefined` and turn this check vacuous — see the suite comment).
+      copyHits: needles.filter((k) => !!k && text.includes(k)),
+      needlesChecked: needles.filter(Boolean).length,
+    };
+  }, RETIRED_BINDINGS_COPY);
+  check('MIN-A1 created face: zero [data-bindings] in #social-modal',
+    min.bindings === 0,
+    `[data-bindings] count = ${min.bindings} (pre-change tree renders exactly 1 on a created card ⇒ this reading is RED there)`);
+  check('MIN-A2 created face: zero [data-default-session-fixed] in #social-modal',
+    min.defaultSessionFixed === 0,
+    `[data-default-session-fixed] count = ${min.defaultSessionFixed} (pre-change tree: the pinned control inside [data-bindings] ⇒ RED there)`);
+  // 🔴 NON-VACUOUS GUARD: `needlesChecked` pins that the frozen vocabulary is
+  //    really there (10 non-empty needles). Without it a truncated constant would
+  //    make the check pass by having nothing to look for — the exact failure mode
+  //    the K-group's deletion would have introduced had the needles kept being
+  //    read off the tables.
+  check('MIN-A3 created face: the bindings/default-session copy no longer renders',
+    min.needlesChecked === RETIRED_BINDINGS_COPY.length && min.needlesChecked === 10 && min.copyHits.length === 0,
+    `vocabulary FROZEN at deletion time (${min.needlesChecked} non-empty needles of ${RETIRED_BINDINGS_COPY.length}) — hits=[${min.copyHits.join(' | ')}] (pre-change tree renders 3 of the zh needles on a created card ⇒ this reading is RED there)`);
+
+  // MIN-K1 (wave-2 K-group, root ruling 2026-10-01) — the deleted keys are
+  // genuinely ABSENT from the SERVED tables, checked per table so a one-sided
+  // deletion reports itself (W11's key-set parity would also catch it, but this
+  // names the offending keys). RED on the pre-change tree: all 8 keys are present
+  // in both tables there.
+  const servedTables = {
+    'zh-CN': await readFile(join(WEB, 'js', 'locales', 'zh-CN.js'), 'utf8'),
+    en: await readFile(join(WEB, 'js', 'locales', 'en.js'), 'utf8'),
+  };
+  const stillPresent = [];
+  for (const [tag, src] of Object.entries(servedTables)) {
+    for (const key of RETIRED_BINDING_KEYS) if (src.includes(`'${key}'`)) stillPresent.push(`${tag}:${key}`);
+  }
+  check('MIN-K1 the 8 K-group keys are absent from BOTH served locale tables',
+    stillPresent.length === 0,
+    `retired=${RETIRED_BINDING_KEYS.length} keys × 2 tables — still present: [${stillPresent.join(', ')}]`);
+
+  // MIN-K2 (wave-3, author ruling #442, 2026-10-01) — ONE ANCHOR PER KEY (11),
+  // the same shape MIN-K1 uses for its 8. Each asserts the key is absent from
+  // BOTH faces, so a one-sided or partial deletion names itself. Reuses MIN-K1's
+  // `servedTables` reads above, so both anchors judge the same bytes:
+  //   · SERVED face (`WEB` = whatever tree the leg serves) — the discriminating
+  //     half, and the reason the anchors are not table-only. On this batch's RED
+  //     leg the served tree is the PRE-change snapshot, so each anchor goes red
+  //     exactly as it must. 🔴 The brief's literal form `!(k in ZH) && !(k in EN)`
+  //     CANNOT go red: `ZH`/`EN` are imported from `REPO_WEB` — the tree the SPEC
+  //     file lives in — so on a red leg (new spec, old served tree) the repo
+  //     tables already carry the deletion and the reading passes vacuously on
+  //     both trees. The served half is what gives the anchor teeth; the repo half
+  //     is kept because it is the DEPLOYMENT reading a reviewer wants (it is the
+  //     same table W11's parity check imports).
+  for (const key of RETIRED_W3_KEYS) {
+    const inServed = Object.entries(servedTables).filter(([, src]) => src.includes(`'${key}'`)).map(([tag]) => tag);
+    const inRepo = (key in ZH) || (key in EN);
+    check(`MIN-K2 ${key} — absent from both served tables and both repo tables`,
+      inServed.length === 0 && !inRepo,
+      `served present in: [${inServed.join(', ')}] · repo present: ${inRepo} (pre-change tree: present in zh-CN, en, ZH and EN ⇒ this reading is RED there)`);
+  }
+
+  // MIN-K2P — the deletion is SYMMETRIC. W11's parity check also catches a
+  // one-sided deletion (the key sets would differ); this reports the raw CARRIER
+  // LINE count per table, so the reading says "11 out of each side" rather than
+  // only "the sets differ". 0/0 on this tree; 11/11 on the pre-change tree.
+  const w3Counts = {};
+  for (const [tag, src] of Object.entries(servedTables)) {
+    w3Counts[tag] = src.split('\n').filter((l) => RETIRED_W3_KEYS.some((k) => l.includes(`'${k}'`))).length;
+  }
+  check('MIN-K2P the deletion is symmetric — zero carrier lines in either served table',
+    w3Counts['zh-CN'] === 0 && w3Counts.en === 0,
+    `carrier lines for the 11 keys: zh=${w3Counts['zh-CN']} en=${w3Counts.en} (both must be 0; pre-change tree: 11 each ⇒ RED there)`);
+
+  // MIN-B1 — behaviour invariance, GREEN ON BOTH TREES by design (see the
+  // suite comment). The mock answered the boot GET with a FOREIGN session id, so
+  // the panel must have issued a PUT carrying the Nebula id.
+  const puts = defaultSessionCalls.filter((c) => c.method === 'PUT');
+  const converged = puts.find((c) => c.body && c.body.sessionId === NEBULA_ID);
+  check('MIN-B1 behaviour held: boot still converges a NON-Nebula default session onto the Nebula id (PUT)',
+    !!converged,
+    `calls=[${defaultSessionCalls.map((c) => `${c.method}${c.body ? ' ' + JSON.stringify(c.body) : ''}`).join(' | ')}] — mock GET returned sessionId=${FOREIGN_ID}, session list carries the Nebula session ${NEBULA_ID}`);
+
+  await shot(page, 'minsuite-1440-light');
+  await ctx.close();
+}
+
+// ── SOCPANEL-MIN WAVE-2: the minimal-face extension (author ruling 2026-10-01) ─
+// Wave-2 removed, on the created face: the fingerprint row (A1), the bridge row
+// (A2), the card description line (A3), the archive's permanent hint line (A4,
+// its copy moved to the unbind button's `title`), the happy-path credential line
+// (A5), the application row's label + its "unknown" explainer (A6, the row is
+// now CONDITIONAL on a real app), the section title (A7), and the P-group
+// leftovers (P2 `.social-scan-manual`, P4 the `data-scan-inline` attribute).
+//
+// Every anchor here is RED on the pre-change tree (the wave-1 tip), which is the
+// point of the RED leg: that tree renders `[data-fp]`, `[data-live-enabled]`, the
+// description line, the permanent hint line, all THREE `.social-live-row`s, the
+// `appUnknown` copy and the section title. The two legs differ only in whether
+// the connection endpoint reports a real application, so the conditional row can
+// be read from both sides (empty when unlinked, exactly one row when linked —
+// never the middle state of three rows).
+//
+// The needles for the A6/A7 copy are read from the LIVE locale tables because
+// the K-group did NOT delete those two keys (they are wave-2-produced orphans
+// whose scope is awaiting a separate ruling); each is paired with a non-empty
+// guard so a future deletion fails LOUDLY here instead of silently emptying the
+// needle list — the same non-vacuous discipline MIN-A3 follows.
+async function min2Suite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  /** The connection reading this leg's handler answers with; '' ⇒ a backend that
+   *  reports no live application (the unlinked/dark reading). */
+  let liveAppId = '';
+  await boot(page, { locale: 'zh-CN' });
+  await page.route('**/api/social/channels/feishu/connection', (r) => r.fulfill({
+    json: {
+      channel: 'feishu', enabled: true, adapterRegistered: true, connected: true,
+      liveAppId: liveAppId || null, liveAppIdFp: 'abcdef', liveAppName: null,
+      storedAppId: 'cli_9999999999999999', storedAppIdFp: '9999',
+      fingerprintMatch: 'match',
+    },
+  }));
+  apiState.channels = { feishu: { enabled: true, fields: {
+    // Pattern-valid on purpose (`^cli_[0-9a-zA-Z]{16,}$`): a violating value
+    // would make the card `configInvalid`, which renders the ACTIONABLE hint
+    // (A5 keeps that one) and would defeat this leg's "healthy card is silent"
+    // reading.
+    app_id: 'cli_9999999999999999',
+    app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+  } } };
+  apiState.probes = { feishu: { app_secret: { exists: true, modeOk: true, readable: true } } };
+  apiState.registered = { feishu: true };
+
+  // Live needles for the A6/A7 copy. 🔴 FROZEN since wave-3 (author ruling #442,
+  // 2026-10-01): this leg's own anchor set deleted the three keys these used to
+  // be read from, and `ZH[k] || EN[k] || ''` would now resolve to `''` — a
+  // needle every string contains, i.e. an anchor that passes by matching
+  // nothing. The values are the literals captured at deletion time (see
+  // [[RETIRED_W3_COPY]]); MIN2-0 below is the non-vacuous guard that pins them.
+  // `A4_HINT` stays a live read on purpose: `social.feishu.archive.hint` was
+  // NOT deleted (it has a live consumer — the unbind button's `title`), so
+  // reading it off the table is still meaningful and still fails LOUDLY if a
+  // future deletion orphans it.
+  const A6_LABEL = RETIRED_W3_COPY.A6_LABEL;
+  const A6_UNKNOWN = RETIRED_W3_COPY.A6_UNKNOWN;
+  const A7_TITLE = RETIRED_W3_COPY.A7_TITLE;
+  const A4_HINT = ZH['social.feishu.archive.hint'] || EN['social.feishu.archive.hint'] || '';
+  check('MIN2-0 the A6/A7 needles resolved (non-vacuous guard)',
+    !!(A6_LABEL && A6_UNKNOWN && A7_TITLE && A4_HINT),
+    `FROZEN at deletion time: live.title=${JSON.stringify(A6_LABEL)} live.appUnknown=${JSON.stringify(A6_UNKNOWN)} channels.title=${JSON.stringify(A7_TITLE)} · live read: archive.hint=${JSON.stringify(A4_HINT)} (a truncation of the frozen block or the deletion of archive.hint fails HERE rather than silently emptying an anchor)`);
+
+  await page.goto(base);
+  await openPanel(page);
+
+  // ── Leg 1: the connection endpoint reports NO live application ────────────
+  const dark = await page.evaluate((n) => {
+    const modal = document.getElementById('social-modal');
+    const card = document.querySelector('.social-card[data-channel="feishu"]');
+    const live = card.querySelector('[data-live]');
+    const archiveBtn = card.querySelector('[data-archive]');
+    const hintEl = card.querySelector('.social-card-hint');
+    return {
+      liveContainers: card.querySelectorAll('[data-live]').length,
+      liveRows: card.querySelectorAll('[data-live] .social-live-row').length,
+      liveText: live ? live.innerText.trim() : '(no container)',
+      fp: card.querySelectorAll('[data-fp]').length,
+      liveEnabled: card.querySelectorAll('[data-live-enabled]').length,
+      liveWarn: card.querySelectorAll('.social-live-warn').length,
+      desc: card.querySelectorAll('.social-card-desc').length,
+      archiveHint: card.querySelectorAll('.social-archive-hint').length,
+      archiveTitle: archiveBtn ? archiveBtn.getAttribute('title') : null,
+      hintHidden: !!hintEl && hintEl.hasAttribute('hidden'),
+      sectionTitle: document.querySelectorAll('#social-channels-title').length,
+      modalText: modal ? modal.innerText : '',
+    };
+  }, {});
+  // ⑩ container presence — SF-1c's anchor must survive the row removals.
+  check('MIN2-⑩ created face: the .social-live container is still present (SF-1c anchor kept)',
+    dark.liveContainers === 1,
+    `[data-live] count = ${dark.liveContainers} (must be 1 — the container is SF-1c's judging surface and refreshCard's re-render target)`);
+  // ⑪ row ceiling — three rows was the pre-change shape.
+  check('MIN2-⑪ created face: the live block renders at most one row (three-row shape broken)',
+    dark.liveRows === 0 || dark.liveRows === 1,
+    `rows = ${dark.liveRows} (∈{0,1}; pre-change tree renders 3 ⇒ this reading is RED there)`);
+  check('MIN2-A1 created face: the fingerprint row is gone ([data-fp] = 0)',
+    dark.fp === 0 && dark.liveWarn === 0,
+    `[data-fp]=${dark.fp} .social-live-warn=${dark.liveWarn} (pre-change tree: the mismatch-capable fingerprint row ⇒ RED there; a mismatch now reads off the status pill, not the DOM)`);
+  check('MIN2-A2 created face: the bridge row is gone ([data-live-enabled] = 0)',
+    dark.liveEnabled === 0,
+    `[data-live-enabled]=${dark.liveEnabled} (pre-change tree: 1 ⇒ RED there)`);
+  check('MIN2-A6 created face: an unlinked bridge renders an EMPTY container, not the "unknown" explainer',
+    dark.liveText === '' && !dark.modalText.includes(A6_UNKNOWN),
+    `live text = ${JSON.stringify(dark.liveText)} — appUnknown copy on screen = ${dark.modalText.includes(A6_UNKNOWN)} (pre-change tree renders it ⇒ RED there; the row is conditional on a REAL app, never on a post-render text comparison)`);
+  check('MIN2-A3 created face: the card description line is gone',
+    dark.desc === 0,
+    `.social-card-desc in the feishu card = ${dark.desc} (pre-change tree: 1 ⇒ RED there; plainCardHTML keeps its own — sealed-family surface, out of scope)`);
+  check('MIN2-A4 created face: the permanent hint line is gone and its copy rode onto the unbind button title',
+    dark.archiveHint === 0 && dark.archiveTitle === A4_HINT,
+    `.social-archive-hint=${dark.archiveHint} button title=${JSON.stringify(dark.archiveTitle)} expected=${JSON.stringify(A4_HINT)} (pre-change tree: 1 permanent line, no title ⇒ RED there; same existing copy reused, none authored)`);
+  check('MIN2-A5 created face: a healthy card carries no credential line (hidden branch)',
+    dark.hintHidden === true,
+    `hint hidden = ${dark.hintHidden} (pre-change tree renders the ok copy ⇒ RED there)`);
+  check('MIN2-A7 created face: the channel-configuration section title is gone',
+    dark.sectionTitle === 0 && !dark.modalText.includes(A7_TITLE),
+    `#social-channels-title=${dark.sectionTitle} — channels.title copy on screen = ${dark.modalText.includes(A7_TITLE)} (pre-change tree: 1 node ⇒ RED there; the visibleChannels/cardHTML/.social-card-list chain is untouched)`);
+  // 🔴 P4 (`data-scan-inline`) is anchored in Leg 3 on the NOT-created face, NOT
+  //    here: the attribute belongs to that branch, so reading it on a created
+  //    card would be vacuous (0 on both trees — a check that can never go red).
+
+  // ── Leg 2: the connection endpoint reports a REAL application ─────────────
+  liveAppId = 'cli_live_abcdef012345';
+  await page.reload();
+  await openPanel(page);
+  const lit = await page.evaluate(() => {
+    const card = document.querySelector('.social-card[data-channel="feishu"]');
+    const rows = card.querySelectorAll('[data-live] .social-live-row');
+    return {
+      rows: rows.length,
+      labels: card.querySelectorAll('[data-live] .social-live-label').length,
+      values: card.querySelectorAll('[data-live] .social-live-value').length,
+      rowText: rows[0] ? rows[0].innerText.trim() : '',
+      fp: card.querySelectorAll('[data-fp]').length,
+    };
+  });
+  check('MIN2-⑫ linked bridge: exactly one row, the application VALUE only, and no label span',
+    lit.rows === 1 && lit.labels === 0 && lit.values === 1
+    && lit.rowText.includes('cli_live_abcdef012345') && lit.fp === 0,
+    `rows=${lit.rows} labels=${lit.labels} values=${lit.values} text=${JSON.stringify(lit.rowText)} [data-fp]=${lit.fp} (pre-change tree: 3 rows, each with a label span, plus the label copy ⇒ RED there)`);
+  check('MIN2-A6b linked bridge: the removed application-label copy no longer renders',
+    !lit.rowText.includes(A6_LABEL),
+    `row text = ${JSON.stringify(lit.rowText)} — label copy ${JSON.stringify(A6_LABEL)} present = ${lit.rowText.includes(A6_LABEL)} (pre-change tree renders it ⇒ RED there)`);
+
+  // ── Leg 3: the NOT-created face — where the P4 attribute actually lived ────
+  // 🔴 WHY THIS LEG EXISTS (found by running the red leg): `data-scan-inline` is
+  //    emitted by the NOT-created branch only. A created face therefore reports
+  //    `[data-scan-inline] = 0` on the pre-change tree too, so reading it there
+  //    would be VACUOUS — it could never go red. The attribute's removal is
+  //    therefore anchored where it discriminates: on the scan face, where the
+  //    container must remain (`SF-1` reads `.social-scan-inline`) while the
+  //    attribute is gone.
+  apiState.channels = {};
+  apiState.registered = { feishu: false };
+  await page.reload();
+  await openPanel(page);
+  await waitInlineScanQr(page);
+  const scanFace = await page.evaluate(() => {
+    const card = document.querySelector('.social-card[data-channel="feishu"]');
+    return {
+      container: card.querySelectorAll('.social-scan-inline').length,
+      attr: card.querySelectorAll('[data-scan-inline]').length,
+      qr: card.querySelectorAll('[data-scan-qr]').length,
+      code: card.querySelectorAll('[data-scan-code]').length,
+      status: card.querySelectorAll('[data-scan-status]').length,
+    };
+  });
+  check('MIN2-B4 scan face: the data-scan-inline ATTRIBUTE is gone while the container and its data-scan-* children stay',
+    scanFace.attr === 0 && scanFace.container === 1
+    && scanFace.qr === 1 && scanFace.code === 1 && scanFace.status === 1,
+    `[data-scan-inline]=${scanFace.attr} .social-scan-inline=${scanFace.container} [data-scan-qr]=${scanFace.qr} [data-scan-code]=${scanFace.code} [data-scan-status]=${scanFace.status} (pre-change tree: attribute 1 / container 1 ⇒ RED there; scanNode reads the children, so they must survive)`);
+
+  // ── ⑧ The CSS residue: the served sheet carries none of the removed rules ──
+  // 🔴 Comments are STRIPPED before scanning: this batch documents every removal
+  //    in a `/* … */` note that necessarily NAMES the selector it removed, so a
+  //    raw substring scan would hit its own tombstone and report a false red.
+  //    The stripped text is what the browser actually applies.
+  const cssText = (await readFile(join(WEB, 'css', 'social.css'), 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '');
+  const cssResidue = ['.social-live-label', '.social-archive-hint', '.social-scan-manual', '[data-fp=']
+    .filter((sel) => cssText.includes(sel));
+  check('MIN2-⑧ served social.css: zero residue of the removed rules',
+    cssResidue.length === 0,
+    `removed rules still present (comments stripped): [${cssResidue.join(', ')}] (pre-change tree has all four ⇒ RED there; .social-live-row/.social-live-value are KEPT — the surviving application row consumes them, and .social-card-desc is KEPT for plainCardHTML)`);
+
+  await shot(page, 'minsuite2-1440-light');
+  await ctx.close();
 }
 
 async function withPanel(browser, base, theme, fn) {
@@ -1651,7 +2222,11 @@ try {
   else if (MODE === 'REDFILTER') await redFilterSuite(browser, base);
   else if (MODE === 'NRS') await nrsSuite(browser, base);
   else if (MODE === 'ILINKRED') await ilinkRedSuite(browser, base);
-  else { await afterSuite(browser, base); await apiSuite(); }
+  // socpanel-min: the removed display block's absence anchors + the behaviour
+  // control. Runs LAST in the AFTER suite so its exact-path routes (`/api/
+  // sessions`, `/feishu/default-session`, `/feishu/connection`) cannot leak into
+  // the legs above. Wave-2's minimal-face anchors follow it for the same reason.
+  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); }
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));
