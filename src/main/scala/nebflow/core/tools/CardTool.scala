@@ -3,6 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.FilePolicyPort
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -482,11 +483,27 @@ object CardTool extends Tool:
 
   val name = "Card"
 
-  /** Path to user-editable card design prompt. */
-  private val designPromptPath = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
+  /**
+   * Path to user-editable card design prompt — derived from the **data root**
+   *  on every access, never from `sys.props("user.home")`.
+   *
+   * This was the last hardcoded-home path on the tool surface: an isolated
+   *  instance (`--home`, tests, a second instance) read and auto-created the
+   *  prompt in the REAL home while everything else followed the swapped root
+   *  (`paths.scala:206-211`). `def`, not `val`: `PathUtil.dataRoot` may be
+   *  re-rooted after this object is initialized (`setDataRoot` / `--home`), and
+   *  a `val` would freeze the first root for the process lifetime.
+   */
+  private def designPromptPath: Path = nebflow.shared.PathUtil.dataRoot.toNIO.resolve("card-design-prompt.md")
 
-  /** Cached design prompt (reloaded on each access via mtime check). */
-  @volatile private var designPromptCache: (Long, String) = (0L, "")
+  /**
+   * Cached design prompt: (source path, mtime) → content.
+   *
+   * The path is part of the key on purpose — an mtime alone cannot tell two
+   *  different data roots apart, so a root swap would keep serving the previous
+   *  root's prompt whenever both files happened to share an mtime.
+   */
+  @volatile private var designPromptCache: (String, Long, String) = ("", 0L, "")
 
   /**
    * Default design guidelines — written to disk on first access if file doesn't exist.
@@ -597,26 +614,29 @@ Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, s
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Scanned: `src=`, `href=`, every `srcset` candidate, every CSS `url(...)`, a bare `@import "..."`. The app's own routes (`/js/`, `/css/`, `/assets/`, `/vendor/`, `/uploads/`, `/agents/`, `/voice-models/`, plus `/style.css` `/app.js` `/logo.svg` `/favicon.*`) are exempt — the app serves them, not the disk — and are counted in `fileRefs.exempt` instead of being reported. Read `warnings` and fix the references before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (the server reads a bare `+` in a URL's `path=` parameter as a space, and `%20` also works). If a reference you wrote used URL escapes or a `+` and the tool resolved it in the decoded form, `notes` in this result says so."""
 
   /**
-   * Load user design prompt from disk (cached by mtime).
+   * Load the design prompt for the data root in force NOW (cached by
+   *  path + mtime).
    *  Auto-creates with defaults on first access if the file doesn't exist.
    */
   private def loadDesignPrompt(): String =
     try
-      if !java.nio.file.Files.exists(designPromptPath) then
-        java.nio.file.Files.createDirectories(designPromptPath.getParent)
+      val path = designPromptPath
+      val key = path.toAbsolutePath.normalize.toString
+      if !java.nio.file.Files.exists(path) then
+        java.nio.file.Files.createDirectories(path.getParent)
         java.nio.file.Files
-          .write(designPromptPath, defaultDesignPrompt.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-        designPromptCache = (java.nio.file.Files.getLastModifiedTime(designPromptPath).toMillis, defaultDesignPrompt)
+          .write(path, defaultDesignPrompt.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        designPromptCache = (key, java.nio.file.Files.getLastModifiedTime(path).toMillis, defaultDesignPrompt)
         defaultDesignPrompt
       else
-        val mtime = java.nio.file.Files.getLastModifiedTime(designPromptPath).toMillis
-        if mtime != designPromptCache._1 then
+        val mtime = java.nio.file.Files.getLastModifiedTime(path).toMillis
+        if key != designPromptCache._1 || mtime != designPromptCache._2 then
           val content =
-            new String(java.nio.file.Files.readAllBytes(designPromptPath), java.nio.charset.StandardCharsets.UTF_8)
-          designPromptCache = (mtime, content)
+            new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
+          designPromptCache = (key, mtime, content)
           content
-        else designPromptCache._2
-    catch case _: Exception => designPromptCache._2
+        else designPromptCache._3
+    catch case _: Exception => designPromptCache._3
 
   /**
    * Base description without user design prompt.
@@ -698,12 +718,21 @@ Rule of thumb: **if the card would contain only sentences, do not use Card.** Th
    - **Simple:** `<img src="/tmp/output.svg" style="width:100%;height:auto">` (recommended default)
    - **Dark-mode CSS:** Read the SVG file, strip `<?xml?>`/`<!DOCTYPE>`, replace `width` with `width="100%"`, inline the SVG content, add `<style>` CSS overrides (see templates below)
 
+## Persistence
+
+Every card you render is also written to disk, as `${nebflow.shared.PathUtil.dataRootRenderValue}/cards/`, named `yyyyMMdd_HHmmss_<title>.html` (a second card in the same second gets a `-2`, `-3`, … suffix — nothing is ever overwritten). The bytes written are the **render source** exactly as supplied: what you passed as `html`, or the file's own content on the `filePath` leg — never the rewritten markup, so the saved file is the thing you would edit. The result carries a `persist` field: `{"ok": true, "path": "<absolute path>"}` on success, `{"ok": false, "reason": "…"}` when the write failed — a failed write never affects the rendered card. To change a card later, `Edit` its saved file and render that path with `filePath`.
+
+## Rendering from a file
+
+Pass `filePath` instead of `html` to render a local `.html`/`.htm` file (at most 2MB; `~` expands to the user's home directory). The file's content becomes the card's HTML and is then processed exactly like an `html` argument — same reference rewriting, same `warnings`/`fileRefs`. The two parameters are **mutually exclusive**: pass exactly one. The path must name a real regular `.html`/`.htm` file no larger than 2MB, at a location whose contents this server is allowed to read — the same rule that governs `/api/nf-file`, so the data root's served subtrees (`${DataRootServedNamespacesText}`) and the project `.nebflow/` directory are read, while credentials, credential-shaped paths and everything else are refused. A refusal names the reason; the file's content is never echoed back.
+
 ## Parameters
 
-- html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
-- title (string, optional): title above card.
+- html (string): HTML with CSS and JS. Dark mode via var(--color-*). Mutually exclusive with `filePath`.
+- filePath (string): absolute path to a local `.html`/`.htm` file (at most 2MB) whose content is rendered as the card — mutually exclusive with `html`. `~` expands to the user's home directory.
+- title (string, optional): title above card. Also the base of the saved file's name.
 
-Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request — up to a TOTAL of 40,000 characters of `data:` URI per card, spent in document order (images past that total keep the `/api/nf-file?path=…` reference); every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `${DataRootServedNamespacesText}`; project `.nebflow/`: `evidence*/`).
+Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved, on either leg — a card has no containing directory, so even when the HTML came from a file, a relative `src` is left alone and reported; that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request — up to a TOTAL of 40,000 characters of `data:` URI per card, spent in document order (images past that total keep the `/api/nf-file?path=…` reference); every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `${DataRootServedNamespacesText}`; project `.nebflow/`: `evidence*/`).
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable / other, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (the server reads a bare `+` in a URL's `path=` parameter as a space, and `%20` also works). If a reference you wrote used URL escapes or a `+` and the tool resolved it in the decoded form, `notes` in this result says so.
 
@@ -720,7 +749,10 @@ Example (SVG diagram):
 {"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 600 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"70\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"240\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}
 
 Example (interactive 3D with Three.js):
-{"html":"<div style=\"padding:0\"><script src=\"https://cdn.jsdelivr.net/npm/three@latest/build/three.min.js\"></script><canvas id=\"c\" style=\"width:100%;height:400px;display:block\"></canvas><script>const s=new THREE.Scene();const c=document.getElementById('c');const r=new THREE.WebGLRenderer({canvas:c,antialias:true});r.setSize(c.clientWidth,400);const cam=new THREE.PerspectiveCamera(75,c.clientWidth/400,0.1,1000);cam.position.z=3;s.add(new THREE.Mesh(new THREE.SphereGeometry(1,32,32),new THREE.MeshNormalMaterial()));function f(){requestAnimationFrame(f);r.render(s,cam)}f()</script></div>","title":"3D Sphere"}"""
+{"html":"<div style=\"padding:0\"><script src=\"https://cdn.jsdelivr.net/npm/three@latest/build/three.min.js\"></script><canvas id=\"c\" style=\"width:100%;height:400px;display:block\"></canvas><script>const s=new THREE.Scene();const c=document.getElementById('c');const r=new THREE.WebGLRenderer({canvas:c,antialias:true});r.setSize(c.clientWidth,400);const cam=new THREE.PerspectiveCamera(75,c.clientWidth/400,0.1,1000);cam.position.z=3;s.add(new THREE.Mesh(new THREE.SphereGeometry(1,32,32),new THREE.MeshNormalMaterial()));function f(){requestAnimationFrame(f);r.render(s,cam)}f()</script></div>","title":"3D Sphere"}
+
+Example (render a card from a file on disk — including one you saved earlier and edited):
+{"filePath": "/tmp/card-source.html", "title": "Architecture"}"""
 
   /** Dynamic description: base tool description + user design prompt (always present after auto-init). */
   def description: String =
@@ -732,79 +764,293 @@ Example (interactive 3D with Three.js):
       "properties" -> Json.obj(
         "html" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "HTML content to render in the card".asJson
+          "description" -> "HTML content to render in the card. Mutually exclusive with `filePath`.".asJson
+        ),
+        "filePath" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> ("Absolute path to a local `.html`/`.htm` file (supports `~` expansion, at most 2MB) whose "
+            + "content is rendered as the card. Mutually exclusive with `html`.").asJson
         ),
         "title" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional title shown above the card".asJson
         )
       ),
-      "required" -> Json.arr("html".asJson)
+      // `html` is no longer statically required: a caller may name the source
+      // with `filePath` instead. The mutual exclusion is enforced in `call`
+      // (the provider surfaces carry no runtime schema evaluation), so a call
+      // that gives neither is still refused there with an actionable message.
+      "required" -> Json.arr()
     )
   )
 
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    extractHtml(input) match
-      case Some(rawHtml) =>
-        val title = extractTitle(input)
-        IO.blocking {
-          val outcome = embedLocalFiles(rawHtml)
-          val distinct = distinctRejections(outcome.rejects)
-          val listed = distinct.take(MaxListedWarnings)
-          if distinct.nonEmpty then
-            logger.warn(
-              s"Card: ${outcome.rejects.size} local file reference(s) NOT proxied (" +
-                listed
-                  .map { case (rejected, count) => s"${rejected.value} [${rejected.failure.code}]x$count" }
-                  .mkString(", ") +
-                ")"
-            )
-          val payload = Json
-            .obj(
-              // Warnings come FIRST on purpose: ToolResultGuard replaces the
-              // LLM-visible content of a result over 50K chars with the first
-              // 2048 chars + a persisted-file pointer (ToolResultGuard.scala
-              // persistAndReplace). A big card would push a trailing warning
-              // section out of that preview — leading with fileRefs/warnings
-              // keeps the failure visible to the model in every case.
-              // Field order is irrelevant to the frontend (property access on
-              // the parsed object), so this stays contract-compatible; the
-              // toolfail batch only ADDED `exempt` inside fileRefs, the
-              // imgfix batch only ADDED `inlined` (image references embedded as
-              // `data:` URIs — counted there, never in `proxied`), and the
-              // img-ticket batch i only ADDED `deferred` (eligible for
-              // embedding but over the cumulative 40,000-char inline budget —
-              // counted there AND in `proxied`, since that is what they are).
-              "fileRefs" -> fileRefsJson(
-                outcome.proxied,
-                distinct.size,
-                distinct.size - listed.size,
-                outcome.exempt,
-                List("inlined" -> outcome.inlined, "deferred" -> outcome.deferred)
-              ),
-              "warnings" -> warningsJson(listed),
-              "notes" -> Json.arr(outcome.notes.map(_.asJson)*),
-              "html" -> outcome.html.asJson,
-              "title" -> title.asJson
-            )
-            .noSpaces
-          Right(s"$CardSentinel$payload")
-        }
+  // ── persistence (rendering a card also writes its render source to disk) ──
 
-      case None =>
-        val debug = input.toMap
-          .map { (k, v) =>
-            val preview = v.asString.getOrElse(v.noSpaces).take(80)
-            s"$k: $preview"
-          }
-          .mkString(", ")
+  /** `cards/` under the data root — the same root everything else follows. */
+  private def cardsDir: Path = nebflow.shared.PathUtil.dataRoot.toNIO.resolve("cards")
+
+  private val CardFileStamp = java.time.format.DateTimeFormatter
+    .ofPattern("yyyyMMdd_HHmmss")
+    .withZone(java.time.ZoneId.systemDefault())
+
+  /** Extension face for a file a card may be rendered FROM — Card's own. */
+  private val RenderableCardExtensions: Set[String] = Set("html", "htm")
+
+  /**
+   * Read ceiling for the `filePath` leg (2MB) — the Pop text-file precedent
+   *  (`PopTool.MaxTextSize`). Deliberately NOT `FileRefs.MaxFileSize` (200MB):
+   *  that one bounds what the browser may FETCH by reference, not what a tool
+   *  copies into its own payload.
+   */
+  private val MaxRenderSourceBytes: Long = 2L * 1024 * 1024
+
+  /**
+   * Filesystem name for one render source: `yyyyMMdd_HHmmss_<slug>[-<n>].html`.
+   *
+   * The slug comes from the card title (empty ⇒ `card`), keeps only
+   *  `[A-Za-z0-9._-]` and is truncated to 60 characters. A same-second second
+   *  render must produce a SECOND file, never overwrite the first: the `-n`
+   *  suffix is added until the name is free (`Files.exists` probe).
+   */
+  private def cardFileName(stamp: String, title: String): String =
+    val slug =
+      val kept = title.filter(c => c.isLetterOrDigit && c < 128 || c == '.' || c == '_' || c == '-')
+      if kept.isEmpty then "card" else kept.take(60)
+    var n = 0
+    var candidate = s"${stamp}_$slug.html"
+    while java.nio.file.Files.exists(cardsDir.resolve(candidate)) do
+      n += 1
+      candidate = s"${stamp}_$slug-$n.html"
+    candidate
+
+  /**
+   * Write the **render source** — the exact bytes the card was rendered from —
+   *  to `<dataRoot>/cards/`, and report what happened as the payload's
+   *  `persist` object.
+   *
+   * 硬门槛（A3）：verbatim, zero transformation. The persisted bytes are what
+   * the caller supplied (the `html` parameter as received, BEFORE
+   * [[embedLocalFiles]] rewrote any reference, or the file's own bytes on the
+   * `filePath` leg). Persisting the REWRITTEN markup would hand the author a
+   * machine string (proxy URLs, base64 blocks) instead of the thing they edit,
+   * and re-rendering it would inline the already-inlined images a second time.
+   *
+   * 旁路副作用（A4）：every failure is caught. A card whose bookkeeping failed
+   * must still render — the caller gets the ordinary payload plus
+   * `"persist":{"ok":false,"reason":"…"}`, never a `Left`.
+   */
+  private def persistCardSource(source: String, title: String): Json =
+    try
+      java.nio.file.Files.createDirectories(cardsDir)
+      val name = cardFileName(java.time.LocalDateTime.now().format(CardFileStamp), title)
+      val path = cardsDir.resolve(name)
+      java.nio.file.Files.write(path, source.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      Json.obj("ok" -> true.asJson, "path" -> path.toAbsolutePath.normalize.toString.asJson)
+    catch
+      case e: Throwable =>
+        val reason = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+        logger.warn(s"Card: could not persist the render source to $cardsDir (${e.getClass.getSimpleName}: $reason)")
+        Json.obj("ok" -> false.asJson, "reason" -> s"${e.getClass.getSimpleName}: $reason".asJson)
+
+  /**
+   * The directories this server reads a card source from: the **data root**
+   *  and the **project `.nebflow` directory** — the two namespaces the file
+   *  endpoint speaks about, taken from the filesystem rather than from its
+   *  served-subtree allowlist (see [[readCardSource]] for why the read face is
+   *  deliberately wider than the endpoint's served subset).
+   */
+  private def cardSourceRoots: List[Path] =
+    List(nebflow.shared.PathUtil.dataRoot.toNIO, java.nio.file.Paths.get(os.pwd.toString).resolve(".nebflow"))
+      .map(p =>
+        try p.toRealPath()
+        catch case _: Throwable => p.toAbsolutePath.normalize
+      )
+
+  /**
+   * Read a card's render source from disk for the `filePath` leg.
+   *
+   * Five gates, in this order, each refusing with a reason the caller can act
+   *  on (and 🔴 none of them ever echoes the file's content):
+   *
+   *  1. **Shape** — a non-empty string naming a real regular file.
+   *  2. **Size** — ≤ [[MaxRenderSourceBytes]]. Checked BEFORE any read, so an
+   *     oversized file is never loaded to find out that it is oversized.
+   *  3. **Extension** — taken from the REAL path (a symlink cannot lend its
+   *     name). Card's OWN face, defined here on purpose: the endpoint's table
+   *     (`NfFileAllowedExt`) serves no `html`/`htm` at all, so borrowing it
+   *     would refuse every legitimate card source.
+   *  4. **Identity** — the endpoint's OWN judge, through the narrow
+   *     `FilePolicyPort` (`endpointVerdictLayer`, 🔴 the same function
+   *     `/api/nf-file` uses — no second table, no mirrored whitelist), asked
+   *     about the REAL path. Only its **credential identity** layers refuse:
+   *     `Credential` (credential-shaped location or name) and `CredentialInode`
+   *     (a hard link to a credential file's inode). Its other two layers answer
+   *     questions this leg does not ask — `Namespace` is the endpoint's REACH
+   *     ("what may a browser fetch with a ticket"), and `FileType` is the
+   *     endpoint's extension face, which gate 3 owns here. Asked BEFORE the
+   *     location gate so that a credential path is refused for being a
+   *     credential, not merely for being out of place.
+   *  5. **Location** — the real path must lie inside the data root or the
+   *     project `.nebflow` directory. This is the read face's own reach rule and
+   *     it is deliberately WIDER than the endpoint's served subtrees
+   *     (`NfDataRootAllowlist`): a card's saved source lives in
+   *     `<dataRoot>/cards/`, which the endpoint does not serve and must not
+   *     (the author kept `cards/` out of that allowlist) — a rule that refused
+   *     it would make the "edit the saved file, render it again" loop
+   *     impossible. A path outside both roots (say `/etc/…`) is refused.
+   *
+   * Fail-closed: a port that cannot be consulted (it is not wired, or the judge
+   *  throws) refuses. Every message names the reason; the file's bytes and the
+   *  credential path's own content are never echoed.
+   */
+  private def readCardSource(rawPath: String): Either[ToolError, String] =
+    val supplied = rawPath.trim
+    def refuse(reason: String): Either[ToolError, String] =
+      Left(ToolError(s"Card: cannot render `filePath` — $reason. Supplied: `$supplied`"))
+    if supplied.isEmpty then refuse("the path is empty")
+    else
+      val resolved =
+        try Some(java.nio.file.Paths.get(nebflow.shared.PathUtil.expandTilde(supplied)).normalize())
+        catch case _: Throwable => None
+      resolved match
+        case None => refuse("the path is not a usable filesystem path")
+        case Some(path) =>
+          try
+            if !java.nio.file.Files.exists(path) then refuse(s"no file at ${path.toAbsolutePath.normalize}")
+            else if !java.nio.file.Files.isRegularFile(path) then refuse("the path is not a regular file")
+            else
+              val size = java.nio.file.Files.size(path)
+              if size > MaxRenderSourceBytes then
+                refuse(s"$size bytes exceeds the ${MaxRenderSourceBytes / (1024 * 1024)}MB render-source limit")
+              else
+                val real = path.toRealPath()
+                val ext = FileRefs.fileExtension(real.getFileName.toString)
+                if !RenderableCardExtensions.contains(ext) then
+                  refuse(
+                    s"'.$ext' is not a renderable card source (only " +
+                      RenderableCardExtensions.toList.sorted.map(e => s".$e").mkString(" / ") + ")"
+                  )
+                else
+                  val identityRefusal: Option[String] =
+                    try
+                      FilePolicyPort.port.endpointVerdictLayer(real) match
+                        case Some((FilePolicyPort.NfDenyLayer.Credential, reason, message)) =>
+                          Some(s"$reason: $message — ${FileRefs.servabilityHint(reason)}")
+                        case Some((FilePolicyPort.NfDenyLayer.CredentialInode, reason, message)) =>
+                          Some(s"$reason: $message — ${FileRefs.servabilityHint(reason)}")
+                        case Some((_, _, _)) | None => None
+                    catch
+                      case e: Throwable =>
+                        Some(
+                          "the credential judge could not be consulted " +
+                            s"(${e.getClass.getSimpleName}) — the file is treated as unreadable " +
+                            "rather than assumed readable"
+                        )
+                  identityRefusal match
+                    case Some(reason) => refuse(reason)
+                    case None =>
+                      if !cardSourceRoots.exists(root => real.startsWith(root)) then
+                        refuse(
+                          "the file lies outside the locations this server reads card sources from " +
+                            s"(${cardSourceRoots.map(_.toString).mkString(" and ")})"
+                        )
+                      else
+                        Right(
+                          new String(
+                            java.nio.file.Files.readAllBytes(real),
+                            java.nio.charset.StandardCharsets.UTF_8
+                          )
+                        )
+          catch
+            case e: Throwable =>
+              val message = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+              refuse(s"the source could not be read (${e.getClass.getSimpleName}: $message)")
+
+  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val suppliedHtml = input("html").flatMap(_.asString).filter(_.nonEmpty)
+    val suppliedFilePath = input("filePath").flatMap(_.asString).filter(_.nonEmpty)
+    (suppliedHtml, suppliedFilePath) match
+      // Both parameters name a render source at once: neither wins silently —
+      // picking one would hide a caller mistake behind a rendered card.
+      case (Some(_), Some(_)) =>
         IO.pure(
           Left(
             ToolError(
-              s"Card tool requires non-empty `html` parameter. Your input: {$debug}. Example: {\"html\": \"<div>content</div>\", \"title\": \"optional\"}"
+              "Card: `html` and `filePath` are mutually exclusive — pass exactly one of them. " +
+                s"Your input: {${input.toMap.keys.mkString(", ")}}"
             )
           )
         )
+      case (None, Some(filePath)) =>
+        val title = extractTitle(input)
+        IO.blocking {
+          readCardSource(filePath) match
+            case Left(error) => Left(error)
+            case Right(source) =>
+              val outcome = embedLocalFiles(source)
+              val persist = persistCardSource(source, title)
+              Right(s"$CardSentinel${cardPayload(outcome, title, persist)}")
+        }
+      case _ =>
+        extractHtml(input) match
+          case Some(rawHtml) =>
+            val title = extractTitle(input)
+            IO.blocking {
+              // A3: persist BEFORE `embedLocalFiles` rewrites a single byte.
+              val persist = persistCardSource(rawHtml, title)
+              val outcome = embedLocalFiles(rawHtml)
+              val distinct = distinctRejections(outcome.rejects)
+              val listed = distinct.take(MaxListedWarnings)
+              if distinct.nonEmpty then
+                logger.warn(
+                  s"Card: ${outcome.rejects.size} local file reference(s) NOT proxied (" +
+                    listed
+                      .map { case (rejected, count) => s"${rejected.value} [${rejected.failure.code}]x$count" }
+                      .mkString(", ") +
+                    ")"
+                )
+              Right(s"$CardSentinel${cardPayload(outcome, title, persist)}")
+            }
+
+          case None =>
+            val debug = input.toMap
+              .map { (k, v) =>
+                val preview = v.asString.getOrElse(v.noSpaces).take(80)
+                s"$k: $preview"
+              }
+              .mkString(", ")
+            IO.pure(
+              Left(
+                ToolError(
+                  s"Card tool requires non-empty `html` parameter (or `filePath` naming a local `.html`/`.htm` file; the two are mutually exclusive). Your input: {$debug}. Example: {\"html\": \"<div>content</div>\", \"title\": \"optional\"}"
+                )
+              )
+            )
+
+  /**
+   * The card payload object. Field order is a contract with the guard
+   *  (fileRefs/warnings lead so a >50K card's 2048-char preview keeps the
+   *  failure visible) — see the note at the `fileRefs` key.
+   */
+  private def cardPayload(outcome: EmbedOutcome, title: String, persist: Json): String =
+    val distinct = distinctRejections(outcome.rejects)
+    val listed = distinct.take(MaxListedWarnings)
+    Json
+      .obj(
+        "fileRefs" -> fileRefsJson(
+          outcome.proxied,
+          distinct.size,
+          distinct.size - listed.size,
+          outcome.exempt,
+          List("inlined" -> outcome.inlined, "deferred" -> outcome.deferred)
+        ),
+        "warnings" -> warningsJson(listed),
+        "notes" -> Json.arr(outcome.notes.map(_.asJson)*),
+        "html" -> outcome.html.asJson,
+        "title" -> title.asJson,
+        "persist" -> persist
+      )
+      .noSpaces
 
   /**
    * Try to extract valid HTML from the input with multi-level fallback:
@@ -872,6 +1118,11 @@ Example (interactive 3D with Three.js):
    *   - `fileRefs`  —— 计数器，与载荷内**同一对象逐字同源**；
    *   - `warnings`  —— 未代理引用的逐条原因，与载荷内**同一数组逐字同源**
    *                    （工具描述要求模型「读 warnings 并修好引用」）；
+   *   - `notes`     —— 解码形态披露，与载荷内**同一数组逐字同源**；
+   *   - `persist`   —— 落盘读数（本批新增）：`{"ok":true,"path":…}` / `{"ok":false,"reason":…}`，
+   *                    与载荷内**同一对象逐字同源**。模型据此可自闭环「Edit 该文件 → 再以
+   *                    `filePath` 渲染」。**唯一**会随「何时调用」变化的字段（文件名带时间戳）
+   *                    —— 这也是它必须被点名的原因，见 `CardModelFaceSpec` C4。
    *   - `htmlChars` —— 卡片正文本体长度（句柄/可核事实）；
    *   - `note`      —— 一句话说明全文只在前端面，避免模型误以为卡片没渲染。
    *
@@ -900,6 +1151,10 @@ Example (interactive 3D with Three.js):
             // face too — the model must be able to see that its escape-spelled
             // path was accepted in a different form (作者令：命中即须说明形态）。
             "notes" -> payload.hcursor.downField("notes").focus.getOrElse(Json.arr()),
+            // The persistence reading travels to the model too: "Edit the saved
+            // file, then render that path" is a loop the model can only close
+            // itself if it is told the path it just wrote.
+            "persist" -> payload.hcursor.downField("persist").focus.getOrElse(Json.obj()),
             "htmlChars" -> htmlChars.getOrElse(0).asJson,
             "note" -> ("The card HTML (including any inlined images) is rendered to the user and is not returned as "
               + "text; `fileRefs` and `warnings` above are the facts to act on.").asJson
