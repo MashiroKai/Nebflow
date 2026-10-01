@@ -40,8 +40,8 @@ object AgentCore:
     agentDef.exists(_.name == "Nebula") && depth == 0
 
   // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):isRootAgent 下沉 actor.RootAgentIdentity、
-  // markToolProgress 下沉 actor.AgentState、MemoryConsolidatorName 下沉 actor.AgentDef 伴生
-  // (签名零 agent 符号;此处不留转发别名,shim 禁令),本对象内调用点随迁改指。
+  // markToolProgress 下沉 actor.AgentState(签名零 agent 符号;此处不留转发别名,shim 禁令),
+  // 本对象内调用点随迁改指。
   /**
    * 会话工具面身份（Q4/Q5 批 2026-09-13）：定义期变体选择的**唯一输入**。
    *
@@ -435,19 +435,23 @@ object AgentCore:
     if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
 
   /**
-   * 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
-   * buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
+   * 阶段 2c 收敛的 agent 定义名（§C.1 总览，本集 = 四个在册名）：其 agent.json tools
+   * 声明在 buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
    * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
    * Edit）自动变 no-op，无需定义层先行迁移。
    *
-   * 2026-09-12 记忆改造批（memq）：+ `memory-consolidator` —— 压缩双轨的**记忆
-   * 整理 agent**（spec §5 R5 O-A）。工具面 = `KernelFixedTools` 恰七件（与 Delegate
-   * 内核同集合，作者第④条口径）；category 锁 standalone、`effectiveMcpServers=Nil`
-   * 由本集自动生效。它**不是**「唯一记忆写入者」——机制层不设该闸（作者 2026-09-12
-   * 00:19 裁定：用通用 `Edit`/`Write` 直写记忆文件，属有意为之的设计）。
+   * E5 batch 2026-10-01 (dangling-name closure): this set previously carried a FIFTH
+   * name -- the memory-consolidation agent added by the 2026-09-12 memq batch (spec §5
+   * R5 O-A, compressed dual-track second track). That agent retired on 2026-09-25
+   * (`aa371d68f`: tool + `memory/queue.jsonl` queue deleted, seed resources ABSENT,
+   * zero entry in the manifest `agents:` list), so its membership here became a
+   * DANGLING name -- the criterion no longer resolves to any def that can exist. This
+   * batch deletes the member, its `fixedToolsFor` by-name branch and the `AgentDef`
+   * name constant (single-owner order: name-family closure belongs to the E5 batch
+   * alone). The set is back to its four registered names.
    */
   val ConvergedAgentNames =
-    Set(RootAgentIdentity.Name, "project-dispatcher", "general", "kernel", "memory-consolidator")
+    Set(RootAgentIdentity.Name, "project-dispatcher", "general", "kernel")
 
   /**
    * Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
@@ -668,11 +672,10 @@ object AgentCore:
           // 先例；不经 legacyFixedTools 的 catch-all（该路径注释自陈「随阶段
           // 2e/3 归档一并退役」，依赖它有漂移风险）。
           case "kernel" => AgentCore.KernelFixedTools
-          // 记忆整理 agent（2026-09-12 记忆改造批）:与内核同集合恰七件——作者第④条
-          // 「与 Delegate 内核相同的工具面」字面成立；因为它是收敛名，`base=∅`、
-          // `NebulaExclusiveTools` 全剥（交集 ∅）、MCP 面 Nil ⇒ 零配置面。
-          // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):常量已下沉 actor.AgentDef。
-          case n if n == AgentDef.MemoryConsolidatorName => AgentCore.KernelFixedTools
+          // E5 batch 2026-10-01: the former fifth member's by-name branch is deleted
+          // together with that name -- the agent retired on 2026-09-25 (`aa371d68f`)
+          // and its name constant in AgentDef went with it in this batch, so the
+          // branch is unreachable by construction.
           case _ => legacyFixedTools(agentDef)
 
     end match

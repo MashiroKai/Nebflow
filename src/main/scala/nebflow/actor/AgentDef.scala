@@ -66,18 +66,3 @@ case class AgentDef(
   pluginMcpServers: List[String] = Nil,
   pluginTools: List[String] = Nil
 )
-
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):本常量自 agent.AgentCore 下沉
-// actor(纯 String 常量;AgentCore 不留转发别名,shim 禁令),全仓改指,实现与注释逐字迁移。
-object AgentDef:
-
-  /**
-   * 记忆整理 agent 定义名（spec §5 R5 O-A；seed = `src/main/resources/seed/agents/
-   * <name>/`，运行时 `~/.nebflow/agents/<name>/`）。压缩双轨的第二轨按此名解析
-   * def——名字缺失 ⇒ 轨失败降级（照常装机，队列保留）。
-   * （六族退役批 2026-09-29：原注释内的轨符号链接已随轨本体退役删除；本常量
-   * 自身的收口归 e5-memconsolidator 批，本批一字不动。）
-   */
-  val MemoryConsolidatorName = "memory-consolidator"
-
-end AgentDef

@@ -46,10 +46,10 @@ class SchemePolicySpec extends FunSuite:
     // 可设两类：Nebula=fast、project-dispatcher=deep（自有引用，红线）
     writeAgent("Nebula", """{"name":"Nebula","description":"orchestrator","preset":"fast"}""")
     writeAgent("project-dispatcher", """{"name":"project-dispatcher","description":"dispatcher","preset":"deep"}""")
-    // 其余：kernel/general 不带自有引用（继承体）；memory-consolidator 带死引用（忽略面）
+    // 其余：kernel/general 不带自有引用（继承体）；非在册 standalone 带死引用（忽略面）
     writeAgent("kernel", """{"name":"kernel","description":"minimal kernel"}""")
     writeAgent("general", """{"name":"general","description":"general executor"}""")
-    writeAgent("memory-consolidator", """{"name":"memory-consolidator","description":"memory","preset":"fast"}""")
+    writeAgent("custom-agent", """{"name":"custom-agent","description":"standalone custom","preset":"fast"}""")
 
   private val FastChain = AgentModelConfig(Some("fast-model"), List("fb-fallback"))
   private val DeepChain = AgentModelConfig(Some("deep-model"), Nil)
@@ -68,8 +68,8 @@ class SchemePolicySpec extends FunSuite:
     resetFixtures()
     assertEquals(SchemePolicy.effectiveRefs("Nebula", Some("fast"), None)._1, Some("fast"))
     assertEquals(SchemePolicy.effectiveRefs("project-dispatcher", Some("deep"), None)._1, Some("deep"))
-    // memory-consolidator 带 preset:"fast"（盘上留审计）——引擎忽略 → None
-    assertEquals(SchemePolicy.effectiveRefs("memory-consolidator", Some("fast"), None)._1, None)
+    // custom-agent 带 preset:"fast"（盘上留审计）——引擎忽略 → None
+    assertEquals(SchemePolicy.effectiveRefs("custom-agent", Some("fast"), None)._1, None)
     // 自有 legacy model 同样被忽略
     assertEquals(SchemePolicy.effectiveRefs("custom-agent", None, Some(AgentModelConfig(Some("x/y"), Nil)))._2, None)
 
@@ -128,12 +128,12 @@ class SchemePolicySpec extends FunSuite:
   test("loadFromDir: 其余 agent 存储方案被忽略——回落默认 preset（数据仍留盘）"):
     resetFixtures()
     val lib = new AgentLibrary(tempRoot / "agents")
-    val mem =
-      lib.loadFromDir(tempRoot / "agents" / "memory-consolidator").getOrElse(fail("memory-consolidator def missing"))
-    assertEquals(mem.model, Some(DefaultChain), "ignored refs must fall through to the default preset")
-    assertEquals(mem.preset, None, "ignored agents must not advertise a preset name")
+    val custom =
+      lib.loadFromDir(tempRoot / "agents" / "custom-agent").getOrElse(fail("custom-agent def missing"))
+    assertEquals(custom.model, Some(DefaultChain), "ignored refs must fall through to the default preset")
+    assertEquals(custom.preset, None, "ignored agents must not advertise a preset name")
     // 数据留盘：盘上 preset 引用原样保留（零删除）
-    val raw = os.read(tempRoot / "agents" / "memory-consolidator" / "agent.json")
+    val raw = os.read(tempRoot / "agents" / "custom-agent" / "agent.json")
     assert(raw.contains("\"preset\""), "the stored preset ref must stay on disk for audit")
 
 end SchemePolicySpec

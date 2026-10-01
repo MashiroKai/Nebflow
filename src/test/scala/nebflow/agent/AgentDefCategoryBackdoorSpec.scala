@@ -31,9 +31,13 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     "Nebula" -> AgentCore.RootOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
     "general" -> AgentCore.GeneralFixedTools,
-    "kernel" -> AgentCore.KernelFixedTools,
-    // 2026-09-12 记忆改造批：记忆整理 agent（压缩双轨第二轨）——与内核同集合恰七件
-    AgentDef.MemoryConsolidatorName -> AgentCore.KernelFixedTools
+    "kernel" -> AgentCore.KernelFixedTools
+    // E5 batch 2026-10-01: the fifth registry entry (the memory-consolidation agent
+    // name -> KernelFixedTools) was removed together with the name itself. That agent
+    // retired on 2026-09-25 (govmemory batch); the dangling member it left inside
+    // ConvergedAgentNames is cleaned up by this batch. The guard
+    // `ConvergedAgentNames == MechanismFixed.keySet` in test 5 below is why these
+    // two deletions must be atomic.
   )
 
   /** friendseal (2026-09-25): flag-aware expectation for the Nebula face — the
