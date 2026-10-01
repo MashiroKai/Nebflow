@@ -54,7 +54,8 @@
 //     when the panel opens on a not-created card, and again after an archive
 //     — the "recreate" leg).
 //   · created: live-app block (contract C1 — which app the running bridge is
-//     actually holding, live fingerprint verdict), archive (contract C5).
+//     actually holding; its fingerprint verdict row was removed by the
+//     socpanel-min wave-2 batch, see that paragraph), archive (contract C5).
 //     The bindings list + default-session control (contracts C3/C4) USED to
 //     render here; the socpanel-min batch (author ruling 2026-10-01, last
 //     paragraph of this header) removed that display block from the face.
@@ -92,6 +93,50 @@
 // orphans for the author to rule on (AGENTS §16: copy is the author's to
 // review), so zero locale file changed. Restoring the block = taking it back
 // from git history (this batch's parent commit).
+// 🔴 That "zero locale file changed" statement held for wave-1 only; the wave-2
+//    paragraph below removes exactly one already-orphaned key (K1).
+//
+// socpanel-min wave-2 batch (author ruling 2026-10-01, follow-up order — the
+// minimal-face extension). Removal only; ZERO new user-visible copy (§16), zero
+// behaviour change beyond the dead-seam question below:
+//   · A1  fingerprint row — gone. `data-fp` / `social-live-warn` have no
+//         emitter left; a mismatch still shows as the pill ([[displayStatus]]
+//         reads the in-memory reading, never the DOM).
+//   · A2  bridge row — gone (`data-live-enabled`, [[enabledText]] retired as
+//         its only consumer).
+//   · A6  the application row keeps its VALUE but loses its label, and renders
+//         ONLY when a real app is known (`live.available && live.appId` — the
+//         same condition the value picks on, never a post-render text
+//         comparison). An unlinked bridge renders the EMPTY container: the key
+//         `social.feishu.live.appUnknown` is simply no longer rendered (kept in
+//         the table, now an orphan for the author). The container + `[data-live]`
+//         stay — they are SF-1c's anchor and [[refreshCard]]'s re-render target.
+//   · A3  the card-wide description line is gone FROM THIS CARD ONLY;
+//         [[plainCardHTML]] keeps its own (sealed-family surface, out of scope).
+//   · A4  the archive's permanent hint line is gone; the SAME existing copy
+//         (social.feishu.archive.hint) now rides the unbind button's `title`,
+//         i.e. hover-at-intent. No second copy was authored, none was reworded.
+//   · A5  the happy-path credential line is gone — a healthy card says nothing
+//         (the pill carries it) and `.social-card-hint` takes its existing
+//         `hidden` branch. The contradicted reading and the actionable
+//         `configInvalid` hint both stay.
+//   · A7  the "channel configuration" section title is gone (index.html node +
+//         its [[applyStaticText]] entry). The multiple-visible-cards path is
+//         untouched: [[visibleChannels]] / [[cardHTML]] / `.social-card-list`
+//         are not modified, so the list still restores itself naturally.
+//   · P2/P4  `.social-scan-manual` (0 emitters, a social-fix leftover) is gone,
+//         and the `data-scan-inline` attribute is gone — the container and its
+//         `data-scan-qr` / `data-scan-code` / `data-scan-status` children stay
+//         ([[scanNode]] reads those).
+//   · K1  the already-orphaned `social.feishu.defaultSession.none` key is gone
+//         from both locale tables (the only locale edit; the author's order
+//         names that key alone — the wave-1 orphans stay, awaiting a ruling).
+// Behaviour faces deliberately NOT touched: routing, the fixed Nebula pin, the
+// boot-time convergence write-back, the bridge state flip, the status pill, the
+// archive action, the scan face. The B8 rollback lookup and the B9 `onChange`
+// listener are KEPT — they are a deliberately preserved seam for a future real
+// picker (the audit's own reading), not accident, so the "may delete" option was
+// declined. `prev` is not dead: the failure path restores the last backend truth.
 //
 // social-fix batch (author ruling 2026-09-28, three changes over the landed
 // panel): ① ONE view layer — the QR sub-dialog is retired, the scan block
@@ -416,15 +461,17 @@ function displayStatus(ch) {
 /**
  * The human credential status line (social-fix, author ruling 2026-09-28):
  * the probe FACE still answers the mechanical triples, but the card never
- * shows internal check names — the reading renders as plain language, two
- * states (+ empty when nothing was probed yet):
- *   · any contradiction in the probed credential ⇒ "missing — scan again"
- *   · otherwise ⇒ "configured · permissions normal".
- * The triple-contradiction path ([[channelProblem]] ⇒ configInvalid) keeps
- * its actionable hint with the file path — this line is the non-invalid
- * reading only.
+ * shows internal check names — the reading renders as plain language.
+ *
+ * socpanel-min wave-2 (author ruling 2026-10-01): the happy-path line
+ * ("configured · permissions normal") is REMOVED — a healthy card says nothing,
+ * because the status pill already carries that state. Only the contradiction
+ * still renders here ("missing — scan again"); the happy path returns '' and
+ * the caller's `.social-card-hint` takes its existing `hidden` branch.
+ * The triple-contradiction path ([[channelProblem]] ⇒ configInvalid) keeps its
+ * actionable hint with the file path — this line is the non-invalid reading only.
  * @param {Record<string, {exists?: boolean, modeOk?: boolean, readable?: boolean}>|undefined} probe
- * @returns {string} translated status, or '' when nothing was probed yet
+ * @returns {string} the scanning-again line, or '' when the credential is clean
  */
 function credentialLine(probe) {
   if (!probe) return '';
@@ -433,7 +480,7 @@ function credentialLine(probe) {
   const p = probe[keys[0]];
   if (!p) return '';
   const broken = p.exists === false || p.modeOk === false || p.readable === false;
-  return t(broken ? 'social.credential.missing' : 'social.credential.ok');
+  return broken ? t('social.credential.missing') : '';
 }
 
 /**
@@ -516,8 +563,15 @@ function plainCardHTML(ch) {
  *   · not-created — the QR lives IN the card with its status line
  *     ([[beginInlineScan]] auto-runs on this face); scan-to-create is the
  *     ONLY creation path.
- *   · created — the live-app block (C1), archive (C5) with its one-line
- *     semantics, and the bindings block (C3/C4).
+ *   · created — the live-app block (C1, narrowed by the socpanel-min batch to
+ *     at most the application row) and archive (C5).
+ * socpanel-min wave-2 (author ruling 2026-10-01): the card-wide description
+ * line is removed from THIS card only ([[plainCardHTML]] keeps its own — it
+ * belongs to the sealed-family surface, out of this batch's scope), and the
+ * archive's one-line hint moved from a permanent line to the unbind button's
+ * `title` (同一既有文案，hover 时机提示). The `data-scan-inline` attribute is
+ * gone; the container and its `data-scan-qr` / `data-scan-code` /
+ * `data-scan-status` children stay ([[scanNode]] reads them).
  * The head keeps icon + name + status pill; the enable switch is folded into
  * archive (enabled=false IS the archive — no separate disabled face exists).
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
@@ -533,7 +587,7 @@ function scanBindCardHTML(ch) {
         <span class="social-status-pill plugins-state-pill" data-status="${status}">${escapeHtml(t(`social.status.${status}`))}</span>
       </div>`;
   const scanInline = `
-      <div class="social-scan-inline" data-scan-inline="${escapeHtml(ch.id)}">
+      <div class="social-scan-inline">
         <div class="social-scan-qr" data-scan-qr></div>
         <div class="social-scan-code" data-scan-code hidden></div>
         <div class="social-scan-status" data-scan-status role="status" aria-live="polite"></div>
@@ -541,14 +595,12 @@ function scanBindCardHTML(ch) {
   const face = created
     ? `${liveBlockHTML(ch)}
        <div class="social-card-actions">
-         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}">${escapeHtml(t('social.feishu.archive.action'))}</button>
+         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t('social.feishu.archive.hint'))}">${escapeHtml(t('social.feishu.archive.action'))}</button>
          <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
-       </div>
-       <div class="social-archive-hint">${escapeHtml(t('social.feishu.archive.hint'))}</div>`
+       </div>`
     : scanInline;
   return `<div class="social-card" data-channel="${escapeHtml(ch.id)}">
       ${head}
-      <div class="social-card-desc">${escapeHtml(t(ch.descKey))}</div>
       ${face}
       <div class="social-card-hint"${hint ? '' : ' hidden'}>${escapeHtml(hint)}</div>
     </div>`;
@@ -567,27 +619,21 @@ function scanBindCardHTML(ch) {
 function liveBlockHTML(ch) {
   const live = liveByChannel[ch.id]
     || { available: false, appId: '', appName: '', fingerprint: 'unknown', enabled: null };
-  const appText = live.available
-    ? (live.appId
-      ? (live.appName ? `${live.appName} · ${live.appId}` : live.appId)
-      : t('social.feishu.live.appUnknown'))
-    : t('social.feishu.live.appUnknown');
-  const fp = live.fingerprint;
-  const fpKey = fp === 'match' ? 'social.feishu.live.fpMatch'
-    : fp === 'mismatch' ? 'social.feishu.live.fpMismatch'
-      : 'social.feishu.live.fpUnknown';
-  // Bridge enabled state: the C1 face's own reading when it answers at all
-  // (null = unknown); the config flag is only the stand-in for an OLD backend
-  // that has no connection endpoint — a stored flag is not a live claim.
-  const enabledText = live.available
-    ? (live.enabled === null
-      ? t('social.feishu.live.fpUnknown')
-      : t(live.enabled ? 'social.feishu.live.bridgeOn' : 'social.feishu.live.bridgeOff'))
-    : t(!!((configByChannel[ch.id] || {}).enabled) ? 'social.feishu.live.bridgeOn' : 'social.feishu.live.bridgeOff');
+  // socpanel-min wave-2 (author ruling 2026-10-01): the minimal face keeps at
+  // most ONE row — the live application itself. The fingerprint row (C1's
+  // `data-fp` verdict + `social-live-warn`), the bridge row (`data-live-enabled`)
+  // and this row's label span are all gone; a fingerprint mismatch still reaches
+  // the user through the status pill ([[displayStatus]] reads the MEMORY value,
+  // never the DOM). The row is CONDITIONAL on the very condition its value picks
+  // on (`available && appId`) — an unlinked bridge renders the empty container,
+  // never the `appUnknown` explainer copy (that key stays in the locale table,
+  // merely unrendered). No post-render text comparison decides this.
+  const showApp = !!(live.available && live.appId);
+  const appText = showApp
+    ? (live.appName ? `${live.appName} · ${live.appId}` : live.appId)
+    : '';
   return `<div class="social-live" data-live="${escapeHtml(ch.id)}">
-      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.title'))}</span><span class="social-live-value">${escapeHtml(appText)}</span></div>
-      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.fingerprint'))}</span><span class="social-live-value${fp === 'mismatch' ? ' social-live-warn' : ''}" data-fp="${fp}">${escapeHtml(t(fpKey))}</span></div>
-      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.bridge'))}</span><span class="social-live-value" data-live-enabled>${escapeHtml(enabledText)}</span></div>
+      ${showApp ? `<div class="social-live-row"><span class="social-live-value">${escapeHtml(appText)}</span></div>` : ''}
     </div>`;
 }
 
@@ -700,7 +746,6 @@ function applyStaticText() {
     ['social-remote-suspended', 'social.remote.suspended'],
     ['social-remote-safety-key', 'social.remote.safetyKey'],
     ['social-remote-safety-plain', 'social.remote.safetyPlain'],
-    ['social-channels-title', 'social.channels.title'],
     ['social-btn', 'social.btn.title', 'title'],
   ];
   for (const [id, key, attr] of map) {
