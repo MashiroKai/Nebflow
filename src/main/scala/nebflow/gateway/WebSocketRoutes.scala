@@ -753,38 +753,48 @@ class WebSocketRoutes(
       rateLimiter.check("bridge").flatMap { allowed =>
         if !allowed then logger.warn("Bridge rate limit exceeded")
         else
-          // Source marker (source-marker batch, 2026-10-01): this is the ONE
-          // bridge→session injection point, so it is also the one place that may
-          // label a message with where it came from. The marker is composed HERE
-          // (before every downstream consumer sees the text) rather than inside
-          // any channel, so the template stays channel-agnostic and a second
-          // channel reuses it by supplying its own values. `origin = None` (the
-          // default, and every pre-existing caller) leaves the string
-          // byte-identical to the pre-batch behaviour.
-          val labelled = nebflow.bridge.BridgeOrigin.compose(origin, senderId, content)
+          // Source marker relocation (source-marker batch, 2026-10-01): this is
+          // the ONE bridge→session injection point, so it is also the one place
+          // that splits an inbound message into the faces it is allowed to appear
+          // on. 🔴 THE MARKER IS MODEL-FACE ONLY: it reaches the agent's context
+          // (`ExternalEvent.payload`) and is structurally absent from the session
+          // display face (the recorded `.ui.json` row and the `bridgeUser`
+          // broadcast both take `faces.sessionDisplay`, which is the bare content
+          // by construction). The template still lives channel-agnostically on
+          // [[nebflow.bridge.BridgeOrigin]]; `origin = None` (the default, and
+          // every pre-existing caller) leaves every face byte-identical to the
+          // pre-batch behaviour.
+          val faces = nebflow.bridge.BridgeOrigin.faces(origin, senderId, content)
           val source = senderId.map(id => s"[via bridge:$id]").getOrElse("[via bridge]")
-          logger.info(s"Bridge message for session $sessionId: ${labelled.take(60)}... $source") *>
-            // Record as UiMessage
+          // The log line is diagnostic, not a display face: it may quote the
+          // labelled model payload. The log file is never rendered as a chat
+          // stream and never read back as a `UiMessage`.
+          logger.info(s"Bridge message for session $sessionId: ${faces.modelPayload.take(60)}... $source") *>
+            // Record as UiMessage — DISPLAY face: bare content, no marker.
             sharedResources.sessionStore
-              .appendUiMessages(sessionId, List(UiMessage.User(labelled, Nil, timestamp = System.currentTimeMillis())))
+              .appendUiMessages(sessionId, List(UiMessage.User(faces.sessionDisplay, Nil, timestamp = System.currentTimeMillis())))
               .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
             // Push to frontend in real-time so it shows without switching sessions
+            // — DISPLAY face: bare content, no marker.
             wsHub.broadcast(
               io.circe.Json.obj(
                 "type" -> "bridgeUser".asJson,
                 "sessionId" -> sessionId.asJson,
-                "text" -> labelled.asJson
+                "text" -> faces.sessionDisplay.asJson
               )
             ) *>
             // Use ExternalEvent instead of UserInput so the message is queued in
             // pendingEvents and can be injected at the next ToolsComplete gap —
             // avoids being stashed until the entire turn finishes.
+            // MODEL face: the payload KEEPS the marker block (the model must stay
+            // able to tell a bridged message from a local one); the structured
+            // origin rides along in `metadata` for later consumers.
             ensureAgent(sessionId)(ref =>
               ref ! AgentCommand.ExternalEvent(
                 source = "bridge",
                 eventType = "user-message",
-                payload = labelled,
-                metadata = io.circe.JsonObject("senderId" -> senderId.asJson),
+                payload = faces.modelPayload,
+                metadata = faces.metadata,
                 correlationId = None
               )
             )

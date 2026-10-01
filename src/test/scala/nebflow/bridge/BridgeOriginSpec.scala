@@ -54,3 +54,84 @@ class BridgeOriginSpec extends FunSuite:
     assert(out.contains("以下消息来自另一个渠道（社交接口 · 渠道 other-channel）"), out)
     assert(out.contains(s"发送方：${BridgeOrigin.UnknownSender}"), out)
   }
+
+  // ────────── source-marker relocation: the two faces must not be conflated ──────────
+  //
+  // Defect (author-reported, 2026-10-01, verbatim): 「现在飞书消息的 system reminder
+  // 会在会话消息中显示，system reminder 永远不显示在会话中。」 Root cause: ONE
+  // composed string was handed to BOTH the model context and the session display
+  // face. The three criteria below pin the split; the source-contract gate at the
+  // bottom pins the single call site that performs it.
+
+  test("CRITERION 1 (session display face): the recorded/broadcast string never carries the marker") {
+    val f = BridgeOrigin.faces(Some(feishu), Some("ou_sender"), "hello")
+    assert(!f.sessionDisplay.contains(BridgeOrigin.MarkerOpen),
+      s"会话显示面不得含 ${BridgeOrigin.MarkerOpen}，现读到：${f.sessionDisplay}")
+    assert(!f.sessionDisplay.contains(BridgeOrigin.MarkerClose),
+      s"会话显示面不得含 ${BridgeOrigin.MarkerClose}，现读到：${f.sessionDisplay}")
+    // and it is the bare content, not a re-derived variant
+    assertEquals(f.sessionDisplay, "hello")
+  }
+
+  test("CRITERION 2 (model face): the payload carries the marker block, exactly one") {
+    val f = BridgeOrigin.faces(Some(feishu), Some("ou_sender"), "hello")
+    assert(f.modelPayload.contains(BridgeOrigin.MarkerOpen), f.modelPayload)
+    assert(f.modelPayload.contains(BridgeOrigin.MarkerClose), f.modelPayload)
+    assertEquals(f.modelPayload.split(BridgeOrigin.MarkerOpen, -1).length, 2, f.modelPayload)
+    assertEquals(f.modelPayload.split(BridgeOrigin.MarkerClose, -1).length, 2, f.modelPayload)
+    // the model keeps the source attribution the marker encodes
+    assert(f.modelPayload.contains("以下消息来自飞书（社交接口 · 渠道 feishu）"), f.modelPayload)
+  }
+
+  test("CRITERION 3 (invariant): origin = None leaves every face byte-identical") {
+    val f = BridgeOrigin.faces(None, Some("ou_sender"), "hello")
+    assertEquals(f.sessionDisplay, "hello")
+    assertEquals(f.modelPayload, "hello")
+    // the metadata base is the pre-batch object, byte-for-byte (`senderId` only);
+    // an unannounced channel adds no channel keys.
+    assertEquals(f.metadata, io.circe.JsonObject("senderId" -> io.circe.Json.fromString("ou_sender")))
+    // and a None senderId still encodes as JSON null, as before
+    assertEquals(
+      BridgeOrigin.faces(None, None, "x").metadata,
+      io.circe.JsonObject("senderId" -> io.circe.Json.Null)
+    )
+  }
+
+  test("the structured origin rides in metadata when a channel announces itself, and only then") {
+    val none = BridgeOrigin.faces(Some(feishu.copy(chatRef = None)), Some("s"), "hi").metadata
+    assertEquals(none("channelId"), Some(io.circe.Json.fromString("feishu")))
+    assertEquals(none("channelDisplay"), Some(io.circe.Json.fromString("飞书")))
+    // a blank chatRef adds no key rather than a guessed conversation name
+    assertEquals(none("chatRef"), None)
+    val some = BridgeOrigin.faces(Some(feishu), Some("s"), "hi").metadata
+    assertEquals(some("chatRef"), Some(io.circe.Json.fromString("oc_123")))
+    // blank chatRef is normalised away, same as the marker's rendering rule
+    assertEquals(BridgeOrigin.faces(Some(feishu.copy(chatRef = Some("  "))), Some("s"), "hi").metadata("chatRef"), None)
+  }
+
+  test("SOURCE CONTRACT: the one bridge injection point sends each face to its own consumer") {
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "WebSocketRoutes.scala")
+    val iFaces = src.indexOf("nebflow.bridge.BridgeOrigin.faces(origin, senderId, content)")
+    assert(iFaces > 0, "handleBridgeMessage no longer splits the message into faces")
+
+    val iRecord = src.indexOf("UiMessage.User(faces.sessionDisplay", iFaces)
+    assert(iRecord > iFaces, "the recorded UiMessage row must carry the DISPLAY face (bare content)")
+
+    val iBroadcast = src.indexOf("\"text\" -> faces.sessionDisplay.asJson", iFaces)
+    assert(iBroadcast > iFaces, "the bridgeUser broadcast must carry the DISPLAY face (bare content)")
+
+    val iPayload = src.indexOf("payload = faces.modelPayload", iFaces)
+    assert(iPayload > iFaces, "the ExternalEvent payload must carry the MODEL face (marker retained)")
+
+    val iMeta = src.indexOf("metadata = faces.metadata", iFaces)
+    assert(iMeta > iFaces, "the ExternalEvent metadata must carry the structured origin")
+
+    // and the pre-fix form is gone: no consumer may take the composed string again
+    assert(!src.contains("UiMessage.User(labelled"),
+      "the recorded row is fed a labelled string again — the marker leaks back into the session display face")
+    assert(!src.contains("\"text\" -> labelled"),
+      "the broadcast is fed a labelled string again — the marker leaks back into the session display face")
+    assert(!src.contains("val labelled = nebflow.bridge.BridgeOrigin.compose("),
+      "handleBridgeMessage composes a single string again instead of splitting the faces")
+  }
+
