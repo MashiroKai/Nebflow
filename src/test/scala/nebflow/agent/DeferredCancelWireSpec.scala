@@ -82,6 +82,11 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
   private def text(s: String): Stream[IO, StreamChunk] =
     Stream(StreamChunk.TextDelta(s), StreamChunk.Done(None, None))
 
+  /** Drop any transcript left by an earlier run for this session id (shared sessions dir). */
+  private def clearSession(sid: String): Unit =
+    val dir = tempRoot / "sessions"
+    List(dir / s"$sid.json", dir / s"$sid.ui.json").foreach(f => if os.exists(f) then os.remove(f))
+
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 25.millis)(cond: IO[Boolean]): IO[Unit] =
     awaitTrue(timeout, every)(cond).void
 
@@ -107,10 +112,15 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
     body: (ActorSystem, SharedResources, nebflow.actor.ActorRef[AgentCommand], os.Path, ScriptedLlm) => IO[Unit]
   ): IO[Unit] =
     val ws = tempRoot / name
-    // Start from a CLEAN workspace: the gate file (and any prior transcript) must not
-    // survive from an earlier run, or the in-flight precondition reads as already met.
+    // Start from a CLEAN workspace AND a clean transcript. Both matter: the gate file
+    // makes the in-flight precondition a real reading, and the session file is keyed by
+    // session id in a SHARED sessions dir — a transcript left by an earlier run of this
+    // very spec (same session id) reads as "the batch already produced its result" and
+    // turns the precondition into a false alarm (observed: stale `<id>.json` with the
+    // previous run's tool_result).
     os.remove.all(ws)
     os.makeDir.all(ws)
+    clearSession(s"deferred-wire-$name")
     val gate = ws / "release-gate"
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
@@ -225,6 +235,77 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
           "D2 VIOLATED — after the cancel takes effect the node must dispatch NO further LLM turn (a second call means a new tool round was started)"
         )
     }
+  }
+
+  // ── D3：非 deferred 的 Stop(reason) 仍是立即中断（零回归对照）─────────────
+  //
+  // 本批只给**零参** Stop() 接 deferred 语义；带 reason 的既有站点必须逐字不变。
+  // 判据形态：批次仍被 gate 锁死（gate 恒不存在）⇒ 若走了 deferred 腿，actor 会
+  // **永不**停（它只会停在那条被锁死的命令之后）。故「actor 在 gate 仍不存在时就停了」
+  // 正是**立即中断**的机械读数。
+
+  test("D3: the historical Stop(reason) still tears the in-flight batch down immediately (zero regression)") {
+    withBatchInFlight("d3") { (system, resources, agent, gate, llm) =>
+      for
+        _ <- IO.blocking(assert(!os.exists(gate), "precondition: the batch is in flight"))
+        _ <- agent ! AgentCommand.Stop("Node cancelled")
+        stopped <- awaitTrue(20.seconds)(system.isAlive(agent.path).map(!_))
+        stillBlocked <- IO.blocking(!os.exists(gate))
+        msgs <- resources.sessionStore.loadMessagesForSession("deferred-wire-d3")
+      yield
+        assert(stillBlocked, "the batch must still be blocked — that is what makes this an IMMEDIATE teardown")
+        assert(
+          stopped,
+          "D3 VIOLATED — Stop(reason) must keep the historical immediate semantics (this batch must not re-route it through the deferred leg)"
+        )
+        val ids = msgs.flatMap(_.content.toOption.toList).flatMap(_.collect { case ContentBlock.ToolResult(id, _, _) => id })
+        assert(
+          !ids.contains("tu-block"),
+          s"D3: the immediate path must drop the un-produced batch (no tool_result persisted), got: $ids"
+        )
+    }
+  }
+
+  // ── D4：无在飞批次时 Stop() 退化为立即路径（不得滞留）───────────────────
+
+  test("D4: Stop() on an idle session (no batch in flight) falls back to the immediate path") {
+    val ws = tempRoot / "d4"
+    os.remove.all(ws)
+    os.makeDir.all(ws)
+    clearSession("deferred-wire-d4")
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tempRoot / "data")
+    val system = ActorSystem("deferred-wire-d4")
+    val io = for
+      resources <- SpecResources.mkResources(system, tempRoot, new ScriptedLlm(Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](Nil)))
+      agent <- system.spawn(
+        AgentActor(
+          agentDef = AgentDef(name = "IdleProbe", description = "idle probe", tools = List("Read"), systemPrompt = ""),
+          resources = resources,
+          wsSend = (_: Json) => IO.unit,
+          depth = 0,
+          parentRef = None,
+          sessionId = Some("deferred-wire-d4"),
+          sessionName = Some("IdleProbe"),
+          safetyMode = "auto-all"
+        ),
+        "deferred-wire-d4"
+      )
+      // No UserInput: the session is parked between turns, so nothing is in flight.
+      _ <- IO.sleep(100.millis)
+      _ <- agent ! AgentCommand.Stop()
+      stopped <- awaitTrue(20.seconds)(system.isAlive(agent.path).map(!_))
+    yield
+      assert(
+        stopped,
+        "D4 VIOLATED — Stop() with nothing in flight must fall back to the immediate path (a recorded intent no batch will ever honour would park the session forever)"
+      )
+    io.guarantee(
+      system.stopAll.handleErrorWith(_ => IO.unit) *>
+        IO(nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)) *>
+        IO(PathUtil.setDataRoot(originalRoot))
+    )
   }
 
 end DeferredCancelWireSpec
