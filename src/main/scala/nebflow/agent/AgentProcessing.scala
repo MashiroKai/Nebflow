@@ -520,6 +520,69 @@ private[agent] object AgentProcessing:
         end if
 
       // --- Tools completed ---
+      case tc: ToolsComplete if state.execution.stopDeferred =>
+        // eng-deferred-cancel batch (2026-10-02) — K-1 observer + K-2 artifact
+        // preservation, both landing here because a transcript is only
+        // reconstructible from a COMPLETE they/result pair (the native
+        // Anthropic/OpenAI client format rejects an assistant ``tool_use``
+        // without its matching ``tool_result``).
+        //
+        //  ① K-2 (preserve produced artifacts): the batch's assistant/result
+        //     messages are appended under the batch's original base and the
+        //     result is persisted FIRST. This is the whole point of deferring:
+        //     under the historical immediate path the batch's fiber is
+        //     cancelled and these results never reach the transcript at all.
+        //  ② K-1 (no new tool call after cancellation takes effect): the
+        //     batch did not come back through ``pipeToolExecutions``, so
+        //     ``toolsCompleted`` was never sent — the stop intent is applied
+        //     here and no further LLM turn is dispatched (ToolsComplete's
+        //     ``case None`` branch, which would call ``pipeLlmCall``, is not
+        //     reached).
+        //  ③ K-1 (readable cancellation face): the stop is observable on two
+        //     existing surfaces — the ``stop-deferred`` lifecycle log line
+        //     written when the intent was recorded, and (at the chain level)
+        //     ``ChainLedger.cancellingChains``. The actor emits neither events
+        //     nor WS frames from here, so the surfaces stay unchanged.
+        //
+        // Deliberately none of the batch-continuation work of the normal
+        // branch: no event/queue drains, no deferral/barrier bookkeeping, no
+        // completion debt — the turn is over and nothing will consume them.
+        // ``lastDispatch`` is deliberately left UNTOUCHED (it still names the
+        // in-flight tool batch). Rewriting it as an LLM dispatch would require
+        // a synthesized ``ConsumeResult`` — a second, fabricated artifact face
+        // — and nothing reads the checkpoint here: the actor stops and
+        // ``retryFromCheckpoint`` is unreachable from a stopped behavior.
+        val stoppedState = state
+          .copy(execution =
+            state.execution
+              .copy(
+                messages = batchMessages(tc, state.messages),
+                stopDeferred = false
+              )
+          )
+        for
+          _ <- IO(
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "stop-deferred-honoured",
+              s"tool batch finished (${tc.results.size} result(s)) — artifacts persisted, actor stopping"
+            )
+          )
+          _ <- persistIfSession(resources, stoppedState)
+            .handleErrorWith(e =>
+              NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
+            )
+          _ <- persistQueues(state.sessionId, stoppedState.execution)
+          _ <- killSessionShellProcesses(stoppedState)
+          _ <- fireLifecycleStopHooks(resources, stoppedState)
+        yield Behaviors.stopped
+
+      // Normal batch continuation. The deferred variant above never falls
+      // through here — it stops the actor.
+
       case tc: ToolsComplete =>
         val toolCalls = tc.results.map((call, _) => call)
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
@@ -829,14 +892,53 @@ private[agent] object AgentProcessing:
         end for
 
       // --- Stop ---
-      case AgentCommand.Stop(_) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
-        for
-          _ <- ctx.cancelCurrentTurn()
+      case stop: AgentCommand.Stop =>
+        // eng-deferred-cancel batch (2026-10-02), K-1: a deferred stop must not
+        // tear down a tool batch that is still in flight — the batch's results
+        // are the artifacts K-2 requires us to preserve. Where the intent is
+        // honoured depends on what "in flight" means at this instant:
+        //   · a tool batch (``pipeToolExecutions`` turn fiber, ``lastDispatch
+        //     .isToolExecution``) — honoured at the batch boundary, i.e. in the
+        //     ``ToolsComplete`` handler below, AFTER ``persistIfSession`` has
+        //     written the batch's results to the transcript. This is the case
+        //     the batch exists for: the node was cancelled while a tool ran.
+        //   · an LLM turn (``lastDispatch`` is an LLM dispatch, or no dispatch
+        //     recorded yet while status is still Processing) — nothing was
+        //     produced yet; the historical immediate path already drops nothing
+        //     durable, so it applies verbatim.
+        //   · no work in flight (Idle/Stop race, agent parked between turns) —
+        //     same, immediate path.
+        // Everything here is the historical body; the only addition is the
+        // intent branch. ``Stop(reason)`` (``deferred == false``) can never take
+        // it, so every pre-existing Stop site is byte-identical in behaviour.
+        val stopDeferred = stop.deferred && state.lastDispatch.exists(_.isToolExecution)
+        if stopDeferred then
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "stop-deferred",
+            "reason=chain-cancel tool-batch in flight — stop honoured at the batch boundary"
+          )
+          IO.pure(
+            processing(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.copy(execution = state.execution.copy(stopDeferred = true)),
+              pending
+            )
+          )
+        else
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
+          for
+            _ <- ctx.cancelCurrentTurn()
 
-          _ <- killSessionShellProcesses(state)
-          _ <- fireLifecycleStopHooks(resources, state)
-        yield Behaviors.stopped
+            _ <- killSessionShellProcesses(state)
+            _ <- fireLifecycleStopHooks(resources, state)
+          yield Behaviors.stopped
 
       case AgentCommand.ClearReadTracker =>
         clearReadTrackerStay(state)(IO.pure(processing(agentDef, resources, depth, parentRef, state, pending)))
@@ -1533,5 +1635,45 @@ private[agent] object AgentProcessing:
       replyTo,
       (ad, r, d, p, s) => processing(ad, r, d, p, s)
     )
+
+  // ── eng-deferred-cancel batch (2026-10-02): deferred-stop batch helpers ──
+  //
+  // A batch that is abandoned at the tool-batch boundary (see the
+  // ``ToolsComplete`` deferred branch) still has to leave a coherent transcript
+  // — the native client formats reject an assistant ``tool_use`` without its
+  // ``tool_result``, so a partial batch would make the session unreadable and
+  // the K-2 artifacts unrecoverable. These two helpers do exactly that and
+  // nothing else.
+
+  /**
+   * Append the batch's assistant/tool-result pair under the batch's ORIGINAL
+   * message base.
+   *
+   * ``tc.compactedMessages`` carries the history the batch was started from;
+   * the normal branch uses it as ``baseMessages``. Reusing it keeps the same
+   * "the messages this batch saw" semantics — messages that arrived while the
+   * batch was running (queued inputs/events) are NOT injected by the deferred
+   * exit, because the actor is stopping and nothing would consume the
+   * continuation a synthetic reminder would have to stand for. The produced
+   * tool results are the artifact; they are kept verbatim.
+   */
+  private def batchMessages(tc: ToolsComplete, current: List[Message]): List[Message] =
+    val toolCalls = tc.results.map((call, _) => call)
+    val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+    tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
+    if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
+    toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
+    val resultBlocks = tc.results.map { (call, r) =>
+      ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
+    }
+    // Image blocks are separate user messages upstream (Anthropic merge /
+    // OpenAI role split) — preserved here too, otherwise the artifact face
+    // would silently drop the images this batch produced.
+    val imageBlocks = tc.results.flatMap { (_, r) => r.imageBlocks.getOrElse(List.empty[ContentBlock.Image]) }
+    val imageMsgs =
+      if imageBlocks.nonEmpty then List(Message(MessageRole.User, Right(imageBlocks))) else Nil
+    tc.compactedMessages.getOrElse(current) ++
+      List(Message(MessageRole.Assistant, Right(assistantBlocks.toList)), Message(MessageRole.User, Right(resultBlocks))) ++
+      imageMsgs
 
 end AgentProcessing

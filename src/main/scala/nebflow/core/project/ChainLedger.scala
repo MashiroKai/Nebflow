@@ -98,6 +98,22 @@ object ChainLedger:
   /** 链已取消（级联取消已执行 + 台账留痕；**不可逆**，`resume` 拒绝）。 */
   val StatusCancelled: String = "cancelled"
 
+  /**
+   * **Lifetime of an in-progress cancel intent** (eng-deferred-cancel batch):
+   * entries in [[State.cancellingChains]] older than this window count as
+   * absent (filtered on read, pruned lazily on write).
+   *
+   * 5 minutes = the upper bound on a NORMAL cancel leg (per-node `executeCancel`
+   * is signalling / short writes, never a wait): only the cancel leg itself
+   * separates the intent registration from the `cancelledChains` landing. The
+   * real cancellation does **not** rely on this window — landing clears the
+   * intent atomically; the window only sweeps out the crash residue of the
+   * "intent written, cancel not run" case, so the readable face neither
+   * false-positives (a permanent "cancelling") nor false-negatives (a truly
+   * cancelling chain that reads as idle).
+   */
+  val CancellingTtlMs: Long = 5L * 60L * 1000L
+
   // ── 冷档轮类型（留痕形态判据）────────────────────────
   /** 轴(c)：载荷搬迁（热行保留身份，`members` 清空 + `compacted=true`）。 */
   val RoundCompact: String = "compact"
@@ -249,7 +265,29 @@ object ChainLedger:
      * 被链级取消过」这个**意图事实**，供 REST/WS 三态读数与「resume 对已取消链拒绝」
      * 的判据。状态投影优先级见 [[stateOf]]（cancelled > paused > active）。
      */
-    cancelledChains: Map[String, Long] = Map.empty
+    cancelledChains: Map[String, Long] = Map.empty,
+    /**
+     * **Chain control · chains being cancelled** (chainId → intent registration
+     * instant; eng-deferred-cancel batch). This is the carrier of the
+     * "cancellation is readable" criterion: the chain-cancel leg records the
+     * intent at the start of the existing cancel leg, so "this chain is being
+     * cancelled" has a readable face on the persisted ledger instead of being a
+     * silent delay.
+     *
+     * 🔴 The difference from [[cancelledChains]] is TENSE, not state:
+     * `cancelledChains` = the cancel has COMPLETED (irreversible terminal, part
+     * of the [[stateOf]] projection); this table = the cancel is IN PROGRESS
+     * (during the deferred window, 🔴 NOT part of [[stateOf]] ⇒ not part of the
+     * REST/WS payload shape).
+     *
+     * Why a TTL ([[CancellingTtlMs]]): the intent is a SHORT-LIVED fact — the
+     * terminal cancel write point in [[withChainControl]] clears it atomically
+     * (same State); a crash inside the narrow "intent written, cancel not run"
+     * window is swept by lazy expiry (zero timers, zero new threads: stale
+     * entries are dropped only on read/write). Persisting it without a TTL
+     * would produce a permanent, never-cleared "cancelling" table.
+     */
+    cancellingChains: Map[String, Long] = Map.empty
   )
 
   object State:
@@ -274,6 +312,46 @@ object ChainLedger:
   /** 已暂停链 → 暂停时刻（别名逐跳解析；查无 ⇒ `None`）。 */
   def pausedAtOf(st: State, chainId: String): Option[Long] =
     st.pausedChains.get(canonicalKey(st, chainId))
+
+  /**
+   * **Being cancelled** (inside the deferred-cancel window; eng-deferred-cancel
+   * batch) → the intent registration instant (alias resolved hop by hop;
+   * unknown / expired ⇒ `None`).
+   *
+   * The TTL is a READ-time judgement ([[CancellingTtlMs]]): an entry older than
+   * the TTL counts as absent, so crash residue left in the "intent written,
+   * cancel not run" window can never permanently pollute the readable face. A
+   * chain that really was cancelled reads [[cancelledAtOf]] (the intent is
+   * cleared atomically by [[withChainControl]] when the cancel lands).
+   */
+  def cancellingAtOf(st: State, chainId: String, now: Long = System.currentTimeMillis()): Option[Long] =
+    st.cancellingChains
+      .get(canonicalKey(st, chainId))
+      .filter(t => now - t < CancellingTtlMs)
+
+  /** All currently IN-PROGRESS cancel intents (read-time TTL filter; for REST/WS and inspection). */
+  def cancellingChainsAt(st: State, now: Long = System.currentTimeMillis()): Map[String, Long] =
+    st.cancellingChains.filter((_, t) => now - t < CancellingTtlMs)
+
+  /**
+   * **Cancel-intent registration** (the write point of the readable-cancellation
+   * criterion; a PURE function — persistence is
+   * `ChainLedgerStore.setChainCancelIntent`'s job).
+   *
+   * It only registers, and deliberately does NOT touch `pausedChains` /
+   * `cancelledChains`: the cancel leg itself
+   * ([[NodeCanceller.cancelChainAndRecord]]) still writes `cancelledChains` in
+   * the existing order, i.e. only AFTER success — the intent is the "about to
+   * cancel" pre-mark, not a state driver (a failed leg writes nothing, per the
+   * existing "never claim cancelled falsely" discipline).
+   *
+   * The lazy prune happens here too: writing also drops stale entries (one
+   * read/write point, no second judge).
+   */
+  def withChainCancelIntent(st: State, chainId: String, now: Long): State =
+    val cid = canonicalKey(st, chainId)
+    val pruned = st.cancellingChains.filter((_, t) => now - t < CancellingTtlMs)
+    st.copy(updatedAt = now, cancellingChains = pruned.updated(cid, now))
 
   /**
    * 链控三态投影（**判据单点**）：`cancelled` > `paused` > `active`。
@@ -307,7 +385,12 @@ object ChainLedger:
         st.copy(
           updatedAt = now,
           cancelledChains = st.cancelledChains.updated(cid, now),
-          pausedChains = st.pausedChains - cid
+          pausedChains = st.pausedChains - cid,
+          // eng-deferred-cancel batch: the intent has been realised — the
+          // in-progress marker is cleared in the same atomic write that records
+          // the terminal cancellation, so the two surfaces can never disagree
+          // (a chain cannot read as both "cancelling" and "cancelled").
+          cancellingChains = st.cancellingChains - cid
         )
       case StatusPaused => st.copy(updatedAt = now, pausedChains = st.pausedChains.updated(cid, now))
       case _            => st.copy(updatedAt = now, pausedChains = st.pausedChains - cid)
