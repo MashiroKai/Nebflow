@@ -1873,6 +1873,21 @@ object NodeEditTool extends Tool:
       IO.pure(
         Left(ToolError(s"Node '${node.name}' is running — its input is frozen. NodeCancel it first, then rewire."))
       )
+    // 缺陷④闸（案 A · 文案冻结批）：running 位的 task 在 editNode 全路径上无写点
+    // （唯一写点位于 didReactivate 事务内 ⇒ reactivate 恒 false），却返回 "updated" = 假成功。
+    // 判据 = 归一化后不等（幂等重发不拒）。死会话 running 的写入需求由 Mail(node:) 的
+    // appendUndelivered 兜底承接 ⇒ 本闸统一按「running ⇒ 拒」处理，不做活/死分档。
+    else if task.isDefined && node.status == NodeLifecycle.Running
+      && NodeTools.normalizeTask(task.get) != node.task.map(NodeTools.normalizeTask).getOrElse("") then
+      IO.pure(
+        Left(
+          ToolError(
+            s"Node '${node.name}' is running — its task is frozen (input is frozen). " +
+              "Use Mail(address=\"node:<id>\", message=<supplement>) to inject a supplement into a running node; " +
+              "to replace the task, NodeCancel it first, then recreate/reactivate. (NODE_RUNNING_TASK_FROZEN)"
+          )
+        )
+      )
     else
       // out 处理（整体替换 / 显式断开）——同步校验先 match，再进 IO 链
       NodeTools.parseOut(outJson) match
