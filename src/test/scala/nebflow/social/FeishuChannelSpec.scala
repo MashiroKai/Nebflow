@@ -102,8 +102,18 @@ class FeishuChannelSpec extends FunSuite:
     // feishubridge: `senderId` joined the wire shape (tenant-scoped sender
     // identity for the member-allowlist gate — not a credential). Absent stays
     // Json.Null, so the rendered form is additive, never credential-bearing.
-    assertEquals(keys, Set("eventId", "messageId", "chatId", "messageType", "content", "text", "createTime", "senderId"))
+    // inbound-parse batch (2026-10-01): `parentId` / `rootId` / `mentions` /
+    // `parsed` joined the same way — the reply指针, the event's mention list and
+    // the readable body the channel used to discard. All are Json.Null / [] when
+    // absent, and none is credential material. This is the ONE breaking
+    // compatibility point of that batch (design card I-5a): the assertion is an
+    // exact key set, so any added key turns it red by design.
+    assertEquals(keys, Set("eventId", "messageId", "chatId", "messageType", "content", "text", "createTime",
+      "senderId", "parentId", "rootId", "mentions", "parsed"))
     assertEquals(in.toJson.hcursor.downField("senderId").focus, Some(io.circe.Json.Null))
+    assertEquals(in.toJson.hcursor.downField("parentId").focus, Some(io.circe.Json.Null))
+    assertEquals(in.toJson.hcursor.downField("rootId").focus, Some(io.circe.Json.Null))
+    assertEquals(in.toJson.hcursor.downField("mentions").focus, Some(io.circe.Json.arr()))
     // The rendered JSON must never contain a secret-ish key.
     val rendered = in.toJson.noSpaces
     assert(!rendered.contains("Secret") && !rendered.contains("secret") && !rendered.contains("appSecret"))

@@ -260,7 +260,8 @@ val x = 1
   /** Recording BridgeContext: the bridge spec's shape, reused here so the wired
     * leg is judged through the real event entry rather than a private method. */
   private final class BridgeCtx(sessions: List[SessionMeta]) extends BridgeContext:
-    def injectMessage(sessionId: String, content: String, senderId: Option[String]): IO[Unit] = IO.unit
+    def injectMessage(sessionId: String, content: String, senderId: Option[String],
+        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] = IO.unit
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)

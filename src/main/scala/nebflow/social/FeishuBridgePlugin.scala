@@ -139,7 +139,15 @@ final class FeishuBridgePlugin(
     for
       allowed <- allowedRef.get
       routes <- routesRef.get
-      _ <- (allowed.isEmpty || in.senderId.exists(allowed.contains), routes.get(in.chatId), in.text) match
+      // inbound-parse batch (2026-10-01): the third element is the RENDERED
+      // body, not `in.text`. `text` is only ever set for `message_type=text`, so
+      // routing on it silently dropped every post/image/file message. `parsed`
+      // carries the readable body for all four inbound classes, and a
+      // non-text type now produces the explicit unrecognised-type placeholder
+      // instead of vanishing. The `None` arm below is therefore reachable only
+      // when the message genuinely carries nothing at all.
+      body = renderedBody(in)
+      _ <- (allowed.isEmpty || in.senderId.exists(allowed.contains), routes.get(in.chatId), body) match
         case (false, _, _) =>
           // Fail-closed when the list is non-empty: an absent/unresolvable
           // sender identity is as good as a non-member. Ordered FIRST so the
@@ -149,11 +157,31 @@ final class FeishuBridgePlugin(
         case (_, None, _) =>
           autoBind(ctx, in)
         case (_, _, None) =>
-          IO(logger.info(s"feishu bridge: message ${in.messageId} (${in.messageType}) has no text body — nothing injected"))
+          IO(logger.info(s"feishu bridge: message ${in.messageId} (${in.messageType}) has no readable body — nothing injected"))
         case (_, Some(sessionId), Some(text)) =>
           logger.info(s"feishu bridge: chat ${in.chatId} -> session $sessionId") *>
-            ctx.injectMessage(sessionId, text, in.senderId)
+            ctx.injectMessage(sessionId, text, in.senderId, originOf(in))
     yield ()
+
+  /** The bridge-side readable body: quote段 then body, in the composition order
+    * the design card fixes (§10.4). The source-marker block is NOT prepended
+    * here — that belongs to the unified injection point, which is the only place
+    * that knows the channel identity. */
+  private[social] def renderedBody(in: FeishuMessage.Inbound): Option[String] =
+    InboundParse.compose(
+      quote = InboundParse.quoteSection(in.quotedMessageId, quotedSender = None, quotedText = None),
+      body = in.parsed
+    )
+
+  /** The channel-agnostic origin descriptor this bridge contributes. The channel
+    * id is the bridge's own stable name and the display name is the human label;
+    * the chat is the conversation reference. Pure data — the template lives on
+    * the channel-agnostic side ([[nebflow.bridge.BridgeOrigin]]). */
+  private def originOf(in: FeishuMessage.Inbound): Option[nebflow.bridge.BridgeOrigin] =
+    Some(nebflow.bridge.BridgeOrigin(
+      channelId = FeishuBridgePlugin.Name,
+      channelDisplay = FeishuBridgePlugin.ChannelDisplay,
+      chatRef = Option(in.chatId).map(_.trim).filter(_.nonEmpty)))
 
   /** P1 auto-bind (feishu-bind batch, 2026-09-27): the first message from a
     * not-yet-bound chat binds that chat to the configured default session and
@@ -178,8 +206,8 @@ final class FeishuBridgePlugin(
         ctx.updateBridgeConfig(sessionId, FeishuBridgePlugin.Name, Some(cfg)) *>
           routesRef.update(_ + (in.chatId -> sessionId)) *>
           IO(logger.info(s"feishu bridge: chat ${in.chatId} auto-bound to default session $sessionId")) *>
-          (in.text match
-            case Some(text) => ctx.injectMessage(sessionId, text, in.senderId)
+          (renderedBody(in) match
+            case Some(text) => ctx.injectMessage(sessionId, text, in.senderId, originOf(in))
             case None       => IO.unit)
       case None =>
         IO(logger.info(
@@ -273,6 +301,12 @@ object FeishuBridgePlugin:
 
   /** BridgePlugin.name — also the platform key in SessionMeta.bridges. */
   val Name = "feishu"
+
+  /** The human-readable label this channel announces in the source-marker block
+    * (source-marker batch, 2026-10-01). Data only: the template lives on the
+    * channel-agnostic side ([[nebflow.bridge.BridgeOrigin.marker]]), so a second
+    * channel reuses it by supplying its own label — never by copying the text. */
+  val ChannelDisplay = "飞书"
 
   /** Companion-side logger (the sync/guard legs live here, outside any instance). */
   private val log = NebflowLogger.forName("nebflow.social.feishu-bridge")
