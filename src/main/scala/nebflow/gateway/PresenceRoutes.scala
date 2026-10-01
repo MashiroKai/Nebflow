@@ -900,6 +900,43 @@ private[gateway] object PresenceRoutes:
           }
         }
 
+      // wechat iLink batch: the ingest leg of the side-car seam. The official
+      // ClawBot plugin (running attached to the host) posts ONE inbound message
+      // here; the seam applies the sender gate (`allowed_ilink_user_ids`,
+      // fail-closed) and injects into the bound/default session through the
+      // existing `handleBridgeMessage` path. Nothing iLink-specific crosses this
+      // face: no token, no cursor, no call back into the peer — the body is
+      // {senderId|from_user_id, text, messageId}. Behind the same auth gate as
+      // every other social arm, and the answer is the observable verdict
+      // (injected + session / dropped + reason), never a secret.
+      case req @ POST -> Root / "social" / "channels" / "weixin-ilink" / "ingress" =>
+        withAuth(req) {
+          req.as[Json].attempt.flatMap {
+            case Left(_) =>
+              BadRequest(Json.obj(
+                "error" -> "invalid_field".asJson,
+                "reason" -> "request body must be a JSON object".asJson
+              ))
+            case Right(body) =>
+              nebflow.social.WeixinIlinkBridgePlugin.parseInbound(body) match
+                case Left(reason) =>
+                  BadRequest(Json.obj("error" -> "invalid_field".asJson, "reason" -> reason.asJson))
+                case Right(in) =>
+                  val seam: IO[Option[nebflow.social.WeixinIlinkBridgePlugin]] =
+                    sharedResources.bridgeManager match
+                      case Some(m) =>
+                        m.plugin(nebflow.social.WeixinIlinkBridgePlugin.Name)
+                          .map(_.collect { case p: nebflow.social.WeixinIlinkBridgePlugin => p })
+                      case None => IO.pure(None)
+                  seam.flatMap {
+                    case Some(p) => p.deliver(in).flatMap(v => Ok(v.json))
+                    case None =>
+                      Ok(nebflow.social.WeixinIlinkBridgePlugin.Verdict
+                        .Dropped(nebflow.social.WeixinIlinkBridgePlugin.ReasonNotStarted).json)
+                  }
+          }
+        }
+
       case req @ POST -> Root / "social" / "channels" / channelId =>
         withAuth(req) {
           req.as[Json].attempt.flatMap {
@@ -918,10 +955,19 @@ private[gateway] object PresenceRoutes:
                   // untouched. Background fiber: the adapter's WebSocket
                   // handshake must never sit inside the HTTP response; the
                   // panel's next probe re-read picks up the flipped flag.
+                  // wechat iLink batch: the same closed loop for the
+                  // weixin-ilink side-car seam — a save that enables the card
+                  // (or fills `allowed_ilink_user_ids`, which re-arms the gate)
+                  // takes effect at once, with no restart. Same background-fiber
+                  // shape and same rejection of the "assembled two ways" state.
                   val resync =
                     if channelId == "feishu" then
                       sharedResources.bridgeManager match
                         case Some(m) => nebflow.social.FeishuBridgePlugin.sync(m, PathUtil.dataRoot)
+                        case None    => IO.unit
+                    else if channelId == nebflow.social.WeixinIlinkBridgePlugin.Name then
+                      sharedResources.bridgeManager match
+                        case Some(m) => nebflow.social.WeixinIlinkBridgePlugin.sync(m, PathUtil.dataRoot)
                         case None    => IO.unit
                     else IO.unit
                   resync.start.void *> Ok(json)
