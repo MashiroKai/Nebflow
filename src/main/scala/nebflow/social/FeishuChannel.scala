@@ -35,6 +35,11 @@ object FeishuChannel:
   private def stamp(): String =
     DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS))
 
+  /** The wire value of the interactive-card message type. Kept as our own
+    * constant so the send method does not depend on the SDK's enum surface for
+    * a string that appears verbatim in the API. */
+  val InteractiveMessageType = "interactive"
+
   /** Outcome of one send attempt. `messageId` is Feishu's, safe to record. */
   final case class SendResult(
     ok: Boolean, messageId: Option[String], code: Int, msg: String, sentAt: String, receiveIdType: String
@@ -113,6 +118,30 @@ object FeishuChannel:
               .flatMap(s => Option(s.getSenderId))
               .flatMap(u => Option(u.getOpenId))
               .map(_.trim).filter(_.nonEmpty)
+            // The reply pointer (inbound-parse batch, 2026-10-01): Feishu keeps
+            // `parent_id` / `root_id` on the ENVELOPE, not inside `content`, so
+            // without these two getters a quoted reply loses its referent at the
+            // door. Blank stays None — an id we do not have is never invented.
+            val parentId = msg.flatMap(m => Option(m.getParentId)).map(_.trim).filter(_.nonEmpty)
+            val rootId = msg.flatMap(m => Option(m.getRootId)).map(_.trim).filter(_.nonEmpty)
+            // The event-face mention list. 🔴 The SDK has TWO mention shapes: this
+            // event face (`MentionEvent`, whose `id` is a nested `UserId`) and the
+            // fetch-message face (`Mention`, whose `id` is a plain String). They
+            // must never be treated as the same class — here we always take the
+            // nested one and flatten it to a plain string for the parse layer.
+            val mentions = msg.flatMap(m => Option(m.getMentions)).map(_.toList).getOrElse(Nil).flatMap { me =>
+              Option(me).flatMap(m => Option(m.getKey)).map(_.trim).filter(_.nonEmpty).map { key =>
+                val uid = Option(me).flatMap(m => Option(m.getId))
+                FeishuMessage.InboundMention(
+                  key = key,
+                  name = Option(me).flatMap(m => Option(m.getName)).map(_.trim).filter(_.nonEmpty),
+                  id = uid.flatMap(u => Option(u.getUserId))
+                    .orElse(uid.flatMap(u => Option(u.getOpenId)))
+                    .orElse(uid.flatMap(u => Option(u.getUnionId)))
+                    .map(_.trim).filter(_.nonEmpty)
+                )
+              }
+            }
             val reduced = FeishuMessage.inboundFrom(
               eventId = header.flatMap(h => Option(h.getEventId)),
               messageId = msg.flatMap(m => Option(m.getMessageId)),
@@ -120,7 +149,10 @@ object FeishuChannel:
               messageType = msg.flatMap(m => Option(m.getMessageType)),
               contentRaw = msg.flatMap(m => Option(m.getContent)),
               createTime = msg.flatMap(m => Option(m.getCreateTime)),
-              senderId = senderId
+              senderId = senderId,
+              parentId = parentId,
+              rootId = rootId,
+              mentions = mentions
             )
             reduced match
               case Right(inbound) =>
@@ -191,6 +223,56 @@ object FeishuChannel:
         .receiveId(receiveId)
         .msgType("text")
         .content(io.circe.Json.obj("text" -> io.circe.Json.fromString(text)).noSpaces)
+        .build()
+      val req = CreateMessageReq.newBuilder()
+        .receiveIdType(receiveIdType)
+        .createMessageReqBody(body)
+        .build()
+      val resp = client.im().v1().message().create(req)
+      if resp != null && resp.success() then
+        SendResult(ok = true, Option(resp.getData).flatMap(d => Option(d.getMessageId)),
+          resp.getCode, Option(resp.getMsg).getOrElse(""), at, receiveIdType)
+      else if resp != null then
+        SendResult(ok = false, None, resp.getCode, Option(resp.getMsg).getOrElse(""), at, receiveIdType)
+      else
+        SendResult(ok = false, None, -1, "SDK returned a null response", at, receiveIdType)
+    catch
+      case e: Exception =>
+        SendResult(ok = false, None, -1,
+          s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}", at, receiveIdType)
+
+  /** Send one interactive card (askuser batch, 2026-10-01).
+    *
+    * Same shape as [[sendText]] — same client construction, same request chain,
+    * same `SendResult` reading — with two differences: the message type is the
+    * card type, and the content is the card JSON itself (still STRING-encoded,
+    * the same rule `content` always follows on this API).
+    *
+    * 🔴 This is the seam only. Ruling A9 keeps the interactive leg UNWIRED for
+    * this batch: nothing calls this method in production, no card callback
+    * handler is registered, and the `SendResult.ok` reading it returns is the
+    * mechanical fallback trigger a later batch will use.
+    *
+    * `sendText` above is deliberately left byte-identical — this is an
+    * ADDITION, so the shipped text path cannot regress.
+    */
+  def sendInteractive(
+    appId: String,
+    appSecret: String,
+    region: String,
+    receiveIdType: String,
+    receiveId: String,
+    cardJson: String
+  ): SendResult =
+    val at = stamp()
+    try
+      val client = LarkClient.newBuilder(appId, appSecret)
+        .openBaseUrl(baseUrlFor(region))
+        .build()
+      val body = CreateMessageReqBody.newBuilder()
+        .receiveId(receiveId)
+        .msgType(InteractiveMessageType)
+        .content(cardJson)
         .build()
       val req = CreateMessageReq.newBuilder()
         .receiveIdType(receiveIdType)
