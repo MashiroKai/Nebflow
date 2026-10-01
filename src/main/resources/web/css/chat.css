@@ -3267,6 +3267,23 @@
 .nf-wl-item.is-done.is-out,
 .nf-wl-item.is-out { animation: nf-wl-rollout 0.35s ease both; }
 
+/* The item that ENTERS behind a leaving one waits for that roll-out to finish
+   (`.is-enter-late` is applied by workline.js on a genuine item switch, never on
+   the first item of a turn). Without the wait the entry overlaps the exit and
+   both labels are legible at once — a double exposure the approved demo does
+   not have: there `#it1` rolls out from 3.5s and `#it2` only rolls in from
+   3.9s, i.e. a hard switch with the exiting item already at opacity 0 while the
+   entering one still sits in its from-state, leaving a gap where the line reads
+   empty. 0.4s is that same start-to-start stagger.
+   `both` fill keeps the entering item at its from-state (opacity 0,
+   translateY 20px) for the whole delay, so the two items are never both on
+   screen and their label boxes never intersect.
+   The two-value delay mirrors the two-animation `.is-done` pair (roll-in + the
+   0.1s-delayed bounce): a single value would repeat for both animations and
+   move the completion bounce inside the delay. */
+.nf-wl-item.is-enter-late { animation-delay: 0.4s; }
+.nf-wl-item.is-done.is-enter-late { animation-delay: 0.4s, 0.5s; }
+
 /* error mark for a failed tool (same 16px ink box as the check) */
 .nf-wl-x svg { width: 16px; height: 16px; display: block; }
 .nf-wl-x path {
@@ -3328,11 +3345,17 @@
      specificity, so the combined selector must be repeated here or a
      done+leaving item would still roll under reduced motion */
   .nf-wl-item.is-done.is-out,
+  /* the switch delay is meaningless once the animations are off — an item that
+     carried it would otherwise sit at its from-state (invisible) for 0.35s */
+  .nf-wl-item.is-enter-late,
+  .nf-wl-item.is-done.is-enter-late,
   .nf-wl-chk,
   .nf-wl-chk path,
   .nf-wl-spin,
   .bubble.nf-pop,
   .bubble.nf-slide-in { animation: none; }
+  .nf-wl-item.is-enter-late,
+  .nf-wl-item.is-done.is-enter-late { animation-delay: 0s; }
   .nf-wl-chk { opacity: 1; transform: none; }
   .nf-wl-chk path { stroke-dashoffset: 0; }
   .nf-wl-think { max-width: none; }

@@ -100,18 +100,30 @@ function buildItem(labelText, icon, extraClass) {
 
 /** Swap the item in. `roll` = the leaving item gets the roll-up animation
  *  (a genuine item switch); false = in-place state change of the SAME item
- *  (tool running → tool done), which must not roll. */
+ *  (tool running → tool done), which must not roll.
+ *
+ *  On a genuine switch the ENTERING item is marked `is-enter-late`: its roll-in
+ *  is held back until the leaving item's roll-out is over. Without that hold the
+ *  two items animate in the same window and BOTH labels are legible at once — a
+ *  double exposure the approved demo does not have (there the outgoing item
+ *  reaches opacity 0 before the incoming one leaves its from-state, i.e. a hard
+ *  switch with a short empty gap; spec §二.1.1「旧上滚出、新下滚入」read as a
+ *  SEQUENCE, not a cross-fade). The first item of a turn has no predecessor, so
+ *  it is never delayed. */
 function swap(wl, item, { key, kind, roll }) {
   const old = wl.item;
+  let entersBehind = false;
   if (old && old !== item) {
     if (roll) {
       old.classList.add('is-out');
       const doomed = old;
       setTimeout(() => doomed.remove(), ROLL_MS);
+      entersBehind = true;
     } else {
       old.remove();
     }
   }
+  item.classList.toggle('is-enter-late', entersBehind);
   wl.item = item;
   wl.key = key;
   wl.kind = kind;
