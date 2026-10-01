@@ -157,9 +157,19 @@ class SeedAgentSelfHealSpec extends FunSuite:
     )
 
   // ── ② 幂等 ├────────────────────────────────────────────────
-  test("自愈幂等：第二次 ensure 对该目录零动作"):
+  test("自愈幂等：第二次 ensure 对该目录零动作（内容与 mtime 双证）"):
     existingHome()
     ensure()
+    val dir = home / "agents" / "general"
+    val again = treeAsText(dir)
+    val mtimes = os.walk(dir).filter(os.isFile).map(p => p -> os.mtime(p)).toMap
+    ensure()
+    assertEquals(treeAsText(dir), again, "第二次零动作（digest 已与种子一致）")
+    mtimes.foreach { (p, before) =>
+      assertEquals(os.mtime(p), before, s"第二次零写入（mtime 未变）：${p.relativeTo(home)}")
+    }
+    // ── E5 批（2026-10-01）落的逐名 digest 腿：main 既有断言，本位逐字保留（零删除 / 零弱化）。
+    // 与上方取回腿互补：上方钉 `general` 的内容 + mtime 双证，本腿钉自愈面全集的第二次零动作。
     for name <- healableAgentNames do
       val dir = home / "agents" / name
       val again = treeAsText(dir)
