@@ -463,7 +463,60 @@ object AgentCommand:
     turnIdx: Int
   ) extends AgentCommand
 
+  /**
+   * Stop a session (kill shell processes, fire lifecycle hooks, stop the actor).
+   *
+   * == Deferred-cancel variant (`Stop()`) — eng-deferred-cancel batch, 2026-10-02 ==
+   *
+   * `Stop(reason)` keeps the historical semantics byte-for-byte: the tool batch
+   * in flight is torn down immediately (`cancelCurrentTurn`) and the actor stops
+   * without persisting the partial turn.
+   *
+   * `Stop()` is the **deferred-cancel** variant (K-1): when the session is
+   * currently executing a tool batch, the stop intent is recorded
+   * ([[nebflow.actor.ExecutionContext.stopDeferred]]) and honoured only at the
+   * tool-batch boundary — the batch's tool results are persisted to the session
+   * transcript FIRST (K-2: produced artifacts are preserved, in the same
+   * assistant `tool_use` / `tool_result` pair shape the normal continuation
+   * writes), and the actor then stops without dispatching a new LLM turn (no
+   * new tool call after cancellation takes effect).
+   *
+   * It is a **separate arity overload** (not a boolean field) on purpose: every
+   * pre-existing call site and every positional pattern match keeps compiling
+   * and behaving exactly as before (zero churn at the 20-odd Stop sites plus
+   * the test anchors `AgentControlToolSpec` / `EphemeralBridgeWatchSpec` /
+   * `StopHangTurnSpec`). A boolean field would have broken arity-based
+   * pattern matches and silently changed nothing else.
+   *
+   * Not deferred-when-idle by design: with no tool batch in flight there is
+   * nothing in flight to preserve, so `Stop()` falls back to the historical
+   * immediate path (read at the point of receipt, not at construction time).
+   */
   case class Stop(reason: String) extends AgentCommand
+
+  object Stop:
+    /**
+     * Deferred-cancel stop (chain cancel: see `NodeStarter.runWithAgent`).
+     * Reason text is fixed: it never reaches a user-visible surface (the chain
+     * cancel reason is rendered into the node `result` by `NodeCompletion`).
+     */
+    def apply(): Stop = Stop(DeferredReason)
+
+    /**
+     * Deferred-cancel flag accessor. A dedicated overload beats a `deferred`
+     * field: the field form would have to squeeze between `reason` and every
+     * existing positional/interpolated construction, and this batch's rule is
+     * that pre-existing call sites stay byte-identical.
+     *
+     * `true` iff the reason is exactly the deferred-cancel marker reason — the
+     * marker is produced by [[apply]] alone, so a caller-supplied reason can
+     * never be mistaken for a deferred stop.
+     */
+    extension (s: Stop) def deferred: Boolean = s.reason == DeferredReason
+
+    /** Marker reason of the deferred-cancel variant (`Stop()`). */
+    val DeferredReason: String = "Node cancelled (deferred)"
+
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
 

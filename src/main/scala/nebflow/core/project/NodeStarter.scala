@@ -19,6 +19,44 @@ private[project] trait NodeStarter:
   self: NodeEngine =>
 
   /**
+   * eng-deferred-cancel batch (2026-10-02): bounded grace for a session to stop
+   * itself AFTER the deferred-cancel intent was delivered.
+   *
+   * Why a wait is unavoidable here (and is not a new scheduling surface): the
+   * engine's very next step after this race is first-order teardown
+   * (``system.stop(ref)`` = fiber cancel of the session actor). Without the
+   * wait, a mailbox-scheduling race could cancel the actor in the middle of
+   * persisting the batch it was allowed to finish — the exact artifact loss
+   * this batch exists to prevent. The wait is on an observable state (the
+   * session actor has exited), not on a guess about timing.
+   *
+   * The probe is ``system.isAlive(ref.path)`` — the actor system's own registry,
+   * which the actor loop removes **itself** in its ``guarantee`` (``ActorSystem``
+   * local loop) on every exit path (normal stop, crash, cancel). The obvious
+   * alternative — ``resources.agentRegistry`` — is deliberately NOT used: the
+   * engine fiber (this very fiber) is the one that removes the ``agentRegistry``
+   * entry, and it does so a few lines BELOW this wait; polling it would never
+   * observe the transition and would always burn the full grace.
+   *
+   * 60s, not the 300s of the tool-phase stuck axis: 300s would collide with
+   * that axis from below (a deceptively long wait for a live-but-hung tool),
+   * whereas 60s is the same order as this codebase's other bounded operations
+   * (context build, WS teardown) and stays well inside the destroy window /
+   * notification quiet period. Exceeding it is NOT a failure — the caller
+   * WARNs and proceeds with teardown (the batch outcome is then lost exactly
+   * as it is today, but nothing deadlocks).
+   */
+  private[project] def settleDeferredCancel(ref: ActorRef[AgentCommand]): IO[Boolean] =
+    val deadline = System.currentTimeMillis() + NodeStarter.DeferredStopGraceMs
+    def loop: IO[Boolean] =
+      system.isAlive(ref.path).flatMap { stillAlive =>
+        if !stillAlive then IO.pure(true)
+        else if System.currentTimeMillis() >= deadline then IO.pure(false)
+        else IO.sleep(NodeStarter.DeferredStopPoll) *> loop
+      }
+    loop
+
+  /**
    * 启动节点（§2.1 创建即运行：入口节点由 NodeEdit 调；下游由投递 barrier 归零调）。
    * resume（crash-recovery 批 2026-09-07 D3）：boot sweep 认领的崩溃残留节点续跑——
    * Some 时跳过 buildInput 直接用 resume prompt（水合消息经 spawn 链 initialMessages
@@ -1114,8 +1152,35 @@ private[project] trait NodeStarter:
         case _ => false)
       _ <- outcome match
         case Right(_) =>
-          logger.info(s"Node '$nodeName' cancelled — stopping agent")
-          (ref ! AgentCommand.Stop("Node cancelled")).void
+          // eng-deferred-cancel batch (2026-10-02), K-1: chain cancel is a
+          // DEFERRED cancel — a tool batch that is currently in flight must be
+          // allowed to finish (its results are the artifacts K-2 preserves;
+          // the tool-batch boundary is where the stop is honoured, see
+          // ``AgentProcessing`` ToolsComplete). ``AgentCommand.Stop()`` carries
+          // that intent; when nothing is in flight the receiving handler falls
+          // back to the historical immediate stop, so this call alone cannot
+          // park the batch.
+          //
+          // The race below is what keeps this leg honest: the immediate
+          // historical path only drops work that has not been produced yet,
+          // but a plain fire-and-forget Stop would let first-order engine
+          // teardown (``system.stop(ref)``) and second-order session death
+          // (``sessionIsLive`` → false) cut in ahead of the deferred intent.
+          // Neither can happen while the intent is live — the success arm is
+          // taken only after watching the session terminate, which is exactly
+          // when the batch outcome has been persisted.
+          logger.info(
+            s"Node '$nodeName' cancelled — deferred stop signalled (tool batch in flight is allowed to finish)"
+          ) *>
+            (ref ! AgentCommand.Stop()).void *>
+            settleDeferredCancel(ref).flatMap { sessionStopped =>
+              IO.whenA(!sessionStopped)(
+                logger.warn(
+                  s"Node '$nodeName' ($nodeId) session '$sessionId' did not stop within " +
+                    s"${NodeStarter.DeferredStopGraceMs / 1000}s of the deferred cancel — proceeding with engine teardown"
+                )
+              )
+            }
         case Left(Left(fo)) =>
           // 孤儿后台任务收殓（D1 主钩子，原语义）——**noderpt 批 B 段改为「登记窗口」
           // 之前，此处只保留挂起腿的即时收殓**：
@@ -1257,3 +1322,16 @@ private[project] trait NodeStarter:
     }
   end runWithAgent
 end NodeStarter
+
+private[project] object NodeStarter:
+
+  /** Bounded grace for a deferred-cancelled session to stop itself (see [[NodeStarter.settleDeferredCancel]]). */
+  val DeferredStopGraceMs: Long = 60_000L
+
+  /**
+   * Poll step of [[NodeStarter.settleDeferredCancel]] (100ms). Constant, not a
+   * system prop: the probe is an in-memory registry lookup (free), and the only
+   * calibration axis that matters — how long a tool batch may legitimately keep
+   * running — is carried by [[DeferredStopGraceMs]], not by the sampling rate.
+   */
+  val DeferredStopPoll: FiniteDuration = 100.millis

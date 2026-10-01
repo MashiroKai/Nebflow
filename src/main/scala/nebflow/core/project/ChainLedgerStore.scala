@@ -263,7 +263,13 @@ class ChainLedgerStore private (
   def setChainControl(chainId: String, status: String, now: Long): IO[ChainLedger.ChainControl] =
     state.get.flatMap { before =>
       val updated = ChainLedger.withChainControl(before, chainId, status, now)
-      val changed = updated.pausedChains != before.pausedChains || updated.cancelledChains != before.cancelledChains
+      val changed = updated.pausedChains != before.pausedChains ||
+        updated.cancelledChains != before.cancelledChains ||
+        // eng-deferred-cancel batch (2026-10-02): a cancel that lands within
+        // the intent window also clears the in-progress marker — that diff
+        // alone must reach disk (otherwise intent and terminal state silently
+        // disagree on disk while agreeing in memory).
+        updated.cancellingChains != before.cancellingChains
       val io = if changed then persist(updated) *> state.set(updated) else IO.unit
       io.as(
         ChainLedger.ChainControl(
@@ -273,6 +279,22 @@ class ChainLedgerStore private (
           cancelledAt = ChainLedger.cancelledAtOf(updated, chainId)
         )
       )
+    }
+
+  /**
+   * **取消意图登记写点**（eng-deferred-cancel 批 2026-10-02，K-1 判据③）：
+   * 与 [[setChainControl]] 同款的「读 → 改 → 无变化 ⇒ 零写，否则 `persist *> state.set`」
+   * 模板。
+   *
+   * 🔴 **与 [[chainControlOf]] 的分工**：本方法**只**登记在途意图；是否已取消/已暂停仍
+   * 恒由 [[chainControlOf]] 的三态投影回答（禁新增第二判据面）。登记的成功返回值也不
+   * 被调用方消费——它是留痕，不是状态。
+   */
+  def setChainCancelIntent(chainId: String, now: Long): IO[Unit] =
+    state.get.flatMap { before =>
+      val updated = ChainLedger.withChainCancelIntent(before, chainId, now)
+      val changed = updated.cancellingChains != before.cancellingChains
+      if changed then persist(updated) *> state.set(updated) else IO.unit
     }
 
   // ── 轴(b)：外部引用面计数（外部三面的落点）──────────────────────────────

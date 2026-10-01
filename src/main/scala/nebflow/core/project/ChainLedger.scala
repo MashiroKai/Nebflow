@@ -98,6 +98,17 @@ object ChainLedger:
   /** 链已取消（级联取消已执行 + 台账留痕；**不可逆**，`resume` 拒绝）。 */
   val StatusCancelled: String = "cancelled"
 
+  /**
+   * **在途取消意图的存活窗**（eng-deferred-cancel 批 2026-10-02）：[[State.cancellingChains]]
+   * 的条目超过本窗即视同不存在（读时过滤 + 写时惰性 prune）。
+   *
+   * 5 分钟 = 取消腿的**正常**时长上界（逐节点 `executeCancel` 是信号/短写，不是等待）：
+   * 意图登记与 `cancelledChains` 落地之间只隔取消腿本身。真正的取消**不是靠本窗兜底**
+   * 的——落地即原子清意图；本窗只负责把「意图已写、取消未跑」的崩溃残留清出场，
+   * 使判据③既不假阳（永久「正在取消」）也不假阴（正在取消的链可读）。
+   */
+  val CancellingTtlMs: Long = 5L * 60L * 1000L
+
   // ── 冷档轮类型（留痕形态判据）────────────────────────
   /** 轴(c)：载荷搬迁（热行保留身份，`members` 清空 + `compacted=true`）。 */
   val RoundCompact: String = "compact"
@@ -249,7 +260,23 @@ object ChainLedger:
      * 被链级取消过」这个**意图事实**，供 REST/WS 三态读数与「resume 对已取消链拒绝」
      * 的判据。状态投影优先级见 [[stateOf]]（cancelled > paused > active）。
      */
-    cancelledChains: Map[String, Long] = Map.empty
+    cancelledChains: Map[String, Long] = Map.empty,
+    /**
+     * **链控 · 正在取消的链**（chainId → 取消意图登记时刻；eng-deferred-cancel
+     * 批 2026-10-02）。**判据③（可判读）的承载**：`cancelChainAndRecord` 在既有的
+     * 「取消腿」开始处登记意图 ⇒ 链被取消这件事在**落盘台账**上有可读面（而不是
+     * 「安静地不中断」）。
+     *
+     * 🔴 与 [[cancelledChains]] 的区别是**时态**，不是状态：`cancelledChains` =
+     * 取消**已完成**（不可逆终局，进 [[stateOf]] 三态投影）；本表 = 取消**进行中**
+     * （延迟取消期间，🔴 **不进** [[stateOf]] ⇒ 不进 REST/WS 载荷形状）。
+     *
+     * 为什么带 TTL（[[CancellingTtlMs]]）：意图是**短期事实**——取消腿跑完即由
+     * [[withChainControl]] 的 cancelled 写点原子清除（同一份 State）；崩在「意图已写、
+     * 取消未跑」的窄窗内则靠惰性过期自清（零定时器、零新线程：过期条目只在读写时被
+     * 剔除）。**持久**会产出一张永远不清的假「正在取消」表。
+     */
+    cancellingChains: Map[String, Long] = Map.empty
   )
 
   object State:
@@ -274,6 +301,38 @@ object ChainLedger:
   /** 已暂停链 → 暂停时刻（别名逐跳解析；查无 ⇒ `None`）。 */
   def pausedAtOf(st: State, chainId: String): Option[Long] =
     st.pausedChains.get(canonicalKey(st, chainId))
+
+  /**
+   * **正在取消**（延迟取消窗口内；eng-deferred-cancel 批 2026-10-02）→ 意图登记
+   * 时刻（别名逐跳解析；查无/已过期 ⇒ `None`）。
+   *
+   * TTL 是**读时判据**（[[CancellingTtlMs]]）：登记超过 TTL 的条目视同不存在——崩溃
+   * 遗留在「意图已写、取消未跑」窗口内的条目不会永久污染判据面。已真正取消的链读
+   * [[cancelledAtOf]]（意图在取消落地时被 [[withChainControl]] 原子清除）。
+   */
+  def cancellingAtOf(st: State, chainId: String, now: Long = System.currentTimeMillis()): Option[Long] =
+    st.cancellingChains
+      .get(canonicalKey(st, chainId))
+      .filter(t => now - t < CancellingTtlMs)
+
+  /** 当前**在途**取消意图全表（读时 TTL 过滤；供 REST/WS 与巡检读数）。 */
+  def cancellingChainsAt(st: State, now: Long = System.currentTimeMillis()): Map[String, Long] =
+    st.cancellingChains.filter((_, t) => now - t < CancellingTtlMs)
+
+  /**
+   * **取消意图登记**（K-1 判据③的写点；**纯函数**，落盘由
+   * `ChainLedgerStore.setChainCancelIntent` 承担）。
+   *
+   * 只登记、**不动** `pausedChains` / `cancelledChains`：取消腿本身（[[NodeCanceller.cancelChainAndRecord]]）
+   * 仍按既有顺序在**成功之后**写 `cancelledChains` —— 意图是「马上要取消」的前置留痕，
+   * 不是状态推手（失败腿不写，见既有「不谎报已取消」纪律）。
+   *
+   * 惰性 prune 在同一处发生：写入时顺带剔除过期条目（读写单点，避免第二处判据）。
+   */
+  def withChainCancelIntent(st: State, chainId: String, now: Long): State =
+    val cid = canonicalKey(st, chainId)
+    val pruned = st.cancellingChains.filter((_, t) => now - t < CancellingTtlMs)
+    st.copy(updatedAt = now, cancellingChains = pruned.updated(cid, now))
 
   /**
    * 链控三态投影（**判据单点**）：`cancelled` > `paused` > `active`。
@@ -307,7 +366,12 @@ object ChainLedger:
         st.copy(
           updatedAt = now,
           cancelledChains = st.cancelledChains.updated(cid, now),
-          pausedChains = st.pausedChains - cid
+          pausedChains = st.pausedChains - cid,
+          // eng-deferred-cancel batch (2026-10-02): the intent has been
+          // realised — the in-progress marker is cleared in the same atomic
+          // write that records the terminal cancellation, so the two surfaces
+          // can never disagree (「正在取消 ∧ 已取消」不可同时可读).
+          cancellingChains = st.cancellingChains - cid
         )
       case StatusPaused => st.copy(updatedAt = now, pausedChains = st.pausedChains.updated(cid, now))
       case _            => st.copy(updatedAt = now, pausedChains = st.pausedChains - cid)

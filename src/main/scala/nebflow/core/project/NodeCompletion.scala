@@ -877,6 +877,29 @@ private[project] trait NodeCompletion:
    * 该参数**只**影响回流时点，不动 ①②③④ 任何行为，也不动 failed 侧（D5 零结算
    * 与 `deliverFailed` 本体逐字不变）。
    */
+  /**
+   * eng-deferred-cancel batch (2026-10-02), K-2: compose the cancelled node's
+   * `result` without destroying an artifact that was already produced.
+   *
+   * Before this batch, `cancelNode` wrote the reason string as the WHOLE
+   * result — a node whose session had already persisted a result lost it.
+   * Here the reason stays the prefix (hard contract: `CancelSource.fromResult`
+   * parses it with `startsWith`, and `DispatchNotify` / `BootWakeInventory`
+   * read the same prefix) and the preserved value follows after a blank line —
+   * the same shape the blocked path has always used
+   * (`BlockedReader.render(...) + "\n\n" + finalText`, see `blockedNode`).
+   *
+   * A preserved value that is ALREADY a cancel rendering is NOT re-appended:
+   * a second cancel on the same node must stay idempotent (one reason, one
+   * read of `CancelSource.fromResult`), not stack reasons. Detection reuses
+   * that very parser — single judge, no second vocabulary.
+   */
+  private[project] def preservedCancelResult(rendered: String, existing: Option[String]): String =
+    existing match
+      case Some(prev) if prev.trim.nonEmpty && CancelSource.fromResult(Some(prev)).isEmpty =>
+        s"$rendered\n\n$prev"
+      case _ => rendered
+
   private[project] def cancelNode(
     nodeId: String,
     reason: String,
@@ -899,7 +922,15 @@ private[project] trait NodeCompletion:
                 withoutReportPending(
                   fresh.copy(
                     status = NodeLifecycle.Cancelled,
-                    result = Some(rendered), // R2：取消原因落盘（此前 cancelled result 恒空）
+                    // R2：取消原因落盘（此前 cancelled result 恒空）。
+                    // eng-deferred-cancel batch (2026-10-02) K-2: the reason is
+                    // PREPENDED, never substituted — an already-produced result
+                    // is kept verbatim behind it. The prefix must stay at offset
+                    // 0 (`CancelSource.fromResult` parses it with `startsWith`),
+                    // and the exactly-one-reason rule (no double append when a
+                    // second cancel lands on the same node) lives in
+                    // [[preservedCancelResult]].
+                    result = Some(preservedCancelResult(rendered, fresh.result)),
                     completedAt = Some(now),
                     // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——保留主图待上层处置。
                     ttlExpireAt = None

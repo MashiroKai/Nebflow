@@ -576,7 +576,22 @@ case class ExecutionContext(
   /** v2：上次错误冻结的 reason——判定「同 reason 连续」；reason 变化重置计数。 */
   lastErrorFreezeReason: Option[FreezeReason] = None,
   /** v2 升级链状态（§5.2，P0 内存态）：进入升级链后挂起，父决策/超时升级时更新。 */
-  escalation: Option[EscalationInfo] = None
+  escalation: Option[EscalationInfo] = None,
+  /**
+   * eng-deferred-cancel batch (2026-10-02, K-1): a deferred ``Stop()`` intent
+   * was recorded while a tool batch was in flight — the stop is honoured at
+   * the batch boundary instead of tearing the batch down.
+   *
+   * Lifecycle: set by the ``AgentCommand.Stop`` handler when a deferred stop
+   * arrives mid-tool-batch; read and cleared exactly once, in the
+   * ``ToolsComplete`` handler, right before the batch's results are persisted
+   * and the actor stops. In-memory only (never persisted — a crash mid-batch
+   * degrades to the pre-existing restart semantics, same as ``lastDispatch``,
+   * which is this flag's co-witness: the flag exists because the received
+   * command must be remembered across the mailbox boundary that separates the
+   * stop from the batch completion).
+   */
+  stopDeferred: Boolean = false
 )
 
 /** P0 阶段 3：touch turn 活动戳（幂等——仅更新时间戳，不改变其他状态）。 */
