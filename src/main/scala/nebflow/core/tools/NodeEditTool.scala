@@ -1432,8 +1432,11 @@ object NodeEditTool extends Tool:
                   case None => acc
               else acc
             )
-            val nodesAfter =
-              withInList.nodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out)))
+            // 🔴 `outNodes`（`out` fold 的**结果**）才是含全部下游 `in` 镜像写回的最终 Map——
+            // 基线缺失事故（20260909）修复的落点。改走 `mutateWithResult` 时若从 `withInList`
+            // 起手，out 目标侧的 `in` 追加会被整支丢弃（`NodeEdgeRepairSpec②-a` /
+            // `NodeDepsSpec T5b` 即此形态的机械把守点）。
+            val nodesAfter = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out)))
             (s.copy(nodes = nodesAfter), NodeTools.createdEdgeViews(nodeId, s.nodes, nodesAfter))
           }
           // create 回执一致性断言（20260909 in 丢失事故护栏①）：回执返回前写后读，
