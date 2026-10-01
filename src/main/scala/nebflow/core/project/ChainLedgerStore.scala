@@ -236,6 +236,45 @@ class ChainLedgerStore private (
           persist(updated) *> state.set(updated)
       }
 
+  // ── 链控三原语的状态面（chainview 批 2026-10-01）────────────────────────
+
+  /**
+   * **链控状态读取单点**（`paused` / `cancelled` / `active`）：判据全在
+   * [[ChainLedger.statusOf]]（别名逐跳解析 ⇒ 改号后旧号照样报对态）。
+   */
+  def chainControlOf(chainId: String): IO[ChainLedger.ChainControl] =
+    state.get.map { st =>
+      ChainLedger.ChainControl(
+        chainId = chainId,
+        status = ChainLedger.statusOf(st, chainId),
+        pausedAt = ChainLedger.pausedAtOf(st, chainId),
+        cancelledAt = ChainLedger.cancelledAtOf(st, chainId)
+      )
+    }
+
+  /**
+   * **链控写点**（`paused` / `active` / `cancelled`）：写点形态逐字同 [[onChainsArchived]]
+   * 的既有模板（读 → 改 → **无变化 ⇒ 零写**，否则 `persist *> state.set`）——「重复暂停同
+   * 一条链」「对活链 resume」都落在零写分支（禁落空账、禁无谓写盘）。
+   *
+   * 状态语义见 [[ChainLedger.State.pausedChains]] / [[ChainLedger.State.cancelledChains]]；
+   * 本方法只负责持久化纯函数 [[ChainLedger.withChainControl]] 的结果。
+   */
+  def setChainControl(chainId: String, status: String, now: Long): IO[ChainLedger.ChainControl] =
+    state.get.flatMap { before =>
+      val updated = ChainLedger.withChainControl(before, chainId, status, now)
+      val changed = updated.pausedChains != before.pausedChains || updated.cancelledChains != before.cancelledChains
+      val io = if changed then persist(updated) *> state.set(updated) else IO.unit
+      io.as(
+        ChainLedger.ChainControl(
+          chainId = chainId,
+          status = ChainLedger.statusOf(updated, chainId),
+          pausedAt = ChainLedger.pausedAtOf(updated, chainId),
+          cancelledAt = ChainLedger.cancelledAtOf(updated, chainId)
+        )
+      )
+    }
+
   // ── 轴(b)：外部引用面计数（外部三面的落点）──────────────────────────────
 
   /**

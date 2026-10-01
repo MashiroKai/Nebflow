@@ -105,6 +105,130 @@ private[project] trait NodeCanceller:
         cancelNodes(cm.info.memberIds, chainId, cm.title, source, reason, cascade).map(Right(_))
     }
 
+  // ── 链控三原语（chainview 批 2026-10-01：暂停 / 继续 / 取消 + 台账状态面）────
+  //
+  // 分工（🔴 判据单点，禁第二处派生）：
+  //   · **解析**恒走 `FlowMapStore.chainMembersOf`（链号 → 成员；本 trait **零**二次派生）；
+  //   · **状态**恒走 `ChainLedgerStore.chainControlOf`（别名逐跳解析 ⇒ 改号后旧号报对态）；
+  //   · **闸**恒走 [[chainGateOf]]（唯一的「本节点是否被链控挡住」判据，三个派发收口共用）；
+  //   · **取消**恒走既有 [[cancelChain]]（级联闭包 / 通知 / 审计全套复用，本批零重写
+  //     —— 重写会打红 `ChainCascadeSpec` 的 Z5/V8 源码级断言：取消族四条腿**零** archive
+  //     写面，且网关腿不得二次派生链成员）。
+
+  /**
+   * **链控状态读数**（`paused` / `cancelled` / `active`；判据单点
+   * [[ChainLedger.statusOf]]）。已挂载项目的 REST/WS 腿都经本方法取态，禁各自读台账。
+   */
+  def chainControlOf(chainId: String): IO[ChainLedger.ChainControl] =
+    store.chainLedgerStore.chainControlOf(chainId)
+
+  /**
+   * **派发闸（判据单点）**：`Some(chainId)` ⇒ 本节点归属的链当前处于 `paused` /
+   * `cancelled` ⇒ 启动收口应当**静默短路**（零日志、零事件、零状态写）。
+   *
+   * 数据源与 `startNode` 的链快照同源（`combinedNodes` → `topologicalChains` →
+   * `chainIdIn`，与 [[chainContextOf]] 同一判据面：声明恒带、未声明者分量 ≥2 成员）；
+   * **不同源的部分**是「归属判定」与「链控状态」两步分开 —— 归属恒来自图派生，状态恒来自
+   * 台账热态。无链节点（`None`）恒放行。
+   *
+   * 🔴 静默是**有意为之**：暂停 / 取消是用户显式意图，其可见性由 REST 响应 + WS 三态帧
+   * （`chainState`）承担；把停等写进引擎事件流（`logMutexHold` 形态）会让暂停链的装配
+   * 文本混入停等告警，且让「paused 链零派发」的红验断言无法机械判定。
+   */
+  private[project] def chainGateOf(nodeId: String): IO[Option[String]] =
+    store.combinedNodes.flatMap { combined =>
+      val chains = FlowMapStore.topologicalChains(combined.values)
+      FlowMapStore.chainIdIn(combined, chains, nodeId) match
+        case None => IO.pure(None)
+        case Some(cid) =>
+          store.chainLedgerStore.snapshot.map(st => if ChainLedger.blocksDispatch(st, cid) then Some(cid) else None)
+    }
+
+  /**
+   * **链控闸 · 批量形态**（判据与 [[chainGateOf]] 逐字同源，只把「逐节点一次全量分量派生」
+   * 收敛成「整张图一次派生」）：返回当前被链控挡住的**全部节点 id**。
+   *
+   * 🔴 存在的理由 = 性能纪律（`chainContextOf` 头注 §9.2：`topologicalChains` 是 O(N+E)
+   * 全量重算，**禁止进热路径**）：`settleRunnableSweep` 每 30s 对**全部** pending/wiring
+   * 节点做资格判定，逐节点调 [[chainGateOf]] 会把一拍放大成 O(N·E)。本方法供该唯一热路径
+   * 消费；`settleTo` / `startNode` 两处是单点判定，直调 [[chainGateOf]] 即可。
+   *
+   * 判据面与 [[chainGateOf]] 同源：`combinedNodes` → `topologicalChains` → [[FlowMapStore.chainVisible]]
+   * 门槛（声明恒带 / 派生分量 ≥2 成员）+ [[ChainLedger.blocksDispatch]]。
+   */
+  private[project] def chainGateNodeIds(combined: Map[String, NodeDef]): IO[Set[String]] =
+    store.chainLedgerStore.snapshot.map { st =>
+      FlowMapStore
+        .topologicalChains(combined.values)
+        .filter(c => FlowMapStore.chainVisible(combined, c) && ChainLedger.blocksDispatch(st, c.id))
+        .flatMap(_.memberIds)
+        .toSet
+    }
+
+  /**
+   * **暂停链**（原语 1）：链台账记 [[ChainLedger.StatusPaused]] ⇒ [[chainGateOf]] 对所有
+   * 成员返回 `Some(chainId)` ⇒ **settle sweep / barrier 结算 / 启动收口三处零后续派发**。
+   *
+   * 🔴 **运行中节点跑完自然停**（作者默认语义：暂停不是 cancel，禁发明「暂停即杀运行中
+   * 节点」——杀运行中节点是 [[cancelChain]] 的语义，两原语**不得互相借鉴**）。因此本方法
+   * 不触碰任何节点状态、不发任何信号、零 side effect（除台账一行）。
+   *
+   * 幂等：对已暂停链重复调用 ⇒ 台账零写（[[ChainLedgerStore.setChainControl]] 的无变化分支），
+   * 返回态照旧 `paused`。可行动错误：链不存在 ⇒ `CHAIN_NOT_FOUND`；单成员/孤立
+   * ⇒ `CHAIN_SINGLE_MEMBER`（与 [[cancelChain]] 同判据：链级原语不静默降级为节点级）。
+   */
+  def pauseChain(chainId: String, now: Long = System.currentTimeMillis()): IO[Either[String, ChainLedger.ChainControl]] =
+    store.chainMembersOf(chainId).flatMap {
+      case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
+      case Some(cm) if cm.info.memberIds.size < 2 => IO.pure(Left(ChainCancelErrors.singleMember(chainId)))
+      case Some(_) =>
+        store.chainLedgerStore.setChainControl(chainId, ChainLedger.StatusPaused, now).map(Right(_))
+    }
+
+  /**
+   * **继续链**（原语 2）：清 `paused`（**只清暂停**；`cancelled` 不动）。
+   *
+   * 🔴 对已取消链 ⇒ `Left(CHAIN_CANCELLED)`：取消是**不可逆**的（级联闭包已把成员翻终态，
+   * 「继续」既不可能也不该有语义）。**禁**静默返回 active —— 那会让调用方以为链又能派发了。
+   *
+   * 幂等：对活跃链 resume ⇒ 台账零写，返回态 `active`。恢复后 settle sweep 当轮即恢复
+   * 正常结算（闸是**现读**台账、非一次性闩 ⇒ 无需任何清账动作）。
+   */
+  def resumeChain(chainId: String, now: Long = System.currentTimeMillis()): IO[Either[String, ChainLedger.ChainControl]] =
+    store.chainLedgerStore.chainControlOf(chainId).flatMap { cur =>
+      if cur.status == ChainLedger.StatusCancelled then
+        IO.pure(Left(ChainCancelErrors.alreadyCancelled(chainId)))
+      else
+        store.chainMembersOf(chainId).flatMap {
+          case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
+          case Some(cm) if cm.info.memberIds.size < 2 => IO.pure(Left(ChainCancelErrors.singleMember(chainId)))
+          case Some(_) =>
+            store.chainLedgerStore.setChainControl(chainId, ChainLedger.StatusActive, now).map(Right(_))
+        }
+    }
+
+  /**
+   * **取消链 + 台账留痕**（原语 3；链控三原语的 REST/WS 入口专用）：复用既有 [[cancelChain]]
+   * 全套语义（成员解析 → 级联闭包 → 逐节点终态化 → 聚合通知 → `chain-cancelled` 审计），
+   * **仅在全成功后**追加一行台账状态（`cancelledChains`）。
+   *
+   * 顺序是语义：先取消后记账 —— 若取消腿失败（`Left`），台账**不写**（不谎报「已取消」）。
+   * 取消腿返回 `Right` 时其成员集必已全终态，故此处的台账写是**事后留痕**而非状态推手
+   * （`chainGateOf` 对 cancelled 链同样返回 `Some`，但此刻已无 pending 成员可挡）。
+   */
+  def cancelChainAndRecord(
+    chainId: String,
+    source: CancelSource,
+    reason: String,
+    cascade: Boolean = true,
+    now: Long = System.currentTimeMillis()
+  ): IO[Either[String, (ChainCancelReport, ChainLedger.ChainControl)]] =
+    cancelChain(chainId, source, reason, cascade).flatMap {
+      case Left(err) => IO.pure(Left(err))
+      case Right(rep) =>
+        store.chainLedgerStore.setChainControl(chainId, ChainLedger.StatusCancelled, now).map(c => Right((rep, c)))
+    }
+
   /**
    * **节点级取消 + 级联（R3 公开原语）**：`ids` 显式种子集（节点级 = 单节点；
    * 链级腿经 [[cancelChain]] 复用本方法，种子 = 链成员集）。

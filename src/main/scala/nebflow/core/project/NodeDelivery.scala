@@ -589,12 +589,21 @@ private[project] trait NodeDelivery:
                   // 只是不 fork 启动；释放后由资格回扫（落点②）当轮拉起。
                   tn match
                     case Some(t) =>
-                      mergeVerdictHoldersOf(t).flatMap { holders =>
-                        if holders.nonEmpty then logVerdictGateHold("settleTo (barrier settle)", t, holders)
-                        else
-                          mergeMutexHoldersOf(t).flatMap { queued =>
-                            if queued.nonEmpty then logMutexHold("settleTo (barrier settle)", t, queued)
-                            else forkStart(s"deliver-out -> $tid")(startNode(tid))
+                      // chainview 批 2026-10-01：**链控闸**（落点③/纵深，与 startNode 收口同一
+                      // 判据单点 [[chainGateOf]]）——暂停/已取消链上的目标即使 barrier 刚好归零
+                      // 也不 fork 启动（barrier 记账**已在上方 mutate 落库**，与 verdict/mutex
+                      // 两闸口径一致：闸只挡「fork startNode」这一动作，不改记账）。命中 ⇒ 静默
+                      // `IO.unit`（零日志；暂停是用户显式意图，可见性在 REST/WS 三态面）。
+                      chainGateOf(tid).flatMap {
+                        case Some(_) => IO.unit
+                        case None =>
+                          mergeVerdictHoldersOf(t).flatMap { holders =>
+                            if holders.nonEmpty then logVerdictGateHold("settleTo (barrier settle)", t, holders)
+                            else
+                              mergeMutexHoldersOf(t).flatMap { queued =>
+                                if queued.nonEmpty then logMutexHold("settleTo (barrier settle)", t, queued)
+                                else forkStart(s"deliver-out -> $tid")(startNode(tid))
+                              }
                           }
                       }
                     case None => IO.unit

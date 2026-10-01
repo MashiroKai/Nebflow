@@ -264,6 +264,25 @@ object FlowMapEventLog:
   val ChainMembershipChangedType = "chain-membership-changed"
 
   /**
+   * **链控态变更事件类型**（chainview 批 2026-10-01）：链级 pause / resume / cancel 的
+   * 台账状态面变动，一条一留痕。
+   *
+   * 与链族既有四型的分工（同族不同事实，禁合并）：`chain-archived` = 整链出库、
+   * `chain-restored` = 整链拉回、`chain-cancelled` = **一次取消操作的成员清单**（本批
+   * 照旧由 `NodeCanceller.cancelNodes` 的聚合腿发射）；本型回答的是「**这条链的控制态
+   * 此刻是什么、什么时候变的**」——三态（`active` / `paused` / `cancelled`）的唯一审计面，
+   * 与 WS 的 `chainState` 帧同源（同一 [[ChainLedger.ChainControl]] 投影）。
+   *
+   * `nodeId` = 链首成员（可能为空——链条目未必存在；`append` 对空 id 照写，消费方按
+   * 顶层 `chainId` 归属）；顶层 `chainId` = 链号（原样回显调用方给的号）。
+   */
+  val ChainStateChangedType = "chain-state-changed"
+
+  /** `chain-state-changed` 结构化 summary（`k=v` 单空格；沿 [[noWs]] 纪律）。 */
+  def chainStateChangedSummary(status: String, at: Long): String =
+    s"status=${noWs(status)} at=$at"
+
+  /**
    * `chain-membership-changed` 结构化 summary（`k=v` 单空格分隔，值不含空白——
    * 沿 [[noWs]] 纪律）：`from` = 旧链号（`-` = 无归属）、`to` = 新链号（`-` = 无归属）、
    * `reason` ∈ declaration | re-id | fallback。时戳由 [[append]] 的顶层 `ts` 字段承载，

@@ -85,6 +85,74 @@ private[gateway] object ProjectsRoutes:
           }
         }
 
+      // ── 链控三端点（chainview 批 2026-10-01 · 引擎面）────────────────────────
+      //
+      // POST /projects/<name>/chains/<chainId>/{pause|resume|cancel}
+      //
+      // 契约（与本文件既有 projects 族逐条同形）：
+      //   · 需 auth（withAuth）；路径相对 Router("/api") 挂载（见文件头注，禁写 "api" 段）；
+      //   · 项目未挂载 → 404 {"error": "project '<name>' not mounted"}
+      //   · 引擎返回可行动错误（CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER / CHAIN_CANCELLED）
+      //     → 404 {"error": "<码>: <可行动说明>"}（链不存在是「找不到资源」；
+      //     CHAIN_SINGLE_MEMBER / CHAIN_CANCELLED 是「现存资源不适用该动作」——
+      //     两者都是可行动的 refusal，不是服务端故障，故不用 5xx）
+      //   · 成功 → 200 {"chainId", "title", "status", "memberIds", "pausedAt", "cancelledAt"}
+      //   · **零派生纪律**（与 chainCancel 腿同款 V8）：本腿只把面板传来的 chainId 当
+      //     查找键；成员 / 状态 / 级联闭包**全在后端单点**解析
+      //     （`FlowMapStore.chainMembersOf` + `ChainLedgerStore.chainControlOf`）
+      //     ⇒ 🔴 本文件**禁**出现 topologicalChains / combinedNodes / memberIds /
+      //     ChainInfo（判据见 ChainCascadeSpec V8 守卫的同款口径）。
+      //   · 每条成功腿发一帧 `chainState`（`ProjectActor.chainStateFrame` 单点），
+      //     经**既有** wsHub.broadcast 全连接广播（与上方 archive 腿同面，🔴 零第二套推送面）。
+
+      /** 三端点共用的骨架见 object 级 [[chainControlRoute]]（本块内**禁**放 `def`：
+        * 路由块的 case 序列是单个部分函数字面量，case 之间不容许定义）。 */
+
+      case req @ POST -> Root / "projects" / name / "chains" / chainId / "pause" =>
+        withAuth(req) {
+          chainControlRoute(
+            ctx,
+            name,
+            chainId,
+            (rt, cid) => rt.engine.pauseChain(cid),
+            FlowMapEventLog.ChainStateChangedType,
+            ctl => FlowMapEventLog.chainStateChangedSummary(ctl.status, ctl.pausedAt.getOrElse(0L))
+          )
+        }
+
+      case req @ POST -> Root / "projects" / name / "chains" / chainId / "resume" =>
+        withAuth(req) {
+          chainControlRoute(
+            ctx,
+            name,
+            chainId,
+            (rt, cid) => rt.engine.resumeChain(cid),
+            FlowMapEventLog.ChainStateChangedType,
+            ctl => FlowMapEventLog.chainStateChangedSummary(ctl.status, System.currentTimeMillis())
+          )
+        }
+
+      // cancel：复用既有链级取消原语（级联闭包 / 逐节点终态化 / 聚合通知 / chain-cancelled
+      // 审计全套零重写），**仅在全成功后**追加台账 cancelled 状态（`cancelChainAndRecord`）。
+      case req @ POST -> Root / "projects" / name / "chains" / chainId / "cancel" =>
+        withAuth(req) {
+          chainControlRoute(
+            ctx,
+            name,
+            chainId,
+            (rt, cid) =>
+              rt.engine
+                .cancelChainAndRecord(
+                  cid,
+                  CancelSource.User,
+                  s"cancelled from REST chain control (project=$name)"
+                )
+                .map(_.map(_._2)),
+            FlowMapEventLog.ChainStateChangedType,
+            ctl => FlowMapEventLog.chainStateChangedSummary(ctl.status, ctl.cancelledAt.getOrElse(0L))
+          )
+        }
+
       case req @ GET -> Root / "projects" / name / "flow-map" =>
         withAuth(req) {
           ProjectRuntimeRegistry.get(name).flatMap {
@@ -207,5 +275,48 @@ private[gateway] object ProjectsRoutes:
 
     }
   end routes
+
+  /**
+   * 链控三端点（pause / resume / cancel）共用的「挂载解析 + 链查找 + 审计 + 状态帧 + 响应」
+   * 骨架（单点，禁三处各拼一份）。
+   *
+   * 🔴 为什么是 object 级私有方法而**不是** `HttpRoutes.of { ... }` 跨 case 的 `def`：
+   * 路由块的 `case` 序列是**单个部分函数字面量**（`{ CaseClauses }`），Scala 3 不允许在
+   * case 之间插 `def` 定义 —— 放在块内是编译错，不是风格问题。故本方法留在块外，
+   * `ctx` 经参数显式传入（原本由块内 `import ctx.*` 隐式带入）。
+   */
+  private def chainControlRoute(
+      ctx: RestApiCtx,
+      name: String,
+      chainId: String,
+      action: (ProjectRuntime, String) => IO[Either[String, ChainLedger.ChainControl]],
+      auditType: String,
+      auditSummary: ChainLedger.ChainControl => String
+  ): IO[Response[IO]] =
+    import ctx.*
+    if chainId.trim.isEmpty then BadRequest(Json.obj("error" -> "chainId is required".asJson))
+    else
+      ProjectRuntimeRegistry.get(name).flatMap {
+        case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+        case Some(rt) =>
+          action(rt, chainId).flatMap {
+            case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+            case Right(ctl) =>
+              // 台账审计留痕（失败只 WARN——审计面 best-effort，与链族既有写点同纪律）
+              FlowMapEventLog
+                .append(
+                  rt.project.workspace,
+                  rt.project.name,
+                  "",
+                  auditType,
+                  auditSummary(ctl),
+                  Some(ctl.chainId)
+                )
+                .handleErrorWith(e => IO(logger.warn(s"$auditType audit append failed: ${e.getMessage}")))
+                .flatTap(_ => wsHub.broadcast(ProjectActor.chainStateFrame(rt.project.name, ctl)))
+                .flatMap(_ => NodeTools.chainControlPayload(rt, ctl))
+                .flatMap(Ok(_))
+          }
+      }
 
 end ProjectsRoutes

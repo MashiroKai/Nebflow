@@ -1669,6 +1669,12 @@ object ChainCancelErrors:
   val NotFound = "CHAIN_NOT_FOUND"
   val SingleMember = "CHAIN_SINGLE_MEMBER"
 
+  /**
+   * `resume` 对**已取消链**的拒绝码（chainview 批 2026-10-01）：取消不可逆 ⇒ 继续链的
+   * 原语必须显式拒绝（🔴 禁静默返回 active —— 那会让调用方以为链又能派发了）。
+   */
+  val AlreadyCancelled = "CHAIN_CANCELLED"
+
   def notFound(chainId: String): String =
     s"$NotFound: no chain with id '$chainId' in this project — chain ids come from the Flow Map " +
       "`chains[]` payload (a chain exists only for a weakly-connected component of the merged " +
@@ -1678,6 +1684,10 @@ object ChainCancelErrors:
     s"$SingleMember: chain '$chainId' has fewer than 2 members — a single node / isolated node " +
       "has no chain to cancel; use the node-level cancel (NodeCancel) instead of degrading the " +
       "chain-level primitive silently"
+
+  def alreadyCancelled(chainId: String): String =
+    s"$AlreadyCancelled: chain '$chainId' was cancelled — cancellation is irreversible (its members " +
+      "are already terminal), so it cannot be resumed; re-create the work as a new chain instead"
 
 /** Project 实体定义（§1.1，projects/<name>/project.json）。 */
 case class ProjectDef(

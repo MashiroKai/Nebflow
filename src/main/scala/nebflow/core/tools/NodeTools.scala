@@ -1519,6 +1519,39 @@ object NodeTools:
    * 逐字同值；无上限、无降级）。
    * WS 不带链级帧，结构变化由前端对账重拉快照消化。
    */
+  /**
+   * **链控端点响应体单点**（chainview 批 2026-10-01）：三条 REST 端点（pause / resume /
+   * cancel）的成功响应共用本构造函数 —— 🔴 禁三处各拼一份（帧形/字段集漂移）。
+   *
+   * 形状（与本文件既有 projects 族逐条同风格，`404/400` 错误体另件于路由）：
+   * {{{
+   *   { chainId, title, status, memberIds, pausedAt|null, cancelledAt|null }
+   * }}}
+   *
+   * 读法纪律：`memberIds` / 链标题恒来自 [[FlowMapStore.chainMembersOf]]（**唯一**的
+   * chainId → 成员解析点，V8 判据）；`status` / 时间戳恒来自
+   * [[ChainLedger.ChainControl]]（判据单点 `ChainLedger.statusOf`）。本方法**零派生**。
+   * 链查无（竞赛窗口：链在动作后消失）⇒ 退化为只回状态字段（不伪造成员集）。
+   */
+  def chainControlPayload(rt: ProjectRuntime, ctl: ChainLedger.ChainControl): IO[Json] =
+    rt.store.chainMembersOf(ctl.chainId).map { cm =>
+      val base = Json.obj(
+        "chainId" -> ctl.chainId.asJson,
+        "status" -> ctl.status.asJson,
+        "pausedAt" -> ctl.pausedAt.map(_.asJson).getOrElse(Json.Null),
+        "cancelledAt" -> ctl.cancelledAt.map(_.asJson).getOrElse(Json.Null)
+      )
+      cm match
+        case None          => base
+        case Some(cmInfo)  =>
+          base.deepMerge(
+            Json.obj(
+              "title" -> cmInfo.title.asJson,
+              "memberIds" -> cmInfo.info.memberIds.asJson
+            )
+          )
+    }
+
   def buildNodeListPayload(rt: ProjectRuntime, statusFilter: Option[Set[String]] = None): IO[Json] =
     for
       s <- rt.store.snapshot
@@ -1567,6 +1600,9 @@ object NodeTools:
       // unheld nodes are simply absent.
       mergeVerdictGates <- rt.engine.mergeVerdictGateBatch(combined)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
+      // chainview 批 2026-10-01：链控三态读数（chains[] 的 status/pausedAt/cancelledAt 三键
+      // 数据源）。**一次读**供整表消费（禁逐链读台账）；纯只读，不写台账、不登记任何号。
+      ledgerState <- rt.store.chainLedgerStore.snapshot
     yield
       val now = System.currentTimeMillis()
       // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
@@ -1637,7 +1673,16 @@ object NodeTools:
           "title" -> FlowMapStore.chainTitle(members, c.id).asJson,
           "entries" -> c.entries.asJson,
           "ends" -> c.ends.asJson,
-          "memberIds" -> c.memberIds.asJson
+          "memberIds" -> c.memberIds.asJson,
+          // chainview 批 2026-10-01：链控三态条件键（前端据此渲染暂停/取消态，
+          // 🔴 前端零派生）。判据**单点** = `ChainLedger.statusOf`（进入本轮
+          // 资格判定时的那一读；别名逐跳解析 ⇒ 改号后旧号照样报对态）。
+          // 键名 `status` **只加不改**：既有五键（id/title/entries/ends/memberIds）
+          // 的名称、类型、语义逐字不变 —— 已核 FlowMapChainSpec / NodeDepsSpec 均
+          // 为非穷举断言（读键不校全集）⇒ 向前兼容。
+          "status" -> ChainLedger.statusOf(ledgerState, c.id).asJson,
+          "pausedAt" -> ChainLedger.pausedAtOf(ledgerState, c.id).map(_.asJson).getOrElse(Json.Null),
+          "cancelledAt" -> ChainLedger.cancelledAtOf(ledgerState, c.id).map(_.asJson).getOrElse(Json.Null)
         )
       }
       val wtDir = os.Path(rt.project.workspace) / ".nebflow"

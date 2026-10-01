@@ -409,13 +409,19 @@ private[project] trait NodeCompletion:
       actives = s1.nodes.values
         .filter(n => n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring)
         .toList
+      // chainview 批 2026-10-01：**链控闸**（落点② 纵深；判据单点 / 批量形态见
+      // `NodeCanceller.chainGateNodeIds`）——暂停/已取消链的成员本轮回扫**不进 qualified**
+      // ⇒ 不 fork、**不进 trigger-starved 记账**（合法等待 ≠ 启动失败，与 verdict/mutex
+      // 两闸同口径）。恢复（resume）后闸是**现读**台账、非一次性闩 ⇒ 下一轮自然放行。
+      // 🔴 整张图派生一次（禁逐节点调 chainGateOf：那会把一拍放大成 O(N·E)）。
+      chainGated <- store.combinedNodes.flatMap(chainGateNodeIds)
       qualified <- actives.filterA { n =>
         val emptyWiring = n.status == NodeLifecycle.Wiring && n.task.isEmpty && n.in.isEmpty && n.deps.isEmpty
         // R4：带「待承接」标记的 barrier 不放行（摘除后 in 已 prune，若不设此闸，
         // barrier 会以缺轨输入正常启动并静默产出缺轨结论）。分发器承接后（NodeEdit
         // 实际变更）标记清空，此处自然放行。
         val barrierOk = !n.in.exists(up => !n.deliveredTo.contains(up)) && n.pendingSuccession.isEmpty
-        if emptyWiring || !barrierOk then IO.pure(false)
+        if emptyWiring || !barrierOk || chainGated.contains(n.id) then IO.pure(false)
         else
           depsSatisfied(n).flatMap {
             case false => IO.pure(false)
