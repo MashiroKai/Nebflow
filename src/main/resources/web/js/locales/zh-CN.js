@@ -1791,7 +1791,6 @@ export default {
   //    「已配置 · 未接入」. The status closed set has no reachable "live" state.
   'social.title': '社交接口',
   'social.btn.title': '手机访问 — 社交接口配置',
-  'social.channels.title': '渠道配置',
   'social.remote.title': '手机远程访问',
   // The remote-access face is held: O1–O5 (switch semantics / QR code / address
   // export / mobile range / clipboard fallback) are author decisions.
@@ -1813,7 +1812,6 @@ export default {
   // retired from the UI — the same probe face renders as two plain-language
   // states now (internal triples unchanged: data source untouched, render
   // layer only).
-  'social.credential.ok': '凭据已配置 · 权限正常',
   'social.credential.missing': '凭据缺失，请重新扫码',
   'social.hint.missingRef': '引用文件不存在：{path}',
   'social.hint.modeBad': '权限不正确（应为 rw-------）：{path}',
@@ -1860,15 +1858,6 @@ export default {
   'social.feishu.scan.failed': '扫码绑定失败：{reason}',
   'social.feishu.scan.userCode': '确认码：{code}',
   'social.feishu.scan.qrFallback': '若二维码未显示，请在手机上打开此链接：',
-  'social.feishu.live.title': '连接的应用',
-  'social.feishu.live.appUnknown': '未知 — 当前后端未上报实际连接的应用',
-  'social.feishu.live.fingerprint': '指纹',
-  'social.feishu.live.fpMatch': '一致',
-  'social.feishu.live.fpMismatch': '不一致 — 桥接的是另一个应用',
-  'social.feishu.live.fpUnknown': '未知',
-  'social.feishu.live.bridge': '桥接',
-  'social.feishu.live.bridgeOn': '已启用',
-  'social.feishu.live.bridgeOff': '已停用',
   'social.feishu.archive.action': '解除绑定',
   'social.feishu.archive.doing': '解除绑定中…',
   'social.feishu.archive.done': '已解除绑定 — 凭据保留',

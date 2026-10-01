@@ -1845,7 +1845,6 @@ export default {
   //    author ruling (O1–O5): no link, no QR code, no guessed address.
   'social.title': 'Social channels',
   'social.btn.title': 'Phone access — social channel configuration',
-  'social.channels.title': 'Channel configuration',
   'social.remote.title': 'Phone remote access',
   'social.remote.suspended': 'Held for the author ruling (this face is inert in the current batch): no link, no QR code, and no address that the backend has not confirmed is shown here.',
   'social.remote.safetyKey': 'Security boundary: a remote-access link is equivalent to an access credential — never forward it to anyone.',
@@ -1864,7 +1863,6 @@ export default {
   // retired from the UI — the same probe face renders as two plain-language
   // states now (internal triples unchanged: data source untouched, render
   // layer only).
-  'social.credential.ok': 'Credentials configured · permissions normal',
   'social.credential.missing': 'Credential missing — scan to create again',
   'social.hint.missingRef': 'Referenced file does not exist: {path}',
   'social.hint.modeBad': 'Wrong permissions (expected rw-------): {path}',
@@ -1912,15 +1910,6 @@ export default {
   'social.feishu.scan.failed': 'Scan-bind failed: {reason}',
   'social.feishu.scan.userCode': 'Confirmation code: {code}',
   'social.feishu.scan.qrFallback': 'If the code does not display, open this link on your phone:',
-  'social.feishu.live.title': 'Connected app',
-  'social.feishu.live.appUnknown': 'Unknown — this backend does not report the live app',
-  'social.feishu.live.fingerprint': 'Fingerprint',
-  'social.feishu.live.fpMatch': 'match',
-  'social.feishu.live.fpMismatch': 'mismatch — the bridge is holding a different app',
-  'social.feishu.live.fpUnknown': 'unknown',
-  'social.feishu.live.bridge': 'Bridge',
-  'social.feishu.live.bridgeOn': 'enabled',
-  'social.feishu.live.bridgeOff': 'disabled',
   'social.feishu.archive.action': 'Unbind',
   'social.feishu.archive.doing': 'Unbinding…',
   'social.feishu.archive.done': 'Unbound — credentials kept',

@@ -106,6 +106,49 @@
 //    MIN-B1 is expected GREEN on BOTH trees — it is the control that says the
 //    removal was display-only.
 //
+// 🔴 SOCPANEL-MIN WAVE-3 (author ruling #442, 2026-10-01: "clear all 11, in the
+//    same branch, riding the existing verify/sink program"): the 11 locale keys
+//    the wave-2 minimal-face removals ORPHANED are deleted from BOTH tables —
+//    `social.channels.title`, `social.credential.ok`, and the nine
+//    `social.feishu.live.*` keys (title/appUnknown/fingerprint/fpMatch/
+//    fpMismatch/fpUnknown/bridge/bridgeOn/bridgeOff). Same governance reading the
+//    K-group applied to its own 8 direct siblings: the row that consumed the copy
+//    is gone, so the key has no consumer left. Removal only — ZERO new copy
+//    (AGENTS §16), 0 inserted lines in both tables.
+//    New anchors: [[MIN-K2]] — ONE PER KEY (11), each asserting absence on BOTH
+//    the SERVED and the REPO locale faces; plus [[MIN-K2P]] (symmetric deletion,
+//    0 carrier lines per table). All RED on the pre-change tree.
+//
+// 🔴 WHY THE A6/A7 NEEDLES ARE NOW FROZEN LITERALS ([[RETIRED_W3_COPY]]): three
+//    of the 11 deleted keys were in use AS LIVE NEEDLES by the wave-2 anchors
+//    (`A6_LABEL`/`A6_UNKNOWN`/`A7_TITLE`, read as `ZH[k] || EN[k] || ''`).
+//    After the deletion those reads yield `''` — and the empty string is
+//    contained in EVERY string, so `text.includes(A6_UNKNOWN)` becomes `true`
+//    unconditionally while `!text.includes(A7_TITLE)` becomes `false`
+//    unconditionally. The anchors would not merely weaken, they would INVERT;
+//    MIN2-0 is the guard that catches it. This is not a hypothetical: the
+//    mutation is recorded in `.nebflow/evidence/20261001_socpanel-min/
+//    mutation-vacuity-proof.txt` (reverting the three constants to the live-read
+//    form turns MIN2-0 / MIN2-A6 / MIN2-A6b / MIN2-A7 red — 120/124).
+//    The values were captured from the merge-base tree just before deletion and
+//    are the zh-CN readings, which is what `ZH[k] || EN[k]` resolved to on every
+//    leg of this suite (all of them boot with `locale: 'zh-CN'`), so the
+//    judgement carried by those four anchors is unchanged.
+//
+// 🔴 WHY MIN-K2 ASSERTS ON THE SERVED FACE, NOT ONLY THE IMPORTS: `ZH`/`EN` are
+//    imported from `REPO_WEB` — the tree this SPEC file lives in. On a RED leg
+//    (new spec, pre-change served tree) the repo tables ALREADY carry the
+//    deletion, so a table-only check like `!(k in ZH) && !(k in EN)` passes on
+//    BOTH trees and can never go red. The served half is what gives the anchor
+//    teeth; the repo half is kept because it is the deployment reading a reviewer
+//    wants. MIN-K1 (wave-2) takes the same shape for the same reason.
+//
+//    Pending (registered, NOT changed this round): `js/socialPanel.js:111`
+//    still NAMES `social.feishu.live.appUnknown` inside a comment. It is a
+//    source-comment face, not rendered and not read by any check — the wave-3
+//    brief explicitly leaves it alone and asks for it to be registered instead.
+//    It is reported as 「注释面待清」 for a separate ruling.
+//
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
@@ -1357,6 +1400,54 @@ const RETIRED_BINDING_KEYS = [
   'social.feishu.defaultSession.unavailable',
 ];
 
+/** The 11 locale keys the wave-3 leg deleted from BOTH tables (author ruling
+ *  `#442`, 2026-10-01 — "clear all 11 in the same branch, ride the existing
+ *  verify/sink program"). Each is a WAVE-2-PRODUCED ORPHAN: the minimal-face
+ *  removals took its last consumer, so nothing renders it any more — the same
+ *  governance reading the K-group above applied to its own 8 direct siblings.
+ *  Frozen at 2026-10-01 (deletion time), captured from the merge-base tree
+ *  `002f4732a34fcbcafe2578d7162c8b44765e8579`.
+ *
+ *  🔴 RED-PROOF NOTE: the 11 anchors below ([[MIN-K2]]) are the ones this leg
+ *     must show FAILING on the pre-change tree, so they are built on the
+ *     SERVED locale bytes (as MIN-K1 is), NOT only on the imported `ZH`/`EN`
+ *     tables. The reason is worth stating: `ZH`/`EN` are imported from
+ *     `REPO_WEB` — the tree the SPEC lives in — so on the red leg (new spec,
+ *     old served tree) the repo tables are ALREADY post-deletion and a
+ *     repo-only check would pass on both trees, i.e. it could never go red.
+ *     The served half is what discriminates; the repo half is asserted too so
+ *     the reading names the deployment face and the source face separately. */
+const RETIRED_W3_KEYS = [
+  'social.channels.title',
+  'social.credential.ok',
+  'social.feishu.live.title',
+  'social.feishu.live.appUnknown',
+  'social.feishu.live.fingerprint',
+  'social.feishu.live.fpMatch',
+  'social.feishu.live.fpMismatch',
+  'social.feishu.live.fpUnknown',
+  'social.feishu.live.bridge',
+  'social.feishu.live.bridgeOn',
+  'social.feishu.live.bridgeOff',
+];
+
+/** The wave-3 orphan COPY, frozen for the same reason [[RETIRED_BINDINGS_COPY]]
+ *  is: three of the 11 deleted keys were being used AS LIVE NEEDLES by the
+ *  wave-2 anchors (A6_LABEL / A6_UNKNOWN / A7_TITLE). Leaving them as
+ *  `ZH[k] || EN[k] || ''` reads would turn those three anchors into `''`
+ *  comparisons — a needle that matches everything (every string contains the
+ *  empty string), which passes forever. Freezing them as the literals captured
+ *  at deletion time keeps MIN2-A6 / MIN2-A6b / MIN2-A7 discriminating; the
+ *  non-vacuous guard MIN2-0 pins that the literals are really there.
+ *  Values are the zh-CN readings — the locale every one of these legs boots
+ *  with (`boot(page, { locale: 'zh-CN' })`), which is also what `ZH[k] || EN[k]`
+ *  resolved to before the freeze, so the judgement is unchanged. */
+const RETIRED_W3_COPY = {
+  A6_LABEL: '连接的应用',
+  A6_UNKNOWN: '未知 — 当前后端未上报实际连接的应用',
+  A7_TITLE: '渠道配置',
+};
+
 async function minSuite(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   const page = await ctx.newPage();
@@ -1464,6 +1555,40 @@ async function minSuite(browser, base) {
     stillPresent.length === 0,
     `retired=${RETIRED_BINDING_KEYS.length} keys × 2 tables — still present: [${stillPresent.join(', ')}]`);
 
+  // MIN-K2 (wave-3, author ruling #442, 2026-10-01) — ONE ANCHOR PER KEY (11),
+  // the same shape MIN-K1 uses for its 8. Each asserts the key is absent from
+  // BOTH faces, so a one-sided or partial deletion names itself. Reuses MIN-K1's
+  // `servedTables` reads above, so both anchors judge the same bytes:
+  //   · SERVED face (`WEB` = whatever tree the leg serves) — the discriminating
+  //     half, and the reason the anchors are not table-only. On this batch's RED
+  //     leg the served tree is the PRE-change snapshot, so each anchor goes red
+  //     exactly as it must. 🔴 The brief's literal form `!(k in ZH) && !(k in EN)`
+  //     CANNOT go red: `ZH`/`EN` are imported from `REPO_WEB` — the tree the SPEC
+  //     file lives in — so on a red leg (new spec, old served tree) the repo
+  //     tables already carry the deletion and the reading passes vacuously on
+  //     both trees. The served half is what gives the anchor teeth; the repo half
+  //     is kept because it is the DEPLOYMENT reading a reviewer wants (it is the
+  //     same table W11's parity check imports).
+  for (const key of RETIRED_W3_KEYS) {
+    const inServed = Object.entries(servedTables).filter(([, src]) => src.includes(`'${key}'`)).map(([tag]) => tag);
+    const inRepo = (key in ZH) || (key in EN);
+    check(`MIN-K2 ${key} — absent from both served tables and both repo tables`,
+      inServed.length === 0 && !inRepo,
+      `served present in: [${inServed.join(', ')}] · repo present: ${inRepo} (pre-change tree: present in zh-CN, en, ZH and EN ⇒ this reading is RED there)`);
+  }
+
+  // MIN-K2P — the deletion is SYMMETRIC. W11's parity check also catches a
+  // one-sided deletion (the key sets would differ); this reports the raw CARRIER
+  // LINE count per table, so the reading says "11 out of each side" rather than
+  // only "the sets differ". 0/0 on this tree; 11/11 on the pre-change tree.
+  const w3Counts = {};
+  for (const [tag, src] of Object.entries(servedTables)) {
+    w3Counts[tag] = src.split('\n').filter((l) => RETIRED_W3_KEYS.some((k) => l.includes(`'${k}'`))).length;
+  }
+  check('MIN-K2P the deletion is symmetric — zero carrier lines in either served table',
+    w3Counts['zh-CN'] === 0 && w3Counts.en === 0,
+    `carrier lines for the 11 keys: zh=${w3Counts['zh-CN']} en=${w3Counts.en} (both must be 0; pre-change tree: 11 each ⇒ RED there)`);
+
   // MIN-B1 — behaviour invariance, GREEN ON BOTH TREES by design (see the
   // suite comment). The mock answered the boot GET with a FOREIGN session id, so
   // the panel must have issued a PUT carrying the Nebula id.
@@ -1524,15 +1649,23 @@ async function min2Suite(browser, base) {
   apiState.probes = { feishu: { app_secret: { exists: true, modeOk: true, readable: true } } };
   apiState.registered = { feishu: true };
 
-  // Live needles (not deleted by the K-group) — read from REPO_WEB's tables, not
-  // the served tree, so this stays a fixed reference. Non-empty guards below.
-  const A6_LABEL = ZH['social.feishu.live.title'] || EN['social.feishu.live.title'] || '';
-  const A6_UNKNOWN = ZH['social.feishu.live.appUnknown'] || EN['social.feishu.live.appUnknown'] || '';
-  const A7_TITLE = ZH['social.channels.title'] || EN['social.channels.title'] || '';
+  // Live needles for the A6/A7 copy. 🔴 FROZEN since wave-3 (author ruling #442,
+  // 2026-10-01): this leg's own anchor set deleted the three keys these used to
+  // be read from, and `ZH[k] || EN[k] || ''` would now resolve to `''` — a
+  // needle every string contains, i.e. an anchor that passes by matching
+  // nothing. The values are the literals captured at deletion time (see
+  // [[RETIRED_W3_COPY]]); MIN2-0 below is the non-vacuous guard that pins them.
+  // `A4_HINT` stays a live read on purpose: `social.feishu.archive.hint` was
+  // NOT deleted (it has a live consumer — the unbind button's `title`), so
+  // reading it off the table is still meaningful and still fails LOUDLY if a
+  // future deletion orphans it.
+  const A6_LABEL = RETIRED_W3_COPY.A6_LABEL;
+  const A6_UNKNOWN = RETIRED_W3_COPY.A6_UNKNOWN;
+  const A7_TITLE = RETIRED_W3_COPY.A7_TITLE;
   const A4_HINT = ZH['social.feishu.archive.hint'] || EN['social.feishu.archive.hint'] || '';
-  check('MIN2-0 the live needles resolved (non-vacuous guard)',
+  check('MIN2-0 the A6/A7 needles resolved (non-vacuous guard)',
     !!(A6_LABEL && A6_UNKNOWN && A7_TITLE && A4_HINT),
-    `live.title=${JSON.stringify(A6_LABEL)} live.appUnknown=${JSON.stringify(A6_UNKNOWN)} channels.title=${JSON.stringify(A7_TITLE)} archive.hint=${JSON.stringify(A4_HINT)}`);
+    `FROZEN at deletion time: live.title=${JSON.stringify(A6_LABEL)} live.appUnknown=${JSON.stringify(A6_UNKNOWN)} channels.title=${JSON.stringify(A7_TITLE)} · live read: archive.hint=${JSON.stringify(A4_HINT)} (a truncation of the frozen block or the deletion of archive.hint fails HERE rather than silently emptying an anchor)`);
 
   await page.goto(base);
   await openPanel(page);
