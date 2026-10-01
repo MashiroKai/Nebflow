@@ -174,6 +174,12 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     expect(done.svgPaths, 'a check glyph is drawn in its place').toBeGreaterThan(0);
     expect(done.height, 'still one line — the completion does not grow the row').toBeLessThanOrEqual(48);
 
+    // Let the completion animation (roll-in 0.35s + the 0.1s-delayed bounce,
+    // 0.5s total) finish. The exit trace below measures MOTION of this same
+    // element, so a still-running entry animation would be credited to the
+    // exit leg and mask a missing roll-out entirely.
+    await page.waitForTimeout(650);
+
     // Switch: the badge rolls the outgoing item out and the next tool in.
     // The EXIT leg is traced frame-by-frame — a reading taken only after the
     // 380ms settle cannot tell "rolled up and out" from "sat still, then was
