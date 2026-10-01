@@ -331,6 +331,45 @@ class CardPersistSpec extends FunSuite:
     )
   }
 
+  test("⑤ a hard link to a credential inode under `secrets/` is refused (the layer the ladder hides)") {
+    // `secrets/` is NOT on the data root allowlist, so the endpoint's ladder
+    // SHORT-CIRCUITS at its first step (`nfCredentialDenyLayer`) and answers
+    // `Namespace` for every path under it — the inode step never runs. The
+    // endpoint's own policy nevertheless snapshots every file under
+    // `<dataRoot>/secrets/`, so a hard link there shares a credential inode:
+    // the read leg must ask that layer itself instead of reading "Namespace"
+    // as "nothing here is a credential".
+    val auth = isolatedRoot.resolve("auth.json")
+    Files.write(auth, "{fake-auth}".getBytes(StandardCharsets.UTF_8))
+    val link = writeSource("secrets/linked.html", "linked")
+    Files.delete(link)
+    try Files.createLink(link, auth)
+    catch case _: Throwable => fail("this filesystem does not support hard links")
+
+    val error = callCard(JsonObject("filePath" -> Json.fromString(link.toString))).swap.toOption
+      .getOrElse(fail("a hard link to a credential inode must be refused however it is named"))
+    assert(
+      error.message.contains("credential-hardlink") || error.message.contains("hard link"),
+      s"the inode identity layer must refuse: ${error.message}"
+    )
+  }
+
+  test("⑤ a file under the data root's `secrets/` is refused (the same hidden layer)") {
+    // Not a link at all: an ordinary file, refused because the endpoint's own
+    // inode snapshot covers the whole credential-bearing subtree. This is the
+    // cell where the ladder reports `Namespace` and stops.
+    val secret = writeSource("secrets/notes.html", "SECRET-BODY-MUST-NOT-LEAK")
+    val error = callCard(JsonObject("filePath" -> Json.fromString(secret.toString))).swap.toOption
+      .getOrElse(
+        fail("a credential-bearing subtree under the readable root must still be refused")
+      )
+    assert(error.message.contains("credential"), s"the identity layer must refuse: ${error.message}")
+    assert(
+      !error.message.contains("SECRET-BODY-MUST-NOT-LEAK"),
+      "the refusal must never echo the file's content"
+    )
+  }
+
   test("⑤ an unusable credential judge refuses the render (fail-closed, not fail-open)") {
     val file = writeSource("judge.html", "<div>judged</div>")
     try
@@ -338,6 +377,8 @@ class CardPersistSpec extends FunSuite:
         def endpointVerdictLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String, String)] =
           throw new IllegalStateException("no judge wired")
         def credentialInodeHit(real: Path): Boolean = throw new IllegalStateException("no judge wired")
+        def credentialIdentityLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String)] =
+          throw new IllegalStateException("no judge wired")
       )
       val error = callCard(JsonObject("filePath" -> Json.fromString(file.toString))).swap.toOption
         .getOrElse(fail("a judge that cannot be consulted must refuse, never allow"))
@@ -354,6 +395,8 @@ class CardPersistSpec extends FunSuite:
         def endpointVerdictLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String, String)] =
           throw new IllegalStateException("no judge wired")
         def credentialInodeHit(real: Path): Boolean = throw new IllegalStateException("no judge wired")
+        def credentialIdentityLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String)] =
+          throw new IllegalStateException("no judge wired")
       )
       val result = callCard(JsonObject("html" -> Json.fromString("<div>inline</div>")))
       assert(result.isRight, s"the html leg is unchanged and must not need the judge: $result")

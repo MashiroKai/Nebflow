@@ -45,16 +45,40 @@ trait EventSink:
 end EventSink
 
 /**
- * `gateway.NfFilePolicy` 的窄端口(C 步倒置)。core 工具面(tools/FileRefs)只问
- * 两个问题:端点整条判据阶梯会不会拒绝这个 realpath(拒在哪一层、什么理由),
- * 以及这个 realpath 是不是凭据 inode。判据本体(白名单表、判据阶梯、inode 快照)
- * 全部留在 gateway 单点——imgref 批「与端点同一份判据(🔴 复用,禁复制)」裁定
- * 不变;`NfPathPolicy.current()` 由实现方自取(判据随在役根漂移、不随进程历史
- * 冻结——r2 F1 ② 裁定不变)。
+ * `gateway.NfFilePolicy` 的窄端口(C 步倒置)。core 工具面(tools/FileRefs、
+ * tools/CardTool)只问三个问题:端点整条判据阶梯会不会拒绝这个 realpath(拒在哪
+ * 一层、什么理由)、这个 realpath 是不是凭据 inode,以及**这个路径自己的身份层**
+ * 怎么判。判据本体(白名单表、判据阶梯、inode 快照)全部留在 gateway 单点——
+ * imgref 批「与端点同一份判据(🔴 复用,禁复制)」裁定不变;`NfPathPolicy.current()`
+ * 由实现方自取(判据随在役根漂移、不随进程历史冻结——r2 F1 ② 裁定不变)。
  */
 trait FilePolicyPort:
   def endpointVerdictLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String, String)]
   def credentialInodeHit(real: Path): Boolean
+
+  /**
+   * The file's **own identity** layer alone — the endpoint ladder's FIRST step
+   * (`nfCredentialDenyLayer`), asked without the short-circuit above it.
+   *
+   * Why a separate question exists at all: the ladder answers `Namespace` for
+   * every non-allowlisted subtree of a protected root and STOPS there, so for
+   * those paths the identity layers are never evaluated. A caller that honours
+   * only the identity layers (and not the endpoint's REACH) therefore cannot
+   * read that answer off [[endpointVerdictLayer]] — `Namespace` there means
+   * "the endpoint would not serve it", not "the file is not a credential".
+   * The repo states this trap itself for the sibling caller
+   * (`FileRefs.inlineMayTakeOver`, `FileRefs.scala:565-568`), which compensates
+   * by re-asking `credentialInodeHit`; this member is the other half of the
+   * same compensation, for callers that must also ask the path's own identity.
+   *
+   * `Some((layer, reason))` = the ladder's credential step refuses this path
+   * (layer is `Credential` for name/directory/known-entry shapes); `None` =
+   * that step passes. Same function, same tables, same messages as the
+   * endpoint's own step — one judgement, no copy, no parallel judge. Callers
+   * treat an unusable port as fail-closed, exactly as they do for
+   * [[endpointVerdictLayer]].
+   */
+  def credentialIdentityLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String)]
 end FilePolicyPort
 
 object FilePolicyPort:

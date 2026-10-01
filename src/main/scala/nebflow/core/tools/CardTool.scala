@@ -879,17 +879,34 @@ Example (render a card from a file on disk — including one you saved earlier a
    *     name). Card's OWN face, defined here on purpose: the endpoint's table
    *     (`NfFileAllowedExt`) serves no `html`/`htm` at all, so borrowing it
    *     would refuse every legitimate card source.
-   *  4. **Identity** — the endpoint's OWN judge, through the narrow
-   *     `FilePolicyPort` (`endpointVerdictLayer`, 🔴 the same function
-   *     `/api/nf-file` uses — no second table, no mirrored whitelist), asked
-   *     about the REAL path. Only its **credential identity** layers refuse:
+   *  4. **Identity** — the endpoint's OWN judges, through the narrow
+   *     `FilePolicyPort` (🔴 the same functions `/api/nf-file` uses — no second
+   *     table, no mirrored whitelist, no copied inode snapshot), asked about
+   *     the REAL path. Only the **credential identity** layers refuse:
    *     `Credential` (credential-shaped location or name) and `CredentialInode`
-   *     (a hard link to a credential file's inode). Its other two layers answer
-   *     questions this leg does not ask — `Namespace` is the endpoint's REACH
-   *     ("what may a browser fetch with a ticket"), and `FileType` is the
-   *     endpoint's extension face, which gate 3 owns here. Asked BEFORE the
-   *     location gate so that a credential path is refused for being a
-   *     credential, not merely for being out of place.
+   *     (an inode belonging to a Nebflow credential file — a hard link to one,
+   *     or a file inside the data root's credential subtrees, which is what
+   *     that snapshot is built from). Its other two layers answer questions
+   *     this leg does not ask — `Namespace` is the endpoint's REACH ("what may
+   *     a browser fetch with a ticket"), and `FileType` is the endpoint's
+   *     extension face, which gate 3 owns here.
+   *
+   *     Three questions, in this order, because the ladder's own order HIDES
+   *     one answer behind another: `endpointVerdictLayer` (the whole ladder) is
+   *     asked first, but it runs its credential step FIRST and SHORT-CIRCUITS
+   *     at `Namespace` (`NfFilePolicy.nfCredentialDenyLayer`: any non-allowlisted
+   *     subtree of the data root answers `Namespace` immediately), so for such a
+   *     path the inode step below it is never reached — the exact trap
+   *     `FileRefs.scala:565-571` documents for the sibling inline caller, which
+   *     compensates by re-asking. So for every outcome that is not already one of
+   *     the two identity layers, this leg asks the path's OWN identity step
+   *     (`credentialIdentityLayer` — the same `nfCredentialDenyLayer` the ladder
+   *     calls) and then the inode step (`credentialInodeHit` — the same
+   *     `nfCredentialInode` the ladder calls). A `Namespace` answer from any of
+   *     them is the endpoint's REACH and says nothing about the file's identity:
+   *     this leg has its own reach rule (gate 5) and deliberately does not honour
+   *     that layer. Asked BEFORE the location gate so that a credential path is
+   *     refused for being a credential, not merely for being out of place.
    *  5. **Location** — the real path must lie inside the data root or the
    *     project `.nebflow` directory. This is the read face's own reach rule and
    *     it is deliberately WIDER than the endpoint's served subtrees
@@ -933,12 +950,57 @@ Example (render a card from a file on disk — including one you saved earlier a
                 else
                   val identityRefusal: Option[String] =
                     try
-                      FilePolicyPort.port.endpointVerdictLayer(real) match
-                        case Some((FilePolicyPort.NfDenyLayer.Credential, reason, message)) =>
-                          Some(s"$reason: $message — ${FileRefs.servabilityHint(reason)}")
-                        case Some((FilePolicyPort.NfDenyLayer.CredentialInode, reason, message)) =>
-                          Some(s"$reason: $message — ${FileRefs.servabilityHint(reason)}")
-                        case Some((_, _, _)) | None => None
+                      // Layer 1 — the whole ladder, in its own order. Its
+                      // IDENTITY outcomes (Credential / CredentialInode) refuse
+                      // here; its other two layers (Namespace = the endpoint's
+                      // reach, FileType = gate 3's own face here) answer
+                      // questions this leg does not ask, so they fall through.
+                      val fromLadder =
+                        FilePolicyPort.port.endpointVerdictLayer(real) match
+                          case Some((FilePolicyPort.NfDenyLayer.Credential, reason, message)) =>
+                            Some(s"$reason: $message — ${FileRefs.servabilityHint(reason)}")
+                          case Some((FilePolicyPort.NfDenyLayer.CredentialInode, reason, message)) =>
+                            Some(s"$reason: $message — ${FileRefs.servabilityHint(reason)}")
+                          case Some((_, _, _)) | None => None
+                      fromLadder match
+                        case some @ Some(_) => some
+                        case None =>
+                          // Layer 2 — the ladder short-circuits at `Namespace`
+                          // and stops BEFORE its inode step, so for a
+                          // non-allowlisted data-root subtree the inode layer
+                          // above was never evaluated. Ask the path's OWN
+                          // identity step, then the inode step directly — the
+                          // same two functions the ladder itself calls
+                          // (`NfFilePolicy.nfCredentialDenyLayer` /
+                          // `nfCredentialInode`), same tables, same snapshot.
+                          // The repo documents this exact trap for the sibling
+                          // caller at `FileRefs.scala:565-571`, which
+                          // compensates the same way.
+                          //
+                          // Only the IDENTITY layers refuse here, exactly as in
+                          // layer 1: a `Namespace` answer is the endpoint's
+                          // REACH and must NOT be honoured — this leg's own
+                          // reach rule (gate 5) admits subtrees the endpoint
+                          // does not serve, `cards/` itself among them, so
+                          // refusing on `Namespace` here would break the
+                          // "edit the saved file, render it again" loop.
+                          val fromIdentity =
+                            FilePolicyPort.port.credentialIdentityLayer(real) match
+                              case Some((FilePolicyPort.NfDenyLayer.Credential, reason)) =>
+                                Some(s"$reason: ${FileRefs.servabilityHint(reason)}")
+                              case Some((FilePolicyPort.NfDenyLayer.CredentialInode, reason)) =>
+                                Some(s"$reason: ${FileRefs.servabilityHint(reason)}")
+                              case Some(_) | None => None
+                          fromIdentity match
+                            case some @ Some(_) => some
+                            case None =>
+                              if FilePolicyPort.port.credentialInodeHit(real) then
+                                Some(
+                                  "credential-hardlink: this file's bytes live in an inode that is one " +
+                                    "of this deployment's credential files — " +
+                                    FileRefs.servabilityHint("credential-hardlink")
+                                )
+                              else None
                     catch
                       case e: Throwable =>
                         Some(

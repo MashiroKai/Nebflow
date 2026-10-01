@@ -588,4 +588,16 @@ object NfFilePolicy extends FilePolicyPort:
   override def credentialInodeHit(real: java.nio.file.Path): Boolean =
     nfCredentialInode(real, NfPathPolicy.current())
 
+  /**
+   * The identity layer alone (see the port's doc). Same function the ladder's
+   * first step is (`nfCredentialDenyLayer`), same policy, no copy — the port
+   * member exists because the ladder SHORT-CIRCUITS at `Namespace` and a caller
+   * that honours only the identity layers cannot read that answer off
+   * `endpointVerdictLayer`.
+   */
+  override def credentialIdentityLayer(
+    real: java.nio.file.Path
+  ): Option[(NfDenyLayer, String)] =
+    nfCredentialDenyLayer(real, NfPathPolicy.current())
+
 end NfFilePolicy
