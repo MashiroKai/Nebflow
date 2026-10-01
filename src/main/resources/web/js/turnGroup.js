@@ -68,6 +68,14 @@
 import { t } from './i18n.js';
 import { formatDuration, chevronSvg } from './chat.js';
 import { isNearBottom } from './utils.js';
+// stream-ux §二.1.4: the running turn's single-line work-line is TRANSIENT
+// chrome. At the terminal it hands over to this module's own summary header
+// (which IS the completed badge — 「终态与现状一致」, text and expand face
+// unchanged), or, when this turn produces no header at all (boundary default:
+// nothing tuckable / nothing left visible), it rolls to its own completed badge
+// and stays. The dependency is one-way: workline.js imports i18n only, so this
+// adds no cycle (chat.js → workline.js ← turnGroup.js ← chat.js).
+import { finishWorkline, removeWorkline } from './workline.js';
 
 /* ---------- row classification ---------- */
 
@@ -311,8 +319,9 @@ export function collapseTurn(view, meta = {}) {
   const tuckable = rows.filter(isTuckableRow);
   const hasKept = rows.some(r => !isTuckableRow(r)); // something remains visible
   let header = null;
+  let stats = null;
   if (tuckable.length > 0 && hasKept) {
-    const stats = computeTurnStats(rows);
+    stats = computeTurnStats(rows);
     header = buildHeader(chat, scope, meta, stats);
     header.dataset.turnState = 'done';
     header.setAttribute('aria-expanded', 'false');
@@ -323,6 +332,28 @@ export function collapseTurn(view, meta = {}) {
     if (isNearBottom(chat)) {
       chat.scrollTop = chat.scrollHeight;
     }
+  }
+  // stream-ux §二.1.1: the running work-line hands over to the terminal chrome.
+  // A turn that got a header keeps the header as its single persistent badge
+  // (§二.1.4 「终态与现状一致」) and drops the transient line; a turn with no
+  // header (boundary default — nothing tuckable / nothing left visible after
+  // tucking) rolls the line to its own completed badge instead, so the stats
+  // are not lost. Either way the transient row leaves `#chat`'s top level only
+  // here — the only insert/remove sites are this terminal and the running turn.
+  //
+  // ORDER MATTERS: this settle MUST run BEFORE markClosed(). The cursor records
+  // `chat.children[len - 1]` as its anchor, and the work-line row is typically
+  // the LAST child at terminal time; removing it after stamping the cursor
+  // leaves the anchor detached, so the NEXT turn's turnScope reads the cursor as
+  // stale, takes the same-turn dissolve-heal branch and deletes the header this
+  // call just built (`__postClosureTurn` / multi-round specs regress to a single
+  // header). Settle first, then stamp the cursor on the final DOM shape.
+  if (header) {
+    removeWorkline(view);
+  } else if (stats && (stats.tools > 0 || stats.thinkingMs > 0)) {
+    finishWorkline(view);
+  } else {
+    removeWorkline(view);
   }
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to tuck; later arrivals are a new turn.
@@ -338,6 +369,14 @@ export function collapseTurn(view, meta = {}) {
 export function failTurn(view) {
   const chat = view.dom.chat;
   turnScope(chat); // runs the dissolve heal when the cursor is stale
+  // stream-ux §二.1.1: the failed turn renders no header either — the transient
+  // work-line must not outlive the turn (spec A5 spirit: nothing but the plain
+  // rows). Rows stay flat for troubleshooting.
+  // Settle BEFORE markClosed() for the same reason collapseTurn does: the
+  // cursor's anchor is chat.lastElementChild, so removing the transient row
+  // afterwards would leave the cursor stale and make the next turn wipe this
+  // turn's chrome.
+  removeWorkline(view);
   markClosed(chat); // #403: terminal reached — later arrivals are a new turn
   return null;
 }
