@@ -3180,3 +3180,145 @@
   .scroll-new-pill { animation: none; transition: none; }
   .scroll-new-pill:hover, .scroll-new-pill:active { transform: translateX(-50%); }
 }
+
+/* ---------- runtime work-line (stream-ux spec §二.1.1) ----------
+   ONE single-line badge slot that scrolls through the running turn's process:
+   tool running = spinner; tool done = check draw + bounce; switching item =
+   roll up/out + roll in/down; thinking = single-line reveal (typewriter /
+   width) then check then roll.
+
+   The line is TRANSIENT turn chrome: workline.js removes it the moment the
+   turn reaches a terminal (turnGroup.js collapseTurn / failTurn). That keeps
+   the persistent `.turn-header` the ONLY top-level turn node — the contract
+   tests/turn-collapse-keep-text.spec.mjs `readSeq` enumerates in full.
+   Pure CSS animations only (WAAPI is pinned out by the same spec family). */
+
+.nf-workline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  max-width: 85%;
+  margin: 2px 0 6px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  font-size: 13px;
+  overflow: hidden;
+  position: relative;
+  animation: nf-wl-in 0.3s ease both;
+}
+.nf-wl-slot { position: relative; flex: 1 1 auto; min-width: 0; height: 100%; }
+.nf-wl-item {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+.nf-wl-item.is-out { animation: nf-wl-rollout 0.35s ease both; }
+.nf-wl-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
+
+/* icon cell: spinner (running) or check (done) */
+.nf-wl-icon { width: 16px; height: 16px; flex: none; display: flex; align-items: center; justify-content: center; }
+.nf-wl-spin {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: nf-wl-spin 0.8s linear infinite;
+}
+.nf-wl-chk { width: 16px; height: 16px; transform: scale(0.4); opacity: 0;
+  animation: nf-wl-chkon 0.4s cubic-bezier(0.34, 1.6, 0.64, 1) forwards; }
+.nf-wl-chk svg { width: 16px; height: 16px; display: block; }
+.nf-wl-chk circle { fill: none; stroke: var(--color-success); stroke-width: 2; }
+.nf-wl-chk path {
+  fill: none;
+  stroke: var(--color-success);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 12;
+  stroke-dashoffset: 12;
+  animation: nf-wl-draw 0.25s 0.1s ease forwards;
+}
+/* the check lands with a small bounce (spec §二.1.1「打勾描画 + 弹跳动画」) */
+.nf-wl-item.is-done { animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both, nf-wl-bounce 0.4s 0.1s ease both; }
+
+/* error mark for a failed tool (same 16px ink box as the check) */
+.nf-wl-x svg { width: 16px; height: 16px; display: block; }
+.nf-wl-x path {
+  fill: none;
+  stroke: var(--color-error);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+.nf-wl-item.is-error .nf-wl-label { color: var(--color-error); }
+
+/* thinking: single-line reveal — the box widens as the thinking text grows
+   while the (already complete) string is clipped by overflow, so the text
+   never reflows and never re-renders per frame (A2/A3/A7). The stepped
+   transition is what gives the reveal its typewriter cadence; workline.js
+   only writes the target width (no per-token DOM rebuild). */
+.nf-wl-think {
+  display: inline-block;
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+  transition: max-width 0.16s steps(3, end);
+}
+.nf-wl-think::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
+.nf-wl-item.is-done .nf-wl-think::after { display: none; }
+
+@keyframes nf-wl-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nf-wl-rollin { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+@keyframes nf-wl-rollout { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-18px); } }
+@keyframes nf-wl-chkon { to { opacity: 1; transform: scale(1); } }
+@keyframes nf-wl-draw { to { stroke-dashoffset: 0; } }
+@keyframes nf-wl-spin { to { transform: rotate(360deg); } }
+@keyframes nf-wl-bounce { 0%, 100% { transform: none; } 40% { transform: translateY(-3px); } }
+@keyframes nf-wl-blink { 50% { opacity: 0; } }
+
+/* ---------- message entrance animations (stream-ux spec §二.1.2 / §二.1.3) ----------
+   Assistant reply: the WHOLE message pops in once (scale + elastic) — never a
+   per-token render (A3). User input: slides in from the right with the same
+   elastic settle. Both are opt-in via a class so history replay (persistence.js
+   builds its own rows) keeps its plain static paint. */
+.bubble.nf-pop { animation: nf-pop-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
+@keyframes nf-pop-in {
+  0% { opacity: 0; transform: translateY(16px) scale(0.82); }
+  60% { transform: translateY(-2px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+.bubble.nf-slide-in { animation: nf-slide-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
+@keyframes nf-slide-in {
+  from { opacity: 0; transform: translateX(30px) scale(0.92); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-workline,
+  .nf-wl-item,
+  .nf-wl-item.is-out,
+  .nf-wl-item.is-done,
+  .nf-wl-chk,
+  .nf-wl-chk path,
+  .nf-wl-spin,
+  .bubble.nf-pop,
+  .bubble.nf-slide-in { animation: none; }
+  .nf-wl-chk { opacity: 1; transform: none; }
+  .nf-wl-chk path { stroke-dashoffset: 0; }
+  .nf-wl-think { max-width: none; }
+}
