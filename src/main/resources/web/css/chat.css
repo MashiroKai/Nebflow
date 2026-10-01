@@ -3220,7 +3220,6 @@
   min-width: 0;
   animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
 }
-.nf-wl-item.is-out { animation: nf-wl-rollout 0.35s ease both; }
 .nf-wl-label {
   white-space: nowrap;
   overflow: hidden;
@@ -3255,6 +3254,18 @@
 }
 /* the check lands with a small bounce (spec §二.1.1「打勾描画 + 弹跳动画」) */
 .nf-wl-item.is-done { animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both, nf-wl-bounce 0.4s 0.1s ease both; }
+/* A completed item that is leaving the slot (the next tool took over): roll it
+   UP and out (spec §二.1.1「旧上滚出、新下滚入」).
+   The two-class selector is deliberate, not decoration: `.is-done` and
+   `.is-out` are both (0,2,0), so a plain `.nf-wl-item.is-out` rule placed
+   before `.is-done` loses the cascade and the roll-out never runs — measured
+   on the real tool-A→done→tool-B sequence, where the outgoing item sat still
+   for the whole 380ms exit window and overlapped the incoming label. (0,3,0)
+   beats `.is-done` on specificity regardless of rule order.
+   The item is built fresh per tool, so an item that was done carries BOTH
+   classes; one still running carries only `.is-out`. */
+.nf-wl-item.is-done.is-out,
+.nf-wl-item.is-out { animation: nf-wl-rollout 0.35s ease both; }
 
 /* error mark for a failed tool (same 16px ink box as the check) */
 .nf-wl-x svg { width: 16px; height: 16px; display: block; }
@@ -3313,6 +3324,10 @@
   .nf-wl-item,
   .nf-wl-item.is-out,
   .nf-wl-item.is-done,
+  /* same (0,3,0) as the roll-out rule above — a media query adds no
+     specificity, so the combined selector must be repeated here or a
+     done+leaving item would still roll under reduced motion */
+  .nf-wl-item.is-done.is-out,
   .nf-wl-chk,
   .nf-wl-chk path,
   .nf-wl-spin,
