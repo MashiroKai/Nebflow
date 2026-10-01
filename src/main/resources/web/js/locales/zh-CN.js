@@ -1238,6 +1238,12 @@ export default {
   'task.chain.cancel.confirm': '取消「{chain}」？取消不可逆，链内未起跑节点将不再派发。',
   'task.chain.ungrouped': '未分组',
   'task.chain.rowHint': '链「{chain}」（{n} 节点）— 点击展开',
+  // §16-pending wording (author to review verbatim before it takes effect)
+  'task.chain.activeCount': '{n} 位进行中',
+  'task.chain.overflow': '还有 {n} 位未显示',
+  'task.chain.pausing': '暂停中',
+  'task.chain.cancelling': '取消中',
+  'task.chain.ctrl.failed': '链控操作未生效，请重试',
   // 通用「移除」可访问名（visup-b 批：主窗口附件 ❌ 的 aria-label/title —— 图形式 ❌
   // 无文本可读，必须挂可访问名；与 `ref.remove`（语义化「移除引用」）分开）。
   'common.remove': '移除',
