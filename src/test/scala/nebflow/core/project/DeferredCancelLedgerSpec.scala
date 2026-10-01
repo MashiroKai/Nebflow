@@ -2,9 +2,14 @@ package nebflow.core.project
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import io.circe.Json
 import munit.CatsEffectSuite
+import nebflow.actor.ActorSystem
+import nebflow.agent.{SharedResources, SpecResources, StubLlm}
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
+import scala.util.Random
 
 /**
  * eng-deferred-cancel 批（`chain-tasklist-anim` 链 · 2026-10-02）——**K-1 判据③**
@@ -159,6 +164,104 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
         "the terminal cancellation survives the reopen"
       )
       assert(!finalDisk.contains(s""""chain-l5":$now"""), "the stale intent row must not remain on disk after the terminal write")
+  }
+
+  // ── L6 面分工：节点级取消不得伪造链级意图 ────────────────────────────────
+
+  private val tempRoot: os.Path = os.pwd / "target" / "test-deferred-cancel-ledger"
+  private val originalRoot = PathUtil.dataRoot
+
+  override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
+
+  override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
+  override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
+
+  /** 真 NodeEngine 夹具（沿 `ChainCascadeSpec` 同款形态；零 spawn、零端口）。 */
+  private def mountRig(name: String): IO[(ProjectRuntime, os.Path, ActorSystem)] =
+    PathUtil.setDataRoot(tempRoot)
+    os.remove.all(tempRoot)
+    os.makeDir.all(tempRoot / "agents" / "general")
+    os.write.over(
+      tempRoot / "agents" / "general" / "agent.json",
+      """{"name":"general","description":"deferred ledger rig agent","tools":[],"category":"standalone"}"""
+    )
+    os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
+    val ws = tempRoot / s"ws-$name"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"deferred-ledger-$name-${Random.nextInt(100000)}")
+    for
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
+      store <- FlowMapStore.open(name, ws.toString)
+      engine = new NodeEngine(
+        store,
+        system,
+        res,
+        wsSendFn = (_: Json) => IO.unit,
+        workspace = ws.toString,
+        rootSessionId = "nebula-root",
+        projectName = name,
+        emitEvent = (_, _, _) => IO.unit,
+        reportGateHold = Some(false)
+      )
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
+      rt = ProjectRuntime(pd, store, engine, system, res, None)
+      _ <- ProjectRuntimeRegistry.register(rt)
+    yield (rt, ws, system)
+
+  private def seedChain(rt: ProjectRuntime, chainId: String, a: String, b: String): IO[Unit] =
+    // 弱连通分量靠**真实 out 边**成形（沿 `ChainCancelSpec.linearChain` 同款口径；
+    // 只写 `deps` 不成链——实测该夹具下分量退化为单成员，前置断言当场抓住）。
+    rt.store
+      .mutate(s =>
+        s.copy(nodes = s.nodes ++ Map(
+          a -> NodeDef(id = a, name = a, agent = "general", status = NodeLifecycle.Pending, out = List(OutEdge(b)), createdAt = 1L),
+          b -> NodeDef(id = b, name = b, agent = "general", status = NodeLifecycle.Pending, in = List(a), createdAt = 2L)
+        ))
+      )
+      .void
+
+  test("L6: the chain-cancel leg records the intent on the persisted ledger (and a node-level cancel must not)") {
+    val name = "deferred-l6"
+    val program = for
+      mounted <- mountRig(name)
+      (rt, ws, system) = mounted
+      _ <- seedChain(rt, "chain-n-l6", "n-l6a", "n-l6b")
+      // 链号派生口径：`chain-<分量内 createdAt 最早成员 id>`（本夹具最早 = n-l6a）
+      resolved <- rt.store.chainMembersOf("chain-n-l6a")
+      ledgerPath = ws / ".nebflow" / ChainLedger.FileName
+      // 前置：取消前链控面无在途意图（走**落盘面**读，避免只看内存）
+      before <- IO.blocking(if os.exists(ledgerPath) then os.read(ledgerPath) else "")
+      _ <- IO(assert(!before.contains("cancellingChains"), s"precondition: no intent face before the chain cancel (file=${os.exists(ledgerPath)})"))
+      // 链级腿：意图必须在**任何节点被信号之前**登记（判据③的可判读面）
+      rep <- rt.engine.cancelChain("chain-n-l6a", CancelSource.User, "user wants this track gone")
+      snap <- rt.store.chainLedgerStore.snapshot
+      afterIntent <- IO.blocking(if os.exists(ledgerPath) then os.read(ledgerPath) else "")
+    yield
+      assert(resolved.exists(_.info.memberIds.size >= 2), s"precondition: a 2-member chain must resolve, got: $resolved")
+      assert(rep.isRight, s"the chain cancel must be accepted, got: $rep")
+      assert(
+        afterIntent.contains("cancellingChains"),
+        s"K-1③: the chain-cancel leg must leave a PERSISTED in-progress face readable while the deferred legs run, " +
+          s"got ledger file exists=${os.exists(ledgerPath)}: ${afterIntent.take(500)}"
+      )
+      assertEquals(
+        ChainLedger.cancellingChainsAt(snap, System.currentTimeMillis()).keySet,
+        Set("chain-n-l6a"),
+        "K-1③: exactly the cancelled chain must read as in progress (a raw cancelChain has not landed the terminal state yet)"
+      )
+      assertEquals(
+        ChainLedger.statusOf(snap, "chain-n-l6a"),
+        ChainLedger.StatusActive,
+        "K-1③: the in-progress face is NOT a state — the three-state projection is untouched"
+      )
+    program.guarantee(
+      IO(PathUtil.setDataRoot(originalRoot))
+    )
   }
 
 end DeferredCancelLedgerSpec
