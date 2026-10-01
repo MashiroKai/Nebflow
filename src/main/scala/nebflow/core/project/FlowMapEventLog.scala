@@ -278,6 +278,240 @@ object FlowMapEventLog:
       s"to=${to.filter(_.trim.nonEmpty).map(noWs).getOrElse("-")} reason=${noWs(reason)}"
 
   /**
+   * **边集变更事件类型**（缺陷③批 2026-10-01 · 案 A「单点统一事件」；root #335① 裁定）。
+   *
+   * 语义 = 「地图里**某条边**变了」——回答此前**结构性不可判**的问题：「我没动过这个节点，
+   * 它的拓扑为什么变了 / 那条边是什么时候没的」。旧口径下 `out` / `in` / `deps` 三类边集
+   * 变更**一个逐笔事件都没有**（`chainId` 声明面有逐笔 `from=/to=` 而边集面零留痕 ⇒ 成因
+   * 不可从审计面重建；在册实证 = failroute-guard 批设计件 `:203`「该位全史零路由事件 ⇒
+   * 成因无法从审计面重建」）。
+   *
+   * 写点（**choke point 单点族**，调用点埋点必漏）：[[NodeTools.setOut]]（含**归档分支**）、
+   * NodeEditTool create 事务、NodeEditTool edit 尾（in 追加 / 归档上游 / deps 替换）、
+   * `NodeCompletion.detachCancelledUpstream` / `detachAbandonedNode`、
+   * `NodeDelivery.reversePruneReferences`、`NodeEngine.applyDeferredWiring`，
+   * 以及**编辑期拒绝面**（`reason=refused`：`ensureMergePassOnly` / `ensureTargetNotRunning` /
+   * `verdictRouteGate` / `verdictRouteGateForAppends` / `loopGateViolation`）。
+   *
+   * 幂等：`before == after`（canonical 口径）⇒ **零行**；一次编辑里未变的边**不得出声**。
+   * **逐边一行**（#335② 裁定）：🔴 禁按批聚合——聚合会让「哪条边」在审计面重新模糊。
+   * `nodeId` 字段承载 **owner**（边集发生变化的节点），`chainId` 不写（边变更不是链族事实）。
+   */
+  val EdgeChangedType = "edge-changed"
+
+  /** `edge-changed` 的变更面（边集方向三族 + 拒绝面一值；值域不含空白，沿 [[noWs]] 纪律）。 */
+  object EdgeChangeKind:
+    val Out = "out"
+    val In = "in"
+    val Deps = "deps"
+    /** 拒绝面：**不写边** ⇒ `from`/`to` 恒 `-`，`kind` = 被拒门类（见 [[EdgeChangeReason.Refused]]）。 */
+    val Refused = "refused"
+
+  /** `edge-changed` 的成因（值域不含空白）。 */
+  object EdgeChangeReason:
+    /** 工具路径（`NodeEdit`）的边集写入。 */
+    val Machine = "machine"
+    /** 引擎侧迟到摘除（`NodeDelivery.reversePruneReferences`）。 */
+    val Engine = "engine"
+    /** 取消链摘边（`NodeCompletion.detachCancelledUpstream`）。 */
+    val Cancel = "cancel"
+    /** 退役摘边（`NodeCompletion.detachAbandonedNode`）。 */
+    val Abandon = "abandon"
+    /** 待接线队列到点自动接线（`NodeEngine.applyDeferredWiring`）。 */
+    val AutoWire = "auto-wire"
+    /** 编辑期硬拒（不写边；`detail` = 既有错误码）。 */
+    val Refused = "refused"
+
+  /**
+   * 单条边变更视图（写点组装的纯数据；summary 组装单点消费）。
+   *
+   * `from` / `to` = 该 owner 边集里**被移除 / 被新增的那一项**的身份（解析后节点 id；
+   * 边集侧恒单条，🔴 禁逗号拼接多边）；`None` = 无该侧（渲染为 `-`）。
+   * `mode` / `gate` = 该边的模式与门集（拒绝面无边 ⇒ `None` → `-`）。
+   */
+  final case class EdgeChangeView(
+    owner: String,
+    from: Option[String],
+    to: Option[String],
+    kind: String,
+    mode: Option[String] = None,
+    gate: Option[String] = None,
+    reason: String = EdgeChangeReason.Machine,
+    detail: Option[String] = None
+  )
+
+  /**
+   * `edge-changed` 结构化 summary（单行、可 grep；`k=v` 单空格分隔，**值不含空白**——
+   * 沿 [[noWs]] 纪律，`-` = 空/不适用，与 [[chainMembershipChangedSummary]] 的 `-` 约定同源）。
+   *
+   * 键序固定：`owner` `from` `to` `kind` `mode` `gate` `reason`（+ 可选 `detail`）。
+   * `detail` 只在拒绝面出现，值 = **既有错误码常量**（如 `NODE_MERGE_PASS_ONLY`）——
+   * 🔴 禁把完整错误文案塞进 payload（含空白，违反行内纪律）。
+   */
+  def edgeChangedSummary(v: EdgeChangeView): String =
+    def valOf(s: Option[String]): String = s.map(noWs).filter(_.nonEmpty).getOrElse("-")
+    s"owner=${valOf(Some(v.owner))} from=${valOf(v.from)} to=${valOf(v.to)} kind=${valOf(Some(v.kind))}" +
+      s" mode=${valOf(v.mode)} gate=${valOf(v.gate)} reason=${valOf(Some(v.reason))}" +
+      v.detail.map(d => s" detail=${valOf(Some(d))}").getOrElse("")
+
+  /** 门集规范式（`|` 分隔、排序确定；空集 = `-`）。 */
+  private def gateSpec(e: OutEdge): String =
+    if e.on.isEmpty then "-" else e.on.toList.sorted.mkString("|")
+
+  /** 边身份键（**解析后**目标 + 模式 + 门集；20260909 in 丢失事故的口径：diff 必须在
+    * 「节点身份」空间进行，名字/ id 两形态不得互相误判为改接）。 */
+  private def edgeIdentity(resolve: String => String, e: OutEdge): (String, String, Set[String]) =
+    (resolve(e.to), e.mode, e.on)
+
+  /**
+   * **边集变更视图（纯函数，零 IO）**：`beforeOut` ↔ `afterOut` 的 canonical 逐边 diff ⇒
+   * 逐边一条视图（先移除、后新增，序确定）。`before == after` ⇒ `Nil`（**零行**，与
+   * `chain-membership-changed` 的「不变则 Nil」同款）。
+   *
+   * `resolve` = 目标串 → 身份串（调用方传 `OutEdge.resolveTargetId(nodes, _)` 的收口）；
+   * 视图里的值取解析结果，悬空时由调用方回落原串。
+   */
+  def outEdgeViews(
+    owner: String,
+    beforeOut: List[OutEdge],
+    afterOut: List[OutEdge],
+    reason: String,
+    resolve: String => String
+  ): List[EdgeChangeView] =
+    val before = OutEdge.canonical(beforeOut)
+    val after = OutEdge.canonical(afterOut)
+    val bKeys = before.map(e => edgeIdentity(resolve, e)).toSet
+    val aKeys = after.map(e => edgeIdentity(resolve, e)).toSet
+    val removed = before.filterNot(e => aKeys.contains(edgeIdentity(resolve, e)))
+    val added = after.filterNot(e => bKeys.contains(edgeIdentity(resolve, e)))
+    removed.map(e =>
+      EdgeChangeView(owner, Some(resolve(e.to)), None, EdgeChangeKind.Out, Some(e.mode), Some(gateSpec(e)), reason)
+    ) ++
+      added.map(e =>
+        EdgeChangeView(owner, None, Some(resolve(e.to)), EdgeChangeKind.Out, Some(e.mode), Some(gateSpec(e)), reason)
+      )
+
+  /**
+   * **`in` 镜像变更视图（纯函数，零 IO）**：`s.in` 列表的 canonical 逐项 diff。
+   *
+   * `kind=in` 是 `kind=out` 的**同一事实的另一面**（下游的入边随上游出边增减）⇒ 必须
+   * **另发一行**（🔴 不得并入 out 那一行：并入会让「谁的边变了」在审计面重新模糊）。
+   * `owner` = **镜像所在节点**（入边的主人），`from`/`to` = 该 in 项的增删（项值恒为
+   * 上游节点 id；`in` 列表历史上只存 id）。
+   */
+  def inMirrorViews(
+    owner: String,
+    beforeIn: List[String],
+    afterIn: List[String],
+    reason: String
+  ): List[EdgeChangeView] =
+    val b = beforeIn.distinct
+    val a = afterIn.distinct
+    val removed = b.filterNot(a.contains)
+    val added = a.filterNot(b.contains)
+    removed.map(up => EdgeChangeView(owner, Some(up), None, EdgeChangeKind.In, None, None, reason)) ++
+      added.map(up => EdgeChangeView(owner, None, Some(up), EdgeChangeKind.In, None, None, reason))
+
+  /**
+   * **`in` 镜像的批量视图**（多个节点的 in 列表同时变化 ⇒ 逐节点、逐项一行）。
+   * `before`/`after` = 「节点 id → 该节点的 in 列表现值」两时点各取一次；只对**真正变化**
+   * 的节点出声（未变节点零行——R5 负控的机械承担点）。
+   */
+  def inMirrorViewsBatch(
+    before: Map[String, List[String]],
+    after: Map[String, List[String]],
+    reason: String
+  ): List[EdgeChangeView] =
+    (before.keySet ++ after.keySet).toList.sorted.flatMap { id =>
+      inMirrorViews(id, before.getOrElse(id, Nil), after.getOrElse(id, Nil), reason)
+    }
+
+  /**
+   * **`deps` 替换视图（纯函数，零 IO）**：`NodeDef.deps` 是**替换**语义（非增删）——
+   * 逐项 diff 记 `kind=deps from=<旧> to=<新>`（`NodeEdit(deps="X")` → `NodeEdit(deps="Y")`
+   * 恰好一行 `from=X to=Y`）。
+   *
+   * 🔴 **成对渲染**（本批 §2.4 R3 的判据面）：替换语义下「旧项 → 新项」是**同一槽位的
+   * 一次改写**，不是「一条边被摘 + 另一条边被加」两件独立事实 ⇒ 逐对发一行
+   * （`from` / `to` 同时非空）。集合大小不等时余项各自单侧（新增：`from=-`；移除：
+   * `to=-`），序确定（配对按 canonical 序，余项接续）。
+   * 两集合相等 ⇒ `Nil`（**零行**——R5 负控的机械承担点）。
+   */
+  def depsViews(owner: String, beforeDeps: List[String], afterDeps: List[String], reason: String): List[EdgeChangeView] =
+    val b = beforeDeps.distinct
+    val a = afterDeps.distinct
+    if b == a then Nil
+    else
+      val removed = b.filterNot(a.contains)
+      val added = a.filterNot(b.contains)
+      val paired = removed.zipAll(added, "", "").map { (oldD, newD) =>
+        EdgeChangeView(
+          owner,
+          if oldD.isEmpty then None else Some(oldD),
+          if newD.isEmpty then None else Some(newD),
+          EdgeChangeKind.Deps,
+          None,
+          None,
+          reason
+        )
+      }
+      paired
+
+  /**
+   * 拒绝面视图（纯函数，零 IO）：编辑期硬拒**落一笔事件**（🔴 不新造平行类型，沿 `kind` /
+   * `reason` 值域扩展）。`from`/`to` 恒 `-`（拒绝面不写边）——只记「谁被谁拒」+ 错误码。
+   */
+  def refusedView(owner: String, gateKind: String, errorCode: String): EdgeChangeView =
+    EdgeChangeView(
+      owner = owner,
+      from = None,
+      to = None,
+      kind = if gateKind.trim.isEmpty then EdgeChangeKind.Refused else gateKind,
+      mode = None,
+      gate = None,
+      reason = EdgeChangeReason.Refused,
+      detail = Some(errorCode)
+    )
+
+  /**
+   * 逐条落 `edge-changed`（**逐边一行**，逐条 append ⇒ 一行一 `os.write.append`）。
+   * `Nil` ⇒ 零 IO（幂等出口的机械承担点：无变更视图就不落任何字节）。
+   */
+  def appendEdgeChanges(workspace: String, project: String, views: List[EdgeChangeView]): IO[Unit] =
+    views.foldLeft(IO.unit)((acc, v) => acc *> append(workspace, project, v.owner, EdgeChangedType, edgeChangedSummary(v)))
+
+  /** 单条落 `edge-changed`（拒绝面 / 单点写点的便捷入口）。 */
+  def appendEdgeChange(workspace: String, project: String, view: EdgeChangeView): IO[Unit] =
+    append(workspace, project, view.owner, EdgeChangedType, edgeChangedSummary(view))
+
+  /**
+   * **重激活触发源判定单点**（缺陷③批 2026-10-01 · 案 A 写点 10，纯函数、零 IO）。
+   *
+   * 此前 `reactivated` 的 `source=` 是**硬编码 `human`**（`NodeEditTool`），于是「谁把
+   * 这个终态节点放回重跑」在审计面恒不可区分——节点会话、分发器会话与真人工三个来源
+   * 同形。本函数按调用方身份三面判定（优先级自上而下）：
+   *
+   *   - `isDispatcher` ⇒ `dispatcher`（分发器会话）；
+   *   - `flowNodeId` 非空 ⇒ `node`（**project 节点会话**）；
+   *   - `sessionId` 非空 ⇒ `machine`（其余具名会话：宿主/REST 直调等）；
+   *   - **零身份面**（三者皆空）⇒ `human`——**回落语义，不是「未知」**（既有调用方
+   *     多为人工/工具直调，保守归到 human 与旧口径一致）。
+   */
+  def reactivateSource(isDispatcher: Boolean, flowNodeId: Option[String], sessionId: Option[String]): String =
+    if isDispatcher then "dispatcher"
+    else if flowNodeId.exists(_.trim.nonEmpty) then "node"
+    else if sessionId.exists(_.trim.nonEmpty) then "machine"
+    else "human"
+
+  /**
+   * `actor=` 尾段（会话 id；🔴 **键非空才发**——缺身份面时返回空串，禁发空值键，与
+   * `chainMembershipChangedSummary` 的「不变则 Nil」同款「不写无信息键」纪律）。
+   * 值经 [[noWs]]（行内不得含空白，与 [[edgeChangedSummary]] 同源纪律）。
+   */
+  def reactivateActorSuffix(sessionId: Option[String]): String =
+    sessionId.map(noWs).filter(_.nonEmpty).map(id => s" actor=$id").getOrElse("")
+
+  /**
    * `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿
    * [[dispatcherWakeSummary]] 的 [[noWs]] 纪律，reason 全文进通知文本/节点 result）。
    */

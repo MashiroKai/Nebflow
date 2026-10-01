@@ -1329,10 +1329,21 @@ object NodeEditTool extends Tool:
         else if notify.invalid.isDefined then
           // notify 值域（b64 批 R1/R2；错误码 NODE_NOTIFY_INVALID，文案含合法值域 + 实收值）
           IO.pure(Left(ToolError(notify.invalid.get)))
-        else if mergeGate.isDefined then IO.pure(Left(ToolError(mergeGate.get)))
+        else if mergeGate.isDefined then
+          // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12，create 侧）：建位期的
+          // `NODE_MERGE_PASS_ONLY` 硬拒此前零事件——落一笔 `edge-changed` + `reason=refused`。
+          NodeTools
+            .emitRefused(rt, nodeId, "ensureMergePassOnly", NodeTools.errorCodeOf(mergeGate.get, "NODE_MERGE_PASS_ONLY"))
+            .as(Left(ToolError(mergeGate.get)))
         else if retryGate.isDefined then IO.pure(Left(ToolError(retryGate.get)))
-        else if verdictGate.isDefined then IO.pure(Left(ToolError(verdictGate.get)))
-        else if loopGate.isDefined then IO.pure(Left(ToolError(loopGate.get)))
+        else if verdictGate.isDefined then
+          NodeTools
+            .emitRefused(rt, nodeId, "verdictRouteGate", NodeTools.errorCodeOf(verdictGate.get, "NODE_VERIFIER_NEEDS_ROUTE"))
+            .as(Left(ToolError(verdictGate.get)))
+        else if loopGate.isDefined then
+          NodeTools
+            .emitRefused(rt, nodeId, "loopGateViolation", NodeTools.errorCodeOf(loopGate.get, "NODE_LOOP_GATE_INCOMPLETE"))
+            .as(Left(ToolError(loopGate.get)))
         else if dup.isDefined then
           IO.pure(
             Left(
@@ -1397,7 +1408,11 @@ object NodeEditTool extends Tool:
           // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out 追加 → 本节点）
           // + out 边（每个非 Nebula 目标 in 追加本节点）。P1 多边：in 声明为上游 out **追加**
           // 指向本节点的缺省 pass 边（不覆盖既有门控，扇出拓扑零扰动）。
-          val mutateIO = rt.store.mutate { s =>
+          //
+          // 缺陷③批 2026-10-01（案 A 写点 5）：本事务同时产出 `edge-changed` 视图——**建位落边
+          // 也是边集变更**（此前建位期的 out 声明与 in 镜像零审计）。视图从 `(写前, 写后)`
+          // 两张 Map 纯函数算出（`mutateWithResult`，f 在 CAS 自旋下可能重入 ⇒ 必须纯）。
+          val mutateIO = rt.store.mutateWithResult { s =>
             val withNode = s.copy(nodes = s.nodes + (nodeId -> node))
             val insNodes = ins.foldLeft(withNode.nodes)((acc, upId) => NodeTools.appendEdgeTo(acc, upId, nodeId))
             val withIns = withNode.copy(nodes = insNodes)
@@ -1421,7 +1436,12 @@ object NodeEditTool extends Tool:
                   case None => acc
               else acc
             )
-            withInList.copy(nodes = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out))))
+            // 🔴 `outNodes`（`out` fold 的**结果**）才是含全部下游 `in` 镜像写回的最终 Map——
+            // 基线缺失事故（20260909）修复的落点。改走 `mutateWithResult` 时若从 `withInList`
+            // 起手，out 目标侧的 `in` 追加会被整支丢弃（`NodeEdgeRepairSpec②-a` /
+            // `NodeDepsSpec T5b` 即此形态的机械把守点）。
+            val nodesAfter = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out)))
+            (s.copy(nodes = nodesAfter), NodeTools.createdEdgeViews(nodeId, s.nodes, nodesAfter))
           }
           // create 回执一致性断言（20260909 in 丢失事故护栏①）：回执返回前写后读，
           // 断言 in 已随节点同事务落定。现实现里 in 追加与节点插入在同一 Ref 事务
@@ -1432,7 +1452,7 @@ object NodeEditTool extends Tool:
             // mutate（IO 顺序保证快照早于任何写动作）。`chainIdView` 是纯派生（分量 +
             // 声明），读快照即得写前归属；写后视图由 emit 内部现读 ⇒ 两次读数各有其时点。
             rt.store.combinedNodes.flatMap { chainBefore =>
-              mutateIO.flatMap { s =>
+              mutateIO.flatMap { case (s, edgeViews) =>
                 val created = s.nodes(nodeId)
                 val missingIn = ins.filterNot(created.in.contains)
                 // pass-consumer gap (verdict-consumer batch 2026-10-01 · case A warning
@@ -1450,7 +1470,10 @@ object NodeEditTool extends Tool:
                   IO(logger.errorSync(s"[node.tools] $msg")).as(Left(ToolError(msg)))
                 else
                   (
-                    // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：两类显式许可
+                    // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 5）：**逐边一行**
+                    // （建位期的 out 与 in 镜像此前零事件）。
+                    FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, edgeViews) *>
+                      // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：两类显式许可
                     // 必须可事后对齐——被拒面查无事件、被放行面有迹可循（校验失败现况零
                     // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
                     // reactivated，零载荷漂移）。
@@ -1979,10 +2002,28 @@ object NodeEditTool extends Tool:
                         if outProvided && ids.nonEmpty then
                           frozenLive.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
                             rs.collectFirst { case Left(e) => e } match
-                              case Some(e) => IO.pure(Left(e))
+                              // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12）：门拒即落一笔
+                              // `edge-changed` + `reason=refused`——此前该硬拒零事件。
+                              case Some(e) =>
+                                NodeTools
+                                  .emitRefused(
+                                    rt,
+                                    node.id,
+                                    "ensureTargetNotRunning",
+                                    NodeTools.errorCodeOf(e, "NODE_TARGET_RUNNING_INPUT_FROZEN")
+                                  )
+                                  .as(Left(e))
                               case None =>
                                 NodeTools.ensureMergePassOnly(rt, newOut).flatMap {
-                                  case Some(gate) => IO.pure(Left(gate): Either[String, Unit])
+                                  case Some(gate) =>
+                                    NodeTools
+                                      .emitRefused(
+                                        rt,
+                                        node.id,
+                                        "ensureMergePassOnly",
+                                        NodeTools.errorCodeOf(gate, "NODE_MERGE_PASS_ONLY")
+                                      )
+                                      .as(Left(gate): Either[String, Unit])
                                   case None => consumedGuard
                                 }
                           }
@@ -2187,8 +2228,32 @@ object NodeEditTool extends Tool:
                             NodeTools
                               .verdictRouteGate(rt, node.id, node.name, node.role, selfLoopEnabled, finalOut)
                               .flatMap { verdictErr =>
-                                if earlyReject.isDefined then IO.pure(Left(earlyReject.get))
-                                else if verdictErr.isDefined then IO.pure(Left(ToolError(verdictErr.get)))
+                                if earlyReject.isDefined then
+                                  // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12，edit 侧
+                                  // loop 门集腿）：`NODE_LOOP_GATE_INCOMPLETE` 硬拒不落边，
+                                  // 但必须可事后对齐（其余 earlyReject 腿 —— description/
+                                  // deps/notify/merge 上限等 —— 不在本批「形态 12」面内）。
+                                  (if loopSelfGate.isDefined then
+                                     NodeTools.emitRefused(
+                                       rt,
+                                       node.id,
+                                       "loopGateViolation",
+                                       NodeTools.errorCodeOf(loopSelfGate.get, "NODE_LOOP_GATE_INCOMPLETE")
+                                     )
+                                   else IO.unit).as(Left(earlyReject.get))
+                                else if verdictErr.isDefined then
+                                  // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12）：verdict
+                                  // 选通门拒也落一笔（`NODE_VERIFIER_NEEDS_ROUTE` /
+                                  // `NODE_VERDICT_GATE_ON_TASK_NODE` / `NODE_LOOP_EDGE_ROLE`
+                                  // 等既有码由 `errorCodeOf` 从文案抽出）。
+                                  NodeTools
+                                    .emitRefused(
+                                      rt,
+                                      node.id,
+                                      "verdictRouteGate",
+                                      NodeTools.errorCodeOf(verdictErr.get, "NODE_VERIFIER_NEEDS_ROUTE")
+                                    )
+                                    .as(Left(ToolError(verdictErr.get)))
                                 // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定（值域 =
                                 // 应用本次改动后的最终 in ∪ deps）+ retry 环。校验失败卡在
                                 // 全部写路径（in 追加/重激活/写回）之前——本次编辑零副作用。
@@ -2340,6 +2405,13 @@ object NodeEditTool extends Tool:
                                               // §2.3 的单值语义在多边下自然兼容）。归档上游（活动区无
                                               // 副本）走 setOut 归档分支：活动侧目标 in 追加 + 归档 out
                                               // 镜像补写（旧 setOut(rt, upId, Some(node.id)) 同域语义）。
+                                              // 缺陷③批 2026-10-01（案 A 写点 6 · in 追加面）：本条腿
+                                              // **无需额外埋点**——`NodeTools.setOut` 是 out 边集的
+                                              // 落盘 choke point，其收口处已对 (before, after) 逐边
+                                              // diff：上游 out 那一面（`kind=out owner=<upId>`）+ 本
+                                              // 节点 in 镜像那一面（`kind=in owner=<node.id> from=-
+                                              // to=<upId>`）**同一次调用内各发一行**。再埋一次即双发
+                                              // （同一事实两行 ⇒ 审计面重复计数）。
                                               _ <- adds.traverse_(upId =>
                                                 rt.store.getNode(upId).flatMap {
                                                   case Some(up) if !up.out.exists(_.to == node.id) =>
@@ -2372,16 +2444,37 @@ object NodeEditTool extends Tool:
                                                 else IO.unit
                                               // deps 替换写回（非重激活路径；重激活在下方事务内一并写）。
                                               // deps 单侧持有：只更新本节点字段，无上游侧镜像边。
+                                              //
+                                              // 缺陷③批 2026-10-01（案 A 写点 6 · deps 面）：deps 替换
+                                              // 也是边集变更（此前零审计）。**逐项一行** `kind=deps`，
+                                              // `from=<旧项> to=<新项>`（替换语义，非增删）；视图从
+                                              // `(写前, 写后)` 两列表纯函数算出。
                                               _ <-
                                                 if depsProvided && depsChanged && !reactivate then
-                                                  rt.store.mutate { s =>
-                                                    s.nodes.get(node.id) match
-                                                      case Some(fresh) =>
-                                                        s.copy(nodes =
-                                                          s.nodes.updated(node.id, fresh.copy(deps = newDeps))
+                                                  rt.store
+                                                    .mutateWithResult { s =>
+                                                      s.nodes.get(node.id) match
+                                                        case Some(fresh) =>
+                                                          (
+                                                            s.copy(nodes =
+                                                              s.nodes.updated(node.id, fresh.copy(deps = newDeps))
+                                                            ),
+                                                            (fresh.deps, newDeps)
+                                                          )
+                                                        case None => (s, (Nil, Nil))
+                                                    }
+                                                    .flatMap { case (_, (beforeDeps, afterDeps)) =>
+                                                      FlowMapEventLog.appendEdgeChanges(
+                                                        rt.project.workspace,
+                                                        rt.project.name,
+                                                        FlowMapEventLog.depsViews(
+                                                          node.id,
+                                                          beforeDeps,
+                                                          afterDeps,
+                                                          FlowMapEventLog.EdgeChangeReason.Machine
                                                         )
-                                                      case None => s
-                                                  }.void
+                                                      )
+                                                    }
                                                 else IO.unit
                                               // plugins 替换写回（阶段 2b §B.4 第 3 步，replace-on-provide
                                               // 与 deps 同款）：passed（any form, including []）= 整列表
@@ -2656,6 +2749,20 @@ object NodeEditTool extends Tool:
                                                   // completed 面另附 NODE_COMPLETED_REACTIVATION 授权名——
                                                   // 「改动既有纪律」的动作必须可事后对齐（C5 要求）。
                                                   val preStatus = node.status
+                                                  // 触发源三面判定（缺陷③批 2026-10-01 · 案 A 写点 10）：
+                                                  // 拆掉硬编码 `source=human`——审计面必须能区分
+                                                  // 「节点会话 / 分发器会话 / 人工」三类重激活发起者。
+                                                  // 零身份面回落 `human`（回落语义，非「未知」）；`actor=`
+                                                  // 键非空才发（禁发空值键）。判据单点 =
+                                                  // `FlowMapEventLog.reactivateSource` / `reactivateActorSuffix`。
+                                                  val reactivateSource =
+                                                    FlowMapEventLog.reactivateSource(
+                                                      ctx.isDispatcher,
+                                                      ctx.flowNodeId,
+                                                      ctx.sessionId
+                                                    )
+                                                  val reactivateActor =
+                                                    FlowMapEventLog.reactivateActorSuffix(ctx.sessionId)
                                                   val reactivateNote =
                                                     (if preStatus == NodeLifecycle.Failed then
                                                        s"failed node edited (round history reset: blockCount→0, notifySentAt cleared) → rerun: ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
@@ -2666,7 +2773,7 @@ object NodeEditTool extends Tool:
                                                      else
                                                        s"blocked node edited (round ${node.blockCount} preserved) → ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
                                                     ) +
-                                                      s" [preStatus=$preStatus source=human gen=${node.gen} blockCount=${node.blockCount} loopRound=${node.loopRound}" +
+                                                      s" [preStatus=$preStatus source=$reactivateSource$reactivateActor gen=${node.gen} blockCount=${node.blockCount} loopRound=${node.loopRound}" +
                                                       (if preStatus == NodeLifecycle.Completed then
                                                          " auth=NODE_COMPLETED_REACTIVATION"
                                                        else "") + "]"

@@ -95,7 +95,7 @@ private[project] trait NodeDelivery:
     store
       .mutateWithResult { s =>
         val referrers = s.nodes.values.filter(_.in.contains(nodeId)).map(_.id).toList.sorted
-        if referrers.isEmpty then (s, Nil)
+        if referrers.isEmpty then (s, (Nil, s.nodes, s.nodes))
         else
           val pruned = referrers.foldLeft(s.nodes) { (acc, tid) =>
             acc.get(tid) match
@@ -109,18 +109,33 @@ private[project] trait NodeDelivery:
                 )
               case None => acc
           }
-          (s.copy(nodes = pruned), referrers)
+          (s.copy(nodes = pruned), (referrers, s.nodes, pruned))
         end if
       }
-      .flatMap { case (_, pruned) =>
-        pruned
-          .foldLeft(IO.unit) { (acc, tid) =>
-            acc >> store.getNode(tid).flatMap {
-              case Some(n) => emitUpdated(n)
-              case None => IO.unit
+      .flatMap { case (_, (referrers, before, after)) =>
+        // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 8）：引擎侧**迟到摘除**逐边一行
+        // （`reason=engine`、`kind=in`，`owner=<被摘下游> from=<被摘节点>`）——此前这条腿
+        // 的摘除只在 `nodeUpdated` 帧里可见（且帧不持久）。
+        FlowMapEventLog.appendEdgeChanges(
+          workspace,
+          projectName,
+          referrers.flatMap(tid =>
+            FlowMapEventLog.inMirrorViews(
+              tid,
+              before.get(tid).map(_.in).getOrElse(Nil),
+              after.get(tid).map(_.in).getOrElse(Nil),
+              FlowMapEventLog.EdgeChangeReason.Engine
+            )
+          )
+        ) *>
+          referrers
+            .foldLeft(IO.unit) { (acc, tid) =>
+              acc >> store.getNode(tid).flatMap {
+                case Some(n) => emitUpdated(n)
+                case None => IO.unit
+              }
             }
-          }
-          .as(pruned)
+            .as(referrers)
       }
 
   /**

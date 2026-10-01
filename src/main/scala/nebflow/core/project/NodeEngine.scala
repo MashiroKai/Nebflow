@@ -655,38 +655,57 @@ class NodeEngine(
         }
         if due.isEmpty then IO.unit
         else
-          store.mutate { st =>
-            st.nodes.get(from.id) match
-              case Some(fresh) =>
-                val wired = fresh.pendingOut.filter(due.contains)
-                if wired.isEmpty then st
-                else
-                  st.copy(nodes =
-                    st.nodes.updated(
-                      from.id,
-                      fresh.copy(
-                        out = OutEdge.canonical(fresh.out ++ wired),
-                        pendingOut = fresh.pendingOut.filterNot(wired.contains)
+          store
+            .mutateWithResult { st =>
+              st.nodes.get(from.id) match
+                case Some(fresh) =>
+                  val wired = fresh.pendingOut.filter(due.contains)
+                  if wired.isEmpty then (st, Nil)
+                  else
+                    (
+                      st.copy(nodes =
+                        st.nodes.updated(
+                          from.id,
+                          fresh.copy(
+                            out = OutEdge.canonical(fresh.out ++ wired),
+                            pendingOut = fresh.pendingOut.filterNot(wired.contains)
+                          )
+                        )
+                      ),
+                      // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 9）：待接线队列到点
+                      // **自动接线**逐边一行（`reason=auto-wire`）。🔴 与 `wiring-applied`
+                      // 分工不重叠：该行承载 `pendingOut` 面的「队列 → 已接线」事实，
+                      // `edge-changed` 只在 `out` **真变**时出声——此处 `out` 恒有新增
+                      // （`wired` 非空），故视图恒非空；`canonical` 幂等已由写前 `wired`
+                      // 判空把守（`wired.isEmpty` 早退 ⇒ 零行）。
+                      FlowMapEventLog.outEdgeViews(
+                        from.id,
+                        fresh.out,
+                        OutEdge.canonical(fresh.out ++ wired),
+                        FlowMapEventLog.EdgeChangeReason.AutoWire,
+                        t => OutEdge.resolveTargetId(st.nodes, t).getOrElse(t)
                       )
                     )
-                  )
-              case None => st
-          } *>
-            store.getNode(from.id).flatMap {
-              case Some(fresh) if !fresh.pendingOut.exists(due.contains) =>
-                FlowMapEventLog.append(
-                  workspace,
-                  projectName,
-                  from.id,
-                  FlowMapEventLog.WiringAppliedType,
-                  s"deferred control edge(s) auto-wired: ${due.map(e => s"${e.to}:${e.mode}").mkString(",")} — " +
-                    "target(s) left running (pendingOut → out; control edge = zero delivery, zero start)"
-                ) *>
-                  emitUpdated(fresh) *>
-                  logger.info(
-                    s"Node '${fresh.name}' (${fresh.id}) deferred control edge(s) auto-wired: ${due.map(_.to).mkString(",")}"
-                  )
-              case _ => IO.unit
+                case None => (st, Nil)
+            }
+            .flatMap { case (_, edgeViews) =>
+              FlowMapEventLog.appendEdgeChanges(workspace, projectName, edgeViews) *>
+                store.getNode(from.id).flatMap {
+                  case Some(fresh) if !fresh.pendingOut.exists(due.contains) =>
+                    FlowMapEventLog.append(
+                      workspace,
+                      projectName,
+                      from.id,
+                      FlowMapEventLog.WiringAppliedType,
+                      s"deferred control edge(s) auto-wired: ${due.map(e => s"${e.to}:${e.mode}").mkString(",")} — " +
+                        "target(s) left running (pendingOut → out; control edge = zero delivery, zero start)"
+                    ) *>
+                      emitUpdated(fresh) *>
+                      logger.info(
+                        s"Node '${fresh.name}' (${fresh.id}) deferred control edge(s) auto-wired: ${due.map(_.to).mkString(",")}"
+                      )
+                  case _ => IO.unit
+                }
             }
         end if
       }
