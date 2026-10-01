@@ -175,10 +175,64 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     expect(done.height, 'still one line — the completion does not grow the row').toBeLessThanOrEqual(48);
 
     // Switch: the badge rolls the outgoing item out and the next tool in.
-    await page.evaluate(() => window.__toolNext());
-    const atSwitch = await indicator(page);
-    expect(atSwitch.running, 'the switch is an animation, not an instant swap').toBeGreaterThan(1);
-    expect(atSwitch.labels.join(' '), 'the next tool is named on the line').toContain(TOOL_B_TEXT);
+    // The EXIT leg is traced frame-by-frame — a reading taken only after the
+    // 380ms settle cannot tell "rolled up and out" from "sat still, then was
+    // detached", because both leave the same final DOM. The user-visible
+    // property the spec sentence promises (「旧上滚出」) is MOTION of the
+    // outgoing item while it is still on screen, so that is what gets
+    // asserted. Form-agnostic: no class of this batch is named — the item is
+    // found by the label it carries. The switch is triggered INSIDE this same
+    // evaluate so the sampler is provably already recording when it fires.
+    const switchRead = await page.evaluate(async ({ textA }) => {
+      const chat = document.getElementById('chat');
+      const ind = Array.from(chat.children).find(k =>
+        !k.classList.contains('row') && !k.classList.contains('turn-header'));
+      if (!ind) return null;
+      const itemFor = (txt) => {
+        const leaf = Array.from(ind.querySelectorAll('*')).find(n =>
+          n.children.length === 0 && (n.textContent || '').includes(txt));
+        return leaf ? leaf.parentElement : null; // the animated item box
+      };
+      const raf = () => new Promise(r => requestAnimationFrame(r));
+      const outgoing = itemFor(textA);
+      if (!outgoing) return null;
+      // let the badge settle before the switch, so the only motion measured
+      // belongs to the exit leg
+      await raf(); await raf();
+      const baseTop = outgoing.getBoundingClientRect().top;
+      window.__toolNext();
+      await raf(); // let the switch commit before reading the live animations
+      const liveAnims = ind.getAnimations({ subtree: true })
+        .filter(a => a.playState === 'running' || a.playState === 'pending').length;
+      let minTop = baseTop;
+      let sawRunning = false;
+      let frames = 0;
+      for (let i = 0; i < 40; i++) {
+        if (!outgoing.isConnected) break;
+        const top = outgoing.getBoundingClientRect().top;
+        if (top < minTop) minTop = top;
+        if (outgoing.getAnimations().some(a => a.playState === 'running')) sawRunning = true;
+        frames++;
+        await raf();
+      }
+      const spins = ind.querySelectorAll('.spinner, [class*="spin"]').length;
+      const labels = Array.from(ind.querySelectorAll('*'))
+        .filter(n => n.tagName === 'SPAN' && n.children.length === 0 && (n.textContent || '').trim())
+        .map(n => n.textContent.trim());
+      return {
+        exit: { baseTop: +baseTop.toFixed(2), minTop: +minTop.toFixed(2), frames, sawRunning },
+        mid: { running: liveAnims, spins, labels },
+      };
+    }, { textA: TOOL_A_TEXT });
+    expect(switchRead, 'the switch was traceable').not.toBeNull();
+    expect(switchRead.mid.running, 'the switch is an animation, not an instant swap').toBeGreaterThan(1);
+    expect(switchRead.mid.labels.join(' '), 'the next tool is named on the line').toContain(TOOL_B_TEXT);
+
+    const exit = switchRead.exit;
+    expect(exit.frames, 'the exit was sampled over multiple animation frames').toBeGreaterThan(3);
+    expect(exit.sawRunning, 'the outgoing item animates on its way out (it does not just vanish)').toBe(true);
+    expect(exit.baseTop - exit.minTop,
+      'the outgoing item ROLLS UP as it leaves (its top actually rises on screen)').toBeGreaterThan(2);
 
     // Settled: the outgoing item is gone; only the new tool owns the line.
     await page.waitForTimeout(600);
