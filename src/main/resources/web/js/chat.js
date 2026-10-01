@@ -21,6 +21,20 @@ import { authHeaders } from './flowHelpers.js';
 // shouldShow/updateVisibility DOM mechanics live in depVisibility.js now, shared
 // with the /model panel. The visibility predicate and the answer-reset stay here.
 import { createDepVisibility } from './depVisibility.js';
+// Runtime work-line (stream-ux §二.1.1): the single-line badge slot that shows
+// the running tool / thinking and rolls to the next item. Leaf module (imports
+// i18n.js only) — the call sites below are the EXISTING render paths, so the
+// engine event stream (thinkingDelta / toolStart / toolEnd) is consumed
+// unchanged.
+import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, finishWorkline, removeWorkline } from './workline.js';
+
+// stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
+// label (same string the user reads on the card), so the single-line badge and
+// the card never disagree about which tool is running.
+function worklineLabel(rawLabel) {
+  const parts = localizeToolLabel(rawLabel).split('\n', 2);
+  return parts[0];
+}
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
 // upgrade toast must name the mode exactly like the header shield does, so both
@@ -313,7 +327,9 @@ export function renderUserBubble(text, attachments, timestamp) {
   // Text bubble (separate)
   if (text) {
     const bubble = document.createElement('div');
-    bubble.className = 'bubble user';
+    // stream-ux §二.1.3: the user's own bubble slides in from the right with
+    // the elastic settle. Opt-in class (history replay stays static).
+    bubble.className = 'bubble user nf-slide-in';
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
@@ -659,6 +675,17 @@ export function appendAiText(text) {
   const view = activeView;
   const chat = view.dom.chat;
   view.stream.aiText += text;
+  // stream-ux §二.1.1: the tool/thinking phase is over — the badge rolls to its
+  // completed form (`已完成 N 工具 · 思考 N 轮 · 点击展开`) and stays for the
+  // rest of the turn. Per §二.1.4 the expand surface itself is the EXISTING
+  // `.turn-header` (built by turnGroup at the terminal), so this badge is a
+  // status readout only; it never grows a second expand face.
+  // (No-op when the turn had no process at all — `finishWorkline` guards on an
+  // existing row.)
+  if (!view.stream._nfWorklineDone) {
+    finishWorkline(view);
+    view.stream._nfWorklineDone = true;
+  }
   // 流式检测：发现完整的 <voice>...</voice> 块立即并行预取 TTS
   const voiceMatches = view.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
   if (voiceMatches) {
@@ -684,24 +711,24 @@ export function appendAiText(text) {
   // streaming so innerHTML replacement can't destroy its event listeners.
   const askBox = view.stream.currentAiBubble.querySelector('.option-box');
   if (askBox) { askBox.remove(); view.stream.aiStreamAskBox = askBox; }
-  // rAF-throttled render — accumulate on every delta, render at most once per
-  // frame. The full accumulated text lives on the bubble node so the rAF never
-  // depends on which view is active at fire time.
+  // stream-ux §二.1.2 / A3 / A7 — the assistant bubble does NOT stream text.
+  // Deltas only ACCUMULATE here (view.stream.aiText + the node's _nfText, which
+  // bgAgentPopup's reopen-adopt reads); the single markdown render happens once
+  // in finishAi(), which is when the bubble pops in as a whole. This removes the
+  // per-frame markdown re-parse/re-layout that made long sessions stutter.
+  // The scroll pin stays: the row is taller than the empty bubble, so keep the
+  // viewport following while the turn is live.
   const bubble = view.stream.currentAiBubble;
   bubble._nfText = view.stream.aiText || '';
-  scheduleStreamRender(view, 'ai',
-    { bubble, chat, snapped: view.stream.scrollSnapped },
-    (target) => {
-      if (!target.bubble.isConnected) return;
-      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
-      const box = view.stream.aiStreamAskBox;
-      if (box) target.bubble.appendChild(box);
-      rafScrollChat(target);
-    });
+  if (view.stream.scrollSnapped === true || isNearBottom(chat)) {
+    chat.scrollTop = chat.scrollHeight;
+  }
 }
 
 export function finishAi(durationMs, model) {
   // Cancel any pending throttled render — this final render supersedes it.
+  // (No rAF slot is scheduled any more; kept for a stream that was opened by an
+  // older code path in the same page session.)
   cancelStreamRender(activeView, 'ai');
   if (activeView.stream.currentAiBubble) {
     if (!activeView.stream.aiText || !activeView.stream.aiText.trim()) {
@@ -715,9 +742,16 @@ export function finishAi(durationMs, model) {
     const askBox = activeView.stream.aiStreamAskBox || activeView.stream.currentAiBubble.querySelector('.option-box');
     if (askBox) askBox.remove();
     const bubble = activeView.stream.currentAiBubble;
+    const firstPaint = !bubble._nfRendered;
     bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    bubble._nfText = activeView.stream.aiText || '';
+    bubble._nfRendered = true;
     if (askBox) bubble.appendChild(askBox);
     activeView.stream.aiStreamAskBox = null;
+    // stream-ux §二.1.2: the whole reply enters ONCE (scale + elastic). Only on
+    // the first final render — a second finishAi on the same bubble (round
+    // boundary) must not replay the entrance.
+    if (firstPaint) bubble.classList.add('nf-pop');
     const ts = Date.now();
     let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
@@ -1029,6 +1063,11 @@ export function applyPopCard(card, label, summary, inputJson, isError) {
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
   const chat = activeView.dom.chat;
+  // stream-ux §二.1.1: the tool FINISHED — the badge swaps the spinner for the
+  // drawn check (cross + error ink when the tool failed) in place, no roll. The
+  // module's own key check makes a stale/other-turn call a no-op.
+  if (isError) failWorklineItem(activeView, worklineLabel(label));
+  else doneWorklineItem(activeView, worklineLabel(label));
 
   // Cancel any pending streaming rAF so it doesn't overwrite the final render
   cancelToolStreamRAF();
@@ -1222,6 +1261,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 export function renderToolPending(label, sessionId) {
   const sid = sessionId || activeView.sessionId;
   const chat = activeView.dom.chat;
+  // stream-ux §二.1.1: a tool STARTED — the single-line badge shows a spinner +
+  // the tool's first label line. Idempotent per label, so the expected
+  // toolCallDetected → toolStart double event does not flicker a roll.
+  startWorklineItem(activeView, worklineLabel(label), 'tool');
   if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
     const row = activeView.stream.currentAiBubble.closest('.row');
@@ -3288,6 +3331,11 @@ export function appendThinkingDelta(delta) {
     bindCollapsibleToggle(label, () => content);
     activeView.stream.currentThinkingBubble = bubble;
   }
+  // stream-ux §二.1.1: 思考 = 单行流式揭示 — the work-line reveals the same
+  // accumulated thinking text on ONE line. Each delta only writes the target
+  // width (a CSS step transition does the cadence) — the row is never rebuilt
+  // per token (A2/A3/A7).
+  thinkingWorklineItem(activeView, activeView.stream.thinkingText);
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
   // which view global state points to at fire time.
@@ -3328,6 +3376,9 @@ export function cancelThinkingRAF() {
 export function finishThinking() {
   cancelThinkingRAF();
   if (activeView.stream.currentThinkingBubble) {
+    // stream-ux §二.1.1: thinking COMPLETED — the work-line swaps the width
+    // reveal for the drawn check and keeps the text on the single line.
+    thinkingWorklineDone(activeView, activeView.stream.thinkingText);
     const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
       // 件①：收尾同一口径渲染（图片节点照旧存活 ⇒ 终结帧不再重拉一次、不再跳一次）
