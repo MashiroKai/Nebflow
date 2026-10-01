@@ -368,6 +368,22 @@ class CardPersistSpec extends FunSuite:
       !error.message.contains("SECRET-BODY-MUST-NOT-LEAK"),
       "the refusal must never echo the file's content"
     )
+
+    // The same hidden-layer divergence in its other shape: a credential-shaped
+    // PATH inside a non-allowlisted data-root subtree. The ladder answers
+    // `Namespace` before it ever runs its credential tables, so the identity
+    // answer (`NfCredentialPathSegments` -> `.ssh`) is hidden here too.
+    val sshFile = writeSource(".ssh/id_rsa.html", "PRIVATE-KEY-BODY-MUST-NOT-LEAK")
+    val sshError = callCard(JsonObject("filePath" -> Json.fromString(sshFile.toString))).swap.toOption
+      .getOrElse(fail("a credential directory inside the readable root must still be refused"))
+    assert(
+      sshError.message.contains("credential"),
+      s"the identity layer must refuse the .ssh cell too: ${sshError.message}"
+    )
+    assert(
+      !sshError.message.contains("PRIVATE-KEY-BODY-MUST-NOT-LEAK"),
+      "the refusal must never echo the file's content"
+    )
   }
 
   test("⑤ an unusable credential judge refuses the render (fail-closed, not fail-open)") {
