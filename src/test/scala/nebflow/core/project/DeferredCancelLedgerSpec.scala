@@ -177,7 +177,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
   /** 真 NodeEngine 夹具（沿 `ChainCascadeSpec` 同款形态；零 spawn、零端口）。 */
-  private def mountRig(name: String): IO[(ProjectRuntime, os.Path, ActorSystem)] =
+  private def mountRig(name: String): IO[(ProjectRuntime, os.Path, ActorSystem, SharedResources)] =
     PathUtil.setDataRoot(tempRoot)
     os.remove.all(tempRoot)
     os.makeDir.all(tempRoot / "agents" / "general")
@@ -211,7 +211,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
-    yield (rt, ws, system)
+    yield (rt, ws, system, res)
 
   private def seedChain(rt: ProjectRuntime, chainId: String, a: String, b: String): IO[Unit] =
     // 弱连通分量靠**真实 out 边**成形（沿 `ChainCancelSpec.linearChain` 同款口径；
@@ -229,7 +229,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     val name = "deferred-l6"
     val program = for
       mounted <- mountRig(name)
-      (rt, ws, system) = mounted
+      (rt, ws, system, res) = mounted
       _ <- seedChain(rt, "chain-n-l6", "n-l6a", "n-l6b")
       // 链号派生口径：`chain-<分量内 createdAt 最早成员 id>`（本夹具最早 = n-l6a）
       resolved <- rt.store.chainMembersOf("chain-n-l6a")
@@ -259,6 +259,63 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
         ChainLedger.StatusActive,
         "K-1③: the in-progress face is NOT a state — the three-state projection is untouched"
       )
+    program.guarantee(
+      IO(PathUtil.setDataRoot(originalRoot))
+    )
+  }
+
+  // ── L7 settleDeferredCancel：探针必须锚「会话真的停了」而非登记表 ─────────
+  //
+  // 这条是 K-1 判据①的**引擎侧护栏**：`runWithAgent` 的取消腿放行 deferred stop 后，
+  // 必须以「会话已终止」为放行条件再走 `system.stop(ref)` 一阶拆解；否则一阶拆解会
+  // 与「落批」赛跑，把 K-2 要保的产物重新砍掉。
+  // 探针选择是**承重**的（实现头注点名）：`system.isAlive` = actor 系统自己的存活登记表
+  // （actor 循环在 guarantee 里自己摘除）；`resources.agentRegistry` 由**本 fiber** 摘除、
+  // 发生在本等待**之后** ⇒ 轮询它永远看不到转变、只会白烧满额 grace。
+
+  test("L7: settleDeferredCancel observes the real session death (isAlive probe), not the engine's own registry") {
+    val name = "deferred-l7"
+    val program = for
+      mounted <- mountRig(name)
+      (rt, _, system, res) = mounted
+      sid = "deferred-l7-session"
+      ref <- system.spawn(
+        {
+          def loop: nebflow.actor.Behavior[nebflow.actor.AgentCommand] =
+            nebflow.actor.Behaviors.receiveMessage[nebflow.actor.AgentCommand](_ => IO.pure(loop))
+          loop
+        },
+        sid
+      )
+      // 登记表**保持有记录**：这正是实现刻意不用的那个探针面（本 fiber 稍后才摘）
+      _ <- res.agentRegistry.update(
+        _ + (sid -> nebflow.actor.AgentRecord(sid, ref, nebflow.actor.AgentKind.Delegate, sid))
+      )
+      aliveBefore <- system.isAlive(ref.path)
+      // 停掉会话 actor（actor 循环自己摘除 isAlive 登记；引擎登记表**不动**）
+      _ <- system.stop(ref)
+      stopped <- rt.engine.settleDeferredCancel(ref)
+      stillRegistered <- res.agentRegistry.get.map(_.contains(sid))
+      t0 <- IO(System.currentTimeMillis())
+      // 对照臂：登记表里仍有记录 ⇒ 若探针误用登记表则必然烧满 grace
+      second <- rt.engine.settleDeferredCancel(ref)
+      elapsed = System.currentTimeMillis() - t0
+    yield
+      assert(aliveBefore, "precondition: the freshly spawned session must be alive")
+      assert(
+        stopped,
+        "L7 VIOLATED — settleDeferredCancel must observe the real session death (isAlive probe) and return true"
+      )
+      assert(
+        stillRegistered,
+        "L7 precondition: the engine's own agentRegistry entry must still be present (it is removed later by the caller fiber)"
+      )
+      assert(
+        elapsed < NodeStarter.DeferredStopGraceMs / 2,
+        s"L7 VIOLATED — the second settle returned in ${elapsed}ms, i.e. it did NOT burn the grace window; " +
+          "a probe pointed at agentRegistry (still registered) would have slept the full ${NodeStarter.DeferredStopGraceMs}ms"
+      )
+      assert(second, "L7: a repeated settle on an already-dead session must still report stopped")
     program.guarantee(
       IO(PathUtil.setDataRoot(originalRoot))
     )
