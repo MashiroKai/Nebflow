@@ -9,13 +9,16 @@ import nebflow.shared.PathUtil
 import scala.concurrent.duration.*
 
 /**
- * P3 methodology transfer: the allocation question set and the membership rule.
+ * P3 methodology transfer: the state composition, the question set and the
+ * membership rule.
  *
- * Transferred verbatim from the 21x20-round scorer (`setscore_one.mjs`): one
- * batched call carrying a `need_<p>` choice question and a `fit_<p>` score
- * question per catalog entry, membership = `probabilities["yes"] >= 0.5`.
+ * The transferred source is the 21x20-round scorer (`setscore_one.mjs`), and
+ * the transfer is scoped to three things: the `state` template (`:59-67`,
+ * preamble + brief + catalog section), the `need_`/`fit_` question pairs
+ * (`:71-85`, one batched call, catalog order, the scorer's own wording), and
+ * the membership rule `probabilities["yes"] >= 0.5` (`:86`).
  *
- * Lives in the `llm` package because the question builders are
+ * Lives in the `llm` package because the question and state builders are
  * `private[decision]` — the point of that visibility is that the wire shape
  * has exactly one producer.
  */
@@ -219,19 +222,129 @@ class JevAllocatorSpec extends CatsEffectSuite:
     }
   }
 
-  test("the state handed over is capped so a huge task cannot blow the budget") {
+  // ── the state composition (§R-1: the catalog MUST reach the model) ──────
+
+  test("the state carries the capability catalog, each entry as name + description") {
+    // The regression this pins: `state` used to be the bare task text, so
+    // `CatalogEntry.description` had ZERO consumers and the model judged a
+    // package by its NAME alone — a different methodology from the one the
+    // measured numbers came from, and invisible to a truncation-only spec.
     val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
-    val capture = new DecisionProvider[IO]:
-      def id: String = "typesafe-jev"
-      def predict(req: DecisionRequest) =
-        IO { seen.set(req.state); Right(DecisionResponse(None, Map.empty, None)) }
-    val alloc = new JevAllocator(capture, 15000L, stateCapChars = 100)
+    val capture = capturing(seen)
     withTempDataRoot { _ =>
-      alloc.allocate("x" * 5000, catalog).map { _ =>
-        assertEquals(seen.get().length, 100, "the state must be truncated to the cap")
+      new JevAllocator(capture, 15000L, stateCapChars = 100000).allocate("fix the Scala actor", catalog).map { _ =>
+        val state = seen.get()
+        for e <- catalog do
+          assert(
+            state.contains(s"### ${e.name}\n${e.description}"),
+            s"catalog entry '${e.name}' must reach the model as a name+description block:\n$state"
+          )
+        // The block form is the transferred scorer's (`setscore_one.mjs:59-61`):
+        // `### <name>` on its own line with the description under it.
+        assert(state.contains("### backend-dev\nScala backend development"), s"block form:\n$state")
       }
     }
   }
+
+  test("the catalog keeps catalog order and both section headers are present") {
+    val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
+    withTempDataRoot { _ =>
+      new JevAllocator(capturing(seen), 15000L, stateCapChars = 100000).allocate("t", catalog).map { _ =>
+        val state = seen.get()
+        assert(state.contains("=== INSTALLED PLUGIN CAPABILITY CATALOG ==="), s"catalog header missing:\n$state")
+        assert(state.contains("=== TASK BRIEF ==="), s"brief header missing:\n$state")
+        // Order is load-bearing: the scorer renders the catalog in file order,
+        // and the question ids follow the same order.
+        val positions = catalog.map(e => state.indexOf(s"### ${e.name}"))
+        assertEquals(positions.sorted, positions, s"catalog entries must keep catalog order:\n$state")
+      }
+    }
+  }
+
+  test("the brief cap bounds the BRIEF and cannot crowd out the catalog") {
+    // The cap is a brief budget, not a whole-state budget: a task text far over
+    // the cap must still produce a state carrying every catalog description.
+    // Composing the state as "truncate the whole thing" would drop the catalog
+    // for exactly the long tasks that need allocation most.
+    //
+    // Asserted on the BRIEF SECTION, not on a global character count: the
+    // preamble legitimately contains the probe character inside ordinary words
+    // ("text", "executed"), so a whole-state count measures the wrong thing.
+    val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
+    withTempDataRoot { _ =>
+      new JevAllocator(capturing(seen), 15000L, stateCapChars = 100).allocate("x" * 5000, catalog).map { _ =>
+        val state = seen.get()
+        assertEquals(briefOf(state), "x" * 100, s"the brief must be capped at the budget:\n$state")
+        for e <- catalog do
+          assert(state.contains(e.description), s"the catalog must survive the brief cap ('${e.name}'):\n$state")
+      }
+    }
+  }
+
+  test("the question instructions are the transferred scorer's words, character for character") {
+    // The instructions are model input: the scorer's sentences ARE the method.
+    // Pinned verbatim so a later paraphrase fails here instead of silently
+    // moving the methodology while leaving every other assertion green.
+    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val qs = alloc.questionsFor(List(CatalogEntry("backend-dev", "Scala backend development")))
+    assertEquals(
+      qs.head.instructions,
+      "Does executing this task's primary purpose REQUIRE the 'backend-dev' capability package - " +
+        "i.e., the task cannot be properly executed without the capability it provides? " +
+        "Judge this one package independently, by the task text alone; ignore boilerplate."
+    )
+    assertEquals(
+      qs(1).instructions,
+      "How well does the 'backend-dev' capability package fit this task's primary purpose, " +
+        "by the task text alone?"
+    )
+  }
+
+  test("the need_ criteria label is the transferred scorer's wording, not a paraphrase") {
+    // `setscore_one.mjs:75-78` spells the no-label in full. The label is part of
+    // the question the model answers, so a shortened variant is a methodology
+    // change wearing the clothes of a copy-edit.
+    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val need = alloc.questionsFor(catalog).head.asInstanceOf[DecisionQuestion.Choice]
+    assertEquals(
+      need.criteria,
+      Map(
+        "yes" -> Some("required for this task's primary purpose"),
+        "no" -> Some("not required for this task's primary purpose")
+      )
+    )
+  }
+
+  test("the state handed over is capped so a huge task cannot blow the budget") {
+    val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
+    val alloc = new JevAllocator(capturing(seen), 15000L, stateCapChars = 100)
+    withTempDataRoot { _ =>
+      alloc.allocate("x" * 5000, catalog).map { _ =>
+        assertEquals(briefOf(seen.get()), "x" * 100, "the brief must be truncated to the cap")
+      }
+    }
+  }
+
+  /**
+   * Extract the brief section from a composed `state`.
+   *
+   * Structural, not a whole-string character count: the preamble and the
+   * catalog are composed AROUND the brief, so only the section between the two
+   * headers answers "how long is the brief". A count over the whole state would
+   * also pick up the probe character where it occurs inside ordinary prose.
+   */
+  private def briefOf(state: String): String =
+    val start = state.indexOf(JevAllocator.BriefHeader)
+    val end = state.indexOf(JevAllocator.CatalogHeader)
+    assert(start >= 0 && end > start, s"both section headers must be present:\n$state")
+    state.substring(start + JevAllocator.BriefHeader.length, end).stripLineEnd.stripPrefix("\n")
+
+  /** A provider that records the `state` it was handed and answers emptily. */
+  private def capturing(seen: java.util.concurrent.atomic.AtomicReference[String]): DecisionProvider[IO] =
+    new DecisionProvider[IO]:
+      def id: String = "typesafe-jev"
+      def predict(req: DecisionRequest) =
+        IO { seen.set(req.state); Right(DecisionResponse(None, Map.empty, None)) }
 
 /** A provider that must never be called; counts calls to prove it. */
 object NoopProvider extends DecisionProvider[IO]:

@@ -12,17 +12,36 @@ import nebflow.shared.NebflowLogger
  * Implements the `core.jev.JevAllocatorPort` seam, so the core call sites
  * depend only on the port and never on a decision-provider type.
  *
- * ==Methodology (P0 #7 / #2, transferred verbatim from the jev-test2 run)==
- * For each catalog entry TWO questions are asked in ONE batched call
- * (`setscore_one.mjs` is the transferred source):
+ * ==Methodology transferred from `setscore_one.mjs`==
+ * THREE things are carried over literally from the jev-test2 scorer, and the
+ * whole claim of transfer is scoped to them:
  *
- *   - `need_<name>` — a CHOICE question with the fixed `{yes, no}` criteria:
- *     "is this capability required for the task's primary purpose?".
- *   - `fit_<name>` — a SCORE question over `["poor", "partial", "good"]`.
- *
- * The membership rule is the R2 main rule, unchanged:
+ *   ① THE STATE TEMPLATE (`:59-67`) — a fixed preamble, then the task brief
+ *      capped at `BRIEF_CAP_CHARS`, then `### <name>\n<description>` blocks for
+ *      the whole capability catalog. The catalog is PART of the state, not
+ *      metadata beside it: the `need_<p>` judgement's entire input is this text
+ *      plus the question, and `CatalogEntry.description` is the only place the
+ *      capability behind a package name is stated to the model. A state that
+ *      carried names but not descriptions would leave the model judging
+ *      packages by name, which is a different methodology from the one the
+ *      measured numbers came from.
+ *   ② THE QUESTION PAIRS (`:71-85`) — one `need_<name>` CHOICE question with
+ *      the fixed `{yes, no}` criteria, and one `fit_<name>` SCORE question over
+ *      `["poor", "partial", "good"]`, both in ONE batched call, in catalog
+ *      order. The instructions and both criteria labels are the scorer's words,
+ *      character for character — they are model input, so a paraphrase is a
+ *      methodology change, not a copy-edit.
+ *   ③ THE MEMBERSHIP RULE (`:86`) — the R2 main rule, unchanged:
  *
  * {{{ J_primary = { p | need_<p>.probabilities["yes"] >= 0.5 } }}}
+ *
+ * Everything around those three (the port seam, the typed error channel, the
+ * fail-open posture, the visibility events) is product code with no counterpart
+ * in the scorer, and is deliberately NOT claimed as transferred. The knowing
+ * deviations from the template — the brief header drops the
+ * `(project … | node …)` label this seam has no context for, and the brief's
+ * trailing newline is not reproduced — are registered in the batch evidence
+ * file's deviation table rather than silently absorbed here.
  *
  * ==The two documented traps, both avoided==
  *   ① `fit >= 1.0` is NOT a membership threshold. It was measured to collapse
@@ -40,16 +59,26 @@ import nebflow.shared.NebflowLogger
 final class JevAllocator(
   provider: DecisionProvider[IO],
   timeoutMs: Long,
-  /** Maximum characters of task text handed over as `state` (the measured
-    * brief cap; the live run never approached the provider's own limit). */
+  /** Maximum characters of the TASK-BRIEF portion of `state`.
+    *
+    * The cap bounds the BRIEF, not the composed state: the preamble and the
+    * catalog section are composed around it, exactly as the transferred scorer
+    * composes them (`setscore_one.mjs:58` slices `brief`, `:62-67` wraps it).
+    * `String.length`/`take` count UTF-16 code units, which is also what the
+    * scorer's `brief.length`/`slice` count — the two truncations agree on where
+    * the boundary falls. */
   stateCapChars: Int = JevAllocator.DefaultStateCapChars
 ) extends JevAllocatorPort:
 
   private val logger = NebflowLogger.forName("nebflow.jev.alloc")
 
-  /** Choice criteria of a `need_` question — the fixed yes/no pair. */
+  /** Choice criteria of a `need_` question — the fixed yes/no pair, in the
+    * transferred scorer's words (`setscore_one.mjs:75-78`). */
   private val NeedCriteria: Map[String, Option[String]] =
-    Map("yes" -> Some("required for this task's primary purpose"), "no" -> Some("not required"))
+    Map(
+      "yes" -> Some("required for this task's primary purpose"),
+      "no" -> Some("not required for this task's primary purpose")
+    )
 
   def allocate(taskText: String, catalog: List[CatalogEntry]): IO[JevAllocation] =
     if catalog.isEmpty then
@@ -57,8 +86,7 @@ final class JevAllocator(
       // not a failure: the caller gets the empty set and dispatch proceeds.
       JevFallback.recordSuccess("catalog:empty", Nil).as(JevAllocation.Allocated(Nil))
     else
-      val state = if taskText.length > stateCapChars then taskText.take(stateCapChars) else taskText
-      val req = DecisionRequest(state = state, questions = questionsFor(catalog))
+      val req = DecisionRequest(state = stateFor(taskText, catalog), questions = questionsFor(catalog))
       provider
         .predict(req)
         .map {
@@ -81,6 +109,23 @@ final class JevAllocator(
           JevFallback.record(JevFallbackKind.Failure, "allocation", e.getClass.getSimpleName)
         }
 
+  /**
+   * Render the model-visible `state` of one allocation call.
+   *
+   * Shape is the transferred scorer's (`setscore_one.mjs:59-67`): preamble,
+   * brief, catalog section, in that order, with the catalog rendered as
+   * `### <name>\n<description>` blocks joined by a blank line and kept in
+   * catalog order (the scorer takes them in file order).
+   *
+   * Truncation lives HERE and nowhere else — see [[JevAllocatorPort.allocate]]:
+   * this method owns the whole composition, so the brief cap and the catalog
+   * section cannot be confused for one another, and a caller must hand over the
+   * untruncated task text.
+   */
+  private[decision] def stateFor(taskText: String, catalog: List[CatalogEntry]): String =
+    val brief = if taskText.length > stateCapChars then taskText.take(stateCapChars) else taskText
+    s"${JevAllocator.StatePreamble}\n\n${JevAllocator.BriefHeader}\n$brief\n${JevAllocator.CatalogHeader}\n${JevAllocator.catalogText(catalog)}"
+
   /** Build the batched question set: one `need_` + one `fit_` per entry. */
   private[decision] def questionsFor(catalog: List[CatalogEntry]): List[DecisionQuestion] =
     catalog.flatMap { entry =>
@@ -88,7 +133,7 @@ final class JevAllocator(
         DecisionQuestion.Choice(
           id = s"need_${entry.name}",
           instructions =
-            s"Does executing this task's primary purpose REQUIRE the '${entry.name}' capability package — " +
+            s"Does executing this task's primary purpose REQUIRE the '${entry.name}' capability package - " +
               "i.e., the task cannot be properly executed without the capability it provides? " +
               "Judge this one package independently, by the task text alone; ignore boilerplate.",
           criteria = NeedCriteria
@@ -129,10 +174,50 @@ final class JevAllocator(
 object JevAllocator:
 
   /**
-   * `state` cap. The transferred scorer caps the brief at 12000 characters,
-   * and the measured brief never reached the provider's own limit under it.
+   * `state` brief cap. The transferred scorer caps the BRIEF at 12000
+   * characters (`setscore_one.mjs:28` `BRIEF_CAP_CHARS`, `:58` the slice) and
+   * composes the preamble and the catalog section AROUND that cap — so the cap
+   * bounds the brief, never the catalog. The live run never approached the
+   * provider's own limit under it.
    */
   val DefaultStateCapChars: Int = 12000
+
+  /**
+   * Fixed `state` preamble, verbatim from the transferred scorer (`:62`).
+   *
+   * Written as concatenated literals rather than as a multi-line string on
+   * purpose: the preamble is ONE line, and a line break introduced for
+   * readability would change the model-visible bytes.
+   */
+  private[decision] val StatePreamble: String =
+    "You are auditing task dispatch in an agent-orchestration platform. Below are (1) one dispatched node " +
+      "task brief, verbatim, and (2) the installed plugin capability catalog. The brief may contain platform " +
+      "boilerplate (default-clause templates D-1..D-6, merge-window fragments, citation paths) - ignore " +
+      "boilerplate; judge the task's substantive purpose. Judge from the task text alone. Multiple capability " +
+      "packages may be needed for one task: judge each package independently, and count a package as " +
+      "\"needed\" only when the task's primary purpose cannot be properly executed without the capability " +
+      "that package provides."
+
+  /**
+   * Brief section header.
+   *
+   * The scorer's form is `=== TASK BRIEF (project: <p> | node: <n>) ===`. This
+   * seam receives neither project nor node — the port signature carries task
+   * text and catalog only — so the label is omitted rather than filled with a
+   * placeholder. Deviation registered in the batch evidence file.
+   */
+  private[decision] val BriefHeader: String = "=== TASK BRIEF ==="
+
+  /** Catalog section header, verbatim from the transferred scorer (`:66`). */
+  private[decision] val CatalogHeader: String = "=== INSTALLED PLUGIN CAPABILITY CATALOG ==="
+
+  /**
+   * Render the capability catalog into the scorer's block form
+   * (`setscore_one.mjs:59-61`): `### <name>` on its own line, the description
+   * under it, blocks joined by a blank line, order preserved.
+   */
+  private[decision] def catalogText(catalog: List[CatalogEntry]): String =
+    catalog.map(e => s"### ${e.name}\n${e.description}").mkString("\n\n")
 
   def apply(provider: DecisionProvider[IO], timeoutMs: Long): JevAllocator =
     new JevAllocator(provider, timeoutMs)
