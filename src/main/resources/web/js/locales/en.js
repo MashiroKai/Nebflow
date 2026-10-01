@@ -1165,6 +1165,12 @@ export default {
   'chat.turnSummaryToolsOne': '1 tool call',
   'chat.turnHeaderThinking': 'thought for {d}',
   'chat.turnHeaderFiles': '{n} files',
+  // Work-line (stream-ux §二.1.1/§二.1.4): the completed badge of the running
+  // turn's single-line indicator. The expand surface stays `.turn-header`
+  // (existing expand face unchanged) — the hint only points at it.
+  'chat.workline.tools': '{n} tools completed',
+  'chat.workline.thinking': '{n} thinking rounds',
+  'chat.workline.expandHint': 'Click to expand',
   'chat.thinking.0': 'Drifting through the cosmos...',
   'chat.thinking.1': 'Gazing into the deep...',
   'chat.thinking.2': 'Sailing the stellar winds...',

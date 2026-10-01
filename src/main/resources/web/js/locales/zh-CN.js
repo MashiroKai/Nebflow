@@ -1118,6 +1118,11 @@ export default {
   'chat.turnSummaryToolsOne': '工具 1 次',
   'chat.turnHeaderThinking': '思考 {d}',
   'chat.turnHeaderFiles': '读写 {n} 文件',
+  // 工作行（stream-ux §二.1.1/§二.1.4）：运行期单行徽标的完成态文案。
+  // 终态展开面仍是 .turn-header（既有展开面不动），故 hint 只指路。
+  'chat.workline.tools': '已完成 {n} 工具',
+  'chat.workline.thinking': '思考 {n} 轮',
+  'chat.workline.expandHint': '点击展开',
   'chat.thinking.0': '星海漫游中...',
   'chat.thinking.1': '凝望深空中...',
   'chat.thinking.2': '星际航行中...',
