@@ -231,21 +231,13 @@
   margin-top: -4px;
 }
 
-/* Chat→session bindings + default-session selector (C3/C4). */
-.social-bindings { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.social-bindings-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-frame-text-muted);
-}
-.social-binding-item {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--color-frame-text);
-  overflow-wrap: anywhere;
-}
-.social-binding-empty { font-size: 11px; line-height: 1.5; color: var(--color-frame-text-muted); }
-.social-default-session { max-width: 300px; }
+/* 🔴 socpanel-min batch (author ruling 2026-10-01): the chat→session bindings
+   list + the default-session selector (contracts C3/C4) were removed from the
+   created face, so `.social-bindings`, `.social-bindings-title`,
+   `.social-binding-item`, `.social-binding-empty` and `.social-default-session`
+   were removed with them. Binding behaviour (routing, the fixed Nebula pin, the
+   boot-time convergence write-back) is untouched and needs no rule here.
+   Restoring the block = taking these rules back from git history. */
 
 /* ── Remote-access section (令②): an independent section, NOT a channel card.
    This batch renders it inert on purpose — no link, no QR, no address. ──── */
