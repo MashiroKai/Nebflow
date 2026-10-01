@@ -101,10 +101,21 @@ final class JevShadowEvaluator(
               val (jevSet, fallback) = allocation match
                 case JevAllocation.Allocated(caps) => (caps, None)
                 case JevAllocation.FellBack(kind, reason) => (Nil, Some(s"${kind.wire}: $reason"))
+              // Did the allocation ACTION run? This is the probe the #8
+              // adjudication moved the duty onto, so it asks "was an attempt
+              // made", NOT "did the attempt succeed". A fell-back allocation
+              // was attempted and returned a verdict, and the dispatcher
+              // default mount is its adjudicated outcome — so it counts as
+              // run. Only the OFF kind means no action at all: there the face
+              // was never applied, which is the genuinely absent path.
+              // Reading a timeout/failure as "nobody allocated" would mark the
+              // most common failure mode as a duty violation and would make
+              // `AllocatedViaFallback` unreachable on this, its only path.
               val allocatedRan = allocation match
                 case JevAllocation.Allocated(_) => true
                 case JevAllocation.FellBack(JevFallbackKind.Off, _) => false
-                case _ => false
+                case JevAllocation.FellBack(JevFallbackKind.Timeout, _) => true
+                case JevAllocation.FellBack(JevFallbackKind.Failure, _) => true
               val duty = JevDeclarationDuty.evaluate(allocatedRan, jevSet, fallback)
               val rec = JevShadowRecord(
                 nodeName = nodeName,
@@ -112,6 +123,17 @@ final class JevShadowEvaluator(
                 jevSatisfied = JevDeclarationDuty.isSatisfied(duty),
                 jevCapabilities = jevSet,
                 declaredCapabilities = declaredCapabilities,
+                // Two distinct criteria, deliberately kept apart:
+                //   ① the two DUTY VERDICTS disagree (the #8 semantic shift —
+                //      a node that declared nothing but WAS allocated);
+                //   ② the produced SET differs from the declared one (what
+                //      arming the point would actually change).
+                // On a fallback the produced set is empty by construction (the
+                // face produced nothing), so ② fires against a NON-empty
+                // declaration. That is recorded rather than filtered:
+                // `fallbackReason` is what tells a degraded run apart from a
+                // genuine replacement, so the divergence count can be read
+                // both ways without re-running the shadow.
                 divergent = JevLegacyDeclarationDuty.isSatisfied(keyProvided) != JevDeclarationDuty.isSatisfied(duty) ||
                   jevSet.sorted != declaredCapabilities.sorted,
                 fallbackReason = fallback

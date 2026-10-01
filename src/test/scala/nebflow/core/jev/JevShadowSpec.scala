@@ -145,7 +145,18 @@ class JevShadowSpec extends CatsEffectSuite:
     }
   }
 
-  test("the shadow never breaks a create: a failing allocator produces a record and raises nothing") {
+  // ── the shadow's fallback arm: the duty is driven by the EVALUATOR ──────
+  //
+  // 🔴 These two tests exist because the enum-level assertion above
+  // (`evaluate(allocated = true, ...)`) pins the DUTY function, but says
+  // nothing about what the shadow FEEDS it. The shadow classified a fell-back
+  // allocation as "no allocation ran", so `AllocatedViaFallback` was
+  // unreachable on its only production path and the most common failure mode
+  // was recorded as a duty violation. Driving the failure through
+  // `JevShadowEvaluator.evaluate` is what makes that reachable-or-not
+  // observable; asserting the enum directly cannot catch it.
+
+  test("a failed allocation is still a duty-satisfying action, and is recorded as fallback") {
     withTempDataRoot { _ =>
       val exploding = new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
@@ -158,8 +169,68 @@ class JevShadowSpec extends CatsEffectSuite:
         _ = assert(rec.isDefined, "a failed allocation is still an allocation action, so a record exists")
         r = rec.get
         _ = assert(r.fallbackReason.isDefined, s"the fallback must be recorded: $r")
+        _ = assert(
+          r.jevSatisfied,
+          s"a fell-back allocation means the action happened — not a missing declaration: $r"
+        )
       yield ()
     }
+  }
+
+  test("a failed allocation does not diverge when the declared and produced sets agree") {
+    withTempDataRoot { _ =>
+      val exploding = new DecisionProvider[IO]:
+        def id: String = "typesafe-jev"
+        def predict(req: DecisionRequest) = IO.raiseError(new RuntimeException("shadow boom"))
+      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding, 15000L)), enabled = true)
+      // The caller declared the empty set and the fallback produced the empty
+      // set, so the SET term is false; both duty verdicts are satisfied
+      // (key present / action ran), so the VERDICT term is false too.
+      // => the arms agree. Before the fix the JeV arm said "unsatisfied" here
+      //    and this assertion would fail — which is exactly the regression the
+      //    test is meant to catch.
+      shadow.evaluate("n", "t", catalog, declaredCapabilities = Nil, keyProvided = true).map { rec =>
+        val r = rec.get
+        assertEquals(r.legacySatisfied, true)
+        assertEquals(r.jevSatisfied, true, "a fell-back allocation still ran, so the duty is satisfied")
+        assertEquals(r.jevCapabilities, Nil)
+        assert(!r.divergent, s"consistent empty declaration must not be flagged divergent: $r")
+      }
+    }
+  }
+
+  test("a failed allocation still flags divergence when the caller declared a non-empty set") {
+    withTempDataRoot { _ =>
+      val exploding = new DecisionProvider[IO]:
+        def id: String = "typesafe-jev"
+        def predict(req: DecisionRequest) = IO.raiseError(new RuntimeException("shadow boom"))
+      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding, 15000L)), enabled = true)
+      // Both arms satisfied, so the verdict term is false; the SET term is
+      // recorded honestly (empty produced vs non-empty declared) because
+      // `fallbackReason` is what distinguishes a degraded run from a genuine
+      // replacement, and the count must stay readable both ways.
+      shadow.evaluate("n", "t", catalog, declaredCapabilities = List("backend-dev"), keyProvided = true).map { rec =>
+        val r = rec.get
+        assertEquals(r.legacySatisfied, true)
+        assertEquals(r.jevSatisfied, true, "a fallback must not be recorded as an unsatisfied duty")
+        assert(r.fallbackReason.isDefined, "the degraded run is still labelled as such")
+      }
+    }
+  }
+
+  test("only the OFF kind means no allocation action — the genuinely absent path") {
+    // `AllocationMissing` is reachable ONLY when the face was never applied.
+    // `JevAllocator` never produces `Off` (that kind is decided before the
+    // allocator is built), so this pin lives on the duty function itself: it is
+    // the mapping `allocatedRan = false` that the shadow must reserve for it.
+    val missing = JevDeclarationDuty.evaluate(allocated = false, capabilities = Nil, fallbackReason = None)
+    assertEquals(missing, JevDeclarationDuty.AllocationMissing)
+    assert(!JevDeclarationDuty.isSatisfied(missing))
+    // ...whereas every fell-back kind the allocator CAN produce is satisfied.
+    for reason <- List("timeout", "failure") do
+      val duty = JevDeclarationDuty.evaluate(allocated = true, capabilities = Nil, fallbackReason = Some(reason))
+      assertEquals(duty, JevDeclarationDuty.AllocatedViaFallback(reason))
+      assert(JevDeclarationDuty.isSatisfied(duty), s"a $reason fallback still means the action happened")
   }
 
   // ── the declarative stub boundary ──────────────────────────────────────
