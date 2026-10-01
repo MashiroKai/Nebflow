@@ -86,6 +86,24 @@
 //    (retired faces stay retired). BEFORE / FIXTURE / RED-FILTER keep their
 //    original judgement.
 //
+// 🔴 SOCPANEL-MIN (author ruling 2026-10-01): the created face's SESSION-
+//    BINDINGS display block is removed — the chat→session list (contract C3)
+//    and the default-session control (contract C4's rendered half) no longer
+//    render. Binding BEHAVIOUR is untouched: routing, the fixed Nebula pin and
+//    the boot-time convergence write-back ([[pinDefaultSessions]] →
+//    [[saveDefaultSession]] PUT) all stay. Flipped anchor: SF-1c's `bindings`
+//    leg, which asserted the block's PRESENCE and now asserts its ABSENCE (red
+//    on the pre-change tree, where a created card always renders
+//    `[data-bindings]` — see the judgement comment at the assertion).
+//    New anchors, all in [[minSuite]] on a created card with a full mock
+//    backend: MIN-A1/A2/A3 (the removed surface is absent from the DOM and its
+//    copy from the rendered text; the vocabulary is read from the repo locale
+//    tables, never hard-coded) and MIN-B1 (behaviour invariance: a backend
+//    holding a NON-Nebula default session still gets converged onto the Nebula
+//    id by exactly the same PUT). MIN-A* are RED on the pre-change tree;
+//    MIN-B1 is expected GREEN on BOTH trees — it is the control that says the
+//    removal was display-only.
+//
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
@@ -101,7 +119,12 @@
 //      (SOCIAL_SUITE only SELECTS which suite runs; SOCIAL_WEB_ROOT still says
 //       which tree is served. Without it, SOCIAL_WEB_ROOT implies BEFORE, whose
 //       suite is red-by-absence and never reaches the flipped assertions — see
-//       the note on MODE below.)
+//       the note on MODE below.) The socpanel-min batch's RED leg is the same
+//       command with its own snapshot dir:
+//   SOCIAL_SUITE=after SOCIAL_WEB_ROOT=/tmp/nb-socmin-baseline/web \
+//     SOCIAL_SHOT_DIR=/tmp/nb-socmin-red node tests/social-panel.spec.mjs
+//      (SF-1c's flipped leg + MIN-A1/A2/A3 must FAIL there; MIN-B1 must PASS
+//       there — it is the behaviour-invariance control, not a flipped anchor.)
 
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
@@ -910,9 +933,20 @@ async function afterSuite(browser, base) {
         probeVocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=|凭据探针|Credential probe/g) || []).length,
       };
     });
-    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card)',
+    // 🔴 FLIPPED by socpanel-min (author ruling 2026-10-01): this leg used to
+    //    assert the bindings block's PRESENCE (`createdFace.bindings === true`).
+    //    The display block is now removed, so the SAME reading asserts ABSENCE.
+    //    JUDGEMENT — why this is RED on the pre-change tree: a created card
+    //    always rendered `bindingsHTML(ch)`, i.e. a `[data-bindings]` element,
+    //    as the last child of its created face. On the pre-change tree the
+    //    reading below is therefore `bindings === true` and the check FAILS;
+    //    after the change no branch of scanBindCardHTML emits it and the check
+    //    PASSES. Everything else in the check is unchanged — the created face
+    //    must still flip, keep its archive control, drop the scan block and
+    //    still render the C1 live block.
+    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card; bindings block absent since socpanel-min)',
       createdFace.pill === 'connected' && createdFace.archive && createdFace.scanInlineGone
-      && createdFace.liveBlock && createdFace.bindings
+      && createdFace.liveBlock && createdFace.bindings === false
       && (createdFace.hint === ZH['social.credential.ok'] || createdFace.hint === EN['social.credential.ok'])
       && createdFace.probeVocab === 0,
       JSON.stringify(createdFace));
@@ -1219,6 +1253,135 @@ async function afterSuite(browser, base) {
     console.log(`  · context ${theme} @375 (never asserted): document.scrollWidth with Canvas panel OPEN = ${ctxRead.canvasOpen}; + side bar expanded = ${ctxRead.canvasOpenSidebarExpanded} — both are the app shell's own pre-existing behaviour (same numbers on the pre-change tree, see beforeSuite).`);
     await ctx.close();
   }
+}
+
+// ── SOCPANEL-MIN: the removed session-bindings display block ────────────────
+// Author ruling 2026-10-01: the created face shows no session-bindings block —
+// the chat→session list (C3) and the default-session control (C4's rendered
+// half) leave the VISIBLE face while every binding BEHAVIOUR stays.
+//
+// Two kinds of anchor live here, and their expectations differ ON PURPOSE:
+//
+//   · MIN-A1/A2/A3 — ABSENCE anchors. Each is RED on the pre-change tree: a
+//     created feishu card on that tree always rendered `<div class="social-
+//     bindings" data-bindings="feishu">`, whose subtree carries the fixed
+//     default-session control (`[data-default-session-fixed]`) and the copy of
+//     the four locale keys read below. On this tree the card renders neither.
+//     MIN-A3's vocabulary is read from the REPO locale tables (`js/locales/
+//     zh-CN.js` / `en.js` — the same fixed references the other anchors use),
+//     never from a hand-typed literal: a hard-coded Chinese string would pass
+//     even after a locale rename, which is exactly the drift the check exists
+//     to catch.
+//
+//   · MIN-B1 — a BEHAVIOUR-INVARIANCE control, and therefore GREEN ON BOTH
+//     TREES. It is deliberately NOT an absence anchor: it proves the ruling
+//     removed a DISPLAY and not a binding. The mock backend is told to hold a
+//     NON-Nebula default session, and the panel's boot must converge it onto
+//     the Nebula session through the pre-existing write path
+//     ([[pinDefaultSessions]] → [[saveDefaultSession]] → PUT). The assertion is
+//     order-insensitive (it asks whether the PUT happened at all, with the
+//     Nebula id, after boot) because the exact interleaving of the boot GETs is
+//     not the subject — the subject is "the convergence write still fires".
+async function minSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  const NEBULA_ID = 'sess-nebula-0001';
+  const FOREIGN_ID = 'sess-somewhere-else-9';
+  // The C4 read the panel performs at boot, plus the PUT it must still issue.
+  // Registered AFTER boot's routes (a later, exact-path handler wins) and
+  // deliberately WITHOUT `fulfill` on the GET side for anything else — the
+  // catch-all keeps owning every other endpoint.
+  /** @type {Array<{method: string, body: any}>} */
+  const defaultSessionCalls = [];
+  await boot(page, { locale: 'zh-CN' });
+  await page.route('**/api/social/channels/feishu/default-session', async (r) => {
+    const req = r.request();
+    const body = req.postData() ? JSON.parse(req.postData() || '{}') : null;
+    defaultSessionCalls.push({ method: req.method(), body });
+    if (req.method() === 'PUT') return r.fulfill({ json: { ok: true } });
+    // The foreign id: exactly the state the 2026-09-30 ruling says boot must
+    // converge away from.
+    return r.fulfill({ json: { sessionId: FOREIGN_ID, sessionName: 'Somewhere else' } });
+  });
+  // The session list the panel reads to identify the Nebula session: one
+  // non-root session plus the root one (agentName omitted = root identity, per
+  // the encoder contract socialPanel.js documents on `nebulaSession`).
+  await page.route('**/api/sessions', (r) => r.fulfill({
+    json: { sessions: [
+      { id: FOREIGN_ID, name: 'Somewhere else', agentName: 'SomeoneElse' },
+      { id: NEBULA_ID, name: 'Nebula' },
+    ] },
+  }));
+  // A created feishu card: the ONLY face that ever carried the removed block.
+  apiState.channels = { feishu: { enabled: true, fields: {
+    app_id: 'cli_0123456789abcdef',
+    region: 'feishu',
+    app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+    verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
+  } } };
+  apiState.probes = { feishu: {
+    app_secret: { exists: true, modeOk: true, readable: true },
+    verification_token: { exists: true, modeOk: true, readable: true },
+  } };
+  apiState.registered = { feishu: true };
+  await page.goto(base);
+  await openPanel(page);
+
+  // `openPanel` returns on `aria-busy=false`, which the panel sets BEFORE the
+  // convergence write (loadAll: setBusy(false) → renderAll → maybeBeginScan →
+  // pinDefaultSessions). So the PUT can still be in flight — wait for it with a
+  // bounded poll instead of a bare timer, and report the deadline as a reading
+  // rather than hanging the suite.
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !defaultSessionCalls.some((c) => c.method === 'PUT')) {
+    await page.waitForTimeout(50);
+  }
+
+  const cardPresent = await page.evaluate(() => !!document.querySelector('.social-card[data-channel="feishu"] [data-archive]'));
+  check('MIN-0 the leg drives the CREATED face (the only face that ever carried the block)',
+    cardPresent, `created face present = ${cardPresent}`);
+
+  // MIN-A1/A2/A3 — one scope (`#social-modal`), three readings. The scope is
+  // the same one the other absence anchors of this spec use.
+  const min = await page.evaluate((keys) => {
+    const m = document.getElementById('social-modal');
+    const text = m ? m.innerText : '';
+    return {
+      bindings: m.querySelectorAll('[data-bindings]').length,
+      defaultSessionFixed: m.querySelectorAll('[data-default-session-fixed]').length,
+      // The copy the removed block rendered: title / empty / unavailable of the
+      // bindings list and the default-session control's static label. Read from
+      // the locale tables below, so this array is data, never a literal.
+      copyHits: keys.filter((k) => !!k && text.includes(k)),
+      keysChecked: keys.filter(Boolean).length,
+    };
+  }, [
+    ZH['social.feishu.bindings.title'], ZH['social.feishu.bindings.empty'],
+    ZH['social.feishu.bindings.unavailable'], ZH['social.feishu.defaultSession.label'],
+    EN['social.feishu.bindings.title'], EN['social.feishu.bindings.empty'],
+    EN['social.feishu.bindings.unavailable'], EN['social.feishu.defaultSession.label'],
+  ]);
+  check('MIN-A1 created face: zero [data-bindings] in #social-modal',
+    min.bindings === 0,
+    `[data-bindings] count = ${min.bindings} (pre-change tree renders exactly 1 on a created card ⇒ this reading is RED there)`);
+  check('MIN-A2 created face: zero [data-default-session-fixed] in #social-modal',
+    min.defaultSessionFixed === 0,
+    `[data-default-session-fixed] count = ${min.defaultSessionFixed} (pre-change tree: the pinned control inside [data-bindings] ⇒ RED there)`);
+  check('MIN-A3 created face: the bindings/default-session copy no longer renders',
+    min.keysChecked === 8 && min.copyHits.length === 0,
+    `vocabulary read from js/locales/{zh-CN,en}.js (8 key values, ${min.keysChecked} non-empty) — hits=[${min.copyHits.join(' | ')}]`);
+
+  // MIN-B1 — behaviour invariance, GREEN ON BOTH TREES by design (see the
+  // suite comment). The mock answered the boot GET with a FOREIGN session id, so
+  // the panel must have issued a PUT carrying the Nebula id.
+  const puts = defaultSessionCalls.filter((c) => c.method === 'PUT');
+  const converged = puts.find((c) => c.body && c.body.sessionId === NEBULA_ID);
+  check('MIN-B1 behaviour held: boot still converges a NON-Nebula default session onto the Nebula id (PUT)',
+    !!converged,
+    `calls=[${defaultSessionCalls.map((c) => `${c.method}${c.body ? ' ' + JSON.stringify(c.body) : ''}`).join(' | ')}] — mock GET returned sessionId=${FOREIGN_ID}, session list carries the Nebula session ${NEBULA_ID}`);
+
+  await shot(page, 'minsuite-1440-light');
+  await ctx.close();
 }
 
 async function withPanel(browser, base, theme, fn) {
@@ -1651,7 +1814,10 @@ try {
   else if (MODE === 'REDFILTER') await redFilterSuite(browser, base);
   else if (MODE === 'NRS') await nrsSuite(browser, base);
   else if (MODE === 'ILINKRED') await ilinkRedSuite(browser, base);
-  else { await afterSuite(browser, base); await apiSuite(); }
+  // socpanel-min: the removed display block's absence anchors + the behaviour
+  // control. Runs LAST in the AFTER suite so its exact-path routes (`/api/
+  // sessions`, `/feishu/default-session`) cannot leak into the legs above.
+  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); }
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));
