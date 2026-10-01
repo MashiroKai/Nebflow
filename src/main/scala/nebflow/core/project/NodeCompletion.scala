@@ -922,8 +922,9 @@ private[project] trait NodeCompletion:
                 withoutReportPending(
                   fresh.copy(
                     status = NodeLifecycle.Cancelled,
-                    // R2：取消原因落盘（此前 cancelled result 恒空）。
-                    // eng-deferred-cancel batch (2026-10-02) K-2: the reason is
+                    // R2: the cancel reason is written to disk (the cancelled
+                    // result used to be permanently empty).
+                    // eng-deferred-cancel batch, K-2: the reason is
                     // PREPENDED, never substituted — an already-produced result
                     // is kept verbatim behind it. The prefix must stay at offset
                     // 0 (`CancelSource.fromResult` parses it with `startsWith`),

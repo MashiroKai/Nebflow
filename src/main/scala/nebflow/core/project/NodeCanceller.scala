@@ -102,8 +102,8 @@ private[project] trait NodeCanceller:
       case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
       case Some(cm) if cm.info.memberIds.size < 2 => IO.pure(Left(ChainCancelErrors.singleMember(chainId)))
       case Some(cm) =>
-        // eng-deferred-cancel batch (2026-10-02), K-1 判据③: record the cancel
-        // INTENT on the persisted ledger before any node is signalled — the
+        // eng-deferred-cancel batch, readable-cancellation criterion: record the
+        // cancel INTENT on the persisted ledger before any node is signalled — the
         // chain reads as "cancellation in progress" for as long as the deferred
         // legs take to finish in-flight tools. Placed here (after member
         // resolution, before execution) and NOT in `cancelNodes`: that overload

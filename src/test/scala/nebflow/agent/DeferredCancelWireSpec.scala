@@ -17,30 +17,37 @@ import nebflow.shared.{ContentBlock, Message, MessageRole}
 import scala.concurrent.duration.*
 
 /**
- * eng-deferred-cancel 批（`chain-tasklist-anim` 链 · 2026-10-02）——**K-1** 判据①
- * （「在飞工具的返回/落盘**先于**节点终态化」）与判据②（「取消生效后该节点**不再发起
- * 新工具调用**」）在**真实 AgentActor 轮环**上的自证判据。
+ * eng-deferred-cancel batch — K-1 criteria 1 and 2 on the REAL AgentActor turn
+ * loop: (1) an in-flight tool's return/persistence happens BEFORE the node is
+ * finalized, and (2) once the cancel takes effect the node dispatches no new
+ * tool call.
  *
- * 面（逐条对应任务书 §二.1 K-1）：
- *  - D1 **判据①时间序**：批次在飞期间收到 deferred stop ⇒ 该批次的 `tool_result`
- *    **先**落进会话 transcript，actor **后**停止。量具 = 两个独立可观测面：
- *    ① 会话 transcript（`SessionStore.loadMessagesForSession`）里存在该 tool_use 的
- *    配对 tool_result；② actor system 的存活登记表（`system.isAlive`）。
- *    顺序是硬断言：transcript 有 result **且** actor 已停 ⇒ 落盘先于终态化。
- *  - D2 **判据②零新工具调用**：停止后该会话**不再**向 LLM 发第二次请求（计数 = 1），
- *    即取消生效后没有新的工具轮被发起。
- *  - D3 **非 deferred 的 Stop(reason) 仍走立即中断**（零回归对照）：同一夹具下
- *    `Stop("reason")` 的既有语义逐字不变（不因本批被改道）。
- *  - D4 **无在飞批次时 deferred 退化为立即路径**（零回归对照）：parked 会话收到
- *    `Stop()` ⇒ 立即停（不存在「有意图但永不结算」的滞留态）。
+ * Faces:
+ *  - D1 (criterion 1, time order): while a batch is in flight, a deferred stop
+ *    must let that batch's `tool_result` be persisted into the session
+ *    transcript FIRST, and only then let the actor stop. Measured against two
+ *    independent observable faces: the transcript
+ *    (`SessionStore.loadMessagesForSession` must contain the paired
+ *    `tool_result`) and the actor system's liveness registry
+ *    (`system.isAlive`). The pairing of "result present AND actor stopped" is
+ *    the hard assertion: persistence precedes finalization.
+ *  - D2 (criterion 2, zero new tool calls): after the stop the session must never
+ *    issue a second LLM request (call count == 1), i.e. no new tool round is
+ *    started once the cancellation has taken effect.
+ *  - D3 (zero-regression control): `Stop(reason)` keeps the historical immediate
+ *    teardown — the same fixture, unchanged semantics.
+ *  - D4 (zero-regression control): with nothing in flight, `Stop()` degrades to
+ *    the immediate path, so a parked session can never be left on an intent that
+ *    no batch will ever honour.
  *
- * **红验语义**（变异 ⇒ 本 spec 必红）：把 `AgentProcessing` 的 deferred 分支删掉
- * （回改成「一律立即 `cancelCurrentTurn`」）⇒ D1 红（transcript 无 tool_result）；
- * 把 delayed 分支改成落批后**继续续轮**（去掉 `Behaviors.stopped`）⇒ D2 红（第二次
- * LLM 请求出现）。
+ * Red semantics: deleting the deferred branch in `AgentProcessing` (back to an
+ * unconditional immediate `cancelCurrentTurn`) turns D1 red (no `tool_result` in
+ * the transcript); making the batch-boundary branch continue to the next LLM
+ * turn instead of stopping turns D2 red (a second request appears).
  *
- * 夹具 = 进程内 spec（真 AgentActor + 静默/脚本 LLM 桩）；零 spawn、零实例、零端口、
- * 零 live `:8080`；只写 `target/test-deferred-cancel-wire/` 下的临时工作区。
+ * Fixture = in-process spec (a real AgentActor + scripted LLM stub): zero spawn,
+ * zero instance, zero ports, zero contact with the live `:8080`; it writes only
+ * under `target/test-deferred-cancel-wire/`.
  */
 class DeferredCancelWireSpec extends CatsEffectSuite:
 
@@ -51,12 +58,15 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
-  // ── 可停在飞工具：用 Bash 跑一条「直到我放行才返回」的命令 ────────────────
+  // ── A tool batch that can be held in flight: a Bash command gated on a file ─
   //
-  // 为什么用真实 Bash 而不是自造工具：本 spec 要钉的是**真实批次边界**（工具返回 →
-  // `pipeToolExecutions` → `ToolsComplete`），自造工具会绕开该边界、把判据架在假设上。
-  // 闸门 = workspace 下的一个文件：命令 `sh -c 'while [ ! -f gate ]; do sleep 0.1; done'`
-  // 只有在 spec 建出 gate 文件后才返回 ⇒ 「批次在飞」这段窗口由 spec 全权掌控（零猜测）。
+  // Why a real Bash tool instead of a hand-rolled one: this spec pins the REAL
+  // batch boundary (tool returns → `pipeToolExecutions` → `ToolsComplete`); a
+  // synthetic tool would bypass that boundary and rest the judge on an
+  // assumption. The gate is a file in the workspace: the command
+  // `while [ ! -f <gate> ]; do sleep 0.05; done` returns only after the spec
+  // creates that file, so the "batch in flight" window is entirely
+  // spec-controlled (zero guessing).
 
   private class ScriptedLlm(streams: Ref[IO, List[Stream[IO, StreamChunk]]]) extends LlmHandle[IO]:
     val calls = Ref.unsafe[IO, Int](0)
@@ -184,7 +194,7 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
         IO(PathUtil.setDataRoot(originalRoot))
     )
 
-  // ── D1 / D2：deferred stop ⇒ 落批先于终态化 + 取消后零新工具调用 ─────────
+  // ── D1 / D2: the batch lands before finalization, and no new turn follows ──
 
   test("D1/D2: a deferred stop lands the in-flight batch's tool_result BEFORE the actor stops, and no new turn follows") {
     withBatchInFlight("d1") { (system, resources, agent, gate, llm) =>
@@ -237,12 +247,14 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
     }
   }
 
-  // ── D3：非 deferred 的 Stop(reason) 仍是立即中断（零回归对照）─────────────
+  // ── D3: the historical Stop(reason) is still an immediate teardown ────────
   //
-  // 本批只给**零参** Stop() 接 deferred 语义；带 reason 的既有站点必须逐字不变。
-  // 判据形态：批次仍被 gate 锁死（gate 恒不存在）⇒ 若走了 deferred 腿，actor 会
-  // **永不**停（它只会停在那条被锁死的命令之后）。故「actor 在 gate 仍不存在时就停了」
-  // 正是**立即中断**的机械读数。
+  // This batch gives the deferred semantics to the ZERO-ARG `Stop()` only; every
+  // pre-existing site carrying a reason must stay byte-identical. The judge
+  // shape: the batch stays gate-blocked (the gate is never created), so if this
+  // leg took the deferred path the actor would NEVER stop (it could only stop
+  // after the blocked command returned). Therefore "the actor stopped while the
+  // gate still does not exist" is the mechanical reading of IMMEDIATE teardown.
 
   test("D3: the historical Stop(reason) still tears the in-flight batch down immediately (zero regression)") {
     withBatchInFlight("d3") { (system, resources, agent, gate, llm) =>
@@ -266,7 +278,7 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
     }
   }
 
-  // ── D4：无在飞批次时 Stop() 退化为立即路径（不得滞留）───────────────────
+  // ── D4: with nothing in flight, Stop() degrades to the immediate path ─────
 
   test("D4: Stop() on an idle session (no batch in flight) falls back to the immediate path") {
     val ws = tempRoot / "d4"

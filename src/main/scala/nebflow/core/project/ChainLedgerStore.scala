@@ -282,13 +282,15 @@ class ChainLedgerStore private (
     }
 
   /**
-   * **取消意图登记写点**（eng-deferred-cancel 批 2026-10-02，K-1 判据③）：
-   * 与 [[setChainControl]] 同款的「读 → 改 → 无变化 ⇒ 零写，否则 `persist *> state.set`」
-   * 模板。
+   * **Cancel-intent registration write point** (eng-deferred-cancel batch): the
+   * same "read → change → no change ⇒ zero write, otherwise `persist *>
+   * state.set`" template as [[setChainControl]].
    *
-   * 🔴 **与 [[chainControlOf]] 的分工**：本方法**只**登记在途意图；是否已取消/已暂停仍
-   * 恒由 [[chainControlOf]] 的三态投影回答（禁新增第二判据面）。登记的成功返回值也不
-   * 被调用方消费——它是留痕，不是状态。
+   * 🔴 **Division of labour with [[chainControlOf]]**: this method ONLY registers
+   * the in-progress intent; whether the chain is cancelled/paused is still
+   * answered exclusively by the three-state projection in [[chainControlOf]]
+   * (no second judgement face). The caller does not consume the success value
+   * either — this is a trace, not a state.
    */
   def setChainCancelIntent(chainId: String, now: Long): IO[Unit] =
     state.get.flatMap { before =>

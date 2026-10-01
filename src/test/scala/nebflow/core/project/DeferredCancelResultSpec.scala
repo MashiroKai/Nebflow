@@ -13,22 +13,30 @@ import scala.concurrent.duration.*
 import scala.util.Random
 
 /**
- * eng-deferred-cancel 批（`chain-tasklist-anim` 链 · 2026-10-02）——**K-2**
- * （「deferred-cancel 终止时保留已 produced 产物，非覆盖清空」）与**取消原因承载分离**
- * 的自证判据。
+ * eng-deferred-cancel batch — in-flight artifact preservation (K-2) and the
+ * separation of the cancel reason from the produced artifact.
  *
- * 面（逐条对应任务书 §二.1 B / §二.3 红线）：
- *  - K1 已产出 `result` 在取消后**仍可读出**（原因**前置**、产物在后，不得互相覆盖）。
- *  - K2 取消原因前缀恒在 offset 0（`CancelSource.fromResult` 用 `startsWith` 解析 ⇒
- *    前置是硬契约，不是排版选择）——并给改动前「覆盖」形态的对照读数。
- *  - K3 二次取消**幂等**：同一节点再取消一次 ⇒ 恰一个原因、不叠加（判据复用既有解析单点）。
- *  - K4 无产物时行为**逐字不变**（`result` = 单纯取消原因），即本项只影响「已有产物」那一面。
- *  - K5 面①（已终态成员的 `preserved ⊎ skipped` 三分区语义）不受影响：本 spec 只读
- *    `NodeDef.result`，不触分区投影。
+ * A deferred cancel stops a node AFTER the tool batch it was running has
+ * produced its results. Those results are the artifact; the cancel reason must
+ * not overwrite them.
  *
- * **红验语义**（变异 ⇒ 本 spec 必红）：把 `preservedCancelResult` 回改成「恒返回 rendered」
- * （= 改动前的覆盖形态）⇒ K1/K3 红、K2 的对照读数改观；把前置改成后置（`s"$prev\n\n$rendered"`）
- * ⇒ K2 红（`fromResult` 反解为 `None`）。
+ * Faces:
+ *  - K1 an already-produced `result` is STILL readable after the cancel (the
+ *    reason is PREPENDED, the artifact follows; neither overwrites the other).
+ *  - K2 the cancel-reason prefix always stays at offset 0
+ *    (`CancelSource.fromResult` parses with `startsWith`, so prepending is a
+ *    hard contract, not a formatting choice) — with a control reading for the
+ *    pre-batch overwriting form.
+ *  - K3a a re-cancel through the ENTRY point is a zero-write no-op, the artifact
+ *    intact (the `ChainCancelScope` gate skips a terminal node).
+ *  - K3b the write point's second line of defence keeps exactly ONE reason when
+ *    a cancel rendering is already there (no stacking).
+ *  - K4 with no artifact the rendering is byte-identical to the historical form,
+ *    i.e. this item only affects the already-produced face.
+ *
+ * Red semantics: reverting `preservedCancelResult` to "always return rendered"
+ * (the pre-batch overwriting form) turns K1/K3a red; appending the reason AFTER
+ * the artifact (the prefix contract broken) turns K2 red.
  */
 class DeferredCancelResultSpec extends CatsEffectSuite:
 
@@ -52,7 +60,7 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  /** 静默 LLM 桩：本 spec 只验终态写点，turn 不参与。 */
+  /** Quiet LLM stub: this spec judges the terminal write point only; turns do not participate. */
   private class QuietLlm:
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -118,7 +126,7 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
       idx = s.indexOf(marker, idx + marker.length)
     n
 
-  /** 真实取消写点（detach/notify 关掉：本 spec 只量 `result` 组成，不量级联/通知）。 */
+  /** The real cancel write point (detach/notify off: this spec measures the `result` composition only). */
   private def cancel(rt: ProjectRuntime, id: String, reason: String): IO[Unit] =
     rt.engine.cancelNode(id, reason, CancelSource.User, detach = false, notify = false, emitNotify = false)
 
@@ -133,7 +141,7 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
       _ <- f(rt, system).guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
     yield ()
 
-  // ── K1 / K2：已产出产物保留 + 原因前缀仍在 offset 0（含改动前对照）──────────
+  // ── K1 / K2: the artifact survives and the reason prefix stays at offset 0 ──
 
   test("K1/K2: an already-produced result survives the cancel, with the reason still at offset 0") {
     val produced = "PRODUCED_ARTIFACT: 12 of 20 samples analysed; partial report written to out/report.md"
@@ -167,14 +175,17 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
     }
   }
 
-  // ── K3a：可达入口的幂等（零写；零回归控制，非本批新判据）──────────────────
+  // ── K3a: re-cancel through the entry point is a zero-write no-op ───────────
   //
-  // 可达性/分层说明（写错判据的坑，先行钉死）：`ChainCancelScope` 闸在
-  // **`cancelNodes`**（链级/节点级入口）里，不在 `NodeCompletion.cancelNode` 本体
-  // ⇒ 第二次取消经**入口**不可达终态写点（幂等出口：零写零信号零通知），而**直调**本体
-  // 仍会再写一次。故本用例走**入口**（`cancelNodes`）量上游闸；`preservedCancelResult`
-  // 的防线另见 K3b（直调探针）。
-  // 已有先例：`ChainCancelSpec` C6 已钉「第二调用 == 0 帧/0 注入/0 审计」全链形态。
+  // Layer caveat, nailed down up front because getting it wrong writes a false
+  // judge: the `ChainCancelScope` gate lives in **`cancelNodes`** (the chain and
+  // node entry points), NOT in `NodeCompletion.cancelNode` itself. So a second
+  // cancel through the entry point is unreachable from the terminal write point
+  // (idempotent exit: zero write, zero signal, zero notify), while calling the
+  // write point DIRECTLY writes once more. Hence this case drives the ENTRY
+  // point to measure the upstream gate; the write point's own defence is K3b.
+  // Precedent: `ChainCancelSpec` C6 already pins the full-chain form (a second
+  // call yields 0 frames / 0 injections / 0 audit rows).
 
   test("K3a: re-cancelling an already-cancelled node through the entry point is a zero-write no-op") {
     val produced = "ARTIFACT-B: 3 findings persisted"
@@ -206,13 +217,16 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
     }
   }
 
-  // ── K3b：终态写点的第二道防线（不可达入口 · 直调探针）────────────────────
+  // ── K3b: the write point's second line of defence (direct-call probe) ─────
   //
-  // `preservedCancelResult` 的不叠加规则是**第二道防线**：经 `ChainCancelScope` 闸后
-  // 不可达（见 K3a），故此处**直调** `cancelNode` 把节点摆到「已 cancelled 且 result 已是
-  // 取消渲染」的形态上探它。判据 = 恰一个原因（禁叠成两个）+ 仍可解析。
-  // 🔴 不主张「产物在此路径也被保留」——本路径连第一次的产物都已被既有的覆盖形态替代；
-  // 本批的可达保留面见 K1/K2。
+  // The no-stacking rule in `preservedCancelResult` is a DEFENCE IN DEPTH: after
+  // the `ChainCancelScope` gate it is unreachable (see K3a), so this case calls
+  // `cancelNode` directly with a node that is already cancelled and whose result
+  // is already a cancel rendering. The judge = exactly one reason (not stacked)
+  // and still machine-readable.
+  // It does NOT claim the artifact is preserved on that path: there the artifact
+  // was already replaced by the pre-existing overwriting form on the first
+  // cancel. The reachable preservation face is K1/K2.
 
   test("K3b: the write-point's second line of defence keeps exactly one reason (no stacking)") {
     val alreadyCancelled = s"cancelled[source=${CancelSource.UserCode}]: reason=first"
@@ -235,7 +249,7 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
     }
   }
 
-  // ── K4：无产物 ⇒ 逐字不变 ──────────────────────────────────────────────
+  // ── K4: no artifact ⇒ byte-identical to the historical rendering ───────────
 
   test("K4: with no produced result the rendering is byte-identical to the historical form") {
     withRig("k4") { (rt, _) =>

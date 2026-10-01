@@ -12,28 +12,39 @@ import scala.concurrent.duration.*
 import scala.util.Random
 
 /**
- * eng-deferred-cancel 批（`chain-tasklist-anim` 链 · 2026-10-02）——**K-1 判据③**
- * （「链的取消态仍可判读」：引擎面 deferred-cancel 期间必须有**可读面**，禁做成静默延迟）
- * 与**零载荷形状变更**的自证判据。
+ * eng-deferred-cancel batch — the READABLE-CANCELLATION criterion (K-1 #3) and the
+ * zero-payload-shape-change discipline, judged on the chain ledger.
  *
- * 面（逐条对应任务书 §二.1 K-1 / §二.1 B / §二.3 红线）：
- *  - L1 意图可判读：`withChainCancelIntent` 登记后 `cancellingAtOf` 可读出登记时刻。
- *  - L2 **不入三态投影**：意图在途时 `statusOf` 仍是 `active`（🔴 禁改 `cancelled > paused`
- *    优先级、禁动 REST/WS 载荷形状）——本批只新增「进行中」的可读面，不改状态投影。
- *  - L3 **终态原子清**：`withChainControl(cancelled)` 与意图清除落在**同一次** State 改写上
- *    ⇒「正在取消 ∧ 已取消」不可同时可读。
- *  - L4 TTL 读时过滤：超窗条目不参与判读（崩在「意图已写、取消未跑」窄窗内的残留自清），
- *    且写入点顺带惰性 prune。
- *  - L5 落盘面：`setChainCancelIntent` 真落盘（重开可读出）、`setChainControl(cancelled)`
- *    把意图清除也落盘（否则内存与磁盘静默不一致）。
- *  - L6 面分工：节点级 `cancelNodes` **不得**伪造链级意图（意图只由 `cancelChain` 腿登记）。
+ * A deferred cancel must not read as a silent delay: while the deferred legs are
+ * letting in-flight tools finish, "this chain is being cancelled" has to be
+ * readable somewhere. This spec pins that face and, just as importantly, pins
+ * what it must NOT change.
  *
- * **红验语义**（逐条钉死「把判据改坏 ⇒ 本 spec 必红」的变异）：
- * 评测红读数以「把实现回改成改动前形态」为变异臂——`withChainCancelIntent` 恒返回入参
- * ⇒ L1/L5 红；`cancellingChains` 进 `statusOf` ⇒ L2 红；`withChainControl` 不清意图 ⇒
- * L3 红；`cancellingAtOf` 去掉 TTL 过滤 ⇒ L4 红。
+ * Faces:
+ *  - L1 the intent is readable: after `withChainCancelIntent`, `cancellingAtOf`
+ *    reports the registration instant.
+ *  - L2 it does NOT enter the three-state projection: while the intent is live,
+ *    `statusOf` still reports `active`, and the REST/WS payload shape is
+ *    untouched (the batch only adds an "in progress" readable face; the
+ *    `cancelled > paused > active` priority is not touched).
+ *  - L3 the terminal write clears it in the SAME state rewrite, so a chain can
+ *    never read as both "cancelling" and "cancelled".
+ *  - L4 the TTL filters on read (crash residue inside the narrow "intent
+ *    written, cancel not run" window is swept), and the write path prunes.
+ *  - L5 persistence: `setChainCancelIntent` really lands on disk (readable after
+ *    a reopen), and `setChainControl(cancelled)` persists the clearing too,
+ *    otherwise memory and disk silently disagree.
+ *  - L6 the chain leg records the intent; a node-level cancel must never
+ *    fabricate a chain-level one.
  *
- * 本位只做**定向**分批跑（`testOnly`），全量 `sbt test` 归零——见任务书 §二.4。
+ * Red semantics: each judge is meant to go red when its implementation point is
+ * reverted to the pre-batch form — the intent write removed (L1/L5), the intent
+ * folded into `statusOf` (L2), the terminal write not clearing (L3), the TTL
+ * filter dropped (L4). Readings are recorded in the batch report; the mutation
+ * arms live outside this file.
+ *
+ * This seat runs targeted `testOnly` batches only; the full `sbt test` suite is
+ * out of scope for this batch.
  */
 class DeferredCancelLedgerSpec extends CatsEffectSuite:
 
@@ -48,7 +59,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       t0
     ).state
 
-  // ── L1 意图可判读（判据③的承载）────────────────────────────────────────
+  // ── L1 the intent is readable (the carrier of criterion 3) ────────────────
 
   test("L1: recording a cancel intent makes the chain readable as 'cancellation in progress'") {
     val st = stateWithChain("chain-l1")
@@ -56,16 +67,16 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     assertEquals(
       ChainLedger.cancellingAtOf(after, "chain-l1", t0 + 1000L),
       Some(t0 + 1000L),
-      "K-1③: the in-progress cancel intent must be readable (禁静默延迟)"
+      "the in-progress cancel intent must be readable (a deferred cancel must not read as a silent delay)"
     )
     assertEquals(
       ChainLedger.cancellingChainsAt(after, t0 + 1000L).keySet,
       Set("chain-l1"),
-      "K-1③: the in-progress face must be enumerable for the REST/WS read path"
+      "the in-progress face must be enumerable for the REST/WS read path"
     )
   }
 
-  // ── L2 不入三态投影（零载荷形状变更）───────────────────────────────────
+  // ── L2 stays OUT of the three-state projection (zero payload shape change) ─
 
   test("L2: the in-progress intent does NOT enter the three-state projection (payload shape unchanged)") {
     val st = stateWithChain("chain-l2")
@@ -73,7 +84,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     assertEquals(
       ChainLedger.statusOf(after, "chain-l2"),
       ChainLedger.StatusActive,
-      "an in-flight cancel intent is NOT a terminal state: projection stays active (禁改 cancelled > paused 优先级)"
+      "an in-flight cancel intent is NOT a terminal state: the projection stays active (the cancelled > paused priority is untouched)"
     )
     assertEquals(ChainLedger.cancelledAtOf(after, "chain-l2"), None, "cancelledAt must stay empty while the cancel is in progress")
     assertEquals(ChainLedger.pausedAtOf(after, "chain-l2"), None, "the intent must not touch pausedChains")
@@ -83,7 +94,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     )
   }
 
-  // ── L3 终态原子清（两面不可同时可读）────────────────────────────────────
+  // ── L3 the terminal write clears it atomically (the two faces cannot coexist)
 
   test("L3: the terminal cancel write clears the in-progress intent in the SAME state rewrite") {
     val st = stateWithChain("chain-l3")
@@ -93,13 +104,13 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     assertEquals(
       ChainLedger.cancellingAtOf(landed, "chain-l3", t0 + 2000L),
       None,
-      "「正在取消 ∧ 已取消」不可同时可读 — the terminal write must clear the intent atomically"
+      "a chain must never read as both 'cancelling' and 'cancelled' — the terminal write clears the intent atomically"
     )
     assertEquals(ChainLedger.cancelledAtOf(landed, "chain-l3"), Some(t0 + 2000L), "the terminal cancellation itself must still be recorded")
     assertEquals(ChainLedger.statusOf(landed, "chain-l3"), ChainLedger.StatusCancelled, "projection priority stays cancelled > paused > active")
   }
 
-  // ── L4 TTL 读时过滤 + 写入惰性 prune ────────────────────────────────────
+  // ── L4 read-time TTL filter + lazy prune on write ─────────────────────────
 
   test("L4: an intent older than the TTL reads as absent, and a new record prunes the stale entry") {
     val st = stateWithChain("chain-l4")
@@ -125,7 +136,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     )
   }
 
-  // ── L5 落盘面 ─────────────────────────────────────────────────────────
+  // ── L5 the persisted face ─────────────────────────────────────────────────
 
   test("L5: the intent is persisted, and the terminal write persists its clearing too") {
     val dir = os.temp.dir(prefix = "nb-deferred-cancel-ledger-", deleteOnExit = false)
@@ -166,7 +177,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       assert(!finalDisk.contains(s""""chain-l5":$now"""), "the stale intent row must not remain on disk after the terminal write")
   }
 
-  // ── L6 面分工：节点级取消不得伪造链级意图 ────────────────────────────────
+  // ── L6 division of labour: a node-level cancel must not fabricate a chain intent
 
   private val tempRoot: os.Path = os.pwd / "target" / "test-deferred-cancel-ledger"
   private val originalRoot = PathUtil.dataRoot
@@ -176,7 +187,7 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  /** 真 NodeEngine 夹具（沿 `ChainCascadeSpec` 同款形态；零 spawn、零端口）。 */
+  /** Real NodeEngine fixture (same shape as `ChainCascadeSpec`; zero spawn, zero ports). */
   private def mountRig(name: String): IO[(ProjectRuntime, os.Path, ActorSystem, SharedResources)] =
     PathUtil.setDataRoot(tempRoot)
     os.remove.all(tempRoot)
@@ -214,8 +225,10 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     yield (rt, ws, system, res)
 
   private def seedChain(rt: ProjectRuntime, chainId: String, a: String, b: String): IO[Unit] =
-    // 弱连通分量靠**真实 out 边**成形（沿 `ChainCancelSpec.linearChain` 同款口径；
-    // 只写 `deps` 不成链——实测该夹具下分量退化为单成员，前置断言当场抓住）。
+    // The weakly-connected component forms through a REAL out edge (same
+    // convention as `ChainCancelSpec.linearChain`); seeding only `deps` does not
+    // make a chain — measured: the component degenerated to a single member,
+    // which the precondition assertion caught on the spot.
     rt.store
       .mutate(s =>
         s.copy(nodes = s.nodes ++ Map(
@@ -231,13 +244,13 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       mounted <- mountRig(name)
       (rt, ws, system, res) = mounted
       _ <- seedChain(rt, "chain-n-l6", "n-l6a", "n-l6b")
-      // 链号派生口径：`chain-<分量内 createdAt 最早成员 id>`（本夹具最早 = n-l6a）
+      // Chain-id derivation: `chain-<earliest createdAt member of the component>`
       resolved <- rt.store.chainMembersOf("chain-n-l6a")
       ledgerPath = ws / ".nebflow" / ChainLedger.FileName
-      // 前置：取消前链控面无在途意图（走**落盘面**读，避免只看内存）
+      // Precondition read from the PERSISTED face, not just memory
       before <- IO.blocking(if os.exists(ledgerPath) then os.read(ledgerPath) else "")
       _ <- IO(assert(!before.contains("cancellingChains"), s"precondition: no intent face before the chain cancel (file=${os.exists(ledgerPath)})"))
-      // 链级腿：意图必须在**任何节点被信号之前**登记（判据③的可判读面）
+      // The chain leg must register the intent BEFORE any node is signalled
       rep <- rt.engine.cancelChain("chain-n-l6a", CancelSource.User, "user wants this track gone")
       snap <- rt.store.chainLedgerStore.snapshot
       afterIntent <- IO.blocking(if os.exists(ledgerPath) then os.read(ledgerPath) else "")
@@ -264,14 +277,18 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     )
   }
 
-  // ── L7 settleDeferredCancel：探针必须锚「会话真的停了」而非登记表 ─────────
+  // ── L7 the settle probe must anchor on "the session really stopped" ───────
   //
-  // 这条是 K-1 判据①的**引擎侧护栏**：`runWithAgent` 的取消腿放行 deferred stop 后，
-  // 必须以「会话已终止」为放行条件再走 `system.stop(ref)` 一阶拆解；否则一阶拆解会
-  // 与「落批」赛跑，把 K-2 要保的产物重新砍掉。
-  // 探针选择是**承重**的（实现头注点名）：`system.isAlive` = actor 系统自己的存活登记表
-  // （actor 循环在 guarantee 里自己摘除）；`resources.agentRegistry` 由**本 fiber** 摘除、
-  // 发生在本等待**之后** ⇒ 轮询它永远看不到转变、只会白烧满额 grace。
+  // The engine-side guard for K-1 criterion 1: after releasing the deferred stop,
+  // the cancel leg must wait for the session to actually terminate before the
+  // first-order engine teardown (`system.stop(ref)`); otherwise that teardown
+  // races the batch persistence and re-cuts exactly the artifacts K-2 preserves.
+  //
+  // The probe choice is LOAD-BEARING (named in the implementation header):
+  // `system.isAlive` is the actor system's own liveness registry, which the actor
+  // loop removes itself in its `guarantee`; `resources.agentRegistry` is removed
+  // by THIS very fiber, a few lines BELOW the wait — polling it would never
+  // observe the transition and would always burn the full grace window.
 
   test("L7: settleDeferredCancel observes the real session death (isAlive probe), not the engine's own registry") {
     val name = "deferred-l7"
@@ -287,17 +304,20 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
         },
         sid
       )
-      // 登记表**保持有记录**：这正是实现刻意不用的那个探针面（本 fiber 稍后才摘）
+      // The registry entry deliberately STAYS present: that is the probe face the
+      // implementation must not use (this fiber removes it only later)
       _ <- res.agentRegistry.update(
         _ + (sid -> nebflow.actor.AgentRecord(sid, ref, nebflow.actor.AgentKind.Delegate, sid))
       )
       aliveBefore <- system.isAlive(ref.path)
-      // 停掉会话 actor（actor 循环自己摘除 isAlive 登记；引擎登记表**不动**）
+      // Stop the session actor (the actor loop removes the isAlive entry itself;
+      // the engine's own registry is left UNTOUCHED)
       _ <- system.stop(ref)
       stopped <- rt.engine.settleDeferredCancel(ref)
       stillRegistered <- res.agentRegistry.get.map(_.contains(sid))
       t0 <- IO(System.currentTimeMillis())
-      // 对照臂：登记表里仍有记录 ⇒ 若探针误用登记表则必然烧满 grace
+      // Control arm: the registry entry is still there, so a probe pointed at
+      // the registry would necessarily burn the full grace window
       second <- rt.engine.settleDeferredCancel(ref)
       elapsed = System.currentTimeMillis() - t0
     yield
