@@ -189,7 +189,7 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     // asserted. Form-agnostic: no class of this batch is named — the item is
     // found by the label it carries. The switch is triggered INSIDE this same
     // evaluate so the sampler is provably already recording when it fires.
-    const switchRead = await page.evaluate(async ({ textA }) => {
+    const switchRead = await page.evaluate(async ({ textA, textB }) => {
       const chat = document.getElementById('chat');
       const ind = Array.from(chat.children).find(k =>
         !k.classList.contains('row') && !k.classList.contains('turn-header'));
@@ -213,11 +213,49 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
       let minTop = baseTop;
       let sawRunning = false;
       let frames = 0;
-      for (let i = 0; i < 40; i++) {
-        if (!outgoing.isConnected) break;
-        const top = outgoing.getBoundingClientRect().top;
-        if (top < minTop) minTop = top;
-        if (outgoing.getAnimations().some(a => a.playState === 'running')) sawRunning = true;
+      // Cross-fade guard: sample BOTH sides of the switch every frame. The
+      // criterion is "no double exposure" — the two slot items must never be
+      // simultaneously legible, the way a hard switch reads (old out, a beat
+      // of nothing, new in). Drawn from computed opacity, not from any class
+      // of this batch, so the assertion stays form-agnostic. A cross-fade
+      // (the round-2 defect) shows up here as a long run of frames where both
+      // opacities are > 0.05; a hard switch shows a run where NEITHER is.
+      const opa = (el) => (el && el.isConnected) ? +getComputedStyle(el).opacity : 0;
+      let bothFrames = 0;
+      let peakOverlap = 0;
+      let gapFrames = 0;
+      // Ordering, in wall-clock terms, of the two visibility edges. Sampling a
+      // frame COUNT is rAF-rate dependent and can read 0 under load even when
+      // the switch is correct; the temporal order of the edges cannot.
+      let tOut = null;  // the leaving item became invisible
+      let tIn = null;   // the entering item became visible
+      const t0 = performance.now();
+      // Time-budgeted, not frame-budgeted: under load a frame count can expire
+      // before the held-back entering item has even started, which would read
+      // as a false pass. 1300ms covers rollout (0.35s) + the stagger + roll-in.
+      for (let i = 0; i < 400 && performance.now() - t0 < 1300; i++) {
+        if (outgoing.isConnected) {
+          const top = outgoing.getBoundingClientRect().top;
+          if (top < minTop) minTop = top;
+          if (outgoing.getAnimations().some(a => a.playState === 'running')) sawRunning = true;
+        }
+        // the entering item is born by the switch, so re-resolve it each frame
+        const incoming = itemFor(textB);
+        const oa = opa(outgoing);
+        const ob = opa(incoming);
+        const dt = performance.now() - t0;
+        if (tOut === null && oa <= 0.05) tOut = dt;
+        if (tIn === null && ob > 0.05) tIn = dt;
+        if (oa > 0.05 && ob > 0.05) {
+          bothFrames++;
+          // same-line slot: the two label boxes share x, so vertical overlap
+          // is the legibility proxy the verifier scored (peak label overlap)
+          const ra = outgoing.getBoundingClientRect();
+          const rb = incoming.getBoundingClientRect();
+          const ov = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+          if (ov > peakOverlap) peakOverlap = +ov.toFixed(1);
+        }
+        if (oa <= 0.05 && ob <= 0.05) gapFrames++;
         frames++;
         await raf();
       }
@@ -227,9 +265,14 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
         .map(n => n.textContent.trim());
       return {
         exit: { baseTop: +baseTop.toFixed(2), minTop: +minTop.toFixed(2), frames, sawRunning },
+        cross: {
+          bothFrames, peakOverlap, gapFrames,
+          tOut: tOut === null ? null : +tOut.toFixed(1),
+          tIn: tIn === null ? null : +tIn.toFixed(1),
+        },
         mid: { running: liveAnims, spins, labels },
       };
-    }, { textA: TOOL_A_TEXT });
+    }, { textA: TOOL_A_TEXT, textB: TOOL_B_TEXT });
     expect(switchRead, 'the switch was traceable').not.toBeNull();
     expect(switchRead.mid.running, 'the switch is an animation, not an instant swap').toBeGreaterThan(1);
     expect(switchRead.mid.labels.join(' '), 'the next tool is named on the line').toContain(TOOL_B_TEXT);
@@ -239,6 +282,23 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     expect(exit.sawRunning, 'the outgoing item animates on its way out (it does not just vanish)').toBe(true);
     expect(exit.baseTop - exit.minTop,
       'the outgoing item ROLLS UP as it leaves (its top actually rises on screen)').toBeGreaterThan(2);
+
+    // No double exposure: the two items must never be legible at once, and the
+    // old one must be gone before the new one arrives (the demo's hard switch
+    // reads as a visible gap, not a cross-fade). This is the round-2 criterion
+    // the frame trace above exists to catch.
+    expect(switchRead.cross.bothFrames,
+      'the two slot items are never simultaneously visible (no cross-fade)').toBe(0);
+    expect(switchRead.cross.peakOverlap,
+      'the leaving and entering labels never overlap on screen').toBe(0);
+    // Ordering, not frame count (rAF-rate independent): the leaving item is
+    // fully gone BEFORE the entering one starts to appear. Under a cross-fade
+    // both edges land at ~0ms — the entering item is already up while the
+    // leaving one is still fading, so the gap between the two edges collapses.
+    expect(switchRead.cross.tOut, 'the leaving item is observed going invisible').not.toBeNull();
+    expect(switchRead.cross.tIn,
+      'the entering item is held back until the leaving item has gone').toBeGreaterThanOrEqual(
+      switchRead.cross.tOut + 100);
 
     // Settled: the outgoing item is gone; only the new tool owns the line.
     await page.waitForTimeout(600);
