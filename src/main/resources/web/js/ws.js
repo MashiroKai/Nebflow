@@ -178,6 +178,13 @@ const GLOBAL_MSG_TYPES = new Set([
   // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
   // TERMINAL 会把 activeView 换成 primary。
   'wsBrowseList', 'wsBrowseMkdir',
+  // 链控状态广播（chainview 批 2026-10-01 · 引擎面单点 ProjectActor.chainStateFrame）：
+  //   {type:'chainState', project, chainId, status:'active'|'paused'|'cancelled',
+  //    pausedAt|null, cancelledAt|null} —— 无 sessionId 的全应用广播（引擎面每条链控
+  //   成功腿经既有 wsHub.broadcast 发一帧）。🔴 必须入 GLOBAL：否则 :647 会把无
+  //   sessionId 的非 GLOBAL 帧当会话内事件 ⇒ setActiveView(null)，把用户正在看的
+  //   会话/面板视图抢走（每次链控动作抢一次）——与上方 projectCreated/nodeCreated 同款。
+  'chainState',
   // 链级取消回帧（chaincancel 批 2026-09-17，R2）：{type, ok, chainId, chainTitle?,
   // cancelled[]/preserved[]/skipped[]/injected/notified, error?}——无 sessionId 的
   // 弹窗私有请求-响应（与 cancelAgentResult 同族）；必须 GLOBAL：无 sessionId 时

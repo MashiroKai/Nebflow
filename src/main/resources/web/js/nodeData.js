@@ -36,7 +36,18 @@ export const API = {
   // 项目 AGENTS.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；
   // URL 不变，磁盘读写工作区根 AGENTS.md（旧 .nebflow/Agent.md 由后端回落兼容）
   agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
+  // 链控三端点（chainview 批 2026-10-01 · 引擎面契约，见 ProjectsRoutes 的
+  // `chainControlRoute`）：POST /api/projects/<name>/chains/<chainId>/{pause|resume|cancel}
+  //   · 需 auth；路径相对 Router("/api") 挂载
+  //   · 成功 200 → {chainId,title,status,memberIds,pausedAt,cancelledAt}
+  //   · 失败 404 → {error:"<码>: <可行动说明>"}（CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER /
+  //     CHAIN_CANCELLED）；每条成功腿另广播一帧 `chainState`（WS 单点，前端据此刷新）
+  chainControl: (name, chainId, action) =>
+    `/api/projects/${encodeURIComponent(name)}/chains/${encodeURIComponent(chainId)}/${action}`,
 };
+
+/** 链控合法动作（与引擎面三条端点一一对应；禁前端自造第四种）。 */
+export const CHAIN_CONTROL_ACTIONS = ['pause', 'resume', 'cancel'];
 
 export const NODE_WS = {
   created: 'nodeCreated',
@@ -178,6 +189,36 @@ export async function fetchFlowMapArchive(projectName) {
     return Array.isArray(data?.batches) ? data.batches : null;
   } catch (_) {
     return null;
+  }
+}
+
+/**
+ * 链控三动作（pause / resume / cancel）统一取数点。POST /api/projects/<name>/chains/<chainId>/<action>
+ * （需 auth）。返回可判别结果对象——调用方据此分流（成功刷新 / 拒绝提示 / 网络错误），
+ * 不抛异常（面板腿不因单次链控失败而中断）。
+ *
+ * 契约（引擎面 `ProjectsRoutes.chainControlRoute`）：
+ *   ok   200 —— data = {chainId,title,status,memberIds,pausedAt,cancelledAt}|{chainId,status,...}
+ *   http 非 2xx —— status + data.error（404 携带 CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER /
+ *        CHAIN_CANCELLED 码前缀与可行动说明）
+ *   network fetch 拒绝或响应不可解析
+ * @param {string} projectName @param {string} chainId
+ * @param {'pause'|'resume'|'cancel'} action
+ * @returns {Promise<{state:'ok', data:any}|{state:'http', status:number, data:any}|{state:'network'}>}
+ */
+export async function controlChain(projectName, chainId, action) {
+  if (!CHAIN_CONTROL_ACTIONS.includes(action)) return { state: 'network' };
+  try {
+    const r = await fetch(API.chainControl(projectName, chainId, action), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
   }
 }
 

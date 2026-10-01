@@ -6,6 +6,13 @@
 //   ~/.nebflow/docs/Nebflow/20260902_tasklist-node-entries-v2-dark.png
 //   ~/.nebflow/docs/Nebflow/20260902_tasklist-node-entries-v2-light.png
 //
+// 2026-10-01 随改随对（chainview-ui-impl-r2 批）：原 `taskListUpdate` /
+// `teamTaskListUpdate` 注入随旧任务区退役**已无渲染路径**（taskList.js 无 handler、
+// ws.js 无路由表项，见 tests/tasklist-nodes.spec.mjs T7），继续注入只是死代码 ⇒
+// 删除该段，改装**链视图**夹具：快照 `chains` 旁挂 + 节点 `chainId` 条件键，
+// 覆盖折叠链行（28px）/ 展开成员行（22px）/ 徽标五态 / 未分组组。
+// 🔴 本脚本只做视觉取证；像素/滚动读数归 evidence 的 chainview-measure.cjs。
+//
 // Run: node scripts/shot-tasklist-nodes.cjs
 
 const { chromium } = require('playwright');
@@ -26,6 +33,22 @@ const node = (over) => ({
   hasWorktree: false, worktree: null, result: null, retries: 0,
   createdAt: now, completedAt: null, startedAt: null, ttlLeftSec: null, ...over,
 });
+
+// ── 链视图夹具（chainview 批）：两条链（活跃 4 位 + 暂停 1 位）+ 两个无链节点 ──
+const A = now - 400_000;
+const CHAIN_NODES = [
+  { project: 'nebflow-project', node: node({ id: 'c-disp', name: 'dispatch', agent: 'general', status: 'completed', createdAt: A, completedAt: A + 60_000, ttlLeftSec: 300, chainId: 'chain-a', role: 'task', in: [], deps: [] }) },
+  { project: 'nebflow-project', node: node({ id: 'c-impl', name: 'chainview-impl', agent: 'general', status: 'running', createdAt: A + 70_000, startedAt: A + 70_000, chainId: 'chain-a', role: 'task', in: ['c-disp'], deps: ['c-disp'] }) },
+  { project: 'nebflow-project', node: node({ id: 'c-verify', name: 'chainview-verify', agent: 'general', status: 'pending', createdAt: A + 80_000, chainId: 'chain-a', role: 'verifier', in: ['c-impl'], deps: ['c-impl'] }) },
+  { project: 'nebflow-project', node: node({ id: 'c-sink', name: 'merge-sink', agent: 'general', status: 'pending', createdAt: A + 90_000, chainId: 'chain-a', role: 'task', merge: true, in: ['c-verify'], deps: ['c-verify'] }) },
+  { project: 'nebflow-project', node: node({ id: 'd-one', name: 'paused-work', agent: 'general', status: 'running', createdAt: A + 100_000, startedAt: A + 100_000, chainId: 'chain-b' }) },
+  { project: 'czt-project', node: node({ id: 'u-kernel', name: 'kernel-boot', agent: 'general', status: 'running', createdAt: A + 110_000, startedAt: A + 110_000 }) },
+  { project: 'czt-project', node: node({ id: 'u-idle', name: 'idle-probe', agent: 'general', status: 'pending', createdAt: A + 120_000 }) },
+];
+const CHAINS = [
+  { project: 'nebflow-project', chain: { id: 'chain-a', title: 'chainview', entries: ['c-disp'], ends: ['c-sink'], memberIds: ['c-disp', 'c-impl', 'c-verify', 'c-sink'], status: 'active' } },
+  { project: 'nebflow-project', chain: { id: 'chain-b', title: 'paused-chain', entries: ['d-one'], ends: ['d-one'], memberIds: ['d-one'], status: 'paused' } },
+];
 
 (async () => {
   const browser = await chromium.launch();
@@ -49,7 +72,12 @@ const node = (over) => ({
       if (p === '/') p = '/index.html';
       if (p.startsWith('/api/')) {
         if (p === '/api/projects') {
-          return route.fulfill({ json: { projects: [] } });
+          return route.fulfill({ json: { projects: [{ name: 'nebflow-project', workspace: '/w/nb', agentFile: 'nebflow-project', description: '', createdAt: new Date(now).toISOString() }, { name: 'czt-project', workspace: '/w/czt', agentFile: 'czt-project', description: '', createdAt: new Date(now).toISOString() }] } });
+        }
+        if (/\/flow-map$/.test(p)) {
+          const proj = p.split('/')[3];
+          const mine = CHAIN_NODES.filter((n) => n.project === proj);
+          return route.fulfill({ json: { nodes: mine.map((e) => e.node), worktrees: [], chains: CHAINS.filter((c) => c.project === proj).map((c) => c.chain), meta: { project: proj, updatedAt: now } } });
         }
         return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
       }
@@ -73,27 +101,22 @@ const node = (over) => ({
     await df({ type: 'historyPage', sessionId: ROOT_SID, messages: [], hasMore: false, offset: 0 });
     await page.waitForTimeout(400);
 
-    // 任务条目（team 分组 + 成员标注）
-    await df({
-      type: 'taskListUpdate', sessionId: ROOT_SID,
-      tasks: [
-        { id: 't-1', subject: '任务列表并入 Flow Map 节点条目', status: 'in_progress', teamId: 'nebflow-project', assignee: 'Frontend', updatedAt: new Date(now - 30_000).toISOString() },
-        { id: 't-2', subject: '视觉验收截图（亮暗双主题）', status: 'pending', teamId: 'nebflow-project', assignee: 'qa-frontend', updatedAt: new Date(now - 300_000).toISOString() },
-      ],
-    });
-    await page.waitForTimeout(200);
-
-    // 节点条目：两个项目 × 五状态
-    await df({ type: 'nodeCreated', project: 'nebflow-project', nodeId: 'n-fe', node: node({ id: 'n-fe', name: 'tasklist-node-entries', agent: 'Frontend', status: 'running', startedAt: now - 45_000 }) });
-    await df({ type: 'nodeCreated', project: 'nebflow-project', nodeId: 'n-rev', node: node({ id: 'n-rev', name: 'visual-review', agent: 'design-engineer', status: 'completed', completedAt: now - 60_000, ttlLeftSec: 240 }) });
-    await df({ type: 'nodeCreated', project: 'nebflow-project', nodeId: 'n-api', node: node({ id: 'n-api', name: 'nodelist-api', agent: 'Backend', status: 'failed', completedAt: now - 150_000, ttlLeftSec: 150 }) });
-    await df({ type: 'nodeCreated', project: 'czt-project', nodeId: 'n-doc', node: node({ id: 'n-doc', name: 'readme-draft', agent: 'Docs', status: 'wiring' }) });
-    await df({ type: 'nodeCreated', project: 'czt-project', nodeId: 'n-plan', node: node({ id: 'n-plan', name: 'paper-outline', agent: 'czt-writer', status: 'pending' }) });
-    await df({ type: 'nodeCreated', project: 'czt-project', nodeId: 'n-old', node: node({ id: 'n-old', name: 'first-draft', agent: 'Docs', status: 'cancelled', completedAt: now - 100_000, ttlLeftSec: 200 }) });
+    // 节点入口：先 renderTaskList 起渲染管线（首渲会拉快照 —— 上面已按项目桩住
+    // `/api/projects` 与 `/flow-map`，链旁挂随快照到达），再补 WS 帧。
+    await page.evaluate(async (sid) => {
+      const { renderTaskList, refreshNodeSnapshot } = await import('/js/taskList.js');
+      renderTaskList([], undefined, sid);
+      await refreshNodeSnapshot();
+    }, ROOT_SID);
+    for (const e of CHAIN_NODES) {
+      await df({ type: 'nodeCreated', project: e.project, nodeId: e.node.id, node: e.node });
+    }
 
     const panel = page.locator('#task-list');
     await panel.waitFor({ state: 'visible', timeout: 8000 });
-    await page.waitForFunction(() => document.querySelectorAll('#task-list .task-node').length >= 6, null, { timeout: 8000 });
+    await page.waitForFunction(() => document.querySelectorAll('#task-list .task-chain').length >= 2, null, { timeout: 8000 });
+    // 展开首链 → 成员行入镜（截图同时含折叠态与展开态）
+    await page.locator('.task-chain[data-chain-id="chain-a"]').click();
     await page.waitForTimeout(500); // 入场动画收敛
 
     const out = join(OUT_DIR, `20260902_tasklist-node-entries-v2-${colorScheme}.png`);
