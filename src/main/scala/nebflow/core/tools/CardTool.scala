@@ -892,20 +892,21 @@ Example (render a card from a file on disk — including one you saved earlier a
    *     extension face, which gate 3 owns here.
    *
    *     Three questions, in this order, because the ladder's own order HIDES
-   *     one answer behind another: `endpointVerdictLayer` (the whole ladder) is
-   *     asked first, but it runs its credential step FIRST and SHORT-CIRCUITS
-   *     at `Namespace` (`NfFilePolicy.nfCredentialDenyLayer`: any non-allowlisted
-   *     subtree of the data root answers `Namespace` immediately), so for such a
-   *     path the inode step below it is never reached — the exact trap
-   *     `FileRefs.scala:565-571` documents for the sibling inline caller, which
-   *     compensates by re-asking. So for every outcome that is not already one of
-   *     the two identity layers, this leg asks the path's OWN identity step
-   *     (`credentialIdentityLayer` — the same `nfCredentialDenyLayer` the ladder
-   *     calls) and then the inode step (`credentialInodeHit` — the same
-   *     `nfCredentialInode` the ladder calls). A `Namespace` answer from any of
-   *     them is the endpoint's REACH and says nothing about the file's identity:
-   *     this leg has its own reach rule (gate 5) and deliberately does not honour
-   *     that layer. Asked BEFORE the location gate so that a credential path is
+   *     answers behind its reach branch: `endpointVerdictLayer` (the whole
+   *     ladder) is asked first, but the ladder decides REACH before identity —
+   *     any non-allowlisted subtree of the data root answers `Namespace` up
+   *     front (`NfFilePolicy.nfCredentialDenyLayer`), so for such a path
+   *     neither the credential tables nor the inode step below them are ever
+   *     evaluated. That is the trap `FileRefs.scala:565-571` documents for the
+   *     sibling inline caller, which compensates by re-asking. So for every
+   *     outcome that is not already one of the two identity layers, this leg
+   *     asks the path's OWN identity step (`credentialIdentityLayer` — the
+   *     endpoint's own credential tables, `NfFilePolicy.nfCredentialIdentityLayer`)
+   *     and then the inode step (`credentialInodeHit` — the endpoint's own
+   *     `nfCredentialInode`). A `Namespace` answer from any of them is the
+   *     endpoint's REACH and says nothing about the file's identity: this leg
+   *     has its own reach rule (gate 5) and deliberately does not honour that
+   *     layer. Asked BEFORE the location gate so that a credential path is
    *     refused for being a credential, not merely for being out of place.
    *  5. **Location** — the real path must lie inside the data root or the
    *     project `.nebflow` directory. This is the read face's own reach rule and
@@ -965,17 +966,17 @@ Example (render a card from a file on disk — including one you saved earlier a
                       fromLadder match
                         case some @ Some(_) => some
                         case None =>
-                          // Layer 2 — the ladder short-circuits at `Namespace`
-                          // and stops BEFORE its inode step, so for a
-                          // non-allowlisted data-root subtree the inode layer
-                          // above was never evaluated. Ask the path's OWN
-                          // identity step, then the inode step directly — the
-                          // same two functions the ladder itself calls
-                          // (`NfFilePolicy.nfCredentialDenyLayer` /
-                          // `nfCredentialInode`), same tables, same snapshot.
-                          // The repo documents this exact trap for the sibling
-                          // caller at `FileRefs.scala:565-571`, which
-                          // compensates the same way.
+                          // Layer 2 — the ladder decides REACH before identity:
+                          // it short-circuits at `Namespace` and stops, so for a
+                          // non-allowlisted data-root subtree neither its
+                          // credential tables nor its inode step were reached.
+                          // Ask both directly — the endpoint's OWN credential
+                          // tables (`NfFilePolicy.nfCredentialIdentityLayer`,
+                          // the ladder's identity branch, one function, no copy)
+                          // and the endpoint's own inode helper. The repo
+                          // documents this exact trap for the sibling caller at
+                          // `FileRefs.scala:565-571`, which compensates the same
+                          // way.
                           //
                           // Only the IDENTITY layers refuse here, exactly as in
                           // layer 1: a `Namespace` answer is the endpoint's

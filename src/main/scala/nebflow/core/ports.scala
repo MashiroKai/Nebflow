@@ -57,26 +57,31 @@ trait FilePolicyPort:
   def credentialInodeHit(real: Path): Boolean
 
   /**
-   * The file's **own identity** layer alone — the endpoint ladder's FIRST step
-   * (`nfCredentialDenyLayer`), asked without the short-circuit above it.
+   * The file's **own identity** layer alone — the credential tables the
+   * endpoint ladder consults for a path it is allowed to reach
+   * (`nfCredentialDenyLayer`'s identity branch, extracted verbatim as
+   * `NfFilePolicy.nfCredentialIdentityLayer`), asked WITHOUT the namespace /
+   * reach branches that sit in front of them.
    *
    * Why a separate question exists at all: the ladder answers `Namespace` for
    * every non-allowlisted subtree of a protected root and STOPS there, so for
-   * those paths the identity layers are never evaluated. A caller that honours
-   * only the identity layers (and not the endpoint's REACH) therefore cannot
-   * read that answer off [[endpointVerdictLayer]] — `Namespace` there means
-   * "the endpoint would not serve it", not "the file is not a credential".
-   * The repo states this trap itself for the sibling caller
-   * (`FileRefs.inlineMayTakeOver`, `FileRefs.scala:565-568`), which compensates
-   * by re-asking `credentialInodeHit`; this member is the other half of the
-   * same compensation, for callers that must also ask the path's own identity.
+   * those paths neither the credential tables nor the inode step are ever
+   * evaluated. A caller that honours only the identity layers (and not the
+   * endpoint's REACH) therefore cannot read that answer off
+   * [[endpointVerdictLayer]] — `Namespace` there means "the endpoint would not
+   * serve it", not "the file is not a credential". The repo states this trap
+   * itself for the sibling caller (`FileRefs.inlineMayTakeOver`,
+   * `FileRefs.scala:565-568`), which compensates by re-asking
+   * `credentialInodeHit`; this member is the other half of the same
+   * compensation, for callers that must also ask the path's own identity.
    *
-   * `Some((layer, reason))` = the ladder's credential step refuses this path
-   * (layer is `Credential` for name/directory/known-entry shapes); `None` =
-   * that step passes. Same function, same tables, same messages as the
-   * endpoint's own step — one judgement, no copy, no parallel judge. Callers
-   * treat an unusable port as fail-closed, exactly as they do for
-   * [[endpointVerdictLayer]].
+   * `Some((layer, reason))` = the identity tables refuse this path (layer is
+   * `Credential` for name/directory/known-entry shapes); `None` = they pass.
+   * Same tables, same branch order, same messages as the endpoint's own step —
+   * one judgement, no copy, no parallel judge; 🔴 the endpoint's own verdict is
+   * unchanged (`nfCredentialDenyLayer` still reports `Namespace` first for such
+   * a path). Callers treat an unusable port as fail-closed, exactly as they do
+   * for [[endpointVerdictLayer]].
    */
   def credentialIdentityLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String)]
 end FilePolicyPort
