@@ -794,16 +794,17 @@ object GatewayMain extends IOApp:
                                     val configService = ConfigService
 
                                     // --- Bridge Manager (plugins: telegram, etc.) ---
-                                    val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
+                                    val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String], Option[nebflow.bridge.BridgeOrigin]) => IO[Unit]]] =
                                       Ref.unsafe(None)
 
                                     // Holder for wsRoutes so we can wire bridge refs after safe construction
                                     var wsRoutesHolder: Option[WebSocketRoutes] = None
 
                                     val bridgeCtx = new BridgeContext:
-                                      def injectMessage(sessionId: String, content: String, senderId: Option[String])
+                                      def injectMessage(sessionId: String, content: String, senderId: Option[String],
+                                          origin: Option[nebflow.bridge.BridgeOrigin] = None)
                                         : IO[Unit] =
-                                        bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId)))
+                                        bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId, origin)))
                                       def interruptAgent(sessionId: String): IO[Unit] =
                                         wsRoutesHolder match
                                           case Some(routes) =>
@@ -1278,7 +1279,7 @@ object GatewayMain extends IOApp:
                                                         // Wire bridge inject ref
                                                         val wireBridge = wsRoutesHolder match
                                                           case Some(wsRoutes) =>
-                                                            bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
+                                                            bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage(_, _, _, _)))
                                                           case None => IO.unit
                                                         wireBridge *> (for
                                                           _ <- logger.info(

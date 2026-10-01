@@ -28,7 +28,8 @@ import scala.jdk.CollectionConverters.*
 class BridgeManagerLoggingSpec extends CatsEffectSuite:
 
   private object NoopCtx extends BridgeContext:
-    def injectMessage(sessionId: String, content: String, senderId: Option[String]): IO[Unit] = IO.unit
+    def injectMessage(sessionId: String, content: String, senderId: Option[String],
+        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] = IO.unit
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(Nil)

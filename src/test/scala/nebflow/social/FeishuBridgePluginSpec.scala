@@ -27,18 +27,26 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       chatId: String,
       text: Option[String],
       sender: Option[String] = None,
-      messageType: String = "text"
+      messageType: String = "text",
+      contentRaw: String = "",
+      mentions: List[FeishuMessage.InboundMention] = Nil,
+      parentId: Option[String] = None,
+      rootId: Option[String] = None
   ): FeishuMessage.Inbound =
-    FeishuMessage.Inbound(
+    val raw = if contentRaw.nonEmpty then contentRaw
+      else text.map(t => Json.obj("text" -> Json.fromString(t)).noSpaces).getOrElse("")
+    FeishuMessage.inboundFrom(
       eventId = Some("evt_1"),
-      messageId = "om_1",
-      chatId = chatId,
-      messageType = messageType,
-      contentRaw = text.map(t => Json.obj("text" -> Json.fromString(t)).noSpaces).getOrElse(""),
-      text = text,
+      messageId = Some("om_1"),
+      chatId = Some(chatId),
+      messageType = Some(messageType),
+      contentRaw = Some(raw),
       createTime = None,
-      senderId = sender
-    )
+      senderId = sender,
+      parentId = parentId,
+      rootId = rootId,
+      mentions = mentions
+    ).toOption.getOrElse(throw new AssertionError(s"spec fixture could not build an Inbound for $chatId"))
 
   private def meta(id: String, chatId: Option[String]): SessionMeta =
     SessionMeta(
@@ -49,19 +57,20 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
   /** Recording BridgeContext: captures injections, serves a fixed session list,
     * and records updateBridgeConfig calls (the auto-bind persistence leg). */
   private final class RecordingCtx(sessions: Ref[IO, List[SessionMeta]]) extends BridgeContext:
-    val injected: Ref[IO, List[(String, String, Option[String])]] =
-      Ref.unsafe[IO, List[(String, String, Option[String])]](Nil)
+    val injected: Ref[IO, List[(String, String, Option[String], Option[nebflow.bridge.BridgeOrigin])]] =
+      Ref.unsafe[IO, List[(String, String, Option[String], Option[nebflow.bridge.BridgeOrigin])]](Nil)
     val bound: Ref[IO, List[(String, String, Option[Json])]] =
       Ref.unsafe[IO, List[(String, String, Option[Json])]](Nil)
-    def injectMessage(sessionId: String, content: String, senderId: Option[String]): IO[Unit] =
-      injected.update(_ :+ ((sessionId, content, senderId)))
+    def injectMessage(sessionId: String, content: String, senderId: Option[String],
+        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+      injected.update(_ :+ ((sessionId, content, senderId, origin)))
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = sessions.get
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] =
       bound.update(_ :+ ((sessionId, platform, config)))
 
-  private def newCtx(sessions: List[SessionMeta]): (RecordingCtx, Ref[IO, List[(String, String, Option[String])]]) =
+  private def newCtx(sessions: List[SessionMeta]): (RecordingCtx, Ref[IO, List[(String, String, Option[String], Option[nebflow.bridge.BridgeOrigin])]]) =
     val ctx = RecordingCtx(Ref.unsafe[IO, List[SessionMeta]](sessions))
     (ctx, ctx.injected)
 
@@ -86,6 +95,17 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
   private def done(sessionId: String): Json =
     Json.obj("type" -> Json.fromString("done"), "sessionId" -> Json.fromString(sessionId))
 
+  /** The (session, text, sender) triple of a recorded injection — the shape the
+    * pre-source-marker assertions were written against. The fourth element
+    * (the origin descriptor) is asserted separately where it matters. */
+  private type Injection = (String, String, Option[String], Option[nebflow.bridge.BridgeOrigin])
+  private def triples(rs: List[Injection]): List[(String, String, Option[String])] =
+    rs.map { case (s, t, snd, _) => (s, t, snd) }
+
+  /** The channel-agnostic origin this bridge announces for a given chat. */
+  private def originFor(chatId: String): Option[nebflow.bridge.BridgeOrigin] =
+    Some(nebflow.bridge.BridgeOrigin("feishu", FeishuBridgePlugin.ChannelDisplay, Some(chatId)))
+
   // ───────────────────────────── inbound routing ─────────────────────────────
 
   test("FB-R1 inbound text from a bound chat injects into the bound session") {
@@ -95,7 +115,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       _ <- p.rebuildRoutes(ctx)
       _ <- p.intake(ctx, inbound("oc_bound", Some("hello")))
       got <- injected.get
-    yield assertEquals(got, List(("s1", "hello", None)))
+    yield assertEquals(triples(got), List(("s1", "hello", None)))
   }
 
   test("FB-R2 a chat with no bound session is dropped (no injection, no error)") {
@@ -108,15 +128,94 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     yield assertEquals(got, List.empty)
   }
 
-  test("FB-R3 a non-text message is never fabricated into a text injection") {
+  // 🔴 FB-R3 was REWRITTEN by the inbound-parse batch (2026-10-01), not merely
+  // renumbered. Its old form asserted that an `image` message injects NOTHING —
+  // which was exactly the defect that batch removes (design card §6.1: the
+  // "非 text ⇒ 会话零注入" drop). Under the new contract a non-text message
+  // injects the explicit unrecognised-type placeholder: still never a fabricated
+  // text body, but no longer a silent drop. The rewrite reason is filed in the
+  // batch report (I-5b).
+  test("FB-R3 a non-text message is never fabricated into a text body — it injects the explicit placeholder") {
     val (ctx, injected) = newCtx(List(meta("s1", Some("oc_bound"))))
     val p = plugin(RecordingSend().fn)
-    val image = inbound("oc_bound", None, messageType = "image")
+    val image = inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v2_abc"}""")
     for
       _ <- p.rebuildRoutes(ctx)
       _ <- p.intake(ctx, image)
       got <- injected.get
-    yield assertEquals(got, List.empty)
+    yield
+      assertEquals(got.map(_._1), List("s1"), "the message reaches the session instead of being dropped")
+      val body = got.head._2
+      assert(body.contains("[未识别的消息类型：image]"),
+        s"the placeholder NAMES the type:\n$body")
+      assert(body.contains("message_id=om_1"), s"the placeholder is traceable:\n$body")
+      assert(body.contains("""{"image_key":"img_v2_abc"}"""), s"the raw content is preserved:\n$body")
+      assert(body.contains("[/未识别的消息类型]"), s"the placeholder is closed:\n$body")
+  }
+
+  test("FB-R3c a quoted reply produces the quoted block AHEAD of the body, and announces its origin") {
+    val (ctx, injected) = newCtx(List(meta("s1", Some("oc_bound"))))
+    val p = plugin(RecordingSend().fn)
+    val reply = inbound("oc_bound", Some("同意"), messageType = "text", parentId = Some("om_q"))
+    for
+      _ <- p.rebuildRoutes(ctx)
+      _ <- p.intake(ctx, reply)
+      got <- injected.get
+    yield
+      val body = got.head._2
+      // The bridge composes the quoted段 + body; the source marker belongs to
+      // the unified injection point (which is where the channel identity is
+      // applied) and is therefore asserted there, not here.
+      assert(body.startsWith("[引用的消息]"), s"the quoted block leads:\n$body")
+      assert(body.contains("原文：未取得（message_id=om_q）"),
+        s"an unfetched original NAMES the id it could not read (branch B):\n$body")
+      val iQuote = body.indexOf("[/引用的消息]")
+      val iBody = body.indexOf("同意")
+      assert(iQuote < iBody, s"order must be quoted block → body:\n$body")
+      // the origin the bridge announces is the channel-agnostic descriptor
+      assertEquals(got.head._4, originFor("oc_bound"))
+  }
+
+  test("FB-R3c2 a non-reply message carries no quoted block at all") {
+    val (ctx, injected) = newCtx(List(meta("s1", Some("oc_bound"))))
+    val p = plugin(RecordingSend().fn)
+    for
+      _ <- p.rebuildRoutes(ctx)
+      _ <- p.intake(ctx, inbound("oc_bound", Some("plain")))
+      got <- injected.get
+    yield
+      assertEquals(got.head._2, "plain", "no reply ⇒ no quote block, and the body is untouched")
+  }
+
+  test("FB-R3d a post message injects the degraded rich text verbatim as the body") {
+    val (ctx, injected) = newCtx(List(meta("s1", Some("oc_bound"))))
+    val p = plugin(RecordingSend().fn)
+    val postRaw = """{"title":"发布说明","content":[[{"tag":"text","text":"版本 "},{"tag":"a","text":"v2","href":"https://x/y"}],[{"tag":"at","user_id":"ou_1","user_name":"张三"},{"tag":"text","text":" 请看 "},{"tag":"img","image_key":"img_v2_k"}]]}"""
+    val post = inbound("oc_bound", None, messageType = "post", contentRaw = postRaw)
+    for
+      _ <- p.rebuildRoutes(ctx)
+      _ <- p.intake(ctx, post)
+      got <- injected.get
+    yield
+      val body = got.head._2
+      assert(body.endsWith("发布说明\n版本 v2(https://x/y)\n@张三 请看 [图片 image_key=img_v2_k]"),
+        s"the body段 must be the design card's verbatim fixture result:\n$body")
+  }
+
+  test("FB-R3e a text message with mentions replaces the placeholders and keeps no raw @_user_N") {
+    val (ctx, injected) = newCtx(List(meta("s1", Some("oc_bound"))))
+    val p = plugin(RecordingSend().fn)
+    val msg = inbound("oc_bound", None, messageType = "text",
+      contentRaw = """{"text":"@_user_1 你好"}""",
+      mentions = List(FeishuMessage.InboundMention("_user_1", Some("张三"), Some("ou_1"))))
+    for
+      _ <- p.rebuildRoutes(ctx)
+      _ <- p.intake(ctx, msg)
+      got <- injected.get
+    yield
+      val body = got.head._2
+      assert(body.contains("@张三 你好"), s"the placeholder resolves to the name:\n$body")
+      assert(!body.contains("@_user_1"), s"no raw placeholder survives:\n$body")
   }
 
   // ───────────────────────────── member allowlist ─────────────────────────────
@@ -130,7 +229,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       _ <- p.rebuildRoutes(ctx)
       _ <- p.intake(ctx, inbound("oc_bound", Some("hi"), sender = None))
       got <- injected.get
-    yield assertEquals(got, List(("s1", "hi", None)))
+    yield assertEquals(triples(got), List(("s1", "hi", None)))
   }
 
   test("FB-R5 a non-empty allowlist is fail-closed: member passes, stranger and senderless drop") {
@@ -147,7 +246,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       stranger <- injStranger.get
       blank <- injBlank.get
     yield
-      assertEquals(ok, List(("s1", "hi", Some("ou_member"))), "listed member passes with its identity")
+      assertEquals(triples(ok), List(("s1", "hi", Some("ou_member"))), "listed member passes with its identity")
       assertEquals(stranger, List.empty, "an unlisted sender is dropped")
       assertEquals(blank, List.empty, "an absent sender id is dropped when the gate is armed")
   }
@@ -251,7 +350,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       routes <- p.routesRef.get
       binds <- ctx.bound.get
     yield
-      assertEquals(got, List(("s_default", "hello", None)), "the message lands in the default session")
+      assertEquals(triples(got), List(("s_default", "hello", None)), "the message lands in the default session")
       assertEquals(routes.get("oc_new"), Some("s_default"), "the routing table knows the new chat at once")
       assertEquals(binds.map { case (sid, plat, _) => (sid, plat) }, List(("s_default", "feishu")))
       assert(binds.headOption.flatMap(_._3).exists(_.hcursor.downField("chat_id").as[String].toOption == Some("oc_new")))
@@ -296,23 +395,38 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     yield
       assertEquals(gotStranger, List.empty, "an unlisted sender cannot trigger auto-bind")
       assertEquals(bindsStranger, List.empty, "an unlisted sender cannot mint a binding")
-      assertEquals(gotMember, List(("s_default", "hi", Some("ou_member"))))
+      assertEquals(triples(gotMember), List(("s_default", "hi", Some("ou_member"))))
       assertEquals(bindsMember.map(_._1), List("s_default"), "a listed member's first message binds the chat")
   }
 
-  test("FB-A4 a textless first message still auto-binds the chat (the chat exists) but injects nothing") {
+  test("FB-A4 an auto-bound image message injects the explicit placeholder (never a fabricated body)") {
     val (ctx, injected) = newCtx(Nil)
     val p = new FeishuBridgePlugin(tmpRoot(), send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
       readDefaultSession = _ => Some("s_default"))
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.intake(ctx, inbound("oc_new", None, messageType = "image"))
+      _ <- p.intake(ctx, inbound("oc_new", None, messageType = "image", contentRaw = """{"image_key":"k"}"""))
       got <- injected.get
       binds <- ctx.bound.get
     yield
-      assertEquals(got, List.empty, "no text body — nothing injected")
+      assertEquals(got.map(_._1), List("s_default"), "the message lands in the default session")
+      assert(got.head._2.contains("[未识别的消息类型：image]"),
+        s"a non-text body degrades to the named placeholder, not silence:\n${got.head._2}")
       assertEquals(binds.map(_._1), List("s_default"), "the chat itself is bound for the next text message")
+  }
+
+  test("FB-R12 a message with genuinely no body is still dropped (the residual None arm)") {
+    // The `None` arm of `intake` is not dead code: an empty text payload really
+    // has nothing to show, and inventing a body for it would be a fabrication.
+    val (ctx, injected) = newCtx(List(meta("s1", Some("oc_bound"))))
+    val p = plugin(RecordingSend().fn)
+    val empty = inbound("oc_bound", Some(""), messageType = "text", contentRaw = """{"text":""}""")
+    for
+      _ <- p.rebuildRoutes(ctx)
+      _ <- p.intake(ctx, empty)
+      got <- injected.get
+    yield assertEquals(got, List.empty, "an empty body injects nothing rather than an empty bubble")
   }
 
   // ─────────── fingerprint guard + connection face (feishu-bind batch, P0-2, C1/C2) ───────────

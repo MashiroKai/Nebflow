@@ -746,24 +746,34 @@ class WebSocketRoutes(
    * into a session's agent. Reuses the same logic as WebSocket user messages:
    * rate limiting, UiMessage recording, agent routing.
    */
-  def handleBridgeMessage(sessionId: String, content: String, senderId: Option[String] = None): IO[Unit] =
+  def handleBridgeMessage(sessionId: String, content: String, senderId: Option[String] = None,
+      origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
     if content.isEmpty || sessionId.isEmpty then IO.unit
     else
       rateLimiter.check("bridge").flatMap { allowed =>
         if !allowed then logger.warn("Bridge rate limit exceeded")
         else
+          // Source marker (source-marker batch, 2026-10-01): this is the ONE
+          // bridge→session injection point, so it is also the one place that may
+          // label a message with where it came from. The marker is composed HERE
+          // (before every downstream consumer sees the text) rather than inside
+          // any channel, so the template stays channel-agnostic and a second
+          // channel reuses it by supplying its own values. `origin = None` (the
+          // default, and every pre-existing caller) leaves the string
+          // byte-identical to the pre-batch behaviour.
+          val labelled = nebflow.bridge.BridgeOrigin.compose(origin, senderId, content)
           val source = senderId.map(id => s"[via bridge:$id]").getOrElse("[via bridge]")
-          logger.info(s"Bridge message for session $sessionId: ${content.take(60)}... $source") *>
+          logger.info(s"Bridge message for session $sessionId: ${labelled.take(60)}... $source") *>
             // Record as UiMessage
             sharedResources.sessionStore
-              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis())))
+              .appendUiMessages(sessionId, List(UiMessage.User(labelled, Nil, timestamp = System.currentTimeMillis())))
               .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
             // Push to frontend in real-time so it shows without switching sessions
             wsHub.broadcast(
               io.circe.Json.obj(
                 "type" -> "bridgeUser".asJson,
                 "sessionId" -> sessionId.asJson,
-                "text" -> content.asJson
+                "text" -> labelled.asJson
               )
             ) *>
             // Use ExternalEvent instead of UserInput so the message is queued in
@@ -773,7 +783,7 @@ class WebSocketRoutes(
               ref ! AgentCommand.ExternalEvent(
                 source = "bridge",
                 eventType = "user-message",
-                payload = content,
+                payload = labelled,
                 metadata = io.circe.JsonObject("senderId" -> senderId.asJson),
                 correlationId = None
               )
