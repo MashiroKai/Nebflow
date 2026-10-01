@@ -204,6 +204,17 @@ enum DecisionError:
   case Malformed(detail: String)
   case Transport(detail: String)
 
+  /**
+   * Is this failure a deadline expiry?
+   *
+   * A typed predicate rather than a substring search on [[message]]: the
+   * allocator branches on it to pick its fallback kind, and matching prose is
+   * the kind of coupling that breaks the moment a detail string changes.
+   */
+  def isTimeout: Boolean = this match
+    case Timeout(_) => true
+    case _ => false
+
   /** Diagnostic text (credential-free by construction — see the providers). */
   def message: String = this match
     case Auth(d) => s"decision API auth failed: $d"

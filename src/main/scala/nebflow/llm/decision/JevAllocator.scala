@@ -62,13 +62,16 @@ final class JevAllocator(
       provider
         .predict(req)
         .map {
-          case Left(err) => Left(err.message)
+          case Left(err) => Left(err)
           case Right(resp) => Right(select(resp, catalog))
         }
         .flatMap {
-          case Left(reason) =>
-            val kind = if reason.toLowerCase.contains("timeout") then JevFallbackKind.Timeout else JevFallbackKind.Failure
-            JevFallback.record(kind, "allocation", reason)
+          case Left(err) =>
+            // Classified from the TYPED error, not from its message text:
+            // string-matching the diagnostic would silently mis-classify the
+            // moment a detail string is reworded.
+            val kind = if err.isTimeout then JevFallbackKind.Timeout else JevFallbackKind.Failure
+            JevFallback.record(kind, "allocation", err.message)
           case Right(selected) =>
             JevFallback.recordSuccess("allocation", selected).as(JevAllocation.Allocated(selected))
         }
