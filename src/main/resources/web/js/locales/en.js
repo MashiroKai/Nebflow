@@ -1863,6 +1863,17 @@ export default {
   'social.wechat.field.appSecret': 'App secret',
   'social.wechat.field.token': 'Verification token',
   'social.wechat.field.aesKey': 'Encoding AES key',
+  // wechat-ilink (chain-wechat-impl, author ruling 2026-09-30, option (B)): the
+  // separate iLink channel id, coexisting with the official-account card above.
+  // Sealed until the real-device login is done, so this copy stays off the
+  // panel for now - it is here so the sealed entry never orphans a key (W11).
+  'social.weixinIlink.name': 'WeChat (iLink)',
+  'social.weixinIlink.desc': 'Credential set for the WeChat iLink bot. This phase stores the configuration only - no outbound channel is opened.',
+  'social.weixinIlink.field.botToken': 'Bot token',
+  'social.weixinIlink.field.ilinkBotId': 'Bot ID',
+  'social.weixinIlink.field.ilinkUserId': 'Signed-in user ID',
+  'social.weixinIlink.field.baseurl': 'API base URL',
+  'social.weixinIlink.field.allowedIlinkUserIds': 'Sender allowlist (optional)',
   'social.feishu.name': 'Feishu',
   // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
   'social.feishu.desc': 'Once a session is bound, Feishu messages enter it and replies go back the same way. Every tenant member can reach the gateway by default.',
