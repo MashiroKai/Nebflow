@@ -102,7 +102,16 @@ private[project] trait NodeCanceller:
       case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
       case Some(cm) if cm.info.memberIds.size < 2 => IO.pure(Left(ChainCancelErrors.singleMember(chainId)))
       case Some(cm) =>
-        cancelNodes(cm.info.memberIds, chainId, cm.title, source, reason, cascade).map(Right(_))
+        // eng-deferred-cancel batch, readable-cancellation criterion: record the
+        // cancel INTENT on the persisted ledger before any node is signalled — the
+        // chain reads as "cancellation in progress" for as long as the deferred
+        // legs take to finish in-flight tools. Placed here (after member
+        // resolution, before execution) and NOT in `cancelNodes`: that overload
+        // is also the node-level entry, and a node cancel must never fabricate
+        // a chain-level intent. Failures to record are not fatal to the cancel
+        // (the cancel itself is the point).
+        store.chainLedgerStore.setChainCancelIntent(chainId, System.currentTimeMillis()).attempt.void *>
+          cancelNodes(cm.info.memberIds, chainId, cm.title, source, reason, cascade).map(Right(_))
     }
 
   // ── 链控三原语（chainview 批 2026-10-01：暂停 / 继续 / 取消 + 台账状态面）────

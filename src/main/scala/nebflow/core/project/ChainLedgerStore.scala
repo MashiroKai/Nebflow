@@ -263,7 +263,13 @@ class ChainLedgerStore private (
   def setChainControl(chainId: String, status: String, now: Long): IO[ChainLedger.ChainControl] =
     state.get.flatMap { before =>
       val updated = ChainLedger.withChainControl(before, chainId, status, now)
-      val changed = updated.pausedChains != before.pausedChains || updated.cancelledChains != before.cancelledChains
+      val changed = updated.pausedChains != before.pausedChains ||
+        updated.cancelledChains != before.cancelledChains ||
+        // eng-deferred-cancel batch (2026-10-02): a cancel that lands within
+        // the intent window also clears the in-progress marker — that diff
+        // alone must reach disk (otherwise intent and terminal state silently
+        // disagree on disk while agreeing in memory).
+        updated.cancellingChains != before.cancellingChains
       val io = if changed then persist(updated) *> state.set(updated) else IO.unit
       io.as(
         ChainLedger.ChainControl(
@@ -273,6 +279,24 @@ class ChainLedgerStore private (
           cancelledAt = ChainLedger.cancelledAtOf(updated, chainId)
         )
       )
+    }
+
+  /**
+   * **Cancel-intent registration write point** (eng-deferred-cancel batch): the
+   * same "read → change → no change ⇒ zero write, otherwise `persist *>
+   * state.set`" template as [[setChainControl]].
+   *
+   * 🔴 **Division of labour with [[chainControlOf]]**: this method ONLY registers
+   * the in-progress intent; whether the chain is cancelled/paused is still
+   * answered exclusively by the three-state projection in [[chainControlOf]]
+   * (no second judgement face). The caller does not consume the success value
+   * either — this is a trace, not a state.
+   */
+  def setChainCancelIntent(chainId: String, now: Long): IO[Unit] =
+    state.get.flatMap { before =>
+      val updated = ChainLedger.withChainCancelIntent(before, chainId, now)
+      val changed = updated.cancellingChains != before.cancellingChains
+      if changed then persist(updated) *> state.set(updated) else IO.unit
     }
 
   // ── 轴(b)：外部引用面计数（外部三面的落点）──────────────────────────────

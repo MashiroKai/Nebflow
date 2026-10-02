@@ -217,35 +217,32 @@
   min-width: 0;
 }
 .social-live-row { display: flex; gap: 8px; font-size: 11px; line-height: 1.45; min-width: 0; }
-.social-live-label { color: var(--color-frame-text-muted); flex-shrink: 0; }
 .social-live-value { color: var(--color-frame-text); overflow-wrap: anywhere; }
-.social-live-value[data-fp="mismatch"] { color: var(--color-danger); }
+/* 🔴 socpanel-min wave-2 (author ruling 2026-10-01), removal readings taken in
+   this tree before deleting (emitter grep over the web JS and HTML sources):
+     · `.social-live-row` / `.social-live-value` KEPT — the one surviving
+       application row still consumes them (socialPanel.js liveBlockHTML).
+     · `.social-live-label` REMOVED — 0 emitters (its only span was the removed
+       first row's label).
+     · `.social-live-value[data-fp="mismatch"]` REMOVED — 0 emitters; `data-fp`
+       itself is gone with the fingerprint row, so the selector could never match
+       again. The mismatch reading still reaches the user via the status pill. */
 
 /* Archive: the only off path (enabled=false), so it carries the danger family
    while staying a plain glass button otherwise. */
 .social-btn-danger { color: var(--color-danger); }
-.social-archive-hint {
-  font-size: 10px;
-  line-height: 1.45;
-  color: var(--color-frame-text-muted);
-  margin-top: -4px;
-}
+/* 🔴 socpanel-min wave-2: `.social-archive-hint` REMOVED — 0 emitters. The
+   hint's permanent line went away and its copy (social.feishu.archive.hint)
+   moved onto the unbind button's `title`, i.e. hover-at-intent, so no rule is
+   needed for it. Restoring it = taking the rule back from git history. */
 
-/* Chat→session bindings + default-session selector (C3/C4). */
-.social-bindings { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.social-bindings-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-frame-text-muted);
-}
-.social-binding-item {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--color-frame-text);
-  overflow-wrap: anywhere;
-}
-.social-binding-empty { font-size: 11px; line-height: 1.5; color: var(--color-frame-text-muted); }
-.social-default-session { max-width: 300px; }
+/* 🔴 socpanel-min batch (author ruling 2026-10-01): the chat→session bindings
+   list + the default-session selector (contracts C3/C4) were removed from the
+   created face, so `.social-bindings`, `.social-bindings-title`,
+   `.social-binding-item`, `.social-binding-empty` and `.social-default-session`
+   were removed with them. Binding behaviour (routing, the fixed Nebula pin, the
+   boot-time convergence write-back) is untouched and needs no rule here.
+   Restoring the block = taking these rules back from git history. */
 
 /* ── Remote-access section (令②): an independent section, NOT a channel card.
    This batch renders it inert on purpose — no link, no QR, no address. ──── */
@@ -328,17 +325,11 @@
   min-height: 18px;
   overflow-wrap: anywhere;
 }
-.social-scan-manual {
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-.social-scan-manual:hover { color: var(--color-frame-text); }
+/* 🔴 socpanel-min wave-2 (author ruling 2026-10-01): `.social-scan-manual` and
+   its `:hover` state REMOVED — P2 of the audit, emitter grep = 0 (the manual
+   fill-in control was already retired by social-fix, which left this rule
+   behind). Note the spec's `[data-scan-manual]` reads an ATTRIBUTE, not this
+   class, so its "no manual control" anchors are unaffected. */
 @media (max-width: 480px) {
   .social-scan-canvas { width: 168px; height: 168px; }
 }
