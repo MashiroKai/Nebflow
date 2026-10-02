@@ -76,6 +76,14 @@
       chatMod.renderToolPending(TOOL_B, 'stream-ux-session');
       await raf2();
     };
+    // The SECOND tool completing. Used by the boundary leg: the completion must
+    // land inside the switch's hold window, which is where the round-2 shape
+    // rebuilt the entering item and re-exposed it while the first was leaving.
+    window.__toolBDone = async () => {
+      chatMod.renderTool(TOOL_B, '240 lines', 'read body', false,
+        '{"path":"NodeTools.scala"}', 'stream-ux-session');
+      await raf2();
+    };
     window.__toolFail = async () => {
       chatMod.renderTool(TOOL_A, 'boom', 'err body', true, '{"pattern":"mergeQueue"}', 'stream-ux-session');
       await raf2();

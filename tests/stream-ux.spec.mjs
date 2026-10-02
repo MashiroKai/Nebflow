@@ -323,6 +323,85 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     expect(failed.spins, 'and it is no longer spinning').toBe(0);
     await context.close();
   });
+
+  // The boundary leg: the incoming tool COMPLETES inside the switch's hold
+  // window, i.e. while the outgoing item is still rolling away. The round-2
+  // shape rebuilt the completing item as a fresh element and dropped its hold,
+  // so the two labels re-appeared together (both-visible frames climbing as the
+  // completion got earlier). The property under test is the SAME one as the
+  // switch above — at most one item legible at a time — asserted to hold
+  // independently of WHEN the completion lands, not only for a settled switch.
+  test('a completion landing inside the switch hold still never double-exposes', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__toolRun());
+    await page.evaluate(() => window.__toolDone());
+    // let tool A's own completion animation settle, so the only motion measured
+    // below is the switch's exit leg (same discipline as the test above)
+    await page.waitForTimeout(650);
+
+    const read = await page.evaluate(async ({ textA, textB, gapMs }) => {
+      const chat = document.getElementById('chat');
+      const ind = Array.from(chat.children).find(k =>
+        !k.classList.contains('row') && !k.classList.contains('turn-header'));
+      if (!ind) return null;
+      const itemFor = (txt) => {
+        const leaf = Array.from(ind.querySelectorAll('*')).find(n =>
+          n.children.length === 0 && (n.textContent || '').includes(txt));
+        return leaf ? leaf.parentElement : null;
+      };
+      const raf = () => new Promise(r => requestAnimationFrame(r));
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const opa = (el) => (el && el.isConnected) ? +getComputedStyle(el).opacity : 0;
+      if (!itemFor(textA)) return null;
+
+      window.__toolNext();          // switch A -> B (B enters behind A's roll-out)
+      await raf();
+      await sleep(gapMs);
+      window.__toolBDone();         // B completes WHILE A is still leaving
+      await raf();
+
+      let bothFrames = 0;
+      let peakOverlap = 0;
+      let frames = 0;
+      const t0 = performance.now();
+      // Time-budgeted (rAF-rate independent), spanning the remaining roll-out,
+      // B's held entry and B's completion bounce.
+      for (let i = 0; i < 300 && performance.now() - t0 < 1100; i++) {
+        const a = itemFor(textA);
+        const b = itemFor(textB);
+        const oa = opa(a);
+        const ob = opa(b);
+        if (oa > 0.05 && ob > 0.05) {
+          bothFrames++;
+          // same-line slot: the label boxes share x, so vertical overlap is the
+          // legibility proxy (the reading the ENG verifier scored)
+          const ra = a.getBoundingClientRect();
+          const rb = b.getBoundingClientRect();
+          const ov = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+          if (ov > peakOverlap) peakOverlap = +ov.toFixed(1);
+        }
+        frames++;
+        await raf();
+      }
+      const box = (txt) => {
+        const el = itemFor(txt);
+        return el ? { op: opa(el), cls: el.className } : null;
+      };
+      return { bothFrames, peakOverlap, frames, a: box(textA), b: box(textB) };
+    }, { textA: TOOL_A_TEXT, textB: TOOL_B_TEXT, gapMs: 120 });
+
+    expect(read, 'the switch was traceable').not.toBeNull();
+    expect(read.frames, 'the window was sampled over multiple animation frames').toBeGreaterThan(3);
+    expect(read.bothFrames,
+      'a completion inside the hold window never makes both items legible at once').toBe(0);
+    expect(read.peakOverlap,
+      'and the leaving and entering labels never overlap on screen').toBe(0);
+    // and the completed tool is the one that ends up owning the line
+    expect(read.b && read.b.cls, 'the completing tool settled into the slot').toContain('is-done');
+    expect(read.b.op, 'and it is legible at the end of the window').toBeGreaterThan(0.05);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
 });
 
 test.describe('A2 — 思考 = 单行流式揭示 → 打勾', () => {
