@@ -500,7 +500,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             userFacingNode = stateForLlm.userFacingNode,
             guardrailsOn = guardrailsOn,
             projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined,
-            flowNodeSession = stateForLlm.flowNodeId.isDefined
+            flowNodeSession = stateForLlm.flowNodeId.isDefined,
+            isDispatcher = stateForLlm.isDispatcher
           )
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
@@ -1024,7 +1025,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         userFacingNode = state.userFacingNode,
         guardrailsOn = guardrailsOn,
         projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined,
-        flowNodeSession = state.flowNodeId.isDefined
+        flowNodeSession = state.flowNodeId.isDefined,
+        isDispatcher = state.isDispatcher
       )
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
@@ -2012,7 +2014,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     userFacingNode: Boolean = false,
     guardrailsOn: Boolean = false,
     projectBoardSession: Boolean = false,
-    flowNodeSession: Boolean = false
+    flowNodeSession: Boolean = false,
+    isDispatcher: Boolean = false
   ): Set[String] =
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
@@ -2169,7 +2172,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // BuiltinToolWhitelist）。信号消费点 = NodeEngine 会话完成时点
     // NodeReportRegistry.drain（按类别分流既有链：blocked/pass/fail；文本锚定
     // 降级面不放宽）。
-    if flowNodeSession then withBoard + nebflow.core.tools.NodeReportToolDef.Name else withBoard
+    // AskUserQuestion mount for the dispatcher session (agentflow batch
+    // 2026-10-02): appended by **engine-side identity** at the same tail as
+    // TaskBoard/node_report -- after every role filter and the
+    // NebulaExclusiveTools strip, so the fixed face and this grant never
+    // interfere. 🔴 The criterion is `isDispatcher` **alone**, NOT
+    // `projectBoardSession`: that flag is `isDispatcher || flowNodeId.isDefined`
+    // (a project node would be pulled in => an over-grant). The two ends
+    // (mount face + the tool's own identity check) form the twin safeguard,
+    // TaskBoard/node_report precedent.
+    val withDispatcherAsk = if isDispatcher then withBoard + "AskUserQuestion" else withBoard
+    if flowNodeSession then withDispatcherAsk + nebflow.core.tools.NodeReportToolDef.Name else withDispatcherAsk
 
   end buildAllowedToolSet
 
@@ -2195,7 +2208,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       userFacingNode,
       guardrailsOn,
       projectBoardSession,
-      flowNodeSession
+      flowNodeSession,
+      isDispatcher
     )
     // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
     // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎

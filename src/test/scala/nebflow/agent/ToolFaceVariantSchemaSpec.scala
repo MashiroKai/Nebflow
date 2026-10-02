@@ -330,21 +330,27 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   // ④ Q5 读数：Mail 地址面逐角色
   // ============================================================
 
-  test("④ Q5: Mail 地址面逐角色 + schema 逐字节不变") {
+  test("④ Q5: Mail 地址面逐角色 + schema 逐字节不变（agentflow 批后：分发器面不再持 Mail）") {
     val rootMail = find(nebulaRootFace, "Mail").getOrElse(fail("Nebula 面丢了 Mail"))
-    val dispMail = find(dispatcherFace, "Mail").getOrElse(fail("dispatcher 面丢了 Mail"))
     val taskMail = find(taskNodeFace, "Mail")
     assertEquals(rootMail.description, MailTool.descriptionRoot, "root 未拿到地址面变体")
-    assertEquals(dispMail.description, MailTool.descriptionDispatcher, "dispatcher 未拿到地址面变体")
     assertEquals(rootMail.inputSchema, baseOf("Mail").inputSchema, "root 变体改了 inputSchema（Q5 判据）")
-    assertEquals(dispMail.inputSchema, baseOf("Mail").inputSchema, "dispatcher 变体改了 inputSchema（Q5 判据）")
+    // agentflow 批（2026-10-02）：−Mail ⇒ 分发器面不再有 Mail（成员资格变更，非地址面
+    // 变体机制变更）——地址面变体机制本身照旧（见下一条直接对 constructor 的断言）。
+    assert(find(dispatcherFace, "Mail").isEmpty, "分发器面仍有 Mail（agentflow 批 −Mail 未落地）")
     // 节点面无 Mail（成员资格不受本批影响）——登记为读数
     assert(taskMail.isEmpty, "节点面出现 Mail（成员资格被本批改动）")
     // 分化面缺席判据（变异①）
     assert(!rootMail.description.contains("**Project dispatcher**"), "root 地址面仍含 dispatcher 段")
     assert(!rootMail.description.contains("**Team context (legacy)**"), "root 地址面仍含 team 段")
-    assert(!dispMail.description.contains("**Nebula (root)**"), "dispatcher 地址面仍含 root 段")
-    assert(!dispMail.description.contains("**Team context (legacy)**"), "dispatcher 地址面仍含 team 段")
+    // Mail dispatcher 地址面变体机制仍在役（constructor 直接断言；不依赖分发器面持 Mail）
+    assertEquals(
+      AgentCore.schemaVariantFor(baseOf("Mail"), AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
+      MailTool.descriptionDispatcher,
+      "Mail dispatcher 地址面变体机制被本批误伤（机制面应零改动）"
+    )
+    assert(!MailTool.descriptionDispatcher.contains("**Nebula (root)**"), "dispatcher 地址面仍含 root 段")
+    assert(!MailTool.descriptionDispatcher.contains("**Team context (legacy)**"), "dispatcher 地址面仍含 team 段")
     // 参数级 address description 属于 inputSchema ⇒ 本批按 Q5 口径冻结（登记在交付说明）
     assert(
       rootMail

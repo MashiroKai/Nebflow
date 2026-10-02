@@ -77,8 +77,9 @@ class RootSixBaseToolsSpec extends FunSuite:
     }
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
-    // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // 17（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep）；
+    // 件数以单点常量 AgentCore.RootOrchestrationToolsExpectedSize 为准：
+    // 18（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17，agentflow 批
+    // 2026-10-02 +AgentFlow ⇒ 18）；
     // 沿革（史实）：16 经 #145 附件腿批 −TransferFile 退役 ⇒ 15，
     // 再经 09-16 18:41 令 −2 ⇒ 13，再经 Delegate 退役批 −1 ⇒ 12。
     // 旧「终态 = 15，已定」与「终态 = 13」口径均已被取代 ⇒ 归档。
@@ -86,13 +87,13 @@ class RootSixBaseToolsSpec extends FunSuite:
     // friendseal (2026-09-25): flag-aware via the single derivation point —
     // constant − (sealed ? 1 : 0), computed from this same fixed-set snapshot.
     assertEquals(fixed.size, nebflow.FriendsSealKit.expectedNebulaSize(fixed),
-      "Nebula 机制集件数 == 单点常量按 friendseal 封存态派生（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值，封存期交付面 = 17 − 1）")
+      "Nebula 机制集件数 == 单点常量按 friendseal 封存态派生（不得各处写裸数字；在飞 18 = 2026-09-18 18:18 令后 17 + agentflow 批 +AgentFlow，封存期交付面 = 18 − 1）")
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
-      17,
-      "RootOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）"
+      18,
+      "RootOrchestrationTools 实测恰 18 件（2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18；变异验红锚：再摘任一件即红）"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====

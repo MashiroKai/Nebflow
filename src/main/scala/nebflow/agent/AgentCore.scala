@@ -229,7 +229,11 @@ object AgentCore:
     // `AgentLibrary` 面板/定义保存侧 strip —— 见 `exclusiveToolsFor` 注释）。
     // 选本路线而非 `buildAllowedToolSet` 内 `- "ListFriends"`（SendMessage 先例）：
     // 两者授能结果等价，但后者不覆盖保存侧。
-    "ListFriends"
+    "ListFriends",
+    // AgentFlow（agentflow 批 2026-10-02）：root 侧派发件；与 `ListFriends` 同享
+    // 【防声明逃逸】通道——agent.json 声明（含 `"*"`）对一切非 Nebula 身份不授能
+    // （真实授能 = `RootOrchestrationTools` 单点）。
+    "AgentFlow"
   )
 
   /**
@@ -360,6 +364,12 @@ object AgentCore:
     // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
     // 报错并指明合法地址面（硬禁静默兜底/模糊匹配）；入站不受限。
     "Mail",
+    // AgentFlow（agentflow 批 2026-10-02，终名 root #405）：root 侧的**派发件**
+    // ——把一份自包含任务书派给某个项目（对偶役 = 分发器侧的 `NodeEdit` 建位）。
+    // 与 `Mail` **不同物**：`AgentFlow` 不投消息、只派任务书（`Mail` 是消息原语，
+    // root 面保留）。挂载面 = 本集（Nebula 专属）；进 `RootExclusiveTools` 防声明
+    // 逃逸（agent.json 声明含 `"*"` 对一切非 Nebula 身份不授能）。
+    "AgentFlow",
     "ProjectCreate",
     "AgentControl",
     // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
@@ -459,7 +469,7 @@ object AgentCore:
    * Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
    * 不得各处写裸数字）。
    *
-   * 值 = **17** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
+   * 值 = **18** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
    * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
    * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
    * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
@@ -467,6 +477,10 @@ object AgentCore:
    * Delegate 退役批 −1 ⇒ 12；
    * **本批：2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」
    * +`Bash` +`Edit` +`Write` +`Glob` +`Grep` ⇒ 17（在飞值）**。
+   * **agentflow 批（2026-10-02）：+`AgentFlow` ⇒ 18（在飞值）**——root 侧派发件
+   * （自包含任务书 → 项目分发器；终名 root #405）。与 `Mail` 不同物：`Mail` 是
+   * 消息原语、root 面逐字保留，本批不动。本增量属「按面变更」（新增成员），
+   * 非「凑数字」——下条纪律针对的是**为过测而放宽断言**。
    *
    * **取代关系记录（逐字，跨面）**：**2026-09-18 18:18 作者令**（原话「恢复nebula
    * 的bash edit write glob grep」）**取代** ① 2026-09-16 18:41 作者令（原话
@@ -488,7 +502,7 @@ object AgentCore:
    * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
    * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 17
+  val RootOrchestrationToolsExpectedSize: Int = 18
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
@@ -529,7 +543,10 @@ object AgentCore:
     "NodeList",
     "NodeEdit",
     "NodeCancel",
-    "Mail",
+    // agentflow 批 2026-10-02：−`Mail` +`AskUserQuestion`（件数 9 → 9）。挂载点在
+    // `buildAllowedToolSet` 末段按引擎侧身份 `isDispatcher` 追加（TaskBoard/
+    // node_report 同款「挂载面 + 工具内身份拒绝」双保险）。
+    "AskUserQuestion",
     "Read",
     "Glob",
     "Grep",

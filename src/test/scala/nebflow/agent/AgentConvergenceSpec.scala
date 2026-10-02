@@ -46,6 +46,9 @@ class AgentConvergenceSpec extends FunSuite:
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     val expected = Set(
       "Mail",
+      // AgentFlow（agentflow 批 2026-10-02，终名 root #405）：root 侧派发件——
+      // 把自包含任务书派给项目。与 Mail 不同物（Mail 是消息原语）。
+      "AgentFlow",
       "ProjectCreate",
       "AgentControl",
       // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
@@ -73,7 +76,7 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(
       delivered,
       expected -- sealStrip,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue；friendseal 封存期按单点 strip 派生）"
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 18 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值 17，加 agentflow 批（2026-10-02）+AgentFlow；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue；friendseal 封存期按单点 strip 派生）"
     )
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
@@ -129,12 +132,12 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== 分发器固定集 =====
 
-  test("dispatcher LLM tool list == Node 四件 + 读四件（isFlowNode spawn 形态；NodeMessage 20260905 机制批）"):
+  test("dispatcher LLM tool list == Node 三件 + AskUserQuestion + 读四件（isFlowNode spawn 形态；agentflow 批 −Mail +AskUserQuestion）"):
     val delivered = CoreProbe.toolList(mkDef("project-dispatcher"), isFlowNode = true).toSet
     assertEquals(
       delivered,
-      Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash"),
-      "分发器固定工具集（§C.1 + NodeMessage 20260905 机制批第八件）：不给 Write/Edit/AskUserQuestion"
+      Set("NodeList", "NodeEdit", "NodeCancel", "AskUserQuestion", "Read", "Glob", "Grep", "Bash"),
+      "分发器固定工具集（agentflow 批 2026-10-02：−Mail +AskUserQuestion，件数 9→9 中本 spawn 形态不含 projectBoardSession ⇒ 8 件）：不给 Write/Edit；TaskBoard 由 projectBoardSession 单独挂载（本形态未置位故不在场）"
     )
 
   test("NodeMessage 仅分发器（20260905 机制批裁定⑥）：Nebula/general 交付面均不含"):

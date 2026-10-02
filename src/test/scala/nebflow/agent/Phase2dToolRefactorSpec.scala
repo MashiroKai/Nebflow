@@ -33,7 +33,8 @@ class Phase2dToolRefactorSpec extends FunSuite:
       isTeamLead: Boolean = false,
       userFacingNode: Boolean = false,
       guardrailsOn: Boolean = false,
-      projectBoardSession: Boolean = false
+      projectBoardSession: Boolean = false,
+      isDispatcher: Boolean = false
     ): Set[String] =
       buildAllowedToolSet(
         defn,
@@ -43,7 +44,9 @@ class Phase2dToolRefactorSpec extends FunSuite:
         isTeamLead,
         userFacingNode,
         guardrailsOn,
-        projectBoardSession
+        projectBoardSession,
+        flowNodeSession = false,
+        isDispatcher = isDispatcher
       )
 
   end CoreProbe
@@ -53,11 +56,13 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 17 件 = 2026-09-18 18:18 令 +5 后值）、零 Issue、零 NodeList（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 18 件 = 2026-09-18 18:18 令 +5 后值 +agentflow 批 +AgentFlow）、零 Issue、零 NodeList（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set(
         "Mail",
+        // AgentFlow（agentflow 批 2026-10-02）：root 侧派发件——与 Mail 不同物。
+        "AgentFlow",
         "ProjectCreate",
         "AgentControl",
         // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
@@ -85,7 +90,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(
       fixed,
       expected -- sealStrip,
-      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 17 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期按单点 strip 派生）"
+      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 18 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17 + agentflow 批（2026-10-02）+AgentFlow；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期按单点 strip 派生）"
     )
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
@@ -115,11 +120,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(fixed.contains("Write"), "Nebula 机制集含 Write（2026-09-18 18:18 令恢复）")
     assert(fixed.contains("Edit"), "Nebula 机制集含 Edit（2026-09-18 18:18 令恢复）")
 
-  test("D.1-1（R2 后）: dispatcher fixed set == Node 三件 + Mail + 读四件 + TaskBoard（−NodeMessage +Mail，9→9）"):
+  test("D.1-1（agentflow 批）: dispatcher fixed set == Node 三件 + AskUserQuestion + 读四件 + TaskBoard（−Mail +AskUserQuestion，9→9）"):
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("project-dispatcher")),
-      Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash", "TaskBoard"),
-      "R2（2026-09-12）：分发器面 −NodeMessage +Mail（9→9）——Mail 的 node: 腿承载 NodeMessage 三态语义；TaskBoard（20260908 任务板批 2，规格 §1c）第九件：项目任务板全权面（权限判定引擎侧身份=isDispatcher，工具内不信客户端参数）"
+      Set("NodeList", "NodeEdit", "NodeCancel", "AskUserQuestion", "Read", "Glob", "Grep", "Bash", "TaskBoard"),
+      "agentflow 批（2026-10-02）：分发器面 −Mail +AskUserQuestion（9→9）——Mail 的原 node: 补件腿随本批消失（补件改走 NodeEdit(task=…) 整替），提问件由 buildAllowedToolSet 末段按引擎侧身份 isDispatcher 追加（TaskBoard 同款）；TaskBoard（20260908 任务板批 2，规格 §1c）仍为项目任务板全权面（权限判定引擎侧身份=isDispatcher，工具内不信客户端参数）"
     )
 
   test("D.1-1: general fixed set == 七件（2026-09-08 恢复 AskUser；2026-09-10 裁定摘 Pop）"):
@@ -173,13 +178,17 @@ class Phase2dToolRefactorSpec extends FunSuite:
     )
     assert(!generalDelivered.contains("Mail"), "Mail 不进 general/节点面（R2 细则：节点不挂消息工具）")
     val dispatcherDelivered =
-      CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true)
+      CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true, isDispatcher = true)
     assertEquals(
       dispatcherDelivered,
       AgentCore.DispatcherFixedTools,
-      "dispatcher project 会话交付面 == 静态 9 件（含 Mail + TaskBoard）"
+      "dispatcher project 会话交付面 == 静态 9 件（含 AskUserQuestion + TaskBoard，不含 Mail）"
     )
-    assert(dispatcherDelivered.contains("Mail"), "Mail 机制固定进分发器交付面（R2 唯一消息原语）")
+    assert(
+      dispatcherDelivered.contains("AskUserQuestion"),
+      "AskUserQuestion 机制固定进分发器交付面（agentflow 批：−Mail +AskUserQuestion，挂载判据 = 引擎侧身份 isDispatcher）"
+    )
+    assert(!dispatcherDelivered.contains("Mail"), "Mail 已退出分发器交付面（agentflow 批：−Mail；分发器补件改走 NodeEdit(task=…) 整替）")
     assert(!dispatcherDelivered.contains("NodeMessage"), "NodeMessage 已删净退役（R2，−NodeMessage +Mail）")
     assert(dispatcherDelivered.contains("TaskBoard"), "TaskBoard 随 project 会话身份进分发器交付面（任务板批 2 §1c）")
     // 边界（R2）：Nebula 面不加 NodeMessage（工具已删净退役）
