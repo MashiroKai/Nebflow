@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<!-- askuser-history-attach harness.html — 静态测试夹具（askUser 历史恢复批
+     2026-10-02，chain-askuser-histattach）。
+
+     与 tests/fixtures/history-replay/harness.html 同族但**独立**（不改动那份被
+     askuser-dup-card / history-replay-cards 两件共用的夹具）：本件只服务
+     tests/askuser-history-attach.spec.mjs，驱动两条历史恢复腿并给出**机器可读**读数：
+
+       __replay(msgs)   → restoreFromBackendHistory(msgs)   （后端历史恢复腿）
+       __storage(msgs)  → 写 localStorage + restoreFromStorage()（本地缓存兜底腿）
+       __read()         → 现场读数（附件块在位 / 行形态 / 插位 / 问题下标 / 可点性）
+       __clickRow(i)    → 程序化点击第 i 行并回报 'workspace-open-item' 是否真的发出
+       __events         → 捕获到的 'workspace-open-item' 明细（单点入口的证据）
+
+     🔴 读数只锚类名 / 属性 / DOM 计数（禁锚本地化文本）。
+     🔴 绝不连任何真实后端：state.ws 是桩（send 只记录帧）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>askuser-history-attach harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView, activeView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'histatt-harness-session';
+
+    // WS stub: 只记录出站帧，绝不连后端。readyState 1 = OPEN（探针会发 pop.readFile，
+    // 无应答 ⇒ 1.5s 后该行降级为静态行 —— 这是「无后端」的夹具产物，不是被测代码行为；
+    // 本 harness 的读数一律在窗口内取，并另取一个「降级后」读数作对照）。
+    window.__sent = [];
+    state.ws = { readyState: 1, send: (d) => window.__sent.push(JSON.parse(d)) };
+
+    window.__events = [];
+    window.addEventListener('workspace-open-item', (e) => window.__events.push(e.detail || null));
+
+    function chatElNow() {
+      return (activeView && activeView.dom && activeView.dom.chat) || chatEl;
+    }
+
+    function fresh() {
+      const el = chatElNow();
+      el.innerHTML = '';
+      window.__events.length = 0;
+      return el;
+    }
+
+    const settle = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    window.__replay = async (msgs) => {
+      fresh();
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory(msgs);
+      await settle();
+      return window.__read();
+    };
+
+    window.__storage = async (msgs) => {
+      fresh();
+      const all = {};
+      all[state.activeSessionId] = msgs;
+      localStorage.setItem(stateMod.LS_SESSIONS_KEY, JSON.stringify(all));
+      const { restoreFromStorage } = await import(`${WEB}/persistence.js`);
+      restoreFromStorage();
+      await settle();
+      return window.__read();
+    };
+
+    /** 现场读数：附件块 + 插位 + 问题下标 + 可点性（全部机器可读）。 */
+    window.__read = () => {
+      const chat = chatElNow();
+      const box = chat.querySelector('.option-box');
+      const wrap = box ? box.querySelector('.ask-attachments-wrap') : null;
+      const rows = wrap ? [...wrap.querySelectorAll('.ob-compare-btn, .ask-attachment-static')] : [];
+      const btnRow = box ? box.querySelector('.option-btn-row') : null;
+      const kids = box ? [...box.children] : [];
+      const qWrappers = box ? [...box.querySelectorAll('.option-q-wrapper')] : [];
+      const firstQuestion = box ? box.querySelector('.option-q-wrapper:not(.ask-attachments-wrap)') : null;
+      return {
+        hasBox: !!box,
+        hasWrap: !!wrap,
+        rows: rows.length,
+        rowTags: rows.map(r => r.tagName),
+        rowDisabled: rows.map(r => (r.tagName === 'BUTTON' ? !!r.disabled : null)),
+        rowTabIndex: rows.map(r => r.getAttribute('tabindex')),
+        rowTitles: rows.map(r => r.title || r.getAttribute('title') || ''),
+        wrapIsQWrapper: wrap ? wrap.classList.contains('option-q-wrapper') : null,
+        qWrapperCount: qWrappers.length,
+        questionAtIndexZero: firstQuestion ? kids.indexOf(firstQuestion) === 0 : null,
+        beforeBtnRow: !!(wrap && btnRow && kids.indexOf(wrap) < kids.indexOf(btnRow)),
+        boxResolved: box ? box.classList.contains('resolved') : null,
+        boxHistoryReplay: box ? box.dataset.historyReplay === '1' : null,
+        clickHandlerAttached: rows.map(r => r.tagName === 'BUTTON' ? typeof r.onclick === 'function' : null),
+        sentFrames: window.__sent.map(f => f.type),
+      };
+    };
+
+    /** 程序化点击第 i 行（探针窗口内），回报单点入口是否真的发出事件。 */
+    window.__clickRow = async (i) => {
+      const box = chatElNow().querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachment-static')] : [];
+      const row = rows[i];
+      if (!row) return { clicked: false, reason: 'no-row' };
+      window.__events.length = 0;
+      row.click();
+      await new Promise(r => setTimeout(r, 0));
+      return {
+        clicked: true,
+        tag: row.tagName,
+        disabled: row.tagName === 'BUTTON' ? !!row.disabled : null,
+        dispatched: window.__events.length,
+        detailIds: window.__events.map(d => d && d.id),
+      };
+    };
+
+    /** 行级入口读数（绕过卡级 capture 哨兵，直接调该行 onclick —— 证明**接线**正确、
+     *  走的是同一单点入口、派发 id 与 live 腿逐字同形）。 */
+    window.__callRowEntry = async (i) => {
+      const box = chatElNow().querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const row = rows[i];
+      if (!row || typeof row.onclick !== 'function') return { dispatched: 0, detailIds: [], reason: 'no-row-or-handler' };
+      window.__events.length = 0;
+      row.onclick();
+      await new Promise(r => setTimeout(r, 0));
+      return { dispatched: window.__events.length, detailIds: window.__events.map(d => d && d.id) };
+    };
+
+    /** **live 腿对照读数**（证明「已决卡内附件行不可点」是既有语义、非本批引入）：
+     *  ① 挂真 live 卡（`renderAskUser` + attachments）⇒ 取附件行状态（pending：可点）；
+     *  ② 点选首个选项 → 点确认 ⇒ 再取同一读数（settled：`lockOptionBox` 既有语义）。 */
+    window.__liveThenConfirm = async () => {
+      fresh();
+      const chatMod = await import(`${WEB}/chat.js`);
+      chatMod.renderAskUser(
+        [{ question: 'harness: live contrast', options: [{ label: 'alpha' }, { label: 'beta' }] }],
+        state.activeSessionId, null, 'ask-live-contrast-1', null,
+        ['/tmp/nb-histatt-fixture/notes.md']
+      );
+      await settle();
+      const readRows = () => {
+        const box = chatElNow().querySelector('.option-box');
+        const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+        return {
+          rows: rows.length,
+          disabled: rows.map(r => !!r.disabled),
+          boxResolved: box ? box.classList.contains('resolved') : null,
+        };
+      };
+      const before = readRows();
+      const box = chatElNow().querySelector('.option-box');
+      const first = box && box.querySelector('.option-btn');
+      if (first) first.click();
+      await settle();
+      const confirm = box && box.querySelector('.option-confirm');
+      const confirmEnabled = confirm ? !confirm.disabled : null;
+      if (confirm) confirm.click();
+      await settle();
+      return { before, confirmEnabled, after: readRows() };
+    };
+
+    /** 结构性判定读数（开放项取证）：把已决卡内附件行**强行复位为可用**
+     *  （`disabled=false` + 去 `aria-disabled`/`tabindex`）后再点击 —— 若仍零派发，
+     *  则说明卡级 capture 点击哨兵**单独**就足以拦下（与 disabled 无关）⇒
+     *  「历史卡附件行可点」在**不改 `lockOptionBox` 本体**的前提下不可达。 */
+    window.__forceEnableAndClick = async (i) => {
+      const box = chatElNow().querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const row = rows[i];
+      if (!row) return { clicked: false, reason: 'no-row' };
+      row.disabled = false;
+      row.removeAttribute('aria-disabled');
+      row.removeAttribute('tabindex');
+      window.__events.length = 0;
+      row.click();
+      await new Promise(r => setTimeout(r, 0));
+      const stillConnected = row.isConnected;
+      return {
+        clicked: true,
+        disabledAfterReset: !!row.disabled,
+        rowStillInDom: stillConnected,
+        dispatched: window.__events.length,
+        detailIds: window.__events.map(d => d && d.id),
+      };
+    };
+
+    /** **main.js:1977 pending 腿**逐字复刻（本批最直接的「可点」读数）：
+     *  历史恢复（最后一条 = 未作答 askUser）⇒ 回收历史孪生卡 ⇒ 用历史行的
+     *  `attachments` 走 live `renderAskUser` 重挂交互卡 ⇒ 读附件行状态 + 真点击。 */
+    window.__pendingRestore = async (msgs) => {
+      fresh();
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      const chatMod = await import(`${WEB}/chat.js`);
+      restoreFromBackendHistory(msgs);
+      await settle();
+      const last = msgs[msgs.length - 1];
+      const chat = chatElNow();
+      // 本树有无「单一判据回收」导出：新树用真身，旧树（改前）用逐字复刻的
+      // 改前内联启发式 —— 同一驱动在两棵树上跑出各自代码的真实行为。
+      if (typeof chatMod.reclaimAskUserCards === 'function') {
+        chatMod.reclaimAskUserCards(chat, last.requestId, { legacyTwin: true });
+      } else {
+        chat.querySelectorAll('.row.ai .option-box').forEach(b => {
+          const rid = b.dataset.requestId || '';
+          if (!b.querySelector('.option-answer') && (!rid || rid === last.requestId)) b.closest('.row.ai').remove();
+        });
+      }
+      chatMod.renderAskUser(last.items, state.activeSessionId, last.agentName, last.requestId,
+        { project: last.project, nodeName: last.nodeName }, last.attachments);
+      await settle();
+      const box = chat.querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const read = {
+        boxes: chat.querySelectorAll('.option-box').length,
+        rows: rows.length,
+        disabled: rows.map(r => !!r.disabled),
+        boxResolved: box ? box.classList.contains('resolved') : null,
+      };
+      const row = rows[0];
+      let click = { dispatched: 0, detailIds: [] };
+      if (row) {
+        window.__events.length = 0;
+        row.click();
+        await new Promise(r => setTimeout(r, 0));
+        click = { dispatched: window.__events.length, detailIds: window.__events.map(d => d && d.id) };
+      }
+      return { read, click };
+    };
+
+    /** 降级后读数（等探针 1.5s 超时）：无后端时夹具产物，作对照行。 */
+    window.__readAfterProbeTimeout = async () => {
+      await new Promise(r => setTimeout(r, 1700));
+      return window.__read();
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
