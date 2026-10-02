@@ -96,8 +96,10 @@ object AgentCore:
     td: ToolDefinition,
     identity: ToolFaceIdentity
   ): ToolDefinition =
-    if AskUserQuestionTool.Name == td.name then if identity.isRootAgent then AskUserQuestionTool.rootVariant(td) else td
-    else if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
+    // AskUserQuestion 的 schema 变体分支已随「非阻塞-only」裁定整体删除：该工具一律
+    // 以非阻塞方式提问，参数面不再有 `mode` 键 ⇒ root 面与基础面 schema 逐字节相等，
+    // 无变体可分（`ToolFaceVariantSchemaSpec` 的 AskUser 豁免同步收紧为 Set.empty）。
+    if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
     else if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
     else td
 

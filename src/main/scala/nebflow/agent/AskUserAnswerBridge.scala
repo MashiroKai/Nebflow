@@ -92,8 +92,8 @@ object AskUserAnswerBridge:
         ) *>
           (target ! AgentCommand.ImmediateInput(
             text = text,
-            source = Some(AskMode.AnswerSource),
-            eventType = Some(AskMode.AnswerSource),
+            source = Some(AskUserAnswerSource.AnswerSource),
+            eventType = Some(AskUserAnswerSource.AnswerSource),
             fromUser = true
           ))
     }

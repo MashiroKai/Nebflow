@@ -861,7 +861,13 @@ object AgentActor extends AgentCore with AgentSession:
     sourceAgent: Option[String] = None,
     sourceSession: Option[String] = None,
     project: Option[String] = None,
-    nodeName: Option[String] = None
+    nodeName: Option[String] = None,
+    /**
+     * 附件引用（本批：AskUser 顶层可选参数 `attachments`）。与 `canvas`（下方
+     * `:899`）同款纪律 = **仅在场发**：为空时**不落键** ⇒ 缺席载荷与既有形态
+     * **逐字节相等**（`AskUserBuildJsonSpec` 的字节契约不受影响）。
+     */
+    attachments: List[String] = Nil
   ): Json =
     val fields = scala.collection.mutable.ListBuffer(
       "type" -> "askUser".asJson,
@@ -872,6 +878,8 @@ object AgentActor extends AgentCore with AgentSession:
     sourceSession.foreach(ss => fields += "sourceSession" -> ss.asJson)
     project.foreach(p => fields += "project" -> p.asJson)
     nodeName.foreach(nn => fields += "nodeName" -> nn.asJson)
+    // attachments emitted only when non-empty — pre-attachment payloads stay byte-identical
+    if attachments.nonEmpty then fields += "attachments" -> attachments.asJson
     fields += "items" -> Json.fromValues(items.map { item =>
       val base = scala.collection.mutable.ListBuffer(
         "question" -> item.question.asJson,

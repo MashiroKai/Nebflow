@@ -428,10 +428,14 @@ object ProjectCreateTool extends Tool:
             for
               answers <- agentRef
                 .?(
-                  (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, List(item), Some(replyTo)),
+                  (replyTo: ActorRef[List[String]]) =>
+                    // awaitsAnswer=true：本面板在自己的 fiber 里阻塞等待，且答复是
+                    // `applyPanelAnswer` 的入参 ⇒ AgentProcessing 必须据此标
+                    // WaitingForUser 并暂停内核预算（否则等人选路径被判成真卡死）。
+                    AgentCommand.AskUser(requestId, List(item), Some(replyTo), awaitsAnswer = true),
                   timeout = None
                 )
-              _ <- AskUserQuestionTool.restoreRegistryAfterAnswer(ctx)
+              _ <- AskUserQuestionTool.answerLanded(ctx)
               result <- applyPanelAnswer(parsePanelAnswer(answers), nameOpt, description, ctx)
             yield result
 end ProjectCreateTool
