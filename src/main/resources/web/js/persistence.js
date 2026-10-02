@@ -676,8 +676,9 @@ export function restoreFromStorage(opts = {}) {
       row.appendChild(bubble);
       chat.appendChild(row);
       // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：第 4 形参
-      // 保持本腿改前原样（不传 requestId —— 本批不越界改本腿的 id 语义），只补
-      // 第 5 形参 `m.attachments`；缺席/空 ⇒ 历史卡与改前逐字节同形。
+      // 保持本腿改前的取值（本腿历来不传 requestId ⇒ 仍是 undefined，本批不越界改
+      // 这条 id 语义），只补第 5 形参 `m.attachments`。缺席 / 空列表 ⇒
+      // `renderAskAttachments` 内早退 ⇒ 本腿历史卡与改前逐字节同形。
       renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments);
       // R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡原**不挂** footer，而 live
       // ask 行（chat.js）与历史 ask 问答行都挂 ⇒ 卡片 footer 奇偶不一致。现补一枚
@@ -1042,7 +1043,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.appendChild(bubble);
       fragment.appendChild(row);
       // 案 B：持久化的 requestId 一并透传 ⇒ 历史卡带 `data-request-id`（可 id 寻址）。
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId);
+      // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：第 5 形参 =
+      // 落盘行顶层 `attachments`（后端历史恢复腿 `handleGetHistory` → `getHistoryPage`
+      // → `Encoder[UiMessage]` 编出的同一形状）。缺席 / 空列表 ⇒
+      // `renderAskAttachments` 内早退 ⇒ 无附件行（改前形态逐字不变）。
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId, m.attachments);
       // R5（作者裁定 = 补上）：与 localStorage 兜底路径同款补药丸，两条历史路径
       // 逐字对齐（本函数与 restoreFromStorage 的历史形态必须一致）。
       const askCopy = askUserQuestionText(m.items);

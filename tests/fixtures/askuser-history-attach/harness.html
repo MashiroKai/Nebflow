@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<!-- askuser-history-attach harness.html — 静态测试夹具（askUser 历史恢复批
+     2026-10-02，chain-askuser-histattach）。
+
+     与 tests/fixtures/history-replay/harness.html 同族但**独立**（不改动那份被
+     askuser-dup-card / history-replay-cards 两件共用的夹具）：本件只服务
+     tests/askuser-history-attach.spec.mjs，驱动两条历史恢复腿并给出**机器可读**读数：
+
+       __replay(msgs)   → restoreFromBackendHistory(msgs)   （后端历史恢复腿）
+       __storage(msgs)  → 写 localStorage + restoreFromStorage()（本地缓存兜底腿）
+       __read()         → 现场读数（附件块在位 / 行形态 / 插位 / 问题下标 / 可点性）
+       __clickRow(i)    → 程序化点击第 i 行并回报 'workspace-open-item' 是否真的发出
+       __events         → 捕获到的 'workspace-open-item' 明细（单点入口的证据）
+
+     🔴 读数只锚类名 / 属性 / DOM 计数（禁锚本地化文本）。
+     🔴 绝不连任何真实后端：state.ws 是桩（send 只记录帧）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>askuser-history-attach harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView, activeView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'histatt-harness-session';
+
+    // WS stub: 只记录出站帧，绝不连后端。readyState 1 = OPEN（探针会发 pop.readFile，
+    // 无应答 ⇒ 1.5s 后该行降级为静态行 —— 这是「无后端」的夹具产物，不是被测代码行为；
+    // 本 harness 的读数一律在窗口内取，并另取一个「降级后」读数作对照）。
+    window.__sent = [];
+    state.ws = { readyState: 1, send: (d) => window.__sent.push(JSON.parse(d)) };
+
+    window.__events = [];
+    window.addEventListener('workspace-open-item', (e) => window.__events.push(e.detail || null));
+
+    function chatElNow() {
+      return (activeView && activeView.dom && activeView.dom.chat) || chatEl;
+    }
+
+    function fresh() {
+      const el = chatElNow();
+      el.innerHTML = '';
+      window.__events.length = 0;
+      return el;
+    }
+
+    const settle = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    window.__replay = async (msgs) => {
+      fresh();
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory(msgs);
+      await settle();
+      return window.__read();
+    };
+
+    window.__storage = async (msgs) => {
+      fresh();
+      const all = {};
+      all[state.activeSessionId] = msgs;
+      localStorage.setItem(stateMod.LS_SESSIONS_KEY, JSON.stringify(all));
+      const { restoreFromStorage } = await import(`${WEB}/persistence.js`);
+      restoreFromStorage();
+      await settle();
+      return window.__read();
+    };
+
+    /** 现场读数：附件块 + 插位 + 问题下标 + 可点性（全部机器可读）。 */
+    window.__read = () => {
+      const chat = chatElNow();
+      const box = chat.querySelector('.option-box');
+      const wrap = box ? box.querySelector('.ask-attachments-wrap') : null;
+      const rows = wrap ? [...wrap.querySelectorAll('.ob-compare-btn, .ask-attachment-static')] : [];
+      const btnRow = box ? box.querySelector('.option-btn-row') : null;
+      const kids = box ? [...box.children] : [];
+      const qWrappers = box ? [...box.querySelectorAll('.option-q-wrapper')] : [];
+      const firstQuestion = box ? box.querySelector('.option-q-wrapper:not(.ask-attachments-wrap)') : null;
+      return {
+        hasBox: !!box,
+        hasWrap: !!wrap,
+        rows: rows.length,
+        rowTags: rows.map(r => r.tagName),
+        rowDisabled: rows.map(r => (r.tagName === 'BUTTON' ? !!r.disabled : null)),
+        rowTabIndex: rows.map(r => r.getAttribute('tabindex')),
+        rowTitles: rows.map(r => r.title || r.getAttribute('title') || ''),
+        wrapIsQWrapper: wrap ? wrap.classList.contains('option-q-wrapper') : null,
+        qWrapperCount: qWrappers.length,
+        questionAtIndexZero: firstQuestion ? kids.indexOf(firstQuestion) === 0 : null,
+        beforeBtnRow: !!(wrap && btnRow && kids.indexOf(wrap) < kids.indexOf(btnRow)),
+        boxResolved: box ? box.classList.contains('resolved') : null,
+        boxHistoryReplay: box ? box.dataset.historyReplay === '1' : null,
+        clickHandlerAttached: rows.map(r => r.tagName === 'BUTTON' ? typeof r.onclick === 'function' : null),
+        sentFrames: window.__sent.map(f => f.type),
+      };
+    };
+
+    /** 程序化点击第 i 行（探针窗口内），回报单点入口是否真的发出事件。 */
+    window.__clickRow = async (i) => {
+      const box = chatElNow().querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachment-static')] : [];
+      const row = rows[i];
+      if (!row) return { clicked: false, reason: 'no-row' };
+      window.__events.length = 0;
+      row.click();
+      await new Promise(r => setTimeout(r, 0));
+      return {
+        clicked: true,
+        tag: row.tagName,
+        disabled: row.tagName === 'BUTTON' ? !!row.disabled : null,
+        dispatched: window.__events.length,
+        detailIds: window.__events.map(d => d && d.id),
+      };
+    };
+
+    /** 降级后读数（等探针 1.5s 超时）：无后端时夹具产物，作对照行。 */
+    window.__readAfterProbeTimeout = async () => {
+      await new Promise(r => setTimeout(r, 1700));
+      return window.__read();
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
