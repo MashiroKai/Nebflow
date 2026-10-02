@@ -2886,10 +2886,13 @@ export function closeAskUserCard(sessionId, requestId, note) {
  *  visible, no answer line. `null` (案 A①) = 历史无作答记录 ⇒ 不补答案行，改挂
  *  `.option-answer-pending` 显式待定标注（禁把「无记录」画成「已作答」）。
  *  requestId: 案 B 起随 askUser 行落盘的提问 id（旧行缺席 ⇒ undefined）。
+ *  attachments: askUser 历史恢复批（2026-10-02，chain-askuser-histattach）——提问
+ *  行随行落盘的附件引用列表（与 live 腿 `renderAskUser` 同构的顶层 `attachments`）。
+ *  缺席 / 空列表 ⇒ 本函数与改前**逐字节同形**（`renderAskAttachments` 自行早退）。
  *  🔴 落「无作答记录」的方向 = 「未作答」而非「已作答」：宁可让一张其实已答过的卡
  *  显示待定（重放腿/作答链会纠正），也不许让一张真 pending 卡被画成已答（那正是
  *  重放腿去重判据被击穿、双开首卡恒死的成因）。 */
-export function renderAskUserHistory(bubble, items, answerText, requestId) {
+export function renderAskUserHistory(bubble, items, answerText, requestId, attachments) {
   if (!Array.isArray(items) || items.length === 0) return;
   try {
     // 案 B：持久化的 requestId 透传进 showOptions ⇒ 历史恢复的卡也带
@@ -2903,6 +2906,11 @@ export function renderAskUserHistory(bubble, items, answerText, requestId) {
   }
   const box = bubble.querySelector('.option-box');
   if (!box) return;
+  // 附件行（askUser 历史恢复批）：与 live 腿（`renderAskUser` 内同一句，单点）同款
+  // 调用 —— 🔴 经 `.option-box` 定位、插位由 `renderAskAttachments` 自身决定
+  // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
+  // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
+  renderAskAttachments(box, attachments);
   // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
   // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）
   // 不受影响。

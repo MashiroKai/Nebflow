@@ -675,7 +675,10 @@ export function restoreFromStorage(opts = {}) {
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
       chat.appendChild(row);
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
+      // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：第 4 形参
+      // 保持本腿改前原样（不传 requestId —— 本批不越界改本腿的 id 语义），只补
+      // 第 5 形参 `m.attachments`；缺席/空 ⇒ 历史卡与改前逐字节同形。
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments);
       // R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡原**不挂** footer，而 live
       // ask 行（chat.js）与历史 ask 问答行都挂 ⇒ 卡片 footer 奇偶不一致。现补一枚
       // 药丸（复用同一 builder ⇒ 分隔符守卫与三面形态同源）。`AskUser` 落盘无
