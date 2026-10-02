@@ -874,8 +874,7 @@ object ProjectActor:
             val ledger = TaskLedgerStore.open()
             ledger.findSync(tid) match
               case Some(entry) =>
-                TaskLedgerRenderer.compactLine(entry, ledger.entriesSync(), terminal) +
-                  s"\n(read the full note timeline with TaskInfo)"
+                TaskLedgerRenderer.compactLine(entry, ledger.entriesSync(), terminal)
               case None => ""
           }.handleErrorWith(e =>
             logger.warn(s"Project '${cfg.project.name}' task injection skipped: ${e.getMessage}").as(""))
