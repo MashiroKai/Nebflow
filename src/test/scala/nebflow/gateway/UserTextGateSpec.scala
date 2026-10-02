@@ -38,6 +38,7 @@ class UserTextGateSpec extends FunSuite:
 
   private val hubFile =
     new java.io.File(repoRoot, "src/main/scala/nebflow/agent/InteractionHub.scala")
+
   // 严格DAG第⑥步第三批A裁定(2026-09-27):InteractionHubCommand(含 Answered)随 dwfq-5c7a31ea-1
   // R-B 移入 nebflow.actor,源码哨兵随迁新增此读面(先例 1c4cbb0/④路径钉串)。
   private val hubCommandFile =

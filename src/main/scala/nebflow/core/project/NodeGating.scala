@@ -23,17 +23,69 @@ private[project] trait NodeGating:
     store.combinedNodes.flatMap { combined =>
       val targets = FlowMapStore.resolveDepTargets(node.deps, combined)
       if targets.unknownChainRefs.nonEmpty then
-        logger.warn(
-          s"[$projectName] node '${node.name}' (${node.id}) deps=[${node.deps.mkString(",")}] carries " +
-            s"unresolvable chain reference(s) [${targets.unknownChainRefs.mkString(",")}] — the dependency can never " +
-            "satisfy (fail-closed); fix the deps ref (chains come from the Flow Map `chains[]` payload)"
-        )
-        IO.pure(false)
+        logger
+          .warn(
+            s"[$projectName] node '${node.name}' (${node.id}) deps=[${node.deps.mkString(",")}] carries " +
+              s"unresolvable chain reference(s) [${targets.unknownChainRefs.mkString(",")}] — the dependency can never " +
+              "satisfy (fail-closed); fix the deps ref (chains come from the Flow Map `chains[]` payload)"
+          )
+          .as(false)
       else
-        targets.ids
-          .traverse(store.findNode)
-          .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
+        // 判据 D（死链；案 b 运行期可见面）：链号**可解析**但成员含 `cancelled` ⇒ 闸**构造性
+        // 不可满足**。**判据零变化**（下方 `forall(completed)` 早已返回 false）；本分支只补
+        // **点名面**：既有 `unknownChainRefs` 分支不覆盖该形态 ⇒ 否则该形态在启动闸上**静默**。
+        // 🔴 **带单发去重**（复用 [[verdictGapLogged]] 式 `Ref[IO, Map]` 记账，见 [[deadChainWarned]]）
+        // ——既有 `unknownChainRefs` 分支本就无去重（逐次调用逐次 WARN），是既有隐患；本分支
+        // **不继承**该隐患（`depsSatisfied` 在资格回扫/启动腿被高频调用 ⇒ 无去重会刷屏）。
+        // RISKY 档（`failed` 成员）同源并列：**放行**（下方判定照旧，可重激活）+ 一条警告，
+        // 🔴 **禁**在此硬拒（那会封死自愈路）。
+        val deadNote = deadChainRefNote(node, targets)
+        val warnDead: IO[Unit] =
+          if deadNote.isEmpty then IO.unit
+          else
+            deadChainWarned
+              .modify(m =>
+                if m.get(node.id).contains(deadNote) then (m, false) else (m.updated(node.id, deadNote), true)
+              )
+              .flatMap(first =>
+                if first then logger.warn(s"[$projectName] node '${node.name}' (${node.id}) $deadNote") else IO.unit
+              )
+        warnDead *>
+          targets.ids
+            .traverse(store.findNode)
+            .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
+      end if
     }
+
+  /**
+   * 死链 / RISKY 链引用的**单点文案**（运行面 WARN 与 [[NodeTools.chainRefDeadError]] 同口径）。
+   * 空串 = 无该形态。判据源 = [[FlowMapStore.resolveDepTargets]] 的第三/第四桶（唯一解析点）。
+   */
+  private[project] def deadChainRefNote(node: NodeDef, targets: FlowMapStore.DepTargets): String =
+    val parts = scala.collection.mutable.ListBuffer.empty[String]
+    if targets.deadChainRefs.nonEmpty then
+      val named = targets.deadChainRefs.toList
+        .sortBy(_._1)
+        .map((cid, ids) =>
+          s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}"
+        )
+        .mkString("; ")
+      parts +=
+        (s"deps chain ref(s) are constructively unsatisfiable: $named — `cancelled` is a non-reactivatable terminal " +
+          "(the gate waits for EVERY member to be completed), so this dependency can NEVER be satisfied; rewire the deps " +
+          "ref to a completion FACT ANCHOR (literal member ids that already carry the landing fact) or drop the ref")
+    if targets.riskyChainRefs.nonEmpty then
+      val named = targets.riskyChainRefs.toList
+        .sortBy(_._1)
+        .map((cid, ids) =>
+          s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Failed}").mkString(", ")}"
+        )
+        .mkString("; ")
+      parts +=
+        (s"deps chain ref(s) are RISKY: $named — `failed` members block the gate until they are re-activated (failed IS " +
+          "reactivatable, so this is NOT a dead ref); re-activate them or rewire to a completion fact anchor")
+    if parts.isEmpty then "" else s"deps=[${node.deps.mkString(",")}] ${parts.mkString("; ")}"
+  end deadChainRefNote
 
   // ── verdict 闸（merge-verdict-gate 批 2026-09-12 作者裁定；**engine-defects #238 泛化
   //    2026-09-15**：闸面从「仅 merge 节点」扩到**全部收口位**）────────────────────────
@@ -216,9 +268,19 @@ private[project] trait NodeGating:
     if !MergeNodePolicy.isMerge(n) then IO.pure(Nil)
     else
       for
-        s <- store.snapshot
+        // 🔴 Data source = the **two-zone combined map**. This gate used to read
+        // `store.snapshot` (active zone only), while `MergeMutexPolicy.upsOf` resolves the
+        // upstreams through `all.get`: once a chain-level sweep moves the upstream into the
+        // archive zone the lookup misses, `readyAt` falls back to `createdAt` (the entry-node
+        // branch) and the rank primary key stops tracking arrival order (fingerprint
+        // `readyAt == createdAt`) — i.e. a later arrival can jump the queue. The combined map
+        // makes this gate share one source with [[depsSatisfied]] (`store.combinedNodes`).
+        // 🔴 Single-predicate discipline: do NOT add a second predicate and do NOT take a
+        // second, active-zone-only snapshot inside this gate.
+        // The `all` passed to `mergeQueueHolders` below is therefore the two-zone map.
+        combined <- store.combinedNodes
         _ <- alarmSameGitDirProjects()
-      yield mergeQueueHolders(n, s.nodes)
+      yield mergeQueueHolders(n, combined)
 
   /**
    * 阻塞清单纯判据（**闸与显示面的共同单点**）：[[MergeMutexPolicy.holders]] 出「同键
@@ -293,6 +355,61 @@ private[project] trait NodeGating:
       .filter(MergeNodePolicy.isMerge)
       .flatMap(n => MergeMutexPolicy.queuePosOf(n, all).map(p => n.id -> p))
       .toMap
+
+  /**
+   * **Pre-W1 name for [[mergeVerdictHoldersOf]]** (taskunify / W2b' backfill). The PR-side
+   * tree carries `verdictGateHoldersOf`; the body was byte-identical to
+   * [[mergeVerdictHoldersOf]]'s (`in ++ deps` expansion over the combined two-zone node map,
+   * `.distinct`, resolved through `store.findNode`, then the shared [[mergeVerdictHolders]]
+   * predicate) -- `git log -SverdictGateHoldersOf` lands only on the synthetic PR head, so the
+   * divergence is W1 rename fallout, not an organised main-side rename. This alias binds to
+   * the single implementation rather than re-deriving the upstream set: a second derivation
+   * would be a second source of truth for the gate, which the batch forbids.
+   */
+  private def verdictGateHoldersOf(n: NodeDef): IO[List[NodeDef]] =
+    mergeVerdictHoldersOf(n)
+
+  /**
+   * **Verdict-gate visibility slot batch** (mergeverdictvis batch 2026-09-23; payload face
+   * single point; pure mapping over the engine IO face, zero side effects, zero persisted
+   * fields): nodeId → [[MergeMutexPolicy.VerdictGate]], **non-empty entries only** (a
+   * non-merge node and a node whose upstream verifiers all pass are absent from the table ⇒
+   * a missing key means "not verdict-held", and the consumer reads it that way).
+   *
+   * Why this exists: a position held by the verdict gate produces **no** `mergeQueue` slot
+   * at all — [[mergeQueueHolders]] drops candidates that are themselves verdict-held (the
+   * admission narrowing of [[MergeMutexPolicy.holders]]), so its payload carries
+   * `mergeQueuePos.position = 1` with no holder listed anywhere, which reads as "first in
+   * line and nobody blocks me". The real cause is an upstream verifier that carries no pass
+   * verdict; this batch lifts that state onto the payload face.
+   *
+   * 🔴 Zero behaviour change: the gate predicate, the FIFO order, `mergeQueue` /
+   * `mergeQueuePos` and the [[MergeMutexPolicy.holders]] narrowing are byte-level untouched
+   * — this function only reads the same single point and maps it into a slot.
+   *
+   * 🔴 The judging authority is the engine (no frontend/dispatcher re-derivation, no read of
+   * the file ticket layer `.nebflow/locks/main-merge.queue`, no replay from the event stream
+   * — the same discipline as [[mergeQueueHoldersBatch]]).
+   */
+  def mergeVerdictGateBatch(all: Map[String, NodeDef]): IO[Map[String, MergeMutexPolicy.VerdictGate]] =
+    all.valuesIterator
+      .filter(MergeNodePolicy.isMerge)
+      .toList
+      .traverse { n =>
+        mergeVerdictHoldersOf(n).map { held =>
+          if held.isEmpty then None
+          else
+            Some(n.id -> MergeMutexPolicy.VerdictGate(held.map { u =>
+              MergeMutexPolicy.VerdictGateHolder(
+                u.id,
+                u.name,
+                u.role,
+                u.lastVerdict.map(_.trim).filter(_.nonEmpty).getOrElse(MergeMutexPolicy.VerdictGateNone)
+              )
+            }))
+        }
+      }
+      .map(_.flatten.toMap)
 
   /**
    * 闸挡启动时的留痕（三处落点共用单点文案）：`merge-queue` 事件（持有者集合变化时

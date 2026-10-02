@@ -200,6 +200,20 @@ export function renderBgAgentDropdown() {
     const projectPart = info.project
       ? '<span class="bg-task-project" title="' + escapeHtml(info.project) + '">' + escapeHtml(info.project) + '</span>'
       : '';
+    // Task attribution badge (2026-09-27 taskbadge batch): `#<id> · <title>` chip
+    // per row — the per-row task marker under the multi-task dispatcher
+    // architecture (rows from different tasks sit side by side in one bucket;
+    // the badge is what makes them distinguishable). No attribution (kernel /
+    // system / legacy / slot cleared) → no badge at all — an explicit empty
+    // badge would be noise on every non-task row. Long titles truncate at the
+    // RENDER layer only (CSS ellipsis + full text in the title tooltip).
+    const taskBadgeText = info.taskId
+      ? (info.taskTitle ? '#' + info.taskId + ' · ' + info.taskTitle : '#' + info.taskId)
+      : '';
+    const taskPart = taskBadgeText
+      ? '<span class="bg-task-badge" title="' + escapeHtml(t('subagents.taskBadge', { text: taskBadgeText })) + '">'
+        + escapeHtml(taskBadgeText) + '</span>'
+      : '';
     const displayName = info.name || id;
     const taskText = info.task ? displayName + ' · ' + info.task : displayName;
     const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
@@ -243,14 +257,20 @@ export function renderBgAgentDropdown() {
     return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        // Meta slots (state / kind / uptime) on the FIRST line — fixed set,
-        // never wraps the name (user ruling 21: agent name is ALWAYS the
-        // second line, visually separated from the labels).
-        '<div class="bg-task-line bg-task-meta">' +
+        // Single-line row (2026-09-27 badge-inline batch, author order: task
+        // badge joins the uptime line): state / kind / project / name / badge
+        // / retries / uptime share ONE line — uptime stays pinned right via
+        // .bg-task-uptime margin-left:auto; project / name / badge truncate
+        // (CSS ellipsis + the existing title tooltips, subagents.taskBadge
+        // family included); fixed chips never shrink. Pure layout: data
+        // sources, tooltip keys, dot / kind / state semantics and counting
+        // are untouched. Supersedes the old meta+name two-line split for THIS
+        // panel only (#bgagent-dropdown); the background-tasks panel
+        // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
+        '<div class="bg-task-line bg-task-main">' +
           '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + projectPart + retriesPart + uptimePart +
+          kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
         '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' + namePart + '</div>' +
         stuckPart + toolPart +
       '</div>' +
     '</div>';
@@ -308,10 +328,10 @@ export function renderBgAgentDropdown() {
 // Snapshot-on-open (2026-09-13 memory-track visibility forensics, fix B).
 // The registry snapshot used to be fetched ONCE per WS (re)connect (the
 // getActiveAgents send inside onReconnect below) — enough for every sub-agent
-// whose live frames reach the client, but NOT for the memory-consolidation
-// track: the backend silences that track's frames on purpose (MemoryTrack.scala
-// passes a no-op wsSend — track events must not pollute the parent view), so a
-// run is invisible unless the browser happens to refresh inside its window.
+// whose live frames reach the client, but NOT for the (now retired, govmemory
+// batch) memory-consolidation track: the backend silenced that track's frames
+// on purpose (track events must not pollute the parent view), so a run was
+// invisible unless the browser happened to refresh inside its window.
 // Fetch on open instead: user-driven, reuses the existing getActiveAgents
 // request and the existing activeAgents consumer (since 批 snapmerge-impl that
 // consumer MERGES the snapshot into the rendered row set instead of rebuilding

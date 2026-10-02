@@ -915,7 +915,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
   }
 
   test(
-    "R3-failed-side + R4-red-line: dead-session convergence to failed raises the immediate barrier alert but performs ZERO detach / ZERO succession marking"
+    "R3-failed-side + R4-red-line: a failed-side terminal write raises the immediate barrier alert but performs ZERO detach / ZERO succession marking"
   ) {
     val ws = tempRoot / "ws-failed"
     os.makeDir.all(ws)
@@ -950,7 +950,15 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
           createdAt = now - 600_000L
         )
       )
-      _ <- rt.engine.settleStaleRunningNodes()
+      // 🔴 killruling 批（2026-09-23 裁定 #19）**改驱动源**：原驱动 = 死会话僵尸收敛
+      // （`settleStaleRunningNodes → autoFailDeadRunning → failNode/deliverFailed`），
+      // 该腿已降档为只提醒（节点留 Running、不写 failed）⇒ 原驱动不再产生 failed。
+      // 新驱动 = **boot-recovery (c) 类**（`bootRecoveryClaim`：Running 且无 sessionRef
+      // ⇒ `failClaim` → **同一个 `failNode` 全链** → `deliverFailed` +
+      // `checkBarriersNow(cause="failed")`）——本用例断言的正是那条链的 failed 侧，
+      // 判据面（D5 零结算 / barrier-blocked 即时告警 / 零摘除 / 零便签 / failed 回流）
+      // **逐字不变**，只换「怎么造出一个 failed 节点」。
+      _ <- rt.store.getNode("n-z").flatMap(_.traverse_(n => rt.engine.bootRecoveryClaim(n).void))
       z <- node(rt, "n-z")
       w <- node(rt, "n-w")
       audit <- readAudit(ws)

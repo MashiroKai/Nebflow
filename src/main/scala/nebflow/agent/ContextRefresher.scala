@@ -299,25 +299,24 @@ object ContextRefresher:
       MemoryStore.loadUserMemory,
       agentMemory,
       MemoryHygieneSignal.takePending(),
-      nebflow.core.tools.TaskListStore.openSummaryLine(),
-      // 记忆队列 pending 计数（记忆改造批 2026-09-12，spec §5 R2）：一行注入，
-      // 复用本注入点先例（TaskList open 摘要同款）——队列为空时返回空串
-      // （不留常驻噪声行）。不新增只读回看工具。
-      nebflow.core.tools.MemoryQueue.summaryLine()
+      nebflow.core.tools.TaskListStore.openSummaryLine()
     )
   end buildMemoryBlock
 
   /**
    * 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 +
-   * TaskList open 摘要行 + 记忆队列 pending 行 → 记忆块全文。文件字节直接由已加载
-   * 内容计算（无第二次读盘）。空串段不渲染；非空段以 --- 分隔。
+   * TaskList open 摘要行 → 记忆块全文。文件字节直接由已加载内容计算（无第二次
+   * 读盘）。空串段不渲染；非空段以 --- 分隔。
+   *
+   * 记忆队列 pending 行参数已随队列族退役（memory-family-retirement 批
+   * 2026-09-29）：队列机制整体停用 ⇒ 无 pending 可报，该段恒空 ⇒ 参数、职责与
+   * 该段一并删除（不留死参）。
    */
   def renderMemoryBlock(
     userContent: Option[String],
     agentContent: Option[String],
     lifecycleSignal: (Boolean, Boolean),
-    openTasksLine: String = "",
-    memoryQueueLine: String = ""
+    openTasksLine: String = ""
   ): String =
     val sections = List(
       userContent.map(content => s"## User Memory\n\n$content"),
@@ -334,7 +333,7 @@ object ContextRefresher:
            |${sections.mkString("\n\n")}""".stripMargin
 
     val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
-    List(base, memoryQueueLine, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
+    List(base, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
   end renderMemoryBlock
 
   /**
@@ -439,26 +438,24 @@ object ContextRefresher:
    * reloaded disk def. The per-turn reload (panel edits take effect on the
    * running actor) must not silently drop spawn-time overrides:
    *
-   *  - modelOverride (#291: Delegate/SubTask `preset` param) — wins over
-   *    disk/panel edits for the actor's lifetime;
    *  - flowContract (FlowDagExecutor injects it per node via
    *    `baseDef.copy(...)`; the contract data survives reloads so the
    *    executor's verdict/slot resolution stays consistent). The FlowReport
    *    tool re-append that used to accompany it retired 2026-09-06 with the
    *    tool itself.
+   *
+   * (The former `modelOverride` leg was removed with the modelcfg batch
+   * `28a246724` -- AgentDef no longer carries `modelOverride`. W1 provisional
+   * shim: ported from main's ContextRefresher.)
    */
   private def applyRuntimeOverrides(running: AgentDef, fresh: AgentDef): AgentDef =
-    val withModel = running.modelOverride match
-      case Some(cfg) => fresh.copy(model = Some(cfg), preset = running.preset, modelOverride = Some(cfg))
-      case None => fresh
-    withModel.copy(
-      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract,
+    fresh.copy(
+      flowContract = if running.flowContract.nonEmpty then running.flowContract else fresh.flowContract,
       // 阶段 2b Plugins（§B.4 第 3/4 步）：node 分配是 spawn 时运行时注入
       // （NodeEngine 写入 pluginMcpServers/pluginTools，不落 agent.json）——
       // 每 turn 热重载不得冲掉（flowContract 同款保活先例）。
-      pluginMcpServers =
-        if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else withModel.pluginMcpServers,
-      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else withModel.pluginTools
+      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else fresh.pluginMcpServers,
+      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else fresh.pluginTools
     )
 
   def refreshTurn(

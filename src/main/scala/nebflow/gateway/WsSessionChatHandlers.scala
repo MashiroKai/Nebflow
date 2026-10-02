@@ -294,10 +294,20 @@ private[gateway] object WsSessionChatHandlers:
             )
           case one :: Nil =>
             val reason = if chReason.nonEmpty then chReason else "cancelled from Flow Map panel (chain-level)"
+            // 2026-10-01 (chainview r3, review finding R1): this leg used to call the plain
+            // `engine.cancelChain`, so the cascade ran but the chain-control ledger was never
+            // written -> `chainControlOf` / the REST payload kept reporting the chain as
+            // `active` (or `paused`), and `resumeChain` answered the semantics-mismatched
+            // CHAIN_SINGLE_MEMBER instead of the contract's CHAIN_CANCELLED (§5.2).
+            //
+            // `cancelChainAndRecord` is the same cascade plus the single ledger write; it keeps
+            // the ledger (`ChainLedger`) as the one authoritative state projection regardless of
+            // which live entry point issued the cancel. Both live entries (this WS leg and the
+            // REST leg in ProjectsRoutes) therefore funnel into the exact same primitive.
             logger.info(s"chainCancel (panel) for chain $chChainId in project '${one.project.name}'") *>
-              one.engine.cancelChain(chChainId, ChainCancelSource.User, reason).flatMap {
+              one.engine.cancelChainAndRecord(chChainId, ChainCancelSource.User, reason).flatMap {
                 case Left(err) => chainCancelReply(ok = false, None, Some(err))
-                case Right(rep) => chainCancelReply(ok = true, Some(rep), None)
+                case Right((rep, _)) => chainCancelReply(ok = true, Some(rep), None)
               }
           case many =>
             chainCancelReply(
@@ -692,23 +702,40 @@ private[gateway] object WsSessionChatHandlers:
     // — pinned by ActiveAgentsEntrySpec, see activeAgentEntryJson.
     sharedResources.agentRegistry.get.flatMap { registry =>
       WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
-        active
-          .traverse { rec =>
-            // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-            // 字段之一；Ephemeral/无任务记录 → 0）
-            sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-              sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount))
+        // taskbadge batch 2026-09-27: ledger titles read **once** (an
+        // id->title map -- a single ledger-file read regardless of row
+        // count); a read failure degrades to an empty map -- the snapshot
+        // always frames, the badge degrades to bare #id (empty-state
+        // contract; the snapshot must never fail because a title could
+        // not be read).
+        IO.blocking {
+          val ids = active.flatMap(_.taskId).distinct
+          ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
+        }.handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+          .flatMap { titles =>
+            active
+              .traverse { rec =>
+                // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                // 字段之一；Ephemeral/无任务记录 → 0）
+                sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                  sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                    WebSocketRoutes.activeAgentEntryJson(
+                      rec,
+                      meta,
+                      taskOpt.map(_.retryCount),
+                      taskTitle = rec.taskId.flatMap(titles.get)
+                    )
+                  }
+                }
               }
-            }
-          }
-          .flatMap { agents =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "activeAgents".asJson,
-                "agents" -> agents.asJson
-              )
-            )
+              .flatMap { agents =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "activeAgents".asJson,
+                    "agents" -> agents.asJson
+                  )
+                )
+              }
           }
       }
     }

@@ -126,7 +126,7 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                       "description" -> Json.fromString("闭环冒烟入口节点"),
                       "task" -> Json.fromString("produce A"),
                       // 显式双通报门集（批 A 回改 B1）：迁移前 bare "Nebula" 经旧解析 = {pass,failed}/result
-                      // ⇒ 此处字面与 :211 断言 `OutEdge.nebula` 逐字节等价（断言零改动）。
+                      // ⇒ 此处字面与 :211 断言 `OutEdge.root` 逐字节等价（断言零改动）。
                       "out" -> Json.fromString("(pass,failed)Nebula")
                     )
                   )
@@ -145,7 +145,7 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                       "description" -> Json.fromString("闭环冒烟下游节点"),
                       "task" -> Json.fromString("assemble B"),
                       "in" -> Json.arr(Json.fromString(aId)),
-                      // 同上（:212 断言 `OutEdge.nebula` 零改动）。
+                      // 同上（:212 断言 `OutEdge.root` 零改动）。
                       "out" -> Json.fromString("(pass,failed)Nebula")
                     )
                   )

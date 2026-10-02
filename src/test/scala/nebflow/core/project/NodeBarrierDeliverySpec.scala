@@ -409,7 +409,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       // A 入口运行中（out 仅满足连接下限；启动时捕获的快照 out 将被运行中接线改写为 C）。
       // 2026-09-12 批 A1：字面用**显式门集** `(pass,failed)Nebula`（= 通知汇报边
-      // `OutEdge.nebula`）；bare `"Nebula"` 今日已收敛为纯出口标记（`{pass}/signal`）。
+      // `OutEdge.root`）；bare `"Nebula"` 今日已收敛为纯出口标记（`{pass}/signal`）。
       _ <- nodeEdit(
         nodeInput(
           "bar-race",

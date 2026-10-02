@@ -519,10 +519,15 @@ function deviceUpdateEntry(d) {
 /** 统一进度面 → 行内回显（按状态机现读值同步；结果帧由 neblink.js 单点消费后播报）。
  *  按 DOM 现读扫描（不整面板重渲染）：零重排、零列表闪烁。 */
 function syncDeviceUpdateUI() {
-  document.querySelectorAll('[data-device-update-state]').forEach((stateEl) => {
+  // querySelectorAll yields Element, which carries neither `dataset` nor
+  // `disabled`; narrow once at the top and keep the body unchanged.
+  document.querySelectorAll('[data-device-update-state]').forEach((node) => {
+    if (!(node instanceof HTMLElement)) return;
+    const stateEl = node;
     const dn = stateEl.dataset.deviceUpdateState || '';
     const row = stateEl.closest('.neblink-peer');
-    const btn = row ? row.querySelector('[data-device-update-btn]') : null;
+    const btnFound = row ? row.querySelector('[data-device-update-btn]') : null;
+    const btn = btnFound instanceof HTMLButtonElement ? btnFound : null;
     const st = getDeviceUpdateState(dn);
     if (!st) {
       stateEl.textContent = '';

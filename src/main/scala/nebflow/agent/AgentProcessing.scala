@@ -242,11 +242,10 @@ private[agent] object AgentProcessing:
             // （stream 层禁 provider 拼接），fatal 会连队列一起丢且 UI 报错，
             // 「恢复」退化成「失败」（round-5 隔离冒烟实证：kick 后零恢复请求、
             // agent 直接 idle、队列滞留）。
-            val (immHeadAfterAbort, remainingImmAfterAbort) = TurnBoundaryDrains.drainHead(
+            val (immInputs, remainingImmAfterAbort) = TurnBoundaryDrains.drainHeadExpanded(
               state.execution.pendingImmediateInputs,
               compactionPending = false
-            )
-            val immInputs = immHeadAfterAbort.toList
+            )(expandRootNotify)
             val immMessages = immInputs.map(imm =>
               (imm.blocks match
                 case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
@@ -376,7 +375,19 @@ private[agent] object AgentProcessing:
                 case e: FallbackExhaustedError =>
                   val attemptSummaries =
                     e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                  NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
+                  // visionfix (甲): the user-facing "images could not be sent"
+                  // text is gated on whether THIS turn carried images, so the
+                  // predicate must be fed the very message list the failed call
+                  // sent. `FallbackExhaustedError.hadImage` already carries it
+                  // (set at the LlmInterface send point, llm/interface.scala);
+                  // fall back to the state's messages for error instances built
+                  // elsewhere (e.g. rethrown wrappers) so the flag is never
+                  // silently lost. `hadImageIn` is the single predicate.
+                  val turnHadImage =
+                    e.hadImage || nebflow.llm.LlmInterface.hadImageIn(cleanedState.messages)
+                  NebflowError.toUserMessage(
+                    NebflowError.LlmFailed(e.getMessage, attemptSummaries, hadImage = turnHadImage)
+                  )
                 case e: ToolPipelineError =>
                   e.message
                 case e: LoopDetectedError =>
@@ -563,9 +574,11 @@ private[agent] object AgentProcessing:
         // immediate input（原缺陷⑥ 合批 = 整队塞进同一次续轮，已按 root 裁定删除）。
         // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
-        val (immHeadInput, remainingImmInputs) =
-          TurnBoundaryDrains.drainHead(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
-        val immInputs = immHeadInput.toList
+        val (immInputs, remainingImmInputs) =
+          TurnBoundaryDrains.drainHeadExpanded(
+            state.execution.pendingImmediateInputs,
+            state.pendingCompaction.isDefined
+          )(expandRootNotify)
         val immediateMessages = immInputs match
           case Nil => Nil
           case inputs =>

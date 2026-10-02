@@ -21,19 +21,18 @@ import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewS
 import { notifyManualUpdateCheck, restoreUpdateProgress } from './updateCheck.js';
 import { toggleHTML, setToggleState } from './toggle.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
-import * as presets from './presets.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 // sidebar.js 拆分(FE组件化批次二 2026-09-27):三簇实现迁至 js/sidebar/ 子模块 —
-// Provider 界面族(providersUi.js)、预设管理 UI(presetsAdmin.js)、Rules +
-// PathPicker 模态(pathRules.js)。本文件保持单向 import(子模块不得反向 import
+// Provider 界面族(providersUi.js)、Rules + PathPicker 模态(pathRules.js)。
+// (预设管理 UI presetsAdmin.js 已随 A 线退役 presets.js 一并删除,合并 2026-10-02。)
+// 本文件保持单向 import(子模块不得反向 import
 // sidebar.js),公共导出面(批次前 41 符号)经下方 `export ... from` 显式转发,
 // 外部 import 方零改动。
 import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, saveNewProvider } from './sidebar/providersUi.js';
-export { saveNewProvider, openProviderWizard } from './sidebar/providersUi.js';
-import { loadPresetsSection } from './sidebar/presetsAdmin.js';
+export { saveNewProvider, openProviderWizard, validateContextWindow, CTX_WINDOW_HARD_CEILING } from './sidebar/providersUi.js';
 import { openRulesEditor, openPathPicker, injectRenderSessionSidebar } from './sidebar/pathRules.js';
 export { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal, openPathPicker, openPathPickerCallback, handleBrowseResult, initPathPicker } from './sidebar/pathRules.js';
 // pathRules 的 handleRulesSaved/handleRulesDeleted 需重渲会话侧栏(该段留守本
@@ -773,6 +772,7 @@ export function renderSettings() {
         </span>
       </button>
       ${neblinkSettingsHTML()}
+      <div id="settings-devices-slot"></div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.runtime')}</div>
@@ -812,18 +812,16 @@ export function renderSettings() {
       </div>
       <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
-    ${providerNames.length === 0
-      // 2026-09-16 作者令：未添加任何 Provider 之前，MODEL PRESETS 整栏不出现。
-      // 结构件（区块容器 / 标题 / #preset-list / #btn-add-preset /
-      // #preset-migrate-banner）一体零渲染，仅在原位留一条 i18n 提示。
-      // 不做点击跳转：本仓无「空态内联跳转」先例（见报告 §判定）。
-      ? `<div class="cfg-hint" id="preset-empty-hint">${t('settings.presetsEmptyHint')}</div>`
-      : `<div class="settings-section">
-      <div class="settings-section-title">${t('settings.presets')}</div>
-      <div id="preset-migrate-banner" style="display:none"></div>
-      <div id="preset-list"><div class="cfg-empty">Loading…</div></div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-preset">${t('settings.addPreset')}</button>
-    </div>`}
+    <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
+    <div class="settings-section">
+      <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
+           2026-09-27 19:20): one row / one button only — the list itself
+           lives in the standalone dedicated dialog (#secrets-overlay, owned
+           by js/secretsPanel.js), not inside #settings-modal. Placement per
+           brief §三: after MODEL PRESETS, before ADVANCED. -->
+      <div class="settings-section-title">${t('settings.secrets')}</div>
+      <button class="cfg-btn cfg-btn-add" id="btn-open-secrets">${t('settings.secrets')}</button>
+    </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
@@ -879,8 +877,15 @@ export function renderSettings() {
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
 
-  // Async-load the preset management section (non-blocking)
-  loadPresetsSection();
+  // friendseal batch (2026-09-25 ①-A): the settings-page device expansion
+  // area (chat entry per device). Lazy import — the P2-4 cycle-cut precedent:
+  // the builder lives in messages.js (the device chat's owner face, which
+  // statically imports neblink.js), so a static import here would create a
+  // new cycle. Idempotent mount; the refresh tick below re-mounts it.
+  const devicesSlot = document.getElementById('settings-devices-slot');
+  if (devicesSlot) {
+    import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
+  }
 
   // Pre-fetch model capabilities, then refresh badges on provider cards
   preloadModelCapabilities(() => {
@@ -907,6 +912,12 @@ export function renderSettings() {
       }
       // Keep the avatar section in lockstep with login/avatar changes.
       renderSettingsAvatar();
+      // friendseal (2026-09-25 ①-A): keep the device expansion area in
+      // lockstep with peer/presence/login changes on the same tick.
+      const devicesSlot = document.getElementById('settings-devices-slot');
+      if (devicesSlot) {
+        import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
+      }
     });
   };
   refreshNeblink();
@@ -1177,9 +1188,9 @@ function bindSettingsEvents(content, cfg) {
       e.stopPropagation();
       window.__showConfirm?.('Remove Provider', t('provider.removeConfirm', { name }), () => {
         state.parsedConfig.llm.providers[name] = null;
-        // Preset reference cleanup on provider removal is backend-owned (#339 —
-        // the global default-model field is retired; backend auto-created
-        // presets are keyed per provider).
+        // Provider removal only rewrites the providers map: model chains are
+        // per-agent (agent.json `model` key, /model panel) and the engine
+        // filters chain refs of removed providers at resolution time.
         state.configDirty = true;
         flushConfigToServer();
         renderSettings();
@@ -2826,10 +2837,27 @@ function showFolderCtxMenu(x, y, folderId) {
     createNewFolder(folderId);
   });
 
-  // Set project root — opens directory picker
+  // Set project root — opens the unified directory picker (workspacePicker.js).
+  // Clear commits projectRoot:null (button shown only when a root is set);
+  // both commit pipes dispatch 'project-root-changed' exactly like the retired
+  // in-module path picker did.
   menu.querySelector('[data-action="set-project-root"]').addEventListener('click', () => {
     if (!folder) return;
-    openPathPicker(folderId, folder.projectRoot);
+    import('./workspacePicker.js').then(({ openPicker }) => {
+      openPicker({
+        startPath: folder.projectRoot || '~',
+        title: t('workspacePicker.projectTitle'),
+        showClear: !!folder.projectRoot,
+        onPick: (path) => {
+          sendWs({ type: 'setFolderProjectRoot', folderId: folder.id, projectRoot: path });
+          window.dispatchEvent(new CustomEvent('project-root-changed'));
+        },
+        onClear: () => {
+          sendWs({ type: 'setFolderProjectRoot', folderId: folder.id, projectRoot: null });
+          window.dispatchEvent(new CustomEvent('project-root-changed'));
+        },
+      });
+    });
     dismissCtxMenu();
   });
 

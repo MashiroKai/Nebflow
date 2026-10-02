@@ -95,13 +95,159 @@ export function initMarkdown() {
   marked.setOptions({ breaks: true, gfm: true, headerIds: false });
 }
 
+// === @-mention rendering (mention-render batch, 2026-09-27) ===
+//
+// Message text naming a MOUNTED project (`@<name>` at word start, the name
+// ending at a whitespace boundary) renders as a blue clickable span that
+// opens the project workspace in the side file explorer (the click delegate
+// lives in mentionComplete.js). Matching runs INSIDE this shared markdown
+// pipeline — the VOICEBLOCK/MATHBLOCK placeholder-restore pattern — so the
+// streaming, finished and history-restored faces stay byte-consistent, and
+// it reuses the ONE project list + fetch cache owned by mentionComplete.js.
+//
+// The list reaches this module through a provider (wired once in main.js)
+// instead of a direct import: utils.js is imported by 29 files, and a new
+// module-graph edge from here into mentionComplete → … → branding.js would
+// interact with branding's import-order contract (see branding.js header).
+//
+// Zero-regression contract: text with NO matching @token renders
+// byte-identically — the scan is a pure pass-through when nothing matches,
+// and code segments (fenced / inline) are split out before scanning, so
+// `@` inside code and mid-word `@` (email addresses) never transform.
+//
+// LRU correctness: `_mdCache` is keyed by raw text, so the shared list's
+// generation is part of the key (see renderMarkdownWithMath) — a list change
+// starts a new key space and cached HTML can never contradict the list that
+// produced the current spans.
+
+/**
+ * A mounted project as exposed by the shared mention list.
+ * @typedef {{name: string, workspace?: string}} MentionProject
+ */
+
+/** @type {null | (() => {projects: MentionProject[], gen: number})} */
+let _mentionProvider = null;
+
+/**
+ * Wire the shared project-list readout (main.js, once at boot). The provider
+ * is the ONLY data path: this module never fetches and never caches projects.
+ * @param {() => {projects: MentionProject[], gen: number}} fn
+ */
+export function setMentionListProvider(fn) {
+  _mentionProvider = fn;
+}
+
+/**
+ * Current provider state; the safe fallback is an empty list (renders stay
+ * plain text until wiring/list arrival).
+ * @returns {{projects: MentionProject[], gen: number}}
+ */
+function mentionListState() {
+  if (!_mentionProvider) return { projects: [], gen: 0 };
+  try {
+    const s = _mentionProvider();
+    if (s && Array.isArray(s.projects)) return { projects: /** @type {MentionProject[]} */ (s.projects), gen: s.gen };
+  } catch (_) { /* a provider hiccup must never break rendering */ }
+  return { projects: [], gen: 0 };
+}
+
+const MENTION_WHITESPACE_RE = /\s/;
+
+/**
+ * Longest mounted-name match at a word-start '@'. Case-insensitive against
+ * the list; `canonical` always carries the list's verbatim name (the span's
+ * visible text stays the slice as typed). The match must END at a whitespace
+ * boundary (or end of segment), so a longer token like `@Name-x` never
+ * matches the name `Name`, and names containing spaces extend across them
+ * (full-name longest match, same semantics as the composer's insert).
+ *
+ * @param {string} text segment being scanned
+ * @param {number} at index of the '@'
+ * @param {MentionProject[]} projects read-only shared snapshot
+ * @returns {{canonical: string, len: number} | null}
+ */
+function matchMentionAt(text, at, projects) {
+  const after = text.slice(at + 1);
+  let bestCanonical = '';
+  let bestLen = 0;
+  for (const p of projects) {
+    const name = p && typeof p.name === 'string' ? p.name : '';
+    if (!name || after.length < name.length) continue;
+    if (after.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue;
+    const tail = after.slice(name.length);
+    if (tail && !MENTION_WHITESPACE_RE.test(tail[0])) continue;
+    if (name.length > bestLen) {
+      bestLen = name.length;
+      bestCanonical = name;
+    }
+  }
+  return bestLen > 0 ? { canonical: bestCanonical, len: bestLen } : null;
+}
+
+/**
+ * Replace word-start `@<mounted-name>` occurrences in a prose segment with
+ * MENTIONBLOCK placeholders (collected into `out`), restored as spans after
+ * marked.parse. Pure function: no match ⇒ byte-identical string out.
+ *
+ * @param {string} seg prose segment (code already split out)
+ * @param {Array<{canonical: string, slice: string}>} out collection sink
+ * @returns {string}
+ */
+function protectMentions(seg, out) {
+  const { projects } = mentionListState();
+  if (projects.length === 0) return seg;
+  let result = '';
+  let i = 0;
+  while (i < seg.length) {
+    const at = seg.indexOf('@', i);
+    if (at < 0) {
+      result += seg.slice(i);
+      break;
+    }
+    // Word-start gate: '@' must stand at segment start or after whitespace
+    // (parseMentionToken precedent in mentionComplete.js) — 'foo@' never hits.
+    const wordStart = at === 0 || MENTION_WHITESPACE_RE.test(seg[at - 1]);
+    const hit = wordStart ? matchMentionAt(seg, at, projects) : null;
+    if (hit) {
+      out.push({ canonical: hit.canonical, slice: seg.slice(at + 1, at + 1 + hit.len) });
+      result += seg.slice(i, at) + 'MENTIONBLOCK' + (out.length - 1) + 'END';
+      i = at + 1 + hit.len;
+    } else {
+      result += seg.slice(i, at + 1);
+      i = at + 1;
+    }
+  }
+  return result;
+}
+
+/**
+ * Restore MENTIONBLOCK placeholders as clickable mention spans. Every
+ * dynamic value goes through escapeHtml; the attribute value additionally
+ * quote-escapes because escapeHtml (a text-node serializer) does not escape
+ * `"` and this value lands inside a double-quoted attribute.
+ *
+ * @param {string} html
+ * @param {Array<{canonical: string, slice: string}>} blocks
+ * @returns {string}
+ */
+function restoreMentions(html, blocks) {
+  return html.replace(/MENTIONBLOCK(\d+)END/g, (m, idx) => {
+    const rec = blocks[parseInt(idx, 10)];
+    if (!rec) return m;
+    const attr = escapeHtml(rec.canonical).replace(/"/g, '&quot;');
+    return '<span class="mention-tag" data-project="' + attr + '">@' + escapeHtml(rec.slice) + '</span>';
+  });
+}
+
 // === KaTeX math rendering - protect math blocks from Markdown processing ===
 // Bounded LRU cache for rendered markdown HTML. History restore and session
 // switching re-render identical content; caching avoids repeated
 // marked.parse + KaTeX.renderToString work.
-// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${text}` —
+// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${mentionGen}|${text}` —
 //   captures every factor that changes the output (voice parsing, library
-//   load state, i18n locale used by the copy button, and the raw text).
+//   load state, i18n locale used by the copy button, the @-mention project
+//   list generation (mention-render batch: a list change must not let cached
+//   HTML contradict the current list), and the raw text).
 // - Capacity: 200 entries. Map preserves insertion order; on get we
 //   delete+set to move the entry to the end (most recent); on set we evict
 //   the first (least recently used) key when over capacity.
@@ -116,7 +262,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
   if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice);
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${text}`;
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${mentionListState().gen}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -147,6 +293,7 @@ function _renderMarkdownWithMath(text, parseVoice) {
 
 function _renderMarkdownInternal(protected_, voiceBlocks) {
   const mathBlocks = [];
+  const mentionBlocks = [];
   // Math is protected BEFORE marked.parse and restored AFTER it on the whole
   // HTML string, so the protection must be blind to code regions — otherwise
   // a `$` inside code (shell/JS snippets) is paired up and the KaTeX markup is
@@ -174,7 +321,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
   };
   protected_ = protected_
     .split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g)
-    .map((seg, i) => (i % 2 === 1 ? seg : protectMath(seg)))
+    .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(seg), mentionBlocks)))
     .join('');
   let html = marked.parse(protected_, { headerIds: false });
   // Wrap <pre> blocks with a copy button
@@ -205,10 +352,136 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
     const vtext = voiceBlocks[i] || '';
     return '<span class="voice-block" data-voice-index="' + i + '">' + escapeHtml(vtext) + '</span>';
   });
+  // Restore mention blocks as clickable blue spans (shared-list longest match).
+  html = restoreMentions(html, mentionBlocks);
   // Tag images for lightbox zoom (click → full preview). Skip imgs that
   // already carry a class (raw HTML in markdown) to avoid duplicate attrs.
   html = html.replace(/<img\b(?![^>]*\bclass=)/g, '<img class="nf-zoom-img"');
   return html;
+}
+
+// === Plain-text face with mention spans (user messages) ===
+/**
+ * Append PLAIN text into `parent`, wrapping word-start `@<mounted-name>`
+ * occurrences in .mention-tag spans. Used by the plain-text user-message
+ * faces (live send: chat.js renderUserBubble; history restore: persistence.js)
+ * which deliberately bypass markdown — user text must never gain markdown
+ * interpretation, so this helper only splits text and adds spans. Everything
+ * is built via createTextNode/setAttribute/textContent: no HTML string, no
+ * injection surface. No match ⇒ a single text node, byte-identical output to
+ * a plain textContent assignment.
+ *
+ * @param {HTMLElement} parent
+ * @param {string} text
+ */
+export function appendTextWithMentions(parent, text) {
+  const { projects } = mentionListState();
+  if (!projects.length) {
+    parent.appendChild(document.createTextNode(text));
+    return;
+  }
+  let rest = text;
+  for (;;) {
+    const at = rest.indexOf('@');
+    if (at < 0) break;
+    const wordStart = at === 0 || MENTION_WHITESPACE_RE.test(rest[at - 1]);
+    const hit = wordStart ? matchMentionAt(rest, at, projects) : null;
+    if (!hit) {
+      // Keep scanning after this non-matching '@'.
+      parent.appendChild(document.createTextNode(rest.slice(0, at + 1)));
+      rest = rest.slice(at + 1);
+      continue;
+    }
+    if (at > 0) parent.appendChild(document.createTextNode(rest.slice(0, at)));
+    const span = document.createElement('span');
+    span.className = 'mention-tag';
+    span.setAttribute('data-project', hit.canonical);
+    span.textContent = '@' + rest.slice(at + 1, at + 1 + hit.len);
+    parent.appendChild(span);
+    rest = rest.slice(at + 1 + hit.len);
+  }
+  if (rest) parent.appendChild(document.createTextNode(rest));
+}
+
+// === One-shot DOM enhancement after the shared list first arrives ===
+/**
+ * Wrap plain-text `@<mounted-name>` hits in already-rendered bubbles with the
+ * same .mention-tag spans the render pipeline emits. Runs ONCE per page load,
+ * wired in main.js via mentionComplete.onProjectsArrival: bubbles rendered
+ * while the list was still empty show plain text; this makes the styling
+ * appear without any user action once the list lands.
+ *
+ * Pure text-node surgery — no re-render, no scroll writes — so scroll
+ * position, msgScrollAnchor compensation and the follow latch are untouched.
+ * Scope: message bubbles of the primary chat and agent popups. Skipped
+ * subtrees: pre/code, voice blocks, KaTeX, existing mention spans, buttons,
+ * svg, script/style — mention styling must never leak into non-prose.
+ */
+export function enhanceMentionSpansInDom() {
+  const { projects } = mentionListState();
+  if (!projects.length) return;
+  const bubbles = document.querySelectorAll('#chat .bubble, .flow-agent-modal .bubble');
+  bubbles.forEach((bubble) => {
+    const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, {
+      /**
+       * @param {Node} node
+       * @returns {number}
+       */
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (parent.closest('pre, code, .voice-block, .mention-tag, .katex, button, svg, script, style')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    // Advance BEFORE mutating: splitText/replaceWith below detach nodes, so
+    // the walker's continuation must be captured first.
+    /** @type {Node | null} */
+    let node = walker.nextNode();
+    while (node) {
+      const textNode = /** @type {Text} */ (node);
+      node = walker.nextNode();
+      wrapMentionsInTextNode(textNode, projects);
+    }
+  });
+}
+
+/**
+ * Splice every mention hit of ONE text node into spans, right-to-left so
+ * earlier hit indices stay valid while splitting.
+ *
+ * @param {Text} textNode
+ * @param {MentionProject[]} projects read-only shared snapshot
+ */
+function wrapMentionsInTextNode(textNode, projects) {
+  const data = textNode.data;
+  /** @type {Array<{start: number, canonical: string, len: number}>} */
+  const hits = [];
+  let scan = 0;
+  while (scan < data.length) {
+    const idx = data.indexOf('@', scan);
+    if (idx < 0) break;
+    const wordStart = idx === 0 || MENTION_WHITESPACE_RE.test(data[idx - 1]);
+    const hit = wordStart ? matchMentionAt(data, idx, projects) : null;
+    if (hit) {
+      hits.push({ start: idx, canonical: hit.canonical, len: hit.len });
+      scan = idx + 1 + hit.len;
+    } else {
+      scan = idx + 1;
+    }
+  }
+  for (let h = hits.length - 1; h >= 0; h--) {
+    const { start, canonical, len } = hits[h];
+    textNode.splitText(start + 1 + len); // tail (rest of the node) becomes a sibling
+    const mid = textNode.splitText(start); // mid = the '@<slice>' text node
+    const span = document.createElement('span');
+    span.className = 'mention-tag';
+    span.setAttribute('data-project', canonical);
+    span.textContent = mid.data;
+    mid.replaceWith(span);
+  }
 }
 
 // === HTML escaping ===

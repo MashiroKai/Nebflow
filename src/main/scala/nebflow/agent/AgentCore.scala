@@ -29,9 +29,21 @@ private[agent] trait AgentCore extends AgentRegistryEmit with AgentStreamPipelin
 
 object AgentCore:
 
+  /**
+   * Nebula-root-session identity criterion (tool-face identity batch B1 /
+   * taskunify 2026-09-24, single source): `agentDef.name == "Nebula" && depth == 0`.
+   * Deliberately NOT the wider root-ish signals (`AgentRecord.kind == AgentKind.Root`
+   * is broader -- standalone root sessions also set kind=Root; `rootSessionId ==
+   * sessionId` needs a registry lookup = IO + registration timing). Consumers:
+   * `ToolContext.isNebulaRoot` / `ToolContext.isNebulaWriter`. (W1 provisional
+   * shim: ported verbatim from main's AgentCore -- the PR blob predates B1.)
+   */
+  def isNebulaRoot(agentDef: Option[AgentDef], depth: Int): Boolean =
+    agentDef.exists(_.name == "Nebula") && depth == 0
+
   // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):isRootAgent 下沉 actor.RootAgentIdentity、
-  // markToolProgress 下沉 actor.AgentState、MemoryConsolidatorName 下沉 actor.AgentDef 伴生
-  // (签名零 agent 符号;此处不留转发别名,shim 禁令),本对象内调用点随迁改指。
+  // markToolProgress 下沉 actor.AgentState(签名零 agent 符号;此处不留转发别名,shim 禁令),
+  // 本对象内调用点随迁改指。
   /**
    * 会话工具面身份（Q4/Q5 批 2026-09-13）：定义期变体选择的**唯一输入**。
    *
@@ -177,7 +189,8 @@ object AgentCore:
    * - MemoryNote（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
    *   裁定①）。2026-09-05 作者签准修订：写面 = Nebula + dream——dream 仅准入
    *   修订动作（remove/update/replace_section），append 在工具执行层拒绝
-   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryNoteTool 强制）。
+   *   （DREAM_APPEND_DENIED——实现该铁律的记账工具本体已随 govmemory 批
+   *   2026-09-25 整体退役，故动作面白名单现无机械面承载，见 registry 的退役注）。
    *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
    *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
@@ -223,8 +236,9 @@ object AgentCore:
    * dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
    * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
    * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
-   * 本集只放开【授能/剥离面】；动作面白名单在 MemoryNoteTool（两道闸独立，
-   * 摘任一道 spec 即红）。
+   * 本集只放开【授能/剥离面】；动作面白名单原在该记账工具内（两道闸独立，
+   * 摘任一道 spec 即红）——该工具与队列族已退役（memory-family-retirement 批
+   * 2026-09-29）⇒ 动作面白名单随之消失，本集仅存授能/剥离语义。
    */
   val DreamAdmittedTools = Set("MemoryNote")
 
@@ -406,19 +420,42 @@ object AgentCore:
   )
 
   /**
-   * 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
-   * buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
+   * friendseal batch (2026-09-25): names stripped from the Nebula DELIVERY
+   * face while the friends feature is sealed. The static set above is
+   * UNCHANGED — its registry-full-set semantics and the
+   * `NebulaOrchestrationToolsExpectedSize` constant both stay untouched; the
+   * seal is conditionalization at this ONE consumption point (the only
+   * injection point for Nebula's fixed face, `fixedToolsFor`), reading the
+   * same `features.friends` latch as the frontend (`nebflow.core.FriendsSeal`).
+   * Currently exactly one name: `ListFriends` — sealed means the name never
+   * reaches the LLM (no schema, no description), and a hallucinated call is
+   * dropped by the allowed-set partition before any execution. SendMessage
+   * STAYS on the face (its device leg remains): sealing its friend/group/
+   * local arms happens inside the tool (`FRIENDS_SEALED`), and the
+   * `buildAllowedToolSet` base-strip of the name (declaration-escape channel)
+   * is deliberately NOT extended by this batch.
+   */
+  def friendsSealedStrip: Set[String] =
+    if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
+
+  /**
+   * 阶段 2c 收敛的 agent 定义名（§C.1 总览，本集 = 四个在册名）：其 agent.json tools
+   * 声明在 buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
    * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
    * Edit）自动变 no-op，无需定义层先行迁移。
    *
-   * 2026-09-12 记忆改造批（memq）：+ `memory-consolidator` —— 压缩双轨的**记忆
-   * 整理 agent**（spec §5 R5 O-A）。工具面 = `KernelFixedTools` 恰七件（与 Delegate
-   * 内核同集合，作者第④条口径）；category 锁 standalone、`effectiveMcpServers=Nil`
-   * 由本集自动生效。它**不是**「唯一记忆写入者」——机制层不设该闸（作者 2026-09-12
-   * 00:19 裁定：用通用 `Edit`/`Write` 直写记忆文件，属有意为之的设计）。
+   * E5 batch 2026-10-01 (dangling-name closure): this set previously carried a FIFTH
+   * name -- the memory-consolidation agent added by the 2026-09-12 memq batch (spec §5
+   * R5 O-A, compressed dual-track second track). That agent retired on 2026-09-25
+   * (`aa371d68f`: tool + `memory/queue.jsonl` queue deleted, seed resources ABSENT,
+   * zero entry in the manifest `agents:` list), so its membership here became a
+   * DANGLING name -- the criterion no longer resolves to any def that can exist. This
+   * batch deletes the member, its `fixedToolsFor` by-name branch and the `AgentDef`
+   * name constant (single-owner order: name-family closure belongs to the E5 batch
+   * alone). The set is back to its four registered names.
    */
   val ConvergedAgentNames =
-    Set(RootAgentIdentity.Name, "project-dispatcher", "general", "kernel", "memory-consolidator")
+    Set(RootAgentIdentity.Name, "project-dispatcher", "general", "kernel")
 
   /**
    * Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
@@ -629,18 +666,20 @@ object AgentCore:
             // general/BaseTools 六件默认注入不变
             // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit+MemoryNote，
             // 在飞恰十七件）——本集即 Nebula 工具面唯一来源。
-            AgentCore.RootOrchestrationTools
+            // friendseal (2026-09-25): the static set above stays the single
+            // source; the friends seal strips names at this one consumption
+            // point (see friendsSealedStrip — currently ListFriends only).
+            AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general" => AgentCore.GeneralFixedTools
           // 极简内核（2026-09-11 恢复批）：机制固定单点，与 general/Nebula 同款
           // 先例；不经 legacyFixedTools 的 catch-all（该路径注释自陈「随阶段
           // 2e/3 归档一并退役」，依赖它有漂移风险）。
           case "kernel" => AgentCore.KernelFixedTools
-          // 记忆整理 agent（2026-09-12 记忆改造批）:与内核同集合恰七件——作者第④条
-          // 「与 Delegate 内核相同的工具面」字面成立；因为它是收敛名，`base=∅`、
-          // `NebulaExclusiveTools` 全剥（交集 ∅）、MCP 面 Nil ⇒ 零配置面。
-          // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):常量已下沉 actor.AgentDef。
-          case n if n == AgentDef.MemoryConsolidatorName => AgentCore.KernelFixedTools
+          // E5 batch 2026-10-01: the former fifth member's by-name branch is deleted
+          // together with that name -- the agent retired on 2026-09-25 (`aa371d68f`)
+          // and its name constant in AgentDef went with it in this batch, so the
+          // branch is unreachable by construction.
           case _ => legacyFixedTools(agentDef)
 
     end match

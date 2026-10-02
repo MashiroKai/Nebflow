@@ -3,6 +3,7 @@ package nebflow.core.project
 import io.circe.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.syntax.*
+import nebflow.core.tools.NodeTools
 
 /**
  * Project + Node + Flow Map 数据模型（#28 阶段 0，方案文档 20260831_project-node-architecture.md §2.1）。
@@ -347,6 +348,15 @@ object OutEdge:
   val RootDefaultOn: Set[String] = Set(Pass, Failed)
   val RootTarget = "Nebula"
 
+  /**
+   * Pre-W1 names for the same two declarations (`NebulaTarget` / `NebulaDefaultOn`,
+   * see the block comment above). Bound directly to the current declarations so the
+   * literal `"Nebula"` and the `{pass,failed}` gate set have exactly **one** source
+   * and cannot drift apart.
+   */
+  val NebulaDefaultOn: Set[String] = RootDefaultOn
+  val NebulaTarget = RootTarget
+
   given Configuration = Configuration.default.withDefaults
   given Codec[OutEdge] = ConfiguredCodec.derived
 
@@ -355,6 +365,9 @@ object OutEdge:
    * 字面构造（测试/工具直建）用；与 fromLegacyString("Nebula") 同形。
    */
   def root: OutEdge = OutEdge(RootTarget, RootDefaultOn)
+
+  /** Pre-W1 name for [[root]] (`nebula`); same equivalent construction, one source. */
+  def nebula: OutEdge = root
 
   /**
    * 旧字符串单边解码（codec 双读与表面语法共用单点）："A"→OutEdge("A",{pass},result)；
@@ -949,7 +962,27 @@ case class NodeDef(
    * = 批二**，本批只落「声明 + 派生兜底收窄」定义层（届时台账挂在本字段之上）。
    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。
    */
-  chainId: Option[String] = None
+  chainId: Option[String] = None,
+  /**
+   * **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①, a single
+   * field `taskId: Option[String]`, the same shape as `chainId`): this node is attributed
+   * to its **task id** (an entry id in the unified ledger
+   * `~/.nebflow/tasks-v2.json`).
+   *
+   * Write point = the node's **single construction point** ([[NodeTools]]'s create),
+   * taking the **engine-side identity** `ctx.taskId` -- 🔴 it must **not** be taken from
+   * `NodeEditTool`'s `project` parameter (that parameter **can override**
+   * `ctx.projectName` ⇒ client-forgeable; the value discipline is the same as
+   * `BoardCaller.fromContext`'s "engine-side identity, never a client parameter").
+   *
+   * A legacy flow-map.json without this key → withDefaults decodes `None` (**zero
+   * migration**).
+   *
+   * (W1 provisional shim: field appended at the END of the parameter list -- main's
+   * copy places it last too; positional constructions keep compiling. The uplink
+   * refusal face that consumes it lands with the owning wave.)
+   */
+  taskId: Option[String] = None
 )
 
 object NodeDef:
@@ -1047,6 +1080,52 @@ object NodePayload:
   /** 拒绝态派生键的值（唯一取值；**缺键 = 合法**，见 [[buildNodeJson]] 头注）。 */
   val VerifierRouteLost: String = "lost"
 
+  /** Value of the pass-face gap derived key (the only value; **absent key = legal**, see the [[buildNodeJson]] header). */
+  val VerifierPassUnconsumed: String = "unconsumed"
+
+  /**
+   * **Judgement E: verifier pass face has zero consumer** (verdict-consumer batch
+   * 2026-10-01 · case A · design card §1.3 / §3.3, verbatim):
+   *
+   * ```
+   * verifierPassUnconsumed(v) ≜ role(v) = verifier
+   *                            ∧ lastVerdict(v) written
+   *                            ∧ declaredOut(v) non-empty
+   *                            ∧ ¬passOutlet(v)
+   * ```
+   *
+   * Sits BESIDE — never instead of — [[verifierRouteInvalid]] (judgement D, the fail
+   * face): D judges "the verdict came back negative, can it re-run?", this one judges
+   * "the verdict came back positive, where does it go?". Both can hold at once; never
+   * merged, never substituted one for the other.
+   *
+   * **No `¬inConsumer` clause** (the same reading as the card's §3.1 tier (a)): an `in`
+   * referrer is a NECESSARY but not a SUFFICIENT condition for the verdict gate (card
+   * §1.5 — the 15 "middle tier" instances share the same root cause, merely masked by
+   * the sink's `in` bookkeeping). This key is therefore a VISIBILITY carrier and the 15
+   * carry it too; the archive face (b) has a separate strict V-0 form, and the
+   * difference between the two is the card's §3.1 hard ruling, not an omission.
+   *
+   * **Pure function, no IO, zero new persisted field** (same discipline as
+   * [[verifierRouteInvalid]]: a derived quantity, declaring the pass edge lifts it
+   * automatically). Same three boundaries as [[NodeTools.passOutlet]] (`pendingOut`
+   * counts; `:loop` does not; `(pass)Nebula:signal` does not) plus "empty declaredOut
+   * does not count" — that window belongs to the existing two-phase token face
+   * (`verifierRoutePending`).
+   *
+   * 🔴 The judgement single point is `NodeTools.passOutlet` (never re-implemented
+   * inside this function; card §5.1 states verbatim "reuse tier (a)'s single point").
+   *
+   * @param nodes the active-zone node table (the resolution face; callers read one
+   *              snapshot and never mix snapshots).
+   */
+  def verifierPassUnconsumed(node: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    if NodeRoles.normalize(node.role) != NodeRoles.Verifier then false
+    else
+      !node.lastVerdict.forall(_.trim.isEmpty) &&
+      NodeTools.declaredOutOf(node).nonEmpty &&
+      !NodeTools.passOutlet(node, nodes)
+
   /**
    * **判据 D：verifier 拒绝态**（failroute-guard 批 2026-09-21 · 案 A · 设计卡 §2.1 逐字）：
    *
@@ -1094,7 +1173,12 @@ object NodePayload:
     // （与 mergeQueue/mergeQueuePos 同款）——缺省 None ⇒ 既有调用方
     // （全部 WS 事件写点）字段集**字节级零漂移**；快照面
     // （NodeList 工具 / REST flow-map）传活动区节点表后按下述判据求值。
-    nodes: Option[Map[String, NodeDef]] = None
+    nodes: Option[Map[String, NodeDef]] = None,
+    // mergeverdictvis batch (2026-09-23): snapshot-only conditional key, the
+    // same discipline as mergeQueue/mergeQueuePos — appended at the end so
+    // existing positional callers stay untouched; default None keeps every
+    // existing caller (all WS event write sites) byte-level zero drift.
+    mergeVerdictGate: Option[MergeMutexPolicy.VerdictGate] = None
   ): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
@@ -1373,8 +1457,52 @@ object NodePayload:
     // 🔴 禁复刻判据（前端/分发器/第二处派生）：真源单点 = 本函数。
     val verifierRouteFields =
       nodes.filter(ns => verifierRouteInvalid(node, ns)).toList.map(_ => "verifierRoute" -> VerifierRouteLost.asJson)
+    // mergeVerdictGate conditional serialization (mergeverdictvis batch 2026-09-23):
+    // carried **only by a merge node whose upstream verifiers hold it at the verdict
+    // gate** (the caller injects [[NodeEngine.mergeVerdictGateBatch]]'s non-empty entries)
+    // — an unheld merge node and every non-merge node keep a **byte-level zero-drift**
+    // field set (same conditional-field discipline as mergeQueue/mergeQueuePos/merge/deps);
+    // 🔴 the judging authority is the engine single point (never re-derived by the
+    // frontend/dispatcher).
+    //
+    // Why it cannot be merged into the two existing keys (wording boundary, verbatim):
+    //   · it cannot go into `mergeQueue` — a verdict-held position produces no
+    //     `mergeQueue` slot at all (the admission narrowing in
+    //     [[NodeEngine.mergeQueueHolders]] drops such candidates before the slot batch
+    //     iterates them), so there is no slot to merge into;
+    //   · it must not go into `mergeQueuePos` — that key is the **queue order** ("which
+    //     place am I"), which deliberately does **not** apply the verdict admission
+    //     filter; putting the gate judgement there would break the frozen split of
+    //     duties and turn a place into a mixed "place + gate" quantity.
+    // Value shape (verbatim contract; the frontend reads it, never derives it):
+    //   blocked  = `true` (this key is only carried when held ⇒ the flag is explicit for
+    //              consumers that would otherwise read a missing holder list as "free")
+    //   heldBy[] = the upstream verifiers that block this position, each
+    //              {id, name, role, lastVerdict}; `lastVerdict` is verbatim, or the
+    //              literal "none" when the upstream declared none / an empty one (same
+    //              wording as the engine's verdict-gate hold message)
+    //   reason   = "verdict-not-pass" (frozen literal; see
+    //              [[MergeMutexPolicy.VerdictGateReason]])
+    // 🔴 This key is a **pure derived quantity**: it writes no NodeDef field and enters
+    //    neither flow-map.json nor the archive batch (same discipline as
+    //    mergeQueue/mergeQueuePos/wiringGap).
+    val mergeVerdictGateFields = mergeVerdictGate.filter(_.heldBy.nonEmpty).toList.map { g =>
+      val held = g.heldBy.map { h =>
+        Json.obj(
+          "id" -> h.id.asJson,
+          "name" -> h.name.asJson,
+          "role" -> h.role.asJson,
+          "lastVerdict" -> h.lastVerdict.asJson
+        )
+      }
+      "mergeVerdictGate" -> Json.obj(
+        "blocked" -> true.asJson,
+        "heldBy" -> held.asJson,
+        "reason" -> MergeMutexPolicy.VerdictGateReason.asJson
+      )
+    }
     Json.obj(
-      (baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields ++ verifierRouteFields)*
+      (baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields ++ mergeVerdictGateFields ++ verifierRouteFields)*
     )
 
   end buildNodeJson
@@ -1547,6 +1675,12 @@ object ChainCancelErrors:
   val NotFound = "CHAIN_NOT_FOUND"
   val SingleMember = "CHAIN_SINGLE_MEMBER"
 
+  /**
+   * `resume` 对**已取消链**的拒绝码（chainview 批 2026-10-01）：取消不可逆 ⇒ 继续链的
+   * 原语必须显式拒绝（🔴 禁静默返回 active —— 那会让调用方以为链又能派发了）。
+   */
+  val AlreadyCancelled = "CHAIN_CANCELLED"
+
   def notFound(chainId: String): String =
     s"$NotFound: no chain with id '$chainId' in this project — chain ids come from the Flow Map " +
       "`chains[]` payload (a chain exists only for a weakly-connected component of the merged " +
@@ -1556,6 +1690,12 @@ object ChainCancelErrors:
     s"$SingleMember: chain '$chainId' has fewer than 2 members — a single node / isolated node " +
       "has no chain to cancel; use the node-level cancel (NodeCancel) instead of degrading the " +
       "chain-level primitive silently"
+
+  def alreadyCancelled(chainId: String): String =
+    s"$AlreadyCancelled: chain '$chainId' was cancelled — cancellation is irreversible (its members " +
+      "are already terminal), so it cannot be resumed; re-create the work as a new chain instead"
+
+end ChainCancelErrors
 
 /** Project 实体定义（§1.1，projects/<name>/project.json）。 */
 case class ProjectDef(

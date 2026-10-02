@@ -63,6 +63,18 @@ import nebflow.shared.PathUtil
  *   致某 verifier 失去 fail 路由时的**可行动**留痕——主语 = **受害 verifier**（非退役
  *   节点）；按批聚合、摘要逐位载被摘目标/保留 pass 面/恢复文案；见
  *   [[VerifierRouteLostType]]）/
+ *   verifier-pass-unconsumed（**verdict-consumer batch 2026-10-01 · case A tier (a),
+ *   warning only**：the PASS-face defect — after a verifier is created/rewired its
+ *   declaration face carries **no pass outlet** (a positive verdict nobody receives).
+ *   Sits BESIDE — never instead of — the fail-face `verifier-route-lost` (both
+ *   judgements can hold at once). Write point = the successful legs of `NodeEditTool`
+ *   create/rewire; summary = that verifier's name/id; see
+ *   [[VerifierPassUnconsumedType]]）/
+ *   chain-archive-held（**same batch · case A tier (b) release + warn**：the chain
+ *   archives as usual, but its component holds a "pass verdict with zero consumer"
+ *   (V-0) member ⇒ the conclusion is carried out on this line, and the summary spells
+ *   out both manual exits verbatim. Same family as `chain-archived`, DIFFERENT fact —
+ *   the two must never be merged into one line; see [[ChainArchiveHeldType]]）/
  *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：`node_report` 申报
  *   已被 `drain` take-and-remove 取走、而终态写按 R2 fresh-read 纪律**拒写**（节点已
  *   消失 / 状态已变 / 关机期 draining 抑制）时的**补偿写回**——summary 含 sessionId +
@@ -170,6 +182,45 @@ object FlowMapEventLog:
       "Restore the route with NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)"
 
   /**
+   * **zero-consumer pass verdict** event type (verdict-consumer batch 2026-10-01 ·
+   * case A warning tier · design card §2.1 / §3.3). Registered-style extension: the
+   * `append` API takes no schema change — a new type is one word in the list above plus
+   * a writing point.
+   *
+   * Semantics = "this verifier judged `pass`, and its declaration face carries **no pass
+   * outlet at all** — the positive verdict has nowhere to go". The subject (`nodeId`
+   * field) is the **verifier itself** (same discipline as [[VerifierRouteLostType]]:
+   * the victim is the subject, never the silent actor).
+   *
+   * 🔴 It sits **beside**, never instead of, the fail-face family: `NODE_VERIFIER_NEEDS_ROUTE`
+   * / `verifierRouteInvalid` / [[VerifierRouteLostType]] all judge whether a **rejected**
+   * target can be re-run. This one judges where an **accepted** verdict is delivered —
+   * both conditions can hold at once, and neither may be merged into the other.
+   *
+   * The judging authority is the single point [[NodeTools.passOutlet]] (never re-derived
+   * here, in the frontend, or in the dispatcher). Idempotent by construction: on a
+   * create/rewire call the line is appended only when the judgement holds at that call's
+   * close, and it is a pure derived quantity ⇒ re-wiring the pass leg removes the
+   * condition with no bookkeeping. Warning tier only: **zero rejection paths**, no new
+   * Mail face (a node has no Mail identity).
+   */
+  val VerifierPassUnconsumedType = "verifier-pass-unconsumed"
+
+  /**
+   * **chain archived with unconsumed verdicts** event type (same batch · case A (b)
+   * release + warn). The chain is archived **as usual** (the release behaviour is
+   * deliberately unchanged: a blocking gate would manufacture "the chain never archives",
+   * the same family as #1180 "waiting ≠ no progress"); this line carries the conclusion
+   * outward so the state is not silent.
+   *
+   * The symmetric precedent is [[ChainRestoredType]] (`chain-restored`): chain-family
+   * events grow by one type rather than being merged, and "the whole chain went out" vs
+   * "the whole chain went out while carrying unconsumed verdicts" are **two different
+   * facts** — 🔴 never merged into one line.
+   */
+  val ChainArchiveHeldType = "chain-archive-held"
+
+  /**
    * 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
    * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。
    */
@@ -213,6 +264,25 @@ object FlowMapEventLog:
   val ChainMembershipChangedType = "chain-membership-changed"
 
   /**
+   * **链控态变更事件类型**（chainview 批 2026-10-01）：链级 pause / resume / cancel 的
+   * 台账状态面变动，一条一留痕。
+   *
+   * 与链族既有四型的分工（同族不同事实，禁合并）：`chain-archived` = 整链出库、
+   * `chain-restored` = 整链拉回、`chain-cancelled` = **一次取消操作的成员清单**（本批
+   * 照旧由 `NodeCanceller.cancelNodes` 的聚合腿发射）；本型回答的是「**这条链的控制态
+   * 此刻是什么、什么时候变的**」——三态（`active` / `paused` / `cancelled`）的唯一审计面，
+   * 与 WS 的 `chainState` 帧同源（同一 [[ChainLedger.ChainControl]] 投影）。
+   *
+   * `nodeId` = 链首成员（可能为空——链条目未必存在；`append` 对空 id 照写，消费方按
+   * 顶层 `chainId` 归属）；顶层 `chainId` = 链号（原样回显调用方给的号）。
+   */
+  val ChainStateChangedType = "chain-state-changed"
+
+  /** `chain-state-changed` 结构化 summary（`k=v` 单空格；沿 [[noWs]] 纪律）。 */
+  def chainStateChangedSummary(status: String, at: Long): String =
+    s"status=${noWs(status)} at=$at"
+
+  /**
    * `chain-membership-changed` 结构化 summary（`k=v` 单空格分隔，值不含空白——
    * 沿 [[noWs]] 纪律）：`from` = 旧链号（`-` = 无归属）、`to` = 新链号（`-` = 无归属）、
    * `reason` ∈ declaration | re-id | fallback。时戳由 [[append]] 的顶层 `ts` 字段承载，
@@ -225,6 +295,263 @@ object FlowMapEventLog:
   ): String =
     s"from=${from.filter(_.trim.nonEmpty).map(noWs).getOrElse("-")} " +
       s"to=${to.filter(_.trim.nonEmpty).map(noWs).getOrElse("-")} reason=${noWs(reason)}"
+
+  /**
+   * **边集变更事件类型**（缺陷③批 2026-10-01 · 案 A「单点统一事件」；root #335① 裁定）。
+   *
+   * 语义 = 「地图里**某条边**变了」——回答此前**结构性不可判**的问题：「我没动过这个节点，
+   * 它的拓扑为什么变了 / 那条边是什么时候没的」。旧口径下 `out` / `in` / `deps` 三类边集
+   * 变更**一个逐笔事件都没有**（`chainId` 声明面有逐笔 `from=/to=` 而边集面零留痕 ⇒ 成因
+   * 不可从审计面重建；在册实证 = failroute-guard 批设计件 `:203`「该位全史零路由事件 ⇒
+   * 成因无法从审计面重建」）。
+   *
+   * 写点（**choke point 单点族**，调用点埋点必漏）：[[NodeTools.setOut]]（含**归档分支**）、
+   * NodeEditTool create 事务、NodeEditTool edit 尾（in 追加 / 归档上游 / deps 替换）、
+   * `NodeCompletion.detachCancelledUpstream` / `detachAbandonedNode`、
+   * `NodeDelivery.reversePruneReferences`、`NodeEngine.applyDeferredWiring`，
+   * 以及**编辑期拒绝面**（`reason=refused`：`ensureMergePassOnly` / `ensureTargetNotRunning` /
+   * `verdictRouteGate` / `verdictRouteGateForAppends` / `loopGateViolation`）。
+   *
+   * 幂等：`before == after`（canonical 口径）⇒ **零行**；一次编辑里未变的边**不得出声**。
+   * **逐边一行**（#335② 裁定）：🔴 禁按批聚合——聚合会让「哪条边」在审计面重新模糊。
+   * `nodeId` 字段承载 **owner**（边集发生变化的节点），`chainId` 不写（边变更不是链族事实）。
+   */
+  val EdgeChangedType = "edge-changed"
+
+  /** `edge-changed` 的变更面（边集方向三族 + 拒绝面一值；值域不含空白，沿 [[noWs]] 纪律）。 */
+  object EdgeChangeKind:
+    val Out = "out"
+    val In = "in"
+    val Deps = "deps"
+
+    /** 拒绝面：**不写边** ⇒ `from`/`to` 恒 `-`，`kind` = 被拒门类（见 [[EdgeChangeReason.Refused]]）。 */
+    val Refused = "refused"
+
+  /** `edge-changed` 的成因（值域不含空白）。 */
+  object EdgeChangeReason:
+    /** 工具路径（`NodeEdit`）的边集写入。 */
+    val Machine = "machine"
+
+    /** 引擎侧迟到摘除（`NodeDelivery.reversePruneReferences`）。 */
+    val Engine = "engine"
+
+    /** 取消链摘边（`NodeCompletion.detachCancelledUpstream`）。 */
+    val Cancel = "cancel"
+
+    /** 退役摘边（`NodeCompletion.detachAbandonedNode`）。 */
+    val Abandon = "abandon"
+
+    /** 待接线队列到点自动接线（`NodeEngine.applyDeferredWiring`）。 */
+    val AutoWire = "auto-wire"
+
+    /** 编辑期硬拒（不写边；`detail` = 既有错误码）。 */
+    val Refused = "refused"
+
+  end EdgeChangeReason
+
+  /**
+   * 单条边变更视图（写点组装的纯数据；summary 组装单点消费）。
+   *
+   * `from` / `to` = 该 owner 边集里**被移除 / 被新增的那一项**的身份（解析后节点 id；
+   * 边集侧恒单条，🔴 禁逗号拼接多边）；`None` = 无该侧（渲染为 `-`）。
+   * `mode` / `gate` = 该边的模式与门集（拒绝面无边 ⇒ `None` → `-`）。
+   */
+  final case class EdgeChangeView(
+    owner: String,
+    from: Option[String],
+    to: Option[String],
+    kind: String,
+    mode: Option[String] = None,
+    gate: Option[String] = None,
+    reason: String = EdgeChangeReason.Machine,
+    detail: Option[String] = None
+  )
+
+  /**
+   * `edge-changed` 结构化 summary（单行、可 grep；`k=v` 单空格分隔，**值不含空白**——
+   * 沿 [[noWs]] 纪律，`-` = 空/不适用，与 [[chainMembershipChangedSummary]] 的 `-` 约定同源）。
+   *
+   * 键序固定：`owner` `from` `to` `kind` `mode` `gate` `reason`（+ 可选 `detail`）。
+   * `detail` 只在拒绝面出现，值 = **既有错误码常量**（如 `NODE_MERGE_PASS_ONLY`）——
+   * 🔴 禁把完整错误文案塞进 payload（含空白，违反行内纪律）。
+   */
+  def edgeChangedSummary(v: EdgeChangeView): String =
+    def valOf(s: Option[String]): String = s.map(noWs).filter(_.nonEmpty).getOrElse("-")
+    s"owner=${valOf(Some(v.owner))} from=${valOf(v.from)} to=${valOf(v.to)} kind=${valOf(Some(v.kind))}" +
+      s" mode=${valOf(v.mode)} gate=${valOf(v.gate)} reason=${valOf(Some(v.reason))}" +
+      v.detail.map(d => s" detail=${valOf(Some(d))}").getOrElse("")
+
+  /** 门集规范式（`|` 分隔、排序确定；空集 = `-`）。 */
+  private def gateSpec(e: OutEdge): String =
+    if e.on.isEmpty then "-" else e.on.toList.sorted.mkString("|")
+
+  /**
+   * 边身份键（**解析后**目标 + 模式 + 门集；20260909 in 丢失事故的口径：diff 必须在
+   * 「节点身份」空间进行，名字/ id 两形态不得互相误判为改接）。
+   */
+  private def edgeIdentity(resolve: String => String, e: OutEdge): (String, String, Set[String]) =
+    (resolve(e.to), e.mode, e.on)
+
+  /**
+   * **边集变更视图（纯函数，零 IO）**：`beforeOut` ↔ `afterOut` 的 canonical 逐边 diff ⇒
+   * 逐边一条视图（先移除、后新增，序确定）。`before == after` ⇒ `Nil`（**零行**，与
+   * `chain-membership-changed` 的「不变则 Nil」同款）。
+   *
+   * `resolve` = 目标串 → 身份串（调用方传 `OutEdge.resolveTargetId(nodes, _)` 的收口）；
+   * 视图里的值取解析结果，悬空时由调用方回落原串。
+   */
+  def outEdgeViews(
+    owner: String,
+    beforeOut: List[OutEdge],
+    afterOut: List[OutEdge],
+    reason: String,
+    resolve: String => String
+  ): List[EdgeChangeView] =
+    val before = OutEdge.canonical(beforeOut)
+    val after = OutEdge.canonical(afterOut)
+    val bKeys = before.map(e => edgeIdentity(resolve, e)).toSet
+    val aKeys = after.map(e => edgeIdentity(resolve, e)).toSet
+    val removed = before.filterNot(e => aKeys.contains(edgeIdentity(resolve, e)))
+    val added = after.filterNot(e => bKeys.contains(edgeIdentity(resolve, e)))
+    removed.map(e =>
+      EdgeChangeView(owner, Some(resolve(e.to)), None, EdgeChangeKind.Out, Some(e.mode), Some(gateSpec(e)), reason)
+    ) ++
+      added.map(e =>
+        EdgeChangeView(owner, None, Some(resolve(e.to)), EdgeChangeKind.Out, Some(e.mode), Some(gateSpec(e)), reason)
+      )
+
+  end outEdgeViews
+
+  /**
+   * **`in` 镜像变更视图（纯函数，零 IO）**：`s.in` 列表的 canonical 逐项 diff。
+   *
+   * `kind=in` 是 `kind=out` 的**同一事实的另一面**（下游的入边随上游出边增减）⇒ 必须
+   * **另发一行**（🔴 不得并入 out 那一行：并入会让「谁的边变了」在审计面重新模糊）。
+   * `owner` = **镜像所在节点**（入边的主人），`from`/`to` = 该 in 项的增删（项值恒为
+   * 上游节点 id；`in` 列表历史上只存 id）。
+   */
+  def inMirrorViews(
+    owner: String,
+    beforeIn: List[String],
+    afterIn: List[String],
+    reason: String
+  ): List[EdgeChangeView] =
+    val b = beforeIn.distinct
+    val a = afterIn.distinct
+    val removed = b.filterNot(a.contains)
+    val added = a.filterNot(b.contains)
+    removed.map(up => EdgeChangeView(owner, Some(up), None, EdgeChangeKind.In, None, None, reason)) ++
+      added.map(up => EdgeChangeView(owner, None, Some(up), EdgeChangeKind.In, None, None, reason))
+
+  /**
+   * **`in` 镜像的批量视图**（多个节点的 in 列表同时变化 ⇒ 逐节点、逐项一行）。
+   * `before`/`after` = 「节点 id → 该节点的 in 列表现值」两时点各取一次；只对**真正变化**
+   * 的节点出声（未变节点零行——R5 负控的机械承担点）。
+   */
+  def inMirrorViewsBatch(
+    before: Map[String, List[String]],
+    after: Map[String, List[String]],
+    reason: String
+  ): List[EdgeChangeView] =
+    (before.keySet ++ after.keySet).toList.sorted.flatMap { id =>
+      inMirrorViews(id, before.getOrElse(id, Nil), after.getOrElse(id, Nil), reason)
+    }
+
+  /**
+   * **`deps` 替换视图（纯函数，零 IO）**：`NodeDef.deps` 是**替换**语义（非增删）——
+   * 逐项 diff 记 `kind=deps from=<旧> to=<新>`（`NodeEdit(deps="X")` → `NodeEdit(deps="Y")`
+   * 恰好一行 `from=X to=Y`）。
+   *
+   * 🔴 **成对渲染**（本批 §2.4 R3 的判据面）：替换语义下「旧项 → 新项」是**同一槽位的
+   * 一次改写**，不是「一条边被摘 + 另一条边被加」两件独立事实 ⇒ 逐对发一行
+   * （`from` / `to` 同时非空）。集合大小不等时余项各自单侧（新增：`from=-`；移除：
+   * `to=-`），序确定（配对按 canonical 序，余项接续）。
+   * 两集合相等 ⇒ `Nil`（**零行**——R5 负控的机械承担点）。
+   */
+  def depsViews(
+    owner: String,
+    beforeDeps: List[String],
+    afterDeps: List[String],
+    reason: String
+  ): List[EdgeChangeView] =
+    val b = beforeDeps.distinct
+    val a = afterDeps.distinct
+    if b == a then Nil
+    else
+      val removed = b.filterNot(a.contains)
+      val added = a.filterNot(b.contains)
+      val paired = removed.zipAll(added, "", "").map { (oldD, newD) =>
+        EdgeChangeView(
+          owner,
+          if oldD.isEmpty then None else Some(oldD),
+          if newD.isEmpty then None else Some(newD),
+          EdgeChangeKind.Deps,
+          None,
+          None,
+          reason
+        )
+      }
+      paired
+
+    end if
+
+  end depsViews
+
+  /**
+   * 拒绝面视图（纯函数，零 IO）：编辑期硬拒**落一笔事件**（🔴 不新造平行类型，沿 `kind` /
+   * `reason` 值域扩展）。`from`/`to` 恒 `-`（拒绝面不写边）——只记「谁被谁拒」+ 错误码。
+   */
+  def refusedView(owner: String, gateKind: String, errorCode: String): EdgeChangeView =
+    EdgeChangeView(
+      owner = owner,
+      from = None,
+      to = None,
+      kind = if gateKind.trim.isEmpty then EdgeChangeKind.Refused else gateKind,
+      mode = None,
+      gate = None,
+      reason = EdgeChangeReason.Refused,
+      detail = Some(errorCode)
+    )
+
+  /**
+   * 逐条落 `edge-changed`（**逐边一行**，逐条 append ⇒ 一行一 `os.write.append`）。
+   * `Nil` ⇒ 零 IO（幂等出口的机械承担点：无变更视图就不落任何字节）。
+   */
+  def appendEdgeChanges(workspace: String, project: String, views: List[EdgeChangeView]): IO[Unit] =
+    views.foldLeft(IO.unit)((acc, v) =>
+      acc *> append(workspace, project, v.owner, EdgeChangedType, edgeChangedSummary(v))
+    )
+
+  /** 单条落 `edge-changed`（拒绝面 / 单点写点的便捷入口）。 */
+  def appendEdgeChange(workspace: String, project: String, view: EdgeChangeView): IO[Unit] =
+    append(workspace, project, view.owner, EdgeChangedType, edgeChangedSummary(view))
+
+  /**
+   * **重激活触发源判定单点**（缺陷③批 2026-10-01 · 案 A 写点 10，纯函数、零 IO）。
+   *
+   * 此前 `reactivated` 的 `source=` 是**硬编码 `human`**（`NodeEditTool`），于是「谁把
+   * 这个终态节点放回重跑」在审计面恒不可区分——节点会话、分发器会话与真人工三个来源
+   * 同形。本函数按调用方身份三面判定（优先级自上而下）：
+   *
+   *   - `isDispatcher` ⇒ `dispatcher`（分发器会话）；
+   *   - `flowNodeId` 非空 ⇒ `node`（**project 节点会话**）；
+   *   - `sessionId` 非空 ⇒ `machine`（其余具名会话：宿主/REST 直调等）；
+   *   - **零身份面**（三者皆空）⇒ `human`——**回落语义，不是「未知」**（既有调用方
+   *     多为人工/工具直调，保守归到 human 与旧口径一致）。
+   */
+  def reactivateSource(isDispatcher: Boolean, flowNodeId: Option[String], sessionId: Option[String]): String =
+    if isDispatcher then "dispatcher"
+    else if flowNodeId.exists(_.trim.nonEmpty) then "node"
+    else if sessionId.exists(_.trim.nonEmpty) then "machine"
+    else "human"
+
+  /**
+   * `actor=` 尾段（会话 id；🔴 **键非空才发**——缺身份面时返回空串，禁发空值键，与
+   * `chainMembershipChangedSummary` 的「不变则 Nil」同款「不写无信息键」纪律）。
+   * 值经 [[noWs]]（行内不得含空白，与 [[edgeChangedSummary]] 同源纪律）。
+   */
+  def reactivateActorSuffix(sessionId: Option[String]): String =
+    sessionId.map(noWs).filter(_.nonEmpty).map(id => s" actor=$id").getOrElse("")
 
   /**
    * `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿
@@ -269,6 +596,173 @@ object FlowMapEventLog:
    * `chainId`（分发器不属任何链）。
    */
   val DispatcherIdleExpiredType = "dispatcher-idle-expired"
+
+  /**
+   * Dispatcher **task-terminal teardown** event type (taskunify merge batch 2026-09-24,
+   * landing point 5 / ruling d①).
+   *
+   * Write point = `ProjectActor.expireTaskTerminalDispatcher` (the 30 s `TtlTick` sweep leg
+   * finds that "the task this dispatcher is bound to reached a terminal state" and tears
+   * the session down).
+   *
+   * 🔴 **Why this needs its own type (implplan §5 "new audit face")**: the semantics of
+   * `dispatcher-idle-expired` is "the keep-alive window ended (a **time** criterion)";
+   * this type's semantics is "**the task is finished** (a **business** criterion)". Sharing
+   * one type name would make the two causes **indistinguishable** in the event stream, and
+   * nobody could answer afterwards "was this teardown a timeout or a task terminal state".
+   * ⇒ Criteria 5.1/5.2 use it to verify the two paths separately.
+   *
+   * The `nodeId` field carries the **session id** (same precedent as
+   * [[DispatcherIdleExpiredType]] — a dispatcher is not a Flow node and has no
+   * `NodeDef.id`); `taskId` is this change's **business key** (written into the summary so
+   * "which finished task caused the teardown" is mechanically greppable — deliberately not
+   * stuffed into `nodeId`, which would clash with the precedent's semantics).
+   * `chainId` is not written (a dispatcher belongs to no chain).
+   */
+  val DispatcherTaskTerminalType = "dispatcher-task-terminal"
+
+  /**
+   * Task-terminal teardown structured summary (`k=v`, single-space separated, **values
+   * carry no whitespace**).
+   */
+  def dispatcherTaskTerminalSummary(sessionId: String, taskId: String, state: String, reason: String): String =
+    s"session=$sessionId task=$taskId state=$state reason=$reason"
+
+  /**
+   * Revive-evict teardown event type (Mail task-continuation batch, 2026-09-28): a Mail
+   * revive trigger found the task's dispatcher slot still occupied (the residue a 30 s
+   * task-terminal sweep window can leave behind) and evicted it so a FRESH bound session
+   * takes over — "dispatcher re-mounted" is only true if the old registration verifiably
+   * died. A **new type**, deliberately distinguishable from the sweep's
+   * `dispatcher-task-terminal` (different cause: revival, not expiry); the `nodeId` field
+   * carries the session id under the same precedent as the terminal/idle events.
+   */
+  val DispatcherReviveEvictType = "dispatcher-revive-evict"
+
+  /**
+   * Revive-evict structured summary (`k=v`, single-space separated, values carry no
+   * whitespace). `reason=revived-by-mail` = the Mail task-continuation leg did this.
+   */
+  def dispatcherReviveEvictSummary(sessionId: String, taskId: String, reason: String): String =
+    s"session=$sessionId task=$taskId reason=$reason"
+
+  /**
+   * Concurrency-cap refusal event type (taskunify merge batch 2026-09-24; design §4d
+   * mandatory anti-leak item).
+   *
+   * Write point = the pre-spawn gate in `ProjectActor.dispatchTask`: the dispatcher session
+   * count has reached [[nebflow.shared.Defaults.DispatcherMaxConcurrentSessions]] ⇒
+   * **explicit refusal + alert** (never a silent over-spawn). 🔴 Division of labour with
+   * the `TASK_*` family: that family is the **tool-call-level** refusal text; this type is
+   * the **engine-side** gate's trace face (the "event face" of the double-trace rule).
+   *
+   * `nodeId` carries the **project name** (there is no session to point at — the refusal
+   * happens before any session exists; same precedent as [[DispatcherWakeType]] carrying a
+   * project name in this field).
+   */
+  val DispatcherConcurrencyRefusedType = "dispatcher-concurrency-refused"
+
+  /**
+   * Concurrency-cap refusal structured summary (`k=v`, single-space separated, **values
+   * carry no whitespace**).
+   *
+   * 🔴 **All four elements must live in this one summary line** (project name ∧ current live
+   * count ∧ cap ∧ **way out**) — the hard requirement is "visible + locatable, not silent",
+   * so the mechanical criterion has to be assertable **on the event line alone** (the WARN
+   * face carries the same text but must not be needed to complete the four elements).
+   * [[wayOut]] is passed in rather than inlined so the event face and the WARN face state
+   * exactly the same remedy wording.
+   */
+  def dispatcherConcurrencyRefusedSummary(project: String, active: Int, cap: Int, reason: String, way: String): String =
+    s"project=${project.replaceAll("\\s+", "_")} active=$active cap=$cap reason=${reason.replaceAll("\\s+", "_")} way=${way.replaceAll("\\s+", "_")}"
+
+  /**
+   * The single source of the cap-refusal way-out wording (shared by the event summary's
+   * `way=` field and the WARN text).
+   */
+  val DispatcherConcurrencyCapWayOut: String =
+    "raise nebflow.dispatcher.maxConcurrentSessions, or let the running dispatcher finish / cancel it"
+
+  /**
+   * 🔴 **Uplink-refused trace event type** (taskunify merge batch 2026-09-24 · ruling T ·
+   * implplan §8/§10.4).
+   *
+   * Semantics = "one uplink notification whose **attribution cannot be resolved** (the node
+   * has no `taskId` fingerprint) was **refused fail-closed**". Write point = the single
+   * engine-side uplink circuit [[NodeEngine.uplinkAllowed]] (the common precondition of all
+   * seven uplink paths U1–U7).
+   *
+   * 🔴 **Why this event must exist (ruling T = ⓑ double trace)**: the `TASK_*` error-code
+   * family covers only the **tool-call-level** refusal text (the `Task` / `TaskInfo`
+   * returns). The **engine-side uplinks** (node completed/failed notification, blocked
+   * reentry, landing/merge uplink, cancel notification, manual redelivery) go through no
+   * tool at all ⇒ without a dedicated event face here, "the landing failed but could not be
+   * sent out" would be **silent** — exactly the case implplan §10.4 marks as "easiest to
+   * miss" (U3's no-loss argument happens not to cover it).
+   *
+   * 🔴 **One refusal ⇒ exactly one event** (criteria 10.4.1/10.4.2): **no merging, no
+   * suppression** (no same-key window suppression — "two in a row ⇒ two events" is a hard
+   * criterion). **A log line alone is forbidden** (criterion 10.4.5: a missing event face
+   * is a red).
+   *
+   * `nodeId` carries the **refused node's id** (that node is this event's subject — same
+   * family as [[DispatcherIdleExpiredType]] carrying a session id in this field: the field
+   * carries the subject's identifier). `chainId` is passed through from the call site when
+   * present, for chain-based lookback.
+   */
+  val UplinkRefusedType = "uplink-refused"
+
+  /**
+   * Structured summary for an uplink refusal (`k=v`, single-space separated, **values carry
+   * no whitespace** — whitespace inside the text is normalised to `_` so that class-counting
+   * criteria such as `grep 'uplink-refused' | grep -c 'landing'` are not broken by spaces).
+   *
+   * 🔴 **The three text elements must all be present (criterion 10.4.4)**: one single line
+   * carrying ① the **node id** (`node=<id>`) ② the **refusal reason**
+   * (`reason=no-attribution` — the reason face is "no attribution fingerprint" / "not
+   * registered in the ledger") ③ the **way out** (`way=<...>` — `register-attribution` /
+   * `node_report` / `Flow Map` / `manual`). `kind` is the uplink class, and the
+   * **landing/merge class must be distinguishable** (`kind=landing`, the core of criterion
+   * 10.4.3).
+   */
+  def uplinkRefusedSummary(
+    nodeId: String,
+    nodeName: String,
+    kind: String,
+    reason: String,
+    way: String
+  ): String =
+    def norm(s: String): String = s.replaceAll("\\s+", "_").trim
+    s"node=${norm(nodeId)} name=${norm(nodeName)} kind=${norm(kind)} reason=${norm(reason)} way=${norm(way)}"
+
+  /**
+   * 分发器**未消费注入件**审计事件类型（mailack 批 2026-09-23，D 项止损）。
+   *
+   * 写点 = `ProjectActor` 的**每一处分发器会话拆除**（`dispatcherBridge.teardown` 与
+   * `expireIdleDispatcher`）：拆除时若 `pendingTaskTexts` 非空（已注入但 turn 尚未消费
+   * 的件），把这些件**数量 + 逐件首行**落一条事件。
+   *
+   * 动因（2026-09-23 audit 实测）：`cancelAgent` / 空闲到期拆除**不检查**未消费队列，
+   * 队列里的件随会话**静默蒸发**——零审计、零补投（分发器任务不在任何补投扫描内，
+   * `ProjectActor` 的 `redeliver` 只覆盖 dispatch-notify 与节点结果）。实证 18:18:08
+   * 一次 `cancelAgent (panel)` 时 `pending=31`。本事件使该形态**可审计**（不是补投：
+   * 补投需要幂等键，件正文非幂等语义载体，属另批）。
+   *
+   * `nodeId` 字段承载**会话 id**（同 [[DispatcherIdleExpiredType]] 先例）。
+   */
+  val DispatcherQueueDroppedType = "dispatcher-queue-dropped"
+
+  /**
+   * 未消费件审计 summary（`k=v` 单空格分隔，**值不含空白**：首行空白归一为 `_` 并截断，
+   * 防 k=v 解析被破坏；完整正文不落事件行——事件行必须保持单行）。
+   */
+  def dispatcherQueueDroppedSummary(sessionId: String, dropped: Int, reason: String, firstLines: List[String]): String =
+    def norm(s: String): String =
+      val t = s.replaceAll("\\s+", "_").trim
+      if t.length > 80 then t.take(80) + "…" else t
+    val head = s"session=$sessionId dropped=$dropped reason=${norm(reason)}"
+    if firstLines.isEmpty then head
+    else head + " items=" + firstLines.map(norm).mkString("|")
 
   /**
    * 空闲到期事件结构化 summary（`k=v` 单空格分隔，值不含空白；`session` 值形如
@@ -394,6 +888,31 @@ object FlowMapEventLog:
    */
   def chainArchivedSummary(chainId: String, archivedAt: Long, members: Int): String =
     s"chain=$chainId archivedAt=$archivedAt members=$members"
+
+  /**
+   * `chain-archive-held` structured summary single point (verdict-consumer batch ·
+   * case A (b)), mirroring [[chainArchivedSummary]] line for line: `k=v` pairs, single
+   * spaces, values carrying no whitespace.
+   *
+   * 🔴 **append-only**: the new key `unconsumedVerdicts` is appended **after** the frozen
+   * `chain=` / `archivedAt=` / `members=` triple, whose keys and order stay byte-for-byte
+   * unchanged — and it rides **this** event, never `chain-archived` (that event's summary
+   * is frozen for its existing consumers). Old readers keep parsing these lines because
+   * [[parseChainSummary]] accepts unknown keys as-is (zero migration).
+   *
+   * The summary must carry the two manual exits **verbatim** (same actionable-trace
+   * discipline as [[verifierRouteLostSummary]]): ① wire `(pass)<landing>` — the condition
+   * is a pure derived quantity, so the next sweep releases the chain with no extra action;
+   * ② retire the verifier with `NodeEdit(abandon=true)`.
+   */
+  def chainArchiveHeldSummary(chainId: String, archivedAt: Long, members: Int, unconsumed: List[String]): String =
+    val ids = unconsumed.distinct.sorted
+    val detail = if ids.isEmpty then "-" else ids.mkString(",")
+    s"chain=$chainId archivedAt=$archivedAt members=$members unconsumedVerdicts=${noWs(detail)} " +
+      "reason=pass-verdict-unconsumed — the chain was archived as usual; these verifiers judged `pass` with no pass outlet " +
+      "(nothing consumes their positive verdict). Manual exits: (1) wire '(pass)<landing>' on the verifier " +
+      "(pure derived judgement — the next sweep releases it with no further action); " +
+      "(2) retire the verifier with NodeEdit(abandon=true)."
 
   /** 拉回事件结构化 summary（对称口径；restoredAt 与 archivedAt 同键位语义）。 */
   def chainRestoredSummary(chainId: String, restoredAt: Long, members: Int): String =

@@ -8,7 +8,7 @@ import nebflow.shared.PathUtil
  *
  * 用法：
  * {{{
- *   sbt -batch "Test/runMain nebflow.agent.AgentDefObservationFaceProbe"
+ *   sbt -batch "Test/runMain nebflow.actor.AgentDefObservationFaceProbe"
  * }}}
  *
  * 面：删 `tools` 键后 keeper payload 的 `AgentDef.tools` 形变（`[]` / 7 件 → `["*"]`）。

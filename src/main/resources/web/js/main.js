@@ -18,7 +18,8 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill, countsAsRealMessage } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
+import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
@@ -63,7 +64,7 @@ import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { addNotification } from './notificationBanner.js';
-import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
+import { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 // #27 Project 标签页 + Flow Map 标签页（方向调整：均为 Canvas 标签页形态）
@@ -108,6 +109,10 @@ import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBa
 // config dialog. Wiring is document-level, so it survives the friends gate
 // detaching/re-attaching the entry (see socialPanel.js initSocialPanel).
 import { initSocialPanel } from './socialPanel.js';
+// Secrets dialog (secrets-frontend batch, 2026-09-27): standalone modal opened
+// from the settings page entry row (#btn-open-secrets). Document-level wiring,
+// so it survives the settings re-renders that rebuild that button.
+import { initSecretsPanel } from './secretsPanel.js';
 import { friendsEnabled } from './featureFlags.js';
 // FE 组件化批次七(2026-09-28):main.js 顶层函数族抽取 —— import 回绑(主体调用点逐字不动;
 // window.* 挂钩行与顶层 setInterval/addEventListener 挂点保留在 main.js 原位置)。
@@ -225,6 +230,16 @@ await waitForGlobals();
 if (typeof marked !== 'undefined') initMarkdown();
 if (typeof lottie !== 'undefined') initSpinner();
 if (typeof lucide !== 'undefined') lucide.createIcons();
+
+// Mention-render batch (2026-09-27): the message renderer reads the shared
+// project list through this provider — mentionComplete.js owns the single
+// list + fetch cache, and utils.js gains no module-graph edge. Warm the list
+// once at boot, and when it FIRST arrives run ONE targeted DOM pass so
+// messages rendered as plain text before arrival (boot race) gain their
+// mention spans without any user action.
+setMentionListProvider(() => ({ projects: getProjectsSnapshot(), gen: getProjectsListGen() }));
+preheatProjects();
+onProjectsArrival(() => { enhanceMentionSpansInDom(); });
 
 // ---------- 3. Register WS message handlers ----------
 
@@ -367,10 +382,18 @@ function consumeTurnDuration(sid) {
 //      帧，靠这一支复位 —— 与该函数头注讨论的会话类同源）。
 // 🔴 不按帧类型白名单：'done' 丢帧时 sessionBusy{false} 仍须能派发（①-2 动因）。
 const drainWindowUsed = new Set();
+// At most ONE in-flight drain timer per session: each turn end emits two
+// terminal frames (done + sessionBusy{busy:false}) and each used to arm its
+// own 50ms timer — the second could fire after a new turn re-opened the
+// window gate, dispatching the next queued item in the same window. Dedupe
+// by sid so the terminal-frame pair collapses to a single pending timer.
+const pendingDrainTimers = new Map();
 function scheduleQueueDrain(sid) {
   if (!sid) return;
+  if (pendingDrainTimers.has(sid)) return; // drain timer already armed for this session
   // Delay lets the UI finalize the finished turn first (unchanged 50ms).
-  setTimeout(() => {
+  const t = setTimeout(() => {
+    pendingDrainTimers.delete(sid);
     if (drainWindowUsed.has(sid)) return;   // 本 turn 窗口已派发过 ⇒ 重复帧 / stale 帧在此挡下
     // 与 input.js:1109-1111 的同两条守卫同义：无件可派 / WS 未开 ⇒ 不关窗（留待后续终止帧）
     const q = state.messageQueue[sid];
@@ -379,6 +402,7 @@ function scheduleQueueDrain(sid) {
     drainWindowUsed.add(sid);               // 本次派发 = 新 turn 起点 ⇒ 关窗（待 ①② 复位）
     drainMessageQueue(sid);
   }, 50);
+  pendingDrainTimers.set(sid, t);
 }
 
 // Helper: ①-2 (2026-09-11) busy re-arm gate for STREAMING frames.
@@ -1838,6 +1862,12 @@ onMessage('agentStart', (msg, view) => {
     // non-project frames have no field — carry over from the previous entry
     // (same cross-turn preservation as kind/startedAt/retryCount).
     project: msg.project || (prev && prev.project) || '',
+    // Task attribution badge (2026-09-27 taskbadge batch): live frames carry
+    // taskId/taskTitle only on agentStart (routeSubagentWsSend injects them for
+    // Project-domain sessions); absent → carry over from the previous entry.
+    // Empty = no attribution → no badge rendered (empty-value contract).
+    taskId: msg.taskId || (prev && prev.taskId) || '',
+    taskTitle: msg.taskTitle || (prev && prev.taskTitle) || '',
     startedAt: (prev && prev.startedAt) || Date.now(),
     status: 'Processing',
     retryCount: (prev && prev.retryCount) || 0,
@@ -2021,7 +2051,7 @@ onMessage('compactComplete', (msg, view) => {
   // with resume, the agent immediately starts a resume turn after compactComplete.
   // The 'done' event after the resume turn will drain correctly when idle.
   if (sid && !state.busySessionIds.has(sid)) {
-    import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+    scheduleQueueDrain(sid);
   }
 });
 
@@ -2049,7 +2079,7 @@ onMessage('compactFailed', (msg, view) => {
   } else {
     // Retry path — also drain queue in case user sent messages during compaction
     if (sid) {
-      import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+      scheduleQueueDrain(sid);
     }
   }
 });
@@ -2185,8 +2215,8 @@ onMessage('configUpdated', (msg, view) => {
 });
 
 // --- Model selection (input-bar picker) ---
-// modelOptions now just feeds the input-bar picker's "add model" list; the
-// /model slash command and the bubble chooser have been removed.
+// modelOptions feeds the input-bar picker's "add model" list; the same refs
+// are the /model panel's fallback static list (modelPanel.js getAllModelRefs).
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   state.allModelRefs = models.map(m => m.ref).filter(Boolean);
@@ -2959,22 +2989,18 @@ onMessage('memoryData', (msg, view) => handleMemoryData(msg));
 onMessage('memoryChanged', (msg, view) => handleMemoryChanged(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
 onMessage('memoryStatus', (msg, view) => showMemoryButton());
-// Memory-queue alert (2026-09-13 memory-pipeline self-heal batch): the memory
-// queue has no consumer / the track refused to run — persistent banner instead
-// of a lifecycle-log-only failure. Text comes from the engine (English, same
-// wording as the injected memory-queue line); no auto-dismiss: the user must
-// see that recorded memory changes are NOT being applied.
-onMessage('memoryQueueAlert', (msg) => {
-  if (msg && msg.text) addNotification('memory', msg.text, { dismissAfter: 0 });
-});
+// Memory-queue alert handler retired 2026-09-25 (govmemory batch): the memory
+// queue / consolidation track are gone, so the engine no longer emits the
+// `memoryQueueAlert` frame (see ws.js).
 
 // --- Rules ---
 onMessage('rulesData', (msg, view) => handleRulesData(msg));
 onMessage('rulesSaved', (msg, view) => handleRulesSaved(msg));
 onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 
-// --- Browse Result (path picker) ---
-onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
+// browseResult frames (the unified directory picker's filter/goto channel) are
+// consumed by workspacePicker.js via per-request dynamic onMessage subscriptions
+// — no module-level subscriber anymore (pickeruni batch retired the static one).
 
 // Update check chain (updateCheckResult/updateStarted/updateCompleted) moved
 // to updateCheck.js — it also owns the silent auto-check scheduling and the
@@ -2997,9 +3023,11 @@ onMessage('forkComplete', (msg, view) => {
     if (e.key !== 'Escape') return;
 
     // Full-screen overlay modals — click the overlay to trigger its close handler
+    // (the directory picker is NOT listed: it owns its own Esc handling since
+    // the pickeruni batch and closes with its cancel semantics.)
     const overlays = [
       '#memory-overlay', '#rules-overlay',
-      '#path-picker-overlay', '#modal-overlay', '#agent-overlay',
+      '#modal-overlay', '#agent-overlay',
     ];
     for (const sel of overlays) {
       const el = document.querySelector(sel);
@@ -3210,7 +3238,6 @@ applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
 initModals();
 initRulesModal();
-initPathPicker();
 initInput(chatViews.primary);
 // visup-b 批（作者 2026-09-19 04:22 修正④）：输入区的 micOrb 气泡形态退役 ⇒
 // `initMicOrb()` 现在是 no-op（挂载判据 = `#mic-canvas` 在场；主区已无该 canvas）。
@@ -3382,6 +3409,7 @@ initChatSearch();
 initUsageDashboard();
 initNeblink();
 initSocialPanel();
+initSecretsPanel();
 initUpdateCheck();
 initDropbox();
 // initContacts()/initMessages() are NOT called here — they are friends-feature
@@ -3702,6 +3730,12 @@ onMessage('activeAgents', (msg) => {
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.
       project: a.project || '',
+      // Task attribution (2026-09-27 taskbadge batch): restore entries carry
+      // taskId + taskTitle (AgentRecord.taskId + ledger title →
+      // activeAgentEntryJson); empty string = no attribution → no badge.
+      // Snapshot is authority — same merge class as project/kind above.
+      taskId: a.taskId || '',
+      taskTitle: a.taskTitle || '',
       startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
       retryCount: typeof a.retryCount === 'number' ? a.retryCount : ((prev && prev.retryCount) || 0),

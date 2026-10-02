@@ -20,11 +20,17 @@ import { notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// @-mention project autocomplete (mention-routing batch; mention-cn 2026-09-27):
+// '@' opens the mounted-projects popup unless the character right before it is
+// an ASCII letter/digit (email-like 'foo@' never triggers) — whitespace, line
+// start, CJK characters and CJK punctuation all open it. Data source =
+// fetchProjects() (nodeData.js).
+import { bindMention, handleMentionKeydown, closeMentionDropdown } from './mentionComplete.js';
 
 // input.js 拆分（FE组件化批次四 2026-09-27）：slash 命令族/输入模式族/附件与引用帧族 → js/input/ 可复用模块（行为保持）。
 // 主体消费面 import + 原导出面转发（23 个 export 仍全部可从 input.js 取得，批次一~三同款纪律）。
 import { handleSlash, updateSlashDropdown, closeSlashDropdown, setSlashHighlight, pickSlashCommand } from './input/slashCommands.js';
-export { registerSkillCommands, handleSlash } from './input/slashCommands.js';
+export { registerSkillCommands, handleSlash, registerCommand } from './input/slashCommands.js';
 import { cancelAskMode, cancelSkillMode, cancelCompactMode } from './input/inputModes.js';
 export { enterAskMode, cancelAskMode, enterSkillMode, cancelSkillMode, enterCompactMode, cancelCompactMode, applyInputModes } from './input/inputModes.js';
 import { addFileAttachment, pendingAttCount, isRefOnlyFrame, syncRefOnlyGate, showAttError, joinAbsPath } from './input/attachments.js';
@@ -91,6 +97,9 @@ export function send() {
     return;
   }
   const input = v.dom.input;
+  // @-mention popup: send() clears the input on every path below, which would
+  // strand the popup over the next turn — close it up front.
+  closeMentionDropdown();
   const text = input.value.trim();
   const isBusy = state.busySessionIds.has(v.sessionId) || state.compactingSessionIds.has(v.sessionId);
   // If in skill mode, send as skill activation
@@ -875,6 +884,10 @@ export function initInput(view) {
     // Backspace 删拼音），一律不 preventDefault、不动作，交还浏览器。
     // 该短路同时修掉「斜杠下拉抢先消费组字 Enter」的既有缺陷（⑤-A 同批修）。
     if (isImeComposing(e, input)) return;
+    // @-mention popup navigation (ArrowUp/Down, Tab/Enter pick, Esc close).
+    // Consumes keys only while the popup is open; IME keys never reach here
+    // (hoisted guard above), so an IME session can neither navigate nor pick.
+    if (handleMentionKeydown(e, view)) return;
     // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
@@ -1202,6 +1215,12 @@ export function initInput(view) {
 
   // Slash dropdown input listener
   input.addEventListener('input', () => { setActiveView(view); updateSlashDropdown(); });
+
+  // @-mention autocomplete (mention-routing batch): input + blur listeners,
+  // token parsing and popup rendering live in mentionComplete.js. Key
+  // handling is hooked in the keydown handler above (behind the imeGuard
+  // short-circuit); send() closes the popup up front.
+  bindMention(view);
 
   // Ask/skill indicator cancel buttons
   {

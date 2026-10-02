@@ -37,10 +37,10 @@ const OUT = join(ROOT, 'build', 'web-dist');
 // Files under web/js that intentionally never enter the module graph.
 // Every entry MUST carry a reason.
 const ORPHAN_EXEMPTIONS = new Map([
-  // 好友/群图片预览传输批「解耦包」(文件头作者裁定 2026-09-19):预落地契约模块,
-  // 等跨仓腿①之后的接线批才被消费;现无任何 graph 入口,按守卫契约显式豁免。
-  ['js/attachImagePreview.js', '解耦包「压缩件生成」:只生成、不申报、不上传,待跨仓接线批接线'],
-  ['js/attachPreviewField.js', '解耦包「契约字段映射」:messages(读)/attachUpload(写) 接线批的字段单点,尚未接线'],
+  // ['js/example.js', 'reason'],
+  // imgpreview decoupled package (eaa9221c9) — friends/group family, flag-sealed; wiring intentionally deferred pending neblink-server attachment DTO leg. Do not delete, do not wire while sealed.
+  ['js/attachImagePreview.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
+  ['js/attachPreviewField.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
 ]);
 
 // ── 1. Clean output ────────────────────────────────────────────

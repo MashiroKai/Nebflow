@@ -35,10 +35,11 @@ object PresetResolver:
       case None => Right(agentDef)
       case Some(name) =>
         store.resolveExplicit(name).map { cfg =>
-          // modelOverride carries the override across the per-turn def refresh
-          // (ContextRefresher.loadCurrentDef reloads from disk and would
-          // otherwise discard it).
-          agentDef.copy(model = Some(cfg), preset = Some(name), modelOverride = Some(cfg))
+          // modelcfg batch (28a246724) retired the tool-level preset override
+          // leg: AgentDef no longer carries `modelOverride`, so the resolved
+          // config lands on the `model` field only. (W3 owns this file's
+          // final keep-deleted disposition.)
+          agentDef.copy(model = Some(cfg), preset = Some(name))
         }
 
 end PresetResolver

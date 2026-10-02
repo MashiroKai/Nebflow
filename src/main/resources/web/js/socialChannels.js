@@ -11,19 +11,83 @@
 //           (REMOTE_ACCESS below), kept out of SOCIAL_CHANNELS.
 //   · §D.2  per-card field list, required flags and patterns.
 //
-// 🔴 PHASE 1 (this batch) — no channel is really connected:
+// 🔴 PHASE 1 (socpanel batch) — no channel is really connected:
 //   `adapterRegistered` is `false` on every channel and there is exactly ONE
 //   place that can ever flip the status to `connected` (the branch inside
 //   channelStatus below). Nothing in the render layer decides "connected" on
 //   its own, so a fake "connected" pill is unreachable by construction.
 //   tests/social-panel.spec.mjs pins both directions (W6 production = 0,
 //   W7 fixture = the same probe turns red).
+//
+// 🔴 PHASE 2 (feishubridge batch, 2026-09-25) — the runtime flip comes from the
+//   BACKEND probe face, never from this file: the panel reads
+//   `adapterRegistered` off GET /api/social/probe (live BridgeManager truth)
+//   and hands it to channelStatus as the `registered` argument. This definition
+//   layer keeps the literal false everywhere (W6③ still greps for it), so the
+//   W7 fixture path (flip the definition flag ⇒ connected pill) keeps proving
+//   the state machine is total. Lark is HIDDEN, NOT DELETED (same sealed family
+//   as the remote-access section): its region entry stays in the data with
+//   `hidden: true`; restoring = dropping one flag.
+//
+// 🔴 PHASE 3 (socialhide batch, 2026-09-26) — wechat and telegram join the
+//   sealed family at the CHANNEL level (same semantics as the lark region
+//   entry above): `hidden: true` on the entry, everything retained. HIDDEN,
+//   NOT DELETED — the entries, their fields and their locale keys all stay in
+//   place; restoring a card = dropping one flag. The visible face is
+//   feishu-only, and `socialChannelCount()` now answers the VISIBLE count
+//   through the ONE visible filter ([[visibleChannels]]), so every §F.2
+//   reader (render layer, tests) keeps a single source.
+//
+// 🔴 PHASE 4 (feiscanbind batch, 2026-09-27) — the "scan to create" main path
+//   joins the feishu card via the `scanBind: true` flag (the ONLY new data
+//   key this phase introduces). Scan-bind spec (endpoints / fiber / state
+//   machine) = the Scaladoc header of `nebflow.social.FeishuScanBind` + its
+//   `FeishuScanBindSpec`; the card-level regression note: the sealed channels
+//   (wechat / telegram, `hidden: true`) never render a card at all, hence
+//   never render a scan face either — no per-channel opt-out is needed,
+//   and [[visibleChannels]] stays the single gate. `verification_token` moves
+//   to optional here (the long-connection path never consumes it — backend
+//   `SocialChannels` FieldSpec remains the enforcement point; this layer is
+//   its mirror).
+//
+// 🔴 PHASE 5 (social-fix batch, author ruling 2026-09-28) — RENDER FACE ONLY,
+//   data untouched. The manual-fill form and its collapsed entry are retired
+//   (scan-to-create is the ONLY creation path), and the QR lives inside the
+//   card (one view layer, no sub-dialog). This file keeps every data shape
+//   exactly as PHASE 3/4 left it: the feishu `fields` array stays the
+//   definition mirror of the backend schema — the status/probe composition
+//   and the hint naming still read it; no form is rendered from it any more.
+//   The sealed channels and their locale keys stay in place (hide ≠ delete).
+//
+// 🔴 PHASE 6 (wechat-ilink batch, chain-wechat-impl, author ruling 2026-09-30) —
+//   a SECOND WeChat card, `weixin-ilink`, is added ALONGSIDE the official-account
+//   `wechat` card. Author ruling ② selected option (B) — "a separate channel id,
+//   the existing card stays as it is" — so the `wechat` entry above is left
+//   byte-for-byte untouched and the two cards coexist in the data. The new card
+//   carries the iLink credential set of the side-car Node client (ruling ① =
+//   option (i), the official ClawBot plugin keeps speaking the protocol and this
+//   repo only meets it at the bridge seam). Its `allowed_ilink_user_ids` slot
+//   mirrors the backend's fail-closed admission gate: the official plugin's own
+//   sender check is provably never wired (design card §2 末), so the gate has to
+//   be held on this side. `context_token` is deliberately NOT a field — it is
+//   runtime state (an in-process map plus a per-account file), not a stored
+//   configuration credential.
+//   The card is SEALED (`hidden: true`) — same sealed family as wechat and
+//   telegram above, HIDDEN, NOT DELETED: the real-device QR login has not been
+//   performed and the channel is unverified, so it must not present itself on
+//   the panel yet; restoring the card = dropping this ONE flag. This is why the
+//   visible face is still feishu-only and [[socialChannelCount]] is still 1.
 
 /**
- * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'} SocialStatus
+ * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'|'failed'} SocialStatus
  * `connected` is deliberately IN the closed set (so the state machine is total
  * and the flipped-flag fixture is a real state) but it is unreachable while
  * `adapterRegistered` stays false.
+ * `failed` is PANEL-COMPOSED only (feishu-panel, contract C2): the live probe
+ * face reports a fingerprint mismatch — the running bridge holds a different
+ * app than the stored credential — and the card displays it as failed.
+ * [[channelStatus]] never returns it; the composition lives with its only
+ * consumer in socialPanel.js ([[displayStatus]] there).
  */
 
 /**
@@ -46,8 +110,15 @@
  * @property {string} descKey
  * @property {SocialField[]} fields
  * @property {boolean} adapterRegistered  phase 1: always false
+ * @property {boolean} [scanBind]  feiscanbind: this card carries the "scan to
+ *   create" main path (QR sub-dialog + status polling in socialPanel.js)
+ * @property {boolean} [hidden]  sealed family (PHASE 3): the channel stays in
+ *   the data — fields, locale keys and any stored config all intact — but
+ *   never renders. Hide ≠ delete; restoring = dropping the flag (same
+ *   semantics as `regions[].hidden`).
  * @property {string} [regionKey]  config key holding the region choice
- * @property {{key: string, base: string}[]} [regions]  the ONLY region source
+ * @property {{key: string, base: string, hidden?: boolean}[]} [regions]  the ONLY region source
+ *   (feishubridge: `hidden: true` = sealed data, never rendered — hide ≠ delete)
  * @property {string} [regionDefault]
  */
 
@@ -63,6 +134,10 @@
  */
 export const SOCIAL_CHANNELS = [
   {
+    // ★ socialhide (author ruling 2026-09-26, merged order ③): sealed, NOT
+    //   deleted — the entry and its fields stay addressable (backend schema
+    //   and stored config untouched); restoring the card = dropping the flag.
+    hidden: true,
     id: 'wechat',
     icon: 'message-circle',
     nameKey: 'social.wechat.name',
@@ -80,33 +155,100 @@ export const SOCIAL_CHANNELS = [
     ],
   },
   {
+    // ★ wechat-ilink (chain-wechat-impl, author ruling 2026-09-30): the SEPARATE
+    //   iLink channel id — author ruling ② option (B). It sits next to the
+    //   official-account `wechat` card above (which is deliberately unchanged:
+    //   option (B) asks for coexistence, and disposing of the old card is not
+    //   this batch's business). Field set mirrors the backend FieldSpec of
+    //   `weixin-ilink` one for one (key / kind / required / pattern /
+    //   secretName); this layer is the mirror, the backend stays the
+    //   enforcement point.
+    //   SEALED (`hidden: true`): hide ≠ delete — the fields, the locale keys and
+    //   any stored config all stay addressable; a real-device QR login has not
+    //   happened yet and the channel is unverified, so it must not show up on
+    //   the panel before it can work. Restoring the card = dropping this flag.
+    //   `allowed_ilink_user_ids` is the fail-closed admission SLOT (same shape
+    //   as the feishu card's `allowed_open_ids`): empty = the allowlist is not
+    //   enforced; filled = senders outside the list are dropped by the bridge.
+    //   Whether to enable is the author's call; the slot itself is data.
+    hidden: true,
+    id: 'weixin-ilink',
+    icon: 'message-circle',
+    nameKey: 'social.weixinIlink.name',
+    descKey: 'social.weixinIlink.desc',
+    adapterRegistered: false,
+    fields: [
+      { key: 'bot_token', kind: 'secret', required: true,
+        i18n: 'social.weixinIlink.field.botToken', secretName: 'social-weixin-bot-token' },
+      { key: 'ilink_bot_id', kind: 'text', required: true,
+        i18n: 'social.weixinIlink.field.ilinkBotId' },
+      { key: 'ilink_user_id', kind: 'text', required: true,
+        i18n: 'social.weixinIlink.field.ilinkUserId' },
+      { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://',
+        i18n: 'social.weixinIlink.field.baseurl' },
+      { key: 'allowed_ilink_user_ids', kind: 'text', required: false,
+        i18n: 'social.weixinIlink.field.allowedIlinkUserIds' },
+    ],
+  },
+  {
     // ★ merged card (author ruling): Feishu + Lark, region choice in-card.
     //   `regions` is the ONLY data source for the region select (§F.2 ③).
+    // ★ feishubridge (author ruling 2026-09-25 ④: hide lark, ship feishu only):
+    //   the lark entry is HIDDEN, NOT DELETED (sealed-family discipline —
+    //   restoring the international option = dropping `hidden: true`). The
+    //   render layer filters hidden regions; the stored config and the backend
+    //   schema (`^(feishu|lark)$`) are untouched, so an existing lark config
+    //   keeps parsing. The region default is hardcoded feishu.
+    // ★ feiscanbind (2026-09-27): `scanBind: true` adds the "scan to create"
+    //   main path to THIS card only (QR overlay + status polling). The manual
+    //   fill stays the full fallback — zero semantics removed.
+    // ★ feishu-panel (2026-09-27): this card renders TWO faces — not-created
+    //   (scan QR primary, auto-opened on entry; manual form collapsed behind
+    //   its toggle) and created (live-app block, bindings + default-session
+    //   selector, archive). The enable switch is folded into archive on this
+    //   card: enabled=false IS the archive (credentials kept), so the face
+    //   discriminator is simply the enabled flag and no disabled face exists.
+    //   Channels without `scanBind` keep the plain card + switch shape.
     id: 'feishu',
     icon: 'send',
     nameKey: 'social.feishu.name',
     descKey: 'social.feishu.desc',
     adapterRegistered: false,
+    scanBind: true,
     regionKey: 'region',
     regionDefault: 'feishu',
     regions: [
       { key: 'feishu', base: 'open.feishu.cn' },
-      { key: 'lark', base: 'open.larksuite.com' },
+      { key: 'lark', base: 'open.larksuite.com', hidden: true },
     ],
     fields: [
       { key: 'app_id', kind: 'text', required: true, pattern: '^cli_[0-9a-zA-Z]{16,}$',
         i18n: 'social.feishu.field.appId', placeholder: 'cli_xxxxxxxxxxxxxxxx' },
       { key: 'app_secret', kind: 'secret', required: true,
         i18n: 'social.feishu.field.appSecret', secretName: 'social-feishu-app-secret' },
-      { key: 'verification_token', kind: 'secret', required: true,
+      // feiscanbind (approved pending-decision ⑤): the long-connection path
+      // never consumes this field, so it is OPTIONAL now (mirror of the
+      // backend FieldSpec in SocialChannels.scala — that one stays the
+      // enforcement point). A scan-bind-created app has none and must still
+      // reach `connected`; the manual path keeps the write-only field.
+      { key: 'verification_token', kind: 'secret', required: false,
         i18n: 'social.feishu.field.verificationToken', secretName: 'social-feishu-verification-token' },
       { key: 'encrypt_key', kind: 'secret', required: false,
         i18n: 'social.feishu.field.encryptKey', secretName: 'social-feishu-encrypt-key' },
       { key: 'region', kind: 'select', required: true,
         i18n: 'social.feishu.field.region', default: 'feishu' },
+      // feishubridge: member allowlist SLOT (default empty = every tenant
+      // member can reach the gateway; filling it turns the bridge gate
+      // fail-closed). Whether to enable is the author's call.
+      { key: 'allowed_open_ids', kind: 'text', required: false,
+        i18n: 'social.feishu.field.allowedOpenIds' },
     ],
   },
   {
+    // ★ socialhide (author ruling 2026-09-26, merged order ③): sealed, NOT
+    //   deleted — same sealed-family discipline as wechat above; restoring
+    //   the card = dropping the flag.
+    hidden: true,
     id: 'telegram',
     icon: 'navigation',
     nameKey: 'social.telegram.name',
@@ -131,12 +273,27 @@ export const SOCIAL_CHANNELS = [
 export const REMOTE_ACCESS = { id: 'webui', kind: 'remote' };
 
 /**
+ * The VISIBLE channel set (§F.2 disciplines ①③): SOCIAL_CHANNELS minus the
+ * sealed (`hidden: true`) entries, order preserved. This is the ONE
+ * visible-filter — the render layer maps THIS, so the filtered order IS the
+ * visible card order (§E.3 X3) and the count can never disagree with the
+ * rendered face. Sealed entries stay in SOCIAL_CHANNELS (hide ≠ delete).
+ * @returns {SocialChannel[]}
+ */
+export function visibleChannels() {
+  return SOCIAL_CHANNELS.filter((c) => !c.hidden);
+}
+
+/**
  * The ONE place a card count comes from (§F.2 discipline ②): tests, docs and
- * the render layer all read this instead of a literal.
+ * the render layer all read this instead of a literal. PHASE 3: the count is
+ * the VISIBLE card count (sealed entries excluded), so it stays in lockstep
+ * with the rendered face; the full sealed data set is still
+ * SOCIAL_CHANNELS.length.
  * @returns {number}
  */
 export function socialChannelCount() {
-  return SOCIAL_CHANNELS.length;
+  return visibleChannels().length;
 }
 
 /**
@@ -208,16 +365,20 @@ export function channelProblem(channel, cfg, probe) {
  * @param {SocialChannel} channel
  * @param {{enabled?: boolean, fields?: Record<string, string>}|null|undefined} cfg
  * @param {Record<string, {exists?: boolean, modeOk?: boolean, readable?: boolean}>|null|undefined} probe
+ * @param {boolean} [registered]  runtime registration truth from the probe face
+ *   (feishubridge): the backend answers `adapterRegistered` off the live
+ *   BridgeManager. The definition-layer flag stays the fixture path.
  * @returns {SocialStatus}
  */
-export function channelStatus(channel, cfg, probe) {
+export function channelStatus(channel, cfg, probe, registered) {
   if (channelProblem(channel, cfg, probe)) return 'configInvalid';
   const values = fieldValues(channel, cfg);
   if (channel.fields.some((f) => f.required && !String(values[storedKey(f)] ?? '').trim())) {
     return 'notConfigured';
   }
-  // 🔴 the single change point — phase 2 flips this flag, nothing else.
-  if (channel.adapterRegistered === true) return 'connected';
+  // 🔴 the single change point — the definition-layer fixture flag (W7) OR the
+  // runtime probe flag (phase 2) can reach `connected`; nothing else can.
+  if (channel.adapterRegistered === true || registered === true) return 'connected';
   return 'configuredNotLinked';
 }
 

@@ -37,6 +37,26 @@ object FriendMessageToolSpec:
 end FriendMessageToolSpec
 
 class FriendMessageToolSpec extends CatsEffectSuite:
+
+  // friendseal flag injection (2026-09-25): this suite pins the FRIEND-LEG behavior
+  // face (send/receipt/α-fallback/description+schema wording), which the seal closes
+  // by default. Lift the latch for the whole suite with the ref-counted kit
+  // primitives; suites run sequentially (Test / parallelExecution := false), so this
+  // lift never races the sealed-default assertions elsewhere.
+  override def beforeAll(): Unit =
+    super.beforeAll()
+    nebflow.core.FriendsSeal.testUnseal()
+    // Registration self-sufficiency (111.8): the resolve/send examples below go through
+    // FriendRosterPort / SendConfirmPort, installed only on the production boot path
+    // (NeblinkWiring.scala:31 / SharedResources.scala:391) and fail CLOSED when absent.
+    // Install the real faces here so this suite does not depend on another suite's
+    // side effect (test-order coupling).
+    RosterFaceSpecKit.install()
+
+  override def afterAll(): Unit =
+    try super.afterAll()
+    finally nebflow.core.FriendsSeal.testReseal()
+
   // ── 解析三态（纯函数，直接测 resolveFriend） ─────────────
 
   private val friends = List(

@@ -5,7 +5,7 @@
 // ctrl/cmd+wheel and ⌘/ctrl key presses over the iframe reach the parent
 // through zoomBridgeScript postMessage (cross-frame events don't bubble).
 
-import { buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle, localLinkNavScript, bindLocalLinkBridge } from './shared.js';
+import { buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle, localLinkNavScript, bindLocalLinkBridge, imgClickScript } from './shared.js';
 import { makeReference } from '../reference.js';
 import { t } from '../i18n.js';
 import { enableViewerZoom } from './zoom.js';
@@ -89,55 +89,35 @@ const anchorNavScript = `<script>
 })();
 <\/script>`;
 
-/** Script injected into the iframe to forward image clicks to the parent
- *  for lightbox preview. Uses the _nfImagePreview message prefix.
+/** Image-click bridge for this viewer's frame.
  *
- *  2026-09-11 (C batch, self-correction ⑧): the payload carries the PATH, not
- *  just a ready-made URL. The parent re-mints a fresh ticket for that path when
- *  the lightbox opens — so the card's injected ticket is never reused, never
- *  outlives its TTL while sitting in the parent document, and never lands in
- *  the parent DOM at all (the parent fetches the bytes and shows a blob: URL).
- *  The `src` field stays, credential-stripped, as the fallback for images that
- *  are not nf-file-proxied at all. */
-const imgClickScript = `<script>
-(function(){
-  function stripCredential(u){
-    return String(u||'').replace(/([?&])(token|ticket)=[^&]*/g,'$1').replace(/[?&]$/,'');
-  }
-  function pathOf(u){
-    var m=/[?&]path=([^&]*)/.exec(String(u||''));
-    if(!m) return '';
-    // Embedded by SOURCE (a frame script cannot import a module): fold a bare
-    // plus sign first, then percent-decode — byte-for-byte the criterion of
-    // nfTicket.js decodePathParam, which is the ONE statement of this
-    // discipline. Calling decodeURIComponent alone folded neither a plus sign
-    // nor %20, so a JVM-form-encoded space reached the parent as a literal plus
-    // and the lightbox re-minted its ticket for a path that does not exist.
-    // NOTE: this comment is INSIDE a template literal — never write an
-    // unescaped backtick here, and never write the two-character interpolation
-    // opener (dollar + brace): either one ends/starts an interpolation and the
-    // module stops parsing, which no Scala test used to see — see
-    // WebJsModuleSyntaxSpec, the JS-face gate added for exactly that miss.
-    // The regex below is spelled with a DOUBLED backslash on purpose: a template
-    // literal drops a lone one, so the single-backslash spelling emitted a
-    // pattern of just a plus sign into this frame script and the browser threw
-    // "Invalid regular expression: /+/g: Nothing to repeat" — the whole handler
-    // died while the module itself still parsed fine. The gate's frame-script
-    // pass pins this class (see WebJsModuleSyntaxSpec).
-    try{ return decodeURIComponent(m[1].replace(/\\+/g,' ')); }catch(e){ return ''; }
-  }
-  document.addEventListener('click', function(e){
-    var img = e.target.closest ? e.target.closest('img') : null;
-    if (!img) return;
-    e.preventDefault();
-    var raw = img.currentSrc || img.src || '';
-    parent.postMessage({ _nfImagePreview: { src: stripCredential(raw), path: pathOf(raw), alt: img.alt || '' } }, '*');
-  }, true);
-})();
-<\/script>`;
+ *  2026-09-28 (card-image-zoom batch): this used to be a private constant of
+ *  this module. The chat card rendered the same kind of documents but injected
+ *  no producer at all, so an image inside a Card was a dead click — the author
+ *  asked for the Canvas behaviour there too. The script now lives in
+ *  `viewers/shared.js` (`imgClickScript()`), and both surfaces inject it: one
+ *  definition, so the payload shape cannot drift between the two legs.
+ *
+ *  🔴 NOT behaviour-equivalent on one shape — measured (round-1 review,
+ *  2026-09-28). Sharing the script also brought this frame under the shared
+ *  handler's `if(e.defaultPrevented) return;` precedence guard, which the
+ *  private version did not have. An `<img>` wrapped in a local-file `<a href>`
+ *  is now claimed by `localLinkNavScript` (registered earlier, same capture
+ *  phase) and the image handler stands down; before this batch that click
+ *  emitted BOTH `_nfOpenLocalFile` (follow the link) and `_nfImagePreview`
+ *  (also open the preview). Both trees read out with identical fixtures in the
+ *  batch's READINGS.md; the linked shape is pinned by Z8a of
+ *  tests/card-image-zoom.spec.mjs. The tightening is deliberate (one click
+ *  doing two things at once), and it is the LINK that wins over a nested image.
+ *  Two shapes are unaffected: a bare image opens the preview as before, and an
+ *  image inside an in-page `#` anchor reads identically on both trees (nothing
+ *  claims that click, so the guard never fires). The open question of which
+ *  behaviour the author wants for a linked image is carried in the batch report
+ *  as a pending semantic decision — it is not settled by this comment. */
+const imgClickMarkup = imgClickScript();
 
 /** #303 B6: dormant element-select script, embedded in the srcdoc at assembly
- *  (same pattern as imgClickScript/anchorNavScript). Sleeps until the parent
+ *  (same pattern as imgClickMarkup/anchorNavScript). Sleeps until the parent
  *  posts `_nfRefMode {on:true}`; then hover-highlight + click-to-pick +
  *  Esc-to-exit, reporting the pick back via `_nfRefPick`. targetOrigin is '*'
  *  (sandbox srcdoc origin is opaque "null" - a literal origin throws). */
@@ -540,7 +520,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${zoomBridgeScript}${svgInlineScript}${imgClickScript}${anchorNavScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${zoomBridgeScript}${svgInlineScript}${imgClickMarkup}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';

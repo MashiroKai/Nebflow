@@ -17,10 +17,12 @@ import java.nio.file.Files
  * - §G.3-①：Root 工具清单 = §C.1 NebulaSet 逐项断言（buildToolList 层——
  *   LLM 实际收到的工具定义列表，未注册名自然缺席，比 allowedSet 更接近交付面）。
  * - dispatcher / general 固定集同层断言（§C.1 分发器行 / §C.4 七件）。
- * - MultiEdit 从 ToolRegistry 删除（§C.1：能力由 Edit replace_all 覆盖），
- *   MemoryNote 注册且 Root 专属（§C.1 记忆行 + RootExclusiveTools）；
- *   dream 受限准入例外（2026-09-05 作者签准，DreamAdmittedTools——动作面
- *   append 仍由 MemoryNoteTool 拒绝，见 MemoryNoteToolSpec）。
+ * - MultiEdit 从 ToolRegistry 删除（§C.1：能力由 Edit replace_all 覆盖）；
+ *   旧记忆记账工具已整体退役（govmemory 批 2026-09-25）：注册表零挂、一切身份
+ *   声明无效、迁移指引表带 Edit/Write 直写口径；dream 准入例外条目仍在
+ *   `AgentCore.DreamAdmittedTools` 集内，但其动作面承载（原记账工具 DREAM_APPEND_DENIED）
+ *   与队列族已在本批整体退役（memory-family-retirement 2026-09-29）⇒ 该例外现无
+ *   执行面效果，名族收口归 e5-memconsolidator 批。
  * - §C.5：Glob/Grep 缺省根 = node root（沙箱开时 = sandbox.root =
  *   SessionContext.projectRoot 权威口径；user.dir 仅沙箱关回退，§G.1 rollback
  *   已由 SandboxSpec「G.1 回滚」用例覆盖）。
@@ -63,10 +65,15 @@ class AgentConvergenceSpec extends FunSuite:
       "Write",
       "Edit"
     )
+    // friendseal (2026-09-25): flag-aware expectation — the literal above stays
+    // UNTOUCHED; the sealed default strips ListFriends at the single delivery point
+    // (AgentCore.friendsSealedStrip), so the expected face removes the same entry
+    // only when the latch reads sealed on this snapshot. Never a bare number.
+    val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
     assertEquals(
       delivered,
-      expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue）"
+      expected -- sealStrip,
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue；friendseal 封存期按单点 strip 派生）"
     )
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含

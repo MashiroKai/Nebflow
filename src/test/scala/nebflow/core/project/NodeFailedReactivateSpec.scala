@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.{IO, Ref}
+import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
@@ -32,8 +33,14 @@ import scala.concurrent.duration.*
  *   不重激活（修前恒判 actualChange=true → 意外重激活）。
  * - FR6 反向锁定：显式传 out 且值变更 → 仍算 actualChange → 重激活（防修过头）。
  *
- * 失败驱动=死会话僵尸收敛（settleStaleRunningNodes → autoFailDeadRunning →
- * deliverFailed，NodeDeadSessionAutoReapSpec 同款）——确定性，不依赖 LLM 报错路径。
+ * 失败驱动=**boot-recovery (c) 类**（`bootRecoveryClaim`：Running 节点无 sessionRef ⇒
+ * `failNode` 全链 → `deliverFailed`）——确定性，不依赖 LLM 报错路径。
+ * 🔴 killruling 批（2026-09-23 裁定 #19）**改驱动源**：原驱动 = 死会话僵尸收敛
+ * （`settleStaleRunningNodes → autoFailDeadRunning → deliverFailed`），该腿已**降档为
+ * 只提醒**（节点留 Running、不再写 failed）⇒ 原驱动**不再产生 failed**，本 spec 的
+ * 前置条件不可达。改判逐字登记在此：本 spec 主题（failed 重激活语义）未被本批改动，
+ * 变的只是**怎么造出一个 failed 节点**——新驱动取同一 `failNode` 全链（同 `deliverFailed`
+ * 投递面），故断言语义零漂移。
  * 注：failed 通知接线后，僵尸收敛会触发分发器会话 spawn（目标语义本身）——
  * FuncLlm 对分发器 prompt 回 "ok" 承接，不干扰断言。
  */
@@ -157,8 +164,11 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
    *
    * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
    * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——
-   * 对本 spec 的**挂载即空工作区**恒为空操作（僵尸由各用例显式
-   * `settleStaleRunningNodes()` 播种后驱动），故此处省略。
+   * 对本 spec 的**挂载即空工作区**恒为空操作，故此处省略。
+   * 🔴 killruling 批（#19）后僵尸收敛腿**已降档为只提醒**（不再产生 failed），本 spec 的
+   * failed 节点改由 `seedZombie` 内的 `bootRecoveryClaim`（boot-recovery (c) 类）单点驱动
+   * ⇒ 各用例里原先「`seedZombie` 后补一拍 `settleStaleRunningNodes()`」的调用**已删**
+   * （保留它只会白扫一遍、不产生 failed；删掉不改变断言语义）。
    */
   private def mountGateOff(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
     val pd = ProjectDef(
@@ -211,7 +221,12 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       )
       .handleError(_ => Nil)
 
-  /** 种一个死会话 running 节点（settleStaleRunningNodes 驱动自动 failed）。 */
+  /**
+   * 种一个 running 节点并经 **boot-recovery (c) 类**失败链收敛成 failed
+   * （killruling 批 #19 后的**新驱动源**：原「死会话僵尸收敛」已降档为只提醒，
+   * 不再产生 failed）。判据 = 无 `sessionRef` ⇒ transcript lost ⇒ `failNode`
+   * 全链（与旧驱动同一 `deliverFailed` 投递面）。
+   */
   private def seedZombie(
     rt: ProjectRuntime,
     id: String,
@@ -234,7 +249,8 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
           createdAt = System.currentTimeMillis() - 3_600_000
         ))
       )
-    }.void
+    }.void *>
+      rt.store.getNode(id).flatMap(_.traverse_(n => rt.engine.bootRecoveryClaim(n).void))
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
@@ -255,7 +271,6 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       rt <- mountGateOff("fr1", ws, system, res) // 腿 2 关闭面挂载（FR1 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr1", "fr-node", "original-task", List(OutEdge.root))
-      _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr-node", Set(NodeLifecycle.Failed))
       // failed 通知接线：marker 必须已落（重激活清零的前置事实）
       _ <- waitUntil(20.seconds)(byName(rt, "fr-node").map(_.notifySentAt.isDefined))
@@ -308,13 +323,12 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       rt <- mountReal("fr2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr2", "fr2-node", "same-task", List(OutEdge.root))
-      _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr2-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr2-node").map(_.notifySentAt.isDefined))
       // 同 task 原文重发 + 同 out 显式回传 → 全维度无差异 → actualChange=false → 不
       // 重激活。（out **未传**的形态见 FR5——actualChange quirk 修后未传 out 不再
       // 误判变更；本测试保留显式回传同值 out，双维度锁定 no-op 语义。）
-      // 2026-09-12 批 A1：种子 out = `OutEdge.nebula`（{pass,failed}/result），故回传
+      // 2026-09-12 批 A1：种子 out = `OutEdge.root`（{pass,failed}/result），故回传
       // 必须写**同值的显式门集**；bare `"Nebula"` 今日 = {pass}/signal 出口标记，
       // 回传它反而是真实变更（这正是 A1 的两处语义分叉）。
       editRes <- nodeEdit(
@@ -405,7 +419,6 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       rt <- mountReal("fr4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr4", "fr4-node", "dead task", List(OutEdge.root))
-      _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr4-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr4-node").map(_.notifySentAt.isDefined))
       refused <- nodeMessage(
@@ -438,7 +451,6 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       rt <- mountReal("fr5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr5", "fr5-node", "fr5-task", List(OutEdge.root), description = Some("fr5-desc"))
-      _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr5-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr5-node").map(_.notifySentAt.isDefined))
       // out 不传 + task/description 原值重发 → 全维度无差异 → actualChange=false。
@@ -496,7 +508,6 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
         )
       }.void
       _ <- seedZombie(rt, "n-fr6", "fr6-node", "fr6-task", List(OutEdge.root))
-      _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr6-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr6-node").map(_.notifySentAt.isDefined))
       // 仅改 out（显式传 + 值变更 Nebula → n-fr6sink）→ actualChange=true → 重激活

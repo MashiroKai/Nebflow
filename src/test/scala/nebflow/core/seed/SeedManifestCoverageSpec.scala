@@ -47,12 +47,19 @@ class SeedManifestCoverageSpec extends FunSuite:
   /**
    * 默认预装集（硬编码锚点；与此不符即红）。
    *
-   * 本批 +`web-search-toolkit`（3 → 4）：Nebula 面摘除 Delegate 后，网络取数能力改由
-   * 插件面承载 ⇒ 该包必须进默认预装集，否则「落地 ≠ 生效」（种子树里有文件、任何 home
-   * 都不装它）。锚点仍是**精确集合相等**，方向未放宽。
+   * 沿革：+`web-search-toolkit`（3 → 4，Nebula 面摘除 Delegate 后网络取数改由插件面
+   * 承载）；A 线批 +`browser-use` +`computer-use` +`document-production`（4 → 7）。
+   * 锚点仍是**精确集合相等**，方向未放宽。
    */
-  private val ExpectedDefaultPlugins: Set[String] =
-    Set("slideblocks", "visual-report", "nebflow-plugin-creator", "web-search-toolkit")
+  private val ExpectedDefaultPlugins: Set[String] = Set(
+    "slideblocks",
+    "visual-report",
+    "nebflow-plugin-creator",
+    "web-search-toolkit",
+    "browser-use",
+    "computer-use",
+    "document-production"
+  )
 
   /**
    * 种子树「目录名 → 是否含 plugin.json」对照表（file 与 jar 双协议，与
@@ -141,9 +148,9 @@ class SeedManifestCoverageSpec extends FunSuite:
         malformed.mkString(", ")
     )
 
-  // ── c. 默认预装集恰为四条（写死锚点）────────────────────────
+  // ── c. 默认预装集恰为七条（写死锚点）────────────────────────
   test(
-    "K9-c: default preinstall set is exactly {slideblocks, visual-report, nebflow-plugin-creator, web-search-toolkit}"
+    "K9-c: default preinstall set is exactly {slideblocks, visual-report, nebflow-plugin-creator, web-search-toolkit, browser-use, computer-use, document-production}"
   ):
     val declared = declaredPluginNames()
     val added = (declared -- ExpectedDefaultPlugins).toList.sorted

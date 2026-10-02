@@ -38,7 +38,7 @@ import scala.jdk.CollectionConverters.*
  * ── 2026-09-19 (credaacl 批): the residual this file used to carry ──────────
  * `setAcl` was the WHOLE story: nothing ever proved that the ACE just written
  * leaves the owner able to open the file. On 2026-09-18 the DACL on
- * `C:\Users\Kai\.nebflow\neblink\device.json` came out as
+ * `C:\Users\you\.nebflow\neblink\device.json` came out as
  * `D:P(A;;0x100187;;;<owner>)` — protected, ONE owner ACE, and four bits short
  * (`FILE_READ_EA` / `FILE_WRITE_EA` / `READ_CONTROL` / `WRITE_DAC`), so
  * `java.nio`'s own `GENERIC_READ`/`GENERIC_WRITE` open — which asks for those

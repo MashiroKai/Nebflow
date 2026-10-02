@@ -144,8 +144,21 @@ object Defaults:
    */
   val QuotaAvoidWindowMs: Long = 300_000L
 
-  /** Bash tool max timeout in ms. */
-  val BashMaxTimeoutMs: Long = 3_600_000L
+  /**
+   * Bash tool foreground auto-background threshold in ms (default 60 minutes).
+   *
+   * bashautobg batch (2026-09-25 author order: "the hard cap should not exist;
+   * auto-move to background at 60min; backgrounded commands have no limit"):
+   * this value is no longer a kill line. A foreground command still running when
+   * this threshold (or an explicit `timeout`, clamped to it) is reached is
+   * adopted into the session's background registry and the tool returns a
+   * background receipt immediately; the process keeps running and the result is
+   * delivered on completion. I2-style prop face: system prop
+   * `nebflow.bash.maxTimeoutMs`, read at every call so specs can compress the
+   * threshold (kill-switch precedent: ForegroundSampleIntervalMs).
+   */
+  def BashMaxTimeoutMs: Long =
+    sys.props.getOrElse("nebflow.bash.maxTimeoutMs", "3600000").toLong
 
   /** Curl tool max timeout in seconds. */
   val CurlMaxTimeoutSec: Int = 120
@@ -200,6 +213,20 @@ object Defaults:
 
   /** 硬超时后的停滞观察窗口（s）：停滞连续满此值 → killProcessTree + TimeoutException。 */
   val BashStuckWindowSec: Int = 120
+
+  /**
+   * bashautobg batch (2026-09-25 author order: "backgrounded commands have no
+   * limit"): sentinel for NO hard timeout on waiting-type background tasks —
+   * `runningMs > hardTimeoutMs` is never true against this value, so the B2
+   * hard-timeout stall kill becomes unreachable. The production face (BashTool:
+   * both explicit `run_in_background` and foreground auto-backgrounding) passes
+   * this value unconditionally — full-class exemption, one unified semantics
+   * "background has no time limit". The ShellSession parameter face keeps
+   * accepting finite values for spec injection (mechanism testability).
+   * NOT covered by this exemption: the B1 alert-only sensor and the foreground
+   * no-progress ceiling (the stall watchdog is not a time limit).
+   */
+  val BashBackgroundNoHardTimeoutMs: Long = Long.MaxValue
 
   // ---- 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）----
   // 节点完成判定不仅要求 turn 完成，还要求其等待型后台任务全部完成才投递。
@@ -332,8 +359,9 @@ object Defaults:
     sys.props.getOrElse("nebflow.noderpt.destroyWindowMs", (30 * 60 * 1000L).toString).toLong
 
   /**
-   * 分发器会话空闲保活窗（`nebflow.dispatcher.idleWindowMs`，默认 **30 分钟**；
-   * 令 3 分发器生命周期设计 §3.4）。
+   * 分发器会话空闲保活窗（`nebflow.dispatcher.idleWindowMs`，默认 **4 小时**；
+   * 令 3 分发器生命周期设计 §3.4；🔴 killruling 批 2026-09-23 作者裁定 **#63** 把
+   * 阈值从 30 分钟**抬到小时级**，本批按 `4 * 60 * 60 * 1000L` 落）。
    *
    * 语义：分发器会话的生命周期从「turn 级」升级为「派发批次级 + 空闲窗」——
    * 观察桥在 `pendingInjected` 归零的那个 `Completed` **不再立即拆除**，改为记
@@ -344,12 +372,108 @@ object Defaults:
    *
    * 与 `NodeDestroyWindowMs` 同款先例：`sys.props` **每次调用现读**（spec /
    * 运维可即时翻转——验收可把窗口压到秒级做等效实验）。
-   * **`≤ 0` = 关闭保活**（回到 turn 级即拆的旧行为）= 零风险回退开关。
+   * **`≤ 0` = 关闭保活**（回到 turn 级即拆的旧行为）= 零风险回退开关
+   * （与 `RootNotifyQuietMs` 的「`≤0` = 关闭打包」同款措辞；判据点 =
+   * `ProjectActor.sweepIdleDispatchers` 的 `if windowMs <= 0 then IO.unit`）。
+   *
+   * 🔴 **代价（抬阈值换来，必须显式登记）**：会话驻留更久 ⇒ 内存 / 句柄占用与
+   * 「空闲会话被误当活会话」的窗口同时变长。涨到 4 h 后「实际拆会话次数」的
+   * 可观测读数 = `flow-map-events.jsonl` 的 `dispatcher-idle-expired` 逐条时刻
+   * 反推会话存活时长分布（改前阈 30 min ⇒ 分布被 30 min 截断）。
    *
    * 有效空闲窗 = **[窗口, 窗口 + 30 s]**（`TtlTick` 节拍粒度，设计 §3.1-4）。
    */
   def DispatcherIdleWindowMs: Long =
-    sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (30 * 60 * 1000L).toString).toLong
+    sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (4 * 60 * 60 * 1000L).toString).toLong
+
+  /**
+   * Dispatcher session lifetime **anchor** (taskunify merge batch 2026-09-24, ruling d①
+   * "pure task-terminal anchor").
+   *
+   * `true` (**new production default**) = the criterion becomes "the task this dispatcher
+   * is bound to reached a terminal state (`completed` / `closed`)" — task terminal ⇒ the
+   * session is torn down + one distinguishable `dispatcher-task-terminal` event; the 4 h
+   * idle window is no longer consulted. `false` = **fallback** to the current idle-window
+   * behaviour (byte-for-byte as today).
+   *
+   * 🔴 **Fallback switch shape (ruling T wording "explicit switch `<=0`/`off`" + current
+   * convention)**: this key is read from `sys.props`; `off` / `false` / `0` / a negative
+   * value all mean **off** (back to the idle window). It is in the same family as
+   * [[DispatcherIdleWindowMs]]'s "`<=0` = keep-alive off", but this key is boolean, so
+   * `off` is accepted too. **Enablement is never silent**: the startup line
+   * `TASKLEDGER_LIFECYCLE_ANCHOR` lands in the gateway log (mechanically greppable).
+   *
+   * 🔴 **Quantitative cap (design §4d / risk table "session leak · unbounded growth" —
+   * mandatory)**: once the criterion is "destroy only on task terminal", a task that never
+   * reaches a terminal state means unbounded session residency (measured baseline: under
+   * the 4 h window `~/.nebflow/sessions/` already holds 1,817 dispatcher sessions / 4.6 GB).
+   * ⇒ the concurrency cap lives in [[DispatcherMaxConcurrentSessions]]; exceeding it is an
+   * **explicit refusal + alert** (never a silent over-spawn).
+   */
+  def DispatcherLifecycleAnchorTaskTerminal: Boolean =
+    val raw = sys.props.getOrElse("nebflow.dispatcher.lifecycleAnchor", "task-terminal").trim.toLowerCase
+    raw match
+      case "off" | "false" | "0" | "no" | "idle" => false
+      case _ => true
+
+  /**
+   * **Concurrency cap on dispatcher sessions per project** (taskunify merge batch
+   * 2026-09-24; design §4d mandatory anti-leak item).
+   *
+   * After the anchor change, "a task that never reaches a terminal state ⇒ unbounded
+   * session residency" is this batch's largest resource risk ⇒ this key sets a hard upper
+   * bound: **when the cap is reached a new spawn is explicitly refused + alerted** (not a
+   * silent over-spawn, not a silent drop — the refusal text names the project, the current
+   * concurrency, the cap and the way out). `<= 0` = **gate off** (fallback).
+   *
+   * Value rationale (mailmodel batch 2026-09-25, author ruling (a) "no upper limit,
+   * concurrency allowed"): the trigger model is now **one dispatcher per task** (per-taskId
+   * slot table — the old singleton precondition for raising the cap is gone), so the
+   * default moves **1 → 0**: `0` is the gate-off semantics = **unbounded** concurrency,
+   * bounded instead by the task-terminal anchor (teardown on terminal). The `sys.props`
+   * override (`nebflow.dispatcher.maxConcurrentSessions`) stays available as the anti-leak
+   * lever when a deployment needs a hard bound.
+   */
+  def DispatcherMaxConcurrentSessions: Int =
+    sys.props.getOrElse("nebflow.dispatcher.maxConcurrentSessions", "0").toInt
+
+  /**
+   * 🔴 **Unified-ledger enable switch + uplink fail-closed gate** (taskunify merge batch
+   * 2026-09-24; author Q2ⓐ "strict fail-closed" + implplan §10.3 hard requirement 3).
+   *
+   * `false` (**production default = legacy behaviour**) = the uplink circuit **does not
+   * check attribution** (byte-for-byte as today: node failed / completed / landing /
+   * reentry / cancel / redelivery are all delivered as before). `true` = fail-closed is
+   * enabled: the uplink checks the node's attribution fingerprint `taskId`;
+   * **no fingerprint (or not registered in the ledger) ⇒ refused**, with the ruling-T
+   * **double trace** (event face [[FlowMapEventLog.UplinkRefusedType]] + WARN log face),
+   * the text carrying "node id + refusal reason + way out".
+   *
+   * 🔴 **Why the default is off (it is not an oversight)**: implplan §10.3 criterion ①
+   * states "started without the switch ⇒ behaviour byte-for-byte as today"; and the Q2ⓐ
+   * legacy cost is registered (all existing nodes have zero fingerprints ⇒ everything
+   * refused). ⇒ default off means **the fallback path IS the default state**, and enabling
+   * the gate is **one explicit action** (the `TASKLEDGER_ENABLED` startup line is
+   * mechanically greppable, criterion 10.3②).
+   *
+   * Accepted values: `false`/`off`/`0`/`no` ⇒ off (same family as
+   * [[DispatcherLifecycleAnchorTaskTerminal]]).
+   */
+  def TaskLedgerUplinkFailClosed: Boolean =
+    val raw = sys.props.getOrElse("nebflow.taskledger.enabled", "false").trim.toLowerCase
+    raw match
+      case "true" | "on" | "1" | "yes" => true
+      case _ => false
+
+  /**
+   * Loud-alert window for the **first N** refusals after enablement (ruling T: "the first
+   * N refusals after enablement alert loudly"). A refusal inside the window also emits an
+   * ALERT-level log line (prefix `[UPLINK-REFUSED]`), so the known cost — "every existing
+   * node is refused the moment the gate turns on" — is **immediately visible** instead of
+   * drowning in routine WARNs. `<= 0` = no extra alert.
+   */
+  def TaskLedgerUplinkLoudAlertFirstN: Int =
+    sys.props.getOrElse("nebflow.taskledger.loudAlertFirstN", "10").toInt
 
   // ── loop 预算（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」）────────────
   //
@@ -401,6 +525,39 @@ object Defaults:
 
   /** Preview size in characters for persisted tool results. */
   val ToolResultPreviewSize: Int = 2048
+
+  // ---- Session UI cache bounds (gateway SessionStore, chain-uicache-lru 2026-09-25) ----
+
+  /**
+   * Max number of sessions whose UI messages (`<id>.ui.json` render history)
+   * stay cached in memory in `nebflow.core.SessionStore` (W1 re-anchor: was
+   * `nebflow.gateway.SessionStore`; the class moved with the PR48 refactor family). Once an insert
+   * pushes the cache past this count (or past `UiCacheMaxBytes`), the
+   * least-recently-used entries are evicted — in memory only: the disk files
+   * are untouched and are re-read on demand.
+   *
+   * Why 32: a cached entry runs ~10-15MB for a long session (the per-session
+   * replay file is already trimmed to `SessionStore.MaxStoredUiMessages`), so
+   * 32 entries is roughly 384-480MB before the byte gate below clamps the
+   * total — enough to keep the active session plus recently viewed sessions
+   * hot, while the cache no longer grows without bound over multi-day uptime
+   * (two runtime OOMs traced to this cache; rescue report residual risk #1).
+   */
+  val UiCacheMaxEntries: Int = 32
+
+  /**
+   * Byte budget for the SessionStore UI cache (see `UiCacheMaxEntries`). Each
+   * entry is charged a bounded estimate of its in-memory residency (2 bytes
+   * per char for UTF-16 strings plus fixed per-message overhead — see
+   * `SessionStore.estimateUiCacheBytes`); entries are evicted in LRU order
+   * until the estimated total is back under this cap.
+   *
+   * Why 256MB: pins the cache's heap footprint at a level comparable to the
+   * rest of the gateway's steady-state residency, so fat card-heavy entries
+   * (which the per-session trim does not shrink — card content is never
+   * truncated) cannot accumulate into a runtime OOM.
+   */
+  val UiCacheMaxBytes: Long = 256L * 1024 * 1024
 
   // ---- Mail queue delivery dedup (P0 投递层指纹去重) ----
 
@@ -579,11 +736,14 @@ object Defaults:
   //   T3 `StuckThresholdMs` ………………………… 本文件（本节上方，I2 **新加**） 600000
   //   T4 `SessionKickIdleSec` ……………………… 本文件（下方，**已有** prop）    150
   //   T5 `BgIdleTimeoutSec` ………………………… 本文件（上方，I2 **新加**）      300
-  //   T6 `StuckDetectionGracePeriod` ……… `core/tools/shell.scala`（I2 收数点 → 本节） 30s
+  //   T6 ~~`StuckDetectionGracePeriod`~~ … 🔴 **已退役（killruling 批 2026-09-23，裁定 #3）**
+  //                                          —— 随 M3 机制同删，取数点 `StuckDetectionGraceSec` 已无
   //   T7 `CpuActiveThresholdNanos` ……… `core/tools/shell.scala`（I2 收数点 → 本节） 1e7ns
   //   T8 死会话 bg-wait **无时限**豁免 …… `core/project/NodeEngine.scala`（本批新增腿）
-  // 🔴 T6/T7 的取数点按 §1.3「阈值唯一取值点」纪律**收敛到本节**（与 T1–T5 同点），
-  //    `shell.scala` 的两个既有名字降为 delegating def（零调用点改动）——差异已登记。
+  // 🔴 T7 的取数点按 §1.3「阈值唯一取值点」纪律**收敛到本节**（与 T1–T5 同点），
+  //    `shell.scala` 的既有名字降为 delegating def（零调用点改动）——差异已登记。
+  // 🔴 T6 行**留档不留值**：该行由 killruling 批（2026-09-23 作者裁定 #3「去」）退役，
+  //    非 I5 翻值（原提案 300s 随机制一并作废）。
   // ───────────────────────────────────────────────────────────────────────────────
 
   /**
@@ -664,17 +824,6 @@ object Defaults:
     sys.props.getOrElse("nebflow.stuck.demandTickSec", "900").toInt
 
   /**
-   * **T6 prop 面**（设计 §4.4.1 T6；I2 在本层新建取数点）：静默后台进程的**停滞探测
-   * 宽限期**（s）——本值之后才开始「零输出 ∧ CPU 增量 < 阈值」的判死采样。
-   *
-   * 现状值 = 30（`core/tools/shell.scala` 原 `private val StuckDetectionGracePeriod =
-   * 30.seconds`）⇒ **默认 `30` = 旧行为现行取值**；设计提案值 300s（#462 涓流/零输出族
-   * 过激）归 I5 翻值。每次调用现读。
-   */
-  def StuckDetectionGraceSec: Int =
-    sys.props.getOrElse("nebflow.shell.stuckDetectionGraceSec", "30").toInt
-
-  /**
    * **T7 prop 面**（设计 §4.4.1 T7；I2 在本层新建取数点）：**后台**判据仍在用的 CPU
    * 活动阈值（ns / 采样窗）——`(cpu2 - cpu1) > 本值` 才算「本窗有进展」。
    *
@@ -682,9 +831,19 @@ object Defaults:
    * CpuActiveThresholdNanos = 10_000_000L`）⇒ **默认 `10000000` = 旧行为现行取值**；
    * 设计提案值 `1_000_000_000`（与前台 [[ForegroundCpuProgressNanos]] 重新对齐，
    * 修「10ms/2s = 0.5% 单核即算忙」的同型盲区）归 I5 翻值。每次调用现读。
+   *
+   * 🔴 killruling 批（2026-09-23 作者裁定 #3）：本项**保留**——删 M3 后消费点仍在
+   * （`shell.scala` 的 B1 `isStalled` 判据 + B2 同款双条件 + `BashTool` 活动桥共三处），
+   * 不是孤儿。
    */
   def CpuActiveThresholdNanos: Long =
     sys.props.getOrElse("nebflow.shell.cpuActiveThresholdNanos", "10000000").toLong
+
+  // 🔴 **T6 `StuckDetectionGraceSec` 已退役**（killruling 批 2026-09-23，作者裁定 #3「去」）：
+  // 原「后台 30 s 停滞探测杀的宽限期」prop 随 M3 机制整块删除——删后**零消费点**
+  // （i2 批的先例纪律「删机制则同删其 prop，留着会误导『还以为有 30 s 档』」）。
+  // 退役前默认值 = `30`（旧行为现行取值）。挂死反馈时延 30s → 300s（B1），见
+  // `nebflow.core.tools.shell` 顶注 + `.nebflow/Spec/20260907_bash-timeout-mechanism-audit.md`。
 
   // ---- boot-time 崩溃恢复（crash-recovery 批 2026-09-07）----
 

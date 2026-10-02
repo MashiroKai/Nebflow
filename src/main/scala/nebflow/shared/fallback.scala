@@ -15,7 +15,7 @@ final case class StreamInactivityTimeout(lastChunkAgeMs: Long, message: String) 
 enum FailoverReason:
 
   case Auth, RateLimit, Overloaded, ServerError, ModelNotFound, ProviderError, Format, ConnectionReset, Timeout,
-    EmptyStream, CapabilityMismatch, Unknown
+    EmptyStream, Unknown
 
 enum ErrorPermanence:
   case Transient, Permanent, Fatal
@@ -66,7 +66,18 @@ case class FallbackAttempt(
 )
 
 // 严格DAG第⑤步裁定(2026-09-26):错误类型拆至 shared 与 FallbackAttempt 团聚(行为保持;core 的 OnboardingService 引用边随消)
-class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
+class FallbackExhaustedError(
+  val attempts: List[FallbackAttempt],
+  /**
+   * visionfix (甲): did the failed request carry image content? Threaded to
+   * the user-facing error so "the images could not be delivered" can be told
+   * apart from a generic chain failure. Default false keeps every existing
+   * construction site source-compatible. (W1 provisional shim: member
+   * ported from main's FallbackExhaustedError, following this class's move
+   * into nebflow.shared.)
+   */
+  val hadImage: Boolean = false
+) extends Exception:
 
   override def getMessage: String =
     val summary = attempts
@@ -75,3 +86,4 @@ class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Except
       }
       .mkString("\n")
     s"All providers failed:\n$summary"
+end FallbackExhaustedError

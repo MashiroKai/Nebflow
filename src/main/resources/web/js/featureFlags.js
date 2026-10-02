@@ -14,9 +14,11 @@
 //     contacts/messages modules never init (no polling, no WS handlers).
 //
 //   - Local dev (sbt run serves the SOURCE tree directly — no esbuild, no
-//     marker property): friends default ON so the entries are visible and
-//     debuggable out of the box. `"features": { "friends": false }` in
-//     ~/.nebflow/nebflow.json turns them off (two-state debugging).
+//     marker property): friends default SEALED (friendseal batch, author
+//     ruling 2026-09-25 — the seal is the default posture; the backend latches
+//     the same key at boot). `"features": { "friends": true }` in
+//     <home>/nebflow.json unseals (two-state debugging); a config edit takes
+//     effect on reload, an instance restart unseals the tool face too.
 //
 // Flag source = the existing server config channel (no new mechanism): the
 // backend serves the install config verbatim via WS `configData` →
@@ -36,14 +38,14 @@ import state from './state.js';
  * The release guard reads the marker expression INLINE (no intermediate
  * const): esbuild's `define` replaces the member expression textually, so
  * the bundled form is `if (true === true)` → the dev branch is folded away.
- * Dev-tree semantics: absent property → dev defaults (ON unless explicitly
- * `false`).
+ * Dev-tree semantics: absent property → sealed (friendseal batch 2026-09-25:
+ * default OFF unless explicitly `true`).
  */
 export function friendsEnabled() {
   if (/** @type {Window & { __NEBFLOW_RELEASE__?: boolean }} */ (window).__NEBFLOW_RELEASE__ === true) {
     return false; // release bundle: stripped (author ruling 2026-09-10)
   }
-  return state.parsedConfig?.features?.friends !== false; // dev: default ON
+  return state.parsedConfig?.features?.friends === true; // dev: default OFF (sealed, 2026-09-25)
 }
 
 /**

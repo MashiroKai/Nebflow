@@ -13,7 +13,7 @@ import { mintTickets, reMintAll, stripCredentialParams, nfFilePathsIn, injectTic
 // guard, the frame is simply gone), and `target="_blank"` does nothing at all —
 // the card sandbox has no allow-popups, so the browser swallows the popup with
 // no tab, no navigation and no message.
-import { localLinkNavScript, bindLocalLinkBridge } from './viewers/shared.js';
+import { localLinkNavScript, bindLocalLinkBridge, imgClickScript } from './viewers/shared.js';
 
 let _iframeId = 0;
 
@@ -414,7 +414,19 @@ function renderHtmlCard(container, html, title, warnings) {
   // localLinkNavScript(): the card's half of the local-link channel (parent
   // half = bindLocalLinkBridge below). Inside #nf-wrap's sibling position so
   // the height script's measurement of the wrapper is unaffected.
-  const srcdocTail = `</div>${localLinkNavScript()}${heightScript}</body></html>`;
+  //
+  // imgClickScript() (card-image-zoom batch, 2026-09-28, author order): the
+  // card's half of the image-preview channel. The Canvas HTML viewer has
+  // forwarded `_nfImagePreview` since the 2026-09-11 C batch while the card
+  // injected no producer, so an image embedded in a Card was a dead click.
+  // The author's order asked for an image embedded in a Card tool to open on
+  // click exactly as an image embedded in Canvas does. Same script function as
+  // the Canvas leg — one producer, one payload shape. It sits in the same tail
+  // as the link script so the height script's measurement of #nf-wrap (which
+  // closes above) is untouched, and it changes no existing message:
+  // `_nfCardH` / `_nfCardFused` / `_nfThemeVars` / `_nfOpenLocalFile` keep
+  // their shape.
+  const srcdocTail = `</div>${localLinkNavScript()}${imgClickScript()}${heightScript}</body></html>`;
   /** @param {Map<string, string>} [tickets] */
   const buildSrcdoc = (tickets) =>
     srcdocHead + injectTickets(processedHtml, tickets || new Map()) + srcdocTail;

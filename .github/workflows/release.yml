@@ -320,3 +320,45 @@ jobs:
           echo -n "${{ needs.build-jar.outputs.version }}" > /tmp/latest-beta-version.txt
           "$OSSUTIL" cp /tmp/latest-beta-version.txt "oss://$COS_BUCKET/latest-beta-version.txt" -f
           echo "  Uploaded latest-beta-version.txt to OSS"
+
+      - name: Upload third-party deps to OSS (deps/ prefix)
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          # deps/ mirror anti-rot gate (installmirror batch, 2026-09-25): the
+          # deps/ prefix once stayed empty for 18 days while a stale uploader
+          # pointed at a bucket that did not exist, and both installers
+          # silently degraded to unverified installs. Every release now
+          # re-mirrors the pinned dep table (scripts/upload-deps.sh) so the
+          # prefix cannot rot silently again.
+          bash scripts/upload-deps.sh --fetch
+          bash scripts/upload-deps.sh --upload
+
+      - name: Assert deps/ availability (release gate)
+        run: |
+          # Range-GET every manifest entry: must return HTTP 200/206 AND at
+          # least one byte. A silent pass here is exactly how the 2026-09
+          # emptiness stayed invisible - any failure must fail the release.
+          set -e
+          MIRROR_BASE="https://${COS_BUCKET}.oss-cn-hangzhou.aliyuncs.com"
+          curl -fsSL --connect-timeout 8 --max-time 30 -o /tmp/deps-checksums.txt \
+            "${MIRROR_BASE}/deps/checksums.txt"
+          rows=$(grep -cE '^[0-9a-f]{64}[[:space:]]+[^[:space:]]+$' /tmp/deps-checksums.txt || true)
+          if [ "${rows:-0}" -lt 9 ]; then
+            echo "::error::deps/checksums.txt unusable (rows=${rows:-0}, need >= 9)"
+            exit 1
+          fi
+          rc=0
+          while read -r hash name; do
+            out=$(curl -sL -r 0-0 -o /dev/null -w '%{http_code} %{size_download}' \
+              --connect-timeout 8 --max-time 30 "${MIRROR_BASE}/deps/${name}")
+            code=${out%% *}; bytes=${out##* }
+            if { [ "$code" = "200" ] || [ "$code" = "206" ]; } && [ "${bytes:-0}" -ge 1 ]; then
+              echo "  [ok] deps/${name} (HTTP ${code}, ${bytes}B)"
+            else
+              echo "::error::deps/${name} not fetchable (HTTP ${code:-none}, ${bytes:-0}B)"
+              rc=1
+            fi
+          done < /tmp/deps-checksums.txt
+          exit $rc

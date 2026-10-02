@@ -324,6 +324,226 @@
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* ── chainview 批 2026-10-01 · 紧凑 v2 链视图常量（**单源**）────────────────
+   尺寸（§二.1.1/1.2）与类型五色（§二.1.4）在此一次性定义；JS 侧同名常量见
+   taskList.js（`NODE_TYPE` / `ROW_H_CHAIN_COLLAPSED` / `ROW_H_NODE_EXPANDED` /
+   `BTN_W` / `BTN_H`），两处由证据脚本 `assert-type-color-single-source.cjs`
+   断言逐值相等（🔴 禁散落硬编码、禁第二份权威）。 */
+:root {
+  --task-chain-row-h: 28px;          /* 折叠链行高（§二.1.1） */
+  --task-chain-node-h: 22px;         /* 展开节点行高（§二.1.2） */
+  --task-chain-btn-w: 22px;          /* 图标钮宽（§二.1.2） */
+  --task-chain-btn-h: 20px;          /* 图标钮高（§二.1.2） */
+  --task-chain-dot-r: 3px;           /* 点图圆点直径 */
+  /* 类型五色（§二.1.4，mockup 已批值；🔴 只此一处 + taskList.js NODE_TYPE 同值） */
+  --task-node-type-dispatcher: #8a93a5;
+  --task-node-type-impl: #4a8fd4;
+  --task-node-type-verify: #e0a03c;
+  --task-node-type-sink: #9b6fd4;
+  --task-node-type-design: #3aa8a0;
+}
+
+/* ── 折叠链行（28px）：`▸ 名称 [状态徽标] [内联点图] n/N · 时长 ⏸ ✕` ──── */
+.task-chain-block { margin: 2px 0; }
+
+.task-chain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--task-chain-row-h);
+  box-sizing: border-box;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.task-chain:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+
+.task-chain-twisty {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-muted, #888);
+  transition: transform 0.15s;
+}
+.task-chain-twisty svg { width: 12px; height: 12px; }
+.task-chain-twisty.is-open { transform: rotate(90deg); }
+
+.task-chain-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 44%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-text, #000);
+}
+
+/* 状态徽标五态（§二.1.3）：运行 / 暂停 / 完成 / 失败 / 取消。
+   色全部取自 base.css 既有变量（亮暗同源自适应），零新色值。 */
+.task-chain-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.task-chain-badge.s-running { color: var(--color-primary, #07c160); }
+.task-chain-badge.s-paused { color: var(--color-warning, #ff9800); }
+.task-chain-badge.s-completed { color: var(--color-success, #4caf50); }
+.task-chain-badge.s-failed { color: var(--color-error, #f44336); }
+.task-chain-badge.s-cancelled { color: var(--color-text-muted, #888); }
+
+/* 内联点图（§二.1.1）：节点拓扑缩略 —— 点（按类型着色）+ 连线。
+   宽度封顶溢出省略：只作缩略，不作判据（窄栏下先牺牲点图）。 */
+.task-chain-map {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  gap: 0;
+}
+.task-chain-map-link {
+  flex: 0 0 auto;
+  width: 4px;
+  height: 1px;
+  background: color-mix(in srgb, var(--color-text-muted, #888) 55%, transparent);
+}
+.task-chain-map-dot {
+  flex: 0 0 auto;
+  width: var(--task-chain-dot-r);
+  height: var(--task-chain-dot-r);
+  border-radius: 50%;
+  box-sizing: content-box;
+  border: 1px solid currentColor;       /* 空心 = 未起跑（背景色填充） */
+  background: transparent;
+}
+.task-chain-map-dot.is-done { background: currentColor; border-color: currentColor; }
+/* 运行中：实心 + 描边放大（形态 + 尺寸双信号，色彩信号不变） */
+.task-chain-map-dot.is-running {
+  background: currentColor;
+  border-color: currentColor;
+  width: calc(var(--task-chain-dot-r) + 2px);
+  height: calc(var(--task-chain-dot-r) + 2px);
+}
+/* 类型着色（值 = :root 单源变量；🔴 禁在此写色值字面量） */
+.task-chain-map-dot.t-dispatcher, .task-chain-dot.t-dispatcher { color: var(--task-node-type-dispatcher); }
+.task-chain-map-dot.t-impl, .task-chain-dot.t-impl { color: var(--task-node-type-impl); }
+.task-chain-map-dot.t-verify, .task-chain-dot.t-verify { color: var(--task-node-type-verify); }
+.task-chain-map-dot.t-sink, .task-chain-dot.t-sink { color: var(--task-node-type-sink); }
+.task-chain-map-dot.t-design, .task-chain-dot.t-design { color: var(--task-node-type-design); }
+
+.task-chain-meta {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+  white-space: nowrap;
+}
+
+.task-chain-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+.task-chain-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--task-chain-btn-w);
+  height: var(--task-chain-btn-h);
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted, #888);
+  transition: background 0.15s, color 0.15s;
+}
+.task-chain-btn svg { width: 12px; height: 12px; }
+.task-chain-btn:hover { background: var(--color-frame-hover); color: var(--color-text, #000); }
+.task-chain-btn-cancel:hover { color: var(--color-error, #f44336); }
+.task-chain-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── 展开态成员行（22px）：色点 + 名 + 状态 + 时长 ─────────────────────── */
+.task-chain-body { min-width: 0; }
+.task-chain-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--task-chain-node-h);
+  box-sizing: border-box;
+  padding: 0 4px 0 16px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.task-chain-member:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+.task-chain-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;              /* 类型色点（:root 单源变量） */
+}
+.task-chain-member-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text, #000);
+}
+.task-chain-member-word {
+  flex: 0 0 auto;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted, #888);
+}
+.task-chain-member-time {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+}
+
+/* ── 未分组折叠组（§二.1.5，置底）：无链节点收拢 ───────────────────────── */
+.task-node-ungrouped { margin-top: 2px; }
+.task-node-ungrouped-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 4px 2px 2px;
+  cursor: pointer;
+}
+/* twisty 语义与链行同款（共用 .task-chain-twisty 基样：is-open ⇒ 90°）。
+   🔴 不覆写 transform —— 组头默认展开 ⇒ 初值即 is-open（见 taskList.js）。 */
+.task-node-ungrouped.is-collapsed .task-node { display: none; }
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   .task-toggle:hover {

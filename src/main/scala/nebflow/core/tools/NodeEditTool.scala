@@ -81,6 +81,69 @@ object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
   /**
+   * descriptionLong stored-length cap (desc300 batch 2026-09-30, author order #281): the
+   * stored value is truncated to this many characters; longer input is NOT an error — the
+   * full (trimmed, untruncated) text is spilled to a per-node file and its absolute path is
+   * returned in the success receipt so the agent can read it.
+   */
+  private val DescriptionLongMaxChars = 300
+
+  /** Truncation = trimmed length beyond the cap. Pure predicate (single judgement point). */
+  private def descriptionLongTruncated(d: Option[String]): Boolean =
+    d.exists(_.trim.length > DescriptionLongMaxChars)
+
+  /**
+   * The ack line appended to the NodeEdit receipt when truncation happened (author-verbatim
+   * S16-4 sentence + the ABSOLUTE spill path). Only the receipt matters here: this line is NOT
+   * written to stdout only, it is returned to the caller (the agent can then Read the file).
+   */
+  private val DescriptionLongFullTextLine = "Full descriptionLong text (untruncated) written to: "
+
+  /** Stored value: trimmed then capped. Pure (single normalisation point). */
+  private def storeDescriptionLong(d: Option[String]): Option[String] =
+    d.map(_.trim.take(DescriptionLongMaxChars))
+
+  /**
+   * Sync the per-node spill file with the value just written (called only when descriptionLong
+   * was rewritten: every create/edit write point). One file per node, zero accumulation:
+   *   - truncated => overwrite the same path with the full untruncated text, and return the
+   *     receipt line S16-4 carrying the ABSOLUTE path (so the agent can read it itself);
+   *   - not truncated => remove any stale spill file (a rewrite to a short value must not leave
+   *     the previous full text behind pointing at a value the node no longer holds).
+   * Best-effort: a disk failure never fails the NodeEdit call (the stored value is already
+   * correct) — it downgrades to a warning line, so the truncation is never silent.
+   */
+  private def syncDescriptionLongSpill(rt: ProjectRuntime, nodeId: String, d: Option[String]): IO[String] =
+    IO.blocking {
+      val trimmed = d.map(_.trim).getOrElse("")
+      if descriptionLongTruncated(d) then
+        FlowMapStore.writeDescriptionLongSpill(rt.project.workspace, nodeId, trimmed) match
+          case Right(path) => "\n" + DescriptionLongFullTextLine + path
+          case Left(err) =>
+            s"\n⚠ descriptionLong was truncated to $DescriptionLongMaxChars chars but the full text could NOT be written to disk ($err) — the untruncated remainder is not readable."
+      else
+        val _ = FlowMapStore.deleteDescriptionLongSpill(rt.project.workspace, nodeId)
+        ""
+    }
+
+  /**
+   * Delete the spill file on the node's terminal exit (abandon / cancel) and return a short
+   * receipt note. BEST-EFFORT by contract: a delete failure must not fail the abandon or the
+   * cancel — it only downgrades to a warning note that the caller records (event / receipt),
+   * so the reading is never silently lost.
+   */
+  private def dropDescriptionLongSpill(workspace: String, nodeId: String): IO[String] =
+    IO.blocking(FlowMapStore.deleteDescriptionLongSpill(workspace, nodeId))
+      .map {
+        case Right(true) => "; descriptionLong spill file deleted"
+        case Right(false) => ""
+        case Left(err) => s"; ⚠ descriptionLong spill file could not be deleted ($err)"
+      }
+      .handleErrorWith(e =>
+        IO.pure(s"; ⚠ descriptionLong spill file could not be deleted (${Option(e.getMessage).getOrElse(e.toString)})")
+      )
+
+  /**
    * 观测面上下文经济学批（20260907 裁定⑤b）：描述 7,438 → 3,742 字符（-50%，
    * 压措辞不改语义——参数面/动作语义/错误码/校验/重激活规则全保留）；合并
    * 观测面P0P1引擎批时统一进基线后落的 main 语义（failed 重激活条款 / abandon
@@ -110,27 +173,27 @@ object NodeEditTool extends Tool:
 ## Parameters
 - project (optional; current project by default).
 - nodename: unique display name — missing = create, existing = edit.
-- description (required on create, ≤60 chars): one-line purpose (card/payload metadata). descriptionLong (optional, ≤200 chars): longer summary — detail channel only. Both replace on edit.
-- task (optional): node task; an entry node (task, no in) runs on create.
+- description (required on create, ≤60 chars): one-line purpose (card/payload metadata). descriptionLong (optional, ≤300 chars; longer text is stored truncated to 300 and the full text is written to a file whose path the result returns): longer summary — detail channel only. Both replace on edit.
+- task (optional): node task.
 - in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each gains a default pass edge here.
 - deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null clears; failed/cancelled/blocked never trigger; deps edits on RUNNING nodes rejected. A ref may be "chain:<id>" = wait for that WHOLE chain (all members completed) — a pure scheduling gate, NEVER a membership edge, deps-only (not 'in'); unknown id ⇒ NODE_CHAIN_REF_UNKNOWN.
 - retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ that upstream re-runs (fresh result over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
 - out (optional; edit rewrites the edge set; empty/null = dangling (state the intent with dangling=true): result retained, auto-delivered once wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
-- worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name> (same-name branch off main); fail-fast; refused on edits.
+- worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name>; fail-fast; refused on edits.
 - Retired (rejected): agent/skill/mcp (NODE_AGENT_RETIRED) ⇒ plugins; preset (NODE_PRESET_RETIRED) — no per-node scheme; dispatcher's applies.
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
-- reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ edit only rewires + auto-delivers the retained result.
+- reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered). Omitted ⇒ rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
 - notify (optional; unset = legacy: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. Legacy one-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
 ## Semantics
-- Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task) runs at create, async.
+- Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task, no in) runs at create, async.
 - Verdict routing (role=verifier): fail is a VERDICT — THE VERIFIER STILL COMPLETES; "(fail)<worker>:loop" re-runs the target. Its out: distinct pass/fail targets (NODE_VERDICT_ROUTE_COLLISION), one fail target (NODE_VERIFY_MULTI_FAIL_TARGET), never "Nebula" (NODE_LOOP_TARGET_NEBULA), no retry (NODE_RETRY_LOOP_CONFLICT); the engine owns the round/wall-clock budget and fails it on exhaustion (loop-budget).
 - out delivery: completed ⇒ pass edges fire (:result payload / :signal bare start; ≤1 per (target,mode)); failed ⇒ on-failed :signal edges fire, the rest waits (D5); wiring into a FAILED upstream with no on-failed edge ⇒ warning.
 - merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure ⇒ blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM); with no out yet it REQUIRES dangling=true (NODE_MERGE_SINK_NEEDS_OUT).
-- Edit: in appends; deps replaces; out rewrites the edge set; description(s) replace. Removing a consumed target (running/terminal) rejected — NodeCancel first; other terminal rewires auto-deliver the retained result to new targets.
+- Edit: in appends; deps/out/description replace; removing a consumed target (running/terminal) rejected — NodeCancel first; other terminal rewires auto-deliver the retained result to new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
 - Failed node edit: a real change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED edit (SIGINT/SIGTERM left it non-terminal): a real change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED re-runs only with reactivateCompleted=true; cancelled not reactivatable (create successor).
 - Archived nodes (TTL-expired, result retained): only 'out' rewiring is accepted; other edits refused (restoreChain=true overrides).
@@ -152,7 +215,7 @@ object NodeEditTool extends Tool:
         ),
         "descriptionLong" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional longer summary, ≤200 chars — detail channel only (NodeList detail= / REST), never in default payloads".asJson
+          "description" -> "Optional longer summary, ≤300 chars — longer text is stored truncated to 300 and the full text is written to a file whose path the result returns — detail channel only (NodeList detail= / REST), never in default payloads".asJson
         ),
         "task" -> Json.obj(
           "type" -> "string".asJson,
@@ -560,14 +623,11 @@ object NodeEditTool extends Tool:
       )
     else if descriptionLong.exists(d => d.trim.isEmpty) then
       IO.pure(Left(ToolError("'descriptionLong' must be non-empty when provided (NODE_DESCRIPTION_LONG_REQUIRED)")))
-    else if descriptionLong.exists(_.trim.length > 200) then
-      IO.pure(
-        Left(
-          ToolError(
-            s"'descriptionLong' must be ≤200 characters (got ${descriptionLong.map(_.trim.length).getOrElse(0)}) (NODE_DESCRIPTION_LONG_TOO_LONG)"
-          )
-        )
-      )
+    // desc300 batch (2026-09-30): over-long is NO LONGER an error — it is truncated on store
+    // (storeDescriptionLong) with the full text spilled to a file. The old over-length reject
+    // branch AND its error code are deleted outright: zero surviving error path for
+    // over-length, so the code appears nowhere in src/ (see the repo-wide grep in the batch
+    // report). The trim-empty contract above is the only surviving descriptionLong rejection.
     else
       val plugins = pluginsParsed.getOrElse(Nil)
       // flag off（§G.2 回滚语义）：NodeEdit 忽略 plugins 参数——不校验不存储
@@ -823,17 +883,15 @@ object NodeEditTool extends Tool:
         )
       case _ => None
 
-  /** descriptionLong 校验单点（裁定⑤c，可选参数：传了才校验；≤200 字符）。 */
+  /**
+   * descriptionLong validation single point (author ruling #5c) — optional parameter, validated
+   * only when provided. desc300 batch (2026-09-30): the cap is 300 and over-length is NOT an
+   * error (see the constants above); only the trim-empty contract survives.
+   */
   private def validateDescriptionLong(descriptionLong: Option[String]): Option[ToolError] =
     descriptionLong match
       case Some(d) if d.trim.isEmpty =>
-        Some(ToolError("'descriptionLong' must be non-empty (trim) — ≤200 chars (NODE_DESCRIPTION_LONG_REQUIRED)"))
-      case Some(d) if d.trim.length > 200 =>
-        Some(
-          ToolError(
-            s"'descriptionLong' must be ≤200 characters (got ${d.trim.length}) (NODE_DESCRIPTION_LONG_TOO_LONG)"
-          )
-        )
+        Some(ToolError("'descriptionLong' must be non-empty (trim) (NODE_DESCRIPTION_LONG_REQUIRED)"))
       case _ => None
 
   /**
@@ -1164,6 +1222,10 @@ object NodeEditTool extends Tool:
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
       stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
+      // 链引用 RISKY 档回执行（判据 D 二档；本批）：`deps` 里的 `chain:<id>` 目标链含
+      // `failed` 成员 ⇒ **放行**（可重激活）+ ⚠ 行。🔴 死链（含 `cancelled` 成员）在
+      // `depsOk` 已硬拒（`NODE_CHAIN_REF_DEAD`），不会走到这里。
+      chainRefWarn <- deps.filter(FlowMapStore.isChainRef).flatTraverse(r => NodeTools.chainRefWarnings(rt, r))
       // 通知策略自检（b64 批；M3/R14/spec §4.2 三条，仅 WARNING 不阻断）
       // B-3 修（2026-09-14）：此处传**未声明即缺键**（不再用 `NotifyPolicy.Default` 填
       // `Some`）。本函数的 `policy` 形参语义即「生效策略（缺键 ⇒ legacy 三态推断）」
@@ -1267,10 +1329,36 @@ object NodeEditTool extends Tool:
         else if notify.invalid.isDefined then
           // notify 值域（b64 批 R1/R2；错误码 NODE_NOTIFY_INVALID，文案含合法值域 + 实收值）
           IO.pure(Left(ToolError(notify.invalid.get)))
-        else if mergeGate.isDefined then IO.pure(Left(ToolError(mergeGate.get)))
+        else if mergeGate.isDefined then
+          // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12，create 侧）：建位期的
+          // `NODE_MERGE_PASS_ONLY` 硬拒此前零事件——落一笔 `edge-changed` + `reason=refused`。
+          NodeTools
+            .emitRefused(
+              rt,
+              nodeId,
+              "ensureMergePassOnly",
+              NodeTools.errorCodeOf(mergeGate.get, "NODE_MERGE_PASS_ONLY")
+            )
+            .as(Left(ToolError(mergeGate.get)))
         else if retryGate.isDefined then IO.pure(Left(ToolError(retryGate.get)))
-        else if verdictGate.isDefined then IO.pure(Left(ToolError(verdictGate.get)))
-        else if loopGate.isDefined then IO.pure(Left(ToolError(loopGate.get)))
+        else if verdictGate.isDefined then
+          NodeTools
+            .emitRefused(
+              rt,
+              nodeId,
+              "verdictRouteGate",
+              NodeTools.errorCodeOf(verdictGate.get, "NODE_VERIFIER_NEEDS_ROUTE")
+            )
+            .as(Left(ToolError(verdictGate.get)))
+        else if loopGate.isDefined then
+          NodeTools
+            .emitRefused(
+              rt,
+              nodeId,
+              "loopGateViolation",
+              NodeTools.errorCodeOf(loopGate.get, "NODE_LOOP_GATE_INCOMPLETE")
+            )
+            .as(Left(ToolError(loopGate.get)))
         else if dup.isDefined then
           IO.pure(
             Left(
@@ -1293,7 +1381,7 @@ object NodeEditTool extends Tool:
             // 方案（NodeDef.preset 字段保留，存量数据显示/审计用）。
             task = task,
             description = description.map(_.trim),
-            descriptionLong = descriptionLong.map(_.trim),
+            descriptionLong = storeDescriptionLong(descriptionLong),
             in = Nil,
             deps = deps,
             merge = merge,
@@ -1335,7 +1423,11 @@ object NodeEditTool extends Tool:
           // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out 追加 → 本节点）
           // + out 边（每个非 Nebula 目标 in 追加本节点）。P1 多边：in 声明为上游 out **追加**
           // 指向本节点的缺省 pass 边（不覆盖既有门控，扇出拓扑零扰动）。
-          val mutateIO = rt.store.mutate { s =>
+          //
+          // 缺陷③批 2026-10-01（案 A 写点 5）：本事务同时产出 `edge-changed` 视图——**建位落边
+          // 也是边集变更**（此前建位期的 out 声明与 in 镜像零审计）。视图从 `(写前, 写后)`
+          // 两张 Map 纯函数算出（`mutateWithResult`，f 在 CAS 自旋下可能重入 ⇒ 必须纯）。
+          val mutateIO = rt.store.mutateWithResult { s =>
             val withNode = s.copy(nodes = s.nodes + (nodeId -> node))
             val insNodes = ins.foldLeft(withNode.nodes)((acc, upId) => NodeTools.appendEdgeTo(acc, upId, nodeId))
             val withIns = withNode.copy(nodes = insNodes)
@@ -1359,7 +1451,12 @@ object NodeEditTool extends Tool:
                   case None => acc
               else acc
             )
-            withInList.copy(nodes = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out))))
+            // 🔴 `outNodes`（`out` fold 的**结果**）才是含全部下游 `in` 镜像写回的最终 Map——
+            // 基线缺失事故（20260909）修复的落点。改走 `mutateWithResult` 时若从 `withInList`
+            // 起手，out 目标侧的 `in` 追加会被整支丢弃（`NodeEdgeRepairSpec②-a` /
+            // `NodeDepsSpec T5b` 即此形态的机械把守点）。
+            val nodesAfter = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out)))
+            (s.copy(nodes = nodesAfter), NodeTools.createdEdgeViews(nodeId, s.nodes, nodesAfter))
           }
           // create 回执一致性断言（20260909 in 丢失事故护栏①）：回执返回前写后读，
           // 断言 in 已随节点同事务落定。现实现里 in 追加与节点插入在同一 Ref 事务
@@ -1370,9 +1467,17 @@ object NodeEditTool extends Tool:
             // mutate（IO 顺序保证快照早于任何写动作）。`chainIdView` 是纯派生（分量 +
             // 声明），读快照即得写前归属；写后视图由 emit 内部现读 ⇒ 两次读数各有其时点。
             rt.store.combinedNodes.flatMap { chainBefore =>
-              mutateIO.flatMap { s =>
+              mutateIO.flatMap { case (s, edgeViews) =>
                 val created = s.nodes(nodeId)
                 val missingIn = ins.filterNot(created.in.contains)
+                // pass-consumer gap (verdict-consumer batch 2026-10-01 · case A warning
+                // tier, design card §2.1): the verifier declares edges but no pass outlet
+                // — its pass verdict has no consumer. Derived ONCE here from the same
+                // post-write snapshot the receipt reads, and shared by the audit line and
+                // the receipt hint (a second derivation would be the twin-derivation the
+                // engine forbids). Judgement authority = NodeTools.verifierPassOutletMissing
+                // (single point; the pass-edge resolution runs on the full active map).
+                val passOutletGap = NodeTools.verifierPassOutletMissing(created, s.nodes)
                 if missingIn.nonEmpty then
                   val msg =
                     s"engine consistency tripwire: node '$nodename' ($nodeId) was created but in edge(s) [${missingIn.mkString(", ")}] are missing from the persisted state " +
@@ -1380,19 +1485,22 @@ object NodeEditTool extends Tool:
                   IO(logger.errorSync(s"[node.tools] $msg")).as(Left(ToolError(msg)))
                 else
                   (
-                    // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：两类显式许可
-                    // 必须可事后对齐——被拒面查无事件、被放行面有迹可循（校验失败现况零
-                    // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
-                    // reactivated，零载荷漂移）。
-                    (if dangling && out.isEmpty then
-                       FlowMapEventLog.append(
-                         rt.project.workspace,
-                         rt.project.name,
-                         nodeId,
-                         "dangling-declared",
-                         "node created with dangling=true (empty out declared intentional; result retained until wired)"
-                       )
-                     else IO.unit) *>
+                    // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 5）：**逐边一行**
+                    // （建位期的 out 与 in 镜像此前零事件）。
+                    FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, edgeViews) *>
+                      // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：两类显式许可
+                      // 必须可事后对齐——被拒面查无事件、被放行面有迹可循（校验失败现况零
+                      // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
+                      // reactivated，零载荷漂移）。
+                      (if dangling && out.isEmpty then
+                         FlowMapEventLog.append(
+                           rt.project.workspace,
+                           rt.project.name,
+                           nodeId,
+                           "dangling-declared",
+                           "node created with dangling=true (empty out declared intentional; result retained until wired)"
+                         )
+                       else IO.unit) *>
                       (if pendingRouteWarn.isDefined then
                          FlowMapEventLog.append(
                            rt.project.workspace,
@@ -1400,6 +1508,22 @@ object NodeEditTool extends Tool:
                            nodeId,
                            "verifier-route-deferred",
                            "verifier created without fail route (verifierRoutePending=true) — wire '(fail)<worker>:loop' to enable re-run routing"
+                         )
+                       else IO.unit) *>
+                      // Pass-face zero-consumer trace (verdict-consumer batch · case A
+                      // tier (a) warning only): sits BESIDE the fail-face
+                      // `verifier-route-deferred` (both judgements can hold at once,
+                      // never merged). Judgement single point = NodeTools.passOutlet
+                      // (already computed above; never re-derived here). Written on the
+                      // success leg, zero rejection paths.
+                      (if passOutletGap then
+                         FlowMapEventLog.append(
+                           rt.project.workspace,
+                           rt.project.name,
+                           nodeId,
+                           FlowMapEventLog.VerifierPassUnconsumedType,
+                           s"verifier '${created.name}' ($nodeId) created without a pass outlet — its pass verdict has no consumer " +
+                             "to route to; declare '(pass)<landing>' or '(pass)Nebula' (NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\")"
                          )
                        else IO.unit) *>
                       // 新节点事件（NodeList 同构 payload，in/out 以 store 最终态为准）
@@ -1480,6 +1604,8 @@ object NodeEditTool extends Tool:
                           case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
                           case None => "") +
                         (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "") +
+                        // 链引用 RISKY 档（判据 D 二档；本批）：failed 成员 ⇒ 放行 + ⚠ 行
+                        (if chainRefWarn.nonEmpty then "\n" + chainRefWarn.mkString("\n") else "") +
                         // 通知策略自检（b64 批；WARNING 族，含 M3「silent ∧ 链末端只警告」）
                         (if notifyWarn.nonEmpty then "\n" + notifyWarn.mkString("\n") else "") +
                         // 悬空提示（O-B 必做 4 + C-ii 升级，本批四项②）：声明了 dangling ⇒
@@ -1489,13 +1615,28 @@ object NodeEditTool extends Tool:
                              (if dangling then NodeTools.wiringGapHintDeclared(nodename, nodeId)
                               else NodeTools.wiringGapHint(nodename, nodeId)).mkString("\n")
                          else "") +
+                        // Pass-outlet gap hint (verdict-consumer batch · case A tier (a)
+                        // warning only, design card §2.1): a verifier with a non-empty
+                        // declaredOut but no pass outlet ⇒ one ⚠ line on the tail
+                        // (the `wiringGapHint` shape: non-blocking, zero rejection
+                        // paths).
+                        (if passOutletGap then
+                           "\n" + NodeTools.verifierPassOutletGapHint(nodename, nodeId).mkString("\n")
+                         else "") +
                         // pending verifier ⚠（C-i ②，本批四项③）+ plugins 声明面警告
                         // （P2a flag-off / P3 文本扫描，本批四项④）——WARNING 族同款形态
                         (if pendingRouteWarn.isDefined then "\n" + pendingRouteWarn.get else "") +
                         (if pluginsFlagWarn.isDefined then "\n" + pluginsFlagWarn.get else "") +
                         (if pluginsTextWarn.nonEmpty then "\n" + pluginsTextWarn.mkString("\n") else "")
                     )
-                  )
+                  ).flatMap { created0 =>
+                    // desc300 batch (create write point): the spill file follows the value just
+                    // written, so the receipt carries a path that is true now (S16-4 sentence +
+                    // ABSOLUTE path). Appended only on success — a rejected create leaves no file.
+                    NodeEditTool
+                      .syncDescriptionLongSpill(rt, nodeId, descriptionLong)
+                      .map(dlSpill => created0.map(_ + dlSpill))
+                  }
                 end if
               }
             }
@@ -1595,7 +1736,13 @@ object NodeEditTool extends Tool:
                   ) *>
                     // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks（与
                     // cancelNode/reap 同款单点——问出问题的节点被放弃，卡片必须关闭）。
-                    rt.engine.cleanupPendingAsks(c.sessionRef).as(abandonReceipt(c))
+                    // desc300 batch: the node leaves the map here, so its descriptionLong
+                    // spill file goes with it (best-effort — a delete failure must not fail
+                    // the abandon; the reading is recorded in the abandoned event).
+                    rt.engine.cleanupPendingAsks(c.sessionRef) *>
+                    NodeEditTool.dropDescriptionLongSpill(rt.project.workspace, c.id).map { spillNote =>
+                      abandonReceipt(c) + spillNote
+                    }
                 }
             }
           case _ =>
@@ -1772,6 +1919,22 @@ object NodeEditTool extends Tool:
       IO.pure(
         Left(ToolError(s"Node '${node.name}' is running — its input is frozen. NodeCancel it first, then rewire."))
       )
+    // 缺陷④闸（案 A · 文案冻结批）：running 位的 task 在 editNode 全路径上无写点
+    // （唯一写点位于 didReactivate 事务内 ⇒ reactivate 恒 false），却返回 "updated" = 假成功。
+    // 判据 = 归一化后不等（幂等重发不拒）。死会话 running 的写入需求由 Mail(node:) 的
+    // appendUndelivered 兜底承接 ⇒ 本闸统一按「running ⇒ 拒」处理，不做活/死分档。
+    else if task.isDefined && node.status == NodeLifecycle.Running
+      && NodeTools.normalizeTask(task.get) != node.task.map(NodeTools.normalizeTask).getOrElse("")
+    then
+      IO.pure(
+        Left(
+          ToolError(
+            s"Node '${node.name}' is running — its task is frozen (input is frozen). " +
+              "Use Mail(address=\"node:<id>\", message=<supplement>) to inject a supplement into a running node; " +
+              "to replace the task, NodeCancel it first, then recreate/reactivate. (NODE_RUNNING_TASK_FROZEN)"
+          )
+        )
+      )
     else
       // out 处理（整体替换 / 显式断开）——同步校验先 match，再进 IO 链
       NodeTools.parseOut(outJson) match
@@ -1857,10 +2020,28 @@ object NodeEditTool extends Tool:
                         if outProvided && ids.nonEmpty then
                           frozenLive.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
                             rs.collectFirst { case Left(e) => e } match
-                              case Some(e) => IO.pure(Left(e))
+                              // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12）：门拒即落一笔
+                              // `edge-changed` + `reason=refused`——此前该硬拒零事件。
+                              case Some(e) =>
+                                NodeTools
+                                  .emitRefused(
+                                    rt,
+                                    node.id,
+                                    "ensureTargetNotRunning",
+                                    NodeTools.errorCodeOf(e, "NODE_TARGET_RUNNING_INPUT_FROZEN")
+                                  )
+                                  .as(Left(e))
                               case None =>
                                 NodeTools.ensureMergePassOnly(rt, newOut).flatMap {
-                                  case Some(gate) => IO.pure(Left(gate): Either[String, Unit])
+                                  case Some(gate) =>
+                                    NodeTools
+                                      .emitRefused(
+                                        rt,
+                                        node.id,
+                                        "ensureMergePassOnly",
+                                        NodeTools.errorCodeOf(gate, "NODE_MERGE_PASS_ONLY")
+                                      )
+                                      .as(Left(gate): Either[String, Unit])
                                   case None => consumedGuard
                                 }
                           }
@@ -2065,8 +2246,32 @@ object NodeEditTool extends Tool:
                             NodeTools
                               .verdictRouteGate(rt, node.id, node.name, node.role, selfLoopEnabled, finalOut)
                               .flatMap { verdictErr =>
-                                if earlyReject.isDefined then IO.pure(Left(earlyReject.get))
-                                else if verdictErr.isDefined then IO.pure(Left(ToolError(verdictErr.get)))
+                                if earlyReject.isDefined then
+                                  // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12，edit 侧
+                                  // loop 门集腿）：`NODE_LOOP_GATE_INCOMPLETE` 硬拒不落边，
+                                  // 但必须可事后对齐（其余 earlyReject 腿 —— description/
+                                  // deps/notify/merge 上限等 —— 不在本批「形态 12」面内）。
+                                  (if loopSelfGate.isDefined then
+                                     NodeTools.emitRefused(
+                                       rt,
+                                       node.id,
+                                       "loopGateViolation",
+                                       NodeTools.errorCodeOf(loopSelfGate.get, "NODE_LOOP_GATE_INCOMPLETE")
+                                     )
+                                   else IO.unit).as(Left(earlyReject.get))
+                                else if verdictErr.isDefined then
+                                  // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12）：verdict
+                                  // 选通门拒也落一笔（`NODE_VERIFIER_NEEDS_ROUTE` /
+                                  // `NODE_VERDICT_GATE_ON_TASK_NODE` / `NODE_LOOP_EDGE_ROLE`
+                                  // 等既有码由 `errorCodeOf` 从文案抽出）。
+                                  NodeTools
+                                    .emitRefused(
+                                      rt,
+                                      node.id,
+                                      "verdictRouteGate",
+                                      NodeTools.errorCodeOf(verdictErr.get, "NODE_VERIFIER_NEEDS_ROUTE")
+                                    )
+                                    .as(Left(ToolError(verdictErr.get)))
                                 // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定（值域 =
                                 // 应用本次改动后的最终 in ∪ deps）+ retry 环。校验失败卡在
                                 // 全部写路径（in 追加/重激活/写回）之前——本次编辑零副作用。
@@ -2218,6 +2423,13 @@ object NodeEditTool extends Tool:
                                               // §2.3 的单值语义在多边下自然兼容）。归档上游（活动区无
                                               // 副本）走 setOut 归档分支：活动侧目标 in 追加 + 归档 out
                                               // 镜像补写（旧 setOut(rt, upId, Some(node.id)) 同域语义）。
+                                              // 缺陷③批 2026-10-01（案 A 写点 6 · in 追加面）：本条腿
+                                              // **无需额外埋点**——`NodeTools.setOut` 是 out 边集的
+                                              // 落盘 choke point，其收口处已对 (before, after) 逐边
+                                              // diff：上游 out 那一面（`kind=out owner=<upId>`）+ 本
+                                              // 节点 in 镜像那一面（`kind=in owner=<node.id> from=-
+                                              // to=<upId>`）**同一次调用内各发一行**。再埋一次即双发
+                                              // （同一事实两行 ⇒ 审计面重复计数）。
                                               _ <- adds.traverse_(upId =>
                                                 rt.store.getNode(upId).flatMap {
                                                   case Some(up) if !up.out.exists(_.to == node.id) =>
@@ -2250,16 +2462,37 @@ object NodeEditTool extends Tool:
                                                 else IO.unit
                                               // deps 替换写回（非重激活路径；重激活在下方事务内一并写）。
                                               // deps 单侧持有：只更新本节点字段，无上游侧镜像边。
+                                              //
+                                              // 缺陷③批 2026-10-01（案 A 写点 6 · deps 面）：deps 替换
+                                              // 也是边集变更（此前零审计）。**逐项一行** `kind=deps`，
+                                              // `from=<旧项> to=<新项>`（替换语义，非增删）；视图从
+                                              // `(写前, 写后)` 两列表纯函数算出。
                                               _ <-
                                                 if depsProvided && depsChanged && !reactivate then
-                                                  rt.store.mutate { s =>
-                                                    s.nodes.get(node.id) match
-                                                      case Some(fresh) =>
-                                                        s.copy(nodes =
-                                                          s.nodes.updated(node.id, fresh.copy(deps = newDeps))
+                                                  rt.store
+                                                    .mutateWithResult { s =>
+                                                      s.nodes.get(node.id) match
+                                                        case Some(fresh) =>
+                                                          (
+                                                            s.copy(nodes =
+                                                              s.nodes.updated(node.id, fresh.copy(deps = newDeps))
+                                                            ),
+                                                            (fresh.deps, newDeps)
+                                                          )
+                                                        case None => (s, (Nil, Nil))
+                                                    }
+                                                    .flatMap { case (_, (beforeDeps, afterDeps)) =>
+                                                      FlowMapEventLog.appendEdgeChanges(
+                                                        rt.project.workspace,
+                                                        rt.project.name,
+                                                        FlowMapEventLog.depsViews(
+                                                          node.id,
+                                                          beforeDeps,
+                                                          afterDeps,
+                                                          FlowMapEventLog.EdgeChangeReason.Machine
                                                         )
-                                                      case None => s
-                                                  }.void
+                                                      )
+                                                    }
                                                 else IO.unit
                                               // plugins 替换写回（阶段 2b §B.4 第 3 步，replace-on-provide
                                               // 与 deps 同款）：passed（any form, including []）= 整列表
@@ -2307,7 +2540,9 @@ object NodeEditTool extends Tool:
                                                         s.copy(nodes =
                                                           s.nodes.updated(
                                                             node.id,
-                                                            fresh.copy(descriptionLong = descriptionLong.map(_.trim))
+                                                            fresh.copy(descriptionLong =
+                                                              storeDescriptionLong(descriptionLong)
+                                                            )
                                                           )
                                                         )
                                                       case None => s
@@ -2470,8 +2705,7 @@ object NodeEditTool extends Tool:
                                                                 task = appliedTask,
                                                                 description =
                                                                   description.map(_.trim).orElse(fresh.description),
-                                                                descriptionLong = descriptionLong
-                                                                  .map(_.trim)
+                                                                descriptionLong = storeDescriptionLong(descriptionLong)
                                                                   .orElse(fresh.descriptionLong),
                                                                 deps = appliedDeps,
                                                                 loop =
@@ -2535,6 +2769,20 @@ object NodeEditTool extends Tool:
                                                   // completed 面另附 NODE_COMPLETED_REACTIVATION 授权名——
                                                   // 「改动既有纪律」的动作必须可事后对齐（C5 要求）。
                                                   val preStatus = node.status
+                                                  // 触发源三面判定（缺陷③批 2026-10-01 · 案 A 写点 10）：
+                                                  // 拆掉硬编码 `source=human`——审计面必须能区分
+                                                  // 「节点会话 / 分发器会话 / 人工」三类重激活发起者。
+                                                  // 零身份面回落 `human`（回落语义，非「未知」）；`actor=`
+                                                  // 键非空才发（禁发空值键）。判据单点 =
+                                                  // `FlowMapEventLog.reactivateSource` / `reactivateActorSuffix`。
+                                                  val reactivateSource =
+                                                    FlowMapEventLog.reactivateSource(
+                                                      ctx.isDispatcher,
+                                                      ctx.flowNodeId,
+                                                      ctx.sessionId
+                                                    )
+                                                  val reactivateActor =
+                                                    FlowMapEventLog.reactivateActorSuffix(ctx.sessionId)
                                                   val reactivateNote =
                                                     (if preStatus == NodeLifecycle.Failed then
                                                        s"failed node edited (round history reset: blockCount→0, notifySentAt cleared) → rerun: ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
@@ -2545,7 +2793,7 @@ object NodeEditTool extends Tool:
                                                      else
                                                        s"blocked node edited (round ${node.blockCount} preserved) → ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
                                                     ) +
-                                                      s" [preStatus=$preStatus source=human gen=${node.gen} blockCount=${node.blockCount} loopRound=${node.loopRound}" +
+                                                      s" [preStatus=$preStatus source=$reactivateSource$reactivateActor gen=${node.gen} blockCount=${node.blockCount} loopRound=${node.loopRound}" +
                                                       (if preStatus == NodeLifecycle.Completed then
                                                          " auth=NODE_COMPLETED_REACTIVATION"
                                                        else "") + "]"
@@ -2705,6 +2953,50 @@ object NodeEditTool extends Tool:
                                               // 与写后现读的**有效链归属视图**比对（判据单点 =
                                               // FlowMapStore.chainIdView，与载荷 chainId 同源）。
                                               _ <- NodeTools.emitChainMembershipChanges(rt, chainBefore)
+                                              // descriptionLong spill (desc300 batch, edit write points):
+                                              // ONLY when this call rewrites descriptionLong (both shapes —
+                                              // the plain metadata write and the reactivate write — assign the
+                                              // same final value: storeDescriptionLong(descriptionLong) orElse
+                                              // the existing one). Not provided => zero action, the file for the
+                                              // node's current stored value stays. A rewrite to an untruncated
+                                              // value clears the stale file (one file per node, no accumulation).
+                                              dlSpill <-
+                                                if descriptionLong.isDefined then
+                                                  NodeEditTool.syncDescriptionLongSpill(rt, node.id, descriptionLong)
+                                                else IO.pure("")
+                                              // pass-consumer gap (verdict-consumer batch 2026-10-01 ·
+                                              // case A warning tier, design card §2.1): read the
+                                              // POST-write node, so a rewire that drops the pass leg is
+                                              // caught here exactly as one that adds it clears the
+                                              // condition (pure derived judgement, zero bookkeeping).
+                                              // Judgement authority = NodeTools.passOutlet (the same
+                                              // single point the create leg uses) — a second derivation
+                                              // would be the twin-derivation the engine forbids.
+                                              // Resolution face = the full post-write node map, exactly
+                                              // as the create leg uses: a pass edge names a landing node
+                                              // id/name that must be RESOLVED here, so a node-local face
+                                              // would report a false positive on every correctly wired
+                                              // verifier (the R2 "rewire clears the warning" semantics).
+                                              passOutletGap <-
+                                                rt.store.snapshot.map { s =>
+                                                  s.nodes
+                                                    .get(node.id)
+                                                    .exists(fresh =>
+                                                      NodeTools.verifierPassOutletMissing(fresh, s.nodes)
+                                                    )
+                                                }
+                                              _ <-
+                                                if passOutletGap then
+                                                  FlowMapEventLog.append(
+                                                    rt.project.workspace,
+                                                    rt.project.name,
+                                                    node.id,
+                                                    FlowMapEventLog.VerifierPassUnconsumedType,
+                                                    s"verifier '${node.name}' (${node.id}) has no pass outlet after this edit — its pass " +
+                                                      "verdict has no consumer to route to; declare '(pass)<landing>' or '(pass)Nebula' " +
+                                                      "(NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\")"
+                                                  )
+                                                else IO.unit
                                             yield Right(
                                               s"Node '${node.name}' updated" +
                                                 (if didReactivate then
@@ -2739,7 +3031,21 @@ object NodeEditTool extends Tool:
                                                 // 形态 ⇒ 尾部 ⚠ 行（与 stalledInWarning 同款形态）。
                                                 (if outProvided && finalOut.isEmpty then
                                                    "\n" + NodeTools.wiringGapHint(node.name, node.id).mkString("\n")
-                                                 else "")
+                                                 else "") +
+                                                // pass outlet gap hint (verdict-consumer batch · case A
+                                                // warning tier, card §2.1): same shape as the wiring-gap
+                                                // hint above — one ⚠ line on a SUCCESS receipt, zero
+                                                // rejection paths. Without this leg the condition would
+                                                // be unfixable once observed (a receipt-only face cannot
+                                                // see a rewire that RE-introduces it).
+                                                (if passOutletGap then
+                                                   "\n" + NodeTools
+                                                     .verifierPassOutletGapHint(node.name, node.id)
+                                                     .mkString("\n")
+                                                 else "") +
+                                                // desc300 batch: the ack line S16-4 (truncated ⇒ full text
+                                                // spilled, absolute path) rides the success receipt.
+                                                dlSpill
                                             )
                                         // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed
                                         // 边且非 merge → WARNING 级提示（不阻断，附成功结果尾部；死锁持续
@@ -2760,8 +3066,15 @@ object NodeEditTool extends Tool:
                                           if notify.provided then notify.flag else node.notifyDispatcher,
                                           finalOut
                                         )
+                                        // 链引用 RISKY 档回执行（判据 D 二档；本批）：编辑后的
+                                        // `deps` 里 `chain:<id>` 目标链含 `failed` 成员 ⇒ **放行**
+                                        // （可重激活）+ ⚠ 行。🔴 死链（含 `cancelled` 成员）已在
+                                        // `dChecks` 硬拒（`NODE_CHAIN_REF_DEAD`），走不到这里。
+                                        chainRefWarn <- finalDeps
+                                          .filter(FlowMapStore.isChainRef)
+                                          .flatTraverse(r => NodeTools.chainRefWarnings(rt, r))
                                       yield inResult.map { r =>
-                                        val warn = stallWarn ++ notifyWarn
+                                        val warn = stallWarn ++ notifyWarn ++ chainRefWarn
                                         if warn.isEmpty then r else r + "\n" + warn.mkString("\n")
                                       }
                                       end for

@@ -734,7 +734,7 @@ object GatewayMain extends IOApp:
                                   val hostWakeSensor: IO[Unit] = nebflow.core.project.WakeSensor.launch
                                   // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                   // 在 startupMount 前就绪默认最小集（project-dispatcher /
-                                  // general / memory-consolidator agents + 4 系统插件 +
+                                  // general agents + 4 系统插件 +
                                   // projects/general）——通用项目需于挂载前存在，干净 home
                                   // 启动即自动挂载、Mail(address="project:general") 直达分发器
                                   // （作者 2026-09-17 裁定①：撤销 09-16「移除内置 general
@@ -794,16 +794,24 @@ object GatewayMain extends IOApp:
                                     val configService = ConfigService
 
                                     // --- Bridge Manager (plugins: telegram, etc.) ---
-                                    val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
+                                    val bridgeInjectRef: Ref[IO, Option[
+                                      (String, String, Option[String], Option[nebflow.bridge.BridgeOrigin]) => IO[Unit]
+                                    ]] =
                                       Ref.unsafe(None)
 
                                     // Holder for wsRoutes so we can wire bridge refs after safe construction
                                     var wsRoutesHolder: Option[WebSocketRoutes] = None
 
                                     val bridgeCtx = new BridgeContext:
-                                      def injectMessage(sessionId: String, content: String, senderId: Option[String])
-                                        : IO[Unit] =
-                                        bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId)))
+                                      def injectMessage(
+                                        sessionId: String,
+                                        content: String,
+                                        senderId: Option[String],
+                                        origin: Option[nebflow.bridge.BridgeOrigin] = None
+                                      ): IO[Unit] =
+                                        bridgeInjectRef.get.flatMap(
+                                          _.fold(IO.unit)(_(sessionId, content, senderId, origin))
+                                        )
                                       def interruptAgent(sessionId: String): IO[Unit] =
                                         wsRoutesHolder match
                                           case Some(routes) =>
@@ -1176,7 +1184,7 @@ object GatewayMain extends IOApp:
                                                       .withHost(cfg.host)
                                                       .withPort(cfg.port)
                                                       // 2026-09-22 watchdog repair: 默认 maxConnections=1024
-                                                      // 被 KAI 对端的 presence 拨号风暴（~1 条/秒、请求永
+                                                      // 被某个对端的 presence 拨号风暴（~1 条/秒、请求永
                                                       // 不被读取也永不关闭）耗尽 → parJoin(1024) 饿死连接
                                                       // 摄取 → 整个 HTTP 面失聪（健康检查 HTTP=000）。
                                                       // 4096 = 4 倍余量；idleTimeout 1h→5min 加速回收僵
@@ -1278,7 +1286,9 @@ object GatewayMain extends IOApp:
                                                         // Wire bridge inject ref
                                                         val wireBridge = wsRoutesHolder match
                                                           case Some(wsRoutes) =>
-                                                            bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
+                                                            bridgeInjectRef.set(
+                                                              Some(wsRoutes.handleBridgeMessage(_, _, _, _))
+                                                            )
                                                           case None => IO.unit
                                                         wireBridge *> (for
                                                           _ <- logger.info(
@@ -1410,6 +1420,26 @@ object GatewayMain extends IOApp:
                                                                     }
                                                                 }
                                                           }
+                                                          // feishubridge: boot-time resync of the closed loop —
+                                                          // config enabled ∧ verified ⇒ the feishu adapter is
+                                                          // registered (and started) before startAll fans out;
+                                                          // start is idempotent at plugin level, so the startAll
+                                                          // pass below is a no-op for it. Otherwise this is an
+                                                          // unregister no-op and boot behaves exactly as before.
+                                                          _ <- nebflow.social.FeishuBridgePlugin.sync(
+                                                            bridgeManager,
+                                                            PathUtil.dataRoot
+                                                          )
+                                                          // wechat iLink batch: boot-time resync for the
+                                                          // weixin-ilink side-car seam — same closed loop
+                                                          // (enabled ∧ verified ⇒ registered and started),
+                                                          // same shape as the feishu line above. The seam
+                                                          // holds no socket, so this never blocks boot and
+                                                          // an unconfigured install is an unregister no-op.
+                                                          _ <- nebflow.social.WeixinIlinkBridgePlugin.sync(
+                                                            bridgeManager,
+                                                            PathUtil.dataRoot
+                                                          )
                                                           // Register bridge as WsHub listener for agent events
                                                           _ <- wsHub.register(json =>
                                                             val sessionId =

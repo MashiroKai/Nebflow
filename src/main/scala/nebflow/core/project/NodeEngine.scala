@@ -123,7 +123,24 @@ class NodeEngine(
    * root 通道打包条数上限生效值（同上接缝形态）：None = 现读
    * [[nebflow.shared.Defaults.RootNotifyBatchMax]]（生产默认 10）。
    */
-  private[project] val rootNotifyBatchMax: Option[Int] = None
+  private[project] val rootNotifyBatchMax: Option[Int] = None,
+  /**
+   * 🔴 **Uplink fail-closed gate** (taskunify merge batch 2026-09-24 · ruling T ·
+   * implplan §10.4): `None` = read
+   * [[nebflow.shared.Defaults.TaskLedgerUplinkFailClosed]] (**production default false =
+   * legacy behaviour byte-for-byte**); `Some(true)` = enabled (every uplink without an
+   * attribution fingerprint is refused + double trace). Specs inject through this
+   * constructor seam — same reason as `stallReNotifyMs`. (W1 provisional shim:
+   * parameter surface ported from main so main-side specs compile; the uplink
+   * refusal face that consumes it lands with the owning wave.)
+   */
+  taskLedgerUplinkFailClosed: Option[Boolean] = None,
+  /**
+   * Loud-alert window effective value (same seam): None = read
+   * [[nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN]]. (W1 provisional
+   * shim: same surface-only port as above.)
+   */
+  taskLedgerUplinkLoudAlertFirstN: Option[Int] = None
 ) extends NodeCanceller
     with NodeRecovery
     with NodeDelivery
@@ -132,6 +149,98 @@ class NodeEngine(
     with NodeCompletion
     with NodeStarter:
   private[project] val logger = NebflowLogger.forName("nebflow.node.engine")
+
+  /**
+   * Uplink fail-closed effective value (re-read on every check; there is no online flip
+   * route ⇒ changing the prop in production requires a host restart).
+   */
+  private def uplinkFailClosedEnabled: Boolean =
+    taskLedgerUplinkFailClosed.getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkFailClosed)
+
+  /**
+   * In-process count of uplink refusals (used **only** for the "first N loud alerts"
+   * window; the persistent criterion face is the event file, which does not depend on this
+   * counter).
+   */
+  private val uplinkRefusals: java.util.concurrent.atomic.AtomicLong =
+    new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /**
+   * 🔴 **Uplink attribution gate (the common precondition of U1–U7; ruling T's single
+   * mechanism point)**.
+   *
+   * Semantics: when a node's **attribution cannot be resolved** (no `taskId` fingerprint),
+   * that node's uplink notifications are **all refused** (Q2ⓐ strict fail-closed, no grace
+   * period, no exemption). Returns `true` = **allowed**, `false` = already refused.
+   *
+   * 🔴 **Double trace + the three text elements (criteria 10.4.4/10.4.5 · ruling T ⓑ)**:
+   *   ① **event face** = one [[FlowMapEventLog.UplinkRefusedType]] (`grep uplink-refused`);
+   *   ② **log face** = one WARN (plus an extra ALERT inside the window, prefix
+   *      `[UPLINK-REFUSED]`);
+   *   ③ that same text carries the **node id** ∧ the **refusal reason**
+   *      (`no-attribution`) ∧ the **way out** (`register-attribution` / `node_report` /
+   *      `Flow Map` / `manual`).
+   * **Silence is forbidden, and a log line alone is forbidden** — criterion 10.4.5 states
+   * plainly "log only, no event face = red".
+   *
+   * 🔴 **One refusal ⇒ exactly one event** (criteria 10.4.1/10.4.2): **no same-key window
+   * suppression, no merging** ("two in a row ⇒ two events" is a hard criterion; this is
+   * **deliberately different** from `enqueueRootNotify`'s merging semantics).
+   *
+   * `kind` = the uplink class (`failed` / `completed` / `landing` / `reentry` / `escalate` /
+   * `cancelled` / `redelivery`). 🔴 **The landing/merge class must carry `landing`** (the
+   * core of criterion 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`).
+   *
+   * 🔴 **U8 (`node_report`) is unaffected**: this gate only intercepts the **engine-side
+   * uplink circuit** (delivery of node notifications). A node's own terminal declaration
+   * goes through `NodeReportRegistry` (keyed by sessionId) and **never passes through this
+   * function**.
+   */
+  private[project] def uplinkAllowed(node: NodeDef, kind: String): IO[Boolean] =
+    if !uplinkFailClosedEnabled then IO.pure(true)
+    else if node.taskId.exists(_.trim.nonEmpty) then IO.pure(true)
+    else
+      val n = uplinkRefusals.incrementAndGet()
+      val reason = "no-attribution"
+      val way =
+        "register-attribution/fix the node's taskId, or report through node_report; visibility stays via the Flow Map"
+      val loud = taskLedgerUplinkLoudAlertFirstN
+        .getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN)
+      val text =
+        s"Node '${node.name}' (${node.id}) uplink REFUSED [kind=$kind reason=$reason] — this node has no task " +
+          s"attribution fingerprint (taskId), so its $kind notification cannot be attributed to a task and was not delivered. " +
+          s"Way out: $way."
+      FlowMapEventLog
+        .append(
+          workspace,
+          projectName,
+          node.id,
+          FlowMapEventLog.UplinkRefusedType,
+          FlowMapEventLog.uplinkRefusedSummary(node.id, node.name, kind, reason, way),
+          chainId = node.chainId
+        )
+        .handleErrorWith(e => logger.warn(s"uplink-refused audit append failed: ${e.getMessage}")) *>
+        (if loud > 0 && n <= loud then
+           logger.warn(s"[UPLINK-REFUSED] $text (refusal #$n of the first $loud — significant alert window)")
+         else logger.warn(text)) *>
+        IO.pure(false)
+
+  /**
+   * Name-resolving wrapper for the U5 uplink gate (implplan §10.4 U5 "the three escalate
+   * channels"): those three escalate seams only have the signature `(text, nodeName)` (the
+   * injection face of `FeedbackRouter` / `DispatchNotify`) ⇒ resolve the node by name first,
+   * then go through [[uplinkAllowed]] (**the same single-point gate**, no second criterion).
+   * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
+   * exists but has no attribution", not "the node cannot be found" (the latter is the
+   * existing chain's own alert face, which this gate does not take over).
+   */
+  private[project] def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
+    if !uplinkFailClosedEnabled then IO.pure(true)
+    else
+      store.snapshot.map(_.nodes.values.find(_.name == nodeName)).flatMap {
+        case Some(n) => uplinkAllowed(n, kind)
+        case None => IO.pure(true)
+      }
 
   /** 完成门腿 1 生效值（每次判定现读；无在线翻转路由 ⇒ 生产侧改 prop 需重启宿主）。 */
   private[project] def bgGateHoldEnabled: Boolean =
@@ -223,6 +332,13 @@ class NodeEngine(
     Ref.unsafe[IO, Map[(String, String), Long]](Map.empty)
 
   /**
+   * Pre-W1 name for [[recentRootDeliveries]] -- the same `Ref` instance, so the
+   * dedup window table keeps exactly one source (the PR-side rename is a pure
+   * rename; see `git log -SrecentRootDeliveries`).
+   */
+  private[project] val recentNebulaDeliveries: Ref[IO, Map[(String, String), Long]] = recentRootDeliveries
+
+  /**
    * **取代面跨调用判据（R2/R3，chaincancel 批 2026-09-17）**：本进程内「由级联/链级
    * 取消腿取消」的节点集。
    *
@@ -245,8 +361,13 @@ class NodeEngine(
   /**
    * 死会话 running 周期对账（僵尸收敛批 2026-09-06；ProjectActor.TtlTick 30s 驱动
    * ——复用既有心跳点零新调度器，与 settleRunnableSweep 同族）。对每个 status=Running
-   * 节点做死会话判定，死者自动收敛 failed（autoFailDeadRunning）。判定口径（作者
-   * 2026-09-06 裁定：收敛必须以「可证明无活会话 且 无在途后台任务」触发）：
+   * 节点做死会话判定。
+   *
+   * 🔴 **killruling 批（2026-09-23 作者裁定 #19）改判**：命中的死者**不再自动收敛
+   * failed**——改走 [[autoFailDeadRunning]] 的**降档处置**（只提醒：写
+   * `dead-session-reaped` + `node-session-dead-reminder` + barrier 告警腿；节点保持
+   * `Running`，处置交人工）。判定口径（作者 2026-09-06 裁定：收敛必须以「可证明无活会话
+   * 且 无在途后台任务」触发）**逐字未变**——变的是命中后的动作（判死 → 提醒）。
    *   - 活会话 = nodeSessions(sessionId) 在 agentRegistry 有记录（agent 已 spawn 且
    *     未清理）——有记录即视为活（保守，宁可漏一期不可误杀）；
    *   - nodeSessions 无映射 = 会话未登记/登记已清（重启内存清空 / 翻转即崩溃於登记
@@ -298,7 +419,12 @@ class NodeEngine(
           zombies.traverse_ { z =>
             autoFailDeadRunning(
               z.id,
-              "node session dead (no live session, no in-flight background task) — auto-converged to failed by dead-session watchdog"
+              // 🔴 killruling 批（2026-09-23 裁定 #19）：本 err 文案**同批改**——原为
+              // 「auto-converged to failed by dead-session watchdog」，降档后该腿**不再
+              // 写终态**，留着会与 `dead-session-reaped` 的新文案自相矛盾（判据面：
+              // 「无自动判定 ⇒ 文案不得声称已判定」）。改后只陈述事实（会话死 + 无在飞
+              // 后台任务 = 判定输入），处置由 `autoFailDeadRunning` 的降档腿表达。
+              "node session dead (no live session, no in-flight background task) — dead-session watchdog reminder leg (killruling ruling #19: no auto-fail, node kept Running)"
             )
           }
         }
@@ -356,6 +482,82 @@ class NodeEngine(
     }
 
   /**
+   * 死会话 running 节点的**提醒腿**（killruling 批 2026-09-23 作者裁定 **#19**「降档」）。
+   *
+   * 改判前：`autoFailDeadRunning` 把死会话 running 节点收敛成 `failed` 终态 + 投递失败
+   * 通知（`deliverFailed`）。作者裁定降档：**不写终态**（复用 #30 L3 挂起腿形态 = 停旧
+   * 会话 / 节点留 `Running`）、`deliverFailed` 同删、`checkBarriersNow` 改**告警腿**
+   * （只告警不终态化，与 #27 mount-stalled 同族）。
+   *
+   * 🔴 顺序义务（令第 6 条「**先补提醒覆盖再降档**」，裸降档 ⇒ dead-session 节点永久挂）：
+   * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`，
+   * 与既有 `fireQuiescentEvent`（提醒阶梯的只写事件档）同款形态：**只提醒、永不判死、
+   * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。
+   *
+   * 🔴 `private[project]`（not `private`）because the single caller that remains after the
+   * killruling #19 downgrade lives in the `NodeCanceller` trait (`autoFailDeadRunning`):
+   * the class-private form is invisible across the split and would force a duplicate
+   * reminder leg — one reminder implementation, reachable from the trait that needs it.
+   */
+  private[project] def remindDeadSession(node: NodeDef, sessionId: String, err: String): IO[Unit] =
+    FlowMapEventLog.append(
+      workspace,
+      projectName,
+      node.id,
+      NodeEngine.NodeSessionDeadReminderEventType,
+      s"dead-session node kept Running (session '$sessionId' has no live session) — needs human supervision; " +
+        s"no auto-fail, no delivery (killruling ruling #19 downgrade): ${err.take(160)}"
+    ) *>
+      logger.warn(
+        s"Node '${node.name}' (${node.id}) session '$sessionId' is dead — kept Running, reminder only " +
+          "(no failed convergence, no failed delivery — killruling ruling #19)"
+      )
+
+  /**
+   * 会话已死提醒腿（killruling 批 2026-09-23，作者裁定 #19「先补提醒覆盖再降档」）。
+   *
+   * 触发点 = 提醒阶梯的 `candidates.find(reg.contains) == None`（改前为 `IO.unit`
+   * 「注入不可达 ⇒ 跳过」）。语义与 [[fireQuiescentEvent]] 同款——**只写事件不注入**：
+   * 会话已死 ⇒ 注入物理不可达，但「该节点该拍仍未申报且会话已死」这一事实必须可见。
+   * 单发节流复用 [[quiescentNotified]]（与 quiescent 档同键记账）：
+   * `NodeReportReminderQuiescentMs`（现读默认 4h）一拍，防 30s 节拍刷屏——与
+   * quiescent 档「每拍一次事件」的纪律同源；`≤0` 亦同款（关闭节流 = 每拍都写）。
+   * 判据强度：`reportPendingSince` 已置 + 过了第 N 拍 + 无活会话 ⇒ 提醒**永不停**
+   * （节点保持 Running，处置交人工）。
+   */
+  private def deadSessionReminder(
+    node: NodeDef,
+    since: Long,
+    elapsed: Long,
+    rung: Int,
+    aliveProbe: String => Boolean,
+    candidates: List[String]
+  ): IO[Unit] =
+    val intervalMs = nebflow.shared.Defaults.NodeReportReminderQuiescentMs
+    IO(System.currentTimeMillis()).flatMap { now =>
+      quiescentNotified.get.map(_.getOrElse(node.id, 0L)).flatMap { last =>
+        if intervalMs > 0 && last > 0 && now - last < intervalMs then IO.unit
+        else
+          quiescentNotified.update(_ + (node.id -> now)) *>
+            FlowMapEventLog.append(
+              workspace,
+              projectName,
+              node.id,
+              NodeEngine.NodeSessionDeadReminderEventType,
+              s"node_report still missing at reminder rung $rung and NO live session is registered " +
+                s"(candidates=[${candidates.mkString(",")}], alive=[${candidates.filter(aliveProbe).mkString(",")}]) — " +
+                s"waited ${elapsed / 1000}s since $since: reminder only, node stays Running (never failed, never killed)"
+            ) *>
+            logger.warn(
+              s"Node '${node.name}' (${node.id}) has no live session at reminder rung $rung " +
+                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running (killruling ruling #19)"
+            )
+      }
+    }
+
+  end deadSessionReminder
+
+  /**
    * quiescent 档（第 maxRungs 拍之后）：**不注入**，每 `quiescentIntervalMs` 写一条
    * `node-report-missing`（stage=quiescent，reminderCount 不递增）。节点保持 Running。
    */
@@ -411,6 +613,14 @@ class NodeEngine(
    */
   private[project] val verdictGapLogged: Ref[IO, Map[String, List[String]]] =
     Ref.unsafe[IO, Map[String, List[String]]](Map.empty)
+
+  /**
+   * 死链 / RISKY 链引用**单发记账**（nodeId → 上次留痕的文案）：`depsSatisfied` 在资格回扫 /
+   * 启动腿被高频调用，而判据是**声明式状态查询**（幂等）⇒ 无去重会每次调用都打一行。
+   * 与 [[verdictGapLogged]] 同款形态（`deps` 文案变化时再留一条，同形态不刷屏）。
+   */
+  private[project] val deadChainWarned: Ref[IO, Map[String, String]] =
+    Ref.unsafe[IO, Map[String, String]](Map.empty)
 
   /**
    * 同键多项目告警单发记账（mark = 他项目名清单；进程内、每挂载一份——只防 30 s
@@ -479,38 +689,58 @@ class NodeEngine(
         }
         if due.isEmpty then IO.unit
         else
-          store.mutate { st =>
-            st.nodes.get(from.id) match
-              case Some(fresh) =>
-                val wired = fresh.pendingOut.filter(due.contains)
-                if wired.isEmpty then st
-                else
-                  st.copy(nodes =
-                    st.nodes.updated(
-                      from.id,
-                      fresh.copy(
-                        out = OutEdge.canonical(fresh.out ++ wired),
-                        pendingOut = fresh.pendingOut.filterNot(wired.contains)
+          store
+            .mutateWithResult { st =>
+              st.nodes.get(from.id) match
+                case Some(fresh) =>
+                  val wired = fresh.pendingOut.filter(due.contains)
+                  if wired.isEmpty then (st, Nil)
+                  else
+                    (
+                      st.copy(nodes =
+                        st.nodes.updated(
+                          from.id,
+                          fresh.copy(
+                            out = OutEdge.canonical(fresh.out ++ wired),
+                            pendingOut = fresh.pendingOut.filterNot(wired.contains)
+                          )
+                        )
+                      ),
+                      // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 9）：待接线队列到点
+                      // **自动接线**逐边一行（`reason=auto-wire`）。🔴 与 `wiring-applied`
+                      // 分工不重叠：该行承载 `pendingOut` 面的「队列 → 已接线」事实，
+                      // `edge-changed` 只在 `out` **真变**时出声——此处 `out` 恒有新增
+                      // （`wired` 非空），故视图恒非空；`canonical` 幂等已由写前 `wired`
+                      // 判空把守（`wired.isEmpty` 早退 ⇒ 零行）。
+                      FlowMapEventLog.outEdgeViews(
+                        from.id,
+                        fresh.out,
+                        OutEdge.canonical(fresh.out ++ wired),
+                        FlowMapEventLog.EdgeChangeReason.AutoWire,
+                        t => OutEdge.resolveTargetId(st.nodes, t).getOrElse(t)
                       )
                     )
-                  )
-              case None => st
-          } *>
-            store.getNode(from.id).flatMap {
-              case Some(fresh) if !fresh.pendingOut.exists(due.contains) =>
-                FlowMapEventLog.append(
-                  workspace,
-                  projectName,
-                  from.id,
-                  FlowMapEventLog.WiringAppliedType,
-                  s"deferred control edge(s) auto-wired: ${due.map(e => s"${e.to}:${e.mode}").mkString(",")} — " +
-                    "target(s) left running (pendingOut → out; control edge = zero delivery, zero start)"
-                ) *>
-                  emitUpdated(fresh) *>
-                  logger.info(
-                    s"Node '${fresh.name}' (${fresh.id}) deferred control edge(s) auto-wired: ${due.map(_.to).mkString(",")}"
-                  )
-              case _ => IO.unit
+                  end if
+                case None => (st, Nil)
+            }
+            .flatMap { case (_, edgeViews) =>
+              FlowMapEventLog.appendEdgeChanges(workspace, projectName, edgeViews) *>
+                store.getNode(from.id).flatMap {
+                  case Some(fresh) if !fresh.pendingOut.exists(due.contains) =>
+                    FlowMapEventLog.append(
+                      workspace,
+                      projectName,
+                      from.id,
+                      FlowMapEventLog.WiringAppliedType,
+                      s"deferred control edge(s) auto-wired: ${due.map(e => s"${e.to}:${e.mode}").mkString(",")} — " +
+                        "target(s) left running (pendingOut → out; control edge = zero delivery, zero start)"
+                    ) *>
+                      emitUpdated(fresh) *>
+                      logger.info(
+                        s"Node '${fresh.name}' (${fresh.id}) deferred control edge(s) auto-wired: ${due.map(_.to).mkString(",")}"
+                      )
+                  case _ => IO.unit
+                }
             }
         end if
       }
@@ -599,12 +829,24 @@ class NodeEngine(
         case _ => IO.unit
       }
     )
-    val rootIO = failedEdges.filter(_.to == OutEdge.RootTarget) match
+    // Pre-W1 name for the same local (the PR-side rebuild renamed the whole `Nebula*` family
+    // to `root*`; `git log -SnebulaIO` lands on the synthetic PR head, so this is W1 rename
+    // fallout). Both names must keep declaration sites here, and there may be only ONE
+    // computation -- `rootIO` therefore binds to `nebulaIO` instead of re-deriving the
+    // decision (a second derivation would be a second source of truth for the failed-leg
+    // uplink decision).
+    val nebulaIO = failedEdges.filter(_.to == OutEdge.RootTarget) match
       case Nil => IO.unit
       case nes if nes.exists(_.mode == OutEdge.Result) =>
         // notifybatch 批（2026-09-18，M-2）：失败腿同走打包入口（决策②异常类一并合并）。
-        enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+        // taskunify (2026-09-24 · U1): uplink attribution gate — no fingerprint ⇒ refused +
+        // double trace.
+        uplinkAllowed(node, "failed").flatMap {
+          case false => IO.unit
+          case true => enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+        }
       case _ => markRootDelivered(node.id)
+    val rootIO = nebulaIO
     val signalIO = signalTargets.traverse_(t => settleTo(node, t))
     val waitLog: IO[Unit] =
       val waiting = nodeTargets.diff(signalTargets) // 非 signal 覆盖的目标 = D5 停等（merge 兜底者已转 blocked）
@@ -870,11 +1112,23 @@ class NodeEngine(
             FlowMapEventLog.append(workspace, projectName, target.id, "merge-blocked", summary) *>
             // notifybatch 批（2026-09-18）：走 root 打包入口（blocked 通报同窗打包，
             // 决策②「异常类一并合并、不单列」）；`nodeId=None` fire-and-forget 口径不变。
-            enqueueRootNotify(
-              s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
-              bn.name,
-              NodeLifecycle.Blocked
-            )
+            // 🔴 taskunify (2026-09-24 · **U3 = landing / merge-class uplink**): uplink
+            // attribution gate; the class **must** be `landing` (the core of criterion
+            // 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`). This is exactly the
+            // face implplan §10.4 marks "easiest to miss" — the sink is allowed through,
+            // actually lands, then fails, and the failure "cannot be sent out"; U1/U2's
+            // no-loss argument does not cover it. ⇒ this item is **listed separately** and
+            // must never be counted together with U1/U2 (mutation red-anchor: commenting out
+            // this gate ⇒ 10.4.3 must go red).
+            uplinkAllowed(bn, "landing").flatMap {
+              case false => IO.unit
+              case true =>
+                enqueueRootNotify(
+                  s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
+                  bn.name,
+                  NodeLifecycle.Blocked
+                )
+            }
         case _ => IO.unit
     yield ()
 
@@ -900,6 +1154,54 @@ class NodeEngine(
 
   private[project] val rootNotifyBatchState: Ref[IO, RootNotifyBatchState] =
     Ref.unsafe[IO, RootNotifyBatchState](RootNotifyBatchState())
+
+  /**
+   * **root 通道打包窗 · 合并批的载体构造面**（原 `NodeEngine.flushRootNotify` 的
+   * `case many` 分支，语义与行序逐字同源）。
+   *
+   * 🔴 **写入点唯一性的承载位**：`windowItems` 的 `Some(...)` 写入在全仓恰此一处，且必须
+   * 落在 `NodeEngine.flushRootNotify` 的 `case many` 语义面内——`RootNotifyBatchSpec.N6` 的
+   * 静态判据（源码现读计数 + 文件路径）即钉在 `NodeEngine.scala` 上。行为保持重构把
+   * `flushRootNotify` 的**单件腿/窗口排空/记账序**迁到 `NodeDelivery` trait（batched
+   * `case many` 的两跳拆分），但**载荷写入点**按此判据留在本文件——若把写入点一并迁出，
+   * 静态判据会在无损重构上误报，而该判据是 notifypack 解 b 批「生产者侧唯一写入点」
+   * 纪律的机械锚。
+   *
+   * 逐件 `sender` 在**此写入点**用 `projectName` 直接构造（该处确在作用域内）⇒ 展开点
+   * 零字符串手术，与 `NotificationHeader.split` 的「首个 `/`」切分口径结构同源。
+   *
+   * **记账序（F-1，作者 2026-09-18 裁定 (a)）**：`Offered` = 交付事实成立 ⇒ 逐件
+   * `markNebulaDelivered`；`Parked`/`Suppressed` = 本批**没发出去** ⇒ 一件都不记
+   * （否则件被标已发却未发、补投判据 `nebulaDeliveredAt.isEmpty` 永不命中 ⇒ 整窗永久
+   * 丢失，宁重复不丢失）。
+   */
+  private[project] def flushRootNotifyMerged(entries: List[RootNotifyEntry]): IO[Unit] =
+    entries match
+      case Nil => IO.unit
+      case many =>
+        offerRootNotify(
+          mergedRootNotifyText(many),
+          many.head.nodeName,
+          mergedRootNotifyStatus(many),
+          nodeId = None,
+          // notifypack 解 b 批（2026-09-23 · 作者裁定 A · 载体 A-ii）：**唯一写入点**
+          // ——把 N 件原始载荷挂在本件上，供消费侧在同一边界（同一 turn）逐件展开
+          // （N 气泡 / 1 次唤醒）。`text` / `sender`（= 首件）/ `eventType` / 去重键 /
+          // 记账序**逐字不变**。
+          windowItems = Some(
+            many.map(e =>
+              AgentCommand.WindowItem(
+                text = e.text,
+                nodeName = e.nodeName,
+                status = e.status,
+                sender = s"$projectName/${e.nodeName}"
+              )
+            )
+          )
+        ).flatMap {
+          case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markRootDelivered)
+          case _ => IO.unit
+        }
 
   /**
    * 链级摘要**降级登记**（作者 2026-09-16 裁定「**全部降级列表态**」；本批前语义 = 投根）。
@@ -952,6 +1254,15 @@ class NodeEngine(
     }
 
   /**
+   * Pre-W1 name for [[dedupeRootDelivery]] (the PR-side `Root`/`nebula*` rename is a pure
+   * rename: `git log -SdedupeRootDelivery` lands on the synthetic PR head, not on an
+   * organised main-side rename) -- delegates to the single implementation, so there is
+   * exactly one dedup criterion.
+   */
+  private[project] def dedupeNebulaDelivery(identity: String, status: String): IO[Boolean] =
+    dedupeRootDelivery(identity, status)
+
+  /**
    * V8: 写 nebulaDeliveredAt 记账（活动区优先，归档区兜底——TTL 归档的
    * 未投递节点同样要记账，否则扫描每次重启都重投）。
    */
@@ -972,6 +1283,24 @@ class NodeEngine(
             case None => a
         }.void
     }
+
+  /**
+   * Pre-W1 name for [[markRootDelivered]] (pure rename, same attribution as
+   * [[dedupeNebulaDelivery]]) -- delegates to the single ledger write point, so the
+   * `nebulaDeliveredAt` anchor keeps exactly one writer.
+   */
+  private[project] def markNebulaDelivered(nodeId: String): IO[Unit] =
+    markRootDelivered(nodeId)
+
+  /**
+   * **Pre-W1 name for [[redeliverUnconsumedRootResults]]** (W2b' backfill; same W1 rename
+   * family as the other `Nebula*`/`root*` pairs -- `git log -SredeliverUnconsumedNebulaResults`
+   * lands on the synthetic PR head and on main's own dispatch-notify/notifybatch batches, which
+   * main later re-spelled). Delegates to the one scan implementation: a second scan would keep
+   * its own candidate criterion and could double-deliver against the 30 s leg.
+   */
+  def redeliverUnconsumedNebulaResults(): IO[Int] =
+    redeliverUnconsumedRootResults()
 
   /**
    * V8 (2026-09-03): 重启重投扫描——扫活动区+归档区全部「终态（completed/failed）
@@ -1037,7 +1366,18 @@ class NodeEngine(
             // notifybatch 批（2026-09-18，M-4）：fresh 腿改走**同一打包入口**（与实时腿
             // 同窗同 digest 形态 ⇒ 补投扫描撞窗时合并而非逐件补投）；stale 腿
             // [[deliverStaleSummary]]（>24h 合并摘要，唯一现存合并点）**零行为改动**。
-            enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id))
+            // taskunify (2026-09-24 · U7): the redelivery scan is an uplink leg too, so the
+            // attribution gate must be on the **scan leg** too (not just the real-time leg) —
+            // otherwise, after the real-time leg refuses and leaves `nebulaDeliveredAt` unset,
+            // the 30 s scan would **revive and deliver** the very same unattributed node, which
+            // amounts to bypassing the U1/U2/U3 gates. Refused ⇒ not delivered and **not
+            // marked** (same semantics as the real-time leg: a refusal is not a delivery —
+            // leave the trace rather than drop silently).
+            uplinkAllowed(n, "redelivery").flatMap {
+              case false => IO.unit
+              case true =>
+                enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id))
+            }
           )
           _ <- if stale.nonEmpty then deliverStaleSummary(stale) else IO.unit
           _ <-
@@ -1103,6 +1443,16 @@ class NodeEngine(
 end NodeEngine
 
 object NodeEngine:
+
+  /**
+   * **会话已死提醒事件类型**（killruling 批 2026-09-23 作者裁定 **#19**「先补提醒覆盖
+   * 再降档」）：提醒阶梯碰上「节点 Running 且过了第 N 拍，但候会话在 `agentRegistry`
+   * 里**全无活记录**」时，改前是 `IO.unit`（注入不可达 ⇒ 静默跳过）⇒ 该形态在阶梯面
+   * **零可见性**。降档后 `autoFailDeadRunning` 也不再判死 ⇒ 若不补本腿，该形态将完全
+   * 无人管。本事件即覆盖补齐件（与 `fireQuiescentEvent` 同款：只写事件、不注入、
+   * 永不判死、永不杀）。
+   */
+  val NodeSessionDeadReminderEventType: String = "node-session-dead-reminder"
   // 伴生契约已整体迁至 NodeEngineContract.scala(行为保持重构,2026-09-25):
   // val/def 逐成员保留同名同签名委托;嵌套类型(FlipOutcome / StartRaceLost /
   // RetireDetach / PluginPreparation / RecoveryAnchor / NodeChainContext /
@@ -1145,6 +1495,9 @@ object NodeEngine:
   def isFixtureEnvelope(node: NodeDef): Boolean = NodeEngineContract.isFixtureEnvelope(node)
 
   val RootDedupWindowMs: Long = NodeEngineContract.RootDedupWindowMs
+
+  /** Pre-W1 name for [[RootDedupWindowMs]] -- the same value (one source). */
+  val NebulaDedupWindowMs: Long = RootDedupWindowMs
 
   type PluginPreparation = NodeEngineContract.PluginPreparation
   val PluginPreparation: NodeEngineContract.PluginPreparation.type = NodeEngineContract.PluginPreparation

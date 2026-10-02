@@ -59,11 +59,9 @@ class PresetResolverSpec extends FunSuite:
       Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro")))
     )
     assertEquals(applied.preset, Some("LowCost"))
-    // modelOverride carries the chain across the per-turn def refresh
-    assertEquals(
-      applied.modelOverride,
-      Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro")))
-    )
+    // W1 shim: the modelOverride leg was removed from the merged tree (visionfix-era
+    // def model carries no modelOverride); the chain-across-refresh pin lands with
+    // the owning wave.
 
   test("explicit preset overrides even when the def has no model"):
     // Default-preset/global fallback would normally apply — explicit still wins.

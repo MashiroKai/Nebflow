@@ -47,6 +47,19 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 180.seconds
 
+  // friendseal flag injection (2026-09-25): this suite pins the friend-leg ask-confirm
+  // chain, which the seal closes by default (a sealed call refuses before any confirm
+  // card is rendered). Lift the latch for the whole suite with the ref-counted kit
+  // primitives; suites run sequentially (Test / parallelExecution := false), so this
+  // lift never races the sealed-default assertions elsewhere.
+  override def beforeAll(): Unit =
+    super.beforeAll()
+    nebflow.core.FriendsSeal.testUnseal()
+
+  override def afterAll(): Unit =
+    try super.afterAll()
+    finally nebflow.core.FriendsSeal.testReseal()
+
   private val RootSid = "root-1"
 
   private val FriendsJson =
@@ -478,7 +491,10 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
       )
       assert(!gateway.contains("NoInteractiveSurface"), "旧桩形态必须已从生产接线移除")
       assert(wiring.contains("askConfirm: Option[String => IO[Boolean]] = None"), "装配缝参数在（默认 None 保留未接线显式条件）")
-      assert(tool.contains("SendConfirmPort") && tool.contains(".locally("), "调用侧必须经 SendConfirmPort 把会话靶挂进 fiber-local（否则 production 读不到靶）")
+      assert(
+        tool.contains("SendConfirmPort") && tool.contains(".locally("),
+        "调用侧必须经 SendConfirmPort 把会话靶挂进 fiber-local（否则 production 读不到靶）"
+      )
       assert(
         sharedResources.contains("SendConfirm.locally") && sharedResources.contains("SendConfirm.targetFor"),
         "注册实现 = locally(targetFor(ctx, label))(io) 合并镜像（SharedResources 构造行装配，靶按次构造含收件人标签）"

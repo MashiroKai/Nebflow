@@ -116,14 +116,36 @@ private[project] trait NodeStarter:
                     // 同样被本收口点挡住（「不通过」结论不得作为正向交付补投下游）。旧形态
                     // （越闸启动）此后**结构性不可能**：若仍发生，[[logVerdictGateBreach]] 会
                     // 单发一行回退告警（不变式告警，与闸共用 staleVerdictUps 单点）。
-                    mergeVerdictHoldersOf(node).flatMap { holders =>
-                      if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
-                      else
-                        logVerdictGateBreach("startNode", node) *>
-                          mergeMutexHoldersOf(node).flatMap { queued =>
-                            if queued.nonEmpty then logMutexHold("startNode", node, queued)
-                            else pastVerdictGate
-                          }
+                    // chainview 批 2026-10-01：**链控闸**逐字接在同一收口点**最前**（闸序 =
+                    // 链控 → verdict → 互斥；链控是**用户显式意图**，优先级高于两个自动停等闸
+                    // ——暂停链上的节点不该被记进 verdict/mutex 的停等留痕）。命中 ⇒ 静默
+                    // `IO.unit`：零日志、零事件、零状态写（可见性由 REST/WS 三态面承担，
+                    // 见 `NodeCanceller.chainGateOf` 头注）。
+                    chainGateOf(node.id).flatMap {
+                      case Some(_) => IO.unit
+                      case None =>
+                        // verdict 闸收口（merge-verdict-gate 批 2026-09-12）——**单权威落点**：
+                        // 全部启动入口（barrier 结算 settleTo / settleDeps 反结算 / 重激活补投
+                        // redeliverInAndStart / D1 补投 / settleRunnableSweep 资格回扫 / crash-recovery
+                        // 续跑 / 直接调用）都汇到本函数，闸在此处即对全部入口生效（与上方 deps/barrier
+                        // 「单闸门自动保护全部启动入口」同款纪律）。命中 ⇒ 零动作返回：节点保持
+                        // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
+                        // mergefifo-engine 批 2026-09-13：**互斥闸**逐字接在同一收口点之后（先 verdict
+                        // 后互斥，与设计件 §7.2 状态机同序；verdict 闸判据/留痕零改动）。
+                        // engine-defects 批 #238（2026-09-15）：**闸面泛化**——判据不再按 merge 分叉
+                        // ⇒ 非 merge 收口位（O-1 缝：`bpm-verify`(fail) → `bpm-report`(merge=False)）
+                        // 同样被本收口点挡住（「不通过」结论不得作为正向交付补投下游）。旧形态
+                        // （越闸启动）此后**结构性不可能**：若仍发生，[[logVerdictGateBreach]] 会
+                        // 单发一行回退告警（不变式告警，与闸共用 staleVerdictUps 单点）。
+                        mergeVerdictHoldersOf(node).flatMap { holders =>
+                          if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
+                          else
+                            logVerdictGateBreach("startNode", node) *>
+                              mergeMutexHoldersOf(node).flatMap { queued =>
+                                if queued.nonEmpty then logMutexHold("startNode", node, queued)
+                                else pastVerdictGate
+                              }
+                        }
                     }
             }
     }
@@ -431,7 +453,8 @@ private[project] trait NodeStarter:
    * 判定点是 NodeEdit 落库时刻，一次性；落库之后对该节点的开关变更无效。作者的关闭
    * 动作走派发面（`plugins.dispatch`），内容面不动 ⇒ 本函数对已派发节点**零影响**。
    * 要收回已派发的包，用封禁（`POST /api/plugins/:name/revoke`，会停用运行中 MCP）。
-   * 闸 A（新派发）在 `NodeTools.dispatchFaceCheck`；闸 D 在 `PluginMcpManager.revalidate`。
+   * 闸 A（新派发）在 `NodeEditTool.dispatchFaceCheck`（旧文件名 `NodeTools` 系 PR#48
+   * 文件拆分前的引用，已订正）；闸 D 在 `PluginMcpManager.revalidate`。
    */
   private def prepareNodePlugins(node: NodeDef): IO[Either[String, NodeEngine.PluginPreparation]] =
     PluginsConfig.enabled.flatMap {
@@ -794,7 +817,9 @@ private[project] trait NodeStarter:
               def armCap(waiting: List[BgTaskRegistry.ActiveTask]): IO[Unit] =
                 disarmCap *> {
                   // 兜底计时器：等待期内无任何后台完成复检达 bgWaitCapMs →
-                  // failed 注明。措辞注意：completeNode 以 message.contains
+                  // 🔴 **转挂起**（killruling 批 2026-09-23 作者裁定 **#17**「转挂起」；
+                  // 改前 = `complete(Left(FailOutcome(… finalizing failed)))`）。
+                  // 措辞注意：completeNode 以 message.contains
                   // ("cancelled") 分流 cancelNode，本文案不得含该词。
                   val capBody: IO[Unit] =
                     IO.sleep(bgWaitCapMs.millis) *>
@@ -803,7 +828,9 @@ private[project] trait NodeStarter:
                         projectName,
                         nodeId,
                         "bg-wait-timeout",
-                        s"background wait cap (${bgWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — finalizing failed"
+                        s"background wait cap (${bgWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — " +
+                          "suspending the session (node stays Running, NOT finalizing failed); " +
+                          "the cooling-off gate re-evaluates once, then it needs human action"
                       ) *>
                       waitCapFiber.set(None) *>
                       // ⑤ 残留字段收口（noderpt 批 B 段实测缺陷：`n-0931699e` status=completed
@@ -811,24 +838,85 @@ private[project] trait NodeStarter:
                       // `setNodeBgWait(Nil)`** ⇒ 首个 hold 期置位的 bgWait 随节点进终态/归档
                       // 永久残留（与 `setNodeBgWait` 头注「flow-map.json 不残留过期 bgWait」
                       // 的契约相悖，也让前端把终态节点误标「等待后台任务」）。此处补写——
-                      // fresh 守卫要求 status==Running，此刻节点仍 Running（终态化在后），
-                      // 故写点有效；幂等（值未变不写不 event）。
+                      // fresh 守卫要求 status==Running，此刻节点仍 Running（挂起后仍是
+                      // Running，语义更强），故写点有效；幂等（值未变不写不 event）。
+                      // 🔴 #17 转挂起后**本行必须保留在最前**（顺序零改动）——否则前端
+                      // 会把「挂起中」的节点误标「等待后台任务」。
                       setNodeBgWait(nodeId, Nil) *>
-                      resultDeferred
-                        .complete(
-                          Left(
-                            FailOutcome(
-                              s"background task wait cap exceeded (${bgWaitCapMs / 1000}s): still waiting for " +
-                                waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ") +
-                                " — node finalized as failed by the background-completion gate; " +
-                                "the background job(s) keep running and their completion notification may arrive at a finalized session"
-                            )
-                          )
-                        )
-                        .attempt
-                        .void
+                      // 🔴 #17 改判点（逐字）：`complete(Left(FailOutcome(...)))` ⇒ **删**，
+                      // 改调 `suspendNode`（复用 L3 挂起腿形态：只停 actor、节点留 Running、
+                      // 本代次的中断点，**不**写 status/result/ttl、不投递失败）。
+                      // ⇒ 节点终态从 `failed` 改「保持 `Running`」（挂起中）；actor 停。
+                      // 🔴 二级上限（root 裁：技术项由分发器给**最小候选**+报备）=
+                      // **复用 `StuckRecoveryCooldownMs`（20 min）作冷却闸**：挂起后到冷却点
+                      // **二次评估一次**；仍等不到 ⇒ 转人工（不再自行终态化，也不再自行
+                      // `hardResumeNode` 复活）。
+                      suspendNode(
+                        sessionId,
+                        s"background task wait cap exceeded (${bgWaitCapMs / 1000}s): " +
+                          s"still waiting for ${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}"
+                      ) *>
+                      armBgWaitRecheck(nodeId, sessionId, waiting)
                   capBody.start.flatMap(f => waitCapFiber.set(Some(f)))
                 }
+              // 🔴 #17 二级上限最小候选（**待 root/作者核 · 本批已落码**）：转挂起后
+              // **一次**冷却点二次评估——仍挂起无人接手 ⇒ 只写事件转人工（零终态化、
+              // 零复活）。复用 `StuckRecoveryCooldownMs`（20 min）作冷却闸的算术，
+              // **不新增 prop**（最小候选纪律）。
+              //
+              // 判据（幂等、不依赖 `bgWait`）：冷却点到时
+              //   ① 节点仍 `Running`（已终态/已归档/已重激活 ⇒ no-op），且
+              //   ② 该节点名下有活会话（`nodeSessions` 映射 ∨ `agentRegistry` 记录）
+              //      ⇒ 已被 `hardResumeNode` 复活、恢复链在跑 ⇒ **no-op**（交出控制权）。
+              //      🔴 判据 ② 不能写成「`bgWait` 仍非空」：本出口的 `setNodeBgWait(nodeId, Nil)`
+              //      是**前置步骤**（防前端误标，见上），挂起时 `bgWait` 恒空 ⇒ 该写法恒
+              //      no-op（死判据）。同理 `BgTaskRegistry.waitingFor` 也不可用：挂起腿的
+              //      既有语义是**即时收殓**该会话的后台表（`runWithAgent` 的 `isSuspendOutcome`
+              //      分支），到点时恒空。
+              //   两条都不满足 ⇒ 「挂起中且无任何接手者」= #17 要显式登记的形态 ⇒
+              //   写事件 + WARN 转人工（**不**再自行终态化、**不**自行复活）。
+              def armBgWaitRecheck(
+                nodeId: String,
+                sessionId: String,
+                waiting: List[BgTaskRegistry.ActiveTask]
+              ): IO[Unit] =
+                val cooldownMs = nebflow.shared.Defaults.StuckRecoveryCooldownMs
+                IO.sleep(cooldownMs.millis) *>
+                  store
+                    .getNode(nodeId)
+                    .flatMap {
+                      case Some(n) if n.status == NodeLifecycle.Running =>
+                        for
+                          mapped <- nodeSessions.get.map(_.get(nodeId))
+                          reg <- resources.agentRegistry.get
+                          resumed = mapped.exists(reg.contains)
+                          _ <-
+                            if resumed then IO.unit // 已被恢复链复活 ⇒ 交出控制权（零写）
+                            else
+                              FlowMapEventLog.append(
+                                workspace,
+                                projectName,
+                                nodeId,
+                                "bg-wait-timeout",
+                                s"background wait cap recheck after ${cooldownMs / 1000}s cooling-off: the node is still " +
+                                  s"suspended with no live session and no recovery leg took it over " +
+                                  s"(${waiting.size} task(s) were pending at suspension: " +
+                                  s"${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — " +
+                                  "handing over to human supervision (no further auto-finalize, no auto-resume; " +
+                                  "the node stays Running)"
+                              ) *>
+                                logger.warn(
+                                  s"Node '$nodeName' ($nodeId) background wait cap recheck: still suspended after the " +
+                                    s"${cooldownMs / 1000}s cooling-off with no auto-resume — needs human action " +
+                                    "(node kept Running)"
+                                )
+                        yield ()
+                      case _ => IO.unit // 已终态/已归档/状态已变 ⇒ no-op（幂等）
+                    }
+                    .handleErrorWith(e => logger.warn(s"bg-wait cap recheck for node $nodeId failed: ${e.getMessage}"))
+                    .start
+                    .void
+              end armBgWaitRecheck
               // 终局记账 → failed 注明文案（含 agent 消化失败通知后的最终输出，
               // 截断防串膨胀；杀因原文净化同上）。
               def bgFailureMessage(

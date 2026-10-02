@@ -449,11 +449,10 @@ private[agent] object AgentFinishTurn:
       // immediate input 开一个独立 turn；其余留队，由后续 turn 边界逐条消费（到达顺序
       // 不变，每件各自若干 turn ⇒ 每件各自 roundComplete / 一次 save / 一次 pipeLlmCall）。
       // 原缺陷⑥「整批塞进一个新 turn」已删除。
-      val (immHead, remainingInputs) = TurnBoundaryDrains.drainHead(
+      val (immInputs, remainingInputs) = TurnBoundaryDrains.drainHeadExpanded(
         state.execution.pendingImmediateInputs,
         compactionPending = false
-      )
-      val immInputs = immHead.toList
+      )(expandRootNotify)
       logAgentEvent(
         agentDef,
         depth,

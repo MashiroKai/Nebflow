@@ -132,7 +132,12 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
     res: SharedResources,
     wsSend: Json => IO[Unit],
     idleWindowMs: Option[Long] = None,
-    ttlCheckIntervalSec: Int = 30
+    ttlCheckIntervalSec: Int = 30,
+    // mailmodel batch (2026-09-25) absorbed fix for a PRE-EXISTING baseline red: the
+    // taskunify merge defaulted the lifecycle anchor to task-terminal, routing
+    // sweepDispatchers away from the idle-window leg. Tests pinning idle-window expiry
+    // (with an OPEN task) mount with the anchor explicitly off; production untouched.
+    anchorTaskTerminal: Option[Boolean] = None
   ): IO[ProjectRuntime] =
     val pd = ProjectDef(
       name = name,
@@ -147,7 +152,8 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
       Some(wsSend),
       rootSessionId = "nebula-root",
       ttlCheckIntervalSec = ttlCheckIntervalSec,
-      dispatcherIdleWindowMs = idleWindowMs
+      dispatcherIdleWindowMs = idleWindowMs,
+      dispatcherLifecycleAnchorTaskTerminal = anchorTaskTerminal
     )
   end mount
 
@@ -166,7 +172,16 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
     ProjectActor.ttlScanner(1.second).background.use { _ =>
       for
         resources <- mkResources(system, tempRoot, new RecordingLlm)
-        rt <- mount("disp-normal", ws, system, resources, j => wsEvents.update(j :: _), Some(1500L), 1)
+        rt <- mount(
+          "disp-normal",
+          ws,
+          system,
+          resources,
+          j => wsEvents.update(j :: _),
+          Some(1500L),
+          1,
+          anchorTaskTerminal = Some(false)
+        )
         actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
         _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("建一个调研节点", "nebula-root")).void
         // #28 接线在位：agentStart 经路由包装到达 engine wsSend（nodeSessionId=dispatcher-*）

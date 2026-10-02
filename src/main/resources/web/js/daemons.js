@@ -13,6 +13,7 @@ import { t } from './i18n.js';
 import { brand } from './brand.js';
 import { key } from './branding.js';
 import { createIconsIn } from './utils.js';
+import { openDaemonConfig } from './daemonPanel.js';
 
 // ── Inline CSS ─────────────────────────────────────────────
 const DAEMON_CSS = `
@@ -407,6 +408,17 @@ function buildRow(d, animate = false) {
       <button class="daemon-btn-icon delete" data-act="delete" data-id="${esc(d.id)}" title="${t('daemons.delete')}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
       </button>
+      ${d.hasConfigPanel
+        /* daemonpanel Phase A (F-3): appended AFTER delete, so the existing
+           start|stop → restart → delete order is untouched. Native <button>,
+           never a div[role=button] — it must be keyboard-reachable and sit
+           last in the row's Tab sequence (C4). `hasConfigPanel` is true only
+           when the backend published a VALIDATED panel (an invalid declaration
+           is rejected whole ⇒ no button, never a partial render — C1/C2). */
+        ? `<button class="daemon-btn-icon config" data-act="config" data-id="${esc(d.id)}" title="${t('daemons.config')}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>`
+        : ''}
     </div>`;
 
   // Daemon name is a native <a target="_blank"> when the port is open —
@@ -455,6 +467,14 @@ function buildRow(d, animate = false) {
             fetchDaemons();
           }
         });
+        return;
+      }
+
+      if (act === 'config') {
+        // daemonpanel Phase A: open the config-panel overlay. Its open state is
+        // deliberately independent of `panelOpen` — the 5s poll re-renders the
+        // list and sharing the flag would reset the form (C6).
+        openDaemonConfig(id, btn);
         return;
       }
 

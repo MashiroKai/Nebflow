@@ -33,6 +33,8 @@ import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
 import { renderFlowMapInto } from './flowMapTab.js';
 import { openAgentFile } from './agentFileViewer.js';
 import { playFlip, prefersReducedMotion, snapshotRects } from './listFlip.js';
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import state from './state.js';
 
 // 两段动画取值（🔴 逐字对齐取证报告 §F「统一取值」表，零新造）：
 // 入场本体 220ms / 退场本体 280ms / 一次性强调环 900ms / 邻卡 FLIP 240ms /
@@ -57,7 +59,7 @@ function openProjectTab() {
   pane.dataset.projectsView = 'list';
   delete pane.dataset.flowMapProject;
   if (pane.querySelector('.flowmap-nav-bar')) pane.innerHTML = '';
-  const scroll = ensureScroll(pane);
+  const scroll = ensureScroll(pane); // mounts the "+" FAB at one single point (returns with any DOM rebuild)
   resetProjectsRetry(); // 用户动作打开面板 = 新一轮序列，重试预算重置
   renderProjectsInto(scroll);
 }
@@ -81,6 +83,10 @@ function ensureScroll(pane) {
     scroll.tabIndex = -1;
     pane.appendChild(scroll);
   }
+  // 🔴 可达性硬约束：本行必须在 `return scroll;` **之前**。落在 `return` 之后时
+  // `git merge-file` 试算 rc=0 零冲突、`checkJs` 不红，但挂载语句不可达 ⇒ 钮永不
+  // 出现且**零报警**（本批唯一的静默失败形态）。
+  attachProjectsCreateFab(pane); // 「+」钮：同款单点挂载（DOM 重建后随之回归；幂等）
   return scroll;
 }
 
@@ -95,6 +101,277 @@ function announceProjects(scroll, text) {
 export function openProjectsTab() {
   openTab('projects', t('project.title'), { type: 'projects', closable: true });
   openProjectTab();
+}
+
+// ── 右下角「+」钮 + 轻弹层（projcreate 批 · 乙案，作者 2026-09-23 九裁后解禁）──────
+// 🔴 2026-09-24 author ruling #4 (this projcreate-redesign batch):
+//   D2(b) reuse the existing creation core => submit no longer prefills the chat
+//         input; it goes through the `projectCreate` WS command instead (backend =
+//         ProjectCreateService, the same creation core the ProjectCreate tool uses);
+//   D4    the dialog gains a PATH PICKER (reusing `workspacePicker.js`'s
+//         `openPicker`, no second implementation), which fills the path in —
+//         replacing "the user hand-types a path".
+// Two pre-existing keys thereby lose their call sites (the author's 2026-09-23 plan
+// document §4 already named them as superseded):
+//   `project.createPrefill` (builds the one sentence sent to the agent) and
+//   `project.createInputUnavailable` (the forward path's "chat input not found" state).
+//   🔴 Both keys are KEPT in this batch (key-face cleanup is outside this batch's
+//   write face; only their call sites = 0 are recorded) — see the deliverable's
+//   "superseded" section.
+const PROJECTS_CREATE_FAB = 'proj-create-fab';
+const PROJECT_CREATE_OVERLAY = 'proj-create-overlay';
+const PROJECT_CREATE_DESC_ID = 'proj-create-desc';
+const PROJECT_CREATE_WS_ID = 'proj-create-ws';
+/** 描述上限（作者已裁③：必填 + 上限 500 字）。计数与校验共用同一度量（码位）。 */
+const PROJECT_CREATE_MAX = 500;
+/** Direct-create reply timeout (ms). The gateway chain is local memory + disk, so
+ *  normally milliseconds; 12s is only a bounded backstop (same shape as this
+ *  file's existing `NODE_RESULT` fetch timeout). A timeout reports an explicit
+ *  error — never an unbounded hang. */
+const PROJECT_CREATE_ACK_TIMEOUT_MS = 12_000;
+
+/** 唯一在飞的弹层上下文（单例：重开先关旧的）。`null` = 无层。 */
+let createDialogCtx = null;
+
+/** 描述长度度量（码位，非 UTF-16 码元）——计数显示与上限校验**共用**此函数，
+ *  否则超限提示与计数器会出现互不一致的口径。 */
+function projectCreateLength(value) {
+  return [...value].length;
+}
+
+/** 关层。`restoreFocus` = true 时把焦点归还「+」钮（取消/Esc/点空白三条路径），
+ *  false 时留给调用方（提交后焦点须落在主输入框，见 submit 分支）。 */
+function closeProjectsCreateDialog(restoreFocus) {
+  const ctx = createDialogCtx;
+  if (!ctx) return;
+  createDialogCtx = null;
+  if (ctx.escHandler) window.removeEventListener('keydown', ctx.escHandler, true);
+  ctx.overlay.remove();
+  // 触发钮可能已随 DOM 重建脱树 ⇒ 只在仍在文档内时归还焦点（否则 focus() 是 no-op）。
+  if (restoreFocus && document.contains(ctx.trigger)) ctx.trigger.focus();
+}
+
+/** 挂载右下角「+」钮。幂等两重：① 已在场则不重建（`ensureScroll` 每次渲染/刷新都会
+ *  被调用，重建会换节点、抢焦点）；② 视图守卫——就地 Flow Map 视图摘钮并早退
+ *  （该视图自带 `.fm-fab`，同角落 16/16，两枚同锚点圆钮会互相遮挡）。
+ *
+ *  🔴 调用点必须落在 `ensureScroll` 内 `return scroll;` **之前**（见该处注释与
+ *  §二 可达性硬约束：落在之后 = 静默死代码，零报警）。 */
+function attachProjectsCreateFab(pane) {
+  if (!pane) return;
+  // 视图守卫（作者已裁⑦：「+」仅列表视图）。
+  if (pane.dataset.projectsView === 'flow-map') {
+    pane.querySelector(`.${PROJECTS_CREATE_FAB}`)?.remove();
+    return;
+  }
+  if (pane.querySelector(`.${PROJECTS_CREATE_FAB}`)) return; // 已在场 ⇒ 幂等早退
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = PROJECTS_CREATE_FAB;
+  // 图标沿本文件既有范式（`<i data-lucide>` + `createIconsIn`），不新引图标库。
+  btn.innerHTML = '<i data-lucide="plus"></i>';
+  // title 与 aria-label **同键双挂**：读屏与悬停同源，不可能不一致。
+  btn.title = t('project.createOpen');
+  btn.setAttribute('aria-label', t('project.createOpen'));
+  btn.setAttribute('aria-haspopup', 'dialog');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openProjectsCreateDialog(btn);
+  });
+  pane.appendChild(btn);
+  import('./utils.js').then(({ createIconsIn }) => createIconsIn(btn));
+}
+
+/** 打开轻弹层（单例）。结构 = `chat.css` 既有 `.wsp-*` 族（不自造弹层），
+ *  面板材质由 `modal.css` 共享玻璃卡组（`.wsp-panel`）承担；🔴 背景**零暗化零模糊**
+ *  ——`.wsp-overlay` 底色 = `var(--overlay-bg)` = `transparent`（视觉铁律 1，逐字依据
+ *  `chat.css:2775-2776` 注释）。描述框复用既有 `.modal-input`（`modal.css:115-158`，
+ *  含 `resize:vertical` + sapphire focus 辉光；本文件不新造输入件材质）。 */
+function openProjectsCreateDialog(trigger) {
+  closeProjectsCreateDialog(false); // 单例：重开先关旧的（不归还焦点，焦点归新层）
+
+  const overlay = document.createElement('div');
+  overlay.className = `wsp-overlay ${PROJECT_CREATE_OVERLAY}`;
+  overlay.innerHTML =
+    '<div class="wsp-panel proj-create-panel" role="dialog" aria-modal="true"' +
+      ` aria-label="${esc(t('project.createTitle'))}">` +
+      `<div class="wsp-title">${esc(t('project.createTitle'))}</div>` +
+      `<label class="proj-create-label" for="${PROJECT_CREATE_DESC_ID}">${esc(t('project.createDescLabel'))}</label>` +
+      // 🔴 placeholder = C1 逐字（含作者 2026-09-20 08:04 令原句）
+      `<textarea id="${PROJECT_CREATE_DESC_ID}" class="modal-input proj-create-desc" rows="5"` +
+        ` placeholder="${esc(t('project.createDescPlaceholder'))}"></textarea>` +
+      '<div class="proj-create-meter">' +
+        '<span class="proj-create-error" role="alert" hidden></span>' +
+        '<span class="proj-create-count"></span>' +
+      '</div>' +
+      // ── D4 path slot (author 2026-09-24 D4: "use a path picker to choose, rather
+      //    than relying on the user typing a path") ──
+      // 🔴 A typeable text box is deliberately NOT provided: the path can only be
+      //   written by the picker, so there is no fake control that "takes input but
+      //   does nothing / the front end cannot validate" (the very reason the
+      //   upstream retired slot table dropped the path box). The echo element is
+      //   display-only.
+      `<label class="proj-create-label" for="${PROJECT_CREATE_WS_ID}">${esc(t('project.createWorkspaceLabel'))}</label>` +
+      '<div class="proj-create-path-row">' +
+        `<button type="button" class="glass-control proj-create-pick" id="${PROJECT_CREATE_WS_ID}">${esc(t('project.createWorkspacePick'))}</button>` +
+        `<span class="proj-create-path" data-picked="0">${esc(t('project.createWorkspaceNone'))}</span>` +
+      '</div>' +
+      '<div class="wsp-foot proj-create-foot">' +
+        '<span class="proj-create-hint"></span>' +
+        '<span class="wsp-foot-btns">' +
+          `<button type="button" class="wsp-cancel">${esc(t('project.createCancel'))}</button>` +
+          `<button type="button" class="wsp-pick">${esc(t('project.createSubmit'))}</button>` +
+        '</span>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  const descEl = /** @type {HTMLTextAreaElement} */ (overlay.querySelector(`#${PROJECT_CREATE_DESC_ID}`));
+  const countEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-count'));
+  const errorEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-error'));
+  const cancelEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cancel'));
+  const submitEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick'));
+  const pickEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-pick'));
+  const pathEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-path'));
+
+  /** Chosen workspace (the single authoritative value; `null` = not chosen). Written
+   *  only by the picker — there is no hand-typed input face. */
+  let pickedPath = null;
+
+  /** 计数器（上限可发现）+ 超限染色（既有 `--color-danger`，零新色值）。 */
+  const renderCount = () => {
+    const n = projectCreateLength(descEl.value);
+    countEl.textContent = t('project.createDescCount', { n: String(n) });
+    countEl.classList.toggle('is-over', n > PROJECT_CREATE_MAX);
+  };
+  /** Report an error: `role="alert"` row shown in place, NEVER silently swallowed
+   *  (the dialog stays open and the values are not cleared). */
+  const showError = (msg) => {
+    errorEl.textContent = msg;
+    errorEl.hidden = false;
+  };
+  const clearError = () => {
+    errorEl.hidden = true;
+    errorEl.textContent = '';
+  };
+  const renderPath = () => {
+    pathEl.textContent = pickedPath || t('project.createWorkspaceNone');
+    pathEl.dataset.picked = pickedPath ? '1' : '0';
+  };
+
+  // ── Path picker (D4): REUSE the existing in-app folder browser, no second impl ──
+  // The call pattern follows `chat.js`'s dirPicker branch verbatim (dynamic import →
+  // openPicker({onPick, onCancel})); sessionId may be omitted (openPicker falls back
+  // to state.activeSessionId internally, and the browse frames go over the GLOBAL
+  // route). Dynamic import + catch => an explicit error on module-load failure,
+  // never a hang.
+  //
+  // 🔴 One MEASURED reuse trap (a pre-existing defect found in this batch; the
+  //   shared file is NOT modified): `closePicker()` uses
+  //   `document.querySelector('.wsp-overlay')` — the FIRST overlay — while this
+  //   dialog is appended before the picker => a naive reuse removes THIS dialog
+  //   thinking it is the picker. Mitigation (in this file only, zero shared-file
+  //   changes): detach this overlay (via `remove()`, keeping the element reference)
+  //   before opening the picker, then re-append it on onPick/onCancel => while the
+  //   picker is up, the document's only `.wsp-overlay` is the picker's own, so
+  //   `closePicker` behaves as designed. After re-appending, focus returns to the
+  //   "choose path" button (so focus never rests on the detached old node).
+  const openPathPicker = () => {
+    import('./workspacePicker.js')
+      .then(({ openPicker }) => {
+        const anchor = document.activeElement;
+        overlay.remove(); // detach for now; the element reference (and its listeners/state) is kept
+        openPicker({
+          startPath: pickedPath || '~',
+          onPick: (p) => {
+            pickedPath = p;
+            renderPath();
+            clearError();
+            reattach();
+          },
+          onCancel: () => reattach(),
+        });
+        function reattach() {
+          document.body.appendChild(overlay);
+          const back = /** @type {HTMLElement | null} */ (
+            anchor && overlay.contains(anchor) ? anchor : submitEl
+          );
+          back?.focus();
+        }
+      })
+      .catch(() => showError(t('project.createWorkspacePickFail')));
+  };
+
+  /** Submit = a REAL creation (D2(b)): straight to the existing creation core via
+   *  the `projectCreate` WS command.
+   *  🔴 No more chat-input prefill, no more waiting for the user to press send;
+   *  failures are shown EXPLICITLY (dialog stays open, values not cleared). */
+  const submit = () => {
+    const raw = descEl.value;
+    const n = projectCreateLength(raw);
+    if (n === 0) { showError(t('project.createDescRequired')); return; }          // (3) required
+    if (n > PROJECT_CREATE_MAX) { showError(t('project.createDescTooLong')); return; } // (3) cap 500
+    if (!pickedPath) { showError(t('project.createWorkspaceRequired')); return; } // D4 path required
+    clearError();
+    submitEl.setAttribute('disabled', 'disabled');
+    const hint = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-hint'));
+    hint.textContent = t('project.createPending');
+    let settled = false;
+    const finish = (msg) => {
+      if (settled) return;
+      settled = true;
+      unsub();
+      clearTimeout(timer);
+      if (msg?.ok) {
+        // Success: close without returning focus (the user decides the next
+        // step). The panel inserts the card via the existing `projectCreated`
+        // frame, which this file already subscribes to — no re-pull here.
+        closeProjectsCreateDialog(false);
+      } else {
+        // Failure is surfaced in place: the layer stays open and the entered
+        // values are kept, so the user can fix and retry (never a silent swallow).
+        showError(String(msg?.error || t('project.createFailGeneric')));
+        hint.textContent = '';
+        submitEl.removeAttribute('disabled');
+      }
+    };
+    const unsub = onMessage('projectCreateResult', finish);
+    const timer = setTimeout(() => finish(null), PROJECT_CREATE_ACK_TIMEOUT_MS);
+    sendWs({
+      type: 'projectCreate',
+      sessionId: state.activeSessionId,
+      workspace: pickedPath,
+      description: raw,
+    });
+  };
+
+  descEl.addEventListener('input', () => { clearError(); renderCount(); });
+  // ⑤ 中文输入收归（作者裁定 2026-09-12）：描述框是多行文本 ⇒ 必须绑组字登记。
+  bindImeGuard(descEl);
+  cancelEl.addEventListener('click', () => closeProjectsCreateDialog(true));
+  submitEl.addEventListener('click', submit);
+  pickEl.addEventListener('click', openPathPicker);
+  // 点遮罩空白 = 取消（沿 `workspacePicker.js:119` 既有范式）。
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeProjectsCreateDialog(true); });
+
+  // 窗口**捕获级** keydown（沿 `bgTaskOutputPopup.js:622-628`）：Esc 关层 + 焦点归还。
+  // 🔴 组字期间 Esc 交还输入法（不关层）——`isImeComposing` 是库内唯一判定源。
+  // 🔴 While this dialog is detached (the picker is in flight) it does not respond:
+  //   Esc then belongs to the picker (its own semantics), and this dialog's
+  //   escHandler closing the layer first would leave the picker host-less => bail out.
+  const escHandler = (e) => {
+    if (e.key !== 'Escape') return;
+    if (!overlay.isConnected) return;
+    if (isImeComposing(e, descEl)) return;
+    e.stopPropagation();
+    closeProjectsCreateDialog(true);
+  };
+  window.addEventListener('keydown', escHandler, true);
+
+  createDialogCtx = { overlay, escHandler, trigger };
+  renderCount();
+  renderPath();
+  descEl.focus(); // 打开即聚焦描述文本域
 }
 
 // ── 迟到对账（2026-09-14 项目面板冷启动缺陷修复）───────────────────────────────
@@ -522,15 +799,20 @@ function bindEmptyCta(scroll) {
   });
 }
 
-/** 把「创建一个项目」的预填指令写进主输入框并聚焦（🔴 只写值 + 聚焦，不发送）。 */
-function prefillProjectPrompt() {
+/** 把预填指令写进主输入框并聚焦（🔴 只写值 + 聚焦，不发送）。
+ *  @param {string=} text — 预填正文；缺省 = 既有空态 CTA 文案（`project.emptyPrefill`），
+ *    故空态 CTA 行为逐字不变。「+」钮弹层提交时传入带描述的模板
+ *    （`project.createPrefill`）——两者共用本函数，语义单点（§7.11 统一入口）。
+ *  @returns {boolean} false ⇒ 注入目标不可得（调用方须显式报错，禁静默吞）。 */
+function prefillProjectPrompt(text) {
   const input = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('input'));
-  if (!input) return;
-  input.value = t('project.emptyPrefill');
+  if (!input) return false;
+  input.value = text || t('project.emptyPrefill');
   // 冒泡 input 事件 = 输入模块既有监听（auto-grow / 活动视图锚定）的入口；
   // 不新增监听、不触发发送、不产生任何网络调用。
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.focus();
+  return true;
 }
 
 /** 归档项目（迁移方案 v2 §6.1）：显式人工动作——确认弹层（防误触，复用
@@ -589,6 +871,9 @@ function openFlowMapInPlace(projectName, highlightNodeId, highlightChainId) {
     && pane.dataset.flowMapProject === projectName;
   if (!sameView) {
     ensureFlowCss();
+    // Flow Map in-place view carries its own floating layer (.fm-float-layer /
+    // .fm-fab, flowMap.css, same 16/16 corner); the "+" FAB is removed by
+    // attachProjectsCreateFab's own view guard.
     pane.dataset.projectsView = 'flow-map';
     pane.dataset.flowMapProject = projectName;
     pane.innerHTML = `
@@ -669,7 +954,7 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
 // 动画）——这里若也全量重拉会覆盖它的 DOM、杀掉动画，故视图分流时跳过 flow-map。
 // 本批起这里的「重拉」不再全量替换 DOM：`renderProjectsInto` 只做名单差集 + 定点增删
 // （同名单 = 零 DOM 变更，仅摘要槽定点刷新），故事件驱动的刷新不会吃掉任何动画。
-import { onMessage, onReconnect } from './ws.js';
+import { onMessage, onReconnect, sendWs } from './ws.js';
 function rerenderProjectsListView() {
   const pane = getTabPane('projects');
   if (!pane) return;

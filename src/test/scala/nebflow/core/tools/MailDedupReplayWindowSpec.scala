@@ -9,6 +9,12 @@ import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.{AgentCommand, messages}
 import nebflow.agent.*
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore, TeamSessionRegistry}

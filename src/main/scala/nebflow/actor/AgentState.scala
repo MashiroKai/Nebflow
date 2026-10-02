@@ -166,6 +166,20 @@ case class AgentRecord(
    */
   displayName: Option[String] = None,
   /**
+   * **Task attribution** (taskbadge batch 2026-09-27: subagent panel task badge) --
+   * the task id this session serves, snapshotted at registration from the same
+   * source as spawn time (dispatcher = the ProjectActor slot's taskId;
+   * node/loop = NodeDef.taskId; same source and same value as
+   * SpawnParams.taskId -> ToolContext.taskId). None = no attribution (legacy
+   * data / non-Project domain / slot already cleared -- default = existing
+   * registration sites untouched). **Recovery-path data source**:
+   * activeAgentEntryJson emits taskId (+ ledger title taskTitle) so the
+   * frontend still renders the task badge after a refresh; the live path
+   * injects it via routeSubagentWsSend's agentStart frame (same dual-face
+   * contract as project).
+   */
+  taskId: Option[String] = None,
+  /**
    * 正信号（**进展证据**）时间戳（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）。
    *
    * 语义 = 「本会话当前在飞的工具，在上一个采样窗里**确有推进**」——由工具活动桥的
@@ -397,6 +411,18 @@ case class SessionContext(
    */
   flowNodeRole: Option[String] = None,
   /**
+   * **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①): the task id
+   * this session is attributed to (a dispatcher = the task it was created to serve; a
+   * project node = the task recorded as its origin). Set at the NodeEngine / ProjectActor
+   * spawn points -> passed through AgentCore into `ToolContext.taskId` -- the **only
+   * source** of `TaskInfo`'s zero-parameter attribution resolution (engine-side identity,
+   * never a client parameter), and the criterion of the engine-side uplink refusal face
+   * (no fingerprint ⇒ fail-closed).
+   * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
+   * direct REST calls).
+   */
+  taskId: Option[String] = None,
+  /**
    * 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
    * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
    * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
@@ -438,7 +464,7 @@ case class SessionContext(
    *
    * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
    * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
-   * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MemoryTrack` / `MailTool` /
+   * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MailTool` /
    * `FlowTreeActor`）一律不传 ⇒ 恒为 `None` ⇒ 走现值函数。
    * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
    * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见
@@ -720,6 +746,12 @@ object AgentState:
     /** 节点角色（nrloop 一期，详见 SessionContext.flowNodeRole）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /**
+     * **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): set on the
+     * spawn side, see SessionContext.taskId. Default None = no attribution (pre-existing
+     * nodes / the Nebula root / team / dual-track flow / direct REST calls).
+     */
+    taskId: Option[String] = None,
     flowNodeName: Option[String] = None,
     /** 链级抽象 P2（§9.2 项 2）：节点所属链 id 快照（None = 无链/非项目会话）。 */
     flowChainId: Option[String] = None,
@@ -772,6 +804,7 @@ object AgentState:
         isDispatcher = isDispatcher,
         flowNodeRole = flowNodeRole,
         projectName = projectName,
+        taskId = taskId,
         flowNodeName = flowNodeName,
         flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
@@ -931,6 +964,14 @@ extension (s: AgentState)
   def flowNodeId: Option[String] = s.session.flowNodeId
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
+
+  /**
+   * **Task attribution fingerprint** (taskunify batch 2026-09-24): the task id this
+   * session is attributed to, see SessionContext.taskId. The single consumer chain =
+   * AgentCore → ToolContext.taskId → `TaskInfo`'s zero-parameter attribution
+   * resolution.
+   */
+  def taskId: Option[String] = s.session.taskId
   def flowNodeName: Option[String] = s.session.flowNodeName
 
   /** 链级抽象 P2（§9.2 项 2）：本节点所属链 id 快照（None = 无链/非项目会话）。 */

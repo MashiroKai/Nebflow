@@ -51,6 +51,43 @@ export default {
   'project.new': 'New project',
   'project.createdAnnounce': '"{name}" created',
   'project.archivedAnnounce': '"{name}" archived',
+  // Projects-panel bottom-right "+" button + light dialog (projcreate batch, plan B:
+  // submit = prefill the main chat input + focus; zero new endpoints, zero new write
+  // face). The description box is the ONLY field — no path/name field: plan B never
+  // writes to disk from the front end, so a path field the front end cannot validate
+  // would be a fake control; the path is resolved by the Nebula-side ProjectCreate
+  // path panel.
+  'project.createOpen': 'New project',
+  'project.createTitle': 'New project',
+  'project.createDescLabel': 'Project description',
+  'project.createDescPlaceholder': 'Describe what this project is for — the Agent assigns tasks to the project based on this description.',
+  'project.createDescCount': '{n}/500',
+  'project.createSubmit': 'Create project',
+  'project.createCancel': 'Cancel',
+  'project.createDescRequired': 'Enter a project description (the Agent assigns tasks from it)',
+  'project.createDescTooLong': 'Description is over 500 characters — please shorten it to 500 or fewer.',
+  // C1 ADDITION CANDIDATES (projcreate-redesign batch, author ruling 2026-09-24
+  // D2(b)+D4): the workspace slot (picker form) and the new direct-submit failure
+  // states. Pending the author's review; the sink freezes the wording.
+  'project.createWorkspaceLabel': 'Workspace path',
+  'project.createWorkspacePick': 'Choose path…',
+  'project.createWorkspaceNone': 'No path selected',
+  'project.createWorkspaceRequired': 'Choose a workspace path first.',
+  'project.createWorkspacePickFail': 'The folder browser failed to load — please try again.',
+  'project.createPending': 'Creating…',
+  'project.createFailGeneric': 'Creation failed — please try again.',
+  // SUPERSEDED (author ruling 2026-09-24 D2(b)): once direct creation landed,
+  // these two keys lost their call sites — `createPrefill` existed to build the
+  // "one sentence sent to the agent" payload, and `createInputUnavailable` was
+  // the forward path's "chat input not found" state. This batch KEEPS the keys
+  // byte-identical and only records call sites = 0 (key-face cleanup is out of
+  // this batch's write face).
+  'project.createInputUnavailable': 'Chat input not found — the description was not filled in.',
+  'project.createPrefill': 'Create a project for me. Project description: {desc}',
+  // Submit-success hint: registered but deliberately NOT enabled in this batch (same
+  // semantics as the existing empty-state CTA — filling the value + focusing is the
+  // feedback; the key stays reserved for a later enablement). No call site by design.
+  'project.createPrefilled': 'Description placed in the input — press send to create.',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
@@ -441,10 +478,10 @@ export default {
   // Login entry / login panel (2026-09-16 login-entry batch): the panel strings
   // used to be hard-coded Chinese literals in activityBar.js's injected style
   // family; this batch moves them into i18n (zh/en paired, no dead keys).
-  'login.title': 'Sign in to nebflow',
+  'login.title': 'Sign in to nebflow — link your devices',
   'login.starting': 'Starting login…',
-  'login.hintBrowser': 'Sign in to your nebflow account in the browser to connect this device',
-  'login.hintAuthorize': 'Complete authorization in the browser to connect this device',
+  'login.hintBrowser': 'Sign in to your nebflow account in the browser; this device then interconnects with your other devices',
+  'login.hintAuthorize': 'Complete authorization in the browser; this device then interconnects with your other devices',
   'login.reopenAuthPage': 'Reopen the login page',
   'login.openAuthPage': 'Open authorization page',
   'login.switchAccount': 'Use another account',
@@ -568,6 +605,11 @@ export default {
   // frame — the gateway drops that shape silently (4055), so the composer blocks
   // the send and shows this line instead.
   'input.refOnlyHint': 'Add a line of text before sending',
+  // @-mention project autocomplete (mention-routing batch, 2026-09-27): data
+  // source = GET /api/projects (same source as the projects panel); copy covers
+  // the popup's no-match state and its ARIA label only.
+  'mention.title': 'Projects',
+  'mention.noMatch': 'No matching projects',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
@@ -672,6 +714,9 @@ export default {
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
   'subagents.status.done': 'Done',
+  // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
+  // per-row `#id · title` badge
+  'subagents.taskBadge': 'Task: {text}',
   'manage.uptime': 'Up {time}',
   'manage.readonlyTeam': 'Team agents are read-only',
   'manage.readonlyFlow': 'Flow node agents are read-only',
@@ -772,52 +817,55 @@ export default {
   'onboarding.probeTimeout': 'Verification timed out. Check your network and retry.',
   'onboarding.noThanks': 'No Thanks',
   'slash.onboarding': 'Replay the onboarding guide',
+  'slash.model': '/model — View or edit model configuration',
   'settings.save': 'Save',
   'settings.saved': 'Saved ✓',
   'settings.providers': 'LLM Providers',
+  // secrets-frontend (2026-09-27): the settings-page entry row opens the
+  // standalone secrets dialog (js/secretsPanel.js) — one key for title + button.
+  'settings.secrets': 'Secrets',
   'settings.addProvider': '+ Add Provider',
-  'settings.presets': 'Model Presets',
-  'settings.addPreset': '+ Add Preset',
-  'settings.presetsEmptyHint': 'Add and configure a provider under "LLM Providers" first — then you can adjust the model preset for Nebula and the project dispatcher.',
-  'preset.default': 'Default',
-  'preset.setDefault': 'Set Default',
-  'preset.edit': 'Edit',
-  'preset.delete': 'Delete',
-  'preset.addTitle': 'New Preset',
-  'preset.editTitle': 'Edit Preset: {name}',
-  'preset.fieldName': 'Preset Name',
-  'preset.fieldDescription': 'Capability description',
-  'preset.descriptionHint': 'Describe what this preset is good at — agents use it to pick a preset automatically',
-  'preset.fieldChain': 'Model Chain (first = preferred)',
-  'preset.dragHint': 'Drag the ⠿ handle to reorder',
-  'preset.addModel': '+ Add Model',
-  'preset.nameRequired': 'Preset name is required',
-  'preset.noSpaces': 'Preset name cannot contain spaces',
-  'preset.usedBy': '{n} agent(s)',
-  'preset.usedByNone': 'No agents',
-  'preset.deleteTitle': 'Delete Preset',
-  'preset.deleteConfirm': 'Delete preset "{name}"? {n} agent(s) referencing it will switch to the default preset.',
-  'preset.deleteConfirmNone': 'Delete preset "{name}"?',
-  'preset.empty': 'No presets configured',
-  'preset.emptyChain': 'Empty — follows the global model chain',
-  'preset.useDefault': 'Use default preset',
-  'preset.current': 'Running',
-  'preset.migrateBanner': '{n} agent(s) still use legacy model config',
-  'preset.migrateAction': 'Migrate',
-  'preset.migrateTitle': 'Migrate Legacy Model Config',
-  'preset.migrateSummary': 'Migrate {agents} agent(s) into {presets} new preset(s):',
-  'preset.migrateNote': 'Migration does not change model behavior — it only consolidates legacy configs into presets.',
-  'preset.migrateReuse': 'reuses existing preset',
-  'preset.migrateExecute': 'Migrate',
-  'preset.migrateRunning': 'Migrating…',
-  'preset.migrateDone': 'Migration complete: {n} agent(s) switched to presets',
-  'preset.migrateFailed': 'Migration failed',
-  'preset.pillPrefix': 'Preset: ',
-  'preset.defaultBadge': 'Default preset',
-  'preset.loadFailed': 'Failed to load presets',
-  'preset.followsNebula': 'Follows Nebula\u2019s current preset (no setting of its own)',
-  'preset.followsDispatcher': 'Determined by the project dispatcher\u2019s current preset at dispatch time (no setting of its own)',
-  'preset.engineManaged': 'Not settable — follows the default preset',
+  'settings.modelChainHint': 'Model presets are retired — type the /model command to configure per-role model chains in unified or per-role mode.',
+  // /model panel (modelcfg Phase 1)
+  'model.title': 'Model Configuration',
+  'model.modeUnified': 'Unified',
+  'model.modeSeparate': 'Per-role',
+  'model.mainChain': 'Nebula primary chain',
+  'model.mainChainDesc': 'Every role follows this chain by default',
+  'model.chainHead': 'Primary',
+  'model.chainFallback': 'Fallback',
+  'model.addModel': 'Add model',
+  'model.refreshList': 'Refresh list',
+  'model.refreshFailed': 'Refresh failed — you can type a provider/model manually',
+  'model.manualInput': 'Manual input',
+  'model.manualPlaceholder': 'provider/model',
+  'model.orderNote': 'Order = automatic failover sequence',
+  'model.followers': 'Followers',
+  'model.followsNebula': 'Follows Nebula',
+  'model.independent': 'Independently configured',
+  'model.makeIndependent': 'Configure independently',
+  'model.restoreFollow': 'Re-follow Nebula',
+  'model.restoreFollowConfirm': 'Re-following clears this role\u2019s own chain; the Nebula primary chain ({chain}) will apply. Continue?',
+  'model.effectivePreview': 'Effective chain (live preview)',
+  'model.kernelNote': 'Kernel sessions are per-delegation; chain changes apply from the next turn',
+  'model.errMinOne': 'A chain needs at least one model',
+  'model.errDuplicate': 'Model already in chain',
+  'model.unavailable': 'Currently unavailable ({reason})',
+  'model.healthFiltered': 'filtered by health',
+  'model.saved': 'Saved',
+  'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
+  'model.divergedView': 'View',
+  'model.seedNote': 'Not configured — the first available model will be used',
+  'model.clearChain': 'Clear chain',
+  'model.clearChainConfirm': 'Clearing deletes this role\u2019s own chain and falls back to the seed chain (first available model). Continue?',
+  'model.singleModelNote': 'Only 1 model and no fallback — errors go straight to the reserve tier',
+  'model.loadFailed': 'Failed to load',
+  'model.roleNebula': 'Nebula',
+  'model.roleDispatcher': 'Project dispatcher',
+  'model.roleKernel': 'kernel',
+  'model.roleGeneral': 'Node',
+  'model.viaSlash': 'Edit with the /model command',
+  'model.currentRun': 'Running',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
@@ -917,6 +965,13 @@ export default {
   'provider.baseUrlRequired': 'Base URL is required',
   'provider.modelRequired': 'At least one model with a non-empty ID is required',
 
+  // chain-ctxbound: contextWindow entrance bound check (paired with the engine clamp)
+  'provider.ctxInvalid': 'Model {id}: context window must be a whole number ≥ 1 (got "{value}")',
+  'provider.ctxExceedsModel': 'Model {id}: context window {value} exceeds the maximum {max} reported for this model',
+  'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
+  'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
+  'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
+
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
   'model.contextPlaceholder': 'Context',
@@ -940,12 +995,9 @@ export default {
   // {device} = the peer's from_device display name).
   'deviceMail.fromDevice': 'Nebula from {device}',
   'deviceMail.injectFailed': 'Cross-device Nebula mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
-  // Mail type tag labels (protocol values stay English)
-  'mailType.INFO': 'Info',
-  'mailType.FOLLOW_UP': 'Follow-up',
-  'mailType.PARALLEL': 'Parallel',
-  'mailType.INTERRUPT': 'Interrupt',
-  'mailType.RESULT': 'Result',
+  // mailmodel batch (2026-09-25): the mailType.* label table was removed — the
+  // Mail tool's `type` parameter is retired; pending-mail tags render the raw
+  // protocol type (flowViewers.js).
   'mailFlow.noBody': '(no body)',
   'mailFlow.renderFailed': '(render failed: {msg})',
 
@@ -975,12 +1027,6 @@ export default {
 
   // === Path ===
   'path.root': 'Root',
-
-  // === Path Picker ===
-  'pathPicker.title': 'Select Project Directory',
-  'pathPicker.select': 'Select This Folder',
-  'pathPicker.clear': 'Clear',
-  'pathPicker.empty': 'No subdirectories in this folder',
 
   // === Session sidebar ===
   'session.namePlaceholder': 'Session name...',
@@ -1224,6 +1270,23 @@ export default {
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
   'task.nodeBlocked': 'Blocked',
+  // === Chain view (chain-view compact v2 batch, 2026-10-01 · front-end face,
+  //     §16 draft key table) ===
+  // Five badge states (§II.1.3) + three hover labels + cancel dialog + ungrouped.
+  // 🔴 Final wording is extracted by the verify node and presented to the author
+  //    (this node only drafts against the mockup wording).
+  'task.chain.badge.running': 'Running',
+  'task.chain.badge.paused': 'Paused',
+  'task.chain.badge.completed': 'Done',
+  'task.chain.badge.failed': 'Failed',
+  'task.chain.badge.cancelled': 'Cancelled',
+  'task.chain.pause': 'Pause this chain',
+  'task.chain.resume': 'Resume this chain',
+  'task.chain.cancel': 'Cancel this chain',
+  'task.chain.cancel.title': 'Cancel the whole chain',
+  'task.chain.cancel.confirm': 'Cancel "{chain}"? This cannot be undone — members that have not started will no longer be dispatched.',
+  'task.chain.ungrouped': 'Ungrouped',
+  'task.chain.rowHint': 'Chain "{chain}" ({n} nodes) — click to expand',
   // Generic "Remove" accessible name (visup-b batch: the main window's attachment ❌
   // — the icon-only ❌ carries no text, so it must have an accessible name; kept
   // separate from `ref.remove`, which is the semantic "Remove reference").
@@ -1429,6 +1492,13 @@ export default {
   'daemons.restartFirst': 'Start first',
   'daemons.deleteTitle': 'Delete Daemon',
   'daemons.deleteConfirm': 'Delete daemon "{name}"?',
+  // daemonpanel Phase A — config panel (daemons.config* keys)
+  'daemons.config': 'Configure',
+  'daemons.configClose': 'Close',
+  'daemons.configSave': 'Save',
+  'daemons.configSaved': 'Saved',
+  'daemons.configEnabled': 'Enabled',
+  'daemons.configSecretHint': 'Leave "***" to keep the stored value; an empty field does not modify it.',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
   'explorer.delete': 'Delete',
@@ -1488,6 +1558,7 @@ export default {
   'lightbox.close': 'Close preview',
   'lightbox.loading': 'Loading…',
   'lightbox.loadError': 'Failed to load image',
+  'lightbox.clickHint': 'Click to view the full-size image',
 
   // === Usage dashboard (token consumption dashboard, spec §7.5) ===
   'usage.title': 'Usage Dashboard',
@@ -1686,6 +1757,19 @@ export default {
   'workspacePicker.empty': 'Empty folder',
   'workspacePicker.readFail': 'Cannot read directory',
   'workspacePicker.mkdirFail': 'Failed to create folder',
+  // pickeruni batch: the retired project-directory picker's copy keys relocated
+  // into workspacePicker.* (values verbatim unchanged)
+  'workspacePicker.projectTitle': 'Select Project Directory',
+  'workspacePicker.clear': 'Clear',
+  'workspacePicker.gotoPlaceholder': 'Type a path to jump, e.g. ~/Downloads',
+  'workspacePicker.go': 'Go',
+  'workspacePicker.searchPlaceholder': 'Search in this folder (server-side filter)',
+  'workspacePicker.noMatch': 'No subdirectory matches "{query}"',
+  'workspacePicker.truncated': '{count} more not shown (of {total})',
+  'workspacePicker.hint.truncated': 'Type a path to jump to it, or filter with the search box',
+  'workspacePicker.hint.empty': 'Type a path to jump there, or go up one level',
+  'workspacePicker.hint.noMatch': 'Clear the search box to restore all; or type a path to jump',
+  'workspacePicker.error.invalid': 'Invalid path',
 
   // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令
@@ -1728,8 +1812,6 @@ export default {
   'content.agent.general.desc': 'General-purpose execution agent — its capabilities are determined by the plugins assigned to it',
   'content.agent.kernel.name': 'kernel',
   'content.agent.kernel.desc': 'Minimal kernel (Delegate kernel): the one-shot task executor that Nebula dispatches via Delegate — six base tools (Read/Write/Edit/Glob/Grep/Bash, all supporting device= for remote) plus AskUserQuestion, seven in total; no project context, no memory, and it does not dispatch sub-agents. Used for tasks that belong to no project ∧ require real execution ∧ are one-shot. Its tool surface is fixed by mechanism (AgentCore.KernelFixedTools = BaseTools + AskUserQuestion; the tools/skills declarations in this file are wholly inert because ConvergedAgentNames includes kernel).',
-  'content.agent.memory-consolidator.name': 'memory-consolidator',
-  'content.agent.memory-consolidator.desc': 'Memory consolidation agent — turns information worth keeping from a conversation into long-term memory for later sessions.',
   'content.plugin.visual-report.name': 'visual-report',
   'content.plugin.visual-report.desc': 'Visual reporting and human-readable report pack — nodes gain the ability to produce charts with professional tools (matplotlib/graphviz/plotly), turn a human-readable report into a one-screen conclusion a person can read, and deliver artifacts to disk with an absolute path (display and opening belong to Nebula; Pop is not invoked). Use for drawing charts, architecture diagrams and flow diagrams, data visualization, producing figures for a document, visual briefings, writing reports meant for people, delivery documents, acceptance reports, research reports, retrospective reports, summaries written for the project owner, compressing an over-long report, and keeping process artifacts separate from deliverables. Bundles skill: visual-report (chart / architecture-diagram / flow-diagram generation rules: palette, typography, annotation, layout aesthetics, a budget of at most 3 figures per document; human-readable delivery conventions: four-part skeleton, length budget; md rules: inline images, jumpable tables of contents, LaTeX formulas). Not for packaging plugins (use nebflow-plugin-creator); for HTML card styling use design-cards. Component surface: no mcp.json, no tool extensions.',
   'content.plugin.slideblocks.name': 'slideblocks',
@@ -1772,14 +1854,18 @@ export default {
   'social.action.saving': 'Saving…',
   'social.action.saved': 'Saved',
   'social.action.saveFailed': 'Save failed ({code})',
+  'social.action.notReady': 'Channel state not loaded yet — reconnecting, please retry',
   'social.action.recheck': 'Check again',
   'social.action.close': 'Close',
   'social.secret.placeholder': 'Paste the credential (never echoed back)',
   'social.secret.stored': 'Written · not echoed',
   'social.secret.empty': 'Not written',
-  'social.probe.summary': 'Credential probe: exists={exists} · modeOk={modeOk} · readable={readable}',
-  'social.value.yes': 'yes',
-  'social.value.no': 'no',
+  // social-fix (author ruling 2026-09-28): the mechanical probe line is
+  // retired from the UI — the same probe face renders as two plain-language
+  // states now (internal triples unchanged: data source untouched, render
+  // layer only).
+  'social.credential.ok': 'Credentials configured · permissions normal',
+  'social.credential.missing': 'Credential missing — scan to create again',
   'social.hint.missingRef': 'Referenced file does not exist: {path}',
   'social.hint.modeBad': 'Wrong permissions (expected rw-------): {path}',
   'social.hint.pattern': 'Field format mismatch: {field}',
@@ -1787,24 +1873,103 @@ export default {
   'social.status.configuredNotLinked': 'Configured · not linked',
   'social.status.configInvalid': 'Invalid configuration',
   'social.status.connected': 'Connected',
+  'social.status.failed': 'Failed',
   'social.wechat.name': 'WeChat',
   'social.wechat.desc': 'Credential set for a WeChat official account. This phase stores the configuration only — no outbound channel is opened.',
   'social.wechat.field.appId': 'App ID',
   'social.wechat.field.appSecret': 'App secret',
   'social.wechat.field.token': 'Verification token',
   'social.wechat.field.aesKey': 'Encoding AES key',
-  'social.feishu.name': 'Feishu / Lark',
-  'social.feishu.desc': 'Feishu and Lark share one schema, so they are one card with a region choice (China / international). This phase stores the configuration only.',
+  // wechat-ilink (chain-wechat-impl, author ruling 2026-09-30, option (B)): the
+  // separate iLink channel id, coexisting with the official-account card above.
+  // Sealed until the real-device login is done, so this copy stays off the
+  // panel for now - it is here so the sealed entry never orphans a key (W11).
+  'social.weixinIlink.name': 'WeChat (iLink)',
+  'social.weixinIlink.desc': 'Credential set for the WeChat iLink bot. This phase stores the configuration only - no outbound channel is opened.',
+  'social.weixinIlink.field.botToken': 'Bot token',
+  'social.weixinIlink.field.ilinkBotId': 'Bot ID',
+  'social.weixinIlink.field.ilinkUserId': 'Signed-in user ID',
+  'social.weixinIlink.field.baseurl': 'API base URL',
+  'social.weixinIlink.field.allowedIlinkUserIds': 'Sender allowlist (optional)',
+  'social.feishu.name': 'Feishu',
+  // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
+  'social.feishu.desc': 'Once a session is bound, Feishu messages enter it and replies go back the same way. Every tenant member can reach the gateway by default.',
   'social.feishu.field.appId': 'App ID',
   'social.feishu.field.appSecret': 'App secret',
   'social.feishu.field.verificationToken': 'Verification token',
   'social.feishu.field.encryptKey': 'Encrypt key (optional)',
+  'social.feishu.field.allowedOpenIds': 'Member allowlist (optional)',
   'social.feishu.field.region': 'Region',
   'social.feishu.region.feishu': 'Feishu (China)',
   'social.feishu.region.lark': 'Lark (international)',
+  // feiscanbind (2026-09-27): scan-to-create copy (§16-collected).
+  // social-fix (2026-09-28): the QR block lives INSIDE the card — no
+  // sub-dialog title, no scan action button, no manual fallback.
+  'social.feishu.scan.starting': 'Requesting a QR code…',
+  'social.feishu.scan.waiting': 'Scan with the Feishu app, then confirm on your phone',
+  'social.feishu.scan.confirmed': 'Confirmed on the phone — creating the app…',
+  'social.feishu.scan.done': 'App created and connected',
+  'social.feishu.scan.failed': 'Scan-bind failed: {reason}',
+  'social.feishu.scan.userCode': 'Confirmation code: {code}',
+  'social.feishu.scan.qrFallback': 'If the code does not display, open this link on your phone:',
+  'social.feishu.live.title': 'Connected app',
+  'social.feishu.live.appUnknown': 'Unknown — this backend does not report the live app',
+  'social.feishu.live.fingerprint': 'Fingerprint',
+  'social.feishu.live.fpMatch': 'match',
+  'social.feishu.live.fpMismatch': 'mismatch — the bridge is holding a different app',
+  'social.feishu.live.fpUnknown': 'unknown',
+  'social.feishu.live.bridge': 'Bridge',
+  'social.feishu.live.bridgeOn': 'enabled',
+  'social.feishu.live.bridgeOff': 'disabled',
+  'social.feishu.archive.action': 'Unbind',
+  'social.feishu.archive.doing': 'Unbinding…',
+  'social.feishu.archive.done': 'Unbound — credentials kept',
+  'social.feishu.archive.hint': 'Unbind: stops the bridge and returns the card to the not-created state. Credentials are kept — nothing is deleted.',
+  'social.feishu.bindings.title': 'Chat bindings',
+  'social.feishu.bindings.empty': 'No chats bound yet — the first message from a chat will be bound here.',
+  'social.feishu.bindings.unavailable': 'Binding data is not available on this backend.',
+  'social.feishu.bindings.source.auto': 'auto',
+  'social.feishu.bindings.source.manual': 'manual',
+  'social.feishu.defaultSession.label': 'Default session for new chats',
+  'social.feishu.defaultSession.none': 'Not set',
+  'social.feishu.defaultSession.unavailable': 'Default-session setting is not available on this backend.',
+  'social.feishu.defaultSession.saved': 'Default session saved',
+  'social.feishu.defaultSession.saveFailed': 'Save failed ({code})',
   'social.telegram.name': 'Telegram',
   'social.telegram.desc': 'Credential set for a Telegram bot. This phase stores the configuration only — no outbound channel is opened.',
   'social.telegram.field.botToken': 'Bot token',
   'social.telegram.field.chatId': 'Target chat ID',
   'social.telegram.field.apiBase': 'API base URL',
+  // secrets-frontend (2026-09-27): the standalone secrets dialog (§16-collected
+  // copy). Values are write-only on this face — no copy line ever describes a
+  // stored value's content.
+  'secrets.title': 'Secrets',
+  'secrets.close': 'Close',
+  'secrets.add': 'Add Secret',
+  'secrets.addTitle': 'Add secret',
+  'secrets.replaceTitle': 'Replace secret value',
+  'secrets.name': 'Name',
+  'secrets.nameHint': 'Lowercase service-purpose, e.g. aliyun-oss',
+  'secrets.value': 'Value',
+  'secrets.showValue': 'Show value',
+  'secrets.hideValue': 'Hide value',
+  'secrets.valuePlaceholder': 'Paste the value. It is written once and never displayed again.',
+  'secrets.replacePlaceholder': 'Saving replaces the stored value entirely. The old value is never displayed.',
+  'secrets.replace': 'Replace Value',
+  'secrets.delete': 'Delete',
+  'secrets.save': 'Save',
+  'secrets.cancel': 'Cancel',
+  'secrets.state.ok': 'owner-only',
+  'secrets.state.permissive': 'permissions too open',
+  'secrets.referencedBy': 'Referenced by {refs}',
+  'secrets.deleteTitle': 'Delete secret',
+  'secrets.deleteConfirm': 'Delete "{name}"? This cannot be undone.',
+  'secrets.deleteConfirmRefs': '"{name}" is referenced by: {refs}. Deleting breaks them. This cannot be undone.',
+  'secrets.empty': 'No secrets yet. Add one and services or agents can reference it by path — the value is written once and never shown.',
+  'secrets.invalidName': 'Use lowercase letters, digits, ".", "-", "_" — start with a letter or digit, at most 64 characters.',
+  'secrets.reservedName': 'Names starting with "social-" or "daemon-" are managed by their own panels.',
+  'secrets.error.notFound': 'That secret no longer exists — it may have been deleted elsewhere.',
+  'secrets.error.conflict': 'The secret already exists, or is still referenced. Resolve the reference before deleting.',
+  'secrets.error.emptyValue': 'Enter a value first.',
+  'secrets.error.io': 'Secrets request failed ({code}). Check the gateway connection and try again.',
 };

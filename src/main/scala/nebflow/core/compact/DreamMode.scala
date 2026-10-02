@@ -29,9 +29,12 @@ import java.security.MessageDigest
  *   - [[entryHash]] — stable sha256 of a normalized entry text, used as the
  *     entry identity in the hook's route records.
  *
- * The `MemoryQueue` `section` field itself is unchanged (it is a locator;
+ * The queue note `section` field itself is unchanged (it is a locator;
  * `None` = file tail). Do not reintroduce a section constant here: the whole
- * point of the removal is that no named section is engine-owned.
+ * point of the removal is that no named section is engine-owned. (The queue
+ * itself has since been retired wholesale — memory-family-retirement batch
+ * 2026-09-29 — so `section` currently has no consumer; the discipline above
+ * stays as the record of why no section constant may return.)
  */
 object DreamMode:
   private val FactPattern = """FACT\s*\d+\s*:\s*\[([A-Za-z_]+)\]\s*(.*)""".r

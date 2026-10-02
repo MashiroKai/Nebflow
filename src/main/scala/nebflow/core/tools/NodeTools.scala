@@ -320,6 +320,137 @@ object NodeTools:
     )
 
   /**
+   * **The pass-consumer judgement single point** (design card §1.3 / §3.1, verbatim):
+   *
+   * ```
+   * declaredOut(v) = canonical(v.out) ++ v.pendingOut
+   * passOutlet(v) ≜ ∃ e ∈ declaredOut(v): mode(e) ≠ loop ∧ pass ∈ on(e)
+   *                ∧ ( e.to = "Nebula" ∧ mode(e) = result
+   *                    ∨ resolveTargetId(nodes, e.to).isDefined )
+   * ```
+   *
+   * Three boundary readings, verbatim from the card, on the same discipline as
+   * `NodePayload.verifierRouteInvalid` (derived quantity, zero new persisted field,
+   * recovery removes the condition with no bookkeeping):
+   *  - `pendingOut` **counts** as declared (the rewire window must not report — the
+   *    observed window is up to 24.5 minutes long);
+   *  - a `mode=loop` edge **does not count** (a re-run back edge is a control signal,
+   *    not a delivery leg);
+   *  - a bare `(pass)Nebula:signal` exit marker **does not count** (it delivers
+   *    nothing); only `(pass)Nebula` in `:result` mode does.
+   *
+   * 🔴 Both consumers — (a) the create/rewire receipt warning and (b) the chain archive
+   * gate — call THIS function. Deriving a second copy per consumer would be exactly the
+   * twin-derivation the engine forbids (`NodeGating.scala:302-306`).
+   *
+   * @param nodes the resolution face (caller reads one snapshot; never mix snapshots).
+   */
+  def passOutlet(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    declaredOutOf(v).exists { e =>
+      !OutEdge.isLoopEdge(e) && e.on.contains(OutEdge.Pass) && {
+        (e.to == OutEdge.RootTarget && e.mode == OutEdge.Result) ||
+        OutEdge.resolveTargetId(nodes, e.to).isDefined
+      }
+    }
+
+  /**
+   * `declaredOut` reading single point for the pass-consumer judgement: the same
+   * `canonical(out) ++ pendingOut` shape `NodePayload.verifierRouteInvalid` uses (one
+   * point, several readers) — so (a) and (b) can never disagree on what "declared" means.
+   */
+  def declaredOutOf(v: NodeDef): List[OutEdge] = OutEdge.canonical(v.out) ++ v.pendingOut
+
+  /**
+   * `inConsumer` — the second half of the strict V-0 form (design card §1.3, verbatim):
+   *
+   * ```
+   * inConsumer(v) ≜ ∃ n ∈ nodes: v.id ∈ resolve(n.in) ∨ v.id ∈ resolve(n.deps)
+   * ```
+   *
+   * "resolve" for `deps` is the chain-reference expansion single point
+   * (`FlowMapStore.resolveDepTargets`) — a `chain:<id>` reference expanding onto this
+   * verifier counts as a consumer exactly as a plain node id would. The batch form is the
+   * only implementation (a per-candidate singular would re-expand the chain table once
+   * per node — O(n·chains) on a 4000-node view), so callers scan the referrer set once.
+   *
+   * 🔴 (a) deliberately does NOT use this — at create time "who will reference me later"
+   * is unknowable, and judging the strict V-0 there would fire on every normally created
+   * verifier (noise flood). (b) does — at archive time the `in`/`deps` references are
+   * settled facts, and dropping the clause would hit the 15 legitimate landing-position
+   * shapes on record. That asymmetry is the card's hard ruling (§3.1), not an oversight.
+   */
+  def inConsumersOf(nodes: Map[String, NodeDef]): Set[String] =
+    nodes.values.iterator.flatMap { n =>
+      val fromDeps =
+        if n.deps.isEmpty then Nil else FlowMapStore.resolveDepTargets(n.deps, nodes).ids
+      (n.in ++ fromDeps).distinct
+    }.toSet
+
+  /** Singular reading of [[inConsumersOf]] (does not re-expand anything beyond the scan). */
+  def inConsumerOf(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    inConsumersOf(nodes).contains(v.id)
+
+  /**
+   * **The create/rewire-face judgement single point** (design card §2.1 body + §2.2
+   * exemption 4, verbatim):
+   *
+   * ```
+   * verifierPassOutletMissing(v) ≜ role(v) = verifier
+   *                              ∧ declaredOut(v) non-empty   ← an empty out goes to the existing two-phase token face, not judged here
+   *                              ∧ ¬passOutlet(v)
+   * ```
+   *
+   * Two clauses need their boundary spelled out, because the card states them as
+   * exemptions rather than as part of the formula (§2.2 exemption face, shared by both tiers):
+   *
+   *  - **empty `out` is never judged** (exemption 5): that window belongs to the existing
+   *    two-phase token face (`verifierRoutePending`), already owned by
+   *    `NODE_VERIFIER_NEEDS_ROUTE`. Tested on the node's OWN edge list, not on
+   *    `declaredOut` — the two are equivalent here because a `pendingOut`-only node has an
+   *    empty own list.
+   *  - **`pendingOut` non-empty ⇒ do not report** (exemption 4): a control edge queued
+   *    behind a running target is the *rewire window* (measured up to 24.5 minutes), during
+   *    which the user is actively wiring; reporting there would be a false positive. This
+   *    is the exact counterpart of the fail-face (iii) boundary in
+   *    [[NodePayload.verifierRouteInvalid]] — same window, same "do not report".
+   *
+   * 🔴 The `lastVerdict` clause is deliberately absent here. At create/rewire time the node
+   * is being DECLARED, not judged — demanding a written verdict would make the warning
+   * unreachable for every newly created verifier (R1 of the acceptance list requires the ⚠
+   * line at creation). The verdict clause belongs to the archive face, where it composes
+   * with `¬inConsumer` into the strict `V-0` form (`FlowMapStore.unconsumedVerdictsOf`).
+   * Both faces share the SAME `passOutlet` single point — only the composition differs,
+   * and that asymmetry is the card's hard ruling (§3.1), not an oversight.
+   */
+  def verifierPassOutletMissing(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    NodeRoles.normalize(v.role) == NodeRoles.Verifier &&
+      OutEdge.canonical(v.out).nonEmpty &&
+      v.pendingOut.isEmpty &&
+      !passOutlet(v, nodes)
+
+  /**
+   * **pass-outlet gap hint (candidate (a), warning tier)** — mirrors [[wiringGapHint]]
+   * line for line: one ⚠ line appended to the tail of a SUCCESS receipt, non-blocking,
+   * **zero rejection paths**.
+   *
+   * Judgement = `role(v)=verifier ∧ declaredOut(v) non-empty ∧ ¬passOutlet(v)` (the
+   * card's `V-0prime`, §2.1): an empty `declaredOut` is deliberately exempt — that window
+   * belongs to the existing two-phase token face (`verifierRoutePending`) and is already
+   * owned by `NODE_VERIFIER_NEEDS_ROUTE`. `pendingOut` counting as declared (§2.2 exempt
+   * 4) is what keeps the rewire window from reporting a false positive.
+   *
+   * 🔴 This judges the **pass** face (where a positive verdict goes). It runs in parallel
+   * with — never instead of — the **fail** face family (`NODE_VERIFIER_NEEDS_ROUTE` /
+   * `verifierRouteInvalid` / `verifier-route-lost`): both can hold at the same time.
+   */
+  def verifierPassOutletGapHint(nodeName: String, nodeId: String): List[String] =
+    List(
+      s"⚠ verifier '$nodeName' ($nodeId) declares no pass outlet — its pass verdict has no consumer to route to (unconsumed). " +
+        "A verifier's pass leg must reach either a landing node ('(pass)<landing>') or the root exit ('(pass)Nebula'); " +
+        "declare it with NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\". (verifier-pass-unconsumed)"
+    )
+
+  /**
    * loop 门集不变量（**P-2 强读法**，2026-09-12 裁定 2/3）——判定单点（纯函数）。
    *
    * 判据（写死）：`loop.exists(_.enabled)`（与引擎实际路由键 `NodeEngine.spawnAndRun`
@@ -479,13 +610,52 @@ object NodeTools:
       afterAdded.updated(fromId, from.copy(out = newEdges, pendingOut = pendingOut.getOrElse(from.pendingOut)))
     end rewire
     def sinkGuard(node: NodeDef): Option[String] = NodeTools.loopGateViolation(node, newEdges)
+
+    // ── 边集变更留痕（缺陷③批 2026-10-01 · 案 A）───────────────────────────────
+    // `setOut` 是 out 边集的**落盘 choke point**（调用点埋点必漏）⇒ 在收口处对
+    // before(out) ↔ after(newEdges) 逐边 diff，**逐边一行**发 `edge-changed`。
+    // 目标解析统一经 `resolveTargetId`（20260909 in 丢失事故口径：diff 在**节点身份**
+    // 空间进行——旧 id 形态边 → 新名字形态边指向同一节点时**零行**，不误报「改接」）。
+    def resolve(nodes: Map[String, NodeDef])(target: String): String =
+      OutEdge.resolveTargetId(nodes, target).getOrElse(target)
+
+    /** 两时点快照（写前 / 写后）⇒ 本节点 out 的逐边视图 + 受影响节点 in 镜像的逐项视图。 */
+    def edgeTrace(
+      before: Map[String, NodeDef],
+      after: Map[String, NodeDef],
+      owner: String,
+      beforeOut: List[OutEdge]
+    ): List[FlowMapEventLog.EdgeChangeView] =
+      val reason = FlowMapEventLog.EdgeChangeReason.Machine
+      val outViews = FlowMapEventLog.outEdgeViews(owner, beforeOut, newEdges, reason, resolve(after))
+      val touched = (before.keySet ++ after.keySet).toList.sorted
+      val inViews = FlowMapEventLog.inMirrorViewsBatch(
+        touched.map(id => id -> before.get(id).map(_.in).getOrElse(Nil)).toMap,
+        touched.map(id => id -> after.get(id).map(_.in).getOrElse(Nil)).toMap,
+        reason
+      )
+      outViews ++ inViews
+    end edgeTrace
+
+    /** `None` ⇒ 零写（幂等出口）；`Some` ⇒ 逐边/逐项一行落 `edge-changed`。 */
+    def emit(views: List[FlowMapEventLog.EdgeChangeView]): IO[Unit] =
+      FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, views)
+
     rt.store.getNode(fromId).flatMap {
       case Some(from) =>
         sinkGuard(from) match
           case Some(err) =>
             IO(logger.errorSync(s"[loop-gate] setOut REFUSED (write skipped, sink invariant): $err"))
           case None =>
-            rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, s.nodes(fromId))) }.void
+            rt.store
+              .mutateWithResult { s =>
+                val nodesAfter = rewire(s.nodes, s.nodes(fromId))
+                (
+                  s.copy(nodes = nodesAfter),
+                  edgeTrace(s.nodes, nodesAfter, fromId, s.nodes.get(fromId).map(_.out).getOrElse(Nil))
+                )
+              }
+              .flatMap { case (_, trace) => emit(trace) }
       case None =>
         rt.store.findNode(fromId).flatMap {
           case None => IO.unit // 两区皆无（并发 TTL 迁移已删）→ no-op
@@ -497,10 +667,21 @@ object NodeTools:
               case Some(err) =>
                 IO(logger.errorSync(s"[loop-gate] setOut REFUSED (archive write skipped, sink invariant): $err"))
               case None =>
-                rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, archFrom) - fromId) }.void *>
-                  rt.store
-                    .mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges)))))
-                    .void
+                // 🔴 **归档分支也要发**（设计卡 §6.3 风险 R-1 的漏点：归档区 out 补写此前
+                // 完全静默——本行是那处「我没动过它、它的边为什么变了」的唯一观测面）。
+                rt.store
+                  .mutateWithResult { s =>
+                    val nodesAfter = rewire(s.nodes, archFrom) - fromId
+                    (
+                      s.copy(nodes = nodesAfter),
+                      edgeTrace(s.nodes, nodesAfter, fromId, archFrom.out)
+                    )
+                  }
+                  .flatMap { case (_, trace) =>
+                    rt.store
+                      .mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges)))))
+                      .void *> emit(trace)
+                  }
         }
     }
 
@@ -525,6 +706,105 @@ object NodeTools:
       case Some(up) if !up.out.exists(_.to == toNodeId) =>
         nodes.updated(upId, up.copy(out = up.out :+ OutEdge(toNodeId)))
       case _ => nodes
+
+  /**
+   * 纯函数：镜像追加视图（缺陷③批 2026-10-01 · 案 A 写点 4）。
+   *
+   * `appendEdgeTo` 是**纯函数**（返回新 Map，无 IO），故其留痕在调用方收口：本函数从
+   * 「追加前 / 追加后」两张 `Map` 抽出该上游 out 的逐边 diff 视图 ⇒ 调用方逐边发一行。
+   * `kind=in`（上游 out 追加 = 下游 in 镜像追加的**同一事实的另一面**）：
+   * `owner` = **被追加镜像的目标节点**（toNodeId），`from=-` `to=<上游>`。
+   *
+   * 🔴 幂等：`appendEdgeTo` 未追加（上游已有指向该目标的边）⇒ 零视图 ⇒ 零行。
+   */
+  def appendEdgeViews(
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef],
+    upId: String,
+    toNodeId: String,
+    reason: String
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val beforeOut = before.get(upId).map(_.out).getOrElse(Nil)
+    val afterOut = after.get(upId).map(_.out).getOrElse(Nil)
+    if OutEdge.canonical(beforeOut) == OutEdge.canonical(afterOut) then Nil
+    else
+      val resolvedTo = OutEdge.resolveTargetId(after, toNodeId).getOrElse(toNodeId)
+      List(
+        FlowMapEventLog.EdgeChangeView(
+          owner = resolvedTo,
+          from = None,
+          to = Some(upId),
+          kind = FlowMapEventLog.EdgeChangeKind.In,
+          reason = reason
+        )
+      )
+
+  end appendEdgeViews
+
+  /**
+   * 纯函数：**建位（create）事务的边集变更视图**（缺陷③批 2026-10-01 · 案 A 写点 5）。
+   *
+   * 建位本身也是边集变更：新节点的 `out` 声明、以及**所有被改动的 `in` 镜像**（新节点自身
+   * 的 `in`、以及 `appendEdgeTo` 在上游 out 追加后在**新节点**侧映出的入边）。此前建位期
+   * 完全静默——「我没动过它、它的边为什么变了」在审计面零观测。
+   *
+   * 输入 = `(写前, 写后)` 两张 `Map`（`mutateWithResult` 的 f 在 CAS 自旋下可能重入 ⇒ 本
+   * 函数**必须纯**：零 IO、零外部状态）。`out` 视图恒为「新增」（新节点建位前不存在 ⇒
+   * `before.get(nodeId).map(_.out).getOrElse(Nil)` = `Nil` 起 diff，同一实现对幂等重入也自洽）。
+   *
+   * 🔴 幂等：两时点 canonical 相等 ⇒ `Nil`（零行）；未变节点的 `in` 零行。
+   */
+  def createdEdgeViews(
+    nodeId: String,
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef]
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val reason = FlowMapEventLog.EdgeChangeReason.Machine
+    val resolve: String => String = t => OutEdge.resolveTargetId(after, t).getOrElse(t)
+    val outViews = FlowMapEventLog.outEdgeViews(
+      nodeId,
+      before.get(nodeId).map(_.out).getOrElse(Nil),
+      after.get(nodeId).map(_.out).getOrElse(Nil),
+      reason,
+      resolve
+    )
+    val touched = (before.keySet ++ after.keySet).toList.sorted
+    val inViews = FlowMapEventLog.inMirrorViewsBatch(
+      touched.map(id => id -> before.get(id).map(_.in).getOrElse(Nil)).toMap,
+      touched.map(id => id -> after.get(id).map(_.in).getOrElse(Nil)).toMap,
+      reason
+    )
+    outViews ++ inViews
+
+  end createdEdgeViews
+
+  /**
+   * **编辑期拒绝面留痕**（缺陷③批 2026-10-01 · 案 A 写点 12/13，IO 包装 = 唯一 IO 点）。
+   *
+   * 形态 12（`ensureMergePassOnly` / `ensureTargetNotRunning` / `verdictRouteGate` 及
+   * create 侧同族）的编辑期硬拒此前**零事件**——「谁被谁拒、按哪个码」在审计面查无。
+   * 本函数落一笔 `edge-changed` + `reason=refused`（🔴 不新造平行类型），payload =
+   * `owner=<被编辑节点> kind=<被拒门类> reason=refused detail=<既有错误码>`；
+   * `from`/`to` 恒 `-`（拒绝面不写边）。
+   *
+   * 🔴 幂等 / 零副作用：本函数**不写任何状态**（拒本身已保证零残留），只追加一行审计。
+   */
+  def emitRefused(rt: ProjectRuntime, owner: String, gateKind: String, errorCode: String): IO[Unit] =
+    FlowMapEventLog.appendEdgeChange(
+      rt.project.workspace,
+      rt.project.name,
+      FlowMapEventLog.refusedView(owner, gateKind, errorCode)
+    )
+
+  /**
+   * `NODE_MERGE_PASS_ONLY` 等既有错误码抽取（错误文本 → 码）的单点：门函数返回的是
+   * **完整文案**（含空白，禁进 payload），本函数从中取出行尾括号里的**错误码常量**
+   * （`(CODE)` 形态，沿本文件既有约定）。无括号码 ⇒ 回落门类名（可行动性优先于精确性：
+   * 宁可记一个明确的门类名，也不记一坨含空白文案）。
+   */
+  def errorCodeOf(message: String, fallback: String): String =
+    val re = raw"\(([A-Z][A-Z0-9_]{3,})\)".r
+    re.findFirstMatchIn(message).map(_.group(1)).getOrElse(fallback)
 
   /**
    * P1 校验层①（spec §2.2，wf3 §3.7 护栏）：指向 merge 节点的 on-failed 边 → 硬拒
@@ -1015,18 +1295,77 @@ object NodeTools:
       "would wait forever). Read the real ids from NodeList chains[].id. (NODE_CHAIN_REF_UNKNOWN)"
 
   /**
+   * **链引用构造性不可满足**的可行动报错（判据 D · 死链；错误码 `NODE_CHAIN_REF_DEAD`）。
+   *
+   * 与 [[chainRefUnknownError]] **互补分桶，非替代**：`UNKNOWN` = 「链号在给定节点集上不
+   * 存在」；`DEAD` = 「链号**存在**，但成员集含**不可挽回**成员（`cancelled`）⇒ 闸永不结算」。
+   * 二者**互斥且穷尽**。
+   *
+   * 为什么 `cancelled` 是「永不」而 `failed` 不是：闸只认 `completed`，`cancelled` 是**不可
+   * 重激活**的终态（重激活闸只放行 `blocked`/`failed`），且引擎**零节点删除路径** ⇒ 该成员
+   * 永久留在节点集里。`failed` 可经重激活转 `completed` ⇒ **不**构成死链（放行 + WARN）。
+   *
+   * 文案**自带改锚指引**（照 [[chainRefUnknownError]] 的成熟形态：说清**怎么改**，不只说
+   * 「不许」）：把「等整链」换成**字面成员 id 的『完成事实锚』**——`deps` 里直接写那些**确实
+   * 承载落地事实**、且已 `completed` 的成员 id（既有字面 `deps` 语法，零新原语）。
+   */
+  def chainRefDeadError(ref: String, deadMembers: Map[String, Set[String]]): String =
+    val named = deadMembers.toList
+      .sortBy(_._1)
+      .map((cid, ids) =>
+        s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}"
+      )
+      .mkString("; ")
+    s"Dead chain reference '${chainRefShown(ref)}' in deps: the chain EXISTS but its member set is constructively unsatisfiable — " +
+      s"$named. `cancelled` is a non-reactivatable terminal (unlike `failed`, which can be re-activated): the gate waits for EVERY " +
+      "member to be completed, so as written this node would wait forever. Fix it by rewiring the deps ref to a COMPLETION FACT " +
+      "ANCHOR — a literal member id that actually carries the landing fact and is already `completed` (deps = [\"n-...\"]), instead of " +
+      "the whole-chain ref; or drop the ref if the gate is no longer meaningful. Read the member ids from NodeList " +
+      "chains[].memberIds, then each member's own status via NodeList detail=<memberId> (that read path resolves a " +
+      "member even after it has left the active map) — or from `nodes[].status` for members still on the active map. (NODE_CHAIN_REF_DEAD)"
+
+  /**
    * 单条链引用可达性（create/edit 两条写路径共用；判据单点，数据源 = 双区合并集
    * ——与启动闸/停滞面同源；零链引用时零派生成本）。`in` 里的链引用由
    * [[chainRefInInputError]] 静态拒（不经本闸）。
+   *
+   * 两档判据（同源 = `FlowMapStore.resolveDepTargets` 单点，零第二解析器）：
+   *   - 链号**不存在**（`unknownChainRefs`）⇒ 拒，[[chainRefUnknownError]]（既有行为）；
+   *   - 链号**存在但构造性不可满足**（`deadChainRefs`，判据 D：成员含 `cancelled`）⇒
+   *     **拒**，[[chainRefDeadError]]（本批新增；fail-loud + 点名 + 改锚指引）。
+   * 🔴 判据**只看** `status == cancelled`——`failed` 成员**放行**（可重激活，禁止硬拒以免
+   * 封死自愈路）；🔴 **禁**以 `archived` / `compacted` / `archivedAt` / ledger 任何键作判据。
    */
   def chainRefExists(rt: ProjectRuntime, ref: String): IO[Either[String, Unit]] =
     if !FlowMapStore.isChainRef(ref) then IO.pure(Right(()))
     else
       rt.store.combinedNodes.map { combined =>
-        val known = FlowMapStore.topologicalChains(combined.values).map(_.id).toSet
+        val targets = FlowMapStore.resolveDepTargets(List(ref), combined)
         val t = FlowMapStore.chainRefTarget(ref)
-        if t.nonEmpty && known.contains(t) then Right(())
+        if targets.deadChainRefs.nonEmpty then Left(chainRefDeadError(ref, targets.deadChainRefs))
+        else if t.nonEmpty && !targets.unknownChainRefs.nonEmpty then Right(())
         else Left(chainRefUnknownError(ref))
+      }
+
+  /**
+   * 链引用的 **RISKY 档**回执行（⚠ 行；空 = 无该形态）。**放行但告警**——`failed` 成员
+   * **可重激活**（与 `cancelled` 不同域）⇒ 🔴 **禁**在写路径硬拒（那会封死自愈路），只把
+   * 「这条闸现在挡着、且要靠重激活才能通」说在决策当下（形式仿 [[stalledInWarning]]：成功
+   * 回执尾部附 ⚠ 行，非阻断）。判据源 = 同一解析单点 [[FlowMapStore.resolveDepTargets]]。
+   */
+  def chainRefWarnings(rt: ProjectRuntime, ref: String): IO[List[String]] =
+    if !FlowMapStore.isChainRef(ref) then IO.pure(Nil)
+    else
+      rt.store.combinedNodes.map { combined =>
+        val targets = FlowMapStore.resolveDepTargets(List(ref), combined)
+        targets.riskyChainRefs.toList
+          .sortBy(_._1)
+          .map((cid, ids) =>
+            s"⚠ chain '$cid' has FAILED member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Failed}").mkString(", ")} — " +
+              "the gate waits for every member to be completed, and `failed` IS reactivatable (unlike `cancelled`, which would " +
+              "refuse this edit outright), so this is NOT a dead ref: re-activate the member, or rewire to a completion fact " +
+              "anchor (literal member ids). (warning only)"
+          )
       }
 
   /**
@@ -1185,10 +1524,52 @@ object NodeTools:
    * 逐字同值；无上限、无降级）。
    * WS 不带链级帧，结构变化由前端对账重拉快照消化。
    */
+  /**
+   * **链控端点响应体单点**（chainview 批 2026-10-01）：三条 REST 端点（pause / resume /
+   * cancel）的成功响应共用本构造函数 —— 🔴 禁三处各拼一份（帧形/字段集漂移）。
+   *
+   * 形状（与本文件既有 projects 族逐条同风格，`404/400` 错误体另件于路由）：
+   * {{{
+   *   { chainId, title, status, memberIds, pausedAt|null, cancelledAt|null }
+   * }}}
+   *
+   * 读法纪律：`memberIds` / 链标题恒来自 [[FlowMapStore.chainMembersOf]]（**唯一**的
+   * chainId → 成员解析点，V8 判据）；`status` / 时间戳恒来自
+   * [[ChainLedger.ChainControl]]（判据单点 `ChainLedger.statusOf`）。本方法**零派生**。
+   * 链查无（竞赛窗口：链在动作后消失）⇒ 退化为只回状态字段（不伪造成员集）。
+   */
+  def chainControlPayload(rt: ProjectRuntime, ctl: ChainLedger.ChainControl): IO[Json] =
+    rt.store.chainMembersOf(ctl.chainId).map { cm =>
+      val base = Json.obj(
+        "chainId" -> ctl.chainId.asJson,
+        "status" -> ctl.status.asJson,
+        "pausedAt" -> ctl.pausedAt.map(_.asJson).getOrElse(Json.Null),
+        "cancelledAt" -> ctl.cancelledAt.map(_.asJson).getOrElse(Json.Null)
+      )
+      cm match
+        case None => base
+        case Some(cmInfo) =>
+          base.deepMerge(
+            Json.obj(
+              "title" -> cmInfo.title.asJson,
+              "memberIds" -> cmInfo.info.memberIds.asJson
+            )
+          )
+    }
+
   def buildNodeListPayload(rt: ProjectRuntime, statusFilter: Option[Set[String]] = None): IO[Json] =
     for
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
+      // 🔴 Two-zone combined map, evaluated up here on purpose: the three merge-window
+      // derived batches below (`mergeQueueSlots` / `mergeQueuePositions` /
+      // `mergeVerdictGate`) MUST share one source with the mutex gate
+      // (`NodeEngine.mergeMutexHoldersOf`, which reads `store.combinedNodes`). Gate and
+      // payload holding different zones means the same node reports one rank through the
+      // gate and another through the payload. This value used to be evaluated inside the
+      // `yield` block, i.e. after the three call sites. Zero new IO: `s` and `arch` are
+      // already in hand above.
+      combined = s.nodes ++ arch.nodes
       // 清场 c-①（20260903 03:04 清场误杀事故复盘）：running 节点携带 liveness
       // 字段——true = 有在飞执行 fiber（活会话，取消信号可达）；false = 无在飞
       // fiber（死会话残留/实例重启泄漏，可经 NodeCancel / abandon 收殓）。非
@@ -1208,16 +1589,30 @@ object NodeTools:
       // 排队位次**显示槽**（engine-defects 批 #2/#227 2026-09-15）：与闸**同一判据**
       // （mergeQueueHolders → MergeMutexPolicy.holders + verdict 准入过滤），只把持有者
       // 富化成 {rank 依据(readyAt/createdAt), 是否真在临界区, 为何未点火}。
-      mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(s.nodes)
+      mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(combined)
       // 排队**位次**派生（queuepos 批 2026-09-15）：纯函数、零副作用，真源 = SEM-2 次序键
       // `rank=(readyAt,createdAt,id)`（[[MergeMutexPolicy.queuePosOf]] 单点）。与
       // `mergeQueueSlots` 分工：后者 = 闸判据「谁挡着我」，本项 = 队列序「我排第几」。
-      mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(s.nodes)
+      mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(combined)
+      // Verdict-gate visibility slot (mergeverdictvis batch 2026-09-23): a merge position
+      // held by the verdict gate produces NO `mergeQueue` slot at all, so the payload used
+      // to show `mergeQueuePos.position=1` with nobody listed anywhere — reading as "first
+      // in line and nobody blocks me" while an upstream verifier with a non-pass verdict is
+      // the real cause. This key lifts that state onto the payload face. Judging authority =
+      // the engine single point (`mergeVerdictGateBatch` -> `staleVerdictUps`, the very list
+      // the gate acts on) — 🔴 no frontend/dispatcher re-derivation, 🔴 no reading of the
+      // file ticket layer, 🔴 no replay from the event stream. Non-empty entries only ⇒
+      // unheld nodes are simply absent.
+      mergeVerdictGates <- rt.engine.mergeVerdictGateBatch(combined)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
+      // chainview 批 2026-10-01：链控三态读数（chains[] 的 status/pausedAt/cancelledAt 三键
+      // 数据源）。**一次读**供整表消费（禁逐链读台账）；纯只读，不写台账、不登记任何号。
+      ledgerState <- rt.store.chainLedgerStore.snapshot
     yield
       val now = System.currentTimeMillis()
       // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
-      val combined = s.nodes ++ arch.nodes
+      // `combined` is evaluated in the for-comprehension above (two-zone map, shared by the
+      // three merge-derived batches).
       // chainmodel 批一 ①（判据同源收口）：旁挂判据由写死的「分量成员数 ≥2」改为判据单点
       // [[FlowMapStore.chainVisible]]（**声明链不论成员数都可见**、派生分量仍需 ≥2 成员
       // ——payload 零膨胀口径逐字保留），并保持既有「旁挂仅收含活动成员的链」约束。
@@ -1266,7 +1661,12 @@ object NodeTools:
           // NodeEngine.loopRouteTargetId 同源，🔴 禁前端/分发器复刻、禁第二处派生）。
           // 注入活动区快照 ⇒ 仅**拒绝态**的 verifier 带键（值 "lost"）；合法节点与
           // 全部 WS 事件写点（不注入）字段集字节级零漂移。
-          nodes = Some(s.nodes)
+          nodes = Some(s.nodes),
+          // Verdict-gate visibility slot (mergeverdictvis batch 2026-09-23): single point =
+          // NodeEngine.mergeVerdictGateBatch (pure read of the gate's own holder list) — 🔴
+          // no re-derivation, 🔴 no file ticket layer, 🔴 no event-stream replay. Only held
+          // positions carry the key; a normally queued position never does.
+          mergeVerdictGate = mergeVerdictGates.get(n.id)
         )
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
@@ -1279,7 +1679,16 @@ object NodeTools:
           "title" -> FlowMapStore.chainTitle(members, c.id).asJson,
           "entries" -> c.entries.asJson,
           "ends" -> c.ends.asJson,
-          "memberIds" -> c.memberIds.asJson
+          "memberIds" -> c.memberIds.asJson,
+          // chainview 批 2026-10-01：链控三态条件键（前端据此渲染暂停/取消态，
+          // 🔴 前端零派生）。判据**单点** = `ChainLedger.statusOf`（进入本轮
+          // 资格判定时的那一读；别名逐跳解析 ⇒ 改号后旧号照样报对态）。
+          // 键名 `status` **只加不改**：既有五键（id/title/entries/ends/memberIds）
+          // 的名称、类型、语义逐字不变 —— 已核 FlowMapChainSpec / NodeDepsSpec 均
+          // 为非穷举断言（读键不校全集）⇒ 向前兼容。
+          "status" -> ChainLedger.statusOf(ledgerState, c.id).asJson,
+          "pausedAt" -> ChainLedger.pausedAtOf(ledgerState, c.id).map(_.asJson).getOrElse(Json.Null),
+          "cancelledAt" -> ChainLedger.cancelledAtOf(ledgerState, c.id).map(_.asJson).getOrElse(Json.Null)
         )
       }
       val wtDir = os.Path(rt.project.workspace) / ".nebflow"

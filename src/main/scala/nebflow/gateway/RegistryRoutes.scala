@@ -81,16 +81,16 @@ private[gateway] object RegistryRoutes:
                   )
               val updatedModels = current.models + (key -> updatedEntry)
               nebflow.llm.ModelRegistry.save(updatedModels)
-              // B3 restore semantics: an explicit vision=true annotation is user
-              // intent and outranks runtime auto-demotion — clear the in-memory
-              // override (and counters) too, otherwise effectiveVision stays
-              // false until restart (stripImages blocks any image-bearing
-              // success, so resetOnSuccess can never lift it).
-              val clearRuntime =
-                if visionOpt.contains(true) then
-                  nebflow.llm.EmptyCompletionTracker.shared.clearOverride(providerId, modelId)
-                else IO.unit
-              clearRuntime *> Ok(Json.obj("status" -> "ok".asJson))
+              // visionfix (甲): the human annotation channel is deliberately KEPT —
+              // `vision` written here is user intent and is the only authority left
+              // on the capability face (O6 optimistic default applies only when the
+              // field is absent).
+              //
+              // The former `clearOverride` companion call is gone with the runtime
+              // heuristic: it existed solely to lift an in-memory auto-demotion
+              // override plus its empty-completion counters, and both are deleted,
+              // so there is no runtime state for an explicit annotation to outrank.
+              Ok(Json.obj("status" -> "ok".asJson))
             else BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
             end if
           }

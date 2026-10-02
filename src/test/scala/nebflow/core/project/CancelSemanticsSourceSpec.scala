@@ -11,6 +11,12 @@ import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, messages, sessionId, status}
 import nebflow.agent.*
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
@@ -258,9 +264,10 @@ class CancelSemanticsSourceSpec extends FunSuite:
     val marking = engineSrcWindow("private def detachCancelledUpstream", 60)
     println(s"[spec] C6 marking-face window (code-only) head:\n${marking.linesIterator.take(25).mkString("\n")}")
     // ① 打标面（本批改动点）：前向扫描跳过回边 —— 逐字形态判据（撤掉本过滤 ⇒ 本行必红）
-    // 2026-09-24:钉死文本更新为 scalafmt 重排后的两行形态(判据语义不变)。
+    // 2026-09-24:钉死文本更新为 scalafmt 重排后的两行形态(判据语义不变);
+    // 合并现场格式化把该窗口缩进整体 +2(16 → 18 空格),同款重钉(判据语义不变)。
     assert(
-      marking.contains("val forward = from.out\n                .filterNot(OutEdge.isLoopEdge)"),
+      marking.contains("val forward = from.out\n                  .filterNot(OutEdge.isLoopEdge)"),
       "the target set must exclude ':loop' back-edge targets on the forward scan (#675(a))"
     )
     // ② 取消族 取代面（chaincancel 批）原样在位——本批不动它

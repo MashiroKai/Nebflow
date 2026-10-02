@@ -3,7 +3,7 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { createIconsIn, markCopyFailed } from './utils.js';
+import { createIconsIn, markCopyFailed, escapeHtml } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
 import { getNeblinkState, onNeblinkStatus, presenceBadgeHTML, platformDisplay } from './neblink.js';
@@ -23,7 +23,7 @@ import * as api from './friendsApi.js';
 // 同一转发入口（主卡 D2：同一契约，ref.id/refType/type='ref' 逐字不变）。
 import {
   refreshGroups, groupsAvailable, groupTitleOf, buildGroupSettings, groupErrToast,
-  groupAvatarGrid,
+  groupAvatarGrid, repaintGroupMemberLabels,
 } from './friendGroups.js';
 import { makeReference, renderRefBlock } from './reference.js';
 import { appendRefToActiveView } from './input.js';
@@ -496,7 +496,23 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
   //   「不是好友」的判定可能已翻转（无证据 ⇒ 已装载且命中）。旧形态只在开窗 /
   //   `fm-friends-changed` / 重连三处重判 ⇒ 空快照下开窗的条**粘滞**到关窗重开为止
   //   （实测 C2b）。此处与 `fm-friends-changed` 分支同款、同函数（禁第二实现）。
-  if (friendsRefreshed && modalEls) applyBlockState(currentConv());
+  //
+  //   群面标签是同一类残留（groupremark-fix · 判词 D1）：气泡发送者名只在建气泡时取
+  //   一次值，成员抽屉行却每次现取 ⇒ 好友快照晚于群窗首帧到达时，气泡被钉死在显示名、
+  //   抽屉行却是备注（作者令「两渲染点必须一致」被破坏，实测粘滞到关窗重开）。修在
+  //   **取数出口**（本尾钩），不在各渲染点：与上面 `applyBlockState` 同址同族、清同一
+  //   类残留；两个函数都已存在且幂等全量重打 ⇒ 零新实现、零新状态、零新请求。
+  if (friendsRefreshed && modalEls) {
+    applyBlockState(currentConv());
+    const c = currentConv();
+    if (c && c.kind === 'group') {
+      paintGroupSenderNames(c);
+      // The member drawer is another render point this module does not own
+      // (same call site and same accessor as the `fm-remark-changed` leg).
+      const drawer = document.querySelector('.fm-group-settings');
+      if (drawer) repaintGroupMemberLabels(drawer);
+    }
+  }
 }
 
 // ── 会话列表：本地层首帧 + 内容签名闸（sessperf Phase B · 2026-09-20）──────
@@ -973,9 +989,16 @@ function convTitleLabel(conv) {
 }
 
 // ── 群气泡发送者名（腿B §5.2 #2 的群新增面）───────────────────────────
-// 名册来源 = GET /api/groups/{id}/members（主卡:249 接口清单；显示名而非好友
-// 备注，主卡 H 节口径）。开群窗时惰性取一次；首帧早于名册时先挂空槽（带
-// data-sender-id），名册到达后就地回填 —— 消息本体渲染不受名册成败影响。
+// 名册来源 = GET /api/groups/{id}/members（主卡:249 接口清单）。开群窗时惰性取一次；
+// 首帧早于名册时先挂空槽（带 data-sender-id），名册到达后就地回填 —— 消息本体渲染
+// 不受名册成败影响。
+//
+// 群面标签 = 「好友备注 > 成员显示名」（作者 2026-09-22 两裁 · 案 (a) 渲染层覆盖）：
+// 原口径「显示名而非好友备注」已由该裁定**作废**。备注是纯本地态、上游永不带该键
+// （`FriendSummary` 的 Decoder 有意不读），而群成员腿是零注入原文代理
+// （`RestApiRoutes.groupProxy`）⇒ 群面必须在客户端从既有好友快照解析备注
+// （`api.friendRemarkOf`，唯一取值点；注入形态取 A-2 = 前端查表，零后端改动）。
+// 名字仍是**渲染时现取**（wire 无名字快照）⇒ 历史消息与新消息同源、一并变备注。
 const groupMemberNames = new Map(); // conversationId -> Map(senderId -> displayName)
 // 窗头组合头像的**名册腿**（conversationId -> [{userId,name,avatarUrl}]）：来源 =
 // 与发送者名**同一次** `getGroupMembers`（零新增请求、零 N+1；方案 §3.2.5「群会话
@@ -983,10 +1006,30 @@ const groupMemberNames = new Map(); // conversationId -> Map(senderId -> display
 // 名册到达后就地升级。
 const groupMemberAvatars = new Map();
 
-/** 群发送者显示名（未命中 ⇒ ''，渲染层留空槽等待回填）。 */
+/** 群发送者显示标签（好友备注 > 成员显示名；未命中 ⇒ ''，渲染层留空槽等待回填）。
+ *
+ *  备注是**渲染时现取**（wire 无名字快照，`MessageSummary` 只带 `senderId`）：
+ *  每次渲染都向好友快照问一次 ⇒ 备注一改变，历史消息与新消息同源、一并生效。
+ *  非好友群成员 / 备注为空 / 好友快照未装载 ⇒ 回落名册显示名 —— 与作者
+ *  「非好友成员不允许起备注」裁定同构：自然收敛，且**零新增录入面**。 */
 function groupSenderNameOf(conv, senderId) {
+  const remark = api.friendRemarkOf(senderId);
+  if (remark) return remark;
   const map = groupMemberNames.get(String(conv && conv.conversationId));
   return (map && map.get(String(senderId))) || '';
+}
+
+/** 已渲染气泡的发送者名就地重打（**唯一**重打实现：名册晚到回填 + 备注变更重打
+ *  共用它，禁第二份遍历）。
+ *
+ *  幂等且**全量覆盖**：按当前备注/名册重算并回写，不做「只在空槽时写」的增量判据
+ *  ——增量写法会把旧文本钉死，备注变更就没有能覆盖旧值的路径（正是本批要修的面）。 */
+function paintGroupSenderNames(conv) {
+  if (!modalEls || !conv || conv.kind !== 'group') return;
+  if (String(openConvId) !== String(conv.conversationId)) return;
+  for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
+    s.textContent = groupSenderNameOf(conv, s.dataset.senderId);
+  }
 }
 
 /** 群成员名册的应用（**唯一**就地渲染实现：窗头组合头像 + 列表行 + 已渲染气泡
@@ -1007,13 +1050,9 @@ function applyGroupRoster(conv, cells) {
   // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
   // 零新 CSS，不动数据面/接口。
   rerenderConvRow(conv.conversationId);
-  // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
-  if (modalEls && openConvId === conv.conversationId) {
-    for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
-      const nm = map.get(s.dataset.senderId);
-      if (nm && !s.textContent) s.textContent = nm;
-    }
-  }
+  // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等；与备注变更重打
+  // 共用 `paintGroupSenderNames` 这一条遍历，禁第二份实现）。
+  paintGroupSenderNames(conv);
 }
 
 /** 群名册内容签名（卡 §4② 兜底判据的群面口径：成员 id 集合的有序拼接）。
@@ -4832,6 +4871,37 @@ async function wakeResync() {
 // ── Wiring ───────────────────────────────────────────────
 let initialized = false;
 
+// ── Device chat face wiring (device leg only — NOT gated by the friends seal) ──
+// friendseal batch (2026-09-25): the settings-page device expansion area opens
+// device chat windows while the friend panels stay detached (author ruling ①:
+// the device face moves back to the settings page; "Relay-only use is
+// shippable" — featureFlags.js). The three subscriptions below are the device
+// window's live half (arrival → window re-render, transfer display state,
+// presence badge refresh). They are pure DEVICE-face wiring: zero friend
+// polling, zero friend_event handler, zero REST call — arming them in the
+// sealed posture adds no live friend code. Idempotent: initMessages calls it
+// at its old spot, the settings entry arms it before opening a window; the
+// latch makes both orders a single registration (never two consumers).
+let deviceChatWired = false;
+export function ensureDeviceChatWiring() {
+  if (deviceChatWired) return;
+  deviceChatWired = true;
+  // ① 设备腿消息变更（`dropbox-message` / `dropbox-history` / 传输态 / 闸位提示）——
+  //    通知源 = dropbox.js 的 `afterDeviceMessageChange` 单点（不在本模块重挂 WS 帧
+  //    监听：否则新旧两窗各消费一次 ⇒ 两套时序判断）。
+  onDeviceMessageChange((deviceId) => { onDeviceMessageChanged(deviceId); });
+  // ①-b 设备腿**传输生命周期**（uxconsist Phase B · §3.3）：通知源 = dropbox.js 的
+  //     `onDeviceTransfer` 单点（入队 / 受理 / 块级进度 / 完成 / 失败 / 取消）。
+  //     本模块据此**登记显示态**（附件的动作面上屏）—— 只共享显示，传输链一行不碰：
+  //     设备腿的反馈面因此**与数据面选路解耦**（`onDeviceMessageChanged` 里
+  //     `sourceServer` 的早退只挡 legacy 数据面重渲，不再连带挡掉附件反馈）。
+  onDeviceTransfer((evt) => { onDeviceTransferEvent(evt); });
+  // ② 在线态推送（O10）：唯一推送源 = `/api/neblink/status` 落地拍（WS `peerListChanged`
+  //    已在其上游汇流）⇒ 开着的设备窗副行徽章就地刷新。联系人面板设备段由 contacts.js
+  //    自行订阅同一源（禁第二份轮询）。
+  onNeblinkStatus(() => { refreshOpenDevicePresence(); });
+}
+
 export function initMessages() {
   if (initialized) return;
   initialized = true;
@@ -4858,16 +4928,30 @@ export function initMessages() {
     if (modalEls) updateTrustBadge(currentConv());
   });
   // ⑦ 备注改动（contacts 行内编辑提交 / 清除）——会话列表行与开着的聊天窗头
-  // 标题面同步（三处显示优先级「备注 > 显示名」；server 端 remark 落到
+  // 标题面同步（显示优先级「备注 > 显示名」；server 端 remark 落到
   // conversations 的 friend 档案是下一次 refresh 的事，本地先就地更新）。
+  // 群面同一信号（作者 2026-09-22 裁 · 案 (a)）：群气泡发送者名与成员抽屉行都读
+  // 备注 ⇒ 改完备注当场重打（不等下一次 refresh）。备注是**渲染时现取**，
+  // 重打同时覆盖历史消息（作者裁 1「历史一并变」的落地）。
   window.addEventListener('fm-remark-changed', (e) => {
     const d = /** @type {CustomEvent<{userId?: string, remark?: string|null}>} */ (e).detail || {};
     if (!d.userId) return;
     const remark = d.remark || null;
     for (const c of conversations) if (c.friend && c.friend.userId === d.userId) c.friend.remark = remark;
     for (const f of friendsCache) if (f.userId === d.userId) f.remark = remark;
+    // 好友快照（群面备注的唯一来源）同拍覆盖：它由整次 getFriends 替换，本地编辑
+    // 不会回写，漏这一步群面读到的是改前值（陈旧显示）。
+    api.applyLocalFriendRemark(d.userId, remark);
     renderList();
     updateModalTitle(modalEls ? currentConv() : null);
+    const cur = modalEls ? currentConv() : null;
+    if (cur && cur.kind === 'group') {
+      paintGroupSenderNames(cur);
+      // 成员抽屉行是**另一处**渲染点（本模块不持有它的 DOM）：交属主就地重打，
+      // 免造第二份写 `.fm-member-name` 的实现（两处必须是同一判据）。
+      const drawer = document.querySelector('.fm-group-settings');
+      if (drawer) repaintGroupMemberLabels(drawer);
+    }
   });
   // 时制偏好变更 → 会话列表行时间（`.fm-conv-time`）就地重渲染随之刷新。列表行
   // 本身已是 role=option 按钮，**不挂**热区（嵌套可交互元素 = 点击语义冲突）；
@@ -4917,20 +5001,11 @@ export function initMessages() {
   }
 
   // ── 设备面（MVP-1）：数据面订阅 ────────────────────────────────────────
-  // ① 设备腿消息变更（`dropbox-message` / `dropbox-history` / 传输态 / 闸位提示）——
-  //    通知源 = dropbox.js 的 `afterDeviceMessageChange` 单点（不在本模块重挂 WS 帧
-  //    监听：否则新旧两窗各消费一次 ⇒ 两套时序判断）。
-  onDeviceMessageChange((deviceId) => { onDeviceMessageChanged(deviceId); });
-  // ①-b 设备腿**传输生命周期**（uxconsist Phase B · §3.3）：通知源 = dropbox.js 的
-  //     `onDeviceTransfer` 单点（入队 / 受理 / 块级进度 / 完成 / 失败 / 取消）。
-  //     本模块据此**登记显示态**（附件的动作面上屏）—— 只共享显示，传输链一行不碰：
-  //     设备腿的反馈面因此**与数据面选路解耦**（`onDeviceMessageChanged` 里
-  //     `sourceServer` 的早退只挡 legacy 数据面重渲，不再连带挡掉附件反馈）。
-  onDeviceTransfer((evt) => { onDeviceTransferEvent(evt); });
-  // ② 在线态推送（O10）：唯一推送源 = `/api/neblink/status` 落地拍（WS `peerListChanged`
-  //    已在其上游汇流）⇒ 开着的设备窗副行徽章就地刷新。联系人面板设备段由 contacts.js
-  //    自行订阅同一源（禁第二份轮询）。
-  onNeblinkStatus(() => { refreshOpenDevicePresence(); });
+  // friendseal (2026-09-25): the three device-face subscriptions moved verbatim
+  // into ensureDeviceChatWiring() (see above) — one idempotent latch — so the
+  // settings-page device entry can arm the device chat WITHOUT flipping any
+  // friend-face wiring (initMessages' polling/handlers stay sealed out).
+  ensureDeviceChatWiring();
 
   renderList();
   if (loggedIn()) refreshConversations();
@@ -5086,6 +5161,108 @@ export function devicePeers() {
   const rel = getNeblinkState();
   if (!rel || !rel.loggedIn) return [];
   return dedupeDevices(rel.peers);
+}
+
+// ── Settings-page device expansion area (friendseal batch ①-A, 2026-09-25) ──
+// The device face's way back to the settings page (author ruling ①: the
+// expansion area under the settings avatar; the 2026-09-15 order that had
+// moved the device entry to the contacts panel is archived by the same
+// ruling). Form = reuse the contacts host's device block classes verbatim
+// (`.fm-nf-entry` entry row + `.neblink-peer` rows; friends.css /
+// neblink.css load unconditionally — zero new CSS, zero new view), with ONE
+// implementation: this module owns devicePeers / deviceLabel / openDeviceChat
+// and renders from them; contacts.js keeps its own host copy untouched
+// (zero diff — with the friends seal as the default that host simply never
+// renders). Rows carry NO remote-update entry (the settings area is the chat
+// entry face: click a row → openDeviceChat; the hotupdate entry stays owned
+// by the contacts host). sidebar.js mounts the slot via a lazy import (no new
+// static cycle) and the settings refresh tick re-mounts it, so peer/presence
+// changes keep the area current while settings is open.
+let settingsDevicesExpanded = true; // one click into a chat is the point (ruling ①)
+let settingsDevicesBound = false;
+
+/** The area's HTML ('' when logged out — the neblink logged-out hint above
+ *  owns that face). Dataset attributes are the QA assertion face (same
+ *  contract family as the contacts device block). */
+export function settingsDevicesHTML() {
+  if (!getNeblinkState().loggedIn) return '';
+  const devs = devicePeers();
+  const chevron = settingsDevicesExpanded ? 'chevron-down' : 'chevron-right';
+  const entry =
+    `<div class="fm-nf-entry fm-devices-entry" data-settings-devices-entry="1" role="button" tabindex="0"` +
+    ` aria-expanded="${settingsDevicesExpanded}">` +
+    `<span class="fm-nf-icon"><i data-lucide="laptop"></i></span>` +
+    `<span class="fm-nf-label">${escapeHtml(t('contacts.sectionDevices'))}</span>` +
+    `<span class="fm-nf-chevron"><i data-lucide="${chevron}"></i></span>` +
+    `</div>`;
+  let rows = '';
+  if (settingsDevicesExpanded) {
+    const list = devs.length === 0
+      ? `<div class="fm-empty">${escapeHtml(t('contacts.devicesEmpty'))}</div>`
+      : devs.map(settingsDeviceRowHTML).join('');
+    rows = `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
+  }
+  return entry + rows;
+}
+
+function settingsDeviceRowHTML(d) {
+  const icon = platformDisplay(d.platform).icon;
+  const statusText = escapeHtml(platformDisplay(d.platform).text || '');
+  const cls = 'neblink-peer fm-device-row' + (d.online === true ? '' : ' neblink-peer-offline');
+  return `<div class="${cls}" role="button" tabindex="0" data-settings-device-row="1" data-device-id="${escapeHtml(String(d.deviceId || ''))}">` +
+    `<span class="neblink-peer-icon">${icon}</span>` +
+    `<span class="neblink-peer-name">${escapeHtml(deviceLabel(d))}</span>` +
+    presenceBadgeHTML({ ...d, isLocal: false }) +
+    `<span class="neblink-peer-status">${statusText}</span>` +
+    `</div>`;
+}
+
+/** Mount (idempotent) the settings device area into the sidebar slot. */
+export function mountSettingsDevices(slot) {
+  if (!slot) return;
+  bindSettingsDevicesOnce();
+  slot.innerHTML = settingsDevicesHTML();
+  createIconsIn(slot);
+}
+
+function bindSettingsDevicesOnce() {
+  if (settingsDevicesBound) return;
+  settingsDevicesBound = true;
+  // Document-level delegation (the bindSettingsAccountEntry precedent in
+  // activityBar.js): the settings refresh tick replaces this area's DOM on
+  // every beat, so binding per-mount would stack listeners; one delegated
+  // pair follows re-renders for free.
+  document.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    const row = target.closest('[data-settings-device-row]');
+    if (row instanceof HTMLElement) {
+      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
+      // `dataset` — narrow to HTMLElement. Runtime-equivalent: the selector
+      // only ever matches this HTML row div.
+      const d = devicePeers().find((p) => String(p.deviceId || '') === row.dataset.deviceId);
+      if (!d) return;
+      ensureDeviceChatWiring();
+      openDeviceChat(d);
+      return;
+    }
+    if (target.closest('[data-settings-devices-entry]')) {
+      settingsDevicesExpanded = !settingsDevicesExpanded;
+      mountSettingsDevices(document.getElementById('settings-devices-slot'));
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    if (target.closest('[data-settings-device-row]') || target.closest('[data-settings-devices-entry]')) {
+      e.preventDefault();
+      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
+      // `click()` — type assertion only; the code already assumed HTMLElement
+      // (SVG targets have no .click() at runtime either).
+      /** @type {HTMLElement} */ (target).click();
+    }
+  });
 }
 
 /** 本机设备 id（MVP-2 方向重算 P2 的**比对基准**）。

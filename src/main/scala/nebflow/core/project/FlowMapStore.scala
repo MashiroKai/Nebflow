@@ -5,6 +5,7 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
+import nebflow.core.tools.NodeTools
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
@@ -465,7 +466,12 @@ class FlowMapStore private (
         nodeId = c.memberIds.headOption.getOrElse(""),
         nodeIds = members.map(_.id),
         members = c.memberIds.size,
-        archivedAt = now
+        archivedAt = now,
+        // Archive outcome is unchanged (release): this only carries the conclusion out
+        // of the class (caller-side re-derivation is the twin derivation banned above).
+        // The judgement reads the union view — the same `s.nodes ++ a.nodes` the
+        // components were derived from — so an archived referrer still counts.
+        unconsumedVerdicts = FlowMapStore.unconsumedVerdictsOf(members, s.nodes ++ a.nodes)
       )
     }
 
@@ -1107,6 +1113,55 @@ object FlowMapStore:
   /** per-node 结果文件目录名（相对 workspace/.nebflow/）。 */
   val ResultsDirName: String = "results"
 
+  /** descriptionLong spill-file name prefix (`descriptionLong-<nodeId>.md`) — same dir as results. */
+  val DescriptionLongPrefix: String = "descriptionLong-"
+
+  /**
+   * SINGLE POINT for the descriptionLong spill-file path (desc300 batch 2026-09-30):
+   * `<workspace>/.nebflow/results/descriptionLong-<nodeId>.md`. It sits in the same
+   * directory as the result/task full-text files ([[ResultsDirName]]), so it lives under
+   * `.nebflow/` (git-ignored) and travels with the project workspace.
+   *
+   * Resolved against the PROJECT WORKSPACE ROOT, not the node cwd / the worktree's own
+   * `.nebflow`: consumers read result files off the workspace, so a file landed inside a
+   * node worktree would be unreachable by path.
+   *
+   * Lifecycle = bound to the node, zero accumulation: one file per node (rewrite
+   * overwrites the same path) + deleted when the node is abandoned or cancelled
+   * ([[deleteDescriptionLongSpill]]).
+   */
+  def descriptionLongSpillPath(workspace: String, nodeId: String): os.Path =
+    os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / ResultsDirName / s"$DescriptionLongPrefix$nodeId.md"
+
+  /**
+   * Write the full descriptionLong text to disk (called by the caller ONLY when truncation
+   * happened; an untruncated value produces no file). Overwrite, never append (one file per
+   * node); UTF-8. Returns the absolute path so the caller can hand it back in the ack.
+   * Best-effort contract: failures come back as `Left(errorText)`, never thrown through.
+   */
+  def writeDescriptionLongSpill(workspace: String, nodeId: String, full: String): Either[String, String] =
+    try
+      val p = descriptionLongSpillPath(workspace, nodeId)
+      os.makeDir.all(p / os.up)
+      os.write.over(p, full)
+      Right(p.toString)
+    catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+
+  /**
+   * Delete the descriptionLong spill file (lifecycle close-out, best-effort): called when a
+   * node is abandoned or cancelled. A missing file is the normal case (no truncation ever
+   * happened) => `Right(false)`. A failure must NOT fail the caller (abandon/cancel); the
+   * caller only records the reading.
+   */
+  def deleteDescriptionLongSpill(workspace: String, nodeId: String): Either[String, Boolean] =
+    try
+      val p = descriptionLongSpillPath(workspace, nodeId)
+      if os.exists(p) then
+        os.remove(p)
+        Right(true)
+      else Right(false)
+    catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+
   /**
    * **链解析载体（R2，chaincancel 批 2026-09-17）**：[[FlowMapStore.chainMembersOf]] 的
    * 返回值——`info` = 分量派生（id/entries/ends/memberIds/edges）、`members` =
@@ -1169,8 +1224,63 @@ object FlowMapStore:
     nodeId: String,
     nodeIds: List[String],
     members: Int,
-    archivedAt: Long
+    archivedAt: Long,
+    /**
+     * Unconsumed pass verdicts carried by this chain (verdict-consumer batch 2026-10-01 ·
+     * case A (b), design card §3.1 V-0): the verifier ids in the component whose verdict
+     * is written and whose positive verdict has neither an outlet nor a consumer.
+     * Derived **inside this class** (see [[FlowMapStore.unconsumedVerdictsOf]]) — the
+     * caller only carries the conclusion outward; a caller-side re-derivation would be
+     * the twin derivation this file forbids. Default `Nil` keeps the existing shape for
+     * every construction site outside the sweep.
+     */
+    unconsumedVerdicts: List[String] = Nil
   )
+
+  /**
+   * **Unconsumed-verdict derivation single point** (verdict-consumer batch 2026-10-01 ·
+   * design card §3.1, verbatim V-0):
+   *
+   * ```
+   * V-0(v) ≜ role(v) = verifier
+   *        ∧ lastVerdict(v) written
+   *        ∧ ¬passOutlet(v)
+   *        ∧ ¬ inConsumer(v)
+   * ```
+   *
+   * Why V-0 (and not `V-0prime`) belongs to the ARCHIVE face: at archive time both the
+   * `in`/`deps` references and the declared edge set are settled facts. A verifier that
+   * has a referrer already sits in the verdict gate's upstream set
+   * (`mergeVerdictHoldersOf`), so its verdict has a structural destination even when the
+   * edge-less fallback bypasses that gate — counting it would hit the 15 legitimate
+   * landing-position shapes on record. Dropping the `¬inConsumer` clause is therefore
+   * **not** an oversight; the card's asymmetry ruling is deliberate ((a) uses the
+   * `V-0prime` form, (b) uses this one).
+   *
+   * Both halves come from one place: `NodeTools.passOutlet` / `NodeTools.inConsumerOf`
+   * are the shared predicates (a single point — deriving a second copy per consumer is
+   * exactly the twin derivation banned at `NodeGating.scala:302-306`).
+   *
+   * @param members the component's active members (the same list the archive eligibility
+   *                judgement consumed) — never a re-derived component.
+   * @param nodes   the resolution face (union of the active and archived maps, i.e. the
+   *                same view the sweep derived its components from; the referrer scan
+   *                must see archived referrers too, otherwise a chain whose sink already
+   *                went out would be misjudged as consumer-less).
+   */
+  private def unconsumedVerdictsOf(members: Iterable[NodeDef], nodes: Map[String, NodeDef]): List[String] =
+    val referrers = NodeTools.inConsumersOf(nodes)
+    members
+      .filter { v =>
+        NodeRoles.normalize(v.role) == NodeRoles.Verifier &&
+        v.lastVerdict.exists(_.trim.nonEmpty) &&
+        !NodeTools.passOutlet(v, nodes) &&
+        !referrers.contains(v.id)
+      }
+      .map(_.id)
+      .toList
+      .distinct
+      .sorted
 
   /** ── 链级摘要载体与常量（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13）──────────── */
 
@@ -1591,8 +1701,24 @@ object FlowMapStore:
    *                         **不存在**）——调用方**必须**当「不可满足」处理（`depsSatisfied`
    *                         = false + 停等原因点名 + 写路径 fail-closed），🔴 **禁**静默
    *                         no-op（当成「零成员即满足」）与静默失败（无痕停等）。
+   * @param deadChainRefs    链号**可解析**但成员集**构造性不可满足**（第三态 / 死链；判据 D
+   *                         见 [[resolveDepTargets]]）：链号 → 该链**已不可挽回**的成员 id 集
+   *                         （`status == cancelled`）。与 `unknownChainRefs` **互补分桶**
+   *                         （「链号不存在」vs「链号存在 ∧ 永不结算」），二者互斥且穷尽。
+   *                         🔴 **带默认值** ⇒ 位置构造向后兼容（既有调用点零改动；`ids` /
+   *                         `unknownChainRefs` 语义逐字不变）。
+   * @param riskyChainRefs   **RISKY 档**（第二档，**非**死链）：链号 → 该链里 `status == failed`
+   *                         的成员 id 集。`failed` **可重激活** ⇒ **非**「永不」⇒ 🔴 **禁**据此
+   *                         硬拒（那会封死自愈路）；本桶只驱动「**放行 + WARN**」的可见面
+   *                         （`depsSatisfied` 去重告警 / 写回执 ⚠ 行）。与 `deadChainRefs` 同源
+   *                         （**同一趟**成员派生，零第二次解析）、同族（`...ChainRefs` 后缀）。
    */
-  final case class DepTargets(ids: List[String], unknownChainRefs: List[String])
+  final case class DepTargets(
+    ids: List[String],
+    unknownChainRefs: List[String],
+    deadChainRefs: Map[String, Set[String]] = Map.empty,
+    riskyChainRefs: Map[String, Set[String]] = Map.empty
+  )
 
   /**
    * **deps 引用解析单点**（③；与成员派生同源）：把 `deps` 声明解析成「本闸要等哪些节点」。
@@ -1604,6 +1730,16 @@ object FlowMapStore:
    *
    * 🔴 本方法是全仓唯一的「`chain:` 引用 → 成员集」解析点；**禁**第二个解析器（先例：
    * `DocIndexConsumer` 头注「同一条链在派生两次必然漂移」）。
+   *
+   * **第三桶 `deadChainRefs`（判据 D · 死链）**：链号**可解析** ∧ ∃ 成员 `status == cancelled`
+   * ⇒ 「构造性不可满足」——`depsSatisfied` 要求全体成员 `completed`，而 `cancelled` 是**不可
+   * 重激活**的终态（与 `failed` 不同域：重激活闸只放行 blocked/failed）且节点**无删除路径**
+   * ⇒ 该闸**永不结算**。判据**只看** `status == cancelled`：🔴 **禁**以 `archived` /
+   * `compacted` / `archivedAt` / ledger 任何键作判据（实测证伪：`archived` 既非充分亦非必要）。
+   * `failed` 成员**不构成**死链（可重激活 ⇒ 非「永不」）。
+   *
+   * `ids ++= c.memberIds` 在本桶命中也**照旧执行** ⇒ `.ids` 语义逐字不变（其余只取 `.ids`
+   * 的调用点零行为变化）。
    */
   def resolveDepTargets(deps: List[String], all: Map[String, NodeDef]): DepTargets =
     if !deps.exists(isChainRef) then DepTargets(deps, Nil)
@@ -1611,6 +1747,8 @@ object FlowMapStore:
       val byId = topologicalChains(all.values).map(c => c.id -> c).toMap
       val ids = scala.collection.mutable.ListBuffer.empty[String]
       val unknown = scala.collection.mutable.ListBuffer.empty[String]
+      val dead = scala.collection.mutable.LinkedHashMap.empty[String, Set[String]]
+      val risky = scala.collection.mutable.LinkedHashMap.empty[String, Set[String]]
       deps.foreach { d =>
         if !isChainRef(d) then ids += d
         else
@@ -1618,10 +1756,28 @@ object FlowMapStore:
           if target.isEmpty then unknown += d
           else
             byId.get(target) match
-              case Some(c) => ids ++= c.memberIds
+              case Some(c) =>
+                ids ++= c.memberIds
+                // 判据 D：成员集含不可挽回成员（cancelled）⇒ 记「链号 → 该成员 id 集」。
+                // 判据源 = 同一 byId 派生（零第二次成员集解析），与 ids 同源。
+                val deadMembers = c.memberIds
+                  .flatMap(id => all.get(id))
+                  .filter(_.status == NodeLifecycle.Cancelled)
+                  .map(_.id)
+                  .toSet
+                if deadMembers.nonEmpty then dead.update(target, dead.getOrElse(target, Set.empty) ++ deadMembers)
+                // RISKY 档（同趟派生，不另起解析）：failed 成员**可重激活** ⇒ 非死链，
+                // 只驱动「放行 + WARN」的可见面。
+                val riskyMembers = c.memberIds
+                  .flatMap(id => all.get(id))
+                  .filter(_.status == NodeLifecycle.Failed)
+                  .map(_.id)
+                  .toSet
+                if riskyMembers.nonEmpty then risky.update(target, risky.getOrElse(target, Set.empty) ++ riskyMembers)
               case None => unknown += target
+          end if
       }
-      DepTargets(ids.toList.distinct, unknown.toList.distinct)
+      DepTargets(ids.toList.distinct, unknown.toList.distinct, dead.toMap, risky.toMap)
 
   /**
    * 链条目是否**下发**（载荷 `chains[]` 旁挂与节点级 `chainId` 条件键的同一判据）：

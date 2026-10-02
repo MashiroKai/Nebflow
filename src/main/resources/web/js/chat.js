@@ -7,7 +7,7 @@ import { key } from './branding.js';
 // / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
 import { formatHm, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
@@ -17,6 +17,10 @@ import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine
 // 复用既存的同族 helper（flowHelpers.authHeaders，全仓 6 处同族实例），**不新造**令牌读取
 // 机制。依赖方向安全：flowHelpers.js 只 import './branding.js'，无环。
 import { authHeaders } from './flowHelpers.js';
+// Conditional-display widget (modelcfg Phase 1 ruling ②-A): showOptions'
+// shouldShow/updateVisibility DOM mechanics live in depVisibility.js now, shared
+// with the /model panel. The visibility predicate and the answer-reset stay here.
+import { createDepVisibility } from './depVisibility.js';
 
 // chat.js 拆分(FE组件化批次三 2026-09-27):时长徽章/pop-artifact/ask·skill 气泡(纯渲染)/折叠助手/注入行
 // 五簇实现迁至 ./chat/*.js。以下显式转发保持公共导出面不缩水(全部符号仍可自 ./chat.js 取得,
@@ -323,7 +327,10 @@ export function renderUserBubble(text, attachments, timestamp) {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user';
     const t = document.createElement('div');
-    t.textContent = text;
+    // Plain-text face with mention spans (mention-render batch): identical
+    // single-text-node output when nothing matches — user text never
+    // enters markdown.
+    appendTextWithMentions(t, text);
     bubble.appendChild(t);
     row.appendChild(bubble);
   }
@@ -1613,6 +1620,10 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const questionWrappers = [];
 
   // --- Conditional branching helpers ---
+  // The DOM mechanics (display toggle, reveal animation, hide-reset hooking)
+  // live in depVisibility.js (shared with the /model panel). This side keeps
+  // only what is AskUser-specific: the predicate (a question is visible when
+  // its dependsOn matches the referenced answer) and the answer reset.
   function shouldShow(qi) {
     const item = questions[qi];
     if (!item.dependsOn) return true;
@@ -1624,26 +1635,21 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     return Array.isArray(a) ? a.includes(dep.equals) : a === dep.equals;
   }
 
-  function updateVisibility() {
-    questionWrappers.forEach((wrapper, qi) => {
-      const visible = shouldShow(qi);
-      const wasHidden = wrapper.style.display === 'none';
-      wrapper.style.display = visible ? '' : 'none';
-      // A-2 (onboarding spec §7): dependsOn reveal animates in; hide is
-      // instant. The initial updateVisibility() runs before the box enters
-      // the DOM, so the reveal class cannot fire on first render.
-      if (visible && wasHidden) {
-        wrapper.classList.remove('ob-q-reveal');
-        void wrapper.offsetWidth; // reflow to restart the animation
-        wrapper.classList.add('ob-q-reveal');
-      }
-      if (!visible && answers[qi] !== null) {
+  const visibility = createDepVisibility({
+    isVisible: (qi) => shouldShow(qi),
+    onHide: (qi, wrapper) => {
+      // A-2 (onboarding spec §7): hiding a question resets its answer so a
+      // stale pick can never ride along on submit.
+      if (answers[qi] !== null) {
         answers[qi] = null;
         wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
-        const input = wrapper.querySelector('.option-custom-input');
+        const input = /** @type {HTMLTextAreaElement|null} */ (wrapper.querySelector('.option-custom-input'));
         if (input) input.value = '';
       }
-    });
+    },
+  });
+  function updateVisibility() {
+    visibility.update();
   }
 
   // --- Multi-select: recompute answers[qi] from the DOM picked state ---
@@ -1668,6 +1674,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const wrapper = document.createElement('div');
     wrapper.className = 'option-q-wrapper';
     questionWrappers.push(wrapper);
+    visibility.register(wrapper);
 
     const q = document.createElement('div');
     q.className = 'option-q';

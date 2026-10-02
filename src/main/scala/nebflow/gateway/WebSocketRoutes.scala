@@ -170,7 +170,7 @@ class WebSocketRoutes(
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
       // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
       // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
-      // 非 root spawn（NodeRunner / EphemeralAgentRunner / MemoryTrack / MailTool /
+      // 非 root spawn（NodeRunner / EphemeralAgentRunner / MailTool /
       // FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
       // ⇒ 走 CompactThreshold 现值函数（口径②）。
       //
@@ -746,35 +746,62 @@ class WebSocketRoutes(
    * into a session's agent. Reuses the same logic as WebSocket user messages:
    * rate limiting, UiMessage recording, agent routing.
    */
-  def handleBridgeMessage(sessionId: String, content: String, senderId: Option[String] = None): IO[Unit] =
+  def handleBridgeMessage(
+    sessionId: String,
+    content: String,
+    senderId: Option[String] = None,
+    origin: Option[nebflow.bridge.BridgeOrigin] = None
+  ): IO[Unit] =
     if content.isEmpty || sessionId.isEmpty then IO.unit
     else
       rateLimiter.check("bridge").flatMap { allowed =>
         if !allowed then logger.warn("Bridge rate limit exceeded")
         else
+          // Source marker relocation (source-marker batch, 2026-10-01): this is
+          // the ONE bridge→session injection point, so it is also the one place
+          // that splits an inbound message into the faces it is allowed to appear
+          // on. 🔴 THE MARKER IS MODEL-FACE ONLY: it reaches the agent's context
+          // (`ExternalEvent.payload`) and is structurally absent from the session
+          // display face (the recorded `.ui.json` row and the `bridgeUser`
+          // broadcast both take `faces.sessionDisplay`, which is the bare content
+          // by construction). The template still lives channel-agnostically on
+          // [[nebflow.bridge.BridgeOrigin]]; `origin = None` (the default, and
+          // every pre-existing caller) leaves every face byte-identical to the
+          // pre-batch behaviour.
+          val faces = nebflow.bridge.BridgeOrigin.faces(origin, senderId, content)
           val source = senderId.map(id => s"[via bridge:$id]").getOrElse("[via bridge]")
-          logger.info(s"Bridge message for session $sessionId: ${content.take(60)}... $source") *>
-            // Record as UiMessage
+          // The log line is diagnostic, not a display face: it may quote the
+          // labelled model payload. The log file is never rendered as a chat
+          // stream and never read back as a `UiMessage`.
+          logger.info(s"Bridge message for session $sessionId: ${faces.modelPayload.take(60)}... $source") *>
+            // Record as UiMessage — DISPLAY face: bare content, no marker.
             sharedResources.sessionStore
-              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis())))
+              .appendUiMessages(
+                sessionId,
+                List(UiMessage.User(faces.sessionDisplay, Nil, timestamp = System.currentTimeMillis()))
+              )
               .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
             // Push to frontend in real-time so it shows without switching sessions
+            // — DISPLAY face: bare content, no marker.
             wsHub.broadcast(
               io.circe.Json.obj(
                 "type" -> "bridgeUser".asJson,
                 "sessionId" -> sessionId.asJson,
-                "text" -> content.asJson
+                "text" -> faces.sessionDisplay.asJson
               )
             ) *>
             // Use ExternalEvent instead of UserInput so the message is queued in
             // pendingEvents and can be injected at the next ToolsComplete gap —
             // avoids being stashed until the entire turn finishes.
+            // MODEL face: the payload KEEPS the marker block (the model must stay
+            // able to tell a bridged message from a local one); the structured
+            // origin rides along in `metadata` for later consumers.
             ensureAgent(sessionId)(ref =>
               ref ! AgentCommand.ExternalEvent(
                 source = "bridge",
                 eventType = "user-message",
-                payload = content,
-                metadata = io.circe.JsonObject("senderId" -> senderId.asJson),
+                payload = faces.modelPayload,
+                metadata = faces.metadata,
                 correlationId = None
               )
             )
@@ -1307,6 +1334,15 @@ class WebSocketRoutes(
     Json.obj(fields.toList*)
   end wsBrowseEvent
 
+  /**
+   * picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+   * `browsePath` frame builders. Body lives in the companion object (pure core,
+   * spec-callable — `deletePathsSafely` precedent), these are the seam the
+   * handler uses.
+   */
+  private[gateway] def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
+
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   /**
@@ -1626,12 +1662,17 @@ class WebSocketRoutes(
       sendMemoryStatusImpl = sendMemoryStatus,
       expandTildeImpl = expandTilde,
       wsBrowseEventImpl = wsBrowseEvent,
+      browseResultFrameImpl = WebSocketRoutes.browseFrame,
+      browseErrorFrameImpl = WebSocketRoutes.browseErrorFrame,
+      browseEntryCapImpl = WebSocketRoutes.BrowseEntryCap,
       resolveExplorerBaseRootImpl = resolveExplorerBaseRoot,
       admitWorkOrRefuseImpl = admitWorkOrRefuse,
       handleUserTextImpl = handleUserText,
       skipCurrentFreezeWindowImpl = () => skipCurrentFreezeWindow,
       executeAskImpl = executeAsk,
-      executeSkillImpl = executeSkill
+      executeSkillImpl = executeSkill,
+      resolveRootSessionIdImpl = resolveRootSessionId,
+      projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json)
     )
   end wsDispatchContext
 
@@ -2527,7 +2568,12 @@ object WebSocketRoutes:
    * Standalone (zero class deps) so the contract is directly unit-testable
    * (ActiveAgentsEntrySpec).
    */
-  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None): Json =
+  def activeAgentEntryJson(
+    rec: AgentRecord,
+    meta: Option[SessionMeta],
+    retryCount: Option[Int] = None,
+    taskTitle: Option[String] = None // taskbadge batch (main-side): title resolved by the caller via the ledger
+  ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -2552,6 +2598,77 @@ object WebSocketRoutes:
       // 数据源。仅 Project 域会话（node- 与 dispatcher- 前缀，注册时写
       // AgentRecord.project）有值；其余空串（前端 falsy → 不渲染徽标）。实时路径
       // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
-      "project" -> rec.project.getOrElse("").asJson
+      "project" -> rec.project.getOrElse("").asJson,
+      // taskbadge batch 2026-09-27: sub-agents panel task attribution on the
+      // snapshot face; taskId = the registration-time snapshot (dispatcher slot /
+      // NodeDef), taskTitle = resolved by the caller via the unified ledger.
+      // Empty string = no badge rendered (falsy contract, same as `project`).
+      "taskId" -> rec.taskId.getOrElse("").asJson,
+      "taskTitle" -> taskTitle.getOrElse("").asJson
+    )
+
+  // ============================================================
+  // picker-trunc batch (main-side 2026-09-22): the browsePath frame
+  // builders — pure core, owned by this object so `PickerBrowseFrameSpec`
+  // can call them directly. The WS `browsePath` command wiring (the call
+  // site that emits these frames) lives in WsFileOpsHandlers.handleBrowsePath,
+  // which reaches them through the class-level seams (browseResultFrame /
+  // browseErrorFrame / BrowseEntryCap).
+  // ============================================================
+
+  /**
+   * How many entries a `browsePath` frame carries before `truncated` turns on —
+   * the ONE ruler for that leg (was a literal `take(200)`).
+   */
+  private[gateway] val BrowseEntryCap: Int = 2000
+
+  /**
+   * picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+   * `browsePath` success frame. Pure core: the spec calls it directly.
+   *
+   * A. **No silent truncation**: `total` is the full FILTERED entry count and
+   *    `truncated` says whether the cap cut it.
+   * B. `query` filters SERVER-side (case-insensitive substring on the entry
+   *    name) BEFORE the cap; `query` is echoed back so the frontend can
+   *    discard a frame that answers a stale filter string.
+   */
+  private[gateway] def browseFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    val q = query.trim.toLowerCase
+    // ONE listing pass: lexical order (pre-existing), then filter, then cap.
+    val all = os
+      .list(dir)
+      .filter(os.isDir)
+      .map(_.last)
+      .toList
+      .sorted
+    val matched = if q.isEmpty then all else all.filter(_.toLowerCase.contains(q))
+    val shown = matched.take(cap)
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> shown
+        .map(n => Json.obj("name" -> n.asJson, "path" -> (dir / n).toString.asJson))
+        .asJson,
+      "total" -> matched.size.asJson,
+      "truncated" -> (matched.size > shown.size).asJson,
+      "query" -> query.asJson
+    )
+
+  end browseFrame
+
+  /**
+   * The `browsePath` failure frame (C): same shape, empty `entries`, plus a
+   * typed `errorKind` (`invalid-path` / `not-a-directory` / `unreadable`).
+   */
+  private[gateway] def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> Json.arr(),
+      "total" -> 0.asJson,
+      "truncated" -> false.asJson,
+      "query" -> query.asJson,
+      "errorKind" -> kind.asJson,
+      "error" -> msg.asJson
     )
 end WebSocketRoutes

@@ -93,60 +93,79 @@ Usage:
     else if Files.exists(filePath) && Files.isDirectory(filePath) then
       IO.pure(Left(ToolError(s"Path is a directory, not a file: $filePath")))
     else
-      val isNew = !Files.exists(filePath)
-
-      // Snapshot existing file before overwriting (with agent identity)
-      val snapshot = if !isNew then ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress)) else IO.unit
-
-      val writeIO = snapshot *> IO.blocking {
-        try
-          val dir = filePath.getParent
-          if dir != null then Files.createDirectories(dir)
-
-          if isNew then
-            DiffUtil.writeFile(filePath, content, "\n")
-            Right(DiffUtil.renderCreatedResult(filePath, content))
-          else
-            val original = DiffUtil.readFile(filePath)
-            val lineSep = DiffUtil.detectLineSep(original)
-            val mtime = Files.getLastModifiedTime(filePath)
-
-            // Compute the diff/stats before re-checking mtime so any work
-            // between read and write is bracketed by the mtime guard.
-            val hunks = DiffUtil.makeUnifiedDiff(original, content)
-            val editResult = EditResult(
-              filePath = filePath.toString,
-              addedLines = hunks.map(_.lines.count(_.startsWith("+"))).sum,
-              removedLines = hunks.map(_.lines.count(_.startsWith("-"))).sum,
-              hunks = hunks,
-              diffText = EditResult.renderHunks(hunks)
-            )
-
-            if Files.getLastModifiedTime(filePath) != mtime then
-              // mtime changed — only fail if content actually differs
-              val current = DiffUtil.readFile(filePath)
-              if current != original then
-                Left(ToolError("File was modified externally between read and write. Please re-check and retry."))
-              else
-                DiffUtil.writeFile(filePath, content, lineSep)
-                Right(editResult.toResultString)
-            else
-              DiffUtil.writeFile(filePath, content, lineSep)
-              Right(editResult.toResultString)
-          end if
-        catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
-      }
-      val lockedWrite = ctx.fileLockManager match
-        case Some(lm) => lm.withWriteLock(filePath)(writeIO)
-        case None => writeIO
-      lockedWrite.flatMap {
-        case Right(result) =>
-          val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-            ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
-            MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
-          record.as(Right(result))
-        case left => IO.pure(left)
+      // Memory-layer budget pre-check (govmemory batch, read-only): refuse
+      // net-growth writes past the hard cap on the three memory layers.
+      IO.blocking(MemoryDirectWriteGuard.preCheck(filePath.toString, content)).flatMap {
+        case Left(err) => IO.pure(Left(err))
+        case Right(()) => runWrite(filePath, content, ctx)
       }
     end if
   end doWrite
+
+  private def runWrite(
+    filePath: Path,
+    content: String,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val isNew = !Files.exists(filePath)
+
+    // Snapshot existing file before overwriting (with agent identity)
+    val snapshot = if !isNew then ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress)) else IO.unit
+
+    val writeIO = snapshot *> IO.blocking {
+      try
+        val dir = filePath.getParent
+        if dir != null then Files.createDirectories(dir)
+
+        if isNew then
+          DiffUtil.writeFile(filePath, content, "\n")
+          Right(DiffUtil.renderCreatedResult(filePath, content))
+        else
+          val original = DiffUtil.readFile(filePath)
+          val lineSep = DiffUtil.detectLineSep(original)
+          val mtime = Files.getLastModifiedTime(filePath)
+
+          // Compute the diff/stats before re-checking mtime so any work
+          // between read and write is bracketed by the mtime guard.
+          val hunks = DiffUtil.makeUnifiedDiff(original, content)
+          val editResult = EditResult(
+            filePath = filePath.toString,
+            addedLines = hunks.map(_.lines.count(_.startsWith("+"))).sum,
+            removedLines = hunks.map(_.lines.count(_.startsWith("-"))).sum,
+            hunks = hunks,
+            diffText = EditResult.renderHunks(hunks)
+          )
+
+          if Files.getLastModifiedTime(filePath) != mtime then
+            // mtime changed — only fail if content actually differs
+            val current = DiffUtil.readFile(filePath)
+            if current != original then
+              Left(ToolError("File was modified externally between read and write. Please re-check and retry."))
+            else
+              DiffUtil.writeFile(filePath, content, lineSep)
+              Right(editResult.toResultString)
+          else
+            DiffUtil.writeFile(filePath, content, lineSep)
+            Right(editResult.toResultString)
+        end if
+      catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
+    }
+    val lockedWrite = ctx.fileLockManager match
+      case Some(lm) => lm.withWriteLock(filePath)(writeIO)
+      case None => writeIO
+    lockedWrite.flatMap {
+      case Right(result) =>
+        val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
+          ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
+          MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
+        // Memory-layer over-budget reminder (govmemory batch): append a
+        // <system-reminder> to the tool result when the file sits over its
+        // soft line (24h anti-harassment window per file).
+        record *> IO.blocking {
+          val reminder = MemoryDirectWriteGuard.postWriteReminder(filePath.toString)
+          Right(if reminder.isEmpty then result else result + "\n" + reminder)
+        }
+      case left => IO.pure(left)
+    }
+  end runWrite
 end WriteTool

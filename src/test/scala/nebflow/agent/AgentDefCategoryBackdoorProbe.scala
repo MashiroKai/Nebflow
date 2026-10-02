@@ -7,7 +7,7 @@ import cats.effect.unsafe.implicits.global
  *
  * 用法（同一命令跑两遍 = 改前 / 改后）：
  * {{{
- *   sbt -batch "Test/runMain nebflow.agent.AgentDefCategoryBackdoorProbe"
+ *   sbt -batch "Test/runMain nebflow.actor.AgentDefCategoryBackdoorProbe"
  * }}}
  *
  * 构造：隔离 scratch home `/tmp/agentdef-tidy-probe/home` 内的 agents 副本——

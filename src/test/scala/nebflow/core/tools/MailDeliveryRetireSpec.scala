@@ -7,6 +7,12 @@ import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.AgentDef
 import nebflow.agent.*
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{MailQueueStore, TeamSessionRegistry}
@@ -35,13 +41,22 @@ import scala.concurrent.duration.*
  *      该面**成立的前提** = 引擎零 JSON-Schema 校验（面外参数静默忽略，`AgentCommand.scala`
  *      自陈；re-pin 2026-09-25：该自陈随 AskMode 自 protocol.scala 迁入）⇒ 旧键照样到达 `call()`，
  *      故「删 schema 键 + 墓碑判」是 fail-closed 一侧，而「删键 + 删判」才是静默降级。
- *   3. **设备腿零改动**：`deliverToDevice` 的 v2.1「显式拒 queue」契约**逐字保持**
- *      （自有字面量，**不**走退役文案；本条以**逐字相等**断言钉死）。
+ *   3. **设备腿（mailmodel 批 2026-09-25 重新钉）**：整条设备腿**已退役** —— 旧
+ *      「`deliverToDevice` 的 v2.1 显式拒 queue 契约」随腿一并消亡；`device=` 的
+ *      唯一可能读法现在是 `MAIL_DEVICE_RETIRED` 墓碑（fail-closed，先于 delivery
+ *      墓碑与一切路由闸；见本文件 ③ 面）。
  *   4. **残差面（本批如实登记）**：非 `queue` 的旧值（`"immediate"` / 陌生值如 `"ask"`）
  *      与「键缺席」**逐字同一结果** —— 该键被静默忽略，且原「陌生值 ⇒ WARN 后收敛到
  *      immediate」分支随 `delivery match` 一并删除（设计件 §4.4(a)「其余值不再需要分支」）。
  *      本文件以**三值逐字相等**钉住该读数（原始读数见交付报告与
  *      `.nebflow/evidence/20260917_mailparams/impl/`）。
+ *
+ * mailmodel batch re-pin (2026-09-25, rulings (d)/(e)): the property set the schema
+ * test pins went 8 -> 6 (`device` and `type` keys retired), and the old "device leg
+ * keeps its own v2.1 queue contract" test is REPLACED: the whole device leg is retired,
+ * so a stale `device=` call now hits the MAIL_DEVICE_RETIRED tombstone BEFORE the
+ * delivery tombstone and before every routing gate (the tombstone order itself is
+ * the pin). Everything this file pinned about the `delivery` tombstone is unchanged.
  *
  * 双向钉（改前 / 改后）：
  *   · **改前红侧** = mailparams 批落地**前**的树跑本文件 ⇒ 红（schema 里 `delivery` 键仍在、
@@ -104,20 +119,34 @@ class MailDeliveryRetireSpec extends FunSuite:
   private def propsOf: JsonObject =
     MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("Mail schema has no properties"))
 
-  test("schema（mailparams 批 re-pin）：`delivery` 键已退役出 schema —— 参数集合恰为 7 件且不含该键"):
+  test(
+    "schema (mailparams re-pin + taskunify `task` + mailmodel re-pin): the `delivery` key is retired from the schema; the property set is exactly 6 entries and excludes the retired keys"
+  ):
     // 机械锚 ①：该键**零命中** + 集合**精确等值**（任何与本批无关的增 / 删 / 改名一律红）。
     assert(
       !propsOf.keys.toSet.contains("delivery"),
-      s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams 批：参数面 8 → 7), got: ${propsOf.keys.toList.sorted}"
+      s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams batch), got: ${propsOf.keys.toList.sorted}"
     )
+    // taskunify merge batch (2026-09-24): + `task` (optional; **no address-syntax
+    // extension**) — when Mail targets a project it auto-creates a task / continues an
+    // existing open task, so the property face grew by one.
+    // mailmodel batch (2026-09-25, rulings (d)/(e)): - `device` and - `type` — the
+    // cross-device leg and the five mail-type tags are retired both ways; the property
+    // face goes 8 → 6. This is a **behaviour-visible** change (declared: a stale
+    // `device=` call refuses with MAIL_DEVICE_RETIRED, a stale `type=` is ignored).
     assertEquals(
       propsOf.keys.toSet,
-      Set("address", "device", "message", "type", "chainId", "images", "attachments"),
-      "the property set must be exactly the 7 surviving parameters (the other 7 are untouched by this batch)"
+      Set("address", "message", "chainId", "task", "images", "attachments"),
+      "the property set must be exactly the surviving parameters (6 after the mailmodel batch)"
     )
-    // 活能力面**必须在场**（禁顺带删活面：device / images / attachments 是当日刚落地的能力；
-    // 判据 = 仍是**对象形态**的已声明属性，不是仅名字在场）。
-    for k <- List("address", "device", "message", "type", "chainId", "images", "attachments") do
+    assert(
+      !propsOf.keys.toSet.contains("device") && !propsOf.keys.toSet.contains("type"),
+      s"the `device` / `type` keys must be GONE from the schema (2026-09-25 mailmodel batch), got: ${propsOf.keys.toList.sorted}"
+    )
+    // The live capability faces MUST stay present (never delete live faces in
+    // passing: all six surviving keys are live capabilities; the criterion is that
+    // each is still a declared property in **object form**, not merely a name).
+    for k <- List("address", "message", "chainId", "task", "images", "attachments") do
       assert(
         propsOf(k).flatMap(_.asObject).nonEmpty,
         s"`$k` must still be a declared object property with its own face (live capability, untouched)"
@@ -226,25 +255,33 @@ class MailDeliveryRetireSpec extends FunSuite:
     assert(msg.contains("every Mail is delivered immediately"), s"the replacement semantics must be stated, got: $msg")
 
   // ============================================================
-  // 3. 设备腿：v2.1 拒 queue 契约逐字保持（禁为退役而翻已落契约）
-  //    mailparams 批对该腿**零改动**：它收到的仍是同一个旧值（现由墓碑读取转交）。
+  // 3. device leg (mailmodel batch 2026-09-25 re-pin): the whole leg is retired =>
+  //    the tombstone precedes everything; the old v2.1 "explicitly refuse queue"
+  //    contract died with the leg; the only possible read of `device=` now is
+  //    MAIL_DEVICE_RETIRED (fail-closed tombstone, ahead of the delivery tombstone
+  //    and every routing gate).
   // ============================================================
 
-  test("设备腿：v2.1「显式拒 queue」契约逐字保持 —— 自有字面量，不走退役文案"):
+  test(
+    "device leg (retired): a stale `device=` call refuses with MAIL_DEVICE_RETIRED — the device tombstone outranks the delivery tombstone and every routing gate"
+  ):
     val msg = rejectedMsg(
       MailTool.call(qJson("device" -> "KAI", "message" -> "hi", "delivery" -> "queue"), ctx()).unsafeRunSync(),
-      "设备腿"
+      "device leg"
     )
-    // 逐字相等（不是 contains）：本批对设备腿**零改动**，故契约文本逐字节钉死。
-    assertEquals(
-      msg,
-      "Device targets are always immediate — the peer's Nebula session is injected at its next turn boundary, " +
-        "so a serialized FIFO queue would only delay it. Drop delivery=queue."
+    // The DEVICE tombstone fires first: the error carries the device retirement code,
+    // NOT the queue retirement code (even though delivery="queue" was also present).
+    assert(
+      msg.contains(MailTool.ErrDeviceLegRetired),
+      s"the stale device= call must hit the device tombstone, got: $msg"
     )
     assert(
       !msg.contains(MailTool.ErrDeliveryQueueRetired),
-      "the device leg must keep its OWN contract text (the retirement guard sits AFTER the device branch)"
+      s"the device tombstone sits BEFORE the delivery tombstone, got: $msg"
     )
+    assert(msg.contains("retired"), s"the error must state the retirement, got: $msg")
+    assert(msg.contains("KAI"), s"the error must echo the offending device value, got: $msg")
+    assert(msg.contains("nothing was sent"), s"fail-closed: must declare zero side effects, got: $msg")
 
   // ============================================================
   // 4. 对照腿 + 残差读数：本闸只咬 queue 一个值；其余旧值 = 键被静默忽略

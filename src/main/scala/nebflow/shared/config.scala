@@ -30,6 +30,14 @@ object LlmProtocol:
  * is derived, so circe silently ignores a legacy `maxTokens` key still present
  * in an existing `nebflow.json` (no error, no migration needed).
  *
+ * visionfix batch (2026-09-23, author ruling): the `vision` key was REMOVED on
+ * the same terms — it fed a per-candidate vision bit whose consumers are all
+ * deleted, and the capability face is now pessimistic-free (images are always
+ * sent). Because the decoder is derived, a legacy inline `"vision"` key in an
+ * existing `nebflow.json` is silently ignored: no error, no migration, and the
+ * on-disk format stays valid (there is no Encoder for these types — the config
+ * is written by raw-JSON deep merge, so nothing re-serializes the field back).
+ *
  * @param modelMaxContext
  *   案② B3（`chain-llmstall-fix`，2026-09-21）：provider 侧**真值上界**（该 model 实际
  *   可受理的上下文长度）。持久化字段，由模型列举端点上报的 `context_length` /
@@ -46,7 +54,6 @@ case class ModelConfig(
   id: String,
   contextWindow: Int = Defaults.ContextWindow,
   description: Option[String] = None,
-  vision: Option[Boolean] = None,
   capabilities: Option[List[String]] = None,
   modelMaxContext: Option[Int] = None
 )
@@ -167,6 +174,66 @@ object SearchConfig:
   given Decoder[SearchConfig] = deriveDecoder[SearchConfig]
 
 /**
+ * JeV decision-allocation config — the top-level `jev` block of nebflow.json
+ * (JeV integration Face A / P1-A2; form precedent = [[SearchConfig]] above).
+ *
+ *   "jev": { "enabled": true, "provider": "typesafe-jev",
+ *            "endpoint": "https://api.typesafe.ai/v1/systemone",
+ *            "model": "jev-latest", "keyRef": "typesafe-api-key",
+ *            "timeoutMs": 15000, "choiceHighBasePolicy": "warn" }
+ *
+ * ==Every field is optional ON PURPOSE==
+ * `SearchConfig` requires `provider` + `apiKey`, so a partially written
+ * `search` block fails to decode. The `jev` block must not repeat that: the
+ * seed can write a partial block (e.g. only `{"enabled":true}`) during a cold
+ * start, and a decode failure there would send `GatewayMain` down the
+ * crash-recovery path and restore a `{}` snapshot — the exact failure mode the
+ * `ensureLlmDefaults` note on [[NebflowServiceConfig]] documents for `llm`.
+ * With everything optional, a partial/seed block decodes to its defaults and
+ * the absence of the whole block decodes to `None`.
+ *
+ * ==Graceful degrade (zero migration)==
+ * `enabled=false`, or a missing/empty `keyRef`, or a `keyRef` that resolves to
+ * no readable secret all mean "the face is skipped" — existing users need no
+ * migration, exactly as with `search`.
+ *
+ * @param keyRef
+ *   NAME of a secret under `~/.nebflow/secrets/` (the social/daemon reference
+ *   form: the config stores a POINTER, never a value). Being a pointer rather
+ *   than a credential, it is intentionally NOT matched by
+ *   `ConfigService.sensitiveKeyPattern`; the pattern still covers any key
+ *   adjacent to it that WOULD carry a value (e.g. `apiKey`).
+ * @param timeoutMs
+ *   ALLOCATION-CALL deadline (how long dispatch waits for a decision before
+ *   falling back). This is a DIFFERENT axis from the R6 tool-authorization
+ *   budget (`Delegate.timeout` -> `Defaults.declaredToolTimeoutMs`), which is
+ *   the blocking-tool judgement window. Do not conflate the two.
+ * @param choiceHighBasePolicy
+ *   What to do when a choice question exceeds the provider's precision range
+ *   (LAYA degrades above ~20 options). Carried as an opaque policy string for
+ *   now: it feeds a WARNING in the adaptation layer, and promoting it to a
+ *   typed enum would fix a product decision that is still open.
+ */
+case class JevConfig(
+  enabled: Option[Boolean] = None,
+  provider: Option[String] = None,
+  endpoint: Option[String] = None,
+  model: Option[String] = None,
+  keyRef: Option[String] = None,
+  timeoutMs: Option[Long] = None,
+  choiceHighBasePolicy: Option[String] = None
+):
+  /**
+   * Toggle semantics: absent means OFF is the SAFE default for a face that
+   * sends node task text off-machine. (Contrast `plugins.enabled`, which
+   * defaults true — there the safe direction is the other way.)
+   */
+  def isEnabled: Boolean = enabled.getOrElse(false)
+
+object JevConfig:
+  given Decoder[JevConfig] = deriveDecoder[JevConfig]
+
+/**
  * Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
  * independently optional; None → Defaults. Applied at boot (LlmInterface
@@ -186,9 +253,9 @@ case class ServiceLlmConfig(
   // 时可能只落 plugins 键、无 llm 节；解码缺省此处，见 NebflowServiceConfig.llm）。
   providers: Map[String, ProviderConfig] = Map.empty,
   /**
-   * #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
-   * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
-   * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。
+   * #339 D-b：llm.model 已退役——默认模型唯一来源是 Nebula 主链（agent.json
+   * `model` 键；未配 = provider 推导种子链，SchemePolicy 单点）。Option 化的
+   * schema 仅容忍存量文件的 llm.model 节（可解析但被忽略）。
    */
   model: Option[ModelChainConfig] = None,
   streamTimeouts: Option[StreamTimeoutsConfig] = None
@@ -271,7 +338,22 @@ case class NebflowServiceConfig(
    * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
    * 仅用户显式开/关（WS `setLlmLog`）才写入本键。
    */
-  llmLog: Option[io.circe.Json] = None
+  llmLog: Option[io.circe.Json] = None,
+  /**
+   * daemon 配置面板（daemonpanel Phase A）的顶层 `daemonPanel` 节原样 JSON。
+   * 现读唯一消费者 = `DaemonPanelSchema.allowWeb`：`kind:"web"` 逃生口**默认
+   * 关闭**，只有本节显式 `{"allowWeb":true}` 才生效（缺省/非法 ⇒ 拒绝，fail-closed）。
+   * 开关本身是作者动作，agent 改它会留下可见 diff。无效值不影响其它键解码。
+   */
+  daemonPanel: Option[io.circe.Json] = None,
+  /**
+   * JeV 决策分配面（Face A / P1-A2）的顶层 `jev` 节——见 [[JevConfig]]。
+   * `None` = 未配置 ⇒ 整个面短路走现行路径（零迁移）；本节**全字段可选**，
+   * 种子中间态（只落 `{"enabled":true}` 等半节）解码为缺省而非抛
+   * `Missing required field` ⇒ 防 GatewayMain 走 crash-recovery 用 `{}` 快照
+   * 打回（同 `llm` 节的既有教训）。
+   */
+  jev: Option[JevConfig] = None
 )
 
 object NebflowServiceConfig:

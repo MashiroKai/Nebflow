@@ -3,11 +3,14 @@
   "items": [
     "agents:project-dispatcher",
     "agents:general",
-    "agents:memory-consolidator",
+    "agents:Nebula",
+    "agents:kernel",
     "plugins:visual-report",
     "plugins:slideblocks",
     "plugins:nebflow-plugin-creator",
     "plugins:web-search-toolkit",
-    "project:general"
+    "plugins:browser-use",
+    "plugins:computer-use",
+    "plugins:document-production"
   ]
 }

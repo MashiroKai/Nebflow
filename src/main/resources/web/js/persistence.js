@@ -17,7 +17,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards } from './chat.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
@@ -520,7 +520,10 @@ export function restoreFromStorage(opts = {}) {
           bubble.appendChild(content);
         } else {
           const t = document.createElement('div');
-          t.textContent = m.text;
+          // Plain-text face with mention spans (mention-render batch):
+          // identical output when nothing matches; user text never enters
+          // markdown on a restore path either.
+          appendTextWithMentions(t, m.text || '');
           bubble.appendChild(t);
         }
         row.appendChild(bubble);
@@ -869,7 +872,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           skipMsg = true; // skip the system message on next iteration
         } else {
           const t = document.createElement('div');
-          t.textContent = m.text;
+          // Plain-text face with mention spans (mention-render batch):
+          // identical output when nothing matches; user text never enters
+          // markdown on a restore path either.
+          appendTextWithMentions(t, m.text || '');
           bubble.appendChild(t);
         }
         row.appendChild(bubble);

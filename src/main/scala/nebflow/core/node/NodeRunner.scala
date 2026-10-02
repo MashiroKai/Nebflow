@@ -72,6 +72,16 @@ object NodeRunner:
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
     /**
+     * **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task
+     * id this session is attributed to -- a NodeEngine node spawn sets `node.taskId` (at
+     * creation time it lands in `NodeDef.taskId` from the engine-side `ctx.taskId`); a
+     * ProjectActor dispatcher spawn sets the task it was created to serve. Passed through
+     * the whole chain SessionContext → AgentCore → ToolContext.taskId, it is the source of
+     * `TaskInfo`'s zero-parameter attribution resolution and of the uplink refusal face.
+     * Default None = no attribution (zero change).
+     */
+    taskId: Option[String] = None,
+    /**
      * D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
      * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。
      */
@@ -148,7 +158,9 @@ object NodeRunner:
     base: Json => IO[Unit],
     rootSessionId: String,
     subagentId: String,
-    project: Option[String] = None
+    project: Option[String] = None,
+    taskId: Option[String] = None,
+    taskTitle: Option[String] = None
   ): Json => IO[Unit] =
     json =>
       json.asObject match
@@ -172,9 +184,19 @@ object NodeRunner:
           // 零载荷膨胀，前端也只从 agentStart 读 project。非 Project 域会话
           // （Delegate/SubTask 走 routeWsSend）不经过本包装 → 无 project 字段
           // → 前端不渲染徽标（恢复路径见 AgentRecord.project）。
+          // Task attribution (taskbadge batch 2026-09-27: subagent panel task
+          // badge) -- the same entry frame gets taskId + taskTitle injected (the
+          // title is resolved once at spawn time by the caller via the ledger);
+          // the injection criterion is independent of project's (each field is
+          // injected when defined, never bound to the other), and an empty value
+          // on the frontend = no badge rendered (same falsy contract as project).
+          // (W1 provisional shim: params + injection ported verbatim from main's
+          // taskbadge batch so main-side specs compile against the merged tree.)
           val finalObj =
-            if project.isDefined && obj("type").exists(_.asString.contains("agentStart")) then
-              withNodeSession.add("project", project.get.asJson)
+            if obj("type").exists(_.asString.contains("agentStart")) then
+              val withProject = project.fold(withNodeSession)(p => withNodeSession.add("project", p.asJson))
+              val withTaskId = taskId.fold(withProject)(t => withProject.add("taskId", t.asJson))
+              taskTitle.fold(withTaskId)(s => withTaskId.add("taskTitle", s.asJson))
             else withNodeSession
           base(Json.fromJsonObject(finalObj))
         case None => base(json)

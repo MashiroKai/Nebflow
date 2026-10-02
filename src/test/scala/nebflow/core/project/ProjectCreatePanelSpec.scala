@@ -16,6 +16,12 @@ import nebflow.actor.{
 }
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectCreateTool, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
@@ -404,13 +410,25 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     // 代码路径逐行未变；节拍由 `ProjectActor.ttlScanner(1.second)` 驱动。
     val propKey = "nebflow.dispatcher.idleWindowMs"
     val propBefore = Option(System.getProperty(propKey))
+    // mailmodel batch (2026-09-25) absorbed fix for a PRE-EXISTING baseline red: the
+    // taskunify merge defaulted the lifecycle anchor to task-terminal, routing
+    // sweepDispatchers away from the idle-window leg. This case pins the idle-window
+    // teardown face, so it flips the anchor prop off for the duration (Defaults reads
+    // it hot on every tick — same prop-flip pattern as the window above); restored in
+    // the guarantee. The production code is untouched.
+    val anchorKey = "nebflow.dispatcher.lifecycleAnchor"
+    val anchorBefore = Option(System.getProperty(anchorKey))
     val restore: IO[Unit] = IO {
       propBefore match
         case Some(v) => System.setProperty(propKey, v)
         case None => System.clearProperty(propKey)
+      anchorBefore match
+        case Some(v) => System.setProperty(anchorKey, v)
+        case None => System.clearProperty(anchorKey)
       ()
     }
     System.setProperty(propKey, "8000")
+    System.setProperty(anchorKey, "off")
     ProjectActor
       .ttlScanner(1.second)
       .background

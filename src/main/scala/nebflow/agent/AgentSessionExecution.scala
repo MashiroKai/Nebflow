@@ -2041,9 +2041,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // ToolRegistry 摘除。Nebula 的旧体系退役口径（2026-09-05 08:40 裁定）不变。
     val isRoot = agentDef.name == RootAgentIdentity.Name
     // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
-    // （空集）；dream 豁免 MemoryNote（2026-09-05 作者签准——动作面仍受
-    // MemoryNoteTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
-    // 剥全集，行为零变化。
+    // （空集）；dream 豁免 MemoryNote（2026-09-05 作者签准——动作面原受记账工具
+    // 的 DREAM_APPEND_DENIED 约束、append 不可用，该约束随工具与队列族退役
+    // 2026-09-29 一并消失；授能豁免本身保留，收口归 e5 批）；其余身份剥全集，
+    // 行为零变化。
     val rootFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
     // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防

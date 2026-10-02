@@ -724,6 +724,26 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
   def stripAllMigrated(prompt: String): String =
     stripSection(prompt, "Voice Output")
 
+  /**
+   * Strip comment-only single lines (a trimmed line that starts with `<!--` and
+   * ends with `-->`) — the mechanical guarantee behind the seed batch-source
+   * annotations (govmemory batch, plan §1.2 step 1: 标注放 HTML 注释，避免进入
+   * 模型上下文). Conservative by design: only whole-line comments are removed;
+   * inline comments inside a content line, multi-line comments and every other
+   * byte are passed through unchanged (byte-identical for comment-free input —
+   * the trailing newline survives via the split("\n", -1) empty tail element).
+   * (W1 provisional shim: ported verbatim from main — the PR blob predates the
+   * govmemory batch.)
+   */
+  def stripCommentOnlyLines(prompt: String): String =
+    prompt
+      .split("\n", -1)
+      .filterNot { l =>
+        val t = l.trim
+        t.startsWith("<!--") && t.endsWith("-->")
+      }
+      .mkString("\n")
+
 end PromptSections
 
 /**

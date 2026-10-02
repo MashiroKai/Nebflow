@@ -1,0 +1,95 @@
+[
+ {
+  "type": "user",
+  "header": "DISPATCH · NEBFLOW",
+  "source": "dispatch",
+  "injected": true,
+  "timestamp": 1790176939643,
+  "text": "You are the task dispatcher for project \"nebflow\".\n\n# Plugin Catalog（可分配能力包，NodeEdit 的 plugins 参数按 name 引用；能力句 = 该插件让节点具备什么能力）\n- backend-dev: Nebflow Scala 后端开发 …[truncated in repo fixture]",
+  "attachments": []
+ },
+ {
+  "type": "user",
+  "header": "MAIL · NEBFLOW · PROJECT-DISPATCHER · RESULT",
+  "source": "mail",
+  "injected": true,
+  "timestamp": 1790178081513,
+  "text": "[mail chainId: notifypack-b]\n【boot 重入处置 · nebflow · 4 项清单（B3×2 / B4×2）已处置，零待批】\n\n■ 一 · 定性：本批停摆的真根因 = **派发侧缺陷（我的错）**，非 worker 过错\n- `notifypack-b-impl`(n-0c01e80b) …[truncated in repo fixture]",
+  "delivery": "immediate",
+  "sender": "project-dispatcher",
+  "eventType": "result",
+  "attachments": []
+ },
+ {
+  "type": "user",
+  "header": "MAIL · NEBULA · NEBULA · INFO",
+  "source": "task",
+  "injected": true,
+  "timestamp": 1790178087019,
+  "text": "── New task arrived (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──\n\n【作者令 · 两件续做】项目自建重设计（去「查源码」能力 + 真直接创建）+ 社交入口（微信/ …[truncated in repo fixture]",
+  "sender": "Nebula",
+  "eventType": "info",
+  "intake": "mail",
+  "attachments": []
+ },
+ {
+  "type": "user",
+  "header": "MAIL · NEBFLOW · PROJECT-DISPATCHER · RESULT",
+  "source": "mail",
+  "injected": true,
+  "timestamp": 1790178264306,
+  "text": "【受理 + 逐位处置 + 两处前提更正】作者令两件续做 · nebflow · 2026-09-23 夜\n\n■ 一 · 🔴 前提核对（作者令 §一 要求「开工前核」；两条与现读不符，照实说）\n1. **`n-0c01e80b` 现读 = `running`，非 blocked** —— 原因是**本席上一轮亲手复活了它 …[truncated in repo fixture]",
+  "delivery": "immediate",
+  "sender": "project-dispatcher",
+  "eventType": "result",
+  "attachments": []
+ },
+ {
+  "type": "user",
+  "header": "MAIL · NEBULA · NEBULA · INFO",
+  "source": "task",
+  "injected": true,
+  "timestamp": 1790178267438,
+  "text": "── New task arrived (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──\n\n【🔴 作者报障（新缺陷）· 子代理面板会话视图里 Mail 注入**无蓝气泡**，与主会话行为 …[truncated in repo fixture]",
+  "sender": "Nebula",
+  "eventType": "info",
+  "intake": "mail",
+  "attachments": []
+ },
+ {
+  "type": "user",
+  "header": "MAIL · NEBFLOW · PROJECT-DISPATCHER · RESULT",
+  "source": "mail",
+  "injected": true,
+  "timestamp": 1790178768972,
+  "text": "【受理 + 逐位处置 + 🔴 两处前提更正（报障读数与指令不符）】子代理面板 Mail 注入无蓝气泡 · nebflow · 2026-09-23 夜\n\n■ 一 · 🔴 前提更正（本席派发期实测；照实说，未迁就）\n1. **「盘上该会话 UI 流只有 1 行注入」不成立 —— 那是行数计数口径错误。**\n   `dis …[truncated in repo fixture]",
+  "delivery": "immediate",
+  "sender": "project-dispatcher",
+  "eventType": "result",
+  "attachments": []
+ },
+ {
+  "type": "user",
+  "header": "MAIL · NEBULA · NEBULA · INFO",
+  "source": "task",
+  "injected": true,
+  "timestamp": 1790178772661,
+  "text": "── New task arrived (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──\n\n【boot 重入处置 · 三确认 + 一处认领（我的派发缺陷）+ 硬线复述 · chain n …[truncated in repo fixture]",
+  "sender": "Nebula",
+  "eventType": "info",
+  "intake": "mail",
+  "attachments": []
+ },
+ {
+  "type": "user",
+  "header": "MAIL · NEBULA · NEBULA · INFO",
+  "source": "task",
+  "injected": true,
+  "timestamp": 1790178994635,
+  "text": "── New task arrived (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──\n\n【作者令 · 两件：a) Mail→kernel 地址面与接线（plan-first）· b) …[truncated in repo fixture]",
+  "sender": "Nebula",
+  "eventType": "info",
+  "intake": "mail",
+  "attachments": []
+ }
+]

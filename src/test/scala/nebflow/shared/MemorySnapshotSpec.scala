@@ -102,7 +102,7 @@ class MemorySnapshotSpec extends FunSuite:
     val table = set.dir / "SNAPSHOT-SHA256.txt"
     assert(os.exists(table), "sha256 断言表必须落盘（回滚锚的可核对面）")
     val text = os.read(table)
-    assert(text.contains("# memory-track pre-landing snapshot  label=unit-test"), text.linesIterator.next())
+    assert(text.contains("# memory pre-write snapshot  label=unit-test"), text.linesIterator.next())
     assert(text.contains("(absent)  ") || text.contains("(absent) "), s"absent 行标注: $text")
     // 备份内容 = 写前磁盘真身（逐字节）
     set.files.filterNot(_.absent).foreach { f =>

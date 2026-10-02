@@ -89,6 +89,11 @@ import scala.concurrent.duration.*
  * 通知文本尾部附停等等待者清单（E-③，[[waitingSuccessors]]）。宿主重启后未投递
  * 通知（notifySentAt 为空）由 ProjectActor.TtlTick(30s) 挂 [[redeliver]] 周期补投
  * （参照 redeliverUnconsumedNebulaResults 形态）。
+ * 🔴 **killruling 批（2026-09-23 裁定 #19）改判**：`autoFailDeadRunning` 已降档为
+ * 「只提醒、节点留 Running」⇒ 该口**不再**必经 `deliverFailed`（死会话形态**不再产生
+ * 分发器 failed 通知**）。本链现存的 failed 入口只剩 `failNode` 一族（含桥上的异常
+ * 终态与 boot-recovery (c) 类）；死会话形态的可见性改由
+ * `node-session-dead-reminder` 事件 + barrier 告警腿承载。
  *
  * == 打包窗口与预算并账（Q4，2026-09-11 任务分发器收件规则批） ==
  * 守卫链（flag/状态/持久去重/占位/窗口熔断）全部保持**逐件**裁决不变；变化只在

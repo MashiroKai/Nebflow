@@ -409,13 +409,19 @@ private[project] trait NodeCompletion:
       actives = s1.nodes.values
         .filter(n => n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring)
         .toList
+      // chainview 批 2026-10-01：**链控闸**（落点② 纵深；判据单点 / 批量形态见
+      // `NodeCanceller.chainGateNodeIds`）——暂停/已取消链的成员本轮回扫**不进 qualified**
+      // ⇒ 不 fork、**不进 trigger-starved 记账**（合法等待 ≠ 启动失败，与 verdict/mutex
+      // 两闸同口径）。恢复（resume）后闸是**现读**台账、非一次性闩 ⇒ 下一轮自然放行。
+      // 🔴 整张图派生一次（禁逐节点调 chainGateOf：那会把一拍放大成 O(N·E)）。
+      chainGated <- store.combinedNodes.flatMap(chainGateNodeIds)
       qualified <- actives.filterA { n =>
         val emptyWiring = n.status == NodeLifecycle.Wiring && n.task.isEmpty && n.in.isEmpty && n.deps.isEmpty
         // R4：带「待承接」标记的 barrier 不放行（摘除后 in 已 prune，若不设此闸，
         // barrier 会以缺轨输入正常启动并静默产出缺轨结论）。分发器承接后（NodeEdit
         // 实际变更）标记清空，此处自然放行。
         val barrierOk = !n.in.exists(up => !n.deliveredTo.contains(up)) && n.pendingSuccession.isEmpty
-        if emptyWiring || !barrierOk then IO.pure(false)
+        if emptyWiring || !barrierOk || chainGated.contains(n.id) then IO.pure(false)
         else
           depsSatisfied(n).flatMap {
             case false => IO.pure(false)
@@ -559,7 +565,28 @@ private[project] trait NodeCompletion:
               "payload / NodeList); until the deps ref is fixed this node can never start (fail-closed, no silent settle)"
           )
         )
-      else mountStallReasonOf(n, now, (n.in ++ targets.ids ++ n.pendingSuccession).distinct)
+      else
+        // 判据 D（死链；案 b 文案分支）：链号**可解析**但成员集含不可挽回成员（`cancelled`）
+        // ⇒ 闸**构造性不可满足**、**永不结算**。既有文案只把成员列成 `'name'(id):status`
+        // （数据在列、**结论不在**，且 `blocked` 与 `cancelled` 在文案上同形）⇒ 读者必须自行
+        // 推断「这是死链」。本分支**纯追加子串**：既有前缀逐字保留，只在尾部补一句可判读结论
+        // （结论词 `constructively unsatisfiable` + 点名成员 id/状态 + 可行动指引）。判据源 =
+        // 同一解析单点（零第二解析器）；只认 `cancelled`（`failed` 可重激活 ⇒ 不构成死链）。
+        val deadNote =
+          if targets.deadChainRefs.isEmpty then ""
+          else
+            val named = targets.deadChainRefs.toList
+              .sortBy(_._1)
+              .map((cid, ids) =>
+                s"chain '$cid' ({${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}})"
+              )
+              .mkString("; ")
+            s", deps chain ref(s) are constructively unsatisfiable: $named — `cancelled` is a " +
+              "non-reactivatable terminal (the gate waits for EVERY member to be completed), so this " +
+              "gate will never settle; rewire the deps ref to a completion FACT ANCHOR (literal member " +
+              "ids that already carry the landing fact) or drop the ref"
+        mountStallReasonOf(n, now, (n.in ++ targets.ids ++ n.pendingSuccession).distinct).map(_.map(_ + deadNote))
+      end if
     }
 
   /**
@@ -825,6 +852,13 @@ private[project] trait NodeCompletion:
    *      [[checkBarriersNow]] 的去重口径）。
    *   ⑤ **R1 回流分发器**：`notifyTerminal(_, Cancelled)`（不查 notifyDispatcher flag，
    *      与 failed 完全对称；账务与通知文本见 DispatchNotify）。
+   *   ⑥ **descriptionLong spill file leaves with the node** (desc300 batch 2026-09-30): as soon
+   *      as the node leaves the active map, delete
+   *      `<workspace>/.nebflow/results/descriptionLong-<nodeId>.md` (one file per node, never
+   *      accumulating). **best-effort**: a delete failure must NOT fail the cancel — it is only
+   *      recorded (audit event + WARN); NodeCancel is the dispatcher's stop-loss tool, so losing
+   *      a stop-loss to a stale file would be worse. No file (nothing was ever truncated) =>
+   *      zero event, zero log: the cancel path of an ordinary node is byte-identical to before.
    *
    * 幂等：detach 幂等（out 已无节点目标即零写）、notify 由 notifySentAt 去重、
    * barrier 告警由即时/回扫共享单发记账去重——重复调用不产生重复副作用。
@@ -898,6 +932,31 @@ private[project] trait NodeCompletion:
         case None =>
           logger.warn(s"Node '$nodeId' vanished before cancel finalize — skipped")
       _ <- checkBarriersNow(nodeId, cause = "cancelled") // R3 即时告警
+      // desc300 batch (2026-09-30): the node leaves the map (or is on its way out), so its
+      // descriptionLong spill file goes with it. BEST-EFFORT by contract: a delete failure
+      // must NEVER fail the cancel — the reading is recorded (audit event + WARN), never
+      // raised (NodeCancel is the dispatcher's stop-loss tool; losing a stop-loss to a stale
+      // file would be worse). The usual case (no truncation ever happened => no file) stays
+      // completely silent: zero event, zero log, so the cancel path of an ordinary node is
+      // byte-identical to before this batch.
+      spillReading <- IO.blocking(FlowMapStore.deleteDescriptionLongSpill(workspace, nodeId)).attempt.map {
+        case Right(Right(true)) => Some("deleted")
+        case Right(Right(false)) => None
+        case Right(Left(err)) => Some(s"NOT deleted ($err)")
+        case Left(e) => Some(s"NOT deleted (${Option(e.getMessage).getOrElse(e.toString)})")
+      }
+      _ <- spillReading.fold(IO.unit) { reading =>
+        (if reading.startsWith("NOT deleted") then
+           logger.warn(s"Node $nodeId descriptionLong spill file $reading on cancel — best-effort, cancel unaffected")
+         else IO.unit) *>
+          FlowMapEventLog.append(
+            workspace,
+            projectName,
+            nodeId,
+            "descriptionLong-spill-cleanup",
+            s"descriptionLong spill file on cancel: $reading (best-effort; cancel unaffected)"
+          )
+      }
       _ <-
         // R1 回流（notify=true）；L3 路径（notify=false）改以占位推迟——见方法头注
         // 「notify = false」段（中间态不是终局，终局腿负责真实回流）。
@@ -914,6 +973,48 @@ private[project] trait NodeCompletion:
     end for
 
   end cancelNode
+
+  /**
+   * 纯函数：**取消摘边的逐边视图**（缺陷③批 2026-10-01 · 案 A 写点 7a，`reason=cancel`）。
+   *
+   * 输入 = `(写前, 写后)` 两张 Map + 被摘目标集（[[detachCancelledUpstream]] 的 `targets`）。
+   * 产出沿两个方向各逐边一行：
+   *   - `kind=in`（`owner` = 被摘下游，`from=<被取消节点>`）：该节点 in 里的那一项被摘掉；
+   *   - `kind=out`（`owner` = 被取消节点，`from=<被摘目标>`）：其 out 中指向该目标的那条边被
+   *     摘掉（`mode`/`gate` 取**摘前**那条边的值——写后 out 已收束为 `Nebula`，读不到）。
+   *
+   * 🔴 幂等：两时点相同者零视图（`targets` 空 ⇒ 本函数不产出任何条）。
+   * 🔴 不改既有文案：`cancelled` 那行的文本逐字不动（本函数只**追加**新事件类型）。
+   */
+  private def cancelDetachViews(
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef],
+    cancelledId: String,
+    targets: List[String]
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val reason = FlowMapEventLog.EdgeChangeReason.Cancel
+    val beforeNode = before.get(cancelledId)
+    targets.flatMap { tid =>
+      val inView = FlowMapEventLog
+        .inMirrorViews(tid, before.get(tid).map(_.in).getOrElse(Nil), after.get(tid).map(_.in).getOrElse(Nil), reason)
+      val outEdge = beforeNode.toList
+        .flatMap(_.out)
+        .find(e => e.to != OutEdge.RootTarget && OutEdge.resolveTargetId(before, e.to).contains(tid))
+      val outView = outEdge.toList.map { e =>
+        FlowMapEventLog.EdgeChangeView(
+          owner = cancelledId,
+          from = Some(tid),
+          to = None,
+          kind = FlowMapEventLog.EdgeChangeKind.Out,
+          mode = Some(e.mode),
+          gate = Some(if e.on.isEmpty then "-" else e.on.toList.sorted.mkString("|")),
+          reason = reason
+        )
+      }
+      inView ++ outView
+    }
+
+  end cancelDetachViews
 
   /**
    * R4 自动摘除（取消静默死锁修复批）：被取消节点的 out 改接 Nebula + 受影响下游的
@@ -967,59 +1068,111 @@ private[project] trait NodeCompletion:
     // 由默认参数（suppressTargets = ∅）进入——若无该集，已取消下游会被补打噪标。
     // 🔴 默认值 ∅ 且该集为空时 ⇒ `NodeCancel` 工具 / 面板会话键等既有单节点腿
     // **逐字零改动**（Z4；判据 M11「保留面」）。
-    cascadeCancelledIds.get.flatMap { suppressedByCascade =>
-      store
-        .mutateWithResult { s =>
-          s.nodes.get(nodeId) match
-            case Some(from) =>
-              // #675(a)（cancelloopfix 批 2026-09-17）：回边**不作打标目标**——`:loop` 不作
-              // 级联传导（M9）⇒ 不连坐 ⇒ 便签也不该有（现态「同一操作内打标 + 紧接取消」
-              // 自相矛盾、在已取消节点上留噪标）。排除面 = 前向扫描跳过 `OutEdge.isLoopEdge`；
-              // 反向腿**无需过滤**（回边从不写 `in` 镜像，见 NodeTools.setOut / create 三处写点）。
-              // 🔴 与 [[referencesOf]] 的传导排除面同款形态、**不同位点**（那里管传导，这里管打标）。
-              val forward = from.out
-                .filterNot(OutEdge.isLoopEdge)
-                .map(_.to)
-                .filterNot(_ == OutEdge.RootTarget)
-                .distinct
-                .flatMap(OutEdge.resolveTargetId(s.nodes, _))
-                .distinct
-              // U5/E：反向引用方（谁还在 in 里引用我）——不一致拓扑下前向遍历恒空，反向恒可算。
-              val reverseOnly =
-                s.nodes.values.filter(n => n.id != nodeId && n.in.contains(nodeId)).map(_.id).toList.sorted
-              val targets = (forward ++ reverseOnly).distinct
-              if targets.isEmpty then (s, Nil)
-              else
-                val pruned = targets.foldLeft(s.nodes) { (acc, tid) =>
-                  acc.get(tid) match
-                    case Some(tn) =>
-                      val alreadySuppressed = suppressTargets.contains(tid) || suppressedByCascade.contains(tid)
-                      acc.updated(
-                        tid,
-                        tn.copy(
-                          in = tn.in.filterNot(_ == nodeId),
-                          pendingSuccession =
-                            if alreadySuppressed then tn.pendingSuccession
-                            else (tn.pendingSuccession :+ nodeId).distinct
+    cascadeCancelledIds.get
+      .flatMap { suppressedByCascade =>
+        store
+          .mutateWithResult { s =>
+            s.nodes.get(nodeId) match
+              case Some(from) =>
+                // #675(a)（cancelloopfix 批 2026-09-17）：回边**不作打标目标**——`:loop` 不作
+                // 级联传导（M9）⇒ 不连坐 ⇒ 便签也不该有（现态「同一操作内打标 + 紧接取消」
+                // 自相矛盾、在已取消节点上留噪标）。排除面 = 前向扫描跳过 `OutEdge.isLoopEdge`；
+                // 反向腿**无需过滤**（回边从不写 `in` 镜像，见 NodeTools.setOut / create 三处写点）。
+                // 🔴 与 [[referencesOf]] 的传导排除面同款形态、**不同位点**（那里管传导，这里管打标）。
+                val forward = from.out
+                  .filterNot(OutEdge.isLoopEdge)
+                  .map(_.to)
+                  .filterNot(_ == OutEdge.RootTarget)
+                  .distinct
+                  .flatMap(OutEdge.resolveTargetId(s.nodes, _))
+                  .distinct
+                // U5/E：反向引用方（谁还在 in 里引用我）——不一致拓扑下前向遍历恒空，反向恒可算。
+                val reverseOnly =
+                  s.nodes.values.filter(n => n.id != nodeId && n.in.contains(nodeId)).map(_.id).toList.sorted
+                val targets = (forward ++ reverseOnly).distinct
+                if targets.isEmpty then (s, (Nil, Nil))
+                else
+                  val pruned = targets.foldLeft(s.nodes) { (acc, tid) =>
+                    acc.get(tid) match
+                      case Some(tn) =>
+                        val alreadySuppressed = suppressTargets.contains(tid) || suppressedByCascade.contains(tid)
+                        acc.updated(
+                          tid,
+                          tn.copy(
+                            in = tn.in.filterNot(_ == nodeId),
+                            pendingSuccession =
+                              if alreadySuppressed then tn.pendingSuccession
+                              else (tn.pendingSuccession :+ nodeId).distinct
+                          )
                         )
-                      )
-                    case None => acc
+                      case None => acc
+                  }
+                  val after = pruned.updated(nodeId, from.copy(out = List(OutEdge.root)))
+                  // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 7a）：取消摘边**逐边一行**
+                  // （`reason=cancel`）——此前取消的后果面只有 `cancelled` 那行**裸计数**，
+                  // 「谁被摘了哪条边」在审计面无从对齐。
+                  (
+                    s.copy(nodes = after),
+                    (targets, cancelDetachViews(s.nodes, after, nodeId, targets))
+                  )
+                end if
+              case None => (s, (Nil, Nil))
+          }
+          .flatMap { case (_, (pruned, edgeViews)) =>
+            FlowMapEventLog.appendEdgeChanges(workspace, projectName, edgeViews) *>
+              pruned
+                .foldLeft(IO.unit) { (acc, tid) =>
+                  acc >> store.getNode(tid).flatMap {
+                    case Some(n) => emitUpdated(n)
+                    case None => IO.unit
+                  }
                 }
-                (s.copy(nodes = pruned.updated(nodeId, from.copy(out = List(OutEdge.root)))), targets)
-              end if
-            case None => (s, Nil)
-        }
-        .flatMap { case (_, pruned) =>
-          pruned
-            .foldLeft(IO.unit) { (acc, tid) =>
-              acc >> store.getNode(tid).flatMap {
-                case Some(n) => emitUpdated(n)
-                case None => IO.unit
-              }
-            }
-            .as(pruned)
-        }
-    }
+                .as(pruned)
+          }
+      }
+      // (cancelfailroute batch 2026-09-25, #380 mode-3 fix) Cancel-path route-loss
+      // visibility: the cancel detach previously had ZERO emission points, so a
+      // route-less verifier touched by a cancel was invisible to the system (no
+      // immediate alert, the 30s backfill leg's candidate filter can miss it, and no
+      // persistent trace - report 20260925_002749_nodeedit-failure-modes, mode 3 /
+      // n-5d9070a3). Immediately after the detach transaction commits, re-derive the
+      // victim set over the detached downstream ids and emit ONE batched
+      // `verifier-route-lost` (scope="cancel detach") + one WARN; zero victims => zero
+      // write, zero log (same idempotent exit as emitVerifierRouteLost). This is a
+      // pure addition: read + emit only, the detach semantics above stay untouched.
+      .flatMap(pruned => emitCancelDetachRouteLost(pruned).as(pruned))
+
+  /**
+   * Cancel-path victim-verifier alert closeout (cancelfailroute batch 2026-09-25;
+   * #380 mode-3 fix). Victim criterion = judgement D, single source
+   * [[NodePayload.verifierRouteInvalid]]: role = verifier AND declaredOut =
+   * canonical(out) ++ pendingOut non-empty AND [[OutEdge.failRouteTargets]] yields
+   * no resolvable target - the exact same derived reading the NodeList visible face
+   * uses, so the alert face and the visible face can no longer disagree. Boundary
+   * (i) of that judgement is preserved verbatim: an empty-out two-phase-token
+   * verifier stays legal and is never a victim.
+   *
+   * Read timing = right after the detach transaction commits. The criterion is a
+   * property of each detached node's own declared face (out/pendingOut + active-map
+   * resolvability); this detach only prunes targets' `in` mirrors, never touches a
+   * target's own out/pendingOut, and never removes a node from the active map, so
+   * the criterion is pointwise invariant across the transaction (the "computed at
+   * detach time" reading) - and the existing transaction body stays byte-identical.
+   * The "" lost-target form means "no route was severed - the fail face is
+   * structurally gone" (cancel severs in-mirrors only; the victim's declared edges
+   * are not removed by this leg).
+   *
+   * Idempotent: empty detached set => zero snapshot, zero write, zero log; zero
+   * victims => the emitter's own empty-set exit.
+   */
+  private def emitCancelDetachRouteLost(detached: List[String]): IO[Unit] =
+    if detached.isEmpty then IO.unit
+    else
+      store.snapshot.flatMap { s =>
+        val victims =
+          detached.filter(tid => s.nodes.get(tid).exists(tn => NodePayload.verifierRouteInvalid(tn, s.nodes)))
+        emitVerifierRouteLost(victims.map(_ -> ""), "cancel detach")
+      }
 
   /**
    * **级联传导引用并集单点**（R3，chaincancel 批 2026-09-17 —— 作者三答 3 逐字落地）。
@@ -1175,6 +1328,46 @@ private[project] trait NodeCompletion:
    * @param priorStatus 该节点**在 abandon 写状态之前**的现值（回填路径给当时的
    *        `Cancelled` ⇒ 依赖轨按「未满足」处理，保守留「待承接」可见态）。
    */
+  /**
+   * 纯函数：**退役摘边的逐边视图**（缺陷③批 2026-10-01 · 案 A 写点 7b，`reason=abandon`）。
+   *
+   * 对 `(写前, 写后)` 两张 Map 做**逐节点、逐面**的 canonical diff（`out` / `in` / `deps`
+   * 三面各逐项一行）——`detachAbandonedNode` 的摘除是两个方向的混合形态（他节点 out
+   * 摘除、in 镜像 prune、deps 摘除，以及退役位自身的 `in/deps/out` 自清），单一「owner」
+   * 无法承载 ⇒ 本函数按**每面各自的 owner** 出声：
+   *
+   *   - `kind=out` `owner=<referrer>`（他节点摘掉指向退役位的边）/ `owner=<退役位>`（自清）；
+   *   - `kind=in`  `owner=<in 镜像方>`（其 in 里的退役位被摘）；
+   *   - `kind=deps` `owner=<deps 持有方>`。
+   *
+   * 目标解析优先取 `after`（新增边），回落 `before`（被摘边在 after 里已解析不到——
+   * 退役位仍在 `after.nodes` 中，故两侧通常皆可解析；回落只为防御）。
+   * 🔴 幂等：两时点相同者零视图（零候选 / 无残留 ⇒ 本函数不产出任何条）。
+   */
+  private def abandonDetachViews(
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef],
+    reason: String
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val ids = (before.keySet ++ after.keySet).toList.sorted
+    val resolve: String => String = t =>
+      OutEdge.resolveTargetId(after, t).orElse(OutEdge.resolveTargetId(before, t)).getOrElse(t)
+    ids.flatMap { id =>
+      val b = before.get(id)
+      val a = after.get(id)
+      FlowMapEventLog.outEdgeViews(
+        id,
+        b.map(_.out).getOrElse(Nil),
+        a.map(_.out).getOrElse(Nil),
+        reason,
+        resolve
+      ) ++
+        FlowMapEventLog.inMirrorViews(id, b.map(_.in).getOrElse(Nil), a.map(_.in).getOrElse(Nil), reason) ++
+        FlowMapEventLog.depsViews(id, b.map(_.deps).getOrElse(Nil), a.map(_.deps).getOrElse(Nil), reason)
+    }
+
+  end abandonDetachViews
+
   def detachAbandonedNode(
     nodeId: String,
     priorStatus: String,
@@ -1189,7 +1382,7 @@ private[project] trait NodeCompletion:
         store
           .mutateWithResult { s =>
             s.nodes.get(nodeId) match
-              case None => (s, NodeEngine.RetireDetach())
+              case None => (s, (NodeEngine.RetireDetach(), Nil))
               case Some(from) =>
                 def resolvable(e: OutEdge): Boolean =
                   e.to != OutEdge.RootTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined
@@ -1203,7 +1396,7 @@ private[project] trait NodeCompletion:
                     .sorted
                 val depsRefs = others.filter(_.deps.contains(nodeId)).map(_.id).sorted
                 if !selfHasGap && inMirrors.isEmpty && outRefs.isEmpty && depsRefs.isEmpty then
-                  (s, NodeEngine.RetireDetach())
+                  (s, (NodeEngine.RetireDetach(), Nil))
                 else
                   val inSet = inMirrors.toSet
                   val outSet = outRefs.toSet
@@ -1250,21 +1443,28 @@ private[project] trait NodeCompletion:
                   }
                   (
                     s.copy(nodes = rewired),
-                    NodeEngine.RetireDetach(inMirrors, outRefs, depsRefs, selfHasGap, routeLost)
+                    (
+                      NodeEngine.RetireDetach(inMirrors, outRefs, depsRefs, selfHasGap, routeLost),
+                      abandonDetachViews(s.nodes, rewired, FlowMapEventLog.EdgeChangeReason.Abandon)
+                    )
                   )
                 end if
           }
-          .flatMap { case (_, d) =>
+          .flatMap { case (_, (d, edgeViews)) =>
             val refFrames = d.referrers.foldLeft(IO.unit) { (acc, tid) =>
               acc >> store.getNode(tid).flatMap {
                 case Some(n) => emitUpdated(n)
                 case None => IO.unit
               }
             }
-            // 告警写点（卡 A2）：受害 verifier 的拒绝态在**同一帧**落盘 + WARN，主语 = 受害
-            // verifier。**按批聚合**（裁定⑤）= 本位退役动作恰一行；回填腿（同批多退役）由
-            // 调用方抑制本位发射、整批收口发一行（传 `emitRouteLost = false`）。
-            refFrames *>
+            // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 7b）：退役摘边**逐边一行**
+            // （`reason=abandon`，含退役位自清面）。🔴 既有 `abandoned` / `cancelled` 文案
+            // 逐字不动——本批只**追加**新事件类型。视图由事务内两张 Map 纯函数算出。
+            FlowMapEventLog.appendEdgeChanges(workspace, projectName, edgeViews) *>
+              // 告警写点（卡 A2）：受害 verifier 的拒绝态在**同一帧**落盘 + WARN，主语 = 受害
+              // verifier。**按批聚合**（裁定⑤）= 本位退役动作恰一行；回填腿（同批多退役）由
+              // 调用方抑制本位发射、整批收口发一行（传 `emitRouteLost = false`）。
+              refFrames *>
               (if emitRouteLost then emitVerifierRouteLost(d.routeLost.map(_ -> nodeId), "detach")
                else IO.unit).as(d)
           }

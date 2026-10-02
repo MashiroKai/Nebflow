@@ -375,6 +375,38 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Single-line row (2026-09-27 badge-inline batch): the task badge joins the
+   uptime line (author order 2026-09-27), collapsing the old meta+name split
+   into ONE line — normal rows are 1 line, rows with a ↳ tool summary are 2.
+   Scoped to the Sub-Agents panel rows (renderBgAgentDropdown); the
+   background-tasks panel (#bg-dropdown) keeps .bg-task-meta /
+   .bg-task-name-line and its two-line layout. Line contract: fixed slots
+   (state word / kind chip / retries / uptime) never shrink; uptime stays
+   pinned right via .bg-task-uptime margin-left:auto; project / name / badge
+   flex-shrink with ellipsis so the line never wraps and never overflows
+   (the badge truncates first and hardest — largest basis; full texts stay
+   on the existing title tooltips). */
+.bg-task-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: nowrap; /* the whole point: one line — truncate, never wrap */
+  min-width: 0;
+}
+/* Identity metadata is short and always readable: the project text keeps its
+   own max-width+ellipsis for long names but does not participate in the
+   line's shrink pool (at 380px it would otherwise crush to "n…" noise). */
+.bg-task-main .bg-task-project { flex-shrink: 0; }
+/* The name yields, but at half the badge's rate: the badge is the designated
+   truncation slot (largest basis + #id anchor + full title tooltip), so it
+   absorbs the shortfall first while the name keeps ~its identity readable. */
+.bg-task-main .bg-task-name {
+  flex: 0 0.5 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .bg-task-state {
   font-size: 11px;
   /* Unified panel spec §3.1: state word is L4 (400) — yields hierarchy to
@@ -454,6 +486,35 @@
   max-width: 140px;
   min-width: 0;
   flex-shrink: 1;
+}
+/* Task attribution badge (2026-09-27 taskbadge batch): `#id · title` chip on
+   each row — the per-row task marker under the multi-task dispatcher
+   architecture. Same chip family as .bg-task-kind; the one accent tint per row
+   (sapphire light, mirroring .bg-task-origin.bg-origin-node) so rows from
+   different tasks are scannable at a glance. No new color tokens: existing
+   accent/glass tokens only. Long titles truncate (nowrap + max-width +
+   ellipsis; full text on hover via title). No attribution → the chip is not
+   rendered at all (empty state = no badge, same contract as .bg-task-project). */
+.bg-task-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid rgb(var(--accent-agent-light) / 0.35);
+  color: rgb(var(--accent-agent-light));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+@media (prefers-color-scheme: dark) {
+  .bg-task-badge {
+    color: rgb(var(--sapphire));
+    border-color: rgb(var(--sapphire) / 0.35);
+  }
 }
 .bg-task-uptime {
   font-size: 10px;
@@ -837,6 +898,19 @@
 .bubble.user.att-bubble .att-file-tag {
   color: #888;
   font-size: 12px;
+}
+/* @-mention tag (mention-render batch, 2026-09-27): blue clickable route
+   marker inside message text — the author's order (verbatim 「为蓝色」) makes
+   it blue, deliberately NOT var(--color-primary): that token is the
+   WeChat-green send family in this codebase (base.css). rgb(var(--sapphire))
+   is the existing accent token — no new color introduced. Hover = underline
+   (task: 下划线或加深). */
+.mention-tag {
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+}
+.mention-tag:hover {
+  text-decoration: underline;
 }
 /* #303 §4: message ref card — a block-level card (not an inline tag) using the
    glass-etched surface, no new color tokens, visual-style font weights. */
@@ -2765,10 +2839,12 @@
   word-break: break-all;
 }
 
-/* Route C：应用内目录浏览器弹窗（workspacePicker.js）
-   设计基准 = path-picker 文件浏览器模态（modal.css #path-picker-* / .pp-item 族）：
-   面板材质挂进 modal.css 共享玻璃卡组（.wsp-panel，含折射线/堆叠阴影/dark 阴影），
-   此处只承载布局与逐值对齐基准的控件样式。 */
+/* Route C: in-app directory picker dialog (workspacePicker.js) — since the
+   pickeruni batch this is the ONE directory-picking face in the app.
+   Panel material rides the modal.css shared glass-card group (.wsp-panel, with
+   refraction line / stacked shadows / dark variants); this section carries the
+   layout and control styles only, on the app's directory-browser baseline
+   values. */
 .wsp-overlay {
   position: fixed;
   inset: 0;
@@ -2796,7 +2872,7 @@
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
 }
-/* 面包屑蚀刻条 —— 逐值对齐 #path-picker-breadcrumb */
+/* Breadcrumb etched strip — app directory-browser baseline values */
 .wsp-crumbs {
   font-size: 12px;
   color: var(--color-frame-text-muted);
@@ -2813,7 +2889,7 @@
   cursor: pointer;
 }
 .wsp-crumb:hover { text-decoration: underline; }
-/* 列表蚀刻容器 —— 逐值对齐 #path-picker-list */
+/* List etched container — app directory-browser baseline values */
 .wsp-list {
   flex: 1;
   min-height: 200px;
@@ -2823,7 +2899,7 @@
   border-radius: 8px;
   background: var(--glass-etched-bg);
 }
-/* 列表行 —— 逐值对齐 .pp-item（hairline 分隔，无圆角悬浮行） */
+/* List row — hairline separators, no rounded hover pills (baseline row shape) */
 .wsp-row {
   display: flex;
   align-items: center;
@@ -2897,8 +2973,8 @@
   padding: 2px 6px;
 }
 .wsp-mkdir-no:hover { color: var(--color-frame-text); }
-/* 底部动作行 —— 逐值对齐 #path-picker-actions 按钮族；
-   新建文件夹入口在左（rules-modal-delete margin-right:auto 模式），取消/选中在右 */
+/* Footer action row — neutral button family; new-folder entry on the left
+   (rules-modal-delete margin-right:auto pattern), cancel/clear/select right */
 .wsp-foot {
   display: flex;
   align-items: center;
@@ -2934,7 +3010,7 @@
     0 0 8px rgba(120, 160, 220, 0.08),
     0 0 20px rgba(120, 160, 220, 0.04);
 }
-/* 主按钮 —— 逐值对齐 #path-picker-select（sapphire 描边系） */
+/* Primary button — sapphire outline family */
 .wsp-pick {
   border-color: rgba(91, 127, 191, 0.35);
   color: rgb(91, 127, 191);
@@ -2949,12 +3025,112 @@
   color: rgb(91, 127, 191);
 }
 
+/* ── pickeruni: goto direct-entry row + server-side search row ────────────
+   Two rows, one each: the jump (locating action) above the filter (narrowing
+   action), full list width, no change to the 520px panel layout. All material
+   sits on existing tokens (--glass-etched-bg / --glass-border / --color-*) —
+   zero new color values. */
+.wsp-goto,
+.wsp-search {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.wsp-goto-input,
+.wsp-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-frame-text);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.wsp-goto-input:focus,
+.wsp-search-input:focus {
+  border-color: rgba(91, 127, 191, 0.5);
+}
+.wsp-goto-btn {
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid var(--glass-border);
+  background: rgba(91, 127, 191, 0.03);
+  color: var(--color-frame-text-dim);
+  transition: all 0.25s ease;
+}
+.wsp-goto-btn:hover {
+  background: rgba(91, 127, 191, 0.08);
+  border-color: var(--sapphire-edge-strong);
+  color: var(--color-frame-text-bright);
+}
+
+/* A: the explicit truncation word (never silent) — same etched strip as the
+   breadcrumb, muted ink, so it reads as a status line not an alert. Second
+   line = the way out (search / direct entry), dimmer than the fact above. */
+.wsp-note {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-border);
+  line-height: 1.4;
+}
+.wsp-note-hint {
+  color: var(--color-frame-text-dim);
+  margin-top: 2px;
+}
+
+/* C: inline path error — single source = --color-danger (bright/dark in base.css) */
+.wsp-err {
+  font-size: 11px;
+  color: var(--color-danger);
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+/* Empty-state second line (the way out), under the .wsp-empty fact line */
+.wsp-empty-hint {
+  color: var(--color-frame-text-dim);
+  margin-top: 2px;
+}
+
+/* Clear button (project-root mode) — danger family, same values as the
+   destructive buttons in modal.css */
+.wsp-clear {
+  border: 1px solid rgba(220, 60, 60, 0.3) !important;
+  color: rgba(220, 60, 60, 0.85) !important;
+  background: rgba(220, 60, 60, 0.04) !important;
+}
+.wsp-clear:hover {
+  background: rgba(220, 60, 60, 0.08) !important;
+  border-color: rgba(220, 60, 60, 0.5) !important;
+  box-shadow:
+    0 0 12px rgba(220, 60, 60, 0.1),
+    0 0 24px rgba(220, 60, 60, 0.05) !important;
+  color: #e55 !important;
+}
+
 @media (prefers-color-scheme: dark) {
   .ws-pick-target { background: rgba(255,255,255,0.05); border-color: rgba(145,170,210,0.28); }
   .ws-pick-target:hover { box-shadow: 0 0 0 3px rgba(145,170,210,0.10), 0 4px 16px rgba(0,0,0,0.35); }
   .ws-pick-hint { color: rgba(160,185,225,0.55); }
-  /* .wsp-* 无 dark 覆写——面板材质/控件全部 token 驱动（共享玻璃卡组 +
-     path-picker 基准值），亮暗双主题随全局变量自动切换。 */
+  /* .wsp-* has no dark overrides — panel material and controls are fully
+     token-driven (shared glass-card group + directory-browser baseline
+     values); both themes follow the global variables automatically. */
 }
 
 /* ---------- "↓ N new messages" pill (A-branch, 2026-09-11) ----------

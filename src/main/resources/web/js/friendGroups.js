@@ -274,6 +274,29 @@ export function groupAvatarGrid(cells, size, total) {
   return grid;
 }
 
+// ── 成员行标签（**唯一**判据；气泡发送者名与成员抽屉行两渲染点必须逐字同结果）──
+// 优先序 = 「好友备注 > 显示名」：备注是纯本地态（上游永不带该键），群成员腿又是
+// 零注入原文代理 ⇒ 从好友快照查表取（`api.friendRemarkOf`，单点）。非好友成员 /
+// 无备注 / 快照未装载 ⇒ 回落 `mem.name || mem.userId`（作者裁定：非好友不新增录入面，
+// 自然收敛到显示名）。与 `messages.js::groupSenderNameOf` 同判据、同取值点。
+function groupMemberLabel(mem) {
+  return api.friendRemarkOf(mem && mem.userId) || (mem && (mem.name || mem.userId)) || '';
+}
+
+/** 已渲染成员行就地重打（`fm-remark-changed` 的群面回填腿；属主 = 本模块，禁他处写
+ *  这份 DOM）。全量重算，增量写法会把旧文本钉死 ⇒ 备注变更没有覆盖路径。
+ *
+ *  Display-name fallback travels on the row itself (`data-display-name`) instead of a
+ *  side map: the same signal shape the bubble leg uses (`data-sender-id`), so the two
+ *  render points stay on one convention and this function holds no state of its own. */
+export function repaintGroupMemberLabels(rootEl) {
+  if (!rootEl) return;
+  for (const nameEl of rootEl.querySelectorAll('.fm-member-row[data-user-id] .fm-member-name')) {
+    const row = /** @type {HTMLElement} */ (nameEl.closest('.fm-member-row'));
+    nameEl.textContent = api.friendRemarkOf(row.dataset.userId) || row.dataset.displayName || '';
+  }
+}
+
 // ── 好友多选器（建群 / owner 邀请 共用一份，禁两份选择面）───────────────
 // 拉黑好友不进候选（O⑩ 拉黑只断单聊的保守面：不主动把拉黑对象拉进群；已在同
 // 群的拉黑对象照常可见 —— 那是服务端成员闸 + 渲染面的事，与本选择器无关）。
@@ -607,7 +630,10 @@ export function buildGroupSettings(conv, hooks) {
     root.appendChild(inviteSec);
   }
 
-  // ── 成员列表（显示名而非好友备注，主卡 H 节口径）
+  // ── 成员列表（标签 = 「好友备注 > 显示名」，作者 2026-09-22 两裁 · 案 (a) 渲染层覆盖）
+  // 原口径「显示名而非好友备注（主卡 H 节）」已由该裁定**作废**：群面标签与气泡发送者名
+  // 同判据（备注优先），两处必须一致。备注解析走 `friendsApi.friendRemarkOf`（唯一取值点）
+  // —— 群成员腿是零注入原文代理，备注只能在客户端从好友快照查表（注入形态 A-2）。
   const memberSec = el('div', 'fm-gs-section');
   const memberHead = el('div', 'fm-gs-title-row');
   memberHead.appendChild(el('div', 'fm-gs-title', t('messages.groupMembers')));
@@ -685,8 +711,14 @@ export function buildGroupSettings(conv, hooks) {
     memberHead.appendChild(el('span', 'fm-gs-count', String(members.length)));
     for (const mem of members) {
       const row = el('div', 'fm-member-row');
+      // In-place repaint anchors (remark changes re-render this row without a full
+      // drawer rebuild): `data-user-id` = who, `data-display-name` = fallback label.
+      // The bubble leg carries the same pair as `data-sender-id`, so both render
+      // points are repainted from the same remark accessor and can never disagree.
+      row.dataset.userId = String(mem.userId);
+      row.dataset.displayName = String(mem.name || mem.userId || '');
       row.appendChild(avatarEl(mem, 28));
-      row.appendChild(el('span', 'fm-member-name', mem.name || mem.userId));
+      row.appendChild(el('span', 'fm-member-name', groupMemberLabel(mem)));
       if (mem.role === 'owner') row.appendChild(el('span', 'fm-role-tag', t('messages.roleOwner')));
       else if (mem.role === 'admin') row.appendChild(el('span', 'fm-role-tag', t('messages.roleAdmin')));
       // 设 / 撤管理员（**owner 专属**；与「移出群聊」同族位置 = 成员行操作位；

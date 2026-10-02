@@ -53,6 +53,10 @@
        and materials are reused from the design system — new values land here,
        never in sapphire.css (off-limits for this batch). -->
   <link rel="stylesheet" href="css/social.css">
+  <!-- Secrets management dialog (secrets-frontend batch, 2026-09-27): tokens
+       and materials reused from the design system — new values land here,
+       never in sapphire.css (off-limits for this batch). -->
+  <link rel="stylesheet" href="css/secrets.css">
   <!-- sapphire.css loads LAST: it is the design-system standard layer.
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
@@ -86,9 +90,10 @@
     <!-- Social interface cards entry (socpanel batch, 2026-09-19; author ruling
          2026-09-19 令③): smartphone icon, directly below the contacts entry,
          before the spacer. No side panel — it opens the config dialog
-         (#social-overlay). Gated together with the contacts anchor: when the
-         friends feature gate detaches the contacts entry, activityBar.js
-         detaches this button on the same beat (no silent drift). -->
+         (#social-overlay). NOT part of the friends seal (friendseal batch,
+         author ruling 2026-09-25 ④: this is a social-channel config panel,
+         unrelated to the friends feature) — the button stays mounted and
+         functional in every friends-flag state. -->
     <button id="social-btn" class="activity-btn" data-panel-btn="social" title="Phone access" aria-pressed="false"><i data-lucide="smartphone"></i></button>
     <div class="activity-spacer"></div>
     <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
@@ -267,6 +272,12 @@
       <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
       <div id="notification-banner"></div>
     </div>
+    <!-- daemonpanel Phase A: daemon config-panel overlay. BODY-LEVEL on purpose
+         — #daemon-panel is an `overflow:hidden` + backdrop-filter container, and
+         such an ancestor both clips its descendants and becomes the containing
+         block for their fixed positioning (the #392 precedent: DOM assertions
+         all green while the overlay is invisible on screen). -->
+    <div id="daemon-config-overlay" role="dialog" aria-modal="false"></div>
     <div id="chat"></div>
     <div id="input-area">
       <div class="voice-overlay" id="voice-overlay">
@@ -386,19 +397,6 @@
       </div>
     </div>
   </div>
-  <!-- Project Root Picker Modal -->
-  <div id="path-picker-overlay">
-    <div id="path-picker-modal">
-      <div id="path-picker-title">Set Project Directory</div>
-      <div id="path-picker-breadcrumb"></div>
-      <div id="path-picker-list"></div>
-      <div id="path-picker-actions">
-        <button id="path-picker-cancel">Cancel</button>
-        <button id="path-picker-clear">Clear</button>
-        <button id="path-picker-select">Select This Folder</button>
-      </div>
-    </div>
-  </div>
   <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
   <div id="settings-overlay">
     <div id="settings-modal">
@@ -451,7 +449,22 @@
        INERT in this batch — the switch semantics, the address export, the QR
        code and the clipboard fallback are author-face items O1–O5 of the
        redesign and are NOT decided yet. No link, no QR, no guessed address is
-       rendered here (see js/socialPanel.js header). -->
+       rendered here (see js/socialPanel.js header).
+
+       🔴 HIDDEN FROM THE VISIBLE FACE (author ruling 2026-09-23, Part A): the
+       whole section is withdrawn from the visible face by the `hidden`
+       attribute below — HIDDEN, NOT DELETED. The DOM subtree, its JS consumers
+       (js/socialPanel.js's applyStaticText mapping), the `social.remote.*`
+       locale keys and the section's own CSS body all stay intact, so restoring
+       the section is exactly one attribute less (drop `hidden`) at zero cost.
+       The channel-configuration face (the three cards + pill / switch / save /
+       re-probe) is untouched by this ruling. O1–O5 remain UNDECIDED — hiding
+       the section does NOT settle them.
+       A bare `hidden` is not sufficient on its own: `css/social.css`'s
+       `.social-section { display: flex; }` outranks the user agent's
+       `[hidden] { display: none }`, so the section also needs the companion
+       `#social-section-remote[hidden] { display: none; }` rule added there
+       (same precedent as flowMap.css / usage.css). -->
   <div id="social-overlay">
     <div id="social-modal" role="dialog" aria-modal="true" aria-labelledby="social-modal-title">
       <div class="social-modal-header">
@@ -459,7 +472,7 @@
         <button id="social-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
       </div>
       <div class="social-modal-body">
-        <div id="social-section-remote" class="social-section">
+        <div id="social-section-remote" class="social-section" hidden>
           <div id="social-remote-title" class="social-section-title"></div>
           <div class="social-card social-remote-card">
             <div id="social-remote-suspended" class="social-remote-note"></div>
@@ -477,9 +490,77 @@
     </div>
   </div>
 
+  <!-- Secrets management dialog (secrets-frontend batch, 2026-09-27).
+       Standalone dedicated dialog per the author's ruling 2026-09-27 19:20:
+       NOT an embedded settings section — the list lives HERE, in its own
+       modal (capacity not bounded by #settings-modal); the settings page
+       carries only the one-row entry button (sidebar.js renderSettings →
+       #btn-open-secrets, opened by js/secretsPanel.js). Same dialog family
+       as #social-overlay: centered, no dimming backdrop, no background blur
+       (visual iron rule 1); the panel itself is the glass, the list area
+       scrolls. Shell is text-free — every caption is applied by
+       js/secretsPanel.js through t(); the editor sub-dialog (#secrets-form)
+       is built here as an inset glass layer of the shell so the focus trap
+       covers it. -->
+  <div id="secrets-overlay">
+    <div id="secrets-modal" role="dialog" aria-modal="true" aria-labelledby="secrets-modal-title">
+      <div class="secrets-modal-header">
+        <span id="secrets-modal-title"></span>
+        <button type="button" id="secrets-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
+      </div>
+      <div class="secrets-modal-body">
+        <div id="secrets-section" class="social-section">
+          <div id="secrets-list" class="secrets-list"></div>
+        </div>
+      </div>
+      <!-- Create entry: the floating bottom-right「+」of the shell (author
+           order 2026-09-30), same 40px glass circle as the Canvas pane's
+           `.proj-create-fab`. Built statically here (NOT inside the list
+           subtree, which `renderList` rewrites) so it survives every list
+           re-render; js/secretsPanel.js applies its label and wiring. It sits
+           BEFORE #secrets-form in the DOM so the editor's inset glass layer
+           paints over it. Icon is injected by js (masked/revealed pair). -->
+      <button type="button" id="secrets-fab" class="secrets-fab"><i data-lucide="plus"></i></button>
+      <div id="secrets-form" class="secrets-form" role="dialog" aria-modal="true" aria-labelledby="secrets-form-title" hidden>
+        <div class="secrets-form-head">
+          <span id="secrets-form-title" class="secrets-form-title"></span>
+          <button type="button" id="secrets-form-close" class="panel-btn"><i data-lucide="x"></i></button>
+        </div>
+        <div class="secrets-form-body">
+          <label class="secrets-field" for="secrets-name-input">
+            <span id="secrets-name-label" class="secrets-field-label"></span>
+            <input id="secrets-name-input" class="secrets-input" type="text" autocomplete="off" spellcheck="false">
+            <span id="secrets-name-hint" class="cfg-hint"></span>
+          </label>
+          <!-- Value row: caption + the eye toggle on one line, the textarea
+               beneath it. The toggle is a SIBLING of the caption (not inside
+               the <label>, which would re-activate the field on every click).
+               It stays IN the tab order on purpose (no tabindex="-1", unlike
+               the sidebar's input-overlay eye): a keyboard user must be able
+               to reach the reveal control, and it carries a focus-visible ring
+               for exactly that path. Tab order = name → eye → value → actions.
+               It controls the mask of the TYPED value in this field only — the
+               stored value is never fetched (write-only semantics, §二.2). -->
+          <div class="secrets-value-head">
+            <label id="secrets-value-label" class="secrets-field-label" for="secrets-value-input"></label>
+            <button type="button" id="secrets-value-eye" class="secrets-value-eye"></button>
+          </div>
+          <textarea id="secrets-value-input" class="secrets-input secrets-value" autocomplete="off" spellcheck="false"></textarea>
+          <div id="secrets-form-error" class="secrets-form-error" role="alert" hidden></div>
+          <div class="secrets-form-actions">
+            <button type="button" id="secrets-form-save" class="btn-save"></button>
+            <button type="button" id="secrets-form-cancel" class="cfg-btn"></button>
+            <span id="secrets-form-state" class="secrets-form-state" role="status" aria-live="polite"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 2026-09-05 旧 UI 退役：body 级 legacy-pop 容器（含 teams-btn/flows-btn）
        已删除——旧面板入口非封存而是摘除（作者裁定）。 -->
   <script src="vendor/lucide.min.js"></script>
+  <script src="vendor/qrcode.js"></script>
   <script src="vendor/lottie.min.js"></script>
   <script src="vendor/marked.min.js"></script>
   <script src="vendor/katex.min.js"></script>

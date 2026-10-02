@@ -515,6 +515,27 @@ final class NeblinkPresenceService(
     id: DeviceIdentity,
     budgetMs: Long
   ): Either[DialFailure, Unit] =
+    // deviceId-compat (2026-09-22, chain neblink-lifecycle-fix leg B): the dial
+    // walks the handshake in a small local closure so the legacy-400 retry gets
+    // a FRESH builder/slot/listener — a rejected attempt's earlyClose must never
+    // leak into the retry's publish decision.
+    def handshakeAttempt(wsUri: String): (WebSocket, ConnSlot) =
+      val slot = new ConnSlot
+      val listener = new PresenceWsListener(this, peer, slot)
+      val client = HttpClient
+        .newBuilder()
+        .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
+        .build()
+      val wsBuilder = client.newWebSocketBuilder()
+      // A1: our deviceId rides the handshake HEADER (primary carrier on every
+      // attempt — the compat retry below only ADDS the query carrier).
+      presenceHandshakeHeaders(id).foreach { case (k, v) => wsBuilder.header(k, v); () }
+      val ws = wsBuilder
+        .buildAsync(URI.create(wsUri), listener)
+        .get(budgetMs, TimeUnit.MILLISECONDS)
+      (ws, slot)
+    end handshakeAttempt
+
     val wsUri = buildWsUri(host, port, id)
     try
       val alive = new AtomicBoolean(true)
@@ -534,18 +555,29 @@ final class NeblinkPresenceService(
         t
       }
 
-      val slot = new ConnSlot
-      val listener = new PresenceWsListener(this, peer, slot)
-      val client = HttpClient
-        .newBuilder()
-        .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
-        .build()
-      val wsBuilder = client.newWebSocketBuilder()
-      // A1: our deviceId rides the handshake HEADER, not the URL query.
-      presenceHandshakeHeaders(id).foreach { case (k, v) => wsBuilder.header(k, v); () }
-      val ws = wsBuilder
-        .buildAsync(URI.create(wsUri), listener)
-        .get(budgetMs, TimeUnit.MILLISECONDS)
+      val (ws, slot) =
+        try handshakeAttempt(wsUri)
+        catch
+          case e: Exception if isLegacyMissingDeviceIdRejection(e) =>
+            // A1-compat (deviceId-compat leg, 2026-09-22): the peer answered
+            // HTTP 400 on the upgrade — on the presence route that shape has
+            // exactly one producer, the empty-deviceId branch (current tree
+            // RestApiRoutes.scala:2610; tag 2026.9.19 :2441), and a pre-A1
+            // listener reads the query ONLY (tag RestApiRoutes.scala:2433 — no
+            // header read anywhere in that file). Our header was unreadable to
+            // it, so retry ONCE with deviceId also in the query; the header
+            // stays (header semantics unchanged). 403/timeouts/refusals are
+            // NOT retried: 403 is the trust gate firing before deviceId
+            // validation (tag :2437-2441) — retrying it with more identity
+            // material would mask a denial as a transport retry.
+            // 🔴 同步语境里必须走 *Sync logger：`logger.info` 返回 IO 描述，
+            // 在这个纯同步方法里没人运行它 ⇒ 兼容证据行会静默蒸发（实装 arm ①
+            // 首轮实证：重试确已发生（dial-ok），行却一个字都没落盘）。
+            logger.infoSync(
+              s"Presence dial to ${peer.deviceName}: legacy listener (HTTP 400 on upgrade) — " +
+                "retrying once with deviceId in the query (A1-compat dial)"
+            )
+            handshakeAttempt(buildCompatWsUri(host, port, id))
 
       val conn = PresenceConnection(peer.deviceId, gen, ws, alive, lastPong, heartbeat)
       slot.conn = conn
@@ -1179,6 +1211,45 @@ final class NeblinkPresenceService(
    */
   private[neblink] def presenceHandshakeHeaders(id: DeviceIdentity): List[(String, String)] =
     List(nebflow.shared.DeviceHeader -> id.deviceId)
+
+  /**
+   * deviceId-compat query carrier (deviceface-hardening batch, main-side):
+   * the SAME uri shape as [[buildWsUri]] plus the legacy query parameters —
+   * dialled only as the SECOND attempt when a peer answered `400 Missing
+   * deviceId` on the header-carrier attempt. (W1 provisional shim: ported
+   * verbatim from main so main-side specs compile.)
+   */
+  private[neblink] def buildCompatWsUri(host: String, port: Int, id: DeviceIdentity): String =
+    val params = Map(
+      "deviceId" -> id.deviceId,
+      "deviceName" -> id.deviceName,
+      "platform" -> id.platform,
+      "capabilities" -> id.capabilities.asJson.noSpaces,
+      "port" -> serverPort.toString
+    )
+    val query = params.map((k, v) => s"$k=${enc(v)}").mkString("&")
+    s"ws://$host:$port/api/neblink/presence?$query"
+
+  /**
+   * Legacy-shape rejection classifier (deviceface-hardening batch, main-side):
+   * true ONLY for a 400 upgrade rejection — the pre-A1 "Missing deviceId"
+   * shape that authorizes the compat retry. 403 fires at the trust gate
+   * BEFORE deviceId validation and must not be retried with more identity
+   * material. (W1 provisional shim: ported verbatim from main.)
+   */
+  private[neblink] def isLegacyMissingDeviceIdRejection(t: Throwable): Boolean =
+    var cur: Throwable = t
+    var depth = 0
+    var found = false
+    while cur != null && depth < 12 && !found do
+      cur match
+        case hs: java.net.http.WebSocketHandshakeException =>
+          val resp = hs.getResponse
+          if resp != null && resp.statusCode() == 400 then found = true
+          else cur = hs.getCause // not the legacy shape — keep scanning (defensive)
+        case other => cur = other.getCause
+      depth += 1
+    found
 
   private def enc(s: String): String =
     try java.net.URLEncoder.encode(s, "UTF-8")

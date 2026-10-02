@@ -139,7 +139,14 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
     ws: os.Path,
     system: ActorSystem,
     res: SharedResources,
-    idleWindowMs: Option[Long]
+    idleWindowMs: Option[Long],
+    // mailmodel batch (2026-09-25) absorbed fix for a PRE-EXISTING baseline red (the
+    // taskunify merge 7b7f4d7a4 made the anchor default to task-terminal, which routes
+    // sweepDispatchers away from the idle-window leg entirely; this spec never pinned
+    // the switch, so its None-taskId dispatcher is reaped by neither leg). Case 3's
+    // premise IS the idle-window leg = the fallback anchor, so it mounts with the
+    // anchor explicitly off; the production code is untouched.
+    anchorTaskTerminal: Option[Boolean] = None
   ): IO[ProjectRuntime] =
     val pd = ProjectDef(
       name = name,
@@ -155,7 +162,8 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
       rootSessionId = "nebula-root",
       // 节拍压到 1 s（生产 = GatewayMain 的 30 s 广播，同一 ttlScanner 函数）
       ttlCheckIntervalSec = 1,
-      dispatcherIdleWindowMs = idleWindowMs
+      dispatcherIdleWindowMs = idleWindowMs,
+      dispatcherLifecycleAnchorTaskTerminal = anchorTaskTerminal
     )
   end mount
 
@@ -224,7 +232,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
       for
         llm <- IO.pure(new RecordingLlm)
         resources <- mkResources(system, tempRoot, llm.handle)
-        rt <- mount("idle-expire", ws, system, resources, Some(2000L))
+        rt <- mount("idle-expire", ws, system, resources, Some(2000L), anchorTaskTerminal = Some(false))
         actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
         _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("任务甲", "nebula-root")).void
         _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
@@ -292,6 +300,34 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
           "关闭保活时不得写空闲到期事件（拆的是 turn 终态，不是空闲窗）"
         )
     }
+  }
+
+  // ── ⑥ killruling 批 #63：默认阈值抬到小时级（4 h）+ `≤0` 回退语义在册 ──────────
+
+  test("⑥ killruling #63：默认空闲窗已抬到 4 h 小时级；`≤0` 回退语义不变（判据 = 常量现读 + 判据点短路）") {
+    // 判据面：本条只读**默认值**与**回退短路的存在性**——注入路径（`Some(v)`）与
+    // 默认值解耦是既有设计的承重面（①–⑤ 用例全部走构造注入，本批未动一行）⇒
+    // 抬默认值**结构性地**不改变任何压缩尺度上的行为读数。
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "shared" / "Defaults.scala")
+    assert(
+      src.contains("""getOrElse("nebflow.dispatcher.idleWindowMs", (4 * 60 * 60 * 1000L).toString)"""),
+      "DispatcherIdleWindowMs 默认必须 = 4 h 小时级（killruling 批 #63：原 30 min）"
+    )
+    val actor = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "ProjectActor.scala")
+    assert(
+      actor.contains("if windowMs <= 0 then IO.unit"),
+      "`≤0` = 关闭保活（回到 turn 级即拆的旧行为）= 零风险回退开关，判据点必须逐字在册"
+    )
+    // 读数上界护栏：不是把默认值抬成「等效关闭」（≥ 0 且非负——抬到小时级而不是关掉）
+    val flipped = sys.props.get("nebflow.dispatcher.idleWindowMs")
+    try
+      sys.props.remove("nebflow.dispatcher.idleWindowMs")
+      assert(
+        nebflow.shared.Defaults.DispatcherIdleWindowMs >= 3_600_000L,
+        s"默认窗必须 ≥ 1 h（现读 ${nebflow.shared.Defaults.DispatcherIdleWindowMs}）"
+      )
+      assert(nebflow.shared.Defaults.DispatcherIdleWindowMs > 0L, "抬阈值 ≠ 关闭保活（`> 0` 才走保活腿；`≤0` 是回退档，两者不得混为一谈）")
+    finally flipped.foreach(v => sys.props("nebflow.dispatcher.idleWindowMs") = v)
   }
 
 end DispatcherIdleWindowSpec

@@ -98,6 +98,8 @@ object MailQueueItem:
     yield MailQueueItem(id, from, fromSession, message, itemType, timestamp, imagePaths)
   }
 
+end MailQueueItem
+
 /**
  * 审批卡答复形状（spec §2.4）。
  *

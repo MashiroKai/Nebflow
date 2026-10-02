@@ -50,14 +50,7 @@ case class AgentDef(
   displayName: Option[String] = None,
   voiceEnabled: Boolean = true,
   model: Option[AgentModelConfig] = None,
-  preset: Option[String] = None, // references a named preset in model-presets.json
-  /**
-   * Tool-level model override (#291: Delegate/SubTask `preset` param). Set by
-   * PresetResolver when a spawn carries an explicit preset; survives the
-   * per-turn def refresh in ContextRefresher.loadCurrentDef (which would
-   * otherwise reload the disk def and discard the override).
-   */
-  modelOverride: Option[AgentModelConfig] = None,
+  preset: Option[String] = None, // legacy stored reference; audit-only, not read by the engine
   category: String = "standalone",
   mcpServers: List[String] = Nil,
   skills: List[String] = Nil, // skill names this agent can see
@@ -73,16 +66,3 @@ case class AgentDef(
   pluginMcpServers: List[String] = Nil,
   pluginTools: List[String] = Nil
 )
-
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):本常量自 agent.AgentCore 下沉
-// actor(纯 String 常量;AgentCore 不留转发别名,shim 禁令),全仓改指,实现与注释逐字迁移。
-object AgentDef:
-
-  /**
-   * 记忆整理 agent 定义名（spec §5 R5 O-A；seed = `src/main/resources/seed/agents/
-   * <name>/`，运行时 `~/.nebflow/agents/<name>/`）。压缩双轨的第二轨按此名解析
-   * def（[[MemoryTrack]]）——名字缺失 ⇒ 轨失败降级（照常装机，队列保留）。
-   */
-  val MemoryConsolidatorName = "memory-consolidator"
-
-end AgentDef

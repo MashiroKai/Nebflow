@@ -23,9 +23,9 @@ import nebflow.shared.{AgentModelConfig, PathUtil}
  *     动态继承 **project-dispatcher 当前方案**——节点无自有设置，分发器派发时
  *     所选方案 = 唯一路径（节点侧静态覆盖已废止：NodeEdit preset 参数退役、
  *     NodeEngine §E.3 节点存储方案消费移除）。
- *   - **其余 agent**（memory-consolidator / 自定义 standalone / team/flow agent）：
- *     引擎**忽略**其存储的 preset/model（数据留盘留审计，零删除），一律回落
- *     默认 preset（resolve level 3 terminal）。
+ *   - **其余 agent**（自定义 standalone / team/flow agent 等非在册名）：引擎**忽略**
+ *     其存储的 preset/model（数据留盘留审计，零删除），一律回落默认 preset
+ *     （resolve level 3 terminal）。
  *
  * 继承是**引用级**透传：把根 agent 的原始 (preset, model) 引用作为有效输入交给
  * 既有 resolve——继承体与根共享同一套三级解析语义，AgentDef.preset 也写根的

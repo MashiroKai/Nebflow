@@ -34,6 +34,19 @@ declare const lucide: {
   createElement(icon: [string, Record<string, any>, any[]]): SVGElement;
 };
 
+/** qrcode-generator (web/vendor/qrcode.js, MIT): QR encoder for the Feishu
+ *  scan-bind overlay in socialPanel.js. Call surface is exactly what the
+ *  overlay uses (auto type number + the canvas draw pair). */
+declare const qrcode: (
+  typeNumber: 0 | 1 | 2 | 3 | 4,
+  errorCorrectionLevel: 'L' | 'M' | 'Q' | 'H'
+) => {
+  addData(data: string): void;
+  make(): void;
+  getModuleCount(): number;
+  isDark(row: number, col: number): boolean;
+};
+
 /** highlight.js: syntax highlighting */
 declare const hljs: {
   getLanguage(name: string): unknown;

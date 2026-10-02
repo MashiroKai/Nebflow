@@ -3,7 +3,7 @@ package nebflow.social
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.{AtomicJson, CredentialFileAcl}
-import nebflow.shared.PathUtil
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path, StandardOpenOption}
@@ -42,6 +42,8 @@ import java.nio.file.{Files, Path, StandardOpenOption}
  */
 object SocialChannels:
 
+  private val logger = NebflowLogger.forName("nebflow.social.channels")
+
   /** One config field. `kind` mirrors the frontend definition layer. */
   final case class FieldSpec(
     key: String,
@@ -75,20 +77,58 @@ object SocialChannels:
         FieldSpec("aes_key", "secret", required = true, pattern = None, Some("social-wechat-aes-key"))
       )
     ),
+    // wechat iLink batch: the official ClawBot plugin's channel. A SEPARATE card
+    // on purpose — the `wechat` card above carries the Official-Account webhook
+    // model (app_id/app_secret/token/aes_key) and replacing those fields would
+    // destroy that semantics irreversibly. This card describes the side-car
+    // deployment: the official plugin runs attached to the host and this repo
+    // only grows the seam, so the card holds identifiers + one runtime URL only.
+    // `bot_token` is the ONE credential and lives behind `_ref` like every other
+    // secret; the official plugin's own credential copy stays in the host state
+    // directory and is never mirrored into this repo.
+    // `allowed_ilink_user_ids` is the sender-gate SLOT: empty = no restriction
+    // (the shipped default), filling it (comma-separated sender ids) makes the
+    // seam's gate fail-closed — a sender that is not on the list, INCLUDING one
+    // whose identity cannot be resolved, is dropped.
+    // `context_token` is deliberately NOT a field: it is runtime state of the
+    // official plugin's session, not configuration.
+    ChannelSpec(
+      "weixin-ilink",
+      List(
+        FieldSpec("bot_token", "secret", required = true, pattern = None, Some("social-weixin-bot-token")),
+        FieldSpec("ilink_bot_id", "text", required = true, pattern = None),
+        FieldSpec("ilink_user_id", "text", required = true, pattern = None),
+        FieldSpec("baseurl", "url", required = false, pattern = Some("^https?://")),
+        FieldSpec("allowed_ilink_user_ids", "text", required = false, pattern = None)
+      )
+    ),
     ChannelSpec(
       "feishu",
       List(
         FieldSpec("app_id", "text", required = true, pattern = Some("^cli_[0-9a-zA-Z]{16,}$")),
         FieldSpec("app_secret", "secret", required = true, pattern = None, Some("social-feishu-app-secret")),
+        // feiscanbind (approved pending-decision ⑤, 2026-09-27): optional. The
+        // long-connection path never consumes this field (read side
+        // `FeishuCredentials` reads only app_id/app_secret_ref; the runtime runs
+        // with an empty token — `FeishuChannel` dispatch), so requiring it would
+        // block a scan-bind-created app (which has none) from ever reaching
+        // `verified`. The manual-fill path keeps the field: optional now, exact
+        // same write path as before.
         FieldSpec(
           "verification_token",
           "secret",
-          required = true,
+          required = false,
           pattern = None,
           Some("social-feishu-verification-token")
         ),
         FieldSpec("encrypt_key", "secret", required = false, pattern = None, Some("social-feishu-encrypt-key")),
-        FieldSpec("region", "select", required = true, pattern = Some("^(feishu|lark)$"))
+        FieldSpec("region", "select", required = true, pattern = Some("^(feishu|lark)$")),
+        // feishubridge batch: member-level allowlist SLOT (feishu is a tenant model
+        // — every tenant member can reach the gateway by default). Empty = no
+        // restriction, which is the shipped default; filling it (comma-separated
+        // open_ids) turns the bridge gate fail-closed. Whether to enable remains
+        // the author's call — the slot exists so enabling later needs no migration.
+        FieldSpec("allowed_open_ids", "text", required = false, pattern = None)
       )
     ),
     ChannelSpec(
@@ -125,23 +165,51 @@ object SocialChannels:
         case Right(j) => j
         case Left(_) => Json.obj() // unreadable config: the READ side answers `{}`; writes refuse below
 
-  /** The `socialChannels` subtree; absent key ⇒ `{}` (old installs, arch §7.2). */
+  /** The stored `socialChannels` subtree; absent key ⇒ `{}` (old installs, arch §7.2). */
   def readChannels(root: os.Path): Json =
     parseConfig(root).hcursor.downField("socialChannels").focus.getOrElse(Json.obj())
+
+  /**
+   * The RAW stored `enabled` of one channel: `None` = the entry (or the store)
+   * never carried the key. Deliberately distinct from `false`.
+   *
+   * 🔴 This distinction IS the feishu-boot-seal fix. On the READ side an absent
+   * key is read as "not enabled" (`channelsJson` / `isEnabled` — unchanged, and
+   * correct: an install that never enabled a channel is not enabled). On the
+   * WRITE side the same conflation was a defect: a request body that did not
+   * mention `enabled` was read with `getOrElse(false)` and therefore wrote
+   * `false` into the user's config — the engine closing the user's switch on
+   * its own authority. A writer must preserve what is here, so it has to be
+   * able to tell "stored false" apart from "never stored".
+   */
+  private def storedEnabled(root: os.Path, id: String): Option[Boolean] =
+    readChannels(root).hcursor
+      .downField("channels")
+      .downField(id)
+      .downField("enabled")
+      .as[Boolean]
+      .toOption
 
   /**
    * GET /api/social/channels payload. Secret fields only ever surface their
    *  PATH (the stored `_ref` value) — never a credential.
    */
-  def channelsJson(root: os.Path): Json =
+  // (W1 provisional shim: `registered` parameter + per-channel
+  // `adapterRegistered` keys ported from main's feishu-adapter-activation
+  // batch; the default (empty) keeps the phase-1 constant-false answer.)
+  def channelsJson(root: os.Path, registered: Set[String] = Set.empty): Json =
     val stored = readChannels(root).hcursor.downField("channels").focus.getOrElse(Json.obj())
     val out = channelIds.map { id =>
       val entry = stored.hcursor.downField(id).focus.getOrElse(Json.obj())
       val enabled = entry.hcursor.downField("enabled").as[Boolean].getOrElse(false)
       val fields = entry.hcursor.downField("fields").focus.getOrElse(Json.obj())
-      id -> Json.obj("enabled" -> enabled.asJson, "fields" -> fields)
+      id -> Json.obj(
+        "enabled" -> enabled.asJson,
+        "fields" -> fields,
+        "adapterRegistered" -> registered.contains(id).asJson
+      )
     }
-    Json.obj("channels" -> Json.fromFields(out), "adapterRegistered" -> false.asJson)
+    Json.obj("channels" -> Json.fromFields(out), "adapterRegistered" -> registered.nonEmpty.asJson)
 
   /**
    * The mechanical triple for one stored path: `{exists, modeOk, readable}`.
@@ -213,10 +281,11 @@ object SocialChannels:
    *  for the whole of phase 1 — the render authority is the frontend
    *  definition layer, and both sides agree there is no adapter yet.
    */
-  def probeJson(root: os.Path, id: String): Either[Failure, Json] =
+  def probeJson(root: os.Path, id: String, registered: Set[String] = Set.empty): Either[Failure, Json] =
     channel(id) match
       case None => Left(Failure.UnknownChannel(id))
-      case Some(spec) => Right(Json.obj("adapterRegistered" -> false.asJson, "secrets" -> probeOf(root, spec)))
+      case Some(spec) =>
+        Right(Json.obj("adapterRegistered" -> registered.contains(id).asJson, "secrets" -> probeOf(root, spec)))
 
   // ─────────────────────────── write side ───────────────────────────
 
@@ -338,6 +407,16 @@ object SocialChannels:
    * is persisted is the path. Fields absent from the body keep their stored
    * value (surgical merge — a toggle flip cannot wipe a schema).
    *
+   * 🔴 `enabled` is the USER's switch (feishu-boot-seal batch, 2026-09-28).
+   * The body key is honoured only when it is actually there: a body that omits
+   * `enabled` is a call with NO opinion about the switch, so the STORED value
+   * survives untouched — and a store that never carried the key does not gain
+   * one. This used to be `getOrElse(false)` on the request body, i.e. a body
+   * without the key silently CLOSED the channel (observed live: a POST with no
+   * `enabled` flipped a verified channel to `false` with zero log lines). The
+   * engine never closes a switch on the user's behalf — the same red line as
+   * "the engine never makes the dispatcher's or the user's decision for them".
+   *
    * `restrict` is the credential-narrowing step; production leaves it at
    * [[defaultRestrict]] (the shared `CredentialFileAcl` module) and only the
    * F1 regression test injects a failing one.
@@ -380,11 +459,22 @@ object SocialChannels:
                 val merged = Json.fromFields(
                   existing.asObject.getOrElse(JsonObject.empty).toList ++ secretRefs ++ plainJson
                 )
-                val enabled = body.hcursor.downField("enabled").as[Boolean].getOrElse(false)
-                val entry = Json.obj(
-                  "enabled" -> enabled.asJson,
-                  "fields" -> merged,
-                  "updatedAt" -> (System.currentTimeMillis() / 1000).asJson
+                // 4. the user's switch: a body that SAYS something about it is
+                // honoured verbatim; a body that does not mention it leaves the
+                // stored value — and a key that was never stored stays ABSENT
+                // rather than materialising as `false`. The old
+                // `getOrElse(false)` closed the channel on a body that simply
+                // had no opinion: the engine making the user's decision.
+                val enabled: Option[Boolean] =
+                  body.hcursor.downField("enabled").as[Boolean].toOption.orElse(storedEnabled(root, id))
+                val entry = Json.fromJsonObject(
+                  JsonObject.fromIterable(
+                    enabled.map(b => "enabled" -> b.asJson).toList ++
+                      List(
+                        "fields" -> merged,
+                        "updatedAt" -> (System.currentTimeMillis() / 1000).asJson
+                      )
+                  )
                 )
                 persist(root, id, entry) match
                   case Left(err) => Left(err)
@@ -397,7 +487,15 @@ object SocialChannels:
 
   /**
    * Surgical `socialChannels.channels.<id>` rewrite: every other key of
-   *  nebflow.json survives (same shape as PluginBlockPolicy's writer).
+   * nebflow.json survives (same shape as PluginBlockPolicy's writer).
+   *
+   * 🔴 This writer is the ONLY producer of the `version:1` + `updatedAt`
+   * (epoch-second) entry shape, and it used to be completely SILENT — the
+   * live incident (2026-09-28 18:00:06) showed the user's `enabled:true`
+   * flipped to `false` with zero log lines in the window, so the write could
+   * not be attributed after the fact. A config write is a user-visible state
+   * change; it now says so (channel id only — never a field value, never a
+   * credential; `app_secret` lives behind `_ref` and is not touched here).
    */
   private def persist(root: os.Path, id: String, entry: Json): Either[Failure, Unit] =
     val p = configPath(root)
@@ -410,6 +508,9 @@ object SocialChannels:
         case Right(rootJson) =>
           val social = rootJson.hcursor.downField("socialChannels").focus.getOrElse(Json.obj())
           val channelsObj = social.hcursor.downField("channels").focus.getOrElse(Json.obj())
+          val previous =
+            channelsObj.hcursor.downField(id).downField("enabled").as[Boolean].toOption
+          val next = entry.hcursor.downField("enabled").as[Boolean].toOption
           val nextChannels = Json.fromJsonObject(
             channelsObj.asObject.getOrElse(JsonObject.empty).add(id, entry)
           )
@@ -420,10 +521,99 @@ object SocialChannels:
             rootJson.asObject.getOrElse(JsonObject.empty).add("socialChannels", nextSocial)
           )
           AtomicJson.writeSync(p, out.noSpaces)
+          logger.infoSync(
+            s"socialChannels: channel '$id' config written (enabled ${previous.map(_.toString).getOrElse("<absent>")} -> ${next.map(_.toString).getOrElse("<absent>")})"
+          )
           Right(())
       end match
     catch case e: Exception => Left(Failure.Io(s"could not persist social channel config: ${e.getMessage}"))
     end try
   end persist
+
+  // ───────────────────── activation gate (feishubridge batch) ─────────────────────
+  // (W1 provisional shim: ported from main's SocialChannels -- the main-only
+  // FeishuBridgePlugin/FeishuChannel/FeishuScanBind files consume this API.
+  // The FieldSpec/channelsJson/probeJson signature hunks stay with this file's
+  // owning wave.)
+
+  /** The stored `enabled` flag of one channel (absent ⇒ false). */
+  def isEnabled(root: os.Path, id: String): Boolean =
+    readChannels(root).hcursor
+      .downField("channels")
+      .downField(id)
+      .downField("enabled")
+      .as[Boolean]
+      .getOrElse(false)
+
+  private def tripleAllTrue(j: Json): Boolean =
+    List("exists", "modeOk", "readable").forall(k => j.hcursor.downField(k).as[Boolean].getOrElse(false))
+
+  /**
+   * Config verification for the activate gate: the card is verified when every
+   *  REQUIRED field is present and valid — a plain field matches its pattern,
+   *  a secret field has a stored `_ref` whose probe triple is all-true.
+   *  Purely mechanical (files and patterns; content is never touched), so the
+   *  closed loop `enabled ∧ verified ⇒ adapter registered` is testable
+   *  offline. Unknown channel ⇒ not verified.
+   */
+  def verified(root: os.Path, id: String): Boolean =
+    channel(id).exists { spec =>
+      val fields = storedFields(root, id)
+      val osName = CredentialFileAcl.currentOsName
+      spec.fields.filter(_.required).forall { f =>
+        if f.isSecret then
+          fields.hcursor
+            .downField(f.storedKey)
+            .as[String]
+            .toOption
+            .filter(_.nonEmpty)
+            .exists(ref => tripleAllTrue(probePath(resolveRef(root, ref), osName)))
+        else
+          fields.hcursor
+            .downField(f.key)
+            .as[String]
+            .toOption
+            .filter(_.nonEmpty)
+            .exists(v => f.pattern.forall(p => v.matches(p)))
+      }
+    }
+
+  // ───────────────── feishu panel face (feishu-bind batch, 2026-09-27) ─────────────────
+
+  /**
+   * The channel-entry key holding the auto-bind default session (feishu, C4).
+   * A sibling of `enabled`/`fields` on the channel entry — deliberately NOT a
+   * card field, so the save path (which validates and rewrites `fields`) can
+   * never touch or wipe it.
+   */
+  val DefaultSessionKey = "defaultSessionId"
+
+  /** The stored default session of one channel (C4): None = unset. */
+  def defaultSessionId(root: os.Path, id: String): Option[String] =
+    readChannels(root).hcursor
+      .downField("channels")
+      .downField(id)
+      .downField(DefaultSessionKey)
+      .as[String]
+      .toOption
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+  /**
+   * Persist (Some) or clear (None) the default session (C4: set = durable).
+   * Surgical merge into the channel entry — `enabled`, `fields` and every
+   * other sibling survive untouched (same surgical writer as [[persist]]). A
+   * blank value is stored as a clear (unset), never as an empty string.
+   */
+  def setDefaultSessionId(root: os.Path, id: String, sessionId: Option[String]): Either[Failure, Unit] =
+    channel(id) match
+      case None => Left(Failure.UnknownChannel(id))
+      case Some(_) =>
+        val entry = readChannels(root).hcursor.downField("channels").downField(id).focus.getOrElse(Json.obj())
+        val obj = entry.asObject.getOrElse(JsonObject.empty)
+        val next = sessionId.map(_.trim).filter(_.nonEmpty) match
+          case Some(sid) => obj.add(DefaultSessionKey, Json.fromString(sid))
+          case None => obj.remove(DefaultSessionKey)
+        persist(root, id, Json.fromJsonObject(next))
 
 end SocialChannels

@@ -5,7 +5,7 @@
 // mocks; the browser is closed in `finally`; no port is ever taken from the
 // host. Zero dependency on the running gateway.
 //
-// FOUR MODES (all offline):
+// FIVE MODES (all offline):
 //   · AFTER (default)         — serves src/main/resources/web; every anchor this
 //                               batch implements is expected GREEN.
 //   · BEFORE (SOCIAL_WEB_ROOT=<baseline web/>) — serves a pre-change tree; the
@@ -15,6 +15,23 @@
 //                               to true (in memory, byte change reported). The
 //                               W7 red-proof: the SAME assertion that is 0 in
 //                               the production tree must fire here.
+//   · RED-FILTER (SOCIAL_MUTATE=card-filter-off) — serves the same tree with
+//                               the definition layer's ONE visible-filter
+//                               dropped (in memory, byte change reported). The
+//                               socialhide red-proof: the SAME visible-card
+//                               probes that read {feishu} in production must
+//                               read every sealed card here, in array order.
+//   · ILINK-RED (SOCIAL_MUTATE=ilink-unseal | ilink-fields) — the wechat-ilink
+//                               batch's red proof, mutation-safe in the same
+//                               sense as the two above: the served definition
+//                               layer is damaged in memory and the SAME probes
+//                               the production tree pins must fire. `ilink-unseal`
+//                               drops the new card's seal (IL1 turns red: the
+//                               visible face is no longer feishu-only);
+//                               `ilink-fields` drops `baseurl`'s pattern and
+//                               flips `ilink_bot_id` to optional (IL2 turns red:
+//                               the field mirror no longer matches the contract).
+//                               Nothing is written to the tree.
 //   · API (SOCIAL_API_BASE=<url>[, <token>]) — optional extra leg that drives
 //                               the REAL /api/social/* endpoints of an isolated
 //                               instance (config round-trip + "no secret
@@ -30,11 +47,61 @@
 //    be mistaken for a pass, and it must never be "fixed" by inventing an
 //    address.
 //
+// 🔴 HIDE RULING (author 2026-09-23, Part A) — W4's remote leg only: the
+//    `#social-section-remote` section is withdrawn from the VISIBLE face by the
+//    `hidden` attribute (plus css/social.css's companion
+//    `#social-section-remote[hidden] { display: none; }` rule — required,
+//    because `.social-section { display: flex }` would otherwise outrank the
+//    user agent's `[hidden]` style and the attribute would be silently
+//    defeated). HIDDEN, NOT DELETED: W4 therefore flips from "the section is
+//    rendered" to "the section is still IN THE DOM and NOT VISIBLE", and the
+//    absence assertions of W5/W15/W17 (no link, no QR, no guessed address) are
+//    unchanged — they keep holding on the hidden subtree. Nothing about the
+//    O1–O5 suspension changes: hiding the section does not decide it.
+//
+// 🔴 CHANNEL SEAL (socialhide batch, author ruling 2026-09-26, merged order
+//    ③): wechat + telegram are SEALED — `hidden: true` at the CHANNEL level,
+//    data retained. W4's count now reads the VISIBLE single source
+//    (socialChannelCount() = 1); SH1–SH3 pin the visible set = {feishu}, the
+//    sealed data face (every entry, all flags in place, feishu unflagged) and
+//    the DOM absence of the sealed ids. The red leg is MUTATION-SAFE
+//    (SOCIAL_MUTATE=card-filter-off): the served definition layer loses its
+//    one visible filter and the SAME probes must read 3 cards. W6 (production
+//    = 0 connected) and W7 (fixture flip ⇒ connected) keep their original
+//    judgement; W9 / W14 / W16-B6 keep their state-machine coverage by moving
+//    onto the feishu card — the only production-visible face (the state
+//    machine is definition-driven and channel-agnostic; the REAL apiSuite leg
+//    still POSTs telegram, proving sealed ≠ deleted on the server face too).
+//
+// 🔴 SOCIAL-FIX (author ruling 2026-09-28, three changes over the landed
+//    panel): ① the scan QR lives INSIDE the feishu card — one view layer, the
+//    `#social-scan` sub-dialog is gone; ② the manual-fill form and its two
+//    entries are retired — scan-to-create is the ONLY creation path; ③ the
+//    mechanical probe triples stop rendering as field names — the card shows
+//    a plain-language credential state. Flipped anchors, each red-proven
+//    against the pre-change tree (SOCIAL_SUITE=after + SOCIAL_WEB_ROOT):
+//    W4's control face ([data-scan-inline] / [data-archive]), W14's fill flow
+//    (replaced by the in-card scan flow SF-1), FB1/FB2 (form fields flip to
+//    absence), W16 B-3/B-6 (form geometry → in-card QR geometry), SF-3
+//    (retired faces stay retired). BEFORE / FIXTURE / RED-FILTER keep their
+//    original judgement.
+//
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
 //   SOCIAL_MUTATE=adapter-true node tests/social-panel.spec.mjs
+//   SOCIAL_MUTATE=card-filter-off node tests/social-panel.spec.mjs
 //   SOCIAL_API_BASE=http://127.0.0.1:8155 SOCIAL_API_TOKEN=<token> node tests/social-panel.spec.mjs
+//
+//   🔴 RED leg for an assertion this batch FLIPPED (hide ruling 2026-09-23) —
+//      run the AFTER suite against a pre-change tree, so the new assertion is
+//      exercised against the tree that must make it fail:
+//   SOCIAL_SUITE=after SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web \
+//     SOCIAL_SHOT_DIR=/tmp/nb-socpanel-hide-red node tests/social-panel.spec.mjs
+//      (SOCIAL_SUITE only SELECTS which suite runs; SOCIAL_WEB_ROOT still says
+//       which tree is served. Without it, SOCIAL_WEB_ROOT implies BEFORE, whose
+//       suite is red-by-absence and never reaches the flipped assertions — see
+//       the note on MODE below.)
 
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
@@ -47,17 +114,101 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
 const REPO_WEB = join(REPO, 'src', 'main', 'resources', 'web');
 const WEB = process.env.SOCIAL_WEB_ROOT ? resolve(process.env.SOCIAL_WEB_ROOT) : REPO_WEB;
-const MODE = process.env.SOCIAL_WEB_ROOT ? 'BEFORE' : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE' : 'AFTER');
+// Suite selection (SOCIAL_SUITE) is DECOUPLED from tree selection
+// (SOCIAL_WEB_ROOT / SOCIAL_MUTATE). Unset = the original behaviour, unchanged:
+// a baseline tree implies BEFORE, a mutated tree FIXTURE, else AFTER. The
+// decoupling exists for exactly one job — the RED leg of an assertion this
+// batch FLIPPED (hide ruling 2026-09-23): the AFTER suite has to run against a
+// PRE-CHANGE tree, which the tree-derived rule cannot express, because
+// SOCIAL_WEB_ROOT alone would silently route to the BEFORE suite (red-by-absence,
+// which never even reaches the flipped assertions) and would prove nothing
+// about them. SOCIAL_SUITE only SELECTS the suite; it never changes which tree
+// is served (the `web=` reading on the mode line below states the tree).
+const SUITE_ENV = String(process.env.SOCIAL_SUITE || '').toLowerCase();
+const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'fixture' || SUITE_ENV === 'redfilter'
+  || SUITE_ENV === 'nrs' || SUITE_ENV === 'ilinkred'
+  ? SUITE_ENV.toUpperCase()
+  : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE'
+    : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE'
+      : (process.env.SOCIAL_MUTATE === 'card-filter-off' ? 'REDFILTER'
+        : (process.env.SOCIAL_MUTATE === 'ilink-unseal' || process.env.SOCIAL_MUTATE === 'ilink-fields' ? 'ILINKRED' : 'AFTER'))));
 const SHOTS = process.env.SOCIAL_SHOT_DIR || '/tmp/nb-socpanel';
 const API_BASE = process.env.SOCIAL_API_BASE || '';
 const API_TOKEN = process.env.SOCIAL_API_TOKEN || '';
 
 // ── Fixed references taken from THIS repo (independent of the served tree) ──
 const CHANNELS_MOD = await import(pathToFileURL(join(REPO_WEB, 'js', 'socialChannels.js')).href);
-const EXPECTED_CARDS = CHANNELS_MOD.SOCIAL_CHANNELS.length;
+// socialhide: the two §F.2 faces are pinned SEPARATELY — the sealed data set
+// (every entry, hide ≠ delete) and the visible single source (count = 1).
+const EXPECTED_DEFINITION_CHANNELS = CHANNELS_MOD.SOCIAL_CHANNELS.length;
+const EXPECTED_CARDS = CHANNELS_MOD.socialChannelCount();
+// Over the FULL set on purpose: W11 keeps proving that the sealed channels'
+// name/desc locale keys are still enumerated (and W11 itself proves they
+// exist in both tables) — sealing must not orphan keys. (SH2 pins the length.)
 const SOCIAL_KEYS = CHANNELS_MOD.SOCIAL_CHANNELS.flatMap((c) => [c.nameKey, c.descKey]);
 const ZH = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'zh-CN.js')).href)).default;
 const EN = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'en.js')).href)).default;
+
+/** The wechat-ilink contract (chain-wechat-impl) — transcribed from the batch's
+ *  single source of truth (the cross-position contract paragraph), NOT re-derived
+ *  from the implementation. `pattern` / `secretName` stay `undefined` where the
+ *  contract says the field carries none, so the mirror below compares the full
+ *  five-tuple on every field and an added/removed/downgraded attribute fails.
+ *  This constant is the ONE judgement input for both the production probe
+ *  (IL1–IL3, read off the repo module) and its red proof (IL-R, read off the
+ *  served mutated tree) — that is what makes "the same probe" literal. */
+const ILINK_CONTRACT = {
+  id: 'weixin-ilink',
+  hidden: true,
+  fields: [
+    { key: 'bot_token', kind: 'secret', required: true, pattern: undefined, secretName: 'social-weixin-bot-token' },
+    { key: 'ilink_bot_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
+    { key: 'ilink_user_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
+    { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://', secretName: undefined },
+    { key: 'allowed_ilink_user_ids', kind: 'text', required: false, pattern: undefined, secretName: undefined },
+  ],
+};
+
+/** Mirror a channel object against [[ILINK_CONTRACT]] field by field. Returns
+ *  `{ok, mismatch, got, sealed}` so a failing probe reports WHICH attribute
+ *  diverged instead of only that something did. `null`/`undefined` channel ⇒ a
+ *  named failure (an absent card must never read as a vacuous pass). */
+function ilinkMirror(ch) {
+  if (!ch) return { ok: false, mismatch: ['channel absent'], got: [], sealed: false };
+  const got = (ch.fields || []).map((f) => ({ key: f.key, kind: f.kind, required: f.required, pattern: f.pattern, secretName: f.secretName }));
+  const want = ILINK_CONTRACT.fields;
+  const mismatch = [];
+  if (got.length !== want.length) mismatch.push(`fieldCount ${got.length}≠${want.length}`);
+  for (let i = 0; i < Math.max(got.length, want.length); i++) {
+    const g = got[i], w = want[i];
+    if (!g || !w) { mismatch.push(`slot ${i} ${w ? w.key : '(extra)'} missing`); continue; }
+    for (const k of ['key', 'kind', 'required', 'pattern', 'secretName']) {
+      if (g[k] !== w[k]) mismatch.push(`${w.key}.${k}=${String(JSON.stringify(g[k]))}≠${String(JSON.stringify(w[k]))}`);
+    }
+  }
+  return { ok: mismatch.length === 0, mismatch, got, sealed: ch.hidden === true };
+}
+
+/** The entry span of one channel id inside the definition-layer SOURCE — used by
+ *  the IL-R mutations to damage exactly one card. Anchored on the unique
+ *  `id: '<id>',` literal and closed by the entry terminator, so a mutation can
+ *  never reach a neighbouring card (wechat also carries `hidden: true`, and
+ *  telegram also carries `pattern: '^https?://'` — a global replace would hit
+ *  the wrong entries and the red leg would prove nothing about the new card). */
+function entrySpan(body, id) {
+  const key = `id: '${id}',`;
+  const at = body.indexOf(key);
+  if (at < 0) return null;
+  // The entry opens at the `  {` that precedes the id literal — `hidden: true`
+  // sits ABOVE `id` in this file, so anchoring on the id alone would leave the
+  // seal outside the span and the unseal mutation would silently do nothing.
+  const open = body.lastIndexOf('\n  {\n', at);
+  if (open < 0) return null;
+  const start = open + 1;
+  const close = body.indexOf('\n  },\n', at);
+  if (close < 0) return null;
+  return { start, end: close + '\n  },\n'.length };
+}
 
 /** W6① — the fake-connection vocabulary (design §E.1: 「等待手机连接」/「已就绪」
  *  added to the original set). Any hit in the RENDERED text of this batch's own
@@ -113,11 +264,61 @@ const MIME = {
 let mutationHits = 0;
 /** The fixture copy: served in memory, never written to the tree. */
 function mutate(rel, body) {
-  if (process.env.SOCIAL_MUTATE !== 'adapter-true') return body;
-  if (rel !== '/js/socialChannels.js') return body;
-  const hits = (body.match(/adapterRegistered: false/g) || []).length;
-  mutationHits += hits;
-  return body.replace(/adapterRegistered: false/g, 'adapterRegistered: true');
+  const mode = process.env.SOCIAL_MUTATE;
+  if (mode === 'adapter-true') {
+    if (rel !== '/js/socialChannels.js') return body;
+    const hits = (body.match(/adapterRegistered: false/g) || []).length;
+    mutationHits += hits;
+    return body.replace(/adapterRegistered: false/g, 'adapterRegistered: true');
+  }
+  if (mode === 'card-filter-off') {
+    // Drops the ONE visible filter ([[visibleChannels]] in the definition
+    // layer) — the exact inverse of the seal: every sealed card renders again.
+    if (rel !== '/js/socialChannels.js') return body;
+    const hits = (body.match(/\.filter\(\(c\) => !c\.hidden\)/g) || []).length;
+    mutationHits += hits;
+    return body.replace(/\.filter\(\(c\) => !c\.hidden\)/g, '.slice()');
+  }
+  if (mode === 'ilink-unseal' || mode === 'ilink-fields') {
+    // wechat-ilink red proof. Both variants damage ONLY the `weixin-ilink`
+    // entry (see [[entrySpan]]): the other sealed cards carry `hidden: true`
+    // too, so an unscoped replace would unseal wechat/telegram as well and the
+    // reading would stop being evidence about THIS batch's card.
+    if (rel !== '/js/socialChannels.js') return body;
+    const span = entrySpan(body, ILINK_CONTRACT.id);
+    if (!span) return body;
+    const entry = body.slice(span.start, span.end);
+    // 🔴 The damage is applied LINE BY LINE, and only to CODE lines: the entry's
+    //    own explanatory comment quotes these very literals in prose (it spells
+    //    out `hidden: true` and the field keys), so an unanchored string replace
+    //    would rewrite the COMMENT and leave the code intact — a mutation that
+    //    proves nothing while still reporting a hit. Classifying lines is robust
+    //    where regex tail-anchoring was not: these code lines end in `,` and the
+    //    field ones share their line with the opening `{ key: ...`.
+    const CODE_SEAL = /^(\s*)hidden: true,$/m;
+    const CODE_PATTERN = /^(.*?), pattern: '\^https\?:\/\/',$/m;
+    const CODE_BOTID = /^(.*\bkey: 'ilink_bot_id', kind: 'text', required: )true$/m;
+    const isComment = (line) => {
+      const t = line.trim();
+      return t.startsWith('//') || t.startsWith('/*') || t.startsWith('*');
+    };
+    const edits = mode === 'ilink-unseal'
+      ? [['hidden: true', 'hidden: false']]
+      : [["pattern: '^https?://',", ''],
+        ["key: 'ilink_bot_id', kind: 'text', required: true", "key: 'ilink_bot_id', kind: 'text', required: false"]];
+    let hit = 0;
+    const damaged = entry.split('\n').map((line) => {
+      if (isComment(line)) return line;
+      let out = line;
+      for (const [from, to] of edits) {
+        if (out.includes(from)) { out = out.split(from).join(to); hit++; }
+      }
+      return out;
+    }).join('\n');
+    mutationHits += hit;
+    return body.slice(0, span.start) + damaged + body.slice(span.end);
+  }
+  return body;
 }
 
 async function startServer() {
@@ -145,9 +346,22 @@ async function startServer() {
 const apiState = {
   channels: {},
   probes: {},
+  /** feishubridge: live adapter registration truth per channel id — the probe
+   *  face's `adapterRegistered` value the panel reads in phase 2. */
+  registered: {},
   posts: [],
   failPost: false,
+  /** social-fix: the scan-bind face the in-card block polls (state-machine
+   *  mirror of the real contract: qr_ready → polling → done|failed). A
+   *  `done` reading writes the created config ONCE — the backend side-effect
+   *  the real endpoint carries. */
+  scan: { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false },
 };
+
+/** Fresh scan face (leg setup / teardown between modes). */
+function resetScanFace() {
+  apiState.scan = { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false };
+}
 
 const SECRET_FILE = {
   wechat: { app_secret: 'social-wechat-app-secret', token: 'social-wechat-token', aes_key: 'social-wechat-aes-key' },
@@ -164,7 +378,7 @@ function stubApi(page) {
   page.route('**/api/social/probe**', (r) => {
     const url = new URL(r.request().url());
     const id = url.searchParams.get('channel') || '';
-    return r.fulfill({ json: { adapterRegistered: false, secrets: apiState.probes[id] || {} } });
+    return r.fulfill({ json: { adapterRegistered: apiState.registered[id] === true, secrets: apiState.probes[id] || {} } });
   });
   page.route('**/api/social/channels/*', (r) => {
     const req = r.request();
@@ -190,6 +404,27 @@ function stubApi(page) {
   page.route('**/api/social/channels', (r) => r.fulfill({
     json: { channels: apiState.channels, adapterRegistered: false },
   }));
+  // social-fix: the scan-bind face (registered LAST ⇒ highest priority above
+  // the catch-all; `*` never crosses `/`, so the deeper scan paths cannot be
+  // shadowed by the channel POST route).
+  page.route('**/api/social/channels/*/scan-bind/begin*', (r) => {
+    if (r.request().method() !== 'POST') return r.fallback();
+    if (apiState.scan.failBegin) return r.fulfill({ status: 503, json: { error: 'io' } });
+    return r.fulfill({ json: { scanId: 'mock-scan-1' } });
+  });
+  page.route('**/api/social/channels/*/scan-bind/status*', (r) => {
+    if (apiState.scan.state === 'done' && !apiState.scan.doneWrites) {
+      // the backend side-effect of a finished scan: the app exists now
+      apiState.scan.doneWrites = true;
+      apiState.channels.feishu = { enabled: true, fields: {
+        app_id: 'cli_mock0123456789ab',
+        app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      } };
+      apiState.probes.feishu = { app_secret: { exists: true, modeOk: true, readable: true } };
+      apiState.registered.feishu = true;
+    }
+    return r.fulfill({ json: { state: apiState.scan.state, qrUrl: apiState.scan.qrUrl, userCode: apiState.scan.userCode } });
+  });
 }
 
 async function boot(page, opts = {}) {
@@ -251,6 +486,17 @@ async function openPanel(page) {
   }, undefined, { timeout: 8000 });
 }
 
+/** Wait for the in-card scan block to reach its QR face (social-fix: the QR
+ *  renders INSIDE the not-created card — no sub-dialog exists any more). The
+ *  canvas is the expected form; the fallback link is accepted so the anchor
+ *  survives a missing vendor QR lib. */
+async function waitInlineScanQr(page) {
+  await page.waitForFunction(() => {
+    const box = document.querySelector('.social-card[data-channel="feishu"] [data-scan-qr]');
+    return !!box && !!box.querySelector('canvas, a');
+  }, undefined, { timeout: 8000 });
+}
+
 async function shot(page, name) {
   try {
     await mkdir(SHOTS, { recursive: true });
@@ -261,6 +507,7 @@ async function shot(page, name) {
 // ── Checks (AFTER tree) ────────────────────────────────────────────────────
 async function afterSuite(browser, base) {
   // W12 + write-face whitelist: the diff must stay inside the batch's file face
+  // (feishubridge batch added its own face below — the `feishubridge:` entries)
   const WHITELIST = [
     'src/main/resources/web/index.html',
     'src/main/resources/web/js/socialChannels.js',
@@ -271,7 +518,17 @@ async function afterSuite(browser, base) {
     'src/main/resources/web/js/activityBar.js',
     'src/main/resources/web/js/main.js',
     'src/main/scala/nebflow/gateway/RestApiRoutes.scala',
+    'src/main/scala/nebflow/gateway/GatewayMain.scala',
     'src/main/scala/nebflow/social/SocialChannels.scala',
+    'src/main/scala/nebflow/social/FeishuChannel.scala',       // feishubridge: sender-id extraction
+    'src/main/scala/nebflow/social/FeishuMessage.scala',       // feishubridge: senderId field
+    'src/main/scala/nebflow/social/FeishuBridgePlugin.scala',  // feishubridge: the adapter
+    'src/main/scala/nebflow/bridge/BridgeManager.scala',       // feishubridge: unregister/startOne/registeredNames
+    'src/test/scala/nebflow/social/FeishuBridgePluginSpec.scala',       // feishubridge spec
+    'src/test/scala/nebflow/social/FeishuAdapterActivationSpec.scala',  // feishubridge spec
+    'src/test/scala/nebflow/social/FeishuChannelSpec.scala',  // feishubridge: senderId joined the wire shape (additive)
+    'src/test/scala/nebflow/social/SocialChannelsBootSealSpec.scala', // feishu-boot-seal spec (A1–A5)
+    'src/test/scala/nebflow/social/FeishuBootSealRestore.scala',       // feishu-boot-seal: the restore entry point (Test scope)
     'tests/social-panel.spec.mjs',
   ];
   let diff = '';
@@ -308,6 +565,78 @@ async function afterSuite(browser, base) {
   const enabledFlags = (src.match(/adapterRegistered: *true/g) || []).length;
   check('W6③ adapterRegistered:true in definition layer = 0', enabledFlags === 0, `grep -c = ${enabledFlags}`);
 
+  // socialhide SH1 — the seal at the definition face: the visible single
+  // source answers feishu-only. Read off the REAL repo module (not the served
+  // tree): the production truth itself.
+  const visIds = CHANNELS_MOD.visibleChannels().map((c) => c.id);
+  check('SH1 visible single source = {feishu} (socialChannelCount = 1)',
+    EXPECTED_CARDS === 1 && CHANNELS_MOD.socialChannelCount() === 1
+    && JSON.stringify(visIds) === JSON.stringify(['feishu']),
+    `count=${CHANNELS_MOD.socialChannelCount()} visible=[${visIds.join(',')}]`);
+
+  // socialhide SH2 — sealed ≠ deleted: the full data set keeps every entry, the
+  // sealed flags are in place, feishu stays unflagged, and the sealed channels'
+  // name/desc keys are still enumerated (W11 below proves those keys exist in
+  // both locale tables — no orphans).
+  // 🔴 wechat-ilink (chain-wechat-impl): the READING moved 3 → 4 entries because
+  //    the batch adds one sealed card; the judgement itself is unchanged (every
+  //    sealed id flagged, the visible one unflagged, keys enumerated pairwise).
+  //    The set of sealed ids is pinned by NAME, not by count, so a future
+  //    add/remove can never pass this check by arithmetic alone.
+  const sealFlags = CHANNELS_MOD.SOCIAL_CHANNELS.map((c) => `${c.id}=${c.hidden === true ? 'hidden' : 'visible'}`);
+  const sealedIds = CHANNELS_MOD.SOCIAL_CHANNELS.filter((c) => c.hidden === true).map((c) => c.id);
+  check('SH2 sealed ≠ deleted: 4 entries in data, wechat+weixin-ilink+telegram flagged, feishu unflagged',
+    EXPECTED_DEFINITION_CHANNELS === 4
+    && CHANNELS_MOD.channelById('wechat')?.hidden === true
+    && CHANNELS_MOD.channelById('weixin-ilink')?.hidden === true
+    && CHANNELS_MOD.channelById('telegram')?.hidden === true
+    && CHANNELS_MOD.channelById('feishu')?.hidden !== true
+    && JSON.stringify(sealedIds) === JSON.stringify(['wechat', 'weixin-ilink', 'telegram'])
+    && SOCIAL_KEYS.length === EXPECTED_DEFINITION_CHANNELS * 2,
+    `entries=${EXPECTED_DEFINITION_CHANNELS} flags=[${sealFlags.join(' ')}] channelLocaleKeys=${SOCIAL_KEYS.length}`);
+
+  // socialhide SH2b — the raw-source grep face of the acceptance: with
+  // comments stripped (headers document the flag too), the CODE carries
+  // exactly 4 `hidden: true` literals — the wechat / weixin-ilink / telegram
+  // channel entries plus the lark region entry. The sealed-data shape on the
+  // bytes themselves.
+  // 🔴 wechat-ilink: 3 → 4 for the added sealed card (semantics untouched).
+  const srcCode = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const hiddenFlags = (srcCode.match(/hidden: true/g) || []).length;
+  check('SH2b code-level `hidden: true` literals = 4 (wechat + weixin-ilink + telegram + lark region)',
+    hiddenFlags === 4, `grep -c (comments stripped) = ${hiddenFlags}`);
+
+  // ── wechat-ilink (chain-wechat-impl): the new card's data face ─────────────
+  // IL1 — the seal of the NEW card, and the visible single source it must not
+  // disturb: the visible set is still {feishu} and the count is still 1, so the
+  // added card is invisible by construction (its own `hidden: true`), never by
+  // the panel happening to skip it.
+  check('IL1 weixin-ilink is sealed: visible face stays {feishu}, count stays 1',
+    CHANNELS_MOD.channelById('weixin-ilink')?.hidden === true
+    && CHANNELS_MOD.socialChannelCount() === 1
+    && JSON.stringify(CHANNELS_MOD.visibleChannels().map((c) => c.id)) === JSON.stringify(['feishu']),
+    `sealed=${CHANNELS_MOD.channelById('weixin-ilink')?.hidden} count=${CHANNELS_MOD.socialChannelCount()} visible=[${CHANNELS_MOD.visibleChannels().map((c) => c.id).join(',')}]`);
+
+  // IL2 — the field mirror. Compares the FULL five-tuple (key / kind / required /
+  // pattern / secretName) against the batch's contract constant, so a dropped
+  // pattern, a flipped required flag, a renamed secret file or a reordered field
+  // all fail. `context_token` must NOT appear (it is runtime state, not config).
+  const ilinkCh = CHANNELS_MOD.channelById(ILINK_CONTRACT.id);
+  const ilinkMr = ilinkMirror(ilinkCh);
+  check('IL2 weixin-ilink fields mirror the contract 5-tuple (key/kind/required/pattern/secretName)',
+    ilinkMr.ok && !(ilinkCh?.fields || []).some((f) => f.key === 'context_token'),
+    `mismatch=[${ilinkMr.mismatch.join('; ')}] fields=[${(ilinkMr.got || []).map((f) => `${f.key}:${f.kind}:${f.required}:${f.pattern ?? '-'}:${f.secretName ?? '-'}`).join(' | ')}]`);
+
+  // IL3 — the old official-account card is untouched by option (B): it keeps its
+  // seal, its id and its own four fields. This is the "coexist, don't replace"
+  // half of the ruling; a future edit that folds iLink into `wechat` fails here.
+  const wechatCh = CHANNELS_MOD.channelById('wechat');
+  const wechatFieldKeys = (wechatCh?.fields || []).map((f) => f.key);
+  check('IL3 the official-account wechat card coexists untouched (sealed, 4 own fields)',
+    wechatCh?.hidden === true
+    && JSON.stringify(wechatFieldKeys) === JSON.stringify(['app_id', 'app_secret', 'token', 'aes_key']),
+    `hidden=${wechatCh?.hidden} fields=[${wechatFieldKeys.join(',')}]`);
+
   // W6① + W2/W4 family in both themes and both locales
   for (const theme of ['light', 'dark']) {
     for (const locale of ['zh-CN', 'en']) {
@@ -335,22 +664,86 @@ async function afterSuite(browser, base) {
         const all = [...document.querySelectorAll('#social-modal .social-card[data-channel]')];
         return {
           count: all.length,
+          ids: all.map((c) => c.dataset.channel),
           heads: all.map((c) => {
             const h = c.querySelector('.social-card-head');
             return h ? {
               icon: h.querySelectorAll('svg, i[data-lucide]').length,
               name: !!h.querySelector('.social-card-name')?.textContent?.trim(),
               status: !!h.querySelector('[data-status]'),
-              toggle: !!h.querySelector('.nb-toggle[role="switch"]'),
+              // scanBind card (feishu, the only visible channel): the head
+              // keeps icon + name + status and carries NO switch — enabled=false
+              // IS the archive, so the card has no `.nb-toggle` anywhere; its
+              // state control lives in the card body — social-fix 2026-09-28:
+              // the in-card QR block ([data-scan-inline], not-created) or the
+              // archive button ([data-archive], created). Plain cards keep the
+              // head switch; sealed channels never render.
+              // See js/socialPanel.js scanBindCardHTML / plainCardHTML.
+              noCardToggle: !c.querySelector('.nb-toggle'),
+              control: !!c.querySelector('[data-scan-inline], [data-archive]'),
             } : null;
           }),
         };
       });
-      const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.toggle);
-      check(`W4 card shape (count = definition length) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
-        `cards=${cards.count} expected=${EXPECTED_CARDS} headsOk=${headsOk}`);
-      const remote = await page.locator('#social-section-remote').count();
-      check(`W4 remote section always present (${tag})`, remote === 1, `#social-section-remote = ${remote}`);
+      const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.noCardToggle && h.control);
+      check(`W4 card shape (count = visible single source) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
+        `cards=${cards.count} visibleExpected=${EXPECTED_CARDS} sealedDataEntries=${EXPECTED_DEFINITION_CHANNELS} headsOk=${headsOk} heads=${JSON.stringify(cards.heads)}`);
+      // socialhide SH3 — the DOM face of the seal: exactly the feishu card
+      // renders (in definition order) and the sealed ids are ABSENT, not
+      // merely invisible.
+      check(`SH3 DOM: visible cards = [feishu], sealed ids absent (${tag})`,
+        JSON.stringify(cards.ids) === JSON.stringify(['feishu'])
+        && !cards.ids.includes('wechat') && !cards.ids.includes('telegram'),
+        `ids=[${cards.ids.join(',')}]`);
+      // social-fix SF-3 — the retired faces stay retired on the visible face:
+      // no sub-dialog, no scan action button, no manual entries, and the
+      // mechanical probe vocabulary never reaches the rendered text.
+      const retired = await page.evaluate(() => {
+        const m = document.getElementById('social-modal');
+        const text = m ? m.innerText : '';
+        return {
+          subDialog: document.querySelectorAll('#social-scan').length,
+          scanBtn: document.querySelectorAll('[data-scanbind]').length,
+          manual: document.querySelectorAll('[data-manual], [data-manual-toggle], [data-scan-manual]').length,
+          probeVocab: (text.match(/exists=|modeOk=|readable=|凭据探针|Credential probe/g) || []).length,
+        };
+      });
+      check(`SF-3 retired faces stay retired (${tag})`,
+        retired.subDialog === 0 && retired.scanBtn === 0 && retired.manual === 0 && retired.probeVocab === 0,
+        JSON.stringify(retired));
+      // 🔴 W4 flipped to HIDE semantics (author ruling 2026-09-23, Part A).
+      //
+      // JUDGEMENT — why this assertion is RED on the pre-change tree: before the
+      // ruling `#social-section-remote` carried neither a `hidden` attribute nor
+      // a companion rule, and its own cascade resolves `display` through
+      // `.social-section { display: flex }` — which OUTRANKS the user agent's
+      // `[hidden] { display: none }`. So on the pre-change tree this element
+      // reads `display: flex` with a NON-ZERO box even while it is inside the
+      // open modal, and the check below must FAIL there (both the display and
+      // the box reading bite). That is exactly the silent-defeat the companion
+      // `#social-section-remote[hidden] { display: none; }` rule in
+      // css/social.css exists to prevent, so the assertion has to measure the
+      // COMPUTED result and not the presence of the attribute.
+      //
+      // The other half of the ruling is "hidden, NOT deleted": `present === 1`
+      // plus the four surviving caption ids prove the DOM subtree is intact.
+      const remote = await page.evaluate(() => {
+        const el = document.getElementById('social-section-remote');
+        if (!el) return { present: 0 };
+        const box = el.getBoundingClientRect();
+        return {
+          present: document.querySelectorAll('#social-section-remote').length,
+          display: getComputedStyle(el).display,
+          hiddenAttr: el.hasAttribute('hidden'),
+          subtree: el.querySelectorAll('#social-remote-title, #social-remote-suspended, #social-remote-safety-key, #social-remote-safety-plain').length,
+          boxW: Math.round(box.width),
+          boxH: Math.round(box.height),
+        };
+      });
+      check(`W4 remote section in the DOM but not visible (${tag})`,
+        remote.present === 1 && remote.display === 'none'
+        && remote.boxW === 0 && remote.boxH === 0 && remote.subtree === 4,
+        `#social-section-remote = ${remote.present} display=${remote.display} hiddenAttr=${remote.hiddenAttr} box=${remote.boxW}x${remote.boxH} surviving captions=${remote.subtree}`);
 
       const st = await statuses(page);
       check(`W8 empty config ⇒ every card notConfigured (${tag})`,
@@ -415,15 +808,17 @@ async function afterSuite(browser, base) {
     () => getComputedStyle(document.querySelector('#social-modal .social-status-pill')).color));
   check('V4 pill colour is token-driven (light ≠ dark)', lightColor !== darkColor, `light=${lightColor} dark=${darkColor}`);
 
-  // W9 configInvalid: pattern violation and a missing referenced file
+  // W9 configInvalid: pattern violation and a missing referenced file.
+  // (socialhide: exercised on the FEISHU card — the only production-visible
+  // face; the state machine is definition-driven and channel-agnostic.)
   await withPanel(browser, base, 'light', async (page) => {
-    apiState.channels = { wechat: { enabled: false, fields: { app_id: 'not-a-wx-id' } } };
+    apiState.channels = { feishu: { enabled: false, fields: { app_id: 'not-a-cli-id' } } };
     apiState.probes = {};
     await page.reload();
     await openPanel(page);
     let st = await statuses(page);
     let pill = await page.evaluate(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
       const p = c.querySelector('.social-status-pill');
       const d = document.createElement('div');
       d.style.color = 'var(--color-danger)';
@@ -436,71 +831,108 @@ async function afterSuite(browser, base) {
       pill.status === 'configInvalid' && pill.color === pill.danger && !pill.hidden && /应用 ID|App ID/.test(pill.hint),
       JSON.stringify(pill));
 
-    apiState.channels = { wechat: { enabled: true, fields: {
-      app_id: 'wx0123456789abcdef',
-      app_secret_ref: '~/.nebflow/secrets/social-wechat-app-secret',
-      token_ref: '~/.nebflow/secrets/social-wechat-token',
-      aes_key_ref: '~/.nebflow/secrets/social-wechat-aes-key',
+    apiState.channels = { feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
     } } };
-    apiState.probes = { wechat: {
+    apiState.probes = { feishu: {
       app_secret: { exists: false, modeOk: false, readable: false },
-      token: { exists: true, modeOk: true, readable: true },
-      aes_key: { exists: true, modeOk: true, readable: true },
+      verification_token: { exists: true, modeOk: true, readable: true },
     } };
     await page.reload();
     await openPanel(page);
     st = await statuses(page);
     pill = await page.evaluate(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
       return { status: c.querySelector('.social-status-pill').dataset.status, hint: c.querySelector('.social-card-hint').textContent };
     });
     check('W9 missing referenced file ⇒ configInvalid + path in hint',
-      pill.status === 'configInvalid' && pill.hint.includes('~/.nebflow/secrets/social-wechat-app-secret'),
+      pill.status === 'configInvalid' && pill.hint.includes('~/.nebflow/secrets/social-feishu-app-secret'),
       JSON.stringify(pill));
 
-    // W14 the full "fill → save → probe re-read" flow (令④), incl. the negative
-    // assertion: no "go edit the file" step anywhere in the panel.
+    // SF-1 the in-card scan flow (social-fix): the not-created card auto-begins
+    // the scan INSIDE the card — QR + status + confirmation code, one view
+    // layer; a finished scan flips the SAME card to its created face. The
+    // retired faces (sub-dialog / scan button / manual entries) stay absent,
+    // and the panel offers no "go edit the file" step anywhere.
     apiState.channels = {};
     apiState.probes = {};
+    apiState.registered = {};
     apiState.posts = [];
+    resetScanFace();
     await page.reload();
     await openPanel(page);
-    await page.fill('.social-card[data-channel="wechat"] [data-field="app_id"]', 'wx0123456789abcdef');
-    await page.fill('.social-card[data-channel="wechat"] [data-field="app_secret"]', 'PLAINTEXT-SECRET-MARKER');
-    await page.fill('.social-card[data-channel="wechat"] [data-field="token"]', 'PLAINTEXT-TOKEN-MARKER');
-    await page.fill('.social-card[data-channel="wechat"] [data-field="aes_key"]', 'PLAINTEXT-AES-MARKER');
-    await page.click('.social-card[data-channel="wechat"] [data-save]');
-    await page.waitForFunction(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
-      return c && c.querySelector('.social-status-pill').dataset.status === 'configuredNotLinked';
-    }, undefined, { timeout: 6000 });
-    const step3 = await page.evaluate(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
+    await waitInlineScanQr(page);
+    const scanFace = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const status = card.querySelector('[data-scan-status]');
+      const code = card.querySelector('[data-scan-code]');
       return {
-        status: c.querySelector('.social-status-pill').dataset.status,
-        hint: c.querySelector('.social-card-hint').textContent,
-        secretInput: c.querySelector('[data-field="app_secret"]').value,
-        secretState: c.querySelector('.social-secret-state').textContent,
+        inline: !!card.querySelector('[data-scan-inline]'),
+        canvas: !!card.querySelector('[data-scan-qr] canvas'),
+        statusText: status ? status.textContent : '',
+        codeShown: !!code && !code.hasAttribute('hidden'),
+        codeText: code ? code.textContent : '',
+        noSubDialog: document.querySelectorAll('#social-scan').length,
+        noScanBtn: document.querySelectorAll('[data-scanbind]').length,
+        noManual: document.querySelectorAll('[data-manual], [data-manual-toggle], [data-scan-manual]').length,
+        noFormFields: document.querySelectorAll('.social-card[data-channel="feishu"] [data-field]').length,
         noFileStep: !/编辑文件|手动放置|去配置|Bot Channels/.test(document.getElementById('social-modal').innerText),
       };
     });
-    check('W14 填 → 存 → 探针读回',
-      step3.status === 'configuredNotLinked' && /exists/.test(step3.hint) && /modeOk/.test(step3.hint),
-      JSON.stringify(step3));
-    check('W14b panel discards the credential and offers no file step',
-      step3.secretInput === '' && step3.noFileStep, JSON.stringify({ value: step3.secretInput, noFileStep: step3.noFileStep }));
-    check('W10② POST body carries the plaintext exactly once (the only place it ever appears)',
-      apiState.posts.length === 1
-      && JSON.stringify(apiState.posts[0].body).includes('PLAINTEXT-SECRET-MARKER'),
-      `posts=${apiState.posts.length}`);
+    check('SF-1 not-created face: QR + status INSIDE the card (one view layer)',
+      scanFace.inline && scanFace.canvas && scanFace.codeShown
+      && scanFace.codeText.includes('MCCK-1234')
+      && [ZH['social.feishu.scan.waiting'], EN['social.feishu.scan.waiting'],
+          ZH['social.feishu.scan.starting'], EN['social.feishu.scan.starting']].includes(scanFace.statusText)
+      && scanFace.noSubDialog === 0 && scanFace.noScanBtn === 0 && scanFace.noManual === 0
+      && scanFace.noFormFields === 0,
+      JSON.stringify(scanFace));
+    check('SF-1b the panel offers no file step on the scan face',
+      scanFace.noFileStep, `noFileStep=${scanFace.noFileStep}`);
+
+    // the phone side confirms ⇒ the SAME card flips to its created face
+    apiState.scan.state = 'done';
+    await page.waitForFunction(
+      () => !!document.querySelector('.social-card[data-channel="feishu"] [data-archive]'),
+      undefined, { timeout: 10000 });
+    const createdFace = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const hint = card.querySelector('.social-card-hint');
+      return {
+        pill: card.querySelector('.social-status-pill').dataset.status,
+        archive: !!card.querySelector('[data-archive]'),
+        scanInlineGone: !card.querySelector('[data-scan-inline]'),
+        liveBlock: !!card.querySelector('[data-live]'),
+        bindings: !!card.querySelector('[data-bindings]'),
+        hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        probeVocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=|凭据探针|Credential probe/g) || []).length,
+      };
+    });
+    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card)',
+      createdFace.pill === 'connected' && createdFace.archive && createdFace.scanInlineGone
+      && createdFace.liveBlock && createdFace.bindings
+      && (createdFace.hint === ZH['social.credential.ok'] || createdFace.hint === EN['social.credential.ok'])
+      && createdFace.probeVocab === 0,
+      JSON.stringify(createdFace));
 
     const afterGet = await page.evaluate(async () => {
       const r = await fetch('/api/social/channels');
       return await r.text();
     });
-    check('W10② config surface never carries credential content',
-      !afterGet.includes('PLAINTEXT-SECRET-MARKER') && !afterGet.includes('PLAINTEXT-TOKEN-MARKER'),
-      `bodyHasPlaintext=${afterGet.includes('PLAINTEXT-SECRET-MARKER')}`);
+    check('SF-1d config surface never carries credential content',
+      !/PLAINTEXT-/.test(afterGet) && afterGet.includes('app_secret_ref'),
+      `hasRef=${afterGet.includes('app_secret_ref')}`);
+
+    // park the face back on not-created for the focus / negative-control legs
+    // (a connected pill would legitimately carry the banned caption 已接入).
+    resetScanFace();
+    apiState.channels = {};
+    apiState.probes = {};
+    apiState.registered = {};
+    await page.reload();
+    await openPanel(page);
 
     // W13 keyboard / focus
     await page.keyboard.press('Escape');
@@ -555,6 +987,127 @@ async function afterSuite(browser, base) {
       `no fabricated link/QR present: ${JSON.stringify(absent)}`);
   });
 
+  // ── feishubridge batch (2026-09-25): lark hide + allowlist slot + the
+  //    runtime flip. The flip leg drives the REAL production path — the panel
+  //    reads `adapterRegistered` off the probe face — so both directions below
+  //    are red if the flag never reaches channelStatus.
+  await withPanel(browser, base, 'light', async (page) => {
+    apiState.channels = {};
+    apiState.probes = {};
+    apiState.registered = {};
+    resetScanFace();
+    await page.reload();
+    await openPanel(page);
+
+    // FB1 lark hide — FLIPPED by social-fix (2026-09-28): the region choice
+    // was a manual-form field; with the form retired the face renders no form
+    // select at all. The seal itself is data-level (FB1b below).
+    const region = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const sel = card && card.querySelector('select[data-field="region"]');
+      return { present: sel ? 1 : 0 };
+    });
+    check('FB1 (flipped, social-fix) the region choice has no manual-form face',
+      region.present === 0,
+      JSON.stringify(region));
+    const larkInData = await page.evaluate(() => import('/js/socialChannels.js').then((m) => {
+      const ch = m.channelById('feishu');
+      const lark = (ch.regions || []).find((r) => r.key === 'lark');
+      return { inData: !!lark, hidden: !!(lark && lark.hidden) };
+    }));
+    check('FB1b lark survives in the definition layer as hidden data (sealed ≠ deleted)',
+      larkInData.inData && larkInData.hidden, JSON.stringify(larkInData));
+
+    // FB2 — FLIPPED by social-fix (2026-09-28): the allowlist slot was a
+    // manual-form field; the form is retired (scan-to-create is the only
+    // creation path), so the card renders NO [data-field] controls at all.
+    const allowlist = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      return { fields: card ? card.querySelectorAll('[data-field]').length : -1 };
+    });
+    check('FB2 (flipped, social-fix) manual form retired — no [data-field] controls render',
+      allowlist.fields === 0,
+      JSON.stringify(allowlist));
+
+    // FB3 runtime flip, positive direction: config complete + probes clean +
+    // the probe face answering adapterRegistered=true ⇒ the feishu pill is
+    // `connected` through the LIVE path (not the W7 definition fixture).
+    apiState.channels = { feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      region: 'feishu',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
+    } } };
+    apiState.probes = { feishu: {
+      app_secret: { exists: true, modeOk: true, readable: true },
+      verification_token: { exists: true, modeOk: true, readable: true },
+    } };
+    apiState.registered = { feishu: true };
+    await page.reload();
+    await openPanel(page);
+    let st = await statuses(page);
+    const feishu = (s) => s.find((x) => x.id === 'feishu');
+    check('FB3 probe adapterRegistered=true ⇒ feishu pill reads connected (runtime flip)',
+      feishu(st).status === 'connected', JSON.stringify(st));
+    // ...and the negative direction: the flag going false must unlink again.
+    apiState.registered = { feishu: false };
+    await page.reload();
+    await openPanel(page);
+    st = await statuses(page);
+    check('FB3b probe adapterRegistered=false ⇒ feishu pill reads configuredNotLinked',
+      feishu(st).status === 'configuredNotLinked', JSON.stringify(st));
+  });
+
+  // SF-2 the probe line renders as human language (social-fix): same probe
+  // face, same triples — the card shows a plain-language credential state,
+  // never the mechanical field names. The W9 legs above keep the actionable
+  // path hints for a contradicting ref (configInvalid); these two states
+  // cover the non-invalid cards.
+  await withPanel(browser, base, 'light', async (page) => {
+    // ① configured + clean probe ⇒ "credentials configured · permissions normal"
+    apiState.channels = { feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+    } } };
+    apiState.probes = { feishu: { app_secret: { exists: true, modeOk: true, readable: true } } };
+    apiState.registered = { feishu: false };
+    await page.reload();
+    await openPanel(page);
+    const ok = await page.evaluate(() => {
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
+      const hint = c.querySelector('.social-card-hint');
+      return {
+        status: c.querySelector('.social-status-pill').dataset.status,
+        hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        vocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=/g) || []).length,
+      };
+    });
+    check('SF-2① clean probe ⇒ human credential status, zero probe vocabulary',
+      ok.status === 'configuredNotLinked'
+      && (ok.hint === ZH['social.credential.ok'] || ok.hint === EN['social.credential.ok'])
+      && ok.vocab === 0, JSON.stringify(ok));
+
+    // ② the probe contradicts but the card holds no ref — the author's exact
+    //    quoted confusion (triples answering 否 on a live card) ⇒ "missing"
+    apiState.channels = {};
+    apiState.probes = { feishu: { app_secret: { exists: false, modeOk: false, readable: false } } };
+    await page.reload();
+    await openPanel(page);
+    const missing = await page.evaluate(() => {
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
+      const hint = c.querySelector('.social-card-hint');
+      return {
+        status: c.querySelector('.social-status-pill').dataset.status,
+        hint: hint && !hint.hasAttribute('hidden') ? hint.textContent : '',
+        vocab: (document.getElementById('social-modal').innerText.match(/exists=|modeOk=|readable=/g) || []).length,
+      };
+    });
+    check('SF-2② contradicted probe ⇒ "missing — scan again" human state',
+      missing.status === 'notConfigured'
+      && (missing.hint === ZH['social.credential.missing'] || missing.hint === EN['social.credential.missing'])
+      && missing.vocab === 0, JSON.stringify(missing));
+  });
+
   // W16 / B-1..B-7 — 375×812, both themes.
   // 🔴 Configuration, read off the design's own probe (§B.1: 「壳 @375x812 …
   // bodyScrollW=375 hOverflow=false barW=48」): side bar COLLAPSED (§M2 — reuse
@@ -607,14 +1160,20 @@ async function afterSuite(browser, base) {
       `${JSON.stringify(closed.entry)} — elementFromPoint lands inside the entry (${closed.entry.hitTag})`);
 
     await openPanel(page);
+    // social-fix: the fillable state no longer exists (manual form retired);
+    // the measured face is the not-created card with its in-card QR.
+    await waitInlineScanQr(page);
     const geo = await page.evaluate(() => {
       const vw = window.innerWidth;
       const m = document.getElementById('social-modal').getBoundingClientRect();
-      const fields = [...document.querySelectorAll('#social-modal input, #social-modal select')]
+      const controls = [...document.querySelectorAll('#social-modal input, #social-modal select, #social-modal button')]
         .map((el) => el.getBoundingClientRect());
       const cards = [...document.querySelectorAll('.social-card')].map((c) => ({ sw: c.scrollWidth, cw: c.clientWidth }));
-      const card = document.querySelector('.social-card[data-channel="telegram"]');
-      const labels = [...card.querySelectorAll('.social-field')].map((l) => Math.round(l.getBoundingClientRect().left));
+      // socialhide: read on the FEISHU card (the only production-visible one;
+      // the sealed telegram card no longer has a DOM face).
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const canvas = card ? card.querySelector('[data-scan-qr] canvas') : null;
+      const cardBox = card ? card.getBoundingClientRect() : null;
       const panel = document.getElementById('social-modal');
       const overlay = document.getElementById('social-overlay');
       const offenders = [...document.querySelectorAll('body *')].filter((el) => {
@@ -625,9 +1184,9 @@ async function afterSuite(browser, base) {
         collapsed: document.body.classList.contains('sidebar-collapsed'),
         scrollWidth: document.documentElement.scrollWidth,
         modal: { left: Math.round(m.left), right: Math.round(m.right), top: Math.round(m.top), bottom: Math.round(m.bottom) },
-        clipped: fields.filter((r) => r.width <= 0 || r.right > vw).length,
+        clipped: controls.filter((r) => r.width <= 0 || r.right > vw).length,
         overflowCards: cards.filter((c) => c.sw > c.cw + 1).length,
-        labels,
+        canvasFits: !!canvas && !!cardBox && canvas.getBoundingClientRect().width <= cardBox.width + 1,
         offenders: offenders.length,
         offendersInPanel: offenders.filter((el) => panel.contains(el) || overlay.contains(el)).length,
       };
@@ -640,9 +1199,10 @@ async function afterSuite(browser, base) {
       `document.scrollWidth closed=${closed.scrollWidth} open=${geo.scrollWidth}; elements sticking out INSIDE the panel/overlay=${geo.offendersInPanel} (whole-document offenders, incl. the shell's own off-screen sliders: closed=${closed.offenders} open=${geo.offenders})`);
     check(`W16 B-2 modal inside the viewport (${theme})`,
       geo.modal.left >= 0 && geo.modal.right <= 375 && geo.modal.top >= 0 && geo.modal.bottom <= 812, JSON.stringify(geo.modal));
-    check(`W16 B-3 no clipped field (${theme})`, geo.clipped === 0, `clipped=${geo.clipped}`);
+    check(`W16 B-3 no clipped control (${theme})`, geo.clipped === 0, `clipped=${geo.clipped}`);
     check(`W16 B-4 no card overflow (${theme})`, geo.overflowCards === 0, `overflowCards=${geo.overflowCards}`);
-    check(`W16 B-6 fields single column (${theme})`, geo.labels.length > 1 && new Set(geo.labels).size === 1, `lefts=${JSON.stringify(geo.labels)}`);
+    check(`W16 B-6 (re-anchored, social-fix) in-card QR fits its card (${theme})`,
+      geo.canvasFits, `canvasFits=${geo.canvasFits}`);
     // context readings (never assertions): the two configurations the design's
     // probe did NOT measure, printed so the deviation is on the record.
     if (theme === 'light') await shot(page, 'after-375-light');
@@ -674,33 +1234,193 @@ async function withPanel(browser, base, theme, fn) {
   }
 }
 
+// ── NRS: the UNREADY panel must not hand the switch to the backend
+//    (feishu-boot-seal batch, 2026-09-28) ────────────────────────────────────
+// The frontend half of the boot-seal defect. The stored half is pinned in
+// `SocialChannelsBootSealSpec` (a body that does not MENTION `enabled` must keep
+// the stored value); this leg pins the OTHER producer of an unasked-for write:
+// a panel whose config read FAILED renders every card from an empty map, so the
+// card's switch line reads "not enabled" — on the pre-change tree that reading
+// was indistinguishable from a real OFF, and a click on it went straight to
+// `saveChannel`, which sent an `enabled` write derived from the failed read.
+//
+// Run under `SOCIAL_MUTATE=card-filter-off`: the plain-card switch only exists
+// on a card that RENDERS, and production renders the feishu scan-bind card
+// alone (wechat/telegram are sealed at the data layer). The mutation is this
+// spec's own sanctioned inverse-of-the-seal (see `redFilterSuite`), and it is
+// applied to `js/socialChannels.js` — the definition layer, NOT the file this
+// batch changed — so the switch under test is the real one, merely reachable.
+//
+// Discriminators (red on the pre-change tree, green after):
+//   NRS-1  unready ⇒ the switch is not OPERABLE (disabled; never an OFF claim);
+//   NRS-2  unready ⇒ clicking it emits ZERO writes carrying `enabled`.
+// Guards (expected green on both trees — stated as such, not as fix evidence):
+//   NRS-3  the exactly-one-legal explicit close path still works: a READY,
+//          created feishu card offers archive, and clicking it sends exactly one
+//          `{enabled:false, fields:{}}` — the archive semantics are untouched;
+//   NRS-4  with a ready config read the same probe finds an OPERABLE switch that
+//          IS on, and a click sends exactly one explicit write — proof that
+//          NRS-1/NRS-2 are not passing on a panel that never renders a switch.
+async function nrsSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  apiState.posts = [];
+  resetScanFace();
+  // 🔴 ONE handler owns the config GET for the whole leg, switched by `nrsReady`
+  // below. It is registered AFTER boot's routes (a later, exact-path handler
+  // wins), and it is deliberately NOT removed later: `page.unroute(url)` drops
+  // EVERY handler on that URL — including boot's own — which would silently
+  // route the "ready" leg to the `**/api/**` catch-all and hand the panel an
+  // empty channel map. The leg must fail for the reason it is testing.
+  let nrsReady = false;
+  await boot(page);
+  await page.route('**/api/social/channels', (r) => (nrsReady
+    ? r.fulfill({ json: { channels: apiState.channels, adapterRegistered: false } })
+    : r.fulfill({ status: 403, json: { error: 'forbidden' } })));
+  await page.goto(base);
+  await openPanel(page);
+
+  const probeSwitches = () => page.evaluate(() => {
+    const g = (id) => {
+      const card = document.querySelector(`.social-card[data-channel="${id}"]`);
+      if (!card) return { card: false, count: 0, disabled: null, on: null, archive: 0 };
+      const sw = card.querySelector(`[data-toggle-channel="${id}"]`);
+      return {
+        card: true,
+        count: card.querySelectorAll(`[data-toggle-channel="${id}"]`).length,
+        disabled: sw ? /** @type {HTMLButtonElement} */ (sw).disabled : null,
+        on: sw ? sw.classList.contains('on') : null,
+        archive: card.querySelectorAll('[data-archive]').length,
+      };
+    };
+    return { wechat: g('wechat'), feishu: g('feishu'), cards: document.querySelectorAll('#social-modal .social-card[data-channel]').length };
+  });
+
+  const unready = await probeSwitches();
+  const clickAll = async (id) => {
+    const loc = page.locator(`.social-card[data-channel="${id}"] [data-toggle-channel="${id}"]`);
+    const n = await loc.count();
+    for (let i = 0; i < n; i++) await loc.nth(i).click({ force: true });
+    await page.waitForTimeout(300);
+  };
+  await clickAll('wechat');
+  const unreadySaveState = await page.evaluate(() => (document.querySelector('[data-save-state="wechat"]') || {}).textContent || '');
+  const unreadyToggleWrites = {
+    posts: apiState.posts.length,
+    enabledWrites: apiState.posts.filter((p) => !!(p.body && 'enabled' in p.body)).length,
+    falseWrites: apiState.posts.filter((p) => p.body && p.body.enabled === false).length,
+    saveState: unreadySaveState,
+  };
+
+  // The close shape itself: the card's SAVE action carries no override, so it
+  // agrees with the rendered switch — on an unready panel the switch renders
+  // OFF, hence `enabled:false` for a channel the backend may have enabled.
+  const saveBtn = page.locator('.social-card[data-channel="wechat"] [data-save="wechat"]');
+  if (await saveBtn.count()) await saveBtn.first().click({ force: true });
+  await page.waitForTimeout(500);
+  const unreadySaveWrites = {
+    posts: apiState.posts.length,
+    falseWrites: apiState.posts.filter((p) => p.body && p.body.enabled === false).length,
+    enabledWrites: apiState.posts.filter((p) => !!(p.body && 'enabled' in p.body)).length,
+    saveState: await page.evaluate(() => (document.querySelector('[data-save-state="wechat"]') || {}).textContent || ''),
+  };
+
+  check('NRS-1 unready panel: the switch is not operable (disabled — never a rendered OFF claim)',
+    unready.wechat.count === 0 || unready.wechat.disabled === true,
+    `wechat card=${unready.wechat.card} switches=${unready.wechat.count} disabled=${unready.wechat.disabled} on=${unready.wechat.on} | cards=${unready.cards}`);
+  check('NRS-2 unready panel: the card SAVE action emits ZERO `enabled:false` writes (the close shape)',
+    unreadySaveWrites.falseWrites === 0,
+    `posts=${unreadySaveWrites.posts} writes carrying \`enabled\`=${unreadySaveWrites.enabledWrites} of which false=${unreadySaveWrites.falseWrites} saveState="${unreadySaveWrites.saveState}"`);
+  check('NRS-2b unready panel: clicking the switch emits ZERO writes carrying `enabled`',
+    unreadyToggleWrites.enabledWrites === 0,
+    `posts=${unreadyToggleWrites.posts} writes carrying \`enabled\`=${unreadyToggleWrites.enabledWrites} (of which false=${unreadyToggleWrites.falseWrites}) saveState="${unreadyToggleWrites.saveState}"`);
+  await shot(page, 'nrs-unready-1440-light');
+
+  // ── ready legs (config GET answers again) ─────────────────────────────────
+  apiState.channels = {
+    wechat: { enabled: true, fields: { app_id: 'wx0123456789abcdef' } },
+    feishu: { enabled: true, fields: { app_id: 'cli_aa32140e8af85d25', region: 'feishu' } },
+  };
+  apiState.probes = { wechat: { app_secret: { exists: true, modeOk: true, readable: true } } };
+  apiState.posts = [];
+  nrsReady = true;
+  await page.reload();
+  await openPanel(page);
+
+  const ready = await probeSwitches();
+  check('NRS-4 positive control: with a ready config read the SAME probe finds an OPERABLE switch that is ON',
+    ready.wechat.count === 1 && ready.wechat.disabled === false && ready.wechat.on === true,
+    `wechat card=${ready.wechat.card} switches=${ready.wechat.count} disabled=${ready.wechat.disabled} on=${ready.wechat.on}`);
+  await clickAll('wechat');
+  const readyWrite = (() => {
+    const p = apiState.posts[apiState.posts.length - 1];
+    return {
+      posts: apiState.posts.length,
+      enabled: p && p.body ? p.body.enabled : null,
+      appId: p && p.body && p.body.fields ? p.body.fields.app_id : null,
+      id: p ? p.id : null,
+    };
+  })();
+  check('NRS-4b positive control: the operable switch DOES write (one explicit user-action body, fields intact)',
+    readyWrite.posts === 1 && readyWrite.enabled === false && readyWrite.id === 'wechat'
+      && readyWrite.appId === 'wx0123456789abcdef',
+    `posts=${readyWrite.posts} id=${readyWrite.id} enabled=${readyWrite.enabled} app_id=${readyWrite.appId}`);
+
+  // ── NRS-3: the archive face is still the one explicit close (no regression) ─
+  const created = await probeSwitches();
+  check('NRS-3 ready + created ⇒ the archive control is reachable (the unready leg\'s 0 has teeth)',
+    created.feishu.archive === 1,
+    `feishu [data-archive] controls=${created.feishu.archive}`);
+  apiState.posts = [];
+  await page.locator('.social-card[data-channel="feishu"] [data-archive]').first().click({ force: true });
+  await page.waitForTimeout(400);
+  const archWrite = (() => {
+    const p = apiState.posts[apiState.posts.length - 1];
+    return {
+      posts: apiState.posts.length,
+      enabled: p && p.body ? p.body.enabled : null,
+      fieldKeys: p && p.body && p.body.fields ? Object.keys(p.body.fields).length : -1,
+      id: p ? p.id : null,
+    };
+  })();
+  check('NRS-3b archive semantics unchanged: exactly one explicit `{enabled:false, fields:{}}` write',
+    archWrite.posts === 1 && archWrite.id === 'feishu' && archWrite.enabled === false && archWrite.fieldKeys === 0,
+    `posts=${archWrite.posts} id=${archWrite.id} enabled=${archWrite.enabled} fieldKeys=${archWrite.fieldKeys}`);
+
+  await ctx.close();
+}
+
 // ── FIXTURE: W7 red proof (the same probe must fire when the flag is flipped) ─
 async function fixtureSuite(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   const page = await ctx.newPage();
   // Every required field present + probes clean ⇒ the ONLY remaining variable is
-  // the flapped flag.
+  // the flapped flag. (socialhide: the fixture drives the FEISHU card — the
+  // only production-visible face, so the flipped state is observable in DOM.)
   apiState.channels = {
-    wechat: { enabled: true, fields: {
-      app_id: 'wx0123456789abcdef',
-      app_secret_ref: '~/.nebflow/secrets/social-wechat-app-secret',
-      token_ref: '~/.nebflow/secrets/social-wechat-token',
-      aes_key_ref: '~/.nebflow/secrets/social-wechat-aes-key',
+    feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      region: 'feishu',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
     } },
   };
-  apiState.probes = { wechat: {
+  apiState.probes = { feishu: {
     app_secret: { exists: true, modeOk: true, readable: true },
-    token: { exists: true, modeOk: true, readable: true },
-    aes_key: { exists: true, modeOk: true, readable: true },
+    verification_token: { exists: true, modeOk: true, readable: true },
   } };
   await boot(page, { locale: 'zh-CN' }); // explicit: the caption assertion below is zh-only, so pin the locale instead of relying on the default
   await page.goto(base);
   await openPanel(page);
   // Kept AFTER the load on purpose: the served bytes are mutated lazily as they
   // are requested, so a check placed before `goto` would always read 0 and
-  // would silently stop proving anything.
+  // would silently stop proving anything. The hit count is against the SEALED
+  // data set (3 definition entries), not the visible count.
   check('FIXTURE mutation applied to the served definition layer',
-    mutationHits === EXPECTED_CARDS, `adapterRegistered:false → true hits = ${mutationHits} (expected ${EXPECTED_CARDS})`);
+    mutationHits === EXPECTED_DEFINITION_CHANNELS, `adapterRegistered:false → true hits = ${mutationHits} (expected ${EXPECTED_DEFINITION_CHANNELS})`);
   const st = await statuses(page);
   const text = await page.evaluate(() => {
     const m = document.getElementById('social-modal');
@@ -715,6 +1435,42 @@ async function fixtureSuite(browser, base) {
   check('W7 fixture: the SAME banned-vocabulary probe goes red here (proves W6① has teeth)',
     banned.length > 0, `hits=[${banned.join(', ')}]`);
   await shot(page, 'fixture-1440-light');
+  await ctx.close();
+}
+
+// ── RED-FILTER: socialhide red proof (drop the ONE visible filter ⇒ the seal
+//    opens; the SAME probes that read {feishu} in production must read all
+//    every sealed card here) ───────────────────────────────────────────────────
+async function redFilterSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  await boot(page, { locale: 'zh-CN' });
+  await page.goto(base);
+  await openPanel(page);
+  // Byte-change proof first (see fixtureSuite: kept after the load on purpose).
+  check('SH-R mutation applied to the served definition layer',
+    mutationHits === 1, `visible-filter .filter((c) => !c.hidden) → .slice() hits = ${mutationHits} (expected 1)`);
+  // The pin probe, re-read on the mutated tree: in-page import sees the SAME
+  // mutated module instance the app rendered from, so module and DOM must agree.
+  const vis = await page.evaluate(() => import('/js/socialChannels.js').then((m) => ({
+    rendered: [...document.querySelectorAll('#social-modal .social-card[data-channel]')].map((e) => e.dataset.channel),
+    inModule: m.visibleChannels().map((c) => c.id),
+    count: m.socialChannelCount(),
+  })));
+  // 🔴 wechat-ilink (chain-wechat-impl): the reading moved 3 → 4 because the
+  //    batch adds one sealed card; the judgement is unchanged (dropping the ONE
+  //    filter renders EVERY sealed entry in array order, so the production pins
+  //    — visible = {feishu}, count = 1 — are red here). The expected id list is
+  //    spelled out, not just counted, so a card silently joining or leaving the
+  //    array fails this check rather than passing on arithmetic.
+  check('SH-R red proof: dropping the filter unseals all four cards (SH1/SH3 fire)',
+    vis.rendered.length === 4 && vis.rendered.join(',') === 'wechat,weixin-ilink,feishu,telegram'
+    && vis.inModule.length === 4 && vis.count === 4,
+    `rendered=[${vis.rendered.join(',')}] module=[${vis.inModule.join(',')}] count=${vis.count} — production pins (visible=1, {feishu}) are RED on this tree`);
+  await shot(page, 'redfilter-1440-light');
   await ctx.close();
 }
 
@@ -813,13 +1569,88 @@ async function apiSuite() {
   check('API without a token ⇒ 403', unauth.status === 403, `status=${unauth.status}`);
 }
 
+// ── ILINKRED: wechat-ilink red proof (damage the new card in the SERVED tree
+//    ⇒ the SAME probes the production tree pins must fire) ───────────────────
+// Mutation-safe in the same sense as the FIXTURE / RED-FILTER legs above: the
+// damage happens to the bytes as they are served, in memory, and the tree on
+// disk is never touched. The probes below are the served-tree twins of IL1
+// (seal) and IL2 (field mirror); the production readings themselves are taken
+// off the repo module in afterSuite, which is why this leg reads the app's own
+// in-page module instance instead — module and DOM then come from the SAME
+// mutated bytes, so the reading cannot be an artefact of a stale import.
+//
+// TWO variants, each with its own judgement:
+//   · SOCIAL_MUTATE=ilink-unseal — the seal is dropped ⇒ IL1's inverse fires
+//     (the visible face is no longer feishu-only).
+//   · SOCIAL_MUTATE=ilink-fields — `baseurl` loses its pattern and
+//     `ilink_bot_id` flips to optional ⇒ IL2's inverse fires (the mirror no
+//     longer reproduces the contract five-tuple), while IL1 stays green — which
+//     is exactly what proves the two probes have separate teeth.
+async function ilinkRedSuite(browser, base) {
+  const variant = process.env.SOCIAL_MUTATE;
+  const expectHits = variant === 'ilink-unseal' ? 1 : 2;
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  await boot(page, { locale: 'zh-CN' });
+  await page.goto(base);
+  await openPanel(page);
+  // Byte-change proof first, and AFTER the load on purpose: the served bytes are
+  // mutated lazily as they are requested, so a check placed before `goto` would
+  // always read 0 and would silently stop proving anything.
+  check(`IL-R mutation applied to the served definition layer (${variant})`,
+    mutationHits === expectHits,
+    `mutations applied to the weixin-ilink entry = ${mutationHits} (expected ${expectHits})`);
+  const served = await page.evaluate(() => import('/js/socialChannels.js').then((m) => {
+    const ch = m.channelById('weixin-ilink');
+    return {
+      hidden: ch ? ch.hidden : null,
+      visible: m.visibleChannels().map((c) => c.id),
+      count: m.socialChannelCount(),
+      rendered: [...document.querySelectorAll('#social-modal .social-card[data-channel]')].map((e) => e.dataset.channel),
+      fields: (ch ? ch.fields : []).map((f) => ({ key: f.key, kind: f.kind, required: f.required, pattern: f.pattern, secretName: f.secretName })),
+    };
+  }));
+  check('IL-R the probe sees a card that IS damaged (this tree is not the production tree)',
+    variant === 'ilink-unseal'
+      ? served.hidden === false
+      : !(served.fields.find((f) => f.key === 'baseurl') || {}).pattern
+        && (served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required === false,
+    `hidden=${served.hidden} baseurl.pattern=${String((served.fields.find((f) => f.key === 'baseurl') || {}).pattern)} ilink_bot_id.required=${String((served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required)}`);
+  if (variant === 'ilink-unseal') {
+    // IL1 on the damaged tree: the seal is gone, so the visible face and the
+    // count BOTH move — the production pins (visible = {feishu}, count = 1) are
+    // red here, which is what gives IL1 teeth.
+    check('IL-R red proof: dropping the new card\'s seal unseals it (IL1 fires)',
+      served.hidden === false && served.visible.includes('weixin-ilink') && served.count === 2,
+      `visible=[${served.visible.join(',')}] count=${served.count} rendered=[${served.rendered.join(',')}] — production pins (visible={feishu}, count=1) are RED on this tree`);
+  } else {
+    // IL2 on the damaged tree: the mirror no longer reproduces the contract.
+    // The seal is intact, so IL1 must stay green here — the two probes are
+    // independent, not two names for one reading.
+    const mr = ilinkMirror({ fields: served.fields, hidden: served.hidden });
+    check('IL-R red proof: a damaged field mirror no longer matches the contract (IL2 fires)',
+      !mr.ok, `mismatch=[${mr.mismatch.join('; ')}] — the production IL2 reading is RED on this tree`);
+    check('IL-R control: IL1\'s seal reading is UNAFFECTED by the field damage',
+      served.hidden === true && served.count === 1 && JSON.stringify(served.visible) === JSON.stringify(['feishu']),
+      `seal intact: hidden=${served.hidden} count=${served.count} visible=[${served.visible.join(',')}]`);
+  }
+  await shot(page, `ilinkred-${variant}-1440-light`);
+  await ctx.close();
+}
+
 // ── main ───────────────────────────────────────────────────────────────────
-console.log(`# social-panel.spec.mjs mode=${MODE} web=${WEB} cards=${EXPECTED_CARDS} api=${API_BASE || '(mock only)'}`);
+console.log(`# social-panel.spec.mjs mode=${MODE} web=${WEB} visibleCards=${EXPECTED_CARDS} sealedEntries=${EXPECTED_DEFINITION_CHANNELS} api=${API_BASE || '(mock only)'}`);
 const { server, base } = await startServer();
 const browser = await chromium.launch();
 try {
   if (MODE === 'BEFORE') await beforeSuite(browser, base);
   else if (MODE === 'FIXTURE') await fixtureSuite(browser, base);
+  else if (MODE === 'REDFILTER') await redFilterSuite(browser, base);
+  else if (MODE === 'NRS') await nrsSuite(browser, base);
+  else if (MODE === 'ILINKRED') await ilinkRedSuite(browser, base);
   else { await afterSuite(browser, base); await apiSuite(); }
 } finally {
   await browser.close();

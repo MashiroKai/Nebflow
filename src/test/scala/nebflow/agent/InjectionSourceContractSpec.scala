@@ -27,6 +27,7 @@ import nebflow.actor.InjectionAttribution
 class InjectionSourceContractSpec extends FunSuite:
 
   private val repoRoot = os.pwd
+
   // 注入行族（source 标签表 / injectedSourceLabel / 类名串）2026-09-28 随 FE 组件化批次三
   // 迁到 js/chat/injectedRows.js（chat.js 只留 `export { … } from './chat/injectedRows.js'`
   // 的转发）。呈现侧契约不变，pin 随迁到实现落点；本面此后若再拆，同法改指。

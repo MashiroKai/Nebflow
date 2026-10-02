@@ -30,6 +30,17 @@ import nebflow.core.tools.{FriendMessageTool, ToolContext}
  */
 class FriendAttachGateSpec extends FunSuite:
 
+  // Registration self-sufficiency (111.8): the A-5 1b tool-face example goes through
+  // FriendMessageTool -> FriendRosterPort / SendConfirmPort. Both registrars are
+  // installed only on the production boot path (NeblinkWiring.scala:31 /
+  // SharedResources.scala:391) and fail CLOSED when absent, so a narrow or regrouped
+  // batch went red here purely because no earlier spec had constructed
+  // SharedResources. Install the real faces in this suite's own fixture instead of
+  // depending on another suite's side effect.
+  override def beforeAll(): Unit =
+    super.beforeAll()
+    RosterFaceSpecKit.install()
+
   // ===== 夹具：本机回环桩 =====
 
   private val FixtureBody = "friendattach-4b\n" // 16 B；sha256 由 shasum 独立算得
@@ -225,38 +236,48 @@ class FriendAttachGateSpec extends FunSuite:
   }
 
   test("A-5 态1b 工具面：同一路径经 SendMessage 工具回执可判读（件数可见，禁「成功但附件消失」）") {
-    withStub("new") { stub =>
-      val cli = loggedIn(stub.url)
-      val fs = fsFor(cli)
-      val file = fixtureFile()
-      // 注：`FriendMessageTool.service` 是**全局装配缝**（@volatile），并行跑的其它 spec
-      // 也会 initialize 它 ⇒ 极小概率被顶掉。命中该形态时重试一次（并在报告里如实登记
-      // 这一夹具面的已知竞态），断言本身不变。
-      def attempt(): Either[nebflow.core.tools.ToolError, String] =
-        FriendMessageTool.initialize(fs)
-        FriendMessageTool
-          .call(
-            JsonObject(
-              "to" -> "alice".asJson,
-              "message" -> "".asJson,
-              "attachments" -> io.circe.Json.arr(file.toString.asJson)
-            ),
-            ToolContext(projectRoot = "/tmp")
-          )
-          .unsafeRunSync()
-      val out = attempt() match
-        case Left(e) if e.message.contains("unavailable") || e.message.contains("not found") => attempt()
-        case other => other
-      assert(out.isRight, s"tool send must succeed on a capable server, got ${out.left.toOption.map(_.message)}")
-      val receipt = out.toOption.get
-      assert(receipt.contains("已发送给"), receipt)
-      assert(receipt.contains("1 件附件"), s"receipt must not hide the attachment (禁「成功但附件消失」), got: $receipt")
-      // 空正文 + 附件 ⇒ 合法（§B.4），且 wire 上确实带了附件 id
-      assert(
-        stub.log.exists(l => l.contains("POST /api/friends/u1/messages") && l.contains("\"attachments\":[\"att-1\"]")),
-        stub.log.toString
-      )
-      evidence("态1b 工具面", s"toolResult=$receipt")
+    // friendseal flag injection (2026-09-25): the friend leg is sealed by default —
+    // lift the latch for this tool-face probe (FriendMessageTool.call is an eager
+    // def, so the guard evaluates at IO-construction time inside this block).
+    nebflow.FriendsSealKit.withUnsealedSync {
+      withStub("new") { stub =>
+        val cli = loggedIn(stub.url)
+        val fs = fsFor(cli)
+        val file = fixtureFile()
+        // 注：`FriendMessageTool.service` 是**全局装配缝**（@volatile），并行跑的其它 spec
+        // 也会 initialize 它 ⇒ 极小概率被顶掉。命中该形态时重试一次（并在报告里如实登记
+        // 这一夹具面的已知竞态），断言本身不变。
+        def attempt(): Either[nebflow.core.tools.ToolError, String] =
+          FriendMessageTool.initialize(fs)
+          FriendMessageTool
+            .call(
+              JsonObject(
+                "to" -> "alice".asJson,
+                "message" -> "".asJson,
+                "attachments" -> io.circe.Json.arr(file.toString.asJson)
+              ),
+              ToolContext(projectRoot = "/tmp")
+            )
+            .unsafeRunSync()
+        val out = attempt() match
+          case Left(e) if e.message.contains("unavailable") || e.message.contains("not found") => attempt()
+          case other => other
+        assert(out.isRight, s"tool send must succeed on a capable server, got ${out.left.toOption.map(_.message)}")
+        val receipt = out.toOption.get
+        assert(receipt.contains("已发送给"), receipt)
+        assert(
+          receipt.contains("1 件附件"),
+          s"receipt must not hide the attachment (禁「成功但附件消失」), got: $receipt"
+        )
+        // 空正文 + 附件 ⇒ 合法（§B.4），且 wire 上确实带了附件 id
+        assert(
+          stub.log.exists(l =>
+            l.contains("POST /api/friends/u1/messages") && l.contains("\"attachments\":[\"att-1\"]")
+          ),
+          stub.log.toString
+        )
+        evidence("态1b 工具面", s"toolResult=$receipt")
+      }
     }
   }
 
