@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorRef, AgentCommand}
 import nebflow.core.project.*
-import nebflow.shared.{AskItem, InteractionRequestId, PathUtil}
+import nebflow.shared.{AskItem, AskUserDispatch, InteractionRequestId, PathUtil}
 
 import scala.util.Try
 
@@ -329,26 +329,36 @@ object ProjectCreateTool extends Tool:
     /** 合法绝对路径 → 进入创建链。 */
     case class Chosen(path: String) extends PanelAnswer
 
+    /**
+     * 派发失败（承接面缺席）→ 明确报错。载荷 = [[nebflow.shared.AskUserDispatch]]
+     * 失败信号原文（自描述：失败类别 + requestId + sourceAgent）。
+     * **与 `Shelved` 是两回事**：问题从未上卡，用户没有「关闭面板」这一动作。
+     */
+    case class Failed(signal: String) extends PanelAnswer
+
   /** 去尾部斜杠（Scala String.stripTrailing 无参版，斜杠语义手写）。 */
   private def stripTrailingSlashes(s: String): String = s.replaceAll("/+$", "")
 
   /**
-   * 面板答案解析（纯函数，spec 覆盖）：首槽空 / 取消哨兵 → Shelved；
-   * '~' 展开后非绝对 → BadPath；合法 → Chosen（去尾斜杠）。
+   * 面板答案解析（纯函数，spec 覆盖）：派发失败信号 → Failed（明确报错，**不是**
+   * 用户动作）；首槽空 / 取消哨兵 → Shelved；'~' 展开后非绝对 → BadPath；
+   * 合法 → Chosen（去尾斜杠）。
    * isAbsolute 为跨平台判定（POSIX / 盘符 / UNC）——朴素 startsWith("/")
    * 会拒绝 Windows 盘符答案（diag-win-paths P1）。
    */
   private def parsePanelAnswer(answers: List[String]): PanelAnswer =
-    val raw = answers.headOption.map(_.trim).getOrElse("")
-    if raw.isEmpty || raw == CancelSentinel then PanelAnswer.Shelved
+    if AskUserDispatch.isFailure(answers) then PanelAnswer.Failed(answers.head)
     else
-      val expanded = expandTilde(raw)
-      if !PathUtil.isAbsolute(expanded) then PanelAnswer.BadPath(raw, "path must be absolute")
-      else PanelAnswer.Chosen(stripTrailingSlashes(expanded))
+      val raw = answers.headOption.map(_.trim).getOrElse("")
+      if raw.isEmpty || raw == CancelSentinel then PanelAnswer.Shelved
+      else
+        val expanded = expandTilde(raw)
+        if !PathUtil.isAbsolute(expanded) then PanelAnswer.BadPath(raw, "path must be absolute")
+        else PanelAnswer.Chosen(stripTrailingSlashes(expanded))
 
   /**
-   * 面板答案落地（纯分派）：Shelved → 搁置消息；BadPath → 明确报错；
-   * Chosen → 创建链。
+   * 面板答案落地（纯分派）：Failed → 明确报错（问题从未上卡，不是用户动作）；
+   * Shelved → 搁置消息；BadPath → 明确报错；Chosen → 创建链。
    */
   private def applyPanelAnswer(
     ans: PanelAnswer,
@@ -357,6 +367,16 @@ object ProjectCreateTool extends Tool:
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     ans match
+      case PanelAnswer.Failed(signal) =>
+        IO.pure(
+          Left(
+            ToolError(
+              s"Path-selection panel could not be dispatched — the question was never shown to the user " +
+                s"and no answer can arrive, so nothing was created. Signal: $signal. " +
+                s"Re-invoke with an absolute 'workspace' path (and optionally 'name') to proceed without the panel."
+            )
+          )
+        )
       case PanelAnswer.Shelved =>
         IO.pure(
           Right(
@@ -384,8 +404,9 @@ object ProjectCreateTool extends Tool:
    *   永久悬挂）；
    * - 无 agent 会话（REST 直调 / harness）→ 明确报错不悬挂；
    * - 等待无人工超时——与 AskUserQuestion 同语义（pending 期间会话标记
-   *   WaitingForUser 豁免 TaskStuckWatcher；hub 缺席时 AgentActor 直接取消
-   *   ask 回 Nil → 走 Shelved 搁置消息）；
+   *   WaitingForUser 豁免 TaskStuckWatcher）；承接面缺席（无 InteractionHub 可用）
+   *   ⇒ 派发腿回 [[nebflow.shared.AskUserDispatch]] 失败信号 ⇒ 本条给明确报错
+   *   （问题从未上卡、答案永不投达，与「用户关掉面板」区分开）；
    * - 取消/空答案 → 明确搁置消息（无创建、无悬挂）；
    * - 答案落定 → restoreRegistryAfterAnswer 配对恢复（与 AskUserQuestionTool
    *   同一实现——#43 修复的答案来源校验语义原样适用：面板答案只能来自用户

@@ -1294,14 +1294,19 @@ private[agent] object AgentProcessing:
               )
             )).void *> nodeAskEventIO
           case None =>
-            // Hub not spawned (early boot / tests): 显式可判读的失败 —— 不静默丢答案。
-            // 本批起本分支为**唯一**的「答案永不投达」路径（阻塞腿的 `.?` 等待已成
-            // 历史），故日志文案自描述其后果。
+            // 承接面缺席（early boot / headless / harness）：问题从未上卡 ⇒ 答复
+            // 永不投达。本腿对 `replyTo` 给出**可判读的失败信号**（自描述：失败
+            // 类别 + requestId + sourceAgent，见 [[nebflow.shared.AskUserDispatch]]），
+            // 而不是空载荷 —— 空载荷在订阅腿那里与「用户没答」同形：桥会把它当
+            // 用户答复注入会话，面板会把它当「用户关闭了面板」静默搁置。两个订阅
+            // 腿都据该信号分支处理（桥不注入、面板明确报错）。
+            val failure = AskUserDispatch.unavailable(requestId, srcAgent)
             logger.warn(
-              s"AskUser dropped: InteractionHub not spawned — the answer can never be delivered " +
+              s"AskUser dispatch FAILED (${AskUserDispatch.UnavailableCode}): InteractionHub is not " +
+                s"available — the question was never shown and the answer can never be delivered " +
                 s"(requestId=$requestId sourceAgent=$srcAgent)"
             ) *>
-              replyToOpt.fold(IO.unit)(replyTo => (replyTo ! Nil).attempt.void)
+              replyToOpt.fold(IO.unit)(replyTo => (replyTo ! failure).attempt.void)
         }
         sendIO *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
