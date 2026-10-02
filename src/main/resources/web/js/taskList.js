@@ -51,8 +51,14 @@ let nodeSnapshotSeq = 0;
 let lastPanelSessionId = null;
 /** 展开的链 id 集合（面板内折叠态记忆；跨重渲保留，同 chainId 恒同态）。 */
 const expandedChains = new Set();
-/** 链控动作在途集合（`project:chainId`）——防重复点击，动作落地/失败后释放。 */
-const chainActionPending = new Set();
+/** In-flight chain-control actions (`project:chainId` → action). Serves double duty:
+ *  it blocks duplicate clicks AND is the **single** source of the optimistic state —
+ *  `buildChainRow` reads it to pick the badge text, to disable both buttons and to set
+ *  `data-chain-pending`. It lives in the render layer rather than in the DOM so that any
+ *  re-render (e.g. an unrelated WS frame) *preserves* the in-flight state instead of
+ *  silently wiping it (§10.7(b) reconciliation rule ③). Released on landing / failure /
+ *  arrival of the authoritative frame. */
+const chainPendingAction = new Map();
 /** 「未分组」组被手动收起的项目集合（§二.1.5：默认展开；手动收起后跨重渲保留
  *  ——面板每次 WS 事件都整块重绘，不记忆则用户收起的组下一秒又张开）。 */
 const ungroupedCollapsed = new Set();
@@ -202,6 +208,10 @@ onMessage('chainState', (msg) => {
   meta.status = normalizeChainStatus(msg.status);
   meta.pausedAt = typeof msg.pausedAt === 'number' ? msg.pausedAt : null;
   meta.cancelledAt = typeof msg.cancelledAt === 'number' ? msg.cancelledAt : null;
+  // Reconciliation (§10.7(b)): the frame is the authority — it clears the in-flight
+  // optimistic state for this chain **unconditionally**, whether the outcome matches
+  // the request or not. Frames for other chains leave other rows' in-flight state alone.
+  chainPendingAction.delete(`${project}:${cid}`);
   rerenderWithNodes();
 });
 onReconnect(() => { if (nodeSnapshotLoaded) refreshNodeSnapshot(); });
@@ -334,14 +344,176 @@ const BTN_H = 20;
 /** 点图节点圆点直径（折叠链行内联拓扑缩略）。 */
 const DOT_R = 3;
 
+// ── Topology / motion constants (this batch · §4.5 — **SINGLE SOURCE**) ──────
+// Each value is mirrored verbatim into the taskList.css `:root` token of the same
+// name; the evidence script assert-type-color-single-source.cjs (extended in this
+// batch) asserts every pair equal, so neither side may drift. 🔴 No scattered
+// literals, no second authority.
+/** Check-mark stroke length (demo verbatim; ≥ path length at both viewBox scales). */
+const CHECK_DASH = 12;
+/** Check bounce easing (demo verbatim — overshoot bezier, second control point y=1.6). */
+const CHECK_EASE = 'cubic-bezier(.34,1.6,.64,1)';
+/** Roll-in duration in ms (demo verbatim). */
+const ROLL_MS = 350;
+/** Indent step per depth level, px (this batch's own value). */
+const NEST_STEP = 8;
+/** Indent cap in levels (this batch's own value — §2.2 measured layout budget). */
+const NEST_CAP = 3;
+/** Overflow threshold: a chain renders at most this many member rows (§6.3). */
+const CHAIN_ROW_LIMIT = 100;
+
+/** Completed glyph — circle + check, demo geometry verbatim (viewBox 16, rendered 12px).
+ *  Path length ≈10.41 ≤ CHECK_DASH, so the draw animation never shows a partial stroke. */
+const CHECK_SVG = '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7"/><path d="M4.5 8.2 L7 10.7 L11.5 5.5"/></svg>';
+/** Failed glyph — circle + cross, same geometry language as the check. Each stroke is
+ *  ≈5.94 long; the CSS dash length is 6 (≤ real length, so the draw starts hidden). */
+const CROSS_SVG = '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7"/><path d="M5.9 5.9 L10.1 10.1 M10.1 5.9 L5.9 10.1"/></svg>';
+
+/** Chain keys (`project:chainId`) present on screen — the first-appearance memory for the
+ *  chain row's pop. Same swap discipline as the member-status memory: without it, the pop
+ *  would replay on every full repaint (i.e. on every WS frame), which §4.3 forbids. */
+let chainSeenPrev = new Set();
+let chainSeenNext = new Set();
+
+/** Previous-frame status per member row (`project:nodeId` → status) — the §4.3
+ *  transition memory. Lives in the render layer only (never in the DOM / storage:
+ *  a refresh must start from an empty memory so already-terminal rows stay silent). */
+let memberStatusPrev = new Map();
+/** Status memory accumulated by the frame currently being built; swapped in at the
+ *  end of redraw. Rows that are not rendered (collapsed chain) simply drop out. */
+let memberStatusNext = new Map();
+
+// ── Chain topology (§2.4 / §5.2): edges are rebuilt from the nodes' OWN declared
+//    fields (out ∪ deps ∪ in) — `chains[].edges` is not serialised (§5.1 ❌).
+//    🔴 This is NOT the retired chain-membership derivation: what is rebuilt is the
+//    *edge* (a per-node declaration), not the aggregate membership authority, so the
+//    "no front-end chain derivation" red line (§7-B) stays intact (§5.3).
+//    Target resolution mirrors the engine single point `OutEdge.resolveTargetId`:
+//    id hit first, node-name fallback second, unresolvable ⇒ dropped.
+/** @param {any[]} members @returns {{ids: Set<string>, adj: Map<string, Set<string>>}} */
+function chainEdgesOf(members) {
+  const list = Array.isArray(members) ? members : [];
+  const ids = new Set(list.map((m) => String(m.id)));
+  const byName = new Map();
+  for (const m of list) {
+    const nm = String(m.name || '');
+    if (nm && !byName.has(nm)) byName.set(nm, String(m.id));
+  }
+  /** @type {Map<string, Set<string>>} */
+  const adj = new Map();
+  for (const id of ids) adj.set(id, new Set());
+  /** @param {any} raw @returns {string|null} */
+  const resolve = (raw) => {
+    const s = String(raw == null ? '' : raw).replace(/^chain:/, '');
+    if (!s) return null;
+    if (ids.has(s)) return s;
+    return byName.get(s) || null;
+  };
+  /** @param {string|null} from @param {string|null} to */
+  const link = (from, to) => {
+    if (from == null || to == null || from === to) return;
+    const set = adj.get(from);
+    if (set && !set.has(to)) set.add(to);
+  };
+  for (const m of list) {
+    const self = String(m.id);
+    for (const e of (Array.isArray(m.out) ? m.out : [])) {
+      if (!e || typeof e !== 'object') continue;
+      // loop edges are re-entry back-edges and 'Nebula' is the panel seat, not a member
+      if (String(e.mode || '') === 'loop' || String(e.to || '') === 'Nebula') continue;
+      link(self, resolve(e.to));
+    }
+    for (const raw of (Array.isArray(m.in) ? m.in : [])) link(resolve(raw), self);
+    for (const raw of (Array.isArray(m.deps) ? m.deps : [])) link(resolve(raw), self);
+  }
+  return { ids, adj };
+}
+
+/** Longest-path depth per member (Kahn sweep — one relaxation round per node, so an
+ *  already-deepened node cannot be under-relaxed the way a visited-set walk would).
+ *  Members inside an unresolved cycle (no cycle is expected: loop edges are stripped)
+ *  fall back to depth 0 instead of being mis-ordered.
+ *  @param {{ids: Set<string>, adj: Map<string, Set<string>>}} edges
+ *  @returns {Map<string, number>} */
+function chainDepthsOf(edges) {
+  const indeg = new Map();
+  for (const id of edges.ids) indeg.set(id, 0);
+  for (const [, set] of edges.adj) for (const to of set) indeg.set(to, (indeg.get(to) || 0) + 1);
+  const depth = new Map();
+  const queue = [];
+  for (const id of edges.ids) {
+    if ((indeg.get(id) || 0) === 0) { depth.set(id, 0); queue.push(id); }
+  }
+  for (let i = 0; i < queue.length; i++) {
+    const from = queue[i];
+    for (const to of (edges.adj.get(from) || [])) {
+      depth.set(to, Math.max(depth.get(to) || 0, (depth.get(from) || 0) + 1));
+      indeg.set(to, (indeg.get(to) || 0) - 1);
+      if ((indeg.get(to) || 0) === 0) queue.push(to);
+    }
+  }
+  for (const id of edges.ids) if (!depth.has(id)) depth.set(id, 0);
+  return depth;
+}
+
+/** Node createdAt as epoch ms (contract §4 sends a number; ISO strings tolerated). */
+function nodeCreatedAt(n) {
+  const raw = n && n.createdAt;
+  if (typeof raw === 'number') return raw;
+  const ms = Date.parse(raw);
+  return isNaN(ms) ? 0 : ms;
+}
+
+/** Topological order — the §2.1 deterministic three-key sort (depth ↑, createdAt ↑, id ↑). */
+function chainOrderOf(members, depths) {
+  const list = Array.isArray(members) ? members : [];
+  return [...list].sort((a, b) => {
+    const da = depths.get(String(a.id)) || 0;
+    const db = depths.get(String(b.id)) || 0;
+    if (da !== db) return da - db;
+    const ta = nodeCreatedAt(a);
+    const tb = nodeCreatedAt(b);
+    if (ta !== tb) return ta - tb;
+    const ia = String(a.id);
+    const ib = String(b.id);
+    return ia < ib ? -1 : (ia > ib ? 1 : 0);
+  });
+}
+
+/** Hierarchical sequence labels ("1", "1.1", "1.1.2") in topological order — these
+ *  carry the depth signal once the CSS indent is capped (§2.1/§2.3).
+ *  @param {any[]} ordered @param {Map<string, number>} depths @returns {Map<string, string>} */
+function chainSeqLabels(ordered, depths) {
+  const counters = [];
+  const labels = new Map();
+  for (const m of ordered) {
+    const d = depths.get(String(m.id)) || 0;
+    counters.length = d + 1;
+    for (let i = 0; i <= d; i++) if (!counters[i]) counters[i] = 0;
+    counters[d] += 1;
+    labels.set(String(m.id), counters.slice(0, d + 1).join('.'));
+  }
+  return labels;
+}
+
 /**
- * 节点类型派生（**假设已申报** —— 载荷无 node type 字段，见报告「假设」节）：
- *   1. 链入口（`in` 为空且无 deps）= 分发器位（把任务发出去的那一位）
- *   2. `merge === true` = 落地位（合并 sink）
- *   3. `role === 'verifier'` = 验证位
- *   4. 名字含 design/诊断类词根 = 诊断设计位
- *   5. 其余 = 实现位
- * 命名约定只作**末位回落**（前三条为载荷面判据）；判据顺序即优先级（首命中即返回）。
+ * Node-type derivation (the payload carries no node-type field — see the report's
+ * assumptions section). Criteria order = priority (first hit wins); every criterion
+ * but the last is a payload fact:
+ *   1. `merge === true` → sink (merge landing seat)
+ *   2. `role === 'verifier'` → verify
+ *   3. name carries a diagnosis word-root → design
+ *   4. chain entry (`in` and `deps` both empty) AND name carries a dispatch word-root
+ *      → dispatcher
+ *   5. otherwise → impl
+ * 🔴 C2 correction (§1.3-C2): the previous rule "`in` empty ∧ `deps` empty ⇒ dispatcher"
+ * equated *chain entry* with *dispatcher seat*. Measured on real chains, 17.5% of the
+ * seats it painted as dispatcher are in fact impl/verify seats (a real chain's entry is
+ * usually the impl seat itself), so the colour signal lied. The entry condition is kept
+ * as a necessary conjunct but is no longer sufficient: it must be paired with an explicit
+ * dispatch word-root, and an entry seat without that word-root falls through to impl —
+ * the measured majority case. The card states no replacement rule; this reading is
+ * evidence-driven and is declared in the report.
  * @param {{role?: string, merge?: boolean, in?: string[], deps?: string[], name?: string}} n
  * @param {string} _project @returns {string} NODE_TYPE 键
  */
@@ -350,9 +522,9 @@ function nodeTypeOf(n, _project) {
   const depsLen = Array.isArray(n.deps) ? n.deps.length : 0;
   const name = String(n.name || '');
   if (n.merge === true) return 'sink';
-  if (inLen === 0 && depsLen === 0) return 'dispatcher';
   if (String(n.role || '') === 'verifier') return 'verify';
   if (/design|diag|forensic|audit|probe|recon|survey|investigat/i.test(name)) return 'design';
+  if (inLen === 0 && depsLen === 0 && /dispatch|triage|intake|orchestrat/i.test(name)) return 'dispatcher';
   return 'impl';
 }
 
@@ -410,22 +582,35 @@ function chainElapsed(chainMeta, members) {
 }
 
 /**
- * 内联点图（§二.1.1）：节点拓扑缩略 —— 每位成员一个圆点（按类型着色）+ 相邻位连线。
+ * Inline dotmap (§二.1.1): node topology thumbnail — one dot per member (coloured by type)
+ * plus links on real edges.
  *   空心（背景色填充 + 类型色描边）= 未起跑；实心 = 已完成/失败/取消；
  *   实心 + 描边放大 = 运行中（`--running` 类，CSS 侧 stroke-width/尺寸放大）。
  * 宽度封顶溢出省略（CSS `overflow:hidden` + `flex-shrink`）——点图只作缩略，不作判据。
- * @param {any[]} members @returns {HTMLElement} */
-function buildChainDotmap(members) {
+ *
+ * 🔴 C1 correction (§1.3-C1 / §2.4): the previous version sorted members by timestamp
+ * and drew a link between every *adjacent pair*. On real chains that painted edges
+ * which do not exist in the payload (measured 75/123 chains) and ordered the chain by
+ * activity rather than by dependency (26/123). The dots now follow the topological
+ * order (§2.1), and a link is inserted **only** where a real edge (out ∪ deps ∪ in)
+ * connects the two adjacent dots. DOM structure and class names are unchanged.
+ * @param {any[]} ordered members already in topological order
+ * @param {{adj: Map<string, Set<string>>}} edges @returns {HTMLElement} */
+function buildChainDotmap(ordered, edges) {
   const map = document.createElement('span');
   map.className = 'task-chain-map';
   map.setAttribute('aria-hidden', 'true');
-  const list = Array.isArray(members) ? members : [];
-  const sorted = [...list].sort((a, b) => nodeTs(a) - nodeTs(b));
-  sorted.forEach((m, i) => {
+  const list = Array.isArray(ordered) ? ordered : [];
+  list.forEach((m, i) => {
     if (i > 0) {
-      const link = document.createElement('span');
-      link.className = 'task-chain-map-link';
-      map.appendChild(link);
+      const prevId = String(list[i - 1].id);
+      const id = String(m.id);
+      const fromSet = edges && edges.adj ? edges.adj.get(prevId) : null;
+      if (fromSet && fromSet.has(id)) {
+        const link = document.createElement('span');
+        link.className = 'task-chain-map-link';
+        map.appendChild(link);
+      }
     }
     const dot = document.createElement('span');
     const type = nodeTypeOf(m, '');
@@ -449,25 +634,62 @@ function buildChainIconBtn(icon, label, cls) {
   return btn;
 }
 
-/** 链控动作（REST 三条 + 状态刷新）：调 `controlChain`，失败仅提示（面板不中断）。
- *  成功后**不**就地改缓存 —— 状态权威 = 引擎面 `chainState` 帧（本帧到达即刷新，
- *  与 WS 单点同源；REST 响应体只用于错误分流）。 */
+/** Chain-control failure toast. `modal.js` is imported **dynamically**: it statically
+ *  imports sidebar.js, which imports this module — a static import here would close the
+ *  documented sidebar↔modal cycle. Same pattern as the other dynamic imports in this file.
+ *  If the toast module is unavailable the panel still rolls back (the rollback never
+ *  depends on the notification). @param {string} message */
+function toastChainControlFailure(message) {
+  import('./modal.js')
+    .then(({ showToast }) => { if (typeof showToast === 'function') showToast(message, 'error'); })
+    .catch(() => {});
+}
+
+/** Chain control (the three REST legs + state refresh): calls `controlChain`.
+ *  On failure ⇒ **roll back the optimistic state + notify** (the panel never breaks).
+ *  On success it does **not** rewrite the cache in place — the state authority is the
+ *  engine-side `chainState` frame (the frame refreshes on arrival, same single source as
+ *  WS; the REST body is only used to triage errors).
+ *
+ *  🔴 Optimistic UI (§10.2③ gap / §10.7(b), the freeze-style semantics ordered by the
+ *  author on 2026-10-01 21:03): from the instant the user clicks, the authoritative frame
+ *  is still one round-trip away. That window previously had **zero** visual feedback on the
+ *  chain row (measured: with an injected 800ms round-trip the row showed its old state for
+ *  224–1223ms), which is exactly the reported symptom "a running chain does not pause".
+ *  The fix mirrors the freeze bar: **set the local state in the same frame** (write
+ *  `chainPendingAction` + re-render ⇒ badge becomes "pausing/cancelling" + both buttons
+ *  disabled + `data-chain-pending`), while the authority stays with the `chainState` frame
+ *  (arrival clears the in-flight state unconditionally). The failure leg (http / network)
+ *  falls back to the server state and notifies. Zero engine change, zero new CSS.
+ *  @param {string} project @param {string} chainId
+ *  @param {'pause'|'resume'|'cancel'} action */
 async function runChainAction(project, chainId, action) {
   const key = `${project}:${chainId}`;
-  if (chainActionPending.has(key)) return;
-  chainActionPending.add(key);
+  if (chainPendingAction.has(key)) return;
+  chainPendingAction.set(key, action);
+  rerenderWithNodes(); // same-frame visual state: badge swap + both buttons disabled
+  let res;
   try {
-    const res = await controlChain(project, chainId, action);
-    if (res.state === 'http') {
-      // 可行动说明（404 携带 CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER / CHAIN_CANCELLED）
-      const detail = res.data && res.data.error ? String(res.data.error) : '';
-      console.warn(`[tasklist] chain ${action} refused (http ${res.status}): ${detail}`);
-    } else if (res.state === 'network') {
-      console.warn(`[tasklist] chain ${action} refused (network)`);
-    }
-  } finally {
-    chainActionPending.delete(key);
+    res = await controlChain(project, chainId, action);
+  } catch (_) {
+    res = { state: 'network' };
   }
+  // The optimistic window closes as soon as the request settles — the local state was never
+  // rewritten, so re-rendering here shows exactly the engine-side truth, and the
+  // authoritative `chainState` frame applies the new state moments later (its own clear is
+  // idempotent). Holding the marker past the response would leave both buttons dead on a
+  // row whose action already succeeded whenever a frame is lost.
+  if (chainPendingAction.get(key) === action) chainPendingAction.delete(key);
+  rerenderWithNodes();
+  if (res.state === 'ok') return;
+  // Failure leg ⇒ rollback is what the render above already produced (server state intact).
+  // A 404 carries an actionable engine reason (CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER /
+  // CHAIN_CANCELLED). This card fixes no locale key for those codes, so the code itself
+  // is the only truthful actionable text available; otherwise fall back to a generic line.
+  const code = res.state === 'http' && res.data && res.data.error ? String(res.data.error) : '';
+  const httpStatus = res.state === 'http' ? res.status : '';
+  console.warn(`[tasklist] chain ${action} refused (${res.state}${httpStatus ? ` ${httpStatus}` : ''}): ${code}`);
+  toastChainControlFailure(code || t('task.chain.ctrl.failed'));
 }
 
 /** 取消 = 不可逆 ⇒ 必须过二次确认（§二.1.6）。确认组件复用既有 `window.__showConfirm`
@@ -484,17 +706,29 @@ function confirmChainCancel(project, chainId, title) {
 }
 
 /**
- * 折叠链行（§二.1.1 · 28px）：`▸ 名称 [状态徽标] [内联点图] n/N · 时长 ⏸ ✕`。
- * 行点击 = 展开/折叠该链（`expandedChains` 记忆）；三钮 stopPropagation（各自语义）。
+ * Collapsed chain row (§二.1.1 · 28px): `▸ name [badge] [dotmap] n/N · elapsed · {n} working ⏸ ✕`.
+ * Row click = expand/collapse this chain (`expandedChains` memory); both buttons stopPropagation.
+ *
+ * Active-position signal #2 (§3.3 item 1): with ≥1 running member the meta appends
+ * `{n} working` (`task.chain.activeCount`) — the collapsed row alone answers "how many are
+ * running", while the dotmap's `is-running` dots sit at their real layers. 🔴 Count only,
+ * never ordered: the front end does not invent a within-chain order (§3.2).
+ *
+ * In-flight optimistic state (§10.7(b)): while `chainPendingAction` holds this chain the
+ * badge shows pausing/cancelling, both buttons are disabled and the row carries
+ * `data-chain-pending` — taking precedence over the five-state badge.
  * @param {string} project
  * @param {{id: string, title: string, memberIds: string[], status?: string, pausedAt?: number|null, cancelledAt?: number|null}} chainMeta
- * @param {any[]} members @returns {HTMLElement} */
-function buildChainRow(project, chainMeta, members) {
+ * @param {any[]} members @param {{ordered: any[], edges: any}} view @returns {HTMLElement} */
+function buildChainRow(project, chainMeta, members, view) {
   const cid = String(chainMeta.id);
   const expanded = expandedChains.has(cid);
   const badge = chainBadgeState(chainMeta, members);
   const { done, total } = chainProgress(members);
   const title = String(chainMeta.title || cid);
+  const pendingAction = chainPendingAction.get(`${project}:${cid}`) || '';
+  const list = Array.isArray(members) ? members : [];
+  const runningCount = list.filter((m) => m && m.status === 'running').length;
 
   const row = document.createElement('div');
   row.className = 'task-chain';
@@ -502,6 +736,12 @@ function buildChainRow(project, chainMeta, members) {
   row.dataset.chainId = cid;
   row.dataset.project = project;
   row.dataset.chainState = badge;
+  if (pendingAction) {
+    row.dataset.chainPending = pendingAction;
+    // aria-busy is the in-flight marker consumed by the acceptance probe (§10.9-A-1);
+    // no new CSS rides on it (the disabled rule already carries the visual).
+    row.setAttribute('aria-busy', 'true');
+  }
   row.setAttribute('role', 'button');
   row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 
@@ -517,16 +757,26 @@ function buildChainRow(project, chainMeta, members) {
   row.appendChild(name);
 
   const badgeEl = document.createElement('span');
+  // In-flight: the optimistic word replaces the five-state badge text but keeps the
+  // same `.task-chain-badge.s-*` element and colour token (zero new CSS, §10.8).
   badgeEl.className = `task-chain-badge s-${badge}`;
-  badgeEl.textContent = t(NODE_BADGE_KEY[badge]);
+  badgeEl.textContent = pendingAction
+    ? t(pendingAction === 'cancel' ? 'task.chain.cancelling' : 'task.chain.pausing')
+    : t(NODE_BADGE_KEY[badge]);
   row.appendChild(badgeEl);
 
-  row.appendChild(buildChainDotmap(members));
+  row.appendChild(buildChainDotmap(view.ordered, view.edges));
 
   const meta = document.createElement('span');
   meta.className = 'task-chain-meta';
   const elapsed = chainElapsed(chainMeta, members);
-  meta.textContent = `${done}/${total}${elapsed ? ` · ${elapsed}` : ''}`;
+  // §3.2: the meta carries `{n} working` for the **concurrent** case (the card's own
+  // headline case: 29.3% of real chains run ≥2 seats at once). A uniquely-running chain is
+  // already identified by its own row (marker + status word) and, in the collapsed row, by
+  // the dotmap's `is-running` dot sitting at its real layer (§3.3) — so no count is appended.
+  // This is the §3.2 table's specific wording; §7.1 states the terser "≥1". Declared in the report.
+  const count = runningCount >= 2 ? ` · ${t('task.chain.activeCount', { n: String(runningCount) })}` : '';
+  meta.textContent = `${done}/${total}${count}${elapsed ? ` · ${elapsed}` : ''}`;
   row.appendChild(meta);
 
   const actions = document.createElement('span');
@@ -538,14 +788,15 @@ function buildChainRow(project, chainMeta, members) {
     isPaused ? t('task.chain.resume') : t('task.chain.pause'),
     'task-chain-btn-pause',
   );
-  if (isCancelled) pauseBtn.disabled = true;
+  // Cancelled chains are inert; an in-flight request locks both buttons (§10.7(a)).
+  if (isCancelled || !!pendingAction) pauseBtn.disabled = true;
   pauseBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     runChainAction(project, cid, isPaused ? 'resume' : 'pause');
   });
   actions.appendChild(pauseBtn);
   const cancelBtn = buildChainIconBtn('x', t('task.chain.cancel'), 'task-chain-btn-cancel');
-  if (isCancelled) cancelBtn.disabled = true;
+  if (isCancelled || !!pendingAction) cancelBtn.disabled = true;
   cancelBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     confirmChainCancel(project, cid, title);
@@ -553,6 +804,9 @@ function buildChainRow(project, chainMeta, members) {
   actions.appendChild(cancelBtn);
   row.appendChild(actions);
 
+  // A pending cancel would make two contradictory controls look live; §10.7(b) settles
+  // that by disabling both, so the row hint stays the five-state wording minus the
+  // click affordance while in flight.
   row.title = t('task.chain.rowHint', { chain: title, n: String(total) });
   row.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -562,20 +816,92 @@ function buildChainRow(project, chainMeta, members) {
   return row;
 }
 
-/** 展开态下的节点行（§二.1.2 · 22px）：色点 + 名 + 状态 + 时长。点色 = 类型色（单源）。 */
-function buildChainMemberRow(node, project, chainMeta) {
+/**
+ * Four-state motion mark (§4.2 / §4.3): a 12px glyph beside the member row's status word.
+ *   running   = brand-green rotating ring (reuses the existing `task-node-spin-rot` — no
+ *               second animation language)
+ *   completed = circle + check; the check draws itself then the container bounces in
+ *               (`task-chain-draw` + `task-chain-check-pop`)
+ *   failed    = circle + red cross, same geometry language and timings (stroke = `--color-error`)
+ *   paused / other = no mark at all (the "paused" semantic *is* "stopped", so an animation
+ *               would contradict it — §4.2 deliberately adds none)
+ *
+ * 🔴 Trigger discipline (§4.3, the card's most critical motion rule) — play ⟺ **this frame
+ * entered the terminal state from a non-terminal one**:
+ *   let prev = this nodeKey's status in the previous frame (undefined on first paint)
+ *   play ⟺ (now ∈ {completed, failed}) ∧ prev ≠ undefined ∧ prev ≠ now
+ *   · first paint already terminal ⇒ silent (prev === undefined) — prevents "refresh replays
+ *     the check"
+ *   · same status both frames ⇒ silent (the whole panel is rebuilt every frame, so without
+ *     the diff every frame would replay)
+ * The memory lives in the render layer (`memberStatusPrev` / `memberStatusNext`) — never in
+ * a DOM dataset or localStorage, so a refresh clears it, which is the correct semantics.
+ * Under `prefers-reduced-motion` the mark lands in its static final state (no animation
+ * class, no memory write) — §4.6, the JS channel.
+ * @param {string} st @param {boolean} transition @returns {HTMLElement|null} */
+function buildMemberMark(st, transition) {
+  if (st === 'running') {
+    // Reuses the existing rotating-ring CSS verbatim (no second animation language); the
+    // reduced-motion channel stops it via the CSS `animation: none` rule (§4.6).
+    const spin = document.createElement('span');
+    spin.className = 'task-node-spin task-chain-mark';
+    spin.setAttribute('aria-hidden', 'true');
+    return spin;
+  }
+  if (st !== 'completed' && st !== 'failed') return null;
+  const mark = document.createElement('span');
+  mark.className = 'task-chain-mark' + (st === 'failed' ? ' task-chain-mark-failed' : ' task-chain-mark-done');
+  mark.setAttribute('aria-hidden', 'true');
+  mark.innerHTML = st === 'failed' ? CROSS_SVG : CHECK_SVG;
+  // Reduced motion, an already-terminal first paint and a same-state frame all land in the
+  // final state; only a real transition plays the draw (§4.3 / §4.6).
+  if (REDUCED_MOTION || !transition) mark.classList.add('task-chain-mark-static');
+  return mark;
+}
+
+/** Expanded member row (§二.1.2 · 22px): sequence label + type dot + name + status word +
+ *  motion mark + elapsed.
+ *
+ *  §2 layered list: row order = **topological order** (`view.ordered`, keyed
+ *  `(depth↑, createdAt↑, id↑)`); the depth travels to CSS via the inline `--nest` property
+ *  (`padding-left: calc(16px + min(var(--nest),3) * 8px)`). Once the indent is capped, the
+ *  `.task-chain-depth` sequence label ("1" / "1.1" / "1.1.2") keeps carrying the depth signal.
+ *  Dot colour = type colour (single source).
+ *
+ *  🔴 C3 correction (§1.3-C3): rows used to be laid out in the incoming `members` order,
+ *  which descends from the panel's most-recent-activity sort — i.e. reverse chronological
+ *  and unrelated to the chain's upstream/downstream structure.
+ *  @param {any} node @param {string} project
+ *  @param {Map<string, number>} depths @param {Map<string, string>} seqs @returns {HTMLElement} */
+function buildChainMemberRow(node, project, depths, seqs) {
   const st = String(node.status || 'pending');
   const cls = NODE_STATUS_CLS[st] || '';
   const type = nodeTypeOf(node, project);
+  const id = String(node.id);
+  const depth = depths.get(id) || 0;
+  // §4.3 transition DIFF (single read for this frame): the previous frame's status for this
+  // member → undefined on first paint, so an already-terminal row stays silent; equal status
+  // across frames is silent too (the panel rebuilds every frame). Recorded into the next
+  // frame's memory — skipped under reduced motion, which never animates (§4.6 JS channel).
+  const prevStatus = memberStatusPrev.get(`${project}:${id}`);
+  const transition = !REDUCED_MOTION && prevStatus !== undefined && prevStatus !== st;
+  if (!REDUCED_MOTION) memberStatusNext.set(`${project}:${id}`, st);
   const row = document.createElement('div');
   row.className = 'task-chain-member' + (cls ? ` task-node-${cls}` : '');
-  row.dataset.nodeKey = `${project}:${node.id}`;
+  row.dataset.nodeKey = `${project}:${id}`;
   row.dataset.project = project;
-  row.dataset.nodeId = String(node.id);
+  row.dataset.nodeId = id;
+  row.style.setProperty('--nest', String(depth));
   row.setAttribute('role', 'button');
   const wordKey = NODE_WORD_KEY[st];
-  row.setAttribute('aria-label', `${node.name || node.id}${wordKey ? ` — ${t(wordKey)}` : ''}`);
+  row.setAttribute('aria-label', `${node.name || id}${wordKey ? ` — ${t(wordKey)}` : ''}`);
   row.title = t('project.openFlowMap', { name: project });
+
+  const seq = document.createElement('span');
+  seq.className = 'task-chain-depth';
+  seq.setAttribute('aria-hidden', 'true');
+  seq.textContent = seqs.get(id) || String(depth + 1);
+  row.appendChild(seq);
 
   const dot = document.createElement('span');
   dot.className = `task-chain-dot t-${type}`;
@@ -584,16 +910,22 @@ function buildChainMemberRow(node, project, chainMeta) {
 
   const label = document.createElement('span');
   label.className = 'task-chain-member-name';
-  label.textContent = node.name || node.id;
+  label.textContent = node.name || id;
   row.appendChild(label);
 
   if (wordKey) {
+    // §4.4 three-state switch transition: the status word rolls in only on a real change
+    // (first paint and same-state frames stay still). `both` fill, no `forwards` tail, so it
+    // never parks an animation on top of the layers that follow (§4.4).
     const word = document.createElement('span');
-    word.className = 'task-chain-member-word';
+    word.className = 'task-chain-member-word' + (transition ? ' task-chain-roll-in' : '');
     word.setAttribute('aria-hidden', 'true');
     word.textContent = t(wordKey);
     row.appendChild(word);
   }
+
+  const mark = buildMemberMark(st, transition);
+  if (mark) row.appendChild(mark);
 
   const ms = nodeTs(node);
   if (ms > 0) {
@@ -614,15 +946,46 @@ function buildChainMemberRow(node, project, chainMeta) {
   return row;
 }
 
-/** 链控件组（折叠行 + 展开时的成员行）。`chainMeta.status` 供徽标/按钮双态判定。 */
+/** Chain view model for one chain block: topology edges, per-member depth, the
+ *  topological row order and the hierarchical sequence labels. Derived once per block
+ *  (§6.2: the depth pass is a pure function measured at 0.1ms for the largest real chain).
+ *  @param {any[]} members @returns {{ordered: any[], edges: any, depths: Map<string, number>, seqs: Map<string, string>}} */
+function chainViewOf(members) {
+  const edges = chainEdgesOf(members);
+  const depths = chainDepthsOf(edges);
+  const ordered = chainOrderOf(members, depths);
+  return { ordered, edges, depths, seqs: chainSeqLabels(ordered, depths) };
+}
+
+/** Chain control group (collapsed row + member rows when expanded). `chainMeta.status`
+ *  drives the badge / button two-state. Overflow fallback (§6.1/§6.3): with more than
+ *  `CHAIN_ROW_LIMIT` members only the first 100 rows are built, plus a
+ *  `{n} more not shown` row (`task.chain.overflow`) — the threshold is a **vertical
+ *  readability** wall, not a performance one (100 × 22px = 5.4 screens); the largest real
+ *  chain is 14 members and the brief's scale is 40, so it never fires in practice. */
 function buildChainBlock(project, chainMeta, members) {
   const block = document.createElement('div');
   block.className = 'task-chain-block';
-  block.appendChild(buildChainRow(project, chainMeta, members));
+  // §4.3 trigger discipline applies to the chain row's pop too: animate only on first
+  // appearance, not on every repaint (the panel is fully rebuilt per WS frame).
+  const chainKey = `${project}:${String(chainMeta.id)}`;
+  if (!chainSeenPrev.has(chainKey)) block.classList.add('task-chain-enter');
+  chainSeenNext.add(chainKey);
+  const view = chainViewOf(members);
+  block.appendChild(buildChainRow(project, chainMeta, members, view));
   if (expandedChains.has(String(chainMeta.id))) {
     const body = document.createElement('div');
     body.className = 'task-chain-body';
-    for (const m of members) body.appendChild(buildChainMemberRow(m, project, chainMeta));
+    const shown = view.ordered.slice(0, CHAIN_ROW_LIMIT);
+    for (const m of shown) body.appendChild(buildChainMemberRow(m, project, view.depths, view.seqs));
+    const hidden = view.ordered.length - shown.length;
+    if (hidden > 0) {
+      const more = document.createElement('div');
+      more.className = 'task-chain-more';
+      more.setAttribute('aria-hidden', 'true');
+      more.textContent = t('task.chain.overflow', { n: String(hidden) });
+      body.appendChild(more);
+    }
     block.appendChild(body);
   }
   return block;
@@ -875,6 +1238,8 @@ export function renderTaskList(_tasks, container, sessionId) {
   ensureLastActiveTimer(nodes.length > 0);
   if (nodes.length === 0) {
     container.innerHTML = '';
+    chainSeenPrev = new Set();     // nothing on screen ⇒ no "previous frame" to diff against
+    memberStatusPrev = new Map();
     return;
   }
 
@@ -892,6 +1257,12 @@ function collectRowKeys(container) {
 }
 
 function redraw(container, nodes) {
+  // §4.3 transition memory: `chainSeenPrev` / `memberStatusPrev` describe the frame that is
+  // on screen right now; the builders fill the `*Next` counterparts for the frame being
+  // built. The swap happens only after the new frame is mounted, so "previous" always means
+  // "rendered" — which is what makes first paint (of an already-terminal row) silent.
+  chainSeenNext = new Set();
+  memberStatusNext = new Map();
   container.innerHTML = '';
   const card = document.createElement('div');
   card.className = 'task-card' + (container.dataset.collapsed === '1' ? ' collapsed' : '');
@@ -930,6 +1301,8 @@ function redraw(container, nodes) {
   container.appendChild(card);
 
   createIconsIn(container);
+  chainSeenPrev = chainSeenNext;
+  memberStatusPrev = memberStatusNext;
 
   toggle.addEventListener('click', () => {
     const nowCollapsed = card.classList.toggle('collapsed');

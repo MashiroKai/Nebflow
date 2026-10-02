@@ -1293,6 +1293,12 @@ export default {
   'task.chain.cancel.confirm': 'Cancel "{chain}"? This cannot be undone — members that have not started will no longer be dispatched.',
   'task.chain.ungrouped': 'Ungrouped',
   'task.chain.rowHint': 'Chain "{chain}" ({n} nodes) — click to expand',
+  // §16-pending wording (author to review verbatim before it takes effect)
+  'task.chain.activeCount': '{n} working',
+  'task.chain.overflow': '{n} more not shown',
+  'task.chain.pausing': 'Pausing…',
+  'task.chain.cancelling': 'Cancelling…',
+  'task.chain.ctrl.failed': 'Chain control did not take effect — please retry',
   // Generic "Remove" accessible name (visup-b batch: the main window's attachment ❌
   // — the icon-only ❌ carries no text, so it must have an accessible name; kept
   // separate from `ref.remove`, which is the semantic "Remove reference").
