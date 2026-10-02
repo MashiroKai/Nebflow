@@ -1488,6 +1488,9 @@ onMessage('askUser', (msg, view) => {
   if (sid) setSessionAttention(sid, true);
   // D6 批 F2: upsert the global pending mirror (requestId-keyed, idempotent —
   // live first-send and replayed snapshot frames both land here).
+  // 附件位（本批）**刻意不进镜像**：`toEntry` 登记的字段面只服务待办条/徽标/跳转，
+  // 附件在那里零消费者；会话切换后的补渲染由 hub 的订阅重放帧（本文件 :1520 腿，
+  // 附完整 payload 含 attachments）承担 ⇒ 登记=多一份无消费方的状态。
   notePendingAsk(msg);
   // AskUser waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
@@ -1520,11 +1523,11 @@ onMessage('askUser', (msg, view) => {
   if (msg.replayed || msg.replaces) {
     if (view) {
       reclaimAskUserCards(view.dom.chat, msg.requestId, { legacyTwin: true });
-      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
+      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource, msg.attachments);
       if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
     } else if (sid) {
       // Non-active session: persist (deduped) so it can be restored on session switch
-      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid, msg.requestId);
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid, msg.requestId);
     }
     return;
   }
@@ -1540,11 +1543,11 @@ onMessage('askUser', (msg, view) => {
     // 在**任何**入口成立，顺手覆盖 `#433 F4` 兜底扇出把同一 requestId 经 broadcast
     // 多次送达同一窗的同 id 多送路径（两卡同 id 时后来的真身替换先前那张）。
     reclaimAskUserCards(activeView.dom.chat, msg.requestId, { legacyTwin: true });
-    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource, msg.attachments);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid);
   }
 });
 
@@ -1967,7 +1970,11 @@ onMessage('historyPage', (msg, view) => {
       // 历史恢复未作答卡。改前这里是「删掉**全部**带 .option-box 的 .row.ai」，
       // 会把更早那些**已作答**的历史卡一并从 DOM 里抹掉（超出本步语义）。
       reclaimAskUserCards(activeView.dom.chat, lastHistMsg.requestId, { legacyTwin: true });
-      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName });
+      // 附件位（本批）与另两条腿同形透传：`lastHistMsg.attachments` 今日恒 undefined
+      // —— 后端 `.ui.json` 落盘时**不写** attachments（WebSocketRoutes.scala:2294-2298
+      // 的 `UiMessage.AskUser(items, askRid)`）⇒ 历史行没有该键可透传，本处是**形态
+      // 对齐**的防御位，不是活路径（见过程件「构造性边界」一节）。
+      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName }, lastHistMsg.attachments);
     }
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.

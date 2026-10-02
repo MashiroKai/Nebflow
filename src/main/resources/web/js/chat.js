@@ -21,6 +21,14 @@ import { authHeaders } from './flowHelpers.js';
 // shouldShow/updateVisibility DOM mechanics live in depVisibility.js now, shared
 // with the /model panel. The visibility predicate and the answer-reset stay here.
 import { createDepVisibility } from './depVisibility.js';
+// AskUser 附件行（本批：顶层 `attachments` ⇒ 整次提问层的可点击附件行）：打开动作
+// **只经**附件预览单点入口 `previewLocalPath`（⇒ `workspace-open-item` ⇒
+// `canvas.openWorkspaceItem`），与消息区附件行为同一条腿 —— 🔴 禁第二套开法
+// （禁新 tabId 前缀 / 禁自拼 URL）。`canPreviewLocalPath` 是同一判据的**同步**出口：
+// 无 viewer 认领 ⇒ 直接渲染静态行（fail-closed，禁假按钮）。
+// 依赖方向安全：attachmentPreview.js 只 import canvas.js / fileViewers.js，二者均
+// 不 import chat.js ⇒ 无环（`scripts/check-circular.mjs` 实证）。
+import { previewLocalPath, canPreviewLocalPath } from './attachmentPreview.js';
 // Runtime work-line (stream-ux §二.1.1): the single-line badge slot that shows
 // the running tool / thinking and rolls to the next item. Leaf module (imports
 // i18n.js only) — the call sites below are the EXISTING render paths, so the
@@ -2561,7 +2569,132 @@ function probeCanvasFile(path) {
   });
 }
 
-export function renderAskUser(items, askSessionId, agentName, requestId, source) {
+// ---------- AskUser 附件行（本批：顶层 `attachments` ⇒ 整次提问层，2026-10-02） ----------
+/** 折叠阈值：行数 > 3 ⇒ 折叠为「N 个附件」+ 展开（设计卡 §三 3.2）。
+ *  🔴 只是**展示**阈值，不是准入上限 —— 件数上限（9）由后端工具调用期拒绝，
+ *  前端不复判（禁第二把尺）。 */
+const ASK_ATTACHMENT_FOLD_AT = 3;
+
+/** 展示名 = 绝对路径最后一段（设计卡 §三 3.2「basename 展示规则」）：
+ *  🔴 严禁把整条绝对路径当可见标签（路径进 `title` 悬停提示即可）。 */
+function askAttachmentBasename(p) {
+  const parts = String(p).split('/');
+  return parts[parts.length - 1] || String(p);
+}
+
+/** 附件行的**单一渲染位**（整次提问层；`renderAskUser` 唯一调用方）。
+ *
+ *  §三 落点 = 卡内 `.option-q-wrapper` 之内、`.option-btn-row` 之前：本函数自建一个
+ *  承载块并复用**既有类名** `.option-q-wrapper`（全仓无该类的 CSS 规则，纯 JS 钩子 ⇒
+ *  零新增 CSS），插在 `box.children` 里的 `.option-btn-row` 之前。该块**不**登记进
+ *  `createDepVisibility`（那是逐问题的 dependsOn 控件）⇒ 末条问题被条件隐藏时附件行
+ *  不随之消失。挂载序号在**全部问题 wrapper 之后** ⇒ `markAnsweredPick` 的
+ *  `wrappers[qi]`（按问题下标取）不受影响。
+ *
+ *  行形态（设计卡 §三 3.2）：
+ *   · 可点（`canPreviewLocalPath` = 有 viewer 认领）⇒ 真 `<button>`（`glass-control
+ *     ob-compare-btn` 同族 = 既有 canvas 腿 viewBtn 同族），点击只走单点入口
+ *     `previewLocalPath`（⇒ `workspace-open-item` ⇒ Canvas 既有 openWorkspaceItem
+ *     去重腿）。🔴 禁第二套开法（禁专用 tabId 前缀 / 禁自拼 URL / 禁自造预览）。
+ *   · 无 viewer 认领（`unsupported`，fail-closed）⇒ 渲染**不可点静态行**（🔴 禁假按钮：
+ *     不出 `<button>` / `[role=button]` / `tabindex`；同 `viewBtn.remove()` 纪律）。
+ *   · 有认领但探针判定缺失/不可读 ⇒ 该行**就地降级**为静态行 + `attachmentUnavailable`
+ *     标注（🔴 只降这一行：其余行与整卡渲染一点不改）。
+ *  文案一律取自 `t()`（🔴 禁硬编码中文串入 JS）。 */
+function renderAskAttachments(box, attachments) {
+  const atts = Array.isArray(attachments)
+    ? attachments.filter(p => typeof p === 'string' && p.length > 0)
+    : [];
+  if (!box || atts.length === 0) return;
+  const btnRow = box.querySelector('.option-btn-row');
+  if (!btnRow) return; // 形态兜底：无按钮行就无插位（改前形态逐字保留）
+
+  const wrap = document.createElement('div');
+  // 既有类名（零新增 CSS）+ 本批专属钩子类（纯 JS 选择器，无 CSS 规则 ⇒ 不触单源闸）
+  wrap.className = 'option-q-wrapper ask-attachments-wrap';
+
+  const head = document.createElement('div');
+  head.className = 'ask-attachments-head';
+  head.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: 2px 0 4px;';
+  // 标题词位 = 独立 span（折叠控件是同级 `<button>`）⇒ 文案读数不被控件文本污染。
+  const label = document.createElement('span');
+  label.className = 'ask-attachments-head-label';
+  head.appendChild(label);
+
+  const list = document.createElement('div');
+  list.className = 'ask-attachments-list';
+  list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; align-items: flex-start;';
+
+  /** 静态（不可点）行：无 viewer 认领 / 探针失败共用同一形态 —— 🔴 零按钮语义。 */
+  function makeStaticRow(path, unavailable) {
+    const base = askAttachmentBasename(path);
+    const row = document.createElement('span');
+    row.className = 'ask-attachment-static';
+    row.title = path; // 悬停给全路径（可见标签只给 basename）
+    row.style.cssText = 'font-size: 12px; color: var(--color-text-muted, #888); opacity: 0.75;';
+    row.textContent = unavailable ? base + ' · ' + t('askUser.attachmentUnavailable') : base;
+    return row;
+  }
+
+  atts.forEach(path => {
+    const base = askAttachmentBasename(path);
+    if (!canPreviewLocalPath(path)) { list.appendChild(makeStaticRow(path, false)); return; }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'glass-control ob-compare-btn';
+    btn.title = path;
+    btn.setAttribute('aria-label', t('askUser.attachmentOpenCanvas', { name: base }));
+    btn.innerHTML = '<i data-lucide="paperclip"></i><span>' + escapeHtml(base) + '</span>';
+    btn.onclick = () => {
+      // 单点入口（唯一合法开法）：无 viewer 认领时它自己 fail-closed 返回
+      // 'unsupported' ⇒ 就地降级，绝不自造第二条开法。
+      if (previewLocalPath({ path, title: base }) !== 'ok') degradeRow(btn, path);
+    };
+    list.appendChild(btn);
+    // 可达性探针（复用 canvas 腿同一件：`pop.readFile` + 1500ms 超时形态）：
+    // 🔴 失败只降级**本行**，整卡渲染一点不改。
+    probeCanvasFile(path).then(ok => { if (!ok) degradeRow(btn, path); });
+  });
+
+  /** 就地降级：可点行 → 不可点静态行（探针失败 / 单点入口回 unsupported 共用）。
+   *  卡已被替换或移除（`isConnected === false`）时静默跳过 —— 降级只服务在卡行。 */
+  function degradeRow(btn, path) {
+    if (!btn.isConnected) return;
+    btn.replaceWith(makeStaticRow(path, true));
+  }
+
+  if (atts.length > ASK_ATTACHMENT_FOLD_AT) {
+    // 折叠态：标题位显「N 个附件」；展开后显标题词。切换件是真控件（展开/收起确实可做）。
+    let expanded = false;
+    label.textContent = t('askUser.attachmentsCount', { n: String(atts.length) });
+    list.style.display = 'none';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'glass-control';
+    toggle.style.cssText = 'font-size: 11px; padding: 1px 8px; margin-left: 6px;';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = t('ref.expand');
+    toggle.onclick = () => {
+      expanded = !expanded;
+      list.style.display = expanded ? '' : 'none';
+      label.textContent = expanded
+        ? t('askUser.attachmentsTitle')
+        : t('askUser.attachmentsCount', { n: String(atts.length) });
+      toggle.textContent = expanded ? t('ref.collapse') : t('ref.expand');
+      toggle.setAttribute('aria-expanded', String(expanded));
+    };
+    head.appendChild(toggle);
+  } else {
+    label.textContent = t('askUser.attachmentsTitle');
+  }
+
+  wrap.appendChild(head);
+  wrap.appendChild(list);
+  btnRow.before(wrap); // 卡内、`.option-btn-row` 之前
+  createIconsIn(wrap);
+}
+
+export function renderAskUser(items, askSessionId, agentName, requestId, source, attachments) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
@@ -2631,14 +2764,22 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source)
       broadcastAskState(targetSid, requestId);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, targetSid, requestId);
+    // 附件行（顶层 `attachments`，整次提问层）：插位 = 卡内 `.option-btn-row` 之前，
+    // 仍在「整次提问」语义层。🔴 不新增前端模块 / 不新增 CSS；`.`option-q` 与其后
+    // 的 options 区（`showOptions` 内层）原样不动 ⇒ dirPicker 路径
+    // (ProjectCreateTool.scala:425) 不受影响、免回归。
+    // showOptions 同步完成 `container.appendChild(box)` ⇒ 此处 box 已在 DOM 内。
+    renderAskAttachments(bubble.querySelector('.option-box'), attachments);
   } catch (e) {
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');
   }
   // Persisted entry carries the source-label fields (D6 批 F1) so the badge
-  // survives localStorage restore / interactive re-render (main.js:1684).
+  // survives localStorage restore / interactive re-render (main.js:1684), plus
+  // the top-level attachment list (本批) so a replayed/re-rendered card keeps it.
   return {
     type: 'askUser', items, requestId,
+    ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
     ...(source && source.project ? { project: source.project, nodeName: source.nodeName } : {})
   };
 }
