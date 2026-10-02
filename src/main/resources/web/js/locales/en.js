@@ -1125,6 +1125,15 @@ export default {
   'chat.typeAnswer': 'Type your answer...',
   'chat.failedRender': 'Failed to render options. Please try again.',
   'askUser.viewCompare': 'View in Canvas',
+  // AskUser attachments batch (chain-askuser-enhance-impl, 2026-10-02) — the
+  // top-level `attachments` render as clickable rows on the whole-ask layer.
+  // 🔴 Draft: author word-for-word review (§16 freeze gate) before it takes
+  // effect; effective on the next restart window (static assets are served
+  // from inside the jar).
+  'askUser.attachmentsTitle': 'Attachments',
+  'askUser.attachmentsCount': '{n} attachments',
+  'askUser.attachmentUnavailable': 'unavailable',
+  'askUser.attachmentOpenCanvas': 'Open {name} in Canvas',
   'askUser.pendingTitle': 'Pending questions',
   'askUser.sourceClosed': 'Source closed (node cancelled)',
   // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a

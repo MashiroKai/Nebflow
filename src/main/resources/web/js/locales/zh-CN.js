@@ -1080,6 +1080,13 @@ export default {
   'chat.typeAnswer': '输入你的回答...',
   'chat.failedRender': '选项渲染失败，请重试。',
   'askUser.viewCompare': '在 Canvas 查看',
+  // AskUser 附件行批（chain-askuser-enhance-impl，2026-10-02）—— 顶层 `attachments`
+  // 渲染为整次提问层的可点击附件行。🔴 草案：候作者逐字过目（§16 冻结闸）后才生效；
+  // 生效候重启窗（静态资源服务自 jar 内资源）。
+  'askUser.attachmentsTitle': '附件',
+  'askUser.attachmentsCount': '{n} 个附件',
+  'askUser.attachmentUnavailable': '不可用',
+  'askUser.attachmentOpenCanvas': '在 Canvas 打开 {name}',
   'askUser.pendingTitle': '待回答问题',
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
   // 双开缺陷批（chain-askuserdup 案 A①）：历史里的提问行**无作答记录**时的显式标注
