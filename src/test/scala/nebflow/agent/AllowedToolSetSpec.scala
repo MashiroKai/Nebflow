@@ -723,17 +723,20 @@ class AllowedToolSetSpec extends FunSuite:
       "legacy catch-all（BaseTools）不授 Card"
     )
 
-  test("project-dispatcher 固定工具集（§C.1 + R2 2026-09-12）：Node 三件 + Mail + 读四件，声明无效"):
+  test("project-dispatcher 固定工具集（§C.1 + agentflow 批 2026-10-02）：Node 三件 + AskUserQuestion + 读四件，声明无效"):
     val declared = mkDef("project-dispatcher", List("Write", "Edit", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(declared, isFlowNode = true) // 分发器会话 spawn 即 isFlowNode=true
-    Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash").foreach { t =>
+    Set("NodeList", "NodeEdit", "NodeCancel", "AskUserQuestion", "Read", "Glob", "Grep", "Bash").foreach { t =>
       assert(allowed.contains(t), s"dispatcher fixed tool missing: $t")
     }
     assert(!allowed.contains("Write"), "dispatcher 不给 Write（只分解不产内容，§C.1）")
     assert(!allowed.contains("Edit"), "dispatcher 不给 Edit")
-    assert(!allowed.contains("AskUserQuestion"), "dispatcher 不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）")
-    // R2 断言反转（2026-09-12）：原「dispatcher 无 Mail」作废——R2 分发器面
-    // −NodeMessage +Mail 净 9；NodeMessage 退役后 dispatcher 投节点消息亦走 Mail(node:)。
+    // agentflow 批（2026-10-02）：分发器**现在持** AskUserQuestion（−Mail
+    // +AskUserQuestion，挂载点在 buildAllowedToolSet 末段按引擎侧身份 isDispatcher
+    // 追加）。§C.3「单次会话不阻塞等用户」的旧理由已不成立——卡答是本批的语义面。
+    // R2 断言反转（2026-09-12）：原「dispatcher 无 Mail」作废；agentflow 批再反转
+    // ——分发器面**零 Mail**（补件腿改走 NodeEdit(task=…) 整替）。
+    assert(!allowed.contains("Mail"), "agentflow 批: 分发器面零 Mail（−Mail，补件改走 NodeEdit(task=…) 整替）")
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，dispatcher 面零 NodeMessage")
     assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
@@ -765,8 +768,8 @@ class AllowedToolSetSpec extends FunSuite:
       "Nebula 面保留 AskUserQuestion（从未摘除）"
     )
     assert(
-      !AgentCore.fixedToolsFor(mkDef("project-dispatcher", Nil)).contains("AskUserQuestion"),
-      "dispatcher 面照旧无 AskUserQuestion（§C.3：单次会话不阻塞等用户）"
+      AgentCore.fixedToolsFor(mkDef("project-dispatcher", Nil)).contains("AskUserQuestion"),
+      "dispatcher 面现持 AskUserQuestion（agentflow 批 2026-10-02：−Mail +AskUserQuestion）"
     )
 
   test("the six remain mechanism-fixed for non-converged agents — cannot be configured away"):
