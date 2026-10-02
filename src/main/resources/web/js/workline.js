@@ -30,6 +30,11 @@ import { t } from './i18n.js';
 /** Out-phase duration before the leaving item is dropped from the DOM —
  *  slightly longer than the CSS roll-out (0.35s) so the animation completes. */
 const ROLL_MS = 380;
+/** How long the exit window stays OPEN: an item that enters while the window is
+ *  open is held until it closes (see `swap`). 0.4s = the CSS roll-out (0.35s)
+ *  plus the short empty gap the approved demo shows between the outgoing item
+ *  reaching opacity 0 and the incoming one leaving its from-state. */
+const EXIT_HOLD_MS = 400;
 /** Width-reveal budget for the single-line thinking text (px). */
 const THINK_MAX_PX = 520;
 
@@ -48,7 +53,9 @@ const CROSS_SVG =
 
 function state(view) {
   if (!view) return null;
-  if (!view._nfWorkline) view._nfWorkline = { row: null, slot: null, item: null, key: '', kind: '' };
+  if (!view._nfWorkline) {
+    view._nfWorkline = { row: null, slot: null, item: null, key: '', kind: '', exitUntil: 0 };
+  }
   return view._nfWorkline;
 }
 
@@ -70,6 +77,7 @@ function ensureRow(view) {
   wl.item = null;
   wl.key = '';
   wl.kind = '';
+  wl.exitUntil = 0;
   return wl;
 }
 
@@ -98,32 +106,65 @@ function buildItem(labelText, icon, extraClass) {
   return item;
 }
 
+/** True when the item is currently legible in the slot. An item that is being
+ *  held back by an open exit window sits at its from-state (opacity 0) for the
+ *  whole hold, so it has no exit of its own left to animate. */
+function isLegible(item) {
+  if (!item || !item.isConnected) return false;
+  return +getComputedStyle(item).opacity > 0.05;
+}
+
+/** The switch hold is a motion device; under reduced motion the CSS turns the
+ *  animations off, so JS must not re-introduce a wait as an inline delay. */
+function prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  } catch {
+    return false;
+  }
+}
+
 /** Swap the item in. `roll` = the leaving item gets the roll-up animation
  *  (a genuine item switch); false = in-place state change of the SAME item
  *  (tool running → tool done), which must not roll.
  *
- *  On a genuine switch the ENTERING item is marked `is-enter-late`: its roll-in
- *  is held back until the leaving item's roll-out is over. Without that hold the
- *  two items animate in the same window and BOTH labels are legible at once — a
- *  double exposure the approved demo does not have (there the outgoing item
- *  reaches opacity 0 before the incoming one leaves its from-state, i.e. a hard
- *  switch with a short empty gap; spec §二.1.1「旧上滚出、新下滚入」read as a
- *  SEQUENCE, not a cross-fade). The first item of a turn has no predecessor, so
- *  it is never delayed. */
+ *  The slot obeys ONE invariant, and it is deliberately independent of WHEN the
+ *  next event lands: **at most one item is legible at a time**. A switch opens
+ *  an exit window (`wl.exitUntil`) covering the outgoing item's roll-out plus
+ *  the short empty beat the approved demo leaves between "old out" and "new
+ *  in"; every item that enters while that window is open is held at its
+ *  from-state until the window closes. That is what makes the switch a hard
+ *  switch (spec §二.1.1「旧上滚出、新下滚入」read as a SEQUENCE) rather than a
+ *  cross-fade, and — the point of tracking the window instead of relying on a
+ *  fixed CSS delay — it still holds when the incoming item's own COMPLETION
+ *  arrives inside the window (that case rebuilt the item as a fresh element,
+ *  dropping the hold, exactly while the outgoing item was still legible).
+ *  The first item of a turn has no predecessor, so it is never held. */
 function swap(wl, item, { key, kind, roll }) {
+  const reduce = prefersReducedMotion();
   const old = wl.item;
-  let entersBehind = false;
   if (old && old !== item) {
-    if (roll) {
+    // Roll the outgoing item out only when there is something legible to
+    // animate AND motion is on. An item already held invisible by an open
+    // window has no exit of its own left — animating it would restart its
+    // opacity at 1 and double-expose it against the item still rolling away.
+    if (roll && !reduce && isLegible(old)) {
       old.classList.add('is-out');
       const doomed = old;
       setTimeout(() => doomed.remove(), ROLL_MS);
-      entersBehind = true;
+      wl.exitUntil = performance.now() + EXIT_HOLD_MS;
     } else {
       old.remove();
     }
   }
-  item.classList.toggle('is-enter-late', entersBehind);
+  // Precise remaining hold. The `.is-enter-late` class alone carries a fixed
+  // 0.4s measured from THIS swap, which is wrong for an item that enters
+  // mid-window: it would restart the clock instead of waiting out the window.
+  // Two delay values mirror the two-animation `.is-done` pair (roll-in + the
+  // 0.1s-delayed bounce); a single-animation item uses the first value.
+  const hold = reduce ? 0 : Math.max(0, Math.round(wl.exitUntil - performance.now()));
+  item.classList.toggle('is-enter-late', hold > 0);
+  if (hold > 0) item.style.animationDelay = hold + 'ms, ' + (hold + 100) + 'ms';
   wl.item = item;
   wl.key = key;
   wl.kind = kind;
@@ -265,6 +306,7 @@ export function removeWorkline(view) {
   wl.item = null;
   wl.key = '';
   wl.kind = '';
+  wl.exitUntil = 0;
   // The next turn of this view starts a fresh badge (appendAiText latches once
   // per turn).
   if (view && view.stream) view.stream._nfWorklineDone = false;
