@@ -204,10 +204,11 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     await context.close();
   });
 
-  // 🔴 开放项（如实申报，不擅自扩面）：历史恢复卡是**已决卡**（既有 `lockOptionBox`
-  // 语义）⇒ 卡内附件行与 live 卡**确认后**同形（disabled + capture 哨兵）。
-  // 本件钉的是「该形态 = 既有语义、非本批引入」：同一份 lockOptionBox 在 live 腿
-  // 确认后对同一附件行取到**同一读数**。
+  // 🔴 开放项（如实申报，不擅自扩面）：**已决**（已作答 / 已取消）的历史恢复卡是
+  // 终态卡（既有 `lockOptionBox` 语义）⇒ 其内附件行 disabled（锁内件）。该形态 =
+  // 既有语义、非本批引入：同一份 lockOptionBox 在 live 腿确认后对同一附件行取到
+  // **同一读数**。🔴 **「可点」的实证腿 = F7 的 pending 重挂**（未作答卡恢复后由
+  // live `renderAskUser` 接管，未进终态锁）—— 已决卡本就不是「可点」的承载面。
   test('F5 对照：同一 lockOptionBox 语义在 live 卡确认后对附件行取到同一 disabled 读数', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, fixedPort);
     const r = await page.evaluate(() => window.__liveThenConfirm());
@@ -221,10 +222,10 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     await context.close();
   });
 
-  // 🔴 开放项取证（结构性）：即便把 disabled 强行复位，卡级 capture 点击哨兵仍拦下 ⇒
-  // 「历史卡附件行可点」须改 `lockOptionBox` 本体（任务书明令禁触面）⇒ 本席不停手、
-  // 不擅自扩面，按字面交付并如实申报（见 result 开放项）。
-  test('F6 开放项取证：复位 disabled 后仍零派发 ⇒ 可点性须改 lockOptionBox 本体（禁触面）', async ({ browser }) => {
+  // 🔴 开放项取证（结构性）：在**已决**历史卡上即便把 disabled 强行复位，卡级
+  // capture 点击哨兵仍拦下 ⇒ 「已决卡附件行可点」须改 `lockOptionBox` 本体（任务书
+  // 明令禁触面）⇒ 本席不停手、不擅自扩面；🔴 已决卡本就不是「可点」的承载面（见 F7）。
+  test('F6 开放项取证：已决卡复位 disabled 后仍零派发 ⇒ 该面须改 lockOptionBox 本体（禁触面）', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, fixedPort);
     await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
     const r = await page.evaluate(() => window.__forceEnableAndClick(0));
