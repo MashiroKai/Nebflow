@@ -62,6 +62,30 @@ class CardToolRegistrationSpec extends FunSuite:
 
   private val emptyCtx = ToolContext(projectRoot = os.pwd.toString)
 
+  // Data-root isolation (card-persist batch): the call-surface tests below
+  // render a card, which now writes its source to `<dataRoot>/cards/` — the
+  // root is a throwaway directory so `sbt test` never writes into the
+  // operator's live `~/.nebflow`. See `CardToolFileRefSpec`.
+  private var savedRoot: os.Path = scala.compiletime.uninitialized
+  private var isolatedRoot: java.nio.file.Path = null
+
+  override def beforeEach(context: BeforeEach): Unit =
+    super.beforeEach(context)
+    savedRoot = nebflow.shared.PathUtil.dataRoot
+    isolatedRoot = java.nio.file.Files.createTempDirectory("cardreg-dataroot-")
+    nebflow.shared.PathUtil.setDataRoot(os.Path(isolatedRoot, os.pwd))
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.shared.PathUtil.setDataRoot(savedRoot)
+    java.nio.file.Files
+      .walk(isolatedRoot)
+      .sorted(java.util.Comparator.reverseOrder())
+      .forEach(p =>
+        java.nio.file.Files.deleteIfExists(p)
+        ()
+      )
+    super.afterEach(context)
+
   test("Card call without html -> ToolError"):
     val result = CardTool.call(io.circe.JsonObject.empty, emptyCtx).unsafeRunSync()
     assert(result.isLeft, "missing html must yield ToolError")

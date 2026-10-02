@@ -75,6 +75,28 @@ class FileRefsInlineBudgetSpec extends FunSuite:
   private val cardSentinel = "___CARD_HTML___"
   private val cardCtx = ToolContext(projectRoot = os.pwd.toString)
 
+  // Data-root isolation (card-persist batch): the Card harness below renders
+  // cards, and rendering now writes the source to `<dataRoot>/cards/` — see
+  // `CardToolFileRefSpec` for the criterion.
+  private var savedRoot: os.Path = scala.compiletime.uninitialized
+  private var isolatedRoot: Path = null
+
+  override def beforeEach(context: BeforeEach): Unit =
+    super.beforeEach(context)
+    savedRoot = nebflow.shared.PathUtil.dataRoot
+    isolatedRoot = Files.createTempDirectory("inline-budget-dataroot-")
+    nebflow.shared.PathUtil.setDataRoot(os.Path(isolatedRoot, os.pwd))
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.shared.PathUtil.setDataRoot(savedRoot)
+    Files
+      .walk(isolatedRoot)
+      .sorted(java.util.Comparator.reverseOrder())
+      .iterator()
+      .asScala
+      .foreach(Files.deleteIfExists)
+    super.afterEach(context)
+
   private def card(html: String): Json =
     val input = JsonObject("html" -> Json.fromString(html), "title" -> Json.fromString("T"))
     val result = CardTool.call(input, cardCtx).unsafeRunSync().getOrElse(fail("expected Right"))
