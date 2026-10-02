@@ -2292,12 +2292,18 @@ class WebSocketRoutes(
         end match
 
       case "askUser" =>
-        val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
         // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：随行落盘 requestId ⇒ 历史
         // 恢复出的卡可 id 寻址（重放腿按 id 替换、askUserClosed 关卡可达）。旧行缺席
         // ⇒ None ⇒ 前端回落形态兜底去重腿（`chat.js sameAskCards` ②）。
-        val askRid = hc.downField("requestId").as[String].toOption.filter(_.nonEmpty)
-        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items, askRid)))
+        // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：帧
+        // `attachments` 随行落盘 ⇒ 历史恢复腿读回后在卡上还原附件行（与 live 腿
+        // `renderAskUser` 同构、单点位于 `.option-box`）。帧 → 落盘行的取键形态
+        // = 伴生对象纯函数 `askUserRowFromFrame`（缺席 / 形态不合 / 空白 / 空列表
+        // 一律回落 None ⇒ 旧载荷逐字节不变）。
+        sharedResources.sessionStore.appendUiMessages(
+          sessionId,
+          List(WebSocketRoutes.askUserRowFromFrame(json))
+        )
 
       case "askPermission" =>
         val toolName = hc.downField("toolName").as[String].getOrElse("")
@@ -2653,4 +2659,35 @@ object WebSocketRoutes:
       "errorKind" -> kind.asJson,
       "error" -> msg.asJson
     )
+
+  // ============================================================
+  // askUser 历史恢复批 (2026-10-02, chain-askuser-histattach): the
+  // `askUser` frame → persisted-row builder — pure core, owned by this
+  // object so the paired spec can feed raw frame JSON. The WS
+  // recording leg (`WebSocketRoutes#makeRecordingWsSend`, `case "askUser"`)
+  // calls it exactly once, so the frame→row shape has ONE construction
+  // point (the persistence leg) and stays disjoint from the restoral leg
+  // (`WsSessionChatHandlers.handleGetHistory` → `SessionStore.getHistoryPage`
+  // → `given Encoder[UiMessage]`).
+  // ============================================================
+
+  /** `askUser` frame → the row written to `.ui.json`.
+    *
+    * Key-reading shape is the SAME loose fallback as the decoder
+    * (`UiMessage`'s `case "askUser"`): absent / malformed ⇒ `None`;
+    * blank `requestId` ⇒ `None`; empty `attachments` ⇒ `None` (dual of the
+    * encoder's "emit only in presence, empty ⇒ no key" rule — an absent or
+    * blank frame must produce byte-identical legacy rows).
+    */
+  private[gateway] def askUserRowFromFrame(frame: Json): UiMessage.AskUser =
+    val hc = frame.hcursor
+    val items = hc.downField("items").as[List[Json]].getOrElse(Nil)
+    val askRid = hc.downField("requestId").as[String].toOption.filter(_.nonEmpty)
+    val attachments = hc
+      .downField("attachments")
+      .as[Option[List[String]]]
+      .toOption
+      .flatten
+      .filter(_.nonEmpty)
+    UiMessage.AskUser(items, askRid, attachments)
 end WebSocketRoutes
