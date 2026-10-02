@@ -130,6 +130,120 @@
       };
     };
 
+    /** 行级入口读数（绕过卡级 capture 哨兵，直接调该行 onclick —— 证明**接线**正确、
+     *  走的是同一单点入口、派发 id 与 live 腿逐字同形）。 */
+    window.__callRowEntry = async (i) => {
+      const box = chatElNow().querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const row = rows[i];
+      if (!row || typeof row.onclick !== 'function') return { dispatched: 0, detailIds: [], reason: 'no-row-or-handler' };
+      window.__events.length = 0;
+      row.onclick();
+      await new Promise(r => setTimeout(r, 0));
+      return { dispatched: window.__events.length, detailIds: window.__events.map(d => d && d.id) };
+    };
+
+    /** **live 腿对照读数**（证明「已决卡内附件行不可点」是既有语义、非本批引入）：
+     *  ① 挂真 live 卡（`renderAskUser` + attachments）⇒ 取附件行状态（pending：可点）；
+     *  ② 点选首个选项 → 点确认 ⇒ 再取同一读数（settled：`lockOptionBox` 既有语义）。 */
+    window.__liveThenConfirm = async () => {
+      fresh();
+      const chatMod = await import(`${WEB}/chat.js`);
+      chatMod.renderAskUser(
+        [{ question: 'harness: live contrast', options: [{ label: 'alpha' }, { label: 'beta' }] }],
+        state.activeSessionId, null, 'ask-live-contrast-1', null,
+        ['/tmp/nb-histatt-fixture/notes.md']
+      );
+      await settle();
+      const readRows = () => {
+        const box = chatElNow().querySelector('.option-box');
+        const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+        return {
+          rows: rows.length,
+          disabled: rows.map(r => !!r.disabled),
+          boxResolved: box ? box.classList.contains('resolved') : null,
+        };
+      };
+      const before = readRows();
+      const box = chatElNow().querySelector('.option-box');
+      const first = box && box.querySelector('.option-btn');
+      if (first) first.click();
+      await settle();
+      const confirm = box && box.querySelector('.option-confirm');
+      const confirmEnabled = confirm ? !confirm.disabled : null;
+      if (confirm) confirm.click();
+      await settle();
+      return { before, confirmEnabled, after: readRows() };
+    };
+
+    /** 结构性判定读数（开放项取证）：把已决卡内附件行**强行复位为可用**
+     *  （`disabled=false` + 去 `aria-disabled`/`tabindex`）后再点击 —— 若仍零派发，
+     *  则说明卡级 capture 点击哨兵**单独**就足以拦下（与 disabled 无关）⇒
+     *  「历史卡附件行可点」在**不改 `lockOptionBox` 本体**的前提下不可达。 */
+    window.__forceEnableAndClick = async (i) => {
+      const box = chatElNow().querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const row = rows[i];
+      if (!row) return { clicked: false, reason: 'no-row' };
+      row.disabled = false;
+      row.removeAttribute('aria-disabled');
+      row.removeAttribute('tabindex');
+      window.__events.length = 0;
+      row.click();
+      await new Promise(r => setTimeout(r, 0));
+      const stillConnected = row.isConnected;
+      return {
+        clicked: true,
+        disabledAfterReset: !!row.disabled,
+        rowStillInDom: stillConnected,
+        dispatched: window.__events.length,
+        detailIds: window.__events.map(d => d && d.id),
+      };
+    };
+
+    /** **main.js:1977 pending 腿**逐字复刻（本批最直接的「可点」读数）：
+     *  历史恢复（最后一条 = 未作答 askUser）⇒ 回收历史孪生卡 ⇒ 用历史行的
+     *  `attachments` 走 live `renderAskUser` 重挂交互卡 ⇒ 读附件行状态 + 真点击。 */
+    window.__pendingRestore = async (msgs) => {
+      fresh();
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      const chatMod = await import(`${WEB}/chat.js`);
+      restoreFromBackendHistory(msgs);
+      await settle();
+      const last = msgs[msgs.length - 1];
+      const chat = chatElNow();
+      // 本树有无「单一判据回收」导出：新树用真身，旧树（改前）用逐字复刻的
+      // 改前内联启发式 —— 同一驱动在两棵树上跑出各自代码的真实行为。
+      if (typeof chatMod.reclaimAskUserCards === 'function') {
+        chatMod.reclaimAskUserCards(chat, last.requestId, { legacyTwin: true });
+      } else {
+        chat.querySelectorAll('.row.ai .option-box').forEach(b => {
+          const rid = b.dataset.requestId || '';
+          if (!b.querySelector('.option-answer') && (!rid || rid === last.requestId)) b.closest('.row.ai').remove();
+        });
+      }
+      chatMod.renderAskUser(last.items, state.activeSessionId, last.agentName, last.requestId,
+        { project: last.project, nodeName: last.nodeName }, last.attachments);
+      await settle();
+      const box = chat.querySelector('.option-box');
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const read = {
+        boxes: chat.querySelectorAll('.option-box').length,
+        rows: rows.length,
+        disabled: rows.map(r => !!r.disabled),
+        boxResolved: box ? box.classList.contains('resolved') : null,
+      };
+      const row = rows[0];
+      let click = { dispatched: 0, detailIds: [] };
+      if (row) {
+        window.__events.length = 0;
+        row.click();
+        await new Promise(r => setTimeout(r, 0));
+        click = { dispatched: window.__events.length, detailIds: window.__events.map(d => d && d.id) };
+      }
+      return { read, click };
+    };
+
     /** 降级后读数（等探针 1.5s 超时）：无后端时夹具产物，作对照行。 */
     window.__readAfterProbeTimeout = async () => {
       await new Promise(r => setTimeout(r, 1700));

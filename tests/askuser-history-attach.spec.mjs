@@ -114,6 +114,14 @@ const WITHOUT_ATT = [{
   items: [{ question: 'harness: no attach rows', options: [{ label: 'alpha' }, { label: 'beta' }] }],
   requestId: 'ask-hist-noattach-1',
 }];
+// pending 腿夹具：最后一条 = **未作答** askUser（带附件）⇒ main.js:1977 的
+// `isAskUserPending` 分支成立（其后无 ai/user 行）。
+const PENDING_WITH_ATT = [{
+  type: 'askUser',
+  items: [{ question: 'harness: pending attach card', options: [{ label: 'alpha' }, { label: 'beta' }] }],
+  requestId: 'ask-hist-pending-att-1',
+  attachments: ['/tmp/nb-histatt-fixture/notes.md'],
+}];
 
 // ============================================================
 // ① 验红基线（改前代码）：历史卡没有附件渲染面
@@ -150,7 +158,7 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     await context.close();
   });
 
-  test('F2 点击走单点入口：真按钮 onclick 已挂；历史卡终态锁（resolved）为既有语义读数', async ({ browser }) => {
+  test('F2 点击面两读数：行级单点入口已接线；卡级终态锁（既有语义）为独立读数', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, fixedPort);
     await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
     const r = await page.evaluate(() => window.__read());
@@ -161,6 +169,17 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.boxResolved, '历史恢复卡 = 已决卡（既有 lockOptionBox 语义）').toBe(true);
     expect(r.rowDisabled, '终态卡内可交互件 disabled（既有语义）').toEqual([true, true]);
     expect(r.sentFrames.filter(f => f === 'pop.readFile').length, '每行一次可达性探针').toBe(2);
+
+    // ① 卡级点击读数（终态锁的既有语义）：capture 阶段哨兵拦下 ⇒ 零派发。
+    const viaClick = await page.evaluate(() => window.__clickRow(0));
+    expect(viaClick.clicked).toBe(true);
+    expect(viaClick.tag).toBe('BUTTON');
+    expect(viaClick.dispatched, '终态卡：capture 哨兵拦下整卡点击（既有 lockOptionBox 语义）').toBe(0);
+
+    // ② 行级接线读数：入口函数本身走单点派发，id 逐字 `file:<absPath>`（与 live 腿同源）。
+    const viaEntry = await page.evaluate(() => window.__callRowEntry(0));
+    expect(viaEntry.dispatched, '行级单点入口本身可用（接线正确）').toBe(1);
+    expect(viaEntry.detailIds, '派发 id 逐字 = file:<absPath>').toEqual(['file:/tmp/nb-histatt-fixture/notes.md']);
     await context.close();
   });
 
@@ -182,6 +201,54 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(pageErrors).toEqual([]);
     expect(r.hasWrap, '两条历史腿同构（都经 renderAskUserHistory）').toBe(true);
     expect(r.rows).toBe(2);
+    await context.close();
+  });
+
+  // 🔴 开放项（如实申报，不擅自扩面）：历史恢复卡是**已决卡**（既有 `lockOptionBox`
+  // 语义）⇒ 卡内附件行与 live 卡**确认后**同形（disabled + capture 哨兵）。
+  // 本件钉的是「该形态 = 既有语义、非本批引入」：同一份 lockOptionBox 在 live 腿
+  // 确认后对同一附件行取到**同一读数**。
+  test('F5 对照：同一 lockOptionBox 语义在 live 卡确认后对附件行取到同一 disabled 读数', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser, fixedPort);
+    const r = await page.evaluate(() => window.__liveThenConfirm());
+    expect(pageErrors).toEqual([]);
+    expect(r.before.rows, 'live pending 卡：附件行在位').toBe(1);
+    expect(r.before.disabled, 'live pending 卡：附件行可点（未锁）').toEqual([false]);
+    expect(r.before.boxResolved).toBe(false);
+    expect(r.confirmEnabled, '选完首个问题后确认键可用').toBe(true);
+    expect(r.after.boxResolved, '确认后卡进入既有终态（resolved）').toBe(true);
+    expect(r.after.disabled, '确认后同一附件行 disabled —— 与本批历史卡读数一致（既有语义）').toEqual([true]);
+    await context.close();
+  });
+
+  // 🔴 开放项取证（结构性）：即便把 disabled 强行复位，卡级 capture 点击哨兵仍拦下 ⇒
+  // 「历史卡附件行可点」须改 `lockOptionBox` 本体（任务书明令禁触面）⇒ 本席不停手、
+  // 不擅自扩面，按字面交付并如实申报（见 result 开放项）。
+  test('F6 开放项取证：复位 disabled 后仍零派发 ⇒ 可点性须改 lockOptionBox 本体（禁触面）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser, fixedPort);
+    await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
+    const r = await page.evaluate(() => window.__forceEnableAndClick(0));
+    expect(pageErrors).toEqual([]);
+    expect(r.clicked).toBe(true);
+    expect(r.disabledAfterReset, '复位生效（disabled=false）').toBe(false);
+    expect(r.rowStillInDom, '行未被降级/移除（探针无应答窗口内取数）').toBe(true);
+    expect(r.dispatched, 'capture 哨兵单独即拦下 ⇒ 不改 lockOptionBox 则不可点').toBe(0);
+    await context.close();
+  });
+
+  // ✅ 「在位且可点」的实证腿 = main.js:1977 的 pending 重挂（历史行附件 ⇒ live
+  // `renderAskUser` ⇒ 交互卡）。这是「刷新后附件行可点」的真实到达面：未作答的
+  // askUser 行在恢复后由 live 卡接管，而该卡**未**进终态锁。
+  test('F7 pending 腿（main.js:1977 同形）：历史行附件还原到 live 交互卡 ⇒ 在位且可点', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser, fixedPort);
+    const r = await page.evaluate((msgs) => window.__pendingRestore(msgs), PENDING_WITH_ATT);
+    expect(pageErrors).toEqual([]);
+    expect(r.read.boxes, '历史孪生卡已被回收，恰一张交互卡').toBe(1);
+    expect(r.read.rows, '附件行在位').toBe(1);
+    expect(r.read.boxResolved, '交互卡未进终态锁（pending）').toBe(false);
+    expect(r.read.disabled, '附件行未禁用 ⇒ 可点').toEqual([false]);
+    expect(r.click.dispatched, '真点击 ⇒ 单点入口派发（可点性实证）').toBe(1);
+    expect(r.click.detailIds).toEqual(['file:/tmp/nb-histatt-fixture/notes.md']);
     await context.close();
   });
 });
