@@ -3,7 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import nebflow.actor.*
 import nebflow.core.tools.{AskUserQuestionTool, ToolContext}
-import nebflow.shared.{AskItem, NebflowLogger}
+import nebflow.shared.{AskItem, AskUserDispatch, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -70,6 +70,11 @@ object AskUserAnswerBridge:
    * 答复 → 注入（D4）。`fromUser = true`（裁定 T6=(a)：真人点了卡）——该标志使
    * `AgentActor.injectionSourceFor` 把 `source` 折成 None（呈现为普通 user 气泡）
    * ⇒ 不需要前端登记面、零前端改动。
+   *
+   * **派发失败信号不注入**（本批）：派发腿在承接面缺席时给出
+   * [[nebflow.shared.AskUserDispatch]] 信号（可判读失败），它**不是**用户答复
+   * ⇒ 这里显式分支，只留 WARN、**不**向会话注入任何内容（把失败信号当答复注入
+   * 会在会话里凭空多出一条空用户消息，并让模型把「提问失败」读成「用户没答」）。
    */
   private def deliver(
     target: ActorRef[AgentCommand],
@@ -78,25 +83,32 @@ object AskUserAnswerBridge:
     answers: List[String],
     ctx: ToolContext
   ): IO[Unit] =
-    val text = AskUserQuestionTool.formatAnswer(items, answers)
-    sessionAlive(ctx).flatMap {
-      case false =>
-        logger.warn(
-          s"askUser answer bridge: requestId=$requestId — the requesting session is gone " +
-            s"(sessionId=${ctx.sessionId.getOrElse("<unknown>")}); answer NOT delivered"
-        )
-      case true =>
-        logger.info(
-          s"askUser answer bridge: requestId=$requestId → injected as a user message into " +
-            s"session=${ctx.sessionId.getOrElse("<unknown>")} (${answers.size} answer slot(s))"
-        ) *>
-          (target ! AgentCommand.ImmediateInput(
-            text = text,
-            source = Some(AskMode.AnswerSource),
-            eventType = Some(AskMode.AnswerSource),
-            fromUser = true
-          ))
-    }
+    if AskUserDispatch.isFailure(answers) then
+      logger.warn(
+        s"askUser answer bridge: requestId=$requestId — dispatch FAILED " +
+          s"(${AskUserDispatch.UnavailableCode}); the question was never shown, so this is not a user " +
+          s"answer and nothing is injected into session=${ctx.sessionId.getOrElse("<unknown>")}"
+      )
+    else
+      val text = AskUserQuestionTool.formatAnswer(items, answers)
+      sessionAlive(ctx).flatMap {
+        case false =>
+          logger.warn(
+            s"askUser answer bridge: requestId=$requestId — the requesting session is gone " +
+              s"(sessionId=${ctx.sessionId.getOrElse("<unknown>")}); answer NOT delivered"
+          )
+        case true =>
+          logger.info(
+            s"askUser answer bridge: requestId=$requestId → injected as a user message into " +
+              s"session=${ctx.sessionId.getOrElse("<unknown>")} (${answers.size} answer slot(s))"
+          ) *>
+            (target ! AgentCommand.ImmediateInput(
+              text = text,
+              source = Some(AskUserAnswerSource.AnswerSource),
+              eventType = Some(AskUserAnswerSource.AnswerSource),
+              fromUser = true
+            ))
+      }
 
   end deliver
 

@@ -128,4 +128,41 @@ class AskUserBuildJsonSpec extends FunSuite:
     assertEquals(json.noSpaces, expected)
   }
 
+  // ---- attachments 批（root 2026-10-02 令 #462 裁③）：顶层可选键 ----
+
+  test("A1: attachments 在场 ⇒ 顶层落键（与 items 平级，非逐问题承载）") {
+    val items = List(AskItem("Open which file?", List(AskOption("A"), AskOption("B"))))
+    val json = AgentActor.buildAskUserJson(
+      Some("root-1"),
+      "Nebula",
+      items,
+      Some("Nebula"),
+      Some("root-1"),
+      attachments = List("/data/docs/a.pdf", "/data/plots/b.png")
+    )
+    assertEquals(
+      json.hcursor.downField("attachments").as[List[String]],
+      Right(List("/data/docs/a.pdf", "/data/plots/b.png"))
+    )
+    // 顶层 = items 的兄弟键（不是 items 里的元素键）
+    assertEquals(json.asObject.map(_.keys.toSet), Some(Set("type", "sessionId", "agentName", "sourceAgent", "sourceSession", "attachments", "items")))
+    val item0 = json.hcursor.downField("items").as[List[Json]].toOption.get.head
+    assertEquals(item0.hcursor.downField("attachments").focus, None, "附件不得挂到单条问题上")
+  }
+
+  test("A1c: attachments 缺席/空 ⇒ 不落键（无附件载荷逐字节等于既有形态）") {
+    val items = List(AskItem("Continue?", List(AskOption("yes"), AskOption("no"))))
+    val expected =
+      """{"type":"askUser","sessionId":"root-1","agentName":"Backend","sourceAgent":"Backend",""" +
+        """"sourceSession":"team-abc","items":[{"question":"Continue?","options":[{"label":"yes"},{"label":"no"}],""" +
+        """"allowOther":true}]}"""
+    assertEquals(frame(items).noSpaces, expected, "默认态（Nil）必须逐字节等于既有形态")
+    assertEquals(
+      AgentActor
+        .buildAskUserJson(Some("root-1"), "Backend", items, Some("Backend"), Some("team-abc"), attachments = Nil)
+        .noSpaces,
+      expected
+    )
+  }
+
 end AskUserBuildJsonSpec

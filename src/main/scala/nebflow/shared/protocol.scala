@@ -355,7 +355,19 @@ object UiMessage:
    * 缺席即不落键（旧 `.ui.json` 行字节形态与旧读法逐字不变；旧行 ⇒ 前端回落
    * 「按形态兜底」的去重腿，见 `chat.js sameAskCards`）。
    */
-  case class AskUser(items: List[Json], requestId: Option[String] = None) extends UiMessage:
+  case class AskUser(
+    items: List[Json],
+    requestId: Option[String] = None,
+    /**
+     * 附件引用（本批：AskUser 顶层可选参数 `attachments`）：仅作**人的可点击入口**，
+     * 内容不进模型上下文（与 `AskItem.canvas` 同族，但挂在整次提问上）。路径已在
+     * 工具调用期经 `FilePolicyPort` 校验通过，本层只搬运。
+     *
+     * 缺省 `None` ⇒ 旧 `.ui.json` 行解析（本文件 `case "askUser"`）与缺键载荷
+     * **逐字节不变**。
+     */
+    attachments: Option[List[String]] = None
+  ) extends UiMessage:
     val typeName = "askUser"
 
   case class Ask(
@@ -442,7 +454,9 @@ object UiMessage:
     case m: AskUser =>
       // 案 B：requestId 随行落盘（历史卡可 id 寻址）。缺席即不落键 ⇒ 旧行形态逐字不变。
       val base = Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
-      m.requestId.filter(_.nonEmpty).fold(base)(r => base.deepMerge(Json.obj("requestId" -> r.asJson)))
+      val withRid = m.requestId.filter(_.nonEmpty).fold(base)(r => base.deepMerge(Json.obj("requestId" -> r.asJson)))
+      // 附件「仅在场发」：缺席即不落键 ⇒ 无附件载荷与既有形态逐字节相等。
+      m.attachments.filter(_.nonEmpty).fold(withRid)(a => withRid.deepMerge(Json.obj("attachments" -> a.asJson)))
     case m: Ask =>
       val base = Json.obj("type" -> "ask".asJson, "question" -> m.question.asJson, "answer" -> m.answer.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -527,7 +541,13 @@ object UiMessage:
           items <- cursor.downField("items").as[List[Json]]
           // 案 B：旧行无 requestId ⇒ None（前端回落形态兜底，不强求 id）
           requestId <- cursor.downField("requestId").as[Option[String]]
-        yield AskUser(items, requestId.filter(_.nonEmpty))
+        yield AskUser(
+          items,
+          requestId.filter(_.nonEmpty),
+          // 附件：旧行无本键 ⇒ None；形态不合（非字符串数组）同样回落 None —— 宽松
+          // 透传：新增可选键绝不改变任何既有行的可解析性（R8 缓解）。
+          cursor.downField("attachments").as[Option[List[String]]].toOption.flatten.filter(_.nonEmpty)
+        )
       case "ask" =>
         for
           question <- cursor.downField("question").as[String]

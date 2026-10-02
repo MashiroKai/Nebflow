@@ -155,56 +155,25 @@ object InjectionAttribution:
 end InjectionAttribution
 
 /**
- * AskUserQuestion 双模式（工具面按角色分化批 B4，2026-09-13 作者裁定 T2=(a)）：
- *  - [[AskMode.Blocking]]（默认，**全角色**可用）= 现状语义：工具挂起 turn，答复
- *    作为该次工具调用的返回值回投；
- *  - [[AskMode.NonBlocking]]（**仅 Nebula 根会话**）= 工具发起即返回 ack，卡片与
- *    requestId 与阻塞模式同构地注册进 hub，答复不作为返回值，而是以注入式用户
- *    输入（[[AgentCommand.ImmediateInput]]，`fromUser=true`）在下一个 turn 边界
- *    到达本会话。
+ * AskUserQuestion 的作答来源定名（本批收敛后**仅存这一处**）。
  *
- * 授权面三层（规格书 §0/§3，作者 2026-09-13 令）：① 第一性 = **定义层分化**
- * （非 root 会话的 `AskUserQuestion` 定义里**整体不含** `mode`，落点
- * `AgentCore.buildToolList`）；② 第二道 = 运行期显式拒绝
- * （`AskUserQuestionTool.call` 的 `ASKUSER_NONBLOCK_NOT_ROOT`，先于任何副作用）；
- * ③ 第三道 = description（仅描述性，不承担机制）。**schema 分化不替代授权判定**：
- * 引擎无 JSON-Schema 校验器 ⇒ 面外参数会被静默忽略，故 ② 不得删除。
+ * 历史形态（工具面按角色分化批 B4，2026-09-13 作者裁定 T2=(a)）是 `Blocking |
+ * NonBlocking` 双模式枚举；本批（root 2026-10-02 令 #462 裁②+①）收敛为
+ * **非阻塞-only** ⇒ `AskMode` 枚举、`BlockingWire` / `NonBlockingWire`、
+ * `parse`、`parksTurn` 随阻塞腿一并移除（`rootVariant` 失去目标、AgentCore 的
+ * AskUser 变体分支整体删除）。
  *
- * 判据单点 = [[AgentCore.isRootAgent]]（`name=="Nebula" && depth==0`），
- * 定义期（挑变体）与运行期（兜底闸）**同一份实现**，禁第二份同表达式。
+ * 保留本对象的理由 = **不切断答案桥链**：`AskUserAnswerBridge.deliver` 把答复
+ * 作为注入用户输入投达会话本体时，用本常量作 `ImmediateInput.source` /
+ * `eventType`；`AgentActor.injectionSourceFor` 在 `fromUser=true` 时把 source 折成
+ * `None`（呈现为普通 user 气泡）⇒ 本常量**不承担前端登记面**，只作后端归因口径。
  */
-enum AskMode:
-  case Blocking, NonBlocking
-
-object AskMode:
+object AskUserAnswerSource:
   /**
-   * 线上字面量（`AskUserQuestionTool` 的 schema enum 与本枚举**共用此一处**，
-   * 防两份字面量漂移）。
-   */
-  val BlockingWire = "blocking"
-  val NonBlockingWire = "non-blocking"
-
-  /**
-   * 非阻塞 ack（`ImmediateInput.source`）的定名——真人点卡作答的答案，故
-   * 与 `fromUser=true` 同行；`fromUser=true` 时 source 被
-   * `AgentActor.injectionSourceFor` 单点折成 None（答案呈现为普通 user 气泡）
-   * ⇒ 不需要前端登记面。
+   * 非阻塞答复的注入来源定名——真人点卡作答，故与 `fromUser=true` 同行。
    */
   val AnswerSource = "askUserAnswer"
-
-  def parse(raw: String): Option[AskMode] = raw match
-    case BlockingWire => Some(AskMode.Blocking)
-    case NonBlockingWire => Some(AskMode.NonBlocking)
-    case _ => None
-
-  /**
-   * 该模式是否把 turn 停在等待态（`AgentActor` 的 `WaitingForUser` 标注 +
-   * `DelegateBudget.pause` 只在阻塞模式发生——非阻塞从未等待，无配对物，误标
-   * 即造出「永不解除的等待」）。
-   */
-  def parksTurn(mode: AskMode): Boolean = mode == AskMode.Blocking
-
-end AskMode
+end AskUserAnswerSource
 
 object AgentCommand:
 
@@ -343,12 +312,28 @@ object AgentCommand:
     items: List[AskItem],
     replyTo: Option[ActorRef[List[String]]] = None,
     /**
-     * 双模式（B4）：**带默认值** ⇒ 两个既有构造点（`AskUserQuestionTool` /
-     * `ProjectCreateTool` 的 pathPanel）不传即逐字节维持阻塞语义；`AgentActor`
-     * 的共享处理链据此决定是否标 `WaitingForUser` / `DelegateBudget.pause`
-     * （仅阻塞模式标——见 [[AskMode.parksTurn]]）。
+     * 附件引用（本批：AskUser 顶层可选参数 `attachments`）。路径已在工具调用期经
+     * `FilePolicyPort` 校验通过；此处只搬运到 `buildAskUserJson` 的顶层键。
+     * 缺省 `Nil` ⇒ 两个既有构造点（`ProjectCreateTool.pathPanel` / `SendConfirm.ask`）
+     * 不传即载荷**逐字节不变**。
+     *
+     * 🔴 `mode` 形参已随「非阻塞-only」裁定移除（root 2026-10-02 令 #462 裁①/②）：
+     * 提问一律非阻塞，`AgentProcessing` 的等待态标注随之消失。
      */
-    mode: AskMode = AskMode.Blocking
+    attachments: List[String] = Nil,
+    /**
+     * 本**次派发**是否有等待答复的调用方（= 该调用方在自己的 fiber 里 `.?` 阻塞、
+     * 需要答复作为**返回值**）。🔴 与已移除的 `AskMode` 枚举**不是**同一回事：
+     * 那是 `AskUserQuestion` 的**工具面模式**（本批裁① 全量非阻塞，已删除）；
+     * 这是**命令面**的客观事实——`AskUserQuestionTool` 一律非阻塞 ⇒ 恒 `false`；
+     * 仍在阻塞等待的两个**既有构造点**（`ProjectCreateTool.pathPanel` 与
+     * `SendConfirm`）中，走本命令的那个必须置 `true`，否则 `AgentProcessing` 不标
+     * `WaitingForUser`（`TaskStuckWatcher` 会把「等人选路径」误判为真卡死并硬取消）
+     * 且不暂停内核 wall-clock 预算（等人在 R11 第 4 层口径下不计入预算）。
+     *
+     * 缺省 `false` ⇒ AskUserQuestion 链与 SendConfirm 链均不受影响。
+     */
+    awaitsAnswer: Boolean = false
   ) extends AgentCommand
 
   case class LlmComplete(

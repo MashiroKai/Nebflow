@@ -1203,7 +1203,7 @@ private[agent] object AgentProcessing:
           )
 
       // --- AskUser from tool ---
-      case AgentCommand.AskUser(requestId, items, replyToOpt, askMode) =>
+      case AgentCommand.AskUser(requestId, items, replyToOpt, askAttachments, awaitsAnswer) =>
         // P2: every agent (root or sub-agent) sends the question straight to
         // the InteractionHub — no ForwardAskUser relay chain. The hub holds
         // replyTo, renders the question in the Nebula window (sessionId =
@@ -1225,7 +1225,8 @@ private[agent] object AgentProcessing:
           Some(srcAgent),
           Some(srcSession),
           askProject,
-          askNodeName
+          askNodeName,
+          askAttachments
         )
         // U3（2026-09-11 作者裁定）：内核会话的来源标注覆盖为 `subagent · <任务摘要>`
         // （纯后端注入——落点仍是来源标注的回落分支：payload.agentName 即前端 badge
@@ -1254,55 +1255,58 @@ private[agent] object AgentProcessing:
               case None =>
                 logger.warn(s"node-ask event skipped: no workspace path (node=$nodeId)")
           case _ => IO.unit
+        // 🔴 本批「非阻塞-only」后**无等待态标记**：提问一律非阻塞（发起即返回），
+        // 本命令的 `replyTo` 只指向答案桥（`AgentCommand.AskUser` 的答复在后续 turn
+        // 边界经 `ImmediateInput` 投达）⇒ 无 `WaitingForUser` 标注、无
+        // `DelegateBudget.pause`（等待从未发生，无配对物；误标即造出「永不解除的
+        // 等待」，误 pause 即把没暂停的预算重复 resume）。历史门控判据
+        // `AskMode.parksTurn` 已随阻塞腿一并移除。
         val sendIO = resources.interactionHubRef.get.flatMap {
           case Some(hub) =>
-            // R2 (wait-timeout-fix, 2026-09-03): the turn parks on a
-            // human-in-the-loop wait — mark WaitingForUser so TaskStuckWatcher
-            // skips the session. Was: status stayed Processing + lastActivityMs
-            // frozen at dispatch → 116 taskStuck false positives/day (audit
-            // 20260903) and, for sub-agents, the destructive Stop→hard-cancel
-            // chain killing a pending question. Paired un-marks (state machine
-            // must never strand WaitingForUser):
-            //   answer → AskUserQuestionTool restore (Processing, fresh stamp)
-            //   user cancel → Interrupt/ResetSession handler touch (Idle)
-            //   turn end → finishTurnCont (Idle) — pre-existing backstop.
-            // True-hang coverage is intact: every exit above re-enters scanned
-            // statuses, and WaitingForUser itself is never a terminal state.
-            // 工具面按角色分化批 B4（2026-09-13）：**只有阻塞模式**才是
-            // human-in-the-loop 等待 —— 非阻塞发起即返回、答复稍后以注入用户输入
-            // 到达（D5），**从未等待** ⇒ 不得标 WaitingForUser，也不得 pause 预算
-            // （无配对物；误标即造出「永不解除的等待」，误 pause 即把没暂停的预算
-            // 重复 resume）。`AskMode.parksTurn` 是单点判据（可独立单测）。
-            // 判据由 `AskUserQuestionTool` 侧的运行期闸（B3）保证：非 root 会话
-            // 根本发不出 NonBlocking（硬造 ⇒ 显式 ToolError，先于本分支）。
+            // 等待态标记（R2 wait-timeout-fix，2026-09-03 作者裁定）：**只**在本次
+            // 派发确有等待答复的调用方时标注 —— `TaskStuckWatcher` 据此豁免该会话
+            // （否则「等人回答」会被判成真卡死并触发破坏性的 Stop→hard-cancel 链），
+            // 且内核的 3600s wall-clock 预算在等待期暂停（R11 第 4 层 / U1=C-a +
+            // U8=(ii)：等待无界/不计入预算）。
+            //
+            // 🔴 本批（root 2026-10-02 令 #462 裁①「非阻塞-only」）后的判据 = **命令面
+            // 客观事实** `awaitsAnswer`，不再是历史工具面模式枚举 `AskMode.parksTurn`：
+            // `AskUserQuestionTool` 一律非阻塞 ⇒ 恒 `false`（无 WaitingForUser、无
+            // pause）；`ProjectCreateTool.pathPanel` 仍在自己的 fiber 里阻塞等待并把
+            // 答案作为返回值消费（`applyPanelAnswer` → `createChain`）⇒ 置 `true`。
+            // 配对恢复点 = 该调用方的答复单点（pathPanel 走
+            // `AskUserPrompt.answerLanded`）。
             val waitMarks: IO[Unit] =
-              if AskMode.parksTurn(askMode) then
+              if awaitsAnswer then
                 touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser) *>
-                  // R11 第 4 层 / U1=C-a + U8=(ii)：ask **发起单点**发暂停信号——内核
-                  // 的 3600s wall-clock 预算在等待期暂停（等待无界，R1）。非 Delegate
-                  // 会话无预算通道 ⇒ 无害 no-op。配对恢复点 =
-                  // AskUserQuestionTool.restoreRegistryAfterAnswer。
                   DelegateBudget.pause(srcSession)
               else IO.unit
             waitMarks *>
               (hub ! InteractionHubCommand.Request(
-                InteractionRequest(
-                  requestId = requestId,
-                  kind = InteractionKind.AskUser,
-                  payload = payload,
-                  reply = InteractionReply.AskUserReply(replyToOpt),
-                  rootSessionId = rootSid,
-                  sourceAgent = srcAgent,
-                  sourceSession = srcSession
-                )
-              )).void *> nodeAskEventIO
+              InteractionRequest(
+                requestId = requestId,
+                kind = InteractionKind.AskUser,
+                payload = payload,
+                reply = InteractionReply.AskUserReply(replyToOpt),
+                rootSessionId = rootSid,
+                sourceAgent = srcAgent,
+                sourceSession = srcSession
+              )
+            )).void *> nodeAskEventIO
           case None =>
-            // Hub not spawned (early boot / tests): cancel the ask so the
-            // caller's AskUserQuestionTool `.?` does not hang forever.
+            // 承接面缺席（early boot / headless / harness）：问题从未上卡 ⇒ 答复
+            // 永不投达。本腿对 `replyTo` 给出**可判读的失败信号**（自描述：失败
+            // 类别 + requestId + sourceAgent，见 [[nebflow.shared.AskUserDispatch]]），
+            // 而不是空载荷 —— 空载荷在订阅腿那里与「用户没答」同形：桥会把它当
+            // 用户答复注入会话，面板会把它当「用户关闭了面板」静默搁置。两个订阅
+            // 腿都据该信号分支处理（桥不注入、面板明确报错）。
+            val failure = AskUserDispatch.unavailable(requestId, srcAgent)
             logger.warn(
-              s"AskUser dropped: InteractionHub not spawned (requestId=$requestId sourceAgent=$srcAgent)"
+              s"AskUser dispatch FAILED (${AskUserDispatch.UnavailableCode}): InteractionHub is not " +
+                s"available — the question was never shown and the answer can never be delivered " +
+                s"(requestId=$requestId sourceAgent=$srcAgent)"
             ) *>
-              replyToOpt.fold(IO.unit)(replyTo => (replyTo ! Nil))
+              replyToOpt.fold(IO.unit)(replyTo => (replyTo ! failure).attempt.void)
         }
         sendIO *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 

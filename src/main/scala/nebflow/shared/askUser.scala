@@ -77,3 +77,49 @@ object AskUser:
 
   def isInteractive: Boolean = handler.get().isDefined
 end AskUser
+
+/**
+ * 交互派发失败信号 —— AskUser 派发腿在**承接面缺席**时给出的返回值。
+ *
+ * 语境：`AgentProcessing` 的 `AskUser` 分支在 `interactionHubRef` 缺席（early
+ * boot / headless / harness）时无法把问题交给任何承接面 ⇒ 问题从未上卡、答复
+ * 永不投达。该腿对 `replyTo` 的返回值**不得**与「用户没有作答」同形（空列表 /
+ * 空文本）：两个订阅腿都据该返回值作语义判定 ——
+ *
+ *  - `AskUserAnswerBridge`（工具面非阻塞腿）：**不**把它当用户答复注入会话
+ *    （否则会话里会凭空多出一条空用户消息）；
+ *  - `ProjectCreateTool.parsePanelAnswer`（面板阻塞腿）：**不**把它当「用户关闭了
+ *    面板」（`Shelved` 搁置），而是给出明确报错。
+ *
+ * 判据本体（「这是不是失败信号」）只在本对象内实现一处，两个订阅点一律委托
+ * （禁第二份副本，与全仓「一处实现、消费点委托」的纪律同源）。
+ */
+object AskUserDispatch:
+
+  /** 机器可读锚：失败类别 = 承接面缺席（无 InteractionHub 可用）。 */
+  val UnavailableCode = "ASKUSER_DISPATCH_UNAVAILABLE"
+
+  /** 人可读判读起点；机器判据（[[isFailure]]）亦以它为准。 */
+  val FailureMarker = s"AskUser dispatch FAILED ($UnavailableCode)"
+
+  /**
+   * 承接面缺席的失败信号（**单槽**）。自描述：失败类别 + requestId +
+   * sourceAgent + 后果（答案永不投达）+ 与用户答复的判别句。
+   */
+  def unavailable(requestId: String, sourceAgent: String): List[String] =
+    List(
+      s"$FailureMarker: no interaction hub is available, so this question was never shown and no " +
+        s"answer can arrive — requestId=$requestId sourceAgent=$sourceAgent. " +
+        s"This is a dispatch failure, not a user answer."
+    )
+
+  /**
+   * 是否派发失败信号。空载荷（`Nil`）、空白文本与常规答复一律 `false` ——
+   * 失败信号必须与「用户没答」在**判据上**可分离，否则本信号退化成同一团模糊。
+   */
+  def isFailure(answers: List[String]): Boolean =
+    answers match
+      case signal :: Nil => signal.startsWith(FailureMarker)
+      case _             => false
+
+end AskUserDispatch

@@ -2,7 +2,7 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.actor.{AgentDef, depth, isDispatcher}
-import nebflow.core.tools.{AskUserQuestionTool, MailTool, NodeReportToolDef, ToolRegistry}
+import nebflow.core.tools.{MailTool, NodeReportToolDef, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
 /**
@@ -72,7 +72,14 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
       .map(t => s"""{"name":${t.name},"description":${t.description},"input_schema":${t.inputSchema}}""")
       .mkString("[", ",", "]")
 
-  /** 改前模拟器（见类注释；**只**用于对照数字）。 */
+  /**
+   * 改前模拟器（见类注释；**只**用于对照数字）。
+   *
+   * re-pin（2026-10-02 令 #462 裁②「不保留 mode 键」）：AskUserQuestion 的 root
+   * schema 变体已整体退场（`AskUserQuestionTool.rootVariant` 不存在了），本模拟器
+   * 相应地退化为「allowedSet 过滤」——改前 = 改后 = 注册表定义本身，这正是本批
+   * 「零变体」的读数面（delta_bytes 恒 0 即判据的可见形态）。
+   */
   private def beforeFace(
     defn: AgentDef,
     depth: Int,
@@ -81,11 +88,7 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
     root: Boolean
   ): List[ToolDefinition] =
     val allowed = CoreProbe.allowed(defn, depth, flowNodeSession, projectBoardSession)
-    ToolRegistry.ALL_TOOLS.flatMap { td =>
-      if !allowed.contains(td.name) then None
-      else if root && td.name == AskUserQuestionTool.Name then Some(AskUserQuestionTool.rootVariant(td))
-      else Some(td)
-    }
+    ToolRegistry.ALL_TOOLS.filter(td => allowed.contains(td.name))
 
   private final case class Cross(
     label: String,

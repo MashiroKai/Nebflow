@@ -13,7 +13,6 @@ import nebflow.actor.{
   AgentKind,
   AgentRecord,
   AgentStatus,
-  AskMode,
   InteractionAnswered,
   messages,
   status
@@ -42,21 +41,25 @@ import scala.concurrent.duration.*
 /**
  * // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-B/M4):命令 ADT 下沉 actor、requestId 生成器下沉 shared。
  * // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M4):生成器已下沉 shared。
- * 工具面按角色分化批（2026-09-13 作者裁定 T1–T9）**真实运行态验收**——
- * 真实 `AgentActor` + 真实 `InteractionHub` + 真实 `AskUserQuestionTool`（脚本化
- * LLM 驱动工具调用，先例 `WaitTimeoutAskUserWiringSpec`）。四条读数：
  *
- *  1. **root 非阻塞全链**（§6②/§6④）：发起即返回（turn 不停，下一轮 LLM 调用里
- *     拿到 ack 文本）+ 卡片渲染（`askUser` 帧）+ hub 槽位 +1 + registry **不出现**
- *     `WaitingForUser`；答复经 hub → 桥（[[AskUserAnswerBridge]]）→
- *     `ImmediateInput(fromUser=true)` 唤醒新 turn，模型看到答案文本；槽位 -1。
- *  2. **负控（真实 actor 级）**：节点会话（general/depth=1）**硬造**非阻塞 ⇒
- *     工具结果为显式错误（`ASKUSER_NONBLOCK_NOT_ROOT`），hub **零槽位**、**无**
- *     `askUser` 帧、registry **无** `WaitingForUser`，且 turn **未挂起**（第二轮
- *     LLM 调用照常发生 —— 若是「静默改走阻塞」就会永久停住）。
- *  3. **B6 预检**：root 会话但**窗口未注册** ⇒ 显式拒绝
- *     （`ASKUSER_NONBLOCK_NO_ROOT_WINDOW`）+ 零槽位（答案不会静默丢失）。
- *  4. **阻塞路径零漂移**（节点会话不传 mode）⇒ 仍标 `WaitingForUser`（现状不变）。
+ * **非阻塞-only 零漂移**（root 2026-10-02 令 #462 裁①/②/④；改写自「工具面按角色
+ * 分化批」的双模式验收，**强度不降**）：真实 `AgentActor` + 真实 `InteractionHub`
+ * + 真实 `AskUserQuestionTool`（脚本化 LLM 驱动工具调用，先例
+ * `WaitTimeoutAskUserWiringSpec`）。五条读数：
+ *
+ *  1. **全链（任意身份）**：发起即返回（ack 进工具结果）+ 卡片渲染（`askUser` 帧）
+ *     + hub 槽位 +1 + registry **不出现** `WaitingForUser`；答复经 hub → 桥
+ *     （[[AskUserAnswerBridge]]）→ `ImmediateInput(fromUser=true)` 唤醒新 turn，
+ *     模型看到答案文本；槽位 -1。
+ *  2. **节点身份零拒绝**（裁①「全量非阻塞」的落地面）：general/depth=1 与 kernel
+ *     会话现在**同样**走非阻塞 —— 历史上的 `ASKUSER_NONBLOCK_NOT_ROOT` 拒答面消失
+ *     ⇒ 断言变为「无该码、turn 未挂起、槽位占上」。
+ *  3. **无窗口不拒**（裁④「去除预检」）：root 会话窗口未注册时**不再** fail-closed；
+ *     问题照常经 hub 派发/挂 pending 承接，答案不会静默丢（hub 扇出腿）。
+ *  4. **`mode` 参数被显式拒绝**：真实链上带 `mode` 的调用得到可判读 `ToolError`，
+ *     且**零副作用**（无槽位、无卡片、turn 未挂起）。
+ *  5. **请求体口径**：两身份的 LlmRequest.tools 里 AskUserQuestion 段与注册表基线
+ *     **逐字节一致**（无 schema 变体残留）。
  */
 class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
 
@@ -266,19 +269,23 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
           "question" -> "运行态非阻塞验证：选一个".asJson,
           "options" -> Json.arr(Json.obj("label" -> "alpha".asJson), Json.obj("label" -> "beta".asJson))
         )
-      ),
-      "mode" -> AskMode.NonBlockingWire.asJson
+      )
     )
 
-  private val askInputBlocking: JsonObject =
+  /** 既有调用面携带已下线的 `mode` 参数 ⇒ 显式拒绝（本批的兼容判据）。 */
+  private val askInputWithRetiredMode: JsonObject =
     JsonObject(
       "questions" -> Json.arr(
         Json.obj(
-          "question" -> "运行态阻塞验证：选一个".asJson,
+          "question" -> "带 mode 的调用：选一个".asJson,
           "options" -> Json.arr(Json.obj("label" -> "alpha".asJson), Json.obj("label" -> "beta".asJson))
         )
-      )
+      ),
+      "mode" -> "non-blocking".asJson
     )
+
+  /** 无 `mode` 的常规入参（两身份共用同一份 —— 本批起不再有模式分叉）。 */
+  private val askInputBlocking: JsonObject = askInputNonBlocking
 
   /** 从 LLM 请求里取最后一次 tool_result 文本（工具返回值 = 模型的可见反馈）。 */
   private def lastToolResults(reqs: List[LlmRequest]): List[String] =
@@ -374,10 +381,10 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   }
 
   // ============================================================
-  // 2. 负控（真实 actor 级）：硬造非阻塞 ⇒ 显式错误 + 零副作用
+  // 2. 任意身份全量非阻塞（裁① 的落地面）：节点会话不再被拒
   // ============================================================
 
-  test("负控（真实 actor）: general 节点 depth=1 硬造 non-blocking ⇒ 显式错误 + 零槽位 + 无 askUser 帧 + 无 WaitingForUser + turn 未挂起") {
+  test("全量非阻塞（真实 actor）: general 节点 depth=1 照常提问 ⇒ 零拒绝 + 占槽位 + 无 WaitingForUser + turn 未挂起") {
     val f = setup(
       "node-nonblock",
       AgentDef(name = "general", description = "", tools = Nil),
@@ -389,25 +396,56 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       _ <- waitFor(f.requests, _.size >= 2, "节点会话的 turn 未继续（疑似静默改走阻塞 = 挂起）")
       reqs <- f.requests.get
       toolResults <- IO(lastToolResults(reqs))
+      // 裁①：节点身份**不再**被「非阻塞仅 root」拒 —— 既无该码，也照常派发。
       _ = assert(
-        toolResults.exists(_.contains(AskUserQuestionTool.NonBlockingNotRootCode)),
-        s"硬造非阻塞未得到显式错误（静默降级？）：$toolResults"
+        !toolResults.exists(_.contains("ASKUSER_NONBLOCK_NOT_ROOT")),
+        s"节点身份仍被 root-only 门拒绝（裁① 未落地）：$toolResults"
       )
-      pend <- pendingAsks(f.hub, f.sid)
-      _ = assertEquals(pend.size, 0, s"被拒的请求却占了 hub 槽位: $pend")
-      frames <- f.wsEvents.get
-      _ = assertEquals(frames.count(_.hcursor.get[String]("type").toOption.contains("askUser")), 0, "被拒的请求渲染了卡片")
+      _ = assert(
+        toolResults.exists(_.contains("non-blocking:")),
+        s"节点身份未拿到非阻塞 ack：$toolResults"
+      )
+      // 卡片照常渲染 + 槽位 +1（= 全量非阻塞真派发，不是静默丢弃）
+      _ <- waitFor(
+        f.wsEvents,
+        _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
+        "节点会话的卡未渲染"
+      )
+      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "节点会话的卡未占槽位")
+      _ = assertEquals(pend.size, 1, s"节点会话的卡未占槽位: $pend")
       st <- statusOf(f.resources, f.sid)
-      _ = assert(st != AgentStatus.WaitingForUser, s"被拒的请求把会话标成 WaitingForUser（$st）—— 永不解除的等待")
+      _ = assert(st != AgentStatus.WaitingForUser, s"非阻塞派发后 registry 被标 WaitingForUser（$st）—— 造出永不解除的等待")
+      _ <- f.cleanup
+    yield ()).unsafeRunSync()
+  }
+
+  test("全量非阻塞（真实 actor）: kernel depth=1 同上（内核会话不再被拒）") {
+    val f = setup(
+      "kernel-nonblock",
+      AgentDef(name = "kernel", description = "", tools = Nil),
+      depth = 1,
+      sid = "dualmode-kernel",
+      askInput = askInputNonBlocking
+    )
+    (for
+      _ <- waitFor(f.requests, _.size >= 2, "内核会话的 turn 未继续")
+      reqs <- f.requests.get
+      toolResults <- IO(lastToolResults(reqs))
+      _ = assert(
+        toolResults.exists(_.contains("non-blocking:")),
+        s"内核身份未拿到非阻塞 ack（裁① 未覆盖内核）：$toolResults"
+      )
+      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "内核会话的卡未占槽位")
+      _ = assertEquals(pend.size, 1)
       _ <- f.cleanup
     yield ()).unsafeRunSync()
   }
 
   // ============================================================
-  // 3. B6 预检：无窗口 ⇒ 显式拒绝 + 零槽位
+  // 3. 裁④ 去除预检：无窗口不再 fail-closed
   // ============================================================
 
-  test("B6 预检: root 会话但窗口未注册 ⇒ 显式拒绝 + 零槽位（答案不会静默丢失）") {
+  test("裁④ 无预检: root 会话窗口未注册 ⇒ 不再拒绝，问题照常派发并可挂 pending 承接") {
     val f = setup(
       "root-nowindow",
       AgentDef(name = "Nebula", description = "", tools = Nil),
@@ -417,26 +455,70 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       registerWindow = false
     )
     (for
-      _ <- waitFor(f.requests, _.size >= 2, "预检未放行 turn（很可能挂住了）")
+      _ <- waitFor(f.requests, _.size >= 2, "无窗口时 turn 未继续（疑似仍在预检里挂住）")
       reqs <- f.requests.get
       toolResults <- IO(lastToolResults(reqs))
+      // 裁④：预检腿已去除 ⇒ 无窗口**不再**是错误；ack 照常返回。
       _ = assert(
-        toolResults.exists(_.contains(AskUserQuestionTool.NoRootWindowCode)),
-        s"无窗口时未显式拒绝：$toolResults"
+        !toolResults.exists(_.contains("ASKUSER_NONBLOCK_NO_ROOT_WINDOW")),
+        s"无窗口仍被预检拒绝（裁④ 未落地）：$toolResults"
       )
-      pend <- pendingAsks(f.hub, f.sid)
-      _ = assertEquals(pend.size, 0, s"预检失败却占了槽位: $pend")
-      frames <- f.wsEvents.get
-      _ = assertEquals(frames.count(_.hcursor.get[String]("type").toOption.contains("askUser")), 0)
+      _ = assert(
+        toolResults.exists(_.contains("non-blocking:")),
+        s"无窗口时未拿到非阻塞 ack：$toolResults"
+      )
+      // 绝对无窗 ⇒ 挂 pending（快照面可见），答案不会静默丢。
+      pend <- pendingAsksUntil(f.hub, f.sid, _.nonEmpty, "无窗口的提问既未扇出也未挂 pending")
+      _ = assert(pend.nonEmpty, s"无窗口的提问未挂 pending（答案无处承接）: $pend")
       _ <- f.cleanup
     yield ()).unsafeRunSync()
   }
 
   // ============================================================
-  // 4. 阻塞路径零漂移（节点会话不传 mode）
+  // 4. `mode` 参数被显式拒绝（兼容判据）——零副作用
   // ============================================================
 
-  test("阻塞零漂移（真实 actor）: 节点会话不传 mode ⇒ 仍标 WaitingForUser（现状不变）") {
+  test("退役参数: 调用面携带 `mode` ⇒ 可判读 ToolError + 零槽位 + 无卡片 + turn 未挂起") {
+    val f = setup(
+      "retired-mode",
+      AgentDef(name = "Nebula", description = "", tools = Nil),
+      depth = 0,
+      sid = "dualmode-retired",
+      askInput = askInputWithRetiredMode
+    )
+    (for
+      _ <- waitFor(f.requests, _.size >= 2, "带 mode 的调用挂住了 turn")
+      reqs <- f.requests.get
+      toolResults <- IO(lastToolResults(reqs))
+      _ = assert(
+        toolResults.exists(_.contains(AskUserQuestionTool.ModeParamRetiredCode)),
+        s"携带 mode 未被显式拒绝（静默降级？）：$toolResults"
+      )
+      // 拒绝文案自描述 + 不回溯叙述先前行为
+      _ = assert(
+        toolResults.exists(t => t.contains("does not accept a `mode` parameter") && t.contains("always asks in a non-blocking way")),
+        s"拒绝文案不可判读：$toolResults"
+      )
+      // 零副作用：哨兵在闸之后才可能派发
+      pend <- pendingAsks(f.hub, f.sid)
+      _ = assertEquals(pend.size, 0, s"被拒的请求却占了 hub 槽位: $pend")
+      frames <- f.wsEvents.get
+      _ = assertEquals(
+        frames.count(_.hcursor.get[String]("type").toOption.contains("askUser")),
+        0,
+        "被拒的请求渲染了卡片"
+      )
+      st <- statusOf(f.resources, f.sid)
+      _ = assert(st != AgentStatus.WaitingForUser, s"被拒的请求把会话标成 WaitingForUser（$st）")
+      _ <- f.cleanup
+    yield ()).unsafeRunSync()
+  }
+
+  // ============================================================
+  // 5. 无等待态：非阻塞派发**恒不**标 WaitingForUser（现状的对照面已消失）
+  // ============================================================
+
+  test("无等待态（真实 actor）: 非阻塞派发后 map 不出现 WaitingForUser，且第二轮 LLM 调用照常发生") {
     val f = setup(
       "node-blocking",
       AgentDef(name = "general", description = "", tools = Nil),
@@ -445,26 +527,25 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       askInput = askInputBlocking
     )
     (for
-      _ <- waitFor(
-        f.resources.agentRegistry,
-        m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "阻塞模式未标 WaitingForUser（现状漂移）"
-      )
-      _ <- waitFor(f.wsEvents, _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")), "阻塞模式未渲染卡片")
-      pend <- pendingAsks(f.hub, f.sid)
+      _ <- waitFor(f.requests, _.size >= 2, "非阻塞派发后 turn 未继续（疑似等待态）")
+      _ <- waitFor(f.wsEvents, _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")), "未渲染卡片")
+      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "卡未占槽位")
       _ = assertEquals(pend.size, 1)
-      // 阻塞模式下 turn 停在等待：第二轮 LLM 调用**不**应发生（对照非阻塞的第一条读数）
-      reqs <- f.requests.get
-      _ = assertEquals(reqs.size, 1, s"阻塞模式 turn 未停住（轮数=${reqs.size}）")
+      // 派发后 turn 继续（第二轮 LLM 调用已发生）⇒ 会话**不**停在等待态。
+      st <- statusOf(f.resources, f.sid)
+      _ = assert(
+        st != AgentStatus.WaitingForUser,
+        s"非阻塞派发把会话标成 WaitingForUser（$st）—— 等待态未随裁① 退场"
+      )
       _ <- f.cleanup
     yield ()).unsafeRunSync()
   }
 
   // ============================================================
-  // 5. 请求体口径（= router JSONL 的同一对象图）
+  // 6. 请求体口径（= router JSONL 的同一对象图）：零变体
   // ============================================================
 
-  test("⑥ 请求体口径: 两角色的 LlmRequest.tools 里 AskUserQuestion 段逐字节对照（router JSONL toolsToJson 同源）") {
+  test("请求体口径: 两身份的 LlmRequest.tools 里 AskUserQuestion 段与注册表基线逐字节一致（无 schema 变体残留）") {
     def askFrom(reqs: List[LlmRequest]): nebflow.shared.ToolDefinition =
       reqs.headOption
         .flatMap(_.tools.getOrElse(Nil).find(_.name == AskUserQuestionTool.Name))
@@ -497,16 +578,18 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       _ <- IO {
         val rootTd = askFrom(rootReqs)
         val nodeTd = askFrom(nodeReqs)
-        // root：mode 在场（enum 含 non-blocking，default=blocking）
-        val mode = modeOf(rootTd).getOrElse(fail("请求体里的 root 定义没有 mode"))
-        assert(mode.hcursor.downField("enum").as[List[String]].getOrElse(Nil).contains(AskMode.NonBlockingWire))
-        assertEquals(mode.hcursor.downField("default").as[String], Right(AskMode.BlockingWire))
-        // node：mode 缺席，且与基线定义**逐字节相同**（description + input_schema）
-        assert(modeOf(nodeTd).isEmpty, "请求体里的 node 定义出现了 mode（分化未生效）")
+        // 裁②「不保留键」：两身份的 AskUserQuestion 定义都**无** mode，且与注册表基线
+        // **逐字节相同**（description + input_schema）⇒ 无变体可分。
+        assert(modeOf(rootTd).isEmpty, "请求体里的 root 定义仍有 mode（裁② 不保留键未落地）")
+        assert(modeOf(nodeTd).isEmpty, "请求体里的 node 定义出现了 mode")
+        assertEquals(rootTd.description, baseline.description)
+        assertEquals(rootTd.inputSchema, baseline.inputSchema)
         assertEquals(nodeTd.description, baseline.description)
         assertEquals(nodeTd.inputSchema, baseline.inputSchema)
-        // 其余**共有**工具逐字节一致（分化只换 AskUserQuestion 那一段；成员资格差异
-        // 是既有角色面差异，与本批无关）
+        // 两身份的这一段彼此也逐字节相同（本批的核心不变量：无身份分化）。
+        assertEquals(rootTd.description, nodeTd.description)
+        assertEquals(rootTd.inputSchema, nodeTd.inputSchema)
+        // 其余**共有**工具逐字节一致（成员资格差异是既有角色面差异，与本批无关）
         val rootTools = rootReqs.head.tools.getOrElse(Nil)
         val nodeTools = nodeReqs.head.tools.getOrElse(Nil)
         val shared = rootTools.map(_.name).toSet.intersect(nodeTools.map(_.name).toSet) - AskUserQuestionTool.Name

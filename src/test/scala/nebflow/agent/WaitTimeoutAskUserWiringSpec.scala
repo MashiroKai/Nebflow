@@ -24,7 +24,7 @@ import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.FileLockManager
+import nebflow.core.tools.{FileLockManager, ProjectCreateTool}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.gateway.WsHub
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
@@ -42,12 +42,26 @@ import nebflow.shared.{
 import scala.concurrent.duration.*
 
 /**
- * R2 状态机闭环（wait-timeout-fix，2026-09-03 作者裁定）端到端接线钉子：
- * 真实 AgentActor + 真实 InteractionHub + 真实 AskUserQuestionTool 驱动
- * AskUser pending 全生命周期，钉住「标记与解除成对，等待态绝不滞留」：
+ * R2 状态机闭环（wait-timeout-fix，2026-09-03 作者裁定）端到端接线钉子 ——
+ * **非阻塞-only 收敛后的等价物**（root 2026-10-02 令 #462 裁①；本批改写，
+ * 判据改、**强度不降**）。真实 AgentActor + 真实 InteractionHub 驱动
+ * AskUser pending 全生命周期，钉住「标记与解除成对，等待态绝不滞留」。
  *
- *   1. AskUser 派发 → registry 标 WaitingForUser（AgentState.scala AgentStatus
- *      死代码首次接线；此前残留 Processing → TaskStuckWatcher 每 30s 误报，
+ * 🔴 **前提变更（本批裁①）**：`AskUserQuestionTool` 一律非阻塞 ⇒ **工具提问不再
+ * 产生等待态** —— 历史用例 1 的前提（工具派发 ⇒ `WaitingForUser`）**已随裁定退场**，
+ * 不再是本 spec 的断言面（改由「零等待态」正面钉住：工具派发的 AskUser 之后
+ * registry **恒不出现** `WaitingForUser`，见下 R2-nb；原文件的「验红变异」措辞
+ * 随之作废）。
+ *
+ * **等待态并未整体消失**：`AgentProcessing` 的 `waitMarks` 改由命令面客观事实
+ * `awaitsAnswer` 门控（root 2026-10-02 令 #462 下仍在阻塞等待的调用方 =
+ * `ProjectCreateTool.pathPanel`，它把答复作为 `createChain` 的入参）。⇒ 本 spec
+ * 的闭环判据**整体迁移到该调用方**（下面 R2-panel 用例，走真实工具链：
+ * LLM 发 `ProjectCreate` 工具调用 → `pathPanel` 派发 `awaitsAnswer=true` 的
+ * `AgentCommand.AskUser` → 等待态 + 预算暂停 → hub 答复 → `answerLanded` 配对解除）：
+ *
+ *   1. 真阻塞调用方派发 → registry 标 `WaitingForUser`（AgentState.scala
+ *      AgentStatus 接线；此前残留 Processing → TaskStuckWatcher 每 30s 误报，
  *      审计 20260903 当日 116 条）；
  *   2. 挂起超阈值（缩阈模拟 11min：回拨 lastActivityMs）→ scan 零动作——
  *      误报与破坏性 Stop 链消失（验收 1）；
@@ -60,9 +74,9 @@ import scala.concurrent.duration.*
  * 时间模拟手法（沿用 TaskStuckWatcherSpec 先例，零真实等待）：直接回拨
  * registry 的 lastActivityMs + 参数化 threshold 驱动单轮 scan。
  *
- * 验红变异（验收 1）：还原等待态标注（AgentActor.AskUser 处理器的
- * touchRegistryActivity(WaitingForUser)）→ status 残留 Processing → 步骤 2
- * 的 scan 开火（taskStuck 广播 + Stop）→ 红；恢复标注后绿。
+ * 验红变异（验收 1，迁移到 R2-panel）：把 `AgentProcessing` 的 `waitMarks`
+ * 改回恒 `IO.unit`（即丢掉 `awaitsAnswer` 门控）⇒ 面板等待期 status 残留
+ * Processing ⇒ 步骤 2 的 scan 开火（taskStuck 广播 + Stop）→ 红；恢复门控后绿。
  */
 class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
 
@@ -71,11 +85,21 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
   private val StuckThresholdMs = 10 * 60 * 1000L // 与 Defaults.StuckThresholdMs 同值
 
   /**
-   * 首轮返回 AskUserQuestion 工具调用；第二轮阻塞在 secondGate（制造回答
-   * 后的稳定观察窗，断言「恢复 Processing」不被 turn 秒完淹没），放行后
-   * 文本收尾。
+   * 首轮返回 **决定性工具调用**（由 `tool` 参数给定）——
+   *   · `"AskUserQuestion"`（非阻塞档）：工具发起即返回 ack，**不产生等待态**
+   *     （本批裁① 的正面钉面，见 R2-nb 用例）；
+   *   · `"ProjectCreate"`（真阻塞档）：`pathPanel` 在自己的 fiber 里 `.?` 等待，
+   *     并把答复作为 `createChain` 的入参 ⇒ `awaitsAnswer=true` ⇒ 等待态闭环
+   *     （R2-panel 用例，本文件的主判决面）。
+   * 第二轮阻塞在 secondGate（制造回答后的稳定观察窗，断言「恢复 Processing」不被
+   * turn 秒完淹没），放行后文本收尾。
    */
-  private class AskLlm(requests: Ref[IO, List[LlmRequest]], secondGate: Deferred[IO, Unit]) extends LlmHandle[IO]:
+  private class AskLlm(
+    requests: Ref[IO, List[LlmRequest]],
+    secondGate: Deferred[IO, Unit],
+    tool: String,
+    toolInput: JsonObject
+  ) extends LlmHandle[IO]:
 
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
@@ -88,13 +112,7 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
         Stream.eval(requests.get.map(_.size)).flatMap { n =>
           if n == 1 then
             Stream(
-              StreamChunk.ToolCallChunk(
-                ToolCall(
-                  "tu-1",
-                  "AskUserQuestion",
-                  JsonObject("questions" -> Json.arr(Json.obj("question" -> Json.fromString("R2 wiring check?"))))
-                )
-              ),
+              StreamChunk.ToolCallChunk(ToolCall("tu-1", tool, toolInput)),
               StreamChunk.Done(None, None)
             )
           else
@@ -154,7 +172,8 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
 
   /**
    * 场景装配：hub + agent（Delegate 形态，有 parentRef——审计破坏性链的
-   * 主角）+ 首轮 AskUser 工具调用派发。返回观察点句柄。
+   * 主角）+ 首轮工具调用派发（`tool` 参数选择：AskUserQuestion 非阻塞档 /
+   * ProjectCreate 真阻塞档）。返回观察点句柄。
    */
   private case class Fixture(
     system: ActorSystem,
@@ -165,10 +184,11 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
     wsEvents: Ref[IO, List[Json]],
     requests: Ref[IO, List[LlmRequest]],
     secondGate: Deferred[IO, Unit],
+    tmp: os.Path,
     cleanup: IO[Unit]
   )
 
-  private def setup(name: String): Fixture =
+  private def setup(name: String, tool: String = "AskUserQuestion"): Fixture =
     val system = ActorSystem(s"r2-wiring-$name")
     val tmp = os.temp.dir()
     os.makeDir.all(tmp / "data")
@@ -176,10 +196,14 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
     PathUtil.setDataRoot(tmp / "data")
+    // 首轮工具调用入参：两档各自的最小合法载荷。
+    val toolInput =
+      if tool == "ProjectCreate" then JsonObject.empty
+      else JsonObject("questions" -> Json.arr(Json.obj("question" -> Json.fromString("R2 wiring check?"))))
     val program = for
       secondGate <- Deferred[IO, Unit]
       requests <- IO.ref(List.empty[LlmRequest])
-      llm = new AskLlm(requests, secondGate)
+      llm = new AskLlm(requests, secondGate, tool, toolInput)
       resources <- mkResources(system, tmp, llm)
       wsEvents <- IO.ref(List.empty[Json])
       hub <- system.spawn(InteractionHub(), s"hub-$name")
@@ -188,7 +212,7 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       def_ = AgentDef(
         name = "Worker",
         description = "r2 wiring fixture",
-        tools = List("AskUserQuestion"),
+        tools = List(tool),
         systemPrompt = ""
       )
       parentSink <- IO.ref(List.empty[AgentCommand])
@@ -229,6 +253,7 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       wsEvents,
       requests,
       secondGate,
+      tmp,
       cleanup = IO {
         nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
         PathUtil.setDataRoot(prevRoot)
@@ -263,16 +288,18 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
 
   // ============================================================
   // 主链路：标注 → 挂起零误报 → 回答解除 → 重新覆盖
+  // 🔴 本批裁① 后，**唯一**仍会产生等待态的调用方 = ProjectCreateTool.pathPanel
+  //    （真阻塞：答复即 createChain 的入参）⇒ 本用例改经该工具链驱动。
   // ============================================================
 
-  test("R2 闭环: 派发标 WaitingForUser → 挂起超阈值零误报 → 回答恢复 Processing → 重新覆盖可开火 → turn 完成 Idle") {
-    val f = setup("main")
+  test("R2 闭环 (panel): 真阻塞调用方派发标 WaitingForUser → 挂起超阈值零误报 → 回答恢复 Processing → 重新覆盖可开火 → turn 完成 Idle") {
+    val f = setup("main", tool = "ProjectCreate")
     (for
-      // ── 1. 派发：AskUser pending → WaitingForUser 标注 + askUser 卡渲染 ──
+      // ── 1. 派发：pathPanel（awaitsAnswer=true）→ WaitingForUser 标注 + askUser 卡渲染 ──
       _ <- waitFor(
         f.resources.agentRegistry,
         m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "AskUser 派发后 registry 未标 WaitingForUser"
+        "真阻塞调用方（pathPanel）派发后 registry 未标 WaitingForUser"
       )
       _ <- waitFor(
         f.wsEvents,
@@ -293,11 +320,20 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(st1, AgentStatus.WaitingForUser, "等待态必须原样保留（不被打扰）"))
 
       // ── 3. 回答落地 → 解除等待态恢复 Processing（secondGate 仍关，观察窗稳定）──
+      //   答案取**取消哨兵** ⇒ `parsePanelAnswer` 得 `PanelAnswer.Shelved` ⇒
+      //   不创建任何项目（本用例只判等待态配对，不判创建链——创建链由
+      //   `ProjectCreatePanelSpec` 覆盖），但 `.?` 的答复路径与 `answerLanded`
+      //   配对解除**逐字相同**（答复落地才是判据本体）。
       evs <- f.wsEvents.get
       askFrame = evs.find(j => j.hcursor.get[String]("type").toOption.contains("askUser")).get
       requestId = askFrame.hcursor.get[String]("requestId").toOption.get
+      _ <- IO(assert(requestId.startsWith("panel-"), s"面板 requestId 前缀应为本工具的 panel-：$requestId"))
       _ <- f.hub ! InteractionHubCommand.Answered(
-        InteractionAnswered(requestId, f.sid, Json.obj("answers" -> Json.arr(Json.fromString("alpha"))))
+        InteractionAnswered(
+          requestId,
+          f.sid,
+          Json.obj("answers" -> Json.arr(Json.fromString(ProjectCreateTool.CancelSentinel)))
+        )
       )
       _ <- waitFor(
         f.resources.agentRegistry,
@@ -337,16 +373,50 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
   }
 
   // ============================================================
+  // 🔴 本批裁① 的**正面钉面**（取代历史用例 1 的前提）：工具提问 ⇒ 零等待态。
+  //    真 AgentActor + 真 hub + 真 AskUserQuestionTool（非阻塞档）。
+  // ============================================================
+
+  test("R2-nb（裁①）: 工具非阻塞提问 ⇒ 卡片渲染 + 槽位在 + registry **恒不出现** WaitingForUser（零误标）") {
+    val f = setup("askuser-nonblocking")
+    (for
+      // 卡片必须真渲染出来（否则「没有等待态」可能只是因为什么都没发生）
+      _ <- waitFor(
+        f.wsEvents,
+        evs => evs.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
+        "非阻塞 askUser 卡未渲染"
+      )
+      // 观察窗：足够长，若真存在历史标注路径必然已落（工具有 ack 即时返回，
+      // 标注在命令处理内同步发生）——窗口取 1.5s，远超单次命令处理时延。
+      _ <- IO.sleep(1500.millis)
+      st <- statusOf(f.resources, f.sid)
+      _ <- IO(
+        assert(
+          st != AgentStatus.WaitingForUser,
+          s"非阻塞工具提问出现了 WaitingForUser —— 裁①「全量非阻塞」未落地（status=$st）"
+        )
+      )
+      // 负控的反向印证：等待态是**从未发生**，不是「被谁清了」——活动戳仍是
+      // Processing 语义下的持续推进（turn 仍在跑，未被挂起）。
+      _ <- IO(assert(st == AgentStatus.Processing, s"非阻塞提问后应保持 Processing，实测 $st"))
+      // 槽位确实挂上了 hub（卡片 + 槽位 +1 是「提问真的派发了」的证据）
+      snap <- f.hub.?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply))
+      _ <- IO(assert(snap.nonEmpty, s"非阻塞提问必须挂上 hub pending 槽（实测快照 = $snap）"))
+      _ <- IO(assert(snap.exists(_.hcursor.get[String]("type").toOption.contains("askUser")), s"槽载荷应含 askUser：$snap"))
+    yield ()).guarantee(f.cleanup)
+  }
+
+  // ============================================================
   // 取消路径：pending 期间 Interrupt → Idle（等待态不是终态，兜底可达）
   // ============================================================
 
-  test("R2 闭环: pending 期间用户 Interrupt → 解除为 Idle（取消路径同步解除，真挂死兜底可达）") {
-    val f = setup("cancel")
+  test("R2 闭环 (panel): pending 期间用户 Interrupt → 解除为 Idle（取消路径同步解除，真挂死兜底可达）") {
+    val f = setup("cancel", tool = "ProjectCreate")
     (for
       _ <- waitFor(
         f.resources.agentRegistry,
         m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "AskUser 派发后 registry 未标 WaitingForUser"
+        "真阻塞调用方（pathPanel）派发后 registry 未标 WaitingForUser"
       )
       _ <- f.actor ! AgentCommand.Interrupt()
       _ <- waitFor(
@@ -369,12 +439,12 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
   // ============================================================
 
   test("#250②: pending 期间 Interrupt → hub 槽位回收 + 广播 askUserClosed(reason=turn-interrupted)，且不误伤别的 sourceSession") {
-    val f = setup("interrupt-cleanup")
+    val f = setup("interrupt-cleanup", tool = "ProjectCreate")
     (for
       _ <- waitFor(
         f.resources.agentRegistry,
         m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "AskUser 派发后 registry 未标 WaitingForUser"
+        "真阻塞调用方（pathPanel）派发后 registry 未标 WaitingForUser"
       )
       _ <- waitFor(
         f.wsEvents,
