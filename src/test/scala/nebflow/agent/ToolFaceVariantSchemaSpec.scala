@@ -2,7 +2,7 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.actor.AgentDef
-import nebflow.core.tools.{AskUserQuestionTool, MailTool, NodeReportToolDef, ToolRegistry}
+import nebflow.core.tools.{MailTool, NodeReportToolDef, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
 /**
@@ -163,12 +163,14 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     do assertEquals(AgentCore.schemaVariantFor(td, id).inputSchema, td.inputSchema, s"${td.name}: 变体改了 inputSchema")
   }
 
-  test("① 判据单点: 三个变体构造器只被 AgentCore 单点调用（源码级 pin）") {
+  test("① 判据单点: 两个变体构造器只被 AgentCore 单点调用（源码级 pin）") {
     val root = os.pwd
     val mainSrc = root / "src" / "main" / "scala"
     assert(os.exists(mainSrc), s"源码根不存在：$mainSrc（本 spec 必须在仓根运行）")
+    // re-pin（root 2026-10-02 令 #462 裁②「不保留 mode 键」）：`rootVariant(` 已随
+    // AskUser 的 schema 分叉面整体退场（工具与 AgentCore 双侧零出现）⇒ 本表只留
+    // 仍在役的两个构造器；下方另有「已退场构造器零出现」的反向断言。
     val callers = Map(
-      "rootVariant(" -> "AgentCore.scala",
       "roleVariant(" -> "AgentCore.scala",
       "addressFaceVariant(" -> "AgentCore.scala"
     )
@@ -178,13 +180,28 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         .filter(p => p.ext == "scala")
         .filter { p =>
           val src = os.read(p)
-          // 定义行（`def rootVariant(`）不算调用；其余出现处必须是单点文件。
+          // 定义行（`def roleVariant(`）不算调用；其余出现处必须是单点文件。
           src.linesIterator.exists(l => l.contains(needle) && !l.contains("def " + needle))
         }
         .map(_.last)
         .toList
         .sorted
       assertEquals(files, List(owner), s"变体构造器 '$needle' 出现了第二个调用点（变体选择必须单点）")
+
+    // AskUser 的 schema 变体构造器已退役：全 main 源内零出现（防「顺手写回」）
+    val retiredFiles = os
+      .walk(mainSrc)
+      .filter(p => p.ext == "scala")
+      .filter(_.last != "AgentCore.scala")
+      .filter(p => os.read(p).contains("rootVariant("))
+      .map(_.last)
+      .toList
+      .sorted
+    assertEquals(retiredFiles, Nil, "已退役的 `rootVariant(` 又出现在 main 源里")
+    assert(
+      !os.read(mainSrc / "nebflow" / "agent" / "AgentCore.scala").contains("rootVariant("),
+      "AgentCore 仍引用 rootVariant（AskUser 变体面未随裁② 退场）"
+    )
 
     // 身份装配判据（角色维度）只许出现在 AgentCore 单点内
     val roleFilterFiles = os
@@ -199,6 +216,19 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     // 既有 root 判据仍单点（与 AskUser 批同一纪律；此处复验不回归）。
     // re-pin（2026-09-25 身份谓词单点化批）：判据名分字面量 "Nebula" 收敛为常量
     // RootAgentIdentity.Name（值不变），正则同步钉常量形态。
+    //
+    // 🔴 re-pin #2（本批顺手对齐，**非本批引入**）：期望值由 `AgentCore.scala` 改为
+    // `RootAgentIdentity.scala` —— 「严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F)」
+    // 已把该谓词自 `AgentCore` 下沉到 `actor.RootAgentIdentity.isRootAgent`
+    // （`AgentCore.scala:40` 仅剩 `isNebulaRoot` 的**另一形态**字面量 `"Nebula"`，
+    // 不命中本正则），但该批只同步了自带 spec（`AskUserDualModeSchemaSpec` 的
+    // 「禁第二份表达式」已钉 `List("RootAgentIdentity.scala")`），**漏改了本处** ⇒
+    // 本断言在 `main` 上即为红（实测：`git archive main` 净副本跑本 spec 同为红）。
+    // 判据本体（一处实现）未变：正则仍只有一个命中文件，且全仓唯一命中
+    // `RootAgentIdentity.scala`，与 `git show main:…AgentCore.scala:40` 的
+    // `agentDef.exists(_.name == "Nebula") && depth == 0`（另一形态）互不覆盖。
+    // ⚠ 尽本批的落点纪律：本文件已列于计划件 §二 落点；此改动仅改**期望常量**，
+    // 不动正则/结构。main 侧仍需同一行 re-pin（本批禁 push ⇒ 不在本批生效）。
     val pred = """(?s)name\s*==\s*RootAgentIdentity\.Name\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
     val holders = os
       .walk(mainSrc)
@@ -215,7 +245,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       .map(_.last)
       .toList
       .sorted
-    assertEquals(holders, List("AgentCore.scala"), "root 判据出现第二份实现")
+    assertEquals(holders, List("RootAgentIdentity.scala"), "root 判据出现第二份实现")
   }
 
   // ============================================================
@@ -242,10 +272,11 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val baseline = ToolRegistry.ALL_TOOLS.map(td => td.name -> td.inputSchema).toMap
     for (name, face) <- crossSections do
       val drifted = face.filter(td => td.inputSchema != baseline(td.name)).map(_.name).toSet
-      // **全注册表唯一允许的 schema 差异** = AskUser 批（已合并）的 root `mode` 属性；
-      // 本批（Q4/Q5）在**任何身份**下都不得改 schema（Q5 口径 + 试点口径）。
-      val allowed = if name == "Nebula-root" then Set(AskUserQuestionTool.Name) else Set.empty[String]
-      assertEquals(drifted, allowed, s"$name 的 schema 漂移超出允许面（本批判据 = 只动 description）")
+      // re-pin（root 2026-10-02 令 #462 裁②「不保留 mode 键」）：AskUser 的历史
+      // root `mode` 属性已随分叉面退场 ⇒ 全注册表**任何身份**下的 schema 都不得有
+      // 差异（豁免集合由 `Set(AskUserQuestionTool.Name)` 收紧为 `Set.empty`）。
+      val allowed = Set.empty[String]
+      assertEquals(drifted, allowed, s"$name 的 schema 漂移超出允许面（收紧后 = 零漂移）")
       for td <- face do
         if !allowed.contains(td.name) then
           assertEquals(

@@ -170,7 +170,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     gotAsk: Ref[IO, Option[(String, List[nebflow.shared.AskItem])]]
   )(system: ActorSystem): IO[ActorRef[AgentCommand]] =
     lazy val behavior: Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] {
-      case AgentCommand.AskUser(requestId, items, replyToOpt, _askMode) =>
+      case AgentCommand.AskUser(requestId, items, replyToOpt, _askAttachments, _awaitsAnswer) =>
         gotAsk.set(Some((requestId, items))) *>
           (hub ! InteractionHubCommand.Request(
             InteractionRequest(

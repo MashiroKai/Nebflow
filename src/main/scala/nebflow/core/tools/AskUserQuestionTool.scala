@@ -16,6 +16,26 @@ object AskUserQuestionTool extends Tool:
 
   val name = Name
 
+  /**
+   * 附件引用（顶层可选参数 `attachments`）的**单件大小上限**——仅作人的可点击入口，
+   * 路径不被读取、不进模型上下文（需要模型看见内容 ⇒ 用 `images`）。
+   *
+   * 上限：件数 = [[nebflow.shared.AttachContract.MaxAttachmentsPerMessage]]（全仓
+   * 消息附件口径的单一数值权威面）；单件 = 本常量（对齐前端 `attachmentPreview.js`
+   * 的 `MAX_TEXT_BYTES` 打开闸 ⇒ 不产生「可贴但不可看」）。
+   *
+   * ⚠ 声明位置在本对象**最前段**（早于 `description` / `inputSchema`）：两者都以
+   * 插值引用本常量，Scala 单例的字段按声明序初始化 ⇒ 放在后面会读到 0（`0 MB`）。
+   */
+  val MaxAttachmentBytes: Long = 100L * 1024 * 1024
+
+  /** 件数超限的错误码。 */
+  val AttachCountCode = "ASKUSER_ATTACH_TOO_MANY"
+
+  /** 附件域的**文案用**清单（判据本体不在此 —— 见 [[judgeAttachmentPath]]）。 */
+  val ReadableDomainLabel: String =
+    "projects, uploads, plots, workspace-items, voice-models, docs, evidence"
+
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question — never ask clarifying questions in plain text.
 
@@ -49,7 +69,7 @@ Conditional branching (dependsOn):
 Attachments:
 - `attachments` (optional, top level, at most 9 entries) lists absolute local file paths to hand to the USER as clickable entries — the file opens in the Canvas panel when the user clicks it. Nothing is read into your context.
 - Use it when a human needs to OPEN a file to decide. To make the MODEL see a file's content, use the `images` parameter instead. The same path may appear in both — they serve different readers.
-- Each entry must be an absolute POSIX path inside a readable domain: projects, uploads, plots, workspace-items, voice-models, docs, evidence. Relative paths, `.`/`..`, `~`, symlinks that resolve outside those domains, non-regular files, unreadable files, credential paths and entries above 100 MB are rejected — the whole call fails with a readable error naming the offending path.
+- Each entry must be an absolute path to a regular local file that is safe to show a human. Refused: relative paths, `~`, `.`/`..` segments, non-regular or unreadable files, symlinks whose real target is refused, entries above 100 MB, credential locations and credential-shaped names, hard links sharing a credential file's inode, and files the file endpoint would not serve — inside the Nebflow data directory that means anything outside projects, uploads, plots, workspace-items, voice-models and docs, and inside the project's `.nebflow` anything outside the evidence subtree. The whole call fails with a readable error naming the offending path.
 
 Behavior:
 - This tool is non-blocking: it returns immediately with an acknowledgement, and the user's answer arrives later as a message in this session. Do not wait for it. If no answer arrives and you cannot decide, proceed with your best judgment and say so in your wrap-up."""
@@ -140,8 +160,11 @@ Behavior:
         "attachments" -> io.circe.Json.obj(
           "type" -> "array".asJson,
           "description" -> ("Optional absolute file paths to hand to the user as clickable entries "
-            + "(they open in the Canvas panel). Max 9 entries, 100 MB each. Nothing is read into your context.").asJson,
-          "maxItems" -> 9.asJson,
+            + s"(they open in the Canvas panel). Max ${AttachContract.MaxAttachmentsPerMessage} entries, "
+            + s"${MaxAttachmentBytes / (1024 * 1024)} MB each. Nothing is read into your context.").asJson,
+          // 件数上限的**机器读数**取自全仓单点常量（禁第二份数值）；description 散文里的
+          // 同一数字由 spec 的「散文钉常量」断言守住漂移。
+          "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
           "items" -> io.circe.Json.obj(
             "type" -> "string".asJson,
             "description" -> "Absolute path, inside a readable domain only.".asJson
@@ -271,7 +294,7 @@ Behavior:
    * 与历史阻塞腿的差别（阻塞腿已整体移除）：
    *  ① `replyTo` = 一次性桥接引用（[[AskUserAnswerBridge]]）而非工具 fiber 的回执；
    *  ② **不做 `.?`**（不等待）⇒ 派发后立刻返回 ack，turn 不暂停。
-   * 无窗口预检（`rootWindowReachable`）已随裁④ 去除：问题经 hub 扇出
+   * 无窗口可达性预检（历史上的 root 窗口探针）已随裁④ 去除：问题经 hub 扇出
    * （`InteractionHub.handleRequest:165-199`）或挂 pending（`snapshotFrames`）
    * 承接 ⇒ 绝对无窗也不再 fail-closed 拒绝。
    */
@@ -302,26 +325,6 @@ Behavior:
       "message in this session — do not wait for it; if no answer arrives and you cannot decide, proceed with your best judgment."
 
   /**
-   * 附件引用（顶层可选参数 `attachments`）——**仅作人的可点击入口**，路径不被读取、
-   * 不进模型上下文（需要模型看见内容 ⇒ 用 `images`）。
-   *
-   * 上限：件数 = [[nebflow.shared.AttachContract.MaxAttachmentsPerMessage]]（全仓
-   * 消息附件口径的单一数值权威面）；单件 = [[MaxAttachmentBytes]]（对齐前端
-   * `attachmentPreview.js` 的 `MAX_TEXT_BYTES` 打开闸 ⇒ 不产生「可贴但不可看」）。
-   */
-  val MaxAttachmentBytes: Long = 100L * 1024 * 1024
-
-  /** 件数超限的错误码。 */
-  val AttachCountCode = "ASKUSER_ATTACH_TOO_MANY"
-
-  /** 附件域的**文案用**清单（判据本体不在此 —— 见 [[judgeAttachmentPath]]）。 */
-  val ReadableDomainLabel: String =
-    "projects, uploads, plots, workspace-items, voice-models, docs, evidence"
-
-  private def attachmentError(code: String, message: String): ToolError =
-    ToolError(s"$message ($code)")
-
-  /**
    * 顶层 `attachments` 解析（与 `parseItems` 同族；与 `canvas` 同为顶层可选）。
    * 形态宽松读（缺省 / 非数组 ⇒ `Nil`），**纯** —— 判据本体在
    * [[validateAttachments]]（那需要 `FilePolicyPort`，属效果面）。
@@ -330,6 +333,9 @@ Behavior:
     input("attachments").flatMap(_.asArray) match
       case None => Nil
       case Some(arr) => arr.flatMap(_.asString).toList
+
+  private def attachmentError(code: String, message: String): ToolError =
+    ToolError(s"$message ($code)")
 
   /**
    * 附件校验：**单次遍历、fail-closed**（任一不过 ⇒ 整次调用拒绝，不部分放行）。
@@ -351,23 +357,33 @@ Behavior:
         acc.flatMap(done => validateOneAttachment(raw).map(done :+ _))
       }
 
-  /** 逐条校验：词法形态 → 规范化 → 存在/普通文件/可读 → 大小 → 白名单/凭据层。 */
+  /**
+   * 逐条校验：词法形态 → 规范化 → 存在/普通文件/可读 → 大小 → 白名单/凭据层。
+   *
+   * 词法面的判序（`~` 先于绝对性）：`~` 的拒绝理由与被展开后的绝对性无关，先判
+   * `~` 才能给出「不得使用 `~`」这一可判读理由（否则 `~/x` 会被笼统报成「非绝对」，
+   * 失去「禁展开」这一语义）。
+   */
   private def validateOneAttachment(raw: String): Either[ToolError, String] =
-    val abs = try java.nio.file.Paths.get(raw) catch case _: Throwable => null
-    if abs == null || !abs.isAbsolute then
-      Left(attachmentError("ASKUSER_ATTACH_NOT_ABSOLUTE", s"Attachment path must be absolute: $raw"))
-    else if raw.contains("~") then
+    if raw == "~" || raw.startsWith("~/") || raw.startsWith("~\\") then
       // `~` 禁展开：展开会把接收端 home 暴露给发送端构造的字符串（同 TargetDirGuard 理由）。
       Left(attachmentError("ASKUSER_ATTACH_TILDE", s"Attachment path must not use `~`; give an absolute path: $raw"))
-    else if raw.split('/').exists(s => s == "." || s == "..") then
-      // `..` / `.` 词法 ⇒ 拒，**禁自动折叠**（折叠会把字符串静默改写为另一路径，审计面失去可比性）。
-      Left(
-        attachmentError(
-          "ASKUSER_ATTACH_RELATIVE_SEGMENT",
-          s"Attachment path must not contain `.` or `..` segments: $raw"
-        )
-      )
     else
+      val abs = try java.nio.file.Paths.get(raw) catch case _: Throwable => null
+      if abs == null || !abs.isAbsolute then
+        Left(attachmentError("ASKUSER_ATTACH_NOT_ABSOLUTE", s"Attachment path must be absolute: $raw"))
+      else if raw.split('/').exists(s => s == "." || s == "..") then
+        // `..` / `.` 词法 ⇒ 拒，**禁自动折叠**（折叠会把字符串静默改写为另一路径，审计面失去可比性）。
+        Left(
+          attachmentError(
+            "ASKUSER_ATTACH_RELATIVE_SEGMENT",
+            s"Attachment path must not contain `.` or `..` segments: $raw"
+          )
+        )
+      else resolveAndJudgeAttachment(raw, abs)
+
+  /** 词法面通过后的实体面：存在/普通文件/可读 → 大小 → 白名单/凭据层。 */
+  private def resolveAndJudgeAttachment(raw: String, abs: java.nio.file.Path): Either[ToolError, String] =
       val real =
         try Some(abs.toRealPath()) // 符号链接按**真实路径**判，不做按原字符串判的旁路
         catch case _: Throwable => None
