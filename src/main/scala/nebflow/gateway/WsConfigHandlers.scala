@@ -53,6 +53,7 @@ private[gateway] object WsConfigHandlers:
     "setSafetyMode" -> handleSetSafetyMode,
     "setBypass" -> handleSetBypass,
     "getConfig" -> handleGetConfig,
+    "getToolsList" -> handleGetToolsList,
     "setOnboardingState" -> handleSetOnboardingState,
     "probeLlm" -> handleProbeLlm,
     "updateConfig" -> handleUpdateConfig,
@@ -579,6 +580,23 @@ private[gateway] object WsConfigHandlers:
       }
     }
   end handleGetConfig
+
+  /**
+   * A4 (perf-481): serve the tool-description list on demand.
+   *
+   * The list used to be embedded in every `serverConfig` frame (connect +
+   * every config broadcast, ~93.5 KB each). The frontend asks for it once per
+   * connection instead; the frame shape is unchanged (`{type:"toolsList", tools}`)
+   * so `state.availableTools` stays populated by the same assignment.
+   */
+  private def handleGetToolsList(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    ctx.sendToolsList(wsSend)
+  end handleGetToolsList
 
   private def handleSetOnboardingState(
     ctx: WsDispatchCtx,

@@ -2736,6 +2736,15 @@ onMessage('serverConfig', (msg, view) => {
 // (09-05 五项裁定①：MCP 概念由 Plugins 系统全面取代，设置页入口移除)。
 // The backend still broadcasts mcpServersUpdate for other consumers.
 
+
+// --- Tool list (perf-481 A4) ---
+// The tool descriptions used to ride every `serverConfig` frame (~93.5 KB each,
+// connect + every config broadcast). They are now fetched once per connection
+// via `getToolsList`. Same assignment as before, so `state.availableTools`
+// keeps its single writer face.
+onMessage('toolsList', (msg) => {
+  if (msg.tools) state.availableTools = msg.tools;
+});
 onMessage('configData', (msg, view) => {
   state.configText = msg.config || '';
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save

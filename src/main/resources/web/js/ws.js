@@ -133,7 +133,7 @@ const handlers = {};
 // and contributed to CSS-spinner jank (the compositor can't paint frames while
 // the main thread is busy).
 const GLOBAL_MSG_TYPES = new Set([
-  'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
+  'sessionList', 'serverConfig', 'toolsList', 'agentList', 'agentSessionList',
   'agentSystemPrompt', 'agentSystemPromptSaved',
   'configData', 'configUpdated', 'configUpdateFailed',
   'toolResultTtl', 'toolResultTtlSaved', 'modelOptions',
@@ -542,6 +542,9 @@ export function connect() {
     sendWs({type: 'memoryStatus'});
     sendWs({type: 'getLlmLog'});
     sendWs({type: 'getConfig'});
+    // perf-481 A4: the tool-description list (~93.5 KB) no longer rides every
+    // serverConfig frame — it is fetched once per connection instead.
+    sendWs({type: 'getToolsList'});
     sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
     // freezetimeout B2: 新连接从零计 miss；先清残留 interval 再武装 —— forceReconnect
     // 会置空 onclose 后 close()（不触发 onclose ⇒ 走不到下面的 clearInterval），若不在

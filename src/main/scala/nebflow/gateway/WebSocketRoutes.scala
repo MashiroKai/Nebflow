@@ -935,8 +935,6 @@ class WebSocketRoutes(
                 workScheduleCfg <- sharedResources.freezeScheduleRef.get
                 skipUntil <- sharedResources.freezeSkipUntilRef.get
                 sttSvc <- sttServiceRef.get
-                toolsList = ToolRegistry.ALL_TOOLS
-                  .map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
                 mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
                   io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                 })
@@ -960,7 +958,9 @@ class WebSocketRoutes(
                           )
                           .asJson,
                         "stt" -> SttService.serverConfigNode(sttSvc),
-                        "tools" -> toolsList.asJson,
+                        // A4: the tool list is served on demand (`getToolsList`),
+                        // not on every connect + config broadcast — see the note
+                        // above `toolsListJson`.
                         "mcpServers" -> mcpServers.asJson
                       )
                       .noSpaces
@@ -1191,9 +1191,34 @@ class WebSocketRoutes(
 
   end logInputHistory
 
+  /**
+   * A4 (perf-481): the full tool-description list, exposed as its OWN message
+   * instead of riding every `serverConfig` frame.
+   *
+   * Why: `serverConfig` carries five small config nodes, but the tool list alone
+   * is ~93.5 KB of tool descriptions. Embedding it made EVERY config broadcast —
+   * and every WS connect — a ~93.5 KB frame to every connection, for a payload
+   * the frontend never reads: `state.availableTools` is only ever WRITTEN
+   * (`main.js:2701`) and has ZERO read sites across `web/` (measured by grep
+   * over `src/main/resources/web/`, and re-confirmed by the DOM/e2e probe leg
+   * before this change).
+   *
+   * On-demand (plan OD-2 default) rather than deleted: the field is the only
+   * provider of `state.availableTools`, so dropping it outright would silently
+   * break any future consumer. `getToolsList` serves it on request, and the
+   * frontend asks once per connection — so the cost moves from "every config
+   * broadcast × every connection" to "once per connect".
+   */
+  private def toolsListJson: io.circe.Json =
+    ToolRegistry.ALL_TOOLS
+      .map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
+      .asJson
+
+  /** A4: the on-demand face of the tool list (`getToolsList` → this frame). */
+  private def sendToolsList(wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    wsSend(io.circe.Json.obj("type" -> "toolsList".asJson, "tools" -> toolsListJson))
+
   private def broadcastServerConfig: IO[Unit] =
-    val toolsList =
-      ToolRegistry.ALL_TOOLS.map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
       workScheduleCfg <- sharedResources.freezeScheduleRef.get
@@ -1221,7 +1246,8 @@ class WebSocketRoutes(
             )
             .asJson,
           "stt" -> SttService.serverConfigNode(sttSvc),
-          "tools" -> toolsList.asJson,
+          // A4: `tools` intentionally NOT here — see the note above the helper
+          // (it was ~93.5 KB on every broadcast; now served by `getToolsList`).
           "mcpServers" -> mcpServers.asJson
         )
       )
@@ -1723,6 +1749,7 @@ class WebSocketRoutes(
       sendAgentSessionListImpl = sendAgentSessionList,
       sendAgentSessionListByNameImpl = sendAgentSessionListByName,
       sendMemoryStatusImpl = sendMemoryStatus,
+      sendToolsListImpl = sendToolsList,
       expandTildeImpl = expandTilde,
       wsBrowseEventImpl = wsBrowseEvent,
       browseResultFrameImpl = WebSocketRoutes.browseFrame,
