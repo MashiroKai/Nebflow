@@ -27,6 +27,7 @@
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
 import { esc, authHeaders } from './flowHelpers.js';
+import { onMinuteTick } from './utils.js';
 import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
 import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
@@ -47,7 +48,6 @@ const PROJECT_NEW_EMPHASIS_MS = 900;      // §F 一次性强调环保持时长
 const PROJECT_NEW_EMPHASIS_REDUCED_MS = 2000; // §F-3 降级：静态环保持 ~2s（新卡仍可辨识）
 const PROJECT_FLIP_MS = 240;              // §F 邻卡 FLIP 衔接
 const PROJECT_FLIP_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)'; // split.css:503 flex 族同值
-const PROJECTS_FALLBACK_POLL_MS = 60_000; // 兜底 C 频率：对齐 taskList.js:209 范式
 
 function openProjectTab() {
   const pane = getTabPane('projects');
@@ -1031,13 +1031,16 @@ onMessage('projectArchived', (msg) => onProjectArchivedFrame(msg));
 // 为什么必须有：进程外改动（有人直接编辑/删除 `~/.nebflow/projects/<name>/project.json`，
 // 或另一个实例写的盘）**任何事件方案都覆盖不到**——全仓无文件 watcher。取证 §H-5 明确
 // 声明此为不可覆盖面 ⇒ 事件面 + 低频重拉是唯一闭合方案。
-// 频率与范式对齐 taskList.js:209（`setInterval(refreshLastActive, 60_000)`）。
+// perf-481 A5：原先此处自持一个 60s `setInterval`，与 taskList.js 的相对时间拍**各自**
+// 计时 ⇒ 两次无关突发落在任意时刻。现改挂**全页共享的墙上分钟栅格**（utils.onMinuteTick）：
+// 周期仍是 1 分钟（请求数不变），但两拍合流为**每分钟一次突发**，且相位锚在分钟边界
+// 而非页面加载时刻。
 // 门控（§D-3）：文档可见 ∧ projects 页签在前台（`.canvas-tab-pane.active`，split.css:643）
 // ∧ 非 flow-map 就地视图 ∧ 面板已出列表（ready/empty；loading/error 由既有有界退避
 // 重试 + onReconnect 腿负责，不在此叠加第二个重试源）。
 // 与事件面不冲突：事件到达即刻定点增删、不等轮询；轮询仅在「名单与磁盘不一致」时
 // 产生一次定点增删（同名单 ⇒ reconcile 零 DOM 变更，只定点刷新摘要槽）。
-setInterval(() => {
+onMinuteTick(() => {
   if (document.visibilityState !== 'visible') return;
   const pane = getTabPane('projects');
   if (!pane || !pane.classList.contains('active')) return;
@@ -1046,7 +1049,7 @@ setInterval(() => {
   const state = scroll.dataset.projectsState;
   if (state !== 'ready' && state !== 'empty') return;
   renderProjectsInto(scroll);
-}, PROJECTS_FALLBACK_POLL_MS);
+});
 
 // 切语言即重渲（contenti18n 批）：项目名/描述走 locale 映射（js/contentI18n.js），
 // 语言一变列表卡片必须重渲——本批前此处零监听。复用上面的视图分流判据

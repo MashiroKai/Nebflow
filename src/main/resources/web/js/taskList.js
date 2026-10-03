@@ -13,7 +13,7 @@
 //     （缓存删除）+ 快照对账消化，前端零链派生零判据（旧 deriveArchivedIds/
 //     clusterBatches 时间批镜像已删除，判据唯一存在于后端 FlowMapStore）。
 import { t } from './i18n.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, onMinuteTick } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect } from './ws.js';
 import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS, controlChain } from './nodeData.js';
@@ -244,9 +244,16 @@ function refreshLastActive() {
 }
 function ensureLastActiveTimer(running) {
   if (running && !lastActiveTimer) {
-    lastActiveTimer = setInterval(refreshLastActive, 60_000);
+    // perf-481 A5: was a private `setInterval(60_000)`. Relative timestamps
+    // ("3m ago") only need minute granularity, so this refresh shares the
+    // page-wide wall-clock minute grid (utils.onMinuteTick) instead of owning a
+    // second 1-minute timer whose phase drifts from the project-tab fallback.
+    lastActiveTimer = onMinuteTick(() => {
+      if (document.hidden) return;
+      refreshLastActive();
+    });
   } else if (!running && lastActiveTimer) {
-    clearInterval(lastActiveTimer);
+    lastActiveTimer();
     lastActiveTimer = null;
   }
 }

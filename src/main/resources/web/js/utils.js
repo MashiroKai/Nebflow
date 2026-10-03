@@ -1221,3 +1221,100 @@ export function truncateMiddle(str, max = 96, tailKeep = 24) {
   if (headLen < 1) return s.slice(0, max);
   return s.slice(0, headLen) + '…' + (tailKeep > 0 ? s.slice(-tailKeep) : '');
 }
+
+// ── Shared minute-grid ticker (perf-481 A5: stagger / coalesce the cheap polls) ──
+//
+// WHY a shared ticker instead of one `setInterval(60_000)` per module: several
+// independent cheap refreshes (project list fallback, task-panel relative
+// timestamps) each owned their own 1-minute interval. Their phases were set at
+// module load, so they drift apart and the page emits a burst of unrelated
+// requests at arbitrary instants. Two modules on the same nominal period should
+// share ONE timer, and that timer should sit on the wall-clock minute boundary
+// so a refresh aligns with the user-visible "minute" instead of an arbitrary
+// offset from page load.
+//
+// The ticker is LATE-ARMED: it schedules a self-correcting `setTimeout` to the
+// next minute boundary, runs the subscribers once, then re-arms. That keeps the
+// timer phase stable across the drift a plain `setInterval` accumulates.
+//
+// Visibility: a page that is not visible must do ZERO work — the timer stops
+// (not just short-circuits) while `hidden` and re-arms on `visibilitychange`,
+// so a backgrounded tab holds no pending timer and issues no requests.
+//
+// The subscriber set is the single source of truth for "who refreshes on the
+// minute"; no module may create a second 1-minute polling timer.
+/** @type {Set<() => void>} */
+const minuteTickSubscribers = new Set();
+let minuteTickTimer = null;
+
+/** True while the shared minute ticker is armed (test/observability face). */
+export function minuteTickerArmed() {
+  return minuteTickTimer !== null;
+}
+
+function minuteTickDelay(now = Date.now()) {
+  const ms = 60_000 - (now % 60_000);
+  // 0-length delay would busy-spin exactly on the boundary; nudge by 1ms.
+  return ms === 60_000 ? 1 : ms;
+}
+
+function armMinuteTick() {
+  if (typeof document !== 'undefined' && document.hidden) {
+    // Background ⇒ hold NO pending timer at all (a short-circuit inside the
+    // callback would still wake the page once per minute).
+    if (minuteTickTimer !== null) {
+      clearTimeout(minuteTickTimer);
+      minuteTickTimer = null;
+    }
+    return;
+  }
+  if (minuteTickTimer !== null) return;
+  minuteTickTimer = setTimeout(() => {
+    minuteTickTimer = null;
+    // Re-arm FIRST so a throwing subscriber can never stop the cadence.
+    armMinuteTick();
+    for (const cb of [...minuteTickSubscribers]) {
+      try { cb(); } catch { /* one subscriber must not break the others */ }
+    }
+  }, minuteTickDelay());
+}
+
+function onVisibilityForMinuteTick() {
+  if (typeof document !== 'undefined' && !document.hidden) {
+    armMinuteTick();
+    // A tab waking up should not wait for the next boundary to catch up.
+    for (const cb of [...minuteTickSubscribers]) {
+      try { cb(); } catch { /* one subscriber must not break the others */ }
+    }
+  } else {
+    armMinuteTick(); // hidden ⇒ drops the pending timer
+  }
+}
+
+/**
+ * Subscribe to the shared minute-grid tick (runs once per wall-clock minute,
+ * only while the document is visible).
+ * @param {() => void} cb
+ * @returns {() => void} unsubscribe
+ */
+export function onMinuteTick(cb) {
+  if (typeof cb !== 'function') return () => {};
+  const first = minuteTickSubscribers.size === 0;
+  minuteTickSubscribers.add(cb);
+  if (first) {
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityForMinuteTick);
+    }
+    armMinuteTick();
+  }
+  return () => {
+    minuteTickSubscribers.delete(cb);
+    if (minuteTickSubscribers.size === 0 && minuteTickTimer !== null) {
+      clearTimeout(minuteTickTimer);
+      minuteTickTimer = null;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityForMinuteTick);
+      }
+    }
+  };
+}
