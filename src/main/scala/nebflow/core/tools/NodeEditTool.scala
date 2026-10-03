@@ -5,7 +5,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.entity.EntityLoader
+import nebflow.core.entity.{BuiltinAgents, EntityLoader}
 import nebflow.core.project.*
 import nebflow.shared.PathUtil
 
@@ -351,7 +351,7 @@ object NodeEditTool extends Tool:
         ),
         "verify" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Verify-agent name (default \"general\"): the session that checks each worker output (general agent + plugins — shares the node's plugins). Must exist in the Agent Catalog. Only with loop=true".asJson
+          "description" -> "Verify-agent name (default the built-in executor agent, 'nebflow'): the session that checks each worker output (executor agent + plugins — shares the node's plugins). Leave unset for the default; a custom name can be any agent in the Agent Catalog. Only with loop=true".asJson
         ),
         "verifyTask" -> Json.obj(
           "type" -> "string".asJson,
@@ -432,12 +432,15 @@ object NodeEditTool extends Tool:
     // loop 参数（LoopNode 批 2026-09-06）：Option 区分「未传」（编辑不改动 / 创建 None，
     // provided=false）与「传了」（loop true 启用 / false 停用）。载体经 implicit 传入
     // createNode/proceed/editNode——调用点零文本改动（与 notifyFlag 同机制）。maxRounds
-    // 缺省 5（与主设计 §2.5 K=5 同参）；verify 缺省 "general"（通用 agent + plugins）。
+    // 缺省 5（与主设计 §2.5 K=5 同参）；verify 缺省 = 内置执行 agent
+    // （BuiltinAgents.ExecutorName，builtin-merge 批 2026-10-03 起取代退役名
+    // —— 常量引用，禁字面量）。
     val loopJson = input("loop")
     val loopProvided = loopJson.exists(j => !j.isNull)
     val loopEnabled = loopJson.flatMap(_.asBoolean).getOrElse(false)
     val maxRounds = input("maxRounds").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(5)
-    val verify = input("verify").flatMap(_.asString).getOrElse("general")
+    val verify = input("verify").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+      .getOrElse(BuiltinAgents.ExecutorName)
     val verifyTask = input("verifyTask").flatMap(_.asString).getOrElse("")
     implicit val loopFlag: NodeEditLoop =
       if !loopProvided then NodeEditLoop(None, provided = false)
@@ -546,7 +549,7 @@ object NodeEditTool extends Tool:
         Left(
           ToolError(
             "'agent'/'skill'/'mcp' node params are RETIRED and no longer accepted (2026-09-05 plugin-architecture alignment) — " +
-              "every node executes the general agent; capability differentiation goes through 'plugins' (a plugin = skills + mcp.json, either " +
+              "every node executes the built-in executor agent; capability differentiation goes through 'plugins' (a plugin = skills + mcp.json, either " +
               "alone is valid; see the Plugin Catalog in your prompt). Existing flow-map nodes keep their old values for display only. " +
               "(NODE_AGENT_RETIRED)"
           )
@@ -967,9 +970,11 @@ object NodeEditTool extends Tool:
     roleFlag: NodeEditRole,
     chainDecl: NodeEditChainDecl
   ): IO[Either[ToolError, String]] =
-    // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
-    // 专业能力由 plugins 差异化；NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。
-    val agentName = "general"
+    // 执行统一内置执行 agent（2026-09-05 插件架构对齐 + builtin-merge 批
+    // 2026-10-03 收敛）：新建节点不再接受 agent 参数，专业能力由 plugins 差异化；
+    // NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。名字取代码单点常量，
+    // 禁字面量。
+    val agentName = BuiltinAgents.ExecutorName
     val inIds = NodeTools.parseIn(inJson)
     // deps 复用 parseIn 三形态宽容解析（deps 设计 §1.2：不新写解析器）；报错文案
     // 把参数名替换成 deps，避免误导（解析器文案写死 'in'）。
@@ -1058,13 +1063,14 @@ object NodeEditTool extends Tool:
                 )
               )
             else
-              // 1. agent 存在性（新建恒 "general"——库缺 general = 环境残缺，fail-fast）
+              // 1. agent 存在性（新建恒 = BuiltinAgents.ExecutorName；库缺该内置
+              //    条目 = 环境残缺，fail-fast）
               EntityLoader.loadAgent(agentName).flatMap {
                 case None =>
                   IO.pure(
                     Left(
                       ToolError(
-                        s"Agent 'general' not found in global library — every node executes the general agent (plugin-architecture alignment); install/restore it first"
+                        s"Agent '$agentName' not found — every node executes the built-in executor agent (plugin-architecture alignment); the builtin library is incomplete"
                       )
                     )
                   )

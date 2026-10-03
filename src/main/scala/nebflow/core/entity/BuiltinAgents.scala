@@ -41,6 +41,23 @@ object BuiltinAgents:
   /** 只读侦察子 agent 名（SubagentTool 的 spawn 目标）。 */
   val SubagentName: String = "subagent"
 
+  /** 退役名解析表（P0-1 旧数据兼容批 2026-10-03）：`general` / `kernel` 在
+    * builtin-merge 批（2026-10-03）合并为执行 agent [[ExecutorName]]，但**存量
+    * 数据仍带这两个名字**——节点 JSON 的 `agent` / `verify` 字段、旧会话元数据、
+    * 旧 model sidecar 目录。全新 home 上这些名字在磁盘上不存在 ⇒ 直接
+    * `loadAgentFromDir` 落空 ⇒ 旧项目节点无法 spawn（审计 §三 的 P0-1 下半面）。
+    *
+    * 本表是**读侧解析兜底的单点**：名字仍可被解析，语义落到合并后的执行 agent。
+    * 新写入面（NodeEditTool / ProjectTypes 缺省）一律直接写 [[ExecutorName]]，
+    * 不再产出这些名字。 */
+  val RetiredNames: Map[String, String] = Map(
+    "general" -> ExecutorName,
+    "kernel" -> ExecutorName
+  )
+
+  /** 退役名 ⇒ 现行内置名；非退役名 ⇒ None（自定义名不受影响，仍走磁盘解析）。 */
+  def resolveRetired(name: String): Option[String] = RetiredNames.get(name)
+
   def isBuiltin(name: String): Boolean = Names.contains(name)
 
   /** 读 model-chain sidecar 的 `preset` / `model` 引用（缺文件 / 坏 JSON ⇒ 空引用，
@@ -311,9 +328,26 @@ Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain means no suffix
 
   /** 合并执行 agent 提示词（builtin-merge 批 2026-10-03）：kernel 的工具纪律 +
     * general 的 workspace/plugin 纪律 + dispatcher 的计划/验收纪律，去节点化重写。
-    * 合并不做三份拼贴：同一纪律只保留一份，冲突处以本文件为准。 */
+    * 合并不做三份拼贴：同一纪律只保留一份，冲突处以本文件为准。
+    *
+    * P0-1 批（2026-10-03）**节点交付契约回填**：本 agent 同时是 Flow Map 节点会话
+    * 的执行名（`NodeEditTool` 建位落 [[ExecutorName]]、`NodeStarter` 经
+    * [[EntityLoader.loadAgent]] 取本条目）⇒ general 的**节点交付契约**（dual-track
+    * Part 1 人读摘要 + Part 2 证据块；末条输出即交付物；node_report 申报义务与未
+    * 申报不终态语义）必须随合并上收进本提示词——f646eeeaa 把节点执行名改为
+    * `nebflow` 时该契约只留在 `general` 的独立提示词里，新 home 上无任何载体。
+    * 判据门 = `nebflow.core.seed.NodeSeedOutputContractSpec`。 */
   private val NebflowPrompt =
-    """You are Nebflow, the built-in execution agent: you FINISH the assigned task; your final assistant text IS the deliverable. You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
+    """Deliver in two parts, in this order (dual-track result): **Part 1 — one-screen human digest**, written to the reader-side delivery convention owned by the `visual-report` skill inside the `visual-report` plugin (the human-digest section of its SKILL.md): that spec fixes the four-section skeleton and its order, the two-column table in section 2, the plain-language and glossary sections, the single closing deliverable-path line, and the part-1 size budget — reference the spec instead of inlining its literals, and leave every semantic requirement it states exactly as stated there. **Part 2 — the evidence block** (the five elements specified below): downstream consumers read part 2, humans read part 1, so **both parts are mandatory** while the terminal state (drop the evidence block and let downstream re-enter via the path line) is not yet in force.
+
+You are Nebflow, the built-in execution agent: you FINISH the assigned task; your final assistant text IS the deliverable (the engine takes it as the node result and delivers it downstream). You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
+
+## Report before you finish (node_report)
+
+If `node_report` is in your tool set (Flow Map node sessions only), call it before wrapping up — the report IS the wrap-up action, not a blocked-only exception. Allowed values depend on your node `role` (a wrong value is rejected with your role's list):
+- `task` (default): `finish` / `blocked` (subcategories per the tool schema: upstream-incomplete / task-underspecified / agent-mismatch / external-dependency / needs-split / other). `pass` / `fail` are ILLEGAL for a task node; a real execution failure (dead session / LLM error) is engine-judged — no agent channel.
+- `verifier`: `pass` / `fail` (a verdict on the object under review) + `blocked`; `fail` is NOT this node's failure — the node still completes (verdict ≠ status) and the engine drives the re-run along the `(fail)<target>:loop` edge.
+Unreported ⇒ the node never terminalizes: it stays `running`, its result is not delivered, and it is only reminded on a ladder (10min/30min/1h/2h/4h … 8 rungs, `[NODE-REPORT-REMINDER]` prefix), after which one `node-report-missing` event per 4h waits for human handling — never auto-failed. Report first, then write your wrap-up text.
 
 ## Tool surface
 Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion, plus:

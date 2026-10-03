@@ -151,10 +151,29 @@ object EntityLoader:
 
   /** Load agent entry from `agents/<name>/agent.json` + `system.md`.
     * builtin-def 批（2026-10-03 作者令①）：四个收敛名的条目来自代码
-    * （BuiltinAgents 单点；每次现读 model sidecar）——磁盘目录死信。 */
+    * （BuiltinAgents 单点；每次现读 model sidecar）——磁盘目录死信。
+    *
+    * P0-1 旧数据兼容批（2026-10-03）：**退役名解析兜底**。builtin-merge 批把
+    * `general` / `kernel` 合并为执行 agent `nebflow`，但存量节点 JSON 的
+    * `agent` / `verify` 字段、旧会话元数据仍带旧名——全新 home 上
+    * `agents/general/` 目录根本不存在 ⇒ 落 `loadAgentFromDir` 得 None ⇒ 旧项目
+    * 节点在新环境建不出/spawn 不了。本兜底把退役名解析到合并后的执行 agent
+    * （[[BuiltinAgents.resolveRetired]] 单点表），**保留**自定义名的磁盘解析语义
+    * 与 `loadAgentFromDir` 的 dir-name 回落（见 EntityLoaderSpec）。
+    *
+    * 顺序：内置名（代码）→ 磁盘目录（自定义名）→ 退役名回落（代码）。
+    * 磁盘优先于退役表是刻意的：用户若在 `agents/kernel/` 放了自己的定义，读侧
+    * 仍按用户的定义解析（磁盘是用户面）；只有磁盘落空时才回落到内建执行器。 */
   def loadAgent(name: String): IO[Option[AgentEntry]] =
     if BuiltinAgents.isBuiltin(name) then IO.blocking { BuiltinAgents.entry(name) }
-    else IO.blocking { loadAgentFromDir(agentsDir / name) }
+    else
+      IO.blocking { loadAgentFromDir(agentsDir / name) }.flatMap {
+        case some @ Some(_) => IO.pure(some)
+        case None =>
+          BuiltinAgents.resolveRetired(name) match
+            case Some(current) => IO.blocking { BuiltinAgents.entry(current) }
+            case None          => IO.pure(None)
+      }
 
   /** Load team-local agent: `teams/<teamName>/agents/<agentName>/` → fallback to global. */
   def loadTeamAgent(teamName: String, agentName: String): IO[Option[AgentEntry]] =

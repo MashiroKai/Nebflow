@@ -236,11 +236,13 @@ case class LoopConfig(
    */
   maxRounds: Int,
   /**
-   * verify 侧 agent 名（默认 "general"）：验证方 = 通用 agent + plugins 体系
-   * （阶段 2 裁定 A——verify 专业化按验证域经 plugins 分配；worker 与 verify
-   * 共享 node.plugins 注入）。显式指定其他已装载 agent 名亦可。
+   * verify 侧 agent 名（默认 = 内置执行 agent，[[nebflow.core.entity.BuiltinAgents.ExecutorName]]）：
+   * 验证方 = 执行 agent + plugins 体系（阶段 2 裁定 A——verify 专业化按验证域经
+   * plugins 分配；worker 与 verify 共享 node.plugins 注入）。显式指定其他已装载
+   * agent 名亦可。**常量引用，禁字面量**（builtin-merge 批 2026-10-03：旧执行名
+   * 已合并且不再是 builtin——读侧兜底见 EntityLoader.loadAgent）。
    */
-  verify: String = "general",
+  verify: String = nebflow.core.entity.BuiltinAgents.ExecutorName,
   /**
    * verify 校验清单模板（含验收基准说明），注入 verify 会话。空 → 执行期用
    * NodeEngine 内置默认清单（VerifyDefaultTask）。
@@ -633,10 +635,12 @@ object RetryPolicy:
 /**
  * Node 数据模型（§2.1 JSON 示例字段全量）。
  *
- * agent 字段（2026-09-05 插件架构对齐）：**新建节点一律落 "general"**（执行统一
- * 通用 agent，专业能力由 plugins 差异化——NodeEdit 已不接受 agent 参数）；字段
- * 保留 = 存量数据兼容读（旧节点 agent 值原样装载、nodeJson 照常输出），引擎
- * spawn 仍读 NodeDef.agent（spawnAndRun → EntityLoader.loadAgent）。
+ * agent 字段（2026-09-05 插件架构对齐；builtin-merge 批 2026-10-03 收敛）：**新建
+ * 节点一律落内置执行 agent**（[[nebflow.core.entity.BuiltinAgents.ExecutorName]]，
+ * 执行统一执行 agent，专业能力由 plugins 差异化——NodeEdit 已不接受 agent 参数）；
+ * 字段保留 = 存量数据兼容读（旧节点 agent 值原样装载、nodeJson 照常输出；旧执行
+ * 名经 EntityLoader.loadAgent 的解析兜底（BuiltinAgents.RetiredNames）落到执行
+ * agent），引擎 spawn 仍读 NodeDef.agent（spawnAndRun → EntityLoader.loadAgent）。
  *
  * description（2026-09-05 创建必写）：简短描述（非空 ≤200 字符，创建时 NodeEdit
  * 强校验），存 NodeDef 进 Flow Map 默认载荷（NodePayload）——按需读取第一层；
