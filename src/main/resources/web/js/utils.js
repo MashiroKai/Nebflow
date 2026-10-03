@@ -804,6 +804,16 @@ export function smartScroll() {
   // Capture the follow intent BEFORE the pending render mutates the DOM —
   // the same schedule-time capture the rAF scroll paths use.
   const follow = shouldFollowBottom(view, chat);
+  // UI-G (author 2026-10-03 19:59): a subagent / flow popup window is a static
+  // display — it does not schedule scroll frames. One synchronous write instead
+  // of an animation frame: same final scroll position (克制 ≠ 破功), no rAF on
+  // that window. This is the single choke point every auto-scroll goes through
+  // (chat.js alone calls it 23 times), so no call site needs its own check.
+  if (typeof view.motionEnabled === 'function' && !view.motionEnabled()) {
+    if (follow || isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;
+    syncScrollPill(view);
+    return;
+  }
   requestAnimationFrame(() => {
     if (follow || isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;
     syncScrollPill(view);

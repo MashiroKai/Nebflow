@@ -24,6 +24,35 @@ export function setActiveView(v) { activeView = v; }
 // this state.js accessor instead of statically importing this module.
 state.getActiveView = () => activeView;
 
+// ── Motion scope: the ONE window-role decision (UI-G, author 2026-10-03) ───
+//
+// Author ruling 19:59: 「只需要主Nebula有流式输出，气泡动画等效果，subagent窗口
+// 要尽量克制，节省资源。」 Every motion switch in the render layer reads THIS
+// predicate — no per-call-site special-casing. A view that renders a subagent /
+// flow popup is built with its own id ('bgagent-…', 'flow-…', 'search-float'),
+// only the main Nebula conversation is 'primary'.
+//
+// The switch has exactly TWO application points, both driven by this one
+// predicate (nothing else may special-case a window role):
+//
+//   1. RENDER-TIME (CSS): a non-primary view's chat container gets the
+//      `nf-static` class in the constructor below. ONE CSS rule
+//      (chat.css `.nf-static, .nf-static *`) then zeroes every `animation`
+//      and every `transition` inside that container — no per-element
+//      handling, no per-feature opt-out list.
+//   2. EVENT-TIME (JS): modules that would arm a timer / rAF read
+//      `view.motionEnabled()` before arming it. Consumers:
+//        · workline.js    — dots live-seconds setInterval, exit setTimeout,
+//                           enter-late hold, terminal roll.
+//        · popArtifacts.js — the expand/collapse height transition's timer.
+//      `view.motionEnabled()` is a method (not a free function import) so the
+//      leaf modules stay leaves: workline.js imports i18n + utils only, and
+//      popArtifacts.js reaches it through the existing `state.getActiveView`
+//      accessor — neither gains a chatView.js import edge.
+export function isMainWindow(view) {
+  return !!view && view.id === 'primary';
+}
+
 // ── ChatView class ──────────────────────────────────────────────────────
 
 export class ChatView {
@@ -104,6 +133,21 @@ export class ChatView {
 
     // ── Send lock (prevents rapid double-send within a single view) ──
     this.isSending = false;
+
+    // ── Motion role (UI-G 2026-10-03) ──
+    // The single window-role switch every render module reads through
+    // `view.motionEnabled()` (see isMainWindow above). Subagent / flow popup
+    // views render static: no CSS animation, no periodic timers, no rAF loops.
+    // Bound once so it can be passed around unbound.
+    this.motionEnabled = () => isMainWindow(this);
+    // Application point 1 (CSS): mark the non-primary container `nf-static`
+    // ONCE, here, so the single chat.css rule kills every animation and every
+    // transition inside it — the popup keeps its static content (克制 ≠ 破功)
+    // but runs none of the main window's motion. Done at construction rather
+    // than per-render so no render path can forget it.
+    if (!isMainWindow(this) && this.dom && this.dom.chat) {
+      this.dom.chat.classList.add('nf-static');
+    }
   }
 
   /** Reset streaming state — called when switching to a different session. */
