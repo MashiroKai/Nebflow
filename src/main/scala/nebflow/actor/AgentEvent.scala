@@ -185,7 +185,17 @@ enum AgentStreamEvent:
     contextWindow: Option[Int] = None,
     inputTokens: Option[Int] = None,
     compactThreshold: Option[Double] = None,
-    outputTokens: Option[Int] = None
+    outputTokens: Option[Int] = None,
+    /**
+     * The turn's final assistant text (blocking-subagent bridge batch
+     * 2026-10-03): the producer for the `finalText` frame field that
+     * BlockingSubagent's wsSend spy reads. Emitted only by the real
+     * turn-finish path (AgentFinishTurn.returnToIdle); error/compaction Done
+     * emitters leave it None so the bridge correctly reports "ended without a
+     * final text". None = the JSON key is OMITTED — every pre-existing payload
+     * stays byte-identical (same merge style as model / outputTokens).
+     */
+    finalText: Option[String] = None
   )
 
   case UsageUpdate(
@@ -294,7 +304,7 @@ enum AgentStreamEvent:
         if isSubagent then
           Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
         else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-      case Done(model, contextWindow, inputTokens, compactThreshold, outputTokens) =>
+      case Done(model, contextWindow, inputTokens, compactThreshold, outputTokens, finalText) =>
         val base =
           if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
           else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
@@ -302,7 +312,11 @@ enum AgentStreamEvent:
         val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
         val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
         val withOt = outputTokens.fold(withIt)(ot => withIt.deepMerge(Json.obj("outputTokens" -> ot.asJson)))
-        compactThreshold.fold(withOt)(ct => withOt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
+        val withCt = compactThreshold.fold(withOt)(ct => withOt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
+        // finalText merged last, same omission style — absent when None so old
+        // payloads stay byte-stable. This is the sole upstream producer of the
+        // field BlockingSubagent's spy reads to complete the blocking bridge.
+        finalText.fold(withCt)(ft => withCt.deepMerge(Json.obj("finalText" -> ft.asJson)))
       case UsageUpdate(inputTokens, contextWindow, compactThreshold, outputTokens, model) =>
         // #308: model (actual model of this round) is merged last, same style as
         // Done's withModel — absent when None so old payloads stay byte-stable.

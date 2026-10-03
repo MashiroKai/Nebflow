@@ -257,7 +257,16 @@ private[agent] object AgentFinishTurn:
         contextWindow = Some(state.contextWindow),
         inputTokens = Some(effectiveInputTokens),
         compactThreshold = Some(state.effectiveCompactThresholdRatio),
-        outputTokens = state.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens))
+        outputTokens = state.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens)),
+        // Blocking-subagent bridge batch (2026-10-03): the ONLY upstream
+        // producer of the `finalText` Done field — without it a blocking
+        // Subagent/Workflow child can never complete (the spy sees agentDone
+        // with no finalText and reports "ended without a final text").
+        // Attached to SUBAGENT frames only: the blocking bridge is the sole
+        // consumer, so session-level `done` payloads stay byte-identical.
+        // Empty text stays None so the bridge keeps its "no final text"
+        // diagnosis instead of completing on an empty string.
+        finalText = if isSubagent then Option(text).map(_.trim).filter(_.nonEmpty) else None
       )
       val emitDoneIO =
         if isSubagent then
