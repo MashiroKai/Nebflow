@@ -842,8 +842,10 @@ export default {
   'executors.builtIn': 'built-in',
   'executors.adapterPending': 'Adapter pending — detection only for now.',
   'executors.setDefault': 'Set default',
-  'settings.save': 'Save',
-  'settings.saved': 'Saved ✓',
+  // (The 'settings.save' / 'settings.saved' pair that used to repeat here was a
+  // byte-identical duplicate of the pair above — removed 2026-10-03 so the
+  // locale object is duplicate-key clean; JS keeps the LAST value, and both
+  // copies were identical, so this is behaviour-preserving.)
   'settings.providers': 'LLM Providers',
   // secrets-frontend (2026-09-27): the settings-page entry row opens the
   // standalone secrets dialog (js/secretsPanel.js) — one key for title + button.
@@ -886,6 +888,11 @@ export default {
   'model.loadFailed': 'Failed to load',
   'model.roleNebula': 'Nebula',
   'model.roleDispatcher': 'Project dispatcher',
+  'model.roleExecutor': 'Executor agent',
+  // P1-2 batch registration (2026-10-03): the two keys below name the retired
+  // kernel/general roles and have ZERO consumers since the panel role table
+  // converged; dictionary entries are display-only (never enter the LLM
+  // context), so they are registered and deferred to the comment/text cleanup batch.
   'model.roleKernel': 'kernel',
   'model.roleGeneral': 'Node',
   'model.viaSlash': 'Edit with the /model command',
@@ -1101,6 +1108,13 @@ export default {
   'chat.popCollapse': 'Collapse',
   'chat.popOpenCanvas': 'Open in Canvas',
   'chat.popFailed': '{n} path(s) could not be shown',
+  // The failed-media placeholder NOTE (缺陷 D fix, 2026-10-03): a Pop image /
+  // video that failed to load (payload path unresolvable, or the re-minted
+  // ticket also failed) had NO visible sign in a Pop row — the only placeholder
+  // rule in chat.css targeted `.bubble.ai img`. The face now carries a dashed
+  // box plus this plain-text line, in both window roles. `{name}` is the item's
+  // display name; it renders as a trailing "— name" only when there is one.
+  'chat.popMediaFailed': 'Media failed to load',
   // Escalation chain (author boundary ① "keep the escalation chain"): permshield
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
@@ -1861,6 +1875,14 @@ export default {
   // scripts/verify-i18n-sweep.cjs asserts Object.keys(zh).length === Object.keys(en).length.
   'content.agent.project-dispatcher.name': 'project-dispatcher',
   'content.agent.project-dispatcher.desc': 'Project task dispatcher — splits a batch of work into several executable nodes, arranges their order and dependencies, and gathers the results once the nodes are done.',
+  // P1-2 batch registration (2026-10-03): the two pairs below name the retired
+  // general/kernel agents. This file is a DISPLAY-ONLY dictionary (contentI18n.js
+  // states so: the server keeps sending its original signal values and the client
+  // picks a string per locale), it never enters the LLM context; and after the
+  // builtin-merge batch the server produces neither agent id, so the keys have
+  // zero consumers. Kept under the "display/comment face — register and defer"
+  // rule; deletion belongs to the comment/text cleanup batch (the kernel line
+  // also cites the deleted `AgentCore.KernelFixedTools` constant).
   'content.agent.general.name': 'general',
   'content.agent.general.desc': 'General-purpose execution agent — its capabilities are determined by the plugins assigned to it',
   'content.agent.kernel.name': 'kernel',

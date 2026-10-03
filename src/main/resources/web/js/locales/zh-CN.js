@@ -806,8 +806,9 @@ export default {
   'executors.builtIn': '内置',
   'executors.adapterPending': '适配器未就绪——本期仅检测与展示。',
   'executors.setDefault': '设为默认',
-  'settings.save': '保存',
-  'settings.saved': '已保存 ✓',
+  // （此处原重复的 'settings.save' / 'settings.saved' 与上方同名键逐字相同，已于
+  // 2026-10-03 移除，使本地化对象不再有重复键；JS 取最后一个值，两副本完全相同，
+  // 故行为不变。）
   'settings.providers': 'LLM 服务商',
   // secrets-frontend（2026-09-27）：设置页入口行，打开独立密钥弹窗
   // （js/secretsPanel.js）——标题与按钮共用一个键。
@@ -850,6 +851,10 @@ export default {
   'model.loadFailed': '加载失败',
   'model.roleNebula': 'Nebula',
   'model.roleDispatcher': '任务分发器',
+  'model.roleExecutor': '执行 agent',
+  // P1-2 批登记项（2026-10-03）：以下两键对应已退役的 kernel/general 角色名，
+  // 面板角色表收敛后**零消费点**；字典条目本身是显示面（不进 LLM 上下文），
+  // 按本批口径登记并延后到注释/文本清理批删除。
   'model.roleKernel': 'kernel',
   'model.roleGeneral': '节点',
   'model.viaSlash': '用 /model 命令编辑',
@@ -1054,6 +1059,10 @@ export default {
   'chat.popCollapse': '收起',
   'chat.popOpenCanvas': '在 Canvas 打开',
   'chat.popFailed': '{n} 个路径未能显示',
+  // 媒体加载失败的占位说明行（缺陷 D 修复，2026-10-03）：Pop 行里的图片/视频加载失败
+  // 此前**无任何可见提示**（chat.css 唯一的占位规则只命中 `.bubble.ai img`）。现补虚线
+  // 盒 + 本纯文本说明行，两种窗口角色下一致显示。{name} 为该项显示名。
+  'chat.popMediaFailed': '媒体加载失败',
   // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
   // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
   'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',
@@ -1804,6 +1813,12 @@ export default {
   // scripts/verify-i18n-sweep.cjs asserts Object.keys(zh).length === Object.keys(en).length.
   'content.agent.project-dispatcher.name': 'project-dispatcher',
   'content.agent.project-dispatcher.desc': '项目任务分发器——负责把一批工作拆成若干可执行的节点、安排它们之间的先后与依赖，并在节点完成后汇总结果。',
+  // P1-2 批登记项（2026-10-03）：下面两对键对应已退役的 general/kernel 名。
+  // 本文件是**显示面字典**（contentI18n.js 自陈 DISPLAY-ONLY：服务端信号值原样
+  // 保留，仅在客户端渲染点按 locale 取串），零进 LLM 上下文；且 builtin-merge 批
+  // 后服务端不再产出这两个 agent id ⇒ 键零消费点。按「显示面/注释面登记并延后」
+  // 口径保留，删除归注释/文本清理批（`content.agent.kernel.desc` 另引已删除的
+  // `AgentCore.KernelFixedTools` 常量，同属该批）。
   'content.agent.general.name': 'general',
   'content.agent.general.desc': '通用执行 agent——能力由分配的 plugins 决定',
   'content.agent.kernel.name': 'kernel',

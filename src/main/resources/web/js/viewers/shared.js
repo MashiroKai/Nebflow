@@ -146,8 +146,9 @@ function escapeAttrValue(v) {
  *
  *  CSS `url()` / `@import` returns are NOT rewritten here — a known, unchanged
  *  gap on this path (shared.js:60-72 only ever handled src=/href=). The Card
- *  path DOES rewrite them (CardTool side); see cardRegistry.js for its own
- *  injection, which covers the unquoted `url()` form too. */
+ *  path DOES rewrite them (the retired CardTool side, now cardRegistry.js's
+ *  own injection); see cardRegistry.js for its own injection, which covers the
+ *  unquoted `url()` form too. */
 export async function resolveLocalFiles(html, dir) {
   const toPath = (src) => {
     if (/^(https?:|data:|#|javascript:|blob:|\/api\/|mailto:|tel:)/i.test(src)) return null;

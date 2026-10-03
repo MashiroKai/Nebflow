@@ -23,7 +23,7 @@ import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bin
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
 // (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, placeArtifactRowsAtTurnEnd } from './popArtifacts.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
@@ -825,6 +825,10 @@ export function restoreFromStorage(opts = {}) {
     }
   });
   buildTurnSummariesForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: re-derive turn headers from flat rows
+  // UI-D: after a rebuild the artifact rows sit wherever their Pop tool row
+  // landed; re-anchor each to the end of its turn (no-op when the history
+  // carried no Pop artifact).
+  placeArtifactRowsAtTurnEnd(chat);
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -991,19 +995,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         renderWithRegistry(cardContainer, m.content);
       } else {
         const isError = m.isError;
-        // Pop artifact payload (pop-upgrade batch): process row + the artifact
-        // row below it — the same two-row shape the live renderTool builds, so
-        // replay is indistinguishable from live.
-        if (isPopPayload(m.content)) {
-          renderPopToolRow(card, m.label, m.summary, isError);
-          row.appendChild(card);
-          chat.appendChild(row);
-          const popPayload = parsePopPayload(m.content);
-          if (popPayload) {
-            const artifactRow = buildPopArtifactRow(popPayload);
-            if (artifactRow) chat.appendChild(artifactRow);
-          }
-        } else
         // Legacy Pop rows (pre-batch histories): rainbow filename + clickable card
         if (applyLegacyPopCard(card, m.label, m.summary, m.input, isError)) {
           row.appendChild(card);
@@ -1215,6 +1206,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   });
   chat.appendChild(fragment);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
+  // UI-D: same re-anchor as the live path and the storage-replay path — a
+  // replayed turn must show its Pop deliverable at the message bottom too.
+  placeArtifactRowsAtTurnEnd(chat);
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
