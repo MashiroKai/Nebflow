@@ -46,9 +46,7 @@ class AgentConvergenceSpec extends FunSuite:
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     val expected = Set(
       "Mail",
-      // AgentFlow（agentflow 批 2026-10-02，终名 root #405）：root 侧派发件——
-      // 把自包含任务书派给项目。与 Mail 不同物（Mail 是消息原语）。
-      "AgentFlow",
+      // AgentFlow 已退役（unified-delegate 批 2026-10-03）：派发统一走 Delegate。
       "ProjectCreate",
       "AgentControl",
       // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
@@ -78,7 +76,7 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(
       delivered,
       expected -- sealStrip,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 19 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值 17，加 agentflow 批（2026-10-02）+AgentFlow，加 builtin-def 批（2026-10-03）+Delegate；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 promptgov 批 −Delegate 两笔史实（后者授能面已被 2026-10-03 作者令②取代）；零 Issue；friendseal 封存期按单点 strip 派生）"
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 18 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值 17，加 builtin-def 批（2026-10-03）+Delegate，减 pop 批（2026-10-03）−Card，减 unified-delegate 批（2026-10-03）−AgentFlow；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 promptgov 批 −Delegate 两笔史实（后者授能面已被 2026-10-03 作者令②取代）；零 Issue；friendseal 封存期按单点 strip 派生）"
     )
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含

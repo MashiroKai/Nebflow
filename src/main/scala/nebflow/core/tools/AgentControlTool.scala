@@ -500,6 +500,9 @@ When to use:
             else "-"
           List(
             rec.sessionId,
+            // unified-delegate 批：地址列——Delegate 行给出 Mail 续聊地址
+            // `delegate:<sessionId>`（与 Delegate 回执同一形态），其余行 "-"。
+            if rec.kind == AgentKind.Delegate then s"delegate:${rec.sessionId}" else "-",
             rec.kind.toString,
             agent,
             if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
@@ -519,6 +522,7 @@ When to use:
     yield
       val header = List(
         "sessionId",
+        "address",
         "kind",
         "agent",
         "parent",

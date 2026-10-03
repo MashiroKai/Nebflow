@@ -56,13 +56,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 19 件 = 2026-09-18 18:18 令 +5 后值 +agentflow 批 +AgentFlow + builtin-def 批 +Delegate）、零 Issue、零 NodeList（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 18 件 = 2026-09-18 18:18 令 +5 后值 + builtin-def 批 +Delegate − pop 批 −Card − unified-delegate 批 −AgentFlow）、零 Issue、零 NodeList（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set(
         "Mail",
-        // AgentFlow（agentflow 批 2026-10-02）：root 侧派发件——与 Mail 不同物。
-        "AgentFlow",
+        // AgentFlow 已退役（unified-delegate 批 2026-10-03）：派发统一走 Delegate。
         "ProjectCreate",
         "AgentControl",
         // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
@@ -93,7 +92,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(
       fixed,
       expected -- sealStrip,
-      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 19 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17 + agentflow 批（2026-10-02）+AgentFlow + builtin-def 批（2026-10-03）+Delegate；沿革：root 面 −Glob −Grep ⇒ 13 与 promptgov 批 −Delegate ⇒ 12 均史实（后者之授能面已被 2026-10-03 作者令②取代）；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期按单点 strip 派生）"
+      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 18 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17 + builtin-def 批（2026-10-03）+Delegate − pop 批 −Card − unified-delegate 批（2026-10-03）−AgentFlow；沿革：root 面 −Glob −Grep ⇒ 13 与 promptgov 批 −Delegate ⇒ 12 均史实（后者之授能面已被 2026-10-03 作者令②取代）；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期按单点 strip 派生）"
     )
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")

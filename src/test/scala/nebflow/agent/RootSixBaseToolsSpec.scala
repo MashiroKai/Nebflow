@@ -78,8 +78,8 @@ class RootSixBaseToolsSpec extends FunSuite:
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
     // 件数以单点常量 AgentCore.RootOrchestrationToolsExpectedSize 为准：
-    // 19（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17，agentflow 批
-    // 2026-10-02 +AgentFlow ⇒ 18，builtin-def 批 2026-10-03 +Delegate ⇒ 19）；
+    // 17（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17，builtin-def 批
+    // 2026-10-03 +Delegate ⇒ 19，pop 批 −Card ⇒ 18，unified-delegate 批 −AgentFlow ⇒ 17）；
     // 沿革（史实）：16 经 #145 附件腿批 −TransferFile 退役 ⇒ 15，
     // 再经 09-16 18:41 令 −2 ⇒ 13，再经 promptgov 批 Delegate 退役 −1 ⇒ 12
     // （该退役令之授能面已被 2026-10-03 作者令②取代）。
@@ -93,8 +93,8 @@ class RootSixBaseToolsSpec extends FunSuite:
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
-      19,
-      "RootOrchestrationTools 实测恰 19 件（2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19；变异验红锚：再摘任一件即红）"
+      17,
+      "RootOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19，pop 批 −Card = 18，unified-delegate 批 −AgentFlow = 17；变异验红锚：再摘任一件即红）"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====

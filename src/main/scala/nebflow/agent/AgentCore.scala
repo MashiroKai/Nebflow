@@ -229,10 +229,6 @@ object AgentCore:
     // 选本路线而非 `buildAllowedToolSet` 内 `- "ListFriends"`（SendMessage 先例）：
     // 两者授能结果等价，但后者不覆盖保存侧。
     "ListFriends",
-    // AgentFlow（agentflow 批 2026-10-02）：root 侧派发件；与 `ListFriends` 同享
-    // 【防声明逃逸】通道——agent.json 声明（含 `"*"`）对一切非 Nebula 身份不授能
-    // （真实授能 = `RootOrchestrationTools` 单点）。
-    "AgentFlow"
   )
 
   /**
@@ -365,12 +361,9 @@ object AgentCore:
     // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
     // 报错并指明合法地址面（硬禁静默兜底/模糊匹配）；入站不受限。
     "Mail",
-    // AgentFlow（agentflow 批 2026-10-02，终名 root #405）：root 侧的**派发件**
-    // ——把一份自包含任务书派给某个项目（对偶役 = 分发器侧的 `NodeEdit` 建位）。
-    // 与 `Mail` **不同物**：`AgentFlow` 不投消息、只派任务书（`Mail` 是消息原语，
-    // root 面保留）。挂载面 = 本集（Nebula 专属）；进 `RootExclusiveTools` 防声明
-    // 逃逸（agent.json 声明含 `"*"` 对一切非 Nebula 身份不授能）。
-    "AgentFlow",
+    // AgentFlow（unified-delegate 批 2026-10-03 退役）：派发面统一收归 Delegate
+    // ——Delegate(task, project?) 是唯一派发入口，Mail 降级为按地址通信。退役
+    // 指引 = RetiredToolGuides("AgentFlow")。
     "ProjectCreate",
     "AgentControl",
     // Delegate（**builtin-def 批 2026-10-03 作者令②在場恢复**：「使用 Delegate
@@ -522,13 +515,16 @@ object AgentCore:
    * 的 Delegate 退役令之授能面部分（史实 −1 ⇒ 12 的那笔；史实归档，不得据此
    * 推断 Delegate 面缺席）。
    *
-   * **pop-upgrade 批（2026-10-03）：−`Card` ⇒ 18（在飞值）**——作者令
+   * **pop-upgrade 批（2026-10-03）：−`Card` ⇒ 18**——作者令
    * 「去掉card工具，然后对Pop工具进行升级」。Card 从本集摘除并整体退役（工具
    * 本体 + 注册表注册删除，迁移指引 = RetiredToolGuides("Card")）；展示职责并入
    * Pop（pop-upgrade 批注见 PopTool）。本减量同属「按面变更」（作者令摘除成员），
    * 非「凑数字」。
+   * **unified-delegate 批（2026-10-03）：−`AgentFlow` ⇒ 17（在飞值）**——派发面
+   * 统一收归 Delegate（Delegate(task, project?) 唯一派发入口；Mail 降级为按地址
+   * 通信）。迁移指引 = RetiredToolGuides("AgentFlow")。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 18
+  val RootOrchestrationToolsExpectedSize: Int = 17
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
@@ -550,7 +546,9 @@ object AgentCore:
     "TransferFile" ->
       """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6).""",
     "Card" ->
-      """Card retired 2026-10-03 (pop-upgrade batch) — its show-face duties moved to Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe)."""
+      """Card retired 2026-10-03 (pop-upgrade batch) — its show-face duties moved to Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe).""",
+    "AgentFlow" ->
+      """AgentFlow retired 2026-10-03 (unified-delegate batch) — dispatch is unified under `Delegate(task=<brief>, project=<optional mounted project>)`. The receipt carries the task number (task #N) and the continuation address `delegate:<id>`; supplements/corrections go through `Mail(address="delegate:<id>", message=...)`. A project-targeted Mail(address="project:<name>") with a task number keeps working as a supplement channel, but new work is dispatched with Delegate only."""
   )
 
   /**

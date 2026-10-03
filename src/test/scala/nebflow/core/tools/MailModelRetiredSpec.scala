@@ -225,15 +225,20 @@ class MailModelRetiredSpec extends FunSuite:
     assert(!msg.contains(MailTool.ErrKernelExclusive), s"the root must NOT be refused by the exclusive gate, got: $msg")
     assert(!msg.contains(MailTool.ErrKernelSpawnRetired), s"the continuation address must not hit the spawn tombstone, got: $msg")
 
-  test("③ kernel continuation miss: `kernel:<id>` against a real (empty) registry is MAIL_KERNEL_NOT_LIVE (fail-closed)"):
+  test("③ delegate continuation miss: `kernel:<id>`/`delegate:<id>` against an empty registry is DELEGATE_NOT_FOUND (fail-closed, unified-delegate batch)"):
     val tmp = os.temp.dir(prefix = "mailmodel-notlive")
     val system = ActorSystem(s"mailmodel-notlive-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val resources = mkResources(system, tmp, new RecordingLlm).unsafeRunSync()
       val c = ctx(nebulaRoot = true).copy(sharedResources = Some(resources), actorSystem = Some(system))
+      // 旧形态 `kernel:<id>` 是 delegate: 的同 id 空间别名（存量回执不打断）——
+      // 未注册 id 的失败面同一张：DELEGATE_NOT_FOUND（回显 id，指路 Delegate 回执）。
       val msg = errOf(callRes(qIn("address" -> "kernel:delegate-kernel-deadbeef", "message" -> "hi"), c), "not-live")
-      assert(msg.contains(MailTool.ErrKernelNotLive), s"a registry miss must be the not-live error, got: $msg")
+      assert(msg.contains("DELEGATE_NOT_FOUND"), s"a registry miss must be the not-found error, got: $msg")
       assert(msg.contains("delegate-kernel-deadbeef"), s"the error must echo the id, got: $msg")
+      // 新形态同面：delegate:<id> 未注册同样是 DELEGATE_NOT_FOUND。
+      val msg2 = errOf(callRes(qIn("address" -> "delegate:delegate-kernel-deadbeef", "message" -> "hi"), c), "not-live-new-form")
+      assert(msg2.contains("DELEGATE_NOT_FOUND"), s"the new form shares the miss face, got: $msg2")
       // pure-constructor pin
       val pure = MailTool.kernelNotLiveError("delegate-kernel-x")
       assert(pure.message.contains(MailTool.ErrKernelNotLive))

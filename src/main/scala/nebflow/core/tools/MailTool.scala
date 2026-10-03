@@ -9,9 +9,10 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.*
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
-import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
+import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry, TaskLedgerHistory, TaskLedgerStore}
 import nebflow.shared.{MailQueueItem, NebflowLogger, *}
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
@@ -707,6 +708,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     * key, unambiguous). */
   private val KernelPrefix = "kernel:"
 
+  /** 统一 delegate 续聊地址前缀（unified-delegate 批 2026-10-03）。 */
+  private val DelegatePrefix = "delegate:"
+
   private def rootFace: String = "\"project:<项目名>\"（裸项目名等价接受）"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id>\""
 
@@ -749,20 +753,18 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     task: Option[String] = None
   ): Option[IO[Either[ToolError, String]]] =
     val role = roleOf(ctx)
-    // ── kernel leg (mailmodel batch 2026-09-25, ruling (b)): the Nebula-exclusive
-    // address leg ── `kernel` = start one kernel instance; `kernel:<id>` = continue that
-    // live instance. Every non-Nebula caller is explicitly refused ([[kernelExclusiveError]];
-    // the refusal text ships as a §16 candidate deliverable).
+    // ── delegate leg (unified-delegate 批 2026-10-03): the Nebula-exclusive
+    // continuation address ── `delegate:<id>` 续聊/补充；旧 `kernel:<id>` 形态
+    // 作为别名同路（同一 id 空间，存量回执不打断），裸 `kernel` 保持墓碑。
     if address == "kernel" then
-      // builtin-def 批（2026-10-03 作者令②）：`kernel` 起实例腿退役——触发面收归
-      // Delegate，Mail 降级为通信原语。显式拒绝（fail-closed 墓碑，禁静默转发），
-      // 错误文案指路 Delegate。
       Some(IO.pure(Left(kernelSpawnRetiredError(address))))
-    else if address.startsWith(KernelPrefix) then
+    else if address.startsWith(DelegatePrefix) || address.startsWith(KernelPrefix) then
+      val (prefix, isLegacyForm) =
+        if address.startsWith(DelegatePrefix) then (DelegatePrefix, false) else (KernelPrefix, true)
       Some(
         if role != SenderRole.Root then
           IO.pure(Left(kernelExclusiveError(address, role.toString)))
-        else deliverToKernel(address, message, blocks, ctx, system)
+        else deliverToDelegate(address.stripPrefix(prefix).trim, message, blocks, ctx, system, isLegacyForm)
       )
     else if address.startsWith(NodePrefix) then
       val nodeId = address.stripPrefix(NodePrefix).trim
@@ -1020,45 +1022,102 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   /** Kernel-leg delivery — continuation only (the caller's NebulaRoot identity has
     * already been verified in [[layeredRoute]]; the bare-kernel SPAWN leg retired in
     * the builtin-def batch 2026-10-03 — Delegate is the only kernel trigger). */
-  private def deliverToKernel(
-      address: String,
+  /**
+   * delegate 续聊腿（unified-delegate 批 2026-10-03）——`delegate:<id>`：
+   *   - **live**：注入 UserInput（replyTo=supervisor，turn 边界消费，结果仍走
+   *     `source="delegate"` 回投链）——与原 kernel 腿逐字同机制；
+   *   - **不 live（终态/重启后）**：内置执行器 ⇒ 以补充信息为输入**续起**一个
+   *     新会话（同 executor/project/cwd/taskId 记账，DelegateRegistry 是数据源）；
+   *     外部执行器 ⇒ 显式 pending（适配在 external-executors 批）。
+   * `kernel:<id>` 是同 id 空间的旧形态别名（isLegacyForm=true 时回执提示新形态）。
+   */
+  private def deliverToDelegate(
+      id: String,
       message: String,
       blocks: Option[List[ContentBlock]],
       ctx: ToolContext,
-      system: ActorSystem
+      system: ActorSystem,
+      isLegacyForm: Boolean
   ): IO[Either[ToolError, String]] =
     (ctx.sharedResources, ctx.actorSystem) match
       case (Some(res), Some(sys)) =>
-        // Continuation leg: `kernel:<id>` -> the registry single point looks up the **live**
-        // instance (kind=Delegate with id match with kernel session prefix); a hit => UserInput
-        // injection (consumed at the turn boundary, replyTo = the supervisor adapter —— the
-        // turn's terminal state still follows the source="delegate" return chain); a miss => fail-closed.
-        val id = address.stripPrefix(KernelPrefix).trim
         if id.isEmpty then
-          IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"kernel:<instanceId>\" (the id the start receipt carried).")))
+          IO.pure(Left(ToolError(s"Malformed address — expected \"delegate:<instanceId>\" (the id the Delegate receipt carried).")))
         else
-          res.agentRegistry.get.flatMap { reg =>
-            reg.get(id) match
-              case Some(rec) if rec.kind == AgentKind.Delegate && id.startsWith("delegate-kernel-") =>
-                (rec.ref ! AgentCommand.UserInput(
-                  text = message,
-                  replyTo = rec.supervisorRef,
-                  source = Some("mail"),
-                  sender = ctx.agentDef.map(_.name),
-                  eventType = Some("info"),
-                  blocks = blocks,
-                  // (2) server-side injection (agent-to-agent mail), NOT human input — stated explicitly.
-                  fromUser = false
-                )).void *>
-                  nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
-                  IO.pure(Right(
-                    s"[kernel #$id] Message injected into the live kernel instance — it will process it " +
-                      "at its next turn boundary; its next result is delivered back to your session."
-                  ))
-              case _ => IO.pure(Left(kernelNotLiveError(id)))
-          }
+          DelegateRegistry.find(id) match
+            case None =>
+              IO.pure(Left(ToolError(s"No delegate instance '$id' on record (DELEGATE_NOT_FOUND) — the Delegate receipt's continuation address is authoritative; check it verbatim.")))
+            case Some(record) =>
+              res.agentRegistry.get.flatMap { reg =>
+                reg.get(id) match
+                  case Some(rec) if rec.kind == AgentKind.Delegate =>
+                    (rec.ref ! AgentCommand.UserInput(
+                      text = message,
+                      replyTo = rec.supervisorRef,
+                      source = Some("mail"),
+                      sender = ctx.agentDef.map(_.name),
+                      eventType = Some("info"),
+                      blocks = blocks,
+                      fromUser = false
+                    )).void *>
+                      nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
+                      IO.pure(Right(s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."))
+                  case _ =>
+                    // 不 live：内置执行器续起（fresh session, same seat）；外部执行器 pending。
+                    if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
+                      IO.pure(Left(ToolError(s"Delegate '$id' ran on external executor '${record.executor}' — cross-session continuation for external executors lands with the external-executors batch. (DELEGATE_EXECUTOR_PENDING)")))
+                    else
+                      continueDelegate(record, id, message, ctx, sys, res)
+              }
       case _ =>
-        IO.pure(Left(ToolError("Cannot deliver to the kernel leg: missing resources.")))
+        IO.pure(Left(ToolError("Cannot deliver to the delegate leg: missing resources.")))
+
+  /** 终态 delegate 的续起：补充信息即新输入，座位/项目/台账继承记录。 */
+  private def continueDelegate(
+      record: DelegateRegistry.Record,
+      id: String,
+      message: String,
+      ctx: ToolContext,
+      system: ActorSystem,
+      res: AgentRuntimePort
+  ): IO[Either[ToolError, String]] =
+    val brief =
+      s"""[continuation of delegate $id — the instance finished; this supplement is your new primary instruction]
+[workspace] ${record.cwd} (file tools need absolute paths; Bash cwd is not guaranteed)
+
+$message"""
+    DelegateTool.spawnBackground(
+      agentDef = nebflow.core.entity.BuiltinAgents.entry(DelegateTool.KernelAgentName).map(_.toAgentDef).get,
+      task = brief,
+      description = s"continuation: ${record.title}",
+      workspace = record.cwd,
+      project = record.project,
+      taskId = record.taskId,
+      system = system,
+      resources = res,
+      parentDepth = 0,
+      parentRef = None,
+      wsSend = None,
+      parentSessionId = Some(record.parentSessionId),
+      rootSessionId = record.parentSessionId
+    ).map {
+      case Left(err) => Left(err)
+      case Right((newId, _)) =>
+        record.taskId.foreach { tid =>
+          scala.util.Try(
+            TaskLedgerStore.open().appendNoteSync(
+              tid,
+              s"Mail supplement → continued as $newId",
+              from = TaskLedgerHistory.Origins.Nebula,
+              actor = TaskLedgerHistory.Actors.Nebula
+            )
+          )
+        }
+        val legacy = if id != newId then s" (the finished instance $id stays archived; this is a fresh session)" else ""
+        Right(
+          s"[delegate #$id] Instance was not live — your message CONTINUED the delegate as a fresh session $newId$legacy, same workspace and task ledger. Its result is delivered back when it finishes."
+        )
+    }
 
   // ============================================================
   // mailattach 批（2026-09-17 作者四答 = 路线 A）——`attachments` 通用附件面

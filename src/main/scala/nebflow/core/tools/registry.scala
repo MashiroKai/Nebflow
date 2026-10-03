@@ -54,18 +54,8 @@ object ToolRegistry:
       // 节点不挂 Mail）。旧注释「message + ask modes」已过时：ask 模式由
       // 2026-08-27 作者裁定整体移除。
       "Mail" -> MailTool,
-      // AgentFlow (agentflow batch 2026-10-02; terminal name per root #405): the
-      // Nebula root's **dispatch tool** -- hand one self-contained brief to a
-      // project (its dispatcher session receives the brief as its entire context).
-      // A **different thing** from `Mail` (the message primitive, which stays on
-      // the root face): AgentFlow delivers no message. The counterpart duty is the
-      // dispatcher-side `NodeEdit` (build/edit nodes from the brief).
-      // Authorization face = `AgentCore.RootOrchestrationTools` alone; the name
-      // lives in `AgentCore.RootExclusiveTools` (declaration-escape prevention --
-      // an agent.json declaration, including "*", grants nothing) and the runtime
-      // gate `ctx.isNebulaRoot` refuses fail-closed. NOT in the plugin allowlist,
-      // NOT in `RemoteExecutor.remoteableTools` (zero `device` semantics).
-      "AgentFlow" -> AgentFlowTool,
+      // AgentFlow retired (unified-delegate batch 2026-10-03): dispatch is
+      // unified under Delegate(task, project?); guide = RetiredToolGuides.
       // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
