@@ -77,6 +77,18 @@
 //   performed and the channel is unverified, so it must not present itself on
 //   the panel yet; restoring the card = dropping this ONE flag. This is why the
 //   visible face is still feishu-only and [[socialChannelCount]] is still 1.
+//
+// 🔴 PHASE 7 (weixin-scanbind batch, author directive 2026-10-03) — the
+//   weixin-ilink card is UNSEALED and joins the scanBind family: the card now
+//   carries `scanBind: true` (the "scan to connect" main path, QR inside the
+//   card, same two faces as feishu) and its seal flag is GONE. The scan leg
+//   mirrors feishu's wire contract exactly (begin → scanId; status =
+//   starting/qr_ready/polling/done/failed), with one channel difference: the QR
+//   is produced by the official plugin's side-car (the backend's control leg,
+//   `sidecar_url`), never by this repo. `sidecar_url` joins the field mirror
+//   (optional url; the backend `SocialChannels` FieldSpec stays the
+//   enforcement point). The official-account `wechat` card above stays sealed
+//   and byte-for-byte untouched.
 
 /**
  * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'|'failed'} SocialStatus
@@ -163,20 +175,22 @@ export const SOCIAL_CHANNELS = [
     //   `weixin-ilink` one for one (key / kind / required / pattern /
     //   secretName); this layer is the mirror, the backend stays the
     //   enforcement point.
-    //   SEALED (`hidden: true`): hide ≠ delete — the fields, the locale keys and
-    //   any stored config all stay addressable; a real-device QR login has not
-    //   happened yet and the channel is unverified, so it must not show up on
-    //   the panel before it can work. Restoring the card = dropping this flag.
+    //   ★ weixin-scanbind (author directive 2026-10-03): UNSEALED and on the
+    //   scanBind family — the card renders the two-face shape (not-created =
+    //   QR inside the card; created = minimal live block + unbind), the same
+    //   faces feishu renders. The QR comes from the official plugin's side-car
+    //   through the backend's control leg; `sidecar_url` is that leg's address
+    //   slot (optional; empty = the backend's default localhost endpoint).
     //   `allowed_ilink_user_ids` is the fail-closed admission SLOT (same shape
     //   as the feishu card's `allowed_open_ids`): empty = the allowlist is not
     //   enforced; filled = senders outside the list are dropped by the bridge.
-    //   Whether to enable is the author's call; the slot itself is data.
-    hidden: true,
+    hidden: false,
     id: 'weixin-ilink',
     icon: 'message-circle',
     nameKey: 'social.weixinIlink.name',
     descKey: 'social.weixinIlink.desc',
     adapterRegistered: false,
+    scanBind: true,
     fields: [
       { key: 'bot_token', kind: 'secret', required: true,
         i18n: 'social.weixinIlink.field.botToken', secretName: 'social-weixin-bot-token' },
@@ -186,6 +200,10 @@ export const SOCIAL_CHANNELS = [
         i18n: 'social.weixinIlink.field.ilinkUserId' },
       { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://',
         i18n: 'social.weixinIlink.field.baseurl' },
+      // 🔴 FULL-MATCH spelling (mirror of the backend's String.matches
+      // enforcement): a prefix pattern would reject every real URL on save.
+      { key: 'sidecar_url', kind: 'url', required: false, pattern: '^https?://.*',
+        i18n: 'social.weixinIlink.field.sidecarUrl' },
       { key: 'allowed_ilink_user_ids', kind: 'text', required: false,
         i18n: 'social.weixinIlink.field.allowedIlinkUserIds' },
     ],

@@ -21,14 +21,18 @@
 //                               socialhide red-proof: the SAME visible-card
 //                               probes that read {feishu} in production must
 //                               read every sealed card here, in array order.
-//   · ILINK-RED (SOCIAL_MUTATE=ilink-unseal | ilink-fields) — the wechat-ilink
+//   · ILINK-RED (SOCIAL_MUTATE=ilink-reseal | ilink-fields) — the wechat-ilink
 //                               batch's red proof, mutation-safe in the same
 //                               sense as the two above: the served definition
 //                               layer is damaged in memory and the SAME probes
-//                               the production tree pins must fire. `ilink-unseal`
-//                               drops the new card's seal (IL1 turns red: the
-//                               visible face is no longer feishu-only);
-//                               `ilink-fields` drops `baseurl`'s pattern and
+//                               the production tree pins must fire. Since
+//                               weixin-scanbind (2026-10-03) the production tree
+//                               ships the card UNSEALED, so the seal leg is
+//                               INVERTED: `ilink-reseal` re-applies the dropped
+//                               seal (IL1 — which now pins the UNSEALED face —
+//                               turns red: the visible face collapses back to
+//                               feishu-only);
+//                               `ilink-fields` drops `sidecar_url`'s pattern and
 //                               flips `ilink_bot_id` to optional (IL2 turns red:
 //                               the field mirror no longer matches the contract).
 //                               Nothing is written to the tree.
@@ -199,7 +203,7 @@ const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'f
   : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE'
     : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE'
       : (process.env.SOCIAL_MUTATE === 'card-filter-off' ? 'REDFILTER'
-        : (process.env.SOCIAL_MUTATE === 'ilink-unseal' || process.env.SOCIAL_MUTATE === 'ilink-fields' ? 'ILINKRED' : 'AFTER'))));
+        : (process.env.SOCIAL_MUTATE === 'ilink-reseal' || process.env.SOCIAL_MUTATE === 'ilink-fields' ? 'ILINKRED' : 'AFTER'))));
 const SHOTS = process.env.SOCIAL_SHOT_DIR || '/tmp/nb-socpanel';
 const API_BASE = process.env.SOCIAL_API_BASE || '';
 const API_TOKEN = process.env.SOCIAL_API_TOKEN || '';
@@ -217,22 +221,24 @@ const SOCIAL_KEYS = CHANNELS_MOD.SOCIAL_CHANNELS.flatMap((c) => [c.nameKey, c.de
 const ZH = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'zh-CN.js')).href)).default;
 const EN = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'en.js')).href)).default;
 
-/** The wechat-ilink contract (chain-wechat-impl) — transcribed from the batch's
- *  single source of truth (the cross-position contract paragraph), NOT re-derived
- *  from the implementation. `pattern` / `secretName` stay `undefined` where the
- *  contract says the field carries none, so the mirror below compares the full
- *  five-tuple on every field and an added/removed/downgraded attribute fails.
+/** The wechat-ilink contract — transcribed from the batch's single source of
+ *  truth, NOT re-derived from the implementation. Since weixin-scanbind
+ *  (2026-10-03) the card ships UNSEALED (`hidden: false`) and on the scanBind
+ *  family; `pattern` / `secretName` stay `undefined` where the contract says
+ *  the field carries none, so the mirror below compares the full five-tuple on
+ *  every field and an added/removed/downgraded attribute fails.
  *  This constant is the ONE judgement input for both the production probe
  *  (IL1–IL3, read off the repo module) and its red proof (IL-R, read off the
  *  served mutated tree) — that is what makes "the same probe" literal. */
 const ILINK_CONTRACT = {
   id: 'weixin-ilink',
-  hidden: true,
+  hidden: false,
   fields: [
     { key: 'bot_token', kind: 'secret', required: true, pattern: undefined, secretName: 'social-weixin-bot-token' },
     { key: 'ilink_bot_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
     { key: 'ilink_user_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
     { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://', secretName: undefined },
+    { key: 'sidecar_url', kind: 'url', required: false, pattern: '^https?://.*', secretName: undefined },
     { key: 'allowed_ilink_user_ids', kind: 'text', required: false, pattern: undefined, secretName: undefined },
   ],
 };
@@ -347,32 +353,34 @@ function mutate(rel, body) {
     mutationHits += hits;
     return body.replace(/\.filter\(\(c\) => !c\.hidden\)/g, '.slice()');
   }
-  if (mode === 'ilink-unseal' || mode === 'ilink-fields') {
-    // wechat-ilink red proof. Both variants damage ONLY the `weixin-ilink`
-    // entry (see [[entrySpan]]): the other sealed cards carry `hidden: true`
-    // too, so an unscoped replace would unseal wechat/telegram as well and the
-    // reading would stop being evidence about THIS batch's card.
+  if (mode === 'ilink-reseal' || mode === 'ilink-fields') {
+    // wechat-ilink red proof (polarity inverted by weixin-scanbind: the
+    // production card ships UNSEALED, so the seal leg RE-APPLIES the seal).
+    // Both variants damage ONLY the `weixin-ilink` entry (see [[entrySpan]]):
+    // the other sealed cards carry `hidden: true` too, so an unscoped replace
+    // would damage wechat/telegram as well and the reading would stop being
+    // evidence about THIS batch's card.
     if (rel !== '/js/socialChannels.js') return body;
     const span = entrySpan(body, ILINK_CONTRACT.id);
     if (!span) return body;
     const entry = body.slice(span.start, span.end);
     // 🔴 The damage is applied LINE BY LINE, and only to CODE lines: the entry's
-    //    own explanatory comment quotes these very literals in prose (it spells
-    //    out `hidden: true` and the field keys), so an unanchored string replace
-    //    would rewrite the COMMENT and leave the code intact — a mutation that
-    //    proves nothing while still reporting a hit. Classifying lines is robust
-    //    where regex tail-anchoring was not: these code lines end in `,` and the
-    //    field ones share their line with the opening `{ key: ...`.
-    const CODE_SEAL = /^(\s*)hidden: true,$/m;
+    //    own explanatory comment quotes these very literals in prose, so an
+    //    unanchored string replace would rewrite the COMMENT and leave the code
+    //    intact — a mutation that proves nothing while still reporting a hit.
+    //    Classifying lines is robust where regex tail-anchoring was not: these
+    //    code lines end in `,` and the field ones share their line with the
+    //    opening `{ key: ...`.
     const CODE_PATTERN = /^(.*?), pattern: '\^https\?:\/\/',$/m;
     const CODE_BOTID = /^(.*\bkey: 'ilink_bot_id', kind: 'text', required: )true$/m;
     const isComment = (line) => {
       const t = line.trim();
       return t.startsWith('//') || t.startsWith('/*') || t.startsWith('*');
     };
-    const edits = mode === 'ilink-unseal'
-      ? [['hidden: true', 'hidden: false']]
+    const edits = mode === 'ilink-reseal'
+      ? [['hidden: false', 'hidden: true']]
       : [["pattern: '^https?://',", ''],
+        ["pattern: '^https?://.*',", ''],
         ["key: 'ilink_bot_id', kind: 'text', required: true", "key: 'ilink_bot_id', kind: 'text', required: false"]];
     let hit = 0;
     const damaged = entry.split('\n').map((line) => {
@@ -419,16 +427,36 @@ const apiState = {
   registered: {},
   posts: [],
   failPost: false,
-  /** social-fix: the scan-bind face the in-card block polls (state-machine
+  /** social-fix: the scan-bind face the in-card blocks poll (state-machine
    *  mirror of the real contract: qr_ready → polling → done|failed). A
-   *  `done` reading writes the created config ONCE — the backend side-effect
-   *  the real endpoint carries. */
-  scan: { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false },
+   *  `done` reading writes the created config ONCE PER CHANNEL — the backend
+   *  side-effect the real endpoint carries (weixin-scanbind: both visible
+   *  scanBind cards poll the same face; each `done` writes THAT channel). */
+  scan: { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: {} },
+};
+
+/** weixin-scanbind: the created-config fixture the scan-bind `done` side
+ *  effect writes, per channel — the mock mirror of the real backend's
+ *  persist-on-done (identifiers plaintext, the secret as a `_ref` path, the
+ *  probe triple clean, the adapter registered). */
+const CREATED_FIXTURE = {
+  feishu: {
+    fields: { app_id: 'cli_mock0123456789ab', app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret' },
+    probe: { app_secret: { exists: true, modeOk: true, readable: true } },
+  },
+  'weixin-ilink': {
+    fields: {
+      ilink_bot_id: 'wxid_mock_bot',
+      ilink_user_id: 'wxid_mock_user',
+      bot_token_ref: '~/.nebflow/secrets/social-weixin-bot-token',
+    },
+    probe: { bot_token: { exists: true, modeOk: true, readable: true } },
+  },
 };
 
 /** Fresh scan face (leg setup / teardown between modes). */
 function resetScanFace() {
-  apiState.scan = { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false };
+  apiState.scan = { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: {} };
 }
 
 const SECRET_FILE = {
@@ -481,15 +509,18 @@ function stubApi(page) {
     return r.fulfill({ json: { scanId: 'mock-scan-1' } });
   });
   page.route('**/api/social/channels/*/scan-bind/status*', (r) => {
-    if (apiState.scan.state === 'done' && !apiState.scan.doneWrites) {
-      // the backend side-effect of a finished scan: the app exists now
-      apiState.scan.doneWrites = true;
-      apiState.channels.feishu = { enabled: true, fields: {
-        app_id: 'cli_mock0123456789ab',
-        app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
-      } };
-      apiState.probes.feishu = { app_secret: { exists: true, modeOk: true, readable: true } };
-      apiState.registered.feishu = true;
+    // weixin-scanbind: the finished-scan side effect is PER CHANNEL — the
+    // polling URL names the channel, and `done` writes THAT channel's created
+    // config exactly once (see CREATED_FIXTURE).
+    const id = decodeURIComponent(r.request().url().split('/api/social/channels/')[1].split('/')[0]);
+    if (apiState.scan.state === 'done' && !apiState.scan.doneWrites[id]) {
+      const fx = CREATED_FIXTURE[id];
+      if (fx) {
+        apiState.scan.doneWrites[id] = true;
+        apiState.channels[id] = { enabled: true, fields: { ...fx.fields } };
+        apiState.probes[id] = JSON.parse(JSON.stringify(fx.probe));
+        apiState.registered[id] = true;
+      }
     }
     return r.fulfill({ json: { state: apiState.scan.state, qrUrl: apiState.scan.qrUrl, userCode: apiState.scan.userCode } });
   });
@@ -587,7 +618,12 @@ async function afterSuite(browser, base) {
     'src/main/resources/web/js/main.js',
     'src/main/scala/nebflow/gateway/RestApiRoutes.scala',
     'src/main/scala/nebflow/gateway/GatewayMain.scala',
+    'src/main/scala/nebflow/gateway/PresenceRoutes.scala',   // weixin-scanbind: the begin/status routes
     'src/main/scala/nebflow/social/SocialChannels.scala',
+    'src/main/scala/nebflow/social/WeixinIlinkScanBind.scala', // weixin-scanbind: the manager
+    'src/test/scala/nebflow/social/WeixinIlinkScanBindSpec.scala', // weixin-scanbind spec
+    'src/test/scala/nebflow/social/WeixinIlinkBridgeSpec.scala', // weixin-scanbind: the WI-F1 field contract
+    'README.md',                                             // weixin-scanbind: the section update
     'src/main/scala/nebflow/social/FeishuChannel.scala',       // feishubridge: sender-id extraction
     'src/main/scala/nebflow/social/FeishuMessage.scala',       // feishubridge: senderId field
     'src/main/scala/nebflow/social/FeishuBridgePlugin.scala',  // feishubridge: the adapter
@@ -633,13 +669,14 @@ async function afterSuite(browser, base) {
   const enabledFlags = (src.match(/adapterRegistered: *true/g) || []).length;
   check('W6③ adapterRegistered:true in definition layer = 0', enabledFlags === 0, `grep -c = ${enabledFlags}`);
 
-  // socialhide SH1 — the seal at the definition face: the visible single
-  // source answers feishu-only. Read off the REAL repo module (not the served
-  // tree): the production truth itself.
+  // socialhide SH1 — the visible single source. Since weixin-scanbind
+  // (2026-10-03) the weixin-ilink card is UNSEALED and the visible set is
+  // [weixin-ilink, feishu] in definition order. Read off the REAL repo module
+  // (not the served tree): the production truth itself.
   const visIds = CHANNELS_MOD.visibleChannels().map((c) => c.id);
-  check('SH1 visible single source = {feishu} (socialChannelCount = 1)',
-    EXPECTED_CARDS === 1 && CHANNELS_MOD.socialChannelCount() === 1
-    && JSON.stringify(visIds) === JSON.stringify(['feishu']),
+  check('SH1 visible single source = [weixin-ilink, feishu] (socialChannelCount = 2)',
+    EXPECTED_CARDS === 2 && CHANNELS_MOD.socialChannelCount() === 2
+    && JSON.stringify(visIds) === JSON.stringify(['weixin-ilink', 'feishu']),
     `count=${CHANNELS_MOD.socialChannelCount()} visible=[${visIds.join(',')}]`);
 
   // socialhide SH2 — sealed ≠ deleted: the full data set keeps every entry, the
@@ -653,36 +690,36 @@ async function afterSuite(browser, base) {
   //    add/remove can never pass this check by arithmetic alone.
   const sealFlags = CHANNELS_MOD.SOCIAL_CHANNELS.map((c) => `${c.id}=${c.hidden === true ? 'hidden' : 'visible'}`);
   const sealedIds = CHANNELS_MOD.SOCIAL_CHANNELS.filter((c) => c.hidden === true).map((c) => c.id);
-  check('SH2 sealed ≠ deleted: 4 entries in data, wechat+weixin-ilink+telegram flagged, feishu unflagged',
+  check('SH2 sealed ≠ deleted: 4 entries in data, wechat+telegram flagged, feishu+weixin-ilink unflagged',
     EXPECTED_DEFINITION_CHANNELS === 4
     && CHANNELS_MOD.channelById('wechat')?.hidden === true
-    && CHANNELS_MOD.channelById('weixin-ilink')?.hidden === true
+    && CHANNELS_MOD.channelById('weixin-ilink')?.hidden === false
     && CHANNELS_MOD.channelById('telegram')?.hidden === true
     && CHANNELS_MOD.channelById('feishu')?.hidden !== true
-    && JSON.stringify(sealedIds) === JSON.stringify(['wechat', 'weixin-ilink', 'telegram'])
+    && JSON.stringify(sealedIds) === JSON.stringify(['wechat', 'telegram'])
     && SOCIAL_KEYS.length === EXPECTED_DEFINITION_CHANNELS * 2,
     `entries=${EXPECTED_DEFINITION_CHANNELS} flags=[${sealFlags.join(' ')}] channelLocaleKeys=${SOCIAL_KEYS.length}`);
 
   // socialhide SH2b — the raw-source grep face of the acceptance: with
   // comments stripped (headers document the flag too), the CODE carries
-  // exactly 4 `hidden: true` literals — the wechat / weixin-ilink / telegram
-  // channel entries plus the lark region entry. The sealed-data shape on the
-  // bytes themselves.
-  // 🔴 wechat-ilink: 3 → 4 for the added sealed card (semantics untouched).
+  // exactly 3 `hidden: true` literals — the wechat / telegram channel entries
+  // plus the lark region entry. The sealed-data shape on the bytes themselves.
+  // 🔴 weixin-scanbind (2026-10-03): 4 → 3 — the weixin-ilink entry dropped its
+  //    seal (`hidden: false` now), so the literal count drops with it.
   const srcCode = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   const hiddenFlags = (srcCode.match(/hidden: true/g) || []).length;
-  check('SH2b code-level `hidden: true` literals = 4 (wechat + weixin-ilink + telegram + lark region)',
-    hiddenFlags === 4, `grep -c (comments stripped) = ${hiddenFlags}`);
+  check('SH2b code-level `hidden: true` literals = 3 (wechat + telegram + lark region)',
+    hiddenFlags === 3, `grep -c (comments stripped) = ${hiddenFlags}`);
 
-  // ── wechat-ilink (chain-wechat-impl): the new card's data face ─────────────
-  // IL1 — the seal of the NEW card, and the visible single source it must not
-  // disturb: the visible set is still {feishu} and the count is still 1, so the
-  // added card is invisible by construction (its own `hidden: true`), never by
-  // the panel happening to skip it.
-  check('IL1 weixin-ilink is sealed: visible face stays {feishu}, count stays 1',
-    CHANNELS_MOD.channelById('weixin-ilink')?.hidden === true
-    && CHANNELS_MOD.socialChannelCount() === 1
-    && JSON.stringify(CHANNELS_MOD.visibleChannels().map((c) => c.id)) === JSON.stringify(['feishu']),
+  // ── wechat-ilink: the card's data face ─────────────────────────────────────
+  // IL1 — since weixin-scanbind (2026-10-03) the card ships UNSEALED: the
+  // visible face is [weixin-ilink, feishu] in definition order and the count
+  // is 2. The seal leg lives on as the RESEAL red proof (ILINKRED below), so
+  // this pin still has teeth — just with inverted polarity.
+  check('IL1 weixin-ilink is unsealed: visible face = [weixin-ilink, feishu], count = 2',
+    CHANNELS_MOD.channelById('weixin-ilink')?.hidden === false
+    && CHANNELS_MOD.socialChannelCount() === 2
+    && JSON.stringify(CHANNELS_MOD.visibleChannels().map((c) => c.id)) === JSON.stringify(['weixin-ilink', 'feishu']),
     `sealed=${CHANNELS_MOD.channelById('weixin-ilink')?.hidden} count=${CHANNELS_MOD.socialChannelCount()} visible=[${CHANNELS_MOD.visibleChannels().map((c) => c.id).join(',')}]`);
 
   // IL2 — the field mirror. Compares the FULL five-tuple (key / kind / required /
@@ -764,11 +801,11 @@ async function afterSuite(browser, base) {
       const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.noCardToggle && h.control);
       check(`W4 card shape (count = visible single source) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
         `cards=${cards.count} visibleExpected=${EXPECTED_CARDS} sealedDataEntries=${EXPECTED_DEFINITION_CHANNELS} headsOk=${headsOk} heads=${JSON.stringify(cards.heads)}`);
-      // socialhide SH3 — the DOM face of the seal: exactly the feishu card
-      // renders (in definition order) and the sealed ids are ABSENT, not
-      // merely invisible.
-      check(`SH3 DOM: visible cards = [feishu], sealed ids absent (${tag})`,
-        JSON.stringify(cards.ids) === JSON.stringify(['feishu'])
+      // socialhide SH3 — the DOM face of the seal: exactly the unsealed cards
+      // render (in definition order) and the sealed ids are ABSENT, not merely
+      // invisible. weixin-scanbind: weixin-ilink joined the visible face.
+      check(`SH3 DOM: visible cards = [weixin-ilink, feishu], sealed ids absent (${tag})`,
+        JSON.stringify(cards.ids) === JSON.stringify(['weixin-ilink', 'feishu'])
         && !cards.ids.includes('wechat') && !cards.ids.includes('telegram'),
         `ids=[${cards.ids.join(',')}]`);
       // social-fix SF-3 — the retired faces stay retired on the visible face:
@@ -2140,26 +2177,28 @@ async function apiSuite() {
   check('API without a token ⇒ 403', unauth.status === 403, `status=${unauth.status}`);
 }
 
-// ── ILINKRED: wechat-ilink red proof (damage the new card in the SERVED tree
+// ── ILINKRED: wechat-ilink red proof (damage the card in the SERVED tree
 //    ⇒ the SAME probes the production tree pins must fire) ───────────────────
 // Mutation-safe in the same sense as the FIXTURE / RED-FILTER legs above: the
 // damage happens to the bytes as they are served, in memory, and the tree on
 // disk is never touched. The probes below are the served-tree twins of IL1
-// (seal) and IL2 (field mirror); the production readings themselves are taken
-// off the repo module in afterSuite, which is why this leg reads the app's own
-// in-page module instance instead — module and DOM then come from the SAME
-// mutated bytes, so the reading cannot be an artefact of a stale import.
+// (unsealed face) and IL2 (field mirror); the production readings themselves
+// are taken off the repo module in afterSuite, which is why this leg reads the
+// app's own in-page module instance instead — module and DOM then come from the
+// SAME mutated bytes, so the reading cannot be an artefact of a stale import.
 //
-// TWO variants, each with its own judgement:
-//   · SOCIAL_MUTATE=ilink-unseal — the seal is dropped ⇒ IL1's inverse fires
-//     (the visible face is no longer feishu-only).
-//   · SOCIAL_MUTATE=ilink-fields — `baseurl` loses its pattern and
-//     `ilink_bot_id` flips to optional ⇒ IL2's inverse fires (the mirror no
-//     longer reproduces the contract five-tuple), while IL1 stays green — which
-//     is exactly what proves the two probes have separate teeth.
+// TWO variants, each with its own judgement (polarity INVERTED by
+// weixin-scanbind, 2026-10-03: the production card ships UNSEALED):
+//   · SOCIAL_MUTATE=ilink-reseal — the dropped seal is re-applied ⇒ IL1's
+//     inverse fires (the visible face collapses back to feishu-only).
+//   · SOCIAL_MUTATE=ilink-fields — `baseurl` AND `sidecar_url` lose their
+//     pattern (2 hits) and `ilink_bot_id` flips to optional (1 hit) ⇒ IL2's
+//     inverse fires (the mirror no longer reproduces the contract five-tuple),
+//     while IL1 stays green — which is exactly what proves the two probes have
+//     separate teeth.
 async function ilinkRedSuite(browser, base) {
   const variant = process.env.SOCIAL_MUTATE;
-  const expectHits = variant === 'ilink-unseal' ? 1 : 2;
+  const expectHits = variant === 'ilink-reseal' ? 1 : 3;
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   const page = await ctx.newPage();
   apiState.channels = {};
@@ -2185,28 +2224,30 @@ async function ilinkRedSuite(browser, base) {
     };
   }));
   check('IL-R the probe sees a card that IS damaged (this tree is not the production tree)',
-    variant === 'ilink-unseal'
-      ? served.hidden === false
+    variant === 'ilink-reseal'
+      ? served.hidden === true
       : !(served.fields.find((f) => f.key === 'baseurl') || {}).pattern
+        && !(served.fields.find((f) => f.key === 'sidecar_url') || {}).pattern
         && (served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required === false,
-    `hidden=${served.hidden} baseurl.pattern=${String((served.fields.find((f) => f.key === 'baseurl') || {}).pattern)} ilink_bot_id.required=${String((served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required)}`);
-  if (variant === 'ilink-unseal') {
-    // IL1 on the damaged tree: the seal is gone, so the visible face and the
-    // count BOTH move — the production pins (visible = {feishu}, count = 1) are
-    // red here, which is what gives IL1 teeth.
-    check('IL-R red proof: dropping the new card\'s seal unseals it (IL1 fires)',
-      served.hidden === false && served.visible.includes('weixin-ilink') && served.count === 2,
-      `visible=[${served.visible.join(',')}] count=${served.count} rendered=[${served.rendered.join(',')}] — production pins (visible={feishu}, count=1) are RED on this tree`);
+    `hidden=${served.hidden} baseurl.pattern=${String((served.fields.find((f) => f.key === 'baseurl') || {}).pattern)} sidecar_url.pattern=${String((served.fields.find((f) => f.key === 'sidecar_url') || {}).pattern)} ilink_bot_id.required=${String((served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required)}`);
+  if (variant === 'ilink-reseal') {
+    // IL1 on the damaged tree: the seal is back, so the visible face and the
+    // count BOTH collapse — the production pins (visible = [weixin-ilink,
+    // feishu], count = 2) are red here, which is what gives IL1 teeth.
+    check('IL-R red proof: re-applying the seal collapses the visible face (IL1 fires)',
+      served.hidden === true && !served.visible.includes('weixin-ilink') && served.count === 1,
+      `visible=[${served.visible.join(',')}] count=${served.count} rendered=[${served.rendered.join(',')}] — production pins (visible=[weixin-ilink, feishu], count=2) are RED on this tree`);
   } else {
     // IL2 on the damaged tree: the mirror no longer reproduces the contract.
-    // The seal is intact, so IL1 must stay green here — the two probes are
+    // The seal stays dropped, so IL1 must stay green here — the two probes are
     // independent, not two names for one reading.
     const mr = ilinkMirror({ fields: served.fields, hidden: served.hidden });
     check('IL-R red proof: a damaged field mirror no longer matches the contract (IL2 fires)',
       !mr.ok, `mismatch=[${mr.mismatch.join('; ')}] — the production IL2 reading is RED on this tree`);
-    check('IL-R control: IL1\'s seal reading is UNAFFECTED by the field damage',
-      served.hidden === true && served.count === 1 && JSON.stringify(served.visible) === JSON.stringify(['feishu']),
-      `seal intact: hidden=${served.hidden} count=${served.count} visible=[${served.visible.join(',')}]`);
+    check('IL-R control: IL1\'s unsealed-face reading is UNAFFECTED by the field damage',
+      served.hidden === false && served.count === 2
+      && JSON.stringify(served.visible) === JSON.stringify(['weixin-ilink', 'feishu']),
+      `unsealed face intact: hidden=${served.hidden} count=${served.count} visible=[${served.visible.join(',')}]`);
   }
   await shot(page, `ilinkred-${variant}-1440-light`);
   await ctx.close();

@@ -8,49 +8,61 @@ import munit.CatsEffectSuite
 import nebflow.bridge.BridgeContext
 import nebflow.shared.SessionMeta
 
-/** Offline regression spec for the weixin iLink side-car seam (wechat iLink
-  * batch, 2026-09-30).
-  *
-  * Deliberately NO network, NO credential and NO host process: the seam holds no
-  * socket at all (the official ClawBot plugin owns the protocol), the allowlist
-  * is pinned through the constructor seam, and the injection context is a
-  * recording fake. What is pinned is every gate / routing / containment decision
-  * the seam makes, plus the server-side field contract of the `weixin-ilink`
-  * card (and the fact that the `wechat` card is untouched).
-  *
-  * Mutation safety: each gate arm below is red-by-construction if the
-  * corresponding decision is removed — [[WeixinIlinkBridgePlugin.intake]]'s
-  * fail-closed branch, its position FIRST (so it also rules the default-session
-  * arm), the containment of a raising `injectMessage`, and the field contract.
-  */
+/**
+ * Offline regression spec for the weixin iLink side-car seam (wechat iLink
+ * batch, 2026-09-30).
+ *
+ * Deliberately NO network, NO credential and NO host process: the seam holds no
+ * socket at all (the official ClawBot plugin owns the protocol), the allowlist
+ * is pinned through the constructor seam, and the injection context is a
+ * recording fake. What is pinned is every gate / routing / containment decision
+ * the seam makes, plus the server-side field contract of the `weixin-ilink`
+ * card (and the fact that the `wechat` card is untouched).
+ *
+ * Mutation safety: each gate arm below is red-by-construction if the
+ * corresponding decision is removed — [[WeixinIlinkBridgePlugin.intake]]'s
+ * fail-closed branch, its position FIRST (so it also rules the default-session
+ * arm), the containment of a raising `injectMessage`, and the field contract.
+ */
 class WeixinIlinkBridgeSpec extends CatsEffectSuite:
 
   private def tmpRoot(): os.Path = os.temp.dir(prefix = "nb-weixin-ilink-")
 
   private def inbound(
-      senderId: Option[String],
-      text: Option[String] = Some("hello"),
-      messageId: Option[String] = Some("msg_1")
+    senderId: Option[String],
+    text: Option[String] = Some("hello"),
+    messageId: Option[String] = Some("msg_1")
   ): WeixinIlinkBridgePlugin.Inbound =
     WeixinIlinkBridgePlugin.Inbound(senderId, text, messageId)
 
   private def meta(id: String, senderId: Option[String]): SessionMeta =
     SessionMeta(
-      id = id, name = id, createdAt = 0L, updatedAt = 0L, hasUnread = false,
+      id = id,
+      name = id,
+      createdAt = 0L,
+      updatedAt = 0L,
+      hasUnread = false,
       bridges = senderId
         .map(s => Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> Json.fromString(s))))
         .getOrElse(Map.empty)
     )
 
-  /** Recording BridgeContext: captures injections and serves a fixed session
-    * list. `raiseOnInject` is the crash-isolation seam — an injection that
-    * throws must never escape the seam. */
-  private final class RecordingCtx(sessions: List[SessionMeta], raiseOnInject: Boolean = false)
-      extends BridgeContext:
+  /**
+   * Recording BridgeContext: captures injections and serves a fixed session
+   * list. `raiseOnInject` is the crash-isolation seam — an injection that
+   * throws must never escape the seam.
+   */
+  private final class RecordingCtx(sessions: List[SessionMeta], raiseOnInject: Boolean = false) extends BridgeContext:
+
     val injected: Ref[IO, List[(String, String, Option[String])]] =
       Ref.unsafe[IO, List[(String, String, Option[String])]](Nil)
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] =
       if raiseOnInject then IO.raiseError(new RuntimeException("injected: peer leg failed"))
       else injected.update(_ :+ ((sessionId, content, senderId)))
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
@@ -58,8 +70,9 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
 
-  private def plugin(allowed: Option[List[String]] = None,
-      root: os.Path = tmpRoot()): WeixinIlinkBridgePlugin =
+  end RecordingCtx
+
+  private def plugin(allowed: Option[List[String]] = None, root: os.Path = tmpRoot()): WeixinIlinkBridgePlugin =
     new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = allowed)
 
   /** bring the seam up over a recording context (armed gate + routing table). */
@@ -151,13 +164,18 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   // and the INFO arms pass the effective-level check and neither assertion can be
   // satisfied by a filter artefact.
 
-  /** The seam's logger, as logback sees it (the plugin uses
-    * `NebflowLogger.forName("nebflow.social.weixin-ilink-bridge")`). */
+  /**
+   * The seam's logger, as logback sees it (the plugin uses
+   * `NebflowLogger.forName("nebflow.social.weixin-ilink-bridge")`).
+   */
   private def seamLogger(): ch.qos.logback.classic.Logger =
-    org.slf4j.LoggerFactory.getLogger("nebflow.social.weixin-ilink-bridge")
+    org.slf4j.LoggerFactory
+      .getLogger("nebflow.social.weixin-ilink-bridge")
       .asInstanceOf[ch.qos.logback.classic.Logger]
 
-  private def withAppender[A](body: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent] => A): A =
+  private def withAppender[A](
+    body: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent] => A
+  ): A =
     val lb = seamLogger()
     val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
     appender.start()
@@ -165,8 +183,9 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     try body(appender)
     finally lb.detachAppender(appender)
 
-  private def messages(appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent])
-      : List[String] =
+  private def messages(
+    appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+  ): List[String] =
     import scala.jdk.CollectionConverters.*
     appender.list.asScala.toList.map(_.getFormattedMessage)
 
@@ -317,12 +336,14 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   }
 
   test("WI-R5 routing rebuild reads only weixin-ilink bindings; duplicate sender id = last wins") {
-    val c = new RecordingCtx(List(
-      meta("s1", Some("wx_1")),
-      meta("s2", Some("wx_2")),
-      meta("s3", Some("wx_1")), // duplicate binding: the last one wins
-      meta("s4", None)          // no weixin-ilink bridge entry: not routed
-    ))
+    val c = new RecordingCtx(
+      List(
+        meta("s1", Some("wx_1")),
+        meta("s2", Some("wx_2")),
+        meta("s3", Some("wx_1")), // duplicate binding: the last one wins
+        meta("s4", None) // no weixin-ilink bridge entry: not routed
+      )
+    )
     val p = plugin()
     for
       _ <- started(p, c)
@@ -334,10 +355,18 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   }
 
   test("WI-R6 a blank ilink_user_id in a binding is not routable") {
-    val c = new RecordingCtx(List(SessionMeta(
-      id = "s1", name = "s1", createdAt = 0L, updatedAt = 0L, hasUnread = false,
-      bridges = Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> Json.fromString("  ")))
-    )))
+    val c = new RecordingCtx(
+      List(
+        SessionMeta(
+          id = "s1",
+          name = "s1",
+          createdAt = 0L,
+          updatedAt = 0L,
+          hasUnread = false,
+          bridges = Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> Json.fromString("  ")))
+        )
+      )
+    )
     val p = plugin()
     for
       _ <- started(p, c)
@@ -358,13 +387,16 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def j(s: String): Json = io.circe.parser.parse(s).toOption.get
     assertEquals(
       WeixinIlinkBridgePlugin.parseInbound(j("""{"senderId":"wx_a","text":"hi","messageId":"m1"}""")),
-      Right(WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("hi"), Some("m1"))))
+      Right(WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("hi"), Some("m1")))
+    )
     assertEquals(
       WeixinIlinkBridgePlugin.parseInbound(j("""{"from_user_id":"wx_b","text":"yo"}""")),
-      Right(WeixinIlinkBridgePlugin.Inbound(Some("wx_b"), Some("yo"), None)))
+      Right(WeixinIlinkBridgePlugin.Inbound(Some("wx_b"), Some("yo"), None))
+    )
     assertEquals(
       WeixinIlinkBridgePlugin.parseInbound(j("""{"text":"anon"}""")),
-      Right(WeixinIlinkBridgePlugin.Inbound(None, Some("anon"), None)))
+      Right(WeixinIlinkBridgePlugin.Inbound(None, Some("anon"), None))
+    )
     assert(WeixinIlinkBridgePlugin.parseInbound(j("""["not","an","object"]""")).isLeft)
   }
 
@@ -405,9 +437,12 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
 
   /** A card that verifies: both required plain fields + the required secret. */
   private def verifiedBody(): Json =
-    io.circe.parser.parse(
-      """{"enabled":true,"fields":{"ilink_bot_id":"deadbeef@im.bot","ilink_user_id":"wx_scan","bot_token":"plain-token"}}"""
-    ).toOption.get
+    io.circe.parser
+      .parse(
+        """{"enabled":true,"fields":{"ilink_bot_id":"deadbeef@im.bot","ilink_user_id":"wx_scan","bot_token":"plain-token"}}"""
+      )
+      .toOption
+      .get
 
   // ─────────────── field contract (cross-branch: part B's definition layer) ───────────────
 
@@ -416,6 +451,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     ("ilink_bot_id", "text", true, None, None),
     ("ilink_user_id", "text", true, None, None),
     ("baseurl", "url", false, Some("^https?://"), None),
+    // weixin-scanbind (2026-10-03): the side-car control leg — the FULL-MATCH
+    // spelling (the save validation runs String.matches, so a prefix pattern
+    // would reject every real URL).
+    ("sidecar_url", "url", false, Some("^https?://.*"), None),
     ("allowed_ilink_user_ids", "text", false, None, None)
   )
 
@@ -433,8 +472,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     }
     // Stored key shape: the one secret keeps a `_ref` path, nothing else does.
     assertEquals(fields.filter(_.isSecret).map(_.storedKey), List("bot_token_ref"))
-    assertEquals(fields.filterNot(_.isSecret).map(_.storedKey), List(
-      "ilink_bot_id", "ilink_user_id", "baseurl", "allowed_ilink_user_ids"))
+    assertEquals(
+      fields.filterNot(_.isSecret).map(_.storedKey),
+      List("ilink_bot_id", "ilink_user_id", "baseurl", "sidecar_url", "allowed_ilink_user_ids")
+    )
   }
 
   test("WI-F2 the wechat card's field set is UNCHANGED (regression lock)") {
@@ -456,8 +497,11 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     assertEquals(ids.count(_ == "weixin-ilink"), 1, "the new card is registered once")
     assert(ids.contains("wechat"), "the wechat card stays registered")
     assertEquals(ids.distinct.size, ids.size, "no duplicate channel id")
-    assertEquals(ids, List("wechat", "weixin-ilink", "feishu", "telegram"),
-      "the channel id order is part of the read-side payload shape")
+    assertEquals(
+      ids,
+      List("wechat", "weixin-ilink", "feishu", "telegram"),
+      "the channel id order is part of the read-side payload shape"
+    )
   }
 
   test("WI-F4 read side: the new card renders in channelsJson with its stored fields") {
@@ -471,13 +515,14 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   test("WI-F5 the gate reads the stored card, and an unset field means unrestricted") {
     val root = tmpRoot()
     assertEquals(WeixinIlinkBridgePlugin.readChannelConfig(root).allowedIlinkUserIds, List.empty[String])
-    SocialChannels.save(root, WeixinIlinkBridgePlugin.Name,
-      io.circe.parser.parse("""{"fields":{"allowed_ilink_user_ids":"wx_a, wx_b;wx_c"}}""").toOption.get) match
+    SocialChannels.save(
+      root,
+      WeixinIlinkBridgePlugin.Name,
+      io.circe.parser.parse("""{"fields":{"allowed_ilink_user_ids":"wx_a, wx_b;wx_c"}}""").toOption.get
+    ) match
       case Right(_) => ()
       case Left(err) => fail(s"save refused: $err")
-    assertEquals(
-      WeixinIlinkBridgePlugin.readChannelConfig(root).allowedIlinkUserIds,
-      List("wx_a", "wx_b", "wx_c"))
+    assertEquals(WeixinIlinkBridgePlugin.readChannelConfig(root).allowedIlinkUserIds, List("wx_a", "wx_b", "wx_c"))
   }
 
 end WeixinIlinkBridgeSpec

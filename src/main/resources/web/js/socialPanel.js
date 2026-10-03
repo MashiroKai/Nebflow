@@ -145,6 +145,21 @@
 // manual-fill form and its collapsed entry are retired — scan-to-create is
 // the ONLY creation path. The probe endpoint, the state machine and the
 // sealed-channel data face are all unchanged (render layer only).
+//
+// weixin-scanbind batch (author directive 2026-10-03): a SECOND scanBind card
+// joins the panel (weixin-ilink, unsealed). Three generalizations, zero
+// behaviour change for the feishu card:
+//   · the scan session state is PER CHANNEL ([[activeScans]], one session per
+//     card; the one poll timer ticks all live sessions and sweeps itself when
+//     the map empties) — [[maybeBeginScan]] auto-begins EVERY visible
+//     not-created scanBind card, not just the first;
+//   · the scan/archive copy is CHANNEL-SCOPED (`<namespace>.scan.*` /
+//     `<namespace>.archive.*`, the namespace derived from the channel's
+//     nameKey — see [[copyBase]]) — the feishu keys resolve exactly as before;
+//   · the feishu-specific contract faces (C1 connection, C4 default session,
+//     the Nebula pin write-back) stay FEISHU-ONLY ([[CONTRACT_FACE_CHANNELS]]):
+//     the weixin bridge resolves its default session server-side, and no
+//     weixin request may ride the feishu endpoints.
 
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn } from './utils.js';
@@ -284,6 +299,13 @@ async function fetchProbe(id) {
 /** C1/C4 endpoints on the feishu social routes. */
 const FEISHU_CONNECTION_URL = '/api/social/channels/feishu/connection';
 const FEISHU_DEFAULT_SESSION_URL = '/api/social/channels/feishu/default-session';
+
+/** The channels whose created face reads the feishu-specific contract faces
+ *  (C1/C4). weixin-scanbind: deliberately FEISHU-ONLY — these endpoints are
+ *  feishu routes, and a weixin card must never fetch its live state from them
+ *  (its default session resolves server-side through the bridge seam). The
+ *  Nebula pin write-back inherits the same restriction. */
+const CONTRACT_FACE_CHANNELS = ['feishu'];
 
 /**
  * First non-empty string among the candidates (contract-field tolerance: a
@@ -595,7 +617,7 @@ function scanBindCardHTML(ch) {
   const face = created
     ? `${liveBlockHTML(ch)}
        <div class="social-card-actions">
-         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t('social.feishu.archive.hint'))}">${escapeHtml(t('social.feishu.archive.action'))}</button>
+         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t(archiveKey(ch.id, 'hint')))}">${escapeHtml(t(archiveKey(ch.id, 'action')))}</button>
          <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
        </div>`
     : scanInline;
@@ -781,8 +803,10 @@ async function loadAll() {
   // to decide whether the convergence write is due) — its rendered control went
   // away with the socpanel-min batch, 2026-10-01. C3 was a display-only
   // transport and left with its only consumer.
+  // weixin-scanbind: the faces stay FEISHU-ONLY ([[CONTRACT_FACE_CHANNELS]]) —
+  // a second scanBind card must not fetch feishu's endpoints.
   for (const ch of SOCIAL_CHANNELS) {
-    if (!ch.scanBind) continue;
+    if (!ch.scanBind || !CONTRACT_FACE_CHANNELS.includes(ch.id)) continue;
     await fetchConnection(ch.id);
     await fetchDefaultSession(ch.id);
   }
@@ -913,7 +937,7 @@ async function recheck(channelId) {
 async function archiveChannel(channelId) {
   const ch = channelById(channelId);
   if (!ch || !ch.scanBind) return;
-  setSaveState(channelId, t('social.feishu.archive.doing'));
+  setSaveState(channelId, t(archiveKey(channelId, 'doing')));
   setBusy(true);
   try {
     const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}`, {
@@ -931,7 +955,7 @@ async function archiveChannel(channelId) {
     configByChannel = await fetchConfig();
     try { probeByChannel[channelId] = await fetchProbe(channelId); } catch { /* keep */ }
     renderAll();
-    setSaveState(channelId, t('social.feishu.archive.done'));
+    setSaveState(channelId, t(archiveKey(channelId, 'done')));
     maybeBeginScan(); // recreate: the archived face auto-begins the QR
   } catch {
     setSaveState(channelId, t('social.action.saveFailed', { code: 'io' }));
@@ -1001,38 +1025,68 @@ async function pinDefaultSessions() {
   const neb = nebulaSession();
   if (!neb) return; // no Nebula session ⇒ degrade silently, never guess an id
   for (const ch of SOCIAL_CHANNELS) {
-    if (!ch.scanBind) continue;
+    // The C4 write path is a feishu route — feishu-only (weixin-scanbind).
+    if (!ch.scanBind || !CONTRACT_FACE_CHANNELS.includes(ch.id)) continue;
     const d = defaultSessionByChannel[ch.id];
     if (!d || !d.available || d.sessionId === neb.id) continue;
     await saveDefaultSession(ch.id, neb.id);
   }
 }
 
-// ── Auto-scan (in-card, social-fix) ──────────────────────────────────────
+// ── Auto-scan (in-card, social-fix; multi-card since weixin-scanbind) ─────
 /**
- * Auto-begin the in-card scan when a visible scanBind card sits on its
+ * Auto-begin the in-card scan on EVERY visible scanBind card sitting on its
  * not-created face (QR first on entry; the archive→recreate leg reuses this).
- * A created card, a closed panel or an already-running session never
- * triggers it.
+ * A created card, a closed panel or a card that already owns a session never
+ * triggers one.
  */
 function maybeBeginScan() {
   const ov = overlay();
   if (!ov || !ov.classList.contains('on')) return;
-  const ch = visibleChannels().find((c) => !!c.scanBind);
-  if (!ch || faceCreated(ch)) return;
-  void beginInlineScan(ch.id);
+  for (const ch of visibleChannels().filter((c) => !!c.scanBind)) {
+    if (faceCreated(ch)) continue;
+    void beginInlineScan(ch.id);
+  }
 }
 
-// ── In-card scan block (feiscanbind 2026-09-27; social-fix 2026-09-28) ────
-// The "scan to create" main path for the feishu card renders INSIDE the card
-// (one view layer with the configuration — no sub-dialog, no overlay face,
-// no manual-fill fallback). Exactly ONE poll timer exists ([[scanPollTimer]]);
-// it is cleared on every terminal state and on panel close, so the card can
-// never leave a loop behind.
+// ── In-card scan block (feiscanbind 2026-09-27; social-fix 2026-09-28;
+//    multi-card since weixin-scanbind 2026-10-03) ──────────────────────────
+// The "scan to create" main path renders INSIDE each scanBind card (one view
+// layer with the configuration — no sub-dialog, no overlay face, no
+// manual-fill fallback). Since weixin-scanbind the session state is PER
+// CHANNEL ([[activeScans]]: exactly one session per card); ONE poll timer
+// drives every live session and sweeps itself away when the map empties, so
+// no card can ever leave a loop behind.
 let scanPollTimer = /** @type {number|null} */ (null);
-let scanActiveScanId = '';
+/** channelId → its live session ({scanId, lastQrUrl, consecutiveErrors}). */
+const activeScans = new Map();
 const SCAN_POLL_MS = 2000;
 const SCAN_MAX_CONSECUTIVE_ERRORS = 5;
+
+/** The channel's copy namespace: the segment of `nameKey` before its last dot
+ *  (`social.feishu` / `social.weixinIlink`). The channel id is NOT the
+ *  namespace for every channel — `weixin-ilink`'s copy lives under the
+ *  camelCase `weixinIlink` — so the namespace is derived from the ONE field
+ *  that already carries it ([[nameKey]]), never re-derived from the id
+ *  (a raw key rendered on the weixin card was exactly that bug). */
+function copyBase(channelId) {
+  const ch = channelById(channelId);
+  const k = (ch && ch.nameKey) || '';
+  const i = k.lastIndexOf('.');
+  return i > 0 ? k.slice(0, i) : `social.${channelId}`;
+}
+
+/** Channel-scoped scan copy: `<namespace>.scan.<name>` — the feishu keys
+ *  resolve exactly as before; the weixin card carries its own set (the copy
+ *  names the right app on each card). */
+function scanKey(channelId, name) {
+  return `${copyBase(channelId)}.scan.${name}`;
+}
+
+/** Channel-scoped archive copy: `<namespace>.archive.<name>`. */
+function archiveKey(channelId, name) {
+  return `${copyBase(channelId)}.archive.${name}`;
+}
 
 /**
  * One scan node of a card (the scan nodes live INSIDE the card since
@@ -1051,11 +1105,12 @@ function scanNode(channelId, sel) {
  * Vendor QR render (web/vendor/qrcode.js, MIT): canvas, white ground + the
  * light-theme text token value as ink. The literals are deliberate — a QR
  * must scan identically in both themes, so it does not follow the palette.
+ * @param {string} channelId
  * @param {HTMLElement} container
  * @param {string} url
  */
-function renderQr(container, url) {
-  if (typeof qrcode !== 'function') { renderQrFallback(container, url); return; }
+function renderQr(channelId, container, url) {
+  if (typeof qrcode !== 'function') { renderQrFallback(channelId, container, url); return; }
   const qr = qrcode(0, 'M');
   qr.addData(url);
   qr.make();
@@ -1067,7 +1122,7 @@ function renderQr(container, url) {
   canvas.width = count * cell + quiet * 2;
   canvas.height = count * cell + quiet * 2;
   const ctx = canvas.getContext('2d');
-  if (!ctx) { renderQrFallback(container, url); return; }
+  if (!ctx) { renderQrFallback(channelId, container, url); return; }
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#1b1e26';
@@ -1080,10 +1135,10 @@ function renderQr(container, url) {
 }
 
 /** Vendor missing / canvas refused: the URL itself stays the usable path. */
-function renderQrFallback(container, url) {
+function renderQrFallback(channelId, container, url) {
   const note = document.createElement('div');
   note.className = 'social-scan-fallback';
-  note.textContent = t('social.feishu.scan.qrFallback');
+  note.textContent = t(scanKey(channelId, 'qrFallback'));
   const link = document.createElement('a');
   link.href = url;
   link.target = '_blank';
@@ -1102,16 +1157,17 @@ function setScanStatus(channelId, text) {
 function setScanUserCode(channelId, code) {
   const el = scanNode(channelId, '[data-scan-code]');
   if (!el) return;
-  el.textContent = t('social.feishu.scan.userCode', { code });
+  el.textContent = t(scanKey(channelId, 'userCode'), { code });
   if (code) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
 }
 
 /**
- * Begin a scan-bind session and poll it INTO the card (one view layer — the
- * status/QR nodes are re-queried from the card on every write, so renderAll
- * rebuilding the card between polls never detaches a write). Terminal states
- * clear the session handle; `done` re-reads backend truth, which flips the
- * SAME card to its created face.
+ * Begin a scan-bind session for ONE card and poll it INTO the card (one view
+ * layer — the status/QR nodes are re-queried from the card on every write, so
+ * renderAll rebuilding the card between polls never detaches a write). Each
+ * scanBind card owns at most one session; terminal states delete the entry
+ * and the poll timer sweeps itself when no session is left. `done` re-reads
+ * backend truth, which flips the SAME card to its created face.
  * @param {string} channelId
  * @returns {Promise<void>}
  */
@@ -1119,9 +1175,9 @@ async function beginInlineScan(channelId) {
   const ch = channelById(channelId);
   const card = cardEl(channelId);
   if (!ch || !ch.scanBind || !card) return;
-  if (faceCreated(ch)) return;  // the created face has no scan block
-  if (scanActiveScanId) return; // exactly one session at a time
-  setScanStatus(channelId, t('social.feishu.scan.starting'));
+  if (faceCreated(ch)) return;          // the created face has no scan block
+  if (activeScans.has(channelId)) return; // exactly one session per card
+  setScanStatus(channelId, t(scanKey(channelId, 'starting')));
   setScanUserCode(channelId, '');
   const qrBox = scanNode(channelId, '[data-scan-qr]');
   if (qrBox) qrBox.replaceChildren();
@@ -1132,64 +1188,89 @@ async function beginInlineScan(channelId) {
     const data = await resp.json();
     scanId = typeof data.scanId === 'string' ? data.scanId : '';
   } catch {
-    setScanStatus(channelId, t('social.feishu.scan.failed', { reason: 'io' }));
+    setScanStatus(channelId, t(scanKey(channelId, 'failed'), { reason: 'io' }));
     return;
   }
-  if (!scanId || scanActiveScanId) return; // a session started while in flight
-  scanActiveScanId = scanId;
-  let lastQrUrl = '';
-  let consecutiveErrors = 0;
-  /** The session is only live while the panel is open, the card exists and
-   *  still shows its not-created face. */
-  const sessionLive = () => scanActiveScanId === scanId
+  if (!scanId || activeScans.has(channelId)) return; // a session started while in flight
+  const session = { scanId, lastQrUrl: '', consecutiveErrors: 0 };
+  activeScans.set(channelId, session);
+  ensureScanPoll();
+  tickSession(channelId, session); // first tick, no 2 s wait
+}
+
+/** One timer drives EVERY live session (weixin-scanbind: the sessions are per
+ *  channel; the timer is process-wide). */
+function ensureScanPoll() {
+  if (scanPollTimer === null) {
+    scanPollTimer = /** @type {any} */ (setInterval(() => {
+      for (const [id, session] of [...activeScans]) tickSession(id, session);
+    }, SCAN_POLL_MS));
+  }
+}
+
+/** Drop dead entries; when no session is left the timer sweeps itself away. */
+function sweepScanPoll() {
+  if (scanPollTimer !== null && activeScans.size === 0) {
+    clearInterval(scanPollTimer);
+    scanPollTimer = null;
+  }
+}
+
+/**
+ * One poll tick for a single session: reads the status face and drives the
+ * in-card block. The session is only live while the panel is open, the card
+ * exists and still shows its not-created face; a dead session deletes its own
+ * entry and the timer sweeps itself when none is left.
+ */
+function tickSession(channelId, session) {
+  const ch = channelById(channelId);
+  if (!ch) { activeScans.delete(channelId); sweepScanPoll(); return; }
+  const sessionLive = () => activeScans.get(channelId) === session
     && !!cardEl(channelId)
     && !faceCreated(ch)
     && !!(overlay() && overlay().classList.contains('on'));
-  /** One poll tick: reads the status face and drives the in-card block. */
-  const tick = async () => {
-    if (!sessionLive()) { stopScanPoll(); return; }
+  const finish = () => { activeScans.delete(channelId); sweepScanPoll(); };
+  void (async () => {
+    if (!sessionLive()) { finish(); return; }
     /** @type {Record<string, any>|null} */
     let s = null;
     try {
-      const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}/scan-bind/status?scanId=${encodeURIComponent(scanId)}`);
-      if (resp.ok) { s = await resp.json(); consecutiveErrors = 0; }
+      const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}/scan-bind/status?scanId=${encodeURIComponent(session.scanId)}`);
+      if (resp.ok) { s = await resp.json(); session.consecutiveErrors = 0; }
     } catch { /* transient — counted below */ }
-    if (!sessionLive()) { stopScanPoll(); return; }
+    if (!sessionLive()) { activeScans.delete(channelId); sweepScanPoll(); return; }
     if (!s) {
-      consecutiveErrors++;
-      if (consecutiveErrors >= SCAN_MAX_CONSECUTIVE_ERRORS) {
-        stopScanPoll();
-        scanActiveScanId = '';
-        setScanStatus(channelId, t('social.feishu.scan.failed', { reason: 'io' }));
+      session.consecutiveErrors++;
+      if (session.consecutiveErrors >= SCAN_MAX_CONSECUTIVE_ERRORS) {
+        activeScans.delete(channelId);
+        sweepScanPoll();
+        setScanStatus(channelId, t(scanKey(channelId, 'failed'), { reason: 'io' }));
       }
       return;
     }
     const state = typeof s.state === 'string' ? s.state : '';
     if (state === 'qr_ready' || state === 'polling') {
       const url = typeof s.qrUrl === 'string' ? s.qrUrl : '';
-      if (url && url !== lastQrUrl) {
+      if (url && url !== session.lastQrUrl) {
         const box = scanNode(channelId, '[data-scan-qr]');
-        if (box) { lastQrUrl = url; renderQr(box, url); }
+        if (box) { session.lastQrUrl = url; renderQr(channelId, box, url); }
       }
       setScanUserCode(channelId, typeof s.userCode === 'string' ? s.userCode : '');
-      setScanStatus(channelId, t(state === 'polling' ? 'social.feishu.scan.confirmed' : 'social.feishu.scan.waiting'));
+      setScanStatus(channelId, t(scanKey(channelId, state === 'polling' ? 'confirmed' : 'waiting')));
     } else if (state === 'done') {
-      stopScanPoll();
-      scanActiveScanId = '';
-      setScanStatus(channelId, t('social.feishu.scan.done'));
+      activeScans.delete(channelId);
+      sweepScanPoll();
+      setScanStatus(channelId, t(scanKey(channelId, 'done')));
       // The card behind flips by backend truth: re-read config + probe so the
       // pill/credential line/adapterRegistered come back current (plan card §5.7).
       setBusy(true);
       try { await loadAll(); } finally { setBusy(false); }
     } else if (state === 'failed') {
-      stopScanPoll();
-      scanActiveScanId = '';
-      setScanStatus(channelId, t('social.feishu.scan.failed', { reason: typeof s.error === 'string' ? s.error : 'io' }));
+      activeScans.delete(channelId);
+      sweepScanPoll();
+      setScanStatus(channelId, t(scanKey(channelId, 'failed'), { reason: typeof s.error === 'string' ? s.error : 'io' }));
     }
-  };
-  stopScanPoll();
-  scanPollTimer = /** @type {any} */ (setInterval(() => { void tick(); }, SCAN_POLL_MS));
-  void tick();
+  })();
 }
 
 /** Clear the ONE poll handle (idempotent). */
@@ -1215,7 +1296,7 @@ export function closeSocialPanel() {
   if (!ov) return;
   // The in-card scan poll never outlives the panel (the closer owns the exit).
   stopScanPoll();
-  scanActiveScanId = '';
+  activeScans.clear();
   ov.classList.remove('on');
   // Esc/close always returns focus to the entry button (W13).
   const btn = document.getElementById('social-btn');

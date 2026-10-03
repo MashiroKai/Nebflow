@@ -99,6 +99,16 @@ object SocialChannels:
         FieldSpec("ilink_bot_id", "text", required = true, pattern = None),
         FieldSpec("ilink_user_id", "text", required = true, pattern = None),
         FieldSpec("baseurl", "url", required = false, pattern = Some("^https?://")),
+        // weixin-scanbind (2026-10-03): the side-car CONTROL leg — where the
+        // scan-bind manager finds the official plugin's login session (the QR
+        // belongs to the plugin side, never to this repo). Empty = the default
+        // localhost endpoint; the scan-bind save never touches this field.
+        // 🔴 FULL-MATCH spelling on purpose: the save validation runs
+        // `String.matches` (whole value), so a prefix pattern like
+        // `^https?://` would reject every real URL. (The older url fields
+        // carry the prefix spelling and disagree with the frontend's
+        // prefix-`.test()` face — pre-existing, out of this batch's face.)
+        FieldSpec("sidecar_url", "url", required = false, pattern = Some("^https?://.*")),
         FieldSpec("allowed_ilink_user_ids", "text", required = false, pattern = None)
       )
     ),
@@ -114,8 +124,13 @@ object SocialChannels:
         // block a scan-bind-created app (which has none) from ever reaching
         // `verified`. The manual-fill path keeps the field: optional now, exact
         // same write path as before.
-        FieldSpec("verification_token", "secret", required = false, pattern = None,
-          Some("social-feishu-verification-token")),
+        FieldSpec(
+          "verification_token",
+          "secret",
+          required = false,
+          pattern = None,
+          Some("social-feishu-verification-token")
+        ),
         FieldSpec("encrypt_key", "secret", required = false, pattern = None, Some("social-feishu-encrypt-key")),
         FieldSpec("region", "select", required = true, pattern = Some("^(feishu|lark)$")),
         // feishubridge batch: member-level allowlist SLOT (feishu is a tenant model
@@ -178,8 +193,12 @@ object SocialChannels:
    * able to tell "stored false" apart from "never stored".
    */
   private def storedEnabled(root: os.Path, id: String): Option[Boolean] =
-    readChannels(root).hcursor.downField("channels").downField(id)
-      .downField("enabled").as[Boolean].toOption
+    readChannels(root).hcursor
+      .downField("channels")
+      .downField(id)
+      .downField("enabled")
+      .as[Boolean]
+      .toOption
 
   /**
    * GET /api/social/channels payload. Secret fields only ever surface their
@@ -275,7 +294,8 @@ object SocialChannels:
   def probeJson(root: os.Path, id: String, registered: Set[String] = Set.empty): Either[Failure, Json] =
     channel(id) match
       case None => Left(Failure.UnknownChannel(id))
-      case Some(spec) => Right(Json.obj("adapterRegistered" -> registered.contains(id).asJson, "secrets" -> probeOf(root, spec)))
+      case Some(spec) =>
+        Right(Json.obj("adapterRegistered" -> registered.contains(id).asJson, "secrets" -> probeOf(root, spec)))
 
   // ─────────────────────────── write side ───────────────────────────
 
@@ -528,49 +548,73 @@ object SocialChannels:
 
   /** The stored `enabled` flag of one channel (absent ⇒ false). */
   def isEnabled(root: os.Path, id: String): Boolean =
-    readChannels(root).hcursor.downField("channels").downField(id)
-      .downField("enabled").as[Boolean].getOrElse(false)
+    readChannels(root).hcursor
+      .downField("channels")
+      .downField(id)
+      .downField("enabled")
+      .as[Boolean]
+      .getOrElse(false)
 
   private def tripleAllTrue(j: Json): Boolean =
     List("exists", "modeOk", "readable").forall(k => j.hcursor.downField(k).as[Boolean].getOrElse(false))
 
-  /** Config verification for the activate gate: the card is verified when every
-    *  REQUIRED field is present and valid — a plain field matches its pattern,
-    *  a secret field has a stored `_ref` whose probe triple is all-true.
-    *  Purely mechanical (files and patterns; content is never touched), so the
-    *  closed loop `enabled ∧ verified ⇒ adapter registered` is testable
-    *  offline. Unknown channel ⇒ not verified. */
+  /**
+   * Config verification for the activate gate: the card is verified when every
+   *  REQUIRED field is present and valid — a plain field matches its pattern,
+   *  a secret field has a stored `_ref` whose probe triple is all-true.
+   *  Purely mechanical (files and patterns; content is never touched), so the
+   *  closed loop `enabled ∧ verified ⇒ adapter registered` is testable
+   *  offline. Unknown channel ⇒ not verified.
+   */
   def verified(root: os.Path, id: String): Boolean =
     channel(id).exists { spec =>
       val fields = storedFields(root, id)
       val osName = CredentialFileAcl.currentOsName
       spec.fields.filter(_.required).forall { f =>
         if f.isSecret then
-          fields.hcursor.downField(f.storedKey).as[String].toOption.filter(_.nonEmpty)
+          fields.hcursor
+            .downField(f.storedKey)
+            .as[String]
+            .toOption
+            .filter(_.nonEmpty)
             .exists(ref => tripleAllTrue(probePath(resolveRef(root, ref), osName)))
         else
-          fields.hcursor.downField(f.key).as[String].toOption.filter(_.nonEmpty)
+          fields.hcursor
+            .downField(f.key)
+            .as[String]
+            .toOption
+            .filter(_.nonEmpty)
             .exists(v => f.pattern.forall(p => v.matches(p)))
       }
     }
 
   // ───────────────── feishu panel face (feishu-bind batch, 2026-09-27) ─────────────────
 
-  /** The channel-entry key holding the auto-bind default session (feishu, C4).
-    * A sibling of `enabled`/`fields` on the channel entry — deliberately NOT a
-    * card field, so the save path (which validates and rewrites `fields`) can
-    * never touch or wipe it. */
+  /**
+   * The channel-entry key holding the auto-bind default session (feishu, C4).
+   * A sibling of `enabled`/`fields` on the channel entry — deliberately NOT a
+   * card field, so the save path (which validates and rewrites `fields`) can
+   * never touch or wipe it.
+   */
   val DefaultSessionKey = "defaultSessionId"
 
   /** The stored default session of one channel (C4): None = unset. */
   def defaultSessionId(root: os.Path, id: String): Option[String] =
-    readChannels(root).hcursor.downField("channels").downField(id)
-      .downField(DefaultSessionKey).as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    readChannels(root).hcursor
+      .downField("channels")
+      .downField(id)
+      .downField(DefaultSessionKey)
+      .as[String]
+      .toOption
+      .map(_.trim)
+      .filter(_.nonEmpty)
 
-  /** Persist (Some) or clear (None) the default session (C4: set = durable).
-    * Surgical merge into the channel entry — `enabled`, `fields` and every
-    * other sibling survive untouched (same surgical writer as [[persist]]). A
-    * blank value is stored as a clear (unset), never as an empty string. */
+  /**
+   * Persist (Some) or clear (None) the default session (C4: set = durable).
+   * Surgical merge into the channel entry — `enabled`, `fields` and every
+   * other sibling survive untouched (same surgical writer as [[persist]]). A
+   * blank value is stored as a clear (unset), never as an empty string.
+   */
   def setDefaultSessionId(root: os.Path, id: String, sessionId: Option[String]): Either[Failure, Unit] =
     channel(id) match
       case None => Left(Failure.UnknownChannel(id))
@@ -579,7 +623,7 @@ object SocialChannels:
         val obj = entry.asObject.getOrElse(JsonObject.empty)
         val next = sessionId.map(_.trim).filter(_.nonEmpty) match
           case Some(sid) => obj.add(DefaultSessionKey, Json.fromString(sid))
-          case None      => obj.remove(DefaultSessionKey)
+          case None => obj.remove(DefaultSessionKey)
         persist(root, id, Json.fromJsonObject(next))
 
 end SocialChannels
