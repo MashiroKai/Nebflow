@@ -59,6 +59,12 @@ object ToolRegistry:
       // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
+      // builtin-merge 批（2026-10-03）：Subagent = 只读侦察子入口（阻塞，结果即
+      // 返回值）；Workflow = 步级 DAG 并行执行（agent 写步骤，引擎并发跑）。
+      // 授权面 = AgentCore.NebflowFixedTools（执行 agent 机制面）；
+      // RootExclusiveTools 防声明逃逸。
+      "Subagent" -> SubagentTool,
+      "Workflow" -> WorkflowTool,
       // Background agent inspection & control (list/status/cancel/restart) — Nebula 专用
       "AgentControl" -> AgentControlTool,
       // FlowTrigger / FlowExecute / FlowReport retired 2026-09-06（工具面裁撤

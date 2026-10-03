@@ -1193,6 +1193,7 @@ export function createMsgCopyButton(text) {
 export function isBgAgentId(id) {
   return typeof id === 'string' && (
     id.startsWith('delegate-') || id.startsWith('subtask-') ||
+    id.startsWith('subagent-') || id.startsWith('workflow-') ||
     id.startsWith('node-') || id.startsWith('dispatcher-')
   );
 }

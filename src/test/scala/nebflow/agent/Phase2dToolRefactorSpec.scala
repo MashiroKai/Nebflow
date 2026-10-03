@@ -134,11 +134,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("D.1-1: general fixed set == 七件（2026-09-08 恢复 AskUser；2026-09-10 裁定摘 Pop）"):
     assertEquals(
-      AgentCore.fixedToolsFor(mkDef("general")),
-      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion"),
-      "AskUserQuestion 回归 general 默认面（2026-09-08 作者修订，D6 批D1：直达作者 + 留痕审计）；Pop 摘除（2026-09-10 作者裁定：收归 Nebula 专属——节点交付物沿 out 边交链末端/Nebula）"
+      AgentCore.fixedToolsFor(mkDef("nebflow")),
+      AgentCore.NebflowFixedTools,
+      "nebflow 固定面 == 静态九件（builtin-merge 批：BaseTools + AskUserQuestion + Subagent + Workflow；AskUser 承继 2026-09-08、零 Pop 承继 2026-09-10）"
     )
-    assert(!AgentCore.fixedToolsFor(mkDef("general")).contains("Pop"), "general 固定面零 Pop（2026-09-10 裁定，变异验红锚）")
+    assert(!AgentCore.fixedToolsFor(mkDef("nebflow")).contains("Pop"), "nebflow 固定面零 Pop（2026-09-10 裁定承继，变异验红锚）")
 
   test("D.1-1: legacy 路径不再含三角色 name 分支——catch-all 对三角色名生效"):
     // legacyFixedTools 是纯 category 函数：三角色名传入时走 catch-all BaseTools
@@ -175,13 +175,15 @@ class Phase2dToolRefactorSpec extends FunSuite:
       Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").subsetOf(nebulaDelivered),
       s"Nebula 交付面必须含文件面六件（2026-09-18 18:18 令）——实得: $nebulaDelivered"
     )
-    val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
+    // builtin-merge 批（2026-10-03）：general ⇒ nebflow——静态集 = 基础六件 +
+    // AskUserQuestion + Subagent + Workflow 恰九件。
+    val generalDelivered = CoreProbe.allowed(mkDef("nebflow"), isFlowNode = true)
     assertEquals(
       generalDelivered,
-      AgentCore.GeneralFixedTools,
-      "general 节点形态交付面 == 静态集恰七件（2026-09-08 作者修订恢复 AskUser；2026-09-10 裁定摘 Pop）"
+      AgentCore.NebflowFixedTools,
+      "nebflow 节点形态交付面 == 静态集恰九件（builtin-merge 批：基础面 + Subagent + Workflow；AskUser 承继、Pop 摘除承继）"
     )
-    assert(!generalDelivered.contains("Mail"), "Mail 不进 general/节点面（R2 细则：节点不挂消息工具）")
+    assert(!generalDelivered.contains("Mail"), "Mail 不进执行 agent 面（R2 细则承继：无消息工具）")
     val dispatcherDelivered =
       CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true, isDispatcher = true)
     assertEquals(

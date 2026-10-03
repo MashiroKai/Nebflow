@@ -34,8 +34,8 @@ import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
 object DelegateTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
-  /** 内置执行器 spawn 的 agent 定义名（builtin-merge 批将收敛为合并后执行 agent）。 */
-  val KernelAgentName = "kernel"
+  /** 内置执行器 spawn 的 agent 定义名（builtin-merge 批：kernel+general ⇒ nebflow）。 */
+  val KernelAgentName = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   /** 默认工作目录名（`project` 缺省时的工作座位）。 */
   val DefaultWorkspaceName = "general"
@@ -115,6 +115,13 @@ object DelegateTool extends Tool:
             case None => base(json)
     end match
   end routeWsSend
+
+  /** 供 BlockingSubagent 复用的路由包装（nodeSessionId 戳 + 根会话索引）。 */
+  private[tools] def routeWsSendFor(
+      subagentId: String,
+      parentSessionId: Option[String],
+      wsSend: Option[io.circe.Json => IO[Unit]]
+  ): io.circe.Json => IO[Unit] = routeWsSend(wsSend, parentSessionId, subagentId)
 
   /** 工作座位解析：挂载项目 workspace，或默认 `<dataRoot>/general/`（现建）。 */
   private[tools] def resolveWorkspace(project: Option[String]): IO[Either[ToolError, (String, Option[String])]] =

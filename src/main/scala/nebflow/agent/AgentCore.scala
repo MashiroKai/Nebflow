@@ -229,6 +229,11 @@ object AgentCore:
     // 选本路线而非 `buildAllowedToolSet` 内 `- "ListFriends"`（SendMessage 先例）：
     // 两者授能结果等价，但后者不覆盖保存侧。
     "ListFriends",
+    // Subagent / Workflow（builtin-merge 批 2026-10-03）：执行 agent（nebflow）的
+    // 机制面工具——同享本集【防声明逃逸】通道：agent.json 声明（含 "*"）对非
+    // 授权身份不授能（真实授能 = AgentCore.NebflowFixedTools 单点）。
+    "Subagent",
+    "Workflow",
   )
 
   /**
@@ -254,6 +259,9 @@ object AgentCore:
       // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
       case "Nebula" => Set.empty[String]
       case "dream" => RootExclusiveTools -- DreamAdmittedTools
+      // builtin-merge 批（2026-10-03）：执行 agent 的机制面豁免——Subagent/Workflow
+      // 是 NebflowFixedTools 单点授能（本集在册只为防其他身份声明逃逸）。
+      case "nebflow" => RootExclusiveTools -- Set("Subagent", "Workflow")
       case _ => RootExclusiveTools
 
   /**
@@ -361,9 +369,6 @@ object AgentCore:
     // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
     // 报错并指明合法地址面（硬禁静默兜底/模糊匹配）；入站不受限。
     "Mail",
-    // AgentFlow（unified-delegate 批 2026-10-03 退役）：派发面统一收归 Delegate
-    // ——Delegate(task, project?) 是唯一派发入口，Mail 降级为按地址通信。退役
-    // 指引 = RetiredToolGuides("AgentFlow")。
     "ProjectCreate",
     "AgentControl",
     // Delegate（**builtin-def 批 2026-10-03 作者令②在場恢复**：「使用 Delegate
@@ -622,7 +627,14 @@ object AgentCore:
    * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
    * tools/mcpServers 声明整体失效，本常量即唯一来源。
    */
-  val KernelFixedTools: Set[String] = BaseTools + "AskUserQuestion"
+  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Subagent" + "Workflow"
+
+  /**
+   * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标
+   * `subagent` 的机制固定工具面——恰五件只读（Read/Glob/Grep/WebSearch/
+   * WebFetch），**无写、无 shell、无消息**（只读由机制保证，不由提示词保证）。
+   */
+  val SubagentFixedTools: Set[String] = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch")
 
   /**
    * 通用模版固定工具集（§C.1/§C.5）：恰七件 = BaseTools 六件 + AskUserQuestion。
@@ -646,7 +658,7 @@ object AgentCore:
    * §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除（能力由 Edit
    * replace_all 覆盖）。
    */
-  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion"
+
 
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
@@ -712,11 +724,12 @@ object AgentCore:
             // point (see friendsSealedStrip — currently ListFriends only).
             AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
-          case "general" => AgentCore.GeneralFixedTools
-          // 极简内核（2026-09-11 恢复批）：机制固定单点，与 general/Nebula 同款
-          // 先例；不经 legacyFixedTools 的 catch-all（该路径注释自陈「随阶段
-          // 2e/3 归档一并退役」，依赖它有漂移风险）。
-          case "kernel" => AgentCore.KernelFixedTools
+          // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：
+          // 基础六件 + AskUserQuestion + Subagent（只读侦察）+ Workflow（步级 DAG）。
+          // 机制固定单点，不经 legacyFixedTools 的 catch-all。
+          case "nebflow" => AgentCore.NebflowFixedTools
+          // 只读侦察子（SubagentTool 的 spawn 目标）：机制固定只读五件。
+          case "subagent" => AgentCore.SubagentFixedTools
           // E5 batch 2026-10-01: the former fifth member's by-name branch is deleted
           // together with that name -- the agent retired on 2026-09-25 (`aa371d68f`)
           // and its name constant in AgentDef went with it in this batch, so the

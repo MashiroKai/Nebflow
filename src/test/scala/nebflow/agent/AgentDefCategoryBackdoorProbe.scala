@@ -32,8 +32,8 @@ object AgentDefCategoryBackdoorProbe:
   private val ExpectedFixed: Map[String, Set[String]] = Map(
     "Nebula" -> AgentCore.RootOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
-    "general" -> AgentCore.GeneralFixedTools,
-    "kernel" -> AgentCore.KernelFixedTools
+    "nebflow" -> AgentCore.NebflowFixedTools,
+    "subagent" -> AgentCore.SubagentFixedTools
   )
 
   /**

@@ -102,19 +102,19 @@ class RootSixBaseToolsSpec extends FunSuite:
   test("② 六件基础 ⊆ general 机制集（GeneralFixedTools=六件+AskUserQuestion 恰七件；2026-09-10 摘 Pop）"):
     val six = AgentCore.BaseTools
     assert(
-      six.subsetOf(AgentCore.GeneralFixedTools),
-      s"general 固定集必须含基础六件（缺: ${six.diff(AgentCore.GeneralFixedTools)}）"
+      six.subsetOf(AgentCore.NebflowFixedTools),
+      s"nebflow 固定集必须含基础六件（缺: ${six.diff(AgentCore.NebflowFixedTools)}）"
     )
     assertEquals(
-      AgentCore.GeneralFixedTools.size,
-      7,
-      "general 固定集恰七件（BaseTools 六件 + AskUserQuestion；2026-09-08 作者修订恢复 AskUser；2026-09-10 作者裁定摘 Pop——收归 Nebula 专属）"
+      AgentCore.NebflowFixedTools.size,
+      9,
+      "nebflow 固定集恰九件（builtin-merge 批：BaseTools 六件 + AskUserQuestion + Subagent + Workflow；AskUser 承继、零 Pop 承继）"
     )
     assert(
-      AgentCore.GeneralFixedTools.contains("AskUserQuestion"),
+      AgentCore.NebflowFixedTools.contains("AskUserQuestion"),
       "general 固定集含 AskUserQuestion（2026-09-08 作者修订恢复——变异验红锚）"
     )
-    assert(!AgentCore.GeneralFixedTools.contains("Pop"), "general 固定集零 Pop（2026-09-10 作者裁定——变异验红锚：加回即红）")
+    assert(!AgentCore.NebflowFixedTools.contains("Pop"), "nebflow 固定集零 Pop（2026-09-10 作者裁定承继——变异验红锚：加回即红）")
     val delivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     six.foreach(t => assert(delivered.contains(t), s"general 交付面缺基础六件之一: $t"))
 

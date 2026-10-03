@@ -30,8 +30,8 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
   private val MechanismFixed: Map[String, Set[String]] = Map(
     "Nebula" -> AgentCore.RootOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
-    "general" -> AgentCore.GeneralFixedTools,
-    "kernel" -> AgentCore.KernelFixedTools
+    "nebflow" -> AgentCore.NebflowFixedTools,
+    "subagent" -> AgentCore.SubagentFixedTools
     // E5 batch 2026-10-01: the fifth registry entry (the memory-consolidation agent
     // name -> KernelFixedTools) was removed together with the name itself. That agent
     // retired on 2026-09-25 (govmemory batch); the dangling member it left inside

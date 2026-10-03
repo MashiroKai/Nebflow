@@ -657,9 +657,9 @@ class AllowedToolSetSpec extends FunSuite:
       !CoreProbe.allowed(mkDef("project-dispatcher", Nil), isFlowNode = true).contains("TaskList"),
       "dispatcher 交付面零 TaskList"
     )
-    // general 固定集不含
-    assert(!AgentCore.GeneralFixedTools.contains("TaskList"), "general 固定集零 TaskList")
-    assert(!CoreProbe.allowed(mkDef("general", Nil), isFlowNode = true).contains("TaskList"), "general 交付面零 TaskList")
+    // 执行 agent 固定集不含（builtin-merge 批：general ⇒ nebflow）
+    assert(!AgentCore.NebflowFixedTools.contains("TaskList"), "nebflow 固定集零 TaskList")
+    assert(!CoreProbe.allowed(mkDef("nebflow", Nil), isFlowNode = true).contains("TaskList"), "nebflow 交付面零 TaskList")
 
   test("TaskList 防声明逃逸：非 Nebula 显式声明与 '*' 通配均剥离（RootExclusiveTools）"):
     assert(AgentCore.RootExclusiveTools.contains("TaskList"), "TaskList 进 RootExclusiveTools（剥离语义单点）")
@@ -742,11 +742,11 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，dispatcher 面零 NodeMessage")
     assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
-  test("general 固定 7 件（§C.4/§C.5；2026-09-10 作者裁定摘 Pop）——BaseTools + AskUserQuestion"):
-    val bare = mkDef("general", Nil)
-    val allowed = CoreProbe.allowed(bare, isFlowNode = true) // general 节点会话 isFlowNode=true
-    val seven = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion")
-    seven.foreach(t => assert(allowed.contains(t), s"general fixed tool missing: $t"))
+  test("nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继）——BaseTools + AskUserQuestion + Subagent + Workflow"):
+    val bare = mkDef("nebflow", Nil)
+    val allowed = CoreProbe.allowed(bare, isFlowNode = true)
+    val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Subagent", "Workflow")
+    nine.foreach(t => assert(allowed.contains(t), s"nebflow fixed tool missing: $t"))
     // 钉死断言（2026-09-08 作者修订，D6 批D1 G6/G7）：general 默认面含回
     // AskUserQuestion——直达作者方案（节点提问经 InteractionHub 直达 Nebula
     // 窗口；分发器监督=node-ask 留痕审计）——变异验红锚
@@ -754,16 +754,16 @@ class AllowedToolSetSpec extends FunSuite:
     // 钉死断言（2026-09-10 作者裁定）：Pop 不在 general 固定面——节点交付物沿
     // out 边交链末端/Nebula，由 Nebula 决定是否展示——变异验红锚（加回即红）
     assert(!allowed.contains("Pop"), "general 节点不得持有 Pop（2026-09-10 裁定：Pop 收归 Nebula 专属）")
-    assert(!AgentCore.GeneralFixedTools.contains("Pop"), "GeneralFixedTools 零 Pop（定义层摘除）")
+    assert(!AgentCore.NebflowFixedTools.contains("Pop"), "NebflowFixedTools 零 Pop（定义层摘除；builtin-merge 批承继）")
     // 明保留（R2 细则 2026-09-12）：节点面 9 件不变、零 Mail——节点无消息工具，
     // 结果沿 out 边投递、终态走 node_report。本条**非** R2 反转对象（原「general 无
     // Mail」理由换成 R2「节点面不挂 Mail」细则，结论一致、理由更新）。
     assert(!allowed.contains("Mail"), "R2: general（节点面）不挂 Mail —— 节点无消息工具")
     assert(!allowed.contains("MultiEdit"), "general 无 MultiEdit（已从 ToolRegistry 删除）")
     // 声明无效（机制固定零配置）
-    val sneaky = mkDef("general", List("WebSearch", "Delegate"))
+    val sneaky = mkDef("nebflow", List("WebSearch", "Delegate", "Pop"))
     val sneakyAllowed = CoreProbe.allowed(sneaky)
-    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate"), "general: tools 声明整体失效")
+    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate") && !sneakyAllowed.contains("Pop"), "nebflow: tools 声明整体失效（机制固定零配置；豁免恰 Subagent/Workflow 两件由静态集授能）")
     // Nebula / dispatcher 面不受影响（对照钉死）
     assert(
       AgentCore.fixedToolsFor(mkDef("Nebula", Nil)).contains("AskUserQuestion"),

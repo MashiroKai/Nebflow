@@ -93,15 +93,15 @@ class RemoteableDeviceParamSpec extends FunSuite:
     val schema = funnelSchema("Delegate")
     assertEquals(
       props(schema),
-      Set("task", "description"),
-      "摘除后 Delegate 的 LLM 面 schema 恰两参数（required 同）"
+      Set("task", "project"),
+      "unified-delegate 后 Delegate 的 LLM 面 schema 恰两参数（required 同）"
     )
     assert(deviceProp(schema).isEmpty, "Delegate must have NO device property in the LLM-facing schema")
 
   // ══════════ 3. 边界：禁「注入多了」 ══════════
 
   test("边界：内核七件的第 7 件 AskUserQuestion 不得被注入 device"):
-    assert(AgentCore.KernelFixedTools.contains("AskUserQuestion"), "内核面仍含 AskUserQuestion（本批不动）")
+    assert(AgentCore.NebflowFixedTools.contains("AskUserQuestion"), "执行 agent 面仍含 AskUserQuestion（builtin-merge 承继）")
     assert(!RemoteExecutor.remoteableTools.contains("AskUserQuestion"), "AskUserQuestion 不是远端工具")
     val augmented = RemoteExecutor.augmentSchema("AskUserQuestion", funnelSchema("AskUserQuestion"))
     assert(
@@ -110,8 +110,8 @@ class RemoteableDeviceParamSpec extends FunSuite:
     )
 
   test("边界：内核面 = 六件（带 device）+ AskUserQuestion（不带），件数 7 不变"):
-    assertEquals(AgentCore.KernelFixedTools.size, 7)
-    val withDevice = AgentCore.KernelFixedTools.filter(n => deviceProp(funnelSchema(n)).isDefined)
+    assertEquals(AgentCore.NebflowFixedTools.size, 9)
+    val withDevice = AgentCore.BaseTools.filter(n => deviceProp(funnelSchema(n)).isDefined)
     assertEquals(
       withDevice,
       AgentCore.BaseTools,

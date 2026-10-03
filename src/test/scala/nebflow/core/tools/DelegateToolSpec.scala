@@ -158,9 +158,9 @@ class DelegateToolSpec extends CatsEffectSuite:
       _ = os.write.over(agentsDir / "kernel" / "agent.json",
         Json.obj("name" -> "kernel".asJson, "description" -> "STRAY-DESCRIPTION-MARKER".asJson).noSpaces,
         createFolders = true)
-      res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("kernel").map(_.toAgentDef).get)
+      res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.toAgentDef).get)
     yield
-      assertEquals(res.name, "kernel")
+      assertEquals(res.name, "nebflow")
       assert(!res.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
         "the disk mirror is a dead letter — the prompt comes from BuiltinAgents (code)")
       assert(!res.description.contains("STRAY-DESCRIPTION-MARKER"),
@@ -170,13 +170,13 @@ class DelegateToolSpec extends CatsEffectSuite:
   test("code-defined def carries the kernel contract (when-to-use / boundary / plugin pointer)"):
     for
       _ <- reset() // empty agents dir: nothing on disk at all — code is enough
-      res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("kernel").map(_.toAgentDef).get)
+      res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.toAgentDef).get)
     yield
-      assertEquals(res.name, "kernel")
-      assert(res.systemPrompt.contains("## ⑤ Creating plugins"),
-        "the author-directed plugin pointer reached the code prompt")
-      assert(res.systemPrompt.contains("**Capability boundary (hard):**"),
-        "the verbatim contract section reached the code prompt")
+      assertEquals(res.name, "nebflow")
+      assert(res.systemPrompt.contains("`<injected-plugins>` is your capability assignment"),
+        "the plugin-assignment discipline reached the merged prompt")
+      assert(res.systemPrompt.contains("BLOCKED"),
+        "the capability-boundary (BLOCKED) contract reached the merged prompt")
       assert(!res.systemPrompt.startsWith("<!--"),
         "the code prompt carries no seed-machinery HTML comment")
 
@@ -233,7 +233,7 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   test("no hard concurrency limit: description and the code-defined prompt carry the no-limit wording in sync"):
     val d = DelegateTool.description
-    val prompt = nebflow.core.entity.BuiltinAgents.entry("kernel").map(_.systemPrompt).getOrElse("")
+    val prompt = nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.systemPrompt).getOrElse("")
     val faces = List(
       "description" -> d,
       "code-defined prompt (BuiltinAgents)" -> prompt
@@ -288,22 +288,35 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
-  test("kernel tool face = BaseTools + AskUserQuestion (7 items) and excludes Delegate/SubTask/TaskBoard"):
-    val face = nebflow.agent.AgentCore.KernelFixedTools
-    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion")
-    assertEquals(face.size, 7)
-    // R2 2026-09-12：kernel 面照旧零 Mail（节点面不挂 Mail），并在排除清单中
-    // 加挂两个已删净退役件 Task/NodeMessage——他们不得因 R2 回潮。
-    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail").foreach { t =>
-      assert(!face.contains(t), s"kernel must not hold: $t")
+  test("nebflow tool face = BaseTools + AskUserQuestion + Subagent + Workflow (9 items) and excludes orchestration/message tools"):
+    val face = nebflow.agent.AgentCore.NebflowFixedTools
+    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent" + "Workflow")
+    assertEquals(face.size, 9)
+    // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
+    // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
+    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop").foreach { t =>
+      assert(!face.contains(t), s"nebflow must not hold: $t")
     }
     assertEquals(
       nebflow.agent.AgentCore
-        .fixedToolsFor(AgentDef(name = "kernel", description = "", tools = Nil, systemPrompt = "")),
+        .fixedToolsFor(AgentDef(name = "nebflow", description = "", tools = Nil, systemPrompt = "")),
       face
     )
 
-  test("kernel agent.json declaration is inert (ConvergedAgentNames) — mechanism-fixed only"):
-    assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("kernel"))
+  test("subagent tool face is read-only five — no write, no shell, no message"):
+    val face = nebflow.agent.AgentCore.SubagentFixedTools
+    assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch"))
+    Set("Write", "Edit", "Bash", "Mail", "Subagent", "Workflow", "Delegate").foreach { t =>
+      assert(!face.contains(t), s"subagent must not hold: $t")
+    }
+    assertEquals(
+      nebflow.agent.AgentCore
+        .fixedToolsFor(AgentDef(name = "subagent", description = "", tools = Nil, systemPrompt = "")),
+      face
+    )
+
+  test("nebflow agent.json declaration is inert (ConvergedAgentNames) — mechanism-fixed only"):
+    assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("nebflow"))
+    assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("subagent"))
 
 end DelegateToolSpec
