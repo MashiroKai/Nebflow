@@ -20,6 +20,7 @@ import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
 import { notifyManualUpdateCheck, restoreUpdateProgress } from './updateCheck.js';
 import { toggleHTML, setToggleState } from './toggle.js';
+import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
@@ -833,6 +834,41 @@ export function renderSettings() {
     </div>
     <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
     <div class="settings-section">
+      <!-- Executors + Jev sections (executor-registry batch, 2026-10-03):
+           executor default display + panel entry, and the Jev allocation
+           toggle (write face = PUT /api/config/jev, whitelist keys only). -->
+      <div class="settings-section-title">${t('settings.executors')}</div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.defaultExecutor')}</span>
+        <span class="settings-executor-current" id="settings-executor-current">…</span>
+      </div>
+      <div class="cfg-hint">${t('settings.executorsHint')}</div>
+      <button class="cfg-btn" id="btn-open-executors">${t('settings.openExecutors')}</button>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">${t('settings.jev')}</div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.jevEnabled')}</span>
+        ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.jevProvider')}</span>
+        <select class="cfg-select" id="cfg-jev-provider" style="width:auto">
+          ${['typesafe-jev', 'laya'].map(p => `<option value="${p}"${(cfg.jev && cfg.jev.provider) === p ? ' selected' : ''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.jevEndpoint')}</span>
+        <input class="cfg-input" id="cfg-jev-endpoint" style="width:auto" placeholder="https://api.typesafe.ai/v1/systemone" value="${escapeHtml((cfg.jev && cfg.jev.endpoint) || '')}">
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.jevKeyRef')}</span>
+        <input class="cfg-input" id="cfg-jev-keyref" style="width:auto" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}">
+      </div>
+      <div class="cfg-hint">${t('settings.jevHint')}</div>
+      <button class="cfg-btn" id="btn-save-jev">${t('settings.save')}</button>
+    </div>
+    <div class="settings-section">
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
            2026-09-27 19:20): one row / one button only — the list itself
            lives in the standalone dedicated dialog (#secrets-overlay, owned
@@ -1079,6 +1115,51 @@ function bindSettingsEvents(content, cfg) {
     setToggleState(this, enabled);
     state.llmLogEnabled = enabled;
     sendWs({type: 'setLlmLog', enabled});
+  });
+
+  // ── Executors section (executor-registry batch, 2026-10-03) ────────────
+  // Panel entry + current-default label. The backend /api/executors snapshot
+  // is the single authority; a fetch failure leaves the "…" placeholder.
+  document.getElementById('btn-open-executors')?.addEventListener('click', () => {
+    import('./executorsPanel.js').then(m => m.openExecutors()).catch(() => {});
+  });
+  {
+    const slot = document.getElementById('settings-executor-current');
+    if (slot) {
+      fetch('/api/executors', { headers: authHeaders() })
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          const cur = (data && data.executors || []).find(x => x.isDefault);
+          if (cur && slot.isConnected) slot.textContent = cur.displayName;
+        })
+        .catch(() => {});
+    }
+  }
+
+  // ── Jev section: explicit save (whitelist keys only; PUT /api/config/jev).
+  // keyRef is a NAME under ~/.nebflow/secrets/ — a pointer, never a value.
+  document.getElementById('toggle-jev')?.addEventListener('click', function() {
+    setToggleState(this, !this.classList.contains('on'));
+  });
+  document.getElementById('btn-save-jev')?.addEventListener('click', async function() {
+    const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
+    const provider = document.getElementById('cfg-jev-provider')?.value || 'typesafe-jev';
+    const endpoint = document.getElementById('cfg-jev-endpoint')?.value.trim() || '';
+    const keyRef = document.getElementById('cfg-jev-keyref')?.value.trim() || '';
+    const body = { enabled, provider };
+    if (endpoint) body.endpoint = endpoint;
+    if (keyRef) body.keyRef = keyRef;
+    let ok = false;
+    try {
+      const resp = await fetch('/api/config/jev', {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      ok = resp.ok;
+    } catch (e) { ok = false; }
+    this.textContent = ok ? t('settings.saved') : t('settings.saveFailed');
+    setTimeout(() => { this.textContent = t('settings.save'); }, 1500);
   });
 
   // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────

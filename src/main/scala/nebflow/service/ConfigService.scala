@@ -280,6 +280,63 @@ object ConfigService:
   def jevWritableKeys: List[String] = JEV_WRITABLE_KEYS
 
   /**
+   * 定向写顶层 `executor` 节（executor-registry 批 2026-10-03：统一 delegate
+   * 的执行器 default / disabled）。
+   *
+   * 形态照 [[setJevSection]]：整体包在 `writeLocked` 内串行；只覆写调用方
+   * 显式给出的键（`None` 键原样保留）；写盘走 [[nebflow.core.AtomicJson]]；
+   * 失败上浮（fail-loud）。本节不收任何凭据键。
+   *
+   * 值校验：`default` 必须在 [[nebflow.core.executor.ExecutorRegistry.defs]]
+   * 在册；`disabled` 不得含内置执行器 `nebflow`（内置执行器是零依赖兜底面，
+   * 恒可用——registry 读取侧也会再挡一层）。
+   */
+  def setExecutorSection(values: Map[String, Json]): IO[Either[String, Unit]] =
+    val unknown = values.keySet.diff(EXECUTOR_WRITABLE_KEYS.toSet)
+    if unknown.nonEmpty then
+      IO.pure(Left(s"executor section write refused — unknown key(s): ${unknown.toList.sorted.mkString(", ")}"))
+    else if values.isEmpty then IO.pure(Left("executor section write refused — no keys given"))
+    else
+      val badDefault = values.get("default").flatMap(_.asString).filterNot { id =>
+        nebflow.core.executor.ExecutorRegistry.defs.exists(_.id == id)
+      }
+      val disablesBuiltin = values.get("disabled").flatMap(_.asArray).exists { arr =>
+        arr.exists(_.asString == Some("nebflow"))
+      }
+      if badDefault.isDefined then
+        IO.pure(Left(s"executor section write refused — unknown default '${badDefault.get}'"))
+      else if disablesBuiltin then
+        IO.pure(Left("executor section write refused — the built-in executor 'nebflow' cannot be disabled"))
+      else
+        writeLocked {
+          IO.blocking {
+            val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+            parse(existing) match
+              case Left(err) =>
+                Left(s"nebflow.json unparseable — refusing to rewrite for executor update: ${err.message}")
+              case Right(parsed) =>
+                val section = parsed.hcursor
+                  .downField(EXECUTOR_SECTION)
+                  .focus
+                  .flatMap(_.asObject)
+                  .getOrElse(JsonObject.empty)
+                val updatedSection = values.foldLeft(section) { case (acc, (k, v)) => acc.add(k, v) }
+                val updated = parsed.mapObject(_.add(EXECUTOR_SECTION, Json.fromJsonObject(updatedSection)))
+                AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+                Right(())
+          }
+        }
+
+  /** 顶层节名（写侧单点，避免字符串散落）。 */
+  private val EXECUTOR_SECTION = "executor"
+
+  /** `executor` 节可写键白名单（本面不收凭据值）。 */
+  private val EXECUTOR_WRITABLE_KEYS: List[String] =
+    List("default", "disabled")
+
+  def executorWritableKeys: List[String] = EXECUTOR_WRITABLE_KEYS
+
+  /**
    * Deep-merge incoming config into existing file.
    *
    * Merge rules:

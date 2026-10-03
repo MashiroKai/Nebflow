@@ -1,0 +1,158 @@
+/* executors.css — /Agents executor picker canvas tab + settings section rows
+   (executor-registry batch, 2026-10-03). Home convention: canvas-tab content
+   styles live beside their owner module's other styles (agent-mgr-* in
+   sidebar.css); kept separate here since the panel is its own module. */
+
+#executors-content {
+  padding: 16px 20px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.executor-loading {
+  color: var(--text-secondary, #888);
+  font-size: 13px;
+  padding: 24px 4px;
+}
+
+.executor-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary, #888);
+  margin-bottom: 12px;
+}
+
+.executor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.executor-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
+  border-radius: 10px;
+  background: var(--panel-bg, transparent);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.executor-card:hover {
+  border-color: var(--accent-color, rgba(99, 102, 241, 0.5));
+}
+
+.executor-card.is-default {
+  border-color: var(--accent-color, rgba(99, 102, 241, 0.55));
+}
+
+.executor-card-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--text-primary, #ddd);
+}
+
+.executor-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.executor-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.executor-card-desc {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executor-card-path {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-secondary, #777);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executor-card-pending {
+  font-size: 11px;
+  color: #d97709;
+  margin-top: 3px;
+}
+
+.executor-card-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.executor-card-badge.default {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgb(99, 102, 241);
+}
+
+.executor-card-badge.off {
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--text-secondary, #888);
+}
+
+.executor-card-detect {
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.executor-card-detect.ok { color: #10b981; }
+.executor-card-detect.miss { color: var(--text-secondary, #888); }
+
+.executor-card-set {
+  flex-shrink: 0;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
+  background: transparent;
+  color: var(--text-primary, #ddd);
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.executor-card-set:hover {
+  border-color: var(--accent-color, rgba(99, 102, 241, 0.6));
+  color: rgb(99, 102, 241);
+}
+
+.executor-card-set:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Settings section: current default label */
+.settings-executor-current {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #ddd);
+}

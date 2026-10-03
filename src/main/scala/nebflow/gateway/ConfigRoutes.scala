@@ -136,6 +136,61 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      // ── Executors（executor-registry 批 2026-10-03）──────────────────────
+      // GET /api/executors —— 统一 delegate 的执行器快照：全部在册执行器 +
+      // 文件系统检测（外部 CLI：PATH + 常用前缀）+ 配置态（default/disabled）。
+      // 每次调用现检测（外部 CLI 安装/卸载即时反映），配置块热读。
+      case req @ GET -> Root / "executors" =>
+        withAuth(req) {
+          Ok(nebflow.core.executor.ExecutorRegistry.snapshotJson)
+        }
+
+      // PUT /api/executors/default —— 设默认执行器。body {"id": "<executorId>"};
+      // 未在册 ⇒ 400 不落盘。内置执行器不可 disabled（无 disabled 臂——面板
+      // 只切 default；disabled 白名单写入留给后续批）。
+      case req @ PUT -> Root / "executors" / "default" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val id = body.hcursor.downField("id").as[String].toOption.getOrElse("")
+            if !nebflow.core.executor.ExecutorRegistry.defs.exists(_.id == id) then
+              BadRequest(
+                Json.obj(
+                  "error" -> s"unknown executor id '$id' — valid: ${nebflow.core.executor.ExecutorRegistry.defs.map(_.id).mkString(", ")}".asJson
+                )
+              )
+            else
+              ConfigService.setExecutorSection(Map("default" -> id.asJson)).flatMap {
+                case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+                case Right(_) =>
+                  wsHub.broadcast(Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson)) *>
+                    Ok(Json.obj("updated" -> true.asJson, "default" -> id.asJson))
+              }
+          }
+        }
+
+      // PUT /api/config/jev —— JeV 配置定向写（设置页 Jev 区的写通道；键
+      // 白名单在 ConfigService.JEV_WRITABLE_KEYS 单点，越界键 400）。
+      case req @ PUT -> Root / "config" / "jev" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            body.asObject match
+              case None => BadRequest(Json.obj("error" -> "expected a JSON object body".asJson))
+              case Some(o) =>
+                val values = o.toMap.collect {
+                  case (k, v) if ConfigService.jevWritableKeys.contains(k) => k -> v
+                }
+                if values.isEmpty then
+                  BadRequest(Json.obj("error" -> s"no writable jev keys given — writable: ${ConfigService.jevWritableKeys.mkString(", ")}".asJson))
+                else
+                  ConfigService.setJevSection(values).flatMap {
+                    case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+                    case Right(_) =>
+                      wsHub.broadcast(Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson)) *>
+                        Ok(Json.obj("updated" -> true.asJson))
+                  }
+          }
+        }
+
       // Update config
       case req @ PATCH -> Root / "config" =>
         withAuth(req) {
