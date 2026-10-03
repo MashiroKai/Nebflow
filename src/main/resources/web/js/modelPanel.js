@@ -103,15 +103,17 @@ export function modelSourceNoteKey(model) {
 
 // ── Panel state ────────────────────────────────────────────
 
-const ROLES = ['Nebula', 'project-dispatcher', 'kernel', 'general'];
-const FOLLOWER_ROLES = ['project-dispatcher', 'kernel', 'general'];
+// P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
+// batch merged `kernel` + `general` into the single executor agent; the panel
+// therefore lists the CURRENT role names, mirroring SchemePolicy.SettableAgents.
+const ROLES = ['Nebula', 'project-dispatcher', 'nebflow'];
+const FOLLOWER_ROLES = ['project-dispatcher', 'nebflow'];
 /** Frontend mirror of SchemePolicy.SettableAgents (the /model write gate). */
 export const SETTABLE_ROLES = new Set(ROLES);
 const ROLE_KEY = {
   'Nebula': 'model.roleNebula',
   'project-dispatcher': 'model.roleDispatcher',
-  'kernel': 'model.roleKernel',
-  'general': 'model.roleGeneral',
+  'nebflow': 'model.roleExecutor',
 };
 
 /** Probed model ids per provider (dynamic layer, refreshed on demand). */
