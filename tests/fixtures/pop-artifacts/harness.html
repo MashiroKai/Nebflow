@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<!-- pop-artifacts harness.html — static test harness for the Pop artifact faces
+     (pop-upgrade batch, 2026-10-03 author ruling 「去掉card工具,然后对Pop工具
+     进行升级」) and for the UI-A…UI-G fixes of the 2026-10-03 UI batch.
+
+     Imports the REAL frontend modules (chatView.js / chat.js / popArtifacts.js /
+     workline.js — no stubs, no bundling) and replays the exact calls the app
+     makes on WS events / history restore. The probes read the RENDERED DOM.
+
+     Window-role legs: `window.__roleSubagent()` installs a SECOND ChatView with
+     a popup id ('bgagent-…') over its own container — the same construction
+     bgAgentPopup.js / flowAgentPopup.js use — and points the active view at it,
+     so the very same render calls run through the subagent path. That is the
+     UI-G judgement surface: same code, two window roles.
+
+     The spec serves the repository root over a throwaway static file server it
+     spawns and kills itself (never the 8080 host).
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>pop-artifacts harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    /* Minimal stand-in for the app shell: give #chat the column width the real
+       layout gives it, everything else comes from the real CSS. */
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat, #popup-chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+    /* The popup container is off-screen in the real app (getHiddenRoot); here
+       it sits below the main column so both can be probed side by side. */
+    #popup-chat { left: auto; right: 0; transform: none; width: 420px; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <div id="popup-chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const state = (await import(`${WEB}/state.js`)).default;
+
+    const chatEl = document.getElementById('chat');
+    const popupEl = document.getElementById('popup-chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'pop-harness';
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const popMod = await import(`${WEB}/popArtifacts.js`);
+    const workMod = await import(`${WEB}/workline.js`);
+    const view = chatViews.primary;
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /* ── payload fixtures (the real PopTool payload shape) ─────────────── */
+
+    /** One image + one document: exercises both face families in one call. */
+    function payloadMixed() {
+      return {
+        fileRefs: { inlined: 2, referenced: 0, failed: 0, omitted: 0 },
+        warnings: [],
+        notes: [],
+        items: [
+          { kind: 'image', path: '/tmp/pop/pic.png', name: 'pic.png', src: 'data:image/png;base64,iVBORw0KGgo=' },
+          { kind: 'document', path: '/tmp/pop/report.pdf', name: 'report.pdf' },
+        ],
+      };
+    }
+
+    /** Three images: drives the WeChat-style stack + the expand/collapse pill. */
+    function payloadStack() {
+      const one = 'data:image/png;base64,iVBORw0KGgo=';
+      return {
+        fileRefs: { inlined: 3, referenced: 0, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [1, 2, 3].map(i => ({
+          kind: 'image', path: `/tmp/pop/shot-${i}.png`, name: `shot-${i}.png`, src: one,
+        })),
+      };
+    }
+
+    /** An image whose payload points at a path with NO bytes: the render path
+     *  must fall back to the ticket route, which the static server refuses →
+     *  the terminal failure mark + note (缺陷 D). */
+    function payloadBrokenMedia() {
+      return {
+        fileRefs: { inlined: 0, referenced: 1, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [{ kind: 'image', path: '/definitely/not/here.png', name: 'gone.png' }],
+      };
+    }
+
+    const SENTINEL = '___POP_JSON___';
+    const popContent = p => SENTINEL + JSON.stringify(p);
+
+    /* ── scenarios ──────────────────────────────────────────────────────── */
+
+    /** A Pop tool call with two items, followed by MORE rows in the same turn
+       (a tool row and the final reply) — the shape that used to bury the
+       artifact row in the middle of the turn (UI-D). */
+    window.__popThenMoreRows = async () => {
+      chatMod.renderUserBubble('给我看一下这张图和这份报告', [], Date.now());
+      chatMod.renderTool('Pop\n  ("pic.png", "report.pdf")', '2 files',
+        popContent(payloadMixed()), false, '{"filePath":["/tmp/pop/pic.png","/tmp/pop/report.pdf"]}', 'pop-harness');
+      // Rows that arrive AFTER the artifact in the SAME turn.
+      chatMod.renderTool('Read\n  ("log.txt")', '20 lines', 'log body', false, '{"file_path":"/tmp/log.txt"}', 'pop-harness');
+      chatMod.appendAiText('图和报告都在下面。');
+      chatMod.finishAi(1500, 'test-model');
+      await raf2();
+    };
+
+    /** Two turns, each with a Pop call — the re-anchor must be per-turn: the
+       first turn's artifact must not drift past the second turn's user row. */
+    window.__twoTurnsWithPop = async () => {
+      chatMod.renderUserBubble('第一回合：来一张图', [], Date.now());
+      chatMod.renderTool('Pop\n  ("shot-1.png")', '1 file', popContent(payloadStack()), false,
+        '{"filePath":"/tmp/pop/shot-1.png"}', 'pop-harness');
+      chatMod.appendAiText('第一回合的图。');
+      chatMod.finishAi(1000, 'test-model');
+      await raf2();
+      chatMod.renderUserBubble('第二回合：再来一张', [], Date.now());
+      chatMod.renderTool('Pop\n  ("shot-2.png")', '1 file', popContent(payloadStack()), false,
+        '{"filePath":"/tmp/pop/shot-2.png"}', 'pop-harness');
+      chatMod.appendAiText('第二回合的图。');
+      chatMod.finishAi(800, 'test-model');
+      await raf2();
+    };
+
+    /** The media stack + its expand / collapse toggle. */
+    window.__popStack = async () => {
+      chatMod.renderUserBubble('三张图', [], Date.now());
+      chatMod.renderTool('Pop\n  ("shot-1.png", …)', '3 files', popContent(payloadStack()), false,
+        '{"filePath":["/tmp/pop/shot-1.png","/tmp/pop/shot-2.png","/tmp/pop/shot-3.png"]}', 'pop-harness');
+      await raf2();
+    };
+
+    /** Click the stack's expand pill (the real user gesture). */
+    window.__toggleExpand = async () => {
+      const pill = document.querySelector('#chat .pop-stack-area .pill');
+      if (!pill) return false;
+      pill.click();
+      await raf2();
+      return true;
+    };
+
+    /** A media item whose bytes cannot be fetched → the failure face. */
+    window.__popBrokenMedia = async () => {
+      chatMod.renderUserBubble('这张图应该加载失败', [], Date.now());
+      chatMod.renderTool('Pop\n  ("gone.png")', '1 file', popContent(payloadBrokenMedia()), false,
+        '{"filePath":"/definitely/not/here.png"}', 'pop-harness');
+      await raf2();
+    };
+
+    /* ── window-role leg (UI-G) ─────────────────────────────────────────── */
+
+    let popupView = null;
+    /** Install a subagent / flow popup ChatView and make it the active view —
+       exactly what bgAgentPopup.ensureStepView does (own id, own container). */
+    window.__roleSubagent = async () => {
+      if (!popupView) {
+        popupView = new ChatView('bgagent-pop-harness', { chat: popupEl });
+        chatViews[popupView.id] = popupView;
+      }
+      setActiveView(popupView);
+      await raf2();
+      return popupView.id;
+    };
+    window.__rolePrimary = async () => {
+      setActiveView(view);
+      await raf2();
+      return view.id;
+    };
+
+    /** One tool run in WHICHEVER view is active — the same call either role. */
+    window.__toolRunHere = async () => {
+      chatMod.renderToolPending('Grep("mergeQueue")', state.activeSessionId);
+      await raf2();
+    };
+    window.__toolDoneHere = async () => {
+      chatMod.renderTool('Grep("mergeQueue")', '12 results', 'grep body', false,
+        '{"pattern":"mergeQueue"}', state.activeSessionId);
+      await raf2();
+    };
+    /** A user + assistant message pair in whichever view is active. */
+    window.__messagesHere = async () => {
+      chatMod.renderUserBubble('消息气泡', [], Date.now());
+      chatMod.appendAiText('回复正文。');
+      chatMod.finishAi(900, 'test-model');
+      await raf2();
+    };
+    /** thinking deltas in whichever view is active (the dots live-seconds
+       timer is armed here — the UI-G periodic-work probe). */
+    window.__thinkingHere = async () => {
+      chatMod.appendThinkingDelta('正在核对 mergeQueue 的实现。');
+      await raf2();
+    };
+    /** Start the pre-token dots item (the second timer arm site). */
+    window.__dotsHere = async () => {
+      workMod.startWorklineDots(state.getActiveView ? state.getActiveView() : view, Date.now());
+      await raf2();
+    };
+    /** The rAF cost of THIS HARNESS ALONE, with no module call in between: five
+       raf2() awaits, the same count the subagent render sequence performs
+       (__roleSubagent, __dotsHere, __toolRunHere, __thinkingHere,
+       __toolDoneHere). The UI-G periodic-work probe subtracts this baseline, so
+       what it asserts on is the MODULE's frames, not the harness's own. */
+    window.__rafBaseline = async () => {
+      await raf2(); await raf2(); await raf2(); await raf2(); await raf2();
+    };
+    /** A Pop artifact in whichever view is active. One image + one document,
+       so the reading is a stable 1 media / 1 file card regardless of how many
+       layers a stack would draw. */
+    window.__popHere = async () => {
+      chatMod.renderTool('Pop\n  ("pic.png", "report.pdf")', '2 files', popContent(payloadMixed()), false,
+        '{"filePath":["/tmp/pop/pic.png","/tmp/pop/report.pdf"]}', state.activeSessionId);
+      await raf2();
+    };
+
+    /* ── readings ───────────────────────────────────────────────────────── */
+
+    /** Static-grep proxy in the browser: count elements in `root` whose
+       COMPUTED animation-name is a real animation (a live CSS animation on a
+       rendered element is precisely what the grep half cannot see, and what
+       the popup must not have). */
+    window.__animated = (sel) => {
+      const root = document.querySelector(sel);
+      if (!root) return null;
+      const all = [root, ...root.querySelectorAll('*')];
+      const animated = [];
+      for (const el of all) {
+        const cs = getComputedStyle(el);
+        const names = (cs.animationName || 'none').split(',').map(s => s.trim())
+          .filter(n => n && n !== 'none');
+        if (names.length) animated.push({ cls: el.className.toString().slice(0, 60), names });
+      }
+      return {
+        total: all.length,
+        animatedCount: animated.length,
+        animated: animated.slice(0, 8),
+        hasStaticClass: root.classList.contains('nf-static'),
+      };
+    };
+
+    /** Read the turn's ordering: which top-level children exist, in order. */
+    window.__seq = (sel) => {
+      const root = document.querySelector(sel);
+      if (!root) return null;
+      return Array.from(root.children).map(el => {
+        const cls = Array.from(el.classList).join('.');
+        const isUser = el.classList.contains('user');
+        const isArtifact = el.classList.contains('pop-artifact');
+        return {
+          cls,
+          kind: isArtifact ? 'artifact' : (isUser ? 'user' : (el.classList.contains('turn-header') ? 'header' : 'other')),
+          media: el.querySelectorAll('.pop-img, .pop-video').length,
+          files: el.querySelectorAll('.file-card').length,
+        };
+      });
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

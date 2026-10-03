@@ -15,7 +15,7 @@
 //   NB_UX_ROOT=/tmp/nb-streamux-base PIN_EXPECT=red \
 //     node node_modules/@playwright/test/cli.js test tests/stream-ux.spec.mjs
 //
-// A1 工具运行期 badge 行含 Spinner + 工具名 / 完成瞬间打勾 / 切换滚动过渡
+// A1 工具运行期 badge 行含 Spinner + 工具名 / 完成瞬间打勾 / 切换淡出过渡（UI-C 纯文本化后：无变换类滚动）
 // A2 思考期单行流式揭示 → 完成打勾
 // A3 助手回复整条出现 + 回复 DOM 内零逐字流式渲染（帧级读数）
 // A4 用户输入气泡入场动画
@@ -152,7 +152,7 @@ async function aiFrameStats(page) {
 }
 
 test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → 翻动切换）', () => {
-  test('spinner + tool name on one line; check on done; switch rolls to the next tool', async ({ browser }) => {
+  test('spinner + tool name on one line; check on done; switch fades the outgoing item to the next tool', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
 
     await page.evaluate(() => window.__toolRun());
@@ -174,21 +174,24 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     expect(done.svgPaths, 'a check glyph is drawn in its place').toBeGreaterThan(0);
     expect(done.height, 'still one line — the completion does not grow the row').toBeLessThanOrEqual(48);
 
-    // Let the completion animation (roll-in 0.35s + the 0.1s-delayed bounce,
-    // 0.5s total) finish. The exit trace below measures MOTION of this same
-    // element, so a still-running entry animation would be credited to the
-    // exit leg and mask a missing roll-out entirely.
+    // Let the completion animation (the 0.3s text fade-in, `.nf-wl-item.is-done`)
+    // finish. The exit trace below measures this same element's fade, so a
+    // still-running entry animation would be credited to the exit leg and mask
+    // a missing fade-out entirely.
     await page.waitForTimeout(650);
 
-    // Switch: the badge rolls the outgoing item out and the next tool in.
+    // Switch: the badge FADES the outgoing item out and the next tool in.
+    // (UI-C, 2026-10-03: the retired layer ROLLED the item up — a CSS
+    // transform; the current layer is PURE TEXT and fades, so the exit leg is
+    // asserted as a fade, never as vertical motion.)
     // The EXIT leg is traced frame-by-frame — a reading taken only after the
-    // 380ms settle cannot tell "rolled up and out" from "sat still, then was
-    // detached", because both leave the same final DOM. The user-visible
-    // property the spec sentence promises (「旧上滚出」) is MOTION of the
-    // outgoing item while it is still on screen, so that is what gets
-    // asserted. Form-agnostic: no class of this batch is named — the item is
-    // found by the label it carries. The switch is triggered INSIDE this same
-    // evaluate so the sampler is provably already recording when it fires.
+    // settle cannot tell "faded out while still on screen" from "sat still,
+    // then was detached", because both leave the same final DOM. The
+    // user-visible property the spec sentence promises (「旧上滚出」) is now
+    // 「旧淡出」: the outgoing item's opacity falls while it is STILL connected.
+    // Form-agnostic: no class of this batch is named — the item is found by the
+    // label it carries. The switch is triggered INSIDE this same evaluate so the
+    // sampler is provably already recording when it fires.
     const switchRead = await page.evaluate(async ({ textA, textB }) => {
       const chat = document.getElementById('chat');
       const ind = Array.from(chat.children).find(k =>
@@ -210,7 +213,9 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
       await raf(); // let the switch commit before reading the live animations
       const liveAnims = ind.getAnimations({ subtree: true })
         .filter(a => a.playState === 'running' || a.playState === 'pending').length;
+      const startOpa = outgoing.isConnected ? +getComputedStyle(outgoing).opacity : 0;
       let minTop = baseTop;
+      let minConnectedOpa = startOpa;
       let sawRunning = false;
       let frames = 0;
       // Cross-fade guard: sample BOTH sides of the switch every frame. The
@@ -237,6 +242,8 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
         if (outgoing.isConnected) {
           const top = outgoing.getBoundingClientRect().top;
           if (top < minTop) minTop = top;
+          const oo = +getComputedStyle(outgoing).opacity;
+          if (oo < minConnectedOpa) minConnectedOpa = oo;
           if (outgoing.getAnimations().some(a => a.playState === 'running')) sawRunning = true;
         }
         // the entering item is born by the switch, so re-resolve it each frame
@@ -264,7 +271,11 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
         .filter(n => n.tagName === 'SPAN' && n.children.length === 0 && (n.textContent || '').trim())
         .map(n => n.textContent.trim());
       return {
-        exit: { baseTop: +baseTop.toFixed(2), minTop: +minTop.toFixed(2), frames, sawRunning },
+        exit: {
+          baseTop: +baseTop.toFixed(2), minTop: +minTop.toFixed(2),
+          startOpa: +startOpa.toFixed(2), minConnectedOpa: +minConnectedOpa.toFixed(2),
+          frames, sawRunning,
+        },
         cross: {
           bothFrames, peakOverlap, gapFrames,
           tOut: tOut === null ? null : +tOut.toFixed(1),
@@ -280,8 +291,14 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     const exit = switchRead.exit;
     expect(exit.frames, 'the exit was sampled over multiple animation frames').toBeGreaterThan(3);
     expect(exit.sawRunning, 'the outgoing item animates on its way out (it does not just vanish)').toBe(true);
-    expect(exit.baseTop - exit.minTop,
-      'the outgoing item ROLLS UP as it leaves (its top actually rises on screen)').toBeGreaterThan(2);
+    // UI-C (2026-10-03): the exit is a PURE-TEXT fade — the leaving item's
+    // opacity actually falls while it is still connected. A still item that is
+    // then detached would read minConnectedOpa ≈ startOpa (≈1); a fade reads
+    // it near 0. Vertical motion is NOT required any more (the retired layer
+    // rolled the item; the current layer fades it).
+    expect(exit.minConnectedOpa,
+      `the outgoing item FADES OUT on its way out (opacity ${exit.startOpa} → ${exit.minConnectedOpa} while still on screen)`)
+      .toBeLessThan(0.4);
 
     // No double exposure: the two items must never be legible at once, and the
     // old one must be gone before the new one arrives (the demo's hard switch
