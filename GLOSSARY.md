@@ -160,6 +160,7 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | Canvas 标签 / Canvas 查看器 | 标签是容器（可关可 pin），查看器是按类型渲染内容的实现。 |
 | 主会话 / Nebula / 子代理 / 后台代理 | 主会话是**会话**（root）；Nebula 是根智能体的**名字**；子代理与后台代理是它派生的执行体（前者聚合在 Sub-Agents 面板，后者脱离当前轮存活）。 |
 | 门禁 / 哨兵 / 基线 / 白名单 | 门禁 = 判定命令；哨兵 = 钉字面串的测试；基线 = 冻结的错误计数（只降）；白名单 = 环境性失败套件的登记表（战役期产物）。 |
+| 内容档位 / 治理 | 档位管**采集时记什么**（Metadata / Content / Full 三档）；治理管**存后怎么处置**（脱敏 / 删除 / 留存采样）；两域互相独立，不得互换（契约 §3.3）。 |
 
 ## 10. 维护
 
@@ -199,3 +200,27 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | 四行拓扑 | four-line topology | 终态信息流向四行：north(web, cli, bridge, social)→gateway；gateway→organic-server & capability-server；organic-server→capability-server & shared；capability-server→shared；`mem-engine` / `skill-engine` 挂 capability 的 direct-call 面。 | 规划态：终态机器落点 = `scripts/check-scala-layers.mjs` 的 `LAYER_ORDER`（B1 起渐次成形） |
 
 **大小写裁定（2026-09-30，B0）**：组件名全小写（`organic-server`、`capability-server` 等）；句首位置按英文惯例首字母大写。已核：两仓 src / scripts / tests / docs 内组件名 organic 零出现（seed 插件设计语料含英文语义词 organic，非代码标识符），无存量需扫。
+
+## 12. 轨迹线（trajectory，2026-10-03 立项）
+
+> **批次说明（2026-10-03）**：本区为 trajectory 线（agent 行为分析工具）既定词汇，契约槽⑧随小批齐落收录。
+> 契约 v0.2 = 唯一权威源（跨仓 `../trajectory-store/docs/trajectory-contract.md`，镜像 `.zcode/plans/trajectory-contract.md`）；
+> 接口方案 = `.zcode/plans/trajectory-接口方案.md`（含 2026-10-03 选择题批裁定记录）。
+> 采集组件本体已裁住 `extensions/trajectory`（A1，2026-10-03；装配批①落码，现为规划态）。
+
+**概念词条**：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| 轨迹 | trajectory | agent 会话行为的结构化事件流：单一 `TrajectoryEvent` 信封（关联键组 + EventKind 密封族〔10 生效 + 1 预留〕+ 内容档位）；一切视图（轮次时间线 / 会话摘要 / 失败链）从事件流**派生**，非快照、非只读投影。 | 契约 §3（跨仓 `../trajectory-store/docs/trajectory-contract.md` v0.2） |
+| 事件汇 | event sink | 采集 port：organic 各缝（轮次 / LLM 受理 / 供应商尝试 / 完成 / 失败 / 中止 / 工具 / 会话生命周期）上行的统一入口；内部有界队列 + 后台 fiber，**汇故障零打断现役行为**。 | 方案 §1（`.zcode/plans/trajectory-接口方案.md`）；组件本体 = `extensions/trajectory`（A1 裁定） |
+| turn | turn | 轮次关联键：一轮用户输入到回合结束；turnId 由 TurnBoundary 侧产生，铸造 = `s"$sessionId:$counter"` 单点；无轮次上下文的事件（会话生命周期 / 北面直连）turnId 缺省。 | 契约 §4；方案 §4 槽 A4 |
+| step | step | 步关联键：轮内**每次 LLM 调用**（send / sendStream）一步；供应商 attempt 不占步（挂单亲事件链）；stepId = `s"$turnId:$stepCounter"`。 | 契约 §4（裁定槽② 2026-10-03 转正）；方案 §4 |
+| 内容档位 | ContentLevel | 采集内容三级档：Metadata（计数 / 时长 / 供应商 / 错误类别，零 PII，默认开）/ Content（消息文本与工具摘要，默认关）/ Full（完整原始负载，显式开）；**档位管采集、治理管存后**，两域不得互换。 | 契约 §3.3 |
+
+**组件词条**（wheel 形态，与 `skill-engine` / `document-based-memory` 同款跨仓先例）：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| trajectory-store | trajectory-store | A 轨**存储 wheel**（独立仓）：schema + 同步 port（治理四能力一等：redact / deleteSession 同步回执 / applyRetention / export）+ JSONL 落盘内存索引 + **conformance corpus 持有方**（两轨等价性语料）。 | `../trajectory-store/`（跨仓）；契约权威源 = 其 `docs/trajectory-contract.md` |
+| trajectory-analysis | trajectory-analysis | B 轨**分析套件 wheel**（独立仓）：schema 独立镜像 + InMemoryTrajectoryStore + 缝适配器（纯函数，镜像输入类型）+ 分析视图（轮次时间线 / 会话摘要 / 失败链 / 供应商切换序列）；payload 唯一解释方。 | `../trajectory-analysis/`（跨仓）；README = 分歧裁决记录 |
