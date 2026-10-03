@@ -72,7 +72,7 @@ object TurnEndpoint:
       // this turn (UiMessage.Tool carries no timestamp, so time-windowing is
       // not precise enough — index slicing is).
       totalBefore <- sessionStore.getUiMessages(sessionId, 0, 0).map(_._2)
-      listenerId <- wsHub.register { json =>
+      listenerId <- wsHub.registerListener { json =>
         val hc = json.hcursor
         val t = hc.downField("type").as[String].getOrElse("")
         val sid = hc.downField("sessionId").as[String].getOrElse("")

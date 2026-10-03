@@ -843,19 +843,69 @@ class WebSocketRoutes(
                 )
             case None => (
               for
-                outbound <- Queue.unbounded[IO, WebSocketFrame]
+                // ── A2 (perf-481): bounded outbound queue ────────────────────
+                // Was `Queue.unbounded`: a slow/stalled subscriber never
+                // applied backpressure, so its queue grew without bound while
+                // the event loop kept paying "serialize + offer" for it.
+                //
+                // Overflow policy (plan OD-1, per-frame class):
+                //  · streaming increment (textDelta/thinkingDelta/…): drop the
+                //    OLDEST frame and enqueue the new one. A stream increment is
+                //    superseded by later ones, so losing the middle of a stream
+                //    costs at most a few rendered characters — never final state.
+                //  · control/status frame: do NOT drop. A dropped control frame
+                //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
+                //    showing "saved"); a throttled one delays it. So the
+                //    connection is torn down instead: the client reconnects and
+                //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
+                //    resync leg), which is a visible, recoverable failure rather
+                //    than a silent one.
+                // The class is computed once per event inside WsHub (see there).
+                outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
+                outboundOverflowClosed <- Deferred[IO, Unit]
 
-                perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
+                perConnWsSend = (text: String, isStream: Boolean) =>
+                  outbound
+                    .tryOffer(WebSocketFrame.Text(text))
+                    .flatMap {
+                      case true => IO.unit
+                      case false if isStream =>
+                        // Full queue + droppable frame ⇒ evict oldest, then take
+                        // the slot this frame just vacated. `tryTake` returning
+                        // None (a reader drained it concurrently) is fine — the
+                        // retry below either succeeds or is counted, never loops.
+                        outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
+                          IO(WsHub.noteOverflowDrop())
+                      case false =>
+                        // Full queue + control frame ⇒ tear this connection down.
+                        // The teardown rides the queue's own stream (see
+                        // `sendStream`), so there is no process-wide state and no
+                        // cross-connection leak.
+                        IO(WsHub.noteOverflowClose()) *>
+                          logger.warn(
+                            "WebSocket outbound queue full on a non-stream frame — closing " +
+                              s"this connection (capacity $OutboundQueueCapacity)"
+                          ) *>
+                          outboundOverflowClosed.complete(()).void
+                    }
                 hubConnId <- wsHub.register(perConnWsSend)
+
+                // A1: the hub now hands connections pre-serialized text. The
+                // handlers below (message dispatch, session list, the explorer
+                // watch table) still reason in Json, so they get an adapter that
+                // serializes on the way in — the point of A1 is that the *fan-out*
+                // no longer re-serializes per connection, not that Json is banned.
+                perConnJsonSend = (json: io.circe.Json) =>
+                  perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
 
                 // explorer-rt (chain-n-1981ce87): one watch-subscription table per
                 // connection. Chained into the finalizer below — a dropped
                 // connection releases every WatchService it registered.
-                watchSession = new ExplorerWatchSession(perConnWsSend, logger)
+                watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
 
                 receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
                   case WebSocketFrame.Text(text, _) =>
-                    handleMessage(text, perConnWsSend, watchSession).handleErrorWith { e =>
+                    handleMessage(text, perConnJsonSend, watchSession).handleErrorWith { e =>
                       logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                       IO.unit
                     }
@@ -867,8 +917,16 @@ class WebSocketRoutes(
                 // sendStream: read from outbound queue, send via WebSocket.
                 // Client disconnects are expected (browser tab close, network change) and
                 // produce IOException during write. Catch and swallow gracefully.
+                //
+                // A2: the stream races the queue against the overflow signal, so a
+                // control frame hitting a full queue actually ENDS the stream
+                // (the socket closes and the client reconnects + resyncs) instead
+                // of the frame being silently discarded. `interruptWhen` cancels
+                // the queue side on completion, and the server's own WebSocket
+                // close handling runs the receive pipe's finalizer.
                 sendStream = Stream
                   .fromQueueUnterminated(outbound)
+                  .interruptWhen(outboundOverflowClosed.get.attempt)
                   .handleErrorWith { e =>
                     Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
                   }
@@ -925,7 +983,7 @@ class WebSocketRoutes(
                     logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
                   )
                 )
-                _ <- sessionService.sendSessionList(perConnWsSend, agentName)
+                _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
                 // R-1b：入账在 build 前（此处之后仅剩 build 本身，失败即自然不
                 // build ⇒ 无幽灵计数）；回减挂流 finalizer（连接关闭必走）。
                 guardHandle <- connGuard.acquireWs(wsIp)
@@ -1335,6 +1393,20 @@ class WebSocketRoutes(
     WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
 
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
+
+  /**
+   * A2 (perf-481): per-connection outbound queue capacity, in frames.
+   *
+   * Sized as a bounded spill buffer for a transiently slow reader, NOT as a
+   * stream buffer: the largest frame the server emits is the ~21 KB
+   * `serverConfig`/`configData` family (A4 shrinks the tool-list one further),
+   * so 1024 frames bounds one connection's pending bytes to the low tens of MB
+   * even in the worst case, while a healthy reader drains far faster than the
+   * server enqueues. A reader that stays behind for this many frames is stalled
+   * by definition and gets the OD-1 policy applied (drop-oldest for stream
+   * increments, connection teardown for control frames).
+   */
+  private val OutboundQueueCapacity = 1024
 
   /**
    * Text-stream engine behind the `textWindow` / `textIndex` / `textSearch` /

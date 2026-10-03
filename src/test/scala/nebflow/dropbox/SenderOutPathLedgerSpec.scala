@@ -69,7 +69,7 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
         _ <- ms.setSendDataFn((_, _, p) => peerFrames.update(_ :+ p).as(true))
         hub <- IO(new WsHub)
         localSeen <- Ref.of[IO, List[Json]](Nil)
-        reg <- hub.register(j => localSeen.update(_ :+ j))
+        reg <- hub.registerListener(j => localSeen.update(_ :+ j))
         _ <- ms.upsertPeer(PeerInfo("dev-2", "Dev2", "macos", "http://127.0.0.1:9"))
         svc <- DropboxService.createForTest(ms, hub, 30.seconds, 30.seconds, 30.seconds)
         out <- use(ms, svc, peerFrames, localSeen, root)

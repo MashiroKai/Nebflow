@@ -209,7 +209,7 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
     val wsHub = new WsHub()
     val stuckBroadcasts = Ref.unsafe[IO, List[Json]](Nil)
     for
-      _ <- wsHub.register(j => stuckBroadcasts.update(j :: _))
+      _ <- wsHub.registerListener(j => stuckBroadcasts.update(j :: _))
       resources <- mkResources(system, tempRoot, new HungLlm)
       rt <- mount("disp-hang", ws, system, resources, _ => IO.unit)
       actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))

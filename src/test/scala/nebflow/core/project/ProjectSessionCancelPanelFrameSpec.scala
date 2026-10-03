@@ -232,7 +232,7 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
     val broadcasts = Ref.unsafe[IO, List[Json]](Nil)
     for
       resources <- mkResources(system, tempRoot, new HungLlm)
-      _ <- wsHub.register(j => broadcasts.update(j :: _))
+      _ <- wsHub.registerListener(j => broadcasts.update(j :: _))
       cmdRef <- system.spawn(dumbBehavior[nebflow.actor.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
       evtRef <- system.spawn(dumbBehavior[nebflow.actor.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
       sid = "node-feedbeef"

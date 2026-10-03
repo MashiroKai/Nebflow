@@ -79,7 +79,7 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         seen <- Ref.of[IO, List[Json]](Nil)
         // 通报面 = WsHub 广播（`notifyFrontend`）；必须注册收集器，否则「通报路径」不可观测
         hub <- IO(new WsHub)
-        reg <- hub.register(j => seen.update(_ :+ j))
+        reg <- hub.registerListener(j => seen.update(_ :+ j))
         // 送达腿判真（否则 offer 会被 markTransferFailed 打成 failed）
         _ <- ms.setSendDataFn((_, _, p) => seen.update(_ :+ p).as(true))
         // 信令窗口放大到 30s：本 spec 只判命名/通报，禁让超时看门狗在序列中途插手

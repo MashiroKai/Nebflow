@@ -311,7 +311,7 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       _ <- backdate(f.resources, f.sid, StuckThresholdMs + 60_000)
       wsHub = new WsHub()
       scanWs <- IO.ref(List.empty[Json])
-      _ <- wsHub.register(json => scanWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => scanWs.update(_ :+ json))
       _ <- TaskStuckWatcher.scan(f.resources, wsHub, StuckThresholdMs)
       _ <- IO.sleep(200.millis)
       scanFrames1 <- scanWs.get

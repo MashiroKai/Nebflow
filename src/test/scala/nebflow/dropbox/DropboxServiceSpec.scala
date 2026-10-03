@@ -62,7 +62,7 @@ class DropboxServiceSpec extends CatsEffectSuite:
         ms <- NeblinkService.create(0, dispatcher)
         hub = new WsHub
         seen <- Ref.of[IO, List[Json]](Nil)
-        regId <- hub.register(j => seen.update(_ :+ j))
+        regId <- hub.registerListener(j => seen.update(_ :+ j))
         svc <- DropboxService.createForTest(ms, hub, OfferT, AcceptedT, TransferT)
         out <- use(ms, svc, seen)
         _ <- hub.unregister(regId)

@@ -103,7 +103,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       parentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "team-parent")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       threshold = 10 * 60 * 1000L
       // Mail 激活的 team agent：kind=Team、有 parentRef（曾使 parentRef=Some 分支
@@ -149,7 +149,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       childRef <- system.spawn(mkRecordingActor(childReceived), "child-1")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       threshold = 10 * 60 * 1000L
       stuckRecord = AgentRecord(
@@ -190,7 +190,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       rootRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "root-rec")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       threshold = 10 * 60 * 1000L
       stuckRecord = AgentRecord(
@@ -310,7 +310,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       received <- Ref.of[IO, List[AgentCommand]](Nil)
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       _ <- resources.agentRegistry.set(
         Map(
@@ -485,7 +485,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
         teamRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "team-agent-w")
         wsHub = new WsHub()
         receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-        _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+        _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
         now = IO(System.currentTimeMillis())
         _ <- now.flatMap { n =>
           resources.agentRegistry.set(
@@ -562,7 +562,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "dispatcher-bridge")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       threshold = 10 * 60 * 1000L
       stuck = AgentRecord(
@@ -674,7 +674,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       agentRef <- system.spawn(mkRecordingActor(agentReceived), "dag-agent")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       threshold = 10 * 60 * 1000L
       stuckDag = AgentRecord(

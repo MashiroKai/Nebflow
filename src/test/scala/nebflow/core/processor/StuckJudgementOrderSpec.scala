@@ -441,7 +441,7 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "p1-bridge")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       rec = toolPhaseRecord("node-scanp1", agentRef, now, progressAgeMs = Some(3_000L))
         .copy(supervisorRef = Some(bridgeRef))

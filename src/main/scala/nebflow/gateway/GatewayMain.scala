@@ -1427,7 +1427,10 @@ object GatewayMain extends IOApp:
                                                           // an unconfigured install is an unregister no-op.
                                                           _ <- nebflow.social.WeixinIlinkBridgePlugin.sync(bridgeManager, PathUtil.dataRoot)
                                                           // Register bridge as WsHub listener for agent events
-                                                          _ <- wsHub.register(json =>
+                                                          // perf-481 A1: this is a hub LISTENER (it reads
+                                                          // the event fields), not a connection — the two
+                                                          // registries are separate faces on purpose.
+                                                          _ <- wsHub.registerListener(json =>
                                                             val sessionId =
                                                               json.hcursor
                                                                 .downField("sessionId")

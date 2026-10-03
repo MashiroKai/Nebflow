@@ -86,7 +86,7 @@ class ProjectEventSpec extends CatsEffectSuite:
     for
       hub <- IO.pure(new WsHub)
       frames <- Ref.of[IO, Vector[Json]](Vector.empty)
-      _ <- hub.register(json => frames.update(_ :+ json))
+      _ <- hub.registerListener(json => frames.update(_ :+ json))
     yield (hub, frames)
 
   private def projectFrames(frames: Vector[Json]): Vector[Json] =

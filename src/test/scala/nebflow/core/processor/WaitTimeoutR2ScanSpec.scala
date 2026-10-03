@@ -128,7 +128,7 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       parentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "r2-parent")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       threshold = 10 * 60 * 1000L
       // 审计 116 条/日 的破坏性形态：Delegate（有 parentRef）挂起超阈值。
       // R2 后 status=WaitingForUser（人在环等待）→ 必须零动作。
@@ -161,7 +161,7 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       resources <- mkResources(system, tmp)
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       threshold = 10 * 60 * 1000L
       // 审计日志的四个会话全是 root（无 parentRef）形态：18:30 起每 30s 一条
       // 「stuck in Processing for Ns — not auto-restarting, broadcast taskStuck」。
@@ -195,7 +195,7 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       parentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "r2-parent-p")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       threshold = 10 * 60 * 1000L
       // 与验收 1 唯一差异 = status: Processing（真卡死）vs WaitingForUser（等人）。
       // 铁律：排除等人绝不放走真挂死。
@@ -231,7 +231,7 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       parentRef <- system.spawn(mkRecordingActor(parentReceived), "r2-team-parent")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       threshold = 10 * 60 * 1000L
       _ <- waitingRecord(
         system,

@@ -566,7 +566,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       (_, halt) <- nebflow.llm.LlmInterface.registerInflight(Some(sid))
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[Json]](Nil)
-      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts)
       abortedAfterL1 <- halt.tryGet

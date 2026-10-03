@@ -182,6 +182,7 @@ class ChainViewWsEntrySpec extends CatsEffectSuite:
       sendAgentSessionListImpl = null,
       sendAgentSessionListByNameImpl = null,
       sendMemoryStatusImpl = null,
+      sendToolsListImpl = null,
       expandTildeImpl = null,
       wsBrowseEventImpl = null,
       browseResultFrameImpl = null,

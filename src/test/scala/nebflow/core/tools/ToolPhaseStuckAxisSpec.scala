@@ -203,7 +203,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         parentRef <- system.spawn(mkRecordingActor(parentCmds), "axis-parent")
         wsHub = new WsHub()
         wsEvents <- Ref.of[IO, List[Json]](Nil)
-        _ <- wsHub.register(json => wsEvents.update(_ :+ json))
+        _ <- wsHub.registerListener(json => wsEvents.update(_ :+ json))
         now = System.currentTimeMillis()
         // 事故现场字段状态：status=Processing、agent 侧戳新鲜（进程侧还在动）、
         // 同一 turn 内单个工具调用已超阈（prop 缩短为 1.5s）。
@@ -291,7 +291,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         parentRef <- system.spawn(mkRecordingActor(parentCmds), "axis-real-parent")
         wsHub = new WsHub()
         wsEvents <- Ref.of[IO, List[Json]](Nil)
-        _ <- wsHub.register(json => wsEvents.update(_ :+ json))
+        _ <- wsHub.registerListener(json => wsEvents.update(_ :+ json))
         now = System.currentTimeMillis()
         // 与 ② **同形态**，唯一差异 = 零正信号（该工具从未报过任何进展证据：
         // `lastProgressSignalAt = 0`）⇒ 必须仍落类① 并走既有开火链。
@@ -354,7 +354,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         parentRef <- system.spawn(mkRecordingActor(parentCmds), "axis-neg-parent")
         wsHub = new WsHub()
         wsEvents <- Ref.of[IO, List[Json]](Nil)
-        _ <- wsHub.register(json => wsEvents.update(_ :+ json))
+        _ <- wsHub.registerListener(json => wsEvents.update(_ :+ json))
         now = System.currentTimeMillis()
         _ <- resources.agentRegistry.set(
           Map(
