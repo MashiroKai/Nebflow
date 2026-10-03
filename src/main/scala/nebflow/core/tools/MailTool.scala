@@ -91,15 +91,19 @@ object MailTool extends Tool:
   //                          tombstone — the schema key is deleted and the engine
   //                          does zero JSON-Schema validation => the stale key still
   //                          reaches call(), where one read line refuses it)
-  //   MAIL_KERNEL_EXCLUSIVE  the kernel leg is Nebula-exclusive (ruling (b)): every
-  //                          non-Nebula caller is refused
+  //   MAIL_KERNEL_EXCLUSIVE  the kernel continuation leg is Nebula-exclusive (ruling (b)):
+  //                          every non-Nebula caller is refused
   //   MAIL_KERNEL_NOT_LIVE   the `kernel:<id>` instance is not live (terminal state /
   //                          unknown id) => explicit refusal
+  //   MAIL_KERNEL_SPAWN_RETIRED  a bare `kernel` address (the former spawn leg) => explicit
+  //                          refusal (builtin-def batch 2026-10-03: Delegate is the only
+  //                          kernel trigger; Mail communicates only)
   // ============================================================
   val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
   val ErrDeviceLegRetired: String = "MAIL_DEVICE_RETIRED"
   val ErrKernelExclusive: String = "MAIL_KERNEL_EXCLUSIVE"
   val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
+  val ErrKernelSpawnRetired: String = "MAIL_KERNEL_SPAWN_RETIRED"
 
   /** Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
     *
@@ -130,7 +134,7 @@ object MailTool extends Tool:
         "same batch), so nothing was sent and nothing is queued. Got device='" + device + "'. To move files or " +
         "text to another MACHINE use SendMessage (pure transport; that machine's agent is not informed). To " +
         "reach an AGENT use 'address': \"project:<name>\" (or a bare mounted project name), a team name or " +
-        "member short name, or — Nebula root only — \"kernel\" / \"kernel:<id>\"."
+        "member short name, or — Nebula root only — \"kernel:<id>\" (a live Delegate kernel instance)."
     )
 
   /** Kernel-leg unauthorized-caller refusal (ruling (b): Nebula-exclusive). */
@@ -142,12 +146,22 @@ object MailTool extends Tool:
         "mail your report to Nebula and let it dispatch."
     )
 
+  /** Explicit refusal for the RETIRED bare-kernel spawn leg (builtin-def batch
+    * 2026-10-03, author directive ②: Delegate triggers kernels; Mail communicates). */
+  private[tools] def kernelSpawnRetiredError(address: String): ToolError =
+    ToolError(
+      s"[$ErrKernelSpawnRetired] Mailing a bare 'kernel' to START an instance is retired — kernel " +
+        "triggering is Delegate-only now (the Delegate result carries the continuation address " +
+        "kernel:<id>). Nothing was sent (address='" + address + "'). To continue a LIVE instance, " +
+        "mail its address \"kernel:<id>\"; to start a new one, call Delegate."
+    )
+
   /** Explicit refusal when the `kernel:<id>` instance is not live (fail-closed). */
   private[tools] def kernelNotLiveError(id: String): ToolError =
     ToolError(
       s"[$ErrKernelNotLive] No live kernel instance 'kernel:$id' — kernel instances are one-shot Delegate " +
         "sessions: when an instance finishes, its result is delivered back to your session and its address " +
-        "stops being routable. Nothing was sent. Start a new instance with address=\"kernel\"."
+        "stops being routable. Nothing was sent. Start a new instance with Delegate(task=...)."
     )
 
   // (W1 shim note: the Q5 address-face description subsystem below already
@@ -351,22 +365,19 @@ Required: message, plus `address`.
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
-  mounted project name is accepted as an equivalent form). `kernel` — start a Kernel
-  instance (the Delegate inner-core sub-agent); `kernel:<id>` — continue THAT live
-  instance. You have no `node:`
-  address and no self-address.
+  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue
+  THAT live Delegate-started Kernel instance. You have no `node:` address, no bare
+  `kernel` address and no self-address.
 
-## Kernel leg (Nebula-exclusive, 2026-09-25)
+## Kernel continuation leg (Nebula-exclusive)
 Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
-mails `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent.
-`address="kernel"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/
-Grep/Bash + AskUserQuestion), no project context, no memory — the message must be a
-fully self-contained brief. The instance runs in the background; its result is delivered
-back to your session when it finishes, and the tool result header carries its
-continuation address (`kernel:<id>`). `address="kernel:<id>"` continues THAT live
-instance (injected at its next turn boundary). A `kernel:<id>` whose instance has
+mails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail can no longer
+START a kernel: triggering is Delegate-only, and the Delegate result carries the
+instance's continuation address (`kernel:<id>`). `address="kernel:<id>"` continues THAT
+live instance (injected at its next turn boundary). A `kernel:<id>` whose instance has
 already finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already
-delivered; start a new one with `kernel`.
+delivered; start a new one with Delegate. A bare `kernel` address is an explicit error
+(MAIL_KERNEL_SPAWN_RETIRED) — never a spawn.
 
 - **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in
   your current project (from NodeList). You do not mail your own project.
@@ -396,7 +407,7 @@ Images (optional `images` parameter — up to 5 absolute local image paths,
 PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Agent targets (`address`)
 that reach a chat turn** (Nebula / a team or agent short name / a live `kernel:<id>`
 instance): the recipient sees the images directly (vision models) plus their paths as
-text. **`project:` / `node:` targets (and the kernel START leg) are text-only** — those
+text. **`project:` / `node:` targets are text-only** — those
 legs hand a plain string to an engine-side session, so `images` there is an **explicit
 error** and nothing is sent; use `attachments` (path mode) instead, or target `Nebula` /
 a team agent.
@@ -404,7 +415,7 @@ a team agent.
 Attachments (optional `attachments` parameter — up to 9 absolute local paths of ANY file
 type, each up to 1024 MB = 1 GiB) are how a non-image file — or any file you do not need
 the model to *see* — reaches the recipient. **Same-machine targets** (`address` =
-`project:…` / `node:…` / `kernel…` / `Nebula` / a team or agent short name): nothing is
+`project:…` / `node:…` / `kernel:<id>` / `Nebula` / a team or agent short name): nothing is
 copied — the mail text carries each
 file's **absolute path, byte size and sha256**, because the recipient shares your disk
 and reads the original. So the file must still exist when the recipient reads it: do not
@@ -451,7 +462,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
 
   private[nebflow] val AddressFaceRoot: String =
-    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel` — start a Kernel\n  instance (the Delegate inner-core sub-agent); `kernel:<id>` — continue THAT live\n  instance. You have no `node:`\n  address and no self-address.\n\n## Kernel leg (Nebula-exclusive, 2026-09-25)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent.\n`address=\"kernel\"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/\nGrep/Bash + AskUserQuestion), no project context, no memory — the message must be a\nfully self-contained brief. The instance runs in the background; its result is delivered\nback to your session when it finishes, and the tool result header carries its\ncontinuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT live\ninstance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with `kernel`.\n\n"
+    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance. You have no `node:` address, no bare\n  `kernel` address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail can no longer\nSTART a kernel: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_RETIRED) — never a spawn.\n\n"
 
   private[nebflow] val AddressFaceDispatcher: String =
     "- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in\n  your current project (from NodeList). You do not mail your own project.\n"
@@ -742,7 +753,12 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // address leg ── `kernel` = start one kernel instance; `kernel:<id>` = continue that
     // live instance. Every non-Nebula caller is explicitly refused ([[kernelExclusiveError]];
     // the refusal text ships as a §16 candidate deliverable).
-    if address == "kernel" || address.startsWith(KernelPrefix) then
+    if address == "kernel" then
+      // builtin-def 批（2026-10-03 作者令②）：`kernel` 起实例腿退役——触发面收归
+      // Delegate，Mail 降级为通信原语。显式拒绝（fail-closed 墓碑，禁静默转发），
+      // 错误文案指路 Delegate。
+      Some(IO.pure(Left(kernelSpawnRetiredError(address))))
+    else if address.startsWith(KernelPrefix) then
       Some(
         if role != SenderRole.Root then
           IO.pure(Left(kernelExclusiveError(address, role.toString)))
@@ -983,23 +999,27 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
           }
 
   // ============================================================
-  // kernel leg (mailmodel batch 2026-09-25, author ruling (b) "only Nebula may use it; Nebula dispatches it"):
-  // Mail-triggered Kernel = the **Nebula-exclusive address leg**; the dispatch receipt carries the
-  // continuation address (the follow-up-by-address family).
-  //   - `kernel`   = spawn one kernel instance (the SAME spawn chain as Delegate.call: same
-  //                  kernel def resolution, same R9 <=4-per-root-session concurrency gate, same
-  //                  BackoffSupervisor adapter and 3600s budget — zero second implementation);
-  //   - `kernel:<id>` = inject into that **live** instance (registry kind=Delegate with session-id match);
-  //     after the instance goes terminal (one-shot Delegate semantics: the result has already been
-  //     returned to root along source="delegate") the address is **unroutable** => explicit refusal
-  //     ([[kernelNotLiveError]]), same family as the `node:` leg's three-state judgment
-  //     ("running injectable / terminal refused").
-  // Unauthorized callers are refused in [[layeredRoute]] (SenderRole != Root => MAIL_KERNEL_EXCLUSIVE);
-  // this layer only delivers. The result-return chain has zero tool-face change (the existing
-  // BackoffSupervisor parent uplink).
+  // kernel leg (builtin-def batch 2026-10-03, author directive ② "Delegate triggers
+  // kernels; Mail is demoted to communication"): the ONLY kernel address leg left is
+  // `kernel:<id>` = inject into that **live** Delegate-spawned instance (registry
+  // kind=Delegate with session-id match); after the instance goes terminal (one-shot
+  // Delegate semantics: the result has already been returned to root along
+  // source="delegate") the address is **unroutable** => explicit refusal
+  // ([[kernelNotLiveError]]), same family as the `node:` leg's three-state judgment
+  // ("running injectable / terminal refused").
+  // The bare-kernel SPAWN leg (`address="kernel"`, mailmodel batch 2026-09-25) is
+  // RETIRED in this batch: triggering is Delegate-only; a bare "kernel" address is an
+  // explicit MAIL_KERNEL_SPAWN_RETIRED refusal in [[layeredRoute]] (fail-closed
+  // tombstone, never a silent forward).
+  // The Nebula-exclusivity ruling (b) carries over verbatim: a non-root caller mailing
+  // `kernel:<id>` is refused ([[kernelExclusiveError]], SenderRole != Root =>
+  // MAIL_KERNEL_EXCLUSIVE). The result-return chain has zero tool-face change (the
+  // existing BackoffSupervisor parent uplink).
   // ============================================================
 
-  /** Kernel-leg delivery (the caller's NebulaRoot identity has already been verified in [[layeredRoute]]). */
+  /** Kernel-leg delivery — continuation only (the caller's NebulaRoot identity has
+    * already been verified in [[layeredRoute]]; the bare-kernel SPAWN leg retired in
+    * the builtin-def batch 2026-10-03 — Delegate is the only kernel trigger). */
   private def deliverToKernel(
       address: String,
       message: String,
@@ -1009,57 +1029,34 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   ): IO[Either[ToolError, String]] =
     (ctx.sharedResources, ctx.actorSystem) match
       case (Some(res), Some(sys)) =>
-        if address == "kernel" then
-          // New instance: the kernel spawn brief is plain-text only
-          // ([[DelegateTool.spawnBackground]]'s initialPrompt has no blocks parameter)
-          // => `images` is explicitly refused on this leg (same family as B6).
-          if blocks.exists(_.exists {
-                case _: nebflow.shared.ContentBlock.Image => true
-                case _                                    => false
-              }) then
-            IO.pure(Left(sameMachineVisionUnsupportedError("kernel", blocks.get.collect {
-              case _: nebflow.shared.ContentBlock.Image => ()
-            }.size)))
-          else
-            DelegateTool.spawnKernelForMail(message, "mail-triggered kernel task", ctx).map {
-              case Left(err) => Left(err)
-              case Right(id) =>
-                Right(
-                  s"[kernel #$id] Kernel instance started (Delegate inner-core: seven fixed tools, " +
-                    "no project context, no memory). Continuation address: \"kernel:" + id +
-                    "\" — later Mails about THIS instance must carry address=\"kernel:" + id +
-                    "\". Its result will be delivered back to your session when the instance finishes."
-                )
-            }
+        // Continuation leg: `kernel:<id>` -> the registry single point looks up the **live**
+        // instance (kind=Delegate with id match with kernel session prefix); a hit => UserInput
+        // injection (consumed at the turn boundary, replyTo = the supervisor adapter —— the
+        // turn's terminal state still follows the source="delegate" return chain); a miss => fail-closed.
+        val id = address.stripPrefix(KernelPrefix).trim
+        if id.isEmpty then
+          IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"kernel:<instanceId>\" (the id the start receipt carried).")))
         else
-          // Continuation leg: `kernel:<id>` -> the registry single point looks up the **live**
-          // instance (kind=Delegate with id match with kernel session prefix); a hit => UserInput
-          // injection (consumed at the turn boundary, replyTo = the supervisor adapter —— the
-          // turn's terminal state still follows the source="delegate" return chain); a miss => fail-closed.
-          val id = address.stripPrefix(KernelPrefix).trim
-          if id.isEmpty then
-            IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"kernel:<instanceId>\" (the id the start receipt carried).")))
-          else
-            res.agentRegistry.get.flatMap { reg =>
-              reg.get(id) match
-                case Some(rec) if rec.kind == AgentKind.Delegate && id.startsWith("delegate-kernel-") =>
-                  (rec.ref ! AgentCommand.UserInput(
-                    text = message,
-                    replyTo = rec.supervisorRef,
-                    source = Some("mail"),
-                    sender = ctx.agentDef.map(_.name),
-                    eventType = Some("info"),
-                    blocks = blocks,
-                    // (2) server-side injection (agent-to-agent mail), NOT human input — stated explicitly.
-                    fromUser = false
-                  )).void *>
-                    nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
-                    IO.pure(Right(
-                      s"[kernel #$id] Message injected into the live kernel instance — it will process it " +
-                        "at its next turn boundary; its next result is delivered back to your session."
-                    ))
-                case _ => IO.pure(Left(kernelNotLiveError(id)))
-            }
+          res.agentRegistry.get.flatMap { reg =>
+            reg.get(id) match
+              case Some(rec) if rec.kind == AgentKind.Delegate && id.startsWith("delegate-kernel-") =>
+                (rec.ref ! AgentCommand.UserInput(
+                  text = message,
+                  replyTo = rec.supervisorRef,
+                  source = Some("mail"),
+                  sender = ctx.agentDef.map(_.name),
+                  eventType = Some("info"),
+                  blocks = blocks,
+                  // (2) server-side injection (agent-to-agent mail), NOT human input — stated explicitly.
+                  fromUser = false
+                )).void *>
+                  nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
+                  IO.pure(Right(
+                    s"[kernel #$id] Message injected into the live kernel instance — it will process it " +
+                      "at its next turn boundary; its next result is delivered back to your session."
+                  ))
+              case _ => IO.pure(Left(kernelNotLiveError(id)))
+          }
       case _ =>
         IO.pure(Left(ToolError("Cannot deliver to the kernel leg: missing resources.")))
 

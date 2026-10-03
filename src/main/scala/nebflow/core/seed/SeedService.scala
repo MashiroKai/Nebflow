@@ -23,9 +23,10 @@ import scala.jdk.CollectionConverters.*
  * （`unmanagedResources` 已含 VERSION/brand.conf 先例，resources 无排除），无需
  * 改安装脚本。
  *
- * 种子面（三 keeper = Nebula 引擎自带 + 本服务补 project-dispatcher / general）：
- *  - 默认 agent：project-dispatcher + general（形态以 runtime trusted 版为准，preset/skills
- *    字段合法入 seed——TB #20 基线对齐 2026-09-09）
+ * 种子面（builtin-def 批 2026-10-03 作者令①起 = **仅插件 + 项目**；四个收敛
+ * agent（Nebula / project-dispatcher / general / kernel）已整体转为**代码定义**
+ * ——`nebflow.core.entity.BuiltinAgents` 单点，磁盘 agent.json/system.md 对这四名
+ * 是死信，seed/agents/ 资源树与 `agents:` manifest 条目同批退役）：
  *  - 系统插件：收缩后默认集（visual-report / slideblocks，c7501470），
  *    预装 + trusted（复用 PluginRegistry.approve）
  *  - 默认通用项目：id=general，workspace=`<root>/projects/general`，启动前挂载
@@ -51,7 +52,7 @@ import scala.jdk.CollectionConverters.*
  *  1. `projects/` 非空（≥1 个 project.json）→ 判定「已有用户数据」：只写/更新
  *     marker（记录当前 SeedVersion），不完整播种（既有 home 不重播默认集）；
  *     **默认集内缺失的 agent / plugin / project 分别由三条 reconcile 自愈补装**
- *     （agents 见 2026-09-13 批 reconcileAgents；project 见本批 reconcileProjects）。
+ *     （agents 面已随 builtin-def 批 2026-10-03 退役——四件收敛 agent 代码定义，无种子面；project 见本批 reconcileProjects）。
  *  2. else（fresh home）：marker 缺失 → 完整冷启动播种；marker.version < seedVersion
  *     → 升级 add-only 补种（每条 `!os.exists` 守卫，只补缺失文件）；>= → no-op。
  *  3. 最后（所有分支、不受守卫/marker 门控）：插件一致性 reconcile（见下）
@@ -74,7 +75,8 @@ import scala.jdk.CollectionConverters.*
  *  - seed digest == runtime digest → 无动作（常态，静默通过）
  *  - 不一致且 runtime digest == 信任记录 digest（干净快照，用户未改）→ **覆盖前备份**
  *    （`<root>/plugins-backups/<ts>_pre-sync-<name>/`，逐文件 pre-sha256；与
- *    [[reconcileAgent]] 硬条件 2 的 `agents-backups` 形态逐项对称）→ 种子镜像
+ *    已退役 agents 面（reconcileAgent，builtin-def 批 2026-10-03 删除）的
+   *    `agents-backups` 形态逐项对称）→ 种子镜像
  *    覆盖（含删除 runtime 独有文件）+ 自动 re-approve → 冷启动插件与最新种子一致
  *  - 不一致且 runtime digest ≠ 信任记录 digest（用户改过）→ 跳过 + WARN（用户编辑 > 种子）
  *  - 不一致且无信任记录 → 跳过 + WARN（无仲裁基准，保守不覆盖）
@@ -107,7 +109,6 @@ import scala.jdk.CollectionConverters.*
 object SeedService:
   private val logger = NebflowLogger.forName("nebflow.core.seed")
 
-  private val AgentsPrefix = "agents:"
   private val PluginsPrefix = "plugins:"
   private val ProjectPrefix = "project:"
   private val GeneralProjectName = "general"
@@ -235,10 +236,9 @@ object SeedService:
       end if
       // 插件一致性 pass（所有分支都跑，不受守卫/marker 门控——digest 一致时是无操作）
       reconcilePlugins(root, manifest)
-      // agents 一致性 pass（#304-④，2026-09-12）：与插件 pass 同构，但仲裁基准
-      // 换成「三条硬条件」（见 reconcileAgents 文档）；digest 一致时同样无操作。
-      // 缺失 → 自愈补装（2026-09-13 批，作者令「改成缺失自愈」）。
-      reconcileAgents(root, manifest)
+      // agents 一致性 pass RETIRED (builtin-def batch 2026-10-03, author
+      // directive ①): the four converged agents are code-defined (BuiltinAgents)
+      // — no disk mirror exists to reconcile, nothing to self-heal.
       // 项目一致性 pass（作者 2026-09-17 裁定②「既有 home 亦 add-only 补种」）：与上面两条
       // reconcile 同构，**与 `hasExistingProjects` 门无关**——既有 home 分支同样走到本行，
       // 迭代面 = manifest items；缺 ⇒ 建、已在 ⇒ 零动作零写盘（见 reconcileProjects）。
@@ -253,9 +253,8 @@ object SeedService:
       // 说成还在积压）。三选一决定：❌(c) 保留悬空告警 = 留「永不触发的真分支 + 恒触发的
       // 假告警」，违反「禁留永不触发的告警」；❌(a) 改判据面 = 只因「校验函数」而发明一个
       // 新的启动期健康检查（无需求驱动、扩面）；✅(b) 整组退役 = 常量 + 调用 + 定义三件一并
-      // 删除。影响（具名报备作者）：①启动日志少一行恒定假告警（真实缺件由 `reconcileAgent`
-      // 的 per-name `reconcile failed` WARN 与 `installAgentFromSeed` 的 `cannot self-heal`
-      // WARN 覆盖，覆盖面零损失）；②该启动期记忆链自检能力**不可逆删除**（若要恢复记忆
+      // 删除。影响（具名报备作者）：①启动日志少一行恒定假告警（真实缺件 WARN 面随 agents
+      // 播种腿在 builtin-def 批 2026-10-03 一并退役——四件 agent 代码定义，不存在缺件态）；②该启动期记忆链自检能力**不可逆删除**（若要恢复记忆
       // 消费链，须带回一个真消费者）。
     catch
       case e: Exception =>
@@ -263,20 +262,6 @@ object SeedService:
         logger.warnSync(s"Seed skipped due to failure: ${e.getMessage}")
     end try
   }
-
-  /** Seed-managed agent system prompt (classpath `seed/agents/<name>/system.md`).
-    *
-    * kernelgen-ext batch (2026-09-26, author directive "kernel into the seed tree"):
-    * single-point classpath reader for spawn-side prompt fail-safe chains. The
-    * `agents:kernel` manifest item is a PROMPT-ONLY seed (system.md, no seed
-    * agent.json — the kernel def face is mechanism-fixed: AgentCore.KernelFixedTools
-    * + ConvergedAgentNames make agent.json declarations dead letters), so the kernel
-    * spawn path ([[nebflow.core.tools.DelegateTool]]) reads this resource directly
-    * instead of relying on a disk def. None = resource missing or blank (caller
-    * falls back to its embedded default); never throws, never touches the data root.
-    */
-  def readAgentSeedPrompt(name: String): Option[String] =
-    readResource(os.SubPath(s"seed/agents/$name/system.md")).filter(_.trim.nonEmpty)
 
   // ── 触发 / fresh-home 守卫 ───────────────────────────────
   /** 判定「已有用户数据」：projects/ 目录存在且含 ≥1 个含 project.json 的子目录。 */
@@ -295,8 +280,11 @@ object SeedService:
 
   private def seedItem(root: os.Path, id: String): Boolean =
     try
-      if id.startsWith(AgentsPrefix) then seedAgent(root, id.stripPrefix(AgentsPrefix))
-      else if id.startsWith(PluginsPrefix) then seedPlugin(root, id.stripPrefix(PluginsPrefix))
+      // agents: prefix RETIRED (builtin-def batch 2026-10-03, author directive ①:
+      // the four converged agents are code-defined — no agent seeding, no mirror,
+      // no manifest items). A stale/rolled-back manifest that still carries an
+      // `agents:` id falls through to the generic unknown-item WARN below.
+      if id.startsWith(PluginsPrefix) then seedPlugin(root, id.stripPrefix(PluginsPrefix))
       else if id.startsWith(ProjectPrefix) then seedProject(root, id.stripPrefix(ProjectPrefix))
       else
         logger.warnSync(s"Seed: unknown item id '$id' — skipping")
@@ -305,18 +293,6 @@ object SeedService:
       case e: Exception =>
         logger.warnSync(s"Seed: item '$id' failed: ${e.getMessage}")
         false
-
-  /**
-   * agent 条目：写 seed/agents/<name>/{agent.json,system.md} 到 ~/.nebflow/agents/<name>/。
-   * agent.json 与 system.md 各自独立 `!os.exists` 守卫（add-only：只补缺失文件）。
-   */
-  private def seedAgent(root: os.Path, name: String): Boolean =
-    val targetDir = root / "agents" / name
-    val jsonWrote = writeIfAbsent(targetDir / "agent.json", readResource(agentResource(name, "agent.json")))
-    val mdWrote = writeIfAbsent(targetDir / "system.md", readResource(agentResource(name, "system.md")))
-    if jsonWrote || mdWrote then
-      logger.infoSync(s"Seed: wrote agent '$name' (agent.json=$jsonWrote, system.md=$mdWrote)")
-    jsonWrote || mdWrote
 
   /**
    * 插件条目（安装路径）：整目录复制 seed/plugins/<name>/ → ~/.nebflow/plugins/<name>/，
@@ -418,7 +394,7 @@ object SeedService:
   // ── 项目一致性 reconcile（既有 home 的缺失内置项目 add-only 补种）──
   /**
    * 每次启动对 manifest 声明的项目做存在性检查 + 缺失补种（与 [[reconcilePlugins]] /
-   * [[reconcileAgents]] **同构**：迭代面 = manifest items、逐条 try/catch、失败仅 WARN、
+   * （已退役的 reconcileAgents 同构先例）：迭代面 = manifest items、逐条 try/catch、失败仅 WARN、
    * 绝不中断启动、digest/内容一致时无操作）。
    *
    * 守卫粒度 = **目录级** `!os.exists(root / "projects" / <name> / "project.json")`
@@ -432,7 +408,7 @@ object SeedService:
    * 与前令的关系（不得再复述前令口径）：`961e2cbd3` 提交记录所写「作者裁定否决既有 home
    * 补种」= **前令，已作废**；后令（2026-09-17 裁定②：两面都补、既有严格 add-only，作者对
    * 波及隔离 home 亦明示知情接受）治前论 ⇒ 本面即先前缺口「缺失的一件」。缺口与
-   * [[reconcileAgents]] 同源：既有 home 受 `projects/` 非空守卫**永不完整播种**，缺失的
+   * 与 reconcilePlugins 同源的历史缺口：既有 home 受 `projects/` 非空守卫**永不完整播种**，缺失的
    * 内置项目因此永久不愈（agents 面 2026-09-13 已自愈，项目面本批对齐）。
    *
    * 写入面 = 项目定义目录的**第二写点**（第一 = `runSeed` 的完整播种）；风险与回滚见设计件
@@ -516,7 +492,7 @@ object SeedService:
               PluginRegistry.trustRecordDigest(name) match
                 case Some(td) if td == runtimeDigest =>
                   // 干净运行时（自 approve 后零漂移）→ 覆盖前备份 + 种子镜像覆盖 + 自动重审
-                  // 覆盖前备份（与 [[reconcileAgent]] 的硬条件 2 对称）：**凡覆盖写必须有
+                  // 覆盖前备份：**凡覆盖写必须有
                   // pre-sync 备份**，不因「按设计这是安全覆盖」而豁免——「本路径按设计安全」
                   // 与「覆盖后有可回滚材料」是两件事，后者是回滚材料完整性的要求。
                   val stamp = java.time.format.DateTimeFormatter
@@ -596,8 +572,8 @@ object SeedService:
   /**
    * 种子镜像覆盖：字节保真写全部种子文件 → 删 runtime 独有文件 → 清理删空目录。
    * 仅在「runtime digest == trusted digest」已证干净后调用（脏目录绝不进此路径）。
-   * **调用方契约：覆写前必先落 pre-sync 备份**（两处调用点均已满足——
-   * [[reconcileAgent]] 落 `agents-backups/`、[[reconcilePlugin]] 落 `plugins-backups/`）。
+   * **调用方契约：覆写前必先落 pre-sync 备份**（现读唯一调用点 [[reconcilePlugin]] 落
+   * `plugins-backups/`；历史上的 agents 面调用点随 builtin-def 批 2026-10-03 退役）。
    */
   private def mirrorSeed(targetDir: os.Path, seedFiles: SortedMap[String, Array[Byte]]): Unit =
     seedFiles.foreach { (rel, bytes) =>
@@ -617,173 +593,6 @@ object SeedService:
 
   end mirrorSeed
 
-  // ── agents 一致性 reconcile（#304-④，2026-09-12）──────────
-  /**
-   * 每次启动对 manifest 声明的 agent 做 seed ↔ runtime 比对。
-   *
-   * 与 [[reconcilePlugins]] 的机制差异：plugins 有 `trustRecordDigest`（approve 时刻
-   * fingerprint）作仲裁基准，**agents 没有信任记录**。D-8 拍板取**最保守档**：
-   * 不新造基准、不做「种子为准」的自动覆盖——**仲裁基准 = seed（种子权威）**，
-   * 并以**三条硬条件**（作者 2026-09-12 裁定，取代 D-8「两条硬加」措辞）为前置，
-   * **缺一即拒**：
-   *   1. **覆盖前差集检查**：任何 seed→runtime **全量覆写**执行前，先做「运行时独有
-   *      内容并入 seed 源」的差集检查；**差集非空 ⇒ 立即停手、零覆盖、上报**
-   *      （列运行时独有行原文 + 行号），**禁静默覆盖**；
-   *   2. **覆盖前备份**：覆写前必留可回滚备份（`<root>/agents-backups/<ts>_pre-sync-<name>/`，
-   *      逐文件 pre-sha256）；
-   *   3. **运行时独有内容不得静默丢弃**：任何路径下都不得静默丢掉运行时独有内容
-   *      （与 1 的「停手上报」同源，缺一即拒）。
-   *
-   * 失败面（2026-09-13 缺失自愈批 / 作者令「改成缺失自愈」，取代 D-8「缺失不新装」口径）：
-   * **missing runtime → 从种子整目录补装**（与 [[reconcilePlugin]] 的 `:218-224` 自愈分支
-   * 对称；安装面严格限定在 **manifest 声明的默认集**，不向种子树全集扩张、既有目录零覆盖）；
-   * digest 一致 → 静默通过（幂等：连续两次启动第二次零动作）。
-   * 全程 best-effort：单条失败只 WARN，绝不阻止 gateway 启动。
-   *
-   * 为什么要改（取证件 §0-3 的鸡生蛋）：既有 home 受 `projects/` 非空守卫**永不完整播种**，
-   * 而旧 reconcile 遇缺失直接 return ⇒ 「seed 只填新 home、reconcile 只修旧 home，交集为空」
-   * ⇒ 默认集 agent 在既有 home **永不可能就位**（旧取证例 = 记忆队列消费者，该 agent 已于
-   * 2026-09-25 退役；本批 E5 2026-10-01 已把该名族的所有引用收口）。插件面对同类缺口已于
-   * 2026-09-12 自愈，agents 面本批对齐。
-   *
-   * **落点纪律**：本机制**只**落代码；不在 `~/.nebflow/bin/` 或任何运维文档面
-   * 新建护栏载体，也不回改任何既有留痕件（作者 2026-09-12 裁定）。
-   */
-  private def reconcileAgents(root: os.Path, manifest: SeedManifest): Unit =
-    manifest.items
-      .collect {
-        case id if id.startsWith(AgentsPrefix) => id.stripPrefix(AgentsPrefix)
-      }
-      .foreach { name =>
-        try reconcileAgent(root, name)
-        catch
-          case e: Exception =>
-            logger.warnSync(s"Seed: agent '$name' reconcile failed: ${e.getMessage}")
-      }
-
-  private def reconcileAgent(root: os.Path, name: String): Unit =
-    val targetDir = root / "agents" / name
-    if !os.exists(targetDir) then
-      // 缺失 → 自愈补装（2026-09-13 批，见 reconcileAgents 文档）：既有 home 受 projects/
-      // 非空守卫永不完整播种，缺失目录因此永久不愈（取证例 = 记忆队列消费者，该 agent 已
-      // 于 2026-09-25 退役；E5 批 2026-10-01 已收口其全部名面引用）。
-      // 安装面 = manifest 声明的默认集；已存在目录绝不进此分支（零覆盖）。
-      installAgentFromSeed(root, name, "self-healed (missing in existing home)")
-    else
-      seedResourcesIn(os.SubPath(s"seed/agents/$name"), "agent.json") match
-        case None => () // 无种子资源，无从比对
-        case Some(seedFiles) =>
-          val seedDigest = treeDigest(seedFiles)
-          val runtimeDigest = runtimeTreeDigest(targetDir)
-          if runtimeDigest == seedDigest then () // 已一致（幂等：第二次启动零动作）
-          else
-            // ── 硬条件 1（⑦(i) 护栏）：覆盖前差集检查 ──
-            val unique = runtimeUniqueLines(targetDir, seedFiles)
-            if unique.nonEmpty then
-              logger.warnSync(
-                s"Seed: agent '$name' runtime has content NOT present in seed — REFUSING to overwrite " +
-                  s"(zero files written). Merge the runtime-only content into the seed source first, then re-sync. " +
-                  s"Runtime-only: " + unique.map(e => s"${e.file}:${e.lines.size} line(s)").mkString(", ")
-              )
-              unique.foreach { e =>
-                e.lines.take(40).foreach { (ln, text) =>
-                  logger.warnSync(s"Seed:   runtime-only [$name] ${e.file}:$ln: $text")
-                }
-              }
-            else
-              // 差集为空（runtime 是 seed 的子集/一致内容）⇒ 种子权威：备份后镜像覆盖。
-              // ── 硬条件 2：覆盖前备份 ──
-              val stamp = java.time.format.DateTimeFormatter
-                .ofPattern("yyyyMMdd_HHmmss")
-                .format(java.time.LocalDateTime.now())
-              val backupDir = root / "agents-backups" / s"${stamp}_pre-sync-$name"
-              val preShas = runtimeFileShas(targetDir)
-              os.makeDir.all(backupDir)
-              os.walk(targetDir).filter(os.isFile).foreach { f =>
-                val rel = f.relativeTo(targetDir)
-                val dest = backupDir / os.SubPath(rel.toString)
-                os.makeDir.all(dest / os.up)
-                os.copy.over(f, dest)
-              }
-              os.write.over(
-                backupDir / "PRE-SHA256.txt",
-                s"# agent=$name  sampled=$stamp\n" +
-                  preShas.map((rel, sha) => s"$sha  $rel").mkString("\n") + "\n"
-              )
-              mirrorSeed(targetDir, seedFiles)
-              logger.infoSync(
-                s"Seed: agent '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…); " +
-                  s"pre-sync backup at ${backupDir.toString.stripPrefix(root.toString + "/")} (${preShas.size} file(s))"
-              )
-
-            end if
-
-          end if
-
-    end if
-
-  end reconcileAgent
-
-  /**
-   * Spec-only hook（E5 批 2026-10-01）：把 `reconcileAgent` 暴露给 `SeedAgentSelfHealSpec`
-   * 的启动面告警核验（root 四条之末）——以「真缺件 ⇒ 响亮 WARN」充当日志捕获的**正向
-   * 控制**（证明捕获有载力，而非恒空）。`private[seed]`：除该 spec 外零调用者。
-   */
-  private[seed] def reconcileAgentForTest(root: os.Path, name: String): Unit =
-    reconcileAgent(root, name)
-
-  /**
-   * 从种子整目录安装一个 agent（[[reconcileAgent]] 的缺失自愈路径与 [[seedAgent]] 的
-   * 播种路径共用单点）。缺种子资源（jar 陈旧 / 资源缺失）⇒ WARN 且**不落盘**——
-   * 缺件必须以响亮日志收口，绝不留静默空目录（否则 `AgentLibrary.get` 仍解析不到、
-   * 现场看起来「装过了」而机制侧一无所获）。
-   */
-  private def installAgentFromSeed(root: os.Path, name: String, outcome: String): Boolean =
-    val targetDir = root / "agents" / name
-    val base = os.SubPath(s"seed/agents/$name")
-    val files = resourceDirList(base, "agent.json")
-    if files.isEmpty then
-      logger.warnSync(
-        s"Seed: agent '$name' is missing in this home but has no seed resources on the classpath — cannot self-heal " +
-          s"(stale jar / missing seed/agents/$name); nothing was written"
-      )
-      false
-    else
-      files.foreach { rel =>
-        readResource(join(base, rel)).foreach { text =>
-          val target = targetDir / rel
-          os.makeDir.all(target / os.up)
-          os.write.over(target, text)
-        }
-      }
-      logger.infoSync(
-        s"Seed: agent '$name' $outcome (${files.size} file(s) from seed/agents/$name/, zero overwrite of existing dirs)"
-      )
-      true
-
-    end if
-
-  end installAgentFromSeed
-
-  /** 同 [[seedResources]]，anchor 参数化（agents 面 = `agent.json`）。 */
-  private def seedResourcesIn(base: os.SubPath, anchorFile: String): Option[SortedMap[String, Array[Byte]]] =
-    val rels = resourceDirList(base, anchorFile)
-    if rels.isEmpty then None
-    else
-      val entries = rels.flatMap { rel =>
-        readResourceBytes(join(base, rel)).map(rel.toString -> _)
-      }
-      Some(SortedMap.from(entries))
-
-  /** 运行时目录的同一 digest 算法（目录不存在 → 空串，调用方已守卫）。 */
-  private def runtimeTreeDigest(dir: os.Path): String =
-    val files = SortedMap.from(
-      os.walk(dir).filter(os.isFile).toList.map { f =>
-        f.relativeTo(dir).toString -> os.read.bytes(f)
-      }
-    )
-    treeDigest(files)
-
   /** 运行时逐文件 sha256（备份留痕用；按 rel 路径排序保证可复算）。 */
   private def runtimeFileShas(dir: os.Path): List[(String, String)] =
     os.walk(dir)
@@ -796,34 +605,6 @@ object SeedService:
     val md = MessageDigest.getInstance("SHA-256")
     md.digest(bytes).map("%02x".format(_)).mkString
 
-  /**
-   * 硬条件 1 的差集计算：**运行时独有行**（逐文件比对同 rel 路径的 seed 文件；
-   * 运行时独有文件 ⇒ 其全部行都算独有）。返回「文件 → (行号, 原文) 列表」。
-   * 纯函数式读取，零写入——本方法只读不写。
-   */
-  private[seed] final case class RuntimeUnique(file: String, lines: List[(Int, String)])
-
-  private[seed] def runtimeUniqueLines(
-    targetDir: os.Path,
-    seedFiles: SortedMap[String, Array[Byte]]
-  ): List[RuntimeUnique] =
-    val seedLineSets: Map[String, Set[String]] = seedFiles.map { (rel, bytes) =>
-      rel -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8).split("\n", -1).toSet
-    }.toMap
-    os.walk(targetDir).filter(os.isFile).toList.sortBy(_.toString).flatMap { f =>
-      val rel = f.relativeTo(targetDir).toString
-      val seedLines = seedLineSets.getOrElse(rel, Set.empty[String])
-      val runtimeLines =
-        try new String(os.read.bytes(f), java.nio.charset.StandardCharsets.UTF_8).split("\n", -1).toList
-        catch case _: Throwable => Nil
-      val unique = runtimeLines.zipWithIndex
-        .filterNot { (line, _) => seedLines.contains(line) }
-        .map { (line, idx) => (idx + 1, line) }
-      if unique.isEmpty then Nil else List(RuntimeUnique(file = rel, lines = unique))
-    }
-
-  end runtimeUniqueLines
-
   // ── helpers ──────────────────────────────────────────────
   private def writeIfAbsent(path: os.Path, content: Option[String]): Boolean =
     content match
@@ -832,9 +613,6 @@ object SeedService:
         os.write.over(path, text)
         true
       case _ => false
-
-  private def agentResource(name: String, file: String): os.SubPath =
-    os.SubPath(s"seed/agents/$name/$file")
 
   private def join(base: os.SubPath, child: os.SubPath): os.SubPath =
     os.SubPath(s"${base.toString}/${child.toString}")
@@ -860,7 +638,7 @@ object SeedService:
   private def resourceDirList(prefix: os.SubPath): List[os.SubPath] =
     resourceDirList(prefix, "plugin.json")
 
-  /** 同上，anchor 文件名参数化（agents 面 anchor = `agent.json`）。 */
+  /** 同上，anchor 文件名参数化（agents 面已退役，现读仅 `plugin.json` anchor）。 */
   private def resourceDirList(prefix: os.SubPath, anchorFile: String): List[os.SubPath] =
     val loader = getClass.getClassLoader
     val anchor = join(prefix, os.SubPath(anchorFile))

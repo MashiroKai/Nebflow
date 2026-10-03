@@ -274,6 +274,9 @@ function renderAgentDetail(pane, name, detail, model) {
   const displayName = detail?.displayName || detail?.name || name;
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
+  // builtin-def 批（2026-10-03 作者令①）：代码定义的内置 agent 在详情页只读——
+  // prompt 不给编辑器、不给保存通道（WS 写通道后端同样显式拒绝，双层收口）。
+  const builtin = !!detail?.builtin;
   // contenti18n 批：详情面文案走 locale 映射（键 = agent id）。`displayName` 本身
   // 不替换——头像首字母（:297）仍取原名，只有文本节点本地化。
   const contentAgentId = detail?.name || name;
@@ -286,9 +289,10 @@ function renderAgentDetail(pane, name, detail, model) {
       <div class="agent-detail-header">
         <span class="agent-detail-avatar">${esc(displayName.charAt(0).toUpperCase())}</span>
         <div class="agent-detail-header-info">
-          <div class="agent-detail-name">${esc(contentText('agent', contentAgentId, 'name', displayName))}</div>
+          <div class="agent-detail-name">${esc(contentText('agent', contentAgentId, 'name', displayName))}${builtin ? `<span class="agent-detail-builtin-badge" title="${esc(t('plugins.builtinTitle'))}">${esc(t('plugins.builtinBadge'))}</span>` : ''}</div>
           ${description ? `<div class="agent-detail-desc">${esc(contentText('agent', contentAgentId, 'desc', description))}</div>` : ''}
           ${extends_ ? `<div class="agent-detail-extends">extends: ${esc(extends_)}</div>` : ''}
+          ${builtin ? `<div class="agent-detail-builtin-note">${esc(t('agentManager.builtinNote'))}</div>` : ''}
         </div>
       </div>
 
@@ -303,16 +307,25 @@ function renderAgentDetail(pane, name, detail, model) {
       <div class="agent-detail-section" id="agent-detail-prompt-section">
         <div class="agent-detail-label-row">
           <span class="agent-detail-label">${t('agentManager.systemPrompt')}</span>
-          <button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="${t('agentManager.viewSource')}">${CODE_ICON_SVG}</button>
+          ${builtin ? '' : `<button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="${t('agentManager.viewSource')}">${CODE_ICON_SVG}</button>`}
         </div>
         <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
-        <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
-        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>
+        ${builtin ? '' : `<textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
+        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>`}
       </div>
     </div>`;
 
   // Model section: read-only resolved chain (source note + chips + current).
   renderModelSection(pane, model);
+
+  if (builtin) {
+    // Read-only face: rendered prompt only, no editor, no save.
+    const roRender = pane.querySelector('#agent-detail-prompt-render');
+    import('./utils.js').then(({ renderMarkdownWithMath }) => {
+      if (pane.isConnected) roRender.innerHTML = renderMarkdownWithMath(prompt);
+    });
+    return;
+  }
 
   // System prompt: rendered markdown view ↔ source textarea toggle.
   // Rendered mode is default; Save only shows in source mode.

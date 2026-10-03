@@ -149,9 +149,12 @@ object EntityLoader:
 
   end loadAgentFromDir
 
-  /** Load agent entry from `agents/<name>/agent.json` + `system.md`. */
+  /** Load agent entry from `agents/<name>/agent.json` + `system.md`.
+    * builtin-def 批（2026-10-03 作者令①）：四个收敛名的条目来自代码
+    * （BuiltinAgents 单点；每次现读 model sidecar）——磁盘目录死信。 */
   def loadAgent(name: String): IO[Option[AgentEntry]] =
-    IO.blocking { loadAgentFromDir(agentsDir / name) }
+    if BuiltinAgents.isBuiltin(name) then IO.blocking { BuiltinAgents.entry(name) }
+    else IO.blocking { loadAgentFromDir(agentsDir / name) }
 
   /** Load team-local agent: `teams/<teamName>/agents/<agentName>/` → fallback to global. */
   def loadTeamAgent(teamName: String, agentName: String): IO[Option[AgentEntry]] =
@@ -173,14 +176,18 @@ object EntityLoader:
       case None => loadAgent(agentName) // fallback to global
     }
 
-  /** List all agents with runtime category inference. */
+  /** List all agents with runtime category inference.
+    * builtin-def 批：四件代码定义恒在册（不限磁盘），磁盘扫描只收自定义名。 */
   def listAgents(): IO[Map[String, AgentEntry]] =
     for
+      builtins <- IO.blocking { BuiltinAgents.entries() }
       rawAgents <- IO.blocking {
         if !os.exists(agentsDir) then Map.empty[String, AgentEntry]
         else
           os.list(agentsDir)
             .filter(os.isDir)
+            // 收敛名不入扫盘面（代码单点，磁盘死信）
+            .filter(dir => !BuiltinAgents.isBuiltin(dir.last))
             .flatMap { dir =>
               val name = dir.last
               loadAgentFromDir(dir).map(name -> _)
@@ -190,8 +197,8 @@ object EntityLoader:
       teams <- listTeams()
       flows <- listFlows()
       // Infer category for agents that have default "standalone"
-      inferred = rawAgents.map { (name, entry) =>
-        if entry.category == "standalone" then
+      inferred = (builtins ++ rawAgents).map { (name, entry) =>
+        if entry.category == "standalone" && !BuiltinAgents.isBuiltin(name) then
           val inferred = classifyAgent(name, teams, flows)
           name -> entry.copy(category = inferred)
         else name -> entry
@@ -254,6 +261,13 @@ object EntityLoader:
    *  so we scan all agent subdirectories and match by the resolved name.
    */
   def findAgentByName(name: String): IO[Option[AgentDef]] =
+    // 0. builtin-def 批（2026-10-03 作者令①）：收敛名 = 代码定义单点，先于
+    //    一切磁盘层（磁盘目录死信）。
+    if BuiltinAgents.isBuiltin(name) then
+      IO.blocking { BuiltinAgents.entry(name).map(_.toAgentDef) }
+    else findOnDisk(name)
+
+  private def findOnDisk(name: String): IO[Option[AgentDef]] =
     for
       // 1. Global agents — name == dir name, fast path
       globalOpt <- IO.blocking {

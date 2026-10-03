@@ -83,9 +83,20 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
         )
     finally os.remove.all(dir / os.up)
 
-  /** 收敛名 keeper：显式声明 JSON category 的后门形态。 */
+  /**
+   * builtin-def 批（2026-10-03 作者令①）：收敛名的磁盘目录是**死信**——
+   * `loadFromDir` 读侧单点直接 None（比 agentdef-tidy 批的「读进来再无视」更早
+   * 一层关死后门）。收敛名 keeper 形态由此从磁盘夹具改为**代码合成 def**：
+   * fixedToolsFor 的按名收敛与 category 无关性照旧由 ①/② 组钉死。
+   */
+  private def loadBuiltinFromDisk(name: String, json: String): Option[AgentDef] =
+    val dir = fixture(name, json)
+    try new AgentLibrary(dir / os.up, None).loadFromDir(dir)
+    finally os.remove.all(dir / os.up)
+
+  /** 收敛名 keeper（代码合成）：显式声明 category 的后门形态。 */
   private def keeper(name: String, category: String): AgentDef =
-    loadFromDisk(name, s"""{"name":"$name","description":"fixture","category":"$category","tools":[]}""")
+    AgentDef(name = name, description = "fixture", tools = Nil, systemPrompt = "", category = category)
 
   /**
    * order-395 段（身份段载体）在 buildConditionalBlocks 同款 filter+render 下的产物。
@@ -105,35 +116,31 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   // ===== ① 收敛名 × JSON category 后门：工具面 =====
 
-  test("收敛名 keeper 的 JSON category=team 被无视 —— fixedToolsFor 恒为机制固定集（零 SubTask/TeamTask*）"):
+  test("收敛名的磁盘定义是死信：loadFromDir 对 builtin 目录恒 None（读侧单点，builtin-def 2026-10-03）"):
     AgentCore.ConvergedAgentNames.toList.sorted.foreach { name =>
-      val defn = keeper(name, "team")
-      assertEquals(defn.category, "standalone", s"$name: 收敛名 category 必须恒 standalone（无视 JSON）")
-      val expected = mechanismFace(name)
-      val fixed = AgentCore.fixedToolsFor(defn)
-      assertEquals(fixed, expected, s"$name: 工具面必须等于机制固定集常量（不得走 legacyFixedTools）")
-      assertEquals(fixed.intersect(LegacyTeamOnlyTools), Set.empty[String], s"$name: team 面独有件必须零出现")
+      val json = "{\"name\":\"" + name + "\",\"description\":\"fixture\",\"category\":\"team\",\"tools\":[\"SubTask\"]}"
+      val loaded = loadBuiltinFromDisk(name, json)
+      assertEquals(loaded, None, s"$name: 磁盘 agent.json 必须是死信（任何内容都不进装载面）")
     }
 
-  test("收敛名 keeper 的 JSON category=flow 同样被无视（同一后门第二形态）"):
-    AgentCore.ConvergedAgentNames.toList.sorted.foreach { name =>
-      val defn = keeper(name, "flow")
-      assertEquals(defn.category, "standalone", s"$name: flow category 也必须被无视")
-      assertEquals(AgentCore.fixedToolsFor(defn), mechanismFace(name), s"$name: 工具面恒为机制固定集")
+  test("fixedToolsFor 的按名收敛与 category 无关：带 team/flow/未知 category 的合成收敛 def 恒得机制固定集（零 SubTask/TeamTask*）"):
+    // builtin-def 批（2026-10-03）：「磁盘 category 无法抵达消费面」已由上面的死信钉
+    // 关死；本组把「即便有人合成出带 category 的收敛 def，fixedToolsFor 仍按名收敛」
+    // 的纵深锚在合成 def 上（fixedToolsFor 源码的按名短路语义）。
+    List("team", "flow", "something-unknown", "standalone").foreach { cat =>
+      AgentCore.ConvergedAgentNames.toList.sorted.foreach { name =>
+        val defn = keeper(name, cat)
+        val expected = mechanismFace(name)
+        val fixed = AgentCore.fixedToolsFor(defn)
+        assertEquals(fixed, expected, s"$name (category=$cat): 工具面必须等于机制固定集常量（不得走 legacyFixedTools）")
+        assertEquals(fixed.intersect(LegacyTeamOnlyTools), Set.empty[String], s"$name: team 面独有件必须零出现")
+      }
     }
 
-  test("收敛名 keeper 的 JSON category 为未知值 / 显式 standalone 时同样收敛"):
-    List("standalone", "something-unknown").foreach { cat =>
-      val defn = keeper("Nebula", cat)
-      assertEquals(defn.category, "standalone", s"category=$cat 时收敛名须恒 standalone")
-      assertEquals(AgentCore.fixedToolsFor(defn), mechanismFace("Nebula"))
-    }
-
-  // ===== ② 收敛名 × JSON category 后门：身份段 =====
-
-  test("收敛名 keeper 的 JSON category=team 不再触发 team 成员身份段（order 395 渲染为空）"):
+  test("代码定义的收敛名 category 恒 standalone（BuiltinAgents 单点）—— order 395 身份段恒空"):
     AgentCore.ConvergedAgentNames.toList.sorted.foreach { name =>
-      val defn = keeper(name, "team")
+      val defn = nebflow.core.entity.BuiltinAgents.entry(name).map(_.toAgentDef).get
+      assertEquals(defn.category, "standalone", s"$name: 代码定义的 category 恒 standalone（磁盘死信后唯一的 def 来源）")
       assertEquals(identitySectionOutput(defn), "", s"$name: team 成员身份段不得渲染")
       // 同一渲染器在真 team 成员上必须照常产出（证明断言有载力，不是「渲染器恒空」）
       val teamMember = AgentDef(name = "SomeMember", description = "", category = "team")

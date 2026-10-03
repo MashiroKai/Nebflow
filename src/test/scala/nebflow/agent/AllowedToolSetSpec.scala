@@ -256,10 +256,11 @@ class AllowedToolSetSpec extends FunSuite:
   test("Delegate is Nebula-exclusive; SubTask is the team-member delegation tool"):
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val teamAgent = mkDef("backend", List("Read", "SubTask"))
-    // Delegate 已从 Nebula 固定面退役（史实：授能集合 −1 ⇒ 12，该时点值）：Nebula 不再携带它；
-    // agent.json 声明对 converged 面依旧失效（声明不授能）。该名对一切非 Nebula
-    // 身份仍由 NebulaExclusiveTools 剥离（惰性剥离项，防声明逃逸语义不变）。
-    assert(!CoreProbe.allowed(nebula).contains("Delegate"), "Nebula 不再携带 Delegate（本批退役；变异验红锚：加回固定面即红）")
+    // Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复进 Nebula 固定面
+    // （promptgov 批 2026-09-17 的退役令之授能面部分被取代——史实 −1 ⇒ 12 归档）：
+    // Nebula 在场携带；该名对一切非 Nebula 身份仍由 RootExclusiveTools 剥离
+    // （防声明逃逸语义不变）。
+    assert(CoreProbe.allowed(nebula).contains("Delegate"), "Nebula 在场携带 Delegate（2026-10-03 作者令② Delegate 直接触发 kernel——变异验红锚：摘掉即红）")
     assert(!CoreProbe.allowed(nebula).contains("SubTask"), "Nebula does not need SubTask (unless listed)")
     assert(!CoreProbe.allowed(teamAgent).contains("Delegate"), "non-Nebula never gets Delegate")
     assert(CoreProbe.allowed(teamAgent).contains("SubTask"), "team agent with SubTask listed keeps it")
@@ -334,9 +335,9 @@ class AllowedToolSetSpec extends FunSuite:
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val allowed = CoreProbe.allowed(nebula)
     assert(!allowed.contains("SubTask"), "Nebula (standalone category) unchanged — no SubTask")
-    // Delegate 本批已从 Nebula 固定面退役：即使声明里写着它，机制固定面不含即不授能
-    // —— 断言方向翻转（在场 → 不在场），力度不变；变异验红锚：加回固定面即红。
-    assert(!allowed.contains("Delegate"), "Nebula 不再携带 Delegate（本批退役；变异验红锚：加回固定面即红）")
+    // Delegate 已由 builtin-def 批 2026-10-03 恢复进 Nebula 固定面（史实退役批被
+    // 取代）：断言方向再翻转回「在场」，力度不变；变异验红锚：摘掉即红。
+    assert(allowed.contains("Delegate"), "Nebula 在场携带 Delegate（2026-10-03 作者令②；变异验红锚：摘掉即红）")
 
   // ===== Flow agents: Mail structurally disabled (08-14 P0 root cause) =====
 
@@ -607,7 +608,7 @@ class AllowedToolSetSpec extends FunSuite:
       "Bash",
       "Write",
       "Edit", // 写手三件（2026-09-18 18:18 令恢复：+3）
-      "Card", // 可视化（2026-09-05 解封恢复）
+      // Card 已退役（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）——展示职责并入 Pop
       "Pop",
       "AskUserQuestion", // 用户面
       "Schedule", // 平台（TransferFile 退役 2026-09-14 #145）
@@ -630,8 +631,9 @@ class AllowedToolSetSpec extends FunSuite:
     Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute").foreach { t =>
       assert(!allowed.contains(t), s"退役件（R2 2026-09-12 + 2026-09-05 旧体系）不得出现: $t")
     }
-    // Delegate 本批已从 Nebula 固定面退役（退役件，与 Issue/NodeList 同型反向钉）
-    assert(!allowed.contains("Delegate"), "Nebula 面零 Delegate（本批退役；变异验红锚：加回固定面即红）")
+    // Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复进 Nebula 固定面（退役件
+    // 反向钉被取代——正向钉，与 Bash/Write/Edit 同型）；Issue/NodeList 维持反向钉。
+    assert(allowed.contains("Delegate"), "Nebula 在场携带 Delegate（2026-10-03 作者令②；变异验红锚：摘掉即红）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula 机制集**在场**含 Bash、含
     // Write、含 Edit——取代 2026-09-05 23:34 裁定之 root 面部分（仅 root 面）。
     // 变异验红锚：从机制集再摘任一件即红。

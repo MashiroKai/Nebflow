@@ -51,12 +51,14 @@ class AgentConvergenceSpec extends FunSuite:
       "AgentFlow",
       "ProjectCreate",
       "AgentControl",
-      // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
+      // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
+      // 直接触发 kernel 并返回 kernel:<id> 续聊地址
+      "Delegate",
       "TaskList", // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
       "SendMessage",
       "ListFriends", // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
       "Read", // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
-      "Card", // 可视化（2026-09-05 解封恢复）
+      // Card 已退役（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）——展示职责并入 Pop
       "AskUserQuestion",
       "Pop",
       "Schedule",
@@ -76,7 +78,7 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(
       delivered,
       expected -- sealStrip,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 18 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值 17，加 agentflow 批（2026-10-02）+AgentFlow；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue；friendseal 封存期按单点 strip 派生）"
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 19 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值 17，加 agentflow 批（2026-10-02）+AgentFlow，加 builtin-def 批（2026-10-03）+Delegate；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 promptgov 批 −Delegate 两笔史实（后者授能面已被 2026-10-03 作者令②取代）；零 Issue；friendseal 封存期按单点 strip 派生）"
     )
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
@@ -113,7 +115,8 @@ class AgentConvergenceSpec extends FunSuite:
       "NodeMessage",
       "FlowTrigger",
       "FlowExecute", // 已退役/维持退役
-      "Delegate", // 退役批（史实 −1 ⇒ 12）：一次性执行任务改路由 general 项目
+      // Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复在场（史实 −1 ⇒ 12 的
+      // 退役批被取代）——从 forbidden 集移出，改由上方 expected 集的成员资格断言。
       "TransferFile", // #145 附件腿批退役（2026-09-14）：能力并入 SendMessage 设备附件腿
       "WebSearch",
       "WebFetch",

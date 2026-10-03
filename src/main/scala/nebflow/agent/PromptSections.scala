@@ -269,14 +269,15 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
   // ============================================================
   // 根代理路由纪律（冷启动路由批 2026-09-17；order 370，条件 isRootAgent）
   //
-  // 存在理由：Nebula 的提示词字面量（AgentLibrary.Seeds.Nebula）里作者六句
+  // 存在理由：Nebula 的提示词字面量（现 = nebflow.core.entity.BuiltinAgents，
+  // 史实 = AgentLibrary.Seeds.Nebula）里作者六句
   // spec 的 ④⑤⑥ 零落地 —— 没有一句规定「第一个动作是路由」、没有一句定义
   // Read 的用途是读回项目返回结果、也没有一句禁止根侧自行探文件系统或由
   // 设备名/主机名推断主机路径。冷启动实例因此以 10×Read 开场（探测 passwd
   // 文件、按主机名猜出的用户名目录、Desktop/Downloads、数据根下的 tasks.json
   // 等），0 次 Mail —— 见诊断件 .nebflow/reports/20260917_coldroute-diag.md。
   //
-  // 落点理由：AgentLibrary.seedDefaults() 对 agents/Nebula/system.md 是
+  // 落点理由：（史实）AgentLibrary.seedDefaults() 对 agents/Nebula/system.md 是
   // add-only（只在文件不存在时补写），既有 home 重启不刷新 ⇒ 改字面量对作者
   // 现有实例无效（诊断件已用隔离实例实测：加标记后重启，标记存活）。本段由
   // **引擎编译**注入、与盘面无关（先例 order 350 / order 360），重启同一 home

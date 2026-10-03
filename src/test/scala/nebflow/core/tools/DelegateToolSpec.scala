@@ -16,12 +16,12 @@ import nebflow.shared.PathUtil
  *  1. schema 面：恰两参数 `task`/`description`（旧 `agent`/`lifecycle`/
  *     `taskDescription`/`images`/`preset`/`prompt` 全部退役——旧断言在本文件里
  *     逐条反向钉死；`device` 亦于 2026-09-14 作者裁定 U1/U2 随 schema 摘除）。
- *  2. Target resolution: the built-in `kernel` def. kernelgen-ext batch (2026-09-26): a missing disk
- *     def no longer refuses to start — resolveKernelDef synthesizes the built-in
- *     fail-safe def, prompt = runtime mirror system.md -> classpath seed
- *     (`seed/agents/kernel/system.md`, prompt-only manifest item `agents:kernel`)
- *     -> the embedded default. Availability first; the former "definition not
- *     found" refusal is retired (its negative is re-pinned below).
+ *  2. Target resolution: the built-in `kernel` def, CODE-DEFINED (builtin-def
+ *     batch 2026-10-03, author directive ① "code is the single source of truth"):
+ *     resolveKernelDef returns the BuiltinAgents kernel def — no disk read, no
+ *     seed mirror, no fail-safe tiers (all retired). The former "definition not
+ *     found" refusal stays retired; its negative is re-pinned below, plus a
+ *     negative pin that stray disk files cannot influence the code prompt.
  *  3. Concurrency: NO cap (author decision 2026-09-26 — the former R9 gate U4=D1,
  *     limit 4 per root session, is retired; pinned at the source face below).
  *  4. 设备面：**本工具已无 `device` 参数**（本地编排件；远端只发生在内核六件上）。
@@ -149,41 +149,43 @@ class DelegateToolSpec extends CatsEffectSuite:
           "the old restore-and-retry refusal must be retired, got: " + err.message)
       case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
 
-  test("fail-safe tier 1: a mirror system.md without agent.json drives the synthesized def's prompt"):
+  test("code-defined def: stray disk files CANNOT influence the kernel prompt (single source = code, builtin-def 2026-10-03)"):
     for
       _ <- reset()
+      // 写入全套磁盘假定义（mirror system.md + agent.json）：对收敛名都是死信
       _ = os.write.over(agentsDir / "kernel" / "system.md", "MIRROR-PROMPT-MARKER", createFolders = true)
+      _ = os.write.over(agentsDir / "kernel" / "agent.json",
+        Json.obj("name" -> "kernel".asJson, "description" -> "STRAY-DESCRIPTION-MARKER".asJson).noSpaces,
+        createFolders = true)
       res <- DelegateTool.resolveKernelDef(ctxWith())
     yield res match
       case Right(defn) =>
         assertEquals(defn.name, "kernel")
-        assert(defn.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
-          "tier 1 = the seed-managed runtime mirror file (what the prompt editor reads/writes)")
-        assertEquals(defn.tools.toSet, nebflow.agent.AgentCore.KernelFixedTools,
-          "the synthesized def carries the mechanism-fixed tool face")
+        assert(!defn.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
+          "the disk mirror is a dead letter — the prompt comes from BuiltinAgents (code)")
+        assert(!defn.description.contains("STRAY-DESCRIPTION-MARKER"),
+          "the disk agent.json is a dead letter — the description comes from BuiltinAgents (code)")
         assertEquals(defn.category, "standalone", "converged name pins the category")
-      case Left(err) => fail(s"fail-safe def expected, got: ${err.message}")
+      case Left(err) => fail(s"code def expected, got: ${err.message}")
 
-  test("fail-safe tier 2: no mirror => the classpath seed text drives the prompt (contract + plugin pointer present)"):
+  test("code-defined def carries the kernel contract (when-to-use / boundary / plugin pointer)"):
     for
-      _ <- reset() // empty agents dir: no disk def, no mirror file
+      _ <- reset() // empty agents dir: nothing on disk at all — code is enough
       res <- DelegateTool.resolveKernelDef(ctxWith())
     yield res match
       case Right(defn) =>
         assertEquals(defn.name, "kernel")
         assert(defn.systemPrompt.contains("## ⑤ Creating plugins"),
-          "the seed text (with the author-directed plugin pointer) reached the prompt")
+          "the author-directed plugin pointer reached the code prompt")
         assert(defn.systemPrompt.contains("**Capability boundary (hard):**"),
-          "the verbatim migrated contract section reached the prompt")
-        // Note: like the three agents' mirrors, the seed file travels verbatim — its
-        // leading HTML comment (cold-start authority note) stays part of the file the
-        // prompt is read from. Only the embedded default tier (code constant) is
-        // comment-free by construction.
-      case Left(err) => fail(s"fail-safe def expected, got: ${err.message}")
+          "the verbatim contract section reached the code prompt")
+        assert(!defn.systemPrompt.startsWith("<!--"),
+          "the code prompt carries no seed-machinery HTML comment")
+      case Left(err) => fail(s"code def expected, got: ${err.message}")
 
-  test("no agent library → self-describing error"):
-    for res <- DelegateTool.call(JsonObject("task" -> "t".asJson), ctxWith(libOpt = None))
-    yield assert(res.left.exists(_.message.contains("No agent library")), res.toString)
+  test("no agent library: resolution no longer depends on it — the call reaches the spawn prerequisites"):
+    for res <- DelegateTool.call(JsonObject("task" -> "t".asJson, "description" -> "x".asJson), ctxWith(libOpt = None))
+    yield assert(res.left.exists(_.message.contains("requires ActorSystem")), res.toString)
 
   test("target is fixed to the built-in kernel def — a non-kernel agent named in the call is impossible"):
     for
@@ -212,26 +214,20 @@ class DelegateToolSpec extends CatsEffectSuite:
   // cap code - re-adding a gate turns the source-face test red (consciousness gate for
   // a cap comeback; the 2026-08 rate-limit incident note stays on the object comment).
 
-  test("no hard concurrency limit: description, embedded default and classpath seed carry the no-limit wording in sync"):
+  test("no hard concurrency limit: description and the code-defined prompt carry the no-limit wording in sync"):
     val d = DelegateTool.description
-    val seed = new String(
-      java.util.Objects.requireNonNull(
-        getClass.getClassLoader.getResourceAsStream("seed/agents/kernel/system.md")
-      ).readAllBytes(),
-      java.nio.charset.StandardCharsets.UTF_8
-    )
-    val seedBody = seed.linesIterator.dropWhile(_.startsWith("<!--")).mkString("\n").trim
+    val prompt = nebflow.core.entity.BuiltinAgents.entry("kernel").map(_.systemPrompt).getOrElse("")
     val faces = List(
       "description" -> d,
-      "embedded default" -> DelegateTool.BuiltinKernelSystemPrompt,
-      "classpath seed body" -> seedBody
+      "code-defined prompt (BuiltinAgents)" -> prompt
     )
     for (name, text) <- faces do
       assert(text.contains("No hard concurrency limit"),
         s"$name must promise no hard concurrency limit (author 2026-09-26)")
       assert(!text.contains("at most 4"), s"$name must not carry the retired 4-cap wording: $name")
-    assertEquals(DelegateTool.BuiltinKernelSystemPrompt.trim, seedBody,
-      "the embedded default (fail-safe tier 3) must stay verbatim-identical to the seed body")
+    // builtin-def 批：种子资源已退役——classpath 上不得再有 seed/agents 面。
+    val gone = Option(getClass.getClassLoader.getResource("seed/agents/kernel/system.md"))
+    assert(gone.isEmpty, "seed/agents resources are retired (builtin-def 2026-10-03) — the classpath must not carry them")
 
   test("the concurrency gate stays retired at the source face (the 5th concurrent spawn is admitted - nothing rejects it)"):
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "DelegateTool.scala")

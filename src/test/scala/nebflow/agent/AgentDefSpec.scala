@@ -5,20 +5,30 @@ import io.circe.syntax.*
 import io.circe.Json
 import munit.CatsEffectSuite
 
+/**
+ * AgentLibrary 装载面 spec —— builtin-def 批（2026-10-03 作者令①「四个 agent 全部
+ * 代码硬编码，不扫盘，唯一标准源就是代码」）改写：
+ *  - 四件收敛名（Nebula / project-dispatcher / general / kernel）= **代码定义**
+ *    （`BuiltinAgents` 单点）：空盘即有、磁盘文件是死信、写通道拒绝；
+ *  - seedDefaults / Seeds 代码种子**退役**（史实测试随批次删除——空盘 Nebula 断言
+ *    由「代码定义恒在」承接）；
+ *  - 自定义（非收敛名）agent 仍走磁盘扫描，用户编辑 > 一切。
+ */
 class AgentDefSpec extends CatsEffectSuite:
 
-  test("loadAll returns Nebula even on empty disk (code fallback)"):
+  test("loadAll returns all four builtins even on an empty disk (code-defined, builtin-def 2026-10-03)"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    assert(result.contains("Nebula"), "Nebula must always exist")
-    // The code-fallback def declares no tools: Nebula is a converged agent name,
-    // so its tool surface is mechanism-fixed (AgentCore.RootOrchestrationTools,
-    // auto-injected) and any `tools` value here grants nothing — see
-    // AgentLibrary.Seeds.RootAgent.
-    assertEquals(result("Nebula").tools, List.empty[String], "Nebula's seed def must declare no tools")
+    for name <- List("Nebula", "project-dispatcher", "general", "kernel") do
+      assert(result.contains(name), s"builtin '$name' must always exist (code-defined)")
+      assert(result(name).systemPrompt.nonEmpty, s"builtin '$name' carries the code system prompt")
+    // The code def declares no tools: builtins are converged agent names,
+    // so their tool surface is mechanism-fixed (AgentCore.fixedToolsFor,
+    // auto-injected) and any `tools` value here grants nothing.
+    assertEquals(result("Nebula").tools, List.empty[String], "builtins must declare no tools (non-authoritative field)")
 
-  test("loadAll reads agents from disk agent.json"):
+  test("loadAll reads CUSTOM agents from disk agent.json (non-converged names only)"):
     val tmpDir = os.temp.dir()
     val customDir = tmpDir / "CustomAgent"
     os.makeDir.all(customDir)
@@ -39,60 +49,45 @@ class AgentDefSpec extends CatsEffectSuite:
     assertEquals(result("CustomAgent").tools, List("Read", "Grep"))
     assertEquals(result("CustomAgent").systemPrompt, "You are a custom agent.")
 
-  test("seedDefaults writes agent.json AND system.md"):
+  test("disk files for a BUILTIN name are dead letters — code wins, disk never read (builtin-def 2026-10-03)"):
     val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None)
-    lib.seedDefaults().unsafeRunSync()
-    assert(os.exists(tmpDir / "Nebula" / "agent.json"), "agent.json should be seeded")
-    assert(os.exists(tmpDir / "Nebula" / "system.md"), "system.md should be seeded")
-    // Seeds.all is Nebula-only now — archived agents must not be re-seeded
-    // (resurrection sentinel lives in SeedDefaultsConvergeSpec).
-
-  test("seedDefaults does not overwrite existing agent.json"):
-    val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None)
-    // First seed
-    lib.seedDefaults().unsafeRunSync()
-    // User customizes agent.json
+    val nebulaDir = tmpDir / "Nebula"
+    os.makeDir.all(nebulaDir)
+    // 一套与代码定义完全不同的磁盘假定义：读侧必须整体跳过（不 merger、不覆盖、
+    // 不回退）——「唯一标准源就是代码」的读侧单点钉。
     os.write.over(
-      tmpDir / "Nebula" / "agent.json",
+      nebulaDir / "agent.json",
       Json
         .obj(
           "name" -> "Nebula".asJson,
+          "description" -> "STRAY-DISC-DESCRIPTION".asJson,
           "tools" -> List("Read").asJson
         )
         .noSpaces
     )
-    // Second seed — should NOT overwrite
-    lib.seedDefaults().unsafeRunSync()
+    os.write.over(nebulaDir / "system.md", "STRAY-DISK-PROMPT")
+    val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    assertEquals(result("Nebula").tools, List("Read"), "User customization should be preserved")
+    assert(!result("Nebula").description.contains("STRAY-DISC-DESCRIPTION"),
+      "the disk agent.json is a dead letter — description comes from code")
+    assert(!result("Nebula").systemPrompt.contains("STRAY-DISK-PROMPT"),
+      "the disk system.md is a dead letter — the prompt comes from code")
 
-  test("seedDefaults is idempotent for system.md"):
+  test("updateSystemPrompt refuses builtin names (read-only face) and writes custom names"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
-    lib.seedDefaults().unsafeRunSync()
-    val firstMd = os.read(tmpDir / "Nebula" / "system.md")
-    lib.seedDefaults().unsafeRunSync()
-    val secondMd = os.read(tmpDir / "Nebula" / "system.md")
-    assertEquals(firstMd, secondMd)
-
-  test("system.md overrides seeded prompt"):
-    val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None)
-    lib.seedDefaults().unsafeRunSync()
-    os.write.over(tmpDir / "Nebula" / "system.md", "Custom prompt for testing.")
-    val result = lib.loadAll().unsafeRunSync()
-    assertEquals(result("Nebula").systemPrompt, "Custom prompt for testing.")
-
-  test("updateSystemPrompt writes system.md"):
-    val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None)
+    // builtin：响亮拒绝（WARN，零写盘）
     lib.updateSystemPrompt("Nebula", "New prompt.").unsafeRunSync()
-    val md = os.read(tmpDir / "Nebula" / "system.md")
-    assertEquals(md, "New prompt.")
+    assert(!os.exists(tmpDir / "Nebula" / "system.md"),
+      "builtin prompt write must be refused — no disk mirror is created")
+    val readBack = lib.readSystemPrompt("Nebula").unsafeRunSync()
+    assert(readBack.exists(_.nonEmpty) && !readBack.contains("New prompt."),
+      "readSystemPrompt for a builtin serves the CODE prompt")
+    // custom：写通道照旧
+    lib.updateSystemPrompt("CustomAgent", "Custom prompt.").unsafeRunSync()
+    assertEquals(os.read(tmpDir / "CustomAgent" / "system.md"), "Custom prompt.")
 
-  test("Nebula fallback when agent.json is corrupted"):
+  test("Nebula survives a corrupted disk agent.json (code definition is unconditional)"):
     val tmpDir = os.temp.dir()
     val nebulaDir = tmpDir / "Nebula"
     os.makeDir.all(nebulaDir)
@@ -100,11 +95,12 @@ class AgentDefSpec extends CatsEffectSuite:
     os.write.over(nebulaDir / "system.md", "Prompt from disk.")
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    assert(result.contains("Nebula"), "Nebula should fall back to code definition")
-    // Corrupted agent.json → skip disk, use code fallback (with code prompt)
+    assert(result.contains("Nebula"), "Nebula comes from code regardless of disk state")
     assert(result("Nebula").systemPrompt.nonEmpty)
+    assert(!result("Nebula").systemPrompt.contains("Prompt from disk."),
+      "even a well-formed disk system.md is a dead letter for a builtin")
 
-  test("multiple custom agents loaded from disk"):
+  test("multiple custom agents loaded from disk and coexist with the four builtins"):
     val tmpDir = os.temp.dir()
     for name <- List("AgentA", "AgentB", "AgentC") do
       val dir = tmpDir / name
@@ -123,6 +119,7 @@ class AgentDefSpec extends CatsEffectSuite:
     assert(result.contains("AgentA"))
     assert(result.contains("AgentB"))
     assert(result.contains("AgentC"))
-    assert(result.contains("Nebula"), "Nebula must coexist with custom agents")
+    for name <- List("Nebula", "project-dispatcher", "general", "kernel") do
+      assert(result.contains(name), s"builtin '$name' must coexist with custom agents")
 
 end AgentDefSpec

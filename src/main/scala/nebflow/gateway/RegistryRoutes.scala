@@ -103,6 +103,11 @@ private[gateway] object RegistryRoutes:
       // 丢弃），天然只回 keeper 定义；.archived / 惰性残留目录不出现（面板收敛
       // spec 钉死）。layer 字段保留恒 "global"（agentManager.js 的 layer 过滤
       // 兼容；scope 字段仅旧 team/flow 条目携带，随两层删除自然消失）。
+      //
+      // builtin-def 批（2026-10-03 作者令①）：四件收敛 agent（Nebula /
+      // project-dispatcher / general / kernel）为**代码定义**，恒在册、磁盘死信
+      // （EntityLoader.listAgents 单点合并）；响应带 `builtin: true` = 面板只读
+      // 标记（写通道对 builtin 名显式拒绝）。
       case req @ GET -> Root / "agents" =>
         withAuth(req) {
           for
@@ -113,7 +118,8 @@ private[gateway] object RegistryRoutes:
                 "description" -> a.description.asJson,
                 "displayName" -> a.name.asJson,
                 "category" -> a.category.asJson,
-                "layer" -> "global".asJson
+                "layer" -> "global".asJson,
+                "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(a.name).asJson
               )
             }
             result <- Ok(Json.obj("agents" -> globalList.asJson))

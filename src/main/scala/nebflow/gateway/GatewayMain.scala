@@ -263,7 +263,8 @@ object GatewayMain extends IOApp:
   ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
-      _ <- agentLibrary.seedDefaults()
+      // seedDefaults() retired (builtin-def batch 2026-10-03): the four
+      // converged agents are code-defined (BuiltinAgents) — nothing to seed.
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)

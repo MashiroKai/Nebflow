@@ -56,7 +56,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 18 件 = 2026-09-18 18:18 令 +5 后值 +agentflow 批 +AgentFlow）、零 Issue、零 NodeList（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 19 件 = 2026-09-18 18:18 令 +5 后值 +agentflow 批 +AgentFlow + builtin-def 批 +Delegate）、零 Issue、零 NodeList（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set(
@@ -65,12 +65,15 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "AgentFlow",
         "ProjectCreate",
         "AgentControl",
-        // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
+        // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
+        // 直接触发 kernel 并返回 kernel:<id> 续聊地址（取代 promptgov 批 2026-09-17
+        // 的退役令之授能面部分——史实 −1 ⇒ 12 归档）
+        "Delegate",
         "TaskList", // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
         "SendMessage",
         "ListFriends", // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
         "Read", // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
-        "Card", // 可视化（2026-09-05 解封恢复）
+        // Card 已退役（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）——展示职责并入 Pop
         "AskUserQuestion",
         "Pop",
         "Schedule",
@@ -90,7 +93,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(
       fixed,
       expected -- sealStrip,
-      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 18 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17 + agentflow 批（2026-10-02）+AgentFlow；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期按单点 strip 派生）"
+      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 19 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17 + agentflow 批（2026-10-02）+AgentFlow + builtin-def 批（2026-10-03）+Delegate；沿革：root 面 −Glob −Grep ⇒ 13 与 promptgov 批 −Delegate ⇒ 12 均史实（后者之授能面已被 2026-10-03 作者令②取代）；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期按单点 strip 派生）"
     )
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
@@ -110,9 +113,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(
       fixed.size,
       nebflow.FriendsSealKit.expectedNebulaSize(fixed),
-      "件数断言单点来源（同一常量，经 FriendsSealKit 单一派生点 constant − sealed?1:0，friendseal 2026-09-25）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）"
+      "件数断言单点来源（同一常量，经 FriendsSealKit 单一派生点 constant − sealed?1:0，friendseal 2026-09-25）——在飞 19（2026-09-18 18:18 令 +5；agentflow 批 +AgentFlow；builtin-def 批 +Delegate；沿革 −TransferFile #145、−Glob −Grep、promptgov 批 −Delegate[史实，已被取代]）"
     )
-    assert(!fixed.contains("Delegate"), "Delegate 本批已从 Nebula 面摘除退役（一次性执行任务改路由 general 项目——变异验红锚：加回即红）")
+    // 钉死断言（builtin-def 批 2026-10-03 作者令②「使用 Delegate 直接触发 kernel」）：
+    // root 面**在场**含 Delegate——取代 promptgov 批 2026-09-17 的退役令之授能面部分
+    // （史实 −1 ⇒ 12 归档）。变异验红锚：摘掉即红。
+    assert(fixed.contains("Delegate"), "Delegate 在 Nebula 面在場恢复（2026-10-03 作者令② Delegate 直接触发 kernel——变异验红锚：摘掉即红）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula 机制集**在场**含 Bash、含
     // Write、含 Edit——取代 2026-09-05 23:34 裁定之 root 面部分（仅 root 面；
     // general/BaseTools 六件默认注入逐字不变）。变异验红锚。
@@ -233,7 +239,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(
       delivered.size,
       nebflow.FriendsSealKit.expectedNebulaSize(delivered),
-      "交付面件数与机制集单点常量一致（经单一 helper 派生 constant − sealed?1:0，friendseal 2026-09-25；在飞 17 = 2026-09-18 18:18 令 +5 后值；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、−Delegate）"
+      "交付面件数与机制集单点常量一致（经单一 helper 派生 constant − sealed?1:0，friendseal 2026-09-25；在飞 19 = 2026-09-18 18:18 令 +5 后值 +AgentFlow +Delegate；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、promptgov 批 −Delegate[史实，已被取代]）"
     )
     assert(delivered.contains("SendMessage"), "新名进交付面（改名承重点：LLM 可见名）")
     // friendseal (2026-09-25): the delivery face carries ListFriends iff the

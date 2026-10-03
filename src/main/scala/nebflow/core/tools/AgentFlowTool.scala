@@ -59,7 +59,9 @@ ACCEPTANCE entries must be mechanically checkable - each one carries a witness c
 BOUNDARY entries are the forbidden surfaces: paths, ports, command families.
 PREMISE-BASE carries the main tip read at creation time; PREMISE-UPSTREAM names each upstream node with its status and verdict; PREMISE-RULING names the governing decision by its on-disk location.
 CHAIN names the chain this position belongs to; POSITION names the node and its role and kind; RESOURCE names the ports, the isolated-instance flag and the time slot.
-A brief missing any anchor, or one leaning on relative references instead of the artifacts above, is a defect: rewrite it before the position starts."""
+A brief missing any anchor, or one leaning on relative references instead of the artifacts above, is a defect: rewrite it before the position starts.
+
+Result: an ACK carrying the task number and the continuation address Mail(address="project:<name>", task=<N>) — later communication about THIS dispatch goes through that address (Mail is the communication primitive; AgentFlow dispatches, it does not converse)."""
 
   /**
    * Input schema (the three parameters). The nine anchor lines are written **inside
@@ -214,7 +216,10 @@ A brief missing any anchor, or one leaning on relative references instead of the
                   ) *>
                   IO.pure(
                     Right(
-                      s"[task #$taskIdStr] Project '$projectName' dispatcher triggered with the brief (AgentFlow)"
+                      s"[task #$taskIdStr] Project '$projectName' dispatcher triggered with the brief (AgentFlow). " +
+                        s"Continuation address: Mail(address=\"project:$projectName\", task=$taskIdStr) — a later Mail " +
+                        "carrying that address and task number reaches THIS dispatch (continues or revives it); " +
+                        "the project's dispatcher session is the working face."
                     )
                   )
             }

@@ -171,16 +171,15 @@ object AgentCore:
    * Nebula-exclusive tools: stripped from every identity except per
    * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryNote only —
    * see DreamAdmittedTools below).
-   * - Delegate: 极简内核入口（曾以新形态回归 Nebula 面；**本批已从
-   *   `NebulaOrchestrationTools` 摘除退役** ⇒ 本集条目保留为**防声明逃逸的惰性
-   *   剥离项**：该名对一切身份都不授能，本集保证 agent.json/`"*"` 声明也授不了）。
-   *   目标恒为内置 `kernel` def；Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
-   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
-   *   2026-09-05 08:40 作者裁定曾把 Delegate 移出 Nebula 固定面（旧 Team/Flow
-   *   体系过渡件退出）；2026-09-10 作者指令 + 2026-09-11 R2-c 裁定使其以
-   *   「极简内核」形态回归 NebulaOrchestrationTools（不携带任何 Team/Flow/Mail
-   *   语义）。本集对非 Nebula 的防逃逸剥离语义不变（legacy team/flow 成员若
-   *   声明 Delegate 仍被剥）。
+   * - Delegate: 极简内核入口（**builtin-def 批 2026-10-03 在場恢复进
+     *   `RootOrchestrationTools`**，作者令② Delegate 直接触发 kernel；本集条目
+     *   继续承担**防声明逃逸**剥离——非 Nebula 身份的 agent.json/`"*"` 声明授不了）。
+     *   目标恒为内置 `kernel` def（代码级，BuiltinAgents 单点）；Team 成员委派走
+     *   SubTaskTool（self-clone + ephemeral）。
+     *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
+     *   史实：2026-09-05 08:40 作者裁定曾把 Delegate 移出 Nebula 固定面；
+     *   2026-09-10 指令 + 2026-09-11 R2-c 裁定以「极简内核」形态回归；
+     *   promptgov 批 2026-09-17 再摘（史实归档，被 2026-10-03 作者令②取代）。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
@@ -340,8 +339,9 @@ object AgentCore:
    *     `device:` 附件腿——迁移指引见 RetiredToolGuides）
    *   - 记忆：MemoryNote（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
    * 显式不含：NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
-   * dispatcher 自身面 DispatcherFixedTools 不受影响）、
-   * Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
+   * dispatcher 自身面 DispatcherFixedTools 不受影响）、FlowTrigger/FlowExecute
+   * （旧体系退役；**Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复在集**）、
+   * Web 系、
    * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
    * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十七件
@@ -350,7 +350,8 @@ object AgentCore:
    * 后再 −Delegate）、零 Issue、零旧体系
    * FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
    * Mail 从「旧体系退役件」成为唯一消息原语）。
-   * **反向指路**：`AgentLibrary.Seeds.Nebula`（代码 fallback 定义）的工具字段
+   * **反向指路**：Nebula 的代码定义 = `nebflow.core.entity.BuiltinAgents`
+   * （builtin-def 批 2026-10-03 起，磁盘/种子镜像退役），其 `tools` 字段
    * **恒空且非权威面**——收敛名短路（本文件 ConvergedAgentNames 分支）使它授不
    * 了任何件；要找 Nebula 的工具清单，只有本集。
    */
@@ -372,17 +373,22 @@ object AgentCore:
     "AgentFlow",
     "ProjectCreate",
     "AgentControl",
-    // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
-    // 无项目归属的单次执行任务。是**编排件**不是能力件（执行能力 = 内核的
-    // BaseTools 六件）。退役口径：一次性执行任务改路由到 general 项目
-    // （`Mail(address="project:general", ...)`，按**注册表 name** 解析；工作区路径的
-    // 权威来源 = `NodeList` `meta.workspace`，🔴 禁按项目名拼路径猜工作区——name 未命中
-    // 且目标工作区已被别的项目占用时 ProjectCreate 默认拒绝，宁拒不误建）；web 系能力
-    // 改由插件面授予。
-    // 本集件数 13 → 12（史实，时点 = Delegate 退役批；见
-    // NebulaOrchestrationToolsExpectedSize——该常量现读值 = 17）。
-    // ⚠️ 本批只摘**授能面**：工具本体（DelegateTool）、AgentKind/子会话机制与
-    // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
+    // Delegate（**builtin-def 批 2026-10-03 作者令②在場恢复**：「使用 Delegate
+    // 直接触发 kernel，返回地址」）：极简内核入口——无项目归属的单次执行任务，
+    // 是**编排件**不是能力件（执行能力 = 内核的 KernelFixedTools 七件）。本批
+    // **取代** promptgov 批 2026-09-17（commit `99f4a5294`）的 Delegate 退役令之
+    // 授能面部分：一次性执行任务的触发面从 `Mail(address="kernel")` 收归
+    // `Delegate`，Delegate 的结果携带续聊地址 `kernel:<id>`；Mail 降级为通信
+    // 原语（`kernel:<id>` 续聊腿保留，`kernel` 起实例腿同批退役）。
+    // 史实（归档，被本批取代）：promptgov 批 13 → 12 曾摘除本件，退役口径为
+    // 「一次性执行任务改路由 general 项目」；kernelgen 批 2026-09-26 又把一次性
+    // 执行路由到 `Mail(address="kernel")`（kernelgen 批的 Mail kernel 腿 =
+    // mailmodel 批 2026-09-25 裁定 (b)）。本集件数 18 → 19（在飞值，见
+    // RootOrchestrationToolsExpectedSize）。
+    // 本集之外不变：工具本体（DelegateTool）、AgentKind/子会话机制未动；
+    // `RootExclusiveTools` 的 "Delegate" 条目继续承担**防声明逃逸**剥离（非
+    // Nebula 身份声明 Delegate 仍被剥）。
+    "Delegate",
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
     "TaskList",
     // 通信（好友功能非旧体系）
@@ -417,8 +423,12 @@ object AgentCore:
     "Bash",
     "Write",
     "Edit",
-    // 可视化（2026-09-05 解封恢复，前端消费面另批）
-    "Card",
+    // Card **已退役**（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）：从本集
+    // 摘除（19 → 18，见 RootOrchestrationToolsExpectedSize），工具本体与注册表
+    // 注册一并删除。其「向用户展示成果」职责并入 Pop（媒体对话内直显叠卡 / 文件
+    // 卡片转发 Canvas，见 PopTool 的 pop-upgrade 批注）。迁移指引 =
+    // RetiredToolGuides("Card")。历史沿革（史实）：commit 793f62c1（2026-08-11）
+    // 曾整体删除，2026-09-05 08:40 作者裁定解封恢复，本批终裁退役。
     // 用户面（Pop = Nebula 专属可视化出口，2026-09-10 作者裁定——Nebula 本体
     // 专属保留；非 Nebula 身份由 NebulaExclusiveTools 剥 + PopTool 身份闸兜底）
     "AskUserQuestion",
@@ -461,9 +471,13 @@ object AgentCore:
    * batch deletes the member, its `fixedToolsFor` by-name branch and the `AgentDef`
    * name constant (single-owner order: name-family closure belongs to the E5 batch
    * alone). The set is back to its four registered names.
+   *
+   * builtin-def 批（2026-10-03 作者令①「四个 agent 代码硬编码，唯一标准源就是
+   * 代码」）：名字全集的**单一所有者** = `nebflow.core.entity.BuiltinAgents.Names`
+   * ——本集改为引用该单点（agent → core 的既有依赖方向，零新环）。四个内置定义
+   * 的 def 面同批上收进 BuiltinAgents（磁盘 agent.json/system.md 对这四名是死信）。
    */
-  val ConvergedAgentNames =
-    Set(RootAgentIdentity.Name, "project-dispatcher", "general", "kernel")
+  val ConvergedAgentNames = nebflow.core.entity.BuiltinAgents.Names
 
   /**
    * Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
@@ -501,6 +515,18 @@ object AgentCore:
    * 本身（本次 12 → 17 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
    * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
    * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。
+   *
+   * **builtin-def 批（2026-10-03）：+`Delegate` ⇒ 19（在飞值）**——作者令②
+   * 「使用 Delegate 直接触发 kernel，返回地址；Mail 降级为用于通信」。本增量属
+   * 「按面变更」（恢复成员），**取代** promptgov 批 2026-09-17（`99f4a5294`）
+   * 的 Delegate 退役令之授能面部分（史实 −1 ⇒ 12 的那笔；史实归档，不得据此
+   * 推断 Delegate 面缺席）。
+   *
+   * **pop-upgrade 批（2026-10-03）：−`Card` ⇒ 18（在飞值）**——作者令
+   * 「去掉card工具，然后对Pop工具进行升级」。Card 从本集摘除并整体退役（工具
+   * 本体 + 注册表注册删除，迁移指引 = RetiredToolGuides("Card")）；展示职责并入
+   * Pop（pop-upgrade 批注见 PopTool）。本减量同属「按面变更」（作者令摘除成员），
+   * 非「凑数字」。
    */
   val RootOrchestrationToolsExpectedSize: Int = 18
 
@@ -522,7 +548,9 @@ object AgentCore:
     "NodeMessage" ->
       """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
     "TransferFile" ->
-      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6)."""
+      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6).""",
+    "Card" ->
+      """Card retired 2026-10-03 (pop-upgrade batch) — its show-face duties moved to Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe)."""
   )
 
   /**

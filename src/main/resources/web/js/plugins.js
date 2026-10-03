@@ -396,7 +396,10 @@ function renderRejectedCard(entry) {
 }
 
 /** Agent summary row: name + description + preset/model 现状 — the whole row
- *  deep-links into the per-agent detail editor (openAgentDetail). */
+ *  deep-links into the per-agent detail editor (openAgentDetail).
+ *  builtin-def 批（2026-10-03 作者令①）：代码定义的四件内置 agent 带只读徽标——
+ *  面板对内置 agent 只读查看，编辑器进详情页也是只读（builtin 标记来自
+ *  GET /api/agents 的 `builtin` 字段）。 */
 function renderAgentRow(agent) {
   const model = agent.model || {};
   const preset = model.preset || '';
@@ -405,9 +408,12 @@ function renderAgentRow(agent) {
     preset ? esc(preset) : '',
     resolved ? esc(shortModel(resolved)) : '',
   ].filter(Boolean).map(p => `<span class="plugins-agent-meta-pill">${p}</span>`).join('');
+  const builtinBadge = agent.builtin
+    ? `<span class="plugins-agent-builtin-badge" title="${esc(t('plugins.builtinTitle'))}">${esc(t('plugins.builtinBadge'))}</span>`
+    : '';
   return `<div class="plugins-agent-row" data-detail-agent="${esc(agent.name)}" role="button" tabindex="0"
     title="${esc(t('plugins.detail'))}">
-    <span class="plugins-agent-name">${esc(contentText('agent', agent.name, 'name', agent.displayName || agent.name))}</span>
+    <span class="plugins-agent-name">${esc(contentText('agent', agent.name, 'name', agent.displayName || agent.name))}${builtinBadge}</span>
     <span class="plugins-agent-desc">${esc(contentText('agent', agent.name, 'desc', agent.description || ''))}</span>
     <span class="plugins-agent-meta">${meta}</span>
     <svg class="plugins-agent-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>

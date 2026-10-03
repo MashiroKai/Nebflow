@@ -82,7 +82,7 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
   test("工具描述：路径 token 运行期取渲染值（非对象初始化冻结的 val）"):
     val rendered = PathUtil.dataRootRenderValue
     val probes = List(
-      "CardTool" -> nebflow.core.tools.CardTool.description,
+      "PopTool" -> nebflow.core.tools.PopTool.description,
       "TaskListTool" -> nebflow.core.tools.TaskListTool.description,
       "LoadTool" -> nebflow.core.tools.LoadTool.description
     )
@@ -93,8 +93,8 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
       )
     }
     assert(
-      nebflow.core.tools.CardTool.description.contains(s"$rendered/projects/<name>/"),
-      "CardTool 必须教 workspace 路径形态（默认 home 下 = 旧字面 ~/.nebflow/projects/<name>/）"
+      nebflow.core.tools.PopTool.description.contains(s"$rendered/projects/<name>/"),
+      "PopTool 必须教 workspace 路径形态（默认 home 下 = 旧字面 ~/.nebflow/projects/<name>/）"
     )
     assert(
       nebflow.core.tools.TaskListTool.description.contains(s"$rendered/tasks.json"),

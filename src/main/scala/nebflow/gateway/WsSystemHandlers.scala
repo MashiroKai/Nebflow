@@ -304,18 +304,30 @@ private[gateway] object WsSystemHandlers:
   end handleGetAgentSystemPrompt
 
   private def handleUpdateAgentSystemPrompt(
-    ctx: WsDispatchCtx,
-    text: String,
-    wsSend: io.circe.Json => IO[Unit],
-    watchSession: ExplorerWatchSession
+      ctx: WsDispatchCtx,
+      text: String,
+      wsSend: io.circe.Json => IO[Unit],
+      watchSession: ExplorerWatchSession
   ): IO[Unit] =
     import ctx.*
     val json = parsedJson(text)
     val agentName = json.hcursor.downField("name").as[String].getOrElse("")
     val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
     if agentName.nonEmpty then
-      agentService.updateSystemPrompt(agentName, systemMd) *>
-        wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
+      // builtin-def 批（2026-10-03 作者令①「唯一标准源就是代码，插件面板只能
+      // 做只读查看」）：builtin 名的 prompt 写通道显式拒绝（loud，禁静默成功——
+      // 客户端拿到 error 信封而不是 saved 回执）。
+      if nebflow.core.entity.BuiltinAgents.isBuiltin(agentName) then
+        logger.warn(s"Rejected updateAgentSystemPrompt for '$agentName' — built-in agents are code-defined and read-only")
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "error".asJson,
+            "message" -> s"'$agentName' is a built-in agent: its system prompt is defined in code (BuiltinAgents) and is read-only.".asJson
+          )
+        )
+      else
+        agentService.updateSystemPrompt(agentName, systemMd) *>
+          wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
     else IO.unit
 
   private def handleUpdateAgentTools(

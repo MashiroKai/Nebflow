@@ -45,29 +45,51 @@ private[gateway] object PresenceRoutes:
   def routes(wsb: WebSocketBuilder2[IO], ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
 
-    /** Feishu scan-bind session manager (feiscanbind batch, 2026-09-27): carries
-      * the single-flight registry for POST …/scan-bind/begin and the read-only
-      * status projection for GET …/scan-bind/status. The SDK leg stays behind
-      * the production thunk; the activation leg is the ONE sync point
-      * ([[nebflow.social.FeishuBridgePlugin.sync]]) — identical wiring to the
-      * save endpoint's resync below, so runtime state is never assembled two
-      * different ways.
-      *
-      * LAZY on purpose (two distinct reasons, both load-bearing):
-      *   - construction reads `sharedResources.bridgeManager`, and the gateway
-      *     route harnesses that only exercise the agents arms build a
-      *     `RestApiRoutes` with `sharedResources = null` (the /agents and /model
-      *     route specs, e.g. `AgentPanelConvergenceSpec` / `ModelChainRoutesSpec`).
-      *     An eager val would NPE those arms the moment `presenceWsRoutes` is
-      *     mounted — a spec-only de-registration, not a behavior change.
-      *   - the single-flight registry must outlive a single request (one manager
-      *     per mounted routes value, exactly the class-member lifetime it had
-      *     before the domain split), so it cannot move inside the handler. */
+    /**
+     * Feishu scan-bind session manager (feiscanbind batch, 2026-09-27): carries
+     * the single-flight registry for POST …/scan-bind/begin and the read-only
+     * status projection for GET …/scan-bind/status. The SDK leg stays behind
+     * the production thunk; the activation leg is the ONE sync point
+     * ([[nebflow.social.FeishuBridgePlugin.sync]]) — identical wiring to the
+     * save endpoint's resync below, so runtime state is never assembled two
+     * different ways.
+     *
+     * LAZY on purpose (two distinct reasons, both load-bearing):
+     *   - construction reads `sharedResources.bridgeManager`, and the gateway
+     *     route harnesses that only exercise the agents arms build a
+     *     `RestApiRoutes` with `sharedResources = null` (the /agents and /model
+     *     route specs, e.g. `AgentPanelConvergenceSpec` / `ModelChainRoutesSpec`).
+     *     An eager val would NPE those arms the moment `presenceWsRoutes` is
+     *     mounted — a spec-only de-registration, not a behavior change.
+     *   - the single-flight registry must outlive a single request (one manager
+     *     per mounted routes value, exactly the class-member lifetime it had
+     *     before the domain split), so it cannot move inside the handler.
+     */
     lazy val feishuScanBind = new nebflow.social.FeishuScanBind(
       PathUtil.dataRoot,
       registerFn = nebflow.social.FeishuScanBind.sdkRegister,
-      activate = sharedResources.bridgeManager.fold(IO.unit)(
-        m => nebflow.social.FeishuBridgePlugin.sync(m, PathUtil.dataRoot))
+      activate =
+        sharedResources.bridgeManager.fold(IO.unit)(m => nebflow.social.FeishuBridgePlugin.sync(m, PathUtil.dataRoot))
+    )
+
+    /**
+     * Weixin scan-bind session manager (weixin-scanbind batch, 2026-10-03):
+     * the SAME begin/status face the feishu card ships, keyed to the
+     * weixin-ilink channel. The QR leg stays behind the production
+     * [[nebflow.social.WeixinIlinkScanBind.sidecarLogin]] thunk (the official
+     * plugin's side-car owns the login); the activation leg is the ONE sync
+     * point ([[nebflow.social.WeixinIlinkBridgePlugin.sync]]) — identical
+     * wiring to the weixin save endpoint's resync, so runtime state is never
+     * assembled two different ways. LAZY for the same two reasons as
+     * [[feishuScanBind]] above (spec-only null manager + one registry per
+     * mounted routes value).
+     */
+    lazy val weixinScanBind = new nebflow.social.WeixinIlinkScanBind(
+      PathUtil.dataRoot,
+      loginFn = nebflow.social.WeixinIlinkScanBind.sidecarLogin(PathUtil.dataRoot),
+      activate = sharedResources.bridgeManager.fold(IO.unit)(m =>
+        nebflow.social.WeixinIlinkBridgePlugin.sync(m, PathUtil.dataRoot)
+      )
     )
 
     // ── Daemon config-panel helpers (daemonpanel Phase A) ──────────────────
@@ -77,38 +99,39 @@ private[gateway] object PresenceRoutes:
     // 此处为 routes 局部 def,层级不变地经 `import ctx.*` 取同两个成员,调用面仅
     // 三类 config-panel 端点 + GET /daemons 的 hasConfigPanel 旗)。
 
-    /** Read a `kind:"web"` panel's `htmlFile` so the HOST can carry the document
-      * into `srcdoc` and inject the local `<meta CSP>` (F-7).
-      *
-      * Why the host carries it instead of pointing an iframe at a URL: the
-      * browser-facing `/api/nf-file` whitelist deliberately omits `html`/`htm`,
-      * so there is no URL that serves a panel document — and even if there were,
-      * a cross-origin/standalone document cannot be given a `<meta CSP>` by its
-      * embedder. Reading the bytes host-side is the only path on which the policy
-      * can actually be attached.
-      *
-      * 🔴 ONE path judge, no second policy: each candidate is resolved to a
-      * realpath and put through the SAME credential-namespace ladder as
-      * `/api/nf-file` ([[nebflow.gateway.NfFilePolicy.nfVerdictForRealLayer]] —
-      * the ladder that used to be reached as `WebSocketRoutes.*` before the
-      * Phase-5 decoupling moved it into `NfFilePolicy`). Only the extension LEG
-      * differs — that endpoint answers for browser-renderable asset types, while
-      * a panel document is `html`/`htm`. Reading the refusing layer from the
-      * single source (instead of re-implementing the ladder) is exactly the
-      * pattern that function documents: a path refused for a
-      * credential/namespace/inode reason is refused here too, and only a
-      * `FileType` refusal may be re-judged against `PanelHtmlExtensions`.
-      *
-      * Candidate roots follow the two namespaces the endpoint can serve (the
-      * design's "servable namespace" requirement): `<dataRoot>/<htmlFile>` and the
-      * project's own `.nebflow/<htmlFile>`. A relative `htmlFile` cannot escape
-      * either root lexically (`..` is rejected by the validator, and the realpath
-      * ladder re-checks the result) — and a symlink out of an allowlisted subtree
-      * is refused by the namespace layer, not followed.
-      *
-      * Fail-closed: every refusal is a `Left`, and an oversized document is refused
-      * rather than truncated (truncation could drop the panel's own closing tags).
-      */
+    /**
+     * Read a `kind:"web"` panel's `htmlFile` so the HOST can carry the document
+     * into `srcdoc` and inject the local `<meta CSP>` (F-7).
+     *
+     * Why the host carries it instead of pointing an iframe at a URL: the
+     * browser-facing `/api/nf-file` whitelist deliberately omits `html`/`htm`,
+     * so there is no URL that serves a panel document — and even if there were,
+     * a cross-origin/standalone document cannot be given a `<meta CSP>` by its
+     * embedder. Reading the bytes host-side is the only path on which the policy
+     * can actually be attached.
+     *
+     * 🔴 ONE path judge, no second policy: each candidate is resolved to a
+     * realpath and put through the SAME credential-namespace ladder as
+     * `/api/nf-file` ([[nebflow.gateway.NfFilePolicy.nfVerdictForRealLayer]] —
+     * the ladder that used to be reached as `WebSocketRoutes.*` before the
+     * Phase-5 decoupling moved it into `NfFilePolicy`). Only the extension LEG
+     * differs — that endpoint answers for browser-renderable asset types, while
+     * a panel document is `html`/`htm`. Reading the refusing layer from the
+     * single source (instead of re-implementing the ladder) is exactly the
+     * pattern that function documents: a path refused for a
+     * credential/namespace/inode reason is refused here too, and only a
+     * `FileType` refusal may be re-judged against `PanelHtmlExtensions`.
+     *
+     * Candidate roots follow the two namespaces the endpoint can serve (the
+     * design's "servable namespace" requirement): `<dataRoot>/<htmlFile>` and the
+     * project's own `.nebflow/<htmlFile>`. A relative `htmlFile` cannot escape
+     * either root lexically (`..` is rejected by the validator, and the realpath
+     * ladder re-checks the result) — and a symlink out of an allowlisted subtree
+     * is refused by the namespace layer, not followed.
+     *
+     * Fail-closed: every refusal is a `Left`, and an oversized document is refused
+     * rather than truncated (truncation could drop the panel's own closing tags).
+     */
     def readPanelHtml(htmlFile: String): IO[Either[String, String]] =
       IO.blocking {
         val policy = nebflow.gateway.NfFilePolicy.NfPathPolicy.current()
@@ -150,17 +173,20 @@ private[gateway] object PresenceRoutes:
                     else if size > DaemonPanelSchema.MaxPanelHtmlBytes then
                       Left(s"panel file is too large: $size bytes > ${DaemonPanelSchema.MaxPanelHtmlBytes}")
                     else Right(new String(java.nio.file.Files.readAllBytes(r), java.nio.charset.StandardCharsets.UTF_8))
+            end match
+        end match
       }.handleErrorWith(e => IO.pure(Left(s"panel file could not be read: ${e.getMessage}")))
 
-    /** Is this daemon's config panel actually usable right now?
-      *
-      * The single answer behind both `hasConfigPanel` (the row button, F1/C7) and
-      * the config-panel endpoints (F-8 fail-closed): a declaration that does not
-      * validate is hidden, and so is a `kind:"web"` + `htmlFile` declaration whose
-      * file cannot be carried. Sharing one question is what keeps the button and
-      * the endpoint from disagreeing (a button that always answers 409 is not a
-      * fail-closed hidden entry).
-      */
+    /**
+     * Is this daemon's config panel actually usable right now?
+     *
+     * The single answer behind both `hasConfigPanel` (the row button, F1/C7) and
+     * the config-panel endpoints (F-8 fail-closed): a declaration that does not
+     * validate is hidden, and so is a `kind:"web"` + `htmlFile` declaration whose
+     * file cannot be carried. Sharing one question is what keeps the button and
+     * the endpoint from disagreeing (a button that always answers 409 is not a
+     * fail-closed hidden entry).
+     */
     def panelUsable(
       cfg: Option[DaemonConfig],
       svcCfg: NebflowServiceConfig
@@ -172,22 +198,23 @@ private[gateway] object PresenceRoutes:
             case Left(_) => IO.pure(None)
             case Right(decl) =>
               decl.htmlFile match
-                case None    => IO.pure(Some(decl))
+                case None => IO.pure(Some(decl))
                 case Some(f) => readPanelHtml(f).map(_.toOption.map(_ => decl))
 
-    /** Resolve a daemon id to its validated config-panel declaration.
-      *
-      * Shared by the three config-panel endpoints so their degradation is
-      * uniform and mechanical:
-      *   - daemon unknown                    -> 404
-      *   - no `configPanel` key              -> 409 `no config panel`   (F-8)
-      *   - declaration fails validation      -> 409 `no config panel`   (F-8,
-      *     fail-closed: an invalid declaration is hidden, never partially used)
-      *   - `kind:"web"` without the explicit  -> 409 `no config panel`   (F-5/F-9,
-      *     nebflow.json switch                    default-closed escape hatch)
-      *   - `kind:"web"`+`htmlFile` unreadable -> 409 `no config panel`   (F-7,
-      *     fail-closed: an unusable panel document hides the entry too)
-      */
+    /**
+     * Resolve a daemon id to its validated config-panel declaration.
+     *
+     * Shared by the three config-panel endpoints so their degradation is
+     * uniform and mechanical:
+     *   - daemon unknown                    -> 404
+     *   - no `configPanel` key              -> 409 `no config panel`   (F-8)
+     *   - declaration fails validation      -> 409 `no config panel`   (F-8,
+     *     fail-closed: an invalid declaration is hidden, never partially used)
+     *   - `kind:"web"` without the explicit  -> 409 `no config panel`   (F-5/F-9,
+     *     nebflow.json switch                    default-closed escape hatch)
+     *   - `kind:"web"`+`htmlFile` unreadable -> 409 `no config panel`   (F-7,
+     *     fail-closed: an unusable panel document hides the entry too)
+     */
     def daemonPanelContext(
       daemonId: String
     ): IO[Either[Response[IO], (DaemonPanelSchema.Declaration, DaemonConfig)]] =
@@ -219,6 +246,7 @@ private[gateway] object PresenceRoutes:
                 }
               }
       }
+    end daemonPanelContext
 
     HttpRoutes.of[IO] {
       case req @ GET -> Root / "neblink" / "presence" =>
@@ -470,7 +498,10 @@ private[gateway] object PresenceRoutes:
                       "displayName" -> defn.displayName.getOrElse(defn.name).asJson,
                       "model" -> defn.model.asJson,
                       "skills" -> defn.skills.asJson,
-                      "flows" -> defn.flows.asJson
+                      "flows" -> defn.flows.asJson,
+                      // builtin-def 批（2026-10-03 作者令①）：代码定义 agent 的
+                      // 只读标记——面板据此关闭 prompt 编辑器与保存通道。
+                      "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(defn.name).asJson
                     )
                   )
             yield result
@@ -537,9 +568,13 @@ private[gateway] object PresenceRoutes:
         withAuth(req) {
           if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
           else if !nebflow.core.SchemePolicy.isSettable(agentName) then
-            BadRequest(Json.obj("error" ->
-              (s"Agent '$agentName' does not accept a model chain: only Nebula, project-dispatcher, " +
-                "kernel and general are settable. Other agents follow the Nebula primary chain.").asJson))
+            BadRequest(
+              Json.obj(
+                "error" ->
+                  (s"Agent '$agentName' does not accept a model chain: only Nebula, project-dispatcher, " +
+                    "kernel and general are settable. Other agents follow the Nebula primary chain.").asJson
+              )
+            )
           else
             req.as[Json].flatMap { body =>
               // Accept {"model": {...}|null}; a bare {preferred, fallbacks}
@@ -547,10 +582,13 @@ private[gateway] object PresenceRoutes:
               val parsed: Either[String, Option[nebflow.shared.AgentModelConfig]] =
                 body.asObject.flatMap(_.apply("model")) match
                   case Some(m) =>
-                    m.as[Option[nebflow.shared.AgentModelConfig]].left
+                    m.as[Option[nebflow.shared.AgentModelConfig]]
+                      .left
                       .map(e => s"Invalid model chain: ${e.getMessage}")
                   case None =>
-                    io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces).left
+                    io.circe.parser
+                      .decode[nebflow.shared.AgentModelConfig](body.noSpaces)
+                      .left
                       .map(e => s"Invalid model chain: ${e.getMessage}")
                       .map(Some(_))
               parsed match
@@ -561,7 +599,26 @@ private[gateway] object PresenceRoutes:
                   val own = chainOpt.filter(nebflow.core.SchemePolicy.hasChain)
                   for
                     dirOpt <- EntityLoader.findAgentDir(agentName)
-                    result <- dirOpt match
+                    // builtin-def 批（2026-10-03）：builtin 名的 agent.json 是纯
+                    // model-chain sidecar——新 home 上不存在 ⇒ 就地建最小 sidecar
+                    // （{"name": ...}），再走既有 merge 写。模型链是用户设置，
+                    // 依旧可写（SchemePolicy.SettableAgents 闸不变）。
+                    resolvedDirOpt <- dirOpt match
+                      case Some(dir) => IO.pure(Some(dir))
+                      case None if nebflow.core.SchemePolicy.isSettable(agentName) =>
+                        IO.blocking {
+                          val dir = nebflow.shared.PathUtil.dataRoot / "agents" / agentName
+                          os.makeDir.all(dir)
+                          val jsonPath = dir / "agent.json"
+                          if !os.exists(jsonPath) then
+                            AtomicJson.writeSync(
+                              jsonPath,
+                              io.circe.Json.obj("name" -> agentName.asJson).noSpaces
+                            )
+                          Some(dir)
+                        }
+                      case None => IO.pure(None)
+                    result <- resolvedDirOpt match
                       case Some(dir) =>
                         IO.blocking {
                           val jsonPath = dir / "agent.json"
@@ -572,7 +629,7 @@ private[gateway] object PresenceRoutes:
                                 .getOrElse(parsedJson)
                               val updated = own match
                                 case Some(c) => stripped.deepMerge(Json.obj("model" -> c.asJson))
-                                case None    => stripped
+                                case None => stripped
                               AtomicJson.writeSync(jsonPath, updated.noSpaces)
                               true
                             case Left(_) => false
@@ -596,6 +653,7 @@ private[gateway] object PresenceRoutes:
                         NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
                   yield result
                   end for
+              end match
             }
         }
 
@@ -781,7 +839,7 @@ private[gateway] object PresenceRoutes:
           // phase-1 answer (none registered) is served unchanged.
           val registered: IO[Set[String]] = sharedResources.bridgeManager match
             case Some(m) => m.registeredNames
-            case None    => IO.pure(Set.empty)
+            case None => IO.pure(Set.empty)
           registered.flatMap { set =>
             IO.blocking(nebflow.social.SocialChannels.channelsJson(PathUtil.dataRoot, set)).flatMap(json => Ok(json))
           }
@@ -799,14 +857,12 @@ private[gateway] object PresenceRoutes:
                 m.plugin(nebflow.social.FeishuBridgePlugin.Name)
                   .map(_.collect { case p: nebflow.social.FeishuBridgePlugin => p })
               case None => IO.pure(None)
-          live.flatMap(p =>
-            Ok(nebflow.social.FeishuBridgePlugin.connectionJson(PathUtil.dataRoot, p)))
+          live.flatMap(p => Ok(nebflow.social.FeishuBridgePlugin.connectionJson(PathUtil.dataRoot, p)))
         }
 
       case req @ GET -> Root / "social" / "channels" / "feishu" / "bindings" =>
         withAuth(req) {
-          sessionStore.listSessions.flatMap(metas =>
-            Ok(nebflow.social.FeishuBridgePlugin.bindingsJson(metas)))
+          sessionStore.listSessions.flatMap(metas => Ok(nebflow.social.FeishuBridgePlugin.bindingsJson(metas)))
         }
 
       // Body {"sessionId": "..."} sets (durable); {"sessionId": null} / a blank
@@ -816,16 +872,22 @@ private[gateway] object PresenceRoutes:
         withAuth(req) {
           req.as[Json].attempt.flatMap {
             case Left(_) =>
-              BadRequest(Json.obj(
-                "error" -> "invalid_field".asJson,
-                "reason" -> "request body must be a JSON object".asJson
-              ))
+              BadRequest(
+                Json.obj(
+                  "error" -> "invalid_field".asJson,
+                  "reason" -> "request body must be a JSON object".asJson
+                )
+              )
             case Right(body) =>
-              val sid = body.hcursor.downField("sessionId").as[Option[String]].getOrElse(None)
-                .map(_.trim).filter(_.nonEmpty)
+              val sid = body.hcursor
+                .downField("sessionId")
+                .as[Option[String]]
+                .getOrElse(None)
+                .map(_.trim)
+                .filter(_.nonEmpty)
               IO.blocking(nebflow.social.SocialChannels.setDefaultSessionId(PathUtil.dataRoot, "feishu", sid))
                 .flatMap {
-                  case Right(_)  => Ok(Json.obj("ok" -> true.asJson, "sessionId" -> sid.asJson))
+                  case Right(_) => Ok(Json.obj("ok" -> true.asJson, "sessionId" -> sid.asJson))
                   case Left(err) => socialErrorResponse(err)
                 }
           }
@@ -857,12 +919,32 @@ private[gateway] object PresenceRoutes:
         withAuth(req) {
           val scanId = req.params.getOrElse("scanId", "").trim
           if scanId.isEmpty then
-            BadRequest(Json.obj("error" -> "invalid_field".asJson,
-              "reason" -> "scanId is required".asJson))
+            BadRequest(Json.obj("error" -> "invalid_field".asJson, "reason" -> "scanId is required".asJson))
           else
             feishuScanBind.status(scanId).flatMap {
               case Some(json) => Ok(json)
-              case None       => NotFound(Json.obj("error" -> "unknown_scan".asJson))
+              case None => NotFound(Json.obj("error" -> "unknown_scan".asJson))
+            }
+        }
+
+      // Same contract as the feishu pair: begin answers a scanId at once; the
+      // status projection is read-only and never carries a credential (done
+      // surfaces only the bot id; the token itself went through the EXISTING
+      // SocialChannels.save write path on the background fiber).
+      case req @ POST -> Root / "social" / "channels" / "weixin-ilink" / "scan-bind" / "begin" =>
+        withAuth(req) {
+          weixinScanBind.begin().flatMap(json => Ok(json))
+        }
+
+      case req @ GET -> Root / "social" / "channels" / "weixin-ilink" / "scan-bind" / "status" =>
+        withAuth(req) {
+          val scanId = req.params.getOrElse("scanId", "").trim
+          if scanId.isEmpty then
+            BadRequest(Json.obj("error" -> "invalid_field".asJson, "reason" -> "scanId is required".asJson))
+          else
+            weixinScanBind.status(scanId).flatMap {
+              case Some(json) => Ok(json)
+              case None => NotFound(Json.obj("error" -> "unknown_scan".asJson))
             }
         }
 
@@ -876,27 +958,34 @@ private[gateway] object PresenceRoutes:
         withAuth(req) {
           req.as[Json].attempt.flatMap {
             case Left(_) =>
-              BadRequest(Json.obj(
-                "error" -> "invalid_field".asJson,
-                "reason" -> "request body must be a JSON object".asJson
-              ))
+              BadRequest(
+                Json.obj(
+                  "error" -> "invalid_field".asJson,
+                  "reason" -> "request body must be a JSON object".asJson
+                )
+              )
             case Right(body) =>
               val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("").trim
               val chatId = body.hcursor.downField("chatId").as[String].getOrElse("").trim
               if sessionId.isEmpty then
-                BadRequest(Json.obj(
-                  "error" -> "invalid_field".asJson,
-                  "reason" -> "sessionId is required".asJson
-                ))
+                BadRequest(
+                  Json.obj(
+                    "error" -> "invalid_field".asJson,
+                    "reason" -> "sessionId is required".asJson
+                  )
+                )
               else
                 val cfg = if chatId.isEmpty then None else Some(Json.obj("chat_id" -> chatId.asJson))
                 sessionStore.updateSessionBridge(sessionId, "feishu", cfg) *>
-                  Ok(Json.obj(
-                    "ok" -> true.asJson,
-                    "sessionId" -> sessionId.asJson,
-                    "chatId" -> chatId.asJson,
-                    "bound" -> cfg.isDefined.asJson
-                  ))
+                  Ok(
+                    Json.obj(
+                      "ok" -> true.asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "chatId" -> chatId.asJson,
+                      "bound" -> cfg.isDefined.asJson
+                    )
+                  )
+              end if
           }
         }
 
@@ -913,10 +1002,12 @@ private[gateway] object PresenceRoutes:
         withAuth(req) {
           req.as[Json].attempt.flatMap {
             case Left(_) =>
-              BadRequest(Json.obj(
-                "error" -> "invalid_field".asJson,
-                "reason" -> "request body must be a JSON object".asJson
-              ))
+              BadRequest(
+                Json.obj(
+                  "error" -> "invalid_field".asJson,
+                  "reason" -> "request body must be a JSON object".asJson
+                )
+              )
             case Right(body) =>
               nebflow.social.WeixinIlinkBridgePlugin.parseInbound(body) match
                 case Left(reason) =>
@@ -931,8 +1022,11 @@ private[gateway] object PresenceRoutes:
                   seam.flatMap {
                     case Some(p) => p.deliver(in).flatMap(v => Ok(v.json))
                     case None =>
-                      Ok(nebflow.social.WeixinIlinkBridgePlugin.Verdict
-                        .Dropped(nebflow.social.WeixinIlinkBridgePlugin.ReasonNotStarted).json)
+                      Ok(
+                        nebflow.social.WeixinIlinkBridgePlugin.Verdict
+                          .Dropped(nebflow.social.WeixinIlinkBridgePlugin.ReasonNotStarted)
+                          .json
+                      )
                   }
           }
         }
@@ -964,11 +1058,11 @@ private[gateway] object PresenceRoutes:
                     if channelId == "feishu" then
                       sharedResources.bridgeManager match
                         case Some(m) => nebflow.social.FeishuBridgePlugin.sync(m, PathUtil.dataRoot)
-                        case None    => IO.unit
+                        case None => IO.unit
                     else if channelId == nebflow.social.WeixinIlinkBridgePlugin.Name then
                       sharedResources.bridgeManager match
                         case Some(m) => nebflow.social.WeixinIlinkBridgePlugin.sync(m, PathUtil.dataRoot)
-                        case None    => IO.unit
+                        case None => IO.unit
                     else IO.unit
                   resync.start.void *> Ok(json)
                 case Left(err) => socialErrorResponse(err)
@@ -981,11 +1075,11 @@ private[gateway] object PresenceRoutes:
           val channelId = req.params.getOrElse("channel", "")
           val registered: IO[Set[String]] = sharedResources.bridgeManager match
             case Some(m) => m.registeredNames
-            case None    => IO.pure(Set.empty)
+            case None => IO.pure(Set.empty)
           registered.flatMap { set =>
             IO.blocking(nebflow.social.SocialChannels.probeJson(PathUtil.dataRoot, channelId, set)).flatMap {
               case Right(json) => Ok(json)
-              case Left(err)   => socialErrorResponse(err)
+              case Left(err) => socialErrorResponse(err)
             }
           }
         }
@@ -1125,16 +1219,19 @@ private[gateway] object PresenceRoutes:
                     val flags: IO[List[Boolean]] =
                       states.toList.traverse(st => panelUsable(cfgById.get(st.id), svcCfg).map(_.isDefined))
                     flags.flatMap { flagsByIndex =>
-                      val statesJson: Json = states.zip(flagsByIndex).map { case (st, hasPanel) =>
-                        val cfg = cfgById.get(st.id)
-                        val base: Json = Json.obj(
-                          "autoStart" -> cfg.exists(_.autoStart).asJson,
-                          "restartOnExit" -> cfg.exists(_.restartOnExit).asJson
-                        )
-                        val merged: Json =
-                          if hasPanel then base.deepMerge(Json.obj("hasConfigPanel" -> true.asJson)) else base
-                        st.asJson.deepMerge(merged)
-                      }.asJson
+                      val statesJson: Json = states
+                        .zip(flagsByIndex)
+                        .map { case (st, hasPanel) =>
+                          val cfg = cfgById.get(st.id)
+                          val base: Json = Json.obj(
+                            "autoStart" -> cfg.exists(_.autoStart).asJson,
+                            "restartOnExit" -> cfg.exists(_.restartOnExit).asJson
+                          )
+                          val merged: Json =
+                            if hasPanel then base.deepMerge(Json.obj("hasConfigPanel" -> true.asJson)) else base
+                          st.asJson.deepMerge(merged)
+                        }
+                        .asJson
                       Ok(Json.obj("daemons" -> statesJson))
                     }
                   }
@@ -1325,15 +1422,18 @@ private[gateway] object PresenceRoutes:
                         "title" -> decl.title.asJson,
                         "fields" -> decl.fields
                           .map(f =>
-                            Json.obj(
-                              "key" -> f.key.asJson,
-                              "label" -> f.label.asJson,
-                              "type" -> f.ftype.asJson,
-                              "required" -> f.required.asJson
-                            )
+                            Json
+                              .obj(
+                                "key" -> f.key.asJson,
+                                "label" -> f.label.asJson,
+                                "type" -> f.ftype.asJson,
+                                "required" -> f.required.asJson
+                              )
                               .deepMerge(f.min.fold(Json.obj())(m => Json.obj("min" -> m.asJson)))
                               .deepMerge(f.max.fold(Json.obj())(m => Json.obj("max" -> m.asJson)))
-                              .deepMerge(if f.options.nonEmpty then Json.obj("options" -> f.options.asJson) else Json.obj())
+                              .deepMerge(
+                                if f.options.nonEmpty then Json.obj("options" -> f.options.asJson) else Json.obj()
+                              )
                           )
                           .asJson,
                         "values" -> values.asJson,
@@ -1368,7 +1468,8 @@ private[gateway] object PresenceRoutes:
                     "id" -> daemonId.asJson,
                     "credentials" -> states
                       .map(s =>
-                        Json.obj("key" -> s.key.asJson, "name" -> s.name.asJson, "state" -> s.state.asJson)
+                        Json
+                          .obj("key" -> s.key.asJson, "name" -> s.name.asJson, "state" -> s.state.asJson)
                           .deepMerge(s.mode.fold(Json.obj())(m => Json.obj("mode" -> m.asJson)))
                       )
                       .asJson
@@ -1404,6 +1505,7 @@ private[gateway] object PresenceRoutes:
                           Ok(Json.obj("id" -> daemonId.asJson, "saved" -> true.asJson, "values" -> values.asJson))
                         }
                     }
+                end match
               }
           }
         }
