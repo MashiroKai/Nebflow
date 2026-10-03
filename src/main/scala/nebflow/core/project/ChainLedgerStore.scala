@@ -13,14 +13,19 @@ import java.security.MessageDigest
  * ChainLedgerStore —— **链号台账的持久面与拍点**（chainmodel 批二）。
  *
  * 判据/算法全部在 [[ChainLedger]]（纯函数，可单测）；本类只负责三件事：
- *  ① **落盘与载入**（原子写 [[AtomicJson]]、启动期载入、与 `flow-map.json` 同生命周期）；
+ *  ① **落盘与载入**（增量写 + 周期 checkpoint，见 [[persist]]；启动期载入，与 `flow-map.json`
+ *     同生命周期）；
  *  ② **冷档读写**（`chain-ledger-archive/round-<n>.json`，只归档不删除）；
  *  ③ **拍点编排**（[[reconcile]] = 出生/承继/合并/拆分 → 计数复算 → 退役 → 压缩，
  *     以及轴 a 的两个归档绑定写点 [[onChainsArchived]] / [[onChainsRestored]]）。
  *
- * == 崩溃安全（三条机械保证）==
- *  1. **原子写**：热账经 `AtomicJson`（tmp + `ATOMIC_MOVE`）⇒ 读侧只见完整旧文件或完整新
- *     文件，绝无半损状态（先例：`AtomicJson` 头注、issue #23）。
+ * == 崩溃安全（四条机械保证；perf-481 A3 把第 1 条从「整份原子写」换成「增量写」）==
+ *  1. **增量写 + 折叠**：热账 = `chain-ledger.json`（checkpoint，tmp + `ATOMIC_MOVE` 原子写）
+ *     ＋ `chain-ledger.json.journal`（每行一条 [[ChainLedger.JournalRecord]] 增量记录）。每次
+ *     变更**先 append 再考虑折叠**，折叠 = 「checkpoint 整写 → journal 截断」（[[AtomicJson.rotateSync]]
+ *     的次序）⇒「checkpoint + journal 合起来 = 最新态」恒成立，绝不出现「载荷已搬走、账未记」。
+ *     残尾（半条 append）在回放时丢弃；记录是完整快照 + 轮号去重 ⇒ 重放幂等。**不折叠时 checkpoint
+ *     逐字节不变**，读侧仍只见完整旧/新文件（[[AtomicJson.writeSync]] 的 tmp + ATOMIC_MOVE）。
  *  2. **先冷档后热账**：任何一轮都是「冷档文件写好 → 热账原子写」。崩在两步之间 ⇒ 热账仍是
  *     上轮状态，下一拍以**同轮号**重放（轮号 = `rounds.size + 1`，候选集确定 ⇒ 内容逐字
  *     相同 ⇒ 幂等覆写）。反向顺序会在崩溃后丢载荷，故禁。
@@ -36,9 +41,10 @@ import java.security.MessageDigest
  * 各轮带 [[ChainLedger.RoundManifest.tick]] 拍标识（同拍恒同值、异拍恒异值）。
  *
  * == 与 `flow-map.json` 的同生命周期 ==
- * 落点 = `<workspace>/.nebflow/chain-ledger.json`（同目录、同 open 期载入、同进程存活期）。
- * 文件缺失/损坏 ⇒ 空账起步 + WARN（判据：台账是**可重建**的派生面 + 别名表；重建只丢
- * 「历史改号别名」，不丢任何图事实 —— 故损坏不阻断启动，但绝不静默）。
+ * 落点 = `<workspace>/.nebflow/chain-ledger.json`（+ 同名 `.journal` 增量面；同目录、同 open 期
+ * 载入、同进程存活期）。两文件皆缺 ⇒ 空账（全新项目，无 WARN）；**存在但损坏** ⇒ 空账起步 +
+ * WARN（判据：台账是**可重建**的派生面 + 别名表；重建只丢「历史改号别名」，不丢任何图事实
+ * —— 故损坏不阻断启动，但绝不静默）。
  */
 class ChainLedgerStore private (
   val project: String,
@@ -47,7 +53,13 @@ class ChainLedgerStore private (
   private val state: Ref[IO, ChainLedger.State],
   private val logger: NebflowLogger,
   /** Cold-archive byte budget for the open-time self-check (tests shrink it; see selfCheck). */
-  private[project] val coldReadBudgetBytes: Long = 32L * 1024 * 1024
+  private[project] val coldReadBudgetBytes: Long = 32L * 1024 * 1024,
+  /** perf-481 A3: how many `rounds` manifests the checkpoint already carries. */
+  initialCommittedRounds: Int = 0,
+  /** perf-481 A3: journal bytes already pending a fold back into the checkpoint. */
+  initialPendingBytes: Long = 0L,
+  /** perf-481 A3: fold threshold (tests shrink it to exercise rotation cheaply). */
+  rotateBytes: Long = ChainLedger.JournalRotateBytes
 ):
 
   import ChainLedger.*
@@ -63,10 +75,68 @@ class ChainLedgerStore private (
 
   private def encode(st: State): String = st.asJson.noSpaces
 
-  /** 当前热态落盘字节数（**轴 c 的字节阈值现读面**；与 [[persist]] 逐字节同源）。 */
+  /** 当前热态落盘字节数（**轴 c 的字节阈值现读面**；与 checkpoint 逐字节同源）。 */
   def hotBytes: IO[Long] = state.get.map(st => encode(st).getBytes("UTF-8").length.toLong)
 
-  private def persist(st: State): IO[Unit] = AtomicJson.write(path, encode(st))
+  // ── perf-481 A3：增量写（append journal + 周期 checkpoint）────────────────
+  //
+  // `persist` 原为「每次变更整份原子写」= 13.4 MB/次。实测量得该体量的 99.99% 是
+  // `rounds`（39 071 条 manifest），而 `rounds` 是 **append-only** ⇒ 与本次变更无关的
+  // 已落盘段每次都被重写。现改为：一次**小追加**（记录 = 更新后的非轮字段 + 自上次折叠
+  // 以来的新增 manifest，通常 0–3 条 ≈ 2 KB），journal 累积到 [[ChainLedger.JournalRotateBytes]]
+  // 才折叠回 checkpoint（整写）并截断 journal。
+  //
+  // 崩溃安全（与 [[AtomicJson]] 头注同一份判据，禁弱化）：
+  //  ① 先 append（durable 副本先落）再考虑 rotation；折叠顺序 = write checkpoint → truncate journal
+  //     ⇒ 「checkpoint + journal 合起来 = 最新态」恒成立，绝不出现「载荷已搬走、账未记」。
+  //  ② 任意崩溃点 ⇒ 最坏是重放一条已折叠的记录（记录是完整快照 + 轮号去重 ⇒ 幂等）。
+  //  ③ 没有 rotation 时 checkpoint 逐字节不变（崩了也读得回旧完整态）。
+  private val persistLock = new java.util.concurrent.Semaphore(1)
+
+  /** checkpoint 已有的 manifest 条数（记录里 `rounds` 段的下界）。 */
+  @volatile private var committedRounds: Int = initialCommittedRounds
+
+  /** journal 里待折叠的字节数（rotation 判据；载入时由现读回填）。 */
+  @volatile private var pendingBytes: Long = initialPendingBytes
+
+  /** 本拍要落的**增量记录**（相对 checkpoint）：非轮字段全量 + 新增 manifest 段。 */
+  private def recordOf(st: State): ChainLedger.JournalRecord =
+    ChainLedger.JournalRecord(base = committedRounds, state = st.copy(rounds = st.rounds.drop(committedRounds)))
+
+  /**
+   * 增量落盘：append 一条记录，累积到阈值再折叠 + 截断。**整条临界区串行化**
+   * （`committedRounds` / `pendingBytes` 的读改写 + 文件两步操作必须原子，否则两个
+   * 并发 persist 会交错 append/rotate 并让水位错位）。
+   *
+   * 🔴 **首次写入必建 checkpoint**：`chain-ledger.json` 是权威面，必须在**任何一次变更后**
+   * 都存在于盘上（既有契约：T10「台账必须在盘」）。journal 相对 checkpoint 存在 —— 没有
+   * checkpoint 的纯 journal 是畸形态。故 checkpoint 缺失时这一次走整写（[[AtomicJson.rotateSync]]）、
+   * 不 append；此后每次变更才是「append + 可能折叠」。
+   */
+  private def persist(st: State): IO[Unit] =
+    IO.blocking {
+      persistLock.acquire()
+      try
+        if !os.exists(path) then
+          // 无 checkpoint（全新台账，或此前从未折叠）⇒ 本次建立权威面。
+          AtomicJson.rotateSync(path, encode(st))
+          committedRounds = st.rounds.size
+          pendingBytes = 0L
+        else
+          val line = recordOf(st).asJson.noSpaces
+          AtomicJson.appendSync(path, line)
+          pendingBytes += AtomicJson.recordBytes(line)
+          if pendingBytes >= rotateBytes then
+            // 折叠：checkpoint 写在前、journal 截断在后（AtomicJson.rotateSync 的次序）。
+            AtomicJson.rotateSync(path, encode(st))
+            // 折叠成功后才推进水位（崩溃在上一行与这一行之间 ⇒ 只是重放，幂等）。
+            committedRounds = st.rounds.size
+            pendingBytes = 0L
+      finally persistLock.release()
+    }
+
+  /** 现读 journal 待折叠字节（诊断/量具面；不改变状态）。 */
+  private[project] def journalPendingBytes: IO[Long] = IO.blocking(AtomicJson.noteBytes(path))
 
   // ── 冷档 ─────────────────────────────────────────────
 
@@ -611,35 +681,80 @@ object ChainLedgerStore:
   private val logger: NebflowLogger = NebflowLogger.forName("nebflow.chain-ledger")
 
   /**
-   * **启动期载入**（与 `flow-map.json` 同生命周期）：文件缺失 ⇒ 空账；损坏 ⇒ WARN + 空账
-   * 起步（台账是派生面 + 别名表，重建只丢历史别名，不丢图事实 ⇒ 不阻启动，但绝不静默）。
+   * **启动期载入**（与 `flow-map.json` 同生命周期）。两文件形态（perf-481 A3）：
+   * checkpoint（`chain-ledger.json`）+ journal（`chain-ledger.json.journal`，每行一条
+   * [[ChainLedger.JournalRecord]] 增量记录）。
+   *
+   * 判据（与旧写法的载入结果**逐字一致**是硬要求）：
+   *  ① journal 里**最后一条完整记录**（残尾丢弃、解析失败即停 —— 见 `AtomicJson.readAll`）
+   *     是更新的面；`checkpoint.rounds ++ 该记录的新增段`（[[ChainLedger.mergeRounds]] 按轮号
+   *     去重）还原全量轮清单 ⇒ 载入态与「整份写」时代逐字节同值。
+   *  ② checkpoint 缺失而 journal 有记录 ⇒ 以「空 checkpoint + 该记录」起步（首次折叠前
+   *     崩溃的正常形态，不算损坏）。
+   *  ③ journal 无记录 ⇒ 纯 checkpoint（旧格式文件、或刚折叠过）。
+   *  ④ **两文件皆不可用**（都不存在 ⇒ 全新项目，静默空账）／**存在但损坏** ⇒ 空账 + WARN
+   *     （台账是可重建派生面，不阻启动，但绝不静默 —— 与旧行为同款）。
    */
   def open(
     project: String,
     ledgerPath: os.Path,
     archivePath: os.Path,
-    coldReadBudgetBytes: Long = 32L * 1024 * 1024
+    coldReadBudgetBytes: Long = 32L * 1024 * 1024,
+    rotateBytes: Long = ChainLedger.JournalRotateBytes
   ): IO[ChainLedgerStore] =
     for
-      loaded <- IO.blocking {
-        if !os.exists(ledgerPath) then ChainLedger.State(project = project)
-        else
-          jsonParse(os.read(ledgerPath)).flatMap(_.as[ChainLedger.State]) match
-            case Right(s) => s.copy(project = project)
-            case Left(e) =>
-              logger.warnSync(
-                s"chain-ledger[$project] ${ledgerPath.last} corrupt: $e — starting empty (台账可重建；历史别名丢失，图事实零影响)"
-              )
-              ChainLedger.State(project = project)
-      }
+      read <- IO.blocking(AtomicJson.readAll(ledgerPath))
+      loaded <- IO.blocking(loadState(project, ledgerPath, read))
       store = new ChainLedgerStore(
         project,
         ledgerPath,
         archivePath,
-        Ref.unsafe[IO, ChainLedger.State](loaded),
+        Ref.unsafe[IO, ChainLedger.State](loaded._1),
         logger,
-        coldReadBudgetBytes
+        coldReadBudgetBytes,
+        initialCommittedRounds = loaded._2,
+        initialPendingBytes = AtomicJson.noteBytes(ledgerPath),
+        rotateBytes = rotateBytes
       )
       _ <- store.selfCheck("open")
     yield store
+  end open
+
+  /**
+   * 折叠两文件为一个状态（纯读；WARN 由本方法按判据打）。返回 `(状态, checkpoint 已有轮数)`。
+   *
+   * 🔴 **损坏的 checkpoint 一律空账起步，且不采信 journal**（[[open]] 判据④）：checkpoint 是
+   * 「最后一个完整态」的权威面，它本身不可用时的正确处置是走既有的「可重建 ⇒ 空账 + WARN」
+   * 策略（T10 断言），而不是拿 journal 片段拼一个半信状态。**文件缺失**（`checkpointError`
+   * 为 `None` 而 `checkpoint` 为空）是另一回事 —— 那是「首次折叠前崩溃」的正常形态，
+   * 由 journal 恢复。
+   */
+  private def loadState(
+    project: String,
+    ledgerPath: os.Path,
+    read: AtomicJson.JournalRead
+  ): (ChainLedger.State, Int) =
+    read.checkpointError match
+      case Some(e) =>
+        logger.warnSync(
+          s"chain-ledger[$project] ${e} — starting empty " +
+            "(台账可重建；历史别名丢失，图事实零影响)"
+        )
+        (ChainLedger.State(project = project), 0)
+      case None =>
+        val committed: Option[ChainLedger.State] =
+          read.checkpoint.flatMap(t => jsonParse(t).flatMap(_.as[ChainLedger.State]).toOption)
+        val parsedNotes: List[ChainLedger.JournalRecord] =
+          read.records.flatMap(n => jsonParse(n.note).flatMap(_.as[ChainLedger.JournalRecord]).toOption)
+        val committedRounds = committed.map(_.rounds.size).getOrElse(0)
+        val base = committed.getOrElse(ChainLedger.State(project = project))
+        parsedNotes.lastOption match
+          case Some(rec) =>
+            val state = rec.state.copy(
+              project = project,
+              rounds = ChainLedger.mergeRounds(base.rounds, rec.state.rounds)
+            )
+            (state, committedRounds)
+          case None => (base.copy(project = project), committedRounds)
+  end loadState
 end ChainLedgerStore
