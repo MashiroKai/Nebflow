@@ -183,8 +183,8 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | 术语 | English / 代码拼写 | 定义 | 权威落点 |
 |---|---|---|---|
 | app | app | 常驻进程原型：薄 main，只做装配与服面；既裁三例 = `gateway` / `capability-server` / `organic-server`。类比：C 实际运行的只有 main。 | 规划态：三例成形后回锚（B3/B4） |
-| server | server | 角色名：某 app 的服务面角色。裁定：server 内含 engine 驱动（engine 不独立成进程）。 | 规划态：B3/B4 回锚 |
-| engine | engine | 域语义：域驱动件（如 `mem-engine` / `skill-engine` / llm 运行时），被 server 装配驱动。 | 规划态：B3/B4 回锚 |
+| server | server | 角色名：某 app 的服务面角色。裁定：server 内含 engine 驱动（engine 不独立成 app）。〔2026-10-04 措辞修正：原句「engine 不独立成进程」——按 app×wheel 五级词汇改写（常驻进程原型＝app，「进程」泛称不在词层），裁定含义不变〕 | 规划态：B3/B4 回锚 |
+| engine | engine | **执行面口径（2026-10-04 回锚，随 IR v0.3 批准批；欠账登记见 v0.3 §5.5）**：术语与解释器分立——解释器管「表面→IR」、执行引擎管「IR→效果」，engine 一词归执行面专用（bash/cmd/ps 引擎族、EngineManager、device 三元组 engineId）；**家族准入判据＝承接来自实体（agent/LLM）指令的面**，系统规律调用/被动后端＝非 engine。〔B0 原句（2026-09-30）并置保留：域语义：域驱动件（如 `mem-engine` / `skill-engine` / llm 运行时），被 server 装配驱动〕 | 口径 = `../skill-engine/docs/ir-v0.2-normalized-form.md` §3A-1（跨仓）；准入判据 = `../nebflow-src/.zcode/plans/trajectory-接口方案.md` A9 终裁（gitignored 计划侧，§11 头注同款现址记法）；代码落点仍规划态：B3/B4 回锚 |
 | wheel | wheel | 物理形态：无 main 的库包；零依赖纯库 = 理想 wheel。`skill-engine` 与 `document-based-memory` 两独立仓已是 wheel 形态。 | 规划态；两独立仓现址 `../skill-engine/`、`../document-based-memory/`（跨仓） |
 | 底座与契约面 | `shared` + `contract` | 底座（`shared`）与北向契约面（`contract`）：UiMessage 密封族等北向契约落此处。 | 规划态：`contract` 面 B5 析出后回锚；现 UiMessage 密封族在 `src/main/scala/nebflow/shared/protocol.scala` |
 
@@ -197,6 +197,7 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | mem-engine | mem-engine | 记忆域 engine（域驱动件），挂 capability-server 的 direct-call 面。 | 规划态：随 P1/B7 回锚 |
 | skill-engine | skill-engine | 技能域 engine；独立仓，已是 wheel 形态（无 main 库包）。 | `../skill-engine/`（跨仓）；spec = `../skill-engine/docs/skill-engine-spec.md` |
 | direct-call | direct-call | 应用间协议：IR 标准 §9 候审稿升格为总线；现阶段 = 包间协议（单 JVM 内），§5.5 loopback IPC 为未来物理承载。 | 候审稿 = `../skill-engine/docs/direct-call-spec.md`（跨仓）；dbm spec §5.5 = `../document-based-memory/docs/20260927_nebflow-sandbox.md` |
+| function | `^engine:function` 的 function 分量 | ^ 词位（Subject 面）冒号后段分量：**engine 提供的功能点**——`^engine:function` 一体指定执行后端与被调用的功能点，两段保持（engine 分量与 device 三元组 engineId 不同值域）。**与 caps 分立**：caps＝信任档原子、function＝功能点（展开求值归注册面，随定稿批落定）。 | `../skill-engine/docs/ir-v0.3-command-surface.md` §3.11（裁定 §10-2/§10-3 Q2②，跨仓；2026-10-04 v0.3 转正批收录） |
 | 四行拓扑 | four-line topology | 终态信息流向四行：north(web, cli, bridge, social)→gateway；gateway→organic-server & capability-server；organic-server→capability-server & shared；capability-server→shared；`mem-engine` / `skill-engine` 挂 capability 的 direct-call 面。 | 规划态：终态机器落点 = `scripts/check-scala-layers.mjs` 的 `LAYER_ORDER`（B1 起渐次成形） |
 
 **大小写裁定（2026-09-30，B0）**：组件名全小写（`organic-server`、`capability-server` 等）；句首位置按英文惯例首字母大写。已核：两仓 src / scripts / tests / docs 内组件名 organic 零出现（seed 插件设计语料含英文语义词 organic，非代码标识符），无存量需扫。
