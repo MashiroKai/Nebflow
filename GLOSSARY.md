@@ -224,3 +224,58 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 |---|---|---|---|
 | trajectory-store | trajectory-store | A 轨**存储 wheel**（独立仓）：schema + 同步 port（治理四能力一等：redact / deleteSession 同步回执 / applyRetention / export）+ JSONL 落盘内存索引 + **conformance corpus 持有方**（两轨等价性语料）。 | `../trajectory-store/`（跨仓）；契约权威源 = 其 `docs/trajectory-contract.md` |
 | trajectory-analysis | trajectory-analysis | B 轨**分析套件 wheel**（独立仓）：schema 独立镜像 + InMemoryTrajectoryStore + 缝适配器（纯函数，镜像输入类型）+ 分析视图（轮次时间线 / 会话摘要 / 失败链 / 供应商切换序列）；payload 唯一解释方。 | `../trajectory-analysis/`（跨仓）；README = 分歧裁决记录 |
+
+## 13. fsm 接入线（fsm-runtime，2026-10-04 立项）
+
+> **批次说明（2026-10-04）**：本区为 F 线（fsm-runtime 接入）词汇，随 F1 设计段落字——**规划态**，nebflow 侧零落码，落点随 F1/F2 批次回锚。
+> 计划 = 跨仓 `../nebflow-src/.zcode/plans/fsm-runtime-integration.md`（gitignored；词条清单在其 §5）；实现锚 = fsm-runtime 独立仓 `../default/fsm-runtime/`（符号锚——行号与版本串是易漂事实，记在计划侧，不入本表）。
+> **与 §10 维护规约的冲突（并置注明，不删改上文；同 §11 先例）**：本批裁定先行、先入表后入码，仓内暂无版本化落点；落点列暂记计划文本与 fsm-runtime 仓现址，随批次回锚。
+
+**概念词条**：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| fsm-runtime | fsm-runtime | 作者自写的编译计算图工具（独立仓，零第三方依赖），钩子子系统与 agent 运行面**新实现的统一底座**（2026-10-01 裁定「后续所有 hook 和 agent 使用这个工具实现」）。形态 = 编译期冻结图 + lint 唯一守门 + 确定性超步解释器 + A1-A4 字节等价契约 + canonical 文法；接入 = publishLocal 工件 + hash 钉（槽 E 终裁 a）。 | `../default/fsm-runtime/`（跨仓）；接入计划 = `../nebflow-src/.zcode/plans/fsm-runtime-integration.md` §1/§6.3 |
+| 冻结图 | `FrozenGraph` / `Combinators.define` | 经 `Combinators.define` 在定义期定稿的**不可变**计算图：状态、转移与算子树此后冻结，运行期只解释执行；lint 是入图唯一守门。agent 三态（idle/processing/frozen）建模为图状态——**「冻结」指图定稿，非 agent 冻结态**（后者是运行态暂停，入图后是图的一个状态）。 | `../default/fsm-runtime/` Core.scala（`FrozenGraph`）；计划 §2.2 |
+| 超步 | superstep | 确定性解释器的原子执行单元，亦是**逻辑时钟**单位（不引墙钟；墙钟 deadline 只能作外部输入注入）。一次 turn（LLM→工具→LLM 循环）= 超步序列，turn 边界 = 静默点（快照点）；rehook 前实例必须已跑过至少一个超步（日志含 StepMark）。 | `../default/fsm-runtime/`（`EventLog.appendSuperstep` / StepMark）；计划 §2.2/§6.5 |
+| canonical bytes | canonical bytes | 快照与渲染的**规范化字节序**：同图同状态必产出逐字节相同的 canonical 文本；「同指纹必须同渲染」的载体——nebflow 黑盒快照测试对执行后端切换失明即靠此纪律。 | `../default/fsm-runtime/`（Snapshot / canonical 文法）；计划 §2.3 |
+| 图指纹 | graph fingerprint / `graph_fingerprint` | 冻结图的**内容寻址**指纹（持久化六字段之首，CHAR(64) 主键）：同指纹 ⇒ 同图源渲染，冲突 fail loud 不自行合并；与 B8 成熟三件套注册面的内容寻址同构（远期可互认不绑定）。 | `../default/fsm-runtime/`；计划 §2.3（六字段） |
+| 算子（十四） | `Operator`（14 cases） | RuntimeHook 的返回代数，**全集 14 例闭集**（加算子 = 改代数 = 走治理）：Pass（单位元）/ Drop / Defer / Rewrite / Synthesize / Veto（仅⑤）/ Force（仅③）/ Reweight / Tag / Allow / Ask / Deny（⑥ 词，消费位 = 宿主 `EffectRunner.verdict`）/ Wrap（载荷 WrapDecl）/ Patch（应用面 MetaHooks）。 | `../default/fsm-runtime/` Core.scala（`enum Operator`，14 case 2026-10-04 亲数）；计划 §2.1 |
+| 席位 | seat / {Schedule, Commit, Enqueue} | 运行时钩子可介入的图内阶段，**收缩面仅三**：Schedule（③ 候选集）/ Commit（⑤ 待提交变更）/ Enqueue（② 排队）；HookStage 八阶段中其余不开（Lifecycle = 闭集占位）。席位 patterns 只匹配**图事件名** ⇒ 观察型/生命周期型事件入不了席，只有图内裁决点能入席。 | `../default/fsm-runtime/` Core.scala（`enum HookStage` / 收缩面检查）；计划 §2.1 |
+| Tier-P | `HookTier.Pure`（纯档） | 钩子分档之纯档：**纯函数、无 IO、无墙钟**，违约 = fail loud；`RuntimeHook.invoke` 属 Tier-P，享受 A1-A4。nebflow 侧纯谓词（如 `FreezeSchedule.evalWithSkip`）可作 Tier-P。 | `../default/fsm-runtime/` Core.scala（`enum HookTier`）；计划 §2.2 |
+| Tier-X | `HookTier.Extended`（扩展档） | 钩子分档之扩展档：有状态/有 IO 的效果域执行面（LLM/工具调用、外部子进程），**放弃 A1-A4**，重放走 playback「记录即事实」不重跑——只承诺已记录轨迹可重放，不承诺新跑可复现（槽 F 已裁：接受此成文语义）。 | `../default/fsm-runtime/` Core.scala（`enum HookTier`）；计划 §2.2/槽 F |
+| playback | playback（记录即事实） | 重放机制：决策与效果**事实从事件日志回读**，LLM/工具/子进程不被再次调用；轨迹确定性是「日志充分统计量」意义上的确定（`Replay.replayManaged` 同日志 + 同版本定义/钩子完整重放）。 | `../default/fsm-runtime/` Replay.scala；计划 §2.2 |
+
+**组件词条**（fsm-runtime 侧类型；nebflow 侧注入缝规划 = `SharedResources` 的 `fsmHooks` / `effectRunner`，B4 归巢时留——计划 §5.2）：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| HookSet | `HookSet` | **实例级**运行时钩子集（私造走 build 的收缩面检查）；rehook = 逐实例手工换装面（最后一次换装胜）；rehook 须先跑过超步，hotSwap 换图后 hooks 不携带须重新 rehook；升版本走 rehook/restore 显式校验（HookVersionMismatch）。 | `../default/fsm-runtime/` Core.scala（`HookSet`）；计划 §2.1/§6.5 |
+| HookLibrary | `HookLibrary` | **世界级**钩子库：宿主侧库，**不入快照不入日志，出生时物化**；继承 = scope 覆盖判定，屏蔽 = 同 id 深作用域覆盖浅作用域。装配点落在哪个 app 内是 hooks 归属裁定（槽 B）的直接后果。 | `../default/fsm-runtime/` Core.scala（`HookLibrary`）；计划 §3 |
+| EffectRunner | `EffectRunner` | 宿主侧效果执行器，两组合子：`wrapped(decl, base)(f)` 包裹记录、`verdict(decl, base)(decide)` 裁决（词表 {Allow, Ask, Deny}：Deny ⇒ 投递 effect.denied、Ask ⇒ effect.ask）。**base 先求值** ⇒ verdict 保不住「工具零执行」，先裁后跑（PreToolUse 类）必须宿主自组 runner。 | `../default/fsm-runtime/` Interpreter.scala（`EffectRunner` / `wrapped` / `verdict`）；计划 §2.1 |
+| WrapDecl | `WrapDecl(label, version)` | 效果声明（纯数据）：runner 以 `WrapDecl(label="llm"/"tools", version=…)` 声明；**prompt/模型变更 = 升 version，不静默替换**；快照 (hkm) 尾槽 + hook.manifest/hook.decision 审计。 | `../default/fsm-runtime/` Core.scala（`WrapDecl`）；计划 §2.2 |
+
+## 14. 事件命名避让表（fsm Event 名铸造，2026-10-04）
+
+> **批次说明（2026-10-04）**：本表是契约件（计划 §5.4，与槽 C 关联——先立 nebflow 侧表，B8 前再议升 contract 面）。范围 = AgentCommand/AgentEvent → fsm Event 名映射的铸造面；保留面取自 fsm-runtime 的 Lint 保留名闭集（计划 §6.4）；五项映射决策为 F1 设计段交接文本落字（机械核对输出录于 F1 设计文档 §2.4，该文档落盘后此处回锚出处）；**落码段 lint 实跑（define 断言）为权威门**。
+
+**保留面**（禁用/避让清单）：
+
+| 避让面 | 保留值 | 规则 |
+|---|---|---|
+| 保留事件名（六闭集） | `timer.fired` / `deadline.expired` / `join.completed` / `cancelled` / `data.ready` / `graph.completed` | 可作转移 on 的仅 {join.completed, deadline.expired, data.ready}（内核合成、有生产者）；其余三名 on 与 emit **双禁**；emit 侧六名全禁 |
+| 保留端口 | `deadletter` / `system` | 端口声明即拒（deadletter = 自动建立的保留死信渠道；system = 系统渠道保留名） |
+| 效果域保留名 | `compile` | CompileRuntime.runner 接管（运行时构图） |
+| 算子保留名 | `noop` | 单位元算子名；非单位元算子取名 noop 即拒（K19） |
+| 完成事件前缀 | `done.state.*` | 独立前缀名空间（整名禁 K1 / 前缀禁 K10） |
+| 审计 marker 命名空间 | `op` / `op.ctx` / `hook.decision` / `hook.manifest` / `lifecycle.spawned` / `gate.paused` / `dead_letter` 等 | 字符串命名空间只增不删改 |
+
+（锚 = `../default/fsm-runtime/` Lint.scala 的 `reservedEventNames` / `matchableReservedEventNames` / `reservedPortNames`，2026-10-04 亲验）
+
+**映射决策**（F1 设计段，2026-10-04）：
+
+1. **命名规则 = 小写点命名空间基名 + 分支后缀双名法**（如 `user.input.wake` / `llm.failed.freeze`）：后缀在铸造侧消歧，使图转移表 exact-match 单目标；dispatch 类统一 `.dispatch` / `.gated` 闸门后缀（`pipeLlmCall` 唯一冻结闸；压缩轮静态解析不过闸除外）。
+2. **`AgentEvent.Cancelled` 必改**：朴素小写 `cancelled` 撞保留名（on/emit 双禁），定名 **`turn.cancelled`**，与 Completed→`turn.completed` / Failed→`turn.failed` 同族；不取裸 `completed`（与保留 `graph.completed` 邻近易误读）。
+3. **冻结恢复驱动禁用 `timer.fired`**（保留名双禁，属宿主/timer 子系统）：CheckFreezeGate 定名 **`freeze.check`**（stay/resume/refreeze）。
+4. **机械核对**：36 项词汇表零撞六保留名 / 保留端口 deadletter·system / 效果域 compile / 算子 noop / `done.state.` 前缀 / 自重复；朴素小写映射唯一撞名 = `cancelled`，证实必改；设计期静态核对（node 脚本），落码段 lint 实跑（define 断言）为权威门。
+5. **避让面边界登记**：AgentEvent 三终态的图外名与 Ephemeral bridge 取消结算日志字符串（非事件名）分置，后者不改。
