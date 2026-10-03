@@ -53,10 +53,19 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   private def modeOf(td: ToolDefinition): Option[Json] =
     td.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("mode"))
 
-  // 身份横断面（含历史分化人格：root / 节点 / 内核 / 按名冒充 root 的节点）
+  // 身份横断面（含历史分化人格：root / 节点 / 退役名 / 按名冒充 root 的节点）
+  //
+  // P1-3 归因修正批（2026-10-03）：节点身份轴改用**现行执行 agent 名**
+  // （`BuiltinAgents.ExecutorName`，builtin-merge 批合并 kernel+general 后的名）。
+  // 旧断言用手搓 AgentDef("general")/("kernel")——两名都不在
+  // `BuiltinAgents.Names` ⇒ 落 `legacyFixedTools` catch-all（BaseTools 六件，
+  // 无 AskUserQuestion）⇒ 本 spec 的「工具面必含 AskUserQuestion」全部假红。
+  // 生产路径也不再构造这样的 def（`EntityLoader.loadAgent` 对退役名回落内建
+  // 执行器条目），故对齐名集即修根因，不是放宽断言。
+  private val executorName = nebflow.core.entity.BuiltinAgents.ExecutorName
   private val rootFace = CoreProbe.face(defNamed("Nebula"), depth = 0)
-  private val generalNodeFace = CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true)
-  private val kernelFace = CoreProbe.face(defNamed("kernel"), depth = 1)
+  private val executorNodeFace = CoreProbe.face(defNamed(executorName), depth = 1, flowNodeSession = true)
+  private val executorPlainFace = CoreProbe.face(defNamed(executorName), depth = 1)
   private val nebulaNamedNodeFace = CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true)
 
   // ============================================================
@@ -66,8 +75,8 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   test("① 核心断言: 四个身份的工具定义里 mode 全缺席 + 与基线定义逐字节相同") {
     for (name, face) <- List(
         "Nebula-root" -> rootFace,
-        "general(depth=1, flowNodeSession)" -> generalNodeFace,
-        "kernel(depth=1)" -> kernelFace,
+        s"$executorName(depth=1, flowNodeSession)" -> executorNodeFace,
+        s"$executorName(depth=1)" -> executorPlainFace,
         "按名冒充 root 的 depth=1 节点(Nebula)" -> nebulaNamedNodeFace
       )
     do
@@ -143,10 +152,11 @@ class AskUserDualModeSchemaSpec extends FunSuite:
 
   test("② 判据单点: 四个身份组合的真值表（含 depth 分量与 fail-closed）") {
     val nebula = Some(defNamed("Nebula"))
-    val general = Some(defNamed("general"))
+    // P1-3 归因修正（2026-10-03）：节点身份轴改用现行执行 agent 名（见上）。
+    val executor = Some(defNamed(executorName))
     assertEquals(RootAgentIdentity.isRootAgent(nebula, 0), true, "Nebula+depth=0 必须是 root")
     assertEquals(RootAgentIdentity.isRootAgent(nebula, 1), false, "Nebula+depth=1（节点会话）不是 root")
-    assertEquals(RootAgentIdentity.isRootAgent(general, 0), false, "非 Nebula 的 depth=0 根会话不是 root（T1=(a)）")
+    assertEquals(RootAgentIdentity.isRootAgent(executor, 0), false, "非 Nebula 的 depth=0 根会话不是 root（T1=(a)）")
     assertEquals(RootAgentIdentity.isRootAgent(None, 0), false, "agentDef=None fail-closed")
     // ToolContext 派生 def 委托同一真值（运行期求值面；AskUserQuestionTool 已不再消费它）
     val ctxRoot = nebflow.core.tools.ToolContext(projectRoot = "", agentDef = nebula, depth = 0)
@@ -179,8 +189,8 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     val baselineNames = ToolRegistry.ALL_TOOLS.map(_.name)
     for (name, face) <- List(
         "Nebula" -> rootFace,
-        "general" -> generalNodeFace,
-        "kernel" -> kernelFace,
+        s"$executorName node" -> executorNodeFace,
+        s"$executorName plain" -> executorPlainFace,
         "Nebula-named node" -> nebulaNamedNodeFace
       )
     do

@@ -252,6 +252,9 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
         ctx
       )
       // 正面：dangling=true ⇒ ⚠ 带 declared 标记 + 审计事件
+      // （P0-1 批 2026-10-03：同 agent 同 task 的「疑似重复派发」闸会拒本单——
+      // 两个节点都挂同一内置执行 agent（builtin-merge 收敛后所有新建节点同 agent），
+      // 故第二条 task 文本必须与 r1 不同以证「声明令牌」判据，而非被重复闸拦截）
       r2 <- nodeEdit(
         nodeInput(
           "decl-d2",

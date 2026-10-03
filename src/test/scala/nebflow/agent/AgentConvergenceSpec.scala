@@ -40,19 +40,28 @@ class AgentConvergenceSpec extends FunSuite:
   private def mkDef(name: String, tools: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools)
 
+  /** 节点实际执行的 agent 名（建位落名 + spawn 读名的同一单点）。
+    * P1-3 归因修正（2026-10-03）：旧断言用手搓 "general" 造节点身份——该名已非
+    * 内置名，落 legacyFixedTools catch-all ⇒ 假红。判据源对齐生产落名。 */
+  private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
+
   // ===== §G.3-① Nebula 工具清单 = §C.1 矩阵 =====
 
   test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/任务/通信/读三件/写手三件/可视化/用户/平台/记忆）"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
-    val expected = Set(
+    // 交付面期望集 = RootOrchestrationTools 的注册表实收面（friendseal strip
+    // 另加）。RootOrchestrationTools 成员资格本身是上游机制面（P1-3 归因修正
+    // 2026-10-03：静态集仍带已注销的 MemoryNote/TaskList 是本树最大现存缺口，
+    // 属阶段 3 收口，不属本批断言过时——本批按「交付面 = 机制集 ∩ 注册表」钉死
+    // 实际交付面并显式登记缺口，两条 baseline-existing 红的根因不再被断言层放大）。
+    val baseExpected = Set(
       "Mail",
       // AgentFlow 已退役（unified-delegate 批 2026-10-03）：派发统一走 Delegate。
       "ProjectCreate",
       "AgentControl",
       // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
-      // 直接触发 kernel 并返回 kernel:<id> 续聊地址
+      // 直接触发内置执行 agent 并返回 delegate:<id> 续聊地址
       "Delegate",
-      "TaskList", // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
       "SendMessage",
       "ListFriends", // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
       "Read", // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
@@ -60,7 +69,12 @@ class AgentConvergenceSpec extends FunSuite:
       "AskUserQuestion",
       "Pop",
       "Schedule",
-      "MemoryNote",
+      // MemoryNote / TaskList 已注销（govmemory 批 2026-09-25 裁「MemoryNote
+      // registration retired」；TaskList 同批「not registered (retired and removed)」）
+      // ⇒ 不在 LLM 交付面（未注册名自然缺席，本 spec 判的是 buildToolList 面）。
+      // P1-3 归因修正（2026-10-03）：基线既有红 3 条里有两条根因在此——
+      // RootOrchestrationTools 的 MemoryNote/TaskList 两成员从未注销 ⇒ 本批按任务书
+      // 口径「断言对齐现实，不是恢复注册」把交付面期望集对齐到注册表实收面。
       // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
       "Glob",
       "Grep",
@@ -73,10 +87,25 @@ class AgentConvergenceSpec extends FunSuite:
     // (AgentCore.friendsSealedStrip), so the expected face removes the same entry
     // only when the latch reads sealed on this snapshot. Never a bare number.
     val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
+    val expected = baseExpected -- sealStrip
+    // 交叉闸：期望集必须是机制集 ∩ 注册表的**逐字节实收面**（机制面多收/漏收任何一件
+    // 即红——缺口显式化，不靠断言藏住）。
+    assertEquals(
+      expected,
+      (AgentCore.RootOrchestrationTools -- sealStrip).filter(ToolRegistry.TOOL_MAP.contains),
+      "Nebula 交付面 = RootOrchestrationTools ∩ 已注册（friendseal strip 后）"
+    )
+    // 已知缺口显式登记（P1-3 归因）：机制面静态集 vs 注册表的差异只能随阶段 3 收口，
+    // 断言层不再容忍新差异加入。
+    assertEquals(
+      AgentCore.RootOrchestrationTools.filter(!ToolRegistry.TOOL_MAP.contains(_)),
+      Set("MemoryNote", "TaskList"),
+      "机制面静态集 vs 注册表的现存差异恰 = {MemoryNote, TaskList}（基线既有；阶段 3 收口面）"
+    )
     assertEquals(
       delivered,
-      expected -- sealStrip,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 18 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值 17，加 builtin-def 批（2026-10-03）+Delegate，减 pop 批（2026-10-03）−Card，减 unified-delegate 批（2026-10-03）−AgentFlow；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 promptgov 批 −Delegate 两笔史实（后者授能面已被 2026-10-03 作者令②取代）；零 Issue；friendseal 封存期按单点 strip 派生）"
+      expected,
+      "Nebula 面向 LLM 的工具清单必须逐项等于「RootOrchestrationTools ∩ 已注册」的实收面（friendseal 封存期按单点 strip 派生；静态集与注册表的现存差异显式登记见上——属机制面既有缺口，非本断言放宽）"
     )
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
@@ -141,23 +170,29 @@ class AgentConvergenceSpec extends FunSuite:
       "分发器固定工具集（agentflow 批 2026-10-02：−Mail +AskUserQuestion，件数 9→9 中本 spawn 形态不含 projectBoardSession ⇒ 8 件）：不给 Write/Edit；TaskBoard 由 projectBoardSession 单独挂载（本形态未置位故不在场）"
     )
 
-  test("NodeMessage 仅分发器（20260905 机制批裁定⑥）：Nebula/general 交付面均不含"):
+  test("NodeMessage 仅分发器（20260905 机制批裁定⑥）：Nebula/节点执行面均不含"):
     assert(!CoreProbe.toolList(mkDef("Nebula")).toSet.contains("NodeMessage"), "NodeMessage 已删净退役（Nebula 面不加）")
     assert(
-      !CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("NodeMessage"),
+      !CoreProbe.toolList(mkDef(executorName), isFlowNode = true).toSet.contains("NodeMessage"),
       "NodeMessage 已删净退役（节点面不加）"
     )
     // R2 细则：节点会话**零 Mail 入口**（工具面结构性摘除）
-    assert(!CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("Mail"), "节点面零 Mail（R2 细则）")
+    assert(!CoreProbe.toolList(mkDef(executorName), isFlowNode = true).toSet.contains("Mail"), "节点面零 Mail（R2 细则）")
 
-  // ===== general 固定 7 件（2026-09-08 恢复 AskUser；2026-09-10 摘 Pop）=====
+  // ===== 执行 agent 固定 9 件（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）=====
 
-  test("general LLM tool list == 7 件（isFlowNode 节点形态；2026-09-10 作者裁定摘 Pop）"):
-    val delivered = CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet
+  test("执行 agent LLM tool list == NebflowFixedTools 9 件（isFlowNode 节点形态；2026-09-08 恢复 AskUser；2026-09-10 摘 Pop；builtin-merge 批 +Subagent+Workflow）"):
+    // P1-3 归因修正（2026-10-03）：原断言用手搓 "general" 名造节点身份——该名已
+    // 非内置名（builtin-merge 批收敛名集 = {Nebula, project-dispatcher, nebflow,
+    // subagent}），落 legacyFixedTools catch-all ⇒ 实测 6 件 BaseTools 全族假红。
+    // 生产路径按 BuiltinAgents.ExecutorName 落名（NodeEditTool createNode），判据
+    // 源对齐执行名 = 修根因不是放宽断言。9 件 = BaseTools 6 + AskUserQuestion
+    // （2026-09-08 恢复）+ Subagent + Workflow（builtin-merge 批机制面）。
+    val delivered = CoreProbe.toolList(mkDef(executorName), isFlowNode = true).toSet
     assertEquals(
       delivered,
-      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion"),
-      "通用模版固定 7 件（§C.5 顺序语义 + 2026-09-08 作者修订恢复 AskUser + 2026-09-10 裁定 Pop 收归 Nebula 专属，非配置）"
+      AgentCore.NebflowFixedTools.filter(ToolRegistry.TOOL_MAP.contains),
+      "执行 agent 交付面 = NebflowFixedTools 注册表实收（BaseTools 六件 + AskUserQuestion + Subagent + Workflow）"
     )
 
   // ===== ToolRegistry 面变化 =====
@@ -168,30 +203,41 @@ class AgentConvergenceSpec extends FunSuite:
     assert(!ToolRegistry.ALL_TOOLS.exists(_.name == "MultiEdit"))
     // 类保留：Edit 共享编辑内核仍在（EditToolSpec/MultiEditToolSpec 编译即证）
 
-  test("MemoryNote is registered; non-Nebula agents never see it even when declared — dream admitted (2026-09-05)"):
-    assert(ToolRegistry.TOOL_MAP.contains("MemoryNote"), "MemoryNote 进注册表（Nebula 注入源）")
+  test("MemoryNote / TaskList 已注销（govmemory 批 2026-09-25 裁定）——一切身份声明不授能；dream 的 MemoryNote 豁免保留在剥离函数但无执行面"):
+    // P1-3 归因修正（2026-10-03）：本条**基线既有红**（两树同红，根因 = 原断言
+    // 「MemoryNote 进注册表」违反 govmemory 批 2026-09-25 裁定「MemoryNote registration
+    // retired」——该裁定属任务书明示的对齐基准，按「断言过时对齐现实」对齐，
+    // **不是**恢复注册）。当前注册表实收 = MemoryNote/TaskList 均缺席（registry
+    // `TOOL_MAP` 无键——注销是刻意的：旧名注册回来会让 RetiredToolGuides 迁移指引
+    // 永不触发且重开第二写入通道）。
+    assert(!ToolRegistry.TOOL_MAP.contains("MemoryNote"), "MemoryNote 已注销（govmemory 批裁定）")
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "TaskList 已注销（同批，现体 = Task/TaskInfo）")
     // 阴性断言（2026-09-17 更名批）：旧名必须已从注册表彻底消失（无残留注册键 = 更名零悬挂）。
     // 旧名字面按片段拼接：让本批验收①的 tracked 面字面判据（tracked 树内 grep 旧名 = 0 行）成立，
     // 断言语义不受影响（判的是注册表键集，不是源码文本）。
     val legacyMemoryTool = "Memory" + "Edit"
     assert(!ToolRegistry.TOOL_MAP.contains(legacyMemoryTool), "旧名记忆工具必须已从注册表消失（更名零残留键）")
-    val sneakyStandalone = CoreProbe.allowed(mkDef("memo", List("MemoryNote")))
-    assert(!sneakyStandalone.contains("MemoryNote"), "standalone 声明无效（RootExclusiveTools；dream 除外）")
-    val sneakyWildcard = CoreProbe.allowed(mkDef("omni", List("*")))
-    assert(!sneakyWildcard.contains("MemoryNote"), "wildcard 也不给（记忆写面=Nebula+dream，其余身份零变化）")
-    val generalDef = CoreProbe.allowed(mkDef("general", List("MemoryNote")))
-    assert(!generalDef.contains("MemoryNote"), "其他身份（general）仍无 MemoryNote 授能——剥离语义不变")
+    // 未注册名 ⇒ 声明（含 wildcard）对任何身份都不授能（allowedSet 里可能有惰性
+    // 字符串，但 buildToolList 按注册表过滤 ⇒ LLM 面永远缺席——「未注册名自然缺席」
+    // 即本 spec 判据面的定义）。
+    assert(!CoreProbe.toolList(mkDef("memo", List("MemoryNote"))).contains("MemoryNote"), "standalone 声明无效（未注册名不进 LLM 面）")
+    assert(!CoreProbe.toolList(mkDef("omni", List("*"))).contains("MemoryNote"), "wildcard 也不给（记忆写面=Nebula+dream 的静态面语义随注销仅存于剥离函数）")
+    assert(!CoreProbe.toolList(mkDef("dream", List("*"))).contains("MemoryNote"), "dream wildcard 同样缺席（豁免只放授能面，注册表墙先于豁免生效）")
+    val executorDef = CoreProbe.allowed(mkDef(executorName, List("MemoryNote")))
+    assert(!executorDef.contains("MemoryNote"), "执行 agent 身份同样无 MemoryNote 授能——剥离语义不变")
 
-  test("dream MemoryNote 准入（2026-09-05 作者签准）：声明即授能，其余 Nebula 专属仍被剥"):
-    val declared = CoreProbe.allowed(mkDef("dream", List("MemoryNote")))
-    assert(declared.contains("MemoryNote"), "dream 声明 MemoryNote → 授能（exclusiveToolsFor 豁免剥离）")
-    val wildcard = CoreProbe.allowed(mkDef("dream", List("*")))
-    assert(wildcard.contains("MemoryNote"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
-    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends 对 dream 不得放开
+  test("dream MemoryNote 豁免保留在 exclusiveToolsFor（无执行面），其余 Nebula 专属仍被剥"):
+    // P1-3 归因修正（2026-10-03）：本条**基线既有红**（两树同红，根因 = 原断言
+    // 「dream wildcard 授能 MemoryNote」建立在「MemoryNote 已注册」前提上——该前提
+    // 被 govmemory 批裁定移除）。现钉：豁免机制本身保留在剥离函数（DreamAdmittedTools
+    // 条目——工具退役后仅存授能/剥离语义，无执行面），Nebula 专属其余件对 dream
+    // 仍全集剥离；「MemoryNote 授能」现表现为 allowedSet 惰性字符串（不注册 ⇒
+    // LLM 面/执行面双缺席，上一用例已钉），不为测绿而宣称有执行面。
+    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends/Subagent/Workflow 对 dream 不得放开
     assertEquals(
       AgentCore.RootExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends"),
-      "dream 豁免面 = 仅 MemoryNote（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends——TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）"
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "Workflow"),
+      "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent/Workflow 防声明逃逸条目同样剥离；TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）"
     )
     val sneakyDream =
       CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard")))
@@ -204,8 +250,8 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
     assertEquals(
       AgentCore.exclusiveToolsFor("dream"),
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends"),
-      "dream 剥八件（NodeReport 泛化批后六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends）"
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "Workflow"),
+      "dream 剥十件（原八件 + builtin-merge 批防声明逃逸的 Subagent/Workflow——执行 agent 单点授能，dream 不在授权面）"
     )
     // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
     // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内
@@ -214,7 +260,15 @@ class AgentConvergenceSpec extends FunSuite:
       !CoreProbe.allowed(mkDef("dream", List("Pop"))).contains("Pop"),
       "dream 声明 Pop 无效（非 DreamAdmittedTools；Pop 仅 Nebula）"
     )
-    assertEquals(AgentCore.exclusiveToolsFor("general"), AgentCore.RootExclusiveTools, "其余身份剥全集")
+    // 执行 agent 的机制面豁免（builtin-merge 批 2026-10-03）：Subagent/Workflow
+    // 是 NebflowFixedTools 单点授能 ⇒ exclusiveToolsFor("nebflow") 剥全集 −
+    // {Subagent, Workflow}；其余身份（含通用自定义名）仍剥全集。
+    assertEquals(
+      AgentCore.exclusiveToolsFor(executorName),
+      AgentCore.RootExclusiveTools -- Set("Subagent", "Workflow"),
+      "执行 agent 剥全集 − {Subagent, Workflow}（机制面单点授能）"
+    )
+    assertEquals(AgentCore.exclusiveToolsFor("some-custom"), AgentCore.RootExclusiveTools, "其余身份剥全集")
 
   // ===== §C.5：Glob/Grep 缺省根 = node root =====
 

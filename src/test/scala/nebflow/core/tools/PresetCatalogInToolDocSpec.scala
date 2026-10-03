@@ -67,11 +67,15 @@ class PresetCatalogInToolDocSpec extends FunSuite:
   // 调用重选。本用例是该退役的反向钉死（旧正向断言在此即红）。
   // 2026-09-14 工具面 `device` 摘除批（作者裁定 U1/U2）：`device` 亦随 schema 摘除
   // ⇒ 期望键集由 {task, description, device} 收紧为 {task, description}。
+  // 2026-10-03 对齐（P1-3 归因修正）：`description` 键亦已退役（agentFlowLabel
+  // 批），`project` 键在场 ⇒ 键集 = {task, project}。判据 = 现读 `DelegateTool.inputSchema`
+  // 的 properties 键集，断言随实现现状对齐（非产品缺陷——preset/description 两条退役
+  // 各自的墓碑断言仍由上方反向钉与 DelegateToolSpec 覆盖）。
   test("Delegate inputSchema has NO preset parameter any more (per-call model override retired)"):
     val schema = DelegateTool.inputSchema
     val props = schema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
     assert(!props.contains("preset"), s"preset must be gone from Delegate schema, got: $props")
-    assertEquals(props, Set("task", "description"))
+    assertEquals(props, Set("task", "project"))
 
   test("SubTask inputSchema embeds live catalog from the store"):
     val doc = presetParamDoc(SubTaskTool.inputSchema)

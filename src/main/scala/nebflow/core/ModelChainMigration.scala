@@ -18,8 +18,9 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  *     unreadable reference (seed-chain semantics).
  *   - project-dispatcher: the `preset` key is removed (the agent becomes a
  *     follower of Nebula's chain).
- *   - kernel / general: stale `preset` keys are removed (the engine ignored
- *     them).
+ *   - the executor agent (`nebflow`, and the retired `kernel` / `general`
+ *     spellings still present on an existing home): stale `preset` keys are
+ *     removed (the engine ignored them).
  *   - The preset catalog file `model-presets.json` is sealed in place:
  *     renamed with a timestamp suffix so the data survives for audit, and a
  *     second boot finds nothing at the original path.
@@ -32,7 +33,15 @@ object ModelChainMigration:
 
   private val NebulaRef = "Nebula"
   private val DefaultPresetRef = "LowCost"
-  private val RoleAgents = List("Nebula", "project-dispatcher", "kernel", "general")
+  /** Role agents whose stored `preset` references the one-time migration cleans
+    * up. P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
+    * batch merged `kernel` + `general` into [[nebflow.core.entity.BuiltinAgents.ExecutorName]],
+    * and the retired spellings here are the OLD-DATA face — an existing home still
+    * carries their sidecars and still needs the same stale-key cleanup, so they are
+    * derived from the single rename table rather than re-spelled as literals. */
+  private val RoleAgents: List[String] =
+    List(NebulaRef, "project-dispatcher", nebflow.core.entity.BuiltinAgents.ExecutorName)
+      ++ nebflow.core.entity.BuiltinAgents.RetiredNames.keys
 
   /** Nebula's default chain — the shipped default chain, verbatim. Used when
     * Nebula's catalog reference cannot be resolved from the catalog file. */

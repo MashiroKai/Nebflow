@@ -714,8 +714,9 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     yield
       assert(created.isRight, s"E2E create must succeed, got: $created")
       val n = snap.nodes.values.find(_.name == "E2E-主节点").getOrElse(fail("node missing"))
-      // 执行统一 general + 配置面
-      assertEquals(n.agent, "general", "new node agent must be pinned to general")
+      // 执行统一内置执行 agent（builtin-merge 批 2026-10-03 收敛：旧名 general
+      // 已由 BuiltinAgents.ExecutorName 常量取代——本断言由字面量对齐常量，语义不变）
+      assertEquals(n.agent, nebflow.core.entity.BuiltinAgents.ExecutorName, "new node agent must be pinned to the built-in executor")
       assertEquals(n.plugins, List("slim-e2e"), "approved plugin must be allocated")
       // panelscheme 批（2026-09-21）：preset 参数退役——新建节点不再携带节点级方案
       assertEquals(n.preset, None, "retired preset param must leave new nodes preset-free")

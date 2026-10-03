@@ -70,7 +70,15 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
    * `gate` = 观察窗（先例 `WaitTimeoutAskUserWiringSpec` 的 secondGate）：未放行时
    * turn 停在第二轮 LLM 调用上 ⇒「非阻塞不标 WaitingForUser」可在**确定的时间窗内**
    * 读数（否则 turn 秒完，turn-end 兜底会把状态刷回 Idle，读数变空转）。
+   *
+   * 节点实际执行的 agent 名（P1-3 归因修正 2026-10-03）：旧断言用手搓
+   * `AgentDef("general")` / `("kernel")` 造身份，两名都不在 `BuiltinAgents.Names`
+   * ⇒ 落 `legacyFixedTools` catch-all，实测报 `AskUserQuestion 不在该会话工具面内`
+   * ⇒ 该 spec 全族假红。生产路径按 `BuiltinAgents.ExecutorName` 落名
+   * （NodeEditTool createNode）⇒ 对齐名集即修根因，不是放宽断言。
    */
+  private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
+
   private class ScriptedAskLlm(
     requests: Ref[IO, List[LlmRequest]],
     askInput: JsonObject,
@@ -384,10 +392,10 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   // 2. 任意身份全量非阻塞（裁① 的落地面）：节点会话不再被拒
   // ============================================================
 
-  test("全量非阻塞（真实 actor）: general 节点 depth=1 照常提问 ⇒ 零拒绝 + 占槽位 + 无 WaitingForUser + turn 未挂起") {
+  test("全量非阻塞（真实 actor）: 执行 agent（nebflow）节点 depth=1 照常提问 ⇒ 零拒绝 + 占槽位 + 无 WaitingForUser + turn 未挂起") {
     val f = setup(
       "node-nonblock",
-      AgentDef(name = "general", description = "", tools = Nil),
+      AgentDef(name = executorName, description = "", tools = Nil),
       depth = 1,
       sid = "dualmode-node",
       askInput = askInputNonBlocking
@@ -419,23 +427,23 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
     yield ()).unsafeRunSync()
   }
 
-  test("全量非阻塞（真实 actor）: kernel depth=1 同上（内核会话不再被拒）") {
+  test("全量非阻塞（真实 actor）: 执行 agent 的 plain depth=1 形态同上（非 flowNodeSession 会话不再被拒）") {
     val f = setup(
-      "kernel-nonblock",
-      AgentDef(name = "kernel", description = "", tools = Nil),
+      "executor-nonblock",
+      AgentDef(name = executorName, description = "", tools = Nil),
       depth = 1,
-      sid = "dualmode-kernel",
+      sid = "dualmode-executor",
       askInput = askInputNonBlocking
     )
     (for
-      _ <- waitFor(f.requests, _.size >= 2, "内核会话的 turn 未继续")
+      _ <- waitFor(f.requests, _.size >= 2, "执行 agent 会话的 turn 未继续")
       reqs <- f.requests.get
       toolResults <- IO(lastToolResults(reqs))
       _ = assert(
         toolResults.exists(_.contains("non-blocking:")),
-        s"内核身份未拿到非阻塞 ack（裁① 未覆盖内核）：$toolResults"
+        s"执行 agent 身份未拿到非阻塞 ack（裁① 未覆盖）：$toolResults"
       )
-      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "内核会话的卡未占槽位")
+      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "执行 agent 会话的卡未占槽位")
       _ = assertEquals(pend.size, 1)
       _ <- f.cleanup
     yield ()).unsafeRunSync()
@@ -521,7 +529,7 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   test("无等待态（真实 actor）: 非阻塞派发后 map 不出现 WaitingForUser，且第二轮 LLM 调用照常发生") {
     val f = setup(
       "node-blocking",
-      AgentDef(name = "general", description = "", tools = Nil),
+      AgentDef(name = executorName, description = "", tools = Nil),
       depth = 1,
       sid = "dualmode-blocking",
       askInput = askInputBlocking
@@ -563,7 +571,7 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
     )
     val nodeFx = setup(
       "reqface-node",
-      AgentDef(name = "general", description = "", tools = Nil),
+      AgentDef(name = executorName, description = "", tools = Nil),
       1,
       "reqface-node",
       askInputBlocking

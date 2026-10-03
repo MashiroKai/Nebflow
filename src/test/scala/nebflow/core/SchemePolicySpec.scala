@@ -4,10 +4,18 @@ import munit.FunSuite
 import nebflow.shared.AgentModelConfig
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 
-/** SchemePolicy v2 — four-role model-chain resolution:
+/** SchemePolicy v2 — role-based model-chain resolution:
   * own chain (settable roles) > Nebula primary chain (everyone else, fresh
-  * read) > seed chain (Nebula unconfigured). */
+  * read) > seed chain (Nebula unconfigured).
+  *
+  * P1-2 对齐（2026-10-03）：builtin-merge 批把 `kernel`+`general` 合并为执行
+  * agent（BuiltinAgents.ExecutorName）⇒ SettableAgents 收敛为三元组；旧名经
+  * `resolveRetired` 单点表继续可解析（旧数据 sidecar 语义不变），本 spec 的
+  * 夹具按「现名 + 退役名仍可解析」双层断言重写。 */
 class SchemePolicySpec extends FunSuite:
+
+  /** 执行 agent 名（builtin-merge 批收敛单点）。 */
+  private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   private val lowCost = AgentModelConfig(
     preferred = Some("zhipu/GLM-5.3-Flash"),
@@ -41,8 +49,14 @@ class SchemePolicySpec extends FunSuite:
 
   // ── write gate ────────────────────────────────────────────
 
-  test("SettableAgents is exactly the four roles") {
-    assertEquals(SchemePolicy.SettableAgents, Set("Nebula", "project-dispatcher", "kernel", "general"))
+  test("SettableAgents is exactly the three current roles; the retired spellings stay resolvable") {
+    assertEquals(SchemePolicy.SettableAgents, Set("Nebula", "project-dispatcher", executorName))
+    // P0-1/P1-2 old-data face: a stored retired-name sidecar keeps the pre-merge
+    // settability (resolveRetired single-point table) — the convergence does NOT
+    // silently move those chains onto the Nebula primary chain.
+    assert(SchemePolicy.isSettable("kernel"), "retired name kernel keeps settability via the rename table")
+    assert(SchemePolicy.isSettable("general"), "retired name general keeps settability via the rename table")
+    assert(!SchemePolicy.isSettable("some-custom"), "custom names are not settable")
   }
 
   // ── level 1: own chain (settable roles) ──────────────────
@@ -59,7 +73,7 @@ class SchemePolicySpec extends FunSuite:
   test("each follower role with an own chain resolves to it (fork)") {
     withRoot("fork") { root =>
       writeNebula(root, Some(lowCost))
-      for name <- List("kernel", "project-dispatcher", "general") do
+      for name <- List(executorName, "project-dispatcher") do
         val (chain, from) = SchemePolicy.resolveModel(name, Some(other))
         assertEquals(chain, other, s"$name own chain must win")
         assertEquals(from, SchemePolicy.OwnChainSource, s"$name resolvedFrom")
@@ -69,7 +83,7 @@ class SchemePolicySpec extends FunSuite:
   test("an empty own chain is treated as absent (follow)") {
     withRoot("empty-own") { root =>
       writeNebula(root, Some(lowCost))
-      val (chain, from) = SchemePolicy.resolveModel("kernel", Some(AgentModelConfig.empty))
+      val (chain, from) = SchemePolicy.resolveModel(executorName, Some(AgentModelConfig.empty))
       assertEquals(chain, lowCost)
       assertEquals(from, SchemePolicy.NebulaChainSource)
     }
@@ -80,7 +94,7 @@ class SchemePolicySpec extends FunSuite:
   test("followers without an own chain inherit Nebula's chain (nebula-chain)") {
     withRoot("follow") { root =>
       writeNebula(root, Some(lowCost))
-      for name <- List("kernel", "project-dispatcher", "general", "custom-agent") do
+      for name <- List(executorName, "project-dispatcher", "custom-agent") do
         val (chain, from) = SchemePolicy.resolveModel(name, None)
         assertEquals(chain, lowCost, s"$name must follow Nebula")
         assertEquals(from, SchemePolicy.NebulaChainSource, s"$name resolvedFrom")
@@ -102,10 +116,10 @@ class SchemePolicySpec extends FunSuite:
   test("followers re-read Nebula's chain on every call (live follow)") {
     withRoot("live-follow") { root =>
       writeNebula(root, Some(lowCost))
-      assertEquals(SchemePolicy.resolveModel("kernel", None)._1, lowCost)
+      assertEquals(SchemePolicy.resolveModel(executorName, None)._1, lowCost)
       os.write.over(root / "agents" / "Nebula" / "agent.json",
         """{"name":"Nebula","model":{"preferred":"kimi/kimi-k3","fallbacks":[]}}""")
-      val (chain, from) = SchemePolicy.resolveModel("kernel", None)
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
       assertEquals(chain.preferred, Some("kimi/kimi-k3"))
       assertEquals(from, SchemePolicy.NebulaChainSource)
     }
@@ -134,7 +148,7 @@ class SchemePolicySpec extends FunSuite:
   test("missing Nebula agent.json: followers fall to the seed chain (fail-safe)") {
     withRoot("seed-no-root") { root =>
       os.write.over(root / "nebflow.json", providersJson("Z" -> "m2"))
-      val (chain, from) = SchemePolicy.resolveModel("kernel", None)
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
       assertEquals(chain, AgentModelConfig(Some("Z/m2"), Nil))
       assertEquals(from, SchemePolicy.SeedSource)
     }
@@ -142,7 +156,7 @@ class SchemePolicySpec extends FunSuite:
 
   test("unconfigured install resolves to an empty chain (registry all-candidates path)") {
     withRoot("seed-empty") { root =>
-      val (chain, from) = SchemePolicy.resolveModel("general", None)
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
       assertEquals(chain, AgentModelConfig.empty)
       assertEquals(from, SchemePolicy.SeedSource)
     }
@@ -152,7 +166,7 @@ class SchemePolicySpec extends FunSuite:
     withRoot("seed-corrupt") { root =>
       writeAgent(root, "Nebula", "{not json")
       os.write.over(root / "nebflow.json", providersJson("Z" -> "m2"))
-      val (chain, from) = SchemePolicy.resolveModel("kernel", None)
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
       assertEquals(chain, AgentModelConfig(Some("Z/m2"), Nil))
       assertEquals(from, SchemePolicy.SeedSource)
     }

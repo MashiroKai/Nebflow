@@ -151,10 +151,18 @@ class MailModelRetiredSpec extends FunSuite:
       List("message"),
       "required must stay exactly [message]"
     )
-    // the address face must declare the kernel forms (model-visible)
+    // the address face must declare the delegate continuation form (model-visible).
+    // P1-1 对齐（2026-10-03，任务书 P1-1）：unified-delegate 批把 `kernel` 起实例腿
+    // 退役——address 面现宣传 **delegate** 续聊语义（`delegate:<id>`，裸 `kernel`
+    // 是墓碑），旧断言钉的 `kernel`/`kernel:<id>` 两形态已与 `MailTool.scala` 的
+    // 墓碑自相矛盾。本批按裁定把断言对齐 delegate 语义（保留「地址面必须声明续聊
+    // 形态」的强度，不是删断言）。
     val addr = propDesc(MailTool.inputSchema, "address")
-    assert(addr.contains("kernel"), s"the address description must name the kernel leg: $addr")
-    assert(addr.contains("kernel:<id>"), s"the address description must name the continuation form: $addr")
+    assert(addr.contains("delegate:<id>"), s"the address description must name the delegate continuation form: $addr")
+    assert(
+      !addr.contains("\"kernel\"") && !addr.contains("\"kernel:<id>\""),
+      s"the address description must NOT advertise the retired kernel forms (delegate is the trigger): $addr"
+    )
 
   test("① device tombstone: a stale `device=` call refuses with MAIL_DEVICE_RETIRED before everything (even before the required-parameter gates)"):
     // with NO message and NO address: the tombstone still wins (it is read first)

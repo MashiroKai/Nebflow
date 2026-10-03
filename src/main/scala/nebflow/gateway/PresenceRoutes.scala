@@ -558,7 +558,7 @@ private[gateway] object PresenceRoutes:
         }
 
       // PUT /agents/:name/model — write the agent's own model chain (the /model
-      // write face; gate = SchemePolicy.SettableAgents, the four roles). Body:
+      // write face; gate = SchemePolicy.SettableAgents). Body:
       // {"model": {"preferred": "...", "fallbacks": ["...", ...]}} sets an own
       // chain (Nebula = the primary chain, a follower write = a fork); null
       // model or an empty chain returns the agent to the follow state (the
@@ -571,8 +571,9 @@ private[gateway] object PresenceRoutes:
             BadRequest(
               Json.obj(
                 "error" ->
-                  (s"Agent '$agentName' does not accept a model chain: only Nebula, project-dispatcher, " +
-                    "kernel and general are settable. Other agents follow the Nebula primary chain.").asJson
+                  (s"Agent '$agentName' does not accept a model chain: only "
+                    + nebflow.core.SchemePolicy.SettableAgents.toList.sorted.mkString(", ")
+                    + " are settable. Other agents follow the Nebula primary chain.").asJson
               )
             )
           else

@@ -4,7 +4,8 @@ import munit.FunSuite
 
 /**
  * node-output contract · 定义面钉子（2026-09-24 立面；govmemory 批 2026-09-25 随
- * seed 对齐改写判据；builtin-def 批 2026-10-03 随 agent 定义上收代码再改判据源）。
+ * seed 对齐改写判据；builtin-def 批 2026-10-03 随 agent 定义上收代码再改判据源；
+ * P0-1 批 2026-10-03 判据源名对齐）。
  *
  * govmemory 批按方案 §1.1/§1.2 把运行面纪律逐段并入 general 的 system prompt
  * （运行面 dual-track 交付体例取代原单轨段）。该 prompt 的**唯一权威源**现为
@@ -17,21 +18,31 @@ import munit.FunSuite
  *  ④ 代码级 prompt **零 HTML 注释**（种子面的「批源注记」形态随种子退役——注释不
  *     进模型上下文，代码定义从结构上就不携带它）。
  *
+ * P0-1 批（2026-10-03）**判据源名对齐**：builtin-merge 批把节点执行名从 `general`
+ * 改为 `BuiltinAgents.ExecutorName`（= `nebflow`），节点会话实收的提示词因此是本
+ * `entry(ExecutorName)` 条目；本 spec 原钉 `entry("general")`，在 f646eeeaa 形态上
+ * 恒 `None`（`general` 已非 builtin）⇒ 3/3 假红。契约文本本身**未削弱**：本批把
+ * 该契约原样回填进执行 agent 的代码提示词（`BuiltinAgents.NebflowPrompt`），判据源
+ * 随之改为「节点实际执行的 agent」，而不是放宽断言。
+ *
  * 面性质：本文件只读 `BuiltinAgents` 的代码定义，不写盘、不碰 `PathUtil.dataRoot`。
  * 引擎贡献面（`NodeEngine.ProtocolFootnote` 与 `PromptSections.NodeSessionAlwaysOnSection`）
  * 不在本 spec 判定内。
  */
 class NodeSeedOutputContractSpec extends FunSuite:
 
+  /** 节点实际执行的 agent 名（建位落名 + spawn 读名的同一单点）。 */
+  private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
+
   private def promptText: String =
-    nebflow.core.entity.BuiltinAgents.entry("general")
+    nebflow.core.entity.BuiltinAgents.entry(executorName)
       .map(_.systemPrompt)
-      .getOrElse(fail("BuiltinAgents must carry a code-defined 'general' entry"))
+      .getOrElse(fail(s"BuiltinAgents must carry a code-defined '$executorName' entry"))
 
   private def contentLines: List[String] =
     promptText.split("\n", -1).toList.filterNot(_.trim.startsWith("<!--"))
 
-  test("general 代码级 prompt 首内容行 = dual-track 交付体例（末条输出 = 自身交付物；双轨强制）"):
+  test("执行 agent 代码级 prompt 首内容行 = dual-track 交付体例（末条输出 = 自身交付物；双轨强制）"):
     val firstContent = contentLines.dropWhile(_.trim.isEmpty).headOption.getOrElse(
       fail("prompt has no content lines")
     )
@@ -46,7 +57,7 @@ class NodeSeedOutputContractSpec extends FunSuite:
     assertEquals(contentLines.count(_.contains("Deliver in two parts")), 1,
       "dual-track 体例只在首内容行承载（零重复）")
 
-  test("general 代码级 prompt 输出契约语义在正文 + node_report 义务在位"):
+  test("执行 agent 代码级 prompt 输出契约语义在正文 + node_report 义务在位"):
     val text = promptText
     // node_report 申报义务 + 未申报不终态（既有机制句不得删）
     assert(text.contains("Report before you finish"), "node_report 段头在位")
@@ -57,7 +68,7 @@ class NodeSeedOutputContractSpec extends FunSuite:
     assert(text.contains("Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion"),
       "节点工具面行在位")
 
-  test("general 代码级 prompt 零 HTML 注释（种子批源注记形态随种子退役；注释不进模型上下文）"):
+  test("执行 agent 代码级 prompt 零 HTML 注释（种子批源注记形态随种子退役；注释不进模型上下文）"):
     // builtin-def 批：prompt = 代码定义，从结构上不携带种子面的 HTML 批源注记。
     // 若有人把注记形态带进代码定义，本条即红（注释行剥离判据的形态前提随之作废）。
     val commented = promptText.split("\n", -1).toList.filter(_.contains("<!--"))

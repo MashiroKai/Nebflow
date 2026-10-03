@@ -20,7 +20,10 @@ class AgentDefSpec extends CatsEffectSuite:
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    for name <- List("Nebula", "project-dispatcher", "general", "kernel") do
+    // P1-3 归因修正（2026-10-03）：名集判据源 = BuiltinAgents.Names 单点（builtin-merge
+    // 批把它收敛为 {Nebula, project-dispatcher, nebflow, subagent}）——旧断言把四名
+    // （含已退役的 general/kernel）写死，属断言过时；此处按现状对齐，静态字面不再复述。
+    for name <- nebflow.core.entity.BuiltinAgents.Names do
       assert(result.contains(name), s"builtin '$name' must always exist (code-defined)")
       assert(result(name).systemPrompt.nonEmpty, s"builtin '$name' carries the code system prompt")
     // The code def declares no tools: builtins are converged agent names,
@@ -119,7 +122,7 @@ class AgentDefSpec extends CatsEffectSuite:
     assert(result.contains("AgentA"))
     assert(result.contains("AgentB"))
     assert(result.contains("AgentC"))
-    for name <- List("Nebula", "project-dispatcher", "general", "kernel") do
+    for name <- nebflow.core.entity.BuiltinAgents.Names do
       assert(result.contains(name), s"builtin '$name' must coexist with custom agents")
 
 end AgentDefSpec

@@ -89,12 +89,20 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   // ① 纯路由（路由表逐行）
   // ============================================================
 
-  /** 注册表候选集（`sessionId -> rootSessionId`）——覆盖 4 个族前缀 + 两个 root + 非族会话。 */
+  /** 注册表候选集（`sessionId -> rootSessionId`）——覆盖全部族前缀 + 两个 root + 非族会话。
+    *
+    * P1-3 归因修正批（2026-10-03）：`subagent-` / `workflow-` 两族补入候选集——
+    * builtin-merge 批新增的 `SubagentTool` / `WorkflowTool` 阻塞桥会话即用这两个
+    * 前缀，前端 `utils.js#isBgAgentId` 早已收录，后端本表此前漏收（真产品缺陷，
+    * 同批补齐）。夹具不覆盖这两族时，`targets` 的路由表 pin 会漏掉它们。
+    */
   private val candidates: List[(String, String)] = List(
     "root-1" -> "root-1", // 发射者自身：永不入选
     "delegate-A" -> "root-1", // 命中（delegate- 族）
     "node-B" -> "root-1", // 命中（node- 族）
     "subtask-D" -> "root-1", // 命中（subtask- 族）
+    "subagent-G" -> "root-1", // 命中（subagent- 族，builtin-merge 批新增）
+    "workflow-H" -> "root-1", // 命中（workflow- 族，builtin-merge 批新增）
     "dispatcher-E" -> "root-1", // 命中（dispatcher- 族）
     "delegate-C" -> "root-2", // 反例：别的 root 的子代理 ⇒ 不入选
     "node-F" -> "", // 反例：无 root 归属 ⇒ 不入选
@@ -102,16 +110,17 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     "team-abc" -> "root-1" // 反例：team- 不在前端 isBgAgentId 内
   )
 
-  private val hitSet = List("delegate-A", "dispatcher-E", "node-B", "subtask-D")
+  private val hitSet =
+    List("delegate-A", "dispatcher-E", "node-B", "subtask-D", "subagent-G", "workflow-H")
 
   test("① -1 白名单族（mail / mail-queue）逐族命中：目标集 = parent 链 π 子代理族前缀，去重且稳定") {
-    assertEquals(InjectedInboxMirror.targets("root-1", "mail", candidates), gated(hitSet, Nil))
-    assertEquals(InjectedInboxMirror.targets("root-1", "mail-queue", candidates), gated(hitSet, Nil))
+    assertEquals(InjectedInboxMirror.targets("root-1", "mail", candidates), gated(hitSet.sorted, Nil))
+    assertEquals(InjectedInboxMirror.targets("root-1", "mail-queue", candidates), gated(hitSet.sorted, Nil))
     // 白名单 pin（唯一来源；改集合 ⇒ 必须同步批报告路由表）
     assertEquals(InjectedInboxMirror.MirrorSources, Set("mail", "mail-queue"))
     assertEquals(
       InjectedInboxMirror.SubAgentIdPrefixes,
-      List("delegate-", "subtask-", "node-", "dispatcher-")
+      List("delegate-", "subtask-", "subagent-", "workflow-", "node-", "dispatcher-")
     )
     // 开关定名 pin（读法 = system property → 环境变量）
     assertEquals(InjectedInboxMirror.SwitchProp, "nebflow.subinbox.mirror")

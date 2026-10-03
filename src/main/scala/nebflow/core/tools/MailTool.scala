@@ -511,7 +511,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Role-scoped address. Nebula (root): \"project:<name>\" (a bare mounted project name is equivalent), \"kernel\" (start a Kernel instance — the Delegate inner-core sub-agent), or \"kernel:<id>\" (continue THAT live instance; the start receipt carries its id) — the kernel leg is Nebula-exclusive. Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". An address outside your face is an explicit error.".asJson
+          "description" -> "Role-scoped address. Nebula (root): \"project:<name>\" (a bare mounted project name is equivalent); \"delegate:<id>\" continues THAT live Delegate instance (the Delegate receipt carries its id) — starting one is Delegate's job, never Mail's. Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". An address outside your face is an explicit error.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
