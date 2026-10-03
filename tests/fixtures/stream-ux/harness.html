@@ -173,10 +173,10 @@
 
     window.__reset = async () => { chatEl.innerHTML = ''; await raf2(); };
 
-    // E6 shape (§二.1.1 boundary default): a turn whose ONLY process is thinking
-    // produces no `.turn-header`. The work-line must still not outlive the turn
-    // (no top-level stray), so it rolls to its own completed badge and is then
-    // handed back — the assertion lives in tests/stream-ux.spec.mjs.
+    // E6 shape (stream-ux redesign 2026-10-03): a turn whose ONLY process is
+    // thinking — the feed ran on the line (pre-tucked bubble), so the line
+    // settles into its OWN `.turn-header` (思考 stats); the assertion lives in
+    // tests/stream-ux.spec.mjs.
     window.__thinkingOnlyTurn = async () => {
       chatMod.renderUserBubble('只想不答的一轮', [], Date.now());
       chatMod.appendThinkingDelta('整轮只有思考，没有工具、没有回复文字。');

@@ -68,14 +68,14 @@
 import { t } from './i18n.js';
 import { formatDuration, chevronSvg } from './chat.js';
 import { isNearBottom } from './utils.js';
-// stream-ux §二.1.4: the running turn's single-line work-line is TRANSIENT
-// chrome. At the terminal it hands over to this module's own summary header
-// (which IS the completed badge — 「终态与现状一致」, text and expand face
-// unchanged), or, when this turn produces no header at all (boundary default:
-// nothing tuckable / nothing left visible), it rolls to its own completed badge
-// and stays. The dependency is one-way: workline.js imports i18n only, so this
-// adds no cycle (chat.js → workline.js ← turnGroup.js ← chat.js).
-import { finishWorkline, removeWorkline } from './workline.js';
+// stream-ux redesign (2026-10-03 author demo): the running turn's line and the
+// terminal badge are THE SAME node. At the terminal this module settles the
+// live work-line into the `.turn-header` in place (settleWorklineAsHeader —
+// last item rolls out, stats badge rolls in, row gains the header role); the
+// buildHeader insert below is only the fallback for turns with no live line
+// (history rebuild, popup restores). One-way dependency: workline.js imports
+// i18n + utils only, so this adds no cycle (chat.js → workline.js ← here).
+import { settleWorklineAsHeader, removeWorkline } from './workline.js';
 
 /* ---------- row classification ---------- */
 
@@ -111,7 +111,14 @@ function isTuckableRow(row) {
 
 /* ---------- stats (数字口径从 turn 子列表统计) ---------- */
 
-const FILE_PATH_KEYS = ['file_path', 'path', 'notebook_path'];
+const FILE_PATH_KEYS = ['file_path', 'path', 'notebook_path', 'filePath'];
+
+/** One stat-worthy path value: a non-empty string, or an ARRAY of them (the
+ *  Pop batch face — one `filePath: [a, b, c]` input counts every member). */
+function statPaths(v, out) {
+  if (typeof v === 'string') { if (v.trim()) out.add(v.trim()); }
+  else if (Array.isArray(v)) v.forEach(x => { if (typeof x === 'string' && x.trim()) out.add(x.trim()); });
+}
 
 /** Compute the header stats from the turn's own row list:
  *  tools = `.row.tool` count; files = deduped file paths across tool input
@@ -130,8 +137,7 @@ function computeTurnStats(scope) {
         try {
           const inp = typeof raw === 'string' ? JSON.parse(raw) : raw;
           for (const k of FILE_PATH_KEYS) {
-            const v = inp ? inp[k] : null;
-            if (typeof v === 'string' && v.trim()) files.add(v.trim());
+            statPaths(inp ? inp[k] : null, files);
           }
         } catch { /* malformed input — skip files for this card */ }
       }
@@ -149,21 +155,26 @@ function computeTurnStats(scope) {
   return { tools, files: files.size, thinkingMs };
 }
 
-/** Fill the persistent header text: `✻ 字句 · <model> · 思考 <N>s · 工具
+/** The header's text as one string: `✻ 字句 · <model> · 思考 <N>s · 工具
  *  <M> 次 · 读写 <K> 文件`. The leading ✻ phrase is the v1-designed
  *  cosmology copy (2026-09-06 restoration — 批② had dropped it); segments
  *  with no data are omitted (history turns have no thinking timing; a
  *  text+thinking turn has no tool segment; a turn without a done badge has
  *  no phrase). Written ONCE per terminal — toggling never rewrites it
- *  (数字常驻不闪). */
-function fillHeaderText(textEl, meta, stats) {
+ *  (数字常驻不闪). Both header faces consume this: buildHeader's span and
+ *  the work-line's terminal morph. */
+function headerTextString(meta, stats) {
   const parts = [];
   if (meta.phrase) parts.push(meta.phrase);
   if (meta.model) parts.push(meta.model);
   if (stats.thinkingMs > 0) parts.push(t('chat.turnHeaderThinking', { d: formatDuration(stats.thinkingMs) }));
   if (stats.tools > 0) parts.push(t(stats.tools === 1 ? 'chat.turnSummaryToolsOne' : 'chat.turnSummaryTools', { n: stats.tools }));
   if (stats.files > 0) parts.push(t('chat.turnHeaderFiles', { n: stats.files }));
-  textEl.textContent = parts.join(' · ');
+  return parts.join(' · ');
+}
+
+function fillHeaderText(textEl, meta, stats) {
+  textEl.textContent = headerTextString(meta, stats);
 }
 
 /* ---------- tuck / untuck (instant — the static .nf-tucked class owns the
@@ -302,59 +313,59 @@ function dissolveTurnChrome(chat) {
 /* ---------- terminal paths ---------- */
 
 /**
- * Done path (v2 decompression model): insert the turn's stats header at the
- * turn top and tuck the thinking + tool rows (instant strip — no animation,
- * 2026-09-06). Text rows, card deliverables and injected bubbles stay
- * visible in place.
+ * Done path (stream-ux redesign 2026-10-03): the running line and the terminal
+ * badge are the SAME node. When the turn has a live work-line, it is settled
+ * INTO the `.turn-header` in place (last item rolls out, stats badge rolls in,
+ * row gains the header role + toggle); buildHeader's insert is only the
+ * fallback for turns with no live line (history rebuild, harness direct calls,
+ * popup restores). The thinking + tool rows are pre-tucked by the render path
+ * during the run (chat.js) — tuckRows here is idempotent insurance. Text rows,
+ * card deliverables and injected bubbles stay visible in place.
  *
- * Boundary defaults: no thinking AND no tools → no header, no tuck (E5
- * text-only / lone injection). Nothing visible left after tucking (E6
- * thinking-only) → keep everything flat instead. Failed-chrome heal is
- * handled by turnScope's dissolve path.
+ * Every turn with tuckable process gets the header now — the old E6 exception
+ * ("nothing would remain visible → keep flat") is gone with the redesign: the
+ * process rows are NEVER visible during the run any more, so leaving them flat
+ * at the terminal would contradict the whole-line model. A turn with no
+ * tuckable rows at all (E5: text-only / lone injection) has no line and no
+ * header (removeWorkline). Failed-chrome heal is handled by turnScope's
+ * dissolve path.
  */
 export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const rows = scope.filter(el => el.classList && el.classList.contains('row'));
   const tuckable = rows.filter(isTuckableRow);
-  const hasKept = rows.some(r => !isTuckableRow(r)); // something remains visible
   let header = null;
-  let stats = null;
-  if (tuckable.length > 0 && hasKept) {
-    stats = computeTurnStats(rows);
-    header = buildHeader(chat, scope, meta, stats);
-    header.dataset.turnState = 'done';
-    header.setAttribute('aria-expanded', 'false');
-    bindHeaderToggle(header);
-    tuckRows(tuckable); // instant strip (no animation, 2026-09-06)
+  if (tuckable.length > 0) {
+    const stats = computeTurnStats(rows);
+    const text = headerTextString(meta, stats);
+    // Same-element settle first (「过程全部展示在这一行」): the live line rolls
+    // its last item out and the stats badge in, then becomes the header.
+    header = settleWorklineAsHeader(view, text, meta.title || '');
+    if (header) {
+      header.dataset.turnState = 'done';
+      header.setAttribute('aria-expanded', 'false');
+      bindHeaderToggle(header);
+    } else {
+      header = buildHeader(chat, scope, meta, stats);
+      header.dataset.turnState = 'done';
+      header.setAttribute('aria-expanded', 'false');
+      bindHeaderToggle(header);
+    }
+    tuckRows(tuckable); // instant strip; pre-tucked rows are already hidden
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
     // A-branch: shared NEAR_BOTTOM_PX unit (was a local 80).
     if (isNearBottom(chat)) {
       chat.scrollTop = chat.scrollHeight;
     }
-  }
-  // stream-ux §二.1.1: the running work-line hands over to the terminal chrome.
-  // A turn that got a header keeps the header as its single persistent badge
-  // (§二.1.4 「终态与现状一致」) and drops the transient line; a turn with no
-  // header (boundary default — nothing tuckable / nothing left visible after
-  // tucking) rolls the line to its own completed badge instead, so the stats
-  // are not lost. Either way the transient row leaves `#chat`'s top level only
-  // here — the only insert/remove sites are this terminal and the running turn.
-  //
-  // ORDER MATTERS: this settle MUST run BEFORE markClosed(). The cursor records
-  // `chat.children[len - 1]` as its anchor, and the work-line row is typically
-  // the LAST child at terminal time; removing it after stamping the cursor
-  // leaves the anchor detached, so the NEXT turn's turnScope reads the cursor as
-  // stale, takes the same-turn dissolve-heal branch and deletes the header this
-  // call just built (`__postClosureTurn` / multi-round specs regress to a single
-  // header). Settle first, then stamp the cursor on the final DOM shape.
-  if (header) {
-    removeWorkline(view);
-  } else if (stats && (stats.tools > 0 || stats.thinkingMs > 0)) {
-    finishWorkline(view);
   } else {
+    // E5: nothing to summarize — the line (if any) must not outlive the turn.
     removeWorkline(view);
   }
+  // ORDER NOTE: the settle/morph above does not change #chat's child list (the
+  // line is already at the turn top), so the closure cursor's anchor
+  // (chat.lastElementChild) survives intact — the stale-cursor heal that
+  // governed the old remove-then-stamp ordering cannot misfire.
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to tuck; later arrivals are a new turn.
   return header;
@@ -362,20 +373,18 @@ export function collapseTurn(view, meta = {}) {
 
 /**
  * Failed path: NO header (spec A5 — the summary element does not exist),
- * everything stays flat and visible for troubleshooting. A same-turn
- * re-terminal (done → error, nothing appended) lands here: turnScope's
- * dissolve heal already removed the done-chrome before this runs.
+ * everything stays flat and visible for troubleshooting. The render path
+ * PRE-TUCKS process rows during the run now, so the failure must clear those
+ * marks — a failed turn reveals every row (A5 spirit: flat for diagnosis).
+ * A same-turn re-terminal (done → error, nothing appended) lands here:
+ * turnScope's dissolve heal already removed the done-chrome before this runs.
  */
 export function failTurn(view) {
   const chat = view.dom.chat;
-  turnScope(chat); // runs the dissolve heal when the cursor is stale
-  // stream-ux §二.1.1: the failed turn renders no header either — the transient
-  // work-line must not outlive the turn (spec A5 spirit: nothing but the plain
-  // rows). Rows stay flat for troubleshooting.
-  // Settle BEFORE markClosed() for the same reason collapseTurn does: the
-  // cursor's anchor is chat.lastElementChild, so removing the transient row
-  // afterwards would leave the cursor stale and make the next turn wipe this
-  // turn's chrome.
+  const scope = turnScope(chat); // runs the dissolve heal when the cursor is stale
+  for (const el of scope) {
+    if (el.classList && el.classList.contains('nf-tucked')) el.classList.remove('nf-tucked');
+  }
   removeWorkline(view);
   markClosed(chat); // #403: terminal reached — later arrivals are a new turn
   return null;

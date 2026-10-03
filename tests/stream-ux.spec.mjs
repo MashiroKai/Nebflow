@@ -416,8 +416,9 @@ test.describe('A2 — 思考 = 单行流式揭示 → 打勾', () => {
     expect(stream.height, 'the reveal is ONE line (no multi-line feed in the badge)').toBeLessThanOrEqual(48);
     expect(stream.running, 'the reveal is animated (CSS), not a static jump').toBeGreaterThan(0);
 
-    // The full thinking feed still lives in the .row.thinking-row below (the
-    // existing expand surface is untouched — spec §二.1.4).
+    // The full thinking feed still accumulates in the .row.thinking-row below
+    // (pre-tucked since the 2026-10-03 redesign — the expand face renders
+    // into the DOM while the line carries the reveal).
     expect(await page.evaluate(() =>
       (document.querySelector('#chat .row.thinking-row .thinking-content')?.textContent || '')
         .includes('互斥闸'))).toBe(true);
@@ -555,7 +556,7 @@ test.describe('A5 — 终态与现状一致（工作行交还既有展开面）'
     await context.close();
   });
 
-  test('a header-less turn (E6) still leaves no stray top-level node', async ({ browser }) => {
+  test('a thinking-only turn (E6) settles the line into its own header (no stray node)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__thinkingOnlyTurn());
     expect(pageErrors).toEqual([]);
@@ -567,14 +568,26 @@ test.describe('A5 — 终态与现状一致（工作行交还既有展开面）'
           .filter(k => !k.classList.contains('row') && !k.classList.contains('turn-header'))
           .map(k => k.className),
         headers: chat.querySelectorAll(':scope > .turn-header').length,
+        headerText: (chat.querySelector(':scope > .turn-header')?.textContent || '').trim(),
       };
     });
-    // No header here (boundary default: nothing tuckable) — and, the point of
-    // this leg, the transient work-line is gone all the same: the `readSeq`
-    // contract of turn-collapse-keep-text.spec.mjs enumerates every top-level
-    // child, so a leftover node would read as `other:nf-workline`.
-    expect(shape.headers, 'a process-only-thinking turn renders no header').toBe(0);
-    expect(shape.stray, 'and still no stray top-level node survives it').toEqual([]);
+    // stream-ux redesign (2026-10-03): the thinking-only turn's process ran on
+    // the line, so the line settles into its OWN header (思考 stats, no 工具
+    // segment) — the old "no header for E6" default is gone with the run-time
+    // pre-tuck (the thinking row is never visible during the run any more).
+    // The readSeq contract still holds: the settled header is a `.turn-header`
+    // top-level node, so no stray survives.
+    expect(shape.headers, 'the E6 turn still gets its own settled header').toBe(1);
+    expect(shape.headerText, 'the badge carries the model + 思考 segment').toContain('test-model');
+    expect(shape.headerText).toContain('思考');
+    expect(shape.stray, 'and no stray top-level node survives it').toEqual([]);
+
+    // The settled header expands the pre-tucked thinking row (the expand face).
+    await page.locator('#chat > .turn-header').first().click();
+    expect(await page.evaluate(() => {
+      const row = document.querySelector('#chat .row.thinking-row');
+      return row ? row.offsetHeight > 0 : false;
+    })).toBe(true);
     await context.close();
   });
 });

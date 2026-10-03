@@ -2334,7 +2334,9 @@
   outline-offset: 1px;
   border-radius: 4px;
 }
-.turn-header .nf-chevron { flex-shrink: 0; }
+.turn-header .nf-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
+/* expanded affordance: the chevron turns to point down (2026-10-03 demo) */
+.turn-header[aria-expanded="true"] .nf-chevron { transform: rotate(90deg); }
 /* Long summaries wrap to multiple lines (height auto-grows) — the full text
    is always visible; no text-overflow / line-clamp swallowing (2026-09-06
    author ruling: 长总结必须完整可见). */
@@ -3181,36 +3183,61 @@
   .scroll-new-pill:hover, .scroll-new-pill:active { transform: translateX(-50%); }
 }
 
-/* ---------- runtime work-line (stream-ux spec §二.1.1) ----------
-   ONE single-line badge slot that scrolls through the running turn's process:
-   tool running = spinner; tool done = check draw + bounce; switching item =
-   roll up/out + roll in/down; thinking = single-line reveal (typewriter /
-   width) then check then roll.
+/* ---------- the turn line (stream-ux redesign, 2026-10-03) ----------
+   ONE single-line stage that plays the running turn's process: tool running =
+   spinner; tool done = check draw + bounce; switching item = roll up/out +
+   roll in/down; thinking = single-line reveal (typewriter / width) then check
+   then roll; pre-token = dots + live seconds.
 
-   The line is TRANSIENT turn chrome: workline.js removes it the moment the
-   turn reaches a terminal (turnGroup.js collapseTurn / failTurn). That keeps
-   the persistent `.turn-header` the ONLY top-level turn node — the contract
-   tests/turn-collapse-keep-text.spec.mjs `readSeq` enumerates in full.
+   The line is the turn's PERSISTENT chrome: it lives at the turn top (the
+   `.turn-header`'s exact slot) and turnGroup.js settles it INTO the header at
+   the terminal — same element, one final roll, no remove-and-rebuild. That
+   keeps the `.turn-header` the only top-level turn node (the contract
+   tests/turn-collapse-keep-text.spec.mjs `readSeq` enumerates in full).
    Pure CSS animations only (WAAPI is pinned out by the same spec family). */
 
+/* ── stream-ux redesign (2026-10-03 author demo): the turn line ────────────
+   ONE line that is BOTH the running process and the terminal badge. It lives
+   at the turn top — the exact slot `.turn-header` occupies — and workline.js
+   settles it INTO the header at the terminal (same element: class swap + one
+   final roll). The face is the header's own design language: no background,
+   no glass, no border — chevron + muted 12px text, brightening on hover.
+   The old boxed card look is gone: the process is the badge's sibling phase,
+   not a different chrome. */
 .nf-workline {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 34px;
+  gap: 4px;
   max-width: 85%;
-  margin: 2px 0 6px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 11px;
-  background: var(--color-surface);
+  margin: 2px 0;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--color-text-dim);
-  font-size: 13px;
+  opacity: 0.9;
   overflow: hidden;
   position: relative;
+  cursor: default;
   animation: nf-wl-in 0.3s ease both;
 }
-.nf-wl-slot { position: relative; flex: 1 1 auto; min-width: 0; height: 100%; }
+.nf-workline:hover { color: var(--color-text); opacity: 1; }
+.nf-workline .nf-chevron { flex-shrink: 0; }
+/* The slot is a single-line stage: fixed height so a rolling-out item and the
+   held-back entering item share the box without reflowing the chat. */
+.nf-wl-slot { position: relative; flex: 1 1 auto; min-width: 0; height: 18px; }
+/* The terminal morph: the row gains `.turn-header`; the slot relaxes so the
+   settled badge text can WRAP (same ruling as the built header — the full
+   summary is always readable, no ellipsis swallowing). The final item is in
+   flow (the outgoing item above it is absolutely positioned and already
+   fading — the exit window keeps them from ever being legible together). */
+.turn-header .nf-wl-slot { height: auto; }
+.nf-wl-item.is-final { position: static; white-space: normal; }
+.nf-wl-item.is-final .nf-wl-label {
+  white-space: normal;
+  overflow-wrap: break-word;
+  overflow: visible;
+  text-overflow: clip;
+}
 .nf-wl-item {
   position: absolute;
   inset: 0;
@@ -3227,6 +3254,9 @@
   min-width: 0;
 }
 .nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
+
+/* pre-token dots (the old placeholder bubble's face, moved onto the line) */
+.nf-wl-dots { display: inline-flex; gap: 3px; align-items: center; flex: none; }
 
 /* icon cell: spinner (running) or check (done) */
 .nf-wl-icon { width: 16px; height: 16px; flex: none; display: flex; align-items: center; justify-content: center; }
@@ -3319,21 +3349,25 @@
 @keyframes nf-wl-bounce { 0%, 100% { transform: none; } 40% { transform: translateY(-3px); } }
 @keyframes nf-wl-blink { 50% { opacity: 0; } }
 
-/* ---------- message entrance animations (stream-ux spec §二.1.2 / §二.1.3) ----------
-   Assistant reply: the WHOLE message pops in once (scale + elastic) — never a
-   per-token render (A3). User input: slides in from the right with the same
-   elastic settle. Both are opt-in via a class so history replay (persistence.js
-   builds its own rows) keeps its plain static paint. */
+/* ---------- message entrance animations (stream-ux redesign 2026-10-03) ----------
+   EVERY message is "one message, one animation": the whole bubble pops in once
+   (scale + elastic settle, iMessage-style) — user and assistant alike, and the
+   assistant's mid-turn text segments each pop as their own bubble at the tool
+   boundary. Never a per-token render (A3/A7). Opt-in via a class so history
+   replay (persistence.js builds its own rows) keeps its plain static paint.
+   The transform-origin roots each side's pop at its bubble tail (user bottom-
+   right, assistant bottom-left). */
+.bubble.user { transform-origin: 100% 100%; }
+.bubble.ai { transform-origin: 0% 100%; }
+/* An assistant bubble stays invisible until its single whole-message paint —
+   the streaming path creates the row/bubble up front but paints only in
+   finishAi() (appendAiText accumulates off-DOM). */
+.bubble.ai:empty { display: none; }
 .bubble.nf-pop { animation: nf-pop-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
 @keyframes nf-pop-in {
   0% { opacity: 0; transform: translateY(16px) scale(0.82); }
   60% { transform: translateY(-2px) scale(1.02); }
   100% { opacity: 1; transform: none; }
-}
-.bubble.nf-slide-in { animation: nf-slide-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
-@keyframes nf-slide-in {
-  from { opacity: 0; transform: translateX(30px) scale(0.92); }
-  to { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3352,11 +3386,166 @@
   .nf-wl-chk,
   .nf-wl-chk path,
   .nf-wl-spin,
-  .bubble.nf-pop,
-  .bubble.nf-slide-in { animation: none; }
+  .bubble.nf-pop { animation: none; }
   .nf-wl-item.is-enter-late,
   .nf-wl-item.is-done.is-enter-late { animation-delay: 0s; }
   .nf-wl-chk { opacity: 1; transform: none; }
   .nf-wl-chk path { stroke-dashoffset: 0; }
   .nf-wl-think { max-width: none; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Pop artifact faces (pop-upgrade batch, 2026-10-03 author ruling
+   「去掉card工具,然后对Pop工具进行升级」): media renders IN THE CHAT as a
+   WeChat-style stacked card; files render as file cards with a forward
+   button. The artifact row is deliberately NOT `.row.tool` — turnGroup's
+   tuck set never touches it, so the deliverable survives the ✻ collapse and
+   sits at the bottom of the agent's message. Renderer = popArtifacts.js
+   (live + both history paths); the approved demo is demo/pop-upgrade-demo.html.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+.row.pop-artifact { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+.pop-group {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 10px; min-width: 0; max-width: 78%;
+}
+
+/* ── media stack (WeChat-style: front card + peeking layers right) ── */
+.pop-stack-area {
+  display: flex; align-items: center; gap: 16px;
+  transition: height 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1));
+}
+.pop-stack-area .pill {
+  flex-shrink: 0;
+  display: flex; align-items: center;
+  background: rgba(128, 128, 128, 0.12); color: var(--color-text);
+  border: none; border-radius: 999px;
+  padding: 10px 18px; font-size: 13px; font-weight: 500;
+  cursor: pointer; user-select: none;
+  transition: background 0.15s, transform 0.12s;
+  font-family: inherit;
+}
+.pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.2); }
+.pop-stack-area .pill:active { transform: scale(0.95); }
+
+.pop-stack-view { position: relative; width: 200px; height: 256px; flex-shrink: 0; touch-action: pan-y; }
+.pop-stack-view.dragging { cursor: grabbing; }
+.media-layer {
+  position: absolute; inset: 0;
+  border-radius: 14px; overflow: hidden;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16);
+  cursor: pointer; background: #17191f;
+  transition: transform 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), filter 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1));
+}
+.pop-stack-view.dragging .media-layer { transition: none; }
+.media-layer.layer-front { transform: none; z-index: 3; filter: none; }
+.media-layer.layer-mid   { transform: translateX(16px) scale(0.965); z-index: 2; filter: brightness(0.9); }
+.media-layer.layer-back  { transform: translateX(32px) scale(0.93); z-index: 1; filter: brightness(0.78); }
+
+.pop-expand-view { display: none; flex-direction: column; gap: 20px; width: 200px; flex-shrink: 0; }
+.pop-expand-view.show { display: flex; }
+.pop-expand-view .media-layer {
+  position: relative; inset: auto; height: 256px;
+  transform: none; filter: none;
+  animation: fadeIn 0.25s ease;
+}
+
+.pop-media { position: relative; width: 100%; height: 100%; }
+.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: cover; background: #17191f; }
+.play-ring {
+  position: absolute; top: 50%; left: 50%;
+  width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border: 2.5px solid rgba(255, 255, 255, 0.92); border-radius: 50%;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: auto; transition: opacity 0.25s;
+}
+.play-ring::after {
+  content: ''; display: block; margin-left: 4px;
+  border-style: solid; border-width: 10px 0 10px 17px;
+  border-color: transparent transparent transparent rgba(255, 255, 255, 0.95);
+}
+.pop-media.playing .play-ring { opacity: 0; pointer-events: none; }
+.dur-chip {
+  position: absolute; right: 8px; bottom: 8px;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+  font-size: 11px; padding: 2px 7px; border-radius: 4px;
+  pointer-events: none; font-variant-numeric: tabular-nums;
+}
+.vd-progress {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 0%;
+  background: var(--color-primary); pointer-events: none;
+}
+
+/* single media item — flat, no stack affordances */
+.pop-media-flat { width: 200px; height: 256px; border-radius: 14px; overflow: hidden; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16); background: #17191f; }
+.pop-media-flat .pop-media { width: 100%; height: 100%; }
+
+/* ── file card ── */
+.file-card {
+  display: flex; align-items: center; gap: 11px;
+  background: var(--color-surface);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 12px; padding: 11px 13px;
+  width: 300px; max-width: 100%; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.15s, transform 0.12s;
+}
+.file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09); }
+.file-card:active { transform: scale(0.985); }
+.fc-icon {
+  width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 9.5px; font-weight: 800; letter-spacing: 0.6px;
+}
+.fc-icon.pdf  { background: linear-gradient(135deg, #ff7b6b, #e64545); }
+.fc-icon.html { background: linear-gradient(135deg, #ffb340, #f57c00); }
+.fc-icon.md   { background: linear-gradient(135deg, #7f8ff0, #5568d6); }
+.fc-icon.doc  { background: linear-gradient(135deg, #5b9bf0, #3574d6); }
+.fc-icon.xls  { background: linear-gradient(135deg, #4db874, #2e9e57); }
+.fc-icon.ppt  { background: linear-gradient(135deg, #ff9a62, #f07030); }
+.fc-icon.epub { background: linear-gradient(135deg, #b08af0, #8a5cd6); }
+.fc-icon.data, .fc-icon.code { background: linear-gradient(135deg, #9aa2b1, #6f7684); }
+.fc-meta { min-width: 0; }
+.fc-name { font-size: 13.5px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-sub { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; }
+.fwd-btn {
+  margin-left: auto; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: none; background: transparent; color: var(--color-text-muted);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative;
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+}
+.file-card:hover .fwd-btn { background: rgba(7, 193, 96, 0.1); color: var(--color-primary); }
+.fwd-btn svg { width: 16px; height: 16px; }
+.fwd-tip {
+  position: absolute; bottom: calc(100% + 9px); right: -6px;
+  background: #1b1e26; color: #fff;
+  font-size: 11px; font-weight: 500; white-space: nowrap;
+  padding: 5px 10px; border-radius: 7px;
+  opacity: 0; transform: translateY(3px);
+  pointer-events: none; transition: opacity 0.16s, transform 0.16s;
+  z-index: 5;
+}
+.fwd-tip::after {
+  content: ''; position: absolute; top: 100%; right: 16px;
+  border: 5px solid transparent; border-top-color: #1b1e26;
+}
+.fwd-btn:hover .fwd-tip { opacity: 1; transform: translateY(0); }
+
+/* failed-paths chip under the artifacts */
+.pop-warn {
+  font-size: 11px; color: var(--color-text-dim);
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 6px; padding: 4px 9px;
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  .media-layer, .pop-img, .pop-video, .pop-media-flat { background: #101318; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.5); }
+  .file-card { border-color: var(--color-border); }
+  .pop-stack-area .pill { background: rgba(128, 128, 128, 0.18); }
+  .pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.28); }
 }

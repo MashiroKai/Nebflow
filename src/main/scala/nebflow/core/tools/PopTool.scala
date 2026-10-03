@@ -9,268 +9,86 @@ import java.nio.file.{Files, Path, Paths}
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):单点已下沉 actor
 /**
- * Pop tool — opens a file or URL in the Canvas panel as a new tab.
+ * Pop tool — shows finished artifacts to the user (pop-upgrade batch, 2026-10-03).
  *
- * 2026-09-10 作者裁定（「我觉得把pop工具给nebula专属吧」）：Pop = Nebula 专属
- * 工具——除 Nebula 本体根会话外，任何 agent / 节点会话 / 子 agent 一律不得调用。
- * 理由：Canvas 是用户面呈现通道，节点乱 Pop 是过程件污染入口——靠纪律不如靠
- * 工具面收口。收口两层（缺一即不完整）：
- *   ①定义/授能层：AgentCore.NebulaExclusiveTools 携带 Pop（非 Nebula 身份含
- *     "*" 声明一律剥离）、GeneralFixedTools 摘除、PluginRegistry.BuiltinToolWhitelist
- *     摘除（关闭插件再授予通道）；
- *   ②分发层（本文件）：call 最前的身份闸——先于任何副作用（路径解析 / 文件读 /
- *     HTML 图片内联 / WS 发送）。
+ * == 2026-10-03 author ruling (pop-upgrade batch) ==
  *
- * Sends a WebSocket message to the frontend, which dispatches a
- * `workspace-open-item` event that canvas.js picks up to render the file
- * using the existing file viewer registry (Monaco editor for code, markdown
- * renderer, image viewer, PDF viewer, etc.).
+ * The author ruled («去掉card工具,然后对Pop工具进行升级») two face changes and
+ * one batch addition (「Pop要支持一次工具调用多个Pop文件」):
  *
- * For binary files (images, PDFs, Office docs), only metadata is sent — the
- * frontend fetches the content via /api/nf-file, same as the file explorer.
- * Exception (2026-09-16 imgfix batch; cumulative cap added by the img-ticket
- * batch i): an image inside the shared inline policy (≤5MB, embeddable format)
- * is embedded in the payload as a `data:` URI and the viewer renders it with no
- * request — as long as the call's total inline size stays within
- * `FileRefs.MaxInlinePayloadChars` (40,000 characters of `data:` URI); the
- * ticket leg is reached by images outside that policy and by images past that
- * total.
+ *  - **Media (image / video) renders IN THE CHAT** — no Canvas tab. Multiple
+ *    items in one call arrive as a WeChat-style stacked card (front card +
+ *    peeking layers, click / swipe to switch, 「展开 N」 flattens to one card
+ *    per row). A single image renders flat, no stack.
+ *  - **Files / documents / HTML animations render as FILE CARDS** at the bottom
+ *    of the agent's message — filename + a forward button whose hover text is
+ *    「在 Canvas 打开」. The card is NOT swallowed by the turn-process collapse
+ *    (turnGroup tucks only `.row.tool` / thinking rows; the artifact row is
+ *    neither) — it stays visible after the ✻ header appears.
+ *  - **One call may carry many files**: `filePath` accepts a string OR an
+ *    array of strings (≤ [[MaxPopFiles]]). The frontend groups the items of
+ *    one call into one stacked card / one card group.
  *
- * For HTTP/HTTPS URLs, the URL is sent directly — the frontend renders it
- * in an embedded iframe.
+ * The Canvas tab face survives for exactly one input kind: an HTTP/HTTPS URL
+ * (single-string form only) still opens an embedded iframe tab, as shipped.
+ *
+ * == Transport ==
+ *
+ * The artifact payload rides the TOOL RESULT (the `___POP_JSON___` sentinel +
+ * one JSON object), exactly like Card's `___CARD_HTML___` face: AgentCore
+ * forwards the verbatim result as `frontendContent` (ToolEnd frame + .ui.json
+ * history), so live rendering and history replay read the same bytes, and
+ * [[modelFacingResult]] keeps the model face a small projection (the payload's
+ * data URIs are browser food, not model food). SessionStore stores the payload
+ * whole: `___POP_JSON___` matches its card-content detector (starts with `___`
+ * and carries `_JSON___`), so a large payload is never preview-truncated in the
+ * UI replay file.
+ *
+ * File CARDS need no bytes at all — the forward button dispatches
+ * `workspace-open-item` and the Canvas fetches content itself (readFile), the
+ * same open path the shipped Pop card used. MEDIA items either embed their
+ * bytes (`data:` URI, the shared `FileRefs` inline policy: ≤5MB per image,
+ * 40,000 chars per call, document order) or carry the absolute path and let the
+ * frontend mint an `/api/nf-file` ticket — the SAME two legs the Canvas image
+ * viewer had. No URL is built tool-side any more: the frontend's
+ * `nfTicket.ticketUrl(path)` is the single URL builder (the tool-side
+ * `%20`-form encoder retired with the Canvas direct-open face).
+ *
+ * 2026-09-10 author ruling (unchanged): Pop = Nebula 专属工具——除 Nebula 本体
+ * 根会话外，任何 agent / 节点会话 / 子 agent 一律不得调用。收口两层（缺一即不
+ * 完整）：①定义/授能层（AgentCore.NebulaExclusiveTools 携带 Pop …）；②分发层
+ * （本文件）：call 最前的身份闸——先于任何副作用。
  */
 object PopTool extends Tool:
 
   /**
-   * Shared local-reference policy (failure enum, file probe, app-route
-   *  exemption, warning/counter JSON shapes) — the same module Card uses.
-   *  Pop contributes only the resolution policy below (a Pop'd HTML file has
-   *  a containing directory, a Card does not) and inlines instead of
-   *  proxying.
+   * Shared local-reference policy (failure enum, file probe, inline policy,
+   * warning/counter JSON shapes) — the same module Card used before its
+   * retirement; the media legs below are its only remaining consumer.
    */
   import FileRefs.*
 
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.pop")
 
-  /** Max text file size to send via WS (2 MB). Larger files are read by the frontend via /api/nf-file. */
-  private val MaxTextSize = 2 * 1024 * 1024
-
-  // The inline policy (`MaxEmbedImageSize` = 5 MB, `EmbeddableImageExtensions`,
-  // `mimeFromExt`, `isInlineImage`, `readAsDataUri`) is ONE definition in
-  // `FileRefs` — Card embeds images on its card face with exactly the same
-  // rule, so the two faces cannot drift apart (imgfix batch, 2026-09-16).
-
-  /** Matches the src attribute value of an <img> tag (single or double quoted). */
-  private val ImgSrcPattern = """(?i)<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""".r
-
-  // Binary-extension + itemType mapping now lives in a single source of
-  // truth (F3): core/workspace/FileTypeRegistry — shared with the WS
-  // readFile / pop.readFile routes. The local BinaryExtensions set and
-  // detectItemType match were removed as duplicate #1/#2.
-
-  /** Check if a src value is a remote/special URL that should not be embedded. */
-  private def isRemoteOrSpecialUrl(src: String): Boolean =
-    val lower = src.toLowerCase
-    lower.startsWith("http://") || lower.startsWith("https://") ||
-    lower.startsWith("data:") || lower.startsWith("blob:") ||
-    lower.startsWith("#") || lower.startsWith("javascript:") ||
-    lower.startsWith("mailto:") || lower.startsWith("tel:")
-
-  /** Resolve an img src (file://, /absolute, ~/, or relative) to a local file Path. */
-  private def resolveImgSrc(src: String, htmlDir: Path): Option[Path] =
-    val cleaned =
-      if src.startsWith("file:///") then src.stripPrefix("file://") // file:///path → /path
-      else if src.startsWith("file://localhost/") then "/" + src.stripPrefix("file://localhost")
-      else if src.startsWith("file://") then "/" + src.stripPrefix("file://") // file://path → /path
-      else if src.startsWith("file:") then src.stripPrefix("file:")
-      else src
-    resolvePath(cleaned).map(p =>
-      if p.isAbsolute then p
-      else htmlDir.resolve(p).normalize()
-    )
+  /**
+   * Upper bound for ONE call's file list (pop-upgrade batch). A batch larger
+   * than this is refused with an actionable message rather than silently
+   * truncated — the model should split the call.
+   */
+  val MaxPopFiles: Int = 20
 
   /**
-   * One HTML image pass: the rewritten HTML plus what happened to every local
-   *  reference (inlined / deferred / exempt / rejected).
+   * Video extensions eligible for the in-chat media face. They are all served
+   * by `/api/nf-file` (`NfFilePolicy.NfFileAllowedExt` carries mp4/webm/ogg/
+   * ogv/mov), and none of them is ever inlineable — a video item always rides
+   * the ticket leg. Kept here (not in `FileTypeRegistry`) on purpose: the
+   * registry's table is the CANVAS viewer's face and its behavior is frozen;
+   * an `.mp4` opened in Canvas keeps its pre-batch itemType there.
    */
-  private case class PopRefOutcome(
-    html: String,
-    inlined: Int,
-    deferred: Int,
-    exempt: Int,
-    rejects: List[RejectedRef],
-    /**
-     * Decoded-form disclosures (imgref batch 2026-09-18): a reference whose
-     *  path was spelled with URL escapes / a bare `+` was resolved as the
-     *  decoded form, and the user-facing result says so.
-     */
-    notes: List[String] = Nil
-  )
+  val VideoExtensions: Set[String] = Set("mp4", "webm", "mov", "m4v", "ogv", "ogg")
 
-  /**
-   * Embed local images referenced by <img src="..."> as base64 data URIs so
-   * they render inside the Canvas iframe without /api/nf-file or auth tokens.
-   * Remote URLs are left unchanged.
-   *
-   * 2026-09-11 (toolfail batch): this pass used to answer `None` to every
-   * question and let `replaced.getOrElse(m.group(0))` keep the raw value with
-   * zero feedback — the Canvas iframe then fetched a path that does not exist
-   * and the user saw an empty box with no explanation (the Card leg had the
-   * same defect, fixed in the carderr batch, merge 52e2f58f). Every local
-   * reference now gets an explicit verdict from the SAME probe Card uses
-   * (`FileRefs.probeFile`):
-   *
-   *   - `Proxy` + embeddable extension + ≤5MB → inlined (counted `proxied`);
-   *   - `Proxy` otherwise → `deferred`: the raw value stays and the Canvas
-   *     HTML viewer's own rewrite serves it through /api/nf-file. Counted,
-   *     never warned — a 5MB+ PNG that renders fine must not appear in an
-   *     actionable defect list;
-   *   - `Reject` whose cause is the endpoint's REACH layer only, on a file that
-   *     is not a credential (`FileRefs.inlineMayTakeOver`, 返工 r2) → still
-   *     inlined when the bytes fit (the shipped behaviour: such a file never had
-   *     a working /api/nf-file leg, only working bytes); when they do not fit,
-   *     it is warned rather than counted `deferred` (there is no fetch to win);
-   *   - `Exempt` (an app route such as `/js/…`) → counted only;
-   *   - `Reject` → structured warning (原始串 → 解析后路径 → 原因): the Canvas
-   *     fallback cannot serve it either, so nothing would render it.
-   */
-  private def processLocalImages(html: String, htmlDir: Path): PopRefOutcome =
-    val rejects = scala.collection.mutable.ListBuffer.empty[RejectedRef]
-    val notes = scala.collection.mutable.ListBuffer.empty[String]
-    var inlined = 0
-    var deferred = 0
-    var exempt = 0
-    // ONE cumulative budget for this pass (= this tool call), spent in the order
-    // the `<img src>` values appear (`replaceAllIn` walks the document left to
-    // right): an image is embedded while the remaining balance covers its
-    // `data:` URI, and left to the Canvas `/api/nf-file` rewrite once it does
-    // not. See `FileRefs.MaxInlinePayloadChars` (img-ticket batch i, #687-C).
-    val budget = InlineBudget()
-
-    def record(decision: RefDecision): Unit = decision match
-      case RefDecision.Exempt(_) => exempt += 1
-      case RefDecision.Reject(rejected) => rejects += rejected
-      case _ => ()
-
-    /** The replacement src value, or None to keep the raw one. */
-    def newValueFor(src: String): Option[String] =
-      if isRemoteOrSpecialUrl(src) then None
-      else
-        // imgref batch (2026-09-18): a reference spelled with URL escapes
-        // (`%20`) or a bare `+` does not name anything on disk — resolve it
-        // through its candidate forms (raw first, then the decoded form,
-        // hit-and-use, and disclose which form was used).
-        val hit = FileRefs.resolveCandidates(
-          src,
-          v => resolveImgSrc(v, htmlDir),
-          v => unresolvable(v, "the reference could not be resolved to a filesystem path")
-        )
-        hit.note.foreach(n => if !notes.contains(n) then notes += n)
-        hit.path match
-          case None =>
-            record(applyAppRouteExemption(src, hit.decision))
-            None
-          case Some(p) =>
-            applyAppRouteExemption(src, hit.decision) match
-              case RefDecision.Proxy(_) =>
-                // Servable — inline it when the iframe can be spared the fetch
-                // AND this call's cumulative inline budget still covers the
-                // bytes, else leave it for the Canvas viewer's /api/nf-file
-                // rewrite. The rule itself is shared with Card
-                // (`FileRefs.embedImage`); only the failure handling is
-                // Pop-specific: an unreadable file is still reported as
-                // `other`, a size/extension/budget miss is `deferred` — a
-                // budget miss is NOT a defect (the reference leg still
-                // renders), so it is counted, never warned.
-                embedImage(p, budget) match
-                  case Right(dataUri) =>
-                    inlined += 1
-                    Some(dataUri)
-                  case Left(InlineSkip.Unreadable(detail)) =>
-                    rejects += RejectedRef(src, Some(describe(p)), FileRefFailure.Other, detail)
-                    None
-                  case Left(_) =>
-                    deferred += 1
-                    None
-              case RefDecision.Reject(rejected) if FileRefs.inlineMayTakeOver(p, rejected) =>
-                // 返工 r2 (2026-09-18, 复核位 F1): the endpoint refuses this
-                // reference for its REACH layer only, and the file's identity is
-                // not a credential — the shipped Canvas pass embedded such
-                // images (the /api/nf-file URL was the unretrievable part, not
-                // the bytes), and the author's order is "let local files
-                // succeed more often". Embed it, and never count it `deferred`:
-                // there is no fetch this reference could win.
-                embedImage(p, budget) match
-                  case Right(dataUri) =>
-                    inlined += 1
-                    Some(dataUri)
-                  case Left(_) =>
-                    // Not embeddable / past the budget / unreadable: nothing can
-                    // render it, so the endpoint's refusal stands and is
-                    // reported with its fix hint (never a silent `deferred`).
-                    rejects += rejected
-                    None
-              case other =>
-                record(other)
-                None
-        end match
-
-    val out = ImgSrcPattern.replaceAllIn(
-      html,
-      { m =>
-        val src = m.group(1)
-        newValueFor(src) match
-          case Some(value) =>
-            // Replace only the src value: the regex guarantees group(1) is
-            // immediately before the closing quote at the end of the match.
-            val full = m.group(0)
-            full.dropRight(src.length + 1) + value + full.takeRight(1)
-          case None => m.group(0)
-      }
-    )
-
-    if rejects.nonEmpty || deferred > 0 || exempt > 0 then
-      logger.debug(
-        s"Pop: ${rejects.size} image reference(s) not inlined (deferred=$deferred exempt=$exempt)"
-      )
-    PopRefOutcome(out, inlined, deferred, exempt, rejects.toList, notes.toList.distinct)
-  end processLocalImages
-
-  /**
-   * The counters + warning list for one Pop pass — the same objects Card puts
-   *  in its payload, so both tools report identically shaped warnings.
-   */
-  private def refPayload(o: PopRefOutcome): (Json, Json) =
-    val distinct = distinctRejections(o.rejects)
-    val listed = distinct.take(MaxListedWarnings)
-    (
-      fileRefsJson(o.inlined, distinct.size, distinct.size - listed.size, o.exempt, List("deferred" -> o.deferred)),
-      warningsJson(listed)
-    )
-
-  /**
-   * Tool result text: the summary line, then — only when something needs
-   *  attention — the warnings array and the `fileRefs` counter line. A clean
-   *  Pop is byte-identical to the pre-batch result.
-   */
-  private def describeResult(summary: String, o: PopRefOutcome, fileRefs: Json, warnings: Json): String =
-    val failed = fileRefs.hcursor.get[Int]("failed").toOption.getOrElse(0)
-    val sb = new StringBuilder(summary)
-    if failed > 0 then
-      sb.append("\n")
-        .append(
-          s"$failed local image reference(s) could NOT be inlined, and the Canvas fallback (/api/nf-file) cannot serve them either:"
-        )
-        .append("\nwarnings: ")
-        .append(warnings.noSpaces)
-    if failed > 0 || o.deferred > 0 || o.exempt > 0 then sb.append("\n").append(CountsMarker).append(fileRefs.noSpaces)
-    // imgref batch: a decoded-form hit is DISCLOSED even on an otherwise clean
-    // pass — the author's order is explicit that the tool result must say which
-    // form of the path was used ("路径含空格，已自动改用解码形态").
-    if o.notes.nonEmpty then sb.append("\nnotes: ").append(o.notes.mkString(" | "))
-    sb.toString
-
-  end describeResult
+  /** The sentinel the frontend splits the payload on (`chat.js` / `persistence.js`). */
+  val Sentinel = "___POP_JSON___"
 
   /** Extract hostname from a URL string. */
   private def extractHostname(url: String): String =
@@ -283,46 +101,61 @@ object PopTool extends Tool:
 
   val name = "Pop"
 
-  val description: String =
-    """Opens a file or URL in the Canvas panel as a new tab. Files are displayed using the appropriate viewer (Monaco editor for code, markdown renderer, image viewer, PDF viewer, etc.). URLs are displayed in an embedded iframe.
+  /**
+   * `def`, not `val`, on purpose (DataRootPlaceholderSpec contract): the
+   * description interpolates `PathUtil.dataRootRenderValue` at CALL time — a
+   * `val` would freeze whichever data root happened to be in force at object
+   * initialization (an isolated `--home` instance would teach the model the
+   * wrong workspace path).
+   */
+  def description: String =
+    s"""Shows finished artifacts to the user. One call accepts ONE path or a LIST of paths — batch the files of one deliverable into one call so they render as one group.
 
 ## Nebula-only (2026-09-10 author ruling)
 
 Pop is Nebula-exclusive: only the Nebula root session may call it. Every other agent, node session, or sub-agent call is rejected with POP_NEBULA_ONLY. Nodes do not Pop — they hand the deliverable to the chain end / Nebula along the out edge, and Nebula decides whether it is shown. Pop cannot be granted back to any other identity (it left the builtin tool whitelist).
 
+## What happens to each item (2026-10-03 pop-upgrade ruling)
+
+- **Image / video** (`png jpg jpeg gif webp bmp svg`, `mp4 webm mov m4v ogv ogg`) — rendered DIRECTLY IN THE CHAT, no Canvas tab. Several items in one call render as one stacked card (front card + peeking layers; click / swipe switches; 「展开 N」 flattens to one card per row). A single image renders flat.
+- **Every other file** (documents, PDF, Office, markdown, code, HTML animations…) — rendered as a FILE CARD at the bottom of your message: filename + a forward button (hover: 「在 Canvas 打开」) that opens it in Canvas on click. The card survives the turn-process collapse. No Canvas tab opens by itself.
+- **HTTP/HTTPS URL** — opens a Canvas tab with an embedded iframe, as before. A URL may be the single string form or a lone array element; an array MIXING a URL with file paths is refused — pop URLs one call at a time, files may be batched.
+
 ## When to use
 
-- Nebula decides a finished result should be shown to the user in Canvas.
-- The user asks to "open" or "show" a file.
+- You decide a finished result should be shown to the user.
+- The user asks to "open" or "show" files/photos/videos.
 - A node handed over a deliverable along the out edge and showing it is warranted.
-- You want to show a web page (e.g. a deployed site, documentation) to the user.
 
-The Canvas tab supports the same file types as the file explorer. The tab title defaults to the filename (or hostname for URLs); provide `title` to customize it.
+**Call Pop AFTER your final text** for the deliverable — the cards land at the bottom of that message. One call per deliverable group: the photos of one reply go in ONE call (an array), not three calls.
 
-## Image references and inlining
+## Media bytes: inline vs ticket
 
-Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. The same rule applies to an image you open DIRECTLY (`filePath` = a `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` ≤5MB): its bytes ride in the pop payload and the image viewer renders them with no request. Inlining is additionally capped in TOTAL per call — at most 40,000 characters of `data:` URI (≈30 KB of source bytes, counted in the order the images appear) go inline, and anything past that total keeps its `/api/nf-file` reference instead. Images outside the 5MB rule, images past that total, and every non-image asset are fetched by the frontend through `/api/nf-file`, which needs a per-path ticket the gateway mints only for paths its credential-namespace policy serves — the data directory serves `projects/**, uploads/**, plots/**, workspace-items/**, voice-models/**, docs/**` and the project `.nebflow/` serves `evidence*/**`. To show such a file, put it under one of the served locations above — `projects/**` is the usual route, but not the only one: a path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/output.svg` renders), as long as it is not credential-shaped. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable / other) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (a bare `+` in a URL's `path=` parameter is read as a space, and `%20` also works); a `notes:` line in this result reports any reference that was resolved in its decoded form.
+A local image ≤5MB in an embeddable format is embedded as a base64 `data:` URI when this call's cumulative inline budget still covers it — at most ${FileRefs.MaxInlinePayloadChars} characters of `data:` URI (≈30 KB of source bytes) per call, spent in the order the paths appear; anything past that keeps its path reference. Referenced images and every video are fetched by the frontend through `/api/nf-file` with a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves ${DataRootServedNamespacesText} and the project `.nebflow/` serves `evidence*/**`. A path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/shot.png` renders), as long as it is not credential-shaped. Project workspaces live under ${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/ — write that full path (not `~/projects/<name>/…`), and put deliverables under one of the served locations when you can.
+
+Every path that could NOT be shown is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable / other) plus a `fileRefs` counter line (`failed`). Read `warnings` and fix the paths before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (`%20` also works); a `notes` array reports any path that was resolved in its decoded form.
 
 ## Parameters
 
-- filePath (string, required): Absolute path to the file (supports `~` expansion), or an HTTP/HTTPS URL.
-- title (string, optional): Custom tab title. Defaults to the filename or URL hostname.
+- filePath (string OR array of strings, required): Absolute path(s) to show (supports `~` expansion), or a single HTTP/HTTPS URL. At most $MaxPopFiles paths per call.
+- title (string, optional): Custom Canvas tab title — only meaningful for the single-URL form.
 
-Example: {"filePath": "/tmp/output.svg"}
-Example: {"filePath": "~/projects/README.md", "title": "README"}
-Example: {"filePath": "https://example.com"}"""
+Example (one photo): {"filePath": "/tmp/output.svg"}
+Example (a batch — the usual shape): {"filePath": ["~/projects/shot1.png", "~/projects/shot2.png", "~/projects/clip.mp4"]}
+Example (documents): {"filePath": ["~/projects/report.pdf", "~/projects/demo.html"]}
+Example (URL): {"filePath": "https://example.com"}"""
 
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
         "filePath" -> Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "Absolute path to the file to display (supports ~ expansion), or an HTTP/HTTPS URL".asJson
+          "type" -> Json.arr("string".asJson, "array".asJson),
+          "description" -> "Absolute path to show (supports ~ expansion), an array of such paths (batch, up to 20), or a single HTTP/HTTPS URL".asJson
         ),
         "title" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Custom tab title (defaults to filename)".asJson
+          "description" -> "Custom Canvas tab title (single-URL form only; defaults to hostname)".asJson
         )
       ),
       "required" -> Json.arr("filePath".asJson)
@@ -331,8 +164,7 @@ Example: {"filePath": "https://example.com"}"""
 
   /**
    * 拒答文案（2026-09-10 作者裁定，作者原话逐字保留）：前置结构化前缀 + 错误码
-   * （仓内 ToolError 惯例：`<Tool>: ... (CODE)`，同 TaskBoardTool.forbidden /
-   * 已退役记账工具的 DREAM_APPEND_DENIED）。
+   * （仓内 ToolError 惯例：`<Tool>: ... (CODE)`）。
    */
   private val RootOnlyError: ToolError = ToolError(
     "Pop: permission denied — Pop 已收归 Nebula 专属；交付物请沿 out 边交给链末端 / Nebula，由 Nebula 决定是否展示 (POP_NEBULA_ONLY)"
@@ -341,179 +173,382 @@ Example: {"filePath": "https://example.com"}"""
   /**
    * 身份闸判据（2026-09-10 作者裁定）：两层同真才放行。
    *
-   *  1. `ctx.agentDef.exists(_.name == "Nebula")` —— 身份来源 = ctx.agentDef
-   *     （AgentCore toolCtx 构造处注入 effectiveDef）；
-   *     已退役记账工具内的 dream 闸先例同款，禁用全局状态猜身份。
+   *  1. `ctx.agentDef.exists(_.name == "Nebula")` —— 身份来源 = ctx.agentDef；
    *  2. `ctx.depth == 0` —— 「Nebula 本体根会话」判据（depth==0 排除
-   *     NodeDef.agent="Nebula" 的节点会话，它们的 depth=1）。子会话判定口径 =
-   *     depth：Nebula 派生的 SubTask worker / 节点会话 / 子 agent 全部 depth≥1；
-   *     depth==0 只有全仓唯一根会话 spawn 点（WebSocketRoutes.doSpawnRootAgent）
-   *     ——「Nebula 自己」与「Nebula 派生的会话」由此分开。
+   *     NodeDef.agent="Nebula" 的节点会话，它们的 depth=1）。
    *
-   * `ctx.agentDef == None`（REST 直调 / spec harness）→ **fail-closed**：非
-   * Nebula 身份一律拒。实测无合法非 agent 调用面被误伤：Pop 不在
-   * RemoteExecutor.remoteableTools（RemoteExecutor.scala:658 只有
-   * Bash/Read/Write/Edit/Glob/Grep）⇒ 远程执行链永不带 Pop；remote-exec 接收侧
-   * （RestApiRoutes.scala:1154-1158 / NeblinkRelayTunnel.scala:275）不传
-   * agentDef 也不传 wsSend，那里的 Pop 本来只回声、不发送、无功能面。spec
-   * harness 显式传 Nebula ctx（PopToolSpec.captureCtx）。
-   *
-   * **工具面按角色分化批（2026-09-13）**：谓词本体已上移为全仓唯一单点
-   * [[nebflow.agent.AgentCore.isRootAgent]]（同批新增：定义期 schema 分组的
-   * 分组依据 + AskUserQuestion 非阻塞兜底闸——三消费点一处实现）。本方法退化为
-   * **纯委托**（行为逐字节不变，PopToolSpec 钉住）；此处**不得**重写
-   * `name=="Nebula" && depth==0`（可判红：`AskUserDualModeSpec` 的 grep 级静态断言）。
+   * `ctx.agentDef == None`（REST 直调 / spec harness）→ **fail-closed**。
+   * 谓词本体 = 全仓唯一单点 [[nebflow.agent.AgentCore.isRootAgent]]（本方法退化为
+   * 纯委托——不得在此重写 `name=="Nebula" && depth==0`，可判红：
+   * `AskUserDualModeSpec` 的 grep 级静态断言）。
    */
   private def isRootAgentSession(ctx: ToolContext): Boolean =
-    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):单点已下沉 actor.RootAgentIdentity(AgentCore 不留转发别名)。
     RootAgentIdentity.isRootAgent(ctx.agentDef, ctx.depth)
 
+  // ── input shape ───────────────────────────────────────────────────────────
+
+  /**
+   * `filePath` accepts the shipped single string OR an array of strings
+   * (pop-upgrade batch). Anything else (number/object/absent) is a usage
+   * error the model can act on.
+   */
+  private def requestedPaths(input: JsonObject): Either[ToolError, List[String]] =
+    input("filePath") match
+      case None => Left(ToolError("Pop tool requires a `filePath` parameter (string or array of strings)."))
+      case Some(v) =>
+        val single = v.asString.filter(_.nonEmpty).map(p => List(p))
+        val array = v.asArray.map(_.flatMap(_.asString).filter(_.trim.nonEmpty).toList)
+        single.orElse(array) match
+          case Some(paths) if paths.nonEmpty =>
+            if paths.length > MaxPopFiles then
+              Left(
+                ToolError(
+                  s"Pop accepts at most $MaxPopFiles paths per call (got ${paths.length}) — split the batch across calls."
+                )
+              )
+            else Right(paths)
+          case _ =>
+            Left(
+              ToolError(
+                "Pop tool requires a non-empty `filePath` (string or array of strings). " +
+                  s"Your input: {${input.toMap.keys.mkString(", ")}}"
+              )
+            )
+
+  // ── per-item probing ──────────────────────────────────────────────────────
+
+  /** One payload item: media (image/video) or a file card. */
+  private case class PopItem(
+    kind: String, // "image" | "video" | "file"
+    name: String,
+    path: String,
+    size: Option[Long] = None,
+    ext: Option[String] = None,
+    itemType: Option[String] = None,
+    /** Inlined bytes (`data:` URI) — present only for embedded images. */
+    src: Option[String] = None
+  )
+
+  private def itemJson(i: PopItem): Json = Json.fromFields(
+    List(
+      "kind" -> i.kind.asJson,
+      "name" -> i.name.asJson,
+      "path" -> i.path.asJson
+    ) ++
+      i.size.map(s => "size" -> s.asJson).toList ++
+      i.ext.map(e => "ext" -> e.asJson).toList ++
+      i.itemType.map(t => "itemType" -> t.asJson).toList ++
+      i.src.map(u => "src" -> u.asJson).toList
+  )
+
+  /**
+   * Resolve + classify ONE requested path into an item, or a rejection, plus
+   * the decoded-form disclosure note when one applies. Pure filesystem work —
+   * runs inside the caller's `IO.blocking`.
+   *
+   * Resolution goes through `FileRefs.resolveCandidates` (least-transformed
+   * first: the raw spelling, then its decoded form), so a `%20`-spelled path
+   * still finds the file and the note discloses which form won — the imgref
+   * batch (2026-09-18 作者令) contract, byte-for-byte. Media legs reuse the
+   * SHARED probes (`FileRefs.probeFile` for the ticket leg's servability,
+   * `FileRefs.embedImage` for the inline decision with its per-image gate +
+   * cumulative budget, `FileRefs.inlineMayTakeOver` for the takeover rule) —
+   * the same ladder Card used, so the two faces never drift. File-card legs
+   * probe only what the card needs (exists / regular file / size): their bytes
+   * are fetched by Canvas `readFile` on open, not by this tool.
+   */
+  private def buildItem(raw: String, budget: InlineBudget): (Either[RejectedRef, PopItem], Option[String]) =
+    val value = raw.trim
+    val ext = fileExtension(value)
+    val isVideo = VideoExtensions.contains(ext)
+    val isImage = EmbeddableImageExtensions.contains(ext)
+    val hit = FileRefs.resolveCandidates(
+      value,
+      FileRefs.resolvePath,
+      v => unresolvable(v, "the path could not be resolved to a filesystem path")
+    )
+    (hit.path, hit.decision) match
+      case (None, RefDecision.Reject(rejected)) => (Left(rejected), hit.note)
+      case (None, _) =>
+        (
+          Left(RejectedRef(value, None, FileRefFailure.Unresolvable, "the path could not be resolved")),
+          hit.note
+        )
+      case (Some(path), decision) =>
+        val name = path.getFileName.toString
+        val body: Either[RejectedRef, PopItem] =
+          if isImage || isVideo then mediaItem(value, path, ext, name, decision, budget, isVideo)
+          else fileCardItem(value, path, ext, name)
+        (body, hit.note)
+  end buildItem
+
+  /**
+   * Image / video leg from the ALREADY-COMPUTED probe verdict (resolveCandidates
+   * ran `probeFile` internally — never probe twice): the bytes either ride
+   * inline or the path rides for the ticket leg.
+   */
+  private def mediaItem(
+    value: String,
+    path: Path,
+    ext: String,
+    name: String,
+    decision: RefDecision,
+    budget: InlineBudget,
+    isVideo: Boolean
+  ): Either[RejectedRef, PopItem] =
+    decision match
+      case RefDecision.Proxy(_) =>
+        if isVideo then referencedVideo(value, path, ext, name)
+        else
+          embedImage(path, budget) match
+            case Right(dataUri) => inlineImage(value, path, ext, name, dataUri)
+            case Left(InlineSkip.Unreadable(detail)) =>
+              Left(RejectedRef(value, Some(describe(path)), FileRefFailure.Other, detail))
+            case Left(_) =>
+              // Per-image gate miss or over-budget: the ticket leg still renders
+              // it (the probe already proved the endpoint serves it) — never a
+              // warning (a 5MB+ PNG that renders fine is not a defect).
+              referencedImage(value, path, ext, name)
+      case RefDecision.Reject(rejected) if !isVideo && inlineMayTakeOver(path, rejected) =>
+        // The endpoint refuses this reference for its REACH layer only, and the
+        // file's identity is not a credential — embed the bytes (the shipped
+        // behaviour: such a file never had a working reference leg, only
+        // working bytes). 返工 r2 discipline, unchanged.
+        embedImage(path, budget) match
+          case Right(dataUri) => inlineImage(value, path, ext, name, dataUri)
+          case Left(_) =>
+            // Nothing can render it: the endpoint's refusal stands.
+            Left(rejected)
+      case RefDecision.Reject(rejected) => Left(rejected)
+      case other =>
+        Left(RejectedRef(value, Some(describe(path)), FileRefFailure.Other, s"unexpected probe verdict: $other"))
+  end mediaItem
+
+  private def inlineImage(value: String, path: Path, ext: String, name: String, dataUri: String): Either[RejectedRef, PopItem] =
+    sizeOf(path).map { size =>
+      Right(PopItem("image", name, describe(path), size = Some(size), ext = Some(ext), src = Some(dataUri)))
+    }.getOrElse(Left(notReadable(value, path)))
+
+  private def referencedImage(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
+    sizeOf(path).map { size =>
+      Right(PopItem("image", name, describe(path), size = Some(size), ext = Some(ext)))
+    }.getOrElse(Left(notReadable(value, path)))
+
+  private def referencedVideo(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
+    sizeOf(path).map { size =>
+      Right(PopItem("video", name, describe(path), size = Some(size), ext = Some(ext)))
+    }.getOrElse(Left(notReadable(value, path)))
+
+  /** File-card leg: exists + regular + size — Canvas readFile fetches the bytes on open. */
+  private def fileCardItem(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
+    try
+      if !Files.exists(path) then
+        val hint = nearestExistingParent(path)
+          .map(parent => s"; the nearest existing parent directory is ${describe(parent)}")
+          .getOrElse("")
+        Left(RejectedRef(value, Some(describe(path)), FileRefFailure.NotFound, s"no file at ${describe(path)}$hint"))
+      else if !Files.isRegularFile(path) then
+        Left(
+          RejectedRef(value, Some(describe(path)), FileRefFailure.NotRegularFile,
+            s"${describe(path)} is a directory or another non-regular file")
+        )
+      else
+        val size = Files.size(path)
+        Right(
+          PopItem(
+            "file",
+            name,
+            describe(path),
+            size = Some(size),
+            ext = Some(ext),
+            itemType = Some(nebflow.core.workspace.FileTypeRegistry.detect(ext).itemType)
+          )
+        )
+    catch
+      case e: Exception =>
+        Left(RejectedRef(value, Some(describe(path)), FileRefFailure.Other,
+          s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
+
+  private def sizeOf(path: Path): Option[Long] =
+    try Some(Files.size(path))
+    catch case _: Exception => None
+
+  private def notReadable(value: String, path: Path): RejectedRef =
+    RejectedRef(value, Some(describe(path)), FileRefFailure.NotReadable,
+      s"${describe(path)} is present but its size could not be read")
+
+  // ── payload ───────────────────────────────────────────────────────────────
+
+  /**
+   * The frontend payload: one JSON object after [[Sentinel]]. Field order
+   * leads with the counters/warnings so a truncated preview still shows the
+   * actionable head (the same contract as Card's payload).
+   */
+  private def payloadJson(
+    items: List[PopItem],
+    rejects: List[RejectedRef],
+    notes: List[String]
+  ): Json =
+    val distinct = distinctRejections(rejects)
+    val listed = distinct.take(MaxListedWarnings)
+    val inlined = items.count(_.src.isDefined)
+    val referenced = items.count(i => (i.kind == "image" || i.kind == "video") && i.src.isEmpty)
+    Json.obj(
+      "fileRefs" -> Json.obj(
+        "inlined" -> inlined.asJson,
+        "referenced" -> referenced.asJson,
+        "failed" -> distinct.size.asJson,
+        "omitted" -> (distinct.size - listed.size).asJson
+      ),
+      "warnings" -> warningsJson(listed),
+      "notes" -> Json.arr(notes.map(_.asJson)*),
+      "items" -> Json.arr(items.map(itemJson)*)
+    )
+
+  /**
+   * The **model-facing projection** (Card's `modelFacingResult` precedent):
+   * the payload's data URIs are browser food, and their size is exactly what
+   * would push the raw result past the guard — so the model face is a small,
+   * actionable projection carrying the SAME counters / warnings / notes
+   * objects verbatim. Never contains the sentinel, never any `data:` URI, and
+   * its length is independent of the media sizes.
+   */
+  override def modelFacingResult(result: String): String =
+    payloadOf(result) match
+      case Some(p) =>
+        val fileRefs = p.hcursor.downField("fileRefs").focus.getOrElse(Json.obj())
+        val media = p.hcursor.downField("items").focus.getOrElse(Json.arr()).asArray
+          .map(_.count(i => Set("image", "video").contains(i.hcursor.get[String]("kind").toOption.getOrElse(""))))
+          .getOrElse(0)
+        val files = p.hcursor.downField("items").focus.getOrElse(Json.arr()).asArray
+          .map(_.count(i => i.hcursor.get[String]("kind").toOption.contains("file")))
+          .getOrElse(0)
+        Json
+          .obj(
+            "pop" -> "displayed".asJson,
+            "media" -> media.asJson,
+            "files" -> files.asJson,
+            "fileRefs" -> fileRefs,
+            "warnings" -> p.hcursor.downField("warnings").focus.getOrElse(Json.arr()),
+            "notes" -> p.hcursor.downField("notes").focus.getOrElse(Json.arr()),
+            "note" -> ("The media/files are rendered to the user from the payload and are not returned as text; "
+              + "`fileRefs.failed` and `warnings` above are the facts to act on.").asJson
+          )
+          .noSpaces
+      case None =>
+        // URL leg (plain text) or an unparseable payload: identity is safe — the
+        // raw result is already small.
+        result
+    end match
+  end modelFacingResult
+
+  /** Parse the payload out of a raw result (`None` for the URL leg / a truncated preview). */
+  private def payloadOf(result: String): Option[Json] =
+    if !result.startsWith(Sentinel) then None
+    else io.circe.parser.parse(result.substring(Sentinel.length)).toOption
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    // 身份闸最前——先于任何副作用（filePath 解析 / 文件读 / HTML 图片内联 /
-    // WS 发送）。非 Nebula 身份（含 agentDef=None）在此短路，零副作用。
+    // 身份闸最前——先于任何副作用（filePath 解析 / 文件读 / 内联 / WS 发送）。
     if !isRootAgentSession(ctx) then IO.pure(Left(RootOnlyError))
     else doCall(input, ctx)
 
-  /** Nebula 本体根会话的 Pop 实现（身份已过闸；语义与本批前逐字节一致）。 */
+  /** Nebula 本体根会话的 Pop 实现（身份已过闸）。 */
   private def doCall(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val filePathStr = input("filePath").flatMap(_.asString).getOrElse("")
-    val customTitle = input("title").flatMap(_.asString).getOrElse("")
-
-    if filePathStr.isBlank then IO.pure(Left(ToolError("Pop tool requires a `filePath` parameter.")))
-    else if isHttpUrl(filePathStr) then
-      val hostname = extractHostname(filePathStr)
-      val tabTitle = if customTitle.nonEmpty then customTitle else hostname
-      val msg = Json.obj(
-        "type" -> "popFile".asJson,
-        "item" -> Json.obj(
-          "id" -> s"url:$filePathStr".asJson,
-          "itemType" -> "url".asJson,
-          "title" -> tabTitle.asJson,
-          "url" -> filePathStr.asJson,
-          "pinned" -> true.asJson
-        )
-      )
-      val sendIO = ctx.wsSend.getOrElse((_: Json) => IO.unit)
-      sendIO(msg) >> IO.pure(Right(s"Opened $tabTitle in Canvas."))
-    else
-      resolvePath(filePathStr) match
-        case None =>
-          IO.pure(Left(ToolError(s"Invalid path: $filePathStr")))
-
-        case Some(path) =>
-          IO.blocking {
-            if !Files.exists(path) then Left(ToolError(s"File not found: $path"))
-            else if !Files.isRegularFile(path) then Left(ToolError(s"Not a regular file: $path"))
-            else
-              val ext = fileExtension(path.toString)
-              val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
-              val itemType = entry.itemType
-              val fileName = path.getFileName.toString
-              val tabTitle = if customTitle.nonEmpty then customTitle else fileName
-              val size = Files.size(path)
-              val isBinary = entry.binary
-
-              // For text files under MaxTextSize: read content and send via WS.
-              // For binary files or large text: send metadata only, frontend fetches via /api/nf-file.
-              val rawContent =
-                if isBinary || size > MaxTextSize then ""
-                else new String(Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
-
-              // Embed local images as base64 data URIs so they render in the
-              // Canvas iframe. Only for HTML files with non-empty content.
-              // `refs` carries what happened to every local reference that was
-              // NOT inlined (toolfail batch, 2026-09-11) — it feeds both the
-              // tool result and the `popFile` item the Canvas viewer renders.
-              val htmlDir = Option(path.getParent).getOrElse(Paths.get("."))
-              val refs: Option[PopRefOutcome] =
-                if itemType == "html" && rawContent.nonEmpty then Some(processLocalImages(rawContent, htmlDir))
-                else None
-              val content = refs.map(_.html).getOrElse(rawContent)
-
-              // Directly-opened image (2026-09-16 imgfix batch): the Canvas image
-              // viewer used to fetch the bytes through /api/nf-file, whose
-              // per-path ticket the gateway mints only for paths its credential-
-              // namespace policy serves — a PNG under `<dataRoot>/docs/**` was
-              // refused, so the viewer got a credential-free URL, a 401, and
-              // showed its "File may be corrupted or not a valid image format."
-              // panel (author report: sha256 f94d0e04…, 512479 B, file intact).
-              // The bytes ride in the payload instead (same rule as the HTML
-              // `<img>` pass above, one definition in `FileRefs`), and the
-              // viewer's existing `objectUrl` leg renders them with NO request.
-              // An image outside the per-image policy — or one that does not fit
-              // this call's cumulative inline budget (`fileRefs`-level rule:
-              // 40,000 chars, `FileRefs.MaxInlinePayloadChars`, img-ticket batch
-              // i / #687-C) — keeps metadata-only and is still fetched through
-              // the ticket leg (which now serves `<dataRoot>/docs/**` too, so the
-              // 2026-09-16 author case above renders either way).
-              // A FRESH budget: the HTML `<img>` pass and this face are mutually
-              // exclusive per call, so neither can spend the other's balance.
-              val inlineImage: Option[String] =
-                if entry.binary then embedImage(path, InlineBudget()).toOption else None
-
-              // The refs keys are added only for HTML items (the only ones the
-              // pass runs on) — a markdown Pop keeps its item shape unchanged.
-              val refFields: List[(String, Json)] = refs match
-                case Some(o) =>
-                  val (counters, warnings) = refPayload(o)
-                  List("fileRefs" -> counters, "warnings" -> warnings)
-                case None => Nil
-
-              // Build the WS message — dispatched as 'popFile' type. The two
-              // extra keys carry the SAME shapes Card ships in its payload, so
-              // the Canvas HTML viewer can render them with the same notice
-              // component the chat uses.
-              val msg = Json.obj(
-                "type" -> "popFile".asJson,
-                "item" -> Json.fromFields(
-                  List(
-                    "id" -> s"file:${path.toString}".asJson,
-                    "itemType" -> itemType.asJson,
-                    "title" -> tabTitle.asJson,
-                    "content" -> content.asJson,
-                    "absPath" -> path.toString.asJson,
-                    "size" -> size.asJson,
-                    "pinned" -> true.asJson
-                  ) ++ inlineImage.map(u => "objectUrl" -> u.asJson).toList ++ refFields
+    requestedPaths(input) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(paths) =>
+        paths match
+          // Single HTTP/HTTPS URL: the Canvas iframe tab, exactly as shipped.
+          case List(single) if isHttpUrl(single.trim) =>
+            val url = single.trim
+            val customTitle = input("title").flatMap(_.asString).getOrElse("")
+            val tabTitle = if customTitle.nonEmpty then customTitle else extractHostname(url)
+            val msg = Json.obj(
+              "type" -> "popFile".asJson,
+              "item" -> Json.obj(
+                "id" -> s"url:$url".asJson,
+                "itemType" -> "url".asJson,
+                "title" -> tabTitle.asJson,
+                "url" -> url.asJson,
+                "pinned" -> true.asJson
+              )
+            )
+            val sendIO = ctx.wsSend.getOrElse((_: Json) => IO.unit)
+            sendIO(msg) >> IO.pure(Right(s"Opened $tabTitle in Canvas."))
+          case _ =>
+            val urlItems = paths.filter(p => isHttpUrl(p.trim))
+            if urlItems.nonEmpty then
+              IO.pure(
+                Left(
+                  ToolError(
+                    "Pop: an HTTP/HTTPS URL cannot be batched with file paths — pop the URL alone " +
+                      "(single-string filePath), files may be batched as an array."
+                  )
                 )
               )
-
-              Right((msg, tabTitle, refs))
-          }.flatMap {
-            case Left(err) => IO.pure(Left(err))
-            case Right((msg, tabTitle, refs)) =>
-              val sendIO = ctx.wsSend.getOrElse((_: Json) => IO.unit)
-              val summary = s"Opened $tabTitle in Canvas."
-              val result = refs match
-                case Some(o) =>
-                  val (fileRefsJsonValue, warningsJsonValue) = refPayload(o)
-                  describeResult(summary, o, fileRefsJsonValue, warningsJsonValue)
-                case None => summary
-              sendIO(msg) >> IO.pure(Right(result))
-          }
-
-    end if
-
+            else
+              IO.blocking {
+                // ONE budget per call (the FileRefs rule): the items of one
+                // batch share it in the order the paths appear.
+                val budget = InlineBudget()
+                val notes = scala.collection.mutable.ListBuffer.empty[String]
+                val rejects = scala.collection.mutable.ListBuffer.empty[RejectedRef]
+                val items = scala.collection.mutable.ListBuffer.empty[PopItem]
+                paths.foreach { raw =>
+                  val (item, note) = buildItem(raw, budget)
+                  item match
+                    case Right(ok) =>
+                      items += ok
+                      note.foreach(n => if !notes.contains(n) then notes += n)
+                    case Left(rejected) =>
+                      // A decoded-form hit is DISCLOSED even when the item went
+                      // on to fail for another reason (imgref batch: the result
+                      // must say which form of the path was used).
+                      note.foreach(n => if !notes.contains(n) then notes += n)
+                      rejects += rejected
+                }
+                val payload = payloadJson(items.toList, rejects.toList, notes.toList.distinct)
+                s"$Sentinel${payload.noSpaces}"
+              }.map(Right(_))
+    end match
   end doCall
 
+  /**
+   * Disclosure note for a path that only named a file through its decoded form
+   * (imgref batch, 2026-09-18 作者令) now rides `FileRefs.resolveCandidates`'
+   * own `CandidateHit.note` — no second copy of the rule here.
+   */
+
   def summarize(input: JsonObject): String =
-    val filePath = input("filePath").flatMap(_.asString).getOrElse("?")
+    val filePath = input("filePath")
     val title = input("title").flatMap(_.asString).getOrElse("")
-    val label =
-      if title.nonEmpty then title
-      else if isHttpUrl(filePath) then extractHostname(filePath)
-      else filePath.split('/').lastOption.getOrElse(filePath)
+    val label = filePath.flatMap(_.asString) match
+      case Some(single) =>
+        if title.nonEmpty then title
+        else if isHttpUrl(single) then extractHostname(single)
+        else single.split('/').lastOption.getOrElse(single)
+      case None =>
+        filePath.flatMap(_.asArray).map(_.flatMap(_.asString).filter(_.trim.nonEmpty)) match
+          case Some(paths) if paths.length > 1 =>
+            val first = paths.head.split('/').lastOption.getOrElse(paths.head)
+            s"$first +${paths.length - 1}"
+          case _ => "?"
     s"Pop\n  ($label)"
 
   def summarizeResult(input: JsonObject, result: String): String =
-    val filePath = input("filePath").flatMap(_.asString).getOrElse("?")
-    val fileName =
-      if isHttpUrl(filePath) then extractHostname(filePath)
-      else filePath.split('/').lastOption.getOrElse(filePath)
-    // Visibility (toolfail batch, mirrors Card's summarizeResult): a Pop whose
-    // local images were dropped used to look like a clean `Opened X in Canvas`.
-    val failed = failedIn(result)
-    if failed > 0 then s"Opened $fileName in Canvas — $failed image reference(s) NOT inlined"
-    else s"Opened $fileName in Canvas"
+    result match
+      case r if r.startsWith("Opened ") => r // URL leg, unchanged face
+      case _ =>
+        payloadOf(result) match
+          case Some(p) =>
+            val items = p.hcursor.downField("items").as[List[Json]].getOrElse(Nil)
+            val media = items.count(i => i.hcursor.get[String]("kind").toOption.exists(k => k == "image" || k == "video"))
+            val files = items.count(i => i.hcursor.get[String]("kind").toOption.contains("file"))
+            val failed = p.hcursor.downField("fileRefs").get[Int]("failed").toOption.getOrElse(0)
+            // Visibility (toolfail-batch discipline): a Pop whose items were
+            // dropped must not look clean.
+            val note = if failed > 0 then s" — $failed path(s) NOT shown" else ""
+            s"Pop: $media media + $files file card(s) shown in chat$note"
+          case None => result
 
 end PopTool

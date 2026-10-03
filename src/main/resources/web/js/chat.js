@@ -34,7 +34,7 @@ import { previewLocalPath, canPreviewLocalPath } from './attachmentPreview.js';
 // i18n.js only) — the call sites below are the EXISTING render paths, so the
 // engine event stream (thinkingDelta / toolStart / toolEnd) is consumed
 // unchanged.
-import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, finishWorkline, removeWorkline } from './workline.js';
+import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, removeWorkline } from './workline.js';
 
 // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
 // label (same string the user reads on the card), so the single-line badge and
@@ -335,9 +335,10 @@ export function renderUserBubble(text, attachments, timestamp) {
   // Text bubble (separate)
   if (text) {
     const bubble = document.createElement('div');
-    // stream-ux §二.1.3: the user's own bubble slides in from the right with
-    // the elastic settle. Opt-in class (history replay stays static).
-    bubble.className = 'bubble user nf-slide-in';
+    // stream-ux (2026-10-03): the user's own bubble enters iMessage-style —
+    // one message, one pop (scale + elastic settle), same animation family as
+    // the assistant bubbles. Opt-in class (history replay stays static).
+    bubble.className = 'bubble user nf-pop';
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
@@ -683,17 +684,11 @@ export function appendAiText(text) {
   const view = activeView;
   const chat = view.dom.chat;
   view.stream.aiText += text;
-  // stream-ux §二.1.1: the tool/thinking phase is over — the badge rolls to its
-  // completed form (`已完成 N 工具 · 思考 N 轮 · 点击展开`) and stays for the
-  // rest of the turn. Per §二.1.4 the expand surface itself is the EXISTING
-  // `.turn-header` (built by turnGroup at the terminal), so this badge is a
-  // status readout only; it never grows a second expand face.
-  // (No-op when the turn had no process at all — `finishWorkline` guards on an
-  // existing row.)
-  if (!view.stream._nfWorklineDone) {
-    finishWorkline(view);
-    view.stream._nfWorklineDone = true;
-  }
+  // stream-ux redesign (2026-10-03): the turn line KEEPS RUNNING while text
+  // segments arrive — each completed segment pops in as its own bubble at the
+  // tool/round boundary (finishAi), so there is no "badge rolls to its done
+  // form on first text" step any more (the old `_nfWorklineDone` latch is
+  // gone). The line only settles at the turn terminal (turnGroup).
   // 流式检测：发现完整的 <voice>...</voice> 块立即并行预取 TTS
   const voiceMatches = view.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
   if (voiceMatches) {
@@ -1000,73 +995,14 @@ export function finishAgent(agentId) {
 
 // ---------- Tool rendering ----------
 
-/**
- * Extract the Pop/Card artifact from a tool label + raw input — the SINGLE
- * detection predicate shared by the message-bubble Pop card (applyPopCard)
- * and the search-results click (chatSearch queue #2): a Pop or legacy-Card
- * tool whose input JSON carries a resolvable filePath. Returns
- * {filePath, title} or null (not an openable artifact → plain jump).
- */
-export function popArtifactFromInput(label, inputJson) {
-  const name = label ? label.split('(')[0].split('\n')[0].trim() : '';
-  if ((name !== 'Pop' && name !== 'Card') || !inputJson) return null;
-  let filePath = '';
-  let title = '';
-  try {
-    const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
-    filePath = inp.filePath || '';
-    title = inp.title || '';
-  } catch { /* malformed input → no openable artifact */ }
-  return filePath ? { filePath, title } : null;
-}
-
-/** Open a Pop artifact in the Canvas panel — the SINGLE open path shared by
- *  the message-bubble Pop card and the search-results click (queue #2).
- *  Dispatches the workspace-open-item event canvas.js listens for; the empty
- *  content + absPath shape makes canvas fetch the real content via readFile. */
-export function openPopArtifact(filePath, title) {
-  const fileName = filePath.split('/').pop() || filePath;
-  window.dispatchEvent(new CustomEvent('workspace-open-item', {
-    detail: {
-      id: 'file:' + filePath,
-      title: title || fileName,
-      itemType: '',
-      content: '',
-      absPath: filePath,
-      pinned: true
-    }
-  }));
-}
-
-/** Render a Pop tool card onto an existing card element.
- *  Shared between live renderTool and history restoreFromBackendHistory.
- *  Returns true if the card was handled (Pop tool), false otherwise. */
-export function applyPopCard(card, label, summary, inputJson, isError) {
-  const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
-  if (_toolName !== 'Pop' || !inputJson) return false;
-
-  const icon = isError
-    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-  const art = popArtifactFromInput(label, inputJson);
-  const popFilePath = art ? art.filePath : '';
-  const popTitle = art ? art.title : '';
-  const popFileName = popFilePath.split('/').pop() || popFilePath;
-  const popLocalLabel = localizeToolLabel(label);
-  const popLocalSummary = localizeToolSummary(summary, label);
-  const popLabelParts = popLocalLabel.split('\n', 2);
-  const rainbowName = '<span class="pop-rainbow-name">' + escapeHtml(popTitle || popFileName) + '</span>';
-  const summaryHtml = escapeHtml(popLocalSummary).replace(escapeHtml(popFileName), rainbowName);
-  const labelHtml = escapeHtml(popLabelParts[0]) + ' &mdash; ' + summaryHtml
-    + (popLabelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(popLabelParts[1]) + '</span>' : '');
-  card.classList.add('pop-tool-card');
-  card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-    '<div class="content"><div class="label">' + labelHtml + '</div></div>';
-  if (popFilePath) {
-    card.addEventListener('click', () => openPopArtifact(popFilePath, popTitle));
-  }
-  return true;
-}
+// Pop artifact faces (pop-upgrade batch 2026-10-03): the payload parser, the
+// media-stack / file-card renderer and the Canvas-open dispatch live in ONE
+// module (popArtifacts.js) so live rendering and history replay share the
+// payload contract. chat.js re-exports the two names chatSearch.js has always
+// imported from here — re-export, not redefinition (single source in
+// popArtifacts.js).
+export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard } from './popArtifacts.js';
 
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
@@ -1115,7 +1051,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     card.innerHTML = '';
   } else {
     row = document.createElement('div');
-    row.className = 'row tool';
+    // Pre-tucked (stream-ux redesign 2026-10-03): the card is the expand face;
+    // the turn line owns the live spinner. Reused pending rows were born
+    // tucked by renderToolPending.
+    row.className = 'row tool nf-tucked';
     card = document.createElement('div');
     card.className = 'tool-card';
     row.appendChild(card);
@@ -1160,8 +1099,36 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // of the tool_result content ("Message sent...").
   const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
 
-  // Pop tool: rainbow filename inline in the label + clickable to re-open.
-  if (applyPopCard(card, label, summary, inputJson, isError)) {
+  // Pop artifact payload (pop-upgrade batch): the tool row renders as a plain
+  // process face; the media stack / file cards render in a SEPARATE row below
+  // (`.row.pop-artifact` — never a `.row.tool`, so turnGroup never tucks it and
+  // the deliverable survives the ✻ collapse, sitting at the bottom of the
+  // agent's message). The payload rides `content` into history, so replay
+  // re-renders the same faces via persistence.js.
+  if (isPopPayload(content)) {
+    renderPopToolRow(card, label, summary, isError);
+    const popPayload = parsePopPayload(content);
+    if (popPayload) {
+      const artifactRow = buildPopArtifactRow(popPayload);
+      if (artifactRow) {
+        row.after(artifactRow);
+        smartScroll();
+      }
+    } else {
+      // Truncated payload (should not happen — SessionStore stores Pop payloads
+      // whole) → the safe placeholder, never the raw sentinel text.
+      const popBody = document.createElement('div');
+      popBody.className = 'body open';
+      popBody.textContent = t('chat.toolCardUnavailable');
+      card.querySelector('.content')?.appendChild(popBody);
+      attachToolClick(card);
+    }
+    return { type: 'tool', label, summary, content, isError, input: inputJson };
+  }
+
+  // Legacy Pop rows (pre-batch histories): rainbow filename inline in the
+  // label + clickable to re-open. New Pop calls always carry the payload above.
+  if (applyLegacyPopCard(card, label, summary, inputJson, isError)) {
     smartScroll();
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
   }
@@ -1335,7 +1302,7 @@ export function renderToolPending(label, sessionId) {
   }
 
   const row = document.createElement('div');
-  row.className = 'row tool';
+  row.className = 'row tool nf-tucked'; // expand face — the turn line owns the run (2026-10-03)
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
   card.className = 'tool-card tool-card--pending';
@@ -3444,7 +3411,11 @@ export function appendThinkingDelta(delta) {
     }
     const chat = activeView.dom.chat;
     const row = document.createElement('div');
-    row.className = 'row ai thinking-row';
+    // stream-ux redesign (2026-10-03): the thinking feed is NEVER visible as a
+    // bubble during the run — the turn line carries the single-line reveal.
+    // The bubble is the EXPAND face, so it is born pre-tucked; content still
+    // renders into it (rAF below) and turnGroup untucks it on demand.
+    row.className = 'row ai thinking-row nf-tucked';
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai thinking-bubble';
     // #346 v2 stats: thinking duration for the turn header (turnGroup.js

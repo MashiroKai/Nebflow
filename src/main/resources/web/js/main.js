@@ -37,6 +37,9 @@ import {
   appendToolStreamDelta, cancelToolStreamRAF,
   formatResumeClock
 } from './chat.js';
+// stream-ux redesign (2026-10-03): the pre-token 「思考中」 placeholder lives
+// ON the turn line (dots + live timer), not in a bubble row.
+import { startWorklineDots } from './workline.js';
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks } from './askPending.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -86,7 +89,6 @@ import { initUpdateCheck } from './updateCheck.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
-import { formatLiveDuration } from './chat.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
@@ -120,63 +122,12 @@ import { friendsEnabled } from './featureFlags.js';
 let friendsGateDecided = false;
 
 // ---------- Live thinking timer ----------
-let _thinkingTimerInterval = null;
-let _thinkingTimerEl = null;
-
-function startThinkingTimer() {
-  stopThinkingTimer(); // clean any previous
-  const sid = state.activeSessionId;
-  const startTime = state.turnStartTimes[sid];
-  if (!startTime) return;
-
-  // Insert timer element into the existing thinking placeholder
-  const placeholder = activeView.dom.chat.querySelector('.thinking-placeholder');
-  if (!placeholder) return;
-
-  // Remove old thinking text, replace with indicator structure
-  placeholder.innerHTML = '';
-  const indicator = document.createElement('div');
-  indicator.className = 'thinking-indicator';
-
-  // Animated dots
-  for (let i = 0; i < 3; i++) {
-    const dot = document.createElement('span');
-    dot.className = 'thinking-dot';
-    if (i === 1) dot.style.animationDelay = '0.15s';
-    if (i === 2) dot.style.animationDelay = '0.3s';
-    indicator.appendChild(dot);
-  }
-
-  // Label
-  const label = document.createElement('span');
-  label.className = 'thinking-indicator-label';
-  label.textContent = t('chat.thinking.now') || '思考中';
-  indicator.appendChild(label);
-
-  // Live timer
-  const timer = document.createElement('span');
-  timer.className = 'thinking-timer';
-  timer.textContent = formatLiveDuration(Date.now() - startTime);
-  indicator.appendChild(timer);
-
-  placeholder.appendChild(indicator);
-  _thinkingTimerEl = timer;
-
-  // Tick every second
-  _thinkingTimerInterval = setInterval(() => {
-    if (_thinkingTimerEl) {
-      _thinkingTimerEl.textContent = formatLiveDuration(Date.now() - startTime);
-    }
-  }, 1000);
-}
-
-function stopThinkingTimer() {
-  if (_thinkingTimerInterval) {
-    clearInterval(_thinkingTimerInterval);
-    _thinkingTimerInterval = null;
-  }
-  _thinkingTimerEl = null;
-}
+// stream-ux redesign (2026-10-03): the old `.thinking-placeholder` bubble and
+// its interval timer are GONE — the "thinking" face is the turn line's dots
+// item (workline.js startWorklineDots, timer self-owned there). The stop
+// helper stays as a no-op for the many legacy call sites (chat.js placeholder
+// branches, input.js cleanup) so they read harmlessly.
+function stopThinkingTimer() {}
 // Expose for cross-module cleanup (input.js)
 window.__stopThinkingTimer = stopThinkingTimer;
 
@@ -917,20 +868,11 @@ onMessage('thinking', (msg, view) => {
   resetStreamTimeout(sid);
   armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
-    // Guard against duplicate thinking bubbles: check both state ref and DOM.
-    const existing = activeView.dom.chat.querySelector('.thinking-placeholder');
-    if (!activeView.stream.currentAiBubble && !existing) {
-      const { chat } = activeView.dom;
-      const row = document.createElement('div');
-      row.className = 'row ai';
-      activeView.stream.currentAiBubble = document.createElement('div');
-      activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      row.appendChild(activeView.stream.currentAiBubble);
-      chat.appendChild(row);
-      smartScroll();
-      // Start live timer after a brief moment so DOM is settled
-      requestAnimationFrame(() => startThinkingTimer());
-    }
+    // stream-ux redesign (2026-10-03): the pre-token face is the turn line's
+    // dots item — no placeholder bubble row any more (the old guard checked
+    // currentAiBubble + a .thinking-placeholder row; the line is idempotent
+    // per kind, so re-issued `thinking` frames cannot double-show).
+    startWorklineDots(activeView, state.turnStartTimes[sid]);
   }
 });
 
@@ -1347,22 +1289,12 @@ onMessage('roundComplete', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
-    // Show thinking placeholder for the upcoming round — backend sent sessionBusy(true)
-    // after roundComplete, so the agent is still working.
+    // Show the turn line's dots for the upcoming round — backend sent
+    // sessionBusy(true) after roundComplete, so the agent is still working
+    // (stream-ux redesign: the dots live ON the line, not in a bubble).
     if (sid && state.busySessionIds.has(sid)) {
       if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
-      const { chat } = activeView.dom;
-      const existing = chat.querySelector('.thinking-placeholder');
-      if (!activeView.stream.currentAiBubble && !existing) {
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        activeView.stream.currentAiBubble = document.createElement('div');
-        activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
-        row.appendChild(activeView.stream.currentAiBubble);
-        chat.appendChild(row);
-        smartScroll();
-        requestAnimationFrame(() => startThinkingTimer());
-      }
+      startWorklineDots(activeView, state.turnStartTimes[sid]);
     }
   }
 });

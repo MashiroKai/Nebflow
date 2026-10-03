@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import io.circe.{Json, JsonObject}
+import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.shared.PathUtil
@@ -101,15 +102,32 @@ class FileRefsServabilityScopeSpec extends FunSuite:
       Option(javax.imageio.ImageIO.read(p.toFile)).map(i => s"${i.getWidth}x${i.getHeight}").getOrElse("unreadable")
     s"${p} bytes=${Files.size(p)} dims=$dims sha256=${sha256(p)}"
 
-  // ── Card harness (the tool face) ──────────────────────────────────────────
+  // ── Pop harness (the tool face; pop-upgrade 批 2026-10-03 re-point: the
+  //    media legs of PopTool are FileRefs' remaining consumer) ───────────────
 
-  private def card(html: String): Json =
-    val input = JsonObject("html" -> Json.fromString(html), "title" -> Json.fromString("T"))
-    val result = CardTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
-    assert(result.startsWith(sentinel), s"result must start with the sentinel, got: ${result.take(60)}")
-    io.circe.parser.parse(result.substring(sentinel.length)).fold(err => fail(s"payload JSON: $err"), identity)
+  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
 
-  private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
+  /** Pop ONE image path through the tool and return the parsed payload. */
+  private def popImage(ref: String): Json =
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val popCtx = ToolContext(
+      sessionId = Some("imgref-scope-test"),
+      sessionStore = None,
+      agentDef = Some(nebulaDef),
+      agentLibrary = None,
+      agentActorRef = None,
+      actorSystem = None,
+      sharedResources = None,
+      depth = 0,
+      messages = Nil,
+      wsSend = Some((j: Json) => IO { buf += j }),
+      projectRoot = ""
+    )
+    val result = PopTool.call(JsonObject("filePath" -> Json.fromString(ref)), popCtx).unsafeRunSync()
+      .getOrElse(fail("expected Right"))
+    assert(result.startsWith(PopTool.Sentinel), s"payload sentinel expected: ${result.take(60)}")
+    io.circe.parser.parse(result.substring(PopTool.Sentinel.length)).fold(err => fail(s"payload JSON: $err"), identity)
+
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
 
   private def refs(p: Json, field: String): Int =
@@ -212,7 +230,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
 
   // ── ① the inline leg honours the reach layer … ────────────────────────────
 
-  test("leg scope: a namespace-only refusal still embeds the bytes, and is still warned on the URL face"):
+  test("leg scope: a namespace-only refusal still embeds the bytes (the inline leg asks the endpoint nothing)"):
     val root = freshRoot("leg-scope")
     val img = writePng(root.resolve("shot 3.png"))
     val ref = realOf(img).toString
@@ -220,36 +238,22 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     println(s"[SCOPE-READING] fixture=${describeFixture(img)}")
     println(s"[SCOPE-READING] layered=${FileRefs.servableByEndpointLayered(realOf(img)).map(t => (t._1, t._2))}")
 
-    // (a) RESOURCE face — the inline leg embeds the bytes: no request, no endpoint,
-    //     so the reach layer is irrelevant. This is the SHIPPED capability the
-    //     author's order asks for (and what `CardModelFaceSpec` C1 exercises).
-    val asImage = card(s"""<img src="$ref"/>""")
+    // RESOURCE face — the inline leg embeds the bytes: no request, no endpoint,
+    // so the reach layer is irrelevant. This is the SHIPPED capability the
+    // author's order asks for ("让本地件成功率高一点"), now on the Pop payload face.
+    val asImage = popImage(ref)
     println(
       s"[SCOPE-READING] img-face fileRefs=${asImage.hcursor.downField("fileRefs").focus.map(_.noSpaces)} " +
-        s"warnings=${warningsOf(asImage).map(_.noSpaces).mkString(",")} inline=${htmlOf(asImage).contains("data:image/png;base64,")}"
+        s"warnings=${warningsOf(asImage).map(_.noSpaces).mkString(",")}"
     )
     assertEquals(refs(asImage, "inlined"), 1, "a readable, non-credential image is embedded")
-    assertEquals(refs(asImage, "proxied"), 0, "an embedded image emits no /api/nf-file URL")
     assertEquals(refs(asImage, "failed"), 0, "nothing failed: the bytes are in the payload")
     assertEquals(warningsOf(asImage), Nil)
-    assert(htmlOf(asImage).contains("data:image/png;base64,"), "the payload carries the data: URI")
-    assert(!htmlOf(asImage).contains("/api/nf-file"), "no URL was emitted for the embedded reference")
-
-    // (b) URL face — the very same file referenced where only /api/nf-file could
-    //     ever deliver it (a navigation reference is never embedded): the endpoint
-    //     cannot serve that location, so it is REPORTED, never counted.
-    val asLink = card(s"""<link rel="stylesheet" href="$ref"/>""")
-    println(
-      s"[SCOPE-READING] link-face fileRefs=${asLink.hcursor.downField("fileRefs").focus.map(_.noSpaces)} " +
-        s"warnings=${warningsOf(asLink).map(_.noSpaces).mkString(",")}"
+    assert(
+      asImage.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+        .exists(_.hcursor.get[String]("src").toOption.exists(_.startsWith("data:image/png;base64,"))),
+      "the payload carries the data: URI"
     )
-    assertEquals(refs(asLink, "proxied"), 0, "an unretrievable URL must never be counted as proxied")
-    assertEquals(refs(asLink, "inlined"), 0)
-    assertEquals(refs(asLink, "failed"), 1)
-    assertEquals(reasons(asLink), List("not-servable"))
-    assert(details(asLink).contains("credential-bearing"), s"the refusal quotes the endpoint: ${details(asLink)}")
-    assert(details(asLink).contains("move or copy the file"), s"…with an executable fix: ${details(asLink)}")
-    assert(htmlOf(asLink).contains(ref), "the raw value stays in the markup (no blank rewrite)")
 
   // ── …and NOT the identity layers (incl. the endpoint's short-circuit) ─────
 
@@ -273,16 +277,19 @@ class FileRefsServabilityScopeSpec extends FunSuite:
 
     // the reference is the LINK's own name (`shot link 4.png`): the endpoint
     // resolves the real path itself, and that real path is the credential file
-    val p = card(s"""<img src="$link"/>""")
+    val p = popImage(link.toString)
     println(
       s"[SCOPE-READING] fileRefs=${p.hcursor.downField("fileRefs").focus.map(_.noSpaces)} " +
         s"warnings=${warningsOf(p).map(_.noSpaces).mkString(",")}"
     )
     assertEquals(refs(p, "inlined"), 0, "a credential file's bytes must never ride in the payload")
-    assertEquals(refs(p, "proxied"), 0)
     assertEquals(refs(p, "failed"), 1)
     assertEquals(reasons(p), List("not-servable"))
-    assert(!htmlOf(p).contains("data:"), "no data: URI was produced")
+    assert(
+      !p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+        .exists(_.hcursor.get[String]("src").toOption.exists(_.startsWith("data:"))),
+      "no data: URI was produced"
+    )
 
   test("identity layer: a file under <dataRoot>/secrets/** is never embedded either"):
     val root = freshRoot("identity-secrets")
@@ -298,9 +305,8 @@ class FileRefsServabilityScopeSpec extends FunSuite:
       false,
       "everything under <dataRoot>/secrets/** is a credential inode"
     )
-    val p = card(s"""<img src="${realOf(secretPng).toString}"/>""")
+    val p = popImage(realOf(secretPng).toString)
     assertEquals(refs(p, "inlined"), 0, "a readable image inside the credential directory is still a credential")
-    assertEquals(refs(p, "proxied"), 0)
     assertEquals(refs(p, "failed"), 1)
     assertEquals(reasons(p), List("not-servable"))
 
@@ -318,9 +324,8 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     // the reference is the SYMLINK's name (`alias 6.png`): its own extension is a
     // served image, and the refusal comes from the extension of the REAL path —
     // which is exactly the layer this test pins
-    val p = card(s"""<img src="$alias"/>""")
+    val p = popImage(alias.toString)
     assertEquals(refs(p, "inlined"), 0, "a symlink cannot lend the embedded image its MIME by name")
-    assertEquals(refs(p, "proxied"), 0)
     assertEquals(refs(p, "failed"), 1)
     assertEquals(reasons(p), List("not-servable"))
     assert(details(p).contains("file-type"), s"the refusal quotes the endpoint's own reason: ${details(p)}")

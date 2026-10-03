@@ -1025,6 +1025,11 @@ export default {
   // cardguard（作者裁定 2026-09-17 · #687①）：含卡片哨兵的工具结果不再以 <pre>
   // 兜底渲染原文 ⇒ 走卡片路径，提取失败时显示本占位（🔴 原文不进 DOM）。
   'chat.toolCardUnavailable': '卡片内容不可用（未渲染原始数据）',
+  // pop-upgrade 批(2026-10-03):Pop 工件面(叠卡/文件卡片)文案
+  'chat.popExpand': '展开 {n}',
+  'chat.popCollapse': '收起',
+  'chat.popOpenCanvas': '在 Canvas 打开',
+  'chat.popFailed': '{n} 个路径未能显示',
   // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
   // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
   'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',
@@ -1632,6 +1637,7 @@ export default {
   'agentManager.noAgents': '未配置智能体',
   'agentManager.saved': '已保存',
   'agentManager.save': '保存',
+  'agentManager.builtinNote': '内置 agent：系统提示词由代码定义（只读）；模型链可在 /model 面板调整',
   // === 插件页（2026-09-13 无审批批：在位即信任；2026-09-14 面板收敛批：
   //     封禁/解封 UI 全量退场 + 派发开关改「任务分发器可见性」并移到卡片右上，en/zh 成对） ===
   'plugins.list': '插件',
@@ -1659,6 +1665,8 @@ export default {
   'plugins.loadFailed': '插件清单加载失败：{error}',
   'plugins.authRequired': '未登录 · 需注册 — 登录后使用插件面板',
   'plugins.relogin': '登录',
+  'plugins.builtinBadge': '内置',
+  'plugins.builtinTitle': '内置 agent：定义在代码中（BuiltinAgents），面板只读',
   'plugins.detail': '详情',
   'chatQueue.dragReorder': '拖动以排序',
   'chatQueue.clickExpand': '点击展开',
@@ -1846,15 +1854,28 @@ export default {
   'social.wechat.field.token': '消息校验 Token',
   'social.wechat.field.aesKey': '消息加解密密钥',
   // wechat-ilink（chain-wechat-impl，作者 2026-09-30 裁定 ② 选 (B)）：另立的
-  // iLink 渠道 id，与上方公众号卡并存。真机登录完成前处于封存态，故这段文案
-  // 暂不上面板——留在表内是为了封存条目不产生孤儿键（W11）。
+  // iLink 渠道 id，与上方公众号卡并存。weixin-scanbind（作者 2026-10-03）：
+  // 卡片解封并加入扫码家族，下面补齐扫码/解绑两组文案（与 feishu 同形，
+  // §16 收录）。
   'social.weixinIlink.name': '微信（iLink）',
-  'social.weixinIlink.desc': '微信 iLink 机器人的接口凭据。一期只做配置落盘，不建立任何对外通道。',
+  'social.weixinIlink.desc': '微信 iLink 机器人：扫码后凭据自动写入，消息进绑定会话。',
   'social.weixinIlink.field.botToken': 'Bot Token',
   'social.weixinIlink.field.ilinkBotId': '机器人 ID',
   'social.weixinIlink.field.ilinkUserId': '登录用户 ID',
   'social.weixinIlink.field.baseurl': 'API 基址',
+  'social.weixinIlink.field.sidecarUrl': 'Side-car 地址（选填）',
   'social.weixinIlink.field.allowedIlinkUserIds': '发送者名单（可选）',
+  'social.weixinIlink.scan.starting': '正在获取二维码…',
+  'social.weixinIlink.scan.waiting': '请用微信扫一扫，并在手机上确认',
+  'social.weixinIlink.scan.confirmed': '手机已确认，正在写入凭据…',
+  'social.weixinIlink.scan.done': '机器人已登录，凭据已写入',
+  'social.weixinIlink.scan.failed': '扫码绑定失败：{reason}',
+  'social.weixinIlink.scan.userCode': '确认码：{code}',
+  'social.weixinIlink.scan.qrFallback': '若二维码未显示，请在手机上打开此链接：',
+  'social.weixinIlink.archive.action': '解除绑定',
+  'social.weixinIlink.archive.doing': '解除绑定中…',
+  'social.weixinIlink.archive.done': '已解除绑定 — 凭据保留',
+  'social.weixinIlink.archive.hint': '解除绑定：停用通道，卡面恢复未创建态。凭据保留，不做任何删除。',
   'social.feishu.name': '飞书',
   // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
   'social.feishu.desc': '绑定会话后，飞书消息进该会话并原路回发。租户内成员默认都可触达。',

@@ -76,7 +76,8 @@ class FileRefsWhitelistSpec extends FunSuite:
 
   test("A1-mirror: the shipped tool descriptions name every served namespace (prose cannot drift)") {
     val text = FileRefs.DataRootServedNamespacesText
-    List("Card" -> CardTool.description, "Pop" -> PopTool.description).foreach { (who, described) =>
+    // Card retired 2026-10-03 (pop-upgrade batch) — PopTool's prose is the mirror face now.
+    List("Pop" -> PopTool.description).foreach { (who, described) =>
       assert(described.contains(text), s"$who's description must enumerate the served namespaces: $text")
       assert(
         !described.contains("docs/**` is NOT served") && !described.contains("docs/** is NOT served"),

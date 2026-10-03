@@ -19,7 +19,11 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards } from './chat.js';
+import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards } from './chat.js';
+// pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
+// (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
+// (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard } from './popArtifacts.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
@@ -588,8 +592,19 @@ export function restoreFromStorage(opts = {}) {
       card.className = 'tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
-      // Card tool: render standard tool card + separate card iframe below
-      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+      // Pop artifact payload (pop-upgrade batch): process row + artifact row,
+      // the same two-row shape the live renderTool builds.
+      if (isPopPayload(m.content)) {
+        const isError = m.isError;
+        renderPopToolRow(card, m.label, m.summary, isError);
+        row.appendChild(card);
+        chat.appendChild(row);
+        const popPayload = parsePopPayload(m.content);
+        if (popPayload) {
+          const artifactRow = buildPopArtifactRow(popPayload);
+          if (artifactRow) chat.appendChild(artifactRow);
+        }
+      } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -943,8 +958,19 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       card.className = 'tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
-      // Card tool: render standard tool card + separate card iframe below
-      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+      // Pop artifact payload (pop-upgrade batch): process row + artifact row,
+      // the same two-row shape the live renderTool builds.
+      if (isPopPayload(m.content)) {
+        const isError = m.isError;
+        renderPopToolRow(card, m.label, m.summary, isError);
+        row.appendChild(card);
+        fragment.appendChild(row);
+        const popPayload = parsePopPayload(m.content);
+        if (popPayload) {
+          const artifactRow = buildPopArtifactRow(popPayload);
+          if (artifactRow) fragment.appendChild(artifactRow);
+        }
+      } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -965,8 +991,21 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         renderWithRegistry(cardContainer, m.content);
       } else {
         const isError = m.isError;
-        // Pop tool: rainbow filename + clickable card (shared with live renderTool)
-        if (applyPopCard(card, m.label, m.summary, m.input, isError)) {
+        // Pop artifact payload (pop-upgrade batch): process row + the artifact
+        // row below it — the same two-row shape the live renderTool builds, so
+        // replay is indistinguishable from live.
+        if (isPopPayload(m.content)) {
+          renderPopToolRow(card, m.label, m.summary, isError);
+          row.appendChild(card);
+          chat.appendChild(row);
+          const popPayload = parsePopPayload(m.content);
+          if (popPayload) {
+            const artifactRow = buildPopArtifactRow(popPayload);
+            if (artifactRow) chat.appendChild(artifactRow);
+          }
+        } else
+        // Legacy Pop rows (pre-batch histories): rainbow filename + clickable card
+        if (applyLegacyPopCard(card, m.label, m.summary, m.input, isError)) {
           row.appendChild(card);
           fragment.appendChild(row);
         } else if (m.content && typeof m.content === 'string' && /___\w+_HTML___/.test(m.content)) {

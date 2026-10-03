@@ -1,31 +1,33 @@
-// workline.js — the running turn's single-line work indicator (stream-ux §二.1.1)
+// workline.js — the turn line: ONE persistent line that IS both the running
+// process and the terminal badge (stream-ux redesign, 2026-10-03 author demo).
 //
-// ONE badge slot that scrolls through the turn's live process: the tool that is
-// currently running (spinner + tool name) / the thinking stream (single-line
-// width reveal) → a drawn check on completion → a roll-up / roll-down switch to
-// the next item, and, once the turn's process is over and the reply streams,
-// the completed badge (`已完成 N 工具 · 思考 N 轮 · 点击展开`).
+// The line lives at the turn top (right after the user row — the exact slot the
+// `.turn-header` occupies at the terminal). While the turn runs it is the ONLY
+// live process surface: dots before the first token, the thinking stream as a
+// single-line width reveal, each tool as spinner → drawn check, every switch a
+// roll-up / roll-down. The thinking bubble and tool cards are still written to
+// the DOM by chat.js, but PRE-TUCKED (`.nf-tucked`) — they are the expand face,
+// never a visible feed. At the terminal turnGroup.js settles THIS line into the
+// `.turn-header` (same element, same position): the last item rolls out, the
+// stats badge rolls in, and the row gains the header's role/toggle. There is no
+// remove-and-rebuild hand-over any more — 「过程全部展示在这一行，终态与该行风格
+// 统一」.
 //
-// Why this module is a LEAF (no chat.js / turnGroup.js import):
-//  · The work-line is TRANSIENT chrome. turnGroup.js removes it the moment the
-//    turn reaches a terminal (collapseTurn / failTurn), so the only persistent
-//    top-level turn node stays `.turn-header` — the contract that
-//    tests/turn-collapse-keep-text.spec.mjs `readSeq` enumerates in full (an
-//    extra top-level node would read as `other:nf-workline` and break it).
+// Why this module stays a LEAF (imports i18n + utils only, never chat.js /
+// turnGroup.js):
+//  · The morph keeps the terminal contract: the only top-level turn node is the
+//    `.turn-header` — tests/turn-collapse-keep-text.spec.mjs `readSeq` and
+//    tests/stream-ux.spec.mjs A5 enumerate #chat's children in full.
 //  · Its node carries NO `.row` class and never `.row.ai`: the background-agent
 //    popup family pins `.row.ai` counts
 //    (tests/bgagent-injected-bubbles.spec.mjs `aiRows === 1`).
 //  · Pure CSS animations only — the turn-* specs pin script-driven (WAAPI)
 //    animations out of the process rows.
-//  · Imports i18n only ⇒ no import cycle (chat.js → workline.js → i18n.js).
-//
-// The engine event stream is consumed unchanged: the callers are the existing
-// render paths in chat.js (appendThinkingDelta / finishThinking /
-// renderToolPending / renderTool / appendAiText), i.e. the same events that
-// already drove the process rows. No WS frame, no backend, no main.js
-// event-entry change.
+//  · The chevron SVG is an inline copy of chat.js chevronSvg() on purpose:
+//    importing chat.js from here would close the chat.js → workline.js cycle.
 
 import { t } from './i18n.js';
+import { isNearBottom } from './utils.js';
 
 /** Out-phase duration before the leaving item is dropped from the DOM —
  *  slightly longer than the CSS roll-out (0.35s) so the animation completes. */
@@ -51,12 +53,42 @@ const CROSS_SVG =
   '<path d="M4.5 4.5 L11.5 11.5 M11.5 4.5 L4.5 11.5"></path>' +
   '</svg>';
 
+/** Inline copy of chat.js chevronSvg() (leaf module — see header). */
+function chevronSvg() {
+  const span = document.createElement('span');
+  span.className = 'nf-chevron';
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  return span;
+}
+
+/** Live-seconds formatter for the dots item (leaf-local copy of the
+ *  chat.js formatLiveDuration shape: `42s` / `1m 03s`). */
+function formatLive(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+}
+
 function state(view) {
   if (!view) return null;
   if (!view._nfWorkline) {
-    view._nfWorkline = { row: null, slot: null, item: null, key: '', kind: '', exitUntil: 0 };
+    view._nfWorkline = { row: null, slot: null, item: null, key: '', kind: '', exitUntil: 0, dotTimer: 0 };
   }
   return view._nfWorkline;
+}
+
+/** The turn-top anchor: the last NON-injected user row of #chat — the same
+ *  boundary turnGroup.js uses for the turn scope. The line is inserted right
+ *  after it, so the terminal morph lands the header exactly where buildHeader
+ *  would have put it. */
+function turnAnchor(chat) {
+  let anchor = null;
+  for (const el of chat.children) {
+    if (el.classList && el.classList.contains('row') && el.classList.contains('user') &&
+        !(el.querySelector && el.querySelector('.bubble.injected'))) anchor = el;
+  }
+  return anchor;
 }
 
 function ensureRow(view) {
@@ -68,10 +100,16 @@ function ensureRow(view) {
   row.className = 'nf-workline';
   row.setAttribute('role', 'status');
   row.setAttribute('aria-live', 'polite');
+  row.appendChild(chevronSvg());
   const slot = document.createElement('div');
   slot.className = 'nf-wl-slot';
   row.appendChild(slot);
-  chat.appendChild(row);
+  const anchor = turnAnchor(chat);
+  if (anchor && anchor.parentNode === chat) anchor.after(row);
+  else chat.appendChild(row);
+  // The line is one row tall; keep the viewport pinned when it was pinned (the
+  // insertion above would otherwise push the pinned content out of view).
+  if (isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;
   wl.row = row;
   wl.slot = slot;
   wl.item = null;
@@ -124,6 +162,15 @@ function prefersReducedMotion() {
   }
 }
 
+/** Stop the dots item's live timer (owned by the slot — any item change or the
+ *  terminal settles it). */
+function stopDotTimer(wl) {
+  if (wl.dotTimer) {
+    clearInterval(wl.dotTimer);
+    wl.dotTimer = 0;
+  }
+}
+
 /** Swap the item in. `roll` = the leaving item gets the roll-up animation
  *  (a genuine item switch); false = in-place state change of the SAME item
  *  (tool running → tool done), which must not roll.
@@ -134,13 +181,14 @@ function prefersReducedMotion() {
  *  the short empty beat the approved demo leaves between "old out" and "new
  *  in"; every item that enters while that window is open is held at its
  *  from-state until the window closes. That is what makes the switch a hard
- *  switch (spec §二.1.1「旧上滚出、新下滚入」read as a SEQUENCE) rather than a
- *  cross-fade, and — the point of tracking the window instead of relying on a
- *  fixed CSS delay — it still holds when the incoming item's own COMPLETION
- *  arrives inside the window (that case rebuilt the item as a fresh element,
- *  dropping the hold, exactly while the outgoing item was still legible).
- *  The first item of a turn has no predecessor, so it is never held. */
+ *  switch (「旧上滚出、新下滚入」 read as a SEQUENCE) rather than a cross-fade,
+ *  and — the point of tracking the window instead of relying on a fixed CSS
+ *  delay — it still holds when the incoming item's own COMPLETION arrives
+ *  inside the window (that case rebuilt the item as a fresh element, dropping
+ *  the hold, exactly while the outgoing item was still legible). The first item
+ *  of a turn has no predecessor, so it is never held. */
 function swap(wl, item, { key, kind, roll }) {
+  stopDotTimer(wl);
   const reduce = prefersReducedMotion();
   const old = wl.item;
   if (old && old !== item) {
@@ -169,6 +217,44 @@ function swap(wl, item, { key, kind, roll }) {
   wl.key = key;
   wl.kind = kind;
   wl.slot.appendChild(item);
+}
+
+/** Turn started, nothing streaming yet: dots + 「思考中」 + a live seconds
+ *  timer, on the turn line (the old `.thinking-placeholder` bubble's face,
+ *  moved onto the line by the 2026-10-03 redesign). The timer stops itself the
+ *  moment any real item replaces the dots (swap) or the turn ends
+ *  (removeWorkline / settleWorklineAsHeader). */
+export function startWorklineDots(view, startedAt) {
+  const wl = ensureRow(view);
+  if (!wl) return;
+  if (wl.kind === 'dots') return; // already showing — timer keeps running
+  const item = document.createElement('div');
+  item.className = 'nf-wl-item';
+  const dots = document.createElement('span');
+  dots.className = 'nf-wl-dots';
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'thinking-dot';
+    if (i === 1) dot.style.animationDelay = '0.15s';
+    if (i === 2) dot.style.animationDelay = '0.3s';
+    dots.appendChild(dot);
+  }
+  item.appendChild(dots);
+  const label = document.createElement('span');
+  label.className = 'nf-wl-label';
+  label.textContent = t('chat.thinking.now');
+  item.appendChild(label);
+  const hint = document.createElement('span');
+  hint.className = 'nf-wl-hint';
+  const start = startedAt || Date.now();
+  hint.textContent = formatLive(Date.now() - start);
+  item.appendChild(hint);
+  swap(wl, item, { key: 'dots', kind: 'dots', roll: true });
+  stopDotTimer(wl);
+  wl.dotTimer = setInterval(() => {
+    if (!item.isConnected) { stopDotTimer(wl); return; }
+    hint.textContent = formatLive(Date.now() - start);
+  }, 1000);
 }
 
 /** Tool (or other single-line process) STARTED: spinner + label. Re-issuing the
@@ -239,67 +325,45 @@ export function thinkingWorklineDone(view, text) {
   swap(wl, item, { key: 'thinking', kind: 'thinking', roll: false });
 }
 
-/** Turn stats for the completed badge: counted from the DOM rows of the CURRENT
- *  turn (rows after the last non-injected user row) — same口径 as the turn
- *  header, computed locally so this module stays a leaf. */
-function turnStats(chat) {
-  const kids = Array.from(chat.children);
-  let start = 0;
-  kids.forEach((el, i) => {
-    if (el.classList && el.classList.contains('row') && el.classList.contains('user') &&
-        !el.querySelector('.bubble.injected')) start = i + 1;
-  });
-  let tools = 0;
-  let thinking = 0;
-  for (let i = start; i < kids.length; i++) {
-    const el = kids[i];
-    if (!el.classList || !el.classList.contains('row')) continue;
-    if (el.classList.contains('tool')) tools++;
-    else if (el.classList.contains('thinking-row')) thinking++;
-  }
-  return { tools, thinking };
-}
-
-/** Completed badge text: `已完成 N 工具 · 思考 N 轮 · 点击展开`. Used by the
- *  terminal hand-over (turnGroup.js) when the turn leaves NO `.turn-header`
- *  (boundary default: nothing tuckable, or nothing left visible after tucking)
- *  — in every other case the existing header IS the completed badge, per spec
- *  §二.1.4 「终态与现状一致」. Returns the badge label + hint as plain strings
- *  so the caller owns the DOM. */
-export function worklineDoneText(view) {
-  const chat = view && view.dom && view.dom.chat;
-  const stats = chat ? turnStats(chat) : { tools: 0, thinking: 0 };
-  return {
-    label: t('chat.workline.tools', { n: stats.tools }) + ' · ' +
-      t('chat.workline.thinking', { n: stats.thinking }),
-    hint: t('chat.workline.expandHint'),
-  };
-}
-
-/** Swap the slot to the completed badge (drawn check + counts + hint). Rolls
- *  the previous item out. Idempotent per turn: a second call is a no-op once
- *  the slot already holds the done badge. */
-export function finishWorkline(view) {
+/** Terminal morph (stream-ux redesign 2026-10-03): the turn line IS the
+ *  summary. The last running item rolls out, the stats badge text rolls in,
+ *  and the row itself becomes the `.turn-header` — same element, same turn-top
+ *  position, chevron already in place. turnGroup.js binds the toggle on the
+ *  returned element (the scope walk lives there; this module stays a leaf).
+ *  Returns the morphed header element, or null when there is no live line
+ *  (caller falls back to buildHeader). Idempotent: a second call is a no-op. */
+export function settleWorklineAsHeader(view, headerText, title) {
   const wl = state(view);
-  if (!wl || !wl.row || !wl.row.isConnected) return;
-  if (wl.kind === 'done') return;
-  const { label: labelText, hint: hintText } = worklineDoneText(view);
-  const item = buildItem(labelText, 'chk', 'is-done');
-  const hint = document.createElement('span');
-  hint.className = 'nf-wl-hint';
-  hint.textContent = hintText;
-  item.appendChild(hint);
+  if (!wl || !wl.row || !wl.row.isConnected) return null;
+  if (wl.kind === 'done') return null;
+  const item = document.createElement('div');
+  item.className = 'nf-wl-item is-final';
+  const label = document.createElement('span');
+  // `turn-header-text` is the header contract class — every reader (specs,
+  // expandGroupContaining tooltips, future consumers) reads the settled badge
+  // through the SAME selector as a built header's text span.
+  label.className = 'nf-wl-label turn-header-text';
+  label.textContent = headerText;
+  item.appendChild(label);
   swap(wl, item, { key: 'done', kind: 'done', roll: true });
+  const row = wl.row;
+  row.classList.remove('nf-workline');
+  row.classList.add('turn-header');
+  row.removeAttribute('role'); // was status — a header is a button face
+  row.removeAttribute('aria-live');
+  if (title) row.title = title;
+  return row;
 }
 
-/** Remove the work-line (turn terminal). Synchronous and idempotent: the turn's
- *  terminal DOM contract (turn-collapse-keep-text.spec.mjs `readSeq` enumerates
- *  #chat's children in full) admits no leftover top-level node, so the row is
- *  detached in the same tick the terminal is rendered — the existing
- *  `.turn-header` is what remains. */
+/** Remove the turn line (failed / interrupted turns and header-less text-only
+ *  terminals — the only shapes with nothing to settle into). Synchronous and
+ *  idempotent: the terminal DOM contract (turn-collapse-keep-text.spec.mjs
+ *  `readSeq` enumerates #chat's children in full) admits no leftover
+ *  top-level node. */
 export function removeWorkline(view) {
   const wl = state(view);
   if (!wl) return;
+  stopDotTimer(wl);
   if (wl.row && wl.row.isConnected) wl.row.remove();
   wl.row = null;
   wl.slot = null;
@@ -307,7 +371,4 @@ export function removeWorkline(view) {
   wl.key = '';
   wl.kind = '';
   wl.exitUntil = 0;
-  // The next turn of this view starts a fresh badge (appendAiText latches once
-  // per turn).
-  if (view && view.stream) view.stream._nfWorklineDone = false;
 }

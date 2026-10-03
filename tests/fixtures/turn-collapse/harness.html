@@ -86,7 +86,7 @@
     // 作为题头首段）。
     window.__liveTurn = async () => {
       chatMod.renderUserBubble('帮我整理这份资料的关键结论', [], Date.now());
-      // thinking 段（直播展开，2026-09-05 思考直播回归）
+      // thinking 段（气泡 pre-tucked，单行馈送在 turn 行上 — 2026-10-03 redesign）
       chatMod.appendThinkingDelta('先拆解问题：资料分三块，逐块提取结论。');
       chatMod.appendThinkingDelta('需要检索佐证。');
       chatMod.finishThinking();
@@ -172,8 +172,8 @@
       await raf2();
     };
 
-    // 思考直播（2026-09-05 回归）：只铺 user + 流式 thinking delta，
-    // 不 finish——断言流式期间内容可见。
+    // 思考单行揭示（2026-10-03 stream-ux redesign）：只铺 user + 流式 thinking
+    // delta，不 finish——气泡行 pre-tucked（展开面），可见馈送在 turn 行上。
     window.__thinkingStreamStart = async () => {
       chatMod.renderUserBubble('看看你怎么想', [], Date.now());
       chatMod.appendThinkingDelta('第一段思考：问题需要拆解。');

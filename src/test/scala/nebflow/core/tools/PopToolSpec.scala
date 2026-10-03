@@ -8,24 +8,22 @@ import io.circe.syntax.*
 import munit.FunSuite
 
 /**
- * PopTool — HTML 图片内联（#15, 方案 A — commit 5d95194b）+ Nebula 专属身份闸
- * （2026-09-10 作者裁定「我觉得把pop工具给nebula专属吧」）。
+ * PopTool — pop-upgrade batch (2026-10-03 作者令「去掉card工具,然后对Pop工具
+ * 进行升级」+「Pop要支持一次工具调用多个Pop文件」).
  *
- * Agent HTML reports reference local screenshots via file:///abs, /abs,
- * relative, or ~/ paths. The Canvas iframe cannot load those (file:// blocked
- * by browser policy, bare paths unresolved), so PopTool pre-processes HTML
- * content: local <img src> values that exist, are embeddable image formats,
- * and are ≤5MB become base64 data URIs. Everything else is left untouched.
+ * The tool's faces, pinned end-to-end through call():
+ *  - **payload face**: files/media produce a `___POP_JSON___{…}` result (NO WS
+ *    message, NO Canvas tab) whose items render in the chat (media stack /
+ *    file cards); the model face ([[modelFacingResult]]) is a small projection.
+ *  - **URL face**: a single HTTP/HTTPS `filePath` still opens a Canvas tab via
+ *    the `popFile` WS message and returns plain text.
+ *  - **batch face**: `filePath` accepts a string or an array (≤ MaxPopFiles).
+ *  - **identity gate** (2026-09-10 作者裁定, unchanged): call 最前的两道同真判据
+ *    ——① ctx.agentDef 名为 Nebula；② ctx.depth == 0。agentDef=None fail-closed。
+ *    拒答含逐字作者文案 + POP_NEBULA_ONLY，先于任何副作用。
  *
- * 身份闸（本批）：call 最前的两道同真判据——① ctx.agentDef 名为 Nebula；
- * ② ctx.depth == 0（Nebula 本体根会话，排除 NodeDef.agent="Nebula" 的节点会话
- * depth=1 / SubTask worker / 子 agent / 一切派生子会话）。agentDef=None
- * （REST 直调 / spec harness）fail-closed 一律拒。拒答含逐字作者文案 +
- * POP_NEBULA_ONLY。身份闸先于任何副作用（filePath 解析 / 文件读 / HTML 内联 /
- * WS 发送）——用「不存在的路径仍报 POP_NEBULA_ONLY 而非 File not found」+
- * 「wsSend 零消息」证明。
- *
- * These specs pin the behavior end-to-end through call() + a captured wsSend.
+ * The per-item probing/inlining/budget/decoding details are pinned in
+ * `PopToolFileRefSpec` + `FileRefsInlineBudgetSpec` + `FileRefsServabilityScopeSpec`.
  */
 class PopToolSpec extends FunSuite:
 
@@ -43,18 +41,9 @@ class PopToolSpec extends FunSuite:
     os.makeDir.all(d)
     d
 
-  private def writePng(p: os.Path, bytes: Int = 8): Unit =
-    // minimal valid-enough PNG header (content is irrelevant — only the bytes
-    // must round-trip through base64)
-    val data = Array.fill(bytes)(0x42.toByte)
-    os.write.over(p, data)
-
   /**
-   * Capture wsSend messages into a Ref-like buffer.
-   *
-   * 2026-09-10 身份闸批：harness 显式传 Nebula 本体 ctx（agentDef=Some(Nebula)、
-   * depth=0）——闸的 fail-closed 语义下 agentDef=None 会被拒，旧 harness 的
-   * None 不再是合法的内联行为测试上下文。
+   * Capture wsSend messages into a buffer. 身份闸批：harness 显式传 Nebula 本体
+   * ctx（agentDef=Some(Nebula)、depth=0）。
    */
   private def captureCtx(buf: scala.collection.mutable.ListBuffer[Json]): ToolContext =
     ctxWith(buf, agentDef = Some(nebulaDef), depth = 0)
@@ -79,119 +68,156 @@ class PopToolSpec extends FunSuite:
       projectRoot = ""
     )
 
-  private def contentOf(buf: scala.collection.mutable.ListBuffer[Json]): String =
-    assertEquals(buf.size, 1, s"exactly one popFile message expected: $buf")
-    val item = buf.head.hcursor.downField("item")
-    item.get[String]("itemType").toOption.getOrElse("") match
-      case "html" => item.get[String]("content").toOption.getOrElse("")
-      case other => fail(s"expected html itemType, got $other")
+  /** Run Pop and return (raw result, ws messages). */
+  private def pop(input: JsonObject, buf: scala.collection.mutable.ListBuffer[Json]): Either[ToolError, String] =
+    PopTool.call(input, captureCtx(buf)).unsafeRunSync()
 
-  test("file:/// absolute image src is inlined as a base64 data URI"):
-    val dir = tempDir("file-abs")
-    writePng(dir / "shot.png")
-    val html = dir / "report.html"
-    os.write.over(html, s"""<html><body><img src="file://${dir.toString}/shot.png"></body></html>""")
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync() match
-      case Right(_) =>
-        val c = contentOf(buf)
-        assert(c.contains("src=\"data:image/png;base64,"), s"data URI expected:\n$c")
-        assert(!c.contains("file://"), s"original file:// src must be replaced:\n$c")
-      case Left(err) => fail(s"Pop failed: ${err.message}")
+  private def payloadOf(result: String): Json =
+    assert(result.startsWith(PopTool.Sentinel), s"result must start with the sentinel: ${result.take(80)}")
+    io.circe.parser.parse(result.substring(PopTool.Sentinel.length)) match
+      case Right(json) => json
+      case Left(err)   => fail(s"everything after the sentinel must be pure JSON: $err")
 
-  test("relative image src resolves against the HTML's directory"):
-    val dir = tempDir("relative")
-    writePng(dir / "pic.png")
-    val html = dir / "report.html"
-    os.write.over(html, """<html><body><img src='pic.png'></body></html>""")
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync()
-    val c = contentOf(buf)
-    assert(c.contains("src='data:image/png;base64,"), s"single-quoted src must inline too:\n$c")
+  private def itemsOf(p: Json): List[Json] =
+    p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
 
-  test("~ expansion: ~/ path in an img src resolves to the user's home"):
-    val home = sys.props("user.home")
-    val abs = s"$home/.nebflow-pop-test-tmp.png"
-    os.write.over(os.Path(abs), Array.fill(4)(0x43.toByte))
-    try
-      val html = tempDir("tilde") / "report.html"
-      os.write.over(html, """<html><img src="~/.nebflow-pop-test-tmp.png"></html>""")
-      val buf = scala.collection.mutable.ListBuffer.empty[Json]
-      PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync()
-      val c = contentOf(buf)
-      assert(c.contains("data:image/png;base64,"), s"~ path must expand and inline:\n$c")
-    finally os.remove.all(os.Path(abs))
+  private def kindsOf(p: Json): List[String] =
+    itemsOf(p).flatMap(_.hcursor.get[String]("kind").toOption)
 
-  test("remote http(s) URLs are left untouched"):
-    val dir = tempDir("remote")
-    val html = dir / "report.html"
-    os.write.over(
-      html,
-      """<html><img src="https://example.com/a.png"><img src="http://cdn.example.net/b.jpg"></html>"""
-    )
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync()
-    val c = contentOf(buf)
-    assert(c.contains("https://example.com/a.png"), s"remote src must stay:\n$c")
-    assert(c.contains("http://cdn.example.net/b.jpg"), s"remote src must stay:\n$c")
-    assert(!c.contains("base64"), s"nothing to embed:\n$c")
-
-  test("missing file and non-image extension keep their original src (2026-09-11: no longer silently)"):
-    // toolfail batch: both cases are now REPORTED in the tool result
-    // (`warnings` + `fileRefs`) instead of being dropped without a trace — the
-    // content behaviour is unchanged, the reporting is pinned in
-    // PopToolFileRefSpec.
-    val dir = tempDir("skip")
-    val html = dir / "report.html"
-    os.write.over(
-      html,
-      s"""<html><img src="${dir.toString}/ghost.png"><img src="${dir.toString}/notes.txt"></html>"""
-    )
-    os.write.over(dir / "notes.txt", "not an image")
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    val result = PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync()
-    val c = contentOf(buf)
-    assert(c.contains("ghost.png"), s"missing file keeps original src:\n$c")
-    assert(c.contains("notes.txt"), s"non-image keeps original src:\n$c")
-    assert(!c.contains("base64"), s"no embedding expected:\n$c")
-    result match
-      case Right(text) =>
-        assert(text.contains("warnings: "), s"both references must be reported:\n$text")
-        assert(text.contains("not-found") && text.contains("extension-not-allowed"), text)
-      case Left(err) => fail(s"Pop failed: ${err.message}")
-
-  test("oversized image (>5MB) keeps its original src"):
-    val dir = tempDir("oversize")
-    os.write.over(dir / "big.png", Array.fill(5 * 1024 * 1024 + 1)(0x44.toByte))
-    val html = dir / "report.html"
-    os.write.over(html, """<html><img src="big.png"></html>""")
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync()
-    val c = contentOf(buf)
-    assert(c.contains("""src="big.png"""") | c.contains("src=\"big.png\""), s"oversize keeps src:\n$c")
-    assert(!c.contains("base64"), s"oversize must not embed:\n$c")
-
-  test("markdown files are not pre-processed (scope: html itemType only)"):
-    val dir = tempDir("md-scope")
-    writePng(dir / "pic.png")
-    val md = dir / "notes.md"
-    os.write.over(md, "![pic](pic.png)\n")
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> md.toString.asJson), captureCtx(buf)).unsafeRunSync()
-    assertEquals(buf.size, 1)
-    val c = buf.head.hcursor.downField("item").get[String]("content").toOption.getOrElse("")
-    assert(c.contains("(pic.png)"), s"markdown content passes through unmodified:\n$c")
-
-  test("missing file returns an error and sends nothing"):
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> "/nonexistent/pop-x.html".asJson), captureCtx(buf)).unsafeRunSync() match
-      case Left(err) =>
-        assert(err.message.contains("not found") || err.message.contains("File not found"), err.message)
-        assertEquals(buf.size, 0, "no WS message on error")
-      case Right(_) => fail("expected an error for a missing file")
+  private def warningsOf(p: Json): List[Json] =
+    p.hcursor.downField("warnings").as[List[Json]].toOption.getOrElse(Nil)
 
   // ====================================================================
-  // Nebula 专属身份闸（2026-09-10 作者裁定）
+  // payload face：文件/媒体 → ___POP_JSON___ 载荷，零 WS 副作用
+  // ====================================================================
+
+  test("a single image rides inline as a data: URI (kind=image, src present), zero WS messages"):
+    val dir = tempDir("img")
+    os.write.over(dir / "shot.png", Array.fill(8)(0x42.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> (dir / "shot.png").toString.asJson), buf) match
+      case Right(raw) =>
+        assertEquals(buf.size, 0, "files open NO Canvas tab — the payload alone carries the artifact")
+        val p = payloadOf(raw)
+        assertEquals(kindsOf(p), List("image"))
+        val src = itemsOf(p).head.hcursor.get[String]("src").toOption.getOrElse(fail("src expected"))
+        assert(src.startsWith("data:image/png;base64,"), src.take(40))
+      case Left(err) => fail(s"Pop failed: ${err.message}")
+
+  test("a batch of media + files produces ONE payload with ordered items (multi-file Pop, author addition)"):
+    val dir = tempDir("batch")
+    os.write.over(dir / "a.png", Array.fill(8)(0x41.toByte))
+    os.write.over(dir / "b.mp4", Array.fill(8)(0x42.toByte))
+    os.write.over(dir / "report.pdf", Array.fill(8)(0x43.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(
+      JsonObject("filePath" -> Json.arr(
+        (dir / "a.png").toString.asJson,
+        (dir / "b.mp4").toString.asJson,
+        (dir / "report.pdf").toString.asJson
+      )),
+      buf
+    ) match
+      case Right(raw) =>
+        assertEquals(buf.size, 0, "a batch never opens Canvas tabs")
+        val p = payloadOf(raw)
+        assertEquals(kindsOf(p), List("image", "video", "file"), "input order is the payload order")
+        val video = itemsOf(p)(1)
+        assertEquals(video.hcursor.get[String]("kind").toOption, Some("video"))
+        assert(video.hcursor.get[String]("src").toOption.isEmpty, "a video is never inlined — ticket leg")
+        assertEquals(video.hcursor.get[String]("path").toOption, Some((dir / "b.mp4").toString))
+        val pdf = itemsOf(p)(2)
+        assertEquals(pdf.hcursor.get[String]("itemType").toOption, Some("pdf"), "file cards carry the viewer itemType")
+      case Left(err) => fail(s"Pop failed: ${err.message}")
+
+  test("a missing file is a payload WARNING (failed=1), not a tool error — the rest of the batch still shows"):
+    val dir = tempDir("missing")
+    os.write.over(dir / "here.png", Array.fill(8)(0x42.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(
+      JsonObject("filePath" -> Json.arr((dir / "here.png").toString.asJson, (dir / "ghost.png").toString.asJson)),
+      buf
+    ) match
+      case Right(raw) =>
+        val p = payloadOf(raw)
+        assertEquals(kindsOf(p), List("image"), "the existing file still shows")
+        val w = warningsOf(p).headOption.getOrElse(fail("warnings expected"))
+        assertEquals(w.hcursor.get[String]("ref").toOption, Some((dir / "ghost.png").toString))
+        assertEquals(w.hcursor.get[String]("reason").toOption, Some("not-found"))
+        val fileRefs = p.hcursor.downField("fileRefs")
+        assertEquals(fileRefs.get[Int]("failed").toOption, Some(1))
+      case Left(err) => fail(s"Pop must not hard-fail on a missing batch member: ${err.message}")
+
+  test("input-shape errors are ToolErrors: empty input, a URL inside an array, and over-the-cap batches"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject.empty, buf) match
+      case Left(err) => assert(err.message.contains("filePath"), err.message)
+      case Right(_)  => fail("empty input must be refused")
+
+    pop(JsonObject("filePath" -> Json.arr("https://example.com".asJson)), buf) match
+      case Right(text) =>
+        // A LONE URL in an array behaves like the string form (the Canvas leg) —
+        // only a URL MIXED with file paths is refused (the batch leg's error below).
+        assertEquals(text, "Opened example.com in Canvas.")
+      case Left(err) => fail(s"a lone URL in an array is the URL leg: ${err.message}")
+
+    pop(
+      JsonObject("filePath" -> Json.arr("https://example.com".asJson, "/tmp/x.png".asJson)),
+      buf
+    ) match
+      case Left(err) => assert(err.message.contains("cannot be batched"), err.message)
+      case Right(_)  => fail("a URL mixed with file paths must be refused")
+
+    val many = Json.arr(List.fill(PopTool.MaxPopFiles + 1)("x.png").map(_.asJson)*)
+    pop(JsonObject("filePath" -> many), buf) match
+      case Left(err) => assert(err.message.contains("at most"), err.message)
+      case Right(_)  => fail("an over-cap batch must be refused")
+    assertEquals(buf.size, 1, "only the lone-URL leg sent a popFile frame; the refusals sent none")
+
+  // ====================================================================
+  // URL face：单条 HTTP(S) 仍开 Canvas 标签（行为不变）
+  // ====================================================================
+
+  test("a single URL still opens the Canvas tab (popFile WS + plain-text result)") {
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> "https://example.com".asJson), buf) match
+      case Right(text) =>
+        assertEquals(text, "Opened example.com in Canvas.")
+        assertEquals(buf.size, 1, "exactly one popFile message for the admitted caller")
+        assertEquals(buf.head.hcursor.downField("type").as[String].toOption, Some("popFile"))
+        assertEquals(buf.head.hcursor.downField("item").get[String]("itemType").toOption, Some("url"))
+      case Left(err) => fail(s"URL Pop failed: ${err.message}")
+  }
+
+  test("modelFacingResult: the model face is the URL text for the URL leg, and a projection for the payload") {
+    val urlResult = "Opened example.com in Canvas."
+    assertEquals(PopTool.modelFacingResult(urlResult), urlResult, "URL leg: identity")
+
+    val dir = tempDir("modelface")
+    os.write.over(dir / "shot.png", Array.fill(8)(0x42.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val raw = pop(JsonObject("filePath" -> (dir / "shot.png").toString.asJson), buf).toOption.getOrElse(fail("expected Right"))
+    val model = PopTool.modelFacingResult(raw)
+    assert(!model.contains(PopTool.Sentinel), "the model face never carries the sentinel")
+    assert(!model.contains("base64"), "the model face never carries data URIs")
+    val p = io.circe.parser.parse(model).toOption.getOrElse(fail(s"model face must be JSON: $model"))
+    assertEquals(p.hcursor.get[Int]("media").toOption, Some(1))
+    assertEquals(p.hcursor.get[Int]("files").toOption, Some(0))
+    assert(p.hcursor.get[String]("note").toOption.exists(_.contains("act on")), "the projection tells the model what to act on")
+  }
+
+  test("summarize: one file names it, a batch names the first file +N"):
+    assertEquals(
+      PopTool.summarize(JsonObject("filePath" -> "/tmp/shot.png".asJson)),
+      "Pop\n  (shot.png)"
+    )
+    assertEquals(
+      PopTool.summarize(JsonObject("filePath" -> Json.arr("/tmp/a.png".asJson, "/tmp/b.png".asJson, "/tmp/c.mp4".asJson))),
+      "Pop\n  (a.png +2)"
+    )
+
+  // ====================================================================
+  // Nebula 专属身份闸（2026-09-10 作者裁定，逐字不变）
   // ====================================================================
 
   /** 逐字作者文案（裁定原文，不得改述）。 */
@@ -204,9 +230,9 @@ class PopToolSpec extends FunSuite:
    * 拒答断言：右值缺席 + 文案命中 + 零副作用。
    *
    * 零副作用两点证明：
-   *  - wsSend 缓冲空（无 popFile 消息）；
-   *  - filePath 指向不存在的路径却报闸文案而非 "File not found" ⇒ 闸先于
-   *    resolvePath / Files.exists / 文件读 / HTML 内联（副作用全部未发生）。
+   *  - wsSend 缓冲空；
+   *  - filePath 指向不存在的路径却报闸文案而非 "not found" ⇒ 闸先于
+   *    resolvePath / Files.exists / 文件读（副作用全部未发生）。
    */
   private def assertDenied(
     label: String,
@@ -229,14 +255,12 @@ class PopToolSpec extends FunSuite:
 
   test("identity gate: Nebula root session (depth 0) is admitted — feature intact"):
     val dir = tempDir("gate-allow")
-    val html = dir / "report.html"
-    os.write.over(html, "<html><body>hi</body></html>")
+    os.write.over(dir / "shot.png", Array.fill(8)(0x42.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> html.toString.asJson), ctxWith(buf, Some(nebulaDef), 0)).unsafeRunSync() match
-      case Right(msg) => assert(msg.contains("Canvas"), msg)
-      case Left(err) => fail(s"Nebula root session must be admitted: ${err.message}")
-    assertEquals(buf.size, 1, "exactly one popFile message for the admitted caller")
-    assertEquals(buf.head.hcursor.downField("type").as[String].toOption, Some("popFile"))
+    pop(JsonObject("filePath" -> (dir / "shot.png").toString.asJson), buf) match
+      case Right(raw) => assert(raw.startsWith(PopTool.Sentinel), raw.take(60))
+      case Left(err)  => fail(s"Nebula root session must be admitted: ${err.message}")
+    assertEquals(buf.size, 0, "the admitted file face sends no WS message")
 
   test("identity gate: non-Nebula agent identities are denied (general / project-dispatcher / dream)"):
     assertDenied("general", Some(defNamed("general")), 0)
@@ -251,9 +275,7 @@ class PopToolSpec extends FunSuite:
 
   test("identity gate: agentDef=None (REST direct / spec harness) fails closed"):
     // 决策：fail-closed。实测无合法非 agent 调用面被误伤——Pop 不在
-    // RemoteExecutor.remoteableTools（RemoteExecutor.scala:658），remote-exec
-    // 接收侧（NeblinkRoutes.scala 的 remote-exec `ToolContext(projectRoot, isRemoteExec = true)`）
-    // 不传 agentDef 也不传 wsSend。
+    // RemoteExecutor.remoteableTools，remote-exec 接收侧不传 agentDef 也不传 wsSend。
     assertDenied("agentDef=None", None, 0)
 
   test("identity gate: denial precedes even input validation (no filePath still POP_NEBULA_ONLY)"):
@@ -264,14 +286,20 @@ class PopToolSpec extends FunSuite:
         assertEquals(buf.size, 0)
       case Right(ok) => fail(s"must be denied before input validation, got Right($ok)")
 
-  test("description states the Nebula-only contract and the node delivery protocol"):
-    assert(PopTool.description.contains("Nebula-exclusive"), "exclusivity must be stated")
-    assert(PopTool.description.contains("POP_NEBULA_ONLY"), "error code surfaced in the description")
-    assert(PopTool.description.contains("out edge"), "node delivery protocol (hand over along the out edge)")
+  test("description states the Nebula-only contract, the node delivery protocol and the pop-upgrade faces"):
+    val d = PopTool.description
+    assert(d.contains("Nebula-exclusive"), "exclusivity must be stated")
+    assert(d.contains("POP_NEBULA_ONLY"), "error code surfaced in the description")
+    assert(d.contains("out edge"), "node delivery protocol (hand over along the out edge)")
     assert(
-      !PopTool.description.contains("never hand-draw"),
+      !d.contains("never hand-draw"),
       "node-facing 'Pop right after generating' guidance must be gone"
     )
+    // pop-upgrade 批的面契约
+    assert(d.contains("FILE CARD"), "the file-card face must be documented")
+    assert(d.contains("stacked card"), "the media stack face must be documented")
+    assert(d.contains("AFTER your final text"), "the call-last placement rule must be documented")
+    assert(d.contains("array"), "the multi-file batch face must be documented")
 
   override def afterEach(context: munit.AfterEach): Unit =
     // test artifacts under target/ are cleaned by sbt; nothing else to do

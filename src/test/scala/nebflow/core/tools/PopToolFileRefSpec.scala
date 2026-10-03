@@ -7,24 +7,21 @@ import io.circe.syntax.*
 import munit.FunSuite
 
 /**
- * toolfail batch (2026-09-11) — Pop's `<img>` pass must fail VISIBLY.
+ * pop-upgrade batch (2026-10-03) — Pop's artifact payload must fail VISIBLY.
  *
- * The pass used to answer `None` to every question and keep the raw `src`
- * (`replaced.getOrElse(m.group(0))`) with zero feedback: the Canvas iframe then
- * fetched a path that does not exist and the user saw an empty box, while the
- * tool result said `Opened X in Canvas.` (the Card leg had exactly the same
- * defect — carderr batch, merge 52e2f58f).
+ * Predecessor: the toolfail batch (2026-09-11) pinned the same visibility
+ * contract on the Canvas `<img>` pass (a dropped reference must never look
+ * like a clean `Opened X in Canvas.`). That face retired with the Canvas
+ * direct-open leg; THIS spec pins the same discipline on the payload face the
+ * chat renders (`___POP_JSON___` → media stack / file cards):
  *
- * Pinned here:
- *  1. both legs of the visibility channel — the tool result (`warnings:` +
- *     `fileRefs:` lines) and the `popFile` WS item (`item.warnings` /
- *     `item.fileRefs`);
- *  2. the verdict mapping: Reject → warning, Proxy+inlinable → inlined,
- *     Proxy+not-inlinable → `deferred` counter only (no noise), app route →
- *     `exempt` counter only;
- *  3. the resolution policy that is Pop's own (relative refs resolve against
- *     the HTML file's directory, `~` expands) — unchanged;
- *  4. zero regression: a clean HTML Pop is byte-identical to before.
+ *  1. a shown item carries its bytes (`src` data URI) or its servable path;
+ *  2. a dropped path is a structured `warnings` entry + a `fileRefs.failed`
+ *     count — never silence;
+ *  3. a servable item that merely missed the inline policy is `referenced`,
+ *     counted but NOT warned (the ticket leg still renders it);
+ *  4. the imgref-batch decoded-form disclosure rides the payload `notes`;
+ *  5. the URL leg keeps its shipped plain-text face.
  */
 class PopToolFileRefSpec extends FunSuite:
 
@@ -53,242 +50,177 @@ class PopToolFileRefSpec extends FunSuite:
       projectRoot = ""
     )
 
-  /**
-   * Fresh dir + `report.html` holding `body`; `prepare` may add the files the
-   *  HTML references (relative refs resolve against the HTML's own dir, so the
-   *  two must share one directory). Returns (result, ws message, content).
-   */
-  private def pop(name: String, body: String, prepare: os.Path => Unit = _ => ()): (String, Json, String) =
-    val dir = tempDir(name)
-    prepare(dir)
-    val file = dir / "report.html"
-    os.write.over(file, body)
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
+  /** Pop `paths` (string or array) → the parsed payload (fails on Left / sentinel absence). */
+  private def payloadOf(input: JsonObject, buf: scala.collection.mutable.ListBuffer[Json]): Json =
+    PopTool.call(input, captureCtx(buf)).unsafeRunSync() match
       case Left(err) => fail(s"Pop failed: ${err.message}")
-      case Right(text) =>
-        assertEquals(buf.size, 1, s"exactly one popFile message expected: $buf")
-        val item = buf.head.hcursor.downField("item")
-        val content = item.get[String]("content").toOption.getOrElse("")
-        (text, buf.head, content)
+      case Right(raw) =>
+        assert(raw.startsWith(PopTool.Sentinel), s"result must start with the sentinel: ${raw.take(80)}")
+        io.circe.parser.parse(raw.substring(PopTool.Sentinel.length)) match
+          case Right(json) => json
+          case Left(err)   => fail(s"payload must be pure JSON: $err")
 
-  private def itemCounters(msg: Json): Json =
-    msg.hcursor.downField("item").downField("fileRefs").focus.getOrElse(Json.Null)
+  private def itemsOf(p: Json): List[Json] =
+    p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
 
-  private def itemWarnings(msg: Json): List[Json] =
-    msg.hcursor.downField("item").get[List[Json]]("warnings").toOption.getOrElse(Nil)
-  private def counter(p: Json, field: String): Int = p.hcursor.get[Int](field).toOption.getOrElse(-1)
+  private def warningsOf(p: Json): List[Json] =
+    p.hcursor.downField("warnings").as[List[Json]].toOption.getOrElse(Nil)
 
-  private def resultCounters(result: String): Json =
-    FileRefs.countsIn(result).getOrElse(fail(s"no `fileRefs:` line in result:\n$result"))
+  private def notesOf(p: Json): List[String] =
+    p.hcursor.downField("notes").as[List[String]].toOption.getOrElse(Nil)
 
-  private def resultWarnings(result: String): List[Json] =
-    val i = result.indexOf("warnings: ")
-    if i < 0 then Nil
-    else
-      val line = result.substring(i + "warnings: ".length).takeWhile(_ != '\n')
-      io.circe.parser.parse(line).toOption.flatMap(_.asArray).getOrElse(Nil).toList
+  private def counter(p: Json, field: String): Int =
+    p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
 
   private def resolvedOf(w: Json): Option[String] = w.hcursor.get[Option[String]]("resolvedPath").toOption.flatten
 
-  // ── ① 正控：仍然内联（零回归） ───────────────────────────
+  // ── ① 正控：内联零回归 ───────────────────────────────────
 
-  test("positive control: an existing local image is still inlined, and the result stays clean"):
-    val (text, msg, content) = pop(
-      "inline",
-      """<html><body><img src="shot.png"/></body></html>""",
-      dir => os.write.over(dir / "shot.png", Array.fill(8)(0x42.toByte))
-    )
-    assert(content.contains("data:image/png;base64,"), s"data URI expected:\n$content")
-    assertEquals(text, "Opened report.html in Canvas.", "a clean Pop has no extra lines")
-    assertEquals(counter(itemCounters(msg), "proxied"), 1)
-    assertEquals(counter(itemCounters(msg), "failed"), 0)
-    assertEquals(itemWarnings(msg), Nil)
+  test("positive control: an existing local image is embedded (src data URI) and the payload is clean"):
+    val dir = tempDir("inline")
+    os.write.over(dir / "shot.png", Array.fill(8)(0x42.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> (dir / "shot.png").toString.asJson), buf)
+    assertEquals(buf.size, 0, "files open no Canvas tab")
+    val items = itemsOf(p)
+    assertEquals(items.map(_.hcursor.get[String]("kind").toOption.getOrElse("")), List("image"))
+    val src = items.head.hcursor.get[String]("src").toOption.getOrElse(fail("src expected"))
+    assert(src.startsWith("data:image/png;base64,"), src.take(40))
+    assertEquals(counter(p, "inlined"), 1)
+    assertEquals(counter(p, "failed"), 0)
+    assertEquals(warningsOf(p), Nil)
 
-  // ── ② 负控：静默丢弃 → 结构化告警 ────────────────────────
+  // ── ② 负控：结构化告警 ──────────────────────────────────
 
-  test("missing absolute image warns in BOTH legs (tool result + popFile item) and keeps the raw src"):
+  test("a missing path warns (not-found) and counts failed=1 — the raw ref and the resolved path both travel"):
     val dir = tempDir("missing")
     val ghost = s"$dir/ghost.png"
-    val (text, msg, content) = pop("missing", s"""<html><img src="$ghost"/></html>""")
-
-    // raw value kept (the HTML still renders, minus the image)
-    assert(content.contains(ghost), s"raw src must stay:\n$content")
-
-    // tool result leg
-    val counters = resultCounters(text)
-    assertEquals(counter(counters, "failed"), 1)
-    assertEquals(counter(counters, "proxied"), 0)
-    val w = resultWarnings(text).headOption.getOrElse(fail(s"warnings line missing:\n$text"))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> ghost.asJson), buf)
+    assertEquals(itemsOf(p), Nil, "nothing to show")
+    val w = warningsOf(p).headOption.getOrElse(fail("warnings expected"))
     assertEquals(w.hcursor.get[String]("ref").toOption, Some(ghost), "原始串")
     assertEquals(w.hcursor.get[String]("reason").toOption, Some("not-found"), "失败原因")
     assertEquals(resolvedOf(w), Some(ghost), "解析后路径")
-    assert(text.startsWith("Opened report.html in Canvas."), s"summary line first:\n$text")
-
-    // WS item leg
-    assertEquals(counter(itemCounters(msg), "failed"), 1)
-    assertEquals(itemWarnings(msg).size, 1)
-    assertEquals(itemWarnings(msg).head.hcursor.get[String]("reason").toOption, Some("not-found"))
+    assertEquals(counter(p, "failed"), 1)
 
   test("`~`-rooted reference reports the path after expansion (原始串 → 解析后路径 differ)"):
-    val (text, _, content) = pop("tilde", """<html><img src="~/__poprefs_missing__/plot.png"/></html>""")
-    val w = resultWarnings(text).headOption.getOrElse(fail(text))
+    val dir = tempDir("tilde")
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> "~/__poprefs_missing__/plot.png".asJson), buf)
+    val w = warningsOf(p).headOption.getOrElse(fail("warnings expected"))
     assertEquals(w.hcursor.get[String]("ref").toOption, Some("~/__poprefs_missing__/plot.png"))
     assertEquals(
       resolvedOf(w),
       Some(s"${sys.props("user.home")}/__poprefs_missing__/plot.png"),
       "resolvedPath is the post-expansion path"
     )
-    assert(content.contains("~/__poprefs_missing__/plot.png"), "the raw value is kept")
 
   test("aggregate counters: three failures collapse into counted, distinct warnings"):
-    val (text, _, _) = pop(
-      "agg",
-      """<html><img src="/tmp/poprefs-a.png"/><img src="/tmp/poprefs-a.png"/><img src="/tmp/poprefs-b.png"/></html>"""
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(
+      JsonObject("filePath" -> Json.arr(
+        "/tmp/poprefs-a.png".asJson, "/tmp/poprefs-a.png".asJson, "/tmp/poprefs-b.png".asJson
+      )),
+      buf
     )
-    val counters = resultCounters(text)
-    assertEquals(counter(counters, "failed"), 2, "distinct references")
-    assertEquals(resultWarnings(text).size, 2)
+    assertEquals(counter(p, "failed"), 2, "distinct references")
+    assertEquals(warningsOf(p).size, 2)
     assertEquals(
-      resultWarnings(text).map(w => w.hcursor.get[Int]("count").toOption.getOrElse(0)).sum,
+      warningsOf(p).map(w => w.hcursor.get[Int]("count").toOption.getOrElse(0)).sum,
       3,
       "the repeated reference carries count=2"
     )
 
-  test("a non-regular file and a non-servable extension are reported with their own reasons"):
+  test("a directory and a non-media file are reported with their own reasons"):
     val dir = tempDir("reasons")
     os.makeDir.all(dir / "bundle.png")
-    os.write.over(dir / "notes.txt", "not an image")
-    val (text, _, _) = pop(
-      "reasons",
-      s"""<html><img src="$dir/bundle.png"/><img src="$dir/notes.txt"/></html>"""
-    )
-    assertEquals(
-      resultWarnings(text).map(w => w.hcursor.get[String]("reason").toOption.getOrElse("")).sorted,
-      List("extension-not-allowed", "not-regular-file")
-    )
-
-  // ── ③ 不刷屏：deferred / exempt 只计数 ───────────────────
-
-  test("an oversized image is `deferred`, not warned — /api/nf-file still serves it"):
-    val (text, msg, content) = pop(
-      "oversize",
-      """<html><img src="big.png"/></html>""",
-      dir => os.write.over(dir / "big.png", Array.fill(5 * 1024 * 1024 + 1)(0x44.toByte))
-    )
-    assert(content.contains("""src="big.png""""), s"raw src kept:\n$content")
-    assert(!content.contains("base64"), "must not inline")
-    val counters = resultCounters(text)
-    assertEquals(counter(counters, "deferred"), 1)
-    assertEquals(counter(counters, "failed"), 0)
-    assert(!text.contains("warnings:"), s"a servable file is not a defect:\n$text")
-    assertEquals(counter(itemCounters(msg), "deferred"), 1)
-
-  test("a non-embeddable but proxy-served extension is `deferred`, not warned"):
-    val (text, _, _) = pop(
-      "tiff",
-      """<html><img src="scan.tiff"/></html>""",
-      dir => os.write.over(dir / "scan.tiff", Array.fill(8)(0x45.toByte))
-    )
-    assertEquals(counter(resultCounters(text), "deferred"), 1)
-    assertEquals(counter(resultCounters(text), "failed"), 0)
-
-  test("an app-route reference is `exempt`: not inlined, not warned, counted"):
-    val (text, msg, content) = pop("approute", """<html><img src="/js/chart-icon.png"/></html>""")
-    assert(content.contains("/js/chart-icon.png"), "the raw value is untouched")
-    assertEquals(counter(resultCounters(text), "exempt"), 1)
-    assertEquals(counter(resultCounters(text), "failed"), 0)
-    assert(!text.contains("warnings:"), s"an app route is not a broken file:\n$text")
-    assertEquals(counter(itemCounters(msg), "exempt"), 1)
-
-  // ── ④ 零回归 ────────────────────────────────────────────
-
-  test("zero regression: remote URLs stay untouched and produce no counters at all"):
-    val (text, msg, content) = pop(
-      "remote",
-      """<html><img src="https://example.com/a.png"><img src="data:image/png;base64,AAA"></html>"""
-    )
-    assert(content.contains("https://example.com/a.png"))
-    assert(content.contains("data:image/png;base64,AAA"))
-    assertEquals(text, "Opened report.html in Canvas.", "nothing to report → no extra lines")
-    assertEquals(itemWarnings(msg), Nil)
-
-  test("zero regression: a non-HTML Pop keeps its item shape (no refs keys)"):
-    val dir = tempDir("md")
-    val md = dir / "notes.md"
-    os.write.over(md, "![pic](pic.png)\n")
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> md.toString.asJson), captureCtx(buf)).unsafeRunSync()
-    val item = buf.head.hcursor.downField("item")
-    assertEquals(item.get[String]("itemType").toOption, Some("markdown"))
-    assert(item.downField("warnings").focus.isEmpty, "no warnings key for a markdown item")
-    assert(item.downField("fileRefs").focus.isEmpty, "no fileRefs key for a markdown item")
-
-  test("summarizeResult surfaces the count (chat header no longer says plain `Opened`)"):
-    val dir = tempDir("summarize")
-    val ghost = s"$dir/ghost.png"
-    val (text, _, _) = pop("summarize", s"""<html><img src="$ghost"/></html>""")
-    val input = JsonObject("filePath" -> Json.fromString(s"$dir/report.html"))
+    val p = payloadOf(JsonObject("filePath" -> (dir / "bundle.png").toString.asJson), buf)
     assertEquals(
-      PopTool.summarizeResult(input, text),
-      "Opened report.html in Canvas — 1 image reference(s) NOT inlined"
+      warningsOf(p).map(w => w.hcursor.get[String]("reason").toOption.getOrElse("")),
+      List("not-regular-file")
     )
-    assertEquals(PopTool.summarizeResult(input, "Opened report.html in Canvas."), "Opened report.html in Canvas")
 
-  test("description promises the warning channel and the deferred/exempt counters"):
+  // ── ③ 不刷屏：引用腿只计数 ───────────────────────────────
+
+  test("an oversized image (>5MB) is `referenced`, not warned — the ticket leg still serves it"):
+    val dir = tempDir("oversize")
+    os.write.over(dir / "big.png", Array.fill(5 * 1024 * 1024 + 1)(0x44.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> (dir / "big.png").toString.asJson), buf)
+    val items = itemsOf(p)
+    assertEquals(items.map(_.hcursor.get[String]("kind").toOption.getOrElse("")), List("image"))
+    assert(items.head.hcursor.get[String]("src").toOption.isEmpty, "outside the inline policy: no embedded bytes")
+    assertEquals(items.head.hcursor.get[Long]("size").toOption, Some(5L * 1024 * 1024 + 1))
+    assertEquals(counter(p, "inlined"), 0)
+    assertEquals(counter(p, "referenced"), 1)
+    assertEquals(counter(p, "failed"), 0)
+    assertEquals(warningsOf(p), Nil, "a servable file is not a defect")
+
+  test("a video is `referenced` (never inlined) and carries its path for the ticket leg"):
+    val dir = tempDir("video")
+    os.write.over(dir / "clip.mp4", Array.fill(64)(0x46.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> (dir / "clip.mp4").toString.asJson), buf)
+    val items = itemsOf(p)
+    assertEquals(items.map(_.hcursor.get[String]("kind").toOption.getOrElse("")), List("video"))
+    assertEquals(items.head.hcursor.get[String]("path").toOption, Some((dir / "clip.mp4").toString))
+    assert(items.head.hcursor.get[String]("src").toOption.isEmpty, "videos always ride the ticket leg")
+    assertEquals(counter(p, "referenced"), 1)
+    assertEquals(counter(p, "failed"), 0)
+
+  test("a browser-unrenderable image format (tiff) is a FILE card, not a media item"):
+    val dir = tempDir("tiff")
+    os.write.over(dir / "scan.tiff", Array.fill(8)(0x45.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> (dir / "scan.tiff").toString.asJson), buf)
+    assertEquals(itemsOf(p).map(_.hcursor.get[String]("kind").toOption.getOrElse("")), List("file"))
+
+  // ── ④ imgref 批：解码形态披露 ────────────────────────────
+
+  test("a `%20`-spelled path resolves through its decoded form and the notes disclose which form won"):
+    val dir = tempDir("space")
+    os.makeDir.all(dir / "space dir")
+    os.write.over(dir / "space dir" / "shot.png", Array.fill(8)(0x42.toByte))
+    val escaped = (dir / "space%20dir" / "shot.png").toString
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> escaped.asJson), buf)
+    val items = itemsOf(p)
+    assertEquals(items.size, 1, "the decoded form resolves the file")
+    assert(items.head.hcursor.get[String]("src").toOption.exists(_.startsWith("data:image/png;base64,")), "it inlines too")
+    assert(
+      notesOf(p).exists(_.contains("decoded form")),
+      s"the disclosure must name the decoded form: ${notesOf(p)}"
+    )
+
+  // ── ⑤ 摘要面 ────────────────────────────────────────────
+
+  test("summarizeResult surfaces the counts (failed stays visible in the chat header)"):
+    val dir = tempDir("summarize")
+    os.write.over(dir / "here.png", Array.fill(8)(0x42.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val raw = PopTool
+      .call(
+        JsonObject("filePath" -> Json.arr((dir / "here.png").toString.asJson, (dir / "ghost.png").toString.asJson)),
+        captureCtx(buf)
+      )
+      .unsafeRunSync()
+      .toOption
+      .getOrElse(fail("expected Right"))
+    val input = JsonObject("filePath" -> Json.arr((dir / "here.png").toString.asJson, (dir / "ghost.png").toString.asJson))
+    assertEquals(
+      PopTool.summarizeResult(input, raw),
+      "Pop: 1 media + 0 file card(s) shown in chat — 1 path(s) NOT shown"
+    )
+    // the URL leg keeps its shipped face
+    assertEquals(
+      PopTool.summarizeResult(JsonObject("filePath" -> "https://example.com".asJson), "Opened example.com in Canvas."),
+      "Opened example.com in Canvas."
+    )
+
+  test("description promises the warning channel and the counters"):
     val d = PopTool.description
     assert(d.contains("warnings"), "the description must name the warnings field")
     assert(d.contains("fileRefs"), "the description must name the counters")
-    assert(d.contains("deferred"), "the delayed path must be documented")
-    assert(d.contains("exempt"), "the exemption must be documented")
-
-  // ── ⑤ 直开图片腿（imgfix 批，2026-09-16） ─────────────────
-  //
-  // Author case (sha256 f94d0e04…, 512479 B): Pop on a PNG under
-  // `<dataRoot>/docs/**` showed viewers/image.js' "File may be corrupted or not
-  // a valid image format." panel. The file was intact — the viewer fetched it
-  // through /api/nf-file, whose per-path ticket the gateway mints only for
-  // paths its credential-namespace policy serves (the data root serves
-  // `projects/ uploads/ plots/ workspace-items/ voice-models/`, NOT `docs/`),
-  // so the URL went out ticket-free and the GET answered 401. A directly-opened
-  // image now carries its bytes in the payload — same inline policy as the HTML
-  // `<img>` pass.
-
-  /** Direct-file Pop (`filePath` = the file itself, no HTML). */
-  private def popDirect(name: String, fileName: String, bytes: Array[Byte]): (String, Json) =
-    val dir = tempDir(name)
-    val file = dir / fileName
-    os.write.over(file, bytes)
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
-      case Left(err) => fail(s"Pop failed: ${err.message}")
-      case Right(text) => (text, buf.head)
-
-  test("direct-open: an image ≤5MB rides in the payload as a data: URI (the viewer needs no request)"):
-    val bytes = Array.tabulate(64)(i => (i * 7).toByte)
-    val (text, msg) = popDirect("direct-inline", "shot.png", bytes)
-    val item = msg.hcursor.downField("item")
-    assertEquals(item.get[String]("itemType").toOption, Some("image"))
-    val uri = item.get[String]("objectUrl").toOption.getOrElse(fail("objectUrl expected on the popFile item"))
-    assert(uri.startsWith("data:image/png;base64,"), uri.take(40))
-    assertEquals(
-      java.util.Base64.getDecoder.decode(uri.drop("data:image/png;base64,".length)).toSeq,
-      bytes.toSeq,
-      "the embedded bytes are the file's bytes"
-    )
-    assertEquals(text, "Opened shot.png in Canvas.", "an embedded image is not a defect — no counters")
-
-  test("direct-open: an image over 5MB keeps metadata-only (the ticket leg still serves it)"):
-    val bytes = Array.fill(5 * 1024 * 1024 + 1)(0x44.toByte)
-    val (_, msg) = popDirect("direct-big", "big.png", bytes)
-    val item = msg.hcursor.downField("item")
-    assertEquals(item.get[String]("objectUrl").toOption, None, "outside the inline policy: no embedded bytes")
-    assertEquals(item.get[Long]("size").toOption, Some(5L * 1024 * 1024 + 1))
-
-  test("direct-open: a non-image binary file is unchanged (no objectUrl, no content)"):
-    val (_, msg) = popDirect("direct-pdf", "doc.pdf", Array.fill(32)(0x25.toByte))
-    val item = msg.hcursor.downField("item")
-    assertEquals(item.get[String]("itemType").toOption, Some("pdf"))
-    assertEquals(item.get[String]("objectUrl").toOption, None)
-    assertEquals(item.get[String]("content").toOption, Some(""))
 end PopToolFileRefSpec

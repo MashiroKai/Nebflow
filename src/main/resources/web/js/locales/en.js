@@ -1072,6 +1072,11 @@ export default {
   // card sentinel is no longer dumped through the <pre> fallback ⇒ it takes the
   // card path, and this placeholder when extraction fails (raw text never in DOM).
   'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
+  // pop-upgrade batch (2026-10-03): Pop artifact faces (media stack / file cards)
+  'chat.popExpand': 'Expand {n}',
+  'chat.popCollapse': 'Collapse',
+  'chat.popOpenCanvas': 'Open in Canvas',
+  'chat.popFailed': '{n} path(s) could not be shown',
   // Escalation chain (author boundary ① "keep the escalation chain"): permshield
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
@@ -1688,6 +1693,7 @@ export default {
   'agentManager.noAgents': 'No agents configured',
   'agentManager.saved': 'Saved',
   'agentManager.save': 'Save',
+  'agentManager.builtinNote': 'Built-in agent: the system prompt is defined in code (read-only); the model chain is adjustable in the /model panel',
   // === Plugins page (2026-09-13 no-gate batch: presence-trust; 2026-09-14 panel-convergence
   //     batch: block/unblock UI fully retired + dispatch switch renamed «Dispatcher visibility»
   //     and moved to the card's top-right, en/zh paired) ===
@@ -1716,6 +1722,8 @@ export default {
   'plugins.loadFailed': 'Failed to load plugin registry: {error}',
   'plugins.authRequired': 'Not signed in — sign up or log in to use plugins',
   'plugins.relogin': 'Log in',
+  'plugins.builtinBadge': 'built-in',
+  'plugins.builtinTitle': 'Built-in agent: defined in code (BuiltinAgents); the panel is read-only',
   'plugins.detail': 'Details',
   'chatQueue.dragReorder': 'Drag to reorder',
   'chatQueue.clickExpand': 'Click to expand',
@@ -1901,15 +1909,27 @@ export default {
   'social.wechat.field.aesKey': 'Encoding AES key',
   // wechat-ilink (chain-wechat-impl, author ruling 2026-09-30, option (B)): the
   // separate iLink channel id, coexisting with the official-account card above.
-  // Sealed until the real-device login is done, so this copy stays off the
-  // panel for now - it is here so the sealed entry never orphans a key (W11).
+  // weixin-scanbind (author directive 2026-10-03): the card is unsealed and
+  // joins the scanBind family — scan/archive copy added, same shape as feishu.
   'social.weixinIlink.name': 'WeChat (iLink)',
-  'social.weixinIlink.desc': 'Credential set for the WeChat iLink bot. This phase stores the configuration only - no outbound channel is opened.',
+  'social.weixinIlink.desc': 'WeChat iLink bot: scan to store the credentials — messages land in the bound session.',
   'social.weixinIlink.field.botToken': 'Bot token',
   'social.weixinIlink.field.ilinkBotId': 'Bot ID',
   'social.weixinIlink.field.ilinkUserId': 'Signed-in user ID',
   'social.weixinIlink.field.baseurl': 'API base URL',
+  'social.weixinIlink.field.sidecarUrl': 'Side-car URL (optional)',
   'social.weixinIlink.field.allowedIlinkUserIds': 'Sender allowlist (optional)',
+  'social.weixinIlink.scan.starting': 'Requesting a QR code…',
+  'social.weixinIlink.scan.waiting': 'Scan with WeChat, then confirm on your phone',
+  'social.weixinIlink.scan.confirmed': 'Confirmed on the phone — writing the credentials…',
+  'social.weixinIlink.scan.done': 'Bot signed in — credentials stored',
+  'social.weixinIlink.scan.failed': 'Scan-bind failed: {reason}',
+  'social.weixinIlink.scan.userCode': 'Confirmation code: {code}',
+  'social.weixinIlink.scan.qrFallback': 'If the code does not display, open this link on your phone:',
+  'social.weixinIlink.archive.action': 'Unbind',
+  'social.weixinIlink.archive.doing': 'Unbinding…',
+  'social.weixinIlink.archive.done': 'Unbound — credentials kept',
+  'social.weixinIlink.archive.hint': 'Unbind: stops the channel and returns the card to the not-created state. Credentials are kept — nothing is deleted.',
   'social.feishu.name': 'Feishu',
   // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
   'social.feishu.desc': 'Once a session is bound, Feishu messages enter it and replies go back the same way. Every tenant member can reach the gateway by default.',
