@@ -34,7 +34,7 @@ import { previewLocalPath, canPreviewLocalPath } from './attachmentPreview.js';
 // i18n.js only) — the call sites below are the EXISTING render paths, so the
 // engine event stream (thinkingDelta / toolStart / toolEnd) is consumed
 // unchanged.
-import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, removeWorkline } from './workline.js';
+import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, removeWorkline, beginRound, stampRound } from './workline.js';
 
 // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
 // label (same string the user reads on the card), so the single-line badge and
@@ -42,6 +42,18 @@ import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorkline
 function worklineLabel(rawLabel) {
   const parts = localizeToolLabel(rawLabel).split('\n', 2);
   return parts[0];
+}
+
+/** THE single row-append path for this module (UI-D, author 2026-10-03
+ *  「放在 agent 一次消息的最底部」). A Pop artifact row is anchored to the end
+ *  of its turn when it is built; any row appended afterwards into the same turn
+ *  would bury it, so every append re-runs the re-anchor. Funnelling through one
+ *  helper means no render path can forget the step, and the pass itself is a
+ *  boolean test until the session has actually shown an artifact
+ *  (popArtifacts.placeArtifactRowsAtTurnEnd's latch). */
+function appendChatRow(chat, row) {
+  chat.append(row);
+  placeArtifactRowsAtTurnEnd(chat);
 }
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
@@ -338,7 +350,10 @@ export function renderUserBubble(text, attachments, timestamp) {
     // stream-ux (2026-10-03): the user's own bubble enters iMessage-style —
     // one message, one pop (scale + elastic settle), same animation family as
     // the assistant bubbles. Opt-in class (history replay stays static).
-    bubble.className = 'bubble user nf-pop';
+    // UI-G: main window only — a subagent / flow popup view renders the same
+    // bubble with no animation class at all (its container also carries
+    // `.nf-static`; this keeps the class off its DOM too).
+    bubble.className = activeView.motionEnabled() ? 'bubble user nf-pop' : 'bubble user';
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
@@ -383,7 +398,7 @@ export function renderUserBubble(text, attachments, timestamp) {
   const ts = timestamp || Date.now();
   row.appendChild(createMsgFooterBadge(ts, text));
 
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   // UNCONDITIONAL by author ruling (2026-09-11 A-branch): the user's own
   // message always brings the viewport back to the bottom — the near-bottom
   // judgement must NOT gate this site. Do not "converge" it.
@@ -631,7 +646,7 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
 export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header) {
   const chat = activeView.dom.chat;
   const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }
 
@@ -708,7 +723,7 @@ export function appendAiText(text) {
     view.stream.currentAiBubble = document.createElement('div');
     view.stream.currentAiBubble.className = 'bubble ai';
     row.appendChild(view.stream.currentAiBubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
   }
   // Preserve any option box across re-renders: keep it OUT of the bubble while
   // streaming so innerHTML replacement can't destroy its event listeners.
@@ -754,7 +769,11 @@ export function finishAi(durationMs, model) {
     // stream-ux §二.1.2: the whole reply enters ONCE (scale + elastic). Only on
     // the first final render — a second finishAi on the same bubble (round
     // boundary) must not replay the entrance.
-    if (firstPaint) bubble.classList.add('nf-pop');
+    // UI-G: `nf-pop` is CSS animation, so the class is only applied in the
+    // main window; the popup views carry `.nf-static` anyway (chatView.js) and
+    // this keeps the class off their DOM entirely, so a static window owns no
+    // animation class even if the CSS rule were ever narrowed.
+    if (firstPaint && activeView.motionEnabled()) bubble.classList.add('nf-pop');
     const ts = Date.now();
     let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
@@ -962,7 +981,7 @@ export function appendAgentText(agentId, text) {
       row.appendChild(badge);
     }
     row.appendChild(bubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
     view.stream.agentBubbles[agentId] = { bubble, text: '', row, badge };
   }
   const a = view.stream.agentBubbles[agentId];
@@ -1002,7 +1021,7 @@ export function finishAgent(agentId) {
 // imported from here — re-export, not redefinition (single source in
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, placeArtifactRowsAtTurnEnd } from './popArtifacts.js';
 
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
@@ -1058,10 +1077,14 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     card = document.createElement('div');
     card.className = 'tool-card';
     row.appendChild(card);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
   }
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
+  // UI-B: stamp the owning round on a freshly built row (a reused pending row
+  // already carries its start round from renderToolPending — the completion
+  // must not re-attribute it to a later round).
+  if (!pending) stampRound(activeView, row);
   // beta.56 ruling: tool-class bubbles carry NO footer — footers are
   // message-class only (user / assistant final text / ask / agent / skill).
   // Tool rows render header + body only. (2026-09-06 二次裁定: thinking 也
@@ -1105,6 +1128,12 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // the deliverable survives the ✻ collapse, sitting at the bottom of the
   // agent's message). The payload rides `content` into history, so replay
   // re-renders the same faces via persistence.js.
+  //
+  // UI-D (author 2026-10-03 「放在 agent 一次消息的最底部」): the row is created
+  // next to its Pop tool row — the payload arrives HERE — and then re-anchored
+  // to the end of its turn by placeArtifactRowsAtTurnEnd. The re-anchor runs on
+  // EVERY tool render (not only the Pop one), because the rows that would bury
+  // the card arrive AFTER it; a build with no artifact row costs one query.
   if (isPopPayload(content)) {
     renderPopToolRow(card, label, summary, isError);
     const popPayload = parsePopPayload(content);
@@ -1112,6 +1141,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
       const artifactRow = buildPopArtifactRow(popPayload);
       if (artifactRow) {
         row.after(artifactRow);
+        placeArtifactRowsAtTurnEnd(chat);
         smartScroll();
       }
     } else {
@@ -1303,6 +1333,10 @@ export function renderToolPending(label, sessionId) {
 
   const row = document.createElement('div');
   row.className = 'row tool nf-tucked'; // expand face — the turn line owns the run (2026-10-03)
+  // UI-B: the row carries the round it belongs to (a tool that starts in one
+  // round and completes in the next keeps its START round, so the split never
+  // re-attributes it). Read by the badge-split spec through dataset.nfRound.
+  stampRound(activeView, row);
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
   card.className = 'tool-card tool-card--pending';
@@ -1313,7 +1347,7 @@ export function renderToolPending(label, sessionId) {
   card.innerHTML = '<span class="icon"><span class="spinner"></span></span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div></div>';
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   state.sessionToolCards[sid] = row;
 }
@@ -1519,7 +1553,7 @@ export function renderError(msg) {
   card.className = 'error-card';
   card.textContent = msg;
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
 }
 
@@ -1677,7 +1711,7 @@ export function renderStillProcessingNotice(sid, rung = 0) {
   };
   card.appendChild(interruptBtn);
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   // 取证面（A 开放项 3）：本类误报行原本不落任何记录 ⇒ 事后不可复查。落一条 system
   // 记录进本地会话缓存（backend 侧无对应帧，因此这是唯一可盘查的痕迹）。动态 import
@@ -1743,7 +1777,7 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   };
   card.appendChild(btn);
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   // 取证面（A 开放项 3 · 原不落任何记录 ⇒ 误报事后不可复查；obsfix ② 起带 i18nKey）。
   import('./persistence.js')
@@ -1774,7 +1808,7 @@ export function renderSystemBubble(text) {
   card.className = 'notice-card notice-info';
   card.textContent = text;
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   // Persist to localStorage and backend (via recording ws send)
   import('./persistence.js').then(({ saveMsg }) => saveMsg({type: 'system', content: text}));
@@ -1819,7 +1853,7 @@ function appendCompactCard(view, state, label, startTs) {
   const chat = view?.dom?.chat;
   if (!chat) return null;
   const row = buildCompactCardRow(state, label, startTs);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   return row.querySelector('.compact-card');
 }
@@ -2686,7 +2720,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
     bubble.appendChild(badge);
   }
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   // canvas field (direction C §2.1): probe readability, then offer a glass
   // "view comparison" button beside the question and auto-open it in Canvas.
   // E8: a missing/broken canvas file does not render the button and does not
@@ -3021,7 +3055,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   }
 
   row.appendChild(bubble);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
 
   const targetSid = permSessionId || activeView.sessionId;
 
@@ -3194,7 +3228,7 @@ export function renderAskBubble(question) {
   row.appendChild(bubble);
   // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles too.
   row.appendChild(createMsgFooterBadge(Date.now(), question));
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
 }
 
@@ -3214,7 +3248,7 @@ export function renderSkillBubble(skillName, text) {
   row.appendChild(bubble);
   // v1.2 unified footer (2026-09-06 补齐批): skill bubbles too.
   row.appendChild(createMsgFooterBadge(Date.now(), text));
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
 }
 
@@ -3234,7 +3268,7 @@ export function appendAskAnswer(delta) {
     view.stream.currentAskBubble.appendChild(label);
     view.stream.currentAskBubble.appendChild(content);
     row.appendChild(view.stream.currentAskBubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
   }
   // rAF-throttled render (same scheduler as appendAiText)
   const bubble = view.stream.currentAskBubble;
@@ -3416,6 +3450,9 @@ export function appendThinkingDelta(delta) {
     // The bubble is the EXPAND face, so it is born pre-tucked; content still
     // renders into it (rAF below) and turnGroup untucks it on demand.
     row.className = 'row ai thinking-row nf-tucked';
+    // UI-B: the process row carries the round it belongs to (same contract as
+    // the tool rows), so a reader can verify the round split from the DOM.
+    stampRound(activeView, row);
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai thinking-bubble';
     // #346 v2 stats: thinking duration for the turn header (turnGroup.js
@@ -3445,7 +3482,7 @@ export function appendThinkingDelta(delta) {
     bubble.appendChild(label);
     bubble.appendChild(content);
     row.appendChild(bubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
     // Click/Enter folds or re-reveals the live content (rAF keeps rendering
     // into it); finishThinking auto-collapses regardless at stream end.
     bindCollapsibleToggle(label, () => content);

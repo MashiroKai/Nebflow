@@ -39,7 +39,7 @@ import {
 } from './chat.js';
 // stream-ux redesign (2026-10-03): the pre-token 「思考中」 placeholder lives
 // ON the turn line (dots + live timer), not in a bubble row.
-import { startWorklineDots } from './workline.js';
+import { startWorklineDots, beginRound } from './workline.js';
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks } from './askPending.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -1296,6 +1296,12 @@ onMessage('roundComplete', (msg, view) => {
       if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
       startWorklineDots(activeView, state.turnStartTimes[sid]);
     }
+    // UI-B: this IS the round boundary. Order matters — startWorklineDots above
+    // may build a brand-new line (round resets to 0 there), so the advance must
+    // come AFTER it, or the first round of a new turn would be numbered 1.
+    // Re-issuing the dots on a line that is already up does not reset the
+    // counter, which is exactly right: the same turn keeps its round sequence.
+    beginRound(activeView);
   }
 });
 
