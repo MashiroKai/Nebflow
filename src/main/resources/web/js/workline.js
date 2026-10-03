@@ -30,15 +30,13 @@ import { t } from './i18n.js';
 import { isNearBottom } from './utils.js';
 
 /** Out-phase duration before the leaving item is dropped from the DOM —
- *  slightly longer than the CSS roll-out (0.35s) so the animation completes. */
+ *  slightly longer than the CSS fade-out (0.3s) so the animation completes. */
 const ROLL_MS = 380;
 /** How long the exit window stays OPEN: an item that enters while the window is
- *  open is held until it closes (see `swap`). 0.4s = the CSS roll-out (0.35s)
+ *  open is held until it closes (see `swap`). 0.4s = the CSS fade-out (0.3s)
  *  plus the short empty gap the approved demo shows between the outgoing item
  *  reaching opacity 0 and the incoming one leaving its from-state. */
 const EXIT_HOLD_MS = 400;
-/** Width-reveal budget for the single-line thinking text (px). */
-const THINK_MAX_PX = 520;
 
 const CHECK_SVG =
   '<svg viewBox="0 0 16 16" aria-hidden="true">' +
@@ -73,9 +71,18 @@ function formatLive(ms) {
 function state(view) {
   if (!view) return null;
   if (!view._nfWorkline) {
-    view._nfWorkline = { row: null, slot: null, item: null, key: '', kind: '', exitUntil: 0, dotTimer: 0 };
+    view._nfWorkline = { view, row: null, slot: null, item: null, key: '', kind: '', exitUntil: 0, dotTimer: 0, round: 0 };
   }
   return view._nfWorkline;
+}
+
+/** Window-role motion switch (UI-G, author 2026-10-03 19:59 ruling): the main
+ *  Nebula window animates, subagent / flow popup windows stay static to save
+ *  resources. The decision itself lives on the view (chatView.js
+ *  `isMainWindow` → `view.motionEnabled`) — this module only consumes it, so
+ *  workline.js stays a leaf (no chatView.js import ⇒ no cycle). */
+function motion(view) {
+  return typeof view?.motionEnabled === 'function' ? view.motionEnabled() : true;
 }
 
 /** The turn-top anchor: the last NON-injected user row of #chat — the same
@@ -93,11 +100,15 @@ function turnAnchor(chat) {
 
 function ensureRow(view) {
   const wl = state(view);
+  wl.view = view; // the motion-role owner; refreshed each call so a released line re-binds
   if (wl.row && wl.row.isConnected) return wl;
   const chat = view.dom && view.dom.chat;
   if (!chat) return null;
   const row = document.createElement('div');
   row.className = 'nf-workline';
+  // UI-G: a static window (subagent / flow popup) runs the line with every
+  // animation off — one class, one CSS rule, no per-element handling.
+  if (!motion(view)) row.classList.add('nf-static');
   row.setAttribute('role', 'status');
   row.setAttribute('aria-live', 'polite');
   row.appendChild(chevronSvg());
@@ -116,6 +127,9 @@ function ensureRow(view) {
   wl.key = '';
   wl.kind = '';
   wl.exitUntil = 0;
+  // A brand-new line is the start of a brand-new turn ⇒ round attribution
+  // restarts at 0 (UI-B). Rounds only advance within a turn (beginRound).
+  wl.round = 0;
   return wl;
 }
 
@@ -189,7 +203,8 @@ function stopDotTimer(wl) {
  *  of a turn has no predecessor, so it is never held. */
 function swap(wl, item, { key, kind, roll }) {
   stopDotTimer(wl);
-  const reduce = prefersReducedMotion();
+  const animated = motion(wl.view);
+  const reduce = prefersReducedMotion() || !animated;
   const old = wl.item;
   if (old && old !== item) {
     // Roll the outgoing item out only when there is something legible to
@@ -199,6 +214,8 @@ function swap(wl, item, { key, kind, roll }) {
     if (roll && !reduce && isLegible(old)) {
       old.classList.add('is-out');
       const doomed = old;
+      // No exit timer in a static window (UI-G): the leaving item is dropped
+      // in the same frame, so the subagent path never arms a timeout.
       setTimeout(() => doomed.remove(), ROLL_MS);
       wl.exitUntil = performance.now() + EXIT_HOLD_MS;
     } else {
@@ -210,6 +227,8 @@ function swap(wl, item, { key, kind, roll }) {
   // mid-window: it would restart the clock instead of waiting out the window.
   // Two delay values mirror the two-animation `.is-done` pair (roll-in + the
   // 0.1s-delayed bounce); a single-animation item uses the first value.
+  // Static windows hold nothing: with the CSS animations off the item is
+  // legible immediately, so an inline delay would only hide it.
   const hold = reduce ? 0 : Math.max(0, Math.round(wl.exitUntil - performance.now()));
   item.classList.toggle('is-enter-late', hold > 0);
   if (hold > 0) item.style.animationDelay = hold + 'ms, ' + (hold + 100) + 'ms';
@@ -223,7 +242,10 @@ function swap(wl, item, { key, kind, roll }) {
  *  timer, on the turn line (the old `.thinking-placeholder` bubble's face,
  *  moved onto the line by the 2026-10-03 redesign). The timer stops itself the
  *  moment any real item replaces the dots (swap) or the turn ends
- *  (removeWorkline / settleWorklineAsHeader). */
+ *  (removeWorkline / settleWorklineAsHeader).
+ *  UI-G: a static window (subagent / flow popup) gets NO live-seconds timer —
+ *  the hint is written once and never re-armed, so the window adds zero
+ *  periodic work. */
 export function startWorklineDots(view, startedAt) {
   const wl = ensureRow(view);
   if (!wl) return;
@@ -251,6 +273,7 @@ export function startWorklineDots(view, startedAt) {
   item.appendChild(hint);
   swap(wl, item, { key: 'dots', kind: 'dots', roll: true });
   stopDotTimer(wl);
+  if (!motion(view)) return; // UI-G: static window — no setInterval, no ticking
   wl.dotTimer = setInterval(() => {
     if (!item.isConnected) { stopDotTimer(wl); return; }
     hint.textContent = formatLive(Date.now() - start);
@@ -292,8 +315,11 @@ export function failWorklineItem(view, key) {
   swap(wl, buildItem(text, '', 'is-error'), { key: wl.key, kind: wl.kind, roll: false });
 }
 
-/** Thinking: single-line width reveal. The first call opens the item; later
- *  calls only grow the revealed width, so the text never re-renders per frame
+/** Thinking: the badge shows the thinking text as TEXT (UI-C text cadence) and
+ *  the line WRAPS (UI-A) — the earlier single-line width reveal clipped the
+ *  text with `overflow:hidden` + a per-call `maxWidth`, which is exactly the
+ *  「一直是一行」 the author scored. Later calls only replace the string; the
+ *  cadence comes from the CSS caret, never from a per-token DOM rebuild
  *  (that is the A3/A7 discipline — no per-token DOM rebuild). */
 export function thinkingWorklineItem(view, text) {
   const wl = ensureRow(view);
@@ -310,8 +336,6 @@ export function thinkingWorklineItem(view, text) {
   const think = wl.item.querySelector('.nf-wl-think');
   if (!think) return;
   think.textContent = text || '';
-  const px = Math.min(THINK_MAX_PX, Math.round((text || '').length * 8 + 14));
-  think.style.maxWidth = px + 'px';
 }
 
 /** Thinking finished: swap the reveal for the completed label + check. */
@@ -331,7 +355,15 @@ export function thinkingWorklineDone(view, text) {
  *  position, chevron already in place. turnGroup.js binds the toggle on the
  *  returned element (the scope walk lives there; this module stays a leaf).
  *  Returns the morphed header element, or null when there is no live line
- *  (caller falls back to buildHeader). Idempotent: a second call is a no-op. */
+ *  (caller falls back to buildHeader). Idempotent: a second call is a no-op.
+ *
+ *  UI-B (author 2026-10-03 「Badge 按轮次切分没有做的很好」): the settle RELEASES
+ *  the line. The morph consumes `wl.row` (it is now the header, owned by
+ *  turnGroup's toggle), so leaving `wl.row` / `wl.slot` pointing at it made the
+ *  NEXT turn's `ensureRow` take the `isConnected` shortcut and append its live
+ *  items into the PREVIOUS turn's settled badge — the badge carried the wrong
+ *  round's process. Only `kind='done'` is kept, so a re-entrant settle inside
+ *  the same terminal is still a no-op. */
 export function settleWorklineAsHeader(view, headerText, title) {
   const wl = state(view);
   if (!wl || !wl.row || !wl.row.isConnected) return null;
@@ -352,6 +384,14 @@ export function settleWorklineAsHeader(view, headerText, title) {
   row.removeAttribute('role'); // was status — a header is a button face
   row.removeAttribute('aria-live');
   if (title) row.title = title;
+  // Release the line: the header now belongs to turnGroup, and the next turn
+  // must build its OWN line (see the UI-B note above).
+  stopDotTimer(wl);
+  wl.row = null;
+  wl.slot = null;
+  wl.item = null;
+  wl.key = '';
+  wl.exitUntil = 0;
   return row;
 }
 
@@ -371,4 +411,49 @@ export function removeWorkline(view) {
   wl.key = '';
   wl.kind = '';
   wl.exitUntil = 0;
+  wl.round = 0;
+}
+
+/* ── round attribution (UI-B, author 2026-10-03 「Badge 按轮次切分没有做的
+   很好」) ─────────────────────────────────────────────────────────────────
+   The badge IS the turn line settled into `.turn-header` at the terminal, and
+   the badge's numbers are computed from the turn's own row list
+   (turnGroup.computeTurnStats). "切分" is therefore a QUESTION OF TURN SCOPE,
+   not of splitting one turn into several headers: within a turn, several LLM
+   rounds of tool calls (MemoryNote×5 → text → Task×4) all belong to ONE badge
+   — the decisive original user quote is 「Badge按轮次切分没有做很好」 and the
+   pinned regression (tests/turn-single-badge.spec.mjs) forbids two headers for
+   a multi-round turn.
+
+   The defect this fixes is the ROW-LEVEL attribution of a round boundary: at
+   `roundComplete` (main.js) the work line is re-armed with the dots item for
+   the upcoming round. That re-arm currently lands on whatever row happens to
+   be last, and — the case the author scored — the PROCESS ROW of a tool whose
+   completion arrives in the NEXT round is stamped with the round in which it
+   STARTED, so a tool that is still running when the round flips is attributed
+   to the wrong round.
+
+   The attribution point is explicit and testable: `beginRound(view)` is called
+   at each round boundary, and `roundOf(view)` reports the current round index
+   for any row stamped by the live render path. Rows carry their round on
+   `dataset.nfRound` so a reader (and a spec) can verify the split without
+   reading the render code. Round 0 = the turn's first LLM round. */
+export function beginRound(view, roundIndex) {
+  const wl = state(view);
+  if (!wl) return 0;
+  wl.round = Number.isInteger(roundIndex) ? roundIndex : ((wl.round || 0) + 1);
+  return wl.round;
+}
+
+/** The current round index for the view's live turn (0 while none started). */
+export function roundOf(view) {
+  const wl = state(view);
+  return wl && Number.isInteger(wl.round) ? wl.round : 0;
+}
+
+/** Stamp a row with the round it belongs to. Called by chat.js for every
+ *  process row it renders live, so the round split is a readable DOM fact. */
+export function stampRound(view, row) {
+  if (!row || !row.dataset) return;
+  row.dataset.nfRound = String(roundOf(view));
 }

@@ -3203,10 +3203,30 @@
    final roll). The face is the header's own design language: no background,
    no glass, no border — chevron + muted 12px text, brightening on hover.
    The old boxed card look is gone: the process is the badge's sibling phase,
-   not a different chrome. */
+   not a different chrome.
+
+   UI-A (author 2026-10-03 「思考过程的那一行要能换行显示，而不是一直是一行」):
+   the line WRAPS. The slot is height:auto with a min-height of one row, the
+   label wraps (white-space:normal + overflow-wrap), and the thinking reveal
+   drops its nowrap clipping. The switch interaction is unaffected: the slot is
+   still a position:relative stage and the ENTERING item is still absolutely
+   positioned over the leaving one, so 「至多一项可见」 holds exactly as before —
+   only the item's height is now allowed to grow.
+
+   UI-C (author 2026-10-03 「动画最好以纯文本的形式来做，符合Badge原有的风格」):
+   every motion in this block is PURE TEXT — a character spinner, a character
+   pulse on the dots, a character caret on the thinking reveal, and a short
+   opacity fade. There are NO transform / translate / scale / rotate
+   animations left (the old roll-in / roll-up / chkon-scale / bounce /
+   spinner-rotate keyframes are gone). The badge keeps the header's static
+   design language instead of a card's motion language.
+
+   UI-G (author 2026-10-03 19:59 ruling): a subagent / flow popup window adds
+   `.nf-static`; the ONE rule below turns every animation and every transition
+   in this block off for that window — no per-element handling. */
 .nf-workline {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 4px;
   max-width: 85%;
   margin: 2px 0;
@@ -3215,21 +3235,27 @@
   font-weight: 500;
   color: var(--color-text-dim);
   opacity: 0.9;
-  overflow: hidden;
   position: relative;
   cursor: default;
   animation: nf-wl-in 0.3s ease both;
 }
 .nf-workline:hover { color: var(--color-text); opacity: 1; }
-.nf-workline .nf-chevron { flex-shrink: 0; }
-/* The slot is a single-line stage: fixed height so a rolling-out item and the
-   held-back entering item share the box without reflowing the chat. */
-.nf-wl-slot { position: relative; flex: 1 1 auto; min-width: 0; height: 18px; }
-/* The terminal morph: the row gains `.turn-header`; the slot relaxes so the
-   settled badge text can WRAP (same ruling as the built header — the full
-   summary is always readable, no ellipsis swallowing). The final item is in
-   flow (the outgoing item above it is absolutely positioned and already
-   fading — the exit window keeps them from ever being legible together). */
+.nf-workline .nf-chevron { flex-shrink: 0; margin-top: 1px; }
+/* The slot is a stage, not a single-line box (UI-A): auto height so a wrapped
+   item grows the line, min-height keeps the one-line geometry stable. */
+.nf-wl-slot { position: relative; flex: 1 1 auto; min-width: 0; min-height: 18px; height: auto; }
+.nf-wl-item {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  animation: nf-wl-in 0.3s ease both;
+}
+/* The terminal morph: the row gains `.turn-header`; the settled badge text
+   WRAPS in flow (same ruling as the built header — the full summary is always
+   readable, no ellipsis swallowing). */
 .turn-header .nf-wl-slot { height: auto; }
 .nf-wl-item.is-final { position: static; white-space: normal; }
 .nf-wl-item.is-final .nf-wl-label {
@@ -3238,116 +3264,99 @@
   overflow: visible;
   text-overflow: clip;
 }
-.nf-wl-item {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
-}
 .nf-wl-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   min-width: 0;
 }
 .nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
 
-/* pre-token dots (the old placeholder bubble's face, moved onto the line) */
+/* pre-token dots (the old placeholder bubble's face, moved onto the line) —
+   PURE TEXT pulse (UI-C): the three dots cycle opacity only. */
 .nf-wl-dots { display: inline-flex; gap: 3px; align-items: center; flex: none; }
+.nf-wl-dots .thinking-dot {
+  width: auto; height: auto; border-radius: 0; background: none;
+  opacity: 0.35;
+  animation: nf-wl-textpulse 1.2s steps(1, end) infinite;
+}
 
-/* icon cell: spinner (running) or check (done) */
+/* icon cell: a PURE-TEXT spinner / a text check (UI-C) — no SVG rotation, no
+   scale-in, no stroke-draw. */
 .nf-wl-icon { width: 16px; height: 16px; flex: none; display: flex; align-items: center; justify-content: center; }
-.nf-wl-spin {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  animation: nf-wl-spin 0.8s linear infinite;
+.nf-wl-spin { width: 14px; height: 14px; border: 0; border-radius: 0; }
+.nf-wl-spin::before {
+  content: "\25DC";
+  display: block; width: 14px; line-height: 14px; text-align: center;
+  color: var(--color-primary);
+  animation: nf-wl-frames 0.8s steps(1, end) infinite;
 }
-.nf-wl-chk { width: 16px; height: 16px; transform: scale(0.4); opacity: 0;
-  animation: nf-wl-chkon 0.4s cubic-bezier(0.34, 1.6, 0.64, 1) forwards; }
-.nf-wl-chk svg { width: 16px; height: 16px; display: block; }
-.nf-wl-chk circle { fill: none; stroke: var(--color-success); stroke-width: 2; }
-.nf-wl-chk path {
-  fill: none;
-  stroke: var(--color-success);
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 12;
-  stroke-dashoffset: 12;
-  animation: nf-wl-draw 0.25s 0.1s ease forwards;
+.nf-wl-chk { width: 16px; height: 16px; opacity: 1; }
+.nf-wl-chk::before {
+  content: "\2713";
+  display: block; width: 16px; line-height: 16px; text-align: center;
+  font-size: 14px; font-weight: 700; color: var(--color-success);
 }
-/* the check lands with a small bounce (spec §二.1.1「打勾描画 + 弹跳动画」) */
-.nf-wl-item.is-done { animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both, nf-wl-bounce 0.4s 0.1s ease both; }
-/* A completed item that is leaving the slot (the next tool took over): roll it
-   UP and out (spec §二.1.1「旧上滚出、新下滚入」).
-   The two-class selector is deliberate, not decoration: `.is-done` and
-   `.is-out` are both (0,2,0), so a plain `.nf-wl-item.is-out` rule placed
-   before `.is-done` loses the cascade and the roll-out never runs — measured
-   on the real tool-A→done→tool-B sequence, where the outgoing item sat still
-   for the whole 380ms exit window and overlapped the incoming label. (0,3,0)
-   beats `.is-done` on specificity regardless of rule order.
-   The item is built fresh per tool, so an item that was done carries BOTH
-   classes; one still running carries only `.is-out`. */
+.nf-wl-chk svg { display: none; }
+/* the check lands with a short text fade (UI-C — no bounce / scale) */
+.nf-wl-item.is-done { animation: nf-wl-in 0.3s ease both; }
+/* A completed item leaving the slot: a short FADE-OUT, no vertical roll.
+   The two-class selector keeps the (0,3,0) specificity discipline recorded on
+   the retired roll-out rule (it must beat `.is-done` regardless of order). */
 .nf-wl-item.is-done.is-out,
-.nf-wl-item.is-out { animation: nf-wl-rollout 0.35s ease both; }
+.nf-wl-item.is-out { animation: nf-wl-fadeout 0.3s ease both; }
 
-/* The item that ENTERS behind a leaving one waits for that roll-out to finish
-   (`.is-enter-late` is applied by workline.js on a genuine item switch, never on
-   the first item of a turn). Without the wait the entry overlaps the exit and
-   both labels are legible at once — a double exposure the approved demo does
-   not have: there `#it1` rolls out from 3.5s and `#it2` only rolls in from
-   3.9s, i.e. a hard switch with the exiting item already at opacity 0 while the
-   entering one still sits in its from-state, leaving a gap where the line reads
-   empty. 0.4s is that same start-to-start stagger.
-   `both` fill keeps the entering item at its from-state (opacity 0,
-   translateY 20px) for the whole delay, so the two items are never both on
-   screen and their label boxes never intersect.
-   The two-value delay mirrors the two-animation `.is-done` pair (roll-in + the
-   0.1s-delayed bounce): a single value would repeat for both animations and
-   move the completion bounce inside the delay. */
+/* The item that ENTERS behind a leaving one waits for that fade to finish
+   (`.is-enter-late` is applied by workline.js on a genuine item switch, never
+   on the first item of a turn). Without the wait the entry overlaps the exit
+   and both labels are legible at once — a double exposure. The delay is the
+   same start-to-start stagger the retired roll layer used (tests/stream-ux.spec.mjs
+   A1 measures the ordering, not the mechanism). */
 .nf-wl-item.is-enter-late { animation-delay: 0.4s; }
-.nf-wl-item.is-done.is-enter-late { animation-delay: 0.4s, 0.5s; }
 
-/* error mark for a failed tool (same 16px ink box as the check) */
-.nf-wl-x svg { width: 16px; height: 16px; display: block; }
-.nf-wl-x path {
-  fill: none;
-  stroke: var(--color-error);
-  stroke-width: 2.4;
-  stroke-linecap: round;
+/* error mark for a failed tool (text cross, same 16px ink box as the check) */
+.nf-wl-x { width: 16px; height: 16px; }
+.nf-wl-x::before {
+  content: "\2715";
+  display: block; width: 16px; line-height: 16px; text-align: center;
+  font-size: 13px; font-weight: 700; color: var(--color-error);
 }
+.nf-wl-x svg { display: none; }
 .nf-wl-item.is-error .nf-wl-label { color: var(--color-error); }
 
-/* thinking: single-line reveal — the box widens as the thinking text grows
-   while the (already complete) string is clipped by overflow, so the text
-   never reflows and never re-renders per frame (A2/A3/A7). The stepped
-   transition is what gives the reveal its typewriter cadence; workline.js
-   only writes the target width (no per-token DOM rebuild). */
+/* thinking: the badge prints the thinking text as TEXT (UI-C text cadence) —
+   it WRAPS (UI-A) and carries a blinking text caret. There is NO width-reveal
+   any more: workline.js writes the whole string and never sets a maxWidth, so
+   no `transition` belongs on this rule (a property that is never written does
+   not need a rung). The caret's blink is the entire "cadence" mechanism. */
 .nf-wl-think {
-  display: inline-block;
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  vertical-align: bottom;
-  transition: max-width 0.16s steps(3, end);
+  display: inline;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: baseline;
 }
 .nf-wl-think::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
 .nf-wl-item.is-done .nf-wl-think::after { display: none; }
 
 @keyframes nf-wl-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes nf-wl-rollin { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
-@keyframes nf-wl-rollout { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-18px); } }
-@keyframes nf-wl-chkon { to { opacity: 1; transform: scale(1); } }
-@keyframes nf-wl-draw { to { stroke-dashoffset: 0; } }
-@keyframes nf-wl-spin { to { transform: rotate(360deg); } }
-@keyframes nf-wl-bounce { 0%, 100% { transform: none; } 40% { transform: translateY(-3px); } }
+@keyframes nf-wl-fadeout { from { opacity: 1; } to { opacity: 0; } }
+@keyframes nf-wl-frames {
+  0% { content: "\25DC"; }
+  25% { content: "\25DD"; }
+  50% { content: "\25DE"; }
+  75% { content: "\25DF"; }
+  100% { content: "\25DC"; }
+}
+@keyframes nf-wl-textpulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.9; } }
 @keyframes nf-wl-blink { 50% { opacity: 0; } }
+
+/* UI-G: a subagent / flow popup window renders the line STATIC. One rule —
+   every animation and transition inside the work line is off; the line still
+   shows the running tool name, the check / cross and the thinking text, so the
+   window stays fully readable (克制 ≠ 破功). */
+.nf-static,
+.nf-static * { animation: none !important; transition: none !important; }
 
 /* ---------- message entrance animations (stream-ux redesign 2026-10-03) ----------
    EVERY message is "one message, one animation": the whole bubble pops in once
@@ -3375,23 +3384,19 @@
   .nf-wl-item,
   .nf-wl-item.is-out,
   .nf-wl-item.is-done,
-  /* same (0,3,0) as the roll-out rule above — a media query adds no
+  /* same (0,3,0) as the fade-out rule above — a media query adds no
      specificity, so the combined selector must be repeated here or a
-     done+leaving item would still roll under reduced motion */
+     done+leaving item would still animate under reduced motion */
   .nf-wl-item.is-done.is-out,
+  .nf-wl-item.is-done.is-enter-late,
   /* the switch delay is meaningless once the animations are off — an item that
      carried it would otherwise sit at its from-state (invisible) for 0.35s */
   .nf-wl-item.is-enter-late,
-  .nf-wl-item.is-done.is-enter-late,
-  .nf-wl-chk,
-  .nf-wl-chk path,
-  .nf-wl-spin,
+  .nf-wl-spin::before,
+  .nf-wl-dots .thinking-dot,
+  .nf-wl-think::after,
   .bubble.nf-pop { animation: none; }
-  .nf-wl-item.is-enter-late,
-  .nf-wl-item.is-done.is-enter-late { animation-delay: 0s; }
-  .nf-wl-chk { opacity: 1; transform: none; }
-  .nf-wl-chk path { stroke-dashoffset: 0; }
-  .nf-wl-think { max-width: none; }
+  .nf-wl-item.is-enter-late { animation-delay: 0s; }
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -3401,7 +3406,8 @@
    button. The artifact row is deliberately NOT `.row.tool` — turnGroup's
    tuck set never touches it, so the deliverable survives the ✻ collapse and
    sits at the bottom of the agent's message. Renderer = popArtifacts.js
-   (live + both history paths); the approved demo is demo/pop-upgrade-demo.html.
+   (live + both history paths); the author-approved preview demo is
+   demo/pop-upgrade-demo.html (git-ignored via `.gitignore:38` `*demo*.html`).
    ═════════════════════════════════════════════════════════════════════════ */
 
 .row.pop-artifact { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
@@ -3452,6 +3458,29 @@
 
 .pop-media { position: relative; width: 100%; height: 100%; }
 .pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: cover; background: #17191f; }
+/* 缺陷 D fix (2026-10-03 UI-E/UI-F): the failed-media placeholder used to be
+   reachable ONLY for `.bubble.ai img` (see the 2026-09-15 rule at the top of
+   this file) — a Pop artifact face lives in `.row.pop-artifact`, so a broken
+   image / video there showed NOTHING at all. Same visual language (dashed box
+   + muted ink), widened to the Pop selector family, plus the plain-text note
+   line the renderer appends under the face (pure text, UI-C family). */
+.pop-img.nf-img-failed, .pop-video.nf-img-failed {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 10px;
+  border: 1px dashed rgba(128, 128, 128, 0.45);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  object-fit: contain;
+}
+.nf-media-failed-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
 .play-ring {
   position: absolute; top: 50%; left: 50%;
   width: 54px; height: 54px; margin: -27px 0 0 -27px;
