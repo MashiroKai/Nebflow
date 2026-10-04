@@ -161,7 +161,7 @@ private[gateway] object RegistryRoutes:
             val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
             val content = scope match
               case "user" => nebflow.shared.MemoryStore.loadUserMemory.getOrElse("")
-              case "agent" => nebflow.shared.MemoryStore.loadAgentMemory(agentName).getOrElse("")
+              case "agent" => nebflow.shared.MemoryStore.loadSoulMemory(agentName).getOrElse("")
               case _ => ""
             Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))
           }

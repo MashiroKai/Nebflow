@@ -57,6 +57,65 @@ object MemoryBudget:
   val ProjectSoftBytes: Long = 8L * 1024
 
   // ---------------------------------------------------------------
+  // 注入预算 × 上下文窗口联动（personal-agent 批 ⑥，2026-10-04）
+  // ---------------------------------------------------------------
+
+  /**
+   * token → 字节的保守估算（中英混排近似）。
+   *
+   * 为什么不引真 tokenizer：预算判据必须在**注入前**、零网络、零依赖地算出，
+   * 且两侧（渲染 / 写闸）要共用同一个数字。4 B/token 是既能覆盖英文（~4）也能
+   * 覆盖中文（~3）的常用保守值——偏保守 ⇒ 预算是**上限**语义，宁可早提醒。
+   */
+  val BytesPerToken: Long = 4L
+
+  /**
+   * 记忆可占上下文窗口的比例（**字节口径**，见 [[BytesPerToken]]）。
+   *
+   * 取 10% 的依据：默认窗口 128,000 tokens ⇒ 512,000 B ⇒ 上限 51,200 B，
+   * 恰**不低于**现役两级硬顶（user 50KB / agent 30KB）⇒ **默认口径零变化**
+   * （既有常量继续绑定）。窗口变小（32k：32,768 × 4 × 10% = 13,107 B）时才收紧
+   * ——正是「小肺不该背大行李」的场景。作者令（2026-10-04 09:02 第 2 条）要求
+   * onboarding 设的 context window 接入本判据；本常量是纯函数式的连接点。
+   */
+  val InjectionShareOfContext: Double = 0.10
+
+  /**
+   * 注入侧字节上限（由**生效**上下文窗口推导）。
+   *
+   * 🔴 入参必须是**生效窗口**（`ProviderRegistry.effectiveContextWindow` 的产物，
+   * 即 `min(configured, modelMaxContext)`），消费链 = `ModelCandidate.contextWindow`
+   * → `AgentState.contextWindow` → `ContextRefresher`。**禁另立旁路**：本函数不做
+   * clamp、不读配置，只做比例换算（clamp 的取数单点在 `llm/registry.scala`）。
+   *
+   * 非正数（未配置 / 探不到）⇒ `Long.MaxValue` ⇒ 由既有常量绑定（fail-open 到
+   * 旧行为，绝不因缺值把预算压成 0）。
+   */
+  def injectionCapBytes(contextWindow: Int): Long =
+    if contextWindow <= 0 then Long.MaxValue
+    else (contextWindow.toLong * BytesPerToken * InjectionShareOfContext).toLong
+
+  /** 注入侧生效硬顶 = min(既有常量, 窗口推导上限)。 */
+  def effectiveHardBytes(baseHard: Long, contextWindow: Int): Long =
+    math.min(baseHard, injectionCapBytes(contextWindow))
+
+  /** 注入侧生效软线 = 生效硬顶的 80%（沿用既有 80% 惯例）。 */
+  def effectiveSoftBytes(baseHard: Long, contextWindow: Int): Long =
+    (effectiveHardBytes(baseHard, contextWindow) * 4) / 5
+
+  /** user 级注入硬顶（窗口联动）。 */
+  def userInjectionHardBytes(contextWindow: Int): Long = effectiveHardBytes(UserHardBytes, contextWindow)
+
+  /** user 级注入软线（窗口联动）。 */
+  def userInjectionSoftBytes(contextWindow: Int): Long = effectiveSoftBytes(UserHardBytes, contextWindow)
+
+  /** agent（Soul）级注入硬顶（窗口联动）。 */
+  def agentInjectionHardBytes(contextWindow: Int): Long = effectiveHardBytes(AgentHardBytes, contextWindow)
+
+  /** agent（Soul）级注入软线（窗口联动）。 */
+  def agentInjectionSoftBytes(contextWindow: Int): Long = effectiveSoftBytes(AgentHardBytes, contextWindow)
+
+  // ---------------------------------------------------------------
   // 判定
   // ---------------------------------------------------------------
 
@@ -143,7 +202,7 @@ object MemoryBudget:
   def exceededMessage(action: String, target: String, targetPath: String, newSizeBytes: Long, newContent: String): String =
     val (label, hard) = target match
       case "user" => ("~/.nebflow/User.md", UserHardBytes)
-      case "agent" => ("~/.nebflow/agents/Nebula/memory.md", AgentHardBytes)
+      case "agent" => ("~/.nebflow/Soul.md", AgentHardBytes)
       case "project" => (targetPath, ProjectHardBytes)
       case other => (other, -1L)
     val pct = if hard > 0 then f"${newSizeBytes * 100.0 / hard}%.0f%%" else "?"

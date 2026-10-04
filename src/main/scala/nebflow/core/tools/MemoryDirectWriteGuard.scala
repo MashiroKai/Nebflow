@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import nebflow.shared.MemoryBudget
 import nebflow.shared.MemoryWriteGate
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -52,14 +53,21 @@ object MemoryDirectWriteGuard:
   private val lastRemindedAt = new ConcurrentHashMap[String, Long]()
 
   /** Classify a path against the three budgeted memory layers.
-    * `Some("user" | "agent" | "project")` = budgeted layer; `None` = not guarded. */
+    * `Some("user" | "agent" | "project")` = budgeted layer; `None` = not guarded.
+    *
+    * personal-agent 批 2026-10-04：`"agent"` 层从 `agents/Nebula/memory.md` 上收到
+    * 根层 `~/.nebflow/Soul.md`（与 `User.md` 同级）。**双读过渡**⇒两处都判 `"agent"`
+    * （旧位仍可被直写，归档期不能失去预算保护）。路径比较基准 = `PathUtil.dataRoot`
+    * （而不是 `user.home`）：隔离实例（`--home` / `setDataRoot`）下同样判得中。
+    */
   def classify(pathStr: String): Option[String] =
-    val home = sys.props("user.home")
+    val root = PathUtil.dataRoot.toString.replace("\\", "/").replaceAll("/+$", "")
     val normalized = pathStr.replace("\\", "/")
-    if normalized == s"$home/.nebflow/User.md" then Some("user")
-    else if normalized == s"$home/.nebflow/agents/Nebula/memory.md" then Some("agent")
+    if normalized == s"$root/User.md" then Some("user")
+    else if normalized == s"$root/Soul.md" then Some("agent")
+    else if normalized == s"$root/agents/${nebflow.actor.RootAgentIdentity.Name}/memory.md" then Some("agent")
     else if normalized.endsWith("/.nebflow/memory.md")
-      && !normalized.startsWith(s"$home/.nebflow/") then Some("project")
+      && !normalized.startsWith(s"$root/") then Some("project")
     else None
 
   /** Current file size; missing/unreadable ⇒ 0 (first write ⇒ anything is net

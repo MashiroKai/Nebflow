@@ -409,6 +409,12 @@ object GatewayMain extends IOApp:
               // 安装的种子源走 providers 推导。
             try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
             catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
+              // personal-agent 批（2026-10-04）：Soul.md 启动一次性迁移腿
+              // （agents/Nebula/memory.md → ~/.nebflow/Soul.md）。幂等：
+              // Soul.md 已存在即跳过、再跑零副作用；写前经 MemorySnapshot 快照，
+              // 原文件保留只读备份（回滚路径见 SoulMigration 头注）。失败不阻断
+              // 启动（与上两行迁移同款纪律）。
+            nebflow.core.SoulMigration.runAtBoot()
               // LLM 日志记录（2026-09-13「默认关」批 + D-A 持久化）：启动时以
               // nebflow.json 顶层 `llmLog.enabled` 落盘值为准；**无落盘值 ⇒ 保持
               // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启

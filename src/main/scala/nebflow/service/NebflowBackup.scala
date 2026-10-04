@@ -32,6 +32,7 @@ object NebflowBackup:
   private val includePatterns: List[String => Boolean] = List(
     // Top-level config files
     _ == "User.md",
+    _ == "Soul.md", // personal-agent 批 2026-10-04：根层 Soul 记忆进灾备清单
     p => p == "nebflow.json" || p == nebflow.shared.Branding.configFileName,
     _ == "auth.json",
     _ == "input_history.jsonl",

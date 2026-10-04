@@ -852,9 +852,17 @@ object ProjectActor:
    * reentryInjectionText）不重复注入——会话 spawn 时已带当次记忆快照，turn
    * 边界间的增量由 NodeList 现读与节点 out 结果承接（最小改动纪律）。
    * 全局注入（ContextRefresher）不含项目记忆——瘦身边界（§3 默认注入只含全局）。
+   *
+   * 🔴 **停注入**（personal-agent 批 2026-10-04，作者裁定②「项目记忆按明令取消」）：
+   * 本方法恒返回 `""` —— 项目记忆不再进分发器 prompt。[[ProjectMemory]] 的
+   * load/save/injectionBlock 单点**全部保留**（数据面与闸面不动，管理员仍可读、
+   * 未来要重启此面时调用点天然过闸），**只是消费点停用**。存量
+   * `<workspace>/.nebflow/memory.md` **归档不删**（见仓库内归档脚本）。
+   * 保留方法壳（而非删调用点）的理由：让「谁在注入项目记忆」这一问在代码里仍有
+   * 单一可 grep 的答案，也让回退 = 一行改回。
    */
   private def projectMemoryText(project: ProjectDef): IO[String] =
-    ProjectMemory.injectionBlock(project.workspace, project.name)
+    IO.pure("")
 
   /** The dispatcher's task injection section (taskunify batch 2026-09-24, replacing
     * TaskBoard batch 2 §3a): **the single attributed entry** (ruling b① / ruling F) -- only

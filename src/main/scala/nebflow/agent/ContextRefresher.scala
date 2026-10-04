@@ -267,8 +267,10 @@ object ContextRefresher:
    * Build a memory block string for system prompt injection.
    *
    * Reads memory levels and formats them into a single Markdown block:
-   *   - User memory    (~/.nebflow/User.md)                 — global
-   *   - Agent memory   (~/.nebflow/agents/Nebula/memory.md)  — Nebula
+   *   - User memory    (~/.nebflow/User.md)                 — global「你是谁」
+   *   - Soul memory    (~/.nebflow/Soul.md)                 — global「我是谁」
+   *     (personal-agent 批 2026-10-04：由 agents/Nebula/memory.md 上收到根层；
+   *      双读回落旧位，见 MemoryStore.loadSoulMemory)
    *
    * 2026-08-31 裁定①: team agents no longer carry memory — the gate
    * (shouldInjectMemory) only admits Nebula, so teamName is always None here.
@@ -290,16 +292,18 @@ object ContextRefresher:
    */
   def buildMemoryBlock(
     agentName: String,
-    teamName: Option[String] = None
+    teamName: Option[String] = None,
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): String =
     val agentMemory = teamName match
       case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
-      case None => MemoryStore.loadAgentMemory(agentName)
+      case None => MemoryStore.loadSoulMemory(agentName)
     renderMemoryBlock(
       MemoryStore.loadUserMemory,
       agentMemory,
       MemoryHygieneSignal.takePending(),
-      nebflow.core.tools.TaskListStore.openSummaryLine()
+      nebflow.core.tools.TaskListStore.openSummaryLine(),
+      contextWindow
     )
   end buildMemoryBlock
 
@@ -308,19 +312,28 @@ object ContextRefresher:
    * TaskList open 摘要行 → 记忆块全文。文件字节直接由已加载内容计算（无第二次
    * 读盘）。空串段不渲染；非空段以 --- 分隔。
    *
+   * **分块注入**（personal-agent 批 ⑥ 硬要求）：Soul.md（我是谁）与 User.md
+   * （你是谁）渲染为**两个可区分的块**（`## Soul` / `## User`），而非合并成一块
+   * ——两块标题即语义边界，模型能分辨「关于我」与「关于你」。
+   *
    * 记忆队列 pending 行参数已随队列族退役（memory-family-retirement 批
    * 2026-09-29）：队列机制整体停用 ⇒ 无 pending 可报，该段恒空 ⇒ 参数、职责与
    * 该段一并删除（不留死参）。
+   *
+   * `contextWindow`（默认参数 = `Defaults.ContextWindow`，向后兼容未传的调用方）
+   * = **生效**上下文窗口，只用于 hygiene 判据的窗口联动（见 [[memoryHygieneNotice]]）；
+   * 不参与正文渲染（注入侧不加截断的既有裁定不变）。
    */
   def renderMemoryBlock(
     userContent: Option[String],
     agentContent: Option[String],
     lifecycleSignal: (Boolean, Boolean),
-    openTasksLine: String = ""
+    openTasksLine: String = "",
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): String =
     val sections = List(
-      userContent.map(content => s"## User Memory\n\n$content"),
-      agentContent.map(content => s"## Agent Memory\n\n$content")
+      agentContent.map(content => s"## Soul\n\n$content"),
+      userContent.map(content => s"## User\n\n$content")
     ).flatten
 
     val base =
@@ -332,18 +345,26 @@ object ContextRefresher:
            |
            |${sections.mkString("\n\n")}""".stripMargin
 
-    val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
+    val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal, contextWindow)
     List(base, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
   end renderMemoryBlock
 
   /**
    * 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排
    * 整理，不等周日）；否则重启/压缩事件命中 → 轻量清扫提示；两者皆无 → 空串。
+   *
+   * **窗口联动**（personal-agent 批 ⑥）：软线不再只取常量，而是
+   * `min(常量 80%, 生效窗口 × 10%)` —— 小窗口模型不再被默认 50KB/30KB 的记忆
+   * 预算相对压垮。`contextWindow` 缺省 = `Defaults.ContextWindow`（128k）⇒
+   * 与该比例下界相等 ⇒ **未传参的调用方读数逐字不变**（既有 spec 不受影响）。
+   * 🔴 记忆**写入侧**（[[nebflow.shared.MemoryBudget.verdict]] 的硬顶）不进本联动：
+   * 存量数据在窗口改小时不因闸而无法整理（收缩路径见 shrinkExempt）。
    */
   def memoryHygieneNotice(
     userContent: Option[String],
     agentContent: Option[String],
-    lifecycleSignal: (Boolean, Boolean)
+    lifecycleSignal: (Boolean, Boolean),
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): String =
     val bytesOf = (s: Option[String]) =>
       s.map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).getOrElse(0L)
@@ -351,16 +372,21 @@ object ContextRefresher:
     val agentBytes = bytesOf(agentContent)
     val (restartPending, compactPending) = lifecycleSignal
 
-    val userOver = userBytes > nebflow.shared.MemoryBudget.UserSoftBytes
-    val agentOver = agentBytes > nebflow.shared.MemoryBudget.AgentSoftBytes
+    val userSoft = nebflow.shared.MemoryBudget.userInjectionSoftBytes(contextWindow)
+    val agentSoft = nebflow.shared.MemoryBudget.agentInjectionSoftBytes(contextWindow)
+    val userHard = nebflow.shared.MemoryBudget.userInjectionHardBytes(contextWindow)
+    val agentHard = nebflow.shared.MemoryBudget.agentInjectionHardBytes(contextWindow)
+
+    val userOver = userBytes > userSoft
+    val agentOver = agentBytes > agentSoft
 
     if userOver || agentOver then
       val lines = List(
         Option.when(userOver)(
-          s"- ~/.nebflow/User.md: $userBytes bytes (soft line ${nebflow.shared.MemoryBudget.UserSoftBytes}, hard ${nebflow.shared.MemoryBudget.UserHardBytes})"
+          s"- ~/.nebflow/User.md: $userBytes bytes (soft line $userSoft, hard $userHard)"
         ),
         Option.when(agentOver)(
-          s"- ~/.nebflow/agents/Nebula/memory.md: $agentBytes bytes (soft line ${nebflow.shared.MemoryBudget.AgentSoftBytes}, hard ${nebflow.shared.MemoryBudget.AgentHardBytes})"
+          s"- ~/.nebflow/Soul.md: $agentBytes bytes (soft line $agentSoft, hard $agentHard)"
         )
       ).flatten
       s"""## Memory hygiene — IMMEDIATE TASK
@@ -524,8 +550,12 @@ object ContextRefresher:
       // Memory: only Nebula (2026-08-31 裁定①). Team agents, standalone
       // agents and SubTask workers get no memory block — clean context.
       // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
+      // personal-agent 批 ⑥：注入预算随**生效**上下文窗口联动——窗口源 =
+      // state.contextWindow（链 = ProviderRegistry.effectiveContextWindow →
+      // ModelCandidate.contextWindow → spawn/update 写入状态；🔴 既有单点链，
+      // 不另立旁路，本处只**消费**）。
       memoryBlock =
-        if shouldInjectMemory(isWorker, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
+        if shouldInjectMemory(isWorker, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
         else ""
     yield TurnContext(
       globalDef,
