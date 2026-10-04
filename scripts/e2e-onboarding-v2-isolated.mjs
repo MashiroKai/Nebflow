@@ -60,7 +60,7 @@ function check(name, ok, extra = '') {
 }
 
 // ── WS plumbing (Node's global WebSocket, same shape the other smokes use) ──
-function wsConnect() {
+function wsConnectOnce() {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`${URL_BASE.replace(/^http/, 'ws')}/ws?token=${encodeURIComponent(TOKEN)}`);
     const inbox = [];
@@ -77,6 +77,25 @@ function wsConnect() {
     ws.addEventListener('open', () => resolve({ ws, inbox, waiters }));
     ws.addEventListener('error', () => reject(new Error('WS connect failed')));
   });
+}
+
+/**
+ * Handshake with retry. The runner already waits for the HTTP listener, but a
+ * single attempt would still turn any residual startup race into a bare
+ * "WS connect failed" — retry briefly so the check reflects the system under
+ * test, not our timing.
+ */
+async function wsConnect(attempts = 15, gapMs = 1000) {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await wsConnectOnce();
+    } catch (e) {
+      last = e;
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  }
+  throw last;
 }
 
 function waitFor(conn, pred, timeoutMs, label, after = 0) {
@@ -100,6 +119,25 @@ async function ask(conn, frame, replyType, timeoutMs = 8000) {
   const after = conn.inbox.length;
   conn.ws.send(JSON.stringify(frame));
   return waitFor(conn, (m) => m.type === replyType, timeoutMs, `${replyType} (after ${frame.type})`, after);
+}
+
+/**
+ * Model-list read that also accepts the generic `{type:"error"}` shell and FAILS
+ * LOUD on it. Without this a server-side refusal shows up as a bare 8s timeout of
+ * `onboardingModels`, which reads like a harness hiccup instead of a defect — the
+ * exact shape the virgin-home decode bug took (before the fix, a fresh home
+ * answered this frame with "current config is unreadable").
+ */
+async function askModels(conn, timeoutMs = 8000) {
+  const after = conn.inbox.length;
+  conn.ws.send(JSON.stringify({ type: 'getOnboardingModels' }));
+  const m = await waitFor(conn, (x) => x.type === 'onboardingModels' || x.type === 'error',
+    timeoutMs, 'onboardingModels|error', after);
+  if (m.type === 'error') {
+    check('D model list: the frame must not be refused', false, `server replied error: ${m.message}`);
+    return { source: null, models: [], providers: [] };
+  }
+  return m;
 }
 
 /** The 11-question script, mirroring onboarding.js (id / label / scope / kind). */
@@ -128,8 +166,11 @@ try {
   // onboarding marker must still be unset: that is what makes this a cold start.
   const seeded = process.env.E2E_SEEDED === '1';
   const cfg = await ask(conn, { type: 'getConfig' }, 'configData');
-  check('A1 cold start: isolated home reports onboarding=pending',
-    cfg.onboarding === 'pending', `onboarding=${JSON.stringify(cfg.onboarding)} configured=${cfg.configured}`);
+  // 🔴 契约（WsConfigHandlers.handleGetConfig + onboarding.js initOnboarding）：
+  // `onboarding: null` = 还没有任何 marker（全新安装）= 引导该跑；'done'/'skipped'
+  // 才是永不再跑。所以冷启动的正确读数就是 **null**（不是 'pending'）。
+  check('A1 cold start: no onboarding marker yet (fresh install => flow must run)',
+    cfg.onboarding === null, `onboarding=${JSON.stringify(cfg.onboarding)} configured=${cfg.configured}`);
   if (!seeded) {
     check('A2 cold start: reports the isolated home as unconfigured',
       cfg.configured === false, `configured=${cfg.configured}`);
@@ -139,7 +180,7 @@ try {
   }
 
   // ── D1. Model list comes from the same config store as Settings ────────
-  const models0 = await ask(conn, { type: 'getOnboardingModels' }, 'onboardingModels');
+  const models0 = await askModels(conn);
   if (!seeded) {
     check('D1 zero providers => empty candidate list (no second data source invented)',
       models0.source === 'configured' && Array.isArray(models0.models) && models0.models.length === 0,
@@ -243,7 +284,7 @@ try {
     .catch((e) => ({ __err: String(e) }));
   check('D1 settings-store write accepted (updateConfig)', !upd1.__err, upd1.__err || `type=${upd1.type}`);
 
-  const models1 = await ask(conn, { type: 'getOnboardingModels' }, 'onboardingModels');
+  const models1 = await askModels(conn);
   const refs = (models1.models || []).map((m) => m.ref);
   check('D2 candidate list reflects the config store (same source as Settings)',
     refs.includes('e2eprov/glm-4.6'), `refs=${JSON.stringify(refs)}`);
@@ -265,7 +306,7 @@ try {
   }, 'onboardingArtifacts', 20000);
   check('D3 write-back reported no error', !finModel.modelWriteError, `modelWriteError=${finModel.modelWriteError}`);
 
-  const models2 = await ask(conn, { type: 'getOnboardingModels' }, 'onboardingModels');
+  const models2 = await askModels(conn);
   const row2 = (models2.models || []).find((m) => m.ref === 'e2eprov/glm-4.6');
   check('D3 two-way consistency: onboarding write read back through Settings data source',
     row2 && row2.contextWindow === 64000 && row2.effectiveContextWindow === 64000,
