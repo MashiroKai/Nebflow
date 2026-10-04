@@ -103,13 +103,24 @@ object TurnEndpoint:
             case _ => IO.unit
         end if
       }
-      // Persist the user bubble + dispatch ImmediateInput (same sequence as
-      // the WS immediateInput/userMessage cases — production wiring passes
-      // wsRoutes.dispatchUserText here).
-      _ <- dispatch(sessionId, content)
-      _ <- dispatchedRef.set(true)
-      completed <- doneSignal.get.as(true).timeoutTo(timeoutSec.seconds, IO.pure(false))
-      _ <- wsHub.unregister(listenerId) // idempotent; also runs on the 504 path
+      // Dispatch the turn and await completion; the listener registered above is
+      // detached on EVERY exit of this segment, the exceptional one included.
+      // Before this change the unregister sat as an inline statement after the
+      // await (the old `:112`), so anything raising earlier (dispatch /
+      // dispatchedRef.set / the timeoutTo on doneSignal) skipped it and leaked
+      // one listener per failed turn — the exact shape documented in
+      // WsHub.unregister. The 504 path is unchanged: timeoutTo returns normally,
+      // the finalizer still runs at the same point, and unregister is
+      // idempotent. NOT in effect on a running gateway until it is restarted on
+      // a build containing this commit (no such restart in this batch).
+      completed <- (for
+        // Persist the user bubble + dispatch ImmediateInput (same sequence as
+        // the WS immediateInput/userMessage cases — production wiring passes
+        // wsRoutes.dispatchUserText here).
+        _ <- dispatch(sessionId, content)
+        _ <- dispatchedRef.set(true)
+        done <- doneSignal.get.as(true).timeoutTo(timeoutSec.seconds, IO.pure(false))
+      yield done).guarantee(wsHub.unregister(listenerId))
       (finalMessage, toolCalls) <- readTurnResult(sessionId, totalBefore, sessionStore)
       errorOpt <- errorRef.get
       usageOpt <- usageRef.get

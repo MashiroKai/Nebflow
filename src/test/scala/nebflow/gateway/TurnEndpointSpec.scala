@@ -237,6 +237,39 @@ class TurnEndpointSpec extends CatsEffectSuite:
     }
   }
 
+  /**
+   * 异常路径的注销保证（perf-closeout2 §5.4 第三条登记项）。
+   *
+   * 判据是**行为**不是字符串：`registerListener`（for 链首个语句）之后任一语句抛
+   * 异常时，`wsHub.unregister` 必须**仍然发生**，否则每个失败 turn 永久漏一个监听
+   * 者（WsHub.unregister 记的正是该泄漏形态：随后每次 broadcast 都会调用它）。
+   *
+   * 两段断言缺一不可：dispatch 时刻 listenerCount 必须是 1（证明监听者**确实注册
+   * 了** —— 排除"根本没注册所以自然是 0"的空过），失败之后必须是 0（证明注销发生）。
+   * 修前：dispatch 抛异常 ⇒ for 链直接中断 ⇒ 注销被跳过 ⇒ 第二段读 1 ⇒ 红。
+   */
+  test("exceptional path: an exception after registerListener still unregisters the listener") {
+    withEnv("turn-exc") { (tmp, _) =>
+      val sessionStore = new SessionStore(tmp / "sessions", tmp / "tasks")
+      val wsHub = new WsHub()
+      val sid = s"turn-exc-${System.currentTimeMillis()}"
+      val listenerCountAtDispatch = Ref.unsafe[IO, Int](-1)
+      val boom: (String, String) => IO[Unit] = (_, _) =>
+        wsHub.listenerCount.flatMap(n => listenerCountAtDispatch.set(n)) *>
+          IO.raiseError(new RuntimeException("dispatch exploded"))
+      val program = for
+        outcome <- TurnEndpoint.runTurn(wsHub, sessionStore, boom, sid, "boom", 30).attempt
+        atDispatch <- listenerCountAtDispatch.get
+        after <- wsHub.listenerCount
+      yield (outcome, atDispatch, after)
+
+      val (outcome, atDispatch, after) = program.unsafeRunSync()
+      assert(outcome.isLeft, s"dispatch failure must propagate: $outcome")
+      assertEquals(atDispatch, 1, "监听者必须已注册（否则本用例空过，判据不可达）")
+      assertEquals(after, 0, "注销必须在异常路径也执行（否则每个失败 turn 漏一个监听者）")
+    }
+  }
+
   test("gate: second concurrent turn on the same session -> 409; release reopens") {
     val sid = s"gate-spec-${System.currentTimeMillis()}"
     val ok = org.http4s.Response[IO](org.http4s.Status.Ok)
