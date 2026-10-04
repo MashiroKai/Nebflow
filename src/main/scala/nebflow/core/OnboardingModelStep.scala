@@ -9,9 +9,19 @@ import nebflow.shared.*
  * Onboarding 模型步骤的引擎侧单点（personal-agent 批 2026-10-04，作者第 2 条）。
  *
  * **与设置系统对齐**（硬要求）：不再自由填空——从**已配置 provider** 检出可用模型
- * 列表供选择，并支持设置 context window；两者都写回**与设置面同一个配置存储**
- * （`NebflowServiceConfig.llm.providers`），做到 onboarding 改完、设置面可见且一致，
- * 反向亦然（同一存储 = 双向一致的结构保证；spec 以「同一次读写往返」证明）。
+ * 列表供选择，并支持设置 context window；**选定模型与窗口都写回与设置面同一个
+ * 配置存储**，做到 onboarding 改完、设置面可见且一致，反向亦然（同一存储 =
+ * 双向一致的结构保证；spec 以「同一次读写往返」证明）。
+ *
+ * 两条写回落点（**都是设置面自己在用的面，没有第二个存储**）：
+ *   1. **context window**（`llm.providers.<id>.models[].contextWindow`，见
+ *      [[applySelectionJson]]）——设置 → provider 面板改的同一字段；
+ *   2. **选定模型（模型链）**（`agents/<root>/agent.json` 的 `model` 键，见
+ *      [[writeSelectedChain]]）——设置 → `/model` 面板 PUT 的同一字段，
+ *      `SchemePolicy.ownChainOf` / `GET /api/agents/:name/model` 的同一读取面。
+ *      🔴 少了第 2 条，用户选的大脑**进不了任何配置面**：设置面读到的仍是 seed 链
+ *      （`resolvedFrom:"seed"`），选定值只在 `Soul.md` 留成一行标签（round-2 复核
+ *      的决定性读数）。窗口与模型必须一起落盘，缺一即「双向一致」不成立。
  *
  * 数据源复用设置面既有两个通道：
  *   1. **已配置面**：`config.llm.providers`（设置面板保存的就是它）——离线可用，
@@ -110,6 +120,8 @@ object OnboardingModelStep:
           if !models.exists(_.hcursor.downField("id").as[String].toOption.contains(modelId)) then
             Left(s"unknown model '$modelId' under provider '$providerId'")
           else
+            // 原子改一个字段：只动该 model 的 contextWindow（None = 只校验不改值）。
+            // 链面的写回在 [[writeSelectedChain]]（另一个键、另一个文件）。
             val updatedModels = models.map { m =>
               if m.hcursor.downField("id").as[String].toOption.contains(modelId) then
                 contextWindow.fold(m)(cw => m.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
@@ -165,5 +177,66 @@ object OnboardingModelStep:
         math.min(mc.contextWindow, mc.modelMaxContext.getOrElse(mc.contextWindow))
       }
     catch case _: IllegalArgumentException => None
+
+  // ============================================================
+  // 选定模型 → 配置存储（模型链面）
+  // ============================================================
+
+  /**
+   * 选定模型 → `agents/<root>/agent.json` 的 `model` 键（**设置面 `/model` 面板
+   * PUT 的同一字段**，`SchemePolicy.ownChainOf` / `GET /api/agents/:name/model`
+   * 的同一读取面）。
+   *
+   * 为什么必须有这一步（round-2 复核的决定性读数）：只写 contextWindow 时，用户
+   * 选定的大脑**不进入任何配置面** —— 设置面 `GET /api/agents/Nebula/model` 回
+   * `resolvedFrom:"seed"`、`current` 是 seed 链的头（`nebflow.json` 字段序第一个
+   * provider 的第一个模型），选定值只在 `Soul.md` 留成一行标签。任务书 §4 第 3 项
+   * 「选定模型 + context window 写回同一配置存储」因此只成立一半。
+   *
+   * **零旁路**：本方法只写设置面自己的那个键；链的解析、消费、clamp 全在既有单点
+   * （[[SchemePolicy]] / `ProviderRegistry`），本对象不复制任何算式、不建第二份存储。
+   *
+   * **不塌缩既有链**（round-2 复核点名的真实危害）：已有链的用户重跑引导时，选定
+   * 模型成为 `preferred`，**既有 preferred + fallbacks 全部保留为后备**（去重、
+   * 保序）—— fallback 深度是用户显式积累的设置，不得被一次选择清掉。空链用户
+   * （全新 home）得到单元素链：fallback 是显式决定，**绝不自动填充**。
+   *
+   * 幂等：同一 ref 重复选择 ⇒ 链不变（覆盖式写入）。`Ref` 无法解析 ⇒ `Left`
+   * （与 [[applySelectionJson]] 同款：不静默新建 provider）。
+   */
+  def writeSelectedChain(ref: String): IO[Either[String, AgentModelConfig]] =
+    IO.blocking {
+      val trimmed = ref.trim
+      if trimmed.isEmpty then Left("empty model ref")
+      else
+        try
+          Config.parseModelRef(trimmed) // 校验形态；不校验 provider 是否已配置（见下）
+          val dir = PathUtil.dataRoot / "agents" / nebflow.actor.RootAgentIdentity.Name
+          val jsonPath = dir / "agent.json"
+          os.makeDir.all(dir)
+          val existing =
+            if os.exists(jsonPath) then io.circe.parser.parse(os.read(jsonPath)).toOption.getOrElse(Json.obj())
+            else Json.obj()
+          val base =
+            if existing.asObject.exists(_.contains("name")) then existing
+            else existing.deepMerge(Json.obj("name" -> nebflow.actor.RootAgentIdentity.Name.asJson))
+          val prior = existing.hcursor.downField("model").as[AgentModelConfig].toOption.getOrElse(AgentModelConfig.empty)
+          val next = mergeChain(prior, trimmed)
+          AtomicJson.writeSync(jsonPath, base.deepMerge(Json.obj("model" -> next.asJson)).noSpaces)
+          Right(next)
+        catch
+          case e: IllegalArgumentException => Left(Option(e.getMessage).getOrElse(s"invalid model ref '$ref'"))
+    }
+
+  /**
+   * 把选定 ref 提升为 `preferred`，**既有 preferred + fallbacks 保序留在链上**
+   * （选定项从后备里剔除，避免重复）。
+   *
+   * 空链 ⇒ `AgentModelConfig(preferred = Some(ref), fallbacks = Nil)`——与 seed 链
+   * 同款「fallbacks 是显式用户决定，never auto-populated」。
+   */
+  private[core] def mergeChain(prior: AgentModelConfig, ref: String): AgentModelConfig =
+    val carried = (prior.preferred.toList ++ prior.fallbacks).filter(_ != ref).distinct
+    AgentModelConfig(preferred = Some(ref), fallbacks = carried)
 
 end OnboardingModelStep
