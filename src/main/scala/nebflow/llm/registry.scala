@@ -67,11 +67,20 @@ class ProviderRegistry(
 
   def getCandidates(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
-      // Global chain source = the Nebula primary chain (its own agent.json
-      // model key), seed chain (first provider's first model) when unconfigured.
-      // Read fresh per call (small file) — /model edits apply on the next call.
-      // The onboarding probe probeLlm (no agentModel) follows the primary
-      // chain, so it measures exactly the model the user just configured.
+      // Global chain source = the SEED chain: the first provider's first model in
+      // `nebflow.json` field order (a legacy `llm.model` chain still wins while
+      // it exists). Read fresh per call (small file) — /model edits apply on the
+      // next call.
+      //
+      // 🔴 This leg serves requests that carry NO `agentModel`, and it is NOT
+      // "the model the user configured": `resolveModel(NebulaName, None)`
+      // short-circuits to the seed chain ("Nebula has no one to follow"), so
+      // Nebula's OWN stored `model` key on disk is ignored here (corrected
+      // comment — the previous text claimed the opposite and was wrong; verifier
+      // round-2 proved it: with two live providers the probe hit the seed
+      // provider, not the picked one). A caller that must measure the user's
+      // pick has to pass it as `LlmRequest.agentModel`, which builds the chain
+      // per ref ([[getCandidateForRef]]) — see `OnboardingService.probeLlm`.
       val chain =
         try
           val (am, _) = nebflow.core.SchemePolicy.resolveModel(nebflow.core.SchemePolicy.NebulaName, None)

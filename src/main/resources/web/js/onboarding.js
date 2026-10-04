@@ -36,7 +36,9 @@
 //   setOnboardingState   → onboardingStateSet { state }
 //   setOnboardingAnswers { answers:{id:{kind,value,values?,label,scope}} } → onboardingAnswersSaved { count }
 //   getOnboardingModels  → onboardingModels { source, providers[], models[] }
-//   probeLlm             → probeResult { ok, error? }        (15s backend timeout)
+//   probeLlm             { modelRef? } → probeResult { ok, provider?, requested?, error? }  (15s backend timeout)
+//                        modelRef = the picked model, so the probe measures THAT model
+//                        (omitted when the user skipped the model question → global chain)
 //   finishOnboarding     { answers, modelRef?, contextWindow? } → onboardingArtifacts { ... }
 //   updateConfig         → configUpdated (same single write path the Settings panel uses)
 
@@ -70,13 +72,24 @@ onMessage('probeResult', (msg) => {
   resolve({ ok: !!msg.ok, error: msg.error || '' });
 });
 
-function probeLlm() {
+/**
+ * Ask the engine to make one REAL call and report whether it answered.
+ *
+ * `modelRef` (the model the user picked, null when the question was skipped)
+ * goes out on the frame: the backend passes it to the probe as the request's
+ * model chain, so the probe measures the brain the user chose. Without it the
+ * probe would fall back to the global (seed) chain — the exact gap that let a
+ * dead picked model still report ok=true.
+ */
+function probeLlm(modelRef = null) {
   return new Promise((resolve) => {
     pendingProbe = { resolve, timer: setTimeout(() => {
       pendingProbe = null;
       resolve({ ok: false, error: t('onboarding.probeTimeout') });
     }, PROBE_TIMEOUT_MS) };
-    sendWs({ type: 'probeLlm' });
+    const frame = { type: 'probeLlm' };
+    if (modelRef) frame.modelRef = modelRef;
+    sendWs(frame);
   });
 }
 
@@ -762,7 +775,10 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
     if (!data.baseUrl.endsWith('/')) data.baseUrl += '/';
     // Same single write path the Settings panel uses: updateConfig → same store.
     sendWs({ type: 'updateConfig', config: withProviderPatch(data) });
-    const res = await probeLlm();
+    // Probe the provider+model this face just wrote (the ref is known here), not
+    // "whatever the global chain happens to resolve" — on a home that already had
+    // providers, the new one is appended last and would NOT be the seed chain.
+    const res = await probeLlm(`${data.name}/${modelIn.value.trim()}`);
     if (res.ok) {
       probe.classList.add('ok');
       probe.textContent = t('ob2.model.probeOk', { model: modelIn.value.trim() });
@@ -1014,9 +1030,9 @@ let lastAttempt = null;     // { answers, modelRef, lines } — replayed by the 
  * already-configured providers) could never satisfy the gate — the user could
  * complete all 11 questions and still never reach `done`. Hoisting the probe into
  * the one terminal sequence removes that gap from both paths at once, and the
- * probe measures exactly the brain the user chose (the global chain resolves to
- * that model; on the fallback face the provider was already written by its own
- * save button before the flow reaches here).
+ * probe carries `modelRef` so it measures exactly the brain the user chose
+ * (the engine builds the measured chain from that ref; on the fallback face the
+ * ref is the provider+model its own save button just wrote).
  *
  * The sequence is idempotent (overwrite-style artifact writes, read-modify-write
  * marker), so the retry button simply re-runs it.
@@ -1027,7 +1043,7 @@ async function finishFlow(answers, modelRef, lines) {
   finishing = true;
   try {
     const probeEl = appendWriteLine(lines, t('ob2.write.probe'));
-    const probe = await probeLlm();
+    const probe = await probeLlm(modelRef);
     setWriteLine(probeEl, probe.ok,
       probe.ok ? t('ob2.write.probeOk') : t('ob2.write.probeFailed', { error: probe.error || '' }));
     if (!probe.ok) { reportFinishFailure('probe', probe.error || ''); return false; }

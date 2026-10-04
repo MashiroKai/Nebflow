@@ -720,24 +720,35 @@ private[gateway] object WsConfigHandlers:
     val ctxWindow = json.hcursor.downField("contextWindow").as[Option[Int]].toOption.flatten
     // 模型选择先写配置（同一存储单点）；随后落产物。配置写失败不阻断产物
     // （产物是记忆面，与 provider 配置无依赖）——但回执如实带上错误。
+    //
+    // 两处落点（作者第 2 条「选定模型 + context window 写回同一配置存储」）：
+    //   ① contextWindow → `llm.providers.<id>.models[].contextWindow`（provider 面）
+    //   ② 选定 ref      → `agents/<root>/agent.json` 的 `model` 键（模型链面，
+    //      设置面板 `/model` PUT 的同一字段）——少了 ② 用户选的大脑进不了任何
+    //      配置面，设置面 `GET /api/agents/Nebula/model` 仍是 `resolvedFrom:"seed"`
+    //      （round-2 复核的 fail 判据）。两处都走设置面自己的键，无第二存储。
     val modelWrite: IO[Option[String]] = modelRef match
       case None => IO.pure(None)
       case Some(ref) =>
         for
           cfgStr <- configService.getConfig
-          res <- IO.blocking {
+          chainRes <- nebflow.core.OnboardingModelStep.writeSelectedChain(ref)
+          chainErr <- chainRes match
+            case Left(err) => IO.pure(Some(err))
+            case Right(_) => IO.pure(None)
+          ctxErr <- IO.blocking {
             io.circe.parser.parse(cfgStr).toOption match
               case None => Left("current config is unreadable")
               case Some(json) => nebflow.core.OnboardingModelStep.applySelectionJson(json, ref, ctxWindow)
-          }
-          out <- res match
+          }.flatMap {
             case Left(err) => IO.pure(Some(err))
             case Right(patched) =>
               configService.updateConfig(patched.noSpaces).map {
                 case Left(err) => Some(err)
                 case Right(_) => None
               }
-        yield out
+          }
+        yield chainErr.orElse(ctxErr)
     end modelWrite
     modelWrite.flatMap { modelErr =>
       nebflow.core.OnboardingArtifacts
@@ -824,15 +835,33 @@ private[gateway] object WsConfigHandlers:
   ): IO[Unit] =
     import ctx.*
     // Onboarding HARD GATE (user ruling 2026-08-15): one real LLM call
-    // through the global chain. The welcome message may only be sent
-    // after this returns ok=true.
-    nebflow.core.OnboardingService.probeLlm(sharedResources.llm).flatMap { pr =>
+    // through the chain. The welcome message may only be sent after this
+    // returns ok=true.
+    //
+    // `modelRef` (optional) = the model the user picked in the model step; it is
+    // passed THROUGH to OnboardingService.probeLlm so the probe measures that
+    // model instead of the seed chain (verifier round-2 finding: without it a
+    // dead picked brain still probed ok=true). The frame keeps working when the
+    // field is absent (skip / legacy client) — then the global chain decides.
+    val modelRef =
+      parsedJson(text).hcursor.downField("modelRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    // The current config body rides along so the probe can refuse a picked ref
+    // that names a model the config does not contain (an unknown id resolves to
+    // no candidate, so the chain would otherwise cover for it and report ok —
+    // E2E section G4). Same store the Settings panel reads, read once here.
+    val probe =
+      if modelRef.isDefined then configService.getConfig.map(cfg => (Some(cfg): Option[String]))
+      else IO.pure(None)
+    probe.flatMap(cfgOpt => nebflow.core.OnboardingService.probeLlm(sharedResources.llm, modelRef, cfgOpt)).flatMap { pr =>
       wsSend(
         io.circe.Json.obj(
           "type" -> "probeResult".asJson,
           "ok" -> pr.ok.asJson,
           "provider" -> pr.provider.asJson,
-          "error" -> pr.error.asJson
+          "error" -> pr.error.asJson,
+          // Echo the measured ref so the caller (and an out-of-band reading) can
+          // tell WHICH model answered rather than assuming the picked one did.
+          "requested" -> modelRef.asJson
         )
       )
     }

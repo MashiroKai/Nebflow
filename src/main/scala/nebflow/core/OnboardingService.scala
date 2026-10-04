@@ -165,26 +165,137 @@ object OnboardingService:
   final case class ProbeResult(ok: Boolean, provider: Option[String], error: Option[String])
 
   /**
-   * One real, minimal LLM call through the global LlmHandle chain (NOT an
-   * agent actor turn). Success = the configured provider actually answers,
-   * and records probeOkAt server-side (backend-only write; the frontend
-   * needs no change and no extra call).
+   * One real, minimal LLM call through the LlmHandle chain (NOT an agent actor
+   * turn). Success = the configured provider actually answers, and records
+   * probeOkAt server-side (backend-only write; the frontend needs no change and
+   * no extra call).
    * Failure = attribute per provider attempt so the user knows WHAT to fix
    * (auth key / wrong model name / unreachable endpoint).
+   *
+   * `modelRef` = **the model the user just picked in the onboarding model step**.
+   * The probe MUST measure that one (verifier round-2 finding): without it the
+   * request carries no `agentModel` and the global leg resolves the seed chain
+   * (`SchemePolicy.resolveModel(Nebula, None)` → first provider's first model in
+   * `nebflow.json` field order), so a probe could report success while the brain
+   * the user chose was dead. `modelRef` rides the EXISTING per-request point
+   * (`LlmRequest.agentModel` → `ProviderRegistry.getCandidatesForAgent` →
+   * `getCandidateForRef`, the same leg production agent turns use via
+   * `AgentSessionExecution`), so the picked ref becomes the head of the measured
+   * chain — no second resolution path is invented here.
+   *
+   * Carrying the ref is only half: the chain that results still ENDS with the
+   * reserve tier (every other configured provider/model, appended by
+   * `ProviderRegistry.getCandidatesForAgent`), so a dead pick falls through to a
+   * live provider and the call would still succeed — i.e. the gate would still
+   * declare success over the user's broken brain. Therefore the answer is
+   * VERIFIED against the pick: when the ref that answered is not the ref that was
+   * picked, the probe reports failure and records NOTHING (see [[refusedAnswer]]).
+   * A probe that is asked to measure a specific model either measures it or says
+   * so; it never silently measures someone else.
+   *
+   * `None` (a user who skipped the model question) keeps the historical shape:
+   * the request carries no agentModel, the global chain decides, and there is no
+   * ref to verify — "whatever is configured first" is the honest answer there.
+   *
+   * `configJson` = the current `nebflow.json` body (the same string the Settings
+   * panel's store holds). It exists for ONE reason: a ref that is well-formed but
+   * names a model the config does not have resolves to no candidate at all
+   * (`ProviderRegistry.getCandidateForRef` returns None for an unknown id), so the
+   * chain silently falls through to the reserve tier and the call succeeds with
+   * SOMEONE ELSE answering — i.e. an unknown id was being reported as a success
+   * for the picked model. With the config in hand the probe can tell "that model
+   * exists but did not answer" (a real failure, refused by [[refusedAnswer]]) from
+   * "that model does not exist" (refused up front, no network call needed).
+   * Omitted (unit tests / legacy callers) ⇒ the check is skipped and behaviour is
+   * exactly as before.
    */
-  def probeLlm(llm: LlmHandle[IO]): IO[ProbeResult] =
+  def probeLlm(
+    llm: LlmHandle[IO],
+    modelRef: Option[String] = None,
+    configJson: Option[String] = None
+  ): IO[ProbeResult] =
+    val picked = modelRef.map(_.trim).filter(_.nonEmpty)
     val req = LlmRequest(
       messages = List(Message(MessageRole.User, Left("回复 ok"))),
       sessionId = "llm-probe",
-      agentId = "llm-probe"
+      agentId = "llm-probe",
+      agentModel = picked.map(ref => AgentModelConfig(preferred = Some(ref)))
     )
-    llm
-      .send(req)
-      .flatMap { resp =>
-        recordProbeOk().as(ProbeResult(ok = true, provider = Some(resp.meta.providerId), error = None))
-      }
-      .handleErrorWith(e => IO.pure(probeFailure(e)))
-      .timeoutTo(15.seconds, IO.pure(ProbeResult(ok = false, provider = None, error = Some("timeout_15s"))))
+    picked
+      .flatMap(malformedRefProblem)
+      .orElse(picked.flatMap(ref => missingModelProblem(ref, configJson))) match
+      case Some(err) =>
+        // A ref that cannot be split, or that names a model the config does not
+        // have, is not a probe target — fail loudly instead of letting the chain
+        // degrade to "some other provider answered".
+        IO.pure(ProbeResult(ok = false, provider = None, error = Some(err)))
+      case None =>
+        llm
+          .send(req)
+          .flatMap { resp =>
+            picked.flatMap(ref => refusedAnswer(ref, resp.meta)) match
+              case Some(err) =>
+                IO.pure(ProbeResult(ok = false, provider = Some(resp.meta.providerId), error = Some(err)))
+              case None =>
+                recordProbeOk().as(ProbeResult(ok = true, provider = Some(resp.meta.providerId), error = None))
+          }
+          .handleErrorWith(e => IO.pure(probeFailure(e)))
+          .timeoutTo(15.seconds, IO.pure(ProbeResult(ok = false, provider = None, error = Some("timeout_15s"))))
+
+  /** Pure: a ref that `providerId/modelId` cannot parse (no `/`). */
+  private def malformedRefProblem(ref: String): Option[String] =
+    try
+      Config.parseModelRef(ref)
+      None
+    catch
+      case e: IllegalArgumentException =>
+        Some(s"invalid model ref: ${Option(e.getMessage).getOrElse(ref)}")
+
+  /**
+   * Pure: `Some(reason)` when the picked ref names a model that the CURRENT
+   * config does not contain (unknown provider, or a known provider without that
+   * model id). Both are refs that resolve to no candidate, which the registry
+   * treats as "skip" — so without this check the request quietly falls through to
+   * the reserve tier and a live provider's answer is reported as a success for a
+   * model that does not exist (section G4 of the E2E harness).
+   *
+   * `None` (no config supplied) ⇒ no verdict, the caller keeps the old behaviour.
+   */
+  private def missingModelProblem(ref: String, configJson: Option[String]): Option[String] =
+    configJson.flatMap { raw =>
+      try
+        val (providerId, modelId) = Config.parseModelRef(ref)
+        io.circe.parser.parse(raw).toOption.flatMap { json =>
+          val providers = json.hcursor.downField("llm").downField("providers")
+          if providers.downField(providerId).focus.isEmpty then
+            Some(s"unknown provider '$providerId' (not in the current config)")
+          else
+            val modelIds = providers.downField(providerId).downField("models").focus
+              .flatMap(_.asArray)
+              .getOrElse(Vector.empty)
+              .flatMap(_.hcursor.downField("id").as[String].toOption)
+            if modelIds.contains(modelId) then None
+            else Some(s"unknown model '$modelId' under provider '$providerId' (not in the current config)")
+        }
+      catch case _: IllegalArgumentException => None // malformed refs are malformedRefProblem's job
+    }
+
+  /**
+   * Pure: `Some(reason)` when the call was answered by a candidate that is NOT
+   * the ref the user picked. The chain is allowed to fall back (that is what a
+   * fallback chain is for), but then the picked brain demonstrably did not
+   * answer — the gate must not record a success for it.
+   */
+  private def refusedAnswer(ref: String, meta: LlmMeta): Option[String] =
+    try
+      val (providerId, modelId) = Config.parseModelRef(ref)
+      if meta.providerId == providerId && meta.model == modelId then None
+      else
+        Some(
+          s"the model you picked ($ref) did not answer — ${meta.providerId}/${meta.model} answered " +
+            "instead (the fallback chain covered for it); fix that provider or pick another model"
+        )
+    catch case _: IllegalArgumentException => None
 
   /** Pure: map a probe failure to a human-usable reason. */
   def probeFailure(e: Throwable): ProbeResult =
