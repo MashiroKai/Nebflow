@@ -193,9 +193,25 @@ object OnboardingService:
    * A probe that is asked to measure a specific model either measures it or says
    * so; it never silently measures someone else.
    *
-   * `None` (a user who skipped the model question) keeps the historical shape:
-   * the request carries no agentModel, the global chain decides, and there is no
-   * ref to verify — "whatever is configured first" is the honest answer there.
+   * `None` (a user who skipped the model question): the request carries no
+   * agentModel BASICALLY, but the agent's own chain is read from disk and used
+   * when it has one (see below) — a home that has a brain configured must be
+   * measured on THAT brain, not on "whatever provider happens to be first in the
+   * config file". Only a truly unconfigured chain falls to the global seed chain,
+   * and then "whatever is configured first" really is the honest answer.
+   *
+   * 🔴 `onboarding.js` always sends the ref on the terminal faces (both the model
+   * and the fallback face know it), so `None` here means either "the model
+   * question was skipped this run" or "a legacy/out-of-band caller". For the
+   * first case the pick may already be recorded on disk from an earlier run, and
+   * the seed-chain fallback would then report `ok` over a brain that is not the
+   * user's — the E2E cross-check showed exactly that (`ssseed` contacted while
+   * the pick sat in `agents/<root>/agent.json`). Reading the own chain closes it
+   * WITHOUT inventing a second resolution path: it is the same chain
+   * `resolveModel` hands a follower, just also applied to Nebula (whose own chain
+   * `resolveModel` deliberately ignores — that short-circuit is about the PROBE
+   * surface, never about the agent's own turn model, which comes from
+   * `AgentSessionExecution` reading the agent def).
    *
    * `configJson` = the current `nebflow.json` body (the same string the Settings
    * panel's store holds). It exists for ONE reason: a ref that is well-formed but
@@ -215,11 +231,17 @@ object OnboardingService:
     configJson: Option[String] = None
   ): IO[ProbeResult] =
     val picked = modelRef.map(_.trim).filter(_.nonEmpty)
+    // No ref ⇒ measure the agent's OWN chain when it has one (the pick from a
+    // previous run, or any chain the user set in Settings); otherwise the global
+    // seed chain decides, as before.
+    val measured: AgentModelConfig = picked match
+      case Some(ref) => AgentModelConfig(preferred = Some(ref))
+      case None => ownChainOrEmpty()
     val req = LlmRequest(
       messages = List(Message(MessageRole.User, Left("回复 ok"))),
       sessionId = "llm-probe",
       agentId = "llm-probe",
-      agentModel = picked.map(ref => AgentModelConfig(preferred = Some(ref)))
+      agentModel = Option.when(measured.preferred.isDefined || measured.fallbacks.nonEmpty)(measured)
     )
     picked
       .flatMap(malformedRefProblem)
@@ -233,7 +255,7 @@ object OnboardingService:
         llm
           .send(req)
           .flatMap { resp =>
-            picked.flatMap(ref => refusedAnswer(ref, resp.meta)) match
+            picked.flatMap(ref => refusedAnswer(ref, resp.meta)).orElse(chainAnswerProblem(measured, resp.meta)) match
               case Some(err) =>
                 IO.pure(ProbeResult(ok = false, provider = Some(resp.meta.providerId), error = Some(err)))
               case None =>
@@ -241,6 +263,37 @@ object OnboardingService:
           }
           .handleErrorWith(e => IO.pure(probeFailure(e)))
           .timeoutTo(15.seconds, IO.pure(ProbeResult(ok = false, provider = None, error = Some("timeout_15s"))))
+
+  /** The root agent's stored chain, or an empty one — never throws. */
+  private def ownChainOrEmpty(): AgentModelConfig =
+    try
+      nebflow.core.SchemePolicy
+        .ownChainOf(nebflow.core.SchemePolicy.NebulaName)
+        .filter(nebflow.core.SchemePolicy.hasChain)
+        .getOrElse(AgentModelConfig.empty)
+    catch case _: Throwable => AgentModelConfig.empty
+
+  /**
+   * Pure: `Some(reason)` when the answer came from a candidate that is not the
+   * HEAD of the chain we set out to measure. This is the no-ref arm's version of
+   * [[refusedAnswer]]: with the own chain measured, the head is the user's brain,
+   * so a reserve-tier cover answering is not a success for it either.
+   *
+   * Empty chain (nothing configured) ⇒ no verdict: there is no head to insist on.
+   */
+  private def chainAnswerProblem(chain: AgentModelConfig, meta: LlmMeta): Option[String] =
+    chain.preferred match
+      case None => None
+      case Some(head) =>
+        try
+          val (providerId, modelId) = Config.parseModelRef(head)
+          if meta.providerId == providerId && meta.model == modelId then None
+          else
+            Some(
+              s"the configured brain ($head) did not answer — ${meta.providerId}/${meta.model} answered " +
+                "instead (the fallback chain covered for it); fix that provider or pick another model"
+            )
+        catch case _: IllegalArgumentException => None
 
   /** Pure: a ref that `providerId/modelId` cannot parse (no `/`). */
   private def malformedRefProblem(ref: String): Option[String] =

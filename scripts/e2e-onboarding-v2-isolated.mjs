@@ -602,6 +602,19 @@ try {
     onDiskChain.name === 'Nebula' && onDiskChain.displayName === NAME,
     `name=${onDiskChain.name} displayName=${onDiskChain.displayName}`);
 
+  // G1b. A probe that carries NO ref must measure the agent's own chain when one
+  //      is on disk — not the raw seed chain. Cross-check finding: with the pick
+  //      recorded and a no-ref probe, the gateway visited the SEED provider and
+  //      reported ok, i.e. the gate answered over a brain that is not the user's.
+  const hitsBeforeG1b = stub.hits();
+  const probeNoRef = await ask(conn, { type: 'probeLlm' }, 'probeResult', 25000);
+  check('G1b a NO-ref probe measures the agent\'s own chain (not the raw seed chain)',
+    probeNoRef.ok === true && probeNoRef.provider === 'e2estub' && stub.hits() > hitsBeforeG1b,
+    `ok=${probeNoRef.ok} provider=${probeNoRef.provider} hits ${hitsBeforeG1b} -> ${stub.hits()}`);
+  check('G1b a NO-ref probe still reports no `requested` ref (it was not asked to measure one)',
+    probeNoRef.requested === null || probeNoRef.requested === undefined,
+    `requested=${probeNoRef.requested}`);
+
   // G2. Re-selecting the same model is idempotent: the write must neither
   //     duplicate slots nor collapse a chain the user already had.
   await ask(conn, {
@@ -648,7 +661,11 @@ try {
     .catch((e) => ({ __err: String(e) }));
   check('G3 dead-pick fixture wired into the same store', !updDead.__err, updDead.__err || `type=${updDead.type}`);
 
-  const probeOkAtBeforeG = markerE.disk?.probeOkAt;
+  // 🔴 Read the probeOkAt reference FRESH here: G1b deliberately ran a
+  // SUCCESSFUL no-ref probe, which (correctly) records probeOkAt. Capture it
+  // before the dead probe so the assertion below measures the dead probe's
+  // effect, not G1b's.
+  const probeOkAtBeforeG = (await readMarker(conn)).disk?.probeOkAt;
   const deadHitsBefore = deadStub.hits();
   const probeDead = await ask(conn, { type: 'probeLlm', modelRef: 'e2edead/dead-model' }, 'probeResult', 25000);
   check('G3 🔴 a DEAD picked model does NOT probe ok (the gate refuses over a broken brain)',

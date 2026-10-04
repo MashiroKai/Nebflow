@@ -319,6 +319,69 @@ class OnboardingServiceSpec extends FunSuite:
     assert(!res.ok, "无 config 时『答者校验』仍生效")
   }
 
+  test("probeLlm with NO ref measures the agent's OWN chain when one is on disk") {
+    // E2E cross-check finding: with no ref the probe resolved the raw seed chain
+    // and visited `ssseed` while the pick from a previous run sat unread in
+    // agents/<root>/agent.json — so the gate answered ok over a brain that is not
+    // the user's. The own chain is the same chain a follower inherits.
+    val dir = tempRoot / "agents" / nebflow.actor.RootAgentIdentity.Name
+    os.makeDir.all(dir)
+    os.write(
+      dir / "agent.json",
+      """{"name":"Nebula","model":{"preferred":"pppick/pick-model","fallbacks":["cccover/cover-model"]}}"""
+    )
+    var captured: LlmRequest = null
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] =
+        captured = req; IO.pure(okResponseFor("pppick", "pick-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService.probeLlm(spy).unsafeRunSync()
+    assert(res.ok)
+    assertEquals(
+      captured.agentModel,
+      Some(AgentModelConfig(preferred = Some("pppick/pick-model"), fallbacks = List("cccover/cover-model"))),
+      "无 ref 时必须量磁盘上的 own 链，而不是 seed 链"
+    )
+  }
+
+  test("probeLlm with NO ref and NO own chain keeps the historical shape (global chain decides)") {
+    var captured: LlmRequest = null
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] =
+        captured = req; IO.pure(okResponse("prov-a"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService.probeLlm(spy).unsafeRunSync()
+    assert(res.ok)
+    assertEquals(captured.agentModel, None, "没有任何 own 链时保持历史形态（全局链）")
+  }
+
+  test("probeLlm with NO ref: a fallback covering for the own chain's head is NOT a success") {
+    // The no-ref arm gets the same treatment as the picked-ref arm: the head of
+    // the chain we set out to measure must be the one that answered.
+    val dir = tempRoot / "agents" / nebflow.actor.RootAgentIdentity.Name
+    os.makeDir.all(dir)
+    os.write(dir / "agent.json", """{"name":"Nebula","model":{"preferred":"pppick/pick-model"}}""")
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.pure(okResponseFor("ssseed", "seed-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService.probeLlm(spy).unsafeRunSync()
+    assert(!res.ok, s"own 链的头没答、别人代答 ⇒ 必须失败，实际 ok=${res.ok}")
+    assert(res.error.exists(_.contains("pppick/pick-model")), s"理由须点名该头：${res.error}")
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), None)
+  }
+
   test("probeLlm attributes FallbackExhaustedError per provider") {
     val attempts = List(
       FallbackAttempt(
