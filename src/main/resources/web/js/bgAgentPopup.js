@@ -10,7 +10,7 @@
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
 import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
-import { isBgAgentId, truncateMiddle, updateScrollSnapped, shouldFollowBottom, initScrollFollow } from './utils.js';
+import { isBgAgentId, truncateMiddle, shouldFollowBottom, initScrollFollow } from './utils.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
@@ -226,21 +226,20 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
     if (target === popupOverlay || (target instanceof Element && target.id === 'bgagent-close')) closeStepPopup();
   });
 
-  entry.container.addEventListener('scroll', () => {
-    // Follow-intent latch for THIS view (shared near-bottom unit, was 40)
-    updateScrollSnapped(entry.view, entry.container);
-    // Scroll-to-top → the older page, same gate the primary window uses
-    // (main.js scroll listener: scrollTop < 100 && hasMore && !loading &&
-    // offset > 0). Shares the automatic head-seek's page/row budget, so a
-    // partial scroll cannot push the panel past the caps either.
-    const pag = entry.view.pagination;
-    if (entry.container.scrollTop < 100 && pag.hasMore && !pag.loading && pag.offset > 0) {
-      requestOlderPage(entry);
-    }
-  });
+  // Scroll-to-top gate → the older page, same gate the primary window uses
+  // (main.js scroll listener: scrollTop < 100 && hasMore && !loading &&
+  // offset > 0). Shares the automatic head-seek's page/row budget, so a
+  // partial scroll cannot push the panel past the caps either.
+  // B4 (2026-10-04): the listener is installed by initScrollFollow below (the
+  // single scroll-machinery installer, so the follow decision and the ↓ N pill
+  // share ONE geometry probe per event). This is the pagination half it calls.
+  const onScrollGate = () => {
+    if (entry.container.scrollTop < 100) requestOlderPage(entry);
+  };
 
   // Per-view scroll-follow machinery: row counting + "↓ N new messages" pill
-  initScrollFollow(entry.view);
+  // (+ the scroll listener; the pagination gate above rides along with it).
+  initScrollFollow(entry.view, { onScroll: onScrollGate });
 
   requestAnimationFrame(() => {
     entry.container.scrollTop = entry.container.scrollHeight;

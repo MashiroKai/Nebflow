@@ -18,7 +18,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
@@ -4378,14 +4378,16 @@ onMessage('activeAgents', (msg) => {
   computeAgentStates();
 });
 
-// Scroll listener (primary window)
+// Scroll listener (primary window). B4 (2026-10-04): the follow-intent latch
+// refresh and the ↓ N pill now ride ONE listener, installed by initScrollFollow
+// below — the same place that owns the latch element (`view.dom.chat`). This
+// module keeps only the pagination gate and hands it to that installer, so the
+// primary window has exactly one scroll handler probing geometry once per event
+// (before the fix: this listener probed for the latch AND utils.js probed again
+// for the pill, three times per event → 6 forced reads per wheel step).
 const _primChat = chatViews.primary.dom.chat;
-_primChat.addEventListener('scroll', () => {
+const _primScrollGate = () => {
   const pv = chatViews.primary;
-  // Follow-intent latch, refreshed on every real scroll event with the shared
-  // near-bottom unit (A-branch convergence — was 40px here, 60/80/100
-  // elsewhere). Also drives the ↓ N pill via syncScrollPill.
-  updateScrollSnapped(pv, _primChat);
   // Scroll-to-top: load older messages
   if (_primChat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
     pv.pagination.loading = true;
@@ -4393,11 +4395,12 @@ _primChat.addEventListener('scroll', () => {
     showHistoryLoader();
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
-}, { passive: true });
+};
 
 // Per-view scroll-follow machinery for the primary window (row counting +
-// the "↓ N new messages" pill). Popups attach their own in ensureStepView.
-initScrollFollow(chatViews.primary);
+// "↓ N new messages" pill + the follow-intent latch + the pagination gate).
+// Popups attach their own in ensureStepView.
+initScrollFollow(chatViews.primary, { onScroll: _primScrollGate });
 
 // ---------- 6. Expose global Nebflow API for plugins ----------
 // Theme tokens extracted from CSS custom properties — agents can read these for consistency.

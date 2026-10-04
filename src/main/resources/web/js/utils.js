@@ -803,11 +803,23 @@ export function isNearBottom(el) {
  * *follow intent* snapshot, so it must only be written where the geometry is
  * authoritative (a real scroll event, or an explicit programmatic jump to the
  * bottom). See the A-branch path table for the staleness analysis.
+ *
+ * B4 (2026-10-04): ONE geometry probe per scroll event. The judgement computed
+ * here doubles as `syncScrollPill`'s input whenever the latch element is the
+ * same element the pill measures (`view.dom.chat` — true for the primary
+ * window and both popups, which all pass their chat container). The pill sync
+ * only re-probes when it is called with no judgement of its own (mutation
+ * observer / post-write call sites), where the geometry really may have moved.
+ *
+ * 🔴 Registration discipline: this is the view's ONLY scroll listener. Call
+ * sites must not add a second scroll listener that also calls it — that would
+ * put two probes back on every scroll event (the B4 defect).
  */
 export function updateScrollSnapped(view, el) {
   if (!view || !view.stream || !el) return;
-  view.stream.scrollSnapped = isNearBottom(el);
-  syncScrollPill(view);
+  const atBottom = isNearBottom(el);
+  view.stream.scrollSnapped = atBottom;
+  syncScrollPill(view, el === view.dom?.chat ? atBottom : undefined);
 }
 
 /**
@@ -855,6 +867,20 @@ export function smartScroll() {
 /** view -> pill record. The WeakMap is the canonical home so a session
  *  switch (resetStream replaces view.stream) cannot orphan the DOM node. */
 const _pillRecords = new WeakMap();
+
+/** B4 (2026-10-04): the element a view's pill geometry is measured against —
+ *  the same element `initScrollFollow` attaches to. Held here because
+ *  `initScrollFollow` may run AFTER `updateScrollSnapped` (main.js attaches the
+ *  window's scroll listener above its `initScrollFollow` call), so the pill
+ *  itself cannot know the element at decision time. WeakMap ⇒ no leak. */
+const _viewChats = new WeakMap();
+
+function viewChat(view) {
+  if (!view) return null;
+  const el = _viewChats.get(view) || view.dom?.chat || null;
+  if (el && !_viewChats.has(view)) _viewChats.set(view, el);
+  return el;
+}
 
 function pillRecord(view) {
   let rec = _pillRecords.get(view);
@@ -967,13 +993,19 @@ export function countsAsRealMessage(row) {
   return true;
 }
 
-/** Recompute pill visibility + count from live geometry for one view. */
-export function syncScrollPill(view) {
+/** Recompute pill visibility + count from live geometry for one view.
+ *
+ *  `atBottom`, when passed, is a judgement already made this frame against the
+ *  view's own chat element (see updateScrollSnapped) — reuse it instead of
+ *  probing the geometry a second time. B4: at most one probe per scroll event.
+ *  Callers that have no judgement of their own (mutation observer, post-write
+ *  re-sync) omit it and pay the probe. */
+export function syncScrollPill(view, atBottom) {
   if (!view || !view.dom || !view.dom.chat) return;
   const rec = pillRecord(view);
   const el = ensureScrollPill(view);
   if (!el) return;
-  const atBottom = isNearBottom(view.dom.chat);
+  if (atBottom === undefined) atBottom = isNearBottom(viewChat(view) || view.dom.chat);
   rec.atBottom = atBottom;
   if (atBottom) rec.count = 0; // reached the bottom (any cause) → nothing unseen
   const show = !atBottom && rec.count > 0;
@@ -997,14 +1029,28 @@ function scrollPillDismiss(view) {
 
 /**
  * Attach the per-view scroll-follow machinery: row-level MutationObserver +
- * scroll listener for one ChatView. Idempotent. Call once per view (primary
- * at startup, popups when their ChatView is created).
+ * the view's ONE scroll listener. Idempotent. Call once per view (primary at
+ * startup, popups when their ChatView is created).
+ *
+ * 🔴 B4 (2026-10-04) — this is the ONLY place a scroll listener is attached for
+ * a view. The listener refreshes the follow-intent latch and drives the ↓ N
+ * pill from the judgement it already made, i.e. ONE geometry probe per scroll
+ * event for both. Before the fix each view had TWO listeners (this one probing
+ * for the pill + the call site's own probing for the latch) while the decision
+ * sites ran three times per event — 6 forced layout reads per wheel step, the
+ * measured B4 defect (`scrollHeightWidth` 360 / 60 steps vs the ≤120 criterion).
+ *
+ * `opts.onScroll` is the call site's pagination gate (main.js / bgAgentPopup.js
+ * scroll-up → older page), run on the same event after the follow update. It is
+ * registered with the view's one listener; a later call without it cannot add a
+ * second listener (guarded by `rec.obs`).
  */
-export function initScrollFollow(view) {
+export function initScrollFollow(view, opts = {}) {
   const chat = view && view.dom && view.dom.chat;
   if (!chat) return;
   const rec = pillRecord(view);
   if (rec.obs) return;
+  _viewChats.set(view, chat);
   rec.atBottom = isNearBottom(chat);
   rec.obs = new MutationObserver((mutations) => {
     let addedRows = 0;
@@ -1040,7 +1086,12 @@ export function initScrollFollow(view) {
     requestAnimationFrame(() => syncScrollPill(view));
   });
   rec.obs.observe(chat, { childList: true });
-  chat.addEventListener('scroll', () => syncScrollPill(view), { passive: true });
+  // The view's ONE scroll listener (B4). Latch + pill share this probe; the
+  // caller's pagination gate rides the same event.
+  chat.addEventListener('scroll', () => {
+    updateScrollSnapped(view, chat);
+    if (typeof opts.onScroll === 'function') opts.onScroll();
+  }, { passive: true });
   syncScrollPill(view);
 }
 

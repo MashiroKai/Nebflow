@@ -18,7 +18,7 @@ import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
-import { truncateMiddle, updateScrollSnapped, shouldFollowBottom, initScrollFollow } from './utils.js';
+import { truncateMiddle, shouldFollowBottom, initScrollFollow } from './utils.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 
 // ── Per-agent state ───────────────────────────────────────
@@ -524,11 +524,12 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
     if (e.target === popupOverlay || e.target.id === 'flow-agent-close') closeStepPopup();
   });
 
-  // Auto-scroll
-  entry.container.addEventListener('scroll', () => {
-    // Follow-intent latch for THIS view (shared near-bottom unit, was 40)
-    updateScrollSnapped(entry.view, entry.container);
-  });
+  // Auto-scroll / follow-intent latch. B4 (2026-10-04): the follow decision is
+  // delegated to initScrollFollow's registry below, where this view's chat
+  // element is also what the ↓ N pill measures (`fakeDom.chat === container`,
+  // ensureStepView). openStepPopup() runs on every open, so it must NOT install
+  // a listener of its own — a duplicate listener would put two geometry probes
+  // back on every scroll event (the B4 defect: 6 forced reads/event).
 
   // Per-view scroll-follow machinery: row counting + "↓ N new messages" pill
   // are per ChatView (view.stream.scrollPill) — never a global singleton.
