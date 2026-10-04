@@ -46,6 +46,7 @@ import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
 import { smartScroll, escapeHtml } from './utils.js';
 import { rootDisplayName as rootName } from './rootName.js';
+import { bindImeGuard, isImeComposing, commitEnter } from './imeGuard.js';
 
 const PROBE_TIMEOUT_MS = 20000; // backend times out at 15s; this is the last-resort guard
 const MODEL_REQ_TIMEOUT_MS = 8000;
@@ -454,6 +455,7 @@ function askCard(def, bubble, total, idx) {
     freeBtn.disabled = true;
     freeInput.placeholder = def.placeholder || def.freeHint || t('ob2.ph.free');
     if (def.maxLength) freeInput.maxLength = def.maxLength;
+    bindImeGuard(freeInput);   // 组字态的 dataset 标记写入点唯一（单点 = imeGuard）
     freeInput.addEventListener('input', () => { freeBtn.disabled = freeInput.value.trim().length === 0; });
     freeBtn.addEventListener('click', () => {
       const v = freeInput.value.trim();
@@ -461,7 +463,9 @@ function askCard(def, bubble, total, idx) {
       finish('free', v, null, v);
     });
     freeInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.isComposing && !freeBtn.disabled) { e.preventDefault(); freeBtn.click(); }
+      // IME 纪律（单点 = imeGuard）：组字期间的 Enter 交还输入法，不得当成提交。
+      if (isImeComposing(e, freeInput)) return;
+      if (commitEnter(e, freeInput) && !freeBtn.disabled) freeBtn.click();
     });
     freeRow.append(freeInput, freeBtn);
 
