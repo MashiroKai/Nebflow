@@ -65,26 +65,53 @@ object MemoryStore:
     val trimmed = content.trim
     if trimmed.nonEmpty then Some(trimmed) else None
 
-  private val userCache = MtimeCache.file[Option[String]](userMemoryPath, parseMemory)
+  /**
+   * Data-root binding guard.
+   *
+   * The mtime caches below hold an **os.Path captured at construction**. In
+   * production `PathUtil.dataRoot` never moves, so the binding is permanent and
+   * this guard is a no-op. In tests every spec swaps `dataRoot` to its own temp
+   * tree, and a cache bound to a previous spec's (deleted) tree would silently
+   * answer from the wrong home — `invalidate*` clears the cached VALUE but not
+   * the bound PATH, so it cannot repair that. Re-binding whenever the root
+   * changes makes each accessor read the current root, which is the semantics
+   * the callers already assume.
+   */
+  @volatile private var boundRoot: os.Path = PathUtil.dataRoot
 
-  private val soulCache = MtimeCache.file[Option[String]](soulMemoryPath, parseMemory)
+  private var userCache = MtimeCache.file[Option[String]](userMemoryPath, parseMemory)
+
+  private var soulCache = MtimeCache.file[Option[String]](soulMemoryPath, parseMemory)
 
   private val agentCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
 
-  private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
-    agentCaches.asScala.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
-
   private val teamAgentCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
+
+  /** Re-bind caches to the current `dataRoot` when it moved (test isolation). */
+  private def rebindIfRootChanged(): Unit =
+    val root = PathUtil.dataRoot
+    if root != boundRoot then
+      boundRoot = root
+      userCache = MtimeCache.file(userMemoryPath, parseMemory)
+      soulCache = MtimeCache.file(soulMemoryPath, parseMemory)
+      agentCaches.clear()
+      teamAgentCaches.clear()
+
+  private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
+    rebindIfRootChanged()
+    agentCaches.asScala.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
 
   private def teamCacheKey(teamName: String, agentName: String): String = s"$teamName/$agentName"
 
   private def getTeamAgentCache(teamName: String, agentName: String): MtimeFileCache[Option[String]] =
+    rebindIfRootChanged()
     val key = teamCacheKey(teamName, agentName)
     teamAgentCaches.asScala.getOrElseUpdate(key, MtimeCache.file(teamAgentMemoryPath(teamName, agentName), parseMemory))
 
   // --- Load (mtime-cached) — injected into system prompts ---
 
   def loadUserMemory: Option[String] =
+    rebindIfRootChanged()
     userCache.get.unsafeRunSync().flatten
 
   /**
@@ -101,6 +128,7 @@ object MemoryStore:
    * shared ← actor ← agent ← core ← gateway），且根名是机制键单点，不得出现第二份字面。
    */
   def loadSoulMemory(agentName: String): Option[String] =
+    rebindIfRootChanged()
     soulCache.get.unsafeRunSync().flatten.orElse(getAgentCache(agentName).get.unsafeRunSync().flatten)
 
   /**
@@ -128,7 +156,8 @@ object MemoryStore:
       IO.blocking(os.write.over(path, content, createFolders = true)) *> invalidateCache()
 
   def saveUserMemory(content: String): IO[Unit] =
-    saveFile(userMemoryPath, "user", content, () => userCache.invalidate)
+    IO.delay(rebindIfRootChanged()) *>
+      saveFile(userMemoryPath, "user", content, () => userCache.invalidate)
 
   /**
    * 落盘 `~/.nebflow/Soul.md`（personal-agent 批起 agent 记忆的**新位**）。
@@ -136,21 +165,26 @@ object MemoryStore:
    * 改名不改预算语义（方案 §2.1 裁定「沿用 agent / user 两级预算」）。
    */
   def saveSoulMemory(content: String): IO[Unit] =
-    saveFile(soulMemoryPath, "agent", content, () => soulCache.invalidate)
+    IO.delay(rebindIfRootChanged()) *>
+      saveFile(soulMemoryPath, "agent", content, () => soulCache.invalidate)
 
   /** 旧位写入（`agents/<name>/memory.md`）——迁移腿与归档脚本用，注入路径已改新位。 */
   def saveAgentMemory(agentName: String, content: String): IO[Unit] =
-    saveFile(agentMemoryPath(agentName), "agent", content, () => getAgentCache(agentName).invalidate)
+    IO.delay(rebindIfRootChanged()) *>
+      saveFile(agentMemoryPath(agentName), "agent", content, () => getAgentCache(agentName).invalidate)
 
   // --- Cache invalidation ---
 
   def invalidateUserCache(): Unit =
+    rebindIfRootChanged()
     userCache.invalidate.unsafeRunSync()
 
   def invalidateSoulCache(): Unit =
+    rebindIfRootChanged()
     soulCache.invalidate.unsafeRunSync()
 
   def invalidateAgentCache(agentName: String): Unit =
+    rebindIfRootChanged()
     getAgentCache(agentName).invalidate.unsafeRunSync()
 
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
