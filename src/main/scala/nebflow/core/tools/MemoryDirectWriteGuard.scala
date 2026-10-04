@@ -1,8 +1,8 @@
 package nebflow.core.tools
 
 import nebflow.shared.MemoryBudget
+import nebflow.shared.MemoryPaths
 import nebflow.shared.MemoryWriteGate
-import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -55,19 +55,22 @@ object MemoryDirectWriteGuard:
   /** Classify a path against the three budgeted memory layers.
     * `Some("user" | "agent" | "project")` = budgeted layer; `None` = not guarded.
     *
-    * personal-agent 批 2026-10-04：`"agent"` 层从 `agents/Nebula/memory.md` 上收到
-    * 根层 `~/.nebflow/Soul.md`（与 `User.md` 同级）。**双读过渡**⇒两处都判 `"agent"`
-    * （旧位仍可被直写，归档期不能失去预算保护）。路径比较基准 = `PathUtil.dataRoot`
-    * （而不是 `user.home`）：隔离实例（`--home` / `setDataRoot`）下同样判得中。
+    * personal-agent 批 2026-10-04：`"agent"` 层从 `agents/<root>/memory.md` 上收到
+    * 根层 `<root>/Soul.md`（与 `User.md` 同级）。**双读过渡**⇒两处都判 `"agent"`
+    * （旧位仍可被直写，归档期不能失去预算保护）。路径基见
+    * [[nebflow.shared.MemoryPaths.globalBases]]——并认运行时数据根与默认 home 根，
+    * 使层判定与进程内换根顺序解耦（此前只认运行时根 ⇒ 被不还原的 setDataRoot
+    * 的相邻 suite 打成全 `None`，闸门 fail-open + 顺序相关假红）。
     */
   def classify(pathStr: String): Option[String] =
-    val root = PathUtil.dataRoot.toString.replace("\\", "/").replaceAll("/+$", "")
-    val normalized = pathStr.replace("\\", "/")
-    if normalized == s"$root/User.md" then Some("user")
-    else if normalized == s"$root/Soul.md" then Some("agent")
-    else if normalized == s"$root/agents/${nebflow.actor.RootAgentIdentity.Name}/memory.md" then Some("agent")
+    val normalized = MemoryPaths.normalizePath(pathStr)
+    val bases = MemoryPaths.globalBases
+    val rootName = nebflow.actor.RootAgentIdentity.Name
+    if bases.exists(b => normalized == s"$b/User.md") then Some("user")
+    else if bases.exists(b => normalized == s"$b/Soul.md") then Some("agent")
+    else if bases.exists(b => normalized == s"$b/agents/$rootName/memory.md") then Some("agent")
     else if normalized.endsWith("/.nebflow/memory.md")
-      && !normalized.startsWith(s"$root/") then Some("project")
+      && !MemoryPaths.isUnderGlobalBase(normalized, bases) then Some("project")
     else None
 
   /** Current file size; missing/unreadable ⇒ 0 (first write ⇒ anything is net
