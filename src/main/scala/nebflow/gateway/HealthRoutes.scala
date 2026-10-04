@@ -39,8 +39,22 @@ private[gateway] object HealthRoutes:
       // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅
       // 对端 IP + 计数 + 上限/超时口径 + fd 代理）。与 /health 同级无令牌门
       // （watchdog/作者探视用）；不含任何 header/body/token 内容。
+      //
+      // perf-481 A2：并入 `outbound` 段 = 出站队列溢出的**机械读数面**。
+      // 判据「溢出计数非零 ∧ 队列长度有界」在返工前**零读点**（计数只有定义、
+      // 无任何消费者）⇒ 结构性不可观测。本段把它挂到既有只读健康面上（不新开
+      // 端点、不新增凭据/令牌面）：`capacity` 是每连接出站队列上界（有界性本身
+      // 的读数），`overflowDrops` / `overflowCloses` 是两个只增计数。
+      // 实例级读数：`ctx.wsHub` 就是 GatewayMain 里那个 hub（同一实例），
+      // 也在 WebSocketRoutes 里接收溢出事件 ⇒ 计数与生产事件流同一来源。
       case GET -> Root / "health" / "conn" =>
-        connGuard.snapshot.flatMap(s => Ok(ConnGuard.healthJson(s, ConnGuard.fdCount())))
+        connGuard.snapshot.flatMap { s =>
+          Ok(
+            ConnGuard
+              .healthJson(s, ConnGuard.fdCount())
+              .deepMerge(Json.obj("outbound" -> wsHub.outboundStatsJson(wsRoutes.OutboundQueueCapacity)))
+          )
+        }
 
       // Token consumption dashboard aggregate (2026-08-18): structured LLM usage
       // telemetry with dimension slicing.
