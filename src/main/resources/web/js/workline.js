@@ -335,7 +335,19 @@ export function thinkingWorklineItem(view, text) {
   }
   const think = wl.item.querySelector('.nf-wl-think');
   if (!think) return;
-  think.textContent = text || '';
+  const next = text || '';
+  const prev = think._nfText || '';
+  // Append only the new tail. Re-writing the whole text node every delta makes
+  // the browser re-shape and re-layout the entire (wrapping) line from scratch
+  // — measured as the single largest layout cost of the thinking stream. The
+  // prefix test also covers the rebuild path: a freshly built .nf-wl-think has
+  // no `_nfText`, so the first call falls through to the whole-text write.
+  if (prev && next.length > prev.length && next.startsWith(prev)) {
+    think.appendChild(document.createTextNode(next.slice(prev.length)));
+  } else if (next !== prev) {
+    think.textContent = next;
+  }
+  think._nfText = next;
 }
 
 /** Thinking finished: swap the reveal for the completed label + check. */
