@@ -2697,9 +2697,13 @@ onMessage('serverConfig', (msg, view) => {
     state.serverThinking = msg.thinking;
     state.thinkingMode = msg.thinking;
   }
-  if (msg.tools) {
-    state.availableTools = msg.tools;
-  }
+  // Tool descriptions do NOT ride this frame (perf-481 A4): the server no longer
+  // attaches `tools` to `serverConfig`, so the old `if (msg.tools)` assignment
+  // here was a dead second writer next to the `toolsList` handler below. Removed
+  // rather than kept for compatibility — `msg.tools` can never be set by the
+  // shipped server, and a second writer face is exactly the drift source A4
+  // removed. The single writer is `onMessage('toolsList', ...)` (per-connection,
+  // on demand).
   // !== undefined (not truthiness): the schedule node must sync even when
   // falsy-but-present ({enabled:false,...}) so the settings panel always
   // echoes server truth (freeze-consistency fix 2026-08-27).
