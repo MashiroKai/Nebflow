@@ -390,6 +390,15 @@ function SCRIPT() {
 // ── Answer collection (the JS-side answer table) ─────────────
 const collected = new Map();   // id → { kind, value, values?, label, scope }
 
+/**
+ * The context window the user chose on the model question (author item ②), sent
+ * as the top-level `contextWindow` of the finishOnboarding frame. `null` = the
+ * user did not set one ⇒ the engine keeps the model's configured value. It is
+ * deliberately NOT part of `collected`: the window is brain config, not a memory
+ * answer, so it must not leak into Soul.md / User.md.
+ */
+let modelContextWindow = null;
+
 function record(def, kind, value, values) {
   const rec = { kind, label: def.label || def.id, scope: def.scope };
   if (kind === 'multi') { rec.values = values || []; rec.value = (values || []).join('；'); }
@@ -571,7 +580,15 @@ function askCard(def, bubble, total, idx) {
 }
 
 /** Model question card: primary path = configured providers (same source as
- *  Settings); the provider field face stays as a fallback. */
+ *  Settings); the provider field face stays as a fallback.
+ *
+ *  The context window is set HERE (author item ②: 「检测可用模型和设置上下文大小」).
+ *  Picking a candidate reveals an inline window field prefilled with that model's
+ *  configured value; the window travels as the top-level `contextWindow` of the
+ *  finishOnboarding frame, which writes it into `llm.providers.<id>.models[].contextWindow`
+ *  — the same store the Settings panel edits. From there the existing single chain
+ *  (effectiveContextWindow → ModelCandidate.contextWindow → AgentState.contextWindow
+ *  → MemoryBudget.injectionCapBytes) makes it drive the injection budget. */
 function askModelCard(def, card, foot, freeRow, finish, total, idx) {
   const hint = document.createElement('div');
   hint.className = 'option-hint';
@@ -581,6 +598,54 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
   const listWrap = document.createElement('div');
   listWrap.className = 'opt-row wide';
   card.appendChild(listWrap);
+
+  // Context-window row: revealed once a candidate is picked. `ctxIn`'s value is
+  // what actually leaves the card; the window is optional (blank / non-positive
+  // ⇒ omitted, and the engine keeps the configured value).
+  const ctxRow = document.createElement('div');
+  ctxRow.className = 'ctx-row';
+  ctxRow.style.display = 'none';
+  const ctxLabel = document.createElement('span');
+  ctxLabel.className = 'ctx-label';
+  ctxLabel.textContent = t('ob2.model.ctxLabel');
+  const ctxIn = document.createElement('input');
+  ctxIn.className = 'option-input mono';
+  ctxIn.type = 'number';
+  ctxIn.min = '1';
+  ctxIn.step = '1000';
+  ctxIn.setAttribute('data-ctx-window', def.id);
+  const ctxApply = document.createElement('button');
+  ctxApply.type = 'button';
+  ctxApply.className = 'glass-control ob-primary';
+  ctxApply.textContent = t('ob2.model.ctxApply');
+  ctxApply.disabled = true;
+  ctxRow.append(ctxLabel, ctxIn, ctxApply);
+  const ctxHint = document.createElement('div');
+  ctxHint.className = 'option-hint';
+  ctxHint.style.display = 'none';
+  ctxHint.textContent = t('ob2.model.ctxHint');
+  card.appendChild(ctxRow);
+  card.appendChild(ctxHint);
+
+  /** Positive integer or null (the engine's own non-positive semantics stay in charge). */
+  const ctxValue = () => {
+    const n = Number(ctxIn.value);
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  };
+  // Committing = the candidate currently selected (null until a list row is
+  // clicked; the fallback field face commits through `saveBtn`).
+  let pickedRef = null;
+  // True once the user edits the window themselves; a candidate pick prefills it,
+  // and the fallback face must not carry a DIFFERENT model's prefill forward.
+  let ctxTouched = false;
+  const syncCtxApply = () => { ctxApply.disabled = pickedRef === null || ctxValue() === null; };
+  ctxIn.addEventListener('input', () => { ctxTouched = true; syncCtxApply(); });
+
+  ctxApply.addEventListener('click', () => {
+    if (pickedRef === null || ctxValue() === null) return;
+    modelContextWindow = ctxValue();
+    finish('model', pickedRef, null, t('ob2.model.echoOk', { model: pickedRef }));
+  });
 
   const fallbackBtn = document.createElement('button');
   fallbackBtn.type = 'button';
@@ -621,6 +686,18 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
     fallbackBtn.style.display = 'none';
     hint.textContent = '';
     fields.style.display = 'block';
+    // The field face commits through `saveBtn`, so no candidate stays "picked"
+    // (otherwise the window row could commit a ref the user navigated away from).
+    pickedRef = null;
+    syncCtxApply();
+    // The window is settable on this face too (author item ②) — it commits with
+    // `saveBtn`, so the standalone "use this window" button steps aside. A
+    // prefill carried over from a discarded candidate is cleared unless the user
+    // typed it themselves.
+    if (!ctxTouched) ctxIn.value = '';
+    ctxRow.style.display = 'flex';
+    ctxHint.style.display = 'block';
+    ctxApply.style.display = 'none';
     urlIn.value = PRESETS.zhipu.baseUrl;
     modelIn.value = PRESETS.zhipu.models[0];
     checkFields();
@@ -645,6 +722,8 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
     if (res.ok) {
       probe.classList.add('ok');
       probe.textContent = t('ob2.model.probeOk', { model: modelIn.value.trim() });
+      // The fallback face carries its own window field value too (author item ②).
+      modelContextWindow = ctxValue();
       finish('model', `${data.name}/${modelIn.value.trim()}`, null, t('ob2.model.echoOk', { model: modelIn.value.trim() }));
     } else {
       probe.textContent = t('onboarding.probeFailed', { error: res.error || '' });
@@ -672,7 +751,23 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
       small.textContent = t('ob2.model.ctx', { n: m.effectiveContextWindow });
       txt.appendChild(small);
       b.appendChild(txt);
-      b.addEventListener('click', () => finish('model', m.ref, null, t('ob2.model.echoOk', { model: m.ref })));
+      // First click selects + reveals the window row prefilled with the model's
+      // configured value; "用这个窗口" commits. This keeps the window an explicit
+      // user decision instead of a silent side effect of picking a model.
+      b.addEventListener('click', () => {
+        pickedRef = m.ref;
+        listWrap.querySelectorAll('[data-model-ref]').forEach((n) => n.classList.remove('picked'));
+        b.classList.add('picked');
+        ctxRow.style.display = 'flex';
+        ctxHint.style.display = 'block';
+        // Picking a candidate IS choosing its window baseline: prefill the model's
+        // configured value (switching candidates re-baselines, the user's next
+        // edit makes it theirs).
+        ctxIn.value = String(m.contextWindow || m.effectiveContextWindow || '');
+        ctxTouched = false;
+        syncCtxApply();
+        smartScroll();
+      });
       listWrap.appendChild(b);
     });
     card.insertBefore(fallbackBtn, fields);
@@ -708,6 +803,7 @@ export function initOnboarding(msg) {
 export function replayOnboarding() {
   started = true;
   collected.clear();
+  modelContextWindow = null;   // a replay must not inherit the previous run's window
   if (activeSim) activeSim.finish();
   void runFlow();
 }
@@ -836,6 +932,9 @@ function answersPayload() {
 function finishOnboarding({ answers, modelRef }) {
   const payload = { type: 'finishOnboarding', answers };
   if (modelRef) payload.modelRef = modelRef;
+  // Explicit window (if the user set one) rides the SAME frame that carries the
+  // model ref — one write path, one config store.
+  if (modelRef && modelContextWindow) payload.contextWindow = modelContextWindow;
   sendWs(payload);
 }
 

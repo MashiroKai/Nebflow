@@ -758,6 +758,9 @@ export default {
   'ob2.model.probeOk': '✓ 连通 · {model}',
   'ob2.model.echoOk': '已连接 {model}',
   'ob2.model.writeErr': '（模型配置写回失败：{error}）',
+  'ob2.model.ctxLabel': '上下文大小',
+  'ob2.model.ctxApply': '用这个窗口',
+  'ob2.model.ctxHint': '留空则沿用模型自己的配置值；改完之后这一项也在「设置」里可见、可改。',
   // 第三幕 · 你对我的期待
   'ob2.intro.expect1': '基础的三件齐了。接下来的问题，是把我捏成你要的样子。',
   'ob2.intro.expect2': '没有标准答案，也不是考试 —— 答不上来就跳过，我会留白，不催你。',
