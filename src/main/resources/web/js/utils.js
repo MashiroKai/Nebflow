@@ -231,7 +231,7 @@ function protectMentions(seg, out) {
  * @returns {string}
  */
 function restoreMentions(html, blocks) {
-  return html.replace(/MENTIONBLOCK(\d+)END/g, (m, idx) => {
+  return html.replace(RE_MENTION_RESTORE, (m, idx) => {
     const rec = blocks[parseInt(idx, 10)];
     if (!rec) return m;
     const attr = escapeHtml(rec.canonical).replace(/"/g, '&quot;');
@@ -253,6 +253,25 @@ function restoreMentions(html, blocks) {
 //   the first (least recently used) key when over capacity.
 const MD_CACHE_CAP = 200;
 const _mdCache = new Map();
+
+// ---------- Precompiled hot-path regexes (修法 2, 2026-09-30) ----------
+// Every streaming frame re-runs these over the WHOLE accumulated text. A regex
+// literal in a function body allocates a fresh RegExp on each evaluation; on a
+// per-frame hot path that is pure waste. String.replace/split always start from
+// index 0 for a global regex, so hoisting them out is behaviour-preserving.
+const RE_VOICE = /<voice>([\s\S]+?)<\/voice>/g;
+const RE_CODE_SPLIT = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g;
+const RE_MATH_DISPLAY_DOLLAR = /\$\$([\s\S]+?)\$\$/g;
+const RE_MATH_DISPLAY_BRACKET = /\\\[([\s\S]+?)\\\]/g;
+const RE_MATH_INLINE_DOLLAR = /(^|[^\\$])\$(?![\s$])((?:\\\$|[^$\n])*?[^\s$])\$(?!\d)/g;
+const RE_MATH_INLINE_PAREN = /(^|[^\\])\\\((\S(?:[^\n]*\S)?)\\\)/g;
+// The <pre> wrap + close pair used to run as TWO whole-string replace passes.
+// They are disjoint (an opening tag can never be a `</pre>`), so ONE alternation
+// pass emits byte-identical output while scanning the HTML only once.
+const RE_PRE_TAG = /<pre[^>]*>|<\/pre>/g;
+const RE_VOICE_RESTORE = /VOICEBLOCK(\d+)END/g;
+const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
+const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
 
 export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
@@ -282,7 +301,7 @@ function _renderMarkdownWithMath(text, parseVoice) {
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
   if (parseVoice) {
-    let vp = text.replace(/<voice>([\s\S]+?)<\/voice>/g, (m, content) => {
+    let vp = text.replace(RE_VOICE, (m, content) => {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;
     });
@@ -307,26 +326,31 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
       return `MATHBLOCK${mathBlocks.length - 1}END`;
     };
     // Display math: $$...$$ and \[...\]
-    seg = seg.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => add(math, true));
-    seg = seg.replace(/\\\[([\s\S]+?)\\\]/g, (m, math) => add(math, true));
+    seg = seg.replace(RE_MATH_DISPLAY_DOLLAR, (m, math) => add(math, true));
+    seg = seg.replace(RE_MATH_DISPLAY_BRACKET, (m, math) => add(math, true));
     // Inline math: $...$ and \(...\). The opening delimiter must not be followed
     // by whitespace (or another $) and the closing one must not be preceded by
     // whitespace nor followed by a digit — otherwise currency prose such as
     // "$100 到 $200" pairs up and swallows the text in between.
-    seg = seg.replace(/(^|[^\\$])\$(?![\s$])((?:\\\$|[^$\n])*?[^\s$])\$(?!\d)/g,
+    seg = seg.replace(RE_MATH_INLINE_DOLLAR,
       (fullMatch, prefix, math) => prefix + add(math, false));
-    seg = seg.replace(/(^|[^\\])\\\((\S(?:[^\n]*\S)?)\\\)/g,
+    seg = seg.replace(RE_MATH_INLINE_PAREN,
       (fullMatch, prefix, math) => prefix + add(math, false));
     return seg;
   };
   protected_ = protected_
-    .split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g)
+    .split(RE_CODE_SPLIT)
     .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(seg), mentionBlocks)))
     .join('');
   let html = marked.parse(protected_, { headerIds: false });
-  // Wrap <pre> blocks with a copy button
-  html = html.replace(/(<pre[^>]*>)/g, '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="' + t('chat.copy') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>' + t('chat.copy') + '</span></button>$1');
-  html = html.replace(/<\/pre>/g, '</pre></div>');
+  // Wrap <pre> blocks with a copy button and close the wrapper in the SAME pass
+  // (修法 2: one whole-string scan instead of two). The alternation keeps the
+  // original per-tag output byte-for-byte: every `<pre…>` gets the wrap opener +
+  // button + the tag itself ($&), every `</pre>` becomes `</pre></div>`.
+  html = html.replace(RE_PRE_TAG, (tag) => {
+    if (tag === '</pre>') return '</pre></div>';
+    return '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="' + t('chat.copy') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>' + t('chat.copy') + '</span></button>' + tag;
+  });
   // Restore math blocks as KaTeX
   mathBlocks.forEach((block, i) => {
     const token = `MATHBLOCK${i}END`;
@@ -347,7 +371,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
     }
   });
   // Restore voice blocks as clickable green spans
-  html = html.replace(/VOICEBLOCK(\d+)END/g, (m, idx) => {
+  html = html.replace(RE_VOICE_RESTORE, (m, idx) => {
     const i = parseInt(idx);
     const vtext = voiceBlocks[i] || '';
     return '<span class="voice-block" data-voice-index="' + i + '">' + escapeHtml(vtext) + '</span>';
@@ -356,7 +380,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
   html = restoreMentions(html, mentionBlocks);
   // Tag images for lightbox zoom (click → full preview). Skip imgs that
   // already carry a class (raw HTML in markdown) to avoid duplicate attrs.
-  html = html.replace(/<img\b(?![^>]*\bclass=)/g, '<img class="nf-zoom-img"');
+  html = html.replace(RE_IMG_TAG, '<img class="nf-zoom-img"');
   return html;
 }
 

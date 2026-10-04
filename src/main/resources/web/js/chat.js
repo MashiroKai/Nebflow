@@ -3399,12 +3399,20 @@ function imgKeepFor(bubble) {
  *  - 首次出现的图才真正拿到 src 去加载，失败时挂 `.nf-img-failed`（稳定失败占位，
  *    CSS 在 chat.css）——**不重试**（🔴 禁无限重试）。
  *
+ * 修法 1（渲染路径优化，2026-09-30）：流式帧**不再**对整段累积文本做全量
+ * `renderMarkdownWithMath` —— 那是 O(n²) 自旋（诊断 chain-fe-perf：rAF 回调内整段
+ * 重解析，单帧成本随 streak 变长而超过帧预算 ⇒ 100% 单核）。改为**只重画变化尾段**：
+ * 文本按「安全块边界」切成**已闭合块**与**未闭合尾块**，已闭合块的 HTML 逐块缓存、
+ * 每帧复用，只有尾块重解析。安全边界判定见 streamSplitPoint（保守 —— 拿不准就不用，
+ * 退回全量路径），因此结果与全量路径**逐字节等价**（判据 1/2 的 oracle）。
+ *
  * @param {HTMLElement} contentEl 流式渲染目标（.thinking-content）
  * @param {string} text 累积文本
  * @param {boolean} parseVoice renderMarkdownWithMath 的 parseVoice
  * @param {Map<string, HTMLImageElement[]>} keep 本次气泡的图片节点保管表
  * @param {boolean} [useCache] 传给 renderMarkdownWithMath 的 cache（流式帧传 false —
- *   逐帧快照不进 LRU；收尾帧传 true — 稳定文本照旧入缓存）
+ *   逐帧快照不进 LRU；收尾帧传 true — 稳定文本照旧入缓存，且**走全量路径**以
+ *   保证终态 DOM 与全量重渲染逐字节相等）
  */
 function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
   keep.clear();
@@ -3414,9 +3422,53 @@ function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
     const queue = keep.get(key);
     if (queue) queue.push(img); else keep.set(key, [img]);
   });
-  contentEl.innerHTML = renderMarkdownWithMath(text, parseVoice, { cache: useCache === true })
-    .replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
-  contentEl.querySelectorAll('img[data-nf-keep-src]').forEach((fresh) => {
+  const plan = streamRenderPlan(contentEl, text, parseVoice, useCache === true);
+  if (plan.mode === 'full') {
+    contentEl.innerHTML = plan.html.replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
+    adoptFreshImgs(contentEl, keep);
+    return;
+  }
+  // Incremental write: the closed chunks are appended ONCE (their nodes are
+  // never rewritten), and only the tail's nodes are swapped. Swapping at
+  // `st.tailIndex` keeps the concatenated innerHTML identical to the previous
+  // whole-subtree assignment, so the DOM stays byte-equal to the oracle.
+  const st = plan.st;
+  const old = Array.prototype.slice.call(contentEl.childNodes, st.tailIndex);
+  if (plan.append.length) {
+    const tpl = document.createElement('div');
+    tpl.innerHTML = plan.append.join('').replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
+    const frag = document.createDocumentFragment();
+    let added = 0;
+    while (tpl.firstChild) { frag.appendChild(tpl.firstChild); added++; }
+    contentEl.insertBefore(frag, old.length ? old[0] : null);
+    // count the nodes BEFORE insertBefore: the insert MOVES them out of the
+    // fragment, so frag.childNodes is empty afterwards (reading it there would
+    // leave tailIndex at 0 and wipe the whole tree on the next frame).
+    st.tailIndex += added;
+  }
+  for (let i = 0; i < old.length; i++) old[i].remove();
+  // Build the new content off-DOM, then hand its nodes over in one insert: the
+  // tail parse happens without touching the live tree, so the browser lays out
+  // at most once for the tail — the same repair cost as the previous assignment,
+  // minus the rebuild of every already-closed block above it.
+  const holder = document.createElement('div');
+  holder.innerHTML = plan.tail.replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
+  for (let n = holder.firstChild; n; n = holder.firstChild) contentEl.appendChild(n);
+  adoptFreshImgs(contentEl, keep);
+}
+
+/**
+ * Re-attach the previous frame's live <img> nodes to the freshly rendered ones
+ * (2026-09-15 件①, unchanged semantics): a fresh <img> carries its src in
+ * `data-nf-keep-src` so it does not fire a load of its own; the node kept from
+ * the previous frame is put back in its place by src, so the decoded bitmap and
+ * the load state survive across frames (no flicker, no re-fetch). Only a
+ * genuinely new image gets its `src` and its one-shot error handler.
+ * @param {HTMLElement} root
+ * @param {Map<string, HTMLImageElement[]>} keep
+ */
+function adoptFreshImgs(root, keep) {
+  root.querySelectorAll('img[data-nf-keep-src]').forEach((fresh) => {
     const key = fresh.getAttribute('data-nf-keep-src');
     fresh.removeAttribute('data-nf-keep-src');
     const queue = keep.get(key);
@@ -3428,6 +3480,127 @@ function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
     fresh.setAttribute('src', key);
     fresh.addEventListener('error', () => fresh.classList.add('nf-img-failed'), { once: true });
   });
+}
+
+// ── 修法 1：增量流式渲染状态 ──────────────────────────────────────────
+// 每个流式容器一份状态：已闭合块（文本长度 + 其 HTML）与已渲染前缀长度。键为容器
+// 元素（WeakMap ⇒ 随气泡回收，无跨气泡 / 跨会话泄漏）。
+const _streamMdState = new WeakMap();
+
+// 链接引用定义是**文档级**的：[a]: /x 出现在前面而 [y][a] 出现在后面时，前缀/尾块
+// 分开解析会得到与整段解析不同的结果。检测到任一引用定义 ⇒ 本段文本退回全量路径。
+const RE_REF_DEF = /^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*\S/m;
+// 行首「块级构造」判据：列表项 / 引用 / 围栏 / 表格行 / 缩进代码。安全边界两侧都不
+// 得是这些（宽松列表、跨空行引用会在空行处继续，分开解析会改变结构）。
+const RE_BLOCK_OPEN = /^[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|>|```|~~~|\||(?:[ \t]{4,}\S))/;
+
+/** Last non-blank line of `s` (trimmed), or '' when there is none. */
+function lastNonBlankLine(s) {
+  const lines = s.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim() !== '') return lines[i];
+  return '';
+}
+
+/** First non-blank line of `s` (trimmed), or '' when there is none. */
+function firstNonBlankLine(s) {
+  for (const line of s.split('\n')) if (line.trim() !== '') return line;
+  return '';
+}
+
+/** True when `s`'s math delimiters are balanced (no dangle across a split). */
+function mathBalanced(s) {
+  const noCode = s.split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g)
+    .map((seg, i) => (i % 2 === 1 ? '' : seg)).join('');
+  if (noCode.includes('$$')) return false;
+  if ((noCode.match(/\\\(/g) || []).length !== (noCode.match(/\\\)/g) || []).length) return false;
+  if ((noCode.match(/\\\[/g) || []).length !== (noCode.match(/\\\]/g) || []).length) return false;
+  if ((noCode.match(/(^|[^\\$])\$/g) || []).length % 2 !== 0) return false;
+  return true;
+}
+
+/**
+ * Offset just past the LAST blank-line boundary in `text` that is provably safe
+ * to split at, or -1 when none qualifies. Conservative by design: any ambiguity
+ * (list/quote/fence/table/code adjacency, unclosed math, reference definitions)
+ * disqualifies the boundary, and a disqualified split means the caller falls
+ * back to the full-render path — never a guess.
+ */
+function streamSplitPoint(text) {
+  if (text.length < 2) return -1;
+  if (RE_REF_DEF.test(text)) return -1;      // document-level refs ⇒ never split
+  let best = -1;
+  let idx = 0;
+  while (true) {
+    const b = text.indexOf('\n\n', idx);
+    if (b < 0) break;
+    const p = b + 2;
+    const before = text.slice(0, p);
+    const after = firstNonBlankLine(text.slice(p));
+    const prev = lastNonBlankLine(text.slice(0, p));
+    if (
+      after !== '' &&
+      !RE_BLOCK_OPEN.test(after) &&
+      !RE_BLOCK_OPEN.test(prev) &&
+      mathBalanced(before) &&
+      !hasOpenFence(before)
+    ) {
+      best = p;
+    }
+    idx = p;
+  }
+  return best;
+}
+
+/** True when `s` contains an odd number of fence-opening lines (unclosed fence). */
+function hasOpenFence(s) {
+  let n = 0;
+  for (const line of s.split('\n')) if (/^\s{0,3}(?:```|~~~)/.test(line)) n++;
+  return n % 2 === 1;
+}
+
+/**
+ * Plan for one stream frame. Same decision tree as before, but expressed as a
+ * *write plan* so the caller can touch only the DOM that actually changed:
+ *   { mode: 'full', html }                       — replace the whole subtree
+ *   { mode: 'incr', append: [html…], tail, st }  — append new closed chunks,
+ *                                                  re-render only the open tail
+ *
+ * Why the DOM has to be incremental too (2026-10-01, 判据 3): the old path
+ * assigned `contentEl.innerHTML` every frame, which destroys and rebuilds the
+ * whole subtree — Layout + RecalcStyle dominated the frame cost (measured
+ * 21.4 s / 7.3 s of 57 s CPU over a 426-frame stream) and did NOT shrink when
+ * only the parse was cached. Chunk HTML is therefore appended ONCE and never
+ * rewritten; only the tail's nodes are swapped (they start at `st.tailIndex`).
+ * The resulting innerHTML is byte-identical to the concatenation the previous
+ * implementation produced, so 判据 1/2 equivalence is preserved.
+ * @param {HTMLElement} contentEl
+ * @param {string} text
+ * @param {boolean} parseVoice
+ * @param {boolean} final
+ */
+function streamRenderPlan(contentEl, text, parseVoice, final) {
+  if (final) {
+    _streamMdState.delete(contentEl);
+    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: true }) };
+  }
+  let st = _streamMdState.get(contentEl);
+  if (!st) { st = { chunks: [], closedLen: 0, rendered: 0, tailIndex: 0 }; _streamMdState.set(contentEl, st); }
+  const reset = () => { st.chunks.length = 0; st.closedLen = 0; st.rendered = 0; st.tailIndex = 0; };
+  const split = streamSplitPoint(text);
+  if (split <= 0) {
+    // Not safely splittable — drop the cache and do the honest full render.
+    reset();
+    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: false }) };
+  }
+  if (split < st.closedLen) reset();  // text shrank ⇒ new message
+  if (split > st.closedLen) {
+    st.chunks.push({ len: split, html: renderMarkdownWithMath(text.slice(st.closedLen, split), parseVoice, { cache: false }) });
+    st.closedLen = split;
+  }
+  const append = [];
+  for (let i = st.rendered; i < st.chunks.length; i++) append.push(st.chunks[i].html);
+  st.rendered = st.chunks.length;
+  return { mode: 'incr', append, tail: renderMarkdownWithMath(text.slice(split), parseVoice, { cache: false }), st };
 }
 
 export function appendThinkingDelta(delta) {

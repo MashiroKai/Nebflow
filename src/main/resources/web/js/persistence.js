@@ -128,6 +128,94 @@ const MAX_THINKING_LEN = 2000; // AI thinking text
 const MAX_TEXT_LEN = 5000;     // AI response text
 const MAX_MSGS_PER_SESSION = 80;
 
+// ---------- Cache cut that never stores half a table (P-1, 2026-09-30) ----------
+// The cap above used to cut `text`/`answer` at a fixed character offset and
+// append '…'. When that offset landed inside a GFM table — the header row or
+// its `|---|` delimiter row — the cached copy lost the delimiter, and the
+// message surface re-rendered the ENTIRE table as literal `| 项目 | 状态 |`
+// prose. The canvas markdown viewer reads the whole file with no cap, so the
+// same content rendered correctly there — the renderer was never at fault
+// (root cause: chain-md-render-compare, 2026-09-29).
+//
+// Rule now: a shorter cache beats a corrupt one, and no cache beats either.
+// A cut is admissible only when it neither leaves a broken table at the tail
+// nor severs a table that begins right after it; otherwise the entry is not
+// cached at all (the caller's filter chain drops it and the backend history —
+// which remains the source of truth — supplies the message on restore).
+const CACHE_CAP_GIVEBACK = 200; // max chars to give back hunting for a block boundary
+
+const CACHE_FENCE_RE = /^\s{0,3}(?:```|~~~)/;
+const CACHE_DELIM_CELL_RE = /^:?-+:?$/;
+
+/** True when the retained text currently sits inside an unclosed code fence. */
+function cacheFenceOpen(s) {
+  let n = 0;
+  for (const line of s.split('\n')) if (CACHE_FENCE_RE.test(line)) n++;
+  return n % 2 === 1;
+}
+
+/** GFM delimiter row: `|---|:--:|` etc. Pipe-delimited cells of dashes only. */
+function cacheDelimiterRowValid(line) {
+  const t = (line || '').trim();
+  if (t.charCodeAt(0) !== 0x7c) return false; // must open with '|'
+  const cells = t.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  return cells.length > 0 && cells.every((c) => CACHE_DELIM_CELL_RE.test(c));
+}
+
+/**
+ * True when the trailing block of `s` is a table that lost its structure — the
+ * header row has no GFM delimiter row yet, so the whole block degrades into
+ * literal `| a | b |` prose (the message-surface bug). A complete delimiter row
+ * means the table renders: cutting off trailing BODY rows is ordinary
+ * truncation, not corruption.
+ */
+function cacheTailTableBroken(s) {
+  if (cacheFenceOpen(s)) return false; // inside a fence the pipes are code
+  const at = s.lastIndexOf('\n\n');
+  const block = at < 0 ? s : s.slice(at + 2);
+  const lines = block.split('\n');
+  let head = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().charCodeAt(0) === 0x7c) { head = i; break; }
+  }
+  if (head < 0) return false;                     // no table in the trailing block
+  if (lines[head + 1] === undefined) return true; // header row with no delimiter row
+  return !cacheDelimiterRowValid(lines[head + 1]);
+}
+
+/** First non-blank line of `s`, or '' when there is none. */
+function cacheFirstLine(s) {
+  for (const line of s.split('\n')) if (line.trim() !== '') return line.trim();
+  return '';
+}
+
+/**
+ * Truncate `s` to MAX_TEXT_LEN without ever storing half a table.
+ * @returns {string|null} storable text, or null when no safe cut exists.
+ */
+function cacheCapText(s) {
+  if (s.length <= MAX_TEXT_LEN) return s;
+  let cut = MAX_TEXT_LEN;
+  // 1. The cut landed in a table's header/delimiter window ⇒ the block would
+  //    render as literal pipe prose. Give back to the nearest closed block
+  //    boundary; when even that cannot produce a clean block, do not cache.
+  if (cacheTailTableBroken(s.slice(0, cut) + '…')) {
+    const floor = Math.max(0, cut - CACHE_CAP_GIVEBACK);
+    let b = -1;
+    for (let i = cut; i > floor; i--) {
+      if (s.charCodeAt(i - 1) === 0x0a && s.charCodeAt(i - 2) === 0x0a) { b = i; break; }
+    }
+    if (b < 0 || cacheTailTableBroken(s.slice(0, b) + '…')) return null;
+    cut = b;
+  }
+  // 2. Never cache a message whose table the cap severed: a discarded tail that
+  //    opens with a table row means the table the backend still holds would be
+  //    missing from the restored view. Dropping the entry is the lesser evil —
+  //    a shorter cache beats a corrupt one, and no cache beats either.
+  if (cacheFirstLine(s.slice(cut)).charCodeAt(0) === 0x7c) return null;
+  return s.slice(0, cut) + '…';
+}
+
 function sanitizeForCache(entry) {
   if (!entry || typeof entry !== 'object') return entry;
   const e = { ...entry };
@@ -137,10 +225,18 @@ function sanitizeForCache(entry) {
     e.input = e.input.slice(0, MAX_INPUT_LEN) + '…';
   if (typeof e.thinking === 'string' && e.thinking.length > MAX_THINKING_LEN)
     e.thinking = e.thinking.slice(0, MAX_THINKING_LEN) + '…';
-  if (typeof e.text === 'string' && e.text.length > MAX_TEXT_LEN)
-    e.text = e.text.slice(0, MAX_TEXT_LEN) + '…';
-  if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN)
-    e.answer = e.answer.slice(0, MAX_TEXT_LEN) + '…';
+  // A capped field that cannot be cut safely marks the whole entry uncacheable
+  // (returns null) — "rather no cache than half a table". See cacheCapText.
+  if (typeof e.text === 'string' && e.text.length > MAX_TEXT_LEN) {
+    const capped = cacheCapText(e.text);
+    if (capped === null) return null;
+    e.text = capped;
+  }
+  if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN) {
+    const capped = cacheCapText(e.answer);
+    if (capped === null) return null;
+    e.answer = capped;
+  }
   // Strip base64 attachment previews — they can be multi-MB. Keep `path`:
   // it's a small string and lets the restore path re-render the image from
   // the uploads route (G1) even after the preview is gone.
@@ -386,7 +482,12 @@ export function saveMsg(entry, sessionId) {
   try {
     const all = safeGetJSON(LS_SESSIONS_KEY, {});
     const arr = all[sid] || [];
-    arr.push(sanitizeForCache(entry));
+    // P-1: a null sanitize result means the entry has a field that cannot be
+    // capped without corrupting a table — skip the cache write entirely rather
+    // than store a half-table. Backend history remains the source of truth.
+    const sane = sanitizeForCache(entry);
+    if (!sane) return;
+    arr.push(sane);
     // Cap messages per session to prevent unbounded growth
     if (arr.length > MAX_MSGS_PER_SESSION) arr.splice(0, arr.length - MAX_MSGS_PER_SESSION);
     all[sid] = arr;
