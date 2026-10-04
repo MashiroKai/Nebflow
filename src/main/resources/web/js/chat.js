@@ -1427,6 +1427,12 @@ const TOOL_PRIMARY_FIELDS = {
   'TaskUpdate': 'description',
   'Mail': 'message',
   'MailAgent': 'message',
+  // zcode-484 (PLAN §3.3-4, OD-5): Pop was the one artifact-producing tool with
+  // no primary-field entry, so its running badge line showed only the tool name
+  // while the args streamed. `filePath` is the field that names the deliverable;
+  // on an array form `extractFieldValueFromPartialJson` reads the first string
+  // element, which is exactly the "first path (+N)" progress the plan asks for.
+  'Pop': 'filePath',
 };
 
 /**

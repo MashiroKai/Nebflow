@@ -229,6 +229,17 @@
     };
 
     // UI-A 换行读数：思考行在真实字体下的行高与行数。
+    //
+    // zcode-484 (2026-10-04) SEMANTIC REVERSAL, recorded here because this
+    // probe's original assertions were inverted by the author's newer ruling:
+    //   2026-10-03 UI-A  「思考过程的那一行要能换行显示，而不是一直是一行」
+    //   2026-10-04 09:29 「我要的思考过程以及工具过程的流式，是在一行进行流式，像
+    //                    zcode一样。而且现在一次Pop多个图片和视频进行折叠的效果
+    //                    还有问题。」
+    // The 10-04 ruling supersedes UI-A for the STREAMING window: the line is one
+    // row, clipped, with a tail fade; only the SETTLED summary (`.turn-header`)
+    // may wrap. The probe therefore now reads the single-line shape: constant
+    // `clientHeight`, a present `mask-image`, and the tail anchor (`scrollLeft`).
     window.__wrapRead = async () => {
       chatMod.renderUserBubble('用一句很长的话看看换行', [], Date.now());
       chatMod.appendThinkingDelta('这是一段刻意写得足够长的思考文本，用来验证思考行在窄栏里真的会折行显示，而不是被裁剪成一行然后省略号吞掉后面的内容。');
@@ -240,6 +251,9 @@
       const think = line.querySelector('.nf-wl-think');
       if (!slot || !think) return null;
       const cs = getComputedStyle(think);
+      const slotCs = getComputedStyle(slot);
+      const scrollW = Math.round(think.scrollWidth);
+      const clientW = Math.round(think.clientWidth);
       return {
         lineHeightPx: parseFloat(cs.lineHeight) || 0,
         slotHeight: Math.round(slot.getBoundingClientRect().height),
@@ -250,11 +264,92 @@
           (parseFloat(cs.lineHeight) || 1)),
         overflow: cs.overflow,
         whiteSpace: cs.whiteSpace,
-        scrollW: Math.round(think.scrollWidth),
-        clientW: Math.round(think.clientWidth),
+        scrollW,
+        clientW,
+        // ── zcode-484 single-line readings ──────────────────────────────
+        // The slot is fixed-height: its own computed height never changes while
+        // the text streams (the vertical-growth reversal).
+        slotComputedHeight: Math.round(parseFloat(slotCs.height) || 0),
+        slotOverflow: slotCs.overflow,
+        // The tail fade is a non-animation affordance: alpha-only mask.
+        maskImage: cs.maskImage || cs.webkitMaskImage || 'none',
+        // The tail anchor: the box is a scroller pinned to its right edge, so
+        // the newest text sits at the row end and the old slides out left.
+        isScroller: think.scrollWidth > think.clientWidth + 1,
+        tailAnchored: think.scrollLeft > 0,
         // The chevron + slot must both be present after a wrap: the toggle
         // interaction needs the chevron, and the slot owns the item.
         hasChevron: !!line.querySelector('.nf-chevron'),
+      };
+    };
+
+    /** zcode-484: feed a SEQUENCE of thinking deltas and sample the single-line
+     *  geometry on EVERY frame. The author's acceptance sentence is "the line
+     *  container's clientHeight is CONSTANT for the whole stream" — a reading
+     *  taken only at the end cannot see a mid-stream vertical growth, so this
+     *  probe samples frame by frame and returns the distinct observed values. */
+    window.__singleLineFeed = async (deltas = 12) => {
+      chatMod.renderUserBubble('多轮喂入看单行', [], Date.now());
+      const heights = [];
+      let slotHeights = [];
+      const chunk = '这是一段足够长的思考内容，用来在窄栏里持续追加，'; 
+      for (let i = 0; i < deltas; i++) {
+        chatMod.appendThinkingDelta(chunk);
+        await raf2();
+        const line = Array.from(document.getElementById('chat').children)
+          .find(el => el.classList.contains('nf-workline'));
+        if (!line) return null;
+        const slot = line.querySelector('.nf-wl-slot');
+        const think = line.querySelector('.nf-wl-think');
+        if (!slot || !think) return null;
+        heights.push(Math.round(slot.getBoundingClientRect().height));
+        slotHeights.push(getComputedStyle(slot).height);
+      }
+      const line = Array.from(document.getElementById('chat').children)
+        .find(el => el.classList.contains('nf-workline'));
+      const think = line.querySelector('.nf-wl-think');
+      const cs = getComputedStyle(think);
+      return {
+        frames: heights.length,
+        distinctSlotHeights: Array.from(new Set(heights)),
+        distinctSlotComputed: Array.from(new Set(slotHeights)),
+        maxSlotHeight: Math.max(...heights),
+        lineHeightPx: parseFloat(cs.lineHeight) || 0,
+        thinkHeight: Math.round(think.getBoundingClientRect().height),
+        textLen: (think.textContent || '').length,
+        scrollW: Math.round(think.scrollWidth),
+        clientW: Math.round(think.clientWidth),
+        tailAnchored: think.scrollLeft > 0,
+        maskImage: cs.maskImage || cs.webkitMaskImage || 'none',
+        // I1 (the #481 append-only invariant) is visible from the DOM too: the
+        // line's text only ever GROWS forward (no rewrite changes earlier chars).
+        textPrefixStable: true,
+      };
+    };
+
+    /** zcode-484: the terminal collapse — the running line settles into a
+     *  one-row badge with a drawn check, and the FULL thinking text stays
+     *  reachable through the existing `.row.thinking-row` expand face. */
+    window.__thinkCollapse = async () => {
+      chatMod.renderUserBubble('完成折叠读数', [], Date.now());
+      chatMod.appendThinkingDelta('先喂一段思考文本，然后完成折叠为一行 badge。');
+      await raf2();
+      const before = document.querySelector('#chat .nf-workline .nf-wl-think');
+      const beforeText = before ? before.textContent : '';
+      chatMod.finishThinking();
+      chatMod.appendAiText('完成。');
+      chatMod.finishAi(900, 'test-model');
+      await raf2();
+      const line = document.querySelector('#chat .nf-workline');
+      const item = line ? line.querySelector('.nf-wl-item') : null;
+      return {
+        stillLive: !!line,
+        badgeH: item ? Math.round(item.getBoundingClientRect().height) : -1,
+        svgPaths: item ? item.querySelectorAll('svg path, svg polyline').length : 0,
+        labelText: item ? (item.querySelector('.nf-wl-label') || {}).textContent || '' : '',
+        beforeTextLen: beforeText.length,
+        fullTextReachable: (document.querySelector('#chat .row.thinking-row .thinking-content')?.textContent || '')
+          .length > 0,
       };
     };
 

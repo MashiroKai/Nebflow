@@ -282,17 +282,22 @@ export function startWorklineDots(view, startedAt) {
 
 /** Tool (or other single-line process) STARTED: spinner + label. Re-issuing the
  *  same key just refreshes the label (toolCallDetected → toolStart for the same
- *  tool must not flicker a roll). */
+ *  tool must not flicker a roll).
+ *  zcode-484: the label is ONE clipped, tail-faded row like the thinking text,
+ *  so the refresh path re-anchors it to its right edge (`1e7` clamp, no layout
+ *  read — see thinkingWorklineItem's doc for the discipline). */
 export function startWorklineItem(view, label, kind = 'tool') {
   const wl = ensureRow(view);
   if (!wl) return;
   const key = label;
   if (wl.item && wl.key === key && wl.kind === kind) {
     const labelEl = wl.item.querySelector('.nf-wl-label');
-    if (labelEl) labelEl.textContent = label;
+    if (labelEl) { labelEl.textContent = label; labelEl.scrollLeft = 1e7; }
     return;
   }
   swap(wl, buildItem(label, 'spin'), { key, kind, roll: true });
+  const fresh = wl.item && wl.item.querySelector('.nf-wl-label');
+  if (fresh) fresh.scrollLeft = 1e7;
 }
 
 /** Same item COMPLETED: drawn check + bounce, in place (no roll). */
@@ -315,12 +320,25 @@ export function failWorklineItem(view, key) {
   swap(wl, buildItem(text, '', 'is-error'), { key: wl.key, kind: wl.kind, roll: false });
 }
 
-/** Thinking: the badge shows the thinking text as TEXT (UI-C text cadence) and
- *  the line WRAPS (UI-A) — the earlier single-line width reveal clipped the
- *  text with `overflow:hidden` + a per-call `maxWidth`, which is exactly the
- *  「一直是一行」 the author scored. Later calls only replace the string; the
- *  cadence comes from the CSS caret, never from a per-token DOM rebuild
- *  (that is the A3/A7 discipline — no per-token DOM rebuild). */
+/** Thinking: the badge shows the thinking text as TEXT (UI-C text cadence). The
+ *  line is ONE row (zcode-484 batch, author ruling 2026-10-04 09:29
+ *  「在一行进行流式，像zcode一样」) — the 2026-10-03 UI-A wrapping rule is
+ *  reversed, so the box is a fixed-height `nowrap` clipper and the streaming
+ *  text scrolls inside it.
+ *
+ *  THE TAIL ANCHOR: after every append the box is pinned to its right edge
+ *  (`scrollLeft = 1e7`, the same clamp idiom chat.js uses for the chat
+ *  scroll container). New content therefore flows in at the right and the older
+ *  content slides out to the left, under the CSS tail fade — the zcode shape.
+ *  The anchor is written AFTER the append, never before, and never reads a
+ *  geometry property: the `1e7` write is itself the clamp, so this adds no
+ *  layout read to the streaming frame (the B4 one-geometry-read-per-frame
+ *  discipline; cargo-culting `scrollWidth` here would be one read per delta).
+ *
+ *  Cadence stays the CSS caret, never a per-token DOM rebuild (A3/A7). Later
+ *  calls only replace/extend the string — the prefix test below appends just
+ *  the new tail, and the write is unconditional because a freshly built
+ *  `.nf-wl-think` is never already at the right edge. */
 export function thinkingWorklineItem(view, text) {
   const wl = ensureRow(view);
   if (!wl) return;
@@ -348,6 +366,9 @@ export function thinkingWorklineItem(view, text) {
     think.textContent = next;
   }
   think._nfText = next;
+  // Tail anchor (see the doc above): pin the scroller to its right edge so the
+  // newest text sits at the row's end and the old text slides out left.
+  think.scrollLeft = 1e7;
 }
 
 /** Thinking finished: swap the reveal for the completed label + check. */
