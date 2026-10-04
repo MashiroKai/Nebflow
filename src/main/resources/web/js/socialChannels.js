@@ -198,7 +198,10 @@ export const SOCIAL_CHANNELS = [
         i18n: 'social.weixinIlink.field.ilinkBotId' },
       { key: 'ilink_user_id', kind: 'text', required: true,
         i18n: 'social.weixinIlink.field.ilinkUserId' },
-      { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://',
+      // baseurl fix (soc483 batch): spelled `.*`-tailed, byte-identical to the
+      // backend FieldSpec, so the frontend `.test()` face and the backend
+      // `String.matches` face accept exactly the same set of values.
+      { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://.*',
         i18n: 'social.weixinIlink.field.baseurl' },
       // 🔴 FULL-MATCH spelling (mirror of the backend's String.matches
       // enforcement): a prefix pattern would reject every real URL on save.

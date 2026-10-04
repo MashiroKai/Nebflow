@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.Ref
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.bridge.BridgeContext
 import nebflow.shared.SessionMeta
@@ -71,6 +72,19 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
 
   end RecordingCtx
+
+  /** Recording context that ALSO captures the origin descriptor of each
+    *  injection (soc483: the inbound source marker). */
+  private final class OriginRecordingCtx(sessions: List[SessionMeta]) extends BridgeContext:
+    val origins: Ref[IO, List[Option[nebflow.bridge.BridgeOrigin]]] =
+      Ref.unsafe[IO, List[Option[nebflow.bridge.BridgeOrigin]]](Nil)
+    def injectMessage(sessionId: String, content: String, senderId: Option[String],
+        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+      origins.update(_ :+ origin)
+    def interruptAgent(sessionId: String): IO[Unit] = IO.unit
+    def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
+    def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
+    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
 
   private def plugin(allowed: Option[List[String]] = None, root: os.Path = tmpRoot()): WeixinIlinkBridgePlugin =
     new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = allowed)
@@ -450,7 +464,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     ("bot_token", "secret", true, None, Some("social-weixin-bot-token")),
     ("ilink_bot_id", "text", true, None, None),
     ("ilink_user_id", "text", true, None, None),
-    ("baseurl", "url", false, Some("^https?://"), None),
+    // soc483 batch: `.*`-tailed spelling, byte-identical to the frontend
+    // mirror (socialChannels.js) and to `sidecar_url` below. The bare prefix
+    // spelling was rejected by the save face for every URL carrying a path.
+    ("baseurl", "url", false, Some("^https?://.*"), None),
     // weixin-scanbind (2026-10-03): the side-car control leg — the FULL-MATCH
     // spelling (the save validation runs String.matches, so a prefix pattern
     // would reject every real URL).
@@ -523,6 +540,106 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       case Right(_) => ()
       case Left(err) => fail(s"save refused: $err")
     assertEquals(WeixinIlinkBridgePlugin.readChannelConfig(root).allowedIlinkUserIds, List("wx_a", "wx_b", "wx_c"))
+  }
+
+  // ─────────── soc483: baseurl save-face validation (positive + counter-example) ───────────
+
+  /** The card's own documented shape: the two required plain fields plus the
+    *  required secret, so a save cannot fail for a reason other than the URL. */
+  private def saveBody(baseurl: String): Json =
+    io.circe.parser
+      .parse(
+        s"""{"fields":{"ilink_bot_id":"deadbeef@im.bot","ilink_user_id":"wx_scan","bot_token":"plain-token","baseurl":"$baseurl"}}"""
+      )
+      .toOption
+      .get
+
+  test("WI-B1 a real baseurl WITH a path is accepted (the bare-prefix spelling used to reject it)") {
+    val root = tmpRoot()
+    SocialChannels.save(root, WeixinIlinkBridgePlugin.Name, saveBody("https://open.example.com/api")) match
+      case Right(_) => ()
+      case Left(err) => fail(s"a path-carrying https baseurl must be accepted, got: $err")
+    val stored = SocialChannels.channelsJson(root).hcursor
+      .downField("channels").downField(WeixinIlinkBridgePlugin.Name).downField("fields")
+    assertEquals(stored.downField("baseurl").as[String].toOption,
+      Some("https://open.example.com/api"), "the value must be stored verbatim")
+  }
+
+  test("WI-B2 a non-URL baseurl is STILL refused (the fix did not open the gate)") {
+    val root = tmpRoot()
+    SocialChannels.save(root, WeixinIlinkBridgePlugin.Name, saveBody("notaurl")) match
+      case Left(SocialChannels.Failure.InvalidField(f, _)) => assertEquals(f, "baseurl")
+      case other => fail(s"a bare word must be refused on `baseurl`, got: $other")
+    SocialChannels.save(root, WeixinIlinkBridgePlugin.Name, saveBody("ftp://host/x")) match
+      case Left(SocialChannels.Failure.InvalidField(f, _)) => assertEquals(f, "baseurl")
+      case other => fail(s"a non-http scheme must be refused on `baseurl`, got: $other")
+  }
+
+  test("WI-B3 an EMPTY baseurl is accepted (optional field — presence is what gets matched)") {
+    val root = tmpRoot()
+    SocialChannels.save(root, WeixinIlinkBridgePlugin.Name, saveBody("")) match
+      case Right(_) => ()
+      case Left(err) => fail(s"an empty optional field must not be refused, got: $err")
+  }
+
+  test("WI-B4 the SECOND validation path reads the same pattern (one source, not two)") {
+    // `SocialChannels.verified` is the other place a field's pattern is applied
+    // (whole-value `String.matches`, not `save`'s pair scan). A card that is
+    // `verified` proves that path accepts what the fixed pattern accepts; and a
+    // bad URL proves BOTH paths read the same `f.pattern` rather than one
+    // carrying its own hardcoded copy.
+    val root = tmpRoot()
+    SocialChannels.save(root, WeixinIlinkBridgePlugin.Name, saveBody("https://open.example.com/x/y"))
+    // A plain field matching but the required secret being unwritten ⇒ not
+    // verified. The point of this row is only the PATTERN face, so it asserts on
+    // the pattern predicate the two paths share, at the card-definition level.
+    val baseurl = SocialChannels.channel(WeixinIlinkBridgePlugin.Name).get.fields.find(_.key == "baseurl").get
+    assertEquals(baseurl.pattern, Some("^https?://.*"))
+    assert("https://open.example.com/x/y".matches(baseurl.pattern.get),
+      "the shared pattern must accept a path-carrying URL (save) …")
+    assert(!"notaurl".matches(baseurl.pattern.get),
+      "…and refuse a bare word (verified), through the SAME pattern object")
+  }
+
+  // ─────────── soc483: the weixin inbound source marker ───────────
+
+  test("WI-S1 the weixin inbound injection announces its OWN origin (id + display label), not feishu's") {
+    val c = new OriginRecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin(allowed = Some(Nil))
+    for
+      _ <- started(p, c)
+      _ <- p.intake(c, inbound(Some("wx_alice")))
+      got <- c.origins.get
+    yield
+      assertEquals(got.size, 1, "exactly one injection carries an origin")
+      val o = got.head.getOrElse(fail("the injection must carry an origin descriptor"))
+      assertEquals(o.channelId, WeixinIlinkBridgePlugin.Name,
+        "the channel id is this bridge's own stable name")
+      assertEquals(o.channelDisplay, WeixinIlinkBridgePlugin.ChannelDisplay,
+        "the display label comes from this channel's own constant")
+      assert(o.channelDisplay != FeishuBridgePlugin.ChannelDisplay,
+        "the label must never be a copy of another channel's label")
+      assertEquals(o.chatRef, None, "iLink carries no conversation reference ⇒ the marker renders the neutral `-`")
+  }
+
+  test("WI-S2 the label rides the marker template: the rendered block names this channel only") {
+    val origin = nebflow.bridge.BridgeOrigin(
+      channelId = WeixinIlinkBridgePlugin.Name,
+      channelDisplay = WeixinIlinkBridgePlugin.ChannelDisplay)
+    val marker = nebflow.bridge.BridgeOrigin.marker(origin, Some("wx_alice"))
+    assert(marker.contains(WeixinIlinkBridgePlugin.ChannelDisplay), marker)
+    assert(marker.contains(WeixinIlinkBridgePlugin.Name), marker)
+    assert(!marker.contains(FeishuBridgePlugin.ChannelDisplay), s"the feishu label leaked in: $marker")
+  }
+
+  test("WI-S3 the outbound leg of this seam stays a stated no-op (boundary unchanged)") {
+    // The soc483 batch adds an INBOUND source marker only. The outbound boundary
+    // (replies belong to the host that runs the plugin) is what this pins: the
+    // call must be a no-op that opens nothing and returns cleanly.
+    val p = plugin()
+    for _ <- p.onAgentEvent("s1", Json.obj("type" -> "toolEnd".asJson, "sessionId" -> "s1".asJson,
+        "content" -> "___CARD_HTML___{}".asJson, "isError" -> false.asJson))
+    yield ()
   }
 
 end WeixinIlinkBridgeSpec

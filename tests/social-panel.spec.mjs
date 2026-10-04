@@ -237,7 +237,7 @@ const ILINK_CONTRACT = {
     { key: 'bot_token', kind: 'secret', required: true, pattern: undefined, secretName: 'social-weixin-bot-token' },
     { key: 'ilink_bot_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
     { key: 'ilink_user_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
-    { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://', secretName: undefined },
+    { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://.*', secretName: undefined },
     { key: 'sidecar_url', kind: 'url', required: false, pattern: '^https?://.*', secretName: undefined },
     { key: 'allowed_ilink_user_ids', kind: 'text', required: false, pattern: undefined, secretName: undefined },
   ],

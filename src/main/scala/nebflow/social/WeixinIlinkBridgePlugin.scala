@@ -175,7 +175,19 @@ final class WeixinIlinkBridgePlugin(
 
   private def inject(ctx: BridgeContext, in: Inbound, sessionId: String): IO[Verdict] =
     logger.info(s"weixin-ilink bridge: sender ${in.routeKey} -> session $sessionId") *>
-      ctx.injectMessage(sessionId, in.text.getOrElse(""), in.senderId).as(Verdict.Injected(sessionId))
+      ctx.injectMessage(sessionId, in.text.getOrElse(""), in.senderId, originOf(in)).as(Verdict.Injected(sessionId))
+
+  /** The channel-agnostic origin descriptor this bridge contributes. The channel
+    * id is the bridge's own stable name and the display name is this channel's
+    * human label — supplied by the channel itself, never copied from another
+    * channel's label. The iLink protocol has no conversation reference of its
+    * own (the routing key is the sender id), so `chatRef` is `None` and the
+    * marker renders the neutral `-`. Pure data — the template lives on the
+    * channel-agnostic side ([[nebflow.bridge.BridgeOrigin]]). */
+  private def originOf(in: Inbound): Option[nebflow.bridge.BridgeOrigin] =
+    Some(nebflow.bridge.BridgeOrigin(
+      channelId = WeixinIlinkBridgePlugin.Name,
+      channelDisplay = WeixinIlinkBridgePlugin.ChannelDisplay))
 
   // ───────────────────────────── routing ─────────────────────────────
   override def refreshRoutes: IO[Unit] =
@@ -216,6 +228,13 @@ object WeixinIlinkBridgePlugin:
 
   /** The bridge-config field carrying the sender id in a binding. */
   val RouteKey = "ilink_user_id"
+
+  /** The human-readable label this channel announces in the source-marker block
+    * (soc483 batch). Same value as the card's own name copy
+    * (`social.weixinIlink.name`) — the label belongs to THIS channel; it is
+    * never copied from another channel's label. Data only: the marker template
+    * lives on the channel-agnostic side ([[nebflow.bridge.BridgeOrigin.marker]]). */
+  val ChannelDisplay = "微信（iLink）"
 
   /** Companion-side logger (the sync leg lives here, outside any instance). */
   private val log = NebflowLogger.forName("nebflow.social.weixin-ilink-bridge")
