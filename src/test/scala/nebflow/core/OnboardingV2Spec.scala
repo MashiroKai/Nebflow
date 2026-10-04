@@ -134,6 +134,61 @@ class OnboardingV2Spec extends FunSuite:
     assertEquals(MemoryBudget.agentInjectionHardBytes(32000), 12800L)
 
   // ---------------------------------------------------------------
+  // 模型步骤：选定模型写回配置存储（模型链面）
+  // ---------------------------------------------------------------
+
+  test("write-back: 选定模型写回 agents/<root>/agent.json 的 model 键（设置面同一字段）"):
+    reset()
+    assertEquals(
+      OnboardingModelStep.writeSelectedChain("zhipu/glm-4.6").unsafeRunSync(),
+      Right(AgentModelConfig(preferred = Some("zhipu/glm-4.6"), fallbacks = Nil)),
+      "空链用户 ⇒ 单元素链（fallback 是显式决定，不自动填充）"
+    )
+    val chain = SchemePolicy.ownChainOf(rootName)
+    assertEquals(chain.flatMap(_.preferred), Some("zhipu/glm-4.6"))
+    // 设置面的读取面（GET /agents/:name/model 的解析腿）现在必须从 seed 变成
+    // own-chain —— 这正是 round-2 复核 fail 的那半条判据。
+    val (effective, from) = SchemePolicy.resolveModel(rootName, chain)
+    assertEquals(from, SchemePolicy.OwnChainSource, s"设置面 resolvedFrom 必须是 own-chain，实际 $from")
+    assertEquals(effective.preferred, Some("zhipu/glm-4.6"))
+    // 机制键不因写链而漂移（身份键冻结）
+    val agentJson = io.circe.parser.parse(os.read(home / "agents" / rootName / "agent.json")).toOption.get
+    assertEquals(agentJson.hcursor.downField("name").as[String].toOption, Some("Nebula"))
+
+  test("write-back: 已有链的用户重跑引导 ⇒ 选定项提升为首选，既有 fallback 深度全保（不塌缩）"):
+    reset()
+    // 用户已积累的链（真实用户形态：一个 preferred + 三条 fallback）
+    os.write(
+      home / "agents" / rootName / "agent.json",
+      """{"name":"Nebula","model":{"preferred":"zhipu/GLM-5.3-Flash","fallbacks":["cmdcode/deepseek/deepseek-v4.1-flash","kimi/kimi-k3","deepseek/deepseek-flash"]}}""",
+      createFolders = true
+    )
+    OnboardingModelStep.writeSelectedChain("kimi/kimi-k3").unsafeRunSync() match
+      case Left(e) => fail(s"应成功，实际 $e")
+      case Right(next) =>
+        assertEquals(next.preferred, Some("kimi/kimi-k3"))
+        // 🔴 旧 preferred 与其余 fallback 全部保留、保序；选定项从后备里去重
+        assertEquals(
+          next.fallbacks,
+          List("zhipu/GLM-5.3-Flash", "cmdcode/deepseek/deepseek-v4.1-flash", "deepseek/deepseek-flash"),
+          "重跑引导不得把用户的 fallback 深度塌缩掉"
+        )
+        assertEquals(next.fallbacks.size, 3, "链深必须仍是 4（1 preferred + 3 fallbacks）")
+    // displayName / name 等其它键不被写链抹掉
+    val reinstated = io.circe.parser.parse(os.read(home / "agents" / rootName / "agent.json")).toOption.get
+    assertEquals(reinstated.hcursor.downField("name").as[String].toOption, Some("Nebula"))
+
+  test("write-back: 选定模型幂等 —— 同一 ref 重选，链不变；坏 ref ⇒ Left"):
+    reset()
+    OnboardingModelStep.writeSelectedChain("zhipu/glm-4.6").unsafeRunSync()
+    val first = SchemePolicy.ownChainOf(rootName)
+    OnboardingModelStep.writeSelectedChain("zhipu/glm-4.6").unsafeRunSync()
+    assertEquals(SchemePolicy.ownChainOf(rootName), first, "同 ref 重复选择必须幂等")
+    assert(OnboardingModelStep.writeSelectedChain("no-slash").unsafeRunSync().isLeft, "无法解析的 ref ⇒ Left")
+    assert(OnboardingModelStep.writeSelectedChain("   ").unsafeRunSync().isLeft, "空白 ref ⇒ Left")
+    assertEquals(SchemePolicy.ownChainOf(rootName), first, "失败的写链不得动盘上的链")
+
+  // ---------------------------------------------------------------
   // 答案持久化（逐题 upsert，保留 state / probeOkAt）
   // ---------------------------------------------------------------
 

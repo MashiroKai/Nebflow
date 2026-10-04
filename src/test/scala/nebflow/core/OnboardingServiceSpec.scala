@@ -135,6 +135,11 @@ class OnboardingServiceSpec extends FunSuite:
         LlmMeta(sessionId = "llm-probe", agentId = "llm-probe", providerId = providerId, model = "m", durationMs = 1)
     )
 
+  /** The answer of a SPECIFIC candidate — what a real chain returns when the
+    *  picked model (or a fallback covering for it) answers. */
+  private def okResponseFor(providerId: String, model: String): LlmResponse =
+    okResponse(providerId).copy(meta = okResponse(providerId).meta.copy(model = model))
+
   test("probeLlm sends minimal User message request through the global handle") {
     var captured: LlmRequest = null
     val spy = new LlmHandle[IO]:
@@ -155,6 +160,163 @@ class OnboardingServiceSpec extends FunSuite:
     assertEquals(captured.messages.head.role, MessageRole.User)
     assertEquals(captured.messages.head.content, Left("回复 ok"))
     assert(captured.tools.isEmpty)
+    // no ref ⇒ no per-request model chain: the global (seed) chain decides
+    assertEquals(captured.agentModel, None, "不带 ref 的探针必须保持历史形态（全局链）")
+  }
+
+  test("probeLlm(modelRef) puts the picked model on the request (the probe measures the user's pick)") {
+    var captured: LlmRequest = null
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] =
+        captured = req; IO.pure(okResponseFor("pppick", "pick-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService.probeLlm(spy, Some("pppick/pick-model")).unsafeRunSync()
+    assert(res.ok)
+    assertEquals(
+      captured.agentModel,
+      Some(AgentModelConfig(preferred = Some("pppick/pick-model"))),
+      "选定 ref 必须落在 LlmRequest.agentModel（既有点：interface.scala → getCandidatesForAgent）"
+    )
+    // a blank / whitespace ref is the same as no ref (never an empty preferred)
+    val blank = OnboardingService.probeLlm(spy, Some("   ")).unsafeRunSync()
+    assert(blank.ok)
+    assertEquals(captured.agentModel, None, "空白 ref 不得变成空 preferred")
+  }
+
+  test("probeLlm(modelRef): a fallback covering for a dead pick is NOT a success (no probeOkAt)") {
+    // The chain ends with the reserve tier, so a dead preferred falls through to
+    // another live provider. That answer must not be recorded as the user's brain
+    // working — the round-2 decisive reading (pick-dead ⇒ ok=true) is exactly this.
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.pure(okResponseFor("ssseed", "seed-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService.probeLlm(spy, Some("pppick/pick-model")).unsafeRunSync()
+    assert(!res.ok, s"选定的模型没答，别人代答 ⇒ 探针必须失败，实际 ok=${res.ok}")
+    assert(res.error.exists(_.contains("pppick/pick-model")), s"失败理由须点名选定 ref：${res.error}")
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), None, "代答不得记录 probeOkAt")
+    // …and the terminal gate therefore still refuses `done`.
+    assertEquals(OnboardingService.setState(OnboardingService.OnboardingState.Done).unsafeRunSync().isLeft, true)
+  }
+
+  test("probeLlm(modelRef): the picked model answering IS a success (gate opens for the right model)") {
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.pure(okResponseFor("pppick", "pick-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService.probeLlm(spy, Some("pppick/pick-model")).unsafeRunSync()
+    assert(res.ok)
+    assert(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt).isDefined)
+    assertEquals(OnboardingService.setState(OnboardingService.OnboardingState.Done).unsafeRunSync().isRight, true)
+  }
+
+  test("probeLlm(modelRef): a malformed ref fails loudly instead of degrading to another provider") {
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.pure(okResponse("prov-a"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService.probeLlm(spy, Some("no-slash")).unsafeRunSync()
+    assert(!res.ok, "无法解析的 ref 不得让链路改判到别的 provider 上")
+    assert(res.error.exists(_.toLowerCase.contains("invalid")), s"须给出可操作理由：${res.error}")
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), None)
+  }
+
+  /** The config body the probe consults to tell "does not exist" from "did not
+    *  answer" — the shape `configService.getConfig` returns. */
+  private def probeCfg(providerId: String, modelIds: String*): String =
+    io.circe.Json
+      .obj(
+        "llm" -> io.circe.Json.obj(
+          "providers" -> io.circe.Json.obj(
+            providerId -> io.circe.Json.obj(
+              "baseUrl" -> io.circe.Json.fromString("https://example.invalid/v1/"),
+              "models" -> io.circe.Json.arr(modelIds.map(id => io.circe.Json.obj("id" -> io.circe.Json.fromString(id)))*)
+            )
+          )
+        )
+      )
+      .noSpaces
+
+  test("probeLlm(modelRef): a well-formed ref naming an UNKNOWN model is refused (no false success)") {
+    // E2E section G4: an unknown model id resolves to no candidate, the reserve
+    // tier covers for it, and the call returns 200 from a live provider — which
+    // used to be reported as ok for a model that does not exist. The config body
+    // is what lets the probe refuse it WITHOUT even calling the provider.
+    var called = false
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] =
+        called = true; IO.pure(okResponseFor("livelive", "other-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService
+      .probeLlm(spy, Some("livelive/ghost-model"), Some(probeCfg("livelive", "real-model")))
+      .unsafeRunSync()
+    assert(!res.ok, s"配置里没有的 model 不得报成功，实际 ok=${res.ok}")
+    assert(res.error.exists(_.contains("ghost-model")), s"理由须点名该 model：${res.error}")
+    assert(!called, "不存在的 model 不该发起网络调用（也就没有『别人代答』的机会）")
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), None)
+  }
+
+  test("probeLlm(modelRef): a ref naming an UNKNOWN provider is refused too") {
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.pure(okResponseFor("livelive", "real-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService
+      .probeLlm(spy, Some("ghostprov/m"), Some(probeCfg("livelive", "real-model")))
+      .unsafeRunSync()
+    assert(!res.ok, "未配置的 provider 不得报成功")
+    assert(res.error.exists(_.contains("ghostprov")), s"理由须点名该 provider：${res.error}")
+  }
+
+  test("probeLlm(modelRef): a ref the config DOES contain still probes normally (the check is not a blanket refusal)") {
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.pure(okResponseFor("livelive", "real-model"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    val res = OnboardingService
+      .probeLlm(spy, Some("livelive/real-model"), Some(probeCfg("livelive", "real-model")))
+      .unsafeRunSync()
+    assert(res.ok)
+    assert(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt).isDefined)
+  }
+
+  test("probeLlm(modelRef) with no config supplied keeps the old shape (unknown ids are not judged)") {
+    // Guards the optional parameter: callers that pass no config (legacy / test
+    // doubles) must not start failing for a reason they cannot express.
+    val spy = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.pure(okResponseFor("someone", "other"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
+        fs2.Stream.empty
+    // The answering-ref check still applies (it always did); only the
+    // existence check is skipped. So a covering answer is still a refusal.
+    val res = OnboardingService.probeLlm(spy, Some("pppick/pick-model")).unsafeRunSync()
+    assert(!res.ok, "无 config 时『答者校验』仍生效")
   }
 
   test("probeLlm attributes FallbackExhaustedError per provider") {
