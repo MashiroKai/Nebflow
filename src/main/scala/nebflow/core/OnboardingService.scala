@@ -72,6 +72,50 @@ object OnboardingService:
           Some(StoredState(stateStr.flatMap(OnboardingState.fromString).getOrElse(OnboardingState.Pending), probeOkAt))
   }
 
+  // ============================================================
+  // 问卷答案（personal-agent 批 2026-10-04）
+  // ============================================================
+
+  /**
+   * 答案在 `onboarding.json` 里的键名。
+   *
+   * 与 `state` / `probeOkAt` **同文件**（而不是另起一个 `onboarding-answers.json`）：
+   * 问卷是一次性状态的三个面（走到哪、探测成功过没有、答了什么），拆文件会让
+   * 「重跑 onboarding」的清空动作变成两处、漏一处就残留半套答案。
+   */
+  private val AnswersKey = "answers"
+
+  /** 读答案（无文件 / 无该键 ⇒ 空表）。 */
+  def readAnswers(): IO[Map[String, io.circe.Json]] = IO.blocking {
+    readStoredJson().flatMap(_.hcursor.downField(AnswersKey).focus.flatMap(_.asObject)).map(_.toMap).getOrElse(Map.empty)
+  }
+
+  /**
+   * 合并写入答案（**逐题 upsert**，不是整表覆盖）：一题一卡、逐题推进的问卷里，
+   * 前端每题 resolve 后就落一次；整表覆盖会把前面已答的题抹掉（重放路径尤甚）。
+   *
+   * `state` / `probeOkAt` 一律保留（读-改-写，与 [[setState]] 同款纪律）。
+   */
+  def mergeAnswers(patch: Map[String, io.circe.Json]): IO[Unit] = IO.blocking {
+    val current = readStoredJson().getOrElse(io.circe.Json.obj())
+    val existing = current.hcursor.downField(AnswersKey).focus.flatMap(_.asObject).map(_.toMap).getOrElse(Map.empty)
+    val merged = io.circe.Json.obj((existing ++ patch).toSeq.map((k, v) => k -> v)*)
+    AtomicJson.writeSync(statePath, current.deepMerge(io.circe.Json.obj(AnswersKey -> merged)).noSpaces)
+  }
+
+  /** 清空答案（重跑 onboarding 用；保留 state / probeOkAt）。 */
+  def clearAnswers(): IO[Unit] = IO.blocking {
+    val current = readStoredJson().getOrElse(io.circe.Json.obj())
+    AtomicJson.writeSync(
+      statePath,
+      current.asObject.map(o => io.circe.Json.fromJsonObject(o.remove(AnswersKey))).getOrElse(current).noSpaces
+    )
+  }
+
+  private def readStoredJson(): Option[io.circe.Json] =
+    if !os.exists(statePath) then None
+    else io.circe.parser.parse(os.read(statePath)).toOption
+
   /**
    * Persist a state transition (read-modify-write: probeOkAt is NEVER
    * erased by a state write). HARD GATE: Done requires a recorded

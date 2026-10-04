@@ -1,40 +1,61 @@
-// onboarding.js — chat-native first-run onboarding (onboarding-redesign-spec v1.0).
+// onboarding.js — chat-native first-run onboarding (v2 conversational questionnaire).
 //
-// The old modal wizard (overlay steps + probe-gated fixed greeting) is gone.
-// The guide now lives in the main chat stream:
-//   S1  Nebula simulated typewriter greeting (pre-recorded, honest about it,
-//       skippable — no real LLM, no WS frames, render-layer only)
-//   S2  main card Q1→Q2(→U1) with dependsOn reveals → branch dispatch
-//   S3c sub cards C/A/B collect baseUrl/apiKey/model → summary bubble
-//       (typewritten, masked key) → [Save & Test / Back]
-//   S4  saveNewProvider → flushConfigToServer (updateConfig WS frame, NO
-//       llm.model write — #339: backend auto-creates the general preset)
-//       → probeLlm hard gate → done / attributed error bubble
+// v2 (personal-agent batch 2026-10-04) replaces the old modal wizard / v1 fixed
+// greeting with the demo-established conversational flow:
+//   demo/personal-agent-onboarding-v2.html  (79107 B / 1731 lines / sha256
+//   b8d0bb0c1b7bcccb6388d565d06ab9f0736ce2e0a1f8afd98b2a69e7cc540205)
+//   design note = .nebflow/onboarding/20261004_011652_v2-interaction-design__personal-agent-onboarding.md
 //
-// Trigger: main.js configData handler calls initOnboarding(msg) once per boot.
-// Replay: /onboarding slash command + Settings "Re-run Onboarding" both land
-// here (replayOnboarding / setOnboardingState('pending') + reload).
-// Backend contract unchanged (WebSocketRoutes):
-//   getConfig → configData { configured, onboarding: 'pending'|'done'|'skipped'|null }
-//   { type:'setOnboardingState', state } → onboardingStateSet { state }
-//   { type:'probeLlm' } → probeResult { ok, error? }   (15s backend timeout)
+// Shape (v2 demo SCRIPT, single source — 11 questions, one card each, order = run order):
+//   1  name       free-first   Agent display name (→ Soul.md + agent.json displayName)
+//   2  call       free-first   how to address the user (→ User.md)
+//   3  model      choice+fields brain config (configured providers → same config store as Settings)
+//   4  role       choice       Soul.md 角色定位
+//   5  style      choice       Soul.md 语言风格
+//   6  pro        choice       Soul.md 主动程度
+//   7  boundaries multi        Soul.md 相处约定
+//   8  temper1    choice       Soul.md 语气基线
+//   9  temper2    choice       Soul.md 做事方式
+//   10 identity   choice       User.md 日常身份
+//   11 focus      free-first   User.md 当前关注
+//
+// Discipline (task book §2 B):
+//   - every question carries 跳过这一题 (no exception — model / name / call too);
+//   - choice questions carry a permanent 「都不是，我自己说」 free-input fallback;
+//   - question text streams FIRST, then a 240ms beat, THEN the option card appears
+//     (🔴 no instant card pop);
+//   - the pseudo-streaming reuses the note's own render layer, which is the SAME
+//     typewriter family the previous onboarding already used in this file (typeInto /
+//     simBubble) — no second typewriter is introduced;
+//   - answers persist per question (WS setOnboardingAnswers, per-question upsert) and
+//     the artifacts (Soul.md / User.md / displayName) are written once at finish
+//     (WS finishOnboarding).
+//
+// Backend contract (gateway/WsConfigHandlers.scala):
+//   getConfig            → configData { configured, onboarding:'pending'|'done'|'skipped'|null, config }
+//   setOnboardingState   → onboardingStateSet { state }
+//   setOnboardingAnswers { answers:{id:{kind,value,values?,label,scope}} } → onboardingAnswersSaved { count }
+//   getOnboardingModels  → onboardingModels { source, providers[], models[] }
+//   probeLlm             → probeResult { ok, error? }        (15s backend timeout)
+//   finishOnboarding     { answers, modelRef?, contextWindow? } → onboardingArtifacts { ... }
+//   updateConfig         → configUpdated (same single write path the Settings panel uses)
 
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { activeView } from './chatView.js';
-import { showOptions } from './chat.js';
-import { saveNewProvider } from './sidebar.js';
-import { t } from './i18n.js';
-import { smartScroll } from './utils.js';
+import { t, getLocale } from './i18n.js';
+import { smartScroll, escapeHtml } from './utils.js';
 
 const PROBE_TIMEOUT_MS = 20000; // backend times out at 15s; this is the last-resort guard
+const MODEL_REQ_TIMEOUT_MS = 8000;
 
 let started = false;           // trigger once per boot (configData re-fires on config save)
-let busy = false;              // save+probe in-flight lock (E17 double-click guard)
+let busy = false;              // finish-in-flight lock (double-click guard)
 let pendingProbe = null;       // { resolve, timer } while a probeLlm is in flight
+let pendingModels = null;      // { resolve, timer } while a getOnboardingModels is in flight
 let activeSim = null;          // current typewriter controller { finish } — for Esc / replay cleanup
 
-// ── probeLlm hard gate (reused from the old wizard) ──────────
+// ── probeLlm hard gate ───────────────────────────────────────
 onMessage('probeResult', (msg) => {
   if (!pendingProbe) return;
   clearTimeout(pendingProbe.timer);
@@ -53,20 +74,46 @@ function probeLlm() {
   });
 }
 
+// ── configured model list (same source as the Settings panel) ─
+onMessage('onboardingModels', (msg) => {
+  if (!pendingModels) return;
+  clearTimeout(pendingModels.timer);
+  const { resolve } = pendingModels;
+  pendingModels = null;
+  resolve({ providers: msg.providers || [], models: msg.models || [] });
+});
+
+function getOnboardingModels() {
+  return new Promise((resolve) => {
+    pendingModels = { resolve, timer: setTimeout(() => {
+      pendingModels = null;
+      resolve({ providers: [], models: [] });
+    }, MODEL_REQ_TIMEOUT_MS) };
+    sendWs({ type: 'getOnboardingModels' });
+  });
+}
+
 // ── State writes ─────────────────────────────────────────────
 function setOnboardingState(next) {
   sendWs({ type: 'setOnboardingState', state: next });
 }
 
-// ── Typewriter engine (§4) ───────────────────────────────────
-// Pure render-layer simulation: char-by-char into .ob-para divs with
-// punctuation pauses, 400ms segment gaps, blinking cursor, skip (bubble click
-// / Esc / skip button) → instant full text; reduced-motion → instant full text.
-const TYPING_MS = 36;
-const PUNCT_PAUSE_MS = 150;
-const DASH_PAUSE_MS = 250;
-const SEGMENT_GAP_MS = 400;
-const DONE_GAP_MS = 600;      // pause after the greeting before the main card
+/** Persist one question's answer immediately (per-question upsert; the terminal
+ *  write of Soul.md / User.md happens once at finish). */
+function persistAnswer(rec) {
+  sendWs({ type: 'setOnboardingAnswers', answers: { [rec.id]: rec } });
+}
+
+// ── Typewriter engine (§4 of the design note) ────────────────
+// Pure render-layer simulation: char-by-char into .ob-para divs with punctuation
+// pauses, segment gaps, blinking cursor, skip (bubble click / Esc / skip button)
+// → instant full text; reduced-motion → instant full text. Parameter set matches
+// the v2 design note (30/130/220/320).
+const TYPING_MS = 30;
+const PUNCT_PAUSE_MS = 130;
+const DASH_PAUSE_MS = 220;
+const SEGMENT_GAP_MS = 320;
+const CARD_BEAT_MS = 240;      // beat between "question finished streaming" and card reveal
 
 function reducedMotion() {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -74,7 +121,7 @@ function reducedMotion() {
 
 /** Type segments into the .ob-para children of `body`. Returns { finish } —
  *  finish() instantly completes all remaining text and fires onDone once. */
-function typeInto(body, segments, { onDone = null, skipable = true }) {
+function typeInto(body, segments, { onDone = null } = {}) {
   const paras = [...body.querySelectorAll('.ob-para')];
   let cancelled = false;
   let seg = 0, pos = 0;
@@ -135,371 +182,688 @@ function typeInto(body, segments, { onDone = null, skipable = true }) {
   return { finish };
 }
 
-/** Build a simulated AI bubble in the chat stream with the typewriter
- *  attached. `segments` = paragraphs of one bubble. Returns the row element. */
-function simBubble(segments, { onDone = null, skipable = true, source = 'NEBULA' } = {}) {
+/** Build a simulated AI bubble in the chat stream with the typewriter attached.
+ *  `segments` = paragraphs of one bubble. Returns the row element. */
+function simBubble(segments, { onDone = null, source = null, question = false } = {}) {
   const chat = activeView?.dom?.chat;
   if (!chat) return null;
   const row = document.createElement('div');
   row.className = 'row ai';
   const bubble = document.createElement('div');
   bubble.className = 'bubble ai ob-sim-bubble';
-  // Source label — the greeting honestly declares itself pre-recorded (§4.1).
   const src = document.createElement('div');
   src.className = 'ask-user-source';
-  src.textContent = source;
+  src.textContent = source || sourceLabel();
   const body = document.createElement('div');
   body.className = 'ob-body';
-  segments.forEach(() => {
+  segments.forEach((_, i) => {
     const p = document.createElement('div');
     p.className = 'ob-para';
+    if (question && i === segments.length - 1) p.classList.add('ob-question');
     body.appendChild(p);
   });
   bubble.append(src, body);
   row.appendChild(bubble);
   chat.appendChild(row);
   smartScroll();
-  const ctrl = typeInto(body, segments, { onDone, skipable });
-  if (skipable && !reducedMotion()) {
+  const ctrl = typeInto(body, segments, { onDone });
+  if (!reducedMotion()) {
     const skip = document.createElement('button');
     skip.type = 'button';
     skip.className = 'ob-skip glass-control';
-    skip.textContent = t('onboarding.sim.skip');
+    skip.textContent = t('ob2.typing.skip');
+    skip.setAttribute('data-skip-typing', '1');
     skip.addEventListener('click', ctrl.finish);
     bubble.appendChild(skip);
   }
   return row;
 }
 
+/** Stream one bubble and resolve once its text has fully arrived. */
+function streamBubble(segments, opts = {}) {
+  return new Promise((resolve) => {
+    const row = simBubble(segments, { ...opts, onDone: () => resolve(row) });
+    if (!row) resolve(null);   // no chat view ⇒ degrade gracefully
+  });
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // Esc skips the current typewriter (bound once at module scope).
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && activeSim) { activeSim.finish(); }
 });
 
-// ── Provider presets (§3.3, v1.0 snapshot) ───────────────────
+// ── Display name ─────────────────────────────────────────────
+// `"Nebula"` is the MECHANISM key wherever it is a judgement (agentList entries
+// are addressed by it — task book §2 C whitelist). Only the DISPLAY face
+// parameterizes: the name onboarding itself collects (question 1) is written to
+// `agents/<root>/agent.json` displayName at finish, and while the session is
+// still running it is read off `agentList` and patched optimistically the moment
+// the user answers.
+function rootDisplayName() {
+  const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
+  return (self && self.displayName) || 'Nebula';
+}
+
+function sourceLabel() {
+  return rootDisplayName().toUpperCase();
+}
+
+/** Apply a newly chosen name everywhere the display surface reads it. */
+function renameEverywhere(name) {
+  const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
+  if (self) self.displayName = name;
+}
+
+// ── Provider presets (field-face fallback for the model question) ─
+// 🔴 The PRIMARY path of the model question is the configured-provider list
+// (getOnboardingModels / same source as Settings). These presets only seed the
+// Base URL / model suggestions when the user picks "add a provider" — the same
+// fallback face v1 had, per task book §2 B.
 const PRESETS = {
-  zhipu:   { name: 'zhipu',   baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', models: ['glm-4.5', 'glm-4.5-air'] },
-  deepseek:{ name: 'deepseek',baseUrl: 'https://api.deepseek.com/v1/',         models: ['deepseek-chat', 'deepseek-reasoner'] },
-  kimi:    { name: 'kimi',    baseUrl: 'https://api.moonshot.cn/v1/',          models: ['moonshot-v1-32k', 'moonshot-v1-8k'] },
-  compat:  { name: 'custom',  baseUrl: null,                                   models: [] },
-  relay:   { name: 'custom',  baseUrl: null,                                   models: [] },
-  local:   { name: 'ollama',  baseUrl: 'http://localhost:11434/v1/',           models: ['qwen3:8b', 'llama3.1:8b'] },
+  zhipu:   { label: '智谱 GLM',     name: 'zhipu',    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', models: ['glm-4.6', 'glm-4.5-air', 'glm-4.5-flash'] },
+  deepseek:{ label: 'DeepSeek',     name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1/',          models: ['deepseek-chat', 'deepseek-reasoner'] },
+  kimi:    { label: 'Kimi',         name: 'kimi',     baseUrl: 'https://api.moonshot.cn/v1/',           models: ['kimi-k2-0905-preview', 'moonshot-v1-32k'] },
+  compat:  { label: 'OpenAI 兼容',  name: 'custom',   baseUrl: 'https://api.openai.com/v1/',            models: ['gpt-4o', 'gpt-4o-mini'] },
+  local:   { label: '本地 Ollama',  name: 'ollama',   baseUrl: 'http://localhost:11434/v1/',            models: ['qwen3:8b', 'llama3.1:8b'] },
 };
 
-// ── Question tree (§3.2) ─────────────────────────────────────
-function mainCardQuestions() {
+// ── Question script (single source) ──────────────────────────
+// Mirrors the v2 design note's SCRIPT table verbatim: id / act / lead / question /
+// options / skip / free input / mapping target.
+function SCRIPT() {
   return [
     {
-      id: 'Q1', question: t('onboarding.q.start'), allowOther: false,
-      options: [
-        { label: t('onboarding.q.start.config'), desc: t('onboarding.q.start.configDesc') },
-        { label: t('onboarding.q.start.browse'), desc: t('onboarding.q.start.browseDesc') },
-        { label: t('onboarding.q.start.skip'), desc: t('onboarding.q.start.skipDesc') },
-      ],
+      id: 'name', seg: t('onboarding.seg.meet'), scope: 'base', kind: 'free-first',
+      intro: [t('ob2.intro.meet1'), t('ob2.intro.meet2')],
+      lead: [t('ob2.lead.meet1')],
+      q: t('ob2.q.name'),
+      placeholder: t('ob2.ph.name'),
+      chips: ['星尘', '洛书', '阿涅', 'Nova', '海豹'],
+      maxLength: 16,
+      label: t('ob2.label.name'),
     },
     {
-      id: 'Q2', question: t('onboarding.q.provider'), allowOther: false,
-      dependsOn: { ref: 'Q1', equals: t('onboarding.q.start.config') },
-      options: [
-        { label: t('onboarding.q.provider.zhipu'), desc: t('onboarding.q.provider.zhipuDesc') },
-        { label: t('onboarding.q.provider.deepseek'), desc: t('onboarding.q.provider.deepseekDesc') },
-        { label: t('onboarding.q.provider.kimi'), desc: t('onboarding.q.provider.kimiDesc') },
-        { label: t('onboarding.q.provider.compat'), desc: t('onboarding.q.provider.compatDesc') },
-        { label: t('onboarding.q.provider.relay'), desc: t('onboarding.q.provider.relayDesc') },
-        { label: t('onboarding.q.provider.local'), desc: t('onboarding.q.provider.localDesc') },
-        { label: t('onboarding.q.provider.unsure'), desc: t('onboarding.q.provider.unsureDesc') },
-      ],
+      id: 'call', seg: t('onboarding.seg.meet'), scope: 'user', kind: 'free-first',
+      lead: [t('ob2.lead.meet2')],
+      q: t('ob2.q.call'),
+      placeholder: t('ob2.ph.call'),
+      chips: ['阿凯', '老板', '船长', '直接叫我名字'],
+      maxLength: 12,
+      label: t('ob2.label.call'),
     },
     {
-      id: 'U1', question: t('onboarding.q.unsureUrl'), allowOther: false,
-      dependsOn: { ref: 'Q2', equals: t('onboarding.q.provider.unsure') },
+      id: 'model', seg: t('onboarding.seg.brain'), scope: 'base', kind: 'model',
+      lead: [t('ob2.lead.brain1'), t('ob2.lead.brain2')],
+      q: t('ob2.q.model'),
+      label: t('ob2.label.model'),
+    },
+    {
+      id: 'role', seg: t('onboarding.seg.expect'), scope: 'soul', kind: 'choice',
+      intro: [t('ob2.intro.expect1'), t('ob2.intro.expect2')],
+      lead: [t('ob2.lead.role')],
+      q: t('ob2.q.role'),
       options: [
-        { label: t('onboarding.q.unsureUrl.yes') },
-        { label: t('onboarding.q.unsureUrl.no') },
+        { label: t('ob2.opt.role.partner') }, { label: t('ob2.opt.role.keeper') },
+        { label: t('ob2.opt.role.sparring') }, { label: t('ob2.opt.role.muse') },
+        { label: t('ob2.opt.role.all') },
       ],
+      freeHint: t('ob2.fh.role'),
+      label: t('ob2.label.role'),
+    },
+    {
+      id: 'style', seg: t('onboarding.seg.expect'), scope: 'soul', kind: 'choice',
+      lead: [t('ob2.lead.style')],
+      q: t('ob2.q.style'),
+      options: [
+        { label: t('ob2.opt.style.direct') }, { label: t('ob2.opt.style.gentle') },
+        { label: t('ob2.opt.style.humor') }, { label: t('ob2.opt.style.rigorous') },
+      ],
+      freeHint: t('ob2.fh.style'),
+      label: t('ob2.label.style'),
+    },
+    {
+      id: 'pro', seg: t('onboarding.seg.expect'), scope: 'soul', kind: 'choice',
+      lead: [t('ob2.lead.pro')],
+      q: t('ob2.q.pro'),
+      options: [
+        { label: t('ob2.opt.pro.quiet'), desc: t('ob2.opt.pro.quietDesc') },
+        { label: t('ob2.opt.pro.remind'), desc: t('ob2.opt.pro.remindDesc') },
+        { label: t('ob2.opt.pro.active'), desc: t('ob2.opt.pro.activeDesc') },
+      ],
+      freeHint: t('ob2.fh.pro'),
+      label: t('ob2.label.pro'),
+    },
+    {
+      id: 'boundaries', seg: t('onboarding.seg.expect'), scope: 'soul', kind: 'multi',
+      lead: [t('ob2.lead.boundaries')],
+      q: t('ob2.q.boundaries'),
+      options: [
+        { label: t('ob2.opt.bd.argue'), desc: t('ob2.opt.bd.argueDesc') },
+        { label: t('ob2.opt.bd.remember'), desc: t('ob2.opt.bd.rememberDesc') },
+        { label: t('ob2.opt.bd.honest'), desc: t('ob2.opt.bd.honestDesc') },
+        { label: t('ob2.opt.bd.hands'), desc: t('ob2.opt.bd.handsDesc') },
+      ],
+      freeHint: t('ob2.fh.boundaries'),
+      label: t('ob2.label.boundaries'),
+    },
+    {
+      id: 'temper1', seg: t('onboarding.seg.expect'), scope: 'soul', kind: 'choice',
+      lead: [t('ob2.lead.temper1')],
+      q: t('ob2.q.temper1'),
+      options: [{ label: t('ob2.opt.t1.direct') }, { label: t('ob2.opt.t1.gentle') }],
+      freeHint: t('ob2.fh.temper1'),
+      label: t('ob2.label.temper1'),
+    },
+    {
+      id: 'temper2', seg: t('onboarding.seg.expect'), scope: 'soul', kind: 'choice',
+      lead: [t('ob2.lead.temper2')],
+      q: t('ob2.q.temper2'),
+      options: [{ label: t('ob2.opt.t2.plan') }, { label: t('ob2.opt.t2.casual') }],
+      freeHint: t('ob2.fh.temper2'),
+      label: t('ob2.label.temper2'),
+    },
+    {
+      id: 'identity', seg: t('onboarding.seg.you'), scope: 'user', kind: 'choice',
+      intro: [t('ob2.intro.you1'), t('ob2.intro.you2')],
+      lead: [t('ob2.lead.identity')],
+      q: t('ob2.q.identity'),
+      options: [
+        { label: t('ob2.opt.id.dev') }, { label: t('ob2.opt.id.student') },
+        { label: t('ob2.opt.id.researcher') }, { label: t('ob2.opt.id.creator') },
+        { label: t('ob2.opt.id.freelance') }, { label: t('ob2.opt.id.other') },
+      ],
+      freeHint: t('ob2.fh.identity'),
+      label: t('ob2.label.identity'),
+    },
+    {
+      id: 'focus', seg: t('onboarding.seg.you'), scope: 'user', kind: 'free-first',
+      lead: [t('ob2.lead.focus')],
+      q: t('ob2.q.focus'),
+      placeholder: t('ob2.ph.focus'),
+      maxLength: 140,
+      label: t('ob2.label.focus'),
     },
   ];
 }
 
-// ── Card rendering (shared with AskUser channel) ─────────────
-function renderCard(questions, onConfirm, doneLabel) {
-  const chat = activeView?.dom?.chat;
-  if (!chat) return;
-  const row = document.createElement('div');
-  row.className = 'row ai';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble ai';
-  const src = document.createElement('div');
-  src.className = 'ask-user-source';
-  src.textContent = 'NEBULA';
-  bubble.appendChild(src);
-  row.appendChild(bubble);
-  chat.appendChild(row);
-  smartScroll();
-  showOptions(bubble, questions, onConfirm, doneLabel, () => {}, null);
+// ── Answer collection (the JS-side answer table) ─────────────
+const collected = new Map();   // id → { kind, value, values?, label, scope }
+
+function record(def, kind, value, values) {
+  const rec = { kind, label: def.label || def.id, scope: def.scope };
+  if (kind === 'multi') { rec.values = values || []; rec.value = (values || []).join('；'); }
+  else if (kind === 'skip') { rec.value = ''; }
+  else { rec.value = value || ''; }
+  collected.set(def.id, rec);
+  persistAnswer({ ...rec });
+  if (def.id === 'name' && kind !== 'skip' && rec.value) renameEverywhere(rec.value);
+}
+
+// ── Segment meta (from the design note: "第三幕 · 第 N / 11 题") ─
+function segmentMeta(def, total, idx) {
+  return `${def.seg} · ${t('ob2.progress', { n: idx, total })}`;
+}
+
+// ── Question cards ───────────────────────────────────────────
+/** One question card appended into `bubble`. Resolves once the user answers,
+ *  skips, or (choice) picks an option / free text. */
+function askCard(def, bubble, total, idx) {
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const card = document.createElement('div');
+    card.className = 'ask-card';
+    card.setAttribute('role', 'group');
+    card.setAttribute('data-q', def.id);
+    card.setAttribute('aria-label', def.q);
+    const meta = document.createElement('div');
+    meta.className = 'ask-meta';
+    meta.textContent = segmentMeta(def, total, idx);
+    card.appendChild(meta);
+
+    const finish = (kind, value, values, echo) => {
+      if (settled) return;
+      settled = true;
+      record(def, kind, value, values);
+      card.querySelectorAll('button, input').forEach((n) => { n.disabled = true; n.style.pointerEvents = 'none'; });
+      card.style.opacity = '0.62';
+      if (echo) userSay(echo);
+      resolve({ kind, value, values });
+    };
+    const skip = () => finish('skip', '', null, t('ob2.echo.skip'));
+
+    // shared free-input row (used by all three kinds)
+    const freeRow = document.createElement('div');
+    freeRow.className = 'free-row';
+    const freeInput = document.createElement('input');
+    freeInput.className = 'option-input';
+    const freeBtn = document.createElement('button');
+    freeBtn.type = 'button';
+    freeBtn.className = 'glass-control ob-primary';
+    freeBtn.textContent = t('ob2.btn.useThis');
+    freeBtn.disabled = true;
+    freeInput.placeholder = def.placeholder || def.freeHint || t('ob2.ph.free');
+    if (def.maxLength) freeInput.maxLength = def.maxLength;
+    freeInput.addEventListener('input', () => { freeBtn.disabled = freeInput.value.trim().length === 0; });
+    freeBtn.addEventListener('click', () => {
+      const v = freeInput.value.trim();
+      if (!v) return;
+      finish('free', v, null, v);
+    });
+    freeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing && !freeBtn.disabled) { e.preventDefault(); freeBtn.click(); }
+    });
+    freeRow.append(freeInput, freeBtn);
+
+    // common foot: always a skip control
+    const foot = document.createElement('div');
+    foot.className = 'ob-actions';
+    const skipBtn = document.createElement('button');
+    skipBtn.type = 'button';
+    skipBtn.className = 'glass-control ob-ghost';
+    skipBtn.textContent = t('ob2.btn.skip');
+    skipBtn.setAttribute('data-skip', def.id);
+    skipBtn.addEventListener('click', skip);
+    const spacer = document.createElement('span');
+    spacer.className = 'ob-spacer';
+    foot.append(spacer, skipBtn);
+
+    if (def.kind === 'free-first') {
+      // Input is present from the start; chips only seed it.
+      card.appendChild(freeRow);
+      if (def.chips) {
+        const chipRow = document.createElement('div');
+        chipRow.className = 'chip-row';
+        def.chips.forEach((c) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'option-btn';
+          b.textContent = c;
+          b.setAttribute('data-chip', def.id);
+          b.addEventListener('click', () => { freeInput.value = c; freeBtn.disabled = false; freeInput.focus(); });
+          chipRow.appendChild(b);
+        });
+        card.appendChild(chipRow);
+      }
+      card.appendChild(foot);
+      bubble.appendChild(card);
+      smartScroll();
+      if (!reducedMotion()) { try { freeInput.focus(); } catch { /* ignore */ } }
+      return;
+    }
+
+    if (def.kind === 'model') { askModelCard(def, card, foot, freeRow, finish, total, idx); bubble.appendChild(card); smartScroll(); return; }
+
+    // choice / multi
+    const opts = document.createElement('div');
+    opts.className = 'opt-row' + ((def.options || []).some((o) => o.desc) ? ' wide' : '');
+    const picked = new Set();
+    let multiOk = null;
+    (def.options || []).forEach((o, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'option-btn';
+      b.setAttribute('data-opt', def.id + ':' + i);
+      if (def.kind === 'multi') {
+        const check = document.createElement('span');
+        check.className = 'option-check';
+        b.appendChild(check);
+      }
+      const txt = document.createElement('span');
+      txt.className = 'option-text';
+      txt.textContent = o.label;
+      if (o.desc) {
+        const small = document.createElement('small');
+        small.textContent = o.desc;
+        txt.appendChild(small);
+      }
+      b.appendChild(txt);
+      b.addEventListener('click', () => {
+        if (def.kind === 'multi') {
+          if (picked.has(o.label)) { picked.delete(o.label); b.classList.remove('picked'); }
+          else { picked.add(o.label); b.classList.add('picked'); }
+          if (multiOk) multiOk.disabled = picked.size === 0;
+        } else {
+          opts.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
+          b.classList.add('picked');
+          setTimeout(() => finish('choice', o.label, null, o.label), reducedMotion() ? 0 : 160);
+        }
+      });
+      opts.appendChild(b);
+    });
+    card.appendChild(opts);
+
+    // permanent free-input fallback entry (every choice/multi question)
+    const ghost = document.createElement('button');
+    ghost.type = 'button';
+    ghost.className = 'option-btn opt-ghost';
+    ghost.textContent = t('ob2.btn.sayMyself');
+    ghost.setAttribute('data-free', def.id);
+    const ghostRow = document.createElement('div');
+    ghostRow.className = 'opt-row';
+    ghostRow.style.marginTop = '8px';
+    ghostRow.appendChild(ghost);
+    card.appendChild(ghostRow);
+    freeRow.style.display = 'none';
+    card.appendChild(freeRow);
+    ghost.addEventListener('click', () => {
+      freeRow.style.display = 'flex';
+      ghostRow.style.display = 'none';
+      smartScroll();
+      try { freeInput.focus(); } catch { /* ignore */ }
+    });
+
+    if (def.kind === 'multi') {
+      multiOk = document.createElement('button');
+      multiOk.type = 'button';
+      multiOk.className = 'glass-control ob-primary';
+      multiOk.textContent = t('ob2.btn.picked');
+      multiOk.setAttribute('data-multi-ok', def.id);
+      multiOk.disabled = true;
+      multiOk.addEventListener('click', () => finish('multi', [...picked].join('；'), [...picked], t('ob2.echo.boundaries', { v: [...picked].join('；') })));
+      foot.appendChild(multiOk);
+    }
+    card.appendChild(foot);
+    bubble.appendChild(card);
+    smartScroll();
+  });
+}
+
+/** Model question card: primary path = configured providers (same source as
+ *  Settings); the provider field face stays as a fallback. */
+function askModelCard(def, card, foot, freeRow, finish, total, idx) {
+  const hint = document.createElement('div');
+  hint.className = 'option-hint';
+  hint.textContent = t('ob2.model.loading');
+  card.appendChild(hint);
+
+  const listWrap = document.createElement('div');
+  listWrap.className = 'opt-row wide';
+  card.appendChild(listWrap);
+
+  const fallbackBtn = document.createElement('button');
+  fallbackBtn.type = 'button';
+  fallbackBtn.className = 'option-btn opt-ghost';
+  fallbackBtn.textContent = t('ob2.model.addProvider');
+  fallbackBtn.style.marginTop = '8px';
+
+  // field face (hidden until "add provider" is chosen)
+  const fields = document.createElement('div');
+  fields.style.display = 'none';
+  const urlIn = document.createElement('input');
+  urlIn.className = 'option-input mono';
+  urlIn.placeholder = 'https://…';
+  const keyIn = document.createElement('input');
+  keyIn.className = 'option-input mono';
+  keyIn.type = 'password';
+  keyIn.placeholder = 'API Key';
+  const modelIn = document.createElement('input');
+  modelIn.className = 'option-input mono';
+  modelIn.placeholder = 'Model ID';
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'glass-control ob-primary';
+  saveBtn.textContent = t('onboarding.btn.testAndSave');
+  saveBtn.disabled = true;
+  fields.append(urlIn, keyIn, modelIn, saveBtn);
+  card.appendChild(fields);
+  card.appendChild(foot);
+
+  function checkFields() {
+    const ok = /^https?:\/\//.test(urlIn.value.trim()) && keyIn.value.trim().length > 0 && modelIn.value.trim().length > 0;
+    saveBtn.disabled = !ok;
+  }
+  [urlIn, keyIn, modelIn].forEach((inp) => inp.addEventListener('input', checkFields));
+
+  fallbackBtn.addEventListener('click', () => {
+    listWrap.style.display = 'none';
+    fallbackBtn.style.display = 'none';
+    hint.textContent = '';
+    fields.style.display = 'block';
+    urlIn.value = PRESETS.zhipu.baseUrl;
+    modelIn.value = PRESETS.zhipu.models[0];
+    checkFields();
+    smartScroll();
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    const probe = document.createElement('div');
+    probe.className = 'ob-probing';
+    probe.textContent = t('onboarding.probing');
+    card.appendChild(probe);
+    smartScroll();
+    const data = {
+      name: 'custom', baseUrl: urlIn.value.trim(), apiKey: keyIn.value.trim(), protocol: 'openai',
+      models: [{ id: modelIn.value.trim() }],
+    };
+    if (!data.baseUrl.endsWith('/')) data.baseUrl += '/';
+    // Same single write path the Settings panel uses: updateConfig → same store.
+    sendWs({ type: 'updateConfig', config: withProviderPatch(data) });
+    const res = await probeLlm();
+    if (res.ok) {
+      probe.classList.add('ok');
+      probe.textContent = t('ob2.model.probeOk', { model: modelIn.value.trim() });
+      finish('model', `${data.name}/${modelIn.value.trim()}`, null, t('ob2.model.echoOk', { model: modelIn.value.trim() }));
+    } else {
+      probe.textContent = t('onboarding.probeFailed', { error: res.error || '' });
+      saveBtn.disabled = false;
+    }
+  });
+
+  // load configured models (silently degrade to the fallback face when empty)
+  getOnboardingModels().then((res) => {
+    hint.textContent = '';
+    if (!res.models.length) {
+      hint.textContent = t('ob2.model.none');
+      card.insertBefore(fallbackBtn, fields);
+      return;
+    }
+    res.models.forEach((m) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'option-btn';
+      b.setAttribute('data-model-ref', m.ref);
+      const txt = document.createElement('span');
+      txt.className = 'option-text';
+      txt.textContent = m.displayLabel || m.ref;
+      const small = document.createElement('small');
+      small.textContent = t('ob2.model.ctx', { n: m.effectiveContextWindow });
+      txt.appendChild(small);
+      b.appendChild(txt);
+      b.addEventListener('click', () => finish('model', m.ref, null, t('ob2.model.echoOk', { model: m.ref })));
+      listWrap.appendChild(b);
+    });
+    card.insertBefore(fallbackBtn, fields);
+    smartScroll();
+  });
+}
+
+/** Build a config JSON carrying the fallback provider (same shape the Settings
+ *  panel writes; merged over the live parsed config so other keys survive). */
+function withProviderPatch(data) {
+  const base = state.parsedConfig && typeof state.parsedConfig === 'object' ? state.parsedConfig : {};
+  const providers = { ...(base.llm?.providers || {}) };
+  providers[data.name] = {
+    baseUrl: data.baseUrl, apiKey: data.apiKey, protocol: data.protocol, models: data.models,
+  };
+  return JSON.stringify({ ...base, llm: { ...(base.llm || {}), providers } });
 }
 
 // ── Flow orchestration ───────────────────────────────────────
-/* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): onboarding is sealed
-   pending complete testing - first run / new users go straight to the main
-   UI. The flag defaults OFF; code kept intact for future re-enable:
-     localStorage.setItem('nebflow.onboarding.enabled', '1')  // then reload */
-const ONBOARDING_ENABLED = () => { try { return localStorage.getItem('nebflow.onboarding.enabled') === '1'; } catch (e) { return false; } };
+/* ENABLEMENT (author ruling 2026-10-04): the onboarding flow is part of the real
+   system now (Personal Agent batch). The flow runs on first start (state pending
+   / no marker) and on explicit replay. It is NOT gated behind a localStorage flag
+   any more. */
 export function initOnboarding(msg) {
-  if (!ONBOARDING_ENABLED()) return; // SEALED
   if (started) return;
   const ob = msg.onboarding ?? null;
   if (ob === 'done' || ob === 'skipped') return;   // S0 — never again
   started = true;
-  if (msg.configured === false) {
-    showSimGreeting();                             // S1 new user
-  } else {
-    showReturningPrompt();                         // S7 returning user (no probe gate, D2)
-  }
+  void runFlow();
 }
 
-/** /onboarding slash command — replay the fixed greeting (same as first run). */
+/** /onboarding slash command + Settings "Re-run Onboarding" — replay the flow. */
 export function replayOnboarding() {
-  started = false;
-  showSimGreeting();
-}
-
-function showSimGreeting() {
+  started = true;
+  collected.clear();
   if (activeSim) activeSim.finish();
-  simBubble([
-    t('onboarding.sim.greet1'),
-    t('onboarding.sim.greet2'),
-    t('onboarding.sim.greet3'),
-  ], { onDone: () => { setTimeout(showMainCard, DONE_GAP_MS); } });
+  void runFlow();
 }
 
-function showMainCard() {
-  renderCard(mainCardQuestions(), dispatchMain, t('onboarding.btn.continue'));
-}
-
-function dispatchMain(answers) {
-  const [a1, a2, a3] = answers;
-  if (a1 === t('onboarding.q.start.browse')) { farewell(t('onboarding.sim.later')); return; }  // S3a
-  if (a1 === t('onboarding.q.start.skip')) { setOnboardingState('skipped'); return; }          // S3b
-  if (a2 === t('onboarding.q.provider.unsure')) {
-    if (a3 === t('onboarding.q.unsureUrl.yes')) openSubCardA();
-    else openSubCardB();
-  } else {
-    const intent = Object.keys(PRESETS).find(k => t('onboarding.q.provider.' + k) === a2);
-    openSubCardC(intent || 'compat');
-  }
-}
-
-function farewell(text) {
-  simBubble([text], { onDone: null });
-}
-
-// ── Sub cards ────────────────────────────────────────────────
-function openSubCardC(intent) {
-  const preset = PRESETS[intent] || PRESETS.compat;
-  const questions = [
-    { id: 'C1', question: t('onboarding.q.baseurl'), options: preset.baseUrl ? [{ label: preset.baseUrl }] : [], allowOther: true },
-    { id: 'C2', question: t('onboarding.q.apikey'), options: intent === 'local' ? [{ label: t('onboarding.q.apikey.none') }] : [], allowOther: true },
-    { id: 'C3', question: t('onboarding.q.model'), options: (preset.models || []).map(m => ({ label: m })), allowOther: true },
-  ];
-  renderCard(questions, (answers) => {
-    const data = assembleProviderData(intent, answers);
-    showSummary(data, () => openSubCardC(intent));
-  }, t('onboarding.btn.summary'));
-}
-
-function openSubCardA() {
-  const questions = [
-    { id: 'A1', question: t('onboarding.q.relayBase'), options: [], allowOther: true },
-    { id: 'A2', question: t('onboarding.q.providerName'), options: [], allowOther: true },
-    { id: 'A3', question: t('onboarding.q.apikey'), options: [], allowOther: true },
-    { id: 'A4', question: t('onboarding.q.model'), options: [], allowOther: true },
-  ];
-  renderCard(questions, (answers) => {
-    const data = assembleFromA(answers);
-    showSummary(data, () => openSubCardA());
-  }, t('onboarding.btn.summary'));
-}
-
-function openSubCardB() {
-  renderCard([{
-    id: 'B1', question: t('onboarding.q.localEnough'),
-    options: [
-      { label: t('onboarding.q.localEnough.yes'), desc: t('onboarding.q.localEnough.yesDesc') },
-      { label: t('onboarding.q.localEnough.no') },
-    ],
-  }], (answers) => {
-    if (answers[0] === t('onboarding.q.localEnough.yes')) openSubCardC('local');
-    else farewell(t('onboarding.sim.tryCloud'));
-  }, t('onboarding.btn.continue'));
-}
-
-// ── Answers → provider data (§3.4) ───────────────────────────
-function maskKey(k) {
-  return k ? k.slice(0, 3) + '…•••' : '•••';
-}
-
-function assembleProviderData(intent, answers) {
-  const preset = PRESETS[intent] || PRESETS.compat;
-  let baseUrl = (answers[0] || '').trim();
-  let apiKey = (answers[1] || '').trim();
-  const model = (answers[2] || '').trim();
-  if (intent === 'local' && apiKey === t('onboarding.q.apikey.none')) apiKey = '';
-  const errors = [];
-  if (!/^https?:\/\//i.test(baseUrl)) errors.push(t('onboarding.summary.errUrl'));
-  if (intent !== 'local' && !apiKey) errors.push(t('onboarding.summary.errKey'));
-  if (!model) errors.push(t('onboarding.summary.errModel'));
-  if (errors.length) return { error: errors.join('；'), _intent: intent };
-  if (!baseUrl.endsWith('/')) baseUrl += '/';
-  return {
-    name: preset.name, baseUrl, apiKey, protocol: 'openai',
-    models: [{ id: model }], _intent: intent,
-  };
-}
-
-function assembleFromA(answers) {
-  let baseUrl = (answers[0] || '').trim();
-  const name = ((answers[1] || '').trim() || 'custom');
-  const apiKey = (answers[2] || '').trim();
-  const model = (answers[3] || '').trim();
-  const errors = [];
-  if (!/^https?:\/\//i.test(baseUrl)) errors.push(t('onboarding.summary.errUrl'));
-  if (!apiKey) errors.push(t('onboarding.summary.errKey'));
-  if (!model) errors.push(t('onboarding.summary.errModel'));
-  if (/\s/.test(name)) errors.push(t('onboarding.summary.errName'));
-  if (errors.length) return { error: errors.join('；'), _intent: 'unsure-a' };
-  if (!baseUrl.endsWith('/')) baseUrl += '/';
-  return { name, baseUrl, apiKey, protocol: 'openai', models: [{ id: model }], _intent: 'unsure-a' };
-}
-
-// ── Summary / save / done / error bubbles (§4.3/§5) ──────────
-function showSummary(data, onBack) {
-  if (data.error) {
-    // Field-level attribution — red error line, no save (E7/E8).
-    simBubble([data.error], { onDone: () => summaryActions(data, onBack) });
-    return;
-  }
-  const text = t('onboarding.summary.text', {
-    name: data.name,
-    baseUrl: data.baseUrl,
-    key: maskKey(data.apiKey),
-    model: data.models[0].id,
-  });
-  simBubble([text], { onDone: () => summaryActions(data, onBack) });
-}
-
-function summaryActions(data, onBack) {
-  const actions = document.createElement('div');
-  actions.className = 'ob-actions';
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.className = 'ob-primary glass-control';
-  saveBtn.textContent = t('onboarding.btn.testAndSave');
-  saveBtn.addEventListener('click', () => { void testAndSave(data); });
-  const backBtn = document.createElement('button');
-  backBtn.type = 'button';
-  backBtn.className = 'glass-control';
-  backBtn.textContent = t('onboarding.btn.back');
-  backBtn.addEventListener('click', onBack);
-  actions.append(saveBtn, backBtn);
-  // Append to the latest sim bubble
-  const row = chatRows().pop();
-  if (row) row.querySelector('.bubble')?.appendChild(actions);
-}
-
-function chatRows() {
+function userSay(text) {
   const chat = activeView?.dom?.chat;
-  return chat ? [...chat.querySelectorAll('.row')] : [];
+  if (!chat) return;
+  const row = document.createElement('div');
+  row.className = 'row user';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble user';
+  const tEl = document.createElement('div');
+  tEl.textContent = text;
+  bubble.appendChild(tEl);
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  smartScroll();
 }
 
-async function testAndSave(data) {
-  if (busy) return;                       // E17: one save+probe at a time
-  busy = true;
-  const row = chatRows().pop();
-  const bubble = row?.querySelector('.bubble');
-  if (bubble) {
-    const status = document.createElement('div');
-    status.className = 'ob-probing';
-    status.textContent = t('onboarding.probing');
-    bubble.appendChild(status);
-    bubble.querySelectorAll('.ob-actions button').forEach(b => { b.disabled = true; });
+async function runFlow() {
+  const total = SCRIPT().length;
+  const script = SCRIPT();
+  await streamBubble([t('ob2.greet1')], { source: t('ob2.source.unnamed') });
+  await streamBubble([t('ob2.greet2'), t('ob2.greet3'), t('ob2.greet4')], { source: t('ob2.source.unnamed') });
+  for (let i = 0; i < script.length; i++) {
+    await askQuestion(script[i], total, i + 1);
   }
-  // One write path (§5.1): saveNewProvider → flushConfigToServer →
-  // updateConfig WS frame. No llm.model / preset-chain writes (#339 — the
-  // backend auto-creates the `general` default preset).
-  saveNewProvider(data.name, {
-    baseUrl: data.baseUrl,
-    apiKey: data.apiKey,
-    protocol: data.protocol,
-    models: data.models,
+  await wait(300);
+  await streamBubble([t('ob2.collected')]);
+  await writingRitual();
+  await finale();
+}
+
+async function askQuestion(def, total, idx) {
+  if (def.intro) await streamBubble(def.intro);
+  const { row } = await streamBubbleAsync(def.lead.concat([def.q]), { question: true });
+  const bubble = row ? row.querySelector('.bubble') : null;
+  if (!bubble) return;
+  await wait(CARD_BEAT_MS);
+  const ans = await askCard(def, bubble, total, idx);
+  await wait(220);
+  await streamBubble([followLine(def, ans)]);
+}
+
+/** streamBubble variant exposing the row. */
+function streamBubbleAsync(segments, opts = {}) {
+  return new Promise((resolve) => {
+    const row = simBubble(segments, { ...opts, onDone: () => resolve({ row }) });
+    if (!row) resolve({ row: null });
   });
-  const result = await probeLlm();
-  busy = false;
-  if (result.ok) {
-    doneBubble(data);
-    setOnboardingState('done');
-  } else {
-    errorBubble(result, data);
+}
+
+/** The transition line after an answer (three sources, three voices). */
+function followLine(def, ans) {
+  if (!ans || ans.kind === 'skip') return t('ob2.follow.skip');
+  if (ans.kind === 'free') return t('ob2.follow.free', { v: ans.value });
+  if (def.id === 'model') return t('ob2.follow.model', { v: ans.value });
+  if (def.kind === 'multi') return t('ob2.follow.multi');
+  return t('ob2.follow.choice', { v: ans.value });
+}
+
+// ── Writing ritual + finale ──────────────────────────────────
+async function writingRitual() {
+  const row = await streamBubbleAsync([t('ob2.writing.title')]);
+  const bubble = row.row ? row.row.querySelector('.bubble') : null;
+  if (!bubble) return;
+  const lines = document.createElement('div');
+  lines.className = 'write-lines';
+  const seq = [
+    t('ob2.write.1'), t('ob2.write.2'), t('ob2.write.3'),
+    t('ob2.write.4'), t('ob2.write.5'), t('ob2.write.6'),
+  ];
+  bubble.appendChild(lines);
+  for (const text of seq) {
+    const el = document.createElement('div');
+    el.className = 'wl ok';
+    el.textContent = text;
+    lines.appendChild(el);
+    smartScroll();
+    await wait(220);
+  }
+  await wait(260);
+  const answers = answersPayload();
+  const modelRef = collected.get('model') && collected.get('model').kind !== 'skip' ? collected.get('model').value : null;
+  finishOnboarding({ answers, modelRef });
+}
+
+let finishAcked = false;
+onMessage('onboardingArtifacts', (msg) => {
+  finishAcked = true;
+  const row = activeView?.dom?.chat;
+  if (row) {
+    const note = document.createElement('div');
+    note.className = 'row notice';
+    const b = document.createElement('div');
+    b.className = 'bubble';
+    b.textContent = t('ob2.write.done', { soul: msg.soulPath, user: msg.userPath });
+    if (msg.modelWriteError) b.textContent += ' ' + t('ob2.model.writeErr', { error: msg.modelWriteError });
+    note.appendChild(b);
+    row.appendChild(note);
+    smartScroll();
+  }
+  setOnboardingState('done');
+});
+
+onMessage('error', (msg) => {
+  if (!/onboarding/i.test(msg?.message || '')) return;
+  const row = activeView?.dom?.chat;
+  if (!row) return;
+  const note = document.createElement('div');
+  note.className = 'row notice';
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.textContent = t('ob2.write.failed', { error: msg.message });
+  note.appendChild(b);
+  row.appendChild(note);
+  smartScroll();
+});
+
+function answersPayload() {
+  const out = {};
+  collected.forEach((v, k) => { out[k] = v; });
+  return out;
+}
+
+function finishOnboarding({ answers, modelRef }) {
+  const payload = { type: 'finishOnboarding', answers };
+  if (modelRef) payload.modelRef = modelRef;
+  sendWs(payload);
+}
+
+async function finale() {
+  const n = collected.get('name');
+  const name = n && n.kind !== 'skip' && n.value ? n.value : t('ob2.name.unnamed');
+  const c = collected.get('call');
+  const call = c && c.kind !== 'skip' && c.value ? c.value : t('ob2.you');
+  const style = collected.get('style');
+  const styleV = style && style.kind !== 'skip' ? style.value : '';
+  const segs = finaleLines(name, call, styleV);
+  await streamBubble(segs);
+  const input = document.getElementById('input');
+  if (input) {
+    input.disabled = false;
+    input.placeholder = t('ob2.input.ph', { name });
   }
 }
 
-function doneBubble(data) {
-  const text = t('onboarding.done.summary', {
-    provider: data.name,
-    model: data.models[0].id,
-    preset: 'general',
-  });
-  simBubble([text], { onDone: null });
-}
-
-function errorBubble(result, data) {
-  const raw = result.error || '';
-  let hint = t('onboarding.err.other', { error: raw });
-  const e = raw.toLowerCase();
-  if (/401|403|unauthorized|invalid api key|auth/i.test(e)) hint = t('onboarding.err.auth');
-  else if (/404|econnrefused|enotfound|timeout|connect/i.test(e)) hint = t('onboarding.err.endpoint');
-  else if (/model not found|model not exist|400/i.test(e)) hint = t('onboarding.err.model');
-  if (data.name === 'ollama') hint = t('onboarding.err.ollama'); // E14 local not running
-  simBubble([hint], { onDone: () => errorActions(data) });
-}
-
-function errorActions(data) {
-  const actions = document.createElement('div');
-  actions.className = 'ob-actions';
-  const backBtn = document.createElement('button');
-  backBtn.type = 'button';
-  backBtn.className = 'glass-control';
-  backBtn.textContent = t('onboarding.btn.back');
-  backBtn.addEventListener('click', () => {
-    if (data._intent === 'unsure-a') openSubCardA();
-    else openSubCardC(data._intent);
-  });
-  const laterBtn = document.createElement('button');
-  laterBtn.type = 'button';
-  laterBtn.className = 'glass-control';
-  laterBtn.textContent = t('onboarding.later');
-  laterBtn.addEventListener('click', () => farewell(t('onboarding.sim.later')));
-  actions.append(backBtn, laterBtn);
-  const row = chatRows().pop();
-  if (row) row.querySelector('.bubble')?.appendChild(actions);
-}
-
-// ── Returning user (S7, no probe gate — D2) ──────────────────
-function showReturningPrompt() {
-  simBubble([t('onboarding.sim.returnGreet')], {
-    onDone: showPrefCard,
-    skipable: false,
-  });
-}
-
-function showPrefCard() {
-  renderCard([{
-    id: 'P1', question: t('onboarding.q.pref'),
-    options: [
-      { label: t('onboarding.q.pref.code') },
-      { label: t('onboarding.q.pref.doc') },
-      { label: t('onboarding.q.pref.research') },
-      { label: t('onboarding.q.pref.other') },
-    ],
-  }], () => farewell(t('onboarding.sim.prefDone')), t('onboarding.btn.continue'));
+/** Style-adaptive closing lines (from the v2 demo's finaleGreeting). */
+function finaleLines(name, call, style) {
+  const byStyle = {
+    [t('ob2.opt.style.direct')]: [t('ob2.finale.direct1', { n: name }), t('ob2.finale.direct2')],
+    [t('ob2.opt.style.gentle')]: [t('ob2.finale.gentle1', { n: name }), t('ob2.finale.gentle2')],
+    [t('ob2.opt.style.humor')]: [t('ob2.finale.humor1', { n: name }), t('ob2.finale.humor2')],
+    [t('ob2.opt.style.rigorous')]: [t('ob2.finale.rigorous1', { n: name }), t('ob2.finale.rigorous2')],
+  };
+  const segs = byStyle[style] || [t('ob2.finale.plain1', { n: name }), t('ob2.finale.plain2')];
+  return [...segs, t('ob2.finale.hello', { u: call })];
 }

@@ -55,6 +55,9 @@ private[gateway] object WsConfigHandlers:
     "getConfig" -> handleGetConfig,
     "getToolsList" -> handleGetToolsList,
     "setOnboardingState" -> handleSetOnboardingState,
+    "setOnboardingAnswers" -> handleSetOnboardingAnswers,
+    "finishOnboarding" -> handleFinishOnboarding,
+    "getOnboardingModels" -> handleGetOnboardingModels,
     "probeLlm" -> handleProbeLlm,
     "updateConfig" -> handleUpdateConfig,
     "toggleMcpServer" -> handleToggleMcpServer
@@ -633,6 +636,177 @@ private[gateway] object WsConfigHandlers:
         )
     end match
   end handleSetOnboardingState
+
+  /**
+   * Onboarding 问卷逐题落账（personal-agent 批 2026-10-04）。
+   *
+   * 帧形：`{type:"setOnboardingAnswers", answers:{<id>:{kind,label,scope,value}}}`。
+   * 逐题 upsert（不整表覆盖——一题一卡逐题推进，覆盖会抹掉前面已答的题）。
+   *
+   * 本题面只落**答案**；产物（Soul.md / User.md / displayName）由
+   * [[handleFinishOnboarding]] 在收尾时统一落盘（避免每题都写文件）。
+   */
+  private def handleSetOnboardingAnswers(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val answersJson = parsedJson(text).hcursor.downField("answers").focus
+    answersJson.flatMap(_.asObject) match
+      case None =>
+        wsSend(
+          io.circe.Json.obj("type" -> "error".asJson, "message" -> "invalid onboarding answers payload".asJson)
+        )
+      case Some(obj) =>
+        val patch = obj.toMap.map((k, v) => k -> (v: io.circe.Json))
+        nebflow.core.OnboardingService
+          .mergeAnswers(patch)
+          .attempt
+          .flatMap {
+            case Right(_) =>
+              wsSend(
+                io.circe.Json.obj("type" -> "onboardingAnswersSaved".asJson, "count" -> patch.size.asJson)
+              )
+            case Left(e) =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "error".asJson,
+                  "message" -> s"failed to persist onboarding answers: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}".asJson
+                )
+              )
+          }
+  end handleSetOnboardingAnswers
+
+  /**
+   * Onboarding 收尾产物落盘（personal-agent 批 2026-10-04）。
+   *
+   * 帧形：`{type:"finishOnboarding", answers:{...}, modelRef?, contextWindow?}`。
+   * 一次调用做三件事（全部单一存储、零旁路）：
+   *   ① 模型选择 + context window 写回**与设置面同一配置存储**
+   *      （`llm.providers.<id>.models[].contextWindow`，经 `updateConfig` 单点）；
+   *   ② `Soul.md` / `User.md` 产物落盘（全跳过也写结构完整骨架）；
+   *   ③ 起名结果写 `agents/<root>/agent.json` 的 `displayName`（🔴 身份键不变）。
+   * 回执带两份文件的路径 / 字节数与生效窗口，供前端完成摘要显示。
+   */
+  private def handleFinishOnboarding(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val answersJson = json.hcursor.downField("answers").focus.flatMap(_.asObject).map(_.toMap).getOrElse(Map.empty)
+    val answers = answersJson.flatMap { (id, v) =>
+      val c = v.hcursor
+      val kindStr = c.downField("kind").as[String].getOrElse("choice")
+      // 多选：values 数组并集成一行文本（与 v2 demo 的 `约定：A；B` 同形）
+      val value = c.downField("values").as[Array[String]].toOption match
+        case Some(vs) => vs.mkString("；")
+        case None => c.downField("value").as[String].getOrElse("")
+      Some(
+        id -> nebflow.core.OnboardingArtifacts.Answer(
+          id = id,
+          label = c.downField("label").as[String].getOrElse(id),
+          scope = c.downField("scope").as[String].getOrElse("soul"),
+          kind = nebflow.core.OnboardingArtifacts.Kind.fromString(kindStr),
+          value = value
+        )
+      )
+    }
+    val modelRef = json.hcursor.downField("modelRef").as[String].toOption.filter(_.nonEmpty)
+    val ctxWindow = json.hcursor.downField("contextWindow").as[Option[Int]].toOption.flatten
+    // 模型选择先写配置（同一存储单点）；随后落产物。配置写失败不阻断产物
+    // （产物是记忆面，与 provider 配置无依赖）——但回执如实带上错误。
+    val modelWrite: IO[Option[String]] = modelRef match
+      case None => IO.pure(None)
+      case Some(ref) =>
+        for
+          cfgStr <- configService.getConfig
+          res <- IO.blocking {
+            io.circe.parser.parse(cfgStr).toOption match
+              case None => Left("current config is unreadable")
+              case Some(json) => nebflow.core.OnboardingModelStep.applySelectionJson(json, ref, ctxWindow)
+          }
+          out <- res match
+            case Left(err) => IO.pure(Some(err))
+            case Right(patched) =>
+              configService.updateConfig(patched.noSpaces).map {
+                case Left(err) => Some(err)
+                case Right(_) => None
+              }
+        yield out
+    end modelWrite
+    modelWrite.flatMap { modelErr =>
+      nebflow.core.OnboardingArtifacts
+        .apply(answers, modelRef)
+        .flatMap { res =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "onboardingArtifacts".asJson,
+              "soulPath" -> res.soulPath.asJson,
+              "soulBytes" -> res.soulBytes.asJson,
+              "userPath" -> res.userPath.asJson,
+              "userBytes" -> res.userBytes.asJson,
+              "agentName" -> res.agentName.asJson,
+              "allSkipped" -> res.allSkipped.asJson,
+              "skipped" -> res.skipped.asJson,
+              "modelWriteError" -> modelErr.asJson
+            )
+          )
+        }
+        .handleErrorWith { e =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "message" -> s"failed to write onboarding artifacts: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}".asJson
+            )
+          )
+        }
+    }
+  end handleFinishOnboarding
+
+  /**
+   * Onboarding 模型步骤的**可用模型列表**（与设置面同源）。
+   *
+   * 帧形：`{type:"getOnboardingModels"}` → `{type:"onboardingModels", providers:[...],
+   * models:[...], source:"configured"}`。数据源 = 已配置 provider 的
+   * `llm.providers[*].models[*]`（设置面板保存的同一份数据）；在线探测仍走设置面既有的
+   * `POST /api/provider/models`，本帧**不重复实现**探测。
+   */
+  private def handleGetOnboardingModels(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    configService.getConfig.flatMap { cfgStr =>
+      IO.blocking {
+        io.circe.parser.parse(cfgStr).toOption.flatMap(_.as[nebflow.shared.NebflowServiceConfig].toOption)
+      }.flatMap {
+        case None =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "message" -> "current config is unreadable".asJson
+            )
+          )
+        case Some(cfg) =>
+          val rows = nebflow.core.OnboardingModelStep.listConfiguredModels(cfg)
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "onboardingModels".asJson,
+              "source" -> "configured".asJson,
+              "providers" -> nebflow.core.OnboardingModelStep.configuredProviders(cfg).asJson,
+              "models" -> io.circe.Json.arr(rows.map(_.asJson)*)
+            )
+          )
+      }
+    }
+  end handleGetOnboardingModels
 
   private def handleProbeLlm(
     ctx: WsDispatchCtx,

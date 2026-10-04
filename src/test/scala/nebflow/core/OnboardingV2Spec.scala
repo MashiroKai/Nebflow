@@ -1,0 +1,234 @@
+package nebflow.core
+
+import cats.effect.unsafe.implicits.global
+import io.circe.Json
+import io.circe.syntax.*
+import munit.FunSuite
+import nebflow.shared.*
+
+import java.nio.file.Files
+
+/**
+ * Onboarding v2 引擎侧验收（personal-agent 批 2026-10-04）。
+ *
+ * 覆盖三面（全部机械可查）：
+ *  - [[OnboardingModelStep.listConfiguredModels]]：模型列表**来自已配置 provider**
+ *    （与设置面同源、同算式 `min(configured, modelMaxContext)`）。
+ *  - [[OnboardingModelStep.applySelectionJson]] + `updateConfig`：选定模型 + context
+ *    window **写回同一配置存储**（`llm.providers.<id>.models[].contextWindow`），
+ *    并且**往返可读**（双向一致）。
+ *  - [[OnboardingArtifacts]]：11 题答案 → `Soul.md` / `User.md`；**全跳过路径**留下
+ *    结构完整（含 `## 备注`）的骨架；起名结果写 `displayName`（🔴 机制键不变）。
+ *
+ * 隔离纪律：全部动作在 `setDataRoot` 钉住的临时目录内，零写真实 `~/.nebflow`。
+ */
+class OnboardingV2Spec extends FunSuite:
+
+  private var originalRoot: os.Path = null
+  private var home: os.Path = null
+
+  override def beforeAll(): Unit =
+    originalRoot = PathUtil.dataRoot
+    home = os.Path(Files.createTempDirectory("nb-ob2-spec"))
+    PathUtil.setDataRoot(home)
+
+  override def afterAll(): Unit =
+    PathUtil.setDataRoot(originalRoot)
+    os.remove.all(home)
+
+  private def reset(): Unit =
+    List(home / "Soul.md", home / "User.md", home / "agents", home / "memory-backups", home / "onboarding.json")
+      .foreach(p => if os.exists(p) then os.remove.all(p))
+    MemoryStore.invalidateSoulCache()
+    MemoryStore.invalidateUserCache()
+
+  private def rootName: String = nebflow.actor.RootAgentIdentity.Name
+
+  // ---------------------------------------------------------------
+  // 模型步骤：同源
+  // ---------------------------------------------------------------
+
+  private def cfgWith(providers: (String, List[(String, Int, Option[Int])])*): NebflowServiceConfig =
+    NebflowServiceConfig(
+      llm = ServiceLlmConfig(providers = providers.map { (pid, models) =>
+        pid -> ProviderConfig(
+          baseUrl = "https://example.invalid/v1/",
+          apiKey = "k",
+          protocol = LlmProtocol.OpenAI,
+          models = models.map((id, cw, mx) => ModelConfig(id = id, contextWindow = cw, modelMaxContext = mx)).toList
+        )
+      }.toMap)
+    )
+
+  /** `${pid}.models[]` → the `llm.providers.<pid>.models[]` JSON array (the same
+    *  shape `nebflow.json` holds). Built by hand: `NebflowServiceConfig` carries
+    *  a Decoder only (no Encoder) by design, so the spec writes the wire shape
+    *  explicitly — the same thing the config file on disk contains. */
+  private def providerModelsJson(models: List[(String, Int, Option[Int])]): Json =
+    Json.arr(models.map { (id, cw, mx) =>
+      Json.obj(
+        "id" -> id.asJson,
+        "contextWindow" -> cw.asJson
+      ).deepMerge(mx.fold(Json.obj())(v => Json.obj("modelMaxContext" -> v.asJson)))
+    }*)
+
+  private def cfgJson(providers: (String, List[(String, Int, Option[Int])])*): Json =
+    Json.obj("llm" -> Json.obj("providers" -> Json.fromFields(
+      providers.map { (pid, models) =>
+        pid -> Json.obj(
+          "baseUrl" -> "https://example.invalid/v1/".asJson,
+          "apiKey" -> "k".asJson,
+          "protocol" -> "openai".asJson,
+          "models" -> providerModelsJson(models)
+        )
+      }
+    )))
+
+  test("models: 列表来自已配置 provider，且 effective = min(configured, modelMaxContext)"):
+    val cfg = cfgWith(
+      "zhipu" -> List(("glm-4.6", 128000, None), ("glm-4.5-air", 200000, Some(32000))),
+      "empty" -> Nil
+    )
+    val rows = OnboardingModelStep.listConfiguredModels(cfg)
+    assertEquals(rows.map(_.ref), List("zhipu/glm-4.5-air", "zhipu/glm-4.6"), "按 provider/model 排序")
+    val air = rows.find(_.ref == "zhipu/glm-4.5-air").get
+    assertEquals(air.effectiveContextWindow, 32000, "modelMaxContext 压低生效窗口")
+    val g46 = rows.find(_.ref == "zhipu/glm-4.6").get
+    assertEquals(g46.effectiveContextWindow, 128000, "无物理上界 ⇒ 生效值 = 配置值")
+    assertEquals(OnboardingModelStep.configuredProviders(cfg), List("zhipu"), "无模型的 provider 不进清单")
+
+  test("models: 零 provider ⇒ 空列表（前端退到「先加一家」引导，不造第二数据源）"):
+    assertEquals(OnboardingModelStep.listConfiguredModels(cfgWith()), Nil)
+
+  // ---------------------------------------------------------------
+  // 模型步骤：写回同一配置存储 + 双向一致
+  // ---------------------------------------------------------------
+
+  test("write-back: contextWindow 写回同一存储，且配置可往返读回（双向一致）"):
+    val json = cfgJson("zhipu" -> List(("glm-4.6", 128000, None)))
+    OnboardingModelStep.applySelectionJson(json, "zhipu/glm-4.6", Some(64000)) match
+      case Left(e) => fail(s"应成功，实际 $e")
+      case Right(patched) =>
+        // 写回后仍是同一份可解码配置（同源 ⇒ 双向一致的结构保证）
+        val round = patched.as[NebflowServiceConfig].toOption.getOrElse(fail("patched 必须仍可解码"))
+        assertEquals(round.llm.providers("zhipu").models.head.contextWindow, 64000)
+        // 写回不影响别的键（原子改一个字段，不重写整文件）
+        assert(patched.hcursor.downField("llm").downField("providers").downField("zhipu").focus.isDefined)
+
+  test("write-back: contextWindow = None ⇒ 只校验 ref，不改任何值"):
+    val before = cfgJson("zhipu" -> List(("glm-4.6", 128000, None)))
+    OnboardingModelStep.applySelectionJson(before, "zhipu/glm-4.6", None) match
+      case Left(e) => fail(s"应成功，实际 $e")
+      case Right(patched) =>
+        assertEquals(patched.as[NebflowServiceConfig].toOption.map(_.llm.providers("zhipu").models.head.contextWindow), Some(128000))
+
+  test("write-back: 未知 provider / 未知 model ⇒ Left，且不静默新建 provider"):
+    val json = cfgJson("zhipu" -> List(("glm-4.6", 128000, None)))
+    assert(OnboardingModelStep.applySelectionJson(json, "ghost/glm-4.6", Some(1000)).isLeft)
+    assert(OnboardingModelStep.applySelectionJson(json, "zhipu/nope", Some(1000)).isLeft)
+    assert(OnboardingModelStep.applySelectionJson(json, "no-slash", Some(1000)).isLeft)
+
+  test("write-back: 改窗值经既有单点链参与注入预算（同一算式，无旁路）"):
+    // 32k 窗口 ⇒ 注入硬顶收紧到 12800（与 MemoryBudget 同一算式）
+    assertEquals(MemoryBudget.userInjectionHardBytes(32000), 12800L)
+    assertEquals(MemoryBudget.agentInjectionHardBytes(32000), 12800L)
+
+  // ---------------------------------------------------------------
+  // 答案持久化（逐题 upsert，保留 state / probeOkAt）
+  // ---------------------------------------------------------------
+
+  test("answers: mergeAnswers 逐题 upsert，且 state / probeOkAt 不被抹掉"):
+    reset()
+    OnboardingService.writeState(OnboardingService.OnboardingState.Pending).unsafeRunSync()
+    OnboardingService.mergeAnswers(Map("name" -> Json.obj("kind" -> "free".asJson, "value" -> "星尘".asJson))).unsafeRunSync()
+    OnboardingService.mergeAnswers(Map("call" -> Json.obj("kind" -> "skip".asJson, "value" -> "".asJson))).unsafeRunSync()
+    val answers = OnboardingService.readAnswers().unsafeRunSync()
+    assertEquals(answers.keySet, Set("name", "call"), "逐题追加，不整表覆盖")
+    assertEquals(OnboardingService.readState().unsafeRunSync(), Some(OnboardingService.OnboardingState.Pending))
+
+  test("answers: clearAnswers 清空答案但保留 state"):
+    reset()
+    OnboardingService.writeState(OnboardingService.OnboardingState.Done).unsafeRunSync()
+    OnboardingService.mergeAnswers(Map("name" -> Json.obj("value" -> "x".asJson))).unsafeRunSync()
+    OnboardingService.clearAnswers().unsafeRunSync()
+    assertEquals(OnboardingService.readAnswers().unsafeRunSync(), Map.empty)
+    assertEquals(OnboardingService.readState().unsafeRunSync(), Some(OnboardingService.OnboardingState.Done))
+
+  // ---------------------------------------------------------------
+  // 产物：Soul.md / User.md
+  // ---------------------------------------------------------------
+
+  private def ans(id: String, label: String, scope: String, kind: OnboardingArtifacts.Kind, value: String = "") =
+    id -> OnboardingArtifacts.Answer(id = id, label = label, scope = scope, kind = kind, value = value)
+
+  test("artifacts: 正常路径写出 Soul.md / User.md 于根层（同级）"):
+    reset()
+    val answers = Map(
+      ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "星尘"),
+      ans("call", "怎么称呼你", "user", OnboardingArtifacts.Kind.Free, "阿凯"),
+      ans("role", "角色定位", "soul", OnboardingArtifacts.Kind.Choice, "靠谱的管家"),
+      ans("style", "语言风格", "soul", OnboardingArtifacts.Kind.Choice, "温和细腻"),
+      ans("pro", "主动程度", "soul", OnboardingArtifacts.Kind.Choice, "适度提醒"),
+      ans("boundaries", "相处约定", "soul", OnboardingArtifacts.Kind.Multi, "可以跟我争论；记住随口提过的小事"),
+      ans("temper1", "语气基线", "soul", OnboardingArtifacts.Kind.Choice, "直接坦率"),
+      ans("temper2", "做事方式", "soul", OnboardingArtifacts.Kind.Choice, "随性灵活"),
+      ans("identity", "日常身份", "user", OnboardingArtifacts.Kind.Choice, "创作者"),
+      ans("focus", "当前关注", "user", OnboardingArtifacts.Kind.Free, "把 Nebflow 做成真正的 Personal Agent"),
+    )
+    val res = OnboardingArtifacts.apply(answers, Some("zhipu/glm-4.6")).unsafeRunSync()
+    assertEquals(res.soulPath, (home / "Soul.md").toString)
+    assertEquals(res.userPath, (home / "User.md").toString)
+    val soul = os.read(home / "Soul.md")
+    assert(soul.contains("- 名字：星尘"))
+    assert(soul.contains("- 角色定位：靠谱的管家"))
+    assert(soul.contains("## 你说过的原话"))
+    assert(soul.contains("星尘"), "自由输入原话进原话段")
+    val user = os.read(home / "User.md")
+    assert(user.contains("- 怎么称呼：阿凯"))
+    assert(user.contains("- 日常身份：创作者"))
+    assert(user.contains("把 Nebflow 做成真正的 Personal Agent"))
+    assert(!res.allSkipped)
+
+  test("artifacts: 全跳过路径留下结构完整骨架（含 ## 备注），非空壳"):
+    reset()
+    val skipped = List("name", "call", "model", "role", "style", "pro", "boundaries", "temper1", "temper2", "identity", "focus")
+      .map(id => ans(id, id, if id == "call" || id == "identity" || id == "focus" then "user" else if id == "model" then "base" else "soul", OnboardingArtifacts.Kind.Skip))
+      .toMap
+    val res = OnboardingArtifacts.apply(skipped, None).unsafeRunSync()
+    assert(res.allSkipped, "全跳过必须被识别")
+    val soul = os.read(home / "Soul.md")
+    for sec <- List("## 自我认知", "## 相处之道", "## 你说过的原话", "## 成长约定", "## 备注") do
+      assert(soul.contains(sec), s"Soul.md 缺段 $sec")
+    assert(soul.contains("未设置（这一题你跳过了）"), "跳过项逐字段占位")
+    val user = os.read(home / "User.md")
+    for sec <- List("## 称呼与身份", "## 当前关注", "## 你说过的原话", "## 记录规则") do
+      assert(user.contains(sec), s"User.md 缺段 $sec")
+    assert(res.soulBytes > 0L && res.userBytes > 0L)
+
+  test("artifacts: 起名写 displayName，且机制键（agent 目录名）不变"):
+    reset()
+    val answers = Map(ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "小满"))
+    val res = OnboardingArtifacts.apply(answers, None).unsafeRunSync()
+    assertEquals(res.agentName, Some("小满"))
+    val agentJson = home / "agents" / rootName / "agent.json"
+    assert(os.exists(agentJson), "displayName 落既有 agent.json")
+    val dn = io.circe.parser.parse(os.read(agentJson)).toOption.flatMap(_.hcursor.downField("displayName").as[String].toOption)
+    assertEquals(dn, Some("小满"))
+    assertEquals(OnboardingArtifacts.currentDisplayName(), "小满")
+    assertEquals(rootName, "Nebula", "🔴 机制键恒为 Nebula（不以参数化之名改判据键）")
+
+  test("artifacts: displayName 缺省回落机制名（无名字用户零回归）"):
+    reset()
+    assertEquals(OnboardingArtifacts.currentDisplayName(), rootName)
+
+  test("artifacts: 重跑幂等（覆盖式写入，不追加旧内容）"):
+    reset()
+    val a1 = Map(ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "甲"))
+    OnboardingArtifacts.apply(a1, None).unsafeRunSync()
+    val a2 = Map(ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "乙"))
+    OnboardingArtifacts.apply(a2, None).unsafeRunSync()
+    val soul = os.read(home / "Soul.md")
+    assert(soul.contains("乙"))
+    assert(!soul.contains("甲"), "覆盖式写入，不残留上一跑")
+
+end OnboardingV2Spec
