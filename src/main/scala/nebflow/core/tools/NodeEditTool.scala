@@ -903,12 +903,32 @@ object NodeEditTool extends Tool:
    * 连续 '-' 折叠、首尾 '-.' 剥除、截 40 字符、空则 "node"（**保留 CJK/Unicode
    * 字母数字**——生产节点名以中文为主，全部归一成 "node" 会让派生名失去区分度；
    * git 分支名与 macOS/Linux 文件名均合法接受 Unicode）。冲突追加 -2..-99；
-   * 分支同名；基线 = main HEAD（无 main → 当前 HEAD）。
+   * 分支同名。
+   *
+   * Baseline (engine-wtbase batch, 2026-10-04): the DEFAULT is the repo HEAD at
+   * creation time, and ONLY the value passed in through the `baseRef` parameter is
+   * used — the former `git rev-parse --verify --quiet main` fallback is gone
+   * (`main` is neither the default nor the sole candidate any more). Defect
+   * evidence: three worktrees created for parallel nodes all landed on main
+   * (a5b716d55) while the integration line tip was e3e784ede, i.e. a parallel
+   * batch started 27 commits behind the integration line. A model-visible
+   * parameter for choosing the baseline is NOT opened here (that would change the
+   * Tool schema => author review gate AGENTS.md §16); this batch lands only the
+   * engine-internal knob: the `baseRef` parameter (default = header repo HEAD),
+   * with the Tool schema / description text left byte-identical.
+   *
+   * Raw ref passed through vs. resolved to a SHA: the raw ref is handed to
+   * `git worktree add`. HEAD must be dereferenced at the moment the worktree is
+   * created — resolving to a SHA first would base a worktree on the tip observed
+   * at resolve time rather than at creation time. With a single dereference point,
+   * an unborn HEAD errors out naturally (measured: exit 128, `fatal: invalid
+   * reference: HEAD`), so no pre-check is needed in this tool.
+   *
    * 创建时机选型（裁决 a「NodeEdit 即时创建」）：fail-fast——分发器组图当下拿到
    * 可行动错误，零 spawn 零 token 浪费；spawn 时懒创建（方案 b）会把失败推迟到
    * 执行链中段，形成 failed 节点 + 重入轮次。git 不可用/非 git 工作区 → 拒建节点。
    */
-  private def createWorktreeFor(ws: os.Path, nodename: String): Either[String, String] =
+  private def createWorktreeFor(ws: os.Path, nodename: String, baseRef: String = "HEAD"): Either[String, String] =
     def git(args: String*): Either[String, String] =
       val res = os.proc(Seq("git", "-C", ws.toString) ++ args).call(cwd = ws, check = false, mergeErrIntoOut = true)
       if res.exitCode != 0 then Left(res.out.trim().take(300)) else Right(res.out.trim())
@@ -934,7 +954,10 @@ object NodeEditTool extends Tool:
       case Some(name) =>
         val path = wtRoot / name
         os.makeDir.all(wtRoot)
-        val baseRef = if git("rev-parse", "--verify", "--quiet", "main").isRight then "main" else "HEAD"
+        // Default baseline = the repo HEAD at creation time (the `baseRef` parameter
+        // default; engine-wtbase batch, 2026-10-04). NO `main` fallback: a parallel
+        // batch must start on the integration line tip, and landing on main silently
+        // drops the integration-line commits.
         git("worktree", "add", "-b", name, path.toString, baseRef).map(_ => name)
 
   end createWorktreeFor
@@ -1098,7 +1121,12 @@ object NodeEditTool extends Tool:
                             )
                           )
                         else
-                          IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
+                          // Single baseline point (engine-wtbase batch, 2026-10-04): default =
+                          // the repo HEAD read at call time (createWorktreeFor's baseRef
+                          // default). Named explicitly here to keep one point of change; the
+                          // engine can pick a different baseline by editing this one argument
+                          // with zero Tool-schema change.
+                          IO.blocking(createWorktreeFor(ws, nodename, baseRef = "HEAD")).flatMap {
                             case Left(err) =>
                               IO.pure(
                                 Left(
