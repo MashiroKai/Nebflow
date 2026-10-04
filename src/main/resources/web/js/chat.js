@@ -3752,7 +3752,7 @@ export function appendThinkingDelta(delta, mark) {
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
   // which view global state points to at fire time.
-  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat, snapped: activeView.stream.scrollSnapped };
+  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat, snapped: activeView.stream.scrollSnapped, mark: null };
   _thinkingRafTarget.bubble._nfText = activeView.stream.thinkingText;
   // B2 consumption: the identity of the last frame that wrote this bubble. The
   // rAF renders the accumulated text under it, so the render cache resets the
