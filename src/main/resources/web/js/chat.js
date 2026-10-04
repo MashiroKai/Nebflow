@@ -1501,10 +1501,12 @@ function readJsonArrayProgress(partialJson, idx) {
   const first = readJsonString(partialJson, idx + 1);
 
   let extra = 0;
+  let closed = false;
   let j = first.end;
   while (j < partialJson.length) {
     while (j < partialJson.length && /[\s,]/.test(partialJson[j])) j++;
-    if (j >= partialJson.length || partialJson[j] === ']') break;
+    if (j >= partialJson.length) break; // stream still open
+    if (partialJson[j] === ']') { closed = true; break; }
     if (partialJson[j] !== '"') break; // non-string element — see the note above
     const elem = readJsonString(partialJson, j + 1);
     if (!elem.complete) break; // still arriving — not counted yet
@@ -1514,7 +1516,7 @@ function readJsonArrayProgress(partialJson, idx) {
 
   return {
     value: extra > 0 ? first.value + ' +' + extra : first.value,
-    complete: first.complete,
+    complete: closed,
   };
 }
 
