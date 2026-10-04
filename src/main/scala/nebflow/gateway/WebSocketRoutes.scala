@@ -875,13 +875,13 @@ class WebSocketRoutes(
                         // None (a reader drained it concurrently) is fine — the
                         // retry below either succeeds or is counted, never loops.
                         outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
-                          IO(WsHub.noteOverflowDrop())
+                          IO(wsHub.noteOverflowDrop())
                       case false =>
                         // Full queue + control frame ⇒ tear this connection down.
                         // The teardown rides the queue's own stream (see
                         // `sendStream`), so there is no process-wide state and no
                         // cross-connection leak.
-                        IO(WsHub.noteOverflowClose()) *>
+                        IO(wsHub.noteOverflowClose()) *>
                           logger.warn(
                             "WebSocket outbound queue full on a non-stream frame — closing " +
                               s"this connection (capacity $OutboundQueueCapacity)"
@@ -1432,7 +1432,7 @@ class WebSocketRoutes(
    * by definition and gets the OD-1 policy applied (drop-oldest for stream
    * increments, connection teardown for control frames).
    */
-  private val OutboundQueueCapacity = 1024
+  private[gateway] val OutboundQueueCapacity = 1024
 
   /**
    * Text-stream engine behind the `textWindow` / `textIndex` / `textSearch` /
