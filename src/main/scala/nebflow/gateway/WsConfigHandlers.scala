@@ -785,7 +785,15 @@ private[gateway] object WsConfigHandlers:
     import ctx.*
     configService.getConfig.flatMap { cfgStr =>
       IO.blocking {
-        io.circe.parser.parse(cfgStr).toOption.flatMap(_.as[nebflow.shared.NebflowServiceConfig].toOption)
+        // 🔴 必须先过 Config.ensureLlmDefaults：`NebflowServiceConfig` 的 `llm`
+        // 是唯一的非 Option 字段，而 circe 的 deriveDecoder **不认** case class
+        // 默认值 ⇒ 冷启动中间态（种子只写 `plugins.trust`、无 `llm` 节）的原始
+        // JSON 直接 `.as[...]` 必然解失败，全新 home 上此帧回
+        // `{type:"error", ...}`，引导的模型步骤在主路径上断掉。单一实现与
+        // [[Config.loadServiceConfig]] 完全同源（此处原先漏了这一步）。
+        io.circe.parser.parse(cfgStr).toOption
+          .map(nebflow.shared.Config.ensureLlmDefaults)
+          .flatMap(_.as[nebflow.shared.NebflowServiceConfig].toOption)
       }.flatMap {
         case None =>
           wsSend(
