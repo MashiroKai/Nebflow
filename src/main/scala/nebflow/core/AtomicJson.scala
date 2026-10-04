@@ -203,14 +203,102 @@ object AtomicJson:
     os.write.append(journalPathOf(path), content + "\n", createFolders = true)
 
   /**
-   * Fold `content` into the checkpoint atomically, then drop the journal.
-   * Fold FIRST, truncate SECOND — see the ordering note above.
+   * [[appendSync]] **with fsync** — the form the ledger uses (perf-481 A3 rework).
+   *
+   * WHY THIS EXISTS (the rework's correction of the first A3 cut): the plain
+   * [[appendSync]] is `write(2)` + close. The close does NOT force the page
+   * cache to the device, so a machine crash (or a hard process kill) can lose an
+   * append that `appendSync` already returned from — i.e. an already-acknowledged
+   * state change silently disappears while the checkpoint still shows the old
+   * state. The first A3 cut claimed "a crash mid-append loses nothing" on the
+   * strength of the write-ahead *ordering* alone; ordering makes a crash lose
+   * only the LAST change, but does not make an acknowledged append durable. This
+   * variant closes that gap: records written through it are on the device before
+   * the call returns, so "checkpoint + journal = newest state" survives a crash
+   * at any point after an ack.
+   *
+   * The torn-tail discipline is unchanged: the frame boundary is still the `\n`,
+   * and a partial frame is still discarded on replay. `force(true)` covers both
+   * the data and the file's metadata (the size), which is what makes the last
+   * line's newline itself durable.
+   *
+   * Cost is bounded and measured: one `FileChannel.force(true)` per record
+   * (see the A3 rework readings) — paid on the append path only, and far below
+   * the 13.4 MB whole-file write it replaces. Tests that need the un-forced
+   * behaviour (torn-tail injection) keep using [[appendSync]].
    */
-  def rotateSync(path: os.Path, content: String): Unit =
-    writeSync(path, content)
+  def appendSyncDurable(path: os.Path, content: String): Unit =
+    require(!content.contains('\n'), "appendSync record must be a single line")
+    val j = journalPathOf(path)
+    val target = j.toNIO
+    val existed = java.nio.file.Files.exists(target)
+    Option(target.getParent).foreach(java.nio.file.Files.createDirectories(_))
+    val bytes = (content + "\n").getBytes("UTF-8")
+    val ch = java.nio.channels.FileChannel.open(
+      target,
+      java.nio.file.StandardOpenOption.CREATE,
+      java.nio.file.StandardOpenOption.WRITE,
+      java.nio.file.StandardOpenOption.APPEND
+    )
+    try
+      val buf = java.nio.ByteBuffer.wrap(bytes)
+      while buf.hasRemaining do ch.write(buf)
+      ch.force(true)
+    finally ch.close()
+    // The file's own `force(true)` does NOT make the file's DIRECTORY ENTRY
+    // durable — a crash can lose a file that was fsync'd but never linked into a
+    // durable directory. That only matters on the append that CREATES the
+    // journal (after a fold), so pay the directory fsync once per journal
+    // generation rather than once per record.
+    if !existed then forceParentDir(j)
+  end appendSyncDurable
+
+  /**
+   * Fold `content` into the checkpoint **durably and atomically**, then drop the
+   * journal. Fold FIRST, truncate SECOND — see the ordering note above.
+   *
+   * `A3 rework`: the first cut called [[writeSync]] here, whose tmp+`ATOMIC_MOVE`
+   * has TWO crash windows the ledger cannot afford:
+   *   1. the tmp file's bytes are never `force`d, so a machine crash after the
+   *      rename can leave a checkpoint that is *referenced but empty* — the
+   *      authoritative face disappears, and (because the journal was already
+   *      truncated) the state with it. That is strictly worse than any append
+   *      loss, because a fold that loses the checkpoint loses EVERYTHING up to
+   *      that point, not just the last change.
+   *   2. the rename itself (the directory entry) is never `force`d, so even a
+   *      fully-written, fsync'd tmp can be un-referenced after a crash.
+   * This variant closes both: `force(true)` on the tmp **before** the move, and
+   * `force(true)` on the containing directory **after** the move (POSIX: the
+   * parent's fsync is what makes the new entry durable). The journal is removed
+   * only once the checkpoint is provably durable — the same fold-before-truncate
+   * discipline, now with the durable half actually durable.
+   *
+   * A leftover journal after a crash here costs only a replay (idempotent), so
+   * the truncate stays best-effort.
+   */
+  def rotateSyncDurable(path: os.Path, content: String): Unit =
+    writeSyncDurable(path, content)
+    forceParentDir(path)
     val j = journalPathOf(path)
     try if os.exists(j) then os.remove(j)
     catch case _: Exception => ()   // a leftover journal only costs a replay
+
+  /**
+   * fsync the directory holding `path`, so a rename into it is itself durable.
+   * Best-effort: a provider that refuses to open a directory for read (some
+   * non-POSIX filesystems) simply skips this — the file's own `force(true)`
+   * already happened, so the degradation is "narrower guarantee", never "write
+   * lost".
+   */
+  private def forceParentDir(path: os.Path): Unit =
+    val parent = path.toNIO.getParent
+    if parent == null then ()
+    else
+      try
+        val dch = java.nio.channels.FileChannel.open(parent, java.nio.file.StandardOpenOption.READ)
+        try dch.force(true)
+        finally dch.close()
+      catch case _: Exception => ()
 
   /**
    * Every COMPLETE record in the journal, oldest first, with its frame size.

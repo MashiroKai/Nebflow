@@ -119,16 +119,20 @@ class ChainLedgerStore private (
       try
         if !os.exists(path) then
           // 无 checkpoint（全新台账，或此前从未折叠）⇒ 本次建立权威面。
-          AtomicJson.rotateSync(path, encode(st))
+          AtomicJson.rotateSyncDurable(path, encode(st))
           committedRounds = st.rounds.size
           pendingBytes = 0L
         else
           val line = recordOf(st).asJson.noSpaces
-          AtomicJson.appendSync(path, line)
+          // 🔴 A3 返工：append 走 **fsync** 形态（[[AtomicJson.appendSyncDurable]]）。
+          // 原 [[AtomicJson.appendSync]] 的 close 不落盘 ⇒ 「已 ack 的变更」可被崩溃静默
+          // 丢掉，而 checkpoint 仍是旧态（复核实测 `CHANGE_LOST=true`）。append-only 顺序
+          // 只保证「最多丢最后一次」，不保证 ack 过的写活着 —— 二者是不同的判据。
+          AtomicJson.appendSyncDurable(path, line)
           pendingBytes += AtomicJson.recordBytes(line)
           if pendingBytes >= rotateBytes then
-            // 折叠：checkpoint 写在前、journal 截断在后（AtomicJson.rotateSync 的次序）。
-            AtomicJson.rotateSync(path, encode(st))
+            // 折叠：checkpoint 写在前、journal 截断在后（durable 形态的同一次序）。
+            AtomicJson.rotateSyncDurable(path, encode(st))
             // 折叠成功后才推进水位（崩溃在上一行与这一行之间 ⇒ 只是重放，幂等）。
             committedRounds = st.rounds.size
             pendingBytes = 0L
