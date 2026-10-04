@@ -816,7 +816,8 @@ onMessage('thinkingDelta', (msg, view) => {
     if (!state.turnExpecting[sid] && !activeView.stream.currentThinkingBubble && !activeView.stream.currentAiBubble) {
       return;
     }
-    appendThinkingDelta(msg.delta);
+    // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
+    appendThinkingDelta(msg.delta, { round: msg.round, block: msg.block });
   }
 });
 
@@ -833,7 +834,8 @@ onMessage('textDelta', (msg, view) => {
     clearRetryStatus();
     // Finish thinking bubble before first text delta
     if (activeView.stream.currentThinkingBubble) finishThinking();
-    appendAiText(msg.delta);
+    // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
+    appendAiText(msg.delta, { round: msg.round, block: msg.block });
   }
 });
 

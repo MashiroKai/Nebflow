@@ -877,7 +877,24 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                     LlmLogWriter.logRequest(request, llmRequestId, isSubagent, isCompactTurn) *>
                     resources.llm
                       .sendStream(request, onAttempt = Some(onAttemptCb))
-                      .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
+                      // B2（RC-2，2026-10-04）：携带本轮 LLM 轮次标识 (round, block)。
+                      // round 取 dispatch 序号 stateForLlm.currentTurnId——它恰好是
+                      // 「本 turn 内第几个 LLM 轮次」（每次 dispatch 取号 +1，工具续轮
+                      // 不递增），与前端 roundComplete 的轮次口径同源。这里用
+                      // stateForLlm（本轮的 state 快照）而非 state：与 state.startTurn
+                      // 的判定同一份输入，不引入新的时序面。block 由管道内的合批计数
+                      // 给出（见 StreamBatching）。后端流断开消费不到本字段（SSE 走
+                      // toSse 的字段集，本批零改动）。
+                      .through(
+                        streamEmitter(
+                          stateForLlm.wsSend,
+                          isSubagent,
+                          sessionIdOpt,
+                          isAskTurn,
+                          isCompactTurn,
+                          round = stateForLlm.execution.currentTurnId.toInt
+                        )
+                      )
                       // 审计 20260903 子项⑤：逐事件实时落盘——ts 取 chunk 到达时刻。
                       .evalTap(chunk => LlmLogWriter.logStreamEvent(sseEncoder, chunk))
                       // P0 阶段 3：每个流 chunk touch 活动戳——流活着 = turn 有活动 =

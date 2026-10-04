@@ -86,9 +86,12 @@ function convertAgentEvent(msg) {
     case 'agentStart':
       return { type: 'agentStart', sessionId: sid, agentId: msg.agentId || msg.name, name: msg.name };
     case 'agentTextDelta':
-      return { type: 'textDelta', sessionId: sid, delta: msg.delta || '' };
+      // B2 (RC-2): the block/round identity of the frame travels with the delta
+      // so sub-agent popups get the same deterministic segment boundary the
+      // primary window gets. `undefined` when the backend is older ⇒ unchanged.
+      return { type: 'textDelta', sessionId: sid, delta: msg.delta || '', round: msg.round, block: msg.block };
     case 'agentThinking':
-      return { type: 'thinkingDelta', sessionId: sid, delta: msg.delta || '' };
+      return { type: 'thinkingDelta', sessionId: sid, delta: msg.delta || '', round: msg.round, block: msg.block };
     case 'agentToolCallDetected':
       return { type: 'toolCallDetected', sessionId: sid, name: msg.name || '' };
     case 'agentToolStart':

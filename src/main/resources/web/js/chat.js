@@ -694,11 +694,53 @@ function rafScrollChat(target) {
   }
 }
 
+// ---------- B2 (RC-2): stream-frame block/round identity ----------
+// The WS frames `textDelta` / `thinkingDelta` now carry `round` (the LLM round
+// of the turn) and `block` (a strictly increasing counter of the frames of that
+// type within the round) — see StreamBatching.FrameMark. The identity is what
+// turns B1's tail-split from a heuristic into a deterministic decision: a frame
+// whose (round, block) is strictly greater than the one the render cache was
+// built under is a CONTINUATION of the same segment (the accumulated text is a
+// strict superset), while a frame that repeats / lowers the identity belongs to
+// a NEW segment and the closed-chunk cache must be dropped.
+//
+// 🔴 Deliberately NOT a DOM attribute: B1's acceptance requires the terminal
+// `#chat` DOM to stay byte-identical (oracle), so the identity lives on the
+// JS-side node fields (`bubble._nfSeg`, `view.stream.{ai,think}Seg`) — readable
+// by a probe/spec, invisible to `outerHTML`.
+
+/** The comparable segment key of a frame mark, or '' when the frame carries no
+ *  identity (older backend / non-batched producers) — an absent key never
+ *  triggers the deterministic reset, so behavior falls back to B1 exactly. */
+function segKey(mark) {
+  return mark && Number.isInteger(mark.round) && Number.isInteger(mark.block)
+    ? mark.round + '.' + mark.block : '';
+}
+
+/** True when `next` continues the segment `prev` opened: same round and a
+ *  strictly greater block (the backend hands out `block` monotonically per round;
+ *  see StreamBatching.BatchState.marked). Both are `round.block` keys. */
+function sameSegment(prev, next) {
+  if (!prev || !next) return true;   // no identity ⇒ never a deterministic boundary
+  const [pr, pb] = prev.split('.').map(Number);
+  const [nr, nb] = next.split('.').map(Number);
+  return pr === nr && nb > pb;
+}
+
 // ---------- AI text streaming ----------
-export function appendAiText(text) {
+export function appendAiText(text, mark) {
   const view = activeView;
   const chat = view.dom.chat;
   view.stream.aiText += text;
+  // B2 consumption ①: record the frame's identity on the view + the live bubble.
+  // The view-level key is what a later frame (or the popup's reopen-adopt path)
+  // compares against to tell "same segment continues" from "a new segment began"
+  // without re-parsing the accumulated text.
+  const seg = segKey(mark);
+  if (seg) {
+    view.stream.aiSeg = seg;
+    view.stream.aiRound = mark.round;
+  }
   // stream-ux redesign (2026-10-03): the turn line KEEPS RUNNING while text
   // segments arrive — each completed segment pops in as its own bubble at the
   // tool/round boundary (finishAi), so there is no "badge rolls to its done
@@ -738,6 +780,13 @@ export function appendAiText(text) {
   // viewport following while the turn is live.
   const bubble = view.stream.currentAiBubble;
   bubble._nfText = view.stream.aiText || '';
+  // B2 consumption ②: the bubble carries the identity of the frame that last
+  // wrote it. `finishAi`/`finishThinking` clear the mark when the segment ends,
+  // so a mark left on the node always means "this segment is still open".
+  if (seg) {
+    bubble._nfSeg = seg;
+    bubble._nfRound = mark.round;
+  }
   if (view.stream.scrollSnapped === true || isNearBottom(chat)) {
     chat.scrollTop = chat.scrollHeight;
   }
@@ -796,6 +845,10 @@ export function finishAi(durationMs, model) {
     const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model, timestamp: ts };
     activeView.stream.currentAiBubble = null;
     activeView.stream.aiText = '';
+    // B2: the segment closed — drop its identity so the next segment's first
+    // frame is judged against an empty (not a stale) key.
+    activeView.stream.aiSeg = '';
+    bubble._nfSeg = null;
     return result;
   }
   return null;
@@ -3413,8 +3466,11 @@ function imgKeepFor(bubble) {
  * @param {boolean} [useCache] 传给 renderMarkdownWithMath 的 cache（流式帧传 false —
  *   逐帧快照不进 LRU；收尾帧传 true — 稳定文本照旧入缓存，且**走全量路径**以
  *   保证终态 DOM 与全量重渲染逐字节相等）
+ * @param {{round:number,block:number}|null} [mark] B2 段标识。同一 round 内 block
+ *   严格递增 ⇒ 累积文本是同段续写（缓存有效）；round 变 / block 不增 ⇒ 段边界
+ *   （丢弃块缓存走诚实的全量渲染）。缺省 null ⇒ 与 B1 逐字节同行为。
  */
-function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
+function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache, mark) {
   keep.clear();
   contentEl.querySelectorAll('img').forEach((img) => {
     const key = img.getAttribute('src');
@@ -3422,7 +3478,7 @@ function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
     const queue = keep.get(key);
     if (queue) queue.push(img); else keep.set(key, [img]);
   });
-  const plan = streamRenderPlan(contentEl, text, parseVoice, useCache === true);
+  const plan = streamRenderPlan(contentEl, text, parseVoice, useCache === true, mark);
   if (plan.mode === 'full') {
     contentEl.innerHTML = plan.html.replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
     adoptFreshImgs(contentEl, keep);
@@ -3577,22 +3633,41 @@ function hasOpenFence(s) {
  * @param {string} text
  * @param {boolean} parseVoice
  * @param {boolean} final
+ * @param {{round:number,block:number}|null} [mark] B2 frame identity (see
+ *   renderStreamMarkdown). When it is present and does NOT continue the identity
+ *   the cache was built under, the segment is provably new ⇒ the closed-chunk
+ *   cache is dropped. That makes the reset DETERMINISTIC: B1 could only infer a
+ *   new segment from `text` shrinking (`split < st.closedLen`), so a new segment
+ *   whose text happens to be longer than the previous one's closed prefix kept a
+ *   stale chunk cache. An absent/equal-or-advancing mark leaves B1's behavior
+ *   byte-for-byte unchanged (the conservative fallback path is untouched).
  */
-function streamRenderPlan(contentEl, text, parseVoice, final) {
+function streamRenderPlan(contentEl, text, parseVoice, final, mark) {
   if (final) {
     _streamMdState.delete(contentEl);
     return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: true }) };
   }
   let st = _streamMdState.get(contentEl);
-  if (!st) { st = { chunks: [], closedLen: 0, rendered: 0, tailIndex: 0 }; _streamMdState.set(contentEl, st); }
+  if (!st) { st = { chunks: [], closedLen: 0, rendered: 0, tailIndex: 0, seg: '' }; _streamMdState.set(contentEl, st); }
   const reset = () => { st.chunks.length = 0; st.closedLen = 0; st.rendered = 0; st.tailIndex = 0; };
+  // B2: `sameSegment` says whether this frame continues the segment the cache was
+  // built under — same round AND a strictly larger block. Anything else (round
+  // moved on, block did not advance, or either side carries no identity) means
+  // the cached closed chunks belong to a DIFFERENT segment and must be dropped.
+  // B1 could only infer this from `text` shrinking, so a new segment whose text
+  // is longer than the old closed prefix (e.g. a second thinking block reusing
+  // the container) silently kept stale chunks; the mark closes that gap.
+  const seg = segKey(mark);
+  if (seg && st.seg && !sameSegment(st.seg, seg)) reset();
   const split = streamSplitPoint(text);
   if (split <= 0) {
     // Not safely splittable — drop the cache and do the honest full render.
     reset();
+    st.seg = seg;
     return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: false }) };
   }
   if (split < st.closedLen) reset();  // text shrank ⇒ new message
+  st.seg = seg;
   if (split > st.closedLen) {
     st.chunks.push({ len: split, html: renderMarkdownWithMath(text.slice(st.closedLen, split), parseVoice, { cache: false }) });
     st.closedLen = split;
@@ -3603,9 +3678,17 @@ function streamRenderPlan(contentEl, text, parseVoice, final) {
   return { mode: 'incr', append, tail: renderMarkdownWithMath(text.slice(split), parseVoice, { cache: false }), st };
 }
 
-export function appendThinkingDelta(delta) {
+export function appendThinkingDelta(delta, mark) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   activeView.stream.thinkingText += delta;
+  // B2 consumption: the frame's (round, block) identity rides along with the
+  // accumulated text so the render cache can tell "same segment continues" from
+  // "a new thinking block began" deterministically (see sameSegment).
+  const seg = segKey(mark);
+  if (seg) {
+    activeView.stream.thinkSeg = seg;
+    activeView.stream.thinkRound = mark.round;
+  }
   // If text bubble already exists (e.g. second+ thinking block after text has started),
   // do NOT create a new thinking bubble — it would appear after the text (misplaced).
   // The thinking content is still accumulated in activeView.stream.thinkingText + sessionThinkingBuffers
@@ -3671,6 +3754,14 @@ export function appendThinkingDelta(delta) {
   // which view global state points to at fire time.
   _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat, snapped: activeView.stream.scrollSnapped };
   _thinkingRafTarget.bubble._nfText = activeView.stream.thinkingText;
+  // B2 consumption: the identity of the last frame that wrote this bubble. The
+  // rAF renders the accumulated text under it, so the render cache resets the
+  // moment the backend's monotone (round, block) pair stops advancing.
+  if (seg) {
+    _thinkingRafTarget.bubble._nfSeg = seg;
+    _thinkingRafTarget.bubble._nfRound = mark.round;
+    _thinkingRafTarget.mark = mark;
+  }
   // Schedule a rAF render if one isn't already pending — caps re-render rate
   // and coalesces multiple deltas into a single DOM update.
   if (!_pendingThinkingRAF) {
@@ -3682,7 +3773,7 @@ export function appendThinkingDelta(delta) {
       const contentEl = target.bubble.querySelector('.thinking-content');
       if (contentEl) {
         // 件①：同一渲染 + 图片节点跨帧存活（否则图片每帧重建 ⇒ 见 renderStreamMarkdown）
-        renderStreamMarkdown(contentEl, target.bubble._nfText || '', true, imgKeepFor(target.bubble), false);
+        renderStreamMarkdown(contentEl, target.bubble._nfText || '', true, imgKeepFor(target.bubble), false, target.mark || null);
         contentEl.insertAdjacentHTML('beforeend', '<span class="cursor"></span>');
       }
       // Scroll the correct chat element directly — smartScroll() reads state.dom
@@ -3720,8 +3811,14 @@ export function finishThinking() {
     const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
       // 件①：收尾同一口径渲染（图片节点照旧存活 ⇒ 终结帧不再重拉一次、不再跳一次）
+      // B2: the final render passes the still-open segment's identity so the
+      // cache reset rule is evaluated identically to the streaming frames —
+      // `final` already forces the full path, so the mark only keeps the
+      // accounting consistent (no DOM effect).
       renderStreamMarkdown(contentEl, activeView.stream.thinkingText || '', false,
-        imgKeepFor(activeView.stream.currentThinkingBubble), true);
+        imgKeepFor(activeView.stream.currentThinkingBubble), true,
+        activeView.stream.thinkSeg
+          ? { round: activeView.stream.thinkRound, block: Number(activeView.stream.thinkSeg.split('.')[1]) } : null);
     }
     // #346 v2 stats: close the thinking-duration window for the turn header.
     if (activeView.stream.currentThinkingBubble.dataset) {
@@ -3757,6 +3854,8 @@ export function finishThinking() {
     // skill). Corrects f8ea9385's classification.
     activeView.stream.currentThinkingBubble = null;
     activeView.stream.thinkingText = '';
+    // B2: the thinking segment closed — clear its identity (see finishAi).
+    activeView.stream.thinkSeg = '';
     return text;
   }
   return '';
