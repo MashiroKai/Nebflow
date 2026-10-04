@@ -50,11 +50,15 @@ import { bindImeGuard, isImeComposing, commitEnter } from './imeGuard.js';
 
 const PROBE_TIMEOUT_MS = 20000; // backend times out at 15s; this is the last-resort guard
 const MODEL_REQ_TIMEOUT_MS = 8000;
+const STATE_WRITE_TIMEOUT_MS = 8000;
+const FINISH_TIMEOUT_MS = 20000;
 
 let started = false;           // trigger once per boot (configData re-fires on config save)
 let busy = false;              // finish-in-flight lock (double-click guard)
 let pendingProbe = null;       // { resolve, timer } while a probeLlm is in flight
 let pendingModels = null;      // { resolve, timer } while a getOnboardingModels is in flight
+let pendingState = null;       // { resolve, timer } while a setOnboardingState write is in flight
+let pendingFinish = null;      // { resolve, timer } while a finishOnboarding is in flight
 let activeSim = null;          // current typewriter controller { finish } — for Esc / replay cleanup
 
 // ── probeLlm hard gate ───────────────────────────────────────
@@ -96,8 +100,40 @@ function getOnboardingModels() {
 }
 
 // ── State writes ─────────────────────────────────────────────
-function setOnboardingState(next) {
-  sendWs({ type: 'setOnboardingState', state: next });
+/** Server verdict for the terminal transition. Resolved by the two reply frames
+ *  `handleSetOnboardingState` can emit: `onboardingStateSet` (accepted) and
+ *  `error` (refused — the hard gate answers `code:'probe_required'`). */
+onMessage('onboardingStateSet', (msg) => {
+  if (!pendingState) return;
+  clearTimeout(pendingState.timer);
+  const { resolve } = pendingState;
+  pendingState = null;
+  resolve({ ok: true, state: msg.state });
+});
+
+/**
+ * Persist the onboarding marker and **await the server's verdict**.
+ *
+ * v2 shipped this as fire-and-forget (`sendWs` with no reply handling), which made
+ * a server-side refusal indistinguishable from success: the marker stayed
+ * `pending` while the flow believed it had finished, so every window re-ran the
+ * whole questionnaire and was refused again — an unfinishable cold start. The
+ * terminal transition is the one step that MUST be observed; this returns the
+ * verdict so the caller can retry (transient) or surface it (permanent).
+ *
+ * Every frame this node sends is answered (WsConfigHandlers.handleSetOnboardingState):
+ * accepted → `onboardingStateSet`, refused → `error`. The timeout below is only a
+ * last-resort guard for a dropped/misrouted frame, not the normal path.
+ */
+function setOnboardingState(next, timeoutMs = STATE_WRITE_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    pendingState = { resolve, timer: setTimeout(() => {
+      // Only clear OURSELVES: a late reply may have already replaced us.
+      if (pendingState && pendingState.resolve === resolve) pendingState = null;
+      resolve({ ok: false, error: t('ob2.state.timeout') });
+    }, timeoutMs) };
+    sendWs({ type: 'setOnboardingState', state: next });
+  });
 }
 
 /** Persist one question's answer immediately (per-question upsert; the terminal
@@ -436,7 +472,11 @@ function askCard(def, bubble, total, idx) {
       if (settled) return;
       settled = true;
       record(def, kind, value, values);
-      card.querySelectorAll('button, input').forEach((n) => { n.disabled = true; n.style.pointerEvents = 'none'; });
+      card.querySelectorAll('button, input').forEach((n) => {
+        const el = /** @type {HTMLButtonElement|HTMLInputElement} */ (n);
+        el.disabled = true;
+        el.style.pointerEvents = 'none';
+      });
       card.style.opacity = '0.62';
       if (echo) userSay(echo);
       resolve({ kind, value, values });
@@ -808,6 +848,8 @@ export function replayOnboarding() {
   started = true;
   collected.clear();
   modelContextWindow = null;   // a replay must not inherit the previous run's window
+  lastAttempt = null;          // …nor a stale retry payload from the previous run
+  clearFinishFailure();
   if (activeSim) activeSim.finish();
   void runFlow();
 }
@@ -837,8 +879,12 @@ async function runFlow() {
   }
   await wait(300);
   await streamBubble([t('ob2.collected')]);
-  await writingRitual();
-  await finale();
+  // 🔴 The finale is the flow's SUCCESS closing (「配置完成…」) — it may only run
+  // once the marker actually landed as `done`. A refused terminal transition
+  // keeps the session unfinished (and the retry button live), so the closing
+  // must not claim completion.
+  const finished = await writingRitual();
+  if (finished) await finale();
 }
 
 async function askQuestion(def, total, idx) {
@@ -869,62 +915,181 @@ function followLine(def, ans) {
   return t('ob2.follow.choice', { v: ans.value });
 }
 
-// ── Writing ritual + finale ──────────────────────────────────
-async function writingRitual() {
-  const row = await streamBubbleAsync([t('ob2.writing.title')]);
-  const bubble = row.row ? row.row.querySelector('.bubble') : null;
-  if (!bubble) return;
-  const lines = document.createElement('div');
-  lines.className = 'write-lines';
-  const seq = [
-    t('ob2.write.1'), t('ob2.write.2'), t('ob2.write.3'),
-    t('ob2.write.4'), t('ob2.write.5'), t('ob2.write.6'),
-  ];
-  bubble.appendChild(lines);
-  for (const text of seq) {
-    const el = document.createElement('div');
-    el.className = 'wl ok';
-    el.textContent = text;
-    lines.appendChild(el);
-    smartScroll();
-    await wait(220);
-  }
-  await wait(260);
-  const answers = answersPayload();
-  const modelRef = collected.get('model') && collected.get('model').kind !== 'skip' ? collected.get('model').value : null;
-  finishOnboarding({ answers, modelRef });
-}
-
-let finishAcked = false;
-onMessage('onboardingArtifacts', (msg) => {
-  finishAcked = true;
-  const row = activeView?.dom?.chat;
-  if (row) {
-    const note = document.createElement('div');
-    note.className = 'row notice';
-    const b = document.createElement('div');
-    b.className = 'bubble';
-    b.textContent = t('ob2.write.done', { soul: msg.soulPath, user: msg.userPath });
-    if (msg.modelWriteError) b.textContent += ' ' + t('ob2.model.writeErr', { error: msg.modelWriteError });
-    note.appendChild(b);
-    row.appendChild(note);
-    smartScroll();
-  }
-  setOnboardingState('done');
-});
-
-onMessage('error', (msg) => {
-  if (!/onboarding/i.test(msg?.message || '')) return;
-  const row = activeView?.dom?.chat;
-  if (!row) return;
+// ── Writing ritual + terminal sequence ───────────────────────
+/** A chat notice bubble for the finish / failure reporting面 (shared). */
+function noticeBubble() {
+  const chat = activeView?.dom?.chat;
+  if (!chat) return null;
   const note = document.createElement('div');
   note.className = 'row notice';
   const b = document.createElement('div');
   b.className = 'bubble';
-  b.textContent = t('ob2.write.failed', { error: msg.message });
   note.appendChild(b);
-  row.appendChild(note);
+  chat.appendChild(note);
   smartScroll();
+  return b;
+}
+
+function appendWriteLine(lines, text) {
+  const el = document.createElement('div');
+  el.className = 'wl';
+  el.textContent = text;
+  if (lines) lines.appendChild(el);
+  smartScroll();
+  return el;
+}
+
+function setWriteLine(el, ok, text) {
+  if (!el) return;
+  el.className = 'wl ' + (ok ? 'ok' : 'bad');
+  el.textContent = text;
+}
+
+/** Re-enable the composer: a run that could not be completed must still leave
+ *  the app usable (the flow's `finale` — which normally does this — is skipped
+ *  on failure so it cannot claim "配置完成"). */
+function enableComposer() {
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('input'));
+  if (input) input.disabled = false;
+}
+
+/** Failure text per terminal-step bucket (never one generic label). */
+const FINISH_FAIL_KEY = {
+  probe: 'ob2.finish.probeFailed',
+  probeRequired: 'ob2.finish.probeRequired',
+  artifacts: 'ob2.write.failed',
+  state: 'ob2.finish.stateRefused',
+};
+
+function clearFinishFailure() {
+  document.querySelectorAll('[data-retry-finish]').forEach((n) => n.closest('.row.notice')?.remove());
+}
+
+/**
+ * Report a refused/failed terminal step with the RIGHT text plus an explicit
+ * retry.
+ *
+ * Why a bucket and a retry: the probe gate's refusal
+ * (`code:'probe_required'`) used to be rendered through the same
+ * `/onboarding/`-matching path as artifact failures, i.e. as
+ * 「记忆写入失败」 — the wrong cause, and with no way to retry. The user was
+ * then stuck: the marker stayed pending, so every window re-ran all 11
+ * questions and was refused again. Naming the step and offering a retry is the
+ * way out of that loop.
+ */
+function reportFinishFailure(kind, detail) {
+  const b = noticeBubble();
+  if (b) {
+    b.textContent = t(FINISH_FAIL_KEY[kind] || 'ob2.finish.stateRefused', { error: detail });
+    // The retry replays the LAST terminal attempt — offered only when there is
+    // one (an unrelated error frame must not render a button that does nothing).
+    if (lastAttempt) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'glass-control ob-primary';
+      retry.textContent = t('ob2.finish.retry');
+      retry.setAttribute('data-retry-finish', kind);
+      retry.addEventListener('click', () => {
+        retry.disabled = true;
+        void finishFlow(lastAttempt.answers, lastAttempt.modelRef, lastAttempt.lines);
+      });
+      b.appendChild(document.createTextNode(' '));
+      b.appendChild(retry);
+    }
+  }
+  enableComposer();
+}
+
+let finishing = false;      // terminal sequence in flight (no concurrent retry)
+let lastAttempt = null;     // { answers, modelRef, lines } — replayed by the retry button
+
+/**
+ * The terminal sequence, in the only order that satisfies the server gate:
+ *   ① one real probe     — records `probeOkAt`, the gate's precondition;
+ *   ② the artifact write — Soul.md / User.md / displayName + the model write-back;
+ *   ③ the marker write   — awaited, so a refusal is a visible verdict.
+ *
+ * ① is shared by BOTH terminal paths. v2 probed only inside the fallback
+ * 「新加一家服务商」 field face, so the primary path (pick a model from the
+ * already-configured providers) could never satisfy the gate — the user could
+ * complete all 11 questions and still never reach `done`. Hoisting the probe into
+ * the one terminal sequence removes that gap from both paths at once, and the
+ * probe measures exactly the brain the user chose (the global chain resolves to
+ * that model; on the fallback face the provider was already written by its own
+ * save button before the flow reaches here).
+ *
+ * The sequence is idempotent (overwrite-style artifact writes, read-modify-write
+ * marker), so the retry button simply re-runs it.
+ */
+async function finishFlow(answers, modelRef, lines) {
+  lastAttempt = { answers, modelRef, lines };
+  if (finishing) return false;
+  finishing = true;
+  try {
+    const probeEl = appendWriteLine(lines, t('ob2.write.probe'));
+    const probe = await probeLlm();
+    setWriteLine(probeEl, probe.ok,
+      probe.ok ? t('ob2.write.probeOk') : t('ob2.write.probeFailed', { error: probe.error || '' }));
+    if (!probe.ok) { reportFinishFailure('probe', probe.error || ''); return false; }
+
+    const fin = await finishOnboarding({ answers, modelRef });
+    if (!fin.ok) { reportFinishFailure('artifacts', fin.error || ''); return false; }
+
+    const st = await setOnboardingState('done');
+    if (!st.ok) {
+      reportFinishFailure(st.code === 'probe_required' ? 'probeRequired' : 'state', st.error || '');
+      return false;
+    }
+    clearFinishFailure();
+    return true;
+  } finally {
+    finishing = false;
+  }
+}
+
+/** Resolve the in-flight `finishOnboarding` await with the artifacts frame. */
+onMessage('onboardingArtifacts', (msg) => {
+  if (!pendingFinish) return;          // a replayed/duplicated frame — not ours
+  clearTimeout(pendingFinish.timer);
+  const { resolve } = pendingFinish;
+  pendingFinish = null;
+  const b = noticeBubble();
+  if (b) {
+    b.textContent = t('ob2.write.done', { soul: msg.soulPath, user: msg.userPath });
+    if (msg.modelWriteError) b.textContent += ' ' + t('ob2.model.writeErr', { error: msg.modelWriteError });
+  }
+  resolve({ ok: true, msg });
+});
+
+onMessage('error', (msg) => {
+  const text = msg?.message || '';
+  const code = msg?.code || '';
+  // A terminal write of OURS is in flight ⇒ it owns the verdict (the awaiting
+  // step reads it and decides retry vs report). Without this the refusal would
+  // be rendered twice — once by the awaiter, once here.
+  if (pendingState) {
+    clearTimeout(pendingState.timer);
+    const { resolve } = pendingState;
+    pendingState = null;
+    resolve({ ok: false, code, error: text });
+    return;
+  }
+  if (pendingFinish) {
+    clearTimeout(pendingFinish.timer);
+    const { resolve } = pendingFinish;
+    pendingFinish = null;
+    resolve({ ok: false, error: text });
+    return;
+  }
+  // ── The probe gate's own refusal, carrying its own code (the ONLY frame on
+  //    this surface that has one). Wrong-bucket reporting of it — 「记忆写入失败
+  //    ：{error}」 — is exactly what hid a refused terminal transition behind a
+  //    memory-write story.
+  if (code === 'probe_required') { reportFinishFailure('probeRequired', text); return; }
+  if (!/onboarding/i.test(text)) return;
+  // Artifact-write failures still read as write failures; answers / marker write
+  // failures get their own (accurate) label.
+  reportFinishFailure(/artifacts/i.test(text) ? 'artifacts' : 'state', text);
 });
 
 function answersPayload() {
@@ -933,13 +1098,43 @@ function answersPayload() {
   return out;
 }
 
-function finishOnboarding({ answers, modelRef }) {
-  const payload = { type: 'finishOnboarding', answers };
-  if (modelRef) payload.modelRef = modelRef;
-  // Explicit window (if the user set one) rides the SAME frame that carries the
-  // model ref — one write path, one config store.
-  if (modelRef && modelContextWindow) payload.contextWindow = modelContextWindow;
-  sendWs(payload);
+/** Write the artifacts once and resolve when the server confirms (same single
+ *  write path the Settings panel uses — only observed now, not fire-and-forget). */
+function finishOnboarding({ answers, modelRef }, timeoutMs = FINISH_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    pendingFinish = { resolve, timer: setTimeout(() => {
+      if (pendingFinish && pendingFinish.resolve === resolve) pendingFinish = null;
+      resolve({ ok: false, error: t('ob2.finish.timeout') });
+    }, timeoutMs) };
+    const payload = { type: 'finishOnboarding', answers };
+    if (modelRef) payload.modelRef = modelRef;
+    // Explicit window (if the user set one) rides the SAME frame that carries the
+    // model ref — one write path, one config store.
+    if (modelRef && modelContextWindow) payload.contextWindow = modelContextWindow;
+    sendWs(payload);
+  });
+}
+
+async function writingRitual() {
+  const row = await streamBubbleAsync([t('ob2.writing.title')]);
+  const bubble = row.row ? row.row.querySelector('.bubble') : null;
+  if (!bubble) return false;
+  const lines = document.createElement('div');
+  lines.className = 'write-lines';
+  const seq = [
+    t('ob2.write.1'), t('ob2.write.2'), t('ob2.write.3'),
+    t('ob2.write.4'), t('ob2.write.5'), t('ob2.write.6'),
+  ];
+  bubble.appendChild(lines);
+  for (const text of seq) {
+    setWriteLine(appendWriteLine(lines, text), true, text);
+    await wait(220);
+  }
+  await wait(260);
+  const answers = answersPayload();
+  const modelAnswer = collected.get('model');
+  const modelRef = modelAnswer && modelAnswer.kind !== 'skip' ? modelAnswer.value : null;
+  return await finishFlow(answers, modelRef, lines);
 }
 
 async function finale() {
@@ -951,7 +1146,7 @@ async function finale() {
   const styleV = style && style.kind !== 'skip' ? style.value : '';
   const segs = finaleLines(name, call, styleV);
   await streamBubble(segs);
-  const input = document.getElementById('input');
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('input'));
   if (input) {
     input.disabled = false;
     input.placeholder = t('ob2.input.ph', { name });

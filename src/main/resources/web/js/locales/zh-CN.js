@@ -850,6 +850,17 @@ export default {
   'ob2.write.6': '✓ memory.md（项目记忆）→ 已退役',
   'ob2.write.done': '记忆已写入：Soul.md（{soul}）、User.md（{user}）。',
   'ob2.write.failed': '记忆写入失败：{error}',
+  // 收尾终局步（真实探测 → 产物 → marker）。三条都是「拦住了」的如实说法，
+  // 各带自己的出口，不再共用「记忆写入失败」一句话。
+  'ob2.write.probe': '· 连线一次真实模型 …',
+  'ob2.write.probeOk': '✓ 模型已应答 —— 这一步才算数',
+  'ob2.write.probeFailed': '✗ 模型没有应答：{error}',
+  'ob2.finish.probeRequired': '还没有一次成功的模型连通记录，引导暂不能收尾：{error}。检查上面选中的模型（或去「设置」改），然后重试。',
+  'ob2.finish.probeFailed': '收尾前的模型连通验证没通过：{error}。修正后可以重试。',
+  'ob2.finish.stateRefused': '引导状态写入被拒：{error}。',
+  'ob2.finish.retry': '重试收尾',
+  'ob2.finish.timeout': '收尾请求超时（服务端未回应），可重试。',
+  'ob2.state.timeout': '引导状态写入超时（服务端未回应），可重试。',
   'ob2.name.unnamed': '（还没有名字的我）',
   'ob2.you': '你',
   'ob2.finale.direct1': '配置完成。从现在起，叫我 {n}。',

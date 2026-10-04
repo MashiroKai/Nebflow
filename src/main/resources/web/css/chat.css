@@ -2140,6 +2140,11 @@
 .write-lines .wl.ok {
   color: var(--color-text);
 }
+/* A terminal step that was refused/failed says so in place (the probe line is
+ * the one that can flip: it is appended pending, then resolved). */
+.write-lines .wl.bad {
+  color: var(--color-danger, #d9534f);
+}
 @media (prefers-reduced-motion: reduce) {
   .ob-cursor {
     display: none;

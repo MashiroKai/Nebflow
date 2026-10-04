@@ -878,6 +878,18 @@ export default {
   'ob2.write.6': '✓ memory.md (per-project memory) → retired',
   'ob2.write.done': 'Memory written: Soul.md ({soul}), User.md ({user}).',
   'ob2.write.failed': 'Failed to write memory: {error}',
+  // Terminal-step outcomes. Each caught step names itself and carries its own
+  // way out — one shared "memory write failed" line is what mislabelled a
+  // refused probe gate and left the user with no next move.
+  'ob2.write.probe': '· reaching the real model once …',
+  'ob2.write.probeOk': '✓ the model answered — this is the step that counts',
+  'ob2.write.probeFailed': '✗ the model did not answer: {error}',
+  'ob2.finish.probeRequired': 'No successful model probe is on record, so onboarding cannot finish: {error}. Check the model picked above (or change it in Settings), then retry.',
+  'ob2.finish.probeFailed': 'The model probe before finishing did not pass: {error}. Fix it and retry.',
+  'ob2.finish.stateRefused': 'The onboarding state write was refused: {error}.',
+  'ob2.finish.retry': 'Retry finishing',
+  'ob2.finish.timeout': 'The finish request timed out (no server reply). You can retry.',
+  'ob2.state.timeout': 'The onboarding state write timed out (no server reply). You can retry.',
   'ob2.name.unnamed': '(the one without a name)',
   'ob2.you': 'you',
   'ob2.finale.direct1': 'Configuration complete. From now on, call me {n}.',
