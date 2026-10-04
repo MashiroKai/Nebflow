@@ -6,10 +6,12 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
+import nebflow.social.outbound.{RichFeishuAdapter, RichKind}
 import nebflow.shared.NebflowLogger
 import nebflow.shared.SessionMeta
 
 import java.util.concurrent.atomic.AtomicBoolean
+import scala.util.Try
 
 /**
  * Feishu bridge adapter (feishubridge batch, 2026-09-25) — the consumer side the
@@ -66,10 +68,22 @@ final class FeishuBridgePlugin(
     * so a fresh read is both always-correct and free. The offline spec pins a
     * function to stay off the real config. */
   readDefaultSession: os.Path => Option[String] =
-    root => SocialChannels.defaultSessionId(root, FeishuBridgePlugin.Name)
+    root => SocialChannels.defaultSessionId(root, FeishuBridgePlugin.Name),
+  /** Rich-content factory seam (richcontent main-link batch, soc483). Production
+    * builds the live adapter from the credential resolved for THIS chat; the
+    * offline spec injects a recording adapter whose four outbound seams are
+    * fakes, so no test ever opens a socket or reads a credential (R-2). */
+  buildRichAdapter: (FeishuCredentials.Credential, String, String) => RichFeishuAdapter =
+    FeishuBridgePlugin.defaultRichAdapter,
+  /** The document extension authority handed to [[RichKind.of]] — the endpoint
+    * table reached through the existing same-package adapter
+    * ([[FeishuOutboundAdapter.defaultTable]]), so no second table exists. */
+  documentExtensions: Set[String] = FeishuBridgePlugin.defaultDocumentExtensions
 ) extends BridgePlugin:
 
   private val logger = NebflowLogger.forName("nebflow.social.feishu-bridge")
+
+  import FeishuBridgePlugin.*
 
   def name: String = FeishuBridgePlugin.Name
 
@@ -80,6 +94,17 @@ final class FeishuBridgePlugin(
   /** session id → accumulated delta text for the turn in flight. */
   private[social] val pendingRef =
     cats.effect.Ref.unsafe[IO, Map[String, String]](Map.empty)
+  /** session id → the LAST rich product observed in the turn in flight
+    * (richcontent main-link batch, soc483).
+    *
+    * The turn's text (`textDelta`) and its artifacts (`toolEnd`) are DIFFERENT
+    * root events, and only `toolEnd` carries `content`; so the rich decision has
+    * to be remembered between the two. Kept per session and cleared exactly like
+    * the buffer — `done` reads + removes it, `interrupted`/`retryStatus` drop it
+    * (a torn turn is never a reply). `None` means "no rich product this turn",
+    * which is the pure-text path and must stay byte-identical. */
+  private[social] val richRef =
+    cats.effect.Ref.unsafe[IO, Map[String, RichProduct]](Map.empty)
   /** The member allowlist in force; empty = unrestricted (shipped default).
     * The pinned value is the INITIAL state so the gate is armed from
     * construction; start() re-reads the stored card config over it. */
@@ -127,6 +152,7 @@ final class FeishuBridgePlugin(
       creds = pinnedCreds
       starting.set(false)
     } *> pendingRef.set(Map.empty) // a torn turn is never a reply, also across restarts
+      *> richRef.set(Map.empty) // …and neither is a rich product from a torn turn
 
   // ───────────────────────────── inbound ─────────────────────────────
   /** The ONE sync→IO boundary: runs on the SDK's receive thread. Exceptions are
@@ -258,21 +284,99 @@ final class FeishuBridgePlugin(
     }
 
   // ───────────────────────────── outbound ─────────────────────────────
+  /**
+   * The outbound decision (richcontent main-link batch, soc483).
+   *
+   * Three event kinds matter here, and they arrive as SEPARATE root events:
+   *
+   *   - `textDelta` — the turn's text, accumulated per session (unchanged);
+   *   - `toolEnd`   — the ONLY root event that carries the tool `content`, and
+   *     therefore the only place a rich product (a card payload or an artifact
+   *     path) can be observed. A rich product is remembered for the turn; any
+   *     other tool result leaves the memory as it was;
+   *   - `done`      — the turn closed. With a rich product remembered, the reply
+   *     goes down the rich leg ([[RichKind.of]] classification → the injected
+   *     [[RichFeishuAdapter]], which plans/renders/delivers and degrades to text
+   *     on every failure). With none, the reply is the accumulated text, through
+   *     the EXISTING [[reply]] path, byte-for-byte as before.
+   *
+   * 🔴 The rich leg is ADDITIVE by construction: it never suppresses the text
+   * reply (the accumulated text is still sent), and the no-product path never
+   * touches the rich code at all. `interrupted` / `retryStatus` clear both the
+   * buffer and the rich memory (a torn turn is never a reply).
+   */
   def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
     val c = event.hcursor
     c.downField("type").as[String].getOrElse("") match
       case "textDelta" =>
         c.downField("delta").as[String].getOrElse("") match
-          case ""   => IO.unit
+          case ""    => IO.unit
           case delta => pendingRef.update(m => m.updated(sessionId, m.getOrElse(sessionId, "") + delta))
+      case "toolEnd" =>
+        // A tool result is only a rich product when it was NOT an error; an
+        // errored tool's content is an error string, never an artifact.
+        if c.downField("isError").as[Boolean].getOrElse(false) then IO.unit
+        else
+          RichProduct.of(
+            content = c.downField("content").as[String].getOrElse(""),
+            input = c.downField("input").focus,
+            label = c.downField("label").as[String].getOrElse(""),
+            documentExtensions = documentExtensions
+          ) match
+            case None       => IO.unit
+            case Some(rich) => richRef.update(m => m.updated(sessionId, rich))
       case "done" =>
-        pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) }.flatMap { text =>
-          if text.trim.isEmpty then IO.unit else reply(sessionId, text)
+        (pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) },
+          richRef.modify { m => (m - sessionId, m.get(sessionId)) }).tupled.flatMap {
+          case (text, richOpt) =>
+            val textLeg = if text.trim.isEmpty then IO.unit else reply(sessionId, text)
+            val richLeg = richOpt match
+              case None       => IO.unit
+              case Some(rich) => deliverRich(sessionId, rich)
+            richLeg *> textLeg
         }
       // A retried or interrupted turn re-streams its text; the partial buffer
       // must never flush as a duplicated/garbled reply.
-      case "interrupted" | "retryStatus" => pendingRef.update(_ - sessionId)
-      case _                             => IO.unit
+      case "interrupted" | "retryStatus" =>
+        pendingRef.update(_ - sessionId) *> richRef.update(_ - sessionId)
+      case _ => IO.unit
+
+  /**
+   * The rich leg: classify the remembered product and deliver it through the
+   * injected adapter, degrading to text on every failure (the adapter's own
+   * contract — see [[RichFeishuAdapter.deliver]]).
+   *
+   * 🔴 Zero-secret: the credential is resolved ONLY here, through the existing
+   * [[FeishuCredentials.resolve]] path the text leg already uses, and is handed
+   * straight to the adapter factory. It is never logged, echoed, or stored.
+   */
+  private[social] def deliverRich(sessionId: String, rich: RichProduct): IO[Unit] =
+    routesRef.get.flatMap { routes =>
+      routes.collectFirst { case (chatId, sid) if sid == sessionId => chatId } match
+        case None => IO.unit // not a feishu-bound session — pass through, exactly as the text leg does
+        case Some(chatId) =>
+          creds match
+            case None =>
+              IO(logger.warn(s"feishu bridge: rich reply for chat $chatId dropped — no credential resolved"))
+            case Some(c) =>
+              val kind = RichKind.of(
+                content = rich.content,
+                path = rich.path.map(_.toString),
+                exists = rich.path.exists(p => Try(os.isFile(p)).getOrElse(false)),
+                documentExtensions = documentExtensions
+              )
+              val adapter = buildRichAdapter(c, region, chatId)
+              // 🔴 The adapter is called for EVERY classified kind, `Unknown`
+              // included: something WAS observed as a product this turn, so the
+              // recipient must be told what happened to it (`[未知类型] …`) — a
+              // silent return here would be exactly the drop this batch forbids.
+              adapter.deliver(kind, rich.path, rich.content).flatMap { results =>
+                val failed = results.filterNot(_.ok)
+                IO(logger.info(
+                  s"feishu bridge: rich reply to chat $chatId kind=$kind label=${rich.label} " +
+                    s"calls=${results.size} failed=${failed.size}"))
+              }
+    }
 
   private[social] def reply(sessionId: String, text: String): IO[Unit] =
     routesRef.get.flatMap { routes =>
@@ -302,11 +406,107 @@ object FeishuBridgePlugin:
   /** BridgePlugin.name — also the platform key in SessionMeta.bridges. */
   val Name = "feishu"
 
+  /**
+   * Rich-content plumbing of the main link (richcontent main-link batch, soc483).
+   *
+   * [[RichProduct]] is what a tool result can contribute to the outbound
+   * decision: the two observables [[RichKind.of]] reads (the leading `content`,
+   * which carries the card payload, and an artifact path).
+   *
+   * Why `content` and `input` are BOTH consulted: two different tools carry the
+   * artifact differently, and the produced result is the authority where it
+   * exists.
+   *
+   *   - a CARD product is the card sentinel + payload, i.e. the `content` itself
+   *     (the shape `RichKind.CardSentinel` pins);
+   *   - a Pop result is the pop sentinel + JSON whose `items[]` carry the
+   *     RESOLVED absolute paths (`PopTool`'s payload; that resolution is the
+   *     authority — re-deriving a path from the call arguments would be a second,
+   *     weaker judgement);
+   *   - failing both, the call's own `input` is read for a path argument, but
+   *     only for an extension that is a rich kind: an arbitrary file argument
+   *     must not turn a turn rich.
+   */
+  final case class RichProduct(content: String, path: Option[os.Path], label: String)
+
+  object RichProduct:
+
+    /** The pop payload sentinel — mirrors `nebflow.core.tools.PopTool.Sentinel`
+      * (the frontend splits on the same literal in `chat.js`). Pinned rather than
+      * imported so this file gains no `core.tools` dependency for one string;
+      * the tool and the frontend are the authority and this is a mirror. */
+    val PopSentinel: String = "___POP_JSON___"
+
+    /** Argument names a tool result may carry a path under. */
+    private val PathFields = List("filePath", "path", "file", "attachment", "artifact")
+
+    /** Read the rich product a tool result contributes, or `None` when it is not
+      * a rich product at all (the overwhelmingly common case). */
+    def of(content: String, input: Option[Json], label: String,
+        documentExtensions: Set[String]): Option[RichProduct] =
+      if RichKind.isCardContent(content) then Some(RichProduct(content, None, label))
+      else if content.startsWith(PopSentinel) then
+        PopProduct.fromPayload(content.stripPrefix(PopSentinel)).map(p => RichProduct(content, Some(p), label))
+      else
+        pathFromInput(input).filter(isRichPath(_, documentExtensions)).map(p => RichProduct("", Some(p), label))
+
+    /** A path argument on the tool call, if any. */
+    private def pathFromInput(input: Option[Json]): Option[os.Path] =
+      input.flatMap { j =>
+        val c = j.hcursor
+        val single = PathFields.flatMap(f => c.downField(f).as[String].toOption).map(_.trim).filter(_.nonEmpty)
+        val many = c.downField("paths").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+        (single ++ many).headOption.flatMap(p => Try(os.Path(p)).toOption)
+      }
+
+    /** True when the path's extension puts it in one of the two rich tables —
+      * the same predicate [[RichKind.of]] applies, used here to keep the fallback
+      * arm from calling an ordinary file argument "rich". */
+    private def isRichPath(p: os.Path, documentExtensions: Set[String]): Boolean =
+      val lower = p.toString.toLowerCase
+      nebflow.core.tools.ImageInject.imageExtensions.keys.exists(lower.endsWith) ||
+        (lower.lastIndexOf('.') match
+          case -1 => false
+          case i  => documentExtensions.contains(lower.substring(i + 1)))
+
+  /** One artifact read out of a Pop payload's `items[]`. Deliberately ONLY the
+    * two kinds the rich leg can carry: a `video` item rides the same payload
+    * shape but is not a rich-content product of this layer, so it is skipped
+    * rather than mis-delivered. If a payload carries only a video, the turn
+    * keeps its text reply. */
+  private object PopProduct:
+    /** First `image` item, else the first `file` item. `kind` / `path` are the
+      * payload's own field names (`PopTool.itemJson`). */
+    def fromPayload(json: String): Option[os.Path] =
+      io.circe.parser.parse(json).toOption.flatMap { j =>
+        val items = j.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+        def pick(kind: String): Option[os.Path] =
+          items
+            .find(i => i.hcursor.downField("kind").as[String].toOption.contains(kind))
+            .flatMap(i => i.hcursor.downField("path").as[String].toOption.map(_.trim).filter(_.nonEmpty))
+            .flatMap(p => Try(os.Path(p)).toOption)
+        pick("image").orElse(pick("file"))
+      }
+
   /** The human-readable label this channel announces in the source-marker block
     * (source-marker batch, 2026-10-01). Data only: the template lives on the
     * channel-agnostic side ([[nebflow.bridge.BridgeOrigin.marker]]), so a second
     * channel reuses it by supplying its own label — never by copying the text. */
   val ChannelDisplay = "飞书"
+
+  /** Production rich-adapter factory: the live adapter assembled from the
+    * credential THIS bridge already resolved and the bound chat id. The
+    * credential value is handed to the SDK seams only — never logged, echoed or
+    * stored ([[RichFeishuAdapter]]'s own zero-secret contract). */
+  def defaultRichAdapter(cred: FeishuCredentials.Credential, region: String, chatId: String): RichFeishuAdapter =
+    RichFeishuAdapter.live(cred, region, "chat_id", chatId)
+
+  /** The document extension authority for the main link: the endpoint table the
+    * existing same-package adapter already owns ([[FeishuOutboundAdapter.defaultTable]],
+    * itself welded to `NfFilePolicy.NfFileAllowedExt` by `FileRefsWhitelistSpec`
+    * A14). Referenced through that adapter rather than importing the gateway
+    * package here, so the `social` package gains no new upward edge. */
+  def defaultDocumentExtensions: Set[String] = FeishuOutboundAdapter.defaultTable
 
   /** Companion-side logger (the sync/guard legs live here, outside any instance). */
   private val log = NebflowLogger.forName("nebflow.social.feishu-bridge")

@@ -283,8 +283,9 @@ object WeixinIlinkScanBind:
   val MaxLoginMs = 300000L
 
   /** Production [[LoginFn]]: HTTP against the side-car control endpoint —
-    * `POST {base}/login/begin` then `GET {base}/login/status` until a terminal
-    * state. Blocking by contract (the fiber runs it inside `IO.blocking`);
+    * `GET {base}/login/begin` then `GET {base}/login/status` until a terminal
+    * state (both legs are GET; the side-car serves no POST on this path).
+    * Blocking by contract (the fiber runs it inside `IO.blocking`);
     * every transport failure lands in [[SidecarUnreachableException]], the
     * budget in [[LoginExpiredException]]. */
   def sidecarLogin(root: os.Path): LoginFn =

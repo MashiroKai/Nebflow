@@ -98,16 +98,21 @@ object SocialChannels:
         FieldSpec("bot_token", "secret", required = true, pattern = None, Some("social-weixin-bot-token")),
         FieldSpec("ilink_bot_id", "text", required = true, pattern = None),
         FieldSpec("ilink_user_id", "text", required = true, pattern = None),
-        FieldSpec("baseurl", "url", required = false, pattern = Some("^https?://")),
+        // baseurl fix (soc483 batch): the spelling used to be the bare prefix
+        // `^https?://`, which `String.matches` (whole value) rejects for every
+        // real URL that carries a path — see the FULL-MATCH note on
+        // `sidecar_url` below. It now carries the `.*` tail so the save face
+        // accepts what the frontend's prefix `.test()` already accepts.
+        FieldSpec("baseurl", "url", required = false, pattern = Some("^https?://.*")),
         // weixin-scanbind (2026-10-03): the side-car CONTROL leg — where the
         // scan-bind manager finds the official plugin's login session (the QR
         // belongs to the plugin side, never to this repo). Empty = the default
         // localhost endpoint; the scan-bind save never touches this field.
         // 🔴 FULL-MATCH spelling on purpose: the save validation runs
         // `String.matches` (whole value), so a prefix pattern like
-        // `^https?://` would reject every real URL. (The older url fields
-        // carry the prefix spelling and disagree with the frontend's
-        // prefix-`.test()` face — pre-existing, out of this batch's face.)
+        // `^https?://` would reject every real URL. (The `api_base` field on
+        // the telegram card still carries the bare prefix spelling; it is
+        // registered as a reading on this batch, its fix is not in scope.)
         FieldSpec("sidecar_url", "url", required = false, pattern = Some("^https?://.*")),
         FieldSpec("allowed_ilink_user_ids", "text", required = false, pattern = None)
       )
