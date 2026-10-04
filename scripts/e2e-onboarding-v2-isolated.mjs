@@ -15,21 +15,38 @@
 //   B. Questionnaire walk: per-question upsert (setOnboardingAnswers) lands each
 //      answer, then finishOnboarding writes Soul.md / User.md as peers at the
 //      home root, carrying the free-form quotes verbatim.
-//   C. All-skipped path: an 11/11 skip run still reaches done and leaves a
-//      structurally complete skeleton (## 备注 present in Soul.md).
+//   C. All-skipped path: an 11/11 skip run reaches **done** — the terminal
+//      transition is actually SENT and awaited (`setOnboardingState('done')` →
+//      `onboardingStateSet`), and the marker on disk says done. Reaching done
+//      also requires a recorded probe (the server hard gate), so this section
+//      points the isolated config at a LOCAL stub that really answers and probes
+//      it first; a harness that only wrote the artifacts could never prove this.
 //   D. Model step same-source + two-way consistency: getOnboardingModels lists
 //      exactly the providers/models of the config store the Settings panel
 //      writes, and a context-window write-back is read back from that same
 //      store (updateConfig -> config file -> the next getOnboardingModels read).
+//   E. PRIMARY terminal path (pick a configured model, then finish): the real
+//      sequence the UI runs — finishOnboarding, then probeLlm (which records
+//      probeOkAt and only succeeds because the stub answers), then
+//      setOnboardingState('done') → the gate accepts. This is the path the
+//      verifier proved unmet; the stub makes the probe real without any network.
+//   F. The gate actually refuses: setOnboardingState('done') on a fresh home
+//      (no probe on record) answers {type:'error',code:'probe_required'} and the
+//      marker does NOT move. Coverage must exercise the gate, not bypass it.
 //
 // Usage:
 //   NEBFLOW_URL=http://127.0.0.1:8687 NEBFLOW_HOME_DIR=$(mktemp -d) \
 //     node scripts/e2e-onboarding-v2-isolated.mjs
 //
+// The local stub server (sections C / E / F) binds an ephemeral loopback port of
+// its OWN choosing — never the reserved 8686..8690 band, never :8080 — and is
+// closed before exit.
+//
 // Exit code 0 = every check passed. Non-zero = at least one FAIL.
 
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 
 const URL_BASE = process.env.NEBFLOW_URL || '';
 const HOME = process.env.NEBFLOW_HOME_DIR || '';
@@ -140,6 +157,63 @@ async function askModels(conn, timeoutMs = 8000) {
   return m;
 }
 
+/**
+ * Read the marker from the frame AND from disk. The frame is `onboarding:` of
+ * `configData`; the file is `onboarding.json` (`{state, probeOkAt}`). The disk
+ * leg matters: a stale/forged frame must not be able to fake a state change
+ * (the same read-modify-write file the gate writes is the source of truth).
+ */
+async function readMarker(conn) {
+  const cfg = await ask(conn, { type: 'getConfig' }, 'configData', 8000);
+  let disk = null;
+  const p = join(HOME, 'onboarding.json');
+  if (existsSync(p)) {
+    try { disk = JSON.parse(readFileSync(p, 'utf8')); } catch { disk = null; }
+  }
+  return { frame: cfg.onboarding ?? null, disk };
+}
+
+/**
+ * A minimal, DETERMINISTIC, LOCAL OpenAI-protocol stub. The onboarding probe
+ * (`probeLlm`) is a real network call through the global chain, so proving the
+ * all-skipped / primary terminal paths reach `done` needs a provider that
+ * actually answers. A stub on loopback keeps that real — no real provider, no
+ * credentials, no third-party network.
+ *
+ * Binding: the OS picks an ephemeral port on 127.0.0.1 (0 in `listen`), which by
+ * construction cannot collide with :8080 or the reserved 8686..8690 band.
+ */
+function startStubLlm() {
+  const state = { hits: 0, lastBody: null };
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      state.hits++;
+      state.lastBody = body;
+      if (!req.url.endsWith('/chat/completions')) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'not found' } }));
+        return;
+      }
+      // Shape the OpenAI adapter expects (choices[0].message.content non-empty).
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        id: 'stub-1', object: 'chat.completion', model: 'stub-model',
+        choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }));
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({ port, url: `http://127.0.0.1:${port}`, hits: () => state.hits, lastBody: () => state.lastBody,
+        close: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
 /** The 11-question script, mirroring onboarding.js (id / label / scope / kind). */
 const SCRIPT = [
   { id: 'name', label: '名字', scope: 'base', kind: 'free' },
@@ -160,6 +234,7 @@ function answerFrame(id, label, scope, kind, value, values) {
 }
 
 const conn = await wsConnect();
+const stub = await startStubLlm();
 try {
   // ── A. Cold start reading ──────────────────────────────────────────────
   // `configured` is true when the home ships providers (a seeded run). The
@@ -238,7 +313,50 @@ try {
     agentJson.displayName === NAME && agentJson.name === 'Nebula',
     `name=${agentJson.name} displayName=${agentJson.displayName}`);
 
-  // ── C. All-skipped path ────────────────────────────────────────────────
+  // ── F. The gate itself REFUSES (must be exercised, not bypassed) ───────
+  // A fresh home with no probe on record: `setOnboardingState('done')` must be
+  // answered by {type:'error',code:'probe_required'} — the very gate that the
+  // original coverage walked around (both by never sending the frame and by
+  // using the legacy `writeState` path in the spec).
+  const refused = await ask(conn, { type: 'setOnboardingState', state: 'done' }, 'error', 8000)
+    .catch((e) => ({ __err: String(e) }));
+  check('F gate refuses done without a probe (code=probe_required)',
+    refused.code === 'probe_required', `code=${refused.code} message=${refused.message}`);
+  const markerAfterRefusal = await readMarker(conn);
+  check('F refused transition leaves the marker unmoved (file + frame agree)',
+    markerAfterRefusal.disk?.state !== 'done' && markerAfterRefusal.frame !== 'done',
+    `disk=${markerAfterRefusal.disk?.state} frame=${markerAfterRefusal.frame}`);
+  // …and the SAME home must still be recoverable: the refusal is not a dead end.
+  check('F a refusal does not leave artifact files half-written behind the user’s back',
+    existsSync(join(HOME, 'Soul.md')), 'Soul.md present from section B');
+
+  // ── C. All-skipped path — reaches done for real ────────────────────────
+  // Point the isolated config at the LOCAL stub (the same single write path the
+  // Settings panel uses) so the probe below is a real network call that really
+  // succeeds. Its baseUrl is loopback: nothing leaves this machine.
+  const cfgForStub = await ask(conn, { type: 'getConfig' }, 'configData');
+  const baseForStub = (() => {
+    try { return JSON.parse(cfgForStub.config || '{}'); } catch { return {}; }
+  })();
+  const cfgWithStub = {
+    ...baseForStub,
+    llm: {
+      ...(baseForStub.llm || {}),
+      providers: {
+        ...((baseForStub.llm || {}).providers || {}),
+        e2estub: {
+          baseUrl: `${stub.url}/`,
+          apiKey: 'stub-key',
+          protocol: 'openai',
+          models: [{ id: 'stub-model', contextWindow: 128000 }],
+        },
+      },
+    },
+  };
+  const updStub = await ask(conn, { type: 'updateConfig', config: JSON.stringify(cfgWithStub) }, 'configUpdated', 15000)
+    .catch((e) => ({ __err: String(e) }));
+  check('C stub provider wired into the isolated config store', !updStub.__err, updStub.__err || `type=${updStub.type}`);
+
   const skippedAnswers = {};
   for (const q of SCRIPT) skippedAnswers[q.id] = answerFrame(q.id, q.label, q.scope, 'skip', '');
   const fin2 = await ask(conn, { type: 'finishOnboarding', answers: skippedAnswers }, 'onboardingArtifacts', 20000);
@@ -257,6 +375,25 @@ try {
   check('C all-skipped: per-field placeholders, no empty holes',
     soul2.includes('未设置（这一题你跳过了）') || soul2.includes('未设置（随时可以再来起一个）'),
     'placeholder rows');
+
+  // 🔴 The transition that used to be MISSING from this harness. The frontend's
+  // terminal sequence probes first, then writes the marker; do the same order.
+  const hitsBefore = stub.hits();
+  const probeSkip = await ask(conn, { type: 'probeLlm' }, 'probeResult', 25000);
+  check('C all-skipped: a real probe through the chosen brain succeeds',
+    probeSkip.ok === true, `ok=${probeSkip.ok} error=${probeSkip.error}`);
+  check('C all-skipped: the probe really reached the configured provider (stub hit count grew)',
+    stub.hits() > hitsBefore, `hits ${hitsBefore} -> ${stub.hits()}`);
+  const stSkip = await ask(conn, { type: 'setOnboardingState', state: 'done' }, 'onboardingStateSet', 8000)
+    .catch((e) => ({ __err: String(e) }));
+  check('C all-skipped: setOnboardingState(done) is ACCEPTED after the probe',
+    stSkip.state === 'done', stSkip.__err || `state=${stSkip.state}`);
+  const markerSkip = await readMarker(conn);
+  check('C all-skipped: the marker on disk says done (cold start is finishable)',
+    markerSkip.disk?.state === 'done' && markerSkip.frame === 'done',
+    `disk=${markerSkip.disk?.state} frame=${markerSkip.frame}`);
+  check('C all-skipped: a successful probe is recorded (probeOkAt on disk)',
+    typeof markerSkip.disk?.probeOkAt === 'number', `probeOkAt=${markerSkip.disk?.probeOkAt}`);
 
   // ── D. Model step: same source + two-way consistency ───────────────────
   // Write a provider into the SAME store the Settings panel uses (updateConfig),
@@ -294,30 +431,51 @@ try {
   check('D2 effective window = min(configured, modelMaxContext)',
     row && row.effectiveContextWindow === 128000, `effective=${row?.effectiveContextWindow}`);
 
-  // Write-back through the onboarding frame, then read the store back directly.
+  // ── E. PRIMARY terminal path: pick a configured model, then finish ──────
+  // This is the path the author's item ② foregrounds (choose a model from the
+  // already-configured providers) AND the one the verifier proved could never
+  // reach done. It is exercised here through the stub so the probe inside the
+  // terminal sequence is a real call that really succeeds — deterministic, no
+  // third-party network, no credentials.
   const finModel = await ask(conn, {
     type: 'finishOnboarding',
     answers: {
       name: answerFrame('name', '名字', 'base', 'free', NAME),
-      model: answerFrame('model', '大脑配置', 'base', 'model', 'e2eprov/glm-4.6'),
+      model: answerFrame('model', '大脑配置', 'base', 'model', 'e2estub/stub-model'),
     },
-    modelRef: 'e2eprov/glm-4.6',
+    modelRef: 'e2estub/stub-model',
     contextWindow: 64000,
   }, 'onboardingArtifacts', 20000);
-  check('D3 write-back reported no error', !finModel.modelWriteError, `modelWriteError=${finModel.modelWriteError}`);
+  check('E primary: artifacts write reports no error', !finModel.modelWriteError, `modelWriteError=${finModel.modelWriteError}`);
 
   const models2 = await askModels(conn);
-  const row2 = (models2.models || []).find((m) => m.ref === 'e2eprov/glm-4.6');
-  check('D3 two-way consistency: onboarding write read back through Settings data source',
+  const row2 = (models2.models || []).find((m) => m.ref === 'e2estub/stub-model');
+  check('E primary: two-way consistency — onboarding write read back via the Settings data source',
     row2 && row2.contextWindow === 64000 && row2.effectiveContextWindow === 64000,
     `contextWindow=${row2?.contextWindow} effective=${row2?.effectiveContextWindow}`);
   const onDisk = JSON.parse(readFileSync(join(HOME, 'nebflow.json'), 'utf8'));
-  check('D3 the SAME config file on disk carries the new window',
-    onDisk.llm?.providers?.e2eprov?.models?.[0]?.contextWindow === 64000,
-    `disk=${onDisk.llm?.providers?.e2eprov?.models?.[0]?.contextWindow}`);
-  check('D3 the write-back did not drop unrelated config keys',
-    onDisk.llm?.providers?.e2eprov?.baseUrl === 'https://example.invalid/v1/',
-    'baseUrl preserved');
+  check('E primary: the SAME config file on disk carries the new window',
+    onDisk.llm?.providers?.e2estub?.models?.[0]?.contextWindow === 64000,
+    `disk=${onDisk.llm?.providers?.e2estub?.models?.[0]?.contextWindow}`);
+  check('E primary: the write-back did not drop unrelated config keys',
+    onDisk.llm?.providers?.e2estub?.baseUrl === `${stub.url}/`,
+    'stub baseUrl preserved');
+
+  // The terminal sequence the frontend now runs: finish → probe → marker. Replay
+  // it in order against a home whose marker is already done (accepted either way)
+  // so the ORDER itself is under test: the probe must come before the marker.
+  const hitsBeforeE = stub.hits();
+  const probeE = await ask(conn, { type: 'probeLlm' }, 'probeResult', 25000);
+  check('E primary: the probe on the picked model succeeds', probeE.ok === true, `ok=${probeE.ok} error=${probeE.error}`);
+  check('E primary: the probe reached the picked provider (stub hit count grew)',
+    stub.hits() > hitsBeforeE, `hits ${hitsBeforeE} -> ${stub.hits()}`);
+  const stE = await ask(conn, { type: 'setOnboardingState', state: 'done' }, 'onboardingStateSet', 8000)
+    .catch((e) => ({ __err: String(e) }));
+  check('E primary: setOnboardingState(done) accepted after the probe', stE.state === 'done', stE.__err || `state=${stE.state}`);
+  const markerE = await readMarker(conn);
+  check('E primary: marker on disk + frame both say done',
+    markerE.disk?.state === 'done' && markerE.frame === 'done',
+    `disk=${markerE.disk?.state} frame=${markerE.frame}`);
 
   // ── D4. The FRONT END actually sends the window ────────────────────────
   // The frame contract above proves the engine honours `contextWindow`; this
@@ -334,11 +492,28 @@ try {
       src.includes("type: 'getOnboardingModels'"), 'getOnboardingModels frame');
     check('D4 front end carries the skip control on every card kind',
       src.includes('data-skip'), 'data-skip');
+    // 🔴 The terminal transition must be OBSERVED, not fired and forgotten: the
+    // flow probes before it writes the marker, it AWAITS `setOnboardingState`, and
+    // it only plays the success finale once the marker actually landed. A source
+    // that still calls setOnboardingState without awaiting its verdict is exactly
+    // the shape that made a refused cold start unfinishable.
+    check('D4 front end probes before writing the terminal marker',
+      /await probeLlm\(\)/.test(src) && /const st = await setOnboardingState/.test(src),
+      'probeLlm awaited + setOnboardingState awaited');
+    check('D4 front end does not fire the marker write without a verdict',
+      !/^\s*setOnboardingState\('done'\);\s*$/m.test(src), 'no bare fire-and-forget done write');
+    check('D4 the probe gate refusal has its own message bucket (不是「记忆写入失败」)',
+      src.includes("'probe_required'") && src.includes('ob2.finish.probeRequired'),
+      'probe_required bucket');
+    check('D4 front end offers a retry for a refused terminal step',
+      src.includes('data-retry-finish') && src.includes('ob2.finish.retry'),
+      'retry control');
   } else {
     check('D4 front-end source check', false, `E2E_ONBOARDING_JS not set or missing: ${jsPath}`);
   }
 } finally {
   conn.ws.close();
+  await stub.close();
 }
 
 console.log(`\nE2E isolated onboarding: ${pass} passed, ${fail} failed`);

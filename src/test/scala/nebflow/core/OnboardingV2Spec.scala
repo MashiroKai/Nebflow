@@ -139,7 +139,9 @@ class OnboardingV2Spec extends FunSuite:
 
   test("answers: mergeAnswers 逐题 upsert，且 state / probeOkAt 不被抹掉"):
     reset()
-    OnboardingService.writeState(OnboardingService.OnboardingState.Pending).unsafeRunSync()
+    // 用**终局同一写入路径** setState 预置状态：本对象的验收必须走真实写路径
+    // （legacy `writeState` 按设计绕过闸门，见 OnboardingService:136-139）。
+    assertEquals(OnboardingService.setState(OnboardingService.OnboardingState.Pending).unsafeRunSync().isRight, true)
     OnboardingService.mergeAnswers(Map("name" -> Json.obj("kind" -> "free".asJson, "value" -> "星尘".asJson))).unsafeRunSync()
     OnboardingService.mergeAnswers(Map("call" -> Json.obj("kind" -> "skip".asJson, "value" -> "".asJson))).unsafeRunSync()
     val answers = OnboardingService.readAnswers().unsafeRunSync()
@@ -148,10 +150,43 @@ class OnboardingV2Spec extends FunSuite:
 
   test("answers: clearAnswers 清空答案但保留 state"):
     reset()
-    OnboardingService.writeState(OnboardingService.OnboardingState.Done).unsafeRunSync()
+    // done 需先有一次成功探测（服务端硬闸）；`recordProbeOk` 是记录点本尊，
+    // 与 probeLlm 成功腿同源，避免这里再造一个假的 LlmHandle。
+    OnboardingService.recordProbeOk().unsafeRunSync()
+    assertEquals(OnboardingService.setState(OnboardingService.OnboardingState.Done).unsafeRunSync().isRight, true)
     OnboardingService.mergeAnswers(Map("name" -> Json.obj("value" -> "x".asJson))).unsafeRunSync()
     OnboardingService.clearAnswers().unsafeRunSync()
     assertEquals(OnboardingService.readAnswers().unsafeRunSync(), Map.empty)
+    assertEquals(OnboardingService.readState().unsafeRunSync(), Some(OnboardingService.OnboardingState.Done))
+
+  // ---------------------------------------------------------------
+  // 终局闸门：走 setState（真实写路径），且拒绝不吞掉用户答案
+  // ---------------------------------------------------------------
+
+  test("gate: 终局转移走 setState —— 无探测记录时 done 被拒，答案保留，补探测后可通过"):
+    // 缺口复现（verifier fail 的根因链）：前端终局写 marker 用 setOnboardingState →
+    // 服务端 `setState`。若验收用 legacy `writeState`（绕过闸门），这条链上的
+    // 拒绝永远不被测到 —— 正是「全跳过到不了 done」能长期潜伏的原因。
+    reset()
+    val answers = Map(
+      "name" -> Json.obj("kind" -> "free".asJson, "value" -> "星尘".asJson),
+      "model" -> Json.obj("kind" -> "model".asJson, "value" -> "zhipu/glm-4.6".asJson),
+    )
+    OnboardingService.mergeAnswers(answers).unsafeRunSync()
+    // ① 无探测 → 拒绝，且 marker 原地不动
+    OnboardingService.setState(OnboardingService.OnboardingState.Done).unsafeRunSync() match
+      case Left(reason) => assert(reason.contains("probe"), s"拒绝理由须点名 probe：$reason")
+      case Right(_) => fail("没有探测记录时 done 必须被拒")
+    // 拒绝 = marker 原地不动（答案写入已建文件、但 state 从未推进到 Done）
+    assertEquals(
+      OnboardingService.readStored().unsafeRunSync().map(_.state),
+      Some(OnboardingService.OnboardingState.Pending)
+    )
+    // ② 拒绝不吞答案 —— 用户不必重答 11 题（重试收尾才有意义）
+    assertEquals(OnboardingService.readAnswers().unsafeRunSync().keySet, Set("name", "model"))
+    // ③ 补一次成功探测后，同一条转移可通过（用户的出口）
+    OnboardingService.recordProbeOk().unsafeRunSync()
+    assertEquals(OnboardingService.setState(OnboardingService.OnboardingState.Done).unsafeRunSync().isRight, true)
     assertEquals(OnboardingService.readState().unsafeRunSync(), Some(OnboardingService.OnboardingState.Done))
 
   // ---------------------------------------------------------------
