@@ -7,6 +7,7 @@ import state from './state.js';
 import { esc, authHeaders, fmtTime, fmtRelTime, overlayRoot, setMailPending } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { chainRefs, resolvedChainChipsHtml, modelSourceNoteKey, SETTABLE_ROLES } from './modelPanel.js';
+import { rootNameParams } from './rootName.js';
 
 // ── 内联 SVG/CSS 图标（2026-09-06 显示优化批：legacy viewer 域禁 emoji/符号字符）──
 // 关闭叉（替代 ✕ U+2715）、阻塞旗（替代 ⚑ U+2691）、收件箭头（替代 → U+2192）、
@@ -61,7 +62,7 @@ function renderAgentModelSection(el, agentName, cfg) {
 
   el.innerHTML = `
     <div class="flow-agent-model-row">
-      <span class="flow-agent-model-note">${esc(t(modelSourceNoteKey(cfg)))}</span>
+      <span class="flow-agent-model-note">${esc(t(modelSourceNoteKey(cfg), rootNameParams()))}</span>
       ${hintHtml}
       ${currentHtml}
     </div>

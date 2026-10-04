@@ -60,6 +60,32 @@ object BuiltinAgents:
 
   def isBuiltin(name: String): Boolean = Names.contains(name)
 
+  /**
+   * 用户为根 agent 起的显示名（personal-agent 批 2026-10-04，方案 §2.3）。
+   *
+   * 读取 `agents/<root>/agent.json` 的 `displayName`；**缺省回落机制名**
+   * （`RootAgentIdentity.Name`）——无名字用户零回归。
+   *
+   * 这是**显示面**的读取单点：UI 渲染与提示词自报家门都走它。
+   * 🔴 **身份键恒为 `"Nebula"`**，本对象不参与任何判据（白名单见任务书 §2 C）。
+   *
+   * 独立于 [[sidecarRefs]] 的第二个读点（那里返回 preset/model），但同文件同宽容
+   * 策略（坏 JSON / 缺文件 ⇒ 回落机制名）。
+   */
+  def displayNameForRoot: String =
+    try
+      val p = PathUtil.dataRoot / "agents" / nebflow.actor.RootAgentIdentity.Name / "agent.json"
+      if !os.exists(p) then nebflow.actor.RootAgentIdentity.Name
+      else
+        io.circe.parser
+          .parse(os.read(p))
+          .toOption
+          .flatMap(_.hcursor.downField("displayName").as[Option[String]].toOption.flatten)
+          .map(_.trim)
+          .filter(_.nonEmpty)
+          .getOrElse(nebflow.actor.RootAgentIdentity.Name)
+    catch case _: Throwable => nebflow.actor.RootAgentIdentity.Name
+
   /** 读 model-chain sidecar 的 `preset` / `model` 引用（缺文件 / 坏 JSON ⇒ 空引用，
     * 与 core.SchemePolicy.ownChainOf 同款宽容；fresh home 上该文件可以根本不存在）。 */
   private def sidecarRefs(name: String): (Option[String], Option[nebflow.shared.AgentModelConfig]) =
@@ -81,7 +107,10 @@ object BuiltinAgents:
     else
       val (preset, model) = sidecarRefs(name)
       val (description, prompt, displayName, skills) = name match
-        case "Nebula"             => (NebulaDescription, NebulaPrompt, Some("Nebula"), List("*"))
+        // 🔴 root entry's displayName = the user's chosen name (falling back to
+        // the mechanism name). Display face only — `name` (the judgement key)
+        // stays "Nebula" and the whole backend addresses the agent by it.
+        case "Nebula"             => (NebulaDescription, NebulaPrompt, Some(displayNameForRoot), List("*"))
         case "project-dispatcher" => (DispatcherDescription, DispatcherPrompt, None, Nil)
         case "nebflow"            => (NebflowDescription, NebflowPrompt, Some("Nebflow"), Nil)
         case "subagent"           => (SubagentDescription, SubagentPrompt, Some("Subagent"), Nil)
@@ -123,11 +152,17 @@ object BuiltinAgents:
     "Read-only recon sub-agent (the Subagent tool's target): Read/Glob/Grep/WebSearch/WebFetch, " +
       "blocking one-shot runs; the final text IS the answer. Definition is mechanism-fixed in code."
 
-  /** Nebula system prompt — 原 seed/agents/Nebula/system.md 全文随本批上收进代码；
+  /** Nebula system prompt —— 原 seed/agents/Nebula/system.md 全文随本批上收进代码；
     * builtin-def 批仅改写 kernel 路由行（作者令②：Delegate 直接触发 kernel，
-    * Mail 降级为通信——`kernel:<id>` 续聊腿保留，起实例腿退役）。 */
-  private val NebulaPrompt =
-    """You are Nebula, the Nebflow orchestrator: read the user's intent, dispatch work to projects, supervise execution, report synthesized results. You do not execute project work yourself.
+    * Mail 降级为通信——`kernel:<id>` 续聊腿保留，起实例腿退役）。
+    *
+    * **自报家门参数化**（personal-agent 批 2026-10-04，方案 §2.3）：首句的显示名取
+    * [[displayNameForRoot]]（缺省回落机制名）。🔴 **只参数化这一处显示名**：
+    * 正文里的 `"Nebula"` 是**机制地址**（Mail 拒收自身地址所用的判据键），
+    * 属于身份键白名单，**恒不替换**（以参数化之名改它会让 Mail 地址判据漂移）。
+    * 模板以 `{{agent_display_name}}` 占位，渲染在 [[NebulaPrompt]] 内完成。 */
+  private val NebulaPromptTemplate =
+    """You are {{agent_display_name}}, the Nebflow orchestrator: read the user's intent, dispatch work to projects, supervise execution, report synthesized results. You do not execute project work yourself.
 
 ## Tool surface
 - Orchestration: `Delegate(task=<self-contained brief>, project=<optional mounted project>)` is THE dispatch entry — every task you do not execute yourself goes out as a Delegate (unified-delegate batch 2026-10-03; the executor is the user's configured default — Nebflow built-in or an external CLI agent — you never pick it). The receipt carries a task number (task #N) and the continuation address `delegate:<id>`; the result is delivered back to you when it finishes. ProjectCreate for a new intent; AgentControl to supervise delegate sessions (list shows each instance's `delegate:<id>` address; cancel a runaway). Your Mail face is SUPPLEMENTS ONLY, by address: `Mail(address="delegate:<id>", message=...)` continues that instance (live = injected at the next turn boundary; finished = continued as a fresh session with your message); `Mail(address="project:<name>", task=<number>)` reaches a dispatched task's notes. `node:<id>`, bare `kernel`, or your own address (`"Nebula"`) is rejected.
@@ -164,6 +199,10 @@ object BuiltinAgents:
 - Credentials are read for diagnosis only - never exfiltrated, never rewritten; runtime data (sessions/logs/uploads) stays untouched unless the task is explicitly ops.
 - Tool usage follows the tool descriptions. Unsure => AskUserQuestion; report proactively after synthesizing.
 """
+
+  /** 渲染后的 Nebula 提示词（自报家门 = 用户起的显示名）。 */
+  private def NebulaPrompt: String =
+    NebulaPromptTemplate.replace("{{agent_display_name}}", displayNameForRoot)
 
   private val DispatcherPrompt =
     """You are project-dispatcher: the per-project task dispatcher. Each trigger is a fresh single-session context: no memory, no cross-session state. State lives in the Flow Map; nodes write files.

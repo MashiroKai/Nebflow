@@ -32,8 +32,8 @@ export default {
   'project.openFlowMap': '打开「{name}」的 Flow Map',
   'project.idle': '空闲',
   'project.empty': '还没有项目',
-  'project.emptyHint': '通过 Nebula 创建 Project 后，这里会列出项目。',
-  'project.emptyCta': '让 Nebula 创建项目',
+  'project.emptyHint': '通过 {agent} 创建 Project 后，这里会列出项目。',
+  'project.emptyCta': '让 {agent} 创建项目',
   'project.emptyCtaHint': '点击后把指令预填到输入框，不会自动发送。',
   'project.emptyPrefill': '帮我创建一个项目',
   'project.loadFail': '项目列表加载失败',
@@ -900,7 +900,7 @@ export default {
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',
   'model.modeSeparate': '分开配置',
-  'model.mainChain': 'Nebula 主链',
+  'model.mainChain': '{agent} 主链',
   'model.mainChainDesc': '所有角色默认跟随此链',
   'model.chainHead': '首选',
   'model.chainFallback': '备用',
@@ -911,11 +911,11 @@ export default {
   'model.manualPlaceholder': 'provider/model',
   'model.orderNote': '顺序 = 出错时自动切换的先后次序',
   'model.followers': '跟随方',
-  'model.followsNebula': '跟随 Nebula',
+  'model.followsNebula': '跟随 {agent}',
   'model.independent': '已独立配置',
   'model.makeIndependent': '独立配置',
-  'model.restoreFollow': '恢复跟随 Nebula',
-  'model.restoreFollowConfirm': '恢复跟随将清除该角色的独立链，生效链变为 Nebula 主链（{chain}）。继续？',
+  'model.restoreFollow': '恢复跟随 {agent}',
+  'model.restoreFollowConfirm': '恢复跟随将清除该角色的独立链，生效链变为 {agent} 主链（{chain}）。继续？',
   'model.effectivePreview': '生效链（实时预览）',
   'model.kernelNote': 'kernel 是每次委派临时实例，改链自下一轮对话生效',
   'model.errMinOne': '链至少保留一个模型',
@@ -930,7 +930,7 @@ export default {
   'model.clearChainConfirm': '清空后回落种子链（首个可用模型），该角色的自有链将被删除。继续？',
   'model.singleModelNote': '仅 1 个模型，无备用——出错将直接使用储备层',
   'model.loadFailed': '加载失败',
-  'model.roleNebula': 'Nebula',
+  'model.roleNebula': '{agent}',
   'model.roleDispatcher': '任务分发器',
   'model.roleExecutor': '执行 agent',
   // P1-2 批登记项（2026-10-03）：以下两键对应已退役的 kernel/general 角色名，
@@ -1061,8 +1061,8 @@ export default {
   // === 跨设备 Nebula 邮件（device-mail 批，2026-09-15）===
   // 注入的 `agent_mail` 蓝气泡标签（后端 source='deviceMail'；{device} = 对端
   // from_device 显示名）。
-  'deviceMail.fromDevice': '来自 {device} 的 Nebula',
-  'deviceMail.injectFailed': '来自 {device} 的跨设备 Nebula 邮件注入失败（已重试 {attempts} 次）——未注入任何内容（详见日志）。',
+  'deviceMail.fromDevice': '来自 {device} 的 {agent}',
+  'deviceMail.injectFailed': '来自 {device} 的跨设备 {agent} 邮件注入失败（已重试 {attempts} 次）——未注入任何内容（详见日志）。',
   // mailmodel batch (2026-09-25): the mailType.* label table is removed — the Mail
   // tool's `type` parameter is retired, and pending-mail badges render the protocol
   // raw value directly (flowViewers.js).
@@ -1163,7 +1163,7 @@ export default {
   'chat.micOrb.idle': '空闲',
   'chat.micOrb.listening': '听写中…',
   'chat.micOrb.processing': '识别中…',
-  'chat.micOrb.nebulaBusy': 'Nebula 工作中',
+  'chat.micOrb.nebulaBusy': '{agent} 工作中',
   'chat.micOrb.bgAgents': '后台 Agent 运行中',
   'chat.micOrb.frozen': '冻结中',
   'chat.micOrb.frozenError': '冻结异常',

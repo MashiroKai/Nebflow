@@ -45,6 +45,7 @@ import { sendWs, onMessage } from './ws.js';
 import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
 import { smartScroll, escapeHtml } from './utils.js';
+import { rootDisplayName as rootName } from './rootName.js';
 
 const PROBE_TIMEOUT_MS = 20000; // backend times out at 15s; this is the last-resort guard
 const MODEL_REQ_TIMEOUT_MS = 8000;
@@ -234,16 +235,13 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && activeSim) { activeSim.finish(); }
 });
 
-// ── Display name ─────────────────────────────────────────────
-// `"Nebula"` is the MECHANISM key wherever it is a judgement (agentList entries
-// are addressed by it — task book §2 C whitelist). Only the DISPLAY face
-// parameterizes: the name onboarding itself collects (question 1) is written to
-// `agents/<root>/agent.json` displayName at finish, and while the session is
-// still running it is read off `agentList` and patched optimistically the moment
-// the user answers.
+// ── Display name (the only place the root agent's name renders) ─
+// The display-name read is owned by rootName.js (leaf module, single read
+// point shared with micOrb / chat / modelPanel). `"Nebula"` is the mechanism key
+// everywhere it is a judgement (task book §2 C whitelist) — only the DISPLAY face
+// parameterizes.
 function rootDisplayName() {
-  const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
-  return (self && self.displayName) || 'Nebula';
+  return rootName();
 }
 
 function sourceLabel() {
@@ -252,6 +250,7 @@ function sourceLabel() {
 
 /** Apply a newly chosen name everywhere the display surface reads it. */
 function renameEverywhere(name) {
+  state.rootDisplayName = name;
   const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
   if (self) self.displayName = name;
 }

@@ -32,8 +32,8 @@ export default {
   'project.openFlowMap': 'Open "{name}" Flow Map',
   'project.idle': 'Idle',
   'project.empty': 'No projects yet',
-  'project.emptyHint': 'Create a Project via Nebula to see it listed here.',
-  'project.emptyCta': 'Ask Nebula to create one',
+  'project.emptyHint': 'Create a Project via {agent} to see it listed here.',
+  'project.emptyCta': 'Ask {agent} to create one',
   'project.emptyCtaHint': 'Fills the instruction into the chat input — nothing is sent automatically.',
   'project.emptyPrefill': 'Create a project for me',
   'project.loadFail': 'Failed to load projects',
@@ -929,7 +929,7 @@ export default {
   'model.title': 'Model Configuration',
   'model.modeUnified': 'Unified',
   'model.modeSeparate': 'Per-role',
-  'model.mainChain': 'Nebula primary chain',
+  'model.mainChain': '{agent} primary chain',
   'model.mainChainDesc': 'Every role follows this chain by default',
   'model.chainHead': 'Primary',
   'model.chainFallback': 'Fallback',
@@ -940,11 +940,11 @@ export default {
   'model.manualPlaceholder': 'provider/model',
   'model.orderNote': 'Order = automatic failover sequence',
   'model.followers': 'Followers',
-  'model.followsNebula': 'Follows Nebula',
+  'model.followsNebula': 'Follows {agent}',
   'model.independent': 'Independently configured',
   'model.makeIndependent': 'Configure independently',
-  'model.restoreFollow': 'Re-follow Nebula',
-  'model.restoreFollowConfirm': 'Re-following clears this role\u2019s own chain; the Nebula primary chain ({chain}) will apply. Continue?',
+  'model.restoreFollow': 'Re-follow {agent}',
+  'model.restoreFollowConfirm': 'Re-following clears this role\u2019s own chain; the {agent} primary chain ({chain}) will apply. Continue?',
   'model.effectivePreview': 'Effective chain (live preview)',
   'model.kernelNote': 'Kernel sessions are per-delegation; chain changes apply from the next turn',
   'model.errMinOne': 'A chain needs at least one model',
@@ -959,7 +959,7 @@ export default {
   'model.clearChainConfirm': 'Clearing deletes this role\u2019s own chain and falls back to the seed chain (first available model). Continue?',
   'model.singleModelNote': 'Only 1 model and no fallback — errors go straight to the reserve tier',
   'model.loadFailed': 'Failed to load',
-  'model.roleNebula': 'Nebula',
+  'model.roleNebula': '{agent}',
   'model.roleDispatcher': 'Project dispatcher',
   'model.roleExecutor': 'Executor agent',
   // P1-2 batch registration (2026-10-03): the two keys below name the retired
@@ -1097,8 +1097,8 @@ export default {
   // === Cross-device Nebula mail (device-mail batch, 2026-09-15) ===
   // Blue-bubble label of an injected `agent_mail` (backend source='deviceMail';
   // {device} = the peer's from_device display name).
-  'deviceMail.fromDevice': 'Nebula from {device}',
-  'deviceMail.injectFailed': 'Cross-device Nebula mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
+  'deviceMail.fromDevice': '{agent} from {device}',
+  'deviceMail.injectFailed': 'Cross-device {agent} mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
   // mailmodel batch (2026-09-25): the mailType.* label table was removed — the
   // Mail tool's `type` parameter is retired; pending-mail tags render the raw
   // protocol type (flowViewers.js).
@@ -1206,7 +1206,7 @@ export default {
   'chat.micOrb.idle': 'Idle',
   'chat.micOrb.listening': 'Dictating…',
   'chat.micOrb.processing': 'Transcribing…',
-  'chat.micOrb.nebulaBusy': 'Nebula working',
+  'chat.micOrb.nebulaBusy': '{agent} working',
   'chat.micOrb.bgAgents': 'Background agents running',
   'chat.micOrb.frozen': 'Frozen',
   'chat.micOrb.frozenError': 'Freeze error',
