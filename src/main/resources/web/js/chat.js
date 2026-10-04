@@ -3688,8 +3688,16 @@ export function appendThinkingDelta(delta) {
       // Scroll the correct chat element directly — smartScroll() reads state.dom
       // at rAF time which may be the wrong window. Capture snapped at schedule
       // time to match smartScroll()'s snapped || near-bottom logic.
+      // The disposition is keep/clamp only — write `1e7` and let the browser
+      // clamp to the content bottom in this same frame instead of reading
+      // `scrollHeight` back. That read, sitting right after this frame's subtree
+      // mutation, forced an extra synchronous layout of the freshly written tail
+      // every frame (measured as the second layout cost of the thinking stream);
+      // the landing position is identical because the clamp IS the bottom.
+      // `snapped === true` short-circuits the ||, so the common follow path now
+      // reads no geometry at all here.
       if (target.snapped === true || isNearBottom(target.chat)) {
-        target.chat.scrollTop = target.chat.scrollHeight;
+        target.chat.scrollTop = 1e7;
       }
     });
   }
