@@ -2348,6 +2348,16 @@
    max-height 0 + collapsed margins so no gap remains. The expand/collapse
    toggle is INSTANT (the 批② WAAPI transition layer was removed 2026-09-06,
    author feedback 「动画太卡顿」) — this class owns the whole state. */
+/* Tucked FORWARD-fill: the thinking feed keeps streaming its text into a face
+   that is display-none-equivalent anyway, and every frame's fresh subtree was
+   being laid out inside a max-height:0/overflow:hidden box — pure waste. After
+   the tail-redraw and append-only fixes this was the largest remaining
+   per-frame layout cost of the stream. Skipping the CONTENTS of the tucked
+   face removes that layout; the row is released the moment the class comes
+   off, so the on-demand expand still paints the full content. */
+.row.nf-tucked .thinking-content {
+  content-visibility: hidden;
+}
 .row.nf-tucked {
   max-height: 0 !important;
   margin-top: 0 !important;
