@@ -175,6 +175,155 @@ class PopToolSpec extends FunSuite:
     assertEquals(buf.size, 1, "only the lone-URL leg sent a popFile frame; the refusals sent none")
 
   // ====================================================================
+  // zcode-484 · S1–S10 — filePath 接受域：双形态继续支持 + 形态错误可读
+  // ====================================================================
+  //
+  // Root cause this section pins (PLAN §3.0): no code path in this repo ever
+  // serialized a `filePath` ARRAY into a single string, so the reported
+  // silent failure is undetermined tool-side. What IS tool-side and wrong is the
+  // ACCEPTANCE WALK: `asArray.map(_.flatMap(_.asString))` silently dropped every
+  // non-string element and then reported the generic "non-empty filePath" error.
+  // S3/S4/S5/S8/S9/S10 are the readable-error cases; S1/S2/S6/S7 pin that the
+  // two supported forms (and the two existing refusal faces) are unchanged.
+
+  /** The `filePath` acceptance must be no wider than the declared schema and no
+   *  narrower: every shape the schema admits is walked, every shape it does not
+   *  is refused by name. */
+  test("S1: an array of mixed-type paths is accepted in order (the batch form, unchanged)"):
+    val dir = tempDir("s1")
+    os.write.over(dir / "a.png", Array.fill(8)(0x41.toByte))
+    os.write.over(dir / "b.mp4", Array.fill(8)(0x42.toByte))
+    os.write.over(dir / "c.pdf", Array.fill(8)(0x43.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(
+      JsonObject("filePath" -> Json.arr(
+        (dir / "a.png").toString.asJson,
+        (dir / "b.mp4").toString.asJson,
+        (dir / "c.pdf").toString.asJson
+      )),
+      buf
+    ) match
+      case Right(raw) => assertEquals(kindsOf(payloadOf(raw)), List("image", "video", "file"))
+      case Left(err)  => fail(s"S1 must stay accepted: ${err.message}")
+
+  test("S2: a lone string path is accepted (the single-value form, unchanged)"):
+    val dir = tempDir("s2")
+    os.write.over(dir / "only.png", Array.fill(8)(0x42.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> (dir / "only.png").toString.asJson), buf) match
+      case Right(raw) => assertEquals(kindsOf(payloadOf(raw)), List("image"))
+      case Left(err)  => fail(s"S2 must stay accepted: ${err.message}")
+
+  test("S3: an empty array names the empty-batch shape (never the generic missing-filePath text)"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> Json.arr()), buf) match
+      case Left(err) =>
+        assert(err.message.contains("carried no usable path strings"), err.message)
+        assert(!err.message.contains("requires a non-empty"), s"generic fallback is unreadable: ${err.message}")
+      case Right(_) => fail("S3 must be refused")
+
+  test("S4: a number is refused BY TYPE (the old walk fell through to the generic error)"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> 123.asJson), buf) match
+      case Left(err) =>
+        assert(err.message.contains("got number"), err.message)
+        assert(err.message.contains("array of path strings"), err.message)
+      case Right(_) => fail("S4 must be refused")
+
+  test("S5: an object is refused BY TYPE"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> Json.obj("path" -> "a.png".asJson)), buf) match
+      case Left(err) => assert(err.message.contains("got object"), err.message)
+      case Right(_)  => fail("S5 must be refused")
+
+  test("S6: a URL mixed with file paths keeps its shipped refusal (message unchanged)"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> Json.arr("https://example.com".asJson, "/tmp/x.png".asJson)), buf) match
+      case Left(err) => assert(err.message.contains("cannot be batched"), err.message)
+      case Right(_)  => fail("S6 must be refused")
+
+  test("S7: an over-cap batch keeps its shipped refusal (message unchanged)"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val many = Json.arr(List.fill(PopTool.MaxPopFiles + 1)("/tmp/x.png").map(_.asJson)*)
+    pop(JsonObject("filePath" -> many), buf) match
+      case Left(err) => assert(err.message.contains("at most"), err.message)
+      case Right(_)  => fail("S7 must be refused")
+
+  test("S8: a non-string ARRAY ELEMENT is refused by index + type (was: silently dropped, Right)"):
+    val dir = tempDir("s8")
+    os.write.over(dir / "a.png", Array.fill(8)(0x41.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(
+      JsonObject("filePath" -> Json.arr((dir / "a.png").toString.asJson, 7.asJson)),
+      buf
+    ) match
+      case Left(err) =>
+        assert(err.message.contains("filePath[1]"), err.message)
+        assert(err.message.contains("got number"), err.message)
+      case Right(ok) =>
+        fail(s"S8 must be refused with a readable error, not silently degraded to a 1-item batch: ${ok.take(80)}")
+
+  test("S9: a string shaped like a JSON array literal is refused as a shape error (was: treated as one path)"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> """["a.png","b.png"]""".asJson), buf) match
+      case Left(err) =>
+        assert(err.message.contains("JSON array literal"), err.message)
+      case Right(ok) => fail(s"S9 must be refused as a shape error, got: ${ok.take(80)}")
+
+  test("S10: unparseable arguments report the parse failure, never a missing filePath"):
+    // Built through the REAL adapter-side marker producer, so the key cannot
+    // drift from `ToolInputJson.RawArgsKey`.
+    val marked = nebflow.llm.providers.ToolInputJson.malformedInput("""{"filePath": 1""")
+    assert(marked.contains(nebflow.llm.providers.ToolInputJson.RawArgsKey),
+      "the spec must exercise the real marker key")
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(marked, buf) match
+      case Left(err) =>
+        assert(err.message.contains("could not be parsed"), err.message)
+        assert(err.message.contains("""{"filePath": 1"""), "the raw arguments must ride the message")
+        assert(!err.message.contains("requires a `filePath`"),
+          s"the misleading 'missing filePath' text must not survive: ${err.message}")
+      case Right(_) => fail("S10 must be refused")
+
+  test("schema ↔ behaviour: the declared filePath domain and the acceptance walk are isomorphic"):
+    val fp = PopTool.inputSchema("properties").flatMap(_.asObject)
+      .flatMap(_("filePath")).flatMap(_.asObject).getOrElse(fail("filePath must be declared"))
+
+    // (a) the DECLARATION carries the array bounds the walk enforces
+    val declaredTypes = fp("type").flatMap(_.asArray).getOrElse(Nil).flatMap(_.asString)
+    assertEquals(declaredTypes, List("string", "array"), "both supported forms are declared")
+    assertEquals(fp("items").flatMap(_.asObject).flatMap(_("type")).flatMap(_.asString), Some("string"),
+      "the array element type is declared — the old schema promised arrays of ANYTHING")
+    assertEquals(fp("minItems").flatMap(_.asNumber).flatMap(_.toInt), Option(1))
+    assertEquals(fp("maxItems").flatMap(_.asNumber).flatMap(_.toInt), Option(PopTool.MaxPopFiles))
+
+    // (b) the walk is no NARROWER than the declaration: every all-string array
+    //     inside the declared bounds is accepted.
+    val dir = tempDir("iso")
+    val ok = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> Json.arr((dir / "ghost.png").toString.asJson)), ok) match
+      case Right(raw) =>
+        // A missing path is a payload WARNING (not a shape error) — the walk
+        // admitted it, which is what this half asserts.
+        assert(raw.startsWith(PopTool.Sentinel), raw.take(60))
+      case Left(err) => fail(s"the declared domain must be walked: ${err.message}")
+
+    // (c) and no WIDER: a shape the declaration excludes is refused by name.
+    val bad = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(JsonObject("filePath" -> Json.arr("a.png".asJson, Json.obj())), bad) match
+      case Left(err) => assert(err.message.contains("filePath[1]"), err.message)
+      case Right(_)  => fail("the declared element type must be enforced")
+
+  test("PopTool's raw-args marker key stays byte-identical to the adapter's"):
+    // `nebflow.core` cannot import `nebflow.llm` (dependency direction), so the
+    // key literal is duplicated in PopTool — this pins the two together.
+    val marker = nebflow.llm.providers.ToolInputJson.malformedInput("nonsense")
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    PopTool.call(marker, ctxWith(buf, Some(nebulaDef), 0)).unsafeRunSync() match
+      case Left(err) => assert(err.message.contains("could not be parsed"), err.message)
+      case Right(ok) => fail(s"the duplicated key drifted from ToolInputJson.RawArgsKey: ${ok.take(80)}")
+
+  // ====================================================================
   // URL face：单条 HTTP(S) 仍开 Canvas 标签（行为不变）
   // ====================================================================
 
