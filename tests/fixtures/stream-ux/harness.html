@@ -339,6 +339,44 @@
       };
     };
 
+    /** zcode-484 rework — the Pop running row's file-path progress.
+     *
+     *  Drives the REAL streaming path exactly as `main.js onMessage('toolArgDelta')`
+     *  does (renderToolPending → appendToolStreamDelta in fragments), for a given
+     *  tool and argument payload, and reads back the `.tool-stream-body` text the
+     *  expanded running row shows. Both the single-string and the ARRAY form must
+     *  produce the body; the array form (the plan's "usual shape" for a batch)
+     *  reads the first path plus " +N" for the further complete ones.
+     *
+     *  The row IS `renderToolPending`'s expand face, so it is un-tucked before the
+     *  read, mirroring what the user sees when they expand the turn mid-run.
+     */
+    window.__toolArgStreamRead = async (tool, payload) => {
+      // `appendToolStreamDelta` looks the pending row up by `activeView.sessionId`
+      // (null in this harness), so the pending call must use the SAME key —
+      // `String(view.sessionId)` is exactly what the app-side probe passes.
+      const sid = String(view.sessionId);
+      chatMod.renderToolPending(tool, sid);
+      const row = state.sessionToolCards[sid];
+      if (!row) return { found: false, bodyExists: false, text: null };
+      view.stream.toolStreamText = '';
+      for (let i = 0; i < payload.length; i += 7) {
+        chatMod.appendToolStreamDelta(tool, payload.slice(i, i + 7));
+        await raf2();
+      }
+      await raf2();
+      row.classList.remove('nf-tucked');
+      await raf2();
+      const body = row.querySelector('.tool-stream-body');
+      const cs = body ? getComputedStyle(body) : null;
+      return {
+        found: true,
+        bodyExists: !!body,
+        text: body ? (body.textContent || '').trim() : null,
+        visible: cs ? (cs.visibility !== 'hidden' && cs.display !== 'none') : false,
+      };
+    };
+
     /** Terminal collapse: the running line becomes a one-row checked badge and
      *  the FULL thinking text stays reachable through the existing expand face. */
     window.__thinkCollapseRead = async () => {

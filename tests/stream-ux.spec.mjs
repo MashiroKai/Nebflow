@@ -741,3 +741,54 @@ test.describe('A6 — 思考单行流式（zcode-484）', () => {
     await context.close();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A6b — the Pop running row's file-path progress (zcode-484 rework).
+//
+// WHY: commit b3c0851c8 claimed the running Pop row shows the deliverable path
+// while its arguments stream, and the plan (OD-5 / §3.3-4) asks for the "first
+// path (+N)" summary for the ARRAY form — the batch Pop shape the requirement
+// is about. The first cut only fixed the single-string form: the extractor
+// bailed with `null` as soon as the first non-space char after the colon was
+// not `"`, so a `[` built NO `.tool-stream-body` at all. These two cases pin
+// BOTH forms against the real render path (renderToolPending →
+// appendToolStreamDelta), which had ZERO coverage before (repo-wide: no test
+// referenced `TOOL_PRIMARY_FIELDS`, `.tool-stream-body` or `'Pop'`).
+//
+// Red leg: the baseline tree has no `'Pop'` entry in `TOOL_PRIMARY_FIELDS`, so
+// BOTH cases fail there (no body node is ever created) — see the `git archive`
+// recipe in the file header, never `git checkout main`.
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe('A6b — Pop 运行期行内文件路径进展（数组 / 单值双形态）', () => {
+  test('the SINGLE-string Pop form shows its path on the running row', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const payload = JSON.stringify({ filePath: '/tmp/lone.png' });
+    const read = await page.evaluate(
+      ([tool, p]) => window.__toolArgStreamRead(tool, p), ['Pop', payload]);
+    expect(read.found, 'the pending Pop row was created').toBe(true);
+    expect(read.bodyExists, 'the running row built its streaming body').toBe(true);
+    expect(read.visible, 'and the body is visible when the turn is expanded').toBe(true);
+    expect(read.text, 'it shows the file path').toContain('/tmp/lone.png');
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('the ARRAY Pop form shows its first path (+N) on the running row', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const payload = JSON.stringify({
+      filePath: ['/tmp/alpha.png', '/tmp/beta.png', '/tmp/gamma.png'],
+    });
+    const read = await page.evaluate(
+      ([tool, p]) => window.__toolArgStreamRead(tool, p), ['Pop', payload]);
+    expect(read.found, 'the pending Pop row was created').toBe(true);
+    // The regression this pins: the array form used to build NO body (the
+    // extractor returned null on `[`), so the expanded running turn showed
+    // nothing while the single-string form showed its path.
+    expect(read.bodyExists, 'the ARRAY form builds the same streaming body').toBe(true);
+    expect(read.visible, 'and the body is visible when the turn is expanded').toBe(true);
+    expect(read.text, 'it shows the first path').toContain('/tmp/alpha.png');
+    expect(read.text, 'and counts the further paths as +2').toContain('+2');
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
