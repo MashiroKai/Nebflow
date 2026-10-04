@@ -539,6 +539,78 @@ class RichOutboundSpec extends CatsEffectSuite:
     }
   }
 
+  // ─────────────────── R-12 the planner→renderer→adapter sequence (main link) ───────────────────
+  //
+  // richcontent main-link batch (soc483): the two manual probes
+  // (`RichRenderProbe` / `RichDegradeProbe`) were the only place the full
+  // classify → plan → render → deliver → degrade sequence was exercised end to
+  // end. Their BEHAVIOUR is converted into the formal assertions below, so the
+  // sequence is pinned in `sbt test`; the probes keep their manual `main` and
+  // stay out of the discovery face (a spec that started a browser would stop
+  // being offline).
+
+  test("R-12a the three rich kinds each drive their own documented call sequence") {
+    // One assertion per kind, over ONE recorder, so the sequence — not just the
+    // call count — is what is read back.
+    val rec = Recorder()
+    val png = writeNoisePng(tmpDir() / "shot.png", 8, 8)
+    val doc = tmpDir() / "report.pdf"
+    Files.write(doc.toNIO, Array[Byte](1, 2, 3))
+    val produced = tmpDir() / "card.png"
+    val renderer = new RecordingRenderer(
+      RichRenderer.RenderResult(true, Some(produced), 4096L, 600, 320, "", "PNG 600x320"),
+      Some((p, w, h) => { writeNoisePng(p, w, h); () }))
+    val a = adapter(rec, renderer)
+
+    for
+      _ <- a.deliver(RichKind.Image, Some(png))
+      _ <- a.deliver(RichKind.Document, Some(doc))
+      _ <- a.deliver(RichKind.Card, None, cardPayload())
+      imgs <- rec.images.get
+      files <- rec.files.get
+      msgs <- rec.msgs.get
+      texts <- rec.texts.get
+    yield
+      // image: upload the real bytes → msg_type=image. No render, no text.
+      // document: upload the original → msg_type=file. No render, no text.
+      // card: render → upload the render product → msg_type=image → the note.
+      assertEquals(imgs, List(png, produced), "image leg then the card's render product, in that order")
+      assertEquals(files.map(_._1), List(doc), "the document leg uploads the original file")
+      assertEquals(msgs.map(_._1), List("image", "file", "image"),
+        "three sends: image, file, then the card screenshot")
+      assertEquals(texts, List(RichPlanner.InteractivePanelNote), "only the card contributes a text call")
+  }
+
+  test("R-12b RichDegradeProbe's three failure cases hold as assertions on the same code path") {
+    // Mirror of the probe's A/B/C cases: (A) a card whose renderer cannot run,
+    // (B) an oversize document, (C) an undecidable kind. All three must land on
+    // exactly one visible text with the machine-matchable placeholder.
+    val failing = new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
+    val recA = Recorder()
+    val recB = Recorder()
+    val recC = Recorder()
+    val big = sparseFile(tmpDir() / "huge.pdf", AttachContract.MaxFileBytes + 1)
+
+    for
+      _ <- adapter(recA, failing).deliver(RichKind.Card, None, cardPayload())
+      _ <- adapter(recB).deliver(RichKind.Document, Some(big))
+      _ <- adapter(recC).deliver(RichKind.Unknown("extension is in neither authority table: xyz"), None)
+      textsA <- recA.texts.get
+      textsB <- recB.texts.get
+      textsC <- recC.texts.get
+      imgsA  <- recA.images.get
+      filesB <- recB.files.get
+    yield
+      assertEquals(imgsA.size, 0, "A: a failed render uploads nothing")
+      assert(textsA.size == 1 && textsA.head.contains("[未渲染]") && textsA.head.contains("交互版见本地面板"),
+        s"A: expected the placeholder + the note, got $textsA")
+      assertEquals(filesB.size, 0, "B: an oversize product never reaches the upload leg")
+      assert(textsB.size == 1 && textsB.head.contains("尺寸闸拒绝") && textsB.head.contains("ATTACH_TOO_LARGE"),
+        s"B: expected the size-gate line with the existing code, got $textsB")
+      assert(textsC.size == 1 && textsC.head.contains("[未知类型]"),
+        s"C: expected the unknown-type placeholder, got $textsC")
+  }
+
   /** Remove Scala block comments and per-line `//` trailing comments. Good enough
     *  for an idiom scan: string literals containing `//` would only make the scan
     *  *weaker* on that line, never produce a false positive. */
