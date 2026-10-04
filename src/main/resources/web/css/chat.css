@@ -3497,7 +3497,17 @@
 .pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.2); }
 .pop-stack-area .pill:active { transform: scale(0.95); }
 
-.pop-stack-view { position: relative; width: 200px; height: 256px; flex-shrink: 0; touch-action: pan-y; }
+/* The stack box takes the FRONT media's own aspect ratio (popArtifacts.js pins
+   an explicit width/height pair from the media's natural size, fitted into
+   220×320). It used to be a hard 200×256 with `object-fit: cover` on the media,
+   which cropped every image that was not 200×256 — a wide screenshot lost its
+   left and right thirds (zcode-484 D1). `4 / 3` is the neutral fallback while
+   the bytes load: the box always has a definite size, never 0×0. */
+.pop-stack-view {
+  position: relative;
+  width: 220px; aspect-ratio: 4 / 3;
+  flex-shrink: 0; touch-action: pan-y;
+}
 .pop-stack-view.dragging { cursor: grabbing; }
 .media-layer {
   position: absolute; inset: 0;
@@ -3510,17 +3520,36 @@
 .media-layer.layer-front { transform: none; z-index: 3; filter: none; }
 .media-layer.layer-mid   { transform: translateX(16px) scale(0.965); z-index: 2; filter: brightness(0.9); }
 .media-layer.layer-back  { transform: translateX(32px) scale(0.93); z-index: 1; filter: brightness(0.78); }
+/* zcode-484 D2: a stack shows its FRONT card plus the two peeking layers; the
+   rest are hidden. Before this rule every item past the third was painted with
+   `layer-back` at the SAME z-index as the third, so 4+ items stacked into one
+   indistinguishable pile (and a click could land on the wrong card). The
+   renderer assigns `is-buried` to every item beyond the front three. */
+.pop-stack-view .media-layer.is-buried { display: none; }
 
-.pop-expand-view { display: none; flex-direction: column; gap: 20px; width: 200px; flex-shrink: 0; }
+.pop-expand-view { display: none; flex-direction: column; gap: 20px; width: 220px; flex-shrink: 0; }
 .pop-expand-view.show { display: flex; }
+/* zcode-484 D3: the expanded face keeps each media's OWN aspect ratio. The
+   layers used to be a fixed 256px tall with `object-fit: cover` inherited from
+   `.pop-img/.pop-video`, so an expanded portrait shot was cropped exactly like
+   the stack was. `height: auto` + the media's `aspect-ratio` lets the natural
+   size drive the row; the renderer writes the ratio onto the layer. */
 .pop-expand-view .media-layer {
-  position: relative; inset: auto; height: 256px;
+  position: relative; inset: auto; height: auto; width: 100%;
   transform: none; filter: none;
   animation: fadeIn 0.25s ease;
 }
+.pop-expand-view .pop-media { height: auto; }
 
 .pop-media { position: relative; width: 100%; height: 100%; }
-.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: cover; background: #17191f; }
+/* zcode-484 D1/D3: the media fills its box WITHOUT being cropped. `cover`
+   (the pre-batch rule) cut every image whose aspect ratio differed from the
+   box's — a 1600×400 screenshot lost two thirds of its width, a portrait shot
+   lost its top and bottom. `contain` letterboxes inside the box instead, so
+   the WHOLE frame is visible at its own ratio, and the box keeps whatever
+   aspect ratio the renderer derived from the front media (`.pop-stack-view`
+   / `.pop-expand-view .media-layer` above). */
+.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
 /* 缺陷 D fix (2026-10-03 UI-E/UI-F): the failed-media placeholder used to be
    reachable ONLY for `.bubble.ai img` (see the 2026-09-15 rule at the top of
    this file) — a Pop artifact face lives in `.row.pop-artifact`, so a broken
@@ -3569,8 +3598,14 @@
   background: var(--color-primary); pointer-events: none;
 }
 
-/* single media item — flat, no stack affordances */
-.pop-media-flat { width: 200px; height: 256px; border-radius: 14px; overflow: hidden; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16); background: #17191f; }
+/* single media item — flat, no stack affordances. Same zcode-484 D1/D3 rule as
+   the stack: the box takes the media's own ratio (renderer-pinned) instead of
+   the old hard 200×256 crop box. */
+.pop-media-flat {
+  width: 220px; aspect-ratio: 4 / 3;
+  border-radius: 14px; overflow: hidden;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16); background: #17191f;
+}
 .pop-media-flat .pop-media { width: 100%; height: 100%; }
 
 /* ── file card ── */

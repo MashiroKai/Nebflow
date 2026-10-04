@@ -423,3 +423,253 @@ test.describe('UI-G — main window effects intact', () => {
     await context.close();
   });
 });
+
+/* ═══════════ zcode-484 · U1–U5 — mixed / sized / many-item Pop ═══════════
+ *
+ * Root cause (PLAN §5.1, all five verified against the pre-batch tree):
+ *   D1 mixed types + differing sizes shared ONE fixed 200×256 box with
+ *      `object-fit: cover` ⇒ images cropped, the video's play face distorted.
+ *   D2 `Math.min(p,2)` painted every 4th+ item at the SAME z-index as the third
+ *      ⇒ 4+ items overlapped indistinguishably (and a click could hit a buried
+ *      card).
+ *   D3 the expanded face kept the same fixed 256px box ⇒ cropping again.
+ *   D4 the expand height was summed from `offsetHeight` while lazy media still
+ *      had a 0-height box ⇒ the animated height jumped mid-flight.
+ *   D5 the video's `controls` state was never asserted per face.
+ *
+ * Every reading below is taken from the RENDERED DOM (box rect vs intrinsic
+ * size), so it is red on the pre-batch tree by construction — see §6.2's
+ * `git archive HEAD` red-leg recipe.
+ */
+
+/** Media whose intrinsic size is known: the assertions compare the box ratio
+ *  against the media's own ratio only where the browser has reported one. */
+const RATIO_TOL = 0.06;
+
+test.describe('U1 — mixed wide/tall/video/file payload keeps every ratio', () => {
+  test('the stack cover takes the front media ratio and nothing is cropped', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popMixedSized());
+    await page.waitForFunction(() => {
+      const ls = document.querySelectorAll('#chat .pop-stack-view .media-layer');
+      return ls.length >= 3 && Array.from(ls).every(l => {
+        const m = l.querySelector('.pop-img, .pop-video');
+        return m && (m.naturalWidth || m.videoWidth);
+      });
+    }, null, { timeout: 10000 });
+
+    const read = await page.evaluate(() => window.__stackRead());
+    expect(read, 'the mixed payload built a stack').not.toBeNull();
+    expect(read.layers.length, 'three media items → three stack layers').toBe(3);
+
+    const front = read.layers.find(l => l.cls.includes('layer-front'));
+    expect(front, 'exactly one front layer').toBeTruthy();
+    expect(front.natRatio, 'the wide image reported its intrinsic ratio').toBeCloseTo(4, 1);
+    // D1 core: the cover box is derived from the FRONT media, so the wide image
+    // fills it without losing its left/right thirds (the old 200×256 cover box
+    // kept only the middle ~15%).
+    expect(read.viewRatio, `cover ratio ${read.viewRatio} must follow the front media ${front.natRatio}`)
+      .toBeCloseTo(front.natRatio, 1);
+
+    // And the family-wide un-cropped face.
+    for (const l of read.layers) {
+      expect(l.objectFit, `${l.cls}: the media is contained, never cropped`).toBe('contain');
+    }
+
+    // D2: visible layers carry DISTINCT z-indices (no two painted at one depth).
+    const visible = read.layers.filter(l => l.display !== 'none');
+    const zs = visible.map(l => l.zIndex);
+    expect(new Set(zs).size, `every visible layer has its own z-index (got ${zs.join(',')})`).toBe(zs.length);
+
+    // D5: the stack face is a COVER plus the play ring — native controls stay off.
+    const video = read.layers.find(l => l.type === 'video');
+    expect(video, 'the video is one of the stack layers').toBeTruthy();
+    expect(video.controls, 'the stack face does not show native controls (the ring is the affordance)').toBe(false);
+    expect(video.ring, 'the stack face carries the play ring instead').toBe(true);
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+test.describe('U2 — more than three items never overlap', () => {
+  test('five images: one front, three painted at distinct depths, the rest buried', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popFiveImages());
+    // No intrinsic-size wait here: the two buried layers are `display:none`, so
+    // their images never load (that IS the D2 behaviour) — this case reads the
+    // layer classes and z-order, not the ratios.
+    await page.waitForFunction(
+      () => document.querySelectorAll('#chat .pop-stack-view .media-layer').length === 5,
+      null, { timeout: 10000 },
+    );
+
+    const read = await page.evaluate(() => window.__stackRead());
+    expect(read.layers.length, 'every item still has its layer').toBe(5);
+    expect(read.frontCount, 'exactly one front card').toBe(1);
+    expect(read.midCount, 'one peeking middle').toBe(1);
+    expect(read.backCount, 'one back layer').toBeGreaterThanOrEqual(1);
+
+    const visible = read.layers.filter(l => l.display !== 'none');
+    const buried = read.layers.filter(l => l.display === 'none');
+    expect(visible.length, 'exactly three layers are painted (front + two peeks)').toBe(3);
+    expect(buried.length, 'the 4th and 5th are hidden, not piled up').toBe(2);
+    for (const b of buried) {
+      expect(b.buried, 'a hidden layer carries the is-buried marker').toBe(true);
+    }
+
+    const zs = visible.map(l => Number(l.zIndex)).sort((a, b) => b - a);
+    expect(new Set(zs).size, `painted layers never share a z-index (got ${zs.join(',')})`).toBe(zs.length);
+    expect(zs, 'and they are strictly ordered front→back').toEqual([3, 2, 1]);
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+test.describe('U3 — the expanded face keeps each media\'s own ratio', () => {
+  test('every expanded layer matches its media ratio; the video exposes controls', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popMixedSized());
+    await page.waitForFunction(() => {
+      const ls = document.querySelectorAll('#chat .pop-stack-view .media-layer');
+      return ls.length >= 3 && Array.from(ls).every(l => {
+        const m = l.querySelector('.pop-img, .pop-video');
+        return m && (m.naturalWidth || m.videoWidth);
+      });
+    }, null, { timeout: 10000 });
+    await page.evaluate(() => window.__toggleExpand());
+
+    const read = await page.evaluate(() => window.__expandRead());
+    expect(read, 'the expanded column exists').not.toBeNull();
+    expect(read.layers.length, 'every media item gets its own expanded card').toBe(3);
+
+    for (const l of read.layers) {
+      expect(l.natRatio, 'the media reported an intrinsic ratio').toBeGreaterThan(0);
+      // D3 core: the old expanded face was a fixed 256px box, so a 4:1 wide shot
+      // was cropped to portrait. Now the box ratio IS the media ratio.
+      expect(l.boxRatio, `${l.type} expanded box ${l.boxRatio} must equal its media ratio ${l.natRatio}`)
+        .toBeCloseTo(l.natRatio, 1);
+      expect(Math.abs(l.boxRatio - l.natRatio),
+        `box/media ratio drift stays within tolerance for the ${l.type}`).toBeLessThan(RATIO_TOL);
+    }
+
+    // D5: the expanded face is where native controls belong (the ring retires).
+    const video = read.layers.find(l => l.type === 'video');
+    expect(video, 'the video is in the expanded column').toBeTruthy();
+    expect(video.controls, 'the expanded face exposes native controls').toBe(true);
+    expect(video.ringVisible, 'and the play ring retires there').toBe(false);
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+test.describe('U4 — the expand animation never jumps', () => {
+  test('the area height is monotone across the whole transition', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popMixedSized());
+    const read = await page.evaluate(() => window.__expandSampled());
+
+    expect(read, 'the expand pill was clicked').not.toBeNull();
+    expect(read.heights.length, 'the sampler caught frames of the transition').toBeGreaterThan(4);
+
+    // D4 core: the pre-batch code summed lazy images' 0-height boxes and then
+    // jumped when the bytes landed. A monotone trace (1px rounding allowed) is
+    // the reading that a mid-flight jump cannot produce.
+    for (let i = 1; i < read.heights.length; i++) {
+      const drop = read.heights[i - 1] - read.heights[i];
+      expect(drop, `height fell ${drop}px at frame ${i} (${read.heights.join(' → ')})`)
+        .toBeLessThanOrEqual(1);
+    }
+    expect(read.settled, 'the expanded column settled at a real height').toBeGreaterThan(0);
+    expect(Math.max(...read.heights), 'the trace reaches the settled height')
+      .toBeGreaterThanOrEqual(read.settled - 2);
+
+    // ...and the settled height is DERIVED, not a fixed box: every expanded row
+    // must be as tall as its OWN ratio dictates (boxH == boxW / mediaRatio), so
+    // the sum is media-driven rather than the pre-batch `n × 256px + gap`.
+    const look = await page.evaluate(() => window.__expandRead());
+    for (const l of look.layers) {
+      const ratioDriven = l.boxW / l.natRatio;
+      expect(Math.abs(l.boxH - ratioDriven),
+        `expanded ${l.type} row height ${l.boxH} must follow its ratio (${l.boxW}/${l.natRatio} ≈ ${ratioDriven.toFixed(1)})`)
+        .toBeLessThan(3);
+    }
+    const expected = look.layers.reduce((s, l) => s + l.boxH, 0) + 20 * (look.layers.length - 1);
+    expect(read.settled, `the settled height (${read.settled}) is the sum of the expanded rows (${expected})`)
+      .toBeGreaterThanOrEqual(expected - 2);
+    expect(read.settled, 'and it is not the pre-batch fixed 3×256+40 box')
+      .not.toBe(808);
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+test.describe('U5 — a single media item renders flat with its own ratio', () => {
+  test('the flat box matches the media ratio (same contract as the expanded face)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popSingleWide());
+    await page.waitForFunction(() => {
+      const m = document.querySelector('#chat .pop-media-flat .pop-img, #chat .pop-media-flat .pop-video');
+      return !!m && !!(m.naturalWidth || m.videoWidth);
+    }, null, { timeout: 10000 });
+
+    const read = await page.evaluate(() => window.__flatRead());
+    expect(read, 'the flat box exists for a lone media item').not.toBeNull();
+    expect(read.natRatio, 'the wide image reported 4:1').toBeCloseTo(4, 1);
+    expect(read.boxRatio, 'the flat box takes the media ratio (was a fixed 200×256 crop)')
+      .toBeCloseTo(read.natRatio, 1);
+    expect(read.objectFit, 'and the media is contained').toBe('contain');
+    // A lone item never grows the stack affordances.
+    expect(await page.evaluate(() => document.querySelectorAll('#chat .pop-stack-area').length),
+      'no stack for a single media item').toBe(0);
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+/* ═══════════ U6 — the static window adds no work for the new faces ═══════
+ *
+ * P6/P7 pin the UI-G gate for the pre-batch faces; U6 extends the same gate to
+ * the NEW stack code paths (ratio fitting on every `load` event, the buried
+ * layer toggle): a subagent window must still arm no timer and run no
+ * animation. (U7 — the failed-media placeholder — is P4's face and is
+ * deliberately not duplicated; the plan lists it as a no-regression item.)
+ */
+
+test.describe('U6 — subagent window: the new stack code adds zero work', () => {
+  test('rendering a mixed stack arms no timer and starts no animation', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(async () => {
+      const counters = { interval: 0, timeout: 0 };
+      const oi = window.setInterval, ot = window.setTimeout;
+      window.setInterval = function (...a) { counters.interval++; return oi.apply(window, a); };
+      window.setTimeout = function (...a) { counters.timeout++; return ot.apply(window, a); };
+      try {
+        await window.__roleSubagent();
+        await window.__popMixedSized();
+        return {
+          counters,
+          layers: document.querySelectorAll('#popup-chat .pop-stack-view .media-layer').length,
+          animated: window.__animated('#popup-chat'),
+        };
+      } finally {
+        window.setInterval = oi;
+        window.setTimeout = ot;
+      }
+    });
+
+    expect(read.layers, 'the subagent window really rendered the stack').toBe(3);
+    expect(read.counters.interval,
+      'the ratio-fitting path arms NO interval (the expand settle timer is gated)').toBe(0);
+    expect(read.counters.timeout, 'and no deferred work').toBe(0);
+    expect(read.animated.animatedCount,
+      `EVERY animation stays off in the subagent window; offenders: ${JSON.stringify(read.animated.animated)}`)
+      .toBe(0);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
