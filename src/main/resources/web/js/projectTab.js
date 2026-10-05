@@ -29,6 +29,7 @@ import { ensureFlowCss } from './flowCss.js';
 import { esc, authHeaders } from './flowHelpers.js';
 import { onMinuteTick } from './utils.js';
 import { t } from './i18n.js';
+import { rootNameParams } from './rootName.js';
 import { contentText } from './contentI18n.js';
 import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
 import { renderFlowMapInto } from './flowMapTab.js';
@@ -614,8 +615,8 @@ function renderEmptyState(scroll) {
   scroll.dataset.projectCount = '0';
   scroll.innerHTML = `<div class="team-empty">
       <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
-      <div class="hint">${esc(t('project.emptyHint'))}</div>
-      <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta'))}</button>
+      <div class="hint">${esc(t('project.emptyHint', rootNameParams()))}</div>
+      <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta', rootNameParams()))}</button>
       <div class="hint team-empty-cta-note">${esc(t('project.emptyCtaHint'))}</div>
     </div>`;
   bindEmptyCta(scroll);

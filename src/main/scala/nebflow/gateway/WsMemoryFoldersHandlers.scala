@@ -303,7 +303,8 @@ private[gateway] object WsMemoryFoldersHandlers:
           case "agent" =>
             teamName match
               case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName).getOrElse("")
-              case None => MemoryStore.loadAgentMemory(agentName).getOrElse("")
+              // personal-agent 批：agent 级记忆已上收到根层 Soul.md（双读回落旧位）
+              case None => MemoryStore.loadSoulMemory(agentName).getOrElse("")
           case _ => ""
         wsSend(
           io.circe.Json.obj(
@@ -347,7 +348,8 @@ private[gateway] object WsMemoryFoldersHandlers:
               // 2026-08-31 裁定①: team agents have no memory — refuse to
               // resurrect deleted team memory.md files via the modal.
               case Some(_) => IO.unit
-              case None => MemoryStore.saveAgentMemory(agentName, content)
+              // personal-agent 批：agent 级记忆落盘到根层 Soul.md（新位单点）
+              case None => MemoryStore.saveSoulMemory(content)
           case _ => IO.unit
         save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
       })

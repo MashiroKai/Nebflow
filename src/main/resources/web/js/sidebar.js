@@ -192,6 +192,14 @@ export function initNavTabs() {
 }
 
 // ---------- Agent icons in Nav Bar ----------
+/** DISPLAY name of an agent by mechanism name: `agentList` carries
+ *  `displayName || name`, so the root agent renders the user's chosen name.
+ *  Judgement keys (`a.name === 'Nebula'` below) stay untouched — display only. */
+function agentDisplayLabel(agentName) {
+  const a = (state.agentsData || []).find(x => x.name === agentName);
+  return a ? (a.displayName || a.name || agentName) : agentName;
+}
+
 export function renderAgentList() {
   const list = document.getElementById('nav-agent-list');
   if (!list) return;
@@ -2263,7 +2271,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     if (agentOrder.length > 1) {
       const header = document.createElement('div');
       header.className = 'agent-group-header';
-      header.textContent = agentName;
+      header.textContent = agentDisplayLabel(agentName);
       sessionList.appendChild(header);
     }
 

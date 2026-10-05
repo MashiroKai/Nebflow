@@ -171,7 +171,7 @@ object MemoryWriteGate:
     val pct = if hard > 0 then f"${bytes * 100.0 / hard}%.0f%%" else "?"
     val label = target match
       case "user" => "~/.nebflow/User.md"
-      case "agent" => "~/.nebflow/agents/Nebula/memory.md"
+      case "agent" => "~/.nebflow/Soul.md"
       case other => path.toString
     s"""$path would reach $bytes bytes ($pct of the $hard-byte hard budget for target='$target'), so the write was refused; $label is untouched.
        |Budget is enforced on the WRITE side (injection is never truncated — an over-budget memory taxes every future session instead).

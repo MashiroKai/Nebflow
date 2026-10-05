@@ -414,8 +414,16 @@ object Config:
   /**
    * 仅当 llm 节缺席、或 llm 存在但 providers 缺席时补一个空 providers；
    * 其余字段（含非法形态）原样保留——非法形态仍会正常解码失败，不被掩盖。
+   *
+   * 🔴 公开（而非 private）：任何**从原始 JSON 直接解**
+   * `NebflowServiceConfig` 的调用点都必须先过这里，否则冷启动中间态
+   * （种子只写 `plugins.trust`、无 `llm` 节）会因 `deriveDecoder` **不认**
+   * case class 默认值而解失败。实测缺陷（personal-agent 批）：WS 面
+   * `getOnboardingModels` 直接 raw-as 解码 ⇒ 全新 home 上回
+   * `{type:"error","message":"current config is unreadable"}`，引导的模型步骤
+   * 在主路径（首装）上直接断掉。单一实现对源 = [[loadFromJson]] 亦走本函数。
    */
-  private def ensureLlmDefaults(json: Json): Json =
+  private[nebflow] def ensureLlmDefaults(json: Json): Json =
     json.asObject match
       case None => json
       case Some(obj) =>

@@ -50,6 +50,7 @@ import {
   computeAgentStates
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
+import { rootDisplayName } from './rootName.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
@@ -2883,6 +2884,7 @@ onMessage('deviceMailInjectFailed', (msg) => {
   addNotification('device-mail', t('deviceMail.injectFailed', {
     device: msg.fromDevice || '?',
     attempts: msg.attempts ?? '?',
+    agent: rootDisplayName(),
   }));
 });
 
@@ -3151,7 +3153,7 @@ function bgTaskOrigin(task) {
     else cat = 'nebula';
   }
   if (!label) {
-    label = cat === 'nebula' ? 'Nebula'
+    label = cat === 'nebula' ? rootDisplayName()
       : cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
       : (task.sessionId || 'node');
   }

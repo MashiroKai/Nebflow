@@ -167,6 +167,10 @@ export default {
 
   // Agent panel
   agentsData: [],
+  // Root agent DISPLAY name, set the moment onboarding writes one (optimistic
+  // paint before agentList re-pushes). `null` = read it off agentList instead.
+  // 🔴 Display only: the mechanism key stays "Nebula" (task book §2 C).
+  rootDisplayName: null,
   selectedAgent: null,
   configText: '',
   parsedConfig: null,        // structured config parsed from JSON

@@ -35,6 +35,10 @@ import { previewLocalPath, canPreviewLocalPath } from './attachmentPreview.js';
 // engine event stream (thinkingDelta / toolStart / toolEnd) is consumed
 // unchanged.
 import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, removeWorkline, beginRound, stampRound } from './workline.js';
+// Root agent DISPLAY name (single read point — rootName.js). Leaf module
+// (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
+// the literal "Nebula".
+import { rootDisplayName } from './rootName.js';
 
 // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
 // label (same string the user reads on the card), so the single-line badge and
@@ -524,7 +528,7 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam, intak
   // ⇒ 标签 = i18n「来自 <from_device> 的 Nebula」双语（sender 携带 from_device）。
   // 复用同一徽章位/同一蓝气泡样式；eventType 段（INFO）照常追加。
   if (source === 'deviceMail') {
-    parts.push(t('deviceMail.fromDevice', { device: sender || '?' }));
+    parts.push(t('deviceMail.fromDevice', { device: sender || '?', agent: rootDisplayName() }));
   } else if (sourceTeam) {
     parts.push(sender ? `${sourceTeam}/${sender}` : sourceTeam);
   } else {

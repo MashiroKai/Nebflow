@@ -14,6 +14,7 @@ import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
 import { createIconsIn } from './utils.js';
 import { chainRefs, resolvedChainChipsHtml, modelSourceNoteKey, SETTABLE_ROLES } from './modelPanel.js';
+import { rootNameParams } from './rootName.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem(key('token')) || ''; }
@@ -256,7 +257,7 @@ export async function openAgentDetail(name, pin = false) {
  *  panel — this page is display-only. */
 function renderModelSection(pane, model) {
   const noteEl = pane.querySelector('#agent-detail-model-note');
-  if (noteEl) noteEl.textContent = t(modelSourceNoteKey(model || {}));
+  if (noteEl) noteEl.textContent = t(modelSourceNoteKey(model || {}), rootNameParams());
   const chainEl = pane.querySelector('#agent-detail-model-chain');
   if (chainEl) chainEl.innerHTML = resolvedChainChipsHtml(model || {});
   const currentEl = pane.querySelector('#agent-detail-model-current');

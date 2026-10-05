@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import munit.FunSuite
 import nebflow.shared.MemoryBudget // W1 shim: main had nebflow.service.MemoryBudget; the merge moved it to shared
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -151,4 +152,32 @@ class MemoryDirectWriteGuardSpec extends FunSuite:
     assert(projectedBytes > MemoryBudget.UserHardBytes, "fixture must exceed the cap in bytes")
     assert(MemoryDirectWriteGuard.preCheck(userPath, projected).isLeft,
       "multi-byte content is budgeted by bytes, not chars")
+
+  // ── 换根顺序无关（回归：personal-agent 批 2026-10-04 的实测缺陷）─────────
+  //
+  // 根因：`classify` 一度只认 `PathUtil.dataRoot` 这一个进程级可换根的基。多个
+  // suite 在类体里 `setDataRoot` 且**不还原**（如 MailQueueRootSpec），紧随其后的
+  // 本 spec 按 `user.home` 造路径 ⇒ 三层全部判成 `None` ⇒ 闸门 fail-open，且表现
+  // 为跨 suite 顺序相关的假红（同一 spec 单跑全绿）。
+  //
+  // 修复 = 并认两个合法基（运行时数据根 + 默认 home 根），见 MemoryPaths.globalBases。
+  // 本用例把该性质钉死在 spec 内：把数据根换到别处后，主实例路径仍须判得中。
+  test("层判定与进程内换根顺序解耦（隔壁 suite 泄漏 setDataRoot 后仍判得中）"):
+    val savedRoot = PathUtil.dataRoot
+    val foreign = os.temp.dir(prefix = "nb-mdwg-foreign-root")
+    try
+      PathUtil.setDataRoot(foreign) // 模拟一个不还原的相邻 suite
+      assertEquals(MemoryDirectWriteGuard.classify(userPath), Some("user"),
+        "user 层判定不得随进程内换根丢失（否则闸门 fail-open）")
+      assertEquals(MemoryDirectWriteGuard.classify(agentPath), Some("agent"),
+        "agent 层（旧位）同样不得丢失")
+      assertEquals(MemoryDirectWriteGuard.classify(s"$home/.nebflow/Soul.md"), Some("agent"),
+        "agent 层（新根层 Soul.md）同样不得丢失")
+      // 换根后，隔离实例自己的路径也必须认（不能只认默认 home）
+      assertEquals(MemoryDirectWriteGuard.classify(s"$foreign/User.md"), Some("user"),
+        "隔离实例的数据根仍是合法基")
+      // 全局 home 域内的 memory.md 依旧不是 project 层
+      assertEquals(MemoryDirectWriteGuard.classify(s"$home/.nebflow/memory.md"), None,
+        "global-home memory.md stays outside the project layer")
+    finally PathUtil.setDataRoot(savedRoot)
 end MemoryDirectWriteGuardSpec
