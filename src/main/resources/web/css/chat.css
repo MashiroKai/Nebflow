@@ -1967,7 +1967,7 @@
   right: 6px;
   font-size: 12px;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: 10px;
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
@@ -1982,8 +1982,36 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
+/* ── 按钮规格统一（作者 2026-10-05：「整体的UI风格 按钮样式，都需要跟Nebflow统一」）──
+   onboarding 全程的 labeled 按钮走全站 Glass Control 的同一几何常例：
+   圆角 10px（09-14 裁定常例）、5px 12px 内距、13px/500 字 —— 与 .option-btn /
+   发送键族（sapphire.css 发送键族统一块）同档；此前这些按钮没有声明几何，
+   实际渲染落 UA 默认（无圆角、系统字重），是「不统一」的主要来源。 */
+.glass-control.ob-primary,
+.glass-control.ob-ghost {
+  border-radius: 10px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+}
+/* 主操作 = 发送键族同款绿实心（作者 2026-09-15 逐字令：主键四态同一套语言）：
+   rest = var(--color-primary)，hover 递进 var(--color-primary-hover)，
+   墨 = #fff（.cfg-btn-primary / .option-btn.picked 的同一既有族墨值），
+   材质仍继承 .glass-control 的 --glass-control-* token（玻璃绿，非第二材质）。
+   替换掉的 rgba(7, 193, 96, 0.42) 半透绿是统一前的旧面。 */
 .glass-control.ob-primary {
-  background: rgba(7, 193, 96, 0.42);
+  background: var(--color-primary);
+  border-color: var(--color-primary-hover);
+  color: #fff;
+}
+.glass-control.ob-primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+.glass-control.ob-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .ob-probing {
   margin-top: 8px;
@@ -2056,7 +2084,10 @@
   margin-top: 1px;
 }
 .option-btn.picked .option-text small {
-  color: rgba(255, 255, 255, 0.8);
+  /* picked 的白墨来自 .option-btn.picked 的 color:#fff（族墨值）；此处只做
+     次级弱化 —— inherit + opacity，不再自持第二份字面量白。 */
+  color: inherit;
+  opacity: 0.8;
 }
 .option-btn .option-check {
   display: inline-block;
@@ -2066,11 +2097,11 @@
   background: transparent;
   box-shadow: none;
   color: var(--color-text-dim);
-  border-color: rgba(145, 170, 210, 0.2);
+  border-color: var(--color-border);
 }
 .option-btn.opt-ghost:hover {
   color: var(--color-text);
-  border-color: rgba(145, 170, 210, 0.5);
+  border-color: var(--color-text-muted);
 }
 .free-row {
   display: flex;
@@ -2082,7 +2113,7 @@
   flex: 1;
   padding: 5px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 14px;
+  border-radius: 10px;
   font-size: 13px;
   outline: none;
   box-sizing: border-box;

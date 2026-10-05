@@ -817,7 +817,7 @@ export default {
   'ob2.label.temper2': '做事方式',
   // 第四幕 · 认识你
   'ob2.intro.you1': '我这边差不多成型了。',
-  'ob2.intro.you2': '最后几个问题不是关于我，是关于你 —— 因为从今天起，我记事只为你一个人。',
+  'ob2.intro.you2': '最后一个问题不是关于我，是关于你 —— 因为从今天起，我记事只为你一个人。',
   'ob2.lead.identity': '先问个大概。',
   'ob2.q.identity': '你的日常身份更接近哪一种？',
   'ob2.opt.id.dev': '程序员 / 工程师',
@@ -828,10 +828,8 @@ export default {
   'ob2.opt.id.other': '其他',
   'ob2.fh.identity': '比如：白天写代码，晚上做播客',
   'ob2.label.identity': '日常身份',
-  'ob2.lead.focus': '最后一个，想听你自己的话。',
-  'ob2.q.focus': '最近半年，你最想解决的一件事是什么？',
-  'ob2.ph.focus': '比如：把 Nebflow 做成真正的 Personal Agent…（不想说就跳过）',
-  'ob2.label.focus': '当前关注',
+  // （ob2.lead.focus / ob2.q.focus / ob2.ph.focus / ob2.label.focus 四键已整键删除——
+  //   作者 2026-10-05：「最近半年，你最想解决的一件事是什么？不要这个问题。」）
   // 作答回执 / 承接句
   'ob2.echo.skip': '（这一题先跳过）',
   'ob2.echo.boundaries': '约定：{v}',
@@ -843,10 +841,10 @@ export default {
   // 书写仪式 / 收尾
   'ob2.writing.title': '正在书写自己',
   'ob2.write.1': '· 初始化 Soul.md …',
-  'ob2.write.2': '✓ 自我认知 — 名字 / 归属 / 大脑',
+  'ob2.write.2': '✓ 自我认知 — 名字 / 归属',
   'ob2.write.3': '✓ 相处之道 — 角色 · 风格 · 主动度 · 约定 · 语气',
   'ob2.write.4': '· 写入 User.md …',
-  'ob2.write.5': '✓ 称呼与身份 / 当前关注',
+  'ob2.write.5': '✓ 称呼与身份',
   'ob2.write.6': '✓ memory.md（项目记忆）→ 已退役',
   'ob2.write.done': '记忆已写入：Soul.md（{soul}）、User.md（{user}）。',
   'ob2.write.failed': '记忆写入失败：{error}',

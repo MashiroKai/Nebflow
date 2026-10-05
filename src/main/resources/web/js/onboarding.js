@@ -6,7 +6,7 @@
 //   b8d0bb0c1b7bcccb6388d565d06ab9f0736ce2e0a1f8afd98b2a69e7cc540205)
 //   design note = .nebflow/onboarding/20261004_011652_v2-interaction-design__personal-agent-onboarding.md
 //
-// Shape (v2 demo SCRIPT, single source — 11 questions, one card each, order = run order):
+// Shape (v2 demo SCRIPT, single source — 10 questions, one card each, order = run order):
 //   1  name       free-first   Agent display name (→ Soul.md + agent.json displayName)
 //   2  call       free-first   how to address the user (→ User.md)
 //   3  model      choice+fields brain config (configured providers → same config store as Settings)
@@ -17,7 +17,9 @@
 //   8  temper1    choice       Soul.md 语气基线
 //   9  temper2    choice       Soul.md 做事方式
 //   10 identity   choice       User.md 日常身份
-//   11 focus      free-first   User.md 当前关注
+// (The v2 demo's 11th question — 「最近半年，你最想解决的一件事是什么？」 / focus —
+//  was removed whole (author 2026-10-05: 「不要这个问题」): no script entry, no
+//  locale keys, no User.md section, no test anchor.)
 //
 // Discipline (task book §2 B):
 //   - every question carries 跳过这一题 (no exception — model / name / call too);
@@ -257,7 +259,17 @@ function simBubble(segments, { onDone = null, source = null, question = false } 
   row.appendChild(bubble);
   chat.appendChild(row);
   smartScroll();
-  const ctrl = typeInto(body, segments, { onDone });
+  // `skipBtn` is declared before typeInto so the typewriter's onDone (fired ONCE,
+  // by its doneFired guard — natural completion AND ctrl.finish both funnel there)
+  // can take the button away: the skip control exists DURING the pseudo-streaming
+  // only (author 2026-10-05: 「伪流式输出结束后，跳过打字的按钮应该消失」).
+  let skipBtn = null;
+  const ctrl = typeInto(body, segments, {
+    onDone: () => {
+      if (skipBtn) { skipBtn.remove(); skipBtn = null; }
+      if (onDone) onDone();
+    },
+  });
   if (!reducedMotion()) {
     const skip = document.createElement('button');
     skip.type = 'button';
@@ -265,6 +277,7 @@ function simBubble(segments, { onDone = null, source = null, question = false } 
     skip.textContent = t('ob2.typing.skip');
     skip.setAttribute('data-skip-typing', '1');
     skip.addEventListener('click', ctrl.finish);
+    skipBtn = skip;
     bubble.appendChild(skip);
   }
   return row;
@@ -303,6 +316,13 @@ function renameEverywhere(name) {
   state.rootDisplayName = name;
   const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
   if (self) self.displayName = name;
+  // The header center title (#session-name) is a display face of this name —
+  // refresh it NOW. Nothing in the rename path re-renders the sidebar (the
+  // session-list fingerprint is unchanged), so without this event the header
+  // kept the previous name until an unrelated rebuild — the exact report
+  // 「起名是会影响Header的标题的」. sidebar.js owns the listener; an event keeps
+  // the module graph acyclic.
+  window.dispatchEvent(new CustomEvent('nebflow-root-name-change'));
 }
 
 // ── Provider presets (field-face fallback for the model question) ─
@@ -426,14 +446,6 @@ function SCRIPT() {
       freeHint: t('ob2.fh.identity'),
       label: t('ob2.label.identity'),
     },
-    {
-      id: 'focus', seg: t('onboarding.seg.you'), scope: 'user', kind: 'free-first',
-      lead: [t('ob2.lead.focus')],
-      q: t('ob2.q.focus'),
-      placeholder: t('ob2.ph.focus'),
-      maxLength: 140,
-      label: t('ob2.label.focus'),
-    },
   ];
 }
 
@@ -459,7 +471,8 @@ function record(def, kind, value, values) {
   if (def.id === 'name' && kind !== 'skip' && rec.value) renameEverywhere(rec.value);
 }
 
-// ── Segment meta (from the design note: "第三幕 · 第 N / 11 题") ─
+// ── Segment meta (from the design note: "第三幕 · 第 N / {total} 题"; total is
+//    SCRIPT().length, so it follows the script automatically) ─
 function segmentMeta(def, total, idx) {
   return `${def.seg} · ${t('ob2.progress', { n: idx, total })}`;
 }
@@ -989,8 +1002,8 @@ function clearFinishFailure() {
  * (`code:'probe_required'`) used to be rendered through the same
  * `/onboarding/`-matching path as artifact failures, i.e. as
  * 「记忆写入失败」 — the wrong cause, and with no way to retry. The user was
- * then stuck: the marker stayed pending, so every window re-ran all 11
- * questions and was refused again. Naming the step and offering a retry is the
+ * then stuck: the marker stayed pending, so every window re-ran the whole
+ * questionnaire and was refused again. Naming the step and offering a retry is the
  * way out of that loop.
  */
 function reportFinishFailure(kind, detail) {
@@ -1028,11 +1041,11 @@ let lastAttempt = null;     // { answers, modelRef, lines } — replayed by the 
  * ① is shared by BOTH terminal paths. v2 probed only inside the fallback
  * 「新加一家服务商」 field face, so the primary path (pick a model from the
  * already-configured providers) could never satisfy the gate — the user could
- * complete all 11 questions and still never reach `done`. Hoisting the probe into
- * the one terminal sequence removes that gap from both paths at once, and the
- * probe carries `modelRef` so it measures exactly the brain the user chose
- * (the engine builds the measured chain from that ref; on the fallback face the
- * ref is the provider+model its own save button just wrote).
+ * complete the whole questionnaire and still never reach `done`. Hoisting the
+ * probe into the one terminal sequence removes that gap from both paths at once,
+ * and the probe carries `modelRef` so it measures exactly the brain the user
+ * chose (the engine builds the measured chain from that ref; on the fallback
+ * face the ref is the provider+model its own save button just wrote).
  *
  * The sequence is idempotent (overwrite-style artifact writes, read-modify-write
  * marker), so the retry button simply re-runs it.

@@ -686,7 +686,9 @@ private[gateway] object WsConfigHandlers:
    * 一次调用做三件事（全部单一存储、零旁路）：
    *   ① 模型选择 + context window 写回**与设置面同一配置存储**
    *      （`llm.providers.<id>.models[].contextWindow`，经 `updateConfig` 单点）；
-   *   ② `Soul.md` / `User.md` 产物落盘（全跳过也写结构完整骨架）；
+   *   ② `Soul.md` / `User.md` 产物落盘（全跳过也写结构完整骨架）——
+   *      🔴 记忆面**零模型痕迹**（作者 2026-10-05「配置模型不需要进记忆」：
+   *      模型选择只活在 ① 的配置存储里，产物文件不渲染任何模型行）；
    *   ③ 起名结果写 `agents/<root>/agent.json` 的 `displayName`（🔴 身份键不变）。
    * 回执带两份文件的路径 / 字节数与生效窗口，供前端完成摘要显示。
    */
@@ -752,7 +754,8 @@ private[gateway] object WsConfigHandlers:
     end modelWrite
     modelWrite.flatMap { modelErr =>
       nebflow.core.OnboardingArtifacts
-        .apply(answers, modelRef)
+        // 产物只吃问卷答案（记忆面）；modelRef 只走上面的配置写回（①），不进产物。
+        .apply(answers)
         .flatMap { res =>
           wsSend(
             io.circe.Json.obj(
