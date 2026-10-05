@@ -48,16 +48,15 @@ function worklineLabel(rawLabel) {
   return parts[0];
 }
 
-/** THE single row-append path for this module (UI-D, author 2026-10-03
- *  「放在 agent 一次消息的最底部」). A Pop artifact row is anchored to the end
- *  of its turn when it is built; any row appended afterwards into the same turn
- *  would bury it, so every append re-runs the re-anchor. Funnelling through one
- *  helper means no render path can forget the step, and the pass itself is a
- *  boolean test until the session has actually shown an artifact
- *  (popArtifacts.placeArtifactRowsAtTurnEnd's latch). */
+/** THE single row-append path for this module. #491 (author 2026-10-05
+ *  「Pop的文件和媒体，要按时间顺序显示，不要总是在文字的最下方」): appends are
+ *  pure doc-order — whatever a render path builds lands where the conversation
+ *  put it, and nothing re-anchors afterwards. (The UI-D turn-end re-anchor
+ *  this helper used to re-run on every append is gone; time order = message
+ *  order is now the structure, not a post-pass.) Funnelling through one helper
+ *  still means no render path can grow a second append semantic. */
 function appendChatRow(chat, row) {
   chat.append(row);
-  placeArtifactRowsAtTurnEnd(chat);
 }
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
@@ -367,11 +366,16 @@ export function renderUserBubble(text, attachments, timestamp) {
     row.appendChild(bubble);
   }
 
-  // Attachment bubbles (below text)
+  // Attachment faces. #491 主题三 (author 2026-10-05 12:14, 【已裁决】#1):
+  // media/file attachments leave the bubble — they render the POP faces as an
+  // INDEPENDENT card row right after this row (AC-S2/S3/S4). Ref-type
+  // attachments keep their in-bubble reference card. The old inline
+  // att-img/att-file-tag bubbles are gone from the live path.
+  const mediaAtts = [];
   (attachments || []).forEach(att => {
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble user att-bubble';
-    if (att.type === 'ref' || att.type === 'taskRef') {
+    if (att && (att.type === 'ref' || att.type === 'taskRef')) {
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user att-bubble';
       // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
       // unified type:'ref' AND the legacy type:'taskRef' from old
       // history/queue restores - normalize into the same Reference and render
@@ -382,20 +386,10 @@ export function renderUserBubble(text, attachments, timestamp) {
       bubble.classList.add('att-ref-bubble');
       const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
       if (ref) bubble.appendChild(renderRefBlock(ref, { mode: 'message' }));
-    } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-      const img = document.createElement('img');
-      img.className = 'att-img';
-      img.src = att.preview;
-      img.title = att.name || '';
-      img.onerror = () => { img.style.display = 'none'; };
-      bubble.appendChild(img);
-    } else {
-      const tag = document.createElement('span');
-      tag.className = 'att-file-tag';
-      tag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="margin-left:2px">' + escapeHtml(att.name || 'file') + '</span>';
-      bubble.appendChild(tag);
+      row.appendChild(bubble);
+      return;
     }
-    row.appendChild(bubble);
+    mediaAtts.push(att);
   });
 
   // Timestamp + copy button (unified v1.2 footer pill)
@@ -403,6 +397,11 @@ export function renderUserBubble(text, attachments, timestamp) {
   row.appendChild(createMsgFooterBadge(ts, text));
 
   appendChatRow(chat, row);
+  // The independent media/file card row (same .row.pop-artifact family the Pop
+  // faces use) — time order = message order: user row, then its cards, then
+  // whatever the conversation appends next (AC-S4's DOM shape).
+  const mediaRow = buildUserMediaRow(mediaAtts);
+  if (mediaRow) appendChatRow(chat, mediaRow);
   // UNCONDITIONAL by author ruling (2026-09-11 A-branch): the user's own
   // message always brings the viewport back to the bottom — the near-bottom
   // judgement must NOT gate this site. Do not "converge" it.
@@ -1078,7 +1077,7 @@ export function finishAgent(agentId) {
 // imported from here — re-export, not redefinition (single source in
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, placeArtifactRowsAtTurnEnd } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow } from './popArtifacts.js';
 
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
@@ -1182,15 +1181,13 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // Pop artifact payload (pop-upgrade batch): the tool row renders as a plain
   // process face; the media stack / file cards render in a SEPARATE row below
   // (`.row.pop-artifact` — never a `.row.tool`, so turnGroup never tucks it and
-  // the deliverable survives the ✻ collapse, sitting at the bottom of the
-  // agent's message). The payload rides `content` into history, so replay
-  // re-renders the same faces via persistence.js.
+  // the deliverable survives the ✻ collapse). The payload rides `content` into
+  // history, so replay re-renders the same faces via persistence.js.
   //
-  // UI-D (author 2026-10-03 「放在 agent 一次消息的最底部」): the row is created
-  // next to its Pop tool row — the payload arrives HERE — and then re-anchored
-  // to the end of its turn by placeArtifactRowsAtTurnEnd. The re-anchor runs on
-  // EVERY tool render (not only the Pop one), because the rows that would bury
-  // the card arrive AFTER it; a build with no artifact row costs one query.
+  // #491 (author 2026-10-05 「按时间顺序显示…像微信一样」): the artifact row is
+  // inserted IN PLACE, right where its payload arrived (`row.after`). The UI-D
+  // re-anchor that used to run here on every tool render is removed — rows
+  // appended later in the turn keep their natural order behind it.
   if (isPopPayload(content)) {
     renderPopToolRow(card, label, summary, isError);
     const popPayload = parsePopPayload(content);
@@ -1198,7 +1195,6 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
       const artifactRow = buildPopArtifactRow(popPayload);
       if (artifactRow) {
         row.after(artifactRow);
-        placeArtifactRowsAtTurnEnd(chat);
         smartScroll();
       }
     } else {

@@ -19,8 +19,8 @@
 //     renders flat with no stack at all. (canvas-media Wave2, 2026-10-05
 //     author ruling OD-1 = (b): audio joins the face video already had —
 //     native <audio controls> strip, ticket leg like video, no stack chrome.)
-//   - FILE (documents / HTML animations / everything else) — file cards at
-//     the bottom of the agent's message: filename + a forward button whose
+//   - FILE (documents / HTML animations / everything else) — file cards in the
+//     artifact row beside the media faces: filename + a forward button whose
 //     hover text is 「在 Canvas 打开」. The row carries `.row.pop-artifact`
 //     (deliberately NOT `.row.tool`): turnGroup's tuck set is
 //     `.row.tool` + thinking rows only, so the artifact survives the
@@ -156,6 +156,21 @@ function hydrateMedia(el, item, onFail) {
     el.dataset.nfMediaFailed = '1';
     if (typeof onFail === 'function') onFail(el);
   };
+  // #491 主题三: user attachments ride the uploads route, NOT the nf-file
+  // ticket — a resolver on the item replaces the ticket leg entirely (its null
+  // result is terminal: the URL builder refused the path, retrying through a
+  // different route cannot help).
+  if (typeof item.resolver === 'function') {
+    let url = null;
+    try { url = item.resolver(path); } catch { url = null; }
+    if (url) {
+      el.addEventListener('error', () => fail());
+      el.src = url;
+    } else {
+      fail();
+    }
+    return;
+  }
   // No `once` on the error listener: the FIRST error arms the re-mint, and a
   // second error (re-mint also failed, or the re-minted URL 404s) must reach
   // the terminal branch — with `once` that case left the element blank.
@@ -310,6 +325,120 @@ const STACK_MAX = { w: 220, h: 320 };
 /** The expanded column's per-item allowance — full column width, taller cap. */
 const EXPAND_MAX = { w: 220, h: 420 };
 
+/** #491 主题三 (AC-S1): the WeChat-style in-stream lightbox — the zoom face
+ *  shared by BOTH sides (user attachments and LLM Pop media). One overlay on
+ *  document.body: dark backdrop, the media centered at its own ratio, the file
+ *  name, and Canvas as the SECONDARY explicit entry (the ruling: 「媒体（图片/
+ *  视频）点击放大 = 消息流内灯箱/浮层（微信式，就地放大，Esc/点击空白关闭）；
+ *  Canvas 打开保留为次级动作」). File-type items never come here — they stay
+ *  small cards whose click IS the Canvas open. */
+let _lightboxEl = null;
+let _lightboxKey = null;
+
+export function closeMediaLightbox() {
+  if (!_lightboxEl) return;
+  const el = _lightboxEl;
+  _lightboxEl = null;
+  if (_lightboxKey) {
+    window.removeEventListener('keydown', _lightboxKey, true);
+    _lightboxKey = null;
+  }
+  el.remove();
+}
+
+/** `item`: {kind:'image'|'video', name, src?, path?, resolver?} — the same
+ *  item shape the faces build, so callers pass what they already hold. */
+export function openMediaLightbox(item) {
+  if (!item || (item.kind !== 'image' && item.kind !== 'video')) return;
+  closeMediaLightbox();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'nf-lightbox';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-label', item.name || 'media');
+  const stage = document.createElement('div');
+  stage.className = 'nf-lightbox-stage';
+  const head = document.createElement('div');
+  head.className = 'nf-lightbox-head';
+  const name = document.createElement('div');
+  name.className = 'nf-lightbox-name';
+  name.textContent = item.name || '';
+  head.appendChild(name);
+  // Secondary entry: Canvas open (only when the item knows an absolute path).
+  if (item.path) {
+    const canvasBtn = document.createElement('button');
+    canvasBtn.type = 'button';
+    canvasBtn.className = 'nf-lightbox-canvas';
+    canvasBtn.innerHTML = FWD_ICON + '<span>' + escapeHtml(t('chat.popOpenCanvas')) + '</span>';
+    canvasBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      // Act-and-exit for the lightbox layer: Canvas opens, the zoom face closes.
+      closeMediaLightbox();
+      openPopArtifact(item.path, item.name);
+    });
+    head.appendChild(canvasBtn);
+  }
+  stage.appendChild(head);
+
+  let mediaEl;
+  if (item.kind === 'video') {
+    mediaEl = document.createElement('video');
+    mediaEl.className = 'nf-lightbox-media';
+    mediaEl.controls = true;
+    mediaEl.playsInline = true;
+    mediaEl.preload = 'metadata';
+  } else {
+    mediaEl = document.createElement('img');
+    mediaEl.className = 'nf-lightbox-media';
+    mediaEl.alt = item.name || '';
+    mediaEl.draggable = false;
+  }
+  stage.appendChild(mediaEl);
+  overlay.appendChild(stage);
+  // Blank-area click closes (the ruling's 「点击空白关闭」): only a click that
+  // landed on the overlay itself — clicks on the media/head stop here.
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) closeMediaLightbox();
+  });
+  // Esc closes the TOP layer only. The handler rides window CAPTURE — window
+  // fires before document, where the search modal's own three-stage Esc
+  // handler lives; without this, an open modal would swallow every Escape and
+  // the lightbox could only be closed by the mouse. stopImmediatePropagation
+  // keeps the modal shut for THIS press; a second Esc (lightbox gone) reaches
+  // the modal's own contract again.
+  _lightboxKey = e => {
+    if (e.key === 'Escape') {
+      e.stopImmediatePropagation();
+      closeMediaLightbox();
+    }
+  };
+  window.addEventListener('keydown', _lightboxKey, true);
+  document.body.appendChild(overlay);
+  _lightboxEl = overlay;
+  // Same byte legs as the inline faces: inline src wins, then the item's own
+  // resolver (uploads route for user attachments), then the ticket leg.
+  hydrateMedia(mediaEl, item, null);
+}
+
+/** The per-card Canvas secondary entry (ruling: 「卡片…上的显式入口」). Rendered
+ *  on flat media faces and expanded stack layers — the collapsed stack keeps
+ *  click-to-advance (the retained R8 invariant), its zoom/Canvas entries live
+ *  one 「展开」 away. Null when the item has no absolute path to open. */
+function canvasCornerButton(item) {
+  if (!item || !item.path) return null;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pop-media-canvas';
+  btn.setAttribute('aria-label', t('chat.popOpenCanvas'));
+  btn.title = t('chat.popOpenCanvas');
+  btn.innerHTML = FWD_ICON;
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    openPopArtifact(item.path, item.name);
+  });
+  return btn;
+}
+
 /**
  * The stacked media group (≥2 items): pill on the left, stack on the right.
  * Clicking a card brings it to the front (WeChat's tap-advance); a pointer
@@ -356,6 +485,12 @@ function buildMediaStack(items) {
       fitLayer(layer, w, h, EXPAND_MAX.w, EXPAND_MAX.h);
       if (expanded) settleExpandHeight();
     }));
+    // #491 主题三 (AC-S1): an expanded layer zooms in the shared lightbox —
+    // the stack view keeps click-to-advance (retained R8 invariant), so this
+    // is where the multi-item zoom entry lives. Canvas rides the corner button.
+    layer.addEventListener('click', () => openMediaLightbox(item));
+    const canvasBtn = canvasCornerButton(item);
+    if (canvasBtn) layer.appendChild(canvasBtn);
     expandView.appendChild(layer);
     return layer;
   });
@@ -465,11 +600,16 @@ function buildMediaStack(items) {
  *  takes the media's own ratio (zcode-484 D1/D3), so a lone wide screenshot is
  *  not cropped into a portrait box. An AUDIO item has no ratio to report — the
  *  `is-audio` class retires the fallback ratio box so the flat face collapses
- *  to the controls strip (chat.css) instead of a mostly-empty 4/3 frame. */
+ *  to the controls strip (chat.css) instead of a mostly-empty 4/3 frame.
+ *  #491 主题三 (AC-S1): a click opens the shared lightbox (both sides), and the
+ *  corner button is the Canvas secondary entry. */
 function buildMediaFlat(item) {
   const box = document.createElement('div');
   box.className = 'pop-media-flat' + (item.kind === 'audio' ? ' is-audio' : '');
   box.appendChild(mediaFace(item, 'expanded', (w, h) => fitLayer(box, w, h, STACK_MAX.w, EXPAND_MAX.h)));
+  box.addEventListener('click', () => openMediaLightbox(item));
+  const canvasBtn = canvasCornerButton(item);
+  if (canvasBtn) box.appendChild(canvasBtn);
   return box;
 }
 
@@ -494,11 +634,16 @@ function buildFileCard(item) {
   btn.className = 'fwd-btn';
   btn.setAttribute('aria-label', t('chat.popOpenCanvas'));
   btn.innerHTML = FWD_ICON + '<span class="fwd-tip">' + escapeHtml(t('chat.popOpenCanvas')) + '</span>';
-  btn.addEventListener('click', e => {
-    e.stopPropagation();
-    openPopArtifact(item.path, item.name);
-  });
-  card.addEventListener('click', () => openPopArtifact(item.path, item.name));
+  // #491 主题三: a card without an absolute path (a live user attachment whose
+  // bytes ride inline, path unknown until the backend resolves it) renders but
+  // opens nothing — never a bogus workspace-open-item with an empty path.
+  if (item.path) {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      openPopArtifact(item.path, item.name);
+    });
+    card.addEventListener('click', () => openPopArtifact(item.path, item.name));
+  }
   const iconEl = document.createElement('div');
   iconEl.className = 'fc-icon ' + icon.cls;
   iconEl.textContent = icon.label;
@@ -508,6 +653,73 @@ function buildFileCard(item) {
 }
 
 /* ─────────────── row assembly ─────────────── */
+
+/* ── #491 主题三: user attachments on the Pop faces (AC-S2/S3/S4) ──────────
+ * The author's 2026-10-05 12:14 ruling: user input media/files behave EXACTLY
+ * like the LLM Pop faces — small file cards (Canvas open), WeChat multi-image
+ * stacking, and INDEPENDENT card placement (「不是放消息的下面了，而是像LLM
+ * Pop的那样是单独的卡片」). One mapping + one row builder, both sharing the
+ * exact face builders above, so the two sides cannot drift apart. */
+
+/** File-name → extension (no dot → ''). */
+function extOf(name) {
+  const n = String(name || '');
+  const i = n.lastIndexOf('.');
+  return i > 0 ? n.slice(i + 1).toLowerCase() : '';
+}
+
+/** UiMessage.User.attachment → the pop-item shape the faces consume.
+ *  `resolver` (optional) replaces the ticket leg for user bytes: the uploads
+ *  route is a different URL family than /api/nf-file, and byte-leg unification
+ *  is explicitly a LATER batch (PLAN §4 — 登记不承诺本期).
+ *  ref/taskRef attachments return null — they keep their in-bubble face. */
+export function popItemFromAttachment(att, resolver) {
+  if (!att || typeof att !== 'object') return null;
+  if (att.type === 'ref' || att.type === 'taskRef') return null;
+  const name = String(att.name || '');
+  const path = typeof att.path === 'string' ? att.path : '';
+  const size = Number(att.size) || undefined;
+  if (att.type === 'image' || att.type === 'video') {
+    return {
+      kind: att.type,
+      name,
+      // Inline preview wins (the live send always carries one); after a cache
+      // strip the uploads resolver takes over via `path`.
+      src: (typeof att.preview === 'string' && att.preview.startsWith('data:')) ? att.preview : '',
+      path,
+      ext: extOf(name),
+      size,
+      resolver,
+    };
+  }
+  if (!name && !path) return null;
+  return { kind: 'file', name: name || path.split('/').pop() || 'file', path, ext: extOf(name), size };
+}
+
+/** The INDEPENDENT media row for one user message's non-ref attachments — the
+ *  exact same row shape a Pop payload builds (`.row.pop-artifact` + faces), so
+ *  「与 LLM Pop 卡片同层同形」 holds by construction. The `user-media` marker
+ *  class is the QA/spec hook. Returns null when nothing displayable remains
+ *  (refs-only messages keep the plain user row). */
+export function buildUserMediaRow(attachments, opts) {
+  const resolver = opts && typeof opts.resolver === 'function' ? opts.resolver : undefined;
+  const items = (attachments || [])
+    .map(a => popItemFromAttachment(a, resolver))
+    .filter(Boolean);
+  if (!items.length) return null;
+  const media = items.filter(it => it.kind === 'image' || it.kind === 'video');
+  const files = items.filter(it => it.kind !== 'image' && it.kind !== 'video');
+  if (!media.length && !files.length) return null;
+  const row = document.createElement('div');
+  row.className = 'row pop-artifact user-media';
+  const group = document.createElement('div');
+  group.className = 'pop-group';
+  row.appendChild(group);
+  if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
+  else if (media.length > 1) group.appendChild(buildMediaStack(media));
+  files.forEach(f => group.appendChild(buildFileCard(f)));
+  return row;
+}
 
 /**
  * Build the artifact row for one Pop payload: media group (stack or flat) on
@@ -521,10 +733,6 @@ const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 export function buildPopArtifactRow(payload) {
   const items = (payload.items || []).filter(it => it && typeof it.path === 'string');
   if (!items.length) return null;
-  // Latch the fast path: from here on, the render paths re-anchor artifacts to
-  // the end of their turn (UI-D). Set before the row is built so a caller that
-  // appends it and then calls the placement pass sees the row.
-  _artifactsSeen = true;
   const media = items.filter(it => MEDIA_KINDS.has(it.kind));
   const files = items.filter(it => !MEDIA_KINDS.has(it.kind));
 
@@ -554,48 +762,18 @@ export function buildPopArtifactRow(payload) {
 }
 
 /**
- * UI-D (author 2026-10-03 「这个卡片不被工具过程收敛，而是放在 agent 一次消息
- * 的最底部」, the R8 second half): move every artifact row of `chat` to the END
- * of its turn.
- * The render paths append the artifact right after its Pop tool row (that is
- * where the payload arrives). Any row appended afterwards into the SAME turn
- * would bury it, so this pass re-anchors each artifact after the last node
- * that still belongs to its turn — the next non-injected user row (or the end
- * of the chat) is the boundary. Rows never move during collapse (turnGroup's
- * decompression model), so one re-anchor per append / per history rebuild is
- * enough; no observer, no timer (a MutationObserver here would be exactly the
- * kind of always-on machinery UI-G rules out for the popup windows).
- *
- * Cheap by construction: `_artifactsSeen` is a session-lifetime latch set the
- * first time an artifact row is built, so a chat that has never shown one pays
- * a single boolean test — not a child scan. Rows are never removed by this
- * pass, so the latch cannot go stale in the false-negative direction.
+ * #491 placement note (2026-10-05 author ruling 「Pop的文件和媒体，要按时间顺序
+ * 显示，不要总是在文字的最下方。而是像微信一样，按时间顺序显示」): the artifact
+ * row is appended IN PLACE by its render path — `row.after(artifactRow)` in
+ * chat.js renderTool, plain doc-order appends in persistence.js's two replay
+ * legs. The UI-D turn-end re-anchor that used to live here
+ * (placeArtifactRowsAtTurnEnd + the `_artifactsSeen` latch + the
+ * `artifactsSeen()` telemetry hook) is physically removed: its semantic was
+ * superseded two days after it shipped, and a dead switch would only grow
+ * maintenance surface. The retained R8 invariants are structural and do not
+ * need this pass: the row is `.row.pop-artifact` (never `.row.tool`), so
+ * turnGroup's tuck set cannot swallow it.
  */
-let _artifactsSeen = false;
-
-export function placeArtifactRowsAtTurnEnd(chat) {
-  if (!chat || !_artifactsSeen) return 0;
-  const rows = Array.from(chat.children).filter(el =>
-    el.classList && el.classList.contains('pop-artifact'));
-  if (!rows.length) return 0;
-  let moved = 0;
-  for (const el of rows) {
-    let tail = el;
-    let n = el.nextElementSibling;
-    while (n) {
-      if (n.classList && n.classList.contains('row') && n.classList.contains('user') &&
-          !(n.querySelector && n.querySelector('.bubble.injected'))) break;
-      tail = n;
-      n = n.nextElementSibling;
-    }
-    if (tail !== el) { tail.after(el); moved++; }
-  }
-  return moved;
-}
-
-/** Test/telemetry hook: whether this session has ever built an artifact row.
- *  Exposed so a spec can assert the fast path without reaching into the DOM. */
-export function artifactsSeen() { return _artifactsSeen; }
 
 /**
  * The Pop tool's PROCESS row face (spinner → check, like every tool) — plain

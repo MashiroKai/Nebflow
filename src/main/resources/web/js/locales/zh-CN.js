@@ -1553,12 +1553,19 @@ export default {
   'search.typeAgent': '助手',
   'search.typeAi': 'AI',
   'search.typeTool': '工具',
-  // v3.1 tabs + date anchor (spec §6.2)
+  // v3.1 tabs + date anchor (spec §6.2) · v3.2 (#491 主题二 §6 候审清单):
+  // tabPop/tabImages 删，tabMedia/tabLinks + 来源/分组键增——键位逐字以计划书
+  // §6 清单为准，过目前为冻结闸前置件。
   'search.tabAll': '全部',
-  'search.tabImages': '图片',
+  'search.tabMedia': '图片与视频',
   'search.tabFiles': '文件',
-  'search.tabPop': 'Pop',
+  'search.tabLinks': '链接',
   'search.tabDate': '日期',
+  'search.sourceAll': '全部来源',
+  'search.sourceUser': '用户',
+  'search.sourceAgent': '助手',
+  'search.groupThisWeek': '本周',
+  'search.groupMonth': '{n} 月',
   'search.emptyCategory': '该栏目下暂无内容',
   'search.datePickTitle': '选择日期',
   'search.dateClear': '清除日期',

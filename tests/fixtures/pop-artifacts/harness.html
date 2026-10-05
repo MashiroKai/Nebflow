@@ -55,6 +55,7 @@
     const chatMod = await import(`${WEB}/chat.js`);
     const popMod = await import(`${WEB}/popArtifacts.js`);
     const workMod = await import(`${WEB}/workline.js`);
+    const persistMod = await import(`${WEB}/persistence.js`);
     const view = chatViews.primary;
 
     const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -472,7 +473,228 @@
       };
     };
 
-    /* ── window-role leg (UI-G) ─────────────────────────────────────────── */
+    /* ── #491 pop-media · placement scenarios (2026-10-05 author ruling:
+       「Pop的文件和媒体，要按时间顺序显示，不要总是在文字的最下方」) ─────── */
+
+    /** One single-image payload, parameterised so two Pop calls in one turn
+       produce two distinguishable artifact rows. */
+    function payloadOneImage(name) {
+      return {
+        fileRefs: { inlined: 1, referenced: 0, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [{ kind: 'image', path: '/tmp/pop/' + name, name, src: svgDataUri(800, 600) }],
+      };
+    }
+
+    /** THE acceptance shape (PLAN §2 验收): 「Pop A → 文本 → Pop B」 inside ONE
+       turn. In-place semantics = DOM order toolA → artifactA → text → toolB →
+       artifactB; the old turn-end re-anchor buried BOTH artifacts after the
+       text instead. */
+    window.__popTextPop = async () => {
+      chatMod.renderUserBubble('两次 Pop，中间说句话', [], Date.now());
+      chatMod.renderTool('Pop\n  ("a.png")', '1 file', popContent(payloadOneImage('a.png')), false,
+        '{"filePath":"/tmp/pop/a.png"}', 'pop-harness');
+      chatMod.appendAiText('中间的文本行。');
+      chatMod.renderTool('Pop\n  ("b.png")', '1 file', popContent(payloadOneImage('b.png')), false,
+        '{"filePath":"/tmp/pop/b.png"}', 'pop-harness');
+      await raf2();
+    };
+
+    /** UiMessage fixtures for the replay legs (same three-message turn twice:
+       user → Pop tool → ai text). Shapes mirror shared/protocol.scala's
+       UiMessage encoder JSON. */
+    function replayTurnMsgs() {
+      const pop1 = {
+        type: 'tool', label: 'Pop\n  ("a.png")', summary: '1 file',
+        content: popContent(payloadOneImage('a.png')), isError: false,
+        input: '{"filePath":"/tmp/pop/a.png"}',
+      };
+      const pop2 = {
+        type: 'tool', label: 'Pop\n  ("b.png")', summary: '1 file',
+        content: popContent(payloadOneImage('b.png')), isError: false,
+        input: '{"filePath":"/tmp/pop/b.png"}',
+      };
+      const now = Date.now();
+      return [
+        { type: 'user', text: '第一回合：Pop 一张', timestamp: now - 60000 },
+        pop1,
+        { type: 'ai', text: '第一回合的正文。', timestamp: now - 50000 },
+        { type: 'user', text: '第二回合：再 Pop 一张', timestamp: now - 40000 },
+        pop2,
+        { type: 'ai', text: '第二回合的正文。', timestamp: now - 30000 },
+      ];
+    }
+
+    /** FULL-REBUILD replay leg: restoreFromBackendHistory over the fixture
+       array (the leg persistence.js:944 owns). */
+    window.__replayBackendTurns = async () => {
+      window.__clearChat();
+      persistMod.restoreFromBackendHistory(replayTurnMsgs(), { scrollToBottom: false });
+      await raf2();
+    };
+
+    /** INCREMENTAL replay leg: seed the localStorage cache via saveMsg (the
+       same writer the live path uses), then restoreFromStorage (the leg
+       persistence.js:588 owns). */
+    window.__replayStorageTurns = async () => {
+      window.__clearChat();
+      const sid = 'pop-harness';
+      for (const m of replayTurnMsgs()) persistMod.saveMsg(m, sid);
+      persistMod.restoreFromStorage({ scrollToBottom: false });
+      await raf2();
+    };
+
+    /** Empty the primary chat container (replay legs start from a clean
+       column so row indices are absolute). */
+    window.__clearChat = () => { chatEl.innerHTML = ''; };
+
+    /* ── #491 · 主题三 (AC-S1..AC-S4): user attachments aligned with the Pop
+       faces — small cards, multi-image stacking, independent placement,
+       WeChat-style lightbox zoom. Author 2026-10-05 12:14 原话. ─────────── */
+
+    const userImg = (name, w, h) => ({
+      type: 'image', name, preview: svgDataUri(w || 800, h || 600),
+    });
+    const userFile = (name, path, size) => ({
+      type: 'text', name, path, size: size || 2048,
+    });
+
+    /** AC-S4 (live): a user message with two images + one file must render the
+       media/files as an INDEPENDENT card row after the user row — not as
+       bubbles inside it. */
+    window.__userMediaLive = async () => {
+      chatMod.renderUserBubble('两张图和一个文件', [
+        userImg('u1.png'), userImg('u2.png', 400, 1600), userFile('notes.pdf', '/tmp/up/notes.pdf'),
+      ], Date.now());
+      await raf2();
+    };
+
+    /** AC-S1 (live): a single user image — the flat face, click-to-zoom leg. */
+    window.__userSingleLive = async () => {
+      chatMod.renderUserBubble('单图', [userImg('one.png', 1600, 400)], Date.now());
+      await raf2();
+    };
+
+    /** AC-S2 (live): a lone user file — the small-card + Canvas leg. */
+    window.__userFileLive = async () => {
+      chatMod.renderUserBubble('一个文件', [userFile('report.pdf', '/tmp/up/report.pdf')], Date.now());
+      await raf2();
+    };
+
+    /** Capture workspace-open-item events while `fn` runs (the Canvas single
+       point both faces must share — AC-S2/S1 detail-shape parity). */
+    window.__captureOpenEvents = async (fn) => {
+      const seen = [];
+      const onOpen = (e) => seen.push(e.detail ? {
+        id: e.detail.id, title: e.detail.title,
+        itemType: e.detail.itemType, absPath: e.detail.absPath,
+        pinned: e.detail.pinned,
+      } : null);
+      window.addEventListener('workspace-open-item', onOpen);
+      try { await fn(); } finally { window.removeEventListener('workspace-open-item', onOpen); }
+      return seen;
+    };
+
+    /** Click the first media face inside the user-media row (or `sel`) and
+       probe the lightbox STRUCTURE — the same probe runs against the Pop face
+       for the AC-S1 「同形态、同交互」 assertion. */
+    window.__lightboxProbeViaClick = async (sel) => {
+      const host = document.querySelector(sel || '#chat > .row.user-media');
+      if (!host) return { clicked: false };
+      const media = host.querySelector('.pop-img, .pop-video');
+      if (!media) return { clicked: false };
+      media.click();
+      await new Promise(r => setTimeout(r, 60));
+      const lb = document.querySelector('.nf-lightbox');
+      return {
+        clicked: true,
+        open: !!lb,
+        cls: lb ? lb.className : '',
+        hasMedia: !!(lb && lb.querySelector('.nf-lightbox-media')),
+        mediaTag: lb && lb.querySelector('.nf-lightbox-media')
+          ? lb.querySelector('.nf-lightbox-media').tagName.toLowerCase() : '',
+        hasCanvasBtn: !!(lb && lb.querySelector('.nf-lightbox-canvas')),
+        hasName: !!(lb && lb.querySelector('.nf-lightbox-name')),
+        nameText: lb && lb.querySelector('.nf-lightbox-name') ? lb.querySelector('.nf-lightbox-name').textContent : '',
+      };
+    };
+
+    window.__closeLightboxEsc = async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await new Promise(r => setTimeout(r, 30));
+      return { open: !!document.querySelector('.nf-lightbox') };
+    };
+
+    window.__closeLightboxBackdrop = async () => {
+      const lb = document.querySelector('.nf-lightbox');
+      if (!lb) return { open: false };
+      lb.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      // The backdrop branch closes only when the click lands on the overlay
+      // itself (e.target === overlay) — dispatching on `lb` does exactly that.
+      await new Promise(r => setTimeout(r, 30));
+      return { open: !!document.querySelector('.nf-lightbox') };
+    };
+
+    /** AC-S2 (Pop side): a Pop artifact with ONE document — its file card is
+       the parity twin of the user file card. */
+    window.__popFileLive = async () => {
+      window.__clearChat();
+      chatMod.renderUserBubble('Pop 一份文件', [], Date.now());
+      chatMod.renderTool('Pop\n  ("report.pdf")', '1 file', popContent({
+        fileRefs: { inlined: 0, referenced: 1, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [{ kind: 'document', path: '/tmp/up/report.pdf', name: 'report.pdf' }],
+      }), false, '{"filePath":"/tmp/up/report.pdf"}', 'pop-harness');
+      await raf2();
+    };
+
+    /** AC-S1 (Pop side): the SAME probe against a Pop artifact's media face. */
+    window.__popLightboxProbe = async () => {
+      window.__clearChat();
+      chatMod.renderUserBubble('Pop 一张', [], Date.now());
+      chatMod.renderTool('Pop\n  ("p1.png")', '1 file', popContent(payloadOneImage('p1.png')), false,
+        '{"filePath":"/tmp/pop/p1.png"}', 'pop-harness');
+      await raf2();
+      return await window.__lightboxProbeViaClick('#chat > .row.pop-artifact');
+    };
+
+    /** AC-S4/S3 (backend replay): a user message with attachments + a following
+       ai row — the media must rebuild as an independent row in between, with
+       path-resolved images (uploads leg, no inline preview). */
+    window.__userMediaBackendReplay = async (threeImages) => {
+      window.__clearChat();
+      const atts = threeImages
+        ? [userImg('m1.png'), userImg('m2.png', 400, 1600), userImg('m3.png')]
+        : [userImg('m1.png'), userFile('notes.pdf', '/tmp/up/notes.pdf')];
+      // Replay reality: the cache strips inline previews (sanitizeForCache),
+      // so restored images resolve from the uploads route via `path`.
+      atts.forEach(a => { a.path = '/uploads/pop-harness/' + (a.name || 'f'); delete a.preview; });
+      persistMod.restoreFromBackendHistory([
+        { type: 'user', text: '带附件的消息', timestamp: Date.now() - 5000, attachments: atts },
+        { type: 'ai', text: '后面的回复。', timestamp: Date.now() - 4000 },
+      ], { scrollToBottom: false });
+      await raf2();
+    };
+
+    /** AC-S4 (storage replay): the same shape through saveMsg +
+       restoreFromStorage (the cache strips previews, so these restore from the
+       uploads route). */
+    window.__userMediaStorageReplay = async () => {
+      window.__clearChat();
+      const sid = 'pop-harness';
+      persistMod.saveMsg({
+        type: 'user', text: '缓存里的附件消息', timestamp: Date.now() - 8000,
+        attachments: [
+          { type: 'image', name: 'c1.png', path: '/uploads/pop-harness/c1.png' },
+          { type: 'text', name: 'c-notes.pdf', path: '/tmp/up/c-notes.pdf', size: 4096 },
+        ],
+      }, sid);
+      persistMod.saveMsg({ type: 'ai', text: '缓存回复。', timestamp: Date.now() - 7000 }, sid);
+      persistMod.restoreFromStorage({ scrollToBottom: false });
+      await raf2();
+    };
+
+
 
     let popupView = null;
     /** Install a subagent / flow popup ChatView and make it the active view —

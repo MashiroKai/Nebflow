@@ -1,10 +1,17 @@
 // chatSearch.js — Chat history search modal (v3.1: WeChat retrieval-window paradigm).
 //
-// Header button (or Cmd/Ctrl+F) opens a centered modal (no dimming backdrop,
-// no blur). v3.1 information architecture on top of the v2.1 contract:
+// v3.2 (#491 主题二, author 2026-10-05 「把Pop的内容按图片/视频/链接/文件等，
+// 微信的这样的设计来进行分类和检索。用户输入的文件和LLM Pop的文件，按这个方式
+// 一起管理」): the standalone Pop tab is retired. Categories read the UNIFIED
+// media index (popMediaIndex.js — user attachments + LLM Pop payloads in one
+// model): tabs are 全部 / 图片与视频 / 文件 / 链接 / 日期; the typed tabs
+// render a thumbnail grid grouped 本周/按月 with source chips (全部来源/用户/
+// 助手) and in-category keyword search over entry fields. The standalone Pop
+// tab and its search.tabPop key are gone; tool-name category matching retired.
+// v3.1 information architecture on top of the v2.1 contract:
 //   - Opens straight into a browse stream of recent messages (no idle hint).
-//   - Category tabs (All / Images / Files / Pop) filter orthogonally with
-//     scope; switching tabs keeps the keyword and re-runs.
+//   - Category tabs filter orthogonally with scope; switching tabs keeps the
+//     keyword and re-runs.
 //   - Date is an ANCHOR, not a filter: the calendar popover stages a single
 //     day, OK applies it as a scroll anchor and the list loads
 //     bidirectionally around it (before/after cursor pages, seamless across
@@ -43,6 +50,10 @@ import { key } from './branding.js';
 import { t, getLocale } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
+import { indexMedia, entryMatchesTab, entryMatchesKeyword, groupEntriesByTime } from './popMediaIndex.js';
+import { openMediaLightbox } from './popArtifacts.js';
+import { ticketUrl } from './nfTicket.js';
+import { attachmentImageUrl } from './persistence.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -56,8 +67,13 @@ const FETCH_CONCURRENCY = 4;
 const DEBOUNCE_MS = 300;
 const PAGE_JUMP = 5;
 
-const CONTENT_TABS = ['all', 'images', 'files', 'pop'];
-const TAB_I18N = { all: 'search.tabAll', images: 'search.tabImages', files: 'search.tabFiles', pop: 'search.tabPop' };
+// v3.2: the date tab JOINS the roving enumeration (keyboard arrows now cross
+// it naturally); it keeps its anchor semantics — clicking it opens the calendar
+// popover, it never switches the category.
+const CONTENT_TABS = ['all', 'media', 'files', 'links', 'date'];
+const TAB_I18N = { all: 'search.tabAll', media: 'search.tabMedia', files: 'search.tabFiles', links: 'search.tabLinks', date: 'search.tabDate' };
+/** Tabs rendered as the unified media-entry grid (popMediaIndex entries). */
+const MEDIA_TABS = ['media', 'files', 'links'];
 
 let initialized = false;
 let lastResults = [];        // loaded window items in display order
@@ -70,7 +86,8 @@ let searchAbort = null;      // AbortController for the in-flight search
 let debounceTimer = 0;
 
 // ── v3.1 view state ────────────────────────────────────────
-let currentTab = 'all';      // 'all' | 'images' | 'files' | 'pop'
+let currentTab = 'all';      // 'all' | 'media' | 'files' | 'links' (+ 'date' anchor tab)
+let currentSource = '';      // media-grid source chip: '' | 'user' | 'agent'
 /** @type {{y:number, m0:number, d:number}|null} applied date anchor (local) */
 let anchorDate = null;
 let calOpen = false;
@@ -80,7 +97,7 @@ let calStaged = null;
 let pillListboxEl = null;    // open year/month listbox element
 
 // ── Stream state (browse/anchor modes) ─────────────────────
-/** @type {Array<{id:string, name:string, all:any[], view:any[], start:number, end:number, el:HTMLElement|null, headerEl:HTMLElement|null}>} */
+/** @type {Array<{id:string, name:string, all:any[], view:any[], entries:any[], start:number, end:number, el:HTMLElement|null, headerEl:HTMLElement|null}>} */
 let streamSessions = [];
 /** @type {Array<any>} sessions with non-empty windows, in display order */
 let streamGroups = [];
@@ -108,6 +125,13 @@ export function initChatSearch() {
   if (initialized) return;
   initialized = true;
 
+  // v3.2: the tab strip is REBUILT from CONTENT_TABS — the static HTML carries
+  // the retired images/pop scaffold, and the strip must stay the single
+  // normative tab list (index.html stays untouched; the category set is code-
+  // owned). Runs before every binding below reads the nodes.
+  buildTabBar();
+  buildSourceChips();
+
   document.getElementById('search-btn')?.addEventListener('click', openSearchModal);
   document.getElementById('search-modal-close')?.addEventListener('click', closeSearchModal);
   const overlay = document.getElementById('search-overlay');
@@ -126,15 +150,16 @@ export function initChatSearch() {
     document.getElementById(id)?.addEventListener('change', scheduleSearch);
   }
 
-  // Category tabs (click). Date tab toggles the calendar popover instead of
-  // switching category; its inline × clears the anchor.
+  // Category tabs (click). The date tab (now IN the roving enumeration but
+  // never a category) toggles the calendar popover instead of switching; its
+  // inline × clears the anchor.
   for (const tab of CONTENT_TABS) {
+    if (tab === 'date') continue;
     document.getElementById(`search-tab-${tab}`)?.addEventListener('click', () => switchTab(tab));
   }
   document.getElementById('search-tab-date')?.addEventListener('click', (e) => {
     if (!(e.target instanceof Element)) return;
     if (e.target.closest('.search-date-clear')) { e.stopPropagation(); clearAnchor(); return; }
-    if (currentTab === 'pop') return;   // aria-disabled: anchor is meaningless for ts=0 tool messages
     toggleCalendar();
   });
 
@@ -255,6 +280,7 @@ function resetSearchState() {
   lastTotal = 0;
   activeIndex = -1;
   currentTab = 'all';
+  currentSource = '';
   anchorDate = null;
   calStaged = null;
   if (calOpen) closeCalendar(false);
@@ -290,6 +316,7 @@ function renderStaticLabels() {
     if (el) el.textContent = t(TAB_I18N[tab]);
   }
   syncDateTabLabel();
+  syncSourceChips();
   const go = document.getElementById('search-go');
   if (go) go.textContent = t('search.go');
   const status = document.getElementById('search-status');
@@ -324,17 +351,18 @@ function syncTabsUI() {
     toolSel.setAttribute('aria-disabled', disabled ? 'true' : 'false');
     toolSel.title = disabled ? t('search.toolDisabledHint') : '';
   }
-  // Date anchor is meaningless in the Pop tab (tool messages carry ts=0).
+  // v3.2: no tab disables the date anchor any more — the index derives entry
+  // times (nearest earlier row with a ts), so anchoring stays meaningful in
+  // every category. (search.dateDisabledInPop's only consumer is gone; the
+  // locale key itself stays untouched — it is outside the §6 candidate list.)
   const dateTab = document.getElementById('search-tab-date');
   if (dateTab) {
-    const dateDisabled = currentTab === 'pop';
-    dateTab.setAttribute('aria-disabled', dateDisabled ? 'true' : 'false');
-    dateTab.title = dateDisabled ? t('search.dateDisabledInPop') : '';
     dateTab.classList.toggle('active', !!anchorDate);
     dateTab.setAttribute('aria-selected', anchorDate ? 'true' : 'false');
     dateTab.setAttribute('aria-expanded', calOpen ? 'true' : 'false');
   }
   syncDateTabLabel();
+  syncSourceChips();
 }
 
 /** Date tab label: plain "Date", or the anchor's short date + × clearer. */
@@ -870,17 +898,16 @@ function normalizeMessage(m, ord) {
 }
 
 // ── Filters (category tab × tool select) ───────────────────
+/** v3.2: typed tabs read the UNIFIED INDEX — membership is the message's own
+ *  entry types, so user attachments and LLM Pop content land in the same
+ *  categories (the standalone Pop tab and its tool-name test are retired;
+ *  legacy payload-less rows are covered by the index's degrade path). */
 function matchesTab(m) {
+  const entries = m.mediaEntries || [];
   switch (currentTab) {
-    case 'images': return m.attachments.some(a => a.type === 'image');
-    case 'files': return m.attachments.some(a => a.type !== 'image');
-    // Pop tool messages (Canvas 展示); legacy 'Card' labels kept for history
-    // recorded before the tool rename.
-    case 'pop': {
-      if (m.kind !== 'tool') return false;
-      const n = cleanToolName(m.tool);
-      return n === 'Pop' || n === 'Card';
-    }
+    case 'media': return entries.some(e => e.type === 'image' || e.type === 'video');
+    case 'files': return entries.some(e => e.type === 'file');
+    case 'links': return entries.some(e => e.type === 'link');
     default: return true;
   }
 }
@@ -905,13 +932,25 @@ function buildView(all) {
   return arr;
 }
 
-function normalizeAll(raw) {
+/** Normalize one session's raw history: the message view (searchable rows)
+ *  PLUS the unified media index over the SAME array (popMediaIndex.js). Each
+ *  normalized message carries its own entries on `.mediaEntries` (the typed
+ *  tabs' message-level membership), and the session's full entry list comes
+ *  back for the media grid. */
+function normalizeAll(raw, meta) {
   const all = [];
   raw.forEach((m, i) => {
     const n = normalizeMessage(m, i);
     if (n) all.push(n);
   });
-  return all;
+  const entries = indexMedia(raw, meta || {});
+  const byOrd = new Map();
+  for (const e of entries) {
+    if (!byOrd.has(e.msgOrd)) byOrd.set(e.msgOrd, []);
+    byOrd.get(e.msgOrd).push(e);
+  }
+  for (const n of all) n.mediaEntries = byOrd.get(n.ord) || [];
+  return { all, entries };
 }
 
 /** End-of-day (23:59:59.999 local) epoch ms for an anchor date. */
@@ -968,7 +1007,8 @@ async function runStream() {
       // today's backend ignores them and returns everything.
       const raw = await fetchHistory(s.id, ac.signal,
         anchorEnd ? { before: anchorEnd, limit: FETCH_PAGE } : { limit: FETCH_PAGE });
-      const all = normalizeAll(raw);
+      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
+      const all = norm.all;
       const view = buildView(all);
       let start = 0;
       if (anchorEnd) {
@@ -978,7 +1018,7 @@ async function runStream() {
         start = ai === -1 ? Math.max(0, view.length - FETCH_PAGE) : ai;
       }
       return {
-        id: s.id, name: s.name || s.id, all, view,
+        id: s.id, name: s.name || s.id, all, view, entries: norm.entries,
         start, end: Math.min(view.length, start + FETCH_PAGE),
         el: null, headerEl: null,
       };
@@ -1024,7 +1064,9 @@ async function loadBeforePages() {
       const lastLoaded = s.view[s.end - 1];
       const raw = await fetchHistory(s.id, searchAbort?.signal,
         { before: lastLoaded?.ts ?? 0, limit: FETCH_PAGE });
-      s.all = normalizeAll(raw);
+      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name });
+      s.all = norm.all;
+      s.entries = norm.entries;
       s.view = buildView(s.all);
       s.end = Math.min(s.view.length, s.end + FETCH_PAGE);
       s.start = Math.min(s.start, s.end);
@@ -1058,7 +1100,9 @@ async function loadAfterPages() {
       const firstLoaded = s.view[s.start];
       const raw = await fetchHistory(s.id, searchAbort?.signal,
         { after: firstLoaded?.ts ?? 0, limit: FETCH_PAGE });
-      s.all = normalizeAll(raw);
+      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name });
+      s.all = norm.all;
+      s.entries = norm.entries;
       s.view = buildView(s.all);
       s.start = Math.max(0, s.start - FETCH_PAGE);
       const items = [];
@@ -1136,7 +1180,8 @@ async function runSearch() {
     const showProgress = sessions.length > 1;
     const perSession = await mapLimit(sessions, FETCH_CONCURRENCY, async (s) => {
       const raw = await fetchHistory(s.id, ac.signal);
-      return { session: s, all: normalizeAll(raw) };
+      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
+      return { session: s, all: norm.all, entries: norm.entries };
     }, showProgress ? (done, total) => {
       if (mySeq === searchSeq) statusEl.textContent = t('search.progress', { done, total });
     } : null);
@@ -1144,6 +1189,29 @@ async function runSearch() {
     if (mySeq !== searchSeq) return;
 
     populateToolFilter(perSession.map(p => ({ all: p.all })), selectById('search-tool')?.value || '');
+
+    // v3.2: typed media tabs search ENTRY FIELDS, not message text (PLAN §3.5)
+    // — the one-shot contract (debounce upstream, seq race guard, cap) stays.
+    if (MEDIA_TABS.includes(currentTab)) {
+      const entries = [];
+      for (const { entries: es } of perSession) {
+        for (const e of es || []) {
+          if (!entryMatchesTab(e, currentTab)) continue;
+          if (currentSource && e.source !== currentSource) continue;
+          if (kw && !entryMatchesKeyword(e, kw)) continue;
+          entries.push(e);
+        }
+      }
+      entries.sort((a, b) => (b.ts - a.ts) || (b.msgOrd - a.msgOrd));
+      streamSessions = sessions.map(s => {
+        const mine = entries.filter(e => e.sessionId === s.id);
+        return { id: s.id, name: s.name || s.id, all: [], view: mine, entries: mine,
+                 start: 0, end: mine.length, el: null, headerEl: null };
+      });
+      buildModel();          // message view empty under grid tabs — keep state coherent
+      renderStreamFresh(resultsEl, statusEl);
+      return;
+    };
 
     // Match (v2.1 semantics, plus the category tab filter)
     const kwLower = kw.toLowerCase();
@@ -1277,6 +1345,14 @@ function renderStreamFresh(resultsEl, statusEl) {
   clearResults(resultsEl);
   renderedCount = 0;
   activeIndex = -1;
+
+  // v3.2: the typed media tabs render the ENTRY GRID (thumbnails, time groups,
+  // source chips) — a different view over the same fetched history, so the
+  // message-stream pipeline below is untouched for all/date tabs.
+  if (MEDIA_TABS.includes(currentTab)) {
+    renderMediaGrid(resultsEl, statusEl);
+    return;
+  }
 
   if (!lastResults.length) {
     // Empty state: browse/category empties use the single-line category key;
@@ -1574,6 +1650,239 @@ function formatTime(ts) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hh}:${mm}`;
 }
 
+// ── v3.2 media grid (#491 主题二) ───────────────────────────
+// The unified-index view: one grid per typed tab, grouped 本周/按月, source
+// chips (全部来源/用户/助手), in-category keyword over entry fields. Entries
+// are REFERENCES — thumbnails mint at render time through the single URL
+// builders (inline data URI → uploads route for user refs → nf-file ticket for
+// agent refs); video duration badges lazy-load via <video preload=metadata>
+// (PLAN §3.4 default: zero backend change).
+
+/** Rebuild the tab strip from CONTENT_TABS. index.html keeps its static
+ *  scaffold untouched; THIS list is the normative set (v3.2: images/pop tabs
+ *  retired, media/links added, date joins the roving enumeration). */
+function buildTabBar() {
+  const wrap = document.querySelector('#search-modal .search-tabs');
+  if (!wrap) return;
+  wrap.innerHTML = CONTENT_TABS.map(tab => tab === 'date'
+    ? `<button type="button" class="search-tab" id="search-tab-date" role="tab" aria-selected="false" aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>`
+    : `<button type="button" class="search-tab" id="search-tab-${tab}" role="tab" aria-selected="false" data-tab="${tab}"></button>`
+  ).join('');
+}
+
+/** The source chip row (dynamic — same zero-index.html-change rule). */
+function buildSourceChips() {
+  const controls = document.querySelector('#search-modal .search-controls');
+  if (!controls || document.getElementById('search-source-chips')) return;
+  const row = document.createElement('div');
+  row.id = 'search-source-chips';
+  row.setAttribute('role', 'group');
+  row.hidden = true;
+  for (const v of ['', 'user', 'agent']) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'search-source-chip';
+    b.dataset.source = v;
+    b.addEventListener('click', () => {
+      currentSource = v;
+      syncSourceChips();
+      // Re-filter from the already-fetched entries — no refetch.
+      if (MEDIA_TABS.includes(currentTab)) {
+        const resultsEl = document.getElementById('search-results');
+        const statusEl = document.getElementById('search-status');
+        if (resultsEl && statusEl) { clearResults(resultsEl); renderMediaGrid(resultsEl, statusEl); }
+      }
+    });
+    row.appendChild(b);
+  }
+  controls.appendChild(row);
+}
+
+/** Chip labels/visibility follow the current tab + selection. */
+function syncSourceChips() {
+  const row = document.getElementById('search-source-chips');
+  if (!row) return;
+  row.hidden = !MEDIA_TABS.includes(currentTab);
+  for (const b of /** @type {HTMLElement[]} */ (Array.from(row.querySelectorAll('.search-source-chip')))) {
+    const v = b.dataset.source || '';
+    const on = v === currentSource;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.textContent = t(v === 'user' ? 'search.sourceUser' : v === 'agent' ? 'search.sourceAgent' : 'search.sourceAll');
+  }
+}
+
+/** All index entries across the loaded sessions. */
+function collectEntries() {
+  const out = [];
+  for (const s of streamSessions) for (const e of (s.entries || [])) out.push(e);
+  return out;
+}
+
+/** The grid's data set: tab membership × source chip × in-category keyword. */
+function filteredEntries() {
+  let entries = collectEntries().filter(e => entryMatchesTab(e, currentTab));
+  if (currentSource) entries = entries.filter(e => e.source === currentSource);
+  const kw = (inputById('search-keyword')?.value || '').trim();
+  if (kw) entries = entries.filter(e => entryMatchesKeyword(e, kw));
+  entries.sort((a, b) => (b.ts - a.ts) || (b.msgOrd - a.msgOrd));
+  return entries;
+}
+
+/** Thumbnail URL for one entry: inline data URI wins; user refs ride the
+ *  uploads route; agent refs mint an nf-file ticket — the same two byte legs
+ *  the inline faces use. Returns a promise (ticket minting is async). */
+function resolveEntryThumb(e) {
+  if (e.thumbRef) return Promise.resolve(e.thumbRef);
+  if (!e.ref) return Promise.resolve('');
+  if (e.source === 'user') {
+    let url = '';
+    try { url = attachmentImageUrl(e.ref) || ''; } catch { url = ''; }
+    return Promise.resolve(url);
+  }
+  return ticketUrl(e.ref).catch(() => '');
+}
+
+function mediaEntryCard(e) {
+  const card = document.createElement('div');
+  card.className = 'search-media-card';
+  card.dataset.entryType = e.type;
+  card.dataset.source = e.source;
+  card.dataset.ts = String(e.ts || 0);
+  card.dataset.entryId = e.id;
+  if (e.type === 'image' || e.type === 'video') {
+    if (e.type === 'image') {
+      const img = document.createElement('img');
+      img.className = 'search-media-thumb';
+      img.alt = e.name;
+      img.loading = 'lazy';
+      img.draggable = false;
+      resolveEntryThumb(e).then(url => { if (img.isConnected && url) img.src = url; }).catch(() => {});
+      img.addEventListener('error', () => card.classList.add('search-media-broken'));
+      card.appendChild(img);
+    } else {
+      // Duration badge rides the browser's own metadata probe — the payload
+      // carries no duration field (PLAN §3.4: front-end lazy fill chosen over
+      // a backend read leg).
+      const vid = document.createElement('video');
+      vid.className = 'search-media-thumb';
+      vid.preload = 'metadata';
+      vid.muted = true;
+      vid.playsInline = true;
+      resolveEntryThumb(e).then(url => { if (vid.isConnected && url) vid.src = url; }).catch(() => {});
+      const chip = document.createElement('div');
+      chip.className = 'search-media-dur';
+      vid.addEventListener('loadedmetadata', () => {
+        const d = Math.round(vid.duration);
+        if (Number.isFinite(d) && d > 0) {
+          chip.textContent = Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0');
+        }
+      });
+      card.appendChild(vid);
+      card.appendChild(chip);
+    }
+    const name = document.createElement('div');
+    name.className = 'search-media-name';
+    name.textContent = e.name;
+    name.title = e.name;
+    card.appendChild(name);
+  } else if (e.type === 'link') {
+    const icon = document.createElement('div');
+    icon.className = 'search-media-ext link';
+    icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+    const body = document.createElement('div');
+    body.className = 'search-media-linkbody';
+    const label = document.createElement('div');
+    label.className = 'search-media-name';
+    label.textContent = e.name;
+    const url = document.createElement('div');
+    url.className = 'search-media-url';
+    url.textContent = e.ref;
+    body.append(label, url);
+    card.append(icon, body);
+  } else {
+    const icon = document.createElement('div');
+    icon.className = 'search-media-ext' + (e.ext ? '' : ' generic');
+    icon.textContent = (e.ext || 'file').toUpperCase().slice(0, 4);
+    const body = document.createElement('div');
+    body.className = 'search-media-linkbody';
+    const label = document.createElement('div');
+    label.className = 'search-media-name';
+    label.textContent = e.name;
+    label.title = e.ref || e.name;
+    body.appendChild(label);
+    card.append(icon, body);
+  }
+  // Source badge (user / assistant) — the alignment marker (主题三).
+  const badge = document.createElement('span');
+  badge.className = 'search-media-source src-' + e.source;
+  badge.textContent = t(e.source === 'user' ? 'search.sourceUser' : 'search.sourceAgent');
+  card.appendChild(badge);
+  const time = document.createElement('span');
+  time.className = 'search-media-time';
+  time.textContent = e.ts ? formatTime(e.ts) : '';
+  card.appendChild(time);
+  card.addEventListener('click', () => activateMediaEntry(e));
+  return card;
+}
+
+/** Grid activation: the SAME open faces as the in-stream cards (AC-S1/S2
+ *  parity holds panel-wide) — media → the shared lightbox (Canvas secondary
+ *  entry on the overlay), file → the workspace-open-item single point,
+ *  link → a new tab. */
+function activateMediaEntry(e) {
+  if (e.type === 'image' || e.type === 'video') {
+    openMediaLightbox({
+      kind: e.type, name: e.name, src: e.thumbRef || '', path: e.ref,
+      resolver: e.source === 'user'
+        ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+        : undefined,
+    });
+  } else if (e.type === 'file') {
+    // Act-and-exit, mirroring the artifact-row routing (v2 ruling): the modal
+    // closes and the file opens in Canvas through the single point.
+    if (e.ref) {
+      closeSearchModal();
+      openPopArtifact(e.ref, e.name);
+    }
+  } else if (e.type === 'link') {
+    window.open(e.ref, '_blank', 'noopener');
+  }
+}
+
+/** Fresh grid render: time groups → headers → card grids. */
+function renderMediaGrid(resultsEl, statusEl) {
+  syncSourceChips();
+  activeIndex = -1;
+  const entries = filteredEntries();
+  lastTotal = entries.length;
+  lastResults = [];
+  if (!entries.length) {
+    const kw = (inputById('search-keyword')?.value || '').trim();
+    resultsEl.innerHTML = kw
+      ? `<div class="search-hint">${escapeHtml(t('search.noResults'))}<br>${escapeHtml(t('search.noResultsSuggestion'))}</div>`
+      : `<div class="search-hint">${escapeHtml(t('search.emptyCategory'))}</div>`;
+    statusEl.textContent = statusSummary();
+    return;
+  }
+  const groups = groupEntriesByTime(entries, new Date());
+  for (const g of groups) {
+    if (g.key !== 'undated') {
+      const header = document.createElement('div');
+      header.className = 'search-media-group-header';
+      header.textContent = g.key === 'week'
+        ? t('search.groupThisWeek')
+        : t('search.groupMonth', { n: g.m0 + 1 });
+      resultsEl.appendChild(header);
+    }
+    const grid = document.createElement('div');
+    grid.className = 'search-media-grid';
+    for (const e of g.entries) grid.appendChild(mediaEntryCard(e));
+    resultsEl.appendChild(grid);
+  }
+  statusEl.textContent = statusSummary();
+}
+
 // ── Result activation ───────────────────────────────────────
 /**
  * Activate a result row (click or Enter).
@@ -1618,5 +1927,7 @@ window.addEventListener('locale-changed', () => {
   // Redraw the rendered window in the new locale (badges/times are localized).
   const resultsEl = document.getElementById('search-results');
   const statusEl = document.getElementById('search-status');
-  if (resultsEl && lastResults.length) renderStreamFresh(resultsEl, /** @type {HTMLElement} */ (statusEl));
+  if (resultsEl && (lastResults.length || MEDIA_TABS.includes(currentTab))) {
+    renderStreamFresh(resultsEl, /** @type {HTMLElement} */ (statusEl));
+  }
 });
