@@ -11,7 +11,15 @@ import java.nio.charset.StandardCharsets
  *
  * 问卷答案 → 两份文件的映射（真源 = v2 交互设计说明的「五条映射表」，逐字对齐）：
  *   - `~/.nebflow/Soul.md`——自我认知 / 相处之道 / 你说过的原话 / 成长约定
- *   - `~/.nebflow/User.md`——称呼与身份 / 当前关注 / 你说过的原话 / 记录规则
+ *   - `~/.nebflow/User.md`——称呼与身份 / 你说过的原话 / 记录规则
+ *
+ * onboarding-ux 批收口（作者 2026-10-05 两点）：
+ *   - 「配置模型不需要进记忆」——模型题的作答**只落配置存储**
+ *     （`llm.providers.<id>.models[].contextWindow` + `agents/<root>/agent.json`
+ *     的 `model` 链键，见 [[OnboardingModelStep]] / WS 面的同一配置存储单点），
+ *     两份记忆文件零模型痕迹（原 Soul「大脑：…」行已删）；
+ *   - 「最近半年，你最想解决的一件事是什么？」整题移除——User.md 的
+ *     `## 当前关注` 段随之收口（不留悬空段）。
  *
  * **全跳过路径**同样产出结构完整、可后补的骨架（含 `## 备注` 段）——不是空壳，
  * 也不是半途中断（验收判据 2）。
@@ -39,9 +47,6 @@ object OnboardingArtifacts:
   /** 跳过占位（User 称呼）。 */
   val SkippedCall: String = "未设置（这一题你跳过了）"
 
-  /** 自由输入留白（当前关注段）。 */
-  val Unfilled: String = "（暂未填写）"
-
   /** 无自由原话时的段落回落。 */
   val NoQuotes: String = "- （这一页还没有你的原话 —— 都是选项答案。）"
 
@@ -68,7 +73,7 @@ object OnboardingArtifacts:
    * 一题的作答。
    *
    * @param id     题目 id（`name` / `call` / `model` / `role` / `style` / `pro` /
-   *               `boundaries` / `temper1` / `temper2` / `identity` / `focus`）
+   *               `boundaries` / `temper1` / `temper2` / `identity`）
    * @param label  该题在文件里的行标签（`名字` / `角色定位` / …）
    * @param scope  落点文件：`soul` / `user` / `base`（`base` = 不进文件正文，
    *               如模型题与起名题的显示名侧写）
@@ -136,15 +141,18 @@ object OnboardingArtifacts:
   /**
    * 生成 `Soul.md` 全文。
    *
-   * 🔴 全跳过路径必须留下**结构完整**的骨架：六段俱全（自我认知 / 相处之道 /
+   * 🔴 零模型配置痕迹（作者 2026-10-05「配置模型不需要进记忆」）：模型题的作答
+   * 只落配置存储，本模板不渲染任何「大脑 / 模型」行 —— 原 `buildSoul` 的
+   * `- 大脑：$brain` 行（`modelLabel` 注入）已随本批删除。
+   *
+   * 🔴 全跳过路径必须留下**结构完整**的骨架：段段俱全（自我认知 / 相处之道 /
    * 你说过的原话 / 成长约定）+ `## 备注` 段，逐字段写占位而非留空洞。
    */
-  def buildSoul(answers: Map[String, Answer], modelLabel: Option[String]): String =
+  def buildSoul(answers: Map[String, Answer]): String =
     val name = nameOf(answers)
     val allSkipped = name.isEmpty &&
       List("role", "style", "pro", "boundaries", "temper1", "temper2").forall(id => byId(answers, id).isEmpty)
     val call = callOr(answers)
-    val brain = modelLabel.filter(_.nonEmpty).getOrElse("未配置")
     val nameLine = name.getOrElse(SkippedName)
     val belong = callOf(answers).map(c => s"$c（我不属于任何一个项目，只属于你）").getOrElse("未设置（我不属于任何一个项目，只属于你）")
     val notes =
@@ -161,7 +169,6 @@ object OnboardingArtifacts:
        |## 自我认知
        |- 名字：$nameLine
        |- 我属于：$belong
-       |- 大脑：$brain
        |
        |## 相处之道（你对我的期待）
        |${soulLine(answers, "role", "角色定位")}
@@ -179,21 +186,20 @@ object OnboardingArtifacts:
        |- 灵魂的改变写 Soul.md；关于 ${call} 的事实写 User.md。
        |$notes""".stripMargin
 
-  /** 生成 `User.md` 全文（同样保证全跳过时结构完整）。 */
+  /** 生成 `User.md` 全文（同样保证全跳过时结构完整）。
+    *
+    * 「最近半年，你最想解决的一件事是什么？」整题移除（作者 2026-10-05）⇒
+    * 原 `## 当前关注` 段随之收口，不留悬空段、不留 `（暂未填写）` 占位。 */
   def buildUser(answers: Map[String, Answer]): String =
     val call = callOr(answers)
     val callLine = callOf(answers).getOrElse(SkippedCall)
     val identity = textOr(answers, "identity", SkippedSoul)
-    val focus = textOr(answers, "focus", Unfilled)
     s"""# User.md
        |> 关于 $call · 持续更新 · 最后写入 $todayUtc
        |
        |## 称呼与身份
        |- 怎么称呼：$callLine
        |- 日常身份：$identity
-       |
-       |## 当前关注
-       |- $focus
        |
        |## 你说过的原话
        |${freeQuotes(answers, "user")}
@@ -206,17 +212,16 @@ object OnboardingArtifacts:
   /**
    * 落盘两份文件 + 起名结果写回 `displayName`。幂等可重跑（覆盖式写入）。
    *
-   * `modelLabel` = 模型题的作答标签（如 `zhipu/glm-4.5`），只写进 Soul 的
-   * 「大脑」行；真正的 provider 配置由 WS 面的同一配置存储写回（单一存储，
-   * 双向一致），本对象不复制配置。
+   * 模型题的作答**不经过本对象**（作者 2026-10-05「配置模型不需要进记忆」）：
+   * 它由 WS 面写进同一配置存储（单一存储），记忆面零模型痕迹。
    */
-  def apply(answers: Map[String, Answer], modelLabel: Option[String] = None): IO[Result] =
-    val soul = buildSoul(answers, modelLabel)
+  def apply(answers: Map[String, Answer]): IO[Result] =
+    val soul = buildSoul(answers)
     val user = buildUser(answers)
     val agentName = nameOf(answers)
     val skipped = answers.values.count(_.kind == Kind.Skip)
     val allSkipped = agentName.isEmpty &&
-      List("role", "style", "pro", "boundaries", "temper1", "temper2", "identity", "focus")
+      List("role", "style", "pro", "boundaries", "temper1", "temper2", "identity")
         .forall(id => byId(answers, id).isEmpty)
     for
       _ <- MemoryStore.saveSoulMemory(soul)

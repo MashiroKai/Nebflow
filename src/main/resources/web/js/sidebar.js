@@ -25,6 +25,9 @@ import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// Root agent's DISPLAY name — the single read point shared with onboarding /
+// micOrb / chat / modelPanel (leaf module; no cycle risk).
+import { rootDisplayName } from './rootName.js';
 
 // ── Provider protocol face: display ←→ stored value (protoface-ui batch,
 // 2026-09-22) ────────────────────────────────────────────────────────────────
@@ -2123,14 +2126,27 @@ function updateHeaderSessionName() {
     const agentName = active.agentName || 'Nebula';
     // Show agent display name in center (session name is redundant when there's only one session).
     if (sessionNameEl) {
-      const agent = state.agentsData.find(a => a.name === agentName);
-      sessionNameEl.textContent = agent ? (agent.displayName || agent.name) : agentName;
+      // Root agent reads the SINGLE display-name read point (rootName.js): both
+      // the in-session onboarding rename override (state.rootDisplayName) and the
+      // persisted `displayName` live there. The old agentsData-only read was the
+      // 「起名不影响 Header」 gap — it ignored the override and fell back to the
+      // bare 'Nebula' literal whenever the agentsData row had not arrived.
+      const label = agentName === 'Nebula'
+        ? rootDisplayName()
+        : (state.agentsData.find(a => a.name === agentName)?.displayName || agentName);
+      sessionNameEl.textContent = label;
       sessionNameEl.style.display = '';
     }
   } else {
     if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
   }
 }
+
+// Onboarding rename → refresh the header center in place (author 2026-10-05:
+// 「起名是会影响Header的标题的」). A rename does not change the session-list
+// fingerprint, so no render path would otherwise fire; onboarding.js dispatches
+// `nebflow-root-name-change` (event, not import — keeps the module graph acyclic).
+window.addEventListener('nebflow-root-name-change', () => { updateHeaderSessionName(); });
 
 export function renderSessionSidebar(sessionData, activeId) {
   state.sessions = sessionData || [];

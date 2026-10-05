@@ -17,8 +17,11 @@ import java.nio.file.Files
  *  - [[OnboardingModelStep.applySelectionJson]] + `updateConfig`：选定模型 + context
  *    window **写回同一配置存储**（`llm.providers.<id>.models[].contextWindow`），
  *    并且**往返可读**（双向一致）。
- *  - [[OnboardingArtifacts]]：11 题答案 → `Soul.md` / `User.md`；**全跳过路径**留下
+ *  - [[OnboardingArtifacts]]：10 题答案 → `Soul.md` / `User.md`；**全跳过路径**留下
  *    结构完整（含 `## 备注`）的骨架；起名结果写 `displayName`（🔴 机制键不变）。
+ *    onboarding-ux 批（作者 2026-10-05）两点收口也在锚：
+ *    「配置模型不需要进记忆」⇒ 模型作答（kind=model）在两份文件**零痕迹**；
+ *    「最近半年…」整题移除 ⇒ `## 当前关注` 段不复存在。
  *
  * 隔离纪律：全部动作在 `setDataRoot` 钉住的临时目录内，零写真实 `~/.nebflow`。
  */
@@ -237,7 +240,7 @@ class OnboardingV2Spec extends FunSuite:
       OnboardingService.readStored().unsafeRunSync().map(_.state),
       Some(OnboardingService.OnboardingState.Pending)
     )
-    // ② 拒绝不吞答案 —— 用户不必重答 11 题（重试收尾才有意义）
+    // ② 拒绝不吞答案 —— 用户不必重答整份问卷（重试收尾才有意义）
     assertEquals(OnboardingService.readAnswers().unsafeRunSync().keySet, Set("name", "model"))
     // ③ 补一次成功探测后，同一条转移可通过（用户的出口）
     OnboardingService.recordProbeOk().unsafeRunSync()
@@ -256,6 +259,7 @@ class OnboardingV2Spec extends FunSuite:
     val answers = Map(
       ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "星尘"),
       ans("call", "怎么称呼你", "user", OnboardingArtifacts.Kind.Free, "阿凯"),
+      ans("model", "大脑配置", "base", OnboardingArtifacts.Kind.Model, "zhipu/glm-4.6"),
       ans("role", "角色定位", "soul", OnboardingArtifacts.Kind.Choice, "靠谱的管家"),
       ans("style", "语言风格", "soul", OnboardingArtifacts.Kind.Choice, "温和细腻"),
       ans("pro", "主动程度", "soul", OnboardingArtifacts.Kind.Choice, "适度提醒"),
@@ -263,9 +267,8 @@ class OnboardingV2Spec extends FunSuite:
       ans("temper1", "语气基线", "soul", OnboardingArtifacts.Kind.Choice, "直接坦率"),
       ans("temper2", "做事方式", "soul", OnboardingArtifacts.Kind.Choice, "随性灵活"),
       ans("identity", "日常身份", "user", OnboardingArtifacts.Kind.Choice, "创作者"),
-      ans("focus", "当前关注", "user", OnboardingArtifacts.Kind.Free, "把 Nebflow 做成真正的 Personal Agent"),
     )
-    val res = OnboardingArtifacts.apply(answers, Some("zhipu/glm-4.6")).unsafeRunSync()
+    val res = OnboardingArtifacts.apply(answers).unsafeRunSync()
     assertEquals(res.soulPath, (home / "Soul.md").toString)
     assertEquals(res.userPath, (home / "User.md").toString)
     val soul = os.read(home / "Soul.md")
@@ -273,32 +276,40 @@ class OnboardingV2Spec extends FunSuite:
     assert(soul.contains("- 角色定位：靠谱的管家"))
     assert(soul.contains("## 你说过的原话"))
     assert(soul.contains("星尘"), "自由输入原话进原话段")
+    // 🔴 作者 2026-10-05「配置模型不需要进记忆」：模型作答在记忆面零痕迹 ——
+    // 既无「大脑」行，模型 ref 字面也一字不落（配置存储才是它的唯一落点）。
+    assert(!soul.contains("大脑"), "Soul.md 不得再有「大脑」行")
+    assert(!soul.contains("zhipu/glm-4.6"), "Soul.md 不得出现模型 ref")
     val user = os.read(home / "User.md")
     assert(user.contains("- 怎么称呼：阿凯"))
     assert(user.contains("- 日常身份：创作者"))
-    assert(user.contains("把 Nebflow 做成真正的 Personal Agent"))
+    // 🔴 「最近半年，你最想解决的一件事是什么？」整题移除（作者 2026-10-05）：
+    // User.md 无「当前关注」段、答案值不残留。
+    assert(!user.contains("## 当前关注"), "User.md 不得再有「当前关注」段")
+    assert(!user.contains("把 Nebflow 做成真正的 Personal Agent"))
     assert(!res.allSkipped)
 
   test("artifacts: 全跳过路径留下结构完整骨架（含 ## 备注），非空壳"):
     reset()
-    val skipped = List("name", "call", "model", "role", "style", "pro", "boundaries", "temper1", "temper2", "identity", "focus")
-      .map(id => ans(id, id, if id == "call" || id == "identity" || id == "focus" then "user" else if id == "model" then "base" else "soul", OnboardingArtifacts.Kind.Skip))
+    val skipped = List("name", "call", "model", "role", "style", "pro", "boundaries", "temper1", "temper2", "identity")
+      .map(id => ans(id, id, if id == "call" || id == "identity" then "user" else if id == "model" then "base" else "soul", OnboardingArtifacts.Kind.Skip))
       .toMap
-    val res = OnboardingArtifacts.apply(skipped, None).unsafeRunSync()
+    val res = OnboardingArtifacts.apply(skipped).unsafeRunSync()
     assert(res.allSkipped, "全跳过必须被识别")
     val soul = os.read(home / "Soul.md")
     for sec <- List("## 自我认知", "## 相处之道", "## 你说过的原话", "## 成长约定", "## 备注") do
       assert(soul.contains(sec), s"Soul.md 缺段 $sec")
     assert(soul.contains("未设置（这一题你跳过了）"), "跳过项逐字段占位")
     val user = os.read(home / "User.md")
-    for sec <- List("## 称呼与身份", "## 当前关注", "## 你说过的原话", "## 记录规则") do
+    for sec <- List("## 称呼与身份", "## 你说过的原话", "## 记录规则") do
       assert(user.contains(sec), s"User.md 缺段 $sec")
+    assert(!user.contains("## 当前关注"), "User.md 不得再有「当前关注」段")
     assert(res.soulBytes > 0L && res.userBytes > 0L)
 
   test("artifacts: 起名写 displayName，且机制键（agent 目录名）不变"):
     reset()
     val answers = Map(ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "小满"))
-    val res = OnboardingArtifacts.apply(answers, None).unsafeRunSync()
+    val res = OnboardingArtifacts.apply(answers).unsafeRunSync()
     assertEquals(res.agentName, Some("小满"))
     val agentJson = home / "agents" / rootName / "agent.json"
     assert(os.exists(agentJson), "displayName 落既有 agent.json")
@@ -314,9 +325,9 @@ class OnboardingV2Spec extends FunSuite:
   test("artifacts: 重跑幂等（覆盖式写入，不追加旧内容）"):
     reset()
     val a1 = Map(ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "甲"))
-    OnboardingArtifacts.apply(a1, None).unsafeRunSync()
+    OnboardingArtifacts.apply(a1).unsafeRunSync()
     val a2 = Map(ans("name", "名字", "base", OnboardingArtifacts.Kind.Free, "乙"))
-    OnboardingArtifacts.apply(a2, None).unsafeRunSync()
+    OnboardingArtifacts.apply(a2).unsafeRunSync()
     val soul = os.read(home / "Soul.md")
     assert(soul.contains("乙"))
     assert(!soul.contains("甲"), "覆盖式写入，不残留上一跑")
