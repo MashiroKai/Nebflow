@@ -44,8 +44,8 @@ description: 把能力需求封装为合规 Nebflow 插件包的执行手册—�
 从模板起步：`${SKILL_DIR}/assets/manifest.template.json`。description 按
 description-quality skill 的五段式规范撰写（该 skill 是描述质量的完整口径：
 模板、好坏范例、核心词表圈定法）。写完自检五段齐备：定位句（含谓词）、触发
-场景句（核心词全落字）、内含 skills 明细（与实际目录一致）、边界/分流句、组件
-面声明句。
+场景句（核心词全落字）、内含 skills 明细（与实际目录一致）、边界句（自足自scope：
+说清本包不管什么即达标，不要求提名其他插件）、组件面声明句。
 
 **保留前缀拦截（生成期）**：manifest name 命中 `nebflow-plugin-` 前缀且不在官方
 白名单（当前官方批次：`nebflow-plugin-creator` 及 seed manifest 声明集）→ 不落盘，
@@ -81,10 +81,12 @@ frontmatter 下限：name（等于目录名）+ description（一句话说清 wh
 ## 第五步：机械自检
 
 ```bash
-python3 ${SKILL_DIR}/scripts/validate_plugin.py {{data_root}}/plugins/<name>
+python3 ${SKILL_DIR}/scripts/validate_plugin.py --profile creator {{data_root}}/plugins/<name>
 ```
 
-- 脚本按 M1-M15 逐条输出 PASS/FAIL + 命中原文，并复算包 digest。
+- 脚本按 `--profile creator` 档逐条输出 M1-M15 全量＋C 组装载器镜像的 PASS/FAIL/WARN
+  ＋命中原文，并复算包 digest；**退出码 0 = 交付闸**（任一 FAIL → 退出码 1，不得交付）。
+  惯例面警告（C1-C3/C6）须逐条处置或在交付报告说明。
 - FAIL → 按失败明细自修 → 重跑，最多 2 轮。
 - 2 轮后仍 FAIL → **blocked 上报**（附逐条失败项原文），交分发器/用户仲裁。
   禁止降级交付——带病交付 = 把格式问题转移给用户与下游节点（落盘即生效，
@@ -123,8 +125,8 @@ PASS 就是最后一道门：**你就是那道人审**。
 
 交付前自检（逐条做完再交付）：
 
-1. **机械面**：`python3 ${SKILL_DIR}/scripts/validate_plugin.py {{data_root}}/plugins/<name>`
-   M1-M15 全 PASS，复算 digest 一并写进报告。
+1. **机械面**：`python3 ${SKILL_DIR}/scripts/validate_plugin.py --profile creator {{data_root}}/plugins/<name>`
+   退出码 0（＝M1-M15 全量＋C 组 fatal 镜像全 PASS），复算 digest 一并写进报告。
 2. **内容面**：skill 全文 / manifest / 脚本逐件读过一遍。格式合规 ≠ 内容合格
    （格式由脚本把关，内容只有你能判）。
 3. **来源**：报告里写明这个包**从哪来**（既有 skill 迁移 / 用户给的 MCP 配置 /
