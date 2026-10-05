@@ -3556,7 +3556,7 @@
    image / video there showed NOTHING at all. Same visual language (dashed box
    + muted ink), widened to the Pop selector family, plus the plain-text note
    line the renderer appends under the face (pure text, UI-C family). */
-.pop-img.nf-img-failed, .pop-video.nf-img-failed {
+.pop-img.nf-img-failed, .pop-video.nf-img-failed, .pop-audio.nf-img-failed {
   min-height: 44px;
   box-sizing: border-box;
   padding: 12px 10px;
@@ -3597,6 +3597,18 @@
   position: absolute; left: 0; bottom: 0; height: 3px; width: 0%;
   background: var(--color-primary); pointer-events: none;
 }
+
+/* audio face (canvas-media Wave2, 2026-10-05 author ruling OD-1 = (b)): audio
+   joins the in-chat media face beside image/video. An audio file has NO
+   intrinsic frame — the native controls strip is the whole face — so it never
+   reports a ratio (the zcode-484 D1/D3 ratio fitting does not fire) and the
+   box keeps its fallback: centered strip inside the stack's ratio box, and a
+   collapsed (content-height) box on the flat/expanded faces. Native controls
+   carry play state / progress / duration, so no ring / vd-progress / dur-chip
+   chrome is layered on top. */
+.pop-audio { display: block; width: 100%; background: transparent; }
+.pop-media.is-audio { display: flex; align-items: center; }
+.pop-media-flat.is-audio { aspect-ratio: auto; }
 
 /* single media item — flat, no stack affordances. Same zcode-484 D1/D3 rule as
    the stack: the box takes the media's own ratio (renderer-pinned) instead of

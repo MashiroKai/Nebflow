@@ -170,6 +170,33 @@ class PopToolFileRefSpec extends FunSuite:
     assertEquals(counter(p, "referenced"), 1)
     assertEquals(counter(p, "failed"), 0)
 
+  // ── canvas-media Wave2 (2026-10-05 OD-1 = (b)): audio joins the chat inline face ──
+
+  test("an audio file is `referenced` (never inlined) and carries its path for the ticket leg"):
+    // The exact video contract, mirrored for the audio family: no inline leg
+    // exists for audio at ANY size (a small .mp3 must NOT ride a data: URI),
+    // the path travels for the frontend's ticket mint, and the item counts as
+    // `referenced` media — not `failed`, not a file card.
+    val dir = tempDir("audio")
+    os.write.over(dir / "tone.mp3", Array.fill(64)(0x49.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val p = payloadOf(JsonObject("filePath" -> (dir / "tone.mp3").toString.asJson), buf)
+    val items = itemsOf(p)
+    assertEquals(items.map(_.hcursor.get[String]("kind").toOption.getOrElse("")), List("audio"))
+    assertEquals(items.head.hcursor.get[String]("path").toOption, Some((dir / "tone.mp3").toString))
+    assert(items.head.hcursor.get[String]("src").toOption.isEmpty, "audio always rides the ticket leg")
+    assertEquals(counter(p, "referenced"), 1)
+    assertEquals(counter(p, "failed"), 0)
+
+  test("every AudioExtensions member maps to the audio kind (whitelist-aligned family, ogg stays video)"):
+    // The set mirrors FileRefs.AllowedExtensions' audio family exactly; `ogg`
+    // is claimed by the VIDEO side (both the whitelist's own comment blocks and
+    // VideoExtensions file it there), so no extension may classify both ways.
+    assert(!PopTool.AudioExtensions.exists(PopTool.VideoExtensions.contains),
+      "audio and video extension sets must stay disjoint")
+    assert(PopTool.AudioExtensions == Set("mp3", "wav", "oga", "flac", "aac", "m4a"),
+      "the audio family is pinned to the whitelist's audio block")
+
   test("a browser-unrenderable image format (tiff) is a FILE card, not a media item"):
     val dir = tempDir("tiff")
     os.write.over(dir / "scan.tiff", Array.fill(8)(0x45.toByte))
