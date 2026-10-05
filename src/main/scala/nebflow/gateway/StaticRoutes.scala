@@ -205,6 +205,77 @@ object StaticRoutes:
   }
 
   /**
+   * canvas-media Wave1 (2026-10-05, OD-2=V-C): tokenized static route for
+   * plugin EXECUTOR assets — `/api/plugin-assets/<name>/<rel…>`. The small
+   * viewers.json control-plane declaration rides inline with
+   * `GET /api/plugins` (PluginRegistry.approvalManifest) instead; everything
+   * heavy (wasm bundles, renderer scripts) is served here so the 6s plugins
+   * poll never re-ships plugin bytes.
+   *
+   * Contract (canvas-media plan §5.3; guard style copied from
+   * uploadsRoutes + the WebSocketRoutes /agents/ precedent, tightened to
+   * realpath containment):
+   *  - Trusted plugins ONLY. `trustedPluginDir` resolves the registry
+   *    entry's directory; unknown or blocked names get the same uniform
+   *    404 as a missing file (no existence oracle for blocked packages).
+   *  - Token REQUIRED: cookie `nebflow_token` first + `?token=` query
+   *    fallback — the same dual channel as uploadsRoutes (a cross-site
+   *    <img>-probe gets no SameSite cookie; the same-origin frontend
+   *    attaches the cookie automatically; the query fallback covers
+   *    cookie-less contexts).
+   *  - Manual segment parsing (http4s DSL matches single segments only):
+   *    trailing slash rejected, `..` and backslash segments rejected in
+   *    the plugin name and the relative parts, and the FINAL defense is
+   *    realpath containment under the plugin dir — the shared
+   *    PluginRegistry.containedUnder fence (single judge, no second
+   *    policy), so a symlink planted inside the package cannot point this
+   *    route outside the plugin root.
+   *
+   * Standalone (the registry lookup is injected) so it is directly
+   * unit-testable (PluginAssetsRoutesSpec), like uploadsRoutes; composed
+   * into the /api Router in GatewayMain.
+   */
+  def pluginAssetsRoutes(
+      token: String,
+      trustedPluginDir: String => IO[Option[os.Path]]
+  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/plugin-assets/") =>
+      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+      val paramToken = req.params.get("token").getOrElse("")
+      if !(Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token)) then
+        Forbidden("Invalid token")
+      // Trailing slash = directory request — this route serves files only.
+      else if req.uri.path.endsWithSlash then NotFound()
+      else
+        val segs = req.uri.path.segments.map(_.encoded).toList
+        // Shape: /plugin-assets/<name>/<rel…> — at least one rel segment.
+        if segs.sizeIs < 3 || relPartsEmpty(segs.drop(2)) then NotFound()
+        else
+          val pname = segs(1)
+          val relParts = segs.drop(2)
+          // Block path traversal in the plugin name and the relative parts
+          if pname.contains("..") || pname.contains("\\") || relParts.exists(s => s == ".." || s.contains("\\"))
+          then NotFound()
+          else
+            trustedPluginDir(pname).flatMap {
+              case None => NotFound()
+              case Some(dir) =>
+                val filePath = dir / os.RelPath(relParts.mkString("/"))
+                // Final defense: realpath containment under the plugin dir
+                if nebflow.core.plugin.PluginRegistry.containedUnder(dir, filePath) && os.exists(filePath) && os
+                    .isFile(filePath)
+                then StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+                else NotFound()
+            }
+        end if
+      end if
+  }
+
+  /** jsRoutes-style emptiness guard: no segments at all, or a trailing empty one. */
+  private def relPartsEmpty(relParts: List[String]): Boolean =
+    relParts.isEmpty || relParts.last.isEmpty
+
+  /**
    * Serves everything under web/js at ANY depth. The frontend's ES modules
    * live at /js/<file>.js, /js/locales/<lang>.js and /js/viewers/<name>.js,
    * and any future subdirectory — this closes the "add a js subdirectory →

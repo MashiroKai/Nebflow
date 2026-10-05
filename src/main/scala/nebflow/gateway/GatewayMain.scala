@@ -1270,7 +1270,21 @@ object GatewayMain extends IOApp:
                                                         ConnGuard.requestTap(connGuard)(
                                                           Router(
                                                             "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
-                                                              .presenceWsRoutes(wsb)),
+                                                              .presenceWsRoutes(wsb) <+> StaticRoutes
+                                                                .pluginAssetsRoutes(
+                                                                  token,
+                                                                  // canvas-media Wave1 (OD-2=V-C): the
+                                                                  // Trusted-only resolver feeding the
+                                                                  // tokenized plugin-asset route.
+                                                                  name =>
+                                                                    nebflow.core.plugin.PluginRegistry
+                                                                      .scan()
+                                                                      .map(
+                                                                        _.find(p =>
+                                                                          p.name == name && p.trust.trusted
+                                                                        ).map(p => os.Path(p.dir))
+                                                                      )
+                                                                )),
                                                             // Logto AC+PKCE loopback callback (RFC 8252) —
                                                             // root-level, outside /api: the provider's browser
                                                             // redirect carries no gateway token.
