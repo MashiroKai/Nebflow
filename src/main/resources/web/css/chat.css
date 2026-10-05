@@ -3242,6 +3242,11 @@
   margin: 2px 0;
   padding: 3px 12px;
   font-size: 12px;
+  /* zcode-484 batch: ONE text row, fixed. The explicit px line-height makes the
+     single-row height deterministic (it is also what the slot's fixed height
+     below mirrors) and survives the terminal morph being removed by the
+     `.turn-header` class swap. */
+  line-height: 18px;
   font-weight: 500;
   color: var(--color-text-dim);
   opacity: 0.9;
@@ -3251,9 +3256,19 @@
 }
 .nf-workline:hover { color: var(--color-text); opacity: 1; }
 .nf-workline .nf-chevron { flex-shrink: 0; margin-top: 1px; }
-/* The slot is a stage, not a single-line box (UI-A): auto height so a wrapped
-   item grows the line, min-height keeps the one-line geometry stable. */
-.nf-wl-slot { position: relative; flex: 1 1 auto; min-width: 0; min-height: 18px; height: auto; }
+/* The slot IS the line (zcode-484 batch, author ruling 2026-10-04 09:29
+   「我要的思考过程以及工具过程的流式，是在一行进行流式，像zcode一样」 — this
+   REVERSES the 2026-10-03 UI-A ruling 「思考过程的那一行要能换行显示」, which had
+   set `height:auto` so a wrapped item grew the line). A fixed single-row height
+   with the overflow clipped means no item can grow the line vertically: the
+   slot's clientHeight is constant for the whole stream. `min-height` carries
+   the same value so the empty slot (dots arrive a beat later) has identical
+   geometry. The terminal badge is exempt below (`.turn-header`) — the settled
+   summary keeps its wrap contract. */
+.nf-wl-slot {
+  position: relative; flex: 1 1 auto; min-width: 0;
+  height: 18px; min-height: 18px; overflow: hidden;
+}
 .nf-wl-item {
   position: absolute;
   inset: 0;
@@ -3265,19 +3280,35 @@
 }
 /* The terminal morph: the row gains `.turn-header`; the settled badge text
    WRAPS in flow (same ruling as the built header — the full summary is always
-   readable, no ellipsis swallowing). */
-.turn-header .nf-wl-slot { height: auto; }
+   readable, no ellipsis swallowing). This is the ONE place the single-row
+   constraint is lifted: 「过程单行」 governs the streaming window only, and the
+   settled summary stays fully legible (I8). */
+.turn-header .nf-wl-slot { height: auto; min-height: 18px; overflow: visible; }
 .nf-wl-item.is-final { position: static; white-space: normal; }
 .nf-wl-item.is-final .nf-wl-label {
   white-space: normal;
   overflow-wrap: break-word;
   overflow: visible;
   text-overflow: clip;
+  flex: 0 1 auto;
+  /* the settled summary is fully legible — the streaming tail fade is gone */
+  -webkit-mask-image: none;
+  mask-image: none;
 }
+/* The label is ONE row while the turn runs: clipped, never wrapped, never
+   ellipsised (the tail is carried by the fade below, not by a `…`).
+   `flex: 1 1 auto` makes the label's BOX span the rest of the row — the mask
+   region (the last 40px, below) then holds no ink whenever the label fits, so
+   a short label is not faded by accident. The terminal badge resets the mask
+   (see `.is-final` above): a settled summary is fully legible. */
 .nf-wl-label {
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  flex: 1 1 auto;
   min-width: 0;
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
 }
 .nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
 
@@ -3334,17 +3365,30 @@
 .nf-wl-item.is-error .nf-wl-label { color: var(--color-error); }
 
 /* thinking: the badge prints the thinking text as TEXT (UI-C text cadence) —
-   it WRAPS (UI-A) and carries a blinking text caret. There is NO width-reveal
-   any more: workline.js writes the whole string and never sets a maxWidth, so
-   no `transition` belongs on this rule (a property that is never written does
-   not need a rung). The caret's blink is the entire "cadence" mechanism. */
+   and it is ONE row (zcode-484 batch). The 2026-10-03 UI-A rule made this box
+   WRAP (`white-space:normal; overflow:visible`); that is what the author scored
+   on 2026-10-04 09:29 and it is removed here.
+   Geometry: a `block` box that fills the row, `nowrap`, clipped. The streaming
+   text is LONGER than the box, so the box itself is the scroller — workline.js
+   pins `scrollLeft` to the end after each append (the tail anchor: new content
+   flows in at the right edge, old content slides out to the left), which is why
+   text-align is irrelevant here.
+   Cadence is still the CSS caret blink — no per-token DOM rebuild (A3/A7) and
+   no transform keyframes (UI-C). */
 .nf-wl-think {
-  display: inline;
-  max-width: none;
-  overflow: visible;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  overflow-wrap: normal;
   vertical-align: baseline;
+  /* Tail fade (A41: no `mask-image` anywhere in this tree before this batch):
+     the rightmost 40px dissolve into the background, so the clipped tail reads
+     as "sliding out" rather than as a hard cut. Alpha-only ⇒ theme-independent
+     (works on the light, dark and `opacity:0.9` surfaces alike). */
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
 }
 .nf-wl-think::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
 .nf-wl-item.is-done .nf-wl-think::after { display: none; }
@@ -3364,9 +3408,14 @@
 /* UI-G: a subagent / flow popup window renders the line STATIC. One rule —
    every animation and transition inside the work line is off; the line still
    shows the running tool name, the check / cross and the thinking text, so the
-   window stays fully readable (克制 ≠ 破功). */
+   window stays fully readable (克制 ≠ 破功). The zcode-484 batch's tail fade is
+   NOT an animation, so it is turned off explicitly here: a static window keeps
+   the plain clipped edge (the text is clipped either way — the fade is a
+   motion-stream affordance the popup does not share). */
 .nf-static,
 .nf-static * { animation: none !important; transition: none !important; }
+.nf-static .nf-wl-think,
+.nf-static .nf-wl-label { -webkit-mask-image: none !important; mask-image: none !important; }
 
 /* ---------- message entrance animations (stream-ux redesign 2026-10-03) ----------
    EVERY message is "one message, one animation": the whole bubble pops in once
@@ -3407,6 +3456,10 @@
   .nf-wl-think::after,
   .bubble.nf-pop { animation: none; }
   .nf-wl-item.is-enter-late { animation-delay: 0s; }
+  /* The tail fade is not motion, but under an explicit reduced-motion request
+     the edge is left as a plain cut (matching the static-window rule). */
+  .nf-wl-think,
+  .nf-wl-label { -webkit-mask-image: none; mask-image: none; }
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -3444,7 +3497,17 @@
 .pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.2); }
 .pop-stack-area .pill:active { transform: scale(0.95); }
 
-.pop-stack-view { position: relative; width: 200px; height: 256px; flex-shrink: 0; touch-action: pan-y; }
+/* The stack box takes the FRONT media's own aspect ratio (popArtifacts.js pins
+   an explicit width/height pair from the media's natural size, fitted into
+   220×320). It used to be a hard 200×256 with `object-fit: cover` on the media,
+   which cropped every image that was not 200×256 — a wide screenshot lost its
+   left and right thirds (zcode-484 D1). `4 / 3` is the neutral fallback while
+   the bytes load: the box always has a definite size, never 0×0. */
+.pop-stack-view {
+  position: relative;
+  width: 220px; aspect-ratio: 4 / 3;
+  flex-shrink: 0; touch-action: pan-y;
+}
 .pop-stack-view.dragging { cursor: grabbing; }
 .media-layer {
   position: absolute; inset: 0;
@@ -3457,17 +3520,36 @@
 .media-layer.layer-front { transform: none; z-index: 3; filter: none; }
 .media-layer.layer-mid   { transform: translateX(16px) scale(0.965); z-index: 2; filter: brightness(0.9); }
 .media-layer.layer-back  { transform: translateX(32px) scale(0.93); z-index: 1; filter: brightness(0.78); }
+/* zcode-484 D2: a stack shows its FRONT card plus the two peeking layers; the
+   rest are hidden. Before this rule every item past the third was painted with
+   `layer-back` at the SAME z-index as the third, so 4+ items stacked into one
+   indistinguishable pile (and a click could land on the wrong card). The
+   renderer assigns `is-buried` to every item beyond the front three. */
+.pop-stack-view .media-layer.is-buried { display: none; }
 
-.pop-expand-view { display: none; flex-direction: column; gap: 20px; width: 200px; flex-shrink: 0; }
+.pop-expand-view { display: none; flex-direction: column; gap: 20px; width: 220px; flex-shrink: 0; }
 .pop-expand-view.show { display: flex; }
+/* zcode-484 D3: the expanded face keeps each media's OWN aspect ratio. The
+   layers used to be a fixed 256px tall with `object-fit: cover` inherited from
+   `.pop-img/.pop-video`, so an expanded portrait shot was cropped exactly like
+   the stack was. `height: auto` + the media's `aspect-ratio` lets the natural
+   size drive the row; the renderer writes the ratio onto the layer. */
 .pop-expand-view .media-layer {
-  position: relative; inset: auto; height: 256px;
+  position: relative; inset: auto; height: auto; width: 100%;
   transform: none; filter: none;
   animation: fadeIn 0.25s ease;
 }
+.pop-expand-view .pop-media { height: auto; }
 
 .pop-media { position: relative; width: 100%; height: 100%; }
-.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: cover; background: #17191f; }
+/* zcode-484 D1/D3: the media fills its box WITHOUT being cropped. `cover`
+   (the pre-batch rule) cut every image whose aspect ratio differed from the
+   box's — a 1600×400 screenshot lost two thirds of its width, a portrait shot
+   lost its top and bottom. `contain` letterboxes inside the box instead, so
+   the WHOLE frame is visible at its own ratio, and the box keeps whatever
+   aspect ratio the renderer derived from the front media (`.pop-stack-view`
+   / `.pop-expand-view .media-layer` above). */
+.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
 /* 缺陷 D fix (2026-10-03 UI-E/UI-F): the failed-media placeholder used to be
    reachable ONLY for `.bubble.ai img` (see the 2026-09-15 rule at the top of
    this file) — a Pop artifact face lives in `.row.pop-artifact`, so a broken
@@ -3516,8 +3598,14 @@
   background: var(--color-primary); pointer-events: none;
 }
 
-/* single media item — flat, no stack affordances */
-.pop-media-flat { width: 200px; height: 256px; border-radius: 14px; overflow: hidden; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16); background: #17191f; }
+/* single media item — flat, no stack affordances. Same zcode-484 D1/D3 rule as
+   the stack: the box takes the media's own ratio (renderer-pinned) instead of
+   the old hard 200×256 crop box. */
+.pop-media-flat {
+  width: 220px; aspect-ratio: 4 / 3;
+  border-radius: 14px; overflow: hidden;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16); background: #17191f;
+}
 .pop-media-flat .pop-media { width: 100%; height: 100%; }
 
 /* ── file card ── */

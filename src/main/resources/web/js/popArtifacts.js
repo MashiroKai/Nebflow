@@ -190,10 +190,21 @@ function appendFailureNote(face, el) {
 /** One media card face for `item`: <img>/<video> + the video overlay face.
  *  `owner` (a view or the active view) supplies the window-role motion switch;
  *  it is not read here today — the face is static in both roles — but the
- *  parameter keeps the call shape ready for role-dependent chrome. */
-function mediaFace(item, interactive) {
+ *  parameter keeps the call shape ready for role-dependent chrome.
+ *
+ *  zcode-484 D1/D3: `natural` receives the media's intrinsic size as soon as it
+ *  is known (image `load`, video `loadedmetadata`) so the CALLER can give the
+ *  surrounding box the media's own aspect ratio — the box's ratio is what makes
+ *  the un-cropped `object-fit: contain` face fill its frame instead of
+ *  letterboxing inside a mismatched one. */
+function mediaFace(item, interactive, natural) {
   const wrap = document.createElement('div');
   wrap.className = 'pop-media';
+  const report = (w, h) => {
+    if (typeof natural === 'function' && Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+      natural(w, h);
+    }
+  };
   if (item.kind === 'video') {
     const expandedFace = interactive === 'expanded';
     const video = document.createElement('video');
@@ -213,6 +224,10 @@ function mediaFace(item, interactive) {
     chip.className = 'dur-chip';
     chip.textContent = '';
     video.addEventListener('loadedmetadata', () => {
+      // The video's own frame ratio drives the box (zcode-484 D1/D3) — and it
+      // is the ONLY point where `videoWidth/videoHeight` are known, so the
+      // expand height can also be re-measured here (D4).
+      report(video.videoWidth, video.videoHeight);
       const d = Math.round(video.duration);
       if (Number.isFinite(d) && d > 0) {
         chip.textContent = Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0');
@@ -243,13 +258,34 @@ function mediaFace(item, interactive) {
     img.className = 'pop-img';
     img.alt = item.name || '';
     img.dataset.nfName = item.name || item.path || '';
+    // `loading=lazy` + a definite box: the ratio is pinned on the layer as soon
+    // as the bytes arrive, so a lazy image swaps in without a layout jump
+    // (zcode-484 D4) instead of the old fixed 256px box.
     img.loading = 'lazy';
     img.draggable = false;
+    img.addEventListener('load', () => report(img.naturalWidth, img.naturalHeight));
     hydrateMedia(img, item, el => appendFailureNote(wrap, el));
     wrap.appendChild(img);
   }
   return wrap;
 }
+
+/** Give `layer` the media's OWN aspect ratio, scaled to fit `maxW`×`maxH`. The
+ *  box ratio then equals the media ratio exactly, so the un-cropped
+ *  `object-fit: contain` face is flush — no letterbox bars, no crop. Called
+ *  again whenever a face reports its intrinsic size, which is why every box has
+ *  a definite size even before its bytes are in (the CSS fallback ratio holds
+ *  until then). */
+function fitLayer(layer, w, h, maxW, maxH) {
+  const scale = Math.min(maxW / w, maxH / h, 1);
+  layer.style.width = Math.round(w * scale) + 'px';
+  layer.style.aspectRatio = w + ' / ' + h;
+  layer.dataset.nfRatio = w + 'x' + h;
+}
+/** The stack box (front card) allowance — the WeChat-style card size. */
+const STACK_MAX = { w: 220, h: 320 };
+/** The expanded column's per-item allowance — full column width, taller cap. */
+const EXPAND_MAX = { w: 220, h: 420 };
 
 /**
  * The stacked media group (≥2 items): pill on the left, stack on the right.
@@ -271,28 +307,52 @@ function buildMediaStack(items) {
 
   let front = 0;
   let expanded = false;
+  // The media's own ratio, per item, as soon as the bytes report it. Until then
+  // the CSS fallback ratio holds the box (never a 0-height frame).
+  const ratios = items.map(() => null);
   const layers = items.map((item, i) => {
     const layer = document.createElement('div');
     layer.className = 'media-layer';
-    layer.appendChild(mediaFace(item, 'stack'));
+    layer.appendChild(mediaFace(item, 'stack', (w, h) => {
+      ratios[i] = { w, h };
+      // The front card drives the stack box, and the expanded row drives its own
+      // layer — re-fit whichever face this item owns (zcode-484 D1/D4).
+      if (i === front) fitLayer(view, w, h, STACK_MAX.w, STACK_MAX.h);
+      fitLayer(expandLayers[i], w, h, EXPAND_MAX.w, EXPAND_MAX.h);
+      if (expanded) settleExpandHeight();
+    }));
     view.appendChild(layer);
     return layer;
   });
-  const expandLayers = items.map(item => {
+  const expandLayers = items.map((item, i) => {
     const layer = document.createElement('div');
     layer.className = 'media-layer';
-    layer.appendChild(mediaFace(item, 'expanded'));
+    layer.appendChild(mediaFace(item, 'expanded', (w, h) => {
+      ratios[i] = { w, h };
+      if (i === front) fitLayer(view, w, h, STACK_MAX.w, STACK_MAX.h);
+      fitLayer(layer, w, h, EXPAND_MAX.w, EXPAND_MAX.h);
+      if (expanded) settleExpandHeight();
+    }));
     expandView.appendChild(layer);
     return layer;
   });
 
+  // zcode-484 D2: only the front card and its two peeking neighbours are
+  // painted. Every item past the third used to land on `layer-back` at the same
+  // z-index as the third, so 4+ items overlapped indistinguishably (and clicks
+  // could hit a buried card). The parked items are `display:none`.
+  const VISIBLE_LAYERS = 3;
   const applyLayers = () => {
     layers.forEach((layer, i) => {
       const p = (i - front + layers.length) % layers.length;
       layer.classList.remove('layer-front', 'layer-mid', 'layer-back');
       layer.classList.add(['layer-front', 'layer-mid', 'layer-back'][Math.min(p, 2)]);
       layer.style.zIndex = String(3 - Math.min(p, 2));
+      layer.classList.toggle('is-buried', p > VISIBLE_LAYERS - 1);
     });
+    const frontRatio = ratios[front];
+    if (frontRatio) fitLayer(view, frontRatio.w, frontRatio.h);
+    else { view.style.width = ''; view.style.aspectRatio = ''; }
   };
   applyLayers();
 
@@ -304,6 +364,24 @@ function buildMediaStack(items) {
       applyLayers();
     });
   });
+
+  /** The expanded column's natural height: the sum of its layers plus the
+   *  column gap. Every layer has a definite height (its own ratio × the column
+   *  width) even while its bytes are still loading, so the value is stable. */
+  const expandHeight = () => Array.from(expandView.children).reduce((s, c) => {
+    const el = /** @type {HTMLElement} */ (c);
+    return s + el.offsetHeight;
+  }, 0) + 20 * (expandView.children.length - 1);
+
+  /** zcode-484 D4: a media that reports its ratio AFTER the expand animation
+   *  started would grow the column mid-flight (the old code summed a lazy
+   *  image's 0-height box and then jumped). Re-target the live height instead —
+   *  a single transition, no jump. No-op outside the animated expand window. */
+  const settleExpandHeight = () => {
+    if (!expanded || !motionEnabled()) return;
+    if (!area.style.height) return; // the transition already settled
+    area.style.height = expandHeight() + 'px';
+  };
 
   // `motion` is read per toggle (not captured) so the same builder serves the
   // main window and a subagent popup without a second code path.
@@ -323,12 +401,7 @@ function buildMediaStack(items) {
     const h0 = area.offsetHeight;
     view.style.display = v ? 'none' : '';
     expandView.classList.toggle('show', v);
-    const h1 = v
-      ? Array.from(expandView.children).reduce((s, c) => {
-          const el = /** @type {HTMLElement} */ (c);
-          return s + el.offsetHeight;
-        }, 0) + 20 * (expandView.children.length - 1)
-      : view.offsetHeight;
+    const h1 = v ? expandHeight() : view.offsetHeight;
     area.style.height = h0 + 'px';
     void area.offsetHeight;
     area.style.height = h1 + 'px';
@@ -365,11 +438,13 @@ function buildMediaStack(items) {
   return area;
 }
 
-/** A single media item renders flat — no pill, no stack, no switching. */
+/** A single media item renders flat — no pill, no stack, no switching. Its box
+ *  takes the media's own ratio (zcode-484 D1/D3), so a lone wide screenshot is
+ *  not cropped into a portrait box. */
 function buildMediaFlat(item) {
   const box = document.createElement('div');
   box.className = 'pop-media-flat';
-  box.appendChild(mediaFace(item, 'expanded'));
+  box.appendChild(mediaFace(item, 'expanded', (w, h) => fitLayer(box, w, h, STACK_MAX.w, EXPAND_MAX.h)));
   return box;
 }
 

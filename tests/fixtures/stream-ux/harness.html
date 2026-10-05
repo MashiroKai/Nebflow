@@ -189,6 +189,221 @@
     };
 
     window.__ready = true;
+
+    /* ── A6 (zcode-484 batch): the single-line streaming window ─────────────
+     * The author's ruling (2026-10-04 09:29, verbatim):
+     *   「我要的思考过程以及工具过程的流式，是在一行进行流式，像zcode一样。」
+     * These probes feed SEVERAL deltas and sample the line's geometry on every
+     * frame, because the acceptance sentence is about CONSTANCY across the
+     * stream — a single end-state read cannot see a mid-stream vertical growth.
+     */
+
+    /** The live line's geometry, read WITHOUT naming any batch-introduced class:
+     *  the top-level child of #chat that is neither a process row nor the
+     *  terminal header (the same detection READ_INDICATOR uses). */
+    window.__lineGeometry = () => {
+      const chat = document.getElementById('chat');
+      const el = Array.from(chat.children).find(k =>
+        !k.classList.contains('row') && !k.classList.contains('turn-header'));
+      if (!el) return null;
+      const think = el.querySelector('.nf-wl-think');
+      const slot = el.querySelector('.nf-wl-slot');
+      const label = el.querySelector('.nf-wl-label');
+      const cs = think ? getComputedStyle(think) : null;
+      const slotCs = slot ? getComputedStyle(slot) : null;
+      const labCs = label ? getComputedStyle(label) : null;
+      return {
+        lineH: Math.round(el.getBoundingClientRect().height),
+        slotH: slot ? Math.round(slot.getBoundingClientRect().height) : -1,
+        slotComputedH: slotCs ? Math.round(parseFloat(slotCs.height) || 0) : -1,
+        slotOverflow: slotCs ? slotCs.overflow : '',
+        thinkH: think ? Math.round(think.getBoundingClientRect().height) : -1,
+        thinkLineHeight: cs ? (parseFloat(cs.lineHeight) || 0) : 0,
+        whiteSpace: cs ? cs.whiteSpace : '',
+        overflow: cs ? cs.overflow : '',
+        maskImage: cs ? (cs.maskImage || cs.webkitMaskImage || 'none') : '',
+        scrollW: think ? Math.round(think.scrollWidth) : 0,
+        clientW: think ? Math.round(think.clientWidth) : 0,
+        tailAnchored: think ? think.scrollLeft > 0 : false,
+        textLen: think ? (think.textContent || '').length : 0,
+        // The TOOL-process face: the label is the text box that used to wrap
+        // (`white-space: normal; overflow-wrap: anywhere`) and now must not.
+        labelH: label ? Math.round(label.getBoundingClientRect().height) : -1,
+        labelWhiteSpace: labCs ? labCs.whiteSpace : '',
+        labelOverflow: labCs ? labCs.overflow : '',
+        labelMaskImage: labCs ? (labCs.maskImage || labCs.webkitMaskImage || 'none') : '',
+        labelScrollW: label ? Math.round(label.scrollWidth) : 0,
+        labelClientW: label ? Math.round(label.clientWidth) : 0,
+        labelTextLen: label ? (label.textContent || '').length : 0,
+      };
+    };
+
+    /** Feed N thinking deltas into ONE line, sampling the geometry every frame. */
+    window.__thinkSingleLineFeed = async (deltas = 12) => {
+      chatMod.renderUserBubble('多轮喂入看单行', [], Date.now());
+      const samples = [];
+      const chunk = '这是一段足够长的思考内容，用来在窄栏里持续追加，看看行容器会不会纵向增长。';
+      for (let i = 0; i < deltas; i++) {
+        chatMod.appendThinkingDelta(chunk);
+        await raf2();
+        const g = window.__lineGeometry();
+        if (!g) return null;
+        samples.push(g);
+      }
+      const last = samples[samples.length - 1];
+      return {
+        frames: samples.length,
+        distinctSlotH: Array.from(new Set(samples.map(s => s.slotH))),
+        distinctSlotComputedH: Array.from(new Set(samples.map(s => s.slotComputedH))),
+        distinctThinkH: Array.from(new Set(samples.map(s => s.thinkH))),
+        distinctLineH: Array.from(new Set(samples.map(s => s.lineH))),
+        maxSlotH: Math.max(...samples.map(s => s.slotH)),
+        last,
+        // The text really did keep growing (otherwise constancy is vacuous).
+        textLenGrew: samples[samples.length - 1].textLen > samples[0].textLen,
+      };
+    };
+
+    /** zcode-484 (I1, the #481 invariant): the thinking stream must APPEND to
+     *  the existing text node — never rewrite the whole line every delta. The
+     *  probe holds the ORIGINAL first text node and checks (a) it is still the
+     *  very same node object and still at index 0 after every delta, and (b) its
+     *  data only ever grew. A whole-text rewrite replaces the node; a
+     *  `textContent = …` write mutates the same node's data but discards the
+     *  previous data identity — both are caught by the node-identity check. */
+    window.__appendOnlyProbe = async (deltas = 8) => {
+      chatMod.renderUserBubble('追加不变量', [], Date.now());
+      chatMod.appendThinkingDelta('第一段：');
+      await raf2();
+      const think = document.querySelector('#chat .nf-wl-think');
+      if (!think) return null;
+      const first = think.firstChild;
+      if (!first) return null;
+      const seen = [];
+      const chunk = '后续每一段都应当被追加，而不是整段重写。';
+      for (let i = 0; i < deltas; i++) {
+        chatMod.appendThinkingDelta(chunk);
+        await raf2();
+        const t = document.querySelector('#chat .nf-wl-think');
+        const f = t && t.firstChild;
+        seen.push({
+          sameNode: f === first,
+          stillFirst: t && t.firstChild === first,
+          nodeIndex: t ? Array.prototype.indexOf.call(t.childNodes, first) : -1,
+          firstLen: first.data ? first.data.length : -1,
+        });
+      }
+      return {
+        frames: seen.length,
+        allSameNode: seen.every(s => s.sameNode),
+        allStillFirst: seen.every(s => s.stillFirst),
+        nodeIndexes: Array.from(new Set(seen.map(s => s.nodeIndex))),
+        firstLenMonotone: seen.every((s, i) => i === 0 || s.firstLen >= seen[i - 1].firstLen),
+        totalTextLen: (document.querySelector('#chat .nf-wl-think') || {}).textContent?.length || 0,
+      };
+    };
+
+    /** The TOOL-process row gets the same treatment: one very long tool label,     *  fed through the real render path, sampled per frame. */
+    window.__toolSingleLineFeed = async () => {
+      chatMod.renderUserBubble('工具过程也要单行', [], Date.now());
+      const samples = [];
+      // Three successive tools on the SAME line (each one re-shapes the item) —
+      // a vertical growth shows up as a change in the LABEL box, which is the
+      // text box that used to wrap (`white-space: normal`).
+      const long = (n) => 'Grep("' + n.repeat(24) + '")';
+      const names = [
+        long('pattern-that-does-not-fit-'),
+        long('another-very-long-argument-'),
+        long('a-third-long-argument-string-')
+      ];
+      for (const n of names) {
+        chatMod.renderToolPending(n, 'stream-ux-session');
+        await raf2();
+        const g = window.__lineGeometry();
+        if (!g) return null;
+        samples.push({ name: n, ...g });
+      }
+      // And its completion face (check + label), on the same one row.
+      chatMod.renderTool(names[0], '12 results', 'body', false, '{}', 'stream-ux-session');
+      await raf2();
+      const done = window.__lineGeometry();
+      return {
+        frames: samples.length,
+        samples,
+        distinctSlotH: Array.from(new Set(samples.map(s => s.slotH))),
+        distinctSlotComputedH: Array.from(new Set(samples.map(s => s.slotComputedH))),
+        distinctLabelH: Array.from(new Set(samples.map(s => s.labelH))),
+        maxSlotH: Math.max(...samples.map(s => s.slotH)),
+        last: samples[samples.length - 1],
+        done,
+      };
+    };
+
+    /** zcode-484 rework — the Pop running row's file-path progress.
+     *
+     *  Drives the REAL streaming path exactly as `main.js onMessage('toolArgDelta')`
+     *  does (renderToolPending → appendToolStreamDelta in fragments), for a given
+     *  tool and argument payload, and reads back the `.tool-stream-body` text the
+     *  expanded running row shows. Both the single-string and the ARRAY form must
+     *  produce the body; the array form (the plan's "usual shape" for a batch)
+     *  reads the first path plus " +N" for the further complete ones.
+     *
+     *  The row IS `renderToolPending`'s expand face, so it is un-tucked before the
+     *  read, mirroring what the user sees when they expand the turn mid-run.
+     */
+    window.__toolArgStreamRead = async (tool, payload) => {
+      // `appendToolStreamDelta` looks the pending row up by `activeView.sessionId`
+      // (null in this harness), so the pending call must use the SAME key —
+      // `String(view.sessionId)` is exactly what the app-side probe passes.
+      const sid = String(view.sessionId);
+      chatMod.renderToolPending(tool, sid);
+      const row = state.sessionToolCards[sid];
+      if (!row) return { found: false, bodyExists: false, text: null };
+      view.stream.toolStreamText = '';
+      for (let i = 0; i < payload.length; i += 7) {
+        chatMod.appendToolStreamDelta(tool, payload.slice(i, i + 7));
+        await raf2();
+      }
+      await raf2();
+      row.classList.remove('nf-tucked');
+      await raf2();
+      const body = row.querySelector('.tool-stream-body');
+      const cs = body ? getComputedStyle(body) : null;
+      return {
+        found: true,
+        bodyExists: !!body,
+        text: body ? (body.textContent || '').trim() : null,
+        visible: cs ? (cs.visibility !== 'hidden' && cs.display !== 'none') : false,
+      };
+    };
+
+    /** Terminal collapse: the running line becomes a one-row checked badge and
+     *  the FULL thinking text stays reachable through the existing expand face. */
+    window.__thinkCollapseRead = async () => {
+      chatMod.renderUserBubble('完成折叠读数', [], Date.now());
+      const feed = '先喂一段思考文本，然后完成折叠为一行 badge。';
+      chatMod.appendThinkingDelta(feed);
+      await raf2();
+      const live = window.__lineGeometry();
+      chatMod.finishThinking();
+      chatMod.appendAiText('完成。');
+      chatMod.finishAi(1200, 'test-model');
+      await raf2();
+      const chat = document.getElementById('chat');
+      const line = Array.from(chat.children).find(el => el.classList.contains('nf-workline'));
+      const item = line ? line.querySelector('.nf-wl-item') : null;
+      return {
+        liveSlotH: live ? live.slotH : -1,
+        stillLive: !!line,
+        badgeH: item ? Math.round(item.getBoundingClientRect().height) : -1,
+        svgPaths: line ? line.querySelectorAll('svg path, svg polyline').length : 0,
+        spins: line ? line.querySelectorAll('.spinner, [class*="spin"]').length : 0,
+        labelText: line ? (line.querySelector('.nf-wl-label') || {}).textContent || '' : '',
+        // The full feed remains reachable in the pre-tucked process row.
+        fullTextReachable: (chat.querySelector('.row.thinking-row .thinking-content')?.textContent || '')
+          .includes(feed.slice(-8)),
+      };
+    };
   </script>
 </body>
 </html>

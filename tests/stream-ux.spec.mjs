@@ -628,3 +628,167 @@ test.describe('animation events — CSS only (no WAAPI in the process chrome)', 
     await context.close();
   });
 });
+
+/* ═══════════ A6 — zcode-484: the single-line streaming window ═══════════
+ *
+ * Author ruling 2026-10-04 09:29, verbatim:
+ *   「我要的思考过程以及工具过程的流式，是在一行进行流式，像zcode一样。而且现在
+ *    一次Pop多个图片和视频进行折叠的效果还有问题。」
+ *
+ * Acceptance (batch brief §4, mechanical):
+ *   1. while streaming, the line container's `clientHeight` is CONSTANT at one
+ *      row — feeding many deltas never grows it vertically;
+ *   2. the row end fades (a tail `mask-image`);
+ *   3. on completion the line collapses to a one-row checked badge;
+ *   4. the FULL thinking text stays reachable.
+ *
+ * The readings below name NO class introduced by this batch (they go through the
+ * batch-agnostic `__lineGeometry`, which finds the live line the same way
+ * READ_INDICATOR does), so the SAME file is RED on the pre-batch tree.
+ */
+
+test.describe('A6 — 思考单行流式（zcode-484）', () => {
+  test('the slot height is CONSTANT across a multi-delta feed (never grows vertically)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__thinkSingleLineFeed(12));
+    expect(read, 'the feed built a live line').not.toBeNull();
+    expect(read.frames, 'every frame found the line').toBe(12);
+    expect(read.textLenGrew, 'the text really kept growing (constancy must not be vacuous)').toBe(true);
+    expect(read.distinctSlotH.length,
+      `the slot height never changed across the whole feed (saw ${JSON.stringify(read.distinctSlotH)})`)
+      .toBe(1);
+    expect(read.distinctSlotComputedH.length,
+      `nor did its computed height (saw ${JSON.stringify(read.distinctSlotComputedH)})`).toBe(1);
+    expect(read.distinctThinkH.length,
+      `nor the text box (saw ${JSON.stringify(read.distinctThinkH)})`).toBe(1);
+    // The single row is exactly one line box high (the padding lives on the row,
+    // not on the slot), which is what "strictly one row" means.
+    expect(read.maxSlotH, 'the line is one text row high')
+      .toBeLessThanOrEqual(read.last.thinkLineHeight * 1.2 + 2);
+    expect(read.last.whiteSpace, 'and it forbids wrapping').toBe('nowrap');
+    expect(read.last.overflow, 'and clips its overflow').toBe('hidden');
+    expect(read.last.slotOverflow, 'the slot clips too').toBe('hidden');
+    // The tail fade: new content flows in at the row end, old slides out left.
+    expect(read.last.maskImage, `a tail fade is applied (was: ${read.last.maskImage})`).not.toBe('none');
+    expect(read.last.scrollW, 'the text overflows the box (so the anchor matters)')
+      .toBeGreaterThan(read.last.clientW);
+    expect(read.last.tailAnchored, 'and the box stays pinned to its right edge (the tail anchor)').toBe(true);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('the TOOL-process row gets the same single-row treatment', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__toolSingleLineFeed());
+    expect(read, 'the tool feed built a live line').not.toBeNull();
+    expect(read.frames, 'three successive tool labels were rendered').toBe(3);
+    expect(read.distinctSlotH.length,
+      `the slot stayed one row high across every tool item (saw ${JSON.stringify(read.distinctSlotH)})`)
+      .toBe(1);
+    expect(read.distinctSlotComputedH.length,
+      `nor did its computed height change (saw ${JSON.stringify(read.distinctSlotComputedH)})`).toBe(1);
+    // The LABEL is the tool face's text box — the very box the pre-batch rule
+    // made wrap (`white-space: normal; overflow-wrap: anywhere`). A long label
+    // must stay one row and be clipped, with the same tail fade.
+    expect(read.last.labelTextLen, 'the label really is long (otherwise the clip is vacuous)')
+      .toBeGreaterThan(80);
+    expect(read.last.labelWhiteSpace, 'the tool label forbids wrapping').toBe('nowrap');
+    expect(read.last.labelOverflow, 'and clips its overflow').toBe('hidden');
+    expect(read.distinctLabelH.length,
+      `the label box never grew a second row (saw ${JSON.stringify(read.distinctLabelH)})`).toBe(1);
+    expect(read.last.labelScrollW, 'the label overflows its box (clipped, not shrunk)')
+      .toBeGreaterThan(read.last.labelClientW);
+    expect(read.last.labelMaskImage,
+      `the tool label carries the same tail fade (was: ${read.last.labelMaskImage})`).not.toBe('none');
+    // The completion face lands on that same single row.
+    expect(read.done, 'the completed face was readable').not.toBeNull();
+    expect(read.done.slotH, 'the check face is still one row').toBe(read.maxSlotH);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('I1: the stream APPENDS to the tail node — the #481 rewrite ban still holds', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__appendOnlyProbe(8));
+    expect(read, 'the probe found the thinking node').not.toBeNull();
+    expect(read.frames, 'the feed ran eight deltas').toBe(8);
+    // The #481 commit 2706962e2's invariant, read from the DOM: the FIRST text
+    // node object survives the whole stream, still at index 0, its data only
+    // growing. A per-delta `textContent = whole` write would replace the node.
+    expect(read.allSameNode,
+      'the first text node is never replaced (no whole-line rewrite per delta)').toBe(true);
+    expect(read.allStillFirst, 'and it stays the leading node of the line').toBe(true);
+    expect(read.nodeIndexes, 'it never moves').toEqual([0]);
+    expect(read.firstLenMonotone, 'its data only ever grew (append-only)').toBe(true);
+    expect(read.totalTextLen, 'the full text accumulated on the line')
+      .toBeGreaterThan(8 * 15);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('completion collapses the line to a one-row checked badge; full text stays reachable', async ({ browser }) => {    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__thinkCollapseRead());
+    expect(read.liveSlotH, 'the line was live and one row before completion').toBeGreaterThan(0);
+    expect(read.badgeH, 'the completed badge is one row high (never a card)')
+      .toBeLessThanOrEqual(read.liveSlotH + 2);
+    expect(read.spins, 'the spinner retired').toBe(0);
+    expect(read.svgPaths, 'and a check glyph is drawn').toBeGreaterThan(0);
+    expect(read.labelText.length, 'the badge carries the settled summary text').toBeGreaterThan(0);
+    // The full thinking feed is still reachable through the pre-tucked row.
+    expect(read.fullTextReachable,
+      'the full thinking text remains reachable (the expand interaction is untouched)').toBe(true);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A6b — the Pop running row's file-path progress (zcode-484 rework).
+//
+// WHY: commit b3c0851c8 claimed the running Pop row shows the deliverable path
+// while its arguments stream, and the plan (OD-5 / §3.3-4) asks for the "first
+// path (+N)" summary for the ARRAY form — the batch Pop shape the requirement
+// is about. The first cut only fixed the single-string form: the extractor
+// bailed with `null` as soon as the first non-space char after the colon was
+// not `"`, so a `[` built NO `.tool-stream-body` at all. These two cases pin
+// BOTH forms against the real render path (renderToolPending →
+// appendToolStreamDelta), which had ZERO coverage before (repo-wide: no test
+// referenced `TOOL_PRIMARY_FIELDS`, `.tool-stream-body` or `'Pop'`).
+//
+// Red leg: the baseline tree has no `'Pop'` entry in `TOOL_PRIMARY_FIELDS`, so
+// BOTH cases fail there (no body node is ever created) — see the `git archive`
+// recipe in the file header, never `git checkout main`.
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe('A6b — Pop 运行期行内文件路径进展（数组 / 单值双形态）', () => {
+  test('the SINGLE-string Pop form shows its path on the running row', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const payload = JSON.stringify({ filePath: '/tmp/lone.png' });
+    const read = await page.evaluate(
+      ([tool, p]) => window.__toolArgStreamRead(tool, p), ['Pop', payload]);
+    expect(read.found, 'the pending Pop row was created').toBe(true);
+    expect(read.bodyExists, 'the running row built its streaming body').toBe(true);
+    expect(read.visible, 'and the body is visible when the turn is expanded').toBe(true);
+    expect(read.text, 'it shows the file path').toContain('/tmp/lone.png');
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('the ARRAY Pop form shows its first path (+N) on the running row', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const payload = JSON.stringify({
+      filePath: ['/tmp/alpha.png', '/tmp/beta.png', '/tmp/gamma.png'],
+    });
+    const read = await page.evaluate(
+      ([tool, p]) => window.__toolArgStreamRead(tool, p), ['Pop', payload]);
+    expect(read.found, 'the pending Pop row was created').toBe(true);
+    // The regression this pins: the array form used to build NO body (the
+    // extractor returned null on `[`), so the expanded running turn showed
+    // nothing while the single-string form showed its path.
+    expect(read.bodyExists, 'the ARRAY form builds the same streaming body').toBe(true);
+    expect(read.visible, 'and the body is visible when the turn is expanded').toBe(true);
+    expect(read.text, 'it shows the first path').toContain('/tmp/alpha.png');
+    expect(read.text, 'and counts the further paths as +2').toContain('+2');
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});

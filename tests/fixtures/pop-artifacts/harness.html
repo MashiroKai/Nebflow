@@ -97,6 +97,59 @@
       };
     }
 
+    /** An SVG data URI with an EXACT intrinsic size — deterministic aspect
+     *  ratios with no fixture bytes (zcode-484 U1/U2/U3 read `naturalWidth` /
+     *  `naturalHeight` against the layer's rendered box). */
+    function svgDataUri(w, h) {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h +
+        '" viewBox="0 0 ' + w + ' ' + h + '"><rect width="100%" height="100%" fill="#2a4d8f"/></svg>';
+      return 'data:image/svg+xml;base64,' + btoa(svg);
+    }
+
+    /** The requirement-two shape (PLAN §5.2 step 3): one WIDE image + one TALL
+     *  image + one VIDEO + one document in ONE call. Sizes deliberately differ
+     *  so a shared fixed box + `object-fit: cover` is guaranteed to crop (D1),
+     *  and the video pins the D5 controls face. `clip.webm` is served by this
+     *  harness's own static server; it is never the ticket leg (a `src` rides
+     *  the payload, so the reader needs no credential). */
+    function payloadMixedSized() {
+      return {
+        fileRefs: { inlined: 3, referenced: 1, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [
+          { kind: 'image', path: '/tmp/pop/wide.png', name: 'wide.png', src: svgDataUri(1600, 400) },
+          { kind: 'image', path: '/tmp/pop/tall.png', name: 'tall.png', src: svgDataUri(400, 1600) },
+          { kind: 'video', path: '/tests/fixtures/pop-artifacts/clip.webm', name: 'clip.webm',
+            src: '/tests/fixtures/pop-artifacts/clip.webm' },
+          { kind: 'document', path: '/tmp/pop/report.pdf', name: 'report.pdf' },
+        ],
+      };
+    }
+
+    /** Five images with five DIFFERENT ratios: the >3 stack case (PLAN U2).
+     *  Distinct `zIndex` per layer is the assertion — the pre-batch code gave
+     *  layers 3..n the SAME z-index (D2). */
+    function payloadFiveImages() {
+      const specs = [[1600, 400], [400, 1600], [800, 600], [1000, 1000], [300, 900]];
+      return {
+        fileRefs: { inlined: 5, referenced: 0, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: specs.map(([w, h], i) => ({
+          kind: 'image', path: '/tmp/pop/p' + i + '.png', name: 'p' + i + '.png', src: svgDataUri(w, h),
+        })),
+      };
+    }
+
+    /** A single media item (the FLAT path, PLAN U5) — same ratio contract as a
+     *  stack's expanded face. */
+    function payloadSingleWide() {
+      return {
+        fileRefs: { inlined: 1, referenced: 0, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [{ kind: 'image', path: '/tmp/pop/wide.png', name: 'wide.png', src: svgDataUri(1600, 400) }],
+      };
+    }
+
     const SENTINEL = '___POP_JSON___';
     const popContent = p => SENTINEL + JSON.stringify(p);
 
@@ -156,6 +209,166 @@
       chatMod.renderTool('Pop\n  ("gone.png")', '1 file', popContent(payloadBrokenMedia()), false,
         '{"filePath":"/definitely/not/here.png"}', 'pop-harness');
       await raf2();
+    };
+
+    /* ── zcode-484 U1-U5 — the mixed / sized / many-item Pop shapes ─────── */
+
+    /** One wide image + one tall image + one video + one document. */
+    window.__popMixedSized = async () => {
+      chatMod.renderUserBubble('宽图 + 竖图 + 视频 + 文件', [], Date.now());
+      chatMod.renderTool('Pop\n  ("wide.png", "tall.png", "clip.webm", "report.pdf")', '4 files',
+        popContent(payloadMixedSized()), false,
+        '{"filePath":["/tmp/pop/wide.png","/tmp/pop/tall.png","/tests/fixtures/pop-artifacts/clip.webm","/tmp/pop/report.pdf"]}',
+        'pop-harness');
+      await raf2();
+    };
+
+    /** Five images (>3) — the buried-layer case. */
+    window.__popFiveImages = async () => {
+      chatMod.renderUserBubble('五张图', [], Date.now());
+      chatMod.renderTool('Pop\n  ("p0.png", …)', '5 files', popContent(payloadFiveImages()), false,
+        '{"filePath":["/tmp/pop/p0.png","/tmp/pop/p1.png","/tmp/pop/p2.png","/tmp/pop/p3.png","/tmp/pop/p4.png"]}',
+        'pop-harness');
+      await raf2();
+    };
+
+    /** A single media item — the FLAT path. */
+    window.__popSingleWide = async () => {
+      chatMod.renderUserBubble('一张宽图', [], Date.now());
+      chatMod.renderTool('Pop\n  ("wide.png")', '1 file', popContent(payloadSingleWide()), false,
+        '{"filePath":"/tmp/pop/wide.png"}', 'pop-harness');
+      await raf2();
+    };
+
+    /** Click the stack's expand pill and SAMPLE the area height across the
+     *  transition (PLAN U4: the animated height must be monotone — no jump).
+     *  Waits for every media's intrinsic size FIRST, so the sampled window is
+     *  the transition alone: a ratio that arrives mid-flight legitimately moves
+     *  the target (zcode-484 D4 re-targets it), which would make a raw
+     *  monotonicity reading mean something other than "no jump". The late-ratio
+     *  case is asserted separately, on its END state. */
+    window.__expandSampled = async () => {
+      const area = document.querySelector('#chat .pop-stack-area');
+      const pill = area && area.querySelector('.pill');
+      if (!pill) return null;
+      await mediaRatisSettled(area);
+      const heights = [];
+      let stop = false;
+      const tick = () => {
+        if (stop) return;
+        heights.push(Math.round(area.getBoundingClientRect().height));
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+      pill.click();
+      // The expand transition is 0.42s; sample past it, then take one settled read.
+      await new Promise(r => setTimeout(r, 620));
+      stop = true;
+      const settled = Math.round(area.getBoundingClientRect().height);
+      return { heights, settled };
+    };
+
+    /** Resolve once every media in `root` reports an intrinsic size (image
+     *  `naturalWidth`, video `videoWidth`), or after a bounded wait. */
+    function mediaRatisSettled(root) {
+      const pending = () => Array.from(root.querySelectorAll('.pop-img, .pop-video'))
+        .filter(m => !(m.naturalWidth || m.videoWidth));
+      if (!pending().length) return Promise.resolve();
+      return new Promise(resolve => {
+        let waited = 0;
+        const t = setInterval(() => {
+          waited += 50;
+          if (!pending().length || waited > 3000) { clearInterval(t); resolve(); }
+        }, 50);
+      });
+    }
+
+    /** Per-layer readings of the CURRENT stack (zcode-484 U1/U2/U3): rendered
+     *  box ratio vs the media's intrinsic ratio, z-index, visibility. */
+    window.__stackRead = () => {
+      const root = document.querySelector('#chat .pop-stack-area');
+      if (!root) return null;
+      const view = root.querySelector('.pop-stack-view');
+      const viewRect = view.getBoundingClientRect();
+      const layers = Array.from(view.querySelectorAll('.media-layer')).map(el => {
+        const media = el.querySelector('.pop-img, .pop-video');
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        return {
+          cls: Array.from(el.classList).join('.'),
+          zIndex: el.style.zIndex || cs.zIndex,
+          display: cs.display,
+          buried: el.classList.contains('is-buried'),
+          boxW: Math.round(r.width),
+          boxH: Math.round(r.height),
+          boxRatio: r.height > 0 ? +(r.width / r.height).toFixed(3) : 0,
+          natW: media ? (media.naturalWidth || media.videoWidth || 0) : 0,
+          natH: media ? (media.naturalHeight || media.videoHeight || 0) : 0,
+          natRatio: media && (media.naturalWidth || media.videoWidth)
+            ? +(((media.naturalWidth || media.videoWidth)) / ((media.naturalHeight || media.videoHeight))).toFixed(3)
+            : 0,
+          objectFit: media ? getComputedStyle(media).objectFit : '',
+          type: media ? media.tagName.toLowerCase() : '',
+          controls: media && media.tagName === 'VIDEO' ? media.controls : null,
+          ring: !!el.querySelector('.play-ring'),
+          isBuriedClass: el.classList.contains('is-buried'),
+        };
+      });
+      return {
+        viewW: Math.round(viewRect.width),
+        viewH: Math.round(viewRect.height),
+        viewRatio: viewRect.height > 0 ? +(viewRect.width / viewRect.height).toFixed(3) : 0,
+        viewAspect: getComputedStyle(view).aspectRatio,
+        layers,
+        frontCount: layers.filter(l => l.cls.includes('layer-front')).length,
+        midCount: layers.filter(l => l.cls.includes('layer-mid')).length,
+        backCount: layers.filter(l => l.cls.includes('layer-back')).length,
+      };
+    };
+
+    /** Per-layer readings of the EXPANDED column (PLAN U3). */
+    window.__expandRead = () => {
+      const root = document.querySelector('#chat .pop-stack-area');
+      if (!root) return null;
+      const expand = root.querySelector('.pop-expand-view');
+      const layers = Array.from(expand.querySelectorAll('.media-layer')).map(el => {
+        const media = el.querySelector('.pop-img, .pop-video');
+        const r = el.getBoundingClientRect();
+        const nw = media ? (media.naturalWidth || media.videoWidth || 0) : 0;
+        const nh = media ? (media.naturalHeight || media.videoHeight || 0) : 0;
+        return {
+          boxW: Math.round(r.width),
+          boxH: Math.round(r.height),
+          boxRatio: r.height > 0 ? +(r.width / r.height).toFixed(3) : 0,
+          natRatio: nw && nh ? +(nw / nh).toFixed(3) : 0,
+          type: media ? media.tagName.toLowerCase() : '',
+          controls: media && media.tagName === 'VIDEO' ? media.controls : null,
+          ringVisible: (() => {
+            const ring = el.querySelector('.play-ring');
+            return ring ? getComputedStyle(ring).display !== 'none' : false;
+          })(),
+          isBuried: el.classList.contains('is-buried'),
+          display: getComputedStyle(el).display,
+        };
+      });
+      return { layers, areaH: Math.round(root.getBoundingClientRect().height) };
+    };
+
+    /** The FLAT single-media box (PLAN U5). */
+    window.__flatRead = () => {
+      const box = document.querySelector('#chat .pop-media-flat');
+      if (!box) return null;
+      const media = box.querySelector('.pop-img, .pop-video');
+      const r = box.getBoundingClientRect();
+      const nw = media ? (media.naturalWidth || media.videoWidth || 0) : 0;
+      const nh = media ? (media.naturalHeight || media.videoHeight || 0) : 0;
+      return {
+        boxW: Math.round(r.width),
+        boxH: Math.round(r.height),
+        boxRatio: r.height > 0 ? +(r.width / r.height).toFixed(3) : 0,
+        natRatio: nw && nh ? +(nw / nh).toFixed(3) : 0,
+        objectFit: media ? getComputedStyle(media).objectFit : '',
+      };
     };
 
     /* ── window-role leg (UI-G) ─────────────────────────────────────────── */

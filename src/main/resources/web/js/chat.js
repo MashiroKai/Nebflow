@@ -1427,24 +1427,23 @@ const TOOL_PRIMARY_FIELDS = {
   'TaskUpdate': 'description',
   'Mail': 'message',
   'MailAgent': 'message',
+  // zcode-484 (PLAN §3.3-4, OD-5): Pop was the one artifact-producing tool with
+  // no primary-field entry, so its running badge line showed only the tool name
+  // while the args streamed. `filePath` is the field that names the deliverable;
+  // it arrives either as one path or as an ARRAY (the usual shape for a batch),
+  // and the reader below handles BOTH: on an array it shows the first path plus
+  // " +N" for the further complete ones — the plan's "first path (+N)" progress.
+  'Pop': 'filePath',
 };
 
 /**
- * Best-effort extraction of a JSON string field value from partial JSON.
- * Returns { value, complete } or null if the field hasn't been started yet.
- * Handles JSON string escapes (\n, \t, \", \\, \uXXXX).
+ * Read one JSON string starting just AFTER its opening quote (the same best-
+ * effort reader the field extractor needs, lifted so the array form can reuse
+ * it per element). Handles the escapes \n \t \r \" \\ \/ \b \f \uXXXX.
+ * Returns { value, complete, end }; `end` is the index just past the closing
+ * quote when complete, or the end of the buffer while the string still streams.
  */
-function extractFieldValueFromPartialJson(partialJson, fieldName) {
-  const marker = '"' + fieldName + '"';
-  const markerIdx = partialJson.indexOf(marker);
-  if (markerIdx === -1) return null;
-
-  let idx = markerIdx + marker.length;
-  // Skip whitespace and colon
-  while (idx < partialJson.length && /[\s:]/.test(partialJson[idx])) idx++;
-  if (idx >= partialJson.length || partialJson[idx] !== '"') return null;
-  idx++; // skip opening quote
-
+function readJsonString(partialJson, idx) {
   let result = '';
   while (idx < partialJson.length) {
     const ch = partialJson[idx];
@@ -1470,15 +1469,81 @@ function extractFieldValueFromPartialJson(partialJson, fieldName) {
       }
       idx += 2;
     } else if (ch === '"') {
-      // Closing quote — field is complete
-      return { value: result, complete: true };
+      // Closing quote — the string is complete
+      return { value: result, complete: true, end: idx + 1 };
     } else {
       result += ch;
       idx++;
     }
   }
   // Stream still open — return what we have so far
-  return { value: result, complete: false };
+  return { value: result, complete: false, end: partialJson.length };
+}
+
+/**
+ * The running PROGRESS reading of a still-streaming JSON ARRAY value: the first
+ * string element as the visible text, plus " +N" once N further elements are
+ * complete. This is what makes an array-form Pop (a batch — the plan's usual
+ * shape) show the same running row the single-string form shows.
+ *
+ * Returns null until the first element's opening quote is on the wire, so
+ * before any content arrives the array form behaves exactly like the string
+ * form (no body is built yet).
+ *
+ * A non-string element is not this reader's business: the tool layer refuses
+ * those by index with a readable error (PopTool.requestedPaths), and a partial
+ * stream cannot tell "rejected shape" from "still arriving" — so the reader
+ * keeps the progress it already has instead of guessing.
+ */
+function readJsonArrayProgress(partialJson, idx) {
+  while (idx < partialJson.length && /[\s,]/.test(partialJson[idx])) idx++;
+  if (idx >= partialJson.length || partialJson[idx] !== '"') return null;
+  const first = readJsonString(partialJson, idx + 1);
+
+  let extra = 0;
+  let closed = false;
+  let j = first.end;
+  while (j < partialJson.length) {
+    while (j < partialJson.length && /[\s,]/.test(partialJson[j])) j++;
+    if (j >= partialJson.length) break; // stream still open
+    if (partialJson[j] === ']') { closed = true; break; }
+    if (partialJson[j] !== '"') break; // non-string element — see the note above
+    const elem = readJsonString(partialJson, j + 1);
+    if (!elem.complete) break; // still arriving — not counted yet
+    extra++;
+    j = elem.end;
+  }
+
+  return {
+    value: extra > 0 ? first.value + ' +' + extra : first.value,
+    complete: closed,
+  };
+}
+
+/**
+ * Best-effort extraction of a JSON field value from partial JSON.
+ * Returns { value, complete } or null if the field hasn't been started yet.
+ * A string value is read verbatim; an ARRAY value reads its first string
+ * element and appends " +N" for the further complete ones (Pop's batch shape).
+ */
+function extractFieldValueFromPartialJson(partialJson, fieldName) {
+  const marker = '"' + fieldName + '"';
+  const markerIdx = partialJson.indexOf(marker);
+  if (markerIdx === -1) return null;
+
+  let idx = markerIdx + marker.length;
+  // Skip whitespace and colon
+  while (idx < partialJson.length && /[\s:]/.test(partialJson[idx])) idx++;
+  if (idx >= partialJson.length) return null;
+
+  // Array form — zcode-484 rework: the array is the plan's usual Pop shape, and
+  // the old single-quote-only guard made this whole branch dead (a `[` bailed
+  // out with null, so the running row built no body at all).
+  if (partialJson[idx] === '[') return readJsonArrayProgress(partialJson, idx + 1);
+
+  if (partialJson[idx] !== '"') return null;
+  const s = readJsonString(partialJson, idx + 1);
+  return { value: s.value, complete: s.complete };
 }
 
 // rAF-throttled rendering (same pattern as appendThinkingDelta)
