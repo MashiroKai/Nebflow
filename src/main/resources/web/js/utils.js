@@ -1279,7 +1279,9 @@ export function isBgAgentId(id) {
   return typeof id === 'string' && (
     id.startsWith('delegate-') || id.startsWith('subtask-') ||
     id.startsWith('subagent-') || id.startsWith('workflow-') ||
-    id.startsWith('node-') || id.startsWith('dispatcher-')
+    id.startsWith('node-') || id.startsWith('dispatcher-') ||
+    // external-executors 批 #1225：外部 CLI delegate 会话（external-<exec>-<id>）。
+    id.startsWith('external-')
   );
 }
 
