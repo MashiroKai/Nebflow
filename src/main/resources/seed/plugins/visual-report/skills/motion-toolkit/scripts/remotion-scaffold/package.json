@@ -1,0 +1,12 @@
+{
+  "name": "motion-toolkit-remotion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "motion-toolkit Remotion minimal scaffold (versions = env-probe verified 2026-10-04)",
+  "dependencies": {
+    "@remotion/cli": "4.0.532",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.532"
+  }
+}

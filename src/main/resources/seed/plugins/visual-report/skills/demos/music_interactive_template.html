@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A 大三和弦分解琶音 · 可听可看交互页（vrs2-music demo）</title>
+<style>
+:root {
+  --color-bg: #ffffff; --color-card: #ffffff; --color-text: #1b1e26;
+  --color-muted: #8a8f98; --color-accent: #5e6ad2; --color-border: #e8eaed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #14161c; --color-card: #1b1e26; --color-text: #e8eaed;
+    --color-muted: #8a8f98; --color-accent: #a0a8e8; --color-border: #2a2e38;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px 16px 48px; background: var(--color-bg); color: var(--color-text);
+       font: 15px/1.65 "Microsoft YaHei", "PingFang SC", sans-serif; }
+main { max-width: 860px; margin: 0 auto; }
+h1 { font-size: 21px; margin: 0 0 10px; }
+h2 { font-size: 16px; margin: 26px 0 8px; }
+.decl { border-left: 3px solid var(--color-accent); padding: 8px 12px; margin: 12px 0;
+        background: var(--color-card); font-size: 13.5px; }
+.decl b { color: var(--color-accent); }
+#engine { font-size: 13px; color: var(--color-muted); margin: 6px 0 0; }
+.keys { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+button { font: inherit; padding: 12px 18px; border: 1px solid var(--color-border); border-radius: 8px;
+         background: var(--color-card); color: var(--color-text); cursor: pointer; }
+button b { color: var(--color-accent); font-size: 17px; }
+button small { display: block; color: var(--color-muted); font-size: 12px; }
+button.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+button.primary b { color: #fff; }
+button.primary small { color: rgba(255,255,255,.8); }
+button:active { transform: translateY(1px); }
+canvas { width: 100%; height: 150px; border: 1px solid var(--color-border); border-radius: 8px;
+         background: var(--color-card); display: block; }
+table { border-collapse: collapse; font-size: 13.5px; margin: 8px 0; }
+th, td { border: 1px solid var(--color-border); padding: 5px 12px; text-align: left; }
+th { color: var(--color-muted); font-weight: 600; }
+#selftest-out { font-size: 13px; white-space: pre-wrap; }
+code { background: var(--color-card); border: 1px solid var(--color-border); border-radius: 4px;
+       padding: 1px 5px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+<h1>A 大三和弦分解琶音 · 可听可看交互页</h1>
+<div class="decl"><b>合成声明</b>：本页所有声音由浏览器实时合成，<b>非实录音</b>，与 <code>demos/music.md</code> 的
+<code>amaj_arpeggio_44k16.wav</code> 同一配方：十二平均律 <b>A4 = 440.000 Hz</b>（f(n) = 440 × 2<sup>n/12</sup>）、
+谐波 k = 1…6 幅度 1/k、包络 A 8 ms / D 120 ms→0.6 / S 0.6 / R 150 ms（线性）、琶音步长 0.25 s。
+在线播放电平留有安全余量，不逐样本等于 wav 的 0.85 FS 归一。</div>
+<p id="engine">音频引擎：加载中…</p>
+
+<h2>① 点按发声（单击琴键，0.90 s 门限）</h2>
+<div class="keys" id="keys"></div>
+
+<h2>② 乐句</h2>
+<div class="keys">
+  <button class="primary" id="btn-arp"><b>▶ 分解琶音</b><small>0.00 / 0.25 / 0.50 / 0.75 s 依次进入</small></button>
+  <button class="primary" id="btn-chord"><b>▶ 和弦齐奏</b><small>四音同响，门限 1.25 s</small></button>
+</div>
+
+<h2>③ 示波器（实时波形，Master 输出）</h2>
+<canvas id="scope" width="860" height="150"></canvas>
+
+<h2>④ 页内自检（OfflineAudioContext 离线渲染 + JS FFT 复算峰值）</h2>
+<p><button id="btn-selftest">运行离线自检</button><span id="selftest-out"></span></p>
+
+<h2>⑤ 配方数据</h2>
+<table>
+  <tr><th>音名</th><th>MIDI</th><th>理论频率（Hz）</th><th>相对 A4 半音数 n</th><th>起始（s）</th></tr>
+  <tr><td>A4</td><td>69</td><td>440.0000</td><td>0</td><td>0.00</td></tr>
+  <tr><td>C#5</td><td>73</td><td>554.3653</td><td>4</td><td>0.25</td></tr>
+  <tr><td>E5</td><td>76</td><td>659.2551</td><td>7</td><td>0.50</td></tr>
+  <tr><td>A5</td><td>81</td><td>880.0000</td><td>12</td><td>0.75</td></tr>
+</table>
+<p style="color:var(--color-muted);font-size:12.5px">本页自包含：Tone.js 15.1.22 以内联方式打包（来源
+cdn.jsdelivr.net/npm/tone@15.1.22，2026-10-04 实测 HTTP 200），查看与发声均不需要外部网络；Tone 不可用时自动降级为
+WebAudio 原生实现（同一配方）。</p>
+</main>
+
+<script>/*__TONE_INLINE__*/</script>
+<script>
+'use strict';
+/* ---------- 配方（与 demos/music_demo_gen.py 逐字一致） ---------- */
+var NOTES = [
+  {name: 'A4',  midi: 69, freq: 440.0000, onset: 0.00},
+  {name: 'C#5', midi: 73, freq: 554.3653, onset: 0.25},
+  {name: 'E5',  midi: 76, freq: 659.2551, onset: 0.50},
+  {name: 'A5',  midi: 81, freq: 880.0000, onset: 0.75}
+];
+var RECIPE = {A: 0.008, D: 0.12, S: 0.6, R: 0.15, gateEnd: 2.0, arpStep: 0.25,
+              nPart: 6, noteLevel: 0.15, master: 0.7};
+window.__vrsEngine = window.Tone ? 'tone' : 'webaudio';
+window.__vrsCtxState = 'none';
+window.__vrsReady = true;
+
+var $ = function (id) { return document.getElementById(id); };
+var engineEl = $('engine');
+engineEl.textContent = window.Tone
+  ? '音频引擎：Tone.js ' + (window.Tone.version || '') + '（已内联，待首次点击激活）'
+  : '音频引擎：WebAudio 原生（Tone.js 不可用，已降级）';
+
+/* ---------- 原生 WebAudio 路径（= 降级路径 = 离线自检路径） ---------- */
+var actx = null, masterRaw = null, analyserRaw = null;
+function ensureRaw() {
+  if (!actx) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    actx = new AC();
+    masterRaw = actx.createGain();
+    masterRaw.gain.value = RECIPE.master;
+    analyserRaw = actx.createAnalyser();
+    analyserRaw.fftSize = 2048;
+    masterRaw.connect(analyserRaw);
+    masterRaw.connect(actx.destination);
+  }
+  if (actx.state === 'suspended') { actx.resume(); }
+  window.__vrsCtxState = actx.state;
+  return actx;
+}
+function scheduleRawNote(ctx, dest, freq, t0, gateEnd) {
+  var env = ctx.createGain();
+  env.gain.setValueAtTime(0, t0);
+  env.gain.linearRampToValueAtTime(1, t0 + RECIPE.A);
+  env.gain.linearRampToValueAtTime(RECIPE.S, t0 + RECIPE.A + RECIPE.D);
+  env.gain.setValueAtTime(RECIPE.S, t0 + gateEnd);
+  env.gain.linearRampToValueAtTime(0, t0 + gateEnd + RECIPE.R);
+  var lvl = ctx.createGain();
+  lvl.gain.value = RECIPE.noteLevel;
+  env.connect(lvl);
+  lvl.connect(dest);
+  for (var k = 1; k <= RECIPE.nPart; k++) {
+    var o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.value = freq * k;
+    var g = ctx.createGain();
+    g.gain.value = 1 / k;
+    o.connect(g);
+    g.connect(env);
+    o.start(t0);
+    o.stop(t0 + gateEnd + RECIPE.R + 0.02);
+  }
+}
+function playRaw(notes, dur) {  /* notes: [{freq,onset}] 或统一 dur 的门限秒数 */
+  var ctx = ensureRaw();
+  var t0 = ctx.currentTime + 0.05;
+  notes.forEach(function (n) {
+    scheduleRawNote(ctx, masterRaw, n.freq, t0 + (n.onset || 0),
+                    dur != null ? dur : RECIPE.gateEnd - (n.onset || 0));
+  });
+  markPlayed();
+}
+
+/* ---------- Tone.js 路径 ---------- */
+var toneSynth = null, toneAnalyser = null;
+function ensureTone() {
+  if (!window.Tone) { return Promise.reject(new Error('Tone unavailable')); }
+  return Tone.start().then(function () {
+    if (!toneSynth) {
+      var g = new Tone.Gain(RECIPE.master).toDestination();
+      toneAnalyser = new Tone.Analyser('waveform', 2048);
+      g.connect(toneAnalyser);
+      toneSynth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: {type: 'custom', partials: [1, 1 / 2, 1 / 3, 1 / 4, 1 / 5, 1 / 6]},
+        envelope: {attack: RECIPE.A, decay: RECIPE.D, sustain: RECIPE.S, release: RECIPE.R,
+                   attackCurve: 'linear', decayCurve: 'linear', releaseCurve: 'linear'}
+      });
+      toneSynth.connect(g);
+    }
+    window.__vrsCtxState = Tone.getContext().rawContext.state;
+    markPlayed();
+  });
+}
+function playTone(notes, dur) {
+  return ensureTone().then(function () {
+    var t0 = Tone.now() + 0.05;
+    notes.forEach(function (n) {
+      toneSynth.triggerAttackRelease(n.freq, dur != null ? dur : RECIPE.gateEnd - (n.onset || 0),
+                                     t0 + (n.onset || 0));
+    });
+  });
+}
+
+/* ---------- 统一入口 ---------- */
+function play(notes, dur) {
+  var p = window.Tone ? playTone(notes, dur) : Promise.resolve(playRaw(notes, dur));
+  p.catch(function (e) {           /* Tone 失败 → 降级原生 */
+    engineEl.textContent += '；Tone 播放异常，已降级 WebAudio：' + e.message;
+    window.__vrsEngine = 'webaudio';
+    playRaw(notes, dur);
+  });
+}
+var playedOnce = false;
+function markPlayed() {
+  if (!playedOnce) {
+    playedOnce = true;
+    engineEl.textContent += '；AudioContext 已激活（' + window.__vrsCtxState + '）';
+  }
+}
+
+/* ---------- UI ---------- */
+var keysEl = $('keys');
+NOTES.forEach(function (n) {
+  var b = document.createElement('button');
+  b.id = 'btn-' + n.name.replace('#', 's');
+  b.innerHTML = '<b>' + n.name + '</b><small>' + n.freq.toFixed(4) + ' Hz</small>';
+  b.addEventListener('click', function () { play([{freq: n.freq, onset: 0}], 0.9); });
+  keysEl.appendChild(b);
+});
+$('btn-arp').addEventListener('click', function () { play(NOTES); });
+$('btn-chord').addEventListener('click', function () { play(NOTES, 1.25); });
+
+/* ---------- 示波器 ---------- */
+var scope = $('scope');
+var sctx = scope.getContext('2d');
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function drawScope() {
+  requestAnimationFrame(drawScope);
+  var data = null;
+  if (toneAnalyser) { data = toneAnalyser.getValue(); }
+  else if (analyserRaw) { data = new Float32Array(analyserRaw.fftSize); analyserRaw.getFloatTimeDomainData(data); }
+  sctx.clearRect(0, 0, scope.width, scope.height);
+  sctx.strokeStyle = cssVar('--color-border');
+  sctx.beginPath();
+  sctx.moveTo(0, scope.height / 2);
+  sctx.lineTo(scope.width, scope.height / 2);
+  sctx.stroke();
+  if (!data) { return; }
+  sctx.strokeStyle = cssVar('--color-accent');
+  sctx.lineWidth = 1.5;
+  sctx.beginPath();
+  for (var i = 0; i < data.length; i++) {
+    var x = i / (data.length - 1) * scope.width;
+    var y = scope.height / 2 - data[i] * scope.height * 1.6;
+    i ? sctx.lineTo(x, y) : sctx.moveTo(x, y);
+  }
+  sctx.stroke();
+}
+requestAnimationFrame(drawScope);
+
+/* ---------- 离线自检：OfflineAudioContext 渲染同一配方 + radix-2 FFT 复算 ---------- */
+function fftRadix2(re, im) {
+  var n = re.length, i, j, len;
+  for (i = 1, j = 0; i < n; i++) {           /* 位反转置换 */
+    var bit = n >> 1;
+    for (; j & bit; bit >>= 1) { j ^= bit; }
+    j ^= bit;
+    if (i < j) {
+      var tr = re[i]; re[i] = re[j]; re[j] = tr;
+      var ti = im[i]; im[i] = im[j]; im[j] = ti;
+    }
+  }
+  for (len = 2; len <= n; len <<= 1) {
+    var ang = -2 * Math.PI / len;
+    var wr = Math.cos(ang), wi = Math.sin(ang);
+    for (i = 0; i < n; i += len) {
+      var cr = 1, ci = 0;
+      for (j = 0; j < len / 2; j++) {
+        var ur = re[i + j], ui = im[i + j];
+        var vr = re[i + j + len / 2] * cr - im[i + j + len / 2] * ci;
+        var vi = re[i + j + len / 2] * ci + im[i + j + len / 2] * cr;
+        re[i + j] = ur + vr; im[i + j] = ui + vi;
+        re[i + j + len / 2] = ur - vr; im[i + j + len / 2] = ui - vi;
+        var ncr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr; cr = ncr;
+      }
+    }
+  }
+}
+function selfTest() {
+  var FS = 44100, DUR = 2.4, M = 32768;
+  var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  var oc = new OC(1, Math.round(FS * DUR), FS);
+  var bus = oc.createGain();
+  bus.gain.value = RECIPE.master;
+  bus.connect(oc.destination);
+  NOTES.forEach(function (n) {
+    scheduleRawNote(oc, bus, n.freq, 0.05 + n.onset, RECIPE.gateEnd - n.onset);
+  });
+  return oc.startRendering().then(function (buf) {
+    var d = buf.getChannelData(0);
+    var seg = d.subarray(Math.round(1.0 * FS), Math.round(1.0 * FS) + M);
+    var wsum = 0, re = new Float64Array(M), im = new Float64Array(M), i;
+    for (i = 0; i < M; i++) {
+      var w = 0.5 * (1 - Math.cos(2 * Math.PI * i / M));   /* Hann（periodic） */
+      wsum += w;
+      re[i] = seg[i] * w;
+    }
+    fftRadix2(re, im);
+    var df = FS / M;
+    var rows = NOTES.map(function (n) {
+      var lo = Math.round((n.freq - 35) / df), hi = Math.round((n.freq + 35) / df), imax = lo;
+      for (i = lo; i <= hi; i++) {
+        if (Math.hypot(re[i], im[i]) > Math.hypot(re[imax], im[imax])) { imax = i; }
+      }
+      var a = Math.log(Math.hypot(re[imax - 1], im[imax - 1])),
+          b = Math.log(Math.hypot(re[imax], im[imax])),
+          c = Math.log(Math.hypot(re[imax + 1], im[imax + 1]));
+      var delta = 0.5 * (a - c) / (a - 2 * b + c);
+      var fm = (imax + delta) * df;
+      var cents = 1200 * Math.log2(fm / n.freq);
+      return {name: n.name, fm: fm, cents: cents,
+              amp: 2 * Math.hypot(re[imax], im[imax]) / wsum};
+    });
+    return rows;
+  });
+}
+window.__vrsSelfTest = selfTest;
+$('btn-selftest').addEventListener('click', function () {
+  var out = $('selftest-out');
+  out.textContent = '离线渲染中…';
+  selfTest().then(function (rows) {
+    var lines = rows.map(function (r) {
+      return r.name + '：实测 ' + r.fm.toFixed(2) + ' Hz（' + (r.cents >= 0 ? '+' : '') +
+             r.cents.toFixed(2) + ' 音分）';
+    });
+    out.textContent = '自检通过（|偏差| ≤ ' +
+      Math.max.apply(null, rows.map(function (r) { return Math.abs(r.cents); })).toFixed(2) +
+      ' 音分）\n' + lines.join('\n');
+  }).catch(function (e) { out.textContent = '自检失败：' + e.message; });
+});
+</script>
+</body>
+</html>
