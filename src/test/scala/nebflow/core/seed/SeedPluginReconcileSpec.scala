@@ -274,19 +274,20 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     ensure()
 
-    // 守卫语义保持：不完整播种（既有 home 走 marker-only 分支、不重播默认集）；
-    // **默认集 agent 自愈补装**（2026-09-13 语义变更：作者令「改成缺失自愈」取代 D-8
-    // 「缺失不新装」——原断言「no project-dispatcher agent under guard」已按新口径改写，
-    // 预期判红样例）。项目面自作者 2026-09-17 裁定②（既有 home 亦 add-only 补种）起由
-    // `reconcileProjects` 补**缺失**的内置项目 ⇒ 本条原负向断言「no general project
-    // planted under guard」已随前令作废，翻转为正向。
+    // 守卫语义保持：不完整播种（既有 home 走 marker-only 分支、不重播默认集）。
+    // 合同翻转（作者裁定 2026-10-05 方案A 附带修红③，两条正向断言翻负向）：manifest 自
+    // 09-26 kernelgen manifestfix（0d2ea5770）起零 `project:` 条目 ⇒ `reconcileProjects`
+    // 结构性休眠（2026-09-17 裁定②的既有 home add-only 补种面随之无项可补）；
+    // agents 面随 10-03 a5b716d55 内置退役（RETIRED）。（历史口径：2026-09-13「缺失自愈」
+    // 与 2026-09-17 裁定②曾把两条翻为正向，已随上述两批作废。）与同 commit
+    // SeedServiceSpec ③ 同口径：reconcileProjects dormant / agents 面 RETIRED。
     assert(
-      os.exists(home / "projects" / "general" / "project.json"),
-      "missing default project backfilled under the guard (add-only reconcile, author ruling ②)"
+      !os.exists(home / "projects" / "general" / "project.json"),
+      "reconcileProjects dormant: zero project: manifest items (kernelgen 2026-09-26) — no default project under guard"
     )
     assert(
-      os.exists(home / "agents" / "project-dispatcher" / "agent.json"),
-      "default-set agent self-healed even under the guard (2026-09-13)"
+      !os.exists(home / "agents" / "project-dispatcher" / "agent.json"),
+      "agents face RETIRED (a5b716d55, 2026-10-03) — no default-set agent under guard"
     )
     // reconcile 穿透守卫：干净旧插件刷新为 seed 形态（2026-09-09 断点的机制解）
     assert(treeAsText(pluginDir) == seedText, "clean stale plugin refreshed even under guard")
@@ -339,18 +340,26 @@ class SeedPluginReconcileSpec extends FunSuite:
     ensure()
 
     // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
-    // 默认集本批 3 → 4 = +web-search-toolkit）
+    // 默认集 = 7 包：作者裁定 2026-10-05 方案A 锚点 4→7 追认现状）
     for name <- List("nebflow-qa", "nebflow-frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),
         s"non-default seed plugin '$name' NOT installed by self-heal (no area expansion)"
       )
-    // 落盘面积恰为默认集四条（枚举目录，防「遍历种子树全集」式实现）
+    // 落盘面积恰为默认集七条（枚举目录，防「遍历种子树全集」式实现）
     val installed = os.list(home / "plugins").filter(os.isDir).map(_.last).toList.sorted
     assert(
-      installed == List("nebflow-plugin-creator", "slideblocks", "visual-report", "web-search-toolkit"),
-      s"existing-home plugin area == default preinstall set (4), got: ${installed.mkString(", ")}"
+      installed == List(
+        "browser-use",
+        "computer-use",
+        "document-production",
+        "nebflow-plugin-creator",
+        "slideblocks",
+        "visual-report",
+        "web-search-toolkit"
+      ),
+      s"existing-home plugin area == default preinstall set (7), got: ${installed.mkString(", ")}"
     )
 
   // ── ⑧ 已存在目录零覆盖（自愈不改既有目录）─────────────────

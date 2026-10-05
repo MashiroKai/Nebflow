@@ -30,8 +30,9 @@ import scala.jdk.CollectionConverters.*
  *  b. **畸形目录**：种子树中每个目录必须是合法插件目录（含 `plugin.json`）。无 `plugin.json`
  *     的目录既不是可手动装的有效插件，也会让 `SeedService.resourceDirList`（anchor =
  *     `plugin.json`）返回空 ⇒ 静默 skipped = 红；
- *  c. **默认预装集恰为 `{slideblocks, visual-report, nebflow-plugin-creator}`**（写死条目：
- *     增删任何一条即红——这一条是作者「只要这三种」意图的机器判据）。
+ *  c. **默认预装集恰为 7 包**（写死条目：增删任何一条即红——原始 3 包锚出自作者
+ *     09-12「只要这三种」意图；作者裁定 2026-10-05 方案A：锚点 4→7 追认现状
+ *     （09-26 restores / 10-03 定形），见 `ExpectedDefaultPlugins`）。
  * 被去掉的只有旧口径的「树 ⊆ manifest」方向：非默认集的种子树目录**允许存在**（它们属
  * 可手动装全集），故本次回退默认集**零删除插件文件**。
  *
@@ -50,9 +51,19 @@ class SeedManifestCoverageSpec extends FunSuite:
    * 本批 +`web-search-toolkit`（3 → 4）：Nebula 面摘除 Delegate 后，网络取数能力改由
    * 插件面承载 ⇒ 该包必须进默认预装集，否则「落地 ≠ 生效」（种子树里有文件、任何 home
    * 都不装它）。锚点仍是**精确集合相等**，方向未放宽。
+   *
+   * 作者裁定 2026-10-05 方案A：锚点 4→7 追认现状（09-26 restores / 10-03 定形）。
    */
   private val ExpectedDefaultPlugins: Set[String] =
-    Set("slideblocks", "visual-report", "nebflow-plugin-creator", "web-search-toolkit")
+    Set(
+      "slideblocks",
+      "visual-report",
+      "nebflow-plugin-creator",
+      "web-search-toolkit",
+      "browser-use",
+      "computer-use",
+      "document-production"
+    )
 
   /**
    * 种子树「目录名 → 是否含 plugin.json」对照表（file 与 jar 双协议，与
@@ -141,9 +152,9 @@ class SeedManifestCoverageSpec extends FunSuite:
         malformed.mkString(", ")
     )
 
-  // ── c. 默认预装集恰为四条（写死锚点）────────────────────────
+  // ── c. 默认预装集恰为七条（写死锚点）────────────────────────
   test(
-    "K9-c: default preinstall set is exactly {slideblocks, visual-report, nebflow-plugin-creator, web-search-toolkit}"
+    "K9-c: default preinstall set is exactly {slideblocks, visual-report, nebflow-plugin-creator, web-search-toolkit, browser-use, computer-use, document-production}"
   ):
     val declared = declaredPluginNames()
     val added = (declared -- ExpectedDefaultPlugins).toList.sorted
