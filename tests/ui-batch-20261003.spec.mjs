@@ -82,26 +82,76 @@ async function newPage(browser) {
   return { context, page, pageErrors };
 }
 
-/* ═══════════ UI-A — the thinking / work line WRAPS ═══════════ */
+/* ═══════════ UI-A — the thinking / work line ═══════════
+ *
+ * ⚠️ zcode-484 SEMANTIC REVERSAL (must be read before judging this block red).
+ *
+ * UI-A (2026-10-03) ruled 「思考过程的那一行要能换行显示，而不是一直是一行」 and
+ * this block pinned the WRAPPING shape. The author's newer ruling —
+ * 2026-10-04 09:29, verbatim 「我要的思考过程以及工具过程的流式，是在一行进行流式，
+ * 像zcode一样。而且现在一次Pop多个图片和视频进行折叠的效果还有问题。」 — supersedes
+ * it FOR THE STREAMING WINDOW: the line is one clipped row with a tail fade, and
+ * only the SETTLED summary (`.turn-header`) may wrap (that contract survives,
+ * pinned by A2 below and by tests/turn-header-persistent.spec.mjs).
+ *
+ * So A1's four assertions are REVERSED, not deleted: the old ones (wrap / no
+ * clip / rows>1 / line grew) would pin the behaviour the author scored. The
+ * reversal reason is recorded in the batch's plan §6.4 (OD-4, author
+ * confirmation item) and in the harness probe itself.
+ */
 
-test.describe('UI-A — 思考行可换行', () => {
-  test('A1: a long thinking text wraps onto multiple rows instead of clipping to one', async ({ browser }) => {
+test.describe('UI-A — 思考行单行（zcode-484 反转）', () => {
+  test('A1: a long thinking text streams on ONE clipped row with a tail fade', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const read = await page.evaluate(() => window.__wrapRead());
     expect(read, 'the work line carried a thinking item').not.toBeNull();
-    expect(read.whiteSpace, 'the think box no longer forbids wrapping').toBe('normal');
-    expect(read.overflow, 'and no longer clips its overflow').not.toBe('hidden');
-    expect(read.rows, 'the text really occupies more than one text row').toBeGreaterThan(1);
-    expect(read.lineHeight, 'the line itself grew past a single row')
-      .toBeGreaterThan(read.lineHeightPx * 1.5);
+    // The reversal of the 2026-10-03 assertions, one for one:
+    expect(read.whiteSpace, 'the think box forbids wrapping while the turn runs').toBe('nowrap');
+    expect(read.overflow, 'and clips its overflow instead of growing').toBe('hidden');
+    expect(read.rows, 'the text occupies exactly one text row').toBe(1);
+    // The SLOT is the line container the acceptance sentence names: one row
+    // high, regardless of how long the text is. (`.nf-workline` itself carries
+    // 3px of vertical padding, so its own rect is 6px taller — that is the
+    // row's frame, not the text box.)
+    expect(read.slotHeight, 'the slot is exactly one row high')
+      .toBeLessThanOrEqual(read.lineHeightPx * 1.2);
+    // ...and the NEW shape the batch adds:
+    expect(read.slotOverflow, 'the slot clips too (nothing can escape vertically)').toBe('hidden');
+    expect(read.maskImage, `a tail fade is applied (mask-image was: ${read.maskImage})`)
+      .not.toBe('none');
+    // The computed form resolves `transparent` to `rgba(…, 0)`, so match either
+    // spelling (never a bare `none`).
+    expect(/transparent|rgba\([^)]*,\s*0\)/.test(read.maskImage),
+      `the fade resolves to a fully transparent tail stop (was: ${read.maskImage})`).toBe(true);
     expect(pageErrors).toEqual([]);
     await context.close();
   });
 
-  test('A2: wrapping does not break the switch interaction (chevron + slot intact)', async ({ browser }) => {
+  test('A1b: the slot height is CONSTANT for the whole multi-delta stream', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    // The author's acceptance sentence is about CONSTANCY across the stream, so
+    // the probe samples the geometry on every frame of a 12-delta feed.
+    const read = await page.evaluate(() => window.__singleLineFeed(12));
+    expect(read, 'the feed built a work line').not.toBeNull();
+    expect(read.frames, 'every sampled frame found the line').toBe(12);
+    expect(read.distinctSlotHeights.length,
+      `the slot height never changed across the feed (saw ${JSON.stringify(read.distinctSlotHeights)})`)
+      .toBe(1);
+    expect(read.distinctSlotComputed.length,
+      `nor did its computed height (saw ${JSON.stringify(read.distinctSlotComputed)})`).toBe(1);
+    expect(read.thinkHeight, 'the thinking box is exactly one row')
+      .toBeLessThanOrEqual(read.lineHeightPx * 1.2);
+    expect(read.textLen, 'a real amount of text streamed').toBeGreaterThan(100);
+    expect(read.maskImage, 'the tail fade stays applied through the stream').not.toBe('none');
+    expect(read.tailAnchored, 'the tail anchor keeps the newest text at the row end').toBe(true);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('A2: the single-row line still drives the chevron + slot toggle face', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const read = await page.evaluate(() => window.__wrapRead());
-    expect(read.hasChevron, 'the chevron survives the wrap (the toggle face)').toBe(true);
+    expect(read.hasChevron, 'the chevron survives the single-row clipping (the toggle face)').toBe(true);
 
     // The toggle face must still work: complete the turn and expand it.
     const toggle = await page.evaluate(async () => {
@@ -111,7 +161,7 @@ test.describe('UI-A — 思考行可换行', () => {
       const view = chatViews.primary;
       const chat = document.getElementById('chat');
       chatMod.finishThinking();
-      chatMod.appendAiText('换行之后仍然可以收起与展开。');
+      chatMod.appendAiText('单行之后仍然可以收起与展开。');
       chatMod.finishAi(1200, 'test-model');
       turnMod.collapseTurn(view, { durationMs: 1200, model: 'test-model', phrase: '', title: 't', sessionId: 'harness-session' });
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -127,7 +177,7 @@ test.describe('UI-A — 思考行可换行', () => {
         tuckedAfterExpand,
       };
     });
-    expect(toggle.hasHeader, 'the wrapped line settled into the turn header').toBe(true);
+    expect(toggle.hasHeader, 'the single-row line settled into the turn header').toBe(true);
     expect(toggle.tuckedAfterCollapse, 'collapsing still tucks the process rows').toBeGreaterThan(0);
     expect(toggle.tuckedAfterExpand, 'expanding still reveals them').toBeLessThan(toggle.tuckedAfterCollapse);
     expect(toggle.ariaExpanded, 'and the toggle state is published').toBe('true');

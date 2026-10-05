@@ -145,12 +145,29 @@ Example (a batch — the usual shape): {"filePath": ["~/projects/shot1.png", "~/
 Example (documents): {"filePath": ["~/projects/report.pdf", "~/projects/demo.html"]}
 Example (URL): {"filePath": "https://example.com"}"""
 
+  /**
+   * Model-visible schema. zcode-484: the `filePath` declaration now mirrors what
+   * [[requestedPaths]] actually accepts — the array branch carries `items`
+   * (`string`), `minItems` (1) and `maxItems` ([[MaxPopFiles]]), because an
+   * unconstrained `"type": ["string","array"]` promised arrays of ANYTHING while
+   * the tool silently dropped every non-string element (`[1,"a"]` → `["a"]`).
+   * Declaration and behaviour are asserted isomorphic by `PopToolSpec`.
+   *
+   * The union `type` form itself is kept (rather than the `oneOf` dual branch the
+   * PLAN §3.3-2 recommends): it is one of only two union-type sites in the repo
+   * (`ScheduleTool` is the other), so switching the FORM is a model-visible change
+   * across batches and stays an open author decision (OD-3). Consistency does not
+   * need it — `items` is what the array branch was missing.
+   */
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
         "filePath" -> Json.obj(
           "type" -> Json.arr("string".asJson, "array".asJson),
+          "items" -> Json.obj("type" -> "string".asJson),
+          "minItems" -> 1.asJson,
+          "maxItems" -> MaxPopFiles.asJson,
           "description" -> "Absolute path to show (supports ~ expansion), an array of such paths (batch, up to 20), or a single HTTP/HTTPS URL".asJson
         ),
         "title" -> Json.obj(
@@ -188,32 +205,135 @@ Example (URL): {"filePath": "https://example.com"}"""
   // ── input shape ───────────────────────────────────────────────────────────
 
   /**
+   * The reserved marker key the provider adapters inject when a tool call's
+   * arguments JSON could not be parsed (`ToolInputJson.RawArgsKey`). Duplicated
+   * as a literal on purpose: `nebflow.core` must not import `nebflow.llm`
+   * (dependency direction, `JevGateSpec` states the same rule), and this module
+   * only needs the KEY, not the parser. `PopToolSpec` pins the parity against
+   * `ToolInputJson.RawArgsKey`, so the copy cannot drift silently.
+   */
+  private val RawArgsKey = "__nebflow_raw_args__"
+
+  /** JSON type name of a `filePath` element, for the readable shape errors. */
+  private def jsonType(v: Json): String =
+    if v.isString then "string"
+    else if v.isArray then "array"
+    else if v.isObject then "object"
+    else if v.isBoolean then "boolean"
+    else if v.isNull then "null"
+    else "number"
+
+  /**
+   * A `filePath` STRING that is really a serialized JSON array literal —
+   * `"[\"a\",\"b\"]"` — was accepted as ONE path by the old code, so the call
+   * went on to fail as "not found" instead of as a shape error. The zcode-484
+   * report describes exactly this class of silent degradation; it is named here
+   * even though the root cause is undetermined tool-side (PLAN §3.0: no code
+   * path in this repo serializes an array into one string). Only a string whose
+   * trimmed form parses as a JSON ARRAY is flagged — a path that merely starts
+   * with `[` is not.
+   */
+  private def looksLikeJsonArrayString(s: String): Boolean =
+    val t = s.trim
+    t.startsWith("[") && t.endsWith("]") &&
+      io.circe.parser.parse(t).toOption.exists(_.isArray)
+
+  /**
    * `filePath` accepts the shipped single string OR an array of strings
-   * (pop-upgrade batch). Anything else (number/object/absent) is a usage
-   * error the model can act on.
+   * (pop-upgrade batch). Anything else (number/object/absent) is a usage error
+   * the model can act on.
+   *
+   * zcode-484: the acceptance is now STRUCTURE-AWARE. The old walk used
+   * `asArray.map(_.flatMap(_.asString))`, which silently dropped every non-string
+   * element (`[1,"a"]` → `["a"]`, `[{}]` → `[]`) and then reported the generic
+   * "non-empty filePath" error — an unreadable failure and the exact
+   * silent-degradation shape the batch forbids. Each malformed form now names
+   * the offending element (index + actual JSON type) or the offending string, and
+   * a marker object from `ToolInputJson` (unparseable arguments) is reported as
+   * such instead of as a missing `filePath`.
    */
   private def requestedPaths(input: JsonObject): Either[ToolError, List[String]] =
-    input("filePath") match
-      case None => Left(ToolError("Pop tool requires a `filePath` parameter (string or array of strings)."))
-      case Some(v) =>
-        val single = v.asString.filter(_.nonEmpty).map(p => List(p))
-        val array = v.asArray.map(_.flatMap(_.asString).filter(_.trim.nonEmpty).toList)
-        single.orElse(array) match
-          case Some(paths) if paths.nonEmpty =>
-            if paths.length > MaxPopFiles then
-              Left(
-                ToolError(
-                  s"Pop accepts at most $MaxPopFiles paths per call (got ${paths.length}) — split the batch across calls."
-                )
-              )
-            else Right(paths)
-          case _ =>
-            Left(
-              ToolError(
-                "Pop tool requires a non-empty `filePath` (string or array of strings). " +
-                  s"Your input: {${input.toMap.keys.mkString(", ")}}"
-              )
-            )
+    // Unparseable arguments: every field was dropped tool-side. Report the parse
+    // failure itself (with the raw preview), never "filePath is missing" — the
+    // misleading error issue #18 exists to prevent (PLAN §3.3-3).
+    input(RawArgsKey).flatMap(_.asString) match
+      case Some(raw) =>
+        Left(
+          ToolError(
+            "Pop: the tool-call arguments JSON could not be parsed, so no `filePath` reached the tool. " +
+              "Raw arguments: " + raw.take(400)
+          )
+        )
+      case None =>
+        input("filePath") match
+          case None =>
+            Left(ToolError("Pop tool requires a `filePath` parameter (string or array of strings)."))
+          case Some(v) =>
+            v.asString match
+              case Some(s) =>
+                if s.trim.isEmpty then Left(EmptyShapeError)
+                else if looksLikeJsonArrayString(s) then
+                  Left(
+                    ToolError(
+                      "Pop: `filePath` looks like a JSON array literal — pass a real JSON array, " +
+                        "not a quoted array string (got a string starting with `[`)."
+                    )
+                  )
+                else Right(List(s))
+              case None =>
+                v.asArray match
+                  case Some(elems) =>
+                    val offending = elems.zipWithIndex.collectFirst {
+                      case (e, i) if !e.isString => i -> jsonType(e)
+                    }
+                    offending match
+                      case Some((i, t)) =>
+                        Left(
+                          ToolError(
+                            s"Pop: filePath[$i] must be a plain path string (got $t) — " +
+                              "pass an array of strings, or one path per call."
+                          )
+                        )
+                      case None =>
+                        val paths = elems.flatMap(_.asString).filter(_.trim.nonEmpty).toList
+                        if paths.isEmpty then
+                          Left(
+                            ToolError(
+                              s"Pop: filePath array carried no usable path strings " +
+                                s"(${elems.length} entries) — pass plain path strings."
+                            )
+                          )
+                        else if paths.length > MaxPopFiles then
+                          Left(
+                            ToolError(
+                              s"Pop accepts at most $MaxPopFiles paths per call (got ${paths.length}) — split the batch across calls."
+                            )
+                          )
+                        else
+                          val arrayLiteral = paths.find(looksLikeJsonArrayString)
+                          arrayLiteral match
+                            case Some(_) =>
+                              Left(
+                                ToolError(
+                                  "Pop: `filePath` looks like a JSON array literal — pass a real JSON array, " +
+                                    "not a quoted array string (got a string starting with `[`)."
+                                )
+                              )
+                            case None => Right(paths)
+                  case None =>
+                    Left(
+                      ToolError(
+                        s"Pop: `filePath` must be a path string or an array of path strings (got ${jsonType(v)})."
+                      )
+                    )
+  end requestedPaths
+
+  /** The unreadable-batch error for a non-empty-looking input that yielded no
+   *  path at all (a blank string, or an array of blanks/whitespace). */
+  private val EmptyShapeError: ToolError =
+    ToolError(
+      "Pop: `filePath` was empty (no path string carried content) — pass a non-blank path or an array of paths."
+    )
 
   // ── per-item probing ──────────────────────────────────────────────────────
 
