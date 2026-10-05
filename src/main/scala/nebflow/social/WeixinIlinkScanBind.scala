@@ -296,10 +296,19 @@ object WeixinIlinkScanBind:
   private def driveLogin(base: String, opts: LoginOptions): LoginResult =
     val client = java.net.http.HttpClient.newHttpClient()
     def get(path: String): Json =
-      val resp = client.send(
-        java.net.http.HttpRequest.newBuilder(java.net.URI.create(base + path))
-          .timeout(java.time.Duration.ofSeconds(5)).GET().build(),
-        java.net.http.HttpResponse.BodyHandlers.ofString())
+      val resp =
+        try client.send(
+          java.net.http.HttpRequest.newBuilder(java.net.URI.create(base + path))
+            .timeout(java.time.Duration.ofSeconds(5)).GET().build(),
+          java.net.http.HttpResponse.BodyHandlers.ofString())
+        catch
+          // 🔴 EVERY transport failure lands in the side-car vocabulary — the
+          // class doc and the README both pin it. The send itself refuses/
+          // times out as a raw IOException (ConnectException on a closed
+          // port, HttpConnectTimeoutException on a hung side-car); without
+          // this wrap it fell through to loginFiber's generic arm and the
+          // card reported "internal_error" for a plainly absent side-car.
+          case e: java.io.IOException => throw SidecarUnreachableException(e)
       if resp.statusCode() / 100 != 2 then throw SidecarUnreachableException(null)
       io.circe.parser.parse(resp.body()).getOrElse(Json.obj())
     // begin: the side-car may answer with the first QR already.

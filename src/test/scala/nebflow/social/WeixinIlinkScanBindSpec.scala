@@ -255,6 +255,45 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
     yield ()
   }
 
+  test("WSB-8 the production side-car leg wraps a transport refusal into " +
+    "sidecar_unreachable (never a raw ConnectException)") {
+    // Offline by construction: bind a loopback port, close it, dial it — the
+    // refusal is a ConnectException on 127.0.0.1 and NO side-car, host or
+    // iLink protocol is ever touched (nothing is there to answer; a real
+    // login never starts). Regression pin for the live diagnosis 2026-10-05:
+    // the absent side-car surfaced as "internal_error" because get() wrapped
+    // only the non-2xx status, letting the raw send() IOException fall
+    // through to loginFiber's generic arm — the card mislabelled exactly the
+    // one failure (side-car not up) the vocabulary exists to name.
+    val socket = new java.net.ServerSocket(0)
+    val port = socket.getLocalPort
+    socket.close()
+    for
+      root <- IO(tmpRoot())
+      pre <- IO(SocialChannels.save(root, "weixin-ilink", Json.obj(
+        "enabled" -> false.asJson,
+        "fields" -> Json.obj("sidecar_url" -> s"http://127.0.0.1:$port".asJson))))
+      _ = assert(clue(pre).isRight, "the sidecar_url pre-save must land")
+      // the adapter alone: the thrown exception must already be in vocabulary
+      thrown <- IO(WeixinIlinkScanBind.sidecarLogin(root)(
+        WeixinIlinkScanBind.LoginOptions(emit = _ => ()))).attempt
+      _ = thrown match
+        case Left(_: WeixinIlinkScanBind.SidecarUnreachableException) => ()
+        case Left(other) =>
+          fail(s"expected SidecarUnreachableException, got ${other.getClass.getName}: ${other.getMessage}")
+        case Right(_) => fail("dialing a closed port must throw")
+      // end-to-end through the manager: the card's reason string follows
+      sb = new WeixinIlinkScanBind(root,
+        loginFn = WeixinIlinkScanBind.sidecarLogin(root), activate = IO.unit)
+      beginJson <- sb.begin()
+      scanId = scanIdOf(beginJson)
+      st <- waitFor(sb, scanId)(stateOf(_) == Some("failed"))
+      _ = assert(
+        st.hcursor.downField("error").as[String].toOption.exists(_.startsWith("sidecar_unreachable")),
+        clue(st.noSpaces))
+    yield ()
+  }
+
   test("WSB-6 a save-side rejection (secrets path blocked) → Failed, zero credential residue") {
     for
       gate <- Deferred[IO, Unit]
