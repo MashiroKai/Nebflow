@@ -3835,3 +3835,203 @@
   .pop-stack-area .pill { background: rgba(128, 128, 128, 0.18); }
   .pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.28); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #491 pop-media 主题三 (2026-10-05 author ruling 「用户输入的文件/媒体等，
+   以及LLM Pop的，都要像微信一样可以点击放大查看…把用户和LLM 的这个行为对齐」).
+   Append-only section: the user-media row reuses the .row.pop-artifact family
+   above verbatim (同层同形), so only the NEW faces get styles here —
+   the in-stream lightbox and the per-card Canvas corner entry.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The user side's independent card row — identical spacing to a Pop artifact
+   row; the marker class exists for QA/spec targeting, not for restyling. */
+.row.user-media { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+
+/* Canvas secondary entry on a media CARD (flat faces + expanded stack layers).
+   WeChat keeps such chips unobtrusive: small, top-right, surface-tinted. */
+.pop-media-flat, .pop-expand-view .media-layer { position: relative; }
+.pop-media-canvas {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45); color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.pop-media-canvas svg { width: 14px; height: 14px; }
+.pop-media-flat:hover .pop-media-canvas,
+.pop-expand-view .media-layer:hover .pop-media-canvas,
+.pop-media-canvas:focus-visible { opacity: 1; }
+.pop-media-canvas:hover { background: rgba(0, 0, 0, 0.65); }
+/* Touch surfaces have no hover: keep the chip faintly visible there. */
+@media (hover: none) {
+  .pop-media-canvas { opacity: 0.75; }
+}
+
+/* ── the in-stream lightbox (AC-S1) — WeChat-style zoom overlay ── */
+.nf-lightbox {
+  position: fixed; inset: 0; z-index: 3200; /* above search-overlay (310), below the modal family (11000) */
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.78);
+  animation: nfLightboxIn 0.16s ease-out;
+}
+@keyframes nfLightboxIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* UI-G: the subagent window gate removes animation chrome via .nf-static on
+   the VIEW container; the lightbox mounts on document.body — clamp it there. */
+.nf-static .nf-lightbox, body .nf-static ~ .nf-lightbox { animation: none; }
+.nf-lightbox-stage {
+  display: flex; flex-direction: column; gap: 10px;
+  max-width: min(92vw, 1100px);
+  max-height: 90vh;
+}
+.nf-lightbox-head {
+  display: flex; align-items: center; gap: 12px;
+  justify-content: space-between;
+}
+.nf-lightbox-name {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+.nf-lightbox-canvas {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+  border: none; border-radius: 999px;
+  padding: 7px 14px; font-size: 12px; font-family: inherit;
+  background: rgba(255, 255, 255, 0.14); color: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.nf-lightbox-canvas:hover { background: rgba(255, 255, 255, 0.24); }
+.nf-lightbox-canvas svg { width: 13px; height: 13px; }
+.nf-lightbox-media {
+  display: block;
+  max-width: 100%;
+  max-height: calc(90vh - 60px);
+  object-fit: contain;
+  border-radius: 10px;
+  background: transparent;
+}
+/* The lightbox reuses the face family's terminal-failure mark. */
+.nf-lightbox-media.nf-img-failed {
+  min-width: 220px; min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.4);
+  object-fit: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #491 pop-media 主题二 (2026-10-05 author ruling 「微信的这样的设计来进行分类
+   和检索」). Append-only section: the media grid view (chatSearch v3.2) —
+   thumbnail cards, video duration badge, source chips, week/month headers.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Source chips row (全部来源 / 用户 / 助手) — lives in .search-controls, shown
+   only under the typed media tabs. */
+#search-source-chips {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+}
+#search-source-chips[hidden] { display: none; }
+.search-source-chip {
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
+  background: transparent; color: var(--color-text-muted, #8a8f99);
+  border-radius: 999px;
+  padding: 4px 12px; font-size: 12px; font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.search-source-chip:hover { background: rgba(128, 128, 128, 0.12); }
+.search-source-chip.active {
+  background: rgba(64, 132, 240, 0.16); color: var(--color-text, #e8eaed);
+  border-color: rgba(64, 132, 240, 0.5);
+}
+
+/* Week/month group headers (本周 / {n} 月). */
+.search-media-group-header {
+  margin: 14px 2px 8px;
+  font-size: 12px; font-weight: 600;
+  color: var(--color-text-muted, #8a8f99);
+}
+
+/* The thumbnail grid (WeChat panel-like: square-ish thumbs, tight gaps). */
+.search-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+}
+.search-media-card {
+  position: relative;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.18));
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.06);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.12s;
+}
+.search-media-card:hover { border-color: rgba(64, 132, 240, 0.55); transform: translateY(-1px); }
+.search-media-thumb {
+  width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
+  display: block; background: #17191f;
+}
+.search-media-broken .search-media-thumb { object-fit: contain; opacity: 0.45; }
+.search-media-name {
+  padding: 6px 8px 8px;
+  font-size: 12px; color: var(--color-text, #e8eaed);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+/* Video duration badge (lazy <video preload=metadata> fill). */
+.search-media-dur {
+  position: absolute; right: 6px; bottom: 30px;
+  padding: 2px 6px; border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65); color: #fff;
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.search-media-dur:empty { display: none; }
+/* Link / file cards: icon + text rows. */
+.search-media-ext {
+  flex-shrink: 0; align-self: flex-start;
+  margin: 10px 0 0 10px;
+  min-width: 40px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 7px; border-radius: 6px;
+  background: rgba(64, 132, 240, 0.14); color: #7fb0f5;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+}
+.search-media-ext.generic { background: rgba(128, 128, 128, 0.16); color: var(--color-text-muted, #8a8f99); }
+.search-media-ext.link { background: rgba(64, 132, 240, 0.14); color: #7fb0f5; }
+.search-media-linkbody { min-width: 0; padding: 6px 8px 8px; }
+.search-media-linkbody .search-media-name { padding: 0 0 2px; }
+.search-media-url {
+  font-size: 11px; color: var(--color-text-muted, #8a8f99);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Source badge + time — the alignment markers (主题三). */
+.search-media-source {
+  position: absolute; top: 6px; left: 6px;
+  padding: 2px 7px; border-radius: 999px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+  pointer-events: none;
+}
+.search-media-source.src-user { background: rgba(46, 160, 67, 0.82); }
+.search-media-source.src-agent { background: rgba(9, 105, 218, 0.82); }
+.search-media-time {
+  position: absolute; top: 6px; right: 6px;
+  padding: 2px 6px; border-radius: 6px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.55); color: rgba(255, 255, 255, 0.92);
+  pointer-events: none;
+}

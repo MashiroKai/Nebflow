@@ -15,8 +15,18 @@
 //
 // Cover (the audit's three named shapes, plus this batch's new behaviour):
 //   P1  `pop-artifact` rows render (media face + file card) — the 0-coverage gap
-//   P2  UI-D: the artifact sits at the END of its turn, not next to its tool row
-//   P3  UI-D per-turn: two turns' artifacts do not cross the user-row boundary
+//   P2  #491 placement: the artifact sits IN PLACE, right after its Pop tool
+//       row (author 2026-10-05 09:54 「Pop的文件和媒体，要按时间顺序显示，不要
+//       总是在文字的最下方。而是像微信一样，按时间顺序显示」— the UI-D turn-end
+//       re-anchor this file's P2 previously pinned is REPLACED by this; its
+//       other semantics stay invariants: no `.row.tool` class, collapse
+//       exemption, stack/expand interaction, failure chip, motion gate)
+//   P3  #491 placement is per-turn: each artifact stays inside its own turn,
+//       immediately after its own Pop tool row
+//   P2b #491 acceptance shape: 「Pop A → 文本 → Pop B」 in ONE turn renders in
+//       message order toolA → artifactA → text → toolB → artifactB
+//   P2c #491 history replay: BOTH rebuild legs (backend full rebuild +
+//       localStorage incremental) restore the same in-place order
 //   P4  缺陷 D: a failed media face shows a visible placeholder + text note
 //       (the old rule only covered `.bubble.ai img` — chat.css:1026)
 //   P5  the media stack + expand/collapse toggle
@@ -126,48 +136,114 @@ test.describe('P1 — Pop artifact faces render', () => {
   });
 });
 
-/* ═══════════ P2/P3 — UI-D: the card sits at the turn bottom ═══════════ */
+/* ═══════════ P2/P3 — #491: the artifact sits IN PLACE (time order) ═══════════ */
 
-test.describe('P2 — UI-D: the artifact sits at the END of its turn', () => {
-  test('rows appended after the Pop call never bury the card', async ({ browser }) => {
+test.describe('P2 — #491: the artifact sits IN PLACE, next to its Pop tool row', () => {
+  test('rows appended after the Pop call stay after the artifact (no re-anchor)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__popThenMoreRows());
 
     const seq = await page.evaluate(() => window.__seq('#chat'));
     const artifactIdx = seq.findIndex(s => s.kind === 'artifact');
-    const lastIdx = seq.length - 1;
+    const firstToolIdx = seq.findIndex(s => s.cls.includes('tool'));
+    const replyIdx = seq.findIndex(s => s.cls.includes('ai'));
 
     expect(artifactIdx, 'the artifact row exists').toBeGreaterThan(-1);
+    expect(firstToolIdx, 'the Pop tool row exists').toBeGreaterThan(-1);
+    // The takeover of UI-D's 「放在 agent 一次消息的最底部」 by the 2026-10-05
+    // in-place ruling: the artifact renders WHERE ITS PAYLOAD ARRIVED —
+    // immediately after its Pop tool row — and everything the turn appends
+    // afterwards keeps its natural order BEHIND it.
     expect(artifactIdx,
-      'the artifact is the LAST node of its turn, past the tool row + the reply')
-      .toBe(lastIdx);
-    // Sanity: the reply row really did arrive after the Pop call (otherwise the
-    // assertion above would pass vacuously).
-    expect(seq.some(s => s.cls.includes('row') && s.cls.includes('ai')),
-      'the turn really appended a reply row after the Pop call').toBe(true);
+      'the artifact is immediately after its Pop tool row (time order = message order)')
+      .toBe(firstToolIdx + 1);
+    expect(replyIdx, 'the turn really appended a reply row after the artifact')
+      .toBeGreaterThan(artifactIdx);
     expect(pageErrors).toEqual([]);
     await context.close();
   });
 });
 
-test.describe('P3 — UI-D is per-turn: artifacts never cross the user boundary', () => {
-  test('turn 1 keeps its own artifact when a second turn arrives with one', async ({ browser }) => {
+test.describe('P3 — #491 placement is per-turn: artifacts never cross the user boundary', () => {
+  test('each turn keeps its own artifact right after its own Pop tool row', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__twoTurnsWithPop());
 
     const seq = await page.evaluate(() => window.__seq('#chat'));
     const userIdx = seq.map((s, i) => (s.kind === 'user' ? i : -1)).filter(i => i >= 0);
+    const toolIdx = seq.map((s, i) => (s.cls.includes('tool') ? i : -1)).filter(i => i >= 0);
     const artIdx = seq.map((s, i) => (s.kind === 'artifact' ? i : -1)).filter(i => i >= 0);
 
     expect(userIdx.length, 'two user rows (two turns)').toBe(2);
     expect(artIdx.length, 'two artifact rows (one per turn)').toBe(2);
-    // Each artifact must sit inside its own turn: after its user row and before
-    // the NEXT user row.
+    expect(toolIdx.length, 'two Pop tool rows').toBe(2);
+    // In-place: each artifact immediately follows ITS OWN tool row.
+    expect(artIdx[0], 'artifact 1 sits right after tool 1').toBe(toolIdx[0] + 1);
+    expect(artIdx[1], 'artifact 2 sits right after tool 2').toBe(toolIdx[1] + 1);
+    // Containment: each pair stays inside its own turn.
     expect(artIdx[0], 'artifact 1 is after user 1').toBeGreaterThan(userIdx[0]);
     expect(artIdx[0], 'artifact 1 never crosses into turn 2').toBeLessThan(userIdx[1]);
     expect(artIdx[1], 'artifact 2 is in turn 2').toBeGreaterThan(userIdx[1]);
-    // And the order of the two artifacts is preserved (no reversal by the pass).
-    expect(artIdx[0]).toBeLessThan(artIdx[1]);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+/* ═══════════ P2b/P2c — #491 acceptance: same-turn A/B + replay legs ═══════════ */
+
+test.describe('P2b — same turn: Pop A → text → Pop B keeps message order', () => {
+  test('DOM order = toolA → artifactA → text → toolB → artifactB', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popTextPop());
+
+    const seq = await page.evaluate(() => window.__seq('#chat'));
+    // Collapse the row classes into a comparable signature. header rows would
+    // only appear on replay legs; the live path renders none here.
+    const sig = seq.map(s =>
+      s.kind === 'artifact' ? 'ART'
+        : s.cls.includes('user') ? 'user'
+          : s.cls.includes('tool') ? 'tool'
+            : s.cls.includes('ai') ? 'text' : 'other');
+    const firstUser = sig.indexOf('user');
+    expect(sig.slice(firstUser), 'the turn is exactly: user → toolA → artifactA → text → toolB → artifactB')
+      .toEqual(['user', 'tool', 'ART', 'text', 'tool', 'ART']);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+test.describe('P2c — history replay restores the same in-place order (both legs)', () => {
+  test('backend full-rebuild leg: user → header → tool → artifact → text, per turn', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__replayBackendTurns());
+
+    const seq = await page.evaluate(() => window.__seq('#chat'));
+    const artIdx = seq.map((s, i) => (s.kind === 'artifact' ? i : -1)).filter(i => i >= 0);
+    const toolIdx = seq.map((s, i) => (s.cls.includes('tool') ? i : -1)).filter(i => i >= 0);
+    expect(artIdx.length, 'two artifacts replayed').toBe(2);
+    expect(toolIdx.length, 'two Pop tool rows replayed').toBe(2);
+    expect(artIdx[0], 'artifact 1 right after its tool row').toBe(toolIdx[0] + 1);
+    expect(artIdx[1], 'artifact 2 right after its tool row').toBe(toolIdx[1] + 1);
+    // Collapse invariant rides along: a replayed artifact row is never tucked
+    // (it is not in turnGroup's tuck set — class-level exemption).
+    const tucked = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#chat > .pop-artifact.nf-tucked')).length);
+    expect(tucked, 'no artifact row carries the tucked class after a replay').toBe(0);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('localStorage incremental leg: same in-place order', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__replayStorageTurns());
+
+    const seq = await page.evaluate(() => window.__seq('#chat'));
+    const artIdx = seq.map((s, i) => (s.kind === 'artifact' ? i : -1)).filter(i => i >= 0);
+    const toolIdx = seq.map((s, i) => (s.cls.includes('tool') ? i : -1)).filter(i => i >= 0);
+    expect(artIdx.length, 'two artifacts replayed from the cache').toBe(2);
+    expect(toolIdx.length, 'two Pop tool rows replayed from the cache').toBe(2);
+    expect(artIdx[0], 'artifact 1 right after its tool row (storage leg)').toBe(toolIdx[0] + 1);
+    expect(artIdx[1], 'artifact 2 right after its tool row (storage leg)').toBe(toolIdx[1] + 1);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

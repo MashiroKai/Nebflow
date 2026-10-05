@@ -23,7 +23,7 @@ import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bin
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
 // (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, placeArtifactRowsAtTurnEnd } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow } from './popArtifacts.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
@@ -432,13 +432,15 @@ export function attachmentImageUrl(path) {
   return `/uploads/${encoded}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
 }
 
-/** Append one attachment bubble to a message row. Images render as <img>
- *  from the live preview (dataURL) or, after a refresh, from the uploads
- *  route via att.path (G1). Non-image attachments keep the plain text tag. */
+/** Append ONE in-bubble attachment: the reference cards only (type ref /
+ *  taskRef). #491 主题三 (author 2026-10-05 12:14 ruling): media/file
+ *  attachments render the Pop faces on an INDEPENDENT card row after the user
+ *  row — see buildUserAttachmentRows below; the old inline att-img /
+ *  att-file-tag bubbles are gone from both replay legs too. */
 export function appendAttachmentBubble(row, att) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble user att-bubble';
-  if (att.type === 'ref' || att.type === 'taskRef') {
+  if (att && (att.type === 'ref' || att.type === 'taskRef')) {
     // #303 D4 + (2026-08-27 打回注入块收敛): restore a Reference as the
     // message card - same renderRefBlock(message) as the live
     // renderUserBubble path, so restored rows are byte-identical to live ones.
@@ -449,30 +451,23 @@ export function appendAttachmentBubble(row, att) {
     const cardNode = ref ? renderRefBlock(ref, { mode: 'message' }) : null;
     if (cardNode) bubble.appendChild(cardNode);
     row.appendChild(bubble);
-    return;
   }
-  const imgSrc =
-    att.type === 'image'
-      ? (att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:'))
-        ? att.preview
-        : attachmentImageUrl(att.path)
-      : null;
-  if (imgSrc) {
-    const img = document.createElement('img');
-    img.src = imgSrc;
-    img.className = 'att-img';
-    img.title = att.name || '';
-    img.draggable = false;
-    // Missing file (uploads dir cleaned, session deleted) — hide the broken
-    // img, the tag below still labels the attachment.
-    img.onerror = () => { img.style.display = 'none'; };
-    bubble.appendChild(img);
-  }
-  const tag = document.createElement('span');
-  tag.className = 'att-file-tag';
-  tag.textContent = (att.type === 'image' ? '[image' : '[file') + (att.name ? ': ' + att.name : '') + ']';
-  bubble.appendChild(tag);
-  row.appendChild(bubble);
+}
+
+/** Split a message's attachments the way BOTH replay legs render them: ref
+ *  cards go INSIDE the user row (appendAttachmentBubble), media/file
+ *  attachments become the one independent `.row.pop-artifact.user-media` row
+ *  that follows it. Images without an inline preview resolve from the uploads
+ *  route via `path` (G1) — passed here as the resolver so the Pop face builders
+ *  never touch the ticket leg for user bytes. Returns null when nothing
+ *  displayable remains outside the row. */
+export function buildUserAttachmentRows(row, atts) {
+  const mediaAtts = [];
+  (atts || []).forEach(att => {
+    if (att && (att.type === 'ref' || att.type === 'taskRef')) appendAttachmentBubble(row, att);
+    else mediaAtts.push(att);
+  });
+  return mediaAtts.length ? buildUserMediaRow(mediaAtts, { resolver: attachmentImageUrl }) : null;
 }
 
 // ---------- Save a message entry to localStorage (best-effort cache) ----------
@@ -633,12 +628,15 @@ export function restoreFromStorage(opts = {}) {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
+      const storageMediaRow = buildUserAttachmentRows(row, m.attachments);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       }
       chat.appendChild(row);
+      // #491 主题三 (AC-S4): the independent media card row follows the user
+      // row — same shape and order the live path builds.
+      if (storageMediaRow) chat.appendChild(storageMediaRow);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
       if (m.thinking) {
@@ -926,10 +924,8 @@ export function restoreFromStorage(opts = {}) {
     }
   });
   buildTurnSummariesForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: re-derive turn headers from flat rows
-  // UI-D: after a rebuild the artifact rows sit wherever their Pop tool row
-  // landed; re-anchor each to the end of its turn (no-op when the history
-  // carried no Pop artifact).
-  placeArtifactRowsAtTurnEnd(chat);
+  // #491 (2026-10-05 in-place ruling): rows replay in document order, so each
+  // artifact already sits right after its Pop tool row — no post-pass.
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -1004,12 +1000,15 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
+      const backendMediaRow = buildUserAttachmentRows(row, m.attachments);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       }
       fragment.appendChild(row);
+      // #491 主题三 (AC-S4): media row into the fragment right after the user
+      // row — document order survives the batched append.
+      if (backendMediaRow) fragment.appendChild(backendMediaRow);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
       if (m.thinking) {
@@ -1307,9 +1306,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   });
   chat.appendChild(fragment);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
-  // UI-D: same re-anchor as the live path and the storage-replay path — a
-  // replayed turn must show its Pop deliverable at the message bottom too.
-  placeArtifactRowsAtTurnEnd(chat);
+  // #491: doc-order replay keeps each artifact beside its Pop tool row — same
+  // as the live path and the storage-replay path; no re-anchor.
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
