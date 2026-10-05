@@ -141,7 +141,63 @@ object BackoffSupervisor:
             val payload =
               if text.trim.nonEmpty then s""""$description":\n${text.trim}"""
               else s""""$description" (no text output)"""
-            notifyParentAndStop("completed", payload, JsonObject.empty)
+            // worktree-judge-fifo 批（#1224）：delegate 轨的 Completed 先过终态
+            // 判定机（三态判词）——completed/blocked 照常报父（payload 携带判词
+            // 行）；ready-to-merge **停靠**：不报父、不停 actor（合并轮需要
+            // delegate 活着自执行合并），预算重挂合并窗新 3600s，超时走下方既有
+            // Cancelled 链兜底。subtask 轨零变化。
+            if source == "delegate" then
+              nebflow.core.delegate.DelegateTerminal
+                .onCompleted(
+                  resources = resources,
+                  delegateId = subagentId,
+                  parentSessionId = parentSessionId,
+                  description = description,
+                  initialPrompt = initialPrompt,
+                  resultText = text,
+                  childRef = childRef,
+                  supervisorRef = ctx.self
+                )
+                .attempt
+                .flatMap {
+                  case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix)) =>
+                    notifyParentAndStop("completed", payload + suffix, JsonObject.empty)
+                  case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
+                    // 合并窗预算重挂（旧窗口随工作相终结释放；DelegateBudget ∈
+                    // agent 层——core 钩子只回 Outcome，重挂留在本层，分层纪律）。
+                    DelegateBudget
+                      .release(subagentId)
+                      .*>(DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "merge-window-timeout")))
+                      .*>(logger.info(s"BackoffSupervisor: delegate $subagentId held for merge round (fresh merge-window budget armed)"))
+                      .as(
+                        active(
+                          childRef,
+                          childSpawnFn,
+                          childName,
+                          parentRef,
+                          description,
+                          agentName,
+                          subagentId,
+                          parentSessionId,
+                          resources,
+                          initialPrompt,
+                          source,
+                          extraMetadata,
+                          wsSend,
+                          restartCount,
+                          restartHistory,
+                          minBackoff,
+                          maxBackoff,
+                          maxRestarts,
+                          withinTimeRange
+                        )
+                      )
+                  case Left(err) =>
+                    // 判定钩子自身缺陷绝不吞终态：按既有完成语义报父（fail-open）。
+                    logger.warn(s"BackoffSupervisor: terminal judge hook failed for $subagentId: ${err.getMessage} — legacy completed path")
+                    notifyParentAndStop("completed", payload, JsonObject.empty)
+                }
+            else notifyParentAndStop("completed", payload, JsonObject.empty)
 
           case AgentEvent.Failed(sessionId, error) =>
             val sessionInfo =
@@ -352,6 +408,17 @@ object BackoffSupervisor:
         val taskStatus = taskStatusOverride.getOrElse(
           if eventType == "completed" then "completed" else "failed"
         )
+        // worktree-judge-fifo 批（#1224）：delegate 轨终态统一清理（幂等）——
+        // MergeQueue 出队（合并轮完成/超时/任何终态都要释放队列）+ failed/
+        // cancelled 的补判词行（completed 腿的判词行由 DelegateTerminal.onCompleted
+        // 写，此处不重复）。subtask 轨零变化。
+        val delegateCleanup =
+          if source == "delegate" then
+            nebflow.core.delegate.DelegateTerminal
+              .onTerminalCleanup(resources, subagentId, parentSessionId, taskStatus, eventType)
+              .handleErrorWith(e => logger.warn(s"delegate terminal cleanup failed: ${e.getMessage}").void)
+          else IO.unit
+
         val taskUpdate = resources.subAgentTaskStore
           .updateStatus(
             parentSessionId,
@@ -376,7 +443,8 @@ object BackoffSupervisor:
         // 终态三清（R2-c §7#4 + 本设计）：① hub 槽（僵尸 ask 卡：内核已死，
         // 卡片再没人能接——全仓唯一的其它清理入口是项目引擎，触及不到内核这种
         // 非项目会话）② 预算通道（不再计时）③ registry 行（既有）。
-        (notify *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
+        // #1224：前置 delegate 清理（队列释放先行，再拆 actor）。
+        (delegateCleanup *> notify *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
           DelegateBudget.release(subagentId) *>
           resources.agentRegistry.update(_ - subagentId) *>
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>

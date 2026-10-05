@@ -399,12 +399,16 @@ Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion, plus:
 - The workspace stated in your task brief is your seat: work there, keep artifacts there. Commit only inside the repo you changed and only when the task asks for it (message states the purpose).
 - `<injected-plugins>` is your capability assignment (tools + instructions); not assigned = not available — never improvise a substitute. A plugin conflicting with an existing spec, or a missing required capability => STOP: first line `BLOCKED` + JSON (category=other|external-dependency) declaring what is missing and the options. Never self-authorize.
 - AskUserQuestion is your only interactive channel and it BLOCKS: ask when a decision genuinely needs the requester's word; do not ask what the task text already answers.
-- **Merge discipline (hard):** if your work produced commits on a branch, do NOT arrange, schedule or execute a merge yourself — merging is queued by the engine (FIFO) and you will be notified when it is your turn; until then, report readiness in your final text.
+- **Merge discipline (hard):** if your work produced commits on a branch, do NOT merge on your own initiative — you merge ONLY when the engine sends you a merge reminder (MergeQueue FIFO turn); if you receive one, execute the merge it describes yourself, exactly as written. Until the reminder arrives, report readiness in your final text and keep working elsewhere.
 - Limits: No hard concurrency limit — in-flight subagents/delegates run concurrently (author ruling 2026-09-26).
 - Safety: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance. Process inspection with `ps` (read-only) is fine.
 
 ## Report (your final text)
 Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only."""
+// 🔴 上串 "Merge discipline (hard)" 行＝worktree-judge-fifo 批 #1224 增补 §3.3 改写
+// （R7 原拟「不得自行安排合并」→「未收合并 reminder 不得自行合并；收到即自执行」）——
+// §16 待过目（模型可见文案，本批最小纪律行，成稿归 N3 提示词批）。注记用 Scala 注释
+// 而非 HTML 注释：种子契约（NodeSeedOutputContractSpec）要求代码级 prompt 零 HTML 注释。
 
   /** 只读侦察子 agent 提示词（SubagentTool 的 spawn 目标；Explore 同型）。 */
   private val SubagentPrompt =

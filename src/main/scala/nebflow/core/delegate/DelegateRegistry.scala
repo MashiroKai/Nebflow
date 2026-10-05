@@ -31,11 +31,18 @@ import nebflow.shared.PathUtil
  */
 object DelegateRegistry:
 
-  /** 一条持久 delegate 记录。 */
+  /**
+   * 一条持久 delegate 记录。
+   *
+   * worktree-judge-fifo 批（#1224 增补 §3.4）**扩面**：末四字段 = delegate_report
+   * 的**状态槽**（仅状态单写，不携汇报——汇报仍走终态消息直传）。旧记录无此四键
+   * ⇒ 解码按缺失 = None 容忍（手工 Decoder 单点，见文件尾——deriveDecoder 不吃
+   * 缺键，会让存量记录在 list 里静默消失，禁）。
+   */
   final case class Record(
       id: String,
       executor: String,
-      /** 派发时解析的工作目录（项目 workspace 或默认 general 目录）。 */
+      /** 派发时解析的工作目录（项目 workspace 或默认 general 目录；worktree 腿 = worktree 路径）。 */
       cwd: String,
       /** 挂载项目名（缺省派发 = None → cwd 为默认 general 目录）。 */
       project: Option[String],
@@ -45,7 +52,21 @@ object DelegateRegistry:
       parentSessionId: String,
       /** 任务摘要（列表显示用；全文在 TaskLedger）。 */
       title: String,
-      createdAt: Long
+      createdAt: Long,
+      /** 工作分支（S13 分支纪律：恒 `delegate/<id>`；非 git 工作区 = None）。 */
+      branch: Option[String] = None,
+      /** worktree 目录（R6 判是腿；判否腿 = None——分支建在项目内）。 */
+      worktree: Option[String] = None,
+      /** spawn 时基分支（合并轮的 `merge --no-ff` 目标；非 git 工作区 = None）。 */
+      baseBranch: Option[String] = None,
+      /** 基工作区（合并执行的 `git -C` 目标；worktree 腿 = 项目 workspace，就地腿 = cwd）。 */
+      projectWorkspace: Option[String] = None,
+      /** delegate_report 状态槽：finish | blocked（未申报 = None）。 */
+      reportStatus: Option[String] = None,
+      /** 申报 detail（blocked 的原因承载）。 */
+      reportDetail: Option[String] = None,
+      /** 申报 suggestion（可选）。 */
+      reportSuggestion: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -86,8 +107,71 @@ object DelegateRegistry:
   def continuationLine(id: String): String =
     s"\nContinuation address: \"delegate:$id\" — later communication about THIS instance (supplements, corrections) goes through Mail(address=\"delegate:$id\"). Its result is delivered back to your session when it finishes."
 
-  /** JSON 编解码（circe generic，字段即 case class 形态）。 */
+  /**
+   * delegate_report 状态槽单写（#1224 增补 §3.4）：读-改-写（同步整写），只动
+   * report* 四键，其余字段原样保真。查无记录 = `Left`（不凭空造记录——申报的
+   * 身份必须来自真实 spawn）。
+   */
+  def updateReport(id: String, status: String, detail: String, suggestion: String): Either[String, Unit] =
+    if !validId(id) then Left(s"delegate_report: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"delegate_report: no registry record for '$id' — report after a real Delegate spawn")
+          case Some(rec) =>
+            try
+              put(
+                rec.copy(
+                  reportStatus = Some(status),
+                  reportDetail = Some(detail),
+                  reportSuggestion = if suggestion.nonEmpty then Some(suggestion) else None
+                )
+              )
+              Right(())
+            catch case e: Throwable => Left(s"delegate_report: write failed: ${e.getMessage}")
+      }
+
+  /** 进程内读-改-写串行化（updateReport 临界区；与 ChainStore.writeLock 各管各件）。 */
+  private val writeLock = new Object
+
+  /** JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
+    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
+    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。 */
   given io.circe.Encoder[Record] = io.circe.generic.semiauto.deriveEncoder
-  given io.circe.Decoder[Record] = io.circe.generic.semiauto.deriveDecoder
+
+  given io.circe.Decoder[Record] = (c: io.circe.HCursor) =>
+    for
+      id <- c.get[String]("id")
+      executor <- c.get[String]("executor")
+      cwd <- c.get[String]("cwd")
+      project <- c.get[Option[String]]("project")
+      taskId <- c.get[Option[String]]("taskId")
+      parentSessionId <- c.get[String]("parentSessionId")
+      title <- c.get[String]("title")
+      createdAt <- c.get[Long]("createdAt")
+      branch <- c.get[Option[String]]("branch")
+      worktree <- c.get[Option[String]]("worktree")
+      baseBranch <- c.get[Option[String]]("baseBranch")
+      projectWorkspace <- c.get[Option[String]]("projectWorkspace")
+      reportStatus <- c.get[Option[String]]("reportStatus")
+      reportDetail <- c.get[Option[String]]("reportDetail")
+      reportSuggestion <- c.get[Option[String]]("reportSuggestion")
+    yield Record(
+      id,
+      executor,
+      cwd,
+      project,
+      taskId,
+      parentSessionId,
+      title,
+      createdAt,
+      branch,
+      worktree,
+      baseBranch,
+      projectWorkspace,
+      reportStatus,
+      reportDetail,
+      reportSuggestion
+    )
 
 end DelegateRegistry

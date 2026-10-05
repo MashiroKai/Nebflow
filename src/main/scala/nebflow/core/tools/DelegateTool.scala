@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.AgentRuntimePort
-import nebflow.core.delegate.DelegateRegistry
+import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace}
 import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.{ProjectRuntimeRegistry, TaskLedgerHistory, TaskLedgerStore}
@@ -194,7 +194,10 @@ object DelegateTool extends Tool:
                     wsSend = ctx.wsSend,
                     parentSessionId = ctx.sessionId,
                     safetyMode = safetyMode,
-                    rootSessionId = rootSid
+                    rootSessionId = rootSid,
+                    // 新鲜派发腿跑判定机（R6 worktree + S13 分支纪律）；Mail
+                    // continue 复活腿（不经此处）保持旧形态。
+                    judgeWorkspace = true
                   )
                 yield result
               case _ =>
@@ -215,7 +218,8 @@ object DelegateTool extends Tool:
     wsSend: Option[io.circe.Json => IO[Unit]],
     parentSessionId: Option[String],
     safetyMode: String,
-    rootSessionId: String
+    rootSessionId: String,
+    judgeWorkspace: Boolean = false
   ): IO[Either[ToolError, String]] =
     IO.blocking(nebflow.core.entity.BuiltinAgents.entry(KernelAgentName).map(_.toAgentDef).get).flatMap { agentDef =>
       spawnBackground(
@@ -232,14 +236,21 @@ object DelegateTool extends Tool:
         wsSend = wsSend,
         parentSessionId = parentSessionId,
         safetyMode = safetyMode,
-        rootSessionId = rootSessionId
+        rootSessionId = rootSessionId,
+        judgeWorkspace = judgeWorkspace
       ).map(_.map { case (subagentId, ack) => ack + DelegateRegistry.continuationLine(subagentId) })
     }
 
   /** Spawn one background executor instance. Returns `(subagentId, ack)` —
     * the id is the `delegate:<id>` continuation-address payload.
     * `private[tools]`: the Mail delegate leg's continue path reuses this
-    * single spawn point (no parallel spawn path). */
+    * single spawn point (no parallel spawn path).
+    *
+    * worktree-judge-fifo 批（#1224）：`judgeWorkspace = true` 仅新鲜派发腿
+    * （`call`）传入——判定机跑 R6 worktree 判定 + S13 分支纪律（无论判否一律建
+    * 分支 `delegate/<id>`，建权在判定机）。Mail continue 复活腿缺省 false =
+    * 旧形态逐字（cwd 沿 record.cwd，不重判、不再建分支）。
+    */
   private[tools] def spawnBackground(
     agentDef: AgentDef,
     task: String,
@@ -254,37 +265,61 @@ object DelegateTool extends Tool:
     wsSend: Option[io.circe.Json => IO[Unit]],
     parentSessionId: Option[String] = None,
     safetyMode: String = "confirm-edits",
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    judgeWorkspace: Boolean = false
   ): IO[Either[ToolError, (String, String)]] =
     val childDepth = parentDepth + 1
     val agentName = agentDef.name
     val subagentId = s"delegate-$agentName-${java.util.UUID.randomUUID().toString.take(8)}"
     val childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
     val resolvedRoot = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
-    val params = NodeRunner.SpawnParams(
-      agentDef = agentDef,
-      resources = resources,
-      sessionId = subagentId,
-      sessionName = description,
-      depth = childDepth,
-      parentRef = parentRef,
-      wsSend = childWsSend,
-      // 工作座位 = 项目 workspace 或默认 general 目录（unified-delegate 批）；
-      // 不再是临时目录——任务产物留在任务的工作目录里。
-      projectRoot = Some(workspace),
-      safetyMode = safetyMode,
-      rootSessionId = resolvedRoot
-    )
-    val brief =
-      s"""[workspace] $workspace (file tools need absolute paths; Bash cwd is not guaranteed)
+    for
+      // 判定机腿（R6/S13）：git 工作区才成腿——返回 None = 非 git（旧形态逐字）。
+      binding <-
+        if judgeWorkspace then
+          DelegateWorkspace
+            .prepare(workspace, task, subagentId)
+            .handleErrorWith(e =>
+              logger.warn(s"DelegateWorkspace.prepare failed (degraded to legacy spawn): ${e.getMessage}").as(None)
+            )
+        else IO.pure(None)
+      // 判是腿的 delegate 工作座 = worktree；判否/无腿 = 原 workspace。
+      effectiveWs = binding.map(_.cwd).getOrElse(workspace)
+      params = NodeRunner.SpawnParams(
+        agentDef = agentDef,
+        resources = resources,
+        sessionId = subagentId,
+        sessionName = description,
+        depth = childDepth,
+        parentRef = parentRef,
+        wsSend = childWsSend,
+        // 工作座位 = 项目 workspace 或默认 general 目录（unified-delegate 批）；
+        // 判是腿 = worktree（worktree-judge-fifo 批）。任务产物留在任务的工作目录里。
+        projectRoot = Some(effectiveWs),
+        safetyMode = safetyMode,
+        rootSessionId = resolvedRoot
+      )
+      // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
+      // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字）+ delegate_report
+      // 申报纪律行（S7/S8「node 同款提醒（防忘记调用）」的最小形态——delegate
+      // 常为单 turn 会话，提醒落在 brief 而非中途 ladder；未申报不阻断终态）。
+      reportLine =
+        """[report] when your work reaches its end state, call delegate_report(category="finish"|"blocked", detail=…) right before your final text — the report updates your status record; your final text remains the deliverable."""
+      brief =
+        s"""[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)${binding
+            .flatMap(_.briefLine)
+            .map(l => s"\n$l")
+            .getOrElse("")}
+$reportLine
 
 $task"""
-    val ack =
-      s"""Delegate task started in the background${taskId.map(n => s" (task #$n)").getOrElse("")}.
-Executor: ${agentName}; workspace: $workspace${project.map(p => s" (project '$p')").getOrElse("")}.
+      ack =
+        s"""Delegate task started in the background${taskId.map(n => s" (task #$n)").getOrElse("")}.
+Executor: ${agentName}; workspace: $effectiveWs${project.map(p => s" (project '$p')").getOrElse("")}${binding
+            .map(b => s"; branch: ${b.branch}")
+            .getOrElse("")}.
 It runs in session $subagentId with no project context and no memory; the brief is its entire context.
 You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
-    for
       subagentRef <- NodeRunner.spawnAgentActor(system, params)
       adapterRef <- NodeRunner.spawnSupervisedAdapter(
         system = system,
@@ -300,7 +335,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         wsSend = Some(childWsSend)
       )
       _ = logger.info(
-        s"Spawned supervised delegate session: $subagentId (depth=$childDepth, workspace=$workspace, project=${project.getOrElse("-")})"
+        s"Spawned supervised delegate session: $subagentId (depth=$childDepth, workspace=$effectiveWs, project=${project.getOrElse("-")}${binding
+            .map(b => s", branch=${b.branch}${b.worktree.map(w => s", worktree=$w").getOrElse("")}")
+            .getOrElse("")})"
       )
       _ <- NodeRunner.registerAgent(
         resources,
@@ -319,15 +356,27 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           DelegateRegistry.Record(
             id = subagentId,
             executor = ExecutorRegistry.DefaultId,
-            cwd = workspace,
+            cwd = effectiveWs,
             project = project,
             taskId = taskId,
             parentSessionId = parentSessionId.getOrElse(""),
             title = description,
-            createdAt = System.currentTimeMillis()
+            createdAt = System.currentTimeMillis(),
+            branch = binding.map(_.branch),
+            worktree = binding.flatMap(_.worktree),
+            baseBranch = binding.flatMap(_.baseBranch),
+            projectWorkspace = binding.map(_.baseWs)
           )
         )
       ).handleErrorWith(e => logger.warn(s"DelegateRegistry.put failed: ${e.getMessage}").void)
+      // ⑤A 链存储：spawn 行（branch/worktree/cwd/基分支——N1 与 #1228 的数据源）。
+      _ <- IO.blocking(
+        ChainStore.appendSync(
+          ChainStore.keyFor(taskId, subagentId),
+          "delegate-spawn",
+          DelegateWorkspace.spawnPayload(subagentId, ExecutorRegistry.DefaultId, project, binding)
+        )
+      ).handleErrorWith(e => logger.warn(s"ChainStore delegate-spawn line failed: ${e.getMessage}").void)
       _ <- resources.subAgentTaskStore
         .recordTask(
           SubAgentTask(
@@ -350,7 +399,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           IO.blocking(
             TaskLedgerStore.open().appendNoteSync(
               tid,
-              s"Delegate dispatched → $subagentId (executor=${ExecutorRegistry.DefaultId}, workspace=$workspace)",
+              s"Delegate dispatched → $subagentId (executor=${ExecutorRegistry.DefaultId}, workspace=$effectiveWs${binding.map(b => s", branch=${b.branch}").getOrElse("")})",
               from = TaskLedgerHistory.Origins.Nebula,
               actor = TaskLedgerHistory.Actors.Nebula
             )

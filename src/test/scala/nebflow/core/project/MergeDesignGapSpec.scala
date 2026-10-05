@@ -491,7 +491,7 @@ class MergeDesignGapSpec extends CatsEffectSuite:
 
   // ── U2/P1：merge 硬闸 ───────────────────────────────────────────
 
-  test("C-⑥: NODE_MERGE_IN_CAP — create with 5 upstreams refused, 4 accepted; edit beyond 4 refused, =4 accepted") {
+  test("C-⑥: NODE_MERGE_IN_CAP — create legs superseded by #1224's NODE_MERGE_UNSUPPORTED seal; EDIT legs live: beyond 4 refused, =4 accepted") {
     val ws = tempRoot / "ws-cap"; os.makeDir.all(ws)
     val system = ActorSystem(s"mgap-cap-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
@@ -501,7 +501,10 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- (1 to 6).toList.traverse_(i => seed(rt.store, upstream(nid(s"u$i"), NodeLifecycle.Running)))
       ids = (1 to 6).toList.map(i => nid(s"u$i"))
-      // create：5 → 拒（边界 =4 合法 / =5 拒）
+      // create（worktree-judge-fifo 批 #1224 增补 §3.7 ⑥ 先行封口）：merge=true
+      // 新建一律 NODE_MERGE_UNSUPPORTED——IN_CAP 的 create 腿（5 拒 / 4 边界合法）
+      // 被封口取代（更强的拒：连 4-upstream 合法形态也不可达）。本用例的 create
+      // 腿改断封口契约；IN_CAP 的活面 = edit 腿（下方 e3ok/e4bad，原判据逐字）。
       c5 <- nodeEdit(
         nodeInput(
           "mgap-cap",
@@ -514,7 +517,6 @@ class MergeDesignGapSpec extends CatsEffectSuite:
         ),
         ctx
       )
-      // create：4 → 合法
       c4 <- nodeEdit(
         nodeInput(
           "mgap-cap",
@@ -548,12 +550,15 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       e3after <- node(rt, nid("e3"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
+      // create 腿 = #1224 封口（两种 upstream 数都以 NODE_MERGE_UNSUPPORTED 拒）
       assert(
-        c5.isLeft && c5.left.exists(_.contains("NODE_MERGE_IN_CAP")),
-        s"C-⑥: a 5-upstream merge create must be refused with NODE_MERGE_IN_CAP, got $c5"
+        c5.isLeft && c5.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"C-⑥: a merge create is sealed — must be refused with NODE_MERGE_UNSUPPORTED, got $c5"
       )
-      assert(c5.left.exists(_.contains("at most 4")), s"C-⑥: the message must state the cap, got $c5")
-      assert(c4.isRight, s"C-⑥: a 4-upstream merge create is the legal boundary and must pass, got $c4")
+      assert(
+        c4.isLeft && c4.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"C-⑥: even the formerly-legal 4-upstream boundary create is sealed now, got $c4"
+      )
       assert(e3ok.isRight, s"C-⑥: appending the 4th upstream (un-triggered wiring merge) must pass, got $e3ok")
       assertEquals(e3.in.sorted, List(ids(0), ids(1), ids(2), ids(3)).sorted, "the 4th upstream must be persisted")
       assert(
