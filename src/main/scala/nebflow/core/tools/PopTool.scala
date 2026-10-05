@@ -16,7 +16,7 @@ import java.nio.file.{Files, Path, Paths}
  * The author ruled («去掉card工具,然后对Pop工具进行升级») two face changes and
  * one batch addition (「Pop要支持一次工具调用多个Pop文件」):
  *
- *  - **Media (image / video) renders IN THE CHAT** — no Canvas tab. Multiple
+ *  - **Media (image / video / audio) renders IN THE CHAT** — no Canvas tab. Multiple
  *    items in one call arrive as a WeChat-style stacked card (front card +
  *    peeking layers, click / swipe to switch, 「展开 N」 flattens to one card
  *    per row). A single image renders flat, no stack.
@@ -87,6 +87,21 @@ object PopTool extends Tool:
    */
   val VideoExtensions: Set[String] = Set("mp4", "webm", "mov", "m4v", "ogv", "ogg")
 
+  /**
+   * Audio extensions eligible for the in-chat media face (canvas-media Wave2,
+   * 2026-10-05 author ruling OD-1 = (b): audio joins the chat inline face where
+   * video already lives). Same single-source discipline as [[VideoExtensions]]:
+   * the set mirrors the whitelist's audio family exactly (`FileRefs.
+   * AllowedExtensions` / `NfFilePolicy.NfFileAllowedExt`: mp3 wav oga flac
+   * aac m4a), every member is served by `/api/nf-file`, and an audio item is
+   * never inlineable — it always rides the ticket leg, like video. Kept here
+   * (not in `FileTypeRegistry`) on purpose: the registry's table is the CANVAS
+   * viewer's face and its behavior is frozen. `ogg` stays video-side only (the
+   * whitelist's own comment blocks file it under video; `oga` is the
+   * audio-side container), so no extension is claimed by both faces.
+   */
+  val AudioExtensions: Set[String] = Set("mp3", "wav", "oga", "flac", "aac", "m4a")
+
   /** The sentinel the frontend splits the payload on (`chat.js` / `persistence.js`). */
   val Sentinel = "___POP_JSON___"
 
@@ -117,7 +132,7 @@ Pop is Nebula-exclusive: only the Nebula root session may call it. Every other a
 
 ## What happens to each item (2026-10-03 pop-upgrade ruling)
 
-- **Image / video** (`png jpg jpeg gif webp bmp svg`, `mp4 webm mov m4v ogv ogg`) — rendered DIRECTLY IN THE CHAT, no Canvas tab. Several items in one call render as one stacked card (front card + peeking layers; click / swipe switches; 「展开 N」 flattens to one card per row). A single image renders flat.
+- **Image / video / audio** (`png jpg jpeg gif webp bmp svg`, `mp4 webm mov m4v ogv ogg`, `mp3 wav oga flac aac m4a`) — rendered DIRECTLY IN THE CHAT, no Canvas tab. Several items in one call render as one stacked card (front card + peeking layers; click / swipe switches; 「展开 N」 flattens to one card per row). A single image renders flat.
 - **Every other file** (documents, PDF, Office, markdown, code, HTML animations…) — rendered as a FILE CARD at the bottom of your message: filename + a forward button (hover: 「在 Canvas 打开」) that opens it in Canvas on click. The card survives the turn-process collapse. No Canvas tab opens by itself.
 - **HTTP/HTTPS URL** — opens a Canvas tab with an embedded iframe, as before. A URL may be the single string form or a lone array element; an array MIXING a URL with file paths is refused — pop URLs one call at a time, files may be batched.
 
@@ -131,7 +146,7 @@ Pop is Nebula-exclusive: only the Nebula root session may call it. Every other a
 
 ## Media bytes: inline vs ticket
 
-A local image ≤5MB in an embeddable format is embedded as a base64 `data:` URI when this call's cumulative inline budget still covers it — at most ${FileRefs.MaxInlinePayloadChars} characters of `data:` URI (≈30 KB of source bytes) per call, spent in the order the paths appear; anything past that keeps its path reference. Referenced images and every video are fetched by the frontend through `/api/nf-file` with a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves ${DataRootServedNamespacesText} and the project `.nebflow/` serves `evidence*/**`. A path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/shot.png` renders), as long as it is not credential-shaped. Project workspaces live under ${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/ — write that full path (not `~/projects/<name>/…`), and put deliverables under one of the served locations when you can.
+A local image ≤5MB in an embeddable format is embedded as a base64 `data:` URI when this call's cumulative inline budget still covers it — at most ${FileRefs.MaxInlinePayloadChars} characters of `data:` URI (≈30 KB of source bytes) per call, spent in the order the paths appear; anything past that keeps its path reference. Referenced images, every video and every audio file are fetched by the frontend through `/api/nf-file` with a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves ${DataRootServedNamespacesText} and the project `.nebflow/` serves `evidence*/**`. A path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/shot.png` renders), as long as it is not credential-shaped. Project workspaces live under ${nebflow.shared.PathUtil.dataRootRenderValue}/projects/<name>/ — write that full path (not `~/projects/<name>/…`), and put deliverables under one of the served locations when you can.
 
 Every path that could NOT be shown is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable / other) plus a `fileRefs` counter line (`failed`). Read `warnings` and fix the paths before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (`%20` also works); a `notes` array reports any path that was resolved in its decoded form.
 
@@ -337,9 +352,9 @@ Example (URL): {"filePath": "https://example.com"}"""
 
   // ── per-item probing ──────────────────────────────────────────────────────
 
-  /** One payload item: media (image/video) or a file card. */
+  /** One payload item: media (image/video/audio) or a file card. */
   private case class PopItem(
-    kind: String, // "image" | "video" | "file"
+    kind: String, // "image" | "video" | "audio" | "file"
     name: String,
     path: String,
     size: Option[Long] = None,
@@ -381,6 +396,7 @@ Example (URL): {"filePath": "https://example.com"}"""
     val value = raw.trim
     val ext = fileExtension(value)
     val isVideo = VideoExtensions.contains(ext)
+    val isAudio = AudioExtensions.contains(ext)
     val isImage = EmbeddableImageExtensions.contains(ext)
     val hit = FileRefs.resolveCandidates(
       value,
@@ -397,15 +413,17 @@ Example (URL): {"filePath": "https://example.com"}"""
       case (Some(path), decision) =>
         val name = path.getFileName.toString
         val body: Either[RejectedRef, PopItem] =
-          if isImage || isVideo then mediaItem(value, path, ext, name, decision, budget, isVideo)
+          if isImage || isVideo || isAudio then
+            mediaItem(value, path, ext, name, decision, budget, isVideo, isAudio)
           else fileCardItem(value, path, ext, name)
         (body, hit.note)
   end buildItem
 
   /**
-   * Image / video leg from the ALREADY-COMPUTED probe verdict (resolveCandidates
+   * Media leg from the ALREADY-COMPUTED probe verdict (resolveCandidates
    * ran `probeFile` internally — never probe twice): the bytes either ride
-   * inline or the path rides for the ticket leg.
+   * inline (images only) or the path rides for the ticket leg (video / audio —
+   * both are always referenced, never inlined).
    */
   private def mediaItem(
     value: String,
@@ -414,11 +432,13 @@ Example (URL): {"filePath": "https://example.com"}"""
     name: String,
     decision: RefDecision,
     budget: InlineBudget,
-    isVideo: Boolean
+    isVideo: Boolean,
+    isAudio: Boolean
   ): Either[RejectedRef, PopItem] =
     decision match
       case RefDecision.Proxy(_) =>
         if isVideo then referencedVideo(value, path, ext, name)
+        else if isAudio then referencedAudio(value, path, ext, name)
         else
           embedImage(path, budget) match
             case Right(dataUri) => inlineImage(value, path, ext, name, dataUri)
@@ -429,11 +449,12 @@ Example (URL): {"filePath": "https://example.com"}"""
               // it (the probe already proved the endpoint serves it) — never a
               // warning (a 5MB+ PNG that renders fine is not a defect).
               referencedImage(value, path, ext, name)
-      case RefDecision.Reject(rejected) if !isVideo && inlineMayTakeOver(path, rejected) =>
+      case RefDecision.Reject(rejected) if !isVideo && !isAudio && inlineMayTakeOver(path, rejected) =>
         // The endpoint refuses this reference for its REACH layer only, and the
         // file's identity is not a credential — embed the bytes (the shipped
         // behaviour: such a file never had a working reference leg, only
-        // working bytes). 返工 r2 discipline, unchanged.
+        // working bytes). 返工 r2 discipline, unchanged. Image-only: audio has
+        // no inline leg to take over with — its refusal stands.
         embedImage(path, budget) match
           case Right(dataUri) => inlineImage(value, path, ext, name, dataUri)
           case Left(_) =>
@@ -457,6 +478,11 @@ Example (URL): {"filePath": "https://example.com"}"""
   private def referencedVideo(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
     sizeOf(path).map { size =>
       Right(PopItem("video", name, describe(path), size = Some(size), ext = Some(ext)))
+    }.getOrElse(Left(notReadable(value, path)))
+
+  private def referencedAudio(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
+    sizeOf(path).map { size =>
+      Right(PopItem("audio", name, describe(path), size = Some(size), ext = Some(ext)))
     }.getOrElse(Left(notReadable(value, path)))
 
   /** File-card leg: exists + regular + size — Canvas readFile fetches the bytes on open. */
@@ -512,7 +538,7 @@ Example (URL): {"filePath": "https://example.com"}"""
     val distinct = distinctRejections(rejects)
     val listed = distinct.take(MaxListedWarnings)
     val inlined = items.count(_.src.isDefined)
-    val referenced = items.count(i => (i.kind == "image" || i.kind == "video") && i.src.isEmpty)
+    val referenced = items.count(i => (i.kind == "image" || i.kind == "video" || i.kind == "audio") && i.src.isEmpty)
     Json.obj(
       "fileRefs" -> Json.obj(
         "inlined" -> inlined.asJson,
@@ -538,7 +564,7 @@ Example (URL): {"filePath": "https://example.com"}"""
       case Some(p) =>
         val fileRefs = p.hcursor.downField("fileRefs").focus.getOrElse(Json.obj())
         val media = p.hcursor.downField("items").focus.getOrElse(Json.arr()).asArray
-          .map(_.count(i => Set("image", "video").contains(i.hcursor.get[String]("kind").toOption.getOrElse(""))))
+          .map(_.count(i => Set("image", "video", "audio").contains(i.hcursor.get[String]("kind").toOption.getOrElse(""))))
           .getOrElse(0)
         val files = p.hcursor.downField("items").focus.getOrElse(Json.arr()).asArray
           .map(_.count(i => i.hcursor.get[String]("kind").toOption.contains("file")))
@@ -662,7 +688,7 @@ Example (URL): {"filePath": "https://example.com"}"""
         payloadOf(result) match
           case Some(p) =>
             val items = p.hcursor.downField("items").as[List[Json]].getOrElse(Nil)
-            val media = items.count(i => i.hcursor.get[String]("kind").toOption.exists(k => k == "image" || k == "video"))
+            val media = items.count(i => i.hcursor.get[String]("kind").toOption.exists(k => k == "image" || k == "video" || k == "audio"))
             val files = items.count(i => i.hcursor.get[String]("kind").toOption.contains("file"))
             val failed = p.hcursor.downField("fileRefs").get[Int]("failed").toOption.getOrElse(0)
             // Visibility (toolfail-batch discipline): a Pop whose items were

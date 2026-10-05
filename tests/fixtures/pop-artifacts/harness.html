@@ -150,6 +150,60 @@
       };
     }
 
+    /* ── canvas-media Wave2 (2026-10-05 OD-1 = (b)): audio in the chat face ── */
+
+    /** A tiny REAL WAV data URI (0.3 s, 8 kHz, 8-bit mono) — built here, no
+     *  binary fixture file: an <audio> needs decodable bytes for its face to
+     *  behave like production (ticket-leg bytes never ride the payload, but a
+     *  `src` item renders with no request, same two legs as img/video). */
+    function wavDataUri() {
+      const rate = 8000, n = 2400, vol = 40;
+      const data = new Uint8Array(44 + n);
+      const dv = new DataView(data.buffer);
+      const wstr = (o, s) => { for (let i = 0; i < s.length; i++) data[o + i] = s.charCodeAt(i); };
+      wstr(0, 'RIFF'); dv.setUint32(4, 36 + n, true); wstr(8, 'WAVE');
+      wstr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true);
+      dv.setUint16(22, 1, true); dv.setUint32(24, rate, true); dv.setUint32(28, rate, true);
+      dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+      wstr(36, 'data'); dv.setUint32(40, n, true);
+      for (let i = 0; i < n; i++) data[44 + i] = 128 + Math.round(vol * Math.sin(2 * Math.PI * 440 * i / rate));
+      let bin = '';
+      for (let i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]);
+      return 'data:audio/wav;base64,' + btoa(bin);
+    }
+
+    /** One audio item — the FLAT media path (the lone-item face). */
+    function payloadSingleAudio() {
+      return {
+        fileRefs: { inlined: 0, referenced: 1, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [{ kind: 'audio', path: '/tmp/pop/tone.wav', name: 'tone.wav', src: wavDataUri() }],
+      };
+    }
+
+    /** Audio + image in ONE call — audio must ride the media STACK beside the
+     *  image (media kinds group together), never the file-card group. */
+    function payloadAudioStack() {
+      return {
+        fileRefs: { inlined: 1, referenced: 1, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [
+          { kind: 'image', path: '/tmp/pop/pic.png', name: 'pic.png', src: svgDataUri(800, 600) },
+          { kind: 'audio', path: '/tmp/pop/tone.wav', name: 'tone.wav', src: wavDataUri() },
+        ],
+      };
+    }
+
+    /** An audio whose payload points at a path with NO bytes: the ticket route
+     *  404s (static server refuses) → terminal failure mark + note (缺陷 D). */
+    function payloadBrokenAudio() {
+      return {
+        fileRefs: { inlined: 0, referenced: 1, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: [{ kind: 'audio', path: '/definitely/not/here.mp3', name: 'gone.mp3' }],
+      };
+    }
+
     const SENTINEL = '___POP_JSON___';
     const popContent = p => SENTINEL + JSON.stringify(p);
 
@@ -238,6 +292,53 @@
       chatMod.renderTool('Pop\n  ("wide.png")', '1 file', popContent(payloadSingleWide()), false,
         '{"filePath":"/tmp/pop/wide.png"}', 'pop-harness');
       await raf2();
+    };
+
+    /* ── canvas-media Wave2 — audio in the chat inline media face ─────────── */
+
+    /** A lone audio item — the FLAT media path. */
+    window.__popAudioFlat = async () => {
+      chatMod.renderUserBubble('放一段音频', [], Date.now());
+      chatMod.renderTool('Pop\n  ("tone.wav")', '1 file', popContent(payloadSingleAudio()), false,
+        '{"filePath":"/tmp/pop/tone.wav"}', 'pop-harness');
+      await raf2();
+    };
+
+    /** Audio + image in one call — the STACK path (media kinds group). */
+    window.__popAudioStack = async () => {
+      chatMod.renderUserBubble('图 + 音频', [], Date.now());
+      chatMod.renderTool('Pop\n  ("pic.png", "tone.wav")', '2 files', popContent(payloadAudioStack()), false,
+        '{"filePath":["/tmp/pop/pic.png","/tmp/pop/tone.wav"]}', 'pop-harness');
+      await raf2();
+    };
+
+    /** An audio item whose bytes cannot be fetched → the failure face. */
+    window.__popBrokenAudio = async () => {
+      chatMod.renderUserBubble('这段音频应该加载失败', [], Date.now());
+      chatMod.renderTool('Pop\n  ("gone.mp3")', '1 file', popContent(payloadBrokenAudio()), false,
+        '{"filePath":"/definitely/not/here.mp3"}', 'pop-harness');
+      await raf2();
+    };
+
+    /** Read the audio face(s): element state + placement (media face vs file
+     *  card) — DOM reads only, per the spec's house rule. */
+    window.__audioFaceRead = () => {
+      const audio = document.querySelector('#chat .pop-artifact .pop-audio');
+      if (!audio) return null;
+      const layer = audio.closest('.media-layer');
+      const flat = audio.closest('.pop-media-flat');
+      const note = document.querySelector('#chat .pop-artifact .nf-media-failed-note');
+      return {
+        controls: audio.controls,
+        inStack: !!layer,
+        inFlat: !!flat,
+        flatIsAudio: !!(flat && flat.classList.contains('is-audio')),
+        inFileCard: !!audio.closest('.file-card'),
+        failed: audio.classList.contains('nf-img-failed'),
+        noteText: note ? note.textContent.trim() : '',
+        audioCount: document.querySelectorAll('#chat .pop-artifact .pop-audio').length,
+        fileCards: document.querySelectorAll('#chat .pop-artifact .file-card').length,
+      };
     };
 
     /** Click the stack's expand pill and SAMPLE the area height across the

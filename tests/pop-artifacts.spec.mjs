@@ -673,3 +673,82 @@ test.describe('U6 — subagent window: the new stack code adds zero work', () =>
     await context.close();
   });
 });
+
+/* ═══════════ P10 — canvas-media Wave2: audio joins the chat inline media face ═══════════
+ *
+ * Author ruling OD-1 = (b) (2026-10-05): audio rides the SAME chat media face
+ * video already had (stack / flat + native controls), never a file card.
+ * PopTool-side kinds are pinned by PopToolSpec / PopToolFileRefSpec (Scala);
+ * this describe pins the RENDER side through the real modules: an audio item
+ * produces an `<audio controls>` in the media group, controls clicks do not
+ * drive the stack pager, and a broken audio gets 缺陷 D's placeholder + note.
+ * DOM reads only (the spec's house rule) — no screenshots, no source wording.
+ */
+
+test.describe('P10 — audio rides the chat inline media face (canvas-media Wave2)', () => {
+  test('a lone audio renders the native controls strip — media face, never a file card', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popAudioFlat());
+
+    const read = await page.evaluate(() => window.__audioFaceRead());
+    expect(read, 'the audio face rendered').not.toBeNull();
+    expect(read.audioCount, 'exactly one audio element').toBe(1);
+    expect(read.controls, 'native controls are on (audio has no ring affordance to replace them)').toBe(true);
+    expect(read.inFlat, 'the lone audio takes the FLAT media path').toBe(true);
+    expect(read.flatIsAudio, 'the flat box retires its fallback ratio for audio (content-height)').toBe(true);
+    expect(read.inFileCard, 'an audio item is NEVER a file card').toBe(false);
+    expect(read.fileCards, 'and no file card exists at all').toBe(0);
+    expect(read.failed, 'a decodable data URI does not mark the face failed').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('audio + image in one call stack together; a controls click never advances the pager', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popAudioStack());
+
+    const stacked = await page.evaluate(() => ({
+      layers: document.querySelectorAll('#chat .pop-stack-view .media-layer').length,
+      pill: !!document.querySelector('#chat .pop-stack-area .pill'),
+    }));
+    expect(stacked.layers, 'both media items are stack layers').toBe(2);
+    expect(stacked.pill, 'the mixed media pair shows the expand pill').toBe(true);
+
+    const read = await page.evaluate(() => window.__audioFaceRead());
+    expect(read.inStack, 'the audio sits in a media layer, not the file-card group').toBe(true);
+    expect(read.fileCards, 'zero file cards for media kinds').toBe(0);
+
+    const frontBefore = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#chat .pop-stack-view .media-layer'))
+        .findIndex(l => l.classList.contains('layer-front')));
+    await page.evaluate(() => {
+      // The audio is NOT the front card here (the image is) — a naive renderer
+      // would let this bubbling click steal the front for the audio layer.
+      const audio = document.querySelector('#chat .pop-stack-view .pop-audio');
+      audio.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const frontAfter = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#chat .pop-stack-view .media-layer'))
+        .findIndex(l => l.classList.contains('layer-front')));
+    expect(frontAfter, 'a click on the audio controls never steals the front (pager untouched)').toBe(frontBefore);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('a broken audio shows the failed-media placeholder + the plain-text note (缺陷 D parity)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popBrokenAudio());
+    // Terminal = the first ticket AND its one re-mint both failed (the img
+    // path's exact ladder — the mark only lands after the second leg dies).
+    await page.waitForFunction(() => {
+      const a = document.querySelector('#chat .pop-artifact .pop-audio');
+      return !!a && a.classList.contains('nf-img-failed');
+    }, { timeout: 5000 });
+
+    const read = await page.evaluate(() => window.__audioFaceRead());
+    expect(read.failed, 'the terminal failure mark is on the audio element').toBe(true);
+    expect(read.noteText.length, 'a plain-text note names the failure').toBeGreaterThan(0);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});

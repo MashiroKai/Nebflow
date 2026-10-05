@@ -130,6 +130,48 @@ class PopToolSpec extends FunSuite:
         assertEquals(pdf.hcursor.get[String]("itemType").toOption, Some("pdf"), "file cards carry the viewer itemType")
       case Left(err) => fail(s"Pop failed: ${err.message}")
 
+  test("audio joins the media face beside image/video (canvas-media Wave2, OD-1 = (b))"):
+    // One call: image + audio + document — the audio item is PAYLOAD media
+    // (kind "audio", ticket leg), not a file card, and the input order is the
+    // payload order like every batch.
+    val dir = tempDir("audio-batch")
+    os.write.over(dir / "a.png", Array.fill(8)(0x41.toByte))
+    os.write.over(dir / "tone.mp3", Array.fill(8)(0x49.toByte))
+    os.write.over(dir / "report.pdf", Array.fill(8)(0x43.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    pop(
+      JsonObject("filePath" -> Json.arr(
+        (dir / "a.png").toString.asJson,
+        (dir / "tone.mp3").toString.asJson,
+        (dir / "report.pdf").toString.asJson
+      )),
+      buf
+    ) match
+      case Right(raw) =>
+        assertEquals(buf.size, 0, "a batch never opens Canvas tabs")
+        val p = payloadOf(raw)
+        assertEquals(kindsOf(p), List("image", "audio", "file"), "input order is the payload order")
+        val audio = itemsOf(p)(1)
+        assertEquals(audio.hcursor.get[String]("kind").toOption, Some("audio"))
+        assert(audio.hcursor.get[String]("src").toOption.isEmpty, "an audio is never inlined — ticket leg")
+        assertEquals(audio.hcursor.get[String]("path").toOption, Some((dir / "tone.mp3").toString))
+        val fileRefs = p.hcursor.downField("fileRefs")
+        assertEquals(fileRefs.get[Int]("referenced").toOption, Some(1), "the audio is referenced media")
+        assertEquals(fileRefs.get[Int]("failed").toOption, Some(0))
+      case Left(err) => fail(s"Pop failed: ${err.message}")
+
+  test("modelFacingResult counts an audio item as media, not files (canvas-media Wave2)"):
+    val dir = tempDir("modelface-audio")
+    os.write.over(dir / "tone.wav", Array.fill(8)(0x57.toByte))
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val raw = pop(JsonObject("filePath" -> (dir / "tone.wav").toString.asJson), buf).toOption.getOrElse(fail("expected Right"))
+    val model = PopTool.modelFacingResult(raw)
+    val p = io.circe.parser.parse(model).toOption.getOrElse(fail(s"model face must be JSON: $model"))
+    assertEquals(p.hcursor.get[Int]("media").toOption, Some(1), "audio rides the media counter")
+    assertEquals(p.hcursor.get[Int]("files").toOption, Some(0), "an audio item is not a file card")
+    val summary = PopTool.summarizeResult(JsonObject.empty, raw)
+    assert(summary.startsWith("Pop: 1 media + 0 file card(s)"), summary)
+
   test("a missing file is a payload WARNING (failed=1), not a tool error — the rest of the batch still shows"):
     val dir = tempDir("missing")
     os.write.over(dir / "here.png", Array.fill(8)(0x42.toByte))
@@ -449,6 +491,10 @@ class PopToolSpec extends FunSuite:
     assert(d.contains("stacked card"), "the media stack face must be documented")
     assert(d.contains("AFTER your final text"), "the call-last placement rule must be documented")
     assert(d.contains("array"), "the multi-file batch face must be documented")
+    // canvas-media Wave2 (2026-10-05 OD-1 = (b))：音频面的 description 契约
+    assert(d.contains("Image / video / audio"), "the in-chat media face must name all three kinds")
+    assert(d.contains("mp3 wav oga flac aac m4a"), "the audio extension family must be declared")
+    assert(d.contains("every audio file"), "the ticket-leg paragraph must cover audio")
 
   override def afterEach(context: munit.AfterEach): Unit =
     // test artifacts under target/ are cleaned by sbt; nothing else to do

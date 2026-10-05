@@ -12,11 +12,13 @@
 // Two faces (the author-approved preview demo lives at demo/pop-upgrade-demo.html;
 //   that path is git-ignored — `.gitignore:38` `*demo*.html` — so it is an
 //   author-side preview, not a tracked deliverable):
-//   - MEDIA (image / video) — no Canvas tab. Several items in one call render
-//     as ONE WeChat-style stacked card: front card + peeking layers to the
-//     right, the 「展开 N」 pill on the left; click / swipe switches; expand
+//   - MEDIA (image / video / audio) — no Canvas tab. Several items in one call
+//     render as ONE WeChat-style stacked card: front card + peeking layers to
+//     the right, the 「展开 N」 pill on the left; click / swipe switches; expand
 //     flattens to one card per row (「收起」 re-stacks). A single media item
-//     renders flat with no stack at all.
+//     renders flat with no stack at all. (canvas-media Wave2, 2026-10-05
+//     author ruling OD-1 = (b): audio joins the face video already had —
+//     native <audio controls> strip, ticket leg like video, no stack chrome.)
 //   - FILE (documents / HTML animations / everything else) — file cards at
 //     the bottom of the agent's message: filename + a forward button whose
 //     hover text is 「在 Canvas 打开」. The row carries `.row.pop-artifact`
@@ -187,7 +189,7 @@ function appendFailureNote(face, el) {
   face.appendChild(note);
 }
 
-/** One media card face for `item`: <img>/<video> + the video overlay face.
+/** One media card face for `item`: <img>/<video>/<audio> + the video overlay face.
  *  `owner` (a view or the active view) supplies the window-role motion switch;
  *  it is not read here today — the face is static in both roles — but the
  *  parameter keeps the call shape ready for role-dependent chrome.
@@ -196,16 +198,37 @@ function appendFailureNote(face, el) {
  *  is known (image `load`, video `loadedmetadata`) so the CALLER can give the
  *  surrounding box the media's own aspect ratio — the box's ratio is what makes
  *  the un-cropped `object-fit: contain` face fill its frame instead of
- *  letterboxing inside a mismatched one. */
+ *  letterboxing inside a mismatched one.
+ *
+ *  canvas-media Wave2 (2026-10-05 OD-1 = (b)): an AUDIO item has no intrinsic
+ *  frame at all — the native controls strip IS the face. `natural` is never
+ *  called for it (nothing to report: audio has no width/height), the box keeps
+ *  its CSS fallback and the strip is centered inside it; native controls carry
+ *  play state + progress, so no ring / progress / duration-chip chrome is
+ *  layered on (克制). Controls are on in BOTH faces: unlike video, an audio
+ *  strip without controls is an empty bar — there is no ring affordance to
+ *  replace them. Controls clicks are stopPropagation'd so tapping play in the
+ *  stack face does not also drive the bring-to-front pager. */
 function mediaFace(item, interactive, natural) {
   const wrap = document.createElement('div');
-  wrap.className = 'pop-media';
+  wrap.className = 'pop-media' + (item.kind === 'audio' ? ' is-audio' : '');
   const report = (w, h) => {
     if (typeof natural === 'function' && Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
       natural(w, h);
     }
   };
-  if (item.kind === 'video') {
+  if (item.kind === 'audio') {
+    const audio = document.createElement('audio');
+    audio.className = 'pop-audio';
+    audio.preload = 'metadata';
+    audio.controls = true;
+    audio.dataset.nfName = item.name || item.path || '';
+    audio.addEventListener('click', e => e.stopPropagation());
+    // Same two legs as img/video: `src` wins, else the /api/nf-file ticket,
+    // re-minted once on a load error, terminal failure → note line (缺陷 D).
+    hydrateMedia(audio, item, el => appendFailureNote(wrap, el));
+    wrap.appendChild(audio);
+  } else if (item.kind === 'video') {
     const expandedFace = interactive === 'expanded';
     const video = document.createElement('video');
     video.className = 'pop-video';
@@ -440,10 +463,12 @@ function buildMediaStack(items) {
 
 /** A single media item renders flat — no pill, no stack, no switching. Its box
  *  takes the media's own ratio (zcode-484 D1/D3), so a lone wide screenshot is
- *  not cropped into a portrait box. */
+ *  not cropped into a portrait box. An AUDIO item has no ratio to report — the
+ *  `is-audio` class retires the fallback ratio box so the flat face collapses
+ *  to the controls strip (chat.css) instead of a mostly-empty 4/3 frame. */
 function buildMediaFlat(item) {
   const box = document.createElement('div');
-  box.className = 'pop-media-flat';
+  box.className = 'pop-media-flat' + (item.kind === 'audio' ? ' is-audio' : '');
   box.appendChild(mediaFace(item, 'expanded', (w, h) => fitLayer(box, w, h, STACK_MAX.w, EXPAND_MAX.h)));
   return box;
 }
@@ -489,6 +514,10 @@ function buildFileCard(item) {
  * top, file cards under it, the failed-paths chip last. Returns null when the
  * payload carries no displayable item (callers keep the plain tool row).
  */
+/** The payload kinds that ride the MEDIA face (stack / flat); everything else
+ *  is a file card. canvas-media Wave2 adds `audio` beside image/video. */
+const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
+
 export function buildPopArtifactRow(payload) {
   const items = (payload.items || []).filter(it => it && typeof it.path === 'string');
   if (!items.length) return null;
@@ -496,8 +525,8 @@ export function buildPopArtifactRow(payload) {
   // the end of their turn (UI-D). Set before the row is built so a caller that
   // appends it and then calls the placement pass sees the row.
   _artifactsSeen = true;
-  const media = items.filter(it => it.kind === 'image' || it.kind === 'video');
-  const files = items.filter(it => it.kind !== 'image' && it.kind !== 'video');
+  const media = items.filter(it => MEDIA_KINDS.has(it.kind));
+  const files = items.filter(it => !MEDIA_KINDS.has(it.kind));
 
   const row = document.createElement('div');
   row.className = 'row pop-artifact';
