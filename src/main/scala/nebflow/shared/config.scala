@@ -91,7 +91,7 @@ object ModelChainConfig:
       case (Right(Some(d)), _) => Right(d)
       case (Right(None), Right(Some(p))) => Right(p)
       case (Right(None), Right(None)) =>
-        Left(io.circe.DecodingFailure("Missing field 'default' (or legacy 'primary')", c.history))
+        Left(io.circe.DecodingFailure("Missing field 'default' (alias 'primary' also accepted)", c.history))
       case (Left(err), _) => Left(err)
       case (_, Left(err)) => Left(err)
     for

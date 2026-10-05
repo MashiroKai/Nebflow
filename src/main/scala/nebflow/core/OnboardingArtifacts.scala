@@ -201,7 +201,7 @@ object OnboardingArtifacts:
        |## 记录规则
        |- 随口提到的事实（人名、日期、偏好）→ 记到这里
        |- 灵魂层面的反馈（「你太啰嗦了」）→ 改写 Soul.md
-       |- 项目相关笔记不再单独建 memory.md，一律以「项目名：」前缀记在这里""".stripMargin
+       |- 项目相关笔记一律以「项目名：」前缀记在这里""".stripMargin
 
   /**
    * 落盘两份文件 + 起名结果写回 `displayName`。幂等可重跑（覆盖式写入）。

@@ -131,7 +131,7 @@ object OfficialPackages:
       case Some(expected) =>
         s"'$name' uses the reserved official namespace '$ReservedPrefix' but its content digest does not match the " +
           s"shipped official package (built-in ${expected.take(12)}… vs on disk ${digest.take(12)}…). The package directory " +
-          "was modified after installation (or the running product no longer ships this exact package). Official packages " +
+          "was modified after installation (or the running product does not ship this exact package). Official packages " +
           "are trusted by digest only — restore the shipped package, or install it under a non-reserved name. " +
           s"(${ErrorCode})"
       case None =>

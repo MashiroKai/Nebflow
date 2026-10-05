@@ -392,7 +392,7 @@ ReportLab pushes the **entire block** to the next page, leaving the current page
 2. Generate the **cover PDF** with `cover_render.py` (pick a template 01–05 per `typesetting/cover.md` Part 2; pass content + palette).
 3. **Merge: insert cover as page 1** of the body PDF using pypdf → single final PDF.
 
-> **Why ReportLab covers now?** The cover engine reproduces the previous HTML designs in pure ReportLab, so the Report route no longer depends on Playwright/Chromium. Fonts are auto-detected from the host machine and chosen by cover style (see `cover.md` Part 3). One cover engine, one visual standard.
+> **Why ReportLab covers?** The cover engine reproduces the HTML designs in pure ReportLab, so the Report route does not depend on Playwright/Chromium. Fonts are auto-detected from the host machine and chosen by cover style (see `cover.md` Part 3). One cover engine, one visual standard.
 
 **⚠️ Cover page is DEFAULT ON for all Report-route documents ≥ 3 pages.**
 

@@ -185,7 +185,7 @@ class MailDeliveryRetireSpec extends FunSuite:
         s"$label: the queue leg must be gone from the block"
       )
       assert(face.contains("There is no delivery mode to choose"), s"$label: the single-mode fact must be stated")
-      assert(face.contains("RETIRED on"), s"$label: the retirement must be stated")
+      assert(face.contains("is an explicit error"), s"$label: the explicit refusal must be stated")
       assert(face.contains(MailTool.ErrDeliveryQueueRetired), s"$label: the retirement error code must be named")
       assert(
         !face.contains("or target a team agent in queue mode"),
@@ -213,7 +213,7 @@ class MailDeliveryRetireSpec extends FunSuite:
         label
       )
       assert(clue(msg).contains(MailTool.ErrDeliveryQueueRetired), s"$label: must carry the retirement code")
-      assert(msg.contains("retired"), s"$label: must state that queue is retired")
+      assert(msg.contains("not accepted"), s"$label: must state that queue is not accepted")
       assert(
         msg.contains("delivery=queue"),
         s"$label: must name the offending value so the caller can self-correct, got: $msg"
@@ -255,7 +255,7 @@ class MailDeliveryRetireSpec extends FunSuite:
   //    and every routing gate).
   // ============================================================
 
-  test("device leg (retired): a stale `device=` call refuses with MAIL_DEVICE_RETIRED — the device tombstone outranks the delivery tombstone and every routing gate"):
+  test("device face: a stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED — the device guard outranks the delivery guard and every routing gate"):
     val msg = rejectedMsg(
       MailTool.call(qJson("device" -> "KAI", "message" -> "hi", "delivery" -> "queue"), ctx()).unsafeRunSync(),
       "device leg"
@@ -264,7 +264,7 @@ class MailDeliveryRetireSpec extends FunSuite:
     // NOT the queue retirement code (even though delivery="queue" was also present).
     assert(msg.contains(MailTool.ErrDeviceLegRetired), s"the stale device= call must hit the device tombstone, got: $msg")
     assert(!msg.contains(MailTool.ErrDeliveryQueueRetired), s"the device tombstone sits BEFORE the delivery tombstone, got: $msg")
-    assert(msg.contains("retired"), s"the error must state the retirement, got: $msg")
+    assert(msg.contains("takes no 'device' parameter"), s"the error must state the device face, got: $msg")
     assert(msg.contains("KAI"), s"the error must echo the offending device value, got: $msg")
     assert(msg.contains("nothing was sent"), s"fail-closed: must declare zero side effects, got: $msg")
 

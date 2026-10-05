@@ -338,7 +338,7 @@ object CliRouter:
         IO.println(s"  ${"nebflow".padTo(16, ' ')}Start the Gateway (same as 'nebflow start')") *>
         IO.println(s"  ${"start".padTo(16, ' ')}Start the Gateway server") *>
         IO.println(s"  ${"stop".padTo(16, ' ')}Stop the running Gateway") *>
-        IO.println("  -s, --server          (legacy) same as 'nebflow start'") *>
+        IO.println("  -s, --server          (alias) same as 'nebflow start'") *>
         IO.println("") *>
         IO.println("System commands (offline):") *> {
           CommandRegistry.all

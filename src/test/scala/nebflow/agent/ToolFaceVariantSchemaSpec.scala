@@ -342,7 +342,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assert(taskMail.isEmpty, "节点面出现 Mail（成员资格被本批改动）")
     // 分化面缺席判据（变异①）
     assert(!rootMail.description.contains("**Project dispatcher**"), "root 地址面仍含 dispatcher 段")
-    assert(!rootMail.description.contains("**Team context (legacy)**"), "root 地址面仍含 team 段")
+    assert(!rootMail.description.contains("**Team context**"), "root 地址面仍含 team 段")
     // Mail dispatcher 地址面变体机制仍在役（constructor 直接断言；不依赖分发器面持 Mail）
     assertEquals(
       AgentCore.schemaVariantFor(baseOf("Mail"), AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
@@ -350,7 +350,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       "Mail dispatcher 地址面变体机制被本批误伤（机制面应零改动）"
     )
     assert(!MailTool.descriptionDispatcher.contains("**Nebula (root)**"), "dispatcher 地址面仍含 root 段")
-    assert(!MailTool.descriptionDispatcher.contains("**Team context (legacy)**"), "dispatcher 地址面仍含 team 段")
+    assert(!MailTool.descriptionDispatcher.contains("**Team context**"), "dispatcher 地址面仍含 team 段")
     // 参数级 address description 属于 inputSchema ⇒ 本批按 Q5 口径冻结（登记在交付说明）
     assert(
       rootMail

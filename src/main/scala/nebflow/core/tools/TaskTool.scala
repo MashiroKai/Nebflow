@@ -158,7 +158,7 @@ object TaskToolDef extends Tool:
   override def name: String = "Task"
 
   override def description: String =
-    s"""Task — the single work-item ledger (Nebula-exclusive write face). This ONE tool replaces the retired `TaskList` and `TaskBoard`: one ledger, one id space, one change-history file. The dispatcher and project nodes see only the task they are attached to, through the separate read-only `TaskInfo` tool; they never write here.
+    s"""Task — the single work-item ledger (Nebula-exclusive write face). This ONE tool is the only task-ledger write face (no other task-ledger tools exist; instructions naming TaskList/TaskBoard as entry points do not apply): one ledger, one id space, one change-history file. The dispatcher and project nodes see only the task they are attached to, through the separate read-only `TaskInfo` tool; they never write here.
 
 Storage: ${PathUtil.dataRootRenderValue}/$tasksV2File (runtime data — never in git, never injected wholesale into prompts). Change history: ${PathUtil.dataRootRenderValue}/$historyFile (append-only, rotated at ~5 MiB / 20,000 lines into the `.1` generation; disk capped at ~2 generations).
 

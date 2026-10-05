@@ -686,11 +686,11 @@ private[gateway] object PresenceRoutes:
           if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
           else
             logger.warn(
-              s"Rejected PUT /agents/$agentName — skills/flows write-back retired 2026-09-06 (stage 2d tool-face batch)"
+              s"Rejected PUT /agents/$agentName — skills/flows write-back is definition/plugin-managed"
             )
             Gone(
               Json.obj(
-                "error" -> "agent skills/flows write-back retired 2026-09-06: per-agent capability config is definition/plugin-managed; agent.json is no longer written from the panel".asJson
+                "error" -> "agent skills/flows write-back is not supported: per-agent capability config is definition/plugin-managed; agent.json is not written from the panel".asJson
               )
             )
         }
