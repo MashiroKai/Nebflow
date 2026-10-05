@@ -733,7 +733,7 @@ export default {
   'ob2.greet1': '你好。第一次见面。',
   'ob2.greet2': '我是为你而生的那个智能体 —— 不过此刻，我还没有名字，没有性格，也没有关于你的任何记忆。',
   'ob2.greet3': '接下来我会一个问题一个问题地问你，像做一次很短的问卷。答不上的、不想说的，随时跳过 —— 跳过不会卡住我们，只会让那一页先空着。',
-  'ob2.greet4': '你说的话最后会变成两份记忆：Soul.md 是「我是谁」，由你对我的期待塑成；User.md 是「你是谁」。原来的项目记忆 memory.md 会退役 —— 从今天起，我按你记事，不按项目记事。',
+  'ob2.greet4': '你说的话最后会变成两份记忆：Soul.md 是「我是谁」，由你对我的期待塑成；User.md 是「你是谁」。我按你（这个人）记事，不按项目记事。',
   'ob2.collected': '问卷收讫。现在，请允许我当着你的面，把自己写出来。',
   // 第一幕 · 见面
   'ob2.intro.meet1': '我们从最小的开始。',
@@ -817,7 +817,7 @@ export default {
   'ob2.label.temper2': '做事方式',
   // 第四幕 · 认识你
   'ob2.intro.you1': '我这边差不多成型了。',
-  'ob2.intro.you2': '最后几个问题不是关于我，是关于你 —— 因为从今天起，我记事只为你一个人。',
+  'ob2.intro.you2': '最后几个问题不是关于我，是关于你 —— 我记事只为你一个人。',
   'ob2.lead.identity': '先问个大概。',
   'ob2.q.identity': '你的日常身份更接近哪一种？',
   'ob2.opt.id.dev': '程序员 / 工程师',
@@ -847,7 +847,7 @@ export default {
   'ob2.write.3': '✓ 相处之道 — 角色 · 风格 · 主动度 · 约定 · 语气',
   'ob2.write.4': '· 写入 User.md …',
   'ob2.write.5': '✓ 称呼与身份 / 当前关注',
-  'ob2.write.6': '✓ memory.md（项目记忆）→ 已退役',
+  'ob2.write.6': '✓ 项目笔记 —— 一律记入 User.md',
   'ob2.write.done': '记忆已写入：Soul.md（{soul}）、User.md（{user}）。',
   'ob2.write.failed': '记忆写入失败：{error}',
   // 收尾终局步（真实探测 → 产物 → marker）。三条都是「拦住了」的如实说法，
@@ -909,7 +909,7 @@ export default {
   // （js/secretsPanel.js）——标题与按钮共用一个键。
   'settings.secrets': '密钥',
   'settings.addProvider': '+ 添加服务商',
-  'settings.modelChainHint': '模型方案已退役——输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
+  'settings.modelChainHint': '在输入框输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',

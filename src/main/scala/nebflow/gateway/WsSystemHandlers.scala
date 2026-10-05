@@ -345,12 +345,12 @@ private[gateway] object WsSystemHandlers:
       .flatMap(_.hcursor.downField("name").as[String].toOption)
       .getOrElse("")
     logger.warn(
-      s"Rejected updateAgentTools for '$agentName' — write-back retired 2026-09-06 (stage 2d tool-face batch)"
+      s"Rejected updateAgentTools for '$agentName' — per-agent tools are mechanism/plugin-managed"
     )
     wsSend(
       io.circe.Json.obj(
         "type" -> "error".asJson,
-        "message" -> s"updateAgentTools retired: per-agent tools are mechanism/plugin-managed since 2026-09-06; agent.json is no longer written from the panel".asJson
+        "message" -> s"updateAgentTools is not supported: per-agent tools are mechanism/plugin-managed; agent.json is not written from the panel".asJson
       )
     )
   end handleUpdateAgentTools

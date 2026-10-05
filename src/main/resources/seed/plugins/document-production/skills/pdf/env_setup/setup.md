@@ -56,7 +56,7 @@ Run the platform-appropriate setup script:
 | Optional | tectonic | LaTeX/Academic PDF compilation |
 | Optional | LibreOffice | Office-to-PDF conversion |
 
-> **Covers no longer need Playwright.** All Report/Academic covers render with ReportLab
+> **Covers do not need Playwright.** All Report/Academic covers render with ReportLab
 > (`scripts/cover_render.py`). Playwright/Chromium is required **only** for the Creative/poster
 > pipeline and some HTML→PDF conversions; Tectonic **only** for the Academic/LaTeX route.
 > Install these optional engines **on demand, after asking the user** (they involve large

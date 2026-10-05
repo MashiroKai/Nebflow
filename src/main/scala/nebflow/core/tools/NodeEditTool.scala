@@ -178,16 +178,16 @@ object NodeEditTool extends Tool:
 - in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each gains a default pass edge here.
 - deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null clears; failed/cancelled/blocked never trigger; deps edits on RUNNING nodes rejected. A ref may be "chain:<id>" = wait for that WHOLE chain (all members completed) — a pure scheduling gate, NEVER a membership edge, deps-only (not 'in'); unknown id ⇒ NODE_CHAIN_REF_UNKNOWN.
 - retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ that upstream re-runs (fresh result over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
-- out (optional; edit rewrites the edge set; empty/null = dangling (state the intent with dangling=true): result retained, auto-delivered once wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
+- out (optional; edit rewrites the edge set; empty/null = dangling (state the intent with dangling=true): result retained, auto-delivered once wired): "B" = pass edge with payload; "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
 - worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name>; fail-fast; refused on edits.
-- Retired (rejected): agent/skill/mcp (NODE_AGENT_RETIRED) ⇒ plugins; preset (NODE_PRESET_RETIRED) — no per-node scheme; dispatcher's applies.
+- Not settable (refused): agent/skill/mcp (NODE_AGENT_UNSUPPORTED) ⇒ plugins; preset (NODE_PRESET_UNSUPPORTED) — no per-node scheme; dispatcher's applies.
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered). Omitted ⇒ rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
-- notify (optional; unset = legacy: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. Legacy one-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
+- notify (optional; unset = default: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. One-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
 ## Semantics
 - Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task, no in) runs at create, async.
 - Verdict routing (role=verifier): fail is a VERDICT — THE VERIFIER STILL COMPLETES; "(fail)<worker>:loop" re-runs the target. Its out: distinct pass/fail targets (NODE_VERDICT_ROUTE_COLLISION), one fail target (NODE_VERIFY_MULTI_FAIL_TARGET), never "Nebula" (NODE_LOOP_TARGET_NEBULA), no retry (NODE_RETRY_LOOP_CONFLICT); the engine owns the round/wall-clock budget and fails it on exhaustion (loop-budget).
@@ -248,7 +248,7 @@ object NodeEditTool extends Tool:
         ),
         "out" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Out-edge spec (OPTIONAL on create — empty/null leaves the node dangling: no delivery, no root notify, the result is retained and auto-delivered once wired; on edit replaces the whole edge set): edge = target + gates + mode. Target = node id OR node name (the engine resolves names to nodes for validation, in-edge mirrors and delivery). \"B\" = pass edge with payload (legacy); \"Nebula\" = EXIT MARKER (pass gate, mode=signal ⇒ zero delivery); to notify the root write an EXPLICIT gate set — \"(pass)Nebula\" / \"(pass,failed)Nebula\"; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). Loop nodes must cover BOTH pass and failed (NODE_LOOP_GATE_INCOMPLETE). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson
+          "description" -> "Out-edge spec (OPTIONAL on create — empty/null leaves the node dangling: no delivery, no root notify, the result is retained and auto-delivered once wired; on edit replaces the whole edge set): edge = target + gates + mode. Target = node id OR node name (the engine resolves names to nodes for validation, in-edge mirrors and delivery). \"B\" = pass edge with payload; \"Nebula\" = EXIT MARKER (pass gate, mode=signal ⇒ zero delivery); to notify the root write an EXPLICIT gate set — \"(pass)Nebula\" / \"(pass,failed)Nebula\"; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). Loop nodes must cover BOTH pass and failed (NODE_LOOP_GATE_INCOMPLETE). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson
         ),
         "dangling" -> Json.obj(
           "type" -> "boolean".asJson,
@@ -276,18 +276,18 @@ object NodeEditTool extends Tool:
         ),
         "notify" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> ("Notification policy for this node's COMPLETED event (unset = legacy resolution; no create-time default). " +
+          "description" -> ("Notification policy for this node's COMPLETED event (unset = default resolution; no create-time default). " +
             "\"silent\" = nobody is notified (Flow Map + persisted result only); \"dispatcher\" = the project dispatcher is notified, NOT the root; \"root\" = the root sees it. " +
             "The policy also decides whether an existing 'Nebula' out-edge actually posts: only with an explicit dispatcher/silent that edge is kept as a DECLARATION while its runtime delivery is suppressed (markNebulaDelivered bookkeeping, so no redelivery revival) — you never need to rewire an existing topology to silence it; undeclared never suppresses. " +
             "A ':signal' Nebula edge is an inert exit marker either way (ledger only) — the policy cannot promote it to a root notify. " +
             "FAILED events are never suppressed: a failed node always notifies the dispatcher, and an explicit '(failed)Nebula' edge still reports to the root. " +
             "Chains with 2+ members also emit ONE aggregated 'source=chain' summary to the root when the chain is archived — that is independent of this field. " +
-            "Legal values: silent | dispatcher | root; null clears the declaration (legacy resolution applies again). " +
+            "Legal values: silent | dispatcher | root; null clears the declaration (default resolution applies again). " +
             "Settable/withdrawable while wiring/pending/running (NODE_NOTIFY_INVALID on any other value).").asJson
         ),
         "notifyDispatcher" -> Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "LEGACY alias of 'notify' (kept for one version): completion backflow toggle. Ignored (warned) when the node already declares 'notify'; prefer 'notify' in new calls (notifyDispatcher=true ≈ notify=dispatcher). Settable/withdrawable while wiring/pending/running".asJson
+          "description" -> "Alias of 'notify' (one-version compatibility): completion backflow toggle. Ignored (warned) when the node already declares 'notify'; prefer 'notify' in new calls (notifyDispatcher=true ≈ notify=dispatcher). Settable/withdrawable while wiring/pending/running".asJson
         ),
         "abandon" -> Json.obj(
           "type" -> "boolean".asJson,
@@ -548,10 +548,10 @@ object NodeEditTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            "'agent'/'skill'/'mcp' node params are RETIRED and no longer accepted (2026-09-05 plugin-architecture alignment) — " +
+            "'agent'/'skill'/'mcp' are not node parameters — " +
               "every node executes the built-in executor agent; capability differentiation goes through 'plugins' (a plugin = skills + mcp.json, either " +
-              "alone is valid; see the Plugin Catalog in your prompt). Existing flow-map nodes keep their old values for display only. " +
-              "(NODE_AGENT_RETIRED)"
+              "alone is valid; see the Plugin Catalog in your prompt). Stored values on existing nodes are display-only. " +
+              "(NODE_AGENT_UNSUPPORTED)"
           )
         )
       )
@@ -563,10 +563,10 @@ object NodeEditTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            "'preset' node param is RETIRED and no longer accepted (2026-09-21 panel model-scheme convergence) — nodes have no " +
+            "'preset' is not a node parameter — nodes have no " +
               "model-scheme setting of their own: a node runs on the project dispatcher's current model scheme (set it on the " +
-              "project-dispatcher agent in Settings; nodes pick it up at dispatch time). Existing nodes keep their stored preset " +
-              "value for display only. (NODE_PRESET_RETIRED)"
+              "project-dispatcher agent in Settings; nodes pick it up at dispatch time). Stored preset values on existing nodes " +
+              "are display-only. (NODE_PRESET_UNSUPPORTED)"
           )
         )
       )
@@ -577,9 +577,9 @@ object NodeEditTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            "'worktree' must be a boolean (2026-09-05 explicit-boolean rework): true = an isolated worktree is auto-created for this node " +
+            "'worktree' must be a boolean: true = an isolated worktree is auto-created for this node " +
               "(derived from the node name, baseline = main HEAD); false/omitted = run directly in the workspace. " +
-              "The old string form (pre-existing bare name) is no longer accepted. (WORKTREE_NOT_BOOLEAN)"
+              "Bare string names are not accepted. (WORKTREE_NOT_BOOLEAN)"
           )
         )
       )
@@ -1023,7 +1023,7 @@ object NodeEditTool extends Tool:
                 Left(
                   ToolError(
                     s"Node '$nodename' must declare an input side — 'task' (entry semantics: starts running on create) or 'in' (barrier upstream). " +
-                      "Out-only relay nodes are no longer supported. (EMPTY_NODE_CONNECTION)"
+                      "Out-only relay nodes are not supported. (EMPTY_NODE_CONNECTION)"
                   )
                 )
               )

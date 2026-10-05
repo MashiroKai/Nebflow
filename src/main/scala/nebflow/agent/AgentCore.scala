@@ -549,11 +549,15 @@ object AgentCore:
     "NodeMessage" ->
       """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
     "TransferFile" ->
-      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6).""",
+      """TransferFile is not available — its capabilities live in SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) have no replacement.""",
+    "TaskList" ->
+      """TaskList is not available — the task ledger is `Task`, the one task-ledger tool (one ledger, one id space): `Task(action="list", assignee=..., project=...)` renders entries with state and dependencies, `Task(action="show", id=...)` renders one entry in full, and create/update/complete/close take the same `action` face.""",
+    "TaskBoard" ->
+      """TaskBoard is not available — the board's contents live in the single `Task` ledger, and the per-session face is the read-only `TaskInfo` (zero parameters — it renders the one task your session is attached to, note timeline included); any write belongs to Nebula's `Task` tool.""",
     "Card" ->
-      """Card retired 2026-10-03 (pop-upgrade batch) — its show-face duties moved to Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe).""",
+      """Card is not available — its show face is Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe).""",
     "AgentFlow" ->
-      """AgentFlow retired 2026-10-03 (unified-delegate batch) — dispatch is unified under `Delegate(task=<brief>, project=<optional mounted project>)`. The receipt carries the task number (task #N) and the continuation address `delegate:<id>`; supplements/corrections go through `Mail(address="delegate:<id>", message=...)`. A project-targeted Mail(address="project:<name>") with a task number keeps working as a supplement channel, but new work is dispatched with Delegate only."""
+      """AgentFlow is not available — dispatch goes through `Delegate(task=<brief>, project=<optional mounted project>)`. The receipt carries the task number (task #N) and the continuation address `delegate:<id>`; supplements/corrections go through `Mail(address="delegate:<id>", message=...)`. A project-targeted Mail(address="project:<name>") with a task number keeps working as a supplement channel, but new work is dispatched with Delegate only."""
   )
 
   /**

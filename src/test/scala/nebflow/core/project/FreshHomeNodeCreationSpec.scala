@@ -201,15 +201,15 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
 
   // ── ③ 写侧单点：NodeEdit 不再接受/产出退役名 ──────────────────
 
-  test("③ write face: the retired `agent` parameter is refused (NODE_AGENT_RETIRED) and the default is the constant"):
+  test("③ write face: the `agent` parameter is refused (NODE_AGENT_UNSUPPORTED) and the default is the constant"):
     val (_, system, _, _, ctx) = mkEnv("writeface").unsafeRunSync()
     try
       val res = nodeEdit(
         nodeInput("fresh-writeface", "n-agentarg").deepMerge(Json.obj("agent" -> Json.fromString("general"))),
         ctx
       ).unsafeRunSync()
-      assert(res.isLeft, "the retired 'agent' parameter must be refused")
-      assert(res.swap.getOrElse("").contains("NODE_AGENT_RETIRED"), s"expected NODE_AGENT_RETIRED, got: $res")
+      assert(res.isLeft, "the 'agent' parameter must be refused")
+      assert(res.swap.getOrElse("").contains("NODE_AGENT_UNSUPPORTED"), s"expected NODE_AGENT_UNSUPPORTED, got: $res")
     finally system.stopAll.unsafeRunSync()
 
   test("③ write face: the `verify` default schema text names the built-in executor (model-visible face)"):

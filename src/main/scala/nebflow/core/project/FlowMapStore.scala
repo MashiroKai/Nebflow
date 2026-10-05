@@ -932,12 +932,12 @@ class FlowMapStore private (
     val legacy = s.nodes.values.filter(n => n.skill.isDefined || n.mcp.isDefined).toList
     legacy.foreach(n =>
       logger.warnSync(
-        s"Node '${n.name}' (${n.id}) carries deprecated skill/mcp fields (skill=${n.skill.getOrElse("-")}, mcp=${n.mcp.getOrElse("-")}) — " +
-          "deprecated since phase 2b (ruling H-11①): display only, NodeEdit no longer accepts them; allocate plugins instead"
+        s"Node '${n.name}' (${n.id}) carries skill/mcp fields that are not settable (skill=${n.skill.getOrElse("-")}, mcp=${n.mcp.getOrElse("-")}) — " +
+          "display only, NodeEdit does not accept them; allocate plugins instead"
       )
     )
     if legacy.nonEmpty then
-      logger.warnSync(s"flow-map '$project': ${legacy.size} node(s) with legacy skill/mcp values (display only)")
+      logger.warnSync(s"flow-map '$project': ${legacy.size} node(s) with stored skill/mcp values (display only)")
 
   /**
    * 结果/task 水合 + 存量污染自动迁移（2026-09-05 精简批 result；2026-09-06 存储瘦

@@ -2,8 +2,8 @@
 
 > The cover is the first impression. Either skip it, or build it like architecture.
 
-**As of V4.0 all covers are rendered with ReportLab** (pure Python), via
-`scripts/cover_render.py`. HTML/Playwright/Chromium is **no longer used or required**
+**All Report/Academic covers are rendered with ReportLab** (pure Python), via
+`scripts/cover_render.py`. HTML/Playwright/Chromium is **not used or required**
 for covers. The Creative route still composes its cover inside the same HTML document
 (see `briefs/creative.md`); everything else (Report, Academic) uses the ReportLab engine.
 
@@ -164,10 +164,9 @@ Two-dimensional: **Intent** × **Document Type**. No global default — choose d
 
 Academic paper selection: arXiv/preprint → **06**; IEEE/ACM/English thesis → **07**; CJK journal / thesis with keywords → **08**; institutional/proposal/government → **09**.
 
-> **Migration note (V4.0):** the old HTML templates were renumbered and two were removed —
-> old *05 Floating Diagonal* and *06 Swiss Grid* are **gone**. Old 07→**05**, 08→**06**, 09→**07**,
-> 10→**08**, 11→**09**. Anything that previously selected the Diagonal or Swiss Grid should use
-> **03 Monolith** (structured/authoritative) or **01 HUD** (data/energy) instead.
+> **Template availability:** the Report/Academic cover set is templates **01–09**.
+> For a structured/authoritative cover use **03 Monolith**; for a data/energy cover
+> use **01 HUD**.
 
 ---
 
@@ -224,11 +223,3 @@ palette dict; never hand-pick hex.
 - **Line-length alignment:** vertical lines ≈ adjacent text-block height; horizontal lines ≥ widest text in zone.
 - **Vertical balance:** center sparse content; no >40% dead whitespace at the bottom.
 
----
-
-# PART 6: CHANGELOG
-
-| Version | Date | Changes |
-|---------|------|---------|
-| V3.0 | 2026-04-07 | HTML/Playwright unified cover system (11 templates). |
-| **V4.0** | **2026-08-17** | **ReportLab cover engine.** All Report/Academic covers now rendered by `scripts/cover_render.py` (pure Python) — HTML/Playwright/Chromium no longer used for covers. Templates renumbered to **01–09**; removed *Floating Diagonal* and *Swiss Grid*. Host-detected, style-driven fonts (CFF fonts skipped; faux-bold for missing heavy weights). Selection matrix remapped. |

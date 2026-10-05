@@ -164,7 +164,7 @@ class MailModelRetiredSpec extends FunSuite:
       s"the address description must NOT advertise the retired kernel forms (delegate is the trigger): $addr"
     )
 
-  test("① device tombstone: a stale `device=` call refuses with MAIL_DEVICE_RETIRED before everything (even before the required-parameter gates)"):
+  test("① device tombstone: a stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED before everything (even before the required-parameter gates)"):
     // with NO message and NO address: the tombstone still wins (it is read first)
     val bare = errOf(callRes(qIn("device" -> "KAI"), ctx()), "device + bare")
     assert(bare.contains(MailTool.ErrDeviceLegRetired), s"the tombstone must fire on a bare stale call, got: $bare")
@@ -200,7 +200,7 @@ class MailModelRetiredSpec extends FunSuite:
   // 3. (b) kernel leg - Nebula-exclusive, not-live continuation, text-only start
   // ============================================================
 
-  test("③ bare-kernel spawn leg retired: ANY role mailing a bare `kernel` gets MAIL_KERNEL_SPAWN_RETIRED (builtin-def 2026-10-03, Delegate is the trigger)"):
+  test("③ bare-kernel spawn leg: ANY role mailing a bare `kernel` gets MAIL_KERNEL_SPAWN_UNSUPPORTED (Delegate is the trigger)"):
     val system = ActorSystem(s"mailmodel-spawnret-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       for (label, c) <- List(
@@ -255,7 +255,7 @@ class MailModelRetiredSpec extends FunSuite:
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       os.remove.all(tmp)
 
-  test("③ kernel spawn leg retired even with images attached: a bare `kernel` tombstones (MAIL_KERNEL_SPAWN_RETIRED), nothing is spawned"):
+  test("③ kernel spawn leg: a bare `kernel` tombstones even with images attached (MAIL_KERNEL_SPAWN_UNSUPPORTED), nothing is spawned"):
     val tmp = os.temp.dir(prefix = "mailmodel-kimg")
     val system = ActorSystem(s"mailmodel-kimg-${java.util.UUID.randomUUID().toString.take(6)}")
     try

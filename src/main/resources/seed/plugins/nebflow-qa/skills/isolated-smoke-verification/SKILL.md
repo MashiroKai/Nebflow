@@ -68,7 +68,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 
 - 冒烟：smoke.log/mock.log 0 字节但验收不降级——msg[6] 双结果注入 + msg[7] 42ms 触发 + fast=completed/stall=failed(2 restarts=maxRestarts) 三重持久化证据链；qa 复核采用同一法证路径通过。
 - Nebflow cold-start 冒烟：`cmp <隔离 home>/auth.json ~/.nebflow/auth.json` → "differ: char 2"；实例日志 "Context window: 128000 tokens (from paid/paid-model)" 不可能来自真实 home（默认 <gateway-alias>/glm-5.2）；cwd 扫无 stray auth.json——三信号一致证明隔离。
-- qwen 碎片聚合修复交验：真实端点本轮只发 name 缺失形态，name:"" 延续帧未触发；以 sendMessageStream 生产帧序回放 spec + 变异验红×2 钉死聚合路径，负例以实例日志 0 条退役串验证。
+- qwen 碎片聚合修复交验：真实端点本轮只发 name 缺失形态，name:"" 延续帧未触发；以 sendMessageStream 生产帧序回放 spec + 变异验红×2 钉死聚合路径，负例以实例日志 0 条目标串命中验证。
 - 对偶：stdout 因 SIGKILL 块缓冲全丢，改用持久化产物核验——两案共同模式：证据不依赖单一易失通道。
 - 大合并关卡：独立 worktree + 独占端口 + nohup + kill PID + lsof 双保险，全链路零冲突。
 - node-runner 复验：mock LLM 状态机驱动 NodeEdit/NodeList/NodeCancel/ProjectCreate 全链路（隔离端口 + mock 端口），五坑见 §6——修复 2 P1（ttlScanner SOE/双前缀）后 V2 五验收点全过；多轮失败全为 mock/环境问题，产品代码全程按契约工作。

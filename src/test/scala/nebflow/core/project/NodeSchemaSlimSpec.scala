@@ -222,7 +222,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         "nodename",
         "descriptionLong",
         "replace-on-provide",
-        "NODE_AGENT_RETIRED",
+        "NODE_AGENT_UNSUPPORTED",
         "EMPTY_NODE_CONNECTION",
         "NODE_MERGE_REQUIRES_UPSTREAM",
         "worktree",
@@ -241,7 +241,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         "NODE_CHAIN_ID_INVALID",
         // panelscheme 批（2026-09-21）：preset 参数退役契约——退役错误码必须常驻描述
         // （分发器不读代码；丢这条 = 它会继续按旧习惯传 preset 吃一次硬拒往返）。
-        "NODE_PRESET_RETIRED",
+        "NODE_PRESET_UNSUPPORTED",
         // desc300 batch (2026-09-30): the new descriptionLong contract must stay resident —
         // a dispatcher that cannot see "longer text is truncated + spilled to a file whose path
         // comes back" would keep believing over-300 input is rejected.
@@ -491,7 +491,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 2. agent/skill/mcp 退役 ─────────────────────────────
 
-  test("B① passing agent/skill/mcp → rejected (NODE_AGENT_RETIRED, points at plugins)") {
+  test("B① passing agent/skill/mcp → rejected (NODE_AGENT_UNSUPPORTED, points at plugins)") {
     val ws = plainWorkspace("retired")
     val system = ActorSystem(s"slim-ret-${Random.nextInt(100000)}")
     for
@@ -537,8 +537,8 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       for (r, label) <- List((withAgent, "agent"), (withSkill, "skill"), (withMcp, "mcp")) do
         assert(r.isLeft, s"$label param must be rejected")
         assert(
-          r.left.exists(_.contains("NODE_AGENT_RETIRED")),
-          s"$label rejection must carry NODE_AGENT_RETIRED, got: ${r.left.getOrElse("")}"
+          r.left.exists(_.contains("NODE_AGENT_UNSUPPORTED")),
+          s"$label rejection must carry NODE_AGENT_UNSUPPORTED, got: ${r.left.getOrElse("")}"
         )
         assert(r.left.exists(_.contains("plugins")), s"$label rejection must point at plugins")
       assert(snap.nodes.isEmpty, "no node must be created from retired-param calls")

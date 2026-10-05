@@ -1196,8 +1196,8 @@ private final class RelayWsListener(
               // production callers).
               if DeviceMail.isAgentMailEnvelope(json) then
                 logger.warnSync(
-                  "agent_mail frame ignored: the cross-device agent-mail intake leg was retired " +
-                    "on 2026-09-25 (mailmodel batch) — the sender side refuses with MAIL_DEVICE_RETIRED; " +
+                  "agent_mail frame ignored: cross-device agent-mail intake is not a tunnel face — " +
+                    "the sender side refuses with MAIL_DEVICE_UNSUPPORTED; " +
                     f"frame dropped branch=agent_mail_retired conversationId=${conversationIdOfFrame(json).getOrElse("<none>")}"
                 )
               else

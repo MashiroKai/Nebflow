@@ -101,10 +101,10 @@ object MailTool extends Tool:
   //                          kernel trigger; Mail communicates only)
   // ============================================================
   val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
-  val ErrDeviceLegRetired: String = "MAIL_DEVICE_RETIRED"
+  val ErrDeviceLegRetired: String = "MAIL_DEVICE_UNSUPPORTED"
   val ErrKernelExclusive: String = "MAIL_KERNEL_EXCLUSIVE"
   val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
-  val ErrKernelSpawnRetired: String = "MAIL_KERNEL_SPAWN_RETIRED"
+  val ErrKernelSpawnRetired: String = "MAIL_KERNEL_SPAWN_UNSUPPORTED"
 
   /** Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
     *
@@ -118,8 +118,8 @@ object MailTool extends Tool:
     * source. */
   private[tools] def targetMissingMessage: String =
     s"[$ErrTargetMissing] Missing target: fill 'address' (an agent/team/project target — e.g. " +
-      "\"project:<name>\", a team name, or a member short name). The former 'device' parameter is " +
-      "retired (MAIL_DEVICE_RETIRED); " +
+      "\"project:<name>\", a team name, or a member short name). This tool takes no 'device' parameter " +
+      "(MAIL_DEVICE_UNSUPPORTED); " +
       (if nebflow.core.FriendsSeal.isSealed then
          "files for another machine go via SendMessage's `device:` target — its friend/group/local " +
            "targets (including the local this-machine copy) are sealed (FRIENDS_SEALED) until the " +
@@ -130,9 +130,8 @@ object MailTool extends Tool:
   /** Retirement refusal for a stale caller's `device=` (pure constructor, for direct spec testing). */
   private[tools] def deviceLegRetiredError(device: String): ToolError =
     ToolError(
-      s"[$ErrDeviceLegRetired] The 'device' parameter was retired on 2026-09-25 — the cross-device " +
-        "agent-mail leg no longer exists (the receiving end stopped injecting agent_mail envelopes in the " +
-        "same batch), so nothing was sent and nothing is queued. Got device='" + device + "'. To move files or " +
+      s"[$ErrDeviceLegRetired] This tool takes no 'device' parameter — cross-device " +
+        "agent mail is not a Mail face, so nothing was sent and nothing is queued. Got device='" + device + "'. To move files or " +
         "text to another MACHINE use SendMessage (pure transport; that machine's agent is not informed). To " +
         "reach an AGENT use 'address': \"project:<name>\" (or a bare mounted project name), a team name or " +
         "member short name, or — Nebula root only — \"kernel:<id>\" (a live Delegate kernel instance)."
@@ -151,8 +150,8 @@ object MailTool extends Tool:
     * 2026-10-03, author directive ②: Delegate triggers kernels; Mail communicates). */
   private[tools] def kernelSpawnRetiredError(address: String): ToolError =
     ToolError(
-      s"[$ErrKernelSpawnRetired] Mailing a bare 'kernel' to START an instance is retired — kernel " +
-        "triggering is Delegate-only now (the Delegate result carries the continuation address " +
+      s"[$ErrKernelSpawnRetired] A bare 'kernel' address does not start an instance — kernel " +
+        "triggering is Delegate-only (the Delegate result carries the continuation address " +
         "kernel:<id>). Nothing was sent (address='" + address + "'). To continue a LIVE instance, " +
         "mail its address \"kernel:<id>\"; to start a new one, call Delegate."
     )
@@ -315,7 +314,7 @@ object MailTool extends Tool:
   //   · (mailmodel 2026-09-25: the device leg's own v2.1 queue-refusal literal died with
   //     the leg itself — the single gate below now structurally covers every leg.)
   // ============================================================
-  val ErrDeliveryQueueRetired: String = "MAIL_DELIVERY_QUEUE_RETIRED"
+  val ErrDeliveryQueueRetired: String = "MAIL_DELIVERY_QUEUE_UNSUPPORTED"
 
   // ============================================================
   // mailattach 批（2026-09-17 作者四答 = 路线 A）——「静默丢」修 B6 的**唯一来源**词表。
@@ -343,14 +342,13 @@ object MailTool extends Tool:
     )
 
   private[tools] def deliveryQueueRetiredMessage(address: String): String =
-    s"""[$ErrDeliveryQueueRetired] delivery="queue" is retired (2026-09-15) — the serialized FIFO mode no longer exists: every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (or omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
+    s"""[$ErrDeliveryQueueRetired] delivery="queue" is not accepted — every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
 
   val name: String = "Mail"
 
   val description: String =
     """Send a message to another agent — the platform's **only message primitive**
-(2026-09-12 「一个 Mail 统一」；the former `Task` and `NodeMessage` tools are retired —
-this note supersedes all earlier instructions naming them as entry points).
+(other tools are not message entry points; instructions naming them as such do not apply).
 
 Required: message, plus `address`.
 
@@ -361,8 +359,8 @@ Required: message, plus `address`.
   on the peer MACHINE and the text appears for the machine and its user; nothing
   enters the peer's agent session or its LLM context. Moving files or text to another
   machine or its user = `SendMessage`; making another agent aware = `Mail`.
-  (The former cross-device `device` parameter of THIS tool was retired on 2026-09-25 —
-  a stale `device=` call is an explicit MAIL_DEVICE_RETIRED error, never a silent send.)
+  (This tool takes no `device` parameter — a stale `device=` call is an explicit
+  MAIL_DEVICE_UNSUPPORTED error, never a silent send.)
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
@@ -372,25 +370,24 @@ Required: message, plus `address`.
 
 ## Kernel continuation leg (Nebula-exclusive)
 Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
-mails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail can no longer
-START a kernel: triggering is Delegate-only, and the Delegate result carries the
+mails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not
+START kernels: triggering is Delegate-only, and the Delegate result carries the
 instance's continuation address (`kernel:<id>`). `address="kernel:<id>"` continues THAT
 live instance (injected at its next turn boundary). A `kernel:<id>` whose instance has
 already finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already
 delivered; start a new one with Delegate. A bare `kernel` address is an explicit error
-(MAIL_KERNEL_SPAWN_RETIRED) — never a spawn.
+(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.
 
 - **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in
   your current project (from NodeList). You do not mail your own project.
-- **Team context (legacy)**: a team name (e.g. "nebflow-project") routed to its
+- **Team context**: a team name (e.g. "nebflow-project") routed to its
   lead agent, a bare member short name (resolved within your team first), or an
   explicit "team/agent" route.
 
 An address that is not recognizable in your face is an **explicit error** — there
 is no silent fallback and no fuzzy matching.
 
-## `node:<id>` routing semantics (by target node status; same engine as the retired
-`NodeMessage` tool — `NodeEngine.sendNodeMessage`)
+## `node:<id>` routing semantics (by target node status; engine: `NodeEngine.sendNodeMessage`)
 - **running**: injected into the node's live session at the NEXT turn boundary
   (does NOT interrupt the current turn), carrying a `[NODE-MESSAGE]` header.
 - **wiring / pending** (non-terminal, no live session): persistently appended to
@@ -428,11 +425,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   Async send, injected at the target's next turn boundary (an idle target starts
   a new turn; a busy target has it merged into the current turn). You don't wait
   for a response.
-  There is no delivery mode to choose: the former `queue` mode (serialized FIFO,
-  one Mail per turn — for "do this, then that" serial chains) was RETIRED on
-  2026-09-15, and the `delivery` parameter itself was removed from this tool's
-  schema on 2026-09-17. A stale caller that still passes `delivery="queue"` is an
-  explicit error (MAIL_DELIVERY_QUEUE_RETIRED) on every target — it is
+  There is no delivery mode to choose: every Mail is immediate. A caller that
+  passes `delivery="queue"` (a serialized FIFO mode — one Mail per turn — that
+  this tool does not offer) is an
+  explicit error (MAIL_DELIVERY_QUEUE_UNSUPPORTED) on every target — it is
   NEVER silently downgraded to immediate.
   Dispatcher-to-root replies are coalesced into ONE injection per 5-second window;
   a reply that must bypass the window leads its body with the literal token
@@ -463,13 +459,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
 
   private[nebflow] val AddressFaceRoot: String =
-    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance. You have no `node:` address, no bare\n  `kernel` address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail can no longer\nSTART a kernel: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_RETIRED) — never a spawn.\n\n"
+    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance. You have no `node:` address, no bare\n  `kernel` address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
 
   private[nebflow] val AddressFaceDispatcher: String =
     "- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in\n  your current project (from NodeList). You do not mail your own project.\n"
 
   private[nebflow] val AddressFaceTeam: String =
-    "- **Team context (legacy)**: a team name (e.g. \"nebflow-project\") routed to its\n  lead agent, a bare member short name (resolved within your team first), or an\n  explicit \"team/agent\" route.\n"
+    "- **Team context**: a team name (e.g. \"nebflow-project\") routed to its\n  lead agent, a bare member short name (resolved within your team first), or an\n  explicit \"team/agent\" route.\n"
 
   private[nebflow] val AddressFaceClosing: String =
     "\nAn address that is not recognizable in your face is an **explicit error** — there\nis no silent fallback and no fuzzy matching."

@@ -253,7 +253,7 @@ Behavior:
   // ============================================================
 
   /** 携带已下线 `mode` 参数的错误码（机器可读锚）。 */
-  val ModeParamRetiredCode = "ASKUSER_MODE_PARAM_RETIRED"
+  val ModeParamRetiredCode = "ASKUSER_MODE_PARAM_UNSUPPORTED"
 
   /**
    * `mode` 参数拒绝（「不保留键方案」）：本工具一律非阻塞 ⇒ 参数面无合法 `mode`

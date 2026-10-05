@@ -374,7 +374,7 @@ Common issues with hand-written Python `page.pdf()` (the dedicated scripts handl
 
 **Iron rule: Posters and cover pages use `html2poster.js`, multi-page documents use `html2pdf-next.js`. Do not write hand-written Python Playwright scripts.**
 
-> **⚠️ Cover page note:** Report/Academic covers are rendered with ReportLab (`scripts/cover_render.py`), NOT HTML — so this gotcha no longer applies to them. It remains relevant only if you hand-author a full-page fixed HTML layout (rare): such a layout uses `position: absolute`, which `html2pdf-next.js` would convert to `static` flow and break — use `html2poster.js` for that case.
+> **⚠️ Cover page note:** Report/Academic covers are rendered with ReportLab (`scripts/cover_render.py`), NOT HTML — so this gotcha does not apply to them. It is relevant only if you hand-author a full-page fixed HTML layout (rare): such a layout uses `position: absolute`, which `html2pdf-next.js` would convert to `static` flow and break — use `html2poster.js` for that case.
 
 ### No overflow:hidden on Fixed-Size Pages (html2pdf-next.js only)
 
@@ -728,7 +728,7 @@ scripts/
   toc_validate.py                   ← TOC validator
   html2pdf-next.js                  ← Playwright + pdf-lib HTML→PDF converter for documents (no Paged.js)
   html2poster.js                    ← Playwright HTML→PDF converter for posters/single-page (auto overflow:hidden, dynamic height)
-  cover_validate.js                 ← (legacy) HTML cover overlap detection — NOT used by the ReportLab cover engine; kept only for hand-authored HTML covers.
+  cover_validate.js                 ← HTML cover overlap detection — NOT used by the ReportLab cover engine; kept only for hand-authored HTML covers.
 references/
   resume-altacv.tex                 ← AltaCV dual-column resume template (creative/tech)
   resume-academic.tex               ← Academic CV template (PhD/academic)

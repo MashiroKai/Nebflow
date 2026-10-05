@@ -133,7 +133,7 @@ class DeviceMailSpec extends FunSuite:
     assert(!props.contains("device"), s"the device key must be GONE from the schema: $props")
     assertEquals(requiredOf, List("message"), "required must stay exactly [message]")
 
-  test("retired: any stale `device=` call refuses with MAIL_DEVICE_RETIRED (even address+device double-filled — the tombstone outranks the old exclusivity gate)"):
+  test("device face: any stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED (even address+device double-filled — the device guard outranks the old exclusivity gate)"):
     val alone = callErr(JsonObject("device" -> "dev-b".asJson, "message" -> "hi".asJson))
     assert(alone.contains(s"[${MailTool.ErrDeviceLegRetired}]"), alone)
     assert(alone.contains("SendMessage"), s"the error must give the way out (machine face = SendMessage): $alone")
@@ -150,7 +150,7 @@ class DeviceMailSpec extends FunSuite:
     val msg = callErr(JsonObject("message" -> "hi".asJson))
     assert(msg.contains(s"[${MailTool.ErrTargetMissing}]"), msg)
     assert(msg.contains("'address'"), msg)
-    assert(msg.contains("retired"), s"the message must state the device retirement: $msg")
+    assert(msg.contains("takes no 'device' parameter"), s"the message must state the device face: $msg")
     // a blank device trims to absent ⇒ same double-missing reading (never MALFORMED)
     val blank = callErr(JsonObject("device" -> "   ".asJson, "message" -> "hi".asJson))
     assert(blank.contains(s"[${MailTool.ErrTargetMissing}]"), blank)

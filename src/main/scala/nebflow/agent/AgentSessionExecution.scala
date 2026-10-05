@@ -1979,7 +1979,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // 迁移指引表先查，命中则把「改用什么」写进错误文案，再退回通用兜底。
         // 本表**只产错误文案、零执行面**（硬禁静默 no-op 与悄悄转发）。
         val msg = AgentCore.RetiredToolGuides.get(call.name) match
-          case Some(guide) => s"Tool '${call.name}' has been retired. $guide"
+          case Some(guide) => s"Tool '${call.name}' is not available. $guide"
           case None => s"No such tool available: ${call.name}"
         val r = ToolExecResult(msg, isError = true)
         logToolStructured(call, ctx, r).as(r)
