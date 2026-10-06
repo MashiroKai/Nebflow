@@ -2061,6 +2061,35 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
+/* 三修批 uifix3 ③ (2026-10-06 21:36 作者令): the question card's 「跳过这一题」
+   control hides until the CARD is hovered (与卡体 hover 联动) — at rest the foot
+   shows only the primary action; a pointer over the ask-card reveals the skip
+   (opacity only: the button stays clickable for keyboard/AT users, and
+   :focus-visible reveals it for keyboard navigation). Touch surfaces have no
+   hover — same answer the .pop-media-canvas chip gives: keep the control
+   plainly visible under (hover: none). A long-press fallback was rejected:
+   it would need new gesture JS on a transient button and hides the feature
+   behind an undiscoverable gesture, while (hover: none) costs nothing and
+   keeps one-tap access.
+   Scope = the LIVE question window. On an ANSWERED card the button is
+   disabled, and sapphire's app-wide disabled blanket
+   (sapphire.css :is(…, button.glass-control, …):disabled — ID-carried :is())
+   deliberately holds disabled buttons at opacity 1 (禁用档用色表达), so the
+   answered card's foot stays legible as part of the answer record. Beating it
+   would need !important against an ID-specificity blanket — not worth the
+   trap; the skip decision only exists while the question is live. */
+.ob-actions .ob-ghost[data-skip] { opacity: 0; }
+.ask-card:hover .ob-actions .ob-ghost[data-skip],
+.ob-actions .ob-ghost[data-skip]:focus-visible { opacity: 1; }
+@media (hover: none) {
+  .ob-actions .ob-ghost[data-skip] { opacity: 1; }
+}
+/* The field face's probe row (uifix3 ②): settings-dialog layout — fetch button
+   + live status line above the model entry. Reuses the card's glass material;
+   the strings come from the settings provider modal's own locale keys. */
+.ob-fetch-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.ob-fetch-row .ob-fetch-btn { flex-shrink: 0; }
+.ob-fetch-row .ob-fetch-status { font-size: 12px; color: var(--color-text-muted); min-width: 0; }
 /* L3 主行动（askuser-hybrid）：品牌绿实底渐变 + 绿影；墨色/半透明绿底退场。
    hover/active 守卫压过 sapphire 的 button.glass-control:hover 换肤（(0,3,0)
    > 其 (0,2,1)），绿实底在两档任何挂法下不掉玻璃。 */
@@ -4319,6 +4348,37 @@
    measured). Expanded state: same margin reads as a wider gap beside the
    expand column — flat, no chrome there. Geometry otherwise untouched. */
 .row.pop-artifact:not(.user) .pop-stack-area > .pill { margin-left: 20px; }
+
+/* 三修批 uifix3 ① (2026-10-06 21:36 作者双截图令): the USER-side stack mirrors
+   the peek INTO the chat interior. The layers' translateX is hard-coded +X —
+   rightward — so on a right-aligned user row the peek painted PAST the chat
+   column's right edge and #chat's overflow clipped it (截图一: the purple stack
+   cut flush at the edge). Mirror disposition, 36c11b9bb A-2's same technique
+   read the other way:
+   • 位移方向自洽 — the two peeking layers flip to negative X on user rows, so
+     the stack expands toward the conversation (interior), never off-canvas.
+     Drag axis and JS stay untouched (CSS-only, the A-2 precedent).
+   • 盒宽自洽 — two widths were wrong on the user side. (1) The stack area is
+     width-capped by .pop-group's 78% while its pill+220px-view content is
+     wider; an LTR flex row spills the excess RIGHT, so the stack view's own
+     box poked ~14.6px past the column edge on a 378px column (measured, 截图
+     一's flush cut). width: max-content lets the area take its content width
+     and .row.user-media's flex-end alignment pins its RIGHT edge at the
+     column line — the same line every user bubble sits on — with all growth
+     going LEFT, into open chat. (2) The flipped peek now runs TOWARD the pill
+     (user pill sits LEFT, DOM order), so the pill takes the mirrored A-2
+     clearance: margin-right: 20px → 36px box gap → the painted left edge
+     (translateX 32px × scale 0.93 ≈ 24.3px past the box) clears the pill by
+     ≈ +11.7px — the exact LLM-side numbers, mirrored. The former user-side
+     reading (+16px, pill vs a peek extending AWAY) is superseded by this
+     mirrored form: the invariant that carries over is zero overlap with ≥8px
+     air (spec (c2)), which holds on both sides before AND after.
+   Vertical centering (0.0px), pill sides (user left / LLM right), and the
+   A-1 click-opens-shown path are geometrically untouched. */
+.row.pop-artifact.user .pop-stack-view .media-layer.layer-mid { transform: translateX(-16px) scale(0.965); }
+.row.pop-artifact.user .pop-stack-view .media-layer.layer-back { transform: translateX(-32px) scale(0.93); }
+.row.pop-artifact.user .pop-stack-area { width: max-content; }
+.row.pop-artifact.user .pop-stack-area > .pill { margin-right: 20px; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    #491 pop-media 主题二 (2026-10-05 author ruling 「微信的这样的设计来进行分类

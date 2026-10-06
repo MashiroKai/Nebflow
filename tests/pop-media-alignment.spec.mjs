@@ -644,13 +644,72 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     // the air between the painted peek edge and the pill's LEFT edge.
     expect(geo.llm.clearanceToPaintedRight,
       `LLM row: pill.left ${geo.llm.pillLeft} clears the painted peek edge ${geo.llm.paintedRight} by ${geo.llm.clearanceToPaintedRight}px (A-2: 零重叠＋留间距)`).toBeGreaterThanOrEqual(8);
-    // User side: the pill sits LEFT and the peek extends AWAY from it — the
-    // 16px gap to the view box must stay (the fix must not tax the user side).
+    // User side (uifix3 ① mirrored geometry): the peek now extends INWARD —
+    // toward the pill (user pill sits LEFT) — so the air that matters is
+    // between the painted LEFT peek edge and the pill's RIGHT edge. Same
+    // mirrored A-2 margin as the LLM side (36px box gap ⇒ ≈ +11.7px air); the
+    // invariant carried over from the A-2 ruling is zero overlap with ≥8px
+    // clearance on BOTH sides, whatever direction the peek points.
     expect(geo.user.clearanceToPaintedLeft,
-      `user row: pill.right ${geo.user.pillRight} clears the painted stack edge ${geo.user.paintedLeft} by ${geo.user.clearanceToPaintedLeft}px`).toBeGreaterThanOrEqual(8);
+      `user row: pill.right ${geo.user.pillRight} clears the painted peek edge ${geo.user.paintedLeft} by ${geo.user.clearanceToPaintedLeft}px (uifix3 ①: mirrored A-2 clearance)`).toBeGreaterThanOrEqual(8);
     // Vertical centering survives the spacing change (既定口径: 垂直居中).
     expect(Math.abs(geo.llm.pillCenterY - geo.llm.stackCenterY), 'LLM row: pill still vertically centered on the stack').toBeLessThanOrEqual(1);
     expect(Math.abs(geo.user.pillCenterY - geo.user.stackCenterY), 'user row: pill still vertically centered on the stack').toBeLessThanOrEqual(1);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('(c3) uifix3 ①: the user-side peek flips INTO the column — nothing paints past the chat container', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await renderStack(page, 3); // LLM row: .row.pop-artifact (no .user)
+    await page.evaluate(() => window.__userMediaLive()); // appends the user-media row (2-image stack)
+    await page.waitForFunction(
+      () => document.querySelectorAll('#chat .row.user-media .pop-stack-view .media-layer').length === 2,
+      null, { timeout: 10000 },
+    );
+
+    // The 2026-10-06 21:36 author screenshot (截图一): the layers' translateX
+    // is hard-coded +X, so on a right-aligned user row the peek painted PAST
+    // the chat column's right edge and the container clipped it. The mirror
+    // disposition flips the user-side peek to negative X (toward the chat
+    // interior): the PAINTED extent (getBoundingClientRect includes the
+    // transforms) must now sit fully inside #chat's content box on BOTH edges,
+    // and the direction pin proves the flip actually happened.
+    const geo = await page.evaluate(() => {
+      const chatRect = document.querySelector('#chat').getBoundingClientRect();
+      const read = (row) => {
+        const area = row.querySelector('.pop-stack-area');
+        const view = area.querySelector('.pop-stack-view');
+        const layers = Array.from(view.querySelectorAll('.media-layer'));
+        const vr = view.getBoundingClientRect();
+        return {
+          viewLeft: +vr.left.toFixed(1), viewRight: +vr.right.toFixed(1),
+          paintedLeft: +Math.min(...layers.map(l => l.getBoundingClientRect().left)).toFixed(1),
+          paintedRight: +Math.max(...layers.map(l => l.getBoundingClientRect().right)).toFixed(1),
+          chatRight: +chatRect.right.toFixed(1), chatLeft: +chatRect.left.toFixed(1),
+        };
+      };
+      return {
+        user: read(document.querySelector('#chat > .row.user-media')),
+        llm: read(document.querySelector('#chat > .row.pop-artifact:not(.user)')),
+      };
+    });
+
+    // 位移方向自洽: on the user side the peek extends INWARD (left of the box)
+    // and NOTHING paints past the box's right edge anymore.
+    expect(geo.user.paintedLeft, `user row: painted left ${geo.user.paintedLeft} < box left ${geo.user.viewLeft} (peek flipped toward the chat interior)`).toBeLessThan(geo.user.viewLeft);
+    expect(geo.user.paintedRight, `user row: painted right ${geo.user.paintedRight} ≤ box right ${geo.user.viewRight} (nothing paints toward the container edge)`).toBeLessThanOrEqual(geo.user.viewRight + 0.5);
+    // 盒宽自洽 (uifix3 ① second leg): the stack VIEW box itself must sit fully
+    // inside the column — the group's 78% cap used to clip the area's
+    // pill+view content and spill the box's right edge past the column.
+    expect(geo.user.viewRight, `user row: stack box right ${geo.user.viewRight} ≤ chat column edge ${geo.user.chatRight} (盒宽自洽 — the box never spills past the column)`).toBeLessThanOrEqual(geo.user.chatRight + 0.5);
+    // 完整可见不贴边: the whole painted extent stays inside the chat column.
+    expect(geo.user.paintedRight, `user row: painted right ${geo.user.paintedRight} inside the chat column edge ${geo.user.chatRight} (出界钉)`).toBeLessThanOrEqual(geo.user.chatRight);
+    expect(geo.user.paintedLeft, `user row: painted left ${geo.user.paintedLeft} inside the chat column edge ${geo.user.chatLeft}`).toBeGreaterThanOrEqual(geo.user.chatLeft);
+    // LLM side unchanged by the mirror: its peek still extends right of the box
+    // (toward its right-side pill) but stays inside the column.
+    expect(geo.llm.paintedRight, `LLM row: painted right ${geo.llm.paintedRight} > box right ${geo.llm.viewRight} (LLM peek direction unchanged)`).toBeGreaterThan(geo.llm.viewRight);
+    expect(geo.llm.paintedRight, `LLM row: painted right ${geo.llm.paintedRight} inside the chat column edge ${geo.llm.chatRight}`).toBeLessThanOrEqual(geo.llm.chatRight);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

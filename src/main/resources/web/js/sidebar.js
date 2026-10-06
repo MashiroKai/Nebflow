@@ -28,6 +28,10 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // Root agent's DISPLAY name — the single read point shared with onboarding /
 // micOrb / chat / modelPanel (leaf module; no cycle risk).
 import { rootDisplayName, isRootNamed } from './rootName.js';
+// uifix3 ② (2026-10-06 21:36 author order): the provider model-list probe is
+// SHARED with the onboarding model question — implementation lives in
+// providerModels.js (moved verbatim from here), one probe, no second copy.
+import { fetchProviderModels } from './providerModels.js';
 
 // ── Provider protocol face: display ←→ stored value (protoface-ui batch,
 // 2026-09-22) ────────────────────────────────────────────────────────────────
@@ -1484,41 +1488,10 @@ onMessage('error', (data) => {
 // OpenRouter exposes context_length; OpenAI/Anthropic do not).
 let providerModelChoices = null;
 
-function providerAuthHeaders() {
-  const tok = localStorage.getItem(key('token')) || '';
-  return tok ? { Authorization: `Bearer ${tok}` } : {};
-}
-
-/** Normalize one models[] element: 'id-string' | {id, contextLength?} →
- *  {id, contextLength|null}. Unknown shapes are dropped. */
-function normalizeModelEntry(m) {
-  if (typeof m === 'string' && m) return { id: m, contextLength: null };
-  if (m && typeof m.id === 'string' && m.id) {
-    return { id: m.id, contextLength: Number.isFinite(m.contextLength) ? m.contextLength : null };
-  }
-  return null;
-}
-
-async function fetchProviderModels(baseUrl, apiKey) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10000);
-  try {
-    const resp = await fetch('/api/provider/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...providerAuthHeaders() },
-      body: JSON.stringify({ baseUrl, apiKey }),
-      signal: ctrl.signal,
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
-    const models = Array.isArray(data.models) ? data.models.map(normalizeModelEntry).filter(Boolean) : [];
-    return { ok: true, models };
-  } catch (e) {
-    return { ok: false, error: e.name === 'AbortError' ? 'timeout' : e.message };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// uifix3 ②: `providerAuthHeaders` / `normalizeModelEntry` / `fetchProviderModels`
+// moved verbatim to providerModels.js (the onboarding model question imports the
+// SAME probe now — 复用不另造). This module keeps only the fetched-list STATE
+// (providerModelChoices) and its readers (contextLengthFor / renderModelIdSelect).
 
 function contextLengthFor(id) {
   if (!id || !providerModelChoices) return null;

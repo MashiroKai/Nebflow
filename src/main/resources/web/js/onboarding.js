@@ -50,6 +50,11 @@ import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
 import { smartScroll, escapeHtml } from './utils.js';
 import { bindImeGuard, isImeComposing, commitEnter } from './imeGuard.js';
+// uifix3 ② (2026-10-06 21:36 author order): the model question's "add a
+// provider" face reuses the SETTINGS probe (one implementation, providerModels.js
+// — moved verbatim from sidebar.js; 禁平行实现). The face's own commit path
+// (updateConfig → probeLlm → finish) below is untouched.
+import { fetchProviderModels } from './providerModels.js';
 
 const PROBE_TIMEOUT_MS = 20000; // backend times out at 15s; this is the last-resort guard
 const MODEL_REQ_TIMEOUT_MS = 8000;
@@ -330,18 +335,13 @@ function renameEverywhere(name) {
   window.dispatchEvent(new CustomEvent('nebflow-root-name-change'));
 }
 
-// ── Provider presets (field-face fallback for the model question) ─
-// 🔴 The PRIMARY path of the model question is the configured-provider list
-// (getOnboardingModels / same source as Settings). These presets only seed the
-// Base URL / model suggestions when the user picks "add a provider" — the same
-// fallback face v1 had, per task book §2 B.
-const PRESETS = {
-  zhipu:   { label: '智谱 GLM',     name: 'zhipu',    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', models: ['glm-4.6', 'glm-4.5-air', 'glm-4.5-flash'] },
-  deepseek:{ label: 'DeepSeek',     name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1/',          models: ['deepseek-chat', 'deepseek-reasoner'] },
-  kimi:    { label: 'Kimi',         name: 'kimi',     baseUrl: 'https://api.moonshot.cn/v1/',           models: ['kimi-k2-0905-preview', 'moonshot-v1-32k'] },
-  compat:  { label: 'OpenAI 兼容',  name: 'custom',   baseUrl: 'https://api.openai.com/v1/',            models: ['gpt-4o', 'gpt-4o-mini'] },
-  local:   { label: '本地 Ollama',  name: 'ollama',   baseUrl: 'http://localhost:11434/v1/',            models: ['qwen3:8b', 'llama3.1:8b'] },
-};
+// ── Provider presets — RETIRED (uifix3 ②b, 2026-10-06 21:36 author order) ──
+// The "add a provider" field face used to seed itself with a vendor prefill
+// (zhipu Base URL + first model id) — a baked-in preference. The face now starts
+// BLANK (去偏好，无预填): the user types their own Base URL / Key, the
+// settings-family probe (fetchProviderModels — the SAME implementation the
+// provider dialog uses) offers the provider's live model ids, and the user
+// picks. No vendor names, no suggested endpoints, no defaults.
 
 // ── Question script (single source) ──────────────────────────
 // Mirrors the v2 design note's SCRIPT table verbatim: id / act / lead / question /
@@ -728,7 +728,12 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
   fallbackBtn.textContent = t('ob2.model.addProvider');
   fallbackBtn.style.marginTop = '8px';
 
-  // field face (hidden until "add provider" is chosen)
+  // field face (hidden until "add provider" is chosen). uifix3 ②: BLANK start
+  // (去偏好 — the retired vendor prefill is gone; placeholders only), and the
+  // model entry rides the SETTINGS probe: type Base URL + Key → the same
+  // /api/provider/models fetch the provider dialog uses lists the provider's
+  // live model ids into a select; a failed probe leaves manual entry (settings'
+  // degrade, never a dead end).
   const fields = document.createElement('div');
   fields.style.display = 'none';
   const urlIn = document.createElement('input');
@@ -738,6 +743,18 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
   keyIn.className = 'option-input mono';
   keyIn.type = 'password';
   keyIn.placeholder = 'API Key';
+  // Fetch row: settings-dialog layout (button + status line above the model
+  // entry). Every visible string sinks to an EXISTING locale key — the exact
+  // ones the settings provider modal shows (零新增文案).
+  const fetchRow = document.createElement('div');
+  fetchRow.className = 'ob-fetch-row';
+  const fetchBtn = document.createElement('button');
+  fetchBtn.type = 'button';
+  fetchBtn.className = 'glass-control ob-ghost ob-fetch-btn';
+  fetchBtn.textContent = t('provider.fetchModels');
+  const fetchStatus = document.createElement('span');
+  fetchStatus.className = 'ob-fetch-status';
+  fetchRow.append(fetchBtn, fetchStatus);
   const modelIn = document.createElement('input');
   modelIn.className = 'option-input mono';
   modelIn.placeholder = 'Model ID';
@@ -746,15 +763,68 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
   saveBtn.className = 'glass-control ob-primary';
   saveBtn.textContent = t('onboarding.btn.testAndSave');
   saveBtn.disabled = true;
-  fields.append(urlIn, keyIn, modelIn, saveBtn);
+  fields.append(urlIn, keyIn, fetchRow, modelIn, saveBtn);
   card.appendChild(fields);
   card.appendChild(foot);
 
+  /** The live model entry (input until a successful probe upgrades it to a
+   *  select — settings' upgradeModelRowsToSelects shape, one control). */
+  /** @type {HTMLInputElement|HTMLSelectElement} */
+  let modelEntry = modelIn;
+  const modelEntryValue = () => (modelEntry.value || '').trim();
+
   function checkFields() {
-    const ok = /^https?:\/\//.test(urlIn.value.trim()) && keyIn.value.trim().length > 0 && modelIn.value.trim().length > 0;
+    const ok = /^https?:\/\//.test(urlIn.value.trim()) && keyIn.value.trim().length > 0 && modelEntryValue().length > 0;
     saveBtn.disabled = !ok;
   }
   [urlIn, keyIn, modelIn].forEach((inp) => inp.addEventListener('input', checkFields));
+
+  /** Probe → candidate select, the settings provider dialog's exact flow
+   *  (wireProviderModelFetch mirrored): button trigger + debounced auto-fetch
+   *  on Base URL / Key change, gen race guard, success upgrades the manual
+   *  input to a select (typed value kept as an extra option), failure leaves
+   *  manual entry with the settings status line. */
+  let probeGen = 0; // race guard: only the newest trigger's response lands
+  const probeModelList = async () => {
+    const baseUrl = urlIn.value.trim();
+    if (!baseUrl || !/^https?:\/\//.test(baseUrl)) {
+      fetchStatus.textContent = '';
+      return;
+    }
+    const gen = ++probeGen;
+    fetchBtn.disabled = true;
+    fetchStatus.textContent = t('provider.fetchingModels');
+    const res = await fetchProviderModels(baseUrl, keyIn.value.trim());
+    if (gen !== probeGen) return; // stale response (older trigger) — dropped
+    fetchBtn.disabled = false;
+    if (res.ok && res.models.length > 0) {
+      const current = modelEntryValue();
+      const sel = document.createElement('select');
+      sel.className = 'option-input mono';
+      sel.setAttribute('data-model-select', def.id);
+      const opts = res.models.map((m) => m.id);
+      // Settings parity: a hand-typed id survives the upgrade as an extra option.
+      if (current && !opts.includes(current)) opts.unshift(current);
+      sel.innerHTML = `<option value="" disabled ${current ? '' : 'selected'}>${escapeHtml(t('provider.modelSelectPlaceholder'))}</option>` +
+        opts.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+      // A <select> has no 'input' event — its change feeds the same gate.
+      sel.addEventListener('change', checkFields);
+      modelEntry.replaceWith(sel);
+      modelEntry = sel;
+      // A non-empty key doubles as credential validation — the settings line.
+      const hasKey = keyIn.value.trim().length > 0;
+      fetchStatus.textContent = t('provider.fetchModelsLoaded', { count: res.models.length }) + (hasKey ? ` · ${t('provider.keyValid')}` : '');
+    } else {
+      fetchStatus.textContent = t('provider.fetchModelsFailed');
+    }
+    checkFields();
+    smartScroll();
+  };
+  fetchBtn.addEventListener('click', probeModelList);
+  let probeDebounce = null;
+  const autoProbe = () => { clearTimeout(probeDebounce); probeDebounce = setTimeout(probeModelList, 400); };
+  urlIn.addEventListener('change', autoProbe);
+  keyIn.addEventListener('change', autoProbe);
 
   fallbackBtn.addEventListener('click', () => {
     listWrap.style.display = 'none';
@@ -766,21 +836,23 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
     pickedRef = null;
     syncCtxApply();
     // The window is settable on this face too (author item ②) — it commits with
-    // `saveBtn`, so the standalone "use this window" button steps aside. A
-    // prefill carried over from a discarded candidate is cleared unless the user
-    // typed it themselves.
+    // `saveBtn`, so the standalone "use this window" button steps aside.
     if (!ctxTouched) ctxIn.value = '';
     ctxRow.style.display = 'flex';
     ctxHint.style.display = 'block';
     ctxApply.style.display = 'none';
-    urlIn.value = PRESETS.zhipu.baseUrl;
-    modelIn.value = PRESETS.zhipu.models[0];
+    // uifix3 ②b: blank start — NO vendor prefill (the old zhipu URL + first
+    // model id seeding is retired; the probe + the user's own pick replace it).
+    urlIn.value = '';
+    keyIn.value = '';
+    modelEntry.value = '';
     checkFields();
     smartScroll();
   });
 
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true;
+    const pickedModel = modelEntryValue();
     const probe = document.createElement('div');
     probe.className = 'ob-probing';
     probe.textContent = t('onboarding.probing');
@@ -788,7 +860,7 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
     smartScroll();
     const data = {
       name: 'custom', baseUrl: urlIn.value.trim(), apiKey: keyIn.value.trim(), protocol: 'openai',
-      models: [{ id: modelIn.value.trim() }],
+      models: [{ id: pickedModel }],
     };
     if (!data.baseUrl.endsWith('/')) data.baseUrl += '/';
     // Same single write path the Settings panel uses: updateConfig → same store.
@@ -796,13 +868,13 @@ function askModelCard(def, card, foot, freeRow, finish, total, idx) {
     // Probe the provider+model this face just wrote (the ref is known here), not
     // "whatever the global chain happens to resolve" — on a home that already had
     // providers, the new one is appended last and would NOT be the seed chain.
-    const res = await probeLlm(`${data.name}/${modelIn.value.trim()}`);
+    const res = await probeLlm(`${data.name}/${pickedModel}`);
     if (res.ok) {
       probe.classList.add('ok');
-      probe.textContent = t('ob2.model.probeOk', { model: modelIn.value.trim() });
+      probe.textContent = t('ob2.model.probeOk', { model: pickedModel });
       // The fallback face carries its own window field value too (author item ②).
       modelContextWindow = ctxValue();
-      finish('model', `${data.name}/${modelIn.value.trim()}`, null, t('ob2.model.echoOk', { model: modelIn.value.trim() }));
+      finish('model', `${data.name}/${pickedModel}`, null, t('ob2.model.echoOk', { model: pickedModel }));
     } else {
       probe.textContent = t('onboarding.probeFailed', { error: res.error || '' });
       saveBtn.disabled = false;
