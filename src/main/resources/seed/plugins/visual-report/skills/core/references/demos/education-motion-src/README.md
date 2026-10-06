@@ -1,7 +1,7 @@
 # education-motion-src · 三形态对照 demo 源工程
 
 主题：RC 电路充电（教学示例值 **R = 1 kΩ，C = 1 µF，U = 1 V ⇒ τ = RC = 1 ms**，件内显著声明）。
-对照页：`../education-motion.md`。渲染一律经套件共享动效模块 `../../motion-toolkit/`（环境说明唯一来源）。
+对照页：`../education-motion.md`。渲染一律经套件共享动效模块 `../../../../motion-toolkit/`（环境说明唯一来源）。
 
 ## 文件 → 产物映射与复现命令
 

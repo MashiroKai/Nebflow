@@ -1,7 +1,7 @@
 # RC 电路充电 · 同一主题三形态对照（静态分步图 / 可交互 3D / 分步讲解视频）
 
 > education 场景「动效层」配套 demo：同一主题（RC 电路充电）分别用既有静态能力与两条动效通路出件对照。
-> 规范上游：`../education/SKILL.md`（§动效层）→ `../core/SKILL.md`（铁律/嵌入/暗色）；渲染一律经 `../motion-toolkit/SKILL.md` 封装（环境事实唯一来源，本页不重复）。源工程：`../education-motion-src/`（复现命令见其 README）。
+> 规范上游：`../../../education/SKILL.md`（§动效层）→ `../../../core/SKILL.md`（铁律/嵌入/暗色）；渲染一律经 `../../../motion-toolkit/SKILL.md` 封装（环境事实唯一来源，本页不重复）。源工程随本页同层收录（复现命令见其 README）。
 
 ## 演示数据声明（教学示例值，显著声明）
 

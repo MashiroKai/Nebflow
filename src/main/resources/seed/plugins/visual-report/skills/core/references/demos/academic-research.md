@@ -1,6 +1,6 @@
 # academic-research 场景示例：C-06 PDOZ 单方案缩影
 
-> **本示例怎么读**：这是 [`academic-research/SKILL.md`](../academic-research/SKILL.md) §2 骨架的最小可运行形态——从既有 SiPM 裁图库取一个方案做缩影：2 张论文原图裁片**全部复用、未重新裁图**，图注四件套齐全，marked v12（`breaks:true`）兼容，无占位框。全量范例（158 图图集）：`~/.nebflow/projects/Sipm/reports/20261004_095255_星际航行辐射监测_探测器与读出结构图集.md` §2.2。
+> **本示例怎么读**：这是 [`academic-research/SKILL.md`](../../../academic-research/SKILL.md) §2 骨架的最小可运行形态——从既有 SiPM 裁图库取一个方案做缩影：2 张论文原图裁片**全部复用、未重新裁图**，图注四件套齐全，marked v12（`breaks:true`）兼容，无占位框。全量范例（158 图图集）：`~/.nebflow/projects/Sipm/reports/20261004_095255_星际航行辐射监测_探测器与读出结构图集.md` §2.2。
 
 ## 方案档案（出处可回溯）
 

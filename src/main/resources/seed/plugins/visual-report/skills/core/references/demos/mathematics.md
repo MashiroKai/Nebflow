@@ -1,6 +1,6 @@
 # 泰勒级数逐阶逼近 sin / cos —— 数学场景小样
 
-> 本文件是 `../mathematics/SKILL.md` 的配套示例，演示五段骨架（直觉引入 → 形式化 → 图解 → 常见误区 → 练习）与三类产件（过程动画 MP4 / manim 公式对照段 / 对数轴误差图）。公共规范见 `../core/SKILL.md`；过程动画经 `../motion-toolkit` 封装出片。图预算：3/3（含视频）。
+> 本文件是 `../../../mathematics/SKILL.md` 的配套示例，演示五段骨架（直觉引入 → 形式化 → 图解 → 常见误区 → 练习）与三类产件（过程动画 MP4 / manim 公式对照段 / 对数轴误差图）。公共规范见 `../../../core/SKILL.md`；过程动画经 `../../../motion-toolkit` 封装出片。图预算：3/3（含视频）。
 
 ## 直觉引入
 
@@ -126,4 +126,4 @@ manim 终判：**可行**（0.21.0，`-ql` 渲染 exit 0、产物合法 mp4）�
 | https://pypi.org/project/manim/ | 200 |
 | https://pypi.org/project/imageio-ffmpeg/ | 200 |
 
-基础工具（numpy/scipy/graphviz 等）链接验证见套件 `../README.md` 全工具链接验证表（同日实测，直接引用不复制）。
+基础工具（numpy/scipy/graphviz 等）链接验证见套件 `../../../README.md` 全工具链接验证表（同日实测，直接引用不复制）。

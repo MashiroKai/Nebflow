@@ -1,6 +1,6 @@
 # 合成 OHLC 演示 —— K线 + 成交量 + MA20 小样
 
-> 本文件是 `../finance/SKILL.md` 的配套示例，演示五段骨架（数据口径声明 → 数据准备 → 主图 → 辅助图 → 读图要点与误区）。公共规范见 `../core/SKILL.md`。脚本：同目录 `finance_demo_gen.py`（mplfinance 0.12.10b0 真实渲染），全部读数可复算。
+> 本文件是 `../../../finance/SKILL.md` 的配套示例，演示五段骨架（数据口径声明 → 数据准备 → 主图 → 辅助图 → 读图要点与误区）。公共规范见 `../../../core/SKILL.md`。脚本：同目录 `finance_demo_gen.py`（mplfinance 0.12.10b0 真实渲染），全部读数可复算。
 
 ## 数据口径声明
 

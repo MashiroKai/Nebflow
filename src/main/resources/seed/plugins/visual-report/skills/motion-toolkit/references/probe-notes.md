@@ -16,7 +16,7 @@
 4. **复杂 props 别走命令行 JSON**：Windows cmd 引号转义深；`--props` 支持**文件路径**，复杂参数写 props.json 传入。
 
 ## three.js
-5. **three ≥ r167 双文件构建**：`build/three.module.js`（648K）相对导入 `./three.core.js`（1424K）；data: URL 内的相对导入无法解析，直接内联主文件会白屏。修法=递归把相对导入改写为指向内联源码的 data: URL（build_three_html.py `_inline()`）。自包含产物 ~5.9MB（three 0.186.1）。
+5. **three ≥ r167 双文件构建**：`build/three.module.js`（648K）相对导入同目录伴生文件 three.core.js（1424K）；data: URL 内的相对导入无法解析，直接内联主文件会白屏。修法=递归把相对导入改写为指向内联源码的 data: URL（build_three_html.py `_inline()`）。自包含产物 ~5.9MB（three 0.186.1）。
 6. **0.186.1 无 three.module.min.js**：build/ 下只有 three.module.js / three.core.js（min 版不在新版本里）；旧教程里的 min 路径已失效。
 7. **headless 目检**：`"C:/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --screenshot=out.png --window-size=900,700 --virtual-time-budget=6000 "file:///....html"`，WebGL 走 SwiftShader 可出图（本模块冒烟即此法，155KB 非空图）。
 
