@@ -276,6 +276,51 @@ object StaticRoutes:
     relParts.isEmpty || relParts.last.isEmpty
 
   /**
+   * Vendor SUBTREE passthrough (canvas-office-render-fix batch, 2026-10-06)
+   * — the depth ≥ 2 shapes under /vendor/ that none of the WebSocketRoutes
+   * vendor cases match. The pptx-preview MVP vendored
+   * `web/vendor/pptx-renderer/` (7 files, commit 0adfef219) and its viewer
+   * fetches the renderer library (aiden0z-pptx-renderer.browser.es.js) under
+   * that directory at runtime; the directory-specific
+   * cases (monaco/pdfjs/fonts) plus the single-segment case cannot match a
+   * 3-segment non-monaco/pdfjs path, so all 7 files answered 404 on a real
+   * instance and the renderer never loaded. That is the SAME outage class
+   * the [[jsRoutes]] scaladoc documents for /js ("every new directory needed
+   * its own hand-written case") — third occurrence on /vendor (monaco →
+   * pdfjs → pptx-renderer) — so instead of a fourth per-directory case, the
+   * remaining vendor tree is served here, exactly like jsRoutes serves the
+   * remaining js tree.
+   *
+   * Scope is unchanged in kind: `web/vendor/` holds only app-shipped public
+   * assets (the same classpath tree the single-segment case already serves
+   * one level of). Precedence over monaco/pdfjs/fonts/single-file paths is
+   * defined by the caller's case position in WebSocketRoutes (this function
+   * is the gap-filler and accepts any depth); guards are the monaco/pdfjs
+   * precedent (traversal rejected, trailing slash rejected) plus jsRoutes'
+   * `no-cache` — a rebuilt classpath vendor tree must be picked up by the
+   * browser, and StaticFile's ETag keeps the revalidation a cheap 304.
+   * Content-Type still derives from the file extension via StaticFile.
+   *
+   * Standalone (zero class deps) so it is directly unit-testable
+   * (VendorSubtreeRoutesSpec), like jsRoutes.
+   */
+  def vendorSubtree(req: Request[IO]): IO[Response[IO]] =
+    if req.uri.path.endsWithSlash then NotFound()
+    else
+      val segs = req.uri.path.segments.map(_.encoded).toList.drop(1) // drop "vendor"
+      if segs.isEmpty || segs.last.isEmpty then NotFound()
+      else if segs.exists(s => s == ".." || s.contains("\\")) then NotFound()
+      else
+        val path = segs.mkString("/")
+        StaticFile
+          .fromResource(s"web/vendor/$path", Some(req))
+          .map(_.putHeaders("Cache-Control" -> "no-cache"))
+          .getOrElseF(NotFound())
+      end if
+    end if
+  end vendorSubtree
+
+  /**
    * Serves everything under web/js at ANY depth. The frontend's ES modules
    * live at /js/<file>.js, /js/locales/<lang>.js and /js/viewers/<name>.js,
    * and any future subdirectory — this closes the "add a js subdirectory →

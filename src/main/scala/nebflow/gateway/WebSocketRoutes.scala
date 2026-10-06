@@ -1088,6 +1088,20 @@ class WebSocketRoutes(
       case req @ GET -> Root / "vendor" / "fonts" / file =>
         StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
 
+      case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/") =>
+        // Vendor SUBTREE passthrough (canvas-office-render-fix batch,
+        // 2026-10-06): the depth ≥ 2 shapes the monaco/pdfjs/fonts and
+        // single-segment cases above cannot match — the pptx-preview MVP's
+        // vendored /vendor/pptx-renderer/* answered 404 here and the renderer
+        // never loaded (real-instance reading). Third occurrence of the
+        // per-directory outage class on /vendor (monaco → pdfjs →
+        // pptx-renderer) — the jsRoutes lesson applied to the vendor tree:
+        // served by the standalone gap-filler, unit-pinned by
+        // VendorSubtreeRoutesSpec (see StaticRoutes.vendorSubtree scaladoc).
+        // This case sits AFTER the directory-specific cases, so their
+        // behavior is byte-identical; this only fills the 404ing gap.
+        StaticRoutes.vendorSubtree(req)
+
       case req @ GET -> Root / fileName =>
         val allowed =
           Set(
