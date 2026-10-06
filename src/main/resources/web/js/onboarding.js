@@ -49,7 +49,7 @@ import { sendWs, onMessage } from './ws.js';
 import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
 import { smartScroll, escapeHtml } from './utils.js';
-import { rootDisplayName as rootName } from './rootName.js';
+import { rootDisplayName as rootName, isRootNamed } from './rootName.js';
 import { bindImeGuard, isImeComposing, commitEnter } from './imeGuard.js';
 
 const PROBE_TIMEOUT_MS = 20000; // backend times out at 15s; this is the last-resort guard
@@ -236,7 +236,17 @@ function typeInto(body, segments, { onDone = null } = {}) {
 }
 
 /** Build a simulated AI bubble in the chat stream with the typewriter attached.
- *  `segments` = paragraphs of one bubble. Returns the row element. */
+ *  `segments` = paragraphs of one bubble. Returns the row element.
+ *
+ *  N2/N3 (unnamed-state batch 2026-10-06, 口径 A · author ruling): while the root
+ *  agent is UNNAMED the bubble renders NO sender label at all — neither the
+ *  mechanism-name fallback (`sourceLabel()`) nor the greeting placeholder
+ *  (`ob2.source.unnamed`「还没有名字的我」, N3). Named → exact previous behavior
+ *  (`source || sourceLabel()`). The judgement is the single point
+ *  rootName.js `isRootNamed()` — 🔴 never a display-value literal compare.
+ *  `question: true` bubbles are card carriers: they get the ghost seat (the
+ *  bubble de-faces so the lead/question text sits on the paper and the ask card
+ *  floats below it — askuser-hybrid 重皮 2026-10-06). */
 function simBubble(segments, { onDone = null, source = null, question = false } = {}) {
   const chat = activeView?.dom?.chat;
   if (!chat) return null;
@@ -244,9 +254,7 @@ function simBubble(segments, { onDone = null, source = null, question = false } 
   row.className = 'row ai';
   const bubble = document.createElement('div');
   bubble.className = 'bubble ai ob-sim-bubble';
-  const src = document.createElement('div');
-  src.className = 'ask-user-source';
-  src.textContent = source || sourceLabel();
+  if (question) bubble.classList.add('ob-ghost-seat');
   const body = document.createElement('div');
   body.className = 'ob-body';
   segments.forEach((_, i) => {
@@ -255,7 +263,13 @@ function simBubble(segments, { onDone = null, source = null, question = false } 
     if (question && i === segments.length - 1) p.classList.add('ob-question');
     body.appendChild(p);
   });
-  bubble.append(src, body);
+  if (isRootNamed()) {
+    const src = document.createElement('div');
+    src.className = 'ask-user-source';
+    src.textContent = source || sourceLabel();
+    bubble.appendChild(src);
+  }
+  bubble.appendChild(body);
   row.appendChild(bubble);
   chat.appendChild(row);
   smartScroll();
@@ -283,10 +297,14 @@ function simBubble(segments, { onDone = null, source = null, question = false } 
   return row;
 }
 
-/** Stream one bubble and resolve once its text has fully arrived. */
+/** Stream one bubble and resolve once its text has fully arrived.
+ *  The resolve is deferred to a microtask: under `prefers-reduced-motion` the
+ *  typewriter fires `onDone` SYNCHRONOUSLY inside simBubble, and a direct
+ *  `resolve(row)` would hit the `const row` TDZ (BRIEF §9.1 attached finding —
+ *  the flow died right after the first bubble for reduced-motion users). */
 function streamBubble(segments, opts = {}) {
   return new Promise((resolve) => {
-    const row = simBubble(segments, { ...opts, onDone: () => resolve(row) });
+    const row = simBubble(segments, { ...opts, onDone: () => Promise.resolve().then(() => resolve(row)) });
     if (!row) resolve(null);   // no chat view ⇒ degrade gracefully
   });
 }
@@ -927,10 +945,11 @@ async function askQuestion(def, total, idx) {
   await streamBubble([followLine(def, ans)]);
 }
 
-/** streamBubble variant exposing the row. */
+/** streamBubble variant exposing the row. (Same microtask defer as streamBubble —
+ *  the reduced-motion synchronous onDone must not read `row` before assignment.) */
 function streamBubbleAsync(segments, opts = {}) {
   return new Promise((resolve) => {
-    const row = simBubble(segments, { ...opts, onDone: () => resolve({ row }) });
+    const row = simBubble(segments, { ...opts, onDone: () => Promise.resolve().then(() => resolve({ row })) });
     if (!row) resolve({ row: null });
   });
 }

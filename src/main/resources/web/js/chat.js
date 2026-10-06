@@ -40,7 +40,7 @@ import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorkline
 // Root agent DISPLAY name (single read point — rootName.js). Leaf module
 // (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
 // the literal "Nebula".
-import { rootDisplayName } from './rootName.js';
+import { rootDisplayName, isRootNamed } from './rootName.js';
 
 // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
 // label (same string the user reads on the card), so the single-line badge and
@@ -2607,7 +2607,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     let otherBtn = null;
     if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
-      otherBtn.className = 'option-btn';
+      // opt-other = askuser-hybrid 重皮的纯样式钩子（虚线自由入口形态；单选腿
+      // dashed / multi 腿保持勾选表格行，见 chat.css askuser-hybrid 段）。
+      otherBtn.className = 'option-btn opt-other';
       if (isMulti) {
         otherBtn.dataset.other = '1';
         otherBtn.innerHTML = '<span class="option-check"></span><span class="option-text">' + escapeHtml(t('chat.other')) + '</span>';
@@ -2953,15 +2955,25 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   if (sid && state.sessionToolCards[sid]) { state.sessionToolCards[sid].remove(); delete state.sessionToolCards[sid]; }
   const row = document.createElement('div');
   row.className = 'row ai';
+  // Ghost seat (askuser-hybrid 重皮 2026-10-06): this bubble's only payload is
+  // the AskUser card (+ source badge / optional canvas button) — the bubble
+  // de-faces so the card floats directly on the paper. Content-bearing bubbles
+  // (finishAi re-attaches a preserved box under streamed markdown) keep their
+  // face — the marker is deliberately an explicit class, never a blanket :has().
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai';
+  bubble.className = 'bubble ai ob-ghost-seat';
   row.appendChild(bubble);
-  // Show source badge if not Nebula. D6 批 F1 (G9): project context (project
-  // node / dispatcher ask) renders "project · nodeName" so concurrent asks
-  // from several nodes stay attributable; no project field → bare agentName
-  // (Nebula self-ask / REPL — pre-F1 behavior, no regression).
+  // Source badge. D6 批 F1 (G9): project context (project node / dispatcher ask)
+  // renders "project · nodeName" so concurrent asks from several nodes stay
+  // attributable; no project field → bare agentName (root self-ask / REPL).
   const badgeLabel = askSourceLabel({ project: source && source.project, nodeName: source && source.nodeName, agentName });
-  if (badgeLabel && badgeLabel !== 'Nebula') {
+  // N4 (unnamed-state batch 2026-10-06): the self-ask badge mounts only when the
+  // root is NAMED — single-point `isRootNamed()` (rootName.js). The retired
+  // `badgeLabel !== 'Nebula'` literal was a judgement-face use of the mechanism
+  // name (the exact line rootName.js's header draws): it silently dual-tracked
+  // the unnamed state AND mis-hid the badge when a user literally named the
+  // agent "Nebula". Project asks keep their badge regardless of named state.
+  if (badgeLabel && ((source && source.project) || isRootNamed())) {
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
     badge.textContent = badgeLabel;
@@ -3144,6 +3156,9 @@ export function closeAskUserCard(sessionId, requestId, note) {
 export function renderAskUserHistory(bubble, items, answerText, requestId, attachments) {
   if (!Array.isArray(items) || items.length === 0) return;
   try {
+    // Ghost seat (askuser-hybrid 重皮): history-replay twin of renderAskUser —
+    // the bubble is this card's carrier, de-face it the same way.
+    bubble.classList.add('ob-ghost-seat');
     // 案 B：持久化的 requestId 透传进 showOptions ⇒ 历史恢复的卡也带
     // `data-request-id`（可 id 寻址：重放腿按 id 替换、askUserClosed 关卡可达）。
     // 旧 .ui.json 行无该键 ⇒ undefined ⇒ 卡不带属性（改前形态，逐字不变）。
@@ -3252,8 +3267,10 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
+  // Ghost seat (askuser-hybrid 重皮): the permission card is an option-box
+  // carrier (badge/banner + box only) — the bubble de-faces, same as renderAskUser.
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai';
+  bubble.className = 'bubble ai ob-ghost-seat';
 
   // Danger level decorations
   const level = dangerLevel || 0;

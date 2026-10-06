@@ -27,7 +27,7 @@ import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.j
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // Root agent's DISPLAY name — the single read point shared with onboarding /
 // micOrb / chat / modelPanel (leaf module; no cycle risk).
-import { rootDisplayName } from './rootName.js';
+import { rootDisplayName, isRootNamed } from './rootName.js';
 
 // ── Provider protocol face: display ←→ stored value (protoface-ui batch,
 // 2026-09-22) ────────────────────────────────────────────────────────────────
@@ -2135,8 +2135,12 @@ function updateHeaderSessionName() {
       // persisted `displayName` live there. The old agentsData-only read was the
       // 「起名不影响 Header」 gap — it ignored the override and fell back to the
       // bare 'Nebula' literal whenever the agentsData row had not arrived.
+      // N1 (unnamed-state batch 2026-10-06): UNNAMED root → the title area is an
+      // EMPTY string — the mechanism name is a key, not a display fallback, and
+      // the empty <span> keeps the header's center-slot layout intact (no jump).
+      // Named root → display name as before; non-root agents keep their own name.
       const label = agentName === 'Nebula'
-        ? rootDisplayName()
+        ? (isRootNamed() ? rootDisplayName() : '')
         : (state.agentsData.find(a => a.name === agentName)?.displayName || agentName);
       sessionNameEl.textContent = label;
       sessionNameEl.style.display = '';
