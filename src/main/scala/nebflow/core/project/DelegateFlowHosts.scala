@@ -116,7 +116,13 @@ object DelegateFlowHosts:
    *
    * `rootSessionId` 判据：delegate 作用域**自根**——恒传 delegateId 本身（节点
    * out=Nebula / 通知注入目标是 delegate 会话，不是 Nebula 顶层根；⑷「creator 不
-   * live＝滞留」由既有 Parked/重投机制物理承接，零旁路）。测试接缝
+   * live＝滞留」由既有 Parked/重投机制物理承接，零旁路）。S19①（N1 刀3 · v3 §7.1
+   * ＋候裁 v3-⑨ 代裁照落）：本自根事实自本刀起升格为显式规则——引擎
+   * notifyTargetKind = CreatorDelegate（[[nebflow.core.delegate.DelegateNotify]]
+   * .NotifyRule.Target=creator-delegate 单点消费），root 通知每次 offer 落
+   * `notify-redirected` 审计行（锚基工作区）；门集语法保留、缺省目标＝创建者
+   * delegate、显式门集 Nebula 边＝重映射投创建者（S19① 不破例）、bare "Nebula"
+   * ＝零投递标记照旧。测试接缝
    * （`reportGateHold` / `rootNotifyQuietMs` / `destroyWindowMs`）与 NodeEngine 构造
    * 器同款：None = 生产缺省，spec 显式注入避全局 prop（本工程测试 JVM prop 注入静默
    * 失效，BootCrashRecoverySpec 先例同款纪律）。
@@ -158,7 +164,15 @@ object DelegateFlowHosts:
                 projectGoal = None,     // 项目目标行同上
                 reportGateHold = reportGateHold,
                 rootNotifyQuietMs = rootNotifyQuietMs,
-                destroyWindowMs = destroyWindowMs
+                destroyWindowMs = destroyWindowMs,
+                // S19①（N1 刀3 · v3 §7.1 + 候裁 v3-⑨ 代裁照落）：作用域引擎的通知
+                // 目标 = 创建者 delegate 本人（root=self 刀1 已使投递落点如此；本参
+                // 把它升格为显式规则——root 通道每次 offer 落 notify-redirected 审计，
+                // 锚基工作区）。缺省目标＝创建者 delegate；显式门集 Nebula 边 =
+                // 重映射投创建者（S19① 不破例）；bare "Nebula" = 零投递标记照旧
+                // （NodeTools.parseOutSegment R1-a 分支零触碰）。
+                notifyTargetKind = NodeEngine.NotifyTargetKind.CreatorDelegate,
+                notifyAuditWorkspace = Some(baseWorkspace)
               )
               rt = DelegateFlowRuntime(delegateId, project, baseWorkspace, engineCwd, store, engine)
               _ <- hosts.update(_ + (delegateId -> rt))

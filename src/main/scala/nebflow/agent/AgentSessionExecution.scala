@@ -2238,7 +2238,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val withDelegateFace =
       if delegateSession then withDelegateReport ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
       else withDelegateReport
-    if flowNodeSession then withDelegateFace + nebflow.core.tools.NodeReportToolDef.Name else withDelegateFace
+    // S6=C（N1 刀3 · v3 §7.2 ①授权面扩＝创建者 delegate＋root）：delegate 会话挂
+    // Mail——地址面经 MailTool.layeredRoute 分层判据收窄为自己作用域的
+    // `node:<id|name>` 腿（SenderRole.Delegate 单点；其余形态显式越界报错）。同段
+    // 追加（全部角色过滤与 NebulaExclusiveTools 剥离之后）：挂载面授权 + 工具内
+    // 地址面分层 = 双保险（TaskBoard/node_report 同款纪律）；kernel-def 的极简内核
+    // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
+    // 不经此腿。
+    val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
+    if flowNodeSession then withDelegateMail + nebflow.core.tools.NodeReportToolDef.Name else withDelegateMail
 
   end buildAllowedToolSet
 

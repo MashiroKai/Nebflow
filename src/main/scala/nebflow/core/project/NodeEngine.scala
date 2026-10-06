@@ -136,7 +136,28 @@ class NodeEngine(
   /** Loud-alert window effective value (same seam): None = read
     * [[nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN]]. (W1 provisional
     * shim: same surface-only port as above.) */
-  taskLedgerUplinkLoudAlertFirstN: Option[Int] = None
+  taskLedgerUplinkLoudAlertFirstN: Option[Int] = None,
+  /**
+   * **S19① 通知目标形态**（N1 刀3 · 设计 v3 §7.1；候裁 v3-⑨ 分发器代裁照落）：
+   * `ProjectRoot`（缺省）= 既有 per-project 面——root 通道目标 = 项目根会话，行为
+   * **逐字节不变**；`CreatorDelegate` = delegate 作用域面——root 通道（out=Nebula
+   * 腿：完成/failed/补投六路同入口 [[NodeDelivery.offerRootNotify]]）的投递目标 =
+   * **创建者 delegate 本人**（[[nebflow.core.delegate.DelegateNotify.NotifyRule]]
+   * .Target=creator-delegate；通道 ImmediateInput 不变——v3「改的是目标不是通道」）。
+   * delegate 宿主（[[DelegateFlowHosts.mount]]）恒传 CreatorDelegate 且
+   * rootSessionId 已 = delegate 自己（刀1 自根），故投递行为与刀1 逐字节一致；本参
+   * 把它从「事实如此」升格为「显式规则」：每次 root 通知 offer 落一行
+   * [[NotifyRedirectedEventType]] 审计（v3 §7.1「落真＝EventLog 留痕」），creator 不
+   * live = Parked 滞留零旁路（⑬A：不改投 Nebula、不建第二上送；补投扫描保留候选）。
+   */
+  private[project] val notifyTargetKind: NodeEngine.NotifyTargetKind = NodeEngine.NotifyTargetKind.ProjectRoot,
+  /**
+   * S19① 审计行的事件流锚点覆盖：None = [[workspace]]（引擎既有锚——与 retry /
+   * node-message 等引擎审计行同源）；delegate 宿主传 `Some(基工作区)`（刀1 审计腿
+   * 同款判据：作用域审计寿命必须长于 worktree 座位——座位可被 cleanup 拆除，基
+   * 工作区 `.nebflow` 常驻）。只服务 [[NodeDelivery.notifyRedirectAudit]] 一条腿。
+   */
+  private[project] val notifyAuditWorkspace: Option[String] = None
 ) extends NodeCanceller
     with NodeRecovery
     with NodeDelivery
@@ -1406,6 +1427,26 @@ object NodeEngine:
     * 无人管。本事件即覆盖补齐件（与 `fireQuiescentEvent` 同款：只写事件、不注入、
     * 永不判死、永不杀）。 */
   val NodeSessionDeadReminderEventType: String = "node-session-dead-reminder"
+
+  /**
+   * **S19① 改向审计事件类型**（N1 刀3 · v3 §7.1「落真＝EventLog 留痕」）：delegate
+   * 作用域引擎每次 root 通知 offer（完成/failed/补投六路同入口）落一行本类型审计，
+   * summary 携 `target=creator-delegate`（[[nebflow.core.delegate.DelegateNotify]]
+   * .NotifyRule.Target 单点复用）＋ offer 结果（offered/parked/suppressed）。锚点 =
+   * [[notifyAuditWorkspace]]（delegate 宿主 = 基工作区）。per-project 引擎零写。
+   */
+  val NotifyRedirectedEventType: String = "notify-redirected"
+
+  /**
+   * S19① 通知目标形态（判别单点；见构造参 [[NodeEngine.notifyTargetKind]]）。
+   */
+  private[project] enum NotifyTargetKind:
+    /** per-project 面：root 通道目标 = 项目根会话（既有行为，逐字节不变）。 */
+    case ProjectRoot
+    /** delegate 作用域面：root 通道目标 = 创建者 delegate（NotifyRule.Target）。 */
+    case CreatorDelegate
+  end NotifyTargetKind
+
   // 伴生契约已整体迁至 NodeEngineContract.scala(行为保持重构,2026-09-25):
   // val/def 逐成员保留同名同签名委托;嵌套类型(FlipOutcome / StartRaceLost /
   // RetireDetach / PluginPreparation / RecoveryAnchor / NodeChainContext /

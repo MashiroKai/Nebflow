@@ -59,6 +59,10 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
+// delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
+// 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
+// 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
+import './delegateChainProvider.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';

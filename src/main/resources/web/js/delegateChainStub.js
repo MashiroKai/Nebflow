@@ -7,9 +7,9 @@
 //     N1 结构帧的字段未定 ⇒ 帧类型在此拆成「已落集」（#1224 三行族，逐键在案）
 //     与「候定集」（PENDING，仅声明不解读），差异一律由下方**适配层**吸收。
 //   - **读取口（read port）**＝未来真实数据源的同形接口（listDelegateRows /
-//     getChainByTask）。当前由本地 stub 数据供给（**默认空 ⇒ 面板零变化**）；
-//     N1/#1228 换源时以 setSource() 挂真实 provider（REST/WS 适配 provider），
-//     渲染面（taskList.js delegate 行骨架）零改动。
+//     getChainByTask）。N1 刀3 换源已落：delegateChainProvider.js 经 setSource()
+//     挂真 provider（REST /api/chains 快照 + WS 触发的防抖镜像），渲染面
+//     （taskList.js delegate 行骨架）零改动；夹具在场 = 恒夹具优先（harness 兼容缝）。
 //   - **适配层**＝纯函数归一（引擎 Record/行 JSON → 规范 schema），字段缺失
 //     容忍（旧盘面/中间态不崩、不臆造）。本件**零 import**（无环、可单测）。
 //
@@ -268,6 +268,16 @@ const fixtureRows = new Map();
 /** @type {Map<string, ChainView>} */
 const fixtureChains = new Map();
 
+/**
+ * 夹具在场否（harness/单测判据；产品路径恒 false——零调用）。读取口在夹具在场时
+ * 恒读夹具（provider 换源后夹具注入面零回归——N1 刀3 换源批的兼容缝；优先级 =
+ * 夹具 > provider，产品无夹具即纯 provider 面）。
+ * @returns {boolean}
+ */
+export function __hasFixture() {
+  return fixtureRows.size > 0 || fixtureChains.size > 0;
+}
+
 /** 本地 stub 数据源（默认）：读 fixture（默认空）。 */
 const localStubSource = {
   /** @returns {DelegateRow[]} */
@@ -298,8 +308,10 @@ export function setSource(provider) {
     : localStubSource;
 }
 
-/** 任务行清单（S1 行数据源读取口；返回源侧快照，渲染面不改写）。 @returns {DelegateRow[]} */
+/** 任务行清单（S1 行数据源读取口；返回源侧快照，渲染面不改写）。夹具在场 = 恒夹具
+ *  优先（换源后 harness 注入口零回归；产品路径无夹具 = 纯 source 面）。 @returns {DelegateRow[]} */
 export function listDelegateRows() {
+  if (__hasFixture()) return Array.from(fixtureRows.values());
   try {
     return source.listDelegateRows();
   } catch (_) {
@@ -308,12 +320,15 @@ export function listDelegateRows() {
 }
 
 /**
- * per-task 链视图（S10 点进 delegate 的数据源读取口；查无 → null）。
+ * per-task 链视图（S10 点进 delegate 的数据源读取口；查无 → null）。夹具在场 = 恒
+ * 夹具优先（同上）。
  * @param {string} taskNo @returns {ChainView|null}
  */
 export function getChainByTask(taskNo) {
+  const k = String(taskNo == null ? '' : taskNo);
+  if (__hasFixture()) return fixtureChains.get(k) || null;
   try {
-    return source.getChainByTask(String(taskNo == null ? '' : taskNo));
+    return source.getChainByTask(k);
   } catch (_) {
     return null;
   }
