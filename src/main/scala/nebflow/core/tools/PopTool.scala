@@ -183,7 +183,7 @@ Example (URL): {"filePath": "https://example.com"}"""
           "items" -> Json.obj("type" -> "string".asJson),
           "minItems" -> 1.asJson,
           "maxItems" -> MaxPopFiles.asJson,
-          "description" -> "Absolute path to show (supports ~ expansion), an array of such paths (batch, up to 20), or a single HTTP/HTTPS URL".asJson
+          "description" -> "Absolute path to show (supports ~ expansion), an array of such paths (batch, up to 20), or a single HTTP/HTTPS URL — the array must be a real JSON array, not a quoted array string".asJson
         ),
         "title" -> Json.obj(
           "type" -> "string".asJson,
@@ -267,7 +267,7 @@ Example (URL): {"filePath": "https://example.com"}"""
    * a marker object from `ToolInputJson` (unparseable arguments) is reported as
    * such instead of as a missing `filePath`.
    */
-  private def requestedPaths(input: JsonObject): Either[ToolError, List[String]] =
+  private def requestedPaths(input: JsonObject): Either[ToolError, (List[String], Option[String])] =
     // Unparseable arguments: every field was dropped tool-side. Report the parse
     // failure itself (with the raw preview), never "filePath is missing" — the
     // misleading error issue #18 exists to prevent (PLAN §3.3-3).
@@ -287,14 +287,12 @@ Example (URL): {"filePath": "https://example.com"}"""
             v.asString match
               case Some(s) =>
                 if s.trim.isEmpty then Left(EmptyShapeError)
-                else if looksLikeJsonArrayString(s) then
-                  Left(
-                    ToolError(
-                      "Pop: `filePath` looks like a JSON array literal — pass a real JSON array, " +
-                        "not a quoted array string (got a string starting with `[`)."
-                    )
-                  )
-                else Right(List(s))
+                else if s.trim.startsWith("[") then
+                  // §16 (2026-10-06 放行令): any array-ish string — well-formed or
+                  // truncated — must parse into a real JSON array of strings or
+                  // refuse with the guard; it never silently rides as ONE path.
+                  acceptQuotedArray(s).map((ps, note) => (ps, Some(note)))
+                else Right((List(s), None))
               case None =>
                 v.asArray match
                   case Some(elems) =>
@@ -334,7 +332,7 @@ Example (URL): {"filePath": "https://example.com"}"""
                                     "not a quoted array string (got a string starting with `[`)."
                                 )
                               )
-                            case None => Right(paths)
+                            case None => Right((paths, None))
                   case None =>
                     Left(
                       ToolError(
@@ -342,6 +340,36 @@ Example (URL): {"filePath": "https://example.com"}"""
                       )
                     )
   end requestedPaths
+
+  /**
+   * §16 落刀（2026-10-06 作者放行令「已覆盖，照落」）：a quoted array string is
+   * now PARSED into the array it holds (two-stage gate ②) with an upfront
+   * `notes` disclosure; every malformed quoted form — non-array, non-string
+   * element, nothing usable after whitespace filtering, over [[MaxPopFiles]] —
+   * refuses with the shipped zcode-484 guard text verbatim (failure never widened).
+   */
+  private def acceptQuotedArray(s: String): Either[ToolError, (List[String], String)] =
+    val guard: ToolError =
+      ToolError(
+        "Pop: `filePath` looks like a JSON array literal — pass a real JSON array, " +
+          "not a quoted array string (got a string starting with `[`)."
+      )
+    io.circe.parser.parse(s.trim).toOption.flatMap(_.asArray) match
+      case None => Left(guard)
+      case Some(elems) =>
+        if elems.exists(!_.isString) then Left(guard)
+        else
+          val paths = elems.flatMap(_.asString).filter(_.trim.nonEmpty).toList
+          if paths.isEmpty || paths.length > MaxPopFiles then Left(guard)
+          else
+            val n = paths.length
+            Right(
+              (
+                paths,
+                s"Pop: `filePath` arrived as a quoted array string (a single string holding a JSON array literal) — it was parsed into $n path(s) and shown this time. Next time pass a real JSON array, not a quoted array string."
+              )
+            )
+  end acceptQuotedArray
 
   /** The unreadable-batch error for a non-empty-looking input that yielded no
    *  path at all (a blank string, or an array of blanks/whitespace). */
@@ -602,7 +630,7 @@ Example (URL): {"filePath": "https://example.com"}"""
   private def doCall(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     requestedPaths(input) match
       case Left(err) => IO.pure(Left(err))
-      case Right(paths) =>
+      case Right((paths, upfrontNotes)) =>
         paths match
           // Single HTTP/HTTPS URL: the Canvas iframe tab, exactly as shipped.
           case List(single) if isHttpUrl(single.trim) =>
@@ -638,6 +666,9 @@ Example (URL): {"filePath": "https://example.com"}"""
                 // batch share it in the order the paths appear.
                 val budget = InlineBudget()
                 val notes = scala.collection.mutable.ListBuffer.empty[String]
+                // §16 upfront disclosure (quoted-array-string accept) seeds the
+                // buffer first, with the same contains-dedup the per-path notes use.
+                upfrontNotes.foreach(n => if !notes.contains(n) then notes += n)
                 val rejects = scala.collection.mutable.ListBuffer.empty[RejectedRef]
                 val items = scala.collection.mutable.ListBuffer.empty[PopItem]
                 paths.foreach { raw =>

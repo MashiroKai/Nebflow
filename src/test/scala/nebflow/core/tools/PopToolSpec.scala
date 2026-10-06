@@ -225,8 +225,11 @@ class PopToolSpec extends FunSuite:
   // silent failure is undetermined tool-side. What IS tool-side and wrong is the
   // ACCEPTANCE WALK: `asArray.map(_.flatMap(_.asString))` silently dropped every
   // non-string element and then reported the generic "non-empty filePath" error.
-  // S3/S4/S5/S8/S9/S10 are the readable-error cases; S1/S2/S6/S7 pin that the
+  // S3/S4/S5/S8/S10 are the readable-error cases; S1/S2/S6/S7 pin that the
   // two supported forms (and the two existing refusal faces) are unchanged.
+  // §16 (2026-10-06 放行令「已覆盖，照落」): S9 flipped — a quoted array string
+  // now parses into the array it holds with an upfront notes disclosure (S9);
+  // its own bad forms still refuse with the guard text verbatim (S9b).
 
   /** The `filePath` acceptance must be no wider than the declared schema and no
    *  narrower: every shape the schema admits is walked, every shape it does not
@@ -305,12 +308,41 @@ class PopToolSpec extends FunSuite:
       case Right(ok) =>
         fail(s"S8 must be refused with a readable error, not silently degraded to a 1-item batch: ${ok.take(80)}")
 
-  test("S9: a string shaped like a JSON array literal is refused as a shape error (was: treated as one path)"):
+  test("S9: a quoted array string is ACCEPTED as the array it holds, carrying the §16 upfront disclosure"):
+    val dir = tempDir("s9")
+    os.write.over(dir / "a.png", Array.fill(8)(0x41.toByte))
+    os.write.over(dir / "b.pdf", Array.fill(8)(0x43.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    pop(JsonObject("filePath" -> """["a.png","b.png"]""".asJson), buf) match
-      case Left(err) =>
-        assert(err.message.contains("JSON array literal"), err.message)
-      case Right(ok) => fail(s"S9 must be refused as a shape error, got: ${ok.take(80)}")
+    // §16 案一披露串（作者放行令逐字；${n} = 解析所得路径条数，此处 2）。
+    val quoted = s"""["${dir / "a.png"}","${dir / "b.pdf"}"]"""
+    pop(JsonObject("filePath" -> quoted.asJson), buf) match
+      case Right(raw) =>
+        val p = payloadOf(raw)
+        assertEquals(kindsOf(p), List("image", "file"), "the quoted array string parsed into 2 shown items")
+        val notes = p.hcursor.downField("notes").as[List[String]].toOption.getOrElse(Nil)
+        val disclosure =
+          "Pop: `filePath` arrived as a quoted array string (a single string holding a JSON array literal) — " +
+            "it was parsed into 2 path(s) and shown this time. " +
+            "Next time pass a real JSON array, not a quoted array string."
+        assert(notes.contains(disclosure), s"§16 upfront disclosure missing: $notes")
+        val model = io.circe.parser.parse(PopTool.modelFacingResult(raw)).toOption
+          .getOrElse(fail(s"model face must be JSON: ${PopTool.modelFacingResult(raw).take(80)}"))
+        val modelNotes = model.hcursor.downField("notes").as[List[String]].toOption.getOrElse(Nil)
+        assertEquals(modelNotes, notes, "the model-facing projection carries the same notes verbatim")
+      case Left(err) => fail(s"S9 must be accepted with the disclosure note: ${err.message}")
+
+  test("S9b: a quoted array string whose own contents are bad still refuses with the guard text"):
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    // A non-string element inside the quoted array — the element-level guard
+    // keeps refusing it even though the string branch now parses quoted arrays.
+    pop(JsonObject("filePath" -> """[1,"/tmp/a.png"]""".asJson), buf) match
+      case Left(err) => assert(err.message.contains("JSON array literal"), err.message)
+      case Right(ok) => fail(s"a bad-element quoted array must be refused: ${ok.take(80)}")
+    // An unparseable array-ish string never reaches the acceptor (the
+    // looksLikeJsonArrayString gate is unchanged) and refuses identically.
+    pop(JsonObject("filePath" -> """["a",""".asJson), buf) match
+      case Left(err) => assert(err.message.contains("JSON array literal"), err.message)
+      case Right(ok) => fail(s"an unparseable quoted array must be refused: ${ok.take(80)}")
 
   test("S10: unparseable arguments report the parse failure, never a missing filePath"):
     // Built through the REAL adapter-side marker producer, so the key cannot
