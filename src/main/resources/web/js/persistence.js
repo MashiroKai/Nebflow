@@ -19,7 +19,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards } from './chat.js';
+import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyPanelDetailFace } from './chat.js';
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
 // (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
@@ -1305,6 +1305,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
   });
   chat.appendChild(fragment);
+  // 分层展示批（2026-10-06）：面板视图的历史重放先归位到展开面（工具行脱
+  // tucked、卡体 body open），再派生 turn header——面板打开 = 展开工具块可见
+  // 「命令/输出/结果详单全量展开」。主聊天流容器无 .nf-panel 标记 = no-op。
+  applyPanelDetailFace(chat);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
   // #491: doc-order replay keeps each artifact beside its Pop tool row — same
   // as the live path and the storage-replay path; no re-anchor.

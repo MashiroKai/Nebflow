@@ -24,6 +24,34 @@ export function setActiveView(v) { activeView = v; }
 // this state.js accessor instead of statically importing this module.
 state.getActiveView = () => activeView;
 
+// ── Detail-face route: the ONE session-layer decision (分层展示批, 2026-10-06) ──
+//
+// Author ruling (17:55 令): the SAME tool-activity data renders under TWO view
+// faces. The MAIN chat flow keeps the single-line streaming work-line form
+// (398dd72ac, zcode-484); a SUBAGENT/DELEGATE PANEL (bgAgentPopup /
+// flowAgentPopup — the overlay monitoring a child session) shows the tool
+// blocks EXPANDED instead — command/output/result detail fully open, and the
+// running detail line replaced by that full expansion (「面板视图不吃细节行，
+// 全量展开替代之」; reference form = git show b3c0851c8^ 展开块样式).
+//
+// THE CONVERGENCE POINT: the decision is made ONCE, here, at view
+// construction — a panel-face view stamps its chat container with `.nf-panel`.
+// Nothing in the render chain may re-derive "is this a panel?" from view ids,
+// session-id prefixes or DOM walks: every consumer (CSS-able state, chat.js
+// builders, turnGroup tuck, persistence restore) branches on THIS marker via
+// isPanelFace() below. Deliberately OPT-IN — chatSearchFloat's throwaway
+// 'search-float' view is also non-primary but must keep the MAIN face (it
+// renders collapsed-turn slices and runs expandGroupContaining), so "not
+// primary" alone is NOT the panel criterion.
+//
+// Style branch, not a data split: both faces share the same data source
+// (toolStart/toolEnd/toolArgDelta + persisted history) and the same tool-block
+// builder (chat.js renderTool/renderToolPending + persistence.js replay) — the
+// panel differs only in the style-state its blocks settle into.
+export function isPanelFace(chatEl) {
+  return !!(chatEl && chatEl.classList && chatEl.classList.contains('nf-panel'));
+}
+
 // ── Motion scope: the ONE window-role decision (UI-G, author 2026-10-03) ───
 //
 // Author ruling 19:59: 「只需要主Nebula有流式输出，气泡动画等效果，subagent窗口
@@ -59,8 +87,12 @@ export class ChatView {
   /**
    * @param {string} id  — 'primary' (future: additional view IDs for multi-instance)
    * @param {object} dom — pre-resolved DOM refs for this window's chat subtree
+   * @param {object} [opts] opts.panelFace: panel-face views (bgagent/flow
+   *        popups) opt in here; see the 分层展示批 route block above. This is
+   *        THE single place the face decision is made (constructor stamps the
+   *        `.nf-panel` marker once; every consumer reads isPanelFace).
    */
-  constructor(id, dom) {
+  constructor(id, dom, opts = {}) {
     this.id = id;
     this.dom = dom;
     this.sessionId = null;
@@ -147,6 +179,13 @@ export class ChatView {
     // than per-render so no render path can forget it.
     if (!isMainWindow(this) && this.dom && this.dom.chat) {
       this.dom.chat.classList.add('nf-static');
+    }
+    // 分层展示批 detail-face route (see the block above): panel views stamp
+    // their container once — same single-construction shape as the UI-G
+    // marker. Main face = default, zero extra class.
+    this.panelFace = !!opts.panelFace;
+    if (this.panelFace && this.dom && this.dom.chat) {
+      this.dom.chat.classList.add('nf-panel');
     }
   }
 

@@ -8,7 +8,7 @@ import { key } from './branding.js';
 // formatFooterTime = footer-time 批（2026-10-06）的分层 footer label：
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
-import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
+import { activeView, setActiveView, findViewBySessionId, chatViews, isPanelFace } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
@@ -1157,6 +1157,14 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     row.appendChild(card);
     appendChatRow(chat, row);
   }
+  // 分层展示批面板分支（2026-10-06）：面板视图的**完成**工具块呈展开态——
+  // 「命令/输出/结果详单全量展开」（参照 b3c0851c8^ 展开块样式）。运行中工具
+  // 行两分支同形（turn 行承载，主分支零改动）；完成块落位时面板脱下 tucked
+  // （复用腿与新建腿同守卫——reused pending row 出生时带 tucked），卡体 body
+  // 直接 open（下方默认/Mail 两个 body 分支按同 branch 落 .open）。
+  // 判定 = 路由收口点标记（isPanelFace），构建器本体零分家。
+  const panelFace = isPanelFace(chat);
+  if (panelFace) row.classList.remove('nf-tucked');
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   // UI-B: stamp the owning round on a freshly built row (a reused pending row
@@ -1254,7 +1262,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     } catch {}
     card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
       '<div class="content"><div class="label">' + labelHtml + '</div>' +
-      (mailBody ? '<div class="body">' + mailBody + '</div>' : '') + '</div>';
+      (mailBody ? '<div class="body' + (panelFace ? ' open' : '') + '">' + mailBody + '</div>' : '') + '</div>';
     smartScroll();
     if (mailBody) attachToolClick(card);
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
@@ -1331,11 +1339,32 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div>' +
-    (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+    (bodyHtml ? '<div class="body' + (panelFace ? ' open' : '') + '">' + bodyHtml + '</div>' : '') + '</div>';
   smartScroll();
 
   if (hasBody) attachToolClick(card);
   return { type: 'tool', label, summary, content, isError, input: inputJson };
+}
+
+/** 分层展示批（2026-10-06）：把面板视图容器里已有的工具块归位到面板展开面——
+ *  完成工具行脱 tucked、卡体 body 落 .open。两条历史重放腿（persistence.js
+ *  restoreFromBackendHistory 的尾部）与未来的批量落位共用本入口；主聊天流
+ *  容器（无 .nf-panel 标记）= 完整 no-op，主分支零影响。
+ *  范围刻意只有 .row.tool（工具块）：thinking 行的 tucked 是另一套过程面
+ *  （#346/#345 语义），本批不动。卡体默认收起 + 点击展开的既有语义在面板里
+ *  依旧成立——.open 只是初始态，attachToolClick 的 toggle 不受影响。 */
+export function applyPanelDetailFace(chat) {
+  if (!chat || !isPanelFace(chat)) return 0;
+  let n = 0;
+  for (const row of chat.querySelectorAll('.row.tool.nf-tucked')) {
+    row.classList.remove('nf-tucked');
+    n++;
+  }
+  for (const body of chat.querySelectorAll('.tool-card .body:not(.open)')) {
+    body.classList.add('open');
+    n++;
+  }
+  return n;
 }
 
 export function renderToolPending(label, sessionId) {
@@ -1471,6 +1500,11 @@ const TOOL_PRIMARY_FIELDS = {
   // and the reader below handles BOTH: on an array it shows the first path plus
   // " +N" for the further complete ones — the plan's "first path (+N)" progress.
   'Pop': 'filePath',
+  // AskUserQuestion（分层展示批追加令 2026-10-06，作者裁决点名「AskUser 输入问题
+  // 的时候」应流式）：卡体流式面与细节行（TOOL_LINE_DETAIL 同批补行）同源一致
+  // ——入参字段 = question（AskUserQuestionTool.scala :96/:157，帧名
+  // "AskUserQuestion"）。
+  'AskUserQuestion': 'question',
 };
 
 // ---------- ② 运行中类型化细节行（toolline-detail 批 2026-10-06 作者 16:51 令）----------
@@ -1500,6 +1534,7 @@ const TOOL_LINE_DETAIL = [
   { tools: ['Grep', 'Glob'], field: 'pattern' },                       // 查询词
   { tools: ['WebSearch'], field: 'query' },                            // 查询词
   { tools: ['WebFetch', 'Curl'], field: 'url' },                       // URL
+  { tools: ['AskUserQuestion'], field: 'question' },                   // 问句（作者 10-06 裁决点名例——问句随 LLM 生成逐字上屏；分层展示批追加令）
 ];
 // 默认分支的探测字段序（其余工具 = 工具名 + 一行上下文）。
 const TOOL_LINE_DETAIL_DEFAULT_FIELDS = ['command', 'file_path', 'path', 'url', 'pattern', 'query', 'task', 'to', 'id', 'name'];
@@ -1650,10 +1685,17 @@ let _toolStreamRafTarget = null;
 
 /** ② 把当前累积参数流投到 turn 行细节位（toolline-detail 批）。
  *  worklineToolDetail 内部做 kind 守卫（仅运行中工具项）与文本比对，重复调用
- *  无副作用——参数流 rAF 帧与 toolStart 终值重放共用本入口。 */
+ *  无副作用——参数流 rAF 帧与 toolStart 终值重放共用本入口。
+ *  分层展示批路由守卫（2026-10-06）：面板视图（.nf-panel）**不吃细节行**——
+ *  面板的工具信息由展开工具块承载（命令/输出/结果全量展开），细节行是主聊天
+ *  流分支的形态。判定读的是路由收口点（chatView.js 构造器）落下的 .nf-panel
+ *  标记，非散判；引擎 !isSubagent 门下子代理腿本就无 toolArgDelta，此守卫把
+ *  该契约落成视图层路由事实（直喂路径/夹具同受约束）。 */
 function setWorklineToolDetail(view, toolName, rawJson) {
+  const v = view || activeView;
+  if (v && v.dom && v.dom.chat && isPanelFace(v.dom.chat)) return;
   const text = toolLineDetailText(toolName, rawJson);
-  if (text) worklineToolDetail(view || activeView, text);
+  if (text) worklineToolDetail(v, text);
 }
 
 /** toolStart 时终值重放：参数 JSON 在 toolCallDetected→toolStart 之间已流毕
