@@ -37,6 +37,79 @@ object NfFileRoutes:
     nfText(resp.status, s"${resp.reason}: ${resp.message}")
       .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("X-Nf-Reason"), resp.reason))
 
+  // ────────────────────────────────────────────────────────────────────────
+  // HTTP Range support (video-canvas batch, 2026-10-06 author order 13:24).
+  //
+  // The serving leg below used to be a bare `StaticFile.fromPath(_, Some(req))`.
+  // Passing the request was widely believed to turn Range negotiation on
+  // (FileTypeRegistry.scala and the pptx recon memo both said so) — it does
+  // NOT: in http4s 0.23.30 `StaticFile` contains zero Range handling (no
+  // `headers/Range` reference, no Accept-Ranges emission — verified against
+  // the jar and pinned by NfFileRoutesSpec). A Canvas <video> therefore got
+  // the whole file as one 200: playback worked, but every progress-bar seek
+  // re-fetched from byte 0.
+  //
+  // Single byte-range negotiation lives here now: `bytes=a-b` / `bytes=a-` /
+  // `bytes=-n` → 206 Partial Content + Content-Range + Accept-Ranges. A
+  // MULTI-range or non-bytes Range, and anything malformed, is IGNORED per
+  // RFC 9110 §14.2 (the route answers 200 with the full body — the receiving
+  // <video> copes) rather than half-implemented; If-Range is likewise ignored
+  // (unconditional serving). 416 with `Content-Range: bytes *\/size` for a
+  // satisfiable-looking but out-of-bounds range.
+  // ────────────────────────────────────────────────────────────────────────
+
+  /** Parsed single byte range: inclusive `start`..`end` against a known size.
+    *
+    * Syntax check vs satisfiability are deliberately ONE function over `size`:
+    * the route calls it twice (syntax against `Long.MaxValue` to tell "no
+    * usable Range" from "a Range we must answer", then against the real file
+    * size to resolve the slice) so a syntactically-fine but out-of-bounds
+    * range lands on 416 while a malformed/multi-range header lands on the
+    * RFC's ignore-and-serve-200. */
+  private def parseByteRange(value: String, size: Long): Option[(Long, Long)] =
+    val m = """^bytes=(\d*)-(\d*)$""".r.findFirstMatchIn(value.trim)
+    m.flatMap { m =>
+      val (first, last) = (m.group(1), m.group(2))
+      if first.isEmpty && last.isEmpty then None
+      else if first.isEmpty then
+        // suffix form `bytes=-n`: the FINAL n bytes
+        last.toLongOption.collect { case n if n > 0 => (math.max(size - n, 0L), size - 1) }
+      else
+        first.toLongOption.collect { case s if s < size =>
+          val end = last.toLongOption.fold(size - 1)(e => math.min(e, size - 1))
+          (s, end)
+        }
+    }.filter((start, end) => start <= end)
+
+  /** The byte-range the request carries, if any. */
+  private def requestedRange(req: Request[IO]): Option[String] =
+    req.headers.get(org.typelevel.ci.CIString("Range")).map(_.head.value)
+
+  /** Content-Type derived the same way StaticFile derives it (MediaType by
+    * extension from the shared MimeDB), so a 206 slice and the 200 whole
+    * always agree. None → no header (StaticFile's own fallback shape). */
+  private def contentTypeFor(real: fs2.io.file.Path): Option[`Content-Type`] =
+    val name = real.toString
+    val dot = name.lastIndexOf('.')
+    if dot < 0 then None
+    else MediaType.forExtension(name.substring(dot + 1).toLowerCase).map(mt => `Content-Type`(mt))
+
+  /**
+   * Serve `bytes start..end` (inclusive) of the file with 206 + Content-Range.
+   * The stream is exactly `end-start+1` bytes (`readRange` takes an
+    * END-EXCLUSIVE bound) and Content-Length is set to match, so Ember emits a
+   * plain fixed-length body.
+   */
+  private def serveRange(real: fs2.io.file.Path, size: Long, start: Long, end: Long): Response[IO] =
+    val len = end - start + 1
+    Response[IO](Status.PartialContent)
+      .putHeaders(
+        org.http4s.headers.`Content-Range`(org.http4s.RangeUnit.Bytes, org.http4s.headers.Range.SubRange(start, end), Some(size)),
+        org.http4s.headers.`Accept-Ranges`.bytes,
+        Header.Raw(org.typelevel.ci.CIString("Content-Length"), len.toString)
+      )
+      .withBodyStream(fs2.io.file.Files[IO].readRange(real, 64 * 1024, start, end + 1))
+
   /**
    * Serves whitelisted local files from disk for card iframes
    * (GET /api/nf-file?path=xxx&ticket=xxx). Supports Range requests for
@@ -51,6 +124,9 @@ object NfFileRoutes:
    * mismatched → 403 with `reason`. The route body has no `handleErrorWith`
    * (it used to be three total functions), so the new resolution step is an
    * explicit `IO.blocking` + in-function try — never a throwing lambda.
+   *
+   * 2026-10-06 (video-canvas batch): single byte-range negotiation added
+   * (206/Content-Range/Accept-Ranges) — see the Range block comment above.
    */
   def nfFileRoutes(
     token: String,
@@ -73,9 +149,43 @@ object NfFileRoutes:
             case Left(reason) =>
               IO.pure(nfDenied(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected")))
             case Right(_) =>
-              StaticFile
-                .fromPath(fs2.io.file.Path(real.toString), Some(req))
-                .getOrElseF(NotFound())
+              val fsReal = fs2.io.file.Path(real.toString)
+              // Stage 1: syntax probe against MaxValue — separates "carries a
+              // usable single byte-range" from "no/malformed/multi Range".
+              val range = requestedRange(req).flatMap(parseByteRange(_, Long.MaxValue))
+              range match
+                case Some(_) =>
+                  // Stage 2: satisfiability against the REAL size (the file may
+                  // have changed or vanished since the verdict — re-reading is
+                  // the honest answer, a stale size would corrupt Content-Range).
+                  IO.blocking(java.nio.file.Files.size(real)).attempt.flatMap {
+                    case Left(_) => IO.pure(Response[IO](Status.NotFound))
+                    case Right(size) =>
+                      requestedRange(req).flatMap(parseByteRange(_, size)) match
+                        case Some((start, end)) =>
+                          val base = serveRange(fsReal, size, start, end)
+                          IO.pure(contentTypeFor(fsReal).fold(base)(base.putHeaders(_)))
+                        case None =>
+                          // Well-formed-looking but unsatisfiable against the
+                          // real size → 416 (RFC 9110 §15.5.17).
+                          IO.pure(
+                            Response[IO](Status.RangeNotSatisfiable)
+                              .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Range"), s"bytes */$size"))
+                              .putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
+                          )
+                  }
+                case None =>
+                  // No (usable single) Range: the unchanged whole-file leg, plus
+                  // the Accept-Ranges advertisement the <video> progress bar
+                  // consults before bothering to seek.
+                  StaticFile
+                    .fromPath(fsReal, Some(req))
+                    .map { r =>
+                      val withAR = r.putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
+                      contentTypeFor(fsReal).fold(withAR)(withAR.putHeaders(_))
+                    }
+                    .getOrElseF(NotFound())
+              end match
           }
       }
     end if
