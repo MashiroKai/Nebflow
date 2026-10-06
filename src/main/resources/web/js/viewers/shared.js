@@ -740,7 +740,34 @@ export function addElementRefToggle(pane, opts) {
 
 // ── ZIP utilities (EPUB viewer) ────────────────────────────────────────
 
-/** Parse ZIP central directory → map of filename → { compMethod, data (Uint8Array) } */
+// ZIP 解压预算族（单一常量纪律；pptx viewer 同批共用，epub 腿经下方两个函数自动继承）。
+// 推导：打开闸 = MaxPopReadFileBytes 100MB（TextStreamSearch.scala:277，attachmentPreview.js:50 前端镜像）——
+// 管的是「能不能进页面」；本族管「进了页面之后解压面放多大」：
+//   · 单 entry 上限 32MB —— 覆盖常规 OOXML 单部件（最大 XML/media part）数倍余量，
+//     高压缩比 zip bomb entry（解压后几十 MB 的 XML）在此拦下；
+//   · 全件解压总量 128MB —— 打开闸 100MB × ~1.28 内存表示安全系数（UTF-16 解码/数据 URL 重写放大），
+//     全程压在单 tab 内存包络内；取值严于 @aiden0z/pptx-renderer 推荐值（256MiB total）。
+// 两条上限都拦在「解压动作之前」（按 central directory 声明的未压缩尺寸预判，见 decompressZipEntry 内
+// 的实际尺寸回检兜底流式 zip 头撒谎的情形）。超限 → 可见错误（viewer 层落到各自的可见降级路径）。
+/** @type {{ maxEntryBytes: number, maxTotalBytes: number }} */
+export const ZIP_BUDGET = Object.freeze({
+  maxEntryBytes: 32 * 1024 * 1024,
+  maxTotalBytes: 128 * 1024 * 1024,
+});
+
+/** Per-source-buffer decompression accounting (weakened-KeyMap keyed by the
+ *  source ArrayBuffer so state dies with the buffer — no cross-file bleed,
+ *  no signature change for existing callers). @type {WeakMap<ArrayBuffer, {used: number}>} */
+const _zipBudgets = new WeakMap();
+function _zipBudgetFor(buffer) {
+  let st = _zipBudgets.get(buffer);
+  if (!st) { st = { used: 0 }; _zipBudgets.set(buffer, st); }
+  return st;
+}
+
+/** Parse ZIP central directory → map of filename → { compMethod, uncompSize, data (Uint8Array) }.
+ *  2026-10-06 pptx-mvp batch: also reads the CD uncompressed-size field (offset +24) and
+ *  enforces ZIP_BUDGET.maxTotalBytes across declared entry sizes (fail before inflating). */
 export function parseZipEntries(buffer) {
   const view = new DataView(buffer);
   const u8 = new Uint8Array(buffer);
@@ -753,11 +780,13 @@ export function parseZipEntries(buffer) {
   const cdOffset = view.getUint32(eocd + 16, true);
   const cdCount = view.getUint16(eocd + 10, true);
   const entries = {};
+  let totalUncomp = 0;
   let off = cdOffset;
   for (let i = 0; i < cdCount; i++) {
     if (view.getUint32(off, true) !== 0x02014b50) break;
     const compMethod = view.getUint16(off + 10, true);
     const compSize = view.getUint32(off + 20, true);
+    const uncompSize = view.getUint32(off + 24, true);
     const nameLen = view.getUint16(off + 28, true);
     const extraLen = view.getUint16(off + 30, true);
     const commentLen = view.getUint16(off + 32, true);
@@ -767,20 +796,46 @@ export function parseZipEntries(buffer) {
     const lNameLen = view.getUint16(localOff + 26, true);
     const lExtraLen = view.getUint16(localOff + 28, true);
     const dataOff = localOff + 30 + lNameLen + lExtraLen;
-    entries[name] = { compMethod, data: u8.subarray(dataOff, dataOff + compSize) };
+    entries[name] = { compMethod, uncompSize, data: u8.subarray(dataOff, dataOff + compSize) };
+    totalUncomp += uncompSize;
     off += 46 + nameLen + extraLen + commentLen;
+  }
+  if (totalUncomp > ZIP_BUDGET.maxTotalBytes) {
+    throw new Error(`ZIP total decompressed size ${totalUncomp} bytes exceeds budget ${ZIP_BUDGET.maxTotalBytes}`);
   }
   return entries;
 }
 
-/** Decompress a ZIP entry to text. Method 0 = stored, 8 = deflate. */
+/** Decompress a ZIP entry to text. Method 0 = stored, 8 = deflate.
+ *  2026-10-06 pptx-mvp batch: ZIP_BUDGET enforcement lives here so every caller
+ *  (epub leg today, any future zip consumer) inherits the same budget family.
+ *  Pre-check uses the CD-declared uncompressed size (header lies from streamed
+ *  zips are backstopped by the actual-size re-check after decode). */
 export async function decompressZipEntry(entry) {
   if (!entry) return '';
-  if (entry.compMethod === 0) return new TextDecoder().decode(entry.data);
-  if (entry.compMethod === 8) {
+  const source = entry.data && entry.data.buffer;
+  const budget = source ? _zipBudgetFor(source) : null;
+  const declared = (typeof entry.uncompSize === 'number' && entry.uncompSize > 0)
+    ? entry.uncompSize
+    : (entry.compMethod === 0 ? entry.data.byteLength : 0);
+  if (declared > ZIP_BUDGET.maxEntryBytes) {
+    throw new Error(`ZIP entry decompressed size ${declared} bytes exceeds budget ${ZIP_BUDGET.maxEntryBytes}`);
+  }
+  let text;
+  if (entry.compMethod === 0) text = new TextDecoder().decode(entry.data);
+  else if (entry.compMethod === 8) {
     const ds = new DecompressionStream('deflate-raw');
     const stream = new Blob([entry.data]).stream().pipeThrough(ds);
-    return await new Response(stream).text();
+    text = await new Response(stream).text();
+  } else throw new Error('Unsupported ZIP compression: ' + entry.compMethod);
+  if (budget) {
+    // Actual-size accounting: header-declared sums are pre-verified in
+    // parseZipEntries; this backstop catches lying/streamed headers before a
+    // runaway multi-entry decode can exceed the family total.
+    budget.used += new TextEncoder().encode(text).byteLength;
+    if (budget.used > ZIP_BUDGET.maxTotalBytes) {
+      throw new Error(`ZIP cumulative decompressed size ${budget.used} bytes exceeds budget ${ZIP_BUDGET.maxTotalBytes}`);
+    }
   }
-  throw new Error('Unsupported ZIP compression: ' + entry.compMethod);
+  return text;
 }
