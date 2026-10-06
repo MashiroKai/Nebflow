@@ -29,6 +29,16 @@ import scala.concurrent.duration.*
  * ==叶子纪律==
  * subagent 是叶子：不注册 SupervisorAdapter（无后台续命），终态即回收；取消
  * 由 AgentControl 的 SubTask 通道（Stop fallback）覆盖。
+ *
+ * ==终态回收（stuck-panel 批 2026-10-06）==
+ * 「终态即回收」此前只是一句注释，没有任何实现：桥完成（或超时）后 registry
+ * 条目（kind=SubTask）滞留 status=Idle、task store 恒 "running"、子 actor 永驻
+ * idle——getActiveAgents 快照按「registry 有记录 = 任务在飞」的契约如实上报，
+ * 子智能体面板随即渲染永不消失的「空闲」行（2026-10-06 17:16 作者截图实证：
+ * 3 个已 turn-complete 的 subagent-* 子会话挂面板 5 分钟+，转录与 task store
+ * 双料在案）。本批补上 [[reap]]：镜像 BackoffSupervisor.notifyParentAndStop 的
+ * 结算面（task store 终态化 → registry 移除 → ask 槽清理 → child Stop），减去
+ * 父通知（父的结果 = 工具返回值本身，不重投）。delegate 编排模型零改动。
  */
 object BlockingSubagent:
   private val logger = NebflowLogger(getClass)
@@ -74,7 +84,7 @@ object BlockingSubagent:
               resources,
               id = childId,
               ref = ref,
-              kind = AgentKind.SubTask,
+              kind = nebflow.actor.AgentKind.SubTask,
               rootSessionId = rootOf(ctx),
               parentRef = ctx.agentActorRef,
               startedAt = System.currentTimeMillis(),
@@ -107,16 +117,67 @@ object BlockingSubagent:
               }
               .handleErrorWith { e =>
                 logger.warn(s"subagent $childId timeout/crash: ${e.getMessage}")
-                (ref ! AgentCommand.Stop(s"subagent-timeout")).attempt.void.as(
-                  Left(ToolError(s"Subagent did not finish within $Timeout — cancelled. Narrow the question and retry."))
-                )
+                (ref ! AgentCommand.Stop(s"subagent-timeout")).attempt.void *>
+                  // stuck-panel 批：超时腿子会话被 Stop 掐断，不再有自家 agentDone
+                  // 帧——补一帧面板终态，活面板的行即时翻终态（成功腿子会话自家的
+                  // agentDone 已随间谍上行，无需补发）。
+                  childWsSend(
+                    io.circe.Json.obj("type" -> "agentDone".asJson, "agentId" -> childId.asJson)
+                  ).attempt.void.as(
+                    Left(ToolError(s"Subagent did not finish within $Timeout — cancelled. Narrow the question and retry."))
+                  )
               }
+            // stuck-panel 批（2026-10-06）：叶子终态回收——桥已定局（成功或超时），
+            // 结算 registry / task store / 子 actor。滞留即「空闲」僵尸行 + 永久
+            // running 记录 + actor 泄漏（根因取证见类注释）。
+            _ <- reap(
+              resources = resources,
+              parentSessionId = parentSid.getOrElse(""),
+              childId = childId,
+              childRef = ref,
+              completed = result.isRight
+            )
           yield result
       case _ =>
         IO.pure(Left(ToolError("Subagent requires ActorSystem and SharedResources")))
 
   private def rootOf(ctx: ToolContext): String =
     ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+
+  /** 叶子终态回收（stuck-panel 批 2026-10-06）——镜像 [[BackoffSupervisor]]
+    * `notifyParentAndStop` 的结算面，减去父通知（父的结果 = 工具返回值本身，
+    * 已随桥交付，不重投）：
+    *   ① task store 终态化（bridge 见到终态帧 = completed；超时兜底 = cancelled，
+    *      与 AgentControl cancel 腿的 taskStatusOverride 同词表）；
+    *   ② agentRegistry 移除——getActiveAgents 的契约「registry 有记录 = 任务
+    *      在飞（完成即注销）」由此恢复（WebSocketRoutes.filterActiveAgents）；
+    *   ③ InteractionHub ask 槽清理（僵尸审批卡防线，与监督者同款）；
+    *   ④ child Stop——idle 永驻的子 actor 退场（AgentIdle Stop 分支：
+    *      cancelTurn + 杀 shell + 生命周期钩子 + stopped）。
+    * 全程 fail-soft：任何一腿失败只落日志，绝不改写工具结果。
+    */
+  private[tools] def reap(
+      resources: nebflow.core.AgentRuntimePort,
+      parentSessionId: String,
+      childId: String,
+      childRef: nebflow.actor.ActorRef[nebflow.actor.AgentCommand],
+      completed: Boolean
+  ): IO[Unit] =
+    val status = if completed then "completed" else "cancelled"
+    val taskUpdate = resources.subAgentTaskStore
+      .updateStatus(parentSessionId, childId, status, completedAt = Some(System.currentTimeMillis()))
+      .handleErrorWith(e => logger.warn(s"subagent $childId taskStore terminalize failed: ${e.getMessage}"))
+    val registryRemove = resources.agentRegistry
+      .update(_ - childId)
+      .handleErrorWith(e => logger.warn(s"subagent $childId registry remove failed: ${e.getMessage}"))
+    val askCleanup = resources.interactionHubRef.get.flatMap {
+      case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.CleanupForSession(childId)).void
+      case None      => IO.unit
+    }.handleErrorWith(e => logger.warn(s"subagent $childId ask-slot cleanup failed: ${e.getMessage}"))
+    val stop = (childRef ! nebflow.actor.AgentCommand.Stop(s"subagent-terminal($status)"))
+      .handleErrorWith(e => logger.warn(s"subagent $childId stop offer failed: ${e.getMessage}"))
+    taskUpdate *> registryRemove *> askCleanup *> stop *>
+      logger.info(s"subagent $childId reaped at terminal: status=$status, registry entry removed, actor stopped")
 
   /** wsSend 间谍：agentDone/agentEnd 且 nodeSessionId 命中 ⇒ 完成桥。 */
   private[tools] def spy(

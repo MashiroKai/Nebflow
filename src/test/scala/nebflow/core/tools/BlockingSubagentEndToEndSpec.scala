@@ -151,6 +151,50 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       }
       .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
 
+  // ── stuck-panel 批（2026-10-06）：叶子终态回收（reap）──────────────────
+  // 根因（2026-10-06 17:16 作者截图 3 个 SubTask「空闲」僵尸行）：BlockingSubagent
+  // 无监督者，「终态即回收」无实现——桥完成后 registry 条目滞留（kind=SubTask、
+  // status=Idle）、task store 恒 running、子 actor 永驻 idle。getActiveAgents 按
+  // 「registry 有记录 = 在飞」契约如实上报 ⇒ 面板渲染永不消失的空闲行。
+  // 本 spec 钉终态三清：桥完成后 ① registry 条目已摘除 ② task 记录终态化
+  // completed（带 completedAt）③ 桥本身未破（finalText 仍在——回归前置）。
+
+  test("stuck-panel: BlockingSubagent.run reaps the leaf child at terminal — registry entry removed + task record terminalized"):
+    val system = nebflow.actor.ActorSystem("bse2e-reap")
+    val captured = TrieMap[String, LlmRequest]()
+    (for
+      parent <- dummyParent(system)
+      res <- SpecResources.mkResources(system, tempRoot, new ScriptedLlm(_ => "REAPED-CHILD-TEXT", captured))
+      out <- BlockingSubagent.run(
+        prompt = "survey the repo",
+        description = "reap-recon",
+        ctx = ctxFor(system, res, parent),
+        defName = nebflow.core.entity.BuiltinAgents.SubagentName
+      )
+      registry <- res.agentRegistry.get
+      // recordTask 的 parentSessionId = ctx.sessionId（见 run：parentSid.getOrElse("")）
+      tasks <- res.subAgentTaskStore.loadTasks("e2e-parent")
+    yield (out, registry, tasks, captured.keys.toList))
+      .map { case (out, registry, tasks, capturedSids) =>
+        // ③ 回归前置：桥先完成（终态帧 finalText 已交付工具结果）
+        assert(out.isRight, s"the blocking bridge must COMPLETE before reap is asserted: $out")
+        assertEquals(out.getOrElse(""), "REAPED-CHILD-TEXT")
+        val childSids = capturedSids.filter(_.startsWith("subagent-"))
+        assert(childSids.nonEmpty, s"the child session must have run a turn: $capturedSids")
+        // ① registry：僵尸条目必须已被摘除（getActiveAgents 不再上报）
+        childSids.foreach { sid =>
+          assert(!registry.contains(sid), s"zombie registry entry must be reaped, still present: sid=$sid registry=${registry.keys.toList}")
+        }
+        // ② task store：spawn 记录的 running 必须终态化 completed + completedAt
+        val recs = tasks.filter(t => childSids.contains(t.taskId))
+        assert(recs.nonEmpty, s"task record must exist for $childSids, got ${tasks.map(_.taskId)}")
+        recs.foreach { rec =>
+          assertEquals(rec.status, "completed", s"task record must be terminalized: ${rec.taskId}=${rec.status}")
+          assert(rec.completedAt.isDefined, s"completedAt must be set on ${rec.taskId}")
+        }
+      }
+      .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
+
   // ── 生产者排他钉（机器可查验收点 3）──────────────────────────
 
   test("P0-2 producer pin: `grep '\"finalText\"' src/main/scala` = producer + reader (exactly 2)"):
