@@ -2,27 +2,41 @@
 // Migrated verbatim from fileViewers.js (viewDocx).
 
 import { escapeHtml } from './shared.js';
-import { ticketUrl } from '../nfTicket.js';
+import { ticketUrl, reMint } from '../nfTicket.js';
 
 /** DOCX viewer — fetch binary, convert to HTML via mammoth.js
  *
  *  `objectUrl` = 附件预览腿（attachmentPreview.js）：整件字节已由应用内鉴权路由取回，
  *  blob: URL 直接交给 mammoth（fetch 后 `arrayBuffer()`），无本机路径 ⇒ 不触票据链。
- *  与 `pdf.js` / `image.js` 的 `objectUrl` 腿**同构**（同一模式，非第二套取字节路）。 */
+ *  与 `pdf.js` / `image.js` 的 `objectUrl` 腿**同构**（同一模式，非第二套取字节路）。
+ *
+ *  canvas-office-render-fix 批（2026-10-06）：取件失败的自愈与 image.js/video.js
+ *  **同构**（T3/T4 纪律）——票据腿取件失败 ⇒ 恰好一次 reMint 重取票＋重试；第二败
+ *  即定局，落既有错误面板。blob 腿无可刷新的凭据 ⇒ 不重试（image.js 同守卫）。 */
 async function viewDocx(pane, { absPath, fileName, objectUrl }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading document...</div>`;
   if (!absPath && !objectUrl) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for DOCX viewer.</div>`;
     return;
   }
-  const url = objectUrl || await ticketUrl(absPath);
-  try {
+  const fetchBytes = async (/** @type {string} */ url) => {
     const resp = await fetch(url);
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '');
       throw new Error(`HTTP ${resp.status}${detail ? ': ' + detail : ''}`);
     }
-    const arrayBuffer = await resp.arrayBuffer();
+    return resp.arrayBuffer();
+  };
+  let retried = false;
+  try {
+    let arrayBuffer;
+    try {
+      arrayBuffer = await fetchBytes(objectUrl || await ticketUrl(absPath));
+    } catch (err) {
+      if (retried || !absPath || objectUrl) throw err;
+      retried = true;
+      arrayBuffer = await fetchBytes(await reMint(absPath));
+    }
     // Load mammoth lazily.
     // mammoth.min.js is a UMD bundle: if Monaco's AMD loader (window.define)
     // is active, the UMD wrapper registers there instead of setting window.mammoth.
