@@ -1398,6 +1398,21 @@ export default {
   'time.yesterday': 'Yesterday',
   // tooltip / aria-label of the 12/24-hour toggle hot zone (all three faces).
   'time.toggleFormat': 'Click to switch 12/24-hour clock',
+  // Day-layered chat footer labels (footer-time batch 2026-10-06): today stays
+  // a bare clock (formatHm); older messages gain a date layer, bucketed on
+  // LOCAL calendar days — yesterday / this week (Monday start) / older /
+  // cross-year. Weekday names are full-form; the {date} payload in
+  // time.footerDate comes from Intl in the active locale (Oct 4 / Oct 4, 2025).
+  'time.footerYesterday': 'Yesterday {time}',
+  'time.footerWeekday': '{weekday} {time}',
+  'time.footerDate': '{date} {time}',
+  'time.weekday.sun': 'Sunday',
+  'time.weekday.mon': 'Monday',
+  'time.weekday.tue': 'Tuesday',
+  'time.weekday.wed': 'Wednesday',
+  'time.weekday.thu': 'Thursday',
+  'time.weekday.fri': 'Friday',
+  'time.weekday.sat': 'Saturday',
 
   // === Task list ===
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old

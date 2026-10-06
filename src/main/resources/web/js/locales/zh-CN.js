@@ -1350,6 +1350,20 @@ export default {
   // 12/24 小时制切换热区的 tooltip / aria-label（三面共用；原为主对话框里的
   // 硬编码中文字面量，en locale 下也是中文 —— 本键收归 i18n）。
   'time.toggleFormat': '点击切换 12/24 小时制',
+  // 消息 footer 分层时间（footer-time 批 2026-10-06）：今天仍为纯时钟
+  // （formatHm，12h/24h 偏好）；更早按本地日历日分桶加日期层 —— 昨天 /
+  // 本周（周一起始）/ 更早 / 跨年。星期名为 一二三四五六日；{date} 载荷走
+  // 活动 locale 的 Intl（10月4日 / 2025年10月4日），组合模板保持一处可译。
+  'time.footerYesterday': '昨天 {time}',
+  'time.footerWeekday': '星期{weekday} {time}',
+  'time.footerDate': '{date} {time}',
+  'time.weekday.sun': '日',
+  'time.weekday.mon': '一',
+  'time.weekday.tue': '二',
+  'time.weekday.wed': '三',
+  'time.weekday.thu': '四',
+  'time.weekday.fri': '五',
+  'time.weekday.sat': '六',
 
   // === Task list ===
   // 任务面板 = 纯 Flow Map 节点视图（2026-09-05 10:54 裁定）：旧任务区退役，
