@@ -13,8 +13,11 @@
 //     entry fields (name/ext/path).
 //   索引一致性 (PLAN §3.1) — for the same history, the artifact set the
 //     message stream renders inline == the index's agent-source entry set.
-//   打开行为 — grid media card → the shared lightbox; grid file card → the
-//     workspace-open-item single point (AC-S1/S2 parity holds panel-wide).
+//   打开行为 — grid media card (path-bearing) → the Canvas single point,
+//     act-and-exit (检索面板媒体直开批, author 2026-10-06 16:58 order — the same
+//     opener the in-chat media card's whole-face click uses, 三修 ②); grid file
+//     card → the workspace-open-item single point. The lightbox remains only
+//     for PATHLESS entries (the in-chat split), which this harness does not seed.
 //
 // Drives the REAL modules through tests/fixtures/pop-media-index/panel.html
 // (self-spawned static server, mocked /api fetches — never the host).
@@ -297,25 +300,37 @@ test.describe('media tab — grid over the unified index', () => {
     await context.close();
   });
 
-  test('click faces: media card → shared lightbox; file card → workspace-open-item', async ({ browser }) => {
+  test('click faces: media card → Canvas single point (act-and-exit); file card → workspace-open-item', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
+    // 检索面板媒体直开批（作者 2026-10-06 16:58 令）: a grid media card with an
+    // absolute path opens CANVAS through the SAME single point the in-chat
+    // media card's whole-face click uses (三修 ② openPopArtifact →
+    // workspace-open-item), act-and-exit like the file-card face below.
+    const clickCardByName = (name) => page.evaluate((n) => {
+      const card = Array.from(document.querySelectorAll('#search-results .search-media-card'))
+        .find(c => (c.querySelector('.search-media-name')?.textContent || '') === n);
+      window.__openEvents.length = 0;
+      card.click();
+    }, name);
     await page.evaluate(() => window.__openPanel());
     await page.evaluate(() => window.__switchTab('media'));
-    await page.evaluate(() => {
-      const card = document.querySelector('#search-results .search-media-card');
-      card.click();
-    });
-    await new Promise(r => setTimeout(r, 60));
-    const lb = await page.evaluate(() => ({
-      open: !!document.querySelector('.nf-lightbox'),
-      hasCanvas: !!document.querySelector('.nf-lightbox .nf-lightbox-canvas'),
-    }));
-    expect(lb.open, 'grid media card opens the SAME lightbox face (AC-S1 panel parity)').toBe(true);
-    expect(lb.hasCanvas, 'Canvas secondary entry on the overlay').toBe(true);
-    await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await clickCardByName('agent.png');
     await new Promise(r => setTimeout(r, 30));
-    expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')), 'Esc closes').toBe(false);
+    const imgOpen = await page.evaluate(() => window.__openEvents);
+    expect(imgOpen.length, 'grid image card fired the Canvas single point').toBe(1);
+    expect(imgOpen[0].absPath, 'absPath = the image ref (in-chat 三修② parity)').toBe('/tmp/a/agent.png');
+    expect(await page.evaluate(() => !document.getElementById('search-overlay').classList.contains('on')),
+      'act-and-exit: the modal closed for the Canvas open').toBe(true);
 
+    await page.evaluate(() => window.__openPanel());
+    await page.evaluate(() => window.__switchTab('media'));
+    await clickCardByName('agent.mp4');
+    await new Promise(r => setTimeout(r, 30));
+    const vidOpen = await page.evaluate(() => window.__openEvents);
+    expect(vidOpen.length, 'grid video card fired the Canvas single point').toBe(1);
+    expect(vidOpen[0].absPath, 'absPath = the video ref (video viewer claims it)').toBe('/tmp/a/agent.mp4');
+
+    await page.evaluate(() => window.__openPanel());
     await page.evaluate(() => window.__switchTab('files'));
     await page.evaluate(() => {
       window.__openEvents.length = 0;

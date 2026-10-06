@@ -132,6 +132,19 @@ export function initChatSearch() {
   buildTabBar();
   buildSourceChips();
 
+  // 媒体直开批: the keyboard-selected media card's focus ring. chat.css is
+  // locked this batch (parallel media batches own it), so the one-rule ring
+  // rides this inline injection instead — receipt-documented — mirroring the
+  // sibling .search-result.active idiom (modal.css): accent border + inset
+  // bar in the same rgba(91,127,191,·) family. No new copy, no new tokens.
+  if (!document.getElementById('search-media-active-style')) {
+    const st = document.createElement('style');
+    st.id = 'search-media-active-style';
+    st.textContent = '.search-media-card.active{border-color:rgba(91,127,191,.9);' +
+      'box-shadow:inset 2px 0 0 rgba(91,127,191,.5),0 0 0 1px rgba(91,127,191,.35);}';
+    document.head.appendChild(st);
+  }
+
   document.getElementById('search-btn')?.addEventListener('click', openSearchModal);
   document.getElementById('search-modal-close')?.addEventListener('click', closeSearchModal);
   const overlay = document.getElementById('search-overlay');
@@ -197,9 +210,10 @@ export function initChatSearch() {
     const res = idx === undefined ? null : lastResults[idx];
     if (res) activateResult(res);
   });
-  // Hovering a result clears the keyboard selection.
+  // Hovering a result clears the keyboard selection — media-grid cards join
+  // the same contract (媒体直开批; additive selector, text rows unaffected).
   resultsEl?.addEventListener('mouseover', (e) => {
-    if (e.target instanceof Element && e.target.closest('.search-result')) setActive(-1);
+    if (e.target instanceof Element && e.target.closest('.search-result, .search-media-card')) setActive(-1);
   });
 
   // Anchor mode: scrolling to the very top loads a NEWER page (after cursor).
@@ -626,7 +640,12 @@ function onModalKeydown(e) {
       if (inNativeControl || ae?.tagName === 'BUTTON') return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (activeIndex >= 0 && lastResults[activeIndex]) activateResult(lastResults[activeIndex]);
+      if (activeIndex >= 0 && lastResults[activeIndex]) {
+        // 媒体直开批: under the typed grid tabs the roving selection walks
+        // media cards — Enter runs the SAME activation a card click does.
+        if (MEDIA_TABS.includes(currentTab)) activateMediaEntry(lastResults[activeIndex]);
+        else activateResult(lastResults[activeIndex]);
+      }
       return;
     }
     case 'ArrowLeft':
@@ -691,11 +710,14 @@ function moveActive(delta, clamp) {
   setActive(i, true);
 }
 
-/** Apply (i >= 0) or clear (i < 0) the keyboard-selected result. */
+/** Apply (i >= 0) or clear (i < 0) the keyboard-selected result. Works over
+ *  BOTH row faces — result rows AND media-grid cards (媒体直开批: the cards
+ *  join the roving enumeration; the media-card selector in the clear step is
+ *  additive, text rows never match it). */
 function setActive(i, scroll = false) {
   const resultsEl = document.getElementById('search-results');
   if (!resultsEl) return;
-  const prev = /** @type {HTMLElement|null} */ (resultsEl.querySelector('.search-result.active'));
+  const prev = /** @type {HTMLElement|null} */ (resultsEl.querySelector('.search-result.active, .search-media-card.active'));
   if (prev) {
     prev.classList.remove('active');
     prev.setAttribute('aria-selected', 'false');
@@ -706,7 +728,7 @@ function setActive(i, scroll = false) {
   if (i < 0) { kw?.removeAttribute('aria-activedescendant'); return; }
   const item = lastResults[i];
   if (!item) return;
-  const el = /** @type {HTMLElement|null} */ (resultsEl.querySelector(`[data-key="${CSS.escape(item.key)}"]`));
+  const el = /** @type {HTMLElement|null} */ (resultsEl.querySelector(`[data-key="${CSS.escape(item.key || item.id || '')}"]`));
   if (!el) return;
   el.classList.add('active');
   el.setAttribute('aria-selected', 'true');
@@ -1751,6 +1773,14 @@ function mediaEntryCard(e) {
   card.dataset.source = e.source;
   card.dataset.ts = String(e.ts || 0);
   card.dataset.entryId = e.id;
+  // 媒体直开批: the card JOINS the panel's roving enumeration — same option
+  // face the result rows carry (resultElement), so setActive/moveActive/Enter
+  // drive cards through the exact machinery text rows use. key = the entry id.
+  card.dataset.key = e.id;
+  card.id = 'sr-' + e.id;
+  card.setAttribute('role', 'option');
+  card.setAttribute('aria-selected', 'false');
+  card.tabIndex = -1;
   if (e.type === 'image' || e.type === 'video') {
     if (e.type === 'image') {
       const img = document.createElement('img');
@@ -1827,12 +1857,22 @@ function mediaEntryCard(e) {
   return card;
 }
 
-/** Grid activation: the SAME open faces as the in-stream cards (AC-S1/S2
- *  parity holds panel-wide) — media → the shared lightbox (Canvas secondary
- *  entry on the overlay), file → the workspace-open-item single point,
- *  link → a new tab. */
+/** Grid activation: media (image/video) with an absolute path opens CANVAS —
+ *  the SAME single point the in-chat media card's whole-face click uses (三修 ②
+ *  openMediaItemClick → openPopArtifact → workspace-open-item); the Canvas
+ *  image/video viewer mints its own /api/nf-file ticket and re-mints once on a
+ *  load error, so the reMint leg is the pathway's own — nothing re-wired here.
+ *  Act-and-exit mirrors the file branch below (v2 ruling). A pathless entry
+ *  (a live user attachment whose bytes ride inline — Canvas cannot open a
+ *  pathless file) keeps the #491 主题三 lightbox zoom, the in-chat split.
+ *  File → the workspace-open-item single point, link → a new tab. */
 function activateMediaEntry(e) {
   if (e.type === 'image' || e.type === 'video') {
+    if (e.ref) {
+      closeSearchModal();
+      openPopArtifact(e.ref, e.name);
+      return;
+    }
     openMediaLightbox({
       kind: e.type, name: e.name, src: e.thumbRef || '', path: e.ref,
       resolver: e.source === 'user'
@@ -1857,7 +1897,14 @@ function renderMediaGrid(resultsEl, statusEl) {
   activeIndex = -1;
   const entries = filteredEntries();
   lastTotal = entries.length;
-  lastResults = [];
+  // 媒体直开批: the grid JOINS the panel's roving enumeration — entries ride
+  // lastResults under their own ids so ArrowUp/Down + Enter run the SAME
+  // machinery the result rows use (setActive/moveActive + the Enter branch);
+  // the cards carry the matching data-key/id/role=option face. The text path
+  // never sees this state: buildModel rebuilds lastResults on every switch.
+  lastResults = entries;
+  modelKeys = new Map(entries.map((en, i) => [en.id, i]));
+  renderedCount = entries.length;
   if (!entries.length) {
     const kw = (inputById('search-keyword')?.value || '').trim();
     resultsEl.innerHTML = kw
@@ -1882,6 +1929,9 @@ function renderMediaGrid(resultsEl, statusEl) {
     resultsEl.appendChild(grid);
   }
   statusEl.textContent = statusSummary();
+  // First card pre-selected — same Top-Hit contract the result rows render
+  // with (renderStreamFresh's setActive(0)), so Enter opens without a click.
+  if (entries.length) setActive(0);
 }
 
 // ── Result activation ───────────────────────────────────────
