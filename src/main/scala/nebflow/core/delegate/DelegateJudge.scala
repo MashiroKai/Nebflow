@@ -19,14 +19,15 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * 两个判定时机（R6 / 终态三态）：
  *   - [[Face.decideWorktree]] —— spawn 前（R6）：该 delegate 是否建 worktree。
- *     无论判否一律建分支 `delegate/<id>`（S13；建权在判定机，delegate 不自建）。
+ *     判「会改文件」才建分支 `delegate/<id>`；纯读/无文件变更＝整腿 None（无分支、
+ *     无 worktree、不入队——完成即 finish）（S13；建权在判定机，delegate 不自建）。
  *   - [[Face.judgeTerminal]] —— delegate 终态后：三态判词
  *     completed / blocked(+原因) / ready-to-merge（原文 Batch 4 终态 judge；输入 =
  *     任务书＋结果＋git status 摘要＋delegate_report 自申报）。
  *
  * 失败语义（fail-open，JevAllocator 同款裁定：派发与终态绝不因判定机阻塞）：
  * 两个方法返回 `IO[Option[_]]`——`None` = 判定机不可用/失败，调用方走回落
- * （spawn 腿 = 不建 worktree 仍建分支的「判否」路径；终态腿 = delegate_report
+ * （spawn 腿两层全败＝按判是（fail-open 反转）；判否＝整腿无绑定；终态腿 = delegate_report
  * 自申报 → 引擎既有完成语义）。
  */
 object DelegateJudge:

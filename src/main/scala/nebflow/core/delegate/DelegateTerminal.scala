@@ -80,12 +80,15 @@ object DelegateTerminal:
       )
       verdict = judged
         .orElse(selfReport.flatMap {
+          case ("merge", _)   => Some(DelegateJudge.Verdict.ReadyToMerge) // ③：merge 态自申报 → 入 MergeQueue（无分支由下方降级兜住）
           case ("finish", _)  => Some(DelegateJudge.Verdict.Completed)
           case ("blocked", d) => Some(DelegateJudge.Verdict.Blocked(if d.nonEmpty then d else "delegate reported blocked"))
           case _              => None
         })
         .getOrElse(DelegateJudge.Verdict.Completed)
-      // 无分支可并的 ready-to-merge = 降级 completed（诚实终态：无可合并产物）。
+      // MergeQueue 入队条件（②）：ready-to-merge 且确有工作分支（只有会改文件的
+      // delegate 才会有）。无分支（纯读腿/非 git）的 ready-to-merge = 降级 completed
+      // ——纯读不入队、完成即 finish（诚实终态：无可合并产物）。
       finalVerdict = verdict match
         case DelegateJudge.Verdict.ReadyToMerge if branch.isEmpty => DelegateJudge.Verdict.Completed
         case other => other

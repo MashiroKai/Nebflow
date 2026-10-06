@@ -13,7 +13,8 @@ import scala.util.Try
  * worktree-judge-fifo 批 #1224 增补 §3.1）.
  *
  * 语义（增补件逐条）：
- *   - **无论判否一律建分支 `delegate/<id>`**（基点 = spawn 时 HEAD）；
+ *   - **判「会改文件」才建分支 `delegate/<id>`**；纯读/无文件变更＝整腿 None
+ *     （无分支、无 worktree、不入队——完成即 finish）（基点 = spawn 时 HEAD）；
  *   - 判是 → `git worktree add -b delegate/<id>`（[[GitWorktrees]]，抽自
  *     NodeEditTool.createWorktreeFor 的公用 util）→ delegate cwd = worktree；
  *   - 判否 → 项目内建分支（共享工作树 HEAD 不动）→ delegate cwd 不变；
@@ -23,7 +24,8 @@ import scala.util.Try
  *     非 git 目录是空集。
  *
  * 判定机两层全败（[[DelegateJudge.DelegateJudgePort.decideWorktree]] = None）=
- * 按「判否」腿执行（fail-open：分支纪律照常生效，只省 worktree）。
+ * 按「判是」腿执行（fail-open 反转：宁可白建分支，不可丢分支纪律——会改文件的
+ * delegate 无分支即破坏合并机制）。
  *
  * 无 worktree 腿的机械保证取舍（增补件 §3.1 实现注记，交付回报注明）：
  *   - (b)「引擎代为 checkout」被现实否决——共享工作树上并行在飞批的存在（本批
@@ -73,37 +75,41 @@ object DelegateWorkspace:
         val baseSha = GitWorktrees.headSha(ws)
         val branch = s"delegate/$delegateId"
         for
-          // 判定机两层全败 = None ⇒ 按判否（fail-open；分支纪律不缺席）。
-          worktreeYes <- DelegateJudge.DelegateJudgePort.decideWorktree(task).map(_.getOrElse(false))
-          binding <- IO.blocking {
-            if worktreeYes then
-              GitWorktrees.createWorktree(
-                ws,
-                dirBase = GitWorktrees.sanitizeRefName(delegateId),
-                branch = branch,
-                baseRef = "HEAD",
-                label = s"delegate $delegateId",
-                // 分支名固定 delegate/<id>（delegate 腿唯一与 legacy 不同的轴——
-                // 目录候选挪位时分支不跟随；legacy 腿默认 true 逐字保持）。
-                branchFollowsDir = false
-              ) match
-                case Right(created) =>
-                  logger.info(s"delegate $delegateId: worktree created at ${created.path} (branch=$branch, base=${baseBranch.getOrElse("?")})")
-                  Binding(
-                    branch,
-                    worktree = Some(created.path.toString),
-                    cwd = created.path.toString,
-                    baseWs = workspace,
-                    baseBranch = baseBranch,
-                    baseSha = baseSha,
-                    briefLine = Some(workingBranchLine(branch, baseBranch, worktree = true))
-                  )
-                case Left(err) =>
-                  logger.warn(s"delegate $delegateId: worktree creation failed ($branch): $err — falling back to in-place branch")
-                  inPlaceBinding(ws, workspace, branch, baseBranch, baseSha, delegateId)
-            else inPlaceBinding(ws, workspace, branch, baseBranch, baseSha, delegateId)
-          }
-        yield Some(binding)
+          // 新语义（②）：问句＝「会否改文件」。判否 ⇒ 整腿 None（无分支、无 worktree、
+          // 不入队——完成即 finish）。判定机两层全败 = None ⇒ 按「判是」（fail-open
+          // 反转：宁可白建分支，不可丢分支纪律——会改文件的 delegate 无分支即破坏合并机制）。
+          changesFiles <- DelegateJudge.DelegateJudgePort.decideWorktree(task).map(_.getOrElse(true))
+          binding <-
+            if !changesFiles then IO.pure(None) // 纯读腿＝无绑定（与非 git 同形）
+            else IO.blocking {
+              if changesFiles then
+                GitWorktrees.createWorktree(
+                  ws,
+                  dirBase = GitWorktrees.sanitizeRefName(delegateId),
+                  branch = branch,
+                  baseRef = "HEAD",
+                  label = s"delegate $delegateId",
+                  // 分支名固定 delegate/<id>（delegate 腿唯一与 legacy 不同的轴——
+                  // 目录候选挪位时分支不跟随；legacy 腿默认 true 逐字保持）。
+                  branchFollowsDir = false
+                ) match
+                  case Right(created) =>
+                    logger.info(s"delegate $delegateId: worktree created at ${created.path} (branch=$branch, base=${baseBranch.getOrElse("?")})")
+                    Binding(
+                      branch,
+                      worktree = Some(created.path.toString),
+                      cwd = created.path.toString,
+                      baseWs = workspace,
+                      baseBranch = baseBranch,
+                      baseSha = baseSha,
+                      briefLine = Some(workingBranchLine(branch, baseBranch, worktree = true))
+                    )
+                  case Left(err) =>
+                    logger.warn(s"delegate $delegateId: worktree creation failed ($branch): $err — falling back to in-place branch")
+                    inPlaceBinding(ws, workspace, branch, baseBranch, baseSha, delegateId)
+              else inPlaceBinding(ws, workspace, branch, baseBranch, baseSha, delegateId)
+            }.map(b => Some(b): Option[Binding])
+        yield binding
     }
   end prepare
 
@@ -138,13 +144,16 @@ object DelegateWorkspace:
    */
   def workingBranchLine(branch: String, baseBranch: Option[String], worktree: Boolean): String =
     val base = baseBranch.getOrElse("the base branch")
+    val mergeDiscipline =
+      " When the work on this branch is complete and ready to land, call delegate_report(category=\"merge\", detail=…) — " +
+        "you will receive a merge reminder when it is your turn; do NOT merge on your own initiative."
     if worktree then
-      s"[working branch] $branch — your worktree is on this branch; commit here. NEVER commit directly to $base."
+      s"[working branch] $branch — your worktree sits on this branch; commit your deliverable commits here. NEVER commit directly to $base.$mergeDiscipline"
     else
       s"[working branch] $branch — the shared checkout stays on $base, so land your changes on YOUR branch only: " +
         "commit with a temporary index (GIT_INDEX_FILE=<tmp> git add -A && GIT_INDEX_FILE=<tmp> git write-tree && " +
         "git commit-tree <tree> -p <parent> && git update-ref refs/heads/" + branch + " <new-commit>), or ask the engine to move them at terminal time. " +
-        s"NEVER commit directly to $base; direct base-branch drift is surfaced to the judge."
+        s"NEVER commit directly to $base; direct base-branch drift is surfaced to the judge.$mergeDiscipline"
 
   /** spawn 行的 ChainStore payload（`delegate-spawn` 行；N1/#1228 的数据源契约）。 */
   def spawnPayload(delegateId: String, executor: String, project: Option[String], b: Option[Binding]): Json =

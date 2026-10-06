@@ -85,7 +85,7 @@ class NodeMergeSealSpec extends CatsEffectSuite:
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> project.asJson) :: ("nodename" -> nodename.asJson) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
-  test("⑥ seal: merge=true create is refused with NODE_MERGE_UNSUPPORTED (the judge machine owns landing now)") {
+  test("⑥ seal: merge=true create is refused with NODE_MERGE_UNSUPPORTED (dispatch as Delegate tasks instead)") {
     val ws = tempRoot / "ws-seal"
     os.makeDir.all(ws)
     val system = ActorSystem(s"seal-1-${scala.util.Random.nextInt(100000)}")
@@ -101,7 +101,7 @@ class NodeMergeSealSpec extends CatsEffectSuite:
       assert(sealRes.isLeft, "merge=true create must be refused")
       val msg = sealRes.left.toOption.get.message
       assert(msg.contains("NODE_MERGE_UNSUPPORTED"), s"error must carry the *_UNSUPPORTED family code, got: $msg")
-      assert(msg.contains("judge machine"), s"the error must point at the replacement mechanism (judge machine + MergeQueue), got: $msg")
+      assert(msg.contains("Delegate tasks"), s"the error must state the behavioral replacement (dispatch as Delegate tasks), got: $msg")
   }
 
   test("⑥ control: merge absent / merge=false creates still work — the seal is merge-only (zero legacy drift)") {

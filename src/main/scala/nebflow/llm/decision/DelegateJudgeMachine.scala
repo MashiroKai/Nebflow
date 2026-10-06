@@ -26,9 +26,9 @@ import scala.concurrent.duration.*
  *      Batch 4：HealthMonitor.SendMessageParams 模式；模型 = `judge.utilityModel`
  *      可配，缺省 = 全局候选链首选；JSON 输出）。
  *
- * 失败语义：两层全败 ⇒ `None`（fail-open——spawn 腿落「判否＋建分支」纪律，终态
- * 腿落自申报/既有完成语义；判定机绝不阻塞派发与终态，JevAllocator 的 adjudicated
- * #3 posture 同款）。
+ * 失败语义：两层全败 ⇒ `None`（fail-open——spawn 腿两层全败＝按判是（fail-open
+ * 反转）；判否＝整腿无绑定，终态腿落自申报/既有完成语义；判定机绝不阻塞派发与
+ * 终态，JevAllocator 的 adjudicated #3 posture 同款）。
  *
  * 🔴 判定机的问句/状态文本是**判定模型可见文案**——本批最小成稿（§16 待过目，
  * 终稿归 N3 提示词批）。
@@ -39,6 +39,18 @@ object DelegateJudgeMachine:
 
   /** 判定调用时限缺省（JudgeConfig.timeoutMs 缺省口径；30s——判定有界）。 */
   val DefaultTimeoutMs: Long = 30_000L
+
+  /** 「会否改文件」问句单点（Jev 腿与 SmallJudge 腿共用——两腿同问句，判据不分叉；
+    * 新语义：只有会改文件的 delegate 建分支/worktree、进 FIFO 合并机制）。 */
+  val FileChangeQuestion: String =
+    "Will this delegated task change any file under the project workspace? Judge ONLY from the brief's requested actions: " +
+      "answer yes iff at least one holds — (1) the brief asks to edit, create, delete, move, or rename files or directories " +
+      "under the workspace, or names files it will write; (2) the brief asks to run commands that write state into the " +
+      "repository (git commit/branch/tag, code or artifact generation meant to be checked in, dependency or config file changes); " +
+      "(3) the brief's deliverable is defined as changes that must land in the repository (fix/feature/refactor/migration). " +
+      "Answer no iff every requested action is read-only — read, search, list, inspect (git log/status/diff/show), analyse, " +
+      "measure, summarise, answer — with any writing confined to outside the repository (the chat reply, system temp dirs). " +
+      "Uncertain => answer yes (the file-changing leg is the safe default: branch discipline applies)."
 
   /** 判定会话的身份戳（SendMessageParams 元数据；router 日志归因）。 */
   private val JudgeSessionId = "delegate-judge"
@@ -52,7 +64,7 @@ object DelegateJudgeMachine:
           case Some((p, ms)) => jevWorktree(p, ms, task)
           case None          => smallJudgeWorktree(registry, task)
         }.flatTap {
-          case None => IO(logger.warnSync("delegate-judge: worktree decision unavailable on both legs — falling back to no-worktree (branch discipline still applies)"))
+          case None => IO(logger.warnSync("delegate-judge: file-change decision unavailable on both legs — failing open to file-changing (branch discipline + merge-queue eligibility preserved)"))
           case _    => IO.unit
         }
 
@@ -81,13 +93,10 @@ object DelegateJudgeMachine:
       questions = List(
         DecisionQuestion.Choice(
           id = "worktree",
-          instructions =
-            "Should this delegated task be executed in a dedicated git worktree (an isolated checkout of the project repository)? " +
-              "Answer yes when the task will modify tracked files in a git repository (code edits, builds producing tracked artifacts, " +
-              "branch-based deliverables). Answer no for read-only tasks, conversation-only tasks, or work outside any git repository.",
+          instructions = FileChangeQuestion,
           criteria = Map(
-            "yes" -> Some("the task modifies tracked files in a git repository and benefits from an isolated checkout"),
-            "no" -> Some("read-only, conversational, or outside any git repository — a plain branch in the project is enough")
+            "yes" -> Some("the brief requests file writes/edits/creations/deletes/moves under the workspace, repo-mutating commands, or a deliverable defined as repository changes — the delegate gets branch delegate/<id> (worktree per the judge) and enters the merge queue on completion"),
+            "no" -> Some("every requested action is read-only and any writing lands outside the repository — the delegate gets NO branch, NO worktree, never enters the merge queue, and finishes directly")
           )
         )
       )
@@ -112,13 +121,13 @@ object DelegateJudgeMachine:
           instructions = terminalInstructions(input),
           criteria = Map(
             DelegateJudge.VerdictWire.Completed -> Some(
-              "the task is fully done and there is no unmerged work left on the branch (or the merge already landed cleanly)"
+              "there is nothing left to merge: the delegate had no working branch (pure read / no file changes) and is done, or the merge round landed cleanly (the git digest shows the delegate commits merged into the base branch)"
             ),
             DelegateJudge.VerdictWire.Blocked -> Some(
               "the task could not be completed, or the merge round hit a refusal/conflict — the terminal text states the blocker"
             ),
             DelegateJudge.VerdictWire.ReadyToMerge -> Some(
-              "the task's deliverable commits sit on the delegate branch, unmerged, and the terminal text reports success"
+              "the delegate has a working branch and the git digest shows deliverable commits on it, unmerged, ahead of the base branch, with the terminal text reporting success — ready for the merge queue (this outcome requires a working branch: never for pure-read delegates)"
             )
           )
         )
@@ -174,7 +183,9 @@ object DelegateJudgeMachine:
               Left(
                 s"""${worktreeState(task)}
                |
-               |Answer with ONLY a JSON object: {"worktree": true|false}.""".stripMargin
+               |$FileChangeQuestion
+               |
+               |Answer with ONLY a JSON object: {"worktree": true|false} — true = the task will change files (branch + worktree discipline applies); false = pure read / no file changes (no branch, no worktree, no merge queue — finish directly).""".stripMargin
               )
             )
           ),
@@ -199,7 +210,7 @@ object DelegateJudgeMachine:
                |
                |${terminalInstructions(input)}
                |
-               |Answer with ONLY a JSON object: {"verdict": "completed"|"blocked"|"ready-to-merge", "reason": "<one line>"}.""".stripMargin
+               |Answer with ONLY a JSON object: {"verdict": "completed"|"blocked"|"ready-to-merge", "reason": "<one line>"} — ready-to-merge requires a working branch with unmerged deliverable commits (never for pure-read delegates); completed for a pure-read delegate means done with nothing to merge.""".stripMargin
               )
             )
           ),
@@ -253,7 +264,7 @@ mergeRound: ${input.mergeRound}"""
     if input.mergeRound then
       "This is the MERGE ROUND: the delegate was instructed to run `git merge --no-ff` in the base workspace. Judge from the git digest whether the merge landed cleanly (completed) or was refused/conflicted (blocked). ready-to-merge is NOT a valid outcome for a merge round."
     else
-      "Judge the delegate's terminal state: completed (done, nothing left to merge), blocked (could not complete — the reason is in the result/git digest), or ready-to-merge (deliverable commits sit unmerged on its branch)."
+      "Judge the delegate's state: completed (pure read / no file changes and done — nothing to merge), blocked (could not complete — the reason is in the result/git digest), or ready-to-merge (the delegate has a working branch with deliverable commits unmerged on it — send it to the merge queue)."
 
   private def cap(s: String): String = if s.length > 12000 then s.take(12000) else s
 

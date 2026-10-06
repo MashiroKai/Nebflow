@@ -300,11 +300,12 @@ object DelegateTool extends Tool:
         rootSessionId = resolvedRoot
       )
       // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
-      // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字）+ delegate_report
+      // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字——无绑定 = 非 git
+      // 或纯读腿（合法形态，非仅失败降级））+ delegate_report
       // 申报纪律行（S7/S8「node 同款提醒（防忘记调用）」的最小形态——delegate
       // 常为单 turn 会话，提醒落在 brief 而非中途 ladder；未申报不阻断终态）。
       reportLine =
-        """[report] when your work reaches its end state, call delegate_report(category="finish"|"blocked", detail=…) right before your final text — the report updates your status record; your final text remains the deliverable."""
+        """[report] when your work reaches its end state, call delegate_report(category="finish"|"merge"|"blocked", detail=…) right before your final text — "merge" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); "finish" = done for good (pure read / no file changes, or the merge has landed); "blocked" = it cannot be completed. The report updates your status record; your final text remains the deliverable."""
       brief =
         s"""[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)${binding
             .flatMap(_.briefLine)

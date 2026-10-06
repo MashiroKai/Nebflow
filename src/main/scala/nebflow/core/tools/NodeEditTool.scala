@@ -972,9 +972,8 @@ object NodeEditTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            "merge=true node creation is sealed — batch landing is now owned by the delegate judge machine " +
-              "(DelegateJudge three-state verdicts + MergeQueue FIFO; the delegate executes the merge itself on the engine's merge reminder). " +
-              "Dispatch the work as Delegate tasks instead of wiring a merge node. Existing merge nodes keep working until the cleanup batch. " +
+            "merge=true node creation is no longer supported — dispatch the work as Delegate tasks " +
+              "instead of wiring a merge node. Existing merge nodes keep working until the cleanup batch. " +
               "(NODE_MERGE_UNSUPPORTED)"
           )
         )
