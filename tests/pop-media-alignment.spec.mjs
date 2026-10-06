@@ -4,8 +4,10 @@
 //   AC-S1 点击放大查看 — AMENDED by the 2026-10-06 10:59 author screenshot
 //        order (pop-media 三修 ②/③): an image card's whole-face click is the
 //        CANVAS open (the file card's workspace-open-item single point), and
-//        the collapsed stack's click opens Canvas with the FIRST item. The
-//        WeChat-style in-stream lightbox remains the zoom face for pathless
+//        the collapsed stack's click opens Canvas with the SHOWN (front) card
+//        — the first before any swipe, the Nth after a swipe to it (复报令
+//        2026-10-06 19:43 A-1: the swipe index must reach the click path).
+//        The WeChat-style in-stream lightbox remains the zoom face for pathless
 //        inline bytes (live user attachments), videos, and the expanded stack
 //        layers; file-type items keep small-card → Canvas. SAME form and
 //        interaction on both sides (user attachments and LLM Pop).
@@ -260,8 +262,8 @@ test.describe('AC-S2 — user file cards fire the same workspace-open-item as Po
    with Canvas as the secondary entry. The 2026-10-06 10:59 author screenshot
    order amends the IMAGE faces (pop-media 三修 ②/③): a whole-image-card click
    is now the CANVAS open — the SAME workspace-open-item single point the file
-   card fires — and the COLLAPSED stack's click opens Canvas with the FIRST
-   item (front card). The lightbox remains the zoom face ONLY where Canvas
+   card fires — and the COLLAPSED stack's click opens Canvas with the SHOWN
+   (front) card. The lightbox remains the zoom face ONLY where Canvas
    cannot apply: a pathless live user attachment (bytes ride inline, no
    absPath yet).
 
@@ -282,7 +284,20 @@ test.describe('AC-S2 — user file cards fire the same workspace-open-item as Po
    REAL Playwright mouse click at the element's center point (real input
    pipeline: hit-test → pointer events → click) and first asserts that the
    point hit-tests to the image itself — the acceptance the author wrote in
-   the 16:47 order. */
+   the 16:47 order.
+
+   ═══════════ 复报令 A-1/A-2 (2026-10-06 19:43 author screenshot order) ═══════════
+
+   A-1 索引脱钩: the 16:47 rebinding hardcoded items[0] — the swipe index
+   (`front`) never reached the click path, so after a swipe to the Nth card a
+   click still opened the FIRST. Case (b2) pins the amended contract with a
+   REAL mouse swipe (pointer sequence incl. the capture retarget) followed by
+   a REAL click: the opened file must be the SHOWN card. Case (b) below stays
+   the no-swipe form of the same contract (front = first before any swipe).
+   A-2 展开钮防重叠: the LLM-side pill's box sat 8.3px UNDER the peeking
+   layers' painted chrome (translateX 32px × scale .93 ≈ +24.3px past the
+   view box; the 16px area gap was measured against the BOX, not the paint).
+   Case (c2) pins pill-vs-PAINTED-extent clearance on both sender sides. */
 
 test.describe('AC-S1 — image card click faces: Canvas single point, lightbox fallback', () => {
   test('pathless live user image: lightbox zoom fallback; Esc and backdrop close', async ({ browser }) => {
@@ -326,7 +341,7 @@ test.describe('AC-S1 — image card click faces: Canvas single point, lightbox f
     await context.close();
   });
 
-  test('a pathed user image opens Canvas; the collapsed stack opens the FIRST item, both sides (三修 ③)', async ({ browser }) => {
+  test('a pathed user image opens Canvas; the collapsed stack opens the SHOWN (front) item — first before any swipe, both sides (三修 ③)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
 
     const opened = await page.evaluate(async () => window.__captureOpenEvents(async () => {
@@ -444,19 +459,60 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     await context.close();
   });
 
-  test('(b) 收起态: a real click on the collapsed stack opens Canvas with the FIRST item', async ({ browser }) => {
+  test('(b) 收起态: a real click on the collapsed stack opens Canvas with the SHOWN item (no swipe → first)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await renderStack(page, 3);
 
     // The 复验 root cause lived exactly here: a REAL click on the front card —
     // the capture-retargeted click never reached the old layer binding.
+    // No swipe has happened, so the SHOWN (front) card IS the first item —
+    // the no-swipe form of the A-1 shown-item contract.
     const frontImg = page.locator('#chat .pop-stack-view .media-layer.layer-front .pop-img');
     const probe = await realCenterClick(page, frontImg);
     expect(probe.hit, `the click point hit-tests to the image body (got ${probe.hit})`).toContain('img.pop-img');
     expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
-    expect(probe.opens[0].absPath, 'opened file = the FIRST item (shot-1.png)').toBe('/tmp/pop/shot-1.png');
+    expect(probe.opens[0].absPath, 'opened file = the SHOWN item (shot-1.png, front before any swipe)').toBe('/tmp/pop/shot-1.png');
     expect(probe.opens[0].id, 'identity = file:<absPath>').toBe('file:/tmp/pop/shot-1.png');
     expect(probe.lightbox, 'no lightbox on the collapsed-stack open (复验令 b)').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('(b2) 复报令 A-1: swipe to the middle card, then a real click opens THAT shown card', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await renderStack(page, 3);
+
+    // A-1 defect form (19:43 作者实录): the swipe advanced the painted front,
+    // but the click stayed hardcoded to items[0] — the index never reached the
+    // click path. Pin the amended contract with the REAL input pipeline end to
+    // end: a real pointer swipe (down → moves → up, >38px ⇒ next) FIRST, then
+    // a real click on the stack — the opened file must be the shown card.
+    const view = page.locator('#chat .pop-stack-view');
+    await view.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(150);
+    const frontBefore = await page.evaluate(() =>
+      document.querySelector('#chat .pop-stack-view .media-layer.layer-front .pop-img')?.dataset.nfName || '');
+    expect(frontBefore, 'before the swipe the front card is shot-1.png').toBe('shot-1.png');
+
+    const box = await view.boundingBox();
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    for (let i = 1; i <= 4; i++) await page.mouse.move(cx + (-60 * i) / 4, cy, { steps: 2 });
+    await page.mouse.up();
+    await page.waitForTimeout(300); // applyLayers + the suppressClick window (60ms) to lapse
+
+    const frontAfter = await page.evaluate(() =>
+      document.querySelector('#chat .pop-stack-view .media-layer.layer-front .pop-img')?.dataset.nfName || '');
+    expect(frontAfter, 'the swipe advanced the painted front to shot-2.png').toBe('shot-2.png');
+
+    // THE A-1 assertion: the click follows the swipe — opens the SHOWN card.
+    const probe = await realCenterClick(page, view);
+    expect(probe.hit, `the click point hit-tests to the shown card's body (got ${probe.hit})`).toContain('img.pop-img');
+    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
+    expect(probe.opens[0].absPath, 'opened file = the SHOWN card (shot-2.png), NOT the hardcoded first').toBe('/tmp/pop/shot-2.png');
+    expect(probe.opens[0].id, 'identity = file:<absPath>').toBe('file:/tmp/pop/shot-2.png');
+    expect(probe.lightbox, 'no lightbox on the collapsed-stack open (A-1)').toBe(false);
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -538,6 +594,63 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     expect(Math.abs(geo.user.deltaY), `user row: |钮心y − 栈中线y| = ${geo.user.deltaY}px (垂直居中)`).toBeLessThanOrEqual(1);
     expect(geo.llm.sideRight, `LLM row: pill RIGHT of the stack (pill.x ${geo.llm.pillLeft} ≥ stack.right ${geo.llm.stackRight})`).toBe(true);
     expect(geo.user.sideLeft, `user row: pill LEFT of the stack (pill.right ${geo.user.pillRight} ≤ stack.x ${geo.user.stackLeft})`).toBe(true);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('(c2) 复报令 A-2: the pill clears the PEEKING layers\' painted extent — no overlap, spacing held', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await renderStack(page, 3); // LLM row: .row.pop-artifact (no .user)
+    await page.evaluate(() => window.__userMediaLive()); // appends the user-media row (2-image stack)
+    await page.waitForFunction(
+      () => document.querySelectorAll('#chat .row.user-media .pop-stack-view .media-layer').length === 2,
+      null, { timeout: 10000 },
+    );
+
+    // The A-2 defect read the pill against the stack VIEW box; the peeking
+    // layers PAINT past it (.layer-back = translateX(32px) × scale(0.93) ≈
+    // +24.3px over the 220px box) and paint ABOVE the non-positioned pill.
+    // Measure the pill against the PAINTED extent (getBoundingClientRect
+    // includes the transforms): positive clearance = visible air, zero or
+    // negative = the overlap the author screenshotted.
+    const geo = await page.evaluate(() => {
+      const read = (row) => {
+        const area = row.querySelector('.pop-stack-area');
+        const pill = area.querySelector('.pill');
+        const view = area.querySelector('.pop-stack-view');
+        const layers = Array.from(view.querySelectorAll('.media-layer'));
+        const pr = pill.getBoundingClientRect(), vr = view.getBoundingClientRect();
+        const paintedRight = Math.max(...layers.map(l => l.getBoundingClientRect().right));
+        const paintedLeft = Math.min(...layers.map(l => l.getBoundingClientRect().left));
+        return {
+          pillLeft: +pr.left.toFixed(1), pillRight: +pr.right.toFixed(1),
+          viewRight: +vr.right.toFixed(1), viewLeft: +vr.left.toFixed(1),
+          paintedRight: +paintedRight.toFixed(1), paintedLeft: +paintedLeft.toFixed(1),
+          clearanceToPaintedRight: +(pr.left - paintedRight).toFixed(1),
+          clearanceToPaintedLeft: +(paintedLeft - pr.right).toFixed(1),
+          pillCenterY: +(pr.y + pr.height / 2).toFixed(1),
+          stackCenterY: +(vr.y + vr.height / 2).toFixed(1),
+        };
+      };
+      return {
+        llm: read(document.querySelector('#chat > .row.pop-artifact:not(.user)')),
+        user: read(document.querySelector('#chat > .row.user-media')),
+      };
+    });
+
+    expect(geo.llm, 'the LLM row was probed').toBeTruthy();
+    expect(geo.user, 'the user row was probed').toBeTruthy();
+    // LLM side: the pill sits RIGHT of the stack, so the number that matters is
+    // the air between the painted peek edge and the pill's LEFT edge.
+    expect(geo.llm.clearanceToPaintedRight,
+      `LLM row: pill.left ${geo.llm.pillLeft} clears the painted peek edge ${geo.llm.paintedRight} by ${geo.llm.clearanceToPaintedRight}px (A-2: 零重叠＋留间距)`).toBeGreaterThanOrEqual(8);
+    // User side: the pill sits LEFT and the peek extends AWAY from it — the
+    // 16px gap to the view box must stay (the fix must not tax the user side).
+    expect(geo.user.clearanceToPaintedLeft,
+      `user row: pill.right ${geo.user.pillRight} clears the painted stack edge ${geo.user.paintedLeft} by ${geo.user.clearanceToPaintedLeft}px`).toBeGreaterThanOrEqual(8);
+    // Vertical centering survives the spacing change (既定口径: 垂直居中).
+    expect(Math.abs(geo.llm.pillCenterY - geo.llm.stackCenterY), 'LLM row: pill still vertically centered on the stack').toBeLessThanOrEqual(1);
+    expect(Math.abs(geo.user.pillCenterY - geo.user.stackCenterY), 'user row: pill still vertically centered on the stack').toBeLessThanOrEqual(1);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

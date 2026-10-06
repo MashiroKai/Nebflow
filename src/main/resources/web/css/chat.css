@@ -4293,6 +4293,20 @@
    measured 钮心 y − 栈卡 y 几何中心 = 0.0px (before AND after, all forms). */
 .row.pop-artifact:not(.user) .pop-stack-area > .pill { order: 3; }
 
+/* 复报令 A-2 (2026-10-06 19:43 作者截图令): the LLM-side pill needs its own
+   clearance from the PEEKING layers, not just from the stack view's box. The
+   painted peek chrome runs ~24px past the view box's right edge
+   (.layer-back = translateX(32px) × scale(0.93) ≈ +24.3px over a 220px box),
+   and the layers paint ABOVE the non-positioned pill (z-index 1..3) — the
+   area's 16px gap alone left the pill's box 8.3px UNDER the painted chrome
+   (measured before this rule: clearanceRight −8.3px). margin-left lifts the
+   pill to 36px from the box → ≈ +11.7px of visible air past the painted
+   edge. Zero overlap, spacing held; user rows keep their 16px gap (pill sits
+   on the LEFT there — the peek extends AWAY from it, clearance +16px,
+   measured). Expanded state: same margin reads as a wider gap beside the
+   expand column — flat, no chrome there. Geometry otherwise untouched. */
+.row.pop-artifact:not(.user) .pop-stack-area > .pill { margin-left: 20px; }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    #491 pop-media 主题二 (2026-10-05 author ruling 「微信的这样的设计来进行分类
    和检索」). Append-only section: the media grid view (chatSearch v3.2) —

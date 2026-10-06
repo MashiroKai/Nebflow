@@ -16,7 +16,9 @@
 //     render as ONE WeChat-style stacked card: front card + peeking layers to
 //     the right, the 「展开 N」 pill beside the stack on the sender side (user
 //     rows: left; LLM rows: right — 三修 ①, 2026-10-06); drag switches; a click
-//     on the collapsed stack opens Canvas with the first item (三修 ③), and an
+//     on the collapsed stack opens Canvas with the SHOWN (front) card — swipe
+//     to the Nth card and the click opens N (复报令 2026-10-06 19:43 A-1;
+//     三修 ③'s first-item face is the no-swipe case), and an
 //     expanded row's whole-face click opens Canvas with THAT item (复验令
 //     2026-10-06 16:47 — expanded was the last lightbox leg, and the collapsed
 //     binding itself was dead on real clicks, see buildMediaStack); expand
@@ -461,9 +463,11 @@ function openMediaItemClick(item) {
  * The stacked media group (≥2 items): pill beside the stack on the sender-side
  * (user rows left / LLM rows right, 三修 ①). A pointer drag of >38px goes
  * next / previous; 「展开 N」 flattens, 「收起」 re-stacks. A click on the
- * COLLAPSED stack opens Canvas with the FIRST item (三修 ③), and an EXPANDED
- * row's whole-face click opens Canvas with THAT row's item (复验令 16:47) — the
- * lightbox survives only as openMediaItemClick's pathless-inline fallback.
+ * COLLAPSED stack opens Canvas with the SHOWN (front) card — swipe to the Nth
+ * card and the click follows the swipe (复报令 2026-10-06 19:43 A-1); the
+ * first card before any swipe (三修 ③). An EXPANDED row's whole-face click
+ * opens Canvas with THAT row's item (复验令 16:47) — the lightbox survives
+ * only as openMediaItemClick's pathless-inline fallback.
  */
 function buildMediaStack(items) {
   const area = document.createElement('div');
@@ -537,11 +541,12 @@ function buildMediaStack(items) {
   };
   applyLayers();
 
-  // 三修 ③ (2026-10-06 10:59 作者截图令), 复验修正 (16:47 作者核查令): a click
-  // on the COLLAPSED stack opens CANVAS with the FIRST item — the same single
-  // point the flat face and the file card share (三修 ②). The old tap-advance
-  // retires; switching cards stays on drag/swipe, and a real drag's
-  // suppressClick window keeps the swipe from also firing this open.
+  // 三修 ③ (2026-10-06 10:59 作者截图令), 复验修正 (16:47 作者核查令), 复报令
+  // A-1 修 (2026-10-06 19:43 作者截图令): a click on the COLLAPSED stack opens
+  // CANVAS with the SHOWN (front) card — the same single point the flat face
+  // and the file card share (三修 ②). The old tap-advance retires; switching
+  // cards stays on drag/swipe, and a real drag's suppressClick window keeps
+  // the swipe from also firing this open.
   //
   // The listener lives on `view`, NOT on the layers — the 复验 root cause: the
   // drag leg calls view.setPointerCapture() on pointerdown, and per the
@@ -553,9 +558,17 @@ function buildMediaStack(items) {
   // `view` IS the front card's box (layers are inset:0), so a click here is a
   // click on the collapsed stack. (`stack` is declared below; the body only
   // runs on real events, after the declaration.)
+  //
+  // A-1 病根 (复报令 19:43): the 复验 rebinding hardcoded items[0] — the swipe
+  // index (`front`, the same variable applyLayers paints from) never reached
+  // the click path, so after a swipe to the Nth card the click still opened
+  // the first. Read `front` live: swipe to N → click opens N. Before any
+  // swipe front === 0 — the 三修 ③ first-item face, unchanged. (`front` is a
+  // `let` captured by this closure; TDZ is unreachable because a click can
+  // only fire after the builder returned.)
   view.addEventListener('click', () => {
     if (stack.suppressClick) return;
-    openMediaItemClick(items[0]);
+    openMediaItemClick(items[front]);
   });
 
   /** The expanded column's natural height: the sum of its layers plus the
