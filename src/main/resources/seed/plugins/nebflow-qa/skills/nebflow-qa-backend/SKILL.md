@@ -4,7 +4,6 @@ description: Nebflow Scala 后端验证域知识——五维审核结构（sbt c
 when_to_use: 每轮后端交付后的验证关卡；verify 节点分配此 skill 做五维全覆盖审核。验证方法论深化（验红实证/变异安全/冒烟法证）见同插件 verification-rigor 与 isolated-smoke-verification。
 language: zh
 status: active
-last_verified: 2026-09-03
 ---
 
 # QA Backend — Scala 后端验证域

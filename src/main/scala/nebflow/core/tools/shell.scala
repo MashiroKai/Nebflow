@@ -1033,10 +1033,10 @@ final class ShellSession private (
                 if health.slowNotified.compareAndSet(false, true) then
                   val summary =
                     s"background job $jobId idle ${idleMs / 1000}s >= ${idleTimeoutMs / 1000}s " +
-                      "(no output, no CPU progress) — sensor only, no kill, no node failure (killruling ruling)"
+                      "(no output, no CPU progress) — sensor only, no kill, no node failure"
                   logger.warn(
                     s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — " +
-                      "sensor only, NOT auto-cancelling (killruling ruling #1+#14+#15)"
+                      "sensor only, NOT auto-cancelling"
                   ) *> onSlowDetected.fold(IO.unit)(_(summary)).handleErrorWith(e =>
                     logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}")) *>
                     // 🔴 提醒腿**必须继续循环**（旧写法是杀 = 终止，故无递归）：不杀 ⇒

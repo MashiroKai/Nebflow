@@ -126,11 +126,11 @@ object PopTool extends Tool:
   def description: String =
     s"""Shows finished artifacts to the user. One call accepts ONE path or a LIST of paths — batch the files of one deliverable into one call so they render as one group.
 
-## Nebula-only (2026-09-10 author ruling)
+## Nebula-only
 
 Pop is Nebula-exclusive: only the Nebula root session may call it. Every other agent, node session, or sub-agent call is rejected with POP_NEBULA_ONLY. Nodes do not Pop — they hand the deliverable to the chain end / Nebula along the out edge, and Nebula decides whether it is shown. Pop cannot be granted back to any other identity (it left the builtin tool whitelist).
 
-## What happens to each item (2026-10-03 pop-upgrade ruling)
+## What happens to each item
 
 - **Image / video / audio** (`png jpg jpeg gif webp bmp svg`, `mp4 webm mov m4v ogv ogg`, `mp3 wav oga flac aac m4a`) — rendered DIRECTLY IN THE CHAT, no Canvas tab. Several items in one call render as one stacked card (front card + peeking layers; click / swipe switches; 「展开 N」 flattens to one card per row). A single image renders flat.
 - **Every other file** (documents, PDF, Office, markdown, code, HTML animations…) — rendered as a FILE CARD at the bottom of your message: filename + a forward button (hover: 「在 Canvas 打开」) that opens it in Canvas on click. The card survives the turn-process collapse. No Canvas tab opens by itself.

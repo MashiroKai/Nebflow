@@ -1693,7 +1693,7 @@ export default {
   'usage.today': '今日',
   'usage.weekTrend': '本周环比',
   'usage.cacheHitRate': '缓存命中率',
-  'usage.cacheHitRateHint': '目标 96%+（当前基线 ~94%）',
+  'usage.cacheHitRateHint': '目标 96%+',
   'usage.cacheHitRateNoData': '暂无缓存数据',
   'usage.noCacheReported': 'provider 未上报缓存数据',
   'usage.topAgent': '最耗 agent',
@@ -1785,7 +1785,7 @@ export default {
   'plugins.dispatchOnTitle': '派发许可已开启——可派给新节点。点击后只挡未来派发；已在跑的节点保持其许可',
   'plugins.dispatchOffTitle': '派发许可已关闭——不会再派给新节点。点击恢复派发',
   'plugins.dispatchBlockedBlocked': '已封禁——本开关不会生效；解封走 API / CLI（面板已无入口）',
-  'plugins.dispatchBlockedTransition': '存在临时派发授权——该授权到期或被清除后，本开关才按作者意图生效',
+  'plugins.dispatchBlockedTransition': '存在临时派发授权——该授权到期或被清除后，本开关才生效',
   'plugins.author': '作者 {author}',
   'plugins.compositionSkills': '{n} 个技能',
   'plugins.compositionMcp': 'MCP：{servers}',
@@ -1959,7 +1959,7 @@ export default {
   // The remote-access face is held: O1–O5 (switch semantics / QR code / address
   // export / mobile range / clipboard fallback) are author decisions.
   // 🔴 Keep this text free of the fake-connection vocabulary (W6).
-  'social.remote.suspended': '本节内容待作者裁定（本批未接通）：不生成链接、不生成二维码、不显示任何未经后端确认的地址。',
+  'social.remote.suspended': '手机远程访问暂未开放。',
   'social.remote.safetyKey': '安全边界：远程访问链接等同于访问凭据，请勿转发给他人。',
   'social.remote.safetyPlain': '明文 HTTP：局域网内不加密，仅限可信网络。',
   'social.action.save': '保存配置',

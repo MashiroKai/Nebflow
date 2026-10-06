@@ -300,7 +300,7 @@ object ProjectCreateService:
     s"Workspace '$norm' is already used by project '${occupant.name}'$arch " +
       s"(its project.json workspace = '$occupantWs'). ProjectCreate default-denies creating '$newName' " +
       "on an occupied workspace — a second project on the same workspace would silently share its " +
-      "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
+      "flow-map / task board / worktrees. Two ways out: " +
       s"(a) reuse the existing project — ProjectCreate(name='${occupant.name}') to re-mount it, or " +
       s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
       s"(b) pass a different 'workspace' directory for '$newName'."

@@ -951,7 +951,7 @@ Git safety:
             jobId,
             s"wait-set bg task guard-hit: job $jobId (session ${ctx.sessionId.getOrElse("")}) " +
               s"ended with ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("").take(160)} — " +
-              "sensor only: no failure ledger, no node failure (killruling ruling #1+#14+#15)"
+              "sensor only: no failure ledger, no node failure"
           )
         case _ => IO.unit
 

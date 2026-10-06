@@ -4,7 +4,6 @@ description: 并行调研纪律（由 research flow 蒸馏）——正交拆题�
 when_to_use: 调研类任务（技术选型/方案对比/文献调研/事实核查）；凡结论需要可验证来源支撑的深度调研。单节点轻量查证不必用本纪律。
 language: zh
 status: active
-last_verified: 2026-09-03
 ---
 
 # Parallel Research — 并行调研纪律

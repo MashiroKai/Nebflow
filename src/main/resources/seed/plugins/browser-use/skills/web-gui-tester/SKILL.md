@@ -5,7 +5,6 @@ when_to_use: 用户要求测网页、验前端功能、复现页面 bug、检查
 audience: nebflow-project
 language: zh
 status: active
-last_verified: 2026-09-18
 ---
 
 # Web GUI Tester — 纯 GUI 黑盒验收方法论

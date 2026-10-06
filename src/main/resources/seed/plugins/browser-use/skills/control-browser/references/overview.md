@@ -33,7 +33,7 @@
 | 截图取证 | ✅ | 落盘 + `Read` 读图 |
 | 视口/响应式 | ✅ | `page.setViewportSize` |
 | 控制台错误采集 | ✅ | `page.on('console')` / `page.on('pageerror')`（只读） |
-| 只读取页面正文（不需要交互） | ✅（另一种载体） | 内置 `WebFetch`；比开浏览器便宜得多。**反爬 / JS 挑战页**靠它的**分层回退链**（第 1 层 HTTP 直取 → 第 2 层浏览器回退：Obscura → Playwright）；**本机现读：回退层不可用** —— `command -v obscura` rc=1（未安装）+ JVM 侧 Playwright 仅标 `provided`（`build.sbt:64`，不进发行包，运行期按 classpath 探测）⇒ 实际只剩第 1 层（HTTP 直取）可用；挑战页取不到正文 ⇒ 按 `SKILL.md` §五 如实记为**能力缺口**，不要改用别的手段凑结果 |
+| 只读取页面正文（不需要交互） | ✅（另一种载体） | 内置 `WebFetch`；比开浏览器便宜得多。**反爬 / JS 挑战页**靠它的**分层回退链**（第 1 层 HTTP 直取 → 第 2 层浏览器回退：Obscura → Playwright）；**回退层在本产品当前发行形态不可用** —— 浏览器回退层（Obscura→Playwright）不随发行包装载（运行期按 classpath 探测，未装载即不可用）⇒ 实际只剩第 1 层（HTTP 直取）可用；挑战页取不到正文 ⇒ 按 `SKILL.md` §五 如实记为**能力缺口**，不要改用别的手段凑结果 |
 | 外域站点的**交互式**操作 | ⛔ 暂缺 | 缺容器级隔离面；见 `deferred-capabilities.md` |
 | 浏览器与页面内容的**容器隔离** | ⛔ 暂缺 | 同上 |
 | 浏览器服务的**常驻**与跨调用复用 | ⛔ 暂缺 | 无 MCP browser server 装载面 |

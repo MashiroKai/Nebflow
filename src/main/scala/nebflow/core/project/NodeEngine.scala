@@ -408,7 +408,7 @@ class NodeEngine(
               // 写终态**，留着会与 `dead-session-reaped` 的新文案自相矛盾（判据面：
               // 「无自动判定 ⇒ 文案不得声称已判定」）。改后只陈述事实（会话死 + 无在飞
               // 后台任务 = 判定输入），处置由 `autoFailDeadRunning` 的降档腿表达。
-              "node session dead (no live session, no in-flight background task) — dead-session watchdog reminder leg (killruling ruling #19: no auto-fail, node kept Running)"
+              "node session dead (no live session, no in-flight background task) — dead-session watchdog reminder leg (no auto-fail, node kept Running)"
             )
           }
         }
@@ -484,10 +484,10 @@ class NodeEngine(
   private[project] def remindDeadSession(node: NodeDef, sessionId: String, err: String): IO[Unit] =
     FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
       s"dead-session node kept Running (session '$sessionId' has no live session) — needs human supervision; " +
-        s"no auto-fail, no delivery (killruling ruling #19 downgrade): ${err.take(160)}") *>
+        s"no auto-fail, no delivery: ${err.take(160)}") *>
       logger.warn(
         s"Node '${node.name}' (${node.id}) session '$sessionId' is dead — kept Running, reminder only " +
-          "(no failed convergence, no failed delivery — killruling ruling #19)")
+          "(no failed convergence, no failed delivery)")
 
   /** 会话已死提醒腿（killruling 批 2026-09-23，作者裁定 #19「先补提醒覆盖再降档」）。
     *
@@ -519,7 +519,7 @@ class NodeEngine(
                 s"waited ${elapsed / 1000}s since $since: reminder only, node stays Running (never failed, never killed)") *>
             logger.warn(
               s"Node '${node.name}' (${node.id}) has no live session at reminder rung $rung " +
-                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running (killruling ruling #19)")
+                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running)")
       }
     }
 

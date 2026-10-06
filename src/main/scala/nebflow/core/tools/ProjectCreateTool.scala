@@ -27,14 +27,14 @@ object ProjectCreateTool extends Tool:
     """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
 ## When to Use
 - **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready). Existing workspace files are never overwritten; only missing pieces are backfilled, and the result lists what was created vs left alone.
-- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog (2026-09-06 裁定), no candidate chips (2026-09-09 裁定)). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend; retiring that free input is a separate S3 order that has not landed. The chosen path flows back into the card and creation proceeds automatically.
+- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog, no candidate chips). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend. The chosen path flows back into the card and creation proceeds automatically.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
 - Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
 ## Semantics
 - Same name + same workspace → idempotent (returns "already exists", re-mounts and backfills any missing scaffold file; safe to repeat).
 - Same name + different workspace → explicit error (never silently re-points an existing project).
-- **Different name + workspace already used by another project → explicit error (default-deny, 2026-09-17 裁定 ④-4/④-12).** Workspace occupancy is compared with trailing slashes and case ignored; an archived project still counts as occupying its workspace. The error names the occupying project and gives two ways out: reuse that project, or pass a different workspace directory. Never let a second project silently share an occupied workspace — report the conflict to the user instead.
+- **Different name + workspace already used by another project → explicit error (default-deny).** Workspace occupancy is compared with trailing slashes and case ignored; an archived project still counts as occupying its workspace. The error names the occupying project and gives two ways out: reuse that project, or pass a different workspace directory. Never let a second project silently share an occupied workspace — report the conflict to the user instead.
 - Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again."""
 
   val inputSchema = JsonObject.fromIterable(
@@ -297,7 +297,7 @@ object ProjectCreateTool extends Tool:
     s"Workspace '$norm' is already used by project '${occupant.name}'$arch " +
       s"(its project.json workspace = '$occupantWs'). ProjectCreate default-denies creating '$newName' " +
       "on an occupied workspace — a second project on the same workspace would silently share its " +
-      "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
+      "flow-map / task board / worktrees. Two ways out: " +
       s"(a) reuse the existing project — ProjectCreate(name='${occupant.name}') to re-mount it, or " +
       s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
       s"(b) pass a different 'workspace' directory for '$newName'."
