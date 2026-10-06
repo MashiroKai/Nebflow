@@ -140,8 +140,8 @@ object MailTool extends Tool:
   /** Kernel-leg unauthorized-caller refusal (ruling (b): Nebula-exclusive). */
   private[tools] def kernelExclusiveError(address: String, role: String): ToolError =
     ToolError(
-      s"[$ErrKernelExclusive] The kernel address leg is EXCLUSIVE to the Nebula root session (ruling " +
-        "2026-09-25 (b)): dispatchers, team agents and nodes cannot start or continue a kernel instance. " +
+      s"[$ErrKernelExclusive] The kernel address leg is EXCLUSIVE to the Nebula root session: dispatchers, " +
+        "team agents and nodes cannot start or continue a kernel instance. " +
         s"Nothing was sent (address='$address', your role: $role). Route the work through Nebula instead — " +
         "mail your report to Nebula and let it dispatch."
     )

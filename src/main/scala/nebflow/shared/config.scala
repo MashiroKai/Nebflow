@@ -252,6 +252,21 @@ object JudgeConfig:
   given Decoder[JudgeConfig] = deriveDecoder[JudgeConfig]
 
 /**
+ * Collaboration-sync remote 节（batch78 三裁②，BA:330 移出＋参数化）：顶层
+ * `collabSync` 节。`remoteUrl` 缺省 `None` ⇒ dispatcher 提示词的协作同步句
+ * 整句不渲染（零本地信息缺省面）；配置存在时渲染同步句（句内 remote 名取
+ * 配置键名段 `collabSync`，非硬编码）。渲染时现读（BuiltinAgents.DispatcherPrompt
+ * 为 def）＋fail-safe（配置读失败等同未配置）。全字段可选：半节解码为缺省
+ * 而非抛（同 `jev` / `judge` 节教训）。
+ */
+case class CollabSyncConfig(
+  remoteUrl: Option[String] = None
+)
+
+object CollabSyncConfig:
+  given Decoder[CollabSyncConfig] = deriveDecoder[CollabSyncConfig]
+
+/**
  * Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
  * independently optional; None → Defaults. Applied at boot (LlmInterface
@@ -371,7 +386,13 @@ case class NebflowServiceConfig(
    * [[JudgeConfig]]。`None` = 未配置 ⇒ SmallJudge 走「根链首选」缺省、Jev 优先
    * 腿照常由 `jev` 节决定；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。
    */
-  judge: Option[JudgeConfig] = None
+  judge: Option[JudgeConfig] = None,
+  /**
+   * Collaboration-sync remote 节（batch78 三裁②，BA:330 移出＋参数化）——见
+   * [[CollabSyncConfig]]。`None` = 未配置 ⇒ dispatcher 提示词的协作同步句整句
+   * 不渲染；渲染时现读，配置改动即席生效（无重启门槛）。
+   */
+  collabSync: Option[CollabSyncConfig] = None
 )
 
 object NebflowServiceConfig:

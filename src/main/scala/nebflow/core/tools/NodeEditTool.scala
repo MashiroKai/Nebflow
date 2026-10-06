@@ -312,7 +312,7 @@ object NodeEditTool extends Tool:
           "type" -> "boolean".asJson,
           "description" -> ("Explicit authorization NODE_COMPLETED_REACTIVATION (default false): re-run a COMPLETED node on this edit — status → wiring/pending, result and delivery ledger cleared, upstreams re-delivered, the node runs again (its old result is discarded). " +
             "Only valid on a completed node (else rejected). Without this flag an edit of a completed node keeps today's behaviour: rewiring only, the retained result is auto-delivered to newly wired targets, no re-run. " +
-            "Audit: every reactivation is logged (preStatus / source / gen / blockCount / loopRound). The routed-loop re-run leg (fail edge) lands in a later batch; this flag is the phase-1 authorization entry.").asJson
+            "Audit: every reactivation is logged (preStatus / source / gen / blockCount / loopRound.").asJson
         ),
         "restoreChain" -> Json.obj(
           "type" -> "boolean".asJson,
@@ -2566,7 +2566,7 @@ object NodeEditTool extends Tool:
                                                   rt.store.findNode(node.id).flatMap {
                                                     case Some(fresh) if fresh.notifyPolicy.isDefined =>
                                                       logger.warn(
-                                                        s"NodeEdit notifyDispatcher=${notify.flag} ignored on node '${node.name}' (${node.id}): the node declares notify=${fresh.notifyPolicy.get} (authoritative since the b64 batch) — use 'notify' to change its notification policy"
+                                                        s"NodeEdit notifyDispatcher=${notify.flag} ignored on node '${node.name}' (${node.id}): the node declares notify=${fresh.notifyPolicy.get} — use 'notify' to change its notification policy"
                                                       )
                                                     case _ =>
                                                       rt.store.mutate { s =>
