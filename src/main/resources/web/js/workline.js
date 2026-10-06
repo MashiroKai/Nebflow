@@ -85,15 +85,34 @@ function motion(view) {
   return typeof view?.motionEnabled === 'function' ? view.motionEnabled() : true;
 }
 
-/** The turn-top anchor: the last NON-injected user row of #chat — the same
- *  boundary turnGroup.js uses for the turn scope. The line is inserted right
- *  after it, so the terminal morph lands the header exactly where buildHeader
- *  would have put it. */
+/** The turn-top anchor: the last user-class row of #chat — injected bubbles
+ *  INCLUDED (toolline-detail 批 2026-10-06, dispatcher 16:54 令「Badge 重建逻辑
+ *  Bug」修法：turn 边界 = 任何面向用户的开轮事件——用户消息、注入邮件、节点
+ *  消息、定时触发、续聊注入统一重开分组；注入泡自身展示形态零改动，只修
+ *  badge 分组边界).
+ *
+ *  Before this change the anchor was the last NON-injected user row, so a turn
+ *  opened by an external injection (device-mail / node-message / schedule)
+ *  anchored its line right after the PREVIOUS turn's user row — the live line
+ *  and the badge it settles into landed on top of the previous turn's chrome
+ *  (the author's screenshot: 新工具行与旧 badge 位置重叠、注入轮无新 badge).
+ *
+ *  Deliberately NOT mirrored into turnGroup's turnScope / dissolveTurnChrome /
+ *  scopeFromHeader: the live terminal scope is governed by the #403 closure
+ *  cursor (marked at each terminal), which already scopes injection turns
+ *  correctly, and a mid-turn continuation bubble must NOT split the turn it
+ *  arrived into (the bubble stays inside that turn's group; the QUEUED
+ *  continuation opens its own turn with its own line+badge — the anchor here
+ *  is consulted only when a NEW line is built, i.e. at genuine turn starts).
+ *  The downward toggle walk (scopeFromHeader) needs no change either: the
+ *  settled badge of the injection turn is inserted right after the bubble, so
+ *  it terminates the walk at exactly the right row. History rebuild already
+ *  splits an injected row that follows a closed (badged) segment
+ *  (buildTurnSummariesForHistory #403 note) — live and history agree. */
 function turnAnchor(chat) {
   let anchor = null;
   for (const el of chat.children) {
-    if (el.classList && el.classList.contains('row') && el.classList.contains('user') &&
-        !(el.querySelector && el.querySelector('.bubble.injected'))) anchor = el;
+    if (el.classList && el.classList.contains('row') && el.classList.contains('user')) anchor = el;
   }
   return anchor;
 }
@@ -300,24 +319,57 @@ export function startWorklineItem(view, label, kind = 'tool') {
   if (fresh) fresh.scrollLeft = 1e7;
 }
 
-/** Same item COMPLETED: drawn check + bounce, in place (no roll). */
-export function doneWorklineItem(view, key) {
+/** Same item COMPLETED: drawn check + bounce, in place (no roll).
+ *  ③ 完成翻转（toolline-detail 批 2026-10-06）：`resultText` = 单行结果摘要
+ *  （chat.js toolLineResultText 组装自 toolEnd 帧已有字段）；空/缺席时回退
+ *  运行中 label 文本（旧引擎帧逐字保持原行为）。翻转 = 项级替换（buildItem
+ *  新建项），运行细节 span 随旧项自然卸下——展开面（tucked 卡）零触碰。 */
+export function doneWorklineItem(view, key, resultText) {
   const wl = state(view);
   if (!wl || !wl.item) return;
   if (wl.key !== key) return; // a different item owns the slot — leave it alone
   const labelEl = wl.item.querySelector('.nf-wl-label');
-  const text = labelEl ? labelEl.textContent : '';
+  const fallback = labelEl ? labelEl.textContent : '';
+  const text = (typeof resultText === 'string' && resultText) ? resultText : fallback;
   swap(wl, buildItem(text, 'chk', 'is-done'), { key: wl.key, kind: wl.kind, roll: false });
 }
 
-/** Same item FAILED (toolEnd with isError): cross mark, in place (no roll). */
-export function failWorklineItem(view, key) {
+/** Same item FAILED (toolEnd with isError): cross mark, in place (no roll).
+ *  resultText 语义同 doneWorklineItem（③ 完成翻转）。 */
+export function failWorklineItem(view, key, resultText) {
   const wl = state(view);
   if (!wl || !wl.item) return;
   if (wl.key !== key) return;
   const labelEl = wl.item.querySelector('.nf-wl-label');
-  const text = labelEl ? labelEl.textContent : '';
+  const fallback = labelEl ? labelEl.textContent : '';
+  const text = (typeof resultText === 'string' && resultText) ? resultText : fallback;
   swap(wl, buildItem(text, '', 'is-error'), { key: wl.key, kind: wl.kind, roll: false });
+}
+
+/** ② 运行中类型化细节行（toolline-detail 批 2026-10-06）：muted 小字细节骑在
+ *  当前运行项上（spinner + label 之后）。调用方 = 参数流 rAF 帧（增量）与
+ *  toolStart 终值重放，二者共用；本函数是唯一写入点——
+ *  · kind/态守卫：只服务**运行中**工具项（dots/thinking 项不接细节；已完成
+ *    项（is-done/is-error）不接——真实链路由 renderTool 的 cancelToolStreamRAF
+ *    挡迟刷帧，本守卫兜直喂路径的残余增量）；
+ *  · 跨帧复用：span 首次创建后只做 textContent 替换（流式帧零节点重建，
+ *    与本行 spinner 的元素复用同纪律）；文本未变时零写；
+ *  · 单行纪律：nowrap + 裁剪 + 尾部 fade（CSS 同 .nf-wl-label 档），右侧
+ *    尾锚 `scrollLeft = 1e7`（同 thinkingWorklineItem 的 clamp 惯例，零布局读）。 */
+export function worklineToolDetail(view, text) {
+  const wl = state(view);
+  if (!wl || !wl.item || wl.kind !== 'tool') return;
+  if (wl.item.classList.contains('is-done') || wl.item.classList.contains('is-error')) return;
+  const next = String(text == null ? '' : text);
+  if (!next) return;
+  let el = wl.item.querySelector('.nf-wl-detail');
+  if (!el) {
+    el = document.createElement('span');
+    el.className = 'nf-wl-detail';
+    wl.item.appendChild(el);
+  }
+  if (el.textContent !== next) el.textContent = next;
+  el.scrollLeft = 1e7;
 }
 
 /** Thinking: the badge shows the thinking text as TEXT (UI-C text cadence). The

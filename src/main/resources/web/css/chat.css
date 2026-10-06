@@ -3527,6 +3527,31 @@
   -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
   mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
 }
+/* ── ② 运行中类型化细节行（toolline-detail 批 2026-10-06）────────────────
+   muted 小字细节骑在运行项 label 之后：单行（nowrap + 裁剪）+ 同款尾部 fade，
+   新内容在右、旧内容左滑出（worklineToolDetail 的 1e7 尾锚）。色 = 既有
+   --color-text-muted token（暗档随 token 提亮，ui-status token 面④）；字号
+   11px 降半档，不喧宾。label 让位：有细节时 label 收缩为内容宽（封顶 55%），
+   细节占其余空间——无细节时布局逐字节同旧。终态摘除：完成翻转 / header 定稿
+   都走 buildItem 新建项，细节 span 不进终态。UI-G 静态窗随 .nf-static 全局
+   关动画（fade 是 mask 非动画，与 .nf-wl-label 同款豁免列）。 */
+.nf-wl-detail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: -4px; /* label gap 10px 的视觉续接（细节是 label 的延长流） */
+  font-size: 11px;
+  color: var(--color-text-muted);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+}
+.nf-wl-item:has(.nf-wl-detail) > .nf-wl-label {
+  flex: 0 1 auto;
+  max-width: 55%;
+}
+.nf-static .nf-wl-detail { -webkit-mask-image: none !important; mask-image: none !important; }
 .nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
 
 /* pre-token dots (the old placeholder bubble's face, moved onto the line) —

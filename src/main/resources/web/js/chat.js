@@ -36,7 +36,7 @@ import { previewLocalPath, canPreviewLocalPath } from './attachmentPreview.js';
 // i18n.js only) — the call sites below are the EXISTING render paths, so the
 // engine event stream (thinkingDelta / toolStart / toolEnd) is consumed
 // unchanged.
-import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, removeWorkline, beginRound, stampRound } from './workline.js';
+import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, removeWorkline, beginRound, stampRound, worklineToolDetail } from './workline.js';
 // Root agent DISPLAY name (single read point — rootName.js). Leaf module
 // (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
 // the literal "Nebula".
@@ -48,6 +48,17 @@ import { rootDisplayName } from './rootName.js';
 function worklineLabel(rawLabel) {
   const parts = localizeToolLabel(rawLabel).split('\n', 2);
   return parts[0];
+}
+
+/** ③ 完成翻转（toolline-detail 批 2026-10-06）：工具完成勾选时 turn 行翻转为
+ *  单行结果摘要——「<工具名> — <本地化 summary>」。数据 = toolEnd 帧前端
+ *  已持有字段（label/summary），零新协议。summary 为空（旧引擎帧/无摘要）时
+ *  返回 '' ⇒ doneWorklineItem 回退运行中 label（原行为逐字保留）。 */
+function toolLineResultText(label, summary) {
+  const sum = localizeToolSummary(summary || '', label);
+  if (!sum) return '';
+  const base = worklineLabel(label) || '';
+  return (base ? base + ' — ' : '') + sum;
 }
 
 /** THE single row-append path for this module. #491 (author 2026-10-05
@@ -1093,8 +1104,11 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // stream-ux §二.1.1: the tool FINISHED — the badge swaps the spinner for the
   // drawn check (cross + error ink when the tool failed) in place, no roll. The
   // module's own key check makes a stale/other-turn call a no-op.
-  if (isError) failWorklineItem(activeView, worklineLabel(label));
-  else doneWorklineItem(activeView, worklineLabel(label));
+  // ③ 完成翻转（toolline-detail 批）：行文本 = 单行结果摘要（工具名 — 摘要），
+  // 不再停留运行中 label；运行细节 span 随项重建自然卸下。
+  const resultText = toolLineResultText(label, summary);
+  if (isError) failWorklineItem(activeView, worklineLabel(label), resultText);
+  else doneWorklineItem(activeView, worklineLabel(label), resultText);
 
   // Cancel any pending streaming rAF so it doesn't overwrite the final render
   cancelToolStreamRAF();
@@ -1350,6 +1364,14 @@ export function renderToolPending(label, sessionId) {
     }
   }
 
+  // Helper: after the workline item is (re)built or refreshed for this label,
+  // replay the finished argument stream into the typed detail line (② toolline-
+  // detail batch). Same-key refresh keeps the item (and its detail span) alive;
+  // a rebuilt item needs the span recreated — worklineToolDetail handles both.
+  function refreshWorklineDetail() {
+    reapplyWorklineDetailFromArgs(label);
+  }
+
   // If a pending card already exists for this session, update it in-place
   // to avoid spinner flicker between toolCallDetected → toolStart events.
   // Defense: if the DOM node was removed (e.g. historyPage cleared innerHTML
@@ -1364,6 +1386,7 @@ export function renderToolPending(label, sessionId) {
     // for the same tool).
     if (!existingLabel || existingLabel === label) {
       updateLabel(existing);
+      refreshWorklineDetail();
       return;
     }
     // Label mismatch — the slot holds a different tool's card.
@@ -1374,6 +1397,7 @@ export function renderToolPending(label, sessionId) {
         const matchedRow = c.closest('.row');
         state.sessionToolCards[sid] = matchedRow;
         updateLabel(matchedRow);
+        refreshWorklineDetail();
         return;
       }
     }
@@ -1387,6 +1411,7 @@ export function renderToolPending(label, sessionId) {
         const matchedRow = c.closest('.row');
         state.sessionToolCards[sid] = matchedRow;
         updateLabel(matchedRow);
+        refreshWorklineDetail();
         return;
       }
     }
@@ -1411,6 +1436,7 @@ export function renderToolPending(label, sessionId) {
   appendChatRow(chat, row);
   smartScroll();
   state.sessionToolCards[sid] = row;
+  refreshWorklineDetail();
 }
 
 // ---------- Tool argument streaming ----------
@@ -1424,7 +1450,10 @@ const TOOL_PRIMARY_FIELDS = {
   'Edit': 'new_string',
   'Bash': 'command',
   'Card': 'html',
-  'Delegate': 'prompt',
+  // Delegate（toolline-detail 批 2026-10-06 修正）：入参 schema 的 brief 字段是
+  // `task`（DelegateTool.scala :72 required "task"；旧值 'prompt' 在帧参数里
+  // 永不出现 ⇒ 参数流式面从末对 Delegate 出过内容）。
+  'Delegate': 'task',
   'Read': 'file_path',
   'Grep': 'pattern',
   'Glob': 'pattern',
@@ -1443,6 +1472,67 @@ const TOOL_PRIMARY_FIELDS = {
   // " +N" for the further complete ones — the plan's "first path (+N)" progress.
   'Pop': 'filePath',
 };
+
+// ---------- ② 运行中类型化细节行（toolline-detail 批 2026-10-06 作者 16:51 令）----------
+//
+// RUNNING detail-line config — ROLLABLE：一种工具类型一行，新工具类型接入 =
+// 加一行，零逻辑改动。每行把「运行中的工具」映射到它该在 turn 行细节位流式
+// 展示的入参字段。数据源 = toolArgDelta 的参数 JSON 增量累积
+// （view.stream.toolStreamText——main.js 在每个 toolCallDetected 复位，toolStart
+// 不复位 ⇒ 执行开始时完整参数已在客户端；证据链 AgentStreamPipelines.scala:228
+// ToolArgDelta → ws.js STREAM_MSG_TYPES → main.js onMessage('toolArgDelta')）。
+//
+//   delegate = 任务 brief 首行（field `task`，DelegateTool schema required）
+//   bash     = 正在执行的具体命令（field `command`）
+//   读/写    = 路径（file_path）
+//   搜索     = 查询词（pattern / query）
+//   web      = URL（url）
+//   其余     = 默认分支：按 DEFAULT_DETAIL_FIELDS 顺序取第一个出现的短字段
+//              （工具名本体已在 label 位，缺字段时不加细节行）。
+//
+// 🔴 bash「输出尾行」滚动不在本表能力内：执行期引擎不下发任何输出事件
+// （唯一执行期帧 = 30s toolHeartbeat{label}，AgentSessionExecution.scala:2283，
+// 只喂活 busy timer）——补事件方案另文候示，🔴 本批禁动引擎面。
+const TOOL_LINE_DETAIL = [
+  { tools: ['Delegate', 'Subagent', 'SubTask'], field: 'task' },       // 任务 brief 首行
+  { tools: ['Bash'], field: 'command' },                               // 正在执行的具体命令
+  { tools: ['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'], field: 'file_path' }, // 路径
+  { tools: ['Grep', 'Glob'], field: 'pattern' },                       // 查询词
+  { tools: ['WebSearch'], field: 'query' },                            // 查询词
+  { tools: ['WebFetch', 'Curl'], field: 'url' },                       // URL
+];
+// 默认分支的探测字段序（其余工具 = 工具名 + 一行上下文）。
+const TOOL_LINE_DETAIL_DEFAULT_FIELDS = ['command', 'file_path', 'path', 'url', 'pattern', 'query', 'task', 'to', 'id', 'name'];
+
+/** 细节行单行化：取首个非空行、封顶截断（… 尾）。流式期间值未完亦照常显示
+ *  （extractFieldValueFromPartialJson 对未闭合字符串返回已到部分——这正是
+ *  「流式」本体）。 */
+function toolLineDetailOneLine(value, cap = 200) {
+  const line = (String(value).split('\n').find(l => l.trim()) || '').trim();
+  return line.length > cap ? line.slice(0, cap - 1) + '…' : line;
+}
+
+/** 映射表解析：toolName → 应展示字段序（命中表项取其 field，否则默认序）。 */
+function toolLineDetailFields(toolName) {
+  const name = String(toolName || '').trim();
+  for (const entry of TOOL_LINE_DETAIL) {
+    if (entry.tools.indexOf(name) !== -1) return [entry.field];
+  }
+  return TOOL_LINE_DETAIL_DEFAULT_FIELDS;
+}
+
+/** 从（可能是部分）参数 JSON 提取细节行文本；无字段可示 → ''（不加细节行）。 */
+function toolLineDetailText(toolName, rawJson) {
+  if (!rawJson) return '';
+  for (const field of toolLineDetailFields(toolName)) {
+    const v = extractFieldValueFromPartialJson(rawJson, field);
+    if (v && v.value) {
+      const line = toolLineDetailOneLine(v.value);
+      if (line) return line;
+    }
+  }
+  return '';
+}
 
 /**
  * Read one JSON string starting just AFTER its opening quote (the same best-
@@ -1558,6 +1648,26 @@ function extractFieldValueFromPartialJson(partialJson, fieldName) {
 let _pendingToolStreamRAF = null;
 let _toolStreamRafTarget = null;
 
+/** ② 把当前累积参数流投到 turn 行细节位（toolline-detail 批）。
+ *  worklineToolDetail 内部做 kind 守卫（仅运行中工具项）与文本比对，重复调用
+ *  无副作用——参数流 rAF 帧与 toolStart 终值重放共用本入口。 */
+function setWorklineToolDetail(view, toolName, rawJson) {
+  const text = toolLineDetailText(toolName, rawJson);
+  if (text) worklineToolDetail(view || activeView, text);
+}
+
+/** toolStart 时终值重放：参数 JSON 在 toolCallDetected→toolStart 之间已流毕
+ *  （toolStart 不复位缓冲，main.js :931 只在下一个 toolCallDetected 复位），
+ *  但 label 刷新可能换新建项（key 变化路径）——用累积流把细节行补回当前项。
+ *  帧参数缺失（如历史重放/子代理腿无 toolArgDelta）时自然为空 → 不加行。 */
+function reapplyWorklineDetailFromArgs(rawLabel) {
+  const stream = activeView.stream;
+  if (!stream.toolStreamText) return;
+  const baseName = String(rawLabel || '').split('(')[0].split('\n')[0].trim();
+  if (baseName && stream.toolStreamToolName && baseName !== stream.toolStreamToolName) return;
+  setWorklineToolDetail(activeView, baseName || stream.toolStreamToolName, stream.toolStreamText);
+}
+
 export function appendToolStreamDelta(toolName, delta) {
   activeView.stream.toolStreamText += delta;
   activeView.stream.toolStreamToolName = toolName;
@@ -1567,6 +1677,7 @@ export function appendToolStreamDelta(toolName, delta) {
   if (!pendingRow || !pendingRow.isConnected) return;
 
   _toolStreamRafTarget = {
+    view: activeView,
     row: pendingRow,
     chat: activeView.dom.chat,
     snapped: activeView.stream.scrollSnapped,
@@ -1588,6 +1699,11 @@ export function appendToolStreamDelta(toolName, delta) {
         const extracted = extractFieldValueFromPartialJson(target.rawText, fieldName);
         if (extracted) displayContent = extracted.value;
       }
+      // ② 类型化细节行（toolline-detail 批）：参数增量 → turn 行细节位流式。
+      // 只做 textContent 替换（span 首次创建后跨帧复用，流式帧零节点重建——
+      // 与 ① spinner 元素复用同纪律）；无字段可示时不建行。视图取 delta 时
+      // 的归属视图（target.view），非刷帧时的 activeView——防中途切视图竞态。
+      setWorklineToolDetail(target.view, target.toolName, target.rawText);
       if (displayContent === null) return; // primary field not started yet
 
       // Find or create streaming body in the tool card
