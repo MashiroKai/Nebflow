@@ -898,67 +898,21 @@ object NodeEditTool extends Tool:
       case _ => None
 
   /**
-   * worktree 派生规则（2026-09-05 显式布尔改造，规则写死）：
-   * 目录名 = 节点名 sanitize——空白与 git-ref 非法字符（~^:?*[\\ 及控制符）→ '-'、
-   * 连续 '-' 折叠、首尾 '-.' 剥除、截 40 字符、空则 "node"（**保留 CJK/Unicode
-   * 字母数字**——生产节点名以中文为主，全部归一成 "node" 会让派生名失去区分度；
-   * git 分支名与 macOS/Linux 文件名均合法接受 Unicode）。冲突追加 -2..-99；
-   * 分支同名。
+   * worktree 派生规则（2026-09-05 显式布尔改造，规则写死）：目录名 = 节点名
+   * sanitize、冲突追加 -2..-99、分支同名——规则本体已抽取为公用 util
+   * [[nebflow.core.GitWorktrees]]（worktree-judge-fifo 批 #1224 增补 §3.1「抽
+   * createWorktreeFor 为公用 util」；delegate spawn 腿共用同一实现）。本包装保持
+   * 原签名与原错误文案（label = 节点名），行为逐字节不变。
    *
-   * Baseline (engine-wtbase batch, 2026-10-04): the DEFAULT is the repo HEAD at
-   * creation time, and ONLY the value passed in through the `baseRef` parameter is
-   * used — the former `git rev-parse --verify --quiet main` fallback is gone
-   * (`main` is neither the default nor the sole candidate any more). Defect
-   * evidence: three worktrees created for parallel nodes all landed on main
-   * (a5b716d55) while the integration line tip was e3e784ede, i.e. a parallel
-   * batch started 27 commits behind the integration line. A model-visible
-   * parameter for choosing the baseline is NOT opened here (that would change the
-   * Tool schema => author review gate AGENTS.md §16); this batch lands only the
-   * engine-internal knob: the `baseRef` parameter (default = header repo HEAD),
-   * with the Tool schema / description text left byte-identical.
-   *
-   * Raw ref passed through vs. resolved to a SHA: the raw ref is handed to
-   * `git worktree add`. HEAD must be dereferenced at the moment the worktree is
-   * created — resolving to a SHA first would base a worktree on the tip observed
-   * at resolve time rather than at creation time. With a single dereference point,
-   * an unborn HEAD errors out naturally (measured: exit 128, `fatal: invalid
-   * reference: HEAD`), so no pre-check is needed in this tool.
-   *
-   * 创建时机选型（裁决 a「NodeEdit 即时创建」）：fail-fast——分发器组图当下拿到
-   * 可行动错误，零 spawn 零 token 浪费；spawn 时懒创建（方案 b）会把失败推迟到
-   * 执行链中段，形成 failed 节点 + 重入轮次。git 不可用/非 git 工作区 → 拒建节点。
+   * Baseline（engine-wtbase 批 2026-10-04）：缺省基点 = 创建时 HEAD，仅显式
+   * baseRef 覆盖；无 `main` 回落（模型可见参数不开——schema 变更属作者过目闸
+   * AGENTS.md §16）。单点 deref 语义照旧（raw ref 直传 `git worktree add`）。
    */
   private def createWorktreeFor(ws: os.Path, nodename: String, baseRef: String = "HEAD"): Either[String, String] =
-    def git(args: String*): Either[String, String] =
-      val res = os.proc(Seq("git", "-C", ws.toString) ++ args).call(cwd = ws, check = false, mergeErrIntoOut = true)
-      if res.exitCode != 0 then Left(res.out.trim().take(300)) else Right(res.out.trim())
-    val sanitized =
-      nodename.trim
-        .replaceAll("[\\s~^:?*\\[\\\\]+", "-")
-        .replaceAll("-{2,}", "-")
-        .stripPrefix("-")
-        .stripSuffix("-")
-        .stripPrefix(".")
-        .take(40)
-        .stripSuffix("-")
-        .stripSuffix(".lock")
-        .stripSuffix(".")
-    val base = if sanitized.isEmpty then "node" else sanitized
-    val wtRoot = ws / ".nebflow" / "worktrees"
-    val candidates = (1 to 99).map(i => if i == 1 then base else s"$base-$i")
-    candidates.find { n => !os.exists(wtRoot / n) && !os.exists(ws / ".nebflow" / n) } match
-      case None =>
-        Left(
-          s"Cannot derive a free worktree name for node '$nodename' (tried '$base', '$base-2'…'$base-99') — pass a shorter/unique nodename"
-        )
-      case Some(name) =>
-        val path = wtRoot / name
-        os.makeDir.all(wtRoot)
-        // Default baseline = the repo HEAD at creation time (the `baseRef` parameter
-        // default; engine-wtbase batch, 2026-10-04). NO `main` fallback: a parallel
-        // batch must start on the integration line tip, and landing on main silently
-        // drops the integration-line commits.
-        git("worktree", "add", "-b", name, path.toString, baseRef).map(_ => name)
+    val sanitized = nebflow.core.GitWorktrees.sanitizeRefName(nodename)
+    nebflow.core.GitWorktrees
+      .createWorktree(ws, dirBase = sanitized, branch = sanitized, baseRef = baseRef, label = nodename)
+      .map(_.name)
 
   end createWorktreeFor
 
@@ -1003,6 +957,28 @@ object NodeEditTool extends Tool:
     // 把参数名替换成 deps，避免误导（解析器文案写死 'in'）。
     val depsIds = NodeTools.parseIn(depsJson).left.map(err => err.replace("'in'", "'deps'"))
     val outEither = NodeTools.parseOut(outJson)
+    // ⑥ merge 参数先行封口（worktree-judge-fifo 批 #1224 增补 §3.7，作者
+    // 裁定⑥「先行封口，不等 #1229」）：判定机（DelegateJudge + MergeQueue）
+    // 就位即封 merge=true **新建**——错误码对齐 *_UNSUPPORTED 族（pfhygiene
+    // 先例 NODE_AGENT_RETIRED→NODE_AGENT_UNSUPPORTED 同型）。「先行」= 本封口
+    // 是 createNode 校验链的**第一站**（先于 description/in/deps/out 全部校验——
+    // merge=true 新建一律以 NODE_MERGE_UNSUPPORTED 拒，不给其他校验面让位）；
+    // 下方旧 merge 专属校验链（校验①…W1）对新建路径已不可达，保留为 #1229
+    // 物理删除面的在飞读数；编辑路径 merge 本就 create-only 静默忽略、归档
+    // 节点传 merge 的既有拒绝（:725 一带）不受影响；**存量 merge 节点运行面
+    // （MergeNodePolicy/门集）零触碰**，物理删除随 #1229＋在飞旧链排空。
+    // 🔴 错误文案模型可见——§16 待过目标注（本批最小成稿，终稿归 N3）。
+    if merge then
+      IO.pure(
+        Left(
+          ToolError(
+            "merge=true node creation is no longer supported — dispatch the work as Delegate tasks " +
+              "instead of wiring a merge node. Existing merge nodes keep working until the cleanup batch. " +
+              "(NODE_MERGE_UNSUPPORTED)"
+          )
+        )
+      )
+    else
     (validateDescription(description, creating = true), validateDescriptionLong(descriptionLong)) match
       case (Some(err), _) => IO.pure(Left(err))
       case (_, Some(err)) => IO.pure(Left(err))
@@ -1031,6 +1007,7 @@ object NodeEditTool extends Tool:
             // contains(true) 语义）：合并节点不配 worktree——落地收口在 workspace 根仓
             // 执行，沙箱根必须 = workspace（.git 在根内可写）；配 worktree=true 则
             // 沙箱根 = worktree 目录，主仓 .git 在根外 → git 变更 EPERM。
+            // （⑥ 先行封口后本链对新建路径不可达——保留为 #1229 物理删除面读数。）
             else if merge && worktree.contains(true) then
               IO.pure(
                 Left(
@@ -1190,8 +1167,6 @@ object NodeEditTool extends Tool:
                       }
                     case None => viaWorktree
               }
-
-    end match
 
   end createNode
 

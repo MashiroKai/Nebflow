@@ -426,4 +426,12 @@ case class SharedResources(
       ): ActorRef[List[String]] =
         AskUserAnswerBridge.ref(target, items, requestId, ctx)
   )
+
+  // worktree-judge-fifo 批（#1224 增补 §3.1）：delegate 判定机注册（⑦ Jev 优先
+  // ＋SmallJudge 兜底——执行体在 llm.decision.DelegateJudgeMachine，core 只见
+  // DelegateJudgePort 注册器，分层纪律同 DelegateBudgetPort 三先例）。注册点 =
+  // 本构造行（生产 boot 与测试装配共用）。
+  nebflow.core.delegate.DelegateJudge.DelegateJudgePort.install(
+    nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
+  )
 end SharedResources

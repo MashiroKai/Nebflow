@@ -232,6 +232,26 @@ object JevConfig:
   given Decoder[JevConfig] = deriveDecoder[JevConfig]
 
 /**
+ * Delegate 判定机 utility model 配置节（worktree-judge-fifo 批 #1224 增补 §一/§3.1
+ * —— SmallJudge 的「新可配 utility model」）: 顶层 `judge` 节，全字段可选。
+ *
+ * @param utilityModel
+ *   SmallJudge（LLM 兜底腿）的模型 ref（`providerId/modelId` 形态）。None =
+ *   缺省口径「根链首选」（registry 全局候选链首条）。Jev 优先腿不受本键影响
+ *   （Jev 走 `jev` 节自带的 provider/model）。
+ * @param timeoutMs
+ *   判定调用时限（worktree 判定与终态三态判定共用）。None → 默认 30s（判定
+ *   有界：spawn 腿与终态腿都绝不因判定机长悬）。
+ */
+case class JudgeConfig(
+  utilityModel: Option[String] = None,
+  timeoutMs: Option[Long] = None
+)
+
+object JudgeConfig:
+  given Decoder[JudgeConfig] = deriveDecoder[JudgeConfig]
+
+/**
  * Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
  * independently optional; None → Defaults. Applied at boot (LlmInterface
@@ -345,7 +365,13 @@ case class NebflowServiceConfig(
    * `Missing required field` ⇒ 防 GatewayMain 走 crash-recovery 用 `{}` 快照
    * 打回（同 `llm` 节的既有教训）。
    */
-  jev: Option[JevConfig] = None
+  jev: Option[JevConfig] = None,
+  /**
+   * Delegate 判定机 utility model 节（worktree-judge-fifo 批 #1224 增补）——见
+   * [[JudgeConfig]]。`None` = 未配置 ⇒ SmallJudge 走「根链首选」缺省、Jev 优先
+   * 腿照常由 `jev` 节决定；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。
+   */
+  judge: Option[JudgeConfig] = None
 )
 
 object NebflowServiceConfig:
