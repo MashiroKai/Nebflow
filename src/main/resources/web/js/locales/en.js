@@ -1428,6 +1428,24 @@ export default {
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
   'task.nodeBlocked': 'Blocked',
+  // === Delegate faces (#1228 换源接线批 · §16 七键 §16-passed verbatim, zh/en paired) ===
+  // 🔴 Values are author-approved verbatim (§16 verdict #1228 两裁①) — no rewording.
+  // Key names follow the delegate.* family (delegateChainStub/task-delegate namespace).
+  // ① ready-to-merge status word (delegate row status column; #1224 verdict semantics:
+  //    "has branch artifacts, entered the FIFO awaiting merge")
+  'delegate.readyToMerge': 'Ready to merge',
+  // ② S10 per-task chain view top bar back button
+  'delegate.backToTasks': 'Back to tasks',
+  // ③ S11 structure overview header
+  'delegate.structure': 'Delegate structure',
+  // ④ S11 FIFO lane header
+  'delegate.mergeQueue': 'Merge queue',
+  // ⑤ S11 worktree seat label
+  'delegate.worktree': 'Worktree',
+  // ⑥ S16 external row exit action (openNative button title/aria)
+  'delegate.openNative': 'Open in original app',
+  // ⑦ S10 fail-soft state (chain fetch failed; row kept, click to retry)
+  'delegate.chainUnavailable': 'Chain view unavailable — click to retry',
   // === Chain view (chain-view compact v2 batch, 2026-10-01 · front-end face,
   //     §16 draft key table) ===
   // Five badge states (§II.1.3) + three hover labels + cancel dialog + ungrouped.

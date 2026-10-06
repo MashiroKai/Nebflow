@@ -1,15 +1,21 @@
 // delegate-chain-stub.spec.mjs — ⑤A stub 接口＋taskList delegate 行骨架验收
-//（#1228 重划版提前开工批 · 可落地段）。
+//（#1228 重划版提前开工批 · 可落地段）＋ 换源接线批扩例（#1228 两裁落派）。
 //
 // 覆盖面：
 //   T1 默认零变化：stub 无夹具 ⇒ delegate 区块零渲染，面板空态收起行为与改前同
 //   T2 骨架行渲染：fixture 注入 ⇒ task#N＋执行器图标＋状态 glyph/状态词；
-//      ready-to-merge 状态词留空（零新增 locale 键纪律的可执行证据）；
+//      ready-to-merge 状态词 = §16 键 1「待合并」逐字（#1228 两裁①落库）；
 //      外部行 data-external="1"（S16 粗粒度标记）
 //   T3 混合面板：delegate 区块先于节点区块；统计仍节点口径（骨架批不改统计面）
 //   T4 适配层单测（页面内纯函数）：rowFromRegistry / chainFromStoreRecord /
 //      mergeQueueFifo（S11 排序键=完成时间 readyAt ↑，非插入序）＋常量钉死
 //   T5 读取口 null 安全：查无链 → null；行清单默认空
+//   ── 换源接线批（switch-impl）──
+//   T6 §16 七键逐字钉（zh/en 双语值提取比对）＋ fm-node 拆出件单源钉（静态）
+//   T7 S1 展开：已落三行族解读渲染＋候定集透传不解读；折叠记忆跨重渲；外部行守卫
+//   T8 S10 per-task 链视图：ChainNode 卡（fmNodeCard 单源渲染）＋返回钮键2＋fail-soft 键7 重试
+//   T9 S11 结构总视图：头键3＋FIFO 泳道键4 readyAt 序＋worktree 座键5＋链卡点进
+//   T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增量＋展开守卫
 //
 // 事件帧/面板驱动与 tasklist-nodes.spec.mjs 同 rig（真实 ws.js 分发路径注入）。
 //
@@ -143,7 +149,7 @@ test('T1 默认零变化：stub 无夹具 ⇒ delegate 区块零渲染、面板�
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-to-merge 词留空；外部行 coarse 标记', async ({ page }) => {
+test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-to-merge=§16键1「待合并」；外部行 coarse 标记', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -172,12 +178,12 @@ test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-t
   await expect(r32.locator('.task-node-word')).toHaveText('阻塞');
   await expect(r32).toHaveAttribute('data-external', '1');
 
-  // #33 ready-to-merge：🔴 零新增 locale 键纪律 ⇒ 状态词留空（候 §16 文案过目），
-  // glyph 中性降级（未知态同族），行本身照常渲染不崩。
+  // #33 ready-to-merge：§16 键 1 落库（#1228 两裁①）⇒ 状态词「待合并」逐字；
+  // glyph 仍中性降级（色信号候 N1 结构帧值域定稿），行本身照常渲染不崩。
   const r33 = panel.locator('.task-delegate[data-task-no="33"]');
   await expect(r33).toHaveCount(1);
   await expect(r33).toHaveAttribute('data-delegate-status', 'ready-to-merge');
-  await expect(r33.locator('.task-node-word')).toHaveCount(0);
+  await expect(r33.locator('.task-node-word')).toHaveText('待合并');
   await expect(r33.locator('.task-node-dot-neutral')).toHaveCount(1);
   await expect(r33).toHaveAttribute('data-external', '1');
 
@@ -302,6 +308,313 @@ test('T5 读取口 null 安全：查无链 → null；行清单默认空；reset
   const panel = page.locator('#task-list');
   await expect(panel.locator('.task-delegate')).toHaveCount(0);
   await expect(panel.locator('.task-section-delegates')).toHaveCount(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
+// ── 换源接线批（switch-impl · #1228 两裁落派）扩例 ──────────────────────────
+
+const row34 = {
+  taskNo: '34', delegateId: 'delegate-zcode-run44', title: 'zcode 跑长任务',
+  executor: 'zcode', status: 'running', external: true, project: '', createdAt: T0 - 30_000,
+};
+
+/** S1 展开夹具链（#31 内部行：已落三行族投影 + 候定集透传帧）。 */
+const chain31 = {
+  taskId: '31', delegateId: 'delegate-nebflow-aa11',
+  nodes: [{ id: 'delegate-nebflow-aa11', kind: 'delegate', label: '重构任务面板数据源',
+    description: '把 delegate 行接上 ⑤A 读取口', status: 'running', deps: [], executor: 'nebflow' }],
+  worktree: { branch: 'delegate/task-31', worktree: '/wt/31', cwd: '/wt/31', baseWorkspace: '/w', baseBranch: 'main', baseSha: 'abc123' },
+  verdict: { verdict: 'running', reason: '', source: '', at: 0 },
+  mergeQueue: [],
+  frames: [{ kind: 'chain-registered', at: T0 - 60_000, payload: { nodes: [{ id: 'a', deps: [] }] } }],
+};
+
+/** 外部行夹具链（#32：数据在场也**不得**展开——S16 守卫终态钉）。 */
+const chain32 = {
+  taskId: '32', delegateId: 'delegate-zcode-bb22',
+  nodes: [{ id: 'delegate-zcode-bb22', kind: 'delegate', label: 'zcode 修断链',
+    description: 'internal details', status: 'blocked', deps: [], executor: 'zcode' }],
+  worktree: { branch: 'delegate/task-32', worktree: '/wt/32', cwd: '/wt/32', baseWorkspace: '/w', baseBranch: 'main', baseSha: 'def456' },
+  verdict: null, mergeQueue: [], frames: [],
+};
+
+/** S11 夹具链族（merge-queue 乱序 readyAt——泳道序钉）。 */
+const chain33 = {
+  taskId: '33', delegateId: 'delegate-claude-cc33',
+  nodes: [{ id: 'delegate-claude-cc33', kind: 'delegate', label: 'claude 文案批',
+    description: 'docs', status: 'ready-to-merge', deps: [], executor: 'claude-code' }],
+  worktree: { branch: 'delegate/task-33', worktree: '/wt/33', cwd: '/wt/33', baseWorkspace: '/w', baseBranch: 'main', baseSha: 'aaa' },
+  verdict: { verdict: 'ready-to-merge', reason: 'docs pass', source: 'judge', at: T0 - 50_000 },
+  mergeQueue: [{ delegateId: 'delegate-claude-cc33', branch: 'delegate/task-33', projectKey: 'docs', readyAt: T0 - 50_000, action: 'enqueued', at: T0 - 50_000 }],
+  frames: [],
+};
+const chain34 = {
+  taskId: '34', delegateId: 'delegate-zcode-run44',
+  nodes: [{ id: 'delegate-zcode-run44', kind: 'delegate', label: 'zcode 跑长任务',
+    description: '', status: 'running', deps: [], executor: 'zcode' }],
+  worktree: null,
+  verdict: null,
+  mergeQueue: [{ delegateId: 'delegate-zcode-run44', branch: 'delegate/task-34', projectKey: 'p', readyAt: T0 - 10_000, action: 'enqueued', at: T0 - 10_000 }],
+  frames: [],
+};
+
+/** 点击 delegate 行内的动作钮（workflow/external-link 图标钮）。 */
+async function clickRowAction(page, taskNo) {
+  await page.locator(`.task-delegate[data-task-no="${taskNo}"] .task-delegate-btn`).click();
+  await page.waitForTimeout(250);
+}
+
+test('T6 §16 七键逐字钉（zh/en 双语提取比对）＋ fm-node 拆出件单源钉（静态）', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page);
+
+  // 页面内 zh 词面（i18n 单源 = locales 模块）。
+  const zh = await page.evaluate(async () => {
+    const { t } = await import('/js/i18n.js');
+    return {
+      readyToMerge: t('delegate.readyToMerge'),
+      backToTasks: t('delegate.backToTasks'),
+      structure: t('delegate.structure'),
+      mergeQueue: t('delegate.mergeQueue'),
+      worktree: t('delegate.worktree'),
+      openNative: t('delegate.openNative'),
+      chainUnavailable: t('delegate.chainUnavailable'),
+    };
+  });
+  expect(zh).toEqual({
+    readyToMerge: '待合并',
+    backToTasks: '返回任务列表',
+    structure: '委托结构',
+    mergeQueue: '合并队列',
+    worktree: '工作树',
+    openNative: '在原软件打开',
+    chainUnavailable: '链视图暂时打不开，点击重试',
+  });
+
+  // 文件级双语逐字钉：zh/en locale 源码里七个键值逐字存在（值禁改一字的落库证据）。
+  const zhSrc = readFileSync(join(WEB, 'js', 'locales', 'zh-CN.js'), 'utf8');
+  const enSrc = readFileSync(join(WEB, 'js', 'locales', 'en.js'), 'utf8');
+  const pairs = [
+    ['delegate.readyToMerge', '待合并', 'Ready to merge'],
+    ['delegate.backToTasks', '返回任务列表', 'Back to tasks'],
+    ['delegate.structure', '委托结构', 'Delegate structure'],
+    ['delegate.mergeQueue', '合并队列', 'Merge queue'],
+    ['delegate.worktree', '工作树', 'Worktree'],
+    ['delegate.openNative', '在原软件打开', 'Open in original app'],
+    ['delegate.chainUnavailable', '链视图暂时打不开，点击重试', 'Chain view unavailable — click to retry'],
+  ];
+  for (const [key, zhv, env] of pairs) {
+    expect(zhSrc).toContain(`'${key}': '${zhv}'`);
+    expect(enSrc).toContain(`'${key}': '${env}'`);
+  }
+
+  // 拆出件单源钉：fmNodeCard.js 是 fm-node 卡渲染唯一单源；flowMapTab / delegateChainView
+  // 都引它，且 flowMapTab 本体零卡渲染函数残留（禁复制双权威）。
+  const fmCardSrc = readFileSync(join(WEB, 'js', 'fmNodeCard.js'), 'utf8');
+  const fmTabSrc = readFileSync(join(WEB, 'js', 'flowMapTab.js'), 'utf8');
+  const dcvSrc = readFileSync(join(WEB, 'js', 'delegateChainView.js'), 'utf8');
+  expect(fmCardSrc).toContain('export function nodeHtml');
+  expect(fmCardSrc).toContain("from './flowMapArchive.js'"); // isTerminalStatus 单源
+  expect(fmTabSrc).toContain("from './fmNodeCard.js'");
+  expect(fmTabSrc).not.toMatch(/function nodeHtml|function chainCardHtml/);
+  expect(dcvSrc).toContain("from './fmNodeCard.js'");
+  expect(dcvSrc).not.toMatch(/function nodeHtml|solar-orbit/); // 视图层零卡面副本
+
+  // DOM 侧：ready-to-merge 行词 = 键 1（zh 环境词面钉）。
+  await setFixture(page, { rows: [row33] });
+  await expect(page.locator('.task-delegate[data-task-no="33"] .task-node-word')).toHaveText('待合并');
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T7 S1 展开：已落三行族解读＋候定集透传不解读；折叠记忆跨重渲；外部行守卫（数据在场也不展开）', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  await setFixture(page, { rows: [row31, row32], chains: [chain31, chain32] });
+
+  const panel = page.locator('#task-list');
+  const r31 = panel.locator('.task-delegate[data-task-no="31"]');
+  await expect(r31).toHaveAttribute('aria-expanded', 'false');
+
+  // 点行展开：spawn 投影行（branch 数据）+ 候定集透传行（kind 原样）。
+  await r31.click();
+  await expect(r31).toHaveAttribute('aria-expanded', 'true');
+  const detail = panel.locator('.task-delegate-detail[data-delegate-detail="31"]');
+  await expect(detail).toHaveCount(1);
+  await expect(detail.locator('.task-delegate-frame-spawn')).toHaveCount(1);
+  await expect(detail.locator('.task-delegate-frame-spawn .task-delegate-frame-text'))
+    .toHaveText('delegate/task-31 · /wt/31 · ← main');
+  // 候定集帧：透传不解读——一行 kind 原样，payload.nodes 不得被解读成第二行/结构。
+  await expect(detail.locator('.task-delegate-frame-raw')).toHaveCount(1);
+  await expect(detail.locator('.task-delegate-frame-raw .task-delegate-frame-text'))
+    .toContainText('chain-registered');
+
+  // 折叠记忆跨重渲（同 batch 纪律）：无关 WS 帧重渲后展开面仍在。
+  await inject(page, {
+    type: 'nodeCreated', project: 'alpha', nodeId: 'n-mem',
+    node: { hasWorktree: false, worktree: null, result: null, retries: 0, id: 'n-mem', name: 'mem-probe', agent: 'Backend', status: 'running', createdAt: T0, startedAt: T0, completedAt: null, ttlLeftSec: null },
+  });
+  await expect(panel.locator('.task-delegate-detail[data-delegate-detail="31"]')).toHaveCount(1);
+  await expect(r31).toHaveAttribute('aria-expanded', 'true');
+
+  // 再点收回。
+  await r31.click();
+  await expect(panel.locator('.task-delegate-detail')).toHaveCount(0);
+
+  // S16 守卫：外部行即使链数据在场，点行也零展开（细则腿零接线 fail-closed）。
+  const r32 = panel.locator('.task-delegate[data-task-no="32"]');
+  await r32.click();
+  await expect(panel.locator('.task-delegate-detail')).toHaveCount(0);
+  await expect(r32).not.toHaveAttribute('aria-expanded');
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T8 S10 per-task 链视图：ChainNode 卡（单源渲染件）＋返回钮键2＋fail-soft 键7 重试', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  // 相 1：无链夹具 → fail-soft 态（键 7）+ 重试（仍 fail-soft，面板不崩）。
+  await setFixture(page, { rows: [row31] });
+  await clickRowAction(page, '31');
+
+  const pane = page.locator('.canvas-tab-pane[data-tab-id="projects"]');
+  await expect(pane).toHaveCount(1);
+  await expect(pane).toHaveAttribute('data-projects-view', 'delegate-chain');
+  await expect(pane).toHaveAttribute('data-delegate-key', '31');
+  const body = pane.locator('.delegate-chain-view-body');
+  const failsoft = body.locator('.delegate-chain-failsoft');
+  await expect(failsoft).toHaveText('链视图暂时打不开，点击重试');
+  await failsoft.click(); // 重试腿：行保留、视图重拉（仍无链 → 同态，不崩）
+  await expect(body.locator('.delegate-chain-failsoft')).toHaveCount(1);
+
+  // 返回钮 = §16 键 2 逐字。
+  const back = pane.locator('[data-back-to-tasks]');
+  await expect(back).toContainText('返回任务列表');
+  await back.click();
+  await expect(pane).toHaveCount(0); // 关页签 = 回任务列表
+
+  // 相 2：装链夹具 → ChainNode 卡渲染（任务＋描述＋状态＋执行器；fmNodeCard 单源面）。
+  await setFixture(page, { rows: [row31], chains: [chain31] });
+  await clickRowAction(page, '31');
+  await expect(pane).toHaveAttribute('data-projects-view', 'delegate-chain');
+  const card = pane.locator('.delegate-chain-view-body .solar-node.fm-node');
+  await expect(card).toHaveCount(1);
+  await expect(card.locator('.solar-node-label')).toHaveText('重构任务面板数据源');
+  await expect(card.locator('.fm-desc')).toHaveText('把 delegate 行接上 ⑤A 读取口');
+  await expect(card.locator('.solar-node-sub')).toHaveText('delegate');
+  await expect(card.locator('.executor-icon-nebflow')).toHaveCount(1);
+  // worktree 座行（spawn 投影，键 5 标）。
+  await expect(pane.locator('.delegate-chain-worktree .delegate-structure-label')).toHaveText('工作树');
+  // S10 视图头 = 结构入口钮（键 3）。
+  await expect(pane.locator('[data-open-delegate-structure]')).toContainText('委托结构');
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T9 S11 结构总视图：头键3＋FIFO 泳道键4 readyAt 序（零派生第二权威）＋worktree 座键5＋链卡点进', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  // 行集：#31 内部行（S10 入口钮所在）＋ #34/#33 外部行（merge-queue 夹具在链上，
+  // 乱序 readyAt——#34 T0-10s 在前、#33 T0-50s 在后 ⇒ 泳道序必须按 readyAt 重排）。
+  await setFixture(page, { rows: [row31, row34, row33], chains: [chain31, chain34, chain33] });
+  await clickRowAction(page, '31'); // 经内部行 workflow 钮进 per-task 视图
+  const pane = page.locator('.canvas-tab-pane[data-tab-id="projects"]');
+  await expect(pane).toHaveAttribute('data-projects-view', 'delegate-chain');
+  await pane.locator('[data-open-delegate-structure]').click();
+
+  // 头 = §16 键 3；泳道头 = 键 4；座标 = 键 5。
+  await expect(pane.locator('.delegate-structure-head')).toHaveText('委托结构');
+  const sections = pane.locator('.delegate-structure-section');
+  await expect(sections).toHaveCount(2);
+  await expect(sections.nth(0).locator('.delegate-structure-label')).toHaveText('工作树');
+  await expect(sections.nth(1).locator('.delegate-structure-label')).toHaveText('合并队列');
+
+  // FIFO 序钉：readyAt ↑（#33 T0-50s 应排首位；行序 34 在前不改序——排序单点 =
+  // stub mergeQueueFifo，前端零派生第二权威）。
+  const laneItems = sections.nth(1).locator('.delegate-structure-lane-item');
+  await expect(laneItems).toHaveCount(2);
+  await expect(laneItems.nth(0)).toHaveAttribute('data-ready-at', String(T0 - 50_000));
+  await expect(laneItems.nth(0).locator('.delegate-chain-mono')).toContainText('delegate/task-33');
+  await expect(laneItems.nth(1)).toHaveAttribute('data-ready-at', String(T0 - 10_000));
+
+  // worktree 座：三行链中 #31/#33 有 worktree 投影（#34 null）⇒ 两座（行序）。
+  const seats = sections.nth(0).locator('.delegate-structure-seat');
+  await expect(seats).toHaveCount(2);
+  await expect(seats.nth(0).locator('.delegate-chain-mono')).toContainText('delegate/task-31');
+  await expect(seats.nth(1).locator('.delegate-chain-mono')).toContainText('delegate/task-33');
+
+  // 链卡：ready-to-merge 卡带 §16 键 1 状态词；点卡 → 该链 per-task 视图。
+  const card = pane.locator('.delegate-chain-list .solar-node.fm-node');
+  await expect(card).toHaveCount(3);
+  await expect(card.nth(2).locator('.fm-st-word')).toHaveText('待合并');
+  await card.nth(2).click();
+  await expect(pane).toHaveAttribute('data-delegate-mode', 'task');
+  await expect(pane).toHaveAttribute('data-delegate-key', '33');
+  await expect(pane.locator('.delegate-chain-view-body .solar-node.fm-node')).toHaveCount(1);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增量＋展开守卫', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+
+  // #1225 落库端点夹具（PresenceRoutes 形）：output = offset 增量；open-native = fire-and-forget。
+  const outputCalls = [];
+  const nativeCalls = [];
+  await page.route('**/api/delegates/delegate-zcode-run44/output*', (route) => {
+    const url = new URL(route.request().url());
+    const offset = Number(url.searchParams.get('offset') || '0');
+    outputCalls.push(offset);
+    const base = { taskId: '34', status: 'running', totalBytes: 64, totalLines: 3, truncated: false, nextOffset: 0, startedAtMs: T0, finishedAtMs: null, exitCode: null, errorHint: null, cliSessionId: 'sid-44', mailboxDepth: 0 };
+    if (offset === 0) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...base, output: 'scanning files\nfound 3 issues\n', nextOffset: 26 }) });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...base, output: 'still working\n', nextOffset: 40 }) });
+  });
+  await page.route('**/api/delegates/delegate-zcode-run44/open-native', (route) => {
+    nativeCalls.push(route.request().method());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ opened: true, command: 'zcode --resume sid-44' }) });
+  });
+
+  await setFixture(page, { rows: [row34] });
+
+  const r34 = page.locator('.task-delegate[data-task-no="34"]');
+  // 出口钮：title/aria = §16 键 6 逐字。
+  const nativeBtn = r34.locator('.task-delegate-btn');
+  await expect(nativeBtn).toHaveAttribute('title', '在原软件打开');
+  await expect(nativeBtn).toHaveAttribute('aria-label', '在原软件打开');
+
+  // 进度腿（粗粒度）：首轮 offset=0 → meta 行显输出尾行（数据）。
+  await expect(r34.locator('.task-node-meta')).toHaveText('found 3 issues', { timeout: 8000 });
+  expect(outputCalls[0]).toBe(0);
+
+  // offset 增量钉：强制第二轮 → 请求带 nextOffset(26)，meta 换新尾行。
+  await page.evaluate(async () => {
+    const m = await import('/js/taskList.js');
+    await m.__pollDelegateProgress(true);
+  });
+  await expect(r34.locator('.task-node-meta')).toHaveText('still working', { timeout: 8000 });
+  expect(outputCalls).toContain(26);
+
+  // 出口腿：点钮 → POST /api/delegates/:id/open-native 恰一次（防重入单发）。
+  await nativeBtn.click();
+  await page.waitForTimeout(200);
+  expect(nativeCalls).toEqual(['POST']);
+
+  // 展开守卫：外部行点行零展开（无 detail、无 aria-expanded）。
+  await r34.click();
+  await expect(page.locator('.task-delegate-detail')).toHaveCount(0);
 
   expect(pageErrors).toEqual([]);
 });

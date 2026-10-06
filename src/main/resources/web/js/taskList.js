@@ -21,7 +21,12 @@ import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS, controlChain } from './no
 // （delegateChainStub.js，默认空 ⇒ 面板零变化；N1/#1228 定稿后 setSource 换源）。
 // 执行器图标 = executorIcons（S14 拆除批保证留项；本批只消费＝任务行图标显示，
 // ⑫ 无面）。终态换源设计（S1/S10/S11/S16 四面）见呈审稿，本骨架只落「行」。
-import { listDelegateRows } from './delegateChainStub.js';
+// 换源接线批（#1228 两裁落派）：S1 行展开接 stub 帧透传位（已落三行族解读、候定集
+// 透传）＋ S10 入口（per-task 链视图，delegateChainView 动态引）＋ S16 外部行粗粒度
+// 面（进度 = delegateApi offset 增量、出口 = openNative）。行源/链源候 N1：
+// setSource 单缝不动，live provider 缺位 = stub/夹具态。
+import { listDelegateRows, getChainByTask, verdictToStatus } from './delegateChainStub.js';
+import { fetchDelegateOutput, openDelegateNative } from './delegateApi.js';
 import { executorIcon } from './executorIcons.js';
 
 // ── Flow Map 节点条目（2026-09-02 作者裁定：节点作为条目并入任务列表）──────
@@ -1222,8 +1227,10 @@ function buildNodeSection(nodes) {
 // delegate 链帧）/点进 per-task flowmap（S10）/外部粗粒度行接线（S16）＝换源批
 // 面，本骨架只落行结构与数据通路；行挂 data-delegate-* 锚供该批接管。
 
-/** 委托行状态词映射（🔴 既有键复用单源；值 = 键名，缺项 = 留空候文案）。
- *  键域对齐 delegateChainStub.ROW_STATUS。 */
+/** 委托行状态词映射（🔴 既有键复用单源 + §16 键 1；值 = 键名）。
+ *  键域对齐 delegateChainStub.ROW_STATUS。ready-to-merge＝§16 过目键 1
+ *  「待合并/Ready to merge」（#1228 两裁①落库；#1224 判词语义＝有分支产物、
+ *  入 FIFO 候合并）。条件三键（merging/外部行进度词/区块头）本批不落。 */
 const DELEGATE_WORD_KEY = {
   pending: 'task.nodePending',
   running: 'task.inProgressShort',
@@ -1231,14 +1238,37 @@ const DELEGATE_WORD_KEY = {
   completed: 'flowmap.done',
   failed: 'flowmap.fail',
   cancelled: 'flowmap.st.cancelled',
-  // ready-to-merge：无既有 locale 键 ⇒ 留空（§16 呈审候补；glyph 照常渲染）。
+  'ready-to-merge': 'delegate.readyToMerge',
 };
 
+// ── S1 展开记忆（FSM：collapsed ⇄ expanded；折叠记忆跨重渲保留）──────────
+// 键 = 行键（taskNo ‖ delegateId，ChainStore.keyFor 同口径）。行内 Set（渲染层
+// 内存，不入 DOM/storage——刷新归零，同 expandedChains 纪律）。
+const expandedDelegates = new Set();
+
+/** 行键（delegate 行的链读取口键）：台账号优先，delegateId 回落。 */
+function delegateRowKey(r) {
+  return String((r && (r.taskNo || r.delegateId)) || '');
+}
+
+/** 链视图有可渲染内容（FSM 展开守卫：内部链帧可用才可展开——空链不进 expanded）。 */
+function delegateChainRenderable(chain) {
+  return !!(chain && (chain.worktree || chain.verdict ||
+    (Array.isArray(chain.mergeQueue) && chain.mergeQueue.length) ||
+    (Array.isArray(chain.frames) && chain.frames.length) ||
+    (Array.isArray(chain.nodes) && chain.nodes.length)));
+}
+
 /**
- * Delegate 行（骨架）：`[执行器图标] #N 标题 [状态词] [相对时间]`。
+ * Delegate 行（S1 collapsed 态）：`[执行器图标] #N 标题 [状态词] [相对时间]`。
  * 视觉复用 .task-node 行族（零新增 CSS；设计语言与面板既有行同源），外加
- * .task-delegate 命名空间锚与 data-delegate-* 数据锚（换源批接管面）。
- * 外部行（S16）＝ coarse 标记（data-external="1"）；细则面本骨架不渲染。
+ * .task-delegate 命名空间锚与 data-delegate-* 数据锚。
+ * 交互（FSM 照图）：
+ *   - 内部行（executor=nebflow）：点行 = 展开/收回（S1 expanded；内部链帧可用才可
+ *     展开——空链点击零动作）；行尾 workflow 钮 = S10 入口（per-task 链视图，
+ *     delegateChainView 动态引——模块图不静态耦合，同 projectTab 惯例）。
+ *   - 外部行（S16 coarse 守卫终态）：点行零动作（展开守卫——细则不展示）；行尾
+ *     openNative 钮（title/aria = §16 键 6）= 出口；进度 meta 行（offset 增量轮询）。
  * @param {any} r DelegateRow（delegateChainStub 规范 schema）
  * @returns {HTMLElement} */
 function buildDelegateRow(r) {
@@ -1257,14 +1287,19 @@ function buildDelegateRow(r) {
   row.dataset.delegateId = delegateId;
   row.dataset.delegateStatus = st;
   if (external) row.dataset.external = '1';
-  row.setAttribute('role', 'button');
+  if (!external) {
+    // 内部行 = S1 展开钮（role/aria-expanded 只属可展开行；外部行是 S16 守卫终态，
+    // 行本体不是按钮——出口在 openNative 钮上）。
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-expanded', expandedDelegates.has(taskNo || delegateId) ? 'true' : 'false');
+  }
   const labelBits = [taskNo ? `#${taskNo}` : '', title || delegateId].filter(Boolean);
   row.setAttribute('aria-label',
     `${labelBits.join(' ')}${wordKey ? ` — ${t(wordKey)}` : ''}`);
 
   // 状态 glyph（复用节点行 glyph 语言：running=品牌绿转圈 / blocked=琥珀点 /
-  // 终态=色点 / 未知=中性点——零新增 CSS；ready-to-merge 走中性点降级，词与
-  // 色信号候 §16 文案批一并补）。色信号由 glyph 独占（同面板既有口径）。
+  // 终态=色点 / 未知=中性点——零新增 CSS；ready-to-merge 走中性点降级，词已落
+  // §16 键 1，色信号候 N1 结构帧值域定稿再议）。色信号由 glyph 独占（同面板既有口径）。
   row.appendChild(buildNodeGlyph(st, NODE_STATUS_CLS[st] || ''));
 
   // 执行器图标（S1：executorIcons 留项消费；未知 executor → 图标自带中性降级）。
@@ -1289,6 +1324,20 @@ function buildDelegateRow(r) {
   label.textContent = title || delegateId; // 无标题回落 delegate id（数据，非文案）
   labelRow.appendChild(label);
   text.appendChild(labelRow);
+
+  // S16 外部行进度 meta（粗粒度「进度」腿）：offset 增量轮询的输出尾行（数据）。
+  // 复用既有 .task-node-meta（零新 CSS）；无缓冲/无读数 → 优雅缺席（零空行）。
+  if (external) {
+    const tail = progressTailText(delegateProgress.get(delegateId));
+    if (tail) {
+      const meta = document.createElement('span');
+      meta.className = 'task-node-meta';
+      meta.setAttribute('aria-hidden', 'true');
+      meta.textContent = tail;
+      meta.title = tail; // 截断 → 悬停全文
+      text.appendChild(meta);
+    }
+  }
   row.appendChild(text);
 
   if (wordKey) {
@@ -1308,20 +1357,246 @@ function buildDelegateRow(r) {
     time.textContent = formatLastActive(time.dataset.ts);
     row.appendChild(time);
   }
+
+  // 行尾动作区：S10 入口（内部行）/ openNative 出口（外部行）。
+  const actions = document.createElement('span');
+  actions.className = 'task-delegate-actions';
+  if (!external) {
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'task-delegate-btn';
+    // 复用既有键 project.openFlowMap（§3.3 核对清单在案；{name} = 行标题/编号）。
+    const openLabel = t('project.openFlowMap', { name: title || (taskNo ? `#${taskNo}` : delegateId) });
+    openBtn.title = openLabel;
+    openBtn.setAttribute('aria-label', openLabel);
+    openBtn.innerHTML = '<i data-lucide="workflow"></i>';
+    openBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // 行点击语义 = S1 展开；链视图入口不叠加
+      import('./delegateChainView.js').then(({ openDelegateChainTask }) => {
+        openDelegateChainTask(taskNo || delegateId, { taskNo, delegateId, title, status: st, executor: String(row0.executor || '') });
+      }).catch(() => {});
+    });
+    actions.appendChild(openBtn);
+  } else {
+    const nativeBtn = document.createElement('button');
+    nativeBtn.type = 'button';
+    nativeBtn.className = 'task-delegate-btn';
+    nativeBtn.title = t('delegate.openNative'); // §16 键 6（title/aria 同值）
+    nativeBtn.setAttribute('aria-label', t('delegate.openNative'));
+    nativeBtn.innerHTML = '<i data-lucide="external-link"></i>';
+    nativeBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!delegateId || nativeBtn.disabled) return;
+      nativeBtn.disabled = true; // 飞行中防重入（fire-and-forget 端点会真开终端）
+      const res = await openDelegateNative(delegateId);
+      nativeBtn.disabled = false;
+      if (res.state !== 'ok') {
+        console.warn(`[tasklist] open-native refused (${res.state}${res.state === 'http' ? ` ${res.status}` : ''})`);
+      }
+    });
+    actions.appendChild(nativeBtn);
+  }
+  row.appendChild(actions);
+
+  // 行点击 = S1 展开/收回（仅内部行 ∧ 链帧可用；外部行守卫终态零动作）。
+  if (!external) {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = taskNo || delegateId;
+      if (expandedDelegates.has(key)) {
+        expandedDelegates.delete(key);
+        rerenderWithNodes();
+        return;
+      }
+      // FSM 展开守卫：内部链帧可用 ∧ 内部执行器。链不可用 → 零动作（不进 expanded）。
+      const chain = getChainByTask(key);
+      if (!delegateChainRenderable(chain)) return;
+      expandedDelegates.add(key);
+      rerenderWithNodes();
+    });
+  }
   return row;
 }
 
 /**
- * Delegate 区块（骨架）：行清单直排（分组/排序终态口径归换源批设计稿——本骨架
- * 保持源侧顺序，零前端派生）。空数据 → null（面板零变化）。
+ * S1 expanded 面板：delegate 链帧树（行下方就地展开）。已落集三行族**解读渲染**
+ * （spawn → worktree 座行；verdict → 判词状态词+reason；merge-queue → 队列行）；
+ * 候定集（chain-registered/chain-node-state）与未知帧**只透传不解读**（kind+at 原样
+ * 列出——N1 定稿前禁造第二权威，同 stub 纪律）。调用前提 = 展开守卫已过
+ * （delegateChainRenderable）。数据 = getChainByTask 读取口（fail-soft：null → null）。
+ * @param {any} r DelegateRow @returns {HTMLElement|null} */
+function buildDelegateDetail(r) {
+  const key = delegateRowKey(r);
+  const chain = getChainByTask(key);
+  if (!chain) return null;
+  const box = document.createElement('div');
+  box.className = 'task-delegate-detail';
+  box.dataset.delegateDetail = key;
+  const addFrame = (cls, text, title) => {
+    const el = document.createElement('div');
+    el.className = `task-delegate-frame${cls ? ` ${cls}` : ''}`;
+    const v = document.createElement('span');
+    v.className = 'task-delegate-frame-text';
+    v.textContent = text;
+    if (title) v.title = title;
+    el.appendChild(v);
+    box.appendChild(el);
+  };
+  // 已落集①：delegate-spawn 投影（branch/worktree/cwd 数据行）。
+  if (chain.worktree) {
+    const bits = [chain.worktree.branch, chain.worktree.worktree || chain.worktree.cwd,
+      chain.worktree.baseBranch ? `← ${chain.worktree.baseBranch}` : ''].filter(Boolean);
+    addFrame('task-delegate-frame-spawn', bits.join(' · '), bits.join(' · '));
+  }
+  // 已落集②：terminal-verdict 投影（判词状态词复用行词表 + reason 数据）。
+  if (chain.verdict) {
+    const wordKey = DELEGATE_WORD_KEY[verdictToStatus(chain.verdict.verdict)] || '';
+    const bits = [wordKey ? t(wordKey) : String(chain.verdict.verdict || ''),
+      chain.verdict.reason || ''].filter(Boolean);
+    addFrame('task-delegate-frame-verdict', bits.join(' — '), bits.join(' — '));
+  }
+  // 已落集③：merge-queue 行（branch + readyAt 相对时刻；顺序 = 源侧投影序）。
+  for (const q of (Array.isArray(chain.mergeQueue) ? chain.mergeQueue : [])) {
+    const bits = [q.branch || q.delegateId,
+      q.readyAt ? formatLastActive(new Date(q.readyAt).toISOString()) : ''].filter(Boolean);
+    addFrame('task-delegate-frame-queue', bits.join(' · '), bits.join(' · '));
+  }
+  // 候定集/未知帧：透传不解读（kind + at 原样；字段零解读）。
+  for (const f of (Array.isArray(chain.frames) ? chain.frames : [])) {
+    const bits = [String(f.kind || ''),
+      f.at ? formatLastActive(new Date(f.at).toISOString()) : ''].filter(Boolean);
+    addFrame('task-delegate-frame-raw', bits.join(' · '), bits.join(' · '));
+  }
+  return box.children.length ? box : null;
+}
+
+/**
+ * Delegate 区块（S1 主面）：行清单直排（分组/排序终态口径归换源批设计稿——
+ * 保持源侧顺序，零前端派生）。展开行（S1 expanded）行下就地挂链帧面板。
+ * 空数据 → null（面板零变化）。
  * @param {any[]} rows @returns {HTMLElement|null} */
 function buildDelegateSection(rows) {
   const list = Array.isArray(rows) ? rows : [];
   if (list.length === 0) return null;
   const section = document.createElement('div');
   section.className = 'task-section task-section-delegates';
-  for (const r of list) section.appendChild(buildDelegateRow(r));
+  for (const r of list) {
+    const rowKey = delegateRowKey(r);
+    section.appendChild(buildDelegateRow(r));
+    if (!r || r.external === true) continue; // 外部行 = S16 守卫终态，无展开面
+    if (!expandedDelegates.has(rowKey)) continue;
+    const detail = buildDelegateDetail(r);
+    if (detail) section.appendChild(detail);
+  }
   return section;
+}
+
+// ── S16 外部行进度面（offset 增量轮询；#1225 落库端点 · delegateApi 绑定）──
+// 粗粒度「进度」腿：ExternalOutputStore 缓冲的输出尾行（数据文本，非文案）。
+// 纪律：只对「面板上可见的外部 running 行」轮询；offset 增量读（nextOffset 守持，
+// 不重拉全量）；终态（exitCode 到位）/无缓冲（404）即停即缺席；行绝不因单次
+// 拉取失败崩/清空（fail-soft 同 R11 口径）。终态词面 = 行状态列既有键，不另造。
+/** delegateId → 进度读数（渲染层内存：{offset, tail, at, noBuffer, done}）。 */
+const delegateProgress = new Map();
+/** 输出尾行滚动缓冲上限（字符）——粗粒度行只显示最后一行，缓冲只为拼接增量。 */
+const DELEGATE_PROGRESS_TAIL_MAX = 2000;
+/** 常规轮询间隔（ms）。404 无缓冲的重试退避（记录面存在、缓冲未建/已淘汰）。 */
+const DELEGATE_PROGRESS_TICK_MS = 3000;
+const DELEGATE_PROGRESS_NOBUFFER_BACKOFF_MS = 15000;
+let delegateProgressTimer = null;
+
+/** 尾行提取：缓冲里最后一个非空行（数据原样，不加工措辞）。 */
+function progressTailText(entry) {
+  if (!entry || !entry.tail) return '';
+  const lines = String(entry.tail).split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const s = lines[i].trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+function stopDelegateProgressTimer() {
+  if (delegateProgressTimer) {
+    clearInterval(delegateProgressTimer);
+    delegateProgressTimer = null;
+  }
+}
+
+/**
+ * 一轮进度拉取（定时器与测试钩子共用；渲染路径经 ensureDelegateProgressLoop）。
+ * @param {boolean} [force] 越过新鲜度门（harness 专用；产品路径恒缺省）
+ * 返回是否有读数变化（变化 → 重渲面板）。
+ * @returns {Promise<boolean>} */
+async function pollDelegateProgress(force) {
+  const container = document.getElementById('task-list');
+  if (!container || !container.classList.contains('has-tasks')) {
+    stopDelegateProgressTimer();
+    return false;
+  }
+  const ids = [];
+  container.querySelectorAll('.task-delegate[data-external="1"][data-delegate-status="running"]')
+    .forEach((el) => {
+      const id = /** @type {HTMLElement} */ (el).dataset && /** @type {HTMLElement} */ (el).dataset.delegateId;
+      if (id && !ids.includes(id)) ids.push(id);
+    });
+  if (ids.length === 0) {
+    stopDelegateProgressTimer();
+    return false;
+  }
+  let changed = false;
+  await Promise.all(ids.map(async (id) => {
+    const cur = delegateProgress.get(id) || { offset: 0, tail: '', at: 0, noBuffer: false, done: false };
+    if (cur.done) return; // 终态读数已定格（终态词面由行状态列承载）
+    const backoff = cur.noBuffer ? DELEGATE_PROGRESS_NOBUFFER_BACKOFF_MS : DELEGATE_PROGRESS_TICK_MS;
+    if (!force && Date.now() - (cur.at || 0) < backoff - 50) return; // 新鲜读数不重拉
+    cur.at = Date.now();
+    const data = await fetchDelegateOutput(id, cur.offset || 0);
+    if (!data) {
+      // 404（无缓冲——进程未在本实例跑过/留存淘汰）→ 静默缺席 + 退避重试；
+      // 网络/HTTP 失败同理保留上次读数（fail-soft，不清空行）。
+      cur.noBuffer = cur.offset === 0 ? true : cur.noBuffer;
+      delegateProgress.set(id, cur);
+      return;
+    }
+    cur.noBuffer = false;
+    const out = typeof data.output === 'string' ? data.output : '';
+    if (out) {
+      cur.tail = (cur.tail + out).slice(-DELEGATE_PROGRESS_TAIL_MAX);
+      changed = true;
+    }
+    if (typeof data.nextOffset === 'number') cur.offset = data.nextOffset;
+    if (data.exitCode !== null && data.exitCode !== undefined) {
+      cur.done = true; // 终态：offset 增量停止（终态词面 = 行状态列既有键）
+      changed = true;
+    }
+    delegateProgress.set(id, cur);
+  }));
+  // 读数变化 → 重渲面板（单点：定时器/harness 强制轮共用同一渲染出口）。
+  if (changed) rerenderWithNodes();
+  return changed;
+}
+
+/** 渲染路径挂钩：面板上有外部 running 行 → 保证轮询在跑并即刻补一轮（新鲜度门内
+ *  自动跳过，WS 突发重渲不放大请求数）；无 → 停表。 */
+function ensureDelegateProgressLoop() {
+  const container = document.getElementById('task-list');
+  if (!container || !container.querySelector('.task-delegate[data-external="1"][data-delegate-status="running"]')) {
+    stopDelegateProgressTimer();
+    return;
+  }
+  if (!delegateProgressTimer) {
+    delegateProgressTimer = setInterval(() => {
+      pollDelegateProgress().catch(() => {});
+    }, DELEGATE_PROGRESS_TICK_MS);
+  }
+  pollDelegateProgress().catch(() => {});
+}
+
+/** Harness 注入口（测试专用；产品路径零调用）：即刻强制一轮进度拉取。
+ *  @param {boolean} [force] true = 越过新鲜度门（offset 增量断言用）。 */
+export function __pollDelegateProgress(force) {
+  return pollDelegateProgress(force === true);
 }
 
 /** Empty-state builder（兜底保留，2026-09-05 10:54 裁定「空态兜底保留」）：
@@ -1369,6 +1644,7 @@ export function renderTaskList(_tasks, container, sessionId) {
     container.innerHTML = '';
     chainSeenPrev = new Set();     // nothing on screen ⇒ no "previous frame" to diff against
     memberStatusPrev = new Map();
+    stopDelegateProgressTimer();   // 面板空态收起 ⇒ S16 进度轮询一并停表
     return;
   }
 
@@ -1438,6 +1714,8 @@ function redraw(container, nodes, delegateRows) {
   container.appendChild(card);
 
   createIconsIn(container);
+  // S16 外部行进度轮询挂钩（有外部 running 行才在跑；新鲜度门内不放大请求）。
+  ensureDelegateProgressLoop();
   chainSeenPrev = chainSeenNext;
   memberStatusPrev = memberStatusNext;
 

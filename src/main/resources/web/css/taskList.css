@@ -704,3 +704,57 @@
   /* 节点区块（独立规则）：窄屏收起状态词与相对时间 */
   .task-node-word, .task-node-time { display: none; }
 }
+
+/* ── Delegate 行动作区 ＋ S1 展开帧面板（#1228 换源接线批）──────────────────
+   零新色值：全部复用既有 token（--color-* / rgb(var(--amber)) / color-mix）。
+   按钮语法与 .task-chain-btn 同族（22×20 图标钮）；展开面板 = 行下缩进帧行。 */
+.task-delegate-actions {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.task-delegate-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--task-chain-btn-w, 22px);
+  height: var(--task-chain-btn-h, 20px);
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted, #888);
+  transition: background 0.15s, color 0.15s;
+}
+.task-delegate-btn svg { width: 12px; height: 12px; }
+.task-delegate-btn:hover { background: var(--color-frame-hover); color: var(--color-text, #000); }
+.task-delegate-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* S1 expanded 帧面板（行下就地；缩进对齐行文案，帧行 = 已落集解读行 + 透传行）。
+   帧文本全部数据原文（branch/cwd/reason/kind）；raw 行（候定集透传）弱化显示。 */
+.task-delegate-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 4px 4px calc(14px + var(--task-chain-nest-step, 8px));
+  border-top: 1px dashed color-mix(in srgb, var(--color-text-muted, #888) 25%, transparent);
+}
+.task-delegate-frame {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 16px;
+}
+.task-delegate-frame-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted, #888);
+}
+.task-delegate-frame-raw .task-delegate-frame-text { opacity: 0.7; font-style: italic; }

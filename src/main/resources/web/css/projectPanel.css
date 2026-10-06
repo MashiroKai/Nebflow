@@ -463,3 +463,141 @@
   .proj-create-fab { transition-duration: 0.01s; }
   .proj-create-fab:hover { transform: none; }
 }
+
+/* ── delegate-chain 就地视图（S10 per-task 链视图 ＋ S11 结构总视图，
+   #1228 换源接线批 · delegateChainView.js）。骨架复用上方 .flowmap-nav-bar；
+   此处只承担视图体/泳道/卡片列表布局——零新色值（--color-* 与 sapphire token）。 */
+.delegate-chain-view-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* S10 fail-soft 态（§16 键 7）：整块可点重试（行保留在任务面板，视图体只呈现
+   重试面——FSM loaderr 终态）。muted 克制文案 + 虚线框，读作「暂不可达」非报错。 */
+.delegate-chain-failsoft {
+  align-self: stretch;
+  padding: 26px 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.delegate-chain-failsoft:hover {
+  color: rgb(var(--sapphire) / 1);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.06);
+}
+
+.delegate-chain-taskview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.delegate-chain-worktree,
+.delegate-chain-verdict {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+}
+.delegate-chain-mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 11px/1.5 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+}
+
+/* 卡片列表：fm-node 卡（fmNodeCard 单源渲染件）流式布局——plain 卡无绝对定位，
+   宽度对齐主图卡（124px，FLOW_CSS .solar-node 既有口径），横排可换行。 */
+.delegate-chain-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+.delegate-chain-card { flex: 0 0 auto; }
+
+/* 候定集/未知帧透传行（只透传不解读：kind + 时刻原文，弱化等宽显示）。 */
+.delegate-chain-frames {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border);
+}
+.delegate-chain-frame {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 10px/1.6 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  opacity: 0.75;
+}
+
+/* ── S11 结构总视图 ─────────────────────────────────────────────── */
+.delegate-structure-head {
+  font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  padding-bottom: 2px;
+}
+.delegate-structure-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+.delegate-structure-label {
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+.delegate-structure-seat,
+.delegate-structure-lane-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.delegate-seat-executor { flex: 0 0 auto; display: inline-flex; }
+.delegate-structure-lane-item.is-head .delegate-lane-pos {
+  background: rgb(var(--sapphire) / 0.14);
+  color: rgb(var(--sapphire) / 1);
+}
+.delegate-lane-pos {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--color-frame-hover);
+  font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+}
+
+/* 卡内执行器徽标（fm-node head 行首占位；图标本体 = executorIcons 既有件）。 */
+.delegate-card-executor {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}

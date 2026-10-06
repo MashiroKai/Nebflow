@@ -1379,6 +1379,24 @@ export default {
   'task.inProgressShort': '进行中',
   'task.nodePending': '待处理',
   'task.nodeBlocked': '阻塞',
+  // === Delegate 面（#1228 换源接线批 · §16 七键逐字过目已过，zh/en 成对）===
+  // 🔴 值为作者 §16 裁定逐字（#1228 两裁①），禁改一字。键名按 delegate.* 族
+  // （delegateChainStub / .task-delegate 命名空间同族）。
+  // ① ready-to-merge 状态词（delegate 行状态列；#1224 判词语义：
+  //    「有分支产物、入 FIFO 候合并」）
+  'delegate.readyToMerge': '待合并',
+  // ② S10 per-task 链视图顶栏返回钮
+  'delegate.backToTasks': '返回任务列表',
+  // ③ S11 结构总视图头
+  'delegate.structure': '委托结构',
+  // ④ S11 FIFO 泳道头
+  'delegate.mergeQueue': '合并队列',
+  // ⑤ S11 worktree 座标
+  'delegate.worktree': '工作树',
+  // ⑥ S16 外部行出口动作（openNative 钮 title/aria）
+  'delegate.openNative': '在原软件打开',
+  // ⑦ S10 fail-soft 态（链拉取失败；行保留，点击重试）
+  'delegate.chainUnavailable': '链视图暂时打不开，点击重试',
   // === 链视图（链视图紧凑 v2 批 2026-10-01 · 前端面 §16 草案键表）===
   // 徽标五态（§二.1.3）+ 悬停三条 + 取消确认框一条 + 未分组一条。
   // 🔴 定稿由复核位抽取呈作者（本位只按 mockup 措辞起草）。

@@ -160,8 +160,9 @@ function closeProjectsCreateDialog(restoreFocus) {
  *  §二 可达性硬约束：落在之后 = 静默死代码，零报警）。 */
 function attachProjectsCreateFab(pane) {
   if (!pane) return;
-  // 视图守卫（作者已裁⑦：「+」仅列表视图）。
-  if (pane.dataset.projectsView === 'flow-map') {
+  // 视图守卫（作者已裁⑦：「+」仅列表视图）。delegate-chain 视图（S10/S11，#1228
+  // 换源接线批）同为非列表视图：摘钮早退（链视图无创建面，亦无同锚浮钮冲突）。
+  if (pane.dataset.projectsView === 'flow-map' || pane.dataset.projectsView === 'delegate-chain') {
     pane.querySelector(`.${PROJECTS_CREATE_FAB}`)?.remove();
     return;
   }
@@ -936,6 +937,14 @@ export function rerenderProjectsTab() {
   projectsRenderTimer = setTimeout(() => {
     const pane = getTabPane('projects');
     if (!pane) return;
+    // delegate-chain 视图分流（S10/S11 · #1228 换源接线批）：按 pane 记忆的模式
+    // 重渲链视图（数据面 = stub 读取口现读；不闪回列表）。
+    if (pane.dataset.projectsView === 'delegate-chain') {
+      import('./delegateChainView.js')
+        .then(({ rerenderDelegateChainPane }) => rerenderDelegateChainPane(pane))
+        .catch(() => {});
+      return;
+    }
     if (pane.dataset.projectsView === 'flow-map' && pane.dataset.flowMapProject) {
       const body = pane.querySelector('.flowmap-view-body');
       if (body) renderFlowMapInto(body, pane.dataset.flowMapProject);
@@ -961,7 +970,8 @@ import { onMessage, onReconnect, sendWs } from './ws.js';
 function rerenderProjectsListView() {
   const pane = getTabPane('projects');
   if (!pane) return;
-  if (pane.dataset.projectsView === 'flow-map') return;
+  // 非列表视图（就地 Flow Map / delegate-chain 链视图）不动列表 DOM。
+  if (pane.dataset.projectsView === 'flow-map' || pane.dataset.projectsView === 'delegate-chain') return;
   rerenderProjectsTab();
 }
 onMessage('nodeCreated', () => rerenderProjectsListView());
@@ -979,10 +989,11 @@ onMessage('nodeRemoved', () => rerenderProjectsListView());
 // 就地 flow-map 视图 / 仍在 loading·error）时不动 DOM：空面板会在打开时现拉，
 // loading/error 交给既有取数路径（`rerenderProjectsTab` 走防抖重拉）。
 
-/** 列表视图的滚动体（面板没开 / 处于就地 Flow Map 视图 ⇒ null）。 */
+/** 列表视图的滚动体（面板没开 / 处于就地 Flow Map 或 delegate-chain 视图 ⇒ null）。 */
 function projectsListScroll() {
   const pane = getTabPane('projects');
-  if (!pane || pane.dataset.projectsView === 'flow-map') return null;
+  if (!pane) return null;
+  if (pane.dataset.projectsView === 'flow-map' || pane.dataset.projectsView === 'delegate-chain') return null;
   const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
   return scroll && scroll.isConnected ? scroll : null;
 }
@@ -1071,7 +1082,8 @@ window.addEventListener('locale-changed', () => {
 onReconnect(() => {
   const pane = getTabPane('projects');
   if (!pane) return;
-  if (pane.dataset.projectsView === 'flow-map') return; // 视图分流同上面的节点事件面
+  // 视图分流同上面的节点事件面（delegate-chain 链视图无列表重拉面）。
+  if (pane.dataset.projectsView === 'flow-map' || pane.dataset.projectsView === 'delegate-chain') return;
   const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
   if (!scroll || !scroll.isConnected) return;
   if (scroll.dataset.projectsState === 'ready') return;
