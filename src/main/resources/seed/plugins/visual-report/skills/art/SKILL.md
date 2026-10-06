@@ -5,7 +5,7 @@ description: 生成艺术与色彩分析（p5.js 可复现算法）；生成艺�
 
 # art — 艺术·生成与色彩场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 art 场景增量，通用规则一律引用 core，不复制漂移。3D/动效一律经 `../motion-toolkit/SKILL.md`。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 art 场景增量，通用规则一律引用 core，不复制漂移。3D/动效一律经 `${SKILL_DIR}/../motion-toolkit/SKILL.md`。
 
 ## 触发条件
 
@@ -15,7 +15,7 @@ description: 生成艺术与色彩分析（p5.js 可复现算法）；生成艺�
 - **色彩系统说明**：配色方案、色轮/互补/明度阶等色彩理论图、品牌/主题色板推导；
 - **视觉风格探索**：同一算法不同参数的效果对照、可复现的风格小样。
 
-不命中即换场景：数据可视化为目的的图用其余场景；纯装饰配图不属于套件交付。
+不命中即换场景：数据可视化为目的的图用其余场景；纯装饰配图不属于插件交付。
 
 ## 独立成 skill 论证（一句）
 
@@ -39,7 +39,7 @@ description: 生成艺术与色彩分析（p5.js 可复现算法）；生成艺�
 
 ### 工具选择
 
-- **p5.js 生成艺术主栈**：库**已本地化**——`demos/art/lib/p5.min.js`（1,057,103 B，2026-10-04 自 jsdelivr 实拉数秒完成，v1.11.10）；经 `demos/art/build_art_html.py` 把库与 sketch 依次内联进单文件 HTML——**不硬依赖网络**，双击即开、离线可用（CDN 不可达时走「内联库代码」降级，本套件已把它做成默认路径）；
+- **p5.js 生成艺术主栈**：库**已本地化**——`demos/art/lib/p5.min.js`（1,057,103 B，2026-10-04 自 jsdelivr 实拉数秒完成，v1.11.10）；经 `demos/art/build_art_html.py` 把库与 sketch 依次内联进单文件 HTML——**不硬依赖网络**，双击即开、离线可用（CDN 不可达时走「内联库代码」降级，本插件已把它做成默认路径）；
 - **matplotlib 色彩理论图**：色轮用 `patches.Wedge`（十二色相、互补对角连线）、互补对照用 `Rectangle` 色样 + RGB 均值混合条、明度阶用 `colorsys.hls_to_rgb` 固定 H/S 步进 L；
 - **降级艺术通路**：numpy+matplotlib 生成艺术（流场线积分静态图 / 奇怪吸引子散点，同样固定 numpy `np.random.seed`）；
 - 场景源工程落 `demos/art/`（sketch JS + 构建器 + lib），产件落 `~/.nebflow/plots/`。
@@ -47,7 +47,7 @@ description: 生成艺术与色彩分析（p5.js 可复现算法）；生成艺�
 ### 生成纪律（本场景第一红线组）
 
 - **固定种子**：`randomSeed()` + `noiseSeed()` 写死在 sketch 头部，并把种子号 + 库版本印进画面戳记（可复现性声明内嵌于作品）；
-- **版本锁定**：库版本写进戳记与文档——p5 2.x 与 1.x API 不兼容，本套件锁 **1.11.10**；
+- **版本锁定**：库版本写进戳记与文档——p5 2.x 与 1.x API 不兼容，本插件锁 **1.11.10**；
 - **复现实测**：交付前双渲染像素 diff（PIL `ImageChops.difference(...).getbbox()` 为 None）才算「可复现」。
 
 ### 工具自检（实测 2026-10-04）
@@ -61,7 +61,7 @@ description: 生成艺术与色彩分析（p5.js 可复现算法）；生成艺�
 | numpy | 降级艺术/数值生成 | `<venv>\python.exe -c "import numpy; print(numpy.__version__)"` → 2.5.3 | https://pypi.org/project/numpy/ | 200（2026-10-04） | 纯 Python `math`/`random` |
 | Chrome（headless 实拍） | 渲染实证截图 / 双渲染复现校验 | `chrome.exe --headless=new --screenshot=... --window-size=1124,1580 --virtual-time-budget=8000 file:///<html>` → 875-912 KB PNG | —（google.com/chrome 本网不可达；本机 Chrome 154.0.8037.93 为准） | 本机在位 | Edge `msedge.exe` 后备 |
 
-全基础工具链接验证表见套件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
+全基础工具链接验证表见插件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
 
 ### 降级策略
 
@@ -79,4 +79,4 @@ description: 生成艺术与色彩分析（p5.js 可复现算法）；生成艺�
 
 ## 示例
 
-- `../demos/art.md` —— 《溪山流霭》seed 20261004（p5 1.11.10 内联自包含 HTML + headless 实拍，双渲染逐位一致实测）+ 色轮/互补对照图 + 明度阶图（RYB 十二色相近似 Hex 示例教学数据）。
+- `${SKILL_DIR}/../core/references/demos/art.md` —— 《溪山流霭》seed 20261004（p5 1.11.10 内联自包含 HTML + headless 实拍，双渲染逐位一致实测）+ 色轮/互补对照图 + 明度阶图（RYB 十二色相近似 Hex 示例教学数据）。

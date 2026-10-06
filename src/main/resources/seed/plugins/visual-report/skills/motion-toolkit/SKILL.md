@@ -3,13 +3,13 @@ name: motion-toolkit
 description: 共享动效模块（Remotion/three.js/mpl_anim 降级链）；需要动效时只引用不复制。
 ---
 
-# motion-toolkit — 套件共享动效模块
+# motion-toolkit — 插件共享动效模块
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色变量表 / 渲染器兼容 / 缺装降级总则）。本模块是套件内**唯一**动效环境说明与渲染封装来源：场景（education / engineering / …）需要视频或交互动画时只引用本文件，**禁止在各场景 SKILL 里重复环境说明**（防漂移）。踩坑细节见 `references/probe-notes.md`。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色变量表 / 渲染器兼容 / 缺装降级总则）。本模块是插件内**唯一**动效环境说明与渲染封装来源：场景（education / engineering / …）需要视频或交互动画时只引用本文件，**禁止在各场景 SKILL 里重复环境说明**（防漂移）。踩坑细节见 `references/probe-notes.md`。
 
 ## 1. 模块定位
 
-visual-report-suite 的共享动效层，三个栈集中一处：
+visual-report 的共享动效层，三个栈集中一处：
 
 | 栈 | 通路 | 产物 | 定位 |
 |---|---|---|---|
@@ -28,7 +28,7 @@ visual-report-suite 的共享动效层，三个栈集中一处：
 | Remotion + CLI | 4.0.532（react 19.0.0） | `scripts\remotion-scaffold\`（node_modules 已装） | 60 帧 1280×720 渲染全程 16s，exit 0，h264 30fps ✓ |
 | 渲染浏览器 | Chrome 154.0.8037.93 | `C:\Program Files\Google\Chrome\Application\chrome.exe` | 必须 `--browser-executable` 指本机 Chrome；`browser ensure` 自动下载走 storage.googleapis.com 仅 ~17KB/s **不可用**。Edge `msedge.exe` 为后备（同标准路径） |
 | three | 0.186.1 | `scripts\three-template\node_modules\three\` | npmmirror 3s 装完；**双文件构建**（module→core 相对导入），自包含内联需递归改写（封装已处理） |
-| Python | 3.12.9 | `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe` | 套件唯一 Python 环境（core §5/§7），只装进 venv |
+| Python | 3.12.9 | `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe` | 插件唯一 Python 环境（core §5/§7），只装进 venv |
 | matplotlib | 3.11.2 | viz-venv 内 | 中文需 MPLCONFIGDIR 接线：`C:\Users\Kai\.nebflow\tools\mplconfig\`（mpl_anim.py 已固化；节点 shell 实测该环境变量为空） |
 | ffmpeg | 7.1（imageio_ffmpeg 0.6.0 自带） | `C:\Users\Kai\.nebflow\tools\viz-venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe` | **PATH 无 ffmpeg**；引用一律用此 exe 绝对路径（封装已固化） |
 | Pillow / numpy | 12.3.0 / 2.5.3 | viz-venv 内 | GIF 走 PillowWriter，不触碰 ffmpeg |
@@ -104,13 +104,13 @@ cd C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
 |---|---|---|---|
 | Remotion | MP4 视频（数据动画、字幕动效、分步讲解片头）；数据驱动动画逐帧确定性（帧号即时间） | 实时交互（产物是视频）；WebGL 3D（`@remotion/three` 未装未测） | **可用**（冒烟通过）——同日通路验证已复核（§5.1） |
 | three.js | 自包含交互 HTML（拖拽 3D、离线双击可开、前端白名单目录可服务） | 嵌入 Pop（core §3：Pop 只挂 SVG/PNG 静态图源）；视频文件 | **可用**（冒烟通过）——同日通路验证已复核（§5.1） |
-| 备选栈 | MP4 / GIF 数据动画；与套件 matplotlib 出图同源同字体 | 交互；3D 复杂场景表现力弱 | **可用**（冒烟通过）——同日通路验证已复核（§5.1） |
+| 备选栈 | MP4 / GIF 数据动画；与插件 matplotlib 出图同源同字体 | 交互；3D 复杂场景表现力弱 | **可用**（冒烟通过）——同日通路验证已复核（§5.1） |
 
 交付形式注意：视频/交互 HTML 是**文件交付**（正文写 `~/...` 绝对路径，走 core §2 白名单，默认 `~/.nebflow/plots/`）； Pop 悬浮预览只挂静态图源（core §3）。GIF/PNG 可被正文 `![...]()` 直接嵌入；MP4/HTML 写路径交付。
 
 ### 5.1 通路验证结论（教育三形态 demo，2026-10-04 实测；场景侧判定见 education SKILL「展示通路」）
 
-对照页 `../../demos/education-motion.md`，产件白名单副本 `~/.nebflow/plots/education-motion/`。方法口径：本机 Chrome 154 `--headless=new` + `--remote-debugging-port` CDP 驱动（`Input.dispatchMouseEvent` 真实输入；chrome-headless-shell 自动下载不可用，见 §2，本机无独立 headless-shell）。§5 前两栈当轮实测复核：
+对照页 `${SKILL_DIR}/../core/references/demos/education-motion.md`，产件白名单副本 `~/.nebflow/plots/education-motion/`。方法口径：本机 Chrome 154 `--headless=new` + `--remote-debugging-port` CDP 驱动（`Input.dispatchMouseEvent` 真实输入；chrome-headless-shell 自动下载不可用，见 §2，本机无独立 headless-shell）。§5 前两栈当轮实测复核：
 
 | 栈 | 实测方法与量化判定 | 结论 |
 |---|---|---|
@@ -126,4 +126,4 @@ cd C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
 
 - 新增渲染通路（如 manim 封装、@remotion/three）先按 core §6 自检模板实测，再补入本文件 §2/§3，禁止只写文档不落封装。
 - 环境表述一律以实测为准；本文件数值改动必须带实测日期与来源（探针路径见 `references/probe-notes.md`）。
-- 场景 SKILL 引用示例：「动效走套件 motion-toolkit（`../motion-toolkit/SKILL.md`），本场景不重复环境说明」。
+- 场景 SKILL 引用示例：「动效走插件 motion-toolkit（`${SKILL_DIR}/../motion-toolkit/SKILL.md`），本场景不重复环境说明」。

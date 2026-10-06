@@ -5,7 +5,7 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 
 # education — 教育·概念讲解场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 education 场景增量，通用规则一律引用 core，不复制漂移。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 education 场景增量，通用规则一律引用 core，不复制漂移。
 
 ## 触发条件
 
@@ -37,7 +37,7 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 
 - **主渲染器：viz-venv matplotlib**——概念图解与分步示意图全部覆盖：函数图像（指数响应、幅频曲线）、分步示意（`annotate` 标注箭头 + ①②③ 编号圆标）、数值对比图；
 - 概念之间的关系图（流程/分类/依赖）可用 graphviz dot（不在 PATH，全路径调用，core §7）;
-- 电路原理图/数字时序图：由套件 eda / timing 场景承接（schemdraw 0.23 / wavedrom 已装，README 实测 2026-10-04）；缺装时按 core §5 降级，不得手画。
+- 电路原理图/数字时序图：由插件 eda / timing 场景承接（schemdraw 0.23 / wavedrom 已装，README 实测 2026-10-04）；缺装时按 core §5 降级，不得手画。
 
 ### 工具自检（实测 2026-10-04）
 
@@ -47,11 +47,11 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 | numpy | 数值生成（指数曲线/频率轴/采样） | `<venv>\python.exe -c "import numpy; print(numpy.__version__)"` → 2.5.3 | https://pypi.org/project/numpy/ | HTTP 200（2026-10-04 实测） | 纯 Python `math` 模块替代（采样点手工生成） |
 | scipy | 特殊函数/信号处理（按需） | `<venv>\python.exe -c "import scipy; print(scipy.__version__)"` → 1.18.1 | https://pypi.org/project/scipy/ | HTTP 200（2026-10-04 实测） | matplotlib + numpy 已覆盖讲义级需求 |
 | graphviz | 概念关系/流程图（备用） | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0 | https://graphviz.org/download/ | HTTP 200（2026-10-04，README 链接验证表） | mermaid-cli（npx 直调）或文字层级列表 |
-| Remotion | 分步讲解视频（React→Chrome→MP4，教育动效主力） | `cd <套件>\motion-toolkit\scripts\remotion-scaffold && node -e "console.log(require('./node_modules/remotion/package.json').version)"` → 4.0.532 | https://www.remotion.dev/docs/ | HTTP 200（2026-10-04 motion-toolkit 实测）；同日 23:16 本场景复测 HEAD/GET 均 000×4（域名暂不可达，渲染走本机 Chrome 不受影响）→ 待通路验证复核 | matplotlib FuncAnimation + imageio-ffmpeg 出 MP4（motion-toolkit §4 降级链） |
-| three.js | 可交互 3D 引导场景（自包含 HTML，双击可开、离线可用） | `cd <套件>\motion-toolkit\scripts\three-template && node -e "console.log(require('./node_modules/three/package.json').version)"` → 0.186.1 | https://threejs.org/ | HTTP 200（2026-10-04 本场景 `curl -sIL` 实测） | `--cdn` 版（需联网）⇒ matplotlib 静态分步图 |
+| Remotion | 分步讲解视频（React→Chrome→MP4，教育动效主力） | `cd ${SKILL_DIR}/../motion-toolkit/scripts/remotion-scaffold && node -e "console.log(require('./node_modules/remotion/package.json').version)"` → 4.0.532 | https://www.remotion.dev/docs/ | HTTP 200（2026-10-04 motion-toolkit 实测）；同日 23:16 本场景复测 HEAD/GET 均 000×4（域名暂不可达，渲染走本机 Chrome 不受影响）→ 待通路验证复核 | matplotlib FuncAnimation + imageio-ffmpeg 出 MP4（motion-toolkit §4 降级链） |
+| three.js | 可交互 3D 引导场景（自包含 HTML，双击可开、离线可用） | `cd ${SKILL_DIR}/../motion-toolkit/scripts/three-template && node -e "console.log(require('./node_modules/three/package.json').version)"` → 0.186.1 | https://threejs.org/ | HTTP 200（2026-10-04 本场景 `curl -sIL` 实测） | `--cdn` 版（需联网）⇒ matplotlib 静态分步图 |
 | imageio-ffmpeg | MP4 编码后端（本机 PATH 无 ffmpeg，引用自带 exe 绝对路径） | `<venv>\python.exe -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_version())"` → 7.1-essentials_build-www.gyan.dev | https://pypi.org/project/imageio-ffmpeg/ | HTTP 200（2026-10-04 本场景 `curl -sIL` 实测） | PillowWriter 出 GIF ⇒ 静态多帧 PNG |
 
-全工具链接验证表（六基础 + numpy/scipy 场景补充）见套件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
+全工具链接验证表（六基础 + numpy/scipy 场景补充）见插件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
 
 ### 类比规范（本场景第一红线）
 
@@ -81,11 +81,11 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 
 - **过程叙事**（机制随时间演化：充放电、收敛、信号流动、逐相推进）→ **Remotion → MP4** 视频；
 - **空间结构 / 自主探索**（可旋转端详的 3D 结构、观看者要自己操作的关系）→ **Three.js → 可交互 3D HTML**；
-- 拿不准就交付三形态对照（静态 / 交互 / 视频），样板见 `../demos/education-motion.md`。
+- 拿不准就交付三形态对照（静态 / 交互 / 视频），样板见 `${SKILL_DIR}/../core/references/demos/education-motion.md`。
 
 ### 渲染通路（只引用，不复制环境说明）
 
-- 一律经套件共享动效模块 **`../motion-toolkit/SKILL.md`**——环境事实、封装命令、降级链、可交付性的唯一来源，本场景禁止重复环境说明（防漂移）；
+- 一律经插件共享动效模块 **`${SKILL_DIR}/../motion-toolkit/SKILL.md`**——环境事实、封装命令、降级链、可交付性的唯一来源，本场景禁止重复环境说明（防漂移）；
 - 视频件走 `motion-toolkit/scripts/render-remotion.mjs`（其 §3.1）；交互件走 `three-template/build_three_html.py`（其 §3.2）；备选动画走 `mpl_anim.py`（其 §3.3）。
 
 ### 动效降级链（静态底座兜底，不空转）
@@ -95,12 +95,12 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 
 ### 动效交付纪律
 
-- 源工程留场景 `../demos/<demo>-src/`；**交互件与视频件必须复制一份进 `~/.nebflow/plots/**` 白名单**（前端可服务，供通路验证与展示）；MP4/HTML 走 `~/...` 绝对路径文件交付（core §2），GIF/PNG 可 `![...]()` 直嵌；**Pop 只挂静态图源**（core §3，交互 HTML 不进 Pop）；
+- 源工程以「样张名-src」目录形态随样张同目录存放（如 education-motion 样张的源工程目录 education-motion-src）；**交互件与视频件必须复制一份进 `~/.nebflow/plots/**` 白名单**（前端可服务，供通路验证与展示）；MP4/HTML 走 `~/...` 绝对路径文件交付（core §2），GIF/PNG 可 `![...]()` 直嵌；**Pop 只挂静态图源**（core §3，交互 HTML 不进 Pop）；
 - 动效内数值与静态图同源逐字（τ=RC 可复算）；演示用教学示例值时，必须在件内与对照页**显著声明**。
 
 ## 展示通路（2026-10-04 本机 headless 实测）
 
-与上方「动效层」互补：那边定选用口径（过程叙事→MP4 / 空间探索→交互 3D），本节只回答「每种形态能否真实送达用户、不能时拿什么替代」。方法与环境口径、量化证据索引一律见 `../motion-toolkit/SKILL.md` §5.1（本机 Chrome 154 `--headless=new` + CDP 真实输入驱动；chrome-headless-shell 自动下载不可用），本节不重复。
+与上方「动效层」互补：那边定选用口径（过程叙事→MP4 / 空间探索→交互 3D），本节只回答「每种形态能否真实送达用户、不能时拿什么替代」。方法与环境口径、量化证据索引一律见 `${SKILL_DIR}/../motion-toolkit/SKILL.md` §5.1（本机 Chrome 154 `--headless=new` + CDP 真实输入驱动；chrome-headless-shell 自动下载不可用），本节不重复。
 
 | 形态 | 通路结论（2026-10-04 实测） | 判定依据（要点） |
 |---|---|---|
@@ -109,7 +109,7 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 | ③ Remotion MP4 | **可交付**（`~/...` 文件交付） | h264 1280×720 30fps 13.33s 全流解码 0 错；内嵌 video 标签 headless 播放 currentTime 前进、抽帧非黑、seek 正常、0 致命错误 |
 
 - **替代口径**（细则以「动效降级链」与 motion-toolkit §4 为准，不重复）：交互件不可用 ⇒ 静态分步图（旋转视角逐帧式）；视频件不可用 ⇒ matplotlib MP4 ⇒ GIF ⇒ 帧序列 PNG；一切动效的兜底 = 既有静态底座（原样保留）。
-- **主推交付形态**：过程叙事 ⇒ **MP4**；空间结构/自主探索 ⇒ **交互 HTML**；底座与 Pop 预览 ⇒ **静态分步图**。三形态 demo（`../demos/education-motion.md`）逐形态通路 2026-10-04 全部实测可用、未触发降级；实机复核清单见 motion-toolkit §5.1。
+- **主推交付形态**：过程叙事 ⇒ **MP4**；空间结构/自主探索 ⇒ **交互 HTML**；底座与 Pop 预览 ⇒ **静态分步图**。三形态 demo（`${SKILL_DIR}/../core/references/demos/education-motion.md`）逐形态通路 2026-10-04 全部实测可用、未触发降级；实机复核清单见 motion-toolkit §5.1。
 
 ## 质量红线
 
@@ -119,9 +119,9 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 4. **禁止手画 SVG；图必须真实渲染**：一切图由专业工具生成落盘（core §1.1），嵌入路径走 core §2 白名单（默认 `~/.nebflow/plots/`）；
 5. **数值逐字**（core §1.2）：讲义例题数值必须可复算，答案与公式推导一致；
 6. 单文档 ≤3 图、marked v12 兼容（core §1.3/§4）：`## ` 带空格、GFM 表分隔行列数==表头列数、只用 `$...$`、`breaks:true` 段间空行。
-7. **动效件纪律**：渲染必经 `../motion-toolkit` 封装（环境说明只引用不复制）；动效数值与静态图同源逐字、教学示例值显著声明；交互件与视频件双份落盘（场景源工程 + plots 白名单副本）；Pop 只挂静态图源（core §3）。
+7. **动效件纪律**：渲染必经 `${SKILL_DIR}/../motion-toolkit` 封装（环境说明只引用不复制）；动效数值与静态图同源逐字、教学示例值显著声明；交互件与视频件双份落盘（场景源工程 + plots 白名单副本）；Pop 只挂静态图源（core §3）。
 
 ## 示例
 
-- `../demos/education.md` —— RC 低通滤波概念讲义小样：五段骨架完整、2 图（时域充放电分步图 + 频域幅频曲线，viz-venv matplotlib 真实生成）、类比失效边界标注、误区对照表、练习带推导答案。
-- `../demos/education-motion.md` —— 同一 RC 充电主题的**三形态对照** demo（matplotlib 静态分步图 / three.js 可交互引导 / Remotion 分步讲解视频），动效层（§动效层）配套样板；源工程在 `../demos/education-motion-src/`。
+- `${SKILL_DIR}/../core/references/demos/education.md` —— RC 低通滤波概念讲义小样：五段骨架完整、2 图（时域充放电分步图 + 频域幅频曲线，viz-venv matplotlib 真实生成）、类比失效边界标注、误区对照表、练习带推导答案。
+- `${SKILL_DIR}/../core/references/demos/education-motion.md` —— 同一 RC 充电主题的**三形态对照** demo（matplotlib 静态分步图 / three.js 可交互引导 / Remotion 分步讲解视频），动效层（§动效层）配套样板；源工程在 `${SKILL_DIR}/../core/references/demos/education-motion-src/`。

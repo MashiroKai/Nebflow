@@ -5,7 +5,7 @@ description: 天文报告（skyfield 星历真算）；星图、星历、天象�
 
 # astronomy — 天文·天象计算场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 astronomy 场景增量，通用规则一律引用 core，不复制漂移。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 astronomy 场景增量，通用规则一律引用 core，不复制漂移。
 
 **独立成 skill 论证（一句话）**：天文表述的语汇是「天球坐标系 + 星图投影」——天体位置是时间×地点×坐标系的三元函数，凭印象画的示意必然方位/高度/月相全错，数值必须由星历（DE 系列）+ 坐标变换库（skyfield）真算，故独立成 skill。
 
@@ -50,7 +50,7 @@ description: 天文报告（skyfield 星历真算）；星图、星历、天象�
 | skyfield | 星历计算/坐标变换 | `<venv>\python.exe -c "import skyfield; print(skyfield.__version__)"` → 1.55 | https://rhodesmill.org/skyfield/ · https://pypi.org/project/skyfield/ | 200 · 200（2026-10-04 实测） | **天文数值不允许降级手算**：改引权威来源数值并标注「未本地复算」，或文字描述既有结论 |
 | de421.bsp | 日月行星历表（1900–2053） | `ls C:\Users\Kai\.nebflow\tools\skyfield-cache\de421.bsp` → 16,788,480 B；`load('de421.bsp')` 命中 | https://ssd.jpl.nasa.gov/ftp/eph/planets/bsp/de421.bsp | HEAD 超时（2026-10-04；缓存命中无需下载，恢复后复测） | 超出 1900–2053 或需更高精度 ⇒ 需 de440s（下载受限则拒绝该时域计算并如实声明） |
 | Hipparcos 星表 | 亮星位置底图 | `ls C:\Users\Kai\.nebflow\tools\skyfield-cache\hip_main.dat` → 53,316,318 B；`hipparcos.load_dataframe` 命中 118,218 颗 | skyfield `hipparcos.URL`（cdn.jsdelivr.net 分发） | 200（2026-10-04 下载成功入缓存） | 星图降级为仅日月行星并注明 |
-| matplotlib | 星图/曲线渲染 | 已装 3.11.2 | 见套件 README 链接验证表 | 200（2026-10-04，README 表） | plotly（已装）或数值表格 |
+| matplotlib | 星图/曲线渲染 | 已装 3.11.2 | 见插件 README 链接验证表 | 200（2026-10-04，README 表） | plotly（已装）或数值表格 |
 
 本机数据缓存现状（实测 2026-10-04）：`C:\Users\Kai\.nebflow\tools\skyfield-cache\` 下 de421.bsp（16,788,480 B）与 hip_main.dat（53,316,318 B）均在盘、加载验证通过；skyfield `Loader` 指向该目录即缓存命中，不重复下载。
 
@@ -73,4 +73,4 @@ description: 天文报告（skyfield 星历真算）；星图、星历、天象�
 
 ## 示例
 
-- `../demos/astronomy.md` —— 北京 2026-03-21 20:00（北京时间）星空圆顶图：DE421+Hipparcos 双缓存真算，木星 alt 71.452°/az 206.366° 高悬西南、月球照亮 7.77%（相位角 32.38° 推算），七天天体数值表逐字可复算。
+- `${SKILL_DIR}/../core/references/demos/astronomy.md` —— 北京 2026-03-21 20:00（北京时间）星空圆顶图：DE421+Hipparcos 双缓存真算，木星 alt 71.452°/az 206.366° 高悬西南、月球照亮 7.77%（相位角 32.38° 推算），七天天体数值表逐字可复算。

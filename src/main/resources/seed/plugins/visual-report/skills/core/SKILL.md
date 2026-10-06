@@ -3,9 +3,9 @@ name: core
 description: 全场景公共规范（铁律/嵌入路径/暗色/渲染器兼容/自检模板）；所有场景动笔前必读。
 ---
 
-# visual-report-suite · core — 全场景公共规范
+# visual-report · core — 全场景公共规范
 
-本文件是七个场景 skill（academic-research / tech-architecture / engineering / office / education / eda / timing）的公共上游规范。场景 SKILL.md 只写场景增量，通用规则一律引用本文，禁止复制漂移。工具链现状与链接验证记录见套件 `README.md`。
+本文件是七个场景 skill（academic-research / tech-architecture / engineering / office / education / eda / timing）的公共上游规范。场景 SKILL.md 只写场景增量，通用规则一律引用本文，禁止复制漂移。工具链现状与链接验证记录见 `${SKILL_DIR}/../README.md`。
 
 ## 1. 铁律（违反即返工）
 
@@ -80,7 +80,7 @@ body { background: var(--color-bg); color: var(--color-text); }
 | graphviz | 流程/架构图 | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0 | https://graphviz.org/download/ | HTTP 200（2026-10-04） | 改用 mermaid-cli 或文字层级列表 |
 ```
 
-基础工具的完整实测记录见套件 `README.md` 链接验证表（含场景补充行），场景 skill 直接引用，不复制。
+基础工具的完整实测记录见 `${SKILL_DIR}/../README.md` 链接验证表（含场景补充行），场景 skill 直接引用，不复制。
 
 ## 7. 本机基线速查（Windows / MSYS）
 

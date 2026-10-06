@@ -46,4 +46,4 @@
 - 反应引擎 / 渲染 / 3D 坐标：rdkit 2026.03.6（viz-venv，Python 3.12.9）；3Dmol.js v2.5.5（npm `3dmol@2.5.5`，库本体本地缓存 `~/.nebflow/plots/vrs2-biochem/3Dmol-min.js`，node --check 语法验证通过）；
 - 一键复算（stdout 逐字重印上表并重建全部产物）：
   `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\biochem_chemistry_demo.py`
-- 源脚本：`../demos/biochem_chemistry_demo.py`（demos 目录内）；位图与交互件落 `~/.nebflow/plots/vrs2-biochem/`。
+- 源脚本：`./biochem_chemistry_demo.py`（demos 目录内）；位图与交互件落 `~/.nebflow/plots/vrs2-biochem/`。

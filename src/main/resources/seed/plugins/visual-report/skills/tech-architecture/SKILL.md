@@ -3,9 +3,9 @@ name: tech-architecture
 description: 技术架构调研报告（graphviz 分层集群）；梳理架构、组件与数据流时使用。
 ---
 
-# visual-report-suite · tech-architecture — 技术架构调研场景
+# visual-report · tech-architecture — 技术架构调研场景
 
-技术架构调研 / 组件梳理 / 数据流说明类报告的可视化规范。通用铁律、嵌入路径、dark-mode、渲染器兼容、降级总则一律见 `../core/SKILL.md`，本文只写场景增量，禁止复制漂移。
+技术架构调研 / 组件梳理 / 数据流说明类报告的可视化规范。通用铁律、嵌入路径、dark-mode、渲染器兼容、降级总则一律见 `${SKILL_DIR}/../core/SKILL.md`，本文只写场景增量，禁止复制漂移。
 
 ## 触发条件
 
@@ -48,4 +48,4 @@ description: 技术架构调研报告（graphviz 分层集群）；梳理架构�
 
 ## 示例
 
-- `../demos/tech-architecture.md` —— Nebflow 自身架构调研 demo：graphviz 16.1.0 真实渲染总架构图 + 任务链数据流图，组件清单逐一对上源码事实（Mac 工作树只读侦查）。
+- `${SKILL_DIR}/../core/references/demos/tech-architecture.md` —— Nebflow 自身架构调研 demo：graphviz 16.1.0 真实渲染总架构图 + 任务链数据流图，组件清单逐一对上源码事实（Mac 工作树只读侦查）。

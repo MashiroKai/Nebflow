@@ -1,56 +1,46 @@
-# visual-report-suite — 可视化报告套件
+# visual-report — 场景总览（skills/ 维护者入口）
 
-场景 skill **一期 7 + 二期 10**：一期 academic-research / tech-architecture / engineering / office / education / eda / timing；二期 biology / chemistry / architecture / mathematics / art / music / geo-map / astronomy / finance / network——外加共享 core 与共享动效模块 motion-toolkit。各场景 SKILL.md 均已由场景节点落盘；本 README 是套件入口：落位与迁移映射、全工具链接验证表、MCP 评估结论、motion-toolkit 说明、扩展位。**选场景先查 [`CATALOG.md`](CATALOG.md)**（总目录表 + 选 skill 决策树，二期收口新增）。
+本文件是 visual-report 插件 `skills/` 的维护者入口：装载器不注入本文件，维护者与按需 Read 的节点以此为索引。场景 skill **一期 7 + 二期 10**：一期 academic-research / tech-architecture / engineering / office / education / eda / timing；二期 biology / chemistry / architecture / mathematics / art / music / geo-map / astronomy / finance / network——外加共享 core 与共享动效模块 motion-toolkit。**选场景先查 [`CATALOG.md`](CATALOG.md)**（总目录表 + 选 skill 决策树）。
 
-- 套件根：`C:\Users\Kai\.nebflow\skills\visual-report-suite\`
 - 公共规范：`core/SKILL.md`（场景 skill 必读；通用规则的唯一来源）
-- 落位判定：**upgrade**（VR-现状定位，chain-n-92b37acf）——既有插件与工具资产全部复用，套件只做扩展面，不重建环境。
+- 样张与验收基准：`core/references/demos/`（场景示例落此）
+- 冲突裁决：图表生成层各场景表述不一致时以 `core/SKILL.md` 为准；人读交付体例以既有 visual-report skill 为准。
 
 ## 目录结构
 
 ```
-visual-report-suite/
-  README.md            ← 本文件（迁移映射 / 工具验证表 / MCP 结论 / motion-toolkit 说明 / 扩展位）
-  CATALOG.md           ← 场景总目录 + 选 skill 决策树（二期收口新增 2026-10-05）
-  core/SKILL.md        ← 全场景公共规范（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 自检模板）
-  academic-research/   ← 一期场景 skill（7 个全部在盘）
-  tech-architecture/
-  engineering/
-  office/
-  education/           ← 含动效层（三形态交付，渲染一律经 motion-toolkit）
-  eda/
-  timing/
-  biology/             ← 二期场景 skill（10 个全部在盘，2026-10-04/05 实测）
-  chemistry/
-  architecture/
-  mathematics/
-  art/
-  music/
-  geo-map/
-  astronomy/
-  finance/
-  network/
-  motion-toolkit/      ← 共享动效模块（Remotion 视频 / three.js 交互 / mpl_anim 降级；SKILL.md + scripts\）
-  demos/               ← 场景示例落此（一期 7 + 二期 10 + education-motion 三形态对照）
+visual-report/           （包根）
+  plugin.json
+  skills/
+    README.md            ← 本文件（维护者入口 / 工具验证表 / MCP 结论 / motion-toolkit 说明 / 扩展位）
+    CATALOG.md           ← 场景总目录 + 选 skill 决策树
+    core/SKILL.md        ← 全场景公共规范（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 自检模板）
+    core/references/demos/  ← 场景示例（一期 7 + 二期 10 + education-motion 三形态对照）
+    academic-research/   ← 一期场景 skill（7 个全部在盘）
+    tech-architecture/
+    engineering/
+    office/
+    education/           ← 含动效层（三形态交付，渲染一律经 motion-toolkit）
+    eda/
+    timing/
+    biology/             ← 二期场景 skill（10 个全部在盘，2026-10-04/05 实测）
+    chemistry/
+    architecture/
+    mathematics/
+    art/
+    music/
+    geo-map/
+    astronomy/
+    finance/
+    network/
+    motion-toolkit/      ← 共享动效模块（Remotion 视频 / three.js 交互 / mpl_anim 降级；SKILL.md + scripts/）
 ```
-
-## 落位与迁移映射（upgrade 模式）
-
-既有 visual-report 插件 v1.2.0（`C:\Users\Kai\.nebflow\plugins\visual-report\`，双侧一致、被 seed 链预装注入）**原样保留不回写**；套件在其之上扩展：
-
-| 既有资产 | 现状（实测 2026-10-04） | 套件落位 | 动作 |
-|---|---|---|---|
-| 插件 SKILL.md（审美规范 / ≤3 图预算 / md 规则 / 人读体例） | v1.2.0，随会话注入 | `core/SKILL.md` §1–§4 继承并加固 | 继承，插件本体不改 |
-| `tools\viz-venv` | Python 3.12.9 + numpy/scipy/matplotlib/pandas/plotly/pymupdf 等 | 套件唯一 Python 环境 | 复用，禁重复安装 |
-| `tools\mplconfig\matplotlibrc` | YaHei 已配（font.sans-serif 首位） | matplotlib 全局配置直接生效 | 复用 |
-| `tools\graphviz` | dot 16.1.0（bin 下，不在 PATH） | 流程/架构图基线渲染器 | 复用，全路径调用 |
-| SiPM 图集（158 图）与裁图库（207 png，projects/Sipm 一带） | 原位在库 | demos 素材来源 | 不搬移，按 `~/...` 路径引用 |
-
-冲突裁决：图表生成层与插件表述不一致时以 `core/SKILL.md` 为准（演进基准）；人读交付体例仍按插件 skill（注入生效）。
 
 ## 全工具链接验证表
 
 验证方式：`curl -sIL` 读末位状态行（本机禁 `curl -w`）；URL 含 `[]` 加 `-g`；query 中 `+` 转义为 `%2B`。实测日期 **2026-10-04**，引用前超 30 天须复测。网络基线（同日实测）：Google / DuckDuckGo / Wikipedia 不可达，Bing 可用；github.com 超时；npmjs.com 网页 403（registry API 正常）。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。
+
+【A4 待改：上段机器绑定口径（<venv> 定义、本机网络基线）与下表 `C:\` 检测命令列由 A4 批按实例事实改写，本批不动。】
 
 | 工具 | 用途 | 本机已有 | 本机检测命令（实测） | 官方下载/文档链接 | 状态码 | 镜像/备用端点（官方失效时） | 状态码 | Mac 差异 | 缺装降级策略 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -83,6 +73,8 @@ visual-report-suite/
 
 ### MSYS 注意
 
+【A4 待改：本节为 Windows 本机操作口径（MSYS2_ARG_CONV_EXCL / curl -w 禁用 / URL 转义），A4 批裁定保留或平台中性化，本批不动。】
+
 - 传 Windows 路径参数加 `MSYS2_ARG_CONV_EXCL='*'`；
 - `curl` 禁 `-w`：用 `-sIL` 并读取末位 `HTTP/...` 状态行；
 - URL 含 `[]` 加 `-g`；query 中 `+` 转义为 `%2B`。
@@ -100,10 +92,10 @@ visual-report-suite/
 
 ## motion-toolkit 共享动效模块（二期新增，2026-10-04 实测 / 2026-10-05 收口）
 
-- **定位**：套件唯一动效环境说明与渲染封装来源（`motion-toolkit/SKILL.md`）——Remotion 视频栈（React 组件 → 本机 Chrome → MP4）、three.js 交互栈（npm 本地化 → 自包含交互 HTML）、备选动画栈（matplotlib FuncAnimation → MP4/GIF）三栈集中一处；场景需要动效/交互动画时**只引用该文件，禁止复制环境说明**（防漂移）。
-- **引用方式**：场景 SKILL 写「动效走套件 motion-toolkit（`../motion-toolkit/SKILL.md`）」；视频件走 `scripts\render-remotion.mjs`，交互件走 `scripts\three-template\build_three_html.py`，备选动画走 `scripts\mpl_anim.py`（用户脚本只写 `build(fig, ax) -> (update, n_frames)`）。已引用方：education（动效层三形态）、mathematics（mpl_anim 出片）、architecture（three.js 体块交互）。
+- **定位**：唯一动效环境说明与渲染封装来源（`motion-toolkit/SKILL.md`）——Remotion 视频栈（React 组件 → 本机 Chrome → MP4）、three.js 交互栈（npm 本地化 → 自包含交互 HTML）、备选动画栈（matplotlib FuncAnimation → MP4/GIF）三栈集中一处；场景需要动效/交互动画时**只引用该文件，禁止复制环境说明**（防漂移）。
+- **引用方式**：场景 SKILL 写「动效走 motion-toolkit（`${SKILL_DIR}/../motion-toolkit/SKILL.md`）」；视频件走 `scripts/render-remotion.mjs`，交互件走 `scripts/three-template/build_three_html.py`，备选动画走 `scripts/mpl_anim.py`（用户脚本只写 `build(fig, ax) -> (update, n_frames)`）。已引用方：education（动效层三形态）、mathematics（mpl_anim 出片）、architecture（three.js 体块交互）。
 - **降级链（一句话）**：Remotion 失败 ⇒ matplotlib FuncAnimation + imageio-ffmpeg 出 MP4 ⇒ PillowWriter 出 GIF ⇒ 静态多帧 PNG；three.js 失败 ⇒ `--cdn` 版 ⇒ matplotlib 静态分步图——任何一步不许空转。
-- **环境三条硬口径（实测）**：npm 一律 `--registry https://registry.npmmirror.com`（npmjs 直连 stall，12s 装 252 包实测）；Remotion 渲染用 `--browser-executable` 指本机 Chrome `C:\Program Files\Google\Chrome\Application\chrome.exe`（chrome-headless-shell 自动下载不可用，Edge 后备）；ffmpeg 引用 viz-venv 内 imageio-ffmpeg 自带 exe 绝对路径（PATH 无 ffmpeg）。
+- **环境三条硬口径（实测）**：npm 一律 `--registry https://registry.npmmirror.com`（npmjs 直连 stall，12s 装 252 包实测）；Remotion 渲染用 `--browser-executable` 指本机 Chrome `C:\Program Files\Google\Chrome\Application\chrome.exe`（chrome-headless-shell 自动下载不可用，Edge 后备）【A4 待改：Chrome 绝对路径按实例事实改写】；ffmpeg 引用 viz-venv 内 imageio-ffmpeg 自带 exe 绝对路径（PATH 无 ffmpeg）【A4 待改】。
 
 ## 扩展位（本轮不实现）
 
@@ -111,8 +103,8 @@ visual-report-suite/
 |---|---|---|---|
 | UML（类图/时序/状态） | plantuml（需 Java，未装）；过渡用 mermaid / graphviz | Java 运行时 | mermaid 已可顶类图/状态图 |
 | 3D | matplotlib 3D（已装）；OpenSCAD CLI（未装） | OpenSCAD 安装 | 科学 3D 曲面现已可用 |
-| 地图/空间分布 | folium、cartopy —— **已装（二期实测 2026-10-04：folium 0.20.0 · cartopy 0.26.0，场景 `geo-map/` 已落地）** | 已满足（NE 海岸线/国界缓存在 `~\.local\share\cartopy`） | cartopy 静态主交付 + folium 交互 |
+| 地图/空间分布 | folium、cartopy —— **已装（二期实测 2026-10-04：folium 0.20.0 · cartopy 0.26.0，场景 `geo-map/` 已落地）** | 已满足（NE 海岸线/国界缓存在 `~\.local\share\cartopy`）【A4 待改：缓存路径平台化】 | cartopy 静态主交付 + folium 交互 |
 | 分子结构 | rdkit —— **已装（二期实测 2026-10-04：2026.03.6，场景 `biology/` `chemistry/` 已落地）**；Open Babel（未装） | rdkit 已满足；Open Babel 需独立二进制 | 反应验证 + 3Dmol.js 自包含交互已由二期场景承接 |
-| 晶体结构 | pymatgen、ASE（未装） | pip 进 viz-venv | 材料场景触发再议 |
+| 晶体结构 | pymatgen、ASE（未装） | pip 进 viz-venv【A4 待改：环境指称】 | 材料场景触发再议 |
 
-新增工具一律先过 `core/SKILL.md` §6 自检模板（实测检测命令 + 链接验证 + 降级策略）再补入上表。
+新增工具一律先过 `core/SKILL.md` §6 自检模板（实测检测命令 + 链接验证 + 降级策略）再补入上表；新增场景 → `skills/` 新建 `<scene>/SKILL.md` + 样张落 `core/references/demos/<scene>.md` → 补入本文件与 CATALOG.md。

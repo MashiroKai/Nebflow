@@ -3,9 +3,9 @@ name: eda
 description: 电路原理讲解报告（schemdraw 原理图）；电路与原理图任务使用。
 ---
 
-# visual-report-suite · eda — 电路 / EDA 场景
+# visual-report · eda — 电路 / EDA 场景
 
-公共规范（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）一律见 `../core/SKILL.md`，本文件只写场景增量，不复制通用规则。工具链现状与全量链接验证见 `../README.md`。
+公共规范（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）一律见 `${SKILL_DIR}/../core/SKILL.md`，本文件只写场景增量，不复制通用规则。工具链现状与全量链接验证见 `${SKILL_DIR}/../README.md`。
 
 ## 1. 触发条件
 
@@ -55,5 +55,5 @@ schemdraw 是本场景主渲染器（电路原理图的唯一合规生成方式�
 
 ## 5. 示例
 
-- demo 文档：`../demos/eda.md` —— 电荷灵敏前置放大器（JFET 输入 + 反馈电容 Cf 并联泄放电阻 Rf + 射极跟随输出级），亮 / 暗双主题 PNG，逐元件图注。
-- 复现脚本：`../demos/eda_cspa_schematic.py`（viz-venv 直跑，schemdraw 0.23）。
+- demo 文档：`${SKILL_DIR}/../core/references/demos/eda.md` —— 电荷灵敏前置放大器（JFET 输入 + 反馈电容 Cf 并联泄放电阻 Rf + 射极跟随输出级），亮 / 暗双主题 PNG，逐元件图注。
+- 复现脚本：`${SKILL_DIR}/../core/references/demos/eda_cspa_schematic.py`（viz-venv 直跑，schemdraw 0.23）。

@@ -5,7 +5,7 @@ description: 建筑空间报告（米制平面/轴测/体块交互）；平面�
 
 # architecture — 建筑·空间表达场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 architecture 场景增量，通用规则一律引用 core，不复制漂移。3D 交互与动效一律经套件共享模块 `../motion-toolkit/SKILL.md`，场景内不重复环境说明（防漂移）。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 architecture 场景增量，通用规则一律引用 core，不复制漂移。3D 交互与动效一律经插件共享模块 `${SKILL_DIR}/../motion-toolkit/SKILL.md`，场景内不重复环境说明（防漂移）。
 
 ## 触发条件
 
@@ -41,7 +41,7 @@ description: 建筑空间报告（米制平面/轴测/体块交互）；平面�
 ### 工具选择
 
 - **主渲染器 viz-venv matplotlib patches**：平面/立面/剖面/轴测静态全部覆盖——墙线用 `Rectangle`（真实墙厚居轴线）、门扇+开启弧用 `Arc`、尺寸链手工 tick、轴测用等轴测投影 + 深度排序填充（`Polygon`）；`ax.set_aspect("equal")` 强制 1:1 比例；
-- **体块/交互 3D：three.js 一律经 `../motion-toolkit`**（其 SKILL.md §3.2 + `build_three_html.py` + 场景 JS），场景代码保持 `import * as THREE from "three"`；禁止本场景另写 3D 环境说明、禁止手写 `<canvas>`/手画 SVG（core §1.1）；
+- **体块/交互 3D：three.js 一律经 `${SKILL_DIR}/../motion-toolkit`**（其 SKILL.md §3.2 + `build_three_html.py` + 场景 JS），场景代码保持 `import * as THREE from "three"`；禁止本场景另写 3D 环境说明、禁止手写 `<canvas>`/手画 SVG（core §1.1）；
 - 场景源工程落 `demos/architecture/`（脚本 + three 场景 JS），产件落 `~/.nebflow/plots/`。
 
 ### 制图规范（本场景第一红线组）
@@ -59,7 +59,7 @@ description: 建筑空间报告（米制平面/轴测/体块交互）；平面�
 | three.js（经 motion-toolkit） | 体块交互 HTML | `node -e "console.log(require('C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts/three-template/node_modules/three/package.json').version)"` → 0.186.1 | https://threejs.org/ | HTTP 200（2026-10-04 复测） | **matplotlib 轴测投影/三视图静态图**（`demos/architecture/axon_house.py` 即此通路的实证样张）；再不行文字几何表 |
 | Chrome（headless 实拍） | WebGL 出图证明 / 交互件复核 | `"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --screenshot=out.png --window-size=1280,900 --virtual-time-budget=6000 file:///<html>` → 40-64 KB PNG | —（google.com/chrome 本网不可达，README 网络基线；以本机已装 Chrome 154.0.8037.93 为准） | 本机在位（实测可出 WebGL 截图） | Edge `msedge.exe` 后备（motion-toolkit §2）；再不行交互件只交 HTML 不附实拍 |
 
-全基础工具链接验证表见套件 README（含 matplotlib/numpy 行），直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
+全基础工具链接验证表见插件 README（含 matplotlib/numpy 行），直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
 
 ### 降级策略
 
@@ -77,4 +77,4 @@ description: 建筑空间报告（米制平面/轴测/体块交互）；平面�
 
 ## 示例
 
-- `../demos/architecture.md` —— 两层坡顶小宅「拾光居」小样：平面双联图（轴线 3300+3000+3300 × 4200+4200，外墙 240/内墙 120）+ 轴测降级通路实证图 + three.js 体块交互 HTML（同一份米制数据：层高 3.0×2、檐口 +6.0、屋脊 +8.4；面积 80.64×2 = 161.28 m²），合成示例数据双声明。
+- `${SKILL_DIR}/../core/references/demos/architecture.md` —— 两层坡顶小宅「拾光居」小样：平面双联图（轴线 3300+3000+3300 × 4200+4200，外墙 240/内墙 120）+ 轴测降级通路实证图 + three.js 体块交互 HTML（同一份米制数据：层高 3.0×2、檐口 +6.0、屋脊 +8.4；面积 80.64×2 = 161.28 m²），合成示例数据双声明。

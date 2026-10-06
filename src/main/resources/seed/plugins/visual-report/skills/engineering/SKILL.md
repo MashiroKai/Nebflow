@@ -5,7 +5,7 @@ description: 工程测试报告（五节骨架+指标判定表）；实验、性
 
 # engineering — 工程测试报告 skill
 
-visual-report-suite 场景之一：把测试 / 实验 / 性能验证结果写成**图真、数准、可判定**的工程报告。公共规范（铁律 / 嵌入路径 / dark-mode / marked v12 兼容 / 降级总则 / 自检模板）一律见 `../core/SKILL.md`，本文只写场景增量，禁止复制漂移；工具链接验证总表见套件 `README.md`。
+visual-report 插件场景之一：把测试 / 实验 / 性能验证结果写成**图真、数准、可判定**的工程报告。公共规范（铁律 / 嵌入路径 / dark-mode / marked v12 兼容 / 降级总则 / 自检模板）一律见 `${SKILL_DIR}/../core/SKILL.md`，本文只写场景增量，禁止复制漂移；工具链接验证总表见 `${SKILL_DIR}/../README.md`。
 
 ## 1. 触发条件
 
@@ -61,7 +61,7 @@ visual-report-suite 场景之一：把测试 / 实验 / 性能验证结果写成
 | matplotlib | 幅频/温漂/FFT 等结果图 | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2（实测 2026-10-04） | https://matplotlib.org/ | HTTP 200（2026-10-04，README 验证表） | plotly（已装）→ 纯表格；禁手画 SVG、禁空转 |
 | graphviz (dot) | 测试流程/信号链框图 | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0（实测 2026-10-04） | https://graphviz.org/download/ | HTTP 200（2026-10-04，README 验证表） | mermaid-cli 未装 → 文字流程列表；禁手画 SVG |
 
-全工具链接验证与计数（19 通过 / 3 失效已换端点补验）见套件 `README.md`「全工具链接验证表」，本场景不复制；引用前超 30 天须复测，新增工具先过 core §6 自检再补表。
+全工具链接验证与计数（19 通过 / 3 失效已换端点补验）见 `${SKILL_DIR}/../README.md`「全工具链接验证表」，本场景不复制；引用前超 30 天须复测，新增工具先过 core §6 自检再补表。
 
 ### 指标表规范（四列，缺一即返工）
 

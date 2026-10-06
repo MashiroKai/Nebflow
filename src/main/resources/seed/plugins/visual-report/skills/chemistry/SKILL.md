@@ -3,9 +3,9 @@ name: chemistry
 description: 化学反应报告（rdkit 验证+3Dmol 交互）；反应与分子 3D 任务使用。
 ---
 
-# visual-report-suite · chemistry — 化学反应 / 3D 交互场景
+# visual-report · chemistry — 化学反应 / 3D 交互场景
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 chemistry 场景增量，通用规则一律引用 core，不复制漂移。工具链现状与全量链接验证见 `../README.md`。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 chemistry 场景增量，通用规则一律引用 core，不复制漂移。工具链现状与全量链接验证见 `${SKILL_DIR}/../README.md`。
 
 **为何值得独立成 skill**：本场景的独有图语汇是**反应式与反应网络**（反应物 → 试剂 → 产物的规范排版）和**可旋转缩放的 3D 分子交互件**——前者必须由 rdkit 反应引擎从反应 SMILES 真实解析渲染并跑通验证（映射模板 Validate=(0,0) + 产物 canonical 同一性），后者必须由 3Dmol.js 内联库驱动 WebGL 呈现。两者都没有「通用绘图工具平替」路径：手画反应式必然违反排版规范，CDN 外链的 3D 页面在断网环境直接失效。独特的图语汇 + 独有的工具链（rdkit 反应引擎 / 3Dmol.js），与 biology（描述符/构象静态呈现）分工明确，故独立成场景。
 
@@ -73,5 +73,5 @@ description: 化学反应报告（rdkit 验证+3Dmol 交互）；反应与分子
 
 ## 5. 示例
 
-- demo 文档：`../demos/chemistry.md` —— 阿司匹林合成（水杨酸 + 乙酸酐 → 阿司匹林 + 乙酸）：反应式 SVG（rdkit 渲染）、全映射模板 Validate=(0,0) + RunReactants 产物 canonical ≡ PubChem CID 2244、质量守恒 240.21 g/mol、四物种 2D 网格、3Dmol.js v2.5.5 内联自包含交互 HTML（亮暗双主题 Chrome headless 截图验证）。
-- 复现脚本：`../demos/biochem_chemistry_demo.py`（viz-venv 直跑，rdkit 2026.03.6；库缓存 `~/.nebflow/plots/vrs2-biochem/3Dmol-min.js`）。
+- demo 文档：`${SKILL_DIR}/../core/references/demos/chemistry.md` —— 阿司匹林合成（水杨酸 + 乙酸酐 → 阿司匹林 + 乙酸）：反应式 SVG（rdkit 渲染）、全映射模板 Validate=(0,0) + RunReactants 产物 canonical ≡ PubChem CID 2244、质量守恒 240.21 g/mol、四物种 2D 网格、3Dmol.js v2.5.5 内联自包含交互 HTML（亮暗双主题 Chrome headless 截图验证）。
+- 复现脚本：`${SKILL_DIR}/../core/references/demos/biochem_chemistry_demo.py`（viz-venv 直跑，rdkit 2026.03.6；库缓存 `~/.nebflow/plots/vrs2-biochem/3Dmol-min.js`）。

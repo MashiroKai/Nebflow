@@ -3,9 +3,9 @@ name: biology
 description: 生物/药物分子报告（rdkit 结构与描述符）；分子结构与性质任务使用。
 ---
 
-# visual-report-suite · biology — 生物 / 药物分子场景
+# visual-report · biology — 生物 / 药物分子场景
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 biology 场景增量，通用规则一律引用 core，不复制漂移。工具链现状与全量链接验证见 `../README.md`。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 biology 场景增量，通用规则一律引用 core，不复制漂移。工具链现状与全量链接验证见 `${SKILL_DIR}/../README.md`。
 
 **为何值得独立成 skill**：分子报告有一套任何其他场景都不具备的图语汇——分子骨架图（2D 结构排版）、构象几何（3D 坐标 + 力场优化）、描述符性质谱（MW / LogP / TPSA / 氢键供受体等成药性量化），且这些图必须由化学信息学引擎（rdkit）从 SMILES 真实解析生成，手画必然失真、通用绘图工具无法代劳。独特的图语汇 + 独有的工具链（rdkit / py3Dmol），与 education（函数曲线）、eda（电路语汇）完全不可互替，故独立成场景。
 
@@ -74,5 +74,5 @@ rdkit 是本场景主引擎：SMILES 解析、2D 排版（MolDraw2DSVG）、3D �
 
 ## 5. 示例
 
-- demo 文档：`../demos/biology.md` —— 阿司匹林 + 咖啡因：2D 结构网格（rdkit SVG）、Lipinski Ro5 描述符对比（matplotlib 亮/暗双主题）、阿司匹林 3D 构象（ETKDGv3 seed=42 + MMFF94s，E = 18.9098 kcal/mol，matplotlib 亮/暗双主题），全部数值逐字可复算。
-- 复现脚本：`../demos/biochem_biology_demo.py`（viz-venv 直跑，rdkit 2026.03.6）。
+- demo 文档：`${SKILL_DIR}/../core/references/demos/biology.md` —— 阿司匹林 + 咖啡因：2D 结构网格（rdkit SVG）、Lipinski Ro5 描述符对比（matplotlib 亮/暗双主题）、阿司匹林 3D 构象（ETKDGv3 seed=42 + MMFF94s，E = 18.9098 kcal/mol，matplotlib 亮/暗双主题），全部数值逐字可复算。
+- 复现脚本：`${SKILL_DIR}/../core/references/demos/biochem_biology_demo.py`（viz-venv 直跑，rdkit 2026.03.6）。

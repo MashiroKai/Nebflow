@@ -5,7 +5,7 @@ description: 网络分析报告（networkx 度量+pyvis 交互）；图网络与
 
 # network — 网络·关系结构场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 network 场景增量，通用规则一律引用 core，不复制漂移。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 network 场景增量，通用规则一律引用 core，不复制漂移。
 
 **独立成 skill 论证（一句）**：节点-边关系数据的核心信息在拓扑结构（社区、中心性、路径），坐标轴折线/柱状图无法承载，必须由图布局算法把拓扑映射到 2D 空间、以节点-边图元表达——这是一套独立的「图布局/社区结构图语汇」，故与通用 2D 图表分场景。
 
@@ -49,7 +49,7 @@ description: 网络分析报告（networkx 度量+pyvis 交互）；图网络与
 | pyvis | 交互网络 HTML | `<venv>\python.exe -c "import pyvis; print(pyvis.__version__)"` → 0.3.2 | https://pyvis.readthedocs.io/en/latest/ · https://pypi.org/project/pyvis/ | HTTP 200 · 200（2026-10-04 实测） | **networkx + matplotlib 静态布局图顶交互版**（交互段改为静态读图指南并声明交互版不可用） |
 | matplotlib | 静态布局渲染器 | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2 | https://matplotlib.org/ | HTTP 200（2026-10-04 实测，README 链接验证表同） | plotly（viz-venv 已装）；再缺 ⇒ 邻接矩阵表 + 文字结构描述，不得手画（core §1.1） |
 
-numpy（2.5.3）/ pandas（3.0.5）为套件共用基线，实测记录见套件 README 链接验证表，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5），pyvis 0.3.2 的枚举值是 `cdn_resources='in_line'`（带下划线，`'inlined'` 会 assert 失败）。
+numpy（2.5.3）/ pandas（3.0.5）为插件共用基线，实测记录见插件 README 链接验证表，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5），pyvis 0.3.2 的枚举值是 `cdn_resources='in_line'`（带下划线，`'inlined'` 会 assert 失败）。
 
 ### 场景规范（本场景红线细则）
 
@@ -74,4 +74,4 @@ numpy（2.5.3）/ pandas（3.0.5）为套件共用基线，实测记录见套件
 
 ## 示例
 
-- `../demos/network.md` —— 30 节点小世界网络小样：`connected_watts_strogatz_graph(n=30, k=4, p=0.3, seed=42)` 真实计算 C/L/直径/模块度社区，同边数 ER 对照给出小世界商 σ≈1.73；matplotlib 静态布局图（社区着色 + 度定大小，亮暗双主题适配）+ pyvis 自包含交互 HTML，脚本 `demos/network_demo_gen.py` 重跑逐值可复现。
+- `${SKILL_DIR}/../core/references/demos/network.md` —— 30 节点小世界网络小样：`connected_watts_strogatz_graph(n=30, k=4, p=0.3, seed=42)` 真实计算 C/L/直径/模块度社区，同边数 ER 对照给出小世界商 σ≈1.73；matplotlib 静态布局图（社区着色 + 度定大小，亮暗双主题适配）+ pyvis 自包含交互 HTML，脚本 `demos/network_demo_gen.py` 重跑逐值可复现。

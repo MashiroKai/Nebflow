@@ -3,9 +3,9 @@ name: academic-research
 description: 学术调研报告与论文原图图集（pymupdf 两遍法裁图）；文献调研、综述配图任务使用。
 ---
 
-# visual-report-suite · academic-research — 学术调研报告（论文图集）
+# visual-report · academic-research — 学术调研报告（论文图集）
 
-场景定位：以**论文原图裁片**为主体的学术调研 / 文献调研报告。本文件只写场景增量；公共铁律、嵌入路径、dark-mode、渲染器兼容、缺装降级总则一律见 [`../core/SKILL.md`](../core/SKILL.md)，六工具链接验证记录见 [`../README.md`](../README.md)，不复制、不漂移。
+场景定位：以**论文原图裁片**为主体的学术调研 / 文献调研报告。本文件只写场景增量；公共铁律、嵌入路径、dark-mode、渲染器兼容、缺装降级总则一律见 [`${SKILL_DIR}/../core/SKILL.md`](${SKILL_DIR}/../core/SKILL.md)，六工具链接验证记录见 [`${SKILL_DIR}/../README.md`](${SKILL_DIR}/../README.md)，不复制、不漂移。
 
 ## 1. 触发条件
 
@@ -84,7 +84,7 @@ MSYS2_ARG_CONV_EXCL='*' 'C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe
 
 既有替代管线：`~/.nebflow/projects/Sipm/papers/figs/_tools/render.mjs`（node + pdfjs-dist，同两遍法，`--crop` 直用渲染像素坐标，自带 ≥1500 px 校验）——207 png 裁图库即其产物，缺 Python 环境时可顶。
 
-### 3.2 工具自检（core §6 模板；检测命令 2026-10-04 实测，链接验证记录引自套件 README 同日表）
+### 3.2 工具自检（core §6 模板；检测命令 2026-10-04 实测，链接验证记录引自插件 README 同日表）
 
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
@@ -107,6 +107,6 @@ MSYS2_ARG_CONV_EXCL='*' 'C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe
 
 ## 5. 示例
 
-- **单方案缩影（本场景 demo，验收基准）**：[`../demos/academic-research.md`](../demos/academic-research.md) —— C-06 PDOZ（塑闪 + 双 SiPM 符合个人剂量计）：复用既有裁图库 2 张 png（未重新裁图），四件套齐全，marked v12 兼容。
+- **单方案缩影（本场景 demo，验收基准）**：[`${SKILL_DIR}/../core/references/demos/academic-research.md`](${SKILL_DIR}/../core/references/demos/academic-research.md) —— C-06 PDOZ（塑闪 + 双 SiPM 符合个人剂量计）：复用既有裁图库 2 张 png（未重新裁图），四件套齐全，marked v12 兼容。
 - **全量图集范例**：`~/.nebflow/projects/Sipm/reports/20261004_095255_星际航行辐射监测_探测器与读出结构图集.md`（158 张原图 / 26 方案 / 四路线图墙 / §3 无图方案注因）。
 - **裁图库与登记表**：`~/.nebflow/projects/Sipm/papers/figs/`（库内 207 png，在册成品 158 张）＋ `papers/figs/FIGS_INDEX.md`。

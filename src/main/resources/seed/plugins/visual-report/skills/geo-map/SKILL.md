@@ -5,7 +5,7 @@ description: 地理报告（cartopy 静态+folium 交互）；地图与空间分
 
 # geo-map — 地理·空间分布场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 geo-map 场景增量，通用规则一律引用 core，不复制漂移。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 geo-map 场景增量，通用规则一律引用 core，不复制漂移。
 
 **独立成 skill 论证（一句话）**：地理数据的表达语汇是「投影 + choropleth」——同一组数值在不同投影下面积/形状/方位关系完全不同，区划底色分级承载「区域对比」语义，通用图表库无法表达这些 GIS 语义，必须由 cartopy/folium 专业工具链承接。
 
@@ -49,7 +49,7 @@ description: 地理报告（cartopy 静态+folium 交互）；地图与空间分
 | cartopy | 静态投影地图 / choropleth | `<venv>\python.exe -c "import cartopy; print(cartopy.__version__)"` → 0.26.0 | https://cartopy.readthedocs.io/ · https://scitools.org.uk/cartopy/docs/latest/ | 200 · 200（2026-10-04 实测；readthedocs 的 /en/stable、/en/latest 子路径实测 404，引用只走根路径） | folium 顶交互位；再缺则文字表格（经纬度+数值），禁止手画 |
 | folium | 交互网页地图 | `<venv>\python.exe -c "import folium; print(folium.__version__)"` → 0.20.0 | https://python-visualization.github.io/folium/ · https://pypi.org/project/folium/ | 200 · 200（2026-10-04 实测） | **cartopy 静态 PNG 顶交付位**（见降级链） |
 | Natural Earth 数据 | 海岸线/国界/行政区几何 | `ls ~\.local\share\cartopy\shapefiles\natural_earth\` → physical + cultural 在盘（见下） | https://www.naturalearthdata.com/ · 下载端点 https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip | 200 · 200（2026-10-04 实测） | 用已缓存图层降级；全缺则文字表格 |
-| matplotlib | cartopy 底座渲染 | 已装 3.11.2 | 见套件 README 链接验证表 | 200（2026-10-04，README 表） | plotly（已装）或数值表 |
+| matplotlib | cartopy 底座渲染 | 已装 3.11.2 | 见插件 README 链接验证表 | 200（2026-10-04，README 表） | plotly（已装）或数值表 |
 
 本机数据缓存现状（实测 2026-10-04）：`C:\Users\Kai\.local\share\cartopy\shapefiles\natural_earth\` 下 physical（110m coastline/land、50m coastline）+ cultural（110m admin_0_countries，180,924 B，本日补齐）。瓦片实测（同日）：tile.openstreetmap.org HEAD 与 GET 均超时；镜像 `https://tile.openstreetmap.de/{z}/{x}/{y}.png` 修正 301 后 GET 出真瓦片（256×256 PNG）；CartoDB 直连 `basemaps.cartocdn.com` GET 出真瓦片但 folium 0.20 内建名触发 API-key 警告（库口径按需 key，不依赖）；folium 页面依赖 CDN（jsdelivr/cdnjs/jquery 六端点）全部 200。
 
@@ -72,4 +72,4 @@ description: 地理报告（cartopy 静态+folium 交互）；地图与空间分
 
 ## 示例
 
-- `../demos/geo-map.md` —— 双形态交付小样：cartopy 世界人口 choropleth（Robinson 投影，110m 海岸线+国界+分级图例，TOP5 数值逐字）+ folium 东亚城市交互页（双底图图层、联网口径横幅、生成时点瓦片实测注明）。
+- `${SKILL_DIR}/../core/references/demos/geo-map.md` —— 双形态交付小样：cartopy 世界人口 choropleth（Robinson 投影，110m 海岸线+国界+分级图例，TOP5 数值逐字）+ folium 东亚城市交互页（双底图图层、联网口径横幅、生成时点瓦片实测注明）。

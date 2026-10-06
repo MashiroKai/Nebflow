@@ -5,7 +5,7 @@ description: 行情复盘报告（mplfinance K线量价）；行情、K线、量
 
 # finance — 金融·行情图场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 finance 场景增量，通用规则一律引用 core，不复制漂移。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 finance 场景增量，通用规则一律引用 core，不复制漂移。
 
 **独立成 skill 论证（一句）**：行情数据的核心图式是 OHLC 四值一体（开/高/低/收）+ 成交量 + 指标叠加的「K线/量价语汇」——拆成通用折线丢影线信息、拆成多图断量价联动，必须由专用渲染器（mplfinance）整图表达，故独立成场景。
 
@@ -49,12 +49,12 @@ description: 行情复盘报告（mplfinance K线量价）；行情、K线、量
 | matplotlib | 辅助图（收盘线/回撤/分布） | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2 | https://matplotlib.org/ | HTTP 200（2026-10-04 实测，README 链接验证表同） | plotly（viz-venv 已装，含 candlestick）；再缺 ⇒ 文字行情表，不得手画 |
 | pandas | OHLCV 整理/指标计算（rolling） | `<venv>\python.exe -c "import pandas; print(pandas.__version__)"` → 3.0.5 | https://pypi.org/project/pandas/ | HTTP 200（2026-10-04，README 链接验证表） | 纯 csv 读取 + 手写滑动均值循环（小数据量可行） |
 
-numpy（2.5.3）为套件共用基线，实测记录见套件 README 链接验证表。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。API 名注意：0.12.10b0 是 `mpf.make_marketcolors` / `mpf.make_mpf_style`（无下划线别名不存在）。
+numpy（2.5.3）为插件共用基线，实测记录见插件 README 链接验证表。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。API 名注意：0.12.10b0 是 `mpf.make_marketcolors` / `mpf.make_mpf_style`（无下划线别名不存在）。
 
 ### 场景规范（本场景红线细则）
 
 - **数据诚实第一**：模拟数据「正文首屏 + 图内 title」双声明；模拟数据禁止挂真实标的代码/名称，标题含「演示/模拟」字样；
-- **涨跌色约定随市场惯例并显式注明**：默认 A股/东亚红涨绿跌（本套件用 `#d64541`/`#2e9e5b`，两主题可读）；用户为美股语境换绿涨红跌并声明；
+- **涨跌色约定随市场惯例并显式注明**：默认 A股/东亚红涨绿跌（本插件用 `#d64541`/`#2e9e5b`，两主题可读）；用户为美股语境换绿涨红跌并声明；
 - **指标参数显式**：MA20、MACD(12,26,9) 之类写全参数；MA 前 N-1 日无效不画线（起点写明）；
 - **真实数据必写复权口径**（前权/后权/不复权）与取数时间戳；模拟数据写明「无复权概念」。
 
@@ -73,4 +73,4 @@ numpy（2.5.3）为套件共用基线，实测记录见套件 README 链接验�
 
 ## 示例
 
-- `../demos/finance.md` —— 合成 OHLC 小样：seed=42 几何随机游走 60 个交易日，mplfinance K线+成交量+MA20 整图（红涨绿跌，图内 title 与底注双「模拟数据」声明，亮暗双主题适配）；OHLC 合法性断言通过，全部读数脚本可复算（脚本 `demos/finance_demo_gen.py`）。
+- `${SKILL_DIR}/../core/references/demos/finance.md` —— 合成 OHLC 小样：seed=42 几何随机游走 60 个交易日，mplfinance K线+成交量+MA20 整图（红涨绿跌，图内 title 与底注双「模拟数据」声明，亮暗双主题适配）；OHLC 合法性断言通过，全部读数脚本可复算（脚本 `demos/finance_demo_gen.py`）。

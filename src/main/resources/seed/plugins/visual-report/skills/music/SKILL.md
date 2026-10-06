@@ -5,7 +5,7 @@ description: 乐理讲解（频谱/卷帘/语谱图+可听化）；音频分析�
 
 # music — 音乐·音频合成与频谱可视化场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 music 场景增量，通用规则一律引用 core，不复制漂移。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 music 场景增量，通用规则一律引用 core，不复制漂移。
 
 > **独立成 skill 论证**：音乐场景的证据链是「频率 ↔ 音名 ↔ 和声结构」的三向逐字对应 + **可听化交付**（wav 与点按发声的交互页），其独特图语汇（FFT 频谱、钢琴卷帘、语谱图）与「听得见的验证闭环」为其余六场景所无，故独立成 skill。
 
@@ -54,11 +54,11 @@ description: 乐理讲解（频谱/卷帘/语谱图+可听化）；音频分析�
 | WebAudio | 交互页音频引擎（基线/降级） | 页内 `typeof (window.AudioContext\|\|window.webkitAudioContext)`；本机 Chrome headless 实测通过 | https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API | HTTP 200（2026-10-04 实测） | 无 WebAudio 的环境不承载可听交付，明示降级为 wav 静态交付 |
 | node | 交互页语法/冒烟验证 | `node --version` → v24.14.0（README 基线复测一致） | https://nodejs.org/ | 2026-10-04 在位实测（npm 11.9.0） | 仅浏览器无 node 时跳过 `node --check`，以 headless 冒烟为准 |
 
-全工具链接验证表（六基础 + 各场景补充行）见套件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
+全工具链接验证表（六基础 + 各场景补充行）见插件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
 
 ### 交互页验证协议（「点按可发声」的实证）
 
-1. 组装：交互页源为模板 + CDN 拉取的 `Tone.min.js` 内联（组装命令随示例 `../demos/music.md` 记录），产物零外部引用；
+1. 组装：交互页源为模板 + CDN 拉取的 `Tone.min.js` 内联（组装命令随示例 `${SKILL_DIR}/../core/references/demos/music.md` 记录），产物零外部引用；
 2. 语法：`node --check` 过一遍内联脚本可解析；
 3. 冒烟：puppeteer-core（npmmirror 安装、不下载浏览器）驱动本机 Chrome headless（Remotion 实测同款 `--browser-executable` 路线）：监听 pageerror/console error 必须为零；真实 `page.click` 触发声部（AudioContext state 必须到 `running`）；`OfflineAudioContext` 离线渲染同一配方 + JS FFT 复算峰频，**全部 |音分偏差| ≤ 5 视为通过**；
 4. 暗色目检：SVG 亮/暗双主题各截图一遍（core §3）；暗色必须用「暗卡底 + `<img>`」wrapper 截图（直接导航透明 SVG 落白页失真）。
@@ -74,4 +74,4 @@ description: 乐理讲解（频谱/卷帘/语谱图+可听化）；音频分析�
 
 ## 示例
 
-- `../demos/music.md` —— A 大三和弦分解琶音小样：真合成 wav（44.1 kHz/16-bit/2.40 s，A4=440 Hz 十二平均律）、FFT 频谱峰值与音名逐字核对（|偏差| ≤ 0.04 音分，880 Hz 叠加峰幅度比实测 1.50 = 理论 1.50）、钢琴卷帘 + 语谱图、Tone.js 15.1.22 内联 + WebAudio 降级的自包含交互页（headless Chrome 实测点按发声 + 离线自检通过）。
+- `${SKILL_DIR}/../core/references/demos/music.md` —— A 大三和弦分解琶音小样：真合成 wav（44.1 kHz/16-bit/2.40 s，A4=440 Hz 十二平均律）、FFT 频谱峰值与音名逐字核对（|偏差| ≤ 0.04 音分，880 Hz 叠加峰幅度比实测 1.50 = 理论 1.50）、钢琴卷帘 + 语谱图、Tone.js 15.1.22 内联 + WebAudio 降级的自包含交互页（headless Chrome 实测点按发声 + 离线自检通过）。

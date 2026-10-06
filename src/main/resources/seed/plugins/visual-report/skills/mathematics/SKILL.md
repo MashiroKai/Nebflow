@@ -5,9 +5,9 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 
 # mathematics — 数学·函数与收敛可视化场景 skill
 
-> 上游公共规范：`../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 mathematics 场景增量，通用规则一律引用 core，不复制漂移。动画渲染一律经 `../motion-toolkit/SKILL.md` 封装，本场景不重复其环境说明。
+> 上游公共规范：`${SKILL_DIR}/../core/SKILL.md`（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 缺装降级总则 / 自检模板）。本文件只写 mathematics 场景增量，通用规则一律引用 core，不复制漂移。动画渲染一律经 `${SKILL_DIR}/../motion-toolkit/SKILL.md` 封装，本场景不重复其环境说明。
 
-**独立成 skill 的论证**：mathematics 承载套件内独有的三类图语汇——函数变换（参数扫描 / 坐标系与级数变换）、几何构造（真实坐标的几何对象与轨迹）、收敛过程（逐阶逼近与误差衰减）——其核心交付动作是「把证明直觉动画化」，这是 education（概念讲解骨架）、timing/eda（工程信号）均不覆盖的能力面。
+**独立成 skill 的论证**：mathematics 承载插件内独有的三类图语汇——函数变换（参数扫描 / 坐标系与级数变换）、几何构造（真实坐标的几何对象与轨迹）、收敛过程（逐阶逼近与误差衰减）——其核心交付动作是「把证明直觉动画化」，这是 education（概念讲解骨架）、timing/eda（工程信号）均不覆盖的能力面。
 
 ## 触发条件
 
@@ -34,7 +34,7 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 
 ### 动画选用口径（图解段内）
 
-- **收敛 / 逼近 / 参数扫描的过程叙事** → matplotlib.animation，经 `../motion-toolkit` 封装出片（`scripts\mpl_anim.py`，MP4/GIF）；数学场景默认这条栈；
+- **收敛 / 逼近 / 参数扫描的过程叙事** → matplotlib.animation，经 `${SKILL_DIR}/../motion-toolkit` 封装出片（`scripts/mpl_anim.py`，MP4/GIF）；数学场景默认这条栈；
 - **公式推演 / 逐项镜头**（对照讲解）→ manim 0.21.0 直调 `python -m manim`（不在 motion-toolkit 三栈内，其 SKILL §2 标注「未封装」）；**本机无 LaTeX：MathTex/Tex 不可用**，公式一律 `Text`/`MarkupText`（Pango 渲染）；
 - **静态结论 / 误差图** → matplotlib 单帧（对数轴误差图是本场景标配）；
 - 动画计入 ≤3 图预算（core §1.3）；MP4 是文件交付（正文写 `~/...` 路径，core §2），GIF/PNG 可直接嵌入。
@@ -43,8 +43,8 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 
 ### 工具选择
 
-- **主渲染器：viz-venv matplotlib**——函数图像、几何构造（真实坐标 patches）、概率分布、对数误差图全覆盖；中文经套件全局 matplotlibrc（YaHei，避免 U+2080 等生僻字形）；
-- **过程动画：matplotlib.animation → motion-toolkit 封装**——用户脚本只需定义 `build(fig, ax) -> (update, n_frames)`，MPLCONFIGDIR / ffmpeg exe（imageio-ffmpeg 自带 v7.1）/ yuv420p 偶数尺寸均由封装固化（`../motion-toolkit/SKILL.md` §3.3）；
+- **主渲染器：viz-venv matplotlib**——函数图像、几何构造（真实坐标 patches）、概率分布、对数误差图全覆盖；中文经插件全局 matplotlibrc（YaHei，避免 U+2080 等生僻字形）；
+- **过程动画：matplotlib.animation → motion-toolkit 封装**——用户脚本只需定义 `build(fig, ax) -> (update, n_frames)`，MPLCONFIGDIR / ffmpeg exe（imageio-ffmpeg 自带 v7.1）/ yuv420p 偶数尺寸均由封装固化（`${SKILL_DIR}/../motion-toolkit/SKILL.md` §3.3）；
 - **公式动画：manim**（可行时用于对照镜头）——渲染命令 `python -m manim render -ql --disable_caching -o <名>.mp4 <脚本>.py <场景类>`；用前跑一次冒烟；
 - 几何关系/流程类图不归本场景：graphviz / mermaid 走对应场景 skill。
 
@@ -57,9 +57,9 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 | manim | 公式动画对照镜头 | `<venv>\python.exe -c "import manim; print(manim.__version__)"` → 0.21.0 | https://docs.manim.community/en/stable/ · https://pypi.org/project/manim/ | 200 · 200（2026-10-04 实测） | 未装 ⇒ matplotlib 动画独担，公式改图内 mathtext 标注 |
 | imageio-ffmpeg | 动画出片的 ffmpeg 二进制（封装内引用） | `<venv>\python.exe -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"` → `...\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe` | https://pypi.org/project/imageio-ffmpeg/ | HTTP 200（2026-10-04 实测） | 封装降级链：MP4 ⇒ GIF（PillowWriter）⇒ 静态多帧分步图 |
 | LaTeX（manim 公式排版依赖） | MathTex/Tex 必需 | MSYS：`command -v latex pdflatex xelatex` → 均无；MiKTeX 常见路径不存在；`python -m manim render`（MathTex 场景）实测 `FileNotFoundError: [WinError 2]` | https://miktex.org/ | 未装，不适用 | **现状即降级**：manim 公式一律 `Text`/`MarkupText`（已实测出片）；装 LaTeX 后方可启用 MathTex |
-| motion-toolkit | 动画渲染封装层（备选动画栈） | `ls ..\motion-toolkit\scripts\mpl_anim.py` → 在盘（2026-10-04） | —（套件内模块） | 见 `../motion-toolkit/SKILL.md` §2 外部链接验证表 | 封装缺失 ⇒ 按上行动画降级链，不复制其环境说明 |
+| motion-toolkit | 动画渲染封装层（备选动画栈） | `ls ${SKILL_DIR}/../motion-toolkit/scripts/mpl_anim.py` → 在盘（2026-10-04） | —（插件内模块） | 见 `${SKILL_DIR}/../motion-toolkit/SKILL.md` §2 外部链接验证表 | 封装缺失 ⇒ 按上行动画降级链，不复制其环境说明 |
 
-全工具链接验证表见套件 README 与 `../motion-toolkit/SKILL.md`，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
+全工具链接验证表见插件 README 与 `${SKILL_DIR}/../motion-toolkit/SKILL.md`，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
 
 ### 数值复算规范（本场景第一红线）
 
@@ -79,10 +79,10 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 1. **数值逐字 + 可复算**（core §1.2 + 本场景复算规范）：误差图、动画状态行、复算表三处数值必须同源同格式；
 2. **收敛图必须对数轴**：误差跨数量级是收敛主题的常态，线性轴一律视为不合格；
 3. **动画必须真渲染出片**：MP4/GIF 落 `~/.nebflow/plots/`，帧数/fps/时长写进交付文本；禁止占位框、占位帧、「示意动画」文字代替；
-4. **动画渲染一律经 `../motion-toolkit` 封装**（manim 除外，直调但需冒烟）；禁止在场景内复制动效环境说明（motion-toolkit §6）；
+4. **动画渲染一律经 `${SKILL_DIR}/../motion-toolkit` 封装**（manim 除外，直调但需冒烟）；禁止在场景内复制动效环境说明（motion-toolkit §6）；
 5. **manim 只做公式/推演镜头**，数值曲线主图归 matplotlib 栈——两栈各司其职，不重复造轮子；
 6. 单文档 ≤3 图（含视频）、marked v12 兼容（core §1.3/§4）：`## ` 带空格、GFM 表分隔行列数==表头列数、只用 `$...$`、`breaks:true` 段间空行。
 
 ## 示例
 
-- `../demos/mathematics.md` —— 泰勒级数逐阶逼近 sin/cos 小样（五段骨架完整）：双面板过程动画 MP4（motion-toolkit 封装出片，240 帧 @20fps）+ manim 公式对照段（MarkupText 路线，无 LaTeX 实测）+ 对数轴误差图（数值表逐字复算）；教学参数（中心点 a=0、阶数集合、评估点 x=π/2）全声明。
+- `${SKILL_DIR}/../core/references/demos/mathematics.md` —— 泰勒级数逐阶逼近 sin/cos 小样（五段骨架完整）：双面板过程动画 MP4（motion-toolkit 封装出片，240 帧 @20fps）+ manim 公式对照段（MarkupText 路线，无 LaTeX 实测）+ 对数轴误差图（数值表逐字复算）；教学参数（中心点 a=0、阶数集合、评估点 x=π/2）全声明。
