@@ -91,6 +91,13 @@ function motion(view) {
  *  消息、定时触发、续聊注入统一重开分组；注入泡自身展示形态零改动，只修
  *  badge 分组边界).
  *
+ *  Ask ANSWER rows are NOT openers (AskUser 强制展开修令, 2026-10-06 19:29 令):
+ *  a replayed card answer (`data-nf-ask-answer`, stamped by persistence.js off
+ *  the recorded `answerOf` User row) continues the turn it was asked inside —
+ *  anchoring the live line after it would settle the terminal badge mid-turn,
+ *  below the answer bubble, on the reload-mid-ask → answer → terminal path.
+ *  同一裁决自己的措辞即判据：turn 边界 = 「**开轮**事件」，作答不开轮。
+ *
  *  Before this change the anchor was the last NON-injected user row, so a turn
  *  opened by an external injection (device-mail / node-message / schedule)
  *  anchored its line right after the PREVIOUS turn's user row — the live line
@@ -112,7 +119,8 @@ function motion(view) {
 function turnAnchor(chat) {
   let anchor = null;
   for (const el of chat.children) {
-    if (el.classList && el.classList.contains('row') && el.classList.contains('user')) anchor = el;
+    if (el.classList && el.classList.contains('row') && el.classList.contains('user') &&
+        !el.hasAttribute('data-nf-ask-answer')) anchor = el;
   }
   return anchor;
 }

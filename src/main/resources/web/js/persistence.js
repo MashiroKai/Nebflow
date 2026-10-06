@@ -607,6 +607,9 @@ export function restoreFromStorage(opts = {}) {
       const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
+      // Ask ANSWER marker — same contract as the backend-history leg below
+      // (AskUser 强制展开修令 2026-10-06): mid-turn, never a turn opener.
+      if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -977,6 +980,15 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
+      // Ask ANSWER marker (AskUser 强制展开修令, author 2026-10-06 19:29): a
+      // recorded card answer rides `answerOf` (案 B single construction point,
+      // UiMessage.askUserAnswer). The row stays a normal user bubble here, but
+      // the marker tells turnGroup it is MID-TURN — the ask blocked the turn,
+      // it did not end it — so the history segment keeps ONE turn header and
+      // the pre-ask tool results stay tucked (isNonInjectedUserRow exemption;
+      // workline turnAnchor same exemption). Absent on pre-案B rows ⇒ those
+      // keep the legacy split behaviour (unchanged).
+      if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';

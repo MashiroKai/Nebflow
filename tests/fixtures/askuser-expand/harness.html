@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<!-- askuser-expand harness.html — static harness for the AskUser 强制展开修令
+     (author 2026-10-06 19:29). Reproduces a MAIN-face turn that contains an
+     AskUserQuestion card between tool calls, through the REAL frontend modules
+     (chatView.js / chat.js / turnGroup.js / persistence.js / workline.js), on
+     both legs the app can produce:
+
+       LIVE leg   — the exact main.js handler sequence: renderUserBubble →
+                    renderToolPending/renderTool (Bash #1) → renderToolPending
+                    (AskUserQuestion) + arg stream → renderAskUser (the card;
+                    it removes the pending ask tool row) → renderTool
+                    (AskUserQuestion toolEnd) → renderToolPending/renderTool
+                    (Bash #2) → appendAiText + finishAi + collapseTurn.
+       REPLAY leg — restoreFromBackendHistory over the persisted message shape
+                    (the gateway records the card answer as a User row with
+                    answerOf) + buildTurnSummariesForHistory (called inside).
+
+     Contract under test (修令 §1): the AskUser card must NOT force-expand the
+     surrounding tool results — in the MAIN face every tool row stays tucked
+     behind the single ✻ turn header, exactly like a turn without a card.
+
+     Exposed calls:
+       window.__axUser(text)          → renderUserBubble
+       window.__axCallStart(name)     → renderToolPending + stream-buffer reset
+       window.__axArg(name, chunk)    → appendToolStreamDelta
+       window.__axDone(label, summary, content, err, input) → renderTool
+       window.__axAsk(items, rid)     → renderAskUser (live card)
+       window.__axFinishTurn(ms, model, text) → appendAiText + finishAi + collapseTurn
+       window.__axReplay(msgs)        → restoreFromBackendHistory (finished turn)
+       window.__axCensus()            → DOM-contract census of the main face
+       window.__axReset()             → clear the container
+
+     Served over a throwaway static server spawned and killed by the capture
+     script (819x discipline — never the 8080 host).
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>askuser-expand harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #ax-wrap { position: absolute; top: 0; bottom: 0; left: 0; right: 0; overflow: hidden; }
+    #ax-chat { height: 100%; overflow-y: auto; padding: 16px 12px 36px; }
+  </style>
+</head>
+<body>
+  <div id="ax-wrap"><div id="ax-chat"></div></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('ax-chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'ax-root-session';
+    chatViews.primary.sessionId = 'ax-root-session';
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const turnMod = await import(`${WEB}/turnGroup.js`);
+    const persMod = await import(`${WEB}/persistence.js`);
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const SID = 'ax-root-session';
+
+    window.__axUser = async (text) => {
+      chatMod.renderUserBubble(text, [], Date.now());
+      await raf2();
+    };
+
+    window.__axCallStart = async (name) => {
+      const v = chatViews.primary;
+      chatMod.renderToolPending(name, SID);
+      v.stream.toolStreamText = '';
+      v.stream.toolStreamToolName = name;
+      await raf2();
+    };
+
+    window.__axArg = (name, chunk) => {
+      chatMod.appendToolStreamDelta(name, chunk);
+    };
+
+    window.__axDone = async (label, summary, content, isError, input) => {
+      chatMod.renderTool(label, summary, content, !!isError, input, SID);
+      await raf2();
+    };
+
+    window.__axAsk = async (items, rid) => {
+      chatMod.renderAskUser(items, SID, undefined, rid, null, null);
+      await raf2();
+    };
+
+    window.__axFinishTurn = async (durationMs = 4200, model = 'test-model', text = '本回合的最终回复。') => {
+      const v = chatViews.primary;
+      chatMod.appendAiText(text);
+      chatMod.finishAi(durationMs, model);
+      turnMod.collapseTurn(v, {
+        durationMs, model,
+        phrase: '✻ 快速确认 4 秒',
+        title: '17:30',
+        sessionId: SID,
+      });
+      await raf2();
+    };
+
+    window.__axReplay = async (msgs, opts = {}) => {
+      persMod.restoreFromBackendHistory(msgs, { scrollToBottom: false, busyTail: !!opts.busyTail });
+      await raf2();
+    };
+
+    window.__axCensus = () => {
+      const chat = chatViews.primary.dom.chat;
+      const kids = Array.from(chat.children);
+      const headers = kids.filter(k => k.classList.contains('turn-header'));
+      const toolRows = Array.from(chat.querySelectorAll('.row.tool'));
+      const askCards = Array.from(chat.querySelectorAll('.option-box'));
+      const userRows = kids.filter(k => k.classList.contains('row') && k.classList.contains('user'));
+      return {
+        headers: headers.map(h => ({
+          text: (h.querySelector('.turn-header-text')?.textContent || '').trim(),
+          state: h.dataset.turnState || '',
+        })),
+        tools: toolRows.map(r => {
+          const card = r.querySelector('.tool-card');
+          const body = card ? card.querySelector('.body') : null;
+          return {
+            tucked: r.classList.contains('nf-tucked'),
+            visible: r.offsetHeight > 0,
+            label: (card?.querySelector('.label')?.textContent || '').trim(),
+            hasBody: !!body,
+            bodyOpenCls: body ? body.classList.contains('open') : false,
+            bodyVisible: body ? body.offsetHeight > 0 : false,
+          };
+        }),
+        askCards: askCards.map(b => ({
+          rid: b.dataset.requestId || '',
+          answered: !!b.querySelector('.option-answer'),
+          rowVisible: (b.closest('.row') || b).offsetHeight > 0,
+        })),
+        userRows: userRows.length,
+        childSeq: kids.map(k => {
+          if (k.classList.contains('turn-header')) return 'header';
+          if (k.classList.contains('nf-workline')) return 'workline';
+          if (k.classList.contains('row')) {
+            if (k.classList.contains('user')) return 'user';
+            if (k.classList.contains('tool')) return 'tool' + (k.classList.contains('nf-tucked') ? '(tucked)' : '(FLAT)');
+            if (k.querySelector('.option-box')) return 'askcard';
+            if (k.classList.contains('ai')) return 'ai';
+            return 'row:' + k.className;
+          }
+          return 'other:' + (k.className || k.tagName);
+        }),
+      };
+    };
+
+    window.__axReset = async () => {
+      chatViews.primary.dom.chat.innerHTML = '';
+      chatViews.primary.resetStream ? chatViews.primary.resetStream() : null;
+      await raf2();
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

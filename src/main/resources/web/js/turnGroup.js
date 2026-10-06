@@ -102,8 +102,22 @@ function isInjectedRow(row) {
 }
 
 function isNonInjectedUserRow(row) {
-  return row.classList && row.classList.contains('row') &&
-    row.classList.contains('user') && !isInjectedRow(row);
+  if (!row.classList || !row.classList.contains('row') ||
+      !row.classList.contains('user') || isInjectedRow(row)) return false;
+  // Ask ANSWER row (AskUser 强制展开修令, author 2026-10-06 19:29): the
+  // gateway persists a card answer as a User message carrying `answerOf`
+  // (案 B single construction point, UiMessage.askUserAnswer). Both replay
+  // legs stamp that row `data-nf-ask-answer` (persistence.js). The answer
+  // belongs to the SAME LLM turn it replied into — the turn was BLOCKED on
+  // the ask, not ended by it — so no boundary reader here may treat it as a
+  // turn opener: turnScope / dissolveTurnChrome / scopeFromHeader /
+  // expandGroupContaining / buildTurnSummariesForHistory all consume this
+  // one predicate. Before this exemption the history replay split the turn
+  // at the answer row, the pre-answer segment lost the terminal badge (it
+  // rides the final Ai row AFTER the answer) and summarizeSegment rendered
+  // it flat — every pre-ask tool result force-expanded with no ✻ header,
+  // and the settled header undercounted the turn's tools.
+  return !row.hasAttribute('data-nf-ask-answer');
 }
 
 /** v2 tuck set: thinking rows + tool-call rows ONLY. Card deliverables
