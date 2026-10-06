@@ -2282,11 +2282,10 @@
    零填充色）；唯一彩墨 = 主行动按钮与其聚焦环。相邻纯对话泡不上浮（本文件不对
    .bubble.ai 全局动手——混合内容泡如 finishAi 回挂卡的正文旅泡同样保面）。 */
 
-/* ── 幽灵座：承卡泡去面去影去圆角，题文直接坐纸面（style-2 手法）──
+/* ── 幽灵座：承卡泡去面去影去圆角（style-2 手法）──
    显式标记类（renderAskUser / renderAskUserHistory / renderPermissionPrompt /
    onboarding question 泡四处挂点），🔴 禁改回 blanket :has()——会把带正文的
-   混合泡一起剥面。内轴对齐：题文 padding 与卡（1px 边 + 14px 内距）内容轴
-   同一条 15px 竖线（HYBRID §4.2）。 */
+   混合泡一起剥面。 */
 .bubble.ai.ob-ghost-seat {
   background: none;
   border: none;
@@ -2294,7 +2293,21 @@
   border-radius: 0;
   padding: 0;
 }
-.bubble.ai.ob-ghost-seat .ob-body { padding: 0 15px; }
+/* B-3 题卡文字气泡化（askuser-bubblename 批 2026-10-06，作者 19:43 令）：
+   onboarding 题泡的题文（lead + 问句，.ob-body 段落）不再裸坐纸面——它自身
+   取得与对话流完全同材质的 AI 泡面，逐 token 取自 .bubble.ai 原值
+   （--color-bubble-ai 底 + 1px whisper 边 + 16px 圆角/左下 4px 尾 + 1px 柔影
+   + 10px/14px 内距）。选项/按钮区维持 56a44587e 浮层卡裁定不回退：外泡
+   （ghost 座）依旧零面，.ask-card 照旧直接浮在纸上——文字入泡、卡不上泡。
+   旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
+.bubble.ai.ob-ghost-seat .ob-body {
+  padding: 10px 14px;
+  background: var(--color-bubble-ai);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 16px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
 /* 题干（卡引言）在浮层语言里抬一档：15px/600（BRIEF §4.4 下限之上） */
 .bubble.ai.ob-ghost-seat .ob-para.ob-question {
   font-size: 15px;

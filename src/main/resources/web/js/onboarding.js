@@ -49,7 +49,6 @@ import { sendWs, onMessage } from './ws.js';
 import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
 import { smartScroll, escapeHtml } from './utils.js';
-import { rootDisplayName as rootName, isRootNamed } from './rootName.js';
 import { bindImeGuard, isImeComposing, commitEnter } from './imeGuard.js';
 
 const PROBE_TIMEOUT_MS = 20000; // backend times out at 15s; this is the last-resort guard
@@ -238,16 +237,17 @@ function typeInto(body, segments, { onDone = null } = {}) {
 /** Build a simulated AI bubble in the chat stream with the typewriter attached.
  *  `segments` = paragraphs of one bubble. Returns the row element.
  *
- *  N2/N3 (unnamed-state batch 2026-10-06, 口径 A · author ruling): while the root
- *  agent is UNNAMED the bubble renders NO sender label at all — neither the
- *  mechanism-name fallback (`sourceLabel()`) nor the greeting placeholder
- *  (`ob2.source.unnamed`「还没有名字的我」, N3). Named → exact previous behavior
- *  (`source || sourceLabel()`). The judgement is the single point
- *  rootName.js `isRootNamed()` — 🔴 never a display-value literal compare.
+ *  B-2 (askuser-bubblename batch 2026-10-06, author ruling upgrading N2/N3):
+ *  bubbles NEVER carry a sender label — not while unnamed (N2/N3, 56a44587e)
+ *  and not after naming either. The name's only chat-face surface is the header
+ *  center title (N1); bubbles are nameless on both sides of the naming question
+ *  (歧义处从严 — when in doubt, the bubble carries no name). The former
+ *  `source`/`sourceLabel()` plumbing is gone with the mount.
  *  `question: true` bubbles are card carriers: they get the ghost seat (the
- *  bubble de-faces so the lead/question text sits on the paper and the ask card
- *  floats below it — askuser-hybrid 重皮 2026-10-06). */
-function simBubble(segments, { onDone = null, source = null, question = false } = {}) {
+ *  bubble de-faces so the lead/question text sits in its own conversation-
+ *  material bubble — B-3 题卡文字气泡化 — and the ask card floats below it on
+ *  the paper, askuser-hybrid 重皮 2026-10-06). */
+function simBubble(segments, { onDone = null, question = false } = {}) {
   const chat = activeView?.dom?.chat;
   if (!chat) return null;
   const row = document.createElement('div');
@@ -263,12 +263,6 @@ function simBubble(segments, { onDone = null, source = null, question = false } 
     if (question && i === segments.length - 1) p.classList.add('ob-question');
     body.appendChild(p);
   });
-  if (isRootNamed()) {
-    const src = document.createElement('div');
-    src.className = 'ask-user-source';
-    src.textContent = source || sourceLabel();
-    bubble.appendChild(src);
-  }
   bubble.appendChild(body);
   row.appendChild(bubble);
   chat.appendChild(row);
@@ -316,19 +310,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && activeSim) { activeSim.finish(); }
 });
 
-// ── Display name (the only place the root agent's name renders) ─
-// The display-name read is owned by rootName.js (leaf module, single read
-// point shared with micOrb / chat / modelPanel). `"Nebula"` is the mechanism key
-// everywhere it is a judgement (task book §2 C whitelist) — only the DISPLAY face
-// parameterizes.
-function rootDisplayName() {
-  return rootName();
-}
-
-function sourceLabel() {
-  return rootDisplayName().toUpperCase();
-}
-
+// ── Display name ─
+// B-2 (askuser-bubblename 2026-10-06): this module renders the root agent's
+// name NOWHERE — bubbles are nameless (named and unnamed alike); the name's
+// chat face is the header center title only (sidebar.js, N1). What survives
+// here is the WRITE side: the naming answer flows through `renameEverywhere`
+// (override + agentsData row + header refresh event).
 /** Apply a newly chosen name everywhere the display surface reads it. */
 function renameEverywhere(name) {
   state.rootDisplayName = name;
@@ -919,8 +906,9 @@ function userSay(text) {
 async function runFlow() {
   const total = SCRIPT().length;
   const script = SCRIPT();
-  await streamBubble([t('ob2.greet1')], { source: t('ob2.source.unnamed') });
-  await streamBubble([t('ob2.greet2'), t('ob2.greet3'), t('ob2.greet4')], { source: t('ob2.source.unnamed') });
+  // B-2: no `source` on the greetings — bubbles never carry a sender label.
+  await streamBubble([t('ob2.greet1')]);
+  await streamBubble([t('ob2.greet2'), t('ob2.greet3'), t('ob2.greet4')]);
   for (let i = 0; i < script.length; i++) {
     await askQuestion(script[i], total, i + 1);
   }

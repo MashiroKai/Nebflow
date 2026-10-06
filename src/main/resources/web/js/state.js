@@ -171,6 +171,17 @@ export default {
   // paint before agentList re-pushes). `null` = read it off agentList instead.
   // 🔴 Display only: the mechanism key stays "Nebula" (task book §2 C).
   rootDisplayName: null,
+  // Root agent NAMED-verdict from the agent.json probe (rootName.js
+  // initRootNameProbe, askuser-bubblename batch): true = a non-blank
+  // `displayName` key exists in agents/Nebula/agent.json; false = unnamed or
+  // probe failed/absent; null = probe not settled yet. Judgement face only —
+  // the agentsData `displayName` row is fallback-poisoned (gateway folds the
+  // unset case to the mechanism name) and must never feed the named-judgement.
+  rootAgentFileNamed: null,
+  // The probe's authoritative display name (same file, same read the server's
+  // displayNameForRoot does). Display-chain leg for the boot race where the
+  // header renders before agentList arrives; null = unnamed / probe unsettled.
+  rootAgentFileName: null,
   selectedAgent: null,
   configText: '',
   parsedConfig: null,        // structured config parsed from JSON

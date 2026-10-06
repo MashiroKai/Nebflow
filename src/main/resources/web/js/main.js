@@ -50,7 +50,7 @@ import {
   computeAgentStates
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
-import { rootDisplayName } from './rootName.js';
+import { rootDisplayName, initRootNameProbe } from './rootName.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
@@ -4460,6 +4460,12 @@ window.Nebflow = {
 // the one shared link leg (viewers/shared.js) before the first message renders.
 bindDocMarkupLinkBridge();
 emergencyCacheCleanup(); // Purge bloated localStorage cache before any writes
+// Root named-verdict probe (rootName.js, askuser-bubblename batch B-1): the
+// agentList displayName row is fallback-poisoned, so the persisted-name face
+// (header / ask badge / pending rows) reads the agent.json probe instead.
+// Fire-and-forget — the verdict re-renders the faces via
+// `nebflow-root-name-change` when it lands.
+initRootNameProbe();
 connect();
 chatViews.primary.dom.input.focus();
 
