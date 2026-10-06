@@ -9,7 +9,7 @@ import { sendWs, onMessage } from './ws.js';
 function showBatchDeleteModalLazy() {
   import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
 }
-import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn } from './utils.js';
+import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
@@ -906,7 +906,9 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
+        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
+          ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
+          : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
           <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
@@ -1460,10 +1462,12 @@ function flushConfigToServer() {
 // Listen for config validation errors
 onMessage('error', (data) => {
   if (data.message && typeof data.message === 'string' && data.message.includes('Provider')) {
-    // Show validation errors from backend
+    // Show validation errors from backend.
+    // ui-status-redesign（分叉④=A，S7 全站归一）：唯一违规件「实心红底白字」
+    // 并入 nebflow-toast 玻璃规范——玻璃卡 + 行首 circle-x 红图标 + 中性正文。
     const toast = document.createElement('div');
     toast.className = 'cfg-toast cfg-toast-error';
-    toast.textContent = data.message;
+    toast.innerHTML = statusIcon('circle-x', 15, 'st-err') + '<span class="cfg-toast-msg">' + escapeHtml(data.message) + '</span>';
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 5000);
   }
@@ -3443,8 +3447,11 @@ function showFolderCtxMenu(x, y, folderId) {
   }
   html +=
     '<div class="ctx-separator"></div>' +
-    '<div class="ctx-item" data-action="delete" style="color:var(--color-error)">' + t('ctx.deleteFolder') + '</div>';
+    // ui-status-redesign（S10 / 盘点 #47）：常显危险文字项字转常规色，危险语义由
+    // 行首 trash-2 红图标承载；hover 时刻字转红（ctx.css :hover 交互红保留）。
+    '<div class="ctx-item" data-action="delete">' + statusIcon('trash-2', 12, 'st-err') + '<span>' + t('ctx.deleteFolder') + '</span></div>';
   menu.innerHTML = html;
+  createIconsIn(menu);
 
   menu.querySelector('[data-action="toggle-pin"]').addEventListener('click', () => {
     if (isPinned) state.pinnedFolders.delete(folderId);
