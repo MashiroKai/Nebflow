@@ -16,7 +16,10 @@
 //     render as ONE WeChat-style stacked card: front card + peeking layers to
 //     the right, the 「展开 N」 pill beside the stack on the sender side (user
 //     rows: left; LLM rows: right — 三修 ①, 2026-10-06); drag switches; a click
-//     on the collapsed stack opens Canvas with the first item (三修 ③); expand
+//     on the collapsed stack opens Canvas with the first item (三修 ③), and an
+//     expanded row's whole-face click opens Canvas with THAT item (复验令
+//     2026-10-06 16:47 — expanded was the last lightbox leg, and the collapsed
+//     binding itself was dead on real clicks, see buildMediaStack); expand
 //     flattens to one card per row (「收起」 re-stacks). A single media item
 //     renders flat with no stack at all, and its whole-card click opens Canvas
 //     like a file card (三修 ②, pathless inline bytes keep the lightbox zoom).
@@ -458,8 +461,9 @@ function openMediaItemClick(item) {
  * The stacked media group (≥2 items): pill beside the stack on the sender-side
  * (user rows left / LLM rows right, 三修 ①). A pointer drag of >38px goes
  * next / previous; 「展开 N」 flattens, 「收起」 re-stacks. A click on the
- * COLLAPSED stack opens Canvas with the FIRST item (三修 ③); the EXPANDED face
- * keeps its per-layer zoom click.
+ * COLLAPSED stack opens Canvas with the FIRST item (三修 ③), and an EXPANDED
+ * row's whole-face click opens Canvas with THAT row's item (复验令 16:47) — the
+ * lightbox survives only as openMediaItemClick's pathless-inline fallback.
  */
 function buildMediaStack(items) {
   const area = document.createElement('div');
@@ -502,10 +506,12 @@ function buildMediaStack(items) {
       fitLayer(layer, w, h, EXPAND_MAX.w, EXPAND_MAX.h);
       if (expanded) settleExpandHeight();
     }));
-    // #491 主题三 (AC-S1): an expanded layer zooms in the shared lightbox —
-    // the stack view keeps click-to-advance (retained R8 invariant), so this
-    // is where the multi-item zoom entry lives. Canvas rides the corner button.
-    layer.addEventListener('click', () => openMediaLightbox(item));
+    // 复验令 (2026-10-06 16:47 作者核查令; amends the 三修-era "expanded keeps
+    // its zoom click" reading): an expanded row's WHOLE-face click opens CANVAS
+    // with ITS item — the same single point as every other face. The expand
+    // view has no pointer-capture drag leg, so a real click does reach this
+    // layer (unlike the collapsed view — see the view-level binding below).
+    layer.addEventListener('click', () => openMediaItemClick(item));
     const canvasBtn = canvasCornerButton(item);
     if (canvasBtn) layer.appendChild(canvasBtn);
     expandView.appendChild(layer);
@@ -531,16 +537,25 @@ function buildMediaStack(items) {
   };
   applyLayers();
 
-  // 三修 ③ (2026-10-06 10:59 作者截图令): a click on the COLLAPSED stack (any
-  // painted layer) opens CANVAS with the FIRST item — the same single point the
-  // flat face and the file card share (三修 ②). The old tap-advance retires
-  // here; switching cards stays on drag/swipe, and a real drag's
+  // 三修 ③ (2026-10-06 10:59 作者截图令), 复验修正 (16:47 作者核查令): a click
+  // on the COLLAPSED stack opens CANVAS with the FIRST item — the same single
+  // point the flat face and the file card share (三修 ②). The old tap-advance
+  // retires; switching cards stays on drag/swipe, and a real drag's
   // suppressClick window keeps the swipe from also firing this open.
-  layers.forEach(layer => {
-    layer.addEventListener('click', () => {
-      if (stack.suppressClick) return;
-      openMediaItemClick(items[0]);
-    });
+  //
+  // The listener lives on `view`, NOT on the layers — the 复验 root cause: the
+  // drag leg calls view.setPointerCapture() on pointerdown, and per the
+  // pointer-events spec the click synthesized after a captured pointer fires
+  // at the CAPTURE target. Every layer-level click listener was therefore dead
+  // code for real clicks (trace: pointerup@view, click@view, NO click@layer) —
+  // a JS element.click() skips the pointer sequence entirely, which is exactly
+  // why the 10:59 三修 read green in the spec yet never fired for the author.
+  // `view` IS the front card's box (layers are inset:0), so a click here is a
+  // click on the collapsed stack. (`stack` is declared below; the body only
+  // runs on real events, after the declaration.)
+  view.addEventListener('click', () => {
+    if (stack.suppressClick) return;
+    openMediaItemClick(items[0]);
   });
 
   /** The expanded column's natural height: the sum of its layers plus the

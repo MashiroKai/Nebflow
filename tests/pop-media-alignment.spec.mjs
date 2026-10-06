@@ -261,9 +261,28 @@ test.describe('AC-S2 — user file cards fire the same workspace-open-item as Po
    order amends the IMAGE faces (pop-media 三修 ②/③): a whole-image-card click
    is now the CANVAS open — the SAME workspace-open-item single point the file
    card fires — and the COLLAPSED stack's click opens Canvas with the FIRST
-   item (front card). The lightbox remains the zoom face where Canvas cannot
-   apply: a pathless live user attachment (bytes ride inline, no absPath yet),
-   video faces, and the expanded stack layers. */
+   item (front card). The lightbox remains the zoom face ONLY where Canvas
+   cannot apply: a pathless live user attachment (bytes ride inline, no
+   absPath yet).
+
+   ═══════════ 复验批 (2026-10-06 16:47 author re-verification order) ═══════════
+
+   The author's 16:47 live test found the 10:59 fix NOT firing: a click on the
+   image body still did not open Canvas. Root causes, both reproduced with
+   real mouse clicks against this very harness:
+   • the COLLAPSED stack's binding lived on the layers, but the drag leg's
+     view.setPointerCapture() retargets a real click to `view` (the capture
+     target) — every layer listener was dead code for real input, while a JS
+     element.click() (which the old spec used) skipped the pointer sequence
+     and masked the defect;
+   • the EXPANDED rows' binding still called openMediaLightbox — the last
+     lightbox leg.
+   The fix moves the collapsed binding to the stack view and points the
+   expanded binding at openMediaItemClick. EVERY case below therefore drives a
+   REAL Playwright mouse click at the element's center point (real input
+   pipeline: hit-test → pointer events → click) and first asserts that the
+   point hit-tests to the image itself — the acceptance the author wrote in
+   the 16:47 order. */
 
 test.describe('AC-S1 — image card click faces: Canvas single point, lightbox fallback', () => {
   test('pathless live user image: lightbox zoom fallback; Esc and backdrop close', async ({ browser }) => {
@@ -345,6 +364,180 @@ test.describe('AC-S1 — image card click faces: Canvas single point, lightbox f
     expect(popStackOpened[0].absPath, 'Pop side: opened content = the FIRST image too').toBe('/tmp/pop/shot-1.png');
     expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')),
       'a collapsed-stack click never opens the lightbox').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+/* ═══════════ AC-S1 复验 — REAL-click acceptance (author 2026-10-06 16:47) ═══════════
+
+   The author's acceptance bar is a REAL click on the image body — not a JS
+   element.click(), which skips the pointer sequence and (per the 复验 root
+   cause) never exercises the capture retarget that killed the collapsed
+   stack's layer binding. Every case here drives page.mouse at the element's
+   center point and first asserts the point hit-tests to the image itself. */
+
+test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks', () => {
+  /** Drive a REAL mouse click at `locator`'s center: pre-read the hit-test at
+   *  that point, arm the workspace-open-item capture, click, then report what
+   *  opened (Canvas events vs the lightbox overlay). */
+  async function realCenterClick(page, locator) {
+    await locator.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(120);
+    const box = await locator.boundingBox();
+    const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const hit = await page.evaluate(([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      return el ? el.tagName.toLowerCase() + '.' + Array.from(el.classList).join('.') : 'null';
+    }, [point.x, point.y]);
+    await page.evaluate(() => {
+      window.__opens = [];
+      window.__onOpen = e => window.__opens.push(e.detail
+        ? { absPath: e.detail.absPath, id: e.detail.id, title: e.detail.title } : null);
+      window.addEventListener('workspace-open-item', window.__onOpen);
+    });
+    await page.mouse.click(point.x, point.y);
+    await page.waitForTimeout(300);
+    const result = await page.evaluate(() => {
+      window.removeEventListener('workspace-open-item', window.__onOpen);
+      return {
+        opens: window.__opens,
+        lightbox: !!document.querySelector('.nf-lightbox'),
+        lightboxName: document.querySelector('.nf-lightbox-name')
+          ? document.querySelector('.nf-lightbox-name').textContent : '',
+      };
+    });
+    return { point, hit, ...result };
+  }
+
+  async function renderStack(page, layers) {
+    await page.evaluate(() => window.__popStack());
+    await page.waitForFunction(
+      n => document.querySelectorAll('#chat .pop-stack-view .media-layer').length === n,
+      layers, { timeout: 10000 },
+    );
+    await page.waitForTimeout(300); // data-URI bytes decode; boxes pin their ratio
+  }
+
+  test('(a) 展开态: a real click on an image body opens Canvas with THAT item', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await renderStack(page, 3);
+
+    // Expand via a REAL click on the pill (the author's gesture path).
+    const pill = page.locator('#chat .pop-stack-area .pill');
+    await pill.scrollIntoViewIfNeeded();
+    const pb = await pill.boundingBox();
+    await page.mouse.click(pb.x + pb.width / 2, pb.y + pb.height / 2);
+    await page.waitForFunction(() => document.querySelector('#chat .pop-expand-view').classList.contains('show'),
+      null, { timeout: 5000 });
+    await page.waitForTimeout(620); // the 0.42s height transition settles
+
+    // The 复验 point: click the IMAGE BODY of expanded row #2 (shot-2.png).
+    const layerImg = page.locator('#chat .pop-expand-view .media-layer').nth(1).locator('.pop-img');
+    const probe = await realCenterClick(page, layerImg);
+    expect(probe.hit, `the click point hit-tests to the image body (got ${probe.hit})`).toContain('img.pop-img');
+    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
+    expect(probe.opens[0].absPath, 'opened file = the clicked row\'s item (shot-2.png)').toBe('/tmp/pop/shot-2.png');
+    expect(probe.opens[0].id, 'identity = file:<absPath> (the file-card single point)').toBe('file:/tmp/pop/shot-2.png');
+    expect(probe.lightbox, 'no lightbox detour on a pathed image (复验令 a)').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('(b) 收起态: a real click on the collapsed stack opens Canvas with the FIRST item', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await renderStack(page, 3);
+
+    // The 复验 root cause lived exactly here: a REAL click on the front card —
+    // the capture-retargeted click never reached the old layer binding.
+    const frontImg = page.locator('#chat .pop-stack-view .media-layer.layer-front .pop-img');
+    const probe = await realCenterClick(page, frontImg);
+    expect(probe.hit, `the click point hit-tests to the image body (got ${probe.hit})`).toContain('img.pop-img');
+    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
+    expect(probe.opens[0].absPath, 'opened file = the FIRST item (shot-1.png)').toBe('/tmp/pop/shot-1.png');
+    expect(probe.opens[0].id, 'identity = file:<absPath>').toBe('file:/tmp/pop/shot-1.png');
+    expect(probe.lightbox, 'no lightbox on the collapsed-stack open (复验令 b)').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('三修 ② regression: a real click on the FLAT single image opens Canvas', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__popSingleWide());
+    await page.waitForSelector('#chat .pop-media-flat .pop-img');
+    await page.waitForTimeout(300);
+
+    const probe = await realCenterClick(page, page.locator('#chat .pop-media-flat .pop-img'));
+    expect(probe.hit, `the click point hit-tests to the image body (got ${probe.hit})`).toContain('img.pop-img');
+    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
+    expect(probe.opens[0].absPath, 'the flat card opened Canvas with the image').toBe('/tmp/pop/wide.png');
+    expect(probe.lightbox, 'no lightbox (the 10:59 face already worked — keep it working)').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('the corner button remains a working SECOND entry (复验令: 可留但不再是唯一通路)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await renderStack(page, 3);
+    const pill = page.locator('#chat .pop-stack-area .pill');
+    await pill.scrollIntoViewIfNeeded();
+    const pb = await pill.boundingBox();
+    await page.mouse.click(pb.x + pb.width / 2, pb.y + pb.height / 2);
+    await page.waitForFunction(() => document.querySelector('#chat .pop-expand-view').classList.contains('show'),
+      null, { timeout: 5000 });
+    await page.waitForTimeout(620);
+
+    // Real click on the row's own corner button (28×28, top-right, z-index 6;
+    // opacity 0 until hover — opacity never blocks real input). The hit-test
+    // reads the DEEPEST node, which inside the 14×14 glyph is the svg path —
+    // still the button's own box (the icon is its child), so both readings count.
+    const btn = page.locator('#chat .pop-expand-view .media-layer').nth(1).locator('.pop-media-canvas');
+    const probe = await realCenterClick(page, btn);
+    expect(probe.hit === 'button.pop-media-canvas' || probe.hit.startsWith('path') || probe.hit.startsWith('svg'),
+      `the click point lands inside the corner button (got ${probe.hit})`).toBe(true);
+    expect(probe.opens.length, 'the explicit entry still opens Canvas').toBe(1);
+    expect(probe.opens[0].absPath, '…with the same item as the body click').toBe('/tmp/pop/shot-2.png');
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('(c) 展开钮几何: vertical centering on the stack midline + sender side (user left / LLM right)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await renderStack(page, 3); // LLM row: .row.pop-artifact (no .user)
+    await page.evaluate(() => window.__userMediaLive()); // appends the user-media row (2-image stack)
+    await page.waitForFunction(
+      () => document.querySelectorAll('#chat .row.user-media .pop-stack-view .media-layer').length === 2,
+      null, { timeout: 10000 },
+    );
+
+    const geo = await page.evaluate(() => {
+      const read = (row) => {
+        const area = row.querySelector('.pop-stack-area');
+        const pill = area.querySelector('.pill');
+        const view = area.querySelector('.pop-stack-view');
+        const pr = pill.getBoundingClientRect(), vr = view.getBoundingClientRect();
+        return {
+          pillCenterY: +(pr.y + pr.height / 2).toFixed(1),
+          stackCenterY: +(vr.y + vr.height / 2).toFixed(1),
+          deltaY: +((pr.y + pr.height / 2) - (vr.y + vr.height / 2)).toFixed(1),
+          pillLeft: +pr.left.toFixed(1), pillRight: +pr.right.toFixed(1),
+          stackLeft: +vr.left.toFixed(1), stackRight: +vr.right.toFixed(1),
+          sideLeft: pr.right <= vr.left + 0.5,
+          sideRight: pr.left >= vr.right - 0.5,
+        };
+      };
+      return {
+        llm: read(document.querySelector('#chat > .row.pop-artifact:not(.user)')),
+        user: read(document.querySelector('#chat > .row.user-media')),
+      };
+    });
+
+    expect(geo.llm, 'the LLM row was probed').toBeTruthy();
+    expect(geo.user, 'the user row was probed').toBeTruthy();
+    expect(Math.abs(geo.llm.deltaY), `LLM row: |钮心y − 栈中线y| = ${geo.llm.deltaY}px (垂直居中)`).toBeLessThanOrEqual(1);
+    expect(Math.abs(geo.user.deltaY), `user row: |钮心y − 栈中线y| = ${geo.user.deltaY}px (垂直居中)`).toBeLessThanOrEqual(1);
+    expect(geo.llm.sideRight, `LLM row: pill RIGHT of the stack (pill.x ${geo.llm.pillLeft} ≥ stack.right ${geo.llm.stackRight})`).toBe(true);
+    expect(geo.user.sideLeft, `user row: pill LEFT of the stack (pill.right ${geo.user.pillRight} ≤ stack.x ${geo.user.stackLeft})`).toBe(true);
     expect(pageErrors).toEqual([]);
     await context.close();
   });
