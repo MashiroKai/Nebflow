@@ -380,21 +380,28 @@
   margin-top: 6px;
   min-height: 16px;
 }
-/* 错误行占满左侧，计数器固定右侧。 */
+/* 错误行占满左侧，计数器固定右侧。ui-status-redesign（盘点 #35，S9 同族）：
+   错误句转中性字，红由行首 circle-alert 图标（projectTab.js 注入）承载。 */
 .proj-create-error {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
   font-size: 11.5px;
-  color: var(--color-danger);
+  color: var(--status-word);
 }
+.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
 .proj-create-count {
   flex: 0 0 auto;
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted);
 }
-/* 超 500 时染色（既有 `--color-danger`，零新色值）。 */
-.proj-create-count.is-over { color: var(--color-danger); }
+/* 超 500 时染色（ui-status-redesign 盘点 #50）：11.5px 红数字退役 → 数字转
+   中性、行首 triangle-alert 琥珀图标（projectTab.js 注入，非阻断超量=警示档）。 */
+.proj-create-count.is-over { color: var(--status-word); }
+.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
 .proj-create-hint { flex: 1; min-width: 0; }
 
 /* ── D4 path slot (author ruling 2026-09-24: "use a path picker to choose, rather

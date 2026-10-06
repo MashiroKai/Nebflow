@@ -48,7 +48,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { t, getLocale } from './i18n.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, statusIcon } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
 import { indexMedia, entryMatchesTab, entryMatchesKeyword, groupEntriesByTime } from './popMediaIndex.js';
 import { openMediaLightbox } from './popArtifacts.js';
@@ -1524,14 +1524,15 @@ function expectsCardBody(r) {
 }
 
 /** Inline warning strip inside a result row (failure must be visible, never
- *  console-only and never a silently missing card). */
+ *  console-only and never a silently missing card). ui-status-redesign（盘点
+ *  #28，S9 同族）：行首 circle-alert 红图标 + 中性正文。 */
 function mountRowNotice(rowEl, msg) {
   const existing = rowEl.querySelector('.search-result-card-warn');
-  if (existing) { existing.textContent = msg; return existing; }
+  if (existing) { existing.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(msg) + '</span>'; return existing; }
   const el = document.createElement('div');
   el.className = 'search-result-card-warn';
   el.setAttribute('role', 'status');
-  el.textContent = msg;
+  el.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
   rowEl.appendChild(el);
   return el;
 }

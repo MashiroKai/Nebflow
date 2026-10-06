@@ -9,7 +9,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, statusIcon, escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
@@ -179,7 +179,8 @@ function updateSelectionBar() {
 
     const delBtn = document.createElement('button');
     delBtn.className = 'explorer-selection-delete';
-    delBtn.textContent = t('explorer.delete');
+    // ui-status-redesign（S10 / 盘点 #47）：字转常规色，行首 trash-2 红图标承载。
+    delBtn.innerHTML = statusIcon('trash-2', 12, 'st-err') + escapeHtml(t('explorer.delete'));
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       deleteSelected();

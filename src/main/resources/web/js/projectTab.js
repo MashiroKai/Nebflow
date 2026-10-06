@@ -27,7 +27,7 @@
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
 import { esc, authHeaders } from './flowHelpers.js';
-import { onMinuteTick } from './utils.js';
+import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
 import { rootNameParams } from './rootName.js';
 import { contentText } from './contentI18n.js';
@@ -239,21 +239,23 @@ function openProjectsCreateDialog(trigger) {
    *  only by the picker — there is no hand-typed input face. */
   let pickedPath = null;
 
-  /** 计数器（上限可发现）+ 超限染色（既有 `--color-danger`，零新色值）。 */
+  /** 计数器（上限可发现）。ui-status-redesign（盘点 #50）：超限不再染红数字——
+   *  数字转中性，行首 triangle-alert 琥珀图标（非阻断超量 = 警示档）。 */
   const renderCount = () => {
     const n = projectCreateLength(descEl.value);
-    countEl.textContent = t('project.createDescCount', { n: String(n) });
+    countEl.innerHTML = (n > PROJECT_CREATE_MAX ? statusIcon('triangle-alert', 11, 'st-warn') : '') + esc(t('project.createDescCount', { n: String(n) }));
     countEl.classList.toggle('is-over', n > PROJECT_CREATE_MAX);
   };
   /** Report an error: `role="alert"` row shown in place, NEVER silently swallowed
-   *  (the dialog stays open and the values are not cleared). */
+   *  (the dialog stays open and the values are not cleared).
+   *  ui-status-redesign（盘点 #35，S9 同族）：行首 circle-alert 红图标 + 中性正文。 */
   const showError = (msg) => {
-    errorEl.textContent = msg;
+    errorEl.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + esc(msg) + '</span>';
     errorEl.hidden = false;
   };
   const clearError = () => {
     errorEl.hidden = true;
-    errorEl.textContent = '';
+    errorEl.innerHTML = '';
   };
   const renderPath = () => {
     pathEl.textContent = pickedPath || t('project.createWorkspaceNone');

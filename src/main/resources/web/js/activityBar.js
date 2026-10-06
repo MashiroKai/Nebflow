@@ -21,7 +21,7 @@
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff } from './neblink.js';
 import { setUpdateDot } from './updateCheck.js';
-import { createIconsIn, escapeHtml } from './utils.js';
+import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
 import { getProfileUrl } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
@@ -491,7 +491,10 @@ function injectLoginModalStyles() {
 .login-actions { display: flex; flex-direction: column; gap: 8px; }
 .login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
 .login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
-.login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
+/* ui-status-redesign（S11 / 盘点 G3）：全盘点对比度最差件（#e57373 白底 2.8:1 ✗）
+   → 中性正文（回到 ~10:1 级）＋行首 octagon-alert 红图标（activityBar.js 注入）。 */
+.login-error-msg { font-size: 13px; color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: 8px; }
+.login-error-msg .st-ic { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
 `;
   document.head.appendChild(style);
 }
@@ -720,7 +723,7 @@ function showLoginModal(opts = {}) {
         ? `<button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-cleanup">${t('neblink.cleanupRelogin')}</button>`
         : '';
       body = `
-        <div class="login-error-msg" data-code="${escapeHtml(failureCode)}">${escapeHtml(data.message || t('login.failed'))}</div>
+        <div class="login-error-msg" data-code="${escapeHtml(failureCode)}">${statusIcon('octagon-alert', 15, 'st-err')}<span>${escapeHtml(data.message || t('login.failed'))}</span></div>
         <div class="login-actions">
           <button class="login-modal-btn glass-control cfg-btn-primary" id="login-retry">${t('login.retry')}</button>
           <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>

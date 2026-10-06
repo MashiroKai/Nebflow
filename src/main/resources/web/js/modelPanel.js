@@ -25,6 +25,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
+import { statusIcon, escapeHtml } from './utils.js';
 import { createDepVisibility } from './depVisibility.js';
 import { rootNameParams } from './rootName.js';
 
@@ -226,11 +227,12 @@ function flashManualInput() {
 }
 
 // ── Inline error helper ────────────────────────────────────
+// ui-status-redesign（盘点 #38，S9 同族）：行首 circle-alert 红图标 + 中性正文。
 
 function flashInline(container, msg) {
   const el = container?.querySelector('.mp-inline-err');
   if (!el) return;
-  el.textContent = msg;
+  el.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
   el.classList.add('on');
   setTimeout(() => { el.classList.remove('on'); }, 2500);
 }

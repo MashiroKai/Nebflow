@@ -415,8 +415,12 @@
   color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
+/* ui-status-redesign（S2 / 盘点 #9,#12,#13）：卡死/失败状态词一律中性字，语义红
+   由词前 timer-off（卡死）/ circle-x（失败）图标承载（main.js 等发射点注入 .st-ic）。 */
 .bg-task-state.bg-state-stuck,
-.bg-task-state.bg-state-error { color: var(--color-error); }
+.bg-task-state.bg-state-error,
+.bg-task-state.bg-state-failed { color: var(--status-word); }
+.bg-task-state .st-ic { width: 11px; height: 11px; margin-right: 3px; }
 .bg-task-state.bg-state-frozen { color: rgb(var(--accent-agent-light)); }
 .bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
 .bg-task-kind {
@@ -538,13 +542,19 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+/* 卡死标签（盘点 #10 / S2）：词转中性 + timer-off 红图标（发射点注入）。 */
 .bg-task-stuck {
   font-size: 11px;
   font-weight: 500;
-  color: var(--color-error);
+  color: var(--status-word);
   margin-top: 2px;
 }
-.bg-task-status.bg-status-error { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); }
+.bg-task-stuck .st-ic { width: 11px; height: 11px; margin-right: 3px; }
+/* 心跳光点 error/stuck（盘点 #11 / S2）：终态/卡死光点由「红晕＋1s 闪烁」改
+   静态红描边环点（dot-ghost 形态——形状仍可辨、去 alarm 动效，reduced-motion
+   天然达标）；运行态绿点脉冲保留（活动性语义）。 */
+.bg-task-status.bg-status-error { background: transparent; border: 1.5px solid var(--status-error-icon); box-shadow: none; }
+.bg-task-status.bg-status-stuck { background: transparent; border: 1.5px solid var(--status-error-icon); box-shadow: none; animation: none; }
 .bg-task-status.bg-status-frozen { background: rgb(var(--accent-agent-light)); box-shadow: 0 0 4px rgb(var(--accent-agent-light) / 0.4); }
 .bg-task-status.bg-status-done { background: var(--color-frame-text-muted); box-shadow: none; }
 /* Frozen is the agent-blue accent: deep sapphire in light theme (agent-light
@@ -651,8 +661,7 @@
 }
 .bg-task-status.bg-status-active { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); animation: bg-pulse 1.5s ease-in-out infinite; }
 .bg-task-status.bg-status-idle { background: #d4a030; box-shadow: 0 0 4px rgba(212,160,48,0.4); }
-.bg-task-status.bg-status-stuck { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); animation: bg-status-blink 1s ease-in-out infinite; }
-@keyframes bg-status-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+/* stuck 移到上面与 error 同规（ui-status-redesign：静态描边环点）。 */
 
 .bg-task-lines {
   font-size: 10px;
@@ -709,7 +718,7 @@
    (flow-agent popup family pattern — feature popups inject their own CSS). */
 .bg-task-row.bg-task-ended { opacity: 0.72; }
 .bg-task-row.bg-task-ended:hover { opacity: 1; }
-.bg-task-state.bg-state-failed { color: var(--color-error); }
+.bg-task-state.bg-state-failed { color: var(--status-word); }
 .bg-task-state.bg-state-done { color: var(--color-frame-text-muted); }
 #bg-dropdown .bg-task-status.bg-status-done {
   background: var(--color-frame-text-muted);
@@ -793,16 +802,18 @@
   color: #34c759;
   opacity: 1;
 }
-/* R4：复制失败**就地提示**（裁定 = 要提示，主/友两面）——失败态按钮转错误色，
-   并注入一行 `aria-live` 文案（`.copy-failed-live`，由 utils.js `markCopyFailed()`
-   生成后 2000ms 自清）。🔴 不新增 toast（toast 属既有 UI 裁定面，本批边界外）。 */
-.msg-copy.copy-failed { color: var(--color-error); opacity: 1; }
+/* R4：复制失败**就地提示**（裁定 = 要提示，主/友两面）——失败态按钮（图标载体）
+   转错误 token 色，并注入一行 `aria-live` 文案（`.copy-failed-live`，由 utils.js
+   `markCopyFailed()` 生成后 2000ms 自清）。ui-status-redesign（盘点 #43 / S6）：
+   10px 红字 → circle-x 红图标 + 中性词；🔴 不新增 toast。 */
+.msg-copy.copy-failed { color: var(--status-error-icon); opacity: 1; }
 .copy-failed-live {
   font-size: 10px;
-  color: var(--color-error);
+  color: var(--status-word);
   margin-left: 4px;
   white-space: nowrap;
 }
+.copy-failed-live .st-ic { width: 10px; height: 10px; margin-right: 2px; vertical-align: -1px; }
 
 /* Recall button (same base style as copy, with hover feedback) */
 .duration-badge .msg-recall {
@@ -1253,7 +1264,9 @@
 .tool-card--pending { background: #e8e8e8; }
 .tool-card .icon { flex-shrink: 0; margin-top: 1px; }
 .tool-card .icon.ok { color: var(--color-success); }
-.tool-card .icon.err { color: var(--color-error); }
+/* ui-status-redesign（盘点 #45）：11 处 JS 内联 ✕ SVG stroke 硬编码 #f44336 →
+   currentColor，色由本类 token 给出（--status-error-icon，暗档随 token 提亮）。 */
+.tool-card .icon.err { color: var(--status-error-icon); }
 .tool-card .spinner {
   width: 14px; height: 14px;
   border: 2px solid #ccc;
@@ -1441,14 +1454,22 @@
 .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 2px; }
 .tool-stream-body::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
 
+/* ui-status-redesign（S8 / 盘点 #30）：粉底红字卡 → 中性 surface 卡＋行首红
+   circle-x 图标（chat.js 注入）；错误正文可复制性、max-width 几何不变。 */
 .error-card {
-  background: #ffebee;
-  color: #c62828;
+  background: var(--color-surface);
+  color: var(--status-word);
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--status-error-icon);
   border-radius: 10px;
   padding: 8px 14px;
   font-size: 13px;
   max-width: 85%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
+.error-card .st-ic { width: 14px; height: 14px; margin: 2px 0 0; flex-shrink: 0; }
 
 /* ---------- Notice Cards (system / stage notifications) ---------- */
 .notice-card {
@@ -1502,13 +1523,15 @@
   animation: fadeIn 0.2s ease;
 }
 .compact-card-icon.ok { color: var(--color-success); }
-.compact-card-icon.err { color: var(--color-error); }
+/* ui-status-redesign（盘点 #31）：err 图标 = 图案载体 ✓，色值归 token；
+   error 边框同归 token color-mix（暗档随 token 自适配）。 */
+.compact-card-icon.err { color: var(--status-error-icon); }
 .compact-card[data-state="active"] {
   border-color: rgb(var(--sapphire) / 0.3);
   color: var(--color-text);
 }
 .compact-card[data-state="error"] {
-  border-color: rgba(244, 67, 54, 0.35);
+  border-color: color-mix(in srgb, var(--status-error-icon) 35%, transparent);
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
@@ -1573,7 +1596,9 @@
   .option-cancel:disabled { border-color: rgba(255,255,255,0.08); }
   .option-confirm:disabled { background: rgba(7,193,96,0.25); }
 
-  .error-card { background: rgba(244,67,54,0.12); color: #ef5350; }
+  /* ui-status-redesign（S8）：暗档同归中性 surface 卡（材质 token 自适配），
+     红只留行首图标；原粉底红字（rgba 244 · #ef5350）退役。 */
+  .error-card { background: var(--color-surface); color: var(--status-word); border-color: var(--color-border); border-left-color: var(--status-error-icon); }
 
   .code-copy-btn {
     background: rgba(23,26,33,0.9);
@@ -1967,7 +1992,7 @@
   right: 6px;
   font-size: 12px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 6px;
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
@@ -1982,36 +2007,8 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
-/* ── 按钮规格统一（作者 2026-10-05：「整体的UI风格 按钮样式，都需要跟Nebflow统一」）──
-   onboarding 全程的 labeled 按钮走全站 Glass Control 的同一几何常例：
-   圆角 10px（09-14 裁定常例）、5px 12px 内距、13px/500 字 —— 与 .option-btn /
-   发送键族（sapphire.css 发送键族统一块）同档；此前这些按钮没有声明几何，
-   实际渲染落 UA 默认（无圆角、系统字重），是「不统一」的主要来源。 */
-.glass-control.ob-primary,
-.glass-control.ob-ghost {
-  border-radius: 10px;
-  padding: 5px 12px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-}
-/* 主操作 = 发送键族同款绿实心（作者 2026-09-15 逐字令：主键四态同一套语言）：
-   rest = var(--color-primary)，hover 递进 var(--color-primary-hover)，
-   墨 = #fff（.cfg-btn-primary / .option-btn.picked 的同一既有族墨值），
-   材质仍继承 .glass-control 的 --glass-control-* token（玻璃绿，非第二材质）。
-   替换掉的 rgba(7, 193, 96, 0.42) 半透绿是统一前的旧面。 */
 .glass-control.ob-primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary-hover);
-  color: #fff;
-}
-.glass-control.ob-primary:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-  border-color: var(--color-primary-hover);
-}
-.glass-control.ob-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  background: rgba(7, 193, 96, 0.42);
 }
 .ob-probing {
   margin-top: 8px;
@@ -2084,10 +2081,7 @@
   margin-top: 1px;
 }
 .option-btn.picked .option-text small {
-  /* picked 的白墨来自 .option-btn.picked 的 color:#fff（族墨值）；此处只做
-     次级弱化 —— inherit + opacity，不再自持第二份字面量白。 */
-  color: inherit;
-  opacity: 0.8;
+  color: rgba(255, 255, 255, 0.8);
 }
 .option-btn .option-check {
   display: inline-block;
@@ -2097,11 +2091,11 @@
   background: transparent;
   box-shadow: none;
   color: var(--color-text-dim);
-  border-color: var(--color-border);
+  border-color: rgba(145, 170, 210, 0.2);
 }
 .option-btn.opt-ghost:hover {
   color: var(--color-text);
-  border-color: var(--color-text-muted);
+  border-color: rgba(145, 170, 210, 0.5);
 }
 .free-row {
   display: flex;
@@ -2113,7 +2107,7 @@
   flex: 1;
   padding: 5px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border-radius: 14px;
   font-size: 13px;
   outline: none;
   box-sizing: border-box;
@@ -2262,9 +2256,15 @@
 .notif-icon.reminder {
   background: #D4A574;
 }
+/* conn（ui-status-redesign 盘点 #7 / D 组）：红方块＋白字符 ! → 透明底 + wifi-off
+   真图标（红 = --status-error-icon 图标载体）；形状编码（斜杠电波）在暗色/色弱下
+   仍可辨。文字档 size/weight 对字符形态保留（仅 conn 覆写）。 */
 .notif-icon.conn {
-  background: #C0392B;
+  background: transparent;
+  color: var(--status-error-icon);
+  font-size: 0;
 }
+.notif-icon.conn .st-ic { width: 15px; height: 15px; }
 .notif-text {
   flex: 1;
   min-width: 0;
@@ -2812,7 +2812,9 @@
   background: var(--color-surface);
 }
 
-/* ===== Permission Danger Levels ===== */
+/* ===== Permission Danger Levels =====
+   ui-status-redesign（S14 / 盘点 #51）：彩边＋彩 10% 底 = 图案载体保留；
+   横幅正文一律中性字，语义色只留在行首图标（.st-warn/.st-err token 档）。 */
 .perm-danger-banner {
   display: flex;
   align-items: center;
@@ -2827,6 +2829,7 @@
 .perm-danger-banner span {
   flex: 1;
 }
+.perm-danger-banner .st-ic { flex-shrink: 0; }
 
 /* Warning level (git ops, may lose data) */
 .bubble.ai.perm-warning {
@@ -2834,25 +2837,25 @@
 }
 .bubble.ai.perm-warning .perm-danger-banner {
   background: rgba(255, 193, 7, 0.1);
-  color: var(--color-warning);
+  color: var(--status-word);
 }
 
 /* Dangerous level (deletion, kill, destructive ops) */
 .bubble.ai.perm-dangerous {
-  border: 1px solid var(--color-error);
+  border: 1px solid var(--status-error-icon);
 }
 .bubble.ai.perm-dangerous .perm-danger-banner {
   background: rgba(244, 67, 54, 0.1);
-  color: var(--color-error);
+  color: var(--status-word);
 }
 
 /* Critical level (system destruction) */
 .bubble.ai.perm-critical {
-  border: 2px solid var(--color-error);
+  border: 2px solid var(--status-error-icon);
 }
 .bubble.ai.perm-critical .perm-danger-banner {
   background: rgba(244, 67, 54, 0.12);
-  color: var(--color-error);
+  color: var(--status-word);
 }
 
 /* Source badge: shows which sub-agent a permission request came from */
@@ -2935,9 +2938,11 @@
   color: var(--color-text-muted);
   line-height: 1.45;
 }
+/* 「继续等待」提示行（盘点 #32 字收敛）：12px 提示句转中性字——红/琥珀只在
+   图标（.error-icon，既有）与按钮（交互红，铁律三豁免）上。 */
 .error-escalation-wait {
   font-size: 12px;
-  color: rgb(var(--amber));
+  color: var(--status-word);
   font-weight: 500;
   line-height: 1.4;
 }
@@ -3291,18 +3296,24 @@
   margin-top: 2px;
 }
 
-/* C: inline path error — single source = --color-danger (bright/dark in base.css) */
+/* C: inline path error — ui-status-redesign（S9 同族 / 盘点 #34）：红底红边红字框
+   → 中性框＋左侧 2px 红线（图案）＋行首 circle-alert 红图标（JS 注入）＋中性正文。 */
 .wsp-err {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   font-size: 11px;
-  color: var(--color-danger);
+  color: var(--status-word);
   margin-bottom: 8px;
   padding: 5px 10px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 32%, transparent);
+  border-left: 2px solid var(--status-error-icon);
   line-height: 1.4;
-  word-break: break-all;
 }
+.wsp-err .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.wsp-err span { word-break: break-all; min-width: 0; }
 
 /* Empty-state second line (the way out), under the .wsp-empty fact line */
 .wsp-empty-hint {
@@ -3311,20 +3322,26 @@
 }
 
 /* Clear button (project-root mode) — danger family, same values as the
-   destructive buttons in modal.css */
+   destructive buttons in modal.css. ui-status-redesign（S10 / 盘点 #47）：常显
+   「清空」键字转常规色，行首 trash-2 红图标承载；hover 转红（铁律三）。 */
 .wsp-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid rgba(220, 60, 60, 0.3) !important;
-  color: rgba(220, 60, 60, 0.85) !important;
+  color: var(--color-text) !important;
   background: rgba(220, 60, 60, 0.04) !important;
 }
+.wsp-clear .st-ic { color: var(--status-error-icon); }
 .wsp-clear:hover {
   background: rgba(220, 60, 60, 0.08) !important;
   border-color: rgba(220, 60, 60, 0.5) !important;
   box-shadow:
     0 0 12px rgba(220, 60, 60, 0.1),
     0 0 24px rgba(220, 60, 60, 0.05) !important;
-  color: #e55 !important;
+  color: var(--status-error-icon) !important;
 }
+.wsp-clear:hover .st-ic { color: var(--status-error-icon); }
 
 @media (prefers-color-scheme: dark) {
   .ws-pick-target { background: rgba(255,255,255,0.05); border-color: rgba(145,170,210,0.28); }
@@ -3426,7 +3443,11 @@
    in this block off for that window — no per-element handling. */
 .nf-workline {
   display: flex;
-  align-items: flex-start;
+  /* 2026-10-06 author screenshot defect (「›偏上、文字基线偏下」): the row
+     centered like its own terminal face (.turn-header is align-items:center)
+     — the old flex-start + a chevron margin-top band-aid left the 12px
+     chevron ink riding high against the 18px text line. */
+  align-items: center;
   gap: 4px;
   max-width: 85%;
   margin: 2px 0;
@@ -3445,7 +3466,9 @@
   animation: nf-wl-in 0.3s ease both;
 }
 .nf-workline:hover { color: var(--color-text); opacity: 1; }
-.nf-workline .nf-chevron { flex-shrink: 0; margin-top: 1px; }
+/* chevron is centered by the row's align-items:center — no offset needed
+   (the retired `margin-top: 1px` was the flex-start-era band-aid). */
+.nf-workline .nf-chevron { flex-shrink: 0; }
 /* The slot IS the line (zcode-484 batch, author ruling 2026-10-04 09:29
    「我要的思考过程以及工具过程的流式，是在一行进行流式，像zcode一样」 — this
    REVERSES the 2026-10-03 UI-A ruling 「思考过程的那一行要能换行显示」, which had
@@ -3544,15 +3567,17 @@
    A1 measures the ordering, not the mechanism). */
 .nf-wl-item.is-enter-late { animation-delay: 0.4s; }
 
-/* error mark for a failed tool (text cross, same 16px ink box as the check) */
+/* error mark for a failed tool (text cross, same 16px ink box as the check)
+   — ui-status-redesign（盘点 #40 / F 表）：✕ 字形 = 形状载体保留，色值归
+   --status-error-icon token；失败标签（词）转中性字。 */
 .nf-wl-x { width: 16px; height: 16px; }
 .nf-wl-x::before {
   content: "\2715";
   display: block; width: 16px; line-height: 16px; text-align: center;
-  font-size: 13px; font-weight: 700; color: var(--color-error);
+  font-size: 13px; font-weight: 700; color: var(--status-error-icon);
 }
 .nf-wl-x svg { display: none; }
-.nf-wl-item.is-error .nf-wl-label { color: var(--color-error); }
+.nf-wl-item.is-error .nf-wl-label { color: var(--status-word); }
 
 /* thinking: the badge prints the thinking text as TEXT (UI-C text cadence) —
    and it is ONE row (zcode-484 batch). The 2026-10-03 UI-A rule made this box
@@ -3888,8 +3913,13 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* The user side's independent card row — identical spacing to a Pop artifact
-   row; the marker class exists for QA/spec targeting, not for restyling. */
+   row; the marker class exists for QA/spec targeting, not for restyling.
+   attach-side-align (2026-10-06 作者截图令): the row carries the bubble-side
+   `user` class (popArtifacts.buildUserMediaRow), so .row.user's
+   align-items:flex-end owns the sender side; inside the group every card
+   mirrors the same side (mixed 220px stack + 300px file cards stay flush). */
 .row.user-media { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+.row.user-media .pop-group { align-items: flex-end; }
 
 /* Canvas secondary entry on a media CARD (flat faces + expanded stack layers).
    WeChat keeps such chips unobtrusive: small, top-right, surface-tinted. */

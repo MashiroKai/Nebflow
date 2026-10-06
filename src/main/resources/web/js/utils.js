@@ -550,6 +550,38 @@ export function createIconsIn(root) {
   }
 }
 
+// ── Status icon helper (ui-status-redesign 2026-10-05, 分叉①=A / ③=lucide) ──
+// State markers that must render inside innerHTML templates (state words,
+// pills, banners) without waiting for a createIconsIn pass. Renders the SAME
+// vendored lucide geometry (kebab→Pascal lookup, currentColor stroke — JS
+// strings must never hardcode a color; the consuming CSS class owns the
+// semantic token). Falls back to an `<i data-lucide>` placeholder when the
+// vendor lib has not loaded yet — a later createIconsIn pass upgrades it.
+// Size via width/height attrs (matches agentManager's inline-style usage);
+// always aria-hidden when paired with a visible status word — pass
+// { labelled: true } for icon-only carriers so the caller attaches
+// title/aria-label itself (usage rule ② of the design spec).
+const _STATUS_ICON_PASCAL_RE = /(\w)(\w*)(_|-|\s*)/g;
+export function statusIcon(name, size = 14, cls = '') {
+  let svg = '';
+  if (typeof lucide !== 'undefined' && lucide.icons && lucide.createElement) {
+    const pascal = name.replace(_STATUS_ICON_PASCAL_RE, (m, c, p) => c.toUpperCase() + p.toLowerCase());
+    const icon = lucide.icons[pascal];
+    if (icon) {
+      const el = lucide.createElement([
+        icon[0],
+        { ...icon[1], width: String(size), height: String(size), class: `st-ic ${cls}`.trim() },
+        icon[2],
+      ]);
+      svg = el.outerHTML;
+    }
+  }
+  if (!svg) {
+    svg = `<i data-lucide="${name}" class="st-ic ${cls}" style="width:${size}px;height:${size}px"></i>`;
+  }
+  return svg;
+}
+
 // Shorthand alias for escapeHtml
 export function esc(s) {
   const d = document.createElement('div');
@@ -1226,7 +1258,8 @@ export function markCopyFailed(btn) {
   live.className = 'copy-failed-live';
   live.setAttribute('role', 'status');
   live.setAttribute('aria-live', 'polite');
-  live.textContent = t('chat.copyFailed');
+  // ui-status-redesign（盘点 #43 / S6）：词前 circle-x 红图标 + 中性词。
+  live.innerHTML = statusIcon('circle-x', 10, 'st-err') + t('chat.copyFailed');
   host.appendChild(live);
   setTimeout(() => {
     live.remove();

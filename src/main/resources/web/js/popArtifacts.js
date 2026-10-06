@@ -711,7 +711,11 @@ export function buildUserMediaRow(attachments, opts) {
   const files = items.filter(it => it.kind !== 'image' && it.kind !== 'video');
   if (!media.length && !files.length) return null;
   const row = document.createElement('div');
-  row.className = 'row pop-artifact user-media';
+  // attach-side-align (2026-10-06 作者截图令): the row carries the SAME
+  // sender-side class as the user bubble row (chat.js renderUserBubble's
+  // 'row user'), so .row.user's positioning owns the side — no second
+  // alignment system.
+  row.className = 'row pop-artifact user user-media';
   const group = document.createElement('div');
   group.className = 'pop-group';
   row.appendChild(group);
@@ -782,7 +786,7 @@ export function buildPopArtifactRow(payload) {
  */
 export function renderPopToolRow(card, label, summary, isError) {
   const icon = isError
-    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
     : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const parts = String(label || '').split('\n', 2);
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
@@ -804,7 +808,7 @@ export function applyLegacyPopCard(card, label, summary, inputJson, isError) {
   if (_toolName !== 'Pop' || !inputJson) return false;
 
   const icon = isError
-    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
     : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const art = popArtifactFromInput(label, inputJson);
   const popFilePath = art ? art.filePath : '';

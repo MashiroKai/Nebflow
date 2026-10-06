@@ -7,7 +7,7 @@ import { key } from './branding.js';
 // / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
 import { formatHm, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
@@ -1153,7 +1153,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // This unifies Card display with other tools — spinner → checkmark transition,
   // consistent tool card header — while the rendered HTML card appears separately.
   if (content && typeof content === 'string' && /^___\w+_HTML___/.test(content)) {
-    const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const cLocalLabel = localizeToolLabel(label);
     const cLocalSummary = localizeToolSummary(summary, label);
@@ -1217,7 +1217,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
 
   if (_toolName === 'Mail' && inputJson) {
-    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const localLabel = localizeToolLabel(label);
     const localSummary = localizeToolSummary(summary, label);
@@ -1239,7 +1239,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
 
   // Default rendering for all other tools
-  const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+  const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   //
   // ── cardguard negative filter (author ruling 2026-09-17 · #687①) ──────────
@@ -1669,7 +1669,8 @@ export function renderError(msg) {
   row.className = 'row error';
   const card = document.createElement('div');
   card.className = 'error-card';
-  card.textContent = msg;
+  // ui-status-redesign（S8 / 盘点 #30）：行首 circle-x 红图标 + 中性正文。
+  card.innerHTML = statusIcon('circle-x', 14, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
   row.appendChild(card);
   appendChatRow(chat, row);
   smartScroll();
@@ -1880,6 +1881,11 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   card.style.display = 'flex';
   card.style.alignItems = 'center';
   card.style.gap = '12px';
+  // ui-status-redesign（S8 同卡）：行首 circle-x 红图标，正文中性字。
+  const iconSpan = document.createElement('span');
+  iconSpan.setAttribute('aria-hidden', 'true');
+  iconSpan.innerHTML = statusIcon('circle-x', 14, 'st-err');
+  card.appendChild(iconSpan);
   const text = document.createElement('span');
   text.textContent = t(i18nKey);
   card.appendChild(text);
@@ -3139,10 +3145,13 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     else if (input.url) detail = input.url;
   } catch (e) {}
 
-  // Danger icons (shared SVG shapes, no text — text comes from i18n)
-  const warningIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
-  const dangerIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
-  const criticalIcon = dangerIcon; // same icon, text differentiates
+  // Danger icons (shared SVG shapes, no text — text comes from i18n).
+  // ui-status-redesign（S14 / 盘点 #51）：图标 = 语义档唯一载体（currentColor，
+  // 色由 .st-warn/.st-err token 档给出——原 stroke="var(--…)" 写法在 presentation
+  // attribute 里不解析，等于从未生效，本批一并修正）；横幅正文转中性字。
+  const warningIcon = '<svg class="st-ic st-warn" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  const dangerIcon = '<svg class="st-ic st-err" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+  const criticalIcon = '<svg class="st-ic st-err" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z"/></svg>';
 
   const dangerConfigs = {
     1: { cls: 'perm-warning', icon: warningIcon, i18nKey: 'chat.permLevel.warning' },

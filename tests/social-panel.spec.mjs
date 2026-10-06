@@ -633,6 +633,54 @@ async function afterSuite(browser, base) {
     'src/test/scala/nebflow/social/FeishuChannelSpec.scala',  // feishubridge: senderId joined the wire shape (additive)
     'src/test/scala/nebflow/social/SocialChannelsBootSealSpec.scala', // feishu-boot-seal spec (A1–A5)
     'src/test/scala/nebflow/social/FeishuBootSealRestore.scala',       // feishu-boot-seal: the restore entry point (Test scope)
+    // ── ui-status-icons 批 whitelist 随批扩（作者 2026-10-06 晨裁令候示④）：
+    // 本批 UI 面实态 43 件（css×14＋js×28＋tests×1）。social.css / socialPanel.js /
+    // activityBar.js / main.js / locales 两表 / tests/social-panel.spec.mjs 已在
+    // 上列不重复。onboarding.js、js/sidebar.js、tests/onboarding-*、scala、seed
+    // 属其他挂起批文件面，不入本白名单（其红为共享工作区既有态，随其批收口自消）。
+    'src/main/resources/web/css/base.css',
+    'src/main/resources/web/css/chat.css',
+    'src/main/resources/web/css/dropbox.css',
+    'src/main/resources/web/css/flowMap.css',
+    'src/main/resources/web/css/friends.css',
+    'src/main/resources/web/css/input.css',
+    'src/main/resources/web/css/modal.css',
+    'src/main/resources/web/css/neblink.css',
+    'src/main/resources/web/css/projectPanel.css',
+    'src/main/resources/web/css/reminder.css',
+    'src/main/resources/web/css/secrets.css',
+    'src/main/resources/web/css/sidebar.css',
+    'src/main/resources/web/css/split.css',
+    'src/main/resources/web/css/taskList.css',
+    'src/main/resources/web/js/attachUpload.js',
+    'src/main/resources/web/js/bgAgentPopup.js',
+    'src/main/resources/web/js/bgTaskOutputPopup.js',
+    'src/main/resources/web/js/chat.js',
+    'src/main/resources/web/js/chatSearch.js',
+    'src/main/resources/web/js/chatSearchFloat.js',
+    'src/main/resources/web/js/contacts.js',
+    'src/main/resources/web/js/daemonPanel.js',
+    'src/main/resources/web/js/daemons.js',
+    'src/main/resources/web/js/dropbox.js',
+    'src/main/resources/web/js/explorer.js',
+    'src/main/resources/web/js/flowAgentPopup.js',
+    'src/main/resources/web/js/flowCss.js',
+    'src/main/resources/web/js/flowMapArchive.js',
+    'src/main/resources/web/js/friendGroups.js',
+    'src/main/resources/web/js/i18n.js',
+    'src/main/resources/web/js/modal.js',
+    'src/main/resources/web/js/modelPanel.js',
+    'src/main/resources/web/js/notificationBanner.js',
+    'src/main/resources/web/js/persistence.js',
+    'src/main/resources/web/js/plugins.js',
+    'src/main/resources/web/js/popArtifacts.js',
+    'src/main/resources/web/js/projectTab.js',
+    'src/main/resources/web/js/scheduled-task.js',
+    'src/main/resources/web/js/secretsPanel.js',
+    'src/main/resources/web/js/taskList.js',
+    'src/main/resources/web/js/utils.js',
+    'src/main/resources/web/js/workspacePicker.js',
+    'tests/toast-glass.spec.mjs',
     'tests/social-panel.spec.mjs',
   ];
   let diff = '';
@@ -934,14 +982,23 @@ async function afterSuite(browser, base) {
       const c = document.querySelector('.social-card[data-channel="feishu"]');
       const p = c.querySelector('.social-status-pill');
       const d = document.createElement('div');
-      d.style.color = 'var(--color-danger)';
+      d.style.color = 'var(--status-error-icon)';
       document.body.appendChild(d);
       const danger = getComputedStyle(d).color; d.remove();
+      const b = document.createElement('div');
+      b.style.borderColor = 'color-mix(in srgb, var(--status-error-icon) 25%, transparent)';
+      document.body.appendChild(b);
+      const dangerBorder = getComputedStyle(b).borderColor; b.remove();
       return { status: p.dataset.status, color: getComputedStyle(p).color, danger,
+        borderColor: getComputedStyle(p).borderColor, dangerBorder, hasIcon: !!p.querySelector('svg, [data-lucide]'),
         hint: c.querySelector('.social-card-hint').textContent, hidden: c.querySelector('.social-card-hint').hasAttribute('hidden') };
     });
-    check('W9 pattern violation ⇒ configInvalid + danger colour',
-      pill.status === 'configInvalid' && pill.color === pill.danger && !pill.hidden && /应用 ID|App ID/.test(pill.hint),
+    // ui-status-redesign（2026-10-05 作者拍板分叉①=A）改版：pill 字面一律中性字，
+    // 危险色只上图案载体（pill 红底红边 = --status-error-icon color-mix）＋词前
+    // triangle-alert 图标。原断言「字色 = --color-danger」随旧形态退役。
+    check('W9 pattern violation ⇒ configInvalid + danger carrier (word neutral + icon)',
+      pill.status === 'configInvalid' && pill.color !== pill.danger && pill.borderColor === pill.dangerBorder
+      && pill.hasIcon && !pill.hidden && /应用 ID|App ID/.test(pill.hint),
       JSON.stringify(pill));
 
     apiState.channels = { feishu: { enabled: true, fields: {

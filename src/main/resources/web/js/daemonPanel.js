@@ -28,7 +28,7 @@
 import { t } from './i18n.js';
 import { brand } from './brand.js';
 import { key } from './branding.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, statusIcon } from './utils.js';
 import { stripCredentialParams } from './nfTicket.js';
 
 const PANEL_CSS = `
@@ -99,7 +99,9 @@ const PANEL_CSS = `
 }
 .daemon-config-btn:disabled { opacity: 0.45; cursor: default; }
 .daemon-config-status { font-size: 12px; color: var(--color-text-muted); margin-right: auto; }
-.daemon-config-status.error { color: #f44336; }
+/* ui-status-redesign：错误词转中性字，红由词前 circle-x 图标承载（.st-err token）。 */
+.daemon-config-status.error { color: var(--status-word); }
+.daemon-config-status .st-ic { margin-right: 4px; }
 .daemon-config-iframe { width: 100%; height: 420px; border: 0; border-radius: 8px; background: var(--color-surface); }
 </style>`;
 
@@ -244,7 +246,11 @@ async function apiCall(method, path, body) {
 function setStatus(text, isError) {
   const el = overlay?.querySelector('.daemon-config-status');
   if (!el) return;
-  el.textContent = text || '';
+  // ui-status-redesign（分叉①=A）：语义红只上词前图标，正文一律中性字。
+  el.innerHTML = isError
+    ? `${statusIcon('circle-x', 12, 'st-err')}<span>${esc(text || '')}</span>`
+    : '';
+  if (!isError) el.textContent = text || '';
   el.classList.toggle('error', !!isError);
 }
 

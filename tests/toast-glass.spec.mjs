@@ -71,10 +71,15 @@ await page.goto(base + '/harness');
 await page.waitForFunction('window.__toastTest.ready === true', null, { timeout: 10000 });
 
 // Computed-style snapshot of the toast icon + container border/frost.
-const ICON_RGB = {
-  error: 'rgb(244, 67, 54)',   // #f44336 (author-ruled)
-  info: 'rgb(7, 193, 96)',     // var(--color-primary) = #07c160 (base.css)
-  success: 'rgb(76, 175, 80)', // var(--color-success) = #4caf50 (base.css)
+// ui-status-redesign (2026-10-05): the error/success toast icons moved off the
+// legacy hardcodes (#f44336 / #4caf50) onto the shared status tokens
+// (--status-error-icon / --status-success-icon; light #d64545 / #2e7d32, dark
+// #f26b6b / #66bb6a). The probe resolves the token in the LIVE theme instead
+// of pinning one scheme's rgb — same probe technique as W9 in social-panel.
+const ICON_TOKEN = {
+  error: '--status-error-icon',
+  info: '--color-primary',
+  success: '--status-success-icon',
 };
 
 // ── A1: per-type fired one at a time, each with its own lifecycle window ──
@@ -84,26 +89,33 @@ for (const type of ['error', 'info', 'success']) {
   const toastSel = `.nebflow-toast-${type}`;
   await page.waitForSelector(toastSel, { timeout: 3000 });
 
-  const snap = await page.evaluate((sel) => {
+  const snap = await page.evaluate(({ sel, token }) => {
     const el = document.querySelector(sel);
     if (!el) return null;
     const icon = el.querySelector('.nebflow-toast-icon');
     const cs = getComputedStyle(el);
+    // Probe: resolve the status token in the live theme (base.css :root).
+    const probe = document.createElement('span');
+    probe.style.color = `var(${token})`;
+    document.body.appendChild(probe);
+    const tokenColor = getComputedStyle(probe).color;
+    probe.remove();
     return {
       iconPresent: !!icon,
       iconGlyph: icon ? icon.textContent : '',
       iconColor: icon ? getComputedStyle(icon).color : '',
+      tokenColor,
       borderLeftWidth: cs.borderLeftWidth,
       borderLeftStyle: cs.borderLeftStyle,
       backdropFilter: cs.backdropFilter || cs.webkitBackdropFilter || '',
       position: cs.position,
     };
-  }, toastSel);
+  }, { sel: toastSel, token: ICON_TOKEN[type] });
 
   check(`A1 ${type}: toast renders with .nebflow-toast-${type}`, !!snap);
   check(`A1 ${type}: icon span present (glyph "${snap?.iconGlyph}")`, !!snap?.iconPresent);
-  check(`A1 ${type}: icon computed color = type color (${ICON_RGB[type]})`,
-    snap?.iconColor === ICON_RGB[type], `got ${snap?.iconColor}`);
+  check(`A1 ${type}: icon computed color = var(${ICON_TOKEN[type]}) in live theme (${snap?.tokenColor})`,
+    snap?.iconColor === snap?.tokenColor, `got ${snap?.iconColor}`);
   check(`A1 ${type}: no 3px left accent strip (border-left-width = ${snap?.borderLeftWidth})`,
     snap?.borderLeftWidth === '1px' && snap?.borderLeftStyle === 'solid',
     `border-left: ${snap?.borderLeftWidth} ${snap?.borderLeftStyle}`);

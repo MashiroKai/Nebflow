@@ -24,6 +24,7 @@
 import { ChatView, setActiveView, activeView } from './chatView.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import { cleanupCardIframes } from './cardRegistry.js';
+import { statusIcon, escapeHtml } from './utils.js';
 import { expandGroupContaining } from './turnGroup.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
@@ -123,12 +124,13 @@ function findTargetRow(chatEl, res) {
   return /** @type {HTMLElement|null} */ (chatEl.querySelector('.row'));
 }
 
-/** Visible inline notice inside a window (failure paths never stay silent). */
+/** Visible inline notice inside a window (failure paths never stay silent).
+ *  ui-status-redesign（盘点 #29，S9 同族）：行首 circle-alert 红图标 + 中性正文。 */
 function showNotice(host, msg) {
   const el = document.createElement('div');
   el.className = 'nf-msgfloat-notice';
   el.setAttribute('role', 'status');
-  el.textContent = msg;
+  el.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
   host.appendChild(el);
   return el;
 }

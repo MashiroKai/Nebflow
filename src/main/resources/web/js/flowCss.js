@@ -131,16 +131,19 @@ export const FLOW_CSS = `
 .dag-card-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
 .dag-card-status.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 .dag-card-status.completed .dot { background: #4caf50; opacity: 1; }
-.dag-card-status.failed .dot { background: #f44336; opacity: 1; }
+/* ui-status-redesign（盘点 #23）：状态点 = 图案载体 ✓，色值归状态 token。 */
+.dag-card-status.failed .dot { background: var(--status-error-icon); opacity: 1; }
 .dag-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
+/* 取消钮（盘点 #23 同行 138，S10 规）：常显危险文字 → 字转常规色，红由描边
+   （图案载体）+ hover 时刻整钮转红（交互红保留，铁律三）。 */
 .dag-card-cancel {
   margin: 0 14px 14px; align-self: flex-start;
-  font: 600 11px -apple-system, sans-serif; color: #f44336;
-  background: transparent; border: 1px solid rgba(244,67,54,0.4);
+  font: 600 11px -apple-system, sans-serif; color: var(--status-word);
+  background: transparent; border: 1px solid color-mix(in srgb, var(--status-error-icon) 40%, transparent);
   border-radius: 8px; padding: 5px 14px; cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
 }
-.dag-card-cancel:hover { background: rgba(244,67,54,0.08); }
+.dag-card-cancel:hover { background: color-mix(in srgb, var(--status-error-icon) 8%, transparent); color: var(--status-error-icon); }
 .dag-card-cancel:disabled { opacity: 0.5; cursor: default; }
 .dag-card-close {
   margin: 0 14px 14px; align-self: flex-start;
@@ -161,7 +164,7 @@ export const FLOW_CSS = `
 .dag-node-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; flex-shrink: 0; }
 .dag-node.running .dag-node-dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 .dag-node.completed .dag-node-dot { background: #4caf50; opacity: 1; }
-.dag-node.failed .dag-node-dot { background: #f44336; opacity: 1; }
+.dag-node.failed .dag-node-dot { background: var(--status-error-icon); opacity: 1; } /* ui-status-redesign #23 token */
 .dag-node-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .dag-node-id { font: 600 12px -apple-system, sans-serif; color: var(--color-text); }
 .dag-node-agent { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); }
@@ -354,7 +357,7 @@ export const FLOW_CSS = `
 }
 .dag-inline-node.running .dag-inline-dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 .dag-inline-node.completed .dag-inline-dot { background: #4caf50; opacity: 1; }
-.dag-inline-node.failed .dag-inline-dot { background: #f44336; opacity: 1; }
+.dag-inline-node.failed .dag-inline-dot { background: var(--status-error-icon); opacity: 1; } /* ui-status-redesign #23 token */
 .dag-inline-node.failed { background: rgba(244, 67, 54, 0.04); }
 .dag-inline-id { font: 500 11px -apple-system, sans-serif; color: var(--color-text); }
 .dag-inline-agent { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; }
@@ -392,7 +395,7 @@ export const FLOW_CSS = `
 .solar-card-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
 .solar-card-status.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 .solar-card-status.completed .dot { background: #4caf50; opacity: 1; }
-.solar-card-status.failed .dot { background: #f44336; opacity: 1; }
+.solar-card-status.failed .dot { background: var(--status-error-icon); opacity: 1; } /* ui-status-redesign #23 token */
 .solar-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
 .solar-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; flex-shrink: 0; }
 .solar-terminal-banner {
@@ -401,8 +404,10 @@ export const FLOW_CSS = `
   border-radius: 10px; flex-shrink: 0;
   font: 600 12px -apple-system, sans-serif;
 }
-.solar-terminal-banner.ok { color: #2e7d32; background: rgba(76,175,80,0.12); border: 1px solid rgba(76,175,80,0.35); }
-.solar-terminal-banner.failed { color: #c62828; background: rgba(244,67,54,0.12); border: 1px solid rgba(244,67,54,0.35); }
+/* ui-status-redesign（盘点 #24）：终端横幅 = 图案载体（红/绿 12% 底＋35% 边保留），
+   横幅色 = 首字形/图标档 token；正文 .solar-terminal-text 本就中性字不动。 */
+.solar-terminal-banner.ok { color: var(--status-success-icon); background: rgba(76,175,80,0.12); border: 1px solid rgba(76,175,80,0.35); }
+.solar-terminal-banner.failed { color: var(--status-error-icon); background: rgba(244,67,54,0.12); border: 1px solid rgba(244,67,54,0.35); }
 .solar-terminal-icon { font-weight: 700; }
 .solar-terminal-text { color: var(--color-text); }
 .solar-card-footer { display: flex; align-items: center; padding: 0 14px 14px; flex-shrink: 0; }
@@ -541,15 +546,16 @@ export const FLOW_CSS = `
 .solar-node.pending .solar-dot { opacity: 0.3; }
 .solar-node.pending .solar-node-label { opacity: 0.4; }
 .solar-node.completed .solar-node-label { opacity: 0.6; }
-.solar-node.failed .solar-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
+.solar-node.failed .solar-ring { border-color: var(--status-error-icon, #e5484d); opacity: 0.5; } /* ui-status-redesign #23 token */
 /* blocked（20260902 反馈路径设计 §4.2）：需动作的警示态——琥珀环，非 failed 的终结红。
    --amber 三元组由 sapphire.css 按亮暗主题定义（亮 255 152 0 / 暗 255 168 60），双主题自适应。 */
 .solar-node.blocked .solar-ring { border-color: rgb(var(--amber, 255 152 0) / 0.75); opacity: 0.6; }
 
-/* Status icon (✓ / ✗ / ⚑) — inline in the sub line */
+/* Status icon (✓ / ✗ / ⚑) — inline in the sub line. ui-status-redesign（盘点 #23
+   B 半）：glyph 即图标载体，色值归状态 token（亮档对比 2.2–2.3:1 → 4.4–5.1:1）。 */
 .solar-node-status { font: 700 10px -apple-system, sans-serif; margin-left: 4px; }
-.solar-node-status.ok { color: #4caf50; }
-.solar-node-status.err { color: #f44336; }
+.solar-node-status.ok { color: var(--status-success-icon); }
+.solar-node-status.err { color: var(--status-error-icon); }
 .solar-node-status.warn { color: rgb(var(--amber, 255 152 0)); }
 
 /* Node label — primary line shows the nodeId (unique per node); the agent

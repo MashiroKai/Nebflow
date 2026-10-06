@@ -468,8 +468,9 @@ function deviceRow(d) {
 //     ⇒ 恢复发生在**新家**（联系人面板设备行），旧 `neblink.js` 设备行模板与三组键绑定的
 //     摘除令**不回滚**（本函数不碰 neblink.js 的模板段）。
 //   · 行内状态文本 = 既有 `.neblink-peer-status`（11px / `--color-text-muted` 中性灰）。
-//     🔴 刻意**不用** `.neblink-update-status.updating(amber) / .error(red)` 两档：裁定 10
-//     「失败/回滚仅状态行」+ 设计 §7:143-144「中性灰 + 明确原因，不用红块」，且「每视口
+//     🔴 刻意**不用** `.neblink-update-status` 的 updating/error 档（ui-status-redesign
+//     后两档 = 图标+中性词，与裁定 10「失败/回滚仅状态行、中性灰+明确原因」同向）：
+//     设计 §7:143-144「中性灰 + 明确原因，不用红块」，且「每视口
 //     至多一个彩色事件」（本行已有一个 presence 彩色事件）。⇒ **样式表零改动**。
 //   · 发送 = **既有** `remoteUpdate` WS 命令（`WebSocketRoutes.scala` 的 `case "remoteUpdate"`）
 //     ⇒ 零新消息类型；载荷在既有 `device` / `beta` 上**加**可选幂等键 `clientRequestId`（G8），

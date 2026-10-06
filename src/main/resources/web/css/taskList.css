@@ -201,7 +201,8 @@
 /* 终态：实心色点；未知状态：中性半透明点优雅降级 */
 .task-node-dot { border-radius: 50%; }
 .task-node-dot-completed { background: var(--color-success, #4caf50); }
-.task-node-dot-failed { background: var(--color-error, #f44336); }
+/* ui-status-redesign（盘点 #17）：图案点保留，色值归状态 token（暗档随 token 提亮）。 */
+.task-node-dot-failed { background: var(--status-error-icon, #f44336); }
 .task-node-dot-cancelled { background: var(--color-warning, #ff9800); }
 .task-node-dot-neutral { background: color-mix(in srgb, var(--color-text-muted, #888) 45%, transparent); }
 
@@ -409,7 +410,14 @@
 .task-chain-badge.s-running { color: var(--color-primary, #07c160); }
 .task-chain-badge.s-paused { color: var(--color-warning, #ff9800); }
 .task-chain-badge.s-completed { color: var(--color-success, #4caf50); }
-.task-chain-badge.s-failed { color: var(--color-error, #f44336); }
+/* ui-status-redesign（S3 / 盘点 #16）：failed 徽章 = 图案承载（红 10% 底 + 红 35% 边
+   保留，不再借 currentColor），词转中性字，词前 circle-x 红（taskList.js 注入）。 */
+.task-chain-badge.s-failed {
+  color: var(--status-word);
+  border-color: color-mix(in srgb, var(--status-error-icon) 35%, transparent);
+  background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
+}
+.task-chain-badge.s-failed .st-ic { width: 9px; height: 9px; margin-right: 2px; }
 .task-chain-badge.s-cancelled { color: var(--color-text-muted, #888); }
 
 /* 内联点图（§二.1.1）：节点拓扑缩略 —— 点（按类型着色）+ 连线。
@@ -585,9 +593,10 @@
   stroke-dasharray: var(--task-chain-check-dash);
   stroke-dashoffset: var(--task-chain-check-dash);
 }
-/* failed: same geometry language, red cross (stroke = the existing --color-error token) */
+/* failed: same geometry language, red cross (ui-status-redesign 盘点 #18：
+   ✕ 描边 SVG = 图标载体 ✓，色值归 --status-error-icon token） */
 .task-chain-mark-failed circle,
-.task-chain-mark-failed path { stroke: var(--color-error, #f44336); }
+.task-chain-mark-failed path { stroke: var(--status-error-icon, #f44336); }
 .task-chain-mark-failed path { stroke-dasharray: 6; stroke-dashoffset: 6; }
 /* A real transition is the only thing that animates: bounce (overshoot easing) + draw. */
 .task-chain-mark-done:not(.task-chain-mark-static) {

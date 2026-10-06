@@ -21,6 +21,7 @@
 // `not_group_admin` 同族口径：**就地说清「没发出去」+ 原因**，不塞进任何 2xx。
 
 import { t } from './i18n.js';
+import { statusIcon, escapeHtml } from './utils.js';
 import { onMessage } from './ws.js';
 import { getAuthToken } from './neblink.js';
 import * as api from './friendsApi.js';
@@ -235,7 +236,10 @@ function uploadCardEl(item) {
     card.appendChild(el('span', 'fm-upload-note', t('messages.attachSent')));
   } else {
     // 失败 / 取消 / 未发（fail-closed 可见：**终态文案就在卡上**，不靠 toast 兜底）。
-    card.appendChild(el('span', 'fm-upload-note', item.error || t('messages.attachFailed')));
+    // ui-status-redesign（盘点 #42 / S5）：失败注记词转中性字 + 词前 circle-x 红图标。
+    const failNote = el('span', 'fm-upload-note');
+    failNote.innerHTML = statusIcon('circle-x', 11, 'st-err') + '<span>' + escapeHtml(item.error || t('messages.attachFailed')) + '</span>';
+    card.appendChild(failNote);
     // ── S4/S8 后的重试键（§5 R3-device + R4-device）──────────────────────
     // 仅在**外部腿**（设备，`onRetry` 在场）挂：设备附件腿无幂等键面 ⇒ 重试 = **新传输**
     // （重走入队，如实声明，不新造键面）。网页腿的失败重试面 = 既有 (c) 臂可重试提示

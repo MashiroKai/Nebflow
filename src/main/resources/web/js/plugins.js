@@ -82,7 +82,7 @@
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, statusIcon } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
 import { key } from './branding.js';
@@ -182,6 +182,14 @@ function pillOf(status) {
     ? t('plugins.stateBlocked')
     : (status.contentChanged ? t('plugins.stateChanged') : '');
   return { key, text };
+}
+
+/** Pill inner HTML（ui-status-redesign，S13 / 盘点 #52）：pill = 图案载体（红底
+ *  红边保留），字转中性、词前 ban 图标（封禁形状语义）；amber changed 档不在
+ *  本批 54 点范围（红系盘点），字形不变。 */
+function pillInnerHtml(pill) {
+  const icon = pill.key === 'blocked' ? statusIcon('ban', 10, 'st-err') : '';
+  return icon + escapeHtml(pill.text);
 }
 
 /** Classify a manifest's DISPATCH-permission state (令 1 派发面,
@@ -355,7 +363,7 @@ function renderPluginCard(manifest) {
         ${metaBits.length ? `<span class="plugins-card-meta">${esc(metaBits.join(' · '))}</span>` : ''}
       </div>
       <div class="plugins-card-state">
-        ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${esc(pill.text)}</span>` : ''}
+        ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${pillInnerHtml(pill)}</span>` : ''}
         <span class="plugins-card-dispatch">
           ${toggleHTML({
             on: disp.on,
@@ -568,7 +576,7 @@ function applyPluginCardState(card, manifest) {
   if (!pill.text) {
     pillEl?.remove();
   } else if (pillEl) {
-    pillEl.textContent = pill.text;
+    pillEl.innerHTML = pillInnerHtml(pill);
     pillEl.classList.remove('on', 'changed', 'blocked');
     pillEl.classList.add(pill.key);
   } else {
@@ -576,7 +584,7 @@ function applyPluginCardState(card, manifest) {
     if (stateBox) {
       pillEl = document.createElement('span');
       pillEl.className = `plugins-state-pill ${pill.key}`;
-      pillEl.textContent = pill.text;
+      pillEl.innerHTML = pillInnerHtml(pill);
       stateBox.insertBefore(pillEl, stateBox.firstChild);
     }
   }
@@ -600,7 +608,8 @@ function applyPluginCardState(card, manifest) {
 }
 
 /** Insert / update / remove one card-level hint row (kept before the skill
- *  expand block, created on demand). */
+ *  expand block, created on demand). ui-status-redesign（盘点 #52）：blocked 提示
+ *  条 = 行首 ban 图标 + 中性正文（红底红边图案由 CSS 保留）。 */
 function setCardHint(card, kind, show, text) {
   let el = card.querySelector(`.plugins-card-hint.${kind}`);
   if (!show) { el?.remove(); return; }
@@ -609,7 +618,7 @@ function setCardHint(card, kind, show, text) {
     el.className = `plugins-card-hint ${kind}`;
     card.insertBefore(el, card.querySelector('.plugins-skill-expand'));
   }
-  el.textContent = text;
+  el.innerHTML = (kind === 'blocked' ? statusIcon('ban', 11, 'st-err') : '') + escapeHtml(text);
 }
 
 /** Derived per-card rendering signature (status + dispatch面). Convergence

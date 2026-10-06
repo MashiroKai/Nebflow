@@ -65,7 +65,7 @@
 // the app's directory-browser baseline, token-driven, both themes.
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, statusIcon } from './utils.js';
 import state from './state.js';
 // ⑤ Chinese-IME takeover (author ruling 2026-09-12): the ONE composition source = imeGuard.js.
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
@@ -171,7 +171,7 @@ export function openPicker(opts = {}) {
         '<span class="wsp-cur"></span>' +
         '<span class="wsp-foot-btns">' +
           '<button type="button" class="wsp-cancel">' + escapeHtml(t('workspacePicker.cancel')) + '</button>' +
-          (opts.showClear ? '<button type="button" class="wsp-clear">' + escapeHtml(t('workspacePicker.clear')) + '</button>' : '') +
+          (opts.showClear ? '<button type="button" class="wsp-clear">' + statusIcon('trash-2', 12, 'st-err') + escapeHtml(t('workspacePicker.clear')) + '</button>' : '') +
           '<button type="button" class="wsp-pick">' + escapeHtml(t('workspacePicker.selectHere')) + '</button>' +
         '</span>' +
       '</div>' +
@@ -220,11 +220,12 @@ export function openPicker(opts = {}) {
   if (clearBtn) clearBtn.onclick = () => finish({ type: 'clear' }); // legacy parity: Clear closes WITHOUT onCancel
   /** @type {HTMLElement} */ (overlay.querySelector('.wsp-mkdir')).onclick = () => startMkdir();
 
-  function hideErr() { errEl.hidden = true; errEl.textContent = ''; }
+  function hideErr() { errEl.hidden = true; errEl.innerHTML = ''; }
   function hideNote() { noteEl.hidden = true; noteEl.textContent = ''; }
 
   function showErr(msg) {
-    errEl.textContent = msg;
+    // ui-status-redesign（S9 同族 / 盘点 #34）：行首 circle-alert 红图标 + 中性正文。
+    errEl.innerHTML = statusIcon('circle-alert', 13, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
     errEl.hidden = false;
   }
 

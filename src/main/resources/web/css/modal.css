@@ -954,17 +954,21 @@
   width: 100%;
   max-width: 100%;
 }
-/* Failure of the card body must be visible inside the row (never silent). */
+/* Failure of the card body must be visible inside the row (never silent).
+   ui-status-redesign（盘点 #28，S9 同族）：11px 通知句转中性字，红由左侧 2px
+   描边（图案）＋行首 circle-alert 图标承载。 */
 .search-result-card-warn {
   margin-top: 6px;
   padding: 6px 8px;
   border-radius: 8px;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-error) 26%, transparent);
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 26%, transparent);
+  border-left: 2px solid var(--status-error-icon);
 }
+.search-result-card-warn .st-ic { width: 12px; height: 12px; margin: 1px 6px 0 0; flex-shrink: 0; }
 
 /* ── Detached message window (v2, 2026-09-11) ──────────────────────────────
    Opened by clicking a non-Pop search result: an independent floating window
@@ -1081,16 +1085,19 @@
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .nf-msgfloat-chat .row { max-width: 100%; }
+/* ui-status-redesign（盘点 #29，S9 同族）：同 .search-result-card-warn 规。 */
 .nf-msgfloat-notice {
   margin: 8px 0;
   padding: 6px 8px;
   border-radius: 8px;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-error) 26%, transparent);
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 26%, transparent);
+  border-left: 2px solid var(--status-error-icon);
 }
+.nf-msgfloat-notice .st-ic { width: 12px; height: 12px; margin: 1px 6px 0 0; flex-shrink: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .nf-msgfloat { animation: none; }
@@ -1168,16 +1175,23 @@
   opacity: 1;
   transform: translateY(0);
 }
-/* Type semantics: leading glyph, colored per type (no color strip). */
+/* Type semantics: leading glyph, colored per type (no color strip).
+   ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：字形 → lucide 真图标
+   （modal.js 注入），色档保留 = 图标载体；error 档色值归 --status-error-icon
+   token（暗档随 token 提亮）。 */
 .nebflow-toast-icon {
   margin-right: 8px;
   font-size: 14px;
   font-weight: 600;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
 }
-.nebflow-toast-error .nebflow-toast-icon { color: #f44336; }
+.nebflow-toast-icon .st-ic { width: 15px; height: 15px; }
+.nebflow-toast-error .nebflow-toast-icon { color: var(--status-error-icon); }
 .nebflow-toast-info .nebflow-toast-icon { color: var(--color-primary); }
-.nebflow-toast-success .nebflow-toast-icon { color: var(--color-success); }
+.nebflow-toast-success .nebflow-toast-icon { color: var(--status-success-icon); }
 .nebflow-toast-link {
   display: inline-block;
   margin-left: 10px;
@@ -1222,11 +1236,18 @@
   margin-top: 10px;
   line-height: 1.6;
 }
+/* ui-status-redesign（盘点 #37，S9 同族·CSS-only 限界）：13px 红字 → 中性正文，
+   红由左侧 2px 描边＋淡红底（图案载体）承载。词前图标需动 onboarding.js（该文件
+   现带他人既有暂存改动，本批禁触）——留待与 onboarding-ux 批合流时补图标。 */
 .onboarding-error {
   font-size: 13px;
-  color: var(--color-error);
+  color: var(--status-word);
   margin-top: 12px;
   word-break: break-word;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border-left: 2px solid var(--status-error-icon);
 }
 .onboarding-status {
   font-size: 13px;
@@ -1439,11 +1460,14 @@
 }
 .mp-add-select:focus { border-color: rgb(var(--sapphire) / 0.4); }
 .mp-manual { flex: 1; min-width: 150px; }
+/* ui-status-redesign（盘点 #38，S9 同族）：11.5px 红字 → 中性正文 + 行首
+   circle-alert 红图标（modelPanel.js 注入）。 */
 .mp-inline-err {
   display: none;
   font: 400 11.5px -apple-system, sans-serif;
-  color: var(--color-error, #e5484d);
+  color: var(--status-word);
 }
+.mp-inline-err .st-ic { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
 .mp-inline-err.on { display: block; }
 @media (prefers-color-scheme: dark) {
   .mp-add-select { background: rgba(255, 255, 255, 0.03); }

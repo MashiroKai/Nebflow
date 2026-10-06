@@ -219,22 +219,27 @@
   font-weight: 500;
   color: var(--color-frame-text);
 }
+/* ui-status-redesign（S10 / 盘点 #47）：常显「删除」文字项字转常规色，危险语义
+   由行首 trash-2 红图标（explorer.js 注入）承载；hover 实底红 = 交互红保留
+   （铁律三）。 */
 .explorer-selection-delete {
   pointer-events: auto; /* only the button is clickable inside the bar */
   padding: 3px 12px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-error);
+  color: var(--color-frame-text);
   background: transparent;
   border: 1px solid var(--glass-border, var(--color-frame-border));
   border-radius: 7px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
+.explorer-selection-delete .st-ic { color: var(--status-error-icon); margin-right: 5px; }
 .explorer-selection-delete:hover {
-  background: var(--color-error);
+  background: var(--status-error-icon);
   color: var(--color-surface);
 }
+.explorer-selection-delete:hover .st-ic { color: var(--color-surface); }
 @media (prefers-color-scheme: dark) {
   .explorer-selection-bar {
     background: var(--glass-bg, rgba(28, 31, 39, 0.85));

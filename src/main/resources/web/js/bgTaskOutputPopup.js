@@ -17,6 +17,7 @@
 
 import { t } from './i18n.js';
 import { key } from './branding.js';
+import { statusIcon, escapeHtml } from './utils.js';
 
 // ── State（单例卡：同一时刻最多一张详情卡）─────────────────
 let overlayEl = null;
@@ -135,9 +136,12 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   color: var(--color-frame-text-muted);
 }
 /* Unified panel spec §3.1：状态词 400 让位主名；终态分色同行面板
-   （done/cancelled/cancelling → dim，failed → error，chat.css:432-435 同源）。 */
+   （done/cancelled/cancelling → dim，failed → error，chat.css:432-435 同源）。
+   ui-status-redesign（盘点 #15，S2）：failed 词转中性字，红由词前 circle-x
+   图标（.st-ic token）承载。 */
 .bgt-state-label--done { color: var(--color-frame-text-dim); }
-.bgt-state-label--failed { color: var(--color-error); }
+.bgt-state-label--failed { color: var(--status-word); }
+.bgt-state-chip .st-ic { width: 11px; height: 11px; }
 .bgt-close {
   cursor: pointer; font-size: 16px; line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
@@ -155,15 +159,19 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   box-shadow: 0 0 0 2px var(--glass-control-border);
 }
 
-/* 失败原因行（failed 任务终态回看）：克制的红，可行动文案。 */
+/* 失败原因行（failed 任务终态回看）：ui-status-redesign（S9 同族）——正文转
+   中性字，红由左侧 2px 描边（图案）＋行首 circle-alert 图标承载。 */
 .bgt-error {
   flex-shrink: 0;
+  display: flex; align-items: flex-start; gap: 6px;
   padding: 6px 16px;
   font: 400 11px -apple-system, sans-serif;
-  color: var(--color-error);
+  color: var(--status-word);
   border-bottom: 1px solid var(--glass-border);
+  border-left: 2px solid var(--status-error-icon);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.bgt-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
 
 /* 输出区（2026-09-10 作者指令：终端化内芯）：后台任务输出是终端任务——
    内芯 = 跟随主题的深/浅终端底（light #f5f5f5 / dark #111419，与代码块
@@ -301,7 +309,8 @@ function renderStatus(status, exitCode) {
   const v = statusView(status);
   dotEl.className = v.dot + ' bgt-dot';
   labelEl.className = 'bgt-state-label' + (v.state ? ' bgt-state-label--' + v.state : '');
-  labelEl.textContent = v.label;
+  // ui-status-redesign（盘点 #15）：failed 词前 circle-x 红图标，词本体中性。
+  labelEl.innerHTML = (v.state === 'failed' ? statusIcon('circle-x', 11, 'st-err') : '') + escapeHtml(v.label);
   // 非零退出码补注（completed 但 exit!=0 也如实展示）
   const sub = overlayEl.querySelector('.bgt-subtitle');
   const exitNote = (exitCode !== undefined && exitCode !== null && exitCode !== 0)
@@ -358,7 +367,9 @@ function showErrorHint(text) {
   const el = overlayEl.querySelector('.bgt-error');
   // 取消与失败分开措辞（cancelled 的 hint 是取消原因，不是失败原因）
   const key = cur.lastStatus === 'cancelled' ? 'bg.detail.cancelHint' : 'bg.detail.failedHint';
-  el.textContent = t(key, { error: text });
+  // ui-status-redesign（S9 同族）：行首 circle-alert 红图标 + 中性正文（红由
+  // 左侧 2px 描边承载，见 .bgt-error）。text = 后端原始错误串，必须 escape。
+  el.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(t(key, { error: text })) + '</span>';
   el.classList.remove('bgt-hidden');
 }
 

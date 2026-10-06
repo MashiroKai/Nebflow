@@ -44,7 +44,7 @@
 // locale files ship the same key set in the same batch.
 
 import { t } from './i18n.js';
-import { escapeHtml, createIconsIn } from './utils.js';
+import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { getAuthToken } from './neblink.js';
 
 // ── Eye toggle glyphs ────────────────────────────────────────────────────
@@ -181,7 +181,11 @@ function formatMtime(ms) {
  */
 function rowHTML(s) {
   const permissive = s.mode !== '0600';
-  const modeBadge = `<span class="secrets-mode-badge" data-mode="${permissive ? 'permissive' : 'ok'}">${escapeHtml(t(permissive ? 'secrets.state.permissive' : 'secrets.state.ok'))}</span>`;
+  const modeBadge = permissive
+    // ui-status-redesign（S13 / 盘点 #36）：pill 字转中性，词前 octagon-alert 红
+    // 图标（权限档形状语义）；红底红边图案由 secrets.css 保留。
+    ? `<span class="secrets-mode-badge" data-mode="permissive">${statusIcon('octagon-alert', 10, 'st-err')}${escapeHtml(t('secrets.state.permissive'))}</span>`
+    : `<span class="secrets-mode-badge" data-mode="ok">${escapeHtml(t('secrets.state.ok'))}</span>`;
   const refsLine = s.refs.length
     ? `<div class="secrets-row-refs">${escapeHtml(t('secrets.referencedBy', { refs: s.refs.join(', ') }))}</div>`
     : '';
@@ -376,7 +380,8 @@ async function saveEditor() {
   const err = document.getElementById('secrets-form-error');
   const stateEl = document.getElementById('secrets-form-state');
   const showErr = (/** @type {string} */ msg) => {
-    if (err) { err.textContent = msg; err.hidden = false; }
+    // ui-status-redesign（盘点 #36，S9 同族）：行首 circle-alert 红图标 + 中性正文。
+    if (err) { err.innerHTML = statusIcon('circle-alert', 11, 'st-err') + escapeHtml(msg); err.hidden = false; }
   };
   const name = (editorTarget || (nameInput ? nameInput.value.trim() : ''));
   if (!name) { showErr(t('secrets.invalidName')); return false; }

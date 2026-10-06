@@ -18,7 +18,7 @@ import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
-import { truncateMiddle, shouldFollowBottom, initScrollFollow } from './utils.js';
+import { truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 
 // ── Per-agent state ───────────────────────────────────────
@@ -293,12 +293,15 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
-/* Stuck: restrained red — dot + task text only, no full-panel alarm. */
+/* Stuck (盘点 #14 / #13，S2 同构)：静态红描边环点（去脉冲 alarm 动效）＋
+   任务词转中性字，语义红由词前 timer-off 图标（.st-ic token）承载。 */
 .flow-agent-footer.stuck .fa-status-dot {
-  background: var(--color-error, #f44336); opacity: 1;
-  animation: fa-pulse 0.9s ease-in-out infinite;
+  background: transparent; opacity: 1;
+  border: 1.5px solid var(--status-error-icon);
+  animation: none;
 }
-.flow-agent-footer.stuck .fa-task { color: var(--color-error, #f44336); }
+.flow-agent-footer.stuck .fa-task { color: var(--status-word); }
+.flow-agent-footer .fa-task .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
 /* Stopped (user-intent interrupt): muted dot, no alarm. */
 .flow-agent-footer.stopped .fa-status-dot {
   background: var(--color-text-muted); opacity: 0.7;
@@ -620,7 +623,8 @@ function updatePopupCtxRing() {
   const pct = Math.min(Math.round(ratio * 100), 100);
   let color = '#4caf50';
   if (ratio > 0.5) color = '#d4a030';
-  if (ratio > 0.75) color = '#e53935';
+  // ui-status-redesign（盘点 #49，B 组）：字面量 → token（经 style 消费）。
+  if (ratio > 0.75) color = 'var(--status-error-icon)';
   const R = 15;
   const CIRC = 2 * Math.PI * R;
   const dashLen = CIRC * pct / 100;
@@ -634,11 +638,10 @@ function updatePopupCtxRing() {
   el.innerHTML = `<div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
     <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
       <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-      <circle cx="18" cy="18" r="${R}" fill="none" stroke="${color}" stroke-width="3.5"
-              stroke-dasharray="${dashLen.toFixed(1)} ${CIRC.toFixed(1)}"
+      <circle cx="18" cy="18" r="${R}" fill="none" stroke-width="3.5"
+              style="stroke:${color};stroke-dasharray:${dashLen.toFixed(1)} ${CIRC.toFixed(1)};transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"
               stroke-linecap="round"
-              transform="rotate(-90 18 18)"
-              style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+              transform="rotate(-90 18 18)"/>
       <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
             class="ctx-ring-threshold"
             transform="rotate(${thresholdAngle.toFixed(1)} 18 18)"/>
@@ -874,13 +877,15 @@ function updateFooterStatus(entry) {
       }
     } else if (status === 'stuck' && entry.meta.stuck) {
       // Hard-recovery P7 (2026-09-07): label mirrors the REAL backend action.
-      taskEl.textContent = entry.meta.stuck.action === 'restart'
+      // ui-status-redesign（盘点 #14，S2）：词前 timer-off 红图标 + 中性字。
+      const stuckTxt = entry.meta.stuck.action === 'restart'
         ? t('manage.stuckAutoRestart')
         : entry.meta.stuck.action === 'hard-abort'
           ? t('manage.stuckHardAbort')
           : entry.meta.stuck.action === 'failed'
             ? t('manage.stuckFailed')
             : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
+      taskEl.innerHTML = `${statusIcon('timer-off', 11, 'st-err')}<span class="fa-task-text">${esc(stuckTxt)}</span>`;
     } else {
       taskEl.textContent = entry.meta.task || 'Session';
     }

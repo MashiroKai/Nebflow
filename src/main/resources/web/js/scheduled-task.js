@@ -3,6 +3,7 @@ import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
 import { t } from './i18n.js';
+import { statusIcon } from './utils.js'; // escapeHtml = 本文件既有本地实现（107 行）
 import { addNotification } from './notificationBanner.js';
 import { createIconsIn, shouldFollowBottom } from './utils.js';
 import { chatViews } from './chatView.js';
@@ -239,11 +240,15 @@ function buildRow(r, isTriggered) {
     timeSpan.textContent = t('task.triggered') + ' ' + formatTriggerTime(r.triggerAt);
   } else {
     const nextTime = r.nextTrigger || r.triggerAt;
-    timeSpan.textContent = formatTriggerTime(nextTime);
-    if (isOverdue({ triggered: false, triggerAt: nextTime })) {
+    const overdue = isOverdue({ triggered: false, triggerAt: nextTime });
+    // ui-status-redesign（S12 / 盘点 #39）：逾期行 = 行首 clock-alert 红图标 +
+    // 中性等宽时间；「逾期」tag 转图案（红边淡红底）+ 中性字。
+    timeSpan.innerHTML = (overdue ? statusIcon('clock-alert', 11, 'st-err') : '')
+      + '<span>' + escapeHtml(formatTriggerTime(nextTime)) + '</span>';
+    if (overdue) {
       const tag = document.createElement('span');
       tag.className = 'reminder-overdue-tag';
-      tag.textContent = t('task.overdue');
+      tag.innerHTML = statusIcon('clock-alert', 9, 'st-err') + '<span>' + escapeHtml(t('task.overdue')) + '</span>';
       timeSpan.appendChild(tag);
     }
   }

@@ -160,9 +160,10 @@ const DAEMON_CSS = `
 }
 .daemon-status.running { background: var(--color-primary, #07c160); animation: daemon-pulse 1.6s ease-out infinite; }
 .daemon-status.stopped { background: var(--color-text-muted); opacity: 0.3; }
-.daemon-status.error { background: #f44336; }
-.daemon-status.crashed { background: #f44336; }
-.daemon-status.starting { background: #ff9800; }
+/* ui-status-redesign：图案圆点保留（铁律一载体面），色值散落字面量 → 状态 token。 */
+.daemon-status.error { background: var(--status-error-icon); }
+.daemon-status.crashed { background: var(--status-error-icon); }
+.daemon-status.starting { background: var(--status-warn-icon); }
 @keyframes daemon-pulse {
   0% { box-shadow: 0 0 0 0 rgba(7, 193, 96, 0.4); }
   100% { box-shadow: 0 0 0 7px rgba(7, 193, 96, 0); }

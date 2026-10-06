@@ -13,7 +13,7 @@
 //     （缓存删除）+ 快照对账消化，前端零链派生零判据（旧 deriveArchivedIds/
 //     clusterBatches 时间批镜像已删除，判据唯一存在于后端 FlowMapStore）。
 import { t } from './i18n.js';
-import { createIconsIn, onMinuteTick } from './utils.js';
+import { createIconsIn, onMinuteTick, statusIcon, escapeHtml } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect } from './ws.js';
 import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS, controlChain } from './nodeData.js';
@@ -767,9 +767,12 @@ function buildChainRow(project, chainMeta, members, view) {
   // In-flight: the optimistic word replaces the five-state badge text but keeps the
   // same `.task-chain-badge.s-*` element and colour token (zero new CSS, §10.8).
   badgeEl.className = `task-chain-badge s-${badge}`;
-  badgeEl.textContent = pendingAction
+  // ui-status-redesign（S3 / 盘点 #16）：failed 徽章 = 图案承载保留（红 10% 底 +
+  // 红 35% 边），词转中性字、词前 circle-x 红（形状编码，9px 档）。
+  const badgeText = pendingAction
     ? t(pendingAction === 'cancel' ? 'task.chain.cancelling' : 'task.chain.pausing')
     : t(NODE_BADGE_KEY[badge]);
+  badgeEl.innerHTML = (badge === 'failed' && !pendingAction ? statusIcon('circle-x', 9, 'st-err') : '') + escapeHtml(badgeText);
   row.appendChild(badgeEl);
 
   row.appendChild(buildChainDotmap(view.ordered, view.edges));

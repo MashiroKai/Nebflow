@@ -162,7 +162,7 @@
 //     weixin request may ride the feishu endpoints.
 
 import { t } from './i18n.js';
-import { escapeHtml, createIconsIn } from './utils.js';
+import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { getAuthToken } from './neblink.js';
 import {
@@ -543,6 +543,17 @@ function cardHTML(ch) {
   return ch.scanBind ? scanBindCardHTML(ch) : plainCardHTML(ch);
 }
 
+/** Status pill content (ui-status-redesign S13): 图案 pill 保留红底红边，词转中性，
+ *  语义形状由词前图标区分（封禁=ban / 配置有误=triangle-alert / 断链失败=unplug）。
+ *  @param {string} status channelStatus key
+ *  @returns {string} inner HTML（词文本由调用方 escape） */
+function pillInner(status, word) {
+  const icon = status === 'configInvalid' ? statusIcon('triangle-alert', 11, 'st-err')
+    : status === 'failed' ? statusIcon('unplug', 11, 'st-err')
+    : '';
+  return icon ? `${icon}<span>${escapeHtml(word)}</span>` : escapeHtml(word);
+}
+
 /**
  * Plain card (channels without the scan-bind main path): head carries icon +
  * name + `[data-status]` + the shared switch (W4 requires all four inside
@@ -560,7 +571,7 @@ function plainCardHTML(ch) {
       <div class="social-card-head">
         <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
         <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
-        <span class="social-status-pill plugins-state-pill" data-status="${status}">${escapeHtml(t(`social.status.${status}`))}</span>
+        <span class="social-status-pill plugins-state-pill" data-status="${status}">${pillInner(status, t(`social.status.${status}`))}</span>
         ${toggleHTML({
           on,
           label: t(ch.nameKey),
@@ -570,7 +581,7 @@ function plainCardHTML(ch) {
       </div>
       <div class="social-card-desc">${escapeHtml(t(ch.descKey))}</div>
       <div class="social-card-fields">${fields}</div>
-      <div class="social-card-hint"${hint ? '' : ' hidden'}>${escapeHtml(hint)}</div>
+      <div class="social-card-hint"${hint ? '' : ' hidden'}>${hint ? statusIcon('triangle-alert', 12, 'st-err') + escapeHtml(hint) : ''}</div>
       <div class="social-card-actions">
         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-primary" data-save="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.save'))}</button>
         <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-recheck="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.recheck'))}</button>
@@ -606,7 +617,7 @@ function scanBindCardHTML(ch) {
   const head = `<div class="social-card-head">
         <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
         <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
-        <span class="social-status-pill plugins-state-pill" data-status="${status}">${escapeHtml(t(`social.status.${status}`))}</span>
+        <span class="social-status-pill plugins-state-pill" data-status="${status}">${pillInner(status, t(`social.status.${status}`))}</span>
       </div>`;
   const scanInline = `
       <div class="social-scan-inline">
@@ -617,14 +628,18 @@ function scanBindCardHTML(ch) {
   const face = created
     ? `${liveBlockHTML(ch)}
        <div class="social-card-actions">
-         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t(archiveKey(ch.id, 'hint')))}">${escapeHtml(t(archiveKey(ch.id, 'action')))}</button>
+         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t(archiveKey(ch.id, 'hint')))}">${statusIcon('unplug', 12, 'st-err')}${escapeHtml(t(archiveKey(ch.id, 'action')))}</button>
          <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
        </div>`
     : scanInline;
-  return `<div class="social-card" data-channel="${escapeHtml(ch.id)}">
+  // socialux-scanbind (author screenshot ruling 2026-10-06): the scanBind card
+  // carries ONE modifier class so its hint line can be axis-centered against
+  // the scan-status line in css/social.css (explicit class, not :has() — same
+  // convention flowMap.css states for state-dependent card faces).
+  return `<div class="social-card social-card-scanbind" data-channel="${escapeHtml(ch.id)}">
       ${head}
       ${face}
-      <div class="social-card-hint"${hint ? '' : ' hidden'}>${escapeHtml(hint)}</div>
+      <div class="social-card-hint"${hint ? '' : ' hidden'}>${hint ? statusIcon('triangle-alert', 12, 'st-err') + escapeHtml(hint) : ''}</div>
     </div>`;
 }
 
@@ -729,14 +744,14 @@ function refreshCard(channelId) {
   const pill = card.querySelector('.social-status-pill');
   if (pill) {
     pill.setAttribute('data-status', status);
-    pill.textContent = t(`social.status.${status}`);
+    pill.innerHTML = pillInner(status, t(`social.status.${status}`));
   }
   const liveEl = card.querySelector('[data-live]');
   if (liveEl instanceof HTMLElement) liveEl.outerHTML = liveBlockHTML(ch);
   const hintEl = card.querySelector('.social-card-hint');
   const hint = cardHint(ch, status);
   if (hintEl) {
-    hintEl.textContent = hint;
+    hintEl.innerHTML = hint ? statusIcon('triangle-alert', 12, 'st-err') + escapeHtml(hint) : '';
     if (hint) hintEl.removeAttribute('hidden'); else hintEl.setAttribute('hidden', '');
   }
   // The shared component only ever renders a <button> (toggle.js); assert it

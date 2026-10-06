@@ -381,6 +381,11 @@
   background: var(--color-frame-hover);
   color: var(--color-frame-text-bright);
 }
+/* ui-status-redesign（S10 / 盘点 #47）：常显危险项（删除文件夹）——字转常规色、
+   行首 trash-2 红图标（sidebar.js 注入）；hover 时刻字随交互转红（铁律三）。 */
+.session-ctx-menu .ctx-item .st-ic { width: 12px; height: 12px; margin-right: 7px; vertical-align: -2px; }
+.session-ctx-menu .ctx-item[data-action="delete"] .st-ic { color: var(--status-error-icon); }
+.session-ctx-menu .ctx-item[data-action="delete"]:hover { color: var(--status-error-icon); }
 
 /* Context menu submenu */
 .ctx-separator {
@@ -1302,16 +1307,30 @@
 }
 
 /* ── Config Toast (validation errors) ─────────────────────────────── */
+/* ui-status-redesign（分叉④=A，S7 全站归一）：全站唯一违规件「实心红底白字」
+   并入 nebflow-toast（modal.css:1140）玻璃规范——同一毛玻璃材质（--glass-control-*
+   token 系）、行首 circle-x 红图标（--status-error-icon，图标载体）+ 中性正文。
+   布局钩子（fixed/bottom/z-index/动画）保留，正文可读性回到主题 token。 */
 .cfg-toast {
   position: fixed; bottom: 20px; right: 20px; z-index: 10000;
-  max-width: 400px; padding: 10px 16px; border-radius: 8px;
+  max-width: 400px; padding: 10px 16px; border-radius: 12px;
   font-size: 13px; line-height: 1.4;
+  display: flex; align-items: flex-start; gap: 8px;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow),
+    0 8px 24px var(--glass-control-glow);
+  color: var(--color-text);
   animation: cfg-toast-in 0.2s ease-out;
 }
-.cfg-toast-error {
-  background: #f44336; color: #fff;
-  box-shadow: 0 4px 12px rgba(244,67,54,0.3);
-}
+.cfg-toast-error .st-ic { width: 15px; height: 15px; margin-top: 1px; flex-shrink: 0; }
+.cfg-toast-error .cfg-toast-msg { color: var(--status-word); min-width: 0; overflow-wrap: anywhere; }
 @keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ── Agent Manager ────────────────────────────────────────────────────── */
@@ -1951,7 +1970,10 @@
    零手造色值；不新增色令牌——本块的 `#`/rgba 字面量禁令见本文件 748 行注释节，
    tests/plugins-panel-autosync.spec.mjs ④ 对 indexOf 切片做零字面量断言）。 */
 .plugins-card.changed { border-color: rgb(var(--amber) / 0.28); }
-.plugins-card.blocked { border-color: color-mix(in srgb, var(--color-error) 32%, transparent); }
+/* ui-status-redesign（盘点 #52 / S13）：封禁态字面全部转中性字，语义红只留在
+   图案载体（卡边/pill 底边/hint 底边 = --status-error-icon color-mix）与词前
+   ban 图标上（plugins.js 注入）。 */
+.plugins-card.blocked { border-color: color-mix(in srgb, var(--status-error-icon) 32%, transparent); }
 .plugins-card.rejected { opacity: 0.75; }
 .plugins-card-head {
   display: flex;
@@ -2010,10 +2032,11 @@
   border-color: rgb(var(--amber) / 0.25);
 }
 .plugins-state-pill.blocked {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 10%, transparent);
-  border-color: color-mix(in srgb, var(--color-error) 25%, transparent);
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
 }
+.plugins-state-pill.blocked .st-ic { width: 10px; height: 10px; margin-right: 3px; }
 .plugins-card-desc {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
@@ -2069,10 +2092,11 @@
 /* （原 `.plugins-card-hint.dim` 的「未启用（默认拒绝）」灰字提示已随内容审批
    面退场一并删除——该状态在新语义下不存在。） */
 .plugins-card-hint.blocked {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 8%, transparent);
-  border-color: color-mix(in srgb, var(--color-error) 25%, transparent);
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
 }
+.plugins-card-hint.blocked .st-ic { width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; }
 /* （原「次级动作：更多菜单 + 封禁/解封」整段样式随 2026-09-14 面板收敛批退场：
    `.plugins-more-btn`（含 hover / [aria-expanded="true"]）、`.plugins-card-more`
    （含 [hidden]）、`.plugins-block-btn`（含 :hover / .unblock / :disabled）、

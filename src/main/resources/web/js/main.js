@@ -18,7 +18,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom, createIconsIn, statusIcon } from './utils.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
@@ -1047,7 +1047,9 @@ function updateHeaderModelInfo() {
   const pct = Math.min(Math.round(ratio * 100), 100);
   let barColor = '#4caf50';
   if (ratio > 0.5) barColor = '#d4a030';
-  if (ratio > 0.75) barColor = '#e53935';
+  // ui-status-redesign（盘点 #49，B 组）：>75% 红档字面量 → 状态 token（环=图案
+  // 载体保留）。CSS 变量经 style.stroke 消费（stroke 属性不支持 var()）。
+  if (ratio > 0.75) barColor = 'var(--status-error-icon)';
 
   const dragPct = el.dataset.ringDragPreviewPct ? Number(el.dataset.ringDragPreviewPct) : null;  // ctxring S1 (see ctxthresh.js header)
   const thresholdPct = dragPct != null ? Math.round(dragPct) : Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
@@ -1071,9 +1073,9 @@ function updateHeaderModelInfo() {
     const ring = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-ring-wrap'));
     if (ring) {
       ring.title = tooltip;
-      const ringFill = ring.querySelector('circle:nth-child(2)');
+      const ringFill = /** @type {SVGElement|null} */ (ring.querySelector('circle:nth-child(2)'));
       if (ringFill) {
-        ringFill.setAttribute('stroke', barColor);
+        ringFill.style.stroke = barColor;
         ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
       }
       const ringLine = ring.querySelector('.ctx-ring-threshold');
@@ -1090,11 +1092,10 @@ function updateHeaderModelInfo() {
     <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
       <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
         <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke="${barColor}" stroke-width="3.5"
-                stroke-dasharray="${dashLen} ${CIRC}"
+        <circle cx="18" cy="18" r="${R}" fill="none" stroke-width="3.5"
+                style="stroke:${barColor};stroke-dasharray:${dashLen} ${CIRC};transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"
                 stroke-linecap="round"
-                transform="rotate(-90 18 18)"
-                style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+                transform="rotate(-90 18 18)"/>
         <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
               transform="rotate(${thresholdAngle} 18 18)"
               class="ctx-ring-threshold"/>
@@ -2213,13 +2214,14 @@ function renderBgAgentDropdown() {
     const retriesPart = retries > 0
       ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
       : '';
-    // Stuck: restrained red label with idle seconds (manage-panel semantics).
+    // Stuck: restrained label with idle seconds (manage-panel semantics) —
+    // ui-status-redesign（S2 / 盘点 #12）：词前 timer-off 红图标 + 中性字。
     // NO inline cancel/restart buttons — operations live in the agent popup (A13).
     // Hard-recovery P7 (2026-09-07): the label mirrors the REAL action the
     // backend performed (halt / hard-abort / restart / failed) — "auto-
     // restarting" only ever shows when an actual restart was triggered.
     const stuckPart = (rowState === 'stuck' && info.stuck)
-      ? '<span class="bg-task-stuck" role="alert">' + escapeHtml(
+      ? '<span class="bg-task-stuck" role="alert">' + statusIcon('timer-off', 11, 'st-err') + escapeHtml(
           info.stuck.action === 'restart'
             ? t('manage.stuckAutoRestart')
             : info.stuck.action === 'hard-abort'
@@ -2255,13 +2257,20 @@ function renderBgAgentDropdown() {
         // panel only (#bgagent-dropdown); the background-tasks panel
         // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
         '<div class="bg-task-line bg-task-main">' +
-          '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
+          '<span class="bg-task-state bg-state-' + rowState + '">' +
+            (rowState === 'stuck' ? statusIcon('timer-off', 11, 'st-err')
+              : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
+              : '') +
+            escapeHtml(statusLabel) + '</span>' +
           kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
         '</div>' +
         stuckPart + toolPart +
       '</div>' +
     '</div>';
   }).join('');
+  // ui-status-redesign：statusIcon() 兜底占位（<i data-lucide>）在此升级为真图标
+  // （vendor lib 已就绪时上面已是内联 SVG，此调用零替换、幂等）。
+  createIconsIn(listEl);
 
   // Wire click handlers for sub-agent rows
   listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
