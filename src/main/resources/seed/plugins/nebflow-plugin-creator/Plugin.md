@@ -45,7 +45,7 @@ nebflow-plugin-creator/  （包根）
 | 步 | 做什么 | 关键判据 | 全量口径 |
 |---|---|---|---|
 | ① 判定输入形态 | A 迁移封装（已有 SKILL.md/skill 目录）/ B MCP 配置（JSON 片段/命令行/URL，**实验性**）/ C 全新创作（口头能力描述） | 按输入实际内容判定，不按用户措辞；可组合（如 A+B） | plugin-packaging 第一步 |
-| ② 能力域分析与拆分 | 能力域分析 → skill 拆分 | one skill = one purpose；每 SKILL.md ≤300 行（深内容下沉 references/、脚本放 scripts/、模板放 assets/） | 第二步 |
+| ② 能力域分析与拆分 | 能力域分析 → skill 拆分 | one skill = one purpose；深内容下沉 references/、脚本放 scripts/、模板放 assets/ | 第二步 |
 | ③ 逐件生成 | manifest（五段式 description）→ skill 目录（frontmatter 下限 name+description）→ mcp.json（仅形态 B，实验性） | description 自检五段齐备；保留前缀 `nebflow-plugin-` 生成期拦截；落盘前探测同名目录、不静默覆盖 | 第三步 |
 | ④ 落盘→自检→交付 | 直写 `<data_root>/plugins/<name>/`（落盘即生效）→ 机械自检 → 终检报告并**冻结目录** | **自检做完再落盘，落盘后不得再写包内文件**；终检报告含包结构/来源/digest/停止手段 | 第四~六步 |
 
@@ -75,10 +75,10 @@ python3 skills/plugin-packaging/scripts/validate_plugin.py --profile creator <�
 
 ## 5. 各技能总目录
 
-| skill 路径（自 skills/） | 一句话括注 | 体量红线 |
-|---|---|---|
-| plugin-packaging/SKILL.md | 三输入→生成→自检→交付的封装主流程，含六分叉处置、交付前自检与来源/digest 报告口径；携带校验脚本与模板资产 | ≤300 行 |
-| description-quality/SKILL.md | manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法 | ≤300 行 |
+| skill 路径（自 skills/） | 一句话括注 |
+|---|---|
+| plugin-packaging/SKILL.md | 三输入→生成→自检→交付的封装主流程，含六分叉处置、交付前自检与来源/digest 报告口径；携带校验脚本与模板资产 |
+| description-quality/SKILL.md | manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法 |
 
 ## 6. 选 skill 决策树
 

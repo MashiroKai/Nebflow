@@ -32,8 +32,8 @@ description: 把能力需求封装为合规 Nebflow 插件包的执行手册—�
 ## 第二步：能力域分析与 skill 拆分（形态 C 为主，A/B 亦适用）
 
 - **one skill = one purpose**：一个 skill 只承载一个目的；两个不相关能力拆成两个 skill。
-- **体量红线**：每个 SKILL.md ≤300 行（节点在 spawn 时一次性收到全文注入，不是按需
-  读取——超限即挤占上下文）。深内容下沉 `references/`（节点按需读），脚本放
+- **体量克制**：SKILL.md 正文在 spawn 时一次性全文注入（非按需读取），体量过大
+  即挤占上下文——正文保持精炼。深内容下沉 `references/`（节点按需读），脚本放
   `scripts/`，模板资源放 `assets/`。
 - 每个 skill 必须有真实工作内容：scripts 干实事，不写散文式伪步骤。
 
@@ -82,10 +82,10 @@ frontmatter 下限：name（等于目录名）+ description（一句话说清 wh
 - **定位**：使用指导件，装载器不注入、不参与选配；维护者与按需 Read 的节点/用户
   以此为包内地图（用户+模型可见的按需 Read 面），装载时刻零上下文成本。
 - **分工边界**：description 管「选不选」（≤400 字符，唯一描述源）；SKILL.md 管
-  「怎么干活」（注入面，≤300 行/skill）；Plugin.md 管「包里还有什么、怎么用怎么
+  「怎么干活」（注入面）；Plugin.md 管「包里还有什么、怎么用怎么
   停」——跨 skill 共用、装不进 description、又不属于任何单 skill 的内容才进这里。
-  单 skill 专属深内容仍下沉该 skill 的 `references/`，**禁为绕 M12 把 SKILL.md
-  正文搬进 Plugin.md**（必与该 skill 正文漂移）。
+  单 skill 专属深内容仍下沉该 skill 的 `references/`，**禁把 SKILL.md 正文
+  搬进 Plugin.md**（必与该 skill 正文漂移）。
 - **写法**：文内路径用自包根的文件相对形态（无 `${SKILL_DIR}` 替换——该替换只
   发生在 SKILL.md 注入文本）；体量克制（建议 ≤400 行）；零占位残留（M15 全包扫）。
   与 SKILL.md 不一致时以 SKILL.md 为准并回改 Plugin.md。

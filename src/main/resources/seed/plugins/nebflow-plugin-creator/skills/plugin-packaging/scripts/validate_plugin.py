@@ -144,7 +144,6 @@ BINARY_EXT = frozenset({
     "pyc", "pyo", "o", "a", "obj", "lib", "swf", "h5p",
     "doc", "docx", "xls", "xlsx", "ppt", "pptx",
 })
-MAX_SKILL_LINES = 300
 MAX_DESC_CHARS = 400
 
 PROFILE_MODES = {
@@ -1078,7 +1077,7 @@ def main():
            f"声明={sorted(declared)} 实际={actual}" if m11_ok else
            f"不一致——描述声明={sorted(declared)}，skills/ 实际={actual}")
 
-    # M12 + M13 逐 SKILL.md（同时收集文本/frontmatter 供 C3/C6 复用）
+    # M13 逐 SKILL.md（同时收集文本/frontmatter 供 C3/C6 复用）
     skill_files = []  # (dirname, filepath, text, frontmatter)
     sd = os.path.join(pkg, "skills")
     if os.path.isdir(sd):
@@ -1089,9 +1088,6 @@ def main():
                     text = f.read()
                 skill_files.append((name_, fp, text, parse_frontmatter(text)))
     for sname, _fp, text, _fm in skill_files:
-        nlines = len(text.splitlines())
-        record(f"M12", f"体量红线 {sname}/SKILL.md", nlines <= MAX_SKILL_LINES,
-               f"{nlines}/{MAX_SKILL_LINES} 行")
         fm = _fm
         m13_ok = fm is not None and fm.get("name", "").strip() != "" and fm.get("description", "").strip() != ""
         record(f"M13", f"frontmatter 下限 {sname}/SKILL.md", m13_ok,
