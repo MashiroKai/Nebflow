@@ -62,6 +62,37 @@ final case class DelegateFlowRuntime(
   def scopeDir: os.Path =
     os.Path(baseWorkspace, PathUtil.dataRoot) / ".nebflow" / FlowMapStore.FlowMapsDirName / delegateId
 
+  /**
+   * N1 刀2（v3 §10.1 A4 授能）：delegate 作用域 → **Node 工具面 ProjectRuntime 视图**。
+   *
+   * 为什么是适配器而不是第二套工具逻辑：NodeEdit/NodeList/NodeCancel 的校验链
+   * （存在性/环检/门集/载荷组装）全部以 `ProjectRuntime` 为参数面——作用域图经本
+   * 适配器复用**同一套**工具逻辑（单一真相源，禁 fork 第二套）。字段映射：
+   *   - `project.name`    = engine.projectName（挂载期归名：项目名 / general 腿座位名
+   *     ——与引擎事件归名同源，载荷 meta.project 与事件流逐字一致）；
+   *   - `project.workspace` = baseWorkspace（**基工作区**——事件锚点，与刀1 各腿
+   *     `chainArchiveLeg` 等逐字同源：作用域目录族挂其 `.nebflow` 下，寿命长于座位）；
+   *   - `store`/`engine`   = 作用域实例本体；
+   *   - `actorRef`/`board` = None（ProjectActor 项目 face 专属——作用域图零板块头、
+   *     零 actor 指令面，与刀1 mount 的 board=None 同口径）。
+   * 纯视图（零注册）：**不进** ProjectRuntimeRegistry（项目 face 的 REST/解析语义
+   * 不变——刀1 已钉的红线）。
+   */
+  def projectRuntime: ProjectRuntime = ProjectRuntime(
+    project = ProjectDef(
+      name = engine.projectName,
+      workspace = baseWorkspace,
+      agentFile = (os.Path(baseWorkspace, PathUtil.dataRoot) / "AGENTS.md").toString,
+      createdAt = 0L
+    ),
+    store = store,
+    engine = engine,
+    system = engine.system,
+    resources = engine.resources,
+    actorRef = None,
+    board = None
+  )
+
 object DelegateFlowHosts:
   private val logger = NebflowLogger.forName("nebflow.delegate.flow-hosts")
 

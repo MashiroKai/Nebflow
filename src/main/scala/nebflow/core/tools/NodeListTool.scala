@@ -16,6 +16,11 @@ object NodeListTool extends Tool:
 - The dispatcher reads the current topology at session start (and before ending) — nodes with status/description/hasWorktree drive merge-node decisions.
 - Frontend panel data source (REST mirrors this shape).
 
+## Scope & addressing (delegate sessions)
+- On a delegate session this tool is the delegate-scope face: it reads the delegate's OWN scope flow map (one delegate, one map). A `project` parameter naming anything else is refused (DELEGATE_SCOPE_FOREIGN); project dispatchers keep the per-project face unchanged.
+- Dual addressing: `detail` accepts the node id OR the node name (exact id match wins; a name matching several nodes is an explicit error listing the candidates — CHAIN_ADDR_AMBIGUOUS; no hit = CHAIN_NODE_NOT_FOUND).
+- Chain read: `chains[]` carries each chain's id/title/entries/ends/memberIds plus the control state (`status`: active|paused|cancelled, `pausedAt`, `cancelledAt`) — the delegate's in-flight chain view. Check it before reporting your own status, and pick up results of chains whose completion notice was missed (NodeList detail=<memberId>).
+
 ## Parameters
 - **project** (optional; defaults to current project): project name.
 - **status** (optional): filter the map to specific lifecycle state(s) — single value, comma-separated list, or array. Valid: wiring, pending, running, completed, failed, cancelled, blocked. Example: "running,pending" to see only active work. Omitted = ALL nodes (use this for the full picture; filter only when the map is large and you know which slice you need). Applies to the map listing only, not to detail=.
@@ -44,7 +49,7 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
         ),
         "detail" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Node id — return that node's full record (metadata + task + result FULL TEXT) instead of the whole map".asJson
+          "description" -> "Node reference — node id OR node name (dual addressing: exact id wins, an ambiguous name is an explicit error); return that node's full record (metadata + task + result FULL TEXT) instead of the whole map".asJson
         )
       ),
       "required" -> Json.arr()
@@ -59,27 +64,23 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
     if result.length > 300 then result.take(297) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    NodeTools.resolveProject(input("project").flatMap(_.asString).orElse(ctx.projectName), ctx).flatMap {
+    // N1 刀2 A4：解析单点换 `resolveRuntime`（delegate 会话 = 自己作用域图；其余身份
+    // per-project 路径逐字节不变——作用域闸详见 NodeTools.resolveRuntime 注）。
+    NodeTools.resolveRuntime(input("project").flatMap(_.asString), ctx).flatMap {
       case Left(err) => IO.pure(Left(ToolError(err)))
       case Right(rt) =>
-        // detail 通道（2026-09-05 载荷收敛配套）：指定 nodeId → 单节点全记录
+        // detail 通道（2026-09-05 载荷收敛配套）：指定节点引用 → 单节点全记录
         // （元数据 + task + 结果全文）。数据源与 REST result 端点同源
-        // （findNode 活动区优先归档兜底；内存 result/task = 加载时从 per-node
+        // （resolveNodeRefIO 双寻址（刀2 A5：id 命中/name 命中/歧义列候选/未找到）
+        // → findNode 活动区优先归档兜底；内存 result/task = 加载时从 per-node
         // 文件 results/<id>.md / tasks/<id>.md 水合的全文——落盘 JSON 只存摘要
         // +指针，detail 聚合即「per-node 文件内容」，单源等价，2026-09-06 存储
         // 瘦身批）。payload 键集 = NodeList 同构字段 + task + result。
         input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
-          case Some(nodeId) =>
-            rt.store.findNode(nodeId).flatMap {
-              case None =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"Node '$nodeId' not found (active or archived) — check NodeList without detail for the current topology"
-                    )
-                  )
-                )
-              case Some(n) =>
+          case Some(nodeRef) =>
+            NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
+              case Left(err) => IO.pure(Left(ToolError(err)))
+              case Right(n) =>
                 // chainId / chainIds 条件键（链级抽象 P0 + U1 多链归属批）：detail
                 // 单节点记录与快照/WS 同构——判据单点 FlowMapStore.chainAttrsOf
                 // （双区可达，归档节点同样带链归属；chainIds 仅 merge 多链节点带，

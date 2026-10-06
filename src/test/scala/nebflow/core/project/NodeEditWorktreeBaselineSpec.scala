@@ -1,45 +1,35 @@
 package nebflow.core.project
 
 import cats.effect.IO
-import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{SharedResources, SpecResources}
-import nebflow.core.flow.TeamSessionRegistry
+import nebflow.core.GitWorktrees
 import nebflow.core.tools.{NodeEditTool, ToolContext}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 
 /**
- * worktree auto-creation baseline spec (engine-wtbase batch, 2026-10-04).
+ * worktree 参数面收口 spec（N1 刀2 D1 重写，2026-10-06；前身 = engine-wtbase 批
+ * 2026-10-04 的 NodeEdit 代建基线验收）。
  *
- * Defect being pinned: `NodeEditTool.createWorktreeFor` used to pick its baseline with
- * `git rev-parse --verify --quiet main` and fall back to `HEAD` only when `main` was
- * absent -- so every `worktree=true` node started on MAIN even when the repo HEAD was
- * on an integration line ahead of it. Measured production shape: three parallel nodes
- * were created on main (a5b716d55) while the integration line tip was e3e784ede, i.e.
- * a parallel batch silently started 27 commits behind the integration line.
+ * 语义反转：`worktree` 不再是 NodeEdit 参数——分支/worktree 代建收归 delegate 层
+ * 判定机（S13）与 Delegate spawn 腿；NodeEdit 首段 seal（`NODE_WORKTREE_UNSUPPORTED`）
+ * 在一切校验/建位/git 探测之前把任何形态的 `worktree` 键拒掉。本 spec 钉两面：
  *
- * All assertions here are BEHAVIOURAL: the baseline is read back with
- * `git rev-parse HEAD` inside the worktree that the tool actually created, never by
- * asserting on a source-level string constant. The fixture repos give a deterministic
- * `main`-vs-HEAD separation, so the spec does not depend on the ambient ref layout of
- * whatever worktree the suite happens to run in.
- *
- * Scope note: a model-visible parameter for choosing the baseline (e.g. a new
- * `worktreeBase` field in the Tool schema) is intentionally NOT part of this batch --
- * it would change the model-visible tool description and therefore needs the author's
- * line-by-line review (AGENTS.md §16). This spec covers only the tool-visible
- * behaviour; the engine-internal `baseRef` parameter of `createWorktreeFor` cannot be
- * exercised from a spec (the method is object-private and its single call site pins
- * `"HEAD"`), so its presence is evidenced by the diff, not here.
+ *  - WTB-1/2/5：NodeEdit seal 面（字符串/布尔/非 git 工作区一视同仁；零节点零
+ *    worktree 目录零 git 探测副作用）。
+ *  - WTB-3/4：**GitWorktrees 公用 util 本体保留**——`sanitizeRefName` 派生规则与
+ *    `createWorktree` 建制能力直测（delegate spawn 腿等其余消费点继续用；util 不随
+ *    NodeEdit 参数退役而退役）。
  */
 class NodeEditWorktreeBaselineSpec extends CatsEffectSuite:
 
-  override def munitIOTimeout: FiniteDuration = 180.seconds
+  override def munitIOTimeout: FiniteDuration = 120.seconds
 
   private val tempRoot: os.Path = os.pwd / "target" / "test-worktree-baseline"
   private val originalRoot = PathUtil.dataRoot
@@ -59,11 +49,10 @@ class NodeEditWorktreeBaselineSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     ProjectRuntimeRegistry.clear
-    TeamSessionRegistry.clear.unsafeRunSync()
 
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  // ── fixture harness (NodeAcceptanceSpec patterns) ───────────────────
+  // ── fixture harness（NodeAcceptanceSpec patterns）──────────────────────
 
   private class RecordingLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -128,202 +117,133 @@ class NodeEditWorktreeBaselineSpec extends CatsEffectSuite:
       .out
       .trim()
 
-  /** git exit code (no throw) -- for `rev-parse --verify --quiet` / `merge-base --is-ancestor`. */
-  private def gitExit(cwd: os.Path, args: String*): Int =
-    os.proc(Seq("git", "-C", cwd.toString) ++ args)
-      .call(cwd = cwd, check = false, mergeErrIntoOut = true)
-      .exitCode
-
   /** Fresh single-branch repo started on `branch`. */
-  private def mkRepo(tag: String, branch: String): os.Path =
+  private def mkRepo(tag: String, branch: String = "main"): os.Path =
     val ws = tempRoot / s"ws-$tag-${scala.util.Random.nextInt(100000)}"
     os.makeDir.all(ws)
     git(ws, "init", "-q", "-b", branch)
     git(ws, "config", "user.email", "spec@nebflow.local")
     git(ws, "config", "user.name", "spec")
+    git(ws, "commit", "-q", "--allow-empty", "-m", "init")
     ws
 
-  private def commit(ws: os.Path, msg: String): Unit =
-    git(ws, "commit", "-q", "--allow-empty", "-m", msg)
+  private def plainWorkspace(tag: String): os.Path =
+    val ws = tempRoot / s"ws-plain-$tag-${scala.util.Random.nextInt(100000)}"
+    os.makeDir.all(ws)
+    ws
 
-  /** Fixture repo + runtime + ctx; `build` shapes the commit graph. */
-  private def wtProject(
-    tag: String,
-    branch: String = "main"
-  )(build: os.Path => Unit): (os.Path, ActorSystem, SharedResources, ProjectRuntime, ToolContext) =
-    val ws = mkRepo(tag, branch)
-    build(ws)
+  private def harness(tag: String, ws: os.Path): (ActorSystem, SharedResources, ProjectRuntime, ToolContext) =
     val system = ActorSystem(s"wtbase-$tag-${scala.util.Random.nextInt(100000)}")
     val res = SpecResources.mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
     val rt = mountProject(s"wtbase-$tag", ws, system, res).unsafeRunSync()
-    (ws, system, res, rt, mkCtx(res, system, ws.toString))
+    (system, res, rt, mkCtx(res, system, ws.toString))
 
-  private def storeOf(rt: ProjectRuntime): IO[FlowMapState] = rt.store.snapshot
+  // ── 1. NodeEdit seal 面（D1：键在场即拒，先于一切校验/建位/git 探测）──────
 
-  private def derivedWorktree(s: FlowMapState, nodeName: String): Option[String] =
-    s.nodes.values.find(_.name == nodeName).flatMap(_.worktree)
-
-  private val NodeName = "wt-baseline"
-
-  /** Unique task text per create: NodeEdit's duplicate-dispatch guard rejects a second
-   *  dispatch whose task text is identical to a completed node's in the same project. */
-  private def taskText(tag: String) = s"wt-base-$tag"
-
-  private def createWtNode(
-    project: String,
-    name: String,
-    ctx: ToolContext,
-    taskTag: String
-  ): IO[Either[String, String]] =
-    nodeEdit(
-      nodeInput(
-        project,
-        name,
-        "description" -> Json.fromString("worktree baseline spec node"),
-        "task" -> Json.fromString(taskText(taskTag)),
-        "worktree" -> Json.fromBoolean(true),
-        "out" -> Json.fromString("Nebula")
-      ),
-      ctx
-    )
-
-  // ── 1. default baseline = repo HEAD at creation time ────────────────
-
-  test("WTB-1 default baseline = repo HEAD when main sits BEHIND the checked-out line") {
-    val (ws, system, _, rt, ctx) = wtProject("behind") { ws =>
-      commit(ws, "main-base") // main = A
-      git(ws, "branch", "exec-line")
-      git(ws, "checkout", "-q", "exec-line")
-      commit(ws, "integration-1")
-      commit(ws, "integration-2") // HEAD = C; main is 2 commits behind
-    }
-    val mainSha = git(ws, "rev-parse", "main")
-    val headSha = git(ws, "rev-parse", "HEAD")
-    assert(mainSha != headSha, s"fixture must separate main from HEAD (main=$mainSha head=$headSha)")
+  test("WTB-1 worktree=true on a git repo → NODE_WORKTREE_UNSUPPORTED; no node, no worktree dir, no branch") {
+    val ws = mkRepo("seal-git")
+    val (system, _, rt, ctx) = harness("seal-git", ws)
     for
-      r <- createWtNode("wtbase-behind", NodeName, ctx, "behind")
-      s <- storeOf(rt)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r.isRight, s"worktree=true create must succeed, got: $r")
-      val wt = derivedWorktree(s, NodeName)
-      assert(wt.isDefined, "NodeDef.worktree must store the derived bare name")
-      val wtPath = ws / ".nebflow" / "worktrees" / wt.get
-      assert(os.exists(wtPath / ".git"), s"derived worktree dir must exist at $wtPath")
-      val baseSha = git(wtPath, "rev-parse", "HEAD")
-      assertEquals(
-        baseSha,
-        headSha,
-        s"new worktree must be based on the repo HEAD at creation time (head=$headSha), got $baseSha"
+      r <- nodeEdit(
+        nodeInput(
+          "wtbase-seal-git",
+          "wt-baseline",
+          "description" -> Json.fromString("seal spec node"),
+          "task" -> Json.fromString("seal task"),
+          "worktree" -> Json.fromBoolean(true),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
       )
-      assert(baseSha != mainSha, s"new worktree must NOT be based on main ($mainSha) when HEAD is ahead of it")
-      assertEquals(
-        gitExit(wtPath, "merge-base", "--is-ancestor", mainSha, baseSha),
-        0,
-        s"fixture shape: main ($mainSha) should be an ancestor of the base ($baseSha)"
-      )
-    end for
-  }
-
-  // ── 2. main is not required and not consulted ───────────────────────
-
-  test("WTB-2 repo with NO 'main' branch: worktree still created, based on HEAD") {
-    val (ws, system, _, rt, ctx) = wtProject("nomain", "trunk") { ws =>
-      commit(ws, "trunk-base")
-      commit(ws, "trunk-tip")
-    }
-    // Fixture sanity: this repo has no `main` ref at all.
-    assert(
-      gitExit(ws, "rev-parse", "--verify", "--quiet", "main") != 0,
-      "fixture must not carry a `main` ref"
-    )
-    val headSha = git(ws, "rev-parse", "HEAD")
-    for
-      r <- createWtNode("wtbase-nomain", NodeName, ctx, "nomain")
-      s <- storeOf(rt)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r.isRight, s"worktree=true must not require a `main` branch, got: $r")
-      val wtPath = ws / ".nebflow" / "worktrees" / derivedWorktree(s, NodeName).get
-      assertEquals(git(wtPath, "rev-parse", "HEAD"), headSha, "baseline must be HEAD when no main exists")
-    end for
-  }
-
-  test("WTB-3 'main' ahead of HEAD is NOT consulted: baseline stays HEAD") {
-    val (ws, system, _, rt, ctx) = wtProject("mainahead") { ws =>
-      commit(ws, "main-base") // main = A
-      git(ws, "branch", "exec-line")
-      git(ws, "checkout", "-q", "exec-line")
-      commit(ws, "integration-1") // HEAD = B
-      git(ws, "checkout", "-q", "main")
-      commit(ws, "main-ahead") // main = C (diverged, ahead)
-      git(ws, "checkout", "-q", "exec-line")
-    }
-    val mainSha = git(ws, "rev-parse", "main")
-    val headSha = git(ws, "rev-parse", "HEAD")
-    assert(mainSha != headSha, s"fixture must diverge main from HEAD (main=$mainSha head=$headSha)")
-    for
-      r <- createWtNode("wtbase-mainahead", NodeName, ctx, "mainahead")
-      s <- storeOf(rt)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r.isRight, s"worktree=true create must succeed, got: $r")
-      val wtPath = ws / ".nebflow" / "worktrees" / derivedWorktree(s, NodeName).get
-      val baseSha = git(wtPath, "rev-parse", "HEAD")
-      assertEquals(baseSha, headSha, s"baseline must be HEAD ($headSha), got $baseSha")
-      assert(baseSha != mainSha, s"the `main` ref ($mainSha) must not be read as the baseline")
-    end for
-  }
-
-  // ── 3. pre-existing behaviour must not regress ──────────────────────
-
-  test("WTB-4 regression: branch-name derivation + collision suffix survive") {
-    val (ws, system, _, rt, ctx) = wtProject("regress") { ws => commit(ws, "base") }
-    for
-      // "wt 同" (space) and "wt-同" sanitize to the same base name => -2 suffix on the second
-      r1 <- createWtNode("wtbase-regress", "wt 同", ctx, "regress-1")
-      r2 <- createWtNode("wtbase-regress", "wt-同", ctx, "regress-2")
-      s <- storeOf(rt)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r1.isRight && r2.isRight, s"both creates must succeed, got: $r1 / $r2")
-      val wt1 = derivedWorktree(s, "wt 同")
-      val wt2 = derivedWorktree(s, "wt-同")
-      assert(wt1.isDefined && wt2.isDefined, s"both nodes must store a derived worktree, got: $wt1 / $wt2")
-      assertEquals(wt1.get, "wt-同", "sanitize must map whitespace to '-' and keep CJK (derivation intact)")
-      assert(wt1.get != wt2.get, s"derived names must be unique, got: $wt1 / $wt2")
-      assert(wt2.get.endsWith("-2"), s"collision candidate must carry the -2 suffix, got: ${wt2.get}")
-      // same-name branch, derived from the same sanitized name
-      assertEquals(git(ws, "branch", "--show-current"), "main", "fixture repo branch sanity")
-      assert(
-        git(ws, "branch", "--list", wt1.get).nonEmpty,
-        s"a branch named '${wt1.get}' must exist in the workspace repo"
-      )
-      assert(
-        git(ws, "branch", "--list", wt2.get).nonEmpty,
-        s"a branch named '${wt2.get}' must exist in the workspace repo"
-      )
-      assert(os.exists(ws / ".nebflow" / "worktrees" / wt2.get / ".git"), "second worktree dir must exist")
-    end for
-  }
-
-  test("WTB-5 regression: non-git workspace still fails fast, no node created") {
-    val ws = tempRoot / s"ws-nogit-${scala.util.Random.nextInt(100000)}"
-    os.makeDir.all(ws) // plain dir (no .git; show-toplevel != ws)
-    val system = ActorSystem(s"wtbase-nogit-${scala.util.Random.nextInt(100000)}")
-    val res = SpecResources.mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
-    val rt = mountProject("wtbase-nogit", ws, system, res).unsafeRunSync()
-    val ctx = mkCtx(res, system, ws.toString)
-    for
-      r <- createWtNode("wtbase-nogit", NodeName, ctx, "nogit")
-      s <- storeOf(rt)
+      s <- rt.store.snapshot
+      noDir <- IO.blocking(!os.exists(ws / ".nebflow" / "worktrees"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(
-        r.isLeft && r.left.exists(_.contains("git repository")),
-        s"non-git workspace must fail fast with an actionable message, got: $r"
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"worktree key must hit the seal, got: $r"
+      )
+      assert(s.nodes.isEmpty, "seal precedes creation: no node from the sealed param")
+      assert(noDir, "NodeEdit must not provision worktrees anymore")
+    end for
+  }
+
+  test("WTB-2 worktree legacy string form → the same seal (any JSON shape is refused)") {
+    val ws = mkRepo("seal-str")
+    val (system, _, rt, ctx) = harness("seal-str", ws)
+    for
+      r <- nodeEdit(
+        nodeInput(
+          "wtbase-seal-str",
+          "n-str",
+          "worktree" -> Json.fromString("pre-made"),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"string worktree must hit the same seal, got: $r"
+      )
+      assert(s.nodes.isEmpty, "no node from the sealed param")
+    end for
+  }
+
+  test("WTB-5 non-git workspace → the seal fires with NO git probe (retired before the repo check)") {
+    val ws = plainWorkspace("nogit")
+    val (system, _, rt, ctx) = harness("nogit", ws)
+    for
+      r <- nodeEdit(
+        nodeInput(
+          "wtbase-nogit",
+          "wt-baseline",
+          "description" -> Json.fromString("seal spec node"),
+          "task" -> Json.fromString("seal task"),
+          "worktree" -> Json.fromBoolean(true),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"non-git workspace must hit the same seal (no 'git repository' message anymore), got: $r"
       )
       assert(s.nodes.isEmpty, "fail-fast: node must NOT be created")
+    end for
+  }
+
+  // ── 2. GitWorktrees util 本体保留（delegate spawn 腿的消费面）────────────
+
+  test("WTB-3 sanitizeRefName derivation rules survive (whitespace→'-', CJK kept, leading dots/escapes clipped)") {
+    assertEquals(GitWorktrees.sanitizeRefName("wt 同"), "wt-同")
+    assertEquals(GitWorktrees.sanitizeRefName("wt-同"), "wt-同")
+    // 前导 '.' 剥除（("../escape" → 首点剥除后不再含 ".."；斜杠是 git ref 合法字符，
+    // util 原样保留——路径安全由调用方目录基座承载，非本函数职责）
+    assert(!GitWorktrees.sanitizeRefName("../escape").contains(".."), "leading-dot escape clipped")
+    // 派生同基名（碰撞面判据的输入端）："wt 同" 与 "wt-同" sanitize 到同一 token
+    assertEquals(GitWorktrees.sanitizeRefName("wt 同"), GitWorktrees.sanitizeRefName("wt-同"))
+  }
+
+  test("WTB-4 createWorktree still provisions worktree+branch (util face intact for the delegate spawn leg)") {
+    val ws = mkRepo("util")
+    for
+      created <- IO.blocking(GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt"))
+      second <- IO.blocking(GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt-2"))
+    yield
+      val c = created.getOrElse(fail(s"util create must succeed: $created"))
+      assert(os.exists(c.path / ".git"), s"worktree dir must exist: ${c.path}")
+      assertEquals(git(ws, "branch", "--list", c.name).nonEmpty, true, s"same-name branch must exist: ${c.name}")
+      // 碰撞后缀（freeName 单点）：第二个同名请求必须落到 -2 目录名（建制能力不回归）
+      val c2 = second.getOrElse(fail(s"collision create must succeed: $second"))
+      assertEquals(c2.name, "util-wt-2", "collision candidate must carry the -2 suffix")
     end for
   }
 

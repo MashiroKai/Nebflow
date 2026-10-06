@@ -27,8 +27,9 @@ import scala.concurrent.duration.*
  *
  * 三条读数：
  *  - Subagent（defName=subagent）：blocking run 完成，返回子文本。
- *  - Workflow（defName=executor，两步骤 DAG）：第二步吃到第一步 `finalText`
- *    的 `=== step a ===` 上游块 ⇒ 阻塞桥逐级完成。
+ *  - AgentFlow（N1 复名薄壳，ex-Workflow）：steps 走 ChainWrite 登记闸（scope 图
+ *    落 pending → 入口放行 → settleDeps 逐级完成；b 的 prompt 带 a 的 `=== Node a ===`
+ *    结果块）——非阻塞 ACK 即返。
  *  - 生产者排他钉：`grep '"finalText"' src/main/scala` 恰两个命中
  *    （`AgentEvent.scala` 生产者 + `BlockingSubagent.scala` 读取点）。
  */
@@ -110,16 +111,41 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       }
       .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
 
-  // ── Workflow：两步骤 DAG 逐级完成（上游块 = 上游 finalText）─────
+  // ── AgentFlow（N1 复名批：ex-Workflow 薄壳）——steps → ChainWrite 登记闸 ──
 
-  test("P0-2 Workflow: a two-step DAG completes — step b receives step a's final text under the upstream header"):
+  test("P0-2 AgentFlow thin shell: a two-step DAG registers through the chain gate, the entry runs, and step b settles after a completes"):
     val captured = TrieMap[String, LlmRequest]()
-    val system = nebflow.actor.ActorSystem("bse2e-wf")
-    val llm = new ScriptedLlm(sid => "STEP-" + sid, captured)
+    val system = nebflow.actor.ActorSystem("bse2e-af")
+    val llm = new ScriptedLlm(_ => "STEP-TEXT", captured)
+    val delegateId = "delegate-general-af11aa11"
+    val ws = tempRoot / "af-ws"
+    os.remove.all(ws)
+    os.makeDir.all(ws)
+    def waitUntil(timeout: FiniteDuration)(cond: IO[Boolean]): IO[Unit] =
+      def go(deadline: Long): IO[Unit] =
+        cond.flatMap {
+          case true => IO.unit
+          case false =>
+            if System.currentTimeMillis() >= deadline then IO.raiseError(new AssertionError("waitUntil timeout"))
+            else IO.sleep(50.millis) >> go(deadline)
+        }
+      go(System.currentTimeMillis() + timeout.toMillis)
     (for
-      parent <- dummyParent(system)
       res <- SpecResources.mkResources(system, tempRoot, llm)
-      out <- WorkflowTool.call(
+      mo <- nebflow.core.project.DelegateFlowHosts.mount(
+        delegateId = delegateId,
+        project = None,
+        baseWorkspace = ws.toString,
+        engineCwd = ws.toString,
+        system = system,
+        resources = res,
+        wsSend = None,
+        reportGateHold = Some(false),
+        rootNotifyQuietMs = Some(0),
+        destroyWindowMs = Some(0L)
+      )
+      h = mo.getOrElse(fail("delegate host must mount"))
+      out <- AgentFlowTool.call(
         JsonObject.fromIterable(
           List(
             "description" -> "e2e".asJson,
@@ -129,27 +155,36 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
             )
           )
         ),
-        ctxFor(system, res, parent)
+        ToolContext(
+          projectRoot = os.pwd.toString,
+          sessionId = Some(delegateId),
+          sharedResources = Some(res),
+          actorSystem = Some(system)
+        )
       )
-    yield out)
-      .map { out =>
-        assert(out.isRight, s"the workflow must complete end-to-end: $out")
-        val text = out.getOrElse("")
-        assert(text.contains("step a"), s"step a must land in the aggregated result: $text")
-        assert(text.contains("step b"), s"step b must land in the aggregated result: $text")
-        // 逐级交付证明：步骤 b 的 prompt 必带步骤 a 的 finalText（=== step a === 块）——
-        // 该块只能来自阻塞桥读到的 finalText。
-        val bReq = captured.values.toList.flatMap(_.messages.lastOption).map(_.content).mkString("\n")
-        assert(
-          captured.size >= 2,
-          s"both steps must actually run a turn (finalText produced), got ${captured.size}: ${captured.keys.toList}"
-        )
-        assert(
-          bReq.contains("=== step a ==="),
-          s"step b's prompt must carry step a's finalText under the upstream header (finalText is the carrier): $bReq"
-        )
+      _ <- waitUntil(60.seconds)(
+        h.store.getNode("b").map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
+      )
+      a <- h.store.getNode("a").map(_.getOrElse(fail("step a must exist")))
+      b <- h.store.getNode("b").map(_.getOrElse(fail("step b must exist")))
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+    yield (out, a, b))
+      .map { case (out, a, b) =>
+        assert(out.isRight, s"the non-blocking ack must land: $out")
+        val ack = out.getOrElse("")
+        assert(ack.contains("Chain 'flow-"), s"auto chain id in the ack: $ack")
+        assert(ack.contains("released"), s"entry release declared in the ack: $ack")
+        assertEquals(a.status, nebflow.core.project.NodeLifecycle.Completed, "entry step runs to completion")
+        assertEquals(b.status, nebflow.core.project.NodeLifecycle.Completed, "downstream step settles via deps")
+        // 逐级交付证明：步骤 b 的 prompt 必带步骤 a 的结果块（=== Node a === 头）——
+        // 薄壳下数据流仍沿边投递（buildInput 上游结果块）。
+        val reqTexts = captured.values.toList.flatMap(_.messages.lastOption).map(m => m.textContent).mkString("\n")
+        assert(captured.size >= 2, s"both steps must actually run a turn, got ${captured.size}: ${captured.keys.toList}")
+        assert(reqTexts.contains("=== Node a ==="), s"step b's prompt must carry step a's result block: $reqTexts")
       }
-      .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
+      .guarantee(
+        (nebflow.core.project.DelegateFlowHosts.unmount(delegateId) *> system.stopAll.handleErrorWith(_ => IO.unit))
+      )
 
   // ── stuck-panel 批（2026-10-06）：叶子终态回收（reap）──────────────────
   // 根因（2026-10-06 17:16 作者截图 3 个 SubTask「空闲」僵尸行）：BlockingSubagent

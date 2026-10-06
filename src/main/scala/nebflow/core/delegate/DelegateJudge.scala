@@ -53,7 +53,13 @@ object DelegateJudge:
       /** delegate_report 自申报（status, detail）——值域 finish | blocked。 */
       selfReport: Option[(String, String)],
       /** true = 该 delegate 已在合并轮（MergeQueue 已注入过合并 reminder）。 */
-      mergeRound: Boolean
+      mergeRound: Boolean,
+      /**
+       * N1 刀2 ⑸（候裁采纳项）：**在飞链计数**——该 delegate 自己作用域图内
+       * 「存在非终态成员」的链数（fail-soft 缺席 = 0）。供判定机区分「工作全部
+       * 收尾」与「还有自己登记的链在跑」——后者 terminal 不必然是整链终局。
+       */
+      inFlightChains: Int = 0
   )
 
   /**

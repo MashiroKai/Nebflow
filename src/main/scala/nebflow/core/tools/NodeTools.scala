@@ -59,6 +59,107 @@ object NodeTools:
           ProjectRuntimeRegistry.all.map(rts => Left(mountError(name, rts.map(_.project.name))))
       }
 
+  // ── N1 刀2（v3 §10.1 A4 授能/作用域闸）────────────────────────────────────
+
+  /**
+   * delegate 会话的四件工具面（挂载点 = `buildAllowedToolSet` 尾段 `delegateSession`
+   * 腿；本集是报错文案与 spec 断言的名字单点，禁字面量散落）。
+   */
+  val DelegateNodeToolsFace: Set[String] = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
+
+  /**
+   * **运行时解析单点（A4 作用域闸）**：delegate 会话 → **只解析自己的作用域图**
+   * （`DelegateFlowHosts.get(ctx.sessionId)`；查无宿主 = fail-closed 显式报错，
+   * 禁静默回落 per-project 面）；其余身份（分发器白名单过渡期照旧 / Nebula /
+   * REST 直调）→ 既有 `resolveProject` per-project 路径**逐字节不变**。
+   *
+   * 三个工具调用点（NodeEdit/NodeList/NodeCancel）统一改走本方法——第二保险与
+   * 挂载面（delegateSession 尾段）构成双保险（TaskBoard/node_report 同款纪律）。
+   *
+   * @param project **显式** project 参数（调用方不再自行 orElse ctx.projectName——
+   *                delegate 面上 ctx.projectName 是派发上下文残留，**禁**参与作用域
+   *                归属：作用域只认会话身份；per-project 面的 fallback 在
+   *                `resolveProject` 内原样保留）。
+   */
+  def resolveRuntime(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
+    if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
+      resolveDelegateScope(project, ctx)
+    else resolveProject(project, ctx)
+
+  /** delegate 会话的宿主查无（fail-closed，可行动：重挂触发点在 spawn/续聊腿）。 */
+  def scopeUnavailableError(scopeId: String): String =
+    s"Your scope flow map is not available (no mounted host for this delegate session) — the flow tools only operate on " +
+      "your own scope map. Retry shortly (the host remounts on session revival) or report blocked if it persists. " +
+      "(DELEGATE_SCOPE_UNAVAILABLE)"
+
+  /** delegate 会话显式指定了他人项目（作用域归属 fail-closed——只能编辑自己作用域图）。 */
+  def scopeForeignError(scopeId: String, requested: String, scopeName: String): String =
+    s"'$requested' is outside your scope — a delegate may only address its OWN scope flow map (scope '$scopeId', " +
+      s"mounted as '$scopeName'). Cross-project work goes through Delegate dispatch, not the flow tools. " +
+      "(DELEGATE_SCOPE_FOREIGN)"
+
+  private def resolveDelegateScope(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
+    val scopeId = ctx.sessionId.getOrElse("")
+    nebflow.core.project.DelegateFlowHosts.get(scopeId).flatMap {
+      case None => IO.pure(Left(scopeUnavailableError(scopeId)))
+      case Some(h) =>
+        val scopeName = h.engine.projectName
+        project match
+          case Some(p) if !p.equalsIgnoreCase(scopeName) && p != scopeId =>
+            IO.pure(Left(scopeForeignError(scopeId, p, scopeName)))
+          case _ => IO.pure(Right(h.projectRuntime))
+    }
+
+  // ── N1 刀2（v3 §10.1 A5 双寻址）──────────────────────────────────────────
+
+  /**
+   * **节点双寻址解析单点**（判据 v2 §4 R1/R3 原样引用；修复底座既有弱点
+   * `resolveTargetId` 静默取首个 name 命中）：解析序 = **id 精确命中即止**（R4 保证
+   * id/name 两空间不相交，序即确定）→ 否则按 name（精确、大小写敏感、零 case
+   * folding）→ **>1 命中 = 显式歧义错**（列全候选 `id(task前30字符)`，不猜）→
+   * 零命中 = `CHAIN_NODE_NOT_FOUND`。
+   *
+   * @param nodes 解析域（调用方取**一次**快照传入——活动区优先；归档候选由调用方
+   *              决定是否并入 combined 集，本函数不做两区 IO）。
+   * @return Right(nodeId) | Left(带错误码的完整文案)。
+   */
+  def resolveNodeRef(nodes: Map[String, NodeDef], ref: String): Either[String, String] =
+    val r = ref.trim
+    if r.isEmpty then Left(chainNodeNotFoundError(r))
+    else if nodes.contains(r) then Right(r)
+    else
+      nodes.values.filter(_.name == r).toList match
+        case single :: Nil => Right(single.id)
+        case Nil           => Left(chainNodeNotFoundError(r))
+        case many =>
+          val candidates = many.map(n => s"${n.id}(${n.task.getOrElse("").take(30)})").mkString(", ")
+          Left(
+            s"'$r' matches ${many.size} nodes by name — $candidates — address by node id, or rename. (CHAIN_ADDR_AMBIGUOUS)"
+          )
+
+  def chainNodeNotFoundError(ref: String): String =
+    s"no node '$ref' (id or name) in this scope's chain map. (CHAIN_NODE_NOT_FOUND)"
+
+  /** 双寻址便捷形态（IO 包装）：活动区未命中再兜归档区（与 findNode 同序），两区皆无 = 未找到。 */
+  def resolveNodeRefIO(rt: ProjectRuntime, ref: String): IO[Either[String, NodeDef]] =
+    rt.store.snapshot.flatMap { s =>
+      resolveNodeRef(s.nodes, ref) match
+        case Right(id) =>
+          s.nodes.get(id).map(n => IO.pure(Right(n))).getOrElse {
+            rt.store.findNode(id).map {
+              case Some(n) => Right(n)
+              case None    => Left(chainNodeNotFoundError(ref))
+            }
+          }
+        case Left(err) =>
+          // 活动区按名零命中 → 归档区兜底（归档节点可被 detail/取消面寻址——结果补投/收殓语义）
+          rt.store.archiveSnapshot.map { arch =>
+            arch.nodes.values.filter(_.name == ref.trim).toList match
+              case single :: Nil => Right(single)
+              case _             => Left(err)
+          }
+    }
+
   /**
    * 项目未挂载报错（附可用项目列表提示实际名称）——纯函数便于单测。
    * 精确项目名不匹配时列出已挂载项目（提示实际名称，不裸报 not mounted）；

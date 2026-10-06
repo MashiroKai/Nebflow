@@ -290,9 +290,9 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
-  test("nebflow tool face = BaseTools + AskUserQuestion + Subagent + Workflow (9 items) and excludes orchestration/message tools"):
+  test("nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (9 items) and excludes orchestration/message tools"):
     val face = nebflow.agent.AgentCore.NebflowFixedTools
-    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent" + "Workflow")
+    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow")
     assertEquals(face.size, 9)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
@@ -308,7 +308,7 @@ class DelegateToolSpec extends CatsEffectSuite:
   test("subagent tool face is read-only five — no write, no shell, no message"):
     val face = nebflow.agent.AgentCore.SubagentFixedTools
     assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch"))
-    Set("Write", "Edit", "Bash", "Mail", "Subagent", "Workflow", "Delegate").foreach { t =>
+    Set("Write", "Edit", "Bash", "Mail", "Subagent", "AgentFlow", "Delegate").foreach { t =>
       assert(!face.contains(t), s"subagent must not hold: $t")
     }
     assertEquals(

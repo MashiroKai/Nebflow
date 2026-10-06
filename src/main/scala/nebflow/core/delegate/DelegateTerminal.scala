@@ -65,9 +65,27 @@ object DelegateTerminal:
     val gitDigest = IO.blocking(digestFor(record))
     val mergeRound = MergeQueue.find(delegateId).exists(_.reminderSentAt.isDefined)
     val selfReport = record.flatMap(r => r.reportStatus.map(s => (s, r.reportDetail.getOrElse(""))))
+    // N1 刀2 ⑸：在飞链计数（fail-soft 0——宿主/快照任何一步失败都不拖判词）。
+    // 判据 = 该 delegate 作用域图内「存在非终态成员」的链数（chainIdView 值集合去重
+    // 后逐链看成员终态）。
+    val inFlightChains: IO[Int] =
+      nebflow.core.project.DelegateFlowHosts
+        .get(delegateId)
+        .flatMap {
+          case None => IO.pure(0)
+          case Some(h) =>
+            h.store.snapshot.map { s =>
+              val byChain = s.nodes.values.groupBy(n => nebflow.core.project.FlowMapStore.chainIdView(s.nodes).get(n.id))
+              byChain.collect {
+                case (Some(_), members) if members.exists(m => !nebflow.core.project.NodeLifecycle.Terminal.contains(m.status)) => 1
+              }.sum
+            }
+        }
+        .handleErrorWith(_ => IO.pure(0))
 
     for
       digest <- gitDigest
+      chains <- inFlightChains
       judged <- DelegateJudge.DelegateJudgePort.judgeTerminal(
         DelegateJudge.TerminalInput(
           delegateId = delegateId,
@@ -75,7 +93,8 @@ object DelegateTerminal:
           resultText = resultText,
           gitDigest = digest,
           selfReport = selfReport,
-          mergeRound = mergeRound
+          mergeRound = mergeRound,
+          inFlightChains = chains
         )
       )
       verdict = judged

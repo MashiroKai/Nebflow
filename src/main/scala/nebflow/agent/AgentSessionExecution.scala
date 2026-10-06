@@ -2227,7 +2227,18 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // （不在 BuiltinToolWhitelist）。信号消费点 = 终态判定机（DelegateJudge
     // selfReport 输入 + 判定机失败回落）与任务列表状态面。
     val withDelegateReport = if delegateSession then withDispatcherAsk + nebflow.core.tools.DelegateReportTool.Name else withDispatcherAsk
-    if flowNodeSession then withDelegateReport + nebflow.core.tools.NodeReportToolDef.Name else withDelegateReport
+    // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
+    // NodeEdit/NodeList/NodeCancel（分发器三件的作用域面）+ ChainWrite（整链登记）。
+    // TaskBoard/node_report/delegate_report 同款「挂载面 + 工具内身份拒绝」双保险：
+    // 判据 = delegateSession 单独（引擎侧 DelegateSessions.isDelegateSession），
+    // **不能用 isFlowNode/agentDef.name**（nebflow def 也服务非 delegate 形态；
+    // over-grant 防线）；插件声明不授能（ChainWrite 在 RootExclusiveTools 防声明
+    // 逃逸集）。作用域归属在工具内以 ctx 会话身份解析（NodeTools.resolveRuntime
+    // 单点）——挂载面只放行名字，不看参数。
+    val withDelegateFace =
+      if delegateSession then withDelegateReport ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
+      else withDelegateReport
+    if flowNodeSession then withDelegateFace + nebflow.core.tools.NodeReportToolDef.Name else withDelegateFace
 
   end buildAllowedToolSet
 

@@ -181,18 +181,18 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== 执行 agent 固定 9 件（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）=====
 
-  test("执行 agent LLM tool list == NebflowFixedTools 9 件（isFlowNode 节点形态；2026-09-08 恢复 AskUser；2026-09-10 摘 Pop；builtin-merge 批 +Subagent+Workflow）"):
+  test("执行 agent LLM tool list == NebflowFixedTools 9 件（isFlowNode 节点形态；2026-09-08 恢复 AskUser；2026-09-10 摘 Pop；builtin-merge 批 +Subagent；N1 复名批 Workflow→AgentFlow 随名）"):
     // P1-3 归因修正（2026-10-03）：原断言用手搓 "general" 名造节点身份——该名已
     // 非内置名（builtin-merge 批收敛名集 = {Nebula, project-dispatcher, nebflow,
     // subagent}），落 legacyFixedTools catch-all ⇒ 实测 6 件 BaseTools 全族假红。
     // 生产路径按 BuiltinAgents.ExecutorName 落名（NodeEditTool createNode），判据
     // 源对齐执行名 = 修根因不是放宽断言。9 件 = BaseTools 6 + AskUserQuestion
-    // （2026-09-08 恢复）+ Subagent + Workflow（builtin-merge 批机制面）。
+    // （2026-09-08 恢复）+ Subagent + AgentFlow（builtin-merge 批机制面；N1 复名批随名）。
     val delivered = CoreProbe.toolList(mkDef(executorName), isFlowNode = true).toSet
     assertEquals(
       delivered,
       AgentCore.NebflowFixedTools.filter(ToolRegistry.TOOL_MAP.contains),
-      "执行 agent 交付面 = NebflowFixedTools 注册表实收（BaseTools 六件 + AskUserQuestion + Subagent + Workflow）"
+      "执行 agent 交付面 = NebflowFixedTools 注册表实收（BaseTools 六件 + AskUserQuestion + Subagent + AgentFlow）"
     )
 
   // ===== ToolRegistry 面变化 =====
@@ -233,11 +233,11 @@ class AgentConvergenceSpec extends FunSuite:
     // 条目——工具退役后仅存授能/剥离语义，无执行面），Nebula 专属其余件对 dream
     // 仍全集剥离；「MemoryNote 授能」现表现为 allowedSet 惰性字符串（不注册 ⇒
     // LLM 面/执行面双缺席，上一用例已钉），不为测绿而宣称有执行面。
-    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends/Subagent/Workflow 对 dream 不得放开
+    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends/Subagent/AgentFlow（+ChainWrite）对 dream 不得放开
     assertEquals(
       AgentCore.RootExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "Workflow"),
-      "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent/Workflow 防声明逃逸条目同样剥离；TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）"
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite"),
+      "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent；N1 复名批 AgentFlow 随名＋新增 ChainWrite——防声明逃逸条目同样剥离；TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）"
     )
     val sneakyDream =
       CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard")))
@@ -250,8 +250,8 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
     assertEquals(
       AgentCore.exclusiveToolsFor("dream"),
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "Workflow"),
-      "dream 剥十件（原八件 + builtin-merge 批防声明逃逸的 Subagent/Workflow——执行 agent 单点授能，dream 不在授权面）"
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite"),
+      "dream 剥十一件（原八件 + builtin-merge 批 Subagent + N1 复名批 AgentFlow 随名/ChainWrite 新增——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
     )
     // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
     // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内
@@ -260,13 +260,13 @@ class AgentConvergenceSpec extends FunSuite:
       !CoreProbe.allowed(mkDef("dream", List("Pop"))).contains("Pop"),
       "dream 声明 Pop 无效（非 DreamAdmittedTools；Pop 仅 Nebula）"
     )
-    // 执行 agent 的机制面豁免（builtin-merge 批 2026-10-03）：Subagent/Workflow
+    // 执行 agent 的机制面豁免（builtin-merge 批 2026-10-03；N1 复名批 Workflow→AgentFlow 随名）：
     // 是 NebflowFixedTools 单点授能 ⇒ exclusiveToolsFor("nebflow") 剥全集 −
-    // {Subagent, Workflow}；其余身份（含通用自定义名）仍剥全集。
+    // {Subagent, AgentFlow}；其余身份（含通用自定义名）仍剥全集（四件 Node 工具不入豁免）。
     assertEquals(
       AgentCore.exclusiveToolsFor(executorName),
-      AgentCore.RootExclusiveTools -- Set("Subagent", "Workflow"),
-      "执行 agent 剥全集 − {Subagent, Workflow}（机制面单点授能）"
+      AgentCore.RootExclusiveTools -- Set("Subagent", "AgentFlow"),
+      "执行 agent 剥全集 − {Subagent, AgentFlow}（机制面单点授能；ChainWrite 留在剥除集——delegateSession 尾段单点授能）"
     )
     assertEquals(AgentCore.exclusiveToolsFor("some-custom"), AgentCore.RootExclusiveTools, "其余身份剥全集")
 

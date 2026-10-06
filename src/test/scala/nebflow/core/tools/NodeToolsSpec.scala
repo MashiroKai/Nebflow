@@ -190,10 +190,17 @@ class NodeToolsSpec extends FunSuite:
       Nil,
       "NodeList has no other required param — project optional leaves required empty"
     )
-    // NodeCancel: node-id 仍必填
+    // NodeCancel: N1 刀2 链级形态（chain XOR node-id，schema required 置空——互斥
+    // 闸在运行期：两者皆缺/皆在均有可行动报错，node-id 不再能 required）。
+    assertEquals(
+      requiredOf(NodeCancelTool),
+      Nil,
+      "NodeCancel required must be empty (node-id XOR chain, enforced at runtime); " +
+        s"got ${requiredOf(NodeCancelTool)}"
+    )
     assert(
-      !requiredOf(NodeCancelTool).contains("project") && requiredOf(NodeCancelTool).contains("node-id"),
-      s"NodeCancel required should drop project, keep node-id; got ${requiredOf(NodeCancelTool)}"
+      NodeCancelTool.inputSchema("properties").exists(_.asObject.exists(_("chain").isDefined)),
+      "NodeCancel schema must carry the chain-level form parameter"
     )
     // NodeMessage 工具已删净退役（R2 2026-09-12）⇒ 其必填面断言同批删除；语义并入
     // `Mail(address="node:<id>", message=...)`。

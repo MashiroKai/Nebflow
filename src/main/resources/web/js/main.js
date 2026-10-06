@@ -2056,8 +2056,10 @@ function bgAgentKindFromSession(sessionId) {
   if (raw.startsWith('delegate-')) return 'Delegate';
   if (raw.startsWith('subtask-')) return 'SubTask';
   // builtin-merge 批（2026-10-03）：Subagent（只读侦察）与 Workflow 步级子会话。
+  // N1 复名批（2026-10-06，v2 ①）：Workflow 工具复名 AgentFlow——显示标签随名
+  // 翻转；会话 id 前缀 `workflow-` 是存储/归因命名空间，保留不改（v2 §3.4）。
   if (raw.startsWith('subagent-')) return 'Subagent';
-  if (raw.startsWith('workflow-')) return 'Workflow';
+  if (raw.startsWith('workflow-')) return 'AgentFlow';
   if (raw.startsWith('dag-')) return 'Flow';
   if (raw.startsWith('ephemeral-')) return 'Ephemeral';
   // #28 可观测接线: Project 节点/分发器后端注册为 AgentKind.Flow → 面板 kind

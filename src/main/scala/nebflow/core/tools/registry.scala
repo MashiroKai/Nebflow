@@ -54,17 +54,26 @@ object ToolRegistry:
       // 节点不挂 Mail）。旧注释「message + ask modes」已过时：ask 模式由
       // 2026-08-27 作者裁定整体移除。
       "Mail" -> MailTool,
-      // AgentFlow retired (unified-delegate batch 2026-10-03): dispatch is
-      // unified under Delegate(task, project?); guide = RetiredToolGuides.
+      // 旧 AgentFlow（dispatcher 派发面）retired (unified-delegate batch
+      // 2026-10-03): dispatch is unified under Delegate(task, project?); 其退役
+      // 墓碑条目随 N1 复名批删除（名字复用后表对该名永不可达——registry 注册即
+      // 令 RetiredToolGuides 对该名失效的既有教义）。
       // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
       // builtin-merge 批（2026-10-03）：Subagent = 只读侦察子入口（阻塞，结果即
-      // 返回值）；Workflow = 步级 DAG 并行执行（agent 写步骤，引擎并发跑）。
-      // 授权面 = AgentCore.NebflowFixedTools（执行 agent 机制面）；
-      // RootExclusiveTools 防声明逃逸。
+      // 返回值）。N1 复名批（v2 ①/v3 §5）：Workflow → **AgentFlow**（同参数：
+      // steps = [{id, task, deps}], description）＝内联 DAG 便捷面，非阻塞薄壳化
+      // （steps → ChainWrite.registerChain 同闸同底座）。授权面 =
+      // AgentCore.NebflowFixedTools（执行 agent 机制面）；RootExclusiveTools
+      // 防声明逃逸。
       "Subagent" -> SubagentTool,
-      "Workflow" -> WorkflowTool,
+      "AgentFlow" -> AgentFlowTool,
+      // ChainWrite（N1 刀2 新注册项，v3 §5 S4）：delegate 会话专属整链登记件——
+      // 一次调用登记节点＋deps＋任务＋描述整链进调用 delegate 自己的作用域图，
+      // 校验过 → 原子落盘 → 入口放行（链齐才跑）。授权面 = buildAllowedToolSet
+      // 尾段 delegateSession 腿；RootExclusiveTools 防声明逃逸（插件声明不授能）。
+      "ChainWrite" -> ChainWriteTool,
       // Background agent inspection & control (list/status/cancel/restart) — Nebula 专用
       "AgentControl" -> AgentControlTool,
       // FlowTrigger / FlowExecute / FlowReport retired 2026-09-06（工具面裁撤
