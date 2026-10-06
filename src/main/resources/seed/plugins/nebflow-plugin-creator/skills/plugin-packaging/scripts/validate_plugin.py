@@ -17,7 +17,9 @@
 #   - viewers 内联上限 32KB    PluginRegistry.scala:124（:796-813 告警面）
 #   - manifest 已知键闭合集    PluginRegistry.scala:133-145（capability deprecated 注记 :127-131）
 #   - 字段类型 fatal 面        PluginRegistry.scala:649-676（stringField :871-878）
-#   - 包根已知条目四件         PluginRegistry.scala:583（org.nebflow 子条目 :587-591）
+#   - 包根已知条目五件         PluginRegistry.scala:583（org.nebflow 子条目 :587-591；
+#                               第五件＝Plugin.md 恰一（六-3 逐字白名单）；装载器侧
+#                               扩面随下个引擎批同批落地（六-1），本脚本先行放行）
 #   - mcp.json 顶层闭合键      PluginRegistry.scala:924-930（entry 未知字段 :980-983）
 #   - server entry 校验        PluginRegistry.scala:987-1077（args/headers 类型、stdio `./` 围栏 :996-1001、cwd 围栏 :1013-1028）
 #   - mcp url loopback-https   PluginRegistry.scala:1083-1094 (validMcpUrl)
@@ -88,8 +90,9 @@ OFFICIAL_FACE = frozenset({
 TOOL_WHITELIST = {"WebSearch", "WebFetch", "Curl"}
 # viewers 内联声明上限（PluginRegistry.scala:124 MaxViewerDeclarationBytes）
 MAX_VIEWER_BYTES = 32 * 1024
-# 包根已知条目四件（PluginRegistry.scala:583）
-KNOWN_ROOT_ENTRIES = {"plugin.json", "mcp.json", "skills", "org.nebflow"}
+# 包根已知条目五件（PluginRegistry.scala:583；第五件＝Plugin.md 恰一——装载器侧
+# 扩面随下个引擎批（六-1），脚本先行；逐字大小写敏感，目录化/变体照 C11 告警）
+KNOWN_ROOT_ENTRIES = {"plugin.json", "mcp.json", "skills", "org.nebflow", "Plugin.md"}
 # org.nebflow 允许子条目（PluginRegistry.scala:587-591；漏扩=贡献静默失效）
 KNOWN_NS_ENTRIES = {"tools.json", "viewers.json"}
 # manifest 闭合 11 键（PluginRegistry.scala:133-145 KnownManifestKeys）
@@ -548,7 +551,7 @@ def check_c10(manifest):
 
 def check_c11(pkg, manifest, mcp_data):
     """C11 未知条目告警面（宽容装载 + 告警的镜像，§B.8-5）：manifest 键（闭合 11 键
-    :133-145）/ 包根四件（:583）/ org.nebflow 子条目（:587-591）/ mcp.json 顶层键
+    :133-145）/ 包根五件（:583；第五件 Plugin.md 恰一文件、逐字命名）/ org.nebflow 子条目（:587-591）/ mcp.json 顶层键
     （:924-930）与 server entry 字段（:980-983）。"""
     unknowns = []
     for k in (manifest or {}):
@@ -557,6 +560,8 @@ def check_c11(pkg, manifest, mcp_data):
     for e in sorted(os.listdir(pkg)):
         if e not in KNOWN_ROOT_ENTRIES:
             unknowns.append(f"包根未知条目 '{e}'（宽容跳过+告警）")
+        elif e == "Plugin.md" and os.path.isdir(os.path.join(pkg, e)):
+            unknowns.append("包根 'Plugin.md' 目录化（白名单仅认恰一文件、逐字命名，六-3）")
     ns = os.path.join(pkg, "org.nebflow")
     if os.path.isdir(ns):
         for f in sorted(os.listdir(ns)):
@@ -577,7 +582,7 @@ def check_c11(pkg, manifest, mcp_data):
         record("C11", "未知条目告警面", False, "；".join(unknowns[:8]) + ("…" if len(unknowns) > 8 else ""), warn=True)
     else:
         record("C11", "未知条目告警面", True,
-               "manifest 键／包根／org.nebflow／mcp.json（顶层+entry）全部命中已知集合")
+               "manifest 键／包根五件（第五件 Plugin.md 恰一文件、逐字命名）／org.nebflow／mcp.json（顶层+entry）全部命中已知集合")
 
 
 def check_c12(manifest):
@@ -798,7 +803,7 @@ def check_c2(pkg):
     files = [f for f in sorted(os.listdir(sd)) if os.path.isfile(os.path.join(sd, f))]
     if files:
         record("C02", "skills/ 顶层纯文件", False,
-               f"{'、'.join(files)} 被 loader 静默过滤（不装载、不告警）——归位某 skill 的 references/ 或移出包", warn=True)
+               f"{'、'.join(files)} 被 loader 静默过滤（不装载、不告警）——三选一：上浮包根 Plugin.md（跨 skill 共用使用指导）/ 归位某 skill 的 references/（单 skill 专属）/ 移出包", warn=True)
     else:
         record("C02", "skills/ 顶层纯文件", True, "skills/ 顶层无纯文件")
 
@@ -807,7 +812,7 @@ def check_c3(pkg, skill_files):
     """C3 裸相对引用（应 ${SKILL_DIR} 形态）：注入面（skills 顶层 */SKILL.md 正文）找 `../`、`./` 包内引用，
     normpath 验目标存在（附带抓断链）；跨包引用单列。
     批2 微调（2026-10-06，区分注入/非注入）：${SKILL_DIR} 单点替换只发生在 SKILL.md 注入文本——
-    非注入 md（skills/ 顶层共用件、references/、样张）的文内相对引用属合法文件相对形态
+    非注入 md（包根共用件（Plugin.md）、references/、样张）的文内相对引用属合法文件相对形态
     （Read 工具按文件位置解析），单列读数、不计入判定；判定面仍为注入面原口径。"""
     def _scan(files):
         bare, broken, cross = [], [], []
@@ -829,7 +834,7 @@ def check_c3(pkg, skill_files):
 
     inj_bare, inj_broken, inj_cross = _scan(skill_files)
 
-    # 非注入 md：全包 .md 去除注入面（skills/ 顶层共用件、references/、样张等）
+    # 非注入 md：全包 .md 去除注入面（包根共用件（Plugin.md）、references/、样张等）
     inj_paths = {os.path.normpath(fp) for _s, fp, _t in skill_files}
     non_files = []
     for rel, fp in walk_files(pkg):
