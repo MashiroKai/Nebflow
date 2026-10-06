@@ -2227,7 +2227,26 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // （不在 BuiltinToolWhitelist）。信号消费点 = 终态判定机（DelegateJudge
     // selfReport 输入 + 判定机失败回落）与任务列表状态面。
     val withDelegateReport = if delegateSession then withDispatcherAsk + nebflow.core.tools.DelegateReportTool.Name else withDispatcherAsk
-    if flowNodeSession then withDelegateReport + nebflow.core.tools.NodeReportToolDef.Name else withDelegateReport
+    // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
+    // NodeEdit/NodeList/NodeCancel（分发器三件的作用域面）+ ChainWrite（整链登记）。
+    // TaskBoard/node_report/delegate_report 同款「挂载面 + 工具内身份拒绝」双保险：
+    // 判据 = delegateSession 单独（引擎侧 DelegateSessions.isDelegateSession），
+    // **不能用 isFlowNode/agentDef.name**（nebflow def 也服务非 delegate 形态；
+    // over-grant 防线）；插件声明不授能（ChainWrite 在 RootExclusiveTools 防声明
+    // 逃逸集）。作用域归属在工具内以 ctx 会话身份解析（NodeTools.resolveRuntime
+    // 单点）——挂载面只放行名字，不看参数。
+    val withDelegateFace =
+      if delegateSession then withDelegateReport ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
+      else withDelegateReport
+    // S6=C（N1 刀3 · v3 §7.2 ①授权面扩＝创建者 delegate＋root）：delegate 会话挂
+    // Mail——地址面经 MailTool.layeredRoute 分层判据收窄为自己作用域的
+    // `node:<id|name>` 腿（SenderRole.Delegate 单点；其余形态显式越界报错）。同段
+    // 追加（全部角色过滤与 NebulaExclusiveTools 剥离之后）：挂载面授权 + 工具内
+    // 地址面分层 = 双保险（TaskBoard/node_report 同款纪律）；kernel-def 的极简内核
+    // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
+    // 不经此腿。
+    val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
+    if flowNodeSession then withDelegateMail + nebflow.core.tools.NodeReportToolDef.Name else withDelegateMail
 
   end buildAllowedToolSet
 

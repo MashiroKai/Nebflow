@@ -94,6 +94,10 @@ class AllowedToolSetSpec extends FunSuite:
         flowNodeSession = flowNodeSession
       )
 
+    /** Probe the delegate-session tail（判据 = delegateSession 单独，引擎侧 DelegateSessions.isDelegateSession）。 */
+    def allowedWithDelegateSession(defn: AgentDef, delegateSession: Boolean): Set[String] =
+      buildAllowedToolSet(defn, 0, delegateSession = delegateSession)
+
   end CoreProbe
 
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
@@ -742,10 +746,10 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，dispatcher 面零 NodeMessage")
     assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
-  test("nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继）——BaseTools + AskUserQuestion + Subagent + Workflow"):
+  test("nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继；N1 复名批随名）——BaseTools + AskUserQuestion + Subagent + AgentFlow"):
     val bare = mkDef("nebflow", Nil)
     val allowed = CoreProbe.allowed(bare, isFlowNode = true)
-    val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Subagent", "Workflow")
+    val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Subagent", "AgentFlow")
     nine.foreach(t => assert(allowed.contains(t), s"nebflow fixed tool missing: $t"))
     // 钉死断言（2026-09-08 作者修订，D6 批D1 G6/G7）：general 默认面含回
     // AskUserQuestion——直达作者方案（节点提问经 InteractionHub 直达 Nebula
@@ -763,7 +767,7 @@ class AllowedToolSetSpec extends FunSuite:
     // 声明无效（机制固定零配置）
     val sneaky = mkDef("nebflow", List("WebSearch", "Delegate", "Pop"))
     val sneakyAllowed = CoreProbe.allowed(sneaky)
-    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate") && !sneakyAllowed.contains("Pop"), "nebflow: tools 声明整体失效（机制固定零配置；豁免恰 Subagent/Workflow 两件由静态集授能）")
+    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate") && !sneakyAllowed.contains("Pop") && !sneakyAllowed.contains("ChainWrite"), "nebflow: tools 声明整体失效（机制固定零配置；豁免恰 Subagent/AgentFlow 两件由静态集授能，ChainWrite 只在 delegateSession 尾段授能）")
     // Nebula / dispatcher 面不受影响（对照钉死）
     assert(
       AgentCore.fixedToolsFor(mkDef("Nebula", Nil)).contains("AskUserQuestion"),
@@ -773,6 +777,21 @@ class AllowedToolSetSpec extends FunSuite:
       AgentCore.fixedToolsFor(mkDef("project-dispatcher", Nil)).contains("AskUserQuestion"),
       "dispatcher 面现持 AskUserQuestion（agentflow 批 2026-10-02：−Mail +AskUserQuestion）"
     )
+
+  // N1 刀3（S6=C · v3 §7.2 ①授权面扩＝创建者 delegate）：delegateSession 尾段
+  // 挂 Mail——地址面经 MailTool.layeredRoute 收窄为自己作用域的 `node:<id|name>`
+  // 腿（SenderRole.Delegate 单点）；挂载面授权 + 工具内地址面分层 = 双保险
+  // （TaskBoard/node_report 同款纪律）。工具内地址面在 MailNodeSubAddressSpec
+  // M1..M8 验收，本条钉挂载面（零 over-grant）。
+  test("N1 刀3 S6=C: the delegateSession tail carries Mail alongside the 刀2 delegate face; the default face gains nothing"):
+    val probe = mkDef("nebflow", Nil)
+    val withTail = CoreProbe.allowedWithDelegateSession(probe, delegateSession = true)
+    val plain = CoreProbe.allowedWithDelegateSession(probe, delegateSession = false)
+    Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite", "delegate_report").foreach { t =>
+      assert(withTail.contains(t), s"delegate face keeps the 刀2 grant: $t (got: ${withTail.toList.sorted})")
+    }
+    assert(withTail.contains("Mail"), "S6=C: the delegate face carries Mail (the node: sub-address authorization)")
+    assert(!plain.contains("Mail"), "non-delegate nebflow sessions gain nothing (no over-grant)")
 
   test("the six remain mechanism-fixed for non-converged agents — cannot be configured away"):
     // 阶段 2c 只收敛 Nebula/dispatcher/general 三定义；team/flow/普通 standalone

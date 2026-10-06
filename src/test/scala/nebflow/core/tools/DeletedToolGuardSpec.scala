@@ -31,6 +31,14 @@ class DeletedToolGuardSpec extends FunSuite:
   /** taskunify merge-batch retired entries (2026-09-24): the two were merged into `Task` / `TaskInfo`. */
   private val retiredTaskunifyNames = List("TaskList", "TaskBoard")
 
+  /**
+   * N1 复名批（v2 §3.3 镜像义务，2026-10-06）rename-retired 集：名字退役产生的新
+   * 墓碑——`Workflow` 名已随复名让位给 AgentFlow（注册面删除、guide 在场），打旧名
+   * 的调用落迁移指引。与 R2 集的差异 = 断言点：guide 指向**复名后的新工具名**
+   * （含 "AgentFlow"），不是 Mail/Task。
+   */
+  private val renameRetiredNames = List("Workflow")
+
   test("no surviving tool description references a deleted tool") {
     val offenders = ToolRegistry.TOOL_MAP.toSeq.collect {
       case (name, tool) if ghostNames.exists(g => tool.description.contains(g)) => name
@@ -85,6 +93,24 @@ class DeletedToolGuardSpec extends FunSuite:
         s"$g guide must point at Task (the unified ledger), got: ${guide.take(120)}"
       )
     }
+
+  test("rename-retired (N1): Workflow is unregistered, its guide is present and names AgentFlow"):
+    renameRetiredNames.foreach { g =>
+      assert(!ToolRegistry.TOOL_MAP.contains(g), s"$g must be unregistered (renamed to AgentFlow, N1 2026-10-06)")
+      assert(
+        nebflow.agent.AgentCore.RetiredToolGuides.contains(g),
+        s"$g must carry a rename migration guide (a diagnosable error, not a compatibility shell)"
+      )
+      val guide = nebflow.agent.AgentCore.RetiredToolGuides(g)
+      assert(guide.contains("AgentFlow"), s"$g guide must point at the renamed AgentFlow, got: ${guide.take(140)}")
+    }
+    // 名字复用教义：AgentFlow 已注册 ⇒ 旧 "AgentFlow" 墓碑条目必须已删（留条目 =
+    // 表对该名永不可达的死文本，违表零膨胀纪律）。
+    assert(ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be registered (the renamed face)")
+    assert(
+      !nebflow.agent.AgentCore.RetiredToolGuides.contains("AgentFlow"),
+      "the old AgentFlow tombstone entry must be deleted (the name is re-registered; a surviving entry is unreachable dead text)"
+    )
 
   test("registry face is unchanged by the R2 retirement — Mail is registered, ghost names are not"):
     assert(ToolRegistry.TOOL_MAP.contains("Mail"), "Mail must stay registered (single message primitive)")

@@ -403,6 +403,33 @@ private[gateway] object PresenceRoutes:
             yield result
         }
 
+      // GET /api/chains — per-task delegate 链**行投影**（N1 刀3 · A8 读面上半：
+      // #1228 stub §四.3 唯一硬依赖 + §四.4 活性提示位 = agentRegistry 快照同面携带；
+      // 真源 = DelegateRegistry 持久记录 × live × terminal-verdict 判词行——投影语义
+      // 与 fail-soft 纪律见 nebflow.core.project.ChainsReadFace 头注）。
+      case req @ GET -> Root / "chains" =>
+        withAuth(req) {
+          sharedResources.agentRegistry.get.flatMap(reg => ChainsReadFace.rowsJson(reg).flatMap(Ok(_)))
+        }
+
+      // GET /api/chains/:key — per-task 链视图（A8 读面下半）：record = ChainStore
+      // 三行族原样（前端既有 chainFromStoreRecord 适配层的直接输入——接口形状零改动）
+      // + chain = delegate 作用域 FlowMap 衍生投影（已挂载现读 / 未挂载盘面探针 / 无
+      // 目录 null 降级）。404 = 查无记录；400 = 键不合法（文件名白名单，防路径穿越）。
+      case req @ GET -> Root / "chains" / key =>
+        withAuth(req) {
+          if !nebflow.core.delegate.ChainStore.validKey(key) then
+            BadRequest(Json.obj("error" -> "invalid chain key".asJson))
+          else
+            sharedResources.agentRegistry.get.flatMap(reg =>
+              ChainsReadFace.chainJson(key, reg).flatMap {
+                case None =>
+                  NotFound(Json.obj("error" -> s"no delegate chain on record for key '$key'".asJson))
+                case Some(body) => Ok(body)
+              }
+            )
+        }
+
       // ===== Flow Editor APIs =====
 
       // GET /teams/def/:name — return team definition for the editor

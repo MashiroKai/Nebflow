@@ -365,8 +365,9 @@ Required: message, plus `address`.
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
   mounted project name is accepted as an equivalent form). `kernel:<id>` — continue
-  THAT live Delegate-started Kernel instance. You have no `node:` address, no bare
-  `kernel` address and no self-address.
+  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a
+  registered delegate chain (its chain-registered id OR name). No bare `kernel`
+  address and no self-address.
 
 ## Kernel continuation leg (Nebula-exclusive)
 Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
@@ -378,8 +379,11 @@ already finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was 
 delivered; start a new one with Delegate. A bare `kernel` address is an explicit error
 (MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.
 
-- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in
-  your current project (from NodeList). You do not mail your own project.
+- **Delegate session (a chain's creator)**: `node:<id|name>` — a node in YOUR OWN
+  scope chain map (its chain-registered id OR name; ambiguous name = explicit error).
+- **Project dispatcher**: `Nebula` — the root session; `node:<id|name>` — a node in
+  your current project (from NodeList; the node's id OR its name). You do not mail
+  your own project.
 - **Team context**: a team name (e.g. "nebflow-project") routed to its
   lead agent, a bare member short name (resolved within your team first), or an
   explicit "team/agent" route.
@@ -400,6 +404,12 @@ is no silent fallback and no fuzzy matching.
   flow-map-events.jsonl audit log (type=node-message).
 - `node:` routing takes no delivery-mode choice — the engine decides inject-at-turn-boundary
   vs append-to-task.
+
+Registered task chains resolve this address through the chain ledger: `node:<…>` may carry a chain
+node's id OR its name (exact id match wins; an ambiguous name is an explicit error listing the
+candidates). Authorization: the creating delegate and the root — pending nodes get the text
+appended to their brief, running nodes receive it at their next turn boundary, finished nodes
+refuse (re-run via a fresh chain instead).
 
 Images (optional `images` parameter — up to 5 absolute local image paths,
 PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Agent targets (`address`)
@@ -459,10 +469,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
 
   private[nebflow] val AddressFaceRoot: String =
-    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance. You have no `node:` address, no bare\n  `kernel` address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
+    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a\n  registered delegate chain (its chain-registered id OR name). No bare `kernel`\n  address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
+
+  private[nebflow] val AddressFaceDelegate: String =
+    "- **Delegate session (a chain's creator)**: `node:<id|name>` — a node in YOUR OWN\n  scope chain map (its chain-registered id OR name; ambiguous name = explicit error).\n"
 
   private[nebflow] val AddressFaceDispatcher: String =
-    "- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in\n  your current project (from NodeList). You do not mail your own project.\n"
+    "- **Project dispatcher**: `Nebula` — the root session; `node:<id|name>` — a node in\n  your current project (from NodeList; the node's id OR its name). You do not mail\n  your own project.\n"
 
   private[nebflow] val AddressFaceTeam: String =
     "- **Team context**: a team name (e.g. \"nebflow-project\") routed to its\n  lead agent, a bare member short name (resolved within your team first), or an\n  explicit \"team/agent\" route.\n"
@@ -687,12 +700,17 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   // R2 分层地址面（「一个 Mail 统一」批 2026-09-12）
   // ============================================================
 
-  /** 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。 */
+  /** 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。
+    * S6=C（N1 刀3 · v3 §7.2）新增 Delegate 面：delegate 会话（引擎侧
+    * `DelegateSessions.isDelegateSession` 前缀判据单点）的地址面 = 自己作用域的
+    * `node:<id|name>` 腿（挂载面授权在 buildAllowedToolSet 尾段，工具内本枚举
+    * 分层为第二保险——双保险同 TaskBoard/node_report 纪律）。 */
   private enum SenderRole:
-    case Root, Dispatcher, Teamish
+    case Root, Dispatcher, Delegate, Teamish
 
   private def roleOf(ctx: ToolContext): SenderRole =
     if ctx.isDispatcher then SenderRole.Dispatcher
+    else if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then SenderRole.Delegate
     else if ctx.agentDef.exists(_.name == MailTool.RootAgentName) then SenderRole.Root
     else SenderRole.Teamish
 
@@ -707,15 +725,17 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   /** 统一 delegate 续聊地址前缀（unified-delegate 批 2026-10-03）。 */
   private val DelegatePrefix = "delegate:"
 
-  private def rootFace: String = "\"project:<项目名>\"（裸项目名等价接受）"
-  private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id>\""
+  private def rootFace: String = "\"project:<项目名>\"（裸项目名等价接受）或 \"node:<节点id或名>\"（已登记 delegate 链）"
+  private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""
+  private def delegateFace: String = "\"node:<节点id或名>\"（你自己作用域链图内的节点）"
 
   /** 分层地址面的显式越界报错（细则：错误消息必须指明**该角色的合法地址面**）。 */
   private def outOfFaceError(address: String, role: SenderRole): ToolError =
     val face = role match
-      case SenderRole.Root => rootFace
+      case SenderRole.Root       => rootFace
       case SenderRole.Dispatcher => dispatcherFace
-      case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
+      case SenderRole.Delegate   => delegateFace
+      case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
     ToolError(
       s"Address '$address' is outside your address face. Your role may only mail: $face. " +
         "There is no silent fallback and no fuzzy matching — use one of the listed forms."
@@ -724,9 +744,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   private def unresolvableError(address: String, role: SenderRole): ToolError =
     ToolError(
       s"Cannot resolve address '$address' — it is not a recognizable target in your address face (${role match
-          case SenderRole.Root => rootFace
+          case SenderRole.Root       => rootFace
           case SenderRole.Dispatcher => dispatcherFace
-          case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
+          case SenderRole.Delegate   => delegateFace
+          case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
         }). No fallback was applied."
     )
 
@@ -763,16 +784,38 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
         else deliverToDelegate(address.stripPrefix(prefix).trim, message, blocks, ctx, system, isLegacyForm)
       )
     else if address.startsWith(NodePrefix) then
-      val nodeId = address.stripPrefix(NodePrefix).trim
+      // S6=C（N1 刀3 · v3 §7.2）：`node:<id|name>` 授权面扩 = 创建者 delegate ＋
+      // root（现分发器语境照旧）。三腿分治：
+      //   - delegate 会话 → 自己作用域链图（NodeTools.resolveRuntime 作用域单点，
+      //     双寻址 A5 序：id 精确命中即止 → name 唯一 → 歧义列候选不猜）；
+      //   - project dispatcher → 既有 per-project 腿（ctx.projectName 解析域），
+      //     同一双寻址单点；
+      //   - root → 跨全部已挂载 delegate 作用域解析（root 无单一项目语境；>1 作用
+      //     域命中 = 显式歧义列 scope 限定候选）。
+      //   - teamish → 既有越界报错（合法面文案指明，零静默兜底）。
+      val nodeRef = address.stripPrefix(NodePrefix).trim
       Some(
-        if nodeId.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id>\".")))
-        else if role != SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else
+        if nodeRef.isEmpty then
+          IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id或名>\".")))
+        else if role == SenderRole.Delegate then
           countMailUsage(
-            deliverToNode(nodeId, withChainAnnotation(message, chainId), imagePaths, ctx),
+            deliverToScopeNode(nodeRef, withChainAnnotation(message, chainId), imagePaths, ctx),
             chainId,
             ctx
           )
+        else if role == SenderRole.Dispatcher then
+          countMailUsage(
+            deliverToNode(nodeRef, withChainAnnotation(message, chainId), imagePaths, ctx),
+            chainId,
+            ctx
+          )
+        else if role == SenderRole.Root then
+          countMailUsage(
+            deliverToRootNodeRef(nodeRef, withChainAnnotation(message, chainId), imagePaths, ctx),
+            chainId,
+            ctx
+          )
+        else IO.pure(Left(outOfFaceError(address, role)))
       )
     else if address.startsWith(ProjectPrefix) then
       val pname = address.stripPrefix(ProjectPrefix).trim
@@ -802,6 +845,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
             )
           )
         case SenderRole.Teamish => None // 既有 canMailRoot 闸不变
+        // S6=C：delegate 会话的面 = 自己作用域的 node: 腿——Nebula 地址 = 显式越界
+        // （合法面文案指明；零静默兜底，与 canMailRoot 的 team 闸语义不同层不混）。
+        case SenderRole.Delegate => Some(IO.pure(Left(outOfFaceError(address, role))))
     else if role == SenderRole.Root then
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
       Some(
@@ -959,9 +1005,15 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * 与三个错误码**不复制**（复制必然漂移）。注入 source 保持 `"system"`（D-3：
    * 节点侧既有呈现零 UI 行为变化）；来源标注经 attribution 参数传（sender/
    * senderTeam/eventType），节点会话蓝气泡顶栏因此可辨「来自谁」。
+   *
+   * S6=C（N1 刀3 · A5 双寻址）：地址 payload 升格为 `<id|name>`——解析单点 =
+   * [[NodeTools.resolveNodeRefIO]]（id 精确命中即止 → name 唯一 → 歧义显式列候选
+   * `CHAIN_ADDR_AMBIGUOUS` / 零命中 `CHAIN_NODE_NOT_FOUND`；活动区未命中兜归档区，
+   * 与 NodeEdit/NodeList/NodeCancel 三调用点同一判据源）。解析域 = 调用会话的
+   * per-project face（ctx.projectName，既有判定零改动）。
    */
   private def deliverToNode(
-    nodeId: String,
+    nodeRef: String,
     message: String,
     imagePaths: List[String],
     ctx: ToolContext
@@ -969,32 +1021,119 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // B6（静默丢修，mailattach 2026-09-17）：本腿结构上只能收字符串 ⇒ `images` 无承载面。
     // 旧行为 = 静默丢（零报错、零投递）；本批 = 显式拒绝（判据与文案见
     // [[sameMachineVisionUnsupportedError]]）。
-    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeId", imagePaths.size)))
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
     else
       ctx.projectName match
         case None | Some("") =>
           IO.pure(
             Left(
               ToolError(
-                s"Cannot route to node '$nodeId' — this session has no project context (the 'node:' leg resolves the project from the calling session)."
+                s"Cannot route to node '$nodeRef' — this session has no project context (the 'node:' leg resolves the project from the calling session)."
               )
             )
           )
         case Some(projectName) =>
           ProjectRuntimeRegistry.get(projectName).flatMap {
             case Some(rt) =>
-              mailAttribution("info", ctx).flatMap { attribution =>
-                rt.engine.sendNodeMessage(nodeId, message, Some(attribution)).map(_.left.map(ToolError(_)))
+              NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
+                case Left(err) => IO.pure(Left(ToolError(err)))
+                case Right(node) =>
+                  mailAttribution("info", ctx).flatMap { attribution =>
+                    rt.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
+                  }
               }
             case None =>
               IO.pure(
                 Left(
                   ToolError(
-                    s"Project '$projectName' is not mounted — cannot route to node '$nodeId'. Re-mount / restart (projects mount at startup)."
+                    s"Project '$projectName' is not mounted — cannot route to node '$nodeRef'. Re-mount / restart (projects mount at startup)."
                   )
                 )
               )
           }
+
+  /**
+   * 腿②′（S6=C · N1 刀3 · v3 §7.2 ①授权面扩）：**delegate 会话 → 自己作用域链图**
+   * 的 `node:<id|name>` 腿。解析域 = [[NodeTools.resolveRuntime]]（delegate 会话只
+   * 解析自己作用域图——查无宿主 `DELEGATE_SCOPE_UNAVAILABLE` fail-closed、显式他项目
+   * `DELEGATE_SCOPE_FOREIGN`，与 NodeEdit/NodeList/NodeCancel 同一单点）；双寻址 =
+   * [[NodeTools.resolveNodeRefIO]]（A5 序，同上）。投递 = 同一引擎单点
+   * `sendNodeMessage`（三态判据 + `node-message` EventLog 审计皆现成，零第二实现）。
+   * 挂载面授权在 buildAllowedToolSet 尾段（本腿为工具内第二保险）。
+   */
+  private def deliverToScopeNode(
+    nodeRef: String,
+    message: String,
+    imagePaths: List[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
+    else
+      NodeTools.resolveRuntime(None, ctx).flatMap {
+        case Left(err) => IO.pure(Left(ToolError(err)))
+        case Right(rt) =>
+          NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
+            case Left(err) => IO.pure(Left(ToolError(err)))
+            case Right(node) =>
+              mailAttribution("info", ctx).flatMap { attribution =>
+                rt.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
+              }
+          }
+      }
+
+  /**
+   * 腿②″（S6=C · N1 刀3 · v3 §7.2 ①授权面扩）：**root → 已登记 delegate 链节点**。
+   * root 无单一项目语境 ⇒ 解析域 = **全部已挂载 delegate 作用域宿主**
+   * （[[nebflow.core.project.DelegateFlowHosts.all]]）；每域内 A5 序双寻址（同一
+   * [[NodeTools.resolveNodeRefIO]] 单点），跨域 >1 命中 = 显式歧义列 **scope 限定**
+   * 候选（不猜不取首）；恰 1 命中 = 投该域引擎（同一 `sendNodeMessage` 单点）；零
+   * 命中 = 显式未找到（提示到属主 delegate 会话 NodeList 核对）。per-project 分发
+   * 器腿不经此腿（逐字节不变）。
+   */
+  private def deliverToRootNodeRef(
+    nodeRef: String,
+    message: String,
+    imagePaths: List[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
+    else
+      nebflow.core.project.DelegateFlowHosts.all.flatMap { hosts =>
+        hosts.traverse { h =>
+          NodeTools.resolveNodeRefIO(h.projectRuntime, nodeRef).map(_.map(n => (h, n)))
+        }.flatMap { hits =>
+          val resolved = hits.collect { case Right(pair) => pair }
+          val failures = hits.collect { case Left(err) => err }
+          if resolved.size > 1 then
+            val candidates =
+              resolved.map((h, n) => s"scope ${h.delegateId} → ${n.id}(${n.task.getOrElse("").take(30)})").mkString(", ")
+            IO.pure(
+              Left(
+                ToolError(
+                  s"'$nodeRef' matches ${resolved.size} nodes across delegate scopes — $candidates — " +
+                    "address by node id, or rename. (CHAIN_ADDR_AMBIGUOUS)"
+                )
+              )
+            )
+          else
+            resolved.headOption match
+              case Some((h, node)) =>
+                mailAttribution("info", ctx).flatMap { attribution =>
+                  h.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
+                }
+              case None =>
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"no node '$nodeRef' (id or name) in any mounted delegate chain scope" +
+                        (if hosts.isEmpty then " (no delegate scopes are mounted right now)"
+                         else s" (${hosts.size} scope(s) checked${if failures.isEmpty then "" else "; per-scope lookup notes: " + failures.mkString(" | ")})") +
+                        " — check NodeList on the owning delegate session. (CHAIN_NODE_NOT_FOUND)"
+                    )
+                  )
+                )
+        }
+      }
 
   // ============================================================
   // kernel leg (builtin-def batch 2026-10-03, author directive ② "Delegate triggers

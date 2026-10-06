@@ -65,9 +65,27 @@ object DelegateTerminal:
     val gitDigest = IO.blocking(digestFor(record))
     val mergeRound = MergeQueue.find(delegateId).exists(_.reminderSentAt.isDefined)
     val selfReport = record.flatMap(r => r.reportStatus.map(s => (s, r.reportDetail.getOrElse(""))))
+    // N1 刀2 ⑸：在飞链计数（fail-soft 0——宿主/快照任何一步失败都不拖判词）。
+    // 判据 = 该 delegate 作用域图内「存在非终态成员」的链数（chainIdView 值集合去重
+    // 后逐链看成员终态）。
+    val inFlightChains: IO[Int] =
+      nebflow.core.project.DelegateFlowHosts
+        .get(delegateId)
+        .flatMap {
+          case None => IO.pure(0)
+          case Some(h) =>
+            h.store.snapshot.map { s =>
+              val byChain = s.nodes.values.groupBy(n => nebflow.core.project.FlowMapStore.chainIdView(s.nodes).get(n.id))
+              byChain.collect {
+                case (Some(_), members) if members.exists(m => !nebflow.core.project.NodeLifecycle.Terminal.contains(m.status)) => 1
+              }.sum
+            }
+        }
+        .handleErrorWith(_ => IO.pure(0))
 
     for
       digest <- gitDigest
+      chains <- inFlightChains
       judged <- DelegateJudge.DelegateJudgePort.judgeTerminal(
         DelegateJudge.TerminalInput(
           delegateId = delegateId,
@@ -75,7 +93,8 @@ object DelegateTerminal:
           resultText = resultText,
           gitDigest = digest,
           selfReport = selfReport,
-          mergeRound = mergeRound
+          mergeRound = mergeRound,
+          inFlightChains = chains
         )
       )
       verdict = judged
@@ -139,7 +158,15 @@ object DelegateTerminal:
             )
           )
         ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line (engine) failed: ${e.getMessage}")))
-    verdictLine *> MergeQueue.onTerminalIO(delegateId)
+    // N1 刀1（v3 §6/A3 宿主生命周期）：delegate 终态 ⇒ 作用域宿主实例灭（盘面状态存，
+    // write-through 已持久——「会话终→引擎实例灭＋落盘状态存」）。幂等：外部执行器腿
+    // / 未挂载 id = 零动作。ready-to-merge 停靠（HoldForMerge）不经本清理面 ⇒ 宿主照常
+    // 存活等合并轮，合并轮终态仍走这里统一卸载。
+    val hostUnmount =
+      nebflow.core.project.DelegateFlowHosts
+        .unmount(delegateId)
+        .handleErrorWith(e => IO(logger.warn(s"delegate flow-host unmount failed: ${e.getMessage}")))
+    verdictLine *> hostUnmount *> MergeQueue.onTerminalIO(delegateId)
 
   // ── 内部 ──────────────────────────────────────────────────────────────
 

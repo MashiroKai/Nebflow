@@ -178,26 +178,28 @@ object NodeEditTool extends Tool:
 - in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each gains a default pass edge here.
 - deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null clears; failed/cancelled/blocked never trigger; deps edits on RUNNING nodes rejected. A ref may be "chain:<id>" = wait for that WHOLE chain (all members completed) — a pure scheduling gate, NEVER a membership edge, deps-only (not 'in'); unknown id ⇒ NODE_CHAIN_REF_UNKNOWN.
 - retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ that upstream re-runs (fresh result over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
-- out (optional; edit rewrites the edge set; empty/null = dangling (state the intent with dangling=true): result retained, auto-delivered once wired): "B" = pass edge with payload; "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
+- out (optional; edit rewrites the edge set; empty/null = dangling: result retained, auto-delivered once wired): "B" = pass edge with payload; "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
-- worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name>; fail-fast; refused on edits.
-- Not settable (refused): agent/skill/mcp (NODE_AGENT_UNSUPPORTED) ⇒ plugins; preset (NODE_PRESET_UNSUPPORTED) — no per-node scheme; dispatcher's applies.
+- Not settable (refused): agent/skill/mcp (NODE_AGENT_UNSUPPORTED) ⇒ plugins; preset (NODE_PRESET_UNSUPPORTED) — no per-node scheme, dispatcher's applies; worktree/merge=true/dangling (NODE_WORKTREE_UNSUPPORTED / NODE_MERGE_UNSUPPORTED / NODE_DANGLING_UNSUPPORTED) — worktree provisioning is the delegate layer's call, dispatch Delegate tasks instead of merge nodes, an empty out is legal as-is.
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered). Omitted ⇒ rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
 - notify (optional; unset = default: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. One-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
+## Scope & addressing (delegate sessions)
+- On a delegate session this tool edits the delegate's OWN scope map (one delegate, one map); a `project` naming anything else is refused (DELEGATE_SCOPE_FOREIGN). Project dispatchers keep the per-project face.
+- Delegate-scope creates land PENDING — release goes through a registered chain (ChainWrite/AgentFlow) or the engine's settle sweep.
+- Dual addressing: `in`/`deps`/`out` accept node id OR node name (exact id wins; ambiguous name = explicit error listing candidates — CHAIN_ADDR_AMBIGUOUS).
 ## Semantics
 - Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task, no in) runs at create, async.
 - Verdict routing (role=verifier): fail is a VERDICT — THE VERIFIER STILL COMPLETES; "(fail)<worker>:loop" re-runs the target. Its out: distinct pass/fail targets (NODE_VERDICT_ROUTE_COLLISION), one fail target (NODE_VERIFY_MULTI_FAIL_TARGET), never "Nebula" (NODE_LOOP_TARGET_NEBULA), no retry (NODE_RETRY_LOOP_CONFLICT); the engine owns the round/wall-clock budget and fails it on exhaustion (loop-budget).
 - out delivery: completed ⇒ pass edges fire (:result payload / :signal bare start; ≤1 per (target,mode)); failed ⇒ on-failed :signal edges fire, the rest waits (D5); wiring into a FAILED upstream with no on-failed edge ⇒ warning.
-- merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure ⇒ blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM); with no out yet it REQUIRES dangling=true (NODE_MERGE_SINK_NEEDS_OUT).
 - Edit: in appends; deps/out/description replace; removing a consumed target (running/terminal) rejected — NodeCancel first; other terminal rewires auto-deliver the retained result to new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
 - Failed node edit: a real change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED edit (SIGINT/SIGTERM left it non-terminal): a real change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED re-runs only with reactivateCompleted=true; cancelled not reactivatable (create successor).
 - Archived nodes (TTL-expired, result retained): only 'out' rewiring is accepted; other edits refused (restoreChain=true overrides).
-- Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved + delivered along out. Full result: NodeList(detail=<nodeId>)."""
+- Validation (0 spawn): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved + delivered along out. Full result: NodeList(detail=<nodeId>)."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -250,13 +252,11 @@ object NodeEditTool extends Tool:
           "type" -> "string".asJson,
           "description" -> "Out-edge spec (OPTIONAL on create — empty/null leaves the node dangling: no delivery, no root notify, the result is retained and auto-delivered once wired; on edit replaces the whole edge set): edge = target + gates + mode. Target = node id OR node name (the engine resolves names to nodes for validation, in-edge mirrors and delivery). \"B\" = pass edge with payload; \"Nebula\" = EXIT MARKER (pass gate, mode=signal ⇒ zero delivery); to notify the root write an EXPLICIT gate set — \"(pass)Nebula\" / \"(pass,failed)Nebula\"; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). Loop nodes must cover BOTH pass and failed (NODE_LOOP_GATE_INCOMPLETE). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson
         ),
-        "dangling" -> Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> ("CREATE-ONLY declaration token (default false, ignored on edit — the dangling form on edit is the out=null disconnect): " +
-            "declares this node's empty out edge as INTENTIONAL. Required instead of 'out' on merge=true creates (NODE_MERGE_SINK_NEEDS_OUT: a landing sink must hand its landed result onward — with no edge the result is retained with zero delivery; " +
-            "pass dangling=true when the sink intentionally waits for its report/notify wiring). On any empty-out create it upgrades the wiring-gap notice from 'suspicious' to 'declared (dangling=true)' and logs a dangling-declared audit event; " +
-            "the derived wiringGap payload key (pending/retained) is unchanged.").asJson
-        ),
+        // worktree / dangling / merge 三属性已删（N1 刀2 D1/D2/③：worktree 代建收归
+        // delegate 层判定机与 Delegate spawn 腿（S13），GitWorktrees 公用 util 本体保留；
+        // merge=true 新建封口（worktree-judge-fifo 批 ⑥ 先行封口沿袭）——三键运行时
+        // 兜底硬闸在 call() 首段（NODE_WORKTREE_UNSUPPORTED / NODE_DANGLING_UNSUPPORTED
+        // / NODE_MERGE_UNSUPPORTED，宽容调用方拿到可行动错误）。
         "plugins" -> Json.obj(
           "oneOf" -> Json
             .arr(
@@ -265,14 +265,6 @@ object NodeEditTool extends Tool:
             )
             .asJson,
           "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog (a listed package is ready to use); a blocked (deny-listed) package is refused, and a package switched off for dispatch by the author is refused for NEW dispatches only".asJson
-        ),
-        "worktree" -> Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson
-        ),
-        "merge" -> Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson
         ),
         "notify" -> Json.obj(
           "type" -> "string".asJson,
@@ -376,7 +368,6 @@ object NodeEditTool extends Tool:
     val description = input("description").flatMap(_.asString)
     // 裁定⑤c（20260907）：双层化长描述——可选，≤200，仅 detail 通道消费
     val descriptionLong = input("descriptionLong").flatMap(_.asString)
-    val worktree = input("worktree")
     val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
     // 显式授权入口 `NODE_COMPLETED_REACTIVATION`（nrloop 一期 2026-09-12，附 C5①）：
     // 布尔参数，**仅 completed 节点有意义**（适用范围闸在 editNode 首段；创建路径
@@ -387,15 +378,11 @@ object NodeEditTool extends Tool:
     // （findNode 双区兜底），节点留在归档区；传 true 才把目标所属归档链**整体**搬回
     // 活动区（恒整批，不做单节点拉回——链是整体单位）。
     val restoreChain = input("restoreChain").flatMap(_.asBoolean).getOrElse(false)
-    // merge（merge-node 批 20260905）：create-only 标记——edit 路径不接收（对既有
-    // 节点传 merge 会被静默忽略；归档节点传 merge 走 forbidden 拒绝）。
-    val merge = input("merge").flatMap(_.asBoolean).getOrElse(false)
-    val mergeProvided = input("merge").flatMap(_.asBoolean).isDefined
-    // 建位期声明闸令牌（nodegate 方案件 §1(ii) C-ii / §1(i) C-i，本批四项①③）：
-    // 两个 create-only 布尔——`dangling` = 显式登记空 out 为有意（merge sink 的唯一
-    // 放行通道 + ⚠ 升级 + 审计）；`verifierRoutePending` = 空 out verifier 的两段式
-    // 许可。编辑路径**容忍忽略**（同 merge 先例：令牌是建位时刻的许可，非节点字段）。
-    val dangling = input("dangling").flatMap(_.asBoolean).getOrElse(false)
+    // N1 刀2：worktree/merge/dangling 三参数解析已随三 seal（call() 首段硬闸）退役
+    // ——键在场即拒，不再读取（schema 属性同批删除）。
+    // 建位期声明闸令牌（nodegate 方案件 §1(i) C-i）：`verifierRoutePending` = 空 out
+    // verifier 的两段式许可（create-only；编辑路径容忍忽略——令牌是建位时刻的许可，
+    // 非节点字段）。
     val verifierRoutePending = input("verifierRoutePending").flatMap(_.asBoolean).getOrElse(false)
     // notifyDispatcher（dispatch-notify 批 2026-09-05）：Option 保留「显式传入」信号
     // （缺省 = 不改动——同 plugins 缺省不改动形态）。载体经 implicit 传入 createNode/
@@ -570,16 +557,43 @@ object NodeEditTool extends Tool:
           )
         )
       )
-    // worktree 类型闸：布尔显式化（String→Boolean 改造）——传字符串（旧形态）不再
-    // 宽容收编，直接拒绝（旧文案教「先建 worktree 再传裸名」的工作流已被
-    // 「worktree=true 即时创建」取代）。
-    else if worktree.exists(w => !w.isBoolean && !w.isNull) then
+    // N1 刀2 三 seal（D1 worktree / D2 merge / ③ dangling，v3 §10.1：退役参数收口
+    // 为显式硬闸——schema 层已删属性（严格调用方过不了 schema），此处运行时兜底给
+    // 宽容调用方可行动错误）。判据与码：
+    //   - worktree 键在场 → NODE_WORKTREE_UNSUPPORTED：分支/worktree 代建收归 delegate
+    //     层判定机（S13）与 Delegate spawn 腿；GitWorktrees 公用 util 本体保留（其余
+    //     消费点不动，本件 createWorktreeFor 包装随之退役）。
+    //   - merge=true → NODE_MERGE_UNSUPPORTED（文案沿 worktree-judge-fifo 批 ⑥ 先行
+    //     封口逐字）；merge=false/缺省容忍（create-only 令牌非节点字段——容忍语义保
+    //     NodeMergeSealSpec ⑥ control 绿）。
+    //   - dangling 键在场 → NODE_DANGLING_UNSUPPORTED：空 out 本就合法（结果保留、
+    //     接线后自动投递），声明令牌随 merge sink 面退役。
+    else if input.contains("worktree") then
       IO.pure(
         Left(
           ToolError(
-            "'worktree' must be a boolean: true = an isolated worktree is auto-created for this node " +
-              "(derived from the node name, baseline = main HEAD); false/omitted = run directly in the workspace. " +
-              "Bare string names are not accepted. (WORKTREE_NOT_BOOLEAN)"
+            "'worktree' is no longer a node parameter — branch/worktree provisioning is decided by the delegate-layer " +
+              "arbiter (S13) and the Delegate spawn leg, not per-node. Run directly in the workspace, or dispatch a Delegate task " +
+              "when isolated execution is required. (NODE_WORKTREE_UNSUPPORTED)"
+          )
+        )
+      )
+    else if input("merge").flatMap(_.asBoolean).contains(true) then
+      IO.pure(
+        Left(
+          ToolError(
+            "merge=true node creation is no longer supported — dispatch the work as Delegate tasks " +
+              "instead of wiring a merge node. Existing merge nodes keep working until the cleanup batch. " +
+              "(NODE_MERGE_UNSUPPORTED)"
+          )
+        )
+      )
+    else if input.contains("dangling") then
+      IO.pure(
+        Left(
+          ToolError(
+            "'dangling' is no longer a node parameter — an empty 'out' is legal on create without any declaration " +
+              "(the result is retained and auto-delivered once wired). Drop the key. (NODE_DANGLING_UNSUPPORTED)"
           )
         )
       )
@@ -656,7 +670,12 @@ object NodeEditTool extends Tool:
         pluginValidation.flatMap {
           case Left(err) => IO.pure(Left(ToolError(err)))
           case Right(_) =>
-            NodeTools.resolveProject(project, ctx).flatMap {
+            // N1 刀2 A4：解析单点换 `resolveRuntime`（delegate 会话 = 自己作用域图；
+            // 其余身份 per-project 路径逐字节不变）＋ A6 作用域分叉判据：delegate 会话
+            // 建位**不自动 startNode**（落 pending——链齐才跑，放行走 ChainWrite/
+            // AgentFlow 登记闸或引擎 settle 回扫）；per-project 分发器面照旧（建即跑）。
+            val mayAutoStart = !nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId)
+            NodeTools.resolveRuntime(project, ctx).flatMap {
               case Left(err) => IO.pure(Left(ToolError(err)))
               case Right(rt) =>
                 // 链拉回（链级抽象 P2 · spec §5.3-④）：restoreChain=true 时**先拉回**
@@ -682,7 +701,6 @@ object NodeEditTool extends Tool:
                               description,
                               descriptionLong,
                               abandon,
-                              worktree.flatMap(_.asBoolean),
                               pluginsOpt,
                               inJson,
                               depsJson,
@@ -703,11 +721,12 @@ object NodeEditTool extends Tool:
                         rt.store.archiveSnapshot.flatMap { arch =>
                           arch.nodes.values.find(_.name == nodename) match
                             case Some(archived) =>
+                              // N1 刀2：worktree/merge/dangling 三键已在 call() 首段 seal
+                              // （到不了本分支），forbidden 清单随之收窄。
                               val forbidden =
-                                task.isDefined || description.isDefined || descriptionLong.isDefined || worktree.isDefined ||
+                                task.isDefined || description.isDefined || descriptionLong.isDefined ||
                                   abandon || inJson.isDefined || depsJson.isDefined ||
-                                  pluginsProvided ||
-                                  mergeProvided || notifyProvided.isDefined || retryProvided ||
+                                  pluginsProvided || notifyProvided.isDefined || retryProvided ||
                                   // chainmodel 批一 ①：链归属声明同 config 族——归档节点只放行
                                   // out 改接（归档是显示过期 + 结果可补投，不是改写归属的通道）。
                                   chainDeclFlag.provided ||
@@ -719,14 +738,6 @@ object NodeEditTool extends Tool:
                                   Left(
                                     ToolError(
                                       s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own."
-                                    )
-                                  )
-                                )
-                              else if mergeProvided then
-                                IO.pure(
-                                  Left(
-                                    ToolError(
-                                      s"Node '$nodename' is archived — 'merge' is a create-only flag and cannot be set on an archived node."
                                     )
                                   )
                                 )
@@ -754,7 +765,6 @@ object NodeEditTool extends Tool:
                                   description,
                                   descriptionLong,
                                   abandon,
-                                  worktree.flatMap(_.asBoolean),
                                   pluginsOpt,
                                   inJson,
                                   depsJson,
@@ -800,15 +810,13 @@ object NodeEditTool extends Tool:
                                       task,
                                       description,
                                       descriptionLong,
-                                      worktree.flatMap(_.asBoolean),
                                       pluginsForCall,
                                       inJson,
                                       depsJson,
                                       outJson,
-                                      merge,
-                                      dangling,
                                       verifierRoutePending,
-                                      pluginsProvided
+                                      pluginsProvided,
+                                      mayAutoStart
                                     )
                                 }
                         }
@@ -897,24 +905,9 @@ object NodeEditTool extends Tool:
         Some(ToolError("'descriptionLong' must be non-empty (trim) (NODE_DESCRIPTION_LONG_REQUIRED)"))
       case _ => None
 
-  /**
-   * worktree 派生规则（2026-09-05 显式布尔改造，规则写死）：目录名 = 节点名
-   * sanitize、冲突追加 -2..-99、分支同名——规则本体已抽取为公用 util
-   * [[nebflow.core.GitWorktrees]]（worktree-judge-fifo 批 #1224 增补 §3.1「抽
-   * createWorktreeFor 为公用 util」；delegate spawn 腿共用同一实现）。本包装保持
-   * 原签名与原错误文案（label = 节点名），行为逐字节不变。
-   *
-   * Baseline（engine-wtbase 批 2026-10-04）：缺省基点 = 创建时 HEAD，仅显式
-   * baseRef 覆盖；无 `main` 回落（模型可见参数不开——schema 变更属作者过目闸
-   * AGENTS.md §16）。单点 deref 语义照旧（raw ref 直传 `git worktree add`）。
-   */
-  private def createWorktreeFor(ws: os.Path, nodename: String, baseRef: String = "HEAD"): Either[String, String] =
-    val sanitized = nebflow.core.GitWorktrees.sanitizeRefName(nodename)
-    nebflow.core.GitWorktrees
-      .createWorktree(ws, dirBase = sanitized, branch = sanitized, baseRef = baseRef, label = nodename)
-      .map(_.name)
-
-  end createWorktreeFor
+  // worktree 派生包装 createWorktreeFor 已随 N1 刀2 D1 seal 退役（2026-09-05 显式
+  // 布尔改造 / engine-wtbase 批的规则本体在公用 util [[nebflow.core.GitWorktrees]]——
+  // delegate spawn 腿等其余消费点不动，本件不再代建 worktree）。
 
   private def createNode(
     rt: ProjectRuntime,
@@ -922,24 +915,24 @@ object NodeEditTool extends Tool:
     task: Option[String],
     description: Option[String],
     descriptionLong: Option[String],
-    worktree: Option[Boolean],
     plugins: List[String],
     inJson: Option[Json],
     depsJson: Option[Json],
     outJson: Option[Json],
-    merge: Boolean = false,
-    /**
-     * C-ii 令牌（nodegate 方案件 §1(ii)）：显式登记空 out 为有意——merge sink 空
-     * out 的唯一放行通道；⚠ 行升级 + `dangling-declared` 审计（create-only）。
-     */
-    dangling: Boolean = false,
     /**
      * C-i 令牌（nodegate 方案件 §1(i)）：空 out verifier 的两段式许可
      * （create-only；非空 out 不豁免；编辑/镜像面不豁免）。
      */
     verifierRoutePending: Boolean = false,
     /** P1 已过闸的旁证（plugins 键在本次调用出现）——驱动 P2a flag-off 警告面。 */
-    pluginsDeclared: Boolean = false
+    pluginsDeclared: Boolean = false,
+    /**
+     * N1 刀2 A6 作用域分叉（v3 §5 S4「链齐才跑」）：false（delegate 会话）= 建位
+     * 落 pending，入口不自动 startNode、D1-deps settle 不自动启动——放行走登记闸
+     * （ChainWrite/AgentFlow）或引擎 settle 回扫（30s 资格 backstop）；true（缺省，
+     * per-project 分发器面）= 既有「入口建即跑」语义逐字保留。
+     */
+    autoStart: Boolean = true
   )(implicit
     notify: NodeEditNotify,
     loopFlag: NodeEditLoop,
@@ -957,28 +950,10 @@ object NodeEditTool extends Tool:
     // 把参数名替换成 deps，避免误导（解析器文案写死 'in'）。
     val depsIds = NodeTools.parseIn(depsJson).left.map(err => err.replace("'in'", "'deps'"))
     val outEither = NodeTools.parseOut(outJson)
-    // ⑥ merge 参数先行封口（worktree-judge-fifo 批 #1224 增补 §3.7，作者
-    // 裁定⑥「先行封口，不等 #1229」）：判定机（DelegateJudge + MergeQueue）
-    // 就位即封 merge=true **新建**——错误码对齐 *_UNSUPPORTED 族（pfhygiene
-    // 先例 NODE_AGENT_RETIRED→NODE_AGENT_UNSUPPORTED 同型）。「先行」= 本封口
-    // 是 createNode 校验链的**第一站**（先于 description/in/deps/out 全部校验——
-    // merge=true 新建一律以 NODE_MERGE_UNSUPPORTED 拒，不给其他校验面让位）；
-    // 下方旧 merge 专属校验链（校验①…W1）对新建路径已不可达，保留为 #1229
-    // 物理删除面的在飞读数；编辑路径 merge 本就 create-only 静默忽略、归档
-    // 节点传 merge 的既有拒绝（:725 一带）不受影响；**存量 merge 节点运行面
-    // （MergeNodePolicy/门集）零触碰**，物理删除随 #1229＋在飞旧链排空。
-    // 🔴 错误文案模型可见——§16 待过目标注（本批最小成稿，终稿归 N3）。
-    if merge then
-      IO.pure(
-        Left(
-          ToolError(
-            "merge=true node creation is no longer supported — dispatch the work as Delegate tasks " +
-              "instead of wiring a merge node. Existing merge nodes keep working until the cleanup batch. " +
-              "(NODE_MERGE_UNSUPPORTED)"
-          )
-        )
-      )
-    else
+    // merge=true 封口已前置到 call() 首段 seal（N1 刀2 D2——先于全部校验面，文案
+    // 沿 worktree-judge-fifo 批 ⑥ 逐字）；本函数不再接 merge/dangling/worktree 三参
+    // （schema 属性已删、运行时键已被 seal 拒），createWorktreeFor 包装随之退役
+    // （GitWorktrees 公用 util 本体不动——delegate spawn 腿等其余消费点继续用）。
     (validateDescription(description, creating = true), validateDescriptionLong(descriptionLong)) match
       case (Some(err), _) => IO.pure(Left(err))
       case (_, Some(err)) => IO.pure(Left(err))
@@ -1003,65 +978,6 @@ object NodeEditTool extends Tool:
                   )
                 )
               )
-            // merge 校验①（merge-node 批 20260905 §权限选型③；worktree 布尔化后
-            // contains(true) 语义）：合并节点不配 worktree——落地收口在 workspace 根仓
-            // 执行，沙箱根必须 = workspace（.git 在根内可写）；配 worktree=true 则
-            // 沙箱根 = worktree 目录，主仓 .git 在根外 → git 变更 EPERM。
-            // （⑥ 先行封口后本链对新建路径不可达——保留为 #1229 物理删除面读数。）
-            else if merge && worktree.contains(true) then
-              IO.pure(
-                Left(
-                  ToolError(
-                    "merge=true (batch landing sink) must NOT carry 'worktree' — a merge node lands on the workspace " +
-                      "root repo; its sandbox root must be the workspace itself so .git is writable. Drop 'worktree'."
-                  )
-                )
-              )
-            // merge 校验②（mount-enforce 批 20260905，作者裁定「节点不允许空挂载」）：
-            // merge=true 必须 ≥1 上游（in 非空）——合并节点靠上游 completed 投递清
-            // in-barrier 触发（deliverOut→startNode），零上游=可触发点永不到达=空挂
-            // pending 永不生效（实证 n-371cf932：merge=true、in=[] 悬挂 10+min，靠
-            // 人工 abandon+重建救援）。合法创建顺序：先建上游节点，再建合并节点并
-            // in=<上游 id>（in 声明自动改接各上游 out → 本节点）。
-            else if merge && ins.isEmpty then
-              IO.pure(
-                Left(
-                  ToolError(
-                    "merge=true (batch landing sink) requires at least one upstream: declare 'in' with existing upstream node id(s). " +
-                      "A merge node triggers only when its in-barrier clears via upstream completed delivery — with zero upstreams " +
-                      "it can never fire (empty mount = pending forever). Create the upstream node(s) first, then create this merge " +
-                      "node with in=<upstream-id(s)> (the in declaration rewires each upstream's out to this node). " +
-                      "(NODE_MERGE_REQUIRES_UPSTREAM)"
-                  )
-                )
-              )
-            // ⑥ in 上限闸（U2/P1 · 2026-09-11 作者拍板）：合并节点 in ≤4，超限拆多个合并
-            // 节点。此前纯纪律、引擎查无校验 ⇒ 一条超限 merge 会把 >4 条轨道压成单点
-            // （落地冲突面与失败面同步放大）。边界 =4 合法 / ≥5 拒，码 NODE_MERGE_IN_CAP。
-            else if merge && ins.distinct.size > NodeTools.MergeInCap then
-              IO.pure(
-                Left(
-                  ToolError(
-                    s"merge=true (batch landing sink) accepts at most ${NodeTools.MergeInCap} upstreams in one ledger — " +
-                      s"this create declares ${ins.distinct.size} distinct upstream(s). Split the batch: create one merge " +
-                      s"node per ≤${NodeTools.MergeInCap} upstream group, then wire the groups' merge nodes into a " +
-                      "follow-up merge/report node. (NODE_MERGE_IN_CAP)"
-                  )
-                )
-              )
-            // (ii) W1 merge 口径（nodegate 方案件 §1(ii)，本批四项①，0 spawn）：merge
-            // sink 建位必须带 out——落地收口的结果要经 out 交出去，空 out 落地结果滞留
-            // （零投递零升根）。「先建 sink 后补 out」的 8–16 秒窗口（方案件 §2 形态③
-            // 4/4 活证）由 dangling=true 显式登记（C-ii 令牌），零声明即拒。
-            else if merge && out.isEmpty && !dangling then
-              IO.pure(
-                Left(
-                  ToolError(
-                    s"merge=true (batch landing sink) must declare 'out' — the landed result is delivered along out; with no edge it is retained with zero delivery. " +
-                      "Declare out (e.g. a report/notify node), or pass dangling=true if this sink intentionally waits for its wiring. (NODE_MERGE_SINK_NEEDS_OUT)"
-                  )
-                )
-              )
             else
               // 1. agent 存在性（新建恒 = BuiltinAgents.ExecutorName；库缺该内置
               //    条目 = 环境残缺，fail-fast）
@@ -1075,83 +991,8 @@ object NodeEditTool extends Tool:
                     )
                   )
                 case Some(_) =>
-                  // 2. worktree 布尔派生（2026-09-05 显式化）：true → 即时创建（裁决 a，
-                  //    fail-fast；失败拒绝建节点）；false/缺省 → workspace 直跑（现状）。
-                  val viaWorktree: IO[Either[ToolError, String]] =
-                    worktree match
-                      case Some(true) =>
-                        val ws = os.Path(rt.project.workspace)
-                        // 必须是 git 仓**根**：--show-toplevel 输出与 workspace 一致。
-                        // 只查 rev-parse 退出码会把「嵌在别的 git 仓子目录里的 workspace」
-                        // 误判为 git 仓（worktree add 会挂到外层仓上）。
-                        val repoRoot = os
-                          .proc("git", "-C", ws.toString, "rev-parse", "--show-toplevel")
-                          .call(cwd = ws, check = false, mergeErrIntoOut = true)
-                        val isGitRoot = repoRoot.exitCode == 0 && repoRoot.out.trim() == ws.toString
-                        if !isGitRoot then
-                          IO.pure(
-                            Left(
-                              ToolError(
-                                s"worktree=true requires the project workspace to be a git repository root (${ws} is not) — " +
-                                  "run in the workspace instead (omit worktree), or git init the workspace first."
-                              )
-                            )
-                          )
-                        else
-                          // Single baseline point (engine-wtbase batch, 2026-10-04): default =
-                          // the repo HEAD read at call time (createWorktreeFor's baseRef
-                          // default). Named explicitly here to keep one point of change; the
-                          // engine can pick a different baseline by editing this one argument
-                          // with zero Tool-schema change.
-                          IO.blocking(createWorktreeFor(ws, nodename, baseRef = "HEAD")).flatMap {
-                            case Left(err) =>
-                              IO.pure(
-                                Left(
-                                  ToolError(
-                                    s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err"
-                                  )
-                                )
-                              )
-                            case Right(bare) =>
-                              proceed(
-                                rt,
-                                nodename,
-                                agentName,
-                                task,
-                                description,
-                                descriptionLong,
-                                Some(bare),
-                                plugins,
-                                ins,
-                                deps,
-                                out,
-                                merge,
-                                dangling,
-                                verifierRoutePending,
-                                pluginsDeclared
-                              )
-                          }
-                        end if
-                      case _ =>
-                        proceed(
-                          rt,
-                          nodename,
-                          agentName,
-                          task,
-                          description,
-                          descriptionLong,
-                          None,
-                          plugins,
-                          ins,
-                          deps,
-                          out,
-                          merge,
-                          dangling,
-                          verifierRoutePending,
-                          pluginsDeclared
-                        )
-                  // loop verify agent 存在性（§2.6 校验②，0 spawn 拦截）：loop=true 时校验
-                  // verify agent 可装载——缺失即拒（与 worker agent 同纪律，fail-fast）。
+                  // 2. loop verify agent 存在性（§2.6 校验②，0 spawn 拦截）：loop=true 时校验
+                  //    verify agent 可装载——缺失即拒（与 worker agent 同纪律，fail-fast）。
                   loopFlag.config match
                     case Some(lc) =>
                       EntityLoader.loadAgent(lc.verify).flatMap {
@@ -1163,9 +1004,10 @@ object NodeEditTool extends Tool:
                               )
                             )
                           )
-                        case Some(_) => viaWorktree
+                        case Some(_) => proceed(rt, nodename, agentName, task, description, descriptionLong, plugins, ins, deps, out, verifierRoutePending, pluginsDeclared, autoStart)
                       }
-                    case None => viaWorktree
+                    case None =>
+                      proceed(rt, nodename, agentName, task, description, descriptionLong, plugins, ins, deps, out, verifierRoutePending, pluginsDeclared, autoStart)
               }
 
   end createNode
@@ -1177,15 +1019,14 @@ object NodeEditTool extends Tool:
     task: Option[String],
     description: Option[String],
     descriptionLong: Option[String],
-    worktree: Option[String],
     plugins: List[String],
     ins: List[String],
     deps: List[String],
     out: List[OutEdge],
-    merge: Boolean = false,
-    dangling: Boolean = false,
     verifierRoutePending: Boolean = false,
-    pluginsDeclared: Boolean = false
+    pluginsDeclared: Boolean = false,
+    /** N1 刀2 A6：false = delegate 会话建位落 pending（入口/D1-deps 零自动启动）。 */
+    autoStart: Boolean = true
   )(implicit
     notify: NodeEditNotify,
     loopFlag: NodeEditLoop,
@@ -1230,7 +1071,7 @@ object NodeEditTool extends Tool:
       mergeGate <- NodeTools.ensureMergePassOnly(rt, out)
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
-      stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
+      stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, isMerge = false)
       // 链引用 RISKY 档回执行（判据 D 二档；本批）：`deps` 里的 `chain:<id>` 目标链含
       // `failed` 成员 ⇒ **放行**（可重激活）+ ⚠ 行。🔴 死链（含 `cancelled` 成员）在
       // `depsOk` 已硬拒（`NODE_CHAIN_REF_DEAD`），不会走到这里。
@@ -1370,7 +1211,9 @@ object NodeEditTool extends Tool:
             id = nodeId,
             name = nodename,
             agent = agentName,
-            worktree = worktree,
+            // N1 刀2 D1：NodeEdit 不再代建 worktree（worktree 键已在 call() seal 拒）
+            // ——新建恒 workspace 直跑；NodeDef.worktree 字段保留（存量节点兼容读）。
+            worktree = None,
             // panelscheme 批（2026-09-21）：preset 参数退役——新建节点不再携带节点级
             // 方案（NodeDef.preset 字段保留，存量数据显示/审计用）。
             task = task,
@@ -1378,7 +1221,9 @@ object NodeEditTool extends Tool:
             descriptionLong = storeDescriptionLong(descriptionLong),
             in = Nil,
             deps = deps,
-            merge = merge,
+            // N1 刀2 D2：merge=true 新建封口前置到 call() seal——本面新建恒普通节点
+            // （NodeDef.merge 字段保留，存量 merge 节点运行面零触碰）。
+            merge = false,
             // LoopNode 配置（LoopNode 批 2026-09-06）：loop=true 时 NodeDef.loop=Some(LoopConfig)，
             // 否则 None（普通节点）。loop 不构成「可立即运行」的输入语义——仍须 task/in 承载
             // 输入（与 deps 同款：完成信号/迭代语义不是输入），入口/barrier 判定不变。
@@ -1482,20 +1327,12 @@ object NodeEditTool extends Tool:
                     // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 5）：**逐边一行**
                     // （建位期的 out 与 in 镜像此前零事件）。
                     FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, edgeViews) *>
-                      // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：两类显式许可
-                    // 必须可事后对齐——被拒面查无事件、被放行面有迹可循（校验失败现况零
-                    // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
-                    // reactivated，零载荷漂移）。
-                    (if dangling && out.isEmpty then
-                       FlowMapEventLog.append(
-                         rt.project.workspace,
-                         rt.project.name,
-                         nodeId,
-                         "dangling-declared",
-                         "node created with dangling=true (empty out declared intentional; result retained until wired)"
-                       )
-                     else IO.unit) *>
-                      (if pendingRouteWarn.isDefined then
+                      // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：显式许可
+                      // 必须可事后对齐——被拒面查无事件、被放行面有迹可循（校验失败现况零
+                      // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
+                      // reactivated，零载荷漂移）。（dangling-declared 审计随 N1 刀2 ③
+                      // dangling 键 seal 退役——空 out 无需声明。）
+                    (if pendingRouteWarn.isDefined then
                          FlowMapEventLog.append(
                            rt.project.workspace,
                            rt.project.name,
@@ -1557,7 +1394,9 @@ object NodeEditTool extends Tool:
                       // 时接线即时触达，含归档上游——findNode 兜底）。与入口启动互斥（入口条件
                       // task && ins.isEmpty 独占启动，防双 startNode 并发 spawn）；ins 非空时
                       // D1 in-delivery 链的 barrier 结算同样经 startNode 闸门，双路径幂等无害。
-                      (if !(task.isDefined && ins.isEmpty) then
+                      // N1 刀2 A6：delegate 会话建位**零自动启动**（autoStart=false 包住本腿
+                      // 与入口腿——建位落 pending，放行走登记闸/settle 回扫，链齐才跑）。
+                      (if autoStart && !(task.isDefined && ins.isEmpty) then
                          NodeTools.runDetached(rt, s"D1-deps settle -> $nodeId")(
                            rt.store.getNode(nodeId).flatMap {
                              case Some(n)
@@ -1575,11 +1414,10 @@ object NodeEditTool extends Tool:
                       // NodeEdit 上直到节点完成（实测单 turn 56min），违背工具契约
                       // 「async, non-blocking」。deps 不构成「可立即运行」——即使误判也被
                       // startNode 内 deps 闸门拦下（deps 设计 §1.2）。
-                      // 合并节点例外（merge-node 批 20260905）：merge=true 时 task 只是
-                      // 落地指令集，**不构成可立即运行的入口语义**——落地收口必须等齐
-                      // 全部上游（in barrier 归零后由上游投递链经 startNode 启动）。
-                      // 否则合并节点会在零上游时开跑（S1 E2E 实测捕获）。
-                      (if task.isDefined && ins.isEmpty && !merge then
+                      // N1 刀2 A6：autoStart=false（delegate 会话）时本腿不触发——建位落
+                      // pending（S4「链齐才跑」：放行点在整链登记闸 ChainWrite/AgentFlow，
+                      // 或引擎 settleRunnableSweep 30s 资格回扫兜底）。
+                      (if autoStart && task.isDefined && ins.isEmpty then
                          NodeTools.runDetached(rt, s"start entry node $nodeId")(rt.engine.startNode(nodeId))
                        else IO.unit) *>
                       // 链归属变更留痕（chainmodel 批一 ⑤）：create 也是归属变更的写点——
@@ -1590,7 +1428,9 @@ object NodeEditTool extends Tool:
                   ).as(
                     Right(
                       s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
-                        (if task.isDefined && ins.isEmpty && !merge then " — entry node started running." else "") +
+                        // N1 刀2 A6：「started running」回执行只在真的启动了（per-project 面）
+                        // 时出现——delegate 建位落 pending，回执不得申报未发生的启动。
+                        (if autoStart && task.isDefined && ins.isEmpty then " — entry node started running." else "") +
                         (if deps.nonEmpty then s" deps ← ${deps.mkString(",")}" else "") +
                         (if out.nonEmpty then s" out → ${out.map(_.to).mkString(", ")}" else "") +
                         (if chainDecl.decl.isDefined then s" chainId ← ${chainDecl.decl.get}" else "") +
@@ -1602,12 +1442,10 @@ object NodeEditTool extends Tool:
                         (if chainRefWarn.nonEmpty then "\n" + chainRefWarn.mkString("\n") else "") +
                         // 通知策略自检（b64 批；WARNING 族，含 M3「silent ∧ 链末端只警告」）
                         (if notifyWarn.nonEmpty then "\n" + notifyWarn.mkString("\n") else "") +
-                        // 悬空提示（O-B 必做 4 + C-ii 升级，本批四项②）：声明了 dangling ⇒
-                        // 带意图文案（declared 标记）；未声明保持原文案（可疑口径）。
+                        // 悬空提示（O-B 必做 4）：空 out = 结果保留、接线后自动投递——
+                        // N1 刀2 ③ dangling 声明令牌退役，统一原文案（可疑口径）。
                         (if out.isEmpty then
-                           "\n" +
-                             (if dangling then NodeTools.wiringGapHintDeclared(nodename, nodeId)
-                              else NodeTools.wiringGapHint(nodename, nodeId)).mkString("\n")
+                           "\n" + NodeTools.wiringGapHint(nodename, nodeId).mkString("\n")
                          else "") +
                         // Pass-outlet gap hint (verdict-consumer batch · case A tier (a)
                         // warning only, design card §2.1): a verifier with a non-empty
@@ -1844,7 +1682,6 @@ object NodeEditTool extends Tool:
     description: Option[String],
     descriptionLong: Option[String],
     abandon: Boolean,
-    worktree: Option[Boolean],
     pluginsOpt: Option[List[String]],
     inJson: Option[Json],
     depsJson: Option[Json],
@@ -1891,20 +1728,8 @@ object NodeEditTool extends Tool:
         )
       )
     else if abandon then abandonNode(rt, node)
-    // worktree 创建期绑定闸（2026-09-05 显式布尔改造）：worktree 是 create-time
-    // 参数——编辑路径出现即拒（旧实现对编辑路径静默忽略，布尔语义下静默忽略
-    // = 「我说要建 worktree 你却没建」的陷阱；显式拒绝 + 指引重建）。
-    else if worktree.isDefined then
-      IO.pure(
-        Left(
-          ToolError(
-            s"'worktree' is a create-time parameter — node '${node.name}' already exists ${
-                if node.worktree.isDefined then s"with worktree '${node.worktree.get}'" else "in the workspace"
-              }. " +
-              "It cannot be added/changed on an existing node; recreate the node if the binding is wrong. (WORKTREE_CREATE_ONLY)"
-          )
-        )
-      )
+    // worktree 创建期绑定闸已随 N1 刀2 D1 seal 退役：worktree 键在 call() 首段即拒
+    // （NODE_WORKTREE_UNSUPPORTED），编辑路径不再需要本分支。
     // 校验三（deps 设计 §1.2）：编辑 running 下游传 deps → 同款冻结拒绝（「输入已冻结」
     // 对齐 in 语义）；给下游加 deps 的上游是 running 则合法（等它完成正是 deps 语义）。
     else if depsJson.isDefined && node.status == NodeLifecycle.Running then

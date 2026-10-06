@@ -447,6 +447,26 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           DelegateWorkspace.spawnPayload(subagentId, ExecutorRegistry.DefaultId, project, binding)
         )
       ).handleErrorWith(e => logger.warn(s"ChainStore delegate-spawn line failed: ${e.getMessage}").void)
+      // N1 刀1（v3 §6/A3 宿主挂载腿）：spawn 成功即挂 delegate 作用域宿主——FlowMapStore
+      // openScope（`<基工作区>/.nebflow/flow-maps/<会话id>/`）＋ NodeEngine 实例（自根：
+      // rootSessionId = 会话 id，节点 out=Nebula 投 delegate 本人）。存储锚 = 基工作区
+      // （`workspace` 参数——判是腿的 worktree 只作座位不作存储根，台账寿命长于 worktree）。
+      // fail-soft：挂载失败只 WARN，绝不拖垮 delegate 本体（刀1 面 additive——工具面在刀2
+      // 接入作用域；「查无作用域图」在刀2 有显式报错形态）。
+      _ <-
+        nebflow.core.project.DelegateFlowHosts
+          .mount(
+            delegateId = subagentId,
+            project = project,
+            baseWorkspace = workspace,
+            engineCwd = effectiveWs,
+            system = system,
+            resources = resources,
+            wsSend = Some(childWsSend)
+          )
+          .handleErrorWith(e =>
+            logger.warn(s"delegate flow-host mount failed (delegate continues without a scope map): ${e.getMessage}").as(None)
+          )
       _ <- resources.subAgentTaskStore
         .recordTask(
           SubAgentTask(

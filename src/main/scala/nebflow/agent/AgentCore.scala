@@ -229,11 +229,18 @@ object AgentCore:
     // 选本路线而非 `buildAllowedToolSet` 内 `- "ListFriends"`（SendMessage 先例）：
     // 两者授能结果等价，但后者不覆盖保存侧。
     "ListFriends",
-    // Subagent / Workflow（builtin-merge 批 2026-10-03）：执行 agent（nebflow）的
-    // 机制面工具——同享本集【防声明逃逸】通道：agent.json 声明（含 "*"）对非
-    // 授权身份不授能（真实授能 = AgentCore.NebflowFixedTools 单点）。
+    // Subagent / AgentFlow（builtin-merge 批 2026-10-03；N1 复名批 Workflow→
+    // AgentFlow，v2 ①/v3 §5）：执行 agent（nebflow）的机制面工具——同享本集
+    // 【防声明逃逸】通道：agent.json 声明（含 "*"）对非授权身份不授能（真实授能
+    // = AgentCore.NebflowFixedTools 单点）。
     "Subagent",
-    "Workflow",
+    "AgentFlow",
+    // ChainWrite（N1 刀2，v3 §5 S4）：delegate 会话专属整链登记件——同享本集
+    // 【防声明逃逸】通道：插件/agent.json 声明（含 "*"）对非 delegate 会话身份
+    // 不授能（真实授能 = buildAllowedToolSet 尾段 delegateSession 腿单点）；
+    // 工具内 DelegateSessions 身份拒绝双保险（TaskBoard/node_report 同款纪律，
+    // 剥离与授能两点不相干扰）。
+    "ChainWrite",
   )
 
   /**
@@ -259,9 +266,11 @@ object AgentCore:
       // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
       case "Nebula" => Set.empty[String]
       case "dream" => RootExclusiveTools -- DreamAdmittedTools
-      // builtin-merge 批（2026-10-03）：执行 agent 的机制面豁免——Subagent/Workflow
-      // 是 NebflowFixedTools 单点授能（本集在册只为防其他身份声明逃逸）。
-      case "nebflow" => RootExclusiveTools -- Set("Subagent", "Workflow")
+      // builtin-merge 批（2026-10-03）：执行 agent 的机制面豁免——Subagent/AgentFlow
+      // 是 NebflowFixedTools 单点授能（本集在册只为防其他身份声明逃逸）。N1 复名
+      // 批：Workflow→AgentFlow 随名；四件 Node 工具**不**入豁免集（防 Subagent/
+      // AgentFlow 步会话过授能——delegate 面真实授能只在 buildAllowedToolSet 尾段）。
+      case "nebflow" => RootExclusiveTools -- Set("Subagent", "AgentFlow")
       case _ => RootExclusiveTools
 
   /**
@@ -528,6 +537,13 @@ object AgentCore:
    * **unified-delegate 批（2026-10-03）：−`AgentFlow` ⇒ 17（在飞值）**——派发面
    * 统一收归 Delegate（Delegate(task, project?) 唯一派发入口；Mail 降级为按地址
    * 通信）。迁移指引 = RetiredToolGuides("AgentFlow")。
+   *
+   * **N1 复名批（2026-10-06，作者 23:04 授权）：Workflow → AgentFlow 复名沿革**
+   * ——本批只动执行 agent 机制面（NebflowFixedTools/RootExclusiveTools/exclusive
+    * ToolsFor 随名）与墓碑表（删旧 "AgentFlow" 条目＋增 "Workflow" 条目），
+   * `NebulaOrchestrationTools` 成员与件数 **17 不变**（旧 root 侧 AgentFlow 派发件
+   * 2026-10-03 已退役，与本复名无涉——同名的先后两物，勿混）。复名连带细案沿
+   * v2 §3（案 A「仅 legacy 形态拒收」）。
    */
   val RootOrchestrationToolsExpectedSize: Int = 17
 
@@ -556,8 +572,13 @@ object AgentCore:
       """TaskBoard is not available — the board's contents live in the single `Task` ledger, and the per-session face is the read-only `TaskInfo` (zero parameters — it renders the one task your session is attached to, note timeline included); any write belongs to Nebula's `Task` tool.""",
     "Card" ->
       """Card is not available — its show face is Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe).""",
-    "AgentFlow" ->
-      """AgentFlow is not available — dispatch goes through `Delegate(task=<brief>, project=<optional mounted project>)`. The receipt carries the task number (task #N) and the continuation address `delegate:<id>`; supplements/corrections go through `Mail(address="delegate:<id>", message=...)`. A project-targeted Mail(address="project:<name>") with a task number keeps working as a supplement channel, but new work is dispatched with Delegate only."""
+    // Workflow（N1 复名批 v2 §6.F 候选，ChainEdit 引用随 v3 作废改 ChainWrite）：
+    // 名字退役产生的新墓碑——Workflow 名已注册删除，打旧名的调用落本指引。
+    "Workflow" ->
+      """Workflow is not available — the tool was renamed AgentFlow (same parameters: steps = [{id, task, deps}], description). Resubmit as AgentFlow(...); for persistent registered chains use ChainWrite."""
+    // 旧 "AgentFlow" 墓碑条目随 N1 复名批删除（v2 §3.2 处置：AgentFlow 以新工具
+    // 注册进 TOOL_MAP——注册即令本表对该名永不可达，留条目＝死文本，违表零膨胀
+    // 纪律；legacy 派发意图改由 AgentFlowTool 内案 A 形态判据承接）。
   )
 
   /**
@@ -631,7 +652,10 @@ object AgentCore:
    * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
    * tools/mcpServers 声明整体失效，本常量即唯一来源。
    */
-  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Subagent" + "Workflow"
+  // N1 复名批（v2 ①，2026-10-06）：Workflow→AgentFlow（同参数 steps =
+  // [{id, task, deps}], description）——NebflowFixedTools 随名；本集 RootExclusiveTools
+  // 成员随名（防声明逃逸面不变）。
+  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow"
 
   /**
    * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标
@@ -729,7 +753,8 @@ object AgentCore:
             AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：
-          // 基础六件 + AskUserQuestion + Subagent（只读侦察）+ Workflow（步级 DAG）。
+          // 基础六件 + AskUserQuestion + Subagent（只读侦察）+ AgentFlow（步级
+          // DAG，N1 复名批 Workflow→AgentFlow 随名）。
           // 机制固定单点，不经 legacyFixedTools 的 catch-all。
           case "nebflow" => AgentCore.NebflowFixedTools
           // 只读侦察子（SubagentTool 的 spawn 目标）：机制固定只读五件。

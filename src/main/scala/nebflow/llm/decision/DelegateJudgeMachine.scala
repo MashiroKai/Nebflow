@@ -258,7 +258,8 @@ ${cap(input.resultText)}
 ${if input.gitDigest.isEmpty then "(not a git workspace)" else input.gitDigest}
 === CONTEXT ===
 $selfReportLine
-mergeRound: ${input.mergeRound}"""
+mergeRound: ${input.mergeRound}
+inFlightChains: ${input.inFlightChains}"""
 
   private def terminalInstructions(input: TerminalInput): String =
     if input.mergeRound then

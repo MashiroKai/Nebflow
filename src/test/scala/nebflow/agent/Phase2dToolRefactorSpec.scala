@@ -136,7 +136,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("nebflow")),
       AgentCore.NebflowFixedTools,
-      "nebflow 固定面 == 静态九件（builtin-merge 批：BaseTools + AskUserQuestion + Subagent + Workflow；AskUser 承继 2026-09-08、零 Pop 承继 2026-09-10）"
+      "nebflow 固定面 == 静态九件（builtin-merge 批：BaseTools + AskUserQuestion + Subagent；N1 复名批 Workflow→AgentFlow 随名；AskUser 承继 2026-09-08、零 Pop 承继 2026-09-10）"
     )
     assert(!AgentCore.fixedToolsFor(mkDef("nebflow")).contains("Pop"), "nebflow 固定面零 Pop（2026-09-10 裁定承继，变异验红锚）")
 
@@ -176,12 +176,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
       s"Nebula 交付面必须含文件面六件（2026-09-18 18:18 令）——实得: $nebulaDelivered"
     )
     // builtin-merge 批（2026-10-03）：general ⇒ nebflow——静态集 = 基础六件 +
-    // AskUserQuestion + Subagent + Workflow 恰九件。
+    // AskUserQuestion + Subagent + AgentFlow 恰九件。
     val generalDelivered = CoreProbe.allowed(mkDef("nebflow"), isFlowNode = true)
     assertEquals(
       generalDelivered,
       AgentCore.NebflowFixedTools,
-      "nebflow 节点形态交付面 == 静态集恰九件（builtin-merge 批：基础面 + Subagent + Workflow；AskUser 承继、Pop 摘除承继）"
+      "nebflow 节点形态交付面 == 静态集恰九件（builtin-merge 批：基础面 + Subagent；N1 复名批随名 AgentFlow；AskUser 承继、Pop 摘除承继）"
     )
     assert(!generalDelivered.contains("Mail"), "Mail 不进执行 agent 面（R2 细则承继：无消息工具）")
     val dispatcherDelivered =

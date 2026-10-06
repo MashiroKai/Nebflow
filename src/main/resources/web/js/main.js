@@ -59,6 +59,10 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
+// delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
+// 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
+// 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
+import './delegateChainProvider.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -2056,8 +2060,10 @@ function bgAgentKindFromSession(sessionId) {
   if (raw.startsWith('delegate-')) return 'Delegate';
   if (raw.startsWith('subtask-')) return 'SubTask';
   // builtin-merge 批（2026-10-03）：Subagent（只读侦察）与 Workflow 步级子会话。
+  // N1 复名批（2026-10-06，v2 ①）：Workflow 工具复名 AgentFlow——显示标签随名
+  // 翻转；会话 id 前缀 `workflow-` 是存储/归因命名空间，保留不改（v2 §3.4）。
   if (raw.startsWith('subagent-')) return 'Subagent';
-  if (raw.startsWith('workflow-')) return 'Workflow';
+  if (raw.startsWith('workflow-')) return 'AgentFlow';
   if (raw.startsWith('dag-')) return 'Flow';
   if (raw.startsWith('ephemeral-')) return 'Ephemeral';
   // #28 可观测接线: Project 节点/分发器后端注册为 AgentKind.Flow → 面板 kind

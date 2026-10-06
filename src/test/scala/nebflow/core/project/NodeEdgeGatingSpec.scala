@@ -334,19 +334,29 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
         ctx
       )
       upId <- idOf(rt, "mg-up")
-      _ <- nodeEdit(
-        nodeInput(
-          "gating-mergegate",
-          "mg-sink",
-          "description" -> Json.fromString("landing sink"),
-          "merge" -> Json.fromBoolean(true),
-          "in" -> Json.fromString(upId),
-          "out" -> Json.fromString("Nebula"),
-          "task" -> Json.fromString("landing commands")
-        ),
-        ctx
-      )
-      mId <- idOf(rt, "mg-sink")
+      // N1 刀2 D2：merge=true 建位已 seal（NODE_MERGE_UNSUPPORTED）——NODE_MERGE_PASS_ONLY
+      // 门的存在性主角（存量 merge 节点）改存储面直种（in 镜像 §2.3 同款）。
+      sinkId = s"n-${f"${scala.util.Random.nextInt(0x1000000)}%06x"}"
+      _ <- rt.store.mutate { s =>
+        s.copy(nodes =
+          s.nodes ++
+            Map(
+              sinkId -> NodeDef(
+                id = sinkId,
+                name = "mg-sink",
+                agent = "test-agent",
+                task = Some("landing commands"),
+                description = Some("landing sink"),
+                status = NodeLifecycle.Wiring,
+                in = List(upId),
+                out = List(OutEdge.root),
+                merge = true,
+                createdAt = System.currentTimeMillis()
+              )
+            ) ++ Map(upId -> s.nodes(upId).copy(out = s.nodes(upId).out :+ OutEdge(to = sinkId)))
+        )
+      }
+      mId = sinkId
       // 创建期：out="(failed)merge" → 硬拒
       createRes <- nodeEdit(
         nodeInput(

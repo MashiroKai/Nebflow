@@ -77,8 +77,8 @@ class CompletionGateSpec extends CatsEffectSuite:
     dir
 
   /**
-   * git 仓 workspace fixture：init + 身份 + 初始空提交（NodeEdit worktree=true
-   * 派生需至少一提交；NodeSchemaSlimSpec 同款）。
+   * git 仓 workspace fixture：init + 身份 + 初始空提交（worktree 目录实建需至少
+   * 一提交；NodeSchemaSlimSpec 同款；N1 刀2 起 worktree 绑定走存储面直写）。
    */
   private def gitWorkspace(name: String): os.Path =
     val ws = tempRoot / s"ws-$name"
@@ -443,11 +443,21 @@ class CompletionGateSpec extends CatsEffectSuite:
           "gate-a",
           "description" -> Json.fromString("gate scenario node"),
           "task" -> Json.fromString("gate-scenario"),
-          "worktree" -> Json.fromBoolean(true),
           "out" -> Json.fromString("n-down-b")
         ),
         ctx
       )
+      // N1 刀2 D1（2026-10-06）：worktree 参数退役（NodeEdit seal 拒）——gate 场景的
+      // 座位绑定改经存储面直写（gate 读 NodeDef.worktree 字段，字段保留；目录由
+      // mkWt 实建，gate 的 exists 检查才会介入）。gate 引擎面零改动。
+      aId <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a").map(_.id))
+      _ = aId.getOrElse(fail("gate-a must be created"))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes.updated(aId.get, s.nodes(aId.get).copy(worktree = Some("gate-wt")))
+        )
+      )
+      _ = mkWt(ws, "gate-wt")
     yield (rt, events, system)
     end for
   end engineScenario

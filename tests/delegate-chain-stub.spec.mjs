@@ -16,6 +16,9 @@
 //   T8 S10 per-task 链视图：ChainNode 卡（fmNodeCard 单源渲染）＋返回钮键2＋fail-soft 键7 重试
 //   T9 S11 结构总视图：头键3＋FIFO 泳道键4 readyAt 序＋worktree 座键5＋链卡点进
 //   T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增量＋展开守卫
+//   ── N1 刀3 真源换源（A8 REST provider）扩例 ──
+//   T11 换源生效：/api/chains 路由 ⇒ 零夹具行渲染自 live provider（live/verdict 投影）
+//   T12 per-task 臂：/api/chains/:key ⇒ S10 渲染一致（节点整组替换；渲染面零改动钉）
 //
 // 事件帧/面板驱动与 tasklist-nodes.spec.mjs 同 rig（真实 ws.js 分发路径注入）。
 //
@@ -615,6 +618,135 @@ test('T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增
   // 展开守卫：外部行点行零展开（无 detail、无 aria-expanded）。
   await r34.click();
   await expect(page.locator('.task-delegate-detail')).toHaveCount(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
+// ── N1 刀3 真源换源（A8 REST provider · #1228 setSource 落真）扩例 ─────────────
+//
+//   T11 换源生效：路由 /api/chains → 行投影 JSON，boot 后**零夹具**——task list
+//      delegate 行渲染自 live provider（WS 帧只当刷新触发器；行权威 = REST）。
+//   T12 per-task 臂：/api/chains/:key → record + chain，S10 视图渲染一致
+//      （渲染面零改动——同一 fmNodeCard/delegateChainView 代码路径）。
+
+/** DelegateRegistry.Record 形 JSON（A8 rows 臂输入：record × live × verdict）。 */
+const rec44 = {
+  id: 'delegate-nebflow-run44', executor: 'nebflow', cwd: '/w/p', project: 'p',
+  taskId: '44', parentSessionId: 'nebula-root', title: 'REST 行投影任务', createdAt: T0 - 90_000,
+};
+const rec45 = {
+  id: 'delegate-nebflow-merge45', executor: 'nebflow', cwd: '/w/p', project: 'p',
+  taskId: '45', parentSessionId: 'nebula-root', title: 'REST 判词任务', createdAt: T0 - 80_000,
+};
+
+/** REST 路由后置注册（Playwright 后注册者优先）＋ 一帧 node* 触发防抖刷 + 重渲。 */
+async function serveChains(page, rowsBody, chainByKey) {
+  await page.route('**/api/chains', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rowsBody) }));
+  await page.route('**/api/chains/*', (route) => {
+    const url = new URL(route.request().url());
+    const key = decodeURIComponent(url.pathname.split('/').pop() || '');
+    const body = chainByKey[key]
+      ? { key, record: { taskId: key, entries: [] }, chain: chainByKey[key] }
+      : { error: 'chain record not found' };
+    return route.fulfill({ status: chainByKey[key] ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  // WS 帧 = 刷新触发器（provider 500ms 防抖）→ 等防抖窗过后重渲一次（真实侧栏
+  // 重渲循环同款入口）。
+  await inject(page, { type: 'nodeUpdated', project: 'p', nodeId: 'n-trigger' });
+  await page.waitForTimeout(800);
+  await renderPanel(page);
+}
+
+test('T11 换源生效：零夹具 ⇒ 行渲染自 live provider（live 活性提示＋verdict 覆写单点）', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  await serveChains(page, {
+    rows: [
+      { ...rec44, live: { status: 'running' } },
+      { ...rec45, live: { status: 'running' }, verdict: { verdict: 'ready-to-merge', reason: 'branch ready', source: 'self-report', at: T0 } },
+    ],
+  }, {});
+
+  // 换源钉：夹具缝**未使用**——行来自 REST 镜像（零 __setFixture 调用）。
+  const seam = await page.evaluate(async () => {
+    const stub = await import('/js/delegateChainStub.js');
+    return { hasFixture: stub.__hasFixture(), rows: stub.listDelegateRows().length };
+  });
+  expect(seam.hasFixture).toBe(false);
+  expect(seam.rows).toBe(2);
+
+  const panel = page.locator('#task-list');
+  // #44：live {running} → 行状态进行中（rowFromRegistry 活性推导原样）。
+  const r44 = panel.locator('.task-delegate[data-task-no="44"]');
+  await expect(r44).toHaveCount(1);
+  await expect(r44.locator('.task-node-label')).toHaveText('REST 行投影任务');
+  await expect(r44.locator('.task-node-word')).toHaveText('进行中');
+  // #45：verdict=ready-to-merge → provider 覆写单点（v3 §9 判词供给）→「待合并」。
+  const r45 = panel.locator('.task-delegate[data-task-no="45"]');
+  await expect(r45).toHaveCount(1);
+  await expect(r45.locator('.task-node-word')).toHaveText('待合并');
+  await expect(r45).toHaveAttribute('data-delegate-status', 'ready-to-merge');
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T12 per-task 臂：REST record+chain ⇒ S10 渲染一致（节点整组替换；渲染面零改动钉）', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  await serveChains(
+    page,
+    { rows: [{ ...rec44, live: { status: 'running' } }] },
+    {
+      44: {
+        scope: 'delegate-nebflow-run44', mounted: true,
+        nodes: [
+          { id: 'n-a', kind: 'flow-step', label: 'REST 链节点甲', description: '后端投影描述', status: 'pending', deps: ['n-b'], executor: '' },
+          { id: 'n-b', kind: 'flow-step', label: 'REST 链节点乙', description: '', status: 'completed', deps: [], executor: '' },
+        ],
+      },
+    },
+  );
+
+  // 链镜像：getChainByTask('44') 节点 = REST 整组替换（adapter 回退节点零残留）。
+  const view = await page.evaluate(async () => {
+    const stub = await import('/js/delegateChainStub.js');
+    const v = stub.getChainByTask('44');
+    return { n: v && v.nodes ? v.nodes.length : -1, ids: v && v.nodes ? v.nodes.map((x) => x.id) : [] };
+  });
+  expect(view.n).toBe(2);
+  expect(view.ids).toEqual(['n-a', 'n-b']);
+
+  // S10 视图：与夹具路径同一渲染面（fmNodeCard/delegateChainView 零改动复用）。
+  await clickRowAction(page, '44');
+  const pane = page.locator('.canvas-tab-pane[data-tab-id="projects"]');
+  await expect(pane).toHaveAttribute('data-projects-view', 'delegate-chain');
+  const cards = pane.locator('.delegate-chain-view-body .solar-node.fm-node');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0).locator('.solar-node-label')).toHaveText('REST 链节点甲');
+  await expect(cards.nth(0).locator('.fm-desc')).toHaveText('后端投影描述');
+  await expect(cards.nth(0).locator('.solar-node-sub')).toHaveText('flow-step'); // kind 数据面（ChainNode 契约）
+  await expect(cards.nth(1).locator('.solar-node-label')).toHaveText('REST 链节点乙');
+  // executor:'' 继承链契约 → 零执行器图标（后端投影零字段映射的可执行钉）。
+  await expect(cards.locator('.executor-icon-nebflow')).toHaveCount(0);
+
+  // 渲染面零改动（静态钉）：视图/骨架两文件不引 provider——换源只在 main.js 单缝；
+  // stub 读取口形状四导出不变（read port 契约）。
+  const taskListSrc = readFileSync(join(WEB, 'js', 'taskList.js'), 'utf8');
+  const dcvSrc = readFileSync(join(WEB, 'js', 'delegateChainView.js'), 'utf8');
+  const stubSrc = readFileSync(join(WEB, 'js', 'delegateChainStub.js'), 'utf8');
+  const provSrc = readFileSync(join(WEB, 'js', 'delegateChainProvider.js'), 'utf8');
+  expect(taskListSrc).not.toContain('delegateChainProvider');
+  expect(dcvSrc).not.toContain('delegateChainProvider');
+  expect(stubSrc).toContain('export function setSource');
+  expect(stubSrc).toContain('export function listDelegateRows');
+  expect(stubSrc).toContain('export function getChainByTask');
+  expect(stubSrc).toContain('export function rowFromRegistry');
+  expect(provSrc).toContain("from './delegateChainStub.js'");
 
   expect(pageErrors).toEqual([]);
 });
