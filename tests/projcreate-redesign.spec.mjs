@@ -178,10 +178,17 @@ test('R-D1 P1 源码切换钮已移除（真渲染读数）', async ({ page }) =
     paneSourceMode: document.querySelector('.canvas-tab-pane[data-type="projects"]')?.dataset.sourceMode ?? null,
   }));
 
-  // 往返一次（列表→Flow Map→回列表）后仍为 0（防「重建时又挂回来」）
+  // 往返一次（列表→delegate-chain 链视图→回列表）后仍为 0（防「重建时又挂回来」）。
+  // flowmaptab-retire（#1228 两裁②）：原 Flow Map 就地视图停用，卡标题入口改指链视图；
+  // 返回钮 = §16 键 2 关页签，重开页签回列表。
   await page.click('.project-card[data-project="alpha"] [data-open-flowmap="alpha"]');
-  await page.waitForSelector('.flowmap-view-body', { timeout: 8000 });
-  await page.click('[data-back-to-projects]');
+  await page.waitForSelector('.delegate-chain-view-body', { timeout: 8000 });
+  await page.click('[data-back-to-tasks]');
+  await page.waitForSelector('.delegate-chain-view-body', { state: 'detached', timeout: 8000 });
+  await page.evaluate(async () => {
+    const m = await import('/js/projectTab.js');
+    m.openProjectsTab();
+  });
   await page.waitForSelector('.project-card[data-project="alpha"]', { timeout: 8000 });
   const afterRoundTrip = await page.evaluate(() => ({
     toggleCount: document.querySelectorAll('.canvas-source-toggle').length,

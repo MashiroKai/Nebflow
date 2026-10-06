@@ -207,12 +207,20 @@ test('T1 钮存在（真渲染证）+ 仅列表视图', async ({ page }) => {
       inPane: !!b.closest('.canvas-tab-pane[data-type="projects"]') };
   });
 
-  // R10 负对照②：进 Flow Map 就地视图 ⇒ 钮为 null
+  // R10 负对照②：进 delegate-chain 就地视图 ⇒ 钮为 null（flowmaptab-retire #1228 两裁②：
+  // 原 Flow Map 就地视图停用，卡标题入口改指链视图——非列表视图摘钮守卫同面生效）。
+  // 证据键名 fabInFlowMap 沿用历史（读数语义 = 非列表就地视图内无「+」钮）。
   await page.click('.project-card[data-project="alpha"] [data-open-flowmap="alpha"]');
-  await page.waitForSelector('.flowmap-view-body', { timeout: 8000 });
+  await page.waitForSelector('.delegate-chain-view-body', { timeout: 8000 });
   const fabInFlowMap = await page.evaluate(() => document.querySelector('.proj-create-fab') !== null);
-  // 回列表 ⇒ 钮回归（单点挂载的 DOM 生命周期正确性）
-  await page.click('[data-back-to-projects]');
+  // 回任务列表 ⇒ 钮回归（返回钮 = §16 键 2 关页签；重开页签 = 列表重渲——单点挂载的
+  // DOM 生命周期正确性）。
+  await page.click('[data-back-to-tasks]');
+  await page.waitForSelector('.delegate-chain-view-body', { state: 'detached', timeout: 8000 });
+  await page.evaluate(async () => {
+    const m = await import('/js/projectTab.js');
+    m.openProjectsTab();
+  });
   await page.waitForSelector('.project-card[data-project="alpha"]', { timeout: 8000 });
   const fabBack = await page.evaluate(() => {
     const b = document.querySelector('.proj-create-fab');
@@ -243,11 +251,13 @@ test('T2 幂等：多次重渲后按钮数恒为 1', async ({ page }) => {
     await openProjects(page);
     counts.push(await page.evaluate(() => document.querySelectorAll('.proj-create-fab').length));
   }
-  // 就地视图往返
+  // 就地视图往返（flowmaptab-retire #1228 两裁②：入口改指 delegate-chain 链视图；
+  // 返回钮 = §16 键 2 关页签，重开页签回列表）。
   await page.click('.project-card[data-project="beta"] [data-open-flowmap="beta"]');
-  await page.waitForTimeout(300);
-  await page.click('[data-back-to-projects]');
-  await page.waitForSelector('.project-card[data-project="beta"]', { timeout: 8000 });
+  await page.waitForSelector('.delegate-chain-view-body', { timeout: 8000 });
+  await page.click('[data-back-to-tasks]');
+  await page.waitForSelector('.delegate-chain-view-body', { state: 'detached', timeout: 8000 });
+  await openProjects(page);
   const afterRoundTrip = await page.evaluate(() => document.querySelectorAll('.proj-create-fab').length);
   // 语言切换（rebuildCardsOnce 一次性整体重建）后仍恰 1 枚
   await page.evaluate(async () => {

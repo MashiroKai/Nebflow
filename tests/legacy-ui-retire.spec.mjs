@@ -209,8 +209,12 @@ test('T4: flowCanvas.js gone from static output; sources carry no legacy symbols
   for (const [file, forbidden] of [
     // 注意：纯注释里的历史提及（如 main.js 顶部 flowAnim 再锚定注释）允许保留，
     // 这里只禁代码符号形态（import 路径 / 绑定调用 / 事件名字面量）。
+    // （flowmaptab-retire #1228 两裁② 补行：flowAnim 副作用 import 摘除、per-project
+    //   Flow Map 入口停用——raw 子串断言；注释不携带同形代码符号，见各文件退役注记。）
     ['/js/activityBar.js', ['SIDEBAR_LEGACY_ENTRIES', 'bindLegacyPanels', 'anchorLegacyPop', "getElementById('legacy-btn')"]],
-    ['/js/main.js', ["from './flowCanvas.js'", '* as flowCanvas', 'flowCanvas.', "'flowMail'", "'flowStarted'", "'flowNodesAdded'", "'flowProgress'", "'flowCompleted'", "'teamList'", "'mailQueued'", "'mailDequeued'", "'treeBranchMounted'", "'treeBranchUnmounted'", "'treeBranchUpdated'"]],
+    ['/js/main.js', ["from './flowCanvas.js'", '* as flowCanvas', 'flowCanvas.', "from './flowAnim.js'", "'flowMail'", "'flowStarted'", "'flowNodesAdded'", "'flowProgress'", "'flowCompleted'", "'teamList'", "'mailQueued'", "'mailDequeued'", "'treeBranchMounted'", "'treeBranchUnmounted'", "'treeBranchUpdated'"]],
+    ['/js/projectTab.js', ["from './flowMapTab.js'", 'renderFlowMapInto(', "projectsView = 'flow-map'", 'flowmap-view-body', 'data-back-to-projects']],
+    ['/js/taskList.js', ['openProjectFlowMapAt', 'openProjectFlowMapChain']],
     ['/js/ws.js', ["'flowMail'", "'flowStarted'", "'flowNodesAdded'", "'flowProgress'", "'flowCompleted'", "'teamList'", "'treeBranchMounted'", "'treeBranchUnmounted'", "'treeBranchUpdated'"]],
     ['/js/state.js', ['flows:']],
     ['/js/i18n.js', ['legacy-btn', 'teams-btn', 'flows-btn', 'legacy-pop', 'flows-indicator', 'flows.panelTitle', 'activity.teams', 'activity.flows', 'activity.legacy']],

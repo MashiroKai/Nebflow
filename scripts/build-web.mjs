@@ -41,6 +41,18 @@ const ORPHAN_EXEMPTIONS = new Map([
   // imgpreview decoupled package (eaa9221c9) — friends/group family, flag-sealed; wiring intentionally deferred pending neblink-server attachment DTO leg. Do not delete, do not wire while sealed.
   ['js/attachImagePreview.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
   ['js/attachPreviewField.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
+  // flowmaptab-retire (#1228 两裁② 停用清单面 1): per-project Flow Map view entry
+  // deactivated (projectsView='flow-map' → delegate-chain; projectTab dropped the
+  // render entry). Module intentionally out of the bundle graph; file kept on disk
+  // pending the #1229 per-project REST/WS retirement batch which deletes it together
+  // with the engine face (delegate-chain-stub.spec T6 still source-pins its fmNodeCard
+  // single-source import). Do not re-wire; do not delete early.
+  ['js/flowMapTab.js', 'flowmaptab-retire (#1228 两裁②): per-project view entry deactivated, module disconnected pending #1229 engine-face retirement batch'],
+  // flowmaptab-retire (#1228 两裁② 停用清单面 3): the main.js side-effect import was
+  // removed per the upstream a60af705d declaration (zero reuse in S10/S11 — static
+  // card lists, CSS animation suffices). File kept on disk for the same #1229 batch;
+  // tests/fixtures/orbit-anim-harness.html still imports it directly (orbit-anim.spec).
+  ['js/flowAnim.js', 'flowmaptab-retire (#1228 两裁②): main.js side-effect import removed per upstream zero-reuse declaration; file kept pending #1229 batch (orbit-anim test harness imports it directly)'],
 ]);
 
 // ── 1. Clean output ────────────────────────────────────────────

@@ -93,11 +93,11 @@ import { initMessages } from './messages.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
-// Side-effect import: flowAnim.js is the rAF orbit driver for Flow Map /
-// flow-run node dots (.solar-node). It used to ride in via the legacy
-// flow-canvas module (deleted 2026-09-05 旧 UI 退役); anchor it here so
-// Flow Map's orbit animation stays alive from boot.
-import './flowAnim.js';
+// flowAnim.js side-effect import REMOVED (flowmaptab-retire, #1228 两裁② 停用清单
+// 面 3 · 上游 a60af705d 申报 S10/S11 零复用——链视图为静态卡列表，动效全由 CSS 承担).
+// The module stays on disk orphan-exempted in scripts/build-web.mjs, pending the
+// #1229 per-project REST/WS retirement batch (tests/fixtures/orbit-anim-harness.html
+// still imports it directly for tests/orbit-anim.spec.mjs).
 // ctxthresh 批（2026-09-15 方案 A）：Header 上下文环 → 压缩阈值面板（自包含
 // 模块：注入 CSS + 把浮层挂成 #header 的兄弟节点 + 绑定环点击 + WS 收发）。
 import './ctxthresh.js';

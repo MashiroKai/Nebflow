@@ -301,7 +301,7 @@ test('T3 nodeRemoved 移除条目', async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
-test('T4 点击条目 → 就地打开该项目 Flow Map 并高亮节点', async ({ page }) => {
+test('T4 点击条目 → 就地打开 delegate-chain 链视图（flow-map 入口停用改指）', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -319,12 +319,15 @@ test('T4 点击条目 → 就地打开该项目 Flow Map 并高亮节点', async
   await expect(row).toHaveCount(1);
   await row.click();
 
-  // 同标签页就地视图 + 节点卡片渲染 + 定位高亮（fm-node-flash）
-  const body = page.locator('.canvas-tab-pane.active .flowmap-view-body');
+  // flowmaptab-retire（#1228 两裁②）：per-project Flow Map 就地视图停用 ⇒ 入口改指
+  // per-task 链视图（delegate-chain · projectsView 分流；同一 projects 标签页就地打开）。
+  const pane = page.locator('.canvas-tab-pane.active');
+  await expect(pane).toHaveAttribute('data-projects-view', 'delegate-chain');
+  const body = pane.locator('.delegate-chain-view-body');
   await expect(body).toHaveCount(1);
-  const nodeCard = body.locator('.fm-node[data-node-id="n-run"]');
-  await expect(nodeCard).toHaveCount(1);
-  await expect(nodeCard).toHaveClass(/fm-node-flash/, { timeout: 3000 });
+  // per-task 读面候 N1：stub provider 空 ⇒ S11 结构总视图自带 fail-soft（§16 键 7），
+  // 面板不崩、任务面板行保留（可重试）。
+  await expect(body.locator('.delegate-chain-failsoft')).toHaveCount(1);
 
   expect(pageErrors).toEqual([]);
 });

@@ -960,8 +960,12 @@ function buildChainMemberRow(node, project, depths, seqs) {
 
   row.addEventListener('click', (e) => {
     e.stopPropagation();
-    import('./projectTab.js').then(({ openProjectFlowMapAt }) => {
-      openProjectFlowMapAt(project, node.id);
+    // 🔴 入口改指（flowmaptab-retire · #1228 两裁②）：per-project Flow Map 就地视图停用，
+    // 原节点定位跳转面（per-project 主图）随视图停用退役 ⇒ per-task 链视图
+    // （delegate-chain · S11 结构总视图 = 总 flowmap 改义面）。per-task 读面候 N1：
+    // stub 空时视图自带 fail-soft（键 7）。
+    import('./delegateChainView.js').then(({ openDelegateChainStructure }) => {
+      openDelegateChainStructure();
     }).catch(() => {});
   });
   return row;
@@ -1057,9 +1061,12 @@ function buildChainBadge(node, project) {
   name.textContent = chainShortName(meta.title || cid);
   badge.appendChild(name);
   badge.addEventListener('click', (e) => {
-    e.stopPropagation(); // 徽标 = 链定位（行点击语义是节点定位，二者不叠加）
-    import('./projectTab.js').then(({ openProjectFlowMapChain }) => {
-      openProjectFlowMapChain(project, cid);
+    e.stopPropagation(); // 徽标 = 链视图入口（行点击语义是节点行展开/跳转，二者不叠加）。
+    // 🔴 入口改指（flowmaptab-retire · #1228 两裁②）：原「跳主图并 fit 整链」随
+    // per-project 视图停用退役（高亮件候 N1 per-task 读面，零臆造映射）⇒ 改指
+    // per-task 链视图（delegate-chain · S11 结构总视图）。
+    import('./delegateChainView.js').then(({ openDelegateChainStructure }) => {
+      openDelegateChainStructure();
     }).catch(() => {});
   });
   return badge;
@@ -1135,8 +1142,12 @@ function buildNodeRow(node, project) {
 
   row.addEventListener('click', (e) => {
     e.stopPropagation();
-    import('./projectTab.js').then(({ openProjectFlowMapAt }) => {
-      openProjectFlowMapAt(project, node.id);
+    // 🔴 入口改指（flowmaptab-retire · #1228 两裁②）：per-project Flow Map 就地视图停用，
+    // 原节点定位跳转面（per-project 主图）随视图停用退役 ⇒ per-task 链视图
+    // （delegate-chain · S11 结构总视图）。行 title/aria 的 project.openFlowMap 键不动（§3.3 在案：该键退役面候裁，
+    // 本批零文案）；per-task 读面候 N1 ⇒ 空 stub 时视图自带 fail-soft（键 7）。
+    import('./delegateChainView.js').then(({ openDelegateChainStructure }) => {
+      openDelegateChainStructure();
     }).catch(() => {});
   });
   return row;
