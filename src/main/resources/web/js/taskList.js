@@ -17,6 +17,12 @@ import { createIconsIn, onMinuteTick, statusIcon, escapeHtml } from './utils.js'
 import state from './state.js';
 import { onMessage, onReconnect } from './ws.js';
 import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS, controlChain } from './nodeData.js';
+// Delegate 行骨架（#1228 重划版提前开工批 · 可落地段）：数据源 = ⑤A stub
+// （delegateChainStub.js，默认空 ⇒ 面板零变化；N1/#1228 定稿后 setSource 换源）。
+// 执行器图标 = executorIcons（S14 拆除批保证留项；本批只消费＝任务行图标显示，
+// ⑫ 无面）。终态换源设计（S1/S10/S11/S16 四面）见呈审稿，本骨架只落「行」。
+import { listDelegateRows } from './delegateChainStub.js';
+import { executorIcon } from './executorIcons.js';
 
 // ── Flow Map 节点条目（2026-09-02 作者裁定：节点作为条目并入任务列表）──────
 // [节点区块 · 独立命名空间] 数据 = WS 节点广播帧（nodeCreated/Updated/Completed/
@@ -1208,6 +1214,116 @@ function buildNodeSection(nodes) {
   return section;
 }
 
+// ── Delegate 行骨架（#1228 重划版提前开工批 · 可落地段最小面）─────────────
+// S1 行 = task#N＋标题＋执行器图标＋状态。数据源 = delegateChainStub.js 读取口
+// （默认空 ⇒ 本区块不渲染，面板与改前逐字节同）。**零新增 locale 键**：状态词
+// 只映射既有键可表达的态；无既有键的态（ready-to-merge 等 #1224 新态）状态词
+// **留空**（候 §16 文案过目后补——呈审件文案清单逐字在案）。展开结构帧（S1
+// delegate 链帧）/点进 per-task flowmap（S10）/外部粗粒度行接线（S16）＝换源批
+// 面，本骨架只落行结构与数据通路；行挂 data-delegate-* 锚供该批接管。
+
+/** 委托行状态词映射（🔴 既有键复用单源；值 = 键名，缺项 = 留空候文案）。
+ *  键域对齐 delegateChainStub.ROW_STATUS。 */
+const DELEGATE_WORD_KEY = {
+  pending: 'task.nodePending',
+  running: 'task.inProgressShort',
+  blocked: 'task.nodeBlocked',
+  completed: 'flowmap.done',
+  failed: 'flowmap.fail',
+  cancelled: 'flowmap.st.cancelled',
+  // ready-to-merge：无既有 locale 键 ⇒ 留空（§16 呈审候补；glyph 照常渲染）。
+};
+
+/**
+ * Delegate 行（骨架）：`[执行器图标] #N 标题 [状态词] [相对时间]`。
+ * 视觉复用 .task-node 行族（零新增 CSS；设计语言与面板既有行同源），外加
+ * .task-delegate 命名空间锚与 data-delegate-* 数据锚（换源批接管面）。
+ * 外部行（S16）＝ coarse 标记（data-external="1"）；细则面本骨架不渲染。
+ * @param {any} r DelegateRow（delegateChainStub 规范 schema）
+ * @returns {HTMLElement} */
+function buildDelegateRow(r) {
+  const row0 = r && typeof r === 'object' ? r : {};
+  const taskNo = String(row0.taskNo == null ? '' : row0.taskNo);
+  const delegateId = String(row0.delegateId || '');
+  const title = String(row0.title || '');
+  const st = String(row0.status || 'running');
+  const wordKey = DELEGATE_WORD_KEY[st] || '';
+  const external = row0.external === true;
+
+  const row = document.createElement('div');
+  row.className = 'task-node task-delegate';
+  row.dataset.delegateKey = taskNo || delegateId;
+  row.dataset.taskNo = taskNo;
+  row.dataset.delegateId = delegateId;
+  row.dataset.delegateStatus = st;
+  if (external) row.dataset.external = '1';
+  row.setAttribute('role', 'button');
+  const labelBits = [taskNo ? `#${taskNo}` : '', title || delegateId].filter(Boolean);
+  row.setAttribute('aria-label',
+    `${labelBits.join(' ')}${wordKey ? ` — ${t(wordKey)}` : ''}`);
+
+  // 状态 glyph（复用节点行 glyph 语言：running=品牌绿转圈 / blocked=琥珀点 /
+  // 终态=色点 / 未知=中性点——零新增 CSS；ready-to-merge 走中性点降级，词与
+  // 色信号候 §16 文案批一并补）。色信号由 glyph 独占（同面板既有口径）。
+  row.appendChild(buildNodeGlyph(st, NODE_STATUS_CLS[st] || ''));
+
+  // 执行器图标（S1：executorIcons 留项消费；未知 executor → 图标自带中性降级）。
+  const icon = document.createElement('span');
+  icon.className = 'task-delegate-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = executorIcon(String(row0.executor || ''), 14);
+  row.appendChild(icon);
+
+  const text = document.createElement('div');
+  text.className = 'task-node-text';
+  const labelRow = document.createElement('span');
+  labelRow.className = 'task-node-label-row';
+  if (taskNo) {
+    const no = document.createElement('span');
+    no.className = 'task-delegate-no';
+    no.textContent = `#${taskNo}`;
+    labelRow.appendChild(no);
+  }
+  const label = document.createElement('span');
+  label.className = 'task-node-label';
+  label.textContent = title || delegateId; // 无标题回落 delegate id（数据，非文案）
+  labelRow.appendChild(label);
+  text.appendChild(labelRow);
+  row.appendChild(text);
+
+  if (wordKey) {
+    const wordEl = document.createElement('span');
+    wordEl.className = 'task-node-word';
+    wordEl.setAttribute('aria-hidden', 'true');
+    wordEl.textContent = t(wordKey);
+    row.appendChild(wordEl);
+  }
+
+  const createdAt = typeof row0.createdAt === 'number' ? row0.createdAt : Date.parse(String(row0.createdAt || ''));
+  if (Number.isFinite(createdAt) && createdAt > 0) {
+    const time = document.createElement('span');
+    time.className = 'task-node-time';
+    time.setAttribute('aria-hidden', 'true');
+    time.dataset.ts = new Date(createdAt).toISOString();
+    time.textContent = formatLastActive(time.dataset.ts);
+    row.appendChild(time);
+  }
+  return row;
+}
+
+/**
+ * Delegate 区块（骨架）：行清单直排（分组/排序终态口径归换源批设计稿——本骨架
+ * 保持源侧顺序，零前端派生）。空数据 → null（面板零变化）。
+ * @param {any[]} rows @returns {HTMLElement|null} */
+function buildDelegateSection(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return null;
+  const section = document.createElement('div');
+  section.className = 'task-section task-section-delegates';
+  for (const r of list) section.appendChild(buildDelegateRow(r));
+  return section;
+}
+
 /** Empty-state builder（兜底保留，2026-09-05 10:54 裁定「空态兜底保留」）：
  *  主路径不接——无节点时面板整体收起（.has-tasks 才展开，与 67e69bf1 行为
  *  一致）。键 task.progressEmpty 保留（zh/en 成对），供后续区块复用。 */
@@ -1241,19 +1357,22 @@ export function renderTaskList(_tasks, container, sessionId) {
     refreshNodeSnapshot();
   }
   const nodes = showNodes ? collectNodes() : [];
+  // Delegate 骨架行（#1228 提前开工批）：读 ⑤A stub 读取口（默认空 ⇒ 与改前
+  // 同一空态收起行为；stub 有数据时面板以 delegate 行为在飞事实展开）。
+  const delegateRows = showNodes ? listDelegateRows() : [];
 
   // 纯节点视图：统计/行全节点口径。无节点 → 面板收起（.has-tasks 才展开）。
-  container.classList.toggle('has-tasks', nodes.length > 0);
+  container.classList.toggle('has-tasks', nodes.length > 0 || delegateRows.length > 0);
   container.classList.toggle('task-ws-down', !state.connected);
   ensureLastActiveTimer(nodes.length > 0);
-  if (nodes.length === 0) {
+  if (nodes.length === 0 && delegateRows.length === 0) {
     container.innerHTML = '';
     chainSeenPrev = new Set();     // nothing on screen ⇒ no "previous frame" to diff against
     memberStatusPrev = new Map();
     return;
   }
 
-  redraw(container, nodes);
+  redraw(container, nodes, delegateRows);
 }
 
 /** Map nodeKey → 存在性 from the current DOM (entry-animation comparison:
@@ -1266,7 +1385,9 @@ function collectRowKeys(container) {
   return keys;
 }
 
-function redraw(container, nodes) {
+/** @param {any[]} nodes @param {any[]} [delegateRows] Delegate 骨架行（⑤A stub 读取口产出；
+ *  空 = 不渲染，面板零变化——#1228 提前开工批） */
+function redraw(container, nodes, delegateRows) {
   // §4.3 transition memory: `chainSeenPrev` / `memberStatusPrev` describe the frame that is
   // on screen right now; the builders fill the `*Next` counterparts for the frame being
   // built. The swap happens only after the new frame is mounted, so "previous" always means
@@ -1279,6 +1400,8 @@ function redraw(container, nodes) {
 
   // ── Header: toggle + stats（统计 = 仅节点数，2026-09-05 10:54 裁定；
   //  键复用 task.statsProgress「{progress} 任务」——语义仍成立）──
+  // 🔴 骨架批统计口径不动（仍节点数）；delegate 行计数的统计面归换源批（设计稿
+  //  §统计口径）——stub 有数据时统计与行集暂不同源，呈审稿已声明。
   const header = document.createElement('div');
   header.className = 'task-header';
 
@@ -1295,11 +1418,15 @@ function redraw(container, nodes) {
   header.appendChild(toggle);
   header.appendChild(stats);
 
-  // ── Body: 节点区块（面板唯一内容区）──
+  // ── Body: delegate 区块（骨架，S1 主面）＋ 节点区块 ──
   const body = document.createElement('div');
   body.className = 'task-body';
   const inner = document.createElement('div');
   inner.className = 'task-body-inner';
+
+  // Delegate 区块（骨架）置于节点区块之前（S1 delegate 任务 = 面板主行；空 → 不渲染）。
+  const delegateSection = buildDelegateSection(delegateRows);
+  if (delegateSection) inner.appendChild(delegateSection);
 
   // 节点区块装配在 buildNodeSection 内全程使用 .task-node-* 命名空间。
   const nodesSection = buildNodeSection(nodes);
