@@ -804,34 +804,67 @@ def check_c2(pkg):
 
 
 def check_c3(pkg, skill_files):
-    """C3 裸相对引用（应 ${SKILL_DIR} 形态）：SKILL.md 正文找 `../`、`./` 包内引用，
-    normpath 验目标存在（附带抓断链）；跨包引用单列。"""
-    bare, broken, cross = [], [], []
-    for sname, fp, _text in skill_files:
-        base = os.path.dirname(fp)
-        rel_base = os.path.relpath(base, pkg).replace(os.sep, "/")
-        for rex in (_C3_LINK_RE, _C3_CODE_RE):
-            for m in rex.finditer(_text):
-                raw = m.group(1)
-                target = os.path.normpath(os.path.join(base, raw))
-                if contained_under(pkg, target):
-                    if os.path.exists(target):
-                        bare.append(f"{rel_base}/{sname}:{raw}")
+    """C3 裸相对引用（应 ${SKILL_DIR} 形态）：注入面（skills 顶层 */SKILL.md 正文）找 `../`、`./` 包内引用，
+    normpath 验目标存在（附带抓断链）；跨包引用单列。
+    批2 微调（2026-10-06，区分注入/非注入）：${SKILL_DIR} 单点替换只发生在 SKILL.md 注入文本——
+    非注入 md（skills/ 顶层共用件、references/、样张）的文内相对引用属合法文件相对形态
+    （Read 工具按文件位置解析），单列读数、不计入判定；判定面仍为注入面原口径。"""
+    def _scan(files):
+        bare, broken, cross = [], [], []
+        for sname, fp, _text in files:
+            base = os.path.dirname(fp)
+            rel_base = os.path.relpath(base, pkg).replace(os.sep, "/")
+            for rex in (_C3_LINK_RE, _C3_CODE_RE):
+                for m in rex.finditer(_text):
+                    raw = m.group(1)
+                    target = os.path.normpath(os.path.join(base, raw))
+                    if contained_under(pkg, target):
+                        if os.path.exists(target):
+                            bare.append(f"{rel_base}/{sname}:{raw}")
+                        else:
+                            broken.append(f"{rel_base}/{sname}:{raw}")
                     else:
-                        broken.append(f"{rel_base}/{sname}:{raw}")
-                else:
-                    cross.append(f"{rel_base}/{sname}:{raw}")
+                        cross.append(f"{rel_base}/{sname}:{raw}")
+        return bare, broken, cross
+
+    inj_bare, inj_broken, inj_cross = _scan(skill_files)
+
+    # 非注入 md：全包 .md 去除注入面（skills/ 顶层共用件、references/、样张等）
+    inj_paths = {os.path.normpath(fp) for _s, fp, _t in skill_files}
+    non_files = []
+    for rel, fp in walk_files(pkg):
+        if not rel.lower().endswith(".md") or os.path.normpath(fp) in inj_paths:
+            continue
+        try:
+            with open(fp, encoding="utf-8") as f:
+                t = f.read()
+        except Exception:
+            continue
+        non_files.append((os.path.basename(fp), fp, t))
+    non_bare, non_broken, non_cross = _scan(non_files)
+
     parts = []
-    if bare:
-        parts.append(f"裸相对引用 {len(bare)} 处（应 ${'{SKILL_DIR}'}/ 形态，如 {'、'.join(bare[:3])}{'…' if len(bare) > 3 else ''}）")
-    if broken:
-        parts.append(f"断链 {len(broken)} 处（目标不存在，如 {'、'.join(broken[:3])}{'…' if len(broken) > 3 else ''}）")
-    if cross:
-        parts.append(f"跨包引用 {len(cross)} 处（${'{SKILL_DIR}'} 不跨包，单列：{'、'.join(cross[:3])}{'…' if len(cross) > 3 else ''}）")
+    if inj_bare:
+        parts.append(f"裸相对引用 {len(inj_bare)} 处（注入面，应 ${'{SKILL_DIR}'}/ 形态，如 {'、'.join(inj_bare[:3])}{'…' if len(inj_bare) > 3 else ''}）")
+    if inj_broken:
+        parts.append(f"断链 {len(inj_broken)} 处（注入面，目标不存在，如 {'、'.join(inj_broken[:3])}{'…' if len(inj_broken) > 3 else ''}）")
+    if inj_cross:
+        parts.append(f"跨包引用 {len(inj_cross)} 处（${'{SKILL_DIR}'} 不跨包，单列：{'、'.join(inj_cross[:3])}{'…' if len(inj_cross) > 3 else ''}）")
+    non_parts = []
+    if non_bare:
+        non_parts.append(f"裸相对引用 {len(non_bare)} 处（如 {'、'.join(non_bare[:2])}{'…' if len(non_bare) > 2 else ''}）")
+    if non_broken:
+        non_parts.append(f"断链 {len(non_broken)} 处（如 {'、'.join(non_broken[:2])}{'…' if len(non_broken) > 2 else ''}）")
+    if non_cross:
+        non_parts.append(f"跨包引用 {len(non_cross)} 处")
+    non_note = ""
+    if non_parts:
+        non_note = "；非注入面（共用件/样张，文件相对形态合法、不计入判定）：" + "；".join(non_parts)
     if parts:
-        record("C03", "裸相对引用/断链/跨包", False, "；".join(parts), warn=True)
+        record("C03", "裸相对引用/断链/跨包", False, "；".join(parts) + non_note, warn=True)
     else:
-        record("C03", "裸相对引用/断链/跨包", True, "SKILL.md 正文零裸相对引用、零断链、零跨包引用")
+        record("C03", "裸相对引用/断链/跨包", True,
+               "SKILL.md 注入面零裸相对引用、零断链、零跨包引用" + (non_note if non_note else "；非注入面零命中"))
 
 
 def check_c4(pkg):
