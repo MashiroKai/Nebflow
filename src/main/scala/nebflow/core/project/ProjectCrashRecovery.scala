@@ -3,6 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import cats.effect.std.Semaphore
 import cats.syntax.all.*
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.shared.{Defaults, NebflowLogger}
 
 /**
@@ -202,6 +203,185 @@ object ProjectCrashRecovery:
     end for
 
   end recoverProject
+
+  // ── delegate 作用域腿（N1 刀1 · 设计 v3 §6/A2）────────────────────────────
+  //
+  // v3 加的 delegate 作用域 sweep：flow-maps/ 目录扫描（根集 = 已挂载项目 workspace ∪
+  // 默认 general 目录，[[DelegateFlowHosts.sweepRoots]]），有 Running/Interrupted 残留
+  // 的作用域重挂宿主 → **同判据认领**（bootRecoveryClaim 零新机制，(a)/(b) 翻 Pending
+  // 入队 / (c) failNode）→ 慢段 rehydrate（信号量并发上限同款）。快慢两段/并发/回滚
+  // 开关机制原样（A2「机制原样」）。
+  //
+  // 🔴 与项目 sweep 的三点差异（均候裁落定口径，非新机制）：
+  //  ① **零汇总通知**——⑷「creator 不 live＝账本滞留不旁路认账」：delegate 会话重启后
+  //     本就不在，认领事实走 boot-recovery 审计事件 + 日志（「禁止静默自愈」由事件面
+  //     承担）；注入死会话/分发器都是旁路，禁。
+  //  ② **座位/归名从 DelegateRegistry 持久记录现读**（cwd = 事故前座位；project = 归名）
+  //     ——记录缺失时座位回落基工作区、归名回落目录名（fail-soft，认领链不因地址簿
+  //     缺行而停）。
+  //  ③ **无残留的作用域即开即卸**（探针式 open——与项目挂载「每 boot 全量重开」同构
+  //     的幂等收敛，无残留不留宿主实例；盘面零动作语义不变）。
+  //
+  // **v3-⑧ 存量 per-project flow-map 归档不迁移（本刀落刀面）**：本 sweep 只扫
+  // `flow-maps/` 作用域目录族——存量 per-project `flow-map.json`（旧路径族）零读取、
+  // 零改写、零迁移，旧挂载面（ProjectActor.mount → FlowMapStore.open 旧路径）照常
+  // 可开、只读留档；delegate 链自新作用域目录族起。
+
+  /**
+   * GatewayMain boot 链挂接入口（projectCrashSweep 邻位，同受 CrashRecoveryEnabled 闸）：
+   * 对全部作用域目录跑快段 + fork 慢段。返回有恢复动作的作用域数（>0 时调用方记 info）。
+   * 作用域级 handleErrorWith——单作用域异常不拖垮其他作用域与 boot（残余 Running 由
+   * 宿主扫描器的 settle 腿兜底，[[DelegateFlowHosts.launchScanner]]）。
+   */
+  def recoverDelegateScopes(
+      concurrency: Int = Defaults.CrashRecoveryConcurrency,
+      // 测试接缝（recoverProject trigger 同款纪律；生产调用点零传参 = 引擎缺省行为）：
+      // 本工程测试 JVM 下 sys.props 注入静默失效（BootCrashRecoverySpec 先例），重挂宿主
+      // 的确定性腿经显式参数注入。
+      reportGateHold: Option[Boolean] = None,
+      rootNotifyQuietMs: Option[Long] = None
+  ): IO[Int] =
+    DelegateFlowHosts.sweepRoots.flatMap { roots =>
+      roots
+        .traverse { ws =>
+          DelegateFlowHosts.scopeDirs(ws).flatMap { dirs =>
+            dirs.traverse { dir =>
+              recoverDelegateScope(ws, dir.last, concurrency, reportGateHold, rootNotifyQuietMs)
+                .handleErrorWith(e =>
+                  logger
+                    .error(
+                      s"[boot-recovery] delegate scope '${dir.last}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the scope scanner's settle leg"
+                    )
+                    .as(0)
+                )
+            }
+          }
+        }
+        .map(_.flatten.sum)
+    }
+
+  /** 单作用域恢复：重挂宿主 → 快段认领（同判据）→ 慢段 rehydrate（fork）。返回动作数。 */
+  private def recoverDelegateScope(
+      baseWorkspace: String,
+      scope: String,
+      concurrency: Int,
+      reportGateHold: Option[Boolean],
+      rootNotifyQuietMs: Option[Long]
+  ): IO[Int] =
+    DelegateRegistry.find(scope) match
+      case None =>
+        recoverDelegateScopeOn(
+          baseWorkspace,
+          scope,
+          project = None,
+          engineCwd = baseWorkspace,
+          concurrency,
+          reportGateHold,
+          rootNotifyQuietMs
+        )
+      case Some(rec) =>
+        recoverDelegateScopeOn(
+          baseWorkspace,
+          scope,
+          project = rec.project,
+          engineCwd = scala.util.Try(os.Path(rec.cwd)).map(_.toString).getOrElse(baseWorkspace),
+          concurrency,
+          reportGateHold,
+          rootNotifyQuietMs
+        )
+
+  private def recoverDelegateScopeOn(
+      baseWorkspace: String,
+      scope: String,
+      project: Option[String],
+      engineCwd: String,
+      concurrency: Int,
+      reportGateHold: Option[Boolean],
+      rootNotifyQuietMs: Option[Long]
+  ): IO[Int] =
+    // system/resources 载体：启动挂载后的任一项目 runtime（boot 链序 = startupMount 先行；
+    // 零项目挂载 = 无 ActorSystem 载体 → WARN 跳过，宿主扫描器 +30s 兜底重试面不存在
+    // ——重启窗口的 delegate 残留等下一次 boot；与项目 sweep「未挂载即不可恢复」同构）。
+    runtimeCarrier.flatMap {
+      case None =>
+        logger
+          .warn(s"[boot-recovery] delegate scope '$scope' skipped: no mounted project runtime carries an ActorSystem")
+          .as(0)
+      case Some((system, resources)) =>
+        DelegateFlowHosts
+          .mount(
+            delegateId = scope,
+            project = project,
+            baseWorkspace = baseWorkspace,
+            engineCwd = engineCwd,
+            system = system,
+            resources = resources,
+            wsSend = None,
+            reportGateHold = reportGateHold,
+            rootNotifyQuietMs = rootNotifyQuietMs
+          )
+          .flatMap {
+            case None => IO.pure(0) // 挂载失败（fail-soft 已 WARN）
+            case Some(h) =>
+              for
+                snap <- h.store.snapshot
+                // 资格判据与项目 sweep 逐字同源（Running ∪ Interrupted，回滚开关同读）。
+                candidates = snap.nodes.values
+                  .filter(n =>
+                    n.status == NodeLifecycle.Running ||
+                      (Defaults.ShutdownInterruptEnabled && n.status == NodeLifecycle.Interrupted)
+                  )
+                  .toList
+                actions <-
+                  if candidates.isEmpty then DelegateFlowHosts.unmount(scope).as(0) // 无残留：即开即卸
+                  else
+                    for
+                      outcomes: List[(String, Option[Either[String, NodeEngine.ResumeContext]])] <- candidates.traverse { n =>
+                        h.engine
+                          .bootRecoveryClaim(n)
+                          .map(out => (n.id, out))
+                          .handleErrorWith(e =>
+                            logger
+                              .error(
+                                s"[boot-recovery] claim failed for delegate-scope node '${n.name}' (${n.id}): ${Option(e.getMessage).getOrElse(e.toString)} — left to the scope scanner's settle leg"
+                              )
+                              .as((n.id, None))
+                          )
+                      }
+                      resumed = outcomes.collect { case (id, Some(Right(ctx))) => (id, ctx) }
+                      failed = outcomes.count(_._2.exists(_.isLeft))
+                      _ = logger.info(
+                        s"[boot-recovery] delegate scope '$scope': ${resumed.size} node(s) claimed for rehydrate, $failed failed (events in ${h.baseWorkspace}/.nebflow/flow-map-events.jsonl; no dispatcher notify — creator-delegate routing lands with N1 cut 3)"
+                      )
+                      // 慢段：fork rehydrate（信号量并发上限；节点会话终态才释放槽位）。
+                      // 认领/续跑事件已由 bootRecoveryClaim 逐节点落审计（①零汇总通知）。
+                      _ <-
+                        if resumed.isEmpty then IO.unit
+                        else
+                          Semaphore[IO](math.max(1, concurrency)).flatMap { sem =>
+                            resumed.traverse_ { case (nodeId, ctx) =>
+                              (sem.permit
+                                .use(_ =>
+                                  h.engine
+                                    .bootRecoveryStart(nodeId, ctx)
+                                    .handleErrorWith(e =>
+                                      logger.error(
+                                        s"[boot-recovery] delegate-scope rehydrate failed for node $nodeId (session=${ctx.sessionId}): ${Option(e.getMessage).getOrElse(e.toString)} — node returned to the pending pool, scope scanner's settle leg will fresh-start it as degraded fallback"
+                                      )
+                                    )
+                                ))
+                                .start
+                                .void
+                            }
+                          }
+                    yield resumed.size + failed
+              yield actions
+          }
+    }
+
+  /** 任一已挂载项目 runtime 的 (ActorSystem, resources) 载体（boot 序 = startupMount 先行）。 */
+  private def runtimeCarrier: IO[Option[(nebflow.actor.ActorSystem, nebflow.core.AgentRuntimePort)]] =
+    ProjectRuntimeRegistry.all.map(_.headOption.map(rt => (rt.system, rt.resources)))
 
   /**
    * 汇总通知文本（恢复清单 + NodeList 复核指引 +「无需回报」——对齐

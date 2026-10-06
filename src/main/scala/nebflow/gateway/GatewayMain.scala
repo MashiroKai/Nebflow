@@ -700,6 +700,23 @@ object GatewayMain extends IOApp:
                                         else IO.unit
                                       }
                                     else IO.unit
+                                  // N1 刀1（v3 §6/A2）：delegate 作用域 boot sweep——flow-maps/
+                                  // 目录族扫描（已挂载项目 workspace ∪ general），有
+                                  // Running/Interrupted 残留的作用域重挂宿主→同判据认领→慢段
+                                  // rehydrate。与项目 sweep 同受 CrashRecoveryEnabled 闸（回滚 =
+                                  // 两腿同关回现状）；零汇总通知（⑷不旁路，事件面留痕）。存量
+                                  // per-project flow-map 归档不迁移（v3-⑧：本 sweep 只读
+                                  // flow-maps/ 作用域族，旧路径族零触碰）。
+                                  val delegateScopeCrashSweep: IO[Unit] =
+                                    if nebflow.shared.Defaults.CrashRecoveryEnabled then
+                                      nebflow.core.project.ProjectCrashRecovery.recoverDelegateScopes().flatMap { scopes =>
+                                        if scopes > 0 then
+                                          logger.info(
+                                            s"Boot delegate-scope sweep: $scopes scope(s) had crashed nodes claimed (rehydrate/failed)"
+                                          )
+                                        else IO.unit
+                                      }
+                                    else IO.unit
                                   // 宿主启动自动重入（boot-wake 批 2026-09-13，方案件 A 档 A1；
                                   // 作者 09-13 裁定「重启后唤醒源 = 直接上 A」）：**独立于
                                   // crash-recovery** 的第二条 boot 扫描腿——crash-recovery 只认
@@ -730,6 +747,12 @@ object GatewayMain extends IOApp:
                                   // 发 TtlTick；无项目时空转。
                                   val projectTtlScanner: IO[Unit] =
                                     nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
+                                  // N1 刀1：delegate 作用域宿主扫描器（projectTtlScanner 邻位同款
+                                  // sleep 循环）——在册宿主的引擎腿周期驱动（TtlTick 引擎侧子集）
+                                  // ＋孤儿收割（delegate 会话不在 ∧ 图内无非终态 ⇒ 宿主实例灭，
+                                  // 盘面状态存）。无宿主 = 空转零成本。
+                                  val delegateScopeScanner: IO[Unit] =
+                                    nebflow.core.project.DelegateFlowHosts.launchScanner(30.seconds).start.void
                                   // 宿主睡眠/唤醒感知（hostresume 批 2026-09-22，设计卡 §4 #3；
                                   // D-2 默认 true + kill-switch：`nebflow.wake.sense.enabled=false`
                                   // ⇒ launch 即 IO.unit，不挂载 = 逐字节现状）。15s 双钟断流纤维
@@ -785,7 +808,7 @@ object GatewayMain extends IOApp:
                                       hotRestart = Some(hotRestart),
                                       updateOrchestrator = Some(updateOrchestrator)
                                     )
-                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> hostWakeSensor *> succeedPortGate(
+                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

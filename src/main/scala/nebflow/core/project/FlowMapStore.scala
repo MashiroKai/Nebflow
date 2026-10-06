@@ -9,12 +9,16 @@ import nebflow.core.tools.NodeTools
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
- * FlowMapStore —— 每项目 Flow Map 存储（#28 阶段 0，方案 §2.6）。
+ * FlowMapStore —— Flow Map 存储（#28 阶段 0，方案 §2.6；**N1 刀1 作用域化**：per-project
+ * 旧面（[[open]]）＋ per-delegate 作用域面（[[openScope]]，v3 §6/A1）两族并存——同一套
+ * 存储语义，两个存储根，互不重叠零迁移）。
  *
- * - 磁盘 write-through：活动区 `<workspace>/.nebflow/flow-map.json` +
- *   归档区 `<workspace>/.nebflow/flow-map-archive/<batchId>.json`（裁定④「TTL 分开」批
+ * - 磁盘 write-through：活动区 per-project `<workspace>/.nebflow/flow-map.json`（旧面，
+ *   路径族零变化）｜ per-delegate `<workspace>/.nebflow/flow-maps/<scope>/flow-map.json`
+ *   （作用域面；归档/results/tasks/chain-ledger 同构随迁进作用域目录）+
+ *   归档区 `<…>/flow-map-archive/<batchId>.json`（裁定④「TTL 分开」批
  *   2026-09-07：按派发批次分文件，一批一文件，原子写，重启恢复；存量单文件
- *   `flow-map-archive.json` open 时零丢失迁移进分文件）。
+ *   `flow-map-archive.json` open 时零丢失迁移进分文件——该迁移只在各族自身目录内）。
  *   result/task 全文不进 JSON——result 拆 `results/<id>.md`（活动+归档），
  *   task 拆 `tasks/<id>.md`（仅活动区；归档 task 剥除，2026-09-06 存储瘦身批），
  *   JSON 只留 ≤500 字符摘要 + 指针（task 归档侧无指针）；加载水合回内存全文
@@ -1489,6 +1493,26 @@ object FlowMapStore:
   val ArchiveDirName: String = "flow-map-archive"
 
   /**
+   * **作用域图目录名**（N1 刀1 · 作用域切换，设计 v3 §6/A1）：per-delegate 作用域的
+   * 存储根 = `<workspace>/.nebflow/flow-maps/<scope>/`（flow-map.json / 归档分文件 /
+   * results/ / tasks/ / chain-ledger.json 同构子目录全部随迁进该目录）。**per-project
+   * 旧面零回归**：`open`（无 scope）路径族逐字节不动——存量 per-project flow-map.json
+   * **归档不迁移**（v3-⑧ 作者候认落刀）：旧挂载面停用（#1229 收口闸）前照常可开、
+   * 只读留档；delegate 链自新作用域目录族起，boot sweep 不做任何迁移。
+   */
+  val FlowMapsDirName: String = "flow-maps"
+
+  /**
+   * 作用域 id 字符集契约（存储层单点；N1 刀1）：作用域键 = delegate 会话 id
+   * （一 delegate 一图），直接拼进落盘目录名 ⇒ 必须收窄到文件名安全集。与
+   * `DelegateRegistry.validId`（地址簿文件名契约）同形但**分属两层各管各件**——
+   * 本判据管的是 FlowMapStore 落盘目录名，非法作用域 id **fail-closed 拒开**
+   * （不静默改名，杜绝第二真相源）。
+   */
+  def validScopeId(id: String): Boolean =
+    id.nonEmpty && id.length <= 128 && id.matches("^[a-zA-Z0-9._-]+$")
+
+  /**
    * 无需上报即满足归档资格的终态集：**completed**（无上报要求，天然满足
    * [[chainArchivable]]）。2026-09-07 12:29 裁定保留（failed/cancelled/blocked 永不
    * 满足本集）；第三次演进（20:38「送达即移」）后归档判据 = [[chainArchivable]]，
@@ -1986,15 +2010,38 @@ object FlowMapStore:
     if t.length > TaskSummaryCap then t.take(TaskSummaryCap) + "…" else t
 
   /** 打开（或初始化）项目的 Flow Map store。workspace 为项目工作区绝对路径。 */
-  def open(project: String, workspace: String): IO[FlowMapStore] =
+  def open(project: String, workspace: String): IO[FlowMapStore] = openAt(project, workspace, None)
+
+  /**
+   * 打开（或初始化）**作用域化**的 Flow Map store（N1 刀1 · A1 作用域切换）：存储根
+   * = `<workspace>/.nebflow/flow-maps/<scope>/`——flow-map.json、归档分文件目录、
+   * results/、tasks/、chain-ledger.json（含冷档目录与 journal）**全部随迁进该作用域
+   * 目录**（路径全部从 statePath 同源派生，天然自包含）。荐 scope 键 = delegate 会话
+   * id（一 delegate 一图）；非法 scope id（[[validScopeId]] 不过）= **fail-closed 拒开**
+   * （显式报错，不静默改名）。per-project 旧面（[[open]]）路径族零变化（v3-⑧ 归档
+   * 不迁移；两族在同一 `.nebflow` 下互不重叠）。
+   */
+  def openScope(scope: String, project: String, workspace: String): IO[FlowMapStore] =
+    if !validScopeId(scope) then
+      IO.raiseError(
+        new IllegalArgumentException(
+          s"FlowMapStore.openScope: invalid scope id '$scope' (charset contract: non-empty, ≤128, [a-zA-Z0-9._-]) — refused fail-closed"
+        )
+      )
+    else openAt(project, workspace, Some(scope))
+
+  /** open/openScope 共同体：scope = None ⇒ per-project 旧路径族（逐字节同旧实现）。 */
+  private def openAt(project: String, workspace: String, scope: Option[String]): IO[FlowMapStore] =
     val base = os.Path(workspace, PathUtil.dataRoot) / ".nebflow"
-    val statePath = base / "flow-map.json"
-    val archivePath = base / "flow-map-archive.json"
+    val root = scope.fold(base)(s => base / FlowMapsDirName / s)
+    val statePath = root / "flow-map.json"
+    val archivePath = root / "flow-map-archive.json"
     // 链号台账（chainmodel 批二）与 flow-map.json 同目录、同生命周期：本方法内一并载入
-    val ledgerPath = base / ChainLedger.FileName
-    val ledgerArchivePath = base / ChainLedger.ArchiveDirName
+    // （作用域化时随迁进作用域目录——N1 刀1 A1「chain-ledger.json 同切」）。
+    val ledgerPath = root / ChainLedger.FileName
+    val ledgerArchivePath = root / ChainLedger.ArchiveDirName
     for
-      s <- IO.blocking(os.makeDir.all(base))
+      s <- IO.blocking(os.makeDir.all(root))
       ledgerStore <- ChainLedgerStore.open(project, ledgerPath, ledgerArchivePath)
       store = new FlowMapStore(
         project,
@@ -2046,5 +2093,5 @@ object FlowMapStore:
       _ <- if convergeBatches.nonEmpty then store.persistBatchFiles(convergeBatches, arch, batchMetas) else IO.unit
     yield store
     end for
-  end open
+  end openAt
 end FlowMapStore

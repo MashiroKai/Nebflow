@@ -139,7 +139,15 @@ object DelegateTerminal:
             )
           )
         ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line (engine) failed: ${e.getMessage}")))
-    verdictLine *> MergeQueue.onTerminalIO(delegateId)
+    // N1 刀1（v3 §6/A3 宿主生命周期）：delegate 终态 ⇒ 作用域宿主实例灭（盘面状态存，
+    // write-through 已持久——「会话终→引擎实例灭＋落盘状态存」）。幂等：外部执行器腿
+    // / 未挂载 id = 零动作。ready-to-merge 停靠（HoldForMerge）不经本清理面 ⇒ 宿主照常
+    // 存活等合并轮，合并轮终态仍走这里统一卸载。
+    val hostUnmount =
+      nebflow.core.project.DelegateFlowHosts
+        .unmount(delegateId)
+        .handleErrorWith(e => IO(logger.warn(s"delegate flow-host unmount failed: ${e.getMessage}")))
+    verdictLine *> hostUnmount *> MergeQueue.onTerminalIO(delegateId)
 
   // ── 内部 ──────────────────────────────────────────────────────────────
 
