@@ -66,7 +66,15 @@ object DelegateRegistry:
       /** 申报 detail（blocked 的原因承载）。 */
       reportDetail: Option[String] = None,
       /** 申报 suggestion（可选）。 */
-      reportSuggestion: Option[String] = None
+      reportSuggestion: Option[String] = None,
+      /**
+       * 外部执行器的 CLI 侧会话 id（external-executors 批 #1225）——resume 续聊
+       * 锚点（claude session_id / codex thread_id / zcode session_id），从适配流
+       * 首帧取得后回写。None = 内部执行器或外部首帧尚未到达（续聊退化形态见
+       * ExternalSessionRunner.startResumeTurn：带前文的续聊 brief，仍在同地址
+       * 同执行器内，零回落）。缺省 None：旧盘面文件无此字段照常解码（向后兼容）。
+       */
+      cliSessionId: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -156,6 +164,7 @@ object DelegateRegistry:
       reportStatus <- c.get[Option[String]]("reportStatus")
       reportDetail <- c.get[Option[String]]("reportDetail")
       reportSuggestion <- c.get[Option[String]]("reportSuggestion")
+      cliSessionId <- c.get[Option[String]]("cliSessionId")
     yield Record(
       id,
       executor,
@@ -171,7 +180,8 @@ object DelegateRegistry:
       projectWorkspace,
       reportStatus,
       reportDetail,
-      reportSuggestion
+      reportSuggestion,
+      cliSessionId
     )
 
 end DelegateRegistry

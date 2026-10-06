@@ -16,9 +16,10 @@ import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
  * DelegateTool —— Nebula 唯一的派发入口（unified-delegate 批 2026-10-03）。
  *
  * 大改后的形态（作者令）：**只填 `task` 与 `project`（选填）**——
- *   - 执行器 = [[ExecutorRegistry]] 的 effectiveDefault（设置页 / `/Agents`
- *     面板调整；本期仅内置执行器 `nebflow` 可派发，外部 CLI 适配在
- *     external-executors 批接线，选中即显式报错——不静默回落）。
+ *   - 执行器 = 主 agent 动态选择（external-executors 批 #1225，S14 运行时半）：
+ *     可选 `executor` 参数为唯一显式选择输入，缺省内置 `nebflow`；可用集 =
+ *     [[ExecutorRegistry]] 检测面（GET /api/executors 快照）；不可用的显式
+ *     选择 = 显式报错——不静默回落。
  *   - 工作目录 = `project` 挂载项目的 workspace；缺省 = 默认工作目录
  *     `<dataRoot>/general/`（首次派发现建）。
  *   - 台账 = 每次派发在 TaskLedger 落一条（task #N 随回执返回，地址面与
@@ -45,16 +46,18 @@ object DelegateTool extends Tool:
 
   val name = "Delegate"
 
+  // 模型可见文案（executor 选择反转——S14 运行时半，external-executors 批
+  // #1225 2026-10-06）。⚠ §16 待过目：本描述段为最小改写（终稿归 N3 ⑭），
+  // 语义 = 「executor 由主 agent 动态选择；缺省 nebflow」（增补任务书 3.1）。
   val description =
-    """Delegate a task to the platform's default executor agent — the executor configured in Settings / /agents (Nebflow built-in, or an external CLI agent installed on this machine). It runs in the background and its result is delivered back to your session as a system message when it finishes.
+    """Delegate a task to a background executor — the built-in Nebflow agent (default) or an external CLI agent installed on this machine. It runs in the background and its result is delivered back to your session as a system message when it finishes.
 
 **Parameters:**
 - `task` (required): self-contained brief — goal, constraints, absolute paths, exact commands/limits, and what "done" looks like. The executor starts with a clean context; the brief is its entire world.
 - `project` (optional): name of a mounted project — the task then runs in that project's workspace. Omit it to run in the default general workspace.
+- `executor` (optional): which executor runs the task. You pick it dynamically per task; omit it for the built-in default (`nebflow`). The available set (with detected external CLIs) is listed in your "Available executors" prompt section. An unavailable pick fails explicitly — there is no silent fallback.
 
-**Executor selection:** you do NOT pick the executor — the user's default (Settings / /agents) decides. Name a specific executor in the task text only when the user asked for one explicitly; the engine honors the configured default regardless.
-
-**Result and continuation address:** the tool result is an ACK carrying the task number (`task #N`) and the continuation address `delegate:<id>`. To send the instance more input (supplements, corrections), use `Mail(address="delegate:<id>", message=...)` — a running instance gets it injected at its next turn boundary; a finished one is continued with your message as new input. Do not start a second Delegate for the same work.
+**Result and continuation address:** the tool result is an ACK carrying the task number (`task #N`) and the continuation address `delegate:<id>`. To send the instance more input (supplements, corrections), use `Mail(address="delegate:<id>", message=...)` — a running instance gets it queued for its next continuation turn; a finished one is continued as a new turn. Do not start a second Delegate for the same work.
 
 **Rules:**
 - Do NOT duplicate the delegate's work — work on something else and let the result arrive as a system message.
@@ -73,6 +76,10 @@ object DelegateTool extends Tool:
         "project" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional mounted project name — the task runs in that project's workspace. Omit for the default general workspace.".asJson
+        ),
+        "executor" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Optional executor id — you pick dynamically per task (see the \"Available executors\" section). Omit for the built-in default \"nebflow\". An unavailable id fails explicitly; there is no silent fallback.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("task".asJson)
@@ -151,59 +158,121 @@ object DelegateTool extends Tool:
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else
-      val executor = ExecutorRegistry.effectiveDefault
-      if executor != ExecutorRegistry.DefaultId then
-        IO.pure(
-          Left(ToolError(s"Delegate: executor '$executor' is the configured default but its external adapter is not wired yet (external-executors batch pending) — switch the default to 'nebflow' in /agents. (DELEGATE_EXECUTOR_PENDING)"))
-        )
-      else
-        resolveWorkspace(project).flatMap {
-          case Left(err) => IO.pure(Left(err))
-          case Right((workspace, resolvedProject)) =>
-            (ctx.actorSystem, ctx.sharedResources) match
-              case (Some(system), Some(resources)) =>
-                val callerRootIO = (ctx.sessionId) match
-                  case Some(sid) =>
-                    resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-                  case None => IO.pure("")
-                for
-                  rootSid <- callerRootIO
-                  // 台账：每次派发一条（地址面与任务列表共用号码；摘要进 note 时间线）。
-                  taskId <- IO.blocking {
-                    TaskLedgerStore
-                      .open()
-                      .createSyncReturningId(
-                        title = s"${resolvedProject.getOrElse(DefaultWorkspaceName)} — $description",
-                        actor = TaskLedgerHistory.Actors.Nebula
-                      )
-                  }.attempt.map {
-                    case Right(Right(id)) => Some(id)
-                    case _                => None // 台账失败不阻断派发（fail-soft，回执无号码）
-                  }
-                  safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-                  result <- spawnKernel(
-                    task = task,
-                    description = description,
-                    workspace = workspace,
-                    project = resolvedProject,
-                    taskId = taskId,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    parentSessionId = ctx.sessionId,
-                    safetyMode = safetyMode,
-                    rootSessionId = rootSid,
-                    // 新鲜派发腿跑判定机（R6 worktree + S13 分支纪律）；Mail
-                    // continue 复活腿（不经此处）保持旧形态。
-                    judgeWorkspace = true
-                  )
-                yield result
-              case _ =>
-                IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
-    }
+      // 执行器选择反转（S14 运行时半，#1225）：显式 `executor` 参数是唯一选择
+      // 输入，缺省 nebflow；nebflow.json executor 块止读（⑫）。fail-closed：
+      // 不可用的显式选择 = 显式错误，零静默回落（DELEGATE_EXECUTOR_PENDING
+      // 墓碑由本批真通路替换——R2/R11）。
+      ExecutorRegistry.resolveRequested(input("executor").flatMap(_.asString)) match
+        case Left(err) => IO.pure(Left(ToolError(err)))
+        case Right(ExecutorRegistry.ResolvedSelection.Internal) =>
+          internalSpawn(project, task, description, ctx)
+        case Right(ExecutorRegistry.ResolvedSelection.External(defn, binPath)) =>
+          externalSpawn(project, task, description, defn, binPath, ctx)
   end call
+
+  /** 派发台账一条（fail-soft：失败不阻断派发，回执无号码）。 */
+  private def createLedgerEntry(
+      resolvedProject: Option[String],
+      description: String
+  ): IO[Option[String]] =
+    IO.blocking {
+      TaskLedgerStore
+        .open()
+        .createSyncReturningId(
+          title = s"${resolvedProject.getOrElse(DefaultWorkspaceName)} — $description",
+          actor = TaskLedgerHistory.Actors.Nebula
+        )
+    }.attempt.map {
+      case Right(Right(id)) => Some(id)
+      case _                => None
+    }
+
+  /** 调用者根会话解析（回投链与面板归桶锚点）。 */
+  private def callerRootOf(ctx: ToolContext, resources: AgentRuntimePort): IO[String] =
+    ctx.sessionId match
+      case Some(sid) =>
+        resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+      case None => IO.pure("")
+
+  /** 内置执行器腿（nebflow）：actor spawn ＋ BackoffSupervisor 监督（原路径）。 */
+  private def internalSpawn(
+      project: Option[String],
+      task: String,
+      description: String,
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    resolveWorkspace(project).flatMap {
+      case Left(err) => IO.pure(Left(err))
+      case Right((workspace, resolvedProject)) =>
+        (ctx.actorSystem, ctx.sharedResources) match
+          case (Some(system), Some(resources)) =>
+            for
+              rootSid <- callerRootOf(ctx, resources)
+              taskId <- createLedgerEntry(resolvedProject, description)
+              safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
+              result <- spawnKernel(
+                task = task,
+                description = description,
+                workspace = workspace,
+                project = resolvedProject,
+                taskId = taskId,
+                system = system,
+                resources = resources,
+                parentDepth = ctx.depth,
+                parentRef = ctx.agentActorRef,
+                wsSend = ctx.wsSend,
+                parentSessionId = ctx.sessionId,
+                safetyMode = safetyMode,
+                rootSessionId = rootSid,
+                // 新鲜派发腿跑判定机（R6 worktree + S13 分支纪律）；Mail
+                // continue 复活腿（不经此处）保持旧形态。
+                judgeWorkspace = true
+              )
+            yield result
+          case _ =>
+            IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
+    }
+
+  /** 外部执行器腿（#1225 真适配器）：ExternalSessionRunner 一条通路——子进程、
+    * 流帧、终态回投、续聊、取消全部在 runner；此处只做选座、台账与回执。 */
+  private def externalSpawn(
+      project: Option[String],
+      task: String,
+      description: String,
+      defn: nebflow.core.executor.ExecutorRegistry.ExecutorDef,
+      binPath: String,
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    resolveWorkspace(project).flatMap {
+      case Left(err) => IO.pure(Left(err))
+      case Right((workspace, resolvedProject)) =>
+        ctx.sharedResources match
+          case Some(resources) =>
+            for
+              rootSid <- callerRootOf(ctx, resources)
+              taskId <- createLedgerEntry(resolvedProject, description)
+              spawned <- nebflow.core.executor.ExternalSessionRunner.spawn(
+                nebflow.core.executor.ExternalSessionRunner.SpawnSpec(
+                  executorId = defn.id,
+                  binPath = binPath,
+                  task = task,
+                  title = description,
+                  workspace = workspace,
+                  project = resolvedProject,
+                  taskId = taskId,
+                  parentSessionId = ctx.sessionId.getOrElse(""),
+                  rootSessionId = rootSid,
+                  parentRef = ctx.agentActorRef,
+                  wsSend = ctx.wsSend,
+                  resources = resources
+                )
+              )
+            yield spawned
+              .map { case (sessionId, ack) => ack + DelegateRegistry.continuationLine(sessionId) }
+              .left.map(ToolError(_))
+          case None =>
+            IO.pure(Left(ToolError("Delegate requires SharedResources")))
+    }
 
   private def spawnKernel(
     task: String,

@@ -472,6 +472,79 @@ private[gateway] object PresenceRoutes:
           }
         }
 
+      // ===== External delegate faces（external-executors 批 #1225）========
+
+      // GET /delegates/:id/output?offset=N — 外部 delegate 进度输出面（原书：
+      // 进度=适配流缓冲，REST 输出面仿 bg-tasks）。响应形态与 bg-tasks 输出
+      // 同构 + 外部扩展字段（cliSessionId / mailboxDepth / startedAtMs）。
+      // 404 = 无缓冲（进程从未在本实例跑过或留存已被淘汰——记录面仍在
+      // DelegateRegistry，见 status 面）。
+      case req @ GET -> Root / "delegates" / id / "output" =>
+        withAuth(req) {
+          val offset = req.uri.params.get("offset").flatMap(_.toLongOption).getOrElse(0L)
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else
+            nebflow.core.executor.ExternalOutputStore.read(id, offset).flatMap {
+              case None =>
+                NotFound(Json.obj("error" -> s"External delegate '$id' has no output buffer (unknown or evicted)".asJson))
+              case Some(o) =>
+                Ok(
+                  Json.obj(
+                    "taskId" -> o.taskId.asJson,
+                    "status" -> o.status.asJson,
+                    "totalBytes" -> o.totalBytes.asJson,
+                    "totalLines" -> o.totalLines.asJson,
+                    "truncated" -> o.truncated.asJson,
+                    "output" -> o.output.asJson,
+                    "nextOffset" -> o.nextOffset.asJson,
+                    "startedAtMs" -> o.startedAtMs.asJson,
+                    "finishedAtMs" -> o.finishedAtMs.asJson,
+                    "exitCode" -> o.exitCode.asJson,
+                    "errorHint" -> o.errorHint.asJson,
+                    "cliSessionId" -> o.cliSessionId.asJson,
+                    "mailboxDepth" -> o.mailboxDepth.asJson
+                  )
+                )
+            }
+        }
+
+      // POST /delegates/:id/open-native — 「打开原软件」：在宿主上打开原 CLI 的
+      // 原生终端并 resume（原书 AgentControl 面；macOS Terminal.app ＋resume、
+      // Win/Linux 对应模板见 ExternalOpenNative）。fire-and-forget：进程启动即
+      // 回，响应带回显命令行供面板确认。404 = 非外部记录；400 = 记录损坏。
+      case req @ POST -> Root / "delegates" / id / "open-native" =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else
+            IO.blocking(nebflow.core.delegate.DelegateRegistry.find(id)).flatMap {
+              case None => NotFound(Json.obj("error" -> s"No delegate '$id' on record".asJson))
+              case Some(rec) if rec.executor == nebflow.core.executor.ExecutorRegistry.DefaultId =>
+                NotFound(Json.obj("error" -> s"Delegate '$id' is the built-in executor — no native app to open".asJson))
+              case Some(rec) =>
+                val (bin, args) = nebflow.core.executor.ExternalOpenNative.templateFor(
+                  osName = sys.props.getOrElse("os.name", "").toLowerCase,
+                  cwd = rec.cwd,
+                  executorId = rec.executor,
+                  cliSessionId = rec.cliSessionId
+                )
+                val echo = (args :+ "").mkString(s"$bin ", " ", "").trim
+                IO.blocking {
+                  val pb = new java.lang.ProcessBuilder((bin +: args)*)
+                  pb.directory(new java.io.File(rec.cwd))
+                  pb.start()
+                }.flatMap { p =>
+                  // 不等窗口（Terminal.app / 终端模拟器起来即回）；后台 fiber
+                  // 收尸防僵尸（xterm -e 形态存活到窗口关闭——fiber 挂着无害）。
+                  IO.blocking(p.waitFor()).void.start.void *>
+                    Ok(Json.obj("opened" -> true.asJson, "command" -> echo.asJson))
+                }.handleErrorWith { e =>
+                  BadRequest(Json.obj("error" -> s"open-native failed: ${e.getMessage}".asJson, "command" -> echo.asJson))
+                }
+            }
+        }
+
       // (2026-09-20 device-face hardening batch) 11-route takedown: GET /agents/list
       // was RETIRED here — 仓内零调用点 in the classify pass (its only in-repo
       // reference was the smoke-spec probe, updated in the same commit).

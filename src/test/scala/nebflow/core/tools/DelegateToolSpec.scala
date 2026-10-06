@@ -90,8 +90,10 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 1. schema 面 ----------
 
-  test("schema: exactly task/project — description and the legacy parameters are gone"):
-    assertEquals(props, Set("task", "project"))
+  test("schema: exactly task/project/executor — description and the legacy parameters are gone"):
+    // external-executors 批 #1225（S14 运行时半）：`executor` 入场——主 agent
+    // 动态选择执行器的唯一显式输入（缺省 nebflow）；legacy 集合照旧反向钉死。
+    assertEquals(props, Set("task", "project", "executor"))
     assertEquals(required, List("task"))
     Set("prompt", "agent", "lifecycle", "taskDescription", "images", "preset").foreach { legacy =>
       assert(!props.contains(legacy), s"legacy parameter must be deleted from the schema: $legacy")

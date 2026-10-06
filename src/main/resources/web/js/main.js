@@ -2064,6 +2064,8 @@ function bgAgentKindFromSession(sessionId) {
   // 徽章显示 Flow（与快照 kind 一致）。
   if (raw.startsWith('node-')) return 'Flow';
   if (raw.startsWith('dispatcher-')) return 'Flow';
+  // external-executors 批 #1225：外部 CLI delegate（external-<exec>-<id>）。
+  if (raw.startsWith('external-')) return 'External';
   return '';
 }
 

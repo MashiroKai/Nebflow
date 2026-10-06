@@ -1024,7 +1024,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    *     `source="delegate"` 回投链）——与原 kernel 腿逐字同机制；
    *   - **不 live（终态/重启后）**：内置执行器 ⇒ 以补充信息为输入**续起**一个
    *     新会话（同 executor/project/cwd/taskId 记账，DelegateRegistry 是数据源）；
-   *     外部执行器 ⇒ 显式 pending（适配在 external-executors 批）。
+   *     外部执行器 ⇒ ExternalSessionRunner 续聊（#1225 真通路：CLI resume ／
+   *     mailbox 排队——live 来信排队、终态一条 resume 消化；S15 注入通道，
+   *     合并轮同门）。地址面零新面（增补任务书 3.5）。
    * `kernel:<id>` 是同 id 空间的旧形态别名（isLegacyForm=true 时回执提示新形态）。
    */
   private def deliverToDelegate(
@@ -1059,9 +1061,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                       nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
                       IO.pure(Right(s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."))
                   case _ =>
-                    // 不 live：内置执行器续起（fresh session, same seat）；外部执行器 pending。
+                    // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors
+                    // 批 #1225 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
+                    // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。
                     if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
-                      IO.pure(Left(ToolError(s"Delegate '$id' ran on external executor '${record.executor}' — cross-session continuation for external executors lands with the external-executors batch. (DELEGATE_EXECUTOR_PENDING)")))
+                      nebflow.core.executor.ExternalSessionRunner
+                        .continueExternal(record, message, parentRef = None, wsSend = ctx.wsSend, resources = res)
+                        .map(_.left.map(ToolError(_)))
                     else
                       continueDelegate(record, id, message, ctx, sys, res)
               }

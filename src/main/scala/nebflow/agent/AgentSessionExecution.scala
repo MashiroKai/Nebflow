@@ -547,6 +547,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               ProjectRuntimeRegistry.all
                 .map(rts => MountedProjectList.renderLines(rts.map(rt => rt.project.name -> rt.project.description)))
             else IO.pure("")
+          // 可用执行器段（external-executors 批 #1225，S14 运行时半）：根代理
+          // only——数据源 = GET /api/executors 检测面快照（每次现读，安装/卸载
+          // 即时反映；注入时机 = systemStable 生命周期重建——「会话装配时快照
+          // 一次」口径，回报已注明）。非根会话恒空 = 段不注入。
+          executorsText <-
+            if isRootAgent then
+              IO.blocking(
+                nebflow.core.executor.ExecutorRegistry.availableLine(
+                  sys.env.getOrElse("PATH", ""),
+                  nebflow.core.executor.ExecutorRegistry.curatedProbeDirs
+                )
+              )
+            else IO.pure("")
           nowMs = System.currentTimeMillis()
           injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
           // Plugin surface live convergence (plugins-live 批 2026-09-12). The Plugin
@@ -632,7 +645,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             userFacingNode = stateForLlm.userFacingNode,
             isTeamLead = isTeamLead,
             isRootAgent = isRootAgent,
-            mountedProjectsText = mountedProjectsText
+            mountedProjectsText = mountedProjectsText,
+            executorsText = executorsText
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
           // cached string byte-for-byte (provider prefix cache stays hit).
