@@ -10,7 +10,7 @@
 #   - name 约束 §5.5          PluginRegistry.scala:287-292 (validPluginName)
 #   - digest 算法             PluginRegistry.scala:237-248 (computeDigest)
 #   - shell-like / 凭据红标启发 PluginRegistry.scala:83-89
-# 批1（2026-10-05 D1-D9 动工令）新增锚点：
+# 新增锚点：
 #   - 官方身份闸（nebflow- 保留前缀 + digest 现算允许列表，OFFICIAL_IMPERSONATION）
 #                             OfficialPackages.scala:51,115-116（fail-closed :34）
 #   - 工具白名单 §B.6          PluginRegistry.scala:104（越界拒载 :754-760 PLUGIN_TOOLS_ILLEGAL）
@@ -28,16 +28,15 @@
 #   - manifest name ≠ 目录名    PluginRegistry.scala:642-644
 #
 # 三档 profile（批1 D4 甲案：单脚本演进；严格度分档按计划§2.1）：
-#   --profile official  官方面硬闸（适用=OFFICIAL_FACE 9 包，作者 2026-10-05 批1令修正①
-#                       逐字名单；engineering-methods / nebflow-frontend-dev / nebflow-qa
-#                       系作者本地使用件，不在官方面）。M1-M15 全量 + C 组 fatal 镜像；
+#   --profile official  官方面硬闸（适用=OFFICIAL_FACE 9 包产品名单；名单外包不适用
+#                       此档）。M1-M15 全量 + C 组 fatal 镜像；
 #                       退出码≠0 即阻断；WARN 逐条处置或挂豁免记录（流程面）。
 #   --profile creator   creator 产出交付闸（默认档）。M1-M15 全量 + fatal 镜像；退出码
 #                       0 为交付闸；惯例面警告（C1-C3/C6）须处置或说明。
 #   --profile user      用户自装包提示级。同引擎全项输出，全部降为提示、无 FAIL 语义，
 #                       退出码恒 0；建议配 --report-file 落文件（不刷屏）。
 #
-# C 组（批1 D8：C9-C15 全收＋C1-C6/C8/C16；C7 缓——包级行数预算候观测，未实现）：
+# C 组（C9-C15 全收＋C1-C6/C8/C16；C7 缓——包级行数预算候观测，未实现）：
 #   C1 skills/ 非 skill 目录（§7.1 skip+warn 镜像）      [WARN]
 #   C2 skills/ 顶层纯文件（loader 静默过滤）              [WARN]
 #   C3 裸相对引用（应 ${SKILL_DIR} 形态；附带断链/跨包）   [WARN]
@@ -54,9 +53,9 @@
 #   C15 符号链接/越围栏（plugin.json 越界升硬闸，余为跳过档）      [FAIL/WARN]
 #   C16 M15 语境豁免（教学/正则字面量→降人工复核提示，不计 FAIL）
 #
-# M9 定稿（计划①+③合并）：BOUNDARY_RE 零逻辑改动——自足边界句（说清本包不管什么
+# M9 定稿：BOUNDARY_RE 零逻辑改动——自足边界句（说清本包不管什么
 # 即达标）照旧 PASS；「另配/请改用」留存标记集合，存量含分流的描述兼容；提名相邻
-# 插件降为可选增强、非要求（作者原则：每个插件不需要提到别的插件，描述好自己就行）。
+# 插件降为可选增强、非要求（设计原则：每个插件不需要提到别的插件，描述好自己就行）。
 #
 # M8 口径注记：触发词「核心词全命中」是 description-quality skill / 人审判定项
 # （词表按包能力域圈定），不进本脚本硬依赖——脚本只机械拦截「无触发场景句」。
@@ -77,9 +76,8 @@ RESERVED_PREFIX = "nebflow-plugin-"
 OFFICIAL_BASELINE = {"nebflow-plugin-creator", "visual-report", "slideblocks"}
 # C9 保留 namespace 前缀（OfficialPackages.scala:51 逐字「nebflow-」；🔴 禁收窄/改写）
 RESERVED_OFFICIAL_PREFIX = "nebflow-"
-# 官方面 9 包名单（作者 2026-10-05 批1 动工令修正①逐字名单）：--profile official
-# 的适用面。engineering-methods / nebflow-frontend-dev / nebflow-qa 系作者本地
-# 使用件、不属 seed 官方面（批3 收账剔出 nebflow-qa）。仅作适用面核对提示用，
+# 官方面 9 包名单：--profile official 的适用面。名单外包（engineering-methods /
+# nebflow-frontend-dev / nebflow-qa）不属 seed 官方面。仅作适用面核对提示用，
 # 不改 M4 白名单语义。
 OFFICIAL_FACE = frozenset({
     "browser-use", "computer-use", "design-spec", "explorer-toolkit",
@@ -811,7 +809,7 @@ def check_c2(pkg):
 def check_c3(pkg, skill_files):
     """C3 裸相对引用（应 ${SKILL_DIR} 形态）：注入面（skills 顶层 */SKILL.md 正文）找 `../`、`./` 包内引用，
     normpath 验目标存在（附带抓断链）；跨包引用单列。
-    批2 微调（2026-10-06，区分注入/非注入）：${SKILL_DIR} 单点替换只发生在 SKILL.md 注入文本——
+    注入/非注入区分：${SKILL_DIR} 单点替换只发生在 SKILL.md 注入文本——
     非注入 md（包根共用件（Plugin.md）、references/、样张）的文内相对引用属合法文件相对形态
     （Read 工具按文件位置解析），单列读数、不计入判定；判定面仍为注入面原口径。"""
     def _scan(files):
@@ -1005,8 +1003,7 @@ def main():
         except Exception:
             pass
         if dirbase not in OFFICIAL_FACE and manifest_name_hint not in OFFICIAL_FACE:
-            out("[INFO] 官方面 9 包名单（作者 2026-10-05 批1令修正①）不含此包——official 档适用面核对："
-                "engineering-methods/nebflow-frontend-dev/nebflow-qa 系作者本地使用件，不属官方面")
+            out("[INFO] 此包不在官方面 9 包名单内——official 档不适用此包")
 
     manifest = None
     # M1 manifest 可解析、顶层 object
