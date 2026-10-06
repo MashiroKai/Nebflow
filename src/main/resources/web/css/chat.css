@@ -1269,8 +1269,12 @@
 .tool-card .icon.err { color: var(--status-error-icon); }
 .tool-card .spinner {
   width: 14px; height: 14px;
-  border: 2px solid #ccc;
-  border-top-color: #555;
+  /* spinner-smooth 批（2026-10-06）：案外字面 #ccc/#555 归既有运行态 token 档——
+     与本页另外两处运行 spinner（.nf-wl-spin::before、.session-status.busy
+     .status-spinner）及 .task-node-spin 同一 --color-primary 惯例，暗档随 token
+     提亮；几何（14px/2px border）与动画（spin 1s，transform-only）不动。 */
+  border: 2px solid color-mix(in srgb, var(--color-primary, #07c160) 25%, transparent);
+  border-top-color: var(--color-primary, #07c160);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   display: inline-block;
@@ -4000,6 +4004,16 @@
   border: 1px dashed rgba(255, 255, 255, 0.4);
   object-fit: none;
 }
+
+/* 三修 ① (2026-10-06 10:59 作者截图令): the 「展开 N」 pill rides the
+   conversation CENTER-AXIS side of the stack, per sender. User rows carry the
+   `.user` sender class (popArtifacts.buildUserMediaRow) and keep the DOM
+   order — pill left of the stack; LLM Pop rows (`.row.pop-artifact` without
+   `.user`) flip the pill to the RIGHT via `order` — deliberately NOT
+   row-reverse, so the stack's own peek direction and the drag axis stay
+   untouched. Vertical centering stays `.pop-stack-area`'s align-items:center:
+   measured 钮心 y − 栈卡 y 几何中心 = 0.0px (before AND after, all forms). */
+.row.pop-artifact:not(.user) .pop-stack-area > .pill { order: 3; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    #491 pop-media 主题二 (2026-10-05 author ruling 「微信的这样的设计来进行分类

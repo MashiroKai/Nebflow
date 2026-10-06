@@ -1,11 +1,14 @@
 // pop-media-alignment.spec.mjs — #491 主题三: user attachments aligned with the
 // LLM Pop faces (author 2026-10-05 12:14 原话 + the three 【已裁决】 rulings).
 //
-//   AC-S1 点击放大查看 — media (image/video) click-to-zoom is a WeChat-style
-//        IN-STREAM lightbox (in place, Esc / blank-click close); Canvas stays a
-//        secondary explicit entry on the card and on the overlay; file-type
-//        items keep small-card → Canvas. SAME form and interaction on both
-//        sides (user attachments and LLM Pop).
+//   AC-S1 点击放大查看 — AMENDED by the 2026-10-06 10:59 author screenshot
+//        order (pop-media 三修 ②/③): an image card's whole-face click is the
+//        CANVAS open (the file card's workspace-open-item single point), and
+//        the collapsed stack's click opens Canvas with the FIRST item. The
+//        WeChat-style in-stream lightbox remains the zoom face for pathless
+//        inline bytes (live user attachments), videos, and the expanded stack
+//        layers; file-type items keep small-card → Canvas. SAME form and
+//        interaction on both sides (user attachments and LLM Pop).
 //   AC-S2 小卡片 + Canvas 打开 — user file attachments render the Pop file-card
 //        face; a click fires the SAME workspace-open-item single point with the
 //        SAME detail shape (absPath) as a Pop file card.
@@ -251,49 +254,97 @@ test.describe('AC-S2 — user file cards fire the same workspace-open-item as Po
   });
 });
 
-/* ═══════════ AC-S1 — WeChat-style lightbox, both sides ═══════════ */
+/* ═══════════ AC-S1 — media click faces (amended: 2026-10-06 10:59 截图令) ═══════════
 
-test.describe('AC-S1 — click-to-zoom lightbox: user and Pop sides are the same face', () => {
-  test('user single image: lightbox opens; Esc closes', async ({ browser }) => {
+   The 2026-10-05 12:14 ruling made a media click the WeChat-style lightbox
+   with Canvas as the secondary entry. The 2026-10-06 10:59 author screenshot
+   order amends the IMAGE faces (pop-media 三修 ②/③): a whole-image-card click
+   is now the CANVAS open — the SAME workspace-open-item single point the file
+   card fires — and the COLLAPSED stack's click opens Canvas with the FIRST
+   item (front card). The lightbox remains the zoom face where Canvas cannot
+   apply: a pathless live user attachment (bytes ride inline, no absPath yet),
+   video faces, and the expanded stack layers. */
+
+test.describe('AC-S1 — image card click faces: Canvas single point, lightbox fallback', () => {
+  test('pathless live user image: lightbox zoom fallback; Esc and backdrop close', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__userSingleLive());
 
     const probe = await page.evaluate(() => window.__lightboxProbeViaClick('#chat > .row.user-media'));
     expect(probe.clicked, 'the media face was clickable').toBe(true);
-    expect(probe.open, 'the lightbox overlay opened').toBe(true);
+    expect(probe.open, 'no absPath on a live attachment → the lightbox zoom fallback').toBe(true);
     expect(probe.hasMedia, 'it carries the zoomed media').toBe(true);
     expect(probe.mediaTag, 'an image face').toBe('img');
     expect(probe.hasName, 'the file name is shown').toBe(true);
 
     const esc = await page.evaluate(() => window.__closeLightboxEsc());
     expect(esc.open, 'Escape closes the lightbox').toBe(false);
-    expect(pageErrors).toEqual([]);
-    await context.close();
-  });
 
-  test('Pop single image: the SAME lightbox structure (同形态、同交互)', async ({ browser }) => {
-    const { context, page, pageErrors } = await newPage(browser);
-    const pop = await page.evaluate(() => window.__popLightboxProbe());
-    expect(pop.open, 'the Pop media opened the lightbox').toBe(true);
-    expect(pop.hasMedia, 'media face present').toBe(true);
-    expect(pop.hasCanvasBtn, 'the overlay carries the Canvas secondary entry (path known)').toBe(true);
-
-    const esc = await page.evaluate(() => window.__closeLightboxEsc());
-    expect(esc.open, 'Escape closes it (same interaction)').toBe(false);
-    expect(pageErrors).toEqual([]);
-    await context.close();
-  });
-
-  test('backdrop click closes; the user side with a path carries the Canvas entry too', async ({ browser }) => {
-    const { context, page, pageErrors } = await newPage(browser);
-    await page.evaluate(() => window.__userMediaBackendReplay(false));
-
-    const probe = await page.evaluate(() => window.__lightboxProbeViaClick('#chat > .row.user-media'));
-    expect(probe.open, 'the replayed user image opened the lightbox').toBe(true);
-    expect(probe.hasCanvasBtn, 'path known on replay → Canvas entry present').toBe(true);
-
+    // Reopen once: the blank-area click still closes (点击空白关闭 retained).
+    await page.evaluate(() => window.__lightboxProbeViaClick('#chat > .row.user-media'));
     const backdrop = await page.evaluate(() => window.__closeLightboxBackdrop());
     expect(backdrop.open, 'a blank-area click closes the lightbox (WeChat style)').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('Pop single image: whole-card click fires the SAME workspace-open-item as the file card (三修 ②)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+
+    const opened = await page.evaluate(async () => window.__captureOpenEvents(async () => {
+      await window.__popSingleWide();
+      const box = document.querySelector('#chat > .row.pop-artifact .pop-media-flat');
+      if (!box) throw new Error('no flat media card rendered');
+      box.click();
+    }));
+    expect(opened.length, 'the whole image card opened something').toBe(1);
+    expect(opened[0].absPath, 'Canvas open = the image absPath (file-card parity)').toBe('/tmp/pop/wide.png');
+    expect(opened[0].id, 'identity = file:<absPath> (same scheme as the file card)').toBe('file:/tmp/pop/wide.png');
+    expect(opened[0].pinned, 'pinned like the file-card open').toBe(true);
+    expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')),
+      'a pathed image click opens Canvas directly — no lightbox detour (三修 ②)').toBe(false);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('a pathed user image opens Canvas; the collapsed stack opens the FIRST item, both sides (三修 ③)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+
+    const opened = await page.evaluate(async () => window.__captureOpenEvents(async () => {
+      await window.__userMediaBackendReplay(false);
+      const media = document.querySelector('#chat > .row.user-media .pop-img');
+      if (!media) throw new Error('no replayed user image rendered');
+      media.click();
+    }));
+    expect(opened.length, 'the replayed user image opened something').toBe(1);
+    expect(opened[0].absPath, 'path known on replay → the Canvas single point (三修 ②)')
+      .toBe('/uploads/pop-harness/m1.png');
+    expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')),
+      'no lightbox once a path exists').toBe(false);
+
+    // 三修 ③: the COLLAPSED stack's click opens Canvas with the FIRST image —
+    // user side (uploads paths) and Pop side (payload paths) alike; no lightbox.
+    await page.evaluate(() => window.__clearChat());
+    const stackOpened = await page.evaluate(async () => window.__captureOpenEvents(async () => {
+      await window.__userMediaBackendReplay(true);
+      const front = document.querySelector('#chat > .row.user-media .pop-stack-view .media-layer.layer-front');
+      if (!front) throw new Error('no collapsed user stack rendered');
+      front.click();
+    }));
+    expect(stackOpened.length, 'the collapsed user stack opened something').toBe(1);
+    expect(stackOpened[0].absPath, 'opened content = the FIRST image').toBe('/uploads/pop-harness/m1.png');
+
+    await page.evaluate(() => window.__clearChat());
+    const popStackOpened = await page.evaluate(async () => window.__captureOpenEvents(async () => {
+      await window.__popStack();
+      const front = document.querySelector('#chat > .row.pop-artifact .pop-stack-view .media-layer.layer-front');
+      if (!front) throw new Error('no collapsed Pop stack rendered');
+      front.click();
+    }));
+    expect(popStackOpened.length, 'the collapsed Pop stack opened something').toBe(1);
+    expect(popStackOpened[0].absPath, 'Pop side: opened content = the FIRST image too').toBe('/tmp/pop/shot-1.png');
+    expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')),
+      'a collapsed-stack click never opens the lightbox').toBe(false);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

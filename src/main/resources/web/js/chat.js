@@ -5,7 +5,9 @@ import state, { AGENT_PALETTE } from './state.js';
 import { key } from './branding.js';
 // 时制（12h/24h）：偏好、格式化与热区绑定的唯一属主 = timeFormat.js（主对话框
 // / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
-import { formatHm, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
+// formatFooterTime = footer-time 批（2026-10-06）的分层 footer label：
+// 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
+import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
@@ -932,10 +934,13 @@ export function createMsgFooterBadge(timestamp, copyText) {
     const timeSpan = document.createElement('span');
     timeSpan.className = 'duration-badge-time';
     // data-ts = 搜索跳转锚点（chatSearchFloat.js 消费，容器级挂载点同用此属性）；
-    // data-ts-text = 时制刷新的显式声明（纯时钟文本节点，见 timeFormat.js 契约）。
+    // data-ts-text = 时制刷新的显式声明（纯时钟文本节点，见 timeFormat.js 契约）；
+    // data-ts-text-format="day" = 本节点文本走分层 footer label（formatFooterTime，
+    // footer-time 批 2026-10-06）：时制切换就地重排仍与渲染时同一 formatter。
     timeSpan.setAttribute('data-ts', timestamp);
     timeSpan.setAttribute('data-ts-text', String(timestamp));
-    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.setAttribute('data-ts-text-format', 'day');
+    timeSpan.textContent = formatFooterTime(timestamp);
     bindTimeToggle(timeSpan);
     badge.appendChild(timeSpan);
   }
@@ -989,10 +994,13 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp, c
     appendDivider();
     const timeSpan = document.createElement('span');
     timeSpan.className = 'duration-badge-time';
-    // data-ts = jump anchor (chatSearchFloat.js); data-ts-text = refresh target.
+    // data-ts = jump anchor (chatSearchFloat.js); data-ts-text = refresh target;
+    // data-ts-text-format="day" = layered footer label (formatFooterTime —
+    // footer-time batch 2026-10-06), same formatter on 12/24 in-place refresh.
     timeSpan.setAttribute('data-ts', timestamp);
     timeSpan.setAttribute('data-ts-text', String(timestamp));
-    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.setAttribute('data-ts-text-format', 'day');
+    timeSpan.textContent = formatFooterTime(timestamp);
     bindTimeToggle(timeSpan);
     badge.appendChild(timeSpan);
   }

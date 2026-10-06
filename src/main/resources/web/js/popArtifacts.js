@@ -14,9 +14,13 @@
 //   author-side preview, not a tracked deliverable):
 //   - MEDIA (image / video / audio) — no Canvas tab. Several items in one call
 //     render as ONE WeChat-style stacked card: front card + peeking layers to
-//     the right, the 「展开 N」 pill on the left; click / swipe switches; expand
+//     the right, the 「展开 N」 pill beside the stack on the sender side (user
+//     rows: left; LLM rows: right — 三修 ①, 2026-10-06); drag switches; a click
+//     on the collapsed stack opens Canvas with the first item (三修 ③); expand
 //     flattens to one card per row (「收起」 re-stacks). A single media item
-//     renders flat with no stack at all. (canvas-media Wave2, 2026-10-05
+//     renders flat with no stack at all, and its whole-card click opens Canvas
+//     like a file card (三修 ②, pathless inline bytes keep the lightbox zoom).
+//     (canvas-media Wave2, 2026-10-05
 //     author ruling OD-1 = (b): audio joins the face video already had —
 //     native <audio controls> strip, ticket leg like video, no stack chrome.)
 //   - FILE (documents / HTML animations / everything else) — file cards in the
@@ -439,10 +443,23 @@ function canvasCornerButton(item) {
   return btn;
 }
 
+/** 三修 ② (2026-10-06 10:59 作者截图令): a media card's WHOLE-face click is the
+ *  CANVAS open — the exact same single point (openPopArtifact) and detail shape
+ *  the file card's whole-card click uses; no second open path is minted. An
+ *  item without an absolute path (a live user attachment whose bytes ride
+ *  inline — Canvas cannot open a pathless file) keeps the #491 主题三 lightbox
+ *  zoom: same face that case had before this ruling, no bogus open dispatch. */
+function openMediaItemClick(item) {
+  if (item && item.path) openPopArtifact(item.path, item.name);
+  else openMediaLightbox(item);
+}
+
 /**
- * The stacked media group (≥2 items): pill on the left, stack on the right.
- * Clicking a card brings it to the front (WeChat's tap-advance); a pointer
- * drag of >38px goes next / previous; 「展开 N」 flattens, 「收起」 re-stacks.
+ * The stacked media group (≥2 items): pill beside the stack on the sender-side
+ * (user rows left / LLM rows right, 三修 ①). A pointer drag of >38px goes
+ * next / previous; 「展开 N」 flattens, 「收起」 re-stacks. A click on the
+ * COLLAPSED stack opens Canvas with the FIRST item (三修 ③); the EXPANDED face
+ * keeps its per-layer zoom click.
  */
 function buildMediaStack(items) {
   const area = document.createElement('div');
@@ -514,12 +531,15 @@ function buildMediaStack(items) {
   };
   applyLayers();
 
-  // Click = bring that card forward (front card → next, matching WeChat).
-  layers.forEach((layer, i) => {
+  // 三修 ③ (2026-10-06 10:59 作者截图令): a click on the COLLAPSED stack (any
+  // painted layer) opens CANVAS with the FIRST item — the same single point the
+  // flat face and the file card share (三修 ②). The old tap-advance retires
+  // here; switching cards stays on drag/swipe, and a real drag's
+  // suppressClick window keeps the swipe from also firing this open.
+  layers.forEach(layer => {
     layer.addEventListener('click', () => {
       if (stack.suppressClick) return;
-      front = (i === front) ? (i + 1) % layers.length : i;
-      applyLayers();
+      openMediaItemClick(items[0]);
     });
   });
 
@@ -601,13 +621,15 @@ function buildMediaStack(items) {
  *  not cropped into a portrait box. An AUDIO item has no ratio to report — the
  *  `is-audio` class retires the fallback ratio box so the flat face collapses
  *  to the controls strip (chat.css) instead of a mostly-empty 4/3 frame.
- *  #491 主题三 (AC-S1): a click opens the shared lightbox (both sides), and the
- *  corner button is the Canvas secondary entry. */
+ *  三修 ② (2026-10-06 10:59 作者截图令): a click on the whole image card opens
+ *  CANVAS (openMediaItemClick = the file card's single point when a path
+ *  exists, the 主题三 lightbox for pathless inline bytes). The corner button
+ *  stays as the explicit entry — same handler, same single point. */
 function buildMediaFlat(item) {
   const box = document.createElement('div');
   box.className = 'pop-media-flat' + (item.kind === 'audio' ? ' is-audio' : '');
   box.appendChild(mediaFace(item, 'expanded', (w, h) => fitLayer(box, w, h, STACK_MAX.w, EXPAND_MAX.h)));
-  box.addEventListener('click', () => openMediaLightbox(item));
+  box.addEventListener('click', () => openMediaItemClick(item));
   const canvasBtn = canvasCornerButton(item);
   if (canvasBtn) box.appendChild(canvasBtn);
   return box;
