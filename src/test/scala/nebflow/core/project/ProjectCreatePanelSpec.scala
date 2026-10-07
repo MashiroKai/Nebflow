@@ -647,7 +647,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         s"Workspace '${ws.toString}' is already used by project 'occ-one' " +
           s"(its project.json workspace = '${ws.toString}'). Project default-denies creating 'occ-two' " +
           "on an occupied workspace — a second project on the same workspace would silently share its " +
-          "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
+          "flow-map / task board / worktrees. Two ways out: " +
           "(a) reuse the existing project — Project(name='occ-one') to re-mount it, or " +
           "Mail(address='project:occ-one', message=...) to dispatch work; " +
           "(b) pass a different 'workspace' directory for 'occ-two'."
