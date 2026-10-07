@@ -93,7 +93,7 @@ const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabl
 // entries carrying `_skill` on every skillList frame, and a whitelist living in
 // the table could be widened by such a re-registration. Keys = the command
 // names exactly as typed (and exactly as used as table keys).
-const SLASH_ALLOWED = new Set(['/clear', '/compact', '/model', '/agents']);
+const SLASH_ALLOWED = new Set(['/clear', '/compact', '/model']);
 /** May `cmd` be listed/dispatched? Whichever is in the whitelist · always;
  *  everything else only while the master gate is open. */
 const slashAllowed = (cmd) => SLASH_ALLOWED.has(cmd) || SLASH_ENABLED();
@@ -175,18 +175,9 @@ registerCommand({
   },
 });
 
-// /agents — UI-only: opens the executor picker canvas tab (executor-registry
-// batch 2026-10-03; whitelisted alongside /model — user ruling this batch:
-// executor choice lives in Settings and /Agents). Load on first use; failure
-// stays silent.
-registerCommand({
-  name: '/agents',
-  desc: () => t('slash.agents'),
-  uiOnly: true,
-  run: () => {
-    import('./executorsPanel.js').then(m => m.openExecutors()).catch(() => {});
-  },
-});
+// /agents retired (ui-train-threefix A, 2026-10-07): the executor picker entry
+// left the user faces (settings section + this command + its locale keys).
+// ExecutorRegistry/detect (scala) untouched.
 
 /** Register skill commands from the server-provided skill list. */
 export function registerSkillCommands(skills) {

@@ -53,6 +53,13 @@ const ORPHAN_EXEMPTIONS = new Map([
   // card lists, CSS animation suffices). File kept on disk for the same #1229 batch;
   // tests/fixtures/orbit-anim-harness.html still imports it directly (orbit-anim.spec).
   ['js/flowAnim.js', 'flowmaptab-retire (#1228 两裁②): main.js side-effect import removed per upstream zero-reuse declaration; file kept pending #1229 batch (orbit-anim test harness imports it directly)'],
+  // s14-executor-userface-retire (ui-train-threefix A, 2026-10-07): the last two
+  // entry points (sidebar settings panel-entry button + /agents command) left the
+  // user faces with their locale keys; the Canvas-tab panel module is intentionally
+  // out of the bundle graph. ExecutorRegistry/detect (scala) untouched — file kept
+  // on disk pending the executor-panel deletion batch (same shape as flowMapTab
+  // above: do not re-wire; do not delete early).
+  ['js/executorsPanel.js', 's14-executor-userface-retire (ui-train-threefix A): settings entry + /agents command removed, module disconnected pending the executor-panel deletion batch'],
 ]);
 
 // ── 1. Clean output ────────────────────────────────────────────

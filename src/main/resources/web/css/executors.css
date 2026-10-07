@@ -149,10 +149,5 @@
   opacity: 0.5;
   cursor: default;
 }
-
-/* Settings section: current default label */
-.settings-executor-current {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #ddd);
-}
+/* (The settings default-executor label rule — retired with the settings
+   executor section, ui-train-threefix A 2026-10-07.) */

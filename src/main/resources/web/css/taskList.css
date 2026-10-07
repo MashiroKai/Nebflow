@@ -79,6 +79,12 @@
   color: var(--color-text-muted, #888);
   /* Unified panel spec §3.3: tabular figures for the count pair. */
   font-variant-numeric: tabular-nums;
+  /* ui-train-threefix C（2026-10-07 作者截图令）: badge 行与任务行盒模型对齐——
+     delegate 行文案列 x = glyph 12 + gap 8 + 执行器图标 14 + gap 8 = 头行坐标
+     （toggle 20 + gap 8）再加 14；不加时统计徽标文案较任务行文案列左偏 14px
+     （截图二「偏左」形态）。补齐 14px 使两行文案列同线（窄屏 gap 4px 口径随
+     下方媒体查询同步 +4）。 */
+  margin-left: 14px;
 }
 
 /* Collapsed body — use grid-template-rows for smooth height-aware animation */
@@ -325,6 +331,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* 窄屏 .task-header gap 8→4：对齐余量 14→18（见上 42px 方程注）。 */
+    margin-left: 18px;
   }
   /* 窄屏收起状态词与相对时间（delegate 行沿用 .task-node-word/-time 同槽） */
   .task-node-word, .task-node-time { display: none; }

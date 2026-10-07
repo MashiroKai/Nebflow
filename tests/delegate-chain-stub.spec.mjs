@@ -751,3 +751,36 @@ test('T12 per-task 臂：REST record+chain ⇒ S10 渲染一致（节点整组�
 
   expect(pageErrors).toEqual([]);
 });
+
+test('T13 badge 行×任务行盒模型对齐（ui-train-threefix C·2026-10-07 截图令）：统计徽标文案列与 delegate 行文案列同线', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  await setFixture(page, { rows: [row31, row32] });
+
+  // 盒模型读数（card-relative）：badge 行（.task-header/.task-stats）文案左缘 ==
+  // 任务行（.task-node-text）文案左缘。方程：toggle 20 + header gap 8 + 对齐余量 14
+  // == glyph 12 + gap 8 + 执行器图标 14 + gap 8（taskList.css .task-stats 注）。
+  // 截图二「偏左」形态 = stats 较 rowText 左偏 14px；本钉 = 修后同线（±0.75px）。
+  const boxes = await page.evaluate(() => {
+    const card = document.querySelector('.task-card');
+    const c = card.getBoundingClientRect();
+    const rel = (el) => {
+      const r = el.getBoundingClientRect();
+      return { x: +(r.left - c.left).toFixed(1), y: +(r.top - c.top).toFixed(1) };
+    };
+    return {
+      stats: rel(document.querySelector('.task-stats')),
+      rowText: rel(document.querySelector('.task-node.task-delegate .task-node-text')),
+      toggle: rel(document.querySelector('.task-toggle')),
+    };
+  });
+  expect(Math.abs(boxes.stats.x - boxes.rowText.x)).toBeLessThanOrEqual(0.75);
+  // 方向守卫：badge 文案必须仍在其 toggle 右侧（修的是列对齐，不是行序/换行）。
+  expect(boxes.stats.x).toBeGreaterThan(boxes.toggle.x + 20);
+  // 纵向序守卫：badge 行在任务行上方（两行盒模型 = 上下两行，不是同行元素）。
+  expect(boxes.stats.y).toBeLessThan(boxes.rowText.y);
+
+  expect(pageErrors).toEqual([]);
+});
