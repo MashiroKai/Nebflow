@@ -105,7 +105,8 @@ object JevFallback:
     event: String,
     subject: String,
     reason: String,
-    capabilities: Option[List[String]] = None
+    capabilities: Option[List[String]] = None,
+    via: Option[String] = None
   ): IO[Unit] =
     IO.blocking {
       val fields = List(
@@ -114,6 +115,7 @@ object JevFallback:
         "subject" -> subject,
         "reason" -> reason
       ) ++ capabilities.toList.flatMap(cs => List("count" -> cs.size.toString, "capabilities" -> cs.mkString(",")))
+        ++ via.toList.map(v => "via" -> v)
       val line = fields.map { case (k, v) => s""""$k":${Json.fromString(v).noSpaces}""" }.mkString("{", ",", "}")
       os.write.append(eventPath, line + "\n", createFolders = true)
     }.void.handleErrorWith(e =>
@@ -127,6 +129,16 @@ object JevFallback:
    * "the allocation action happened" auditable, which the #8 adjudication
    * names as the real risk signal once allocation authority moves off the
    * NodeEdit parameter.
+   *
+   * `via` (jev-plugins 批 #1226, additive/defaulted): WHICH arm produced the
+   * set — `None` keeps the historical byte-shape (no field); the LLM fallback
+   * leg stamps `"llm-fallback"` so the three allocation states stay
+   * distinguishable in the event stream (Jev success carries no via field =
+   * the original arm).
    */
-  def recordSuccess(subject: String, capabilities: List[String]): IO[Unit] =
-    appendEvent("allocated", subject, "ok", Some(capabilities))
+  def recordSuccess(
+    subject: String,
+    capabilities: List[String],
+    via: Option[String] = None
+  ): IO[Unit] =
+    appendEvent("allocated", subject, "ok", Some(capabilities), via)

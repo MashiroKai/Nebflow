@@ -9,7 +9,7 @@ import nebflow.core.AgentRuntimePort
 import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace}
 import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
-import nebflow.core.project.{ProjectRuntimeRegistry, TaskLedgerHistory, TaskLedgerStore}
+import nebflow.core.project.{PluginInjection, ProjectRuntimeRegistry, TaskLedgerHistory, TaskLedgerStore}
 import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
 
 /**
@@ -342,6 +342,79 @@ object DelegateTool extends Tool:
     val subagentId = s"delegate-$agentName-${java.util.UUID.randomUUID().toString.take(8)}"
     val childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
     val resolvedRoot = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
+    // ── jev-plugins 批 #1226（内置执行器腿分配链 · 原文链条逐字）──────────
+    // 启用插件 → CatalogEntry 目录 → JevGate? → JevAllocator.allocate（need_ 问题对）
+    // ；未配 Jev → LlmAllocator（单次 JSON 选插件）；失败 → JevFallback fail-open。
+    // 分配经 prepareNodePlugins 等价路径（PluginInjection）注入。三态语义：
+    // 分配失败 = fail-open 空集（派发绝不阻塞）；解析/注入失败（选中包被封禁等）=
+    // 显式拒 spawn（分配失败是节点级失败，不静默降级——节点路径同款口径）。
+    // Mail 续聊复活腿同点复用（同是 spawn 触发点，机制同一）。
+    PluginInjection.allocatePreparation(subject = subagentId, taskText = task).flatMap {
+      case Left(err) =>
+        IO.pure(Left(ToolError(s"Delegate: plugin allocation refused — $err (DELEGATE_PLUGINS_REFUSED)")))
+      case Right((preparation, allocated)) =>
+        val grantIo: IO[Either[String, nebflow.core.plugin.PluginMcpManager.Grant]] =
+          if preparation.mcpPlugins.isEmpty then IO.pure(Right(nebflow.core.plugin.PluginMcpManager.Grant(Nil)))
+          else resources.pluginMcp.acquire(subagentId, preparation.mcpPlugins)
+        grantIo.flatMap {
+          // pluginMcp.acquire 失败 → 本腿已启动者已被 manager 回滚停用；spawn 显式
+          // 拒（零 running 残留——NodeStarter 同款口径）。
+          case Left(err) => IO.pure(Left(ToolError(s"Delegate: plugin MCP startup failed — $err")))
+          case Right(grant) =>
+            val effectiveDef =
+              if grant.serverIds.isEmpty && preparation.builtinTools.isEmpty then agentDef
+              else agentDef.copy(pluginMcpServers = grant.serverIds, pluginTools = preparation.builtinTools)
+            spawnWithPlugins(
+              effectiveDef,
+              task,
+              description,
+              workspace,
+              project,
+              taskId,
+              system,
+              resources,
+              childDepth,
+              parentRef,
+              childWsSend,
+              parentSessionId,
+              safetyMode,
+              resolvedRoot,
+              judgeWorkspace,
+              subagentId,
+              preparation,
+              allocated
+            )
+        }
+    }
+
+  end spawnBackground
+
+  /**
+   * 分配后的 spawn 本体（原 spawnBackground for-推导逐字，两处注入：brief 尾部
+   * `<injected-plugins>` 块 + agentDef 运行时授予；记账两行：DelegateRegistry
+   * plugins 集 + ChainStore delegate-spawn 行 plugins/allocation 字段）。
+   */
+  private def spawnWithPlugins(
+    agentDef: AgentDef,
+    task: String,
+    description: String,
+    workspace: String,
+    project: Option[String],
+    taskId: Option[String],
+    system: ActorSystem,
+    resources: AgentRuntimePort,
+    childDepth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    childWsSend: io.circe.Json => IO[Unit],
+    parentSessionId: Option[String],
+    safetyMode: String,
+    resolvedRoot: String,
+    judgeWorkspace: Boolean,
+    subagentId: String,
+    preparation: nebflow.core.project.NodeEngine.PluginPreparation,
+    allocated: nebflow.core.project.PluginInjection.AllocatedSet
+  ): IO[Either[ToolError, (String, String)]] =
+    val agentName = agentDef.name
     for
       // 判定机腿（R6/S13）：git 工作区才成腿——返回 None = 非 git（旧形态逐字）。
       binding <-
@@ -375,6 +448,8 @@ object DelegateTool extends Tool:
       // 常为单 turn 会话，提醒落在 brief 而非中途 ladder；未申报不阻断终态）。
       reportLine =
         """[report] when your work reaches its end state, call delegate_report(category="finish"|"merge"|"blocked", detail=…) right before your final text — "merge" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); "finish" = done for good (pure read / no file changes, or the merge has landed); "blocked" = it cannot be completed. The report updates your status record; your final text remains the deliverable."""
+      // jev-plugins 批 #1226：分配集注入 = prepareNodePlugins 等价路径（注入块
+      // 追加在 brief 尾部——NodeStarter 首条消息同款位形；空分配 = 旧 brief 逐字）。
       brief =
         s"""[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)${binding
             .flatMap(_.briefLine)
@@ -382,7 +457,7 @@ object DelegateTool extends Tool:
             .getOrElse("")}
 $reportLine
 
-$task"""
+$task${if preparation.injectedBlock.isEmpty then "" else s"\n\n${preparation.injectedBlock}"}"""
       ack =
         s"""Delegate task started in the background${taskId.map(n => s" (task #$n)").getOrElse("")}.
 Executor: ${agentName}; workspace: $effectiveWs${project.map(p => s" (project '$p')").getOrElse("")}${binding
@@ -407,7 +482,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       _ = logger.info(
         s"Spawned supervised delegate session: $subagentId (depth=$childDepth, workspace=$effectiveWs, project=${project.getOrElse("-")}${binding
             .map(b => s", branch=${b.branch}${b.worktree.map(w => s", worktree=$w").getOrElse("")}")
-            .getOrElse("")})"
+            .getOrElse("")}${if allocated.names.nonEmpty then s", plugins=${allocated.names.mkString(",")}" else ""})"
       )
       _ <- NodeRunner.registerAgent(
         resources,
@@ -435,16 +510,27 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             branch = binding.map(_.branch),
             worktree = binding.flatMap(_.worktree),
             baseBranch = binding.flatMap(_.baseBranch),
-            projectWorkspace = binding.map(_.baseWs)
+            projectWorkspace = binding.map(_.baseWs),
+            // 分配集记账（#1226 可查面）：分配动作发生即记（空集也是显式空）；
+            // disabled/off（未发生）= None。
+            plugins = if allocated.actionRan then Some(allocated.names) else None
           )
         )
       ).handleErrorWith(e => logger.warn(s"DelegateRegistry.put failed: ${e.getMessage}").void)
-      // ⑤A 链存储：spawn 行（branch/worktree/cwd/基分支——N1 与 #1228 的数据源）。
+      // ⑤A 链存储：spawn 行（branch/worktree/cwd/基分支——N1 与 #1228 的数据源）；
+      // #1226 增分配摘要字段（plugins 集 + 三态模式词——结构帧可查，零新建存储）。
       _ <- IO.blocking(
         ChainStore.appendSync(
           ChainStore.keyFor(taskId, subagentId),
           "delegate-spawn",
-          DelegateWorkspace.spawnPayload(subagentId, ExecutorRegistry.DefaultId, project, binding)
+          DelegateWorkspace.spawnPayload(
+            subagentId,
+            ExecutorRegistry.DefaultId,
+            project,
+            binding,
+            plugins = if allocated.actionRan then Some(allocated.names) else None,
+            allocation = if allocated.actionRan then Some(allocated.mode) else None
+          )
         )
       ).handleErrorWith(e => logger.warn(s"ChainStore delegate-spawn line failed: ${e.getMessage}").void)
       // N1 刀1（v3 §6/A3 宿主挂载腿）：spawn 成功即挂 delegate 作用域宿主——FlowMapStore

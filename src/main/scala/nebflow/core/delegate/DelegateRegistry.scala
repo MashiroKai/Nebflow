@@ -74,7 +74,15 @@ object DelegateRegistry:
        * ExternalSessionRunner.startResumeTurn：带前文的续聊 brief，仍在同地址
        * 同执行器内，零回落）。缺省 None：旧盘面文件无此字段照常解码（向后兼容）。
        */
-      cliSessionId: Option[String] = None
+      cliSessionId: Option[String] = None,
+      /**
+       * 分配插件集（jev-plugins 批 #1226 · S9 可查面）：本 delegate spawn 时分配面
+       * 授予的包名集（task 行结构帧的 plugins 摘要供源；渲染归 #1228）。**分配动作
+       * 发生即记**（`Some(Nil)` = 显式空分配）；`None` = 分配未发生（plugins 总闸关 /
+       * 外部执行器腿——外部执行器零注入，恒 None）。缺省 None：旧盘面文件无此字段
+       * 照常解码（向后兼容，cliSessionId 同款纪律）。
+       */
+      plugins: Option[List[String]] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -165,6 +173,7 @@ object DelegateRegistry:
       reportDetail <- c.get[Option[String]]("reportDetail")
       reportSuggestion <- c.get[Option[String]]("reportSuggestion")
       cliSessionId <- c.get[Option[String]]("cliSessionId")
+      plugins <- c.get[Option[List[String]]]("plugins")
     yield Record(
       id,
       executor,
@@ -181,7 +190,8 @@ object DelegateRegistry:
       reportStatus,
       reportDetail,
       reportSuggestion,
-      cliSessionId
+      cliSessionId,
+      plugins
     )
 
 end DelegateRegistry

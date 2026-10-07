@@ -155,18 +155,34 @@ object DelegateWorkspace:
         "git commit-tree <tree> -p <parent> && git update-ref refs/heads/" + branch + " <new-commit>), or ask the engine to move them at terminal time. " +
         s"NEVER commit directly to $base; direct base-branch drift is surfaced to the judge.$mergeDiscipline"
 
-  /** spawn 行的 ChainStore payload（`delegate-spawn` 行；N1/#1228 的数据源契约）。 */
-  def spawnPayload(delegateId: String, executor: String, project: Option[String], b: Option[Binding]): Json =
-    Json.obj(
-      "delegateId" -> delegateId.asJson,
-      "executor" -> executor.asJson,
-      "project" -> project.getOrElse("").asJson,
-      "branch" -> b.map(_.branch).getOrElse("").asJson,
-      "worktree" -> b.flatMap(_.worktree).getOrElse("").asJson,
-      "cwd" -> b.map(_.cwd).getOrElse("").asJson,
-      "baseWorkspace" -> b.map(_.baseWs).getOrElse("").asJson,
-      "baseBranch" -> b.flatMap(_.baseBranch).getOrElse("").asJson,
-      "baseSha" -> b.flatMap(_.baseSha).getOrElse("").asJson
+  /**
+   * spawn 行的 ChainStore payload（`delegate-spawn` 行；N1/#1228 的数据源契约）。
+   * jev-plugins 批 #1226 增分配摘要两键（additive，缺省不落键——旧行字节不变）：
+   * `plugins` = 分配集；`allocation` = 三态模式词（jev / llm-fallback / fail-open）。
+   */
+  def spawnPayload(
+      delegateId: String,
+      executor: String,
+      project: Option[String],
+      b: Option[Binding],
+      plugins: Option[List[String]] = None,
+      allocation: Option[String] = None
+  ): Json =
+    io.circe.Json.fromJsonObject(
+      io.circe.JsonObject.fromIterable(
+        List(
+          "delegateId" -> delegateId.asJson,
+          "executor" -> executor.asJson,
+          "project" -> project.getOrElse("").asJson,
+          "branch" -> b.map(_.branch).getOrElse("").asJson,
+          "worktree" -> b.flatMap(_.worktree).getOrElse("").asJson,
+          "cwd" -> b.map(_.cwd).getOrElse("").asJson,
+          "baseWorkspace" -> b.map(_.baseWs).getOrElse("").asJson,
+          "baseBranch" -> b.flatMap(_.baseBranch).getOrElse("").asJson,
+          "baseSha" -> b.flatMap(_.baseSha).getOrElse("").asJson
+        ) ++ plugins.toList.map(p => "plugins" -> p.asJson)
+          ++ allocation.toList.map(a => "allocation" -> a.asJson)
+      )
     )
 
 end DelegateWorkspace

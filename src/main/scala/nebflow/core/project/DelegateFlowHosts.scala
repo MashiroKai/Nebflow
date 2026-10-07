@@ -172,7 +172,11 @@ object DelegateFlowHosts:
                 // 重映射投创建者（S19① 不破例）；bare "Nebula" = 零投递标记照旧
                 // （NodeTools.parseOutSegment R1-a 分支零触碰）。
                 notifyTargetKind = NodeEngine.NotifyTargetKind.CreatorDelegate,
-                notifyAuditWorkspace = Some(baseWorkspace)
+                notifyAuditWorkspace = Some(baseWorkspace),
+                // jev-plugins 批 #1226（S9 扩面）：作用域引擎 = 分配触发点（链每步
+                // spawn）——节点空声明走分配面（PluginInjection.forNode）；per-project
+                // 引擎不传（缺省 false = 逐字节旧行为）。
+                delegateScope = true
               )
               rt = DelegateFlowRuntime(delegateId, project, baseWorkspace, engineCwd, store, engine)
               _ <- hosts.update(_ + (delegateId -> rt))

@@ -216,6 +216,15 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      // GET /api/decision/health —— 分配决策通道探活（jev-plugins 批 #1226；设置页
+      // Jev 区探活显示的读通道）。读 sharedResources.decisionHealth 单实例（写腿 =
+      // 插件分配器两腿）。凭证无关：payload 只含 status/reason/since（DecisionHealth
+      // .toJson 既有键族——reason 为分类诊断词，永不携带任务文本或密钥）。
+      case req @ GET -> Root / "decision" / "health" =>
+        withAuth(req) {
+          sharedResources.decisionHealth.toJson.flatMap(h => Ok(Json.obj("decision" -> h)))
+        }
+
       // Update config
       case req @ PATCH -> Root / "config" =>
         withAuth(req) {

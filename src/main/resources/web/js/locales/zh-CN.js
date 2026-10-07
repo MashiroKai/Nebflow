@@ -891,6 +891,10 @@ export default {
   'settings.jevEndpoint': '端点',
   'settings.jevKeyRef': 'API 密钥引用',
   'settings.jevHint': '开启后，Nebflow 执行器的 Delegate 调用会先询问 Jev 该任务需要哪些插件；未配置 Jev 时由普通 LLM 调用代判。keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。',
+  'settings.jevHealth': '分配探活',
+  'settings.jevHealthUp': '正常',
+  'settings.jevHealthDown': '异常',
+  'settings.jevHealthUnconfigured': '未配置',
   // executors panel（executor-registry 批，2026-10-03）
   'executors.hint': 'Delegate 任务由下方默认执行器执行。检测扫描 PATH 与常用安装前缀；外部 CLI 以 headless 模式在项目目录内运行。',
   'executors.empty': '尚无在册执行器。',
