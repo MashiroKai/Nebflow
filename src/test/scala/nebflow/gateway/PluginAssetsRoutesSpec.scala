@@ -76,13 +76,16 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
 
   /**
    * The PRODUCTION composition (GatewayMain): the route as one arm of
-   * `Router("/api" -> …)`, served through orNotFound — a request to
-   * `/api/plugin-assets/…` must REACH the route (not fall through), with
-   * http4s handing it the prefix-stripped `pathInfo`.
+   * `Router("/api" -> …)` — a request to `/api/plugin-assets/…` must REACH
+   * the route (not fall through), with http4s handing it the prefix-stripped
+   * `pathInfo`. The Router itself is an HttpRoutes, so the Option semantics
+   * are load-bearing: a reached route = Some(response), a silent fall-through
+   * = None — the seam pins below fail loudly on None (the pre-fix 404 seam
+   * showed up as a fall-through, never as an answer from this route).
    */
   private def mountedGet(pluginDir: os.Path)(path: String): Option[org.http4s.Response[IO]] =
-    val app = Router("/api" -> StaticRoutes.pluginAssetsRoutes(gatewayToken, resolverFor(pluginDir))).orNotFound
-    app.run(Request[IO](Method.GET, Uri.unsafeFromString(path))).unsafeRunSync()
+    val mounted = Router("/api" -> StaticRoutes.pluginAssetsRoutes(gatewayToken, resolverFor(pluginDir)))
+    mounted.run(Request[IO](Method.GET, Uri.unsafeFromString(path))).value.unsafeRunSync()
 
   test("rejects unauthenticated requests") {
     withTempPlugin { dir =>
