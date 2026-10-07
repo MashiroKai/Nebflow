@@ -62,7 +62,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
       Set(
         "Mail",
         // AgentFlow 已退役（unified-delegate 批 2026-10-03）：派发统一走 Delegate。
-        "ProjectCreate",
+        "Project", // N2 project-tool 批 2026-10-06 ⑨A 更名（原 ProjectCreate）
         "AgentControl",
         // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
         // 直接触发 kernel 并返回 kernel:<id> 续聊地址（取代 promptgov 批 2026-09-17

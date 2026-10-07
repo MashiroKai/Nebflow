@@ -108,8 +108,9 @@ object ToolRegistry:
       // FlowReport 注册已随 2026-09-06 工具面裁撤批移除（见上注）。
       // #28 阶段 0：Project + Node 模型工具集（分发器白名单声明；全局注册使
       // agent.json tools 可解析）。NodeEdit/NodeList/NodeCancel = 分发器用；
-      // ProjectCreate = Nebula 用（建项目 + 工作区脚手架；workspace 缺省/不可用
-      // 时弹 AskUser 式路径面板复用 pending 机制）。
+      // Project = Nebula 用（N2 project-tool 批 2026-10-06 ⑨A 更名，原 ProjectCreate
+      // ——建项目 + 工作区脚手架 + unmount 硬卸载面；workspace 缺省/不可用
+      // 时弹 AskUser 式路径面板复用 pending 机制。旧名走 RetiredToolGuides 墓碑指路）。
       // 本条覆盖此前相关指令：**`Task` 已删净退役**（2026-09-12「一个 Mail
       // 统一」批，B3-a + B5-c）——项目触发入口唯一 = `Mail(address="project:<name>")`；
       // 打到 `Task` 的调用走 AgentCore 的退役工具迁移指引表（只产错误文案，
@@ -118,7 +119,7 @@ object ToolRegistry:
       "NodeEdit" -> NodeEditTool,
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,
-      "ProjectCreate" -> ProjectCreateTool,
+      "Project" -> ProjectTool,
       // MemoryNote registration retired 2026-09-25 (govmemory batch): the tool
       // was pure queue bookkeeping (zero disk writes since 2026-09-12) and the
       // queue is retired with it. Memory is written directly with Edit/Write on

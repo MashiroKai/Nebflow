@@ -50,7 +50,7 @@ object InteractionRequestId:
   /** SendMessage ask 档确认卡（`SendConfirm.ask`）。 */
   def forSendConfirm(): String = newId("confirm")
 
-  /** ProjectCreate 工作区选择面板（`NodeTools.ProjectCreateTool` 的 pathPanel）。 */
+  /** Project 工具工作区选择面板（`ProjectTool` 的 pathPanel；N2 更名，原 ProjectCreateTool）。 */
   def forDirPanel(): String = newId("panel")
 
   /**

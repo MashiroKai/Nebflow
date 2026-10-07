@@ -314,7 +314,7 @@ object AgentCommand:
     /**
      * 附件引用（本批：AskUser 顶层可选参数 `attachments`）。路径已在工具调用期经
      * `FilePolicyPort` 校验通过；此处只搬运到 `buildAskUserJson` 的顶层键。
-     * 缺省 `Nil` ⇒ 两个既有构造点（`ProjectCreateTool.pathPanel` / `SendConfirm.ask`）
+     * 缺省 `Nil` ⇒ 两个既有构造点（`ProjectTool.pathPanel` / `SendConfirm.ask`）
      * 不传即载荷**逐字节不变**。
      *
      * 🔴 `mode` 形参已随「非阻塞-only」裁定移除（root 2026-10-02 令 #462 裁①/②）：
@@ -326,7 +326,7 @@ object AgentCommand:
      * 需要答复作为**返回值**）。🔴 与已移除的 `AskMode` 枚举**不是**同一回事：
      * 那是 `AskUserQuestion` 的**工具面模式**（本批裁① 全量非阻塞，已删除）；
      * 这是**命令面**的客观事实——`AskUserQuestionTool` 一律非阻塞 ⇒ 恒 `false`；
-     * 仍在阻塞等待的两个**既有构造点**（`ProjectCreateTool.pathPanel` 与
+     * 仍在阻塞等待的两个**既有构造点**（`ProjectTool.pathPanel` 与
      * `SendConfirm`）中，走本命令的那个必须置 `true`，否则 `AgentProcessing` 不标
      * `WaitingForUser`（`TaskStuckWatcher` 会把「等人选路径」误判为真卡死并硬取消）
      * 且不暂停内核 wall-clock 预算（等人在 R11 第 4 层口径下不计入预算）。

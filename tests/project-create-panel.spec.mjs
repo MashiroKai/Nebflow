@@ -112,7 +112,7 @@ test('T1 正常路径真渲染：dirPicker 卡无 textarea；点选即自动提�
 
   // 问题文案：引导目录浏览器 + 改述「选择后即完成创建」；退役叙述不得残留
   const question = await page.locator('.option-q').first().textContent();
-  expect(question).toContain('ProjectCreate');
+  expect(question).toContain('Project');
   expect(question).toContain('工作区路径');
   expect(question).toContain('选择后即完成创建');
   expect(question).not.toContain('输入框');

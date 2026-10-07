@@ -330,7 +330,8 @@ object AgentCore:
    * 取代，只归档、不重提。
    * 分组与矩阵行一一对应：
    *   - 编排触发：Mail（R2「一个 Mail 统一」批：−Task +Mail，2026-09-12）/
-   *     ProjectCreate / AgentControl（list/status/cancel/restart）
+   *     Project（N2 project-tool 批 2026-10-06 ⑨A 更名，原 ProjectCreate——件数
+   *     零变化，纯换名非摘除）/ AgentControl（list/status/cancel/restart）
    *     / Delegate（2026-09-11 极简内核回归）
    *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
    *     防声明逃逸——dispatcher/general/"*" 一律剥离）
@@ -382,7 +383,9 @@ object AgentCore:
     // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
     // 报错并指明合法地址面（硬禁静默兜底/模糊匹配）；入站不受限。
     "Mail",
-    "ProjectCreate",
+    // Project（N2 project-tool 批 2026-10-06 ⑨A 硬替换：ProjectCreate → Project，
+    // 同参数面 + 新增 action="unmount" 硬卸载腿；旧名入 RetiredToolGuides 指路）。
+    "Project",
     "AgentControl",
     // Delegate（**builtin-def 批 2026-10-03 作者令②在場恢复**：「使用 Delegate
     // 直接触发 kernel，返回地址」）：极简内核入口——无项目归属的单次执行任务，
@@ -589,7 +592,13 @@ object AgentCore:
     // Workflow（N1 复名批 v2 §6.F 候选，ChainEdit 引用随 v3 作废改 ChainWrite）：
     // 名字退役产生的新墓碑——Workflow 名已注册删除，打旧名的调用落本指引。
     "Workflow" ->
-      """Workflow is not available — the tool was renamed AgentFlow (same parameters: steps = [{id, task, deps}], description). Resubmit as AgentFlow(...); for persistent registered chains use ChainWrite."""
+      """Workflow is not available — the tool was renamed AgentFlow (same parameters: steps = [{id, task, deps}], description). Resubmit as AgentFlow(...); for persistent registered chains use ChainWrite.""",
+    // ProjectCreate（N2 project-tool 批 2026-10-06，⑨A 硬替换 + guard 表登记，
+    // taskunify/N1 rename 先例同型）：Project 工具更名（create 语义原样保留，
+    // 面板手动卸载被工具面替代 = 新增 action="unmount"）。名字退役产生的新墓碑
+    // ——打旧名的调用落本指引（注册面已换名，本条对活名 "Project" 永不可达）。
+    "ProjectCreate" ->
+      """ProjectCreate is not available — the tool was renamed Project (same create parameters; the panel's manual unmount is replaced by Project's own `action="unmount"` face: it stops the project's in-flight work first — nodes, chains, dispatcher/delegate sessions — then removes it from the mount face, keeping every workspace file). Resubmit as Project(workspace=...) to create/re-mount, or Project(action="unmount", name=...) to unmount."""
     // 旧 "AgentFlow" 墓碑条目随 N1 复名批删除（v2 §3.2 处置：AgentFlow 以新工具
     // 注册进 TOOL_MAP——注册即令本表对该名永不可达，留条目＝死文本，违表零膨胀
     // 纪律；legacy 派发意图改由 AgentFlowTool 内案 A 形态判据承接）。

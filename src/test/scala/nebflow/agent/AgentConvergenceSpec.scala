@@ -57,7 +57,7 @@ class AgentConvergenceSpec extends FunSuite:
     val baseExpected = Set(
       "Mail",
       // AgentFlow 已退役（unified-delegate 批 2026-10-03）：派发统一走 Delegate。
-      "ProjectCreate",
+      "Project", // N2 project-tool 批 2026-10-06 ⑨A 更名（原 ProjectCreate）
       "AgentControl",
       // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
       // 直接触发内置执行 agent 并返回 delegate:<id> 续聊地址

@@ -88,7 +88,7 @@ end AskUser
  *
  *  - `AskUserAnswerBridge`（工具面非阻塞腿）：**不**把它当用户答复注入会话
  *    （否则会话里会凭空多出一条空用户消息）；
- *  - `ProjectCreateTool.parsePanelAnswer`（面板阻塞腿）：**不**把它当「用户关闭了
+ *  - `ProjectTool.parsePanelAnswer`（面板阻塞腿）：**不**把它当「用户关闭了
  *    面板」（`Shelved` 搁置），而是给出明确报错。
  *
  * 判据本体（「这是不是失败信号」）只在本对象内实现一处，两个订阅点一律委托

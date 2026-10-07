@@ -1722,7 +1722,21 @@ case class ProjectDef(
    * 单程语义：恢复 = 手工删除 project.json 中 archived/archivedAt 两键（本批无 UI）。
    */
   archived: Option[Boolean] = None,
-  archivedAt: Option[Long] = None
+  archivedAt: Option[Long] = None,
+  /**
+   * unmount 标记（N2 project-tool 批 2026-10-06，S17/⑩A 硬卸载档）：只有显式动作
+   * （`Project` 工具 `action="unmount"` → `ProjectStore.markUnmounted`）会设置；无任何
+   * 自动路径。unmount 三步序「先停后卸」——本键写入时该项目在飞任务已停（链/节点/
+   * dispatcher·delegate 会话），随后 `ProjectStore.list()` 源头过滤（面板 API 与
+   * startupMount 同源跳过），workspace 文件零删除零移动（硬约束）。解码侧可选——
+   * 存量 project.json 无此键 → withDefaults 解码 None（零迁移）；磁盘写入走
+   * markUnmounted 手术式原位插键（非全量 re-encode），未卸载项目文件不含此键
+   * （条件序列化，与 archived 同款）。单程语义：恢复 = 手工删除 project.json 中
+   * unmounted/unmountedAt 两键（`Project` 工具 create 面显式拒绝 unmounted 项目，
+   * 同 archived 先例形状）。
+   */
+  unmounted: Option[Boolean] = None,
+  unmountedAt: Option[Long] = None
 )
 
 object ProjectDef:
