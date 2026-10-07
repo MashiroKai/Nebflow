@@ -160,6 +160,38 @@
 //     the Nebula pin write-back) stay FEISHU-ONLY ([[CONTRACT_FACE_CHANNELS]]):
 //     the weixin bridge resolves its default session server-side, and no
 //     weixin request may ride the feishu endpoints.
+//
+// weixin-binditem batch (author order 2026-10-07 09:22, 微信②·绑定完成态 UI
+// 重构): the WEIXIN binding face becomes an ITEM ROW (accordion). The five
+// states the order pins, and where each lives here:
+//   ① default = one row only (icon + 微信 iLink + status pill + chevron);
+//      clicking the row expands the QR binding face — the in-card scan block
+//      moves INTO the row's expandable body WHOLE ([[itemCardHTML]]), it is
+//      hidden, NOT rebuilt (the scan nodes must stay in the DOM: the scan flow
+//      re-queries and writes them per tick, and an auto-begun session renders
+//      the QR behind the collapsed row so expanding shows it mid-flow);
+//   ② scanning — the badge rides the EXISTING state machine unchanged (the
+//      pill is [[displayStatus]] on both faces; no scan-state pill is added);
+//   ③ binding done — the expansion is dropped ([[tickSession]]'s `done` leg)
+//      so the card lands back on the row; the created face's EMPTY live bar is
+//      retired with the form ([[liveBlockHTML]] is not rendered on the item
+//      face at all — the item-face channel has no C1 source, so that container
+//      was permanently empty, which is exactly the empty-bar shape the order
+//      retires);
+//   ④ the unbind control rides the EXPANDED face (the 取舍 is declared in the
+//      batch report: the row stays single-purpose so the accordion toggle can
+//      never share a click with a destructive action — no double-target
+//      ambiguity on the row, which state ⑤ forbids);
+//   ⑤ clicking the expanded row collapses it ([[toggleItemFace]] toggles
+//      aria-expanded + the body's `hidden` attribute in place — never a
+//      [[renderAll]], whose rebuild would detach the QR box while
+//      [[session.lastQrUrl]] still holds the rendered URL and the next tick
+//      would skip the re-render).
+// Feishu keeps the two-face card byte-for-byte ([[ITEM_FACE_CHANNELS]]); zero
+// locale key changes (§16: the row, the badge, the expanded faces and the
+// unbind control all reuse existing copy; aria-expanded/aria-controls carry no
+// copy). Zero engine change (GET /api/social/channels stays a read-only
+// consumer).
 
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
@@ -306,6 +338,23 @@ const FEISHU_DEFAULT_SESSION_URL = '/api/social/channels/feishu/default-session'
  *  (its default session resolves server-side through the bridge seam). The
  *  Nebula pin write-back inherits the same restriction. */
 const CONTRACT_FACE_CHANNELS = ['feishu'];
+
+/** The channels whose card renders as an ITEM ROW (accordion) instead of the
+ *  two-face card. weixin-binditem (author order 2026-10-07 09:22): the weixin
+ *  binding face collapses to ONE row; the working faces live inside the row's
+ *  expandable body ([[itemCardHTML]]). Feishu keeps the two-face card. The
+ *  channel-scoped constant is the [[CONTRACT_FACE_CHANNELS]] shape — one named
+ *  set, not an id literal in the render path. */
+const ITEM_FACE_CHANNELS = ['weixin-ilink'];
+
+/** Which item-face cards are expanded, keyed by channel id. Expansion is VIEW
+ *  state only: the body is ALWAYS rendered (the scan nodes must exist — the
+ *  scan flow re-queries and writes them per tick), `hidden` only withdraws it
+ *  from the visible face. Cleared on panel close (default = the row only) and
+ *  on the two transitions the order pins: scan `done` (state ③: auto-collapse
+ *  back to the item view) and archive completion (same default-row reading for
+ *  the recreate leg). */
+const itemExpanded = new Set();
 
 /**
  * First non-empty string among the candidates (contract-field tolerance: a
@@ -534,12 +583,14 @@ function cardHint(ch, status) {
 }
 
 /**
- * One card. The scanBind channels (feishu today) render the two-face card;
+ * One card. The scanBind channels render the two-face card; weixin-binditem:
+ * the item-face channels ([[ITEM_FACE_CHANNELS]]) render the accordion card;
  * every other channel keeps the plain card shape unchanged.
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
  * @returns {string}
  */
 function cardHTML(ch) {
+  if (ch.scanBind && ITEM_FACE_CHANNELS.includes(ch.id)) return itemCardHTML(ch);
   return ch.scanBind ? scanBindCardHTML(ch) : plainCardHTML(ch);
 }
 
@@ -591,6 +642,23 @@ function plainCardHTML(ch) {
 }
 
 /**
+ * The in-card scan block — ONE source for both faces: the two-face card renders
+ * it directly ([[scanBindCardHTML]]); the item face renders it inside the row's
+ * expandable body ([[itemCardHTML]]). The container and its `data-scan-qr` /
+ * `data-scan-code` / `data-scan-status` children are [[scanNode]]'s anchors;
+ * the `data-scan-inline` attribute stays retired (socpanel-min wave-2 P4).
+ * @returns {string}
+ */
+function scanInlineHTML() {
+  return `
+      <div class="social-scan-inline">
+        <div class="social-scan-qr" data-scan-qr></div>
+        <div class="social-scan-code" data-scan-code hidden></div>
+        <div class="social-scan-status" data-scan-status role="status" aria-live="polite"></div>
+      </div>`;
+}
+
+/**
  * The scanBind card (feishu-panel two faces; social-fix 2026-09-28): scan and
  * configure share ONE view layer — no sub-dialog, no manual form.
  *   · not-created — the QR lives IN the card with its status line
@@ -607,6 +675,8 @@ function plainCardHTML(ch) {
  * `data-scan-status` children stay ([[scanNode]] reads them).
  * The head keeps icon + name + status pill; the enable switch is folded into
  * archive (enabled=false IS the archive — no separate disabled face exists).
+ * weixin-binditem: feishu keeps THIS shape — the item face ([[itemCardHTML]])
+ * is weixin-only, so every feishu-pinned anchor renders byte-identically.
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
  * @returns {string}
  */
@@ -619,12 +689,7 @@ function scanBindCardHTML(ch) {
         <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
         <span class="social-status-pill plugins-state-pill" data-status="${status}">${pillInner(status, t(`social.status.${status}`))}</span>
       </div>`;
-  const scanInline = `
-      <div class="social-scan-inline">
-        <div class="social-scan-qr" data-scan-qr></div>
-        <div class="social-scan-code" data-scan-code hidden></div>
-        <div class="social-scan-status" data-scan-status role="status" aria-live="polite"></div>
-      </div>`;
+  const scanInline = scanInlineHTML();
   const face = created
     ? `${liveBlockHTML(ch)}
        <div class="social-card-actions">
@@ -641,6 +706,81 @@ function scanBindCardHTML(ch) {
       ${face}
       <div class="social-card-hint"${hint ? '' : ' hidden'}>${hint ? statusIcon('triangle-alert', 12, 'st-err') + escapeHtml(hint) : ''}</div>
     </div>`;
+}
+
+/**
+ * The item-face card (weixin-binditem, author order 2026-10-07 09:22): the
+ * binding face collapses to ONE row — icon + 微信 iLink + the status pill + a
+ * chevron — and the working faces live inside the row's expandable body:
+ *   · not-created (state ①) — the QR binding face ([[scanInlineHTML]]) whole.
+ *     The auto-begun session ([[maybeBeginScan]] is unchanged) writes into the
+ *     hidden nodes, so expanding shows the QR mid-flow; expanding a card
+ *     without a live session (re)begins one ([[toggleItemFace]] —
+ *     [[beginInlineScan]] is idempotent).
+ *   · created (states ③④) — the unbind row ONLY. The C1 live block is
+ *     deliberately NOT rendered on this face: the item-face channel has no
+ *     connection endpoint ([[CONTRACT_FACE_CHANNELS]] is feishu-only), so its
+ *     live container was permanently empty — exactly the empty-bar form this
+ *     order retires. Scan `done` drops the expansion ([[tickSession]]), so the
+ *     card lands back on the row with the bound badge.
+ * The head keeps the `.social-card-head` class (W4's judging surface) on the
+ * row <button> itself — one tab stop, Enter/Space toggles; the status pill is
+ * the SAME pill the two-face card renders (state ②: badge semantics ride the
+ * existing state machine unchanged). The hint line stays OUTSIDE the body: a
+ * configInvalid reading explains the pill, which is visible while collapsed,
+ * so the explanation must be too.
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {string}
+ */
+function itemCardHTML(ch) {
+  const created = faceCreated(ch);
+  const status = displayStatus(ch);
+  const hint = cardHint(ch, status);
+  const expanded = itemExpanded.has(ch.id);
+  const bodyId = `social-item-body-${escapeHtml(ch.id)}`;
+  const row = `<button type="button" class="social-card-head social-item-row" data-item-toggle="${escapeHtml(ch.id)}"
+        aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="${bodyId}">
+        <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
+        <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
+        <span class="social-status-pill plugins-state-pill" data-status="${status}">${pillInner(status, t(`social.status.${status}`))}</span>
+        <i data-lucide="chevron-down" class="social-item-chevron"></i>
+      </button>`;
+  const body = created
+    ? `<div class="social-card-actions">
+         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t(archiveKey(ch.id, 'hint')))}">${statusIcon('unplug', 12, 'st-err')}${escapeHtml(t(archiveKey(ch.id, 'action')))}</button>
+         <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
+       </div>`
+    : scanInlineHTML();
+  return `<div class="social-card social-card-scanbind social-card-itemface" data-channel="${escapeHtml(ch.id)}">
+      ${row}
+      <div class="social-item-body" id="${bodyId}" data-item-body${expanded ? '' : ' hidden'}>${body}</div>
+      <div class="social-card-hint"${hint ? '' : ' hidden'}>${hint ? statusIcon('triangle-alert', 12, 'st-err') + escapeHtml(hint) : ''}</div>
+    </div>`;
+}
+
+/**
+ * Expand/collapse one item-face card (weixin-binditem, states ①⑤): the row
+ * toggles IN PLACE — `aria-expanded` and the body's `hidden` attribute flip on
+ * the live DOM, never a [[renderAll]] (a rebuild mid-scan would detach the QR
+ * box while the session's `lastQrUrl` still holds the rendered URL, and the
+ * next poll tick — which re-renders only on a URL CHANGE — would leave the
+ * box empty). Expanding a not-created card also (re)begins its scan session:
+ * [[beginInlineScan]] is idempotent while a session is live, so this is a
+ * no-op on the auto-begun path and a genuine retry after a failed one.
+ * @param {string} channelId
+ */
+function toggleItemFace(channelId) {
+  const card = cardEl(channelId);
+  if (!card) return;
+  const body = card.querySelector('[data-item-body]');
+  const row = card.querySelector('[data-item-toggle]');
+  if (!(body instanceof HTMLElement) || !(row instanceof HTMLElement)) return;
+  const expand = !itemExpanded.has(channelId);
+  if (expand) itemExpanded.add(channelId); else itemExpanded.delete(channelId);
+  row.setAttribute('aria-expanded', expand ? 'true' : 'false');
+  if (expand) body.removeAttribute('hidden'); else body.setAttribute('hidden', '');
+  const ch = channelById(channelId);
+  if (expand && ch && ch.scanBind && !faceCreated(ch)) void beginInlineScan(channelId);
 }
 
 /**
@@ -969,6 +1109,11 @@ async function archiveChannel(channelId) {
     for (const f of ch.fields) delete draftValues[`${channelId}.${f.key}`];
     configByChannel = await fetchConfig();
     try { probeByChannel[channelId] = await fetchProbe(channelId); } catch { /* keep */ }
+    // weixin-binditem: unbind returns the card to its DEFAULT item view (the
+    // order's default = the row only); the recreate leg below re-begins the
+    // scan behind the collapsed row ([[maybeBeginScan]]), so expanding shows
+    // the fresh QR.
+    itemExpanded.delete(channelId);
     renderAll();
     setSaveState(channelId, t(archiveKey(channelId, 'done')));
     maybeBeginScan(); // recreate: the archived face auto-begins the QR
@@ -1053,7 +1198,10 @@ async function pinDefaultSessions() {
  * Auto-begin the in-card scan on EVERY visible scanBind card sitting on its
  * not-created face (QR first on entry; the archive→recreate leg reuses this).
  * A created card, a closed panel or a card that already owns a session never
- * triggers one.
+ * triggers one. weixin-binditem: item-face cards begin theirs too — the
+ * session writes into the row's hidden body, so the QR is already rendered
+ * when the row is expanded (state ① keeps the auto-begin semantics; only the
+ * DOM target moved behind the row).
  */
 function maybeBeginScan() {
   const ov = overlay();
@@ -1276,6 +1424,11 @@ function tickSession(channelId, session) {
       activeScans.delete(channelId);
       sweepScanPoll();
       setScanStatus(channelId, t(scanKey(channelId, 'done')));
+      // weixin-binditem (state ③): binding done ⇒ the binding face withdraws
+      // back to the item row. Dropping the expansion here makes the loadAll()
+      // rebuild below land the card on its collapsed row, badge carrying the
+      // bound state ([[displayStatus]] reads the re-read backend truth).
+      itemExpanded.delete(channelId);
       // The card behind flips by backend truth: re-read config + probe so the
       // pill/credential line/adapterRegistered come back current (plan card §5.7).
       setBusy(true);
@@ -1312,6 +1465,9 @@ export function closeSocialPanel() {
   // The in-card scan poll never outlives the panel (the closer owns the exit).
   stopScanPoll();
   activeScans.clear();
+  // weixin-binditem: expansion is session-scoped view state — reopening the
+  // panel starts from the default (the row only).
+  itemExpanded.clear();
   ov.classList.remove('on');
   // Esc/close always returns focus to the entry button (W13).
   const btn = document.getElementById('social-btn');
@@ -1358,6 +1514,13 @@ function onDocumentClick(ev) {
   if (!target) return;
   if (target.closest('#social-btn')) { openSocialPanel(); return; }
   if (target.closest('#social-modal-close')) { closeSocialPanel(); return; }
+  // weixin-binditem: the item row's toggle. Checked BEFORE the action buttons:
+  // the row is the head, so everything inside it (icon, name, pill, chevron)
+  // toggles — and the unbind button, which lives in the BODY, can never reach
+  // this branch (it is not a descendant of the row), so a destructive action
+  // and the accordion toggle can never share one click (state ⑤).
+  const item = target.closest('[data-item-toggle]');
+  if (item instanceof HTMLElement && item.dataset.itemToggle) { toggleItemFace(item.dataset.itemToggle); return; }
   const arch = target.closest('[data-archive]');
   if (arch instanceof HTMLElement && arch.dataset.archive) { void archiveChannel(arch.dataset.archive); return; }
   const save = target.closest('[data-save]');

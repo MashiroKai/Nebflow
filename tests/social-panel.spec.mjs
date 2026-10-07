@@ -153,6 +153,26 @@
 //    brief explicitly leaves it alone and asks for it to be registered instead.
 //    It is reported as 「注释面待清」 for a separate ruling.
 //
+// 🔴 WEIXIN-BINDITEM (author order 2026-10-07 09:22, 微信②·绑定完成态 UI 重构):
+//    the WEIXIN binding face becomes an ITEM ROW (accordion). Default = one
+//    row only (icon + 微信 iLink + status pill + chevron); one click expands
+//    the QR binding face (the in-card scan block moves into the row's
+//    expandable body WHOLE — hidden, NOT rebuilt, so the scan flow's per-tick
+//    writes keep landing); scanning rides the existing badge semantics (②);
+//    scan `done` auto-collapses back to the row (③) and the created face's
+//    empty live bar retires (zero [data-live] on the weixin card in any
+//    state); the unbind control rides the EXPANDED face (④ — the declared
+//    取舍: the row stays single-purpose so the toggle can never share a click
+//    with a destructive action); clicking the expanded row collapses it (⑤).
+//    Feishu keeps the two-face card byte-for-byte ([[ITEM_FACE_CHANNELS]] is
+//    weixin-only). Zero locale key changes (§16: every string on the new face
+//    reuses existing copy; aria-expanded/aria-controls carry none). New
+//    anchors: [[bindItemSuite]] WBI-1..8. RED leg = the AFTER suite against
+//    the pre-change tree (SOCIAL_SUITE=after SOCIAL_WEB_ROOT=<baseline>/web):
+//    WBI-1..7 must fail there (no [data-item-toggle] exists), WBI-8 stays
+//    green on both trees (control, not a flipped anchor). Every WBI leg is
+//    mock-driven (夹具优先): no real binding flow, zero production writes.
+
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
@@ -840,6 +860,12 @@ async function afterSuite(browser, base) {
               // class discriminates exactly as the attribute did.
               // Plain cards keep the head switch; sealed channels never render.
               // See js/socialPanel.js scanBindCardHTML / plainCardHTML.
+              // 🔴 weixin-binditem (2026-10-07): the weixin card's head is the
+              // ITEM ROW (a real <button> carrying the same .social-card-head
+              // class — the accordion toggle), so the icon/name/status probe
+              // reads identically; the control discriminator still holds
+              // because the working face (scan block / archive) stays in the
+              // DOM inside the row's body — hidden, NOT deleted.
               noCardToggle: !c.querySelector('.nb-toggle'),
               control: !!c.querySelector('.social-scan-inline, [data-archive]'),
             } : null;
@@ -1886,6 +1912,255 @@ async function min2Suite(browser, base) {
   await ctx.close();
 }
 
+// ── WEIXIN-BINDITEM: the weixin binding face as an ITEM ROW (accordion) ─────
+// Author order 2026-10-07 09:22 (微信②·绑定完成态 UI 重构). Five states, each
+// anchored on the SAME mock backend the suites above use (夹具优先 — no real
+// binding flow, zero production writes; the scan face is the suite's own
+// state-machine mirror). Runs LAST in the AFTER chain so nothing below it can
+// inherit its apiState mutations.
+//
+//   WBI-1  default   — the weixin card IS one row: [data-item-toggle] with
+//                      aria-expanded="false", [data-item-body] present AND
+//                      hidden, chevron present, pill = channelStatus.
+//   WBI-2  expand    — one click ⇒ aria-expanded="true", the body visible, the
+//                      QR face renders in it (the auto-begun session already
+//                      drew it behind the collapsed row).
+//   WBI-3  collapse  — the SAME click target toggles back (accordion, ⑤; no
+//                      second control, no double-bind).
+//   WBI-4  scanning  — the badge rides the existing semantics (②): during
+//                      polling the pill stays the channelStatus reading while
+//                      the scan status line advances to the confirmed copy.
+//   WBI-5  done      — the card auto-collapses back to the row (③), the pill
+//                      reads connected, and the retired empty-bar form stays
+//                      retired: zero [data-live] on the weixin card, the scan
+//                      block gone, the unbind control inside the body.
+//   WBI-6  unbind    — the unbind control rides the EXPANDED face (④):
+//                      present-but-not-visible collapsed, visible expanded,
+//                      hover copy unchanged (archive.hint on the title).
+//   WBI-7  archive   — unbind returns the card to the default row; the
+//                      recreate leg re-begins the scan behind it (expand ⇒ QR).
+//   WBI-8  control   — the feishu card is NOT an item face: no row, no body,
+//                      no itemface class, head still a plain div (green on
+//                      BOTH trees — it is the control, not a flipped anchor).
+//
+// 🔴 RED LEG (same discipline as the flipped anchors above): run the AFTER
+//    suite against the pre-change tree —
+//      SOCIAL_SUITE=after SOCIAL_WEB_ROOT=<baseline>/web node tests/social-panel.spec.mjs
+//    — WBI-1..7 must FAIL there (the old tree renders the two-face weixin
+//    card: no [data-item-toggle] / [data-item-body] anywhere), WBI-8 stays
+//    GREEN. The legs below therefore guard their clicks: on a tree without
+//    the item face a missing selector must record a named RED, not kill the
+//    run ([[leg]] catches and emits).
+async function bindItemSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  apiState.posts = [];
+  resetScanFace();
+  await boot(page, { locale: 'zh-CN' });
+  await page.goto(base);
+  await openPanel(page);
+
+  /** Red-leg guard: run one leg; a selector that cannot exist on a pre-change
+   *  tree throws, and the catch records the leg's named RED instead of dying. */
+  const leg = async (name, fn) => {
+    try { await fn(); } catch (e) {
+      check(name, false, `red-by-absence (pre-change tree): ${String((e && e.message) || e).slice(0, 200)}`);
+    }
+  };
+  const readCard = () => page.evaluate(() => {
+    const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+    if (!card) return { card: false };
+    const row = card.querySelector('[data-item-toggle]');
+    const body = card.querySelector('[data-item-body]');
+    const bo = body instanceof HTMLElement ? body.offsetParent : undefined;
+    return {
+      card: true,
+      itemface: card.classList.contains('social-card-itemface'),
+      row: !!row,
+      rowIsButton: row instanceof HTMLButtonElement,
+      ariaExpanded: row ? row.getAttribute('aria-expanded') : null,
+      bodyPresent: !!body,
+      bodyHidden: body ? body.hasAttribute('hidden') : null,
+      bodyVisible: bo !== null && bo !== undefined,
+      pill: (card.querySelector('[data-status]') || {}).getAttribute
+        ? card.querySelector('[data-status]').getAttribute('data-status') : null,
+      name: ((card.querySelector('.social-card-name') || {}).textContent || '').trim(),
+      chevron: !!card.querySelector('.lucide-chevron-down'),
+      scanInline: !!card.querySelector('.social-scan-inline'),
+      archive: !!card.querySelector('[data-archive]'),
+      liveBlocks: card.querySelectorAll('[data-live]').length,
+    };
+  });
+  const weixinQrReady = () => page.waitForFunction(() => {
+    const box = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-qr]');
+    return !!box && !!box.querySelector('canvas, a');
+  }, undefined, { timeout: 8000 });
+
+  // WBI-1 — default: one row, body present and hidden (no click needed, so
+  // this anchor reads directly and is RED on the old tree by absence).
+  const def = await readCard();
+  check('WBI-1 weixin default = item row (aria-expanded=false, body present and hidden, chevron)',
+    def.card && def.itemface && def.row && def.rowIsButton && def.ariaExpanded === 'false'
+    && def.bodyPresent && def.bodyHidden === true && !def.bodyVisible
+    && def.pill === 'notConfigured' && def.name.includes('微信') && def.chevron
+    && def.scanInline === true && def.archive === false && def.liveBlocks === 0,
+    `row=${def.row} aria=${def.ariaExpanded} bodyPresent=${def.bodyPresent} bodyHidden=${def.bodyHidden} bodyVisible=${def.bodyVisible} pill=${def.pill} name=${JSON.stringify(def.name)} chevron=${def.chevron} scanInline=${def.scanInline} archive=${def.archive} live=${def.liveBlocks} (pre-change tree: no [data-item-toggle] ⇒ RED there)`);
+  await shot(page, 'wbi-1-default-row');
+
+  await leg('WBI-2 one click expands the QR binding face (state ①)', async () => {
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    await weixinQrReady();
+    const ex = await readCard();
+    const statusLine = await page.evaluate(() => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return el ? el.textContent : '';
+    });
+    check('WBI-2 one click expands the QR binding face (state ①)',
+      ex.ariaExpanded === 'true' && ex.bodyHidden === false && ex.bodyVisible
+      && ex.scanInline && def.scanInline,
+      `aria=${ex.ariaExpanded} bodyHidden=${ex.bodyHidden} bodyVisible=${ex.bodyVisible} scanInline=${ex.scanInline} statusLine=${JSON.stringify(statusLine)} (the auto-begun session drew the QR behind the collapsed row; expanding reveals it mid-flow)`);
+    await shot(page, 'wbi-2-expanded-qr');
+  });
+
+  await leg('WBI-3 clicking the expanded row collapses it (accordion, ⑤)', async () => {
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    const cl = await readCard();
+    check('WBI-3 clicking the expanded row collapses it (accordion, ⑤)',
+      cl.ariaExpanded === 'false' && cl.bodyHidden === true && !cl.bodyVisible,
+      `aria=${cl.ariaExpanded} bodyHidden=${cl.bodyHidden} bodyVisible=${cl.bodyVisible} — the SAME target toggles both ways; no second control, no double-bind`);
+  });
+
+  await leg('WBI-4 scanning: the badge rides the existing semantics (②)', async () => {
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    await weixinQrReady();
+    apiState.scan.state = 'polling';
+    const confirmed = [ZH['social.weixinIlink.scan.confirmed'], EN['social.weixinIlink.scan.confirmed']].filter(Boolean);
+    await page.waitForFunction((needles) => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return !!el && needles.some((n) => el.textContent.includes(n));
+    }, confirmed, { timeout: 8000 });
+    const scanning = await readCard();
+    const statusLine = await page.evaluate(() => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return el ? el.textContent : '';
+    });
+    check('WBI-4 scanning: the badge rides the existing semantics (②) — pill stays channelStatus while the scan line advances',
+      scanning.pill === 'notConfigured' && scanning.bodyVisible
+      && confirmed.includes(statusLine),
+      `pill=${scanning.pill} statusLine=${JSON.stringify(statusLine)} bodyVisible=${scanning.bodyVisible} (no scan-state pill was added; the flow speaks through the existing status line)`);
+    await shot(page, 'wbi-4-scanning');
+  });
+
+  await leg('WBI-5 scan done ⇒ auto-collapse to the item view (③)', async () => {
+    apiState.scan.state = 'done';
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const row = card && card.querySelector('[data-item-toggle]');
+      const body = card && card.querySelector('[data-item-body]');
+      const pill = card && card.querySelector('[data-status]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden')
+        && !!pill && pill.getAttribute('data-status') === 'connected';
+    }, undefined, { timeout: 15000 });
+    const done = await readCard();
+    const archiveInsideBody = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const body = card.querySelector('[data-item-body]');
+      return !!body && !!body.querySelector('[data-archive]');
+    });
+    check('WBI-5 scan done ⇒ auto-collapse to the item view (③); the empty-bar form stays retired',
+      done.pill === 'connected' && done.ariaExpanded === 'false' && done.bodyHidden && !done.bodyVisible
+      && done.scanInline === false && done.liveBlocks === 0 && archiveInsideBody,
+      `pill=${done.pill} aria=${done.ariaExpanded} bodyHidden=${done.bodyHidden} scanInline=${done.scanInline} live=${done.liveBlocks} archiveInsideBody=${archiveInsideBody} (pre-change tree: the done card kept a wide created face with an ALWAYS-EMPTY [data-live] bar — the form this order retires; RED there)`);
+    await shot(page, 'wbi-5-done-back-to-row');
+  });
+
+  await leg('WBI-6 the unbind control rides the EXPANDED face (④)', async () => {
+    const collapsed = await readCard();
+    const unbindCollapsed = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const btn = card.querySelector('[data-archive]');
+      return {
+        present: !!btn,
+        visible: btn instanceof HTMLElement && btn.offsetParent !== null,
+        title: btn ? btn.getAttribute('title') : '',
+      };
+    });
+    const hintCopy = ZH['social.weixinIlink.archive.hint'] || EN['social.weixinIlink.archive.hint'] || '';
+    check('WBI-6a collapsed: the unbind control exists but is NOT visible (④ — rides the expanded face)',
+      collapsed.bodyHidden && unbindCollapsed.present && !unbindCollapsed.visible
+      && unbindCollapsed.title === hintCopy,
+      `present=${unbindCollapsed.present} visible=${unbindCollapsed.visible} title=${JSON.stringify(unbindCollapsed.title)} (hover copy unchanged — zero new keys)`);
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    const unbindExpanded = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const btn = card.querySelector('[data-archive]');
+      return {
+        visible: btn instanceof HTMLElement && btn.offsetParent !== null,
+        label: btn ? (btn.textContent || '').trim() : '',
+        bodyVisible: card.querySelector('[data-item-body]').offsetParent !== null,
+      };
+    });
+    const actionCopy = ZH['social.weixinIlink.archive.action'] || EN['social.weixinIlink.archive.action'] || '';
+    check('WBI-6b expanded: the unbind control is visible inside the body (existing copy, zero new keys)',
+      unbindExpanded.visible && unbindExpanded.bodyVisible
+      && unbindExpanded.label.includes(actionCopy),
+      `visible=${unbindExpanded.visible} label=${JSON.stringify(unbindExpanded.label)} — 取舍 declared: the row stays single-purpose, so the toggle and the destructive action can never share one click (⑤'s no-ambiguity clause)`);
+    await shot(page, 'wbi-6b-expanded-unbind');
+  });
+
+  await leg('WBI-7 unbind ⇒ default item view; recreate re-begins the QR behind the row', async () => {
+    // The recreate leg must poll a FRESH scan face (WBI-5 consumed the global
+    // `done`), and the real unbind stops the bridge — unregister the mock.
+    resetScanFace();
+    apiState.registered = {};
+    await page.click('[data-archive="weixin-ilink"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const row = card && card.querySelector('[data-item-toggle]');
+      const body = card && card.querySelector('[data-item-body]');
+      const pill = card && card.querySelector('[data-status]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden')
+        && !!pill && pill.getAttribute('data-status') === 'configuredNotLinked';
+    }, undefined, { timeout: 10000 });
+    const unbound = await readCard();
+    // the recreate leg: expanding the archived card shows the fresh QR again
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    await weixinQrReady();
+    const recreated = await readCard();
+    check('WBI-7 unbind ⇒ back to the default item view (fields kept ⇒ configuredNotLinked); the recreate leg re-begins the QR behind the row',
+      unbound.ariaExpanded === 'false' && unbound.bodyHidden
+      && unbound.pill === 'configuredNotLinked' && unbound.archive === false
+      && recreated.bodyVisible && recreated.scanInline && !recreated.archive,
+      `after unbind: aria=${unbound.ariaExpanded} bodyHidden=${unbound.bodyHidden} pill=${unbound.pill} archive=${unbound.archive}; after re-expand: bodyVisible=${recreated.bodyVisible} scanInline=${recreated.scanInline}`);
+  });
+
+  // WBI-8 — control, green on BOTH trees: the feishu card never grew an item
+  // face. Structural readings only (face-independent): W4/SF-1/MIN2 already
+  // pin the feishu faces per state.
+  const feishuCtrl = await page.evaluate(() => {
+    const card = document.querySelector('.social-card[data-channel="feishu"]');
+    if (!card) return { card: false };
+    return {
+      card: true,
+      itemRow: !!card.querySelector('[data-item-toggle]'),
+      itemBody: !!card.querySelector('[data-item-body]'),
+      itemfaceClass: card.classList.contains('social-card-itemface'),
+      headIsButton: card.querySelector('.social-card-head') instanceof HTMLButtonElement,
+    };
+  });
+  check('WBI-8 control: the feishu card keeps the two-face card (no item face)',
+    feishuCtrl.card && !feishuCtrl.itemRow && !feishuCtrl.itemBody
+    && !feishuCtrl.itemfaceClass && !feishuCtrl.headIsButton,
+    `itemRow=${feishuCtrl.itemRow} itemBody=${feishuCtrl.itemBody} itemfaceClass=${feishuCtrl.itemfaceClass} headIsButton=${feishuCtrl.headIsButton} (green on both trees — control, not a flipped anchor)`);
+
+  await ctx.close();
+}
+
 async function withPanel(browser, base, theme, fn) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
   const page = await ctx.newPage();
@@ -2324,7 +2599,9 @@ try {
   // control. Runs LAST in the AFTER suite so its exact-path routes (`/api/
   // sessions`, `/feishu/default-session`, `/feishu/connection`) cannot leak into
   // the legs above. Wave-2's minimal-face anchors follow it for the same reason.
-  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); }
+  // weixin-binditem's [[bindItemSuite]] runs after THOSE for the same reason in
+  // turn: it mutates the shared apiState scan face, so nothing may inherit it.
+  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); await bindItemSuite(browser, base); }
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));

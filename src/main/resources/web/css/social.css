@@ -361,6 +361,49 @@
    fill-in control was already retired by social-fix, which left this rule
    behind). Note the spec's `[data-scan-manual]` reads an ATTRIBUTE, not this
    class, so its "no manual control" anchors are unaffected. */
+/* ── weixin-binditem (author order 2026-10-07 09:22): the weixin-ilink card
+   renders as an ITEM ROW (accordion). The row IS the card head (it keeps the
+   .social-card-head class for the W4 judging surface) as a real <button> —
+   one tab stop, Enter/Space toggles; the button reset below is what lets the
+   head styles apply unchanged. The working face lives in `[data-item-body]`,
+   withdrawn by `hidden` when collapsed — hidden, NOT deleted (the scan nodes
+   must stay in the DOM: the scan flow re-queries and writes them per tick).
+   The companion `[hidden] { display: none }` rule is the same trap-guard the
+   remote section carries (#social-section-remote above): if a future edit
+   ever gives the body an author `display`, the bare attribute would be
+   silently defeated. Chevron = the affordance that says the row expands
+   (icon only, zero copy); it rotates with aria-expanded. Existing tokens
+   only — the focus ring reuses the .social-input focus family. */
+.social-item-row {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.social-item-row:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.4);
+  outline-offset: 2px;
+}
+.social-item-chevron {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-left: 6px;
+  color: var(--color-frame-text-dim);
+  transition: transform 0.15s ease;
+}
+.social-item-row[aria-expanded="true"] .social-item-chevron { transform: rotate(180deg); }
+.social-item-body[hidden] { display: none; }
+
 @media (max-width: 480px) {
   .social-scan-canvas { width: 168px; height: 168px; }
 }
+
