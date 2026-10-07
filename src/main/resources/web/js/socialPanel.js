@@ -192,6 +192,28 @@
 // unbind control all reuse existing copy; aria-expanded/aria-controls carry no
 // copy). Zero engine change (GET /api/social/channels stays a read-only
 // consumer).
+//
+// weixin-binditem-3cuts batch (author order 2026-10-07, 三小裁 over the landed
+// item face — the paragraph above's "Feishu keeps the two-face card" is
+// superseded by ruling ③ below):
+//   ① unbind fallback — CONFIRMED, zero change: [[archiveChannel]] already
+//     drops the expansion and re-lands the card on its row ([[renderAll]]), so
+//     unbind completion returns the card to the item view by itself. The
+//     evidence frame and the spec pins (WBI-7 / WBI-8d) are the audit trail.
+//   ② the item row's chevron is REMOVED ([[itemCardHTML]]): the whole row IS
+//     the click target, so the direction hint is noise. `aria-expanded` /
+//     `aria-controls` stay — the expand/collapse state still reaches assistive
+//     tech through the attributes alone. The `.social-item-chevron` CSS rules
+//     left with the node (css/social.css).
+//   ③ feishu JOINS the item face ([[ITEM_FACE_CHANNELS]]): the two-face card
+//     retires; the created face's C1 live block rides the EXPANDED state
+//     ([[itemCardHTML]]'s contract branch — the real-time value is visible
+//     only after a click, the same accordion paradigm as the weixin card:
+//     default row / click to expand / click to collapse), and
+//     [[scanBindCardHTML]] becomes the fallback for a future scanBind channel
+//     that has not joined. Zero locale key changes (§16: the feishu row reuses
+//     the same name/badge/live/archive copy the two-face card rendered).
+// Zero engine change throughout (GET /api/social/channels stays read-only).
 
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
@@ -342,10 +364,12 @@ const CONTRACT_FACE_CHANNELS = ['feishu'];
 /** The channels whose card renders as an ITEM ROW (accordion) instead of the
  *  two-face card. weixin-binditem (author order 2026-10-07 09:22): the weixin
  *  binding face collapses to ONE row; the working faces live inside the row's
- *  expandable body ([[itemCardHTML]]). Feishu keeps the two-face card. The
- *  channel-scoped constant is the [[CONTRACT_FACE_CHANNELS]] shape — one named
- *  set, not an id literal in the render path. */
-const ITEM_FACE_CHANNELS = ['weixin-ilink'];
+ *  expandable body ([[itemCardHTML]]). weixin-binditem-3cuts (author order
+ *  2026-10-07, ruling ③): feishu JOINS the set — the two-face card retires and
+ *  the C1 live value rides the EXPANDED face ([[itemCardHTML]]'s contract
+ *  branch). The channel-scoped constant is the [[CONTRACT_FACE_CHANNELS]]
+ *  shape — one named set, not an id literal in the render path. */
+const ITEM_FACE_CHANNELS = ['weixin-ilink', 'feishu'];
 
 /** Which item-face cards are expanded, keyed by channel id. Expansion is VIEW
  *  state only: the body is ALWAYS rendered (the scan nodes must exist — the
@@ -675,8 +699,12 @@ function scanInlineHTML() {
  * `data-scan-status` children stay ([[scanNode]] reads them).
  * The head keeps icon + name + status pill; the enable switch is folded into
  * archive (enabled=false IS the archive — no separate disabled face exists).
- * weixin-binditem: feishu keeps THIS shape — the item face ([[itemCardHTML]])
- * is weixin-only, so every feishu-pinned anchor renders byte-identically.
+ * weixin-binditem-3cuts (ruling ③): NO visible channel rides this branch any
+ * more — both scanBind cards are item faces ([[ITEM_FACE_CHANNELS]]), so this
+ * renderer is the FALLBACK path for a future scanBind channel that has not
+ * joined the item face (kept, not deleted: [[cardHTML]]'s routing still names
+ * it, and the two-face semantics this function documents stay one constant
+ * away).
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
  * @returns {string}
  */
@@ -709,23 +737,33 @@ function scanBindCardHTML(ch) {
 }
 
 /**
- * The item-face card (weixin-binditem, author order 2026-10-07 09:22): the
- * binding face collapses to ONE row — icon + 微信 iLink + the status pill + a
- * chevron — and the working faces live inside the row's expandable body:
+ * The item-face card (weixin-binditem, author order 2026-10-07 09:22; amended
+ * the same day by the 3cuts order — rulings ①②③): the binding face collapses
+ * to ONE row — icon + name + the status pill, NO chevron (ruling ②: the WHOLE
+ * row is the click target, so a direction hint is noise; the row stays a real
+ * <button> and keeps `aria-expanded` / `aria-controls`, which carry the
+ * expand/collapse state to assistive tech without any arrow) — and the working
+ * faces live inside the row's expandable body:
  *   · not-created (state ①) — the QR binding face ([[scanInlineHTML]]) whole.
  *     The auto-begun session ([[maybeBeginScan]] is unchanged) writes into the
  *     hidden nodes, so expanding shows the QR mid-flow; expanding a card
  *     without a live session (re)begins one ([[toggleItemFace]] —
  *     [[beginInlineScan]] is idempotent).
- *   · created (states ③④) — the unbind row ONLY. The C1 live block is
- *     deliberately NOT rendered on this face: the item-face channel has no
- *     connection endpoint ([[CONTRACT_FACE_CHANNELS]] is feishu-only), so its
- *     live container was permanently empty — exactly the empty-bar form this
- *     order retires. Scan `done` drops the expansion ([[tickSession]]), so the
- *     card lands back on the row with the bound badge.
+ *   · created (states ③④) — the unbind row, plus — for the contract channels
+ *     ([[CONTRACT_FACE_CHANNELS]], i.e. feishu; ruling ③) — the C1 live block:
+ *     the real-time value shows ONLY inside the expanded state, the same
+ *     accordion paradigm as the weixin card (default row / click to expand /
+ *     click to collapse). The weixin item face still renders NO live block:
+ *     the weixin channel has no connection endpoint ([[CONTRACT_FACE_CHANNELS]]
+ *     is feishu-only), so its live container was permanently empty — exactly
+ *     the empty-bar form the first order retired.
+ * Scan `done` drops the expansion ([[tickSession]]), so the card lands back on
+ * the row with the bound badge; archive does the same ([[archiveChannel]] —
+ * ruling ①: the unbind fallback to the item view is the SHIPPED behaviour,
+ * confirmed with an evidence frame, zero code).
  * The head keeps the `.social-card-head` class (W4's judging surface) on the
  * row <button> itself — one tab stop, Enter/Space toggles; the status pill is
- * the SAME pill the two-face card renders (state ②: badge semantics ride the
+ * the SAME pill the two-face card rendered (state ②: badge semantics ride the
  * existing state machine unchanged). The hint line stays OUTSIDE the body: a
  * configInvalid reading explains the pill, which is visible while collapsed,
  * so the explanation must be too.
@@ -743,10 +781,13 @@ function itemCardHTML(ch) {
         <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
         <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
         <span class="social-status-pill plugins-state-pill" data-status="${status}">${pillInner(status, t(`social.status.${status}`))}</span>
-        <i data-lucide="chevron-down" class="social-item-chevron"></i>
       </button>`;
+  // 3cuts ③: the contract channels' C1 live value rides the EXPANDED state —
+  // rendered into the body, visible only after a click (the weixin item face
+  // keeps no live block at all: no C1 source — the retired empty-bar form).
   const body = created
-    ? `<div class="social-card-actions">
+    ? `${CONTRACT_FACE_CHANNELS.includes(ch.id) ? liveBlockHTML(ch) : ''}
+       <div class="social-card-actions">
          <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t(archiveKey(ch.id, 'hint')))}">${statusIcon('unplug', 12, 'st-err')}${escapeHtml(t(archiveKey(ch.id, 'action')))}</button>
          <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
        </div>`
@@ -1515,10 +1556,11 @@ function onDocumentClick(ev) {
   if (target.closest('#social-btn')) { openSocialPanel(); return; }
   if (target.closest('#social-modal-close')) { closeSocialPanel(); return; }
   // weixin-binditem: the item row's toggle. Checked BEFORE the action buttons:
-  // the row is the head, so everything inside it (icon, name, pill, chevron)
-  // toggles — and the unbind button, which lives in the BODY, can never reach
-  // this branch (it is not a descendant of the row), so a destructive action
-  // and the accordion toggle can never share one click (state ⑤).
+  // the row is the head, so everything inside it (icon, name, pill — the 3cuts
+  // order removed the chevron) toggles — and the unbind button, which lives in
+  // the BODY, can never reach this branch (it is not a descendant of the row),
+  // so a destructive action and the accordion toggle can never share one click
+  // (state ⑤).
   const item = target.closest('[data-item-toggle]');
   if (item instanceof HTMLElement && item.dataset.itemToggle) { toggleItemFace(item.dataset.itemToggle); return; }
   const arch = target.closest('[data-archive]');

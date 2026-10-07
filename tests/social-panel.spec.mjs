@@ -172,6 +172,25 @@
 //    WBI-1..7 must fail there (no [data-item-toggle] exists), WBI-8 stays
 //    green on both trees (control, not a flipped anchor). Every WBI leg is
 //    mock-driven (夹具优先): no real binding flow, zero production writes.
+//
+// 🔴 WEIXIN-BINDITEM-3CUTS (author order 2026-10-07, 三小裁 over the landed
+//    item face — supersedes the "Feishu keeps the two-face card" clause above):
+//    ① the unbind fallback is CONFIRMED AS SHIPPED — zero code: archive
+//    already drops the expansion and re-lands the card on its row; the pins
+//    are WBI-7 (weixin) and the new WBI-8d (feishu), plus the evidence frame
+//    in the batch report; ② the item row's CHEVRON IS REMOVED — the whole row
+//    is the click target (no direction hint); aria-expanded/aria-controls
+//    stay; WBI-1 re-pins the chevron's ABSENCE (the chevron clause is RED on
+//    the pre-change tree, where the row still renders it); ③ feishu JOINS the
+//    item face ([[ITEM_FACE_CHANNELS]] gains feishu; the C1 live value rides
+//    the EXPANDED face). WBI-8 FLIPS from the both-trees control into the
+//    feishu itemization anchors (8a default row / 8b expanded live value /
+//    8c accordion collapse / 8d unbind fallback) — RED on the pre-change
+//    tree, where the feishu card still renders the two-face card and no
+//    [data-item-toggle="feishu"] exists. W16-B6 re-points to expand the row
+//    before measuring the in-card QR (the geometry anchor would otherwise
+//    read a hidden canvas). Zero locale key changes; mock-driven throughout
+//    (夹具优先 — no real binding flow, zero production writes).
 
 // Run:
 //   node tests/social-panel.spec.mjs
@@ -1396,6 +1415,20 @@ async function afterSuite(browser, base) {
     // social-fix: the fillable state no longer exists (manual form retired);
     // the measured face is the not-created card with its in-card QR.
     await waitInlineScanQr(page);
+    // 🔴 weixin-binditem-3cuts ③: the feishu card joined the item face, so the
+    //    in-card QR now lives in the row's HIDDEN body — measuring it collapsed
+    //    would read a 0-width canvas and the geometry anchor would pass
+    //    vacuously. B-6 therefore expands the row first (guarded: on a
+    //    pre-change tree there is no row, and the collapsed-canvas reading is
+    //    what that tree legitimately measures).
+    const feishuRow375 = await page.$('[data-item-toggle="feishu"]');
+    if (feishuRow375) {
+      await feishuRow375.click();
+      await page.waitForFunction(() => {
+        const b = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
+        return !!b && !b.hasAttribute('hidden');
+      }, undefined, { timeout: 4000 });
+    }
     const geo = await page.evaluate(() => {
       const vw = window.innerWidth;
       const m = document.getElementById('social-modal').getBoundingClientRect();
@@ -1913,15 +1946,17 @@ async function min2Suite(browser, base) {
 }
 
 // ── WEIXIN-BINDITEM: the weixin binding face as an ITEM ROW (accordion) ─────
-// Author order 2026-10-07 09:22 (微信②·绑定完成态 UI 重构). Five states, each
-// anchored on the SAME mock backend the suites above use (夹具优先 — no real
-// binding flow, zero production writes; the scan face is the suite's own
-// state-machine mirror). Runs LAST in the AFTER chain so nothing below it can
-// inherit its apiState mutations.
+// Author order 2026-10-07 09:22 (微信②·绑定完成态 UI 重构), amended the same
+// day by the 3CUTS order (see the header's WEIXIN-BINDITEM-3CUTS paragraph).
+// Five states, each anchored on the SAME mock backend the suites above use
+// (夹具优先 — no real binding flow, zero production writes; the scan face is
+// the suite's own state-machine mirror). Runs LAST in the AFTER chain so
+// nothing below it can inherit its apiState mutations.
 //
 //   WBI-1  default   — the weixin card IS one row: [data-item-toggle] with
 //                      aria-expanded="false", [data-item-body] present AND
-//                      hidden, chevron present, pill = channelStatus.
+//                      hidden, NO chevron (3cuts ② — flipped from the original
+//                      "chevron present"), pill = channelStatus.
 //   WBI-2  expand    — one click ⇒ aria-expanded="true", the body visible, the
 //                      QR face renders in it (the auto-begun session already
 //                      drew it behind the collapsed row).
@@ -1937,19 +1972,34 @@ async function min2Suite(browser, base) {
 //   WBI-6  unbind    — the unbind control rides the EXPANDED face (④):
 //                      present-but-not-visible collapsed, visible expanded,
 //                      hover copy unchanged (archive.hint on the title).
-//   WBI-7  archive   — unbind returns the card to the default row; the
-//                      recreate leg re-begins the scan behind it (expand ⇒ QR).
-//   WBI-8  control   — the feishu card is NOT an item face: no row, no body,
-//                      no itemface class, head still a plain div (green on
-//                      BOTH trees — it is the control, not a flipped anchor).
+//   WBI-7  archive   — unbind returns the card to the default row (ruling ①:
+//                      the SHIPPED fallback, confirmed — the evidence frame
+//                      rides the batch report); the recreate leg re-begins the
+//                      scan behind it (expand ⇒ QR).
+//   WBI-8  3cuts ③   — feishu JOINS the item face. WAS the both-trees control
+//                      ("keeps the two-face card"); the ruling retires that
+//                      face, so the anchor flipped and grew legs:
+//     WBI-8a default — the feishu card IS one row: aria-expanded="false",
+//                      body hidden, pill = connected (created fixture), the
+//                      C1 live value NOT on the collapsed face, NO chevron.
+//     WBI-8b expand  — one click ⇒ the C1 live value shows INSIDE the
+//                      expanded state (实时值在展态内), the unbind control with
+//                      it; aria-expanded="true".
+//     WBI-8c collapse— the SAME click target collapses it (weixin's accordion
+//                      paradigm, byte for byte).
+//     WBI-8d unbind  — unbind returns the feishu card to the default row
+//                      (fields kept ⇒ configuredNotLinked) — ruling ①'s pin
+//                      on the feishu side.
 //
 // 🔴 RED LEG (same discipline as the flipped anchors above): run the AFTER
 //    suite against the pre-change tree —
 //      SOCIAL_SUITE=after SOCIAL_WEB_ROOT=<baseline>/web node tests/social-panel.spec.mjs
-//    — WBI-1..7 must FAIL there (the old tree renders the two-face weixin
-//    card: no [data-item-toggle] / [data-item-body] anywhere), WBI-8 stays
-//    GREEN. The legs below therefore guard their clicks: on a tree without
-//    the item face a missing selector must record a named RED, not kill the
+//    — WBI-1 fails there ONLY via its chevron clause (the item face itself
+//    landed in the previous batch), and WBI-8a..d fail wholesale (the old
+//    tree renders the two-face feishu card: no [data-item-toggle="feishu"]).
+//    WBI-2..7 stay GREEN there (they pin the previous batch's landed face).
+//    The legs below therefore guard their clicks: on a tree without the
+//    probed face a missing selector must record a named RED, not kill the
 //    run ([[leg]] catches and emits).
 async function bindItemSuite(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
@@ -2000,14 +2050,15 @@ async function bindItemSuite(browser, base) {
   }, undefined, { timeout: 8000 });
 
   // WBI-1 — default: one row, body present and hidden (no click needed, so
-  // this anchor reads directly and is RED on the old tree by absence).
+  // this anchor reads directly and is RED on the old tree by absence). 3cuts
+  // ②: the chevron clause flipped — the row must NOT render it any more.
   const def = await readCard();
-  check('WBI-1 weixin default = item row (aria-expanded=false, body present and hidden, chevron)',
+  check('WBI-1 weixin default = item row (aria-expanded=false, body present and hidden, no chevron)',
     def.card && def.itemface && def.row && def.rowIsButton && def.ariaExpanded === 'false'
     && def.bodyPresent && def.bodyHidden === true && !def.bodyVisible
-    && def.pill === 'notConfigured' && def.name.includes('微信') && def.chevron
+    && def.pill === 'notConfigured' && def.name.includes('微信') && !def.chevron
     && def.scanInline === true && def.archive === false && def.liveBlocks === 0,
-    `row=${def.row} aria=${def.ariaExpanded} bodyPresent=${def.bodyPresent} bodyHidden=${def.bodyHidden} bodyVisible=${def.bodyVisible} pill=${def.pill} name=${JSON.stringify(def.name)} chevron=${def.chevron} scanInline=${def.scanInline} archive=${def.archive} live=${def.liveBlocks} (pre-change tree: no [data-item-toggle] ⇒ RED there)`);
+    `row=${def.row} aria=${def.ariaExpanded} bodyPresent=${def.bodyPresent} bodyHidden=${def.bodyHidden} bodyVisible=${def.bodyVisible} pill=${def.pill} name=${JSON.stringify(def.name)} chevron=${def.chevron} scanInline=${def.scanInline} archive=${def.archive} live=${def.liveBlocks} (3cuts ②: chevron retired — the whole row is the click target; pre-change tree: chevron still present ⇒ RED there; the original pre-binditem tree: no [data-item-toggle] ⇒ RED there)`);
   await shot(page, 'wbi-1-default-row');
 
   await leg('WBI-2 one click expands the QR binding face (state ①)', async () => {
@@ -2139,24 +2190,149 @@ async function bindItemSuite(browser, base) {
       `after unbind: aria=${unbound.ariaExpanded} bodyHidden=${unbound.bodyHidden} pill=${unbound.pill} archive=${unbound.archive}; after re-expand: bodyVisible=${recreated.bodyVisible} scanInline=${recreated.scanInline}`);
   });
 
-  // WBI-8 — control, green on BOTH trees: the feishu card never grew an item
-  // face. Structural readings only (face-independent): W4/SF-1/MIN2 already
-  // pin the feishu faces per state.
-  const feishuCtrl = await page.evaluate(() => {
+  // ── WBI-8 — 3cuts ③: feishu JOINS the item face ──────────────────────────
+  // Was the both-trees control ("the feishu card keeps the two-face card");
+  // the ruling retires that face, so the anchor flipped and grew legs. RED on
+  // the pre-change tree (no [data-item-toggle="feishu"] there). The created
+  // fixture + a live app id ride the SAME mock: the C1 connection handler is
+  // registered here for this page (min2Suite's shape), reading a mutable so a
+  // future leg could darken it.
+  apiState.channels.feishu = { enabled: true, fields: { ...CREATED_FIXTURE.feishu.fields } };
+  apiState.probes.feishu = JSON.parse(JSON.stringify(CREATED_FIXTURE.feishu.probe));
+  apiState.registered.feishu = true;
+  let feishuLiveAppId = 'cli_live_mock0987654321';
+  await page.route('**/api/social/channels/feishu/connection', (r) => r.fulfill({
+    json: {
+      channel: 'feishu', enabled: true, adapterRegistered: true, connected: true,
+      liveAppId: feishuLiveAppId, liveAppIdFp: 'abcdef', liveAppName: null,
+      storedAppId: feishuLiveAppId, storedAppIdFp: '9999', fingerprintMatch: 'match',
+    },
+  }));
+  await page.reload();
+  await openPanel(page);
+
+  // WBI-8a — default: the feishu card IS one row; the C1 live value sits in
+  // the hidden body, NOT on the collapsed face (实时值面收进展态内). Reads are
+  // structural + visibility, all judged directly (RED on the old tree by
+  // absence of the row).
+  const fdef = await page.evaluate(() => {
     const card = document.querySelector('.social-card[data-channel="feishu"]');
     if (!card) return { card: false };
+    const row = card.querySelector('[data-item-toggle]');
+    const body = card.querySelector('[data-item-body]');
+    const live = card.querySelector('[data-live]');
+    const archive = card.querySelector('[data-archive]');
     return {
       card: true,
-      itemRow: !!card.querySelector('[data-item-toggle]'),
-      itemBody: !!card.querySelector('[data-item-body]'),
-      itemfaceClass: card.classList.contains('social-card-itemface'),
-      headIsButton: card.querySelector('.social-card-head') instanceof HTMLButtonElement,
+      itemface: card.classList.contains('social-card-itemface'),
+      row: !!row,
+      rowIsButton: row instanceof HTMLButtonElement,
+      ariaExpanded: row ? row.getAttribute('aria-expanded') : null,
+      bodyPresent: !!body,
+      bodyHidden: body ? body.hasAttribute('hidden') : null,
+      bodyVisible: body instanceof HTMLElement && body.offsetParent !== null,
+      pill: (card.querySelector('[data-status]') || {}).getAttribute
+        ? card.querySelector('[data-status]').getAttribute('data-status') : null,
+      name: ((card.querySelector('.social-card-name') || {}).textContent || '').trim(),
+      chevron: !!card.querySelector('.lucide-chevron-down'),
+      livePresent: !!live,
+      liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+      archivePresent: !!archive,
+      archiveVisible: archive instanceof HTMLElement && archive.offsetParent !== null,
     };
   });
-  check('WBI-8 control: the feishu card keeps the two-face card (no item face)',
-    feishuCtrl.card && !feishuCtrl.itemRow && !feishuCtrl.itemBody
-    && !feishuCtrl.itemfaceClass && !feishuCtrl.headIsButton,
-    `itemRow=${feishuCtrl.itemRow} itemBody=${feishuCtrl.itemBody} itemfaceClass=${feishuCtrl.itemfaceClass} headIsButton=${feishuCtrl.headIsButton} (green on both trees — control, not a flipped anchor)`);
+  check('WBI-8a feishu default = item row (aria-expanded=false, body hidden, live value NOT on the collapsed face, no chevron)',
+    fdef.card && fdef.itemface && fdef.row && fdef.rowIsButton && fdef.ariaExpanded === 'false'
+    && fdef.bodyPresent && fdef.bodyHidden === true && !fdef.bodyVisible
+    && fdef.pill === 'connected' && fdef.name.includes('飞书') && !fdef.chevron
+    && fdef.livePresent && !fdef.liveVisible
+    && fdef.archivePresent && !fdef.archiveVisible,
+    `row=${fdef.row} aria=${fdef.ariaExpanded} bodyHidden=${fdef.bodyHidden} bodyVisible=${fdef.bodyVisible} pill=${fdef.pill} name=${JSON.stringify(fdef.name)} chevron=${fdef.chevron} livePresent=${fdef.livePresent} liveVisible=${fdef.liveVisible} archivePresent=${fdef.archivePresent} archiveVisible=${fdef.archiveVisible} (the created face's live value AND unbind control both sit in the hidden body — visible only after a click; pre-change tree: the feishu card keeps the two-face card — no row, live value flat on the face ⇒ RED there)`);
+  await shot(page, 'wbi-8a-feishu-default-row');
+
+  await leg('WBI-8b one click expands the feishu face: the C1 live value shows INSIDE the expanded state', async () => {
+    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const b = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
+      return !!b && !b.hasAttribute('hidden');
+    }, undefined, { timeout: 4000 });
+    const ex = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const row = card.querySelector('[data-item-toggle]');
+      const body = card.querySelector('[data-item-body]');
+      const live = card.querySelector('[data-live]');
+      const archive = card.querySelector('[data-archive]');
+      return {
+        ariaExpanded: row.getAttribute('aria-expanded'),
+        bodyVisible: body instanceof HTMLElement && body.offsetParent !== null,
+        liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+        liveText: live ? (live.innerText || live.textContent || '').trim() : '',
+        archiveVisible: archive instanceof HTMLElement && archive.offsetParent !== null,
+      };
+    });
+    check('WBI-8b feishu expanded: aria=true, the live app value visible inside the body, the unbind control with it',
+      ex.ariaExpanded === 'true' && ex.bodyVisible && ex.liveVisible
+      && ex.liveText.includes('cli_live_mock0987654321') && ex.archiveVisible,
+      `aria=${ex.ariaExpanded} bodyVisible=${ex.bodyVisible} liveVisible=${ex.liveVisible} liveText=${JSON.stringify(ex.liveText)} archiveVisible=${ex.archiveVisible} (实时值在展态内 — the two-face card's created face showed it flat; 3cuts ③ moves it behind the click)`);
+    await shot(page, 'wbi-8b-feishu-expanded-live');
+  });
+
+  await leg('WBI-8c clicking the expanded feishu row collapses it (weixin\'s accordion paradigm)', async () => {
+    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const row = document.querySelector('.social-card[data-channel="feishu"] [data-item-toggle]');
+      const body = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden');
+    }, undefined, { timeout: 4000 });
+    const cl = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const body = card.querySelector('[data-item-body]');
+      const live = card.querySelector('[data-live]');
+      return {
+        ariaExpanded: card.querySelector('[data-item-toggle]').getAttribute('aria-expanded'),
+        bodyHidden: body.hasAttribute('hidden'),
+        liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+      };
+    });
+    check('WBI-8c feishu collapsed: the SAME target toggles both ways, the live value withdraws with the body',
+      cl.ariaExpanded === 'false' && cl.bodyHidden && !cl.liveVisible,
+      `aria=${cl.ariaExpanded} bodyHidden=${cl.bodyHidden} liveVisible=${cl.liveVisible} — no second control, no double-bind (the interaction language is the weixin card's, byte for byte)`);
+  });
+
+  await leg('WBI-8d feishu unbind ⇒ back to the default item view (fields kept ⇒ configuredNotLinked)', async () => {
+    // the real unbind stops the bridge — unregister the mock first (WBI-7's
+    // discipline), so the archived pill reads configuredNotLinked, and give
+    // the recreate leg a FRESH scan face (this page's weixin legs consumed
+    // the shared `done`).
+    apiState.registered = {};
+    resetScanFace();
+    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
+    await page.click('[data-archive="feishu"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const row = card && card.querySelector('[data-item-toggle]');
+      const body = card && card.querySelector('[data-item-body]');
+      const pill = card && card.querySelector('[data-status]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden')
+        && !!pill && pill.getAttribute('data-status') === 'configuredNotLinked';
+    }, undefined, { timeout: 10000 });
+    const unbound = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const row = card.querySelector('[data-item-toggle]');
+      const body = card.querySelector('[data-item-body]');
+      return {
+        ariaExpanded: row.getAttribute('aria-expanded'),
+        bodyHidden: body.hasAttribute('hidden'),
+        pill: card.querySelector('[data-status]').getAttribute('data-status'),
+      };
+    });
+    check('WBI-8d feishu unbind ⇒ back to the default item view (fields kept ⇒ configuredNotLinked)',
+      unbound.ariaExpanded === 'false' && unbound.bodyHidden && unbound.pill === 'configuredNotLinked',
+      `aria=${unbound.ariaExpanded} bodyHidden=${unbound.bodyHidden} pill=${unbound.pill} — ruling ①'s fallback pin on the feishu side (the weixin side is WBI-7); the recreate leg re-begins the QR behind the collapsed row`);
+    await shot(page, 'wbi-8d-feishu-unbound-row');
+  });
 
   await ctx.close();
 }

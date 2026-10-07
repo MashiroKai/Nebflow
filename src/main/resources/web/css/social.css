@@ -371,9 +371,13 @@
    The companion `[hidden] { display: none }` rule is the same trap-guard the
    remote section carries (#social-section-remote above): if a future edit
    ever gives the body an author `display`, the bare attribute would be
-   silently defeated. Chevron = the affordance that says the row expands
-   (icon only, zero copy); it rotates with aria-expanded. Existing tokens
-   only — the focus ring reuses the .social-input focus family. */
+   silently defeated. 🔴 weixin-binditem-3cuts (author order 2026-10-07,
+   ruling ②): `.social-item-chevron` and its aria-expanded rotate rule are
+   REMOVED with the node — the whole row is the click target, so the direction
+   hint is noise; the expand/collapse state reads through aria-expanded alone
+   (0 emitters left: the only emitter was itemCardHTML's row icon). The rules
+   stay restorable from git history. Existing tokens only — the focus ring
+   reuses the .social-input focus family. */
 .social-item-row {
   appearance: none;
   background: none;
@@ -392,15 +396,6 @@
   outline: 2px solid rgb(var(--sapphire) / 0.4);
   outline-offset: 2px;
 }
-.social-item-chevron {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  margin-left: 6px;
-  color: var(--color-frame-text-dim);
-  transition: transform 0.15s ease;
-}
-.social-item-row[aria-expanded="true"] .social-item-chevron { transform: rotate(180deg); }
 .social-item-body[hidden] { display: none; }
 
 @media (max-width: 480px) {
