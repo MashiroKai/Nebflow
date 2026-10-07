@@ -635,15 +635,83 @@ link_brew_jdk() {
     export PATH="${prefix}/opt/openjdk@21/bin:$PATH"
 }
 
+ensure_java_mac_tarball() {
+    # macOS twin of ensure_java_linux_tarball: deps/ mirror -> TUNA -> Adoptium
+    # API, sha256 via deps/checksums.txt. Mac tarballs nest the JDK under
+    # Contents/Home - normalize into the pinned layout ${HOME}/${HOME_DIR}/jdk-21
+    # (staging swap: a corrupt/truncated download never replaces the pin slot).
+    local jdk_arch="aarch64"
+    [ "$ARCH" = "x64" ] && jdk_arch="x64"
+    local jdk_ver="21.0.12.1_1"
+    local tarball_name="OpenJDK21U-jdk_${jdk_arch}_mac_hotspot_${jdk_ver}.tar.gz"
+    local jdk_dir="${HOME}/${HOME_DIR}/jdk-21"
+    mkdir -p "${HOME}/${HOME_DIR}" || return 1
+    local tmp_tar tmp_dir
+    tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
+    tmp_dir=$(mktemp -d)
+    local tuna_url="https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/${jdk_arch}/mac/${tarball_name}"
+    local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/mac/${jdk_arch}/jdk/hotspot/normal/eclipse"
+    if ! download_file "$tmp_tar" "$tarball_name" "$tarball_name" \
+        "${COS_DEPS_BASE}/${tarball_name}" "$tuna_url" "$jdk_url"; then
+        rm -f "$tmp_tar"; rm -rf "$tmp_dir"; return 1
+    fi
+    if ! tar xzf "$tmp_tar" -C "$tmp_dir" 2>/dev/null; then
+        rm -f "$tmp_tar"; rm -rf "$tmp_dir"; return 1
+    fi
+    rm -f "$tmp_tar"
+    local src
+    src=$(find "$tmp_dir" -type d -path '*/Contents/Home' 2>/dev/null | head -1)
+    if [ -z "$src" ] || [ ! -x "${src}/bin/java" ]; then
+        rm -rf "$tmp_dir"; return 1
+    fi
+    local major
+    major=$("${src}/bin/java" -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
+    [ "$major" = "1" ] && major=$("${src}/bin/java" -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
+    case "$major" in ''|*[!0-9]*) rm -rf "$tmp_dir"; return 1 ;; esac
+    [ "$major" -ge "$JDK_MAJOR_REQUIRED" ] 2>/dev/null || { rm -rf "$tmp_dir"; return 1; }
+    # staging swap into the pin slot (same-filesystem rename, legacy tree only
+    # removed after the new tree is fully in place)
+    rm -rf "${jdk_dir}.new.$$"
+    if ! mv "${src}" "${jdk_dir}.new.$$" 2>/dev/null; then rm -rf "$tmp_dir"; return 1; fi
+    rm -rf "$tmp_dir"
+    rm -rf "$jdk_dir"
+    if ! mv "${jdk_dir}.new.$$" "$jdk_dir" 2>/dev/null; then
+        rm -rf "${jdk_dir}.new.$$"; return 1
+    fi
+    export PATH="$jdk_dir/bin:$PATH"
+    export JAVA_HOME="$jdk_dir"
+    return 0
+}
+
 ensure_java_mac() {
+    # cn: Temurin tarball first (deps/ mirror -> TUNA; readings 2026-10-07:
+    # ghcr bottle 39-354 KB/s vs TUNA ~3 MB/s) - Homebrew demoted to fallback,
+    # so a fresh domestic Mac never touches github.com/ghcr.io for Java.
+    # global: brew-first unchanged (ghcr is fast overseas); the tarball leg
+    # becomes the new failure fallback instead of a hard exit.
+    # NEBFLOW_JDK_TARBALL=1 forces the tarball leg on any region (testing).
+    if { [ "$REGION" = "cn" ] || [ "${NEBFLOW_JDK_TARBALL:-}" = "1" ]; } \
+        && ensure_java_mac_tarball; then
+        log_ok "Java installed (Temurin tarball, pinned at ~/${HOME_DIR}/jdk-21)."
+        return 0
+    fi
     ensure_brew || {
-        log_err "Could not install Homebrew; cannot install JDK automatically."
+        log_err "Could not install Homebrew; trying the Temurin tarball leg..."
+        if ensure_java_mac_tarball; then
+            log_ok "Java installed (Temurin tarball, pinned at ~/${HOME_DIR}/jdk-21)."
+            return 0
+        fi
+        log_err "Tarball leg failed as well."
         java_manual_hint
         exit $ERR_JAVA
     }
     log_i "Installing OpenJDK 21 via Homebrew..."
     if ! brew install --quiet openjdk@21; then
-        log_err "brew install openjdk@21 failed."
+        log_err "brew install openjdk@21 failed - trying the Temurin tarball leg..."
+        if ensure_java_mac_tarball; then
+            log_ok "Java installed (Temurin tarball, pinned at ~/${HOME_DIR}/jdk-21)."
+            return 0
+        fi
         java_manual_hint
         exit $ERR_JAVA
     fi

@@ -72,6 +72,8 @@ DEPS=(
   "homebrew-install.sh|https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
   "OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz|https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/x64/linux/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz"
   "OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.12.1_1.tar.gz|https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/aarch64/linux/OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.12.1_1.tar.gz"
+  "OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz|https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/aarch64/mac/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz"
+  "OpenJDK21U-jdk_x64_mac_hotspot_21.0.12.1_1.tar.gz|https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/x64/mac/OpenJDK21U-jdk_x64_mac_hotspot_21.0.12.1_1.tar.gz"
 )
 
 die() { echo "upload-deps.sh: $*" >&2; exit 1; }
