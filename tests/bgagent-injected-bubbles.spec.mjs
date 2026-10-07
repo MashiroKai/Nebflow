@@ -462,7 +462,12 @@ test('T6 reopen: the previous cycle\'s stream anchor is not continued (and the t
   // popup's state.
   const reopened = (await probe(page)).open;
   expect(reopened.aiText, 'the in-flight tail survives the reopen').toContain('Dispatching the batch now.');
-  expect(reopened.aiRows, 'exactly one assistant row — the restored tail is one bubble').toBe(1);
+  // e2e 断点②修（2026-10-07）：interceptBgAgentStep 在 agentStart 武装
+  // turnExpecting（delegate 会话不经真人派发点，思考流原先整段被
+  // thinkingDelta 渲染门丢弃＝作者实测弹窗空白）。武装后 feedLiveWhileClosed
+  // 的思考 delta 合法渲染成思考揭示行（.row.ai.thinking-row 也算 .row.ai）⇒
+  // 重开面 = 思考行 1 + 正文尾流行 1 = 2（原钉 1 = 门关态旧行为）。
+  expect(reopened.aiRows, 'thinking reveal row + the restored tail bubble').toBe(2);
 
   // (b) the previous cycle's text is NOT re-emitted: the delta below is the
   // only new text, so the row must not grow the earlier copy a second time.

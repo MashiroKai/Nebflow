@@ -144,4 +144,20 @@ function scheduleRefresh() {
 for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']) {
   onMessage(evt, scheduleRefresh);
 }
+
+// delegate 生命周期触发（e2e 断点①修 · 2026-10-07）：裸 delegate spawn/续聊/终态
+// 不经作用域图——node* 帧族在「无 AgentFlow 链活动」的整段在飞期为零（实测：
+// rig :8245 /api/chains 22s 即有行，页面不刷新则任务列表恒空直到 reload）。本组
+// 触发器把 delegate/external 会话自身的 turn 边界帧（nodeSessionId 前缀判据）
+// 也接进同一防抖刷——帧仍只当触发器，数据权威恒在 REST /api/chains；tool 级
+// 帧（agentToolStart/End）不接（每工具一帧太频，行状态变更已由 turn 边界覆盖：
+// spawn=agentStart、delegate_report=turn 内写盘 + 该 turn 的 agentDone 兜底）。
+const DELEGATE_TRIGGER_RE = /^(delegate|external)-/;
+function onDelegateLifecycle(msg) {
+  const nsid = String((msg && (msg.nodeSessionId || msg.agentId)) || '');
+  if (DELEGATE_TRIGGER_RE.test(nsid)) scheduleRefresh();
+}
+for (const evt of ['agentStart', 'agentDone', 'agentEnd']) {
+  onMessage(evt, onDelegateLifecycle);
+}
 onReconnect(() => refresh().catch(() => {}));

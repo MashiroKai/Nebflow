@@ -784,3 +784,18 @@ test('T13 badge 行×任务行盒模型对齐（ui-train-threefix C·2026-10-07 
 
   expect(pageErrors).toEqual([]);
 });
+
+test('T14 delegate 生命周期触发器静态钉（e2e 断点①修 · 2026-10-07）：裸 delegate 在飞期 node* 帧族为零 ⇒ provider 把 turn 边界帧接进同一防抖刷', async () => {
+  // 判据单源 = provider 源码静态钉（触发器面无渲染面，无 DOM 可断言）：
+  //   ① turn 边界帧族（agentStart/agentDone/agentEnd）注册为触发器；
+  //   ② 会话判据 = delegate-/external- 前缀（registry 写入的两类会话；
+  //      subtask- 不在行源——BlockingSubagent 子会话不落 DelegateRegistry）；
+  //   ③ 触发只进 scheduleRefresh 防抖（帧只当触发器，数据权威恒在 REST）。
+  const provSrc = readFileSync(join(WEB, 'js', 'delegateChainProvider.js'), 'utf8');
+  expect(provSrc).toContain("for (const evt of ['agentStart', 'agentDone', 'agentEnd'])");
+  expect(provSrc).toContain('DELEGATE_TRIGGER_RE = /^(delegate|external)-/');
+  expect(provSrc).toContain('function onDelegateLifecycle');
+  // 同一防抖单缝：生命周期触发与 node* 帧族共用 scheduleRefresh（零第二刷新路径）。
+  const refreshCalls = provSrc.match(/scheduleRefresh\(\)/g) || [];
+  expect(refreshCalls.length).toBeGreaterThanOrEqual(2);
+});

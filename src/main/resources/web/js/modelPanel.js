@@ -108,8 +108,16 @@ export function modelSourceNoteKey(model) {
 // P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
 // batch merged `kernel` + `general` into the single executor agent; the panel
 // therefore lists the CURRENT role names, mirroring SchemePolicy.SettableAgents.
-const ROLES = ['Nebula', 'project-dispatcher', 'nebflow'];
-const FOLLOWER_ROLES = ['project-dispatcher', 'nebflow'];
+// 面板隐藏名过滤（追加第三修复项 · 作者 2026-10-07 23:13 令；S14 UI 收尾批同族）：
+// 判据单源 = BuiltinAgents.PanelHiddenNames（「任务分发器」面板隐藏，14:13 令②）——
+// 插件面板三处过滤已落库（RegistryRoutes GET /api/agents 第二过滤点 + plugins.js
+// 第三过滤点），本面板是同族第四处消费位：角色枚举先过同一张隐藏名表，面板只留
+// 现役可配角色。藏的是可见性不是生命：单取 GET /api/agents/:name/model 读写链
+// 零触碰（本面板对隐藏角色零枚举即零读取）。
+const PANEL_HIDDEN_ROLES = ['project-dispatcher'];
+const ALL_ROLES = ['Nebula', 'project-dispatcher', 'nebflow'];
+const ROLES = ALL_ROLES.filter((r) => !PANEL_HIDDEN_ROLES.includes(r));
+const FOLLOWER_ROLES = ROLES.filter((r) => r !== 'Nebula');
 /** Frontend mirror of SchemePolicy.SettableAgents (the /model write gate). */
 export const SETTABLE_ROLES = new Set(ROLES);
 const ROLE_KEY = {

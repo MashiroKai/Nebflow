@@ -134,6 +134,14 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
       break;
     }
   }
+  // （e2e 断点②修曾在此按行活态补武装 turnExpecting——实测 T6（bgagent-injected-
+  // bubbles）红：重开路径的缓冲重播会把思考缓冲多渲染一行。撤——页面刷新后在飞
+  // 会话的思考尾流仍不入弹窗（残留边界，随批报告申报）；活 turn 的武装在
+  // interceptBgAgentStep 的 agentStart 分支单点。
+  if (entry.meta.status === 'running' || entry.meta.status === 'thinking' ||
+      entry.meta.status === 'responding' || entry.meta.status === 'tool') {
+    state.turnExpecting[nodeSessionId] = true;
+  }
 
   // A panel that was CLOSED has no stream anchor to continue into: nothing
   // renders into this container while the panel is away, so the bubble left
@@ -396,6 +404,16 @@ export function interceptBgAgentStep(msg) {
     entry.meta.status = 'running';
     entry.meta.startedAt = entry.meta.startedAt || Date.now(); // uptime anchor
     entry.meta.stuck = null;
+    // e2e 断点②修（2026-10-07）：thinkingDelta 渲染门的武装位。门（main.js
+    // onMessage('thinkingDelta')）要求 turnExpecting[sid] ∨ 已有思考/AI 气泡，
+    // 否则丢弃 delta——本意防 done 后迟到的杂音思考泡，但 delegate 会话永远
+    // 不经真人派发点（turnExpecting 只在 input.js 四个发送点置位）⇒ 弹窗里
+    // delegate 的思考流整段被丢（作者 23:05 实测：delegate 纯 thinking 4m21s，
+    // 弹窗体只剩注入气泡）。agentStart = 引擎侧「该会话一 turn 开始」的事实，
+    // 与真人派发同语义 ⇒ 在此武装同一门位；agentDone 的既有清理路径
+    // （main.js done/error 分支按 sessionId delete turnExpecting）照常拆闸，
+    // 防杂音的原意不破。
+    state.turnExpecting[msg.nodeSessionId] = true;
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
     entry.meta.stuck = null;
