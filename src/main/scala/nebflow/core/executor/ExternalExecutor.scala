@@ -175,21 +175,91 @@ object ExternalExecutor:
 
   /**
    * zcode：headless print 模式（[[ExecutorRegistry]] 描述面口径）＝
-   * `zcode -p <task> --output-format stream-json`（claude-code 同族 CLI 形态；
-   * 宿主无 PATH zcode 可回放，精确旗标以装机联调复核——本批 fixture 回放按
-   * 同族格式驱动，见 ExternalExecutorSpec）。续聊：`zcode --resume <sid>`。
+   * `zcode -p <task> --json`（zcode-shim 联调批晨裁①-B 2026-10-07：旗标撤旧换
+   * `--json`）。续聊＝`--resume <sid>` 前置（zcode --resume 在册旗标）。
+   *
+   * == 输出实况（zcode 0.16.9 bundle 走查＋装机 `--json` 惯例实测，2026-10-07）==
+   *  - `--json`（options.json=true，outputFormat 未定义 ⇒ wantsJsonSummary）：
+   *    turn 期间 stdout 静默，终局打印**单份 pretty JSON 摘要**（bundle `e0`＝
+   *    `formatJson`＝`JSON.stringify(x,null,2)+\n`；`plugins list --json` 装机
+   *    同格式实证）：`{sessionId, traceId, turnId?, response, usage?, eventCount,
+   *    projection{status,…}}`。多行文档逐行进 [[parseLine]]：键级正则提取——
+   *    JSON 字符串值转义后恒单行（raw 换行不会出现在值内），行级提取可靠；
+   *    `response` 值经 circe 再解析还原转义。失败路径不打印摘要（stderr＋
+   *    exit≠0）＝runner 既有 exit 码 fail-closed 兜底，此处零补丁。
+   *  - 兼容方言（同窗解析）：`--output-format stream-json`（**隐藏旗标**——0.16.9
+   *    help 不列，bundle parseArgs 白名单 `["text","json","stream-json"]` 在册，
+   *    wantsEventStream 语义）＝逐帧 JSONL 事件流（`{type:"session.created"|
+   *    "model.streaming"|"tool.updated"|"turn.failed"|…}`，payload.kind 驱动）
+   *    ＋终局紧凑单行 `{type:"result",sessionId,response,…}`。候裁如复审旗标
+   *    选型（stream-json 有逐帧流式进度），仅 launchArgs 一行翻转，解析面不动。
    */
   object ZCode extends ExternalExecutor:
     val id          = "zcode"
     val displayName = "ZCode"
 
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String] =
-      val base = List("-p", task, "--output-format", "stream-json")
+      val base = List("-p", task, "--json")
       resumeSessionId.fold(base)(sid => List("--resume", sid) :++ base)
 
     def parseLine(line: String): List[Frame] =
-      // 同族 stream-json：解析核与 claude-code 共形（headless print 输出）。
-      ClaudeCode.parseLine(line)
+      val trimmed = line.trim
+      if trimmed.isEmpty then Nil
+      else
+        parseJson(trimmed) match
+          case Some(j) => parseFrameJson(j) // 方言一：整行 JSON（事件流 JSONL／紧凑 result 行）
+          case None    => parseSummaryLine(trimmed) // 方言二：--json pretty 摘要文档的键值行
+
+    /** 方言一：JSONL 事件帧与紧凑 result 行。 */
+    private def parseFrameJson(j: Json): List[Frame] =
+      j.hcursor.downField("type").as[String].toOption match
+        case Some("result") =>
+          // 终局紧凑行：sessionId＝续聊锚点，response＝终稿文本。
+          val sid = str(j, "sessionId")
+          (if sid.isDefined then List(Frame.Start(sid)) else Nil) :+
+            Frame.Final(str(j, "response").getOrElse(""), failed = summaryFailed(j))
+        case Some("session.created") =>
+          str(j, "sessionId").map(sid => Frame.Start(Some(sid))).toList
+        case Some("model.streaming") =>
+          j.hcursor.downField("payload").focus.toList.flatMap { p =>
+            p.hcursor.downField("kind").as[String].toOption match
+              case Some("text_delta") =>
+                p.hcursor.downField("delta").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+              case Some("tool_call") | Some("tool_input_start") =>
+                p.hcursor.downField("toolName").as[String].toOption.toList.map(Frame.Tool.apply)
+              case _ => Nil // reasoning_* / start / end / tool_input_delta 等零帧
+          }
+        case Some("tool.updated") =>
+          j.hcursor.downField("payload").focus.toList.collect {
+            case p if p.hcursor.downField("kind").as[String].toOption.exists(k => k == "started" || k == "scheduled") =>
+              p.hcursor.downField("toolName").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Tool.apply)
+          }.flatten
+        case Some("turn.failed") =>
+          val payload = j.hcursor.downField("payload")
+          val msg = payload.focus.flatMap(p => str(p, "message"))
+            .orElse(payload.downField("error").focus.flatMap(p => str(p, "message")))
+            .getOrElse("turn failed")
+          List(Frame.Final(msg, failed = true))
+        case _ => Nil
+
+    /** 摘要 projection.status 有 error 词即带 failed（正常成功路径＝idle 等）。 */
+    private def summaryFailed(j: Json): Boolean =
+      j.hcursor.downField("projection").downField("status").as[String].toOption
+        .exists(_.equalsIgnoreCase("error"))
+
+    // 方言二：pretty 摘要（JSON.stringify(x,null,2)）的一键一行形态；锚定行首键名，
+    // 字符串值 JSON 转义后单行，行尾可有逗号。
+    private val SessionIdLine = """^"sessionId"\s*:\s*"([^"]+)"\s*,?$""".r
+    private val ResponseLine  = """^"response"\s*:\s*"(.*)"\s*,?$""".r
+
+    private def parseSummaryLine(trimmed: String): List[Frame] =
+      trimmed match
+        case SessionIdLine(sid) => List(Frame.Start(Some(sid)))
+        case ResponseLine(escaped) =>
+          // 值按 JSON 字符串字面量再解析还原转义（\" 与 \n 等）；坏形零帧不抛。
+          io.circe.parser.parse("\"" + escaped + "\"").toOption.flatMap(_.asString).toList
+            .map(text => Frame.Final(text, failed = false))
+        case _ => Nil
 
     def interactiveResumeCommand(cliSessionId: Option[String]): String =
       cliSessionId.fold("zcode")(sid => s"zcode --resume $sid")
