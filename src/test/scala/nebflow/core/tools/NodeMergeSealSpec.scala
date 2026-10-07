@@ -125,4 +125,35 @@ class NodeMergeSealSpec extends CatsEffectSuite:
       assert(explicitFalse.isRight, s"merge=false ⇒ legacy create must succeed: $explicitFalse")
   }
 
+  // E2E 实测断点（2026-10-07 n1-e2e rig）：schema 已删 merge 属性 ⇒ 宽容客户端（LLM
+  // 工具调用实测如此）把 true 序列化成字符串 "true"，旧 `asBoolean` 判据对它返回
+  // None ⇒ seal 被类型混淆绕过、create 静默吞键（节点建成而 merge 意图无声丢失）。
+  // 封口判据收口后：字符串 "true"（含大小写/空白变体）一律拒绝，"false" 照旧容忍。
+  test("⑥ seal string-form: merge=\"true\" (the type-confused legacy shape) is refused too — no silent drop") {
+    val ws = tempRoot / "ws-seal-string"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"seal-3-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      _ <- mountProject("seal-3", ws, system, res)
+      lower <- NodeEditTool.call(
+        nodeInput("seal-3", "string-sink", "merge" -> "true".asJson, "in" -> Json.arr()).asObject.get,
+        mkCtx(res, system, ws.toString)
+      )
+      padded <- NodeEditTool.call(
+        nodeInput("seal-3", "string-sink-2", "merge" -> "  TRUE ".asJson, "in" -> Json.arr()).asObject.get,
+        mkCtx(res, system, ws.toString)
+      )
+      falseString <- NodeEditTool.call(
+        nodeInput("seal-3", "plain-node-3", "description" -> "str work".asJson, "task" -> "str work".asJson, "merge" -> "false".asJson).asObject.get,
+        mkCtx(res, system, ws.toString)
+      )
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assert(lower.isLeft, "merge=\"true\" (string) must be refused — the seal is not bypassable by type confusion")
+      assert(lower.left.toOption.get.message.contains("NODE_MERGE_UNSUPPORTED"), "string form carries the same family code")
+      assert(padded.isLeft, "merge=\"  TRUE \" (padded/upper) must be refused the same way")
+      assert(falseString.isRight, s"merge=\"false\" (string) stays on the tolerated legacy leg: $falseString")
+  }
+
 end NodeMergeSealSpec

@@ -81,6 +81,17 @@ object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
   /**
+   * merge 退役封口判据（单点；NodeMergeSealSpec ⑥ 断言共用）。布尔 true 之外，
+   * **字符串形态 "true"**（大小写/首尾空白宽容）同样判封口——schema 已删该属性，
+   * 仍发 merge 键的都是遗留调用方；宽容客户端（LLM 工具调用）会把 true 序列化成
+   * 字符串，旧 `asBoolean` 判据对它返回 None ⇒ 类型混淆绕过封口、下游 create 静默
+   * 吞键（E2E 实测断点 2026-10-07）。"false"/布尔 false/其它值 = 容忍腿零变化。
+   */
+  private[tools] def mergeSealRequested(input: JsonObject): Boolean =
+    input("merge").exists(v => v.asBoolean.contains(true) || v.asString.exists(_.trim.equalsIgnoreCase("true")))
+
+
+  /**
    * descriptionLong stored-length cap: the
    * stored value is truncated to this many characters; longer input is NOT an error — the
    * full (trimmed, untruncated) text is spilled to a per-node file and its absolute path is
@@ -562,7 +573,12 @@ object NodeEditTool extends Tool:
     //     层判定机（S13）与 Delegate spawn 腿；GitWorktrees 公用 util 本体保留（其余
     //     消费点不动，本件 createWorktreeFor 包装随之退役）。
     //   - merge=true → NODE_MERGE_UNSUPPORTED（文案沿先行封口逐字）；merge=false/缺省容忍（create-only 令牌非节点字段——容忍语义保
-    //     NodeMergeSealSpec ⑥ control 绿）。
+    //     NodeMergeSealSpec ⑥ control 绿）。判据 = 布尔 true **或字符串形态 "true"**
+    //     （E2E 实测断点 2026-10-07：schema 已删属性 ⇒ 宽容客户端（LLM 工具调用实测
+    //     如此）会把 true 序列化成字符串，旧判据 `asBoolean` 对它返回 None ⇒ seal 被
+    //     类型混淆绕过，且下游 create 静默吞掉未知键——节点建成而 merge 意图无声丢失，
+    //     对调用方呈现为成功。字符串形态同样视为「仍想造 merge 节点」的遗留调用方，
+    //     一律封口；"false"/布尔 false 照旧容忍）。
     //   - dangling 键在场 → NODE_DANGLING_UNSUPPORTED：空 out 本就合法（结果保留、
     //     接线后自动投递），声明令牌随 merge sink 面退役。
     else if input.contains("worktree") then
@@ -575,7 +591,7 @@ object NodeEditTool extends Tool:
           )
         )
       )
-    else if input("merge").flatMap(_.asBoolean).contains(true) then
+    else if NodeEditTool.mergeSealRequested(input) then
       IO.pure(
         Left(
           ToolError(
