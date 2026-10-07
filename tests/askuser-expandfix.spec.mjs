@@ -21,6 +21,11 @@
 //      下一 header）＋ tucked 展开面语义不回归（修令 §2）
 //   A4 旧数据形态（回答行无 answerOf，pre-案B）= 旧分裂行为逐字保留（本修
 //      不越界改写存量语义）
+//   A5 busyTail 重载→live 续跑：工作行锚轮顶、终态整轮一枚 header
+//   B1-B3 badge 并列复发修令钉（作者 2026-10-07 09:25 令，取证
+//      .nebflow/evidence/20261007_101748_askuser-badge-regroup/）：挂起卡终态
+//      不开组（live 双轮全链无并列 badge 面）＋ 真实两轮历史形 reload 一枚
+//      header ＋ busyTail 交换中途重放不被轮1中间 badge 骗出假完成 header。
 // Run: npx playwright test tests/askuser-expandfix.spec.mjs
 
 import { test, expect } from '@playwright/test';
@@ -89,7 +94,9 @@ test.describe('AskUser 强制展开修令 (2026-10-06 19:29)', () => {
     expect(during.askCards).toHaveLength(1);
     expect(during.tools.every(x => x.tucked)).toBe(true);
     expect(during.tools.every(x => !x.bodyOpenCls)).toBe(true);
-    // 作答 → 续跑 → 终态
+    // 作答 → 续跑 → 终态（作答走真实点击面：lockOptionBox + .option-answer 落卡，
+    // badge 并列复发修令 2026-10-07 起终态判据读卡面——挂起卡=不开组）
+    await page.evaluate(() => window.__axAnswerCard('req-ax-1'));
     await page.evaluate(() => window.__axDone('AskUserQuestion\n  (用哪个方向继续?)', '已回答', null, false, '{"question":"用哪个方向继续?"}'));
     await page.evaluate(() => window.__axCallStart('Bash'));
     await page.evaluate(() => window.__axDone('Bash\n  (npm test)', '成功', 'ok', false, '{"command":"npm test"}'));
@@ -161,5 +168,80 @@ test.describe('AskUser 强制展开修令 (2026-10-06 19:29)', () => {
     expect(c.headers[0].text).toContain('工具 3 次');
     expect(c.tools.every(x => x.tucked)).toBe(true);
     expect(c.childSeq[1]).toBe('header');
+  });
+
+  // ── badge 并列复发修令钉（作者 2026-10-07 09:25 令）────────────────────
+  // 病根（取证 .nebflow/evidence/20261007_101748_askuser-badge-regroup/）：
+  // AskUserQuestion 已是非阻塞-only（阻塞腿移除）——ack 轮正常终态而卡仍挂起；
+  // 终态 collapseTurn 在挂起卡在场时照常关组落 badge，作答续跑（新引擎轮、live
+  // 无回答行）的工作行经 turnAnchor 重锚到开轮行顶 = 旧 badge 之上，两并列
+  // badge 面（作者截图）；重载腿 busyTail 完成判据被轮1中间 badge 骗过 →
+  // 假完成 header + 续跑线并列。修 = 挂起卡终态不开组（同轮豁免语义延到 live
+  // 判据面）＋ busyTail 尾段完成判据让位于最后一枚带标回答行（exchangeComplete）。
+  const B_MSGS_HEAD = [
+    { type: 'user', text: '帮我看下仓库状态，然后问我一个方向问题', timestamp: T0 },
+    { type: 'tool', label: 'Bash\n  (git status)', summary: '成功', content: 'clean', isError: false, input: { command: 'git status' }, timestamp: T0 + 1000 },
+    { type: 'askUser', items: ASK_ITEMS, requestId: 'req-b', agentName: 'Nebula' },
+    { type: 'ai', text: '卡片已发出，等你选方向。', durationMs: 4200, model: 'test-model', timestamp: T0 + 2000 }, // 轮1 ack 终态行（真实历史形：带 badge）
+    { type: 'user', text: '方向 A', answerOf: 'req-b', timestamp: T0 + 5000 },
+  ];
+
+  test('B1 live 双轮：挂起卡终态不开组——作答续跑同轮、终态整轮一枚 header', async ({ page }) => {
+    await page.evaluate(() => window.__axUser('帮我看下仓库状态，然后问我一个方向问题'));
+    await page.evaluate(() => window.__axCallStart('Bash'));
+    await page.evaluate(() => window.__axDone('Bash\n  (git status)', '成功', 'clean', false, '{"command":"git status"}'));
+    await page.evaluate(() => window.__axCallStart('AskUserQuestion'));
+    await page.evaluate((items) => window.__axAsk(items, 'req-b'), ASK_ITEMS);
+    // 轮1（ack 轮）终态时卡仍挂起——非阻塞语义下的真实序列
+    await page.evaluate(() => window.__axFinishTurn(4200, 'test-model', '卡片已发出。'));
+    const m1 = await page.evaluate(() => window.__axCensus());
+    expect(m1.headers).toHaveLength(0); // 修复点：不落 badge、不开组（并列组的源头）
+    expect(m1.tools.every(x => !x.tucked)).toBe(true); // 等待面平铺（=busyTail 开尾同形）
+    expect(m1.childSeq[1]).toBe('tool(FLAT)');
+    // 作答 → 续跑：工作行锚轮顶，全程无第二 badge 面
+    await page.evaluate(() => window.__axAnswerCard('req-b'));
+    await page.evaluate(() => window.__axCallStart('Bash'));
+    const m2 = await page.evaluate(() => window.__axCensus());
+    expect(m2.headers).toHaveLength(0); // 修复点：工作行不再骑到旧 badge 之上（作者截图面）
+    expect(m2.childSeq[1]).toBe('workline');
+    await page.evaluate(() => window.__axDone('Bash\n  (npm test)', '成功', 'ok', false, '{"command":"npm test"}'));
+    await page.evaluate(() => window.__axFinishTurn(900, 'test-model', '已确认方向 A，全部完成。'));
+    const f = await page.evaluate(() => window.__axCensus());
+    expect(f.headers).toHaveLength(1); // 整个交换一枚 badge
+    expect(f.headers[0].text).toContain('工具 2 次'); // 前后工具行同组
+    expect(f.tools.every(x => x.tucked)).toBe(true);
+    expect(f.childSeq[1]).toBe('header');
+  });
+
+  test('B2 reload 完整交换（真实两轮历史形）：一枚 header 罩全部、中间 badge 不并列', async ({ page }) => {
+    const msgs = [...B_MSGS_HEAD,
+      { type: 'tool', label: 'Bash\n  (npm test)', summary: '成功', content: 'ok', isError: false, input: { command: 'npm test' }, timestamp: T0 + 6000 },
+      { type: 'ai', text: '已确认方向 A，全部完成。', durationMs: 900, model: 'test-model', timestamp: T0 + 7000 }];
+    await page.evaluate((m) => window.__axReplay(m, {}), msgs);
+    const c = await page.evaluate(() => window.__axCensus());
+    expect(c.headers).toHaveLength(1); // 交换一枚 badge——轮1 中间 badge 不另立组
+    expect(c.childSeq[1]).toBe('header');
+    expect(c.headers[0].text).toContain('工具 2 次');
+    expect(c.tools.every(x => x.tucked)).toBe(true);
+  });
+
+  test('B3 busyTail 重载（交换中途、轮1 badge 在尾）→live 续跑：假完成 header 不复发', async ({ page }) => {
+    const msgs = [...B_MSGS_HEAD,
+      { type: 'tool', label: 'Bash\n  (npm run build)', summary: '成功', content: 'built', isError: false, input: { command: 'npm run build' }, timestamp: T0 + 6000 }];
+    await page.evaluate((m) => window.__axReplay(m, { busyTail: true }), msgs);
+    const r1 = await page.evaluate(() => window.__axCensus());
+    expect(r1.headers).toHaveLength(0); // 修复点：exchangeComplete 不被轮1中间 badge 骗过
+    expect(r1.tools.every(x => !x.tucked)).toBe(true); // 开尾平铺
+    await page.evaluate(() => window.__axCallStart('Bash')); // live 续跑
+    const r2 = await page.evaluate(() => window.__axCensus());
+    expect(r2.headers).toHaveLength(0); // 无并列
+    expect(r2.childSeq[1]).toBe('workline');
+    await page.evaluate(() => window.__axDone('Bash\n  (echo done)', '成功', 'done', false, '{"command":"echo done"}'));
+    await page.evaluate(() => window.__axFinishTurn(900, 'test-model', '续跑完成。'));
+    const f = await page.evaluate(() => window.__axCensus());
+    expect(f.headers).toHaveLength(1);
+    expect(f.headers[0].text).toContain('工具 3 次'); // 重放工具×2 + 续跑工具×1 同组
+    expect(f.tools.every(x => x.tucked)).toBe(true);
+    expect(f.childSeq[1]).toBe('header');
   });
 });

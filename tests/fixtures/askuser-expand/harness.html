@@ -96,6 +96,22 @@
       await raf2();
     };
 
+    // The REAL answer face: pick the first option, click confirm — the same
+    // clicks the author's answer runs (showOptions' confirm handler locks the
+    // card and appends the .option-answer line; ws.send is the stub). Badge
+    // 并列复发修令 (2026-10-07): without the lock face a live terminal sees a
+    // pending card and — correctly — keeps the group open, so every live-leg
+    // drive that models an ANSWERED card must run this before its terminal.
+    window.__axAnswerCard = async (rid) => {
+      const box = document.querySelector('.option-box[data-request-id="' + rid + '"]');
+      if (!box) throw new Error('no card ' + rid);
+      const opt = box.querySelector('.option-btn');
+      if (opt) opt.click();
+      const confirmBtn = box.querySelector('.option-confirm');
+      if (confirmBtn && !confirmBtn.disabled) confirmBtn.click();
+      await raf2();
+    };
+
     window.__axFinishTurn = async (durationMs = 4200, model = 'test-model', text = '本回合的最终回复。') => {
       const v = chatViews.primary;
       chatMod.appendAiText(text);

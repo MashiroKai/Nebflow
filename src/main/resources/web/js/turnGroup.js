@@ -352,6 +352,33 @@ export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const rows = scope.filter(el => el.classList && el.classList.contains('row'));
+  // Ask ANSWER continuation (badge 并列复发修令, author 2026-10-07 09:25): a
+  // terminal that lands while the turn's scope still holds an UNANSWERED ask
+  // card is NOT a wheel-close. AskUserQuestion is non-blocking today (阻塞腿
+  // 已整体移除，AskUserQuestionTool.askUser): the ack ENDS the engine turn while
+  // its card is still pending, and the card answer arrives later as a NEW
+  // engine turn whose frames broadcast with NO user row in the live DOM. If the
+  // group closed here, the settled badge would fence the pre-answer rows and
+  // the continuation's line (workline turnAnchor → the exchange opener) would
+  // re-open ABOVE it — two parallel badge faces, the author's screenshot — and
+  // the re-terminal would dissolve that badge again (stale-cursor heal). Same
+  // ruling as 0584bf0bb's replay side, 作答不是开轮事件: keep the group OPEN —
+  // reveal the process rows (failTurn's flat-for-waiting precedent; identical
+  // to the busyTail open-tail face a reload shows at this same moment), drop
+  // the line (E5: it must not outlive the turn), and leave the closure cursor
+  // untouched. The answer's continuation then joins the SAME group and the
+  // exchange's REAL terminal builds the ONE header over pre+post rows — the
+  // replay face (spec A2). Predicate = chat.js's own pending-ask selector face
+  // (an `.option-box` without a resolved `.option-answer` line, as in the
+  // session-attention broadcast); a card answered mid-turn (the confirm path
+  // appends the answer line) takes the normal close below.
+  if (rows.some(r => r.querySelector('.option-box:not(:has(.option-answer))'))) {
+    for (const el of scope) {
+      if (el.classList && el.classList.contains('nf-tucked')) el.classList.remove('nf-tucked');
+    }
+    removeWorkline(view);
+    return null; // group stays open — no header, no markClosed
+  }
   const tuckable = rows.filter(isTuckableRow);
   let header = null;
   if (tuckable.length > 0) {
@@ -447,6 +474,33 @@ export function expandGroupContaining(el) {
  * at the tail's first row so the terminal doesn't dissolve legitimate
  * history chrome.
  */
+/**
+ * True when the tail's completion signal postdates its last stamped ask-answer
+ * row — i.e. no answer continuation is still open after the last done badge.
+ * The plain "some Ai row carries a done badge" read (findDoneBadge) is the
+ * wrong completion oracle once a turn contains an AskUserQuestion: the tool is
+ * non-blocking, so turn 1 (the ack round) legitimately ends with a badged Ai
+ * row while the stamped ANSWER row and the answer-turn's rows keep streaming
+ * after it. Flushing such a tail rebuilt a false-complete header mid-exchange
+ * and the live continuation re-opened its line above it — the reload face of
+ * the 并列 badge bug (author 2026-10-07 09:25 令). Open tail whenever the last
+ * `data-nf-ask-answer` row outranks the last badge row (作答不是开轮事件, the
+ * 0584bf0bb stamp as the boundary oracle — no second authority). A tail with
+ * no badge at all stays open (unchanged); a badge after the last stamp is the
+ * completed exchange (unchanged).
+ */
+function exchangeComplete(tail) {
+  let badgeIdx = -1;
+  let stampIdx = -1;
+  tail.forEach((r, i) => {
+    if (r.hasAttribute('data-nf-ask-answer')) stampIdx = i;
+    for (const b of r.querySelectorAll('.duration-badge')) {
+      if (b.dataset.nfPhrase) { badgeIdx = i; break; }
+    }
+  });
+  return badgeIdx > stampIdx;
+}
+
 export function buildTurnSummariesForHistory(chat, opts = {}) {
   const { busyTail = false } = opts;
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
@@ -463,7 +517,7 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
     if (isInjectedRow(r) && findDoneBadge(rows.slice(segStart, i))) { flush(i); segStart = i; }
   });
   const tail = rows.slice(segStart);
-  if (!busyTail || findDoneBadge(tail)) {
+  if (!busyTail || exchangeComplete(tail)) {
     flush(rows.length);
     markClosed(chat);
   } else if (tail.length > 0) {
