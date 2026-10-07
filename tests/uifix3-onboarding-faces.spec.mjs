@@ -373,7 +373,11 @@ test('uifix3 ③: touch fallback = (hover: none) keeps the control visible; typi
     await skipLoc.waitFor({ state: 'attached', timeout: 30000 });
     const op = await skipLoc.evaluate((el) => { const o = getComputedStyle(el).opacity; el.click(); return o; });
     if (i === 0) {
-      expect(op, 'the 跳过打字 control is OUT of ③\'s scope — stays visible during typing').toBe('1');
+      // uifix-skiptyping batch (2026-10-07): the typing-skip control gained the
+      // ③ four-state treatment — on this TOUCH surface it stays visible at rest
+      // through the (hover: none) fallback leg (the assertion below pins that
+      // fallback on a typing bubble; ③ itself never touched this control).
+      expect(op, 'the 跳过打字 control stays visible during typing on a touch surface ((hover: none) fallback — uifix-skiptyping batch)').toBe('1');
     }
     await skipLoc.waitFor({ state: 'detached', timeout: 10000 });
   }
@@ -439,6 +443,131 @@ test('uifix3 ③ scope boundary: the hover-hide governs the LIVE window; sapphir
   expect(answered.disabled, 'the answered card\'s skip is disabled').toBe(true);
   expect(await settledOpacity(), 'answered card: sapphire\'s disabled blanket keeps the foot legible (documented boundary, not a hover-hide regression)').toBe('1');
   expect(pageErrors).toEqual([]);
+});
+
+/* ═══ uifix-skiptyping — 「跳过打字」hover 显隐（uifix3 ③ 同构四态；2026-10-07
+   作者复查令「伪流式气泡的『跳过打字』没落实 hover 显示」）═══ */
+
+test('uifix-skiptyping: the typing-skip control hides at rest, reveals on BUBBLE hover, reveals via :focus-visible, hides again; a hidden click still skips', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page);
+  // Greet bubble 1 (greet2+3+4) types for ~7s — long enough for the four
+  // settled reads; bubble 0's window (~0.5s) is too short to be worth racing.
+  const bubble = page.locator('.ob-sim-bubble').nth(1);
+  const skip = bubble.locator('[data-skip-typing]');
+  await skip.waitFor({ state: 'attached', timeout: 30000 });
+
+  const readOp = () => page.evaluate(() => {
+    const b = document.querySelectorAll('.ob-sim-bubble')[1];
+    const el = b && b.querySelector('[data-skip-typing]');
+    return el ? getComputedStyle(el).opacity : 'gone';
+  });
+  // Settled reader — uifix3 ③'s two-equal-reads shape (0.15s ease tail values
+  // like 0.0068 are transition residue, not a state).
+  const settledOpacity = async () => {
+    let prev = await readOp();
+    for (let i = 0; i < 40 && prev !== 'gone'; i++) {
+      await page.waitForTimeout(120);
+      const cur = await readOp();
+      if (cur === prev) return cur;
+      prev = cur;
+    }
+    return prev;
+  };
+  // Park/hover via absolute mouse moves: the bubble GROWS while typing, so
+  // locator.hover()'s stability gate would race the typewriter. One bbox read
+  // then raw moves — the bubble only grows downward, the parked point stays
+  // inside it (③'s pointer-parking lesson applied to a moving box).
+  const parkOff = () => page.mouse.move(8, 8);
+  const hoverBubble = async () => {
+    const bb = await bubble.boundingBox();
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2);
+  };
+
+  await parkOff();
+  expect(await settledOpacity(), 'at rest the 跳过打字 control is hidden (平常隐藏)').toBe('0');
+
+  await hoverBubble();
+  expect(await settledOpacity(), 'bubble hover reveals the control (与气泡体 hover 联动 — uifix3 ③ 同构)').toBe('1');
+
+  await parkOff();
+  expect(await settledOpacity(), 'pointer off the bubble hides the control again').toBe('0');
+
+  // Keyboard: forced :focus-visible focus reveals it (the promise ③ makes).
+  await page.evaluate(() => {
+    const b = document.querySelectorAll('.ob-sim-bubble')[1];
+    b.querySelector('[data-skip-typing]').focus({ focusVisible: true });
+  });
+  expect(await settledOpacity(), ':focus-visible reveals the control for keyboard users').toBe('1');
+  await page.evaluate(() => document.activeElement.blur());
+  expect(await settledOpacity(), 'blur hides it again').toBe('0');
+
+  // Opacity is not a pointer gate — with the pointer parked away and the
+  // control visually hidden, a real click still skips (text lands, button leaves).
+  await skip.click({ force: true });
+  await skip.waitFor({ state: 'detached', timeout: 10000 });
+  expect((await bubble.innerText()).trim().length, 'text fully lands after skip').toBeGreaterThan(0);
+  expect(pageErrors).toEqual([]);
+});
+
+test('uifix-skiptyping: touch surface ((hover: none)) keeps the typing-skip control visible — one-tap access; the question-card ③ fallback intact', async ({ browser }) => {
+  // Same real-touch rig as ③'s fallback test: the iPhone context flips the
+  // (hover)/(pointer) media features; viewport stays desktop-sized.
+  const context = await browser.newContext({
+    ...devices['iPhone 13'], viewport: { width: 1100, height: 1000 }, locale: 'zh-CN',
+  });
+  const page = await context.newPage();
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page);
+  expect(await page.evaluate(() => matchMedia('(hover: none)').matches),
+    'the emulated touch surface really matches (hover: none)').toBe(true);
+
+  // Both greeting bubbles: at-rest opacity read + JS click fast-forward, one
+  // evaluate per bubble (③'s no-real-click-window shape, scoped per index).
+  for (let i = 0; i < 2; i++) {
+    const skipLoc = page.locator('.ob-sim-bubble').nth(i).locator('[data-skip-typing]');
+    await skipLoc.waitFor({ state: 'attached', timeout: 30000 });
+    const op = await skipLoc.evaluate((el) => { const o = getComputedStyle(el).opacity; el.click(); return o; });
+    if (i === 0) {
+      expect(op, '(hover: none) fallback: the 跳过打字 control stays visible at rest on touch').toBe('1');
+    }
+    await skipLoc.waitFor({ state: 'detached', timeout: 10000 });
+  }
+  // Element A regression pin on the same surface: ③'s (hover: none) fallback
+  // still holds on the first question card.
+  const card = page.locator('.ask-card[data-q="name"]');
+  await expect(card).toBeVisible({ timeout: 30000 });
+  const opA = await card.locator('[data-skip]').evaluate((el) => getComputedStyle(el).opacity);
+  expect(opA, 'touch surface: the question-card skip stays visible (③ fallback intact)').toBe('1');
+  expect(pageErrors.filter((e) => e !== 'Canceled')).toEqual([]);
+  await context.close();
+});
+
+test('uifix-skiptyping static pin: the four-state rules exist in chat.css; zero new copy (ob2.typing.skip reused byte-identical)', () => {
+  // Rest hidden / bubble hover reveal / :focus-visible reveal / (hover: none)
+  // fallback — the ③ isomorphism, selector-for-selector.
+  expect(skipCss.includes('.ob-skip[data-skip-typing] { opacity: 0; }'),
+    'rest: hidden').toBe(true);
+  expect(skipCss.includes('.ob-sim-bubble:hover .ob-skip[data-skip-typing]'),
+    'hover: revealed on the typing bubble').toBe(true);
+  expect(skipCss.includes('.ob-skip[data-skip-typing]:focus-visible'),
+    'keyboard: :focus-visible reveal').toBe(true);
+  // The fallback leg verbatim (order-independent: this block sits right after
+  // the .ob-skip base rule, BEFORE ③'s (hover: none) block in file order).
+  expect(skipCss.includes('@media (hover: none) {\n  .ob-skip[data-skip-typing] { opacity: 1; }\n}'),
+    'touch fallback keeps the control visible').toBe(true);
+  // Element A's uifix3 ③ rules still in place (touched-surface regression pin).
+  expect(skipCss.includes('.ob-actions .ob-ghost[data-skip] { opacity: 0; }'),
+    '③ rest rule intact').toBe(true);
+  expect(skipCss.includes('.ask-card:hover .ob-actions .ob-ghost[data-skip]'),
+    '③ card-hover rule intact').toBe(true);
+  // Zero-copy red line: the label is the EXISTING key, byte-identical both locales.
+  const zh = readFileSync(join(WEB, 'js', 'locales', 'zh-CN.js'), 'utf8');
+  const en = readFileSync(join(WEB, 'js', 'locales', 'en.js'), 'utf8');
+  expect(zh.includes("'ob2.typing.skip': '跳过打字'"), 'zh copy byte-identical').toBe(true);
+  expect(en.includes("'ob2.typing.skip': 'Skip typing'"), 'en copy byte-identical').toBe(true);
 });
 
 /* ═══════════ 零文案红线 static pin — the new face sinks to existing keys ═══ */

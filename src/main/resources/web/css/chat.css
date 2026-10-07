@@ -2050,6 +2050,25 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
+/* uifix-skiptyping 批 (2026-10-07 10:52 作者复查令「伪流式气泡的『跳过打字』
+   没落实 hover 显示」): the pseudo-streaming bubble's 「跳过打字」 control gets
+   the uifix3 ③ treatment (282c07d8d, the four states, isomorphic):
+   hidden at rest; revealed while the pointer is over the typing BUBBLE
+   (与气泡体 hover 联动 — the sim bubble is this control's ask-card); revealed
+   for keyboard users via :focus-visible; kept plainly visible on touch
+   surfaces under (hover: none) (the .pop-media-canvas precedent — no hover
+   on touch, one-tap access stays). Opacity only: the button stays clickable
+   for keyboard/AT users while visually hidden, and it exists only DURING the
+   typing window anyway (simBubble removes it on done — so ③'s answered-card
+   disabled-foot boundary has no counterpart here). The 0.15s opacity leg of
+   the base rule's transition above is what animates the reveal. Zero new
+   copy: the label is the existing ob2.typing.skip key. */
+.ob-skip[data-skip-typing] { opacity: 0; }
+.ob-sim-bubble:hover .ob-skip[data-skip-typing],
+.ob-skip[data-skip-typing]:focus-visible { opacity: 1; }
+@media (hover: none) {
+  .ob-skip[data-skip-typing] { opacity: 1; }
+}
 /* Summary / error action rows (glass controls, §8.2 — save button keeps the
    translucent-green send-button accent). */
 .ob-actions {
