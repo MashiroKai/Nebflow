@@ -72,7 +72,7 @@ CANONICAL_MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 RESERVED_PREFIX = "nebflow-plugin-"
 # 官方白名单基线 = creator 自身 + seed manifest 现声明集（运行时会尝试读邻近
 # seed/manifest.json 动态并入 plugins: 声明，见 discover_official）。——M4 生成期
-# 更窄防线（nebflow-plugin- 前缀），批1 不动。
+# 更窄防线（nebflow-plugin- 前缀），维持不动。
 OFFICIAL_BASELINE = {"nebflow-plugin-creator", "visual-report", "slideblocks"}
 # C9 保留 namespace 前缀（OfficialPackages.scala:51 逐字「nebflow-」；🔴 禁收窄/改写）
 RESERVED_OFFICIAL_PREFIX = "nebflow-"
