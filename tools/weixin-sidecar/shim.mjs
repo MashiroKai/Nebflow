@@ -558,6 +558,20 @@ server.listen(OPTS.port, OPTS.host, () => {
   info(`contract: GET /login/begin, GET /login/status (README "Weixin (iLink) channel"); ilink base ${FIXED_BASE_URL}`);
 });
 
+// weixin-inbound batch (2026-10-07): the optional inbound msg loop lives in its
+// OWN file and boots here. Kill switches: WEIXIN_MSGLOOP_OFF=1, removing
+// msgloop.mjs (import failure is caught below), or leaving
+// WEIXIN_MSGLOOP_INGRESS_URL unset (the loop itself idles with a visible log).
+// Registered BEFORE the signal handlers below so a SIGTERM releases the loop's
+// consumer lock first.
+if (process.env.WEIXIN_MSGLOOP_OFF === "1") {
+  info("msgloop: disabled by WEIXIN_MSGLOOP_OFF (kill switch 2)");
+} else {
+  import("./msgloop.mjs")
+    .then((m) => m.startMsgLoop())
+    .catch((e) => warn(`msgloop: not loaded (${e.message}) — login-only shim (kill switch 1)`));
+}
+
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     info(`${sig} received, closing`);

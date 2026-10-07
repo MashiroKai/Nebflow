@@ -1100,7 +1100,10 @@ private[gateway] object PresenceRoutes:
       // every other social arm, and the answer is the observable verdict
       // (injected + session / dropped + reason), never a secret.
       case req @ POST -> Root / "social" / "channels" / "weixin-ilink" / "ingress" =>
-        withAuth(req) {
+        // weixin-inbound batch (2026-10-07): the gate gains its track-2 (the
+        // shim token, route-local — see withIngressAuth); track 1 (admin) is
+        // the same checkAuth verdict withAuth would have used, unchanged.
+        withIngressAuth(req, checkAuth(req)) {
           req.as[Json].attempt.flatMap {
             case Left(_) =>
               BadRequest(
@@ -1729,6 +1732,29 @@ private[gateway] object PresenceRoutes:
         Forbidden(Json.obj("error" -> "secret_mode".asJson, "field" -> field.asJson, "reason" -> reason.asJson))
       case Failure.Io(reason) =>
         InternalServerError(Json.obj("error" -> "io".asJson, "reason" -> reason.asJson))
+
+  /**
+   * weixin-inbound batch (2026-10-07), the ingest route's auth gate —
+   * ROUTE-LOCAL to `POST /api/social/channels/weixin-ilink/ingress` on purpose.
+   * Track 1 is the existing `checkAuth` (admin token, byte-for-byte unchanged —
+   * `adminOk` is its verdict, evaluated by the caller); track 2 is the shim
+   * token the engine minted at seam-up ([[nebflow.social.WeixinIngressToken]]).
+   * The shim token never enters the global `checkAuth`/`withAuth`, so its
+   * whole authority is this one route (least privilege by placement, report
+   * §1.1). A total failure answers the SAME 403 body `withAuth` answers, so
+   * the two tracks are indistinguishable from outside (no enumeration oracle).
+   * by-name `f` keeps the gate-lazy evaluation shape of [[RestApiCtx.withAuth]].
+   */
+  private def withIngressAuth(req: Request[IO], adminOk: Boolean)(f: => IO[Response[IO]]): IO[Response[IO]] =
+    if adminOk then f
+    else
+      val bearer = req.headers.get[Authorization].collectFirst {
+        case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t
+      }
+      nebflow.social.WeixinIngressToken.accepts(PathUtil.dataRoot, bearer).flatMap {
+        case true  => f
+        case false => Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      }
 
   /**
    * SSRF guard for provider model discovery: only absolute http(s) URLs with a

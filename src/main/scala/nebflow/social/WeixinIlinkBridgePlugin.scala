@@ -49,9 +49,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  * contained into a [[WeixinIlinkBridgePlugin.Verdict]] plus one log line: never
  * an exception, never a torn-down bridge.
  *
- * 🔴 Zero credentials: the card keeps `bot_token` behind its `_ref` path and the
- * official plugin keeps its own token under the host state directory. This class
- * reads no credential at all (only the allowlist string) and logs no value.
+ * 🔴 Credentials: the card keeps `bot_token` behind its `_ref` path and the
+ * official plugin keeps its own token under the host state directory; this
+ * class READS no credential at all (only the allowlist string) and logs no
+ * value. weixin-inbound batch (2026-10-07): `start` additionally MINTS the
+ * shim's ingress token ([[WeixinIngressToken]] — a generated secret at
+ * `<root>/secrets/`, never a read of any stored credential), the track-2
+ * credential of the ingest route's route-local gate (report §1).
  */
 final class WeixinIlinkBridgePlugin(
   root: os.Path,
@@ -92,6 +96,17 @@ final class WeixinIlinkBridgePlugin(
           _ <- allowedRef.set(pinnedAllowedIlinkUserIds.getOrElse(cfg.allowedIlinkUserIds))
           _ <- rebuildRoutes(ctx)
           _ <- IO { started = true }
+          // weixin-inbound batch (2026-10-07): mint (or keep) the shim's ingress
+          // token at seam-up — the credential plane of the ingest route's track-2
+          // ([[WeixinIngressToken]]; design = batch report §1). Failure is logged
+          // and NOT fatal: the seam itself is passive and the admin track still
+          // serves the route; a missing token only means the shim's POSTs stay
+          // 403 until a later seam-up mints one.
+          _ <- WeixinIngressToken.ensure(root).handleErrorWith(e =>
+            logger.error(
+              s"weixin-ilink bridge: ingress token mint failed (${e.getClass.getSimpleName}: ${e.getMessage}) — " +
+                "shim ingress stays 403 until a later seam-up succeeds"
+            ))
           gate <- allowedRef.get
           _ <- logger.info(
             s"weixin-ilink bridge: seam up — routing table rebuilt, sender gate " +
