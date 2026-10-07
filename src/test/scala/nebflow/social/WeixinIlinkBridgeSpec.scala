@@ -51,12 +51,16 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   /**
    * Recording BridgeContext: captures injections and serves a fixed session
    * list. `raiseOnInject` is the crash-isolation seam — an injection that
-   * throws must never escape the seam.
+   * throws must never escape the seam. `bound` records every
+   * `updateBridgeConfig` write (the auto-bind leg's persistence face).
    */
   private final class RecordingCtx(sessions: List[SessionMeta], raiseOnInject: Boolean = false) extends BridgeContext:
 
     val injected: Ref[IO, List[(String, String, Option[String])]] =
       Ref.unsafe[IO, List[(String, String, Option[String])]](Nil)
+
+    val bound: Ref[IO, List[(String, String, Json)]] =
+      Ref.unsafe[IO, List[(String, String, Json)]](Nil)
 
     def injectMessage(
       sessionId: String,
@@ -69,7 +73,8 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
-    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] =
+      config.fold(IO.unit)(c => bound.update(_ :+ ((sessionId, platform, c))))
 
   end RecordingCtx
 
@@ -652,6 +657,157 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       got <- calls.get
     yield assertEquals(got, Nil, "toolEnd observes nothing; done with an empty buffer sends nothing")
+  }
+
+  // ─────────────── auto-bind leg (weixin-autobind batch, 2026-10-07) ───────────────
+  //
+  // The unbound-sender arm used to be inject-only: the message was served by
+  // the default session but NO `ilink_user_id` ever landed on it, so the
+  // session had no return address — every later flush died on
+  // `no-return-address` (the gap the outbound batch declared, its report §0.5).
+  // The feishu C4 form closes it: bind (source=auto + boundAt) → routes table
+  // → inject. WI-AB7 pins the closure end to end through the UNCHANGED
+  // outbound reverse read.
+
+  /** The plugin with a recording send seam (the WI-S3 shape) — for the
+    * auto-bind ⇄ outbound-loop cases. No socket is ever opened. */
+  private def pluginWithRecorder(root: os.Path, calls: Ref[IO, List[(String, String)]]): WeixinIlinkBridgePlugin =
+    new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      send = _ => (to, text) => calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
+    )
+
+  test("WI-AB1 an unbound sender + a default session ⇒ auto-binds (source=auto + boundAt), then injects there") {
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = plugin(root = root)
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      _ <- started(p, c)
+      v <- p.intake(c, inbound(Some("wx_new")))
+      bound <- c.bound.get
+      routes <- p.routesRef.get
+      got <- c.injected.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
+      assertEquals(
+        bound.map { case (sid, plat, _) => (sid, plat) },
+        List(("s_default", WeixinIlinkBridgePlugin.Name)),
+        "exactly one binding write, onto the default session, under this bridge's own key"
+      )
+      val cfg = bound.head._3
+      assertEquals(
+        cfg.hcursor.downField(WeixinIlinkBridgePlugin.RouteKey).as[String].toOption,
+        Some("wx_new"),
+        "the binding carries the sender id — the return address the outbound reverse read consumes"
+      )
+      assertEquals(cfg.hcursor.downField("source").as[String].toOption, Some("auto"),
+        "auto-bindings are marked `auto` so the bindings face can tell them from manual ones")
+      assert(cfg.hcursor.downField("boundAt").as[Long].toOption.isDefined, "the binding is timestamped")
+      assertEquals(routes.get("wx_new"), Some("s_default"),
+        "the local routes table is updated in the same step — the turn in flight can already be replied to")
+      assertEquals(got, List(("s_default", "hello", Some("wx_new"))))
+  }
+
+  test("WI-AB2 the second message from an auto-bound sender rides the binding; no re-bind") {
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = plugin(root = root)
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      _ <- started(p, c)
+      v1 <- p.intake(c, inbound(Some("wx_new"), messageId = Some("m1")))
+      v2 <- p.intake(c, inbound(Some("wx_new"), messageId = Some("m2")))
+      bound <- c.bound.get
+      got <- c.injected.get
+    yield
+      assertEquals(v1, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
+      assertEquals(v2, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
+      assertEquals(bound.size, 1, "the binding is written once — the second message routes through it")
+      assertEquals(got.map(_._1), List("s_default", "s_default"))
+  }
+
+  test("WI-AB3 a no-text (media) message from a new sender STILL binds (the address precedes the body)") {
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = plugin(root = root)
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      _ <- started(p, c)
+      v <- p.intake(c, inbound(Some("wx_media"), text = None))
+      bound <- c.bound.get
+      got <- c.injected.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNoText))
+      assertEquals(
+        bound.map { case (sid, plat, cfg) =>
+          (sid, plat, cfg.hcursor.downField(WeixinIlinkBridgePlugin.RouteKey).as[String].toOption)
+        },
+        List(("s_default", WeixinIlinkBridgePlugin.Name, Some("wx_media"))),
+        "the binding is written even when this message carries nothing injectable — the address must exist for the NEXT message"
+      )
+      assertEquals(got, List.empty, "nothing is injected (no text is ever fabricated)")
+  }
+
+  test("WI-AB4 an UNRESOLVABLE sender never mints a binding (an empty key would hijack every anonymous sender)") {
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = plugin(root = root)
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      _ <- started(p, c)
+      v <- p.intake(c, inbound(None))
+      bound <- c.bound.get
+      got <- c.injected.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"),
+        "the pre-existing fallback (inject via the default session) is byte-identical for unresolvable senders")
+      assertEquals(bound, List.empty, "no binding without a resolvable sender id")
+      assertEquals(got, List(("s_default", "hello", None)))
+  }
+
+  test("WI-AB5 no default session ⇒ the drop arm is unchanged and writes zero bindings") {
+    val c = new RecordingCtx(Nil)
+    val p = plugin()
+    for
+      _ <- started(p, c)
+      v <- p.intake(c, inbound(Some("wx_none")))
+      bound <- c.bound.get
+      got <- c.injected.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNoSession))
+      assertEquals(bound, List.empty, "nothing to bind TO — no binding is minted either")
+      assertEquals(got, List.empty)
+  }
+
+  test("WI-AB6 an explicitly bound sender's intake never touches the binding plane") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin()
+    for
+      _ <- started(p, c)
+      v <- p.intake(c, inbound(Some("wx_alice")))
+      bound <- c.bound.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"))
+      assertEquals(bound, List.empty, "intake READS explicit bindings; it never re-writes one")
+  }
+
+  test("WI-AB7 the auto-binding closes the loop: the UNCHANGED outbound reverse read now resolves the sender") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = pluginWithRecorder(root, calls)
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      _ <- p.start(c)
+      _ <- p.intake(c, inbound(Some("wx_new"))) // auto-binds + injects
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "hi".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
+      got <- calls.get
+    yield
+      assertEquals(got, List(("wx_new", "hi")),
+        "the session's flush resolves the sender through the SAME table the auto-bind wrote — the return path exists")
   }
 
 end WeixinIlinkBridgeSpec

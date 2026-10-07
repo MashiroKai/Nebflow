@@ -55,7 +55,11 @@ object WeixinIngressToken:
   private val logger = NebflowLogger.forName("nebflow.social.weixin-ingress-token")
 
   /** File name under `<dataRoot>/secrets/`. The shim learns the path out of
-    * band (its `WEIXIN_MSGLOOP_TOKEN_FILE`), never from an API response. */
+    * band (its token-file env — spelled `WEIXIN_SEND_TOKEN_FILE` since the
+    * weixin-autobind batch, 2026-10-07, which moved it into the outbound
+    * `WEIXIN_SEND_TOKEN[_FILE]` family; the pre-rename
+    * `WEIXIN_MSGLOOP_TOKEN_FILE` stays readable shim-side for one
+    * compatibility release), never from an API response. */
   val FileName = "weixin-ilink-ingress-token"
 
   def path(root: os.Path): os.Path = root / "secrets" / FileName

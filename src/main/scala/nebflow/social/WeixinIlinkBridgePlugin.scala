@@ -25,7 +25,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     (HTTP face `POST /api/social/channels/weixin-ilink/ingress`) → the sender
  *     gate (`allowed_ilink_user_ids`, fail-closed) → the session bound to that
  *     sender (`SessionMeta.bridges` key `weixin-ilink`, field `ilink_user_id`),
- *     else the channel's configured default session → `ctx.injectMessage`, the
+ *     else the channel's configured default session — which an unbound
+ *     RESOLVABLE sender is then AUTO-BOUND to (weixin-autobind batch,
+ *     2026-10-07, the feishu C4 form: the binding written IS the session's
+ *     return address, `source=auto` + `boundAt`) → `ctx.injectMessage`, the
  *     existing rate-limited `handleBridgeMessage` path;
  *   - outbound (weixin-outbound batch, 2026-10-07): accumulated `textDelta`
  *     flushes as ONE text reply on `done`, through the injected send seam —
@@ -195,9 +198,15 @@ final class WeixinIlinkBridgePlugin(
             // flip it while the seam runs, and this path is once per new sender).
             IO.blocking(SocialChannels.defaultSessionId(root, Name)).flatMap {
               case Some(sessionId) =>
-                in.text match
-                  case Some(text) => inject(ctx, in, sessionId)
-                  case None       => IO.pure(Verdict.Dropped(ReasonNoText))
+                if in.routeKey.isEmpty then
+                  // Unresolvable sender: nothing to BIND — a binding on the
+                  // empty key would pin every anonymous sender onto one
+                  // session. The pre-existing fallback (inject via the default
+                  // session, nothing persisted) is kept byte-identical.
+                  in.text match
+                    case Some(text) => inject(ctx, in, sessionId)
+                    case None       => IO.pure(Verdict.Dropped(ReasonNoText))
+                else autoBind(ctx, in, sessionId)
               case None =>
                 logger.info(
                   s"weixin-ilink bridge: dropped [$ReasonNoSession] — no session is bound to sender " +
@@ -218,6 +227,34 @@ final class WeixinIlinkBridgePlugin(
           s"(${e.getClass.getSimpleName}: ${e.getMessage}), contained, the seam stays up"
       ) *> IO.pure(Verdict.Dropped(ReasonInjectFailed))
     )
+
+  /** Auto-bind (weixin-autobind batch, 2026-10-07) — the feishu C4 form
+    * ([[FeishuBridgePlugin.autoBind]]) for the weixin seam: the first message
+    * from a not-yet-bound sender binds that sender to the default session and
+    * injects the message there — zero commands. 🔴 The binding IS the return
+    * address: it persists through [[BridgeContext.updateBridgeConfig]]
+    * (`SessionMeta.bridges`, key `weixin-ilink`) carrying `source=auto` +
+    * `boundAt` — the same JSON the outbound [[reply]] leg reverse-reads — and
+    * the local routes table is updated in the same step, so the turn in flight
+    * can already be replied to. Before this leg a fallback-served sender was
+    * structurally un-answerable: the message was injected but no
+    * `ilink_user_id` ever landed on the session, so every later flush died on
+    * [[ReasonNoReturnAddress]]. No default session configured ⇒ the
+    * pre-existing behaviour, unchanged: drop + log (that arm stays in
+    * [[intake]]). A no-text (media) message binds too — the address must exist
+    * for the NEXT message even when this one carries nothing injectable. */
+  private def autoBind(ctx: BridgeContext, in: Inbound, sessionId: String): IO[Verdict] =
+    val cfg = Json.obj(
+      RouteKey -> in.routeKey.asJson,
+      "source" -> "auto".asJson,
+      "boundAt" -> System.currentTimeMillis().asJson
+    )
+    ctx.updateBridgeConfig(sessionId, Name, Some(cfg)) *>
+      routesRef.update(_ + (in.routeKey -> sessionId)) *>
+      logger.info(s"weixin-ilink bridge: sender ${in.routeKey} auto-bound to default session $sessionId") *>
+      (in.text match
+        case Some(text) => inject(ctx, in, sessionId)
+        case None       => IO.pure(Verdict.Dropped(ReasonNoText)))
 
   private def inject(ctx: BridgeContext, in: Inbound, sessionId: String): IO[Verdict] =
     logger.info(s"weixin-ilink bridge: sender ${in.routeKey} -> session $sessionId") *>

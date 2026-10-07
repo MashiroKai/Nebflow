@@ -17,8 +17,15 @@
  *
  * Config (env only — shim.mjs argv parsing untouched):
  *   WEIXIN_MSGLOOP_INGRESS_URL  full ingress URL (required to start)
- *   WEIXIN_MSGLOOP_TOKEN_FILE   shim token path (default ~/.nebflow/secrets/
- *                               weixin-ilink-ingress-token; engine mints 0600)
+ *   WEIXIN_SEND_TOKEN_FILE      shim token path (default ~/.nebflow/secrets/
+ *                               weixin-ilink-ingress-token; engine mints 0600).
+ *                               weixin-autobind batch (2026-10-07): the env
+ *                               name joined the WEIXIN_SEND_TOKEN[_FILE] family
+ *                               — the outbound send leg's spelling (author
+ *                               ruling ②: same bot ⇒ one token, one name). The
+ *                               pre-rename WEIXIN_MSGLOOP_TOKEN_FILE spelling
+ *                               is still read for one compatibility release,
+ *                               then removable.
  *   WEIXIN_MSGLOOP_FIXTURE      absolute NDJSON path of iLink-shaped messages;
  *                               presence = FIXTURE mode (zero iLink traffic),
  *                               lines flow through the same deliver leg
@@ -45,9 +52,25 @@ import { fileURLToPath } from "node:url";
 // ───────────────────────────── config ─────────────────────────────
 
 const INGRESS_URL = (process.env.WEIXIN_MSGLOOP_INGRESS_URL ?? "").trim();
-const TOKEN_FILE =
-  process.env.WEIXIN_MSGLOOP_TOKEN_FILE?.trim() ||
-  path.join(os.homedir(), ".nebflow", "secrets", "weixin-ilink-ingress-token");
+
+/**
+ * Token-file env resolution (weixin-autobind batch, 2026-10-07): the env name
+ * joined the WEIXIN_SEND_TOKEN[_FILE] family — the outbound send leg's
+ * spelling (author ruling ②; same bot ⇒ one token, one name). Resolution
+ * order: WEIXIN_SEND_TOKEN_FILE ＞ the deprecated WEIXIN_MSGLOOP_TOKEN_FILE
+ * (kept for one compatibility release — existing plists/deployments keep
+ * working; removable after that) ＞ the engine-minted default. Pure (env
+ * injected) so the tokenfile spec can pin the order offline.
+ * @param {Record<string, string | undefined>} env
+ */
+export function resolveTokenFile(env = process.env) {
+  return (
+    env.WEIXIN_SEND_TOKEN_FILE?.trim() ||
+    env.WEIXIN_MSGLOOP_TOKEN_FILE?.trim() || // deprecated pre-rename spelling
+    path.join(os.homedir(), ".nebflow", "secrets", "weixin-ilink-ingress-token")
+  );
+}
+const TOKEN_FILE = resolveTokenFile();
 const FIXTURE = process.env.WEIXIN_MSGLOOP_FIXTURE?.trim() || "";
 const ACCOUNT_OVERRIDE = process.env.WEIXIN_MSGLOOP_ACCOUNT_ID?.trim() || "";
 
