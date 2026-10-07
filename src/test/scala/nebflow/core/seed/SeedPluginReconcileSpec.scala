@@ -275,12 +275,11 @@ class SeedPluginReconcileSpec extends FunSuite:
     ensure()
 
     // 守卫语义保持：不完整播种（既有 home 走 marker-only 分支、不重播默认集）。
-    // 合同翻转（作者裁定 2026-10-05 方案A 附带修红③，两条正向断言翻负向）：manifest 自
-    // 09-26 kernelgen manifestfix（0d2ea5770）起零 `project:` 条目 ⇒ `reconcileProjects`
-    // 结构性休眠（2026-09-17 裁定②的既有 home add-only 补种面随之无项可补）；
-    // agents 面随 10-03 a5b716d55 内置退役（RETIRED）。（历史口径：2026-09-13「缺失自愈」
-    // 与 2026-09-17 裁定②曾把两条翻为正向，已随上述两批作废。）与同 commit
-    // SeedServiceSpec ③ 同口径：reconcileProjects dormant / agents 面 RETIRED。
+    // 合同翻转（两条正向断言翻负向）：manifest 自 kernelgen manifestfix 起零
+    // `project:` 条目 ⇒ `reconcileProjects` 结构性休眠（既有 home add-only 补种面
+    // 随之无项可补）；agents 面随内置退役（RETIRED）。（历史口径：「缺失自愈」
+    // 与 add-only 补种曾把两条翻为正向，已作废。）与 SeedServiceSpec 同口径：
+    // reconcileProjects dormant / agents 面 RETIRED。
     assert(
       !os.exists(home / "projects" / "general" / "project.json"),
       "reconcileProjects dormant: zero project: manifest items (kernelgen 2026-09-26) — no default project under guard"

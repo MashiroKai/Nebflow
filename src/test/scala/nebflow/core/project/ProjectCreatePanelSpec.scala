@@ -157,7 +157,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
    * AgentCommand.AskUser → 记录 (requestId, items)（面板载荷断言面）→ 投真实
    * InteractionHub（pending 槽 + 根窗口渲染帧由此产生）。
    *
-   * 🔴 S3 批 r4 返工（作者 2026-09-17 裁定 R3 帧级红因 = (甲) 测试面缺陷）：载荷
+   * 🔴 返工（帧级红因 = 测试面缺陷）：载荷
    * **不再由本桩自造**——改经 `AskUserFrameBridge` 走生产序列化单点
    * `AgentActor.buildAskUserJson`（本桩自此只保留转发职责）。原桩硬写
    * `question`/`options`/`allowOther` 三键 ⇒ 结构性不含 `dirPicker`/`freeInput`，
