@@ -647,7 +647,12 @@ ensure_java_mac_tarball() {
     local jdk_dir="${HOME}/${HOME_DIR}/jdk-21"
     mkdir -p "${HOME}/${HOME_DIR}" || return 1
     local tmp_tar tmp_dir
-    tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
+    # NOTE (siteinstall-exec acceptance fix): no .tar.gz suffix on the mktemp
+    # template - BSD mktemp (macOS) only randomizes TRAILING X's; with a
+    # suffix it silently creates the literal fixed name, so a reinstall or a
+    # concurrent install collides on /tmp and this leg hard-fails. The linux
+    # twin (GNU mktemp) accepts suffixes; the mac leg must not copy that form.
+    tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX)
     tmp_dir=$(mktemp -d)
     local tuna_url="https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/${jdk_arch}/mac/${tarball_name}"
     local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/mac/${jdk_arch}/jdk/hotspot/normal/eclipse"
