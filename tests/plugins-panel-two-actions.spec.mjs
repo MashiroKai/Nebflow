@@ -9,6 +9,9 @@
 // 「任务分发器可见性」整体删除（toggle 本体自明；`plugins.dispatchLabel` 只留作
 // aria-label），默认态药丸也不再出「已启用」文字（药丸本体 + 状态样式保留；
 // blocked / contentChanged 仍出字）。
+// **2026-10-07 条目式批（作者 09:40 令）改口径**：开关自「卡片右上、与药丸同排」
+// **收进展开详情区**（`.plugins-item-actions` 行）——只动层级，钩子/语义零变；
+// 条目行 accordion（`[data-plugin-item]` role=button）默认收起。
 //
 // 断言链：
 //   ① 退场件页面级零残留：`[data-plugin-switch]`（2026-09-13 退场）+
@@ -164,12 +167,12 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
       const dw = card?.querySelector('[data-plugin-dispatch]');
       const pill = card?.querySelector('.plugins-state-pill');
       const head = card?.querySelector('.plugins-card-head');
+      const detail = card?.querySelector('.plugins-item-detail');
       const state = card?.querySelector('.plugins-card-state');
-      const row = card?.querySelector('.plugins-card-dispatch');
+      const row = card?.querySelector('[data-plugin-item]');
       const note = card?.querySelector('.plugins-dispatch-note');
-      const comp = row ? getComputedStyle(row) : null;
       const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height, right: b.right, bottom: b.bottom }; };
-      const rb = box(row), db = box(dw), hb = box(head);
+      const ab = box(card?.querySelector('.plugins-item-actions'));
       return {
         cardCount: document.querySelectorAll('#plugins-content .plugins-card').length,
         // ① 退场件（页面级零残留）
@@ -177,21 +180,22 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
         moreCount: document.querySelectorAll('#plugins-content [data-plugin-more]').length,
         menuCount: document.querySelectorAll('#plugins-content [data-plugin-menu]').length,
         blockCount: document.querySelectorAll('#plugins-content [data-plugin-block]').length,
-        // ② 唯一控件
+        // ② 唯一控件（2026-10-07 条目式批：收进展开详情区 actions 行）
         dispatchCount: document.querySelectorAll('#plugins-content [data-plugin-dispatch]').length,
         hasDispatch: !!dw,
         dispatchRole: dw?.getAttribute('role') ?? null,
         dispatchLabel: dw?.getAttribute('aria-label') ?? null,
-        rowLabelText: row?.querySelector('.plugins-dispatch-label')?.textContent.trim() ?? null,
-        rowBorderTop: comp ? comp.borderTopWidth : null,
-        rowBox: rb,
+        rowLabelText: card?.querySelector('.plugins-dispatch-label')?.textContent.trim() ?? null,
+        inDetail: !!(detail && dw && detail.contains(dw)),
+        inActions: !!dw?.closest('.plugins-item-actions'),
         inHead: !!(head && dw && head.contains(dw)),
-        inState: !!(state && dw && state.contains(dw)),
-        // 2026-09-15「删掉空框」：空文案 ⇒ 药丸元素缺席 ⇒ 状态区只剩承载开关的包裹
+        rowIsButton: row?.getAttribute('role') === 'button' && row?.getAttribute('aria-expanded') !== null,
+        detailHiddenByDefault: detail?.hidden ?? null,
+        actionsBox: ab,
+        // 2026-09-15「删掉空框」：空文案 ⇒ 药丸元素缺席 ⇒ 状态区只剩 chevron
+        //（2026-10-07 补充令：chevron 归位右上状态区）
         pillAbsent: !pill,
-        stateOnlyChild: !!(state && state.children.length === 1
-          && state.firstElementChild?.querySelector('[data-plugin-dispatch]')),
-        rightAlignedInHead: !!(hb && db) && (hb.right - db.right) <= 4,
+        stateOnlyChevron: !!state && state.children.length === 1 && !!state.querySelector('.plugins-item-chevron'),
         dispatchDisabled: dw ? dw.disabled : null,
         dispatchBlocked: dw?.getAttribute('data-dispatch-blocked') ?? null,
         dispatchOn: dw?.classList.contains('on') ?? null,
@@ -206,7 +210,7 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     }, name);
   }
 
-  test('①+②+③ 退场件零残留；唯一控件 = 卡片右上派发开关（与药丸同排）；药丸绑新字段', async ({ page }) => {
+  test('①+②+③ 退场件零残留；唯一控件 = 展开详情区派发开关（2026-10-07 条目式批：只动层级）；药丸绑新字段', async ({ page }) => {
     await unblockQuietly(PLUGIN);
     await loadPluginsPage(page);
     const st = await cardState(page, PLUGIN);
@@ -219,19 +223,29 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     expect(st.menuCount, '次级动作行退场 = 页面级零残留').toBe(0);
     expect(st.blockCount, '封禁/解封入口退场 = 页面级零残留').toBe(0);
 
-    // ② 唯一控件：存在 + 钩子/标签 + 位置（右上、与药丸同排）
+    // ② 唯一控件：存在 + 钩子/标签 + 位置（2026-10-07 条目式批：详情区 actions 行）
     expect(st.dispatchCount, '页面唯一控件 = 派发开关（计数 1）').toBe(1);
     expect(st.hasDispatch, '派发控件存在（既有钩子 data-plugin-dispatch）').toBe(true);
     expect(st.dispatchRole, '派发控件 role=switch').toBe('switch');
     expect(st.dispatchLabel, '派发控件 aria-label = locale plugins.dispatchLabel（可访问性面保留）').toBe(dispatchLabel);
     expect(st.rowLabelText, '开关旁无可见 label 小字（2026-09-15 令：「任务分发器可见性」已整体删除，toggle 本体自明）').toBe(null);
-    expect(st.inHead, '控件在卡片头行内（不再是底部独立行）').toBe(true);
-    expect(st.inState, '控件落在状态区（卡片右上）').toBe(true);
-    expect(st.pillAbsent, '状态区内无药丸元素（空框不占位）').toBe(true);
-    expect(st.stateOnlyChild, '状态区只剩承载开关的包裹元素（零占位残留）').toBe(true);
-    expect(st.rightAlignedInHead, '控件行盒右对齐（「右上」）').toBe(true);
-    expect(st.rowBox.w > 0 && st.rowBox.h > 0, '控件真实渲染（有非零盒）').toBe(true);
-    expect(parseFloat(st.rowBorderTop), '旧底部行的 hairline 分隔已随该形态退场（border-top = 0）').toBe(0);
+    expect(st.inDetail, '控件在展开详情区内（2026-10-07 条目式批：只动层级）').toBe(true);
+    expect(st.inActions, '控件落在详情区 actions 行').toBe(true);
+    expect(st.inHead, '条目行零控件（开关不在行上）').toBe(false);
+    expect(st.rowIsButton, '条目行 = role=button + aria-expanded（accordion 可访问性面）').toBe(true);
+    expect(st.detailHiddenByDefault, '详情区默认收起（展开态默认收起，不新造持久化）').toBe(true);
+    // 2026-10-07 条目式批：actions 行居于**收起详情区**内 ⇒ 收起态零盒是正确形态
+    //（hidden 元素无几何）；量盒断言改在**展开后**读——与 ⑤⑥「先展开再触开关」同序。
+    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-item]`);
+    await page.waitForFunction((n) =>
+      !document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-item-detail`)?.hidden,
+      PLUGIN, { timeout: 10000 });
+    const stOpen = await cardState(page, PLUGIN);
+    expect(stOpen.detailHiddenByDefault, '点击条目行后详情区展开（hidden 翻转）').toBe(false);
+    expect(stOpen.actionsBox?.w > 0 && stOpen.actionsBox?.h > 0, 'actions 行真实渲染（展开态非零盒）').toBe(true);
+    expect(stOpen.inHead, '展开态下条目行依旧零控件').toBe(false);
+    expect(st.pillAbsent, '条目行状态区无药丸元素（空框不占位）').toBe(true);
+    expect(st.stateOnlyChevron, '状态区只剩 chevron（补充令：chevron 归位右上）').toBe(true);
 
     // ③ 药丸绑 blocked/contentChanged（未封禁 ⇒ 默认态：空文案 ⇒ **元素不生成**）
     expect(st.pillElCount, '状态药丸默认态零元素（「删掉空框」：空文案 ⇒ 不渲染 pill 元素）').toBe(0);
@@ -275,7 +289,12 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     page.on('request', (req) => {
       if (req.method() === 'POST' && req.url().includes('/api/plugins/')) posts.push(new URL(req.url()).pathname);
     });
-    // 面板上唯一的用户动作（派发开关）——wire 只可能是 enable/disable。
+    // 面板上唯一的用户动作（派发开关；2026-10-07 条目式批收在展开详情区内 ⇒
+    // 先展开条目行）——wire 只可能是 enable/disable。
+    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-item]`);
+    await page.waitForFunction((n) =>
+      !document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-item-detail`)?.hidden,
+      PLUGIN, { timeout: 10000 });
     await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-dispatch]`);
     await page.waitForFunction((n) =>
       document.querySelector(`.plugins-card[data-plugin="${n}"] [data-plugin-dispatch]`)?.getAttribute('aria-checked') === 'false',
@@ -334,11 +353,26 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     expect(st.dispatchBlocked, 'blocked 属性清除').toBe(null);
     expect(posts.filter((p) => /\/revoke$|\/unblock$/.test(p)), `面板不得打 revoke/unblock，got ${posts}`).toEqual([]);
 
-    // 派发动作仍打自己的端点（且不掺 revoke/unblock）。
+    // 派发动作仍打自己的端点（且不掺 revoke/unblock；开关在详情区 ⇒ 先展开）。
     const posts2 = [];
     page.on('request', (req) => {
       if (req.method() === 'POST') posts2.push(new URL(req.url()).pathname);
     });
+    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-item]`);
+    await page.waitForFunction((n) =>
+      !document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-item-detail`)?.hidden,
+      PLUGIN, { timeout: 10000 });
+    // ⑤ 已把开关拨到 off（乐观翻转落盘 dispatch.authorEnabled=false；解封不复位
+    // dispatch）⇒ 先拨回 on——此拨在 wire 断言读数分叉**之前**（posts2 计数只在
+    // 最终点击后核对），本用例的点击才是「关向」动作，验证它（且只）打 /disable。
+    const preState = await page.getAttribute(
+      `.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-dispatch]`, 'aria-checked');
+    if (preState === 'false') {
+      await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-dispatch]`);
+      await page.waitForFunction((n) =>
+        document.querySelector(`.plugins-card[data-plugin="${n}"] [data-plugin-dispatch]`)?.getAttribute('aria-checked') === 'true',
+        PLUGIN, { timeout: 10000 });
+    }
     await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-dispatch]`);
     await page.waitForFunction((n) =>
       !document.querySelector(`.plugins-card[data-plugin="${n}"] [data-plugin-dispatch]`)?.disabled,

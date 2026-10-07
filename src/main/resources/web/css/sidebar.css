@@ -1975,37 +1975,145 @@
    ban 图标上（plugins.js 注入）。 */
 .plugins-card.blocked { border-color: color-mix(in srgb, var(--status-error-icon) 32%, transparent); }
 .plugins-card.rejected { opacity: 0.75; }
+/* ── 条目式形态（2026-10-07 作者 09:40 令＋10:58 补充令·多行卡式）────────
+   每插件一条目行（多行卡式）：行 1 = 完整 puzzle 图标 + 名称（独立行不截断，
+   长名自然换行）+ 版本 meta；右上 = 状态药丸 + chevron-down（展开翻转 180°，
+   与社交面板 .social-item-chevron 同语言）；行 2 = 摘要（独立行，最多两行
+   line-clamp 超出省略）。行高随内容自适应。
+   交互语言 = 社交面板 .social-item-row 同族（row cursor/hover/focus-visible）；
+   🔴 零新手造色值（全部既有 token）。
+   可交互面只挂 `[data-plugin-item]`：rejected 信息行同用 `.plugins-card-head`
+   但无该钩子 ⇒ 不带指针/悬停（非可展开语义）。 */
 .plugins-card-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 3px;
   align-items: center;
-  gap: 8px;
 }
-.plugins-card-id {
-  flex: 1;
+.plugins-card-head[data-plugin-item] {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: background 0.15s;
+}
+.plugins-card-head[data-plugin-item]:hover { background: var(--glass-control-bg-hover); }
+.plugins-card-head[data-plugin-item]:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+/* 行 1 = 图标 + 名称 + meta（flex-wrap：长名自然换行不截断，meta 随流）。 */
+.plugins-item-id {
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px 8px;
+}
+.plugins-item-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  align-self: center;
+  color: var(--color-frame-text-muted);
+  transition: color 0.15s;
+}
+.plugins-card-head[data-plugin-item]:hover .plugins-item-icon { color: rgb(var(--sapphire)); }
+.plugins-item-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--color-frame-text-dim);
+  transition: transform 0.15s, color 0.15s;
+}
+.plugins-card-head[data-plugin-item]:hover .plugins-item-chevron { color: rgb(var(--sapphire)); }
+.plugins-card.expanded .plugins-item-chevron {
+  transform: rotate(180deg);
+  color: rgb(var(--sapphire));
 }
 .plugins-card-name {
   font: 600 12px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 名称独立行不截断（补充令②）：禁 nowrap/ellipsis——长名在行 1 内自然换行。 */
+  overflow-wrap: anywhere;
 }
 .plugins-card-meta {
   font: 400 10px -apple-system, sans-serif;
   color: var(--color-frame-text-dim);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
+/* 右上状态区（补充令④：badge/chevron 自裁右上，不与文字争位）。 */
 .plugins-card-state {
-  flex-shrink: 0;
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   align-items: center;
+  gap: 6px;
+}
+/* 行 2 = 一行摘要（补充令③：独立行，最多两行，超出省略）。 */
+.plugins-item-summary {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.plugins-card.expanded .plugins-item-summary { visibility: hidden; }
+/* 展开详情区（accordion 载体）：默认 hidden 属性收起；`[hidden]` 显式守卫
+   （防 flex 声明压过 UA 隐藏，同 `.plugins-dispatch-note[hidden]` 先例）。 */
+.plugins-item-detail {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  padding-top: 10px;
+}
+.plugins-item-detail[hidden] { display: none; }
+.plugins-item-detail .plugins-card-desc { -webkit-line-clamp: unset; }
+/* 启停操作钮行（既有派发开关收进展开态，2026-10-07 条目式批只动层级）：
+   右对齐呼应原「卡片右上」的肌肉记忆。 */
+.plugins-item-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+/* Plugin.md 入口（条目式批）：只做入口呈现，内容呈现归 Canvas 既有通路。
+   探针在场才显形（默认 hidden 属性）；标注 = 文件名本身（数据投影）。 */
+.plugins-item-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  padding: 3px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: rgb(var(--sapphire));
+  transition: color 0.15s, border-color 0.15s;
+}
+.plugins-item-doc:hover { border-color: rgb(var(--sapphire) / 0.35); }
+.plugins-item-doc:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.plugins-item-doc[hidden] { display: none; }
+.plugins-item-doc .st-ic { width: 12px; height: 12px; }
+/* 详情区 skills 清单：逐 skill 条目直呈现（原「chip toggle + hidden 块」机构
+   退场）；skill 多时清单内滚动。 */
+.plugins-item-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
 }
 /* The enable switch — now the shared nb-toggle component (js/toggle.js);
    styles live in the «nb-toggle» section below. The pill stays panel-local. */
@@ -2047,7 +2155,10 @@
   overflow: hidden;
 }
 /* Composition annotations — chips, not sections. skills/MCP/tools only
-   describe what the plugin contains; the switch acts on the whole. */
+   describe what the plugin contains; the switch acts on the whole.
+   （2026-10-07 条目式批：chips 整排移入展开详情区组件面；原 `.plugins-comp-toggle`
+   交互三规则随「skills chip toggle」机构退场——skills 清单改由详情区直呈现。）
+   */
 .plugins-card-composition {
   display: flex;
   flex-wrap: wrap;
@@ -2065,18 +2176,6 @@
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.plugins-comp-toggle {
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-.plugins-comp-toggle:hover {
-  color: rgb(var(--sapphire));
-  border-color: rgb(var(--sapphire) / 0.3);
-}
-.plugins-comp-toggle.open {
-  color: rgb(var(--sapphire));
-  border-color: rgb(var(--sapphire) / 0.35);
 }
 .plugins-card-hint {
   font: 400 10px -apple-system, sans-serif;
@@ -2101,10 +2200,10 @@
    `.plugins-more-btn`（含 hover / [aria-expanded="true"]）、`.plugins-card-more`
    （含 [hidden]）、`.plugins-block-btn`（含 :hover / .unblock / :disabled）、
    `.plugins-block-note` 全部删除——面板不再提供封禁入口，在飞止损只走 API / CLI。） */
-/* ── 每卡唯一控件：任务分发器可见性开关（令 1，2026-09-12；2026-09-14 改口径）──
-   位置 = **卡片右上、与状态药丸同一排**（`.plugins-card-state` 内）——原「卡片底部
-   独立一行 + 上缘 hairline」的形态随封禁 UI 退场一并作废（面板现只剩一个控件，
-   不再需要「两动作视觉可分」的几何分离）。文字标签保留（开关自身无文字）。
+/* ── 唯一控件：任务分发器可见性开关（令 1，2026-09-12）──
+   2026-10-07 条目式批：开关**收进展开详情区**（`.plugins-item-actions` 行，
+   右对齐）——原「卡片右上、与状态药丸同一排」的头部形态随条目式批退役
+   （只动层级，钩子/语义零变）。文字标签保留（开关自身无文字）。
    注意：本块在「卡片入场动画块」之前，不在 «nb-toggle» 组件节内（该节的 token
    纪律由 tests/plugins-panel-autosync.spec.mjs ④ 断言，勿把规则搬进去；此注释
    刻意不写卡片入场块的选择器字面量——该 spec 用 indexOf 定位节边界，注释里的
@@ -2137,12 +2236,9 @@
   border: 1px solid rgb(var(--amber) / 0.25);
   white-space: nowrap;
 }
-/* Expandable per-skill previews (composition annotation's detail view) */
-.plugins-skill-expand {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+/* Per-skill items inside the expanded detail area (2026-10-07 条目式批：清单由
+   详情区直呈现；原 `.plugins-skill-expand` hidden-块载体随 chip-toggle 机构退场，
+   条目样式 `.plugins-skill-item` 族原样保留）。 */
 .plugins-skill-item {
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
