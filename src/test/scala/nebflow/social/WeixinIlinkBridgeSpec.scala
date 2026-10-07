@@ -632,14 +632,26 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     assert(!marker.contains(FeishuBridgePlugin.ChannelDisplay), s"the feishu label leaked in: $marker")
   }
 
-  test("WI-S3 the outbound leg of this seam stays a stated no-op (boundary unchanged)") {
-    // The soc483 batch adds an INBOUND source marker only. The outbound boundary
-    // (replies belong to the host that runs the plugin) is what this pins: the
-    // call must be a no-op that opens nothing and returns cleanly.
-    val p = plugin()
-    for _ <- p.onAgentEvent("s1", Json.obj("type" -> "toolEnd".asJson, "sessionId" -> "s1".asJson,
+  test("WI-S3 toolEnd stays a no-op on the outbound leg (weixin-outbound batch: text replies only)") {
+    // The weixin-outbound batch (2026-10-07) REPLACED the old stated no-op:
+    // onAgentEvent now accumulates textDelta and flushes ONE text reply on
+    // `done` (pinned by WeixinOutboundSpec). What REMAINS the boundary here is
+    // the toolEnd arm — a tool result (rich product or not) never triggers a
+    // send on this leg. A recorder seam proves the zero-send property.
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    val p = new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      send = _ => (to, text) => calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
+    )
+    for
+      _ <- p.start(new RecordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "toolEnd".asJson, "sessionId" -> "s1".asJson,
         "content" -> "___CARD_HTML___{}".asJson, "isError" -> false.asJson))
-    yield ()
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      got <- calls.get
+    yield assertEquals(got, Nil, "toolEnd observes nothing; done with an empty buffer sends nothing")
   }
 
 end WeixinIlinkBridgeSpec
