@@ -1,4 +1,4 @@
-/* 从 NodeTools.scala 迁出(行为保持重构,2026-09-25)。 */
+/* 从 NodeTools.scala 迁出(行为保持重构)。 */
 package nebflow.core.tools
 
 import cats.effect.IO
@@ -69,13 +69,12 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
     NodeTools.resolveRuntime(input("project").flatMap(_.asString), ctx).flatMap {
       case Left(err) => IO.pure(Left(ToolError(err)))
       case Right(rt) =>
-        // detail 通道（2026-09-05 载荷收敛配套）：指定节点引用 → 单节点全记录
+        // detail 通道（载荷收敛配套）：指定节点引用 → 单节点全记录
         // （元数据 + task + 结果全文）。数据源与 REST result 端点同源
         // （resolveNodeRefIO 双寻址（刀2 A5：id 命中/name 命中/歧义列候选/未找到）
         // → findNode 活动区优先归档兜底；内存 result/task = 加载时从 per-node
         // 文件 results/<id>.md / tasks/<id>.md 水合的全文——落盘 JSON 只存摘要
-        // +指针，detail 聚合即「per-node 文件内容」，单源等价，2026-09-06 存储
-        // 瘦身批）。payload 键集 = NodeList 同构字段 + task + result。
+        // +指针，detail 聚合即「per-node 文件内容」，单源等价（存储瘦身）。payload 键集 = NodeList 同构字段 + task + result。
         input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
           case Some(nodeRef) =>
             NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
@@ -95,11 +94,11 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
                     attrs.chainIds,
                     mergeUpstreamChains = attrs.mergeUpstreamChains
                   )
-                  // 裁定②历史参照补挂（20260907 上下文经济学批）：默认载荷仅 blocked 态
+                  // 历史参照补挂：默认载荷仅 blocked 态
                   // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值
                   // （blocked 节点 base 已含，deepMerge 同值幂等）。
                   val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
-                  // 裁定⑤c 双层化：descriptionLong 仅 detail 通道（不进默认载荷）——
+                  // 语义⑤c 双层化：descriptionLong 仅 detail 通道（不进默认载荷）——
                   // 条件键，存量节点无长文 → 缺键（消费方回退短文 description）。
                   val descLong = n.descriptionLong.toList.map(d => "descriptionLong" -> d.asJson)
                   val full = base
@@ -114,7 +113,7 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
                 }
             }
           case None =>
-            // status 过滤（裁定⑤a，20260907）：解析三形态宽容（string/array/逗号串），
+            // status 过滤（语义⑤a）：解析三形态宽容（string/array/逗号串），
             // 逐值枚举校验；缺省 None = 全量（字节级现状）。
             parseStatusFilter(input("status")) match
               case Left(err) => IO.pure(Left(ToolError(err)))
@@ -123,7 +122,7 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
     }
 
   /**
-   * status 过滤参数解析（裁定⑤a）：三形态宽容（单值 string / array / 逗号串，
+   * status 过滤参数解析（语义⑤a）：三形态宽容（单值 string / array / 逗号串，
    * 复用 parseIn 语义），逐值对生命周期枚举校验——非法值给可行动错误（列出全部
    * 合法值）。缺省（未传/null）→ None = 全量。
    */

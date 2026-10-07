@@ -9,7 +9,7 @@ import nebflow.core.node.NodeRunner
 import nebflow.core.presets.PresetStore
 import nebflow.shared.*
 
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M4/M6):定位器参数窄化,SubAgentTask 已下沉 shared
+// 定位器参数窄化,SubAgentTask 已下沉 shared
 /**
  * SubTaskTool — team-agent task delegation (Delegate split, 方案 A).
  *
@@ -28,8 +28,8 @@ import nebflow.shared.*
  *     appended to its system prompt declares it has no team.
  *   - **Ephemeral only**: the adapter deletes the worker's session store entry
  *     on completion for the **worker** sessions it owns; historical `subtask-*`
- *     residue from earlier batches is reaped by the tracked-cleanup sweep
- *     (2026-09-10 批), not by this adapter alone.
+ *     residue from earlier batches is reaped by the tracked-cleanup sweep,
+ *     not by this adapter alone.
  *   - Result is delivered to the parent via ExternalEvent(source="subtask")
  *     exactly like Delegate's background mode.
  *
@@ -127,7 +127,7 @@ A task with 2+ independent parts — different file domains, or different nature
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-task depth ($MaxDepth) reached. Cannot delegate further.")))
     else if ctx.agentDef.exists(_.name == RootAgentIdentity.Name) then
-      // #28 (2026-08-20): Nebula's toolset has no SubTask, but guard
+      // Nebula's toolset has no SubTask, but guard
       // structurally — the root orchestrator exists exactly once and must not
       // spawn copies of itself, even if a custom agent.json lists the tool.
       IO.pure(
@@ -160,7 +160,7 @@ A task with 2+ independent parts — different file domains, or different nature
                     case Right(effectiveDef) =>
                       (ctx.actorSystem, ctx.sharedResources) match
                         case (Some(system), Some(resources)) =>
-                          // permshield S1（2026-09-13）：worker 继承的档位 = 应用级全局
+                          // permshield：worker 继承的档位 = 应用级全局
                           // 持久值（唯一入口），不再读 `store.getSafetyMode` 的盘上遗留值
                           // （同 DelegateTool）。
                           // P2: resolve the caller's root session so interactions (askUser /
@@ -173,7 +173,7 @@ A task with 2+ independent parts — different file domains, or different nature
                             case _ => IO.pure(ctx.sessionId.getOrElse(""))
                           for
                             rootSid <- callerRootIO
-                            // permshield S1（2026-09-13）：档位 = 应用级全局持久值
+                            // permshield：档位 = 应用级全局持久值
                             // （唯一入口；不再读 `store.getSafetyMode` 的盘上遗留值，
                             // 同 DelegateTool）。
                             safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)

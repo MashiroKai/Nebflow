@@ -14,7 +14,7 @@ import nebflow.shared.NebflowLogger
  * Tasks are registered when they start and removed when they complete.
  * The frontend queries this on WS reconnect to recover missed completion events.
  *
- * 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）：
+ * 节点完成闸：
  * 本 registry 同时是节点完成闸的等待集权威——NodeEngine 观察桥在 Completed
  * 时查 waitingFor(nodeSessionId)，非空则 hold（不终态化节点）直到全部等待型
  * 后台任务完成回调（ExternalEvent 唤醒续跑轮 → 又一次 Completed → 复检）。
@@ -35,20 +35,20 @@ object BgTaskRegistry:
     startedAtMs: Long,
     kind: String, // "local" | "remote"
     /**
-     * 顶层根会话 id（2026-09-05 计数/列表分叉修复）：前端 backgroundTaskUpdate
+     * 顶层根会话 id（计数/列表分叉修复）：前端 backgroundTaskUpdate
      * 信封与 activeBgTasks 快照共用本键分桶。空 = 无 agent 上下文（REST 直调等）
      * 或旧调用方未传 → activeTasksJson 回退按 sessionId 分组。
      */
     rootSessionId: String = "",
     /**
-     * 节点完成闸（bgtask-completion-gate 批）：true = 服务型（长驻 server），
+     * 节点完成闸：true = 服务型（长驻 server），
      * 不纳入节点等待集（节点完成不等它）；false = 等待型，纳入。默认 false
      * = 等待——绝大多数后台任务是编译/测试/CI，「完成即通知」语义本就要求
      * 等完再交付；server 是少数派且可显式申报。
      */
     persistent: Boolean = false,
     /**
-     * 来源类别（2026-09-07 后台任务面板重设计，作者指令②）：每任务标注开启
+     * 来源类别（后台任务面板重设计）：每任务标注开启
      * 它的节点类别——"nebula" / "dispatcher" / "node"。由 originFor 从注册
      * 会话 id 前缀推导（node-<uuid8> 随机段不含 Flow Map nodeId，故标识取
      * 会话名=节点名，见 originLabel）。
@@ -80,7 +80,7 @@ object BgTaskRegistry:
   private val failures: Ref[IO, Map[String, FailedBgTask]] = Ref.unsafe(Map.empty)
 
   /**
-   * 来源推导（2026-09-07 后台任务面板重设计）：从注册会话 id 前缀 + 会话名
+   * 来源推导（后台任务面板重设计）：从注册会话 id 前缀 + 会话名
    * 推导 (origin 类别, originLabel 显示名)。node-<uuid8> 的随机段不含 Flow Map
    * nodeId（NodeEngine 生成），节点标识取 sessionName（NodeEngine 注入 = Flow Map
    * 节点名）；dispatcher 的 sessionName 恒为 "dispatcher/<project>"。其余一律
@@ -133,9 +133,9 @@ object BgTaskRegistry:
           (kept, removed.values.toList)
         }
 
-  // ── 终态延迟销毁窗口的「禁 spawn」表（noderpt 批 B 段，2026-09-11 作者裁定）──────
+  // ── 终态延迟销毁窗口的「禁 spawn」表──────
   //
-  // 语义：节点终态后**一律存活 30 分钟再销毁**（作者裁定形态 (b)）——窗口内进程/任务
+  // 语义：节点终态后**一律存活 30 分钟再销毁**——窗口内进程/任务
   // 照跑、输出照写、允许读取取证，但**禁止新 spawn**（新后台任务 / 新会话）。本表是
   // 那条「禁 spawn」判据的唯一载体：`sessionId -> destroyAt(epoch ms)`，写入点 =
   // NodeEngine 终态登记（`scheduleDestroy`）/ 扫描腿表项自愈；读取点 =
@@ -219,7 +219,7 @@ object BgTaskRegistry:
     ShellSession.killSessionProcesses(sessionId) *>
       unregisterSession(sessionId).flatMap { removed =>
         removed.traverse_ { t =>
-          // 输出查看批（2026-09-09）：收割的挂起任务同为终态——输出留存区翻转
+          // 收割的挂起任务同为终态——输出留存区翻转
           // 为 cancelled，详情卡可回看收割时刻为止的输出。幂等 no-op 当已完成。
           nebflow.core.tools.BgTaskOutputStore
             .finalizeTask(t.jobId, "cancelled", None, Some("Session reclaimed"))
@@ -228,7 +228,7 @@ object BgTaskRegistry:
               Json.obj(
                 "type" -> "backgroundTaskUpdate".asJson,
                 "sessionId" -> sessionId.asJson,
-                // 权威分键（2026-09-05 计数/列表分叉修复）：与 BashTool/RemoteExecutor
+                // 权威分键（计数/列表分叉修复）：与 BashTool/RemoteExecutor
                 // 发射点一致携带 rootSessionId，收割帧按根会话分桶直达归属视图
                 // （前端已删 bgTaskRootFor 启发式逆向分键）。
                 "rootSessionId" -> rootSessionId.asJson,
@@ -254,7 +254,7 @@ object BgTaskRegistry:
     }
 
   /**
-   * 热重启 quiesce（F5 域，hot-restart 批）：全部活动等待型（非 persistent）后台
+   * 热重启 quiesce：全部活动等待型（非 persistent）后台
    * 任务——等待型任务无持久面（进程内 Ref），重启即亡，故必须纳入空闲判定。
    */
   def waitingTasks: IO[List[ActiveTask]] =
@@ -302,7 +302,7 @@ object BgTaskRegistry:
                 "description" -> t.description.asJson,
                 "status" -> "running".asJson,
                 "startedAt" -> t.startedAtMs.asJson,
-                // 2026-09-07 后台任务面板重设计：快照补 kind（local/remote）与
+                // 后台任务面板重设计：快照补 kind（local/remote）与
                 // 来源字段（origin 类别 + originLabel 显示名）——前端来源 chip
                 // 与类别样式在刷新恢复路径同样可渲染。
                 "kind" -> t.kind.asJson,

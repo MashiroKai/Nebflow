@@ -1,7 +1,7 @@
-/* 从 NodeTools.scala 迁出(行为保持重构,2026-09-25)。 */
-/* N2 project-tool 批(2026-10-06,⑨A 硬替换):ProjectCreate 更名 Project——同文件
+/* 从 NodeTools.scala 迁出(行为保持重构)。 */
+/* 工具更名硬替换：ProjectCreate 更名 Project——同文件
  * `git mv` 承接(ProjectCreateTool.scala → ProjectTool.scala);旧名入
- * AgentCore.RetiredToolGuides 指路 Project(taskunify/N1 rename 先例同型),guard 表
+ * AgentCore.RetiredToolGuides 指路 Project(N1 rename 先例同型),guard 表
  * 登记见 DeletedToolGuardSpec rename-retired (N2) 块。增 unmount 面(S17/⑩A):三步序
  * 「在飞任务先停(①)→挂载面移除(②)→工作区文件零删(③,硬约束)」,实施单点 =
  * [[nebflow.core.project.ProjectUnmount]];archive 保留软下线档(语义分档见
@@ -22,17 +22,7 @@ import scala.util.Try
 object ProjectTool extends Tool:
   val name = "Project"
 
-  // 2026-09-17 作者 12:09 裁定单 ④-10（更新旧条目、取代而非静默覆盖）：本 description
-  // 的面板分支旧句逐字为「Clicking it opens the REAL OS folder browser (native directory
-  // dialog on macOS/Windows) where the user browses, can create folders, and confirms; …
-  // Candidate paths (first-level directories under ~/Claude code/ not already used as project
-  // workspaces) remain on the card as secondary one-click hints, and the built-in "Other…"
-  // free input accepts a custom absolute path.」——**该句已过时**：2026-09-09 裁定后实现
-  // 为零候选 options + 应用内目录浏览器（`NodeTools.scala` 面板段 `:3217-3224`，
-  // `ProjectCreatePanelSpec` 断言 `options == Nil`），OS 原生对话框/候选 chips/「Other…」
-  // 三者**均不存在**。旧句按「取代而非静默覆盖」保留于此注记中可读，正文改写为实现一致。
-  //
-  // N2 project-tool 批（2026-10-06，⑨A/S17）：工具更名 Project（原 ProjectCreate），
+  // 工具更名 Project（原 ProjectCreate），
   // 增 `action="unmount"` 面；create 语义逐字保留，仅首行改双面题头＋新增 Unmount 节。
   val description =
     """Manage a Project (Nebula use) — `action="create"` (default): project definition + workspace .nebflow/ scaffolding + mount; `action="unmount"`: hard-unmount a mounted project (stops its in-flight work first; zero workspace deletion).
@@ -204,9 +194,9 @@ object ProjectTool extends Tool:
       IO.pure(Left(ToolError(s"Cannot derive project name from workspace '$workspace' — pass 'name' explicitly")))
     else
       /**
-       * L1 **默认空**（promptopt 落地批 W3 · 2026-09-18 作者令，工作单 §2.3）：
+       * L1 **默认空**：
        * `NodeEdit` 新建项目写出的工作区 `AGENTS.md` **不再预填任何内容** —— 模板 = 空
-       * （`ensureScaffoldSync` 落盘成 0 字节文件），项目指令由项目/作者自持。
+       * （`ensureScaffoldSync` 落盘成 0 字节文件），项目指令由项目方自持。
        * 语义边界零变化：`ProjectStore`「缺件即补、既有永不覆盖」照旧（本改动只影响
        * 「缺件补什么」，不动任何写入路径与既有件）；种子项目 general 的文本面属 L2
        * （`src/main/resources/seed/projects/general/AGENTS.md`），与本 val 不同源。
@@ -214,7 +204,7 @@ object ProjectTool extends Tool:
       val agentMdTemplate: String = ""
 
       /**
-       * 项目级实时事件（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）。
+       * 项目级实时事件（两身份事件）。
        *
        * 走**既有推送面**（🔴 不自建第二套）：`ctx.wsSend` 在 WS 会话面的构造是
        * `makeRecordingWsSend(sessionId, (json) => wsHub.broadcast(json))`
@@ -241,7 +231,7 @@ object ProjectTool extends Tool:
         created: Boolean,
         scaffold: Option[ProjectStore.ScaffoldReport] = None
       ): IO[Either[ToolError, String]] =
-        // ③-9 逐件报告（作者 2026-09-17 12:09 裁定单）：成功/幂等两态的结果句统一带
+        // 逐件报告：成功/幂等两态的结果句统一带
         // 本次补缺读数（有 created 时含一行摘要）。既有 contains 子串（`Mail(address='project:`、
         // `already exists`）保持不变，只在句尾追加。
         val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
@@ -250,11 +240,11 @@ object ProjectTool extends Tool:
             // P0 接线修复（Explorer c759e8c）：mount 传**上链 rootSessionId**（真正顶层），
             // 非挂载者自身会话——否则 out="Nebula" 投递目标是挂载者（如 qa-backend），
             // 节点完成消息注入执行者形成自维持循环。fallback ctx.sessionId（老调用方）。
-            // freshinstall-rootsessionid 批 M3（作者 09-14 裁定 ②）：**无会话上下文的
+            // **无会话上下文的
             // 挂载视为非法**——逐字对齐既有正例（SendConfirm.scala 的「先过滤非空、
             // 再显式拒绝」）：`orElse` 不过滤非空（`Some("")` 取胜 ⇒ 空桶），且末档
-            // 伪造占位 `"default"` 是**凭空造的桶键**（作者明禁伪造兜底）⇒ 两处都走。
-            // 调用面枚举（详见本批报告「M3 调用面枚举」）：Project（原 ProjectCreate）的 ToolContext
+            // 伪造占位 `"default"` 是**凭空造的桶键**（禁伪造兜底）⇒ 两处都走。
+            // 调用面枚举：Project（原 ProjectCreate）的 ToolContext
             // 生产构造面共 4 处 —— AgentCore 会话面（有身份）/ WS AgentControl（不达本
             // 工具）/ neblink relay 与 neblink REST remote-exec（**两者都不携带任何会话
             // 身份**：请求体仅 action/params/projectRoot，无 sessionId 字段）⇒ 后者
@@ -299,22 +289,22 @@ object ProjectTool extends Tool:
       end mountProject
 
       // ============================================================
-      // ④ 反守卫（作者 2026-09-17 12:09 裁定单 ④-4 + ④-12：默认拒绝、宁误拒不误建）
+      // ④ 反守卫（默认拒绝、宁误拒不误建）
       // ============================================================
       // 缺守卫的缺口（设计件项2 基线 3 现取）：创建链原有三类守卫只覆盖
       // 「同 name 覆盖 / 同 name 同 workspace 幂等 / 同 name 异 workspace 报错」，
       // **「新 name + 已被别的 name 占用的 workspace」零守卫** ⇒ 静默新建第二个项目
       // 共享同一 workspace（flow-map / task-board / worktrees 全按 workspace 落位，
-      // 并列挂载必然互写；事故链见 .nebflow/reports/20260917_pcsys-mech-design.md 项2）。
+      // 并列挂载必然互写）。
       //
-      // 判据纪律（逐条裁定）：
+      // 判据纪律：
       // - **前置于任何写盘**：占用检查在 ProjectStore.create 之前 ⇒ 拒绝路径零写盘
       //   （projects/<newName>/ 不出现、workspace 逐件 sha 不变）。
       // - **占用判据与幂等判据共用同一函数** `sameWorkspace`（禁两套判据）：同一归一
       //   函数（绝对化 + 去尾斜杠 + **大小写不敏感**）。
-      // - 🔴 禁引入 realpath/symlink 解析（未被裁定；`/tmp`↔`/private/tmp` 会改变现有语义）。
+      // - 🔴 禁引入 realpath/symlink 解析（未授权引入；`/tmp`↔`/private/tmp` 会改变现有语义）。
       // - 占用扫描源 = ProjectStore.listAll()（**含归档**定义，保守默认：宁误拒不误建；
-      //   该保守面是分发器定的默认、非作者逐字裁定，见报告「判据声明」节）。
+      //   该保守面是分发器定的默认）。
       // - 占用者 name 判等用 sameProjectName（与 ProjectRuntimeRegistry.get 的
       //   equalsIgnoreCase 兜底同源）：同 name（含仅大小写差）= 同一项目 ⇒ 幂等重挂不被误拒。
       ProjectStore.listAll().flatMap { defs =>
@@ -326,7 +316,7 @@ object ProjectTool extends Tool:
               case Right((pd, report)) => mountProject(pd, created = true, scaffold = Some(report))
               case Left(err) =>
                 // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义；③-8 补缺脚手架
-                // （缺件即补、既有永不覆盖；作者 2026-09-17 12:09 裁定单 ③-8 取代了此处原先
+                // （缺件即补、既有永不覆盖；现行口径取代了此处原先
                 // 「不动脚手架」的口径——它正是「删了 AGENTS.md 永不回、定义已存在的缺件态
                 // 永不修复」的成因）。幂等重挂本就返回成功语义，补缺必须同批，否则静默零写入。
                 // 同名异 workspace → 明确报错（不静默复用旧定义）。
@@ -388,7 +378,7 @@ object ProjectTool extends Tool:
 
   /**
    * 同一归一函数的**比较键**（大小写不敏感）——占用判据与幂等判据共用 [[sameWorkspace]]
-   * 这**一条**判据（禁两套）。大小写不敏感归一由作者 2026-09-17 12:09 裁定单 ④-12 定
+   * 这**一条**判据（禁两套）。大小写不敏感归一取定
    * （「路径语义 + 大小写不敏感归一」，「宁误拒不误建」：在大小写敏感的 FS 上该归一更严）。
    */
   private def workspaceKey(p: String): Option[String] =
@@ -553,11 +543,11 @@ object ProjectTool extends Tool:
               )
             )
           case Some(agentRef) =>
-            // 2026-09-09 作者裁定原句保留可读：「面板不再下发候选（无候选 chips、无「其他…」）。
+            // 现行口径原句保留可读：「面板不再下发候选（无候选 chips、无「其他…」）。
             // 选择面 = 应用内目录浏览器（dirPicker=true → 前端大目标 → workspacePicker.js，
             // 可逐级浏览/新建文件夹/显示隐藏目录）+ 空 options 使自由输入 textarea 直接
             // 可见（~ 手输兜底，后端 expandTilde/parsePanelAnswer 负责展开与绝对化校验）」。
-            // 其中**末一条已被 2026-09-17 作者裁定取代**（S3 ②-5/②-6/②-7）：本卡显式
+            // 其中**末一条已被现行口径取代**：本卡显式
             // freeInput=false ⇒ 前端不渲染自由输入 textarea（选择面不可用时按需揭示降级
             // 输入面兜底）；点选即自动提交保持不变；「不下发候选 options」一条继续成立、禁改。
             // 后端 expandTilde / parsePanelAnswer 的绝对化校验保留（降级兜底 / legacy / CLI 面

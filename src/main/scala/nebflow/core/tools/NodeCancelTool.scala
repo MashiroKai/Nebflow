@@ -1,4 +1,4 @@
-/* 从 NodeTools.scala 迁出(行为保持重构,2026-09-25)。 */
+/* 从 NodeTools.scala 迁出(行为保持重构)。 */
 package nebflow.core.tools
 
 import cats.effect.IO
@@ -67,7 +67,7 @@ object NodeCancelTool extends Tool:
             )
           case (false, false) =>
             IO.pure(Left(ToolError("Missing 'node-id' (one node) or 'chain' (whole chain)")))
-          // 链级取消（⑴″ 增强承接，chaincancel 批语义复用：cancelChain 单点——级联闭包
+          // 链级取消（增强承接，语义复用：cancelChain 单点——级联闭包
           // /台账意图/聚合通知全套引擎侧既有，零重写）。双寻址不做链名猜测：链引用恒
           // 链号（NodeList chains[].id 是唯一名单——LLM 侧自纠通道已足）。
           case (false, true) =>
@@ -94,7 +94,7 @@ object NodeCancelTool extends Tool:
                 if n.status != NodeLifecycle.Running then
                   IO.pure(Right(s"Node '${n.name}' is not running (status=${n.status}) — no-op"))
                 else
-                  // 清场 c-③（20260903 事故复盘）：有在飞执行 fiber → 正常取消信号（原
+                  // 清场 c-③：有在飞执行 fiber → 正常取消信号（原
                   // 语义）；无在飞 fiber（会话已死/实例重启泄漏）→ 直接收殓终态化——修复
                   // 「返回成功但节点状态不落终态」的假成功（假成功下分发器以为已止损，
                   // stale running 永久滞留）。收殓内部二次复核 isRunning（防窗口竞态）。
@@ -107,8 +107,7 @@ object NodeCancelTool extends Tool:
   end call
 end NodeCancelTool
 
-// NodeMessageTool 已删净退役（R2「一个 Mail 统一」批，2026-09-12 作者裁定
-// B5-c：不留 deprecated 壳、不留别名、不留自动转发）。语义整体并入
+// NodeMessageTool 已删净退役（不留 deprecated 壳、不留别名、不留自动转发）。语义整体并入
 // `MailTool` 的 `node:<nodeId>` 腿——三态判据（终态拒绝 / wiring·pending 追加
 // task / running 注入）**不复制**，由 Mail 复用引擎侧单点
 // `NodeEngine.sendNodeMessage`（含 NODE_NOT_FOUND / NODE_MESSAGE_EMPTY /

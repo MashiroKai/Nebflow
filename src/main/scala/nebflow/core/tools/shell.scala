@@ -18,7 +18,7 @@ import scala.jdk.StreamConverters.*
 import scala.util.Using
 
 /**
- * T2（2026-09-11，Q1 裁定 = 方案 §5 隐含采纳 D5-b）：Bash cwd 不存在 / 非法
+ * T2（cwd 判据）：Bash cwd 不存在 / 非法
  * ⇒ **显式失败**，不做任何形式的静默回退——旧行为回退 `user.home`（或 `C:\\`
  * / `/tmp`）已删除，「回退到专用 scratch 根」同样禁止。接收端确认卡 D5-a 仍未决，
  * 本类不做任何接收端语义。
@@ -63,14 +63,14 @@ private[tools] class JobHealth(
   val outputLineCount: AtomicInteger = new AtomicInteger(0),
   val startedAtMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
   /** Whether a "process dead" notification has already been sent — prevents spam.
-    * 🔴 killruling 批（#1+#14+#15 改造）后本旗**只剩 B2 消费**（B1 已降为只提醒腿）。
+    * 🔴 只提醒改造后本旗**只剩 B2 消费**（B1 已降为只提醒腿）。
     */
   val deadNotified: AtomicBoolean = new AtomicBoolean(false),
-  /** B1「只提醒」腿的单发旗（killruling 批 2026-09-23）：提醒**不杀** ⇒ 不得再与 B2
+  /** B1「只提醒」腿的单发旗：提醒**不杀** ⇒ 不得再与 B2
     * 共用 [[deadNotified]]（那会把 B2 的单发预算提前烧掉）。CAS 单发，防 30s 节拍刷屏。 */
   val slowNotified: AtomicBoolean = new AtomicBoolean(false),
   /**
-   * 后台任务输出查看批（2026-09-09）：逐行输出汇聚口——runProcess 的 stdout/
+   * 后台任务输出查看：逐行输出汇聚口——runProcess 的 stdout/
    * stderr 行回调调用。仅后台路径（executeBackground）注入 BgTaskOutputStore
    * 缓冲 sink；前台/默认 no-op（前台输出直接随 ProcessResult 返回，无需缓冲）。
    */
@@ -107,7 +107,7 @@ final class ShellSession private (
   currentDir: Ref[IO, String],
   backgroundJobs: Ref[IO, Map[String, BackgroundJob]],
   /**
-   * #391 机制 E：本 session 当前存活的 OS 进程（前台 + 后台 runProcess 启动时
+   * 机制 E：本 session 当前存活的 OS 进程（前台 + 后台 runProcess 启动时
    * 注册、bracket release 注销）。AgentControl restart/Stop 时 killSessionProcesses
    * 遍历此表杀进程树——修复「cancelCurrentTurn 只取消 fiber、IO.blocking 不中断、
    * bracket release 永不执行」的 B9 残留根因链。
@@ -185,28 +185,28 @@ final class ShellSession private (
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None,
     on_heartbeat: Option[(String, JobHealth) => IO[Unit]] = None,
     jobIdOverride: Option[String] = None,
-    // #391 机制 B：后台硬超时 + 停滞窗口阈值（nebflow.json 可配，默认 Defaults）。
+    // 机制 B：后台硬超时 + 停滞窗口阈值（nebflow.json 可配，默认 Defaults）。
     hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
     stuckWindowSec: Int = Defaults.BashStuckWindowSec,
     // 测试注入用：health check 采样间隔（生产默认 30s）。
     healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
-    // 节点完成闸批（作者 2026-09-05 18:29 裁定）：persistent=true = 服务型
+    // 节点完成闸：persistent=true = 服务型
     // （长驻 server）——豁免 B1 idle 杀与 B2 硬超时+停滞杀（idle server 零 CPU
     // 被 5min idle 杀、30min 被硬超时杀对 server 全是误杀）。用户自担：仍可
     // cancel_background_job 显式取消、killSessionProcesses/kill 照常清理、
     // WS 心跳指示器照常可见。心跳保持（可见性不受豁免影响）。
     persistent: Boolean = false,
-    // 输出查看批（2026-09-09）：逐行输出汇聚口（BgTaskOutputStore 缓冲 sink，
+    // 输出查看：逐行输出汇聚口（BgTaskOutputStore 缓冲 sink，
     // BashTool 后台路径注入）。None = 无缓冲（默认，兼容既有调用方/测试）。
     outputSink: Option[String => Unit] = None,
-    /** B1「只提醒」腿的审计出口（killruling 批 2026-09-23；见 [[startJobHealthCheck]]
+    /** B1「只提醒」腿的审计出口（见 [[startJobHealthCheck]]
       * 同名参数）：None = 无项目上下文 / spec 直调 ⇒ 只留 `logger.warn`。 */
     onSlowDetected: Option[String => IO[Unit]] = None
   ): IO[String] =
     lifecycleMutex.lock.surround {
       for
         _ <- checkAlive *> touch
-        // 终态延迟销毁窗口的禁 spawn 守卫（noderpt 批 B 段 2026-09-11 作者裁定：节点终态后
+        // 终态延迟销毁窗口的禁 spawn 守卫（节点终态后
         // 一律存活 30 分钟再销毁——窗口内允许读取取证、**禁止新 spawn**）。放这里 =
         // 进程真正 spawn 之前（`backgroundExecute`/`runProcess` 之下再无此点），窗口内的
         // 已注册任务照跑、输出照写，不受影响。抛错经 AgentCore.executeTool 的
@@ -331,7 +331,7 @@ final class ShellSession private (
     }
 
   /**
-   * #391 机制 E：杀本 session 全部存活 OS 进程树（前台 + 后台 runProcess 注册的
+   * 机制 E：杀本 session 全部存活 OS 进程树（前台 + 后台 runProcess 注册的
    * 进程）。幂等 no-op（无注册进程时）。与 kill() 的区别：kill() 只取消后台任务
    * fiber 并 complete deferred，不碰前台进程——而前台进程卡在 IO.blocking 上时
    * fiber 取消无效（B9 盲区 4），必须在此直接 killProcessTree。
@@ -348,7 +348,7 @@ final class ShellSession private (
    *  Serialised with lifecycleMutex to prevent executeBackground from adding
    *  jobs after we read the map.
    *
-   * #391 机制 E：kill 现在也杀后台任务的 OS 进程树（原实现只 cancel fiber——
+   * 机制 E：kill 现在也杀后台任务的 OS 进程树（原实现只 cancel fiber——
    * IO.blocking 取消不中断线程，后台命令进程残留）。前台进程由
    * killActiveProcesses 单独处理（killSessionProcesses 组合两者）。
    */
@@ -409,7 +409,7 @@ final class ShellSession private (
         else new ProcessBuilder(bashPath, "-s")
       else new ProcessBuilder(bashPath, "-c", command)
     // 执行环境 provider 接缝（design §1.1 F11：**接缝不是围栏，是接入点**）。
-    // [沙箱拆围栏批 S3，2026-09-10] 缺省 provider=host ⇒ SandboxRuntime.current =
+    // 缺省 provider=host ⇒ SandboxRuntime.current =
     // `SandboxBackend.Host`，wrap 恒 None ⇒ 走 plain（宿主路径**不再包裹**）；
     // provider=local-process ⇒ Seatbelt 后端，wrap 返回 sandbox-exec 包裹 argv
     // （§4.5 回退点，切 provider 即恢复）。**本调用点保留为唯一 wrap 接缝**：容器/VM
@@ -421,7 +421,7 @@ final class ShellSession private (
           case Some(wrapped) => new ProcessBuilder(wrapped*)
           case None => plain
       else plain
-    // cwd 判定（T2，2026-09-11，Q1 裁定）：不存在 / 非法 ⇒ **显式失败**。
+    // cwd 判定（T2）：不存在 / 非法 ⇒ **显式失败**。
     // 旧行为（`cwd == null || cwd.isEmpty || !exists` ⇒ 回退 user.home）已删除——
     // 它把工作目录不可用伪装成命令执行成功（命令在 home 里静默跑）。诊断三件套
     // （原始入参 / 解析后绝对路径 / 触发点）见 InvalidCwdError。
@@ -442,7 +442,7 @@ final class ShellSession private (
   private[tools] val SleepCommandRe = """\bsleep\s+\d+""".r
 
   /**
-   * #22 (2026-08-19): foreground no-progress ceiling. A foreground command
+   * Foreground no-progress ceiling. A foreground command
    * that makes NO progress — no new output AND no CPU progress within a
    * single sample window (see Defaults.ForegroundCpuProgressNanos) — for this
    * long is killed with an informative error: it is almost certainly waiting
@@ -451,7 +451,7 @@ final class ShellSession private (
    * test suites), run on; sleep-like commands are excluded (#319: `sleep N`
    * foreground must complete).
    *
-   * 2026-09-10（验收项 3 修复）：判据是**窗口增量**——每次比较的都是「本窗」烧掉的
+   * 验收项 3 修复：判据是**窗口增量**——每次比较的都是「本窗」烧掉的
    * CPU，基线在每个分支都推进，见 `foregroundNoProgressWatch`。
    *
    * 采样窗与判死窗口可经 system prop 缩短（kill-switch 先例），供下游真实形态复现 /
@@ -466,16 +466,15 @@ final class ShellSession private (
   /**
    * Minimum CPU delta (nanos) during sampling to consider a process "active".
    * 10ms of CPU work in 2s means the process is computing, not waiting for input.
-   * private[tools]（#391 机制 D）：BashTool 活动桥接的 hasProgress 与后台停滞
+   * private[tools]（机制 D）：BashTool 活动桥接的 hasProgress 与后台停滞
    * 探测（2s 采样窗）共用此常量。
    *
-   * 2026-09-10 卡死判据换轴（阈值解耦）：前台 no-progress ceiling **不再**用本
-   * 常量——10ms/30s = 0.033% 单核，任何有偶发唤醒的进程都能越过（事故实证：
-   * 前台 dev server 1.786 ms/s = 5.4 倍阈值 ⇒ 10 分钟安全网被微动无条件解除，
-   * 命令跑了 2h50m 未被杀）。ceiling 改用
+   * 卡死判据换轴（阈值解耦）：前台 no-progress ceiling **不再**用本
+   * 常量——10ms/30s = 0.033% 单核，任何有偶发唤醒的进程都能越过（实测教训在案：
+   * 真实前台长跑命令曾以数倍阈值的微动解除 10 分钟安全网）。ceiling 改用
    * Defaults.ForegroundCpuProgressNanos（1s/30s 窗 = 3.3% 单核，与采样窗同量纲）。
    *
-   * I2（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T7**）：取值收敛到**唯一取数点**
+   * I2（**T7**）：取值收敛到**唯一取数点**
    * `Defaults.CpuActiveThresholdNanos`（system prop `nebflow.shell.cpuActiveThresholdNanos`，
    * 默认 `10000000` ns = 10ms/采样窗 = **旧行为现行取值**，每次调用现读）——本名降为
    * delegating def，**零调用点改动**（本文件 B1/B2 判据 + `BashTool` 活动桥共三处消费点
@@ -522,7 +521,7 @@ final class ShellSession private (
    * Parse `ps -A -o pid=,ppid=,time=` output, build process tree, and sum the
    * kernel-reported cumulative CPU of root + all descendants.
    *
-   * #17 completion (2026-08-10 qa 打回链): the `time` column is the ONLY CPU
+   * Completion requirement: the `time` column is the ONLY CPU
    * source that covers GRANDCHILDREN on macOS — ProcessHandle
    * .totalCpuDuration() is only implemented for the current JVM process
    * there (empirically: 1 of allProcesses() reports it). Tree-blind sampling
@@ -594,7 +593,7 @@ final class ShellSession private (
     }.bracket { proc =>
       val h = health.getOrElse(new JobHealth())
       val storeProc = IO(h.processRef.set(proc))
-      // #391 机制 E：进程启动即注册进 session 活动表（前台 + 后台），bracket
+      // 机制 E：进程启动即注册进 session 活动表（前台 + 后台），bracket
       // release 注销——restart/Stop 时 killSessionProcesses 靠它杀进程树。
       val registerActive = activeProcesses.update(_ + proc)
       // On Windows, write the command to bash's stdin (bash -s mode), then
@@ -617,7 +616,7 @@ final class ShellSession private (
             // passed health = None.
             h.lastActivityMs.set(System.currentTimeMillis())
             h.outputLineCount.incrementAndGet()
-            // 输出查看批：行序按读取到达序（stdout/stderr 两读线程并发，全局
+            // 输出查看：行序按读取到达序（stdout/stderr 两读线程并发，全局
             // 近似行序——简洁优先，不做流间严格排序）。
             h.outputSink(line)
           ,
@@ -643,16 +642,14 @@ final class ShellSession private (
         proc.exitValue()
       }
 
-      // ── Stuck process detection (REMOVED — killruling 批 2026-09-23 作者裁定 #3）──
+      // ── Stuck process detection (REMOVED) ─────────────────────────────
       // 原 M3「后台 30 s 停滞探测杀」（grace 30s + 2s CPU 采样窗 → killProcessTree）
-      // 已按作者裁定**整块删除**，零新增替代机制：挂死反馈时延 30s → 300s，由 B1
-      // （`startJobHealthCheck` 的 idle 判据）承担；`#1` 的 300s 兜为**现读既有行为**，
-      // 非本批新增。详见 `.nebflow/Spec/20260907_bash-timeout-mechanism-audit.md`
-      // 的同批改判与 `.nebflow/evidence/20260923_killruling-impl/` 的三态读数。
+      // 已**整块删除**，零新增替代机制：挂死反馈时延 30s → 300s，由 B1
+      // （`startJobHealthCheck` 的 idle 判据）承担；300s 兜为**现读既有行为**。
       //
-      // 🔴 覆盖带代价（本批实测，见 result 内 R-B 节）：M3 删后存在两条**无自动接手者**
+      // 🔴 覆盖带代价（现读在案）：M3 删后存在两条**无自动接手者**
       // 的带——①「前 30s 零输出 ∧ CPU 率 ∈ (0.333, 5] ms/s」；② `persistent=true`
-      // 服务型（B1/B2 整条跳过，M3 是其现读唯一杀器）。二者均为作者已知情接受项。
+      // 服务型（B1/B2 整条跳过，M3 是其现读唯一杀器）。二者均为已知情接受项。
       //
       // Sleep-like commands are excluded — they legitimately produce no
       // output while their timer runs.
@@ -663,7 +660,7 @@ final class ShellSession private (
       // （#3 删后唯一写点 = 前台 no-progress ceiling 下方 `stuckFlag.set(true)`。）
       val stuckFlag = Ref.unsafe[IO, Boolean](false)
 
-      // ── Foreground no-progress ceiling (#22, 2026-08-19) ────────────────
+      // ── Foreground no-progress ceiling ────────────────
       // A foreground command that produces no output and makes no CPU progress
       // *within a sample window* for ForegroundNoProgressTimeout is killed —
       // interactive prompts / hung waits would otherwise freeze the agent's
@@ -682,14 +679,14 @@ final class ShellSession private (
             if !alive then IO.unit
             // Strictly-greater: macOS `ps` time quantizes to centiseconds —
             // one quantum (10ms) EQUALS the bridge's threshold.
-            // 2026-09-10 换轴（阈值解耦）：本 ceiling 的「有 CPU 进展」判据改用
+            // 换轴（阈值解耦）：本 ceiling 的「有 CPU 进展」判据改用
             // Defaults.ForegroundCpuProgressNanos（1s / 30s 采样窗 ≈ 3.3% 单核，
             // 与采样窗同量纲），**不再**共用 BashTool 活动桥接的 10ms 常量：后者
             // 10ms/30s = 0.033% 单核，进程一有偶发唤醒就解除窗口（事故实证：该
             // 前台命令凭 CPU 微动（5.4 倍阈值）绕过了本条 10 分钟安全网，跑了 2h50m）。
             // 真正在算的进程（构建/测试）一个 30s 窗烧掉远超 1s CPU → 照常续跑。
             //
-            // 2026-09-10（验收项 3 修复）：`lastCpu`/`lastLines` 是**上一个采样窗**的
+            // 验收项 3 修复：`lastCpu`/`lastLines` 是**上一个采样窗**的
             // 基线，两条分支都推进 ⇒ 上面的差值是**本窗增量**，不是「自上次重置以来的
             // 累计量」。旧实现只在重置分支推进 `lastCpu`，于是每窗比较的是跨窗累加值：
             // 事故速率 1.786 ms/s 只需 19 窗就能累过 1s 门槛 ⇒ 每 ~19 窗重置一次，
@@ -697,7 +694,7 @@ final class ShellSession private (
             else if lines > lastLines || (cpu - lastCpu) > Defaults.ForegroundCpuProgressNanos then
               watch(lines, cpu, 0L) // 有进展（输出 / 本窗 CPU 超门槛）→ 重置判死窗口
             else if idleMs + ForegroundSampleInterval.toMillis >= ForegroundNoProgressTimeout.toMillis then
-              // 2026-09-10 死日志修复：原为 `IO.delay(shellLogger.warn(...))`——warn 已返回
+              // 死日志修复：原为 `IO.delay(shellLogger.warn(...))`——warn 已返回
               // IO[Unit]，再包一层得到 IO[IO[Unit]]，内层日志永不执行（看护路径静默无日志）。
               shellLogger.warn(
                 s"Foreground command idle for ${(idleMs + ForegroundSampleInterval.toMillis) / 1000}s " +
@@ -711,7 +708,7 @@ final class ShellSession private (
         watch(h.outputLineCount.get(), 0L, 0L)
       end foregroundNoProgressWatch
 
-      // ── Hard timeout watchdog (#22, 2026-08-19 20:35 incident) ──────────
+      // ── Hard timeout watchdog ──────────
       // `.timeout` over the three IO.blocking reads below is SOFT: IO.blocking
       // cannot be interrupted, so the TimeoutException only surfaces after the
       // reads return — i.e. after every pipe-holding descendant exits. In the
@@ -721,7 +718,7 @@ final class ShellSession private (
       // EOF, reads unblock, and the timeout surfaces within milliseconds.
       val timeoutWatchdog =
         IO.sleep(timeout) *>
-          // 2026-09-10 死日志修复：去掉外层 IO.delay（内层 IO 永不执行）。杀树顺序不变。
+          // 死日志修复：去掉外层 IO.delay（内层 IO 永不执行）。杀树顺序不变。
           shellLogger.warn(
             s"Command timeout (${timeout.toSeconds}s) reached — killing process tree: ${command.take(80)}"
           ) *>
@@ -791,7 +788,7 @@ final class ShellSession private (
               IO.delay(cb(existing))
                 .flatten
                 .handleErrorWith(e =>
-                  // 2026-09-10 死日志修复：回调失败路径原为 IO.delay(warn(...)) —— 静默无日志。
+                  // 死日志修复：回调失败路径原为 IO.delay(warn(...)) —— 静默无日志。
                   NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
                 )
             }
@@ -801,7 +798,7 @@ final class ShellSession private (
               IO.delay(cb(result))
                 .flatten
                 .handleErrorWith(e =>
-                  // 2026-09-10 死日志修复：同上（结果回调失败路径）。
+                  // 死日志修复：同上（结果回调失败路径）。
                   NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
                 )
             }
@@ -839,7 +836,7 @@ final class ShellSession private (
 
   end startHeartbeat
 
-  /** bashautobg batch (2026-09-25 author order: "no hard cap; auto-background at
+  /** Auto-background policy ("no hard cap; auto-background at
     * 60min; backgrounded commands have no limit"): adopt an ALREADY-RUNNING
     * foreground execution as a background job. Isomorphic to the registration
     * half of executeBackground (BackgroundJob entry + heartbeat + B1 sensor +
@@ -948,8 +945,8 @@ final class ShellSession private (
    * recovery path for delegate/subtask agents that would otherwise be blocked
    * forever by a stuck background command.
    *
-   * #391 机制 B（2026-08-25 用户裁定「输出零增长且 CPU 零消耗才杀」；
-   * #26 2026-08-30 保留——只服务显式 run_in_background 后台任务）：
+   * 机制 B（「输出零增长且 CPU 零消耗才杀」；
+   * 后经裁定保留——只服务显式 run_in_background 后台任务）：
    * - B1 idle CPU 豁免：idle 判定期间 CPU 有消耗（≥ CpuActiveThresholdNanos /
    *   采样窗口）→ 不算 idle，不杀（避免误杀 CPU 忙的合法任务，如无输出编译）。
    * - B2 硬超时兜底：运行 > hardTimeoutMs（默认 30min）后进入停滞观察——输出
@@ -957,7 +954,7 @@ final class ShellSession private (
    *   + TimeoutException。总时长不重置：硬超时后必须持续证明活着（有进展才重置
    *   停滞计数）。持续吐日志/烧 CPU 的卡死任务（盲区 5）由此兜底。
    *
-   * persistent=true（节点完成闸批）不进入本看护——executeBackground 直接跳过
+   * persistent=true（节点完成闸）不进入本看护——executeBackground 直接跳过
    * 启动本 fiber（服务型豁免 B1/B2，见其参数注释）。
    */
   private def startJobHealthCheck(
@@ -968,8 +965,7 @@ final class ShellSession private (
     hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
     stuckWindowSec: Int = Defaults.BashStuckWindowSec,
     checkIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
-    /** B1「只提醒」腿的审计出口（killruling 批 2026-09-23；作者裁定 #1+#14+#15
-      * 「判据留作读数传感器、动作换只提醒」）：命中 idle 判据时以 summary 回调一次，
+    /** B1「只提醒」腿的审计出口（判据留作读数传感器、动作换只提醒）：命中 idle 判据时以 summary 回调一次，
       * 由挂载面（BashTool，持有 project/workspace/节点身份）写 `bg-slow` 事件。
       * `None`（无项目上下文 / spec 直调）⇒ 只留 `logger.warn`。
       * 🔴 与 #27 mount-stalled 同族：**只写事件、不终态化、不杀进程**。 */
@@ -981,7 +977,7 @@ final class ShellSession private (
 
     /**
      * 停滞（统一口径，对齐前台 no-progress ceiling）：输出零增长且 CPU 增量
-     * < CpuActiveThresholdNanos（10ms/采样窗口）——双条件（#391 用户裁定）。
+     * < CpuActiveThresholdNanos（10ms/采样窗口）——双条件。
      */
     def isStalled(lines: Int, cpu: Long, lastLines: Int, lastCpu: Long): Boolean =
       lines <= lastLines && (cpu - lastCpu) < CpuActiveThresholdNanos
@@ -1020,7 +1016,7 @@ final class ShellSession private (
               if !isSleepLike && idleMs > idleTimeoutMs && !progress then
                 // B1：idle timeout（300s 无输出）——CPU 豁免已并入 progress 判断
                 //（CPU 忙 → progress=true → 不进入此分支）。
-                // 🔴 killruling 批（2026-09-23 作者裁定 #1+#14+#15「改造」）：本支从
+                // 🔴 只提醒改造后：本支从
                 // **杀**降为 **只提醒**——判据（上方 `if`，逐字未变）继续作为**读数
                 // 传感器**；动作换为「写 `bg-slow` 审计事件（经 `onSlowDetected`，
                 // 挂载面注入）+ `logger.warn`」，**不杀进程、不 complete deferred、
@@ -1067,7 +1063,7 @@ final class ShellSession private (
   end startJobHealthCheck
 
   /**
-   * Poll-based line reader (#22, 2026-08-19).
+   * Poll-based line reader.
    *
    * A blocking `BufferedReader.readLine()` cannot be interrupted — IO.blocking
    * defers cancellation until the native read returns, and a pipe held open by
@@ -1190,7 +1186,7 @@ object ShellSession:
   private[tools] val CwdSiteBuildProcessBuilder: String = "ShellSession.buildProcessBuilder/safeCwd"
 
   /**
-   * cwd 判定单点（T2，Q1 裁定）：返回可用 cwd，否则抛 [[InvalidCwdError]]。
+   * cwd 判定单点（T2）：返回可用 cwd，否则抛 [[InvalidCwdError]]。
    *
    * 判定面（全部只读文件系统元数据，不做任何「换成别的目录」的动作）：
    *   - `null` / 空串             → cwd 缺失
@@ -1285,7 +1281,7 @@ object ShellSession:
               // Cancel the old cleanup fiber before killing the session to prevent fiber leak
               replace(s)
             case false =>
-              // 2026-08-28 restart 恢复修复：滞留注册表的死会话（isAlive=false，
+              // restart 恢复修复：滞留注册表的死会话（isAlive=false，
               // 如 restart/Stop 杀进程后未出 map 的历史形态）不返回——自愈重建，
               // 否则恢复后的 member 首个 Bash 调用 checkAlive 永远抛
               // "Session has been destroyed"，无法自愈。
@@ -1309,7 +1305,7 @@ object ShellSession:
     }.flatten
 
   /**
-   * #391 机制 E：restart/Stop 联动——杀该 session 全部 OS 进程树（前台进程 +
+   * 机制 E：restart/Stop 联动——杀该 session 全部 OS 进程树（前台进程 +
    * 后台任务进程）并取消后台任务 fiber。session 已销毁/不存在时幂等 no-op。
    * AgentControl restart 在 cancelCurrentTurn（只取消 fiber）之后调用本方法，
    * 修复 IO.blocking 取消不中断线程导致的 OS 进程树残留（B9 残留根因）。
@@ -1317,7 +1313,7 @@ object ShellSession:
    */
   def killSessionProcesses(sessionId: Option[String]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
-      // 2026-08-28 restart 恢复修复：kill 的同时把会话移出注册表（与
+      // restart 恢复修复：kill 的同时把会话移出注册表（与
       // destroySession 对称）。原实现只杀进程+置 isAlive=false，死会话滞留
       // sessions map → member restart 恢复后 forSession 命中 Some(死) →
       // touch 原样返回 → 首个 Bash 调用 checkAlive 抛 "Session has been
@@ -1336,7 +1332,7 @@ object ShellSession:
     initialDir: Option[String] = None,
     sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
   ): IO[ShellSession] =
-    // 终态延迟销毁窗口的禁 spawn 守卫（noderpt 批 B 段 2026-09-11 作者裁定）：**新会话
+    // 终态延迟销毁窗口的禁 spawn 守卫：**新会话
     // 一律拒绝**——节点终态后其会话已交还（窗口内实体仍在，走 doGetOrCreate 的
     // Some 分支复用；到点 reclaim 后表项仍留 = 死会话不可复活）。放这里而非
     // forSession 入口：forSession 的 Some 分支是**复用**（含面板 cancelBackgroundJob

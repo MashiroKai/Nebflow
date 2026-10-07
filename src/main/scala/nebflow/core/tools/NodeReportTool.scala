@@ -7,19 +7,18 @@ import nebflow.core.project.*
 import nebflow.shared.ToolDefinition
 
 /**
- * node_report — Flow Map 节点专属终态语义申报工具（20260909 blocked-signal
- * 设计 spec 方案 A 改造点 #2；同日作者裁定泛化：NodeReport 统一三语义迁移）。
+ * node_report — Flow Map 节点专属终态语义申报工具（NodeReport 统一三语义迁移）。
  *
- * 作者裁定原话：「这个工具可以加，但是不能是 report_blocked，而是 NodeReport，
- * 因为我们不只 Blocked，还有 Pass 和 Failed 也是在使用类似的语义判断。如果
- * Blocked 存在问题，那么其他的肯定也存在，要迁移就应该一起迁移。」
+ * 裁定结论（转述）：工具按 NodeReport 命名而非 report_blocked——Blocked 之外，
+ * Pass 与 Failed 也在用同型语义判断；若 Blocked 语义有问题，其余终态同样有
+ * 问题，迁移必须整体进行。
  *
  * 节点以工具调用申报终态语义（协议级结构化信号，非文本推断），单 category
- * 参数 = 值域**按节点角色分化**（nrloop 一期 2026-09-12；旧「三语义状态 + blocked
- * 六类细分」的 9 值扁平白名单已被设计 §3.3 #1 取代）：
+ * 参数 = 值域**按节点角色分化**（旧「三语义状态 + blocked
+ * 六类细分」的 9 值扁平白名单已由角色分化值域取代）：
  *  - `role=task`（执行节点，缺省）：`finish`（可选显式完成）+ blocked 泛值/六类细分；
  *  - `role=verifier`（校验节点）：`pass`/`fail`（verdict）+ blocked 泛值/六类细分。
- * 三条纪律（设计 §3.1，工具 description 与 ProtocolFootnote 双面同文）：
+ * 三条纪律（工具 description 与 ProtocolFootnote 双面同文）：
  *  ① **执行失败没有申报通道**（引擎判 `failed`，不由 agent 申报）；
  *  ② `blocked` 保留全部既有语义（可见终态 + FeedbackRouter 重入 + blockCount）；
  *  ③ **verifier 的 `fail` 恒伴随节点 `completed`**（verdict ≠ 节点状态）。
@@ -45,7 +44,7 @@ object NodeReportToolDef extends Tool:
   val BlockedValue: String = "blocked"
 
   /**
-   * **值域按角色分化**（nrloop 一期 2026-09-12，设计 §3.3 #1 / 附 C2-R1·R2）：两个正交
+   * **值域按角色分化**：两个正交
    * 维度不再压进一个 `category`——
    *   ①「本节点执行成没成」：`finish`（完成，可选显式化）| `blocked`（做不成）；
    *   ②「被判定对象合格不合格」：`pass` | `fail`（**仅 verifier**，verdict 面）。
@@ -64,9 +63,8 @@ object NodeReportToolDef extends Tool:
   val BlockedCategories: Set[String] = BlockedReader.Categories
 
   /**
-   * **blocked 面完整值域**（泛值 `blocked` + 六类细分）——两个角色共有（设计 §3.1
-   * 纪律②：blocked 保留全部既有语义）。单点定义以避免「泛值漏进角色值域」这类
-   * 静默收窄（旧 `EnumWhitelist` 是 9 值 = {blocked,pass,fail} ∪ 六类 ⇒ 本批必须
+   * **blocked 面完整值域**（泛值 `blocked` + 六类细分）——两个角色共有（blocked 保留全部既有语义）。单点定义以避免「泛值漏进角色值域」这类
+   * 静默收窄（旧 `EnumWhitelist` 是 9 值 = {blocked,pass,fail} ∪ 六类 ⇒ 必须
    * 显式带上泛值才是等价面）。
    */
   val BlockedDomain: Set[String] = BlockedCategories + BlockedValue
@@ -126,17 +124,17 @@ Either role: BLOCKED semantics (visible terminal state + dispatcher re-entry + b
 Pass category (the verdict + why), detail (what exactly, actionable), suggestion (what would unblock / fix). After calling, finish your report normally — the engine routes the declaration to the matching terminal chain. Calling this tool is a declaration, NOT your deliverable: your final assistant text is the node result handed downstream, so write your own completion report there — what you did, the result, artifact paths, open items — and keep it self-contained (restate the numbers and paths; never close with "see above", "same as above" or any pointer to an earlier message)."""
 
   // ============================================================
-  // Q4 试点（2026-09-13 作者裁定）：**按节点角色分化 description**（定义层变体
+  // **按节点角色分化 description**（定义层变体
   // 机制，落点 `AgentCore.schemaVariantFor` / 装配 `buildToolList`）。
   //
   // 做法 = **段投影（纯删段）**：分化的那一段是基础 `description` 里**既有的**
   // 角色行（`(1) role=task …` / `(2) role=verifier …`），分化变体 = 基础**逐行删去
   // 另一角色的那一行**。零新造字（spec `ToolFaceVariantSpec` 断言行级删除关系）。
   //
-  // 未动面（登记在交付说明「待作者给措辞 / 待裁」）：① `inputSchema` 逐字节不变
-  // （enum 仍是两角色并集 10 值 + `category.description` 仍是角色并集）——本批范围
+  // 未动面（登记在案）：① `inputSchema` 逐字节不变
+  // （enum 仍是两角色并集 10 值 + `category.description` 仍是角色并集）——改动范围
   // = description 变体机制；② verifier 变体里 `(c) BLOCKED works exactly as above.`
-  // 的「as above」指代被删的 task 段（纯删段的必然残留）⇒ 措辞待作者给。
+  // 的「as above」指代被删的 task 段（纯删段的必然残留）⇒ 措辞候审。
   // ============================================================
 
   /**
@@ -249,10 +247,10 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
               )
             )
           )
-        // 角色值域门（nrloop 一期 2026-09-12，设计 §3.3 #4 / 附 C2-R1·R2）：值域合法
+        // 角色值域门：值域合法
         // 但**不属于本节点角色**（task 报 pass/fail，或 verifier 报 finish）⇒ 拒，且
         // 错误里给出**本节点 role + 本角色合法值清单**（可行动：agent 据此自纠，
-        // 不误杀、不降级——设计 §2 R3 表「未标」行的观测面措施）。
+        // 不误杀、不降级（「未标」行的观测面措施）。
         case Some(_) if !enumFor(ctx.flowNodeRole).contains(category) =>
           val role = NodeRoles.normalize(ctx.flowNodeRole.getOrElse(""))
           val legal = enumFor(ctx.flowNodeRole).toList.sorted.mkString(" | ")
@@ -283,7 +281,7 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
         case Some(nodeId) =>
           val fb = BlockedFeedback(category = category, detail = detail, suggestion = suggestion)
           // 确认文本：blocked 链沿用 v1 原文（测试/冒烟断言锚零漂移）；**verdict 面按
-          // 角色/类别分支**（nrloop 一期 §3.3 #5「回执不误导」）——verifier 的 fail
+          // 角色/类别分支**（「回执不误导」）——verifier 的 fail
           // 必须说清「节点本身照常 completed、结论沿 fail 边选通」，否则 agent 会把
           // verdict 读成「我失败了」。判断顺序：blocked ⇒ verdict ⇒ finish。
           val confirm =
@@ -300,7 +298,7 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
             else
               "[OK] node report (finish) recorded — finish your report normally. The engine completes this node along the " +
                 "default completion chain."
-          // #239② 面①（申报跨宿主重启持久化，2026-09-15）：申报除进程内登记外**同步落
+          // 申报跨宿主重启持久化：申报除进程内登记外**同步落
           // 该项目的持久化日志**（`<workspace>/.nebflow/node-reports.jsonl`）——旧口径下
           // 进程一死申报即在结构上消失（磁盘/事件/内存三处零副本）。归属工作区解析见
           // [[reportWorkspaceFor]]；解析不到 ⇒ 空串 = 无持久化位置（登记表内部 WARN

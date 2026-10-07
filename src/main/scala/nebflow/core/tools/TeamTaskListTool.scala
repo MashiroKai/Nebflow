@@ -6,8 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.core.task.*
 
 /**
- * Team Manager task tool — list (spec 20260825_team-manager-task-tool-spec.md
- * §2.1/§2.3). READ-ONLY by hard constraint: no mutation parameters exist on
+ * Team Manager task tool — list (spec §2.1/§2.3). READ-ONLY by hard constraint: no mutation parameters exist on
  * this tool at all. Available to the team's Manager (own team by default) and
  * to Nebula (read-only oversight, spec §3 — passes `team` explicitly since it
  * has no team context). All statuses are listed (pending/in_progress/
@@ -16,7 +15,7 @@ import nebflow.core.task.*
 object TeamTaskListTool extends Tool:
   val name = "TeamTaskList"
 
-  // 阶段 2d（§D.1-14/§D.2）：原 PromptSections order 630 Task List Protocol
+  // 原 PromptSections order 630 Task List Protocol
   // 条件段下迁至此（Reminders/Protocol 节）——双轨期语义：team 成员人手本
   // 工具，协议随工具定义必达；阶段 3 随 team 退役一并拆除。
   val description =

@@ -15,7 +15,7 @@ import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry, TaskLedgerHistory, TaskLedgerStore}
 import nebflow.shared.{MailQueueItem, NebflowLogger, *}
 
-// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
+// 定位器参数窄化,AgentActor 构造改经工厂镜像
 /**
  * Agent-to-agent communication tool.
  *
@@ -24,8 +24,7 @@ import nebflow.shared.{MailQueueItem, NebflowLogger, *}
  * turn, a busy recipient gets it merged into the current turn).
  *
  * The former `queue` mode (serialized FIFO persisted to disk, one mail per turn —
- * for serial task chains: "do this, then that") was **retired** (delivery 退役批,
- * 2026-09-15 作者裁定 (b)):
+ * for serial task chains: "do this, then that") was **retired**:
  * - **every leg** (team short name / `project:` / `node:` / Nebula / `kernel`) that
  *   still sends `delivery="queue"` is an **explicit error**
  *   (`MAIL_DELIVERY_QUEUE_RETIRED`) — **never** a silent downgrade to immediate
@@ -37,7 +36,7 @@ import nebflow.shared.{MailQueueItem, NebflowLogger, *}
  *   queue endpoints) and specs call it directly — it now has **zero production
  *   caller from this tool face**.
  *
- * mailparams 批 (2026-09-17 作者裁定 = 案 C「清死面」): the `delivery` **key has been
+ * 案 C「清死面」: the `delivery` **key has been
  * removed from `inputSchema`** — parameter face **8 → 7**. Zero capability is lost
  * (`immediate` was the only remaining `enum` value and it is also the default, so
  * the key only ever asked the model to pick a one-option option).
@@ -48,7 +47,7 @@ import nebflow.shared.{MailQueueItem, NebflowLogger, *}
  * caller's key still reaches the tool and is judged there, which is exactly why the
  * tombstone is the fail-closed side of this change.
  *
- * mailmodel batch (2026-09-25, rulings (b)/(d)/(e)):
+ * Mail 模型裁定族:
  * - the `device` **key is removed from `inputSchema`** (parameter face **8 → 7**):
  *   the cross-device agent-mail leg is retired both ways (outbound leg deleted; the
  *   relay-tunnel `agent_mail` intake no longer injects). A stale caller that still
@@ -60,7 +59,7 @@ import nebflow.shared.{MailQueueItem, NebflowLogger, *}
  *   dispatcher-to-root P0 window exemption is now judged on the **body's first-line
  *   `[INTERRUPT]` literal**, keeping the A3/R7 bypass pair intact — mechanism, not a
  *   message type).
- * - the **`kernel` address leg** is added (Nebula-exclusive, ruling (b)):
+ * - the **`kernel` address leg** is added (Nebula-exclusive):
  *   `address="kernel"` starts a Kernel instance (the Delegate inner-core sub-agent)
  *   and the receipt carries the continuation address `kernel:<id>`; a later Mail to
  *   `kernel:<id>` continues that live instance. Non-Nebula callers are refused
@@ -69,7 +68,7 @@ import nebflow.shared.{MailQueueItem, NebflowLogger, *}
  *   the existing `source="delegate"` uplink (zero tool-face change on the return leg).
  *
  * The former `ask` mode (synchronous context fork) was removed entirely
- * (2026-08-27 user ruling) — see git history if that mechanism is ever needed.
+ * — see git history if that mechanism is ever needed.
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
@@ -82,7 +81,7 @@ object MailTool extends Tool:
   private val RootAgentName = RootAgentIdentity.Name
 
   // ============================================================
-  // mailmodel batch (2026-09-25, rulings (d)/(e)) — target face and retirement word
+  //  target face and retirement word
   // table (**single source**; the report, specs and descriptions cite this same source;
   // a second literal copy is forbidden).
   //   MAIL_TARGET_MISSING    both missing: `address` not filled (the device leg is
@@ -92,12 +91,12 @@ object MailTool extends Tool:
   //                          tombstone — the schema key is deleted and the engine
   //                          does zero JSON-Schema validation => the stale key still
   //                          reaches call(), where one read line refuses it)
-  //   MAIL_KERNEL_EXCLUSIVE  the kernel continuation leg is Nebula-exclusive (ruling (b)):
+  //   MAIL_KERNEL_EXCLUSIVE  the kernel continuation leg is Nebula-exclusive:
   //                          every non-Nebula caller is refused
   //   MAIL_KERNEL_NOT_LIVE   the `kernel:<id>` instance is not live (terminal state /
   //                          unknown id) => explicit refusal
   //   MAIL_KERNEL_SPAWN_RETIRED  a bare `kernel` address (the former spawn leg) => explicit
-  //                          refusal (builtin-def batch 2026-10-03: Delegate is the only
+  //                          refusal (Delegate is the only
   //                          kernel trigger; Mail communicates only)
   // ============================================================
   val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
@@ -108,7 +107,7 @@ object MailTool extends Tool:
 
   /** Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
     *
-    * friendseal batch (2026-09-25): the tail pointer is SEAL-AWARE. With the
+    * The tail pointer is SEAL-AWARE. With the
     * friends feature sealed (the default posture), SendMessage's friend/group/
     * local targets — including the this-machine local copy — answer
     * `FRIENDS_SEALED`, so the pointer names the surviving `device:` target
@@ -137,7 +136,7 @@ object MailTool extends Tool:
         "member short name, or — Nebula root only — \"kernel:<id>\" (a live Delegate kernel instance)."
     )
 
-  /** Kernel-leg unauthorized-caller refusal (ruling (b): Nebula-exclusive). */
+  /** Kernel-leg unauthorized-caller refusal (Nebula-exclusive). */
   private[tools] def kernelExclusiveError(address: String, role: String): ToolError =
     ToolError(
       s"[$ErrKernelExclusive] The kernel address leg is EXCLUSIVE to the Nebula root session: dispatchers, " +
@@ -146,8 +145,7 @@ object MailTool extends Tool:
         "mail your report to Nebula and let it dispatch."
     )
 
-  /** Explicit refusal for the RETIRED bare-kernel spawn leg (builtin-def batch
-    * 2026-10-03, author directive ②: Delegate triggers kernels; Mail communicates). */
+  /** Explicit refusal for the RETIRED bare-kernel spawn leg (Delegate triggers kernels; Mail communicates). */
   private[tools] def kernelSpawnRetiredError(address: String): ToolError =
     ToolError(
       s"[$ErrKernelSpawnRetired] A bare 'kernel' address does not start an instance — kernel " +
@@ -170,7 +168,7 @@ object MailTool extends Tool:
   // map onto those; no duplicate was added here.)
 
   // ============================================================
-  // dispatcher-reply 打包窗（mailmodel / mailbatch 批，main 侧 2026-09-25）。
+  // dispatcher-reply 打包窗。
   // (W1 provisional shim: the subsystem below is ported verbatim from main's
   // MailTool so main-side specs compile. The SEND-path wiring that enqueues
   // dispatcher replies in production (deliverToNebulaRoot leg) lands with the
@@ -214,7 +212,7 @@ object MailTool extends Tool:
   private[tools] def dispatcherMailWindowArmed: IO[Boolean] =
     dispatcherMailState.get.map(_.windowArmed)
 
-  /** P0 exemption grade (mailmodel batch): a leg whose body's **first line is the
+  /** P0 exemption grade (): a leg whose body's **first line is the
     * `[INTERRUPT]` literal** does not enter the buffer — mechanism-based judgment. */
   private[tools] def isDispatcherMailInterrupt(text: String): Boolean =
     text.linesIterator.find(_.trim.nonEmpty).exists(_.trim == "[INTERRUPT]")
@@ -299,10 +297,10 @@ object MailTool extends Tool:
       }
 
   // ============================================================
-  // delivery 退役批（2026-09-15 作者裁定 (b)「保留字段、退役 queue 模式语义」）
-  //   ＋ mailparams 批（2026-09-17 作者裁定 = 案 C「清死面」）——
+  // delivery 退役（保留字段、退役 queue 模式语义）
+  //   ＋ 案 C「清死面」——
   // The unified explicit-refusal text for `delivery="queue"` on **every leg** (**single source**; specs cite this same source).
-  //   · 语义 = `delivery` 字段已**退役出 schema**（mailparams 批：参数面 8 → 7，该键
+  //   · 语义 = `delivery` 字段已**退役出 schema**（案 C：参数面 8 → 7，该键
   //     不再对模型可见），但 `call()` 内**保留一行墓碑读取**（`deliveryTombstone`）
   //     —— every leg receiving `"queue"` is still **immediately and explicitly refused**: zero delivery side effects, zero queue persistence.
   //   · 选「显式拒绝」而非「立即化」的理由：调用方声明的**串行链语义**无法被立即投递
@@ -311,13 +309,13 @@ object MailTool extends Tool:
   //   · 墓碑读取成立的判据（不是权宜）：引擎**零 JSON-Schema 校验**（`protocol.scala`
   //     自陈「面外参数会被静默忽略」）⇒ 删 schema 键**不会**让旧键到不了 `call()`；
   //     故「删键 + 墓碑判」= fail-closed，而「删键 + 删判」才是静默降级。
-  //   · (mailmodel 2026-09-25: the device leg's own v2.1 queue-refusal literal died with
+  //   · (the device leg's own v2.1 queue-refusal literal died with
   //     the leg itself — the single gate below now structurally covers every leg.)
   // ============================================================
   val ErrDeliveryQueueRetired: String = "MAIL_DELIVERY_QUEUE_UNSUPPORTED"
 
   // ============================================================
-  // mailattach 批（2026-09-17 作者四答 = 路线 A）——「静默丢」修 B6 的**唯一来源**词表。
+  // 附件面路线 A——「静默丢」修 B6 的**唯一来源**词表。
   //   MAIL_VISION_UNSUPPORTED_LEG  `project:` / `node:` / `kernel` (the spawn leg)
   //                                receiving `images` => explicit refusal.
   // Rationale: these legs are **structurally string-only** (`ProjectActor.TriggerDispatcher(message)` /
@@ -325,7 +323,7 @@ object MailTool extends Tool:
   // parameter) => the old behavior was "load + base64, then never use it" = silent drop (plan risk 1).
   // Now an explicit refusal, with the message giving **category + reason + alternative path** and
   // naming the legs that can carry images.
-  // (mailmodel batch 2026-09-25: the device leg retired whole with (e) => its B7 4000-char body
+  // (the device leg retired whole => its B7 4000-char body
   // gate (`MaxDeviceMailTextChars` / `MAIL_DEVICE_TEXT_TOO_LONG`) is deleted with it.)
   // ============================================================
   val ErrVisionUnsupportedLeg: String = "MAIL_VISION_UNSUPPORTED_LEG"
@@ -445,7 +443,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   [INTERRUPT] on the first line."""
 
   // ============================================================
-  // Q5（2026-09-13 作者裁定 = (b)）：地址面**只分化 `description`**，`inputSchema`
+  // 地址面**只分化 `description`**，`inputSchema`
   // 逐字节不变（规格 §4.4 D-2 的差距 = 一个角色读到另两个角色的地址面：
   // `:49-60` 工具级 address 节 + `:106` 参数级 description）。
   //
@@ -455,9 +453,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   // 变体 = 基础删去他角色段的结果）；非地址面字节一律**逐字节原样**（子串手术，
   // 不重排、不改写）。
   //
-  // 未分化面（登记在交付说明「待作者给措辞」）：`team context` 段 —— 定义层
+  // 未分化面（登记在案）：`team context` 段 —— 定义层
   // 无 team 成员身份维度；`inputSchema.properties.address.description`（参数级
-  // 三面并集）—— Q5 口径冻结 `inputSchema`，本批不动。
+  // 三面并集）—— Q5 口径冻结 `inputSchema` 不动。
   // ============================================================
 
   /** **基础变体**（= 上面的 `description`）：**逐字节不变**——未登记/未知身份的
@@ -577,9 +575,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
 
   def summarize(input: JsonObject): String =
     val addr = input("address").flatMap(_.asString).getOrElse("?")
-    // mailmodel batch (2026-09-25): the device/type keys are retired => the label face
+    // the device/type keys are retired => the label face
     // is address-only (the old `device:` target prefix and the ` [TYPE]` tag are gone with them).
-    // delivery 退役批（2026-09-15）：标签面不再有 `, queue` 形态 —— queue 模式退役后
+    // delivery 退役：标签面不再有 `, queue` 形态 —— queue 模式退役后
     // 该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递（描述面清理的连带面）。
     s"Mail(→$addr)"
 
@@ -590,7 +588,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     val message = input("message").flatMap(_.asString).getOrElse("")
 
     // ------------------------------------------------------------
-    // 🔴 墓碑读取（mailparams 批，2026-09-17 案 C「清死面」；mailmodel 批 2026-09-25
+    // 🔴 墓碑读取（案 C「清死面」
     // 以同一形态加了 device 墓碑）——**这两个键都已退役出 schema**，本段仅作**退役墓碑**，
     // 不是活参数：
     //   · `delivery` 的唯一用途 = 判旧调用方送来的 `"queue"` 并报
@@ -606,24 +604,24 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val deviceTombstone = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
-    // taskunify task-continuation parameter (restored in the W1 re-anchor merge): the
+    // task-continuation parameter (restored in the W1 re-anchor merge): the
     // optional explicit task id is threaded to the project leg only (layeredRoute);
     // base/main extraction form kept verbatim.
     val taskRaw = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
-    // mailmodel batch (2026-09-25, ruling e): the `device` tombstone gate — **ahead of
+    // Mail 模型裁定: the `device` tombstone gate — **ahead of
     // every other judgment and delivery side effect** (same order as the existing
     // fail-fast discipline; the key is no longer in the schema, only stale callers send it).
     if deviceTombstone.isDefined then
       IO.pure(Left(deviceLegRetiredError(deviceTombstone.get)))
     else if address.isEmpty then IO.pure(Left(ToolError(targetMissingMessage)))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-    // delivery 退役批（2026-09-15 作者裁定 (b)）：`delivery="queue"` ⇒
+    // delivery 退役：`delivery="queue"` ⇒
     // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
-    // mailparams 批（2026-09-17 案 C）后本闸的输入来自**墓碑读取**（`deliveryTombstone`，
+    // 案 C 后本闸的输入来自**墓碑读取**（`deliveryTombstone`，
     // 该键已不在 schema）——判据与文案**逐字不变**：这是「删 schema 键、不删拒绝」的落点。
     // 单点兜住全部腿（`node:` / `project:` / Nebula / team 短名 / 裸项目名）——结构性保证
-    // 「本工具面零 queue 入口」。（设备腿已随 mailmodel 批退役 ⇒ 不再有它自己的字面量；
+    // 「本工具面零 queue 入口」。（设备腿已退役 ⇒ 不再有它自己的字面量；
     // 旧设备腿调用方在上面的 device 墓碑处被拒，永不走到本闸。）
     else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
     else
@@ -642,7 +640,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
               ImageInject.resolveImages(imagePaths).flatMap {
                 case Left(err) => IO.pure(Left(err))
                 case Right(attachments) =>
-                  // mailattach 批（2026-09-17）：同机腿附件 = **附注 + 零搬字节**。
+                  // 同机腿附件 = **附注 + 零搬字节**。
                   // 校验（形态/存在/件数/大小）与附注构造都是单点（[[attachmentsPlan]] /
                   // [[withAttachmentsNote]]），且前置于一切路由副作用；附注必须在
                   // `messageBlocks` **之前**并入正文 —— blocks 在场时 `AgentActor` 丢弃
@@ -656,7 +654,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                         case None =>
                           IO.pure(Left(ToolError("No actor system available")))
                         case Some(system) =>
-                          // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
+                          // R2 分层地址面（细则 + B1-a）：角色专属
                           // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
                           // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
                           // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
@@ -674,13 +672,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                           ) match
                             case Some(action) => action
                             case None =>
-                              // mailparams 批（2026-09-17 案 C）：本层原有一个 `delivery match`
+                              // 案 C：本层原有一个 `delivery match`
                               // —— 「`"immediate"`」与「陌生值 ⇒ 打 WARN 后收敛到 immediate」两支。
                               // schema 键删除后**只剩一条投递路径**（immediate 是唯一形态），
                               // 故该分支连同其 WARN 一并删除（设计件 §4.4(a)「其余值不再需要分支」），
                               // 不再有任何按键值分派的逻辑。非 `queue` 的旧值由此与「键缺席」
                               // **逐字同一结果**（残差读数见交付报告）。
-                              // mailmodel batch (2026-09-25): the `type` parameter is retired with
+                              // the `type` parameter is retired with
                               // the key —— eventType is now judged by the **leading `[INTERRUPT]`
                               // literal of the body** (same single-point criterion as deliverToRoot):
                               // a literal first line => `interrupt`, otherwise `info`. The dispatcher->root
@@ -697,7 +695,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   end call
 
   // ============================================================
-  // R2 分层地址面（「一个 Mail 统一」批 2026-09-12）
+  // R2 分层地址面
   // ============================================================
 
   /** 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。
@@ -716,13 +714,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
 
   private val NodePrefix = "node:"
   private val ProjectPrefix = "project:"
-  /** kernel leg (mailmodel batch 2026-09-25, ruling (b)): the `kernel:<id>` continuation
+  /** kernel leg: the `kernel:<id>` continuation
     * form's prefix (the bare `kernel` form = start a new instance, judged in
     * [[layeredRoute]]). id = the full session id `delegate-kernel-<8hex>` (the registry
     * key, unambiguous). */
   private val KernelPrefix = "kernel:"
 
-  /** 统一 delegate 续聊地址前缀（unified-delegate 批 2026-10-03）。 */
+  /** 统一 delegate 续聊地址前缀。 */
   private val DelegatePrefix = "delegate:"
 
   private def rootFace: String = "\"project:<项目名>\"（裸项目名等价接受）或 \"node:<节点id或名>\"（已登记 delegate 链）"
@@ -755,7 +753,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * 分层地址分派。返回 Some(结果) = 本地址形态属分层面（已处理，含显式报错）；
    * None = 不属分层面（调用方继续既有 team/短名瀑布——D-6：legacy 面不随批收口）。
    *
-   * delivery 退役批（2026-09-15）：本层**不再持有 `delivery` 参数**——「非设备腿禁
+   * delivery 退役：本层**不再持有 `delivery` 参数**——「非设备腿禁
    * queue」由 `call` 的单点前置闸统一下判（该闸在设备腿分支之后、本层之前），
    * 故本层结构上**零 queue 分支**（`project:` 腿原先「两分支同体」也已折成单支）。
    */
@@ -770,7 +768,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     task: Option[String] = None
   ): Option[IO[Either[ToolError, String]]] =
     val role = roleOf(ctx)
-    // ── delegate leg (unified-delegate 批 2026-10-03): the Nebula-exclusive
+    // ── delegate leg: the Nebula-exclusive
     // continuation address ── `delegate:<id>` 续聊/补充；旧 `kernel:<id>` 形态
     // 作为别名同路（同一 id 空间，存量回执不打断），裸 `kernel` 保持墓碑。
     if address == "kernel" then
@@ -956,25 +954,25 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
             }
 
   /**
-   * 本会话作为发信方的**来源标注**（bluebubble 批 2026-09-12，单点构造）：
+   * 本会话作为发信方的**来源标注**（单点构造）：
    * 接管方 agent 自身名（与前端 `ownAgentName()` 同名空间，见
    * [[nebflow.agent.InjectionAttribution]] 的字段名/取值域契约）+ 所属 Team 名
    * + 邮件类型（eventType）。两条项目腿（腿① 项目、腿② 节点）与 leg③
    * `sendMail` 共用同一取值口径 —— 三种 Mail 形态的气泡顶栏因此同源。
    *
-   * `intake`（mailbadge 批 2026-09-13，作者裁定「必须显示 MAIL」⇒ 选项 C）是
+   * `intake`（「必须显示 MAIL」⇒ 选项 C）是
    * **调用方声明的收件通道判别**，**不由本方法统一置位**：本方法是三条腿的
    * 共用构造点，而三条腿的收件面**呈现口径不同** ——
    *   - 腿①（`routeToProject` → 分发器收件面）：传
-   *     [[InjectionAttribution.IntakeMail]] ⇒ 标签显示 `Mail`（本批的目标）；
+   *     [[InjectionAttribution.IntakeMail]] ⇒ 标签显示 `Mail`（本机制的目标）；
    *   - 腿②（`deliverToNode` → 节点收件面）：**不传**（默认 `None`）——
    *     `source` 保持 `"system"` ⇒ 标签恒 `System` + `[NODE-MESSAGE]` 文本头
-   *     逐字不变（节点收件面不在本批，已单独立项）；
+   *     逐字不变（节点收件面单独立项）；
    *   - 腿③（`sendMail` → 非 project 面）：**不传**（默认 `None`）——
    *     `source` 已是 `"mail"` ⇒ 标签恒 `Mail`，呈现零漂移。
    * 若在此统一置位，腿② 的标签会被抬成 `Mail` ⇒ **越界扩面**（禁动面）。
    *
-   * `project`（R-A 补，2026-09-15 ③ root 裁定）与 `intake` **相反**：**三条腿同源置位**
+   * `project` 与 `intake` **相反**：**三条腿同源置位**
    * ——取本会话所属项目（`ToolContext.projectName`）= 四段式 `PROJECT` 段的**链首级**
    * 「发送方所属项目」。与 `intake`（收件通道的**呈现判别**，逐腿口径不同）无关：
    * 「发送方项目域」在任一收件面上都不改变该腿的标签语义，故单点置位零越界。
@@ -1018,8 +1016,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     imagePaths: List[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    // B6（静默丢修，mailattach 2026-09-17）：本腿结构上只能收字符串 ⇒ `images` 无承载面。
-    // 旧行为 = 静默丢（零报错、零投递）；本批 = 显式拒绝（判据与文案见
+    // B6（静默丢修）：本腿结构上只能收字符串 ⇒ `images` 无承载面。
+    // 旧行为 = 静默丢（零报错、零投递）；现行为 = 显式拒绝（判据与文案见
     // [[sameMachineVisionUnsupportedError]]）。
     if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
     else
@@ -1136,19 +1134,18 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
       }
 
   // ============================================================
-  // kernel leg (builtin-def batch 2026-10-03, author directive ② "Delegate triggers
-  // kernels; Mail is demoted to communication"): the ONLY kernel address leg left is
+  // kernel leg ("Delegate triggers kernels; Mail is demoted to communication"): the ONLY kernel address leg left is
   // `kernel:<id>` = inject into that **live** Delegate-spawned instance (registry
   // kind=Delegate with session-id match); after the instance goes terminal (one-shot
   // Delegate semantics: the result has already been returned to root along
   // source="delegate") the address is **unroutable** => explicit refusal
   // ([[kernelNotLiveError]]), same family as the `node:` leg's three-state judgment
   // ("running injectable / terminal refused").
-  // The bare-kernel SPAWN leg (`address="kernel"`, mailmodel batch 2026-09-25) is
-  // RETIRED in this batch: triggering is Delegate-only; a bare "kernel" address is an
+  // The bare-kernel SPAWN leg (`address="kernel"`) is
+  // RETIRED: triggering is Delegate-only; a bare "kernel" address is an
   // explicit MAIL_KERNEL_SPAWN_RETIRED refusal in [[layeredRoute]] (fail-closed
   // tombstone, never a silent forward).
-  // The Nebula-exclusivity ruling (b) carries over verbatim: a non-root caller mailing
+  // The Nebula-exclusivity ruling carries over verbatim: a non-root caller mailing
   // `kernel:<id>` is refused ([[kernelExclusiveError]], SenderRole != Root =>
   // MAIL_KERNEL_EXCLUSIVE). The result-return chain has zero tool-face change (the
   // existing BackoffSupervisor parent uplink).
@@ -1156,9 +1153,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
 
   /** Kernel-leg delivery — continuation only (the caller's NebulaRoot identity has
     * already been verified in [[layeredRoute]]; the bare-kernel SPAWN leg retired in
-    * the builtin-def batch 2026-10-03 — Delegate is the only kernel trigger). */
+    * Delegate is the only kernel trigger). */
   /**
-   * delegate 续聊腿（unified-delegate 批 2026-10-03）——`delegate:<id>`：
+   * delegate 续聊腿——`delegate:<id>`：
    *   - **live**：注入 UserInput（replyTo=supervisor，turn 边界消费，结果仍走
    *     `source="delegate"` 回投链）——与原 kernel 腿逐字同机制；
    *   - **不 live（终态/重启后）**：内置执行器 ⇒ 以补充信息为输入**续起**一个
@@ -1200,8 +1197,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                       nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
                       IO.pure(Right(s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."))
                   case _ =>
-                    // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors
-                    // 批 #1225 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
+                    // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
                     // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。
                     if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
                       nebflow.core.executor.ExternalSessionRunner
@@ -1261,12 +1257,12 @@ $message"""
     }
 
   // ============================================================
-  // mailattach 批（2026-09-17 作者四答 = 路线 A）——`attachments` 通用附件面
+  // 附件面路线 A——`attachments` 通用附件面
   //   设计要点（plan §2 方案 A / §1 面 3）：
-  //   ① **上限只引用 `AttachContract`**（件数 9 / 单件 1 GiB，作者给定数）——本文件
+  //   ① **上限只引用 `AttachContract`**（件数 9 / 单件 1 GiB）——本文件
   //      零硬编码副本（判据：`grep` 只见 `AttachContract` 单点）；
   //   (2) validation **precedes every delivery side effect** (same order as the existing images judgment G3);
-  //   (3) same-machine leg semantics (mailmodel batch 2026-09-25: the device leg is retired => only
+  //   (3) same-machine leg semantics (the device leg is retired => only
   //       this one remains): **zero bytes are moved**; the body gets a note with "absolute path +
   //       byte count + sha256" ([[withAttachmentsNote]])
   //        —— 接收方与发送方共享同一磁盘，路径即取件；
@@ -1276,7 +1272,7 @@ $message"""
   /**
    * `attachments` 参数的**形态解析**（纯函数，与 `ImageInject.parseImagesParam` 同族口径）：
    * 缺省 ⇒ `Nil`；非数组 / 含非字符串项 ⇒ 显式错误；空白项丢弃；**件数闸**用
-   * `AttachContract.checkAttachmentCount`（作者给定数单点）。
+   * `AttachContract.checkAttachmentCount`（上限数单点）。
    */
   private[tools] def parseAttachments(input: JsonObject): Either[ToolError, List[String]] =
     val raw = input("attachments") match
@@ -1395,9 +1391,9 @@ $message"""
 
   /**
    * 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。
-   * B6（静默丢修，mailattach 2026-09-17）：本腿结构上只能收字符串
+   * B6（静默丢修）：本腿结构上只能收字符串
    * （`TriggerDispatcher(message: String, …)` 无 blocks 形参）⇒ `images` 无承载面，
-   * 旧行为 = 静默丢，本批 = 显式拒绝（覆盖三入口：`project:` / Nebula 裸项目名 / 分发器）。
+   * 旧行为 = 静默丢，现行为 = 显式拒绝（覆盖三入口：`project:` / Nebula 裸项目名 / 分发器）。
    */
   private def deliverToProject(
     name: String,
@@ -1422,7 +1418,7 @@ $message"""
       }
 
   /**
-   * 腿③（分发器 → root）：**解析到真正的 Nebula root 会话**（追加条款②，2026-09-12）。
+   * 腿③（分发器 → root）：**解析到真正的 Nebula root 会话**。
    * 硬禁三种静默行为：① 回落成发信者自身 ② 落到非 Nebula 的 Root 会话
    * ③ 解析失败仍报成功——解析不到即**显式报错**（并不指明合法地址面）。
    */
@@ -1434,7 +1430,7 @@ $message"""
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
     val senderSessionId = ctx.sessionId.getOrElse("")
-    // mailmodel batch (2026-09-25): the `type` parameter is retired with the key --
+    // the `type` parameter is retired with the key --
     // the event type is judged here by the body's leading `[INTERRUPT]` literal
     // (same single-point criterion as the dispatcher-reply window exemption;
     // [[isDispatcherMailInterrupt]]). A literal first line => `interrupt`, else `info`.
@@ -1471,19 +1467,18 @@ $message"""
   // ============================================================
   // Legacy queue layer: persisted FIFO, drained one-per-turn
   // ============================================================
-  // 退役登记（delivery 退役批，2026-09-15 作者裁定 (b)；**未摘除面**）：
-  // queue 模式退役、且 `delivery` 键已退役出 schema（mailparams 批，2026-09-17）⇒
-  // 本层自 2026-09-15 起**在本工具面零生产调用方**（`call` 的单点前置闸——喂给它的
+  // 退役登记（delivery 退役；**未摘除面**）：
+  // queue 模式退役、且 `delivery` 键已退役出 schema（案 C）⇒
+  // 本层自此起**在本工具面零生产调用方**（`call` 的单点前置闸——喂给它的
   // 正是墓碑读取 `deliveryTombstone`——已显式拒绝一切非设备腿的 `delivery="queue"`，
   // `layeredRoute` 结构上不再持有 `delivery` 参数）。本层**保留不动**（禁摘除）：① spec 直调
   // （`MailToolRootSenderSpec` / `MailQueueNebulaSpec` / `ColdQueueActivationSpec` /
   // `MailIdleGateWiringSpec` —— 它们钉的是 idle-gate / 冷激活 / 根解析等**已落契约**，
-  // 与本批退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、
-  // `RestApiRoutes` 的队列检视/取消端点 —— 本批禁碰）。摘除属另批另议。
+  // 与退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、
+  // `RestApiRoutes` 的队列检视/取消端点 —— 禁碰）。摘除属另议。
 
-  /** The `[task #N] …` receipt header of the project leg (Mail task-continuation batch,
-    * 2026-09-28): the ordinary (non-revived) face is byte-for-byte the historical string;
-    * the revive face reports the author's verbatim continuation line — `前态=` carries the
+  /** The `[task #N] …` receipt header of the project leg (task-continuation): the ordinary (non-revived) face is byte-for-byte the historical string;
+    * the revive face reports a verbatim continuation line — `前态=` carries the
     * ACTUAL prior state (`completed` | `closed`), and the Chinese literal is the
     * author-given receipt text quoted as-is (the one intentional non-English string in
     * this batch). */
@@ -1498,7 +1493,7 @@ $message"""
     * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
     * Node results are delivered along out edges (§2.7), never back through Mail.
     *
-    * -- taskunify batch (2026-09-24, ruling c①: **an explicit parameter, no address-syntax
+    * -- ruling c①: **an explicit parameter, no address-syntax
     * extension**) --
     * Semantics (the "first Mail" concept is gone):
     *   ① **without** `task` ⇒ treated as creating a dispatcher: the engine **creates a task
@@ -1507,9 +1502,9 @@ $message"""
     *   ② **with** `task` ⇒ **continue** that task's dispatcher (active ⇒ inject / inactive ⇒
     *      spawn or inject per the slot table), 🔴 **never create a new one**;
     *   ③ **with** `task` pointing at a **terminal** task (`completed` / `closed`) ⇒ REVIVE
-    *      (Mail task-continuation batch, 2026-09-28 · the author's 10:49 order): the entry
+    *      (task-continuation ruling): the entry
     *      flips back to `open` ([[TaskLedgerStore.reviveSync]] — state flip + change-history
-    *      event + the author's verbatim note line), a **fresh** dispatcher session is
+    *      event + the verbatim note line), a **fresh** dispatcher session is
     *      mounted (`TriggerDispatcher(revive = true)` — residue slots are evicted inside
     *      the single actor, never reused), and the receipt header reports
     *      `Task 上下文已继承（前态=<prior>，已重启）· dispatcher re-mounted`;
@@ -1532,15 +1527,14 @@ $message"""
             IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
           case Some(ref) =>
             val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
-            // Attribution resolution (ruling c: the explicit parameter is primary, the
+            // Attribution resolution (the explicit parameter is primary, the
             // address syntax is not extended).
             // ① without task ⇒ the engine creates a task automatically (new watermark; the
             //    "first Mail" concept is gone).
             // ② with task ⇒ continue it (it must exist; an OPEN entry takes the ordinary
             //    inject-or-spawn path, byte-for-byte unchanged).
             // ③ with task pointing at a TERMINAL entry (`completed` / `closed`) ⇒ revive:
-            //    flip back to `open` + mount a FRESH dispatcher session (the author's
-            //    10:49 order, 2026-09-28 — a finished task is continued, not refused).
+            //    flip back to `open` + mount a FRESH dispatcher session (a finished task is continued, not refused).
             // ④ with task pointing at a non-existent / pruned entry ⇒ refused + a readable
             //    reason (the non-continuable face, unchanged).
             // The resolved value carries the prior state (`Some(prior)` iff a revive
@@ -1550,7 +1544,7 @@ $message"""
             val ledger = nebflow.core.project.TaskLedgerStore.open()
             val resolved: IO[Either[ToolError, (String, Option[String])]] = task match
               case None =>
-                // r2 P0 fix (2026-09-25): the auto-create consumes the PURE ledger id
+                // P0 fix: the auto-create consumes the PURE ledger id
                 // (`createSyncReturningId`) -- never the rendered `[OK] ...` banner. The
                 // id travels below into the slot binding (TriggerDispatcher), the note
                 // append and the `[task #N]` receipt header; the banner stays the `Task`
@@ -1572,7 +1566,7 @@ $message"""
                         s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})")))
                   case Some(entry) if entry.status != nebflow.core.project.TaskLedgerStore.Status.Open =>
                     // Revive branch (the old TASK_STATUS terminal-refusal lived here —
-                    // 2026-09-28 batch): both terminal states (`completed` and `closed`)
+                    // both terminal states (`completed` and `closed`)
                     // are continuable through the same primitive; the non-existent /
                     // pruned face above stays an explicit error.
                     IO.blocking(ledger.reviveSync(entry.id)).map {
@@ -1584,15 +1578,15 @@ $message"""
             resolved.flatMap {
               case Left(err) => IO.pure(Some(Left(err)))
               case Right((taskIdStr, revivedPrior)) =>
-                // Leg ① source annotation (bluebubble batch 2026-09-12): the sender travels
+                // Leg ① source annotation: the sender travels
                 // with the trigger message into the dispatcher session's injection bubble
-                // header (source stays = task, ruling D-5: the value is not renamed).
-                // mailbadge batch (2026-09-13, option C): **only this leg** sets `intake` --
+                // header (source stays = task; the value is not renamed).
+                // Option C: **only this leg** sets `intake` --
                 // the dispatcher intake face is the landing point of the author's "annotate
                 // Mail with a blue bubble" ruling; `source` stays `"task"` untouched (the
                 // bridge's single consumption-count point `ProjectActor:622` and the
                 // `idleSince` 30 min idle window are unchanged line by line).
-                // mailmodel batch (2026-09-25): the `type` key is retired — the
+                // the `type` key is retired — the
                 // dispatcher-intake attribution is pinned to `info` (the P0 window
                 // exemption is judged on the body's first-line [INTERRUPT] literal at
                 // the root-injection side, not on a message type here).
@@ -1753,7 +1747,7 @@ $message"""
 
   /**
    * The Nebula root agent's sessionId — **the true Nebula root**, not "any Root record"
-   * (追加条款② 2026-09-12). 解析序（两档，任一档解析不出 ⇒ None ⇒ 调用方显式报错）：
+   * (追加条款). 解析序（两档，任一档解析不出 ⇒ None ⇒ 调用方显式报错）：
    *   ① **preferredRootSid**（调用方会话的 `ctx.rootSessionId`）——spawn 本分发器会话的
    *      那个 root 会话，确定性最高、零歧义；命中失败**不**静默改选别的 Root 会话；
    *   ② 无 preferred 时按 **session meta**（`agentName == "Nebula"`）判定，且必须唯一。
@@ -1770,10 +1764,10 @@ $message"""
    * Root records eligible as "the Nebula root"（判据见 [[resolveRootSession]] 文档）。
    * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。
    *
-   * Visibility (device-mail batch, 2026-09-15): `private` -> `private[nebflow]` —— the former
+   * Visibility `private` -> `private[nebflow]` —— the former
    * device-mail intake leg (`nebflow.neblink.DeviceMailInbox`) injected into this machine's
    * Nebula session through this **single resolution point**.
-   * mailmodel batch (2026-09-25, ruling (e-1)): that intake leg is retired with the tunnel face
+   *  that intake leg is retired with the tunnel face
    * (the tunnel side logs WARN and ignores `agent_mail` frames), but the **visibility is not
    * reverted** — the same-machine injection path and the specs still go through this single
    * point (a second copy of the same expression is forbidden: two copies always drift). Zero
@@ -1944,7 +1938,7 @@ $message"""
 
   /**
    * Who may mail Nebula directly: **a project dispatcher (engine-side role judge
-   * `ctx.isDispatcher`)** — the 2026-09-12 细则 narrows "who can reach root" to that
+   * `ctx.isDispatcher`)** — 该细则 narrows "who can reach root" to that
    * single role — OR a registered team Manager (managerMap) OR any team lead by
    * definition (agent.json lead of a mounted/defined team). The name-based fallback
    * covers fork/temporary sessions — a forked Manager keeps the Manager agentDef
@@ -2042,7 +2036,7 @@ $message"""
                           case Right(None) =>
                             val isRootTarget = address == RootAgentName || address.endsWith(s"/$RootAgentName")
                             if isRootTarget then
-                              // 追加条款②（2026-09-12）：**必须**落到真正的 Nebula root 会话。
+                              // 追加条款：**必须**落到真正的 Nebula root 会话。
                               // 旧实现取 `getParentActor(senderSessionId)`（last-writer-wins 注册）
                               // 并在缺失时取「第一条 Root 记录」——两条都可能落到发信者自身或
                               // 其它 Root 会话，且解析失败仍返回成功文案（静默）。现改为单点解析
@@ -2224,7 +2218,7 @@ $message"""
           // Block 0 registration chain: member → its Manager; Manager → mounting
           // root; unknown → None (registration falls back to the caller sid).
           parentSid <- TeamSessionRegistry.parentForRecord(session.id)
-          // permshield S1（2026-09-13）：有效档位 = 应用级全局持久值，走**唯一入口**
+          // permshield：有效档位 = 应用级全局持久值，走**唯一入口**
           // `SharedResources.effectiveSafetyMode`。既不读 `session.safetyMode`
           // （`_index.json` 的盘上遗留值：全局 confirm-edits 时被 Mail 激活的成员会
           // 继承盘上 auto-all），也不再有会话覆盖面。
@@ -2298,7 +2292,7 @@ $message"""
               // session — the Teams panel double-entry ghost. Delegate /
               // SubTask / DAG spawns already name actors by their
               // nodeSessionId; this aligns the Mail path with them.
-              // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):AgentActor 构造改经工厂
+              // AgentActor 构造改经工厂
               // 镜像(resources 以 this 代入,实参逐字,零行为差)。
               ref <- actorSystem.spawn(
                 resources.agentActorBehavior(
@@ -2361,8 +2355,7 @@ $message"""
     yield ref
 
   /**
-   * Death watch for Mail-activated team agents (deep follow-up #1,
-   * 2026-08-17): MailTool spawns these actors outside FlowTreeActor's
+   * Death watch for Mail-activated team agents (deep follow-up): MailTool spawns these actors outside FlowTreeActor's
    * watch system, so their death was completely silent — actorMap kept
    * the dead ref (subsequent Mails to it vanished into a dead queue),
    * agentRegistry kept the record, busyMap kept the last turn's busy
@@ -2429,7 +2422,7 @@ $message"""
         sender = Some(senderName),
         senderTeam = teamOpt,
         delivery = Some("immediate"),
-        // 气泡四段式统一批（2026-09-15）· R-A 补：四段式 `PROJECT` 段链首级 =
+        // 气泡四段式统一 · R-A 补：四段式 `PROJECT` 段链首级 =
         // **发送方所属项目**。本腿（分发器 → root）的收件会话是 root 会话（无项目
         // 上下文）⇒ 不置位时第二段恒落根域 `NEBULA`，与「发送方所属项目」判据相反。
         // 置本会话项目域即与 `mailAttribution` 同源（构造点 = 发送方侧，唯一取值处）。

@@ -11,9 +11,9 @@ import java.time.Instant
 import scala.collection.mutable
 
 /**
- * TaskList 变更史 —— 独立 append-only JSONL 数据面（TaskList 升级批 D1/D2/D6）。
+ * TaskList 变更史 —— 独立 append-only JSONL 数据面（TaskList 升级批）。
  *
- * 动机：`tasks.json` 是整库覆盖写（read-modify-write），前后值即弃；作者裁定
+ * 动机：`tasks.json` 是整库覆盖写（read-modify-write），前后值即弃；定案口径：
  * 「变更史单独落盘、不随任务消失」⇒ 史不再放任务体，独占一份文件。
  *
  * 落盘：`<dataRoot>/tasks-history.jsonl`（生产 = `~/.nebflow/tasks-history.jsonl`），
@@ -28,7 +28,7 @@ import scala.collection.mutable
  * `text`（仅 log）/ `links`（仅 log）/ `detail`（outcome 或 system 事件说明）。
  * **无 `seq`**：排序键 = 文件行序（append-only 天然时序），`at` 仅用于显示。
  *
- * **史的主体 = note 内容的变更（作者 2026-09-11 17:27 口径）**：每一次 note 被改都
+ * **史的主体 = note 内容的变更**：每一次 note 被改都
  * 落一条可还原的内容行 —— `update` 覆盖既有 note 时 `from`/`to` **两侧全文入档**
  * （`field="note"`，JSON 字符串，不截断）；`log` 的 `text` 同日径；`create` 带初始
  * note、`close` 的 `[done] outcome` 追加，同样各落一条 `field="note"` 的
@@ -208,7 +208,7 @@ object TaskListHistory:
 
   /**
    * 读取结果：`events` = 该 id 最近 ≤ limit 条（升序）；`matched` = 该 id 事件
-   * 总数；`matchedNote` = 其中 **note/log 内容事件**数（作者 17:27 口径的史主体；
+   * 总数；`matchedNote` = 其中 **note/log 内容事件**数（史主体；
    * 其余为状态/结构类事件）；`globalRecent` = 全局事件（无 id）最近 ≤ globalLimit
    * 条（升序）；`unreadable` = 不可解析行数。计数在整文件范围内统计（不受 limit
    * 影响）⇒ 渲染侧的「未显示」计数可精确对账。
@@ -226,7 +226,7 @@ object TaskListHistory:
     val empty: ReadResult = ReadResult(Nil, 0, 0, Nil, 0)
 
   /**
-   * note/log 内容事件 = 变更史主线（作者 2026-09-11 17:27 口径：史的主体是
+   * note/log 内容事件 = 变更史主线（史的主体是
    * **note 内容的变更**，可还原「第 N 次补充把做法从 A 改成 B」）。其余
    * （create/close/非 note 字段 update/prune/quarantine/rotate）= 状态类，退居次要区。
    */

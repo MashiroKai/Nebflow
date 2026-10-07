@@ -1,4 +1,4 @@
-/* 从 NodeTools.scala 迁出(行为保持重构,2026-09-25)。 */
+/* 从 NodeTools.scala 迁出(行为保持重构)。 */
 package nebflow.core.tools
 
 import cats.effect.IO
@@ -10,16 +10,16 @@ import nebflow.core.project.*
 import nebflow.shared.PathUtil
 
 /**
- * notifyDispatcher 参数载体（dispatch-notify 批 2026-09-05）：call() 解析的
+ * notifyDispatcher 参数载体：call() 解析的
  * （flag, provided）经 implicit 从 call() 词法作用域自动填入 createNode/proceed/
- * editNode——三者的既有调用点零文本改动（在飞批 trigger-chain-fix 占用了这些
+ * editNode——三者的既有调用点零文本改动（并行批曾占用这些
  * 调用点行，碰撞规避；implicit 参数解析为 Scala 标准机制，非 hack）。
  */
 /**
  * @param flag            legacy `notifyDispatcher` 实参（true/false）
  * @param provided        legacy `notifyDispatcher` 是否显式传入
  * @param policy          **新权威字段** `notify` 的声明值（None = 显式清除/未传，
- *                        由 [[policyProvided]] 区分；b64 批 2026-09-13）
+ *                        由 [[policyProvided]] 区分）
  * @param policyProvided  `notify` 是否显式传入（true 且 policy=None ⇒ 显式清除，
  *                        节点回落 legacy 解析）
  */
@@ -36,7 +36,7 @@ final case class NodeEditNotify(
 )
 
 /**
- * loop 参数载体（LoopNode 批 2026-09-06）：call() 解析的（config, provided）经
+ * loop 参数载体：call() 解析的（config, provided）经
  * implicit 自动填入 createNode/proceed/editNode——调用点零文本改动（与
  * NodeEditNotify 同机制）。provided=false（未传）= 编辑不改动 / 创建 None；
  * provided=true 且 config=Some(LoopConfig) = 启用 loop；provided=true 且
@@ -45,7 +45,7 @@ final case class NodeEditNotify(
 final case class NodeEditLoop(config: Option[LoopConfig], provided: Boolean)
 
 /**
- * retry 参数载体（批E2 P2 failed 回跳，spec §2.3）：call() 解析的（policy,
+ * retry 参数载体（failed 回跳）：call() 解析的（policy,
  * provided）经 implicit 自动填入 createNode/proceed/editNode（与 notify/loop 同
  * 机制）。provided=false（未传）= 编辑不改动 / 创建 None；provided=true 且
  * policy=Some = 设置/替换（对象或字符串形态）；provided=true 且 policy=None =
@@ -54,7 +54,7 @@ final case class NodeEditLoop(config: Option[LoopConfig], provided: Boolean)
 final case class NodeEditRetry(policy: Option[RetryPolicy], provided: Boolean)
 
 /**
- * role 参数载体（nrloop 一期 2026-09-12，设计 §3.2）：call() 解析的（role, provided）
+ * role 参数载体：call() 解析的（role, provided）
  * 经 implicit 自动填入 createNode/proceed/editNode（与 notify/loop/retry 同机制）。
  * `provided=false`（未传）= 创建落缺省 `task` / 编辑零改动；`provided=true` =
  * 创建期声明本节点角色（create-only：编辑期出现即拒 `NODE_ROLE_CREATE_ONLY`——
@@ -63,7 +63,7 @@ final case class NodeEditRetry(policy: Option[RetryPolicy], provided: Boolean)
 final case class NodeEditRole(role: Option[String], provided: Boolean)
 
 /**
- * **链归属声明载体**（chainmodel 批一 ①「显式成员制」2026-09-19）：call() 解析的
+ * **链归属声明载体**（「显式成员制」）：call() 解析的
  * （decl, provided, invalid）经 implicit 自动填入 createNode/proceed/editNode（与
  * notify/loop/retry/role 同机制——调用点零文本改动）。
  *
@@ -81,7 +81,7 @@ object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
   /**
-   * descriptionLong stored-length cap (desc300 batch 2026-09-30, author order #281): the
+   * descriptionLong stored-length cap: the
    * stored value is truncated to this many characters; longer input is NOT an error — the
    * full (trimmed, untruncated) text is spilled to a per-node file and its absolute path is
    * returned in the success receipt so the agent can read it.
@@ -144,28 +144,26 @@ object NodeEditTool extends Tool:
       )
 
   /**
-   * 观测面上下文经济学批（20260907 裁定⑤b）：描述 7,438 → 3,742 字符（-50%，
-   * 压措辞不改语义——参数面/动作语义/错误码/校验/重激活规则全保留）；合并
-   * 观测面P0P1引擎批时统一进基线后落的 main 语义（failed 重激活条款 / abandon
-   * 无 TTL 裁定 / notifyDispatcher completion-only）→ 4,308 字符（仍 -42% vs
+   * 观测面上下文经济学：描述 7,438 → 3,742 字符（-50%，
+   * 压措辞不改语义——参数面/动作语义/错误码/校验/重激活规则全保留）；合并基线后落的 main 语义（failed 重激活条款 / abandon
+   * 无 TTL / notifyDispatcher completion-only）→ 4,308 字符（仍 -42% vs
    * 7,438；NodeSchemaSlimSpec 预算断言随之 3800→4400，语义不可删故放宽预算）。
-   * 批D2 描述重写（20260908 语义门控 spec §5 批D2，行为基线=E1+E2 已实施代码）：
+   * 描述重写（语义门控，行为基线=已实施代码）：
    * out 门控语法逐段展开（单值/扇出/失败信号边/门缺省 on={pass} 零漂移/Nebula
    * 双门例外/mode=signal deps 同款）+ retry 自动回跳链（下游单侧持有/gen 代次/
    * cap 耗尽 RetryCap 升级/邻居与环两校验）+ NODE_MERGE_PASS_ONLY 硬拒与
    * 无 on-failed 边 WARNING 两条新校验条款 → ~5,3xx 字符（预算断言随之
    * 4700→5400，同窗合并使前缀缓存一次性失效——spec §4.2 cache 纪律）。
-   * 中断恢复语义批 R1/R2（20260908_interrupt-recovery-semantics §2.4 批 R2，
-   * 2026-09-13）：interrupted 重激活条款（语义明示 = fresh 重跑非续跑，近 200 字符）
+   * 中断恢复语义：interrupted 重激活条款（语义明示 = fresh 重跑非续跑，近 200 字符）
    * → 5,633 字符（预算断言随之 5450→5700）。
-   * notify 默认值回归修复批 B-3 + A-2（2026-09-14，b64 批 502 字符零压缩的补账）：
+   * notify 默认值回归修复：
    * ① 语义订正——`notify` 行由「create default "dispatcher"」改为**未声明 = 缺键 =
    *   legacy**（与实现一致：显式门集边照投根，只有**显式** dispatcher/silent 才抑制）；
    *   并把 `notifyDispatcher` 行**并入** `notify` 行尾（LEGACY 别名 + 「一个版本」期限
    *   仍可读）；② 压缩——`description`/`descriptionLong` 两行并一行、`out` 行 Nebula
    *   条款与 `notify` 行去重、`## Semantics` 措辞收紧 → **6,042 字符**（**未抬预算**，
-   *   仍守 6050；b64 批新增两条参数行后描述曾涨到 6,532 = 超预算 482）。
-   *   13 条语义锚（NodeSchemaSlimSpec）逐条在位，见批报告。
+   *   仍守 6050）。
+   *   13 条语义锚（NodeSchemaSlimSpec）逐条在位，见报告。
    * 该描述随 tools 数组进分发器每次请求。长度上限由 NodeSchemaSlimSpec 断言钉住）。
    */
   val description =
@@ -254,7 +252,7 @@ object NodeEditTool extends Tool:
         ),
         // worktree / dangling / merge 三属性已删（N1 刀2 D1/D2/③：worktree 代建收归
         // delegate 层判定机与 Delegate spawn 腿（S13），GitWorktrees 公用 util 本体保留；
-        // merge=true 新建封口（worktree-judge-fifo 批 ⑥ 先行封口沿袭）——三键运行时
+        // merge=true 新建封口（先行封口沿袭）——三键运行时
         // 兜底硬闸在 call() 首段（NODE_WORKTREE_UNSUPPORTED / NODE_DANGLING_UNSUPPORTED
         // / NODE_MERGE_UNSUPPORTED，宽容调用方拿到可行动错误）。
         "plugins" -> Json.obj(
@@ -366,29 +364,29 @@ object NodeEditTool extends Tool:
     val nodename = input("nodename").flatMap(_.asString).getOrElse("")
     val task = input("task").flatMap(_.asString)
     val description = input("description").flatMap(_.asString)
-    // 裁定⑤c（20260907）：双层化长描述——可选，≤200，仅 detail 通道消费
+    // 双层化长描述——可选，≤200，仅 detail 通道消费
     val descriptionLong = input("descriptionLong").flatMap(_.asString)
     val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
-    // 显式授权入口 `NODE_COMPLETED_REACTIVATION`（nrloop 一期 2026-09-12，附 C5①）：
+    // 显式授权入口 `NODE_COMPLETED_REACTIVATION`：
     // 布尔参数，**仅 completed 节点有意义**（适用范围闸在 editNode 首段；创建路径
     // 显式拒——新节点无「重激活」语义）。默认 false ⇒ 今日行为逐字不变。
     val reactivateCompleted = input("reactivateCompleted").flatMap(_.asBoolean).getOrElse(false)
     // restoreChain（链级抽象 P2 · spec §5.3-②③）：**拉回显式旗标**——缺省 false ⇒
     // 纯引用语义（今日行为逐字不变）：in/deps 引用归档节点只走既有 D1 补投递通道
     // （findNode 双区兜底），节点留在归档区；传 true 才把目标所属归档链**整体**搬回
-    // 活动区（恒整批，不做单节点拉回——链是整体单位）。
+    // 活动区（恒整链，不做单节点拉回——链是整体单位）。
     val restoreChain = input("restoreChain").flatMap(_.asBoolean).getOrElse(false)
     // N1 刀2：worktree/merge/dangling 三参数解析已随三 seal（call() 首段硬闸）退役
-    // ——键在场即拒，不再读取（schema 属性同批删除）。
+    // ——键在场即拒，不再读取（schema 属性同步删除）。
     // 建位期声明闸令牌（nodegate 方案件 §1(i) C-i）：`verifierRoutePending` = 空 out
     // verifier 的两段式许可（create-only；编辑路径容忍忽略——令牌是建位时刻的许可，
     // 非节点字段）。
     val verifierRoutePending = input("verifierRoutePending").flatMap(_.asBoolean).getOrElse(false)
-    // notifyDispatcher（dispatch-notify 批 2026-09-05）：Option 保留「显式传入」信号
+    // notifyDispatcher：Option 保留「显式传入」信号
     // （缺省 = 不改动——同 plugins 缺省不改动形态）。载体经 implicit 传入 createNode/
-    // proceed/editNode——三者的既有调用点零改动（碰撞规避：在飞批占用了这些调用点行）。
+    // proceed/editNode——三者的既有调用点零改动（碰撞规避：并行批曾占用这些调用点行）。
     val notifyProvided = input("notifyDispatcher").flatMap(_.asBoolean)
-    // notify 三值（b64 批 2026-09-13，R1/R2/R3/R5）：**新权威字段**。
+    // notify 三值：**新权威字段**。
     // 三形态（replace-on-provide，与 deps/retry 同款）：
     //   未传          → policyProvided=false（创建落缺省 `dispatcher`；编辑零改动）
     //   传 null       → 显式**清除**（回落 legacy 解析）
@@ -416,11 +414,11 @@ object NodeEditTool extends Tool:
       policyProvided = notifyPolicyProvided,
       invalid = notifyPolicyParsed.left.toOption
     )
-    // loop 参数（LoopNode 批 2026-09-06）：Option 区分「未传」（编辑不改动 / 创建 None，
+    // loop 参数：Option 区分「未传」（编辑不改动 / 创建 None，
     // provided=false）与「传了」（loop true 启用 / false 停用）。载体经 implicit 传入
     // createNode/proceed/editNode——调用点零文本改动（与 notifyFlag 同机制）。maxRounds
     // 缺省 5（与主设计 §2.5 K=5 同参）；verify 缺省 = 内置执行 agent
-    // （BuiltinAgents.ExecutorName，builtin-merge 批 2026-10-03 起取代退役名
+    // （BuiltinAgents.ExecutorName，取代退役名
     // —— 常量引用，禁字面量）。
     val loopJson = input("loop")
     val loopProvided = loopJson.exists(j => !j.isNull)
@@ -432,7 +430,7 @@ object NodeEditTool extends Tool:
     implicit val loopFlag: NodeEditLoop =
       if !loopProvided then NodeEditLoop(None, provided = false)
       else NodeEditLoop(if loopEnabled then Some(LoopConfig(maxRounds, verify, verifyTask)) else None, provided = true)
-    // retry 参数（批E2 P2 failed 回跳，spec §2.3）：两形态——JSON 对象
+    // retry 参数（failed 回跳）：两形态——JSON 对象
     // {"upstream":"<id>","max":N} 或字符串 "<id>:<N>"；null=清除。replace-on-provide
     // 与 deps 同款：传了（任何形态含 null）= 整体替换/清除，未传 = 不改动。
     // max 范围 1-10 在解析单点校验（NODE_RETRY_MAX_RANGE）——创建/编辑共用。
@@ -466,7 +464,7 @@ object NodeEditTool extends Tool:
             case _ => Left(s"'retry' string form must be '<upstream-id>:<max-int>', got '${j.asString.getOrElse("")}'")
         case Some(_) => Left("'retry' must be an object {upstream, max} or a string '<upstream-id>:<max>'")
     implicit val retryFlag: NodeEditRetry = NodeEditRetry(retryParsed.getOrElse(None), retryProvided)
-    // role 参数（nrloop 一期 2026-09-12，设计 §3.2）：值域 `task|verifier`（NodeRoles
+    // role 参数：值域 `task|verifier`（NodeRoles
     // 单点，大小写宽容）；未传 = 创建落缺省 task / 编辑零改动。**create-only**——
     // 编辑路径出现即拒（错误码 NODE_ROLE_CREATE_ONLY，见 editNode 首个分支）。
     val roleJson = input("role")
@@ -488,7 +486,7 @@ object NodeEditTool extends Tool:
             case None =>
               Left("'role' must be a string: \"task\" or \"verifier\" (NODE_ROLE_INVALID)")
     implicit val roleFlag: NodeEditRole = NodeEditRole(roleParsed.getOrElse(None), roleProvided)
-    // chainId 参数（**chainmodel 批一 ①「显式成员制」** 2026-09-19）：三形态
+    // chainId 参数（**「显式成员制」**）：三形态
     // （replace-on-provide，与 notify 同款）——
     //   未传        → provided=false（创建不声明 / 编辑零改动：现有归属轨逐字不变）
     //   传 null     → 显式**撤销**声明（回落派生兜底）
@@ -528,7 +526,7 @@ object NodeEditTool extends Tool:
       if !pluginsProvided then Right(Nil)
       else NodeTools.parseIn(pluginsJson).left.map(err => err.replace("'in'", "'plugins'"))
     if nodename.isEmpty then IO.pure(Left(ToolError("Missing 'nodename'")))
-    // 退役参数硬闸（2026-09-05 插件架构对齐）：agent/skill/mcp 一律拒绝——schema 层
+    // 退役参数硬闸：agent/skill/mcp 一律拒绝——schema 层
     // 已删属性（严格调用方过不了 schema），此处运行时兜底（宽容调用方拿到可行动错误，
     // 指向 plugins）。形态：NODE_AGENT_RETIRED 单一错误码三参数共用。
     else if input.contains("agent") || input.contains("skill") || input.contains("mcp") then
@@ -542,7 +540,7 @@ object NodeEditTool extends Tool:
           )
         )
       )
-    // preset 退役硬闸（panelscheme 批 2026-09-21，作者令：节点无自有模型方案设置）——
+    // preset 退役硬闸（节点无自有模型方案设置）——
     // 节点模型 = 项目分发器当前方案（派发时解析，SchemePolicy 单点）；存量节点保留
     // 其存储 preset 值仅作显示/审计（引擎已不再读取）。schema 层已删属性，此处运行时
     // 兜底给可行动错误。
@@ -563,8 +561,7 @@ object NodeEditTool extends Tool:
     //   - worktree 键在场 → NODE_WORKTREE_UNSUPPORTED：分支/worktree 代建收归 delegate
     //     层判定机（S13）与 Delegate spawn 腿；GitWorktrees 公用 util 本体保留（其余
     //     消费点不动，本件 createWorktreeFor 包装随之退役）。
-    //   - merge=true → NODE_MERGE_UNSUPPORTED（文案沿 worktree-judge-fifo 批 ⑥ 先行
-    //     封口逐字）；merge=false/缺省容忍（create-only 令牌非节点字段——容忍语义保
+    //   - merge=true → NODE_MERGE_UNSUPPORTED（文案沿先行封口逐字）；merge=false/缺省容忍（create-only 令牌非节点字段——容忍语义保
     //     NodeMergeSealSpec ⑥ control 绿）。
     //   - dangling 键在场 → NODE_DANGLING_UNSUPPORTED：空 out 本就合法（结果保留、
     //     接线后自动投递），声明令牌随 merge sink 面退役。
@@ -599,7 +596,7 @@ object NodeEditTool extends Tool:
       )
     else if pluginsProvided && pluginsParsed.isLeft then
       IO.pure(Left(ToolError(pluginsParsed.swap.toOption.getOrElse("invalid plugins"))))
-    // loop maxRounds 范围校验（LoopNode 批 2026-09-06）：1-50 合理区间（主设计 K=5
+    // loop maxRounds 范围校验：1-50 合理区间（主设计 K=5
     // 口径，上限防御异常配置）；loop=true 时校验，非 loop 忽略。
     else if loopEnabled && (maxRounds < 1 || maxRounds > 50) then
       IO.pure(
@@ -609,19 +606,19 @@ object NodeEditTool extends Tool:
           )
         )
       )
-    // retry 解析/范围错误前置拦截（批E2）：对象/字符串形态与 max 范围在解析单点
+    // retry 解析/范围错误前置拦截：对象/字符串形态与 max 范围在解析单点
     // 已判，这里统一拦在进 create/edit 之前（0 spawn）。
     else if retryProvided && retryParsed.isLeft then
       IO.pure(Left(ToolError(retryParsed.swap.toOption.getOrElse("invalid retry"))))
-    // role 值域错误前置拦截（nrloop 一期，0 spawn）：非法角色值在进 create/edit 之前拒。
+    // role 值域错误前置拦截（0 spawn）：非法角色值在进 create/edit 之前拒。
     else if roleProvided && roleParsed.isLeft then
       IO.pure(Left(ToolError(roleParsed.swap.toOption.getOrElse("invalid role"))))
-    // chainId 值域错误前置拦截（chainmodel 批一 ①，0 spawn）：非法链号在进 create/edit 之前拒
+    // chainId 值域错误前置拦截（0 spawn）：非法链号在进 create/edit 之前拒
     // （fail-closed——链号进载荷键与归档批文件名，禁路径分隔符/空白/`..`）。
     else if chainDeclProvided && chainDeclParsed.isLeft then
       IO.pure(Left(ToolError(chainDeclParsed.swap.toOption.getOrElse("invalid chainId"))))
     // description 校验（创建必写 + 编辑可 update 共用）：trim 非空 + ≤60 字符
-    // （裁定⑤c 双层化：短文进默认载荷；长文走 descriptionLong ≤200）。
+    // （双层化：短文进默认载荷；长文走 descriptionLong ≤200）。
     else if description.exists(d => d.trim.isEmpty) then
       IO.pure(
         Left(
@@ -640,7 +637,7 @@ object NodeEditTool extends Tool:
       )
     else if descriptionLong.exists(d => d.trim.isEmpty) then
       IO.pure(Left(ToolError("'descriptionLong' must be non-empty when provided (NODE_DESCRIPTION_LONG_REQUIRED)")))
-    // desc300 batch (2026-09-30): over-long is NO LONGER an error — it is truncated on store
+    // over-long is NO LONGER an error — it is truncated on store
     // (storeDescriptionLong) with the full text spilled to a file. The old over-length reject
     // branch AND its error code are deleted outright: zero surviving error path for
     // over-length, so the code appears nowhere in src/ (see the repo-wide grep in the batch
@@ -687,9 +684,9 @@ object NodeEditTool extends Tool:
                   rt.store.snapshot.flatMap { s =>
                     s.nodes.values.find(_.name == nodename) match
                       case Some(existing) =>
-                        // 令 1 闸 A（派发面，唯一判定点 = NodeEdit 落库时刻）：只判**新增**
+                        // 闸 A（派发面，唯一判定点 = NodeEdit 落库时刻）：只判**新增**
                         // 分配；节点上已有的分配 = 已做出的派发承诺（S2/S3），不重判 ⇒
-                        // 作者此后关闭该插件不会让既有节点的编辑被拒。
+                        // 此后关闭该插件不会让既有节点的编辑被拒。
                         val newlyAssigned = pluginsForCall.filterNot(existing.plugins.toSet.contains)
                         dispatchFaceCheck(newlyAssigned).flatMap {
                           case Left(err) => IO.pure(Left(ToolError(err)))
@@ -710,7 +707,7 @@ object NodeEditTool extends Tool:
                             )
                         }
                       case None =>
-                        // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
+                        // 归档节点编辑兜底（「已存在边+归档上游不补投递」修复）：
                         // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
                         // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
                         // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
@@ -727,7 +724,7 @@ object NodeEditTool extends Tool:
                                 task.isDefined || description.isDefined || descriptionLong.isDefined ||
                                   abandon || inJson.isDefined || depsJson.isDefined ||
                                   pluginsProvided || notifyProvided.isDefined || retryProvided ||
-                                  // chainmodel 批一 ①：链归属声明同 config 族——归档节点只放行
+                                  // 链归属声明同 config 族——归档节点只放行
                                   // out 改接（归档是显示过期 + 结果可补投，不是改写归属的通道）。
                                   chainDeclFlag.provided ||
                                   // 显式授权入口对归档节点无意义（归档是显示过期 + 结果可补投，
@@ -786,9 +783,9 @@ object NodeEditTool extends Tool:
                                     )
                                   )
                                 )
-                              // P1 声明存在性（nodegate 方案件 §1(iii)，本批四项④，0 spawn）：
+                              // P1 声明存在性（0 spawn）：
                               // 新建节点必须**显式声明**能力面——漏传键 = 静默漏挂能力面（现场
-                              // 活证 n-89c91443：建位 10 分钟后靠节点自陈才发现）。`plugins=[]`
+                              // 教训在案）。`plugins=[]`
                               // = 显式「本节点无需能力面」，与「漏传」区分。只对「新建」生效
                               // （编辑路径 replace-on-provide 语义不动）。
                               else if !pluginsProvided then
@@ -831,8 +828,8 @@ object NodeEditTool extends Tool:
   end call
 
   /**
-   * 令 1（插件开关语义，2026-09-12）**闸 A** = 派发许可的**唯一**判定点。
-   * 2026-09-13 无审批批口径更新：内容面判定 = 「在位即信任 ∧ 未被封禁」。
+   * **闸 A** = 派发许可的**唯一**判定点（插件开关语义）。
+   * 口径更新：内容面判定 = 「在位即信任 ∧ 未被封禁」。
    *
    * `dispatchFaceCheck` 只对**新派发**（新建节点的 plugins / 既有节点上新增的插件名）
    * 生效：内容面仍由 `PluginRegistry.resolve` 在更早处把门（不存在 / **被封禁** 一律拒），
@@ -871,8 +868,7 @@ object NodeEditTool extends Tool:
   // ── 新建 ─────────────────────────────────────────────
 
   /**
-   * description 校验单点（create 必写；edit 传了才校验）。裁定⑤c（20260907
-   * 双层化）：短文 ≤60 进默认载荷；长文走 validateDescriptionLong（≤200，
+   * description 校验单点（create 必写；edit 传了才校验）。双层化：短文 ≤60 进默认载荷；长文走 validateDescriptionLong（≤200，
    * detail 通道）。存量 ≤200 长描述不回溯。
    */
   private def validateDescription(description: Option[String], creating: Boolean): Option[ToolError] =
@@ -895,8 +891,8 @@ object NodeEditTool extends Tool:
       case _ => None
 
   /**
-   * descriptionLong validation single point (author ruling #5c) — optional parameter, validated
-   * only when provided. desc300 batch (2026-09-30): the cap is 300 and over-length is NOT an
+   * descriptionLong validation single point — optional parameter, validated
+   * only when provided. The cap is 300 and over-length is NOT an
    * error (see the constants above); only the trim-empty contract survives.
    */
   private def validateDescriptionLong(descriptionLong: Option[String]): Option[ToolError] =
@@ -905,8 +901,8 @@ object NodeEditTool extends Tool:
         Some(ToolError("'descriptionLong' must be non-empty (trim) (NODE_DESCRIPTION_LONG_REQUIRED)"))
       case _ => None
 
-  // worktree 派生包装 createWorktreeFor 已随 N1 刀2 D1 seal 退役（2026-09-05 显式
-  // 布尔改造 / engine-wtbase 批的规则本体在公用 util [[nebflow.core.GitWorktrees]]——
+  // worktree 派生包装 createWorktreeFor 已退役（显式
+  // 布尔改造的规则本体在公用 util [[nebflow.core.GitWorktrees]]——
   // delegate spawn 腿等其余消费点不动，本件不再代建 worktree）。
 
   private def createNode(
@@ -940,8 +936,7 @@ object NodeEditTool extends Tool:
     roleFlag: NodeEditRole,
     chainDecl: NodeEditChainDecl
   ): IO[Either[ToolError, String]] =
-    // 执行统一内置执行 agent（2026-09-05 插件架构对齐 + builtin-merge 批
-    // 2026-10-03 收敛）：新建节点不再接受 agent 参数，专业能力由 plugins 差异化；
+    // 执行统一内置执行 agent（插件架构对齐后收敛）：新建节点不再接受 agent 参数，专业能力由 plugins 差异化；
     // NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。名字取代码单点常量，
     // 禁字面量。
     val agentName = BuiltinAgents.ExecutorName
@@ -950,8 +945,8 @@ object NodeEditTool extends Tool:
     // 把参数名替换成 deps，避免误导（解析器文案写死 'in'）。
     val depsIds = NodeTools.parseIn(depsJson).left.map(err => err.replace("'in'", "'deps'"))
     val outEither = NodeTools.parseOut(outJson)
-    // merge=true 封口已前置到 call() 首段 seal（N1 刀2 D2——先于全部校验面，文案
-    // 沿 worktree-judge-fifo 批 ⑥ 逐字）；本函数不再接 merge/dangling/worktree 三参
+    // merge=true 封口已前置到 call() 首段 seal——先于全部校验面，文案
+    // 沿先行封口逐字）；本函数不再接 merge/dangling/worktree 三参
     // （schema 属性已删、运行时键已被 seal 拒），createWorktreeFor 包装随之退役
     // （GitWorktrees 公用 util 本体不动——delegate spawn 腿等其余消费点继续用）。
     (validateDescription(description, creating = true), validateDescriptionLong(descriptionLong)) match
@@ -963,7 +958,7 @@ object NodeEditTool extends Tool:
           case (_, Left(err), _) => IO.pure(Left(ToolError(err)))
           case (_, _, Left(err)) => IO.pure(Left(ToolError(err)))
           case (Right(ins), Right(deps), Right(out)) =>
-            // 校验五（**2026-09-12 作者裁定重写**：out 可空置）：创建必须 (task ∨ in)——
+            // 校验五（**out 可空置**）：创建必须 (task ∨ in)——
             // **out 不再是创建必备边**（dangling 创建恢复合法：空 out = 零投递、零升根，
             // 结果保留在 result，接线后自动投递给新接下游）。给 out 则目标必须存在（存在性/
             // 环检在 proceed）且不得成环。in 侧 task 即连接（入口节点 task 创建即运行语义
@@ -1040,7 +1035,7 @@ object NodeEditTool extends Tool:
       // 引用存在性 + 环检测（in 上游 → 本节点；deps 上游 → 本节点；本节点 → out 目标）。
       // wouldCreateCycle 已含 deps 反向边（deps 设计 §1.2 校验二：混合图单点覆盖）——
       // create 场景新节点无出边，环检天然为 false，保留调用与 in 对称（防御未来变化）。
-      // chainmodel 批一 ③：deps 里的 `chain:<id>` 引用走**链可达性闸**（不是节点存在性
+      // deps 里的 `chain:<id>` 引用走**链可达性闸**（不是节点存在性
       // ——按字面查节点必然「查无此点」，报错文案指不到真正原因）；`in` 里的链引用 = 语法
       // 误用，静态可行动报错（链引用是 deps 专属语法）。
       inOk <- ins.traverse { id =>
@@ -1053,7 +1048,7 @@ object NodeEditTool extends Tool:
       }
       cycleIn <- ins.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
       cycleDeps <- deps.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
-      // out 目标解析（20260909 in 丢失事故修复面）：接受节点 id 或节点名，校验/环检/
+      // out 目标解析（in 丢失修复面）：接受节点 id 或节点名，校验/环检/
       // 镜像记账全部在解析后的 id 上做——名字形态不再被 id-only 校验误拒，也不再绕过
       // 环检测（原实现按原始串查 Map，名字串查不到 → 环检测静默放行）。
       outResolved <- outTargets.traverse(t => NodeTools.resolveOutTarget(rt, t).map(opt => t -> opt))
@@ -1072,17 +1067,17 @@ object NodeEditTool extends Tool:
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
       stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, isMerge = false)
-      // 链引用 RISKY 档回执行（判据 D 二档；本批）：`deps` 里的 `chain:<id>` 目标链含
+      // 链引用 RISKY 档回执行（判据 D 二档）：`deps` 里的 `chain:<id>` 目标链含
       // `failed` 成员 ⇒ **放行**（可重激活）+ ⚠ 行。🔴 死链（含 `cancelled` 成员）在
       // `depsOk` 已硬拒（`NODE_CHAIN_REF_DEAD`），不会走到这里。
       chainRefWarn <- deps.filter(FlowMapStore.isChainRef).flatTraverse(r => NodeTools.chainRefWarnings(rt, r))
-      // 通知策略自检（b64 批；M3/R14/spec §4.2 三条，仅 WARNING 不阻断）
-      // B-3 修（2026-09-14）：此处传**未声明即缺键**（不再用 `NotifyPolicy.Default` 填
+      // 通知策略自检（三条判据，仅 WARNING 不阻断）
+      // 此处传**未声明即缺键**（不再用 `NotifyPolicy.Default` 填
       // `Some`）。本函数的 `policy` 形参语义即「生效策略（缺键 ⇒ legacy 三态推断）」
       // ——旧写法把「用户未声明」合成 `Some("dispatcher")`，等于让默认值顶掉 legacy
       // 推断（与落盘点同一处回归），警告面会与实际生效策略不一致。
       notifyWarn <- NodeTools.notifyPolicyWarnings(rt, nodename, notify.policy, notify.flag, out)
-      // pending verifier ⚠（C-i ②可见性，本批四项③）：令牌放行的空 out verifier，
+      // pending verifier ⚠（可见性）：令牌放行的空 out verifier，
       // 回执必须把「暂无 fail 路由 = 永远无法重跑被拒对象」说在决策当下。纯判据
       // （能走到回执 ⇒ 闸已放行 ⇒ 只剩「空 out + pending」形态）。
       pendingRouteWarn =
@@ -1094,7 +1089,7 @@ object NodeEditTool extends Tool:
             s"⚠ verifier '$nodename' has no fail route yet (declared pending) — it can never re-run a rejected target until '(fail)<worker>:loop' is wired. (verifierRoutePending)"
           )
         else None
-      // P2a flag-off 警告（nodegate 方案件 §1(iii)，本批四项④）：声明了 plugins 但
+      // P2a flag-off 警告）：声明了 plugins 但
       // 全局开关关闭 ⇒ 声明被静默丢弃是「声明了却没真挂」的可机械判面——必须警告，
       // 禁静默（flag off 是运维回滚态，故不硬拒）。
       pluginsFlagWarn <-
@@ -1107,10 +1102,10 @@ object NodeEditTool extends Tool:
             case _ => None
           }
         else IO.pure(None)
-      // P3 文本扫描警告（nodegate 方案件 §1(iii) D7 采纳为警告，本批四项④）：task
+      // P3 文本扫描警告（采纳为警告）：task
       // 文本命中 Catalog 插件名而 plugins 空 ⇒ 提示（不硬拒——正文引用/提及会误报）。
       // 判据纯读（Catalog 枚举一次 + contains 匹配）；仅建位面（编辑面 task 语义
-      // 另有重激活链，不在本批范围）。
+      // 另有重激活链，不在处置范围）。
       pluginsTextWarn <-
         if plugins.isEmpty && task.exists(_.trim.nonEmpty) then
           nebflow.core.plugin.PluginRegistry.listWithRejected().map { case (defs, _) =>
@@ -1123,26 +1118,26 @@ object NodeEditTool extends Tool:
               )
           }
         else IO.pure(Nil)
-      // loop 门集预检（2026-09-12 裁定 2/3，0 spawn）：本次创建会写入两条路径的最终边集
+      // loop 门集预检（0 spawn）：本次创建会写入两条路径的最终边集
       // ——① 本节点 out（`(pass)Nebula` 单腿等形态）；② 每个 in 上游的 out 镜像追加
       // （`appendEdgeTo`，下游 in: 声明路）。任一违规 ⇒ 整调用拒绝（节点不落库、上游零改边）。
       loopGate <- rt.store.snapshot.map { s =>
         NodeTools
           .loopGateViolation(loopFlag.config.exists(_.enabled), nodename, out)
           .orElse(NodeTools.loopGateForAppends(s.nodes, ins, nodeId))
-          // verdict 选通镜像腿（nodegate 方案件 §1(i)，本批四项③）：in 上游里的
+          // verdict 选通镜像腿）：in 上游里的
           // verifier 被追加 pass 边后仍无 fail 路由 ⇒ 拒（**镜像腿不豁免** pending——
           // 否则立刻变成「有边无 fail 路由」= 缺陷形态本身）。
           .orElse(NodeTools.verdictRouteGateForAppends(s.nodes, ins, nodeId))
       }
-      // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定 + retry 环。值域 =
+      // retry 风暴防护（0 spawn）：邻居限定 + retry 环。值域 =
       // 本次声明的 in ∪ deps（节点尚未落库，in 邻接关系沿声明）。
       retryGate <- retryFlag.policy match
         case None => IO.pure(None)
         case Some(p) => NodeTools.retryGuard(rt, nodeId, nodename, p, ins ++ deps)
-      // verdict 选通校验族（nrloop 一期 2026-09-12，设计 §3.3 #13，0 spawn）：
+      // verdict 选通校验族（0 spawn）：
       // 角色 × fail 门 × :loop 控制边 —— 见 NodeTools.verdictRouteGate 判据表。
-      // 与批 A 的 loop 门集不变量并列（后者由下方 loopGate 判），互不覆盖。
+      // 与既有 loop 门集不变量并列（后者由下方 loopGate 判），互不覆盖。
       verdictGate <- NodeTools.verdictRouteGate(
         rt,
         nodeId,
@@ -1177,10 +1172,10 @@ object NodeEditTool extends Tool:
             )
           )
         else if notify.invalid.isDefined then
-          // notify 值域（b64 批 R1/R2；错误码 NODE_NOTIFY_INVALID，文案含合法值域 + 实收值）
+          // notify 值域（错误码 NODE_NOTIFY_INVALID，文案含合法值域 + 实收值）
           IO.pure(Left(ToolError(notify.invalid.get)))
         else if mergeGate.isDefined then
-          // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12，create 侧）：建位期的
+          // 拒绝面留痕（create 侧）：建位期的
           // `NODE_MERGE_PASS_ONLY` 硬拒此前零事件——落一笔 `edge-changed` + `reason=refused`。
           NodeTools
             .emitRefused(rt, nodeId, "ensureMergePassOnly", NodeTools.errorCodeOf(mergeGate.get, "NODE_MERGE_PASS_ONLY"))
@@ -1214,7 +1209,7 @@ object NodeEditTool extends Tool:
             // N1 刀2 D1：NodeEdit 不再代建 worktree（worktree 键已在 call() seal 拒）
             // ——新建恒 workspace 直跑；NodeDef.worktree 字段保留（存量节点兼容读）。
             worktree = None,
-            // panelscheme 批（2026-09-21）：preset 参数退役——新建节点不再携带节点级
+            // preset 参数退役——新建节点不再携带节点级
             // 方案（NodeDef.preset 字段保留，存量数据显示/审计用）。
             task = task,
             description = description.map(_.trim),
@@ -1224,7 +1219,7 @@ object NodeEditTool extends Tool:
             // N1 刀2 D2：merge=true 新建封口前置到 call() seal——本面新建恒普通节点
             // （NodeDef.merge 字段保留，存量 merge 节点运行面零触碰）。
             merge = false,
-            // LoopNode 配置（LoopNode 批 2026-09-06）：loop=true 时 NodeDef.loop=Some(LoopConfig)，
+            // LoopNode 配置：loop=true 时 NodeDef.loop=Some(LoopConfig)，
             // 否则 None（普通节点）。loop 不构成「可立即运行」的输入语义——仍须 task/in 承载
             // 输入（与 deps 同款：完成信号/迭代语义不是输入），入口/barrier 判定不变。
             loop = loopFlag.config,
@@ -1234,10 +1229,10 @@ object NodeEditTool extends Tool:
             // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
             // 不继承——收敛保证见 DispatchNotify）
             notifyDispatcher = notify.flag,
-            // **通知策略（b64 批 R2；B-3 修 2026-09-14）**：创建期按**用户是否显式
+            // **通知策略**：创建期按**用户是否显式
             // 声明**落盘——传了就是传的值；**未传 = 缺键 `None`**（与显式 `null` 同落
             // 缺键 ⇒ 回落 legacy 解析）。
-            // B-3 裁定：**默认值不得覆盖显式门集**。旧写法 `Some(getOrElse(Default))`
+            // **默认值不得覆盖显式门集**。旧写法 `Some(getOrElse(Default))`
             // 让每个新建节点恒落 `Some("dispatcher")`，于是「显式写 `(pass,failed)Nebula`
             // = 上根声明」这条 08:04 前契约被一个**用户从未声明的默认值**静默覆盖
             // （引擎自证：`has Nebula out-edge(s) but notify=dispatcher ... SUPPRESSED`）。
@@ -1249,10 +1244,10 @@ object NodeEditTool extends Tool:
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
             createdAt = now,
             plugins = plugins,
-            // 节点角色（nrloop 一期 2026-09-12，设计 §3.2）：create-only，未传 = task
+            // 节点角色：create-only，未传 = task
             // （旧行为零变化——存量/既有调用方全落在 task 面）。
             role = roleFlag.role.getOrElse(NodeRoles.Task),
-            // 链归属声明（chainmodel 批一 ①，2026-09-19）：建位参数面 = NodeEdit 的
+            // 链归属声明（显式成员制）：建位参数面 = NodeEdit 的
             // `chainId`，持久面 = 本字段。**声明即归属**（恒为该值，与它等谁/被谁等/
             // 被谁汇聚无关）；未传 = None = 未声明 ⇒ 归属走派生兜底轨（存量数据全走
             // 此路 ⇒ 零迁移）。值域已在 call() 前置闸拒非法值（NODE_CHAIN_ID_INVALID）。
@@ -1263,7 +1258,7 @@ object NodeEditTool extends Tool:
           // + out 边（每个非 Nebula 目标 in 追加本节点）。P1 多边：in 声明为上游 out **追加**
           // 指向本节点的缺省 pass 边（不覆盖既有门控，扇出拓扑零扰动）。
           //
-          // 缺陷③批 2026-10-01（案 A 写点 5）：本事务同时产出 `edge-changed` 视图——**建位落边
+          // 本事务同时产出 `edge-changed` 视图——**建位落边
           // 也是边集变更**（此前建位期的 out 声明与 in 镜像零审计）。视图从 `(写前, 写后)`
           // 两张 Map 纯函数算出（`mutateWithResult`，f 在 CAS 自旋下可能重入 ⇒ 必须纯）。
           val mutateIO = rt.store.mutateWithResult { s =>
@@ -1276,12 +1271,12 @@ object NodeEditTool extends Tool:
                 case None => acc
             }
             val outNodes = out.foldLeft(withInList.nodes)((acc, e) =>
-              // **红线①（nrloop 一期 2026-09-12，设计 §3.5 R5(a)）**：`:loop` 控制边
+              // **红线①**：`:loop` 控制边
               // **不写 in 镜像**——与 `setOut` 同款过滤（此处是第三个镜像写点；漏掉它
               // 会让 `(fail)<worker>:loop` 在创建期把 verifier 记进 worker 的 in ⇒
               // worker 等 verifier、verifier 等 worker 的 round-1 barrier 死锁）。
               if e.to != OutEdge.RootTarget && !OutEdge.isLoopEdge(e) then
-                // in 镜像按解析后 id 记账（同 setOut——20260909 事故修复）：目标串可能是名字
+                // in 镜像按解析后 id 记账（同 setOut——in 丢失修复）：目标串可能是名字
                 OutEdge.resolveTargetId(acc, e.to) match
                   case Some(tid) =>
                     acc.get(tid) match
@@ -1291,26 +1286,25 @@ object NodeEditTool extends Tool:
               else acc
             )
             // 🔴 `outNodes`（`out` fold 的**结果**）才是含全部下游 `in` 镜像写回的最终 Map——
-            // 基线缺失事故（20260909）修复的落点。改走 `mutateWithResult` 时若从 `withInList`
+            // 基线缺失修复的落点。改走 `mutateWithResult` 时若从 `withInList`
             // 起手，out 目标侧的 `in` 追加会被整支丢弃（`NodeEdgeRepairSpec②-a` /
             // `NodeDepsSpec T5b` 即此形态的机械把守点）。
             val nodesAfter = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out)))
             (s.copy(nodes = nodesAfter), NodeTools.createdEdgeViews(nodeId, s.nodes, nodesAfter))
           }
-          // create 回执一致性断言（20260909 in 丢失事故护栏①）：回执返回前写后读，
+          // create 回执一致性断言（in 丢失护栏①）：回执返回前写后读，
           // 断言 in 已随节点同事务落定。现实现里 in 追加与节点插入在同一 Ref 事务
           // （不可分离）；本断言是防回归哨兵——in 追加若被挪出 mutate（或未来重构
           // 引入后置写）即在此显式红，杜绝「回执成功但 in 空 → barrier 空真」的静默形态。
           val createIO: IO[Either[ToolError, String]] =
-            // 链归属变更留痕（chainmodel 批一 ⑤）需要**写前**归属视图：先取快照再执行
+            // 链归属变更留痕需要**写前**归属视图：先取快照再执行
             // mutate（IO 顺序保证快照早于任何写动作）。`chainIdView` 是纯派生（分量 +
             // 声明），读快照即得写前归属；写后视图由 emit 内部现读 ⇒ 两次读数各有其时点。
             rt.store.combinedNodes.flatMap { chainBefore =>
               mutateIO.flatMap { case (s, edgeViews) =>
                 val created = s.nodes(nodeId)
                 val missingIn = ins.filterNot(created.in.contains)
-                // pass-consumer gap (verdict-consumer batch 2026-10-01 · case A warning
-                // tier, design card §2.1): the verifier declares edges but no pass outlet
+                // pass-consumer gap (warning tier): the verifier declares edges but no pass outlet
                 // — its pass verdict has no consumer. Derived ONCE here from the same
                 // post-write snapshot the receipt reads, and shared by the audit line and
                 // the receipt hint (a second derivation would be the twin-derivation the
@@ -1324,10 +1318,10 @@ object NodeEditTool extends Tool:
                   IO(logger.errorSync(s"[node.tools] $msg")).as(Left(ToolError(msg)))
                 else
                   (
-                    // 边集变更留痕（缺陷③批 2026-10-01 · 案 A 写点 5）：**逐边一行**
+                    // 边集变更留痕：**逐边一行**
                     // （建位期的 out 与 in 镜像此前零事件）。
                     FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, edgeViews) *>
-                      // 建位声明审计（nodegate 方案件 D8 采纳，本批四项②③）：显式许可
+                      // 建位声明审计（显式许可）：显式许可
                       // 必须可事后对齐——被拒面查无事件、被放行面有迹可循（校验失败现况零
                       // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
                       // reactivated，零载荷漂移）。（dangling-declared 审计随 N1 刀2 ③
@@ -1369,7 +1363,7 @@ object NodeEditTool extends Tool:
                       // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
                       // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游节点终态，
                       // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
-                      // merge 分流（mount-enforce 批）：合并节点创建时 in 引用已 failed 的
+                      // merge 分流：合并节点创建时 in 引用已 failed 的
                       // 上游（创建顺序翻转后的合法形态）——failed 错误文本≠产物，不作输入
                       // 投递，走 MergeNodePolicy 转 blocked 可见终态不悬挂（与 deliverFailed
                       // 运行期路径同语义单点 mergeBlockedByUpstreamFailure）；非 merge 下游
@@ -1389,7 +1383,7 @@ object NodeEditTool extends Tool:
                           }
                         }
                       ) *>
-                      // D1-deps 补触发（deps 设计 §1.2，裁定③内明确要求）：接线后 deps 全满足
+                      // D1-deps 补触发（语义明确要求）：接线后 deps 全满足
                       // 且 in barrier 已归零且自身 wiring/pending → 立即启动（上游已 completed
                       // 时接线即时触达，含归档上游——findNode 兜底）。与入口启动互斥（入口条件
                       // task && ins.isEmpty 独占启动，防双 startNode 并发 spawn）；ins 非空时
@@ -1411,7 +1405,7 @@ object NodeEditTool extends Tool:
                        else IO.unit) *>
                       // 入口节点（task 且无 in）→ 创建即运行。后台化（收口③根因修复）：
                       // startNode 同步等节点整个任务跑完，直接调用会把分发器 turn 卡在
-                      // NodeEdit 上直到节点完成（实测单 turn 56min），违背工具契约
+                      // NodeEdit 上直到节点完成，违背工具契约
                       // 「async, non-blocking」。deps 不构成「可立即运行」——即使误判也被
                       // startNode 内 deps 闸门拦下（deps 设计 §1.2）。
                       // N1 刀2 A6：autoStart=false（delegate 会话）时本腿不触发——建位落
@@ -1420,7 +1414,7 @@ object NodeEditTool extends Tool:
                       (if autoStart && task.isDefined && ins.isEmpty then
                          NodeTools.runDetached(rt, s"start entry node $nodeId")(rt.engine.startNode(nodeId))
                        else IO.unit) *>
-                      // 链归属变更留痕（chainmodel 批一 ⑤）：create 也是归属变更的写点——
+                      // 链归属变更留痕：create 也是归属变更的写点——
                       // ①显式声明（reason=declaration，单成员声明链照样成链）；②新节点把两个
                       // 既有分量桥接成一条链时，**原成员**的链号归并（reason=fallback）此前
                       // 完全静默（判据见 emitChainMembershipChanges：全节点前后视图比对）。
@@ -1438,9 +1432,9 @@ object NodeEditTool extends Tool:
                           case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
                           case None => "") +
                         (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "") +
-                        // 链引用 RISKY 档（判据 D 二档；本批）：failed 成员 ⇒ 放行 + ⚠ 行
+                        // 链引用 RISKY 档（判据 D 二档）：failed 成员 ⇒ 放行 + ⚠ 行
                         (if chainRefWarn.nonEmpty then "\n" + chainRefWarn.mkString("\n") else "") +
-                        // 通知策略自检（b64 批；WARNING 族，含 M3「silent ∧ 链末端只警告」）
+                        // 通知策略自检（WARNING 族，含「silent ∧ 链末端只警告」）
                         (if notifyWarn.nonEmpty then "\n" + notifyWarn.mkString("\n") else "") +
                         // 悬空提示（O-B 必做 4）：空 out = 结果保留、接线后自动投递——
                         // N1 刀2 ③ dangling 声明令牌退役，统一原文案（可疑口径）。
@@ -1454,14 +1448,14 @@ object NodeEditTool extends Tool:
                         // paths).
                         (if passOutletGap then "\n" + NodeTools.verifierPassOutletGapHint(nodename, nodeId).mkString("\n")
                          else "") +
-                        // pending verifier ⚠（C-i ②，本批四项③）+ plugins 声明面警告
-                        // （P2a flag-off / P3 文本扫描，本批四项④）——WARNING 族同款形态
+                        // pending verifier ⚠ + plugins 声明面警告
+                        // （P2a flag-off / P3 文本扫描）——WARNING 族同款形态
                         (if pendingRouteWarn.isDefined then "\n" + pendingRouteWarn.get else "") +
                         (if pluginsFlagWarn.isDefined then "\n" + pluginsFlagWarn.get else "") +
                         (if pluginsTextWarn.nonEmpty then "\n" + pluginsTextWarn.mkString("\n") else "")
                     )
                   ).flatMap { created0 =>
-                    // desc300 batch (create write point): the spill file follows the value just
+                    // the spill file follows the value just
                     // written, so the receipt carries a path that is true now (S16-4 sentence +
                     // ABSOLUTE path). Appended only on success — a rejected create leaves no file.
                     NodeEditTool.syncDescriptionLongSpill(rt, nodeId, descriptionLong)
@@ -1479,14 +1473,14 @@ object NodeEditTool extends Tool:
 
   /**
    * abandon 动作（blocked 反馈重入设计 §7.7）：终态节点 → status=cancelled + **摘边**
-   * （案 A，2026-09-14 作者 17:24 拍板）+ 审计事件。
+   * + 审计事件。
    *
-   * **归档语义订正（2026-09-14）**：旧措辞「failed/cancelled 永不自动归档」**过强**
+   * **归档语义订正**：旧措辞「failed/cancelled 永不自动归档」**过强**
    * 且易被读成「cancelled 永不出图」——准确表述 = **无节点级出图路径（无节点级 TTL），
    * 但可随其全终态分量被 30s 链级 sweep 自动归档**（`FlowMapStore.chainArchivable`
-   * 自 2026-09-08 P1 起对 cancelled **显式放行**）。本批摘边正是把「分量永不全终态」
+   * 对 cancelled **显式放行**）。摘边正是把「分量永不全终态」
    * 这一堵点摘掉：退役节点自成全终态分量后由 sweep 正常出库（**归档留底，非删除**）。
-   * 场景存档（provisional）：措辞订正的权威 = 作者 2026-09-14 17:24 裁定。
+   * 场景存档（provisional）：措辞订正已定案（上行为准）。
    *
    * 分发器处置 blocked 节点的「放弃」载体；NodeCancel 语义不动（仅 running——
    * `cancelNode` 路径判据 / `detach` 默认 / `notify` 抑制口径**逐字不变**，回归钉见
@@ -1494,14 +1488,14 @@ object NodeEditTool extends Tool:
    * R2 纪律：mutate 内现读 fresh，fresh 已非终态（并发重激活）→ 拒写（拒写时**不摘边、
    * 不清理**——写点没发生就不申报已发生的事实）。
    *
-   * 接受域扩展（裁定①待实施语义，deps 设计 §1.6）：终态 ∪ wiring/pending——拓扑
+   * 接受域扩展（待实施语义）：终态 ∪ wiring/pending——拓扑
    * 清场时退役节点常是活的 wiring/pending（「悬空活节点」无处置出口），abandon 是
    * 其唯一出口（NodeCancel 仅 running）。wiring/pending 无在飞会话，无中断副作用；
    * 被退役节点的上游其后完成时 deliverOut → startNode 幂等跳过（cancelled ∈ Terminal）。
    *
-   * 死会话 running 收殓（清场 c-②，20260903 03:04 清场误杀事故复盘）：running 且
+   * 死会话 running 收殓（清场 c-②，清场误杀复盘）：running 且
    * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled，无 TTL，
-   * 摘边后由链级 sweep 归档——2026-09-14 口径）。
+   * 摘边后由链级 sweep 归档）。
    * 误杀防护（硬约束）：活 running（isRunning=true = 有在飞 fiber，取消信号可达）
    * 绝对拒绝，只能走 NodeCancel。无复活竞态：running 节点不会被 startNode 二次
    * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。
@@ -1523,24 +1517,24 @@ object NodeEditTool extends Tool:
                     fresh.copy(
                       status = NodeLifecycle.Cancelled,
                       completedAt = Some(now),
-                      // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——abandon 是上层
+                      // cancelled 无 TTL 强制清——abandon 是上层
                       // 裁决动作，节点留主图（不再 24h 后静默消失），由后续拓扑清理处置。
                       ttlExpireAt = None
                     )
                   )
                 )
               )
-              // 未申报计时同事务清表（noderpt 批 F3，2026-09-11 复核 D3 修复）：abandon
+              // 未申报计时同事务清表：abandon
               // 是第 7 个**不经 run fiber** 的终态写点（`allowDeadRunning=true` 分支专门
               // 收殓「Running + 无活 fiber」的死会话节点，那类节点永远到不了
               // `cleanupRunTables`）⇒ 不清表则持久层/归档残留「终态节点带待申报计时」的
-              // 误导态（复核探针 P2 实测残留）。复用引擎侧公共纯函数单点（同判据，防
+              // 误导态（复核探针发现的残留）。复用引擎侧公共纯函数单点（同判据，防
               // 第 8 个写点再漏）。
             case _ => st // 状态已变（并发重激活/移除）→ 拒写
         }
         out <- s.nodes.get(node.id) match
           case Some(c) if c.status == NodeLifecycle.Cancelled =>
-            // ── 案 A 摘边（cancelled 滞留主图修复批 2026-09-14，作者 17:24 拍板）──
+            // ── 案 A 摘边（cancelled 滞留主图修复）──
             // 语义全文与自决项 = `NodeEngine.detachAbandonedNode` 头注；本处只负责
             // 「先落终态、再摘边」（顺序与 cancelNode 的 detach-first 相反，理由：
             // 状态写点有 R2 并发拒写分支，先摘边会在被拒时留下「没退役却已摘边」
@@ -1566,7 +1560,7 @@ object NodeEditTool extends Tool:
                   ) *>
                     // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks（与
                     // cancelNode/reap 同款单点——问出问题的节点被放弃，卡片必须关闭）。
-                    // desc300 batch: the node leaves the map here, so its descriptionLong
+                    // the node leaves the map here, so its descriptionLong
                     // spill file goes with it (best-effort — a delete failure must not fail
                     // the abandon; the reading is recorded in the abandoned event).
                     rt.engine.cleanupPendingAsks(c.sessionRef) *>
@@ -1576,7 +1570,7 @@ object NodeEditTool extends Tool:
                 }
             }
           case _ =>
-            // 状态未落（并发重激活/移除 → R2 拒写）：文案与本批前逐字一致（未摘边、
+            // 状态未落（并发重激活/移除 → 拒写）：文案与此前逐字一致（未摘边、
             // 未清理——写点没发生就不该申报已发生的事实）。
             IO.pure(s"Node '${node.name}' abandoned — cancelled (retained on map, no TTL; result retained)")
       yield Right(out)
@@ -1599,8 +1593,8 @@ object NodeEditTool extends Tool:
   end abandonNode
 
   /**
-   * abandon 回执（顺带小件①，2026-09-14）：「result retained」对**从未开工**的目标
-   * （`startedAt=null ∧ result=null`，考古批实测 4/4 如此）是**空承诺**——abandon 分支
+   * abandon 回执：「result retained」对**从未开工**的目标
+   * （`startedAt=null ∧ result=null`）是**空承诺**——abandon 分支
    * 不写 result（与 `cancelNode` 写 `cancelled[source=…]: reason=…` 不同），那类节点没有
    * 「已保留的结果」可言。故按「有没有产出」分叉：无产出如实写「已取消并摘边；无产出」，
    * **有产出件文案逐字照旧**（零回归）。这是本次「以为是 bug」的助燃剂之一（案 F）。
@@ -1613,15 +1607,15 @@ object NodeEditTool extends Tool:
     else s"Node '${c.name}' abandoned — cancelled (retained on map, no TTL; result retained)"
 
   /**
-   * abandon 的**零提交 worktree 回收腿**（顺带小件②，2026-09-14）：退役节点不留空
-   * 工作目录 + 空分支（考古批实测存量遗留 = 1 个零提交 worktree + 同名空分支，
+   * abandon 的**零提交 worktree 回收腿**：退役节点不留空
+   * 工作目录 + 空分支（存量遗留形态 = 零提交 worktree + 同名空分支，
    * `git log main..<branch>` 零提交，且**无人工清理入口**）。
    *
    * 两条判据**同时**成立才动手（任一不成立 ⇒ 一行不动，返回「不动的原因」）：
    *   ① 工作目录 `git status --porcelain` **零行**（干净）；
    *   ② 分支相对基线（main；无 main 回落 HEAD）**零提交**（`rev-list --count <base>..<branch>` = 0）。
    * 动作 = `git worktree remove <dir>` 然后 `git branch -d <name>`。
-   * 🔴 **禁 `-D` / 禁 `--force`**（2026-09-10 J7 纪律：强删丢弃审计血缘；`branch -d`
+   * 🔴 **禁 `-D` / 禁 `--force`**（强删丢弃审计血缘；`branch -d`
    * 自带的「未合并即拒」正是本腿的第二道保险）。**非零提交 ⇒ 分支与目录原样保留**。
    *
    * best-effort：任何异常/非零退出 ⇒ 只回落成「不动 + 原因」（写进 `abandoned` 事件），
@@ -1688,7 +1682,7 @@ object NodeEditTool extends Tool:
     outJson: Option[Json],
     ctx: ToolContext,
     /**
-     * 显式授权入口 `NODE_COMPLETED_REACTIVATION`（nrloop 一期 2026-09-12，附 C5①）：
+     * 显式授权入口 `NODE_COMPLETED_REACTIVATION`：
      * true = 有权限把 **completed** 节点重激活回 wiring/pending 重跑一轮（默认 false
      * ⇒ completed 节点的编辑行为逐字不变：改接只补投递既有结果，不重跑）。
      */
@@ -1701,7 +1695,7 @@ object NodeEditTool extends Tool:
     chainDecl: NodeEditChainDecl
   ): IO[Either[ToolError, String]] =
     // ── 动作分支 ──
-    // role create-only（nrloop 一期 2026-09-12，设计 §3.2）：角色 = 拓扑身份（决定
+    // role create-only：角色 = 拓扑身份（决定
     // node_report 值域与 verdict 选通合法性），中途改会让已落盘的值域/路由语义与
     // 声明面脱节 ⇒ 与 merge/worktree 同口径硬拒（可行动：新建节点替代）。放在最前
     // ——任何副作用（含 abandon）之前即拒。
@@ -1736,7 +1730,7 @@ object NodeEditTool extends Tool:
       IO.pure(
         Left(ToolError(s"Node '${node.name}' is running — its input is frozen. NodeCancel it first, then rewire."))
       )
-    // 缺陷④闸（案 A · 文案冻结批）：running 位的 task 在 editNode 全路径上无写点
+    // 缺陷④闸（文案冻结）：running 位的 task 在 editNode 全路径上无写点
     // （唯一写点位于 didReactivate 事务内 ⇒ reactivate 恒 false），却返回 "updated" = 假成功。
     // 判据 = 归一化后不等（幂等重发不拒）。死会话 running 的写入需求由 Mail(node:) 的
     // appendUndelivered 兜底承接 ⇒ 本闸统一按「running ⇒ 拒」处理，不做活/死分档。
@@ -1755,12 +1749,12 @@ object NodeEditTool extends Tool:
       // out 处理（整体替换 / 显式断开）——同步校验先 match，再进 IO 链
       NodeTools.parseOut(outJson) match
         case Left(err) => IO.pure(Left(ToolError(err)))
-        // 校验六-a 已按 2026-09-12 作者裁定**删除**（out 可空置）：显式 null/"null" 断开
+        // 校验六-a 已**删除**（out 可空置）：显式 null/"null" 断开
         // 恢复合法（节点回到 dangling 形态——零投递、零升根，结果保留在 result，接线后
-        // 自动投递）。「先断开再改接」工作流随裁定复活；重复投递面由 consumedGuard
+        // 自动投递）。「先断开再改接」工作流复活；重复投递面由 consumedGuard
         // （被移除旧目标已消费 ⇒ 拒）与投递侧逐目标去重共同兜住。
         case Right(newOut) =>
-          // deps 处理（deps 设计 §1.2，replace-on-provide 语义裁定）：未传不改；
+          // deps 处理（replace-on-provide 语义）：未传不改；
           // 传了（任何形态，含 [] / null）整体替换。
           NodeTools.parseIn(depsJson).left.map(err => err.replace("'in'", "'deps'")) match
             case Left(err) => IO.pure(Left(ToolError(err)))
@@ -1771,7 +1765,7 @@ object NodeEditTool extends Tool:
               val newTargets = newOut.map(_.to).filterNot(_ == OutEdge.RootTarget).distinct
               val oldTargets = node.out.map(_.to).filterNot(_ == OutEdge.RootTarget).distinct
               val outChanged = outProvided && OutEdge.canonical(newOut) != OutEdge.canonical(node.out)
-              // out 目标解析 + 存在性闸（20260909 in 丢失事故修复面）：新目标接受节点 id
+              // out 目标解析 + 存在性闸（in 丢失修复面）：新目标接受节点 id
               // 或节点名，统一解析为 id 后再过状态守卫/环检测/merge 门控——原实现按原始
               // 串查 Map，名字形态「查无此点」被状态守卫与环检测静默放行，坏边由此进入
               // 拓扑。悬空目标现在显式拒绝（可行动错误，不再静默半接线）。
@@ -1812,7 +1806,7 @@ object NodeEditTool extends Tool:
                       }
                     )
                     .map(_.collectFirst { case Left(e) => e }.toLeft(()))
-              // B5 缺口③（作者 2026-09-17 M-3 裁定，选项①）：本次声明的**新增控制边**若
+              // 适用面收窄口径：本次声明的**新增控制边**若
               // 指向 running 目标 ⇒ 入待接线队列（不进 out），**不再整单拒绝**；新增
               // **非控制边**仍拒（frozen）；**未变边**两边皆不入（放行）。判据单点 =
               // NodeTools.partitionDeferredWiring。求值一次、以 guard 载荷下传
@@ -1836,7 +1830,7 @@ object NodeEditTool extends Tool:
                         if outProvided && ids.nonEmpty then
                           frozenLive.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
                             rs.collectFirst { case Left(e) => e } match
-                              // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12）：门拒即落一笔
+                              // 拒绝面留痕：门拒即落一笔
                               // `edge-changed` + `reason=refused`——此前该硬拒零事件。
                               case Some(e) =>
                                 NodeTools
@@ -1870,7 +1864,7 @@ object NodeEditTool extends Tool:
                 case Right(deferred) =>
                   // 环检测（新 out：每个非 Nebula、**非 `:loop`** 目标，按解析后 id）
                   //
-                  // **控制边豁免（nrloop 一期 2026-09-12，设计 §3.3 #14 / 红线①的第二处
+                  // **控制边豁免（红线①的第二处
                   // 落地）**：`:loop` 控制边走「图上不连」语义（`NodeDef.out` 只是**声明面**，
                   // 邻接/环检/谱系一概不认——见 `FlowMapStore.wouldCreateCycle.successors`
                   // 与 `topologicalChains`）。本调用点的判据是「加这条边是否成环」，对控制边
@@ -1932,7 +1926,7 @@ object NodeEditTool extends Tool:
                           val depsChecks: IO[List[Either[String, Unit]]] =
                             if depsProvided then
                               newDeps.traverse { upId =>
-                                // chainmodel 批一 ③：`chain:<id>` 引用走**链可达性闸**——
+                                // `chain:<id>` 引用走**链可达性闸**——
                                 // 它不是节点 id，走节点存在性必然「查无此点」（报错指不到真因），
                                 // 环检对它也无意义（引用边在环检图上经 resolveDepTargets 展开为
                                 // 目标链成员，见 FlowMapStore.wouldCreateCycle）。
@@ -1952,37 +1946,37 @@ object NodeEditTool extends Tool:
                               }
                             else IO.pure(Nil)
                           depsChecks.flatMap { dChecks =>
-                            // 校验六（**2026-09-12 作者裁定删除零连接下限**）：断开/清空 out
-                            // 合法 ⇒ 「编辑后 in ∪ deps ∪ out 全空」不再拒（该判据已被裁定①②
+                            // 校验六（**删除零连接下限**）：断开/清空 out
+                            // 合法 ⇒ 「编辑后 in ∪ deps ∪ out 全空」不再拒（旧判据已被
                             // 推翻）。输入侧下限仍在创建侧（task ∨ in）把守纯空挂载。
                             // 注意 out 的「未传」与「显式 null 断开」经 parseOut 后同为 None——
                             // 仍须按 outJson 是否出现区分：传了才视为断开后的 None，未传保持原 out。
                             val finalIn = node.in ++ adds
-                            // ⑥⑧ 合并节点闸门的触发面（本批 U2/P1）：只有**真的新加上游**
+                            // ⑥⑧ 合并节点闸门的触发面：只有**真的新加上游**
                             // 才算「加 in」——重复回显既有 in（幂等重发）不是加，不触发任何
                             // 闸门（防「同参数重编辑」被误拒的回归）。
                             val genuinelyNewIn = adds.distinct.filterNot(node.in.contains)
                             val finalDeps = if depsProvided then newDeps else node.deps
                             val finalOut = if outJson.isDefined then newOut else node.out
-                            // notifyDispatcher 校验（dispatch-notify 批）：设置/撤销域为
+                            // notifyDispatcher 校验：设置/撤销域为
                             // wiring/pending/running（完成时行为开关，不属输入冻结域）；
                             // 终态拒（blocked 出口=重激活）。
                             val notifyStatusOk = !notify.provided ||
                               (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
-                            // notify 策略（b64 批 R1）可设置时机与 notifyDispatcher **同域**
+                            // notify 策略可设置时机与 notifyDispatcher **同域**
                             // （spec §4.2「可设置时机」行：仅 wiring/pending/running——终态节点
-                            // 改策略无意义）。b64：两个参数共用上一条闸门。
+                            // 改策略无意义）。两个参数共用上一条闸门。
                             val notifyPolicyStatusOk = !notify.policyProvided || notifyStatusOk
                             // notify 值域错误优先短路（NODE_NOTIFY_INVALID）
                             val notifyPolicyInvalid = notify.invalid
-                            // loop 校验（LoopNode 批 2026-09-06）：设置/撤销域同 hold——enabled
+                            // loop 校验：设置/撤销域同 hold——enabled
                             // 开关是行为开关（loop 迭代仅在 running 期驱动、PASS 完成时经
                             // completeNode 走 hold/merge/投递），wiring/pending/running 可设；
                             // 终态/held 拒（held 出口=release，blocked 出口=重激活）。blocked
                             // 节点 loop 变更走 actualChange → 重激活（下方 reactivate 分支应用）。
                             val loopStatusOk = !loopFlag.provided ||
                               (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
-                            // loop 门集预检（2026-09-12 裁定 2/3，改接侧 self 面）：本次编辑的
+                            // loop 门集预检（改接侧 self 面）：本次编辑的
                             // 最终 out（未传 out = 保持原边集）也要过同一不变量。loop 开关本身
                             // 可能在本调用内变化（loopFlag.provided）⇒ 用**生效后**的开关判定
                             // （未传 = 保持 node.loop；传了 = 本调用的声明值，与 loopStatusOk
@@ -2052,7 +2046,7 @@ object NodeEditTool extends Tool:
                                   else None
                                 )
                             // 前置拒绝集统一闸（description 校验 + loop 门集 + deps 校验）
-                            // + verdict 选通校验族（nrloop 一期 2026-09-12，0 spawn）：
+                            // + verdict 选通校验族（0 spawn）：
                             // 本节点的**最终边集**（未传 out = 保持原边集）过同一判据——
                             // 角色 create-only ⇒ 生效角色恒为既有 node.role；旧式 loop 开关
                             // 可能在本调用内变化，取**生效后**的口径（与 loopSelfGate 同源）。
@@ -2063,10 +2057,10 @@ object NodeEditTool extends Tool:
                               .verdictRouteGate(rt, node.id, node.name, node.role, selfLoopEnabled, finalOut)
                               .flatMap { verdictErr =>
                                 if earlyReject.isDefined then
-                                  // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12，edit 侧
+                                  // 拒绝面留痕（edit 侧
                                   // loop 门集腿）：`NODE_LOOP_GATE_INCOMPLETE` 硬拒不落边，
                                   // 但必须可事后对齐（其余 earlyReject 腿 —— description/
-                                  // deps/notify/merge 上限等 —— 不在本批「形态 12」面内）。
+                                  // deps/notify/merge 上限等 —— 不在本闸面内）。
                                   (if loopSelfGate.isDefined then
                                      NodeTools.emitRefused(
                                        rt,
@@ -2076,7 +2070,7 @@ object NodeEditTool extends Tool:
                                      )
                                    else IO.unit).as(Left(earlyReject.get))
                                 else if verdictErr.isDefined then
-                                  // 拒绝面留痕（缺陷③批 2026-10-01 · 案 A 写点 12）：verdict
+                                  // 拒绝面留痕：verdict
                                   // 选通门拒也落一笔（`NODE_VERIFIER_NEEDS_ROUTE` /
                                   // `NODE_VERDICT_GATE_ON_TASK_NODE` / `NODE_LOOP_EDGE_ROLE`
                                   // 等既有码由 `errorCodeOf` 从文案抽出）。
@@ -2088,7 +2082,7 @@ object NodeEditTool extends Tool:
                                       NodeTools.errorCodeOf(verdictErr.get, "NODE_VERIFIER_NEEDS_ROUTE")
                                     )
                                     .as(Left(ToolError(verdictErr.get)))
-                                // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定（值域 =
+                                // retry 风暴防护（0 spawn）：邻居限定（值域 =
                                 // 应用本次改动后的最终 in ∪ deps）+ retry 环。校验失败卡在
                                 // 全部写路径（in 追加/重激活/写回）之前——本次编辑零副作用。
                                 else
@@ -2099,8 +2093,8 @@ object NodeEditTool extends Tool:
                                   ).flatMap {
                                     case Some(err) => IO.pure(Left(ToolError(err)))
                                     case None =>
-                                      // blocked/failed 重激活（blocked 反馈重入设计 §6 #5；failed
-                                      // 放开=2026-09-07 批作者裁定③）：编辑 blocked/failed 节点且
+                                      // blocked/failed 重激活（blocked 反馈重入；failed
+                                      // 放开已裁定）：编辑 blocked/failed 节点且
                                       // task/description/in/out/deps 实际变更 → status 回
                                       // wiring/pending、deliveredTo 清空、completedAt/ttlExpireAt/
                                       // startedAt 复位，随后 D1 补投递链重投全部已完成上游。
@@ -2115,37 +2109,37 @@ object NodeEditTool extends Tool:
                                         description.exists(d => d.trim != node.description.getOrElse(""))
                                       val depsChanged = depsProvided && newDeps != node.deps
                                       val loopChanged = loopFlag.provided && loopFlag.config != node.loop
-                                      // out 未传 ≠ 变更（actualChange quirk 修，2026-09-07）：
+                                      // out 未传 ≠ 变更（actualChange quirk 修）：
                                       // parseOut 未传=Nil 与 node.out 非空恒不等——裸比较会让
                                       // 终态节点「未传 out 的编辑」恒判 actualChange=true → 意外重
                                       // 激活，违背描述「No-op if nothing actually changed」。与
                                       // 上方 setOutIO / finalOut 同款 outProvided 守卫（canonical
                                       // 比较消歧段语法等价形态）。
-                                      // chainmodel 批一 ①：**chainId 声明不进 actualChange**——归属是纯元数据
+                                      // **chainId 声明不进 actualChange**——归属是纯元数据
                                       // （声明不改任何调度判据），若纳入则「给 blocked/failed 节点声明链号」
                                       // 会被判成实际改动而**意外重激活**（清 result / 回 wiring 重跑）——
                                       // 与「声明不构成调度变更」直接冲突。故声明只写字段 + 留痕，零重激活。
                                       // 同理不进 `depsChanged`（deps 才是闸）。
                                       val actualChange =
                                         taskChanged || descriptionChanged || outChanged || adds.nonEmpty || depsChanged || loopChanged
-                                      // 重激活判据（**2026-09-12 nrloop 一期**）：
+                                      // 重激活判据：
                                       //   · blocked / failed：**逐字不变**（既有两态的语义、FeedbackRouter
                                       //     重入、blockCount 口径一律不动——C5③ 独立复核项）；
                                       //   · completed：**仅经显式授权入口** `NODE_COMPLETED_REACTIVATION`
-                                      //     （本调用参数 `reactivateCompleted=true`）才可重跑 —— 作者裁定
-                                      //     C1-2「completed 不可重激活 = 一律放开」，但 C5① 明文要求
+                                      //     （本调用参数 `reactivateCompleted=true`）才可重跑 —— 裁定
+                                      //     「completed 不可重激活 = 一律放开」，但明文要求
                                       //     「**不得**作为实现细节隐性放宽 `reactivate` 判据」。
                                       //
                                       // 为什么不做「completed + actualChange ⇒ 一律重激活」的隐性放宽
-                                      // （现场判定，与批 A 判据共存核对）：「已完成的悬空节点被接线 ⇒ 结果
-                                      // 自动补投」（批 A O-B 必做 1/5 + W1/W2「out 可空置 + 接线即投递」）
+                                      // （现场判定，与既有判据共存核对）：「已完成的悬空节点被接线 ⇒ 结果
+                                      // 自动补投」（O-B 必做 1/5 + W1/W2「out 可空置 + 接线即投递」）
                                       // 走的是**同一条** `out changed` 分支；隐性放宽会把它变成「接线即重跑」
-                                      // （result 清空、节点回 wiring），与批 A 已落地的裁定直接互斥。故本批
-                                      // 取「显式授权才重激活」：默认行为逐字不变（批 A 判据零放宽、零覆盖），
+                                      // （result 清空、节点回 wiring），与已落地裁定直接互斥。故此处
+                                      // 取「显式授权才重激活」：默认行为逐字不变（既有判据零放宽、零覆盖），
                                       // 需要重跑时分发器显式传 `reactivateCompleted=true`。
                                       // 执行腿（`reloopTo` 回边驱动）仍落二期 —— 其触发源经引擎侧同点进来
                                       // （事件留痕 `source=loop`），判据本体已在此就位。
-                                      //   · interrupted（中断恢复语义批 2026-09-13 spec §2.4 批 R2）：
+                                      //   · interrupted（中断恢复语义）：
                                       //     与 blocked/failed 同判据（实际改动才重激活）——语义 =
                                       //     **fresh 重跑，非续跑**（自动续跑走 boot sweep：同 session
                                       //     + transcript 断点；人工 reactivate 是「换任务书从头跑」的
@@ -2170,7 +2164,7 @@ object NodeEditTool extends Tool:
                                           else Nil
                                         (node.id +: (adds ++ fromOut)).distinct
                                       for
-                                        // 链归属变更留痕（chainmodel 批一 ⑤）：**写前**归属视图快照
+                                        // 链归属变更留痕：**写前**归属视图快照
                                         // （第一个绑定 ⇒ 早于本 for 内全部写动作；`chainIdView` 是纯
                                         // 派生，快照即写前归属）。写后视图由 emit 内部现读。
                                         chainBefore <- rt.store.combinedNodes
@@ -2178,7 +2172,7 @@ object NodeEditTool extends Tool:
                                         // traverse 内 raiseError 后被 handleErrorWith 吞成 Left 值丢弃，
                                         // 后续 setOutIO/mutate 照跑且工具误报成功（一并修正）
                                         inChecks <- adds.traverse { upId =>
-                                          // chainmodel 批一 ③：链引用是 deps 专属语法，`in` 里一律拒
+                                          // 链引用是 deps 专属语法，`in` 里一律拒
                                           // （静态可行动报错——按字面当节点查会得到「查无此点」的误导面）。
                                           if FlowMapStore.isChainRef(upId) then
                                             IO.pure(Left(NodeTools.chainRefInInputError(upId)): Either[String, Unit])
@@ -2186,7 +2180,7 @@ object NodeEditTool extends Tool:
                                             NodeTools.ensureNodeExists(rt, upId).flatMap {
                                               case Left(e) => IO.pure(Left(e): Either[String, Unit])
                                               case Right(_) =>
-                                                // loop 门集预检（2026-09-12 裁定 2/3，**镜像追加路径**——
+                                                // loop 门集预检（**镜像追加路径**——
                                                 // 该路径不经 outJson 校验点，故必须在写路径上判）：本调用会
                                                 // 给每个上游 out 追加一条 pass 边（活动区经 setOut / 归档区
                                                 // 经其归档分支）⇒ 上游若是 loop 节点，最终边集可能违反两腿
@@ -2196,7 +2190,7 @@ object NodeEditTool extends Tool:
                                                   val gate = upOpt.flatMap { up =>
                                                     val after = NodeTools.appendEdgeTo(Map(up.id -> up), upId, node.id)
                                                     val prospective = after.get(upId).map(_.out).getOrElse(up.out)
-                                                    // verdict 选通镜像腿（nodegate 方案件 §1(i)，本批四项③）：
+                                                    // verdict 选通镜像腿）：
                                                     // 上游若是 verifier 且追加后 fail 路由仍为空 ⇒ 拒
                                                     // （**镜像腿不豁免** pending——C-i ①）。与 loop 门集同点
                                                     // 同款（appendEdgeTo 复算，幂等分支零复制）。
@@ -2239,7 +2233,7 @@ object NodeEditTool extends Tool:
                                               // §2.3 的单值语义在多边下自然兼容）。归档上游（活动区无
                                               // 副本）走 setOut 归档分支：活动侧目标 in 追加 + 归档 out
                                               // 镜像补写（旧 setOut(rt, upId, Some(node.id)) 同域语义）。
-                                              // 缺陷③批 2026-10-01（案 A 写点 6 · in 追加面）：本条腿
+                                              // （in 追加面留痕）：本条腿
                                               // **无需额外埋点**——`NodeTools.setOut` 是 out 边集的
                                               // 落盘 choke point，其收口处已对 (before, after) 逐边
                                               // diff：上游 out 那一面（`kind=out owner=<upId>`）+ 本
@@ -2279,7 +2273,7 @@ object NodeEditTool extends Tool:
                                               // deps 替换写回（非重激活路径；重激活在下方事务内一并写）。
                                               // deps 单侧持有：只更新本节点字段，无上游侧镜像边。
                                               //
-                                              // 缺陷③批 2026-10-01（案 A 写点 6 · deps 面）：deps 替换
+                                              // （deps 面留痕）：deps 替换
                                               // 也是边集变更（此前零审计）。**逐项一行** `kind=deps`，
                                               // `from=<旧项> to=<新项>`（替换语义，非增删）；视图从
                                               // `(写前, 写后)` 两列表纯函数算出。
@@ -2326,7 +2320,7 @@ object NodeEditTool extends Tool:
                                                       case None => s
                                                   }.void
                                                 else IO.unit
-                                              // description 写回（2026-09-05 创建必写批，编辑可 update）：
+                                              // description 写回（创建必写，编辑可 update）：
                                               // 校验（非空/≤200）已在 earlyReject 前置拦截；这里纯写
                                               // （trim 归一，与 create 同源）。blocked 节点的 description
                                               // 变更参与重激活判定（descriptionChanged）；非 blocked 节点
@@ -2345,7 +2339,7 @@ object NodeEditTool extends Tool:
                                                       case None => s
                                                   }.void
                                                 else IO.unit
-                                              // descriptionLong 写回（裁定⑤c 双层化 20260907）：纯展示
+                                              // descriptionLong 写回（双层化）：纯展示
                                               // 元数据（detail 通道/前端详情消费，不进默认载荷）——
                                               // 不参与重激活判定（任务语义信号由 task/description 承载）。
                                               _ <-
@@ -2362,7 +2356,7 @@ object NodeEditTool extends Tool:
                                                       case None => s
                                                   }.void
                                                 else IO.unit
-                                              // pendingSuccession 清除（取消静默死锁修复批 R4）：
+                                              // pendingSuccession 清除（取消静默死锁修复）：
                                               // 本节点带「待承接」标（其 in 上曾有被引擎取消并
                                               // 自动摘除的上游）而本次编辑有**实际变更** =
                                               // 分发器已介入处置（承接节点 append 回 in / 改接 /
@@ -2380,12 +2374,12 @@ object NodeEditTool extends Tool:
                                                       case _ => s
                                                   }.void
                                                 else IO.unit
-                                              // notifyDispatcher 设置/撤销写回（dispatch-notify 批）：
+                                              // notifyDispatcher 设置/撤销写回：
                                               // 校验已在 earlyReject 拦截（终态 → 拒）；running 合法
                                               // （完成时行为开关）。事务内现读 fresh（R2 纪律）+ 状态双重保险。
                                               _ <-
                                                 if notify.provided then
-                                                  // R1 并存过渡（b64 批）：`notify` 已是权威值时
+                                                  // 并存过渡：`notify` 已是权威值时
                                                   // 本键不再参与裁决 ⇒ **写侧拒绝静默改动**，只 WARN
                                                   // 告知（B1-b「二者冲突时 notify 优先并 WARN」）。
                                                   rt.store.findNode(node.id).flatMap {
@@ -2408,7 +2402,7 @@ object NodeEditTool extends Tool:
                                                       }.void
                                                   }
                                                 else IO.unit
-                                              // notify 策略写回（b64 批 R1）：replace-on-provide（传 null
+                                              // notify 策略写回：replace-on-provide（传 null
                                               // = 显式清除 ⇒ 回落 legacy 解析）。校验已在 earlyReject
                                               // 拦截；状态域与 notifyDispatcher 同（wiring/pending/running）。
                                               _ <-
@@ -2424,7 +2418,7 @@ object NodeEditTool extends Tool:
                                                       case _ => s
                                                   }.void
                                                 else IO.unit
-                                              // loop 设置/撤销写回（LoopNode 批 2026-09-06）：校验已在
+                                              // loop 设置/撤销写回：校验已在
                                               // earlyReject 拦截（终态/held → 拒）；wiring/pending/running 合法
                                               // （loop 是 running 期行为开关）。事务内现读 fresh（R2 纪律）+
                                               // 状态双重保险；blocked 重激活在下方 reactivate 分支应用（不再走此）。
@@ -2440,7 +2434,7 @@ object NodeEditTool extends Tool:
                                                       case _ => s
                                                   }.void
                                                 else IO.unit
-                                              // retry 设置/清除写回（批E2 P2，spec §2.3）：replace-on-provide
+                                              // retry 设置/清除写回：replace-on-provide
                                               // （传了即整体替换，null=清除）；不参与重激活判定（retry 是
                                               // 「下一次失败」的行为开关，语义同 notifyDispatcher——已有
                                               // failed 节点要立即生效须另行重激活，如改 task）。
@@ -2458,7 +2452,7 @@ object NodeEditTool extends Tool:
                                                       case None => s
                                                   }.void
                                                 else IO.unit
-                                              // chainId 声明写回（chainmodel 批一 ①，replace-on-provide
+                                              // chainId 声明写回（replace-on-provide
                                               // 与 notify 同款）：传了即整体替换（`null` = **撤销**声明 ⇒
                                               // 回落派生兜底）；未传 = 零改动。**无状态域闸**——归属是
                                               // 纯元数据，不构成行为开关（声明不改任何调度判据，见
@@ -2468,7 +2462,7 @@ object NodeEditTool extends Tool:
                                               // `actualChange`**（见该判据处注释）：声明不得把 blocked/
                                               // failed/interrupted 节点意外重激活（声明 ≠ 实际改动）。
                                               // 事务内现读 fresh（R2 纪律），仅改本字段；不 gate 在
-                                              // `!reactivate` 上——重激活写回的是另一批字段，两者
+                                              // `!reactivate` 上——重激活写回的是另一组字段，两者
                                               // 各自现读、互补覆盖。
                                               _ <-
                                                 if chainDecl.provided then
@@ -2484,7 +2478,7 @@ object NodeEditTool extends Tool:
                                               // blocked/failed 重激活写回（R2 纪律）：事务内现读
                                               // fresh，fresh 仍 Blocked/Failed 才写；状态已变（并发
                                               // abandon/重激活）→ 拒写不重激活。failed 版差异
-                                              // （2026-09-07 批，作者裁定①②语义点）：**轮次历史复位**
+                                              // （语义点）：**轮次历史复位**
                                               // 而非保留——重跑不是语义阻塞轮次：blockCount→0、
                                               // blockedFeedback 清除（blockCount 复位后旧反馈成孤
                                               // 儿数据）；notifySentAt 清除（重激活后再次真失败 →
@@ -2500,7 +2494,7 @@ object NodeEditTool extends Tool:
                                                         case Some(fresh)
                                                             if fresh.status == NodeLifecycle.Blocked || fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Completed || fresh.status == NodeLifecycle.Interrupted =>
                                                           val fromFailed = fresh.status == NodeLifecycle.Failed
-                                                          // interrupted 面（批 R2）：与 failed 面**同清**
+                                                          // interrupted 面：与 failed 面**同清**
                                                           // notifySentAt——重激活 = 新一轮身份重跑，之后再
                                                           // 真失败必须能重新通知分发器（成功验收 §2.8-6）；
                                                           // blockCount/blockedFeedback 按 blocked 口径保留
@@ -2540,7 +2534,7 @@ object NodeEditTool extends Tool:
                                                                 notifySentAt =
                                                                   if fromFailed || fromInterrupted then None
                                                                   else fresh.notifySentAt,
-                                                                // ── engine-defects 批 #245（2026-09-15）：**陈旧判词必须随重激活作废** ──
+                                                                // ── **陈旧判词必须随重激活作废** ──
                                                                 // 缺陷：重激活是「同一身份重跑一轮」（本字段族的既有口径，见上方
                                                                 // result/deliveredTo/nebulaDeliveredAt 三清），但 `lastVerdict` 不在其列
                                                                 // ⇒ 重跑中的复核位仍挂着上一轮判词；下游判词闸
@@ -2572,10 +2566,10 @@ object NodeEditTool extends Tool:
                                                 else IO.pure(false)
                                               _ <-
                                                 if didReactivate then
-                                                  // 重激活留痕（C5② 事件留痕，2026-09-12 nrloop 一期）：
+                                                  // 重激活留痕（事件留痕）：
                                                   // 单条 `reactivated` 事件，**结构化 k=v 尾段**（可解析，
                                                   // 与 `NodeEngine.reportMissingSummary` 同风格）至少含：
-                                                  //   · preStatus = 放开前的终态（blocked/failed/completed，completed 为 nrloop 一期新增面）
+                                                  //   · preStatus = 放开前的终态（blocked/failed/completed，completed 为新增面）
                                                   //   · source    = 触发源（human = NodeEdit 人工/分发器；
                                                   //                 loop = 回边驱动，二期的 reloopTo 用）
                                                   //   · gen / blockCount / loopRound = 轮次或代次
@@ -2583,7 +2577,7 @@ object NodeEditTool extends Tool:
                                                   // completed 面另附 NODE_COMPLETED_REACTIVATION 授权名——
                                                   // 「改动既有纪律」的动作必须可事后对齐（C5 要求）。
                                                   val preStatus = node.status
-                                                  // 触发源三面判定（缺陷③批 2026-10-01 · 案 A 写点 10）：
+                                                  // 触发源三面判定：
                                                   // 拆掉硬编码 `source=human`——审计面必须能区分
                                                   // 「节点会话 / 分发器会话 / 人工」三类重激活发起者。
                                                   // 零身份面回落 `human`（回落语义，非「未知」）；`actor=`
@@ -2652,9 +2646,8 @@ object NodeEditTool extends Tool:
                                                     )
                                                 else IO.unit
                                               // 终态节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标
-                                              // 投递）。P1 多边 + 本批两处收敛：
-                                              // ① **判据与路径 B 同口径**（O-B 必做 1 / N1 收敛，2026-09-12
-                                              //    批）：`result.isDefined ∧ status != Blocked ∧
+                                              // 投递）。P1 多边 + 两处收敛：
+                                              // ① **判据与路径 B 同口径**（O-B 必做 1 收敛）：`result.isDefined ∧ status != Blocked ∧
                                               //    Terminal.contains(status)`——**逐字同句**见下方 in 追加
                                               //    补投递支与 `proceed` 的创建侧谓词（三处同款，禁止第二种
                                               //    写法）；旧口径只认 `Completed`，使 failed/cancelled 源的
@@ -2705,8 +2698,7 @@ object NodeEditTool extends Tool:
                                                     s"deliver appended upstream results + settle barrier -> ${node.id}"
                                                   )(
                                                     for
-                                                      // 补投递完整性（fix b「已存在边+归档上游不补投递」修复
-                                                      // 20260903）：不只投递本次追加上游——全部 in 上游中
+                                                      // 补投递完整性（「已存在边+归档上游不补投递」修复）：不只投递本次追加上游——全部 in 上游中
                                                       // 「终态有结果而 deliveredTo 未记」的都补投（findNode
                                                       // 活动/归档兜底）。覆盖两类缺口：①边已存在但投递曾丢失
                                                       // （陈旧 out 覆盖时代的历史悬空，实证 n-219106db：两个
@@ -2761,13 +2753,13 @@ object NodeEditTool extends Tool:
                                               // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
                                               // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
                                               _ <- NodeTools.emitWiringUpdates(rt, affected)
-                                              // 链归属变更留痕（chainmodel 批一 ⑤，写点②）：声明写入 / 撤销 /
+                                              // 链归属变更留痕（写点②）：声明写入 / 撤销 /
                                               // 本节点被并入别的分量 / 本节点把两个分量桥接成一条链 ⇒ 逐节点
                                               // 一条 `chain-membership-changed`。判据 = 写前快照 (`chainBefore`)
                                               // 与写后现读的**有效链归属视图**比对（判据单点 =
                                               // FlowMapStore.chainIdView，与载荷 chainId 同源）。
                                               _ <- NodeTools.emitChainMembershipChanges(rt, chainBefore)
-                                              // descriptionLong spill (desc300 batch, edit write points):
+                                              // descriptionLong spill (edit write points):
                                               // ONLY when this call rewrites descriptionLong (both shapes —
                                               // the plain metadata write and the reactivate write — assign the
                                               // same final value: storeDescriptionLong(descriptionLong) orElse
@@ -2778,8 +2770,7 @@ object NodeEditTool extends Tool:
                                                 if descriptionLong.isDefined then
                                                   NodeEditTool.syncDescriptionLongSpill(rt, node.id, descriptionLong)
                                                 else IO.pure("")
-                                              // pass-consumer gap (verdict-consumer batch 2026-10-01 ·
-                                              // case A warning tier, design card §2.1): read the
+                                              // pass-consumer gap (warning tier): read the
                                               // POST-write node, so a rewire that drops the pass leg is
                                               // caught here exactly as one that adds it clears the
                                               // condition (pure derived judgement, zero bookkeeping).
@@ -2855,7 +2846,7 @@ object NodeEditTool extends Tool:
                                                      .verifierPassOutletGapHint(node.name, node.id)
                                                      .mkString("\n")
                                                  else "") +
-                                                // desc300 batch: the ack line S16-4 (truncated ⇒ full text
+                                                // the ack line S16-4 (truncated ⇒ full text
                                                 // spilled, absolute path) rides the success receipt.
                                                 dlSpill
                                             )
@@ -2869,7 +2860,7 @@ object NodeEditTool extends Tool:
                                           finalIn,
                                           node.merge
                                         )
-                                        // 通知策略自检（b64 批）：按**本次编辑后的生效声明**判
+                                        // 通知策略自检：按**本次编辑后的生效声明**判
                                         // （传了 notify 用新值，否则沿用节点现值；legacy flag 同源）。
                                         notifyWarn <- NodeTools.notifyPolicyWarnings(
                                           rt,
@@ -2878,7 +2869,7 @@ object NodeEditTool extends Tool:
                                           if notify.provided then notify.flag else node.notifyDispatcher,
                                           finalOut
                                         )
-                                        // 链引用 RISKY 档回执行（判据 D 二档；本批）：编辑后的
+                                        // 链引用 RISKY 档回执行（判据 D 二档）：编辑后的
                                         // `deps` 里 `chain:<id>` 目标链含 `failed` 成员 ⇒ **放行**
                                         // （可重激活）+ ⚠ 行。🔴 死链（含 `cancelled` 成员）已在
                                         // `dChecks` 硬拒（`NODE_CHAIN_REF_DEAD`），走不到这里。

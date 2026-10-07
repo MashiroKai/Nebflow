@@ -13,7 +13,7 @@ import scala.util.Try
 
 /**
  * MemoryDirectWriteGuard — budget pre-check + over-budget system-reminder for
- * the direct-write memory form (govmemory batch 2026-09-25, author ruling (e)①:
+ * the direct-write memory form (
  * 写前检查 + 超限即时提醒 + 24h 防骚扰).
  *
  * Since the MemoryNote tool and the memory queue are retired, memory is written
@@ -55,7 +55,7 @@ object MemoryDirectWriteGuard:
   /** Classify a path against the three budgeted memory layers.
     * `Some("user" | "agent" | "project")` = budgeted layer; `None` = not guarded.
     *
-    * personal-agent 批 2026-10-04：`"agent"` 层从 `agents/<root>/memory.md` 上收到
+    * `"agent"` 层已从 `agents/<root>/memory.md` 上收到
     * 根层 `<root>/Soul.md`（与 `User.md` 同级）。**双读过渡**⇒两处都判 `"agent"`
     * （旧位仍可被直写，归档期不能失去预算保护）。路径基见
     * [[nebflow.shared.MemoryPaths.globalBases]]——并认运行时数据根与默认 home 根，

@@ -13,10 +13,9 @@ import nebflow.shared.{NebflowLogger, SubAgentTask}
 import scala.concurrent.duration.*
 
 /**
- * BlockingSubagent —— 阻塞式只读侦察子会话的单一 spawn 点（builtin-merge 批
- * 2026-10-03）。
+ * BlockingSubagent —— 阻塞式只读侦察子会话的单一 spawn 点。
  *
- * Explore 同型（zcode/claude code 的 explore 子代理）：spawn 一个 `subagent`
+ * Explore 同型（外部 CLI agent 的 explore 型子代理）：spawn 一个 `subagent`
  * 内置会话（只读工具面，机制固定 = `AgentCore.SubagentFixedTools`），**阻塞**
  * 到它完成，把最终文本作为工具结果返回。
  *
@@ -30,13 +29,12 @@ import scala.concurrent.duration.*
  * subagent 是叶子：不注册 SupervisorAdapter（无后台续命），终态即回收；取消
  * 由 AgentControl 的 SubTask 通道（Stop fallback）覆盖。
  *
- * ==终态回收（stuck-panel 批 2026-10-06）==
+ * ==终态回收==
  * 「终态即回收」此前只是一句注释，没有任何实现：桥完成（或超时）后 registry
  * 条目（kind=SubTask）滞留 status=Idle、task store 恒 "running"、子 actor 永驻
  * idle——getActiveAgents 快照按「registry 有记录 = 任务在飞」的契约如实上报，
- * 子智能体面板随即渲染永不消失的「空闲」行（2026-10-06 17:16 作者截图实证：
- * 3 个已 turn-complete 的 subagent-* 子会话挂面板 5 分钟+，转录与 task store
- * 双料在案）。本批补上 [[reap]]：镜像 BackoffSupervisor.notifyParentAndStop 的
+ * 子智能体面板随即渲染永不消失的「空闲」行（现场实证：
+ * turn-complete 的 subagent-* 子会话挂面板 5 分钟+）。现补上 [[reap]]：镜像 BackoffSupervisor.notifyParentAndStop 的
  * 结算面（task store 终态化 → registry 移除 → ask 槽清理 → child Stop），减去
  * 父通知（父的结果 = 工具返回值本身，不重投）。delegate 编排模型零改动。
  */
@@ -118,7 +116,7 @@ object BlockingSubagent:
               .handleErrorWith { e =>
                 logger.warn(s"subagent $childId timeout/crash: ${e.getMessage}")
                 (ref ! AgentCommand.Stop(s"subagent-timeout")).attempt.void *>
-                  // stuck-panel 批：超时腿子会话被 Stop 掐断，不再有自家 agentDone
+                  // 超时腿子会话被 Stop 掐断，不再有自家 agentDone
                   // 帧——补一帧面板终态，活面板的行即时翻终态（成功腿子会话自家的
                   // agentDone 已随间谍上行，无需补发）。
                   childWsSend(
@@ -127,7 +125,7 @@ object BlockingSubagent:
                     Left(ToolError(s"Subagent did not finish within $Timeout — cancelled. Narrow the question and retry."))
                   )
               }
-            // stuck-panel 批（2026-10-06）：叶子终态回收——桥已定局（成功或超时），
+            // 叶子终态回收——桥已定局（成功或超时），
             // 结算 registry / task store / 子 actor。滞留即「空闲」僵尸行 + 永久
             // running 记录 + actor 泄漏（根因取证见类注释）。
             _ <- reap(
@@ -144,7 +142,7 @@ object BlockingSubagent:
   private def rootOf(ctx: ToolContext): String =
     ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
 
-  /** 叶子终态回收（stuck-panel 批 2026-10-06）——镜像 [[BackoffSupervisor]]
+  /** 叶子终态回收——镜像 [[BackoffSupervisor]]
     * `notifyParentAndStop` 的结算面，减去父通知（父的结果 = 工具返回值本身，
     * 已随桥交付，不重投）：
     *   ① task store 终态化（bridge 见到终态帧 = completed；超时兜底 = cancelled，

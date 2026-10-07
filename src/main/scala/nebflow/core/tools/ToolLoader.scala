@@ -14,7 +14,7 @@ object ToolLoader:
   private def flowToolsDir(flow: String): os.Path = PathUtil.dataRoot / "flows" / flow / "tools"
 
   // Layer priority for name conflicts: global < team < flow (higher wins).
-  // The per-agent layer was retired 2026-09-06 with the panel capability
+  // The per-agent layer was retired with the panel capability
   // sections — agents/*/tools/ style directories are no longer scanned.
   private val layerPriority: Map[String, Int] = Map("global" -> 0, "team" -> 2, "flow" -> 3)
 
@@ -32,7 +32,7 @@ object ToolLoader:
    * register fresh ScriptTool instances. On name conflicts a higher-priority
    * layer (flow > team > global) overrides a lower one; built-in
    * tools always win. The per-agent layer (agents/x/tools scans) retired
-   * 2026-09-06 with the panel capability sections.
+   * with the panel capability sections.
    * Idempotent — safe to call repeatedly (used by initial load + file watcher).
    */
   def reload(): IO[Unit] =
@@ -121,7 +121,7 @@ object ToolLoader:
    * flow), merged by name with layer priority. Returns (config, sourceDir)
    * pairs; sourceDir becomes the ScriptTool's $TOOL_DIR. Per-agent tools
    * scans (agents/x/tools, teams/t/agents/x/tools, flows/f/agents/x/tools)
-   * retired 2026-09-06 with the panel capability sections.
+   * retired with the panel capability sections.
    */
   def loadAll(): IO[List[(ExternalToolConfig, os.Path)]] =
     for
