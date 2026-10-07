@@ -6,6 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.shared.NebflowLogger
+import nebflow.social.outbound.{AskPromptCodec, PromptAction, PromptView}
 
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -102,6 +103,25 @@ final class WeixinIlinkBridgePlugin(
     * `start` re-reads the stored card over it. */
   private[social] val allowedRef =
     cats.effect.Ref.unsafe[IO, List[String]](pinnedAllowedIlinkUserIds.getOrElse(Nil))
+  /** askuser-remote P1: the per-sender ask ledger (B-3 接缝面, research 卡 B) —
+    * ONE active ask slot per sender (routeKey → entry). The hub stays the ask
+    * AUTHORITY (the answer is forwarded, never consumed here); this ledger
+    * exists because the WEIXIN channel needs the per-sender mapping the hub
+    * does not know (which sender is being asked) and the B-1 numbering
+    * judgement (a reply's numbers mean the ACTIVE set). A successfully
+    * answered entry stays as an ANSWERED tombstone so a late repeat read of
+    * the same numbers is refused (「该问题已作答」, never a second injection);
+    * askUserClosed removes the entry; a new ask displaces the old one
+    * (CloseRequest — B-3 新问顶旧问). Cleared on stop: a torn ask is never
+    * answered across a restart. */
+  private[social] val askLedgerRef =
+    cats.effect.Ref.unsafe[IO, Map[String, AskEntry]](Map.empty)
+  /** askuser-remote P1 (B-4 案甲): the per-sender full-text pull slot — the
+    * text a 「全文」 reply will receive, segmented on demand. One slot per
+    * sender; a newer long text displaces the older (latest wins). Cleared on
+    * stop. */
+  private[social] val pullRef =
+    cats.effect.Ref.unsafe[IO, Map[String, PullEntry]](Map.empty)
   private val ctxRef = cats.effect.Ref.unsafe[IO, Option[BridgeContext]](None)
   /** Double-start guard: boot-time sync AND `startAll` both call start — the
     * second call must be a no-op. */
@@ -152,12 +172,15 @@ final class WeixinIlinkBridgePlugin(
       ) *> IO(if !started then starting.set(false)) // failed start ⇒ a later sync may retry
 
   /** Idempotent teardown — the single exit path; safe to call twice. A torn
-    * turn is never a reply, also across restarts (the feishu rule). */
+    * turn is never a reply, also across restarts (the feishu rule); neither is
+    * a torn ask (askuser-remote P1) nor a stale full-text slot. */
   val stop: IO[Unit] =
     IO {
       started = false
       starting.set(false)
     } *> pendingRef.set(Map.empty)
+      *> askLedgerRef.set(Map.empty)
+      *> pullRef.set(Map.empty)
 
   /** Whether the seam is up. There is no connection to report: the seam holds no
     * socket, so "up" means it is registered and the gate is armed. */
@@ -182,44 +205,54 @@ final class WeixinIlinkBridgePlugin(
       for
         allowed <- allowedRef.get
         routes <- routesRef.get
-        verdict <- (allowed.isEmpty || in.senderId.exists(allowed.contains), routes.get(in.routeKey), in.text) match
-          case (false, _, _) =>
-            // Fail-closed when the list is non-empty: an absent/unresolvable
-            // sender identity is as good as a non-member. Ordered FIRST so the
-            // gate also rules the default-session arm below.
-            logger.warn(
-              s"weixin-ilink bridge: inbound message${in.messageId.fold("")(id => s" $id")} dropped " +
-                s"[$ReasonNotOnAllowlist] — sender identity is " +
-                s"${if in.senderId.isEmpty then "unresolvable" else "not"} on the allowed_ilink_user_ids list"
-            ) *> IO.pure(Verdict.Dropped(ReasonNotOnAllowlist))
-          case (_, None, _) =>
-            // No explicit binding for this sender: fall back to the channel's
-            // default session when one is configured (cold read — a REST save can
-            // flip it while the seam runs, and this path is once per new sender).
-            IO.blocking(SocialChannels.defaultSessionId(root, Name)).flatMap {
-              case Some(sessionId) =>
-                if in.routeKey.isEmpty then
-                  // Unresolvable sender: nothing to BIND — a binding on the
-                  // empty key would pin every anonymous sender onto one
-                  // session. The pre-existing fallback (inject via the default
-                  // session, nothing persisted) is kept byte-identical.
-                  in.text match
-                    case Some(text) => inject(ctx, in, sessionId)
-                    case None       => IO.pure(Verdict.Dropped(ReasonNoText))
-                else autoBind(ctx, in, sessionId)
-              case None =>
+        gateOpen = allowed.isEmpty || in.senderId.exists(allowed.contains)
+        // askuser-remote P1: the ask-answer / full-text pull legs sit BETWEEN
+        // the allowlist gate and the routing/injection arms — the gate rules
+        // them exactly as it rules the injection arm (same ordering argument
+        // as the original first arm), and a message they do not claim falls
+        // through to the pre-existing arms byte-for-byte unchanged.
+        askLeg <- if gateOpen then askLegs(ctx, in) else IO.pure(None)
+        verdict <- askLeg match
+          case Some(v) => IO.pure(v)
+          case None =>
+            (gateOpen, routes.get(in.routeKey), in.text) match
+              case (false, _, _) =>
+                // Fail-closed when the list is non-empty: an absent/unresolvable
+                // sender identity is as good as a non-member. Ordered FIRST so the
+                // gate also rules the default-session arm below.
+                logger.warn(
+                  s"weixin-ilink bridge: inbound message${in.messageId.fold("")(id => s" $id")} dropped " +
+                    s"[$ReasonNotOnAllowlist] — sender identity is " +
+                    s"${if in.senderId.isEmpty then "unresolvable" else "not"} on the allowed_ilink_user_ids list"
+                ) *> IO.pure(Verdict.Dropped(ReasonNotOnAllowlist))
+              case (_, None, _) =>
+                // No explicit binding for this sender: fall back to the channel's
+                // default session when one is configured (cold read — a REST save can
+                // flip it while the seam runs, and this path is once per new sender).
+                IO.blocking(SocialChannels.defaultSessionId(root, Name)).flatMap {
+                  case Some(sessionId) =>
+                    if in.routeKey.isEmpty then
+                      // Unresolvable sender: nothing to BIND — a binding on the
+                      // empty key would pin every anonymous sender onto one
+                      // session. The pre-existing fallback (inject via the default
+                      // session, nothing persisted) is kept byte-identical.
+                      in.text match
+                        case Some(text) => inject(ctx, in, sessionId)
+                        case None       => IO.pure(Verdict.Dropped(ReasonNoText))
+                    else autoBind(ctx, in, sessionId)
+                  case None =>
+                    logger.info(
+                      s"weixin-ilink bridge: dropped [$ReasonNoSession] — no session is bound to sender " +
+                        s"${in.routeKey} and no default session is configured"
+                    ) *> IO.pure(Verdict.Dropped(ReasonNoSession))
+                }
+              case (_, _, None) =>
                 logger.info(
-                  s"weixin-ilink bridge: dropped [$ReasonNoSession] — no session is bound to sender " +
-                    s"${in.routeKey} and no default session is configured"
-                ) *> IO.pure(Verdict.Dropped(ReasonNoSession))
-            }
-          case (_, _, None) =>
-            logger.info(
-              s"weixin-ilink bridge: dropped [$ReasonNoText] — inbound message" +
-                s"${in.messageId.fold("")(id => s" $id")} has no text body, nothing injected"
-            ) *> IO.pure(Verdict.Dropped(ReasonNoText))
-          case (_, Some(sessionId), Some(text)) =>
-            inject(ctx, in, sessionId)
+                  s"weixin-ilink bridge: dropped [$ReasonNoText] — inbound message" +
+                    s"${in.messageId.fold("")(id => s" $id")} has no text body, nothing injected"
+                ) *> IO.pure(Verdict.Dropped(ReasonNoText))
+              case (_, Some(sessionId), Some(text)) =>
+                inject(ctx, in, sessionId)
       yield verdict
     body.handleErrorWith(e =>
       logger.warn(
@@ -227,6 +260,182 @@ final class WeixinIlinkBridgePlugin(
           s"(${e.getClass.getSimpleName}: ${e.getMessage}), contained, the seam stays up"
       ) *> IO.pure(Verdict.Dropped(ReasonInjectFailed))
     )
+
+  // ─────────── askuser-remote P1: the ask-answer / pull legs (intake 前置臂) ───────────
+
+  /** The two consumed-message legs, tried in order. `None` = this text is
+    * nobody's ask reply: the caller falls through to the pre-existing arms
+    * (normal chat injection, untouched).
+    *
+    *   ① 案甲 pull arm — the sender has a stashed full text AND the reply is
+    *     exactly the pull keyword: push the segments, clear the slot.
+    *   ② ask arm — the sender has an ACTIVE ask and the text parses as a
+    *     numbered/explicit reply (B-1): validate → slots → forward the SAME
+    *     `Answered` command the feishu card leg forwards → tombstone. An
+    *     answered tombstone repeats are refused with the S-8 line, never
+    *     re-injected; range errors answer ONE readable refusal line (超界拒不
+    *     钳制). Anything else — `Right(None)` from the parser, no ask on
+    *     file — is chat: falls through.
+    */
+  private def askLegs(ctx: BridgeContext, in: Inbound): IO[Option[Verdict]] =
+    val text = in.text.map(_.trim).filter(_.nonEmpty)
+    val sender = Option(in.routeKey).filter(_.nonEmpty)
+    (text, sender) match
+      case (Some(t), Some(s)) =>
+        pullRef.get.flatMap { pulls =>
+          pulls.get(s).filter(p => t == WeixinAskLeg.FullTextKeyword) match
+            case Some(pending) =>
+              pushFullText(s, pending).as(Some(Verdict.Pulled(pending.segments)))
+            case None =>
+              askLedgerRef.get.flatMap { ledger =>
+                ledger.get(s) match
+                  case Some(entry) if entry.answered.isEmpty =>
+                    WeixinAskLeg.parseReply(t, entry.views) match
+                      case Right(Some(actions)) => answerAsk(ctx, s, entry, actions).map(Some(_))
+                      case Right(None)          => IO.pure(None) // chat passthrough — B-2 拍板
+                      case Left(reject) =>
+                        outbound(s, reject.line).flatMap { res =>
+                          if res.ok then IO.unit
+                          else logger.warn(s"weixin-ilink bridge: ask refusal line send failed code=${res.code} reason=${res.reason}")
+                        } *>
+                          IO.pure(Some(Verdict.Dropped(ReasonAskRange)))
+                  case Some(entry) =>
+                    // Answered tombstone: a repeat read of the numbers is refused
+                    // (S-8 frozen copy reused verbatim), never injected twice.
+                    WeixinAskLeg.parseReply(t, entry.views) match
+                      case Right(None) => IO.pure(None) // not ask-shaped at all — chat
+                      case _ =>
+                        outbound(s, FeishuAskCard.ToastAlreadyAnswered).flatMap { res =>
+                          if res.ok then IO.unit
+                          else logger.warn(s"weixin-ilink bridge: already-answered line send failed code=${res.code}")
+                        } *> IO.pure(Some(Verdict.Dropped(ReasonAskAnswered)))
+                  case None => IO.pure(None)
+              }
+        }
+      case _ => IO.pure(None)
+
+  /** Validate → fixed-length slots (expand over the ORIGINAL set — a dropped
+    * question stays `""`) → the hub Answered convergence → tombstone. */
+  private def answerAsk(ctx: BridgeContext, sender: String, entry: AskEntry, actions: List[PromptAction]): IO[Verdict] =
+    AskPromptCodec.validate(entry.views, actions) match
+      case Left(why) =>
+        logger.warn(s"weixin-ilink bridge: ask reply failed validation ($why) — refused") *> IO.pure(Verdict.Dropped(ReasonAskRange))
+      case Right(_) =>
+        val kept = AskPromptCodec.answers(entry.views, actions)
+        val answers = entry.expand(kept)
+        ctx.forwardInteractionAnswer(entry.requestId, entry.rootSessionId, Json.obj("answers" -> answers.asJson)) *>
+          askLedgerRef.update(_.updated(sender, entry.copy(answered = Some(answers)))) *>
+          logger.info(s"weixin-ilink bridge: ask answer forwarded requestId=${entry.requestId} root=${entry.rootSessionId} " +
+            s"answers=${answers.size}") *>
+          IO.pure(Verdict.Answered(entry.requestId))
+
+  // ─────────── askuser-remote P1: the outbound ask card + 案甲 legs ───────────
+
+  /** The `askUser` frame leg (L0): flatten (D-1) → B-3 新问顶旧问 (the previous
+    * OPEN ask on this sender is retired by precise requestId, never the
+    * session-wide sweep) → ledger slot → numbered text card through the SAME
+    * deliver/dedup path as a chat reply. A session with no bound sender has
+    * no return address — the frame passes through (the hub card still shows
+    * in the web window; the reply leg's own rule). */
+  private def onAskUserFrame(sessionId: String, c: io.circe.HCursor): IO[Unit] =
+    ctxRef.get.flatMap {
+      case None => IO.unit // never started — nothing to close, nowhere to send
+      case Some(ctx) =>
+        routesRef.get.flatMap { routes =>
+          routes.collectFirst { case (sender, sid) if sid == sessionId => sender } match
+            case None => IO.unit // not a weixin-bound session — pass through
+            case Some(sender) =>
+              val requestId = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              val items = c.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+              val attachments = c.downField("attachments").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+              val views = AskPromptCodec.viewsFromItemsJson(items)
+              (requestId, views) match
+                case (None, _) =>
+                  IO(logger.warn(s"weixin-ilink bridge: askUser frame without requestId — dropped"))
+                case (_, Nil) =>
+                  IO(logger.warn(s"weixin-ilink bridge: askUser frame without a usable question — dropped"))
+                case (Some(rid), all) =>
+                  val flat = AskPromptCodec.flatten(all)
+                  askLedgerRef.get.flatMap { ledger =>
+                    val previous = ledger.get(sender)
+                    // B-3 拍板 (无超时·新问顶旧问): the previous OPEN ask retires the
+                    // moment the new one takes the slot — precise CloseRequest, the
+                    // InteractionHub CloseRequest 先例 (single-slot, never the
+                    // session-wide sweep). An answered tombstone is already consumed
+                    // at the hub; nothing to close.
+                    val closeOld = previous
+                      .filter(p => p.requestId != rid && p.answered.isEmpty)
+                      .map(p => ctx.closeInteractionRequest(p.requestId) *>
+                        logger.info(s"weixin-ilink bridge: new ask displaces requestId=${p.requestId} for sender $sender (B-3 top-old)"))
+                      .getOrElse(IO.unit)
+                    closeOld *>
+                      askLedgerRef.update(_ + (sender -> AskEntry(
+                        requestId = rid, rootSessionId = sessionId, views = flat.views,
+                        originalIndices = flat.originalIndices, originalSize = flat.originalSize))) *>
+                      sendAskCard(sender, flat.views, attachments)
+                  }
+        }
+    }
+
+  /** The ask card send: text card, 案甲-degraded when oversized (the numbering
+    * and footer stay intact — only the question TEXT is cut; the full text
+    * rides the pull slot). The degraded branch sends DIRECTLY (it already did
+    * the 案甲 work itself — deliverText would re-stash). */
+  private def sendAskCard(sender: String, views: List[PromptView], attachments: List[String]): IO[Unit] =
+    val (text, _) = WeixinAskLeg.renderAskText(views, attachments)
+    if text.length <= WeixinAskLeg.FullTextThreshold then
+      deliverText(sender, text).void
+    else
+      val (short, _) = WeixinAskLeg.renderAskTextTruncated(views, attachments,
+        questionBudget = math.max(WeixinAskLeg.FullTextThreshold - 800, 0))
+      val segs = WeixinAskLeg.segments(text)
+      pullRef.update(_.updated(sender, PullEntry(text, segs.size))) *>
+        outbound(sender, short + "\n\n" + WeixinAskLeg.fullTextHint(text.length, segs.size)).void
+
+  /** `askUserClosed` (P1 form): the hub slot is gone (withdraw / cleanup /
+    * restart) — the ledger entry dies with it. A later numbered reply then
+    * falls through as normal chat (there is nothing left to answer). */
+  private def onAskClosedFrame(c: io.circe.HCursor): IO[Unit] =
+    val rid = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    rid.fold(IO.unit)(r => askLedgerRef.update { m =>
+      val victim = m.collectFirst { case (s, e) if e.requestId == r => s }
+      victim.fold(m)(s => m - s)
+    })
+
+  /** The 案甲 reply leg (B-4 拍板, 案甲): text at/below the first tier goes out
+    * as-is; longer text stashes the full body in the sender's pull slot and
+    * sends 摘要（首 4000 字）+ 拉取指令. A newer long text displaces the older
+    * slot (latest wins). */
+  private def deliverText(sender: String, text: String): IO[WeixinOutboundAdapter.SendResult] =
+    val plain = nebflow.social.outbound.OutboundText.toPlain(text)
+    if plain.length <= WeixinAskLeg.FullTextThreshold then outbound(sender, plain)
+    else
+      val segs = WeixinAskLeg.segments(plain)
+      pullRef.update(_.updated(sender, PullEntry(plain, segs.size))) *>
+        outbound(sender, plain.take(WeixinAskLeg.FullTextThreshold) + "\n\n" +
+          WeixinAskLeg.fullTextHint(plain.length, segs.size))
+
+  /** Push the stashed full text in segments (each order-marked, each within
+    * the first tier). The slot clears only when EVERY segment was accepted —
+    * a failed push keeps the slot so a repeat 「全文」 can retry. */
+  private def pushFullText(sender: String, pending: PullEntry): IO[Unit] =
+    val segs = WeixinAskLeg.segments(pending.text)
+    segs.foldLeft(IO.pure(true)) { (acc, seg) =>
+      acc.flatMap {
+        case false => IO.pure(false) // stop on first failure — the slot stays for a retry
+        case true =>
+          outbound(sender, seg).flatMap { res =>
+            if res.ok then IO.pure(true)
+            else
+              logger.warn(
+                s"weixin-ilink bridge: full-text segment send failed code=${res.code} reason=${res.reason} — pull slot kept"
+              ).as(false)
+          }
+      }
+    }.flatMap {
+      case true  => pullRef.update(_ - sender)
+      case false => IO.unit
+    }
 
   /** Auto-bind (weixin-autobind batch, 2026-10-07) — the feishu C4 form
     * ([[FeishuBridgePlugin.autoBind]]) for the weixin seam: the first message
@@ -338,6 +547,11 @@ final class WeixinIlinkBridgePlugin(
       // must never flush as a duplicated/garbled reply.
       case "interrupted" | "retryStatus" =>
         pendingRef.update(_ - sessionId)
+      // askuser-remote P1 (L0, D-2 拍板: each bridge grows its own branch —
+      // no second mechanism). askUser → the per-sender numbered card (with
+      // B-3 top-old and the ask ledger); askUserClosed → ledger clear.
+      case "askUser"       => onAskUserFrame(sessionId, c)
+      case "askUserClosed" => onAskClosedFrame(c)
       case _ => IO.unit
 
   private[social] def reply(sessionId: String, text: String): IO[Unit] =
@@ -348,8 +562,11 @@ final class WeixinIlinkBridgePlugin(
             s"weixin-ilink bridge: reply for session $sessionId dropped [$ReasonNoReturnAddress] — " +
               s"no sender id is bound to this session, so the reply has no iLink target"))
         case Some(sender) =>
-          val outboundText = nebflow.social.outbound.OutboundText.toPlain(text)
-          outbound(sender, outboundText).flatMap { res =>
+          // askuser-remote P1 (B-4 案甲): the flush goes through the deliver
+          // path, which applies the 4000-char first tier — at/below it the
+          // send is byte-identical to the pre-P1 behaviour; above it the full
+          // text rides the pull slot and 摘要+拉取指令 goes out.
+          deliverText(sender, text).flatMap { res =>
             if res.ok then
               IO(logger.info(
                 s"weixin-ilink bridge: reply delivered to sender $sender (id=${res.messageId.getOrElse("-")})"))
@@ -394,14 +611,21 @@ object WeixinIlinkBridgePlugin:
     def routeKey: String = senderId.map(_.trim).filter(_.nonEmpty).getOrElse("")
 
   /** The observable outcome of one ingest — the reading the side-car, the logs
-    * and the offline spec all see. */
+    * and the offline spec all see. askuser-remote P1 adds two CONSUMED
+    * outcomes that are neither injected nor dropped: the message was an ask
+    * reply routed to the hub ([[Verdict.Answered]]) or a 案甲 full-text pull
+    * ([[Verdict.Pulled]]). */
   enum Verdict:
     case Injected(sessionId: String)
     case Dropped(reason: String)
+    case Answered(requestId: String)
+    case Pulled(segments: Int)
 
     def json: Json = this match
       case Injected(sessionId) => Json.obj("verdict" -> "injected".asJson, "sessionId" -> sessionId.asJson)
       case Dropped(reason)     => Json.obj("verdict" -> "dropped".asJson, "reason" -> reason.asJson)
+      case Answered(requestId) => Json.obj("verdict" -> "answered".asJson, "requestId" -> requestId.asJson)
+      case Pulled(segments)    => Json.obj("verdict" -> "full-text".asJson, "segments" -> segments.asJson)
 
   // Drop reasons — stable strings, safe to read from a log or a response body.
   val ReasonNotOnAllowlist = "not-on-allowlist"
@@ -410,6 +634,36 @@ object WeixinIlinkBridgePlugin:
   val ReasonInjectFailed = "inject-failed"
   val ReasonNotStarted = "adapter-not-started"
   val ReasonMalformed = "malformed-body"
+  // askuser-remote P1 additions (the ask legs' consumed outcomes).
+  val ReasonAskRange = "ask-index-out-of-range"
+  val ReasonAskAnswered = "ask-already-answered"
+
+  /** One sender's active (or answered) ask slot — askuser-remote P1. The
+    * views are the FLATTENED, renumbered set (D-1); `originalIndices` /
+    * `originalSize` re-expand the kept slots into the engine's fixed-length
+    * answer array. `answered` = Some → a tombstone (the numbers now read
+    * 「已作答」, never re-injected); None → the ask is open. */
+  final case class AskEntry(
+    requestId: String,
+    rootSessionId: String,
+    views: List[PromptView],
+    originalIndices: List[Int],
+    originalSize: Int,
+    askedAt: Long = System.currentTimeMillis(),
+    answered: Option[List[String]] = None
+  ):
+    /** Kept slots → the engine's fixed-length answer list (`""` at dropped
+      * positions). Same rule as `AskPromptCodec.FlatSet.expandAnswerSlots`;
+      * spelled here so the entry is self-contained. */
+    def expand(keptSlots: List[String]): List[String] =
+      val slots = Array.fill(originalSize)("")
+      keptSlots.zip(originalIndices).foreach { (a, orig) =>
+        if orig >= 0 && orig < originalSize then slots(orig) = a
+      }
+      slots.toList
+
+  /** One sender's stashed full text (B-4 案甲 pull slot). */
+  final case class PullEntry(text: String, segments: Int, stashedAt: Long = System.currentTimeMillis())
 
   /**
    * The ingest body → [[Inbound]]. `senderId` is the sender identity (the

@@ -854,6 +854,36 @@ object GatewayMain extends IOApp:
                                         : IO[Unit] =
                                         sessionStore.updateSessionBridge(sessionId, platform, config)
 
+                                      // ── askuser-remote P1 (2026-10-07): the interaction face ──
+                                      // The hub is the single ask authority and the single answer
+                                      // convergence; the bridges get exactly these three faces and
+                                      // never a second ledger. `wsRoutesHolder` late-binds exactly
+                                      // like the interrupt leg above.
+                                      override def listPendingAsks: IO[List[Json]] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) =>
+                                            // ask-pattern (one-shot reply ref) — the read-only
+                                            // global snapshot, oldest first. A hub hiccup raises to
+                                            // the caller (the bridge answers its clicker with the
+                                            // contained empty response), never a silent empty that
+                                            // would read as "no ask open".
+                                            hub.?[List[Json]](reply =>
+                                              nebflow.actor.InteractionHubCommand.ListAllPendingAsks(reply))
+                                          case None => IO.pure(Nil)
+                                        }
+                                      override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json)
+                                        : IO[Unit] =
+                                        wsRoutesHolder match
+                                          case Some(routes) =>
+                                            routes.forwardBridgeInteractionAnswer(requestId, rootSessionId, payload)
+                                          case None => IO.unit
+                                      override def closeInteractionRequest(requestId: String): IO[Unit] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) =>
+                                            (hub ! nebflow.actor.InteractionHubCommand.CloseRequest(requestId)).void
+                                          case None => IO.unit
+                                        }
+
                                     val bridgeSetup: IO[BridgeManager] =
                                       BridgeManager.create(bridgeCtx)
 

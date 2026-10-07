@@ -512,6 +512,32 @@ class WebSocketRoutes(
       }
     else logger.warn("Dropping interaction answer: no sessionId provided") *> IO.unit
 
+  /**
+   * askuser-remote P1 (2026-10-07): the BRIDGE answer leg — social bridges
+   * (a feishu card click, a weixin numbered reply) enter the SAME Answered
+   * convergence through this DEDICATED public method instead of the private
+   * frontend one, so bridge-sourced answers stay attributable (their own log
+   * line) and can never be confused with a frontend WS answer. Same
+   * primitives, same ghost-agent D2 guarantee: the hub is told, never
+   * routeToAgent.
+   */
+  def forwardBridgeInteractionAnswer(requestId: String, sessionId: String, payload: io.circe.Json): IO[Unit] =
+    if sessionId.nonEmpty then
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          for
+            rootSid <- resolveRootSessionId(sessionId)
+            _ <- logger.info(
+              s"bridge interaction answer: requestId=$requestId root=$rootSid keys=${payload.asObject.map(_.keys.toList.mkString(",")).getOrElse("-")}")
+            _ <- (hub ! nebflow.actor.InteractionHubCommand.Answered(
+              nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
+            )).void
+          yield ()
+        case None =>
+          logger.warn("Bridge interaction answer dropped: InteractionHub not spawned") *> IO.unit
+      }
+    else logger.warn("Dropping bridge interaction answer: no sessionId provided") *> IO.unit
+
   /** Resolve the permission-policy bucket (root session) of a sessionId. */
   private def resolveRootSessionId(sessionId: String): IO[String] =
     sharedResources.agentRegistry.get
