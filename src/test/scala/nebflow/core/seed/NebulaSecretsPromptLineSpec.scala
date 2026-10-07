@@ -2,9 +2,23 @@ package nebflow.core.seed
 
 import munit.FunSuite
 
-import java.nio.file.Files
-
-/** secrets-consumption batch (2026-10-01) — acceptance item §二.5, prompt-line leg.
+/** RETIRED-PREREQUISITE NOTE — author P1 ruling, option (a):
+  *
+  * a5b716d55（seed/agents 树退役批）作废其双面前提；提示词面已上收 BuiltinAgents 代码面
+  *
+  * Accordingly the former P1 "seed and runtime prompt carry the secrets line
+  * together or not at all" leg has been deleted: it asserted agreement between
+  * two prompt faces whose seed side (`seed/agents/Nebula/system.md`) the
+  * retirement batch removed — a dead premise (the leg read a file that no longer
+  * exists, the runtime mirror has no writer, so the leg would be permanently
+  * red once landed). This deletion is the mechanical consequence of that
+  * retirement ruling, not a new ruling. The docstring below is kept verbatim as
+  * the record of the original design intent; its two-face premise is void per
+  * the note above. P2 (catalogue path agreement) is unaffected.
+  *
+  * ---- original header (premise retired, see note above) ----
+  *
+  * secrets-consumption batch (2026-10-01) — acceptance item §二.5, prompt-line leg.
   *
   * The batch's §16 draft (see `.nebflow/evidence/20261001_secrets-consumption/`)
   * must NOT be landed here: the author reviews the line verbatim first. What this
@@ -35,43 +49,10 @@ import java.nio.file.Files
   */
 class NebulaSecretsPromptLineSpec extends FunSuite:
 
-  /** Stable substring of the §16 draft line — the needle both files are scanned
-    * for. It survives wording edits anywhere else in the line. */
+  /** Stable substring of the §16 draft line — pinning that the artefact P2
+    * asserts (`SecretsCatalog.catalogPath`) is exactly the one the draft's
+    * prompt line named. It survives wording edits anywhere else in the line. */
   private val Sentinel = "secrets-catalog.md"
-
-  private val SeedRel = "src/main/resources/seed/agents/Nebula/system.md"
-
-  private def runtimePath: os.Path = os.home / ".nebflow" / "agents" / "Nebula" / "system.md"
-
-  /** The repository root of whichever checkout this spec runs from. `os.pwd` is
-    * the sbt project base (the worktree root under a worktree node); the second
-    * candidate covers an invocation from a nested directory. A missing seed file
-    * is a hard failure, not a skip — the seed is a tracked file. */
-  private def seedPath(): os.Path =
-    // `SeedRel` carries slashes, which os-lib's `/` operator refuses as a single
-    // segment — go through `os.RelPath`, the documented conversion for a
-    // multi-segment relative path.
-    val candidates = List(os.pwd / os.RelPath(SeedRel), os.pwd / os.up / os.up / os.RelPath(SeedRel))
-    candidates.find(p => Files.exists(p.toNIO)).getOrElse(
-      fail(s"$SeedRel not found from ${os.pwd} — run from the repository root")
-    )
-
-  test("P1 · 🔴 seed and runtime Nebula prompt carry the secrets line together or not at all") {
-    val seedText = os.read(seedPath())
-    val runtime = runtimePath
-    val runtimeText = if Files.exists(runtime.toNIO) then Some(os.read(runtime)) else None
-    (seedText.contains(Sentinel), runtimeText.exists(_.contains(Sentinel))) match
-      case (false, false) => () // the state this batch leaves behind
-      case (true, true)   => () // a future, approved §16 landing that covered both faces
-      case (seedHas, runtimeHas) =>
-        // (`seedHas` / `runtimeHas`, not `s` / `r` — a pattern binding named `s`
-        // would shadow the string interpolator.)
-        fail(
-          s"seed carries the secrets prompt line = $seedHas but the runtime mirror = $runtimeHas — the two prompt " +
-            "faces have diverged. A §16 landing must write BOTH (the runtime sync is a restart-window " +
-            "ops action with the author present), and this batch must write NEITHER."
-        )
-  }
 
   test("P2 · the catalogue path the draft prompt line names is the path this batch renders") {
     // The draft points agents at `<dataRoot>/secrets-catalog.md`; if the
