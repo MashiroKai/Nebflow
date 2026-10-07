@@ -11,9 +11,11 @@ import munit.FunSuite
  * （运行面 dual-track 交付体例取代原单轨段）。该 prompt 的**唯一权威源**现为
  * `nebflow.core.entity.BuiltinAgents`（builtin-def 批 2026-10-03 作者令①「唯一标准
  * 源就是代码」——seed/agents 资源树已删，磁盘 system.md 是死信），本 spec 的判据源
- * 随之指向代码定义。现行钉面：
- *  ① 末条输出 = 自身交付物（dual-track 双轨体例开头即承载）；
- *  ② 结果自包含、双轨强制（Part 2 证据块不得省）；
+ * 随之指向代码定义。现行钉面（①②随 2026-10-07 N3 修订批 dual-track 体例退役翻转）：
+ *  ① 末条输出 = 自身交付物（首内容行＝节点身份句「You are a task node」开头即承
+ *     载；曾为 dual-track 双轨体例开头承载）；
+ *  ② 结果自包含（五要素 Report 段在位）＋ dual-track 体例防复活（!Deliver in two
+ *     parts；曾钉双轨强制「both parts are mandatory」，随体例退役翻转）；
  *  ③ node_report 申报义务 + 未申报不终态语义在位；
  *  ④ 代码级 prompt **零 HTML 注释**（种子面的「批源注记」形态随种子退役——注释不
  *     进模型上下文，代码定义从结构上就不携带它）。
@@ -42,20 +44,22 @@ class NodeSeedOutputContractSpec extends FunSuite:
   private def contentLines: List[String] =
     promptText.split("\n", -1).toList.filterNot(_.trim.startsWith("<!--"))
 
-  test("执行 agent 代码级 prompt 首内容行 = dual-track 交付体例（末条输出 = 自身交付物；双轨强制）"):
+  test("执行 agent 代码级 prompt 首内容行 = 节点身份句（末条输出 = 自身交付物；五要素 Report 段在位）"):
     val firstContent = contentLines.dropWhile(_.trim.isEmpty).headOption.getOrElse(
       fail("prompt has no content lines")
     )
-    assert(firstContent.startsWith("Deliver in two parts"),
+    assert(firstContent.startsWith("You are a task node"),
       s"首内容行语域被改：${firstContent.take(80)}")
     val text = promptText
     assert(text.contains("your final assistant text IS the deliverable"),
       "交付物身份句在位（node deliverable semantics）")
-    assert(text.contains("both parts are mandatory"),
-      "双轨强制句在位（evidence block 不得省）")
-    // 交付体例只承载一次（零重复）
-    assertEquals(contentLines.count(_.contains("Deliver in two parts")), 1,
-      "dual-track 体例只在首内容行承载（零重复）")
+    assert(text.contains("## Report (your final text)"),
+      "五要素 Report 段在位（single-track evidence block）")
+    assert(!text.contains("Deliver in two parts"),
+      "dual-track 体例已退役（防复活）")
+    // 退役体例零复活（零出现）
+    assertEquals(contentLines.count(_.contains("Deliver in two parts")), 0,
+      "dual-track 体例已退役（任何行零出现，防复活）")
 
   test("执行 agent 代码级 prompt 输出契约语义在正文 + node_report 义务在位"):
     val text = promptText
