@@ -21,9 +21,25 @@
 | `/login/begin` | GET | 重启登录会话；QR 已取到则即时回 `{"state":"qr_ready","qrUrl":…,"expireIn":…}`，否则 `{"state":"starting"}`（≤4s 等首码） |
 | `/login/status` | GET | 会话投影：`starting / qr_ready / polling / done / failed`；`done` **仅首次**携带 `credentials{bot_token,ilink_bot_id,ilink_user_id}`，此后不再出现 token |
 | `/healthz` | GET | 运维探针（契约外，仅本机） |
+| `/send` | POST | **出站段（weixin-outbound 批，独立文件 `send.mjs`）**：引擎回程投递。Bearer 共享 token 必带（常量时比较；未配置 token ⇒ 503 关门）；body `{"to","text","account"?}`；200＝iLink `ret=0` 受理（携 `message_id`，uint64 无损字符串化）。详见批报告安全设计段与下表 env |
 
 安全面：只绑 loopback（该契约缝无鉴权，按设计仅本机可达）；token 不落日志
-（只记长度）；`done` 后凭证只出一次。
+（只记长度）；`done` 后凭证只出一次。`/send` 例外：出站面**带鉴权**（引擎
+铸造的共享 token，双向呈现同一凭证体系；bot_token 零过引擎↔shim 线路，shim
+自读宿主账号文件）。
+
+## 出站段 env（`send.mjs`；标注「候与入站批对账归一」者为暂定名）
+
+| 变量 | 缺省 | 说明 |
+|---|---|---|
+| `WEIXIN_SEND_TOKEN` | — | 共享 token 直配值（最高优先；改值需重启） |
+| `WEIXIN_SEND_TOKEN_FILE` | — | 共享 token 文件路径（每请求现读，换文件即撤销） |
+| （缺省文件） | `~/.nebflow/secrets/weixin-ilink-send-token` | 引擎铸造位；`NEBFLOW_HOME` 可重根 |
+| `WEIXIN_SIDECAR_ILINK_BASE` | 官方 `https://ilinkai.weixin.qq.com` | 出站 iLink base（测试/运维缝；登录腿不受影响） |
+| `WEIXIN_SIDECAR_SEND_TIMEOUT_MS` | 15000 | 单次 sendmessage 超时（官方 DEFAULT_API_TIMEOUT_MS 同值） |
+| `WEIXIN_SIDECAR_SEND_ATTEMPTS` | 2 | 仅网络类失败重试预算；HTTP 4xx/5xx 与 `ret!==0` 绝不重试 |
+| `WEIXIN_SIDECAR_SEND_BACKOFF_MS` | 1000 | 重试退避 |
+
 
 ## 手动起停（最小可用 / 今日验证用）
 

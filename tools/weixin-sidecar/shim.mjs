@@ -50,6 +50,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+// weixin-outbound batch (2026-10-07): the OUTBOUND send leg lives in its own
+// file (unified interface contract ④: send section separate from the loop
+// section). shim.mjs only wires the route and hands over the shared helpers.
+import { makeSendHandler } from "./send.mjs";
 
 // ───────────────────────────── config ─────────────────────────────
 
@@ -513,6 +517,27 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
+// weixin-outbound batch: the send-leg handler, assembled once with this file's
+// shared helpers (send.mjs stays importable standalone for unit tests).
+// `inboundActive` reports the inbound loop state; this side-car ships none yet
+// (the inbound batch owns that half) so it is constantly false for now — the
+// send leg logs its observability WARN on that, per the send contract.
+const handleSend = makeSendHandler({
+  info,
+  warn,
+  error,
+  debug,
+  sendJson,
+  loadAccount,
+  listIndexedAccountIds,
+  normalizeAccountId,
+  PLUGIN_VERSION,
+  ILINK_APP_ID,
+  ILINK_APP_CLIENT_VERSION,
+  ILINK_DEFAULT_BASE: FIXED_BASE_URL,
+  inboundActive: () => false, // 候与入站批对账归一: the inbound batch flips this to its loop state
+});
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? "127.0.0.1"}`);
   const p = url.pathname.replace(/\/+$/, "") || "/";
@@ -547,6 +572,13 @@ const server = http.createServer((req, res) => {
 
   if (p === "/healthz") {
     sendJson(res, 200, { ok: true, state: session?.phase ?? "idle", gen: session?.gen ?? 0 });
+    return;
+  }
+
+  // weixin-outbound batch: the authenticated outbound send leg (send.mjs owns
+  // the whole contract — auth, body, retry boundary, iLink wire mirror).
+  if (p === "/send") {
+    handleSend(req, res);
     return;
   }
 

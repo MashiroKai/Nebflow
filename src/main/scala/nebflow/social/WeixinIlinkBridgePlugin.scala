@@ -27,9 +27,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     sender (`SessionMeta.bridges` key `weixin-ilink`, field `ilink_user_id`),
  *     else the channel's configured default session → `ctx.injectMessage`, the
  *     existing rate-limited `handleBridgeMessage` path;
- *   - outbound: nothing. Sending back into Weixin belongs to the host that owns
- *     the plugin session; this seam only injects (the README section states the
- *     boundary);
+ *   - outbound (weixin-outbound batch, 2026-10-07): accumulated `textDelta`
+ *     flushes as ONE text reply on `done`, through the injected send seam —
+ *     the authenticated side-car `POST /send` face ([[WeixinOutboundAdapter]]),
+ *     from where the side-car hands the message to the iLink wire. The reply
+ *     target is the reverse read of the SAME routing table the inbound leg
+ *     builds (one binding source); a session with no binding has no return
+ *     address and its flush says so (WARN). Send failures are contained (one
+ *     WARN line, no retry, no queue — design §0.4);
  *   - lifecycle: `start` / `stop` / `refreshRoutes` plus the [[WeixinIlinkBridgePlugin.sync]]
  *     companion — the same activation shape [[FeishuBridgePlugin]] uses.
  *
@@ -61,18 +66,33 @@ final class WeixinIlinkBridgePlugin(
   root: os.Path,
   /** Test seam for the gate: None = read the stored card at start (production),
     * Some(list) = pinned (offline spec). */
-  pinnedAllowedIlinkUserIds: Option[List[String]] = None
+  pinnedAllowedIlinkUserIds: Option[List[String]] = None,
+  /** Outbound send seam factory (weixin-outbound batch, 2026-10-07). Production
+    * = [[WeixinOutboundAdapter.sendLive]] (the authenticated side-car `POST
+    * /send` face); the offline spec injects a recorder so no test opens a
+    * socket. Takes the root so the production leg cold-reads the stored card
+    * and the shared token per send. */
+  send: (os.Path => WeixinIlinkBridgePlugin.Send) = WeixinOutboundAdapter.sendLive
 ) extends BridgePlugin:
 
   import WeixinIlinkBridgePlugin.*
 
   private val logger = NebflowLogger.forName("nebflow.social.weixin-ilink-bridge")
 
+  /** The outbound send leg resolved for THIS root (the injected factory, or
+    * the production side-car face). */
+  private val outbound: Send = send(root)
+
   def name: String = Name
 
   // ── runtime state (mutation is confined to start/stop and the Refs) ──
   /** sender id → session id, rebuilt from `SessionMeta.bridges`. */
   private[social] val routesRef =
+    cats.effect.Ref.unsafe[IO, Map[String, String]](Map.empty)
+  /** session id → accumulated delta text for the turn in flight (the outbound
+    * reply buffer — the same shape [[FeishuBridgePlugin]] flushes on `done`).
+    * Cleared on stop/interrupt/retry: a torn turn is never a reply. */
+  private[social] val pendingRef =
     cats.effect.Ref.unsafe[IO, Map[String, String]](Map.empty)
   /** The allowlist in force; empty = unrestricted (the shipped default). The
     * pinned value is the INITIAL state so the gate is armed from construction;
@@ -95,6 +115,16 @@ final class WeixinIlinkBridgePlugin(
           cfg <- IO.blocking(readChannelConfig(root))
           _ <- allowedRef.set(pinnedAllowedIlinkUserIds.getOrElse(cfg.allowedIlinkUserIds))
           _ <- rebuildRoutes(ctx)
+          // weixin-outbound batch: the SHARED TOKEN is minted lazily HERE (the
+          // enabled∧verified start path — design §0.2: a channel-less install
+          // never gains a secret file). Reuse on an existing mint, never
+          // rotate. A mint failure closes only the OUTBOUND leg (the send face
+          // answers shim_token_unconfigured); the inbound seam stays up.
+          _ <- WeixinOutboundAdapter.ensureToken(root).flatMap {
+            case Right(_) => IO.unit // minted or reused — the value is never logged
+            case Left(reason) =>
+              logger.warn(s"weixin-ilink bridge: outbound leg stays closed — could not ensure the shim token: $reason")
+          }
           _ <- IO { started = true }
           // weixin-inbound batch (2026-10-07): mint (or keep) the shim's ingress
           // token at seam-up — the credential plane of the ingest route's track-2
@@ -118,12 +148,13 @@ final class WeixinIlinkBridgePlugin(
         logger.error(s"weixin-ilink bridge: start failed: ${e.getClass.getSimpleName}: ${e.getMessage}")
       ) *> IO(if !started then starting.set(false)) // failed start ⇒ a later sync may retry
 
-  /** Idempotent teardown — the single exit path; safe to call twice. */
+  /** Idempotent teardown — the single exit path; safe to call twice. A torn
+    * turn is never a reply, also across restarts (the feishu rule). */
   val stop: IO[Unit] =
     IO {
       started = false
       starting.set(false)
-    }
+    } *> pendingRef.set(Map.empty)
 
   /** Whether the seam is up. There is no connection to report: the seam holds no
     * socket, so "up" means it is registered and the gate is armed. */
@@ -229,10 +260,67 @@ final class WeixinIlinkBridgePlugin(
     }
 
   // ───────────────────────────── outbound ─────────────────────────────
-  /** Nothing to do: replies to Weixin are owned by the host that runs the
-    * official plugin (this seam implements the inbound leg only). Kept as an
-    * explicit no-op so the boundary is stated in code rather than implied. */
-  def onAgentEvent(sessionId: String, event: Json): IO[Unit] = IO.unit
+  /**
+   * The outbound reply leg (weixin-outbound batch, 2026-10-07) — the same
+   * shape [[FeishuBridgePlugin.onAgentEvent]] ships: `textDelta` events
+   * accumulate per session and flush as ONE text message on `done` (a chat
+   * reply is a message, not a delta stream); `interrupted` / `retryStatus`
+   * clear the buffer (a torn turn is never a reply); the flush is contained —
+   * a send failure is one WARN line, never a raise, and is NOT retried here
+   * (design §0.4: an ambiguous timeout may already be a delivered message).
+   *
+   * `toolEnd` is deliberately a no-op arm: rich products (cards/artifacts)
+   * are a feishu-leg concept; the weixin outbound v1 carries text only.
+   *
+   * 🔴 The reply target is the REVERSE read of the same routing table the
+   * inbound leg builds (contract ③: one binding source): session → the bound
+   * `ilink_user_id`. A session with NO binding has no return address — the
+   * flush logs a WARN and drops (the inbound default-session fallback cannot
+   * be answered to because no sender id is on file for it; the structural fix
+   * would be an inbound auto-bind, which belongs to the inbound batch).
+   *
+   * 🔴 Zero-secret: the send seam carries the shared shim token in its
+   * Authorization header only ([[WeixinOutboundAdapter]]); the bot_token never
+   * reaches this class. The outbound copy is de-marked-up through
+   * [[nebflow.social.outbound.OutboundText.toPlain]] (author ruling #299, the
+   * feishu reply treatment); the in-session original is never rewritten.
+   */
+  def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
+    val c = event.hcursor
+    c.downField("type").as[String].getOrElse("") match
+      case "textDelta" =>
+        c.downField("delta").as[String].getOrElse("") match
+          case ""    => IO.unit
+          case delta => pendingRef.update(m => m.updated(sessionId, m.getOrElse(sessionId, "") + delta))
+      case "toolEnd" => IO.unit // text-only v1: rich products are not carried (stated boundary)
+      case "done" =>
+        pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) }.flatMap { text =>
+          if text.trim.isEmpty then IO.unit else reply(sessionId, text)
+        }
+      // A retried or interrupted turn re-streams its text; the partial buffer
+      // must never flush as a duplicated/garbled reply.
+      case "interrupted" | "retryStatus" =>
+        pendingRef.update(_ - sessionId)
+      case _ => IO.unit
+
+  private[social] def reply(sessionId: String, text: String): IO[Unit] =
+    routesRef.get.flatMap { routes =>
+      routes.collectFirst { case (sender, sid) if sid == sessionId => sender } match
+        case None =>
+          IO(logger.warn(
+            s"weixin-ilink bridge: reply for session $sessionId dropped [$ReasonNoReturnAddress] — " +
+              s"no sender id is bound to this session, so the reply has no iLink target"))
+        case Some(sender) =>
+          val outboundText = nebflow.social.outbound.OutboundText.toPlain(text)
+          outbound(sender, outboundText).flatMap { res =>
+            if res.ok then
+              IO(logger.info(
+                s"weixin-ilink bridge: reply delivered to sender $sender (id=${res.messageId.getOrElse("-")})"))
+            else
+              IO(logger.warn(
+                s"weixin-ilink bridge: reply send failed code=${res.code} reason=${res.reason}"))
+          }
+    }
 
 end WeixinIlinkBridgePlugin
 
@@ -243,6 +331,15 @@ object WeixinIlinkBridgePlugin:
 
   /** The bridge-config field carrying the sender id in a binding. */
   val RouteKey = "ilink_user_id"
+
+  /** The outbound send seam: `(to, text) → reading` (weixin-outbound batch).
+    * The reading is [[WeixinOutboundAdapter.SendResult]] — one contained
+    * outcome per flush, never a raise. */
+  type Send = (String, String) => IO[WeixinOutboundAdapter.SendResult]
+
+  /** The outbound drop reason for a session with no bound sender: stable
+    * string, safe to reconcile from a log line. */
+  val ReasonNoReturnAddress = "no-return-address"
 
   /** The human-readable label this channel announces in the source-marker block
     * (soc483 batch). Same value as the card's own name copy
