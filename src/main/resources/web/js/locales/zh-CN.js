@@ -51,6 +51,9 @@ export default {
   'project.new': '新项目',
   'project.createdAnnounce': '「{name}」已创建',
   'project.archivedAnnounce': '「{name}」已归档',
+  // N2 project-tool 批（2026-10-06）：面板手动卸载（归档按钮）被 Project 工具
+  // action="unmount" 工具面替代；播报镜像 archived（aria-live 状态行）。
+  'project.unmountedAnnounce': '「{name}」已卸载——在飞任务已停，文件全部保留',
   // Project-panel右下角「+」钮 + 轻弹层（projcreate 批 · 乙案：提交 = 预填主输入框 + 聚焦，
   // 零新端点、零新增写面 —— 描述框只收一段描述，不设路径/名称字段：乙案前端不写盘，
   // 放一个前端无从校验的路径框 = 假控件；路径由 Nebula 侧 ProjectCreate 自带路径面板解析）。

@@ -2816,7 +2816,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   }
 }
 
-// ---------- Workspace dir picker（ProjectCreate「选择工作区」卡） ----------
+// ---------- Workspace dir picker（Project「选择工作区」卡） ----------
 // 2026-09-06 作者拍板：复用应用内目录浏览器（workspacePicker.js，含面包屑导航 /
 // 上级 / 列表 / 新建文件夹 / 选中此目录），不再走系统目录对话框（macOS NSOpenPanel /
 // Windows JFileChooser）。openPicker 的 onPick/onCancel 直接驱动卡片 api 的
@@ -3070,7 +3070,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     // 附件行（顶层 `attachments`，整次提问层）：插位 = 卡内 `.option-btn-row` 之前，
     // 仍在「整次提问」语义层。🔴 不新增前端模块 / 不新增 CSS；`.`option-q` 与其后
     // 的 options 区（`showOptions` 内层）原样不动 ⇒ dirPicker 路径
-    // (ProjectCreateTool.scala:425) 不受影响、免回归。
+    // (ProjectTool.scala，原 ProjectCreateTool.scala:425) 不受影响、免回归。
     // showOptions 同步完成 `container.appendChild(box)` ⇒ 此处 box 已在 DOM 内。
     renderAskAttachments(bubble.querySelector('.option-box'), attachments);
   } catch (e) {

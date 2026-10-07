@@ -1,4 +1,12 @@
 /* 从 NodeTools.scala 迁出(行为保持重构,2026-09-25)。 */
+/* N2 project-tool 批(2026-10-06,⑨A 硬替换):ProjectCreate 更名 Project——同文件
+ * `git mv` 承接(ProjectCreateTool.scala → ProjectTool.scala);旧名入
+ * AgentCore.RetiredToolGuides 指路 Project(taskunify/N1 rename 先例同型),guard 表
+ * 登记见 DeletedToolGuardSpec rename-retired (N2) 块。增 unmount 面(S17/⑩A):三步序
+ * 「在飞任务先停(①)→挂载面移除(②)→工作区文件零删(③,硬约束)」,实施单点 =
+ * [[nebflow.core.project.ProjectUnmount]];archive 保留软下线档(语义分档见
+ * ProjectUnmount 文件头注)。#1229 边界:项目管理/挂载面属常轨能力,不随 #1229
+ * 引擎族拆除(spec §2.3 #1229 排除件条款;核对锚点 = ProjectUnmountSpec 头注)。 */
 package nebflow.core.tools
 
 import cats.effect.IO
@@ -11,8 +19,8 @@ import nebflow.shared.{AskItem, AskUserDispatch, InteractionRequestId, PathUtil}
 
 import scala.util.Try
 
-object ProjectCreateTool extends Tool:
-  val name = "ProjectCreate"
+object ProjectTool extends Tool:
+  val name = "Project"
 
   // 2026-09-17 作者 12:09 裁定单 ④-10（更新旧条目、取代而非静默覆盖）：本 description
   // 的面板分支旧句逐字为「Clicking it opens the REAL OS folder browser (native directory
@@ -23,33 +31,47 @@ object ProjectCreateTool extends Tool:
   // 为零候选 options + 应用内目录浏览器（`NodeTools.scala` 面板段 `:3217-3224`，
   // `ProjectCreatePanelSpec` 断言 `options == Nil`），OS 原生对话框/候选 chips/「Other…」
   // 三者**均不存在**。旧句按「取代而非静默覆盖」保留于此注记中可读，正文改写为实现一致。
+  //
+  // N2 project-tool 批（2026-10-06，⑨A/S17）：工具更名 Project（原 ProjectCreate），
+  // 增 `action="unmount"` 面；create 语义逐字保留，仅首行改双面题头＋新增 Unmount 节。
   val description =
-    """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
-## When to Use
+    """Manage a Project (Nebula use) — `action="create"` (default): project definition + workspace .nebflow/ scaffolding + mount; `action="unmount"`: hard-unmount a mounted project (stops its in-flight work first; zero workspace deletion).
+## When to Use (create)
 - **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready). Existing workspace files are never overwritten; only missing pieces are backfilled, and the result lists what was created vs left alone.
 - **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog, no candidate chips). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend. The chosen path flows back into the card and creation proceeds automatically.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
 - Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
-## Semantics
+## Create Semantics
 - Same name + same workspace → idempotent (returns "already exists", re-mounts and backfills any missing scaffold file; safe to repeat).
 - Same name + different workspace → explicit error (never silently re-points an existing project).
 - **Different name + workspace already used by another project → explicit error (default-deny).** Workspace occupancy is compared with trailing slashes and case ignored; an archived project still counts as occupying its workspace. The error names the occupying project and gives two ways out: reuse that project, or pass a different workspace directory. Never let a second project silently share an occupied workspace — report the conflict to the user instead.
-- Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again."""
+- Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again.
+## Unmount (action="unmount", requires `name`)
+- **Hard unmount in three ordered steps** — stricter than archive (archive = soft retirement: only tags project.json, running tasks keep running, zero deletion):
+  1. **In-flight work stops first**: running nodes get the cancel signal (dead running sessions are finalized as cancelled), active chains are cancelled (cascade), and the project's dispatcher sessions plus its in-flight internal delegate sessions are cancelled; the unmount waits until the flow map has no running node before moving on — if the drain deadline passes with work still running, the unmount aborts with an explicit error and the mount face is left untouched.
+  2. **Mount face removed**: the project disappears from the Projects list (source filter shared with the startup auto-mount, so a restart will not re-mount it) and its runtime is torn down.
+  3. **Zero workspace deletion (hard constraint)**: project.json / AGENTS.md / .nebflow/ / flow-map files are all kept byte-for-byte — nothing is deleted or moved.
+- Re-mounting an unmounted project is refused with an actionable error — remove the `unmounted`/`unmountedAt` keys in projects/<name>/project.json to restore it first (single-way semantics, same shape as archive)."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
+        "action" -> Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> Json.arr("create".asJson, "unmount".asJson),
+          "description" -> "create (default): create / re-mount a project from `workspace`. unmount: hard-unmount the mounted project `name` — stops its in-flight work first (nodes, chains, dispatcher/delegate sessions), then removes it from the mount face; every workspace file is kept (zero deletion). Ignored for create: `workspace`/`description`.".asJson
+        ),
         "name" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Project name (single path segment). Optional — defaults to the workspace path basename.".asJson
+          "description" -> "Project name (single path segment). Optional for create — defaults to the workspace path basename. Required for unmount.".asJson
         ),
         "workspace" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Absolute path to the project workspace. Omit to pop the interactive path-selection panel (AskUserQuestion-style card).".asJson
+          "description" -> "Absolute path to the project workspace (create only). Omit to pop the interactive path-selection panel (AskUserQuestion-style card).".asJson
         ),
-        "description" -> Json.obj("type" -> "string".asJson, "description" -> "Optional one-line description".asJson)
+        "description" -> Json.obj("type" -> "string".asJson, "description" -> "Optional one-line description (create only)".asJson)
       ),
       "required" -> Json.arr()
     )
@@ -60,7 +82,8 @@ object ProjectCreateTool extends Tool:
 
   def summarize(input: JsonObject): String =
     val n = input("name").flatMap(_.asString).orElse(input("workspace").flatMap(_.asString))
-    s"ProjectCreate(${n.getOrElse("<panel>")})"
+    val action = input("action").flatMap(_.asString).orElse(Some("create"))
+    s"Project(${action.getOrElse("create")}:${n.getOrElse("<panel>")})"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
@@ -68,6 +91,26 @@ object ProjectCreateTool extends Tool:
     val rawName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val rawWorkspace = input("workspace").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    input("action").flatMap(_.asString).map(_.trim.toLowerCase(java.util.Locale.ROOT)).getOrElse("create") match
+      // N2 project-tool 批：unmount 面（S17/⑩A 三步序；实施单点 ProjectUnmount）。
+      case "unmount" => unmountFace(rawName, ctx)
+      case "create"  => createFace(rawName, rawWorkspace, description, ctx)
+      case other =>
+        IO.pure(
+          Left(
+            ToolError(
+              s"Unknown action '$other'. Supported actions: create (default), unmount."
+            )
+          )
+        )
+
+  /** create 面（原 ProjectCreate 语义，逐字保持）。 */
+  private def createFace(
+    rawName: Option[String],
+    rawWorkspace: Option[String],
+    description: Option[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
     rawWorkspace match
       // 已知路径直建（口径①，既有路径语义不变，name 缺省改 basename 派生）。
       case Some(ws) =>
@@ -76,6 +119,70 @@ object ProjectCreateTool extends Tool:
           case scala.util.Failure(_) => pathPanel(rawName, description, ctx) // path 不可用 → 面板兜底
       // 未知/缺省 path（口径②）→ AskUser 式交互面板。
       case None => pathPanel(rawName, description, ctx)
+
+  // ============================================================
+  // unmount 面（N2 project-tool 批，S17/⑩A 三步序）
+  // ============================================================
+
+  /**
+   * `action="unmount"`：硬卸载已挂载项目。三步序与零删硬约束的实施单点 =
+   * [[nebflow.core.project.ProjectUnmount]]；本方法只做两件事——①参数/上下文守卫
+   * （`name` 必填；无会话上下文/无 agent runtime 显式拒绝，镜像 mount 腿 M3
+   * 「无会话上下文的挂载视为非法」先例：stop 步要经 agentRegistry 找到在飞
+   * dispatcher/delegate 会话，凭空缺上下文的调用不卸）；②结果渲染。
+   */
+  private def unmountFace(
+    rawName: Option[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    rawName match
+      case None =>
+        IO.pure(
+          Left(
+            ToolError(
+              "unmount requires 'name' — the project to unmount. Create/re-mount is the default action; " +
+                "pass action=\"unmount\" explicitly with the project name."
+            )
+          )
+        )
+      case Some(proj) =>
+        val rootKey = ctx.rootSessionId.filter(_.nonEmpty).orElse(ctx.sessionId.filter(_.nonEmpty))
+        (ctx.sharedResources, rootKey) match
+          case (Some(res), Some(_)) =>
+            ProjectUnmount
+              .unmount(
+                proj,
+                res.agentRegistry,
+                frame => ctx.wsSend.fold(IO.unit)(send => send(frame))
+              )
+              .map(_.left.map(ToolError.apply).map(renderUnmountResult))
+          case _ =>
+            IO.pure(
+              Left(
+                ToolError(
+                  "Project refused to unmount: this call carries no session context (both rootSessionId " +
+                    "and sessionId are empty or absent) and no agent runtime, so the stop step could not " +
+                    "enumerate the project's in-flight dispatcher/delegate sessions — and an unmount that " +
+                    "cannot stop first must not proceed. Re-invoke Project(action=\"unmount\", name=...) " +
+                    "from an agent session (Nebula / project dispatcher)."
+                )
+              )
+            )
+
+  /** unmount 结果句（成功/幂等两态；report 计数逐项可读，幂等态显式声明 no-op）。 */
+  private def renderUnmountResult(r: ProjectUnmount.UnmountReport): String =
+    val op = if r.alreadyUnmounted then "was already unmounted (no-op — zero side effects)" else "unmounted"
+    val stopped =
+      if r.alreadyUnmounted then ""
+      else
+        s"Stopped first (step 1): ${r.chainsCancelled.size} active chain(s) cancelled" +
+          (if r.chainsCancelled.nonEmpty then s" [${r.chainsCancelled.mkString(", ")}]" else "") +
+          s", ${r.nodesCancelled.size} running node(s) stopped/finalized" +
+          (if r.nodesCancelled.nonEmpty then s" [${r.nodesCancelled.mkString(", ")}]" else "") +
+          s", ${r.sessionsCancelled.size} dispatcher session(s) and ${r.delegatesCancelled.size} internal delegate session(s) cancelled. "
+    s"Project '${r.project}' $op. " + stopped +
+      "Mount face removed (step 2): hidden from the Projects list; startup auto-mount will skip it. " +
+      "Zero deletion (step 3): every workspace file is kept byte-for-byte — nothing was deleted or moved."
 
   // ============================================================
   // 创建链（直建与面板选择路径共用）
@@ -147,7 +254,7 @@ object ProjectCreateTool extends Tool:
             // 挂载视为非法**——逐字对齐既有正例（SendConfirm.scala 的「先过滤非空、
             // 再显式拒绝」）：`orElse` 不过滤非空（`Some("")` 取胜 ⇒ 空桶），且末档
             // 伪造占位 `"default"` 是**凭空造的桶键**（作者明禁伪造兜底）⇒ 两处都走。
-            // 调用面枚举（详见本批报告「M3 调用面枚举」）：ProjectCreate 的 ToolContext
+            // 调用面枚举（详见本批报告「M3 调用面枚举」）：Project（原 ProjectCreate）的 ToolContext
             // 生产构造面共 4 处 —— AgentCore 会话面（有身份）/ WS AgentControl（不达本
             // 工具）/ neblink relay 与 neblink REST remote-exec（**两者都不携带任何会话
             // 身份**：请求体仅 action/params/projectRoot，无 sessionId 字段）⇒ 后者
@@ -159,10 +266,10 @@ object ProjectCreateTool extends Tool:
                 IO.pure(
                   Left(
                     ToolError(
-                      "ProjectCreate refused to mount: this call carries no session context " +
+                      "Project refused to mount: this call carries no session context " +
                         "(both rootSessionId and sessionId are empty or absent), so the project's delivery root " +
                         "cannot be attributed — and inventing a placeholder root is not allowed. " +
-                        "Re-invoke ProjectCreate from an agent session (Nebula / project dispatcher / project node)."
+                        "Re-invoke Project from an agent session (Nebula / project dispatcher / project node)."
                     )
                   )
                 )
@@ -235,6 +342,18 @@ object ProjectCreateTool extends Tool:
                         )
                       )
                     )
+                  // N2 project-tool 批：unmounted 单程语义（同 archive 先例形状）——
+                  // 幂等重挂不隐式复活硬卸载的项目（挂载面移除必须由人工显式恢复）。
+                  case Some(pd) if pd.unmounted.contains(true) =>
+                    IO.pure(
+                      Left(
+                        ToolError(
+                          s"Project '$resolvedName' is unmounted (hidden from the Projects panel; its in-flight " +
+                            s"work was stopped when it was unmounted). " +
+                            s"Remove the 'unmounted'/'unmountedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
+                        )
+                      )
+                    )
                   case None => IO.pure(Left(ToolError(err)))
                   case Some(pd) if sameWorkspace(pd.workspace, workspace) =>
                     // 🔴 补缺只挂本分支（成功幂等重挂）；归档分支与异 workspace 分支保持零写入。
@@ -293,12 +412,15 @@ object ProjectCreateTool extends Tool:
   private def occupiedWorkspaceError(newName: String, workspace: String, occupant: ProjectDef): String =
     val norm = normalizeWorkspace(workspace).getOrElse(workspace)
     val occupantWs = normalizeWorkspace(occupant.workspace).getOrElse(occupant.workspace)
-    val arch = if occupant.archived.contains(true) then " (archived)" else ""
+    val arch =
+      if occupant.archived.contains(true) then " (archived)"
+      else if occupant.unmounted.contains(true) then " (unmounted)"
+      else ""
     s"Workspace '$norm' is already used by project '${occupant.name}'$arch " +
-      s"(its project.json workspace = '$occupantWs'). ProjectCreate default-denies creating '$newName' " +
+      s"(its project.json workspace = '$occupantWs'). Project default-denies creating '$newName' " +
       "on an occupied workspace — a second project on the same workspace would silently share its " +
       "flow-map / task board / worktrees. Two ways out: " +
-      s"(a) reuse the existing project — ProjectCreate(name='${occupant.name}') to re-mount it, or " +
+      s"(a) reuse the existing project — Project(name='${occupant.name}') to re-mount it, or " +
       s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
       s"(b) pass a different 'workspace' directory for '$newName'."
 
@@ -380,7 +502,7 @@ object ProjectCreateTool extends Tool:
       case PanelAnswer.Shelved =>
         IO.pure(
           Right(
-            "ProjectCreate shelved: the path-selection panel was dismissed without a choice — " +
+            "Project shelved: the path-selection panel was dismissed without a choice — " +
               "no project created. Re-invoke with a known 'workspace', or ask the user again."
           )
         )
@@ -441,7 +563,7 @@ object ProjectCreateTool extends Tool:
             // 后端 expandTilde / parsePanelAnswer 的绝对化校验保留（降级兜底 / legacy / CLI 面
             // 仍喂自由文本；见 test ⑥）。
             val question =
-              s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器" +
+              s"Project 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器" +
                 s"（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。"
             val item = AskItem(question, List.empty, dirPicker = true, freeInput = false)
             // #250 第⑤项：requestId 熵强化（单点生成器，作用域 panel-）
@@ -459,4 +581,4 @@ object ProjectCreateTool extends Tool:
               _ <- AskUserQuestionTool.answerLanded(ctx)
               result <- applyPanelAnswer(parsePanelAnswer(answers), nameOpt, description, ctx)
             yield result
-end ProjectCreateTool
+end ProjectTool

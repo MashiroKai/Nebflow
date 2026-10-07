@@ -2,7 +2,7 @@
   "requestId": "pc-e2e-01",
   "items": [
     {
-      "question": "ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。",
+      "question": "Project 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。",
       "options": [],
       "dirPicker": true,
       "freeInput": false

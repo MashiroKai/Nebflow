@@ -602,7 +602,7 @@ class AllowedToolSetSpec extends FunSuite:
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
       "Mail",
-      "ProjectCreate",
+      "Project", // N2 project-tool 批 2026-10-06 ⑨A 更名（原 ProjectCreate）——件数零变化，纯换名
       "AgentControl", // 编排触发（R2 批：−Task +Mail 史实净 16；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 17 = 2026-09-18 18:18 令 +5；NodeList 摘除）
       "TaskList", // 任务编排（TaskList 批：快变状态出记忆）
       "SendMessage", // 通信（好友功能非旧体系，保留）

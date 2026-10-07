@@ -156,21 +156,22 @@ class NodeToolsSpec extends FunSuite:
   }
 
   // ── resolveProject 报错（mountError 纯函数，项目名不匹配附可用项目列表）────
-  // 实证锚点：NodeList(Nebflow) 报 "Project 'Nebflow' is not mounted. Use ProjectCreate first."——
+  // 实证锚点：NodeList(Nebflow) 报 "Project 'Nebflow' is not mounted. Use Project first."
+  // （N2 project-tool 批更名，原句为 Use ProjectCreate first）——
   // 不匹配应列出实际已挂载项目名（提示大小写/名称，不裸报 not mounted）。
 
   test("mountError: not-mounted error lists available projects (case-insensitive hint)") {
     val e = NodeTools.mountError("Nebflow", List("nebflow"))
     assert(e.contains("Nebflow"), s"must name the requested project, got: $e")
     assert(e.contains("Available projects: nebflow"), s"must list available project(s), got: $e")
-    assert(e.contains("Use ProjectCreate first"), s"must point to ProjectCreate, got: $e")
+    assert(e.contains("Use Project first"), s"must point to Project, got: $e")
   }
 
   test("mountError: empty available list → dedicated no-projects hint (still actionable)") {
     val e = NodeTools.mountError("nonexistent", Nil)
     assert(e.contains("nonexistent"), s"must name the requested project, got: $e")
     assert(e.contains("No projects are currently mounted"), s"empty registry needs its own hint, got: $e")
-    assert(e.contains("Use ProjectCreate first"), s"must point to ProjectCreate, got: $e")
+    assert(e.contains("Use Project first"), s"must point to Project, got: $e")
   }
 
   // ── 四工具 schema：project 参数可选化（缺省=分发器当前项目，不再 required）────

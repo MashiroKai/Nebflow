@@ -27,12 +27,12 @@
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
-import { esc, authHeaders } from './flowHelpers.js';
+import { esc } from './flowHelpers.js';
 import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
 import { rootNameParams } from './rootName.js';
 import { contentText } from './contentI18n.js';
-import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
+import { fetchProjects, fetchFlowMap, summarize } from './nodeData.js';
 // 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图停用，
 // 对 flowMapTab 渲染入口的静态 import 随之摘除——flowMapTab.js 自此脱离模块图
 // （build-web ORPHAN_EXEMPTIONS 在案），文件留盘候 #1229 per-project REST/WS 退役批
@@ -593,7 +593,9 @@ function startCardExit(scroll, card) {
     PROJECT_CARD_EXIT_MS + 60);
 }
 
-/** 焦点移交（§F-3③）：焦点在退场卡内 ⇒ 移交下一张卡的归档按钮，无下一张则移交容器。 */
+/** 焦点移交（§F-3③）：焦点在退场卡内 ⇒ 移交下一张卡的项目标题，无下一张则移交容器。
+ *  （N2 project-tool 批 2026-10-06：面板手动卸载按钮随「被 Project 工具 unmount 面替代」
+ *  移除——原移交目标「下一张卡的归档按钮」随之改为本卡唯一交互件 .team-card-title。） */
 function releaseCardFocus(card) {
   if (!card.contains(document.activeElement)) return;
   const cards = projectCards(card.parentElement);
@@ -601,7 +603,7 @@ function releaseCardFocus(card) {
   const next =
     cards.slice(idx + 1).find((c) => c.dataset.exiting !== '1')
     || cards.slice(0, idx).reverse().find((c) => c.dataset.exiting !== '1');
-  const target = next?.querySelector('.project-archive-btn') || card.parentElement;
+  const target = next?.querySelector('.team-card-title') || card.parentElement;
   target?.focus?.();
 }
 
@@ -639,7 +641,6 @@ function projectCardHtml(p) {
       <div class="team-card-header">
         <div class="team-card-title" data-open-flowmap="${esc(name)}" title="${esc(t('project.openFlowMap', { name }))}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span><span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
-        <button class="project-archive-btn" data-archive-project="${esc(name)}" title="${esc(t('project.archive'))}" aria-label="${esc(t('project.archiveTitle', { name }))}"><i data-lucide="archive"></i></button>
       </div>
       <div class="project-fields">
         <div class="project-field" title="${esc(p.workspace)}">
@@ -785,10 +786,10 @@ function bindProjectCard(card) {
       window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
     }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
   });
-  card.querySelector('[data-archive-project]')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    archiveProject(e.currentTarget?.getAttribute('data-archive-project') || '');
-  });
+  // N2 project-tool 批（2026-10-06）：原 `[data-archive-project]` 手动卸载按钮随
+  // 「面板手动卸载被工具面替代」移除（Project 工具 action="unmount" = 唯一卸载面；
+  // 卸载经 projectUnmounted 帧回声驱动本文件定点退场，见文末订阅）。REST
+  // POST /projects/<name>/archive 保留（软下线档现语义不动），仅失去面板入口。
 }
 
 // ── 空态 CTA：一键引导（方向 B · 行为 = 仅预填）────────────────────────────────
@@ -826,43 +827,12 @@ function prefillProjectPrompt(text) {
   return true;
 }
 
-/** 归档项目（迁移方案 v2 §6.1）：显式人工动作——确认弹层（防误触，复用
- *  window.__showConfirm 既有确认范式）→ POST /api/projects/<name>/archive →
- *  **立即对目标卡施加定点退场**（取证 §F-2 触发条件①：不等重拉返回——重拉的全量
- *  替换会吃掉动画；本批出口已改成定点增删，故重拉也不会再吃掉它）。
- *  后端 ProjectStore.list 源头过滤归档项 ⇒ 兜底 C 的下一次重拉名单里也不会有它。
- *  零删除零移动：仅 project.json 打归档标记，workspace 与定义文件全部保留。
- *  tone:'neutral'——归档可逆（可取消归档），确认钮不用 danger 红。
- *  后端同批广播的 projectArchived 帧随后到达本页（同一动作的回声）——由
- *  startCardExit 的 `data-exiting` 幂等闸吸收，不产生第二次退场/第二次渲染。 */
-function archiveProject(name) {
-  if (!name) return;
-  window.__showConfirm?.(
-    t('project.archiveTitle', { name }),
-    t('project.archiveConfirm', { name }),
-    async () => {
-      try {
-        const r = await fetch(`${API.projects}/${encodeURIComponent(name)}/archive`, {
-          method: 'POST',
-          headers: authHeaders(),
-        });
-        if (!r.ok) throw new Error(`archive ${r.status}`);
-        window.__showToast?.(t('project.archiveDone', { name }), 'success');
-        const scroll = projectsListScroll() || getTabPane('projects')?.querySelector('.team-scroll');
-        const card = scroll ? cardByName(scroll, name) : null;
-        if (scroll && card) {
-          startCardExit(scroll, card);            // 退场动画（280ms）→ 定点 remove + FLIP
-          announceProjects(scroll, t('project.archivedAnnounce', { name }));
-        } else {
-          rerenderProjectsTab();                  // 卡不在本列表可见面（正常不达）⇒ 兜一次权威重拉
-        }
-      } catch (e) {
-        window.__showToast?.(t('project.archiveFail', { name }), 'error');
-      }
-    },
-    { tone: 'neutral' }
-  );
-}
+/** 🔴 N2 project-tool 批（2026-10-06）：`archiveProject` 整件随面板手动卸载面移除
+ *  ——原「确认弹层 → POST /api/projects/<name>/archive → 定点退场」的面板按钮已被
+ *  Project 工具 `action="unmount"` 工具面替代（范围句第 4 条；面板卸载入口自此不存在，
+ *  卸载回声 = projectUnmounted 帧，见文末订阅）。软下线 REST（POST archive）保留、
+ *  现语义不动（仅失去面板入口）；locale 键面清理不在本批写面（projcreate 批先例：
+ *  失去调用点的键保留，键 face 归清理批），`project.archive*` 五键调用点归零在案。 */
 
 /** 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图
  *  整块退役（原 openFlowMapInPlace / openProjectFlowMapAt / openProjectFlowMapChain /
@@ -978,8 +948,26 @@ function onProjectArchivedFrame(msg) {
   announceProjects(scroll, t('project.archivedAnnounce', { name }));
 }
 
+/** 卸载回声（N2 project-tool 批 2026-10-06）：Project 工具 `action="unmount"` 成功腿
+ *  广播 `projectUnmounted{project,unmountedAt}`——处理面与 archived 帧同构（按名定点
+ *  退场 + aria 播报）。卸载后 GET /api/projects 名单源（ProjectStore.list）源头过滤
+ *  ⇒ 兜底 C 重拉名单也不会再有它。`data-exiting` 幂等闸吸收重复帧/回声。 */
+function onProjectUnmountedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const name = typeof msg?.project === 'string' ? msg.project : '';
+  if (!name) return;
+  const card = cardByName(scroll, name);
+  if (!card) return; // 已不在列表 / 面板未展示该项目 ⇒ no-op，无重复渲染
+  startCardExit(scroll, card); // 退场动画（280ms）→ 定点 remove + FLIP 衔接邻卡
+  announceProjects(scroll, t('project.unmountedAnnounce', { name }));
+}
+
 onMessage('projectCreated', (msg) => onProjectCreatedFrame(msg));
 onMessage('projectArchived', (msg) => onProjectArchivedFrame(msg));
+onMessage('projectUnmounted', (msg) => onProjectUnmountedFrame(msg));
 
 // ── 兜底 C：低频重拉（裁定 (c) 同批）──────────────────────────────────────────
 // 为什么必须有：进程外改动（有人直接编辑/删除 `~/.nebflow/projects/<name>/project.json`，

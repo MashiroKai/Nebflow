@@ -282,9 +282,9 @@ class AskUserDualModeSchemaSpec extends FunSuite:
       !toolSrc.contains("awaitsAnswer") || !toolSrc.contains("awaitsAnswer = true"),
       "非阻塞工具侧出现了 awaitsAnswer=true（造出永不解除的等待）"
     )
-    // 唯一的 awaitsAnswer=true 调用方 = ProjectCreateTool.pathPanel（阻塞等答复的面板）
-    val panelSrc = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "ProjectCreateTool.scala")
-    assert(panelSrc.contains("awaitsAnswer = true"), "ProjectCreateTool.pathPanel 的等待面未被标注（会永不解除等待）")
+    // 唯一的 awaitsAnswer=true 调用方 = ProjectTool.pathPanel（阻塞等答复的面板）
+    val panelSrc = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "ProjectTool.scala")
+    assert(panelSrc.contains("awaitsAnswer = true"), "ProjectTool.pathPanel 的等待面未被标注（会永不解除等待）")
   }
 
 end AskUserDualModeSchemaSpec

@@ -51,6 +51,9 @@ export default {
   'project.new': 'New project',
   'project.createdAnnounce': '"{name}" created',
   'project.archivedAnnounce': '"{name}" archived',
+  // N2 project-tool batch (2026-10-06): the Project tool's action="unmount" face replaced
+  // the panel's manual archive button; the announce mirrors the archived one (aria-live row).
+  'project.unmountedAnnounce': '"{name}" unmounted — in-flight work stopped, files kept',
   // Projects-panel bottom-right "+" button + light dialog (projcreate batch, plan B:
   // submit = prefill the main chat input + focus; zero new endpoints, zero new write
   // face). The description box is the ONLY field — no path/name field: plan B never

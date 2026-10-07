@@ -457,7 +457,7 @@ Behavior:
    * 答复落定后的配对恢复（每个**阻塞**调用方的答复单点调用一次）。
    *
    * 本批（root 2026-10-02 令 #462 裁①）后，`AskUserQuestionTool` 自身**不再**是
-   * 此函数的调用方（一律非阻塞、无等待态）；唯一调用方 = `ProjectCreateTool.pathPanel`
+   * 此函数的调用方（一律非阻塞、无等待态）；唯一调用方 = `ProjectTool.pathPanel`
    * —— 那个面板仍在自己的 fiber 里阻塞等待（答复即 `createChain` 的入参），
    * `AgentProcessing` 据此命令的 `awaitsAnswer=true` 标了 `WaitingForUser` 并
    * `DelegateBudget.pause`，本函数是**同一条链的配对解除点**（缺它 ⇒ 会话永久停在

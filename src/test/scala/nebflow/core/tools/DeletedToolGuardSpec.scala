@@ -39,6 +39,13 @@ class DeletedToolGuardSpec extends FunSuite:
    */
   private val renameRetiredNames = List("Workflow")
 
+  /**
+   * N2 project-tool 批（2026-10-06，⑨A 硬替换）rename-retired 集：`ProjectCreate`
+   * 名让位 `Project`（create 语义原样 + 新增 action="unmount" 硬卸载腿；旧名注册面
+   * 删除、guide 指路 Project——N1 Workflow 先例同型，guard 表登记即本块断言）。
+   */
+  private val renameRetiredProjectNames = List("ProjectCreate")
+
   test("no surviving tool description references a deleted tool") {
     val offenders = ToolRegistry.TOOL_MAP.toSeq.collect {
       case (name, tool) if ghostNames.exists(g => tool.description.contains(g)) => name
@@ -114,4 +121,26 @@ class DeletedToolGuardSpec extends FunSuite:
 
   test("registry face is unchanged by the R2 retirement — Mail is registered, ghost names are not"):
     assert(ToolRegistry.TOOL_MAP.contains("Mail"), "Mail must stay registered (single message primitive)")
+
+  test("rename-retired (N2): ProjectCreate is unregistered, its guide is present and names Project"):
+    renameRetiredProjectNames.foreach { g =>
+      assert(!ToolRegistry.TOOL_MAP.contains(g), s"$g must be unregistered (renamed to Project, N2 2026-10-06)")
+      assert(
+        nebflow.agent.AgentCore.RetiredToolGuides.contains(g),
+        s"$g must carry a rename migration guide (a diagnosable error, not a compatibility shell)"
+      )
+      val guide = nebflow.agent.AgentCore.RetiredToolGuides(g)
+      assert(guide.contains("Project"), s"$g guide must point at the renamed Project, got: ${guide.take(140)}")
+      assert(
+        guide.contains("unmount"),
+        s"$g guide must mention the unmount face (the panel's manual unmount moved into the tool), got: ${guide.take(140)}"
+      )
+    }
+    // 名字复用教义：Project 已注册 ⇒ 表内不得存在指向活名的死条目（留条目 = 对该名
+    // 永不可达的死文本，违表零膨胀纪律——N1 AgentFlow 先例同款断言）。
+    assert(ToolRegistry.TOOL_MAP.contains("Project"), "Project must be registered (the renamed face)")
+    assert(
+      !nebflow.agent.AgentCore.RetiredToolGuides.contains("Project"),
+      "no tombstone entry may exist for the live name \"Project\" (registered ⇒ unreachable dead text)"
+    )
 end DeletedToolGuardSpec

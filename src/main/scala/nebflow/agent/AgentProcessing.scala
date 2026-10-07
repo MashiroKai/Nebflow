@@ -1272,7 +1272,7 @@ private[agent] object AgentProcessing:
             // 🔴 本批（root 2026-10-02 令 #462 裁①「非阻塞-only」）后的判据 = **命令面
             // 客观事实** `awaitsAnswer`，不再是历史工具面模式枚举 `AskMode.parksTurn`：
             // `AskUserQuestionTool` 一律非阻塞 ⇒ 恒 `false`（无 WaitingForUser、无
-            // pause）；`ProjectCreateTool.pathPanel` 仍在自己的 fiber 里阻塞等待并把
+            // pause）；`ProjectTool.pathPanel` 仍在自己的 fiber 里阻塞等待并把
             // 答案作为返回值消费（`applyPanelAnswer` → `createChain`）⇒ 置 `true`。
             // 配对恢复点 = 该调用方的答复单点（pathPanel 走
             // `AskUserPrompt.answerLanded`）。

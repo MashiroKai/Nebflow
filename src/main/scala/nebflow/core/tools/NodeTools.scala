@@ -167,8 +167,8 @@ object NodeTools:
    */
   def mountError(name: String, available: List[String]): String =
     if available.isEmpty then
-      s"Project '$name' is not mounted. No projects are currently mounted. Use ProjectCreate first."
-    else s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use ProjectCreate first."
+      s"Project '$name' is not mounted. No projects are currently mounted. Use Project first."
+    else s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use Project first."
 
   /** 引用节点存在性（活动区 + 归档区）。 */
   def ensureNodeExists(rt: ProjectRuntime, id: String): IO[Either[String, Unit]] =

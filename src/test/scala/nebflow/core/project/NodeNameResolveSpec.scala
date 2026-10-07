@@ -19,7 +19,8 @@ import scala.util.Random
 /**
  * Node 工具 project 名解析 spec（2026-09-07 作者裁定：工具 project 参数可选化 + 大小写容错）。
  *
- * 实证锚点：`NodeList(Nebflow) — Project 'Nebflow' is not mounted. Use ProjectCreate first.`
+ * 实证锚点：`NodeList(Nebflow) — Project 'Nebflow' is not mounted. Use Project first.`
+ * （N2 project-tool 批更名；原句尾为 Use ProjectCreate first.）
  * 分发器在项目沙箱内传 "Nebflow" 而被拒（registry 精确 key 匹配，canonical 名是小写）。
  *
  * 修复落点（three-way）：
@@ -201,7 +202,7 @@ class NodeNameResolveSpec extends CatsEffectSuite:
         e.contains("Available projects:") && e.contains("res-p1"),
         s"error must list the mounted project(s) in 'Available projects:', got: $e"
       )
-      assert(e.contains("Use ProjectCreate first"), s"error must point to ProjectCreate, got: $e")
+      assert(e.contains("Use Project first"), s"error must point to Project, got: $e")
     end for
   }
 

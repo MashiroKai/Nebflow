@@ -19,7 +19,7 @@ import nebflow.actor.{
 }
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{AskUserQuestionTool, FileLockManager, ProjectCreateTool, ToolContext}
+import nebflow.core.tools.{AskUserQuestionTool, FileLockManager, ProjectTool, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{
@@ -49,7 +49,7 @@ import scala.concurrent.duration.*
  * 当「用户关闭了面板」（`Shelved` 搁置消息）。本 spec 的两个用例分别钉住这两条
  * 订阅腿的**新口径**，每条都带可分离的红锚：
  *
- *  1. **面板腿**（真 `ProjectCreateTool.pathPanel` + 真 `AgentActor` + hub 缺席）：
+ *  1. **面板腿**（真 `ProjectTool.pathPanel` + 真 `AgentActor` + hub 缺席）：
  *     派发失败 ⇒ 工具结果里有可判读失败码 [[AskUserDispatch.UnavailableCode]]
  *     （自描述：问题从未上卡 / 答案永不投达 / 这不是用户答复），且**不含**
  *     `shelved` 搁置文案（返工前口径 = `Shelved` ⇒ 本用例转红）。
@@ -263,7 +263,7 @@ class AskUserDispatchUnavailableSpec extends CatsEffectSuite:
   // ============================================================
 
   test("hub 缺席 ⇒ 面板腿给可判读失败码（不是 shelved），失败信号不冒充用户答复") {
-    val f = setup("panel", ProjectCreateTool.name, JsonObject.empty)
+    val f = setup("panel", ProjectTool.name, JsonObject.empty)
     (for
       _ <- assertHubAbsent(f.resources)
       // 面板在自己的 fiber 里 .? 等待答复 ⇒ 派发失败信号即其**返回值**

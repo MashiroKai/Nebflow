@@ -18,7 +18,7 @@ import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
 import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectCreateTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectTool, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
@@ -224,7 +224,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       .asObject
       .get
     for
-      result <- ProjectCreateTool.call(input, toolCtx(ws, system, res))
+      result <- ProjectTool.call(input, toolCtx(ws, system, res))
       pd <- ProjectStore.load("ws-alpha")
       rt <- ProjectRuntimeRegistry.get("ws-alpha")
       gitignore <- IO(os.read(ws / ".gitignore"))
@@ -274,7 +274,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       done <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fib <- ProjectCreateTool
+      fib <- ProjectTool
         .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
         .flatMap(r => done.complete(r).void)
         .start
@@ -291,7 +291,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         InteractionAnswered(
           requestId = rid,
           rootSessionId = "nebula-root",
-          payload = Json.obj("answers" -> Json.arr(Json.fromString(ProjectCreateTool.CancelSentinel)))
+          payload = Json.obj("answers" -> Json.arr(Json.fromString(ProjectTool.CancelSentinel)))
         )
       )
       result <- done.get
@@ -352,7 +352,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       done <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fib <- ProjectCreateTool
+      fib <- ProjectTool
         .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
         .flatMap(r => done.complete(r).void)
         .start
@@ -431,7 +431,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         for
           res <- fullResources(system, new RecordingLlm)
           frames <- Ref.of[IO, List[Json]](Nil)
-          created <- ProjectCreateTool.call(
+          created <- ProjectTool.call(
             Json
               .obj("name" -> Json.fromString("trigger-proj"), "workspace" -> Json.fromString(ws.toString))
               .asObject
@@ -486,10 +486,10 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val mk = (w: os.Path) =>
       Json.obj("name" -> Json.fromString("dup"), "workspace" -> Json.fromString(w.toString)).asObject.get
     for
-      first <- ProjectCreateTool.call(mk(wsA), toolCtx(wsA, system, res))
-      second <- ProjectCreateTool.call(mk(wsA), toolCtx(wsA, system, res))
+      first <- ProjectTool.call(mk(wsA), toolCtx(wsA, system, res))
+      second <- ProjectTool.call(mk(wsA), toolCtx(wsA, system, res))
       rt <- ProjectRuntimeRegistry.get("dup")
-      conflict <- ProjectCreateTool.call(mk(wsB), toolCtx(wsA, system, res))
+      conflict <- ProjectTool.call(mk(wsB), toolCtx(wsA, system, res))
       _ <- ProjectRuntimeRegistry.unregister("dup")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -521,7 +521,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       // (a) 取消哨兵
       doneA <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fibA <- ProjectCreateTool
+      fibA <- ProjectTool
         .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
         .flatMap(r => doneA.complete(r).void)
         .start
@@ -531,14 +531,14 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         InteractionAnswered(
           ridA,
           "nebula-root",
-          Json.obj("answers" -> Json.arr(Json.fromString(ProjectCreateTool.CancelSentinel)))
+          Json.obj("answers" -> Json.arr(Json.fromString(ProjectTool.CancelSentinel)))
         )
       )
       resA <- doneA.get
       // (b) 空答案（Other 输入空白即提交）
       _ <- gotAsk.set(None)
       doneB <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fibB <- ProjectCreateTool
+      fibB <- ProjectTool
         .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
         .flatMap(r => doneB.complete(r).void)
         .start
@@ -551,7 +551,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       // (c) 非绝对路径自由输入
       _ <- gotAsk.set(None)
       doneC <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fibC <- ProjectCreateTool
+      fibC <- ProjectTool
         .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
         .flatMap(r => doneC.complete(r).void)
         .start
@@ -586,7 +586,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val system = ActorSystem(s"pcp-7-${scala.util.Random.nextInt(100000)}")
     val res = minimalResources(ws)
     for
-      result <- ProjectCreateTool.call(Json.obj().asObject.get, toolCtx(ws, system, res, agentRef = None))
+      result <- ProjectTool.call(Json.obj().asObject.get, toolCtx(ws, system, res, agentRef = None))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(result.isLeft, "panel requires an agent session — must fail fast")
@@ -627,10 +627,10 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val system = ActorSystem(s"pcp-8-${scala.util.Random.nextInt(100000)}")
     val res = minimalResources(ws)
     for
-      first <- ProjectCreateTool.call(mkInput("occ-one", ws.toString), toolCtx(ws, system, res))
+      first <- ProjectTool.call(mkInput("occ-one", ws.toString), toolCtx(ws, system, res))
       beforeSha <- IO(wsSha(ws))
       beforeNb <- IO(nebflowEntries(ws))
-      second <- ProjectCreateTool.call(mkInput("occ-two", ws.toString), toolCtx(ws, system, res))
+      second <- ProjectTool.call(mkInput("occ-two", ws.toString), toolCtx(ws, system, res))
       afterSha <- IO(wsSha(ws))
       afterNb <- IO(nebflowEntries(ws))
       newDir <- IO(os.exists(ProjectStore.projectDir("occ-two")))
@@ -645,10 +645,10 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       // （a 复用既有项目 / b 换工作区目录）。逐字等值 ⇒ 内容要求不可被静默弱化。
       val expectedErr =
         s"Workspace '${ws.toString}' is already used by project 'occ-one' " +
-          s"(its project.json workspace = '${ws.toString}'). ProjectCreate default-denies creating 'occ-two' " +
+          s"(its project.json workspace = '${ws.toString}'). Project default-denies creating 'occ-two' " +
           "on an occupied workspace — a second project on the same workspace would silently share its " +
           "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
-          "(a) reuse the existing project — ProjectCreate(name='occ-one') to re-mount it, or " +
+          "(a) reuse the existing project — Project(name='occ-one') to re-mount it, or " +
           "Mail(address='project:occ-one', message=...) to dispatch work; " +
           "(b) pass a different 'workspace' directory for 'occ-two'."
       assertEquals(err, expectedErr, "占用报错原文必须逐字稳定（可行动四点齐备）")
@@ -666,9 +666,9 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val trailing = ws.toString + "/"
     val upper = ws.toString.toUpperCase
     for
-      first <- ProjectCreateTool.call(mkInput("norm-one", ws.toString), toolCtx(ws, system, res))
-      rTrailing <- ProjectCreateTool.call(mkInput("norm-two", trailing), toolCtx(ws, system, res))
-      rUpper <- ProjectCreateTool.call(mkInput("norm-three", upper), toolCtx(ws, system, res))
+      first <- ProjectTool.call(mkInput("norm-one", ws.toString), toolCtx(ws, system, res))
+      rTrailing <- ProjectTool.call(mkInput("norm-two", trailing), toolCtx(ws, system, res))
+      rUpper <- ProjectTool.call(mkInput("norm-three", upper), toolCtx(ws, system, res))
       d2 <- IO(os.exists(ProjectStore.projectDir("norm-two")))
       d3 <- IO(os.exists(ProjectStore.projectDir("norm-three")))
       _ <- ProjectRuntimeRegistry.unregister("norm-one")
@@ -691,10 +691,10 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val system = ActorSystem(s"pcp-10-${scala.util.Random.nextInt(100000)}")
     val res = minimalResources(ws)
     for
-      first <- ProjectCreateTool.call(mkInput("occ-arch", ws.toString), toolCtx(ws, system, res))
+      first <- ProjectTool.call(mkInput("occ-arch", ws.toString), toolCtx(ws, system, res))
       arch <- ProjectStore.archive("occ-arch")
       beforeSha <- IO(wsSha(ws))
-      r <- ProjectCreateTool.call(mkInput("occ-new", ws.toString), toolCtx(ws, system, res))
+      r <- ProjectTool.call(mkInput("occ-new", ws.toString), toolCtx(ws, system, res))
       afterSha <- IO(wsSha(ws))
       newDir <- IO(os.exists(ProjectStore.projectDir("occ-new")))
       occJson <- IO(os.read(ProjectStore.projectJsonPath("occ-arch")))
@@ -721,15 +721,15 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val system = ActorSystem(s"pcp-11-${scala.util.Random.nextInt(100000)}")
     val res = minimalResources(ws)
     for
-      created <- ProjectCreateTool.call(mkInput("scaf-one", ws.toString), toolCtx(ws, system, res))
+      created <- ProjectTool.call(mkInput("scaf-one", ws.toString), toolCtx(ws, system, res))
       _ <- IO(os.remove(ws / "AGENTS.md"))
       giBefore <- IO(sha256Of(gi))
       nbBefore <- IO(nebflowEntries(ws))
-      again <- ProjectCreateTool.call(mkInput("scaf-one", ws.toString), toolCtx(ws, system, res))
+      again <- ProjectTool.call(mkInput("scaf-one", ws.toString), toolCtx(ws, system, res))
       giAfter <- IO(sha256Of(gi))
       nbAfter <- IO(nebflowEntries(ws))
       // 新语义（作者 2026-09-18 令：「AGENTS.md 应该默认是空的，用户去写，我们只是创建」；
-      // popt W3 已把模板置空 = `ProjectCreateTool.scala:108` `agentMdTemplate = ""`）。
+      // popt W3 已把模板置空 = `ProjectTool.scala:108` `agentMdTemplate = ""`）。
       // 判据随之改为：**文件本体仍被创建**（存在）+ **内容为空**（0 字节），两者缺一即红。
       restoredExists <- IO(os.exists(ws / "AGENTS.md"))
       restoredText <- IO(if os.exists(ws / "AGENTS.md") then os.read(ws / "AGENTS.md") else "<missing>")
@@ -767,7 +767,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val system = ActorSystem(s"pcp-12-${scala.util.Random.nextInt(100000)}")
     val res = minimalResources(ws)
     for
-      created <- ProjectCreateTool.call(mkInput("nl-meta", ws.toString), toolCtx(ws, system, res))
+      created <- ProjectTool.call(mkInput("nl-meta", ws.toString), toolCtx(ws, system, res))
       rtOpt <- ProjectRuntimeRegistry.get("nl-meta")
       rt = rtOpt.getOrElse(fail("project must be mounted for the NodeList payload"))
       payload <- NodeTools.buildNodeListPayload(rt, None)

@@ -153,7 +153,8 @@ object ProjectCreateService:
           // key — the author explicitly forbids fabricating a root — so both are
           // rejected and we refuse instead.
           //
-          // Call-site enumeration: ProjectCreate's ToolContext has 4 production
+          // Call-site enumeration: Project (the tool; renamed from ProjectCreate,
+          // N2 2026-10-06)'s ToolContext has 4 production
           // construction points — the AgentCore session face (has identity), WS
           // AgentControl (never reaches this tool), and neblink relay /
           // neblink REST remote-exec (NEITHER carries any session identity:
@@ -165,10 +166,10 @@ object ProjectCreateService:
           rootKey match
             case None =>
               IO.pure(Left(ToolError(
-                "ProjectCreate refused to mount: this call carries no session context " +
+                "Project refused to mount: this call carries no session context " +
                   "(both rootSessionId and sessionId are empty or absent), so the project's delivery root " +
                   "cannot be attributed — and inventing a placeholder root is not allowed. " +
-                  "Re-invoke ProjectCreate from an agent session (Nebula / project dispatcher / project node)."
+                  "Re-invoke Project from an agent session (Nebula / project dispatcher / project node)."
               )))
             case Some(root) =>
               val mountedResult = ProjectRuntimeRegistry
@@ -296,12 +297,14 @@ object ProjectCreateService:
   def occupiedWorkspaceError(newName: String, workspace: String, occupant: ProjectDef): String =
     val norm = normalizeWorkspace(workspace).getOrElse(workspace)
     val occupantWs = normalizeWorkspace(occupant.workspace).getOrElse(occupant.workspace)
-    val arch = if occupant.archived.contains(true) then " (archived)" else ""
+    val arch = if occupant.archived.contains(true) then " (archived)"
+               else if occupant.unmounted.contains(true) then " (unmounted)"
+               else ""
     s"Workspace '$norm' is already used by project '${occupant.name}'$arch " +
-      s"(its project.json workspace = '$occupantWs'). ProjectCreate default-denies creating '$newName' " +
+      s"(its project.json workspace = '$occupantWs'). Project default-denies creating '$newName' " +
       "on an occupied workspace — a second project on the same workspace would silently share its " +
       "flow-map / task board / worktrees. Two ways out: " +
-      s"(a) reuse the existing project — ProjectCreate(name='${occupant.name}') to re-mount it, or " +
+      s"(a) reuse the existing project — Project(name='${occupant.name}') to re-mount it, or " +
       s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
       s"(b) pass a different 'workspace' directory for '$newName'."
 
