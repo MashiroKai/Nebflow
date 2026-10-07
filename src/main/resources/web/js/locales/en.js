@@ -767,7 +767,7 @@ export default {
   'ob2.greet1': 'Hello. First time meeting you.',
   'ob2.greet2': 'I\'m the agent born for you inside Nebflow — though right now I have no name, no personality, and no memory of you at all.',
   'ob2.greet3': 'I\'ll ask you one question at a time, like a very short questionnaire. Skip anything you can\'t or don\'t want to answer — skipping won\'t hold us up, it just leaves that page blank for now.',
-  'ob2.greet4': 'What you say becomes two files of memory: Soul.md is "who I am", shaped by what you expect of me; User.md is "who you are". I remember by you, the person — not by project.',
+  'ob2.greet4': 'What you say becomes two files of memory: Soul.md is "who I am", shaped by what you expect of me; User.md is "who you are".',
   'ob2.collected': 'That\'s the whole questionnaire. Now, let me write myself out in front of you.',
   'ob2.intro.meet1': 'Let\'s start with the smallest things.',
   'ob2.intro.meet2': 'Three things have to come first: what I\'m called, what I call you, and what brain I use. Everything after those is optional.',
