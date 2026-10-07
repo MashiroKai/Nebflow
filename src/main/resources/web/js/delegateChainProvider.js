@@ -85,7 +85,10 @@ async function refreshChain(key) {
   mirror.chains.set(key, projectChain(body));
 }
 
-/** 全量刷新：行投影 + 各行键链视图（并发逐键、单键失败不连累）。 */
+/** 全量刷新：行投影 + 各行键链视图（并发逐键、单键失败不连累）。
+ *  刷新完成即广播 delegate-chain-mirror-updated（#56 残项 · 换源即切 UI 承接位，
+ *  晨裁② 2026-10-07）：面板渲染层监听此事件重渲——数据权威恒在本镜像（REST），
+ *  事件零载荷、零帧解读（「帧只当触发器」纪律不变）。 */
 async function refresh() {
   const seq = ++mirror.seq;
   const body = await fetchJson(CHAINS_API.rows());
@@ -95,6 +98,10 @@ async function refresh() {
   emptyKeys.clear();
   const keys = Array.from(new Set(rows.map(rowKey).filter(Boolean)));
   await Promise.all(keys.map((k) => refreshChain(k).catch(() => {})));
+  if (seq !== mirror.seq) return; // 刷新期间又有更新在途——广播交给最新一轮
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('delegate-chain-mirror-updated'));
+  }
 }
 
 /** 按需补拉（getChainByTask 未命中键；fire-and-forget，读口本调用仍返回 null）。 */

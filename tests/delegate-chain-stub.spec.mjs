@@ -6,7 +6,8 @@
 //   T2 骨架行渲染：fixture 注入 ⇒ task#N＋执行器图标＋状态 glyph/状态词；
 //      ready-to-merge 状态词 = §16 键 1「待合并」逐字（#1228 两裁①落库）；
 //      外部行 data-external="1"（S16 粗粒度标记）
-//   T3 混合面板：delegate 区块先于节点区块；统计仍节点口径（骨架批不改统计面）
+//   T3 换源即切（#56 残项 · 晨裁②「并行一窗不保留」）：节点区块零渲染（nodeCreated
+//      帧腿照发也不渲染）；统计 = delegate 行口径（换源批统计面）
 //   T4 适配层单测（页面内纯函数）：rowFromRegistry / chainFromStoreRecord /
 //      mergeQueueFifo（S11 排序键=完成时间 readyAt ↑，非插入序）＋常量钉死
 //   T5 读取口 null 安全：查无链 → null；行清单默认空
@@ -20,7 +21,8 @@
 //   T11 换源生效：/api/chains 路由 ⇒ 零夹具行渲染自 live provider（live/verdict 投影）
 //   T12 per-task 臂：/api/chains/:key ⇒ S10 渲染一致（节点整组替换；渲染面零改动钉）
 //
-// 事件帧/面板驱动与 tasklist-nodes.spec.mjs 同 rig（真实 ws.js 分发路径注入）。
+// 事件帧/面板驱动走真实 ws.js 分发路径注入（原 tasklist-nodes 同 rig spec 已随
+// 节点区块退役除名——退役脸断言移 legacy-ui-retire 族 H 段）。
 //
 // Run: node node_modules/@playwright/test/cli.js test tests/delegate-chain-stub.spec.mjs
 
@@ -193,30 +195,29 @@ test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-t
   expect(pageErrors).toEqual([]);
 });
 
-test('T3 混合面板：delegate 区块先于节点区块；统计仍节点口径（骨架批不改统计面）', async ({ page }) => {
+test('T3 换源即切（#56 残项 · 晨裁②）：并行一窗摘除——nodeCreated 帧腿照发零节点区块渲染；统计=delegate 行口径', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
   await bootApp(page);
   await setFixture(page, { rows: [row31, row32] });
+  // 换源前并行一窗的节点帧腿照发（WS node* 帧族 = provider 刷新触发器面，不撤）：
+  // 面板零节点区块渲染——帧只当触发器，数据权威恒在读取口（REST 镜像/夹具优先缝）。
   await inject(page, {
     type: 'nodeCreated', project: 'alpha', nodeId: 'n-run',
     node: { hasWorktree: false, worktree: null, result: null, retries: 0, id: 'n-run', name: 'scan-repo', agent: 'Backend', status: 'running', createdAt: T0, startedAt: T0, completedAt: null, ttlLeftSec: null },
   });
+  await page.waitForTimeout(900); // 越过 provider 500ms 防抖（帧→刷→镜像事件→重渲全链）
 
   const panel = page.locator('#task-list');
   await expect(panel.locator('.task-delegate')).toHaveCount(2);
-  await expect(panel.locator('.task-chain, .task-node:not(.task-delegate)')).toHaveCount(1);
+  // 🔴 并行一窗不保留（晨裁② 2026-10-07）：节点行/链行/节点分区零渲染。
+  await expect(panel.locator('.task-chain, .task-node:not(.task-delegate)')).toHaveCount(0);
+  await expect(panel.locator('.task-section-nodes')).toHaveCount(0);
 
-  // 顺序：delegate 区块在前（S1 delegate 任务 = 面板主行）。
-  const order = await panel.locator('.task-body-inner > *').evaluateAll((els) => els.map((e) => e.className));
-  const dIdx = order.findIndex((c) => c.includes('task-section-delegates'));
-  const nIdx = order.findIndex((c) => c.includes('task-section-nodes'));
-  expect(dIdx).toBeGreaterThanOrEqual(0);
-  expect(nIdx).toBeGreaterThan(dIdx);
-
-  // 统计仍节点口径（骨架批纪律：统计面零改动）。
-  await expect(panel.locator('.task-stats')).toHaveText('1 任务');
+  // 统计口径归换源批（a60af705d 申报面「delegate 行计数的统计面归换源批」）：
+  // = delegate 行数（键复用 task.statsProgress，语义「{progress} 任务」仍成立）。
+  await expect(panel.locator('.task-stats')).toHaveText('2 任务');
 
   expect(pageErrors).toEqual([]);
 });

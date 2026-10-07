@@ -639,7 +639,9 @@ function projectCardHtml(p) {
   return `
     <div class="team-card project-card" data-project="${esc(name)}" data-running="0">
       <div class="team-card-header">
-        <div class="team-card-title" data-open-flowmap="${esc(name)}" title="${esc(t('project.openFlowMap', { name }))}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span><span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
+        <!-- 入口键（project 域 Flow Map 提示键）已随晨裁②退役照荐落（§3.3 在案）：卡标题
+             不再挂「打开 Flow Map」提示（点击改指行为保留——delegate-chain 链视图，#1228 两裁②）。 -->
+        <div class="team-card-title" data-open-flowmap="${esc(name)}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span><span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
       </div>
       <div class="project-fields">
@@ -712,7 +714,10 @@ function applyCardEmptyState(card, empty) {
   title.classList.toggle('empty', empty);
   if (empty) delete title.dataset.openFlowmap; // 🔴 无节点 → 点进 Flow Map 无意义
   else title.dataset.openFlowmap = name;
-  title.title = empty ? t('project.noNodesHint', { name }) : t('project.openFlowMap', { name });
+  // 入口键 project.openFlowMap 退役（晨裁②）：非空卡标题零提示（点进行为保留）；
+  // 空态提示键 project.noNodesHint 非退役键，原样保留。
+  if (empty) title.title = t('project.noNodesHint', { name });
+  else title.removeAttribute('title');
   const tag = title.querySelector('.project-empty-tag');
   if (tag) tag.hidden = !empty;
 }

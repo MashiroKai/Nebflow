@@ -200,12 +200,17 @@ for (const [name, re] of [
   }
   check(`retire G: ${name}`, hits.length === 0, hits.join(', '));
 }
-// 面 1（改指面在场钉）：项目卡标题入口与节点行/链徽标入口改指 delegate-chain。
+// 面 1（改指面在场钉）：项目卡标题入口与 delegate 行 S10 入口改指 delegate-chain。
 check('retire G: projectTab card title routes to delegate-chain',
   /import\(['"]\.\/delegateChainView\.js['"]\)/.test(codeOnly(retireFiles['js/projectTab.js'])) &&
   /openDelegateChainStructure/.test(codeOnly(retireFiles['js/projectTab.js'])));
-check('retire G: taskList node-row/badge entries route to delegate-chain',
-  (codeOnly(retireFiles['js/taskList.js']).match(/import\(['"]\.\/delegateChainView\.js['"]\)/g) || []).length >= 3);
+// 换源即切翻转（#56 残项 · 晨裁②「并行一窗不保留」）：原「节点行/链徽标入口 ≥3 处」
+// 断言随节点区块退役——taskList 仅存 delegate 行 S10 入口（openDelegateChainTask）；
+// S11 结构入口 = 项目卡标题点击 ＋ S10 视图内结构钮（不在 taskList）。
+check('retire G: taskList keeps only the delegate-row S10 entry; node-row/badge structure entries retired',
+  (codeOnly(retireFiles['js/taskList.js']).match(/import\(['"]\.\/delegateChainView\.js['"]\)/g) || []).length === 1 &&
+  /openDelegateChainTask/.test(codeOnly(retireFiles['js/taskList.js'])) &&
+  !/openDelegateChainStructure/.test(codeOnly(retireFiles['js/taskList.js'])));
 // 拆出件单源确认（零重复拆出、零复制双权威；上游 a60af705d 申报＋delegate-chain-stub T6 静态钉）。
 check('retire G: fmNodeCard single source intact (flowMapTab import edge present in file kept on disk)',
   (read('js/flowMapTab.js') ?? '').includes("from './fmNodeCard.js'") &&
@@ -228,6 +233,62 @@ check('retire G: flowCss per-project layout face removed',
       !cssCode.includes('@keyframes flow-dash');
   })());
 
-// ── H. 测试脚本自身语法 ────────────────────────────────────────
+// ── H. 换源即切承接位（#56 残项 · 晨裁②「并行一窗不保留」＋入口键退役）───────
+// 原裁出处：20261006_201326 呈审稿 §2.2 REST/WS 行内嵌候裁项（并行一窗 vs 换源即切）
+// ＋§3.3 project.openFlowMap 退役面；晨裁②（2026-10-07）：换源即切（并行一窗不保留）
+// ＋入口键退役照荐落。engine setSource 落库面 = 88368a259（delegateChainProvider）。
+const switchFiles = {
+  'js/taskList.js': read('js/taskList.js') ?? '',
+  'js/projectTab.js': read('js/projectTab.js') ?? '',
+  'css/taskList.css': read('css/taskList.css') ?? '',
+  'js/delegateChainProvider.js': read('js/delegateChainProvider.js') ?? '',
+};
+const taskListCode = codeOnly(switchFiles['js/taskList.js']);
+const projectTabCode = codeOnly(switchFiles['js/projectTab.js']);
+
+// 节点区块数据腿零残留（快照对账/WS 订阅/链控缓存——代码符号形态，注释豁免）。
+check('switchcut H: taskList node snapshot/WS-cache legs absent',
+  !/refreshNodeSnapshot|applyNodeWsEvent|nodeCache|chainCache|chainPendingAction|collectNodes\b/.test(taskListCode));
+// 节点行/链行/链徽标/链控构建器零残留。
+check('switchcut H: taskList chain/node row builders absent',
+  !/buildChainRow|buildChainBlock|buildChainBadge|buildChainMemberRow|buildNodeRow|buildNodeSection|nodeTypeOf|NODE_BADGE_KEY|NODE_WORD_KEY/.test(taskListCode));
+// 面板零 WS 知识：帧只当 provider 刷新触发器；面板重渲走镜像事件（换源即切接线）。
+check('switchcut H: taskList has no direct WS subscription (provider-mirror driven)',
+  !/from\s+['"]\.\/ws\.js['"]/.test(taskListCode) && !/onMessage\(/.test(taskListCode));
+// nodeData 消费面收敛到 NODE_STATUS_CLS（fetchFlowMap/controlChain/fetchProjects 随
+// 节点区块退役；projectTab 摘要腿保留边不动＝#1229 面）。
+check('switchcut H: taskList nodeData import shrunk to NODE_STATUS_CLS',
+  /import \{ NODE_STATUS_CLS \} from '\.\/nodeData\.js';/.test(taskListCode) &&
+  !/fetchFlowMap|controlChain|fetchProjects/.test(taskListCode));
+// 入口键 project.openFlowMap 退役照荐落：零 t() 消费（键值保留在册＝零文案 diff）。
+check('switchcut H: openFlowMap entry key retired (zero t() consumption)',
+  !/project\.openFlowMap/.test(taskListCode) && !/project\.openFlowMap/.test(projectTabCode));
+// 统计口径归换源批：task.statsProgress 挂 delegate 行数。
+check('switchcut H: stats = delegate-row count',
+  /task\.statsProgress', \{ progress: delegateRows\.length \}/.test(taskListCode));
+// 换源即切接线：provider 镜像刷新完成广播 ↔ 面板监听重渲（零载荷、零帧解读）。
+check('switchcut H: provider mirror event wired (dispatch + panel listener)',
+  switchFiles['js/delegateChainProvider.js'].includes("new CustomEvent('delegate-chain-mirror-updated')") &&
+  taskListCode.includes("'delegate-chain-mirror-updated'"));
+// CSS 面：链折叠行/成员行/点图/链控/动效/未分组组面摘除；节点行基样与 delegate 面
+// 保留（delegate 行沿用 .task-node 行族＋--task-chain-btn-* 尺寸 token）。
+check('switchcut H: taskList.css chain face removed, node base + delegate face kept',
+  (() => {
+    const css = switchFiles['css/taskList.css']
+      .replace(/^\s*\/\*[\s\S]*?\*\/\s*$/gm, '')  // 整块注释豁免（退役注记）
+      .replace(/^\s*\/\/.*$/gm, '');
+    return !/\.task-chain[-. {]/.test(css) &&
+      !css.includes('.task-node-chain') && !css.includes('.task-node-group') &&
+      !css.includes('.task-node-ungrouped') &&
+      css.includes('.task-node {') && css.includes('.task-delegate-btn') &&
+      css.includes('--task-chain-btn-w');
+  })());
+// 退役脸 spec/取证工具随批除名（原节点区块验收面）。
+check('switchcut H: retired node-block spec/shot tooling absent',
+  !existsSync(join(HERE, '..', 'tests', 'tasklist-nodes.spec.mjs')) &&
+  !existsSync(join(HERE, '..', 'tests', 'tasklist-chainctl-optimistic.spec.mjs')) &&
+  !existsSync(join(HERE, '..', 'scripts', 'shot-tasklist-nodes.cjs')));
+
+// ── I. 测试脚本自身语法 ────────────────────────────────────────
 console.log(failed === 0 ? '\nALL STATIC CHECKS PASS' : `\n${failed} CHECK(S) FAILED`);
 process.exit(failed === 0 ? 0 : 1);
