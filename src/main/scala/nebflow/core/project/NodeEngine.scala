@@ -157,7 +157,15 @@ class NodeEngine(
    * 同款判据：作用域审计寿命必须长于 worktree 座位——座位可被 cleanup 拆除，基
    * 工作区 `.nebflow` 常驻）。只服务 [[NodeDelivery.notifyRedirectAudit]] 一条腿。
    */
-  private[project] val notifyAuditWorkspace: Option[String] = None
+  private[project] val notifyAuditWorkspace: Option[String] = None,
+  /**
+   * **delegate 作用域引擎**标记（jev-plugins 批 #1226 · S9 扩面）：`false`（缺省，
+   * per-project 面）= 逐字节旧行为——节点空声明即空注入，分配面零参与；`true`
+   * （[[DelegateFlowHosts.mount]] 恒传）= 节点 `plugins` **空声明**时走分配面
+   * （[[PluginInjection.forNode]]——delegate spawn ＋ flow/链每步 spawn 是分配
+   * 触发点全集；声明集在场仍恒为权威，派发许可判定点在落库时刻的既有口径不变）。
+   */
+  val delegateScope: Boolean = false
 ) extends NodeCanceller
     with NodeRecovery
     with NodeDelivery

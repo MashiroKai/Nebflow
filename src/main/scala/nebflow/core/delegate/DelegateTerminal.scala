@@ -166,7 +166,14 @@ object DelegateTerminal:
       nebflow.core.project.DelegateFlowHosts
         .unmount(delegateId)
         .handleErrorWith(e => IO(logger.warn(s"delegate flow-host unmount failed: ${e.getMessage}")))
-    verdictLine *> hostUnmount *> MergeQueue.onTerminalIO(delegateId)
+    // jev-plugins 批 #1226：分配插件的 MCP 引用回收（pluginMcp.acquire/release 随
+    // delegate 生命周期——release 是全终态汇合点；幂等 no-op：未分配/外部执行器腿
+    // 恒零持有）。
+    val pluginRelease =
+      resources.pluginMcp
+        .release(delegateId)
+        .handleErrorWith(e => IO(logger.warn(s"delegate plugin MCP release failed: ${e.getMessage}")))
+    verdictLine *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(delegateId)
 
   // ── 内部 ──────────────────────────────────────────────────────────────
 

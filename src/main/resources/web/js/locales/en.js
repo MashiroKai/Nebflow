@@ -917,6 +917,10 @@ export default {
   'settings.jevEndpoint': 'Endpoint',
   'settings.jevKeyRef': 'API key reference',
   'settings.jevHint': 'When enabled, Nebflow-agent Delegate calls ask Jev which plugins a task needs. Without Jev, a regular LLM call decides. keyRef is a secret NAME under ~/.nebflow/secrets/, never the value.',
+  'settings.jevHealth': 'Decision health',
+  'settings.jevHealthUp': 'Up',
+  'settings.jevHealthDown': 'Down',
+  'settings.jevHealthUnconfigured': 'Unconfigured',
   // executors panel (executor-registry batch, 2026-10-03)
   'executors.hint': 'Delegate runs tasks on the default executor below. Detection scans PATH and common install prefixes; external CLIs run headless in their project directory.',
   'executors.empty': 'No executors registered.',

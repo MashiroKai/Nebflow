@@ -881,6 +881,10 @@ export function renderSettings() {
         <input class="cfg-input" id="cfg-jev-keyref" style="width:auto" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}">
       </div>
       <div class="cfg-hint">${t('settings.jevHint')}</div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.jevHealth')}</span>
+        <span class="settings-jev-health" id="settings-jev-health">…</span>
+      </div>
       <button class="cfg-btn" id="btn-save-jev">${t('settings.save')}</button>
     </div>
     <div class="settings-section">
@@ -1178,6 +1182,27 @@ function bindSettingsEvents(content, cfg) {
     this.textContent = ok ? t('settings.saved') : t('settings.saveFailed');
     setTimeout(() => { this.textContent = t('settings.save'); }, 1500);
   });
+
+  // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07).
+  // Read-only probe = GET /api/decision/health (DecisionHealthMonitor; the write
+  // legs are the plugin-allocation calls themselves). A fetch failure leaves the
+  // "…" placeholder (same convention as the executor-current label above).
+  {
+    const slot = document.getElementById('settings-jev-health');
+    if (slot) {
+      fetch('/api/decision/health', { headers: authHeaders() })
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          const d = data && data.decision;
+          if (!d || !slot.isConnected) return;
+          const word = d.status === 'up' ? t('settings.jevHealthUp')
+            : d.status === 'down' ? t('settings.jevHealthDown')
+            : t('settings.jevHealthUnconfigured');
+          slot.textContent = (d.status === 'down' && d.reason) ? `${word} — ${d.reason}` : word;
+        })
+        .catch(() => {});
+    }
+  }
 
   // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
   // 作者裁定（2026-08-30, toggle 即时保存）：开关类设置变更即保存——toggle 不再
