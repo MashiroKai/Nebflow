@@ -85,24 +85,97 @@ function motion(view) {
   return typeof view?.motionEnabled === 'function' ? view.motionEnabled() : true;
 }
 
-/** The turn-top anchor: the last user-class row of #chat — injected bubbles
- *  INCLUDED (toolline-detail 批 2026-10-06, dispatcher 16:54 令「Badge 重建逻辑
- *  Bug」修法：turn 边界 = 任何面向用户的开轮事件——用户消息、注入邮件、节点
- *  消息、定时触发、续聊注入统一重开分组；注入泡自身展示形态零改动，只修
- *  badge 分组边界).
+/* ── badge terminal-state oracle (AskUser badge 分组条件化, author 2026-10-07
+   18:36 三令之②·新口径) ────────────────────────────────────────────────────
+   THE single terminal criterion, shared by turnGroup.js's five boundary
+   readers (isNonInjectedUserRow → turnScope / dissolveTurnChrome /
+   scopeFromHeader / expandGroupContaining / buildTurnSummariesForHistory) and
+   this module's turnAnchor. The old pair of static knives — 398dd72ac「注入腿
+   统一重开」(any user row re-opens) and 0584bf0bb「作答行豁免」(a stamped
+   answer row never opens) — is upgraded to ONE conditional rule:
+
+     上一轮 badge 未到终态 → 并入同组 (merge into the open group)
+     上一轮 badge 已终态   → 下方新开 badge 单行流式 (own line + badge below,
+                             与用户输入同形)
+
+   Terminal criterion = the badge STATUS FIELD, read at ONE point here: a
+   settled `.turn-header` whose `data-turn-state` is `done` / `done-expanded`
+   (the field every settle/build path stamps — turnGroup.js collapseTurn
+   settle path, buildHeader fallback, history summarizeSegment). The walk
+   stops at the first decisive marker above `row`:
+
+   · settled turn-header                     ⇒ TRUE  (previous group terminal)
+   · the ask card this row's stamp answers   ⇒ FALSE (the exchange the answer
+     (`.option-box[data-request-id]` ===       continues is open RIGHT HERE —
+     `data-nf-ask-answer`; stamped rows)       its ack-round badge, when one
+                                               exists, is mid-exchange, never
+                                               the group's terminal — B2/B3
+                                               一枚 header 面不动)
+   · a plain user row (real input, always    ⇒ stamped row: TRUE — the answer's
+     an opener)                                own card is NOT in the segment
+                                               above ⇒ the exchange it replies
+                                               into already closed ⇒ the answer
+                                               opens a NEW group below;
+                                             injected row: FALSE — the group
+                                               above is open ⇒ merge (tail
+                                               injection 并入同组)
+   · exhausted ⇒ FALSE (nothing above ⇒ no badge ⇒ merge)
+
+   Lives HERE because workline.js is the leaf (turnGroup.js already imports
+   this module; the reverse import would close a cycle). */
+export function priorTurnBadgeSettled(chat, row) {
+  if (!chat || !row || !row.classList) return false;
+  const rid = row.getAttribute('data-nf-ask-answer') || '';
+  for (let el = row.previousElementSibling; el; el = el.previousElementSibling) {
+    const cls = el.classList;
+    if (!cls) continue;
+    if (cls.contains('turn-header')) {
+      const st = el.dataset ? el.dataset.turnState : '';
+      if (st === 'done' || st === 'done-expanded') return true;
+      continue;
+    }
+    if (!cls.contains('row')) continue;
+    if (rid) {
+      const boxes = el.querySelectorAll('.option-box[data-request-id]');
+      for (const b of boxes) {
+        if (b.getAttribute('data-request-id') === rid) return false;
+      }
+    }
+    if (cls.contains('user') && !el.hasAttribute('data-nf-ask-answer') &&
+        !(el.querySelector && el.querySelector('.bubble.injected'))) {
+      return !!rid; // plain user row: stamped ⇒ new group; injected ⇒ open tail
+    }
+  }
+  return false;
+}
+
+/** The turn-top anchor: the last user-class row of #chat — CONDITIONAL since
+ *  the AskUser badge 分组条件化批 (author 2026-10-07 18:36 三令之②): a user-
+ *  class row anchors a NEW line only when the group above it has settled its
+ *  badge (priorTurnBadgeSettled — the single oracle above). The pre-conditional
+ *  rulings remain as its branches:
  *
- *  Ask ANSWER rows are NOT openers (AskUser 强制展开修令, 2026-10-06 19:29 令):
- *  a replayed card answer (`data-nf-ask-answer`, stamped by persistence.js off
- *  the recorded `answerOf` User row) continues the turn it was asked inside —
- *  anchoring the live line after it would settle the terminal badge mid-turn,
- *  below the answer bubble, on the reload-mid-ask → answer → terminal path.
- *  同一裁决自己的措辞即判据：turn 边界 = 「**开轮**事件」，作答不开轮。
+ *  · Real user input: unconditional opener (unchanged — the reference shape).
+ *  · Injected rows (toolline-detail 批 2026-10-06, dispatcher 16:54 令「Badge
+ *    重建逻辑 Bug」): turn 边界 = 任何面向用户的开轮事件 — an injection whose
+ *    previous badge is TERMINAL anchors after its bubble (idle injection /
+ *    queued continuation — badge-injected-turn.spec faces); an injection into
+ *    an OPEN tail (busyTail replay, rows after the bubble) merges — no
+ *    re-anchor, the line stays at the turn top. A tail injection with NOTHING
+ *    after it also anchors: the previous turn may be headerless-closed (E5
+ *    text-only — no badge exists to read) and the line must not land inside
+ *    it. Injection bubble display shape zero-changed.
+ *  · Ask ANSWER rows (AskUser 强制展开修令, 2026-10-06 19:29 令, now
+ *    conditional): a replayed card answer (`data-nf-ask-answer`) anchors its
+ *    own line ONLY when the exchange it replied into already settled (下方新开
+ *    — 与用户输入同形); inside its open exchange it stays mid-turn chrome
+ *    (the exemption, conditional).
  *
- *  Before this change the anchor was the last NON-injected user row, so a turn
- *  opened by an external injection (device-mail / node-message / schedule)
- *  anchored its line right after the PREVIOUS turn's user row — the live line
- *  and the badge it settles into landed on top of the previous turn's chrome
- *  (the author's screenshot: 新工具行与旧 badge 位置重叠、注入轮无新 badge).
+ *  Fallback: when the chosen anchor's group already settled (a turn-header
+ *  rides between it and the tail), the arriving turn is NEWER than every row-
+ *  anchored group — the line opens at the chat BOTTOM (anchor = null), never
+ *  above a settled badge (the parallel-badge face the 09:25 令 fixed for the
+ *  pending-ask path).
  *
  *  Deliberately NOT mirrored into turnGroup's turnScope / dissolveTurnChrome /
  *  scopeFromHeader: the live terminal scope is governed by the #403 closure
@@ -119,8 +192,19 @@ function motion(view) {
 function turnAnchor(chat) {
   let anchor = null;
   for (const el of chat.children) {
-    if (el.classList && el.classList.contains('row') && el.classList.contains('user') &&
-        !el.hasAttribute('data-nf-ask-answer')) anchor = el;
+    if (!el.classList || !el.classList.contains('row') || !el.classList.contains('user')) continue;
+    if (el.hasAttribute('data-nf-ask-answer')) {
+      if (priorTurnBadgeSettled(chat, el)) anchor = el;
+      continue;
+    }
+    if (el.querySelector && el.querySelector('.bubble.injected')) {
+      if (priorTurnBadgeSettled(chat, el) || !el.nextElementSibling) anchor = el;
+      continue;
+    }
+    anchor = el; // real user input: unconditional opener
+  }
+  for (let n = anchor ? anchor.nextElementSibling : null; n; n = n.nextElementSibling) {
+    if (n.classList && n.classList.contains('turn-header')) return null;
   }
   return anchor;
 }

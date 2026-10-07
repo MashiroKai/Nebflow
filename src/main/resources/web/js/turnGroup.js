@@ -75,7 +75,7 @@ import { isNearBottom } from './utils.js';
 // buildHeader insert below is only the fallback for turns with no live line
 // (history rebuild, popup restores). One-way dependency: workline.js imports
 // i18n + utils only, so this adds no cycle (chat.js → workline.js ← here).
-import { settleWorklineAsHeader, removeWorkline } from './workline.js';
+import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled } from './workline.js';
 
 /* ---------- row classification ---------- */
 
@@ -100,20 +100,27 @@ function isInjectedRow(row) {
 function isNonInjectedUserRow(row) {
   if (!row.classList || !row.classList.contains('row') ||
       !row.classList.contains('user') || isInjectedRow(row)) return false;
-  // Ask ANSWER row (AskUser 强制展开修令, author 2026-10-06 19:29): the
-  // gateway persists a card answer as a User message carrying `answerOf`
-  // (案 B single construction point, UiMessage.askUserAnswer). Both replay
-  // legs stamp that row `data-nf-ask-answer` (persistence.js). The answer
-  // belongs to the SAME LLM turn it replied into — the turn was BLOCKED on
-  // the ask, not ended by it — so no boundary reader here may treat it as a
-  // turn opener: turnScope / dissolveTurnChrome / scopeFromHeader /
-  // expandGroupContaining / buildTurnSummariesForHistory all consume this
-  // one predicate. Before this exemption the history replay split the turn
-  // at the answer row, the pre-answer segment lost the terminal badge (it
-  // rides the final Ai row AFTER the answer) and summarizeSegment rendered
-  // it flat — every pre-ask tool result force-expanded with no ✻ header,
-  // and the settled header undercounted the turn's tools.
-  return !row.hasAttribute('data-nf-ask-answer');
+  // Real user input: unconditional opener (unchanged — the reference shape).
+  if (!row.hasAttribute('data-nf-ask-answer')) return true;
+  // Ask ANSWER row (AskUser 强制展开修令, author 2026-10-06 19:29 → 条件化升级:
+  // AskUser badge 分组条件化, author 2026-10-07 18:36 三令之②): the gateway
+  // persists a card answer as a User message carrying `answerOf` (案 B single
+  // construction point, UiMessage.askUserAnswer). Both replay legs stamp that
+  // row `data-nf-ask-answer` (persistence.js). The static 0584bf0bb exemption
+  // ("never an opener") is now CONDITIONAL on the previous group's badge
+  // terminal state — the ONE oracle in workline.priorTurnBadgeSettled:
+  //   上一轮 badge 已终态（settled turn-header / closed exchange above）⇒ the
+  //     answer OPENS a new group below, 与用户输入同形 (its continuation's
+  //     line + badge fence below the closed group);
+  //   上一轮 badge 未到终态（the exchange the answer replies into is still
+  //     open — its own ask card found above, or an open badge-less segment）⇒
+  //     the answer stays MID-TURN: no boundary reader may treat it as an
+  //     opener (turnScope / dissolveTurnChrome / scopeFromHeader /
+  //     expandGroupContaining / buildTurnSummariesForHistory all consume this
+  //     one predicate). That keeps the reload-mid-ask → answer → terminal
+  //     exchange ONE header (0584bf0bb's defect face) and the non-blocking
+  //     ack→answer→continuation exchange ONE header (09:25 令 B family).
+  return priorTurnBadgeSettled(row.parentNode, row);
 }
 
 /** v2 tuck set: thinking rows + tool-call rows ONLY. Card deliverables
