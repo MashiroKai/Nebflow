@@ -36,6 +36,14 @@ private[tools] object FileRefs:
    * Allowed extensions for /api/nf-file proxy — prevents reading arbitrary
    * files via src=.
    *
+   * 🔴 2026-10-07 起**本表不再是判据**（askuser-attach-align 批，作者 09:35/09:41
+   * 两令）：端点侧扩展名门整体退役（`NfFilePolicy.NfFileAllowedExt` 注释块），
+   * [[probeFile]] 的扩展名前置过滤随之撤除——「URL 腿过端点整条阶梯」的镜像纪律
+   * 不变，阶梯不再含扩展名维。表本体保留：`FileRefsWhitelistSpec` 的 A14 与端点表
+   * 逐项焊死（两侧同退役、同留存，防单侧复活）。
+   *
+   * 历史沿革（撤门前的前置过滤史，保留可读）：
+   *
    * 2026-09-05 恢复批对齐（以现行端点为准）：与 NfFilePolicy.NfFileAllowedExt
    * （2026-09-03 Canvas interactive-HTML fix 版）逐项一致——删除了端点已不收的
    * avi/eot/wasm/obj/stl/gltf/glb（避免生成必然 400 的死链），补齐端点已放行的
@@ -582,19 +590,19 @@ private[tools] object FileRefs:
    * The executable fix for one of the endpoint's own refusal reasons — a warning
    * that only says "no" costs the agent a second round trip; one that says what
    * to do instead does not. Keyed by the endpoint's `reason` (never by prose).
+   *
+   * 2026-10-07 askuser-attach-align 批：阶梯撤门后可达的拒绝原因只剩凭据两族
+   * （`credential-path` / `credential-hardlink`）——原 `file-type` 分支与「搬进
+   * 可服务域」缺省文案随域门退役；缺省分支保留为凭据语义的兜底文案。
    */
   def servabilityHint(reason: String): String =
     reason match
       case "credential-hardlink" =>
         "copy the file's BYTES to a new file (a hard link shares the credential file's inode, " +
           "so /api/nf-file refuses it however the link is named)"
-      case "file-type" =>
-        "give the file a real extension /api/nf-file serves — the extension is read from the " +
-          "REAL path, so a symlink cannot lend it its name"
       case _ =>
-        "move or copy the file into a location /api/nf-file serves " +
-          s"(data root: ${DataRootServedNamespacesText}; project .nebflow: evidence*/**) " +
-          "and reference it from there"
+        "this location is a credential (a known credential location, a credential-shaped " +
+          "filename, or a credential directory) — attachments/links must not point at credentials"
 
   /**
    * HEAD-equivalent readability: regular file, non-zero size, first byte really
@@ -683,129 +691,123 @@ private[tools] object FileRefs:
    * `value` is the verbatim reference (reported back in the warning), `path`
    * the resolved filesystem path. Returns `Proxy(url)` when the value can be
    * served through `/api/nf-file`, `Reject` otherwise.
+   *
+   * 2026-10-07 askuser-attach-align 批：原第一道「扩展名前置过滤」撤除——端点
+   * 阶梯不再含扩展名维（`NfFilePolicy.NfFileAllowedExt` 注释块），镜像纪律下
+   * 本 probe 亦不再按扩展名拒绝；准入 = 存在 + 普通文件 + ≤[[MaxFileSize]] +
+   * realpath 上的端点同一份阶梯（凭据身份 + inode，`servableByEndpointLayered`）
+   * + 真可读 + URL 往返校验，全部逐字保留。
    */
   def probeFile(value: String, path: Path): RefDecision =
-    val ext = fileExtension(value)
-    if !AllowedExtensions.contains(ext) then
-      RefDecision.Reject(
-        RejectedRef(
-          value,
-          Some(describe(path)),
-          FileRefFailure.ExtensionNotAllowed,
-          s"'.$ext' is not in the proxied extension whitelist (images / video / audio / fonts / pdf / office / js / css / json)"
-        )
-      )
-    else
-      try
-        if !Files.exists(path) then
-          val hint = nearestExistingParent(path)
-            .map(parent => s"; the nearest existing parent directory is ${describe(parent)}")
-            .getOrElse("")
-          RefDecision.Reject(
-            RejectedRef(
-              value,
-              Some(describe(path)),
-              FileRefFailure.NotFound,
-              s"no file at ${describe(path)}$hint"
-            )
+    try
+      if !Files.exists(path) then
+        val hint = nearestExistingParent(path)
+          .map(parent => s"; the nearest existing parent directory is ${describe(parent)}")
+          .getOrElse("")
+        RefDecision.Reject(
+          RejectedRef(
+            value,
+            Some(describe(path)),
+            FileRefFailure.NotFound,
+            s"no file at ${describe(path)}$hint"
           )
-        else if !Files.isRegularFile(path) then
+        )
+      else if !Files.isRegularFile(path) then
+        RefDecision.Reject(
+          RejectedRef(
+            value,
+            Some(describe(path)),
+            FileRefFailure.NotRegularFile,
+            s"${describe(path)} is a directory or another non-regular file"
+          )
+        )
+      else
+        val size = Files.size(path)
+        if size > MaxFileSize then
           RefDecision.Reject(
             RejectedRef(
               value,
               Some(describe(path)),
-              FileRefFailure.NotRegularFile,
-              s"${describe(path)} is a directory or another non-regular file"
+              FileRefFailure.SizeExceeded,
+              s"$size bytes exceeds the ${MaxFileSize / (1024 * 1024)}MB proxy limit"
             )
           )
         else
-          val size = Files.size(path)
-          if size > MaxFileSize then
-            RefDecision.Reject(
-              RejectedRef(
-                value,
-                Some(describe(path)),
-                FileRefFailure.SizeExceeded,
-                s"$size bytes exceeds the ${MaxFileSize / (1024 * 1024)}MB proxy limit"
-              )
-            )
-          else
-            // ── the "is this actually retrievable?" gate (imgref batch ②) ────
-            // A URL string is not evidence that a browser can fetch the bytes.
-            // Each of the four checks below is a way the shipped code counted a
-            // reference as proxied while the render leg could not retrieve it.
-            //
-            // 返工 r2：这四段判据是**URL 腿**的判据，所以拒的时候连**拒在哪一层**
-            // 一起记下来（[[RejectedRef.layer]]）—— 内联腿不在这一层让步，它按
-            // [[inlineMayTakeOver]] 自己决定接不接管这条拒绝。
-            val realTry =
-              try Some(path.toRealPath())
-              catch case e: Exception => None
-            realTry match
-              case None =>
-                RefDecision.Reject(
-                  RejectedRef(
-                    value,
-                    Some(describe(path)),
-                    FileRefFailure.NotReadable,
-                    s"${describe(path)} exists but its real path could not be resolved — " +
-                      "the endpoint resolves the real path before it serves anything, so the reference " +
-                      "would 404; re-create the file (a dangling symlink or a permission-denied parent " +
-                      "directory is the usual cause)"
-                  )
+          // ── the "is this actually retrievable?" gate (imgref batch ②) ────
+          // A URL string is not evidence that a browser can fetch the bytes.
+          // Each of the four checks below is a way the shipped code counted a
+          // reference as proxied while the render leg could not retrieve it.
+          //
+          // 返工 r2：这四段判据是**URL 腿**的判据，所以拒的时候连**拒在哪一层**
+          // 一起记下来（[[RejectedRef.layer]]）—— 内联腿不在这一层让步，它按
+          // [[inlineMayTakeOver]] 自己决定接不接管这条拒绝。
+          val realTry =
+            try Some(path.toRealPath())
+            catch case e: Exception => None
+          realTry match
+            case None =>
+              RefDecision.Reject(
+                RejectedRef(
+                  value,
+                  Some(describe(path)),
+                  FileRefFailure.NotReadable,
+                  s"${describe(path)} exists but its real path could not be resolved — " +
+                    "the endpoint resolves the real path before it serves anything, so the reference " +
+                    "would 404; re-create the file (a dangling symlink or a permission-denied parent " +
+                    "directory is the usual cause)"
                 )
-              case Some(real) =>
-                servableByEndpointLayered(real) match
-                  case Some((layer, reason, message)) =>
-                    RefDecision.Reject(
-                      RejectedRef(
-                        value,
-                        Some(describe(path)),
-                        FileRefFailure.NotServable,
-                        s"$reason: $message — ${servabilityHint(reason)}",
-                        layer = Some(layer)
-                      )
+              )
+            case Some(real) =>
+              servableByEndpointLayered(real) match
+                case Some((layer, reason, message)) =>
+                  RefDecision.Reject(
+                    RejectedRef(
+                      value,
+                      Some(describe(path)),
+                      FileRefFailure.NotServable,
+                      s"$reason: $message — ${servabilityHint(reason)}",
+                      layer = Some(layer)
                     )
-                  case None =>
-                    readableFirstByte(path) match
-                      case Some(reason) =>
-                        RefDecision.Reject(
-                          RejectedRef(
-                            value,
-                            Some(describe(path)),
-                            FileRefFailure.NotReadable,
-                            s"$reason — the reference would render as a broken element; " +
-                              "write a file with real content (or drop the reference)"
-                          )
+                  )
+                case None =>
+                  readableFirstByte(path) match
+                    case Some(reason) =>
+                      RefDecision.Reject(
+                        RejectedRef(
+                          value,
+                          Some(describe(path)),
+                          FileRefFailure.NotReadable,
+                          s"$reason — the reference would render as a broken element; " +
+                            "write a file with real content (or drop the reference)"
                         )
-                      case None =>
-                        val url = s"/api/nf-file?path=${encodePathParam(path.toString)}"
-                        val param = url.substring(url.indexOf("path=") + "path=".length)
-                        decodePathParam(param) match
-                          case Some(back) if back == path.toString => RefDecision.Proxy(url)
-                          case _ =>
-                            RefDecision.Reject(
-                              RejectedRef(
-                                value,
-                                Some(describe(path)),
-                                FileRefFailure.Other,
-                                s"the proxied URL for ${describe(path)} does not decode back to the resolved " +
-                                  "path (encoder/decoder drift) — the endpoint would look for a different path"
-                              )
+                      )
+                    case None =>
+                      val url = s"/api/nf-file?path=${encodePathParam(path.toString)}"
+                      val param = url.substring(url.indexOf("path=") + "path=".length)
+                      decodePathParam(param) match
+                        case Some(back) if back == path.toString => RefDecision.Proxy(url)
+                        case _ =>
+                          RefDecision.Reject(
+                            RejectedRef(
+                              value,
+                              Some(describe(path)),
+                              FileRefFailure.Other,
+                              s"the proxied URL for ${describe(path)} does not decode back to the resolved " +
+                                "path (encoder/decoder drift) — the endpoint would look for a different path"
                             )
-            end match
-          end if
-      catch
-        case e: Exception =>
-          RefDecision.Reject(
-            RejectedRef(
-              value,
-              Some(describe(path)),
-              FileRefFailure.Other,
-              s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
-            )
+                          )
+          end match
+    catch
+      case e: Exception =>
+        RefDecision.Reject(
+          RejectedRef(
+            value,
+            Some(describe(path)),
+            FileRefFailure.Other,
+            s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
           )
-    end if
+        )
+    end try
   end probeFile
 
   // ── inline policy (shared by Card and Pop) ────────────────────────────────

@@ -130,17 +130,38 @@
       };
     };
 
+    /** Canvas 打开腿读数（askuser-attach-align 2026-10-07 重接线后）：
+     *  行入口 = `openAttachmentInCanvas` ⇒ `canvas.openWorkspaceItem`（动态 import 链）
+     *  ⇒ 其 readFile 腿发 `pop.readFile` 帧（path 逐字 = absPath）。旧
+     *  `workspace-open-item` 事件面随 previewLocalPath 代理闸退役、不再产生。
+     *  本 helper 轮询到帧落地为止（import 链异步），预算 2.5s。 */
+    window.__openLegFrames = async (expectPath, budgetMs = 2500) => {
+      const t0 = Date.now();
+      const hits = () => window.__sent.filter(f => f.type === 'pop.readFile' && f.path === expectPath);
+      while (Date.now() - t0 < budgetMs) {
+        if (hits().length > 0) return hits();
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return hits();
+    };
+
     /** 行级入口读数（绕过卡级 capture 哨兵，直接调该行 onclick —— 证明**接线**正确、
-     *  走的是同一单点入口、派发 id 与 live 腿逐字同形）。 */
+     *  走的是 Canvas 打开腿（与 live 腿/Pop 文件卡同源）、readFile path 与 absPath
+     *  逐字同形；同时回报旧事件面计数 = 0（退役实证）。 */
     window.__callRowEntry = async (i) => {
       const box = chatElNow().querySelector('.option-box');
       const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
       const row = rows[i];
-      if (!row || typeof row.onclick !== 'function') return { dispatched: 0, detailIds: [], reason: 'no-row-or-handler' };
+      if (!row || typeof row.onclick !== 'function') return { dispatched: 0, detailIds: [], events: 0, reason: 'no-row-or-handler' };
       window.__events.length = 0;
+      window.__sent.length = 0;
       row.onclick();
-      await new Promise(r => setTimeout(r, 0));
-      return { dispatched: window.__events.length, detailIds: window.__events.map(d => d && d.id) };
+      const frames = await window.__openLegFrames(row.title);
+      return {
+        dispatched: frames.length,
+        detailIds: frames.map(f => f.path),
+        events: window.__events.length,
+      };
     };
 
     /** **live 腿对照读数**（证明「已决卡内附件行不可点」是既有语义、非本批引入）：
@@ -237,9 +258,14 @@
       let click = { dispatched: 0, detailIds: [] };
       if (row) {
         window.__events.length = 0;
+        window.__sent.length = 0;
         row.click();
-        await new Promise(r => setTimeout(r, 0));
-        click = { dispatched: window.__events.length, detailIds: window.__events.map(d => d && d.id) };
+        const frames = await window.__openLegFrames(row.title);
+        click = {
+          dispatched: frames.length,
+          detailIds: frames.map(f => f.path),
+          events: window.__events.length,
+        };
       }
       return { read, click };
     };

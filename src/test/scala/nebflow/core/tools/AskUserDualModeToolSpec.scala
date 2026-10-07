@@ -283,7 +283,7 @@ class AskUserDualModeToolSpec extends FunSuite:
         err
       case Right(ok) => fail(s"$label 期望拒绝（$code），实得过闸：$ok")
 
-  test("附件形态: 顶层可选 —— parseAttachments 缺省/非数组 ⇒ Nil；非字符串项丢弃；校验过闸原样返回") {
+  test("附件形态: 顶层可选 —— parseAttachments 缺省/非数组 ⇒ Nil；非字符串项丢弃；校验过闸返回解析后绝对路径") {
     assertEquals(AskUserQuestionTool.parseAttachments(JsonObject.empty), Nil)
     assertEquals(AskUserQuestionTool.parseAttachments(JsonObject("attachments" -> "not-an-array".asJson)), Nil)
     assertEquals(
@@ -296,66 +296,91 @@ class AskUserDualModeToolSpec extends FunSuite:
     assertEquals(AskUserQuestionTool.validateAttachments(List(f.toString)), Right(List(f.toString)))
   }
 
-  test("附件拒绝①: 非绝对路径 / `~` / `..`·`.` 词法（禁折叠、禁展开）") {
-    val root = freshRoot("lexical")
-    val f = servedFile(root, "projects/demo/a.pdf")
-    PathUtil.setDataRoot(os.Path(root))
-    assertRejected(List("projects/demo/a.pdf"), "ASKUSER_ATTACH_NOT_ABSOLUTE", "相对路径")
-    assertRejected(List("~/Documents/a.pdf"), "ASKUSER_ATTACH_TILDE", "`~`")
-    assertRejected(List(root.resolve("projects/../projects/demo/a.pdf").toString), "ASKUSER_ATTACH_RELATIVE_SEGMENT", "`..`")
-    assertRejected(List(root.resolve("./projects/demo/a.pdf").toString), "ASKUSER_ATTACH_RELATIVE_SEGMENT", "`.`")
-    // 🔴 词法拒**不**看文件是否真存在 ⇒ 上面第 3/4 条命中的是归一化后的真实文件，
-    // 仍然被拒（禁自动折叠 = 审计面可比）。
-    assert(Files.exists(f), "夹具自身不成立")
+  test("附件形态·Pop 同判①: /tmp 等数据域外本机可读路径放行（09:41 翻转——目录域门撤除）") {
+    // 判据 = Pop 文件面（存在 + 普通文件 + probeFile 的端点同一份阶梯）。临时目录
+    // 本就在任何数据根之外 ⇒ 翻转后放行（改前此处被 OUT_OF_DOMAIN 拒——作者四撞之一）。
+    val outside = freshRoot("outside-domain")
+    val f = outside.resolve("report.md")
+    Files.write(f, Array.fill(32)(0x41.toByte))
+    PathUtil.setDataRoot(os.Path(freshRoot("unrelated-root")))
+    assertEquals(AskUserQuestionTool.validateAttachments(List(f.toString)), Right(List(f.toString)))
   }
 
-  test("附件拒绝②: 不存在 / 目录 / 不可读 ⇒ 各自显式拒绝") {
+  test("附件形态·Pop 同判②: `~` 形态展开后放行，回传**解析后**绝对路径（home 注入隔离）") {
+    val fakeHome = freshRoot("fake-home")
+    val seeded = fakeHome.resolve("nebflow-attach-spec/notes.md")
+    Files.createDirectories(seeded.getParent)
+    Files.write(seeded, "# hello".getBytes("UTF-8"))
+    val savedHome = System.getProperty("user.home")
+    System.setProperty("user.home", fakeHome.toString)
+    try
+      // `~/...` 与 Pop 同一解析源（FileRefs.resolvePath 的 sys.props("user.home") 展开）。
+      AskUserQuestionTool.validateAttachments(List("~/nebflow-attach-spec/notes.md")) match
+        case Right(paths) => assertEquals(paths, List(seeded.toString), "`~` 必须展开为绝对路径回传")
+        case Left(err) => fail(s"`~` 形态被拒（Pop 能挂的 AskUser 就能挂）：${err.message}")
+    finally System.setProperty("user.home", savedHome)
+  }
+
+  test("附件形态·Pop 同判③: `.`/`..` 词法段折叠放行（与 Pop 的 normalize 同判，禁词法二把尺）") {
+    val root = freshRoot("dotdot")
+    val f = servedFile(root, "projects/demo/a.pdf")
+    PathUtil.setDataRoot(os.Path(root))
+    val folded = root.resolve("projects/../projects/demo/a.pdf")
+    AskUserQuestionTool.validateAttachments(List(folded.toString)) match
+      case Right(paths) => assertEquals(paths, List(f.toString), "折叠后回传规范绝对路径")
+      case Left(err) => fail(s"词法折叠被拒（Pop 同判要求放行）：${err.message}")
+  }
+
+  test("附件拒绝①: 不存在 / 目录 / 非普通文件（/dev/null）⇒ 各自显式拒绝") {
     val root = freshRoot("existence")
     val dir = root.resolve("projects/demo")
     Files.createDirectories(dir)
     PathUtil.setDataRoot(os.Path(root))
-    assertRejected(List(dir.resolve("nope.pdf").toString), "ASKUSER_ATTACH_UNREADABLE", "不存在")
+    assertRejected(List(dir.resolve("nope.md").toString), "ASKUSER_ATTACH_NOT_FOUND", "不存在")
     assertRejected(List(dir.toString), "ASKUSER_ATTACH_NOT_REGULAR", "目录")
+    if Files.exists(java.nio.file.Paths.get("/dev/null")) then
+      assertRejected(List("/dev/null"), "ASKUSER_ATTACH_NOT_REGULAR", "字符设备")
   }
 
-  test("附件拒绝③: 越界（不在可读域）/ 凭据域 —— 判据经 FilePolicyPort，文案只给域清单名") {
-    val root = freshRoot("domain")
-    val outside = servedFile(root, "top.pdf") // dataRoot 下的非白名单首段
-    val secret = servedFile(root, "secrets/secret.pdf") // 凭据段
+  test("附件拒绝②: 凭据身份（形态名）与凭据 inode（secrets 子树）—— 域外逃逸面零松动") {
+    val root = freshRoot("credential")
     PathUtil.setDataRoot(os.Path(root))
-    val e1 = assertRejected(List(outside.toString), "ASKUSER_ATTACH_OUT_OF_DOMAIN", "越界")
-    assert(e1.message.contains(AskUserQuestionTool.ReadableDomainLabel), s"文案未给域清单名：${e1.message}")
-    // 🔴 文案只给**域清单名**，不给宿主白名单根的物理全貌：即便入参路径本身被回显，
-    // 也不得出现「端点根/白名单根」的其它绝对路径（`/Users/<name>/.nebflow` 一类）。
-    assert(
-      !e1.message.contains(PathUtil.dataRoot.toString) || e1.message.contains(outside.toString),
-      s"文案泄漏宿主数据根：${e1.message}"
-    )
-    assert(!e1.message.contains(System.getProperty("user.home")), s"文案泄漏 home：${e1.message}")
-    assertRejected(List(secret.toString), "ASKUSER_ATTACH_OUT_OF_DOMAIN", "凭据段（先被凭据阶梯拦下）")
+    // 凭据形态 basename（判据本体 = NfFilePolicy.NfCredentialNamePattern，本文件零复制）。
+    // 落在**数据域外**的普通临时目录——拒绝只能来自凭据身份层，不能来自目录域（门已撤）。
+    val elsewhere = freshRoot("credential-outside")
+    val keyFile = elsewhere.resolve("id_rsa")
+    Files.write(keyFile, "not-a-real-key".getBytes("UTF-8"))
+    val e = assertRejected(List(keyFile.toString), "ASKUSER_ATTACH_CREDENTIAL", "凭据形态名")
+    // 09:41 令「报错自解释真实拒绝因」：文案回显输入路径 + 端点同一份拒因（与 Pop
+    // 警告同源逐字）+ 双维度尾注。旧「不点名表项」redaction 随 OUT_OF_DOMAIN 退役
+    // （该 redaction 是给浏览器 403 面的；工具错误面向模型，Pop 警告本就全量引用）。
+    assert(e.message.contains(keyFile.toString), s"文案应回显输入路径：${e.message}")
+    assert(e.message.contains(AskUserQuestionTool.RejectionTypeNote), s"双维度尾注缺失：${e.message}")
+    // 数据根 secrets 子树 = R2 inode 快照收口（scanCredentialInodes 覆盖）。
+    val secret = servedFile(root, "secrets/secret.pdf")
+    assertRejected(List(secret.toString), "ASKUSER_ATTACH_CREDENTIAL", "凭据 inode")
   }
 
-  test("附件拒绝④: 符号链接越界 ⇒ 按真实路径拒（无「按原串判」旁路）") {
+  test("附件拒绝③: 符号链接按真实路径判 —— 链接到凭据真身 ⇒ 拒；链接到普通文件 ⇒ 过（无「按原串判」旁路）") {
     val root = freshRoot("symlink")
-    // 真身 = 同一数据根内**被拒**的位置（非白名单首段）⇒ 链接串在域内、真身在域外（域 = 可读子树）
-    val target = servedFile(root, "top.pdf")
+    val secret = servedFile(root, "secrets/secret-target.pdf")
     val link = root.resolve("projects/demo/link.pdf")
     Files.createDirectories(link.getParent)
-    Files.createSymbolicLink(link, target)
+    Files.createSymbolicLink(link, secret)
     PathUtil.setDataRoot(os.Path(root))
-    assertRejected(List(link.toString), "ASKUSER_ATTACH_OUT_OF_DOMAIN", "symlink 越界")
-    // 对偶：链接指向**域内**真实文件 ⇒ 过闸（拒的是「真实路径越界」，不是「链接」本身）
-    val inside = servedFile(root, "projects/demo/real.pdf")
-    val okLink = root.resolve("projects/demo/ok-link.pdf")
-    Files.createSymbolicLink(okLink, inside)
+    assertRejected(List(link.toString), "ASKUSER_ATTACH_CREDENTIAL", "symlink 指向凭据")
+    // 对偶：链接指向普通文件 ⇒ 过闸（拒的是「真实路径是凭据」，不是「符号链接」本身）。
+    val plain = servedFile(root, "projects/demo/real.md")
+    val okLink = root.resolve("projects/demo/ok-link.md")
+    Files.createSymbolicLink(okLink, plain)
     assertEquals(
       AskUserQuestionTool.validateAttachments(List(okLink.toString)).isRight,
       true,
-      "域内符号链接被误拒（判据应是「真实路径越界」，不是「符号链接」）"
+      "指向普通文件的符号链接被误拒"
     )
   }
 
-  test("附件拒绝⑤: 件数超上限（单点常量 AttachContract.MaxAttachmentsPerMessage）") {
+  test("附件拒绝④: 件数超上限（单点常量 AttachContract.MaxAttachmentsPerMessage）") {
     val root = freshRoot("count")
     val files = (1 to AttachContract.MaxAttachmentsPerMessage + 1).map(i => servedFile(root, s"projects/demo/f$i.pdf")).toList
     PathUtil.setDataRoot(os.Path(root))
@@ -371,7 +396,7 @@ class AskUserDualModeToolSpec extends FunSuite:
     )
   }
 
-  test("附件拒绝⑥: 单件大小超 100 MB（上限 = 前端 Canvas 打开闸同一把尺）") {
+  test("附件拒绝⑤: 单件大小超 100 MB（上限 = 前端 Canvas 打开闸同一把尺）") {
     assertEquals(AskUserQuestionTool.MaxAttachmentBytes, 100L * 1024 * 1024)
     val root = freshRoot("size")
     val big = servedFile(root, "projects/demo/big.pdf")
@@ -393,44 +418,37 @@ class AskUserDualModeToolSpec extends FunSuite:
     finally ch3.close()
     assertEquals(java.nio.file.Files.size(exact), AskUserQuestionTool.MaxAttachmentBytes)
     assertEquals(
-      AskUserQuestionTool.validateAttachments(List(exact.toString)).isRight,
+      AskUserQuestionTool
+        .validateAttachments(List(exact.toString)).isRight,
       true,
       "恰好等于单件上限的文件被误拒（上限语义应为 ≤）"
     )
   }
 
-  test("附件拒绝⑦: 凭据形态名 / 非普通文件（设备）—— 各自显式拒绝，文案不点名命中表项") {
-    val root = freshRoot("credential")
-    val elsewhere = freshRoot("credential-outside") // 不在数据根内 ⇒ 判据落到凭据名面
+  test("附件拒绝⑥: 双维度自解释尾注随每条拒绝文案（09:35 令②(b)：报错说明哪一维失败、哪一维无关）") {
+    val root = freshRoot("dual-dim")
     PathUtil.setDataRoot(os.Path(root))
-    // 凭据形态 basename（判据本体 = `NfFilePolicy.NfCredentialNamePattern`，本文件零复制）
-    val keyFile = elsewhere.resolve("id_rsa")
-    Files.write(keyFile, "not-a-real-key".getBytes("UTF-8"))
-    val e = assertRejected(List(keyFile.toString), "ASKUSER_ATTACH_CREDENTIAL", "凭据形态名")
-    // 🔴 文案不叙述「命中了哪条表项」（只报输入路径 + 凭据类判词）
-    assert(!e.message.contains("known credential shape"), s"文案叙述了命中表项：${e.message}")
-    assert(e.message.contains(keyFile.toString), s"文案应原样回显输入路径：${e.message}")
-
-    // 非普通文件：/dev/null 存在、可读，但不是普通文件 ⇒ 显式拒（判据在字节层之前）
-    if Files.exists(java.nio.file.Paths.get("/dev/null")) then
-      assertRejected(List("/dev/null"), "ASKUSER_ATTACH_NOT_REGULAR", "字符设备")
-  }
-
-  test("附件判据零复制（机械读数）: 工具源文件内无第二份白名单表/凭据正则/字符串 contains 判定") {
-    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "AskUserQuestionTool.scala")
-    // 判据本体只能在 FilePolicyPort 实现侧（gateway.NfFilePolicy）出现
-    for banned <- List("NfDataRootAllowlist", "NfCredentialNamePattern", "NfCredentialPathSegments", "NfExternalCredentialEntries")
-    do assert(!src.contains(banned), s"工具层出现第二份判据表 `$banned`（禁复制）")
-    // 唯一判据访问点 = FilePolicyPort 的两个问题
-    val hits = "FilePolicyPort\\.port\\.(endpointVerdictLayer|credentialInodeHit)".r.findAllIn(src).toList
-    assertEquals(
-      hits.map(_.replace("FilePolicyPort.port.", "")).sorted,
-      List("credentialInodeHit", "endpointVerdictLayer"),
-      "FilePolicyPort 调用点不再是「两层各一」"
+    val e = assertRejected(List(root.resolve("projects/demo/ghost.md").toString), "ASKUSER_ATTACH_NOT_FOUND", "不存在")
+    assert(e.message.contains(AskUserQuestionTool.RejectionTypeNote), s"尾注缺失：${e.message}")
+    assert(
+      e.message.contains("never the file type"),
+      s"尾注未说明「类型面永不是拒绝维」：${e.message}"
     )
   }
 
-  test("附件全链: 通过校验的附件随 AskUser 派发（工具侧零改写），ack 带附件数") {
+  test("附件判据零复制（机械读数）: 工具源文件内无第二份判据表、无直连 FilePolicyPort（判据经 FileRefs/Pop 同一入口）") {
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "AskUserQuestionTool.scala")
+    // 判据本体只能在 FilePolicyPort 实现侧（gateway.NfFilePolicy）出现
+    for banned <- List("NfDataRootAllowlist", "NfCredentialNamePattern", "NfCredentialPathSegments", "NfExternalCredentialEntries", "NfFileAllowedExt", "AllowedExtensions")
+    do assert(!src.contains(banned), s"工具层出现第二份判据表 `$banned`（禁复制）")
+    // 09:41 令「禁自造第二套域规则/第二权威」：工具层不直连端口（端口问答收拢在
+    // FileRefs——Pop 的同一入口），解析/探针 = FileRefs 两个单点。
+    assert(!src.contains("FilePolicyPort.port."), "工具层直连 FilePolicyPort（应经 FileRefs 同一入口）")
+    assert(src.contains("FileRefs.resolveCandidates"), "解析未走 Pop 同一解析源 FileRefs.resolveCandidates")
+    assert(src.contains("FileRefs.probeFile"), "准入未走 Pop 同一探针 FileRefs.probeFile")
+  }
+
+  test("附件全链: 通过校验的附件以**解析后绝对路径**随 AskUser 派发，ack 带附件数") {
     val root = freshRoot("chain")
     val f = servedFile(root, "projects/demo/a.pdf")
     PathUtil.setDataRoot(os.Path(root))
@@ -446,16 +464,16 @@ class AskUserDualModeToolSpec extends FunSuite:
       case other => fail(s"期望一条 AskUser（带附件），实得：$other")
   }
 
-  test("附件拒绝 ⇒ 整次调用拒（不部分放行）: 一条合法 + 一条越界 ⇒ 零派发") {
+  test("附件拒绝 ⇒ 整次调用拒（不部分放行）: 一条合法 + 一条不存在 ⇒ 零派发") {
     val root = freshRoot("partial")
-    val good = servedFile(root, "projects/demo/good.pdf")
-    val bad = servedFile(root, "top.pdf")
+    val good = servedFile(root, "projects/demo/good.md")
+    val bad = root.resolve("projects/demo/ghost.md")
     PathUtil.setDataRoot(os.Path(root))
     val sink = scala.collection.mutable.ListBuffer.empty[AgentCommand]
     val ctx = ctxFor(nebulaDef, 0, Some(recordingRef(sink)))
     val input = twoQuestions.add("attachments", io.circe.Json.arr(good.toString.asJson, bad.toString.asJson))
     AskUserQuestionTool.call(input, ctx).unsafeRunSync() match
-      case Left(err) => assert(err.message.contains("ASKUSER_ATTACH_OUT_OF_DOMAIN"), err.message)
+      case Left(err) => assert(err.message.contains("ASKUSER_ATTACH_NOT_FOUND"), err.message)
       case Right(ok) => fail(s"部分放行：$ok")
     assertEquals(sink.toList, Nil, "被拒的调用仍派发了 AskUser（部分放行）")
   }

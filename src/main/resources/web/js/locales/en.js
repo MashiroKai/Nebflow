@@ -1265,6 +1265,7 @@ export default {
   // 🔴 Draft: author word-for-word review (§16 freeze gate) before it takes
   // effect; effective on the next restart window (static assets are served
   // from inside the jar).
+  'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
   'askUser.attachmentsTitle': 'Attachments',
   'askUser.attachmentsCount': '{n} attachments',
   'askUser.attachmentUnavailable': 'unavailable',

@@ -33,9 +33,12 @@ import scala.jdk.CollectionConverters.*
  * NfTicketRoutesSpec (A1–A16); this file stays the behaviour-equivalence
  * surface (A13).
  *
- * Contract points: ticket auth; whitelist gate (js/css/json in; scripts and
- * unknown types out); byte-identical serving; missing file 404; missing
- * path param 400.
+ * Contract points: ticket auth; byte-identical serving; missing file 404;
+ * missing path param 400. (2026-10-07 askuser-attach-align: the former
+ * whitelist gate is retired — any credential-clean local file serves; the
+ * credential-namespace / hard-link / issuer assertions live in
+ * NfTicketRoutesSpec (A1–A17); this file stays the behaviour-equivalence
+ * surface (A13).
  */
 class NfFileRoutesSpec extends CatsEffectSuite:
 
@@ -161,13 +164,16 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("rejects non-whitelisted executable types (sh)") {
+  test("serves non-whitelisted executable types too (sh) — the extension gate is RETIRED (2026-10-07 flip)") {
     withSeedFile("evil.sh", "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8)) { sh =>
       IO {
-        assertEquals(
-          get(s"/api/nf-file?path=${sh.toString}&ticket=${ticketFor(sh.toString)}").get.status,
-          Status.BadRequest
-        )
+        // askuser-attach-align (author 09:35/09:41 orders): the whitelist is no
+        // longer a gate — the bytes of any credential-clean local file serve
+        // (the Canvas open face renders registered types and downloads the
+        // rest; this endpoint is the byte transport for both).
+        val resp = get(s"/api/nf-file?path=${sh.toString}&ticket=${ticketFor(sh.toString)}").get
+        assertEquals(resp.status, Status.Ok)
+        assertEquals(bodyOf(resp), "#!/bin/sh\n")
       }
     }
   }
@@ -344,18 +350,18 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("still refuses the near-miss macro-enabled / executable types (docm, exe) with the file-type 400") {
-    // `docm` is the deliberate near-miss: macro-enabled OOXML, same family as the
-    // `docx` already served and the same `word/` part layout — it proves the
-    // widening is by EXACT suffix, not by Office family.
+  test("serves the near-miss macro-enabled / executable types (docm, exe) — byte transport only (2026-10-07 flip)") {
+    // `docm` was the deliberate near-miss of the old exact-suffix whitelist;
+    // with the gate retired the endpoint transports the bytes of any
+    // credential-clean file (rendering/download decisions live in the viewer
+    // registry, not here — this route never parses what it serves).
     List("macro.docm", "evil.exe").foreach { name =>
       withSeedFile(name, Array[Byte](1, 2, 3)) { p =>
         IO {
           val resp = get(s"/api/nf-file?path=${p.toString}&ticket=${ticketFor(p.toString)}").get
-          assertEquals(resp.status, Status.BadRequest, s"$name must stay refused")
-          val body = bodyOf(resp)
-          assert(body.contains("File type not allowed"), s"$name: unexpected body: $body")
-          assert(body.startsWith("file-type:"), s"$name: the refusal must name the file-type reason: $body")
+          assertEquals(resp.status, Status.Ok, s"$name must be served (extension gate retired)")
+          val served = resp.body.compile.toVector.unsafeRunSync().toArray
+          assert(java.util.Arrays.equals(served, Array[Byte](1, 2, 3)), s"$name must be byte-identical")
         }
       }
     }

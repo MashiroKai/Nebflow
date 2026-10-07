@@ -142,41 +142,57 @@ class FileRefsServabilityScopeSpec extends FunSuite:
   // ── ② the verdict follows the roots in force, never the first roots ────────
 
   test("current policy: the verdict follows the roots in force, never the roots this JVM saw first"):
+    // 2026-10-07 flip: the namespace reach layer is retired, so the ROOT-DRIFT
+    // probe can no longer ride a top-level data-root file (it serves under
+    // every root now) — and since the root-anchored seed made
+    // `<dataRoot>/auth.json` a credential BY IDENTITY, the basename is refused
+    // under EVERY root (identity is root-free) and carries no drift readout
+    // any more. The root-relative surface that remains is the R2 inode
+    // snapshot (scanCredentialInodes(dataRoot)), and it is only visible
+    // through an ALIAS: a hard link with an innocuous name shares auth.json's
+    // (dev,ino) — refused as CredentialInode under the root in force, served
+    // under any other root.
     val rootA = freshRoot("drift-a")
     val rootB = freshRoot("drift-b")
-    val top = writePng(rootA.resolve("top 1.png"))
-    val served = writePng(rootA.resolve("plots/served 1.png"))
-    val topReal = realOf(top)
-    val servedReal = realOf(served)
-    println(s"[SCOPE-READING] fixture(top)=${describeFixture(top)}")
-    println(s"[SCOPE-READING] fixture(served)=${describeFixture(served)}")
+    val auth = Files.write(rootA.resolve("auth.json"), "\"t\"".getBytes("UTF-8"))
+    val authReal = realOf(auth)
+    Files.createDirectories(rootA.resolve("plots"))
+    val alias = Files.createLink(rootA.resolve("plots/auth-alias.bin"), authReal)
+    val aliasReal = realOf(alias)
+    val plain = writePng(rootA.resolve("plots/plain.png"))
+    val plainReal = realOf(plain)
+    println(s"[SCOPE-READING] fixture(auth)=${describeFixture(auth)}")
 
-    // In force: rootA ⇒ `top 1.png` sits at the data root's TOP LEVEL (outside every
-    // served subtree) while `plots/**` is served.
+    // In force: rootA ⇒ the alias IS a credential inode of this root; the
+    // plain file and the alias's innocuous name are served/refused
+    // respectively by the live layers.
     PathUtil.setDataRoot(os.Path(rootA))
-    val aTop = FileRefs.servableByEndpointLayered(topReal)
-    val aServed = FileRefs.servableByEndpointLayered(servedReal)
-    println(s"[SCOPE-READING] rootA top=${aTop.map(t => (t._1, t._2))} served=${aServed.map(t => (t._1, t._2))}")
-    assertEquals(aTop.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
-    assertEquals(aTop.map(_._2), Some("credential-path"))
-    assertEquals(aServed, None, "plots/** is served from this data root")
+    val aAuth = FileRefs.servableByEndpointLayered(authReal)
+    val aAlias = FileRefs.servableByEndpointLayered(aliasReal)
+    val aPlain = FileRefs.servableByEndpointLayered(plainReal)
+    println(s"[SCOPE-READING] rootA auth=${aAuth.map(t => (t._1, t._2))} alias=${aAlias.map(t => (t._1, t._2))} plain=${aPlain.map(t => (t._1, t._2))}")
+    // root-anchored seed (auth.json inside the data root) fires as Credential
+    assertEquals(aAuth.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Credential))
+    assertEquals(aAlias.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.CredentialInode),
+      "the alias's innocuous name passes identity; the root's own inode snapshot catches it")
+    assertEquals(aPlain, None, "any credential-clean file is served from this data root (namespace layer retired)")
 
-    // In force: rootB (a different, empty root) ⇒ the very same files are OUTSIDE
-    // the data root and the project .nebflow, so the endpoint would serve them.
-    // A policy memoized at the first call would still be answering for rootA here.
+    // In force: rootB ⇒ the very same alias inode belongs to NO root in
+    // force (rootB has its own, different inode snapshot) ⇒ served. A policy
+    // memoized at the first call would still be answering for rootA here.
     PathUtil.setDataRoot(os.Path(rootB))
-    val bTop = FileRefs.servableByEndpointLayered(topReal)
-    val bServed = FileRefs.servableByEndpointLayered(servedReal)
-    println(s"[SCOPE-READING] rootB top=${bTop.map(t => (t._1, t._2))} served=${bServed.map(t => (t._1, t._2))}")
-    assertEquals(bTop, None, "with another data root in force the same file is servable again (no history freeze)")
-    assertEquals(bServed, None)
+    val bAlias = FileRefs.servableByEndpointLayered(aliasReal)
+    val bPlain = FileRefs.servableByEndpointLayered(plainReal)
+    println(s"[SCOPE-READING] rootB alias=${bAlias.map(t => (t._1, t._2))} plain=${bPlain.map(t => (t._1, t._2))}")
+    assertEquals(bAlias, None, "under another data root the alias is not a credential inode (no history freeze)")
+    assertEquals(bPlain, None)
 
-    // …and back: the verdict is a function of the roots in force, not of the order
-    // in which the process happened to meet them.
+    // …and back: the verdict is a function of the roots in force, not of the
+    // order in which the process happened to meet them.
     PathUtil.setDataRoot(os.Path(rootA))
-    val again = FileRefs.servableByEndpointLayered(topReal)
-    println(s"[SCOPE-READING] rootA again top=${again.map(t => (t._1, t._2))}")
-    assertEquals(again.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
+    val again = FileRefs.servableByEndpointLayered(aliasReal)
+    println(s"[SCOPE-READING] rootA again alias=${again.map(t => (t._1, t._2))}")
+    assertEquals(again.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.CredentialInode))
 
   // ── single source: the gate IS the endpoint's own ladder ──────────────────
 
@@ -204,11 +220,15 @@ class FileRefsServabilityScopeSpec extends FunSuite:
         s"credentialInodes=${policy.credentialInodes.size}"
     )
 
+    // 2026-10-07 flip expectations: the namespace reach layer and the FileType
+    // layer no longer refuse — top-level files and extension-lent symlinks
+    // SERVE; the remaining refusals are the R2 inode layer (secrets/*) and the
+    // credential identity tables (.ssh trees).
     val expectations: List[(Path, Option[(nebflow.gateway.NfFilePolicy.NfDenyLayer, String)])] = List(
       realOf(servedPng) -> None,
-      realOf(topPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace, "credential-path")),
-      realOf(secretPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace, "credential-path")),
-      realOf(alias) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.FileType, "file-type")),
+      realOf(topPng) -> None, // namespace reach retired: top-level serves
+      realOf(secretPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Credential, "credential-path")),
+      realOf(alias) -> None, // FileType retired: the symlink serves (its bytes are a real PNG)
       realOf(sshPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Credential, "credential-path"))
     )
 
@@ -269,11 +289,15 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val linkReal = realOf(link)
     val layered = FileRefs.servableByEndpointLayered(linkReal).map(t => (t._1, t._2))
     println(s"[SCOPE-READING] hardlink=${linkReal} layered=$layered inodeClean=${FileRefs.credentialInodeClean(link)}")
-    // The endpoint's credential step runs FIRST and reports the NAMESPACE layer for
-    // this path, so the layer alone says "reach" — the inode answer is the one that
-    // says "credential", and the inline leg must ask it separately.
-    assertEquals(layered.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
-    assertEquals(FileRefs.credentialInodeClean(link), false, "the inode layer must be consulted independently")
+    // 2026-10-07 flip: the namespace reach layer is gone, and a hard link's
+    // realpath is the LINK's OWN path (`<root>/shot link 4.png` — a hard link
+    // shares the inode, not the name): neither the root-anchored seed nor the
+    // root-free identity tables see anything credential-shaped about it. The
+    // ONLY layer that can catch it is the R2 inode guard ⇒ CredentialInode
+    // (exactly the aliasing the (dev,ino) snapshot exists for — realpath
+    // cannot see a hard link).
+    assertEquals(layered.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.CredentialInode))
+    assertEquals(FileRefs.credentialInodeClean(link), false, "the inode layer must be consultable independently")
 
     // the reference is the LINK's own name (`shot link 4.png`): the endpoint
     // resolves the real path itself, and that real path is the credential file
@@ -310,7 +334,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     assertEquals(refs(p, "failed"), 1)
     assertEquals(reasons(p), List("not-servable"))
 
-  test("identity layer: the real path's extension (FileType) is honoured on the inline leg too"):
+  test("FileType layer RETIRED (2026-10-07 flip): an extension-lent symlink embeds — the bytes are what render"):
     val root = freshRoot("identity-filetype")
     val served = writePng(root.resolve("plots/real 6.png"))
     val target = root.resolve("plots/target 6.xyz")
@@ -321,12 +345,18 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     println(
       s"[SCOPE-READING] alias=${realOf(alias)} layered=${FileRefs.servableByEndpointLayered(realOf(alias)).map(t => (t._1, t._2))}"
     )
-    // the reference is the SYMLINK's name (`alias 6.png`): its own extension is a
-    // served image, and the refusal comes from the extension of the REAL path —
-    // which is exactly the layer this test pins
+    // The reference is the SYMLINK's name (`alias 6.png`); the REAL path's
+    // extension is `.xyz`. Before the flip the endpoint's FileType layer
+    // refused exactly this shape; with that layer retired the bytes (a real
+    // PNG) ride and the file embeds — same judgment as the Pop/Canvas open
+    // face, where an unregistered type downloads instead of refusing.
     val p = popImage(alias.toString)
-    assertEquals(refs(p, "inlined"), 0, "a symlink cannot lend the embedded image its MIME by name")
-    assertEquals(refs(p, "failed"), 1)
-    assertEquals(reasons(p), List("not-servable"))
-    assert(details(p).contains("file-type"), s"the refusal quotes the endpoint's own reason: ${details(p)}")
+    assertEquals(refs(p, "inlined"), 1, "the extension is no longer a refusal dimension")
+    assertEquals(refs(p, "failed"), 0)
+    assertEquals(warningsOf(p), Nil)
+    assert(
+      p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+        .exists(_.hcursor.get[String]("src").toOption.exists(_.startsWith("data:image/png;base64,"))),
+      "the payload carries the data: URI"
+    )
 end FileRefsServabilityScopeSpec

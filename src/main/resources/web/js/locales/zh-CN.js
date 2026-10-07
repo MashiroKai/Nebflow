@@ -1220,6 +1220,7 @@ export default {
   // AskUser 附件行批（chain-askuser-enhance-impl，2026-10-02）—— 顶层 `attachments`
   // 渲染为整次提问层的可点击附件行。🔴 草案：候作者逐字过目（§16 冻结闸）后才生效；
   // 生效候重启窗（静态资源服务自 jar 内资源）。
+  'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
   'askUser.attachmentsTitle': '附件',
   'askUser.attachmentsCount': '{n} 个附件',
   'askUser.attachmentUnavailable': '不可用',

@@ -23,14 +23,15 @@ import { authHeaders } from './flowHelpers.js';
 // shouldShow/updateVisibility DOM mechanics live in depVisibility.js now, shared
 // with the /model panel. The visibility predicate and the answer-reset stay here.
 import { createDepVisibility } from './depVisibility.js';
-// AskUser 附件行（本批：顶层 `attachments` ⇒ 整次提问层的可点击附件行）：打开动作
-// **只经**附件预览单点入口 `previewLocalPath`（⇒ `workspace-open-item` ⇒
-// `canvas.openWorkspaceItem`），与消息区附件行为同一条腿 —— 🔴 禁第二套开法
-// （禁新 tabId 前缀 / 禁自拼 URL）。`canPreviewLocalPath` 是同一判据的**同步**出口：
-// 无 viewer 认领 ⇒ 直接渲染静态行（fail-closed，禁假按钮）。
-// 依赖方向安全：attachmentPreview.js 只 import canvas.js / fileViewers.js，二者均
-// 不 import chat.js ⇒ 无环（`scripts/check-circular.mjs` 实证）。
-import { previewLocalPath, canPreviewLocalPath } from './attachmentPreview.js';
+// AskUser 附件行（顶层 `attachments` ⇒ 整次提问层的可点击附件行）。askuser-attach-align
+// 批（2026-10-07 作者令「跟 Pop 保持一致」）后打开动作**直接走** Canvas 打开腿
+// `openAttachmentInCanvas`（⇒ `workspace-open-item` ⇒ `canvas.openWorkspaceItem`，
+// 与 Pop 文件卡同一条通路；禁第二套开法——禁新 tabId 前缀 / 禁自拼 URL / 禁自造
+// 预览）。`previewLocalPath` 的好友/设备面认领闸（含 `EXCLUDED_ITEM_TYPES = {html}`
+// 的不受信内容排除）不再为本行把关——本地面信任级 = Pop 同级。
+// askuser-attach-align 批（2026-10-07 作者令「未注册类型走下载兜底＝与 Pop/Canvas 同判」）：
+// 附件行的类型认领判据读 viewer 注册表自身（禁第二张扩展名表；本件已在 bundle 图内）。
+import { itemTypeForFileName } from './fileViewers.js';
 // Runtime work-line (stream-ux §二.1.1): the single-line badge slot that shows
 // the running tool / thinking and rolls to the next item. Leaf module (imports
 // i18n.js only) — the call sites below are the EXISTING render paths, so the
@@ -2862,7 +2863,7 @@ function probeCanvasFile(path) {
   });
 }
 
-// ---------- AskUser 附件行（本批：顶层 `attachments` ⇒ 整次提问层，2026-10-02） ----------
+// ---------- AskUser 附件行（顶层 `attachments` ⇒ 整次提问层，2026-10-02；askuser-attach-align 2026-10-07 重写判定面） ----------
 /** 折叠阈值：行数 > 3 ⇒ 折叠为「N 个附件」+ 展开（设计卡 §三 3.2）。
  *  🔴 只是**展示**阈值，不是准入上限 —— 件数上限（9）由后端工具调用期拒绝，
  *  前端不复判（禁第二把尺）。 */
@@ -2875,6 +2876,51 @@ function askAttachmentBasename(p) {
   return parts[parts.length - 1] || String(p);
 }
 
+/** 附件点击的 Canvas 打开腿 —— **与 Pop 文件卡同一条通路**（askuser-attach-align
+ *  2026-10-07 作者令「跟 Pop 保持一致」）：直接 `workspace-open-item` 交 Canvas
+ *  既有 `openWorkspaceItem`（去重腿）⇒ `pop.readFile` ⇒ viewer 注册表渲染。
+ *  🔴 刻意**不经** `previewLocalPath`：那道闸带着好友/设备面的
+ *  `EXCLUDED_ITEM_TYPES = {html}` 排除（对端**不受信内容**的 2026-09-15 取证裁词）；
+ *  AskUser 附件是**本机文件**、由用户本人点击，信任级与 Pop 文件卡同级 ⇒ 同通路
+ *  直开（禁把不受信面的排除误伤到本地面）。开法仍只有这一条（禁第二套开法）。
+ *  canvas 腿同件 `openAskCanvas` 的动态 import 形态（E8：失败不阻塞卡面）。 */
+function openAttachmentInCanvas(path, title) {
+  import('./canvas.js').then(({ openWorkspaceItem }) => {
+    openWorkspaceItem({
+      id: 'file:' + path,
+      title: title || String(path).split('/').pop() || 'file',
+      itemType: '',
+      content: '',
+      absPath: path,
+      path,
+      pinned: false,
+    }).catch(() => {});
+  }).catch(() => {});
+}
+
+/** 未注册类型的**下载兜底**（askuser-attach-align 2026-10-07 作者令）：与设备面
+ *  下载键同一字节通路 —— `nfTicket.ticketUrl`（per-path 短票）⇒ `/api/nf-file`
+ *  整件取回 ⇒ blob 交给浏览器下载管理器。本函数**不新开取数面**（同通路纪律）；
+ *  返回 false（铸票/取回失败）时调用方就地降级为静态行（可见降级，禁静默）。 */
+async function downloadAttachmentFile(path, base) {
+  try {
+    const { ticketUrl } = await import('./nfTicket.js');
+    const resp = await fetch(await ticketUrl(path));
+    if (!resp.ok) return false;
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = base || 'attachment';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    return true;
+  } catch { return false; }
+}
+
 /** 附件行的**单一渲染位**（整次提问层；`renderAskUser` 唯一调用方）。
  *
  *  §三 落点 = 卡内 `.option-q-wrapper` 之内、`.option-btn-row` 之前：本函数自建一个
@@ -2884,15 +2930,15 @@ function askAttachmentBasename(p) {
  *  不随之消失。挂载序号在**全部问题 wrapper 之后** ⇒ `markAnsweredPick` 的
  *  `wrappers[qi]`（按问题下标取）不受影响。
  *
- *  行形态（设计卡 §三 3.2）：
- *   · 可点（`canPreviewLocalPath` = 有 viewer 认领）⇒ 真 `<button>`（`glass-control
- *     ob-compare-btn` 同族 = 既有 canvas 腿 viewBtn 同族），点击只走单点入口
- *     `previewLocalPath`（⇒ `workspace-open-item` ⇒ Canvas 既有 openWorkspaceItem
- *     去重腿）。🔴 禁第二套开法（禁专用 tabId 前缀 / 禁自拼 URL / 禁自造预览）。
- *   · 无 viewer 认领（`unsupported`，fail-closed）⇒ 渲染**不可点静态行**（🔴 禁假按钮：
- *     不出 `<button>` / `[role=button]` / `tabindex`；同 `viewBtn.remove()` 纪律）。
- *   · 有认领但探针判定缺失/不可读 ⇒ 该行**就地降级**为静态行 + `attachmentUnavailable`
- *     标注（🔴 只降这一行：其余行与整卡渲染一点不改）。
+ *  行形态（askuser-attach-align 2026-10-07 起；单一附件入口 = 本行的回形针）：
+ *   · viewer 注册表认领的类型（md/pdf/html/office/图片/视频…，判据 =
+ *     `itemTypeForFileName` 读注册表自身，**含 html** —— 本地面信任级 = Pop 同级，
+ *     见 `openAttachmentInCanvas` 头注）⇒ 真按钮，点击走 Canvas 打开腿。
+ *   · 未注册类型 ⇒ 真按钮，点击走**下载兜底**（设备面同通路；不再渲染死静态行
+ *     ——「未注册类型走下载兜底＝与 Pop/Canvas 同判」，作者令原文）。
+ *   · 探针判定缺失/不可读（`probeCanvasFile` 败 / 下载腿败）⇒ 该行**就地降级**为
+ *     静态行 + `attachmentUnavailable` 标注（🔴 只降这一行：其余行与整卡渲染
+ *     一点不改）。🔴 静态行零按钮语义（不出 `<button>` / `[role=button]`）。
  *  文案一律取自 `t()`（🔴 禁硬编码中文串入 JS）。 */
 function renderAskAttachments(box, attachments) {
   const atts = Array.isArray(attachments)
@@ -2918,7 +2964,7 @@ function renderAskAttachments(box, attachments) {
   list.className = 'ask-attachments-list';
   list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; align-items: flex-start;';
 
-  /** 静态（不可点）行：无 viewer 认领 / 探针失败共用同一形态 —— 🔴 零按钮语义。 */
+  /** 静态（不可点）行：探针失败 / 下载腿失败共用同一形态 —— 🔴 零按钮语义。 */
   function makeStaticRow(path, unavailable) {
     const base = askAttachmentBasename(path);
     const row = document.createElement('span');
@@ -2931,17 +2977,21 @@ function renderAskAttachments(box, attachments) {
 
   atts.forEach(path => {
     const base = askAttachmentBasename(path);
-    if (!canPreviewLocalPath(path)) { list.appendChild(makeStaticRow(path, false)); return; }
+    // 类型认领判据 = viewer 注册表自身（禁第二张扩展名表）。认领 ⇒ Canvas 渲染；
+    // 未认领 ⇒ 下载兜底；两者都是**真按钮**（本地面无「必死的假按钮」——下载腿
+    // 失败才有降级，且降级可见）。
+    const claimed = !!itemTypeForFileName(path);
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'glass-control ob-compare-btn';
     btn.title = path;
-    btn.setAttribute('aria-label', t('askUser.attachmentOpenCanvas', { name: base }));
+    btn.setAttribute('aria-label', claimed
+      ? t('askUser.attachmentOpenCanvas', { name: base })
+      : t('askUser.attachmentDownload', { name: base }));
     btn.innerHTML = '<i data-lucide="paperclip"></i><span>' + escapeHtml(base) + '</span>';
     btn.onclick = () => {
-      // 单点入口（唯一合法开法）：无 viewer 认领时它自己 fail-closed 返回
-      // 'unsupported' ⇒ 就地降级，绝不自造第二条开法。
-      if (previewLocalPath({ path, title: base }) !== 'ok') degradeRow(btn, path);
+      if (claimed) openAttachmentInCanvas(path, base);
+      else downloadAttachmentFile(path, base).then(ok => { if (!ok) degradeRow(btn, path); });
     };
     list.appendChild(btn);
     // 可达性探针（复用 canvas 腿同一件：`pop.readFile` + 1500ms 超时形态）：
@@ -2949,7 +2999,7 @@ function renderAskAttachments(box, attachments) {
     probeCanvasFile(path).then(ok => { if (!ok) degradeRow(btn, path); });
   });
 
-  /** 就地降级：可点行 → 不可点静态行（探针失败 / 单点入口回 unsupported 共用）。
+  /** 就地降级：可点行 → 不可点静态行（探针失败 / 下载腿失败共用）。
    *  卡已被替换或移除（`isConnected === false`）时静默跳过 —— 降级只服务在卡行。 */
   function degradeRow(btn, path) {
     if (!btn.isConnected) return;

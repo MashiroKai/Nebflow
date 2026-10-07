@@ -169,17 +169,26 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
   }
 
   // ── A5 / A6 ──────────────────────────────────────────────────────────
-  test("A5/A6: data-root credential paths are 403 credential-path even WITH a valid ticket") {
+  test("A5/A6: credential paths are 403 even WITH a valid ticket (identity pattern + R2 inode)") {
     withEnv { env =>
       IO {
         // The ticket is minted straight from the store — i.e. it deliberately
         // bypasses the issuer's own rejection (A11) to prove the READ leg
         // refuses independently. Defence in depth, not a single chokepoint.
-        for rel <- List("auth.json", "nebflow.json", "secrets/x.txt") do
+        // 2026-10-07 askuser-attach-align flip: the namespace reach layer is
+        // gone; the refusing layer is the IDENTITY face — the basename tables
+        // (auth.json / nebflow.json) and the LIVE root-anchored seed
+        // (auth.json / nebflow.json / the secrets subtree inside the data root;
+        // the R2 inode snapshot remains the alias guard on top).
+        for (rel, want) <- List(
+            ("auth.json", "credential-path"),
+            ("nebflow.json", "credential-path"),
+            ("secrets/x.txt", "credential-path")
+          ) do
           val real = env.pathOf(rel).toRealPath()
           val resp = env.read(s"path=${url(real)}&ticket=${env.ticketFor(real)}").get
           assertEquals(resp.status, Status.Forbidden, s"$rel")
-          assertEquals(reasonOf(resp), "credential-path", s"$rel")
+          assertEquals(reasonOf(resp), want, s"$rel")
       }
     }
   }
@@ -197,15 +206,18 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
   }
 
   // ── A8 ───────────────────────────────────────────────────────────────
-  test("A8: extension gate still runs, and runs AFTER the credential gate (reason=file-type)") {
+  test("A8: the extension gate is RETIRED — a non-whitelisted, credential-clean file serves (2026-10-07 flip)") {
     withEnv { env =>
       IO {
+        // `vps.env` was the A8 fixture precisely because the basename is
+        // credential-SHAPED... wait, no: `.env` files match the pattern only
+        // as a BARE `.env` name; `vps.env` never matched — the old refusal
+        // here came from the extension judge. With that judge retired, the
+        // file serves like any other credential-clean local file.
         val file = env.outside.resolve("vps.env")
         val resp = env.read(s"path=${url(file)}&ticket=${env.ticketFor(file)}").get
-        assertEquals(resp.status, Status.BadRequest)
-        // reason=file-type proves the credential judge let it through (it is
-        // outside the namespaces) and the extension judge is the one refusing.
-        assertEquals(reasonOf(resp), "file-type")
+        assertEquals(resp.status, Status.Ok)
+        assertEquals(bodyOf(resp), "A=1")
       }
     }
   }
@@ -240,11 +252,11 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
   }
 
   // ── A11 / A12 / A16 ──────────────────────────────────────────────────
-  test("A11/A12/A16: the issuer rejects credential paths and bad extensions, and never signs them") {
+  test("A11/A16: the issuer rejects credential paths and never signs them; non-credential paths all sign") {
     withEnv { env =>
       IO {
         val cred = env.pathOf("auth.json")
-        val badExt = env.outside.resolve("vps.env")
+        val formerBadExt = env.outside.resolve("vps.env") // A12 retired with the extension gate
         val good = env.outside.resolve("x.json")
         val resp = env
           .issue(
@@ -252,7 +264,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
               "sessionId" -> Json.fromString("spec"),
               "paths" -> Json.arr(
                 Json.fromString(cred.toString),
-                Json.fromString(badExt.toString),
+                Json.fromString(formerBadExt.toString),
                 Json.fromString(good.toString),
                 Json.fromString("/nonexistent/definitely-missing.json")
               )
@@ -268,21 +280,17 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         val rejected = body.hcursor.downField("rejected").values.getOrElse(Vector.empty).toList
         // A11 — the credential path got no ticket, and is reported
         assert(!tickets.contains(cred.toString))
-        assert(rejected.exists(j => j.hcursor.downField("path").as[String].toOption.contains(cred.toString)))
-        assert(
-          rejected.exists(j =>
-            j.hcursor.downField("path").as[String].toOption.contains(cred.toString) &&
-              j.hcursor.downField("reason").as[String].toOption.contains("credential-path")
-          )
-        )
-        // A12 — the non-whitelisted extension got no ticket
-        assert(!tickets.contains(badExt.toString))
-        assert(
-          rejected.exists(j =>
-            j.hcursor.downField("path").as[String].toOption.contains(badExt.toString) &&
-              j.hcursor.downField("reason").as[String].toOption.contains("file-type")
-          )
-        )
+        assert(rejected.exists(j =>
+          j.hcursor.downField("path").as[String].toOption.contains(cred.toString) &&
+            j.hcursor.downField("reason").as[String].toOption.contains("credential-path")
+        ))
+        // A12 (retired 2026-10-07): the extension face no longer rejects —
+        // the formerly "bad extension" file is SIGNED like any other
+        // credential-clean local file.
+        assert(tickets.contains(formerBadExt.toString), "the extension gate is retired: vps.env must sign")
+        assert(!rejected.exists(j =>
+          j.hcursor.downField("path").as[String].toOption.contains(formerBadExt.toString)
+        ))
         // A16 — the opaque value must not leak the path it unlocks
         val token = body.hcursor
           .downField("tickets")
@@ -338,11 +346,11 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
   // ── A17 (img-ticket batch i, 2026-09-16 · #687-A): `<dataRoot>/docs/**` ──
   //
-  // 作者裁定：`~/.nebflow/docs/**`（人交付落位）加入 A1 数据根命名空间白名单，
-  // 范围仅此一项、顺序语义不变、`head` 精确匹配不变。两条读数：
+  // 作者裁定：`~/.nebflow/docs/**`（人交付落位）加入 A1 数据根命名空间白名单。
+  // 2026-10-07 askuser-attach-align 批（作者 09:35/09:41 两令）后：白名单整体退役
+  // （A17 的 200 由「白名单成员」变成「翻转后的普遍语义」——用例保留作回归锚），
+  // 唯一保留的拒绝维 = 凭据身份 + R2 inode（见 A17-counter 的翻转后读数）。
   //  A17  —— 走**既有链**铸票并读取（🔴 无新旁路、无绕票据）：铸票成功 + 读取 200。
-  //  A17-c —— 反证「没有顺手放开别的路径」：兄弟目录 / 数据根凭据件 / 穿越到
-  //           `~/.ssh` 形态仍逐条 `credential-path`（铸票面 + 读取面各一次）。
   test("A17: `<dataRoot>/docs/**` mints a ticket and reads 200 (author ruling #687-A, existing chain only)") {
     withEnv { env =>
       IO {
@@ -382,36 +390,34 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
   }
 
   test(
-    "A17-counter: the widening is ONE entry — a sibling dir, a data-root credential and a .ssh traversal stay refused"
+    "A17-counter (2026-10-07 flip): former namespace refusals serve; ONLY credential identity/inode stay refused"
   ) {
     withEnv { env =>
       IO {
         val logs = env.pathOf("logs/x.svg")
         Files.createDirectories(logs.getParent)
         Files.write(logs, "<svg/>".getBytes(StandardCharsets.UTF_8))
-        // A data-root entry that is NOT on the allowlist (the fail-closed default)
+        // A data-root entry that is NOT on the (retired) allowlist — served now.
         Files.write(env.pathOf("future-thing.json"), "{}".getBytes(StandardCharsets.UTF_8))
         val sshDir = Files.createDirectories(env.root.resolve(".ssh"))
         Files.write(sshDir.resolve("id_ed25519"), "key".getBytes(StandardCharsets.UTF_8))
-        // Lexically normalized by the verdict chain → <root>/.ssh/id_ed25519, i.e.
-        // OUTSIDE the data root: the pattern reject (credential directory segment)
-        // is what must catch it, not the allowlist.
+        // Lexically normalized by the verdict chain → <root>/.ssh/id_ed25519: the
+        // credential DIRECTORY-SEGMENT table (not any namespace rule) catches it.
         val traversal = env.pathOf("projects/../../.ssh/id_ed25519")
 
-        val cases: List[(Path, String)] = List(
-          (logs, "credential-path"),
+        // ① mint face: the credential cases stay unsigned + reported; the
+        //    former namespace cases SIGN.
+        val credCases: List[(Path, String)] = List(
           (env.pathOf("auth.json"), "credential-path"),
           (env.pathOf("secrets/x.txt"), "credential-path"),
-          (env.pathOf("future-thing.json"), "credential-path"),
           (traversal, "credential-path")
         )
-
-        // ① mint face: every one of them is rejected, and NOTHING is signed
+        val serveCases: List[Path] = List(logs, env.pathOf("future-thing.json"))
         val mint = env
           .issue(
             Json.obj(
               "sessionId" -> Json.fromString("spec"),
-              "paths" -> Json.arr(cases.map((p, _) => Json.fromString(p.toString))*)
+              "paths" -> Json.arr((credCases.map((p, _) => Json.fromString(p.toString)) ++ serveCases.map(p => Json.fromString(p.toString)))*)
             )
           )
           .get
@@ -419,7 +425,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         val mintBody = parse(bodyOf(mint)).toOption.getOrElse(Json.Null)
         val tickets = mintBody.hcursor.downField("tickets").keys.getOrElse(Nil).toList
         val rejected = mintBody.hcursor.downField("rejected").values.getOrElse(Vector.empty).toList
-        for (p, want) <- cases do
+        for (p, want) <- credCases do
           assert(!tickets.contains(p.toString), s"$p must not be signed")
           assert(
             rejected.exists(j =>
@@ -428,10 +434,12 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
             ),
             s"$p must be rejected with $want — got $rejected"
           )
+        for p <- serveCases do
+          assert(tickets.contains(p.toString), s"$p must be signed after the flip (namespace refusal retired)")
 
-        // ② read face: refused even WITH a valid ticket (defence in depth, same
-        //    pattern as A5/A6 — the store is called directly to bypass the issuer)
-        for (p, want) <- cases do
+        // ② read face: credentials refused even WITH a valid ticket (defence in
+        //    depth — the store is called directly to bypass the issuer)
+        for (p, want) <- credCases do
           val read = env.read(s"path=${url(p)}&ticket=${env.ticketFor(p)}").get
           assertEquals(read.status, Status.Forbidden, s"$p")
           assertEquals(reasonOf(read), want, s"$p")
@@ -465,31 +473,32 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
       )
   }
 
-  test("policy: a newly added data-root directory is denied by default (fail-closed)") {
+  test("policy: a newly added data-root directory SERVES after the 2026-10-07 flip (namespace default-deny retired)") {
     withEnv { env =>
       IO {
         Files.write(env.pathOf("future-thing.json"), "{}".getBytes(StandardCharsets.UTF_8))
         val real = env.pathOf("future-thing.json").toRealPath()
         val resp = env.read(s"path=${url(real)}&ticket=${env.ticketFor(real)}").get
-        assertEquals(resp.status, Status.Forbidden)
-        assertEquals(reasonOf(resp), "credential-path")
+        assertEquals(resp.status, Status.Ok, "the namespace reach layer is retired; only credentials refuse")
+        assertEquals(bodyOf(resp), "{}")
       }
     }
   }
 
   test(
-    "policy: P3 namespace is <workspace>/.nebflow — repo files pass, the project .nebflow is denied, evidence*/** is allowlisted"
+    "policy: P3 namespace is RETIRED (2026-10-07 flip) — repo files, project .nebflow and evidence alike serve; credentials still refuse"
   ) {
-    // Pins R1's P3 boundary at the pure-judge level (no HTTP, no existence
-    // race). The 2026-09-11 regression this catches: rooting P3 at the
-    // workspace/repo ROOT instead of the project's `.nebflow` dir makes every
-    // repo file "the project .nebflow directory" and therefore 403 — which the
-    // real-backend smoke spec hit as an unrenderable image.
+    // The 2026-09-11 regression this block used to catch (rooting P3 at the
+    // repo root 403'd every repo file) is structurally impossible after the
+    // flip: there is no namespace reach layer left to mis-root. The pure-judge
+    // pins below now assert the FLIP: only the credential identity tables
+    // refuse. (R2 inode remains the guard for data-root auth/secrets files —
+    // see A5/A6/A17-counter.)
     val ws = Files.createTempDirectory("nebflow-nfp3-test").toRealPath()
     try
       val projNf = Files.createDirectories(ws.resolve(".nebflow"))
       val repoFile = Files.write(ws.resolve("README.md"), "hi".getBytes(StandardCharsets.UTF_8))
-      val denied = Files.write(projNf.resolve("memory.md"), "- a".getBytes(StandardCharsets.UTF_8))
+      val projNfFile = Files.write(projNf.resolve("memory.md"), "- a".getBytes(StandardCharsets.UTF_8))
       val evidenceDir = Files.createDirectories(projNf.resolve("evidence"))
       val evidence =
         Files.write(evidenceDir.resolve("plot.svg"), "<svg/>".getBytes(StandardCharsets.UTF_8))
@@ -499,9 +508,10 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         Set.empty
       )
       assertEquals(NfFilePolicy.nfCredentialDeny(repoFile.toRealPath(), policy), None)
-      assert(
-        NfFilePolicy.nfCredentialDeny(denied.toRealPath(), policy).isDefined,
-        "a file in the project .nebflow dir must be refused (P3)"
+      assertEquals(
+        NfFilePolicy.nfCredentialDeny(projNfFile.toRealPath(), policy),
+        None,
+        "the project .nebflow file serves after the flip (namespace refusal retired)"
       )
       assertEquals(NfFilePolicy.nfCredentialDeny(evidence.toRealPath(), policy), None)
     finally

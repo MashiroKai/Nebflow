@@ -11,6 +11,10 @@ import scala.concurrent.duration.*
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):静态面经注册器倒置
 object AskUserQuestionTool extends Tool:
+
+  /** 附件判据词汇（解析/探针/拒绝枚举）——**Pop 文件面同一套**（askuser-attach-align
+   *  批：禁第二套域规则/第二权威，作者 2026-10-07 09:41 令）。 */
+  import FileRefs.*
   /** 工具名（`AgentCore.schemaVariantFor` 与本工具共用此一处字面量）。 */
   val Name = "AskUserQuestion"
 
@@ -32,9 +36,17 @@ object AskUserQuestionTool extends Tool:
   /** 件数超限的错误码。 */
   val AttachCountCode = "ASKUSER_ATTACH_TOO_MANY"
 
-  /** 附件域的**文案用**清单（判据本体不在此 —— 见 [[judgeAttachmentPath]]）。 */
-  val ReadableDomainLabel: String =
-    "projects, uploads, plots, workspace-items, voice-models, docs, evidence"
+  /**
+   * 双维度自解释尾注（作者 09:35 令②(b)「报错必须双维度齐全」·09:41 令同步改）：
+   * 附件面的拒绝维 = **路径/位置**（不可解析/不存在/非普通文件/不可读/凭据身份/
+   * 超限），**类型面永不是拒绝维**——扩展名门已随 Pop 同判撤除（Canvas viewer
+   * 注册表渲染注册类型；未注册类型点击走下载兜底）。每条拒绝文案附此注，读者
+   * 一眼可判「哪一维失败、哪一维无关」——作者四撞的全因即旧文案只列目录清单、
+   * 两个维度混在一个单码里。
+   */
+  val RejectionTypeNote: String =
+    "The failing dimension is the PATH/LOCATION, never the file type: any readable local " +
+      "file type is accepted (registered types render in Canvas; everything else downloads on click)."
 
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question — never ask clarifying questions in plain text.
@@ -340,9 +352,15 @@ Behavior:
   /**
    * 附件校验：**单次遍历、fail-closed**（任一不过 ⇒ 整次调用拒绝，不部分放行）。
    *
-   * 🔴 判据本体**零复制**：白名单/凭据两层一律经 `FilePolicyPort` 发问（判据本体唯一
-   * 实现在 `gateway.NfFilePolicy`，`FileRefs.scala:105-125` 明写禁第二份副本）；本文件
-   * 内无白名单表、无凭据正则、无字符串 `contains` / 裸 `startsWith` 判定。
+   * 🔴 判据 = **Pop 文件面的同一套**（作者 2026-10-07 09:35/09:41 两令·
+   * 「跟 Pop 保持一致」/「Pop 能挂的 AskUser 就能挂」，禁第二套域规则/第二权威）：
+   * 解析走 `FileRefs.resolveCandidates`（`~` 展开 + `%20`/`+` 变形候选，变形最小
+   * 优先——与 Pop 逐字同一解析源），准入走 `FileRefs.probeFile`（存在/普通文件/
+   * ≤200MB/realpath 上的端点同一份阶梯 = 凭据身份 + R2 inode；**无目录域门、
+   * 无扩展名门**——`/tmp`、`~/.nebflow` 等本机可读路径全部可用）。本文件在此之上
+   * 只保留**一把**自己的尺：单件 ≤ [[MaxAttachmentBytes]]（前端 Canvas 打开闸同
+   * 值；probe 的 200MB 代理闸在其上）。判据不可得 ⇒ fail-closed（拒绝，不假设
+   * 可服务）。拒绝文案不给命中的具体凭据表项、不给宿主绝对路径全貌。
    */
   def validateAttachments(paths: List[String]): Either[ToolError, List[String]] =
     if paths.length > AttachContract.MaxAttachmentsPerMessage then
@@ -358,96 +376,74 @@ Behavior:
       }
 
   /**
-   * 逐条校验：词法形态 → 规范化 → 存在/普通文件/可读 → 大小 → 白名单/凭据层。
-   *
-   * 词法面的判序（`~` 先于绝对性）：`~` 的拒绝理由与被展开后的绝对性无关，先判
-   * `~` 才能给出「不得使用 `~`」这一可判读理由（否则 `~/x` 会被笼统报成「非绝对」，
-   * 失去「禁展开」这一语义）。
+   * 逐条校验（askuser-attach-align 批重写）：解析（Pop 同源）→ probe（Pop 同一
+   * 探针，内部含端点同一份凭据阶梯）→ 自有大小尺。**通过 ⇒ 返回解析后的绝对路径**
+   * （`FileRefs.describe`，与 Pop 载荷同口径）——帧/`.ui.json` 落盘/前端三腿直接
+   * 可用，`~`/`%20` 形态不再依赖前端二次解析。
    */
   private def validateOneAttachment(raw: String): Either[ToolError, String] =
-    if raw == "~" || raw.startsWith("~/") || raw.startsWith("~\\") then
-      // `~` 禁展开：展开会把接收端 home 暴露给发送端构造的字符串（同 TargetDirGuard 理由）。
-      Left(attachmentError("ASKUSER_ATTACH_TILDE", s"Attachment path must not use `~`; give an absolute path: $raw"))
-    else
-      val abs = try java.nio.file.Paths.get(raw) catch case _: Throwable => null
-      if abs == null || !abs.isAbsolute then
-        Left(attachmentError("ASKUSER_ATTACH_NOT_ABSOLUTE", s"Attachment path must be absolute: $raw"))
-      else if raw.split('/').exists(s => s == "." || s == "..") then
-        // `..` / `.` 词法 ⇒ 拒，**禁自动折叠**（折叠会把字符串静默改写为另一路径，审计面失去可比性）。
-        Left(
-          attachmentError(
-            "ASKUSER_ATTACH_RELATIVE_SEGMENT",
-            s"Attachment path must not contain `.` or `..` segments: $raw"
-          )
-        )
-      else resolveAndJudgeAttachment(raw, abs)
-
-  /** 词法面通过后的实体面：存在/普通文件/可读 → 大小 → 白名单/凭据层。 */
-  private def resolveAndJudgeAttachment(raw: String, abs: java.nio.file.Path): Either[ToolError, String] =
-      val real =
-        try Some(abs.toRealPath()) // 符号链接按**真实路径**判，不做按原字符串判的旁路
-        catch case _: Throwable => None
-      real match
-        case None =>
-          Left(attachmentError("ASKUSER_ATTACH_UNREADABLE", s"Attachment is not readable: $raw"))
-        case Some(rp) =>
-          if !java.nio.file.Files.isRegularFile(rp) then
-            Left(attachmentError("ASKUSER_ATTACH_NOT_REGULAR", s"Attachment is not a regular file: $raw"))
-          else
+    val hit = FileRefs.resolveCandidates(
+      raw.trim,
+      FileRefs.resolvePath,
+      v => unresolvableAttachment(v)
+    )
+    hit.path match
+      case None =>
+        // 任何形态都解析不成文件系统路径（含空串/纯空白）。
+        hit.decision match
+          case RefDecision.Reject(rejected) => Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, rejected.detail))
+          case _ => Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, s"the reference could not be resolved: $raw"))
+      case Some(path) =>
+        hit.decision match
+          case RefDecision.Reject(rejected) => Left(rejectionFromProbe(raw, rejected))
+          case _ =>
+            // 自有尺：单件 ≤ MaxAttachmentBytes（probe 的 200MB 代理闸已过）。
             val size =
-              try java.nio.file.Files.size(rp) catch case _: Throwable => -1L
-            if size < 0 || !java.nio.file.Files.isReadable(rp) then
-              Left(attachmentError("ASKUSER_ATTACH_UNREADABLE", s"Attachment is not readable: $raw"))
+              try java.nio.file.Files.size(path) catch case _: Throwable => -1L
+            if size < 0 then
+              Left(
+                attachmentProbeError(
+                  "ASKUSER_ATTACH_UNREADABLE",
+                  raw,
+                  s"the file is present but its size could not be read: ${FileRefs.describe(path)}"
+                )
+              )
             else if size > MaxAttachmentBytes then
               Left(
-                attachmentError(
+                attachmentProbeError(
                   "ASKUSER_ATTACH_TOO_LARGE",
-                  s"Attachment exceeds the ${MaxAttachmentBytes / (1024 * 1024)} MB per-file limit: $raw"
+                  raw,
+                  s"exceeds the ${MaxAttachmentBytes / (1024 * 1024)} MB per-file limit (resolved: ${FileRefs.describe(path)})"
                 )
               )
-            else judgeAttachmentPath(raw, rp)
+            else Right(FileRefs.describe(path))
 
-  /**
-   * 白名单 + 凭据两层：**只向 `FilePolicyPort` 发问**，本文件内零白名单表、零凭据
-   * 正则。端口未接线 / 抛错 ⇒ **fail-closed**（拒绝，不假设可服务）。拒绝文案不给
-   * 命中的具体凭据文件名、不给宿主绝对路径全貌。
-   */
-  private def judgeAttachmentPath(raw: String, real: java.nio.file.Path): Either[ToolError, String] =
-    try
-      FilePolicyPort.port.endpointVerdictLayer(real) match
-        case Some((layer, _, _)) =>
-          layer match
-            case FilePolicyPort.NfDenyLayer.Credential | FilePolicyPort.NfDenyLayer.CredentialInode =>
-              Left(
-                attachmentError(
-                  "ASKUSER_ATTACH_CREDENTIAL",
-                  s"Attachment path is not allowed in a credential domain: $raw"
-                )
-              )
-            case FilePolicyPort.NfDenyLayer.Namespace | FilePolicyPort.NfDenyLayer.FileType =>
-              Left(
-                attachmentError(
-                  "ASKUSER_ATTACH_OUT_OF_DOMAIN",
-                  s"Attachment path is outside the readable domains ($ReadableDomainLabel): $raw"
-                )
-              )
-        case None =>
-          if FilePolicyPort.port.credentialInodeHit(real) then
-            Left(
-              attachmentError(
-                "ASKUSER_ATTACH_CREDENTIAL",
-                s"Attachment path is not allowed in a credential domain: $raw"
-              )
-            )
-          else Right(raw)
-    catch
-      case _: Throwable =>
-        Left(
-          attachmentError(
-            "ASKUSER_ATTACH_JUDGE_UNAVAILABLE",
-            s"Attachment path could not be checked, treating it as not served: $raw"
-          )
-        )
+  /** 解析失败的共用构造（resolveCandidates 的 whenUnresolvable 腿）。 */
+  private def unresolvableAttachment(value: String): RefDecision =
+    RefDecision.Reject(
+      RejectedRef(value, None, FileRefFailure.Unresolvable, s"the path could not be resolved to a filesystem path: $value")
+    )
+
+  /** 拒绝文案 = 输入路径回显 + probe 自己的可判读 detail（与 Pop 警告逐字同源）
+   *  + 双维度尾注 ——「何域可服务（类型面全放）、当前路径为何拒（detail）」齐备。 */
+  private def attachmentProbeError(fallbackCode: String, raw: String, detail: String): ToolError =
+    attachmentError(fallbackCode, s"Attachment refused for `$raw` — $detail. ${RejectionTypeNote}")
+
+  /** probe 的拒绝枚举 → 工具错误码（凭据族保住既有 `ASKUSER_ATTACH_CREDENTIAL` 锚）。 */
+  private def rejectionFromProbe(raw: String, rejected: RejectedRef): ToolError =
+    val code = rejected.failure match
+      case FileRefFailure.NotFound => "ASKUSER_ATTACH_NOT_FOUND"
+      case FileRefFailure.NotRegularFile => "ASKUSER_ATTACH_NOT_REGULAR"
+      case FileRefFailure.NotReadable => "ASKUSER_ATTACH_UNREADABLE"
+      case FileRefFailure.SizeExceeded => "ASKUSER_ATTACH_TOO_LARGE"
+      case FileRefFailure.Unresolvable => "ASKUSER_ATTACH_UNRESOLVED"
+      case FileRefFailure.NotServable =>
+        rejected.layer match
+          case Some(FilePolicyPort.NfDenyLayer.Credential) | Some(FilePolicyPort.NfDenyLayer.CredentialInode) =>
+            "ASKUSER_ATTACH_CREDENTIAL"
+          case _ => "ASKUSER_ATTACH_UNSERVABLE"
+      case _ => "ASKUSER_ATTACH_UNSERVABLE" // ExtensionNotAllowed 已不可产出（门已撤）；Other 兜底
+    attachmentProbeError(code, raw, rejected.detail)
 
   /** 顶层附件参数的一体化入口：解析 + 校验。 */
   def parseAttachmentsOrError(input: JsonObject): Either[ToolError, List[String]] =
@@ -457,7 +453,7 @@ Behavior:
    * 答复落定后的配对恢复（每个**阻塞**调用方的答复单点调用一次）。
    *
    * 本批（root 2026-10-02 令 #462 裁①）后，`AskUserQuestionTool` 自身**不再**是
-   * 此函数的调用方（一律非阻塞、无等待态）；唯一调用方 = `ProjectTool.pathPanel`
+   * 此函数的调用方（一律非阻塞、无等待态）；唯一调用方 = `ProjectCreateTool.pathPanel`
    * —— 那个面板仍在自己的 fiber 里阻塞等待（答复即 `createChain` 的入参），
    * `AgentProcessing` 据此命令的 `awaitsAnswer=true` 标了 `WaitingForUser` 并
    * `DelegateBudget.pause`，本函数是**同一条链的配对解除点**（缺它 ⇒ 会话永久停在

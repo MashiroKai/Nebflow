@@ -163,7 +163,7 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
     const r = await page.evaluate(() => window.__read());
     expect(pageErrors).toEqual([]);
-    expect(r.clickHandlerAttached, '每行挂 onclick（单点入口 previewLocalPath）').toEqual([true, true]);
+    expect(r.clickHandlerAttached, '每行挂 onclick（单点入口 = Canvas 打开腿）').toEqual([true, true]);
     // 历史卡走 lockOptionBox（既有终态语义：历史恢复卡 = 已决卡）：置灰 + disabled。
     // 本批不越界改 lockOptionBox / renderAskAttachments 本体 ⇒ 如实取读数。
     expect(r.boxResolved, '历史恢复卡 = 已决卡（既有 lockOptionBox 语义）').toBe(true);
@@ -176,10 +176,15 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(viaClick.tag).toBe('BUTTON');
     expect(viaClick.dispatched, '终态卡：capture 哨兵拦下整卡点击（既有 lockOptionBox 语义）').toBe(0);
 
-    // ② 行级接线读数：入口函数本身走单点派发，id 逐字 `file:<absPath>`（与 live 腿同源）。
+    // ② 行级接线读数（askuser-attach-align 2026-10-07 重接线后）：入口 =
+    //    Pop 文件卡同一条 Canvas 通路（openAttachmentInCanvas ⇒
+    //    canvas.openWorkspaceItem），可观测面 = 其 readFile 腿（pop.readFile 帧，
+    //    path 逐字 = absPath）；旧 workspace-open-item 事件面随 previewLocalPath
+    //    代理闸退役 ⇒ events = 0 即同判（本地面信任级 = Pop 同级，排除面不再把关）。
     const viaEntry = await page.evaluate(() => window.__callRowEntry(0));
-    expect(viaEntry.dispatched, '行级单点入口本身可用（接线正确）').toBe(1);
-    expect(viaEntry.detailIds, '派发 id 逐字 = file:<absPath>').toEqual(['file:/tmp/nb-histatt-fixture/notes.md']);
+    expect(viaEntry.dispatched, '行级单点入口本身可用（接线正确：Canvas readFile 腿已发出）').toBe(1);
+    expect(viaEntry.detailIds, 'readFile path 逐字 = absPath').toEqual(['/tmp/nb-histatt-fixture/notes.md']);
+    expect(viaEntry.events, '旧预览代理事件面已退役（零 workspace-open-item）').toBe(0);
     await context.close();
   });
 
@@ -248,8 +253,9 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.read.rows, '附件行在位').toBe(1);
     expect(r.read.boxResolved, '交互卡未进终态锁（pending）').toBe(false);
     expect(r.read.disabled, '附件行未禁用 ⇒ 可点').toEqual([false]);
-    expect(r.click.dispatched, '真点击 ⇒ 单点入口派发（可点性实证）').toBe(1);
-    expect(r.click.detailIds).toEqual(['file:/tmp/nb-histatt-fixture/notes.md']);
+    expect(r.click.dispatched, '真点击 ⇒ Canvas 打开腿 readFile 帧已发出（可点性实证）').toBe(1);
+    expect(r.click.detailIds).toEqual(['/tmp/nb-histatt-fixture/notes.md']);
+    expect(r.click.events, '旧预览代理事件面已退役（零 workspace-open-item）').toBe(0);
     await context.close();
   });
 });
