@@ -362,7 +362,9 @@ private[agent] object AgentCompactionHandlers:
           parentRef,
           state,
           replyTo,
-          "[Response truncated: max output tokens reached]",
+          // 四修①：空烧收尾文案单点（Defaults.MaxTokensStubText）——监督者空轮
+          // 判据与终态确定性预检据同串识别本形态，禁字面量散落。
+          Defaults.MaxTokensStubText,
           None,
           None,
           textAlreadyStreamed = false,

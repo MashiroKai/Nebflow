@@ -358,6 +358,19 @@ object ThinkingConfig:
         "budget_tokens" -> tc.budgetTokens.asJson
       )
     else io.circe.Json.Null
+
+  /**
+   * 四修④（2026-10-07 修复令）：worker 侧思考预算帽（纯函数——spec 判红锚）。
+   * 派生会话（depth>0）不得继承根会话被用户调高的 thinking 预算——钳到
+   * [[Defaults.SubagentThinkingBudgetCap]]（32000，UI 客户端缺省形态）以下；
+   * 低于帽的配置原样通过（只设上限，不抬线下）。enabled=false 时预算字段
+   * 照钳不误——本函数维护的单一不变式是「worker 预算 ≤ 帽」，与开关无关
+   * （关着的时候字段不出口，但也不该滞留超帽值待人翻转开关）。
+   */
+  def cappedForSubagent(tc: ThinkingConfig): ThinkingConfig =
+    if tc.budgetTokens > Defaults.SubagentThinkingBudgetCap then
+      tc.copy(budgetTokens = Defaults.SubagentThinkingBudgetCap)
+    else tc
 end ThinkingConfig
 
 case class NebflowServiceConfig(

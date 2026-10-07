@@ -129,7 +129,13 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
         ),
         "supervisor-1"
       )
-      _ <- supervisor ! AgentEvent.Completed(childSid, Nil)
+      // 四修①（2026-10-07）：Nil 消息 = 空烧形态，会走重启/续推链——本件钉的是
+      // parentSessionId 状态落盘管线，给一条真实终文绕开空烧判据（空烧语义由
+      // BackoffSupervisorEmptyBurnSpec 专钉）。
+      _ <- supervisor ! AgentEvent.Completed(
+        childSid,
+        List(nebflow.shared.Message(nebflow.shared.MessageRole.Assistant, Left("done, result is 42")))
+      )
       _ <- waitUntil(3.seconds)(
         resources.subAgentTaskStore
           .loadTasks(parentSid)

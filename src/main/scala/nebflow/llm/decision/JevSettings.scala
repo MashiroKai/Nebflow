@@ -37,9 +37,14 @@ object JevSettings:
    * precedent, so toggling the block takes effect without a restart.
    *
    * The `keyRef` is a NAME under `~/.nebflow/secrets/` (the social/daemon
-   * reference form: the config stores a pointer, never a value). A keyRef that
-   * names an absent file resolves to no token — the provider is still built,
-   * and the call fails as [[DecisionError.Auth]] if genuinely attempted.
+   * reference form: the config stores a pointer, never a value).
+   *
+   * 四修③（2026-10-07 修复令「腿生命周期挂 secrets 在位性」）：`keyRef` 指向的
+   * secret 件缺失/空/不可读 ⇒ **本腿自动关闭**（resolve = None，WARN 在案）——
+   * 调用方（判定机 jevLeg / JevAllocator）直接走兜底腿，不再构造注定 403 的
+   * provider 白烧一次调用。热读口径下补上 secret 件即**自动恢复**（下一次
+   * resolve 现读在位性，无需重启）。keyRef 未配置（None/空白）= 不期望凭据的
+   * 形态，腿照常开启（既有语义不变）。
    */
   def resolve(cfg: Option[JevConfig], health: Option[DecisionHealthPort]): Option[JevSettings] =
     cfg.flatMap { c =>
@@ -58,17 +63,27 @@ object JevSettings:
             )
           val model = c.model.filter(_.nonEmpty).getOrElse(DecisionProvider.DefaultModel)
           val timeout = c.timeoutMs.filter(_ > 0).getOrElse(DecisionProvider.DefaultTimeoutMs)
-          Some(
-            JevSettings(
-              provider = provider,
-              endpoint = endpoint,
-              model = model,
-              timeoutMs = timeout,
-              token = readSecretToken(c.keyRef),
-              choiceHighBasePolicy = c.choiceHighBasePolicy.filter(_.nonEmpty),
-              health = health
+          val token = readSecretToken(c.keyRef)
+          val keyRefExpected = c.keyRef.map(_.trim).exists(_.nonEmpty)
+          if keyRefExpected && token.isEmpty then
+            // 四修③：凭据在位性不满足 ⇒ 腿自动关闭（细节 WARN 已由
+            // readSecretToken 落；此处落「腿级」关闭行——审计可查腿开/腿关）。
+            logger.warnSync(
+              s"jev.keyRef '${c.keyRef.get.trim}' secret absent — decision leg CLOSED (fallback leg takes over); restoring the secret re-opens the leg on the next call (hot read)"
             )
-          )
+            None
+          else
+            Some(
+              JevSettings(
+                provider = provider,
+                endpoint = endpoint,
+                model = model,
+                timeoutMs = timeout,
+                token = token,
+                choiceHighBasePolicy = c.choiceHighBasePolicy.filter(_.nonEmpty),
+                health = health
+              )
+            )
     }
 
   /** Read the config block out of the loaded service config (hot read). */

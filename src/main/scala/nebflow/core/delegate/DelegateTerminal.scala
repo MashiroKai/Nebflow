@@ -27,6 +27,12 @@ import scala.util.Try
  * blocked→blocked(detail)）→ 都没有 = 引擎既有完成语义（completed）。判
  * ready-to-merge 但无分支可并（非 git 工作区 / 分支缺失）= 降级 completed（无可
  * 合并产物，诚实终态）。
+ *
+ * 四修②（2026-10-07 修复令「判词诚实化」）：自申报也缺失时，completed 判词行
+ * 诚实标注 `completed (unjudged — judge unavailable)`（ChainStore 行 source=
+ * `unjudged`）——「判过」与「没判成」审计可分；确定性预检（resultText 空＋
+ * 零工具调用，`sessionToolCalls = Some(0)`）⇒ 直接判 blocked，不依赖 LLM 判
+ * （source=`precheck`）。
  */
 object DelegateTerminal:
 
@@ -45,6 +51,15 @@ object DelegateTerminal:
 
   /**
    * Completed 终态的判定与分流。签名全部取自监督者现场（无第二份状态源）。
+   *
+   * 四修②（2026-10-07 修复令「判词诚实化」）：
+   *   - **确定性预检**（不依赖 LLM 判）：`sessionToolCalls = Some(0)` 且终文
+   *     空/空烧 stub（[[nebflow.shared.Defaults.MaxTokensStubText]]）⇒ 直接判
+   *     blocked（判定机两层连问都不问——空烧形态没有可判之物）；
+   *   - **诚实未判**：判定机两层全败＋自申报缺失 ⇒ 仍落既有 completed 语义
+   *     （fail-open 不变），但判词行诚实标注 `completed (unjudged — judge
+   *     unavailable)`，ChainStore 行 source=`unjudged`（审计可分「判过」与
+   *     「没判成」）。
    */
   def onCompleted(
       resources: AgentRuntimePort,
@@ -54,7 +69,8 @@ object DelegateTerminal:
       initialPrompt: String,
       resultText: String,
       childRef: ActorRef[AgentCommand],
-      supervisorRef: ActorRef[AgentEvent]
+      supervisorRef: ActorRef[AgentEvent],
+      sessionToolCalls: Option[Int] = None
   ): IO[Outcome] =
     val record = DelegateRegistry.find(delegateId)
     val taskId = record.flatMap(_.taskId)
@@ -86,18 +102,27 @@ object DelegateTerminal:
     for
       digest <- gitDigest
       chains <- inFlightChains
-      judged <- DelegateJudge.DelegateJudgePort.judgeTerminal(
-        DelegateJudge.TerminalInput(
-          delegateId = delegateId,
-          taskBrief = initialPrompt,
-          resultText = resultText,
-          gitDigest = digest,
-          selfReport = selfReport,
-          mergeRound = mergeRound,
-          inFlightChains = chains
-        )
-      )
-      verdict = judged
+      // 四修② 确定性预检（纯函数，先于判定机——空烧形态零 LLM 消耗）。
+      precheck = deterministicPrecheck(resultText, sessionToolCalls)
+      judged <-
+        if precheck.isDefined then IO.pure(None)
+        else
+          DelegateJudge.DelegateJudgePort.judgeTerminal(
+            DelegateJudge.TerminalInput(
+              delegateId = delegateId,
+              taskBrief = initialPrompt,
+              resultText = resultText,
+              gitDigest = digest,
+              selfReport = selfReport,
+              mergeRound = mergeRound,
+              inFlightChains = chains,
+              sessionToolCalls = sessionToolCalls
+            )
+          )
+      // 四修② 诚实未判标记：判定机 None＋自申报 None＋预检未中 ⇒ 判词行标注。
+      unjudged = precheck.isEmpty && judged.isEmpty && selfReport.isEmpty
+      verdict = precheck
+        .orElse(judged)
         .orElse(selfReport.flatMap {
           case ("merge", _)   => Some(DelegateJudge.Verdict.ReadyToMerge) // ③：merge 态自申报 → 入 MergeQueue（无分支由下方降级兜住）
           case ("finish", _)  => Some(DelegateJudge.Verdict.Completed)
@@ -111,23 +136,48 @@ object DelegateTerminal:
       finalVerdict = verdict match
         case DelegateJudge.Verdict.ReadyToMerge if branch.isEmpty => DelegateJudge.Verdict.Completed
         case other => other
-      _ = logVerdict(delegateId, taskId, finalVerdict)
+      // ChainStore 行 source：precheck（确定性预检）/ unjudged（两层全败诚实态）
+      // / judge（判定机或自申报回落——既有口径）。
+      source = if precheck.isDefined then "precheck" else if unjudged then "unjudged" else "judge"
+      _ = logVerdict(delegateId, taskId, finalVerdict, unjudged)
       _ <- IO.blocking(
         ChainStore.appendSync(
           ChainStore.keyFor(taskId, delegateId),
           "terminal-verdict",
-          DelegateJudge.verdictPayload(delegateId, taskId, finalVerdict, source = "judge")
+          DelegateJudge.verdictPayload(delegateId, taskId, finalVerdict, source = source)
         )
       ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
       outcome <- finalVerdict match
         case DelegateJudge.Verdict.ReadyToMerge =>
           holdForMerge(resources, record, delegateId, parentSessionId, childRef, supervisorRef)
         case DelegateJudge.Verdict.Completed =>
-          IO.pure(Outcome.Release("\n\n[delegate-judge] verdict: completed."))
+          IO.pure(Outcome.Release(verdictLineCompleted(unjudged)))
         case DelegateJudge.Verdict.Blocked(reason) =>
           IO.pure(Outcome.Release(s"\n\n[delegate-judge] verdict: blocked — $reason"))
     yield outcome
   end onCompleted
+
+  /**
+   * 四修② 确定性预检（纯函数——spec 判红锚）：全会话零工具调用（`Some(0)`；
+   * `None` = 调用方未计数，预检跳过）且终文为空/空烧 stub ⇒ blocked。与监督者
+   * 空轮判据同串（[[nebflow.shared.Defaults.MaxTokensStubText]]）。
+   */
+  private[delegate] def deterministicPrecheck(resultText: String, sessionToolCalls: Option[Int]): Option[DelegateJudge.Verdict] =
+    sessionToolCalls.filter(_ == 0).filterNot(_ => hasRealOutput(resultText)).map { _ =>
+      DelegateJudge.Verdict.Blocked(
+        "deterministic precheck: session ended with no text output and zero tool calls (empty burn) — judged incomplete without the LLM judge"
+      )
+    }
+
+  /** 终文可用性：非空且不是 max_tokens 空烧 stub（空烧 stub = 无可判产出）。 */
+  private[delegate] def hasRealOutput(resultText: String): Boolean =
+    val t = resultText.trim
+    t.nonEmpty && t != nebflow.shared.Defaults.MaxTokensStubText
+
+  /** completed 判词行（四修②：未判诚实标注——🔴 模型/用户可见文案，作者令原文措辞）。 */
+  private[delegate] def verdictLineCompleted(unjudged: Boolean): String =
+    if unjudged then "\n\n[delegate-judge] verdict: completed (unjudged — judge unavailable)."
+    else "\n\n[delegate-judge] verdict: completed."
 
   /**
    * 任意终态的统一清理（BackoffSupervisor.notifyParentAndStop 内，gate
@@ -194,12 +244,13 @@ object DelegateTerminal:
         }
         parts.mkString("\n")
 
-  /** 判词日志（观测面：审计可查的最小行）。 */
-  private def logVerdict(delegateId: String, taskId: Option[String], v: DelegateJudge.Verdict): Unit =
+  /** 判词日志（观测面：审计可查的最小行；四修② 未判诚实标注随行）。 */
+  private def logVerdict(delegateId: String, taskId: Option[String], v: DelegateJudge.Verdict, unjudged: Boolean = false): Unit =
     val reason = v match
       case DelegateJudge.Verdict.Blocked(r) => s" — $r"
       case _                                => ""
-    logger.info(s"delegate terminal verdict: $delegateId (task=${taskId.getOrElse("-")}) -> ${DelegateJudge.VerdictWire.encode(v)}$reason")
+    val marker = if unjudged && v == DelegateJudge.Verdict.Completed then " (unjudged — judge unavailable)" else ""
+    logger.info(s"delegate terminal verdict: $delegateId (task=${taskId.getOrElse("-")}) -> ${DelegateJudge.VerdictWire.encode(v)}$marker$reason")
 
   /**
    * ready-to-merge 停靠：任务库状态 + 入队轮转。**不通知父、不停 actor**——

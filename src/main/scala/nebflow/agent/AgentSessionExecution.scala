@@ -827,13 +827,22 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               "request-only cleanup applied (session history untouched)"
             )
           }
+          // 四修④（2026-10-07 修复令）：worker 侧思考预算帽——派生会话
+          // （depth>0：delegate / subtask / team 成员）不继承根会话被 UI 调高
+          // 的 thinking 预算，钳到 Defaults.SubagentThinkingBudgetCap（32000，
+          // UI 客户端缺省形态）以下，防 20 分钟空烧再现（现场：鹦鹉骑自行车
+          // delegate，thinking 146K 字符、textLen=0、零工具调用）。纯函数钳在
+          // ThinkingConfig.cappedForSubagent（spec 判红锚）；根会话零变化。
+          workerThinking =
+            if depth > 0 then nebflow.shared.ThinkingConfig.cappedForSubagent(turnCtx.thinkingConfig)
+            else turnCtx.thinkingConfig
           request = LlmRequest(
             messages =
               ttlCleanedMessages.getOrElse(stateWithReminder.messages) ++ contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
-            thinking = Some(nebflow.shared.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
+            thinking = Some(nebflow.shared.ThinkingConfig.toLlmJson(workerThinking)),
             systemStable = Some(systemStable),
             agentModel = freshDef.model,
             // WebSearch P0: housekeeping turns (compact/ask) opt out of

@@ -174,7 +174,10 @@ object DelegateJudgeMachine:
 
   private def smallJudgeWorktree(registry: ProviderRegistry, task: String): IO[Option[Boolean]] =
     utilityCandidate(registry).flatMap {
-      case None => IO.pure(None)
+      // 四修③（2026-10-07 修复令）：utilityCandidate=None 不再静默——WARN 在案
+      // （原静默 None 路径，判定全败只有 finally 的两条腿级 warn，无此因）。
+      case None =>
+        IO(logger.warnSync("delegate-judge: small-judge worktree leg unavailable — utility model resolves to no candidate (judge.utilityModel unresolved AND root candidate chain empty)")) *> IO.pure(None)
       case Some(c) =>
         val params = SendMessageParams(
           messages = List(
@@ -199,7 +202,9 @@ object DelegateJudgeMachine:
 
   private def smallJudgeVerdict(registry: ProviderRegistry, input: TerminalInput): IO[Option[Verdict]] =
     utilityCandidate(registry).flatMap {
-      case None => IO.pure(None)
+      // 四修③：utilityCandidate=None 不再静默——WARN 在案（原静默 None 路径）。
+      case None =>
+        IO(logger.warnSync("delegate-judge: small-judge verdict leg unavailable — utility model resolves to no candidate (judge.utilityModel unresolved AND root candidate chain empty)")) *> IO.pure(None)
       case Some(c) =>
         val params = SendMessageParams(
           messages = List(
@@ -218,7 +223,18 @@ object DelegateJudgeMachine:
           sessionId = Some(JudgeSessionId),
           agentId = Some(JudgeSessionId)
         )
-        singleCall(registry, c.providerId, params).map(_.flatMap(parseVerdict))
+        singleCall(registry, c.providerId, params).flatMap {
+          // 四修③：parseVerdict 失败不再静默——回文在案（原文头部 160 字符，
+          // WARN 可查「判没判成、为何没判成」；None = 回落腿接手，非误判）。
+          case None => IO.pure(None)
+          case Some(raw) =>
+            parseVerdict(raw) match
+              case Some(v) => IO.pure(Some(v))
+              case None =>
+                val excerpt = raw.trim.take(160).replaceAll("\\s+", " ")
+                IO(logger.warnSync(s"delegate-judge: small-judge verdict parse FAILED (raw head: $excerpt) — leg yields None, fallback/self-report takes over")) *>
+                  IO.pure(None)
+        }
     }
   end smallJudgeVerdict
 

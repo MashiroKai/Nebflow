@@ -59,7 +59,14 @@ object DelegateJudge:
        * 「存在非终态成员」的链数（fail-soft 缺席 = 0）。供判定机区分「工作全部
        * 收尾」与「还有自己登记的链在跑」——后者 terminal 不必然是整链终局。
        */
-      inFlightChains: Int = 0
+      inFlightChains: Int = 0,
+      /**
+       * 四修②（2026-10-07 修复令）：**全会话工具调用计数**（Completed 事件携
+       * 带的全会话消息面现算，BackoffSupervisor 传入）。`None` = 调用方未计数
+       * （外部执行器腿 / 直接调用——确定性预检跳过，既有语义）；`Some(0)` 且
+       * resultText 空/空烧 stub ⇒ 终态确定性预检直接判 blocked（不依赖 LLM 判）。
+       */
+      sessionToolCalls: Option[Int] = None
   )
 
   /**

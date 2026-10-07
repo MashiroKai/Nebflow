@@ -219,18 +219,29 @@ class DecisionProviderSpec extends CatsEffectSuite:
 
   // ── credential discipline ──────────────────────────────────────────────
 
-  test("keyRef is a pointer: an absent secret yields no token and never a value in diagnostics") {
+  test("keyRef is a pointer: an absent secret CLOSES the leg (four-fix ③) and never a value in diagnostics") {
     val original = PathUtil.dataRoot
     val tmp = os.temp.dir(prefix = "nb-jev-secret-")
     PathUtil.setDataRoot(tmp)
     try
-      // Point at a name that does not exist: resolution must succeed with no
-      // token (the call would fail auth), not throw and not invent a value.
+      // Point at a name that does not exist: the leg is now CLOSED (resolve =
+      // None, four-fix ③ presence lifecycle — no doomed provider, no 403 burn;
+      // restoring the secret re-opens the leg on the next hot read).
       val cfg = nebflow.shared.JevConfig(enabled = Some(true), keyRef = Some("no-such-secret"))
-      val s = JevSettings.resolve(Some(cfg), None).get
-      assertEquals(s.token, None)
+      assertEquals(JevSettings.resolve(Some(cfg), None), None, "absent secret ⇒ leg closed (four-fix ③)")
+      // The pointer read itself still invents nothing.
+      assertEquals(JevSettings.readSecretToken(Some("no-such-secret")), None)
       // The diagnostic projection must not carry the token at all.
-      val view = DecisionProviders.resolvedView(s.copy(token = Some("LEAK-CANARY")))
+      val canary = JevSettings(
+        provider = DecisionProvider.TypesafeJev,
+        endpoint = "http://localhost",
+        model = "m",
+        timeoutMs = 1000L,
+        token = Some("LEAK-CANARY"),
+        choiceHighBasePolicy = None,
+        health = None
+      )
+      val view = DecisionProviders.resolvedView(canary)
       assert(!view.values.exists(_.contains("LEAK-CANARY")), s"resolvedView must never carry key material: $view")
       assertEquals(view.get("keyRefResolved"), Some("true"))
     finally PathUtil.setDataRoot(original)

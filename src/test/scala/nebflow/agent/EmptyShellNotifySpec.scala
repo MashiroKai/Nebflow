@@ -17,25 +17,29 @@ import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil, ThinkingCon
 import scala.concurrent.duration.*
 
 /**
- * 空壳通知回归测试（message-truncation-report.md 方案 A）：
- * 子 agent 最后一条 assistant 消息为纯空白（"\n\n"）时，
- * 完成通知 payload 必须是 "(no text output)"，而非 `"描述":\n\n\n` 空壳形态。
+ * 空壳通知回归测试（message-truncation-report.md 方案 A ＋ 四修① 2026-10-07 更订）：
  *
- * 修复前：text.nonEmpty 判断让 "\n\n" 溜过 → 空壳 payload
- * 修复后：text.trim.nonEmpty → 走 "(no text output)" 分支
+ *  - 四修①后，「纯空白尾＋全会话零工具调用」= 空烧形态 → 不再是干净完成：
+ *    监督者走重启/续推预算（maxRestarts=2），预算耗尽 → delegate 轨确定性
+ *    预检判 blocked——判词行随 payload 报父（诚实终态），假 completed 不复存在。
+ *  - trim guard 的存续面：**有工具调用**、终文纯空白 → 非空烧（真的干了活）→
+ *    照常完成，payload 仍是 "(no text output)"（原方案的空壳防护不变）。
+ *  - 正常文本尾 → `"描述":\n<text>` 形态（原契约不变）。
  */
 class EmptyShellNotifySpec extends CatsEffectSuite:
 
   /** A child that replies Completed with the given messages, replying to whoever asked. */
   private def completingChild(messages: List[Message]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage[AgentCommand] {
-      case AgentCommand.UserInput(_, replyTo, _, _, _, _, _, _, _, _, _, _, _) =>
-        // NOTE: `!` returns IO[Unit] (the send action) — it MUST be chained
-        // into the returned IO, not discarded by foreach.
-        val send = replyTo.fold(IO.unit)(ref => ref ! AgentEvent.Completed("", messages))
-        send *> IO.pure(Behaviors.stopped[AgentCommand])
-      case _ => IO.pure(Behaviors.stopped[AgentCommand])
-    }
+    def loop: Behavior[AgentCommand] =
+      Behaviors.receiveMessage[AgentCommand] {
+        case AgentCommand.UserInput(_, replyTo, _, _, _, _, _, _, _, _, _, _, _) =>
+          // NOTE: `!` returns IO[Unit] (the send action) — it MUST be chained
+          // into the returned IO, not discarded by foreach.
+          val send = replyTo.fold(IO.unit)(ref => ref ! AgentEvent.Completed("", messages))
+          send *> IO.pure(loop)
+        case _ => IO.pure(loop)
+      }
+    loop
 
   /** Spy parent that captures ExternalEvent payloads (loops on itself). */
   private def spyParent(captured: cats.effect.Ref[IO, List[String]]): Behavior[AgentCommand] =
@@ -116,7 +120,9 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
             parentSessionId = s"$testName-parent-session",
             resources = resources,
             initialPrompt = "ignored",
-            source = "delegate"
+            source = "delegate",
+            minBackoff = 50.millis,
+            maxBackoff = 100.millis
           ),
           s"$testName-supervisor"
         )
@@ -140,7 +146,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
 
   end runCompletedPayload
 
-  test("whitespace-only tail produces '(no text output)', not an empty shell") {
+  test("四修①: whitespace-only tail + zero tools = empty burn → restart chain, then the deterministic precheck's blocked verdict (never a fake completion)") {
     // Last assistant message: thinking block + whitespace-only text ("\n\n")
     val messages = List(
       Message(MessageRole.User, Left("do the thing")),
@@ -150,8 +156,25 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       )
     )
     val payload = runCompletedPayload("ws", messages)
-    assert(payload.contains("(no text output)"), s"expected '(no text output)' marker, got: ${payload.take(80)}")
-    assert(!payload.trim.endsWith(":"), s"payload must not end with bare colon (empty shell), got: ${payload.take(80)}")
+    // The terminal payload carries the honest blocked verdict line (budget
+    // exhausted after maxRestarts pushes; judge-less precheck renders blocked).
+    assert(payload.contains("[delegate-judge] verdict: blocked"), s"empty burn must end blocked, got: ${payload.take(160)}")
+    assert(payload.contains("deterministic precheck"), s"the precheck marker must be named, got: ${payload.take(160)}")
+  }
+
+  test("tools were called + whitespace tail ⇒ NOT an empty burn: trim guard keeps '(no text output)' on the completion path") {
+    val messages = List(
+      Message(MessageRole.User, Left("do the thing")),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("t1", "Bash", io.circe.JsonObject.empty)))),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("t1", "ok")))),
+      Message(
+        MessageRole.Assistant,
+        Right(List(ContentBlock.Thinking("analysis..."), ContentBlock.Text("\n\n")))
+      )
+    )
+    val payload = runCompletedPayload("ws2", messages)
+    assert(payload.contains("(no text output)"), s"expected '(no text output)' marker, got: ${payload.take(120)}")
+    assert(!payload.trim.endsWith(":"), s"payload must not end with bare colon (empty shell), got: ${payload.take(120)}")
   }
 
   test("normal text tail still produces '\"desc\":\\n<text>' form") {

@@ -51,6 +51,27 @@ object Defaults:
   val MaxThinkingBudget = 32768
 
   /**
+   * 四修④（2026-10-07 修复令，作者令原文「subagent 单发调用设 thinking 上限（对齐
+   * UI 客户端 budgetTokens=32000 形态），防 20 分钟空烧再现」）：**worker 侧思考
+   * 预算帽**。任何被派生的会话（depth>0：delegate / subtask / team 成员）的
+   * `thinking.budget_tokens` 都被钳到本值以下——根会话可由用户在 UI 调高预算，
+   * worker 不得继承放大版预算空烧（现场：鹦鹉骑自行车 delegate，thinking 146K
+   * 字符、textLen=0、零工具调用、stopReason=max_tokens，20 分钟零产出）。
+   *
+   * 32000 = UI 客户端缺省形态（`ThinkingConfig` 缺省 + `WsConfigHandlers`
+   * budgetTokens 缺省 + `sidebar.js EFFORT_BUDGETS` 的 high 档），非新数值。
+   */
+  val SubagentThinkingBudgetCap = 32000
+
+  /**
+   * 四修①（2026-10-07 修复令）：max_tokens 空烧的收尾文案单点——
+   * `AgentCompactionHandlers.handleEmptyResponse` 的 isMaxTokens 腿用它作为
+   * turn 终文，`BackoffSupervisor` 的空轮判据与 `DelegateTerminal` 的确定性
+   * 预检据**同串**识别该形态（三处共用本常量，禁字面量散落）。
+   */
+  val MaxTokensStubText: String = "[Response truncated: max output tokens reached]"
+
+  /**
    * Stream inactivity timeout — resets on every stream event (text/tool/compaction).
    * Long tasks with ongoing activity will not be killed; only truly stuck streams time out.
    * Also used as frontend spinner timeout (streamTimeoutMs + 30s buffer).
