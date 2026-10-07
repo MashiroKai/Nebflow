@@ -15,9 +15,10 @@ import nebflow.gateway.NfFilePolicy
  * 🔴 2026-10-07 askuser-attach-align 批（作者 09:35/09:41 两令）：两张表**同时退役**
  * ——端点阶梯的扩展名维与 FileRefs 的前置过滤双双撤除（Canvas viewer 注册表为准，
  * 未注册类型渲染面下载兜底）；表本体与逐项相等不变量**保留**，防任何单侧复活。
- * The namespace mirror (A1) keeps the same shape for the same reason: the Pop
- * prose interpolates the list, so the mirror must not rot even though the
- * namespace judge no longer reads it.
+ * The namespace mirror (A1) keeps the same shape for the same reason — and the
+ * 2026-10-07 askuser-copy-land cut (§16.2 落刀) retires the prose leg with the
+ * judge: the table body stays welded (A1-mirror), while the tool prose must
+ * NOT enumerate the list anymore (the judge no longer reads it).
  *
  * Lives in `nebflow.core.tools` because `FileRefs` is `private[tools]`.
  */
@@ -60,7 +61,8 @@ class FileRefsWhitelistSpec extends FunSuite:
   // allowlist by hand, and the 2026-09-16 author ruling (#687-A) widened the
   // endpoint by exactly one entry (`docs`). These tests make that drift
   // impossible to ship: the tool-side constant must equal the endpoint's list
-  // item for item, and the prose the model reads must name it.
+  // item for item — and (since the 2026-10-07 flip) the prose the model reads
+  // must no longer name it.
 
   test("A1-mirror: FileRefs.DataRootServedNamespaces == NfFilePolicy.NfDataRootAllowlist (no namespace drift)") {
     assertEquals(FileRefs.DataRootServedNamespaces, NfFilePolicy.NfDataRootAllowlist)
@@ -79,11 +81,15 @@ class FileRefsWhitelistSpec extends FunSuite:
     )
   }
 
-  test("A1-mirror: the shipped tool descriptions name every served namespace (prose cannot drift)") {
+  test("A1-mirror (2026-10-07 flip): the shipped tool descriptions no longer enumerate the served namespaces (retired prose cannot silently return)") {
     val text = FileRefs.DataRootServedNamespacesText
-    // Card retired 2026-10-03 (pop-upgrade batch) — PopTool's prose is the mirror face now.
+    // The 2026-10-07 askuser-copy-land cut (§16.2 落刀) rewrote PopTool's prose to
+    // "every readable local location qualifies" — the enumeration left the model face
+    // together with the judge that read it. This leg welds the PROSE side of that
+    // retirement: the list must not reappear in tool prose while the judge no longer
+    // reads it (same anti-single-side-revival weld as the retired tables above).
     List("Pop" -> PopTool.description).foreach { (who, described) =>
-      assert(described.contains(text), s"$who's description must enumerate the served namespaces: $text")
+      assert(!described.contains(text), s"$who's description must not enumerate the retired namespace list: $text")
       assert(
         !described.contains("docs/**` is NOT served") && !described.contains("docs/** is NOT served"),
         s"$who's description still claims docs/** is not served"

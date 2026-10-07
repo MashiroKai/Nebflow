@@ -79,9 +79,9 @@ Conditional branching (dependsOn):
 - Independent questions don't need dependsOn — just include them all in one call.
 
 Attachments:
-- `attachments` (optional, top level, at most 9 entries) lists absolute local file paths to hand to the USER as clickable entries — the file opens in the Canvas panel when the user clicks it. Nothing is read into your context.
+- `attachments` (optional, top level, at most 9 entries) lists local file paths to hand to the USER as clickable entries — the file opens in the Canvas panel when the user clicks it, or downloads when no viewer claims its type. Nothing is read into your context.
 - Use it when a human needs to OPEN a file to decide. To make the MODEL see a file's content, use the `images` parameter instead. The same path may appear in both — they serve different readers.
-- Each entry must be an absolute path to a regular local file that is safe to show a human. Refused: relative paths, `~`, `.`/`..` segments, non-regular or unreadable files, symlinks whose real target is refused, entries above 100 MB, credential locations and credential-shaped names, hard links sharing a credential file's inode, and files the file endpoint would not serve — inside the Nebflow data directory that means anything outside projects, uploads, plots, workspace-items, voice-models and docs, and inside the project's `.nebflow` anything outside the evidence subtree. The whole call fails with a readable error naming the offending path.
+- Each entry must resolve to a regular local file that is safe to show a human — the SAME rules as Pop's file face: absolute paths, `~/…` (expands to the home directory), and space / `%20`-containing spellings are all accepted (closest match wins); `.`/`..` segments are folded; relative paths resolve against the process working directory. Any readable local location works — `/tmp/…`, `~/.nebflow/…`, data-directory and project files alike. Refused: non-regular or unreadable files, files above 100 MB, credential locations and credential-shaped names (`auth.json`, `id_rsa`, `*.pem`, `.ssh`/`.aws`/… subtrees), and hard links sharing a credential file's inode. There is NO extension restriction and no directory whitelist: registered viewer types open in Canvas, everything else downloads on click. The whole call fails with a readable error naming the offending path, the failing reason, and which dimension failed.
 
 Behavior:
 - This tool is non-blocking: it returns immediately with an acknowledgement, and the user's answer arrives later as a message in this session. Do not wait for it. If no answer arrives and you cannot decide, proceed with your best judgment and say so in your wrap-up."""
@@ -179,7 +179,7 @@ Behavior:
           "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
           "items" -> io.circe.Json.obj(
             "type" -> "string".asJson,
-            "description" -> "Absolute path, inside a readable domain only.".asJson
+            "description" -> "Local file path — absolute, ~/…, or space/%20-encoded form; judged like Pop's file face (credential locations refused). Unregistered types download on click.".asJson
           )
         )
       ),
