@@ -418,10 +418,7 @@ function ensureStepView(sessionId) {
     bgagentIndicatorEl: null, bgagentDropdownEl: null, bgagentDropdownListEl: null,
     sessionNameEl: null,
   };
-  // 分层展示批 (2026-10-06): the flow popup is the same monitoring-panel family
-  // as bgAgentPopup — it opts into the panel detail face (expanded tool blocks)
-  // through the ONE route point (chatView.js constructor → `.nf-panel`).
-  const view = new ChatView('flow-' + sessionId, fakeDom, { panelFace: true });
+  const view = new ChatView('flow-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.

@@ -81,7 +81,7 @@ function ensureStepView(sessionId) {
     bgagentIndicatorEl: null, bgagentDropdownEl: null, bgagentDropdownListEl: null,
     sessionNameEl: null,
   };
-  const view = new ChatView('bgagent-' + sessionId, fakeDom, { panelFace: true });
+  const view = new ChatView('bgagent-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.

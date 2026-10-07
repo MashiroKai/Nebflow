@@ -1588,6 +1588,12 @@
   .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
   .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
 
+  /* 思考窗硬上限暗档：同一窗口长度（max-height 是长度非颜色，双主题同值），
+     仅滚动条墨色随主题翻转（与 .tool-card .body.open 暗档同值）。 */
+  .thinking-content { scrollbar-color: rgba(255,255,255,0.15) transparent; }
+  .thinking-content::-webkit-scrollbar-track { background: transparent; }
+  .thinking-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
   .history-loader { color: #656870; }
   .history-loader .history-spinner { border-color: #282b33; border-top-color: #7b7e88; }
   .history-end { color: #555860; }
@@ -2793,10 +2799,20 @@
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.5;
-  max-height: none;
-  overflow: visible;
+  /* 思考窗硬上限（作者 2026-10-07 令「思考过程要限制一个最大窗口进行流式，
+     不要占满整个屏幕。比如最多 5 行」）：流式与展开两态同窗——7.5em = 5 行 ×
+     1.5 行高（本元素 13px 档）。单点真源是 chat.js THINKING_WINDOW_MAX_LINES
+     （同一算式内联落 style.maxHeight）；此处常量值是 JS 缺席时的兜底，两处
+     同式同值。超出即内部滚动（绝不向下游无限撑开下游布局）；行数计数读数在
+     data-nf-think-lines（chat.js 单点写入，spec 读数锚）。 */
+  max-height: 7.5em;
+  overflow-y: auto;
   margin-top: 2px;
+  scrollbar-color: rgba(0,0,0,0.15) transparent;
 }
+/* 滚动条外观沿用 .tool-card .body.open 同档（细、透明轨），亮暗双主题同构。 */
+.thinking-content::-webkit-scrollbar-track { background: transparent; }
+.thinking-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
 .thinking-content p {
   margin: 0.3em 0;
 }

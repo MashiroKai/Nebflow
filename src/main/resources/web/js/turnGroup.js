@@ -68,10 +68,6 @@
 import { t } from './i18n.js';
 import { formatDuration, chevronSvg } from './chat.js';
 import { isNearBottom } from './utils.js';
-// 分层展示批 (2026-10-06): the panel detail-face route marker reader. chatView
-// owns the ONE construction-time decision (`.nf-panel`); this module only
-// consumes it (same consume-only shape as workline.js's motion()).
-import { isPanelFace } from './chatView.js';
 // stream-ux redesign (2026-10-03 author demo): the running turn's line and the
 // terminal badge are THE SAME node. At the terminal this module settles the
 // live work-line into the `.turn-header` in place (settleWorklineAsHeader —
@@ -397,10 +393,7 @@ export function collapseTurn(view, meta = {}) {
       header.setAttribute('aria-expanded', 'false');
       bindHeaderToggle(header);
     }
-    // 分层展示批面板分支（2026-10-06）：面板视图不收起——工具块保持展开
-    // （「命令/输出/结果详单全量展开」），badge 照常落定；header toggle 仍
-    // 真实有效（点击收起 → 再点展开，状态机不动）。主分支 tuckRows 原样。
-    if (!isPanelFace(chat)) tuckRows(tuckable); // instant strip; pre-tucked rows are already hidden
+    tuckRows(tuckable); // instant strip; pre-tucked rows are already hidden
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
     // A-branch: shared NEAR_BOTTOM_PX unit (was a local 80).
     if (isNearBottom(chat)) {
@@ -547,9 +540,7 @@ function summarizeSegment(chat, seg) {
   header.dataset.turnState = 'done';
   header.setAttribute('aria-expanded', 'false');
   bindHeaderToggle(header);
-  // 分层展示批面板分支（2026-10-06）：面板历史重放同样不收起（面板打开 =
-  // 展开工具块可见），badge header 照建——面板终态与历史态同一展开面。
-  if (!isPanelFace(chat)) tuckRows(tuckable); // history rebuild: static tuck
+  tuckRows(tuckable); // history rebuild: static tuck
   return [header];
 }
 

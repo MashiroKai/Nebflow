@@ -1,21 +1,30 @@
 <!DOCTYPE html>
-<!-- panel-detail harness.html — static test harness for the 分层展示批
-     (panel detail-face route, author 2026-10-06 17:55 令 + dispatcher 追加令).
+<!-- panel-detail harness.html — static test harness for the stream-919-unify
+     batch (author 2026-10-07 22:34→10:10 澄清令: 「当行流式改为跟 9.19 显示方式，
+     不是把工具结果展开」). Supersedes the 分层展示批 dual-face harness — d780's
+     panel branch is RETIRED and the two views below are now the SAME unified
+     9.19-style face (single-line streaming work-line, tucked completed cards,
+     detail line on both).
 
      Imports the REAL frontend modules (chatView.js / chat.js / turnGroup.js /
      persistence.js / workline.js / state.js — no stubs, no bundling) and mounts
      TWO views side by side:
 
-       #main-chat   → the 'primary' ChatView  — MAIN face (single-line work-line,
-                      tucked tool cards, detail line) — must stay byte-for-byte
-                      the 398dd72ac form for the same feed.
-       #panel-chat  → a 'bgagent-*' ChatView constructed WITH {panelFace:true}
-                      (exactly the bgAgentPopup.js construction) — PANEL face
-                      (expanded tool blocks, no detail line).
+       #main-chat   → the 'primary' ChatView  — the main chat flow.
+       #panel-chat  → a 'bgagent-*' ChatView constructed exactly the way
+                      bgAgentPopup.js ensureStepView does (NO face opts — the
+                      d780 panelFace opt-in is retired) — the monitoring panel.
 
      The same tool-activity feed can be replayed into EITHER view (route = the
      view that activeView points at, identical to the app's ws.js dispatch), so
-     the spec can pin the MUTUAL EXCLUSION of the two faces on identical data.
+     the spec can pin the UNIFIED FACE on identical data: both containers must
+     render byte-for-byte the same shapes.
+
+     Thinking-window probe (§③ 思考窗硬上限, same batch): __pdThink feeds real
+     appendThinkingDelta frames; __pdThinkDone runs finishThinking; the census
+     exposes the .thinking-content window (max-height / client height /
+     scrollability / data-nf-think-lines count) and the bubble row height for
+     the zero-downstream-expansion assertion.
 
      Exposed calls (all replay the exact calls the WS handlers make):
 
@@ -27,11 +36,13 @@
        window.__pdDone(label, summary,
                        content, err, in)→ renderTool
        window.__pdFinishTurn(ms, model) → appendAiText + finishAi + collapseTurn
+       window.__pdThink(chunk, mark)    → appendThinkingDelta (live rAF flush)
+       window.__pdThinkDone()           → finishThinking
        window.__pdHistory(msgs)         → restoreFromBackendHistory (the panel
                                           open/getHistory shape)
        window.__pdCensus(which)         → DOM-contract census of that face
        window.__pdClickHeader(which)    → click the settled .turn-header
-       window.__pdNewPlainView()        → ChatView without the panelFace opt-in
+       window.__pdNewPlainView()        → ChatView without any face opts
                                           (the search-float shape) → marker probe
        window.__pdReset(which)          → clear that container
 
@@ -69,8 +80,9 @@
     const panelEl = document.getElementById('panel-chat');
 
     chatViews.primary = new ChatView('primary', { chat: mainEl });
-    // Exactly the bgAgentPopup.js ensureStepView construction (panelFace opt-in).
-    const panelView = new ChatView('bgagent-pd-demo', { chat: panelEl }, { panelFace: true });
+    // Exactly the bgAgentPopup.js ensureStepView construction — NO face opts
+    // (the d780 panelFace opt-in is retired; both views are the unified face).
+    const panelView = new ChatView('bgagent-pd-demo', { chat: panelEl });
     panelView.mounted = true;
     panelView.sessionId = 'delegate-pd-demo';
     panelView.visible = true;
@@ -154,8 +166,31 @@
       await raf2();
     };
 
-    // The search-float shape: a non-primary view WITHOUT the opt-in must stay
-    // on the main face (marker absent).
+    // ── §③ 思考窗硬上限 probe（stream-919-unify 批）──
+    // Real live frames: appendThinkingDelta accumulates + rAF flush (the exact
+    // main.js thinkingDelta handler shape — the caller awaits a raf2 between
+    // chunks so each frame lands). mark mirrors the B2 (round, block) identity.
+    window.__pdThink = async (chunk, mark) => {
+      chatMod.appendThinkingDelta(chunk, mark || { round: 0, block: 0 });
+      await raf2();
+    };
+
+    window.__pdThinkDone = async () => {
+      chatMod.finishThinking();
+      await raf2();
+    };
+
+    // Click the thinking label to re-reveal the content (bindCollapsibleToggle)
+    // — the expand-face read the §③ window assertions run against.
+    window.__pdThinkLabel = async (which) => {
+      const chat = viewOf(which).dom.chat;
+      const lbl = chat.querySelector('.thinking-label');
+      if (lbl) lbl.click();
+      await raf2();
+    };
+
+    // The search-float shape: a non-primary view WITHOUT any opts must stay on
+    // the unified face (marker absent — the route reader itself is retired).
     window.__pdNewPlainView = () => {
       const el = document.createElement('div');
       const v = new ChatView('search-float', { chat: el });
@@ -173,6 +208,27 @@
       const label = item ? item.querySelector('.nf-wl-label') : null;
       const toolRows = Array.from(chat.querySelectorAll('.row.tool'));
       const headers = kids.filter(k => k.classList.contains('turn-header'));
+      // §③ thinking-window read: the .thinking-content box against its cap —
+      // declared max-height, rendered client height, scroll state, the count
+      // reading (data-nf-think-lines) and the owning bubble row height (the
+      // downstream-layout containment fact).
+      const tContent = chat.querySelector('.thinking-bubble .thinking-content');
+      let think = null;
+      if (tContent) {
+        const cs = getComputedStyle(tContent);
+        think = {
+          present: true,
+          count: tContent.dataset.nfThinkLines || '',
+          maxHeightPx: parseFloat(cs.maxHeight) || 0,
+          lineHeightPx: parseFloat(cs.lineHeight) || 0,
+          clientH: tContent.clientHeight,
+          scrollH: tContent.scrollHeight,
+          scrollable: tContent.scrollHeight > tContent.clientHeight + 0.5,
+          overflowY: cs.overflowY,
+          rowH: (tContent.closest('.row') || {}).offsetHeight || 0,
+          displayNone: cs.display === 'none',
+        };
+      }
       return {
         marker: chat.classList.contains('nf-panel'),
         staticCls: chat.classList.contains('nf-static'),
@@ -182,6 +238,7 @@
         itemText: label ? label.textContent : '',
         detailPresent: !!detail,
         detailText: detail ? detail.textContent : '',
+        think,
         tools: toolRows.map(r => {
           const card = r.querySelector('.tool-card');
           const body = card ? card.querySelector('.body') : null;
