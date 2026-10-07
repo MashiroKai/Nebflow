@@ -234,20 +234,35 @@ object StaticRoutes:
    * Standalone (the registry lookup is injected) so it is directly
    * unit-testable (PluginAssetsRoutesSpec), like uploadsRoutes; composed
    * into the /api Router in GatewayMain.
+   *
+   * Mount-form agnostic path source (plugin-assets-404-fix, 2026-10-07): the
+   * guard and the segment parse read `req.pathInfo` — the path RELATIVE TO
+   * THE CURRENT MOUNT — never `req.uri.path`, which keeps the absolute form.
+   * This closed the production 404 seam: the route composes under
+   * GatewayMain's `Router("/api" -> …)`, and http4s hands mounted routes a
+   * request whose `uri.path` still carries the `/api` prefix while
+   * `pathInfo` is the stripped form — the same form the DSL cases of every
+   * sibling route in that Router (ConfigRoutes `Root / "config"`, …) match
+   * on. A guard written against `uri.path` therefore NEVER matched in
+   * production (`/api/plugin-assets/…` answered 404 on every real instance:
+   * the frontend Plugin.md probe URL) while the direct-call spec family
+   * (unmounted, pathInfo == uri.path) stayed green, masking the seam.
+   * Reading `pathInfo` serves BOTH mount forms with one judge: prefixed
+   * under the Router (production), bare when composed directly (specs).
    */
   def pluginAssetsRoutes(
-      token: String,
-      trustedPluginDir: String => IO[Option[os.Path]]
+    token: String,
+    trustedPluginDir: String => IO[Option[os.Path]]
   ): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/plugin-assets/") =>
+    case req @ GET -> _ if req.pathInfo.renderString.startsWith("/plugin-assets/") =>
       val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
       val paramToken = req.params.get("token").getOrElse("")
       if !(Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token)) then
         Forbidden("Invalid token")
       // Trailing slash = directory request — this route serves files only.
-      else if req.uri.path.endsWithSlash then NotFound()
+      else if req.pathInfo.endsWithSlash then NotFound()
       else
-        val segs = req.uri.path.segments.map(_.encoded).toList
+        val segs = req.pathInfo.segments.map(_.encoded).toList
         // Shape: /plugin-assets/<name>/<rel…> — at least one rel segment.
         if segs.sizeIs < 3 || relPartsEmpty(segs.drop(2)) then NotFound()
         else

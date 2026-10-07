@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import org.http4s.{Method, Request, Status, Uri}
+import org.http4s.server.Router
 
 import java.nio.file.Files
 import scala.jdk.CollectionConverters.*
@@ -23,7 +24,12 @@ import scala.jdk.CollectionConverters.*
  *    same as the /agents/ precedent — nothing decodes into a separator);
  *  - final defense = realpath containment (PluginRegistry.containedUnder):
  *    a symlink inside the package pointing outside the plugin root 404s;
- *  - happy path serves bytes at any nesting depth.
+ *  - happy path serves bytes at any nesting depth;
+ *  - PRODUCTION MOUNT FORM (plugin-assets-404-fix, 2026-10-07): the route
+ *    answers `/api/plugin-assets/…` through the real `Router("/api" -> …)`
+ *    composition (the frontend Plugin.md probe URL). The direct-call tests
+ *    below (bare `/plugin-assets/…`) stay the unmounted对照 leg: the route
+ *    reads `pathInfo`, so both mount forms work and neither may regress.
  */
 class PluginAssetsRoutesSpec extends CatsEffectSuite:
 
@@ -67,6 +73,16 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
     val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
     val req = cookie.fold(base) { case (n, v) => base.addCookie(n, v) }
     StaticRoutes.pluginAssetsRoutes(gatewayToken, resolverFor(pluginDir))(req).value.unsafeRunSync()
+
+  /**
+   * The PRODUCTION composition (GatewayMain): the route as one arm of
+   * `Router("/api" -> …)`, served through orNotFound — a request to
+   * `/api/plugin-assets/…` must REACH the route (not fall through), with
+   * http4s handing it the prefix-stripped `pathInfo`.
+   */
+  private def mountedGet(pluginDir: os.Path)(path: String): Option[org.http4s.Response[IO]] =
+    val app = Router("/api" -> StaticRoutes.pluginAssetsRoutes(gatewayToken, resolverFor(pluginDir))).orNotFound
+    app.run(Request[IO](Method.GET, Uri.unsafeFromString(path))).unsafeRunSync()
 
   test("rejects unauthenticated requests") {
     withTempPlugin { dir =>
@@ -120,7 +136,10 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
   test("uniform 404 for an unknown (or blocked) plugin — no existence oracle") {
     withTempPlugin { dir =>
       IO {
-        assertEquals(get(dir)(s"/plugin-assets/ghost/assets/renderer.js?token=$gatewayToken").get.status, Status.NotFound)
+        assertEquals(
+          get(dir)(s"/plugin-assets/ghost/assets/renderer.js?token=$gatewayToken").get.status,
+          Status.NotFound
+        )
         assertEquals(
           get(dir)(s"/plugin-assets/blocked/assets/renderer.js?token=$gatewayToken").get.status,
           Status.NotFound
@@ -177,6 +196,61 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
     withTempPlugin { dir =>
       IO {
         assertEquals(get(dir)(s"/plugin-assets/good/escape?token=$gatewayToken").get.status, Status.NotFound)
+      }
+    }
+  }
+
+  // ── production mount form (plugin-assets-404-fix): the /api-prefixed face ──
+
+  test("production mount: Router(\"/api\") serves the /api-prefixed frontend probe URL (404 seam pin)") {
+    withTempPlugin { dir =>
+      IO {
+        // The exact URL shape web/js/plugins.js pluginMdUrl() fetches, through
+        // the exact GatewayMain composition: Router("/api" -> pluginAssetsRoutes).
+        val resp = mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get
+        assertEquals(resp.status, Status.Ok)
+        assertEquals(resp.bodyText.compile.string.unsafeRunSync(), "export const x = 1;")
+      }
+    }
+  }
+
+  test("production mount对照: the bare (unprefixed) direct-call form still serves — neither leg may regress") {
+    withTempPlugin { dir =>
+      IO {
+        // Same fixture file, the OTHER mount form: unmounted route + bare path
+        // (pathInfo == uri.path). The 404 seam fix must stay mount-form
+        // agnostic — pinning both forms prevents an over-correction that
+        // hard-couples the route to the /api prefix.
+        assertEquals(get(dir)(s"/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get.status, Status.Ok)
+        assertEquals(
+          mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get.status,
+          Status.Ok
+        )
+      }
+    }
+  }
+
+  test("production mount: a prefixed request reaches the route — bad token is 403, never a silent fall-through 404") {
+    withTempPlugin { dir =>
+      IO {
+        // Before the seam fix a prefixed request never matched (404 whatever
+        // the token); now the route answers and its own auth face is visible.
+        assertEquals(
+          mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js?token=wrong").get.status,
+          Status.Forbidden
+        )
+        assertEquals(mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js").get.status, Status.Forbidden)
+      }
+    }
+  }
+
+  test("production mount: unknown plugin keeps the uniform 404 (no existence oracle) on the prefixed form") {
+    withTempPlugin { dir =>
+      IO {
+        assertEquals(
+          mountedGet(dir)(s"/api/plugin-assets/ghost/assets/renderer.js?token=$gatewayToken").get.status,
+          Status.NotFound
+        )
       }
     }
   }
