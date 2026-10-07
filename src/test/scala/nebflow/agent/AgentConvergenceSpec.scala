@@ -62,6 +62,8 @@ class AgentConvergenceSpec extends FunSuite:
       // Delegate（builtin-def 批 2026-10-03 作者令②在場恢复）：极简内核入口，
       // 直接触发内置执行 agent 并返回 delegate:<id> 续聊地址
       "Delegate",
+      // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面只读件）
+      "TaskSearch",
       "SendMessage",
       "ListFriends", // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
       "Read", // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
@@ -233,11 +235,11 @@ class AgentConvergenceSpec extends FunSuite:
     // 条目——工具退役后仅存授能/剥离语义，无执行面），Nebula 专属其余件对 dream
     // 仍全集剥离；「MemoryNote 授能」现表现为 allowedSet 惰性字符串（不注册 ⇒
     // LLM 面/执行面双缺席，上一用例已钉），不为测绿而宣称有执行面。
-    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends/Subagent/AgentFlow（+ChainWrite）对 dream 不得放开
+    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends/Subagent/AgentFlow（+ChainWrite +TaskSearch）对 dream 不得放开
     assertEquals(
       AgentCore.RootExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite"),
-      "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent；N1 复名批 AgentFlow 随名＋新增 ChainWrite——防声明逃逸条目同样剥离；TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）"
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite", "TaskSearch"),
+      "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent；N1 复名批 AgentFlow 随名＋新增 ChainWrite；task-rag 批 #1227 +TaskSearch——防声明逃逸条目同样剥离；TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula / TaskSearch 仅 Nebula）"
     )
     val sneakyDream =
       CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard")))
@@ -250,8 +252,8 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
     assertEquals(
       AgentCore.exclusiveToolsFor("dream"),
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite"),
-      "dream 剥十一件（原八件 + builtin-merge 批 Subagent + N1 复名批 AgentFlow 随名/ChainWrite 新增——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite", "TaskSearch"),
+      "dream 剥十二件（原八件 + builtin-merge 批 Subagent + N1 复名批 AgentFlow 随名/ChainWrite 新增 + task-rag 批 #1227 TaskSearch——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
     )
     // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
     // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内

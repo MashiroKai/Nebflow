@@ -191,6 +191,31 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      // PUT /api/config/embedding —— Embedding 配置定向写（task-rag 批 #1227 /
+      // §Batch 7 检索面设置区写通道；形态照 jev 路由：键白名单在
+      // ConfigService.embeddingWritableKeys 单点，越界/空体 400；keyRef 是
+      // secrets 名指针、值型凭据键不在册）。
+      case req @ PUT -> Root / "config" / "embedding" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            body.asObject match
+              case None => BadRequest(Json.obj("error" -> "expected a JSON object body".asJson))
+              case Some(o) =>
+                val values = o.toMap.collect {
+                  case (k, v) if ConfigService.embeddingWritableKeys.contains(k) => k -> v
+                }
+                if values.isEmpty then
+                  BadRequest(Json.obj("error" -> s"no writable embedding keys given — writable: ${ConfigService.embeddingWritableKeys.mkString(", ")}".asJson))
+                else
+                  ConfigService.setEmbeddingSection(values).flatMap {
+                    case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+                    case Right(_) =>
+                      wsHub.broadcast(Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson)) *>
+                        Ok(Json.obj("updated" -> true.asJson))
+                  }
+          }
+        }
+
       // Update config
       case req @ PATCH -> Root / "config" =>
         withAuth(req) {

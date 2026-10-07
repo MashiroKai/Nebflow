@@ -241,6 +241,10 @@ object AgentCore:
     // 工具内 DelegateSessions 身份拒绝双保险（TaskBoard/node_report 同款纪律，
     // 剥离与授能两点不相干扰）。
     "ChainWrite",
+    // TaskSearch（task-rag 批 #1227 / §Batch 7）：Nebula 专属只读检索件——
+    // 同享本集【防声明逃逸】通道：agent.json/插件声明（含 "*"）对一切非 Nebula
+    // 身份不授能（真实授能 = RootOrchestrationTools 单点；TaskList 同域纪律）。
+    "TaskSearch",
   )
 
   /**
@@ -398,6 +402,12 @@ object AgentCore:
     "Delegate",
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
     "TaskList",
+    // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
+    // 只读）——账本条目 + delegate 地址簿的 embedding/词法检索，返回 task #N/
+    // 标题/状态/执行器图标/address(delegate:<id>)/snippet；检索到的地址可直接
+    // 续派（Mail(address="delegate:<id>")）。本集件数 17 → 18（见
+    // RootOrchestrationToolsExpectedSize）。
+    "TaskSearch",
     // 通信（好友功能非旧体系）
     "SendMessage",
     // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
@@ -544,8 +554,12 @@ object AgentCore:
    * `NebulaOrchestrationTools` 成员与件数 **17 不变**（旧 root 侧 AgentFlow 派发件
    * 2026-10-03 已退役，与本复名无涉——同名的先后两物，勿混）。复名连带细案沿
    * v2 §3（案 A「仅 legacy 形态拒收」）。
+   *
+   * **task-rag 批（#1227 / §Batch 7，2026-10-07 作者令三批并行）：+`TaskSearch`
+   * ⇒ 18（在飞值）**——任务语义检索（Nebula 面只读件：embedding/词法 + 可选
+   * Jev 重排）。本增量属「按面变更」（新增成员），非「凑数字」。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 17
+  val RootOrchestrationToolsExpectedSize: Int = 18
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。

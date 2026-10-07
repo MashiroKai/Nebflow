@@ -109,7 +109,14 @@ object DelegateReportTool extends Tool:
       // 仅状态单写（§3.4）：DelegateRegistry 状态槽；不携汇报、不动终态消息面。
       val write = IO.blocking(DelegateRegistry.updateReport(id, category, detail, suggestion))
         .handleErrorWith(e => IO.pure(Left(s"delegate_report: status write failed: ${e.getMessage}")))
-      write.map {
+      write.flatTap {
+        // task-rag 批（#1227 / §Batch 7）：delegate 终态增量索引——申报写成功后
+        // fire-and-forget upkeep（reportStatus/reportDetail 变化 ⇒ 索引文本 hash
+        // 变化 ⇒ 下轮 upkeep 重嵌；检索前另有惰性 upkeep 自愈）。在飞合流 + 异常
+        // 内吞，绝不影响本工具结果。🔴 接缝纪律：DelegateRegistry 本体零触碰。
+        case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
+        case Left(_)  => IO.unit
+      }.map {
         case Left(err) => Left(ToolError(err))
         case Right(_) =>
           val confirm =

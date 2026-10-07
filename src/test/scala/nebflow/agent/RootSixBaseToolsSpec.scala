@@ -88,13 +88,13 @@ class RootSixBaseToolsSpec extends FunSuite:
     // friendseal (2026-09-25): flag-aware via the single derivation point —
     // constant − (sealed ? 1 : 0), computed from this same fixed-set snapshot.
     assertEquals(fixed.size, nebflow.FriendsSealKit.expectedNebulaSize(fixed),
-      "Nebula 机制集件数 == 单点常量按 friendseal 封存态派生（不得各处写裸数字；在飞 19 = 2026-09-18 18:18 令后 17 + agentflow 批 +AgentFlow + builtin-def 批 +Delegate，封存期交付面 = 19 − 1）")
+      "Nebula 机制集件数 == 单点常量按 friendseal 封存态派生（不得各处写裸数字；在飞 18 = unified-delegate 批后 17 + task-rag 批 #1227 +TaskSearch，封存期交付面 = 18 − 1）")
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
-      17,
-      "RootOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19，pop 批 −Card = 18，unified-delegate 批 −AgentFlow = 17；变异验红锚：再摘任一件即红）"
+      18,
+      "RootOrchestrationTools 实测恰 18 件（2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19，pop 批 −Card = 18，unified-delegate 批 −AgentFlow = 17，task-rag 批 #1227 +TaskSearch = 18；变异验红锚：再摘任一件即红）"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
