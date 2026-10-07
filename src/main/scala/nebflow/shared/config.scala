@@ -232,6 +232,46 @@ object JevConfig:
   given Decoder[JevConfig] = deriveDecoder[JevConfig]
 
 /**
+ * Embedding 检索面配置节（task-rag 批 #1227 / §Batch 7）：顶层 `embedding` 块，
+ * 驱动 OpenAI 兼容 embeddings 端点（`POST {baseUrl}/embeddings`）。
+ *
+ *   "embedding": { "enabled": true, "baseUrl": "https://api.openai.com/v1",
+ *                  "model": "text-embedding-3-small", "keyRef": "openai-api-key",
+ *                  "timeoutMs": 20000 }
+ *
+ * ==Every field is optional ON PURPOSE==
+ * Form precedent = [[JevConfig]] (all-optional, `SearchConfig`-style graceful
+ * degrade): a partially written block decodes to its defaults instead of
+ * failing the whole service-config read.
+ *
+ * ==Graceful degrade (zero migration)==
+ * `enabled` absent/false, or a missing `baseUrl`/`model`, or a `keyRef` that
+ * resolves to no readable secret ⇒ the embedding face is OFF and task search
+ * falls back to lexical matching — existing users need zero migration. 🔴
+ * Absent means OFF is the SAFE default (same direction as `jev`): the face
+ * sends task/notes text off-machine.
+ *
+ * @param keyRef
+ *   NAME of a secret under `~/.nebflow/secrets/` (the `jev` reference form:
+ *   the config stores a POINTER, never a value; resolved by the consumer).
+ * @param timeoutMs
+ *   Per embeddings-call deadline. None → 20000.
+ */
+case class EmbeddingConfig(
+  enabled: Option[Boolean] = None,
+  baseUrl: Option[String] = None,
+  model: Option[String] = None,
+  keyRef: Option[String] = None,
+  timeoutMs: Option[Long] = None
+):
+  /** Toggle semantics: absent means OFF is the safe default for a face that
+    * sends task text off-machine (same direction as `JevConfig.isEnabled`). */
+  def isEnabled: Boolean = enabled.getOrElse(false)
+
+object EmbeddingConfig:
+  given Decoder[EmbeddingConfig] = deriveDecoder[EmbeddingConfig]
+
+/**
  * Delegate 判定机 utility model 配置节（worktree-judge-fifo 批 #1224 增补 §一/§3.1
  * —— SmallJudge 的「新可配 utility model」）: 顶层 `judge` 节，全字段可选。
  *
@@ -392,7 +432,13 @@ case class NebflowServiceConfig(
    * [[CollabSyncConfig]]。`None` = 未配置 ⇒ dispatcher 提示词的协作同步句整句
    * 不渲染；渲染时现读，配置改动即席生效（无重启门槛）。
    */
-  collabSync: Option[CollabSyncConfig] = None
+  collabSync: Option[CollabSyncConfig] = None,
+  /**
+   * Embedding 检索面节（task-rag 批 #1227 / §Batch 7）——见 [[EmbeddingConfig]]。
+   * `None` = 未配置 ⇒ embedding 面关、任务检索走词法降级（零迁移）；全字段
+   * 可选，半节解码为缺省而非抛（同 `jev` / `judge` 节教训）。
+   */
+  embedding: Option[EmbeddingConfig] = None
 )
 
 object NebflowServiceConfig:

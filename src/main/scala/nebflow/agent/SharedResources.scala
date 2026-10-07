@@ -434,4 +434,13 @@ case class SharedResources(
   nebflow.core.delegate.DelegateJudge.DelegateJudgePort.install(
     nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
   )
+
+  // task-rag 批（#1227 / §Batch 7）：TaskSearch 可选 Jev 重排注册（⑦ 家族在检索
+  // 面的同族落地——执行体在 llm.decision.JevTaskSearchRerank，core 只见
+  // TaskSearchRerank 注册器，分层纪律同 DelegateJudgePort 先例）。hotFace =
+  // 每次 rerank 现读 jev 配置（JevConfigReader 同款热读）；未配 Jev ⇒ 恒 None ⇒
+  // 跳过重排照常返回（原文「可选」的缺省路径）。
+  nebflow.core.index.TaskSearchRerank.install(
+    nebflow.llm.decision.JevTaskSearchRerank.hotFace()
+  )
 end SharedResources

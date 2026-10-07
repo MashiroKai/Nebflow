@@ -275,6 +275,13 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
       TaskTool.dispatchSync(TaskLedgerStore.open(), nodeTerminalMapOf(), ctx, action,
         title = title, id = id, assignee = assignee, nodeId = nodeId, links = links,
         blocks = blocks, parentId = parentId, project = project)
+    }.flatTap {
+      // task-rag 批（#1227 / §Batch 7）：账本写后增量索引（task 创建/完成/revive
+      // 的落地触发面——三态账本无独立 revive 动作，update 覆盖重开、complete 覆盖
+      // closed→completed，故写成功即 upkeep）。fire-and-forget（在飞合流 + 异常
+      // 内吞），绝不影响工具结果。
+      case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
+      case Left(_)  => IO.unit
     }
 
   /** The mapping for the ⚠node-done join: read live from the Flow Map of the workspace

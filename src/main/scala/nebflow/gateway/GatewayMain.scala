@@ -606,6 +606,12 @@ object GatewayMain extends IOApp:
                                       case Left(e) =>
                                         logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
                                     }
+                                  // 启动补扫（task-rag 批 #1227 / §Batch 7）：检索索引
+                                  // 增量维护——embedding 面关 = 快速 no-op；面开 =
+                                  // 只重嵌 hash 变化条目（增量）。后台 fiber 起跑，
+                                  // 永不阻塞启动；失败在 upkeep 内部记 WARN 吞掉。
+                                  val taskIndexBackfill: IO[Unit] =
+                                    nebflow.core.index.TaskSearchIndex.upkeep().start.void
                                   // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
                                   // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
                                   // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
@@ -808,7 +814,7 @@ object GatewayMain extends IOApp:
                                       hotRestart = Some(hotRestart),
                                       updateOrchestrator = Some(updateOrchestrator)
                                     )
-                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
+                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

@@ -166,7 +166,12 @@ object ToolRegistry:
       // 按 delegateSession 引擎侧身份注入 + 工具内 DelegateSessions 身份拒绝
       // 双保险）。值域 finish|blocked＋detail；仅更新 DelegateRegistry 状态槽，
       // 不携汇报（汇报仍走终态消息直传）。信号消费点 = 终态判定机。
-      "delegate_report" -> DelegateReportTool
+      "delegate_report" -> DelegateReportTool,
+      // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
+      // 只读）——embedding 余弦 top-k + 词法降级 + 可选 Jev 重排。授权面 =
+      // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单
+      // 与 remoteableTools 均不含本件。
+      "TaskSearch" -> TaskSearchTool
     )
     tools.putAll(builtins.asJava)
   }

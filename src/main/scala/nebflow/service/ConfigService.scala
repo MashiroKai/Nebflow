@@ -280,6 +280,51 @@ object ConfigService:
   def jevWritableKeys: List[String] = JEV_WRITABLE_KEYS
 
   /**
+   * 定向写顶层 `embedding` 节（task-rag 批 #1227 / §Batch 7：OpenAI 兼容
+   * embeddings 端点的设置区，仿 [[setJevSection]] 先例）。
+   *
+   * 形态照 [[setJevSection]]：整体包在 `writeLocked` 内串行；只覆写调用方
+   * 显式给出的键（`None` 键原样保留，本节无其它写者）；写盘走
+   * [[nebflow.core.AtomicJson]]；失败上浮（fail-loud）。
+   *
+   * 🔴 凭据纪律（同 jev 节）：`keyRef` 是 secrets 目录里的**名**（指针），
+   * 在册；**值型凭据键一律不在册**（无 `apiKey` 入参，形态上不可表达）。
+   */
+  def setEmbeddingSection(values: Map[String, Json]): IO[Either[String, Unit]] =
+    val unknown = values.keySet.diff(EMBEDDING_WRITABLE_KEYS.toSet)
+    if unknown.nonEmpty then
+      IO.pure(Left(s"embedding section write refused — unknown key(s): ${unknown.toList.sorted.mkString(", ")}"))
+    else if values.isEmpty then IO.pure(Left("embedding section write refused — no keys given"))
+    else
+      writeLocked {
+        IO.blocking {
+          val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+          parse(existing) match
+            case Left(err) =>
+              Left(s"nebflow.json unparseable — refusing to rewrite for embedding update: ${err.message}")
+            case Right(parsed) =>
+              val section = parsed.hcursor
+                .downField(EMBEDDING_SECTION)
+                .focus
+                .flatMap(_.asObject)
+                .getOrElse(JsonObject.empty)
+              val updatedSection = values.foldLeft(section) { case (acc, (k, v)) => acc.add(k, v) }
+              val updated = parsed.mapObject(_.add(EMBEDDING_SECTION, Json.fromJsonObject(updatedSection)))
+              AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+              Right(())
+        }
+      }
+
+  /** 顶层节名（写侧单点）。 */
+  private val EMBEDDING_SECTION = "embedding"
+
+  /** `embedding` 节可写键白名单（keyRef 指针在册；值型凭据键不在册——同 jev）。 */
+  private val EMBEDDING_WRITABLE_KEYS: List[String] =
+    List("enabled", "baseUrl", "model", "keyRef", "timeoutMs")
+
+  def embeddingWritableKeys: List[String] = EMBEDDING_WRITABLE_KEYS
+
+  /**
    * 定向写顶层 `executor` 节（executor-registry 批 2026-10-03：统一 delegate
    * 的执行器 default / disabled）。
    *
