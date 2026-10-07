@@ -9,7 +9,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 /**
- * Plugin-surface change payload (plugins-live 批 2026-09-12): the rendered
+ * Plugin-surface change payload: the rendered
  * `# Plugin Catalog` section as it was last visible to the session (`previous`,
  * = the spawn-time first-message snapshot / the last announced value) versus the
  * current render (`current`). Produced by AgentCore's change detection and
@@ -51,42 +51,42 @@ object SystemReminders:
    * Collect per-turn reminders including a summary of pending scheduled
    * tasks for this session. IO because it queries the scheduled-task store.
    *
-   * Cache-optimization v2 (2026-08-11): dynamic values that were moved OUT of
+   * Cache-optimization v2: dynamic values that were moved OUT of
    * the per-turn system prompt are injected here instead — request-level
    * reminders (never persisted). The time reminder keeps its persisted
    * semantics (任务 O).
    *
-   * Reminder refactor (2026-08-20, user ruling — audit
-   * system-reminder audit 设计件, 44K token/半天 waste):
+   * Reminder refactor (audit
+   * finding: system reminders wasted a large token share per half-day):
    *  - time: injected on real-user turns always; on system-event turns
    *    (mail/external/skill injections) at most once per hour — the caller
    *    passes `injectTime` after checking the gap.
    *  - tasks: team sessions only, real-user turns only (task redesign
-   *    2026-08-30 — moved from Nebula to team members); the caller supplies
+   *    — moved from Nebula to team members); the caller supplies
    *    pre-rendered full/delta/unchanged text (change detection lives in
    *    AgentCore, gated on TeamSessionRegistry.teamOfSession).
    *  - schedule: Nebula (root) only.
-   *  - sessions & environment reminder types REMOVED (user ruling: sessions
+   *  - sessions & environment reminder types REMOVED (rationale: sessions
    *    outdated; environment change notifications cut — only stable fields
    *    remain in systemStable, jittery chatWidth dropped from the template).
    *  - devices: caller supplies a pre-computed delta (+/- lines).
-   *  - projects: Nebula only (progressive disclosure 2026-09-07) — caller
+   *  - projects: Nebula only (progressive disclosure) — caller
    *    supplies a pre-computed +/- delta of mounted projects; empty when no
    *    change. systemStable carries the full list at lifecycle nodes, mid-session
    *    mount/unmount/create is reported here instead of invalidating the cache.
-   *  - plugin-surface: dispatcher sessions only (plugins-live 批 2026-09-12) —
+   *  - plugin-surface: dispatcher sessions only —
    *    caller supplies the previous/current rendered Plugin Catalog section; the
    *    reminder is emitted on a real change and is PERSISTED (see
    *    SystemReminders.isPluginSurfaceReminderMessage) so a closed plugin's
    *    capability stays retracted for every later turn of the same session.
    *
-   * Reminder audit (2026-08-19): time-context (peak/off-peak + next idle
-   * window) removed entirely — user flagged "Off-peak hours." as noise
-   * (00:00 实测). `tasks` is gated to root agents: subagent workers receive
+   * Reminder audit: time-context (peak/off-peak + next idle
+   * window) removed entirely — user flagged "Off-peak hours." as noise.
+   * `tasks` is gated to root agents: subagent workers receive
    * their work from the parent's Delegate/SubTask instructions, not the task
    * store.
    *
-   * F-2（presdial 批 2026-09-19，`kaiflap-diag` §2.4 M1/M2/M3）：
+   * F-2：
    *  - `suppressContextReminders` **抑制位**：compact/ask 轮在注入闸
    *    （AgentCore `contextMsg`）处为空 ⇒ 这些**请求级**提醒根本到不了模型。
    *    「没交付就不记数」：该轮**不产生提醒对象** ⇒ 既不注入也不打计数行
@@ -125,7 +125,7 @@ object SystemReminders:
             List(
               if isRootAgent then pendingScheduleReminder(pending) else None,
               devicesReminder(deviceDelta, deviceMemberKey),
-              // Task redesign (2026-08-30): task reminder targets team sessions, not
+              // Task redesign: task reminder targets team sessions, not
               // Nebula. The caller (AgentCore) only renders taskListText when the
               // session is team-registered, so the gate lives upstream — include the
               // reminder whenever text is non-empty (schedule stays Nebula-only).
@@ -139,12 +139,12 @@ object SystemReminders:
       yield reminders
 
   /**
-   * Devices changed since systemStable was built (cache v2; delta lines 2026-08-20).
+   * Devices changed since systemStable was built (cache v2 delta lines).
    *
-   * F-2（presdial 批 2026-09-19）：`memberKey` 是变化的**身份**（成员集合），
+   * F-2：`memberKey` 是变化的**身份**（成员集合），
    * 作为 [[SystemReminder.countKey]] 交给 [[logAndReturn]] 去重计数；空键 ⇒ `None`
    * （不参与去重 = 旧行为）。注入内容与字面**逐字不变**（`+/-` 条目形态保持原样 ——
-   * 条目字面属提示词面，本批零改动）。
+   * 条目字面属提示词面，零改动）。
    */
   private def devicesReminder(deviceDelta: String, memberKey: String = ""): Option[SystemReminder] =
     if deviceDelta.isEmpty then None
@@ -216,7 +216,7 @@ object SystemReminders:
 
   /**
    * Mounted projects changed since systemStable was built (cache v2,
-   * progressive disclosure 2026-09-07). Nebula sees incremental +/-
+   * progressive disclosure). Nebula sees incremental +/-
    * entries when a project is mounted/unmounted/created — the root-aware
    * gate lives upstream (AgentCore only renders delta for the root agent).
    */
@@ -225,7 +225,7 @@ object SystemReminders:
     else Some(SystemReminder("projects", s"Mounted projects changed:\n$mountedProjectsDelta"))
 
   // ------------------------------------------------------------------
-  // Plugin surface (plugins-live 批 2026-09-12)
+  // Plugin surface
   // ------------------------------------------------------------------
 
   /**
@@ -246,7 +246,7 @@ object SystemReminders:
    * renders it into the FIRST message only). Without this channel an already-open
    * dispatcher session keeps seeing the spawn-time catalog forever: revoking a
    * plugin does not refresh it, so the session still plans nodes against a
-   * capability that is no longer allocatable (author report 2026-09-12 12:52).
+   * capability that is no longer allocatable (observed in practice).
    *
    * Semantics (same shape as the devices/projects delta channels): the caller
    * (AgentCore) compares the catalog **as last announced to this session** with
@@ -345,7 +345,7 @@ object SystemReminders:
         .map { t =>
           val when = formatScheduleTime(t.triggerAt, now)
           val repeat = t.repeat.fold("")(r => s" ($r)")
-          // id + name（2026-09-06 升级）：给 Nebula 直接的 cancel/upsert 句柄——
+          // id + name：给 Nebula 直接的 cancel/upsert 句柄——
           // 重启后无需先 list 就能辨认既有例行任务（防 re-arm 双份的事故盲区）。
           val nm = t.name.fold("")(n => s" name: $n")
           s"- [$when] ${t.content.take(60)}$repeat [id: ${t.id}$nm]"
@@ -368,11 +368,11 @@ object SystemReminders:
   /**
    * Log reminders and return them wrapped in IO.
    *
-   * Reminder refactor (2026-08-20): the `time` category fires on nearly every
+   * Reminder refactor: the `time` category fires on nearly every
    * user turn (~2.3K log lines/half-day) — downsampled to at most one log
    * line per [[TimeLogSampleMs]]. The injection itself is unaffected.
    *
-   * F-2（presdial 批 2026-09-19）：带 [[SystemReminder.countKey]] 的提醒（device
+   * F-2：带 [[SystemReminder.countKey]] 的提醒（device
    * 通道）**按变化身份计数** —— 同一变化（成员集合键相同）已经在别的会话计过 ⇒
    * **零增量**（不打第二行）。计数面 = 这一行日志本身（「同一变化对应多条日志行」的源头即此处）。
    * 🔴 注入不受影响（每会话仍各自收到它自己的差量）；`time` 的降采样次序不变

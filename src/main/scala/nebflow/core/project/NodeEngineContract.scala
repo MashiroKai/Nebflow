@@ -1,4 +1,4 @@
-/* 从 NodeEngine 迁出(行为保持重构,2026-09-25)。 */
+/* 从 NodeEngine 迁出(行为保持重构)。 */
 package nebflow.core.project
 
 import nebflow.actor.{AgentRecord, AgentStatus, status}
@@ -7,14 +7,14 @@ import nebflow.shared.Message
 
 private[project] object NodeEngineContract:
   /**
-   * `cascadeCancelledIds` 的 FIFO 上界（chaincancel 批 2026-09-17）：见该 Ref 头注——
+   * `cascadeCancelledIds` 的 FIFO 上界：见该 Ref 头注——
    * 只为防长跑进程无界增长；超限丢最旧，最坏后果 = 已取消下游被补一条 `pendingSuccession`
    * 噪标（零功能影响）。
    */
   val CascadeSuppressCap: Int = 512
 
   /**
-   * **L3 硬恢复的级联权限单点（判据 M8 的硬不变量，作者三答 4 参照的 §6-M8）**：
+   * **L3 硬恢复的级联权限单点（判据 M8 的硬不变量）**：
    * `deferDetach = true`（L3 硬恢复**中间态**——bridge Cancelled → 5s → resume）⇒
    * **级联强制 false**。
    *
@@ -22,7 +22,7 @@ private[project] object NodeEngineContract:
    * **复活**；若此刻已把下游连带 `cancelled`（不可重激活），拓扑已毁、resume 成功也无
    * 可续跑的接线 ⇒ 恢复路径被结构性掐死。
    *
-   * 形态 = 恒 false 的级联旗标（本批**不**给 L3 腿接任何级联写路径，故它是「结构事实
+   * 形态 = 恒 false 的级联旗标（**不**给 L3 腿接任何级联写路径，故它是「结构事实
    * 的显式化 + 可失败的守卫」而不是一个可配开关）：L3 腿以本函数为准，日后若有人把
    * L3 腿改接到 `cancelNodes`/链级写路径上，腿上的守卫行立即抛出。
    */
@@ -44,8 +44,8 @@ private[project] object NodeEngineContract:
       .sorted
 
   /**
-   * completed 节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor
-   * 注入）。2026-09-07 裁定收紧：仅 completed 带 TTL 到期自动归档；failed/cancelled
+   * completed 节点显示 TTL（24h；测试档可缩短——ProjectActor
+   * 注入）。口径收紧：仅 completed 带 TTL 到期自动归档；failed/cancelled
    * （与 blocked 同）ttlExpireAt=None 不过期——死亡现场保留主图待上层裁决。
    */
   val TtlDisplayMs: Long = 24 * 60 * 60 * 1000L
@@ -69,7 +69,7 @@ private[project] object NodeEngineContract:
   val StarvedRounds: Int = 2
 
   /**
-   * mount-stalled 停滞阈值（mount-enforce 批 20260905，作者裁定「节点一旦挂载必须
+   * mount-stalled 停滞阈值（「节点一旦挂载必须
    * 一定生效」）：可触发点后 60s 仍未触发（仍 pending/wiring 且无 running/wiring
    * 上游）→ mount-stalled 事件留痕（含节点 id+等待原因）+ settleSweep 既有资格回扫
    * 接管补触发。双保险的时间维度信号（轮次维度由 trigger-starved 承担）。
@@ -77,10 +77,10 @@ private[project] object NodeEngineContract:
   val MountStalledMs: Long = 60_000L
 
   /**
-   * mount-stalled **告警升级**间隔（engine-defects 批 #85，2026-09-15）：同一停滞期在
+   * mount-stalled **告警升级**间隔：同一停滞期在
    * 首条之后每过本间隔**再发一条**（summary 带 `escalation=#N`），直到节点脱离停滞集。
    *
-   * 动因（真身 `.nebflow/flow-map-events.jsonl:5553` + `:5581`）：R4 `pendingSuccession`
+   * 动因（台账实证在案）：`pendingSuccession`
    * 形态下 barrier 被永久 hold，唯一出口是分发器人工 `NodeEdit`（`NodeTools.scala:2373-2390`）；
    * 旧「单发 Set」让一个可持续数十分钟、并且会**堵死整条合并队列**的停滞只留下一条
    * 事件 = 事实上的静默。取 10min（≥ MountStalledMs 的 10 倍）：既足以在 30s tick 上
@@ -98,7 +98,7 @@ private[project] object NodeEngineContract:
   def StallReNotifyMs: Long = nebflow.shared.Defaults.StallReNotifyMs
 
   /**
-   * 死会话自动收敛的 spawn 窗口宽限（僵尸收敛批 2026-09-06）：节点 status 翻
+   * 死会话自动收敛的 spawn 窗口宽限：节点 status 翻
    * Running 后，agent registry 登记发生在 spawn 之后（runWithAgent :816）——Flipped
    * 瞬到 registry 登记之间存在微小窗口。自动对账只在「已过该宽限仍未登记 agent」
    * 时才判定死会话，避免把刚启动（fiber 活着、agent 即将登记）的节点误判收殓。
@@ -114,7 +114,7 @@ private[project] object NodeEngineContract:
       extends RuntimeException(s"start race lost ($nodeId) — winner owns the session")
 
   /**
-   * abandon 摘边台账（**案 A 2026-09-14，作者 17:24 拍板**；写点
+   * abandon 摘边台账（**案 A**；写点
    * [[NodeEngine.detachAbandonedNode]]）。三个 referrer 清单都是**活动区**里真正被
    * 改写的节点 id（升序、去重），`selfRewired` = 被退役节点自身的 in/out/deps 确有
    * 需要改写的挂线。四者全空 ⇒ 摘边是 no-op（幂等判据：重复调用恒空）。
@@ -130,7 +130,7 @@ private[project] object NodeEngineContract:
     depsRefs: List[String] = Nil,
     selfRewired: Boolean = false,
     /**
-     * **拒绝态受害集**（failroute-guard 批 2026-09-21 · 案 A A1）：本次摘边前后各算
+     * **拒绝态受害集**（案 A A1）：本次摘边前后各算
      * 一次「被摘掉 fail 选通边的 referrer」中**摘前合法 ∧ 摘后失路**的 verifier id
      * （升序去重）。纯台账、零额外写；告警按批收口消费本字段
      * （`NodeEngine.emitVerifierRouteLost`）。旧台账语义零改动 ⇒ 默认 Nil。
@@ -147,7 +147,7 @@ private[project] object NodeEngineContract:
     def referrers: List[String] = (inMirrors ++ outRefs ++ depsRefs).distinct.sorted
   end RetireDetach
 
-  // ── 投递可靠性批次常量（2026-09-04 四缺口）──────────────────
+  // ── 投递可靠性批次常量（四缺口）──────────────────
 
   /**
    * 缺口2：补投/重投新鲜度阈值（24h，取 TtlDisplayMs 同口径——超过一个显示
@@ -184,7 +184,7 @@ private[project] object NodeEngineContract:
   val RootDedupWindowMs: Long = 60_000L
 
   // `DispatcherSourceMarker`（`"dispatcher"`）与 `DispatcherTaskSummaryChars` 同批删净
-  // （R2「一个 Mail 统一」批 2026-09-12，R7-b）：桥收敛后 source=="dispatcher" 族
+  // （R7-b）：桥收敛后 source=="dispatcher" 族
   // **无生产者**（恒 0）。保留死常量会误导「该族仍会生产」——按 B5-c 精神随调用点一起删。
   // 观测口径变化登记：`SessionRecorder` 六字段取值集不再出现 `dispatcher`；
   // `web/js/chat.js` 的 `INJECTED_SOURCE_LABELS` 本无该键（走通用回退分支），前端零必需改动。
@@ -208,15 +208,15 @@ private[project] object NodeEngineContract:
   object PluginPreparation:
     val empty: PluginPreparation = PluginPreparation("", Nil, Nil)
 
-  // ── NodeMessage（20260905 机制批，作者裁定六条语义）──────────────────
+  // ── NodeMessage（六条语义）──────────────────
 
   /**
-   * 裁定②：running 注入文本的可识别前缀——与用户任务文本、节点结果投递明确
+   * 语义②：running 注入文本的可识别前缀——与用户任务文本、节点结果投递明确
    * 区分（分发器 NodeMessage + 节点名 + 时间戳来源标注）。
    */
   val NodeMessagePrefix: String = "[NODE-MESSAGE]"
 
-  /** 裁定⑤：消息留痕事件类型（FlowMapEventLog append-only JSONL）。 */
+  /** 语义⑤：消息留痕事件类型（FlowMapEventLog append-only JSONL）。 */
   val NodeMessageEventType: String = "node-message"
 
   /** running 注入文本头（前缀 + 来源标注单点）。 */
@@ -225,9 +225,9 @@ private[project] object NodeEngineContract:
     s"$NodeMessagePrefix 来源：任务分发器 NodeMessage · 节点 $nodeName · $ts"
 
   /**
-   * 裁定③：任务追加分节头（NodeEdit release note 先例同款形态；裁定原文
+   * 语义③：任务追加分节头（NodeEdit release note 先例同款形态；原文
    * 「== 分发器补充（NodeMessage <时间戳>） ==」）。undelivered=true 时追加
-   * 「注入未达」标注（裁定②竞态兜底——留痕不丢）。
+   * 「注入未达」标注（语义②竞态兜底——留痕不丢）。
    */
   def nodeMessageSection(undelivered: Boolean): String =
     val ts = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
@@ -237,7 +237,7 @@ private[project] object NodeEngineContract:
   /** 节点 id 前缀（sessionId = "node-<uuid>"）。 */
   val SessionPrefix = "node-"
 
-  // ── 未申报提醒阶梯常量（noderpt 批 A 段 2026-09-11 作者裁定）──────────────────
+  // ── 未申报提醒阶梯常量──────────────────
 
   /**
    * 提醒轮注入文本的**专用前缀头**（文案首行；agent 与取证双面可识别——与
@@ -261,7 +261,7 @@ private[project] object NodeEngineContract:
   val NodeReportStageActive: String = "active"
   val NodeReportStageQuiescent: String = "quiescent"
 
-  // ── 释放唤醒常量（noderpt 批 F2，2026-09-11 复核 D2 修复）──────────────────────
+  // ── 释放唤醒常量──────────────────────
   //
   // 与提醒阶梯同族但**不同语义**：提醒 = 「你没申报」（注入提醒轮 + 事件）；
   // 释放唤醒 = 「你申报了，但桥没观测到那一轮」（唤醒桥复检放行 + 事件，不提醒）。
@@ -293,10 +293,10 @@ private[project] object NodeEngineContract:
     s"node_report declaration present but the completion bridge never observed the declaring turn — " +
       s"release wake injected: stage=release-wake session=$sessionId pendingSince=$pendingSince delivered=$delivered"
 
-  // ── 终态延迟销毁窗口常量（noderpt 批 B 段 2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
+  // ── 终态延迟销毁窗口常量（一律存活 30 分钟再销毁）──
 
   /**
-   * **申报未消费补偿事件类型**（engine-defects 批 #239①，2026-09-15；写点 =
+   * **申报未消费补偿事件类型**（写点 =
    * `NodeEngine.compensateUnconsumedReport`）：`node_report` 申报已被 `drain`
    * take-and-remove 取走，而终态写因 R2 fresh-read 纪律**拒写**（节点已消失 /
    * 状态已变 / 关机期 draining 抑制）时，把申报全文补偿写回本审计流。
@@ -306,12 +306,12 @@ private[project] object NodeEngineContract:
    *
    * 与 `blocked` / `bg-harvest` 等既有行**分开记账**：本条回答的是「这个节点申报过，
    * 为什么最终状态里没有它、也没人知道」——旧口径下该形态**零痕迹**（drain 取走即移除、
-   * 无补偿写回），是本批闭合的那条缝在观测面上的唯一锚点。
+   * 无补偿写回），是已闭合的那条缝在观测面上的唯一锚点。
    */
   val ReportUnconsumedEventType: String = "node-report-unconsumed"
 
   /**
-   * **申报被非终态分支消费**事件类型（#239② ⑤-(1)，2026-09-15；写点 =
+   * **申报被非终态分支消费**事件类型（写点 =
    * [[NodeEngine.noteNonTerminalConsumption]]）：Loop 的 worker 支把 `pass`/`finish`
    * 申报消费进「本轮照常进 verify 裁决」——该支**没有**终态写，也就没有落地判词可挂，
    * 于是申报会在内存与日志两处同时消失而无一行说明去向。本行补的是「申报被谁消费掉了」
@@ -347,7 +347,7 @@ private[project] object NodeEngineContract:
     else s"${ms / 1000L}s"
 
   /**
-   * 提醒轮注入文案（nrloop 一期 2026-09-12 **中性化**，设计 §2 R9 / 附 C2-R9：
+   * 提醒轮注入文案（**中性化**：
    * 文案不按角色分支、不并列值域——「合法取值以工具说明为准」一句把值域解释权收归
    * `node_report` description（按角色单一权威），提醒只做「你还没申报」这一件事）。
    * 适用范围 = **全部节点会话**（`remindUnreportedNodes` 本就按 Running 全扫、无角色
@@ -409,18 +409,17 @@ private[project] object NodeEngineContract:
       }
       .toMap
 
-  // ── P2（stuck 自动恢复批）：runtime 定位键修正（硬依赖 2，正交实验已证**正**）──
+  // ── P2（stuck 自动恢复）：runtime 定位键修正（硬依赖 2，正交实验已证**正**）──
   //
-  // 事故形态：`rts.find(rt => rt.engine.rootSessionId == rec.rootSessionId)` 在
+  // 缺陷形态：`rts.find(rt => rt.engine.rootSessionId == rec.rootSessionId)` 在
   // **多项目挂载**下必然歧义——`ProjectActor.mountAll` 把**同一个顶层 rootSessionId**
   // 交给全部项目（`GatewayMain` 单个 `rootSid` → `mountAll` → `mount` →
   // `NodeEngine(rootSessionId, …)`），`ProjectRuntimeRegistry.all` 是 Map 无序
   // （`runtimes.get.map(_.values.toList)`）⇒ 16 个同 id 候选中任取其一。
   //
-  // 实证（宿主日志，2026-09-11 06:58 启动 16 项目同一 rootSessionId
-  // `5cc7590a-…`）：`no node owns session`（**引擎内**节点查无，NodeEngine:436）12 次，
-  // 而 watcher 层「no project runtime for …」（`rts.find` 整体落空）**0 次** ⇒
-  // `find` 总是命中、命中的却总是**错的引擎**（15/16 概率），节点在别的项目 store 里。
+  // 实证结论（多项目共栖一宿主时在案）：`no node owns session`（**引擎内**节点查无）反复出现，
+  // 而 watcher 层「no project runtime for …」（`rts.find` 整体落空）零出现 ⇒
+  // `find` 总是命中、命中的却可能是**错的引擎**，节点在别的项目 store 里。
   //
   // ⇒ 项目定位键 = **会话在哪个 store 里**，不是 rootSessionId。`sessionRef`
   // （node-/dispatcher- 会话 id）在任一 store 内唯一，故按 sessionRef 扫 store 即
@@ -506,7 +505,7 @@ private[project] object NodeEngineContract:
    * 不改 `AgentEvent` 形态，与 `CancelSource` 同纪律）。
    *
    * 该事件此前**无原因**：读者只能看到「node finalized (cancelled) — reclaimed bg
-   * session」，看不出是引擎看门狗取消、bg 等待上限、会话猝死还是本批新增的挂起腿
+   * session」，看不出是引擎看门狗取消、bg 等待上限、会话猝死还是新增的挂起腿
    * （本板 #98 的两条诉求「为什么被 cancelled / 是否通知过」的第一个盲区即此）。
    */
   def finalizeCause(msg: String): String =
@@ -523,7 +522,7 @@ private[project] object NodeEngineContract:
    *
    * A1（transcript）在主锚位：由调用方（watcher）经 `SessionStore.loadMessagesForSession`
    * 探测（引擎侧同一读点，二者同源）——不可用 ⇒ **不恢复、直接一次上报**。
-   * A3（worktree/git）是产物面旁证：目录缺失 ⇒ 该锚不可用（#159 形态），
+   * A3（worktree/git）是产物面旁证：目录缺失 ⇒ 该锚不可用，
    * 降级为「A1 可用则续跑」。
    */
   final case class RecoveryAnchor(
@@ -566,7 +565,7 @@ private[project] object NodeEngineContract:
   end stuckResumeNote
 
   /**
-   * **A3 锚不可用时的承接语义说明**（#159/#176 ③，2026-09-14）。
+   * **A3 锚不可用时的承接语义说明**。
    *
    * 语义（设计态 + 实现态，逐条对应）：
    *   - **S1 就地续跑**：A3 可用 ⇒ 恢复腿在与上轮**同一**目录里续跑（现行为，未改）；
@@ -576,7 +575,7 @@ private[project] object NodeEngineContract:
    *     ——本函数即该告知的载体（否则恢复后的会话会拿「不存在的目录」当下事实）；
    *   - **S3 承接失败**：`no node owns session` ⇒ 恢复腿无法接管（[[suspendNode]] /
    *     [[hardResumeNode]] 各自留痕 + 跳过，[[failStuckRecovery]] / [[settleFailedHardResume]]
-   *     兜终态）；事件流留痕见那两处（本批补）。
+   *     兜终态）；事件流留痕见那两处。
    *   - **S4 零产出空支**（J7）：`hasOutput=false` ⇒ 无产物可救，重激活 = 重跑本 turn 或
    *     经 `NodeEdit` 重激活/换名承接；**禁** `branch -D` 强删（审计血缘保留）。
    *
@@ -597,27 +596,27 @@ private[project] object NodeEngineContract:
   val MaxBlockRoundsPerNode: Int = 2
 
   /**
-   * 节点终态语义申报协议脚注（buildInput 末尾单点注入）。TaskBoard 批 2（§3c）：
+   * 节点终态语义申报协议脚注（buildInput 末尾单点注入）：
    * 末尾增一行上报指引——与终态语义协议同点注入、同生命周期；措辞自带条件
    * （「若…给了」），无板会话注入该行无副作用。
-   * blocked 结构化信号批（20260909 spec §5.2 #7）：第一优先 = 调用申报工具；
-   * 同日作者裁定泛化（NodeReport 统一三语义）：工具更名 node_report，blocked
+   * blocked 结构化信号：第一优先 = 调用申报工具；
+   * 裁定泛化（NodeReport 统一三语义）：工具更名 node_report，blocked
    * 细分六类之外 pass/fail 语义同走结构化申报；三语义文本锚定（首行裸 BLOCKED
    * / VERDICT: PASS/FAIL）降级为「工具不可用时」备用通道，措辞强调首行裸形态
    * 要求（6 例实证：markdown 标题/加粗/前置导语均锚定失败）。
    *
-   * nrloop 一期 2026-09-12（设计 §3.1 / B9）：值域**按节点角色分化**后，本文案
+   * 值域**按节点角色分化**后，本文案
    * 只保留角色中立表述（「按你的节点角色传对应值」+ 括号注明校验节点 = pass/fail），
    * verifier 专属段（verdict ≠ 节点状态）由 [[protocolFootnoteFor]] 追加——避免把
    * 两套值域并列塞进一篇脚注（R9 中性化同款纪律：解释权收归工具 description）。
    * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
    * `endsWith(ProtocolFootnote)` 身份断言）。
-   * F8 收口（2026-09-15）：本 val = 节点终态申报协议在**引擎贡献面**（引擎编译、
+   * F8 收口：本 val = 节点终态申报协议在**引擎贡献面**（引擎编译、
    * 随系统提示词/任务输入注入的提示词文本）的单一权威文本——该面唯一完整协议，
    * blocked JSON 文法在该面仅此处承载（工具面语义另由 `node_report` 工具
    * description 与 `NodeReportTool` 承载，不属本断言域）。**非全局唯一**：agent
    * 种子条件句 `seed/agents/general/system.md:7-10` 自带完整规则文本（promptfix
-   * 作者并存终态「规则各留一份」，唯一 seed 面防线，无指向本 val 的指针）；
+   * 并存终态「规则各留一份」，唯一 seed 面防线，无指向本 val 的指针）；
    * `PromptSections` 段序 360 = belt+指针；内置 general 项目脚手架的 AGENTS.md
    * （**符号锚**：按角色描述该文件，不指文件路径——文件路径会随种子面增删漂移）=
    * 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载
@@ -636,7 +635,7 @@ private[project] object NodeEngineContract:
       |TaskBoard work order ⇒ close = done, blocked = stuck.""".stripMargin
 
   /**
-   * verifier 专属附录段（nrloop 一期 B9；设计 §3.1 纪律③「verdict ≠ 节点状态」+
+   * verifier 专属附录段（B9；设计 §3.1 纪律③「verdict ≠ 节点状态」+
    * §3.2 verifier 语义）。**仅 `role=verifier` 注入**（[[protocolFootnoteFor]]），
    * 逐字回答校验节点最容易搞错的一件事：申报 `fail` 不等于自己失败。
    * 与 `node_report` description 该段同源同措辞（双面同文纪律，设计 §3.1）。
@@ -647,7 +646,7 @@ private[project] object NodeEngineContract:
       |A real execution failure (dead session / LLM error) is engine-judged — no agent channel. Stuck ⇒ `blocked`, as for a task node.""".stripMargin
 
   /**
-   * 角色分支脚注（nrloop 一期 B9 单点）：`verifier` = 基线 + [[VerifierVerdictFootnote]]
+   * 角色分支脚注（B9 单点）：`verifier` = 基线 + [[VerifierVerdictFootnote]]
    * 附录；其余（含 None / 未知）= 基线**逐字原文**（旧行为零漂移——既有
    * `endsWith(ProtocolFootnote)` / 末行断言全部保持）。
    */
@@ -656,7 +655,7 @@ private[project] object NodeEngineContract:
       ProtocolFootnote + "\n" + VerifierVerdictFootnote
     else ProtocolFootnote
 
-  // ── 链级抽象 P2：链上下文透传（20260910_process-doc-chain-attribution-spec §9.2）──
+  // ── 链级抽象 P2：链上下文透传（过程文档溯源 §9.2）──
 
   /**
    * 节点所属链的 spawn 时刻快照（§9.2 项 4/5/7）：chainId = `chain-<分量最早
@@ -675,8 +674,8 @@ private[project] object NodeEngineContract:
     s"[chain: ${c.title} (${c.chainId}) · ${c.memberCount} 节点]"
 
   /**
-   * 过程文档命名·溯源提示段（R-3，2026-09-11 作者裁定；替代原「过程文档元数据头
-   * 模板」——本批 §9.2 项 8 注入面）——**不再教写正文元数据头**：旧模板体（可复制
+   * 过程文档命名·溯源提示段（R-3；替代原「过程文档元数据头
+   * 模板」——§9.2 项 8 注入面）——**不再教写正文元数据头**：旧模板体（可复制
    * YAML front matter + 键白名单）正是正文元数据头的诱导源，整体作废。
    * 权威条文（与 `CONVENTIONS.md` 逐字同源）：① 正文零元数据头（`chain`/`chains`/
    * `chain-source`/`chain-role`/`produced-by`/`produced-at`/`doc-class`/`root` 一律
@@ -687,10 +686,10 @@ private[project] object NodeEngineContract:
    * （零改名、零搬移、零回改）。
    * 段体 = 可复制的四种文件名形态 + 三条纪律，**零 `---` 行、零键白名单**（旧模板的
    * 诱导源就在这两处）；链 id 值取自紧随其上的链头行（`chainHeaderLine`）。
-   * 旧「元数据头上限 = ≤8 键 / ≤10 行」（2026-09-10 作者裁定）随正文头停写退为**存量
+   * 旧「元数据头上限 = ≤8 键 / ≤10 行」随正文头停写退为**存量
    * 读取侧历史口径**（`index-backfill.py` 的 legacy 元数据头读取路径仍按该口径容错）。
    * 只在有链时注入（紧随链头）——无链会话无归属对象，注入只会诱导编造 chain id
-   * （裁定理由同原交付报告）。
+   * 。
    */
   val DocProvenanceBlock: String =
     """[Process doc naming · provenance — body: NO metadata header; chain attribution only in the filename suffix `__<chainId>`:]
@@ -698,13 +697,13 @@ private[project] object NodeEngineContract:
       |20260911_082530_<topic>.md = unattributed (no suffix — never invent one) · ...__<mainId>+<secondId>.md = multi-chain
       |Body never carries chain/chains/chain-source/chain-role/produced-by/produced-at/doc-class/root; chainId = the header line above; time = local second; same-second clash ⇒ -<n>; existing docs: no rename / move / retro-edit.""".stripMargin
 
-  // ── LoopNode（LoopNode 批 2026-09-06，主设计 §2.2/§2.3）──────────────────
+  // ── LoopNode（主设计 §2.2/§2.3）──────────────────
 
   /** loop 运行态阶段值（NodeDef.loopPhase；loopRound 配套）。 */
   val LoopPhaseWorker: String = "worker"
   val LoopPhaseVerify: String = "verify"
 
-  // ── boot-time 崩溃恢复（crash-recovery 批 2026-09-07）──────────────────
+  // ── boot-time 崩溃恢复──────────────────
 
   /**
    * 恢复认领事件类型（FlowMapEventLog append-only JSONL，「禁止静默自愈」纪律——
@@ -713,7 +712,7 @@ private[project] object NodeEngineContract:
   val BootRecoveryEventType: String = "boot-recovery"
 
   /**
-   * 优雅关机翻态事件类型（中断恢复语义批 2026-09-13，spec §2.3-2）：钩子把
+   * 优雅关机翻态事件类型（中断恢复语义，spec §2.3-2）：钩子把
    * Running 节点翻成 interrupted 时的唯一审计留痕点（与 draining 守卫的 WARN 留痕
    * 区分：本类型 = 翻态事实，守卫留痕 = 被拒的 failed 写）。
    */
@@ -723,7 +722,7 @@ private[project] object NodeEngineContract:
    * 崩溃恢复续跑上下文（D3）：spawnAndRun/runWithAgent/spawnAndRunLoop 全链的
    * resume 增量——Some 时跳过 buildInput、复用旧会话 id（D2：transcript 单文件
    * 续写 + F2 队列重放白捡）+ initialMessages 水合，其余装配逐行复用（R8：禁手写
-   * 独立 spawn 链）。普通节点仅主会话三字段；loop 节点（裁定③）另带 verify 双会话
+   * 独立 spawn 链）。普通节点仅主会话三字段；loop 节点（条款③）另带 verify 双会话
    * 与崩溃时 loopRound/loopPhase 断点。
    */
   final case class ResumeContext(
@@ -748,7 +747,7 @@ private[project] object NodeEngineContract:
 
   /**
    * 普通节点 resume prompt（§3.3 模板；磁盘上 (a)/(b) 不可区分——副作用核验告知
-   * 恒带（裁定②诚实语义：mid-turn 重放=从上一持久轮重跑，已完成的工作无需重复，
+   * 恒带（诚实语义：mid-turn 重放=从上一持久轮重跑，已完成的工作无需重复，
    * 未确认的副作用先核验）。bgWaitNote = 认领时清空的等待集快照（G4 死亡告知）。
    */
   def nodeResumePrompt(projectName: String, node: NodeDef, recoveredCount: Int, bgWaitNote: Option[String]): String =
@@ -761,7 +760,7 @@ private[project] object NodeEngineContract:
        |Full task text: NodeList(detail="${node.id}", project="$projectName").""".stripMargin
 
   /**
-   * loop worker 相位 resume prompt（裁定③：worker→verify 迭代跨崩溃续接——本轮
+   * loop worker 相位 resume prompt（条款③：worker→verify 迭代跨崩溃续接——本轮
    * 产出从最后持久轮边界续作，verify 照常裁决本轮）。
    */
   def loopWorkerResumePrompt(node: NodeDef, round: Int, phase: String, recoveredCount: Int): String =
@@ -789,15 +788,15 @@ private[project] object NodeEngineContract:
 
   /**
    * verify 清单默认模板（loopSpec.verifyTask 为空时兜底注入）。
-   * 语言：本批令 2 ①「全部提示词面英文」⇒ 由中文改为英文（设计 §3.1-B 把 B9 记为
-   * 「保留原文」的例外，是针对**字节硬线**的计账例外；语言面以任务书 ① 为准）。
+   * 语言：「全部提示词面英文」口径 ⇒ 由中文改为英文（设计 §3.1-B 把 B9 记为
+   * 「保留原文」的例外，是针对**字节硬线**的计账例外；语言面以上述口径为准）。
    */
   val VerifyDefaultTask: String =
     "Check the worker's output item by item against the original task and the acceptance baseline; " +
       "list every issue that must be fixed (one bullet each) and rule PASS when the bar is met."
 
   /**
-   * **回边重跑准入判据单点**（B5 缺口③ 对偶腿 · 作者 2026-09-17 M-3 裁定：「运行期
+   * **回边重跑准入判据单点**（「运行期
    * 回边腿**同步排除 Running 目标**」——与编辑期守卫（`NodeTools`：控制边对 running
    * 目标入待接线队列）**两面口径一致，缺一半即洞**）。
    *
@@ -844,7 +843,7 @@ private[project] object NodeEngineContract:
 
   /**
    * verify 输入模板三（第 N 轮；首轮全文、第 N≥2 轮新段——持久会话已持有原始任务/
-   * 上游段/验证清单/历轮产出，主设计 §2.2 模板三 + 裁定 B 注记）。
+   * 上游段/验证清单/历轮产出，主设计 §2.2 模板三 + 注记）。
    */
   def loopVerifyInput(
     round: Int,
