@@ -23,7 +23,9 @@
 //       ├ 组件面（mcp/skills/org.nebflow 现读投影 = 既有 comp chips 族；org.nebflow
 //       │   行 = viewerContributions.viewers[].name 数据投影，无贡献不渲染）
 //       └ 启停操作钮 = 既有派发开关**原样收进展开态**（钩子/语义/乐观翻转零变，
-//           只动层级——2026-09-14 后它是卡片唯一控件，无封禁钮可收）。
+//           只动层级）＋ **收起态行尾第二视图**（2026-10-07 14:13 作者令①：
+//           `[data-plugin-dispatch-row]` 挂 `.plugins-card-state`，药丸后 chevron
+//           前；点击 stopPropagation 不触发展开；两视图一处状态源同源同步）。
 //     展开态默认收起；收敛管线（applyRegistryStates）保持节点身份 ⇒ 展开态跨
 //     轮询/开关收敛保持；整页重渲（locale 切换 / tab 恢复）无记忆 ⇒ 默认收起
 //     （🔴 不新造持久化）。
@@ -42,9 +44,10 @@
 //       │   文字为空 ⇒ **整个药丸元素不渲染**（「删掉空框」）——判据是**元素
 //       │   count = 0**，不是「元素在但不可见」（🔴 禁 CSS 遮盖式假修）。
 //       │   封禁 / 内容已变更**仍出字且照常渲染**（那是可行动信号，不是说明性小字）。
-//       └ 派发开关 `[data-plugin-dispatch]` = **展开详情区内**的**唯一控件**
-//           （`.plugins-item-actions` 行，2026-10-07 条目式批自「卡片右上、与药丸
-//           同排」收进展开态——只动层级，钩子/语义零变）；🔴 **2026-09-15 作者令：
+//       └ 派发开关 `[data-plugin-dispatch]` = **展开详情区内**控件（原「唯一控件」
+//           ——`.plugins-item-actions` 行，2026-10-07 条目式批收进展开态）；
+//           2026-10-07 14:13 作者令①增补收起态行尾第二视图（同源，见上）；
+//           🔴 **2026-09-15 作者令：
 //           可见文案「任务分发器可见性」小字整体删除**（toggle 本体自明）——
 //           `plugins.dispatchLabel` 仅作 **aria-label** 保留（可访问性面；
 //           2026-09-14 作者三裁之批一引入，2026-09-15 只删可见文本）。
@@ -252,13 +255,20 @@ function dispatchState(manifest, blocked) {
 }
 
 // ── Data assembly ──────────────────────────────────────────
+/** 面板隐藏 agent（2026-10-07 14:13 作者令②「任务分发器面板隐藏」）——枚举链
+ *  **第三过滤点**（前端兜底腿；判据语义与后端单点
+ *  `BuiltinAgents.PanelHiddenNames` 同源，后端 GET /api/agents 为权威过滤）。
+ *  🔴 只过滤本面板的 agents 列表枚举；`/api/agents/:name` 单取、编辑器深链、
+ *  生命周期面零触碰——藏的是可见性不是生命。#1229 物理删除候 S19③。 */
+const PANEL_HIDDEN_AGENTS = ['project-dispatcher'];
+
 /**
  * Load everything the page needs in one pass.
  * @returns {Promise<{registry: object, agents: Array}>}
  */
 async function loadPluginsData() {
   const [registry, agents] = await Promise.all([fetchPluginRegistry(), fetchAgents()]);
-  return { registry, agents };
+  return { registry, agents: agents.filter(a => !PANEL_HIDDEN_AGENTS.includes(a.name)) };
 }
 
 /** Per-agent model snapshot for the summary row's preset/model pills. */
@@ -373,9 +383,13 @@ const ITEM_CHEVRON_SVG = '<svg class="plugins-item-chevron" width="14" height="1
  *    `[data-plugin-item]`     — 条目行（点击/键盘 toggle 展开态；role=button +
  *                               aria-expanded/aria-controls 可访问性面）
  *    `.plugins-item-detail`   — 展开详情区（默认 hidden；accordion 载体）
- *    `[data-plugin-dispatch]` — 任务分发器可见性开关（令 1 既有钩子，保留不动；
- *                               2026-10-07 条目式批：层级改到详情区 actions 行）
- *    `.plugins-card-state`    — 条目行右上状态区（药丸 + chevron 载体）
+ *    `[data-plugin-dispatch]` — 任务分发器可见性开关·**展开态**（令 1 既有钩子，
+ *                               保留不动；2026-10-07 条目式批：层级改到详情区
+ *                               actions 行）
+ *    `[data-plugin-dispatch-row]` — 同一开关的**收起态行尾视图**（2026-10-07
+ *                               14:13 作者令①）：与上钩子同源同态（一处状态源、
+ *                               两处视图），点击 stopPropagation 不触发展开
+ *    `.plugins-card-state`    — 条目行右上状态区（药丸 + 行尾开关 + chevron 载体）
  *    `[data-plugin-doc]`      — Plugin.md 入口（探针在场才显形；默认 hidden）
  *  🔴 2026-09-14 面板收敛批退场钩子（**生产代码零使用**，判据见报告静态腿）：
  *    `[data-plugin-more]` / `[data-plugin-menu]` / `[data-plugin-block]`
@@ -414,6 +428,20 @@ function renderPluginCard(manifest) {
       </div>
       <div class="plugins-card-state">
         ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${pillInnerHtml(pill)}</span>` : ''}
+        ${toggleHTML({
+          on: disp.on,
+          disabled: !!disp.blocked,
+          // 收起态行尾开关（2026-10-07 14:13 作者令①）：与状态药丸/chevron 同排，
+          // 药丸之后、chevron 之前（chevron 保持行末展开 affordance）。与展开态
+          // 详情区开关同一状态源（disp / cardSignature 单点），两处视图；
+          // 🔴 新钩子 `data-plugin-dispatch-row`——既有 `[data-plugin-dispatch]`
+          // 钩子语义/测试钉（详情区 actions 行）零变。点击 stopPropagation 由
+          // bindCardEvents 统一绑定（不触发整行 accordion）。
+          label: t('plugins.dispatchLabel'),
+          title: disp.title,
+          attrs: `data-plugin-dispatch-row="${esc(name)}"`
+            + (disp.blocked ? ` data-dispatch-blocked="${esc(disp.blocked)}"` : ''),
+        })}
         ${ITEM_CHEVRON_SVG}
       </div>
       <span class="plugins-item-summary">${esc(desc)}</span>
@@ -563,12 +591,22 @@ function renderAuthRequired(content) {
   content.querySelector('[data-plugins-relogin]')?.addEventListener('click', () => openLoginModal());
 }
 
+/** All per-card dispatch-toggle views（一处状态源、两处视图——14:13 令①）：
+ *  展开态 `[data-plugin-dispatch]` ＋ 收起态行尾 `[data-plugin-dispatch-row]`。
+ *  乐观翻转/收敛/释放三条路径都必须遍历本集，两视图才不会漂移。 */
+function dispatchToggles(card) {
+  // Legacy hook first so querySelector('[data-plugin-dispatch]') consumers
+  // (domCardSignature / specs) keep reading the detail-area view.
+  return card
+    ? card.querySelectorAll('[data-plugin-dispatch], [data-plugin-dispatch-row]')
+    : [];
+}
+
 /** Optimistic in-place flip of one card's DISPATCH switch (no re-render) —
  *  the only optimistic path left on the card (the content switch retired
- *  2026-09-13), same in-flight latch discipline. */
+ *  2026-09-13), same in-flight latch discipline. Flips BOTH views. */
 function flipDispatchState(card, on) {
-  const sw = card.querySelector('[data-plugin-dispatch]');
-  if (sw) {
+  for (const sw of dispatchToggles(card)) {
     setToggleState(sw, on);
     sw.disabled = true; // in-flight guard — released by state convergence
   }
@@ -582,8 +620,9 @@ function flipDispatchState(card, on) {
  *  (零静默空操作)。
  *  （2026-09-14 面板收敛批：原同时释放的封禁/解封按钮已随该动作退场。） */
 function releaseCardActions(card) {
-  const dsw = card?.querySelector('[data-plugin-dispatch]');
-  if (dsw && !dsw.hasAttribute('data-dispatch-blocked')) dsw.disabled = false;
+  for (const dsw of dispatchToggles(card)) {
+    if (!dsw.hasAttribute('data-dispatch-blocked')) dsw.disabled = false;
+  }
 }
 
 /** Dispatch-permission action (令 1 派发面) — POST /api/plugins/:name/(enable|disable).
@@ -650,8 +689,8 @@ function applyPluginCardState(card, manifest) {
     }
   }
   // 派发面（令 1）：开关态 = 作者意图层；blocked 时 disabled + 注明原因。
-  const dsw = card.querySelector('[data-plugin-dispatch]');
-  if (dsw) {
+  // 两处视图（展开态 + 收起态行尾）同源收敛——遍历 dispatchToggles，防漂移。
+  for (const dsw of dispatchToggles(card)) {
     setToggleState(dsw, disp.on);
     dsw.disabled = !!disp.blocked;
     dsw.title = disp.title;
@@ -925,18 +964,25 @@ function bindCardEvents(card) {
     });
   }
   // 派发开关（令 1 派发面）：只写 plugins.dispatch；blocked 时控制件自带
-  // disabled，故此处点击不可达（零静默空操作）。开关本体收在展开详情区内
-  // （2026-10-07 条目式批只动层级），语义与收敛管线零变。
-  const dsw = card.querySelector('[data-plugin-dispatch]');
-  if (dsw && !boundDispatchSwitches.has(dsw)) {
+  // disabled，故此处点击不可达（零静默空操作）。两处视图同绑（2026-10-07
+  // 14:13 令①）：展开态详情区 + 收起态行尾（同源同态）。
+  // 🔴 stopPropagation（14:13 令①硬条）：行尾开关在 `[data-plugin-item]`
+  // （role=button accordion）**内部**——click 冒泡会触发展开，Enter/Space 的
+  // keydown 冒泡同样会（`<button>` 原生 click 语义已激活开关本体，行不得再动）。
+  for (const dsw of dispatchToggles(card)) {
+    if (boundDispatchSwitches.has(dsw)) continue;
     boundDispatchSwitches.add(dsw);
-    dsw.addEventListener('click', () => {
+    dsw.addEventListener('click', (e) => {
+      e.stopPropagation(); // 收起态行尾开关不得触发整行 accordion（详情态无害）
       if (dsw.disabled) return;
-      const name = dsw.dataset.pluginDispatch;
+      const name = dsw.dataset.pluginDispatch || dsw.dataset.pluginDispatchRow;
       const enable = !dsw.classList.contains('on');
       const cardEl = dsw.closest('.plugins-card');
       flipDispatchState(cardEl, enable); // optimistic — converged/rolled back async
       setPluginDispatch(name, enable, cardEl);
+    });
+    dsw.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
     });
   }
   mountPluginMdEntry(card);

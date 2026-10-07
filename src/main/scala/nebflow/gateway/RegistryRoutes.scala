@@ -108,11 +108,19 @@ private[gateway] object RegistryRoutes:
       // project-dispatcher / general / kernel）为**代码定义**，恒在册、磁盘死信
       // （EntityLoader.listAgents 单点合并）；响应带 `builtin: true` = 面板只读
       // 标记（写通道对 builtin 名显式拒绝）。
+      //
+      // 2026-10-07 14:13 作者令②：「任务分发器」面板隐藏——本 handler 是枚举链
+      // **第二过滤点**（判据单点 = BuiltinAgents.PanelHiddenNames / panelVisible，
+      // 第一过滤点在其定义处）。🔴 藏的是可见性不是生命：只过滤本**列表枚举**，
+      // 单取 GET /api/agents/:name、模型链读写、注册/旧轨/生命周期零触碰；
+      // #1229 物理删除仍候 S19③ 收口闸。
       case req @ GET -> Root / "agents" =>
         withAuth(req) {
           for
             globalAgents <- EntityLoader.listAgents()
-            globalList = globalAgents.values.toList.map { a =>
+            globalList = globalAgents.values.toList
+              .filter(a => nebflow.core.entity.BuiltinAgents.panelVisible(a.name))
+              .map { a =>
               Json.obj(
                 "name" -> a.name.asJson,
                 "description" -> a.description.asJson,

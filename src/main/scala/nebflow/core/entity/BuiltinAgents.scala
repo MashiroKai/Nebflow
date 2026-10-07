@@ -35,6 +35,21 @@ object BuiltinAgents:
     * 过渡保留——随 flow 引擎退役批一并删除。 */
   val Names: Set[String] = Set("Nebula", "project-dispatcher", "nebflow", "subagent")
 
+  /** 面板隐藏名（2026-10-07 14:13 作者令②「任务分发器面板隐藏」）——枚举链
+    * **第一过滤点**。🔴 本集是**可见性**维度，不是生命维度：集内 agent 的本体
+    * 过渡保留零触碰（仍在 [[Names]]——entry/entries 照常解析、isBuiltin 写通道
+    * 判据零变、注册/旧轨/生命周期全不动），藏的是面板枚举不是生命：
+    * `GET /api/agents`（[[nebflow.gateway.RegistryRoutes]] 面板枚举，第二过滤点）
+    * 与其前端消费面（web/js/plugins.js agents 列表，第三过滤点）按本集过滤。
+    * `project-dispatcher` 物理删除仍候 #1229 / S19③ 收口闸，本集只是过渡期的
+    * 显示面挡板——随该闸一并删除。 */
+  val PanelHiddenNames: Set[String] = Set("project-dispatcher")
+
+  /** 面板枚举可见性判据（枚举链单一判据面：REST 与前端共用本语义）。
+    * 🔴 只用于**枚举/列表**面——单取（GET /api/agents/:name）、解析、派发、
+    * Mail 等生命面一律不走本判据。 */
+  def panelVisible(name: String): Boolean = !PanelHiddenNames.contains(name)
+
   /** 合并后的执行 agent 定义名（Delegate 的 spawn 目标；builtin-merge 批起取代 kernel）。 */
   val ExecutorName: String = "nebflow"
 

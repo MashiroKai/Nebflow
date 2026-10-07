@@ -3,8 +3,9 @@
 //
 // 断言链（条目式钉）：
 //   ① 默认态单行：每插件仅一条目行 = chevron + 名称 + 版本 meta + 状态药丸 +
-//      一行摘要；详情区默认 hidden；条目行零控件（派发开关不在行上）；
-//      空态药丸零元素（「删掉空框」口径延续）。
+//      一行摘要；详情区默认 hidden；行尾派发开关在场（2026-10-07 14:13 令①，
+//      -row 钩子第二视图；既有钩子仍钉详情区）；空态药丸零元素（「删掉空框」
+//      口径延续）。
 //   ② 展开收起：点击条目行 ⇄ 详情区显隐 + aria-expanded/class 同步（accordion
 //      语义自洽，逐条目独立）；Enter/Space 键盘可达。
 //   ③ 操作钮层级：派发开关收进详情区 `.plugins-item-actions` 行（只动层级）——
@@ -208,9 +209,11 @@ async function rowState(page, name) {
         return cs.webkitLineClamp === '2' && cs.overflow === 'hidden';
       })(),
       pillElCount: card ? card.querySelectorAll('.plugins-state-pill').length : 0,
-      // 层级钉：条目行零控件；开关只在详情区
+      // 层级钉（2026-10-07 14:13 令①改版）：条目行上有**行尾开关**（新钩子
+      // data-plugin-dispatch-row）；既有钩子 data-plugin-dispatch 仍钉在详情区
       rowControls: row ? row.querySelectorAll('button, [role="switch"]').length : null,
       dispatchInRow: !!row?.querySelector('[data-plugin-dispatch]'),
+      dispatchRowHookInRow: !!row?.querySelector('[data-plugin-dispatch-row]'),
       dispatchInDetail: !!detail?.querySelector('[data-plugin-dispatch]'),
       dispatchInActions: !!detail?.querySelector('.plugins-item-actions [data-plugin-dispatch]'),
       docBtnHidden: detail?.querySelector('[data-plugin-doc]')?.hidden ?? null,
@@ -244,10 +247,12 @@ test('① 默认态单行：条目行 = chevron+名称+版本+摘要，详情默
   expect(st.summary, '一行摘要 = description 既有字段').toBe(`Fixture plugin ${DOC_OK} (itemize spec)`);
   expect(st.summaryClamp2, '③摘要独立行最多两行（-webkit-box line-clamp 2 超出省略）').toBe(true);
   expect(st.pillElCount, '默认态药丸零元素（「删掉空框」延续）').toBe(0);
-  // 层级钉：条目行零控件（派发开关收进详情区）
-  expect(st.rowControls, '条目行零 button/switch（默认态仅条目行）').toBe(0);
-  expect(st.dispatchInRow, '派发开关不在条目行上').toBe(false);
-  expect(st.dispatchInDetail, '派发开关在详情区（只动层级）').toBe(true);
+  // 层级钉（2026-10-07 14:13 令①改版）：行尾开关上条目行（-row 钩子第二视图）；
+  // 既有钩子仍在详情区（只动层级那批的原钉保留，钩子字面不变）
+  expect(st.rowControls, '条目行恰一控件（行尾派发开关，14:13 令①）').toBe(1);
+  expect(st.dispatchRowHookInRow, '收起态行尾开关在场（data-plugin-dispatch-row）').toBe(true);
+  expect(st.dispatchInRow, '既有钩子 data-plugin-dispatch 不在条目行上（行上是 -row 钩子）').toBe(false);
+  expect(st.dispatchInDetail, '既有钩子开关在详情区（只动层级）').toBe(true);
   expect(st.dispatchInActions, '派发开关在详情区 actions 行').toBe(true);
   // Plugin.md 入口：元素在详情区 DOM（显形语义由 ⑤ 的 200/404 两腿钉——探针在
   // 页内即时决，时序钉放那里）；折叠态下入口不可见（详情区收起即整区隐藏）。

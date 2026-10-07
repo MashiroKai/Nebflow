@@ -276,8 +276,9 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         rowRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('role'),
         rowAriaExpanded: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
         detailHiddenBefore: q('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
-        // 开关收进展开详情区（只动层级）：条目行上不得有控件
+        // 既有钩子仍钉详情区；行尾开关（14:13 令①）= -row 钩子上条目行
         rowHasDispatch: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch]'),
+        rowHasDispatchRow: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch-row]'),
         cardDesc: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-desc')),
         comps: qa('.plugins-card[data-plugin="e2e-hello"] .plugins-comp').map(txt),
         statePill: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')),
@@ -289,8 +290,9 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         moreCount: qa('#plugins-content [data-plugin-more]').length,
         menuCount: qa('#plugins-content [data-plugin-menu]').length,
         blockCount: qa('#plugins-content [data-plugin-block]').length,
-        // 唯一控件 = 派发开关（2026-10-07 条目式批：展开详情区内）
+        // 既有钩子 = 展开详情区内（2026-10-07 条目式批）；行尾第二视图 = -row 钩子
         dispatchCount: qa('#plugins-content [data-plugin-dispatch]').length,
+        rowDispatchCount: qa('#plugins-content [data-plugin-dispatch-row]').length,
         dispatchRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('role'),
         dispatchDisabled: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.disabled,
         dispatchAriaLabel: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('aria-label'),
@@ -304,14 +306,17 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
           const dsw = card?.querySelector('[data-plugin-dispatch]');
           if (!card || !head || !detail || !dsw) return null;
           return {
-            // 2026-10-07 条目式批：开关在详情区 actions 行内，条目行零控件
+            // 2026-10-07 条目式批：既有钩子开关在详情区 actions 行内；
+            // 14:13 令①：行尾开关（-row 钩子）在条目行上——head 恰一控件
             inDetail: detail.contains(dsw), inHead: head.contains(dsw),
             inActions: !!dsw.closest('.plugins-item-actions'),
             rowControls: head.querySelectorAll('button, [role="switch"]').length,
-            // 2026-09-15「删掉空框」：默认态药丸元素缺席 ⇒ 状态区只剩 chevron
-            //（2026-10-07 补充令：chevron 归位右上状态区，药丸缺席时它就是唯一子元素）
+            // 2026-09-15「删掉空框」：默认态药丸元素缺席；14:13 令①后状态区 =
+            // 行尾开关 + chevron（药丸缺席时这俩就是全部子元素）
             pillAbsent: !pill,
-            stateOnlyChevron: !!state && state.children.length === 1 && !!state.querySelector('.plugins-item-chevron'),
+            stateToggleAndChevron: !!state && state.children.length === 2
+              && !!state.querySelector('[data-plugin-dispatch-row]')
+              && !!state.querySelector('.plugins-item-chevron'),
           };
         })(),
         // rejected card：信息卡，任何控件（含派发开关及其状态注记）都不得出现
@@ -344,7 +349,8 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.rowRole, `[${locale}] item row carries role=button`).toBe('button');
     expect(dump.rowAriaExpanded, `[${locale}] item row starts collapsed (aria-expanded=false)`).toBe('false');
     expect(dump.detailHiddenBefore, `[${locale}] detail area collapsed initially`).toBe(true);
-    expect(dump.rowHasDispatch, `[${locale}] 条目行上零控件（开关在详情区，只动层级）`).toBe(false);
+    expect(dump.rowHasDispatch, `[${locale}] 既有钩子不在条目行上（行上是 -row 钩子第二视图）`).toBe(false);
+    expect(dump.rowHasDispatchRow, `[${locale}] 收起态行尾开关在场（14:13 令① data-plugin-dispatch-row）`).toBe(true);
     expect(dump.card, `[${locale}] unified plugin card rendered`).toBe(true);
     expect(dump.cardName, `[${locale}] card shows plugin name`).toBe('e2e-hello');
     expect(dump.cardMeta, `[${locale}] card meta = version + author`).toBe(locale === 'zh-CN' ? 'v1.0.0 · 作者 spec' : 'v1.0.0 · by spec');
@@ -366,7 +372,7 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.moreCount, `[${locale}] 「更多」菜单入口 retired — zero on the page`).toBe(0);
     expect(dump.menuCount, `[${locale}] 次级动作行 retired — zero on the page`).toBe(0);
     expect(dump.blockCount, `[${locale}] 封禁/解封入口 retired — zero on the page`).toBe(0);
-    expect(dump.dispatchCount, `[${locale}] exactly one dispatch control on the page`).toBe(1);
+    expect(dump.dispatchCount, `[${locale}] 既有钩子（详情区视图）每卡恰一`).toBe(1);
     expect(dump.dispatchRole, `[${locale}] dispatch switch still on the card (role=switch)`).toBe('switch');
     expect(dump.dispatchDisabled, `[${locale}] dispatch switch NOT blocked when the plugin is not blocked`).toBe(false);
     // 2026-09-15 作者令：开关旁的**可见** label 小字整体删除（toggle 本体自明）；
@@ -377,10 +383,11 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     // 2026-10-07 条目式批几何钉：开关收进展开详情区（actions 行内）；条目行零控件
     expect(dump.dispatchGeom?.inDetail, `[${locale}] 开关落在展开详情区`).toBe(true);
     expect(dump.dispatchGeom?.inActions, `[${locale}] 开关在详情区 actions 行`).toBe(true);
-    expect(dump.dispatchGeom?.inHead, `[${locale}] 条目行零控件（开关不在行上）`).toBe(false);
-    expect(dump.dispatchGeom?.rowControls, `[${locale}] 条目行按钮/开关计数 0`).toBe(0);
+    expect(dump.dispatchGeom?.inHead, `[${locale}] 既有钩子开关不在条目行上（在详情区）`).toBe(false);
+    expect(dump.dispatchGeom?.rowControls, `[${locale}] 条目行恰一行尾开关控件（14:13 令①）`).toBe(1);
     expect(dump.dispatchGeom?.pillAbsent, `[${locale}] 条目行状态区无药丸元素（空框不占位）`).toBe(true);
-    expect(dump.dispatchGeom?.stateOnlyChevron, `[${locale}] 状态区只剩 chevron（补充令：chevron 归位右上）`).toBe(true);
+    expect(dump.dispatchGeom?.stateToggleAndChevron, `[${locale}] 状态区 = 行尾开关 + chevron（14:13 令①）`).toBe(true);
+    expect(dump.rowDispatchCount, `[${locale}] 行尾开关每卡恰一（-row 钩子）`).toBe(1);
     expect(dump.detailHiddenBefore, `[${locale}] 详情区默认收起`).toBe(true);
     expect(dump.rejectedPill, `[${locale}] rejected card carries the pill`).toBe(locale === 'zh-CN' ? '拒载' : 'Rejected');
     expect(dump.rejectedNoControls, `[${locale}] rejected card carries no control at all`).toBe(true);
