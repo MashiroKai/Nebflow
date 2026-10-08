@@ -29,6 +29,9 @@ import {
 } from './delegateChainStub.js';
 import { nodeHtml } from './fmNodeCard.js';
 import { executorIcon } from './executorIcons.js';
+// file-diff feature: live GUI entry for the node detail layer (archive FAB +
+// panel + detail with the changed-file diff section) inside this chain view.
+import { attachChainDetailLayer } from './chainDetailEntry.js';
 
 /** 视图体滚动容器选择器（pane 内唯一）。 */
 const BODY_SEL = '.delegate-chain-view-body';
@@ -141,6 +144,9 @@ export function openDelegateChainTask(taskKey, meta = {}) {
   const labelBits = [m.taskNo ? `#${m.taskNo}` : '', m.title || m.delegateId || key].filter(Boolean);
   const pane = openPane('task', key, labelBits.join(' '));
   if (!pane) return;
+  // 行挂载项目名（file-diff diff 入口的报告/归档拉取上下文；'' = 无项目态，
+  // 层照开、远端读取 fail-soft）。rerender 路径经同一 dataset 复用。
+  pane.dataset.delegateProject = String(m.project || '');
   renderTaskBody(pane, key);
 }
 
@@ -226,6 +232,12 @@ function renderTaskBody(pane, key) {
     wrap.appendChild(fx);
   }
   body.appendChild(wrap);
+  // file-diff feature (rework): the chain view body hosts the single-source
+  // node detail layer — node cards open .fm-detail, and completed nodes mount
+  // their changed-file diff section inside it (404/no project = the section
+  // silently stays absent). Scoped-chain projections carry real node ids; the
+  // fallback single-delegate node degrades honestly (no report to fetch).
+  attachChainDetailLayer(body, String(pane.dataset.delegateProject || ''), chain.nodes);
 }
 
 // ── S11 结构总视图 ───────────────────────────────────────────────────────

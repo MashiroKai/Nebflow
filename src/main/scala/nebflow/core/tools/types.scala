@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
-import nebflow.core.{AgentLibraryView, AgentRuntimePort, FileChangeTracker}
+import nebflow.core.{AgentLibraryView, AgentRuntimePort, FileChangeLedger, FileChangeTracker}
 import nebflow.shared.*
 
 // 字段类型窄化,agent 定位器类型退出 core
@@ -36,6 +36,15 @@ case class ToolContext(
   agentLibrary: Option[AgentLibraryView] = None,
   fileLockManager: Option[FileLockManager] = None,
   fileChangeTracker: Option[FileChangeTracker] = None,
+  /**
+   * Session-level ledger of file changes (file-diff feature): Write / Edit /
+   * MultiEdit append one event per successful write; keys = sessionId ∪
+   * flowNodeId ∪ taskId. At node completion NodeEngine drains the node's slice
+   * by flowNodeId and FileChangeReport recomputes git diffs + persists the
+   * report. None = non-agent context (direct REST calls / spec harness without
+   * assembly) — tools skip silently.
+   */
+  fileChangeLedger: Option[FileChangeLedger] = None,
   hookEngine: HookEngine = HookEngine.noop,
   hookContext: HookContext = HookContext(None, "", ""),
   folderId: Option[String] = None,

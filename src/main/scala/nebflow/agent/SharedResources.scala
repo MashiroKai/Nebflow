@@ -35,6 +35,14 @@ case class SharedResources(
   thinkingConfigRef: Ref[IO, ThinkingConfig],
   rateLimiter: RateLimiter,
   fileChangeTracker: FileChangeTracker,
+  /**
+   * Session-level file-change ledger (file-diff feature; memory-only, one
+   * global instance). Tools append events via ToolContext.fileChangeLedger; at
+   * node completion FileChangeReport drains + recomputes git diffs and persists
+   * the report. Default = the global singleton (Ref.unsafe precedent) →
+   * existing test constructors need zero changes.
+   */
+  fileChangeLedger: FileChangeLedger = FileChangeLedger.unsafe,
   contextWindow: Int,
   agentLibrary: AgentLibrary,
   taskStore: TaskStore,

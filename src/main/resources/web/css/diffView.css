@@ -1,0 +1,146 @@
+/* diffView.css — per-node file-change diff section (file-diff feature).
+   Mounted by diffView.js into the Flow Map node detail panel. */
+
+/* Section container */
+.nf-filechanges {
+  margin-top: 10px;
+}
+.nf-filechanges-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* File list */
+.nf-filechanges-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* One file entry (details/summary = click to expand the diff) */
+.nf-fc {
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-bg, transparent);
+}
+.nf-fc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  min-width: 0;
+}
+.nf-fc-row:hover {
+  background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
+}
+.nf-fc-row::marker,
+.nf-fc-row::-webkit-details-marker {
+  display: none;
+  content: '';
+}
+.nf-fc-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.nf-fc-counts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.nf-fc-added {
+  color: var(--color-success, #3fb950);
+}
+.nf-fc-removed {
+  color: var(--color-danger, #f85149);
+}
+
+/* change-type badges */
+.nf-fc-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.nf-fc-badge-added {
+  color: var(--color-success, #3fb950);
+  border-color: var(--color-success, #3fb950);
+}
+.nf-fc-badge-modified {
+  color: var(--color-warning, #d29922);
+  border-color: var(--color-warning, #d29922);
+}
+.nf-fc-badge-deleted {
+  color: var(--color-danger, #f85149);
+  border-color: var(--color-danger, #f85149);
+}
+
+/* diff source tag */
+.nf-fc-src {
+  font-size: 10px;
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+/* expanded body */
+.nf-fc-body {
+  border-top: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
+  max-height: 320px;
+  overflow: auto;
+}
+.nf-fc-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+}
+
+/* unified diff body */
+.nf-diff {
+  min-width: 0;
+}
+.nf-diff-body {
+  margin: 0;
+  padding: 6px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
+.nf-diff-row {
+  padding: 0 8px;
+}
+.nf-diff-add {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-success, #3fb950);
+}
+.nf-diff-del {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--color-danger, #f85149);
+}
+.nf-diff-ctx {
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+}
+.nf-diff-hunk {
+  color: var(--color-info, #58a6ff);
+  background: rgba(88, 166, 255, 0.1);
+  margin: 3px 0;
+}
+.nf-diff-meta {
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.7));
+  font-style: italic;
+}

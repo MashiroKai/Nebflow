@@ -238,6 +238,30 @@ private[gateway] object ProjectsRoutes:
           }
         }
 
+      // GET /projects/<name>/flow-map/nodes/<nodeId>/file-changes — per-node changed-
+      // file diff report (file-diff feature: written by FileChangeReport at node
+      // completion; per-file path/changeType/added/removed/source + diffText or a
+      // degradation reason). Pure disk read: missing (legacy nodes / zero changes)
+      // or corrupt file → 404 {error}; the frontend silently skips the diff section.
+      case req @ GET -> Root / "projects" / name / "flow-map" / "nodes" / nodeId / "file-changes" =>
+        withAuth(req) {
+          ProjectRuntimeRegistry.get(name).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+            case Some(rt) =>
+              IO.blocking {
+                val f = os.Path(rt.project.workspace, PathUtil.dataRoot) / ".nebflow" / FileChangeReport.FileChangesDirName / s"$nodeId.json"
+                if os.exists(f) then Right(os.read(f))
+                else Left(())
+              }.flatMap {
+                case Right(text) =>
+                  io.circe.parser.parse(text) match
+                    case Right(json) => Ok(json)
+                    case Left(_)     => NotFound(Json.obj("error" -> s"file-change report for '$nodeId' is corrupt".asJson))
+                case Left(_) => NotFound(Json.obj("error" -> s"no file-change report for node '$nodeId'".asJson))
+              }
+          }
+        }
+
       // GET /projects/<name>/agent.md — 项目 agent 指令读取（#27「点击查看」；仿 team rules.md）。
       // E.3 双轨移除（裁定 13）：只读工作区根 AGENTS.md（canonical）——旧位
       // `.nebflow/Agent.md` 优先逻辑删除，迁移由 ProjectStore.load 统一执行

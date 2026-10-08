@@ -4,6 +4,7 @@ package nebflow.core.project
 import cats.effect.*
 import cats.syntax.all.*
 import nebflow.actor.{InteractionHubCommand, status}
+import nebflow.core.FileChangeLedger
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-B=B1):命令 ADT 已下沉 actor
 private[project] trait NodeCompletion:
@@ -285,6 +286,20 @@ private[project] trait NodeCompletion:
         case Some(completed) =>
           emitWithChain("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
             logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
+            // file-diff feature: per-node change report (ledger drain + read-only
+            // git recompute + persist). Build root = node workspace/worktree as
+            // before; persist face = the PROJECT workspace (store.baseWorkspace)
+            // — the canonical read location the frontend endpoint serves
+            // (`<project ws>/.nebflow/file-changes/<id>.json`). Per-project
+            // engines: baseWorkspace == workspace ⇒ path byte-equal to the
+            // previous behavior; scoped delegate hosts run with workspace =
+            // delegate cwd, and only the store carries the base project face.
+            // Best-effort fail-open: all internal errors are swallowed
+            // (warn-logged) — the completion chain is never blocked.
+            FileChangeReport.buildAndPersist(
+              workspace, completed.worktree, completed.id, FileChangeLedger.unsafe,
+              persistWorkspace = Some(store.baseWorkspace)
+            ) *>
             deliverOut(completed, resultText) *>
             // deps 反向结算（deps 设计 §1.3）：与 deliverOut 同一完成 fiber 顺序推进
             // （现状 deliverOut 同款语义）。blocked 分流在 completeNode 入口已与

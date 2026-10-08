@@ -278,7 +278,9 @@ function buildDelegateRow(r) {
     openBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // 行点击语义 = S1 展开；链视图入口不叠加
       import('./delegateChainView.js').then(({ openDelegateChainTask }) => {
-        openDelegateChainTask(taskNo || delegateId, { taskNo, delegateId, title, status: st, executor: String(row0.executor || '') });
+        // project passthrough (file-diff diff entry): the chain view needs the
+        // row's mounted project name to fetch per-node change reports.
+        openDelegateChainTask(taskNo || delegateId, { taskNo, delegateId, title, status: st, executor: String(row0.executor || ''), project: String(row0.project || '') });
       }).catch(() => {});
     });
     actions.appendChild(openBtn);

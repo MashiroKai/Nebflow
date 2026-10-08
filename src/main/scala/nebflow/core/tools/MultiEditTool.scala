@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.FileChangeLedger
 import nebflow.core.sandbox.FileSandbox
 import nebflow.shared.NebflowLogger
 
@@ -188,6 +189,10 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
                 case Right(result) =>
                   val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
                     ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
+                    // file-diff feature: append one ledger event per successful write
+                    ctx.fileChangeLedger.traverse_(
+                      _.recordToolResult(ctx.sessionId, ctx.flowNodeId, ctx.taskId, "MultiEdit", filePath.toString, result)
+                    ) *>
                     MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
                   record.as(Right(result))
                 case left => IO.pure(left)

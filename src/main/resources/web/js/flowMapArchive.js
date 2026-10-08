@@ -26,6 +26,7 @@ import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, statusIcon } from './utils.js';
 import { fetchNodeResultDetail, fetchFlowMapArchive } from './nodeData.js';
+import { mountFileChangesSection } from './diffView.js';
 // 排队视图共享解析（queuepos 批 2026-09-15）：详情面板与主图卡读**同一份**解析（叶子模块，
 // 无循环依赖；见 mergeQueueView.js 头注）。详情面板此前**完全没有**排队字段（作者现场报）。
 import { mergeQueueView, queueNameLabel } from './mergeQueueView.js';
@@ -642,6 +643,16 @@ export function openDetailFor(container, project, nodeId) {
   openDetail(ctxFor(container, project), nodeId);
 }
 
+/** 外部开详情（载荷直供形；delegate 链视图 diff 入口，chainDetailEntry.js 消费）：
+ *  成员对象由调用方给定（链读取口的 ChainNode 投影），**不做 store 查找**——
+ *  归档 store 不持有链视图节点（input 亦不被本路径改写，零 clobber 面）。
+ *  渲染/换装/竞态守卫与 openDetail 全同（renderAndOpenDetail 单源）。 */
+export function openDetailForMember(container, project, member) {
+  const n = member && typeof member === 'object' && String(member.id || '') ? member : null;
+  if (!n) return;
+  renderAndOpenDetail(ctxFor(container, project), n);
+}
+
 function updateBadge(/** @type {LayerCtx} */ ctx, /** @type {boolean} */ pulse) {
   const s = storeOf(ctx.project);
   const n = panelChains(s).length; // 徽章口径 = 面板链条目数（§4.3；裁定④ remote∪派生；TTL 清理同步减）
@@ -812,6 +823,12 @@ function openDetail(/** @type {LayerCtx} */ ctx, /** @type {string} */ nodeId) {
   // 裁定④：派生输入（快照+墓碑）优先，后端归档成员兜底（重启后归档详情可开）
   const n = s.input.get(nodeId) || s.remoteMembers.get(nodeId);
   if (!n) return;
+  renderAndOpenDetail(ctx, n);
+}
+
+/** 渲染 + 开窗（openDetail 查找命中后的公共后段；openDetailForMember 的直供载荷
+ *  走同一段——渲染/换装/竞态守卫/开窗动画单源，禁复制双权威）。 */
+function renderAndOpenDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n) {
   renderDetail(ctx, n);
   updateDetailDock(ctx);
   if (!ctx.detail.hidden && ctx.detail.classList.contains('open')) return; // 已开 → 原位换内容
@@ -1045,6 +1062,10 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   // 新载荷根本没有摘要）。只替换 .fm-detail-result，不重建详情窗；响应按
   // ctx.detailRenderSeq 守卫（swapCurrent）。blocked 原文换装进 .flow-agent-block-readonly。
   if (hasResult) upgradeDetailResult(ctx, seq, n.id, fb);
+  // file-diff feature: completed nodes carry their changed-file diff section
+  // (lazily fetched; 404/empty = silently not rendered; seq-guarded like the
+  // result upgrade above so a stale response never mounts).
+  if (st === 'completed') mountFileChangesSection(ctx, seq, String(n.id || ''));
 }
 
 // ── 详情结果按需全文（20260904「归档详情窗节点结果完整显示」；20260905 载荷收敛

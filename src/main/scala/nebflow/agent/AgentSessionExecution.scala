@@ -1160,6 +1160,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         agentLibrary = Some(resources.agentLibrary),
         fileLockManager = Some(resources.fileLockManager),
         fileChangeTracker = Some(resources.fileChangeTracker),
+        fileChangeLedger = Some(resources.fileChangeLedger),
         hookEngine = resources.hookEngine,
         hookContext =
           HookContext(sessionId = state.sessionId, projectRoot = effectiveProjectRoot, cwd = effectiveProjectRoot),

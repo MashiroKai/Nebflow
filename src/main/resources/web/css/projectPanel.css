@@ -530,6 +530,13 @@
   gap: 12px;
 }
 .delegate-chain-card { flex: 0 0 auto; }
+/* Node cards wired to the node detail layer (chainDetailEntry.js) read as
+   clickable; keyboard focus parity with the main-graph cards. */
+.delegate-chain-list .fm-node.chain-detail-openable { cursor: pointer; }
+.delegate-chain-list .fm-node.chain-detail-openable:focus-visible {
+  outline: 2px solid var(--color-accent, #4c8dff);
+  outline-offset: 2px;
+}
 
 /* 候定集/未知帧透传行（只透传不解读：kind + 时刻原文，弱化等宽显示）。 */
 .delegate-chain-frames {

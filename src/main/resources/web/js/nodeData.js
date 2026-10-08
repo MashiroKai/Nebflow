@@ -29,6 +29,12 @@ export const API = {
   // 快照/事件载荷只带 hasResult 标记（元数据 only），全文仅此端点按需提供；
   // 未挂载/无节点 404
   nodeResult: (name, nodeId) => `/api/projects/${encodeURIComponent(name)}/flow-map/nodes/${encodeURIComponent(nodeId)}/result`,
+  // Per-node changed-file diff report (file-diff feature): GET →
+  // {nodeId,generatedAt,root,files:[...]}. The engine computes and persists it
+  // at node completion (<workspace>/.nebflow/file-changes/<nodeId>.json); this
+  // endpoint is a pure disk read. Not mounted / no report (legacy nodes, zero
+  // changes) → 404 (the frontend silently skips the diff section).
+  nodeFileChanges: (name, nodeId) => `/api/projects/${encodeURIComponent(name)}/flow-map/nodes/${encodeURIComponent(nodeId)}/file-changes`,
   // Flow Archive 分批内容（裁定④「TTL 分开」批 2026-09-07）：归档面板数据源——
   // GET → {batches:[{id,archivedAt,completedAt,members:[NodePayload 元数据]}],ttlMs,count}；
   // 服务端按显示窗（24h）过滤聚合；未挂载 404

@@ -39,6 +39,10 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  */
 class FlowMapStore private (
   val project: String,
+  /** Workspace the store is rooted in: the project workspace for per-project
+    * stores, the BASE project workspace for scoped (delegate) stores — i.e.
+    * the canonical `<ws>/.nebflow/` face that surrounds the scope dir. */
+  val baseWorkspace: String,
   private val statePath: os.Path,
   private val archivePath: os.Path,
   private val state: Ref[IO, FlowMapState],
@@ -2045,6 +2049,7 @@ object FlowMapStore:
       ledgerStore <- ChainLedgerStore.open(project, ledgerPath, ledgerArchivePath)
       store = new FlowMapStore(
         project,
+        workspace,
         statePath,
         archivePath,
         Ref.unsafe[IO, FlowMapState](FlowMapState(project = project, updatedAt = 0L)),

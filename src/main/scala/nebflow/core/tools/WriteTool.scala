@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.core.FileChangeLedger
 import nebflow.core.sandbox.FileSandbox
 
 import java.nio.charset.StandardCharsets
@@ -157,6 +158,11 @@ Usage:
       case Right(result) =>
         val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
           ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
+          // file-diff feature: append one ledger event per successful write
+          // (reads the raw result string before any reminder text is appended)
+          ctx.fileChangeLedger.traverse_(
+            _.recordToolResult(ctx.sessionId, ctx.flowNodeId, ctx.taskId, "Write", filePath.toString, result)
+          ) *>
           MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
         // Memory-layer over-budget reminder (govmemory batch): append a
         // <system-reminder> to the tool result when the file sits over its
