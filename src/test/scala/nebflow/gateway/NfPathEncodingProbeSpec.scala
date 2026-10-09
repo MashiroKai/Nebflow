@@ -66,6 +66,23 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
   import NfPathEncodingProbeSpec.*
 
+  // Data-root isolation (card-persist batch): the Card tool face below renders
+  // cards, and rendering now writes a copy of the render source to
+  // `<dataRoot>/cards/` — the root is therefore pinned to a throwaway
+  // directory for this suite's lifetime so a run never touches the operator's
+  // live `~/.nebflow`. See `CardToolFileRefSpec` for the criterion.
+  private var savedCardsRoot: os.Path = scala.compiletime.uninitialized
+  private var cardsRootIsolation: Path = null
+
+  override def beforeAll(): Unit =
+    savedCardsRoot = nebflow.shared.PathUtil.dataRoot
+    cardsRootIsolation = Files.createTempDirectory("nfpath-cards-dataroot-")
+    nebflow.shared.PathUtil.setDataRoot(os.Path(cardsRootIsolation, os.pwd))
+
+  override def afterAll(): Unit =
+    nebflow.shared.PathUtil.setDataRoot(savedCardsRoot)
+    deleteTree(cardsRootIsolation)
+
   private val gatewayToken = "probe-gateway-token"
   private val store = NfTicketStore.unsafeCreate(1800)
 

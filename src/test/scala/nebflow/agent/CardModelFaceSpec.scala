@@ -121,6 +121,44 @@ class CardModelFaceSpec extends FunSuite:
     val md = java.security.MessageDigest.getInstance("SHA-256")
     md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8)).map("%02x".format(_)).mkString
 
+  /**
+   * The payload with its `persist` object removed — the deterministic part.
+   *
+   * card-persist batch (E3-2, author ruling option (a)): a card now also writes
+   * its render source to `<dataRoot>/cards/<yyyyMMdd_HHmmss>_<slug>.html` and
+   * reports that path in the payload. The file NAME carries the wall clock, so
+   * two calls with one and the same input **necessarily** produce two different
+   * `persist.path` values (a second render in the same second gets a `-1`,
+   * `-2`, … suffix — nothing is ever overwritten).
+   *
+   * The assertions below keep their original legislative purpose — "payload
+   * construction contains no clock and no randomness" — by comparing the
+   * payloads with that ONE declared, timestamp-bearing field stripped. Nothing
+   * else is normalized, so any other clock/random leak still fails here.
+   */
+  private def stripPersist(payload: String): String =
+    def withoutPersist(json: io.circe.Json): io.circe.Json =
+      json.arrayOrObject(
+        json,
+        arr => io.circe.Json.arr(arr.map(withoutPersist)*),
+        obj => io.circe.Json.fromJsonObject(obj.filterKeys(_ != "persist").mapValues(withoutPersist))
+      )
+    withoutPersist(
+      io.circe.parser
+        .parse(payload.stripPrefix(sentinel))
+        .fold(e => fail(s"payload must be JSON: $e"), identity)
+    ).noSpaces
+
+  /** The `persist` object of a payload — the reading the batch adds. */
+  private def persistOf(payload: String): io.circe.Json =
+    io.circe.parser
+      .parse(payload.stripPrefix(sentinel))
+      .fold(e => fail(s"payload must be JSON: $e"), identity)
+      .hcursor
+      .downField("persist")
+      .focus
+      .getOrElse(fail(s"payload carries no persist field: ${payload.take(300)}"))
+
   private def htmlChars(face: String): Int =
     io.circe.parser
       .parse(face)
@@ -155,7 +193,10 @@ class CardModelFaceSpec extends FunSuite:
     assert(face.length <= 2_000, s"model face must be a summary (was ${face.length} chars)")
     assert(face.length < 50_000, "model face stays under the guard threshold by construction")
     // 用户面：同一张卡仍带着全文（两侧同时成立 = C5）
-    assertEquals(res.frontendContent.getOrElse(""), raw)
+    // card-persist batch: two CALLS are compared (`raw` and `res` come from
+    // different calls), and the persist path is timestamped by design — so the
+    // byte-equality is asserted with that one declared field stripped.
+    assertEquals(stripPersist(res.frontendContent.getOrElse("")), stripPersist(raw))
     assert(res.frontendContent.get.contains(bodyMarker) && res.frontendContent.get.contains("data:image/png;base64,"))
     assert(
       res.frontendContent.get.length > 100 * face.length,
@@ -211,7 +252,9 @@ class CardModelFaceSpec extends FunSuite:
     val persisted = tmpDir.resolve("tool-results").resolve("sess-cardface")
     val files = if Files.isDirectory(persisted) then Files.list(persisted).iterator().asScala.toList else Nil
     assert(files.isEmpty, s"no disk copy for a card's model face: $files")
-    assertEquals(guarded.frontendContent.getOrElse(""), rawPayload(input))
+    // card-persist batch: two CALLS are compared, and `persist.path` is
+    // timestamped by construction (that is the batch's declared new fact).
+    assertEquals(stripPersist(guarded.frontendContent.getOrElse("")), stripPersist(rawPayload(input)))
   }
 
   // ── C4 / C5 用户面逐字全文（硬）──────────────────────────────────────────
@@ -225,13 +268,31 @@ class CardModelFaceSpec extends FunSuite:
     val raw = rawPayload(input)
     val raw2 = rawPayload(input)
     assert(raw.length > 50_000, s"fixture must really carry a large body (was ${raw.length})")
-    assertEquals(sha256(raw), sha256(raw2), "payload construction is deterministic (no clock/random in the payload)")
+    // E3-2 (author ruling (a)): the ONE field that legitimately differs between
+    // two calls is the timestamped `persist` reading; the rest of the payload
+    // construction is still asserted clock-free and random-free.
+    assertEquals(
+      sha256(stripPersist(raw)),
+      sha256(stripPersist(raw2)),
+      "payload construction is deterministic (no clock/random in the payload, `persist` excepted)"
+    )
+
+    // The deterministic core still proves itself twice: the persisted file name
+    // must NOT be the only thing distinguishing the two calls, and the reading
+    // must really be there (a `persist`-less payload would make the assertion
+    // above vacuous).
+    val persist = persistOf(raw)
+    assertEquals(persist.hcursor.get[Boolean]("ok").toOption, Some(true), s"expected ok persist: $persist")
 
     val (_, res) = runCard(input)
     val front = res.frontendContent.getOrElse(fail("frontendContent must be set"))
     assert(front.startsWith(sentinel), s"user face keeps the card sentinel: ${front.take(40)}")
-    assertEquals(sha256(front), sha256(raw), "user face == tool payload byte-for-byte (sha256)")
-    assertEquals(front, raw)
+    // 用户面逐字全文：`raw` 与 `front` 来自**两次**调用，而 `persist.path` 按设计带
+    // 时间戳（同一秒内第二次渲染还会拿到 `-1` 后缀）——故逐字比对是「剥离这一个已申报
+    // 字段后逐字相等」。原始判据目的（用户面 == 工具载荷、正文标记与内联图一个不少）
+    // 一字未改，只把**本批有意引入的那一个新事实**排除在等价域外。
+    assertEquals(sha256(stripPersist(front)), sha256(stripPersist(raw)), "user face == tool payload byte-for-byte (sha256, `persist` excepted)")
+    assertEquals(stripPersist(front), stripPersist(raw))
     // 逐字全文：正文标记 + 内联图 data URI 一个不少
     val parsed = io.circe.parser.parse(front.substring(sentinel.length)).fold(e => fail(s"payload json: $e"), identity)
     val htmlOut = parsed.hcursor.get[String]("html").toOption.getOrElse(fail("payload html"))

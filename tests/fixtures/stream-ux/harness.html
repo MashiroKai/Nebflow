@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<!-- stream-ux harness.html — static test harness for the running-stream display
+     redesign (chain chain-streamux, §二.1 判据面 = the RENDERED DOM / animation
+     events, never the source wording).
+
+     Imports the REAL frontend modules (chatView.js / state.js / chat.js /
+     turnGroup.js — no stubs, no bundling) and replays the exact calls the app
+     makes on WS events, so the probes read the production render path:
+
+       window.__toolRun()        → one tool starts (spinner + badge line)
+       window.__toolDone()       → that tool ends (drawn check, in place)
+       window.__toolNext()       → a second tool starts (roll-up / roll-down switch)
+       window.__toolFail()       → a tool ends in error (cross mark)
+       window.__thinkingRun()    → user row + live thinking deltas (single line)
+       window.__thinkingDone()   → finishThinking (check + roll to the next item)
+       window.__userSlide()      → renderUserBubble (right slide-in)
+       window.__aiStream()       → appendAiText ×N then finishAi (one whole-reply pop)
+
+     The harness never imports workline.js directly: that module does not exist
+     on the baseline tree, and the probe must run unchanged against BOTH trees
+     (green on the branch, red on `main`) — see tests/stream-ux.spec.mjs.
+
+     The spec serves the served WEB tree over a throwaway static file server
+     spawned and killed by the spec itself (never the 8080 host).
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>stream-ux harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    /* Minimal stand-in for the app shell: give #chat the column width the real
+       layout gives it, everything else comes from the real CSS. */
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const state = (await import(`${WEB}/state.js`)).default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'stream-ux-session';
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const turnMod = await import(`${WEB}/turnGroup.js`);
+    const view = chatViews.primary;
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    const TOOL_A = 'Grep("mergeQueue")';
+    const TOOL_B = 'Read("NodeTools.scala")';
+
+    // ── A1: the running work-line ─────────────────────────────────────────
+    window.__toolRun = async () => {
+      chatMod.renderUserBubble('帮我查一下 mergeQueue 的实现', [], Date.now());
+      chatMod.renderToolPending(TOOL_A, 'stream-ux-session');
+      await raf2();
+    };
+    window.__toolDone = async () => {
+      chatMod.renderTool(TOOL_A, '12 results', 'grep body', false, '{"pattern":"mergeQueue"}', 'stream-ux-session');
+      await raf2();
+    };
+    window.__toolNext = async () => {
+      chatMod.renderToolPending(TOOL_B, 'stream-ux-session');
+      await raf2();
+    };
+    // The SECOND tool completing. Used by the boundary leg: the completion must
+    // land inside the switch's hold window, which is where the round-2 shape
+    // rebuilt the entering item and re-exposed it while the first was leaving.
+    window.__toolBDone = async () => {
+      chatMod.renderTool(TOOL_B, '240 lines', 'read body', false,
+        '{"path":"NodeTools.scala"}', 'stream-ux-session');
+      await raf2();
+    };
+    window.__toolFail = async () => {
+      chatMod.renderTool(TOOL_A, 'boom', 'err body', true, '{"pattern":"mergeQueue"}', 'stream-ux-session');
+      await raf2();
+    };
+
+    // ── A2: thinking = single-line width reveal → check ───────────────────
+    window.__thinkingRun = async () => {
+      chatMod.renderUserBubble('看看你怎么想', [], Date.now());
+      chatMod.appendThinkingDelta('用户要看 mergeQueue');
+      chatMod.appendThinkingDelta('——先定位实现，再看互斥闸排序判定……');
+      await raf2();
+    };
+    window.__thinkingDone = async () => {
+      chatMod.finishThinking();
+      await raf2();
+    };
+
+    // ── A3/A4: message bubbles ────────────────────────────────────────────
+    window.__userSlide = async () => {
+      chatMod.renderUserBubble('右滑入的用户气泡', [], Date.now());
+      await raf2();
+    };
+
+    /** Frame-level reading of the assistant bubble while its text streams:
+     *  a rAF sampler records, per frame, how many child ELEMENTS the bubble
+     *  holds and how long its markup / text is. Per-token rendering shows up as
+     *  a monotonically growing htmlLen; a single whole-message paint shows a
+     *  run of zeros followed by exactly one non-zero frame. */
+    window.__aiStreamFrames = [];
+    let aiSampler = null;
+    function aiBubble() {
+      const rows = Array.from(document.querySelectorAll('#chat .row.ai'))
+        .filter(r => !r.classList.contains('thinking-row'));
+      const row = rows[rows.length - 1];
+      return row ? row.querySelector('.bubble.ai') : null;
+    }
+    function startAiSampler() {
+      window.__aiStreamFrames = [];
+      const tick = () => {
+        const b = aiBubble();
+        window.__aiStreamFrames.push(b ? {
+          childElems: b.children.length,
+          htmlLen: b.innerHTML.length,
+          textLen: (b.textContent || '').length,
+        } : { childElems: -1, htmlLen: -1, textLen: -1 });
+        aiSampler = requestAnimationFrame(tick);
+      };
+      aiSampler = requestAnimationFrame(tick);
+    }
+    function stopAiSampler() {
+      if (aiSampler) cancelAnimationFrame(aiSampler);
+      aiSampler = null;
+      return window.__aiStreamFrames;
+    }
+    window.__startAiSampler = startAiSampler;
+    window.__stopAiSampler = stopAiSampler;
+
+    window.__aiStream = async (deltas) => {
+      chatMod.renderUserBubble('把结论写给我', [], Date.now());
+      const parts = deltas || ['mergeQueue ', '用 ConcurrentHashMap ', '维护等待中的合并节点。'];
+      for (const p of parts) {
+        chatMod.appendAiText(p);
+        await raf2();
+      }
+      await raf2();
+    };
+    window.__aiStreamFinish = async () => {
+      chatMod.finishAi(4200, 'test-model');
+      await raf2();
+    };
+
+    // ── A5: terminal — the work-line hands over, the expand face is unchanged
+    window.__fullTurnCollapse = async () => {
+      chatMod.renderUserBubble('完整一轮', [], Date.now());
+      chatMod.appendThinkingDelta('先想一下。');
+      chatMod.finishThinking();
+      chatMod.renderToolPending(TOOL_A, 'stream-ux-session');
+      chatMod.renderTool(TOOL_A, '12 results', 'grep body', false, '{"pattern":"mergeQueue"}', 'stream-ux-session');
+      chatMod.appendAiText('结论：双区读解决了漏看。');
+      chatMod.finishAi(4200, 'test-model');
+      turnMod.collapseTurn(view, {
+        durationMs: 4200, model: 'test-model', phrase: '✻ 整理线索 4 秒',
+        title: '10:30', sessionId: 'stream-ux-session',
+      });
+      await raf2();
+    };
+
+    window.__reset = async () => { chatEl.innerHTML = ''; await raf2(); };
+
+    // E6 shape (§二.1.1 boundary default): a turn whose ONLY process is thinking
+    // produces no `.turn-header`. The work-line must still not outlive the turn
+    // (no top-level stray), so it rolls to its own completed badge and is then
+    // handed back — the assertion lives in tests/stream-ux.spec.mjs.
+    window.__thinkingOnlyTurn = async () => {
+      chatMod.renderUserBubble('只想不答的一轮', [], Date.now());
+      chatMod.appendThinkingDelta('整轮只有思考，没有工具、没有回复文字。');
+      chatMod.finishThinking();
+      turnMod.collapseTurn(view, {
+        durationMs: 2000, model: 'test-model', phrase: '',
+        title: '10:33', sessionId: 'stream-ux-session',
+      });
+      await raf2();
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

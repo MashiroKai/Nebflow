@@ -121,6 +121,10 @@ export class ChatView {
       scrollSnapped: true,
       toolStreamText: '',
       toolStreamToolName: '',
+      // stream-ux §二.1.1: per-turn latch for the work-line's completed badge
+      // (the badge rolls to its done form once, at the first assistant text of
+      // the turn). Declared here so the view's stream shape stays closed.
+      _nfWorklineDone: false,
     };
   }
 

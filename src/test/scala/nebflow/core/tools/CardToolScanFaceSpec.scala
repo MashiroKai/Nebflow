@@ -26,6 +26,29 @@ class CardToolScanFaceSpec extends FunSuite:
   private val ctx = ToolContext(projectRoot = os.pwd.toString)
   private val sentinel = "___CARD_HTML___"
 
+  // Data-root isolation (card-persist batch): rendering a card writes its
+  // source to `<dataRoot>/cards/` — the root must be a throwaway directory so
+  // a test run never touches the operator's live `~/.nebflow`. See
+  // `CardToolFileRefSpec` for the full criterion.
+  private var savedRoot: os.Path = scala.compiletime.uninitialized
+  private var isolatedRoot: Path = null
+
+  override def beforeEach(context: BeforeEach): Unit =
+    super.beforeEach(context)
+    savedRoot = nebflow.shared.PathUtil.dataRoot
+    isolatedRoot = Files.createTempDirectory("cardscan-dataroot-")
+    nebflow.shared.PathUtil.setDataRoot(os.Path(isolatedRoot, os.pwd))
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.shared.PathUtil.setDataRoot(savedRoot)
+    Files
+      .walk(isolatedRoot)
+      .sorted(java.util.Comparator.reverseOrder())
+      .iterator()
+      .asScala
+      .foreach(Files.deleteIfExists)
+    super.afterEach(context)
+
   private def card(html: String, title: String = "T"): Json =
     val input = JsonObject("html" -> Json.fromString(html), "title" -> Json.fromString(title))
     val result = CardTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))

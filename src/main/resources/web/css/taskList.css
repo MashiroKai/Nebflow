@@ -341,6 +341,14 @@
   --task-node-type-verify: #e0a03c;
   --task-node-type-sink: #9b6fd4;
   --task-node-type-design: #3aa8a0;
+  /* Topology / motion tokens (this batch, §4.5).
+     🔴 Defined here only, mirrored by same-named taskList.js constants — the evidence
+     script asserts every pair equal (no scattered literals, no second authority). */
+  --task-chain-check-dash: 12;                          /* CHECK_DASH */
+  --task-chain-check-ease: cubic-bezier(.34,1.6,.64,1); /* CHECK_EASE (demo verbatim) */
+  --task-chain-roll-ms: 350ms;                          /* ROLL_MS (demo verbatim) */
+  --task-chain-nest-step: 8px;                          /* NEST_STEP (this batch) */
+  --task-chain-nest-cap: 3;                             /* NEST_CAP (this batch, §2.2) */
 }
 
 /* ── 折叠链行（28px）：`▸ 名称 [状态徽标] [内联点图] n/N · 时长 ⏸ ✕` ──── */
@@ -479,7 +487,7 @@
 .task-chain-btn-cancel:hover { color: var(--color-error, #f44336); }
 .task-chain-btn:disabled { opacity: 0.4; cursor: default; }
 
-/* ── 展开态成员行（22px）：色点 + 名 + 状态 + 时长 ─────────────────────── */
+/* ── Expanded member row (22px): sequence label + dot + name + status + time ── */
 .task-chain-body { min-width: 0; }
 .task-chain-member {
   display: flex;
@@ -487,7 +495,10 @@
   gap: 6px;
   height: var(--task-chain-node-h);
   box-sizing: border-box;
-  padding: 0 4px 0 16px;
+  /* Layered indent (§2.1/§2.3): base 16px + 8px per level, capped at level 3 (turns the
+     worst-case loss from O(depth) into the constant 24px). `--nest` is set inline by the
+     member row. After the cap the .task-chain-depth label keeps carrying the depth. */
+  padding: 0 4px 0 calc(16px + min(var(--nest, 0), var(--task-chain-nest-cap)) * var(--task-chain-nest-step));
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
@@ -495,6 +506,18 @@
   transition: background 0.15s;
 }
 .task-chain-member:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+
+/* Hierarchical sequence label (§2.3, new class): the depth carrier once the indent is
+   capped. Fixed-width + tabular so its own length changes never shift the flex columns. */
+.task-chain-depth {
+  flex: 0 0 auto;
+  min-width: 24px;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text-muted, #888) 70%, transparent);
+}
+
 .task-chain-dot {
   flex: 0 0 auto;
   width: 7px;
@@ -525,6 +548,87 @@
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
 }
+
+/* Overflow notice row (§6.1/§6.3, threshold 100): same row height, not clickable, muted. */
+.task-chain-more {
+  display: flex;
+  align-items: center;
+  height: var(--task-chain-node-h);
+  box-sizing: border-box;
+  padding: 0 4px 0 40px;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--color-text-muted, #888);
+}
+
+/* ── Four-state motion mark (§4.2 / §4.3): 12px, beside the member row's status word ──
+   Geometry and timing are taken verbatim from the demo (§4.1); every animation name lands
+   in this batch's namespace (`.task-chain-*`) so no demo/global name is taken over. */
+.task-chain-mark {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+.task-chain-mark svg { width: 12px; height: 12px; display: block; }
+/* completed: circle + check (stroke draws, then the container bounces into place) */
+.task-chain-mark circle {
+  fill: none;
+  stroke: var(--color-success, #4caf50);
+  stroke-width: 2;
+}
+.task-chain-mark path {
+  fill: none;
+  stroke: var(--color-success, #4caf50);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: var(--task-chain-check-dash);
+  stroke-dashoffset: var(--task-chain-check-dash);
+}
+/* failed: same geometry language, red cross (stroke = the existing --color-error token) */
+.task-chain-mark-failed circle,
+.task-chain-mark-failed path { stroke: var(--color-error, #f44336); }
+.task-chain-mark-failed path { stroke-dasharray: 6; stroke-dashoffset: 6; }
+/* A real transition is the only thing that animates: bounce (overshoot easing) + draw. */
+.task-chain-mark-done:not(.task-chain-mark-static) {
+  animation: task-chain-check-pop 0.4s var(--task-chain-check-ease) forwards;
+}
+.task-chain-mark-done:not(.task-chain-mark-static) path {
+  animation: task-chain-draw 0.25s 0.1s ease forwards;
+}
+.task-chain-mark-failed:not(.task-chain-mark-static) {
+  animation: task-chain-check-pop 0.4s var(--task-chain-check-ease) forwards;
+}
+.task-chain-mark-failed:not(.task-chain-mark-static) path {
+  animation: task-chain-draw 0.25s 0.1s ease forwards;
+}
+/* First paint already terminal / same status across frames ⇒ land in the final state
+   (this is the anti-"refresh replays the check" branch). */
+.task-chain-mark-static path { stroke-dashoffset: 0; }
+@keyframes task-chain-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes task-chain-check-pop {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* §4.4 status-switch roll (demo-verbatim ±20px offset): mounted only on a real change. */
+.task-chain-roll-in {
+  animation: task-chain-roll-in var(--task-chain-roll-ms) cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+@keyframes task-chain-roll-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+/* A chain row appearing for the first time (§4.1 #10, demo `pop` verbatim). The class is
+   added only on first appearance (the builder diffs against the previous frame), so a
+   repaint cannot replay it; `both` fill makes it invisible during the animation. */
+@keyframes task-chain-pop {
+  0%   { opacity: 0; transform: translateY(16px) scale(0.82); }
+  60%  { transform: translateY(-2px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+.task-chain-block.task-chain-enter { animation: task-chain-pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
 
 /* ── 未分组折叠组（§二.1.5，置底）：无链节点收拢 ───────────────────────── */
 .task-node-ungrouped { margin-top: 2px; }
@@ -561,6 +665,22 @@
   }
   .task-node.task-node-entering {
     animation: none;
+  }
+  /* This batch's animations (§4.6, CSS channel): stop all four and state the static final
+     form. 🔴 The source demo has zero degradation (§4.0), so omitting this block would be a
+     behaviour regression introduced by this batch. */
+  .task-chain-mark,
+  .task-chain-mark path,
+  .task-chain-roll-in,
+  .task-chain-block.task-chain-enter {
+    animation: none;
+  }
+  /* check / cross shown complete straight away (scale(1), opacity:1, dashoffset:0) */
+  .task-chain-mark-static path,
+  .task-chain-mark path { stroke-dashoffset: 0; }
+  /* spinner degradation = a still ring (border all at 25% mix, same as the existing rule) */
+  .task-chain-mark.task-node-spin {
+    border-top-color: color-mix(in srgb, var(--color-primary, #07c160) 25%, transparent);
   }
 }
 /* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px. ── */

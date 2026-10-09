@@ -301,7 +301,12 @@ test.describe('思考直播回归 (验收 ①)', () => {
     expect(mid.contentVisible).toBe(false); // auto-collapse at stream end (09-07 ruling)
     expect(mid.label).toBe('思考过程'); // done label, pre-#345 design
     expect(mid.collapsible).toBe(true); // label stays clickable — 可重开
-    expect(mid.aiText).toBe('思考后的答案。');
+    // stream-ux A3 (§二.1.2): the assistant bubble does NOT render per-delta.
+    // Deltas accumulate off-DOM; the whole text lands in ONE paint at
+    // finishAi(). At this mid point (deltas landed, finishAi not called yet)
+    // the bubble is therefore EMPTY by design — the text is asserted after the
+    // terminal in the next test (terminal tuck → 'ai:思考后的答案。').
+    expect(mid.aiText).toBe('');
 
     // Click the label → the content re-expands (「可重开」contract).
     await page.locator('#chat .row.thinking-row .thinking-label').click();

@@ -38,11 +38,19 @@ class CardToolPathFormSpec extends FunSuite:
   private var root: Path = null
   private var spaceDir: Path = null
 
+  // Data-root isolation (card-persist batch): rendering a card writes its
+  // source to `<dataRoot>/cards/` — see `CardToolFileRefSpec` for the criterion.
+  private var savedRoot: os.Path = scala.compiletime.uninitialized
+  private var isolatedRoot: Path = null
+
   private var spaceImage: Path = null
   private var spaceCss: Path = null
   private var ctlCss: Path = null
 
   override def beforeAll(): Unit =
+    savedRoot = nebflow.shared.PathUtil.dataRoot
+    isolatedRoot = Files.createTempDirectory("imgref-form-dataroot-")
+    nebflow.shared.PathUtil.setDataRoot(os.Path(isolatedRoot, os.pwd))
     root = Files.createTempDirectory("imgref-form-")
     // a space in an ANCESTOR segment AND in the file name — the author's shape
     spaceDir = root.resolve("space dir")
@@ -54,6 +62,14 @@ class CardToolPathFormSpec extends FunSuite:
     Files.write(ctlCss, ".y{color:#654321}\n".getBytes("UTF-8"))
 
   override def afterAll(): Unit =
+    nebflow.shared.PathUtil.setDataRoot(savedRoot)
+    if isolatedRoot != null then Files
+      .walk(isolatedRoot)
+      .sorted(java.util.Comparator.reverseOrder())
+      .forEach { x =>
+        try Files.deleteIfExists(x)
+        catch case _: Throwable => ()
+      }
     if root != null then
       val s = Files.walk(root)
       try

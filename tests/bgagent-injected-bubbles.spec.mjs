@@ -214,7 +214,18 @@ function probe(page) {
       // text node inside the container, so its contribution is empty; joining
       // (rather than reading the first row) also sees text that arrived as a
       // LATER round, which is a separate row by design.
-      aiText: [...c.querySelectorAll('.row.ai .bubble.ai')].map((b) => b.textContent).join('\n'),
+      //
+      // stream-ux A3 (§二.1.2): the assistant bubble no longer renders per
+      // delta — the deltas accumulate on the node (`bubble._nfText`, the same
+      // carrier `bgAgentPopup.js`'s reopen-adopt reads) and land in ONE paint at
+      // `finishAi()`. A still-open round therefore has an EMPTY textContent by
+      // design. This probe is about "the row and its text SURVIVED the reset"
+      // (its whole purpose — the round-1 regression destroyed them), so it reads
+      // the retained text: the rendered text when the round finished/history
+      // painted it, else the accumulated one. Still non-vacuous: if the reset
+      // dropped the row, both sources are gone and the reading is empty.
+      aiText: [...c.querySelectorAll('.row.ai .bubble.ai')]
+        .map((b) => b.textContent || b._nfText || '').join('\n'),
     } : null);
     return { open: read(open), hidden: read(hidden) };
   });
@@ -589,7 +600,11 @@ function probeInFlightRows(page) {
       // re-attached, not re-created.
       tags: [...c.querySelectorAll('.row.ai, .row.tool')].map((r) => r.dataset.f2Tag || null),
       aiRows: c.querySelectorAll('.row.ai').length,
-      aiText: [...c.querySelectorAll('.row.ai .bubble.ai')].map((b) => b.textContent).join('\n'),
+      // Same reading as the shared `probe`: rendered text when painted, else
+      // the accumulated `_nfText` (stream-ux A3 — the open round's bubble stays
+      // empty until finishAi). Kept local so T7's surface is unchanged.
+      aiText: [...c.querySelectorAll('.row.ai .bubble.ai')]
+        .map((b) => b.textContent || b._nfText || '').join('\n'),
       injected: c.querySelectorAll('.bubble.injected').length,
       children: c.children.length,
     };

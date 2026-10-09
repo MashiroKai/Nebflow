@@ -45,6 +45,27 @@ class CardToolWinPathRefSpec extends FunSuite:
   private val ctx = ToolContext(projectRoot = os.pwd.toString)
   private val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
 
+  // Data-root isolation (card-persist batch): rendering a card writes its
+  // source to `<dataRoot>/cards/` — see `CardToolFileRefSpec`.
+  private var savedRoot: os.Path = scala.compiletime.uninitialized
+  private var isolatedRoot: Path = null
+
+  override def beforeEach(context: BeforeEach): Unit =
+    super.beforeEach(context)
+    savedRoot = nebflow.shared.PathUtil.dataRoot
+    isolatedRoot = Files.createTempDirectory("cardwin-dataroot-")
+    nebflow.shared.PathUtil.setDataRoot(os.Path(isolatedRoot, os.pwd))
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.shared.PathUtil.setDataRoot(savedRoot)
+    Files
+      .walk(isolatedRoot)
+      .sorted(java.util.Comparator.reverseOrder())
+      .iterator()
+      .asScala
+      .foreach(Files.deleteIfExists)
+    super.afterEach(context)
+
   /** Call the tool and decode the payload (same shape CardToolFileRefSpec pins). */
   private def card(html: String): Json =
     val input = JsonObject("html" -> Json.fromString(html), "title" -> Json.fromString("T"))

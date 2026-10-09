@@ -385,27 +385,59 @@ object NfFilePolicy extends FilePolicyPort:
           s"the project .nebflow directory is credential-bearing; only " +
             s"${NfWorkspaceAllowlistPrefix}*/** may be served"
         )
+    else nfCredentialIdentityLayer(realPath, policy)
+
+  /** The identity part alone — see [[nfCredentialIdentityLayer]]. */
+  private def nfCredentialIdentityLayerOnly(
+    rp: java.nio.file.Path
+  ): Option[(NfDenyLayer, String)] =
+    val home = java.nio.file.Paths.get(sys.props.getOrElse("user.home", "/")).toAbsolutePath.normalize()
+    val homeRel =
+      if rp.startsWith(home) then Some(home.relativize(rp).toString.replace('\\', '/')) else None
+    val externalHit = homeRel.exists { rel =>
+      val norm = rel.stripPrefix("./")
+      NfExternalCredentialEntries.exists(entry => norm == entry || norm.startsWith(entry + "/"))
+    }
+    if externalHit then Some((NfDenyLayer.Credential, "this path is a known credential location"))
     else
-      val home = java.nio.file.Paths.get(sys.props.getOrElse("user.home", "/")).toAbsolutePath.normalize()
-      val homeRel =
-        if rp.startsWith(home) then Some(home.relativize(rp).toString.replace('\\', '/')) else None
-      val externalHit = homeRel.exists { rel =>
-        val norm = rel.stripPrefix("./")
-        NfExternalCredentialEntries.exists(entry => norm == entry || norm.startsWith(entry + "/"))
-      }
-      if externalHit then Some((NfDenyLayer.Credential, "this path is a known credential location"))
-      else
-        val segments = (0 until rp.getNameCount).map(i => rp.getName(i).toString).toArray
-        val basename = Option(rp.getFileName).map(_.toString).getOrElse("")
-        if segments.exists(NfCredentialPathSegments.contains) then
-          Some((NfDenyLayer.Credential, "this path traverses a credential directory"))
-        else if NfCredentialNamePattern.matches(basename) then
-          Some((NfDenyLayer.Credential, "this filename is a known credential shape"))
-        else None
+      val segments = (0 until rp.getNameCount).map(i => rp.getName(i).toString).toArray
+      val basename = Option(rp.getFileName).map(_.toString).getOrElse("")
+      if segments.exists(NfCredentialPathSegments.contains) then
+        Some((NfDenyLayer.Credential, "this path traverses a credential directory"))
+      else if NfCredentialNamePattern.matches(basename) then
+        Some((NfDenyLayer.Credential, "this filename is a known credential shape"))
+      else None
 
-    end if
-
-  end nfCredentialDenyLayer
+  /**
+   * The file's **own identity** — the credential tables (known credential
+   * locations, credential directory segments, credential-shaped basenames)
+   * asked about a real path WITHOUT the namespace/reach branch in front of
+   * them.
+   *
+   * [[nfCredentialDenyLayer]] asks the same tables but only for paths outside
+   * both protected namespaces: it answers `Namespace` for every non-allowlisted
+   * subtree of the data root or of the project `.nebflow` and STOPS there, so a
+   * credential-shaped path inside such a subtree is reported as a REACH fact
+   * and its identity is never evaluated. Callers that must honour the identity
+   * layers and not the reach layer (the tool-side read leg, `CardTool`'s gate 4)
+   * therefore cannot read that answer off the ladder and ask this function
+   * instead — same tables, same branch order, same messages, no copy.
+   *
+   * 🔴 The endpoint's own verdict is UNCHANGED: `nfCredentialDenyLayer`'s last
+   * branch IS this function (extracted verbatim), so the endpoint still reports
+   * `Namespace` first for a `<dataRoot>/.ssh/…` path — namespace order is part
+   * of the endpoint's reach contract, and this function only adds a way to ask
+   * the identity question on its own.
+   */
+  def nfCredentialIdentityLayer(
+    realPath: java.nio.file.Path,
+    policy: NfPathPolicy
+  ): Option[(NfDenyLayer, String)] =
+    // The policy parameter is kept for symmetry with the ladder (and so a
+    // future identity rule that needs a root can be added without changing
+    // callers); today the identity tables are root-independent.
+    val _ = policy
+    nfCredentialIdentityLayerOnly(realPath.toAbsolutePath.normalize())
 
   /**
    * C1-5: the single authority for "may this raw path be served?".
@@ -587,5 +619,23 @@ object NfFilePolicy extends FilePolicyPort:
 
   override def credentialInodeHit(real: java.nio.file.Path): Boolean =
     nfCredentialInode(real, NfPathPolicy.current())
+
+  /**
+   * The identity layer alone (see the port's doc). Same tables, same branch
+   * order, same messages as the ladder's credential step — the ladder's last
+   * branch IS `nfCredentialIdentityLayer` (one function, no copy). The port
+   * member exists because the ladder answers `Namespace` FIRST for a
+   * non-allowlisted subtree and stops, so a caller that must honour the
+   * identity layers and not the reach layer cannot read that answer off
+   * `endpointVerdictLayer`.
+   *
+   * 🔴 The endpoint's own verdict is unchanged: `nfCredentialDenyLayer` still
+   * reports `Namespace` first for such a path (its namespace branches are
+   * untouched); this only opens the identity question to callers that need it.
+   */
+  override def credentialIdentityLayer(
+    real: java.nio.file.Path
+  ): Option[(NfDenyLayer, String)] =
+    nfCredentialIdentityLayer(real, NfPathPolicy.current())
 
 end NfFilePolicy
