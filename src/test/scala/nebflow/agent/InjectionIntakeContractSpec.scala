@@ -23,7 +23,9 @@ import scala.io.Source
  *     ↓ `ProjectActor.TriggerDispatcher(attribution)` → `UserInput(intake = …)`
  *   帧字段  `AgentActor#emitInjectedUserEvent` 的 `deepMerge`（与 senderTeam/delivery 同款）
  *   落盘    `UiMessage.User.intake` 编码器/解码器（历史恢复面）
- *   消费侧  `web/js/chat.js#injectedSourceLabel`（`intake || source` 优先 + 回落表）
+ *   消费侧  `web/js/chat/injectedRows.js#injectedSourceLabel`（`intake || source` 优先 + 回落表）
+ *           （2026-09-28 FE 组件化批次三拆分：该族原在 `web/js/chat.js`，拆出后 chat.js 只留
+ *           转发 export；本 spec 随迁到真实实现落点，先例 1c4cbb0）
  *           `main.js#onMessage('user')` / `persistence.js` 两条 restore 路径读该字段
  *
  * 本 spec 是纯文本契约门 + 一处**编解码行为断言**（不起服务、不读运行时状态）：
@@ -45,7 +47,9 @@ class InjectionIntakeContractSpec extends FunSuite:
   private lazy val projectActor: String = read("src/main/scala/nebflow/core/project/ProjectActor.scala")
   private lazy val agentActor: String = read("src/main/scala/nebflow/agent/AgentActor.scala")
   private lazy val sharedProtocol: String = read("src/main/scala/nebflow/shared/protocol.scala")
-  private lazy val chatJs: String = read("src/main/resources/web/js/chat.js")
+  // 2026-09-28 FE 组件化批次三拆分：注入行族（含 injectedSourceLabel）迁到
+  // js/chat/injectedRows.js，chat.js 只留转发 export；消费侧 pin 随迁（先例 1c4cbb0）。
+  private lazy val injectedRowsJs: String = read("src/main/resources/web/js/chat/injectedRows.js")
   private lazy val mainJs: String = read("src/main/resources/web/js/main.js")
   private lazy val persistenceJs: String = read("src/main/resources/web/js/persistence.js")
 
@@ -149,12 +153,12 @@ class InjectionIntakeContractSpec extends FunSuite:
       "persistence.js 两条 restore 路径（restoreFromStorage / batch restore）都必须读 m.intake"
     )
     assert(
-      chatJs.contains("const key = intake || source;"),
-      "chat.js#injectedSourceLabel 缺 intake 优先判据（`intake || source`）—— 呈现侧未接该字段"
+      injectedRowsJs.contains("const key = intake || source;"),
+      "js/chat/injectedRows.js#injectedSourceLabel 缺 intake 优先判据（`intake || source`）—— 呈现侧未接该字段"
     )
     assert(
-      chatJs.contains("INJECTED_SOURCE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1)"),
-      "chat.js 标签解析表达式被改写 —— 缺席回落路径必须逐字保持（回落表语义不改）"
+      injectedRowsJs.contains("INJECTED_SOURCE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1)"),
+      "js/chat/injectedRows.js 标签解析表达式被改写 —— 缺席回落路径必须逐字保持（回落表语义不改）"
     )
 
   test("⑤ 编解码行为：置位 ⇒ 落 `intake:mail`；缺席 ⇒ 不落键且解码回落 None（向后兼容 / 负控）"):

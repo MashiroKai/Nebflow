@@ -268,11 +268,19 @@ class CredentialDiagnosticsSpec extends FunSuite:
     assert(CD.isCleanVisibleText("本机凭据文件打不开（权限或占用）"))
     // D4 二重断言的正控：POSIX 绝对路径**不命中**判据正则（这正是要补这两条的理由）
     // —— 故只靠正则时它是「干净」的，必须由 data-root / 文件名两条断言拦住。
-    val posixLeak = s"不能读取 $root/neblink/device.json"
+    // 平台中立化（B 侧共享文件平台修正，run owner 授权）：正则零命中探针改喂**字面
+    // POSIX 根**（判词 D4 实测形态 `/var/folders/…/device.json`）——真实临时根在
+    // Windows 上带盘符，会把本探针退化成「Windows 泄漏」而误翻零命中断言；真实
+    // data-root 泄漏单独喂二重断言，判「各自命中」而不数总数（Windows 上它会多出
+    // 一条盘符正则命中，属该平台真实读数，不是本探针要判的事）。判据强度不降。
+    val posixLeak = "不能读取 /var/folders/xx/nb-cred-diag-spec/neblink/device.json"
     assert(CD.isCleanVisibleText(posixLeak), "判据正则对 POSIX 绝对路径零命中（判词 D4 实测形态）")
+    val realRootLeak = s"不能读取 $root/neblink/device.json"
+    val realRootViolations = LogdevTestSupport.violations(realRootLeak, root)
+    assert(realRootViolations.exists(_.startsWith("data-root")), s"data-root 断言必须命中: $realRootViolations")
     assert(
-      LogdevTestSupport.violations(posixLeak, root).length == 2,
-      s"data-root 与 device.json 两条断言必须各自命中: ${LogdevTestSupport.violations(posixLeak, root)}"
+      realRootViolations.exists(_.startsWith("凭据文件名泄漏")),
+      s"device.json 断言必须命中: $realRootViolations"
     )
 
     val dirty = "java.nio.file.AccessDeniedException: C:\\Users\\kaiyu\\.nebflow\\neblink\\device.json"

@@ -46,6 +46,14 @@ import {
   chainMembersOf, chainHighlightIds,
 } from './flowMapArchive.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
+// 簇落位（FE组件化批次六 2026-09-28）：折叠态 localStorage 持久化助手 →
+// ./flowMap/collapse.js（裁定注释与文件级态 collapsedCache 整态随迁，主体只经
+// 函数面读写）。以下转发保持本文件公共导出面字节稳定，外部 import 方零改动。
+// 🔴 徽章/文案小函数族（nodeFlagKeys/flagBadgesHtml/queueBadgeHtml/queueNoteText）
+// 原落 ./flowMap/badges.js；合流取 A 侧 #1228 卡面单源钉（本文件已改引 fmNodeCard.js，
+// 见上 :37-:41）——重复的 import/转发两行按「同名单源」删除（两处实现逐字相同）。
+import { collapsedChainIdsOf, persistCollapsed } from './flowMap/collapse.js';
+export { collapsedChainIdsOf };
 
 // 布局常量（紧凑化：作者 2026-09-04 裁定「层级从上到下、连线竖直/曲线、压缩冗余空白」）
 // 卡面几何（NODE_W/NODE_H/PAD/cardTopOf）已随卡迁 fmNodeCard.js（#1228 拆出单源），
@@ -127,42 +135,6 @@ function passesViewFilter(node) {
 // 折叠 = **纯渲染层变换**（对齐聊天域 turnGroup 折叠范式，2026-09-06 作者裁定
 // 「无动画直落直剥」）：折叠态下成员卡从布局剔除、链摘要卡 `.fm-chain-card` 作为伪
 // 节点继承成员的跨链边参与深度分层与层内均布，链内边不画（成员已不在场）。
-// 折叠态存 localStorage（视图偏好非协作事实；域内持久化先例 = activeOnly），值按
-// project 分桶存 chainId 集。链 id 因分量合并变化时记忆失效 → 优雅降级为展开（无害）。
-const CHAIN_COLLAPSED_KEY = 'nebflow.flowmap.collapsedChains';
-
-/** @type {Map<string, Set<string>> | null} localStorage 解析缓存镜像（写路径同步维护） */
-let collapsedCache = null;
-
-/** localStorage → Map<project, Set<chainId>>（解析失败 = 空 = 全展开，零抛错）。 */
-function collapseAll() {
-  if (collapsedCache) return collapsedCache;
-  let raw = null;
-  try { raw = JSON.parse(localStorage.getItem(CHAIN_COLLAPSED_KEY) || '{}'); } catch (e) { raw = {}; }
-  const m = new Map();
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    for (const [proj, ids] of Object.entries(raw)) {
-      if (Array.isArray(ids)) m.set(String(proj), new Set(ids.map(String)));
-    }
-  }
-  collapsedCache = m;
-  return m;
-}
-
-/** @param {string} project @returns {Set<string>} 该项目折叠中的链 id 集（空集 = 全展开）。 */
-export function collapsedChainIdsOf(project) {
-  return collapseAll().get(String(project || '')) || new Set();
-}
-
-/** 折叠态持久化（缓存镜像 + localStorage 双写；写失败 = 会话态兜底，不抛）。 */
-function persistCollapsed(project, ids) {
-  const all = collapseAll();
-  if (ids.size) all.set(String(project), ids);
-  else all.delete(String(project));
-  const obj = {};
-  for (const [p, s] of all) obj[p] = Array.from(s);
-  try { localStorage.setItem(CHAIN_COLLAPSED_KEY, JSON.stringify(obj)); } catch (e) { /* 隐私模式等 */ }
-}
 
 /** 设置某链折叠态（幂等；spec §3.3：全视图重渲，复用视图过滤 toggle 既有路径；
  *  不做动画——重渲在 noAnim 窗口内，位移/出入场过渡一并抑制）。 */

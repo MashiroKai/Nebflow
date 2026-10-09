@@ -8,6 +8,13 @@
 // any NEW file with errors, any (file, code) count increase, or any total
 // increase fails the gate.
 //
+// 2026-09-27 re-anchor (编排端裁定 dwfq-ece28a39-1/-2/-3,FE 组件化试点批):
+// 试点门禁发现 3 条失败(contacts.js 作为"新文件"计 6 错、bgAgentPopup.js
+// TS2339 4>1、TS8032 1>0)系旧基线文件过期所致——对照实验(git archive 纯净
+// 8fe972e 树复跑,输出逐字相同,两轮一致)证实漂移早于拆分存在。本基线已在
+// 拆分提交 b1eab62 之上以 --update 重锚定(total 313→273,只降不升),此后
+// "baseline only goes down" 恢复全强度适用。
+//
 // Files in ZERO_ERROR_FILES (P2-3 core contracts) must be clean outright —
 // baseline entries for them are ignored and any error there is a failure.
 //

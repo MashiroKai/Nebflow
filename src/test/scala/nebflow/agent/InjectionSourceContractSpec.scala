@@ -13,7 +13,9 @@ import nebflow.actor.InjectionAttribution
  * 来源字段的定名权收口到后端
  * [[InjectionAttribution]]（`nebflow.agent` 包顶层），前端只做**呈现**：
  *   - 判据：`web/js/persistence.js#isOutgoingInjection`（sender == 本会话 agent 名）
- *   - 呈现：`web/js/chat.js#INJECTED_SOURCE_LABELS` / `#injectedSourceLabel`
+ *   - 呈现：`web/js/chat/injectedRows.js#INJECTED_SOURCE_LABELS` / `#injectedSourceLabel`
+ *     （2026-09-28 FE 组件化批次三拆分：该族原在 `web/js/chat.js`，拆出后 chat.js 只留
+ *     转发 export；本 spec 随迁到真实实现落点，先例 1c4cbb0）
  * 后端是唯一定名源 ⇒ 后端每加一个 source 取值，前端**必须显式登记**（表项
  * 或 `injectedSourceLabel` 里的显式分支），**禁靠首字母大写兜底**——兜底对
  * 多词源名（`background` → 兜底恰好对，但语义是偶然）、大小写变体不设防，
@@ -25,7 +27,12 @@ import nebflow.actor.InjectionAttribution
 class InjectionSourceContractSpec extends FunSuite:
 
   private val repoRoot = os.pwd
-  private val chatJsPath = repoRoot / "src" / "main" / "resources" / "web" / "js" / "chat.js"
+
+  // 注入行族（source 标签表 / injectedSourceLabel / 类名串）2026-09-28 随 FE 组件化批次三
+  // 迁到 js/chat/injectedRows.js（chat.js 只留 `export { … } from './chat/injectedRows.js'`
+  // 的转发）。呈现侧契约不变，pin 随迁到实现落点；本面此后若再拆，同法改指。
+  private val injectedRowsPath =
+    repoRoot / "src" / "main" / "resources" / "web" / "js" / "chat" / "injectedRows.js"
 
   private val persistenceJsPath =
     repoRoot / "src" / "main" / "resources" / "web" / "js" / "persistence.js"
@@ -37,16 +44,16 @@ class InjectionSourceContractSpec extends FunSuite:
     try src.mkString
     finally src.close()
 
-  private lazy val chatJs: String = read(chatJsPath)
+  private lazy val injectedRowsJs: String = read(injectedRowsPath)
 
   /** `const INJECTED_SOURCE_LABELS = { ... };` 的表体。 */
   private lazy val sourceLabelTableBody: String =
-    val start = chatJs.indexOf("const INJECTED_SOURCE_LABELS")
-    assert(start >= 0, "chat.js 里找不到 INJECTED_SOURCE_LABELS —— 前端登记面被搬迁/改名？")
-    val open = chatJs.indexOf('{', start)
-    val close = chatJs.indexOf('}', open)
+    val start = injectedRowsJs.indexOf("const INJECTED_SOURCE_LABELS")
+    assert(start >= 0, "js/chat/injectedRows.js 里找不到 INJECTED_SOURCE_LABELS —— 前端登记面被搬迁/改名？")
+    val open = injectedRowsJs.indexOf('{', start)
+    val close = injectedRowsJs.indexOf('}', open)
     assert(open >= 0 && close > open, "INJECTED_SOURCE_LABELS 表体解析失败（不是对象字面量？）")
-    chatJs.substring(open + 1, close)
+    injectedRowsJs.substring(open + 1, close)
 
   /** 表内显式登记的 source key（`name: 'Label'`）。 */
   private lazy val registeredSourceKeys: Set[String] =
@@ -58,12 +65,12 @@ class InjectionSourceContractSpec extends FunSuite:
    * （`source === 'node'` 形态：表现格式与通用模板不同，故不走表）。
    */
   private lazy val explicitBranchSources: Set[String] =
-    val fnStart = chatJs.indexOf("export function injectedSourceLabel")
-    assert(fnStart >= 0, "chat.js 里找不到 injectedSourceLabel —— 前端呈现入口被搬迁/改名？")
-    val fnEnd = chatJs.indexOf("\nexport ", fnStart + 1) match
-      case -1 => chatJs.length
+    val fnStart = injectedRowsJs.indexOf("export function injectedSourceLabel")
+    assert(fnStart >= 0, "js/chat/injectedRows.js 里找不到 injectedSourceLabel —— 前端呈现入口被搬迁/改名？")
+    val fnEnd = injectedRowsJs.indexOf("\nexport ", fnStart + 1) match
+      case -1 => injectedRowsJs.length
       case other => other
-    val body = chatJs.substring(fnStart, fnEnd)
+    val body = injectedRowsJs.substring(fnStart, fnEnd)
     val branchRe: Regex = """source\s*===\s*'([A-Za-z_][A-Za-z0-9_]*)'""".r
     branchRe.findAllMatchIn(body).map(_.group(1)).toSet
 
@@ -150,7 +157,7 @@ class InjectionSourceContractSpec extends FunSuite:
       )
     }
     assert(
-      chatJs.contains("injected-source-label"),
+      injectedRowsJs.contains("injected-source-label"),
       "chat.js 缺 injected-source-label 类名 —— 注入气泡的标签容器被改名？"
     )
     // 判据（persistence.js#isOutgoingInjection）读 sender——本会话自身外发不渲染

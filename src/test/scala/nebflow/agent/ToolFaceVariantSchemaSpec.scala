@@ -421,21 +421,32 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     for seg <- List(
         MailTool.AddressFaceHeader,
         MailTool.AddressFaceRoot,
+        MailTool.AddressFaceDelegate,
         MailTool.AddressFaceDispatcher,
         MailTool.AddressFaceTeam,
         MailTool.AddressFaceClosing
       )
     do assert(base.contains(seg), s"地址面段常量不是基础文本的逐字子串（含新造字）：${seg.take(60)}…")
+    // re-pin（本批修复，A 侧继承红）：基础面在 root 段后另有一支 delegate 段
+    // （AddressFaceDelegate，`- **Delegate session (a chain's creator)**`），
+    // 投影只保留本角色一段 ⇒ 两个变体都必须把它一并删去（旧式「删两段」等式
+    // 因该段驻留而必红；判据强度不变 = 变体仍须等于基础逐字节删段的结果）。
     assertEquals(
-      base.replace(MailTool.AddressFaceDispatcher + MailTool.AddressFaceTeam, ""),
+      base
+        .replace(MailTool.AddressFaceDelegate, "")
+        .replace(MailTool.AddressFaceDispatcher, "")
+        .replace(MailTool.AddressFaceTeam, ""),
       MailTool.descriptionRoot,
-      "root 变体 ≠ 基础删去另两段（出现了改写/新造字）"
+      "root 变体 ≠ 基础删去另三段（出现了改写/新造字）"
     )
-    // dispatcher 变体：基础里两段**不相邻**（Nebula 段在题首、team 段在题尾）⇒ 两次定点删除
+    // dispatcher 变体：基础里三段**不相邻**（Nebula 段在题首，delegate 段夹在中间、team 段在题尾）⇒ 三次定点删除
     assertEquals(
-      base.replace(MailTool.AddressFaceRoot, "").replace(MailTool.AddressFaceTeam, ""),
+      base
+        .replace(MailTool.AddressFaceRoot, "")
+        .replace(MailTool.AddressFaceDelegate, "")
+        .replace(MailTool.AddressFaceTeam, ""),
       MailTool.descriptionDispatcher,
-      "dispatcher 变体 ≠ 基础删去另两段（出现了改写/新造字）"
+      "dispatcher 变体 ≠ 基础删去另三段（出现了改写/新造字）"
     )
   }
 

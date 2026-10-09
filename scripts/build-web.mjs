@@ -48,6 +48,20 @@ const ORPHAN_EXEMPTIONS = new Map([
   // with the engine face (delegate-chain-stub.spec T6 still source-pins its fmNodeCard
   // single-source import). Do not re-wire; do not delete early.
   ['js/flowMapTab.js', 'flowmaptab-retire (#1228 两裁②): per-project view entry deactivated, module disconnected pending #1229 engine-face retirement batch'],
+  // flowmaptab-retire (#1228 两裁② 停用清单面 1 随件): the two FE组件化批次六 sub-modules
+  // (B-side structure; absent from the 9ca39083 side). Both leave the bundle graph with
+  // their host above — kept on disk, untouched, for the same #1229 batch that deletes the
+  // per-project face. 本批（ustc 9ca39083 合流）新增这两条目：A 侧没有这两个文件，故
+  // 不在 A 的 ORPHAN_EXEMPTIONS 内；不豁免则孤儿闸红。二者现状形状不同：
+  //   · collapse.js — flowMapTab.js:55 仍 import 它，而 flowMapTab.js 自己是本表豁免件
+  //     ⇒ 自入口不可达（故「only importer」一说不失实）。
+  //   · badges.js   — 本合流已把 flowMapTab.js 对它的 import 换成 fmNodeCard.js 单源钉
+  //     （flowMapTab.js:53-55 注明）⇒ 全树零 live import，是真孤儿；旧理由文本已与现状
+  //     不符，随本条更正。
+  // Do not re-wire (the badge family is single-sourced in fmNodeCard.js per the T6 pin);
+  // do not delete early.
+  ['js/flowMap/badges.js', 'flowmaptab-retire (#1228 两裁②): flowMapTab.js import dropped by the 9ca39083 merge in favour of the fmNodeCard.js single-source pin ⇒ zero live importers in tree; module kept on disk pending the #1229 batch'],
+  ['js/flowMap/collapse.js', 'flowmaptab-retire (#1228 两裁②): only importer = js/flowMapTab.js (exempt/disconnected); module kept on disk pending the #1229 batch'],
   // flowmaptab-retire (#1228 两裁② 停用清单面 3): the main.js side-effect import was
   // removed per the upstream a60af705d declaration (zero reuse in S10/S11 — static
   // card lists, CSS animation suffices). File kept on disk for the same #1229 batch;

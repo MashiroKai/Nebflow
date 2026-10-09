@@ -9,13 +9,25 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
-import { createIconsIn, statusIcon, escapeHtml } from './utils.js';
+import { createIconsIn } from './utils.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showSidePanel } from './activityBar.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+
+// explorer.js 拆分(FE组件化批次五 2026-09-28):选择状态族与文件规则小簇迁至 js/explorer/
+// 子模块 —— selection.js(多选模型族,簇私态 selectedPaths/anchorPath 整态随迁)、
+// fileRules.js(getFileInfo/shouldHide + FILE_ICONS/HIDDEN_DIRS 两表随迁)。子模块不得
+// 反向 import 本文件;本文件公共导出面(initExplorer/openExplorerAt/refreshExplorer)
+// 不变,外部 import 方零改动。树内拖放族(B)与外部拖入导入族(A)本批降级留主体:其函数
+// 体直接读写 explorerRoot/dragMoveSrc/currentDir 文件级可变态且调用面横跨簇外主体。
+import { selectedPaths, applySelectionClasses, selectSingle, clearSelection, pruneSelection, handleSelectClick, injectSelectionHostFns } from './explorer/selection.js';
+import { getFileInfo, shouldHide } from './explorer/fileRules.js';
+// selection.js 的 rangeSelect/updateSelectionBar 需主体 getTargetDir/deleteSelected
+//(该两段留守本文件):模块求值即注入,函数声明提升保证此处已可引用。
+injectSelectionHostFns({ getTargetDir, deleteSelected });
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -63,155 +75,7 @@ let currentDir = '';
 /** Loading indicator set — prevents double-fetching the same dir. */
 const loadingDirs = new Set();
 
-// ── Selection model (multi-select) ──────────────────────────────────────
-
-/** Selected item paths (relative to explorer root). */
-const selectedPaths = new Set();
-/** Anchor path for shift-range selection (last plain-clicked / cmd-added item). */
-let anchorPath = null;
-
-/** Re-apply `.selected` classes to match selectedPaths (after render/refresh). */
-function applySelectionClasses() {
-  const tree = document.getElementById('explorer-tree');
-  if (!tree) return;
-  tree.querySelectorAll('.explorer-item.selected').forEach(el => {
-    if (!selectedPaths.has(el.dataset.path)) el.classList.remove('selected');
-  });
-  for (const p of selectedPaths) {
-    const el = tree.querySelector(`.explorer-item[data-path="${CSS.escape(p)}"]`);
-    if (el) el.classList.add('selected');
-  }
-}
-
-/** Replace selection with a single path and make it the anchor. */
-function selectSingle(path) {
-  selectedPaths.clear();
-  selectedPaths.add(path);
-  anchorPath = path;
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Cmd/Ctrl+click — toggle path in/out of the selection. */
-function toggleSelection(path) {
-  if (selectedPaths.has(path)) {
-    selectedPaths.delete(path);
-    if (anchorPath === path) anchorPath = null;
-  } else {
-    selectedPaths.add(path);
-    anchorPath = path;
-  }
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Ordered visible sibling rows of a directory's children container. */
-function getSiblingPaths(parentDir) {
-  const container = parentDir
-    ? document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(parentDir)}"] > .explorer-children`)
-    : document.querySelector('.explorer-root > .explorer-children');
-  if (!container) return null;
-  const out = [];
-  for (const child of container.children) {
-    const item = child.classList.contains('explorer-item')
-      ? child
-      : child.querySelector(':scope > .explorer-item');
-    if (item && item.dataset.path !== undefined) out.push(item.dataset.path);
-  }
-  return out;
-}
-
-/** Shift+click — range-select visible siblings from anchor to target.
- *  Cross-level (different parent dir) degenerates to single-select of target. */
-function rangeSelect(from, to) {
-  if (getTargetDir(from) !== getTargetDir(to)) {
-    selectSingle(to);
-    return;
-  }
-  const sibs = getSiblingPaths(getTargetDir(to));
-  const i = sibs ? sibs.indexOf(from) : -1;
-  const j = sibs ? sibs.indexOf(to) : -1;
-  if (i === -1 || j === -1) {
-    selectSingle(to);
-    return;
-  }
-  selectedPaths.clear();
-  for (let k = Math.min(i, j); k <= Math.max(i, j); k++) selectedPaths.add(sibs[k]);
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Clear selection + anchor (Esc, blank click, root/session switch). */
-function clearSelection() {
-  if (!selectedPaths.size && !anchorPath) return;
-  selectedPaths.clear();
-  anchorPath = null;
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Remove a deleted path from the selection model. */
-function pruneSelection(path) {
-  const had = selectedPaths.delete(path);
-  if (anchorPath === path) anchorPath = null;
-  if (had) {
-    applySelectionClasses();
-    updateSelectionBar();
-  }
-}
-
-/** Floating action bar (appears when ≥2 items selected), pinned to tree top. */
-function updateSelectionBar() {
-  const section = document.getElementById('explorer-section');
-  if (!section) return;
-  let bar = document.getElementById('explorer-selection-bar');
-  if (selectedPaths.size < 2) {
-    if (bar) bar.remove();
-    return;
-  }
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'explorer-selection-bar';
-    bar.className = 'explorer-selection-bar';
-
-    const count = document.createElement('span');
-    count.className = 'explorer-selection-count';
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'explorer-selection-delete';
-    // ui-status-redesign（S10 / 盘点 #47）：字转常规色，行首 trash-2 红图标承载。
-    delBtn.innerHTML = statusIcon('trash-2', 12, 'st-err') + escapeHtml(t('explorer.delete'));
-    delBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteSelected();
-    });
-
-    bar.appendChild(count);
-    bar.appendChild(delBtn);
-    section.appendChild(bar);
-  }
-  bar.querySelector('.explorer-selection-count').textContent =
-    t('explorer.selectedCount', { count: selectedPaths.size });
-}
-
-/** Shared click routing for tree rows.
- *  @returns {boolean} true if the click was consumed as a selection op
- *                     (caller must NOT run its default open/toggle behavior). */
-function handleSelectClick(e, path) {
-  if (e.metaKey || e.ctrlKey) {
-    e.preventDefault();
-    toggleSelection(path);
-    return true;
-  }
-  if (e.shiftKey && anchorPath && anchorPath !== path) {
-    e.preventDefault();
-    rangeSelect(anchorPath, path);
-    return true;
-  }
-  // Plain click — single-select + anchor; default behavior continues.
-  selectSingle(path);
-  return false;
-}
+// ── Selection model → 已迁 ./explorer/selection.js(FE组件化批次五 2026-09-28,行为保持)────
 
 // ── Drag-to-move (VS Code-style) ──────────────────────────────────────
 // Files drag with the existing 'application/x-nebflow-file' MIME (shared with
@@ -631,39 +495,7 @@ function refreshImportTarget(targetDir) {
 
 function $(sel) { return document.querySelector(sel); }
 
-/** File extension → lucide icon name + color class. */
-const FILE_ICONS = {
-  scala: { icon: 'file-code', cls: 'f-scala' },
-  java:  { icon: 'file-code', cls: 'f-java' },
-  py:    { icon: 'file-code', cls: 'f-py' },
-  js:    { icon: 'file-code', cls: 'f-js' },
-  ts:    { icon: 'file-code', cls: 'f-ts' },
-  css:   { icon: 'file-code', cls: 'f-css' },
-  html:  { icon: 'file-code', cls: 'f-html' },
-  json:  { icon: 'braces',    cls: 'f-json' },
-  yaml:  { icon: 'file-text', cls: 'f-yaml' },
-  yml:   { icon: 'file-text', cls: 'f-yaml' },
-  md:    { icon: 'file-text', cls: 'f-md' },
-  xml:   { icon: 'file-code', cls: 'f-xml' },
-  sql:   { icon: 'database',  cls: 'f-sql' },
-  sh:    { icon: 'terminal',  cls: 'f-sh' },
-};
-
-/** Directories to hide in the tree (build artifacts, VCS, etc.). */
-const HIDDEN_DIRS = new Set([
-  '.git', '.svn', 'target', 'node_modules', 'dist', 'build',
-  '.gradle', '.idea', '.vscode', '__pycache__', '.cache',
-  '.meta', 'DerivedData',
-]);
-
-function getFileInfo(name) {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  return FILE_ICONS[ext] || { icon: 'file', cls: 'f-default' };
-}
-
-function shouldHide(name, isDir) {
-  return isDir && HIDDEN_DIRS.has(name);
-}
+// FILE_ICONS/HIDDEN_DIRS/getFileInfo/shouldHide 已迁 ./explorer/fileRules.js(FE组件化批次五,行为保持)。
 
 // ── Render ─────────────────────────────────────────────────────────────
 

@@ -357,8 +357,11 @@ class TaskListToolSpec extends FunSuite:
 
   // ===== ⑦ 工具面隔离（硬约束）的注册表侧事实 =====
 
-  test("TaskList 进注册表；schema 恰六 action（升级批：+log/show —— 本断言是既有面唯一被授权的改动，见交付申报）"):
-    assert(ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 挂 TaskList（Nebula 注入源）")
+  test("TaskList 不再挂注册表（taskunify 2026-09-24 退役：类保留供本 spec/插件引用）；schema 恰六 action（升级批：+log/show）"):
+    // taskunify 批（registry.scala）：`TaskList`+`TaskBoard` 合并进统一台账 `Task`/`TaskInfo`，
+    // 注册表**故意不挂**旧名 ⇒ 调用旧名走 AgentCore.RetiredToolGuides 迁移指引（error text
+    // only，非兼容壳）。本类保留（MultiEdit 先例：class kept for spec/plugin reference）。
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 不再挂 TaskList（taskunify 退役）")
     val schema = TaskListTool.inputSchema
     val actions = schema("properties").get.asObject
       .get("action")

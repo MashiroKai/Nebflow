@@ -461,31 +461,37 @@ class PromptSectionsSpec extends munit.FunSuite:
     }
 
   // node-output contract（2026-09-24）：order-360 段是「末条输出 = 自身完成汇报 +
-  // 结果自包含、禁 see above 指代」在系统提示词面的最短兜底。本段进每次 node LLM
-  // 调用 ⇒ 段长门（UTF-8 ≤ NodeSessionAlwaysOnSectionMaxBytes）是本用例的第一判据：
-  // 加内容必须压进门内（本批 327 B → 388 B，门内 ≤400 B）。
-  test("order-360 段：段长门 ≤400 B（实测 388 B）+ 输出契约两要求各有一句"):
+  // 结果自包含、禁 see above 指代」在系统提示词面的最短兜底。A 线后续批把**输出契约
+  // 两句整体迁入权威位**（`node_report` description，NodeReportTool），本段收窄为
+  // 纯指针 + 一句 wrap-up 铁律 ⇒ 判据随迁：段长门不变，两句契约改钉权威位。
+  test("order-360 段：段长门 ≤400 B + wrap-up 铁律一句 + 输出契约两句在权威位"):
     withIsolatedDataRoot {
       val bytes = NodeSessionAlwaysOnSection.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
       assert(
         bytes <= NodeSessionAlwaysOnSectionMaxBytes,
         s"段长门：$bytes B 超 ${NodeSessionAlwaysOnSectionMaxBytes} B（本段进每次 node LLM 调用）"
       )
-      // 要求 1：末条输出 = 节点结果 / 自身完成汇报
+      // 段内钉句：收尾即申报（wrap-up 铁律，not blocked-only）
       assert(
-        NodeSessionAlwaysOnSection.contains("Your last output is the node result"),
-        s"要求 1（末条输出 = 节点结果）:\n$NodeSessionAlwaysOnSection"
+        NodeSessionAlwaysOnSection.contains("Before wrapping up call `node_report`") &&
+          NodeSessionAlwaysOnSection.contains("reporting IS the wrap-up action, not a blocked-only exception"),
+        s"wrap-up 铁律句:\n$NodeSessionAlwaysOnSection"
+      )
+      // 要求 1/2 的两句契约迁入权威位（node_report description）——改钉权威面
+      val authority = nebflow.core.tools.NodeReportToolDef.description
+      assert(
+        authority.contains("your final assistant text is the node result"),
+        s"要求 1（末条输出 = 节点结果，权威位）"
       )
       assert(
-        NodeSessionAlwaysOnSection.contains("your own completion report"),
-        s"要求 1（= 自身完成汇报）:\n$NodeSessionAlwaysOnSection"
+        authority.contains("your own completion report"),
+        s"要求 1（= 自身完成汇报，权威位）"
       )
-      // 要求 2：自包含、禁指代收尾
-      assert(NodeSessionAlwaysOnSection.contains("self-contained"), "要求 2（自包含）")
-      assert(NodeSessionAlwaysOnSection.contains("\"see above\""), "要求 2（点名禁 see above）")
+      assert(authority.contains("self-contained"), "要求 2（自包含，权威位）")
+      assert(authority.contains("\"see above\""), "要求 2（点名禁 see above，权威位）")
       // 段仍是指针：权威位不变（node_report description + 协议脚注）
       assert(
-        NodeSessionAlwaysOnSection.contains("`node_report` description")
+        NodeSessionAlwaysOnSection.contains("`node_report` tool description")
           && NodeSessionAlwaysOnSection.contains("Node protocol footnote"),
         "指针目标不得悬空"
       )
@@ -493,7 +499,10 @@ class PromptSectionsSpec extends munit.FunSuite:
       val blocks =
         buildConditionalBlocks(PromptContext(availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name)))
       assert(blocks.contains("## Node terminal report"), s"order-360 段注入丢失：$blocks")
-      assert(blocks.contains("Your last output is the node result"), s"段正文注入丢失：$blocks")
+      assert(
+        blocks.contains("Before wrapping up call `node_report`"),
+        s"段正文注入丢失：$blocks"
+      )
     }
 
 end PromptSectionsSpec

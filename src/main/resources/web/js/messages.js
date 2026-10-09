@@ -148,18 +148,8 @@ let selfUserId = '';
 let selfIdAcct = '';
 const sentMessageIds = new Set();
 
-// ── 好友腿终态码 → 分态文案（rcptcode 批 2026-09-20）────────────────────────
-// 判定集合 = `friendsApi.js` 的 `FRIEND_TERMINAL_CODES`（**同源单表**，经
-// `api.isFriendTerminalCode` 消费；🔴 禁在本文件另写一份码表）。
-// 语义 = **终态**：对同一动作重试恒无效（同 `clientMsgId` + 同被引坐标重发只会再失败
-// ⇒ 不给重试键，改给原因 + 正文回填），与群腿「按码分态」同族而非同表。
-// 📌 r2 基线适配（uxconsist Phase B 段2 之后）：本表**零改**——码集与文案键是批契约面；
-// 改的只是失败面的**装配形态**（`bindRetry` / `applyPhase` 单点，见 `sendCurrent`）。
-const FRIEND_TERMINAL_TEXT = {
-  not_friends: 'messages.friendNotFriends',
-  not_blocker: 'messages.friendNotBlocker',
-  REPLY_TARGET_INVALID: 'messages.friendReplyTargetInvalid',
-};
+import { FRIEND_TERMINAL_TEXT, personLabel } from './messages/friendCopy.js';
+export { personLabel } from './messages/friendCopy.js';
 
 /** viewer 自身 userId（群方向/未读判据用；单聊路径不受影响——direct 分支
  *  仍走既有 conv.friend.userId 判据）。 */
@@ -286,29 +276,8 @@ function forgetPendingSend(p) {
 let syncingConvId = null;       // 同一会话同时只跑一条增量链
 let lastBackfillAt = 0;
 
-// ── 好友信任模式 v1（作者令：信任的好友，新消息自动走既有「转发给 agent」
-// 通道）── 纯客户端本地标记，localStorage 持久化（与 fm_seen_requests /
-// fm_blocked 同一家族）。存 userId 数组（与黑名单缓存同键——userId 比
-// neblinkId/Username 稳定，friend_event 的 senderId 匹配也用它）。零后端改动；
-// 跨设备同步 = v2 候选。本模块是 store 唯一属主，contacts.js 经导出入口读写。
-// ⑨-6（作者预授权令）：裸键 `fm_trusted` 迁入 `key()` 品牌命名空间
-// （`nebflow_fm_trusted` today）。存量值经 branding.js 的 LEGACY_IRREGULAR
-// 启动即迁移，数据不丢；裸键字面只保留在 branding.js 的兼容层里。
-const LS_TRUSTED = key('fm_trusted');
-function loadTrusted() {
-  try { return new Set(JSON.parse(localStorage.getItem(LS_TRUSTED) || '[]')); } catch { return new Set(); }
-}
-export function isFriendTrusted(userId) {
-  return !!userId && loadTrusted().has(userId);
-}
-export function setFriendTrusted(userId, trusted) {
-  if (!userId) return;
-  const s = loadTrusted();
-  if (trusted) s.add(userId); else s.delete(userId);
-  try { localStorage.setItem(LS_TRUSTED, JSON.stringify([...s])); } catch { /* non-critical */ }
-  // Let an open chat modal refresh its header trust indicator.
-  window.dispatchEvent(new CustomEvent('fm-trust-changed', { detail: { userId, trusted } }));
-}
+import { isFriendTrusted } from './messages/friendTrust.js';
+export { isFriendTrusted, setFriendTrusted } from './messages/friendTrust.js';
 
 // ── 历史分页（0904 批次：加载更早消息）────────────────
 // Server keyset is forward-only (store.rs list_messages: id > after ASC LIMIT
@@ -329,14 +298,6 @@ let oldestLoadedId = 0;         // keyset anchor for load-more
 let hasMoreHistory = false;
 let loadingHistory = false;
 
-// ── ⑦ 好友备注显示（作者裁定 2026-09-12，方案 §4.3(c)）────────────
-// 显示优先级「备注 > 显示名」；`username`（neblinkId，NL 号）显示面不变。
-// 备注缺失（null/undefined）⇒ 回落显示名，绝不渲染 null 字面。
-export function personLabel(person) {
-  if (!person) return '';
-  return person.remark || person.name || person.neblinkId || '';
-}
-
 function loggedIn() { return !!getNeblinkState().loggedIn; }
 
 /** drag 事件是否携带文件（③A8 判定用；无 dataTransfer 的合成事件一律视为无文件）。 */
@@ -344,80 +305,10 @@ function hasFiles(e) {
   return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
 }
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
+import { el, avatarEl, deviceAvatarEl } from './messages/elements.js';
 
-function avatarEl(person, size) {
-  const a = el('span', `fm-avatar fm-avatar-${size}`);
-  // sessperf Phase B（2026-09-20）：src 解析收口到 `avatarRender.avatarNodeFor`
-  // —— 本地层（`localStore.readAvatar`，键 = userId）命中 ⇒ 直接拿 objectURL，
-  // **零网络、零重取**；未命中 ⇒ 回落既有解码复用池 + 远端直拉（零回归），且由
-  // 本地层低频补字节供下一次开窗命中。判据面（有无 avatarUrl）与改前逐字相同。
-  const node = person ? avatarNodeFor(person) : null;
-  if (node) {
-    a.appendChild(node);
-  } else {
-    a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();
-  }
-  a.setAttribute('aria-hidden', 'true');
-  return a;
-}
-
-/** 设备行头像（①，作者 2026-09-15：「设备在消息列表里的头像应该要和在联系人面板里
- *  一致」）。**同款判据 = 同一字形源**：联系人面板设备行（`contacts.js:401`
- *  `platformDisplay(d.platform).icon`）与本处**共用同一函数、同一返回值**
- *  （`neblink.js:401-414` 单点，禁第二份平台→图标映射），故同一设备在两面板里渲染出
- *  逐字节同形的 `<svg>`（同 viewBox / 同 path `d` / 同 fill|stroke 语义）。
- *  🔴 落槽 = `.fm-avatar` 家族（几何随既有 `-40` 档，不新开尺寸座），字形尺寸由
- *  `.fm-avatar-device svg` 单条规则决定（`friends.css`）。
- *  消费点两处：会话列表设备行（`convRow` 设备分支）＋ 设备**窗头**（`renderChatModal`
- *  设备分支，作者 2026-09-21 16:54 令「三类对话框统一显示头像」）——同一函数、同一
- *  字形源，禁第二份构造。
- *  🔴 只换**设备**这一支：好友头像照旧走档案 `avatarUrl` / 首字母，群行照旧首字母
- *  ⇒ 三类头像互不影响（逐类读数见本批报告 §①）。
- *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js`
- *  `platformDisplay` 兜底档，现读 `:565` generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
-function deviceAvatarEl(device, size) {
-  const a = el('span', `fm-avatar fm-avatar-${size} fm-avatar-device`);
-  a.innerHTML = platformDisplay(device && device.platform).icon;
-  a.setAttribute('aria-hidden', 'true');
-  return a;
-}
-
-// ── Time format: today HH:mm / yesterday / M-D (§3.2) ───
-// Backend timestamps are epoch SECONDS (numbers, FriendApiRoutesSpec:
-// "createdAt":1234567890) or ISO strings — normalize before new Date().
-function toEpochMs(ts) {
-  if (ts == null || ts === '') return 0;
-  if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts; // s vs ms
-  const ms = Date.parse(ts);
-  return isNaN(ms) ? 0 : ms;
-}
-
-export function fmtTime(ts) {
-  const ms = toEpochMs(ts);
-  if (!ms) return '';
-  // 同日 = 纯时钟文本 ⇒ 走共享的 12h/24h 偏好（formatHm）。
-  if (isSameDayMs(ms)) return formatHm(ms);
-  const d = new Date(ms);
-  const now = new Date();
-  const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (d.getFullYear() === y.getFullYear() && d.getMonth() === y.getMonth() && d.getDate() === y.getDate()) {
-    return t('messages.yesterday');
-  }
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-/** Same calendar day as now (local) — the only branch that is a pure clock. */
-function isSameDayMs(ms) {
-  const d = new Date(ms);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-}
+import { toEpochMs, fmtTime, isSameDayMs } from './messages/timeFmt.js';
+export { fmtTime } from './messages/timeFmt.js';
 
 // #290: origin column (R2=A, contract-first with the Rust batch) - a message
 // is agent-sent when the server-side origin says so, or via the legacy

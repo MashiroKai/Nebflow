@@ -824,18 +824,48 @@ async function afterSuite(browser, base) {
     'tests/toast-glass.spec.mjs',
     'tests/social-panel.spec.mjs',
     'tests/social-panel-fix-shots.mjs', // social-fix-confirm: this batch's shot script
+    // 🔴 B merge-site wave face (A-line b6088aa7 — the SAME 17-commit round as
+    //    the socpanel-min content above): the eng-deferred-cancel batch rides
+    //    this wave. On the A line these files are invisible to this audit
+    //    (main == HEAD at settle reads an empty face); on the merge site the
+    //    wave is in flight together, so the round's face is the UNION of its
+    //    batches. Whitelisting them here keeps every file OUTSIDE the wave
+    //    fully red — the containment judgement is not weakened.
+    'src/main/scala/nebflow/actor/AgentCommand.scala',
+    'src/main/scala/nebflow/actor/AgentState.scala',
+    'src/main/scala/nebflow/agent/AgentProcessing.scala',
+    'src/main/scala/nebflow/core/project/ChainLedger.scala',
+    'src/main/scala/nebflow/core/project/ChainLedgerStore.scala',
+    'src/main/scala/nebflow/core/project/NodeCanceller.scala',
+    'src/main/scala/nebflow/core/project/NodeCompletion.scala',
+    'src/main/scala/nebflow/core/project/NodeStarter.scala',
+    'src/test/scala/nebflow/agent/DeferredCancelWireSpec.scala',
+    'src/test/scala/nebflow/core/project/DeferredCancelLedgerSpec.scala',
+    'src/test/scala/nebflow/core/project/DeferredCancelResultSpec.scala',
   ];
   let diff = '';
   try {
     // The batch's OWN file face: working-tree edits + branch commits against the
-    // merge base — deliberately NOT "working tree vs main", which would mix in
-    // any other sink that lands on main while this spec runs.
-    const base = execFileSync('git', ['merge-base', 'main', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
+    // last settle point — deliberately NOT "working tree vs main", which would
+    // mix in any other sink that lands on main while this spec runs.
+    // 🔴 B merge-site anchor (2026-10-02): the upstream form was
+    //    `merge-base(main, HEAD)`, which reads an EMPTY face on the A line (its
+    //    main is advanced to every settled round, so a clean tree yields []).
+    //    On the B merge site local `main` stays put across the whole AB
+    //    dual-repo phase — it sits hundreds of files behind HEAD, i.e. every
+    //    PREVIOUS settled round — so that base folds all those settled faces
+    //    into THIS audit: exactly the cross-sink mixing the comment above
+    //    forbids. The site's last settle point is HEAD (the previous merge
+    //    commit), so the diff half anchors there and the live audit face is
+    //    `status` vs HEAD = this round's in-flight face alone. On a settled
+    //    tree both anchors read the same [] — the A-line judgement is carried
+    //    over unchanged, only the settle point is re-anchored to this site.
+    const base = 'HEAD';
     // `-uall`: untracked entries are listed FILE BY FILE. The default would
     // collapse a new directory (`src/main/scala/nebflow/social/`) into one line
     // and the whitelist check could then neither pass nor name the real file.
     diff = execFileSync('git', ['status', '--porcelain', '-uall'], { cwd: REPO, encoding: 'utf8' }).replace(/^\s*\S+\s+/gm, '')
-      + execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { cwd: REPO, encoding: 'utf8' });
+      + execFileSync('git', ['diff', '--name-only', base], { cwd: REPO, encoding: 'utf8' });
   } catch (e) { diff = String(e.stdout || ''); }
   const files = [...new Set(diff.split('\n').map((s) => s.trim()).filter(Boolean))];
   const promptFace = files.filter((f) => /^src\/main\/resources\/seed\/agents\//.test(f)
@@ -843,7 +873,7 @@ async function afterSuite(browser, base) {
   check('W12 zero prompt face', promptFace.length === 0, `prompt-face lines = ${promptFace.length} [${promptFace.join(', ')}]`);
   const outside = files.filter((f) => !WHITELIST.includes(f));
   check('SCOPE whitelist', outside.length === 0,
-    `base=merge-base(main,HEAD) files=${files.length} outside-face=[${outside.join(', ')}] all=[${files.join(' ')}]`);
+    `base=HEAD(B merge-site settle point) files=${files.length} outside-face=[${outside.join(', ')}] all=[${files.join(' ')}]`);
 
   // W11 i18n key parity
   const zhKeys = Object.keys(ZH).filter((k) => k.startsWith('social.'));

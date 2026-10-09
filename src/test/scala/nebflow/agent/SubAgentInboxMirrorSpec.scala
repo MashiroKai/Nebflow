@@ -58,7 +58,9 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   private lazy val agentProcessing: String = read("src/main/scala/nebflow/agent/AgentProcessing.scala")
   private lazy val mirrorSrc: String = read("src/main/scala/nebflow/agent/InjectedInboxMirror.scala")
   private lazy val utilsJs: String = read("src/main/resources/web/js/utils.js")
-  private lazy val chatJs: String = read("src/main/resources/web/js/chat.js")
+  // 2026-09-28 FE 组件化批次三拆分：source 标签表随注入行族迁到 js/chat/injectedRows.js
+  // （chat.js 只留转发 export）；本 tripwire 随迁到真实落点（先例 1c4cbb0）。
+  private lazy val injectedRowsJs: String = read("src/main/resources/web/js/chat/injectedRows.js")
 
   /** 去注释后的**代码面**（禁越面判据只吃代码，注释里的说明文字不算命中）。 */
   private def codeOf(src: String): String =
@@ -391,6 +393,6 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     assert(mirrorCode.contains("append"), "镜像件未走既有落盘入口 append（禁新造写面）")
     // 既有注入文案面 tripwire：header 帧字段与前端 source 标签表逐字未动
     assert(agentActor.contains("""Json.obj("header" -> h.asJson)"""), "header 帧字段被改动")
-    assert(chatJs.contains("mail: 'Mail'"), "前端 source 标签表被改动 —— 渲染侧零改是本批硬边界")
+    assert(injectedRowsJs.contains("mail: 'Mail'"), "前端 source 标签表被改动 —— 渲染侧零改是本批硬边界")
   }
 end SubAgentInboxMirrorSpec
