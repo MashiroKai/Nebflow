@@ -28,6 +28,14 @@ import scala.util.matching.Regex
  *   mcp.json               可选——{"$schema":<canonical mcp>,"mcpServers":{...}}（§7.2.1
  *                          闭合 schema；server entry type ∈ stdio|streamable-http|sse）
  *   org.nebflow/tools.json 可选——nebflow 扩展命名空间：{"tools":["WebSearch",...]}
+ *   org.nebflow/viewers.json 可选——canvas-media 批（2026-10-05，OD-3=K-1）：
+ *                          viewer 贡献声明（小体积控制面 JSON）。声明文件名可经
+ *                          manifest `extensions["org.nebflow/viewers"]` 指定（与
+ *                          org.nebflow/tools 同形态：字符串 = 命名空间内文件名）；
+ *                          未声明时回落 org.nebflow/viewers.json。内容经
+ *                          GET /api/plugins 内联下发（OD-2=V-C，仅受信包）；执行体
+ *                          资产（wasm/渲染脚本等大件）另走令牌化静态路由
+ *                          /api/plugin-assets/<name>/…（StaticRoutes.pluginAssetsRoutes）。
  * }}}
  *
  * 装载校验（裁定 12 / §B.8-7）：skills/ 与 mcp.json 至少其一，全无 → 拒载+告警；
@@ -106,6 +114,14 @@ object PluginRegistry:
    * （插件继续装载其余组件，§6.2 边界）。
    */
   val CanonicalMcpSchema = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+
+  /**
+   * canvas-media 批（2026-10-05，OD-2=V-C）：viewer 贡献声明是**小体积控制面**——
+   * 超过该字节上限就不再内联（降级 warn + viewerContributions=None，插件继续装载）。
+   * 大件（wasm/渲染脚本）必须走执行体资产路由 /api/plugin-assets/<name>/…，
+   * 禁撑大 GET /api/plugins（前端每 6s 轮询一次，重传面随声明体积线性涨）。
+   */
+  val MaxViewerDeclarationBytes: Int = 32 * 1024
 
   /**
    * §5.2 闭合 schema 十一字段（capability 系 dispatcher-ctx 批新增后注释未同步，
@@ -216,6 +232,14 @@ object PluginRegistry:
     skills: List[PluginSkill],
     mcpServers: Map[String, McpServerConfig],
     toolsExtension: List[String],
+    /**
+     * canvas-media 批（2026-10-05，OD-3=K-1）：org.nebflow/viewers.json 的解析内容
+     * （原样 JSON object，schema 归前端渲染器注册表面——服务端不做深校验）。
+     * 声明了但解析失败 / 非 object / 超 [[MaxViewerDeclarationBytes]] ⇒ None +
+     * 告警（组件级降级，插件继续装载，与 mcp.json 组件 invalid 同一 §6.2 边界）；
+     * 未声明且无默认文件 ⇒ None（非错误）。
+     */
+    viewerContributions: Option[Json] = None,
     digest: String,
     fileCount: Int,
     warnings: List[String],
@@ -299,6 +323,12 @@ object PluginRegistry:
         )
       }.asJson,
       "toolsExtension" -> p.toolsExtension.asJson,
+      // canvas-media 批（2026-10-05，OD-2=V-C）：viewer 贡献声明（小体积控制面）
+      // 随本清单**内联**下发；执行体资产另走令牌化静态路由
+      // /api/plugin-assets/<name>/…（StaticRoutes.pluginAssetsRoutes，token 必带）。
+      // 封禁包**永不内联**（fail-closed：第三方面内容不发给已点名封禁的包）——
+      // 前端按 `blocked` 字段过滤的既有面（B5）不变，这里是服务端同向兜底。
+      "viewerContributions" -> (if p.trust.trusted then p.viewerContributions.asJson else Json.Null),
       "warnings" -> p.warnings.asJson,
       "flags" -> approvalFlags(p).asJson,
       "changeSummary" -> changeSummary(p)
@@ -422,8 +452,11 @@ object PluginRegistry:
    * 用于所有「按插件作者提供的路径读文件」的入口。不存在的路径无 symlink
    * 逃逸面（toRealPath 会 NoSuchFile）→ 降级为词法归一判定（E2E 取证修复：
    * 声明式 extensions 路径先存在性后围栏，不可把缺失文件误判为逃逸）。
+   *
+   * canvas-media 批（2026-10-05）起 public：gateway 的 /api/plugin-assets
+   * 静态资产路由的**终防围栏**复用这同一条判定（单一 judge，禁第二套实现）。
    */
-  private def containedUnder(root: os.Path, p: os.Path): Boolean =
+  def containedUnder(root: os.Path, p: os.Path): Boolean =
     try
       val real = java.nio.file.Paths.get(p.toString).toRealPath()
       val rootReal = java.nio.file.Paths.get(root.toString).toRealPath()
@@ -544,14 +577,17 @@ object PluginRegistry:
     val name0 = dir.last
     val warnings = mutable.ListBuffer[String]()
 
-    // 未知顶层条目 → 宽容跳过 + 告警（§B.8-5；LICENSE/CHANGELOG 等杂项文件同样走此规则）
+    // 未知顶层条目 → 宽容跳过 + 告警（§B.8-5；LICENSE/CHANGELOG 等杂项文件同样走此规则）。
+    // canvas-media 批（2026-10-05，OD-3=K-1）：org.nebflow/ 允许子条目扩为
+    // tools.json + viewers.json——漏扩会让贡献**静默失效**（告警假绿，蓝图 §6.4 硬前置）。
     val known = Set("plugin.json", "mcp.json", "skills", "org.nebflow")
     os.list(dir).foreach { e =>
       val n = e.last
       if !known.contains(n) then warnings += s"ignored unknown entry '$n' (forward-compat: skipped)"
       else if n == "org.nebflow" && os.isDir(e) then
         os.list(e).foreach { f =>
-          if f.last != "tools.json" then warnings += s"ignored unknown org.nebflow entry '${f.last}'"
+          if f.last != "tools.json" && f.last != "viewers.json" then
+            warnings += s"ignored unknown org.nebflow entry '${f.last}'"
         }
     }
 
@@ -727,6 +763,55 @@ object PluginRegistry:
                   warnings += s"tools.json decode failed (${err.getMessage}) — tools extension ignored"
                   (Right(Nil): Either[(String, String), List[String]])
 
+
+      // org.nebflow/viewers.json（canvas-media 批 2026-10-05，OD-3=K-1）：manifest
+      // `extensions["org.nebflow/viewers"]` 声明文件名（字符串，与 org.nebflow/tools
+      // 同形态——K-1 零 schema 变更）；未声明时回落 org.nebflow/viewers.json。
+      // 解析语义照 toolsPath：org.nebflow/ 命名空间相对为主、插件根相对兼容，
+      // 两处均围栏校验（§4.1）。组件级违规（解析失败 / 非 object / 超内联上限）
+      // → 告警 + 无贡献，插件继续装载（§6.2 边界，与 mcp.json 组件 invalid 同法）。
+      viewersPath =
+        val declared = c.downField("extensions").downField("org.nebflow/viewers").as[String].toOption
+        declared match
+          case Some(rel) =>
+            val nsRel =
+              try Some(nsDir / os.SubPath(rel))
+              catch case _: Exception => None
+            val rootRel =
+              if rel.startsWith("./") then resolvePluginRelative(dir, rel)
+              else resolvePluginRelative(dir, s"./$rel")
+            List(nsRel, rootRel).flatten.find(p => os.isFile(p) && containedUnder(dir, p)) match
+              case Some(p) => Some(p)
+              case None =>
+                warnings += s"extensions 'org.nebflow/viewers' declared '$rel' but no readable file under org.nebflow/ or plugin root — viewer contribution ignored"
+                None
+          case None =>
+            val d = nsDir / "viewers.json"
+            if !os.isFile(d) then None
+            else if !containedUnder(dir, d) then
+              warnings += s"org.nebflow/viewers.json resolves outside the plugin root — viewer contribution ignored (§4.1)"
+              None
+            else Some(d)
+        end match
+      viewerContributions <- viewersPath match
+        case None => (Right(None): Either[(String, String), Option[Json]])
+        case Some(p) =>
+          val size = os.size(p)
+          if size > MaxViewerDeclarationBytes then
+            warnings +=
+              s"viewers.json is $size bytes, over the $MaxViewerDeclarationBytes-byte inline declaration cap — viewer contribution ignored (serve heavy executor assets via /api/plugin-assets, not the control plane)"
+            (Right(None): Either[(String, String), Option[Json]])
+          else
+            io.circe.parser.parse(os.read(p)) match
+              case Left(err) =>
+                warnings += s"viewers.json unparseable (${err.message}) — viewer contribution ignored"
+                (Right(None): Either[(String, String), Option[Json]])
+              case Right(vjson) if !vjson.isObject =>
+                warnings += s"viewers.json must contain a top-level object — viewer contribution ignored"
+                (Right(None): Either[(String, String), Option[Json]])
+              case Right(vjson) =>
+                (Right(Some(vjson)): Either[(String, String), Option[Json]])
+
       // 装载校验（裁定 12）：skills 与 mcp 至少其一
       _ <- pass(
         skills.nonEmpty || mcpServers.nonEmpty,
@@ -772,6 +857,7 @@ object PluginRegistry:
       skills = skills,
       mcpServers = mcpServers,
       toolsExtension = toolsExtension,
+      viewerContributions = viewerContributions,
       digest = digest,
       fileCount = fileCount,
       warnings = warnings.toList,

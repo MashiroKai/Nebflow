@@ -38,6 +38,9 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 复用主窗同一语音管线 —— 识别流/双模（Web Speech / 云 STT）/态机全在
 // voiceEngine.js 单点，本模块只做「按钮 ⇄ 本窗输入框」的回调接线，零新造机制。
 import { startDictation, stopDictation } from './voiceEngine.js';
+// 字段方言双兼容批：预览字段的**收面单点**（方言登记表判读 + `data:` 合成全仓唯一落点；
+// 该模块零 import ⇒ 无环）。
+import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
 import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
@@ -2064,12 +2067,15 @@ function paintInlineFrame(img, url, dims) {
  *  判据现为**单点**：调用前的文件名判据（`isImageAttachmentName`）+ 体积上限
  *  （`MAX_INLINE_IMAGE_BYTES`），响应头不参与判定（禁按上游 mime 建立信任面）。
  *
- *  ── 取字节（🔴 两套**既有**面，禁第三条路）──
+ *  ── 取字节（🔴 两套**既有**面，禁第三条**取字节**路）──
  *  · 好友 / 群聊：`api.downloadAttachment(att.id)` = 应用内鉴权路由
  *    `/api/friends/attachments/{id}`（与下载腿、Canvas 预览腿**同一个**取字节口）。
  *  · 设备：本机落盘件 `att.deviceSavedPath` ⇒ `nfTicket.ticketUrl(path)` 取
  *    `/api/nf-file?path=…&ticket=…`（**既有票据面**：per-path 票据、TTL 1800s、
  *    票据内不限次读、三连失败熔断 15s —— 常量与语义见 `nfTicket.js:12-31`）。
+ *  · **预览腿（传输集成批 S6 · 不是取字节路）**：好友/群附件带 `preview` 键 ⇒
+ *    内联字节随载荷到手，**零往返**直接出帧（合成单点 = `attachPreviewField.js`）；
+ *    它在「拉原件」支**之前**、预算闸之后 —— 字节取法仍只有上面两套。
  *
  *  ── 与 `imgticket` 口径的对齐（逐条，任务书要求）──
  *  · **票据面只用于「本机路径」**：`nfTicket` 的键是 `path`（本机绝对路径），
@@ -2193,6 +2199,25 @@ function attachInlineImage(card, att, kind, src) {
   if (cached) {
     // ① A1-min：命中本机句柄（本机刚发出的那件）⇒ **零服务端往返**。
     mount(cached, localOutAttachmentIds.has(id) ? 'local-handle' : 'server-cached');
+    return true;
+  }
+  // 收端消费腿（字段方言双兼容批）：**预览优先、免往返即显** ——
+  //   · 判读单点 = `attachPreviewField.readPreviewField`（按**方言登记表**逐条试：五键
+  //     `{mime,w,h,size,b64}` 与六键 `{fmt,w,h,bytes,sha256,b64}` **都认**；第三种未知
+  //     方言 / 缺键 / `null` / 形状不全 / 越上限 ⇒ null ⇒ 走下面今天的「拉原件」路，逐字现状）；
+  //   · `data:` 合成只经 `previewDataUrlOf`（全仓唯一合成点；wire 面零 `data:` 前缀）；
+  //   · 盒比协同（visup-ratio 批唯一算术落点）：尺寸已知 ⇒ 归一化 `w/h` 经
+  //     `mount`→`paintInlineFrame` 直通**同一个** `inlineBoxFor`（禁另立宽高逻辑），
+  //     骨架→真帧同帧落地、且**零解码取尺寸**（连内禀尺寸探测都省了）；
+  //   · 读数面：`data-att-src="inline-preview"` + `data-att-preview="1"`（免往返的机械读数
+  //     = 本腿 `return` ⇒ `api.downloadAttachment` 调用计数 **0**）+ `data-att-dialect`
+  //     （识别到的那一版，便于对账）；
+  //   · 本腿在既有内联预算闸**之后** ⇒ 预算外大原件行为逐字不变（零越面）。
+  const previewField = readPreviewField(att);
+  if (previewField) {
+    img.dataset.attPreview = '1';
+    img.dataset.attDialect = previewField.dialectId;
+    mount(previewDataUrlOf(att), 'inline-preview', { w: previewField.w, h: previewField.h });
     return true;
   }
   api.downloadAttachment(id)

@@ -247,6 +247,14 @@ async function runCase(browser, { caseDef, colorScheme }) {
     await new Promise((r) => requestAnimationFrame(r));
 
     // ── 真渲染自检（收尾态）──
+    // 2026-10-03 stream-ux redesign: the thinking bubble is born pre-tucked
+    // (`.nf-tucked`) — the expand face is REVEALED on demand after the turn.
+    // G1/G2/G4 (element identity, single load) were measured during the live
+    // stream above and are visibility-independent; this paint probe mirrors
+    // the user path (expand the face) before hit-testing the pixels.
+    const tRow = document.querySelector('#chat .row.thinking-row');
+    if (tRow) tRow.classList.remove('nf-tucked');
+    await new Promise((r) => requestAnimationFrame(r));
     const c = content();
     const im = c ? c.querySelector('img') : null;
     let paint = null;

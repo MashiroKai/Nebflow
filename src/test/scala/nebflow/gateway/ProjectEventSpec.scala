@@ -10,7 +10,7 @@ import nebflow.agent.SharedResources
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.{ProjectActor, ProjectDef, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, ProjectCreateTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, ProjectTool, ToolContext}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
@@ -86,7 +86,7 @@ class ProjectEventSpec extends CatsEffectSuite:
     for
       hub <- IO.pure(new WsHub)
       frames <- Ref.of[IO, Vector[Json]](Vector.empty)
-      _ <- hub.register(json => frames.update(_ :+ json))
+      _ <- hub.registerListener(json => frames.update(_ :+ json))
     yield (hub, frames)
 
   private def projectFrames(frames: Vector[Json]): Vector[Json] =
@@ -120,7 +120,7 @@ class ProjectEventSpec extends CatsEffectSuite:
         actorSystem = Some(system),
         wsSend = Some((json: Json) => hub.broadcast(json))
       )
-      result <- ProjectCreateTool.call(input, ctx)
+      result <- ProjectTool.call(input, ctx)
       collected <- frames.get
       _ <- ProjectRuntimeRegistry.unregister("evt-create")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -169,10 +169,10 @@ class ProjectEventSpec extends CatsEffectSuite:
         actorSystem = Some(system),
         wsSend = Some((json: Json) => hub.broadcast(json))
       )
-      first <- ProjectCreateTool.call(input, ctx)
+      first <- ProjectTool.call(input, ctx)
       afterFirst <- frames.get
       _ <- frames.set(Vector.empty)
-      second <- ProjectCreateTool.call(input, ctx) // 定义已存在 → 幂等重挂（created=false）
+      second <- ProjectTool.call(input, ctx) // 定义已存在 → 幂等重挂（created=false）
       afterSecond <- frames.get
       _ <- ProjectRuntimeRegistry.unregister("evt-dup")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -205,7 +205,7 @@ class ProjectEventSpec extends CatsEffectSuite:
         rootSessionId = Some("nebula-root"),
         wsSend = Some((json: Json) => hub.broadcast(json))
       )
-      result <- ProjectCreateTool.call(input, ctx)
+      result <- ProjectTool.call(input, ctx)
       collected <- frames.get
     yield
       assert(result.isRight, result.toString)

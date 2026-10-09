@@ -1,10 +1,6 @@
 {
   "seedVersion": "1.0.0",
   "items": [
-    "agents:project-dispatcher",
-    "agents:general",
-    "agents:Nebula",
-    "agents:kernel",
     "plugins:visual-report",
     "plugins:slideblocks",
     "plugins:nebflow-plugin-creator",

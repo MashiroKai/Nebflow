@@ -11,10 +11,42 @@ import scala.concurrent.duration.*
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):静态面经注册器倒置
 object AskUserQuestionTool extends Tool:
+
+  /** 附件判据词汇（解析/探针/拒绝枚举）——**Pop 文件面同一套**（askuser-attach-align
+   *  批：禁第二套域规则/第二权威，作者 2026-10-07 09:41 令）。 */
+  import FileRefs.*
   /** 工具名（`AgentCore.schemaVariantFor` 与本工具共用此一处字面量）。 */
   val Name = "AskUserQuestion"
 
   val name = Name
+
+  /**
+   * 附件引用（顶层可选参数 `attachments`）的**单件大小上限**——仅作人的可点击入口，
+   * 路径不被读取、不进模型上下文（需要模型看见内容 ⇒ 用 `images`）。
+   *
+   * 上限：件数 = [[nebflow.shared.AttachContract.MaxAttachmentsPerMessage]]（全仓
+   * 消息附件口径的单一数值权威面）；单件 = 本常量（对齐前端 `attachmentPreview.js`
+   * 的 `MAX_TEXT_BYTES` 打开闸 ⇒ 不产生「可贴但不可看」）。
+   *
+   * ⚠ 声明位置在本对象**最前段**（早于 `description` / `inputSchema`）：两者都以
+   * 插值引用本常量，Scala 单例的字段按声明序初始化 ⇒ 放在后面会读到 0（`0 MB`）。
+   */
+  val MaxAttachmentBytes: Long = 100L * 1024 * 1024
+
+  /** 件数超限的错误码。 */
+  val AttachCountCode = "ASKUSER_ATTACH_TOO_MANY"
+
+  /**
+   * 双维度自解释尾注（作者 09:35 令②(b)「报错必须双维度齐全」·09:41 令同步改）：
+   * 附件面的拒绝维 = **路径/位置**（不可解析/不存在/非普通文件/不可读/凭据身份/
+   * 超限），**类型面永不是拒绝维**——扩展名门已随 Pop 同判撤除（Canvas viewer
+   * 注册表渲染注册类型；未注册类型点击走下载兜底）。每条拒绝文案附此注，读者
+   * 一眼可判「哪一维失败、哪一维无关」——作者四撞的全因即旧文案只列目录清单、
+   * 两个维度混在一个单码里。
+   */
+  val RejectionTypeNote: String =
+    "The failing dimension is the PATH/LOCATION, never the file type: any readable local " +
+      "file type is accepted (registered types render in Canvas; everything else downloads on click)."
 
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question — never ask clarifying questions in plain text.
@@ -46,30 +78,22 @@ Conditional branching (dependsOn):
 - Common scenarios: stack choice — ask "Which language?" (id: lang) and "Which framework?" (dependsOn: lang=Python → Django/FastAPI; lang=Rust → Actix/Axum); deployment — ask "Deploy where?" (id: target) and if Vercel → "Custom domain?"; testing — ask "Test type?" and if Unit → "Mock library?".
 - Independent questions don't need dependsOn — just include them all in one call.
 
+Attachments:
+- `attachments` (optional, top level, at most 9 entries) lists local file paths to hand to the USER as clickable entries — the file opens in the Canvas panel when the user clicks it, or downloads when no viewer claims its type. Nothing is read into your context.
+- Use it when a human needs to OPEN a file to decide. To make the MODEL see a file's content, use the `images` parameter instead. The same path may appear in both — they serve different readers.
+- Each entry must resolve to a regular local file that is safe to show a human — the SAME rules as Pop's file face: absolute paths, `~/…` (expands to the home directory), and space / `%20`-containing spellings are all accepted (closest match wins); `.`/`..` segments are folded; relative paths resolve against the process working directory. Any readable local location works — `/tmp/…`, `~/.nebflow/…`, data-directory and project files alike. Refused: non-regular or unreadable files, files above 100 MB, credential locations and credential-shaped names (`auth.json`, `id_rsa`, `*.pem`, `.ssh`/`.aws`/… subtrees), and hard links sharing a credential file's inode. There is NO extension restriction and no directory whitelist: registered viewer types open in Canvas, everything else downloads on click. The whole call fails with a readable error naming the offending path, the failing reason, and which dimension failed.
+
 Behavior:
-- This tool blocks until the user responds. Your turn pauses and resumes automatically when the user answers."""
+- This tool is non-blocking: it returns immediately with an acknowledgement, and the user's answer arrives later as a message in this session. Do not wait for it. If no answer arrives and you cannot decide, proceed with your best judgment and say so in your wrap-up."""
 
   /**
-   * 基础变体（= 上面 `description`）**逐字节保持不变**（规格 §5.1 补充条）——
-   * 非 root 会话看到的永远是这一份，分化只许在 root 变体上「加」，不许在基础
-   * 变体上「改/删/美化」（否则非 root 会话的请求前缀会漂移，且语义面被扩大）。
-   * spec `AskUserDualModeSpec` 用字节比对钉住本不变量。
+   * 本批（root 2026-10-02 令 #462 裁②）**不保留 `mode` 键**：schema 与 description
+   * 对**所有身份**逐字节一致，无变体可分 —— 历史的三层授权面（定义层分化 /
+   * 运行期拒绝 / description）随阻塞腿一并退场，`AgentCore.schemaVariantFor` 的
+   * AskUser 分支整体删除。此处保留 `descriptionBase` 只为在 spec 中钉住「无第二份
+   * 变体文本」的不变量。
    */
   val descriptionBase: String = description
-
-  /**
-   * root 变体的增量段（工具面按角色分化批 B1/L5）：只在
-   * [[rootVariant]] 里拼接，绝不并入基线段。三段内容 = ① 非阻塞的确切
-   * 语义（发起即返回 + 答复稍后以消息到达 + 未答按最佳判断继续）、② 默认值、
-   * ③ 适用面声明（本形态仅本会话可见）。
-   */
-  private val rootExtraDescription =
-    """
-- Non-blocking mode (`mode` = "non-blocking", default "blocking"): the tool returns immediately with an acknowledgement instead of waiting. Your turn does NOT pause; the question card is shown to the user exactly as in blocking mode, and the answer arrives later as a new user message in this session (it wakes a new turn when you are idle, or lands at the next turn boundary). The acknowledgement carries the requestId — match the incoming answer to it. If no answer arrives and you cannot decide, proceed with your best judgment and say so in your wrap-up.
-- `mode` is available to this session only (Nebula root); every other session sees the blocking form alone."""
-
-  /** root 变体 description（B1/L5）：基础变体 + 增量段（基础文本一字不改）。 */
-  val descriptionRoot: String = description + rootExtraDescription
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -144,6 +168,19 @@ Behavior:
             ),
             "required" -> io.circe.Json.arr("question".asJson)
           )
+        ),
+        "attachments" -> io.circe.Json.obj(
+          "type" -> "array".asJson,
+          "description" -> ("Optional absolute file paths to hand to the user as clickable entries "
+            + s"(they open in the Canvas panel). Max ${AttachContract.MaxAttachmentsPerMessage} entries, "
+            + s"${MaxAttachmentBytes / (1024 * 1024)} MB each. Nothing is read into your context.").asJson,
+          // 件数上限的**机器读数**取自全仓单点常量（禁第二份数值）；description 散文里的
+          // 同一数字由 spec 的「散文钉常量」断言守住漂移。
+          "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
+          "items" -> io.circe.Json.obj(
+            "type" -> "string".asJson,
+            "description" -> "Local file path — absolute, ~/…, or space/%20-encoded form; judged like Pop's file face (credential locations refused). Unregistered types download on click.".asJson
+          )
         )
       ),
       "required" -> io.circe.Json.arr("questions".asJson)
@@ -151,44 +188,10 @@ Behavior:
   )
 
   // ============================================================
-  // 两份 schema 变体（B1/L4）：基础变体 = 上面 `inputSchema`（**逐字节不变**，
-  // 非 root 会话看到的那份，**属性缺席**——不是 enum 收窄、也不是「有属性但值
-  // 非法」，T9=(a)）；root 变体 = 基础 + `mode` 属性（enum + default）。
-  // 不接落点（= 无 buildToolList 分组）时本对象对外行为零变化。
+  // 无 schema 变体（root 2026-10-02 令 #462 裁②「不保留 mode 键」）：历史上的
+  // 「基础变体 vs root 变体（基础 + `mode`）」分叉已整体移除 —— root 面与基础面
+  // schema 逐字节相等，`schemaVariantFor` 的 AskUser 分支同步删除。
   // ============================================================
-
-  /** `mode` 属性的 schema（线上字面量取自 [[AskMode]] —— 与解析端共用一处）。 */
-  val modePropertySchema: io.circe.Json = io.circe.Json.obj(
-    "type" -> "string".asJson,
-    "enum" -> io.circe.Json.arr(AskMode.BlockingWire.asJson, AskMode.NonBlockingWire.asJson),
-    "default" -> AskMode.BlockingWire.asJson,
-    "description" -> ("How this question is asked. \"blocking\" (default) parks your turn until the user answers — " +
-      "the answer comes back as this tool's result. \"non-blocking\" returns immediately and the answer arrives later " +
-      "as a user message in this session; the card is identical. Non-blocking is available to the Nebula root session only.").asJson
-  )
-
-  /**
-   * root 变体 schema：基础 schema + `properties.mode`（从传入的基础定义派生 ⇒
-   * 与基础变体的字节一致性由构造方式保证）。
-   */
-  def schemaRoot(base: JsonObject): JsonObject =
-    val props = base("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
-    base.add("properties", io.circe.Json.fromJsonObject(props.add("mode", modePropertySchema)))
-
-  /** 不变式：基础 schema 里**没有** `mode`（防「顺手把并集 schema 写回来」）。 */
-  def baseHasModeProperty: Boolean =
-    inputSchema("properties").flatMap(_.asObject).exists(_.contains("mode"))
-
-  /**
-   * root 变体定义（B1）：从**已注册的定义**（`ToolRegistry.ALL_TOOLS` 那份，
-   * 已经过 `RemoteExecutor.augmentSchema`）派生 ⇒ 变体只多一个属性 + 一段描述，
-   * 基础面逐字节不受影响；工具名不变（成员资格与权限边界零变化）。
-   */
-  def rootVariant(base: ToolDefinition): ToolDefinition =
-    base.copy(
-      description = descriptionRoot,
-      inputSchema = schemaRoot(base.inputSchema)
-    )
 
   def summarize(input: JsonObject): String =
     val questions = input("questions").flatMap(_.asArray).getOrElse(Nil)
@@ -255,71 +258,28 @@ Behavior:
     if headless then Some(ToolError(HeadlessErrorMessage)) else None
 
   // ============================================================
-  // 运行期兜底闸（B3/L3，规格 §0.4 第二道）：`mode` 解析 + 非 root 显式拒绝。
-  // 位置 = `askGuard` **之后**、`askUser` **之前**，**先于任何副作用**（此点之后
-  // 才可能有 hub 槽位 / 卡片 / 状态标记）。三层分层里 schema 分化是**第一性**，
-  // 本闸兜住 schema 兜不到的四类边角：① 模型硬造面外参数（引擎无 schema 校验器
-  // ⇒ 面外参数本来会被静默忽略）② 进程外调用方（ScriptTool / spec harness /
-  // REST 直调）③ 分化实现 bug（漏分支）④ 未来新增会话形态漏传身份。
-  // **不得**因 schema 分化而删除本闸——删即把硬造参数变成静默降级。
+  // 面外参数闸（本批收敛）：`mode` 拒绝。位置 = `askGuard` **之后**、
+  // `parseOrError` **之前**，**先于任何副作用**（此点之后才可能派发 hub 槽位）。
+  // 理由：引擎无 JSON-Schema 校验器 ⇒ 面外参数本来会被**静默忽略**；本闸把
+  // 「既有调用面携带 `mode`」折成显式可判读 `ToolError`，不静默降级、不回溯叙述。
   // ============================================================
 
-  /** 非法 `mode` 值的错误码（第三种伪处理：静默按阻塞跑）。 */
-  val BadModeCode = "ASKUSER_BAD_MODE"
-
-  /** 非 root 携带非阻塞的错误码（规格 §3.3 定稿文案的机器可读锚）。 */
-  val NonBlockingNotRootCode = "ASKUSER_NONBLOCK_NOT_ROOT"
-
-  /** 非阻塞**无窗口可投**的错误码（B6 可达性预检；规格 §3.4#4）。 */
-  val NoRootWindowCode = "ASKUSER_NONBLOCK_NO_ROOT_WINDOW"
+  /** 携带已下线 `mode` 参数的错误码（机器可读锚）。 */
+  val ModeParamRetiredCode = "ASKUSER_MODE_PARAM_UNSUPPORTED"
 
   /**
-   * `mode` 解析（B3）：**缺席 ⇒ 默认阻塞**（既有调用点零行为漂移）；**出现但
-   * 非法 ⇒ 显式 ToolError**（类型不对 / 值域外 / 空串一律显式，绝不静默回落
-   * 到阻塞——那正是明禁的「静默忽略参数」伪处理）。
+   * `mode` 参数拒绝（「不保留键方案」）：本工具一律非阻塞 ⇒ 参数面无合法 `mode`
+   * 值，**出现即拒**（不按取值分叉）。文案给出：错在哪 / 期望是什么 / 错误码。
    */
-  def parseMode(input: JsonObject): Either[ToolError, AskMode] =
-    input("mode") match
-      case None => Right(AskMode.Blocking)
-      case Some(j) =>
-        j.asString.flatMap(AskMode.parse) match
-          case Some(m) => Right(m)
-          case None =>
-            Left(
-              ToolError(
-                s"AskUserQuestion: invalid `mode` value ${j.noSpaces} — legal values are " +
-                  s""""${AskMode.BlockingWire}" | "${AskMode.NonBlockingWire}" (omit `mode` for the default "Blocking"); """ +
-                  s"nothing was asked ($BadModeCode)."
-              )
-            )
-
-  /**
-   * 非 root 携带非阻塞的拒答（规格 §3.3 定稿文案：错在哪 / 期望是什么 / 合法
-   * 选项 / 错误码；并显式禁止重试）。
-   */
-  def nonBlockingNotRootError(ctx: ToolContext): ToolError =
-    val who = ctx.agentDef.map(_.name).getOrElse("<no agent session>")
+  def modeParamError(value: io.circe.Json): ToolError =
     ToolError(
-      s"AskUserQuestion: non-blocking mode is Nebula-root-only — this session is '$who' (depth=${ctx.depth}), " +
-        s"so `mode=\"${AskMode.NonBlockingWire}\"` is not permitted here ($NonBlockingNotRootCode). " +
-        "Legal options: (a) omit `mode` (blocking is the default and IS available to you); " +
-        "(b) if you must not block, use a different channel (node: text result along the out edge / BLOCKED report) instead. " +
-        s"Do not retry with mode=\"${AskMode.NonBlockingWire}\"."
+      s"AskUserQuestion does not accept a `mode` parameter (got ${value.noSpaces}) — this tool always asks in a " +
+        s"non-blocking way ($ModeParamRetiredCode)."
     )
 
-  /**
-   * 非阻塞可达性预检失败（B6）：问题**发不到任何窗口** ⇒ fail-closed 拒绝，
-   * 且**零槽位**（预检是只读的，发生在任何 hub 注册之前）。
-   */
-  def noRootWindowError(ctx: ToolContext): ToolError =
-    val root = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("<unknown>")
-    ToolError(
-      "AskUserQuestion: non-blocking mode needs an open window — this session's root " +
-        s"'$root' has no live client window registered with the interaction hub, so a non-blocking question " +
-        s"would never be shown (and nobody is waiting for it). Nothing was asked ($NoRootWindowCode). " +
-        "Legal options: (a) omit `mode` (blocking falls back to any other registered window); " +
-        "(b) ask again once a window is connected."
-    )
+  /** 面外参数闸：`mode` 在场（不论取值）⇒ 显式拒绝；缺席 ⇒ 放行。 */
+  def rejectRetiredModeParam(input: JsonObject): Option[ToolError] =
+    input("mode").map(modeParamError)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // Headless benchmark mode: fail fast at the entry — no AskUser dispatch,
@@ -327,15 +287,12 @@ Behavior:
     askGuard() match
       case Some(err) => IO.pure(Left(err))
       case None =>
-        // B3 兜底闸：解析 + 角色判定，**先于任何副作用**（纯函数，无 IO）。
-        parseMode(input) match
-          case Left(err) => IO.pure(Left(err))
-          case Right(AskMode.Blocking) => askUser(input, ctx)
-          case Right(AskMode.NonBlocking) =>
-            if !ctx.isRootAgent then IO.pure(Left(nonBlockingNotRootError(ctx)))
-            else askUserNonBlocking(input, ctx)
+        // 面外参数闸（纯函数，先于任何副作用）。
+        rejectRetiredModeParam(input) match
+          case Some(err) => IO.pure(Left(err))
+          case None => askUser(input, ctx)
 
-  /** 入参校验（阻塞/非阻塞共用；错误文案与历史逐字节一致）。 */
+  /** 入参校验（错误文案与历史逐字节一致）。 */
   private def parseOrError(input: JsonObject): Either[ToolError, List[AskItem]] =
     val questionsJson = input("questions").flatMap(_.asArray).getOrElse(Nil)
     if questionsJson.isEmpty then Left(ToolError("No valid questions provided"))
@@ -343,125 +300,173 @@ Behavior:
       val items = parseItems(questionsJson)
       if items.isEmpty then Left(ToolError("No valid questions provided")) else Right(items)
 
-  private def askUser(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    parseOrError(input) match
-      case Left(err) => IO.pure(Left(err))
-      case Right(items) =>
-        ctx.agentActorRef match
-          case Some(agentRef) =>
-            // #250 第⑤项：requestId 熵强化（单点生成器，作用域 ask-）
-            val requestId = InteractionRequestId.forAskUser()
-            agentRef
-              .?(
-                (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, items, Some(replyTo)),
-                timeout = None
-              )
-              .flatMap { answers =>
-                // R2 closure (wait-timeout-fix): the answer landed — paired
-                // un-mark for the WaitingForUser status set by the agent's
-                // AskUser handler. Fresh activity stamp so the TaskStuckWatcher
-                // idle window restarts from the answer, and the session is back
-                // under true-stuck coverage while the turn continues.
-                restoreRegistryAfterAnswer(ctx).as(Right(formatAnswer(items, answers)))
-              }
-          case None =>
-            IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
-    end match
-  end askUser
-
-  // ============================================================
-  // 非阻塞分支（B5/L6，仅 Nebula root 可达——B3 闸已在本方法之前判过）
-  // ============================================================
-
-  /** 预检上限（B6）：只读查询的有界等待；超时 = fail-closed 拒绝（不静默放行）。 */
-  val PreflightTimeout: FiniteDuration = 5.seconds
-
   /**
-   * 非阻塞 ack（L6）：机器可读（requestId + 问题数）+ 明确「不要在此等待」+
-   * 未答兜底指令（D6：丢答案的降级必须是**设计内**的，不是静默的）。
-   */
-  def nonBlockingAck(items: List[AskItem], requestId: String): String =
-    s"requestId=$requestId · ${items.size} question(s) · non-blocking: the answer will arrive later as a " +
-      "message in this session — do not wait for it; if no answer arrives and you cannot decide, proceed with your best judgment."
-
-  /**
-   * 可达性预检（B6/M10）：**只读**问 hub「本会话 root 的窗口是否已注册」。
+   * 唯一的执行链（非阻塞-only）：`parseOrError` → 附件校验 → 派发 + 立即 ack。
    *
-   * WHY：非阻塞下没人等待 ⇒ root 不可达时卡被丢弃（hub 仅 warn）就会变成**静默
-   * 丢失答案**（规格 §5.4 root 不可达风险行的唯一「必修正」项）。fail-closed：
-   * 无 hub / 无 root 窗口 / hub 未在有界窗口内应答 ⇒ 显式拒绝。**零槽位**：预检
-   * 不注册任何 pending（发生在 `AgentCommand.AskUser` 派发之前）。
-   */
-  private def rootWindowReachable(ctx: ToolContext): IO[Either[ToolError, Unit]] =
-    val rootSid = ctx.rootSessionId.filter(_.nonEmpty).orElse(ctx.sessionId.filter(_.nonEmpty)).getOrElse("")
-    if rootSid.isEmpty then IO.pure(Left(noRootWindowError(ctx)))
-    else
-      ctx.sharedResources match
-        case None => IO.pure(Left(noRootWindowError(ctx)))
-        case Some(res) =>
-          res.interactionHubRef.get.flatMap {
-            case None => IO.pure(Left(noRootWindowError(ctx)))
-            case Some(hub) =>
-              hub
-                .?(
-                  (replyTo: ActorRef[Boolean]) => InteractionHubCommand.RootReachable(rootSid, replyTo),
-                  timeout = Some(PreflightTimeout)
-                )
-                .map(reachable => if reachable then Right(()) else Left(noRootWindowError(ctx)))
-                .handleErrorWith(_ => IO.pure(Left(noRootWindowError(ctx))))
-          }
-
-    end if
-
-  end rootWindowReachable
-
-  /**
-   * 非阻塞执行链（L6）：同校验、同 items、同 hub 卡片链（`AgentCommand.AskUser`
-   * → `AgentActor` → `InteractionHubCommand.Request`），两处不同：
+   * 与历史阻塞腿的差别（阻塞腿已整体移除）：
    *  ① `replyTo` = 一次性桥接引用（[[AskUserAnswerBridge]]）而非工具 fiber 的回执；
    *  ② **不做 `.?`**（不等待）⇒ 派发后立刻返回 ack，turn 不暂停。
-   * `AgentCommand.AskUser` 携带 `AskMode.NonBlocking` ⇒ `AgentActor` 跳过
-   * `WaitingForUser` 标注与 `DelegateBudget.pause`（等待从未发生，无配对物）。
+   * 无窗口可达性预检（历史上的 root 窗口探针）已随裁④ 去除：问题经 hub 扇出
+   * （`InteractionHub.handleRequest:165-199`）或挂 pending（`snapshotFrames`）
+   * 承接 ⇒ 绝对无窗也不再 fail-closed 拒绝。
    */
-  private def askUserNonBlocking(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    parseOrError(input) match
-      case Left(err) => IO.pure(Left(err))
-      case Right(items) =>
+  private def askUser(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    (parseOrError(input), parseAttachmentsOrError(input)) match
+      case (Left(err), _) => IO.pure(Left(err))
+      case (_, Left(err)) => IO.pure(Left(err))
+      case (Right(items), Right(attachments)) =>
         ctx.agentActorRef match
           case None => IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
           case Some(agentRef) =>
-            rootWindowReachable(ctx).flatMap {
-              case Left(err) => IO.pure(Left(err))
-              case Right(_) =>
-                // #250 第⑤项：requestId 熵强化（单点生成器，作用域 asknb-）
-                val requestId = InteractionRequestId.forAskUserNonBlocking()
-                // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):桥构造经注册器(agent 实现原地)。
-                val bridge = AskUserAnswerPort.ref(agentRef, items, requestId, ctx)
-                (agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), AskMode.NonBlocking))
-                  .as(Right(nonBlockingAck(items, requestId)))
-            }
+            // #250 第⑤项：requestId 熵强化（单点生成器，作用域 asknb-）
+            val requestId = InteractionRequestId.forAskUserNonBlocking()
+            // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):桥构造经注册器(agent 实现原地)。
+            val bridge = AskUserAnswerPort.ref(agentRef, items, requestId, ctx)
+            (agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), attachments))
+              .as(Right(nonBlockingAck(items, requestId, attachments)))
     end match
-  end askUserNonBlocking
+  end askUser
 
   /**
-   * R2 (wait-timeout-fix): paired un-mark for the WaitingForUser status the
-   * agent's AskUser handler set when this question was dispatched. Registry
-   * entry present → status=Processing + fresh lastActivityMs (same touch
-   * semantics as AgentCore.touchRegistryActivity — never creates a ghost
-   * row). No-op when sharedResources/sessionId are absent (harness calls).
-   * Failure-safe: a registry touch must never fail the user's answer.
-   * private[tools]: ProjectCreateTool's path panel dispatches the same
-   * AgentCommand.AskUser and must pair the same un-mark (one shared
-   * implementation — no divergent copy).
+   * 非阻塞 ack（唯一回执面）：机器可读（requestId + 问题数 + 附件数）+ 明确
+   * 「不要在此等待」+ 未答兜底指令（丢答案的降级必须是**设计内**的，不是静默的）。
    */
-  private[tools] def restoreRegistryAfterAnswer(ctx: ToolContext): IO[Unit] =
+  def nonBlockingAck(items: List[AskItem], requestId: String, attachments: List[String] = Nil): String =
+    val attach = if attachments.isEmpty then "" else s" · ${attachments.size} attachment(s)"
+    s"requestId=$requestId · ${items.size} question(s)$attach · non-blocking: the answer will arrive later as a " +
+      "message in this session — do not wait for it; if no answer arrives and you cannot decide, proceed with your best judgment."
+
+  /**
+   * 顶层 `attachments` 解析（与 `parseItems` 同族；与 `canvas` 同为顶层可选）。
+   * 形态宽松读（缺省 / 非数组 ⇒ `Nil`），**纯** —— 判据本体在
+   * [[validateAttachments]]（那需要 `FilePolicyPort`，属效果面）。
+   */
+  def parseAttachments(input: JsonObject): List[String] =
+    input("attachments").flatMap(_.asArray) match
+      case None => Nil
+      case Some(arr) => arr.flatMap(_.asString).toList
+
+  private def attachmentError(code: String, message: String): ToolError =
+    ToolError(s"$message ($code)")
+
+  /**
+   * 附件校验：**单次遍历、fail-closed**（任一不过 ⇒ 整次调用拒绝，不部分放行）。
+   *
+   * 🔴 判据 = **Pop 文件面的同一套**（作者 2026-10-07 09:35/09:41 两令·
+   * 「跟 Pop 保持一致」/「Pop 能挂的 AskUser 就能挂」，禁第二套域规则/第二权威）：
+   * 解析走 `FileRefs.resolveCandidates`（`~` 展开 + `%20`/`+` 变形候选，变形最小
+   * 优先——与 Pop 逐字同一解析源），准入走 `FileRefs.probeFile`（存在/普通文件/
+   * ≤200MB/realpath 上的端点同一份阶梯 = 凭据身份 + R2 inode；**无目录域门、
+   * 无扩展名门**——`/tmp`、`~/.nebflow` 等本机可读路径全部可用）。本文件在此之上
+   * 只保留**一把**自己的尺：单件 ≤ [[MaxAttachmentBytes]]（前端 Canvas 打开闸同
+   * 值；probe 的 200MB 代理闸在其上）。判据不可得 ⇒ fail-closed（拒绝，不假设
+   * 可服务）。拒绝文案不给命中的具体凭据表项、不给宿主绝对路径全貌。
+   */
+  def validateAttachments(paths: List[String]): Either[ToolError, List[String]] =
+    if paths.length > AttachContract.MaxAttachmentsPerMessage then
+      Left(
+        attachmentError(
+          AttachCountCode,
+          s"Too many attachments: ${paths.length} — at most ${AttachContract.MaxAttachmentsPerMessage} per call."
+        )
+      )
+    else
+      paths.foldLeft[Either[ToolError, List[String]]](Right(Nil)) { (acc, raw) =>
+        acc.flatMap(done => validateOneAttachment(raw).map(done :+ _))
+      }
+
+  /**
+   * 逐条校验（askuser-attach-align 批重写）：解析（Pop 同源）→ probe（Pop 同一
+   * 探针，内部含端点同一份凭据阶梯）→ 自有大小尺。**通过 ⇒ 返回解析后的绝对路径**
+   * （`FileRefs.describe`，与 Pop 载荷同口径）——帧/`.ui.json` 落盘/前端三腿直接
+   * 可用，`~`/`%20` 形态不再依赖前端二次解析。
+   */
+  private def validateOneAttachment(raw: String): Either[ToolError, String] =
+    val hit = FileRefs.resolveCandidates(
+      raw.trim,
+      FileRefs.resolvePath,
+      v => unresolvableAttachment(v)
+    )
+    hit.path match
+      case None =>
+        // 任何形态都解析不成文件系统路径（含空串/纯空白）。
+        hit.decision match
+          case RefDecision.Reject(rejected) => Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, rejected.detail))
+          case _ => Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, s"the reference could not be resolved: $raw"))
+      case Some(path) =>
+        hit.decision match
+          case RefDecision.Reject(rejected) => Left(rejectionFromProbe(raw, rejected))
+          case _ =>
+            // 自有尺：单件 ≤ MaxAttachmentBytes（probe 的 200MB 代理闸已过）。
+            val size =
+              try java.nio.file.Files.size(path) catch case _: Throwable => -1L
+            if size < 0 then
+              Left(
+                attachmentProbeError(
+                  "ASKUSER_ATTACH_UNREADABLE",
+                  raw,
+                  s"the file is present but its size could not be read: ${FileRefs.describe(path)}"
+                )
+              )
+            else if size > MaxAttachmentBytes then
+              Left(
+                attachmentProbeError(
+                  "ASKUSER_ATTACH_TOO_LARGE",
+                  raw,
+                  s"exceeds the ${MaxAttachmentBytes / (1024 * 1024)} MB per-file limit (resolved: ${FileRefs.describe(path)})"
+                )
+              )
+            else Right(FileRefs.describe(path))
+
+  /** 解析失败的共用构造（resolveCandidates 的 whenUnresolvable 腿）。 */
+  private def unresolvableAttachment(value: String): RefDecision =
+    RefDecision.Reject(
+      RejectedRef(value, None, FileRefFailure.Unresolvable, s"the path could not be resolved to a filesystem path: $value")
+    )
+
+  /** 拒绝文案 = 输入路径回显 + probe 自己的可判读 detail（与 Pop 警告逐字同源）
+   *  + 双维度尾注 ——「何域可服务（类型面全放）、当前路径为何拒（detail）」齐备。 */
+  private def attachmentProbeError(fallbackCode: String, raw: String, detail: String): ToolError =
+    attachmentError(fallbackCode, s"Attachment refused for `$raw` — $detail. ${RejectionTypeNote}")
+
+  /** probe 的拒绝枚举 → 工具错误码（凭据族保住既有 `ASKUSER_ATTACH_CREDENTIAL` 锚）。 */
+  private def rejectionFromProbe(raw: String, rejected: RejectedRef): ToolError =
+    val code = rejected.failure match
+      case FileRefFailure.NotFound => "ASKUSER_ATTACH_NOT_FOUND"
+      case FileRefFailure.NotRegularFile => "ASKUSER_ATTACH_NOT_REGULAR"
+      case FileRefFailure.NotReadable => "ASKUSER_ATTACH_UNREADABLE"
+      case FileRefFailure.SizeExceeded => "ASKUSER_ATTACH_TOO_LARGE"
+      case FileRefFailure.Unresolvable => "ASKUSER_ATTACH_UNRESOLVED"
+      case FileRefFailure.NotServable =>
+        rejected.layer match
+          case Some(FilePolicyPort.NfDenyLayer.Credential) | Some(FilePolicyPort.NfDenyLayer.CredentialInode) =>
+            "ASKUSER_ATTACH_CREDENTIAL"
+          case _ => "ASKUSER_ATTACH_UNSERVABLE"
+      case _ => "ASKUSER_ATTACH_UNSERVABLE" // ExtensionNotAllowed 已不可产出（门已撤）；Other 兜底
+    attachmentProbeError(code, raw, rejected.detail)
+
+  /** 顶层附件参数的一体化入口：解析 + 校验。 */
+  def parseAttachmentsOrError(input: JsonObject): Either[ToolError, List[String]] =
+    validateAttachments(parseAttachments(input))
+
+  /**
+   * 答复落定后的配对恢复（每个**阻塞**调用方的答复单点调用一次）。
+   *
+   * 本批（root 2026-10-02 令 #462 裁①）后，`AskUserQuestionTool` 自身**不再**是
+   * 此函数的调用方（一律非阻塞、无等待态）；唯一调用方 = `ProjectCreateTool.pathPanel`
+   * —— 那个面板仍在自己的 fiber 里阻塞等待（答复即 `createChain` 的入参），
+   * `AgentProcessing` 据此命令的 `awaitsAnswer=true` 标了 `WaitingForUser` 并
+   * `DelegateBudget.pause`，本函数是**同一条链的配对解除点**（缺它 ⇒ 会话永久停在
+   * 等待态、内核预算永久暂停 = 造出「永不解除的等待」）。
+   *
+   * 注册表行存在 ⇒ status=Processing + 新活动戳（同 `AgentCore.touchRegistryActivity`
+   * 语义，**绝不**造幽灵行）。sharedResources/sessionId 缺席（spec harness）⇒ no-op。
+   * 失败安全：一次注册表触碰绝不让用户的答复失败。
+   */
+  private[tools] def answerLanded(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
         val now = System.currentTimeMillis()
-        // R11 第 4 层 / U1=C-a + U8=(ii)：ask **答复单点**发恢复信号——内核的
-        // 3600s wall-clock 预算从此刻继续累计（等待期不计入）。非 Delegate 会话
-        // 无预算通道 ⇒ 无害 no-op。发起侧配对点 = AgentActor 的 AskUser 分支。
-        // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):恢复信号经注册器(agent 实现原地)。
         DelegateBudgetPort.resume(sid) *>
           res.agentRegistry
             .modify { m =>

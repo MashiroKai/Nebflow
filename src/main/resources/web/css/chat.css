@@ -415,8 +415,12 @@
   color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
+/* ui-status-redesign（S2 / 盘点 #9,#12,#13）：卡死/失败状态词一律中性字，语义红
+   由词前 timer-off（卡死）/ circle-x（失败）图标承载（main.js 等发射点注入 .st-ic）。 */
 .bg-task-state.bg-state-stuck,
-.bg-task-state.bg-state-error { color: var(--color-error); }
+.bg-task-state.bg-state-error,
+.bg-task-state.bg-state-failed { color: var(--status-word); }
+.bg-task-state .st-ic { width: 11px; height: 11px; margin-right: 3px; }
 .bg-task-state.bg-state-frozen { color: rgb(var(--accent-agent-light)); }
 .bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
 .bg-task-kind {
@@ -538,13 +542,19 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+/* 卡死标签（盘点 #10 / S2）：词转中性 + timer-off 红图标（发射点注入）。 */
 .bg-task-stuck {
   font-size: 11px;
   font-weight: 500;
-  color: var(--color-error);
+  color: var(--status-word);
   margin-top: 2px;
 }
-.bg-task-status.bg-status-error { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); }
+.bg-task-stuck .st-ic { width: 11px; height: 11px; margin-right: 3px; }
+/* 心跳光点 error/stuck（盘点 #11 / S2）：终态/卡死光点由「红晕＋1s 闪烁」改
+   静态红描边环点（dot-ghost 形态——形状仍可辨、去 alarm 动效，reduced-motion
+   天然达标）；运行态绿点脉冲保留（活动性语义）。 */
+.bg-task-status.bg-status-error { background: transparent; border: 1.5px solid var(--status-error-icon); box-shadow: none; }
+.bg-task-status.bg-status-stuck { background: transparent; border: 1.5px solid var(--status-error-icon); box-shadow: none; animation: none; }
 .bg-task-status.bg-status-frozen { background: rgb(var(--accent-agent-light)); box-shadow: 0 0 4px rgb(var(--accent-agent-light) / 0.4); }
 .bg-task-status.bg-status-done { background: var(--color-frame-text-muted); box-shadow: none; }
 /* Frozen is the agent-blue accent: deep sapphire in light theme (agent-light
@@ -651,8 +661,7 @@
 }
 .bg-task-status.bg-status-active { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); animation: bg-pulse 1.5s ease-in-out infinite; }
 .bg-task-status.bg-status-idle { background: #d4a030; box-shadow: 0 0 4px rgba(212,160,48,0.4); }
-.bg-task-status.bg-status-stuck { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); animation: bg-status-blink 1s ease-in-out infinite; }
-@keyframes bg-status-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+/* stuck 移到上面与 error 同规（ui-status-redesign：静态描边环点）。 */
 
 .bg-task-lines {
   font-size: 10px;
@@ -709,7 +718,7 @@
    (flow-agent popup family pattern — feature popups inject their own CSS). */
 .bg-task-row.bg-task-ended { opacity: 0.72; }
 .bg-task-row.bg-task-ended:hover { opacity: 1; }
-.bg-task-state.bg-state-failed { color: var(--color-error); }
+.bg-task-state.bg-state-failed { color: var(--status-word); }
 .bg-task-state.bg-state-done { color: var(--color-frame-text-muted); }
 #bg-dropdown .bg-task-status.bg-status-done {
   background: var(--color-frame-text-muted);
@@ -793,16 +802,18 @@
   color: #34c759;
   opacity: 1;
 }
-/* R4：复制失败**就地提示**（裁定 = 要提示，主/友两面）——失败态按钮转错误色，
-   并注入一行 `aria-live` 文案（`.copy-failed-live`，由 utils.js `markCopyFailed()`
-   生成后 2000ms 自清）。🔴 不新增 toast（toast 属既有 UI 裁定面，本批边界外）。 */
-.msg-copy.copy-failed { color: var(--color-error); opacity: 1; }
+/* R4：复制失败**就地提示**（裁定 = 要提示，主/友两面）——失败态按钮（图标载体）
+   转错误 token 色，并注入一行 `aria-live` 文案（`.copy-failed-live`，由 utils.js
+   `markCopyFailed()` 生成后 2000ms 自清）。ui-status-redesign（盘点 #43 / S6）：
+   10px 红字 → circle-x 红图标 + 中性词；🔴 不新增 toast。 */
+.msg-copy.copy-failed { color: var(--status-error-icon); opacity: 1; }
 .copy-failed-live {
   font-size: 10px;
-  color: var(--color-error);
+  color: var(--status-word);
   margin-left: 4px;
   white-space: nowrap;
 }
+.copy-failed-live .st-ic { width: 10px; height: 10px; margin-right: 2px; vertical-align: -1px; }
 
 /* Recall button (same base style as copy, with hover feedback) */
 .duration-badge .msg-recall {
@@ -1253,11 +1264,17 @@
 .tool-card--pending { background: #e8e8e8; }
 .tool-card .icon { flex-shrink: 0; margin-top: 1px; }
 .tool-card .icon.ok { color: var(--color-success); }
-.tool-card .icon.err { color: var(--color-error); }
+/* ui-status-redesign（盘点 #45）：11 处 JS 内联 ✕ SVG stroke 硬编码 #f44336 →
+   currentColor，色由本类 token 给出（--status-error-icon，暗档随 token 提亮）。 */
+.tool-card .icon.err { color: var(--status-error-icon); }
 .tool-card .spinner {
   width: 14px; height: 14px;
-  border: 2px solid #ccc;
-  border-top-color: #555;
+  /* spinner-smooth 批（2026-10-06）：案外字面 #ccc/#555 归既有运行态 token 档——
+     与本页另外两处运行 spinner（.nf-wl-spin::before、.session-status.busy
+     .status-spinner）及 .task-node-spin 同一 --color-primary 惯例，暗档随 token
+     提亮；几何（14px/2px border）与动画（spin 1s，transform-only）不动。 */
+  border: 2px solid color-mix(in srgb, var(--color-primary, #07c160) 25%, transparent);
+  border-top-color: var(--color-primary, #07c160);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   display: inline-block;
@@ -1441,14 +1458,22 @@
 .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 2px; }
 .tool-stream-body::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
 
+/* ui-status-redesign（S8 / 盘点 #30）：粉底红字卡 → 中性 surface 卡＋行首红
+   circle-x 图标（chat.js 注入）；错误正文可复制性、max-width 几何不变。 */
 .error-card {
-  background: #ffebee;
-  color: #c62828;
+  background: var(--color-surface);
+  color: var(--status-word);
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--status-error-icon);
   border-radius: 10px;
   padding: 8px 14px;
   font-size: 13px;
   max-width: 85%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
+.error-card .st-ic { width: 14px; height: 14px; margin: 2px 0 0; flex-shrink: 0; }
 
 /* ---------- Notice Cards (system / stage notifications) ---------- */
 .notice-card {
@@ -1502,13 +1527,15 @@
   animation: fadeIn 0.2s ease;
 }
 .compact-card-icon.ok { color: var(--color-success); }
-.compact-card-icon.err { color: var(--color-error); }
+/* ui-status-redesign（盘点 #31）：err 图标 = 图案载体 ✓，色值归 token；
+   error 边框同归 token color-mix（暗档随 token 自适配）。 */
+.compact-card-icon.err { color: var(--status-error-icon); }
 .compact-card[data-state="active"] {
   border-color: rgb(var(--sapphire) / 0.3);
   color: var(--color-text);
 }
 .compact-card[data-state="error"] {
-  border-color: rgba(244, 67, 54, 0.35);
+  border-color: color-mix(in srgb, var(--status-error-icon) 35%, transparent);
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
@@ -1561,19 +1588,23 @@
   .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
   .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
 
+  /* 思考窗硬上限暗档：同一窗口长度（max-height 是长度非颜色，双主题同值），
+     仅滚动条墨色随主题翻转（与 .tool-card .body.open 暗档同值）。 */
+  .thinking-content { scrollbar-color: rgba(255,255,255,0.15) transparent; }
+  .thinking-content::-webkit-scrollbar-track { background: transparent; }
+  .thinking-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
   .history-loader { color: #656870; }
   .history-loader .history-spinner { border-color: #282b33; border-top-color: #7b7e88; }
   .history-end { color: #555860; }
 
-  .option-box { background: rgba(255,255,255,0.06); }
-  .option-btn { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
-  .option-btn:hover { border-color: rgba(145,170,210,0.38); color: rgba(160,185,225,0.9); }
-  .option-custom-input { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
-  .option-cancel { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
-  .option-cancel:disabled { border-color: rgba(255,255,255,0.08); }
-  .option-confirm:disabled { background: rgba(7,193,96,0.25); }
+  /* （askuser-hybrid 浮层卡的 dark token 不在本块：本块位于亮档 :root 之前，
+     同特异性源序会被后置亮档值盖掉——dark 值与亮档同段声明，见下方
+     Universal Option Box 段首的 @media (prefers-color-scheme: dark)。） */
 
-  .error-card { background: rgba(244,67,54,0.12); color: #ef5350; }
+  /* ui-status-redesign（S8）：暗档同归中性 surface 卡（材质 token 自适配），
+     红只留行首图标；原粉底红字（rgba 244 · #ef5350）退役。 */
+  .error-card { background: var(--color-surface); color: var(--status-word); border-color: var(--color-border); border-left-color: var(--status-error-icon); }
 
   .code-copy-btn {
     background: rgba(23,26,33,0.9);
@@ -1600,24 +1631,71 @@
   .retry-status { background: rgba(217,165,65,0.12); color: #d4a030; }
 }
 
+/* ── askuser-hybrid 浮层卡 token（light 档）───────────────────────────────
+   askuser-hybrid 重皮批 2026-10-06：AskUser 卡 + onboarding 题卡换「纸上浮层」
+   材质——容器 = style-2 浮层外壳（渐变面 + 发丝描边 + 双层柔影 + 顶缘高光），
+   内里控件 = style-1 细线规整（透明底 + 1px 细线，卡内零投影零填充色），
+   主按钮 = 品牌绿实底渐变 + 绿影（墨色按钮退场）。逐值取自
+   design/20261006_askuser_redesign/hybrid/mockup.html + HYBRID.md §2-§3。
+   文字/分隔线尽量落既有 token（--color-text / --color-frame-text /
+   --color-text-dim / --color-border）；线稿描边（line-strong）与绿钮族是本批
+   仅有的新值（dark 档覆写见上方 Dark Theme 块）。 */
+:root {
+  /* 浮层容器（style-2 外壳原值） */
+  --ask-card-top: #ffffff;
+  --ask-card-bot: #f5f7fa;
+  --ask-card-bd: rgba(20, 26, 40, 0.08);
+  --ask-card-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.10);
+  --ask-card-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  /* style-1 细线（--ask-line 落既有 --color-border；line-strong 为新值） */
+  --ask-line: var(--color-border);
+  --ask-line-strong: rgba(28, 30, 34, 0.30);
+  /* 绿按钮（#0ac065 = style-2 确切色值，两档恒定；深端取其词表 #069a4e——
+     亮档对比度如需再进一步 = 换此值一行，候示，见 HYBRID.md §3） */
+  --ask-green: #0ac065;
+  --ask-green-deep: #069a4e;
+  --ask-btn-shadow: 0 2px 6px rgba(7, 193, 96, 0.30), 0 6px 18px rgba(7, 193, 96, 0.20);
+  --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.14);
+}
+/* dark 档（与亮档同段声明，防源序反转；值逐字取自 hybrid/mockup.html）。
+   绿钮两档恒定（#0ac065 / #069a4e 不覆写），差异只在容器影深 / 发丝描边 /
+   绿影收敛 / 聚焦环。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ask-card-top: #272c3a;
+    --ask-card-bot: #1f232d;
+    --ask-card-bd: rgba(255, 255, 255, 0.09);
+    --ask-card-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), 0 14px 36px rgba(0, 0, 0, 0.50);
+    --ask-card-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --ask-line-strong: rgba(255, 255, 255, 0.30);
+    --ask-btn-shadow: 0 2px 8px rgba(7, 193, 96, 0.32);
+    --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.22);
+  }
+}
+
 /* ---------- Universal Option Box (AskUser / SlashCmd / Permission) ---------- */
+/* 浮层容器（style-2 外壳）：渐变面 + 1px 发丝描边 + 16px 圆角 + 双层柔影 +
+   顶缘内高光。承卡泡由 .ob-ghost-seat 去面（见 askuser-hybrid 段），卡直接坐纸。 */
 .option-box {
   margin-top: 6px;
-  padding: 8px;
-  background: var(--color-frame-hover);
-  border-radius: 10px;
-  border: 1px solid var(--color-border);
+  padding: 13px 14px;
+  background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
+  border-radius: 16px;
+  border: 1px solid var(--ask-card-bd);
+  box-shadow: var(--ask-card-shadow), var(--ask-card-highlight);
 }
 .option-q {
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  line-height: 1.55;
   color: var(--color-text);
-  margin-bottom: 6px;
-  font-weight: 400;
+  margin-bottom: 8px;
 }
 .option-opts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 0;
   margin-bottom: 8px;
 }
 .option-btn {
@@ -1690,8 +1768,8 @@
   transition: all 0.2s ease;
 }
 .option-btn.picked .option-check {
-  border-color: #fff;
-  background: var(--color-primary);
+  border-color: var(--ask-green);
+  background: var(--ask-green);
 }
 .option-btn.picked .option-check::after {
   content: '';
@@ -1707,64 +1785,71 @@
 .option-custom-input {
   display: block;
   width: 100%;
-  margin-top: 6px;
-  padding: 5px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  font-size: 13px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--ask-line-strong);
+  border-radius: 8px;
+  font-size: 13.5px;
   outline: none;
   box-sizing: border-box;
   resize: none;
   overflow-y: auto;
   max-height: 100px;
   font-family: inherit;
-  line-height: 1.4;
-  background: var(--color-frame-input-bg);
-  color: var(--color-frame-input-text);
+  line-height: 1.55;
+  background: transparent;
+  color: var(--color-text);
 }
 .option-custom-input:focus {
-  border-color: rgba(145, 170, 210, 0.45);
+  border-color: var(--ask-green);
+  box-shadow: var(--ask-ring);
 }
 .option-btn-row {
   display: flex;
+  justify-content: space-between;
   gap: 8px;
   margin-top: 8px;
 }
+/* 取消 = 纯文字次级（style-1 纪律：卡内零填充色零投影；墨色按钮退场） */
 .option-cancel {
   flex: 0 0 auto;
-  padding: 7px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-bubble-ai);
-  color: var(--color-text-muted);
+  padding: 8px 6px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--color-text-dim);
   font-size: 13px;
   cursor: pointer;
 }
+.option-cancel:hover { color: var(--color-text); }
 .option-cancel:disabled {
-  color: var(--color-text-muted);
-  border-color: var(--color-border);
+  color: var(--color-text-dim);
+  opacity: 0.5;
   cursor: default;
 }
+/* 确认 = L3 主行动（品牌绿实底渐变 + 绿影，半径 12 与 16 卡面同族） */
 .option-confirm {
-  flex: 1;
-  padding: 7px;
+  flex: 0 0 auto;
+  padding: 8px 16px;
   border: none;
-  border-radius: 10px;
-  background: var(--color-primary);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--ask-green), var(--ask-green-deep));
   color: #fff;
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  transition: background 0.2s;
+  box-shadow: var(--ask-btn-shadow);
+  transition: filter 0.2s ease-out, opacity 0.12s ease-out;
 }
-.option-confirm:hover {
-  background: var(--color-primary-hover);
-}
+.option-confirm:hover { filter: brightness(1.06); }
 .option-confirm:disabled {
-  background: var(--color-frame-active);
+  background: rgba(10, 192, 101, 0.30);
+  box-shadow: none;
   cursor: default;
 }
 .option-desc {
@@ -1912,7 +1997,7 @@
 }
 /* A-5: confirm button unlock transition (120ms opacity). */
 .option-confirm {
-  transition: background 0.2s ease-out, opacity 0.12s ease-out;
+  transition: background 0.2s ease-out, opacity 0.12s ease-out, filter 0.2s ease-out;
 }
 .option-confirm:disabled {
   opacity: 0.6;
@@ -1971,6 +2056,25 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
+/* uifix-skiptyping 批 (2026-10-07 10:52 作者复查令「伪流式气泡的『跳过打字』
+   没落实 hover 显示」): the pseudo-streaming bubble's 「跳过打字」 control gets
+   the uifix3 ③ treatment (282c07d8d, the four states, isomorphic):
+   hidden at rest; revealed while the pointer is over the typing BUBBLE
+   (与气泡体 hover 联动 — the sim bubble is this control's ask-card); revealed
+   for keyboard users via :focus-visible; kept plainly visible on touch
+   surfaces under (hover: none) (the .pop-media-canvas precedent — no hover
+   on touch, one-tap access stays). Opacity only: the button stays clickable
+   for keyboard/AT users while visually hidden, and it exists only DURING the
+   typing window anyway (simBubble removes it on done — so ③'s answered-card
+   disabled-foot boundary has no counterpart here). The 0.15s opacity leg of
+   the base rule's transition above is what animates the reveal. Zero new
+   copy: the label is the existing ob2.typing.skip key. */
+.ob-skip[data-skip-typing] { opacity: 0; }
+.ob-sim-bubble:hover .ob-skip[data-skip-typing],
+.ob-skip[data-skip-typing]:focus-visible { opacity: 1; }
+@media (hover: none) {
+  .ob-skip[data-skip-typing] { opacity: 1; }
+}
 /* Summary / error action rows (glass controls, §8.2 — save button keeps the
    translucent-green send-button accent). */
 .ob-actions {
@@ -1982,18 +2086,418 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
+/* 三修批 uifix3 ③ (2026-10-06 21:36 作者令): the question card's 「跳过这一题」
+   control hides until the CARD is hovered (与卡体 hover 联动) — at rest the foot
+   shows only the primary action; a pointer over the ask-card reveals the skip
+   (opacity only: the button stays clickable for keyboard/AT users, and
+   :focus-visible reveals it for keyboard navigation). Touch surfaces have no
+   hover — same answer the .pop-media-canvas chip gives: keep the control
+   plainly visible under (hover: none). A long-press fallback was rejected:
+   it would need new gesture JS on a transient button and hides the feature
+   behind an undiscoverable gesture, while (hover: none) costs nothing and
+   keeps one-tap access.
+   Scope = the LIVE question window. On an ANSWERED card the button is
+   disabled, and sapphire's app-wide disabled blanket
+   (sapphire.css :is(…, button.glass-control, …):disabled — ID-carried :is())
+   deliberately holds disabled buttons at opacity 1 (禁用档用色表达), so the
+   answered card's foot stays legible as part of the answer record. Beating it
+   would need !important against an ID-specificity blanket — not worth the
+   trap; the skip decision only exists while the question is live. */
+.ob-actions .ob-ghost[data-skip] { opacity: 0; }
+.ask-card:hover .ob-actions .ob-ghost[data-skip],
+.ob-actions .ob-ghost[data-skip]:focus-visible { opacity: 1; }
+@media (hover: none) {
+  .ob-actions .ob-ghost[data-skip] { opacity: 1; }
+}
+/* The field face's probe row (uifix3 ②): settings-dialog layout — fetch button
+   + live status line above the model entry. Reuses the card's glass material;
+   the strings come from the settings provider modal's own locale keys. */
+.ob-fetch-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.ob-fetch-row .ob-fetch-btn { flex-shrink: 0; }
+.ob-fetch-row .ob-fetch-status { font-size: 12px; color: var(--color-text-muted); min-width: 0; }
+/* L3 主行动（askuser-hybrid）：品牌绿实底渐变 + 绿影；墨色/半透明绿底退场。
+   hover/active 守卫压过 sapphire 的 button.glass-control:hover 换肤（(0,3,0)
+   > 其 (0,2,1)），绿实底在两档任何挂法下不掉玻璃。 */
 .glass-control.ob-primary {
-  background: rgba(7, 193, 96, 0.42);
+  background: linear-gradient(180deg, var(--ask-green), var(--ask-green-deep));
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 8px 16px;
+  box-shadow: var(--ask-btn-shadow);
+}
+.glass-control.ob-primary:hover,
+.glass-control.ob-primary:active {
+  background: linear-gradient(180deg, var(--ask-green), var(--ask-green-deep));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: var(--ask-btn-shadow);
+  filter: brightness(1.06);
+}
+/* 禁用档（空输入闸等）：半透绿 = .option-confirm:disabled 同语言（旧 dark 块
+   rgba(7,193,96,.25) 的既有先例）。🔴 不对齐则落到 sapphire 全局
+   button.glass-control:disabled 白玻璃 ((0,2,1) > (0,2,0))，主行动在纸面上
+   读成普通灰 chip——与「主按钮一眼可辨」红线冲突。 */
+.glass-control.ob-primary:disabled {
+  background: rgba(10, 192, 101, 0.30);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: none;
+  filter: none;
 }
 .ob-probing {
   margin-top: 8px;
   font-size: 12px;
   color: var(--color-text-muted);
 }
+.ob-probing.ok {
+  color: var(--color-success);
+}
+/* 跳过 = 纯文字次级（askuser-hybrid：去边框去底，可点且每题必有） */
+.glass-control.ob-ghost {
+  background: none;
+  border: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: 8px;
+  padding: 2px 4px;
+  color: var(--color-text-dim);
+  font-size: 13px;
+}
+.glass-control.ob-ghost:hover,
+.glass-control.ob-ghost:active {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+}
+.ob-spacer {
+  flex: 1;
+}
+
+/* v2 conversational onboarding (personal-agent batch 2026-10-04) — one card per
+   question appended INSIDE the streamed agent bubble. Zero new colors: every
+   class below is composed from design tokens already in base.css. */
+.ob-body .ob-para {
+  min-height: 1.62em;
+}
+.ob-body .ob-para.ob-question {
+  font-weight: 500;
+  color: var(--color-text);
+}
+.ask-card {
+  margin-top: 12px;
+  padding: 13px 14px;
+  background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
+  border: 1px solid var(--ask-card-bd);
+  border-radius: 16px;
+  box-shadow: var(--ask-card-shadow), var(--ask-card-highlight);
+  animation: ob-card-in 200ms ease-out;
+}
+/* 题头（hybrid §5 梯队：meta 11px/字距 1.2；下距交给后续件的 margin-top 凑 10px 节奏） */
+.ask-meta {
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  color: var(--color-text-dim);
+  margin-bottom: 2px;
+}
+.opt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.opt-row.wide {
+  flex-direction: column;
+  align-items: stretch;
+}
+.opt-row.wide .option-btn {
+  text-align: left;
+  border-radius: 10px;
+}
+.option-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+}
+.option-text small {
+  display: block;
+  color: var(--color-text-dim);
+  font-size: 11px;
+  margin-top: 1px;
+}
+.option-btn.picked .option-text small {
+  color: rgba(255, 255, 255, 0.8);
+}
+.option-btn .option-check {
+  display: inline-block;
+  margin-right: 8px;
+}
+.option-btn.opt-ghost {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-dim);
+  border-color: rgba(145, 170, 210, 0.2);
+}
+.option-btn.opt-ghost:hover {
+  color: var(--color-text);
+  border-color: rgba(145, 170, 210, 0.5);
+}
+.free-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+.option-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--ask-line-strong);
+  border-radius: 8px;
+  font-size: 13.5px;
+  outline: none;
+  box-sizing: border-box;
+  background: transparent;
+  color: var(--color-text);
+}
+.option-input:focus {
+  border-color: var(--ask-green);
+  box-shadow: var(--ask-ring);
+}
+.option-input.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12.5px;
+}
+.option-input::placeholder {
+  color: var(--color-text-dim);
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+/* Context-window row (personal-agent batch 2026-10-04, author item ②): the
+   model question's "set the context size" control. Revealed when a configured
+   candidate is picked; reuses .option-input / .glass-control, zero new colors. */
+.ctx-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.ctx-row .ctx-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.ctx-row .option-input {
+  flex: 0 1 130px;
+}
+.option-hint {
+  font-size: 11.5px;
+  color: var(--color-text-dim);
+}
+.write-lines {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 2;
+  margin-top: 2px;
+}
+.write-lines .wl {
+  color: var(--color-text-muted);
+  animation: ob-card-in 300ms ease-out;
+}
+.write-lines .wl.ok {
+  color: var(--color-text);
+}
+/* A terminal step that was refused/failed says so in place (the probe line is
+ * the one that can flip: it is appended pending, then resolved). */
+.write-lines .wl.bad {
+  color: var(--color-danger, #d9534f);
+}
 @media (prefers-reduced-motion: reduce) {
   .ob-cursor {
     display: none;
   }
+  .ask-card,
+  .write-lines .wl {
+    animation: none;
+  }
+}
+
+/* ═══ askuser-hybrid 重皮 · 承卡泡幽灵座 + 内里线稿控件（2026-10-06）═══
+   分层合同（HYBRID.md §2）：浮层只做容器处理——卡（.ask-card / .option-box）是
+   唯一脱底上浮的层；内里控件全部回到纸上表格的纪律（透明底 + 1px 细线，零投影
+   零填充色）；唯一彩墨 = 主行动按钮与其聚焦环。相邻纯对话泡不上浮（本文件不对
+   .bubble.ai 全局动手——混合内容泡如 finishAi 回挂卡的正文旅泡同样保面）。 */
+
+/* ── 幽灵座：承卡泡去面去影去圆角（style-2 手法）──
+   显式标记类（renderAskUser / renderAskUserHistory / renderPermissionPrompt /
+   onboarding question 泡四处挂点），🔴 禁改回 blanket :has()——会把带正文的
+   混合泡一起剥面。 */
+.bubble.ai.ob-ghost-seat {
+  background: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+}
+/* B-3 题卡文字气泡化（askuser-bubblename 批 2026-10-06，作者 19:43 令）：
+   onboarding 题泡的题文（lead + 问句，.ob-body 段落）不再裸坐纸面——它自身
+   取得与对话流完全同材质的 AI 泡面，逐 token 取自 .bubble.ai 原值
+   （--color-bubble-ai 底 + 1px whisper 边 + 16px 圆角/左下 4px 尾 + 1px 柔影
+   + 10px/14px 内距）。选项/按钮区维持 56a44587e 浮层卡裁定不回退：外泡
+   （ghost 座）依旧零面，.ask-card 照旧直接浮在纸上——文字入泡、卡不上泡。
+   旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
+.bubble.ai.ob-ghost-seat .ob-body {
+  padding: 10px 14px;
+  background: var(--color-bubble-ai);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 16px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+/* 题干（卡引言）在浮层语言里抬一档：15px/600（BRIEF §4.4 下限之上） */
+.bubble.ai.ob-ghost-seat .ob-para.ob-question {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  margin-top: 4px;
+}
+
+/* ── 表格行控件（style-1 纪律）：选项 = 分隔线行 + 1.5px radio 线稿圈；
+   覆盖 sapphire 后加载的 glass 组规则（Pattern B (0,1,0) 与 hover (0,3,0)，
+   本段上下文选择器 ≥(0,2,0)、hover (0,4,0) 全数压过）。 */
+.option-opts .option-btn,
+.ask-card .opt-row .option-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 6px;
+  border: none;
+  border-top: 1px solid var(--ask-line);
+  border-radius: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: var(--color-text);
+  font-size: 13.5px;
+  text-align: left;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.option-opts .option-btn:first-child,
+.ask-card .opt-row .option-btn:first-child {
+  border-top: none;
+}
+.option-opts .option-btn:not(.picked):hover,
+.ask-card .opt-row .option-btn:not(.picked):hover {
+  background: transparent;
+  border-color: var(--ask-line);
+  box-shadow: none;
+  color: var(--color-text);
+}
+/* 单选行首 radio 线稿圈（multi 行自带 .option-check 方框，radio 让位） */
+.option-opts .option-btn::before,
+.ask-card .opt-row .option-btn::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1.5px solid var(--color-text-dim);
+  border-radius: 50%;
+}
+.option-opts.multi .option-btn::before,
+.ask-card .opt-row .option-btn:has(.option-check)::before {
+  display: none;
+}
+/* picked = 线稿圈染绿点（行面保持零填充——绿只在主行动与选中指示上） */
+.option-opts .option-btn.picked,
+.ask-card .opt-row .option-btn.picked {
+  background: transparent;
+  color: var(--color-text);
+}
+.option-opts .option-btn.picked::before,
+.ask-card .opt-row .option-btn.picked::before {
+  border-color: var(--ask-green);
+  background: radial-gradient(circle closest-side, var(--ask-green) 82%, transparent 86%);
+}
+/* picked 行的 desc 小字跟随行面（旧白字在透明行上不可读） */
+.option-btn.picked .option-text small {
+  color: var(--color-text-dim);
+}
+/* 权限升档行保留 sapphire 一档可辨（行面纪律内的文字/圈着色） */
+.option-opts .option-btn.perm-upgrade-option { color: rgb(var(--sapphire) / 0.95); }
+.option-opts .option-btn.perm-upgrade-option::before { border-color: rgb(var(--sapphire) / 0.8); }
+
+/* onboarding 选择/多选题行（.ask-card .opt-row）纵排归一 + 节奏 */
+.ask-card .opt-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 8px;
+}
+
+/* 「其他…」（单选腿）= 1px 虚线自由输入入口（hybrid .opt-other 形态）；
+   multi 腿的「其他…」带勾选框、保持表格行语义。 */
+.option-opts:not(.multi) .opt-other {
+  border: 1px dashed var(--ask-line-strong);
+  border-radius: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  color: var(--color-frame-text);
+}
+.option-opts:not(.multi) .opt-other::before { display: none; }
+.option-opts:not(.multi) .opt-other.picked {
+  border-style: solid;
+  border-color: var(--ask-green);
+}
+
+/* onboarding 候选 chips = 1px 细线胶囊（透明底，radius 999） */
+.chip-row .option-btn {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  padding: 5px 14px;
+  border: 1px solid var(--ask-line-strong);
+  border-radius: 999px;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: var(--color-frame-text);
+  font-size: 13px;
+}
+.chip-row .option-btn::before { content: none; }
+.chip-row .option-btn:not(.picked):hover {
+  border-color: var(--ask-line-strong);
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+}
+
+/* 「都不是，我自己说」= 虚线自由入口（同 .opt-other 语言） */
+.ask-card .opt-row .option-btn.opt-ghost {
+  border: 1px dashed var(--ask-line-strong);
+  border-radius: 8px;
+  margin-top: 0;
+  padding: 8px 12px;
+  color: var(--color-frame-text);
+}
+.ask-card .opt-row .option-btn.opt-ghost::before { display: none; }
+.ask-card .opt-row .option-btn.opt-ghost:not(.picked):hover {
+  border-color: var(--ask-line-strong);
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
 }
 
 /* ===== Top Overlays (task list + notifications) ===== */
@@ -2072,9 +2576,15 @@
 .notif-icon.reminder {
   background: #D4A574;
 }
+/* conn（ui-status-redesign 盘点 #7 / D 组）：红方块＋白字符 ! → 透明底 + wifi-off
+   真图标（红 = --status-error-icon 图标载体）；形状编码（斜杠电波）在暗色/色弱下
+   仍可辨。文字档 size/weight 对字符形态保留（仅 conn 覆写）。 */
 .notif-icon.conn {
-  background: #C0392B;
+  background: transparent;
+  color: var(--status-error-icon);
+  font-size: 0;
 }
+.notif-icon.conn .st-ic { width: 15px; height: 15px; }
 .notif-text {
   flex: 1;
   min-width: 0;
@@ -2289,10 +2799,20 @@
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.5;
-  max-height: none;
-  overflow: visible;
+  /* 思考窗硬上限（作者 2026-10-07 令「思考过程要限制一个最大窗口进行流式，
+     不要占满整个屏幕。比如最多 5 行」）：流式与展开两态同窗——7.5em = 5 行 ×
+     1.5 行高（本元素 13px 档）。单点真源是 chat.js THINKING_WINDOW_MAX_LINES
+     （同一算式内联落 style.maxHeight）；此处常量值是 JS 缺席时的兜底，两处
+     同式同值。超出即内部滚动（绝不向下游无限撑开下游布局）；行数计数读数在
+     data-nf-think-lines（chat.js 单点写入，spec 读数锚）。 */
+  max-height: 7.5em;
+  overflow-y: auto;
   margin-top: 2px;
+  scrollbar-color: rgba(0,0,0,0.15) transparent;
 }
+/* 滚动条外观沿用 .tool-card .body.open 同档（细、透明轨），亮暗双主题同构。 */
+.thinking-content::-webkit-scrollbar-track { background: transparent; }
+.thinking-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
 .thinking-content p {
   margin: 0.3em 0;
 }
@@ -2334,7 +2854,9 @@
   outline-offset: 1px;
   border-radius: 4px;
 }
-.turn-header .nf-chevron { flex-shrink: 0; }
+.turn-header .nf-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
+/* expanded affordance: the chevron turns to point down (2026-10-03 demo) */
+.turn-header[aria-expanded="true"] .nf-chevron { transform: rotate(90deg); }
 /* Long summaries wrap to multiple lines (height auto-grows) — the full text
    is always visible; no text-overflow / line-clamp swallowing (2026-09-06
    author ruling: 长总结必须完整可见). */
@@ -2346,6 +2868,16 @@
    max-height 0 + collapsed margins so no gap remains. The expand/collapse
    toggle is INSTANT (the 批② WAAPI transition layer was removed 2026-09-06,
    author feedback 「动画太卡顿」) — this class owns the whole state. */
+/* Tucked FORWARD-fill: the thinking feed keeps streaming its text into a face
+   that is display-none-equivalent anyway, and every frame's fresh subtree was
+   being laid out inside a max-height:0/overflow:hidden box — pure waste. After
+   the tail-redraw and append-only fixes this was the largest remaining
+   per-frame layout cost of the stream. Skipping the CONTENTS of the tucked
+   face removes that layout; the row is released the moment the class comes
+   off, so the on-demand expand still paints the full content. */
+.row.nf-tucked .thinking-content {
+  content-visibility: hidden;
+}
 .row.nf-tucked {
   max-height: 0 !important;
   margin-top: 0 !important;
@@ -2610,7 +3142,9 @@
   background: var(--color-surface);
 }
 
-/* ===== Permission Danger Levels ===== */
+/* ===== Permission Danger Levels =====
+   ui-status-redesign（S14 / 盘点 #51）：彩边＋彩 10% 底 = 图案载体保留；
+   横幅正文一律中性字，语义色只留在行首图标（.st-warn/.st-err token 档）。 */
 .perm-danger-banner {
   display: flex;
   align-items: center;
@@ -2625,6 +3159,7 @@
 .perm-danger-banner span {
   flex: 1;
 }
+.perm-danger-banner .st-ic { flex-shrink: 0; }
 
 /* Warning level (git ops, may lose data) */
 .bubble.ai.perm-warning {
@@ -2632,25 +3167,25 @@
 }
 .bubble.ai.perm-warning .perm-danger-banner {
   background: rgba(255, 193, 7, 0.1);
-  color: var(--color-warning);
+  color: var(--status-word);
 }
 
 /* Dangerous level (deletion, kill, destructive ops) */
 .bubble.ai.perm-dangerous {
-  border: 1px solid var(--color-error);
+  border: 1px solid var(--status-error-icon);
 }
 .bubble.ai.perm-dangerous .perm-danger-banner {
   background: rgba(244, 67, 54, 0.1);
-  color: var(--color-error);
+  color: var(--status-word);
 }
 
 /* Critical level (system destruction) */
 .bubble.ai.perm-critical {
-  border: 2px solid var(--color-error);
+  border: 2px solid var(--status-error-icon);
 }
 .bubble.ai.perm-critical .perm-danger-banner {
   background: rgba(244, 67, 54, 0.12);
-  color: var(--color-error);
+  color: var(--status-word);
 }
 
 /* Source badge: shows which sub-agent a permission request came from */
@@ -2733,9 +3268,11 @@
   color: var(--color-text-muted);
   line-height: 1.45;
 }
+/* 「继续等待」提示行（盘点 #32 字收敛）：12px 提示句转中性字——红/琥珀只在
+   图标（.error-icon，既有）与按钮（交互红，铁律三豁免）上。 */
 .error-escalation-wait {
   font-size: 12px;
-  color: rgb(var(--amber));
+  color: var(--status-word);
   font-weight: 500;
   line-height: 1.4;
 }
@@ -3089,18 +3626,24 @@
   margin-top: 2px;
 }
 
-/* C: inline path error — single source = --color-danger (bright/dark in base.css) */
+/* C: inline path error — ui-status-redesign（S9 同族 / 盘点 #34）：红底红边红字框
+   → 中性框＋左侧 2px 红线（图案）＋行首 circle-alert 红图标（JS 注入）＋中性正文。 */
 .wsp-err {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   font-size: 11px;
-  color: var(--color-danger);
+  color: var(--status-word);
   margin-bottom: 8px;
   padding: 5px 10px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 32%, transparent);
+  border-left: 2px solid var(--status-error-icon);
   line-height: 1.4;
-  word-break: break-all;
 }
+.wsp-err .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.wsp-err span { word-break: break-all; min-width: 0; }
 
 /* Empty-state second line (the way out), under the .wsp-empty fact line */
 .wsp-empty-hint {
@@ -3109,20 +3652,26 @@
 }
 
 /* Clear button (project-root mode) — danger family, same values as the
-   destructive buttons in modal.css */
+   destructive buttons in modal.css. ui-status-redesign（S10 / 盘点 #47）：常显
+   「清空」键字转常规色，行首 trash-2 红图标承载；hover 转红（铁律三）。 */
 .wsp-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid rgba(220, 60, 60, 0.3) !important;
-  color: rgba(220, 60, 60, 0.85) !important;
+  color: var(--color-text) !important;
   background: rgba(220, 60, 60, 0.04) !important;
 }
+.wsp-clear .st-ic { color: var(--status-error-icon); }
 .wsp-clear:hover {
   background: rgba(220, 60, 60, 0.08) !important;
   border-color: rgba(220, 60, 60, 0.5) !important;
   box-shadow:
     0 0 12px rgba(220, 60, 60, 0.1),
     0 0 24px rgba(220, 60, 60, 0.05) !important;
-  color: #e55 !important;
+  color: var(--status-error-icon) !important;
 }
+.wsp-clear:hover .st-ic { color: var(--status-error-icon); }
 
 @media (prefers-color-scheme: dark) {
   .ws-pick-target { background: rgba(255,255,255,0.05); border-color: rgba(145,170,210,0.28); }
@@ -3181,159 +3730,282 @@
   .scroll-new-pill:hover, .scroll-new-pill:active { transform: translateX(-50%); }
 }
 
-/* ---------- runtime work-line (stream-ux spec §二.1.1) ----------
-   ONE single-line badge slot that scrolls through the running turn's process:
-   tool running = spinner; tool done = check draw + bounce; switching item =
-   roll up/out + roll in/down; thinking = single-line reveal (typewriter /
-   width) then check then roll.
+/* ---------- the turn line (stream-ux redesign, 2026-10-03) ----------
+   ONE single-line stage that plays the running turn's process: tool running =
+   spinner; tool done = check draw + bounce; switching item = roll up/out +
+   roll in/down; thinking = single-line reveal (typewriter / width) then check
+   then roll; pre-token = dots + live seconds.
 
-   The line is TRANSIENT turn chrome: workline.js removes it the moment the
-   turn reaches a terminal (turnGroup.js collapseTurn / failTurn). That keeps
-   the persistent `.turn-header` the ONLY top-level turn node — the contract
-   tests/turn-collapse-keep-text.spec.mjs `readSeq` enumerates in full.
+   The line is the turn's PERSISTENT chrome: it lives at the turn top (the
+   `.turn-header`'s exact slot) and turnGroup.js settles it INTO the header at
+   the terminal — same element, one final roll, no remove-and-rebuild. That
+   keeps the `.turn-header` the only top-level turn node (the contract
+   tests/turn-collapse-keep-text.spec.mjs `readSeq` enumerates in full).
    Pure CSS animations only (WAAPI is pinned out by the same spec family). */
 
+/* ── stream-ux redesign (2026-10-03 author demo): the turn line ────────────
+   ONE line that is BOTH the running process and the terminal badge. It lives
+   at the turn top — the exact slot `.turn-header` occupies — and workline.js
+   settles it INTO the header at the terminal (same element: class swap + one
+   final roll). The face is the header's own design language: no background,
+   no glass, no border — chevron + muted 12px text, brightening on hover.
+   The old boxed card look is gone: the process is the badge's sibling phase,
+   not a different chrome.
+
+   UI-A (author 2026-10-03 「思考过程的那一行要能换行显示，而不是一直是一行」):
+   the line WRAPS. The slot is height:auto with a min-height of one row, the
+   label wraps (white-space:normal + overflow-wrap), and the thinking reveal
+   drops its nowrap clipping. The switch interaction is unaffected: the slot is
+   still a position:relative stage and the ENTERING item is still absolutely
+   positioned over the leaving one, so 「至多一项可见」 holds exactly as before —
+   only the item's height is now allowed to grow.
+
+   UI-C (author 2026-10-03 「动画最好以纯文本的形式来做，符合Badge原有的风格」):
+   every motion in this block is PURE TEXT — a character spinner, a character
+   pulse on the dots, a character caret on the thinking reveal, and a short
+   opacity fade. There are NO transform / translate / scale / rotate
+   animations left (the old roll-in / roll-up / chkon-scale / bounce /
+   spinner-rotate keyframes are gone). The badge keeps the header's static
+   design language instead of a card's motion language.
+
+   UI-G (author 2026-10-03 19:59 ruling): a subagent / flow popup window adds
+   `.nf-static`; the ONE rule below turns every animation and every transition
+   in this block off for that window — no per-element handling. */
 .nf-workline {
   display: flex;
+  /* 2026-10-06 author screenshot defect (「›偏上、文字基线偏下」): the row
+     centered like its own terminal face (.turn-header is align-items:center)
+     — the old flex-start + a chevron margin-top band-aid left the 12px
+     chevron ink riding high against the 18px text line. */
   align-items: center;
-  gap: 10px;
-  height: 34px;
+  gap: 4px;
   max-width: 85%;
-  margin: 2px 0 6px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 11px;
-  background: var(--color-surface);
+  margin: 2px 0;
+  padding: 3px 12px;
+  font-size: 12px;
+  /* zcode-484 batch: ONE text row, fixed. The explicit px line-height makes the
+     single-row height deterministic (it is also what the slot's fixed height
+     below mirrors) and survives the terminal morph being removed by the
+     `.turn-header` class swap. */
+  line-height: 18px;
+  font-weight: 500;
   color: var(--color-text-dim);
-  font-size: 13px;
-  overflow: hidden;
+  opacity: 0.9;
   position: relative;
+  cursor: default;
   animation: nf-wl-in 0.3s ease both;
 }
-.nf-wl-slot { position: relative; flex: 1 1 auto; min-width: 0; height: 100%; }
+.nf-workline:hover { color: var(--color-text); opacity: 1; }
+/* chevron is centered by the row's align-items:center — no offset needed
+   (the retired `margin-top: 1px` was the flex-start-era band-aid). */
+.nf-workline .nf-chevron { flex-shrink: 0; }
+/* The slot IS the line (zcode-484 batch, author ruling 2026-10-04 09:29
+   「我要的思考过程以及工具过程的流式，是在一行进行流式，像zcode一样」 — this
+   REVERSES the 2026-10-03 UI-A ruling 「思考过程的那一行要能换行显示」, which had
+   set `height:auto` so a wrapped item grew the line). A fixed single-row height
+   with the overflow clipped means no item can grow the line vertically: the
+   slot's clientHeight is constant for the whole stream. `min-height` carries
+   the same value so the empty slot (dots arrive a beat later) has identical
+   geometry. The terminal badge is exempt below (`.turn-header`) — the settled
+   summary keeps its wrap contract. */
+.nf-wl-slot {
+  position: relative; flex: 1 1 auto; min-width: 0;
+  height: 18px; min-height: 18px; overflow: hidden;
+}
 .nf-wl-item {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   min-width: 0;
-  animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+  animation: nf-wl-in 0.3s ease both;
 }
+/* The terminal morph: the row gains `.turn-header`; the settled badge text
+   WRAPS in flow (same ruling as the built header — the full summary is always
+   readable, no ellipsis swallowing). This is the ONE place the single-row
+   constraint is lifted: 「过程单行」 governs the streaming window only, and the
+   settled summary stays fully legible (I8). */
+.turn-header .nf-wl-slot { height: auto; min-height: 18px; overflow: visible; }
+.nf-wl-item.is-final { position: static; white-space: normal; }
+.nf-wl-item.is-final .nf-wl-label {
+  white-space: normal;
+  overflow-wrap: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  flex: 0 1 auto;
+  /* the settled summary is fully legible — the streaming tail fade is gone */
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* The label is ONE row while the turn runs: clipped, never wrapped, never
+   ellipsised (the tail is carried by the fade below, not by a `…`).
+   `flex: 1 1 auto` makes the label's BOX span the rest of the row — the mask
+   region (the last 40px, below) then holds no ink whenever the label fits, so
+   a short label is not faded by accident. The terminal badge resets the mask
+   (see `.is-final` above): a settled summary is fully legible. */
 .nf-wl-label {
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+  flex: 1 1 auto;
   min-width: 0;
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
 }
+/* ── ② 运行中类型化细节行（toolline-detail 批 2026-10-06）────────────────
+   muted 小字细节骑在运行项 label 之后：单行（nowrap + 裁剪）+ 同款尾部 fade，
+   新内容在右、旧内容左滑出（worklineToolDetail 的 1e7 尾锚）。色 = 既有
+   --color-text-muted token（暗档随 token 提亮，ui-status token 面④）；字号
+   11px 降半档，不喧宾。label 让位：有细节时 label 收缩为内容宽（封顶 55%），
+   细节占其余空间——无细节时布局逐字节同旧。终态摘除：完成翻转 / header 定稿
+   都走 buildItem 新建项，细节 span 不进终态。UI-G 静态窗随 .nf-static 全局
+   关动画（fade 是 mask 非动画，与 .nf-wl-label 同款豁免列）。 */
+.nf-wl-detail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: -4px; /* label gap 10px 的视觉续接（细节是 label 的延长流） */
+  font-size: 11px;
+  color: var(--color-text-muted);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+}
+.nf-wl-item:has(.nf-wl-detail) > .nf-wl-label {
+  flex: 0 1 auto;
+  max-width: 55%;
+}
+.nf-static .nf-wl-detail { -webkit-mask-image: none !important; mask-image: none !important; }
 .nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
 
-/* icon cell: spinner (running) or check (done) */
+/* pre-token dots (the old placeholder bubble's face, moved onto the line) —
+   PURE TEXT pulse (UI-C): the three dots cycle opacity only. */
+.nf-wl-dots { display: inline-flex; gap: 3px; align-items: center; flex: none; }
+.nf-wl-dots .thinking-dot {
+  width: auto; height: auto; border-radius: 0; background: none;
+  opacity: 0.35;
+  animation: nf-wl-textpulse 1.2s steps(1, end) infinite;
+}
+
+/* icon cell: a PURE-TEXT spinner / a text check (UI-C) — no SVG rotation, no
+   scale-in, no stroke-draw. */
 .nf-wl-icon { width: 16px; height: 16px; flex: none; display: flex; align-items: center; justify-content: center; }
-.nf-wl-spin {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  animation: nf-wl-spin 0.8s linear infinite;
+.nf-wl-spin { width: 14px; height: 14px; border: 0; border-radius: 0; }
+.nf-wl-spin::before {
+  content: "\25DC";
+  display: block; width: 14px; line-height: 14px; text-align: center;
+  color: var(--color-primary);
+  animation: nf-wl-frames 0.8s steps(1, end) infinite;
 }
-.nf-wl-chk { width: 16px; height: 16px; transform: scale(0.4); opacity: 0;
-  animation: nf-wl-chkon 0.4s cubic-bezier(0.34, 1.6, 0.64, 1) forwards; }
-.nf-wl-chk svg { width: 16px; height: 16px; display: block; }
-.nf-wl-chk circle { fill: none; stroke: var(--color-success); stroke-width: 2; }
-.nf-wl-chk path {
-  fill: none;
-  stroke: var(--color-success);
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 12;
-  stroke-dashoffset: 12;
-  animation: nf-wl-draw 0.25s 0.1s ease forwards;
+.nf-wl-chk { width: 16px; height: 16px; opacity: 1; }
+.nf-wl-chk::before {
+  content: "\2713";
+  display: block; width: 16px; line-height: 16px; text-align: center;
+  font-size: 14px; font-weight: 700; color: var(--color-success);
 }
-/* the check lands with a small bounce (spec §二.1.1「打勾描画 + 弹跳动画」) */
-.nf-wl-item.is-done { animation: nf-wl-rollin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1) both, nf-wl-bounce 0.4s 0.1s ease both; }
-/* A completed item that is leaving the slot (the next tool took over): roll it
-   UP and out (spec §二.1.1「旧上滚出、新下滚入」).
-   The two-class selector is deliberate, not decoration: `.is-done` and
-   `.is-out` are both (0,2,0), so a plain `.nf-wl-item.is-out` rule placed
-   before `.is-done` loses the cascade and the roll-out never runs — measured
-   on the real tool-A→done→tool-B sequence, where the outgoing item sat still
-   for the whole 380ms exit window and overlapped the incoming label. (0,3,0)
-   beats `.is-done` on specificity regardless of rule order.
-   The item is built fresh per tool, so an item that was done carries BOTH
-   classes; one still running carries only `.is-out`. */
+.nf-wl-chk svg { display: none; }
+/* the check lands with a short text fade (UI-C — no bounce / scale) */
+.nf-wl-item.is-done { animation: nf-wl-in 0.3s ease both; }
+/* A completed item leaving the slot: a short FADE-OUT, no vertical roll.
+   The two-class selector keeps the (0,3,0) specificity discipline recorded on
+   the retired roll-out rule (it must beat `.is-done` regardless of order). */
 .nf-wl-item.is-done.is-out,
-.nf-wl-item.is-out { animation: nf-wl-rollout 0.35s ease both; }
+.nf-wl-item.is-out { animation: nf-wl-fadeout 0.3s ease both; }
 
-/* The item that ENTERS behind a leaving one waits for that roll-out to finish
-   (`.is-enter-late` is applied by workline.js on a genuine item switch, never on
-   the first item of a turn). Without the wait the entry overlaps the exit and
-   both labels are legible at once — a double exposure the approved demo does
-   not have: there `#it1` rolls out from 3.5s and `#it2` only rolls in from
-   3.9s, i.e. a hard switch with the exiting item already at opacity 0 while the
-   entering one still sits in its from-state, leaving a gap where the line reads
-   empty. 0.4s is that same start-to-start stagger.
-   `both` fill keeps the entering item at its from-state (opacity 0,
-   translateY 20px) for the whole delay, so the two items are never both on
-   screen and their label boxes never intersect.
-   The two-value delay mirrors the two-animation `.is-done` pair (roll-in + the
-   0.1s-delayed bounce): a single value would repeat for both animations and
-   move the completion bounce inside the delay. */
+/* The item that ENTERS behind a leaving one waits for that fade to finish
+   (`.is-enter-late` is applied by workline.js on a genuine item switch, never
+   on the first item of a turn). Without the wait the entry overlaps the exit
+   and both labels are legible at once — a double exposure. The delay is the
+   same start-to-start stagger the retired roll layer used (tests/stream-ux.spec.mjs
+   A1 measures the ordering, not the mechanism). */
 .nf-wl-item.is-enter-late { animation-delay: 0.4s; }
-.nf-wl-item.is-done.is-enter-late { animation-delay: 0.4s, 0.5s; }
 
-/* error mark for a failed tool (same 16px ink box as the check) */
-.nf-wl-x svg { width: 16px; height: 16px; display: block; }
-.nf-wl-x path {
-  fill: none;
-  stroke: var(--color-error);
-  stroke-width: 2.4;
-  stroke-linecap: round;
+/* error mark for a failed tool (text cross, same 16px ink box as the check)
+   — ui-status-redesign（盘点 #40 / F 表）：✕ 字形 = 形状载体保留，色值归
+   --status-error-icon token；失败标签（词）转中性字。 */
+.nf-wl-x { width: 16px; height: 16px; }
+.nf-wl-x::before {
+  content: "\2715";
+  display: block; width: 16px; line-height: 16px; text-align: center;
+  font-size: 13px; font-weight: 700; color: var(--status-error-icon);
 }
-.nf-wl-item.is-error .nf-wl-label { color: var(--color-error); }
+.nf-wl-x svg { display: none; }
+.nf-wl-item.is-error .nf-wl-label { color: var(--status-word); }
 
-/* thinking: single-line reveal — the box widens as the thinking text grows
-   while the (already complete) string is clipped by overflow, so the text
-   never reflows and never re-renders per frame (A2/A3/A7). The stepped
-   transition is what gives the reveal its typewriter cadence; workline.js
-   only writes the target width (no per-token DOM rebuild). */
+/* thinking: the badge prints the thinking text as TEXT (UI-C text cadence) —
+   and it is ONE row (zcode-484 batch). The 2026-10-03 UI-A rule made this box
+   WRAP (`white-space:normal; overflow:visible`); that is what the author scored
+   on 2026-10-04 09:29 and it is removed here.
+   Geometry: a `block` box that fills the row, `nowrap`, clipped. The streaming
+   text is LONGER than the box, so the box itself is the scroller — workline.js
+   pins `scrollLeft` to the end after each append (the tail anchor: new content
+   flows in at the right edge, old content slides out to the left), which is why
+   text-align is irrelevant here.
+   Cadence is still the CSS caret blink — no per-token DOM rebuild (A3/A7) and
+   no transform keyframes (UI-C). */
 .nf-wl-think {
-  display: inline-block;
-  max-width: 0;
-  overflow: hidden;
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
-  vertical-align: bottom;
-  transition: max-width 0.16s steps(3, end);
+  overflow: hidden;
+  overflow-wrap: normal;
+  vertical-align: baseline;
+  /* Tail fade (A41: no `mask-image` anywhere in this tree before this batch):
+     the rightmost 40px dissolve into the background, so the clipped tail reads
+     as "sliding out" rather than as a hard cut. Alpha-only ⇒ theme-independent
+     (works on the light, dark and `opacity:0.9` surfaces alike). */
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
 }
 .nf-wl-think::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
 .nf-wl-item.is-done .nf-wl-think::after { display: none; }
 
 @keyframes nf-wl-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes nf-wl-rollin { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
-@keyframes nf-wl-rollout { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-18px); } }
-@keyframes nf-wl-chkon { to { opacity: 1; transform: scale(1); } }
-@keyframes nf-wl-draw { to { stroke-dashoffset: 0; } }
-@keyframes nf-wl-spin { to { transform: rotate(360deg); } }
-@keyframes nf-wl-bounce { 0%, 100% { transform: none; } 40% { transform: translateY(-3px); } }
+@keyframes nf-wl-fadeout { from { opacity: 1; } to { opacity: 0; } }
+@keyframes nf-wl-frames {
+  0% { content: "\25DC"; }
+  25% { content: "\25DD"; }
+  50% { content: "\25DE"; }
+  75% { content: "\25DF"; }
+  100% { content: "\25DC"; }
+}
+@keyframes nf-wl-textpulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.9; } }
 @keyframes nf-wl-blink { 50% { opacity: 0; } }
 
-/* ---------- message entrance animations (stream-ux spec §二.1.2 / §二.1.3) ----------
-   Assistant reply: the WHOLE message pops in once (scale + elastic) — never a
-   per-token render (A3). User input: slides in from the right with the same
-   elastic settle. Both are opt-in via a class so history replay (persistence.js
-   builds its own rows) keeps its plain static paint. */
+/* UI-G: a subagent / flow popup window renders the line STATIC. One rule —
+   every animation and transition inside the work line is off; the line still
+   shows the running tool name, the check / cross and the thinking text, so the
+   window stays fully readable (克制 ≠ 破功). The zcode-484 batch's tail fade is
+   NOT an animation, so it is turned off explicitly here: a static window keeps
+   the plain clipped edge (the text is clipped either way — the fade is a
+   motion-stream affordance the popup does not share). */
+.nf-static,
+.nf-static * { animation: none !important; transition: none !important; }
+.nf-static .nf-wl-think,
+.nf-static .nf-wl-label { -webkit-mask-image: none !important; mask-image: none !important; }
+
+/* ---------- message entrance animations (stream-ux redesign 2026-10-03) ----------
+   EVERY message is "one message, one animation": the whole bubble pops in once
+   (scale + elastic settle, iMessage-style) — user and assistant alike, and the
+   assistant's mid-turn text segments each pop as their own bubble at the tool
+   boundary. Never a per-token render (A3/A7). Opt-in via a class so history
+   replay (persistence.js builds its own rows) keeps its plain static paint.
+   The transform-origin roots each side's pop at its bubble tail (user bottom-
+   right, assistant bottom-left). */
+.bubble.user { transform-origin: 100% 100%; }
+.bubble.ai { transform-origin: 0% 100%; }
+/* An assistant bubble stays invisible until its single whole-message paint —
+   the streaming path creates the row/bubble up front but paints only in
+   finishAi() (appendAiText accumulates off-DOM). */
+.bubble.ai:empty { display: none; }
 .bubble.nf-pop { animation: nf-pop-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
 @keyframes nf-pop-in {
   0% { opacity: 0; transform: translateY(16px) scale(0.82); }
   60% { transform: translateY(-2px) scale(1.02); }
   100% { opacity: 1; transform: none; }
-}
-.bubble.nf-slide-in { animation: nf-slide-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
-@keyframes nf-slide-in {
-  from { opacity: 0; transform: translateX(30px) scale(0.92); }
-  to { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3341,22 +4013,512 @@
   .nf-wl-item,
   .nf-wl-item.is-out,
   .nf-wl-item.is-done,
-  /* same (0,3,0) as the roll-out rule above — a media query adds no
+  /* same (0,3,0) as the fade-out rule above — a media query adds no
      specificity, so the combined selector must be repeated here or a
-     done+leaving item would still roll under reduced motion */
+     done+leaving item would still animate under reduced motion */
   .nf-wl-item.is-done.is-out,
+  .nf-wl-item.is-done.is-enter-late,
   /* the switch delay is meaningless once the animations are off — an item that
      carried it would otherwise sit at its from-state (invisible) for 0.35s */
   .nf-wl-item.is-enter-late,
-  .nf-wl-item.is-done.is-enter-late,
-  .nf-wl-chk,
-  .nf-wl-chk path,
-  .nf-wl-spin,
-  .bubble.nf-pop,
-  .bubble.nf-slide-in { animation: none; }
-  .nf-wl-item.is-enter-late,
-  .nf-wl-item.is-done.is-enter-late { animation-delay: 0s; }
-  .nf-wl-chk { opacity: 1; transform: none; }
-  .nf-wl-chk path { stroke-dashoffset: 0; }
-  .nf-wl-think { max-width: none; }
+  .nf-wl-spin::before,
+  .nf-wl-dots .thinking-dot,
+  .nf-wl-think::after,
+  .bubble.nf-pop { animation: none; }
+  .nf-wl-item.is-enter-late { animation-delay: 0s; }
+  /* The tail fade is not motion, but under an explicit reduced-motion request
+     the edge is left as a plain cut (matching the static-window rule). */
+  .nf-wl-think,
+  .nf-wl-label { -webkit-mask-image: none; mask-image: none; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Pop artifact faces (pop-upgrade batch, 2026-10-03 author ruling
+   「去掉card工具,然后对Pop工具进行升级」): media renders IN THE CHAT as a
+   WeChat-style stacked card; files render as file cards with a forward
+   button. The artifact row is deliberately NOT `.row.tool` — turnGroup's
+   tuck set never touches it, so the deliverable survives the ✻ collapse and
+   sits at the bottom of the agent's message. Renderer = popArtifacts.js
+   (live + both history paths); the author-approved preview demo is
+   demo/pop-upgrade-demo.html (git-ignored via `.gitignore:38` `*demo*.html`).
+   ═════════════════════════════════════════════════════════════════════════ */
+
+.row.pop-artifact { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+.pop-group {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 10px; min-width: 0; max-width: 78%;
+}
+
+/* ── media stack (WeChat-style: front card + peeking layers right) ── */
+.pop-stack-area {
+  display: flex; align-items: center; gap: 16px;
+  transition: height 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1));
+}
+.pop-stack-area .pill {
+  flex-shrink: 0;
+  display: flex; align-items: center;
+  background: rgba(128, 128, 128, 0.12); color: var(--color-text);
+  border: none; border-radius: 999px;
+  padding: 10px 18px; font-size: 13px; font-weight: 500;
+  cursor: pointer; user-select: none;
+  transition: background 0.15s, transform 0.12s;
+  font-family: inherit;
+}
+.pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.2); }
+.pop-stack-area .pill:active { transform: scale(0.95); }
+
+/* The stack box takes the FRONT media's own aspect ratio (popArtifacts.js pins
+   an explicit width/height pair from the media's natural size, fitted into
+   220×320). It used to be a hard 200×256 with `object-fit: cover` on the media,
+   which cropped every image that was not 200×256 — a wide screenshot lost its
+   left and right thirds (zcode-484 D1). `4 / 3` is the neutral fallback while
+   the bytes load: the box always has a definite size, never 0×0. */
+.pop-stack-view {
+  position: relative;
+  width: 220px; aspect-ratio: 4 / 3;
+  flex-shrink: 0; touch-action: pan-y;
+}
+.pop-stack-view.dragging { cursor: grabbing; }
+.media-layer {
+  position: absolute; inset: 0;
+  border-radius: 14px; overflow: hidden;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16);
+  cursor: pointer; background: #17191f;
+  transition: transform 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), filter 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1));
+}
+.pop-stack-view.dragging .media-layer { transition: none; }
+.media-layer.layer-front { transform: none; z-index: 3; filter: none; }
+.media-layer.layer-mid   { transform: translateX(16px) scale(0.965); z-index: 2; filter: brightness(0.9); }
+.media-layer.layer-back  { transform: translateX(32px) scale(0.93); z-index: 1; filter: brightness(0.78); }
+/* zcode-484 D2: a stack shows its FRONT card plus the two peeking layers; the
+   rest are hidden. Before this rule every item past the third was painted with
+   `layer-back` at the SAME z-index as the third, so 4+ items stacked into one
+   indistinguishable pile (and a click could land on the wrong card). The
+   renderer assigns `is-buried` to every item beyond the front three. */
+.pop-stack-view .media-layer.is-buried { display: none; }
+
+.pop-expand-view { display: none; flex-direction: column; gap: 20px; width: 220px; flex-shrink: 0; }
+.pop-expand-view.show { display: flex; }
+/* zcode-484 D3: the expanded face keeps each media's OWN aspect ratio. The
+   layers used to be a fixed 256px tall with `object-fit: cover` inherited from
+   `.pop-img/.pop-video`, so an expanded portrait shot was cropped exactly like
+   the stack was. `height: auto` + the media's `aspect-ratio` lets the natural
+   size drive the row; the renderer writes the ratio onto the layer. */
+.pop-expand-view .media-layer {
+  position: relative; inset: auto; height: auto; width: 100%;
+  transform: none; filter: none;
+  animation: fadeIn 0.25s ease;
+}
+.pop-expand-view .pop-media { height: auto; }
+
+.pop-media { position: relative; width: 100%; height: 100%; }
+/* zcode-484 D1/D3: the media fills its box WITHOUT being cropped. `cover`
+   (the pre-batch rule) cut every image whose aspect ratio differed from the
+   box's — a 1600×400 screenshot lost two thirds of its width, a portrait shot
+   lost its top and bottom. `contain` letterboxes inside the box instead, so
+   the WHOLE frame is visible at its own ratio, and the box keeps whatever
+   aspect ratio the renderer derived from the front media (`.pop-stack-view`
+   / `.pop-expand-view .media-layer` above). */
+.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
+/* 缺陷 D fix (2026-10-03 UI-E/UI-F): the failed-media placeholder used to be
+   reachable ONLY for `.bubble.ai img` (see the 2026-09-15 rule at the top of
+   this file) — a Pop artifact face lives in `.row.pop-artifact`, so a broken
+   image / video there showed NOTHING at all. Same visual language (dashed box
+   + muted ink), widened to the Pop selector family, plus the plain-text note
+   line the renderer appends under the face (pure text, UI-C family). */
+.pop-img.nf-img-failed, .pop-video.nf-img-failed, .pop-audio.nf-img-failed {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 10px;
+  border: 1px dashed rgba(128, 128, 128, 0.45);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  object-fit: contain;
+}
+.nf-media-failed-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+.play-ring {
+  position: absolute; top: 50%; left: 50%;
+  width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border: 2.5px solid rgba(255, 255, 255, 0.92); border-radius: 50%;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: auto; transition: opacity 0.25s;
+}
+.play-ring::after {
+  content: ''; display: block; margin-left: 4px;
+  border-style: solid; border-width: 10px 0 10px 17px;
+  border-color: transparent transparent transparent rgba(255, 255, 255, 0.95);
+}
+.pop-media.playing .play-ring { opacity: 0; pointer-events: none; }
+.dur-chip {
+  position: absolute; right: 8px; bottom: 8px;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+  font-size: 11px; padding: 2px 7px; border-radius: 4px;
+  pointer-events: none; font-variant-numeric: tabular-nums;
+}
+.vd-progress {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 0%;
+  background: var(--color-primary); pointer-events: none;
+}
+
+/* audio face (canvas-media Wave2, 2026-10-05 author ruling OD-1 = (b)): audio
+   joins the in-chat media face beside image/video. An audio file has NO
+   intrinsic frame — the native controls strip is the whole face — so it never
+   reports a ratio (the zcode-484 D1/D3 ratio fitting does not fire) and the
+   box keeps its fallback: centered strip inside the stack's ratio box, and a
+   collapsed (content-height) box on the flat/expanded faces. Native controls
+   carry play state / progress / duration, so no ring / vd-progress / dur-chip
+   chrome is layered on top. */
+.pop-audio { display: block; width: 100%; background: transparent; }
+.pop-media.is-audio { display: flex; align-items: center; }
+.pop-media-flat.is-audio { aspect-ratio: auto; }
+
+/* single media item — flat, no stack affordances. Same zcode-484 D1/D3 rule as
+   the stack: the box takes the media's own ratio (renderer-pinned) instead of
+   the old hard 200×256 crop box. */
+.pop-media-flat {
+  width: 220px; aspect-ratio: 4 / 3;
+  border-radius: 14px; overflow: hidden;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16); background: #17191f;
+  /* 复验批 (2026-10-06 16:47): the whole-card click IS the Canvas open (三修 ②),
+     so the flat face carries the same pointer affordance the stack layers
+     always had (.media-layer). Visual only — geometry untouched. */
+  cursor: pointer;
+}
+.pop-media-flat .pop-media { width: 100%; height: 100%; }
+
+/* ── file card ── */
+.file-card {
+  display: flex; align-items: center; gap: 11px;
+  background: var(--color-surface);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 12px; padding: 11px 13px;
+  width: 300px; max-width: 100%; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.15s, transform 0.12s;
+}
+.file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09); }
+.file-card:active { transform: scale(0.985); }
+.fc-icon {
+  width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 9.5px; font-weight: 800; letter-spacing: 0.6px;
+}
+.fc-icon.pdf  { background: linear-gradient(135deg, #ff7b6b, #e64545); }
+.fc-icon.html { background: linear-gradient(135deg, #ffb340, #f57c00); }
+.fc-icon.md   { background: linear-gradient(135deg, #7f8ff0, #5568d6); }
+.fc-icon.doc  { background: linear-gradient(135deg, #5b9bf0, #3574d6); }
+.fc-icon.xls  { background: linear-gradient(135deg, #4db874, #2e9e57); }
+.fc-icon.ppt  { background: linear-gradient(135deg, #ff9a62, #f07030); }
+.fc-icon.epub { background: linear-gradient(135deg, #b08af0, #8a5cd6); }
+.fc-icon.data, .fc-icon.code { background: linear-gradient(135deg, #9aa2b1, #6f7684); }
+.fc-meta { min-width: 0; }
+.fc-name { font-size: 13.5px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-sub { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; }
+.fwd-btn {
+  margin-left: auto; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: none; background: transparent; color: var(--color-text-muted);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative;
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+}
+.file-card:hover .fwd-btn { background: rgba(7, 193, 96, 0.1); color: var(--color-primary); }
+.fwd-btn svg { width: 16px; height: 16px; }
+.fwd-tip {
+  position: absolute; bottom: calc(100% + 9px); right: -6px;
+  background: #1b1e26; color: #fff;
+  font-size: 11px; font-weight: 500; white-space: nowrap;
+  padding: 5px 10px; border-radius: 7px;
+  opacity: 0; transform: translateY(3px);
+  pointer-events: none; transition: opacity 0.16s, transform 0.16s;
+  z-index: 5;
+}
+.fwd-tip::after {
+  content: ''; position: absolute; top: 100%; right: 16px;
+  border: 5px solid transparent; border-top-color: #1b1e26;
+}
+.fwd-btn:hover .fwd-tip { opacity: 1; transform: translateY(0); }
+
+/* failed-paths chip under the artifacts */
+.pop-warn {
+  font-size: 11px; color: var(--color-text-dim);
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 6px; padding: 4px 9px;
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  .media-layer, .pop-img, .pop-video, .pop-media-flat { background: #101318; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.5); }
+  .file-card { border-color: var(--color-border); }
+  .pop-stack-area .pill { background: rgba(128, 128, 128, 0.18); }
+  .pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.28); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #491 pop-media 主题三 (2026-10-05 author ruling 「用户输入的文件/媒体等，
+   以及LLM Pop的，都要像微信一样可以点击放大查看…把用户和LLM 的这个行为对齐」).
+   Append-only section: the user-media row reuses the .row.pop-artifact family
+   above verbatim (同层同形), so only the NEW faces get styles here —
+   the in-stream lightbox and the per-card Canvas corner entry.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The user side's independent card row — identical spacing to a Pop artifact
+   row; the marker class exists for QA/spec targeting, not for restyling.
+   attach-side-align (2026-10-06 作者截图令): the row carries the bubble-side
+   `user` class (popArtifacts.buildUserMediaRow), so .row.user's
+   align-items:flex-end owns the sender side; inside the group every card
+   mirrors the same side (mixed 220px stack + 300px file cards stay flush). */
+.row.user-media { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+.row.user-media .pop-group { align-items: flex-end; }
+
+/* Canvas secondary entry on a media CARD (flat faces + expanded stack layers).
+   WeChat keeps such chips unobtrusive: small, top-right, surface-tinted. */
+.pop-media-flat, .pop-expand-view .media-layer { position: relative; }
+.pop-media-canvas {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45); color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.pop-media-canvas svg { width: 14px; height: 14px; }
+.pop-media-flat:hover .pop-media-canvas,
+.pop-expand-view .media-layer:hover .pop-media-canvas,
+.pop-media-canvas:focus-visible { opacity: 1; }
+.pop-media-canvas:hover { background: rgba(0, 0, 0, 0.65); }
+/* Touch surfaces have no hover: keep the chip faintly visible there. */
+@media (hover: none) {
+  .pop-media-canvas { opacity: 0.75; }
+}
+
+/* ── the in-stream lightbox (AC-S1) — WeChat-style zoom overlay ── */
+.nf-lightbox {
+  position: fixed; inset: 0; z-index: 3200; /* above search-overlay (310), below the modal family (11000) */
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.78);
+  animation: nfLightboxIn 0.16s ease-out;
+}
+@keyframes nfLightboxIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* UI-G: the subagent window gate removes animation chrome via .nf-static on
+   the VIEW container; the lightbox mounts on document.body — clamp it there. */
+.nf-static .nf-lightbox, body .nf-static ~ .nf-lightbox { animation: none; }
+.nf-lightbox-stage {
+  display: flex; flex-direction: column; gap: 10px;
+  max-width: min(92vw, 1100px);
+  max-height: 90vh;
+}
+.nf-lightbox-head {
+  display: flex; align-items: center; gap: 12px;
+  justify-content: space-between;
+}
+.nf-lightbox-name {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+.nf-lightbox-canvas {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+  border: none; border-radius: 999px;
+  padding: 7px 14px; font-size: 12px; font-family: inherit;
+  background: rgba(255, 255, 255, 0.14); color: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.nf-lightbox-canvas:hover { background: rgba(255, 255, 255, 0.24); }
+.nf-lightbox-canvas svg { width: 13px; height: 13px; }
+.nf-lightbox-media {
+  display: block;
+  max-width: 100%;
+  max-height: calc(90vh - 60px);
+  object-fit: contain;
+  border-radius: 10px;
+  background: transparent;
+}
+/* The lightbox reuses the face family's terminal-failure mark. */
+.nf-lightbox-media.nf-img-failed {
+  min-width: 220px; min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.4);
+  object-fit: none;
+}
+
+/* 三修 ① (2026-10-06 10:59 作者截图令): the 「展开 N」 pill rides the
+   conversation CENTER-AXIS side of the stack, per sender. User rows carry the
+   `.user` sender class (popArtifacts.buildUserMediaRow) and keep the DOM
+   order — pill left of the stack; LLM Pop rows (`.row.pop-artifact` without
+   `.user`) flip the pill to the RIGHT via `order` — deliberately NOT
+   row-reverse, so the stack's own peek direction and the drag axis stay
+   untouched. Vertical centering stays `.pop-stack-area`'s align-items:center:
+   measured 钮心 y − 栈卡 y 几何中心 = 0.0px (before AND after, all forms). */
+.row.pop-artifact:not(.user) .pop-stack-area > .pill { order: 3; }
+
+/* 复报令 A-2 (2026-10-06 19:43 作者截图令): the LLM-side pill needs its own
+   clearance from the PEEKING layers, not just from the stack view's box. The
+   painted peek chrome runs ~24px past the view box's right edge
+   (.layer-back = translateX(32px) × scale(0.93) ≈ +24.3px over a 220px box),
+   and the layers paint ABOVE the non-positioned pill (z-index 1..3) — the
+   area's 16px gap alone left the pill's box 8.3px UNDER the painted chrome
+   (measured before this rule: clearanceRight −8.3px). margin-left lifts the
+   pill to 36px from the box → ≈ +11.7px of visible air past the painted
+   edge. Zero overlap, spacing held; user rows keep their 16px gap (pill sits
+   on the LEFT there — the peek extends AWAY from it, clearance +16px,
+   measured). Expanded state: same margin reads as a wider gap beside the
+   expand column — flat, no chrome there. Geometry otherwise untouched. */
+.row.pop-artifact:not(.user) .pop-stack-area > .pill { margin-left: 20px; }
+
+/* 三修批 uifix3 ① (2026-10-06 21:36 作者双截图令): the USER-side stack mirrors
+   the peek INTO the chat interior. The layers' translateX is hard-coded +X —
+   rightward — so on a right-aligned user row the peek painted PAST the chat
+   column's right edge and #chat's overflow clipped it (截图一: the purple stack
+   cut flush at the edge). Mirror disposition, 36c11b9bb A-2's same technique
+   read the other way:
+   • 位移方向自洽 — the two peeking layers flip to negative X on user rows, so
+     the stack expands toward the conversation (interior), never off-canvas.
+     Drag axis and JS stay untouched (CSS-only, the A-2 precedent).
+   • 盒宽自洽 — two widths were wrong on the user side. (1) The stack area is
+     width-capped by .pop-group's 78% while its pill+220px-view content is
+     wider; an LTR flex row spills the excess RIGHT, so the stack view's own
+     box poked ~14.6px past the column edge on a 378px column (measured, 截图
+     一's flush cut). width: max-content lets the area take its content width
+     and .row.user-media's flex-end alignment pins its RIGHT edge at the
+     column line — the same line every user bubble sits on — with all growth
+     going LEFT, into open chat. (2) The flipped peek now runs TOWARD the pill
+     (user pill sits LEFT, DOM order), so the pill takes the mirrored A-2
+     clearance: margin-right: 20px → 36px box gap → the painted left edge
+     (translateX 32px × scale 0.93 ≈ 24.3px past the box) clears the pill by
+     ≈ +11.7px — the exact LLM-side numbers, mirrored. The former user-side
+     reading (+16px, pill vs a peek extending AWAY) is superseded by this
+     mirrored form: the invariant that carries over is zero overlap with ≥8px
+     air (spec (c2)), which holds on both sides before AND after.
+   Vertical centering (0.0px), pill sides (user left / LLM right), and the
+   A-1 click-opens-shown path are geometrically untouched. */
+.row.pop-artifact.user .pop-stack-view .media-layer.layer-mid { transform: translateX(-16px) scale(0.965); }
+.row.pop-artifact.user .pop-stack-view .media-layer.layer-back { transform: translateX(-32px) scale(0.93); }
+.row.pop-artifact.user .pop-stack-area { width: max-content; }
+.row.pop-artifact.user .pop-stack-area > .pill { margin-right: 20px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #491 pop-media 主题二 (2026-10-05 author ruling 「微信的这样的设计来进行分类
+   和检索」). Append-only section: the media grid view (chatSearch v3.2) —
+   thumbnail cards, video duration badge, source chips, week/month headers.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Source chips row (全部来源 / 用户 / 助手) — lives in .search-controls, shown
+   only under the typed media tabs. */
+#search-source-chips {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+}
+#search-source-chips[hidden] { display: none; }
+.search-source-chip {
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
+  background: transparent; color: var(--color-text-muted, #8a8f99);
+  border-radius: 999px;
+  padding: 4px 12px; font-size: 12px; font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.search-source-chip:hover { background: rgba(128, 128, 128, 0.12); }
+.search-source-chip.active {
+  background: rgba(64, 132, 240, 0.16); color: var(--color-text, #e8eaed);
+  border-color: rgba(64, 132, 240, 0.5);
+}
+
+/* Week/month group headers (本周 / {n} 月). */
+.search-media-group-header {
+  margin: 14px 2px 8px;
+  font-size: 12px; font-weight: 600;
+  color: var(--color-text-muted, #8a8f99);
+}
+
+/* The thumbnail grid (WeChat panel-like: square-ish thumbs, tight gaps). */
+.search-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+}
+.search-media-card {
+  position: relative;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.18));
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.06);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.12s;
+}
+.search-media-card:hover { border-color: rgba(64, 132, 240, 0.55); transform: translateY(-1px); }
+.search-media-thumb {
+  width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
+  display: block; background: #17191f;
+}
+.search-media-broken .search-media-thumb { object-fit: contain; opacity: 0.45; }
+.search-media-name {
+  padding: 6px 8px 8px;
+  font-size: 12px; color: var(--color-text, #e8eaed);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+/* Video duration badge (lazy <video preload=metadata> fill). */
+.search-media-dur {
+  position: absolute; right: 6px; bottom: 30px;
+  padding: 2px 6px; border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65); color: #fff;
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.search-media-dur:empty { display: none; }
+/* Link / file cards: icon + text rows. */
+.search-media-ext {
+  flex-shrink: 0; align-self: flex-start;
+  margin: 10px 0 0 10px;
+  min-width: 40px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 7px; border-radius: 6px;
+  background: rgba(64, 132, 240, 0.14); color: #7fb0f5;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+}
+.search-media-ext.generic { background: rgba(128, 128, 128, 0.16); color: var(--color-text-muted, #8a8f99); }
+.search-media-ext.link { background: rgba(64, 132, 240, 0.14); color: #7fb0f5; }
+.search-media-linkbody { min-width: 0; padding: 6px 8px 8px; }
+.search-media-linkbody .search-media-name { padding: 0 0 2px; }
+.search-media-url {
+  font-size: 11px; color: var(--color-text-muted, #8a8f99);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Source badge + time — the alignment markers (主题三). */
+.search-media-source {
+  position: absolute; top: 6px; left: 6px;
+  padding: 2px 7px; border-radius: 999px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+  pointer-events: none;
+}
+.search-media-source.src-user { background: rgba(46, 160, 67, 0.82); }
+.search-media-source.src-agent { background: rgba(9, 105, 218, 0.82); }
+.search-media-time {
+  position: absolute; top: 6px; right: 6px;
+  padding: 2px 6px; border-radius: 6px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.55); color: rgba(255, 255, 255, 0.92);
+  pointer-events: none;
 }

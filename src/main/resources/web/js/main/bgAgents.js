@@ -2,7 +2,7 @@
 import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
-import { escapeHtml, isBgAgentId } from '../utils.js';
+import { escapeHtml, isBgAgentId, createIconsIn, statusIcon } from '../utils.js';
 import { findViewBySessionId, activeView } from '../chatView.js';
 import { fmtUptime, isFailedSnapshotStatus } from '../managePanel.js';
 import { openStepPopup as openFlowStepPopup } from '../flowAgentPopup.js';
@@ -70,12 +70,19 @@ export function bgAgentKindFromSession(sessionId) {
   if (raw.startsWith('team-')) return 'Team';
   if (raw.startsWith('delegate-')) return 'Delegate';
   if (raw.startsWith('subtask-')) return 'SubTask';
+  // builtin-merge 批（2026-10-03）：Subagent（只读侦察）与 Workflow 步级子会话。
+  // N1 复名批（2026-10-06，v2 ①）：Workflow 工具复名 AgentFlow——显示标签随名
+  // 翻转；会话 id 前缀 `workflow-` 是存储/归因命名空间，保留不改（v2 §3.4）。
+  if (raw.startsWith('subagent-')) return 'Subagent';
+  if (raw.startsWith('workflow-')) return 'AgentFlow';
   if (raw.startsWith('dag-')) return 'Flow';
   if (raw.startsWith('ephemeral-')) return 'Ephemeral';
   // #28 可观测接线: Project 节点/分发器后端注册为 AgentKind.Flow → 面板 kind
   // 徽章显示 Flow（与快照 kind 一致）。
   if (raw.startsWith('node-')) return 'Flow';
   if (raw.startsWith('dispatcher-')) return 'Flow';
+  // external-executors 批 #1225：外部 CLI delegate（external-<exec>-<id>）。
+  if (raw.startsWith('external-')) return 'External';
   return '';
 }
 
@@ -226,13 +233,14 @@ export function renderBgAgentDropdown() {
     const retriesPart = retries > 0
       ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
       : '';
-    // Stuck: restrained red label with idle seconds (manage-panel semantics).
+    // Stuck: restrained label with idle seconds (manage-panel semantics) —
+    // ui-status-redesign（S2 / 盘点 #12）：词前 timer-off 红图标 + 中性字。
     // NO inline cancel/restart buttons — operations live in the agent popup (A13).
     // Hard-recovery P7 (2026-09-07): the label mirrors the REAL action the
     // backend performed (halt / hard-abort / restart / failed) — "auto-
     // restarting" only ever shows when an actual restart was triggered.
     const stuckPart = (rowState === 'stuck' && info.stuck)
-      ? '<span class="bg-task-stuck" role="alert">' + escapeHtml(
+      ? '<span class="bg-task-stuck" role="alert">' + statusIcon('timer-off', 11, 'st-err') + escapeHtml(
           info.stuck.action === 'restart'
             ? t('manage.stuckAutoRestart')
             : info.stuck.action === 'hard-abort'
@@ -268,13 +276,20 @@ export function renderBgAgentDropdown() {
         // panel only (#bgagent-dropdown); the background-tasks panel
         // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
         '<div class="bg-task-line bg-task-main">' +
-          '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
+          '<span class="bg-task-state bg-state-' + rowState + '">' +
+            (rowState === 'stuck' ? statusIcon('timer-off', 11, 'st-err')
+              : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
+              : '') +
+            escapeHtml(statusLabel) + '</span>' +
           kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
         '</div>' +
         stuckPart + toolPart +
       '</div>' +
     '</div>';
   }).join('');
+  // ui-status-redesign：statusIcon() 兜底占位（<i data-lucide>）在此升级为真图标
+  // （vendor lib 已就绪时上面已是内联 SVG，此调用零替换、幂等）。
+  createIconsIn(listEl);
 
   // Wire click handlers for sub-agent rows
   listEl.querySelectorAll('[data-node-session-id]').forEach(row => {

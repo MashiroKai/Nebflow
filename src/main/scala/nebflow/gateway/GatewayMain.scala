@@ -263,7 +263,8 @@ object GatewayMain extends IOApp:
   ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
-      _ <- agentLibrary.seedDefaults()
+      // seedDefaults() retired (builtin-def batch 2026-10-03): the four
+      // converged agents are code-defined (BuiltinAgents) — nothing to seed.
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)
@@ -408,6 +409,12 @@ object GatewayMain extends IOApp:
               // 安装的种子源走 providers 推导。
             try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
             catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
+              // personal-agent 批（2026-10-04）：Soul.md 启动一次性迁移腿
+              // （agents/Nebula/memory.md → ~/.nebflow/Soul.md）。幂等：
+              // Soul.md 已存在即跳过、再跑零副作用；写前经 MemorySnapshot 快照，
+              // 原文件保留只读备份（回滚路径见 SoulMigration 头注）。失败不阻断
+              // 启动（与上两行迁移同款纪律）。
+            nebflow.core.SoulMigration.runAtBoot()
               // LLM 日志记录（2026-09-13「默认关」批 + D-A 持久化）：启动时以
               // nebflow.json 顶层 `llmLog.enabled` 落盘值为准；**无落盘值 ⇒ 保持
               // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启
@@ -599,6 +606,12 @@ object GatewayMain extends IOApp:
                                       case Left(e) =>
                                         logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
                                     }
+                                  // 启动补扫（task-rag 批 #1227 / §Batch 7）：检索索引
+                                  // 增量维护——embedding 面关 = 快速 no-op；面开 =
+                                  // 只重嵌 hash 变化条目（增量）。后台 fiber 起跑，
+                                  // 永不阻塞启动；失败在 upkeep 内部记 WARN 吞掉。
+                                  val taskIndexBackfill: IO[Unit] =
+                                    nebflow.core.index.TaskSearchIndex.upkeep().start.void
                                   // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
                                   // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
                                   // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
@@ -693,6 +706,23 @@ object GatewayMain extends IOApp:
                                         else IO.unit
                                       }
                                     else IO.unit
+                                  // N1 刀1（v3 §6/A2）：delegate 作用域 boot sweep——flow-maps/
+                                  // 目录族扫描（已挂载项目 workspace ∪ general），有
+                                  // Running/Interrupted 残留的作用域重挂宿主→同判据认领→慢段
+                                  // rehydrate。与项目 sweep 同受 CrashRecoveryEnabled 闸（回滚 =
+                                  // 两腿同关回现状）；零汇总通知（⑷不旁路，事件面留痕）。存量
+                                  // per-project flow-map 归档不迁移（v3-⑧：本 sweep 只读
+                                  // flow-maps/ 作用域族，旧路径族零触碰）。
+                                  val delegateScopeCrashSweep: IO[Unit] =
+                                    if nebflow.shared.Defaults.CrashRecoveryEnabled then
+                                      nebflow.core.project.ProjectCrashRecovery.recoverDelegateScopes().flatMap { scopes =>
+                                        if scopes > 0 then
+                                          logger.info(
+                                            s"Boot delegate-scope sweep: $scopes scope(s) had crashed nodes claimed (rehydrate/failed)"
+                                          )
+                                        else IO.unit
+                                      }
+                                    else IO.unit
                                   // 宿主启动自动重入（boot-wake 批 2026-09-13，方案件 A 档 A1；
                                   // 作者 09-13 裁定「重启后唤醒源 = 直接上 A」）：**独立于
                                   // crash-recovery** 的第二条 boot 扫描腿——crash-recovery 只认
@@ -723,6 +753,12 @@ object GatewayMain extends IOApp:
                                   // 发 TtlTick；无项目时空转。
                                   val projectTtlScanner: IO[Unit] =
                                     nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
+                                  // N1 刀1：delegate 作用域宿主扫描器（projectTtlScanner 邻位同款
+                                  // sleep 循环）——在册宿主的引擎腿周期驱动（TtlTick 引擎侧子集）
+                                  // ＋孤儿收割（delegate 会话不在 ∧ 图内无非终态 ⇒ 宿主实例灭，
+                                  // 盘面状态存）。无宿主 = 空转零成本。
+                                  val delegateScopeScanner: IO[Unit] =
+                                    nebflow.core.project.DelegateFlowHosts.launchScanner(30.seconds).start.void
                                   // 宿主睡眠/唤醒感知（hostresume 批 2026-09-22，设计卡 §4 #3；
                                   // D-2 默认 true + kill-switch：`nebflow.wake.sense.enabled=false`
                                   // ⇒ launch 即 IO.unit，不挂载 = 逐字节现状）。15s 双钟断流纤维
@@ -778,7 +814,7 @@ object GatewayMain extends IOApp:
                                       hotRestart = Some(hotRestart),
                                       updateOrchestrator = Some(updateOrchestrator)
                                     )
-                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> hostWakeSensor *> succeedPortGate(
+                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -824,6 +860,36 @@ object GatewayMain extends IOApp:
                                       def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json])
                                         : IO[Unit] =
                                         sessionStore.updateSessionBridge(sessionId, platform, config)
+
+                                      // ── askuser-remote P1 (2026-10-07): the interaction face ──
+                                      // The hub is the single ask authority and the single answer
+                                      // convergence; the bridges get exactly these three faces and
+                                      // never a second ledger. `wsRoutesHolder` late-binds exactly
+                                      // like the interrupt leg above.
+                                      override def listPendingAsks: IO[List[Json]] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) =>
+                                            // ask-pattern (one-shot reply ref) — the read-only
+                                            // global snapshot, oldest first. A hub hiccup raises to
+                                            // the caller (the bridge answers its clicker with the
+                                            // contained empty response), never a silent empty that
+                                            // would read as "no ask open".
+                                            hub.?[List[Json]](reply =>
+                                              nebflow.actor.InteractionHubCommand.ListAllPendingAsks(reply))
+                                          case None => IO.pure(Nil)
+                                        }
+                                      override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json)
+                                        : IO[Unit] =
+                                        wsRoutesHolder match
+                                          case Some(routes) =>
+                                            routes.forwardBridgeInteractionAnswer(requestId, rootSessionId, payload)
+                                          case None => IO.unit
+                                      override def closeInteractionRequest(requestId: String): IO[Unit] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) =>
+                                            (hub ! nebflow.actor.InteractionHubCommand.CloseRequest(requestId)).void
+                                          case None => IO.unit
+                                        }
 
                                     val bridgeSetup: IO[BridgeManager] =
                                       BridgeManager.create(bridgeCtx)
@@ -1270,7 +1336,21 @@ object GatewayMain extends IOApp:
                                                         ConnGuard.requestTap(connGuard)(
                                                           Router(
                                                             "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
-                                                              .presenceWsRoutes(wsb)),
+                                                              .presenceWsRoutes(wsb) <+> StaticRoutes
+                                                                .pluginAssetsRoutes(
+                                                                  token,
+                                                                  // canvas-media Wave1 (OD-2=V-C): the
+                                                                  // Trusted-only resolver feeding the
+                                                                  // tokenized plugin-asset route.
+                                                                  name =>
+                                                                    nebflow.core.plugin.PluginRegistry
+                                                                      .scan()
+                                                                      .map(
+                                                                        _.find(p =>
+                                                                          p.name == name && p.trust.trusted
+                                                                        ).map(p => os.Path(p.dir))
+                                                                      )
+                                                                )),
                                                             // Logto AC+PKCE loopback callback (RFC 8252) —
                                                             // root-level, outside /api: the provider's browser
                                                             // redirect carries no gateway token.
@@ -1441,7 +1521,10 @@ object GatewayMain extends IOApp:
                                                             PathUtil.dataRoot
                                                           )
                                                           // Register bridge as WsHub listener for agent events
-                                                          _ <- wsHub.register(json =>
+                                                          // perf-481 A1: this is a hub LISTENER (it reads
+                                                          // the event fields), not a connection — the two
+                                                          // registries are separate faces on purpose.
+                                                          _ <- wsHub.registerListener(json =>
                                                             val sessionId =
                                                               json.hcursor
                                                                 .downField("sessionId")

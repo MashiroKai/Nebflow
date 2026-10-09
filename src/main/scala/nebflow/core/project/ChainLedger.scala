@@ -137,6 +137,19 @@ object ChainLedger:
   /** 单轮搬迁行数上限（有界轮：一轮不搬空全库 ⇒ 可观测、可中断复跑）。 */
   val CompactionBatchRows: Int = 512
 
+  /**
+   * perf-481 A3：journal 折叠回 checkpoint 的字节阈值（**「每分钟写入 ≤ 3 MB」判据的
+   * 直接旋钮**）。一次折叠 = 一次整份 checkpoint 写（≈ 文件体量），truncate 之后归零。
+   * 实测量得该台账写频 ≈1.88 次/分钟、记录单条 ≈2 KB ⇒ 设 1 MB 时折叠约每 13 天一次
+   * （单次整写分摊到 ~19 000 分钟 ≈ 0.7 KB/分钟）⇒ 总写入 ≈ 3 KB/分钟，远低于 3 MB/分钟。
+   *
+   * 为什么**不**复用 [[MaxHotBytes]] 作阈值：`bytes > MaxHotBytes` 在本台账恒真（`rounds`
+   * 使文件远超 1 MB），若以它触发折叠就会**每拍都整写 13.4 MB**（= 回到现状甚至更糟）。
+   * 两个量度是不同的东西 —— `MaxHotBytes` 量「热态该不该压缩（轴的 (c) 语义）」，本阈值量
+   * 「journal 该不该折叠（写放大语义）」，故各自成常数（禁合并成一个）。
+   */
+  val JournalRotateBytes: Long = 1024L * 1024L
+
   /** 阈值在册形态（随每轮冷档落盘 ⇒「这一轮按哪组阈值触发」事后可查、可复算）。 */
   final case class Thresholds(maxHotRows: Int, maxHotBytes: Int, batchRows: Int)
 
@@ -293,6 +306,41 @@ object ChainLedger:
   object State:
     given Configuration = Configuration.default.withDefaults
     given Codec[State] = ConfiguredCodec.derived
+
+  /**
+   * **增量写记录**（perf-481 A3；落点 = `<workspace>/.nebflow/chain-ledger.json.journal` 的一行）。
+   *
+   * == 为什么记录不是「整份 State」 ==
+   * 实测量得：CZT 项目台账 13 434 495 B 里 `rounds`（39 071 条 manifest）占 **99.99%**，
+   * 而 `entries` 8 行 + 其余字段合计仅 ~1.8 KB。所以「每次变更整份原子写」的成本几乎全在
+   * `rounds` 上，而 `rounds` 是 **append-only**：已落 checkpoint 的那段与本次变更无关。
+   * ⇒ 记录只需携带「相对 checkpoint 的增量」= **更新后的非轮字段** + **自上轮 checkpoint
+   * 以来新增的 manifest**（通常 0–3 条，每条 ~344 B）⇒ 单次写入从 13.4 MB 降到 ~2 KB。
+   *
+   * == 语义（禁静默弱化）==
+   *   · `base` = 本记录相对的 checkpoint 里已有的 manifest 条数（= `state.rounds.drop(base)`
+   *     就是「新增段」）。`base` 只在 **rotation**（checkpoint 折叠 + journal 截断）时前进。
+   *   · `state.rounds` **只**存新增段（不是全量）—— 全量恒可由「checkpoint.rounds ++ 新增段」
+   *     **合并（[[mergeRounds]]，按轮号去重）**还原 ⇒ 载入后内存态与旧写法**逐字节同值**。
+   *   · 记录是一份**完整可读的状态快照**（非 delta-diff）⇒ 重放幂等：同一条记录重放两次
+   *     结果不变（轮号去重），崩在「checkpoint 已写、journal 未截断」之间也只是重放旧记录。
+   */
+  final case class JournalRecord(base: Int, state: State)
+
+  object JournalRecord:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[JournalRecord] = ConfiguredCodec.derived
+
+  /**
+   * 轮清单合并（按轮号去重、升序）：checkpoint 已有的段 + journal 记录携带的新增段。
+   * 同一轮号在两段里**内容恒同**（由 `reconcile` 的确定性派生 + 冷档同轮号重放幂等保证）
+   * ⇒ 「后见者覆盖」与「先见者保留」等价，此处取后见者并排序（禁静默丢弃任一段）。
+   * 无锁（单线程回放调用点）。
+   */
+  def mergeRounds(committed: List[RoundManifest], pending: List[RoundManifest]): List[RoundManifest] =
+    val seen = scala.collection.mutable.LinkedHashMap.empty[Int, RoundManifest]
+    (committed ++ pending).foreach(m => seen.update(m.round, m))
+    seen.values.toList.sortBy(_.round)
 
   // ── 链控状态投影（chainview 批 2026-10-01；**判据单点**）────────────────
   //

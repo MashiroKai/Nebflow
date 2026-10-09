@@ -268,10 +268,17 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
       return {
         tabId: q('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]') ? 'plugins' : null,
         tabLabel: txt(q('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"] .canvas-tab-label')),
-        // unified card
+        // unified card (2026-10-07 条目式批：条目行 + 展开详情区)
         card: !!q('.plugins-card[data-plugin="e2e-hello"]'),
         cardName: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-name')),
         cardMeta: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-meta')),
+        rowSummary: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-item-summary')),
+        rowRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('role'),
+        rowAriaExpanded: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
+        detailHiddenBefore: q('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
+        // 既有钩子仍钉详情区；行尾开关（14:13 令①）= -row 钩子上条目行
+        rowHasDispatch: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch]'),
+        rowHasDispatchRow: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch-row]'),
         cardDesc: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-desc')),
         comps: qa('.plugins-card[data-plugin="e2e-hello"] .plugins-comp').map(txt),
         statePill: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')),
@@ -283,8 +290,9 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         moreCount: qa('#plugins-content [data-plugin-more]').length,
         menuCount: qa('#plugins-content [data-plugin-menu]').length,
         blockCount: qa('#plugins-content [data-plugin-block]').length,
-        // 唯一控件 = 右上派发开关（与状态药丸同排）
+        // 既有钩子 = 展开详情区内（2026-10-07 条目式批）；行尾第二视图 = -row 钩子
         dispatchCount: qa('#plugins-content [data-plugin-dispatch]').length,
+        rowDispatchCount: qa('#plugins-content [data-plugin-dispatch-row]').length,
         dispatchRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('role'),
         dispatchDisabled: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.disabled,
         dispatchAriaLabel: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('aria-label'),
@@ -292,22 +300,25 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         dispatchGeom: (() => {
           const card = q('.plugins-card[data-plugin="e2e-hello"]');
           const head = card?.querySelector('.plugins-card-head');
+          const detail = card?.querySelector('.plugins-item-detail');
           const state = card?.querySelector('.plugins-card-state');
           const pill = card?.querySelector('.plugins-state-pill');
           const dsw = card?.querySelector('[data-plugin-dispatch]');
-          if (!card || !head || !state || !dsw) return null;
-          const r = (el) => el.getBoundingClientRect();
-          const dr = r(dsw), hr = r(head);
+          if (!card || !head || !detail || !dsw) return null;
           return {
-            inHead: head.contains(dsw), inState: state.contains(dsw),
-            // 2026-09-15「删掉空框」：默认态药丸元素缺席 ⇒ 状态区**只剩开关**（零占位）。
-            stateOnlyChild: state.children.length === 1 && !!state.firstElementChild?.querySelector('[data-plugin-dispatch]'),
+            // 2026-10-07 条目式批：既有钩子开关在详情区 actions 行内；
+            // 14:13 令①：行尾开关（-row 钩子）在条目行上——head 恰一控件
+            inDetail: detail.contains(dsw), inHead: head.contains(dsw),
+            inActions: !!dsw.closest('.plugins-item-actions'),
+            rowControls: head.querySelectorAll('button, [role="switch"]').length,
+            // 2026-09-15「删掉空框」：默认态药丸元素缺席；14:13 令①后状态区 =
+            // 行尾开关 + chevron（药丸缺席时这俩就是全部子元素）
             pillAbsent: !pill,
-            rightAlignedInHead: (hr.right - dr.right) <= 4,
+            stateToggleAndChevron: !!state && state.children.length === 2
+              && !!state.querySelector('[data-plugin-dispatch-row]')
+              && !!state.querySelector('.plugins-item-chevron'),
           };
         })(),
-        // expandable skill previews
-        expandHiddenBefore: q('[data-expand-for="skills-e2e-hello"]')?.hidden,
         // rejected card：信息卡，任何控件（含派发开关及其状态注记）都不得出现
         rejectedPill: txt(q('.plugins-card[data-plugin="broken-plugin"] .plugins-rejected-pill')),
         rejectedNoControls: !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-dispatch]')
@@ -334,10 +345,18 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
 
     expect(dump.tabId, `[${locale}] plugins tab opened at boot`).toBe('plugins');
     expect(dump.tabLabel, `[${locale}] tab label localized`).toBe(locale === 'zh-CN' ? '插件' : 'Plugins');
+    // 2026-10-07 条目式批：条目行形态钉（role=button + aria-expanded=false + 详情默认收起）
+    expect(dump.rowRole, `[${locale}] item row carries role=button`).toBe('button');
+    expect(dump.rowAriaExpanded, `[${locale}] item row starts collapsed (aria-expanded=false)`).toBe('false');
+    expect(dump.detailHiddenBefore, `[${locale}] detail area collapsed initially`).toBe(true);
+    expect(dump.rowHasDispatch, `[${locale}] 既有钩子不在条目行上（行上是 -row 钩子第二视图）`).toBe(false);
+    expect(dump.rowHasDispatchRow, `[${locale}] 收起态行尾开关在场（14:13 令① data-plugin-dispatch-row）`).toBe(true);
     expect(dump.card, `[${locale}] unified plugin card rendered`).toBe(true);
     expect(dump.cardName, `[${locale}] card shows plugin name`).toBe('e2e-hello');
     expect(dump.cardMeta, `[${locale}] card meta = version + author`).toBe(locale === 'zh-CN' ? 'v1.0.0 · 作者 spec' : 'v1.0.0 · by spec');
-    expect(dump.cardDesc, `[${locale}] description summary`).toBe('E2E fixture plugin for the plugins page');
+    // 条目行一行摘要 = description 既有字段现读（零新造文案）
+    expect(dump.rowSummary, `[${locale}] row one-line summary = description`).toBe('E2E fixture plugin for the plugins page');
+    expect(dump.cardDesc, `[${locale}] description summary (detail area, same field)`).toBe('E2E fixture plugin for the plugins page');
     expect(dump.comps.length, `[${locale}] composition annotations: skills + mcp + tools`).toBe(3);
     expect(dump.comps[0], `[${locale}] skills annotation with count`).toBe(locale === 'zh-CN' ? '2 个技能' : '2 skill(s)');
     expect(dump.comps[1], `[${locale}] mcp annotation with server + transport`).toBe(locale === 'zh-CN' ? 'MCP：fs-server (stdio)' : 'MCP: fs-server (stdio)');
@@ -353,7 +372,7 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.moreCount, `[${locale}] 「更多」菜单入口 retired — zero on the page`).toBe(0);
     expect(dump.menuCount, `[${locale}] 次级动作行 retired — zero on the page`).toBe(0);
     expect(dump.blockCount, `[${locale}] 封禁/解封入口 retired — zero on the page`).toBe(0);
-    expect(dump.dispatchCount, `[${locale}] exactly one dispatch control on the page`).toBe(1);
+    expect(dump.dispatchCount, `[${locale}] 既有钩子（详情区视图）每卡恰一`).toBe(1);
     expect(dump.dispatchRole, `[${locale}] dispatch switch still on the card (role=switch)`).toBe('switch');
     expect(dump.dispatchDisabled, `[${locale}] dispatch switch NOT blocked when the plugin is not blocked`).toBe(false);
     // 2026-09-15 作者令：开关旁的**可见** label 小字整体删除（toggle 本体自明）；
@@ -361,12 +380,15 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.dispatchVisibleLabel, `[${locale}] 开关旁无可见 label 小字（「任务分发器可见性」已删）`).toBe(null);
     expect(dump.dispatchAriaLabel, `[${locale}] 开关 aria-label 仍 = locale plugins.dispatchLabel（可访问性面保留）`)
       .toBe(locale === 'zh-CN' ? '任务分发器可见性' : 'Dispatcher visibility');
-    expect(dump.dispatchGeom?.inState, `[${locale}] 开关落在状态区（卡片右上）`).toBe(true);
-    expect(dump.dispatchGeom?.inHead, `[${locale}] 开关在卡片头行内（非底部独立行）`).toBe(true);
-    expect(dump.dispatchGeom?.pillAbsent, `[${locale}] 状态区内无药丸元素（空框不占位）`).toBe(true);
-    expect(dump.dispatchGeom?.stateOnlyChild, `[${locale}] 状态区只剩开关这一个子元素（零占位残留）`).toBe(true);
-    expect(dump.dispatchGeom?.rightAlignedInHead, `[${locale}] 开关行盒右对齐（「右上」）`).toBe(true);
-    expect(dump.expandHiddenBefore, `[${locale}] skill previews collapsed initially`).toBe(true);
+    // 2026-10-07 条目式批几何钉：开关收进展开详情区（actions 行内）；条目行零控件
+    expect(dump.dispatchGeom?.inDetail, `[${locale}] 开关落在展开详情区`).toBe(true);
+    expect(dump.dispatchGeom?.inActions, `[${locale}] 开关在详情区 actions 行`).toBe(true);
+    expect(dump.dispatchGeom?.inHead, `[${locale}] 既有钩子开关不在条目行上（在详情区）`).toBe(false);
+    expect(dump.dispatchGeom?.rowControls, `[${locale}] 条目行恰一行尾开关控件（14:13 令①）`).toBe(1);
+    expect(dump.dispatchGeom?.pillAbsent, `[${locale}] 条目行状态区无药丸元素（空框不占位）`).toBe(true);
+    expect(dump.dispatchGeom?.stateToggleAndChevron, `[${locale}] 状态区 = 行尾开关 + chevron（14:13 令①）`).toBe(true);
+    expect(dump.rowDispatchCount, `[${locale}] 行尾开关每卡恰一（-row 钩子）`).toBe(1);
+    expect(dump.detailHiddenBefore, `[${locale}] 详情区默认收起`).toBe(true);
     expect(dump.rejectedPill, `[${locale}] rejected card carries the pill`).toBe(locale === 'zh-CN' ? '拒载' : 'Rejected');
     expect(dump.rejectedNoControls, `[${locale}] rejected card carries no control at all`).toBe(true);
     expect(dump.noSubChecks, `[${locale}] subscription chips removed`).toBe(0);
@@ -383,14 +405,28 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.titles.agents, `[${locale}] agents section title zh/en paired`)
       .toBe(locale === 'zh-CN' ? '智能体' : 'Agents');
 
-    // Expand path: click the skills annotation → previews show.
-    await page.click('.plugins-card[data-plugin="e2e-hello"] .plugins-comp-toggle');
+    // Expand path: click the item row → detail area opens with the per-skill
+    // list（2026-10-07 条目式批：原 skills chip-toggle 机构退场，清单在详情区）。
+    await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
     const expanded = await page.evaluate(() => ({
-      visible: !document.querySelector('[data-expand-for="skills-e2e-hello"]')?.hidden,
-      ids: [...document.querySelectorAll('[data-expand-for="skills-e2e-hello"] .plugins-skill-item-id')].map(el => el.textContent.trim()),
+      visible: !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
+      ariaExpanded: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
+      expandedClass: document.querySelector('.plugins-card[data-plugin="e2e-hello"]')?.classList.contains('expanded'),
+      ids: [...document.querySelectorAll('.plugins-card[data-plugin="e2e-hello"] .plugins-item-skills .plugins-skill-item-id')].map(el => el.textContent.trim()),
     }));
-    expect(expanded.visible, `[${locale}] skill expand opens`).toBe(true);
+    expect(expanded.visible, `[${locale}] item row click opens the detail area`).toBe(true);
+    expect(expanded.ariaExpanded, `[${locale}] aria-expanded flips to true`).toBe('true');
+    expect(expanded.expandedClass, `[${locale}] card carries the expanded class`).toBe(true);
     expect(expanded.ids, `[${locale}] expanded skill ids`).toEqual(['e2e-hello/hello', 'e2e-hello/wave']);
+
+    // Collapse path: click again → 收回（accordion 语义自洽）。
+    await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
+    const collapsed = await page.evaluate(() => ({
+      hidden: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
+      ariaExpanded: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
+    }));
+    expect(collapsed.hidden, `[${locale}] second click collapses the detail area`).toBe(true);
+    expect(collapsed.ariaExpanded, `[${locale}] aria-expanded flips back to false`).toBe('false');
   }
 
   expect(apiRequests, 'plugins page must not call /api/skills or /api/mcp (unified plugin system)').toEqual([]);
@@ -478,7 +514,11 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   expect([before.moreCount, before.menuCount, before.blockCount], 'start: 封禁 UI 三钩子零残留').toEqual([0, 0, 0]);
   expect(before.dispatchCount, 'start: 页面唯一控件 = 派发开关').toBe(1);
 
-  // 面板上仅存的动作：派发开关（乐观翻转 → 收敛）。wire 只应出现 enable/disable。
+  // 面板上仅存的动作：派发开关（乐观翻转 → 收敛；2026-10-07 条目式批收在展开
+  // 详情区内 ⇒ 先展开条目行）。wire 只应出现 enable/disable。
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
+  await page.waitForFunction(() =>
+    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden);
   await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
   await page.waitForFunction(() =>
     !document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.classList.contains('on'),
@@ -533,7 +573,8 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   // 只是药丸与提示行改义（内容已按新版本生效，不再需要审批）。
   pluginState.contentChanged = true;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
-  await page.waitForSelector('.plugins-card[data-plugin="e2e-hello"] .plugins-card-hint.changed', { timeout: 5000 });
+  // 2026-10-07 条目式批：提示行收在详情区（默认收起）⇒ 等 attached 而非 visible。
+  await page.waitForSelector('.plugins-card[data-plugin="e2e-hello"] .plugins-card-hint.changed', { state: 'attached', timeout: 5000 });
   const changed = await cardDump(page);
   expect(changed.pill, 'contentChanged ⇒ 药丸改义为「内容已变更」（不是封禁）').toBe('内容已变更');
   expect(changed.pillClass, 'pill 带 changed class').toContain('changed');

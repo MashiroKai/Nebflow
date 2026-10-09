@@ -771,7 +771,10 @@
 .mic-orb-wrap.s-bg        { --orb-filter:hue-rotate(8deg) saturate(0.80) brightness(0.94); --orb-glow:rgba(144,153,203,.28); --orb-dot:#9099CB; }
 .mic-orb-wrap.s-frozen    { --orb-filter:saturate(0.40) brightness(0.75); --orb-glow:rgba(126,136,162,.16); --orb-dot:#7E88A2; }
 .mic-orb-wrap.s-frozenerr { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F0D9C0 0%, #C99A6E 48%, #5E4130 100%); --orb-inset:rgba(58,38,22,0.32); --orb-filter:none; --orb-glow:rgba(214,150,110,.30); --orb-dot:#B08468; }
-.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #FADBD4 0%, #DE575C 48%, #7E262C 100%); --orb-inset:rgba(64,16,20,0.34); --orb-filter:none; --orb-glow:rgba(229,72,77,.40); --orb-dot:#E5484D; }
+/* ui-status-redesign（盘点 #54，B 组）：麦克风错误 orb = 大图案载体（渐变材质
+   保留）；散落取值收敛——--orb-dot / --orb-glow 归 --status-error-icon token
+   （暗档随 token 提亮）。WebGL 主路径走 orbPresets 'magma'+hue（无散落字面量）。 */
+.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #FADBD4 0%, #DE575C 48%, #7E262C 100%); --orb-inset:rgba(64,16,20,0.34); --orb-filter:none; --orb-glow:color-mix(in srgb, var(--status-error-icon) 40%, transparent); --orb-dot:var(--status-error-icon); }
 .mic-orb-wrap.s-offline   { --orb-filter:saturate(0) brightness(0.88); --orb-glow:rgba(150,155,165,.14); --orb-dot:#8A8F98; }
 
 /* Action layering (v8.1 §10.3③ / v8.2 §10.5, CSS fallback family):

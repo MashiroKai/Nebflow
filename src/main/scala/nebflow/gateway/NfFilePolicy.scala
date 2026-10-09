@@ -25,8 +25,14 @@ import org.http4s.Status
 object NfFilePolicy extends FilePolicyPort:
 
   /**
-   * Extension whitelist for GET /api/nf-file (local files served to
-   * card/canvas iframes).
+   * 🔴 2026-10-07 起本表**不再是判据**（askuser-attach-align 批，作者 09:35/09:41 两令）：
+   * 扩展名门已从 [[nfVerdictForRealLayer]] 整体撤除——Canvas viewer 注册表现已覆盖
+   * md/pdf/html/pptx/视频族，未注册类型在渲染面走下载兜底（与 Pop/Canvas 同判），
+   * 白名单早已过时；「按扩展名拒绝字节服务」不再是端点语义。表本体**保留不删**：
+   * `FileRefs.AllowedExtensions`（工具侧镜像）由 `FileRefsWhitelistSpec` 与本表逐项
+   * 焊死（Pop 文案亦引用同族清单），双侧同退役、同留存，防单侧复活。
+   *
+   * 历史沿革（撤门前的准入史，保留可读）：
    *
    * 2026-09-03 Canvas interactive-HTML fix: beyond the media types it now
    * covers the text asset types a multi-file HTML deliverable references —
@@ -37,56 +43,14 @@ object NfFilePolicy extends FilePolicyPort:
    * failure (prototype.html:455 `const SNAP = window.FM_SNAPSHOT` →
    * :487 seedFromSnapshot() throws on the 400'd script).
    *
-   * Security posture unchanged: the route stays token-gated end to end, and
-   * anything running inside the srcdoc canvas iframe already executes with
-   * app-origin script privileges (viewers/html.js sandbox: allow-scripts +
-   * allow-same-origin), so serving js/css/json does not widen the trust
-   * boundary — content source remains locally opened, user-initiated
-   * deliverables.
-   *
-   * 2026-09-17 nfext batch (author ruling, superseding the list above — not a
-   * silent override): `doc`, `ppt`, `xls` joined. The ruling's standard is
-   * "the device face behaves like the friend/group face": the friend/group
-   * attachment leg (`GET /api/friends/attachments/{id}`, RestApiRoutes.scala)
-   * carries NO extension gate and serves legacy Office files, while the device
-   * face routes its attachment bytes through THIS route's ticket leg — so the
-   * three legacy binary types were the one place the two faces disagreed.
-   * `devattach-verify` open item ① measured the resulting false affordance:
-   * a legacy `.doc` card binds its download key (the frontend criterion
-   * `canFetchLocalBytes` resolves `.doc`/`.ppt`/`.xls` to the docx/pptx/xlsx
-   * viewers, all of which are in `BLOB_ITEM_TYPES`) but the key's nf-file call
-   * is refused 400 once — "the key is there and must fail". Closing that gap
-   * means exactly these three entries here, on the endpoint that is allowed.
-   *
-   * Width of the change: the extension table is NOT a path constraint. It is
-   * evaluated LAST, after expandTilde → lexical normalize → exists/isRegularFile
-   * → toRealPath → the credential-namespace judge → the R2 hard-link inode
-   * guard (see `nfFileVerdict`), and it only decides whether an already-fully
-   * resolved real file's lowercased last-dot suffix is served. Adding a suffix
-   * therefore grants no reach to any path that the six upstream judgements
-   * refuse — it widens "which bytes an already-credentialed, already-path-
-   * authorized requester may fetch" by three suffixes and nothing else.
+   * Security posture (unchanged by the 2026-10-07 flip in its layering): the
+   * route stays token/ticket-gated end to end. The whitelist was never a path
+   * constraint — it was evaluated LAST, after expandTilde → lexical normalize →
+   * exists/isRegularFile → toRealPath → the credential judge → the R2 hard-link
+   * inode guard (see `nfFileVerdict`), and it only decided whether an
+   * already-fully resolved real file's lowercased last-dot suffix is served.
    * Serving bytes executes nothing ON THIS ENDPOINT — the route transports bytes
-   * and never parses them — and what the EXISTING viewers then do with a legacy
-   * container was MEASURED rather than assumed (probe scripts + raw stdout under
-   * `.nebflow/evidence/20260917_nfext/`): `.ppt` parses nothing at all (info card
-   * + a click-time download link, `viewers/pptx.js`); `.doc` is refused by
-   * mammoth with a visible parse error (CFB/OLE2 header → "Can't find end of
-   * central directory : is this a zip file ?", caught at `viewers/docx.js:68` →
-   * error panel) instead of being rendered; `.xls` goes down the SAME SheetJS leg
-   * that already carried `.xlsx`/`.xlsm` before this batch. No preview leg
-   * evaluates VBA, so a macro inside a legacy container is inert on this face.
-   *
-   * ⚠ Open item registered in the batch report (deliberately NOT fixed here —
-   * the frontend tree is outside this batch's face): these two tables decide only
-   * what may be FETCHED, whereas the `.xls` leg inherits a pre-existing property
-   * of the vendored SheetJS 0.18.5 — `sheet_to_html` escapes a cell's TEXT but
-   * not its `data-v` attribute, and `viewers/xlsx.js:50` assigns that string to
-   * `pane.innerHTML` (a same-origin div, not a sandboxed iframe). It is reachable
-   * TODAY with `.xlsx` alone (already on this list before the batch) and through
-   * the friend/group attachment leg (which has no extension gate at all), so this
-   * batch neither creates nor widens it. `html` stays excluded from the
-   * attachment preview face.
+   * and never parses them.
    *
    * Pure + testable on purpose (same pattern as uploadsRoutes).
    */
@@ -158,23 +122,29 @@ object NfFilePolicy extends FilePolicyPort:
   /**
    * A1 — the ONLY `PathUtil.dataRoot` subtrees whose contents may be served.
    *
-   * Every other entry under the data root is credential-bearing by default:
-   * `auth.json` (the gateway token), `nebflow.json`, `secrets/`, `logs/`,
-   * `sessions/`, `usage-records/`, … Fail-closed: a new directory added
-   * under the data root is refused until it is listed here.
+   * 🔴 2026-10-07 起**不再是判据**（askuser-attach-align 批，作者 09:35/09:41 两令·
+   * 「跟 Pop 保持一致」/「Pop 能挂的 AskUser 就能挂」）：数据目录子树白名单连同
+   * `NfWorkspaceAllowlistPrefix` 一起从 [[nfCredentialDenyLayer]] 整体撤除——目录域
+   * 不再拒绝任何位置，`/tmp`、`~/.nebflow`（含 `logs/`、`sessions/` 等原白名单外
+   * 子树）与数据目录内全部位置一视同仁，唯一保留的拒绝维 = **凭据身份两层**
+   * （`NfExternalCredentialEntries` / `NfCredentialPathSegments` /
+   * `NfCredentialNamePattern`）+ R2 凭据 inode（`scanCredentialInodes` 覆盖
+   * `secrets` 子树、`auth.json`、`nebflow.json`、`~/.ssh`）。表本体**保留不删**：
+   * `FileRefs.DataRootServedNamespaces` 由 `FileRefsWhitelistSpec` 与本表逐项焊死、
+   * Pop 工具文案插值同一清单（`DataRootServedNamespacesText`），双侧同退役、同留存。
    *
-   * 2026-09-16 (img-ticket batch i, #687-A, author ruling — already ruled, not
-   * pending): `docs` joins the list. The author's human-deliverable directory
-   * (`~/.nebflow/docs/…`) was the one location the delivery convention told
-   * people to write to AND this judge refused with `credential-path`; the
-   * ruling resolves that contradiction. 🔴 Scope is EXACTLY this one entry:
-   * no other subtree, no prefix/glob matching, no change to the `head`
-   * exact-match semantics below, and the five shipped entries keep their order
-   * and meaning. The ruling explicitly SUPERSEDES the 2026-09-11 "do not widen
-   * the credential namespace" ruling — and that supersession is per-item, so
-   * it authorizes nothing beyond `docs`. The tool face reads
-   * `FileRefs.DataRootServedNamespaces`, which `FileRefsWhitelistSpec` welds to
-   * this list item for item.
+   * 🔴 权限面改动出处 = 作者裁定（本仓铁律：改权限面只能出自作者裁定）。09:41 令
+   * 原文口径：「AskUser 可用数据目录同步放开，与 Pop 文件面同域同判——/tmp、
+   * ~/.nebflow/ 等本机可读路径全部可用……不再限于网关数据目录白名单」；服务面
+   * 同令授权：「nf-file 对 Pop 同域文件的票腿/流式如需扩域支持……一并实现；与
+   * Pop 同判同通路优先，禁平行机制」。pop.readFile 打开腿本就**零域门**（绝对路径
+   * + 存在 + 普通文件 + 大小闸），本表撤除 = 票腿/流式腿与打开腿同判（禁第二把尺）。
+   *
+   * 历史沿革（撤门前的准入史，保留可读）：每一个其他数据根子树默认按凭据处理：
+   * `auth.json`（网关令牌）、`nebflow.json`、`secrets/`、`logs/`、`sessions/`、
+   * `usage-records/`……fail-closed：数据根下新增目录在此被判拒。2026-09-16
+   * (img-ticket batch i, #687-A, author ruling) `docs` 加入；该裁定明示 supersede
+   * 2026-09-11「不放开凭据命名空间」令——其「逐项明文」纪律由本批的 09:41 令延续。
    */
   val NfDataRootAllowlist: List[String] =
     List("projects", "uploads", "plots", "workspace-items", "voice-models", "docs")
@@ -182,6 +152,9 @@ object NfFilePolicy extends FilePolicyPort:
   /**
    * A2 — the ONLY `<workspace>/.nebflow` subtrees whose contents may be served
    * (evidence capture directories: screenshots/logs a node produced).
+   *
+   * 🔴 2026-10-07 起**不再是判据**（同 [[NfDataRootAllowlist]] 的撤门裁定）：保留
+   * 仅作历史文案/焊死镜面，`nfCredentialDenyLayer` 不再读它。
    */
   val NfWorkspaceAllowlistPrefix: String = "evidence"
 
@@ -344,7 +317,7 @@ object NfFilePolicy extends FilePolicyPort:
   val NfDenyLayer = FilePolicyPort.NfDenyLayer
 
   /**
-   * C1-4: pure credential-namespace judge. `Some(reason)` = refuse with 403.
+   * C1-4: pure credential judge. `Some(reason)` = refuse with 403.
    *
    * Projection of [[nfCredentialDenyLayer]] (same branches, same order, same
    * messages) — the two can never disagree.
@@ -352,40 +325,27 @@ object NfFilePolicy extends FilePolicyPort:
   def nfCredentialDeny(realPath: java.nio.file.Path, policy: NfPathPolicy): Option[String] =
     nfCredentialDenyLayer(realPath, policy).map(_._2)
 
-  /** [[nfCredentialDeny]] with the refusing layer named (see [[NfDenyLayer]]). */
+  /**
+   * [[nfCredentialDeny]] with the refusing layer named (see [[NfDenyLayer]]).
+   *
+   * 🔴 2026-10-07 askuser-attach-align 批（作者 09:35/09:41 两令）：**目录域两个
+   * reach 分支整体撤除**——原第一/第二分支（`dataRoot` 白名单首段、项目
+   * `.nebflow` 的 `evidence*` 前缀）不再产生拒绝；本函数退化为**纯身份判据**
+   * （凭据表两层，即 `nfCredentialIdentityLayer`，零复制直委托）。判据顺序因此
+   * 收敛为：凭据身份（403 credential-path）→ R2 inode（403 credential-hardlink）
+   * ——见 [[nfVerdictForRealLayer]]。`Namespace` 层词表保留（enum 不动）但阶梯
+   * 不再产出；`FileType` 层同批撤除（扩展名门退役，见 [[NfFileAllowedExt]]）。
+   *
+   * 凭据防线在翻转后**零松动**：`~/.ssh` 族、凭据目录段、凭据形态 basename
+   * （`auth.json`/`id_rsa`/`*.pem`…）照拒；`dataRoot` 的 `secrets` 子树、
+   * `auth.json`、`nebflow.json`、`~/.ssh` 由 R2 inode 快照照拒（身份层短的以
+   * inode 层收口）。
+   */
   def nfCredentialDenyLayer(
     realPath: java.nio.file.Path,
     policy: NfPathPolicy
   ): Option[(NfDenyLayer, String)] =
-    val rp = realPath.toAbsolutePath.normalize()
-    val p1 = policy.dataRoot
-    val p3 = policy.workspaceRoot
-    def relUnder(root: java.nio.file.Path): String =
-      root
-        .relativize(rp)
-        .toString
-        .replace('\\', '/')
-    if rp.startsWith(p1) then
-      val rel = relUnder(p1)
-      val head = rel.split('/').headOption.getOrElse("")
-      if NfDataRootAllowlist.contains(head) then None
-      else
-        Some(
-          NfDenyLayer.Namespace,
-          s"the Nebflow data directory is credential-bearing; only " +
-            s"${NfDataRootAllowlist.mkString("/**, ", "/**, ", "/**")} may be served"
-        )
-    else if rp.startsWith(p3) then
-      val rel = relUnder(p3)
-      val head = rel.split('/').headOption.getOrElse("")
-      if head.startsWith(NfWorkspaceAllowlistPrefix) then None
-      else
-        Some(
-          NfDenyLayer.Namespace,
-          s"the project .nebflow directory is credential-bearing; only " +
-            s"${NfWorkspaceAllowlistPrefix}*/** may be served"
-        )
-    else nfCredentialIdentityLayer(realPath, policy)
+    nfCredentialIdentityLayer(realPath, policy)
 
   /** The identity part alone — see [[nfCredentialIdentityLayer]]. */
   private def nfCredentialIdentityLayerOnly(
@@ -411,42 +371,56 @@ object NfFilePolicy extends FilePolicyPort:
   /**
    * The file's **own identity** — the credential tables (known credential
    * locations, credential directory segments, credential-shaped basenames)
-   * asked about a real path WITHOUT the namespace/reach branch in front of
-   * them.
+   * asked about a real path WITHOUT any reach question in front of them.
    *
-   * [[nfCredentialDenyLayer]] asks the same tables but only for paths outside
-   * both protected namespaces: it answers `Namespace` for every non-allowlisted
-   * subtree of the data root or of the project `.nebflow` and STOPS there, so a
-   * credential-shaped path inside such a subtree is reported as a REACH fact
-   * and its identity is never evaluated. Callers that must honour the identity
-   * layers and not the reach layer (the tool-side read leg, `CardTool`'s gate 4)
-   * therefore cannot read that answer off the ladder and ask this function
-   * instead — same tables, same branch order, same messages, no copy.
+   * 2026-10-07 askuser-attach-align 批增补（作者 09:35/09:41 两令「凭据防线零松动」
+   * 的落实腿）：在原根无关表之后，追加**根锚定的 Nebflow 凭据种子**一问——realpath
+   * 落在 `dataRoot` 的 `auth.json` / `nebflow.json` / `secrets` 子树 ⇒ `Credential`。
+   * 出因：目录域 reach 撤除后，数据根内这三个凭据落位原本由 reach 分支逐请求兜住，
+   * R2 inode 快照只是**启动时**的别名闸；不补这条实时身份问，运行期新建进
+   * `secrets` 子树的文件要等重启才进 inode 快照 = 防线松动。本问与
+   * `scanCredentialInodes` 的种子集逐项同源（同一常量语义，零第二份表），R2 inode
+   * 层继续专责**别名**（硬链接）的捕捉。端口文档「future identity rule that needs
+   * a root」预告的正是这一形态：identity 从根无关升级为「根无关表 + 根锚种子」，
+   * 调用方零改动。
    *
-   * 🔴 The endpoint's own verdict is UNCHANGED: `nfCredentialDenyLayer`'s last
-   * branch IS this function (extracted verbatim), so the endpoint still reports
-   * `Namespace` first for a `<dataRoot>/.ssh/…` path — namespace order is part
-   * of the endpoint's reach contract, and this function only adds a way to ask
-   * the identity question on its own.
+   * [[nfCredentialDenyLayer]] (= the identity layers since the flip) therefore
+   * answers live for every request; no branch of the credential face depends
+   * on the startup snapshot any more.
    */
   def nfCredentialIdentityLayer(
     realPath: java.nio.file.Path,
     policy: NfPathPolicy
   ): Option[(NfDenyLayer, String)] =
-    // The policy parameter is kept for symmetry with the ladder (and so a
-    // future identity rule that needs a root can be added without changing
-    // callers); today the identity tables are root-independent.
-    val _ = policy
-    nfCredentialIdentityLayerOnly(realPath.toAbsolutePath.normalize())
+    nfCredentialIdentityLayerOnly(realPath.toAbsolutePath.normalize()) match
+      case hit @ Some(_) => hit
+      case None =>
+        val rp = realPath.toAbsolutePath.normalize()
+        val dr = policy.dataRoot
+        if rp.startsWith(dr) then
+          val rel = dr.relativize(rp).toString.replace('\\', '/')
+          val head = rel.split('/').headOption.getOrElse("")
+          if head == "secrets" || rel == "auth.json" || rel == "nebflow.json" then
+            Some(
+              (
+                NfDenyLayer.Credential,
+                "this path is a Nebflow credential file inside the data directory " +
+                  "(auth.json / nebflow.json / the secrets subtree)"
+              )
+            )
+          else None
+        else None
 
   /**
    * C1-5: the single authority for "may this raw path be served?".
    *
-   * Chain (plan §3.3): empty → `~` expansion → lexical normalize →
-   * exists/isRegularFile (404) → toRealPath (404) → R2 hard-link inode (403)
-   * → `nfCredentialDeny` (403) → extension taken from the REAL path (400).
-   * The extension verdict deliberately uses the realpath: a client can no
-   * longer pick the served extension by naming a symlink (C1-2).
+   * Chain (plan §3.3; 2026-10-07 askuser-attach-align 撤门后): empty → `~`
+   * expansion → lexical normalize → exists/isRegularFile (404) → toRealPath
+   * (404) → R2 hard-link inode (403) → `nfCredentialDeny` (403). The former
+   * last step "extension taken from the REAL path (400)" was retired with the
+   * extension gate (see [[NfFileAllowedExt]]); the served extension is still
+   * read from the REAL path for the Allowed verdict (C1-2: a client can no
+   * longer pick the served extension by naming a symlink).
    */
   def nfFileVerdict(
     rawPath: String,
@@ -506,27 +480,29 @@ object NfFilePolicy extends FilePolicyPort:
   /**
    * The post-`toRealPath` half of [[nfFileVerdict]] — every step that decides on
    * the REAL path, in the shipped order: `nfCredentialDeny` (403 credential-path)
-   * → R2 hard-link inode (403 credential-hardlink) → extension from the realpath
-   * (400 file-type). `None` = the endpoint would SERVE this real path.
+   * → R2 hard-link inode (403 credential-hardlink). `None` = the endpoint would
+   * SERVE this real path.
+   *
+   * 🔴 2026-10-07 askuser-attach-align 批（作者 09:35/09:41 两令）：原第三步
+   * 「realpath 上的扩展名（400 file-type）」**整体撤除**——扩展名不再是服务维
+   * （Canvas viewer 注册表为准，未注册类型渲染面下载兜底）；原第一步的目录域
+   * reach 分支同批撤除（见 [[nfCredentialDenyLayer]]）。保持的判据 = 凭据身份
+   * 两层 + R2 inode，fail-closed 语义不变。
    *
    * Extracted verbatim (imgref rework r1, 2026-09-18) so that the tool-side
    * pre-flight gate (`FileRefs.servableByEndpoint`) and the endpoint ask EXACTLY
-   * the same question by calling the same function. Before this extraction the
-   * gate reused only `nfCredentialDeny` and therefore went green on a hard link
-   * to a credential file and on a symlink whose realpath extension is not
-   * served — both of which the endpoint refuses (`proxied` green while the
-   * browser's fetch answered 401: the author's failure ② shape). One function,
-   * no copy, no parallel judge.
+   * the same question by calling the same function. One function, no copy, no
+   * parallel judge.
    *
    * Order is part of the contract: a credential file named directly (or reached
    * through a symlink) must report `credential-path`, not the alias-specific
    * `credential-hardlink`.
    *
    * 🔴 Short-circuit (read this before relying on the layer): the credential
-   * step runs FIRST, so a path that is refused for the namespace reason can also
-   * be a hard link to a credential file without the inode step ever being asked
-   * — a caller that honours only some layers must ask the inode layer itself
-   * (see `FileRefs.credentialInodeClean`).
+   * step runs FIRST, so a path that is a credential inode can be reported by
+   * the identity layer without the inode step ever being asked — a caller that
+   * honours only some layers must ask the inode layer itself (see
+   * `FileRefs.credentialInodeClean`).
    */
   def nfVerdictForReal(real: java.nio.file.Path, policy: NfPathPolicy): Option[NfVerdict.Denied] =
     nfVerdictForRealLayer(real, policy).map(_._2)
@@ -558,8 +534,6 @@ object NfFilePolicy extends FilePolicyPort:
               )
             )
           )
-        else if !NfFileAllowedExt.contains(nfRealExtension(real)) then
-          Some((NfDenyLayer.FileType, NfVerdict.Denied(Status.BadRequest, "file-type", "File type not allowed")))
         else None
 
   /**
@@ -622,16 +596,10 @@ object NfFilePolicy extends FilePolicyPort:
 
   /**
    * The identity layer alone (see the port's doc). Same tables, same branch
-   * order, same messages as the ladder's credential step — the ladder's last
-   * branch IS `nfCredentialIdentityLayer` (one function, no copy). The port
-   * member exists because the ladder answers `Namespace` FIRST for a
-   * non-allowlisted subtree and stops, so a caller that must honour the
-   * identity layers and not the reach layer cannot read that answer off
-   * `endpointVerdictLayer`.
-   *
-   * 🔴 The endpoint's own verdict is unchanged: `nfCredentialDenyLayer` still
-   * reports `Namespace` first for such a path (its namespace branches are
-   * untouched); this only opens the identity question to callers that need it.
+   * order, same messages as the ladder's credential step — since the
+   * 2026-10-07 domain flip ([[nfCredentialDenyLayer]] = the identity layers
+   * only) the two ARE one judgement; the port member predates the flip and is
+   * kept for the callers that name the identity question explicitly.
    */
   override def credentialIdentityLayer(
     real: java.nio.file.Path

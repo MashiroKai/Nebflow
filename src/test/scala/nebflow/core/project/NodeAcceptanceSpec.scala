@@ -1510,11 +1510,13 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
 
   // ── NodeEdit worktree 布尔派生（2026-09-05 显式布尔改造）──
   //
-  // 契约：worktree String→Boolean——true = NodeEdit 即时派生创建
-  // (<derived-from-node-name> 同名分支、基线 main HEAD；fail-fast，失败拒绝建节点)；
-  // false/缺省 = workspace 直跑；旧字符串形态（裸名/前缀/绝对路径）一律
-  // WORKTREE_NOT_BOOLEAN 拒绝；编辑路径 WORKTREE_CREATE_ONLY 拒绝。
-  // （20260903 的「三形态宽容 + 双位置实存」查找契约随字符串参数一并退役。）
+  // 契约（N1 刀2 D1 重写，2026-10-06）：worktree 不再是 NodeEdit 参数——键在场
+  // （任何形态/任何值）= 首段 seal 拒（NODE_WORKTREE_UNSUPPORTED，先于一切校验/
+  // 建位/git 探测）；分支/worktree 代建收归 delegate 层判定机（S13）与 Delegate
+  // spawn 腿。GitWorktrees 公用 util 本体保留（util 直测在 NodeEditWorktreeBaselineSpec
+  // WTB-3/4；NodeSchemaSlimSpec C①-C⑤ 为同面 seal 断言）。
+  // （20260903 的「三形态宽容 + 双位置实存」查找契约与 20260905 的显式布尔创建契约
+  // 均随参数退役；存量节点的 NodeDef.worktree 字段保留——显示/审计/gate 读取面不变。）
 
   /** 建 worktree 集成测试项目（git 仓 workspace + 真实 spawn 走 RecordingLlm 秒完）。 */
   private def wtProject(tag: String): (os.Path, ActorSystem, SharedResources, ProjectRuntime, ToolContext) =
@@ -1529,7 +1531,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     val rt = mountProject(s"acc-wt-$tag", ws, system, res).unsafeRunSync()
     (ws, system, res, rt, mkCtx(res, system, ws.toString))
 
-  test("WT-1 worktree=true: derived worktree+branch created immediately, bare name stored") {
+  test("WT-1 worktree=true → NODE_WORKTREE_UNSUPPORTED seal; no node, no worktree dir, no branch") {
     val (ws, system, res, rt, ctx) = wtProject("bare")
     for
       r <- nodeEdit(
@@ -1544,21 +1546,21 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         ctx
       )
       s <- rt.store.snapshot
+      noDir <- IO.blocking(!os.exists(ws / ".nebflow" / "worktrees"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"worktree=true create must succeed, got: $r")
-      val wt = s.nodes.values.find(_.name == "调研-派生").flatMap(_.worktree)
-      assert(wt.isDefined, "NodeDef.worktree must store the derived bare name")
-      assert(os.exists(ws / ".nebflow" / "worktrees" / wt.get / ".git"), "derived worktree dir must exist")
-      val branches = os.proc("git", "-C", ws.toString, "branch", "--list", wt.get).call(check = true).out.trim()
-      assert(branches.nonEmpty, s"same-name branch must exist, got: '$branches'")
+      assert(
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"worktree key must hit the seal, got: $r"
+      )
+      assert(s.nodes.isEmpty, "seal precedes creation: no node")
+      assert(noDir, "NodeEdit must not provision worktrees anymore")
     end for
   }
 
-  test("WT-2 worktree=true: sanitize-collision → unique derived suffix (-2), both nodes independent") {
+  test("WT-2 worktree=true twice (sanitize-collision names) → both sealed; no worktree dir at all") {
     val (ws, system, res, rt, ctx) = wtProject("unique")
     for
-      // 「调研 同」（空格）与「调研-同」sanitize 后同名（空格 → -）→ 派生名冲突走 -2 后缀
       r1 <- nodeEdit(
         nodeInput(
           "acc-wt-unique",
@@ -1582,19 +1584,20 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         ctx
       )
       s <- rt.store.snapshot
+      noDir <- IO.blocking(!os.exists(ws / ".nebflow" / "worktrees"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r1.isRight && r2.isRight, s"both creates must succeed, got: $r1 / $r2")
-      val wts = s.nodes.values.toList.sortBy(_.name).flatMap(_.worktree)
-      assertEquals(wts.size, 2)
-      assert(wts(0) != wts(1), s"derived names must be unique, got: $wts")
-      assert(wts(1).endsWith("-2"), s"second derived name must carry -2 suffix, got: $wts")
-      // CJK 保留（sanitize 不把中文名归一成 "node"）
-      assert(wts(0).startsWith("调研"), s"CJK must be preserved in derived name, got: $wts")
+      assert(
+        r1.isLeft && r1.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")) &&
+          r2.isLeft && r2.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"both creates must hit the seal, got: $r1 / $r2"
+      )
+      assert(s.nodes.isEmpty, "no node from the sealed path")
+      assert(noDir, "no worktree provisioning (collision suffix derivation is a util face now)")
     end for
   }
 
-  test("WT-3 worktree=false → workspace direct-run (no binding), matches omitted") {
+  test("WT-3 worktree=false → the same seal (any presence of the key is refused)") {
     val (ws, system, res, rt, ctx) = wtProject("false")
     for
       r <- nodeEdit(
@@ -1611,15 +1614,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"worktree=false create must succeed, got: $r")
-      assertEquals(s.nodes.values.find(_.name == "N3").flatMap(_.worktree), None)
-      // workspace 直跑：不派生任何 worktree 目录
-      val wtsDir = ws / ".nebflow" / "worktrees"
-      assert(!os.exists(wtsDir) || os.list(wtsDir).isEmpty, "worktree=false must not create any worktree dir")
+      assert(
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"worktree=false must hit the same seal (key presence, not value), got: $r"
+      )
+      assert(s.nodes.isEmpty, "no node from the sealed param")
     end for
   }
 
-  test("WT-4 worktree string form (bare/prefix/absolute) → WORKTREE_NOT_BOOLEAN (legacy forms retired)") {
+  test("WT-4 worktree string forms (bare/prefix/absolute) → the same seal (legacy WORKTREE_NOT_BOOLEAN retired)") {
     val (ws, system, res, _, ctx) = wtProject("str")
     for
       rBare <- nodeEdit(
@@ -1659,15 +1662,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     yield for (r, form) <- List((rBare, "bare"), (rPrefix, "prefix"), (rAbs, "absolute")) do
       assert(r.isLeft, s"$form string form must be rejected")
       assert(
-        r.left.exists(_.contains("WORKTREE_NOT_BOOLEAN")),
-        s"$form rejection must carry WORKTREE_NOT_BOOLEAN, got: ${r.left.getOrElse("")}"
+        r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"$form rejection must carry NODE_WORKTREE_UNSUPPORTED, got: ${r.left.getOrElse("")}"
       )
     end for
   }
 
-  test("WT-5 worktree=true on non-git workspace → fail-fast Left, NO node created") {
+  test("WT-5 worktree=true on non-git workspace → the seal fires with NO git probe, NO node") {
     val ws = tempRoot / s"ws-wt-nogit"
-    os.makeDir.all(ws) // 非 git 目录（tempRoot 在仓库树内但 ws 自身无 .git 且 show-toplevel ≠ ws）
+    os.makeDir.all(ws) // 非 git 目录
     val system = ActorSystem(s"acc-wt-nogit-${scala.util.Random.nextInt(100000)}")
     val res = SpecResources.mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
     val rt = mountProject("acc-wt-nogit", ws, system, res).unsafeRunSync()
@@ -1687,13 +1690,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      // 显式布尔契约 fail-fast：创建失败 → 节点不存在（不做 workspace 直跑静默降级）
-      assert(r.isLeft && r.left.exists(_.contains("git repository")), s"non-git workspace must fail fast, got: $r")
+      assert(
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"non-git workspace must hit the same seal (no 'git repository' message anymore), got: $r"
+      )
       assert(s.nodes.isEmpty, "fail-fast: node must NOT be created")
     end for
   }
 
-  test("WT-6 worktree on edit → WORKTREE_CREATE_ONLY (create-time binding)") {
+  test("WT-6 worktree on edit → the same seal (the edit path never sees the key)") {
     val (ws, system, res, _, ctx) = wtProject("edit")
     for
       _ <- nodeEdit(
@@ -1709,8 +1714,8 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       r <- nodeEdit(nodeInput("acc-wt-edit", "N6", "worktree" -> Json.fromBoolean(true)), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield assert(
-      r.isLeft && r.left.exists(_.contains("WORKTREE_CREATE_ONLY")),
-      s"worktree on edit must be refused, got: $r"
+      r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+      s"worktree on edit must hit the seal, got: $r"
     )
     end for
   }

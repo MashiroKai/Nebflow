@@ -5,9 +5,11 @@ import state, { AGENT_PALETTE } from './state.js';
 import { key } from './branding.js';
 // 时制（12h/24h）：偏好、格式化与热区绑定的唯一属主 = timeFormat.js（主对话框
 // / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
-import { formatHm, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
+// formatFooterTime = footer-time 批（2026-10-06）的分层 footer label：
+// 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
+import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
@@ -21,12 +23,25 @@ import { authHeaders } from './flowHelpers.js';
 // shouldShow/updateVisibility DOM mechanics live in depVisibility.js now, shared
 // with the /model panel. The visibility predicate and the answer-reset stay here.
 import { createDepVisibility } from './depVisibility.js';
+// AskUser 附件行（顶层 `attachments` ⇒ 整次提问层的可点击附件行）。askuser-attach-align
+// 批（2026-10-07 作者令「跟 Pop 保持一致」）后打开动作**直接走** Canvas 打开腿
+// `openAttachmentInCanvas`（⇒ `workspace-open-item` ⇒ `canvas.openWorkspaceItem`，
+// 与 Pop 文件卡同一条通路；禁第二套开法——禁新 tabId 前缀 / 禁自拼 URL / 禁自造
+// 预览）。`previewLocalPath` 的好友/设备面认领闸（含 `EXCLUDED_ITEM_TYPES = {html}`
+// 的不受信内容排除）不再为本行把关——本地面信任级 = Pop 同级。
+// askuser-attach-align 批（2026-10-07 作者令「未注册类型走下载兜底＝与 Pop/Canvas 同判」）：
+// 附件行的类型认领判据读 viewer 注册表自身（禁第二张扩展名表；本件已在 bundle 图内）。
+import { itemTypeForFileName } from './fileViewers.js';
 // Runtime work-line (stream-ux §二.1.1): the single-line badge slot that shows
 // the running tool / thinking and rolls to the next item. Leaf module (imports
 // i18n.js only) — the call sites below are the EXISTING render paths, so the
 // engine event stream (thinkingDelta / toolStart / toolEnd) is consumed
 // unchanged.
-import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, finishWorkline, removeWorkline } from './workline.js';
+import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorklineItem, thinkingWorklineDone, removeWorkline, beginRound, stampRound, worklineToolDetail } from './workline.js';
+// Root agent DISPLAY name (single read point — rootName.js). Leaf module
+// (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
+// the literal "Nebula".
+import { isRootNamed } from './rootName.js';
 
 // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
 // label (same string the user reads on the card), so the single-line badge and
@@ -40,13 +55,38 @@ function worklineLabel(rawLabel) {
 // 五簇实现迁至 ./chat/*.js。以下显式转发保持公共导出面不缩水(全部符号仍可自 ./chat.js 取得,
 // 含动态 import('./chat.js') 解构形态);import 方文件零改动。主体自用符号另行 import。
 import { createMsgFooterBadge, renderDurationBadge } from './chat/durationBadges.js';
-import { applyPopCard } from './chat/popArtifact.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
-export { popArtifactFromInput, openPopArtifact, applyPopCard } from './chat/popArtifact.js';
+// Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
+// 的再导出改由下方 A 侧 `./popArtifacts.js` 单源承担（chatSearch.js 既有 import 面
+// 不缩水，取到的即 A 侧新语义）；本行只留 B 侧独有的 `applyPopCard` 兼容名——
+// 同时保持 ./chat/popArtifact.js 在 bundle 图内（禁孤儿化）。
+export { applyPopCard } from './chat/popArtifact.js';
 export { renderAskBubble, renderSkillBubble } from './chat/askBubbles.js';
 export { bindCollapsibleToggle, chevronSvg } from './chat/collapsible.js';
 export { injectedSourceLabel, buildInjectedRow, renderInjectedBubble } from './chat/injectedRows.js';
+
+/** ③ 完成翻转（toolline-detail 批 2026-10-06）：工具完成勾选时 turn 行翻转为
+ *  单行结果摘要——「<工具名> — <本地化 summary>」。数据 = toolEnd 帧前端
+ *  已持有字段（label/summary），零新协议。summary 为空（旧引擎帧/无摘要）时
+ *  返回 '' ⇒ doneWorklineItem 回退运行中 label（原行为逐字保留）。 */
+function toolLineResultText(label, summary) {
+  const sum = localizeToolSummary(summary || '', label);
+  if (!sum) return '';
+  const base = worklineLabel(label) || '';
+  return (base ? base + ' — ' : '') + sum;
+}
+
+/** THE single row-append path for this module. #491 (author 2026-10-05
+ *  「Pop的文件和媒体，要按时间顺序显示，不要总是在文字的最下方」): appends are
+ *  pure doc-order — whatever a render path builds lands where the conversation
+ *  put it, and nothing re-anchors afterwards. (The UI-D turn-end re-anchor
+ *  this helper used to re-run on every append is gone; time order = message
+ *  order is now the structure, not a post-pass.) Funnelling through one helper
+ *  still means no render path can grow a second append semantic. */
+function appendChatRow(chat, row) {
+  chat.append(row);
+}
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
 // upgrade toast must name the mode exactly like the header shield does, so both
@@ -339,9 +379,13 @@ export function renderUserBubble(text, attachments, timestamp) {
   // Text bubble (separate)
   if (text) {
     const bubble = document.createElement('div');
-    // stream-ux §二.1.3: the user's own bubble slides in from the right with
-    // the elastic settle. Opt-in class (history replay stays static).
-    bubble.className = 'bubble user nf-slide-in';
+    // stream-ux (2026-10-03): the user's own bubble enters iMessage-style —
+    // one message, one pop (scale + elastic settle), same animation family as
+    // the assistant bubbles. Opt-in class (history replay stays static).
+    // UI-G: main window only — a subagent / flow popup view renders the same
+    // bubble with no animation class at all (its container also carries
+    // `.nf-static`; this keeps the class off its DOM too).
+    bubble.className = activeView.motionEnabled() ? 'bubble user nf-pop' : 'bubble user';
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
@@ -351,11 +395,16 @@ export function renderUserBubble(text, attachments, timestamp) {
     row.appendChild(bubble);
   }
 
-  // Attachment bubbles (below text)
+  // Attachment faces. #491 主题三 (author 2026-10-05 12:14, 【已裁决】#1):
+  // media/file attachments leave the bubble — they render the POP faces as an
+  // INDEPENDENT card row right after this row (AC-S2/S3/S4). Ref-type
+  // attachments keep their in-bubble reference card. The old inline
+  // att-img/att-file-tag bubbles are gone from the live path.
+  const mediaAtts = [];
   (attachments || []).forEach(att => {
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble user att-bubble';
-    if (att.type === 'ref' || att.type === 'taskRef') {
+    if (att && (att.type === 'ref' || att.type === 'taskRef')) {
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user att-bubble';
       // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
       // unified type:'ref' AND the legacy type:'taskRef' from old
       // history/queue restores - normalize into the same Reference and render
@@ -366,27 +415,22 @@ export function renderUserBubble(text, attachments, timestamp) {
       bubble.classList.add('att-ref-bubble');
       const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
       if (ref) bubble.appendChild(renderRefBlock(ref, { mode: 'message' }));
-    } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-      const img = document.createElement('img');
-      img.className = 'att-img';
-      img.src = att.preview;
-      img.title = att.name || '';
-      img.onerror = () => { img.style.display = 'none'; };
-      bubble.appendChild(img);
-    } else {
-      const tag = document.createElement('span');
-      tag.className = 'att-file-tag';
-      tag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="margin-left:2px">' + escapeHtml(att.name || 'file') + '</span>';
-      bubble.appendChild(tag);
+      row.appendChild(bubble);
+      return;
     }
-    row.appendChild(bubble);
+    mediaAtts.push(att);
   });
 
   // Timestamp + copy button (unified v1.2 footer pill)
   const ts = timestamp || Date.now();
   row.appendChild(createMsgFooterBadge(ts, text));
 
-  chat.appendChild(row);
+  appendChatRow(chat, row);
+  // The independent media/file card row (same .row.pop-artifact family the Pop
+  // faces use) — time order = message order: user row, then its cards, then
+  // whatever the conversation appends next (AC-S4's DOM shape).
+  const mediaRow = buildUserMediaRow(mediaAtts);
+  if (mediaRow) appendChatRow(chat, mediaRow);
   // UNCONDITIONAL by author ruling (2026-09-11 A-branch): the user's own
   // message always brings the viewport back to the bottom — the near-bottom
   // judgement must NOT gate this site. Do not "converge" it.
@@ -438,22 +482,58 @@ function rafScrollChat(target) {
   }
 }
 
+// ---------- B2 (RC-2): stream-frame block/round identity ----------
+// The WS frames `textDelta` / `thinkingDelta` now carry `round` (the LLM round
+// of the turn) and `block` (a strictly increasing counter of the frames of that
+// type within the round) — see StreamBatching.FrameMark. The identity is what
+// turns B1's tail-split from a heuristic into a deterministic decision: a frame
+// whose (round, block) is strictly greater than the one the render cache was
+// built under is a CONTINUATION of the same segment (the accumulated text is a
+// strict superset), while a frame that repeats / lowers the identity belongs to
+// a NEW segment and the closed-chunk cache must be dropped.
+//
+// 🔴 Deliberately NOT a DOM attribute: B1's acceptance requires the terminal
+// `#chat` DOM to stay byte-identical (oracle), so the identity lives on the
+// JS-side node fields (`bubble._nfSeg`, `view.stream.{ai,think}Seg`) — readable
+// by a probe/spec, invisible to `outerHTML`.
+
+/** The comparable segment key of a frame mark, or '' when the frame carries no
+ *  identity (older backend / non-batched producers) — an absent key never
+ *  triggers the deterministic reset, so behavior falls back to B1 exactly. */
+function segKey(mark) {
+  return mark && Number.isInteger(mark.round) && Number.isInteger(mark.block)
+    ? mark.round + '.' + mark.block : '';
+}
+
+/** True when `next` continues the segment `prev` opened: same round and a
+ *  strictly greater block (the backend hands out `block` monotonically per round;
+ *  see StreamBatching.BatchState.marked). Both are `round.block` keys. */
+function sameSegment(prev, next) {
+  if (!prev || !next) return true;   // no identity ⇒ never a deterministic boundary
+  const [pr, pb] = prev.split('.').map(Number);
+  const [nr, nb] = next.split('.').map(Number);
+  return pr === nr && nb > pb;
+}
+
 // ---------- AI text streaming ----------
-export function appendAiText(text) {
+export function appendAiText(text, mark) {
   const view = activeView;
   const chat = view.dom.chat;
   view.stream.aiText += text;
-  // stream-ux §二.1.1: the tool/thinking phase is over — the badge rolls to its
-  // completed form (`已完成 N 工具 · 思考 N 轮 · 点击展开`) and stays for the
-  // rest of the turn. Per §二.1.4 the expand surface itself is the EXISTING
-  // `.turn-header` (built by turnGroup at the terminal), so this badge is a
-  // status readout only; it never grows a second expand face.
-  // (No-op when the turn had no process at all — `finishWorkline` guards on an
-  // existing row.)
-  if (!view.stream._nfWorklineDone) {
-    finishWorkline(view);
-    view.stream._nfWorklineDone = true;
+  // B2 consumption ①: record the frame's identity on the view + the live bubble.
+  // The view-level key is what a later frame (or the popup's reopen-adopt path)
+  // compares against to tell "same segment continues" from "a new segment began"
+  // without re-parsing the accumulated text.
+  const seg = segKey(mark);
+  if (seg) {
+    view.stream.aiSeg = seg;
+    view.stream.aiRound = mark.round;
   }
+  // stream-ux redesign (2026-10-03): the turn line KEEPS RUNNING while text
+  // segments arrive — each completed segment pops in as its own bubble at the
+  // tool/round boundary (finishAi), so there is no "badge rolls to its done
+  // form on first text" step any more (the old `_nfWorklineDone` latch is
+  // gone). The line only settles at the turn terminal (turnGroup).
   // 流式检测：发现完整的 <voice>...</voice> 块立即并行预取 TTS
   const voiceMatches = view.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
   if (voiceMatches) {
@@ -473,7 +553,7 @@ export function appendAiText(text) {
     view.stream.currentAiBubble = document.createElement('div');
     view.stream.currentAiBubble.className = 'bubble ai';
     row.appendChild(view.stream.currentAiBubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
   }
   // Preserve any option box across re-renders: keep it OUT of the bubble while
   // streaming so innerHTML replacement can't destroy its event listeners.
@@ -488,6 +568,13 @@ export function appendAiText(text) {
   // viewport following while the turn is live.
   const bubble = view.stream.currentAiBubble;
   bubble._nfText = view.stream.aiText || '';
+  // B2 consumption ②: the bubble carries the identity of the frame that last
+  // wrote it. `finishAi`/`finishThinking` clear the mark when the segment ends,
+  // so a mark left on the node always means "this segment is still open".
+  if (seg) {
+    bubble._nfSeg = seg;
+    bubble._nfRound = mark.round;
+  }
   if (view.stream.scrollSnapped === true || isNearBottom(chat)) {
     chat.scrollTop = chat.scrollHeight;
   }
@@ -519,7 +606,11 @@ export function finishAi(durationMs, model) {
     // stream-ux §二.1.2: the whole reply enters ONCE (scale + elastic). Only on
     // the first final render — a second finishAi on the same bubble (round
     // boundary) must not replay the entrance.
-    if (firstPaint) bubble.classList.add('nf-pop');
+    // UI-G: `nf-pop` is CSS animation, so the class is only applied in the
+    // main window; the popup views carry `.nf-static` anyway (chatView.js) and
+    // this keeps the class off their DOM entirely, so a static window owns no
+    // animation class even if the CSS rule were ever narrowed.
+    if (firstPaint && activeView.motionEnabled()) bubble.classList.add('nf-pop');
     const ts = Date.now();
     let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
@@ -542,6 +633,10 @@ export function finishAi(durationMs, model) {
     const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model, timestamp: ts };
     activeView.stream.currentAiBubble = null;
     activeView.stream.aiText = '';
+    // B2: the segment closed — drop its identity so the next segment's first
+    // frame is judged against an empty (not a stale) key.
+    activeView.stream.aiSeg = '';
+    bubble._nfSeg = null;
     return result;
   }
   return null;
@@ -567,7 +662,7 @@ export function appendAgentText(agentId, text) {
       row.appendChild(badge);
     }
     row.appendChild(bubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
     view.stream.agentBubbles[agentId] = { bubble, text: '', row, badge };
   }
   const a = view.stream.agentBubbles[agentId];
@@ -600,14 +695,26 @@ export function finishAgent(agentId) {
 
 // ---------- Tool rendering ----------
 
+// Pop artifact faces (pop-upgrade batch 2026-10-03): the payload parser, the
+// media-stack / file-card renderer and the Canvas-open dispatch live in ONE
+// module (popArtifacts.js) so live rendering and history replay share the
+// payload contract. chat.js re-exports the two names chatSearch.js has always
+// imported from here — re-export, not redefinition (single source in
+// popArtifacts.js).
+export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow } from './popArtifacts.js';
+
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
   const chat = activeView.dom.chat;
   // stream-ux §二.1.1: the tool FINISHED — the badge swaps the spinner for the
   // drawn check (cross + error ink when the tool failed) in place, no roll. The
   // module's own key check makes a stale/other-turn call a no-op.
-  if (isError) failWorklineItem(activeView, worklineLabel(label));
-  else doneWorklineItem(activeView, worklineLabel(label));
+  // ③ 完成翻转（toolline-detail 批）：行文本 = 单行结果摘要（工具名 — 摘要），
+  // 不再停留运行中 label；运行细节 span 随项重建自然卸下。
+  const resultText = toolLineResultText(label, summary);
+  if (isError) failWorklineItem(activeView, worklineLabel(label), resultText);
+  else doneWorklineItem(activeView, worklineLabel(label), resultText);
 
   // Cancel any pending streaming rAF so it doesn't overwrite the final render
   cancelToolStreamRAF();
@@ -647,14 +754,21 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     card.innerHTML = '';
   } else {
     row = document.createElement('div');
-    row.className = 'row tool';
+    // Pre-tucked (stream-ux redesign 2026-10-03): the card is the expand face;
+    // the turn line owns the live spinner. Reused pending rows were born
+    // tucked by renderToolPending.
+    row.className = 'row tool nf-tucked';
     card = document.createElement('div');
     card.className = 'tool-card';
     row.appendChild(card);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
   }
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
+  // UI-B: stamp the owning round on a freshly built row (a reused pending row
+  // already carries its start round from renderToolPending — the completion
+  // must not re-attribute it to a later round).
+  if (!pending) stampRound(activeView, row);
   // beta.56 ruling: tool-class bubbles carry NO footer — footers are
   // message-class only (user / assistant final text / ask / agent / skill).
   // Tool rows render header + body only. (2026-09-06 二次裁定: thinking 也
@@ -667,7 +781,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // This unifies Card display with other tools — spinner → checkmark transition,
   // consistent tool card header — while the rendered HTML card appears separately.
   if (content && typeof content === 'string' && /^___\w+_HTML___/.test(content)) {
-    const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const cLocalLabel = localizeToolLabel(label);
     const cLocalSummary = localizeToolSummary(summary, label);
@@ -692,14 +806,46 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // of the tool_result content ("Message sent...").
   const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
 
-  // Pop tool: rainbow filename inline in the label + clickable to re-open.
-  if (applyPopCard(card, label, summary, inputJson, isError)) {
+  // Pop artifact payload (pop-upgrade batch): the tool row renders as a plain
+  // process face; the media stack / file cards render in a SEPARATE row below
+  // (`.row.pop-artifact` — never a `.row.tool`, so turnGroup never tucks it and
+  // the deliverable survives the ✻ collapse). The payload rides `content` into
+  // history, so replay re-renders the same faces via persistence.js.
+  //
+  // #491 (author 2026-10-05 「按时间顺序显示…像微信一样」): the artifact row is
+  // inserted IN PLACE, right where its payload arrived (`row.after`). The UI-D
+  // re-anchor that used to run here on every tool render is removed — rows
+  // appended later in the turn keep their natural order behind it.
+  if (isPopPayload(content)) {
+    renderPopToolRow(card, label, summary, isError);
+    const popPayload = parsePopPayload(content);
+    if (popPayload) {
+      const artifactRow = buildPopArtifactRow(popPayload);
+      if (artifactRow) {
+        row.after(artifactRow);
+        smartScroll();
+      }
+    } else {
+      // Truncated payload (should not happen — SessionStore stores Pop payloads
+      // whole) → the safe placeholder, never the raw sentinel text.
+      const popBody = document.createElement('div');
+      popBody.className = 'body open';
+      popBody.textContent = t('chat.toolCardUnavailable');
+      card.querySelector('.content')?.appendChild(popBody);
+      attachToolClick(card);
+    }
+    return { type: 'tool', label, summary, content, isError, input: inputJson };
+  }
+
+  // Legacy Pop rows (pre-batch histories): rainbow filename inline in the
+  // label + clickable to re-open. New Pop calls always carry the payload above.
+  if (applyLegacyPopCard(card, label, summary, inputJson, isError)) {
     smartScroll();
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
   }
 
   if (_toolName === 'Mail' && inputJson) {
-    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const localLabel = localizeToolLabel(label);
     const localSummary = localizeToolSummary(summary, label);
@@ -721,7 +867,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
 
   // Default rendering for all other tools
-  const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+  const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   //
   // ── cardguard negative filter (author ruling 2026-09-17 · #687①) ──────────
@@ -824,6 +970,14 @@ export function renderToolPending(label, sessionId) {
     }
   }
 
+  // Helper: after the workline item is (re)built or refreshed for this label,
+  // replay the finished argument stream into the typed detail line (② toolline-
+  // detail batch). Same-key refresh keeps the item (and its detail span) alive;
+  // a rebuilt item needs the span recreated — worklineToolDetail handles both.
+  function refreshWorklineDetail() {
+    reapplyWorklineDetailFromArgs(label);
+  }
+
   // If a pending card already exists for this session, update it in-place
   // to avoid spinner flicker between toolCallDetected → toolStart events.
   // Defense: if the DOM node was removed (e.g. historyPage cleared innerHTML
@@ -838,6 +992,7 @@ export function renderToolPending(label, sessionId) {
     // for the same tool).
     if (!existingLabel || existingLabel === label) {
       updateLabel(existing);
+      refreshWorklineDetail();
       return;
     }
     // Label mismatch — the slot holds a different tool's card.
@@ -848,6 +1003,7 @@ export function renderToolPending(label, sessionId) {
         const matchedRow = c.closest('.row');
         state.sessionToolCards[sid] = matchedRow;
         updateLabel(matchedRow);
+        refreshWorklineDetail();
         return;
       }
     }
@@ -861,13 +1017,18 @@ export function renderToolPending(label, sessionId) {
         const matchedRow = c.closest('.row');
         state.sessionToolCards[sid] = matchedRow;
         updateLabel(matchedRow);
+        refreshWorklineDetail();
         return;
       }
     }
   }
 
   const row = document.createElement('div');
-  row.className = 'row tool';
+  row.className = 'row tool nf-tucked'; // expand face — the turn line owns the run (2026-10-03)
+  // UI-B: the row carries the round it belongs to (a tool that starts in one
+  // round and completes in the next keeps its START round, so the split never
+  // re-attributes it). Read by the badge-split spec through dataset.nfRound.
+  stampRound(activeView, row);
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
   card.className = 'tool-card tool-card--pending';
@@ -878,9 +1039,10 @@ export function renderToolPending(label, sessionId) {
   card.innerHTML = '<span class="icon"><span class="spinner"></span></span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div></div>';
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   state.sessionToolCards[sid] = row;
+  refreshWorklineDetail();
 }
 
 // ---------- Tool argument streaming ----------
@@ -894,7 +1056,10 @@ const TOOL_PRIMARY_FIELDS = {
   'Edit': 'new_string',
   'Bash': 'command',
   'Card': 'html',
-  'Delegate': 'prompt',
+  // Delegate（toolline-detail 批 2026-10-06 修正）：入参 schema 的 brief 字段是
+  // `task`（DelegateTool.scala :72 required "task"；旧值 'prompt' 在帧参数里
+  // 永不出现 ⇒ 参数流式面从末对 Delegate 出过内容）。
+  'Delegate': 'task',
   'Read': 'file_path',
   'Grep': 'pattern',
   'Glob': 'pattern',
@@ -905,24 +1070,90 @@ const TOOL_PRIMARY_FIELDS = {
   'TaskUpdate': 'description',
   'Mail': 'message',
   'MailAgent': 'message',
+  // zcode-484 (PLAN §3.3-4, OD-5): Pop was the one artifact-producing tool with
+  // no primary-field entry, so its running badge line showed only the tool name
+  // while the args streamed. `filePath` is the field that names the deliverable;
+  // it arrives either as one path or as an ARRAY (the usual shape for a batch),
+  // and the reader below handles BOTH: on an array it shows the first path plus
+  // " +N" for the further complete ones — the plan's "first path (+N)" progress.
+  'Pop': 'filePath',
+  // AskUserQuestion（分层展示批追加令 2026-10-06，作者裁决点名「AskUser 输入问题
+  // 的时候」应流式）：卡体流式面与细节行（TOOL_LINE_DETAIL 同批补行）同源一致
+  // ——入参字段 = question（AskUserQuestionTool.scala :96/:157，帧名
+  // "AskUserQuestion"）。
+  'AskUserQuestion': 'question',
 };
 
+// ---------- ② 运行中类型化细节行（toolline-detail 批 2026-10-06 作者 16:51 令）----------
+//
+// RUNNING detail-line config — ROLLABLE：一种工具类型一行，新工具类型接入 =
+// 加一行，零逻辑改动。每行把「运行中的工具」映射到它该在 turn 行细节位流式
+// 展示的入参字段。数据源 = toolArgDelta 的参数 JSON 增量累积
+// （view.stream.toolStreamText——main.js 在每个 toolCallDetected 复位，toolStart
+// 不复位 ⇒ 执行开始时完整参数已在客户端；证据链 AgentStreamPipelines.scala:228
+// ToolArgDelta → ws.js STREAM_MSG_TYPES → main.js onMessage('toolArgDelta')）。
+//
+//   delegate = 任务 brief 首行（field `task`，DelegateTool schema required）
+//   bash     = 正在执行的具体命令（field `command`）
+//   读/写    = 路径（file_path）
+//   搜索     = 查询词（pattern / query）
+//   web      = URL（url）
+//   其余     = 默认分支：按 DEFAULT_DETAIL_FIELDS 顺序取第一个出现的短字段
+//              （工具名本体已在 label 位，缺字段时不加细节行）。
+//
+// 🔴 bash「输出尾行」滚动不在本表能力内：执行期引擎不下发任何输出事件
+// （唯一执行期帧 = 30s toolHeartbeat{label}，AgentSessionExecution.scala:2283，
+// 只喂活 busy timer）——补事件方案另文候示，🔴 本批禁动引擎面。
+const TOOL_LINE_DETAIL = [
+  { tools: ['Delegate', 'Subagent', 'SubTask'], field: 'task' },       // 任务 brief 首行
+  { tools: ['Bash'], field: 'command' },                               // 正在执行的具体命令
+  { tools: ['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'], field: 'file_path' }, // 路径
+  { tools: ['Grep', 'Glob'], field: 'pattern' },                       // 查询词
+  { tools: ['WebSearch'], field: 'query' },                            // 查询词
+  { tools: ['WebFetch', 'Curl'], field: 'url' },                       // URL
+  { tools: ['AskUserQuestion'], field: 'question' },                   // 问句（作者 10-06 裁决点名例——问句随 LLM 生成逐字上屏；分层展示批追加令）
+];
+// 默认分支的探测字段序（其余工具 = 工具名 + 一行上下文）。
+const TOOL_LINE_DETAIL_DEFAULT_FIELDS = ['command', 'file_path', 'path', 'url', 'pattern', 'query', 'task', 'to', 'id', 'name'];
+
+/** 细节行单行化：取首个非空行、封顶截断（… 尾）。流式期间值未完亦照常显示
+ *  （extractFieldValueFromPartialJson 对未闭合字符串返回已到部分——这正是
+ *  「流式」本体）。 */
+function toolLineDetailOneLine(value, cap = 200) {
+  const line = (String(value).split('\n').find(l => l.trim()) || '').trim();
+  return line.length > cap ? line.slice(0, cap - 1) + '…' : line;
+}
+
+/** 映射表解析：toolName → 应展示字段序（命中表项取其 field，否则默认序）。 */
+function toolLineDetailFields(toolName) {
+  const name = String(toolName || '').trim();
+  for (const entry of TOOL_LINE_DETAIL) {
+    if (entry.tools.indexOf(name) !== -1) return [entry.field];
+  }
+  return TOOL_LINE_DETAIL_DEFAULT_FIELDS;
+}
+
+/** 从（可能是部分）参数 JSON 提取细节行文本；无字段可示 → ''（不加细节行）。 */
+function toolLineDetailText(toolName, rawJson) {
+  if (!rawJson) return '';
+  for (const field of toolLineDetailFields(toolName)) {
+    const v = extractFieldValueFromPartialJson(rawJson, field);
+    if (v && v.value) {
+      const line = toolLineDetailOneLine(v.value);
+      if (line) return line;
+    }
+  }
+  return '';
+}
+
 /**
- * Best-effort extraction of a JSON string field value from partial JSON.
- * Returns { value, complete } or null if the field hasn't been started yet.
- * Handles JSON string escapes (\n, \t, \", \\, \uXXXX).
+ * Read one JSON string starting just AFTER its opening quote (the same best-
+ * effort reader the field extractor needs, lifted so the array form can reuse
+ * it per element). Handles the escapes \n \t \r \" \\ \/ \b \f \uXXXX.
+ * Returns { value, complete, end }; `end` is the index just past the closing
+ * quote when complete, or the end of the buffer while the string still streams.
  */
-function extractFieldValueFromPartialJson(partialJson, fieldName) {
-  const marker = '"' + fieldName + '"';
-  const markerIdx = partialJson.indexOf(marker);
-  if (markerIdx === -1) return null;
-
-  let idx = markerIdx + marker.length;
-  // Skip whitespace and colon
-  while (idx < partialJson.length && /[\s:]/.test(partialJson[idx])) idx++;
-  if (idx >= partialJson.length || partialJson[idx] !== '"') return null;
-  idx++; // skip opening quote
-
+function readJsonString(partialJson, idx) {
   let result = '';
   while (idx < partialJson.length) {
     const ch = partialJson[idx];
@@ -948,20 +1179,106 @@ function extractFieldValueFromPartialJson(partialJson, fieldName) {
       }
       idx += 2;
     } else if (ch === '"') {
-      // Closing quote — field is complete
-      return { value: result, complete: true };
+      // Closing quote — the string is complete
+      return { value: result, complete: true, end: idx + 1 };
     } else {
       result += ch;
       idx++;
     }
   }
   // Stream still open — return what we have so far
-  return { value: result, complete: false };
+  return { value: result, complete: false, end: partialJson.length };
+}
+
+/**
+ * The running PROGRESS reading of a still-streaming JSON ARRAY value: the first
+ * string element as the visible text, plus " +N" once N further elements are
+ * complete. This is what makes an array-form Pop (a batch — the plan's usual
+ * shape) show the same running row the single-string form shows.
+ *
+ * Returns null until the first element's opening quote is on the wire, so
+ * before any content arrives the array form behaves exactly like the string
+ * form (no body is built yet).
+ *
+ * A non-string element is not this reader's business: the tool layer refuses
+ * those by index with a readable error (PopTool.requestedPaths), and a partial
+ * stream cannot tell "rejected shape" from "still arriving" — so the reader
+ * keeps the progress it already has instead of guessing.
+ */
+function readJsonArrayProgress(partialJson, idx) {
+  while (idx < partialJson.length && /[\s,]/.test(partialJson[idx])) idx++;
+  if (idx >= partialJson.length || partialJson[idx] !== '"') return null;
+  const first = readJsonString(partialJson, idx + 1);
+
+  let extra = 0;
+  let closed = false;
+  let j = first.end;
+  while (j < partialJson.length) {
+    while (j < partialJson.length && /[\s,]/.test(partialJson[j])) j++;
+    if (j >= partialJson.length) break; // stream still open
+    if (partialJson[j] === ']') { closed = true; break; }
+    if (partialJson[j] !== '"') break; // non-string element — see the note above
+    const elem = readJsonString(partialJson, j + 1);
+    if (!elem.complete) break; // still arriving — not counted yet
+    extra++;
+    j = elem.end;
+  }
+
+  return {
+    value: extra > 0 ? first.value + ' +' + extra : first.value,
+    complete: closed,
+  };
+}
+
+/**
+ * Best-effort extraction of a JSON field value from partial JSON.
+ * Returns { value, complete } or null if the field hasn't been started yet.
+ * A string value is read verbatim; an ARRAY value reads its first string
+ * element and appends " +N" for the further complete ones (Pop's batch shape).
+ */
+function extractFieldValueFromPartialJson(partialJson, fieldName) {
+  const marker = '"' + fieldName + '"';
+  const markerIdx = partialJson.indexOf(marker);
+  if (markerIdx === -1) return null;
+
+  let idx = markerIdx + marker.length;
+  // Skip whitespace and colon
+  while (idx < partialJson.length && /[\s:]/.test(partialJson[idx])) idx++;
+  if (idx >= partialJson.length) return null;
+
+  // Array form — zcode-484 rework: the array is the plan's usual Pop shape, and
+  // the old single-quote-only guard made this whole branch dead (a `[` bailed
+  // out with null, so the running row built no body at all).
+  if (partialJson[idx] === '[') return readJsonArrayProgress(partialJson, idx + 1);
+
+  if (partialJson[idx] !== '"') return null;
+  const s = readJsonString(partialJson, idx + 1);
+  return { value: s.value, complete: s.complete };
 }
 
 // rAF-throttled rendering (same pattern as appendThinkingDelta)
 let _pendingToolStreamRAF = null;
 let _toolStreamRafTarget = null;
+
+/** ② 把当前累积参数流投到 turn 行细节位（toolline-detail 批）。
+ *  worklineToolDetail 内部做 kind 守卫（仅运行中工具项）与文本比对，重复调用
+ *  无副作用——参数流 rAF 帧与 toolStart 终值重放共用本入口。 */
+function setWorklineToolDetail(view, toolName, rawJson) {
+  const text = toolLineDetailText(toolName, rawJson);
+  if (text) worklineToolDetail(view || activeView, text);
+}
+
+/** toolStart 时终值重放：参数 JSON 在 toolCallDetected→toolStart 之间已流毕
+ *  （toolStart 不复位缓冲，main.js :931 只在下一个 toolCallDetected 复位），
+ *  但 label 刷新可能换新建项（key 变化路径）——用累积流把细节行补回当前项。
+ *  帧参数缺失（如历史重放/子代理腿无 toolArgDelta）时自然为空 → 不加行。 */
+function reapplyWorklineDetailFromArgs(rawLabel) {
+  const stream = activeView.stream;
+  if (!stream.toolStreamText) return;
+  const baseName = String(rawLabel || '').split('(')[0].split('\n')[0].trim();
+  if (baseName && stream.toolStreamToolName && baseName !== stream.toolStreamToolName) return;
+  setWorklineToolDetail(activeView, baseName || stream.toolStreamToolName, stream.toolStreamText);
+}
 
 export function appendToolStreamDelta(toolName, delta) {
   activeView.stream.toolStreamText += delta;
@@ -972,6 +1289,7 @@ export function appendToolStreamDelta(toolName, delta) {
   if (!pendingRow || !pendingRow.isConnected) return;
 
   _toolStreamRafTarget = {
+    view: activeView,
     row: pendingRow,
     chat: activeView.dom.chat,
     snapped: activeView.stream.scrollSnapped,
@@ -993,6 +1311,11 @@ export function appendToolStreamDelta(toolName, delta) {
         const extracted = extractFieldValueFromPartialJson(target.rawText, fieldName);
         if (extracted) displayContent = extracted.value;
       }
+      // ② 类型化细节行（toolline-detail 批）：参数增量 → turn 行细节位流式。
+      // 只做 textContent 替换（span 首次创建后跨帧复用，流式帧零节点重建——
+      // 与 ① spinner 元素复用同纪律）；无字段可示时不建行。视图取 delta 时
+      // 的归属视图（target.view），非刷帧时的 activeView——防中途切视图竞态。
+      setWorklineToolDetail(target.view, target.toolName, target.rawText);
       if (displayContent === null) return; // primary field not started yet
 
       // Find or create streaming body in the tool card
@@ -1082,9 +1405,10 @@ export function renderError(msg) {
   row.className = 'row error';
   const card = document.createElement('div');
   card.className = 'error-card';
-  card.textContent = msg;
+  // ui-status-redesign（S8 / 盘点 #30）：行首 circle-x 红图标 + 中性正文。
+  card.innerHTML = statusIcon('circle-x', 14, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
 }
 
@@ -1242,7 +1566,7 @@ export function renderStillProcessingNotice(sid, rung = 0) {
   };
   card.appendChild(interruptBtn);
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   // 取证面（A 开放项 3）：本类误报行原本不落任何记录 ⇒ 事后不可复查。落一条 system
   // 记录进本地会话缓存（backend 侧无对应帧，因此这是唯一可盘查的痕迹）。动态 import
@@ -1293,6 +1617,11 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   card.style.display = 'flex';
   card.style.alignItems = 'center';
   card.style.gap = '12px';
+  // ui-status-redesign（S8 同卡）：行首 circle-x 红图标，正文中性字。
+  const iconSpan = document.createElement('span');
+  iconSpan.setAttribute('aria-hidden', 'true');
+  iconSpan.innerHTML = statusIcon('circle-x', 14, 'st-err');
+  card.appendChild(iconSpan);
   const text = document.createElement('span');
   text.textContent = t(i18nKey);
   card.appendChild(text);
@@ -1308,7 +1637,7 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   };
   card.appendChild(btn);
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   // 取证面（A 开放项 3 · 原不落任何记录 ⇒ 误报事后不可复查；obsfix ② 起带 i18nKey）。
   import('./persistence.js')
@@ -1339,7 +1668,7 @@ export function renderSystemBubble(text) {
   card.className = 'notice-card notice-info';
   card.textContent = text;
   row.appendChild(card);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   // Persist to localStorage and backend (via recording ws send)
   import('./persistence.js').then(({ saveMsg }) => saveMsg({type: 'system', content: text}));
@@ -1384,7 +1713,7 @@ function appendCompactCard(view, state, label, startTs) {
   const chat = view?.dom?.chat;
   if (!chat) return null;
   const row = buildCompactCardRow(state, label, startTs);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   smartScroll();
   return row.querySelector('.compact-card');
 }
@@ -1890,7 +2219,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     let otherBtn = null;
     if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
-      otherBtn.className = 'option-btn';
+      // opt-other = askuser-hybrid 重皮的纯样式钩子（虚线自由入口形态；单选腿
+      // dashed / multi 腿保持勾选表格行，见 chat.css askuser-hybrid 段）。
+      otherBtn.className = 'option-btn opt-other';
       if (isMulti) {
         otherBtn.dataset.other = '1';
         otherBtn.innerHTML = '<span class="option-check"></span><span class="option-text">' + escapeHtml(t('chat.other')) + '</span>';
@@ -2055,7 +2386,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   }
 }
 
-// ---------- Workspace dir picker（ProjectCreate「选择工作区」卡） ----------
+// ---------- Workspace dir picker（Project「选择工作区」卡） ----------
 // 2026-09-06 作者拍板：复用应用内目录浏览器（workspacePicker.js，含面包屑导航 /
 // 上级 / 列表 / 新建文件夹 / 选中此目录），不再走系统目录对话框（macOS NSOpenPanel /
 // Windows JFileChooser）。openPicker 的 onPick/onCancel 直接驱动卡片 api 的
@@ -2101,7 +2432,181 @@ function probeCanvasFile(path) {
   });
 }
 
-export function renderAskUser(items, askSessionId, agentName, requestId, source) {
+// ---------- AskUser 附件行（顶层 `attachments` ⇒ 整次提问层，2026-10-02；askuser-attach-align 2026-10-07 重写判定面） ----------
+/** 折叠阈值：行数 > 3 ⇒ 折叠为「N 个附件」+ 展开（设计卡 §三 3.2）。
+ *  🔴 只是**展示**阈值，不是准入上限 —— 件数上限（9）由后端工具调用期拒绝，
+ *  前端不复判（禁第二把尺）。 */
+const ASK_ATTACHMENT_FOLD_AT = 3;
+
+/** 展示名 = 绝对路径最后一段（设计卡 §三 3.2「basename 展示规则」）：
+ *  🔴 严禁把整条绝对路径当可见标签（路径进 `title` 悬停提示即可）。 */
+function askAttachmentBasename(p) {
+  const parts = String(p).split('/');
+  return parts[parts.length - 1] || String(p);
+}
+
+/** 附件点击的 Canvas 打开腿 —— **与 Pop 文件卡同一条通路**（askuser-attach-align
+ *  2026-10-07 作者令「跟 Pop 保持一致」）：直接 `workspace-open-item` 交 Canvas
+ *  既有 `openWorkspaceItem`（去重腿）⇒ `pop.readFile` ⇒ viewer 注册表渲染。
+ *  🔴 刻意**不经** `previewLocalPath`：那道闸带着好友/设备面的
+ *  `EXCLUDED_ITEM_TYPES = {html}` 排除（对端**不受信内容**的 2026-09-15 取证裁词）；
+ *  AskUser 附件是**本机文件**、由用户本人点击，信任级与 Pop 文件卡同级 ⇒ 同通路
+ *  直开（禁把不受信面的排除误伤到本地面）。开法仍只有这一条（禁第二套开法）。
+ *  canvas 腿同件 `openAskCanvas` 的动态 import 形态（E8：失败不阻塞卡面）。 */
+function openAttachmentInCanvas(path, title) {
+  import('./canvas.js').then(({ openWorkspaceItem }) => {
+    openWorkspaceItem({
+      id: 'file:' + path,
+      title: title || String(path).split('/').pop() || 'file',
+      itemType: '',
+      content: '',
+      absPath: path,
+      path,
+      pinned: false,
+    }).catch(() => {});
+  }).catch(() => {});
+}
+
+/** 未注册类型的**下载兜底**（askuser-attach-align 2026-10-07 作者令）：与设备面
+ *  下载键同一字节通路 —— `nfTicket.ticketUrl`（per-path 短票）⇒ `/api/nf-file`
+ *  整件取回 ⇒ blob 交给浏览器下载管理器。本函数**不新开取数面**（同通路纪律）；
+ *  返回 false（铸票/取回失败）时调用方就地降级为静态行（可见降级，禁静默）。 */
+async function downloadAttachmentFile(path, base) {
+  try {
+    const { ticketUrl } = await import('./nfTicket.js');
+    const resp = await fetch(await ticketUrl(path));
+    if (!resp.ok) return false;
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = base || 'attachment';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    return true;
+  } catch { return false; }
+}
+
+/** 附件行的**单一渲染位**（整次提问层；`renderAskUser` 唯一调用方）。
+ *
+ *  §三 落点 = 卡内 `.option-q-wrapper` 之内、`.option-btn-row` 之前：本函数自建一个
+ *  承载块并复用**既有类名** `.option-q-wrapper`（全仓无该类的 CSS 规则，纯 JS 钩子 ⇒
+ *  零新增 CSS），插在 `box.children` 里的 `.option-btn-row` 之前。该块**不**登记进
+ *  `createDepVisibility`（那是逐问题的 dependsOn 控件）⇒ 末条问题被条件隐藏时附件行
+ *  不随之消失。挂载序号在**全部问题 wrapper 之后** ⇒ `markAnsweredPick` 的
+ *  `wrappers[qi]`（按问题下标取）不受影响。
+ *
+ *  行形态（askuser-attach-align 2026-10-07 起；单一附件入口 = 本行的回形针）：
+ *   · viewer 注册表认领的类型（md/pdf/html/office/图片/视频…，判据 =
+ *     `itemTypeForFileName` 读注册表自身，**含 html** —— 本地面信任级 = Pop 同级，
+ *     见 `openAttachmentInCanvas` 头注）⇒ 真按钮，点击走 Canvas 打开腿。
+ *   · 未注册类型 ⇒ 真按钮，点击走**下载兜底**（设备面同通路；不再渲染死静态行
+ *     ——「未注册类型走下载兜底＝与 Pop/Canvas 同判」，作者令原文）。
+ *   · 探针判定缺失/不可读（`probeCanvasFile` 败 / 下载腿败）⇒ 该行**就地降级**为
+ *     静态行 + `attachmentUnavailable` 标注（🔴 只降这一行：其余行与整卡渲染
+ *     一点不改）。🔴 静态行零按钮语义（不出 `<button>` / `[role=button]`）。
+ *  文案一律取自 `t()`（🔴 禁硬编码中文串入 JS）。 */
+function renderAskAttachments(box, attachments) {
+  const atts = Array.isArray(attachments)
+    ? attachments.filter(p => typeof p === 'string' && p.length > 0)
+    : [];
+  if (!box || atts.length === 0) return;
+  const btnRow = box.querySelector('.option-btn-row');
+  if (!btnRow) return; // 形态兜底：无按钮行就无插位（改前形态逐字保留）
+
+  const wrap = document.createElement('div');
+  // 既有类名（零新增 CSS）+ 本批专属钩子类（纯 JS 选择器，无 CSS 规则 ⇒ 不触单源闸）
+  wrap.className = 'option-q-wrapper ask-attachments-wrap';
+
+  const head = document.createElement('div');
+  head.className = 'ask-attachments-head';
+  head.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: 2px 0 4px;';
+  // 标题词位 = 独立 span（折叠控件是同级 `<button>`）⇒ 文案读数不被控件文本污染。
+  const label = document.createElement('span');
+  label.className = 'ask-attachments-head-label';
+  head.appendChild(label);
+
+  const list = document.createElement('div');
+  list.className = 'ask-attachments-list';
+  list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; align-items: flex-start;';
+
+  /** 静态（不可点）行：探针失败 / 下载腿失败共用同一形态 —— 🔴 零按钮语义。 */
+  function makeStaticRow(path, unavailable) {
+    const base = askAttachmentBasename(path);
+    const row = document.createElement('span');
+    row.className = 'ask-attachment-static';
+    row.title = path; // 悬停给全路径（可见标签只给 basename）
+    row.style.cssText = 'font-size: 12px; color: var(--color-text-muted, #888); opacity: 0.75;';
+    row.textContent = unavailable ? base + ' · ' + t('askUser.attachmentUnavailable') : base;
+    return row;
+  }
+
+  atts.forEach(path => {
+    const base = askAttachmentBasename(path);
+    // 类型认领判据 = viewer 注册表自身（禁第二张扩展名表）。认领 ⇒ Canvas 渲染；
+    // 未认领 ⇒ 下载兜底；两者都是**真按钮**（本地面无「必死的假按钮」——下载腿
+    // 失败才有降级，且降级可见）。
+    const claimed = !!itemTypeForFileName(path);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'glass-control ob-compare-btn';
+    btn.title = path;
+    btn.setAttribute('aria-label', claimed
+      ? t('askUser.attachmentOpenCanvas', { name: base })
+      : t('askUser.attachmentDownload', { name: base }));
+    btn.innerHTML = '<i data-lucide="paperclip"></i><span>' + escapeHtml(base) + '</span>';
+    btn.onclick = () => {
+      if (claimed) openAttachmentInCanvas(path, base);
+      else downloadAttachmentFile(path, base).then(ok => { if (!ok) degradeRow(btn, path); });
+    };
+    list.appendChild(btn);
+    // 可达性探针（复用 canvas 腿同一件：`pop.readFile` + 1500ms 超时形态）：
+    // 🔴 失败只降级**本行**，整卡渲染一点不改。
+    probeCanvasFile(path).then(ok => { if (!ok) degradeRow(btn, path); });
+  });
+
+  /** 就地降级：可点行 → 不可点静态行（探针失败 / 下载腿失败共用）。
+   *  卡已被替换或移除（`isConnected === false`）时静默跳过 —— 降级只服务在卡行。 */
+  function degradeRow(btn, path) {
+    if (!btn.isConnected) return;
+    btn.replaceWith(makeStaticRow(path, true));
+  }
+
+  if (atts.length > ASK_ATTACHMENT_FOLD_AT) {
+    // 折叠态：标题位显「N 个附件」；展开后显标题词。切换件是真控件（展开/收起确实可做）。
+    let expanded = false;
+    label.textContent = t('askUser.attachmentsCount', { n: String(atts.length) });
+    list.style.display = 'none';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'glass-control';
+    toggle.style.cssText = 'font-size: 11px; padding: 1px 8px; margin-left: 6px;';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = t('ref.expand');
+    toggle.onclick = () => {
+      expanded = !expanded;
+      list.style.display = expanded ? '' : 'none';
+      label.textContent = expanded
+        ? t('askUser.attachmentsTitle')
+        : t('askUser.attachmentsCount', { n: String(atts.length) });
+      toggle.textContent = expanded ? t('ref.collapse') : t('ref.expand');
+      toggle.setAttribute('aria-expanded', String(expanded));
+    };
+    head.appendChild(toggle);
+  } else {
+    label.textContent = t('askUser.attachmentsTitle');
+  }
+
+  wrap.appendChild(head);
+  wrap.appendChild(list);
+  btnRow.before(wrap); // 卡内、`.option-btn-row` 之前
+  createIconsIn(wrap);
+}
+
+export function renderAskUser(items, askSessionId, agentName, requestId, source, attachments) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
@@ -2111,22 +2616,32 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source)
   if (sid && state.sessionToolCards[sid]) { state.sessionToolCards[sid].remove(); delete state.sessionToolCards[sid]; }
   const row = document.createElement('div');
   row.className = 'row ai';
+  // Ghost seat (askuser-hybrid 重皮 2026-10-06): this bubble's only payload is
+  // the AskUser card (+ source badge / optional canvas button) — the bubble
+  // de-faces so the card floats directly on the paper. Content-bearing bubbles
+  // (finishAi re-attaches a preserved box under streamed markdown) keep their
+  // face — the marker is deliberately an explicit class, never a blanket :has().
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai';
+  bubble.className = 'bubble ai ob-ghost-seat';
   row.appendChild(bubble);
-  // Show source badge if not Nebula. D6 批 F1 (G9): project context (project
-  // node / dispatcher ask) renders "project · nodeName" so concurrent asks
-  // from several nodes stay attributable; no project field → bare agentName
-  // (Nebula self-ask / REPL — pre-F1 behavior, no regression).
+  // Source badge. D6 批 F1 (G9): project context (project node / dispatcher ask)
+  // renders "project · nodeName" so concurrent asks from several nodes stay
+  // attributable; no project field → bare agentName (root self-ask / REPL).
   const badgeLabel = askSourceLabel({ project: source && source.project, nodeName: source && source.nodeName, agentName });
-  if (badgeLabel && badgeLabel !== 'Nebula') {
+  // N4 (unnamed-state batch 2026-10-06): the self-ask badge mounts only when the
+  // root is NAMED — single-point `isRootNamed()` (rootName.js). The retired
+  // `badgeLabel !== 'Nebula'` literal was a judgement-face use of the mechanism
+  // name (the exact line rootName.js's header draws): it silently dual-tracked
+  // the unnamed state AND mis-hid the badge when a user literally named the
+  // agent "Nebula". Project asks keep their badge regardless of named state.
+  if (badgeLabel && ((source && source.project) || isRootNamed())) {
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
     badge.textContent = badgeLabel;
     badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
     bubble.appendChild(badge);
   }
-  chat.appendChild(row);
+  appendChatRow(chat, row);
   // canvas field (direction C §2.1): probe readability, then offer a glass
   // "view comparison" button beside the question and auto-open it in Canvas.
   // E8: a missing/broken canvas file does not render the button and does not
@@ -2171,14 +2686,22 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source)
       broadcastAskState(targetSid, requestId);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, targetSid, requestId);
+    // 附件行（顶层 `attachments`，整次提问层）：插位 = 卡内 `.option-btn-row` 之前，
+    // 仍在「整次提问」语义层。🔴 不新增前端模块 / 不新增 CSS；`.`option-q` 与其后
+    // 的 options 区（`showOptions` 内层）原样不动 ⇒ dirPicker 路径
+    // (ProjectTool.scala，原 ProjectCreateTool.scala:425) 不受影响、免回归。
+    // showOptions 同步完成 `container.appendChild(box)` ⇒ 此处 box 已在 DOM 内。
+    renderAskAttachments(bubble.querySelector('.option-box'), attachments);
   } catch (e) {
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');
   }
   // Persisted entry carries the source-label fields (D6 批 F1) so the badge
-  // survives localStorage restore / interactive re-render (main.js:1684).
+  // survives localStorage restore / interactive re-render (main.js:1684), plus
+  // the top-level attachment list (本批) so a replayed/re-rendered card keeps it.
   return {
     type: 'askUser', items, requestId,
+    ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
     ...(source && source.project ? { project: source.project, nodeName: source.nodeName } : {})
   };
 }
@@ -2285,12 +2808,18 @@ export function closeAskUserCard(sessionId, requestId, note) {
  *  visible, no answer line. `null` (案 A①) = 历史无作答记录 ⇒ 不补答案行，改挂
  *  `.option-answer-pending` 显式待定标注（禁把「无记录」画成「已作答」）。
  *  requestId: 案 B 起随 askUser 行落盘的提问 id（旧行缺席 ⇒ undefined）。
+ *  attachments: askUser 历史恢复批（2026-10-02，chain-askuser-histattach）——提问
+ *  行随行落盘的附件引用列表（与 live 腿 `renderAskUser` 同构的顶层 `attachments`）。
+ *  缺席 / 空列表 ⇒ 本函数与改前**逐字节同形**（`renderAskAttachments` 自行早退）。
  *  🔴 落「无作答记录」的方向 = 「未作答」而非「已作答」：宁可让一张其实已答过的卡
  *  显示待定（重放腿/作答链会纠正），也不许让一张真 pending 卡被画成已答（那正是
  *  重放腿去重判据被击穿、双开首卡恒死的成因）。 */
-export function renderAskUserHistory(bubble, items, answerText, requestId) {
+export function renderAskUserHistory(bubble, items, answerText, requestId, attachments) {
   if (!Array.isArray(items) || items.length === 0) return;
   try {
+    // Ghost seat (askuser-hybrid 重皮): history-replay twin of renderAskUser —
+    // the bubble is this card's carrier, de-face it the same way.
+    bubble.classList.add('ob-ghost-seat');
     // 案 B：持久化的 requestId 透传进 showOptions ⇒ 历史恢复的卡也带
     // `data-request-id`（可 id 寻址：重放腿按 id 替换、askUserClosed 关卡可达）。
     // 旧 .ui.json 行无该键 ⇒ undefined ⇒ 卡不带属性（改前形态，逐字不变）。
@@ -2302,6 +2831,11 @@ export function renderAskUserHistory(bubble, items, answerText, requestId) {
   }
   const box = bubble.querySelector('.option-box');
   if (!box) return;
+  // 附件行（askUser 历史恢复批）：与 live 腿（`renderAskUser` 内同一句，单点）同款
+  // 调用 —— 🔴 经 `.option-box` 定位、插位由 `renderAskAttachments` 自身决定
+  // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
+  // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
+  renderAskAttachments(box, attachments);
   // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
   // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）
   // 不受影响。
@@ -2394,8 +2928,10 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
+  // Ghost seat (askuser-hybrid 重皮): the permission card is an option-box
+  // carrier (badge/banner + box only) — the bubble de-faces, same as renderAskUser.
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai';
+  bubble.className = 'bubble ai ob-ghost-seat';
 
   // Danger level decorations
   const level = dangerLevel || 0;
@@ -2411,10 +2947,13 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     else if (input.url) detail = input.url;
   } catch (e) {}
 
-  // Danger icons (shared SVG shapes, no text — text comes from i18n)
-  const warningIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
-  const dangerIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
-  const criticalIcon = dangerIcon; // same icon, text differentiates
+  // Danger icons (shared SVG shapes, no text — text comes from i18n).
+  // ui-status-redesign（S14 / 盘点 #51）：图标 = 语义档唯一载体（currentColor，
+  // 色由 .st-warn/.st-err token 档给出——原 stroke="var(--…)" 写法在 presentation
+  // attribute 里不解析，等于从未生效，本批一并修正）；横幅正文转中性字。
+  const warningIcon = '<svg class="st-ic st-warn" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  const dangerIcon = '<svg class="st-ic st-err" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+  const criticalIcon = '<svg class="st-ic st-err" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z"/></svg>';
 
   const dangerConfigs = {
     1: { cls: 'perm-warning', icon: warningIcon, i18nKey: 'chat.permLevel.warning' },
@@ -2445,7 +2984,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   }
 
   row.appendChild(bubble);
-  chat.appendChild(row);
+  appendChatRow(chat, row);
 
   const targetSid = permSessionId || activeView.sessionId;
 
@@ -2619,7 +3158,7 @@ export function appendAskAnswer(delta) {
     view.stream.currentAskBubble.appendChild(label);
     view.stream.currentAskBubble.appendChild(content);
     row.appendChild(view.stream.currentAskBubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
   }
   // rAF-throttled render (same scheduler as appendAiText)
   const bubble = view.stream.currentAskBubble;
@@ -2719,14 +3258,25 @@ function imgKeepFor(bubble) {
  *  - 首次出现的图才真正拿到 src 去加载，失败时挂 `.nf-img-failed`（稳定失败占位，
  *    CSS 在 chat.css）——**不重试**（🔴 禁无限重试）。
  *
+ * 修法 1（渲染路径优化，2026-09-30）：流式帧**不再**对整段累积文本做全量
+ * `renderMarkdownWithMath` —— 那是 O(n²) 自旋（诊断 chain-fe-perf：rAF 回调内整段
+ * 重解析，单帧成本随 streak 变长而超过帧预算 ⇒ 100% 单核）。改为**只重画变化尾段**：
+ * 文本按「安全块边界」切成**已闭合块**与**未闭合尾块**，已闭合块的 HTML 逐块缓存、
+ * 每帧复用，只有尾块重解析。安全边界判定见 streamSplitPoint（保守 —— 拿不准就不用，
+ * 退回全量路径），因此结果与全量路径**逐字节等价**（判据 1/2 的 oracle）。
+ *
  * @param {HTMLElement} contentEl 流式渲染目标（.thinking-content）
  * @param {string} text 累积文本
  * @param {boolean} parseVoice renderMarkdownWithMath 的 parseVoice
  * @param {Map<string, HTMLImageElement[]>} keep 本次气泡的图片节点保管表
  * @param {boolean} [useCache] 传给 renderMarkdownWithMath 的 cache（流式帧传 false —
- *   逐帧快照不进 LRU；收尾帧传 true — 稳定文本照旧入缓存）
+ *   逐帧快照不进 LRU；收尾帧传 true — 稳定文本照旧入缓存，且**走全量路径**以
+ *   保证终态 DOM 与全量重渲染逐字节相等）
+ * @param {{round:number,block:number}|null} [mark] B2 段标识。同一 round 内 block
+ *   严格递增 ⇒ 累积文本是同段续写（缓存有效）；round 变 / block 不增 ⇒ 段边界
+ *   （丢弃块缓存走诚实的全量渲染）。缺省 null ⇒ 与 B1 逐字节同行为。
  */
-function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
+function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache, mark) {
   keep.clear();
   contentEl.querySelectorAll('img').forEach((img) => {
     const key = img.getAttribute('src');
@@ -2734,9 +3284,53 @@ function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
     const queue = keep.get(key);
     if (queue) queue.push(img); else keep.set(key, [img]);
   });
-  contentEl.innerHTML = renderMarkdownWithMath(text, parseVoice, { cache: useCache === true })
-    .replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
-  contentEl.querySelectorAll('img[data-nf-keep-src]').forEach((fresh) => {
+  const plan = streamRenderPlan(contentEl, text, parseVoice, useCache === true, mark);
+  if (plan.mode === 'full') {
+    contentEl.innerHTML = plan.html.replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
+    adoptFreshImgs(contentEl, keep);
+    return;
+  }
+  // Incremental write: the closed chunks are appended ONCE (their nodes are
+  // never rewritten), and only the tail's nodes are swapped. Swapping at
+  // `st.tailIndex` keeps the concatenated innerHTML identical to the previous
+  // whole-subtree assignment, so the DOM stays byte-equal to the oracle.
+  const st = plan.st;
+  const old = Array.prototype.slice.call(contentEl.childNodes, st.tailIndex);
+  if (plan.append.length) {
+    const tpl = document.createElement('div');
+    tpl.innerHTML = plan.append.join('').replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
+    const frag = document.createDocumentFragment();
+    let added = 0;
+    while (tpl.firstChild) { frag.appendChild(tpl.firstChild); added++; }
+    contentEl.insertBefore(frag, old.length ? old[0] : null);
+    // count the nodes BEFORE insertBefore: the insert MOVES them out of the
+    // fragment, so frag.childNodes is empty afterwards (reading it there would
+    // leave tailIndex at 0 and wipe the whole tree on the next frame).
+    st.tailIndex += added;
+  }
+  for (let i = 0; i < old.length; i++) old[i].remove();
+  // Build the new content off-DOM, then hand its nodes over in one insert: the
+  // tail parse happens without touching the live tree, so the browser lays out
+  // at most once for the tail — the same repair cost as the previous assignment,
+  // minus the rebuild of every already-closed block above it.
+  const holder = document.createElement('div');
+  holder.innerHTML = plan.tail.replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
+  for (let n = holder.firstChild; n; n = holder.firstChild) contentEl.appendChild(n);
+  adoptFreshImgs(contentEl, keep);
+}
+
+/**
+ * Re-attach the previous frame's live <img> nodes to the freshly rendered ones
+ * (2026-09-15 件①, unchanged semantics): a fresh <img> carries its src in
+ * `data-nf-keep-src` so it does not fire a load of its own; the node kept from
+ * the previous frame is put back in its place by src, so the decoded bitmap and
+ * the load state survive across frames (no flicker, no re-fetch). Only a
+ * genuinely new image gets its `src` and its one-shot error handler.
+ * @param {HTMLElement} root
+ * @param {Map<string, HTMLImageElement[]>} keep
+ */
+function adoptFreshImgs(root, keep) {
+  root.querySelectorAll('img[data-nf-keep-src]').forEach((fresh) => {
     const key = fresh.getAttribute('data-nf-keep-src');
     fresh.removeAttribute('data-nf-keep-src');
     const queue = keep.get(key);
@@ -2750,9 +3344,177 @@ function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
   });
 }
 
-export function appendThinkingDelta(delta) {
+// ── 修法 1：增量流式渲染状态 ──────────────────────────────────────────
+// 每个流式容器一份状态：已闭合块（文本长度 + 其 HTML）与已渲染前缀长度。键为容器
+// 元素（WeakMap ⇒ 随气泡回收，无跨气泡 / 跨会话泄漏）。
+const _streamMdState = new WeakMap();
+
+// 链接引用定义是**文档级**的：[a]: /x 出现在前面而 [y][a] 出现在后面时，前缀/尾块
+// 分开解析会得到与整段解析不同的结果。检测到任一引用定义 ⇒ 本段文本退回全量路径。
+const RE_REF_DEF = /^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*\S/m;
+// 行首「块级构造」判据：列表项 / 引用 / 围栏 / 表格行 / 缩进代码。安全边界两侧都不
+// 得是这些（宽松列表、跨空行引用会在空行处继续，分开解析会改变结构）。
+const RE_BLOCK_OPEN = /^[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|>|```|~~~|\||(?:[ \t]{4,}\S))/;
+
+/** Last non-blank line of `s` (trimmed), or '' when there is none. */
+function lastNonBlankLine(s) {
+  const lines = s.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim() !== '') return lines[i];
+  return '';
+}
+
+/** First non-blank line of `s` (trimmed), or '' when there is none. */
+function firstNonBlankLine(s) {
+  for (const line of s.split('\n')) if (line.trim() !== '') return line;
+  return '';
+}
+
+/** True when `s`'s math delimiters are balanced (no dangle across a split). */
+function mathBalanced(s) {
+  const noCode = s.split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g)
+    .map((seg, i) => (i % 2 === 1 ? '' : seg)).join('');
+  if (noCode.includes('$$')) return false;
+  if ((noCode.match(/\\\(/g) || []).length !== (noCode.match(/\\\)/g) || []).length) return false;
+  if ((noCode.match(/\\\[/g) || []).length !== (noCode.match(/\\\]/g) || []).length) return false;
+  if ((noCode.match(/(^|[^\\$])\$/g) || []).length % 2 !== 0) return false;
+  return true;
+}
+
+/**
+ * Offset just past the LAST blank-line boundary in `text` that is provably safe
+ * to split at, or -1 when none qualifies. Conservative by design: any ambiguity
+ * (list/quote/fence/table/code adjacency, unclosed math, reference definitions)
+ * disqualifies the boundary, and a disqualified split means the caller falls
+ * back to the full-render path — never a guess.
+ */
+function streamSplitPoint(text) {
+  if (text.length < 2) return -1;
+  if (RE_REF_DEF.test(text)) return -1;      // document-level refs ⇒ never split
+  let best = -1;
+  let idx = 0;
+  while (true) {
+    const b = text.indexOf('\n\n', idx);
+    if (b < 0) break;
+    const p = b + 2;
+    const before = text.slice(0, p);
+    const after = firstNonBlankLine(text.slice(p));
+    const prev = lastNonBlankLine(text.slice(0, p));
+    if (
+      after !== '' &&
+      !RE_BLOCK_OPEN.test(after) &&
+      !RE_BLOCK_OPEN.test(prev) &&
+      mathBalanced(before) &&
+      !hasOpenFence(before)
+    ) {
+      best = p;
+    }
+    idx = p;
+  }
+  return best;
+}
+
+/** True when `s` contains an odd number of fence-opening lines (unclosed fence). */
+function hasOpenFence(s) {
+  let n = 0;
+  for (const line of s.split('\n')) if (/^\s{0,3}(?:```|~~~)/.test(line)) n++;
+  return n % 2 === 1;
+}
+
+/**
+ * Plan for one stream frame. Same decision tree as before, but expressed as a
+ * *write plan* so the caller can touch only the DOM that actually changed:
+ *   { mode: 'full', html }                       — replace the whole subtree
+ *   { mode: 'incr', append: [html…], tail, st }  — append new closed chunks,
+ *                                                  re-render only the open tail
+ *
+ * Why the DOM has to be incremental too (2026-10-01, 判据 3): the old path
+ * assigned `contentEl.innerHTML` every frame, which destroys and rebuilds the
+ * whole subtree — Layout + RecalcStyle dominated the frame cost (measured
+ * 21.4 s / 7.3 s of 57 s CPU over a 426-frame stream) and did NOT shrink when
+ * only the parse was cached. Chunk HTML is therefore appended ONCE and never
+ * rewritten; only the tail's nodes are swapped (they start at `st.tailIndex`).
+ * The resulting innerHTML is byte-identical to the concatenation the previous
+ * implementation produced, so 判据 1/2 equivalence is preserved.
+ * @param {HTMLElement} contentEl
+ * @param {string} text
+ * @param {boolean} parseVoice
+ * @param {boolean} final
+ * @param {{round:number,block:number}|null} [mark] B2 frame identity (see
+ *   renderStreamMarkdown). When it is present and does NOT continue the identity
+ *   the cache was built under, the segment is provably new ⇒ the closed-chunk
+ *   cache is dropped. That makes the reset DETERMINISTIC: B1 could only infer a
+ *   new segment from `text` shrinking (`split < st.closedLen`), so a new segment
+ *   whose text happens to be longer than the previous one's closed prefix kept a
+ *   stale chunk cache. An absent/equal-or-advancing mark leaves B1's behavior
+ *   byte-for-byte unchanged (the conservative fallback path is untouched).
+ */
+function streamRenderPlan(contentEl, text, parseVoice, final, mark) {
+  if (final) {
+    _streamMdState.delete(contentEl);
+    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: true }) };
+  }
+  let st = _streamMdState.get(contentEl);
+  if (!st) { st = { chunks: [], closedLen: 0, rendered: 0, tailIndex: 0, seg: '' }; _streamMdState.set(contentEl, st); }
+  const reset = () => { st.chunks.length = 0; st.closedLen = 0; st.rendered = 0; st.tailIndex = 0; };
+  // B2: `sameSegment` says whether this frame continues the segment the cache was
+  // built under — same round AND a strictly larger block. Anything else (round
+  // moved on, block did not advance, or either side carries no identity) means
+  // the cached closed chunks belong to a DIFFERENT segment and must be dropped.
+  // B1 could only infer this from `text` shrinking, so a new segment whose text
+  // is longer than the old closed prefix (e.g. a second thinking block reusing
+  // the container) silently kept stale chunks; the mark closes that gap.
+  const seg = segKey(mark);
+  if (seg && st.seg && !sameSegment(st.seg, seg)) reset();
+  const split = streamSplitPoint(text);
+  if (split <= 0) {
+    // Not safely splittable — drop the cache and do the honest full render.
+    reset();
+    st.seg = seg;
+    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: false }) };
+  }
+  if (split < st.closedLen) reset();  // text shrank ⇒ new message
+  st.seg = seg;
+  if (split > st.closedLen) {
+    st.chunks.push({ len: split, html: renderMarkdownWithMath(text.slice(st.closedLen, split), parseVoice, { cache: false }) });
+    st.closedLen = split;
+  }
+  const append = [];
+  for (let i = st.rendered; i < st.chunks.length; i++) append.push(st.chunks[i].html);
+  st.rendered = st.chunks.length;
+  return { mode: 'incr', append, tail: renderMarkdownWithMath(text.slice(split), parseVoice, { cache: false }), st };
+}
+
+// ── §③ 思考窗硬上限（stream-919-unify 批 · 作者 2026-10-07 10:10 澄清令）──────
+// 「思考过程要限制一个最大窗口进行流式，不要占满整个屏幕。比如最多 5 行。」
+// 流式与展开两态同窗：超窗＝内部滚动（内容零丢失，持久化与展开面完整），
+// 绝不向下游无限撑开布局。行数计数读数落 data-nf-think-lines（DOM 属性，
+// 非可见串——§16 零文案合规；可见行数徽系候裁件，本批不落）。
+// 单点真源＝本常量；chat.css `.thinking-content { max-height: 7.5em }` 是
+// JS 缺席时的同值兜底（5 行 × 1.5 行高，两处同式同值，改常量须同步改 CSS）。
+export const THINKING_WINDOW_MAX_LINES = 5;
+const THINKING_WINDOW_EM = THINKING_WINDOW_MAX_LINES * 1.5; // 13px 档行高 1.5
+
+/** 把思考内容窗钉在上限并写行数计数读数（源文本行数，非渲染行数）。
+ *  写点＝四处：live rAF（appendThinkingDelta 流式帧）／finishThinking（终态
+ *  帧）／persistence 两条历史重放腿——四点同一入口，读数与窗形不分家。 */
+export function applyThinkingWindowCap(contentEl, text) {
+  if (!contentEl) return;
+  contentEl.style.maxHeight = THINKING_WINDOW_EM + 'em';
+  const lines = String(text || '').split('\n').length;
+  contentEl.dataset.nfThinkLines = String(lines);
+}
+
+export function appendThinkingDelta(delta, mark) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   activeView.stream.thinkingText += delta;
+  // B2 consumption: the frame's (round, block) identity rides along with the
+  // accumulated text so the render cache can tell "same segment continues" from
+  // "a new thinking block began" deterministically (see sameSegment).
+  const seg = segKey(mark);
+  if (seg) {
+    activeView.stream.thinkSeg = seg;
+    activeView.stream.thinkRound = mark.round;
+  }
   // If text bubble already exists (e.g. second+ thinking block after text has started),
   // do NOT create a new thinking bubble — it would appear after the text (misplaced).
   // The thinking content is still accumulated in activeView.stream.thinkingText + sessionThinkingBuffers
@@ -2765,7 +3527,14 @@ export function appendThinkingDelta(delta) {
     }
     const chat = activeView.dom.chat;
     const row = document.createElement('div');
-    row.className = 'row ai thinking-row';
+    // stream-ux redesign (2026-10-03): the thinking feed is NEVER visible as a
+    // bubble during the run — the turn line carries the single-line reveal.
+    // The bubble is the EXPAND face, so it is born pre-tucked; content still
+    // renders into it (rAF below) and turnGroup untucks it on demand.
+    row.className = 'row ai thinking-row nf-tucked';
+    // UI-B: the process row carries the round it belongs to (same contract as
+    // the tool rows), so a reader can verify the round split from the DOM.
+    stampRound(activeView, row);
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai thinking-bubble';
     // #346 v2 stats: thinking duration for the turn header (turnGroup.js
@@ -2795,7 +3564,7 @@ export function appendThinkingDelta(delta) {
     bubble.appendChild(label);
     bubble.appendChild(content);
     row.appendChild(bubble);
-    chat.appendChild(row);
+    appendChatRow(chat, row);
     // Click/Enter folds or re-reveals the live content (rAF keeps rendering
     // into it); finishThinking auto-collapses regardless at stream end.
     bindCollapsibleToggle(label, () => content);
@@ -2809,8 +3578,16 @@ export function appendThinkingDelta(delta) {
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
   // which view global state points to at fire time.
-  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat, snapped: activeView.stream.scrollSnapped };
+  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat, snapped: activeView.stream.scrollSnapped, mark: null };
   _thinkingRafTarget.bubble._nfText = activeView.stream.thinkingText;
+  // B2 consumption: the identity of the last frame that wrote this bubble. The
+  // rAF renders the accumulated text under it, so the render cache resets the
+  // moment the backend's monotone (round, block) pair stops advancing.
+  if (seg) {
+    _thinkingRafTarget.bubble._nfSeg = seg;
+    _thinkingRafTarget.bubble._nfRound = mark.round;
+    _thinkingRafTarget.mark = mark;
+  }
   // Schedule a rAF render if one isn't already pending — caps re-render rate
   // and coalesces multiple deltas into a single DOM update.
   if (!_pendingThinkingRAF) {
@@ -2822,14 +3599,24 @@ export function appendThinkingDelta(delta) {
       const contentEl = target.bubble.querySelector('.thinking-content');
       if (contentEl) {
         // 件①：同一渲染 + 图片节点跨帧存活（否则图片每帧重建 ⇒ 见 renderStreamMarkdown）
-        renderStreamMarkdown(contentEl, target.bubble._nfText || '', true, imgKeepFor(target.bubble), false);
+        renderStreamMarkdown(contentEl, target.bubble._nfText || '', true, imgKeepFor(target.bubble), false, target.mark || null);
+        // §③ 思考窗：流式帧同窗钉限＋计数读数随渲染刷新（源文本行数）。
+        applyThinkingWindowCap(contentEl, target.bubble._nfText || '');
         contentEl.insertAdjacentHTML('beforeend', '<span class="cursor"></span>');
       }
       // Scroll the correct chat element directly — smartScroll() reads state.dom
       // at rAF time which may be the wrong window. Capture snapped at schedule
       // time to match smartScroll()'s snapped || near-bottom logic.
+      // The disposition is keep/clamp only — write `1e7` and let the browser
+      // clamp to the content bottom in this same frame instead of reading
+      // `scrollHeight` back. That read, sitting right after this frame's subtree
+      // mutation, forced an extra synchronous layout of the freshly written tail
+      // every frame (measured as the second layout cost of the thinking stream);
+      // the landing position is identical because the clamp IS the bottom.
+      // `snapped === true` short-circuits the ||, so the common follow path now
+      // reads no geometry at all here.
       if (target.snapped === true || isNearBottom(target.chat)) {
-        target.chat.scrollTop = target.chat.scrollHeight;
+        target.chat.scrollTop = 1e7;
       }
     });
   }
@@ -2852,8 +3639,17 @@ export function finishThinking() {
     const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
       // 件①：收尾同一口径渲染（图片节点照旧存活 ⇒ 终结帧不再重拉一次、不再跳一次）
+      // B2: the final render passes the still-open segment's identity so the
+      // cache reset rule is evaluated identically to the streaming frames —
+      // `final` already forces the full path, so the mark only keeps the
+      // accounting consistent (no DOM effect).
       renderStreamMarkdown(contentEl, activeView.stream.thinkingText || '', false,
-        imgKeepFor(activeView.stream.currentThinkingBubble), true);
+        imgKeepFor(activeView.stream.currentThinkingBubble), true,
+        activeView.stream.thinkSeg
+          ? { round: activeView.stream.thinkRound, block: Number(activeView.stream.thinkSeg.split('.')[1]) } : null);
+      // §③ 思考窗：终态帧同窗钉限＋计数读数定稿（收起/再展开两态同窗——
+      // max-height 是元素常驻样式，与 display 收展正交）。
+      applyThinkingWindowCap(contentEl, activeView.stream.thinkingText || '');
     }
     // #346 v2 stats: close the thinking-duration window for the turn header.
     if (activeView.stream.currentThinkingBubble.dataset) {
@@ -2889,6 +3685,8 @@ export function finishThinking() {
     // skill). Corrects f8ea9385's classification.
     activeView.stream.currentThinkingBubble = null;
     activeView.stream.thinkingText = '';
+    // B2: the thinking segment closed — clear its identity (see finishAi).
+    activeView.stream.thinkSeg = '';
     return text;
   }
   return '';

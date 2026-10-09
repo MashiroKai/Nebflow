@@ -18,7 +18,7 @@ object BashTool extends Tool:
   val DEFAULT_TIMEOUT = 30_000L // 30s — fallback for synchronous remote-exec only
 
   /**
-   * bashautobg batch (2026-09-25 author order): the former "max timeout / kill
+   * Auto-background: the former "max timeout / kill
    * line" is now the foreground auto-background threshold — a foreground command
    * still running when this value (or an explicit, clamped `timeout`) is reached
    * is adopted into the background registry, never killed by time. `def` (not
@@ -164,7 +164,7 @@ Git safety:
 
   /**
    * `rm` against the data root — derived at call time from PathUtil.dataRoot
-   * （home 硬编码 → 运行时动态化批 2026-09-11）。
+   * （home 硬编码 → 运行时动态化）。
    *
    * 旧实现是固定字面 `rm\s+.*~/.nebflow`：隔离实例（--home /tmp/...）下护错对象
    * ——真正要护的是**本实例**的数据根。此处同时覆盖两种写法，保护面只增不减：
@@ -264,7 +264,7 @@ Git safety:
     val dangerousPatterns = List(
       """rm\s+-rf\s+""".r,
       """rm\s+-fr\s+""".r,
-      // R11: Windows 递归删除（2026-09-10 P0 的两条肇事形态此前判 0/safe）
+      // R11: Windows 递归删除（两条肇事形态此前判 0/safe）
       """(?i)\bRemove-Item\b[\s\S]*-Recurse""".r,
       """(?i)\b(rd|rmdir)\s+/s\b""".r,
       """(?i)\bdel\s+(?:/[a-z]+\s+)*/s\b""".r,
@@ -281,12 +281,11 @@ Git safety:
       """git\s+clean\s+-f""".r
     )
     val warningPatterns = List(
-      // T4（2026-09-11 网络档，Q3 裁定）：出网命令统一 **1 档**——只做可见性分级，
-      // 不与 delguard 的删除形态分级（2/3）打架。任务书点名 6 条形态；PowerShell
+      // T4（网络档）：出网命令统一 **1 档**——只做可见性分级，
+      // 不与 delguard 的删除形态分级（2/3）打架。规格点名 6 条形态；PowerShell
       // 的 `powershell -c "Invoke-WebRequest …"` 由「引号前置」分支接住。
       // 前置 = 行首 / 空白 / shell 分隔符（; & | (）/ 引号，后置 = 空白 / 行尾，
-      // 故 `curling`、`ssh-keygen` 之类子串不误判。**别名（sftp/nc/telnet/iwr/irm）
-      // 本批不纳入**。注意：auto-all 下 dangerLevel 不参与闸门决策，可见性由
+      // 故 `curling`、`ssh-keygen` 之类子串不误判。**别名（sftp/nc/telnet/iwr/irm）不纳入**。注意：auto-all 下 dangerLevel 不参与闸门决策，可见性由
       // relay 执行审计行（RelayExecAudit）承担。
       """(?i)(?:^|[\s;&|("'`])(?:ssh|scp|curl|wget|ncat|Invoke-WebRequest)(?=\s|$)""".r,
       """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r,
@@ -369,7 +368,7 @@ Git safety:
     else lines.takeRight(n).mkString("\n")
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    // [沙箱拆围栏批 S3，2026-09-10] provider 语义（design §4.2 / R4=d2 + §6.1 R7=g1）：
+    // provider 语义（design §4.2）：
     //
     // ① 宿主路径不再 fail-closed：围栏拆掉后「无包裹」是**缺省态**（provider=host），
     //    旧判据 `ctx.sandbox.enabled && !SandboxRuntime.current.available` 失去对象；
@@ -400,7 +399,7 @@ Git safety:
     val desc = input("description").flatMap(_.asString)
     val bgJobId = input("background_job_id").flatMap(_.asString)
     val cancelBg = input("cancel_background_job").flatMap(_.asBoolean).getOrElse(false)
-    // 节点完成闸批（作者 2026-09-05 18:29 裁定）：persistent=true = 服务型后台
+    // 节点完成闸：persistent=true = 服务型后台
     // （长驻 server）——豁免 B1/B2 看护杀、不纳入节点等待集。默认 false = 等待型。
     val persistent = input("persistent").flatMap(_.asBoolean).getOrElse(false)
 
@@ -409,18 +408,40 @@ Git safety:
     // user.dir）；Seatbelt 包装随会话持有策略在 buildProcessBuilder 内完成。
     // 读面按 H-10① 接受全盘（写 OS 强制 + JVM 读围栏双层），hardening 清单另列。
     val sandboxOpt = Some(ctx.sandbox).filter(_.enabled)
-    // B5 缺口②（作者 2026-09-17 M-1 裁定「会话启动即 `cd` 座椅」，选项①）：shell 初
+    // 会话初始 cwd（「会话启动即 `cd` 座椅」）：shell 初
     // cwd 优先取**显式座椅信号**（worktree 节点 ⇒ 座椅路径），缺省回落沙箱根（旧行为
     // 逐字节不变：非 worktree 节点两值同源）。🔴 fail-closed：座椅目录缺失 ⇒
     // ShellSession.buildProcessBuilder 的 `resolveCwdOrFail` 抛 InvalidCwdError ⇒ 本调用
     // 显式失败（经下方 `Error: …` 通道回到模型），**禁**静默回落工作区根。围栏面
-    // （sandbox=工作区根）本批不动——与 2026-09-05 21:05 裁定相容。
+    // （sandbox=工作区根）不动。
     val sessionInitialDir = ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))
+    // Secrets-consumption batch (2026-10-01): the C-case allowlist, resolved
+    // for THIS agent. Empty allowlist (the default) => `Map.empty` => the
+    // session's command environments are byte-identical to the pre-batch
+    // behaviour. 🔴 `materialize` is the only place a credential value is read
+    // for injection, and it is not reached at all when the list is empty.
+    val secretEnv: Map[String, String] =
+      val injection = nebflow.core.secrets.SecretInjection.load(nebflow.shared.PathUtil.dataRoot)
+      val entries = nebflow.core.secrets.SecretInjection.resolve(injection, ctx.agentDef.map(_.name))
+      val env = nebflow.core.secrets.SecretInjection.materialize(
+        nebflow.shared.PathUtil.dataRoot / "secrets", entries)
+      // Audible, name-only: which allowlisted secrets did NOT resolve. A
+      // silently absent variable is the failure mode that costs an hour of
+      // debugging, and a NAME never leaks anything.
+      val missing = nebflow.core.secrets.SecretInjection.unresolved(entries, env)
+      if missing.nonEmpty then
+        NebflowLogger.forName("nebflow.secrets")
+          .warn(s"allowlisted secrets did not resolve (absent / unreadable / oversized): ${missing.mkString(", ")}")
+      env
 
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
       case Some(jobId) =>
-        ShellSession.forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt).flatMap { shell =>
+        // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
+        // sessionId, so a query that created the session first would otherwise
+        // hand the later execute path a session created without injection.
+        ShellSession.forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt,
+          secretEnv = secretEnv).flatMap { shell =>
           if cancelBg then
             shell.cancelBackgroundJob(jobId).map { cancelled =>
               if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
@@ -471,7 +492,8 @@ Git safety:
             )
           else
             ShellSession
-              .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt)
+              .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt,
+                secretEnv = secretEnv)
               .flatMap { shell =>
                 if background then
                   val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
@@ -479,8 +501,7 @@ Git safety:
                   val bgDescription = desc.getOrElse(firstLine)
                   // 等待型任务的完成回调需带闸记账信息（超时杀 → 节点 failed 注明）。
                   val gateOwned = !persistent && isNodeSession(ctx)
-                  // bashautobg batch (2026-09-25 author order "backgrounded commands
-                  // have no limit"): waiting-type background jobs have NO time cap —
+                  // Policy "backgrounded commands have no limit": waiting-type background jobs have NO time cap —
                   // the old 30min tier (ctx.bashConfig.hardTimeoutMs) and the node
                   // 4h tier (BgGateNodeHardTimeoutMs) are both retired from the
                   // production face. Both the explicit run_in_background path (here)
@@ -494,7 +515,7 @@ Git safety:
                   for
                     jobId <- IO.randomUUID.map(_.toString.take(8))
                     onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
-                    // 输出查看批（2026-09-09 作者需求）：先建缓冲拿句柄，sink 随
+                    // 先建缓冲拿句柄，sink 随
                     // executeBackground 挂上 JobHealth——运行中逐行入尾窗缓冲，
                     // 终态后由 onComplete finalizeTask 进留存区（详情卡 REST 读）。
                     outBuffer <- BgTaskOutputStore.open(jobId)
@@ -509,7 +530,7 @@ Git safety:
                       healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
                       persistent = persistent,
                       outputSink = Some((line: String) => outBuffer.append(line)),
-                      // B1 只提醒腿的审计出口（killruling 批 #1+#14+#15）：经 ctx 身份解析
+                      // B1 只提醒腿的审计出口：经 ctx 身份解析
                       // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
                       onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
                     )
@@ -552,25 +573,25 @@ Git safety:
   /**
    * Execute a command in the foreground until it completes or fails.
    *
-   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台，依赖卡死检测就行了，
-   * 不设超时」）：恢复前台直跑语义——#391 机制 A（5 分钟自动转后台）已推翻
+   * 用户裁定「Bash 工具不再自动转后台，依赖卡死检测就行了，
+   * 不设超时」）：恢复前台直跑语义——机制 A（5 分钟自动转后台）已推翻
    * 删除。前台命令一直跑到结束（或显式 timeout watchdog 杀树），返回真实
    * 输出；不产生「[Command moved to background]」占位。无显式 timeout 时不设
    * 命令级超时（processTimeout 用 365.days 近似无限）。
    *
    * 卡死兜底保持：
    * - 显式 timeout（若有）→ watchdog 杀进程树
-   * - 前台 no-progress ceiling（shell.scala #22）：10min 零输出且每个采样窗的 CPU
-   *   增量都 ≤ 1s（**窗口增量**口径，阈值与活动桥接常量解耦，2026-09-10）→
+   * - 前台 no-progress ceiling（shell.scala）：10min 零输出且每个采样窗的 CPU
+   *   增量都 ≤ 1s（**窗口增量**口径，阈值与活动桥接常量解耦）→
    *   停滞杀（命令级）
-   * - TaskStuckWatcher（turn 级，2026-09-10 换轴）：判据 = agent 侧事件停滞 ∪
+   * - TaskStuckWatcher（turn 级换轴）：判据 = agent 侧事件停滞 ∪
    *   单个工具调用持续超 10min（工具相位），**均不看进程 CPU**——进程活性
    *   （processActivityMs）不再是「有进展」的证据，长跑命令不再能凭 CPU 微动
    *   免疫卡死检测。
    *
    * 活动桥接（#319）保持：有进展（输出/CPU≥阈值/sleep-like）刷新
-   * **processActivityMs**（进程侧字段）——#391 机制 D 让 CPU 判断对齐
-   * CpuActiveThresholdNanos（10ms/30s 采样）；2026-09-10 起该戳与 agent 侧
+   * **processActivityMs**（进程侧字段）——机制 D 让 CPU 判断对齐
+   * CpuActiveThresholdNanos（10ms/30s 采样）；换轴后该戳与 agent 侧
    * 活动彻底分家（事故根因即两者曾被同一字段承载）。
    */
   private def executeForeground(
@@ -581,7 +602,7 @@ Git safety:
     ctx: ToolContext,
     tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
-    // bashautobg batch (2026-09-25 author order "no hard cap; auto-background at
+    // Policy "no hard cap; auto-background at
     // 60min; backgrounded commands have no limit"): an explicit `timeout` is no
     // longer a kill line — it and the default threshold (MAX_TIMEOUT) are the
     // same thing: a foreground WAIT BUDGET. When the budget elapses and the
@@ -595,7 +616,7 @@ Git safety:
     // ceiling (the stall watchdog — not a time limit, kept per behavior def 3).
     val waitBudgetMs = explicitTimeoutMs.getOrElse(MAX_TIMEOUT)
     val health = new JobHealth()
-    // #22 (2026-08-19): a running Bash is INVISIBLE — the completion log only
+    // A running Bash is INVISIBLE — the completion log only
     // fires when it returns, so a long/hung command reads as "turn went
     // silent" in every forensic timeline (20:35 Backend: 37min of zero
     // artifacts while an un-killable timeout ran). Log the start too (same
@@ -612,7 +633,7 @@ Git safety:
       // Process-activity bridge: while the command runs, mirror **process-side**
       // liveness into the registry (AgentRecord.processActivityMs) so operators
       // can tell "the child process is still alive" from "the agent is making
-      // progress". 2026-09-10 换轴：该桥不再影响卡死判据（旧行为=进程 CPU
+      // progress". 换轴后：该桥不再影响卡死判据（旧行为=进程 CPU
       // 微动持续刷新 agent 侧戳 → 2h50m 判据失明，事故根因）。
       bridgeFiber <- startActivityBridge(shell, health, command, ctx)
       // Foreground run with NO command-level time kill, raced against the wait
@@ -653,7 +674,7 @@ Git safety:
 
   /**
    * Render a foreground outcome: real result / stall-watchdog error / generic
-   * error. With the time kill retired (bashautobg batch), the only
+   * error. With the time kill retired, the only
    * TimeoutException reaching here is the foreground no-progress ceiling.
    */
   private def formatOutcome(
@@ -669,7 +690,7 @@ Git safety:
         Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
 
   /**
-   * bashautobg batch: adopt a still-running foreground execution as a background
+   * Auto-background: adopt a still-running foreground execution as a background
    * job and produce the receipt. Registry / indicator / completion-notify faces
    * are fully aligned with an explicit run_in_background (BgTaskRegistry + WS
    * indicator + BgTaskOutputStore + makeNotifyCallback); the only gap = no live
@@ -719,7 +740,7 @@ Git safety:
    * it shows progress, refreshes the agent registry's **process-side** activity
    * stamp (AgentRecord.processActivityMs) — NOT the agent-side stamp.
    *
-   * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
+   * 卡死判据换轴（取证在案）：
    * 本桥不再 touch `lastActivityMs` —— 事故实证：一条前台常驻 dev server 命令
    * （输出恒 0 行、CPU 微动 1.786 ms/s = 10ms 阈值的 5.4 倍）经此桥每 30s 刷新
    * agent 侧戳，令 TaskStuckWatcher 判据 / SessionKick / AgentControl 的 idle
@@ -727,7 +748,7 @@ Git safety:
    * `processActivityMs`（不得被 TaskStuckWatcher / SessionKick / 人可见 idle 读取），
    * agent 侧戳只由 agent 事件写（AgentCore.touchRegistryActivity）。
    *
-   * #22 (2026-08-19): while alive, also emits a once-a-minute running log
+   * While alive, also emits a once-a-minute running log
    * (INFO, WARN after 10min) — without it an in-flight command leaves zero
    * log artifacts between START and completion, which is exactly how the
    * 20:35 "silent turn death" hid a 37-minute zombie timeout.
@@ -754,7 +775,7 @@ Git safety:
         }.flatMap { case (alive, lines, cpu) =>
           // Running visibility: log every 60s (every 2nd tick) while alive.
           val tick = ticks + 1
-          // #391 机制 D：CPU 判断对齐 CpuActiveThresholdNanos（10ms/30s 采样，
+          // 机制 D：CPU 判断对齐 CpuActiveThresholdNanos（10ms/30s 采样，
           // 与 shell.scala 前台 no-progress ceiling 同标准）——卡死进程的 CPU
           // 微消耗（Chrome 挂起 <10ms/30s）不再算「有进展」。
           // Strictly-greater (D-1 flake fix): macOS `ps` time quantizes to
@@ -784,11 +805,11 @@ Git safety:
 
   /**
    * Refresh the agent registry's **process-side** activity stamp for this
-   * session (if present). 2026-09-10 换轴：目标字段 = `processActivityMs`
+   * session (if present). 换轴后：目标字段 = `processActivityMs`
    * （旧实现写 `lastActivityMs`，把进程活性混进 agent 侧判据——事故根因）。
    * 本戳不参与卡死判据，只作「子进程确实活着」的旁证。
    *
-   * stuck 自动恢复批 P1（2026-09-11 作者裁定 R-3）：本方法同时是**正信号（进展
+   * stuck 自动恢复（R-3）：本方法同时是**正信号（进展
    * 证据）的传感器**——调用点位于 `startActivityBridge` 的 `hasProgress` 分支，
    * 即「上一个采样窗内 stdout 行数增长 ∨ 单窗 CPU 增量 > 活动桥阈值」。两个字段
    * **同点采样、不同语义**：
@@ -806,7 +827,7 @@ Git safety:
         res.agentRegistry.modify { m =>
           m.get(sid) match
             case Some(rec) =>
-              // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):纯函数已下沉 actor.AgentState(AgentCore 不留转发别名)。
+              // 纯函数已下沉 actor.AgentState(AgentCore 不留转发别名)。
               (m.updated(sid, AgentState.markToolProgress(rec.copy(processActivityMs = now), now)), ())
             case None => (m, ())
         }
@@ -939,7 +960,7 @@ Git safety:
             store
           )
 
-      // 🔴 killruling 批（2026-09-23 作者裁定 #1+#14+#15「改造」）：本处的**台账写点
+      // 🔴 「只提醒」改造口径：本处的**台账写点
       // 已摘除**——原「等待集内任务被看护杀（TimeoutException）→ `markFailed` 终局
       // 记账 → 节点 failed+注明」链的**生产端取消**（消费端 `NodeEngine.drainFailures`
       // 与 `bgFailureMessage` **原样保留** ⇒ 台账恒空 ⇒ 自然走放行支）。
@@ -959,7 +980,7 @@ Git safety:
             jobId,
             s"wait-set bg task guard-hit: job $jobId (session ${ctx.sessionId.getOrElse("")}) " +
               s"ended with ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("").take(160)} — " +
-              "sensor only: no failure ledger, no node failure (killruling ruling #1+#14+#15)"
+              "sensor only: no failure ledger, no node failure"
           )
         case _ => IO.unit
 
@@ -979,7 +1000,7 @@ Git safety:
           io.circe.Json.obj(
             "type" -> "backgroundTaskUpdate".asJson,
             "sessionId" -> ctx.sessionId.asJson,
-            // 权威分键（2026-09-05 计数/列表分叉修复）：前端直接按 rootSessionId
+            // 权威分键（计数/列表分叉修复）：前端直接按 rootSessionId
             // 分桶，替代已删除的 bgTaskRootFor 启发式逆向分键。缺省回退执行者
             // sessionId（根会话自己的任务 root==sessionId，分桶不变）。
             "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
@@ -1008,7 +1029,7 @@ Git safety:
     }
 
   /**
-   * `bg-slow` 审计腿（killruling 批 2026-09-23，作者裁定 #1+#14+#15「只提醒」）：
+   * `bg-slow` 审计腿（「只提醒」）：
    * 把「后台任务被判停滞」这一事实写进项目事件流（nodeId = 节点 id，与 #27
    * mount-stalled 同族：**只写事件、不终态化、不杀进程**）。
    *
@@ -1050,7 +1071,7 @@ Git safety:
     description: String,
     persistent: Boolean = false
   ): IO[Unit] =
-    // 来源标注（2026-09-07 后台任务面板重设计，作者指令②）：类别+显示名从
+    // 来源标注：类别+显示名从
     // 注册会话推导（node- → Flow Map 节点名，dispatcher- → dispatcher/<project>，
     // 其余 → Nebula），注册与 WS 信封同源携带。
     val (origin, originLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)

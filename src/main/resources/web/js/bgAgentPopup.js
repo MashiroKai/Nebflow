@@ -10,7 +10,7 @@
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
 import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
-import { isBgAgentId, truncateMiddle, updateScrollSnapped, shouldFollowBottom, initScrollFollow } from './utils.js';
+import { isBgAgentId, truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
@@ -226,21 +226,20 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
     if (target === popupOverlay || (target instanceof Element && target.id === 'bgagent-close')) closeStepPopup();
   });
 
-  entry.container.addEventListener('scroll', () => {
-    // Follow-intent latch for THIS view (shared near-bottom unit, was 40)
-    updateScrollSnapped(entry.view, entry.container);
-    // Scroll-to-top → the older page, same gate the primary window uses
-    // (main.js scroll listener: scrollTop < 100 && hasMore && !loading &&
-    // offset > 0). Shares the automatic head-seek's page/row budget, so a
-    // partial scroll cannot push the panel past the caps either.
-    const pag = entry.view.pagination;
-    if (entry.container.scrollTop < 100 && pag.hasMore && !pag.loading && pag.offset > 0) {
-      requestOlderPage(entry);
-    }
-  });
+  // Scroll-to-top gate → the older page, same gate the primary window uses
+  // (main.js scroll listener: scrollTop < 100 && hasMore && !loading &&
+  // offset > 0). Shares the automatic head-seek's page/row budget, so a
+  // partial scroll cannot push the panel past the caps either.
+  // B4 (2026-10-04): the listener is installed by initScrollFollow below (the
+  // single scroll-machinery installer, so the follow decision and the ↓ N pill
+  // share ONE geometry probe per event). This is the pagination half it calls.
+  const onScrollGate = () => {
+    if (entry.container.scrollTop < 100) requestOlderPage(entry);
+  };
 
   // Per-view scroll-follow machinery: row counting + "↓ N new messages" pill
-  initScrollFollow(entry.view);
+  // (+ the scroll listener; the pagination gate above rides along with it).
+  initScrollFollow(entry.view, { onScroll: onScrollGate });
 
   requestAnimationFrame(() => {
     entry.container.scrollTop = entry.container.scrollHeight;
@@ -354,7 +353,8 @@ function updatePopupCtxRing() {
   const pct = Math.min(Math.round(ratio * 100), 100);
   let color = '#4caf50';
   if (ratio > 0.5) color = '#d4a030';
-  if (ratio > 0.75) color = '#e53935';
+  // ui-status-redesign（盘点 #49，B 组）：字面量 → token（经 style 消费）。
+  if (ratio > 0.75) color = 'var(--status-error-icon)';
   const R = 15;
   const CIRC = 2 * Math.PI * R;
   const dashLen = CIRC * pct / 100;
@@ -368,11 +368,10 @@ function updatePopupCtxRing() {
   el.innerHTML = `<div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
     <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
       <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-      <circle cx="18" cy="18" r="${R}" fill="none" stroke="${color}" stroke-width="3.5"
-              stroke-dasharray="${dashLen.toFixed(1)} ${CIRC.toFixed(1)}"
+      <circle cx="18" cy="18" r="${R}" fill="none" stroke-width="3.5"
+              style="stroke:${color};stroke-dasharray:${dashLen.toFixed(1)} ${CIRC.toFixed(1)};transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"
               stroke-linecap="round"
-              transform="rotate(-90 18 18)"
-              style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+              transform="rotate(-90 18 18)"/>
       <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
             class="ctx-ring-threshold"
             transform="rotate(${thresholdAngle.toFixed(1)} 18 18)"/>
@@ -663,15 +662,18 @@ function updateFooterStatus(entry) {
         taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
       }
     } else if (status === 'stuck' && entry.meta.stuck) {
-      // Restrained red stuck label (manage-panel, 2026-08-22).
+      // Restrained stuck label (manage-panel, 2026-08-22) — ui-status-redesign
+      // （盘点 #13，S2 同构）：词前 timer-off 红图标 + 中性字。
       // Hard-recovery P7 (2026-09-07): label mirrors the REAL backend action.
-      taskEl.textContent = entry.meta.stuck.action === 'restart'
-        ? t('manage.stuckAutoRestart')
-        : entry.meta.stuck.action === 'hard-abort'
-          ? t('manage.stuckHardAbort')
-          : entry.meta.stuck.action === 'failed'
-            ? t('manage.stuckFailed')
-            : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
+      taskEl.innerHTML = statusIcon('timer-off', 11, 'st-err') + '<span class="fa-task-text">' + (
+        entry.meta.stuck.action === 'restart'
+          ? esc(t('manage.stuckAutoRestart'))
+          : entry.meta.stuck.action === 'hard-abort'
+            ? esc(t('manage.stuckHardAbort'))
+            : entry.meta.stuck.action === 'failed'
+              ? esc(t('manage.stuckFailed'))
+              : esc(t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' }))
+      ) + '</span>';
     } else {
       taskEl.textContent = entry.meta.task || 'Session';
     }

@@ -620,7 +620,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
 
   // ── panelscheme（2026-09-21）：preset 参数退役 + 节点继承分发器方案 ──────────
 
-  test("panelscheme: NodeEdit preset 参数退役（NODE_PRESET_RETIRED）；节点模型 = 分发器当前方案（general 动态继承）") {
+  test("panelscheme: NodeEdit preset 参数不可设（NODE_PRESET_UNSUPPORTED）；节点模型 = 分发器当前方案（general 动态继承）") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-preset"
     os.makeDir.all(ws)
@@ -673,8 +673,8 @@ class NodePluginChainSpec extends CatsEffectSuite:
         )
         _ = assert(rejected.isLeft, s"NodeEdit with the preset param must be rejected: $rejected")
         _ = assert(
-          rejected.left.exists(_.contains("NODE_PRESET_RETIRED")),
-          s"rejection must carry NODE_PRESET_RETIRED: $rejected"
+          rejected.left.exists(_.contains("NODE_PRESET_UNSUPPORTED")),
+          s"rejection must carry NODE_PRESET_UNSUPPORTED: $rejected"
         )
         noNode <- rt.store.snapshot.map(s => !s.nodes.values.exists(_.name == "preset-retired"))
         _ = assert(noNode, "rejected NodeEdit must not create a node")

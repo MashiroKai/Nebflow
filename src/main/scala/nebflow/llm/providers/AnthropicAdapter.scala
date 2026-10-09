@@ -137,7 +137,7 @@ class AnthropicAdapter(
         else
           val newBlocks =
             if paired.isEmpty then
-              List(ContentBlock.Text("[dropped orphaned tool_result: referenced tool_use no longer in history]"))
+              List(ContentBlock.Text("[dropped orphaned tool_result: referenced tool_use is not in history]"))
             else paired
           msg.copy(content = Right(newBlocks))
       case other => other

@@ -9,7 +9,7 @@ import { sendWs, onMessage } from './ws.js';
 function showBatchDeleteModalLazy() {
   import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
 }
-import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn } from './utils.js';
+import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
@@ -20,10 +20,20 @@ import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
 import { notifyManualUpdateCheck, restoreUpdateProgress } from './updateCheck.js';
 import { toggleHTML, setToggleState } from './toggle.js';
+import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// Root agent's DISPLAY name — the single read point shared with onboarding /
+// micOrb / chat / modelPanel (leaf module; no cycle risk).
+import { rootDisplayName, isRootNamed } from './rootName.js';
+// uifix3 ② (2026-10-06 21:36 author order): the provider model-list probe is
+// SHARED with the onboarding model question — implementation lives in
+// providerModels.js (moved verbatim from here), one probe, no second copy.
+// 合流落位：探针在本文件零消费点（唯一调用点 wireProviderModelFetch 随 Provider 界面族
+// 迁 ./sidebar/providersUi.js，该件已自 ../providerModels.js 单源 import）⇒ 本文件
+// 不再空挂该 import（A 侧单源语义由 providersUi.js 承接，零丢失）。
 
 // sidebar.js 拆分(FE组件化批次二 2026-09-27):三簇实现迁至 js/sidebar/ 子模块 —
 // Provider 界面族(providersUi.js)、Rules + PathPicker 模态(pathRules.js)。
@@ -172,6 +182,14 @@ export function initNavTabs() {
 }
 
 // ---------- Agent icons in Nav Bar ----------
+/** DISPLAY name of an agent by mechanism name: `agentList` carries
+ *  `displayName || name`, so the root agent renders the user's chosen name.
+ *  Judgement keys (`a.name === 'Nebula'` below) stay untouched — display only. */
+function agentDisplayLabel(agentName) {
+  const a = (state.agentsData || []).find(x => x.name === agentName);
+  return a ? (a.displayName || a.name || agentName) : agentName;
+}
+
 export function renderAgentList() {
   const list = document.getElementById('nav-agent-list');
   if (!list) return;
@@ -814,6 +832,43 @@ export function renderSettings() {
     </div>
     <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
     <div class="settings-section">
+      <!-- Jev section (executor-registry batch, 2026-10-03; ui-train-threefix B,
+           2026-10-07: toggle-ized per author five-order B — the nb-toggle row on
+           top decides usage; the detail body (provider / endpoint / keyRef +
+           hint + save) is visible only while the toggle is on, same pattern as
+           #schedule-editor: collapsing keeps the inputs in the DOM, so collapse
+           ≠ clear and an already-configured setup survives untouched. The
+           allocation health row keeps its slot below the body, visible in both
+           states. Write face = PUT /api/config/jev, whitelist keys only.) -->
+      <div class="settings-section-title">${t('settings.jev')}</div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.jevEnabled')}</span>
+        ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
+      </div>
+      <div id="jev-detail-body" style="display:${cfg.jev && cfg.jev.enabled ? 'block' : 'none'};padding:4px 0 8px;">
+        <div class="settings-row">
+          <span class="settings-label">${t('settings.jevProvider')}</span>
+          <select class="cfg-select" id="cfg-jev-provider" style="width:auto">
+            ${['typesafe-jev', 'laya'].map(p => `<option value="${p}"${(cfg.jev && cfg.jev.provider) === p ? ' selected' : ''}>${p}</option>`).join('')}
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">${t('settings.jevEndpoint')}</span>
+          <input class="cfg-input" id="cfg-jev-endpoint" style="width:auto" placeholder="https://api.typesafe.ai/v1/systemone" value="${escapeHtml((cfg.jev && cfg.jev.endpoint) || '')}">
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">${t('settings.jevKeyRef')}</span>
+          <input class="cfg-input" id="cfg-jev-keyref" style="width:auto" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}">
+        </div>
+        <div class="cfg-hint">${t('settings.jevHint')}</div>
+        <button class="cfg-btn" id="btn-save-jev">${t('settings.save')}</button>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.jevHealth')}</span>
+        <span class="settings-jev-health" id="settings-jev-health">…</span>
+      </div>
+    </div>
+    <div class="settings-section">
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
            2026-09-27 19:20): one row / one button only — the list itself
            lives in the standalone dedicated dialog (#secrets-overlay, owned
@@ -840,7 +895,9 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
+        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
+          ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
+          : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
           <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
@@ -1061,6 +1118,63 @@ function bindSettingsEvents(content, cfg) {
     state.llmLogEnabled = enabled;
     sendWs({type: 'setLlmLog', enabled});
   });
+
+  // ── Executors section retired (ui-train-threefix A, 2026-10-07): the
+  // settings 默认执行器 row, the panel-entry button and the /agents command
+  // left with their locale keys; ExecutorRegistry/detect (scala) untouched.
+
+  // ── Jev section: explicit save (whitelist keys only; PUT /api/config/jev).
+  // keyRef is a NAME under ~/.nebflow/secrets/ — a pointer, never a value.
+  // Toggle = usage gate: flipping it also expands/collapses the detail body
+  // (work-schedule #schedule-editor pattern — the inputs stay in the DOM while
+  // collapsed, so a collapsed body never clears configured values).
+  document.getElementById('toggle-jev')?.addEventListener('click', function() {
+    const enabled = !this.classList.contains('on');
+    setToggleState(this, enabled);
+    const body = document.getElementById('jev-detail-body');
+    if (body) body.style.display = enabled ? 'block' : 'none';
+  });
+  document.getElementById('btn-save-jev')?.addEventListener('click', async function() {
+    const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
+    const provider = document.getElementById('cfg-jev-provider')?.value || 'typesafe-jev';
+    const endpoint = document.getElementById('cfg-jev-endpoint')?.value.trim() || '';
+    const keyRef = document.getElementById('cfg-jev-keyref')?.value.trim() || '';
+    const body = { enabled, provider };
+    if (endpoint) body.endpoint = endpoint;
+    if (keyRef) body.keyRef = keyRef;
+    let ok = false;
+    try {
+      const resp = await fetch('/api/config/jev', {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      ok = resp.ok;
+    } catch (e) { ok = false; }
+    this.textContent = ok ? t('settings.saved') : t('settings.saveFailed');
+    setTimeout(() => { this.textContent = t('settings.save'); }, 1500);
+  });
+
+  // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07).
+  // Read-only probe = GET /api/decision/health (DecisionHealthMonitor; the write
+  // legs are the plugin-allocation calls themselves). A fetch failure leaves the
+  // "…" placeholder (same convention as the executor-current label above).
+  {
+    const slot = document.getElementById('settings-jev-health');
+    if (slot) {
+      fetch('/api/decision/health', { headers: authHeaders() })
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          const d = data && data.decision;
+          if (!d || !slot.isConnected) return;
+          const word = d.status === 'up' ? t('settings.jevHealthUp')
+            : d.status === 'down' ? t('settings.jevHealthDown')
+            : t('settings.jevHealthUnconfigured');
+          slot.textContent = (d.status === 'down' && d.reason) ? `${word} — ${d.reason}` : word;
+        })
+        .catch(() => {});
+    }
+  }
 
   // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
   // 作者裁定（2026-08-30, toggle 即时保存）：开关类设置变更即保存——toggle 不再
@@ -1343,10 +1457,12 @@ document.addEventListener('change', (e) => {
 // Listen for config validation errors
 onMessage('error', (data) => {
   if (data.message && typeof data.message === 'string' && data.message.includes('Provider')) {
-    // Show validation errors from backend
+    // Show validation errors from backend.
+    // ui-status-redesign（分叉④=A，S7 全站归一）：唯一违规件「实心红底白字」
+    // 并入 nebflow-toast 玻璃规范——玻璃卡 + 行首 circle-x 红图标 + 中性正文。
     const toast = document.createElement('div');
     toast.className = 'cfg-toast cfg-toast-error';
-    toast.textContent = data.message;
+    toast.innerHTML = statusIcon('circle-x', 15, 'st-err') + '<span class="cfg-toast-msg">' + escapeHtml(data.message) + '</span>';
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 5000);
   }
@@ -1500,14 +1616,31 @@ function updateHeaderSessionName() {
     const agentName = active.agentName || 'Nebula';
     // Show agent display name in center (session name is redundant when there's only one session).
     if (sessionNameEl) {
-      const agent = state.agentsData.find(a => a.name === agentName);
-      sessionNameEl.textContent = agent ? (agent.displayName || agent.name) : agentName;
+      // Root agent reads the SINGLE display-name read point (rootName.js): both
+      // the in-session onboarding rename override (state.rootDisplayName) and the
+      // persisted `displayName` live there. The old agentsData-only read was the
+      // 「起名不影响 Header」 gap — it ignored the override and fell back to the
+      // bare 'Nebula' literal whenever the agentsData row had not arrived.
+      // N1 (unnamed-state batch 2026-10-06): UNNAMED root → the title area is an
+      // EMPTY string — the mechanism name is a key, not a display fallback, and
+      // the empty <span> keeps the header's center-slot layout intact (no jump).
+      // Named root → display name as before; non-root agents keep their own name.
+      const label = agentName === 'Nebula'
+        ? (isRootNamed() ? rootDisplayName() : '')
+        : (state.agentsData.find(a => a.name === agentName)?.displayName || agentName);
+      sessionNameEl.textContent = label;
       sessionNameEl.style.display = '';
     }
   } else {
     if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
   }
 }
+
+// Onboarding rename → refresh the header center in place (author 2026-10-05:
+// 「起名是会影响Header的标题的」). A rename does not change the session-list
+// fingerprint, so no render path would otherwise fire; onboarding.js dispatches
+// `nebflow-root-name-change` (event, not import — keeps the module graph acyclic).
+window.addEventListener('nebflow-root-name-change', () => { updateHeaderSessionName(); });
 
 export function renderSessionSidebar(sessionData, activeId) {
   state.sessions = sessionData || [];
@@ -1648,7 +1781,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     if (agentOrder.length > 1) {
       const header = document.createElement('div');
       header.className = 'agent-group-header';
-      header.textContent = agentName;
+      header.textContent = agentDisplayLabel(agentName);
       sessionList.appendChild(header);
     }
 
@@ -2804,8 +2937,11 @@ function showFolderCtxMenu(x, y, folderId) {
   }
   html +=
     '<div class="ctx-separator"></div>' +
-    '<div class="ctx-item" data-action="delete" style="color:var(--color-error)">' + t('ctx.deleteFolder') + '</div>';
+    // ui-status-redesign（S10 / 盘点 #47）：常显危险文字项字转常规色，危险语义由
+    // 行首 trash-2 红图标承载；hover 时刻字转红（ctx.css :hover 交互红保留）。
+    '<div class="ctx-item" data-action="delete">' + statusIcon('trash-2', 12, 'st-err') + '<span>' + t('ctx.deleteFolder') + '</span></div>';
   menu.innerHTML = html;
+  createIconsIn(menu);
 
   menu.querySelector('[data-action="toggle-pin"]').addEventListener('click', () => {
     if (isPinned) state.pinnedFolders.delete(folderId);

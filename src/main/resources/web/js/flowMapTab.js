@@ -30,6 +30,15 @@ import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
 // `mergeQueueView` 在本文件**再导出** = 既有 fixture 验证面逐字保留。
 import { mergeQueueView } from './mergeQueueView.js';
 export { mergeQueueView };
+// fm-node 卡渲染件（#1228 换源接线批拆出单源）：卡面 HTML（节点卡/链摘要卡）与卡面
+// 几何常量改从 fmNodeCard.js 单源引取——本文件只剩布局/增量 diff/交互管线，卡面
+// 渲染零本地副本（S10 per-task 链视图与主图共用同一渲染件，禁复制双权威）。
+// nodeFlagKeys 等 fixture 验证导出面**逐字保留**（再导出，消费方零漂移）。
+import {
+  NODE_W, NODE_H, PAD, cardTopOf,
+  nodeHtml, nodeFlagKeys, FM_CHAIN_BUCKETS,
+} from './fmNodeCard.js';
+export { nodeFlagKeys, flagBadgesHtml, queueBadgeHtml, queueNoteText } from './fmNodeCard.js';
 import {
   isTerminalStatus, purgeExpired,
   ingestNodes, recordNodeRemoved, dropStore,
@@ -37,24 +46,20 @@ import {
   chainMembersOf, chainHighlightIds,
 } from './flowMapArchive.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
-// 簇落位（FE组件化批次六 2026-09-28）：徽章/文案小函数族 → ./flowMap/badges.js，
-// 折叠态 localStorage 持久化助手 → ./flowMap/collapse.js（裁定注释与文件级态
-// collapsedCache 整态随迁，主体只经函数面读写）。以下转发保持本文件公共导出面
-// 字节稳定，外部 import 方零改动。
-import { nodeFlagKeys, flagBadgesHtml, queueBadgeHtml, queueNoteText } from './flowMap/badges.js';
+// 簇落位（FE组件化批次六 2026-09-28）：折叠态 localStorage 持久化助手 →
+// ./flowMap/collapse.js（裁定注释与文件级态 collapsedCache 整态随迁，主体只经
+// 函数面读写）。以下转发保持本文件公共导出面字节稳定，外部 import 方零改动。
+// 🔴 徽章/文案小函数族（nodeFlagKeys/flagBadgesHtml/queueBadgeHtml/queueNoteText）
+// 原落 ./flowMap/badges.js；合流取 A 侧 #1228 卡面单源钉（本文件已改引 fmNodeCard.js，
+// 见上 :37-:41）——重复的 import/转发两行按「同名单源」删除（两处实现逐字相同）。
 import { collapsedChainIdsOf, persistCollapsed } from './flowMap/collapse.js';
-export { nodeFlagKeys, flagBadgesHtml, queueBadgeHtml, queueNoteText };
 export { collapsedChainIdsOf };
 
 // 布局常量（紧凑化：作者 2026-09-04 裁定「层级从上到下、连线竖直/曲线、压缩冗余空白」）
-// NODE_W 对齐真实卡宽（FLOW_CSS .solar-node width:124px）——旧值 150 让布局数学
-// 虚胖 26px/卡（水平净距虚增）；V_SPACING 150：典型卡高 88-105px 时层间净距 45-62px，
-// 最厚卡（result+等待脚注 ~134px）仍 +16px 不重叠；H_SPACING 168 → 水平净距 44px。
-const NODE_W = 124;
-const NODE_H = 108;
+// 卡面几何（NODE_W/NODE_H/PAD/cardTopOf）已随卡迁 fmNodeCard.js（#1228 拆出单源），
+// 本文件只留层距/水平距等**布局侧**常量（卡宽/标称卡高从 fmNodeCard 单源引取）。
 const V_SPACING = 150;
 const H_SPACING = 168;
-const PAD = 48;
 
 // 实测高驱动层距（作者 2026-09-14 裁定①「画布根治」，批二）：
 // 卡是 height:auto——徽标行换行 / barrier 提示 / 等待脚注 / desc 行让实卡高远超标称 108px
@@ -76,11 +81,6 @@ function heightsFor(project) {
   if (!m) { m = new Map(); measuredHByProject.set(project, m); }
   return m;
 }
-
-/** 卡左上角（画布局部坐标 = world）。x 由层内水平排布定（卡宽恒 NODE_W）；
- *  y 以 pos.y 为**竖直中心**（与 collectEdges 的边端点锚点「位置即节点中心」同口径），
- *  卡高取 pos.h（实测高，标称下限 108）——标称卡与旧式 `pos.y - NODE_H/2` 逐像素一致。 */
-function cardTopOf(pos) { return pos.y - (pos.h || NODE_H) / 2 + PAD; }
 
 // 增量动画节奏：节点位移走 CSS left/top 过渡、边端点跟随走 rAF 插值，两者同曲线
 // （easeInOutCubic ≙ cubic-bezier(0.645,0.045,0.355,1)）同时长，视觉上同步滑动。
@@ -739,230 +739,6 @@ function nameResolverOf(project) {
   };
 }
 
-// ── 内联 SVG 图标（裁定①：节点域禁 emoji/符号字符，状态图标用 SVG 描边绘制）──
-// 描边风格统一：viewBox 12×12、stroke currentColor（随 .ok/.err/.warn 色板取色）、
-// 圆头圆角；cancelled 减号线沿用原「—」语义。
-const FM_STATUS_SVG = {
-  ok: '<path d="M2.5 6.5 5 9l4.5-5.5"/>',
-  err: '<path d="M3 3l6 6M9 3l-6 6"/>',
-  warn: '<path d="M3.5 1.5v9M3.5 2.5H9L7.5 4.75 9 7H3.5"/>',
-  cancelled: '<path d="M3 6h6"/>',
-};
-/** 终态卡状态词 i18n 键（2026-09-07 状态保真批）：glyph 单看不可读（cancelled 减号
- *  线视觉即「-」）——终态卡 head 行 glyph 旁恒带状态文本，死亡现场一眼可辨。 */
-const FM_NODE_ST_KEY = {
-  completed: 'flowmap.done',
-  failed: 'flowmap.fail',
-  cancelled: 'flowmap.st.cancelled',
-};
-const fmSvgIcon = (cls, inner, sw) =>
-  `<span class="solar-node-status ${cls}"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor"`
-  + ` stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg></span>`;
-// 等待脚注图标：沙漏（替代 ⏳，描边风格与状态图标一致）
-const FM_WAIT_ICON =
-  '<svg class="fm-wait-note-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor"'
-  + ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-  + '<path d="M3 1.5h6M3 10.5h6M3.8 2.6h4.4L6 6 3.8 2.6ZM3.8 9.4h4.4L6 6 3.8 9.4Z"/></svg>';
-
-
-// ── 链摘要卡（折叠态，spec §3.3；复用节点卡几何 + 既有状态 glyph/色板 token）──
-// 一行式内容对齐归档链条目（.fm-entry）：状态词 + 链名 + `N 节点` + 分状态计数 +
-// chevron。零新色值（色板全取 flowMap.css/flowCss.js 既有 token）。点击本体或
-// chevron = 展开该链（容器级捕获委托分派，见 bindFlowMapClicks——不做节点详情入口：
-// chainId 不是节点 id）。折叠态下成员徽标信息聚合为计数行（spec §3.3 徽标兼容）。
-function chainCardHtml(n, pos, originX) {
-  const st = String(n.status || 'pending');
-  const cls = NODE_STATUS_CLS[st] || 'pending';
-  const left = pos.x - NODE_W / 2 + originX;
-  const top = cardTopOf(pos);
-  const statusIcon = st === 'completed' ? fmSvgIcon('ok', FM_STATUS_SVG.ok, 1.5)
-    : st === 'failed' ? fmSvgIcon('err', FM_STATUS_SVG.err, 1.5)
-    : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5)
-    : st === 'blocked' ? fmSvgIcon('warn', FM_STATUS_SVG.warn, 1.4) : '';
-  const counts = n.counts || {};
-  const countItems = FM_CHAIN_BUCKETS
-    .filter((k) => counts[k] > 0)
-    .map((k) => {
-      const g = FM_CHAIN_GLYPH[k];
-      return `<span class="fm-chain-count ${k}">${fmSvgIcon(g.cls, g.inner, g.sw)}${counts[k]}</span>`;
-    }).join('');
-  const title = String(n.name || n.id);
-  const nodesText = t('flowmap.chain.nodes', { n: String(n.memberCount || 0) });
-  return `
-    <div class="solar-node fm-node fm-chain-card ${cls}" data-node-id="${esc(String(n.id))}"
-         data-chain-card="1" data-chain-id="${esc(String(n.id))}" data-status="${esc(st)}"
-         tabindex="0" title="${esc(t('flowmap.chain.cardHint', { chain: title, n: String(n.memberCount || 0) }))}"
-         style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
-      <div class="fm-node-head">${statusIcon}<span class="fm-st-word ${esc(cls)}">${esc(t(FM_CHAIN_ST_KEY[st] || 'flowmap.wait'))}</span>${chainCancelButtonHtml(n.id)}<button type="button" class="fm-chain-chev" data-chain-id="${esc(String(n.id))}" aria-expanded="false"
-                aria-label="${esc(t('flowmap.chain.expand'))}" title="${esc(t('flowmap.chain.expand'))}">${FM_CHEV_SVG}</button>
-      </div>
-      <div class="solar-node-label" title="${esc(title)}">${esc(title)}</div>
-      <div class="solar-node-sub">${esc(nodesText)}</div>
-      ${countItems ? `<div class="fm-chain-counts">${countItems}</div>` : ''}
-    </div>`;
-}
-
-/** 折叠 chevron（指向右 = 「点击展开」；与归档条目 chevron 同一描边语言）。 */
-const FM_CHEV_SVG = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"'
-  + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2l3.5 3-3.5 3"/></svg>';
-
-/** ── 链级取消（R2，chaincancel 批 2026-09-17）─────────────────────────────────
- *  落点 = 链入口成员卡 head 行 `.fm-chain-chev` **同行** + 折叠链摘要卡 head 行同款
- *  （两形态共用同一按钮形态与同一容器级捕获委托单点）。
- *  🔴 前端**只发 chainId**——成员集合 / 状态判定 / 级联闭包全在后端现读派生
- *  （「后端下发、零派生」既有硬纪律）；本文件的 `memberIds` 消费面**仅**用于确认卡的
- *  计数显示（作者明列口径）。 */
-const FM_CANCEL_SVG = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"'
-  + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.2 2.2l5.6 5.6M7.8 2.2l-5.6 5.6"/></svg>';
-
-/** 取消集状态桶（与后端 `NodeLifecycle.ChainCancelScope` 同序；确认卡逐状态计数用）。
- *  仅 **显示** 用途——不代表任何判定口径（判定恒在后端）。 */
-const FM_CHAIN_CANCEL_BUCKETS = ['running', 'pending', 'wiring', 'blocked', 'interrupted'];
-/** 零触碰桶（确认卡第 ④ 要素的计数面）。 */
-const FM_CHAIN_KEEP_BUCKETS = ['completed', 'failed', 'cancelled'];
-
-/** 链级取消按钮（两形态同款；`data-chain-id` 是唯一载荷，无状态/成员信息）。 */
-function chainCancelButtonHtml(chainId) {
-  const cid = String(chainId || '');
-  if (!cid) return '';
-  const label = t('flowmap.chain.cancel.label');
-  return `<button type="button" class="fm-chain-cancel" data-chain-id="${esc(cid)}"`
-    + ` aria-label="${esc(label)}" title="${esc(label)}">${FM_CANCEL_SVG}</button>`;
-}
-
-/** 不可逆确认卡（作者三答 2 + 工程面自决「四要素 + 放弃可恢复中断数提示」）：
- *  ① 链名 + chainId；② 将被取消的节点数与**逐状态计数**；③ 不可逆声明；④ 零触碰声明；
- *  **加**「放弃 N 个可恢复中断（interrupted）」提示。确认组件复用既有
- *  `window.__showConfirm`（danger tone 默认）+ i18n，不引入新交互语言、不做「输入链名」
- *  式二次确认（与产品克制基调冲突）。
- *  安全口径：`__showConfirm` 缺席 ⇒ **什么都不做**（绝不无确认直发不可逆帧）。 */
-function confirmChainCancel(projectName, chainId) {
-  const cid = String(chainId || '');
-  if (!cid) return;
-  if (typeof window.__showConfirm !== 'function') {
-    console.warn('[flowmap] chain cancel needs the confirm dialog (window.__showConfirm) — refused');
-    return;
-  }
-  const view = chainViewById(projectName, cid);
-  const fm = fmByProject.get(projectName);
-  const byId = new Map((Array.isArray(fm?.nodes) ? fm.nodes : []).map((n) => [String(n.id), n]));
-  const members = Array.isArray(view?.memberIds) ? view.memberIds.map(String) : [];
-  const counts = {};
-  for (const k of [...FM_CHAIN_CANCEL_BUCKETS, ...FM_CHAIN_KEEP_BUCKETS]) counts[k] = 0;
-  for (const id of members) {
-    const st = String(byId.get(id)?.status || 'pending');
-    counts[st] = (counts[st] || 0) + 1;
-  }
-  const doomed = FM_CHAIN_CANCEL_BUCKETS.reduce((s, k) => s + counts[k], 0);
-  const kept = FM_CHAIN_KEEP_BUCKETS.reduce((s, k) => s + counts[k], 0);
-  const breakdown = FM_CHAIN_CANCEL_BUCKETS
-    .map((k) => `${t(`flowmap.chain.cancel.st.${k}`)} ${counts[k]}`).join(' · ');
-  const msg = [
-    t('flowmap.chain.cancel.chain', { chain: String(view?.title || cid), id: cid }),
-    t('flowmap.chain.cancel.counts', { n: String(doomed), breakdown }),
-    t('flowmap.chain.cancel.irreversible'),
-    t('flowmap.chain.cancel.untouched', { n: String(kept) }),
-    t('flowmap.chain.cancel.interrupted', { n: String(counts.interrupted) }),
-  ].join(' · ');
-  window.__showConfirm(t('flowmap.chain.cancel.title'), msg, () => {
-    sendWs({ type: 'chainCancel', chainId: cid });
-  });
-}
-
-// ── 节点卡片（复用 solar 视觉）────────────────────────────
-function nodeHtml(n, pos, originX, nameOf) {
-  if (n && n.chainCard) return chainCardHtml(n, pos, originX); // 折叠链卡单点分派
-  const st = n.status || 'pending';
-  const cls = NODE_STATUS_CLS[st] || 'pending';
-  const term = isTerminalStatus(st); // v3 链未齐终态保留卡（规格 §3.2 终态色卡）
-  const left = pos.x - NODE_W / 2 + originX;
-  const top = cardTopOf(pos);
-  const statusIcon = st === 'completed' ? fmSvgIcon('ok', FM_STATUS_SVG.ok, 1.5)
-    : st === 'failed' ? fmSvgIcon('err', FM_STATUS_SVG.err, 1.5)
-    : st === 'blocked' ? fmSvgIcon('warn', FM_STATUS_SVG.warn, 1.4)
-    : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5) : '';
-  // 终态状态词（2026-09-07 状态保真批）：终态卡 glyph 旁恒带文本（已完成/失败/
-  // 已取消）——真实终态可见，不再是孤零零的「-」减号线。
-  const statusWord = term && FM_NODE_ST_KEY[st]
-    ? `<span class="fm-st-word ${esc(cls)}">${esc(t(FM_NODE_ST_KEY[st]))}</span>` : '';
-  const worktreeBadge = n.hasWorktree || n.worktree
-    ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
-  // 特殊节点标识（badge 批）：merge/loop/pending 徽标进 head 行（wt 徽标同区，
-  // 复用该行既有 flex+gap；不新增卡内纵行——88px 卡纵向不可加行，同 node-flowmap-slim 口径）
-  const flags = flagBadgesHtml(n);
-  // 排队位次胶囊（排队位次可见性批）：head 行内、flags 之后（与 merge/pending 同区，
-  // 复用该行既有 flex+gap）。未排队（键缺失）⇒ '' ⇒ head 行 DOM 与改动前**逐字一致**。
-  const queueFlag = queueBadgeHtml(n);
-  // 链折叠控件（P1 · spec §3.3）：链入口成员卡 head 行右端 chevron（控件属链不属成员
-  // ——仅「可见成员 ≥2 的链」的入口卡带，成员 ≤1 恒无）。点击 = 折叠该链（容器级
-  // 捕获委托单点分派，见 bindFlowMapClicks）；title/aria 带链名与成员数，避免
-  // 「这个箭头的对象是谁」的歧义。
-  // chaincancel 批（R2）：链入口成员卡 head 行右端新增 `.fm-chain-cancel`（折叠链摘要卡
-  // 同款，见 chainCardHtml）——**只发 chainId**；判定/执行全在后端。位置在 `chainChev`
-  // **之前**：`.fm-chain-chev` 的 `margin-left:auto` 保持既有 chevron 的右端定位不变
-  // （既有控件零视觉漂移），取消控件紧贴其左。
-  const chainChev = n.chainHead
-    ? chainCancelButtonHtml(n.chainHead.id) + `<button type="button" class="fm-chain-chev fm-chain-chev-open" data-chain-id="${esc(String(n.chainHead.id))}"
-         aria-expanded="true" aria-label="${esc(t('flowmap.chain.collapse', { chain: String(n.chainHead.title), n: String(n.chainHead.n) }))}"
-         title="${esc(t('flowmap.chain.collapse', { chain: String(n.chainHead.title), n: String(n.chainHead.n) }))}">${FM_CHEV_SVG}</button>`
-    : '';
-  // 载荷收敛（2026-09-05）：卡片不再显示 result 摘要（默认载荷无 result）——
-  // 改显示 description（创建必写的一行描述）；存量节点无 description → 回退
-  // taskPreview（载荷条件字段，task 首行 ≤80 截断）。结果全文经详情窗按需拉取。
-  const descText = n.description || n.taskPreview || '';
-  // LoopNode 运行态（2026-09-06）：running 的 loop 节点 desc 行显相位（worker/verify），
-  // 与 head 行「loop N/K」徽标互补（徽标上轮次、desc 行当前角色）——复用既有 .fm-desc
-  // 行，不新增卡内纵行（88px 卡纵向不可加行）。
-  const loopPhase = (st === 'running' && n.loopPhase && n.loop && typeof n.loop === 'object')
-    ? esc(t(`flowmap.loopPhase.${n.loopPhase === 'verify' ? 'verify' : 'worker'}`)) : '';
-  const desc = descText
-    ? `<div class="fm-desc" title="${esc(descText)}">${esc(descText.slice(0, 46))}${descText.length > 46 ? '…' : ''}</div>`
-    : (st === 'running'
-        ? `<div class="fm-desc running">${loopPhase || esc(t('flowmap.cardRunning'))}</div>`
-        : '');
-  // 等待脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps → 列出全部等待对象
-  //（in = 等结果投递，deps = 等完成信号；上游已归档 → i18n 纯文字诚实降级，
-  //  原 ⏳ 图标按裁定①换内联 SVG 沙漏，文字单独 ellipsis 截断）
-  const waitParts = (st === 'pending' || st === 'wiring')
-    ? [...(n.in || []), ...(n.deps || [])].map((id) => nameOf ? nameOf(id) : id)
-    : [];
-  // 合并窗排队脚注（排队位次可见性批 2026-09-14）：**同一脚注行**（不新增卡内纵行）——
-  // 排队态首段 = 「被 XX 挡着」（持有者全列，作者 16:39 裁定②）；上游等待段非空时
-  // 以 ` · ` 续接（合并窗等待与上游等待是两个独立成因，禁互相吞并）。未排队 ⇒
-  // queueNote 为空串 ⇒ 本行文案与改动前**逐字一致**（既有 emoji 清零/防溢出两条
-  // 验收口径零回归）。
-  const queueNote = queueNoteText(n);
-  const waitText = queueNote
-    ? (waitParts.length ? `${queueNote} · ${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}` : queueNote)
-    : (waitParts.length ? `${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}` : '');
-  const waitNote = waitText
-    ? `<div class="fm-wait-note${queueNote ? ' fm-wait-note-queue' : ''}" title="${esc(waitText)}">`
-      + `${FM_WAIT_ICON}<span class="fm-wait-note-text">${esc(waitText)}</span></div>`
-    : '';
-  // Agent 退役（node-flowmap-slim：节点恒 general，卡上无信息量）——副行改显节点
-  // 元数据：preset 常显（未配置 → 克制空态「默认预设」），plugins 有则以
-  // `preset · p1, p2` 同行合显、无则零空态段。单行口径与归档成员行/详情窗 meta
-  // 一致；88px 固定卡纵向不可加行（独占行实测溢出加剧），复用 .solar-node-sub。
-  const presetText = n.preset || t('flowmap.presetDefault');
-  const pluginsText = (n.plugins || []).join(', ');
-  const subTitle = pluginsText ? `${presetText} · ${pluginsText}` : presetText;
-  return `
-    <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}"
-         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(subTitle)}${term && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
-      <div class="solar-orbit">
-        <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot-spin"><div class="solar-dot"></div></div></div></div>
-        <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot-spin"><div class="solar-dot"></div></div></div></div>
-        <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot-spin"><div class="solar-dot"></div></div></div></div>
-      </div>
-      <div class="fm-node-head${queueFlag ? ' fm-head-queued' : ''}">${worktreeBadge}${flags}${queueFlag}${statusIcon}${statusWord}${chainChev}</div>
-      <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
-      <div class="solar-node-sub">${esc(subTitle)}</div>
-      ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
-      ${waitNote}
-      ${desc}
-    </div>`;
-}
-
 // ── 边（SVG，复用 .flow-edge）─────────────────────────────
 // 边的语义按 §2.7 的投递状态分三档，而不是 flow-run 的"正在流动"动画：
 //   delivered  上游 completed → 结果已沿这条边投递（实线、加重）
@@ -1242,33 +1018,6 @@ function visibleNodes(fm) {
 // 分桶存 localStorage）。
 // 折叠门槛 = **可见成员 ≥2**：单成员链折叠无收益且会造出与单体卡重复的卡；成员
 // 被视图过滤/已归档出库时可见成员自然减少 ⇒ 优雅降级为不折叠（无判据、无状态）。
-
-/** 链摘要卡计数行分桶（顺序 = 卡面展示顺序）：终态三色 + running + blocked。
- *  pending/wiring 不设桶（未起步，链卡状态词已表达；零计数桶不渲染）。 */
-const FM_CHAIN_BUCKETS = ['completed', 'running', 'failed', 'cancelled', 'blocked'];
-
-/** 链摘要卡计数行 glyph（spec §3.3「✓n · 跑n · ✗n」）：沿用节点卡 FM_STATUS_SVG
- *  同一批 path（✓/✗/—/⚑ 描边语言），running 用空心圆点（与 .solar-dot 圆点语义
- *  同源）——裁定①禁 emoji/符号字符，全 SVG 描边。cls 为 .solar-node-status 色类
- *  （flowCss.js 既有色板），空串 = 继承容器色（running=链色）。 */
-const FM_CHAIN_GLYPH = {
-  completed: { cls: 'ok', inner: FM_STATUS_SVG.ok, sw: 1.5 },
-  running: { cls: '', inner: '<circle cx="6" cy="6" r="2.6"/>', sw: 1.4 },
-  failed: { cls: 'err', inner: FM_STATUS_SVG.err, sw: 1.5 },
-  cancelled: { cls: 'cancelled', inner: FM_STATUS_SVG.cancelled, sw: 1.5 },
-  blocked: { cls: 'warn', inner: FM_STATUS_SVG.warn, sw: 1.4 },
-};
-
-/** 链摘要卡状态词 i18n 键（最坏态优先：failed > cancelled > running > blocked >
- *  全完成 > pending，与归档链 chainStatusOf 同构的「最坏态」语义）。 */
-const FM_CHAIN_ST_KEY = {
-  completed: 'flowmap.done',
-  running: 'flowmap.run',
-  failed: 'flowmap.fail',
-  cancelled: 'flowmap.st.cancelled',
-  blocked: 'flowmap.blocked',
-  pending: 'flowmap.wait',
-};
 
 /** 节点出边目标集（载荷形态双读：P1 起 out 为 `[{to,on,mode}]` 数组，存量/夹具
  *  仍可能是裸字符串——与 flowMapArchive 的 outTargets 同款双读）。 */
@@ -2184,6 +1933,54 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
   // 实测高驱动层距（裁定①）：挂载后下一帧量实卡高，需要时按实测重算层心并挪位
   scheduleMeasuredLayout(container, fm, projectName);
+}
+
+// ── 链级取消确认（R2，chaincancel 批 2026-09-17 · 交互面留本文件）──────────────
+// 取消**按钮**已随卡面迁 fmNodeCard（chainCancelButtonHtml 单源件）；确认卡与
+// 发帧腿属容器交互管线，留在本文件（#1228 拆件边界：渲染件出、交互留）。
+/** 取消集状态桶（与后端 `NodeLifecycle.ChainCancelScope` 同序；确认卡逐状态计数用）。
+ *  仅 **显示** 用途——不代表任何判定口径（判定恒在后端）。 */
+const FM_CHAIN_CANCEL_BUCKETS = ['running', 'pending', 'wiring', 'blocked', 'interrupted'];
+/** 零触碰桶（确认卡第 ④ 要素的计数面）。 */
+const FM_CHAIN_KEEP_BUCKETS = ['completed', 'failed', 'cancelled'];
+
+/** 不可逆确认卡（作者三答 2 + 工程面自决「四要素 + 放弃可恢复中断数提示」）：
+ *  ① 链名 + chainId；② 将被取消的节点数与**逐状态计数**；③ 不可逆声明；④ 零触碰声明；
+ *  **加**「放弃 N 个可恢复中断（interrupted）」提示。确认组件复用既有
+ *  `window.__showConfirm`（danger tone 默认）+ i18n，不引入新交互语言、不做「输入链名」
+ *  式二次确认（与产品克制基调冲突）。
+ *  安全口径：`__showConfirm` 缺席 ⇒ **什么都不做**（绝不无确认直发不可逆帧）。 */
+function confirmChainCancel(projectName, chainId) {
+  const cid = String(chainId || '');
+  if (!cid) return;
+  if (typeof window.__showConfirm !== 'function') {
+    console.warn('[flowmap] chain cancel needs the confirm dialog (window.__showConfirm) — refused');
+    return;
+  }
+  const view = chainViewById(projectName, cid);
+  const fm = fmByProject.get(projectName);
+  const byId = new Map((Array.isArray(fm?.nodes) ? fm.nodes : []).map((n) => [String(n.id), n]));
+  const members = Array.isArray(view?.memberIds) ? view.memberIds.map(String) : [];
+  const counts = {};
+  for (const k of [...FM_CHAIN_CANCEL_BUCKETS, ...FM_CHAIN_KEEP_BUCKETS]) counts[k] = 0;
+  for (const id of members) {
+    const st = String(byId.get(id)?.status || 'pending');
+    counts[st] = (counts[st] || 0) + 1;
+  }
+  const doomed = FM_CHAIN_CANCEL_BUCKETS.reduce((s, k) => s + counts[k], 0);
+  const kept = FM_CHAIN_KEEP_BUCKETS.reduce((s, k) => s + counts[k], 0);
+  const breakdown = FM_CHAIN_CANCEL_BUCKETS
+    .map((k) => `${t(`flowmap.chain.cancel.st.${k}`)} ${counts[k]}`).join(' · ');
+  const msg = [
+    t('flowmap.chain.cancel.chain', { chain: String(view?.title || cid), id: cid }),
+    t('flowmap.chain.cancel.counts', { n: String(doomed), breakdown }),
+    t('flowmap.chain.cancel.irreversible'),
+    t('flowmap.chain.cancel.untouched', { n: String(kept) }),
+    t('flowmap.chain.cancel.interrupted', { n: String(counts.interrupted) }),
+  ].join(' · ');
+  window.__showConfirm(t('flowmap.chain.cancel.title'), msg, () => {
+    sendWs({ type: 'chainCancel', chainId: cid });
+  });
 }
 
 function bindFlowMapClicks(container, projectName) {

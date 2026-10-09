@@ -3,7 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.actor.{AgentDef, RootAgentIdentity}
+import nebflow.actor.AgentDef
 import nebflow.core.AgentLibraryView
 import nebflow.core.presets.{PresetStore, SchemePolicy}
 import nebflow.shared.*
@@ -11,11 +11,13 @@ import nebflow.shared.*
 import scala.util.Try
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M3):原地混入 core 窄视图(消费面仅 get,签名镜像,行为保持)
-// Agent definitions loaded from disk (~/.nebflow/agents/<name>/agent.json + system.md).
-//
-// Only Nebula is hardcoded as a fallback — if its disk files are missing or
-// corrupted, the code definition keeps the system alive. All other agents
-// are defined exclusively on disk; deleting their directory removes them.
+// Agent definitions: the four CONVERGED names (Nebula / project-dispatcher /
+// general / kernel) are CODE-DEFINED (builtin-def batch 2026-10-03, author
+// directive ① "all four agents hardcoded in code, no disk scan, code is the
+// single source of truth") — `BuiltinAgents` owns their defs; disk files under
+// `~/.nebflow/agents/<builtin>/` are dead letters (never read for the def face,
+// never deleted). Only NON-converged (custom) agents load from disk: deleting
+// their directory removes them. The panel is read-only for builtins.
 class AgentLibrary(
   agentsDir: os.Path,
   serviceConfig: Option[NebflowServiceConfig] = None
@@ -32,45 +34,38 @@ class AgentLibrary(
   // Public API
   // ============================================================
 
-  /** Seed agent.json + system.md for default agents (first install only). */
-  def seedDefaults(): IO[Unit] = IO.blocking {
-    Seeds.all.foreach { agent =>
-      val dir = agentsDir / agent.name
-      os.makeDir.all(dir)
-      // Write agent.json if it doesn't exist (don't overwrite user edits)
-      val jsonPath = dir / "agent.json"
-      if !os.exists(jsonPath) then
-        os.write.over(jsonPath, agent.toJson)
-        logger.info(s"Seeded agent.json for: ${agent.name}")
-      // Write system.md if it doesn't exist
-      if agent.systemPrompt.nonEmpty && !os.exists(dir / "system.md") then
-        os.write.over(dir / "system.md", agent.systemPrompt)
-        logger.info(s"Seeded system.md for: ${agent.name}")
-    }
-  }
+  // seedDefaults() RETIRED (builtin-def batch 2026-10-03, author directive ①):
+  // the four converged agents are code-defined (BuiltinAgents) — there is
+  // nothing left to seed and no disk mirror to maintain. The former Nebula-only
+  // seeding (Seeds.all) is deleted with it; GatewayMain's startup call is gone.
 
-  // Load all agents from disk. Scans all agent.json files in the agents directory.
-  // Nebula is guaranteed to exist — falls back to code definition if
-  // missing or corrupted on disk.
+  // Load all agents. The four converged names ALWAYS come from code
+  // (BuiltinAgents — never from disk, never absent); the disk scan covers
+  // custom (non-converged) agents only.
   def loadAll(): IO[Map[String, AgentDef]] = IO.blocking {
     val diskAgents = scanDisk()
-
-    // Ensure Nebula always exists (system survival guarantee)
-    if diskAgents.contains(Seeds.RootAgent.name) then diskAgents
-    else
-      logger.warnSync("Nebula not found on disk — using code fallback")
-      diskAgents + (Seeds.RootAgent.name -> Seeds.RootAgent.toAgentDef)
+    val builtins = nebflow.core.entity.BuiltinAgents.entries().map((k, e) => k -> e.toAgentDef)
+    builtins ++ diskAgents
   }
 
-  /** Get a single agent by name. */
+  /** Get a single agent by name. Converged names resolve from code only. */
   def get(name: String): IO[Option[AgentDef]] =
-    loadAll().map(_.get(name))
+    if nebflow.core.entity.BuiltinAgents.isBuiltin(name) then
+      IO.blocking(nebflow.core.entity.BuiltinAgents.entry(name).map(_.toAgentDef))
+    else loadAll().map(_.get(name))
 
-  /** Write a system.md file for the given agent. */
+  /** Write a system.md file for the given agent.
+    * Builtins are read-only (author directive ①: the code prompt is the only
+    * source) — a write attempt is refused loudly (WARN, no write, no error). */
   def updateSystemPrompt(name: String, content: String): IO[Unit] = IO.blocking {
-    val dir = agentsDir / name
-    os.makeDir.all(dir)
-    os.write.over(dir / "system.md", content)
+    if nebflow.core.entity.BuiltinAgents.isBuiltin(name) then
+      logger.warnSync(
+        s"Refused updateSystemPrompt('$name') — built-in agents are code-defined (BuiltinAgents) and read-only"
+      )
+    else
+      val dir = agentsDir / name
+      os.makeDir.all(dir)
+      os.write.over(dir / "system.md", content)
   }
 
   // updateTools (agent.json tools write-back) retired 2026-09-06 — the panel's
@@ -83,12 +78,23 @@ class AgentLibrary(
    * Update the model configuration in agent.json. Reads the existing file,
    *  merges the "model" field, and writes it back.
    *
-   * @return true if updated, false if agent.json not found.
+   * builtin-def batch (2026-10-03): for the four code-defined agents agent.json
+   * is a pure MODEL-CHAIN SIDECAR — when it does not exist (fresh home) it is
+   * created with just the name + model keys (the def face stays in code).
+   *
+   * @return true if updated (created counts as updated), false only on a
+   *         corrupt existing file.
    * @throws RuntimeException if the existing JSON is corrupt.
    */
   def updateModel(name: String, config: AgentModelConfig): IO[Boolean] = IO.blocking {
     val jsonPath = agentsDir / name / "agent.json"
-    if !os.exists(jsonPath) then false
+    if !os.exists(jsonPath) then
+      os.makeDir.all(agentsDir / name)
+      os.write.over(
+        jsonPath,
+        io.circe.Json.obj("name" -> name.asJson, "model" -> config.asJson).noSpaces
+      )
+      true
     else
       val json = os.read(jsonPath)
       io.circe.parser.parse(json) match
@@ -100,10 +106,13 @@ class AgentLibrary(
           throw new RuntimeException(s"Failed to parse agent.json for '$name': ${err.getMessage}")
   }
 
-  /** Read a system.md file. */
+  /** Read a system.md file. Builtins serve the CODE prompt (read-only face). */
   def readSystemPrompt(name: String): IO[Option[String]] = IO.blocking {
-    val p = agentsDir / name / "system.md"
-    if os.exists(p) then Some(os.read(p)) else None
+    if nebflow.core.entity.BuiltinAgents.isBuiltin(name) then
+      nebflow.core.entity.BuiltinAgents.entry(name).map(_.systemPrompt)
+    else
+      val p = agentsDir / name / "system.md"
+      if os.exists(p) then Some(os.read(p)) else None
   }
 
   /** Reload from disk (no cache, so it's a no-op). */
@@ -118,6 +127,13 @@ class AgentLibrary(
    *  Shared between global scanning and project-level overrides.
    */
   def loadFromDir(dir: os.Path): Option[AgentDef] =
+    // builtin-def 批（2026-10-03 作者令①）：收敛名的 def 面只在代码
+    // （BuiltinAgents）——磁盘目录对这四个名是死信，读侧单点跳过（纵深：
+    // scanDisk 已过滤，此处兜 loadFromDir 的其他调用方）。
+    if nebflow.core.entity.BuiltinAgents.isBuiltin(dir.last) then None
+    else loadCustomFromDir(dir)
+
+  private def loadCustomFromDir(dir: os.Path): Option[AgentDef] =
     val jsonPath = dir / "agent.json"
     if !os.exists(jsonPath) then None
     else
@@ -173,7 +189,7 @@ class AgentLibrary(
 
     end if
 
-  end loadFromDir
+  end loadCustomFromDir
 
   /**
    * Load a project-specific agent from a folder directory.
@@ -191,6 +207,8 @@ class AgentLibrary(
     else
       os.list(agentsDir)
         .filter(os.isDir)
+        // builtin-def 批：收敛名不入扫盘面（代码单点，磁盘死信）
+        .filter(dir => !nebflow.core.entity.BuiltinAgents.isBuiltin(dir.last))
         .flatMap { dir => loadFromDir(dir).map(d => d.name -> d) }
         .toMap
 
@@ -274,77 +292,6 @@ private object AgentJson:
       .deepMerge(j.flows.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
   }
 end AgentJson
-
-// ============================================================
-// Seed definitions (for initial install + Nebula fallback)
-// ============================================================
-
-private case class SeedAgent(
-  name: String,
-  displayName: Option[String],
-  description: String,
-  tools: List[String],
-  systemPrompt: String
-):
-
-  def toAgentDef: AgentDef = AgentDef(
-    name = name,
-    description = description,
-    tools = tools,
-    systemPrompt = systemPrompt,
-    displayName = displayName,
-    category = "standalone"
-  )
-
-  def toJson: String =
-    val agentJson = AgentJson(name, displayName, Some(description), None, tools, None, None)
-    agentJson.asJson.noSpaces
-
-end SeedAgent
-
-private object Seeds:
-
-  // Tool surface: deliberately empty — this field is NOT the authoritative face.
-  // Nebula is a converged agent name, so `buildToolList` short-circuits any
-  // `tools` declaration to the empty set (AgentCore.ConvergedAgentNames branch)
-  // and the field grants nothing. The single source of truth is
-  // AgentCore.RootOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
-  // Do not reintroduce a list here: it would read as authoritative while being
-  // dead data that silently drifts from the real tool surface.
-  val RootAgent = SeedAgent(
-    RootAgentIdentity.Name,
-    Some(RootAgentIdentity.Name),
-    "Orchestrator — delegates all execution to specialized Teams and Flows",
-    Nil,
-    """You are Nebula, the AI assistant in Nebflow. Your job is to understand the user's intent and help the user get the work done.
-
-Tool duties: ProjectCreate creates projects; Mail dispatches a task to a project or a remote device, choosing a suitable target from the project's and the device's descriptions; AgentControl supervises the running state of project sessions; Read reads results; TaskList manages task state and task memory; MemoryNote records long-term memory.
-
-Creating a project has three cases: (1) an old project whose folder you do not know the path of - leave it empty and let the user choose; (2) the user stated the project path explicitly in the conversation - create it directly; (3) a new project with no project folder - create it under {{data_root}}/projects/<project name> by preference. A project's description must be clear enough to say what the project is for. Create a project proactively to carry the work, unless it really is a single one-off execution task - those go to the general project.
-
-If you need to know the current state before you can decide, have the general project summarize the current state for you. general is the project for simple general tasks; when the user needs a skill, an MCP server or a plugin created, route it to the general project.
-
-Output: keep it terse, add a plain-language explanation when you use a technical term, no emoji. When relaying a task keep the user's original words, add no more than necessary, and stay on the task itself. Task results are shown to the user through Pop. Todos / questions / decisions always go through AskUserQuestion.
-
-Visualization: use the card tool actively to visualize results - humans read visual content more easily; for material you cannot produce yourself, such as drawing an image, ask general for help. Never draw a block diagram, flowchart or architecture diagram out of ASCII characters (box-drawing glyphs, `+---+` borders, dash-and-pipe trees). For plain-text content do not use the card tool - output it directly.
-
-Memory: record only what cannot be obtained from the project's code and helps future tasks, such as design preferences, design principles, the user's profile, the user's habits, the project's background.
-
-""" + "\n"
-  )
-
-  /**
-   * Seeds for initial installation — Nebula only (F.3 convergence, 2026-09-05).
-   * Nebula is both the only seed and the runtime fallback; every other agent
-   * is defined on disk only (git-tracked definitions, restorable outside the
-   * code). Archived agent dirs (agent.json renamed *.archived) must NOT be
-   * resurrected by seeding — seedDefaults() rewrites any in-list dir missing
-   * agent.json, so keeping retired names out of this list is what keeps them
-   * retired across restarts (GatewayMain calls seedDefaults() on startup).
-   */
-  val all = List(RootAgent)
-
-end Seeds
 
 object AgentLibrary:
   def defaultDir: os.Path = PathUtil.dataRoot / "agents"

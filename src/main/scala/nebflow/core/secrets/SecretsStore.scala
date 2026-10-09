@@ -103,30 +103,140 @@ class SecretsStore(
   def managedNamespace(name: String): Boolean =
     name.startsWith("social-") || name.startsWith("daemon-")
 
+  // ── Consumption face (pointer semantics — never a value) ───────────────
+
+  /** Resolve `name` to its consumption pointer — the answer to "I need this
+    * credential; where do I get it?".
+    *
+    * 🔴 The returned `location` is a PATH. No branch of this method opens the
+    * secret file: the existence check reads directory metadata only. That is
+    * the mechanism, not a convention — a value cannot leak through a channel
+    * that never reads one. */
+  def pointer(name: String): IO[Either[Failure, Pointer]] =
+    validateName(name) match
+      case Left(f) => IO.pure(Left(f))
+      case Right(_) =>
+        IO.blocking {
+          if !Files.exists(path(name).toNIO) then Left(Failure.UnknownSecret(name))
+          else
+            val meta = SecretsCatalog.load(dataRoot)
+            Right(Pointer(
+              name = name,
+              variableName = SecretsCatalog.variableNameOf(name, meta),
+              description = SecretsCatalog.descriptionOf(name, meta),
+              location = SecretsCatalog.renderedLocation(dataRoot, secretsDir, name)
+            ))
+        }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
+
+  /** Every consumption pointer, sorted by name — the catalogue as data. */
+  def pointers(): IO[Either[Failure, List[Pointer]]] =
+    IO.blocking {
+      Right(SecretsCatalog.rows(secretsDir, dataRoot).map(r =>
+        Pointer(
+          name = r.name,
+          variableName = r.variableName,
+          description = r.description,
+          location = SecretsCatalog.renderedLocation(dataRoot, secretsDir, r.name)
+        )
+      ))
+    }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, secretsDir.toString)))))
+
+  /** Set the two non-value catalogue fields of an existing secret. A missing
+    * target is `404 unknown_secret` — metadata never mints a secret (the file
+    * is the credential; metadata describes it).
+    *
+    * 🔴 WHOLESALE REPLACE, and `None` means CLEAR — these two arguments are the
+    * values the secret ends up with, not a patch:
+    *
+    *   - `variableName = None` (or `Some("")`) drops the override, so the
+    *     secret reads under its derived default again (not "unchanged");
+    *   - `description = None` (or `Some("")`) clears the description.
+    *
+    * The alternative — a three-state set / clear / leave merge — makes the
+    * meaning of a call depend on which argument the caller happened to omit,
+    * which is exactly the shape that silently half-applies an edit. Both call
+    * sites (`PATCH /secrets/{name}`, `secretsMetadataBody`) already speak
+    * whole-replace, so this face states the same contract rather than adding a
+    * second, subtler one. Clearing BOTH leaves no sidecar entry at all
+    * ([[SecretsCatalog.save]] drops metadata that carries no field). */
+  def setMetadata(
+    name: String,
+    variableName: Option[String] = None,
+    description: Option[String] = None
+  ): IO[Either[Failure, Unit]] =
+    validateName(name) match
+      case Left(f) => IO.pure(Left(f))
+      case Right(_) =>
+        variableName.filter(_.nonEmpty) match
+          case Some(v) if !SecretsCatalog.isVariableName(v) =>
+            IO.pure(Left(Failure.InvalidVariableName(name, v)))
+          case _ =>
+            IO.blocking {
+              if !Files.exists(path(name).toNIO) then Left(Failure.UnknownSecret(name))
+              else
+                val current = SecretsCatalog.load(dataRoot)
+                val next = SecretsCatalog.Meta(
+                  variableName.filter(_.nonEmpty),
+                  description.filter(_.nonEmpty).getOrElse("")
+                )
+                if next == SecretsCatalog.Meta(None, "") then
+                  SecretsCatalog.save(dataRoot, current - name)
+                else
+                  SecretsCatalog.save(dataRoot, current.updated(name, next))
+                SecretsCatalog.refresh(secretsDir, dataRoot)
+                Right(())
+            }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
+
+  /** Re-render the catalogue after a store mutation. Best-effort: the secret
+    * itself is already stored, so a catalogue failure is logged loudly rather
+    * than turned into a write failure (reporting "not stored" when it is
+    * stored would be the worse lie — the same shape as the ACL warn-not-abort
+    * rule). */
+  private def refreshCatalog(): Unit =
+    try SecretsCatalog.refresh(secretsDir, dataRoot)
+    catch case e: Exception => logger.warn(s"secrets catalog refresh failed: ${describe(e, secretsDir.toString)}")
+
   // ── Read face (metadata only — never a value) ──────────────────────────
 
   /** One listed secret: name, size (bytes), mtime (epoch millis), the mode
     * string (`0600` on a POSIX readback, `null` where the OS has no POSIX
-    * view) and the referencing ids. No `value` key exists anywhere in this
-    * shape — enforced structurally by the routes spec. */
-  final case class Entry(name: String, size: Long, mtime: Long, mode: Option[String], refs: List[String])
+    * view), the referencing ids, and the two catalogue fields
+    * ([[SecretsCatalog]] — variable name + description; the third field of the
+    * catalogue model, the value, is the file itself and is never read back).
+    * No `value` key exists anywhere in this shape — enforced structurally by
+    * the routes spec. */
+  final case class Entry(
+    name: String,
+    size: Long,
+    mtime: Long,
+    mode: Option[String],
+    refs: List[String],
+    variableName: String,
+    description: String
+  )
 
   /** List everything under `secretsDir`. A missing directory is an empty list
     * (no secrets yet), not an error. Managed names are visible like any
-    * other; only writes distinguish them. */
+    * other; only writes distinguish them.
+    *
+    * Read-only by contract: it reads the metadata sidecar, and deliberately
+    * does NOT refresh the catalogue — a list must never write. */
   def list(): IO[Either[Failure, List[Entry]]] =
     IO.blocking {
       if !Files.isDirectory(secretsDir.toNIO) then Right(Nil)
       else
         val names = os.list(secretsDir).filter(p => Files.isRegularFile(p.toNIO)).map(_.last).toList.sorted
         val refs = referencedByAll()
+        val meta = SecretsCatalog.load(dataRoot)
         Right(names.map(n =>
           Entry(
             name = n,
             size = Files.size((secretsDir / n).toNIO),
             mtime = Files.getLastModifiedTime((secretsDir / n).toNIO).toMillis,
             mode = modeOf(secretsDir / n),
-            refs = refs.getOrElse(n, Nil)
+            refs = refs.getOrElse(n, Nil),
+            variableName = SecretsCatalog.variableNameOf(n, meta),
+            description = SecretsCatalog.descriptionOf(n, meta)
           )
         ))
     }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, secretsDir.toString)))))
@@ -148,7 +258,11 @@ class SecretsStore(
       case Right(_) =>
         IO.blocking {
           if Files.exists(path(name).toNIO) then Left(Failure.AlreadyExists(name))
-          else writeThrough(name, value).map(_ => ())
+          else
+            writeThrough(name, value).map { _ =>
+              refreshCatalog()
+              ()
+            }
         }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
   /** Overwrite an existing secret entirely. A missing target is `404
@@ -163,7 +277,11 @@ class SecretsStore(
       case Right(_) =>
         IO.blocking {
           if !Files.exists(path(name).toNIO) then Left(Failure.UnknownSecret(name))
-          else writeThrough(name, value).map(_ => ())
+          else
+            writeThrough(name, value).map { _ =>
+              refreshCatalog()
+              ()
+            }
         }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
   /** Delete a secret. Guard rails in order — the managed check runs BEFORE
@@ -184,6 +302,12 @@ class SecretsStore(
           else
             try
               Files.delete(path(name).toNIO)
+              // The metadata describes a credential that is now gone — dropping
+              // the entry keeps the sidecar from carrying orphans that a later
+              // secret of the same name would silently inherit.
+              val meta = SecretsCatalog.load(dataRoot)
+              if meta.contains(name) then SecretsCatalog.save(dataRoot, meta - name)
+              refreshCatalog()
               logger.info(s"Secret deleted: $name")
               Right(())
             catch
@@ -464,6 +588,16 @@ end SecretsStore
 
 object SecretsStore:
 
+  /** One consumption record: WHICH credential, under what VARIABLE NAME, for
+    * WHAT purpose, and WHERE to query it. This is the whole C-case contract —
+    * the field that a value would occupy is a location string.
+    *
+    * It lives on the companion (not inside the class) so its type has a stable
+    * path: a class-nested case class is path-dependent on the store INSTANCE,
+    * which would make every caller's type signature mention a particular store
+    * rather than the shape itself. */
+  final case class Pointer(name: String, variableName: String, description: String, location: String)
+
   /** Name contract: lowercase start, `[a-z0-9._-]`, 1-64 chars. */
   val NamePattern: java.util.regex.Pattern = java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9._-]{0,63}$")
   val MaxLen: Int = 64
@@ -478,6 +612,10 @@ object SecretsStore:
   enum Failure:
     case InvalidName(name: String, reason: String)
     case InvalidValue(name: String, reason: String)
+    /** A variable-name override that is not a legal shell identifier (the
+      * catalogue's naming contract). Carries the REJECTED NAME — which is a
+      * field label the caller just supplied, never a secret value. */
+    case InvalidVariableName(name: String, variableName: String)
     case UnknownSecret(name: String)
     case AlreadyExists(name: String)
     case Referenced(name: String, refs: List[String])

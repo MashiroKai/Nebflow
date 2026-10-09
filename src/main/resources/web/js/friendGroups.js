@@ -26,7 +26,7 @@
 //    既有管线结构性支持，本模块零参与）。
 
 import { t } from './i18n.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, statusIcon, escapeHtml } from './utils.js';
 import { getNeblinkState } from './neblink.js';
 import * as api from './friendsApi.js';
 import { errKind } from './friendsApi.js';
@@ -648,7 +648,10 @@ export function buildGroupSettings(conv, hooks) {
   if (isOwner) {
     const hint = el('div', 'fm-gs-hint', t('messages.groupOwnerNoLeave'));
     actSec.appendChild(hint);
+    // ui-status-redesign（S10 / 盘点 #47）：字转常规色，危险语义由行首图标承载
+    // （解散=trash-2 / 退群=unplug，红 token），hover 整键转红（铁律三）。
     const dissolveBtn = el('button', 'glass-control fm-gs-action fm-gs-danger', t('messages.groupDissolve'));
+    dissolveBtn.innerHTML = statusIcon('trash-2', 12, 'st-err') + escapeHtml(t('messages.groupDissolve'));
     dissolveBtn.addEventListener('click', () => {
       confirmRun(t('messages.groupDissolve'), t('messages.confirmDissolve'), async () => {
         try {
@@ -662,6 +665,7 @@ export function buildGroupSettings(conv, hooks) {
     actSec.appendChild(dissolveBtn);
   } else {
     const leaveBtn = el('button', 'glass-control fm-gs-action fm-gs-danger', t('messages.groupLeave'));
+    leaveBtn.innerHTML = statusIcon('unplug', 12, 'st-err') + escapeHtml(t('messages.groupLeave'));
     leaveBtn.addEventListener('click', () => {
       confirmRun(t('messages.groupLeave'), t('messages.confirmLeave'), async () => {
         try {

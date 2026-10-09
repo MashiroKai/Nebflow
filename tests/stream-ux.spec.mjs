@@ -15,7 +15,7 @@
 //   NB_UX_ROOT=/tmp/nb-streamux-base PIN_EXPECT=red \
 //     node node_modules/@playwright/test/cli.js test tests/stream-ux.spec.mjs
 //
-// A1 工具运行期 badge 行含 Spinner + 工具名 / 完成瞬间打勾 / 切换滚动过渡
+// A1 工具运行期 badge 行含 Spinner + 工具名 / 完成瞬间打勾 / 切换淡出过渡（UI-C 纯文本化后：无变换类滚动）
 // A2 思考期单行流式揭示 → 完成打勾
 // A3 助手回复整条出现 + 回复 DOM 内零逐字流式渲染（帧级读数）
 // A4 用户输入气泡入场动画
@@ -152,7 +152,7 @@ async function aiFrameStats(page) {
 }
 
 test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → 翻动切换）', () => {
-  test('spinner + tool name on one line; check on done; switch rolls to the next tool', async ({ browser }) => {
+  test('spinner + tool name on one line; check on done; switch fades the outgoing item to the next tool', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
 
     await page.evaluate(() => window.__toolRun());
@@ -174,21 +174,24 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     expect(done.svgPaths, 'a check glyph is drawn in its place').toBeGreaterThan(0);
     expect(done.height, 'still one line — the completion does not grow the row').toBeLessThanOrEqual(48);
 
-    // Let the completion animation (roll-in 0.35s + the 0.1s-delayed bounce,
-    // 0.5s total) finish. The exit trace below measures MOTION of this same
-    // element, so a still-running entry animation would be credited to the
-    // exit leg and mask a missing roll-out entirely.
+    // Let the completion animation (the 0.3s text fade-in, `.nf-wl-item.is-done`)
+    // finish. The exit trace below measures this same element's fade, so a
+    // still-running entry animation would be credited to the exit leg and mask
+    // a missing fade-out entirely.
     await page.waitForTimeout(650);
 
-    // Switch: the badge rolls the outgoing item out and the next tool in.
+    // Switch: the badge FADES the outgoing item out and the next tool in.
+    // (UI-C, 2026-10-03: the retired layer ROLLED the item up — a CSS
+    // transform; the current layer is PURE TEXT and fades, so the exit leg is
+    // asserted as a fade, never as vertical motion.)
     // The EXIT leg is traced frame-by-frame — a reading taken only after the
-    // 380ms settle cannot tell "rolled up and out" from "sat still, then was
-    // detached", because both leave the same final DOM. The user-visible
-    // property the spec sentence promises (「旧上滚出」) is MOTION of the
-    // outgoing item while it is still on screen, so that is what gets
-    // asserted. Form-agnostic: no class of this batch is named — the item is
-    // found by the label it carries. The switch is triggered INSIDE this same
-    // evaluate so the sampler is provably already recording when it fires.
+    // settle cannot tell "faded out while still on screen" from "sat still,
+    // then was detached", because both leave the same final DOM. The
+    // user-visible property the spec sentence promises (「旧上滚出」) is now
+    // 「旧淡出」: the outgoing item's opacity falls while it is STILL connected.
+    // Form-agnostic: no class of this batch is named — the item is found by the
+    // label it carries. The switch is triggered INSIDE this same evaluate so the
+    // sampler is provably already recording when it fires.
     const switchRead = await page.evaluate(async ({ textA, textB }) => {
       const chat = document.getElementById('chat');
       const ind = Array.from(chat.children).find(k =>
@@ -210,7 +213,9 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
       await raf(); // let the switch commit before reading the live animations
       const liveAnims = ind.getAnimations({ subtree: true })
         .filter(a => a.playState === 'running' || a.playState === 'pending').length;
+      const startOpa = outgoing.isConnected ? +getComputedStyle(outgoing).opacity : 0;
       let minTop = baseTop;
+      let minConnectedOpa = startOpa;
       let sawRunning = false;
       let frames = 0;
       // Cross-fade guard: sample BOTH sides of the switch every frame. The
@@ -237,6 +242,8 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
         if (outgoing.isConnected) {
           const top = outgoing.getBoundingClientRect().top;
           if (top < minTop) minTop = top;
+          const oo = +getComputedStyle(outgoing).opacity;
+          if (oo < minConnectedOpa) minConnectedOpa = oo;
           if (outgoing.getAnimations().some(a => a.playState === 'running')) sawRunning = true;
         }
         // the entering item is born by the switch, so re-resolve it each frame
@@ -264,7 +271,11 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
         .filter(n => n.tagName === 'SPAN' && n.children.length === 0 && (n.textContent || '').trim())
         .map(n => n.textContent.trim());
       return {
-        exit: { baseTop: +baseTop.toFixed(2), minTop: +minTop.toFixed(2), frames, sawRunning },
+        exit: {
+          baseTop: +baseTop.toFixed(2), minTop: +minTop.toFixed(2),
+          startOpa: +startOpa.toFixed(2), minConnectedOpa: +minConnectedOpa.toFixed(2),
+          frames, sawRunning,
+        },
         cross: {
           bothFrames, peakOverlap, gapFrames,
           tOut: tOut === null ? null : +tOut.toFixed(1),
@@ -280,8 +291,14 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
     const exit = switchRead.exit;
     expect(exit.frames, 'the exit was sampled over multiple animation frames').toBeGreaterThan(3);
     expect(exit.sawRunning, 'the outgoing item animates on its way out (it does not just vanish)').toBe(true);
-    expect(exit.baseTop - exit.minTop,
-      'the outgoing item ROLLS UP as it leaves (its top actually rises on screen)').toBeGreaterThan(2);
+    // UI-C (2026-10-03): the exit is a PURE-TEXT fade — the leaving item's
+    // opacity actually falls while it is still connected. A still item that is
+    // then detached would read minConnectedOpa ≈ startOpa (≈1); a fade reads
+    // it near 0. Vertical motion is NOT required any more (the retired layer
+    // rolled the item; the current layer fades it).
+    expect(exit.minConnectedOpa,
+      `the outgoing item FADES OUT on its way out (opacity ${exit.startOpa} → ${exit.minConnectedOpa} while still on screen)`)
+      .toBeLessThan(0.4);
 
     // No double exposure: the two items must never be legible at once, and the
     // old one must be gone before the new one arrives (the demo's hard switch
@@ -416,8 +433,9 @@ test.describe('A2 — 思考 = 单行流式揭示 → 打勾', () => {
     expect(stream.height, 'the reveal is ONE line (no multi-line feed in the badge)').toBeLessThanOrEqual(48);
     expect(stream.running, 'the reveal is animated (CSS), not a static jump').toBeGreaterThan(0);
 
-    // The full thinking feed still lives in the .row.thinking-row below (the
-    // existing expand surface is untouched — spec §二.1.4).
+    // The full thinking feed still accumulates in the .row.thinking-row below
+    // (pre-tucked since the 2026-10-03 redesign — the expand face renders
+    // into the DOM while the line carries the reveal).
     expect(await page.evaluate(() =>
       (document.querySelector('#chat .row.thinking-row .thinking-content')?.textContent || '')
         .includes('互斥闸'))).toBe(true);
@@ -555,7 +573,7 @@ test.describe('A5 — 终态与现状一致（工作行交还既有展开面）'
     await context.close();
   });
 
-  test('a header-less turn (E6) still leaves no stray top-level node', async ({ browser }) => {
+  test('a thinking-only turn (E6) settles the line into its own header (no stray node)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__thinkingOnlyTurn());
     expect(pageErrors).toEqual([]);
@@ -567,14 +585,26 @@ test.describe('A5 — 终态与现状一致（工作行交还既有展开面）'
           .filter(k => !k.classList.contains('row') && !k.classList.contains('turn-header'))
           .map(k => k.className),
         headers: chat.querySelectorAll(':scope > .turn-header').length,
+        headerText: (chat.querySelector(':scope > .turn-header')?.textContent || '').trim(),
       };
     });
-    // No header here (boundary default: nothing tuckable) — and, the point of
-    // this leg, the transient work-line is gone all the same: the `readSeq`
-    // contract of turn-collapse-keep-text.spec.mjs enumerates every top-level
-    // child, so a leftover node would read as `other:nf-workline`.
-    expect(shape.headers, 'a process-only-thinking turn renders no header').toBe(0);
-    expect(shape.stray, 'and still no stray top-level node survives it').toEqual([]);
+    // stream-ux redesign (2026-10-03): the thinking-only turn's process ran on
+    // the line, so the line settles into its OWN header (思考 stats, no 工具
+    // segment) — the old "no header for E6" default is gone with the run-time
+    // pre-tuck (the thinking row is never visible during the run any more).
+    // The readSeq contract still holds: the settled header is a `.turn-header`
+    // top-level node, so no stray survives.
+    expect(shape.headers, 'the E6 turn still gets its own settled header').toBe(1);
+    expect(shape.headerText, 'the badge carries the model + 思考 segment').toContain('test-model');
+    expect(shape.headerText).toContain('思考');
+    expect(shape.stray, 'and no stray top-level node survives it').toEqual([]);
+
+    // The settled header expands the pre-tucked thinking row (the expand face).
+    await page.locator('#chat > .turn-header').first().click();
+    expect(await page.evaluate(() => {
+      const row = document.querySelector('#chat .row.thinking-row');
+      return row ? row.offsetHeight > 0 : false;
+    })).toBe(true);
     await context.close();
   });
 });
@@ -595,6 +625,170 @@ test.describe('animation events — CSS only (no WAAPI in the process chrome)', 
     expect(kinds.length, 'the running badge animates').toBeGreaterThan(0);
     expect(kinds.every(k => k === 'css'),
       'every badge animation is CSS (WAAPI is pinned out by the turn-* specs)').toBe(true);
+    await context.close();
+  });
+});
+
+/* ═══════════ A6 — zcode-484: the single-line streaming window ═══════════
+ *
+ * Author ruling 2026-10-04 09:29, verbatim:
+ *   「我要的思考过程以及工具过程的流式，是在一行进行流式，像zcode一样。而且现在
+ *    一次Pop多个图片和视频进行折叠的效果还有问题。」
+ *
+ * Acceptance (batch brief §4, mechanical):
+ *   1. while streaming, the line container's `clientHeight` is CONSTANT at one
+ *      row — feeding many deltas never grows it vertically;
+ *   2. the row end fades (a tail `mask-image`);
+ *   3. on completion the line collapses to a one-row checked badge;
+ *   4. the FULL thinking text stays reachable.
+ *
+ * The readings below name NO class introduced by this batch (they go through the
+ * batch-agnostic `__lineGeometry`, which finds the live line the same way
+ * READ_INDICATOR does), so the SAME file is RED on the pre-batch tree.
+ */
+
+test.describe('A6 — 思考单行流式（zcode-484）', () => {
+  test('the slot height is CONSTANT across a multi-delta feed (never grows vertically)', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__thinkSingleLineFeed(12));
+    expect(read, 'the feed built a live line').not.toBeNull();
+    expect(read.frames, 'every frame found the line').toBe(12);
+    expect(read.textLenGrew, 'the text really kept growing (constancy must not be vacuous)').toBe(true);
+    expect(read.distinctSlotH.length,
+      `the slot height never changed across the whole feed (saw ${JSON.stringify(read.distinctSlotH)})`)
+      .toBe(1);
+    expect(read.distinctSlotComputedH.length,
+      `nor did its computed height (saw ${JSON.stringify(read.distinctSlotComputedH)})`).toBe(1);
+    expect(read.distinctThinkH.length,
+      `nor the text box (saw ${JSON.stringify(read.distinctThinkH)})`).toBe(1);
+    // The single row is exactly one line box high (the padding lives on the row,
+    // not on the slot), which is what "strictly one row" means.
+    expect(read.maxSlotH, 'the line is one text row high')
+      .toBeLessThanOrEqual(read.last.thinkLineHeight * 1.2 + 2);
+    expect(read.last.whiteSpace, 'and it forbids wrapping').toBe('nowrap');
+    expect(read.last.overflow, 'and clips its overflow').toBe('hidden');
+    expect(read.last.slotOverflow, 'the slot clips too').toBe('hidden');
+    // The tail fade: new content flows in at the row end, old slides out left.
+    expect(read.last.maskImage, `a tail fade is applied (was: ${read.last.maskImage})`).not.toBe('none');
+    expect(read.last.scrollW, 'the text overflows the box (so the anchor matters)')
+      .toBeGreaterThan(read.last.clientW);
+    expect(read.last.tailAnchored, 'and the box stays pinned to its right edge (the tail anchor)').toBe(true);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('the TOOL-process row gets the same single-row treatment', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__toolSingleLineFeed());
+    expect(read, 'the tool feed built a live line').not.toBeNull();
+    expect(read.frames, 'three successive tool labels were rendered').toBe(3);
+    expect(read.distinctSlotH.length,
+      `the slot stayed one row high across every tool item (saw ${JSON.stringify(read.distinctSlotH)})`)
+      .toBe(1);
+    expect(read.distinctSlotComputedH.length,
+      `nor did its computed height change (saw ${JSON.stringify(read.distinctSlotComputedH)})`).toBe(1);
+    // The LABEL is the tool face's text box — the very box the pre-batch rule
+    // made wrap (`white-space: normal; overflow-wrap: anywhere`). A long label
+    // must stay one row and be clipped, with the same tail fade.
+    expect(read.last.labelTextLen, 'the label really is long (otherwise the clip is vacuous)')
+      .toBeGreaterThan(80);
+    expect(read.last.labelWhiteSpace, 'the tool label forbids wrapping').toBe('nowrap');
+    expect(read.last.labelOverflow, 'and clips its overflow').toBe('hidden');
+    expect(read.distinctLabelH.length,
+      `the label box never grew a second row (saw ${JSON.stringify(read.distinctLabelH)})`).toBe(1);
+    expect(read.last.labelScrollW, 'the label overflows its box (clipped, not shrunk)')
+      .toBeGreaterThan(read.last.labelClientW);
+    expect(read.last.labelMaskImage,
+      `the tool label carries the same tail fade (was: ${read.last.labelMaskImage})`).not.toBe('none');
+    // The completion face lands on that same single row.
+    expect(read.done, 'the completed face was readable').not.toBeNull();
+    expect(read.done.slotH, 'the check face is still one row').toBe(read.maxSlotH);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('I1: the stream APPENDS to the tail node — the #481 rewrite ban still holds', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__appendOnlyProbe(8));
+    expect(read, 'the probe found the thinking node').not.toBeNull();
+    expect(read.frames, 'the feed ran eight deltas').toBe(8);
+    // The #481 commit 2706962e2's invariant, read from the DOM: the FIRST text
+    // node object survives the whole stream, still at index 0, its data only
+    // growing. A per-delta `textContent = whole` write would replace the node.
+    expect(read.allSameNode,
+      'the first text node is never replaced (no whole-line rewrite per delta)').toBe(true);
+    expect(read.allStillFirst, 'and it stays the leading node of the line').toBe(true);
+    expect(read.nodeIndexes, 'it never moves').toEqual([0]);
+    expect(read.firstLenMonotone, 'its data only ever grew (append-only)').toBe(true);
+    expect(read.totalTextLen, 'the full text accumulated on the line')
+      .toBeGreaterThan(8 * 15);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('completion collapses the line to a one-row checked badge; full text stays reachable', async ({ browser }) => {    const { context, page, pageErrors } = await newPage(browser);
+    const read = await page.evaluate(() => window.__thinkCollapseRead());
+    expect(read.liveSlotH, 'the line was live and one row before completion').toBeGreaterThan(0);
+    expect(read.badgeH, 'the completed badge is one row high (never a card)')
+      .toBeLessThanOrEqual(read.liveSlotH + 2);
+    expect(read.spins, 'the spinner retired').toBe(0);
+    expect(read.svgPaths, 'and a check glyph is drawn').toBeGreaterThan(0);
+    expect(read.labelText.length, 'the badge carries the settled summary text').toBeGreaterThan(0);
+    // The full thinking feed is still reachable through the pre-tucked row.
+    expect(read.fullTextReachable,
+      'the full thinking text remains reachable (the expand interaction is untouched)').toBe(true);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A6b — the Pop running row's file-path progress (zcode-484 rework).
+//
+// WHY: commit b3c0851c8 claimed the running Pop row shows the deliverable path
+// while its arguments stream, and the plan (OD-5 / §3.3-4) asks for the "first
+// path (+N)" summary for the ARRAY form — the batch Pop shape the requirement
+// is about. The first cut only fixed the single-string form: the extractor
+// bailed with `null` as soon as the first non-space char after the colon was
+// not `"`, so a `[` built NO `.tool-stream-body` at all. These two cases pin
+// BOTH forms against the real render path (renderToolPending →
+// appendToolStreamDelta), which had ZERO coverage before (repo-wide: no test
+// referenced `TOOL_PRIMARY_FIELDS`, `.tool-stream-body` or `'Pop'`).
+//
+// Red leg: the baseline tree has no `'Pop'` entry in `TOOL_PRIMARY_FIELDS`, so
+// BOTH cases fail there (no body node is ever created) — see the `git archive`
+// recipe in the file header, never `git checkout main`.
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe('A6b — Pop 运行期行内文件路径进展（数组 / 单值双形态）', () => {
+  test('the SINGLE-string Pop form shows its path on the running row', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const payload = JSON.stringify({ filePath: '/tmp/lone.png' });
+    const read = await page.evaluate(
+      ([tool, p]) => window.__toolArgStreamRead(tool, p), ['Pop', payload]);
+    expect(read.found, 'the pending Pop row was created').toBe(true);
+    expect(read.bodyExists, 'the running row built its streaming body').toBe(true);
+    expect(read.visible, 'and the body is visible when the turn is expanded').toBe(true);
+    expect(read.text, 'it shows the file path').toContain('/tmp/lone.png');
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('the ARRAY Pop form shows its first path (+N) on the running row', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const payload = JSON.stringify({
+      filePath: ['/tmp/alpha.png', '/tmp/beta.png', '/tmp/gamma.png'],
+    });
+    const read = await page.evaluate(
+      ([tool, p]) => window.__toolArgStreamRead(tool, p), ['Pop', payload]);
+    expect(read.found, 'the pending Pop row was created').toBe(true);
+    // The regression this pins: the array form used to build NO body (the
+    // extractor returned null on `[`), so the expanded running turn showed
+    // nothing while the single-string form showed its path.
+    expect(read.bodyExists, 'the ARRAY form builds the same streaming body').toBe(true);
+    expect(read.visible, 'and the body is visible when the turn is expanded').toBe(true);
+    expect(read.text, 'it shows the first path').toContain('/tmp/alpha.png');
+    expect(read.text, 'and counts the further paths as +2').toContain('+2');
+    expect(pageErrors).toEqual([]);
     await context.close();
   });
 });

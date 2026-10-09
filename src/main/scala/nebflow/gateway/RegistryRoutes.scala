@@ -103,17 +103,31 @@ private[gateway] object RegistryRoutes:
       // 丢弃），天然只回 keeper 定义；.archived / 惰性残留目录不出现（面板收敛
       // spec 钉死）。layer 字段保留恒 "global"（agentManager.js 的 layer 过滤
       // 兼容；scope 字段仅旧 team/flow 条目携带，随两层删除自然消失）。
+      //
+      // builtin-def 批（2026-10-03 作者令①）：四件收敛 agent（Nebula /
+      // project-dispatcher / general / kernel）为**代码定义**，恒在册、磁盘死信
+      // （EntityLoader.listAgents 单点合并）；响应带 `builtin: true` = 面板只读
+      // 标记（写通道对 builtin 名显式拒绝）。
+      //
+      // 2026-10-07 14:13 作者令②：「任务分发器」面板隐藏——本 handler 是枚举链
+      // **第二过滤点**（判据单点 = BuiltinAgents.PanelHiddenNames / panelVisible，
+      // 第一过滤点在其定义处）。🔴 藏的是可见性不是生命：只过滤本**列表枚举**，
+      // 单取 GET /api/agents/:name、模型链读写、注册/旧轨/生命周期零触碰；
+      // #1229 物理删除仍候 S19③ 收口闸。
       case req @ GET -> Root / "agents" =>
         withAuth(req) {
           for
             globalAgents <- EntityLoader.listAgents()
-            globalList = globalAgents.values.toList.map { a =>
+            globalList = globalAgents.values.toList
+              .filter(a => nebflow.core.entity.BuiltinAgents.panelVisible(a.name))
+              .map { a =>
               Json.obj(
                 "name" -> a.name.asJson,
                 "description" -> a.description.asJson,
                 "displayName" -> a.name.asJson,
                 "category" -> a.category.asJson,
-                "layer" -> "global".asJson
+                "layer" -> "global".asJson,
+                "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(a.name).asJson
               )
             }
             result <- Ok(Json.obj("agents" -> globalList.asJson))
@@ -155,7 +169,7 @@ private[gateway] object RegistryRoutes:
             val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
             val content = scope match
               case "user" => nebflow.shared.MemoryStore.loadUserMemory.getOrElse("")
-              case "agent" => nebflow.shared.MemoryStore.loadAgentMemory(agentName).getOrElse("")
+              case "agent" => nebflow.shared.MemoryStore.loadSoulMemory(agentName).getOrElse("")
               case _ => ""
             Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))
           }

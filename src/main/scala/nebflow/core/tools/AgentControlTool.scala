@@ -50,7 +50,7 @@ Actions:
 - **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules).
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
 
-Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or legacy dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-trigger Mail(address="project:<name>", message=...)). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
+Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-trigger Mail(address="project:<name>", message=...)). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
 
 When to use:
 - A delegated task has been silent far longer than expected → list, then status the suspicious session.
@@ -118,6 +118,33 @@ When to use:
   def cancelable(rec: AgentRecord): Boolean =
     CancelableKinds.contains(rec.kind) ||
       (rec.kind == AgentKind.Flow && isProjectFlowSession(rec.sessionId) && rec.supervisorRef.isDefined)
+
+  /**
+   * 外部腿（#1225）的根桶守卫：外部 delegate 无 agentRegistry 行，走不了
+   * withGuardedRecord 的同桶判定——这里只保留「调用者必须是 root 桶」一条
+   * （Nebula / 无注册记录的 legacy 形态放行；非 root 调用者拒绝）。
+   */
+  private def withExternalRootGuard(
+    resources: AgentRuntimePort,
+    ctx: ToolContext
+  )(
+    body: => IO[Either[ToolError, String]]
+  ): IO[Either[ToolError, String]] =
+    val callerSessionId = ctx.sessionId.getOrElse("")
+    if callerSessionId.isEmpty then body
+    else
+      resources.agentRegistry.get.flatMap { registry =>
+        val rootBucket = callerIsRootBucket(registry, callerSessionId)
+        if rootBucket then body
+        else
+          IO.pure(
+            Left(
+              ToolError(
+                s"Permission denied: external delegate management is root-scope — session '$callerSessionId' is not a root-bucket caller."
+              )
+            )
+          )
+      }
 
   private def kindRejection(
     rec: AgentRecord,
@@ -265,6 +292,15 @@ When to use:
             else doStatus(resources, ctx, sessionId)
           case "cancel" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("cancel requires sessionId (run list first to get one)")))
+            else if sessionId.startsWith(nebflow.core.executor.ExternalSessionRunner.SessionPrefix) then
+              // 外部腿（external-executors 批 #1225）：外部 delegate 无 actor /
+              // agentRegistry 行——取消直达进程树（原书：ProcessTree.killProcessTree）。
+              // 权限 = root 桶调用者（与 delegate 派发面同族）。
+              withExternalRootGuard(resources, ctx) {
+                nebflow.core.executor.ExternalSessionRunner
+                  .cancel(sessionId, reason, by = callerLabel(ctx))
+                  .map(_.left.map(ToolError(_)))
+              }
             else
               val confirm = input("confirm").flatMap(_.asBoolean).getOrElse(false)
               withGuardedRecord(resources, ctx, sessionId, "cancel", confirm, reason)((rec, _) =>
@@ -464,6 +500,14 @@ When to use:
           case None => true
           case Some(anchors) => anchors.contains(parentSid) || chainReaches(registry, parentSid, anchors, 8)
       runningTasks <- resources.subAgentTaskStore.findRunningTasks
+      // 外部行（external-executors 批 #1225）：地址列内外统一，源 =
+      // DelegateRegistry（持久地址簿）；与 ExternalOutputStore 的活体/终态留存
+      // 条目 join——只展示有缓冲面的行（重启后进程消失的外部任务由下方
+      // orphanRows 面覆盖：外部任务同在 runningTasks，无 registry 行即 orphan）。
+      externalRows <- nebflow.core.delegate.DelegateRegistry.list()
+        .filter(_.executor != nebflow.core.executor.ExecutorRegistry.DefaultId)
+        .traverse(rec => nebflow.core.executor.ExternalOutputStore.read(rec.id, 0).map(_.map(o => (rec, o))))
+        .map(_.flatten)
       taskMap = runningTasks.map(t => t.taskId -> t).toMap
       now = System.currentTimeMillis()
       rows = registry.values.toList
@@ -500,6 +544,9 @@ When to use:
             else "-"
           List(
             rec.sessionId,
+            // unified-delegate 批：地址列——Delegate 行给出 Mail 续聊地址
+            // `delegate:<sessionId>`（与 Delegate 回执同一形态），其余行 "-"。
+            if rec.kind == AgentKind.Delegate then s"delegate:${rec.sessionId}" else "-",
             rec.kind.toString,
             agent,
             if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
@@ -519,6 +566,7 @@ When to use:
     yield
       val header = List(
         "sessionId",
+        "address",
         "kind",
         "agent",
         "parent",
@@ -556,7 +604,31 @@ When to use:
             (t.description + " [orphan: no live actor — lost to a process crash; swept at next startup]").take(60)
           )
         }
-      val table = (header :: rows ++ orphanRows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
+      // 外部行（#1225）：address 列内外统一（源 DelegateRegistry）；stuck?/phase/
+      // loop/barrier 面不适用（无 actor 心跳轴，"-"）；status = 进度面终态词表
+      // （running/completed/blocked/cancelled——blocked 即三态判词直显）。
+      val externalRowList = externalRows.map { case (rec, o) =>
+        val statusLabel =
+          if o.status == "running" && o.mailboxDepth > 0 then s"running (mailbox ${o.mailboxDepth})"
+          else o.status
+        List(
+          rec.id,
+          s"delegate:${rec.id}",
+          "Delegate",
+          rec.executor,
+          if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
+          statusLabel,
+          "-",
+          "-",
+          "-",
+          "-",
+          fmtMillis(math.max(0L, now - o.startedAtMs)),
+          "-",
+          "-",
+          rec.title.take(48)
+        )
+      }
+      val table = (header :: rows ++ orphanRows ++ externalRowList).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
       val scopeNote =
         if anchorsOpt.isDefined then
           "\nScope: your team subtree only (own members + their sub-agents) — root sessions and other teams' agents are hidden."
@@ -565,17 +637,21 @@ When to use:
         if orphanRows.nonEmpty then
           "\norphan(running) = task survived a process crash: no live actor exists, its result was lost. The startup sweep terminalizes these and notifies the parent session on next restart."
         else ""
+      val externalNote =
+        if externalRowList.nonEmpty then
+          "\nexternal-* rows = external CLI delegates (address = delegate:<id>, Mail continues them; cancel kills the process tree; status/buffer via GET /api/delegates/<id>/output)."
+        else ""
       val summary =
-        if rows.isEmpty && orphanRows.isEmpty then
+        if rows.isEmpty && orphanRows.isEmpty && externalRowList.isEmpty then
           "No live background agents in your scope (registry is empty or outside your subtree)."
         else
-          s"""Background agents (${rows.size + orphanRows.size}):
+          s"""Background agents (${rows.size + orphanRows.size + externalRowList.size}):
              |
              |$table
              |
              |stuck? = Processing and either (a) no agent-side event (LLM chunk / tool batch) for >${Defaults.StuckThresholdMs / 60000}min
              |         or (b) one tool call running for >${Defaults.ToolPhaseStuckMs / 60000}min inside an unfinished turn — same judgement as the automatic watcher.
-             |phase = the in-flight tool call (name + elapsed) for the current turn — "-" when no tool is executing.$orphanNote
+             |phase = the in-flight tool call (name + elapsed) for the current turn — "-" when no tool is executing.$orphanNote$externalNote
              |loop = streak/rounds (loop-guard): streak = consecutive rounds failing the same call (warn@3); rounds = non-progressing
              |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
@@ -675,29 +751,80 @@ When to use:
           Right((lines :+ manage).mkString("\n"))
         }
       case None =>
-        resources.subAgentTaskStore.findByTaskId(sessionId).map {
-          case Some(t) if t.status == "running" || t.status == "restarting" =>
-            Right(
-              s"Orphan task: no live actor for '$sessionId' but the task file still says status=${t.status} " +
-                s"(agent=${t.agentName}, parent=${t.parentSessionId}). The actor died without a terminal event " +
-                "(e.g. gateway restart). It can be ignored — startup recovery / pruning will clean it — or the " +
-                "task can be re-delegated."
-            )
-          case Some(t) =>
-            Right(
-              s"Session '$sessionId' is no longer live. Task record: status=${t.status}, retries=${t.retryCount}, lastError=${t.lastError.getOrElse("-")}."
-            )
-          case None =>
-            Left(
-              ToolError(
-                s"No agent or task record with sessionId='$sessionId'. Run AgentControl(action=list) to see live sessions."
+        // 外部腿（#1225）：外部 delegate 无 registry 行——status 读进度缓冲面
+        // （ExternalOutputStore）＋ DelegateRegistry 记录（原书：status 读缓冲）。
+        if sessionId.startsWith(nebflow.core.executor.ExternalSessionRunner.SessionPrefix) then
+          externalStatusBody(sessionId)
+        else
+          resources.subAgentTaskStore.findByTaskId(sessionId).map {
+            case Some(t) if t.status == "running" || t.status == "restarting" =>
+              Right(
+                s"Orphan task: no live actor for '$sessionId' but the task file still says status=${t.status} " +
+                  s"(agent=${t.agentName}, parent=${t.parentSessionId}). The actor died without a terminal event " +
+                  "(e.g. gateway restart). It can be ignored — startup recovery / pruning will clean it — or the " +
+                  "task can be re-delegated."
               )
-            )
-        }
+            case Some(t) =>
+              Right(
+                s"Session '$sessionId' is no longer live. Task record: status=${t.status}, retries=${t.retryCount}, lastError=${t.lastError.getOrElse("-")}."
+              )
+            case None =>
+              Left(
+                ToolError(
+                  s"No agent or task record with sessionId='$sessionId'. Run AgentControl(action=list) to see live sessions."
+                )
+              )
+          }
 
     end match
 
   end doStatusBody
+
+  /** 外部 delegate 的 status 详情（进度缓冲 + 地址簿记录 + mailbox 深度）。 */
+  private def externalStatusBody(sessionId: String): IO[Either[ToolError, String]] =
+    nebflow.core.executor.ExternalOutputStore.read(sessionId, 0).flatMap {
+      case None =>
+        nebflow.core.delegate.DelegateRegistry.find(sessionId) match
+          case Some(rec) =>
+            IO.pure(
+              Right(
+                s"External delegate '$sessionId' (executor=${rec.executor}) has no output buffer on this instance " +
+                  "(process finished and its retained buffer was evicted, or it ran before the last restart). " +
+                  s"Record: workspace=${rec.cwd}, project=${rec.project.getOrElse("-")}, taskId=${rec.taskId.getOrElse("-")}. " +
+                  "Continue it via Mail(address=\"delegate:<id>\")."
+              )
+            )
+          case None =>
+            IO.pure(Left(ToolError(s"No external delegate '$sessionId' on record (DelegateRegistry). Run AgentControl(action=list).")))
+      case Some(o) =>
+        nebflow.core.delegate.DelegateRegistry.find(sessionId) match
+          case Some(rec) =>
+            val lines = List(
+              s"sessionId: ${o.taskId}",
+              "kind: Delegate (external CLI)",
+              s"executor: ${rec.executor}",
+              s"status: ${o.status}" + (if o.mailboxDepth > 0 then s" (mailbox: ${o.mailboxDepth} queued)" else ""),
+              s"startedAt: ${fmtMillis(System.currentTimeMillis() - o.startedAtMs)} ago",
+              s"finishedAt: ${o.finishedAtMs.map(f => fmtMillis(System.currentTimeMillis() - f) + " ago").getOrElse("-")}",
+              s"exitCode: ${o.exitCode.map(_.toString).getOrElse("-")}",
+              s"lastError: ${o.errorHint.getOrElse("-")}",
+              s"workspace: ${rec.cwd}",
+              s"project: ${rec.project.getOrElse("-")}",
+              s"taskId: ${rec.taskId.getOrElse("-")}",
+              s"cliSessionId: ${o.cliSessionId.orElse(rec.cliSessionId).map(_.toString).getOrElse("-")}",
+              "address: delegate:" + rec.id,
+              "manageable: cancel (kills the CLI process tree); continue via Mail(address)"
+            )
+            IO.pure(Right(lines.mkString("\n")))
+          case None =>
+            // 有缓冲无记录（理论形态——记录先于缓冲写）：缓冲面照报。
+            IO.pure(
+              Right(
+                s"External delegate session '$sessionId': status=${o.status}, exitCode=${o.exitCode.map(_.toString).getOrElse("-")}, " +
+                  s"lastError=${o.errorHint.getOrElse("-")} (no DelegateRegistry record found)."
+              )
+            )
+    }
 
   /**
    * Cancel 终止任务终态（区别于 Interrupt 停当前 turn）。public：WS cancelAgent

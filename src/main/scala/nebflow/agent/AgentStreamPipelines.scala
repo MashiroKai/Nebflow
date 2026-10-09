@@ -41,7 +41,13 @@ object StreamBatching:
     textCount: Int = 0,
     thinking: String = "",
     thinkingCount: Int = 0,
-    lastFlushMs: Long = 0L
+    lastFlushMs: Long = 0L,
+    /** B2: highest block index handed out by this pipeline so far. Carried
+     *  across flushes (never reset by `take`), so every frame emitted by one
+     *  round carries a strictly increasing `block`. The pipe is built once per
+     *  LLM round, so `block` is the frame's index WITHIN its round — the pair
+     *  (`round`, `block`) is the frame's identity for the whole turn. */
+    marked: Int = 0
   )
 
   /** One flush's WS frames — thinking first（流序：thinking 段先于 text 段），then text. */
@@ -50,31 +56,80 @@ object StreamBatching:
   val MaxBatch = 50
   val FlushWindowMs = 50L
 
+  /**
+   * B2（RC-2，2026-10-04）：流式帧的块/轮次标识。
+   *
+   * 缺口：`textDelta` / `thinkingDelta` 帧此前**没有任何段/轮次标识**，前端只能
+   * 从累积字符串里**启发式**判断「变化的那一段尾巴」（B1 的 `streamSplitPoint`），
+   * 拿不准就整段重画。标识上线后，前端尾段切分从启发式变**确定性**：帧自带
+   * `round`（本轮 LLM 轮次，与前端 `dataset.nfRound` / `roundComplete` 同一口径）
+   * 与 `block`（帧的**累积序**——同一 turn 内该类型帧的第几条，严格递增）。
+   *
+   * 增量语义：**同一 round 内 block 单调递增**。前端据此可断言「帧 i 是同段续写」，
+   * 而不是「帧 i 与帧 i-1 之间是否发生了段边界」。跨 round 时 `round` 变化 ⇒
+   * 段边界确定性可见（不需要解析文本）。
+   *
+   * 🔴 向后兼容：`round` / `block` 是**附加字段**，旧前端不读即忽略；两个帧类型
+   * 各自保留原有字段（type/sessionId/delta/agentId/nodeSessionId）逐字不变。
+   * 🔴 保守回退路径不动：B1 的 `streamSplitPoint` 判据与回退分支零改动——标识是
+   * 额外信息，不是替代判据（拿不准仍然整段重画）。
+   */
+  final case class FrameMark(round: Int, block: Int)
+
   def textFrame(
     delta: String,
     isAskMode: Boolean,
     isSubagent: Boolean,
     sessionId: Option[String],
-    agentPath: String
+    agentPath: String,
+    mark: Option[FrameMark] = None
   ): Json =
     if isAskMode then
       Json.obj("type" -> "askTextDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
-    else if isSubagent then AgentStreamEvent.TextDelta(delta).toJson(agentPath, true, None)
-    else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
+    else if isSubagent then markFrame(AgentStreamEvent.TextDelta(delta).toJson(agentPath, true, None), mark)
+    else markFrame(
+      Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson),
+      mark
+    )
 
-  def thinkingFrame(delta: String, isSubagent: Boolean, sessionId: Option[String], agentPath: String): Json =
+  def thinkingFrame(
+    delta: String,
+    isSubagent: Boolean,
+    sessionId: Option[String],
+    agentPath: String,
+    mark: Option[FrameMark] = None
+  ): Json =
     if isSubagent then
       // Sub-agents emit agentThinking with a delta field. routeWsSend
       // stamps nodeSessionId; ws.js convertAgentEvent maps agentThinking
       // → thinkingDelta with sessionId = nodeSessionId so the popup view
       // renders the reasoning bubble.
-      Json.obj(
-        "type" -> "agentThinking".asJson,
-        "agentId" -> agentPath.asJson,
-        "delta" -> delta.asJson,
-        "nodeSessionId" -> sessionId.asJson
+      markFrame(
+        Json.obj(
+          "type" -> "agentThinking".asJson,
+          "agentId" -> agentPath.asJson,
+          "delta" -> delta.asJson,
+          "nodeSessionId" -> sessionId.asJson
+        ),
+        mark
       )
-    else Json.obj("type" -> "thinkingDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
+    else
+      markFrame(
+        Json.obj("type" -> "thinkingDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson),
+        mark
+      )
+
+  /** Add the B2 block/round identifier to an already-built frame. Absent mark ⇒
+   *  frame unchanged (wire-compatible: a caller that has no round context yet,
+   *  e.g. an older construction path, emits exactly the pre-B2 bytes). */
+  private def markFrame(json: Json, mark: Option[FrameMark]): Json =
+    mark match
+      case None => json
+      case Some(m) =>
+        json.asObject match
+          case Some(obj) =>
+            Json.fromJsonObject(obj.add("round", m.round.asJson).add("block", m.block.asJson))
+          case None => json
 
   def pipe(
     wsSend: Json => IO[Unit],
@@ -82,7 +137,8 @@ object StreamBatching:
     sessionId: Option[String],
     isAskMode: Boolean,
     isCompactTurn: Boolean,
-    agentPath: String
+    agentPath: String,
+    round: Int = 0
   ): fs2.Pipe[IO, StreamChunk, StreamChunk] =
     stream =>
       fs2.Stream.eval(IO.ref(BatchState(lastFlushMs = System.currentTimeMillis()))).flatMap { st =>
@@ -96,11 +152,19 @@ object StreamBatching:
               val due = buffered && (force || now - s.lastFlushMs >= FlushWindowMs)
               if !due then (s, None)
               else
-                val p = FlushPayload(
-                  Option.when(s.thinking.nonEmpty)(thinkingFrame(s.thinking, isSubagent, sessionId, agentPath)),
-                  Option.when(s.text.nonEmpty)(textFrame(s.text, isAskMode, isSubagent, sessionId, agentPath))
-                )
-                (BatchState(lastFlushMs = now), Some(p))
+                val thinks = s.thinking.nonEmpty
+                val texts = s.text.nonEmpty
+                var next = s.marked
+                val thinking = Option.when(thinks) {
+                  next += 1
+                  thinkingFrame(s.thinking, isSubagent, sessionId, agentPath, Some(FrameMark(round, next)))
+                }
+                val text = Option.when(texts) {
+                  next += 1
+                  textFrame(s.text, isAskMode, isSubagent, sessionId, agentPath, Some(FrameMark(round, next)))
+                }
+                val p = FlushPayload(thinking, text)
+                (BatchState(lastFlushMs = now, marked = next), Some(p))
             }
           }
 
@@ -110,11 +174,14 @@ object StreamBatching:
               val count = (if isText then s.textCount else s.thinkingCount) + 1
               if count >= MaxBatch || now - s.lastFlushMs >= FlushWindowMs then
                 val merged = (if isText then s.text else s.thinking) + delta
+                val block = s.marked + 1
+                val fm = Some(FrameMark(round, block))
                 val p =
                   if isText then
-                    FlushPayload(None, Some(textFrame(merged, isAskMode, isSubagent, sessionId, agentPath)))
-                  else FlushPayload(Some(thinkingFrame(merged, isSubagent, sessionId, agentPath)), None)
-                (BatchState(lastFlushMs = now), Some(p))
+                    FlushPayload(None, Some(textFrame(merged, isAskMode, isSubagent, sessionId, agentPath, fm)))
+                  else
+                    FlushPayload(Some(thinkingFrame(merged, isSubagent, sessionId, agentPath, fm)), None)
+                (BatchState(lastFlushMs = now, marked = block), Some(p))
               else
                 val next =
                   if isText then s.copy(text = s.text + delta, textCount = count)
@@ -184,7 +251,8 @@ private[agent] trait AgentStreamPipelines:
     isSubagent: Boolean = true,
     sessionId: Option[String] = None,
     isAskMode: Boolean = false,
-    isCompactTurn: Boolean = false
+    isCompactTurn: Boolean = false,
+    round: Int = 0
   )(using ctx: ActorContext[AgentCommand]): fs2.Pipe[IO, StreamChunk, StreamChunk] =
     stream =>
       // ── WS 事件合批（2026-09-07 抽出为 StreamBatching 并修复 park 饿死）──
@@ -199,7 +267,8 @@ private[agent] trait AgentStreamPipelines:
         sessionId = sessionId,
         isAskMode = isAskMode,
         isCompactTurn = isCompactTurn,
-        agentPath = ctx.self.path.name
+        agentPath = ctx.self.path.name,
+        round = round
       )(stream)
 
   protected def aggregateChunks(chunks: List[StreamChunk]): ConsumeResult =

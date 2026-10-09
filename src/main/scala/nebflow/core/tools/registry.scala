@@ -29,10 +29,12 @@ object ToolRegistry:
       "Curl" -> CurlTool,
       // Canvas file display
       "Pop" -> PopTool,
-      // Chat-stream HTML card (sandboxed iframe) — 解封恢复（2026-09-05 08:40
-      // 作者裁定，NebulaOrchestrationTools +Card）：commit 793f62c1（2026-08-11）
-      // 曾整体删除，本批恢复后端工具与注册；前端 iframe 消费面另批恢复。
-      "Card" -> CardTool,
+      // Card retired 2026-10-03 (pop-upgrade batch, author ruling 「去掉card工具」):
+      // the chat-stream HTML card tool is gone — its show-face duties moved to
+      // Pop (media renders in the chat; files render as file cards). Calling the
+      // retired name hits AgentCore.RetiredToolGuides (error text only, zero
+      // execution surface). cardRegistry.js keeps rendering legacy `___*_HTML___`
+      // payloads already stored in old session histories.
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
       // Team task tools (任务工具重做 2026-08-30: 任务=进展展示，工具只配
@@ -52,9 +54,26 @@ object ToolRegistry:
       // 节点不挂 Mail）。旧注释「message + ask modes」已过时：ask 模式由
       // 2026-08-27 作者裁定整体移除。
       "Mail" -> MailTool,
+      // 旧 AgentFlow（dispatcher 派发面）retired (unified-delegate batch
+      // 2026-10-03): dispatch is unified under Delegate(task, project?); 其退役
+      // 墓碑条目随 N1 复名批删除（名字复用后表对该名永不可达——registry 注册即
+      // 令 RetiredToolGuides 对该名失效的既有教义）。
       // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
+      // builtin-merge 批（2026-10-03）：Subagent = 只读侦察子入口（阻塞，结果即
+      // 返回值）。N1 复名批（v2 ①/v3 §5）：Workflow → **AgentFlow**（同参数：
+      // steps = [{id, task, deps}], description）＝内联 DAG 便捷面，非阻塞薄壳化
+      // （steps → ChainWrite.registerChain 同闸同底座）。授权面 =
+      // AgentCore.NebflowFixedTools（执行 agent 机制面）；RootExclusiveTools
+      // 防声明逃逸。
+      "Subagent" -> SubagentTool,
+      "AgentFlow" -> AgentFlowTool,
+      // ChainWrite（N1 刀2 新注册项，v3 §5 S4）：delegate 会话专属整链登记件——
+      // 一次调用登记节点＋deps＋任务＋描述整链进调用 delegate 自己的作用域图，
+      // 校验过 → 原子落盘 → 入口放行（链齐才跑）。授权面 = buildAllowedToolSet
+      // 尾段 delegateSession 腿；RootExclusiveTools 防声明逃逸（插件声明不授能）。
+      "ChainWrite" -> ChainWriteTool,
       // Background agent inspection & control (list/status/cancel/restart) — Nebula 专用
       "AgentControl" -> AgentControlTool,
       // FlowTrigger / FlowExecute / FlowReport retired 2026-09-06（工具面裁撤
@@ -89,8 +108,9 @@ object ToolRegistry:
       // FlowReport 注册已随 2026-09-06 工具面裁撤批移除（见上注）。
       // #28 阶段 0：Project + Node 模型工具集（分发器白名单声明；全局注册使
       // agent.json tools 可解析）。NodeEdit/NodeList/NodeCancel = 分发器用；
-      // ProjectCreate = Nebula 用（建项目 + 工作区脚手架；workspace 缺省/不可用
-      // 时弹 AskUser 式路径面板复用 pending 机制）。
+      // Project = Nebula 用（N2 project-tool 批 2026-10-06 ⑨A 更名，原 ProjectCreate
+      // ——建项目 + 工作区脚手架 + unmount 硬卸载面；workspace 缺省/不可用
+      // 时弹 AskUser 式路径面板复用 pending 机制。旧名走 RetiredToolGuides 墓碑指路）。
       // 本条覆盖此前相关指令：**`Task` 已删净退役**（2026-09-12「一个 Mail
       // 统一」批，B3-a + B5-c）——项目触发入口唯一 = `Mail(address="project:<name>")`；
       // 打到 `Task` 的调用走 AgentCore 的退役工具迁移指引表（只产错误文案，
@@ -99,7 +119,7 @@ object ToolRegistry:
       "NodeEdit" -> NodeEditTool,
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,
-      "ProjectCreate" -> ProjectCreateTool,
+      "Project" -> ProjectTool,
       // MemoryNote registration retired 2026-09-25 (govmemory batch): the tool
       // was pure queue bookkeeping (zero disk writes since 2026-09-12) and the
       // queue is retired with it. Memory is written directly with Edit/Write on
@@ -141,7 +161,18 @@ object ToolRegistry:
       // plugins 声明不授能（不在 BuiltinTool 白名单）。信号经 NodeReportRegistry
       // 登记表由 NodeEngine 完成时点 drain 按类别分流到既有链（blocked →
       // blockedNode/FeedbackRouter；pass → completed 链；fail → failed 链）。
-      "node_report" -> NodeReportToolDef
+      "node_report" -> NodeReportToolDef,
+      // delegate_report（worktree-judge-fifo 批 #1224 增补 §3.4）：delegate 会话
+      // 专属终态语义申报——对齐 node_report 挂载先例（buildAllowedToolSet 末段
+      // 按 delegateSession 引擎侧身份注入 + 工具内 DelegateSessions 身份拒绝
+      // 双保险）。值域 finish|blocked＋detail；仅更新 DelegateRegistry 状态槽，
+      // 不携汇报（汇报仍走终态消息直传）。信号消费点 = 终态判定机。
+      "delegate_report" -> DelegateReportTool,
+      // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
+      // 只读）——embedding 余弦 top-k + 词法降级 + 可选 Jev 重排。授权面 =
+      // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单
+      // 与 remoteableTools 均不含本件。
+      "TaskSearch" -> TaskSearchTool
     )
     tools.putAll(builtins.asJava)
   }

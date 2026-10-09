@@ -4,7 +4,6 @@ description: 隔离实例冒烟验证法——验证多 agent 交互修复/后�
 audience: nebflow-project
 language: zh
 status: active
-last_verified: 2026-08-24
 ---
 
 # Isolated Smoke Verification — 隔离实例冒烟验证
@@ -15,7 +14,7 @@ last_verified: 2026-08-24
 
 - 临时 `NEBFLOW_HOME`（独立目录）+ 独占端口 + 会话路由 mock（按 session 前缀区分角色行为）
 - 断言锚定**持久化产物**：会话 JSONL 消息内容、taskStore 终态——而非 stdout 日志
-- nohup 块缓冲 + SIGKILL 会丢 stdout 法证（先例：冒烟 smoke.log/mock.log 0 字节，靠根会话 msg[6] 注入内容 + 任务库终态独立核验兜回全链结论）
+- nohup 块缓冲 + SIGKILL 会丢 stdout 法证（先例形态：冒烟 stdout 产物 0 字节时，以根会话注入内容＋任务库终态独立核验兜回全链结论）
 - 实例参数坑：ModelConfig 必填 contextWindow；`/api/command` 用户输入形状 = `type:"userMessage"` + content；root sessionId=UUID 仅显示名
 
 ## 2. kill 前验明 PID 正身
@@ -31,7 +30,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 验证冒烟/沙盒运行是否泄漏进真实数据根（如 ~/.nebflow）时，三角定位三个独立信号，单一信号可被欺骗（env 缺失、cwd-relative fallback、静默回退链），三信号一致才算隔离：
 
 1. **源码 data-root 优先级**：flag override > env/home > default，确认实际取哪个
-2. **实例日志 config provenance**：从实例日志的模型/上下文窗口值反推它读了哪个 home（先例：日志出现 `paid/paid-model` 而真实 home 默认是 `<gateway-alias>/glm-5.2`，证明非真实 home）
+2. **实例日志 config provenance**：从实例日志的模型/上下文窗口值反推它读了哪个 home（先例形态：实例日志出现非当前 home 所配默认的模型别名，即证明其读的不是真实 home）
 3. **字节级对比**：`cmp` real-home vs test-home 关键文件 + 扫 cwd 残留（`ls ~ | grep <artifact>`）
 
 ## 4. 易失证据通道的替代法证
@@ -66,9 +65,9 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 
 ## Evidence
 
-- 冒烟：smoke.log/mock.log 0 字节但验收不降级——msg[6] 双结果注入 + msg[7] 42ms 触发 + fast=completed/stall=failed(2 restarts=maxRestarts) 三重持久化证据链；qa 复核采用同一法证路径通过。
-- Nebflow cold-start 冒烟：`cmp <隔离 home>/auth.json ~/.nebflow/auth.json` → "differ: char 2"；实例日志 "Context window: 128000 tokens (from paid/paid-model)" 不可能来自真实 home（默认 <gateway-alias>/glm-5.2）；cwd 扫无 stray auth.json——三信号一致证明隔离。
-- qwen 碎片聚合修复交验：真实端点本轮只发 name 缺失形态，name:"" 延续帧未触发；以 sendMessageStream 生产帧序回放 spec + 变异验红×2 钉死聚合路径，负例以实例日志 0 条退役串验证。
+- 冒烟：stdout 产物 0 字节但验收不降级——以双通道注入内容、触发帧与快/滞终态的多重持久化证据链闭合；qa 复核采用同一法证路径通过。
+- cold-start 冒烟：`cmp <隔离 home>/auth.json <真实 home>/auth.json` 报差异；实例日志的上下文窗口/模型别名与真实 home 所配默认不一致；cwd 扫无 stray auth.json——三信号一致证明隔离。
+- 流式碎片聚合修复交验：真实端点只发 name 缺失形态、延续帧未触发；以生产帧序回放 spec ＋变异验红钉死聚合路径，负例以实例日志零命中目标串验证。
 - 对偶：stdout 因 SIGKILL 块缓冲全丢，改用持久化产物核验——两案共同模式：证据不依赖单一易失通道。
 - 大合并关卡：独立 worktree + 独占端口 + nohup + kill PID + lsof 双保险，全链路零冲突。
 - node-runner 复验：mock LLM 状态机驱动 NodeEdit/NodeList/NodeCancel/ProjectCreate 全链路（隔离端口 + mock 端口），五坑见 §6——修复 2 P1（ttlScanner SOE/双前缀）后 V2 五验收点全过；多轮失败全为 mock/环境问题，产品代码全程按契约工作。

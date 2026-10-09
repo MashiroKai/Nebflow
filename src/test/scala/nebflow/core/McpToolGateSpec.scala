@@ -177,7 +177,7 @@ class McpToolGateSpec extends FunSuite:
   // A1-8 内置工具零回归
   // ============================================================
   test("A1-8 内置工具面判定为 None（不进审批门）；isReversible 四类判定逐条不变") {
-    List("Read", "Write", "Edit", "MultiEdit", "Bash", "Curl", "Grep", "Glob", "Pop", "Card", "AskUserQuestion")
+    List("Read", "Write", "Edit", "MultiEdit", "Bash", "Curl", "Grep", "Glob", "Pop", "AskUserQuestion")
       .foreach(t => assertEquals(McpToolGate.surfaceOf(t), None, s"内置工具 $t 不得进审批门"))
 
     // 与 tools/scala 既有 ToolReversibilitySpec 同判据（改前改后均绿）

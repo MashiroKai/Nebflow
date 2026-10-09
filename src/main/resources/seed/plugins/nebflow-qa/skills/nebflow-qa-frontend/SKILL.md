@@ -4,7 +4,6 @@ description: Nebflow 前端验证域知识——隔离真实例三步验证（�
 when_to_use: 每轮前端交付后的合并前独立验收；verify 节点分配此 skill。自验 harness 方法论（wire 探针/契约夹具/Playwright 坑）见同插件 frontend-verification；视觉硬规则见 nebflow-frontend-dev 插件的 visual-style。
 language: zh
 status: active
-last_verified: 2026-09-03
 ---
 
 # QA Frontend — 前端验证域

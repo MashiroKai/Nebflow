@@ -74,8 +74,8 @@ object ProjectRuntimeRegistry:
    * 启动自动挂载（0b 契约「阶段 1 补自动挂载」，#37 重启窗口收尾）：
    * 磁盘已有项目 → 幂等挂载。rootSessionId = 顶层 Nebula 主会话 id
    * （启动期无会话上下文，调用方直接传顶层根——A 修复后的 thread 语义）。
-   * 与 ProjectCreate 幂等挂载（运行时主动路径，241ef6c5）互补：
-   * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。
+   * 与 Project（原 ProjectCreate，N2 更名）幂等挂载（运行时主动路径，241ef6c5）互补：
+   * 本函数管重启免人工，Project 管运行时挂载/重挂。返回新挂载数。
    * #46 fail-soft：单个项目 mount 失败（workspace 不可创建/不可解析，如跨平台
    * 机器特定绝对路径、权限受限、路径被删——FlowMapStore.open 抛异常）时记 WARN
    * 并跳过该项目（不计数、不中断），其余项目照常挂载，gateway 正常启动——不再
@@ -220,7 +220,7 @@ object ProjectRuntimeRegistry:
                   .toList
                   .traverse_(n => engine.reapStaleRunning(n.id).void)
               }
-          // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（ProjectCreate 路径）且根
+          // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（Project 路径，原 ProjectCreate）且根
           // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
           // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
           _ <- engine.redeliverUnconsumedRootResults().handleErrorWith(_ => IO.unit)
@@ -297,6 +297,21 @@ object ProjectActor:
       "type" -> "projectArchived".asJson,
       "project" -> name.asJson,
       "archivedAt" -> archivedAt.asJson
+    )
+
+  /**
+   * **unmount 帧单点**（N2 project-tool 批 2026-10-06，S17/⑩A）：Project 工具
+   * `action="unmount"` 成功腿广播的 `projectUnmounted` 帧——载荷镜像 projectArchived
+   * §D-2 三键形状（type / project / unmountedAt）。emit 点 = ProjectUnmount 步②
+   * （挂载面移除完成后），经**既有** `wsHub.broadcast` 通道（ctx.wsSend）全连接下发
+   * ——🔴 不自建第二套推送面。前端按名定点退场（与 archived 帧同一吸收面：
+   * `data-exiting` 幂等闸防重放双退场）。
+   */
+  def projectUnmountedFrame(name: String, unmountedAt: Long): Json =
+    Json.obj(
+      "type" -> "projectUnmounted".asJson,
+      "project" -> name.asJson,
+      "unmountedAt" -> unmountedAt.asJson
     )
 
   /**
@@ -869,9 +884,17 @@ object ProjectActor:
    * reentryInjectionText）不重复注入——会话 spawn 时已带当次记忆快照，turn
    * 边界间的增量由 NodeList 现读与节点 out 结果承接（最小改动纪律）。
    * 全局注入（ContextRefresher）不含项目记忆——瘦身边界（§3 默认注入只含全局）。
+   *
+   * 🔴 **停注入**（personal-agent 批 2026-10-04，作者裁定②「项目记忆按明令取消」）：
+   * 本方法恒返回 `""` —— 项目记忆不再进分发器 prompt。[[ProjectMemory]] 的
+   * load/save/injectionBlock 单点**全部保留**（数据面与闸面不动，管理员仍可读、
+   * 未来要重启此面时调用点天然过闸），**只是消费点停用**。存量
+   * `<workspace>/.nebflow/memory.md` **归档不删**（见仓库内归档脚本）。
+   * 保留方法壳（而非删调用点）的理由：让「谁在注入项目记忆」这一问在代码里仍有
+   * 单一可 grep 的答案，也让回退 = 一行改回。
    */
   private def projectMemoryText(project: ProjectDef): IO[String] =
-    ProjectMemory.injectionBlock(project.workspace, project.name)
+    IO.pure("")
 
   /**
    * The dispatcher's task injection section (taskunify batch 2026-09-24, replacing

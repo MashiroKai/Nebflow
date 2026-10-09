@@ -231,7 +231,9 @@
 }
 .dropbox-file-badge.completed { color: #34c759; }
 .dropbox-file-badge.transferring { color: var(--color-frame-text-muted, #888); animation: pulse 1.2s ease-in-out infinite; }
-.dropbox-file-badge.failed { color: #e44; }
+/* ui-status-redesign（S5 / 盘点 #41）：badge = 图标载体（✕ → circle-x 真图标），
+   色值 #e44 → --status-error-icon token（亮 3.8:1✗ → 4.4:1✓）。 */
+.dropbox-file-badge.failed { color: var(--status-error-icon); }
 
 .dropbox-file-status-text {
   margin-top: 4px;
@@ -239,7 +241,9 @@
 }
 .dropbox-file-status-text.completed { color: #34c759; }
 .dropbox-file-status-text.transferring { color: var(--color-frame-text-muted, #888); }
-.dropbox-file-status-text.failed { color: #e44; }
+/* 状态词转中性字，语义红由词前 wifi-off/circle-x 图标（dropbox.js 注入）承载。 */
+.dropbox-file-status-text.failed { color: var(--status-word); }
+.dropbox-file-status-text.failed .st-ic { width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; }
 
 /* ===== 附件腿批（2026-09-12）：块级进度条 + 闸位拒绝提示条 ===== */
 /* 复用既有配色（completed 绿 / failed 红 / muted 灰），不新造设计语言。 */
@@ -256,12 +260,18 @@
   background: #34c759;
   transition: width 0.2s ease-out;
 }
+/* 闸位拒绝提示条（ui-status-redesign / 盘点 #41 通知行）：12px 红字 → 中性
+   正文 + 行首 triangle-alert 琥珀图标（dropbox.js 注入）。 */
 .dropbox-notice {
-  color: #e44;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--status-word);
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
 }
+.dropbox-notice .st-ic { width: 13px; height: 13px; margin-top: 1px; flex-shrink: 0; }
 
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }

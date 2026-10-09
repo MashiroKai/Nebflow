@@ -4,7 +4,7 @@
  */
 import state from './state.js';
 import { key } from './branding.js';
-import { escapeHtml, createIconsIn } from './utils.js';
+import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, onDisconnect, onReconnect, sendWs } from './ws.js';
 import { refreshNeblink } from './neblink.js';
@@ -771,21 +771,25 @@ function renderMessage(m) {
   }
 
   // 闸位拒绝 / 本地超限提示条（可见，回显实际值）
+  // ui-status-redesign（S5 / 盘点 #41 通知行）：12px 红字 → triangle-alert 琥珀
+  // 图标 + 中性正文（闸位/离线属「连接因由」警示档，非失败终结）。
   if (m.kind === 'notice') {
     return `
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
-        <div class="dropbox-msg-bubble dropbox-notice">${escapeHtml(m.text)}</div>
+        <div class="dropbox-msg-bubble dropbox-notice">${statusIcon('triangle-alert', 13, 'st-warn')}<span>${escapeHtml(m.text)}</span></div>
         <div class="dropbox-msg-meta"><span class="dropbox-msg-time" data-ts-text="${m.ts}">${time}</span></div>
       </div>`;
   }
 
   if (m.kind === 'file') {
     const sizeStr = formatSize(m.fileSize);
+    // ui-status-redesign（盘点 #46 / D 组）：failed 的 '✕' 文本字形 → circle-x
+    // 真图标（红 = 图标载体 token）；completed 的 '✓' 字形不在 54 点范围，保留。
     const statusMap = {
       'pending':   { icon: '...', cls: 'transferring' },
       'accepted':  { icon: '...', cls: 'transferring' },
       'completed': { icon: isOut ? '\u2713' : '\u2713', cls: 'completed' },
-      'failed':    { icon: '\u2717', cls: 'failed' },
+      'failed':    { icon: statusIcon('circle-x', 14, 'st-err'), cls: 'failed' },
     };
     const st = statusMap[m.status] || { icon: '', cls: '' };
     const statusText = m.status === 'completed'
@@ -809,7 +813,7 @@ function renderMessage(m) {
             <span class="dropbox-file-badge ${st.cls}">${st.icon}</span>
           </div>
           ${pct !== null ? `<div class="dropbox-file-progress"><div class="dropbox-file-progress-bar" style="width:${pct}%"></div></div>` : ''}
-          <div class="dropbox-file-status-text ${st.cls}">${statusText}</div>
+          <div class="dropbox-file-status-text ${st.cls}">${m.status === 'failed' ? statusIcon('wifi-off', 11, 'st-err') : ''}<span>${escapeHtml(statusText)}</span></div>
         </div>
         <div class="dropbox-msg-time" data-ts-text="${m.ts}">${time}</div>
       </div>`;

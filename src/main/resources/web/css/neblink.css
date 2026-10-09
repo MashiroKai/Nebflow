@@ -201,7 +201,10 @@
 }
 .neblink-ch-cancel:hover { color: var(--color-text); }
 
-/* Update status indicators */
+/* Update status indicators — ui-status-redesign（盘点 #6）：三档字面色全部退役
+   （11px 状态词一律中性字）。现行 DOM 零发射点（摘除令保留样式），保留档位钩子
+   并固定改版口径：后续任何发射点必须 = 词前 lucide 图标（updating=loader-circle
+   / done=circle-check / error=circle-x，色走 --status-*-icon token）＋ 中性词。 */
 .neblink-update-status {
   font-size: 11px;
   flex-shrink: 0;
@@ -209,10 +212,12 @@
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--status-word);
 }
-.neblink-update-status.updating { color: var(--color-warning); }
-.neblink-update-status.done { color: var(--color-success); }
-.neblink-update-status.error { color: var(--color-error); }
+.neblink-update-status .st-ic { margin-right: 3px; }
+.neblink-update-status.updating,
+.neblink-update-status.done,
+.neblink-update-status.error { color: var(--status-word); }
 
 /* Header button */
 #neblink-btn {

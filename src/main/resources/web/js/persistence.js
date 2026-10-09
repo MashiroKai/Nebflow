@@ -19,7 +19,11 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards } from './chat.js';
+import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
+// pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
+// (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
+// (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow } from './popArtifacts.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
@@ -124,6 +128,94 @@ const MAX_THINKING_LEN = 2000; // AI thinking text
 const MAX_TEXT_LEN = 5000;     // AI response text
 const MAX_MSGS_PER_SESSION = 80;
 
+// ---------- Cache cut that never stores half a table (P-1, 2026-09-30) ----------
+// The cap above used to cut `text`/`answer` at a fixed character offset and
+// append '…'. When that offset landed inside a GFM table — the header row or
+// its `|---|` delimiter row — the cached copy lost the delimiter, and the
+// message surface re-rendered the ENTIRE table as literal `| 项目 | 状态 |`
+// prose. The canvas markdown viewer reads the whole file with no cap, so the
+// same content rendered correctly there — the renderer was never at fault
+// (root cause: chain-md-render-compare, 2026-09-29).
+//
+// Rule now: a shorter cache beats a corrupt one, and no cache beats either.
+// A cut is admissible only when it neither leaves a broken table at the tail
+// nor severs a table that begins right after it; otherwise the entry is not
+// cached at all (the caller's filter chain drops it and the backend history —
+// which remains the source of truth — supplies the message on restore).
+const CACHE_CAP_GIVEBACK = 200; // max chars to give back hunting for a block boundary
+
+const CACHE_FENCE_RE = /^\s{0,3}(?:```|~~~)/;
+const CACHE_DELIM_CELL_RE = /^:?-+:?$/;
+
+/** True when the retained text currently sits inside an unclosed code fence. */
+function cacheFenceOpen(s) {
+  let n = 0;
+  for (const line of s.split('\n')) if (CACHE_FENCE_RE.test(line)) n++;
+  return n % 2 === 1;
+}
+
+/** GFM delimiter row: `|---|:--:|` etc. Pipe-delimited cells of dashes only. */
+function cacheDelimiterRowValid(line) {
+  const t = (line || '').trim();
+  if (t.charCodeAt(0) !== 0x7c) return false; // must open with '|'
+  const cells = t.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  return cells.length > 0 && cells.every((c) => CACHE_DELIM_CELL_RE.test(c));
+}
+
+/**
+ * True when the trailing block of `s` is a table that lost its structure — the
+ * header row has no GFM delimiter row yet, so the whole block degrades into
+ * literal `| a | b |` prose (the message-surface bug). A complete delimiter row
+ * means the table renders: cutting off trailing BODY rows is ordinary
+ * truncation, not corruption.
+ */
+function cacheTailTableBroken(s) {
+  if (cacheFenceOpen(s)) return false; // inside a fence the pipes are code
+  const at = s.lastIndexOf('\n\n');
+  const block = at < 0 ? s : s.slice(at + 2);
+  const lines = block.split('\n');
+  let head = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().charCodeAt(0) === 0x7c) { head = i; break; }
+  }
+  if (head < 0) return false;                     // no table in the trailing block
+  if (lines[head + 1] === undefined) return true; // header row with no delimiter row
+  return !cacheDelimiterRowValid(lines[head + 1]);
+}
+
+/** First non-blank line of `s`, or '' when there is none. */
+function cacheFirstLine(s) {
+  for (const line of s.split('\n')) if (line.trim() !== '') return line.trim();
+  return '';
+}
+
+/**
+ * Truncate `s` to MAX_TEXT_LEN without ever storing half a table.
+ * @returns {string|null} storable text, or null when no safe cut exists.
+ */
+function cacheCapText(s) {
+  if (s.length <= MAX_TEXT_LEN) return s;
+  let cut = MAX_TEXT_LEN;
+  // 1. The cut landed in a table's header/delimiter window ⇒ the block would
+  //    render as literal pipe prose. Give back to the nearest closed block
+  //    boundary; when even that cannot produce a clean block, do not cache.
+  if (cacheTailTableBroken(s.slice(0, cut) + '…')) {
+    const floor = Math.max(0, cut - CACHE_CAP_GIVEBACK);
+    let b = -1;
+    for (let i = cut; i > floor; i--) {
+      if (s.charCodeAt(i - 1) === 0x0a && s.charCodeAt(i - 2) === 0x0a) { b = i; break; }
+    }
+    if (b < 0 || cacheTailTableBroken(s.slice(0, b) + '…')) return null;
+    cut = b;
+  }
+  // 2. Never cache a message whose table the cap severed: a discarded tail that
+  //    opens with a table row means the table the backend still holds would be
+  //    missing from the restored view. Dropping the entry is the lesser evil —
+  //    a shorter cache beats a corrupt one, and no cache beats either.
+  if (cacheFirstLine(s.slice(cut)).charCodeAt(0) === 0x7c) return null;
+  return s.slice(0, cut) + '…';
+}
+
 function sanitizeForCache(entry) {
   if (!entry || typeof entry !== 'object') return entry;
   const e = { ...entry };
@@ -133,10 +225,18 @@ function sanitizeForCache(entry) {
     e.input = e.input.slice(0, MAX_INPUT_LEN) + '…';
   if (typeof e.thinking === 'string' && e.thinking.length > MAX_THINKING_LEN)
     e.thinking = e.thinking.slice(0, MAX_THINKING_LEN) + '…';
-  if (typeof e.text === 'string' && e.text.length > MAX_TEXT_LEN)
-    e.text = e.text.slice(0, MAX_TEXT_LEN) + '…';
-  if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN)
-    e.answer = e.answer.slice(0, MAX_TEXT_LEN) + '…';
+  // A capped field that cannot be cut safely marks the whole entry uncacheable
+  // (returns null) — "rather no cache than half a table". See cacheCapText.
+  if (typeof e.text === 'string' && e.text.length > MAX_TEXT_LEN) {
+    const capped = cacheCapText(e.text);
+    if (capped === null) return null;
+    e.text = capped;
+  }
+  if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN) {
+    const capped = cacheCapText(e.answer);
+    if (capped === null) return null;
+    e.answer = capped;
+  }
   // Strip base64 attachment previews — they can be multi-MB. Keep `path`:
   // it's a small string and lets the restore path re-render the image from
   // the uploads route (G1) even after the preview is gone.
@@ -332,13 +432,15 @@ export function attachmentImageUrl(path) {
   return `/uploads/${encoded}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
 }
 
-/** Append one attachment bubble to a message row. Images render as <img>
- *  from the live preview (dataURL) or, after a refresh, from the uploads
- *  route via att.path (G1). Non-image attachments keep the plain text tag. */
+/** Append ONE in-bubble attachment: the reference cards only (type ref /
+ *  taskRef). #491 主题三 (author 2026-10-05 12:14 ruling): media/file
+ *  attachments render the Pop faces on an INDEPENDENT card row after the user
+ *  row — see buildUserAttachmentRows below; the old inline att-img /
+ *  att-file-tag bubbles are gone from both replay legs too. */
 export function appendAttachmentBubble(row, att) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble user att-bubble';
-  if (att.type === 'ref' || att.type === 'taskRef') {
+  if (att && (att.type === 'ref' || att.type === 'taskRef')) {
     // #303 D4 + (2026-08-27 打回注入块收敛): restore a Reference as the
     // message card - same renderRefBlock(message) as the live
     // renderUserBubble path, so restored rows are byte-identical to live ones.
@@ -349,30 +451,23 @@ export function appendAttachmentBubble(row, att) {
     const cardNode = ref ? renderRefBlock(ref, { mode: 'message' }) : null;
     if (cardNode) bubble.appendChild(cardNode);
     row.appendChild(bubble);
-    return;
   }
-  const imgSrc =
-    att.type === 'image'
-      ? (att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:'))
-        ? att.preview
-        : attachmentImageUrl(att.path)
-      : null;
-  if (imgSrc) {
-    const img = document.createElement('img');
-    img.src = imgSrc;
-    img.className = 'att-img';
-    img.title = att.name || '';
-    img.draggable = false;
-    // Missing file (uploads dir cleaned, session deleted) — hide the broken
-    // img, the tag below still labels the attachment.
-    img.onerror = () => { img.style.display = 'none'; };
-    bubble.appendChild(img);
-  }
-  const tag = document.createElement('span');
-  tag.className = 'att-file-tag';
-  tag.textContent = (att.type === 'image' ? '[image' : '[file') + (att.name ? ': ' + att.name : '') + ']';
-  bubble.appendChild(tag);
-  row.appendChild(bubble);
+}
+
+/** Split a message's attachments the way BOTH replay legs render them: ref
+ *  cards go INSIDE the user row (appendAttachmentBubble), media/file
+ *  attachments become the one independent `.row.pop-artifact.user-media` row
+ *  that follows it. Images without an inline preview resolve from the uploads
+ *  route via `path` (G1) — passed here as the resolver so the Pop face builders
+ *  never touch the ticket leg for user bytes. Returns null when nothing
+ *  displayable remains outside the row. */
+export function buildUserAttachmentRows(row, atts) {
+  const mediaAtts = [];
+  (atts || []).forEach(att => {
+    if (att && (att.type === 'ref' || att.type === 'taskRef')) appendAttachmentBubble(row, att);
+    else mediaAtts.push(att);
+  });
+  return mediaAtts.length ? buildUserMediaRow(mediaAtts, { resolver: attachmentImageUrl }) : null;
 }
 
 // ---------- Save a message entry to localStorage (best-effort cache) ----------
@@ -382,7 +477,12 @@ export function saveMsg(entry, sessionId) {
   try {
     const all = safeGetJSON(LS_SESSIONS_KEY, {});
     const arr = all[sid] || [];
-    arr.push(sanitizeForCache(entry));
+    // P-1: a null sanitize result means the entry has a field that cannot be
+    // capped without corrupting a table — skip the cache write entirely rather
+    // than store a half-table. Backend history remains the source of truth.
+    const sane = sanitizeForCache(entry);
+    if (!sane) return;
+    arr.push(sane);
     // Cap messages per session to prevent unbounded growth
     if (arr.length > MAX_MSGS_PER_SESSION) arr.splice(0, arr.length - MAX_MSGS_PER_SESSION);
     all[sid] = arr;
@@ -507,6 +607,9 @@ export function restoreFromStorage(opts = {}) {
       const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
+      // Ask ANSWER marker — same contract as the backend-history leg below
+      // (AskUser 强制展开修令 2026-10-06): mid-turn, never a turn opener.
+      if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -528,12 +631,15 @@ export function restoreFromStorage(opts = {}) {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
+      const storageMediaRow = buildUserAttachmentRows(row, m.attachments);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       }
       chat.appendChild(row);
+      // #491 主题三 (AC-S4): the independent media card row follows the user
+      // row — same shape and order the live path builds.
+      if (storageMediaRow) chat.appendChild(storageMediaRow);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
       if (m.thinking) {
@@ -547,6 +653,9 @@ export function restoreFromStorage(opts = {}) {
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
+        // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿同窗钉限＋计数
+        // 读数（与 live 腿同一入口——四写点不分家，读数与窗形一致）。
+        applyThinkingWindowCap(tContent, m.thinking);
         // If there's no text, keep thinking expanded so user can see what the model thought
         if (!m.text) {
           tLabel.classList.add('expanded');
@@ -588,10 +697,21 @@ export function restoreFromStorage(opts = {}) {
       card.className = 'tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
-      // Card tool: render standard tool card + separate card iframe below
-      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+      // Pop artifact payload (pop-upgrade batch): process row + artifact row,
+      // the same two-row shape the live renderTool builds.
+      if (isPopPayload(m.content)) {
         const isError = m.isError;
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+        renderPopToolRow(card, m.label, m.summary, isError);
+        row.appendChild(card);
+        chat.appendChild(row);
+        const popPayload = parsePopPayload(m.content);
+        if (popPayload) {
+          const artifactRow = buildPopArtifactRow(popPayload);
+          if (artifactRow) chat.appendChild(artifactRow);
+        }
+      } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
@@ -625,7 +745,7 @@ export function restoreFromStorage(opts = {}) {
         // DOM collapsed or not). Ordinary tool results never match this regex and keep the
         // branch below byte-for-byte.
         const isError = m.isError;
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
@@ -644,7 +764,7 @@ export function restoreFromStorage(opts = {}) {
         chat.appendChild(row);
       } else {
         const isError = m.isError;
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
         const _delegatePrompt = buildDelegatePromptHtml(m.input);
@@ -675,7 +795,11 @@ export function restoreFromStorage(opts = {}) {
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
       chat.appendChild(row);
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
+      // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：第 4 形参
+      // 保持本腿改前的取值（本腿历来不传 requestId ⇒ 仍是 undefined，本批不越界改
+      // 这条 id 语义），只补第 5 形参 `m.attachments`。缺席 / 空列表 ⇒
+      // `renderAskAttachments` 内早退 ⇒ 本腿历史卡与改前逐字节同形。
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments);
       // R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡原**不挂** footer，而 live
       // ask 行（chat.js）与历史 ask 问答行都挂 ⇒ 卡片 footer 奇偶不一致。现补一枚
       // 药丸（复用同一 builder ⇒ 分隔符守卫与三面形态同源）。`AskUser` 落盘无
@@ -806,6 +930,8 @@ export function restoreFromStorage(opts = {}) {
     }
   });
   buildTurnSummariesForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: re-derive turn headers from flat rows
+  // #491 (2026-10-05 in-place ruling): rows replay in document order, so each
+  // artifact already sits right after its Pop tool row — no post-pass.
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -857,6 +983,15 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
+      // Ask ANSWER marker (AskUser 强制展开修令, author 2026-10-06 19:29): a
+      // recorded card answer rides `answerOf` (案 B single construction point,
+      // UiMessage.askUserAnswer). The row stays a normal user bubble here, but
+      // the marker tells turnGroup it is MID-TURN — the ask blocked the turn,
+      // it did not end it — so the history segment keeps ONE turn header and
+      // the pre-ask tool results stay tucked (isNonInjectedUserRow exemption;
+      // workline turnAnchor same exemption). Absent on pre-案B rows ⇒ those
+      // keep the legacy split behaviour (unchanged).
+      if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -880,12 +1015,15 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
+      const backendMediaRow = buildUserAttachmentRows(row, m.attachments);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       }
       fragment.appendChild(row);
+      // #491 主题三 (AC-S4): media row into the fragment right after the user
+      // row — document order survives the batched append.
+      if (backendMediaRow) fragment.appendChild(backendMediaRow);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
       if (m.thinking) {
@@ -899,6 +1037,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         deferMd(tContent, m.thinking);
+        // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿（deferMd 版）
+        // 同窗钉限＋计数读数——窗是元素常驻样式，与 deferMd 异步渲染正交。
+        applyThinkingWindowCap(tContent, m.thinking);
         // If there's no text, keep thinking expanded so user can see what the model thought
         if (!m.text) {
           tLabel.classList.add('expanded');
@@ -939,10 +1080,21 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       card.className = 'tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
-      // Card tool: render standard tool card + separate card iframe below
-      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+      // Pop artifact payload (pop-upgrade batch): process row + artifact row,
+      // the same two-row shape the live renderTool builds.
+      if (isPopPayload(m.content)) {
         const isError = m.isError;
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+        renderPopToolRow(card, m.label, m.summary, isError);
+        row.appendChild(card);
+        fragment.appendChild(row);
+        const popPayload = parsePopPayload(m.content);
+        if (popPayload) {
+          const artifactRow = buildPopArtifactRow(popPayload);
+          if (artifactRow) fragment.appendChild(artifactRow);
+        }
+      } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
@@ -961,8 +1113,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         renderWithRegistry(cardContainer, m.content);
       } else {
         const isError = m.isError;
-        // Pop tool: rainbow filename + clickable card (shared with live renderTool)
-        if (applyPopCard(card, m.label, m.summary, m.input, isError)) {
+        // Legacy Pop rows (pre-batch histories): rainbow filename + clickable card
+        if (applyLegacyPopCard(card, m.label, m.summary, m.input, isError)) {
           row.appendChild(card);
           fragment.appendChild(row);
         } else if (m.content && typeof m.content === 'string' && /___\w+_HTML___/.test(m.content)) {
@@ -980,7 +1132,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           // checked first, exactly as in the live path (chat.js:1099 before :1139) — and
           // ordinary tool results never match the regex, so their rendering is untouched.
           const isError = m.isError;
-          const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+          const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                                : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
           const localLabel = localizeToolLabel(m.label);
           const localSummary = localizeToolSummary(m.summary, m.label);
@@ -998,7 +1150,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           row.appendChild(card);
           fragment.appendChild(row);
         } else {
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
         const _delegatePrompt2 = buildDelegatePromptHtml(m.input);
@@ -1039,7 +1191,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.appendChild(bubble);
       fragment.appendChild(row);
       // 案 B：持久化的 requestId 一并透传 ⇒ 历史卡带 `data-request-id`（可 id 寻址）。
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId);
+      // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：第 5 形参 =
+      // 落盘行顶层 `attachments`（后端历史恢复腿 `handleGetHistory` → `getHistoryPage`
+      // → `Encoder[UiMessage]` 编出的同一形状）。缺席 / 空列表 ⇒
+      // `renderAskAttachments` 内早退 ⇒ 无附件行（改前形态逐字不变）。
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId, m.attachments);
       // R5（作者裁定 = 补上）：与 localStorage 兜底路径同款补药丸，两条历史路径
       // 逐字对齐（本函数与 restoreFromStorage 的历史形态必须一致）。
       const askCopy = askUserQuestionText(m.items);
@@ -1168,6 +1324,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   });
   chat.appendChild(fragment);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
+  // #491: doc-order replay keeps each artifact beside its Pop tool row — same
+  // as the live path and the storage-replay path; no re-anchor.
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).

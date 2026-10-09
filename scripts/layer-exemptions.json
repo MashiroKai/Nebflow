@@ -26,6 +26,11 @@
       "from": "src/main/scala/nebflow/social/FeishuOutboundAdapter.scala",
       "to": "gateway",
       "reason": "A-line status quo: the file does not exist on the B side; A tip 037a8549 (socoutbound batch, design card 20260930_203506_socoutbound-design) added it and deliberately delegates the file-extension endpoint authority to the single table NfFilePolicy.NfFileAllowedExt instead of re-declaring one — an explicit single-source author decision documented in the class header. Merged copy byte-identical to A; not merge-introduced coupling."
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/BlockingSubagent.scala",
+      "to": "agent",
+      "reason": "A-line status quo (merge/ustc-9ca39083 reconciliation, 2026-10-09): the file does not exist on the B side; A's executor-registry train added it (A commit 7b5b1b70c, blocking-subagent-reap) as the single spawn point for the blocking read-only recon sub-session, carrying `import nebflow.agent.*` (AgentCore.SubagentFixedTools plus the leaf-reap faces). A's own tree fails this gate with this edge unexempted — the identical single reverse edge, verified by running this script on A's tip 9ca39083 (4 unexempted edges there; the other 3 are already covered by this baseline). The merged copy is byte-identical to A (git diff ustc/main -- <file> empty), so it is A's status quo, not coupling introduced by the merge."
     }
   ]
 }

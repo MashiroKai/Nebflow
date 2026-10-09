@@ -2,7 +2,7 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.actor.AgentDef
-import nebflow.core.tools.{AskUserQuestionTool, MailTool, NodeReportToolDef, ToolRegistry}
+import nebflow.core.tools.{MailTool, NodeReportToolDef, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
 /**
@@ -163,12 +163,14 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     do assertEquals(AgentCore.schemaVariantFor(td, id).inputSchema, td.inputSchema, s"${td.name}: 变体改了 inputSchema")
   }
 
-  test("① 判据单点: 三个变体构造器只被 AgentCore 单点调用（源码级 pin）") {
+  test("① 判据单点: 两个变体构造器只被 AgentCore 单点调用（源码级 pin）") {
     val root = os.pwd
     val mainSrc = root / "src" / "main" / "scala"
     assert(os.exists(mainSrc), s"源码根不存在：$mainSrc（本 spec 必须在仓根运行）")
+    // re-pin（root 2026-10-02 令 #462 裁②「不保留 mode 键」）：`rootVariant(` 已随
+    // AskUser 的 schema 分叉面整体退场（工具与 AgentCore 双侧零出现）⇒ 本表只留
+    // 仍在役的两个构造器；下方另有「已退场构造器零出现」的反向断言。
     val callers = Map(
-      "rootVariant(" -> "AgentCore.scala",
       "roleVariant(" -> "AgentCore.scala",
       "addressFaceVariant(" -> "AgentCore.scala"
     )
@@ -178,13 +180,28 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         .filter(p => p.ext == "scala")
         .filter { p =>
           val src = os.read(p)
-          // 定义行（`def rootVariant(`）不算调用；其余出现处必须是单点文件。
+          // 定义行（`def roleVariant(`）不算调用；其余出现处必须是单点文件。
           src.linesIterator.exists(l => l.contains(needle) && !l.contains("def " + needle))
         }
         .map(_.last)
         .toList
         .sorted
       assertEquals(files, List(owner), s"变体构造器 '$needle' 出现了第二个调用点（变体选择必须单点）")
+
+    // AskUser 的 schema 变体构造器已退役：全 main 源内零出现（防「顺手写回」）
+    val retiredFiles = os
+      .walk(mainSrc)
+      .filter(p => p.ext == "scala")
+      .filter(_.last != "AgentCore.scala")
+      .filter(p => os.read(p).contains("rootVariant("))
+      .map(_.last)
+      .toList
+      .sorted
+    assertEquals(retiredFiles, Nil, "已退役的 `rootVariant(` 又出现在 main 源里")
+    assert(
+      !os.read(mainSrc / "nebflow" / "agent" / "AgentCore.scala").contains("rootVariant("),
+      "AgentCore 仍引用 rootVariant（AskUser 变体面未随裁② 退场）"
+    )
 
     // 身份装配判据（角色维度）只许出现在 AgentCore 单点内
     val roleFilterFiles = os
@@ -198,8 +215,20 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
 
     // 既有 root 判据仍单点（与 AskUser 批同一纪律；此处复验不回归）。
     // re-pin（2026-09-25 身份谓词单点化批）：判据名分字面量 "Nebula" 收敛为常量
-    // RootAgentIdentity.Name（值不变），正则同步钉常量形态；谓词本体同批收敛进
-    // actor/RootAgentIdentity.scala（单点实现随文件走，此处钉真实单点文件）。
+    // RootAgentIdentity.Name（值不变），正则同步钉常量形态。
+    //
+    // 🔴 re-pin #2（本批顺手对齐，**非本批引入**）：期望值由 `AgentCore.scala` 改为
+    // `RootAgentIdentity.scala` —— 「严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F)」
+    // 已把该谓词自 `AgentCore` 下沉到 `actor.RootAgentIdentity.isRootAgent`
+    // （`AgentCore.scala:40` 仅剩 `isNebulaRoot` 的**另一形态**字面量 `"Nebula"`，
+    // 不命中本正则），但该批只同步了自带 spec（`AskUserDualModeSchemaSpec` 的
+    // 「禁第二份表达式」已钉 `List("RootAgentIdentity.scala")`），**漏改了本处** ⇒
+    // 本断言在 `main` 上即为红（实测：`git archive main` 净副本跑本 spec 同为红）。
+    // 判据本体（一处实现）未变：正则仍只有一个命中文件，且全仓唯一命中
+    // `RootAgentIdentity.scala`，与 `git show main:…AgentCore.scala:40` 的
+    // `agentDef.exists(_.name == "Nebula") && depth == 0`（另一形态）互不覆盖。
+    // ⚠ 尽本批的落点纪律：本文件已列于计划件 §二 落点；此改动仅改**期望常量**，
+    // 不动正则/结构。main 侧仍需同一行 re-pin（本批禁 push ⇒ 不在本批生效）。
     val pred = """(?s)name\s*==\s*RootAgentIdentity\.Name\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
     val holders = os
       .walk(mainSrc)
@@ -243,10 +272,11 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val baseline = ToolRegistry.ALL_TOOLS.map(td => td.name -> td.inputSchema).toMap
     for (name, face) <- crossSections do
       val drifted = face.filter(td => td.inputSchema != baseline(td.name)).map(_.name).toSet
-      // **全注册表唯一允许的 schema 差异** = AskUser 批（已合并）的 root `mode` 属性；
-      // 本批（Q4/Q5）在**任何身份**下都不得改 schema（Q5 口径 + 试点口径）。
-      val allowed = if name == "Nebula-root" then Set(AskUserQuestionTool.Name) else Set.empty[String]
-      assertEquals(drifted, allowed, s"$name 的 schema 漂移超出允许面（本批判据 = 只动 description）")
+      // re-pin（root 2026-10-02 令 #462 裁②「不保留 mode 键」）：AskUser 的历史
+      // root `mode` 属性已随分叉面退场 ⇒ 全注册表**任何身份**下的 schema 都不得有
+      // 差异（豁免集合由 `Set(AskUserQuestionTool.Name)` 收紧为 `Set.empty`）。
+      val allowed = Set.empty[String]
+      assertEquals(drifted, allowed, s"$name 的 schema 漂移超出允许面（收紧后 = 零漂移）")
       for td <- face do
         if !allowed.contains(td.name) then
           assertEquals(
@@ -300,21 +330,27 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   // ④ Q5 读数：Mail 地址面逐角色
   // ============================================================
 
-  test("④ Q5: Mail 地址面逐角色 + schema 逐字节不变") {
+  test("④ Q5: Mail 地址面逐角色 + schema 逐字节不变（agentflow 批后：分发器面不再持 Mail）") {
     val rootMail = find(nebulaRootFace, "Mail").getOrElse(fail("Nebula 面丢了 Mail"))
-    val dispMail = find(dispatcherFace, "Mail").getOrElse(fail("dispatcher 面丢了 Mail"))
     val taskMail = find(taskNodeFace, "Mail")
     assertEquals(rootMail.description, MailTool.descriptionRoot, "root 未拿到地址面变体")
-    assertEquals(dispMail.description, MailTool.descriptionDispatcher, "dispatcher 未拿到地址面变体")
     assertEquals(rootMail.inputSchema, baseOf("Mail").inputSchema, "root 变体改了 inputSchema（Q5 判据）")
-    assertEquals(dispMail.inputSchema, baseOf("Mail").inputSchema, "dispatcher 变体改了 inputSchema（Q5 判据）")
+    // agentflow 批（2026-10-02）：−Mail ⇒ 分发器面不再有 Mail（成员资格变更，非地址面
+    // 变体机制变更）——地址面变体机制本身照旧（见下一条直接对 constructor 的断言）。
+    assert(find(dispatcherFace, "Mail").isEmpty, "分发器面仍有 Mail（agentflow 批 −Mail 未落地）")
     // 节点面无 Mail（成员资格不受本批影响）——登记为读数
     assert(taskMail.isEmpty, "节点面出现 Mail（成员资格被本批改动）")
     // 分化面缺席判据（变异①）
     assert(!rootMail.description.contains("**Project dispatcher**"), "root 地址面仍含 dispatcher 段")
-    assert(!rootMail.description.contains("**Team context (legacy)**"), "root 地址面仍含 team 段")
-    assert(!dispMail.description.contains("**Nebula (root)**"), "dispatcher 地址面仍含 root 段")
-    assert(!dispMail.description.contains("**Team context (legacy)**"), "dispatcher 地址面仍含 team 段")
+    assert(!rootMail.description.contains("**Team context**"), "root 地址面仍含 team 段")
+    // Mail dispatcher 地址面变体机制仍在役（constructor 直接断言；不依赖分发器面持 Mail）
+    assertEquals(
+      AgentCore.schemaVariantFor(baseOf("Mail"), AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
+      MailTool.descriptionDispatcher,
+      "Mail dispatcher 地址面变体机制被本批误伤（机制面应零改动）"
+    )
+    assert(!MailTool.descriptionDispatcher.contains("**Nebula (root)**"), "dispatcher 地址面仍含 root 段")
+    assert(!MailTool.descriptionDispatcher.contains("**Team context**"), "dispatcher 地址面仍含 team 段")
     // 参数级 address description 属于 inputSchema ⇒ 本批按 Q5 口径冻结（登记在交付说明）
     assert(
       rootMail
@@ -385,21 +421,32 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     for seg <- List(
         MailTool.AddressFaceHeader,
         MailTool.AddressFaceRoot,
+        MailTool.AddressFaceDelegate,
         MailTool.AddressFaceDispatcher,
         MailTool.AddressFaceTeam,
         MailTool.AddressFaceClosing
       )
     do assert(base.contains(seg), s"地址面段常量不是基础文本的逐字子串（含新造字）：${seg.take(60)}…")
+    // re-pin（本批修复，A 侧继承红）：基础面在 root 段后另有一支 delegate 段
+    // （AddressFaceDelegate，`- **Delegate session (a chain's creator)**`），
+    // 投影只保留本角色一段 ⇒ 两个变体都必须把它一并删去（旧式「删两段」等式
+    // 因该段驻留而必红；判据强度不变 = 变体仍须等于基础逐字节删段的结果）。
     assertEquals(
-      base.replace(MailTool.AddressFaceDispatcher + MailTool.AddressFaceTeam, ""),
+      base
+        .replace(MailTool.AddressFaceDelegate, "")
+        .replace(MailTool.AddressFaceDispatcher, "")
+        .replace(MailTool.AddressFaceTeam, ""),
       MailTool.descriptionRoot,
-      "root 变体 ≠ 基础删去另两段（出现了改写/新造字）"
+      "root 变体 ≠ 基础删去另三段（出现了改写/新造字）"
     )
-    // dispatcher 变体：基础里两段**不相邻**（Nebula 段在题首、team 段在题尾）⇒ 两次定点删除
+    // dispatcher 变体：基础里三段**不相邻**（Nebula 段在题首，delegate 段夹在中间、team 段在题尾）⇒ 三次定点删除
     assertEquals(
-      base.replace(MailTool.AddressFaceRoot, "").replace(MailTool.AddressFaceTeam, ""),
+      base
+        .replace(MailTool.AddressFaceRoot, "")
+        .replace(MailTool.AddressFaceDelegate, "")
+        .replace(MailTool.AddressFaceTeam, ""),
       MailTool.descriptionDispatcher,
-      "dispatcher 变体 ≠ 基础删去另两段（出现了改写/新造字）"
+      "dispatcher 变体 ≠ 基础删去另三段（出现了改写/新造字）"
     )
   }
 

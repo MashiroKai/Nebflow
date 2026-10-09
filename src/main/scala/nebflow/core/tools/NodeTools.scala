@@ -18,7 +18,7 @@ import scala.util.Try
  * 校验（agent 存在性 / 引用存在 / 环检测 / 1 对多 / 状态守卫 / loop detect）
  * 在工具层统一拦截，0 spawn 0 token。
  *
- * 边模型（§2.3 原子性 + P1 语义门控 20260908）：`node.out` 是边列表单权威（OutEdge：
+ * 边模型（§2.3 原子性 + P1 语义门控）：`node.out` 是边列表单权威（OutEdge：
  * to/on⊆{pass,failed}/mode∈{result,signal}）——设 out 时事务内同步更新目标节点 `in`
  * （反向一致），被移除目标 in 移除、新增目标 in 追加，杜绝双写漂移。in 参数用于
  * 创建/追加 barrier 入边（等价给上游 out 追加指向本节点的 pass 边）。
@@ -27,14 +27,14 @@ object NodeTools:
   private val logger = NebflowLogger.forName("nebflow.node.tools")
 
   /**
-   * ⑥ 合并节点 in 上限（merge-node 设计落实批 U2/P1，2026-09-11 作者拍板「升引擎硬闸」）。
+   * ⑥ 合并节点 in 上限（引擎硬闸）。
    * 纪律原文（分发器提示词「合并节点」节 + 设计指南 §0bis）：「in ≤4，超限拆多个合并
    * 节点」——此前纯纪律、引擎查无校验。边界：=4 合法、≥5 拒（`NODE_MERGE_IN_CAP`）。
    */
   val MergeInCap: Int = 4
 
   /**
-   * ⑧ 「已触发」状态集（同一裁定）：running/blocked/completed 的合并节点其 in 账本冻结
+   * ⑧ 「已触发」状态集（同一硬闸）：running/blocked/completed 的合并节点其 in 账本冻结
    * ——新 worktree 配新合并节点，禁向已触发节点追加 in（`NODE_MERGE_FIRED_NO_IN`）。
    * un-triggered（wiring/pending）追加是正常回流，放行。
    *
@@ -59,6 +59,107 @@ object NodeTools:
           ProjectRuntimeRegistry.all.map(rts => Left(mountError(name, rts.map(_.project.name))))
       }
 
+  // ── N1 刀2（v3 §10.1 A4 授能/作用域闸）────────────────────────────────────
+
+  /**
+   * delegate 会话的四件工具面（挂载点 = `buildAllowedToolSet` 尾段 `delegateSession`
+   * 腿；本集是报错文案与 spec 断言的名字单点，禁字面量散落）。
+   */
+  val DelegateNodeToolsFace: Set[String] = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
+
+  /**
+   * **运行时解析单点（A4 作用域闸）**：delegate 会话 → **只解析自己的作用域图**
+   * （`DelegateFlowHosts.get(ctx.sessionId)`；查无宿主 = fail-closed 显式报错，
+   * 禁静默回落 per-project 面）；其余身份（分发器白名单过渡期照旧 / Nebula /
+   * REST 直调）→ 既有 `resolveProject` per-project 路径**逐字节不变**。
+   *
+   * 三个工具调用点（NodeEdit/NodeList/NodeCancel）统一改走本方法——第二保险与
+   * 挂载面（delegateSession 尾段）构成双保险（TaskBoard/node_report 同款纪律）。
+   *
+   * @param project **显式** project 参数（调用方不再自行 orElse ctx.projectName——
+   *                delegate 面上 ctx.projectName 是派发上下文残留，**禁**参与作用域
+   *                归属：作用域只认会话身份；per-project 面的 fallback 在
+   *                `resolveProject` 内原样保留）。
+   */
+  def resolveRuntime(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
+    if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
+      resolveDelegateScope(project, ctx)
+    else resolveProject(project, ctx)
+
+  /** delegate 会话的宿主查无（fail-closed，可行动：重挂触发点在 spawn/续聊腿）。 */
+  def scopeUnavailableError(scopeId: String): String =
+    s"Your scope flow map is not available (no mounted host for this delegate session) — the flow tools only operate on " +
+      "your own scope map. Retry shortly (the host remounts on session revival) or report blocked if it persists. " +
+      "(DELEGATE_SCOPE_UNAVAILABLE)"
+
+  /** delegate 会话显式指定了他人项目（作用域归属 fail-closed——只能编辑自己作用域图）。 */
+  def scopeForeignError(scopeId: String, requested: String, scopeName: String): String =
+    s"'$requested' is outside your scope — a delegate may only address its OWN scope flow map (scope '$scopeId', " +
+      s"mounted as '$scopeName'). Cross-project work goes through Delegate dispatch, not the flow tools. " +
+      "(DELEGATE_SCOPE_FOREIGN)"
+
+  private def resolveDelegateScope(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
+    val scopeId = ctx.sessionId.getOrElse("")
+    nebflow.core.project.DelegateFlowHosts.get(scopeId).flatMap {
+      case None => IO.pure(Left(scopeUnavailableError(scopeId)))
+      case Some(h) =>
+        val scopeName = h.engine.projectName
+        project match
+          case Some(p) if !p.equalsIgnoreCase(scopeName) && p != scopeId =>
+            IO.pure(Left(scopeForeignError(scopeId, p, scopeName)))
+          case _ => IO.pure(Right(h.projectRuntime))
+    }
+
+  // ── N1 刀2（v3 §10.1 A5 双寻址）──────────────────────────────────────────
+
+  /**
+   * **节点双寻址解析单点**（判据 v2 §4 R1/R3 原样引用；修复底座既有弱点
+   * `resolveTargetId` 静默取首个 name 命中）：解析序 = **id 精确命中即止**（R4 保证
+   * id/name 两空间不相交，序即确定）→ 否则按 name（精确、大小写敏感、零 case
+   * folding）→ **>1 命中 = 显式歧义错**（列全候选 `id(task前30字符)`，不猜）→
+   * 零命中 = `CHAIN_NODE_NOT_FOUND`。
+   *
+   * @param nodes 解析域（调用方取**一次**快照传入——活动区优先；归档候选由调用方
+   *              决定是否并入 combined 集，本函数不做两区 IO）。
+   * @return Right(nodeId) | Left(带错误码的完整文案)。
+   */
+  def resolveNodeRef(nodes: Map[String, NodeDef], ref: String): Either[String, String] =
+    val r = ref.trim
+    if r.isEmpty then Left(chainNodeNotFoundError(r))
+    else if nodes.contains(r) then Right(r)
+    else
+      nodes.values.filter(_.name == r).toList match
+        case single :: Nil => Right(single.id)
+        case Nil           => Left(chainNodeNotFoundError(r))
+        case many =>
+          val candidates = many.map(n => s"${n.id}(${n.task.getOrElse("").take(30)})").mkString(", ")
+          Left(
+            s"'$r' matches ${many.size} nodes by name — $candidates — address by node id, or rename. (CHAIN_ADDR_AMBIGUOUS)"
+          )
+
+  def chainNodeNotFoundError(ref: String): String =
+    s"no node '$ref' (id or name) in this scope's chain map. (CHAIN_NODE_NOT_FOUND)"
+
+  /** 双寻址便捷形态（IO 包装）：活动区未命中再兜归档区（与 findNode 同序），两区皆无 = 未找到。 */
+  def resolveNodeRefIO(rt: ProjectRuntime, ref: String): IO[Either[String, NodeDef]] =
+    rt.store.snapshot.flatMap { s =>
+      resolveNodeRef(s.nodes, ref) match
+        case Right(id) =>
+          s.nodes.get(id).map(n => IO.pure(Right(n))).getOrElse {
+            rt.store.findNode(id).map {
+              case Some(n) => Right(n)
+              case None    => Left(chainNodeNotFoundError(ref))
+            }
+          }
+        case Left(err) =>
+          // 活动区按名零命中 → 归档区兜底（归档节点可被 detail/取消面寻址——结果补投/收殓语义）
+          rt.store.archiveSnapshot.map { arch =>
+            arch.nodes.values.filter(_.name == ref.trim).toList match
+              case single :: Nil => Right(single)
+              case _             => Left(err)
+          }
+    }
+
   /**
    * 项目未挂载报错（附可用项目列表提示实际名称）——纯函数便于单测。
    * 精确项目名不匹配时列出已挂载项目（提示实际名称，不裸报 not mounted）；
@@ -66,8 +167,8 @@ object NodeTools:
    */
   def mountError(name: String, available: List[String]): String =
     if available.isEmpty then
-      s"Project '$name' is not mounted. No projects are currently mounted. Use ProjectCreate first."
-    else s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use ProjectCreate first."
+      s"Project '$name' is not mounted. No projects are currently mounted. Use Project first."
+    else s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use Project first."
 
   /** 引用节点存在性（活动区 + 归档区）。 */
   def ensureNodeExists(rt: ProjectRuntime, id: String): IO[Either[String, Unit]] =
@@ -77,7 +178,7 @@ object NodeTools:
     }
 
   /**
-   * out 目标解析（20260909 in 丢失事故修复面单点）：out 边目标串接受节点 id 或节点名
+   * out 目标解析（in 丢失修复面单点）：out 边目标串接受节点 id 或节点名
    * （in/deps 维持纯 id 契约，不经此解析）。返回解析后的节点 id；悬空 → None。
    * 校验（存在性/状态守卫/环检测）、in 镜像记账、投递结算统一以解析结果为准——
    * 原始串形态只留在存储层（边 to 字段，前端/审计可读）。
@@ -89,7 +190,7 @@ object NodeTools:
   /**
    * 状态守卫：目标已运行 → 拒绝接线（§2.2「目标已运行，输入已冻结」）。
    *
-   * B5 缺口③ 后的**适用面收窄**（作者 2026-09-17 M-3 裁定，选项①）：本守卫只对
+   * **适用面收窄**后的守卫口径：本守卫只对
    * **非控制边**（真实输入边 result / signal）与「已接线且未变」的目标生效；指向
    * running 目标的**控制边**（`:loop`）改由 [[deferredLoopEdges]] 入待接线队列
    * （`NodeDef.pendingOut`），不再整单拒绝——控制边零投递、不进 in 镜像/屏障，对其
@@ -107,15 +208,15 @@ object NodeTools:
     }
 
   /**
-   * **编辑期待接线分区判据单点**（B5 缺口③ · 作者 2026-09-17 M-3 裁定「待接线队列
-   * （到点自动接）」，选项①）：把本次声明的 `newOut` 相对**已接线** `currentOut` 的
+   * **编辑期待接线分区判据单点**（「待接线队列
+   * （到点自动接）」口径）：把本次声明的 `newOut` 相对**已接线** `currentOut` 的
    * **新增边**按「目标此刻是否 running」三分为：
    *
    *   - `deferred`：新增 **控制边**（`:loop`）∧ 目标 running ⇒ 入 `NodeDef.pendingOut`
    *     待接线队列（不进 out），目标离开 running 后由 `NodeEngine.applyDeferredWiring`
    *     自动接线 + 落痕；
    *   - `frozen`：新增 **非控制边**（result / signal）∧ 目标 running ⇒ 照旧**拒**
-   *     （护「in 在启动前定型」的屏障语义，merge 面保护不得被本批削弱）；
+   *     （护「in 在启动前定型」的屏障语义，merge 面保护不得削弱）；
    *   - **未变边（`currentOut` 已含）**：两边皆不入 ⇒ 编辑放行（已接线者无需再接、也
    *     无输入冻结可言——旧守卫「对所有声明目标含未变者」的过宽面即在此收窄）。
    *
@@ -148,8 +249,7 @@ object NodeTools:
    *   out="(pass)B, (failed)C" → List(OutEdge("B"), OutEdge("C",{failed}))   扇出
    *   out="(failed)C:signal"   → List(OutEdge("C",{failed},"signal"))        失败纯信号边
    * 段语法：(gates)? target (:mode)?——gates 逗号分隔 ⊆{pass,failed}（缺省 pass）；
-   * mode ∈{result,signal}（缺省 result）。**Nebula 两态语义（2026-09-12 裁定 1，
-   * R1-a）**：隐式门（bare `"Nebula"`）＝纯出口标记 ⇒ `on={pass}` + `mode=signal`
+   * mode ∈{result,signal}（缺省 result）。**Nebula 两态语义**：隐式门（bare `"Nebula"`）＝纯出口标记 ⇒ `on={pass}` + `mode=signal`
    * （零投递、只记账）；显式门集 `"(pass)Nebula"` / `"(pass,failed)Nebula"` ＝通知
    * 声明（按声明门 + 声明 mode 真投递）。null/"null" → Nil = 断开（空 out 合法）；
    * JSON 数组 → 拒（1 对多改用逗号段语法）。输出经 canonical 规范化（同 (to,mode)
@@ -200,8 +300,8 @@ object NodeTools:
 
   /**
    * 门控组解析："(pass)" / "(pass,failed)" / "(fail)"——空组/非法门 → 可行动错误
-   * （附原文 + **fail/failed 一字之差的区分说明**，nrloop 一期 §3.3 #11：写错门是
-   * 本批最可能的 LLM 误用面，错误文案必须自己说清两词的区别）。
+   * （附原文 + **fail/failed 一字之差的区分说明**，§3.3 #11：写错门是
+   * 最可能的 LLM 误用面，错误文案必须自己说清两词的区别）。
    */
   private def parseOutGates(inner: String, seg: String): Either[String, Set[String]] =
     val parts = inner.split(',').map(_.trim).filter(_.nonEmpty).toList
@@ -251,10 +351,10 @@ object NodeTools:
             "never settles the barrier — the engine drives it)"
         )
       else
-        // 2026-09-12 裁定 1（R1-a）——Nebula 边两态分叉（隐式门 = 出口标记）：
+        // Nebula 边两态分叉（隐式门 = 出口标记）：
         //   隐式门（bare "Nebula"）→ on={pass} + mode=signal：**零投递、只记账**
         //     （nebulaDelivery/deliverFailed 走既有 Signal 分支 ⇒ 不投 root，亦不补投）。
-        //     该分支连写的 :mode 被出口标记语义整体覆盖——裁定 1 明文「显式回传 = 写字面
+        //     该分支连写的 :mode 被出口标记语义整体覆盖——「显式回传 = 写字面
         //     门集形态」，隐式门不是声明面（要通知必须补门集）。
         //   显式门集（"(pass)Nebula" / "(pass,failed)Nebula"）→ 按声明门 + 声明 mode
         //     （缺省 result）真投递 = 通知声明。
@@ -295,9 +395,9 @@ object NodeTools:
       case Some(_) => Left("'in' must be a node id string or an array of node ids")
 
   /**
-   * 悬空提示（W1 = O-B 必做 4，2026-09-12 批）：创建/改接成功结果尾部一行提示——与
+   * 悬空提示：创建/改接成功结果尾部一行提示——与
    * 既有 `stalledInWarning` **同款形态**（成功结果尾部附 ⚠ 行，非阻断）。判据 = 本次调用
-   * 结束态该节点无出边 ⇒ 结果将滞留（零投递、零升根，见裁定第 3 条），接线后自动投递。
+   * 结束态该节点无出边 ⇒ 结果将滞留（零投递、零升根），接线后自动投递。
    * 0 spawn、零新字段、零持久痕迹（与 W2 的 `wiringGap` 载荷键互为「决策当下可见 /
    * 巡检可见」两面）。
    */
@@ -451,12 +551,12 @@ object NodeTools:
     )
 
   /**
-   * loop 门集不变量（**P-2 强读法**，2026-09-12 裁定 2/3）——判定单点（纯函数）。
+   * loop 门集不变量（**P-2 强读法**）——判定单点（纯函数）。
    *
    * 判据（写死）：`loop.exists(_.enabled)`（与引擎实际路由键 `NodeEngine.spawnAndRun`
    * 的 `node.loop.exists(_.enabled)` 同源，**不是** `loop.isDefined`）∧ 最终边集非空 ∧
    * 未**同时覆盖** pass 与 failed 两腿 ⇒ 拒。**空 out 豁免**（out 可空置：结果留在
-   * result，接线后再投递）——否则与「out 可空置」裁定直接冲突（该形态下 P-2 不可判，
+   * result，接线后再投递）——否则与「out 可空置」语义直接冲突（该形态下 P-2 不可判，
    * 是已接受的不可判窗口）。**存量零回溯**：只在写路径入口判定（新建/改接），
    * 落盘加载路径（`Decoder[List[OutEdge]]` / `fromLegacyString`）一行不改。
    *
@@ -490,7 +590,7 @@ object NodeTools:
 
   /**
    * 镜像追加路径（下游 `in:` 声明 ⇒ 上游 out 追加缺省 pass 边）的 loop 门集预检
-   * （裁定 3 明文要求覆盖的面：该路径不经 outJson 校验点，故必须在**写路径**上判）。
+   * （该路径不经 outJson 校验点，故必须在**写路径**上判）。
    *
    * 复算方式：逐条调用**真实的落盘收敛函数** `appendEdgeTo` 得到追加后的上游边集再判
    * ——不复制其条件（单一真相源，避免「幂等不追加」分支被镜像成第二套语义）。归档
@@ -506,7 +606,7 @@ object NodeTools:
       .nextOption()
 
   /**
-   * `NODE_VERIFIER_NEEDS_ROUTE` 可行动文案单点（nodegate 方案件 §1(i) D2 裁定：
+   * `NODE_VERIFIER_NEEDS_ROUTE` 可行动文案单点（文案口径：
    * 两腿同码——缺陷语义相同（verifier 无 fail 路由），码名描述缺陷不描述相位，
    * 下游分发器自纠只需认一个码）。
    *
@@ -518,7 +618,7 @@ object NodeTools:
       "(fail)<worker>:loop\"." + via + " (NODE_VERIFIER_NEEDS_ROUTE)"
 
   /**
-   * 镜像追加路径的 verdict 选通预检（nodegate 方案件 §1(i) 镜像腿，本批四项③）：
+   * 镜像追加路径的 verdict 选通预检（镜像腿）：
    * 下游 `in:` 声明会给每个上游 out 追加一条缺省 pass 边——上游若是 verifier 且
    * 追加后 fail 路由仍为空 ⇒ 拒（否则「pending verifier 被下游补 pass 边」立即
    * 变成「有边无 fail 路由」= 缺陷形态本身，正是 n-b9faa304 形态的成因通道）。
@@ -556,12 +656,12 @@ object NodeTools:
   /**
    * 事务内设 out 边集（单权威，P1 多边版）：被移除边目标 in 移除 + 新增边目标 in
    * 追加 + 本节点 out 替换（canonical 规范化落库）。同 to 保留边不重触发 in 写
-   * （幂等）。归档感知（fix a「新建边→归档上游」修复 20260903）：from 在归档区
+   * （幂等）。归档感知（「新建边→归档上游」修复）：from 在归档区
    * 时——活动区侧照常做目标 in 增删，from.out 补写归档区（mutateArchive；归档节点
    * 不可复活，仅元数据保持单权威一致）；旧目标也在归档区时其 in 不回写（归档 in
    * 表是死数据，避免跨区二跳写）。
    *
-   * **loop 门集不变量（裁定 3 的落盘收敛点）**：写入前用 `loopGateViolation` 复查最终
+   * **loop 门集不变量（落盘收敛点）**：写入前用 `loopGateViolation` 复查最终
    * 边集——违规即**拒写**（ERROR 留痕，本函数是写路径单权威，防未来新调用方绕过前置
    * 预检）。正常路径不可达：创建/改接的**前置预检**（`loopGateForAppends` + 改接侧
    * self 预检）已用同一判据在任何写之前拒绝整调用 ⇒ 零残留。
@@ -574,12 +674,12 @@ object NodeTools:
   ): IO[Unit] =
     val newEdges = OutEdge.canonical(newOut)
     def rewire(nodes: Map[String, NodeDef], from: NodeDef): Map[String, NodeDef] =
-      // in 镜像记账按解析后的节点 id 做（20260909 in 丢失事故修复）：目标串有 id/名字
+      // in 镜像记账按解析后的节点 id 做（in 丢失修复）：目标串有 id/名字
       // 两种形态，removed/added 的 diff 必须在「节点身份」空间进行——按原始串 diff 时，
       // 「旧 id 形态边 → 新名字形态边指向同一节点」会被误判为改接他点，removed 侧把
       // 下游 in 抹掉、added 侧又因名字查 Map MISS 而漏记（净效应 = in 蒸发）。
       //
-      // **红线①（nrloop 一期 2026-09-12，设计 §3.3 #15 / 附 C2-R5）**：`mode==loop`
+      // **红线①**：`mode==loop`
       // 的控制边**不写 in 镜像**——回边若照写镜像，worker 的 in 会含 verifier ⇒
       // round-1 的 in-barrier 永不归零 ⇒ 第一次就死锁（loop 边不是「谁被谁喂输入」，
       // 它是选通信号）。两侧（removed/added）都过滤，且 `afterAdded.updated` 仍写 out。
@@ -611,10 +711,10 @@ object NodeTools:
     end rewire
     def sinkGuard(node: NodeDef): Option[String] = NodeTools.loopGateViolation(node, newEdges)
 
-    // ── 边集变更留痕（缺陷③批 2026-10-01 · 案 A）───────────────────────────────
+    // ── 边集变更留痕 ───────────────────────────────
     // `setOut` 是 out 边集的**落盘 choke point**（调用点埋点必漏）⇒ 在收口处对
     // before(out) ↔ after(newEdges) 逐边 diff，**逐边一行**发 `edge-changed`。
-    // 目标解析统一经 `resolveTargetId`（20260909 in 丢失事故口径：diff 在**节点身份**
+    // 目标解析统一经 `resolveTargetId`（in 丢失口径：diff 在**节点身份**
     // 空间进行——旧 id 形态边 → 新名字形态边指向同一节点时**零行**，不误报「改接」）。
     def resolve(nodes: Map[String, NodeDef])(target: String): String =
       OutEdge.resolveTargetId(nodes, target).getOrElse(target)
@@ -692,11 +792,11 @@ object NodeTools:
    * 边——上游已有指向本节点的边（任意门控）则保持不变（in 声明不覆盖既有门控声明，
    * 扇出拓扑的其它边零扰动；旧单值世界的「改指」语义由多边追加天然兼容）。
    *
-   * **loop 门集不变量面（裁定 3）**：本函数是镜像追加路径的落盘收敛点，调用方
+   * **loop 门集不变量面**：本函数是镜像追加路径的落盘收敛点，调用方
    * （create 事务 / edit 侧 `setOut`）必须在写前用 `loopGateForAppends` 预检——它
    * 直接调用本函数复算追加后的上游边集，故「幂等不追加」分支零复制。
    *
-   * **红线①（nrloop 一期 2026-09-12）**：追加的边恒为缺省 pass + result 模式的边（本函数
+   * **红线①**：追加的边恒为缺省 pass + result 模式的边（本函数
    * 不产 `:loop` 边）；`(fail)<worker>:loop` 的回边**绝不**经本函数写 in 镜像——回边
    * 由 verifier 的 out 声明承载，镜像面在 `setOut` 侧按 `mode==loop` 过滤（防 round-1
    * 死锁：worker 的 in 若含 verifier ⇒ barrier 永不归零）。
@@ -708,7 +808,7 @@ object NodeTools:
       case _ => nodes
 
   /**
-   * 纯函数：镜像追加视图（缺陷③批 2026-10-01 · 案 A 写点 4）。
+   * 纯函数：镜像追加视图。
    *
    * `appendEdgeTo` 是**纯函数**（返回新 Map，无 IO），故其留痕在调用方收口：本函数从
    * 「追加前 / 追加后」两张 `Map` 抽出该上游 out 的逐边 diff 视图 ⇒ 调用方逐边发一行。
@@ -742,7 +842,7 @@ object NodeTools:
   end appendEdgeViews
 
   /**
-   * 纯函数：**建位（create）事务的边集变更视图**（缺陷③批 2026-10-01 · 案 A 写点 5）。
+   * 纯函数：**建位（create）事务的边集变更视图**。
    *
    * 建位本身也是边集变更：新节点的 `out` 声明、以及**所有被改动的 `in` 镜像**（新节点自身
    * 的 `in`、以及 `appendEdgeTo` 在上游 out 追加后在**新节点**侧映出的入边）。此前建位期
@@ -779,7 +879,7 @@ object NodeTools:
   end createdEdgeViews
 
   /**
-   * **编辑期拒绝面留痕**（缺陷③批 2026-10-01 · 案 A 写点 12/13，IO 包装 = 唯一 IO 点）。
+   * **编辑期拒绝面留痕**（IO 包装 = 唯一 IO 点）。
    *
    * 形态 12（`ensureMergePassOnly` / `ensureTargetNotRunning` / `verdictRouteGate` 及
    * create 侧同族）的编辑期硬拒此前**零事件**——「谁被谁拒、按哪个码」在审计面查无。
@@ -818,7 +918,7 @@ object NodeTools:
       .filter(e => e.on.contains(OutEdge.Failed) && e.to != OutEdge.RootTarget)
       .toList
       .traverse { e =>
-        // 目标按解析后 id 查（20260909 修复面：名字形态的 failed 边不再绕过本门控）
+        // 目标按解析后 id 查（修复面：名字形态的 failed 边不再绕过本门控）
         NodeTools.resolveOutTarget(rt, e.to).flatMap {
           case None => IO.pure(None)
           case Some(tid) =>
@@ -834,7 +934,7 @@ object NodeTools:
       .map(_.flatten.headOption)
 
   /**
-   * **verdict 选通校验族**（nrloop 一期 2026-09-12，设计 §3.3 #13 + §3.4；
+   * **verdict 选通校验族**（
    * 全部 **0 spawn** —— 创建/改接期拒绝，节点不落库、上游零改边）。
    *
    * 判据（逐条，返回首个违规的可行动错误；`Some` = 拒）：
@@ -847,7 +947,7 @@ object NodeTools:
    *     （`loop=true` 的节点内 verify 会话已天然是校验方，节点级 role 与之冲突）。
    *  3. `NODE_VERIFIER_NEEDS_ROUTE`：`role=verifier` 且 fail 选通边为空 ⇒ 拒（否则
    *     loop 静默退化为单次：verifier 报不了 fail，回边永不触发）。nodegate 方案件
-   *     §1(i)（本批四项③）把**空 out 逃逸通道一并关闭**——原实现的 `edges.nonEmpty`
+   *     §1(i) 把**空 out 逃逸通道一并关闭**——原实现的 `edges.nonEmpty`
    *     前置使空 out verifier 建位/编辑恒放行（注释自陈「空 out 是合法形态，不在此
    *     判」正是逃逸口）；现取「空 out 且创建期显式声明 `verifierRoutePending=true`」
    *     为唯一放行形态（C-i 令牌，见 [[verifierRoutePending]] 参数），编辑面与镜像
@@ -865,7 +965,7 @@ object NodeTools:
    *     两条自动重跑腿都会清 `deliveredTo`，并发命中会打乱 barrier 账本；v1 拒绝
    *     同节点既为 loop 目标又有 retry。
    *
-   * 与批 A 判据共存（硬口径）：本函数**不触碰** `loopGateViolation`（旧式 loop 节点
+   * 与既有判据共存（硬口径）：本函数**不触碰** `loopGateViolation`（旧式 loop 节点
    * 的两腿覆盖不变量）——两者是并列的写前校验，互不覆盖、互不放宽；本函数只看
    * 角色 × verdict 门 × 控制边这一族，且对旧式 loop 节点仅在「role=verifier」这一
    * 冲突形态上发声（见第 2 条第 3 分句）。
@@ -1040,10 +1140,10 @@ object NodeTools:
         .map(_.flatten)
 
   /**
-   * 通知策略声明自检（**WARNING 族**，b64 批 2026-09-13；形态仿 [[stalledInWarning]]：
-   * 成功结果尾部附 ⚠ 行，**非阻断**）。三条判据（spec §4.2 + 作者裁定 M3）：
+   * 通知策略声明自检（**WARNING 族**；形态仿 [[stalledInWarning]]：
+   * 成功结果尾部附 ⚠ 行，**非阻断**）。三条判据：
    *
-   *   ① **M3（作者裁定「只警告，不拦」）**：`silent` ∧ **链末端**（out 里没有任何
+   *   ① **只警告，不拦**：`silent` ∧ **链末端**（out 里没有任何
    *      「可解析为节点的目标」——仅 Nebula 边 / 悬空名 / out=Nil 都算末端，D7 口径
    *      与 `FlowMapStore.topologicalChains` 的 `hasNodeTarget` 同源）。语义 = 该节点
    *      是链的收口位，自身静默 + 下游无节点 ⇒ 完成事实在根面**完全没有**节点级入口，
@@ -1101,7 +1201,7 @@ object NodeTools:
     rt.store.wouldCreateCycle(fromId, to)
 
   /**
-   * P2 retry 风暴防护两校验（spec §2.3，0 spawn；批E2）。Some(错误) = 拒绝：
+   * P2 retry 风暴防护两校验（spec §2.3，0 spawn）。Some(错误) = 拒绝：
    *   ① 邻居限定（NODE_RETRY_NEIGHBOR）：retry.upstream 必须是持有节点的 in/deps
    *      邻居——回跳语义 =「重取上游产物再试」，跨子图回跳无输入语义支撑（沿 deps
    *      「下游单侧持有」连通性先例）。
@@ -1209,7 +1309,7 @@ object NodeTools:
    * 为什么按「全节点」而非调用点给的受影响集比对：链 id 是**分量级**派生量——新增一条
    * 边可能把两个既有分量并成一条链（id 归并为最早 createdAt 者的 id），此时**每个**原
    * 成员节点的链号都变了，而它们都不是本次写动作「点名」的节点。少比对 = 归属变更静默
-   * （正是本批要消灭的形态）。
+   * （正是要消灭的形态）。
    *
    * 三项原因（`reason`，与 [[FlowMapEventLog.chainMembershipChangedSummary]] 同值域）：
    *   - `declaration`：本节点由未声明 → 声明（旧链号可能缺省也可能有派生值）；
@@ -1332,7 +1432,7 @@ object NodeTools:
    * 两档判据（同源 = `FlowMapStore.resolveDepTargets` 单点，零第二解析器）：
    *   - 链号**不存在**（`unknownChainRefs`）⇒ 拒，[[chainRefUnknownError]]（既有行为）；
    *   - 链号**存在但构造性不可满足**（`deadChainRefs`，判据 D：成员含 `cancelled`）⇒
-   *     **拒**，[[chainRefDeadError]]（本批新增；fail-loud + 点名 + 改锚指引）。
+   *     **拒**，[[chainRefDeadError]]（新增；fail-loud + 点名 + 改锚指引）。
    * 🔴 判据**只看** `status == cancelled`——`failed` 成员**放行**（可重激活，禁止硬拒以免
    * 封死自愈路）；🔴 **禁**以 `archived` / `compacted` / `archivedAt` / ledger 任何键作判据。
    */
@@ -1507,7 +1607,7 @@ object NodeTools:
    * §2.2 NodeList 返回结构）。节点序列化统一走 NodePayload.buildNodeJson（与 WS
    * 事件 payload 同构）。
    *
-   * statusFilter（观测面上下文经济学批 20260907 裁定⑤a）：可选生命周期枚举多选
+   * statusFilter（观测面上下文经济学）：可选生命周期枚举多选
    * 过滤——**缺省 None = 全量，输出字节级等于现状**（向后兼容铁律；REST/前端
    * 调用零改动）。命中过滤时 liveness 探测也只对入选 running 节点做。
    *
@@ -1519,13 +1619,13 @@ object NodeTools:
    * 条目形状 {id,title,entries,ends,memberIds}，title 由 FlowMapStore.chainTitle
    * 三级推导下发（前端零派生）；entries/ends/memberIds = 分量全量（含归档成员，
    * spec §6.2「全成员」——主图渲染由前端按节点缓存过滤）。节点级 chainIds 条件键
-   * **仅 merge 节点且可达成员链数 ≥2** 带（作者裁定①：多链归属只对合并节点做；普通
+   * **仅 merge 节点且可达成员链数 ≥2** 带（多链归属只对合并节点做；普通
    * 节点恒单值 chainId），值 = **主链 id 首项 + 全量成员链**（主链恒首项 = `chainId`
    * 逐字同值；无上限、无降级）。
    * WS 不带链级帧，结构变化由前端对账重拉快照消化。
    */
   /**
-   * **链控端点响应体单点**（chainview 批 2026-10-01）：三条 REST 端点（pause / resume /
+   * **链控端点响应体单点**：三条 REST 端点（pause / resume /
    * cancel）的成功响应共用本构造函数 —— 🔴 禁三处各拼一份（帧形/字段集漂移）。
    *
    * 形状（与本文件既有 projects 族逐条同风格，`404/400` 错误体另件于路由）：
@@ -1570,13 +1670,13 @@ object NodeTools:
       // `yield` block, i.e. after the three call sites. Zero new IO: `s` and `arch` are
       // already in hand above.
       combined = s.nodes ++ arch.nodes
-      // 清场 c-①（20260903 03:04 清场误杀事故复盘）：running 节点携带 liveness
+      // 清场 c-①（清场误杀复盘）：running 节点携带 liveness
       // 字段——true = 有在飞执行 fiber（活会话，取消信号可达）；false = 无在飞
       // fiber（死会话残留/实例重启泄漏，可经 NodeCancel / abandon 收殓）。非
       // running 节点不带该键（wiring/pending 无会话存活概念、终态无存活可言
       // ——语义明确）。仅快照（NodeList 工具 / REST flow-map）带；WS 事件单一
       // 序列化点（NodePayload.buildNodeJson）不动 → 事件键集断言零影响。
-      // 裁定⑤a：过滤先行——liveness 只探入选节点（缺省 None 集合不变）。
+      // 过滤先行——liveness 只探入选节点（缺省 None 集合不变）。
       selected = statusFilter match
         case None => s.nodes.values.toList.sortBy(_.createdAt)
         case Some(fs) => s.nodes.values.toList.sortBy(_.createdAt).filter(n => fs.contains(n.status))
@@ -1584,17 +1684,17 @@ object NodeTools:
         .filter(_.status == NodeLifecycle.Running)
         .traverse(n => rt.engine.isRunning(n.id).map(alive => n.id -> alive))
         .map(_.toMap)
-      // 排队位次派生（排队位次可见性批 2026-09-14）：纯函数、零副作用，与闸同一单点；
+      // 排队位次派生：纯函数、零副作用，与闸同一单点；
       // 同键多项目（O-1）读数为显示面降级信号（键求值走进程内缓存，稳态零 git 调用）。
-      // 排队位次**显示槽**（engine-defects 批 #2/#227 2026-09-15）：与闸**同一判据**
+      // 排队位次**显示槽**：与闸**同一判据**
       // （mergeQueueHolders → MergeMutexPolicy.holders + verdict 准入过滤），只把持有者
       // 富化成 {rank 依据(readyAt/createdAt), 是否真在临界区, 为何未点火}。
       mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(combined)
-      // 排队**位次**派生（queuepos 批 2026-09-15）：纯函数、零副作用，真源 = SEM-2 次序键
+      // 排队**位次**派生：纯函数、零副作用，真源 = SEM-2 次序键
       // `rank=(readyAt,createdAt,id)`（[[MergeMutexPolicy.queuePosOf]] 单点）。与
       // `mergeQueueSlots` 分工：后者 = 闸判据「谁挡着我」，本项 = 队列序「我排第几」。
       mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(combined)
-      // Verdict-gate visibility slot (mergeverdictvis batch 2026-09-23): a merge position
+      // Verdict-gate visibility slot: a merge position
       // held by the verdict gate produces NO `mergeQueue` slot at all, so the payload used
       // to show `mergeQueuePos.position=1` with nobody listed anywhere — reading as "first
       // in line and nobody blocks me" while an upstream verifier with a non-pass verdict is
@@ -1605,7 +1705,7 @@ object NodeTools:
       // unheld nodes are simply absent.
       mergeVerdictGates <- rt.engine.mergeVerdictGateBatch(combined)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
-      // chainview 批 2026-10-01：链控三态读数（chains[] 的 status/pausedAt/cancelledAt 三键
+      // 链控三态读数（chains[] 的 status/pausedAt/cancelledAt 三键
       // 数据源）。**一次读**供整表消费（禁逐链读台账）；纯只读，不写台账、不登记任何号。
       ledgerState <- rt.store.chainLedgerStore.snapshot
     yield
@@ -1618,10 +1718,10 @@ object NodeTools:
       // ——payload 零膨胀口径逐字保留），并保持既有「旁挂仅收含活动成员的链」约束。
       // 为什么必须同源：节点级 `chainId` 条件键（本处 `chainIdByNode`）与 WS/事件面
       // （`chainAttrsOf` → `chainIdIn`）是同一个载荷键的两条生产路径——不同源 = 同一节点
-      // 在工具面与事件面报出不同链号（本批 ① 的直接反例）。零新键、零形状变化。
+      // 在工具面与事件面报出不同链号（① 的直接反例）。零新键、零形状变化。
       val chains = FlowMapStore.payloadChains(combined, s.nodes.keySet)
       val chainIdByNode = chains.flatMap(c => c.memberIds.map(_ -> c.id)).toMap
-      // U1 多链归属（作者裁定①）：仅 merge 节点、可达成员链数 ≥2 才有值（值 = 主链 id
+      // 多链归属：仅 merge 节点、可达成员链数 ≥2 才有值（值 = 主链 id
       // 首项 + 全量成员链；普通节点恒缺席 = 单值 chainId 语义不变）；派生与 chainId
       // 同源（同一份 chains 分量表，禁双端二次派生）。
       // chainmodel 批三 ②：同一单点（FlowMapStore.mergeChainAttrs）一次给出两值——
@@ -1641,12 +1741,12 @@ object NodeTools:
           now,
           chainIdByNode.get(n.id),
           chainIdsByNode.get(n.id),
-          // 排队位次条件键（排队位次可见性批 2026-09-14，案 A）：判据**单点** = 引擎闸
+          // 排队位次条件键：判据**单点** = 引擎闸
           // 同一函数（[[NodeEngine.mergeQueueHoldersBatch]] → [[NodeEngine.mergeQueueHolders]]
           // → [[MergeMutexPolicy.holders]] + verdict 准入过滤）——🔴 禁前端/分发器复刻，
           // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未排队节点缺键。
           mergeQueue = mergeQueueSlots.get(n.id),
-          // 排队位次条件键（queuepos 批 2026-09-15）：判据**单点** = 引擎
+          // 排队位次条件键：判据**单点** = 引擎
           // [[NodeEngine.mergeQueuePositionsBatch]] → [[MergeMutexPolicy.queuePosOf]]
           // → [[MergeMutexPolicy.rankOf]]（SEM-2 次序真源）——🔴 禁前端/分发器复刻，
           // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未成队节点缺键。
@@ -1656,13 +1756,13 @@ object NodeTools:
           sameKeyProjects = sameKeyForeignProjects,
           // chainmodel 批三 ② 新增键（本次汇聚的上游链；门控与 chainIds 同源，同缺席）
           mergeUpstreamChains = mergeUpstreamByNode.get(n.id),
-          // verifierRoute 条件键（failroute-guard 批 2026-09-21 · 案 A A3）：判据**单点** =
+          // verifierRoute 条件键：判据**单点** =
           // NodePayload.verifierRouteInvalid（纯函数；「合法 fail 选通边」算面与运行期
           // NodeEngine.loopRouteTargetId 同源，🔴 禁前端/分发器复刻、禁第二处派生）。
           // 注入活动区快照 ⇒ 仅**拒绝态**的 verifier 带键（值 "lost"）；合法节点与
           // 全部 WS 事件写点（不注入）字段集字节级零漂移。
           nodes = Some(s.nodes),
-          // Verdict-gate visibility slot (mergeverdictvis batch 2026-09-23): single point =
+          // Verdict-gate visibility slot: single point =
           // NodeEngine.mergeVerdictGateBatch (pure read of the gate's own holder list) — 🔴
           // no re-derivation, 🔴 no file ticket layer, 🔴 no event-stream replay. Only held
           // positions carry the key; a normally queued position never does.
@@ -1680,7 +1780,7 @@ object NodeTools:
           "entries" -> c.entries.asJson,
           "ends" -> c.ends.asJson,
           "memberIds" -> c.memberIds.asJson,
-          // chainview 批 2026-10-01：链控三态条件键（前端据此渲染暂停/取消态，
+          // 链控三态条件键（前端据此渲染暂停/取消态，
           // 🔴 前端零派生）。判据**单点** = `ChainLedger.statusOf`（进入本轮
           // 资格判定时的那一读；别名逐跳解析 ⇒ 改号后旧号照样报对态）。
           // 键名 `status` **只加不改**：既有五键（id/title/entries/ends/memberIds）
@@ -1693,7 +1793,7 @@ object NodeTools:
       }
       val wtDir = os.Path(rt.project.workspace) / ".nebflow"
       val authDir = wtDir / "worktrees"
-      // worktrees[] 双位置合并去重（20260903 worktree 参数修复——参照系统一）：
+      // worktrees[] 双位置合并去重（worktree 参数修复——参照系统一）：
       // worktrees/ 权威位置目录名 ∪ .nebflow/ 顶层目录/软链名（os.isDir 沿软链），
       // distinct + sorted 排序稳定。worktrees/ 容器本身不算 worktree。今日生产
       // 顶层同名条目为指向权威位置的软链 → 去重后名单与可传 worktree 名单一致。
@@ -1710,10 +1810,8 @@ object NodeTools:
         "nodes" -> nodes.asJson,
         "worktrees" -> worktrees.asJson,
         "chains" -> chainsJson.asJson,
-        // ④-11(b)（作者 2026-09-17 12:09 裁定单）：meta 增 `workspace` = 本项目**权威工作区
-        // 绝对路径**，供分发器/下游拿权威路径（根治「按项目名猜路径」——事故链：
-        // 分发器按 name 拼 `<dataRoot>/projects/<name>/AGENTS.md` 而真源 workspace 是别处，
-        // 见 .nebflow/reports/20260917_pcsys-mech-design.md 项2 基线 8）。
+        // meta 增 `workspace` = 本项目**权威工作区
+        // 绝对路径**，供分发器/下游拿权威路径（根治「按项目名猜路径」——按名拼接路径与真源 workspace 可能错位）。
         // 🔴 只**新增**键：既有键 `project` / `updatedAt` / `archived` 的键名与类型语义零改动
         // （后端新增键对全部既有消费者是向后兼容新增，容忍读数见实施批报告 A5 节）。
         "meta" -> Json.obj(

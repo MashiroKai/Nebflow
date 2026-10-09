@@ -8,6 +8,7 @@ import { batchDeleteSelected, deleteFolder, getTargetPath, getTargetAgent, getCu
 import { t } from './i18n.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { statusIcon } from './utils.js';
 
 // ---------- Session Modals ----------
 export function showNewSessionModal() {
@@ -199,7 +200,15 @@ function resolveConflict(action) {
 // color accent strip to a leading glyph icon (color-only distinction; glyph
 // colors live in modal.css). Signature and lifecycle unchanged — callers
 // keep passing (message, type).
-const TOAST_ICONS = { error: '\u2715', info: '!', success: '\u2713' };
+// ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：「✕/!/✓」文本字形 → lucide
+// 真图标（circle-x / circle-alert / circle-check，currentColor——色仍由 modal.css
+// 的类型档 token 给出，JS 串零硬编码色值）。
+// ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：「✕/!/✓」文本字形 → lucide
+// 真图标（circle-x / circle-alert / circle-check，currentColor——色仍由 modal.css
+// 的类型档 token 给出，JS 串零硬编码色值）。
+// 图标不带语义色类——颜色由下方 modal.css 类型档（.nebflow-toast-*）经
+// currentColor 继承给出，避免 st-err/st-ok 直涂覆盖类型档。
+const TOAST_ICONS = { error: 'circle-x', info: 'circle-alert', success: 'circle-check' };
 /**
  * Show a brief Nebflow-styled toast notification.
  * @param {string} message — text to display
@@ -211,7 +220,8 @@ export function showToast(message, type = 'error') {
   const icon = document.createElement('span');
   icon.className = 'nebflow-toast-icon';
   icon.setAttribute('aria-hidden', 'true');
-  icon.textContent = TOAST_ICONS[type] || TOAST_ICONS.info;
+  const [iconName] = [TOAST_ICONS[type] || TOAST_ICONS.info];
+  icon.innerHTML = statusIcon(iconName, 15);
   const msg = document.createElement('span');
   msg.className = 'nebflow-toast-msg';
   msg.textContent = message;

@@ -202,6 +202,24 @@ private[gateway] object WsSessionChatHandlers:
         )
       )
     if cSessionId.isEmpty then cancelReply(ok = false, "error" -> "cancelAgent requires sessionId".asJson)
+    else if cSessionId.startsWith(nebflow.core.executor.ExternalSessionRunner.SessionPrefix) then
+      // 外部腿（external-executors 批 #1225）：外部 delegate 无 agentRegistry
+      // 行——取消直达进程树 + 补发 agentDone 面板终态帧（行即时清理，与
+      // node-* 会话取消同款刷新语义）。面板路径无 caller 概念（本 handler
+      // 既有语义）：外部行管理面随面板放行（工具路径另有 root 桶守卫）。
+      logger.info(s"cancelAgent (panel) for external delegate $cSessionId") *>
+        nebflow.core.executor.ExternalSessionRunner
+          .cancel(cSessionId, if cReason.nonEmpty then cReason else "cancelled from panel", by = "the user panel")
+          .flatMap {
+            case Left(err) => cancelReply(ok = false, "error" -> err.asJson)
+            case Right(msg) =>
+              nebflow.core.delegate.DelegateRegistry.find(cSessionId) match
+                case None => cancelReply(ok = true, "message" -> msg.asJson)
+                case Some(rec) =>
+                  nebflow.core.node.NodeRunner
+                    .emitSubagentPanelDone(wsSend, cSessionId, rec.parentSessionId)
+                    .handleErrorWith(_ => IO.unit) *> cancelReply(ok = true, "message" -> msg.asJson)
+          }
     else
       logger.info(s"cancelAgent (panel) for session $cSessionId") *>
         sharedResources.agentRegistry.get.flatMap { registry =>

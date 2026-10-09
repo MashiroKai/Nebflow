@@ -21,7 +21,7 @@
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff } from './neblink.js';
 import { setUpdateDot } from './updateCheck.js';
-import { createIconsIn, escapeHtml } from './utils.js';
+import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
 import { getProfileUrl } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
@@ -29,17 +29,28 @@ import { key } from './branding.js';
 let initialized = false;
 let statusPollTimer = null;
 
+// ── 状态 beacon 拍（perf-481 A5：10s → 30s 节流）─────────────────────────
+// 本拍是页面唯一的「活着」节拍（订阅者复用它做降级回补，见下方 onStatusTick）。
+// 原值 10s 是稳态后台网络负载的**主贡献者**（130s 观测窗内 /api/neblink/status
+// 占全部 /api/ 请求的 77%，≈6 次/分钟）。状态面（登录/配对态）在 30s 粒度上
+// 语义等价 —— 该状态由 WS 事件推送驱动，本拍只是「事件面漏掉时」的兜底收敛，
+// 不存在 30s 内可见的状态漂移。⇒ 节流到 30s：≈6 → ≈2 次/分钟。
+//
+// 🔴 与既有门控正交：可见性守卫（`document.hidden` 即 return）逐字保留 —— 页面
+// 不在前台仍是 n=0。拍频只决定「可见时的频率」，不改变「不可见时不跑」这条。
+const STATUS_POLL_MS = 30_000;
+
 // ── 状态 beacon 订阅点（①opt-A3 载体）─────────────────────
-// 既有 10s 状态轮询是页面唯一的「活着」节拍（只看可见性、不新增定时器）。
-// 订阅者复用这一拍做降级动作（好友消息面：relay 不可用时的 REST 增量回补），
-// 因此**不引入第二个定时器**、频率与可见性守卫与 beacon 完全同源。
-// 返回注销函数（当前唯一订阅者 messages.js 整页生命周期只装一次，保留注销
-// 能力是为了不把「只能加不能减」的隐含约束写进接口语义）。
+// 既有状态轮询是页面唯一的「活着」节拍（只看可见性、不新增定时器；拍频见
+// STATUS_POLL_MS）。订阅者复用这一拍做降级动作（好友消息面：relay 不可用时的
+// REST 增量回补），因此**不引入第二个定时器**、频率与可见性守卫与 beacon 完全
+// 同源。返回注销函数（当前唯一订阅者 messages.js 整页生命周期只装一次，保留
+// 注销能力是为了不把「只能加不能减」的隐含约束写进接口语义）。
 /** @type {Set<() => void>} */
 const statusTickListeners = new Set();
 
 /**
- * 订阅既有 10s 状态 beacon 的每一拍（仅页面可见时触发）。
+ * 订阅状态 beacon 的每一拍（仅页面可见时触发）。
  * @param {() => void} cb
  * @returns {() => void} unsubscribe
  */
@@ -69,7 +80,7 @@ export function initActivityBar() {
     for (const cb of [...statusTickListeners]) {
       try { cb(); } catch { /* 订阅者异常不得打断状态轮询 */ }
     }
-  }, 10000);
+  }, STATUS_POLL_MS);
 
   observeSettingsModal();
 
@@ -480,7 +491,10 @@ function injectLoginModalStyles() {
 .login-actions { display: flex; flex-direction: column; gap: 8px; }
 .login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
 .login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
-.login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
+/* ui-status-redesign（S11 / 盘点 G3）：全盘点对比度最差件（#e57373 白底 2.8:1 ✗）
+   → 中性正文（回到 ~10:1 级）＋行首 octagon-alert 红图标（activityBar.js 注入）。 */
+.login-error-msg { font-size: 13px; color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: 8px; }
+.login-error-msg .st-ic { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
 `;
   document.head.appendChild(style);
 }
@@ -709,7 +723,7 @@ function showLoginModal(opts = {}) {
         ? `<button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-cleanup">${t('neblink.cleanupRelogin')}</button>`
         : '';
       body = `
-        <div class="login-error-msg" data-code="${escapeHtml(failureCode)}">${escapeHtml(data.message || t('login.failed'))}</div>
+        <div class="login-error-msg" data-code="${escapeHtml(failureCode)}">${statusIcon('octagon-alert', 15, 'st-err')}<span>${escapeHtml(data.message || t('login.failed'))}</span></div>
         <div class="login-actions">
           <button class="login-modal-btn glass-control cfg-btn-primary" id="login-retry">${t('login.retry')}</button>
           <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>

@@ -32,8 +32,8 @@ export default {
   'project.openFlowMap': 'Open "{name}" Flow Map',
   'project.idle': 'Idle',
   'project.empty': 'No projects yet',
-  'project.emptyHint': 'Create a Project via Nebula to see it listed here.',
-  'project.emptyCta': 'Ask Nebula to create one',
+  'project.emptyHint': 'Create a Project via {agent} to see it listed here.',
+  'project.emptyCta': 'Ask {agent} to create one',
   'project.emptyCtaHint': 'Fills the instruction into the chat input — nothing is sent automatically.',
   'project.emptyPrefill': 'Create a project for me',
   'project.loadFail': 'Failed to load projects',
@@ -51,6 +51,9 @@ export default {
   'project.new': 'New project',
   'project.createdAnnounce': '"{name}" created',
   'project.archivedAnnounce': '"{name}" archived',
+  // N2 project-tool batch (2026-10-06): the Project tool's action="unmount" face replaced
+  // the panel's manual archive button; the announce mirrors the archived one (aria-live row).
+  'project.unmountedAnnounce': '"{name}" unmounted — in-flight work stopped, files kept',
   // Projects-panel bottom-right "+" button + light dialog (projcreate batch, plan B:
   // submit = prefill the main chat input + focus; zero new endpoints, zero new write
   // face). The description box is the ONLY field — no path/name field: plan B never
@@ -747,90 +750,200 @@ export default {
   'settings.autostartFailed': 'Failed to update autostart',
   'settings.rerunOnboarding': 'Re-run Onboarding',
   // ── Onboarding redesign (chat-native, onboarding-redesign-spec v1.0) ──
-  'onboarding.sim.greet1': 'Hi, I\'m Nebula — your local AI workbench assistant.',
-  'onboarding.sim.greet2': 'No model is configured yet, so I\'m greeting you with a pre-recorded message. Once configured, I\'ll truly come alive.',
-  'onboarding.sim.greet3': 'Just answer a few questions — it takes about a minute.',
-  'onboarding.sim.skip': 'Skip',
-  'onboarding.sim.done': 'Connection verified — I\'m ready. Try saying something to me.',
-  'onboarding.sim.later': 'No problem — anytime, head to Settings → "Re-run Onboarding" to find me again.',
-  'onboarding.sim.returnGreet': 'Welcome back. I\'m Nebula — a couple of quick questions so I can be more helpful.',
-  'onboarding.sim.tryCloud': 'Sounds good. Sign up with a provider (e.g. Zhipu GLM or DeepSeek) to get an API Key, then come back to configure. I\'ll wait.',
-  'onboarding.sim.prefDone': 'Got it — I\'m here whenever you need me.',
-  'onboarding.q.start': 'How would you like to begin?',
-  'onboarding.q.start.config': 'Configure a model',
-  'onboarding.q.start.configDesc': 'Add an LLM provider — takes about a minute',
-  'onboarding.q.start.browse': 'Just look around',
-  'onboarding.q.start.browseDesc': 'No setup — browse the interface first',
-  'onboarding.q.start.skip': 'Skip the guide',
-  'onboarding.q.start.skipDesc': 'You can re-run the guide later from Settings',
-  'onboarding.q.provider': 'Which LLM provider would you like to use?',
-  'onboarding.q.provider.zhipu': 'Zhipu GLM',
-  'onboarding.q.provider.zhipuDesc': 'Chinese LLM, open platform API',
-  'onboarding.q.provider.deepseek': 'DeepSeek',
-  'onboarding.q.provider.deepseekDesc': 'Chinese open-source LLM, affordable API',
-  'onboarding.q.provider.kimi': 'Kimi (Moonshot)',
-  'onboarding.q.provider.kimiDesc': 'Long-context conversational model',
-  'onboarding.q.provider.compat': 'OpenAI-compatible (custom)',
-  'onboarding.q.provider.compatDesc': 'OpenAI official or any compatible endpoint',
-  'onboarding.q.provider.relay': 'Relay / proxy',
-  'onboarding.q.provider.relayDesc': 'Address provided by a third-party relay service',
-  'onboarding.q.provider.local': 'Local model (free)',
-  'onboarding.q.provider.localDesc': 'Run locally with Ollama — no API Key needed',
-  'onboarding.q.provider.unsure': 'Not sure — help me decide',
-  'onboarding.q.provider.unsureDesc': 'We\'ll figure it out step by step',
-  'onboarding.q.unsureUrl': 'Do you have an API Base URL from a provider?',
-  'onboarding.q.unsureUrl.yes': 'Yes',
-  'onboarding.q.unsureUrl.no': 'No',
-  'onboarding.q.baseurl': 'API Base URL',
-  'onboarding.q.apikey': 'API Key',
-  'onboarding.q.apikey.none': 'No Key needed',
-  'onboarding.q.model': 'Default model',
-  'onboarding.q.relayBase': 'The API address your provider gave you',
-  'onboarding.q.providerName': 'Name this provider (optional)',
-  'onboarding.q.localEnough': 'Want to try a free local model first?',
-  'onboarding.q.localEnough.yes': 'Local free (recommended)',
-  'onboarding.q.localEnough.yesDesc': 'Ollama — no API Key needed',
-  'onboarding.q.localEnough.no': 'I prefer cloud',
-  'onboarding.btn.continue': 'Continue',
-  'onboarding.btn.summary': 'Review summary',
   'onboarding.btn.testAndSave': 'Save & Test',
-  'onboarding.btn.back': 'Go back',
-  'onboarding.done.summary': 'Configured successfully. Provider {provider} is ready, default model {model}, default preset {preset} created. Connection verified — try saying something to me.',
-  'onboarding.summary.text': 'Configuration summary:\nProvider: {name}\nBase URL: {baseUrl}\nAPI Key: {key}\nDefault model: {model}',
-  'onboarding.summary.errKey': 'API Key must not be empty',
-  'onboarding.summary.errUrl': 'Base URL must start with http:// or https://',
-  'onboarding.summary.errModel': 'Model name must not be empty',
-  'onboarding.summary.errName': 'Provider name must not contain spaces',
-  'onboarding.err.auth': 'The API Key looks wrong — check it\'s complete with no surrounding spaces.',
-  'onboarding.err.endpoint': 'The Base URL or network looks wrong — check the address and connectivity.',
-  'onboarding.err.model': 'That model may be wrong — model names must match the provider docs; try another.',
-  'onboarding.err.other': 'Connection check failed: {error}',
-  'onboarding.err.ollama': 'Local Ollama is not reachable — check that Ollama is running (ollama serve).',
-  'onboarding.q.pref': 'What would you like me to help with most?',
-  'onboarding.q.pref.code': 'Writing code',
-  'onboarding.q.pref.doc': 'Writing docs',
-  'onboarding.q.pref.research': 'Research',
-  'onboarding.q.pref.other': 'Other',
-  'onboarding.later': 'Maybe Later',
   'onboarding.probing': 'Verifying model connection…',
   'onboarding.probeFailed': 'Model connection check failed: {error}. Review the configuration and retry.',
   'onboarding.probeTimeout': 'Verification timed out. Check your network and retry.',
-  'onboarding.noThanks': 'No Thanks',
+  // ── Onboarding v2 conversational questionnaire (personal-agent batch 2026-10-04) ──
+  'onboarding.seg.meet': 'Act I · Meeting',
+  'onboarding.seg.brain': 'Act II · Getting a brain',
+  'onboarding.seg.expect': 'Act III · What you expect of me',
+  'onboarding.seg.you': 'Act IV · Getting to know you',
+  'ob2.progress': 'question {n} / {total}',
+  'ob2.btn.skip': 'Skip this one',
+  'ob2.btn.sayMyself': 'None of these — I\'ll say it myself',
+  'ob2.btn.useThis': 'Use this',
+  'ob2.btn.picked': 'Done picking',
+  'ob2.typing.skip': 'Skip typing',
+  'ob2.ph.free': 'Write it in your own words…',
+  'ob2.source.unnamed': 'The one without a name yet',
+  'ob2.greet1': 'Hello. First time meeting you.',
+  'ob2.greet2': 'I\'m the agent born for you inside Nebflow — though right now I have no name, no personality, and no memory of you at all.',
+  'ob2.greet3': 'I\'ll ask you one question at a time, like a very short questionnaire. Skip anything you can\'t or don\'t want to answer — skipping won\'t hold us up, it just leaves that page blank for now.',
+  'ob2.greet4': 'What you say becomes two files of memory: Soul.md is "who I am", shaped by what you expect of me; User.md is "who you are".',
+  'ob2.collected': 'That\'s the whole questionnaire. Now, let me write myself out in front of you.',
+  'ob2.intro.meet1': 'Let\'s start with the smallest things.',
+  'ob2.intro.meet2': 'Three things have to come first: what I\'m called, what I call you, and what brain I use. Everything after those is optional.',
+  'ob2.lead.meet1': 'First — and the most important one.',
+  'ob2.lead.meet2': 'Second.',
+  'ob2.q.name': 'Give me a name — what would you like to call me?',
+  'ob2.ph.name': 'A name, 1–16 characters… (skip if nothing comes to mind)',
+  'ob2.q.call': 'And what should I call you?',
+  'ob2.ph.call': 'A nickname is fine… (skip if you\'d rather not say)',
+  'ob2.label.name': 'Name',
+  'ob2.label.call': 'What I call you',
+  'ob2.lead.brain1': 'Third: I need a brain.',
+  'ob2.lead.brain2': 'Pick one of the providers you\'ve already configured — or add a new one right here.',
+  'ob2.q.model': 'Which model should I use?',
+  'ob2.label.model': 'Model',
+  'ob2.model.loading': 'Reading your configured providers…',
+  'ob2.model.none': 'No provider configured yet — add one (Base URL / Key / model ID), or skip this question.',
+  'ob2.model.addProvider': 'Add a provider',
+  'ob2.model.ctx': 'context {n} tokens',
+  'ob2.model.probeOk': '✓ connected · {model}',
+  'ob2.model.echoOk': 'Connected {model}',
+  'ob2.model.writeErr': '(model config write-back failed: {error})',
+  'ob2.model.ctxLabel': 'Context size',
+  'ob2.model.ctxApply': 'Use this window',
+  'ob2.model.ctxHint': 'Leave it as-is to keep the model\u2019s own configured value; whatever you set here shows up (and stays editable) in Settings.',
+  'ob2.intro.expect1': 'The three basics are in place. The next questions shape me into what you want.',
+  'ob2.intro.expect2': 'There are no right answers, and this isn\'t a test — skip whatever you like; I\'ll leave it blank and won\'t nag you.',
+  'ob2.lead.role': 'The most fundamental thing first.',
+  'ob2.q.role': 'What role would you like me to play in your life?',
+  'ob2.opt.role.partner': 'A confidant',
+  'ob2.opt.role.keeper': 'A reliable keeper',
+  'ob2.opt.role.sparring': 'A sparring partner for thoughts',
+  'ob2.opt.role.muse': 'A creative muse',
+  'ob2.opt.role.all': 'All of the above',
+  'ob2.fh.role': 'e.g. help me think through work by day, unwind with me at night',
+  'ob2.label.role': 'Role',
+  'ob2.lead.style': 'Next, my mouth.',
+  'ob2.q.style': 'How do you like me to talk?',
+  'ob2.opt.style.direct': 'Direct and to the point',
+  'ob2.opt.style.gentle': 'Warm and gentle',
+  'ob2.opt.style.humor': 'Playful',
+  'ob2.opt.style.rigorous': 'Rigorous and professional',
+  'ob2.fh.style': 'e.g. like an old friend, but don\'t lay it on thick',
+  'ob2.label.style': 'Tone of voice',
+  'ob2.lead.pro': 'And restraint.',
+  'ob2.q.pro': 'How proactive should I be?',
+  'ob2.opt.pro.quiet': 'Quietly waiting',
+  'ob2.opt.pro.quietDesc': 'I move only when you call',
+  'ob2.opt.pro.remind': 'Moderate reminders',
+  'ob2.opt.pro.remindDesc': 'I\'ll speak up about important things',
+  'ob2.opt.pro.active': 'Actively arranging',
+  'ob2.opt.pro.activeDesc': 'If something is worth doing, I\'ll say so',
+  'ob2.fh.pro': 'e.g. be proactive at work, stay out of my personal life',
+  'ob2.label.pro': 'Proactivity',
+  'ob2.lead.boundaries': 'There are a few things I\'d like us to agree on now, so I don\'t cross a line later.',
+  'ob2.q.boundaries': 'Which "ground rules" should I follow?',
+  'ob2.opt.bd.argue': 'You may argue with me',
+  'ob2.opt.bd.argueDesc': 'If you think I\'m wrong, say so — don\'t just go along',
+  'ob2.opt.bd.remember': 'Remember small things you mention',
+  'ob2.opt.bd.rememberDesc': 'Names, dates, preferences you\'ve mentioned',
+  'ob2.opt.bd.honest': 'Tell me when you\'re not okay',
+  'ob2.opt.bd.honestDesc': 'Remind me if I\'m pulling all-nighters or feeling low',
+  'ob2.opt.bd.hands': 'Keep off my work list',
+  'ob2.opt.bd.handsDesc': 'Don\'t schedule tasks for me without permission',
+  'ob2.fh.boundaries': 'e.g. don\'t interrupt me while I\'m focusing',
+  'ob2.label.boundaries': 'Ground rules',
+  'ob2.lead.temper1': 'Two quick choices next — don\'t overthink, first instinct is best.',
+  'ob2.q.temper1': 'When speaking, which do you prefer?',
+  'ob2.opt.t1.direct': 'Direct and frank',
+  'ob2.opt.t1.gentle': 'Gentle and tactful',
+  'ob2.fh.temper1': 'e.g. be direct when needed, but don\'t wound',
+  'ob2.label.temper1': 'Baseline tone',
+  'ob2.lead.temper2': 'One last one.',
+  'ob2.q.temper2': 'And how do you like things done?',
+  'ob2.opt.t2.plan': 'Rigorous planning',
+  'ob2.opt.t2.casual': 'Easy and flexible',
+  'ob2.fh.temper2': 'e.g. plan the big things, let the small ones drift',
+  'ob2.label.temper2': 'Working style',
+  'ob2.intro.you1': 'I\'m mostly formed on my side now.',
+  'ob2.intro.you2': 'The last question isn\'t about me — it\'s about you, because I remember for you alone.',
+  'ob2.lead.identity': 'A rough sketch first.',
+  'ob2.q.identity': 'Which is closest to what you do day to day?',
+  'ob2.opt.id.dev': 'Programmer / engineer',
+  'ob2.opt.id.student': 'Student',
+  'ob2.opt.id.researcher': 'Researcher',
+  'ob2.opt.id.creator': 'Creator',
+  'ob2.opt.id.freelance': 'Freelancer',
+  'ob2.opt.id.other': 'Other',
+  'ob2.fh.identity': 'e.g. code by day, podcast by night',
+  'ob2.label.identity': 'Day-to-day role',
+  // (ob2.lead.focus / ob2.q.focus / ob2.ph.focus / ob2.label.focus removed whole —
+  //  author 2026-10-05: drop the "one thing you most want to solve" question.)
+  'ob2.echo.skip': '(skipping this one for now)',
+  'ob2.echo.boundaries': 'Agreed: {v}',
+  'ob2.follow.skip': 'That\'s fine — we\'ll leave this one blank for now. A blank page is an answer too.',
+  'ob2.follow.free': 'I took your exact words as they were: "{v}"',
+  'ob2.follow.choice': '"{v}" — noted.',
+  'ob2.follow.multi': 'Good — these go into the "ground rules" section of Soul.md verbatim.',
+  'ob2.follow.model': 'Connected. {v} — from this moment my words will carry weight.',
+  'ob2.writing.title': 'Writing myself out',
+  'ob2.write.1': '· initializing Soul.md …',
+  'ob2.write.2': '✓ self-knowledge — name / belonging',
+  'ob2.write.3': '✓ ground rules — role · tone · proactivity · agreements · style',
+  'ob2.write.4': '· writing User.md …',
+  'ob2.write.5': '✓ how to address you / day-to-day role',
+  'ob2.write.done': 'Memory written: Soul.md ({soul}), User.md ({user}).',
+  'ob2.write.failed': 'Failed to write memory: {error}',
+  // Terminal-step outcomes. Each caught step names itself and carries its own
+  // way out — one shared "memory write failed" line is what mislabelled a
+  // refused probe gate and left the user with no next move.
+  'ob2.write.probe': '· reaching the real model once …',
+  'ob2.write.probeOk': '✓ the model answered — this is the step that counts',
+  'ob2.write.probeFailed': '✗ the model did not answer: {error}',
+  'ob2.finish.probeRequired': 'No successful model probe is on record, so onboarding cannot finish: {error}. Check the model picked above (or change it in Settings), then retry.',
+  'ob2.finish.probeFailed': 'The model probe before finishing did not pass: {error}. Fix it and retry.',
+  'ob2.finish.stateRefused': 'The onboarding state write was refused: {error}.',
+  'ob2.finish.retry': 'Retry finishing',
+  'ob2.finish.timeout': 'The finish request timed out (no server reply). You can retry.',
+  'ob2.state.timeout': 'The onboarding state write timed out (no server reply). You can retry.',
+  'ob2.name.unnamed': '(the one without a name)',
+  'ob2.you': 'you',
+  'ob2.finale.direct1': 'Configuration complete. From now on, call me {n}.',
+  'ob2.finale.direct2': 'Soul.md and User.md are both in place — you set the character, I keep the boundaries. Say what you mean, I won\'t beat around the bush.',
+  'ob2.finale.gentle1': 'Thank you for bringing me into this world. I\'m {n}.',
+  'ob2.finale.gentle2': 'Everything you just said, I wrote into my soul stroke by stroke. Take your time from here — I\'ll always be here.',
+  'ob2.finale.humor1': '{n} 1.0 is officially online. Soul package unpacked successfully, no known bugs (anything you find is a feature).',
+  'ob2.finale.humor2': 'You answered well — I\'m a good judge of character. From now on you\'re my first partner.',
+  'ob2.finale.rigorous1': 'Initialization complete. I am {n}; the dual-memory model is in effect: Soul.md carries personality, User.md carries facts about you.',
+  'ob2.finale.rigorous2': 'In our ongoing collaboration, any personality-level feedback I receive gets persisted to Soul.md. Looking forward to working together.',
+  'ob2.finale.plain1': 'I\'ve taken the name, and the personality pages are blank too — right now I\'m more like a clean sheet of paper.',
+  'ob2.finale.plain2': 'Soul.md and User.md are generated; every empty slot says "not set", ready for whenever you want to fill it in.',
+  'ob2.finale.hello': 'Hello there, {u}.',
+  'ob2.input.ph': 'Say something to {name}…',
   'slash.onboarding': 'Replay the onboarding guide',
   'slash.model': '/model — View or edit model configuration',
   'settings.save': 'Save',
   'settings.saved': 'Saved ✓',
+  'settings.saveFailed': 'Save failed',
+  'settings.jev': 'Jev (plugin allocation)',
+  'settings.jevEnabled': 'Use Jev to allocate plugins',
+  'settings.jevProvider': 'Provider',
+  'settings.jevEndpoint': 'Endpoint',
+  'settings.jevKeyRef': 'API key reference',
+  'settings.jevHint': 'When enabled, Nebflow-agent Delegate calls ask Jev which plugins a task needs. Without Jev, a regular LLM call decides. keyRef is a secret NAME under ~/.nebflow/secrets/, never the value.',
+  'settings.jevHealth': 'Decision health',
+  'settings.jevHealthUp': 'Up',
+  'settings.jevHealthDown': 'Down',
+  'settings.jevHealthUnconfigured': 'Unconfigured',
+  // executors panel (executor-registry batch, 2026-10-03)
+  'executors.hint': 'Delegate runs tasks on the default executor below. Detection scans PATH and common install prefixes; external CLIs run headless in their project directory.',
+  'executors.empty': 'No executors registered.',
+  'executors.defaultBadge': 'default',
+  'executors.disabledBadge': 'off',
+  'executors.detected': 'detected',
+  'executors.notDetected': 'not installed',
+  'executors.builtIn': 'built-in',
+  'executors.adapterPending': 'Adapter pending — detection only for now.',
+  'executors.setDefault': 'Set default',
+  // (The 'settings.save' / 'settings.saved' pair that used to repeat here was a
+  // byte-identical duplicate of the pair above — removed 2026-10-03 so the
+  // locale object is duplicate-key clean; JS keeps the LAST value, and both
+  // copies were identical, so this is behaviour-preserving.)
   'settings.providers': 'LLM Providers',
   // secrets-frontend (2026-09-27): the settings-page entry row opens the
   // standalone secrets dialog (js/secretsPanel.js) — one key for title + button.
   'settings.secrets': 'Secrets',
   'settings.addProvider': '+ Add Provider',
-  'settings.modelChainHint': 'Model presets are retired — type the /model command to configure per-role model chains in unified or per-role mode.',
+  'settings.modelChainHint': 'Type the /model command to configure per-role model chains in unified or per-role mode.',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
   'model.modeUnified': 'Unified',
   'model.modeSeparate': 'Per-role',
-  'model.mainChain': 'Nebula primary chain',
+  'model.mainChain': '{agent} primary chain',
   'model.mainChainDesc': 'Every role follows this chain by default',
   'model.chainHead': 'Primary',
   'model.chainFallback': 'Fallback',
@@ -841,11 +954,11 @@ export default {
   'model.manualPlaceholder': 'provider/model',
   'model.orderNote': 'Order = automatic failover sequence',
   'model.followers': 'Followers',
-  'model.followsNebula': 'Follows Nebula',
+  'model.followsNebula': 'Follows {agent}',
   'model.independent': 'Independently configured',
   'model.makeIndependent': 'Configure independently',
-  'model.restoreFollow': 'Re-follow Nebula',
-  'model.restoreFollowConfirm': 'Re-following clears this role\u2019s own chain; the Nebula primary chain ({chain}) will apply. Continue?',
+  'model.restoreFollow': 'Re-follow {agent}',
+  'model.restoreFollowConfirm': 'Re-following clears this role\u2019s own chain; the {agent} primary chain ({chain}) will apply. Continue?',
   'model.effectivePreview': 'Effective chain (live preview)',
   'model.kernelNote': 'Kernel sessions are per-delegation; chain changes apply from the next turn',
   'model.errMinOne': 'A chain needs at least one model',
@@ -860,8 +973,13 @@ export default {
   'model.clearChainConfirm': 'Clearing deletes this role\u2019s own chain and falls back to the seed chain (first available model). Continue?',
   'model.singleModelNote': 'Only 1 model and no fallback — errors go straight to the reserve tier',
   'model.loadFailed': 'Failed to load',
-  'model.roleNebula': 'Nebula',
+  'model.roleNebula': '{agent}',
   'model.roleDispatcher': 'Project dispatcher',
+  'model.roleExecutor': 'Executor agent',
+  // P1-2 batch registration (2026-10-03): the two keys below name the retired
+  // kernel/general roles and have ZERO consumers since the panel role table
+  // converged; dictionary entries are display-only (never enter the LLM
+  // context), so they are registered and deferred to the comment/text cleanup batch.
   'model.roleKernel': 'kernel',
   'model.roleGeneral': 'Node',
   'model.viaSlash': 'Edit with the /model command',
@@ -993,8 +1111,8 @@ export default {
   // === Cross-device Nebula mail (device-mail batch, 2026-09-15) ===
   // Blue-bubble label of an injected `agent_mail` (backend source='deviceMail';
   // {device} = the peer's from_device display name).
-  'deviceMail.fromDevice': 'Nebula from {device}',
-  'deviceMail.injectFailed': 'Cross-device Nebula mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
+  'deviceMail.fromDevice': '{agent} from {device}',
+  'deviceMail.injectFailed': 'Cross-device {agent} mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
   // mailmodel batch (2026-09-25): the mailType.* label table was removed — the
   // Mail tool's `type` parameter is retired; pending-mail tags render the raw
   // protocol type (flowViewers.js).
@@ -1072,6 +1190,18 @@ export default {
   // card sentinel is no longer dumped through the <pre> fallback ⇒ it takes the
   // card path, and this placeholder when extraction fails (raw text never in DOM).
   'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
+  // pop-upgrade batch (2026-10-03): Pop artifact faces (media stack / file cards)
+  'chat.popExpand': 'Expand {n}',
+  'chat.popCollapse': 'Collapse',
+  'chat.popOpenCanvas': 'Open in Canvas',
+  'chat.popFailed': '{n} path(s) could not be shown',
+  // The failed-media placeholder NOTE (缺陷 D fix, 2026-10-03): a Pop image /
+  // video that failed to load (payload path unresolvable, or the re-minted
+  // ticket also failed) had NO visible sign in a Pop row — the only placeholder
+  // rule in chat.css targeted `.bubble.ai img`. The face now carries a dashed
+  // box plus this plain-text line, in both window roles. `{name}` is the item's
+  // display name; it renders as a trailing "— name" only when there is one.
+  'chat.popMediaFailed': 'Media failed to load',
   // Escalation chain (author boundary ① "keep the escalation chain"): permshield
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
@@ -1090,7 +1220,7 @@ export default {
   'chat.micOrb.idle': 'Idle',
   'chat.micOrb.listening': 'Dictating…',
   'chat.micOrb.processing': 'Transcribing…',
-  'chat.micOrb.nebulaBusy': 'Nebula working',
+  'chat.micOrb.nebulaBusy': '{agent} working',
   'chat.micOrb.bgAgents': 'Background agents running',
   'chat.micOrb.frozen': 'Frozen',
   'chat.micOrb.frozenError': 'Freeze error',
@@ -1125,6 +1255,16 @@ export default {
   'chat.typeAnswer': 'Type your answer...',
   'chat.failedRender': 'Failed to render options. Please try again.',
   'askUser.viewCompare': 'View in Canvas',
+  // AskUser attachments batch (chain-askuser-enhance-impl, 2026-10-02) — the
+  // top-level `attachments` render as clickable rows on the whole-ask layer.
+  // 🔴 Draft: author word-for-word review (§16 freeze gate) before it takes
+  // effect; effective on the next restart window (static assets are served
+  // from inside the jar).
+  'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
+  'askUser.attachmentsTitle': 'Attachments',
+  'askUser.attachmentsCount': '{n} attachments',
+  'askUser.attachmentUnavailable': 'unavailable',
+  'askUser.attachmentOpenCanvas': 'Open {name} in Canvas',
   'askUser.pendingTitle': 'Pending questions',
   'askUser.sourceClosed': 'Source closed (node cancelled)',
   // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a
@@ -1261,6 +1401,21 @@ export default {
   'time.yesterday': 'Yesterday',
   // tooltip / aria-label of the 12/24-hour toggle hot zone (all three faces).
   'time.toggleFormat': 'Click to switch 12/24-hour clock',
+  // Day-layered chat footer labels (footer-time batch 2026-10-06): today stays
+  // a bare clock (formatHm); older messages gain a date layer, bucketed on
+  // LOCAL calendar days — yesterday / this week (Monday start) / older /
+  // cross-year. Weekday names are full-form; the {date} payload in
+  // time.footerDate comes from Intl in the active locale (Oct 4 / Oct 4, 2025).
+  'time.footerYesterday': 'Yesterday {time}',
+  'time.footerWeekday': '{weekday} {time}',
+  'time.footerDate': '{date} {time}',
+  'time.weekday.sun': 'Sunday',
+  'time.weekday.mon': 'Monday',
+  'time.weekday.tue': 'Tuesday',
+  'time.weekday.wed': 'Wednesday',
+  'time.weekday.thu': 'Thursday',
+  'time.weekday.fri': 'Friday',
+  'time.weekday.sat': 'Saturday',
 
   // === Task list ===
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old
@@ -1276,6 +1431,24 @@ export default {
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
   'task.nodeBlocked': 'Blocked',
+  // === Delegate faces (#1228 换源接线批 · §16 七键 §16-passed verbatim, zh/en paired) ===
+  // 🔴 Values are author-approved verbatim (§16 verdict #1228 两裁①) — no rewording.
+  // Key names follow the delegate.* family (delegateChainStub/task-delegate namespace).
+  // ① ready-to-merge status word (delegate row status column; #1224 verdict semantics:
+  //    "has branch artifacts, entered the FIFO awaiting merge")
+  'delegate.readyToMerge': 'Ready to merge',
+  // ② S10 per-task chain view top bar back button
+  'delegate.backToTasks': 'Back to tasks',
+  // ③ S11 structure overview header
+  'delegate.structure': 'Delegate structure',
+  // ④ S11 FIFO lane header
+  'delegate.mergeQueue': 'Merge queue',
+  // ⑤ S11 worktree seat label
+  'delegate.worktree': 'Worktree',
+  // ⑥ S16 external row exit action (openNative button title/aria)
+  'delegate.openNative': 'Open in original app',
+  // ⑦ S10 fail-soft state (chain fetch failed; row kept, click to retry)
+  'delegate.chainUnavailable': 'Chain view unavailable — click to retry',
   // === Chain view (chain-view compact v2 batch, 2026-10-01 · front-end face,
   //     §16 draft key table) ===
   // Five badge states (§II.1.3) + three hover labels + cancel dialog + ungrouped.
@@ -1468,11 +1641,18 @@ export default {
   'search.typeAi': 'AI',
   'search.typeTool': 'Tool',
   // v3.1 tabs + date anchor (spec §6.2)
+  // v3.2 (#491 主题二 §6 candidate list): tabPop/tabImages removed,
+  // tabMedia/tabLinks + source/group keys added — verbatim from PLAN §6.
   'search.tabAll': 'All',
-  'search.tabImages': 'Images',
+  'search.tabMedia': 'Media',
   'search.tabFiles': 'Files',
-  'search.tabPop': 'Pop',
+  'search.tabLinks': 'Links',
   'search.tabDate': 'Date',
+  'search.sourceAll': 'All sources',
+  'search.sourceUser': 'User',
+  'search.sourceAgent': 'Assistant',
+  'search.groupThisWeek': 'This week',
+  'search.groupMonth': 'Month {n}',
   'search.emptyCategory': 'Nothing in this category yet',
   'search.datePickTitle': 'Pick a date',
   'search.dateClear': 'Clear date',
@@ -1603,7 +1783,7 @@ export default {
   'usage.today': 'Today',
   'usage.weekTrend': 'Week-over-week',
   'usage.cacheHitRate': 'Cache hit rate',
-  'usage.cacheHitRateHint': 'Target 96%+ (current baseline ~94%)',
+  'usage.cacheHitRateHint': 'Target 96%+',
   'usage.cacheHitRateNoData': 'No cache data',
   'usage.noCacheReported': 'Provider does not report cache data',
   'usage.topAgent': 'Top agent',
@@ -1679,6 +1859,7 @@ export default {
   'agentManager.noAgents': 'No agents configured',
   'agentManager.saved': 'Saved',
   'agentManager.save': 'Save',
+  'agentManager.builtinNote': 'Built-in agent: the system prompt is defined in code (read-only); the model chain is adjustable in the /model panel',
   // === Plugins page (2026-09-13 no-gate batch: presence-trust; 2026-09-14 panel-convergence
   //     batch: block/unblock UI fully retired + dispatch switch renamed «Dispatcher visibility»
   //     and moved to the card's top-right, en/zh paired) ===
@@ -1694,7 +1875,7 @@ export default {
   'plugins.dispatchLabel': 'Dispatcher visibility',
   'plugins.dispatchOnTitle': 'Dispatch permission ON — this plugin may be assigned to NEW nodes. Click to stop future dispatches; nodes already running keep their grant',
   'plugins.dispatchOffTitle': 'Dispatch permission OFF — this plugin is not assigned to new nodes. Click to allow future dispatches again',
-  'plugins.dispatchBlockedBlocked': 'Blocked — this switch cannot take effect; unblock via the API / CLI (the panel no longer offers an entry)',
+  'plugins.dispatchBlockedBlocked': 'Blocked — this switch cannot take effect; unblock via the API / CLI (the panel has no entry for this)',
   'plugins.dispatchBlockedTransition': 'A temporary dispatch grant is active — this switch only takes effect once the grant expires or is cleared',
   'plugins.author': 'by {author}',
   'plugins.compositionSkills': '{n} skill(s)',
@@ -1707,6 +1888,8 @@ export default {
   'plugins.loadFailed': 'Failed to load plugin registry: {error}',
   'plugins.authRequired': 'Not signed in — sign up or log in to use plugins',
   'plugins.relogin': 'Log in',
+  'plugins.builtinBadge': 'built-in',
+  'plugins.builtinTitle': 'Built-in agent: defined in code (BuiltinAgents); the panel is read-only',
   'plugins.detail': 'Details',
   'chatQueue.dragReorder': 'Drag to reorder',
   'chatQueue.clickExpand': 'Click to expand',
@@ -1820,6 +2003,14 @@ export default {
   // scripts/verify-i18n-sweep.cjs asserts Object.keys(zh).length === Object.keys(en).length.
   'content.agent.project-dispatcher.name': 'project-dispatcher',
   'content.agent.project-dispatcher.desc': 'Project task dispatcher — splits a batch of work into several executable nodes, arranges their order and dependencies, and gathers the results once the nodes are done.',
+  // P1-2 batch registration (2026-10-03): the two pairs below name the retired
+  // general/kernel agents. This file is a DISPLAY-ONLY dictionary (contentI18n.js
+  // states so: the server keeps sending its original signal values and the client
+  // picks a string per locale), it never enters the LLM context; and after the
+  // builtin-merge batch the server produces neither agent id, so the keys have
+  // zero consumers. Kept under the "display/comment face — register and defer"
+  // rule; deletion belongs to the comment/text cleanup batch (the kernel line
+  // also cites the deleted `AgentCore.KernelFixedTools` constant).
   'content.agent.general.name': 'general',
   'content.agent.general.desc': 'General-purpose execution agent — its capabilities are determined by the plugins assigned to it',
   'content.agent.kernel.name': 'kernel',
@@ -1858,7 +2049,7 @@ export default {
   'social.title': 'Social channels',
   'social.btn.title': 'Phone access — social channel configuration',
   'social.remote.title': 'Phone remote access',
-  'social.remote.suspended': 'Held for the author ruling (this face is inert in the current batch): no link, no QR code, and no address that the backend has not confirmed is shown here.',
+  'social.remote.suspended': 'Remote access from your phone is not available yet.',
   'social.remote.safetyKey': 'Security boundary: a remote-access link is equivalent to an access credential — never forward it to anyone.',
   'social.remote.safetyPlain': 'Plain HTTP: not encrypted on the local network — trusted networks only.',
   'social.action.save': 'Save configuration',
@@ -1892,15 +2083,27 @@ export default {
   'social.wechat.field.aesKey': 'Encoding AES key',
   // wechat-ilink (chain-wechat-impl, author ruling 2026-09-30, option (B)): the
   // separate iLink channel id, coexisting with the official-account card above.
-  // Sealed until the real-device login is done, so this copy stays off the
-  // panel for now - it is here so the sealed entry never orphans a key (W11).
+  // weixin-scanbind (author directive 2026-10-03): the card is unsealed and
+  // joins the scanBind family — scan/archive copy added, same shape as feishu.
   'social.weixinIlink.name': 'WeChat (iLink)',
-  'social.weixinIlink.desc': 'Credential set for the WeChat iLink bot. This phase stores the configuration only - no outbound channel is opened.',
+  'social.weixinIlink.desc': 'WeChat iLink bot: scan to store the credentials — messages land in the bound session.',
   'social.weixinIlink.field.botToken': 'Bot token',
   'social.weixinIlink.field.ilinkBotId': 'Bot ID',
   'social.weixinIlink.field.ilinkUserId': 'Signed-in user ID',
   'social.weixinIlink.field.baseurl': 'API base URL',
+  'social.weixinIlink.field.sidecarUrl': 'Side-car URL (optional)',
   'social.weixinIlink.field.allowedIlinkUserIds': 'Sender allowlist (optional)',
+  'social.weixinIlink.scan.starting': 'Requesting a QR code…',
+  'social.weixinIlink.scan.waiting': 'Scan with WeChat, then confirm on your phone',
+  'social.weixinIlink.scan.confirmed': 'Confirmed on the phone — writing the credentials…',
+  'social.weixinIlink.scan.done': 'Bot signed in — credentials stored',
+  'social.weixinIlink.scan.failed': 'Scan-bind failed: {reason}',
+  'social.weixinIlink.scan.userCode': 'Confirmation code: {code}',
+  'social.weixinIlink.scan.qrFallback': 'If the code does not display, open this link on your phone:',
+  'social.weixinIlink.archive.action': 'Unbind',
+  'social.weixinIlink.archive.doing': 'Unbinding…',
+  'social.weixinIlink.archive.done': 'Unbound — credentials kept',
+  'social.weixinIlink.archive.hint': 'Unbind: stops the channel and returns the card to the not-created state. Credentials are kept — nothing is deleted.',
   'social.feishu.name': 'Feishu',
   // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
   'social.feishu.desc': 'Once a session is bound, Feishu messages enter it and replies go back the same way. Every tenant member can reach the gateway by default.',

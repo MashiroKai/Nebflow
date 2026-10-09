@@ -114,14 +114,16 @@
 .fm-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; justify-content: center; }
 
 /* 终态卡状态词（2026-09-07 状态保真批）：主图终态卡 head 行 glyph 旁文本——
-   死亡节点（重启收敛 failed/cancelled）的真实终态一眼可辨，不再是孤减号线。 */
+   死亡节点（重启收敛 failed/cancelled）的真实终态一眼可辨，不再是孤减号线。
+   ui-status-redesign（S4 / 盘点 #19）：状态词一律中性字（对齐 cancelled 档），
+   语义色由既有 statusIcon glyph 承载（形状编码冗余——✓/✗/− 单凭形状可辨）。 */
 .fm-st-word {
   font: 500 9px/1 -apple-system, BlinkMacSystemFont, sans-serif;
   letter-spacing: 0.02em;
 }
-.fm-st-word.completed { color: var(--color-success); }
-.fm-st-word.failed { color: var(--color-error); }
-.fm-st-word.cancelled { color: var(--color-text-muted); }
+.fm-st-word.completed { color: var(--status-word); }
+.fm-st-word.failed { color: var(--status-word); }
+.fm-st-word.cancelled { color: var(--status-word); }
 
 /* worktree 徽标：在 worktree 内工作的节点 */
 .fm-worktree-badge {
@@ -599,12 +601,19 @@
   font: 500 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-variant-numeric: tabular-nums;
 }
+/* 分状态计数行（spec §3.3「✓n · 跑n · ✗n」；零计数桶不渲染，故恒 ≤5 项）。
+   复用节点卡 glyph 色板类（.solar-node-status.ok/.err/.warn），running 用链色圆点。
+   ui-status-redesign（盘点 #20）：「图标＋数字全红」→ 数字转中性字，红/绿/琥珀
+   只留在 glyph（.solar-node-status token 档）上。 */
 .fm-chain-count { display: inline-flex; align-items: center; gap: 2px; color: var(--color-text-muted); }
-.fm-chain-count.completed { color: var(--color-success); }
-.fm-chain-count.failed { color: var(--color-error); }
+.fm-chain-count.completed { color: var(--status-word); }
+.fm-chain-count.failed { color: var(--status-word); }
 .fm-chain-count.cancelled { color: var(--color-text-muted); }
-.fm-chain-count.blocked { color: var(--color-warning); }
+.fm-chain-count.blocked { color: var(--status-word); }
 .fm-chain-count.running { color: rgb(var(--sapphire)); }
+.fm-chain-count.completed .solar-node-status { color: var(--status-success-icon); }
+.fm-chain-count.failed .solar-node-status { color: var(--status-error-icon); }
+.fm-chain-count.blocked .solar-node-status { color: var(--status-warn-icon); }
 /* glyph 尺寸/边距收紧到计数行上下文（.fm-node .solar-node-status svg 为 10px/带边距）。 */
 .fm-chain-count .solar-node-status { margin-left: 0; animation: none; }
 .fm-chain-count .solar-node-status svg { width: 9px; height: 9px; }
@@ -834,18 +843,21 @@
 .fm-entry-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fm-entry-st { flex: 0 0 auto; display: inline-flex; }
 .fm-entry-st svg { width: 12px; height: 12px; display: block; }
-.fm-entry-st.completed { color: var(--color-success); }
-.fm-entry-st.failed { color: var(--color-error); }
+/* ui-status-redesign（盘点 #21）：glyph 色值归状态 token（图案承载）。 */
+.fm-entry-st.completed { color: var(--status-success-icon); }
+.fm-entry-st.failed { color: var(--status-error-icon); }
 .fm-entry-st.cancelled { color: var(--color-text-muted); }
 .fm-entry-st.active { color: rgb(var(--sapphire)); }
 /* 状态词（2026-09-07 状态保真批）：归档条目/成员行 glyph 旁恒带状态文本——
-   cancelled 减号 glyph 单看是「-」无从分辨，文本消灭歧义；色板与 glyph 同规则。 */
+   cancelled 减号 glyph 单看是「-」无从分辨，文本消灭歧义；ui-status-redesign
+   （S4 同规 / 盘点 #21）：词一律中性字（completed/failed/cancelled 对齐），
+   语义由左侧 glyph 承载。 */
 .fm-entry-stw {
   flex: 0 0 auto; font: 500 10px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
 }
-.fm-entry-stw.completed { color: var(--color-success); }
-.fm-entry-stw.failed { color: var(--color-error); }
-.fm-entry-stw.cancelled { color: var(--color-text-muted); }
+.fm-entry-stw.completed { color: var(--status-word); }
+.fm-entry-stw.failed { color: var(--status-word); }
+.fm-entry-stw.cancelled { color: var(--status-word); }
 .fm-entry-stw.active { color: rgb(var(--sapphire)); }
 .fm-entry-name {
   flex: 0 1 auto; min-width: 0; font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -941,8 +953,10 @@
 }
 .fm-detail-st { flex: 0 0 auto; display: inline-flex; }
 .fm-detail-st svg { width: 12px; height: 12px; display: block; }
-.fm-detail-st.completed { color: var(--color-success); }
-.fm-detail-st.failed { color: var(--color-error); }
+/* ui-status-redesign（盘点 #21 同族）：glyph token 化；详情标题旁状态词中性化
+   （.fm-detail-title 本就中性，标题行状态语义全在 glyph 上）。 */
+.fm-detail-st.completed { color: var(--status-success-icon); }
+.fm-detail-st.failed { color: var(--status-error-icon); }
 .fm-detail-st.cancelled { color: var(--color-text-muted); }
 .fm-detail-st.active { color: rgb(var(--sapphire)); }
 .fm-detail-title {
@@ -1049,6 +1063,10 @@
 .fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
 .fm-md strong { font-weight: 600; }
 .fm-md .md-empty { font-style: italic; color: var(--color-text-muted); opacity: 0.7; }
+/* 错误态（ui-status-redesign 盘点 #25，收编 flowMapArchive.js 原 inline 覆盖）：
+   中性正文 + 行首 circle-x 红图标（红只上图标）。 */
+.fm-md .md-error { font-style: normal; opacity: 1; color: var(--status-word); display: inline-flex; align-items: flex-start; gap: 5px; }
+.fm-md .md-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
 
 /* ── v3 链未齐终态保留卡（§3.2）：opacity .78 后退一层、静态环染终态色、
    标签降 dim；hover 回 1——一眼区分「还在跑的」与「已完成待整链归档的」── */
@@ -1057,7 +1075,9 @@
 .solar-node.fm-node.terminal .solar-dot { opacity: 0.35; }
 .solar-node.fm-node.terminal .solar-node-label { color: var(--color-text-dim); }
 .solar-node.fm-node.terminal.completed .solar-ring { border-color: var(--color-success); opacity: 0.55; }
-.solar-node.fm-node.terminal.failed .solar-ring { border-color: var(--color-error); opacity: 0.55; }
+/* ui-status-redesign（盘点 #22）：失败环 = 图案载体 ✓，色值归 --status-error-icon
+   （暗档随 token 提亮）。 */
+.solar-node.fm-node.terminal.failed .solar-ring { border-color: var(--status-error-icon); opacity: 0.55; }
 .solar-node.fm-node.terminal.cancelled .solar-ring { border-color: var(--color-text-muted); opacity: 0.55; }
 
 /* hover 联动加亮（§5.6）：条目/成员 hover → 可见下游卡 .fm-adj */

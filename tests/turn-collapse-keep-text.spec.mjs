@@ -12,8 +12,10 @@
 // The toggle is INSTANT — no transition layer (the 批② 320ms/stagger WAAPI
 // animation was removed 2026-09-06, author feedback 「动画太卡顿」).
 //
-// Streaming regression (思考直播回归): thinking streams EXPANDED; only the
-// terminal tuck folds it.
+// Streaming (2026-10-03 stream-ux redesign, superseding the 2026-09-05
+// 思考直播回归): the thinking bubble is born PRE-TUCKED — the deltas still
+// render into it (the expand face) but the visible feed is the turn line's
+// single-line reveal; the terminal settles the line into the header.
 //
 // Drives the REAL render modules (chatView.js / chat.js / turnGroup.js /
 // persistence.js) in a static harness page
@@ -257,48 +259,50 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
   });
 });
 
-test.describe('思考直播回归 (验收 ①)', () => {
-  test('thinking streams EXPANDED; auto-collapses at stream end (09-07 ruling) with a clickable re-open label', async ({ browser }) => {
+test.describe('思考单行揭示 (2026-10-03 stream-ux redesign)', () => {
+  test('thinking streams on the turn line; the bubble is the pre-tucked expand face', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
 
-    // Streaming: content div must be visible while deltas land.
+    // Streaming: the deltas render into the bubble's content div (the expand
+    // face keeps accumulating) but the row itself is PRE-TUCKED — the visible
+    // feed is the turn line's single-line reveal (2026-10-03 ruling supersedes
+    // the 2026-09-05 思考直播回归: the feed no longer streams as a bubble).
     await page.evaluate(() => window.__thinkingStreamStart());
     expect(pageErrors).toEqual([]);
     const streaming = await page.evaluate(() => {
       const row = document.querySelector('#chat .row.thinking-row');
       const content = row?.querySelector('.thinking-content');
+      const line = Array.from(document.getElementById('chat').children)
+        .find(k => !k.classList.contains('row') && !k.classList.contains('turn-header'));
       return {
+        rowTucked: row ? row.classList.contains('nf-tucked') : false,
         rowVisible: row ? row.offsetHeight > 0 : false,
-        contentVisible: content ? content.offsetHeight > 0 : false,
         hasText: !!content && content.textContent.includes('第二段思考'),
-        label: row?.querySelector('.thinking-label-text')?.textContent || '',
+        lineText: line ? (line.textContent || '').trim() : '',
       };
     });
-    expect(streaming.rowVisible).toBe(true);
-    expect(streaming.contentVisible).toBe(true);
-    expect(streaming.hasText).toBe(true);
-    expect(streaming.label).toContain('思考中');
+    expect(streaming.rowTucked, 'the bubble is born pre-tucked (expand face)').toBe(true);
+    expect(streaming.rowVisible, 'and it is NOT a visible feed during the run').toBe(false);
+    expect(streaming.hasText, 'the expand face still accumulates every delta').toBe(true);
+    expect(streaming.lineText, 'the turn line carries the single-line reveal').toContain('第二段思考');
 
-    // Mid-turn finish (text reply follows): the thinking CONTENT auto-collapses
-    // at stream end (2026-09-07 09:24 author ruling — restores the pre-08-20
-    // behavior; 15f7cab4), the label stays clickable so the user can re-open.
+    // Mid-turn finish (text reply follows): the thinking row stays tucked; its
+    // label reverts to the done design (「思考过程」, clickable re-open — the
+    // click itself only works once the turn's header untucks the row).
     await page.evaluate(() => window.__thinkingStreamMid());
     expect(pageErrors).toEqual([]);
     const mid = await page.evaluate(() => {
       const row = document.querySelector('#chat .row.thinking-row');
-      const content = row?.querySelector('.thinking-content');
       const aiRow = Array.from(document.querySelectorAll('#chat .row.ai'))
         .find(r => !r.classList.contains('thinking-row'));
       return {
-        rowVisible: row ? row.offsetHeight > 0 : false,
-        contentVisible: content ? content.offsetHeight > 0 : false,
+        rowTucked: row ? row.classList.contains('nf-tucked') : false,
         label: row?.querySelector('.thinking-label-text')?.textContent || '',
         collapsible: !!row?.querySelector('.thinking-label.collapsible'),
         aiText: aiRow ? (aiRow.querySelector('.bubble.ai')?.textContent || '').trim() : '',
       };
     });
-    expect(mid.rowVisible).toBe(true);
-    expect(mid.contentVisible).toBe(false); // auto-collapse at stream end (09-07 ruling)
+    expect(mid.rowTucked).toBe(true);
     expect(mid.label).toBe('思考过程'); // done label, pre-#345 design
     expect(mid.collapsible).toBe(true); // label stays clickable — 可重开
     // stream-ux A3 (§二.1.2): the assistant bubble does NOT render per-delta.
@@ -308,25 +312,17 @@ test.describe('思考直播回归 (验收 ①)', () => {
     // terminal in the next test (terminal tuck → 'ai:思考后的答案。').
     expect(mid.aiText).toBe('');
 
-    // Click the label → the content re-expands (「可重开」contract).
-    await page.locator('#chat .row.thinking-row .thinking-label').click();
-    const reopened = await page.evaluate(() => {
-      const content = document.querySelector('#chat .row.thinking-row .thinking-content');
-      return content ? content.offsetHeight > 0 : false;
-    });
-    expect(reopened).toBe(true);
-
     await context.close();
   });
 
-  test('terminal tuck folds the finished thinking row with the turn', async ({ browser }) => {
+  test('terminal settles the line into the header; expanding it reveals the thinking face (可重开)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__thinkingStreamStart());
     await page.evaluate(() => window.__thinkingStreamMid());
     await page.evaluate(() => window.__thinkingStreamFinish());
     expect(pageErrors).toEqual([]);
 
-    // After done: thinking row tucked behind the header; text reply visible.
+    // After done: the settled header + tucked thinking row; text reply visible.
     expect(await readSeq(page)).toEqual([
       'user',
       'header',
@@ -336,6 +332,27 @@ test.describe('思考直播回归 (验收 ①)', () => {
     const headerText = await page.locator('.turn-header-text').first().textContent();
     expect(headerText).toContain('test-model');
     expect(headerText).toContain('思考');
+
+    // The turn's header untucks the process face. The thinking CONTENT itself
+    // stays auto-collapsed (09-07 ruling) until its label is clicked — the
+    // 「可重开」 contract lives behind the header's expand now.
+    await page.locator('#chat > .turn-header').first().click();
+    const revealed = await page.evaluate(() => {
+      const row = document.querySelector('#chat .row.thinking-row');
+      const content = row?.querySelector('.thinking-content');
+      return {
+        rowVisible: row ? row.offsetHeight > 0 : false,
+        contentVisible: content ? content.offsetHeight > 0 : false,
+      };
+    });
+    expect(revealed.rowVisible).toBe(true);
+    expect(revealed.contentVisible).toBe(false);
+    await page.locator('#chat .row.thinking-row .thinking-label').click();
+    const reopened = await page.evaluate(() => {
+      const content = document.querySelector('#chat .row.thinking-row .thinking-content');
+      return content ? content.offsetHeight > 0 : false;
+    });
+    expect(reopened, 'clicking the revealed label re-opens the content').toBe(true);
 
     await context.close();
   });

@@ -3,6 +3,13 @@ package nebflow.social
 import com.lark.oapi.Client as LarkClient
 import com.lark.oapi.core.enums.BaseUrlEnum
 import com.lark.oapi.event.EventDispatcher
+import com.lark.oapi.event.cardcallback.P2CardActionTriggerHandler
+import com.lark.oapi.event.cardcallback.model.{
+  CallBackCard,
+  CallBackToast,
+  P2CardActionTrigger,
+  P2CardActionTriggerResponse
+}
 import com.lark.oapi.service.im.ImService
 import com.lark.oapi.service.im.v1.model.{CreateMessageReq, CreateMessageReqBody, P2MessageReceiveV1}
 import com.lark.oapi.ws.Client as WsClient
@@ -64,10 +71,67 @@ object FeishuChannel:
       )
 
   /** A received event, tagged with the local receive timestamp (the "true
-    *  receive" reading this batch must produce). */
+    * receive" reading this batch must produce). */
   final case class Received(inbound: FeishuMessage.Inbound, receivedAt: String):
     def toJson: io.circe.Json =
       io.circe.Json.obj("receivedAt" -> io.circe.Json.fromString(receivedAt), "event" -> inbound.toJson)
+
+  // ───────────── askuser-remote P1: the card.action.trigger receive face ─────────────
+
+  /** One card click, reduced to what the answering side may read: the
+    * clicker's open_id (feeds the member allowlist gate — the SAME judge the
+    * text intake applies), the chat the card was clicked in (the
+    * chat-mismatch judge's input), the message the card lives in, and the
+    * button's own `value` payload (nf/rid/qi/oi — [[FeishuAskCard]]'s design:
+    * 🔴 it never carries a session id; the answering side resolves the
+    * conversation from its own records). Identity/context only — never a
+    * credential. */
+  final case class CardAction(
+    openId: Option[String],
+    chatId: Option[String],
+    messageId: Option[String],
+    value: io.circe.Json
+  )
+
+  /** What the callback answers with, inside the 3-second window (A4 ruling):
+    * a toast and/or the UPDATED card body. `none` keeps the card untouched —
+    * the refusal path answers with a toast only. */
+  final case class CardActionResponse(toast: Option[String], card: Option[String]):
+    def isEmpty: Boolean = toast.isEmpty && card.isEmpty
+  object CardActionResponse:
+    val none: CardActionResponse = CardActionResponse(None, None)
+
+  /** circe → Java (the SDK response objects are plain-Java faces and the SDK
+    * serialises them with its own mapper — a circe AST handed to `setData`
+    * would not survive). Total over the JSON model. */
+  private[social] def jsonToJava(j: io.circe.Json): Object =
+    import scala.jdk.CollectionConverters.*
+    j.fold(
+      null,
+      b => java.lang.Boolean.valueOf(b),
+      n => java.lang.Long.valueOf(n.toLong.getOrElse(0L)),
+      s => s,
+      arr => new java.util.ArrayList[Object](arr.map(jsonToJava).asJava),
+      obj => new java.util.LinkedHashMap[String, Object](obj.toMap.map { (k, v) => k -> jsonToJava(v) }.asJava)
+    )
+
+  /** The SDK callback `value` map → circe (Jackson already produced plain
+    * String/Number/Boolean/Map/List leaves). Values that are neither JSON
+    * scalars, maps nor lists degrade to their `toString` — a button payload
+    * never carries anything else, and an unreadable leaf must not kill the
+    * dispatch. */
+  private[social] def javaToJson(v: Object): io.circe.Json =
+    import scala.jdk.CollectionConverters.*
+    v match
+      case null                                 => io.circe.Json.Null
+      case s: String                            => io.circe.Json.fromString(s)
+      case b: java.lang.Boolean                 => io.circe.Json.fromBoolean(b.booleanValue)
+      case n: java.lang.Number                  => io.circe.Json.fromLong(n.longValue)
+      case m: java.util.Map[?, ?]               =>
+        io.circe.Json.obj(m.asScala.toList.map { case (k, v) =>
+          (String.valueOf(k), javaToJson(v.asInstanceOf[Object])) }*)
+      case l: java.util.List[?]                 => io.circe.Json.arr(l.asScala.map(e => javaToJson(e.asInstanceOf[Object])).toList*)
+      case other                                => io.circe.Json.fromString(String.valueOf(other))
 
   /** Map the `region` config value onto the SDK's base-URL enum. Unknown values
     *  fall back to Feishu rather than throwing: a bad region must not make the
@@ -91,7 +155,21 @@ object FeishuChannel:
     appSecret: String,
     region: String = "feishu",
     handler: FeishuMessage.Inbound => Unit = _ => (),
-    readyMs: Long = 15000L
+    readyMs: Long = 15000L,
+    /** askuser-remote P1 (zero-secret discipline): the card-callback
+      * credential pair, read by the caller through [[FeishuCredentials]] and
+      * handed ONLY to the SDK builder — never logged, never rendered. Both
+      * default to the empty string = the long-connection shape this listener
+      * always ran with (the values are optional for websocket callback
+      * delivery; absent credentials change nothing). */
+    verificationToken: String = "",
+    encryptKey: String = "",
+    /** The card.action.trigger consumer (askuser-remote P1). Runs on the
+      * SDK's dispatch thread with the SAME containment contract as `handler`:
+      * a throwing consumer is contained here (the response stays empty) and
+      * can never kill the socket. Returning [[CardActionResponse.none]] keeps
+      * the card untouched. */
+    cardHandler: FeishuChannel.CardAction => FeishuChannel.CardActionResponse = _ => FeishuChannel.CardActionResponse.none
   ):
     private val queue = new LinkedBlockingQueue[FeishuMessage.Inbound]()
     private var ws: Option[WsClient] = None
@@ -104,7 +182,7 @@ object FeishuChannel:
       *  cannot be reduced to a message id + chat id is recorded as an error
       *  rather than synthesised into a fake message. */
     private def dispatcher: EventDispatcher =
-      EventDispatcher.newBuilder("", "") // long-connection mode: no webhook token/encrypt key
+      EventDispatcher.newBuilder(verificationToken, encryptKey) // long-connection mode: the callback pair (optional, may stay empty)
         .onP2MessageReceiveV1(new ImService.P2MessageReceiveV1Handler:
           override def handle(event: P2MessageReceiveV1): Unit =
             val data = Option(event).flatMap(e => Option(e.getEvent))
@@ -161,6 +239,61 @@ object FeishuChannel:
                 catch case e: Exception => lastError = Some(s"handler threw ${e.getClass.getSimpleName}")
               case Left(reason) => lastError = Some(reason)
         )
+        // askuser-remote P1 (A-1/A-2 拍板): the SAME long-connection dispatcher
+        // also serves the interactive-card callback — only the NEW
+        // `card.action.trigger` event is subscribed (never the v1 face, never
+        // a second webhook URL, so one click produces exactly one request).
+        // The click is reduced to a [[CardAction]] (operator open_id →
+        // allowlist gate; context open_chat_id → chat-mismatch judge; action
+        // value → the nf/rid/qi/oi payload) and the handler's response —
+        // toast and/or the A4 updated card — is returned inside the SDK's
+        // callback window.
+        .onP2CardActionTrigger(new P2CardActionTriggerHandler:
+          override def handle(event: P2CardActionTrigger): P2CardActionTriggerResponse =
+            val data = Option(event).flatMap(e => Option(e.getEvent))
+            val action = data.flatMap(d => Option(d.getAction))
+            val value = action
+              .flatMap(a => Option(a.getValue))
+              .map(m => javaToJson(m.asInstanceOf[Object]))
+              .getOrElse(io.circe.Json.obj())
+            val card = FeishuChannel.CardAction(
+              openId = data
+                .flatMap(d => Option(d.getOperator))
+                .flatMap(o => Option(o.getOpenId))
+                .map(_.trim).filter(_.nonEmpty),
+              chatId = data
+                .flatMap(d => Option(d.getContext))
+                .flatMap(c => Option(c.getOpenChatId))
+                .map(_.trim).filter(_.nonEmpty),
+              messageId = data
+                .flatMap(d => Option(d.getContext))
+                .flatMap(c => Option(c.getOpenMessageId))
+                .map(_.trim).filter(_.nonEmpty),
+              value = value
+            )
+            val response =
+              try cardHandler(card)
+              catch
+                case e: Exception =>
+                  lastError = Some(s"card handler threw ${e.getClass.getSimpleName}")
+                  FeishuChannel.CardActionResponse.none
+            val out = new P2CardActionTriggerResponse
+            response.toast.foreach { t =>
+              val toast = new CallBackToast()
+              toast.setType("info")
+              toast.setContent(t)
+              out.setToast(toast)
+            }
+            response.card.foreach { body =>
+              val c = new CallBackCard()
+              c.setType("raw")
+              io.circe.parser.parse(body) match
+                case Right(j) => c.setData(jsonToJava(j))
+                case Left(_)  => c.setData(body) // a non-JSON body would be a caller bug; hand it through unchanged
+              out.setCard(c)
+            }
+            out
+        )
         .build()
 
     /** Start the socket and block until the handshake completes (or the budget
@@ -202,6 +335,15 @@ object FeishuChannel:
     def stop(): Unit =
       ws.foreach { c => try c.close() catch case _: Exception => () }
       ws = None
+
+    /** askuser-remote P1 — live-probe MACHINE leg only: feed ONE raw wire
+      * event through THIS listener's dispatcher, i.e. the same dispatcher
+      * object the SDK's websocket transport hands decoded frames to. The
+      * probe therefore exercises the REAL `card.action.trigger` registration
+      * and the real response assembly, not a copy. Returns the raw response
+      * body the SDK would hand back to the platform. */
+    private[social] def feedRawEvent(body: Array[Byte]): String =
+      dispatcher.doWithoutValidation(body).toString
 
   /** Send one text message. `receiveIdType` is `chat_id` or `open_id` (the two
     *  the batch's acceptance criteria name). Returns a reading for both the

@@ -32,8 +32,8 @@ description: 把能力需求封装为合规 Nebflow 插件包的执行手册—�
 ## 第二步：能力域分析与 skill 拆分（形态 C 为主，A/B 亦适用）
 
 - **one skill = one purpose**：一个 skill 只承载一个目的；两个不相关能力拆成两个 skill。
-- **体量红线**：每个 SKILL.md ≤300 行（节点在 spawn 时一次性收到全文注入，不是按需
-  读取——超限即挤占上下文）。深内容下沉 `references/`（节点按需读），脚本放
+- **体量克制**：SKILL.md 正文在 spawn 时一次性全文注入（非按需读取），体量过大
+  即挤占上下文——正文保持精炼。深内容下沉 `references/`（节点按需读），脚本放
   `scripts/`，模板资源放 `assets/`。
 - 每个 skill 必须有真实工作内容：scripts 干实事，不写散文式伪步骤。
 
@@ -44,8 +44,8 @@ description: 把能力需求封装为合规 Nebflow 插件包的执行手册—�
 从模板起步：`${SKILL_DIR}/assets/manifest.template.json`。description 按
 description-quality skill 的五段式规范撰写（该 skill 是描述质量的完整口径：
 模板、好坏范例、核心词表圈定法）。写完自检五段齐备：定位句（含谓词）、触发
-场景句（核心词全落字）、内含 skills 明细（与实际目录一致）、边界/分流句、组件
-面声明句。
+场景句（核心词全落字）、内含 skills 明细（与实际目录一致）、边界句（自足自scope：
+说清本包不管什么即达标，不要求提名其他插件）、组件面声明句。
 
 **保留前缀拦截（生成期）**：manifest name 命中 `nebflow-plugin-` 前缀且不在官方
 白名单（当前官方批次：`nebflow-plugin-creator` 及 seed manifest 声明集）→ 不落盘，
@@ -72,6 +72,27 @@ frontmatter 下限：name（等于目录名）+ description（一句话说清 wh
   其必要性，并在交付报告里主动向用户标出这些风险点。
 - manifest description 须写明 server 能力面与凭据要求，让用户有依据判断里面是什么。
 
+### 3.4 生成 Plugin.md（包根使用指导件，按需可选）
+
+包内容超出 description 容量、需要跨 skill 共用的使用指导（速览、安装/启用/停用、
+目录结构、工具环境验证、各技能总目录、选 skill 决策树、共享模块说明、扩展位、
+维护约定）时，写包根 `Plugin.md` 单件——这是包根唯一合法的「第五件」（装载器
+白名单，恰一文件、逐字命名 `Plugin.md`）；包内容简单则不写，模板默认最小合规包。
+
+- **定位**：使用指导件，装载器不注入、不参与选配；维护者与按需 Read 的节点/用户
+  以此为包内地图（用户+模型可见的按需 Read 面），装载时刻零上下文成本。
+- **分工边界**：description 管「选不选」（≤400 字符，唯一描述源）；SKILL.md 管
+  「怎么干活」（注入面）；Plugin.md 管「包里还有什么、怎么用怎么
+  停」——跨 skill 共用、装不进 description、又不属于任何单 skill 的内容才进这里。
+  单 skill 专属深内容仍下沉该 skill 的 `references/`，**禁把 SKILL.md 正文
+  搬进 Plugin.md**（必与该 skill 正文漂移）。
+- **写法**：文内路径用自包根的文件相对形态（无 `${SKILL_DIR}` 替换——该替换只
+  发生在 SKILL.md 注入文本）；体量克制（建议 ≤400 行）；零占位残留（M15 全包扫）。
+  与 SKILL.md 不一致时以 SKILL.md 为准并回改 Plugin.md。
+- **校验联动**：包根 Plugin.md 恰一文件过 C11（装载器白名单第五件）；skills/
+  顶层不得再放 README/CATALOG 类共用件（C2 照旧 WARN，提示文案三选一：上浮
+  Plugin.md / 归位 references/ / 移出包）。
+
 ## 第四步：落盘（直写 + 同名探测）
 
 - 直写目标：`{{data_root}}/plugins/<name>/`（节点直写是既定流程能力；装载为
@@ -81,10 +102,12 @@ frontmatter 下限：name（等于目录名）+ description（一句话说清 wh
 ## 第五步：机械自检
 
 ```bash
-python3 ${SKILL_DIR}/scripts/validate_plugin.py {{data_root}}/plugins/<name>
+python3 ${SKILL_DIR}/scripts/validate_plugin.py --profile creator {{data_root}}/plugins/<name>
 ```
 
-- 脚本按 M1-M15 逐条输出 PASS/FAIL + 命中原文，并复算包 digest。
+- 脚本按 `--profile creator` 档逐条输出 M1-M15 全量＋C 组装载器镜像的 PASS/FAIL/WARN
+  ＋命中原文，并复算包 digest；**退出码 0 = 交付闸**（任一 FAIL → 退出码 1，不得交付）。
+  惯例面警告（C1-C3/C6）须逐条处置或在交付报告说明。
 - FAIL → 按失败明细自修 → 重跑，最多 2 轮。
 - 2 轮后仍 FAIL → **blocked 上报**（附逐条失败项原文），交分发器/用户仲裁。
   禁止降级交付——带病交付 = 把格式问题转移给用户与下游节点（落盘即生效，
@@ -118,13 +141,13 @@ digest 可与 `GET /api/plugins` 返回的 `digest` 字段比对闭环。
 ## 落盘即生效（已生效；交付前自检 + 报告 digest 与来源）
 
 **本包落盘即生效**：插件装载采用「在位即生效」——`{{data_root}}/plugins/<name>/`
-下扫到的包直接被装载，**没有人工确认环节**（用户裁定）。所以终检
+下扫到的包直接被装载，**没有人工确认环节**（产品裁定）。所以终检
 PASS 就是最后一道门：**你就是那道人审**。
 
 交付前自检（逐条做完再交付）：
 
-1. **机械面**：`python3 ${SKILL_DIR}/scripts/validate_plugin.py {{data_root}}/plugins/<name>`
-   M1-M15 全 PASS，复算 digest 一并写进报告。
+1. **机械面**：`python3 ${SKILL_DIR}/scripts/validate_plugin.py --profile creator {{data_root}}/plugins/<name>`
+   退出码 0（＝M1-M15 全量＋C 组 fatal 镜像全 PASS），复算 digest 一并写进报告。
 2. **内容面**：skill 全文 / manifest / 脚本逐件读过一遍。格式合规 ≠ 内容合格
    （格式由脚本把关，内容只有你能判）。
 3. **来源**：报告里写明这个包**从哪来**（既有 skill 迁移 / 用户给的 MCP 配置 /

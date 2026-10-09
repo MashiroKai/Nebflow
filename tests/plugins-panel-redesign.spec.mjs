@@ -3,10 +3,11 @@
 // 真后端（隔离实例，NEBFLOW_HOME fixture + 端口 ≥8285，绝非宿主 8080）+ fixture
 // 插件目录。重写自 2026-09-04 的「开关状态机」版本（内容审批开关退场）；本批再
 // 砍掉封禁 UI 面，新链：
-//   A 卡片形态（任意引擎）：无内容审批开关、无「更多」/封禁入口（卡片级零残留）；
-//     药丸默认态**无可见文字**（2026-09-15 文案微批：删「已启用」小字）+ on 类；
-//     **唯一控件** = 卡片右上派发开关（在头行内、与药丸同排、在药丸右侧、行盒右对齐；
-//     🔴 开关旁**无**可见 label 小字——2026-09-15 令，aria-label 保留）
+//   A 条目行形态（2026-10-07 条目式批改口径；任意引擎）：无内容审批开关、无「更多」/
+//     封禁入口（卡片级零残留）；药丸默认态**无可见文字**（2026-09-15 文案微批：
+//     删「已启用」小字）；**唯一控件** = 派发开关，收进**展开详情区**（条目行
+//     accordion 默认收起，点击展开；🔴 开关旁**无**可见 label 小字——2026-09-15 令，
+//     aria-label 保留；只动层级，语义零变）
 //   B 目录可见性 + 内容变更**非拦截**（需引擎轨 C6 字段）：
 //     无记录包 ⇒ 进分发器目录（在位即信任的可见结果）；
 //     改 fixture 文件 ⇒ digest 变 ⇒ **仍进目录**、仍有派发许可，只在面板上标
@@ -135,17 +136,23 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
       const dw = card?.querySelector('[data-plugin-dispatch]');
       const pill = card?.querySelector('.plugins-state-pill');
       const head = card?.querySelector('.plugins-card-head');
+      const detail = card?.querySelector('.plugins-item-detail');
       const state = card?.querySelector('.plugins-card-state');
+      const row = card?.querySelector('[data-plugin-item]');
       const geom = (() => {
-        if (!card || !dw || !head || !state) return null;
-        const r = (el) => el.getBoundingClientRect();
-        const dr = r(dw), hr = r(head);
+        if (!card || !dw || !head || !detail || !row) return null;
         return {
+          // 2026-10-07 条目式批：开关收进展开详情区（actions 行内）；条目行零控件
+          inDetail: detail.contains(dw),
+          inActions: !!dw.closest('.plugins-item-actions'),
           inHead: head.contains(dw),
-          // 2026-09-15「删掉空框」：空文案 ⇒ 药丸元素缺席 ⇒ 状态区只剩承载开关的包裹
+          rowControls: head.querySelectorAll('button, [role="switch"]').length,
+          rowIsButton: row.getAttribute('role') === 'button' && row.getAttribute('aria-expanded') !== null,
+          detailHiddenByDefault: detail.hidden,
+          // 2026-09-15「删掉空框」：空文案 ⇒ 药丸元素缺席 ⇒ 状态区只剩 chevron
+          //（2026-10-07 补充令：chevron 归位右上状态区）
           pillAbsent: !pill,
-          stateOnlyChild: state.children.length === 1 && !!state.firstElementChild?.querySelector('[data-plugin-dispatch]'),
-          rightAlignedInHead: (hr.right - dr.right) <= 4,
+          stateOnlyChevron: !!state && state.children.length === 1 && !!state.querySelector('.plugins-item-chevron'),
         };
       })();
       return {
@@ -171,7 +178,7 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     }, name);
   }
 
-  test('A card form: content switch + block UI retired; 默认态药丸无文字; 唯一控件 = 卡片右上派发开关', async ({ page }) => {
+  test('A 条目行形态：内容开关 + 封禁 UI 退场；默认态药丸无文字; 唯一控件 = 展开详情区内派发开关（2026-10-07 条目式批改口径）', async ({ page }) => {
     await unblockQuietly(ALPHA);
     await loadPluginsPage(page);
     const st = await cardState(page, ALPHA);
@@ -184,10 +191,15 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     // 2026-09-15 作者令：开关旁的**可见** label 小字删除；aria-label（可访问性面）保留。
     expect(st.dispatchLabel, '开关旁无可见 label 小字（「任务分发器可见性」已删）').toBe(null);
     expect(st.dispatchAria, '开关 aria-label 保留 = 「任务分发器可见性」').toBe('任务分发器可见性');
-    expect(st.geom?.inHead, '开关在卡片头行内（不是底部独立一行）').toBe(true);
-    expect(st.geom?.pillAbsent, '状态区内无药丸元素（空框不占位）').toBe(true);
-    expect(st.geom?.stateOnlyChild, '状态区只剩承载开关的包裹元素（零占位残留）').toBe(true);
-    expect(st.geom?.rightAlignedInHead, '开关行盒右对齐（「右上」）').toBe(true);
+    // 2026-10-07 条目式批几何钉：条目行（role=button）默认收起；开关收进详情区
+    expect(st.geom?.rowIsButton, '条目行 = role=button + aria-expanded（accordion 可访问性面）').toBe(true);
+    expect(st.geom?.detailHiddenByDefault, '详情区默认收起（展开态默认收起，不新造持久化）').toBe(true);
+    expect(st.geom?.inDetail, '开关落在展开详情区（只动层级）').toBe(true);
+    expect(st.geom?.inActions, '开关在详情区 actions 行').toBe(true);
+    expect(st.geom?.inHead, '条目行零控件（开关不在行上）').toBe(false);
+    expect(st.geom?.rowControls, '条目行按钮/开关计数 0').toBe(0);
+    expect(st.geom?.pillAbsent, '条目行状态区无药丸元素（空框不占位）').toBe(true);
+    expect(st.geom?.stateOnlyChevron, '状态区只剩 chevron（补充令：chevron 归位右上）').toBe(true);
     // 2026-09-15 作者令（先删文字、后裁「删掉空框」）：默认态药丸**零元素**。
     expect(st.pillElCount, '药丸默认态零元素（空文案 ⇒ 不渲染 pill 元素；判据 = count 0）').toBe(0);
     expect(st.pill, '默认态药丸无元素 ⇒ 文本读数 null').toBe(null);

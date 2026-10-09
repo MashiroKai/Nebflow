@@ -27,6 +27,7 @@
 
 import { t } from './i18n.js';
 import { findViewBySessionId, activeView } from './chatView.js';
+import { isRootNamed } from './rootName.js';
 
 /** requestId → { requestId, sessionId, agentName, project, nodeName, summary, ts } */
 const pending = new Map();
@@ -47,9 +48,14 @@ function summarizeItems(items) {
 
 /** Badge/row source label: project context → "project · nodeName" (dispatcher
  *  asks carry nodeName="dispatcher" from the engine); otherwise the bare agent
- *  name (Nebula self-ask / REPL — pre-F1 behavior). */
+ *  name (root self-ask / REPL — pre-F1 behavior).
+ *  N5 (unnamed-state batch 2026-10-06): an UNNAMED root self-ask returns ''
+ *  (same single-point judgement as N1/N2/N4) so renderBar's existing
+ *  `|| t('askUser.pendingTitle')` fallback naturally lands on 「待回答问题」 —
+ *  the mechanism name is a key, never a display fallback. Named → unchanged. */
 export function askSourceLabel(source) {
   if (source && source.project) return `${source.project} · ${source.nodeName || source.agentName || ''}`;
+  if (!isRootNamed()) return '';
   return (source && source.agentName) || '';
 }
 

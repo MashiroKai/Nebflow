@@ -21,14 +21,18 @@
 //                               socialhide red-proof: the SAME visible-card
 //                               probes that read {feishu} in production must
 //                               read every sealed card here, in array order.
-//   · ILINK-RED (SOCIAL_MUTATE=ilink-unseal | ilink-fields) — the wechat-ilink
+//   · ILINK-RED (SOCIAL_MUTATE=ilink-reseal | ilink-fields) — the wechat-ilink
 //                               batch's red proof, mutation-safe in the same
 //                               sense as the two above: the served definition
 //                               layer is damaged in memory and the SAME probes
-//                               the production tree pins must fire. `ilink-unseal`
-//                               drops the new card's seal (IL1 turns red: the
-//                               visible face is no longer feishu-only);
-//                               `ilink-fields` drops `baseurl`'s pattern and
+//                               the production tree pins must fire. Since
+//                               weixin-scanbind (2026-10-03) the production tree
+//                               ships the card UNSEALED, so the seal leg is
+//                               INVERTED: `ilink-reseal` re-applies the dropped
+//                               seal (IL1 — which now pins the UNSEALED face —
+//                               turns red: the visible face collapses back to
+//                               feishu-only);
+//                               `ilink-fields` drops `sidecar_url`'s pattern and
 //                               flips `ilink_bot_id` to optional (IL2 turns red:
 //                               the field mirror no longer matches the contract).
 //                               Nothing is written to the tree.
@@ -149,6 +153,45 @@
 //    brief explicitly leaves it alone and asks for it to be registered instead.
 //    It is reported as 「注释面待清」 for a separate ruling.
 //
+// 🔴 WEIXIN-BINDITEM (author order 2026-10-07 09:22, 微信②·绑定完成态 UI 重构):
+//    the WEIXIN binding face becomes an ITEM ROW (accordion). Default = one
+//    row only (icon + 微信 iLink + status pill + chevron); one click expands
+//    the QR binding face (the in-card scan block moves into the row's
+//    expandable body WHOLE — hidden, NOT rebuilt, so the scan flow's per-tick
+//    writes keep landing); scanning rides the existing badge semantics (②);
+//    scan `done` auto-collapses back to the row (③) and the created face's
+//    empty live bar retires (zero [data-live] on the weixin card in any
+//    state); the unbind control rides the EXPANDED face (④ — the declared
+//    取舍: the row stays single-purpose so the toggle can never share a click
+//    with a destructive action); clicking the expanded row collapses it (⑤).
+//    Feishu keeps the two-face card byte-for-byte ([[ITEM_FACE_CHANNELS]] is
+//    weixin-only). Zero locale key changes (§16: every string on the new face
+//    reuses existing copy; aria-expanded/aria-controls carry none). New
+//    anchors: [[bindItemSuite]] WBI-1..8. RED leg = the AFTER suite against
+//    the pre-change tree (SOCIAL_SUITE=after SOCIAL_WEB_ROOT=<baseline>/web):
+//    WBI-1..7 must fail there (no [data-item-toggle] exists), WBI-8 stays
+//    green on both trees (control, not a flipped anchor). Every WBI leg is
+//    mock-driven (夹具优先): no real binding flow, zero production writes.
+//
+// 🔴 WEIXIN-BINDITEM-3CUTS (author order 2026-10-07, 三小裁 over the landed
+//    item face — supersedes the "Feishu keeps the two-face card" clause above):
+//    ① the unbind fallback is CONFIRMED AS SHIPPED — zero code: archive
+//    already drops the expansion and re-lands the card on its row; the pins
+//    are WBI-7 (weixin) and the new WBI-8d (feishu), plus the evidence frame
+//    in the batch report; ② the item row's CHEVRON IS REMOVED — the whole row
+//    is the click target (no direction hint); aria-expanded/aria-controls
+//    stay; WBI-1 re-pins the chevron's ABSENCE (the chevron clause is RED on
+//    the pre-change tree, where the row still renders it); ③ feishu JOINS the
+//    item face ([[ITEM_FACE_CHANNELS]] gains feishu; the C1 live value rides
+//    the EXPANDED face). WBI-8 FLIPS from the both-trees control into the
+//    feishu itemization anchors (8a default row / 8b expanded live value /
+//    8c accordion collapse / 8d unbind fallback) — RED on the pre-change
+//    tree, where the feishu card still renders the two-face card and no
+//    [data-item-toggle="feishu"] exists. W16-B6 re-points to expand the row
+//    before measuring the in-card QR (the geometry anchor would otherwise
+//    read a hidden canvas). Zero locale key changes; mock-driven throughout
+//    (夹具优先 — no real binding flow, zero production writes).
+
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
@@ -199,7 +242,7 @@ const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'f
   : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE'
     : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE'
       : (process.env.SOCIAL_MUTATE === 'card-filter-off' ? 'REDFILTER'
-        : (process.env.SOCIAL_MUTATE === 'ilink-unseal' || process.env.SOCIAL_MUTATE === 'ilink-fields' ? 'ILINKRED' : 'AFTER'))));
+        : (process.env.SOCIAL_MUTATE === 'ilink-reseal' || process.env.SOCIAL_MUTATE === 'ilink-fields' ? 'ILINKRED' : 'AFTER'))));
 const SHOTS = process.env.SOCIAL_SHOT_DIR || '/tmp/nb-socpanel';
 const API_BASE = process.env.SOCIAL_API_BASE || '';
 const API_TOKEN = process.env.SOCIAL_API_TOKEN || '';
@@ -217,22 +260,24 @@ const SOCIAL_KEYS = CHANNELS_MOD.SOCIAL_CHANNELS.flatMap((c) => [c.nameKey, c.de
 const ZH = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'zh-CN.js')).href)).default;
 const EN = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'en.js')).href)).default;
 
-/** The wechat-ilink contract (chain-wechat-impl) — transcribed from the batch's
- *  single source of truth (the cross-position contract paragraph), NOT re-derived
- *  from the implementation. `pattern` / `secretName` stay `undefined` where the
- *  contract says the field carries none, so the mirror below compares the full
- *  five-tuple on every field and an added/removed/downgraded attribute fails.
+/** The wechat-ilink contract — transcribed from the batch's single source of
+ *  truth, NOT re-derived from the implementation. Since weixin-scanbind
+ *  (2026-10-03) the card ships UNSEALED (`hidden: false`) and on the scanBind
+ *  family; `pattern` / `secretName` stay `undefined` where the contract says
+ *  the field carries none, so the mirror below compares the full five-tuple on
+ *  every field and an added/removed/downgraded attribute fails.
  *  This constant is the ONE judgement input for both the production probe
  *  (IL1–IL3, read off the repo module) and its red proof (IL-R, read off the
  *  served mutated tree) — that is what makes "the same probe" literal. */
 const ILINK_CONTRACT = {
   id: 'weixin-ilink',
-  hidden: true,
+  hidden: false,
   fields: [
     { key: 'bot_token', kind: 'secret', required: true, pattern: undefined, secretName: 'social-weixin-bot-token' },
     { key: 'ilink_bot_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
     { key: 'ilink_user_id', kind: 'text', required: true, pattern: undefined, secretName: undefined },
-    { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://', secretName: undefined },
+    { key: 'baseurl', kind: 'url', required: false, pattern: '^https?://.*', secretName: undefined },
+    { key: 'sidecar_url', kind: 'url', required: false, pattern: '^https?://.*', secretName: undefined },
     { key: 'allowed_ilink_user_ids', kind: 'text', required: false, pattern: undefined, secretName: undefined },
   ],
 };
@@ -347,32 +392,34 @@ function mutate(rel, body) {
     mutationHits += hits;
     return body.replace(/\.filter\(\(c\) => !c\.hidden\)/g, '.slice()');
   }
-  if (mode === 'ilink-unseal' || mode === 'ilink-fields') {
-    // wechat-ilink red proof. Both variants damage ONLY the `weixin-ilink`
-    // entry (see [[entrySpan]]): the other sealed cards carry `hidden: true`
-    // too, so an unscoped replace would unseal wechat/telegram as well and the
-    // reading would stop being evidence about THIS batch's card.
+  if (mode === 'ilink-reseal' || mode === 'ilink-fields') {
+    // wechat-ilink red proof (polarity inverted by weixin-scanbind: the
+    // production card ships UNSEALED, so the seal leg RE-APPLIES the seal).
+    // Both variants damage ONLY the `weixin-ilink` entry (see [[entrySpan]]):
+    // the other sealed cards carry `hidden: true` too, so an unscoped replace
+    // would damage wechat/telegram as well and the reading would stop being
+    // evidence about THIS batch's card.
     if (rel !== '/js/socialChannels.js') return body;
     const span = entrySpan(body, ILINK_CONTRACT.id);
     if (!span) return body;
     const entry = body.slice(span.start, span.end);
     // 🔴 The damage is applied LINE BY LINE, and only to CODE lines: the entry's
-    //    own explanatory comment quotes these very literals in prose (it spells
-    //    out `hidden: true` and the field keys), so an unanchored string replace
-    //    would rewrite the COMMENT and leave the code intact — a mutation that
-    //    proves nothing while still reporting a hit. Classifying lines is robust
-    //    where regex tail-anchoring was not: these code lines end in `,` and the
-    //    field ones share their line with the opening `{ key: ...`.
-    const CODE_SEAL = /^(\s*)hidden: true,$/m;
+    //    own explanatory comment quotes these very literals in prose, so an
+    //    unanchored string replace would rewrite the COMMENT and leave the code
+    //    intact — a mutation that proves nothing while still reporting a hit.
+    //    Classifying lines is robust where regex tail-anchoring was not: these
+    //    code lines end in `,` and the field ones share their line with the
+    //    opening `{ key: ...`.
     const CODE_PATTERN = /^(.*?), pattern: '\^https\?:\/\/',$/m;
     const CODE_BOTID = /^(.*\bkey: 'ilink_bot_id', kind: 'text', required: )true$/m;
     const isComment = (line) => {
       const t = line.trim();
       return t.startsWith('//') || t.startsWith('/*') || t.startsWith('*');
     };
-    const edits = mode === 'ilink-unseal'
-      ? [['hidden: true', 'hidden: false']]
+    const edits = mode === 'ilink-reseal'
+      ? [['hidden: false', 'hidden: true']]
       : [["pattern: '^https?://',", ''],
+        ["pattern: '^https?://.*',", ''],
         ["key: 'ilink_bot_id', kind: 'text', required: true", "key: 'ilink_bot_id', kind: 'text', required: false"]];
     let hit = 0;
     const damaged = entry.split('\n').map((line) => {
@@ -419,16 +466,36 @@ const apiState = {
   registered: {},
   posts: [],
   failPost: false,
-  /** social-fix: the scan-bind face the in-card block polls (state-machine
+  /** social-fix: the scan-bind face the in-card blocks poll (state-machine
    *  mirror of the real contract: qr_ready → polling → done|failed). A
-   *  `done` reading writes the created config ONCE — the backend side-effect
-   *  the real endpoint carries. */
-  scan: { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false },
+   *  `done` reading writes the created config ONCE PER CHANNEL — the backend
+   *  side-effect the real endpoint carries (weixin-scanbind: both visible
+   *  scanBind cards poll the same face; each `done` writes THAT channel). */
+  scan: { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: {} },
+};
+
+/** weixin-scanbind: the created-config fixture the scan-bind `done` side
+ *  effect writes, per channel — the mock mirror of the real backend's
+ *  persist-on-done (identifiers plaintext, the secret as a `_ref` path, the
+ *  probe triple clean, the adapter registered). */
+const CREATED_FIXTURE = {
+  feishu: {
+    fields: { app_id: 'cli_mock0123456789ab', app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret' },
+    probe: { app_secret: { exists: true, modeOk: true, readable: true } },
+  },
+  'weixin-ilink': {
+    fields: {
+      ilink_bot_id: 'wxid_mock_bot',
+      ilink_user_id: 'wxid_mock_user',
+      bot_token_ref: '~/.nebflow/secrets/social-weixin-bot-token',
+    },
+    probe: { bot_token: { exists: true, modeOk: true, readable: true } },
+  },
 };
 
 /** Fresh scan face (leg setup / teardown between modes). */
 function resetScanFace() {
-  apiState.scan = { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: false };
+  apiState.scan = { state: 'qr_ready', qrUrl: 'https://feishu.example/qr_connect/mock', userCode: 'MCCK-1234', failBegin: false, doneWrites: {} };
 }
 
 const SECRET_FILE = {
@@ -481,15 +548,18 @@ function stubApi(page) {
     return r.fulfill({ json: { scanId: 'mock-scan-1' } });
   });
   page.route('**/api/social/channels/*/scan-bind/status*', (r) => {
-    if (apiState.scan.state === 'done' && !apiState.scan.doneWrites) {
-      // the backend side-effect of a finished scan: the app exists now
-      apiState.scan.doneWrites = true;
-      apiState.channels.feishu = { enabled: true, fields: {
-        app_id: 'cli_mock0123456789ab',
-        app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
-      } };
-      apiState.probes.feishu = { app_secret: { exists: true, modeOk: true, readable: true } };
-      apiState.registered.feishu = true;
+    // weixin-scanbind: the finished-scan side effect is PER CHANNEL — the
+    // polling URL names the channel, and `done` writes THAT channel's created
+    // config exactly once (see CREATED_FIXTURE).
+    const id = decodeURIComponent(r.request().url().split('/api/social/channels/')[1].split('/')[0]);
+    if (apiState.scan.state === 'done' && !apiState.scan.doneWrites[id]) {
+      const fx = CREATED_FIXTURE[id];
+      if (fx) {
+        apiState.scan.doneWrites[id] = true;
+        apiState.channels[id] = { enabled: true, fields: { ...fx.fields } };
+        apiState.probes[id] = JSON.parse(JSON.stringify(fx.probe));
+        apiState.registered[id] = true;
+      }
     }
     return r.fulfill({ json: { state: apiState.scan.state, qrUrl: apiState.scan.qrUrl, userCode: apiState.scan.userCode } });
   });
@@ -587,7 +657,12 @@ async function afterSuite(browser, base) {
     'src/main/resources/web/js/main.js',
     'src/main/scala/nebflow/gateway/RestApiRoutes.scala',
     'src/main/scala/nebflow/gateway/GatewayMain.scala',
+    'src/main/scala/nebflow/gateway/PresenceRoutes.scala',   // weixin-scanbind: the begin/status routes
     'src/main/scala/nebflow/social/SocialChannels.scala',
+    'src/main/scala/nebflow/social/WeixinIlinkScanBind.scala', // weixin-scanbind: the manager
+    'src/test/scala/nebflow/social/WeixinIlinkScanBindSpec.scala', // weixin-scanbind spec
+    'src/test/scala/nebflow/social/WeixinIlinkBridgeSpec.scala', // weixin-scanbind: the WI-F1 field contract
+    'README.md',                                             // weixin-scanbind: the section update
     'src/main/scala/nebflow/social/FeishuChannel.scala',       // feishubridge: sender-id extraction
     'src/main/scala/nebflow/social/FeishuMessage.scala',       // feishubridge: senderId field
     'src/main/scala/nebflow/social/FeishuBridgePlugin.scala',  // feishubridge: the adapter
@@ -597,6 +672,54 @@ async function afterSuite(browser, base) {
     'src/test/scala/nebflow/social/FeishuChannelSpec.scala',  // feishubridge: senderId joined the wire shape (additive)
     'src/test/scala/nebflow/social/SocialChannelsBootSealSpec.scala', // feishu-boot-seal spec (A1–A5)
     'src/test/scala/nebflow/social/FeishuBootSealRestore.scala',       // feishu-boot-seal: the restore entry point (Test scope)
+    // ── ui-status-icons 批 whitelist 随批扩（作者 2026-10-06 晨裁令候示④）：
+    // 本批 UI 面实态 43 件（css×14＋js×28＋tests×1）。social.css / socialPanel.js /
+    // activityBar.js / main.js / locales 两表 / tests/social-panel.spec.mjs 已在
+    // 上列不重复。onboarding.js、js/sidebar.js、tests/onboarding-*、scala、seed
+    // 属其他挂起批文件面，不入本白名单（其红为共享工作区既有态，随其批收口自消）。
+    'src/main/resources/web/css/base.css',
+    'src/main/resources/web/css/chat.css',
+    'src/main/resources/web/css/dropbox.css',
+    'src/main/resources/web/css/flowMap.css',
+    'src/main/resources/web/css/friends.css',
+    'src/main/resources/web/css/input.css',
+    'src/main/resources/web/css/modal.css',
+    'src/main/resources/web/css/neblink.css',
+    'src/main/resources/web/css/projectPanel.css',
+    'src/main/resources/web/css/reminder.css',
+    'src/main/resources/web/css/secrets.css',
+    'src/main/resources/web/css/sidebar.css',
+    'src/main/resources/web/css/split.css',
+    'src/main/resources/web/css/taskList.css',
+    'src/main/resources/web/js/attachUpload.js',
+    'src/main/resources/web/js/bgAgentPopup.js',
+    'src/main/resources/web/js/bgTaskOutputPopup.js',
+    'src/main/resources/web/js/chat.js',
+    'src/main/resources/web/js/chatSearch.js',
+    'src/main/resources/web/js/chatSearchFloat.js',
+    'src/main/resources/web/js/contacts.js',
+    'src/main/resources/web/js/daemonPanel.js',
+    'src/main/resources/web/js/daemons.js',
+    'src/main/resources/web/js/dropbox.js',
+    'src/main/resources/web/js/explorer.js',
+    'src/main/resources/web/js/flowAgentPopup.js',
+    'src/main/resources/web/js/flowCss.js',
+    'src/main/resources/web/js/flowMapArchive.js',
+    'src/main/resources/web/js/friendGroups.js',
+    'src/main/resources/web/js/i18n.js',
+    'src/main/resources/web/js/modal.js',
+    'src/main/resources/web/js/modelPanel.js',
+    'src/main/resources/web/js/notificationBanner.js',
+    'src/main/resources/web/js/persistence.js',
+    'src/main/resources/web/js/plugins.js',
+    'src/main/resources/web/js/popArtifacts.js',
+    'src/main/resources/web/js/projectTab.js',
+    'src/main/resources/web/js/scheduled-task.js',
+    'src/main/resources/web/js/secretsPanel.js',
+    'src/main/resources/web/js/taskList.js',
+    'src/main/resources/web/js/utils.js',
+    'src/main/resources/web/js/workspacePicker.js',
+    'tests/toast-glass.spec.mjs',
     'tests/social-panel.spec.mjs',
     // 🔴 B merge-site wave face (A-line b6088aa7 — the SAME 17-commit round as
     //    the socpanel-min content above): the eng-deferred-cancel batch rides
@@ -663,13 +786,14 @@ async function afterSuite(browser, base) {
   const enabledFlags = (src.match(/adapterRegistered: *true/g) || []).length;
   check('W6③ adapterRegistered:true in definition layer = 0', enabledFlags === 0, `grep -c = ${enabledFlags}`);
 
-  // socialhide SH1 — the seal at the definition face: the visible single
-  // source answers feishu-only. Read off the REAL repo module (not the served
-  // tree): the production truth itself.
+  // socialhide SH1 — the visible single source. Since weixin-scanbind
+  // (2026-10-03) the weixin-ilink card is UNSEALED and the visible set is
+  // [weixin-ilink, feishu] in definition order. Read off the REAL repo module
+  // (not the served tree): the production truth itself.
   const visIds = CHANNELS_MOD.visibleChannels().map((c) => c.id);
-  check('SH1 visible single source = {feishu} (socialChannelCount = 1)',
-    EXPECTED_CARDS === 1 && CHANNELS_MOD.socialChannelCount() === 1
-    && JSON.stringify(visIds) === JSON.stringify(['feishu']),
+  check('SH1 visible single source = [weixin-ilink, feishu] (socialChannelCount = 2)',
+    EXPECTED_CARDS === 2 && CHANNELS_MOD.socialChannelCount() === 2
+    && JSON.stringify(visIds) === JSON.stringify(['weixin-ilink', 'feishu']),
     `count=${CHANNELS_MOD.socialChannelCount()} visible=[${visIds.join(',')}]`);
 
   // socialhide SH2 — sealed ≠ deleted: the full data set keeps every entry, the
@@ -683,36 +807,36 @@ async function afterSuite(browser, base) {
   //    add/remove can never pass this check by arithmetic alone.
   const sealFlags = CHANNELS_MOD.SOCIAL_CHANNELS.map((c) => `${c.id}=${c.hidden === true ? 'hidden' : 'visible'}`);
   const sealedIds = CHANNELS_MOD.SOCIAL_CHANNELS.filter((c) => c.hidden === true).map((c) => c.id);
-  check('SH2 sealed ≠ deleted: 4 entries in data, wechat+weixin-ilink+telegram flagged, feishu unflagged',
+  check('SH2 sealed ≠ deleted: 4 entries in data, wechat+telegram flagged, feishu+weixin-ilink unflagged',
     EXPECTED_DEFINITION_CHANNELS === 4
     && CHANNELS_MOD.channelById('wechat')?.hidden === true
-    && CHANNELS_MOD.channelById('weixin-ilink')?.hidden === true
+    && CHANNELS_MOD.channelById('weixin-ilink')?.hidden === false
     && CHANNELS_MOD.channelById('telegram')?.hidden === true
     && CHANNELS_MOD.channelById('feishu')?.hidden !== true
-    && JSON.stringify(sealedIds) === JSON.stringify(['wechat', 'weixin-ilink', 'telegram'])
+    && JSON.stringify(sealedIds) === JSON.stringify(['wechat', 'telegram'])
     && SOCIAL_KEYS.length === EXPECTED_DEFINITION_CHANNELS * 2,
     `entries=${EXPECTED_DEFINITION_CHANNELS} flags=[${sealFlags.join(' ')}] channelLocaleKeys=${SOCIAL_KEYS.length}`);
 
   // socialhide SH2b — the raw-source grep face of the acceptance: with
   // comments stripped (headers document the flag too), the CODE carries
-  // exactly 4 `hidden: true` literals — the wechat / weixin-ilink / telegram
-  // channel entries plus the lark region entry. The sealed-data shape on the
-  // bytes themselves.
-  // 🔴 wechat-ilink: 3 → 4 for the added sealed card (semantics untouched).
+  // exactly 3 `hidden: true` literals — the wechat / telegram channel entries
+  // plus the lark region entry. The sealed-data shape on the bytes themselves.
+  // 🔴 weixin-scanbind (2026-10-03): 4 → 3 — the weixin-ilink entry dropped its
+  //    seal (`hidden: false` now), so the literal count drops with it.
   const srcCode = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   const hiddenFlags = (srcCode.match(/hidden: true/g) || []).length;
-  check('SH2b code-level `hidden: true` literals = 4 (wechat + weixin-ilink + telegram + lark region)',
-    hiddenFlags === 4, `grep -c (comments stripped) = ${hiddenFlags}`);
+  check('SH2b code-level `hidden: true` literals = 3 (wechat + telegram + lark region)',
+    hiddenFlags === 3, `grep -c (comments stripped) = ${hiddenFlags}`);
 
-  // ── wechat-ilink (chain-wechat-impl): the new card's data face ─────────────
-  // IL1 — the seal of the NEW card, and the visible single source it must not
-  // disturb: the visible set is still {feishu} and the count is still 1, so the
-  // added card is invisible by construction (its own `hidden: true`), never by
-  // the panel happening to skip it.
-  check('IL1 weixin-ilink is sealed: visible face stays {feishu}, count stays 1',
-    CHANNELS_MOD.channelById('weixin-ilink')?.hidden === true
-    && CHANNELS_MOD.socialChannelCount() === 1
-    && JSON.stringify(CHANNELS_MOD.visibleChannels().map((c) => c.id)) === JSON.stringify(['feishu']),
+  // ── wechat-ilink: the card's data face ─────────────────────────────────────
+  // IL1 — since weixin-scanbind (2026-10-03) the card ships UNSEALED: the
+  // visible face is [weixin-ilink, feishu] in definition order and the count
+  // is 2. The seal leg lives on as the RESEAL red proof (ILINKRED below), so
+  // this pin still has teeth — just with inverted polarity.
+  check('IL1 weixin-ilink is unsealed: visible face = [weixin-ilink, feishu], count = 2',
+    CHANNELS_MOD.channelById('weixin-ilink')?.hidden === false
+    && CHANNELS_MOD.socialChannelCount() === 2
+    && JSON.stringify(CHANNELS_MOD.visibleChannels().map((c) => c.id)) === JSON.stringify(['weixin-ilink', 'feishu']),
     `sealed=${CHANNELS_MOD.channelById('weixin-ilink')?.hidden} count=${CHANNELS_MOD.socialChannelCount()} visible=[${CHANNELS_MOD.visibleChannels().map((c) => c.id).join(',')}]`);
 
   // IL2 — the field mirror. Compares the FULL five-tuple (key / kind / required /
@@ -785,6 +909,12 @@ async function afterSuite(browser, base) {
               // class discriminates exactly as the attribute did.
               // Plain cards keep the head switch; sealed channels never render.
               // See js/socialPanel.js scanBindCardHTML / plainCardHTML.
+              // 🔴 weixin-binditem (2026-10-07): the weixin card's head is the
+              // ITEM ROW (a real <button> carrying the same .social-card-head
+              // class — the accordion toggle), so the icon/name/status probe
+              // reads identically; the control discriminator still holds
+              // because the working face (scan block / archive) stays in the
+              // DOM inside the row's body — hidden, NOT deleted.
               noCardToggle: !c.querySelector('.nb-toggle'),
               control: !!c.querySelector('.social-scan-inline, [data-archive]'),
             } : null;
@@ -794,11 +924,11 @@ async function afterSuite(browser, base) {
       const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.noCardToggle && h.control);
       check(`W4 card shape (count = visible single source) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
         `cards=${cards.count} visibleExpected=${EXPECTED_CARDS} sealedDataEntries=${EXPECTED_DEFINITION_CHANNELS} headsOk=${headsOk} heads=${JSON.stringify(cards.heads)}`);
-      // socialhide SH3 — the DOM face of the seal: exactly the feishu card
-      // renders (in definition order) and the sealed ids are ABSENT, not
-      // merely invisible.
-      check(`SH3 DOM: visible cards = [feishu], sealed ids absent (${tag})`,
-        JSON.stringify(cards.ids) === JSON.stringify(['feishu'])
+      // socialhide SH3 — the DOM face of the seal: exactly the unsealed cards
+      // render (in definition order) and the sealed ids are ABSENT, not merely
+      // invisible. weixin-scanbind: weixin-ilink joined the visible face.
+      check(`SH3 DOM: visible cards = [weixin-ilink, feishu], sealed ids absent (${tag})`,
+        JSON.stringify(cards.ids) === JSON.stringify(['weixin-ilink', 'feishu'])
         && !cards.ids.includes('wechat') && !cards.ids.includes('telegram'),
         `ids=[${cards.ids.join(',')}]`);
       // social-fix SF-3 — the retired faces stay retired on the visible face:
@@ -927,14 +1057,23 @@ async function afterSuite(browser, base) {
       const c = document.querySelector('.social-card[data-channel="feishu"]');
       const p = c.querySelector('.social-status-pill');
       const d = document.createElement('div');
-      d.style.color = 'var(--color-danger)';
+      d.style.color = 'var(--status-error-icon)';
       document.body.appendChild(d);
       const danger = getComputedStyle(d).color; d.remove();
+      const b = document.createElement('div');
+      b.style.borderColor = 'color-mix(in srgb, var(--status-error-icon) 25%, transparent)';
+      document.body.appendChild(b);
+      const dangerBorder = getComputedStyle(b).borderColor; b.remove();
       return { status: p.dataset.status, color: getComputedStyle(p).color, danger,
+        borderColor: getComputedStyle(p).borderColor, dangerBorder, hasIcon: !!p.querySelector('svg, [data-lucide]'),
         hint: c.querySelector('.social-card-hint').textContent, hidden: c.querySelector('.social-card-hint').hasAttribute('hidden') };
     });
-    check('W9 pattern violation ⇒ configInvalid + danger colour',
-      pill.status === 'configInvalid' && pill.color === pill.danger && !pill.hidden && /应用 ID|App ID/.test(pill.hint),
+    // ui-status-redesign（2026-10-05 作者拍板分叉①=A）改版：pill 字面一律中性字，
+    // 危险色只上图案载体（pill 红底红边 = --status-error-icon color-mix）＋词前
+    // triangle-alert 图标。原断言「字色 = --color-danger」随旧形态退役。
+    check('W9 pattern violation ⇒ configInvalid + danger carrier (word neutral + icon)',
+      pill.status === 'configInvalid' && pill.color !== pill.danger && pill.borderColor === pill.dangerBorder
+      && pill.hasIcon && !pill.hidden && /应用 ID|App ID/.test(pill.hint),
       JSON.stringify(pill));
 
     apiState.channels = { feishu: { enabled: true, fields: {
@@ -1306,6 +1445,20 @@ async function afterSuite(browser, base) {
     // social-fix: the fillable state no longer exists (manual form retired);
     // the measured face is the not-created card with its in-card QR.
     await waitInlineScanQr(page);
+    // 🔴 weixin-binditem-3cuts ③: the feishu card joined the item face, so the
+    //    in-card QR now lives in the row's HIDDEN body — measuring it collapsed
+    //    would read a 0-width canvas and the geometry anchor would pass
+    //    vacuously. B-6 therefore expands the row first (guarded: on a
+    //    pre-change tree there is no row, and the collapsed-canvas reading is
+    //    what that tree legitimately measures).
+    const feishuRow375 = await page.$('[data-item-toggle="feishu"]');
+    if (feishuRow375) {
+      await feishuRow375.click();
+      await page.waitForFunction(() => {
+        const b = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
+        return !!b && !b.hasAttribute('hidden');
+      }, undefined, { timeout: 4000 });
+    }
     const geo = await page.evaluate(() => {
       const vw = window.innerWidth;
       const m = document.getElementById('social-modal').getBoundingClientRect();
@@ -1822,6 +1975,398 @@ async function min2Suite(browser, base) {
   await ctx.close();
 }
 
+// ── WEIXIN-BINDITEM: the weixin binding face as an ITEM ROW (accordion) ─────
+// Author order 2026-10-07 09:22 (微信②·绑定完成态 UI 重构), amended the same
+// day by the 3CUTS order (see the header's WEIXIN-BINDITEM-3CUTS paragraph).
+// Five states, each anchored on the SAME mock backend the suites above use
+// (夹具优先 — no real binding flow, zero production writes; the scan face is
+// the suite's own state-machine mirror). Runs LAST in the AFTER chain so
+// nothing below it can inherit its apiState mutations.
+//
+//   WBI-1  default   — the weixin card IS one row: [data-item-toggle] with
+//                      aria-expanded="false", [data-item-body] present AND
+//                      hidden, NO chevron (3cuts ② — flipped from the original
+//                      "chevron present"), pill = channelStatus.
+//   WBI-2  expand    — one click ⇒ aria-expanded="true", the body visible, the
+//                      QR face renders in it (the auto-begun session already
+//                      drew it behind the collapsed row).
+//   WBI-3  collapse  — the SAME click target toggles back (accordion, ⑤; no
+//                      second control, no double-bind).
+//   WBI-4  scanning  — the badge rides the existing semantics (②): during
+//                      polling the pill stays the channelStatus reading while
+//                      the scan status line advances to the confirmed copy.
+//   WBI-5  done      — the card auto-collapses back to the row (③), the pill
+//                      reads connected, and the retired empty-bar form stays
+//                      retired: zero [data-live] on the weixin card, the scan
+//                      block gone, the unbind control inside the body.
+//   WBI-6  unbind    — the unbind control rides the EXPANDED face (④):
+//                      present-but-not-visible collapsed, visible expanded,
+//                      hover copy unchanged (archive.hint on the title).
+//   WBI-7  archive   — unbind returns the card to the default row (ruling ①:
+//                      the SHIPPED fallback, confirmed — the evidence frame
+//                      rides the batch report); the recreate leg re-begins the
+//                      scan behind it (expand ⇒ QR).
+//   WBI-8  3cuts ③   — feishu JOINS the item face. WAS the both-trees control
+//                      ("keeps the two-face card"); the ruling retires that
+//                      face, so the anchor flipped and grew legs:
+//     WBI-8a default — the feishu card IS one row: aria-expanded="false",
+//                      body hidden, pill = connected (created fixture), the
+//                      C1 live value NOT on the collapsed face, NO chevron.
+//     WBI-8b expand  — one click ⇒ the C1 live value shows INSIDE the
+//                      expanded state (实时值在展态内), the unbind control with
+//                      it; aria-expanded="true".
+//     WBI-8c collapse— the SAME click target collapses it (weixin's accordion
+//                      paradigm, byte for byte).
+//     WBI-8d unbind  — unbind returns the feishu card to the default row
+//                      (fields kept ⇒ configuredNotLinked) — ruling ①'s pin
+//                      on the feishu side.
+//
+// 🔴 RED LEG (same discipline as the flipped anchors above): run the AFTER
+//    suite against the pre-change tree —
+//      SOCIAL_SUITE=after SOCIAL_WEB_ROOT=<baseline>/web node tests/social-panel.spec.mjs
+//    — WBI-1 fails there ONLY via its chevron clause (the item face itself
+//    landed in the previous batch), and WBI-8a..d fail wholesale (the old
+//    tree renders the two-face feishu card: no [data-item-toggle="feishu"]).
+//    WBI-2..7 stay GREEN there (they pin the previous batch's landed face).
+//    The legs below therefore guard their clicks: on a tree without the
+//    probed face a missing selector must record a named RED, not kill the
+//    run ([[leg]] catches and emits).
+async function bindItemSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  apiState.posts = [];
+  resetScanFace();
+  await boot(page, { locale: 'zh-CN' });
+  await page.goto(base);
+  await openPanel(page);
+
+  /** Red-leg guard: run one leg; a selector that cannot exist on a pre-change
+   *  tree throws, and the catch records the leg's named RED instead of dying. */
+  const leg = async (name, fn) => {
+    try { await fn(); } catch (e) {
+      check(name, false, `red-by-absence (pre-change tree): ${String((e && e.message) || e).slice(0, 200)}`);
+    }
+  };
+  const readCard = () => page.evaluate(() => {
+    const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+    if (!card) return { card: false };
+    const row = card.querySelector('[data-item-toggle]');
+    const body = card.querySelector('[data-item-body]');
+    const bo = body instanceof HTMLElement ? body.offsetParent : undefined;
+    return {
+      card: true,
+      itemface: card.classList.contains('social-card-itemface'),
+      row: !!row,
+      rowIsButton: row instanceof HTMLButtonElement,
+      ariaExpanded: row ? row.getAttribute('aria-expanded') : null,
+      bodyPresent: !!body,
+      bodyHidden: body ? body.hasAttribute('hidden') : null,
+      bodyVisible: bo !== null && bo !== undefined,
+      pill: (card.querySelector('[data-status]') || {}).getAttribute
+        ? card.querySelector('[data-status]').getAttribute('data-status') : null,
+      name: ((card.querySelector('.social-card-name') || {}).textContent || '').trim(),
+      chevron: !!card.querySelector('.lucide-chevron-down'),
+      scanInline: !!card.querySelector('.social-scan-inline'),
+      archive: !!card.querySelector('[data-archive]'),
+      liveBlocks: card.querySelectorAll('[data-live]').length,
+    };
+  });
+  const weixinQrReady = () => page.waitForFunction(() => {
+    const box = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-qr]');
+    return !!box && !!box.querySelector('canvas, a');
+  }, undefined, { timeout: 8000 });
+
+  // WBI-1 — default: one row, body present and hidden (no click needed, so
+  // this anchor reads directly and is RED on the old tree by absence). 3cuts
+  // ②: the chevron clause flipped — the row must NOT render it any more.
+  const def = await readCard();
+  check('WBI-1 weixin default = item row (aria-expanded=false, body present and hidden, no chevron)',
+    def.card && def.itemface && def.row && def.rowIsButton && def.ariaExpanded === 'false'
+    && def.bodyPresent && def.bodyHidden === true && !def.bodyVisible
+    && def.pill === 'notConfigured' && def.name.includes('微信') && !def.chevron
+    && def.scanInline === true && def.archive === false && def.liveBlocks === 0,
+    `row=${def.row} aria=${def.ariaExpanded} bodyPresent=${def.bodyPresent} bodyHidden=${def.bodyHidden} bodyVisible=${def.bodyVisible} pill=${def.pill} name=${JSON.stringify(def.name)} chevron=${def.chevron} scanInline=${def.scanInline} archive=${def.archive} live=${def.liveBlocks} (3cuts ②: chevron retired — the whole row is the click target; pre-change tree: chevron still present ⇒ RED there; the original pre-binditem tree: no [data-item-toggle] ⇒ RED there)`);
+  await shot(page, 'wbi-1-default-row');
+
+  await leg('WBI-2 one click expands the QR binding face (state ①)', async () => {
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    await weixinQrReady();
+    const ex = await readCard();
+    const statusLine = await page.evaluate(() => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return el ? el.textContent : '';
+    });
+    check('WBI-2 one click expands the QR binding face (state ①)',
+      ex.ariaExpanded === 'true' && ex.bodyHidden === false && ex.bodyVisible
+      && ex.scanInline && def.scanInline,
+      `aria=${ex.ariaExpanded} bodyHidden=${ex.bodyHidden} bodyVisible=${ex.bodyVisible} scanInline=${ex.scanInline} statusLine=${JSON.stringify(statusLine)} (the auto-begun session drew the QR behind the collapsed row; expanding reveals it mid-flow)`);
+    await shot(page, 'wbi-2-expanded-qr');
+  });
+
+  await leg('WBI-3 clicking the expanded row collapses it (accordion, ⑤)', async () => {
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    const cl = await readCard();
+    check('WBI-3 clicking the expanded row collapses it (accordion, ⑤)',
+      cl.ariaExpanded === 'false' && cl.bodyHidden === true && !cl.bodyVisible,
+      `aria=${cl.ariaExpanded} bodyHidden=${cl.bodyHidden} bodyVisible=${cl.bodyVisible} — the SAME target toggles both ways; no second control, no double-bind`);
+  });
+
+  await leg('WBI-4 scanning: the badge rides the existing semantics (②)', async () => {
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    await weixinQrReady();
+    apiState.scan.state = 'polling';
+    const confirmed = [ZH['social.weixinIlink.scan.confirmed'], EN['social.weixinIlink.scan.confirmed']].filter(Boolean);
+    await page.waitForFunction((needles) => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return !!el && needles.some((n) => el.textContent.includes(n));
+    }, confirmed, { timeout: 8000 });
+    const scanning = await readCard();
+    const statusLine = await page.evaluate(() => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return el ? el.textContent : '';
+    });
+    check('WBI-4 scanning: the badge rides the existing semantics (②) — pill stays channelStatus while the scan line advances',
+      scanning.pill === 'notConfigured' && scanning.bodyVisible
+      && confirmed.includes(statusLine),
+      `pill=${scanning.pill} statusLine=${JSON.stringify(statusLine)} bodyVisible=${scanning.bodyVisible} (no scan-state pill was added; the flow speaks through the existing status line)`);
+    await shot(page, 'wbi-4-scanning');
+  });
+
+  await leg('WBI-5 scan done ⇒ auto-collapse to the item view (③)', async () => {
+    apiState.scan.state = 'done';
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const row = card && card.querySelector('[data-item-toggle]');
+      const body = card && card.querySelector('[data-item-body]');
+      const pill = card && card.querySelector('[data-status]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden')
+        && !!pill && pill.getAttribute('data-status') === 'connected';
+    }, undefined, { timeout: 15000 });
+    const done = await readCard();
+    const archiveInsideBody = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const body = card.querySelector('[data-item-body]');
+      return !!body && !!body.querySelector('[data-archive]');
+    });
+    check('WBI-5 scan done ⇒ auto-collapse to the item view (③); the empty-bar form stays retired',
+      done.pill === 'connected' && done.ariaExpanded === 'false' && done.bodyHidden && !done.bodyVisible
+      && done.scanInline === false && done.liveBlocks === 0 && archiveInsideBody,
+      `pill=${done.pill} aria=${done.ariaExpanded} bodyHidden=${done.bodyHidden} scanInline=${done.scanInline} live=${done.liveBlocks} archiveInsideBody=${archiveInsideBody} (pre-change tree: the done card kept a wide created face with an ALWAYS-EMPTY [data-live] bar — the form this order retires; RED there)`);
+    await shot(page, 'wbi-5-done-back-to-row');
+  });
+
+  await leg('WBI-6 the unbind control rides the EXPANDED face (④)', async () => {
+    const collapsed = await readCard();
+    const unbindCollapsed = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const btn = card.querySelector('[data-archive]');
+      return {
+        present: !!btn,
+        visible: btn instanceof HTMLElement && btn.offsetParent !== null,
+        title: btn ? btn.getAttribute('title') : '',
+      };
+    });
+    const hintCopy = ZH['social.weixinIlink.archive.hint'] || EN['social.weixinIlink.archive.hint'] || '';
+    check('WBI-6a collapsed: the unbind control exists but is NOT visible (④ — rides the expanded face)',
+      collapsed.bodyHidden && unbindCollapsed.present && !unbindCollapsed.visible
+      && unbindCollapsed.title === hintCopy,
+      `present=${unbindCollapsed.present} visible=${unbindCollapsed.visible} title=${JSON.stringify(unbindCollapsed.title)} (hover copy unchanged — zero new keys)`);
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    const unbindExpanded = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const btn = card.querySelector('[data-archive]');
+      return {
+        visible: btn instanceof HTMLElement && btn.offsetParent !== null,
+        label: btn ? (btn.textContent || '').trim() : '',
+        bodyVisible: card.querySelector('[data-item-body]').offsetParent !== null,
+      };
+    });
+    const actionCopy = ZH['social.weixinIlink.archive.action'] || EN['social.weixinIlink.archive.action'] || '';
+    check('WBI-6b expanded: the unbind control is visible inside the body (existing copy, zero new keys)',
+      unbindExpanded.visible && unbindExpanded.bodyVisible
+      && unbindExpanded.label.includes(actionCopy),
+      `visible=${unbindExpanded.visible} label=${JSON.stringify(unbindExpanded.label)} — 取舍 declared: the row stays single-purpose, so the toggle and the destructive action can never share one click (⑤'s no-ambiguity clause)`);
+    await shot(page, 'wbi-6b-expanded-unbind');
+  });
+
+  await leg('WBI-7 unbind ⇒ default item view; recreate re-begins the QR behind the row', async () => {
+    // The recreate leg must poll a FRESH scan face (WBI-5 consumed the global
+    // `done`), and the real unbind stops the bridge — unregister the mock.
+    resetScanFace();
+    apiState.registered = {};
+    await page.click('[data-archive="weixin-ilink"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const row = card && card.querySelector('[data-item-toggle]');
+      const body = card && card.querySelector('[data-item-body]');
+      const pill = card && card.querySelector('[data-status]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden')
+        && !!pill && pill.getAttribute('data-status') === 'configuredNotLinked';
+    }, undefined, { timeout: 10000 });
+    const unbound = await readCard();
+    // the recreate leg: expanding the archived card shows the fresh QR again
+    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
+    await weixinQrReady();
+    const recreated = await readCard();
+    check('WBI-7 unbind ⇒ back to the default item view (fields kept ⇒ configuredNotLinked); the recreate leg re-begins the QR behind the row',
+      unbound.ariaExpanded === 'false' && unbound.bodyHidden
+      && unbound.pill === 'configuredNotLinked' && unbound.archive === false
+      && recreated.bodyVisible && recreated.scanInline && !recreated.archive,
+      `after unbind: aria=${unbound.ariaExpanded} bodyHidden=${unbound.bodyHidden} pill=${unbound.pill} archive=${unbound.archive}; after re-expand: bodyVisible=${recreated.bodyVisible} scanInline=${recreated.scanInline}`);
+  });
+
+  // ── WBI-8 — 3cuts ③: feishu JOINS the item face ──────────────────────────
+  // Was the both-trees control ("the feishu card keeps the two-face card");
+  // the ruling retires that face, so the anchor flipped and grew legs. RED on
+  // the pre-change tree (no [data-item-toggle="feishu"] there). The created
+  // fixture + a live app id ride the SAME mock: the C1 connection handler is
+  // registered here for this page (min2Suite's shape), reading a mutable so a
+  // future leg could darken it.
+  apiState.channels.feishu = { enabled: true, fields: { ...CREATED_FIXTURE.feishu.fields } };
+  apiState.probes.feishu = JSON.parse(JSON.stringify(CREATED_FIXTURE.feishu.probe));
+  apiState.registered.feishu = true;
+  let feishuLiveAppId = 'cli_live_mock0987654321';
+  await page.route('**/api/social/channels/feishu/connection', (r) => r.fulfill({
+    json: {
+      channel: 'feishu', enabled: true, adapterRegistered: true, connected: true,
+      liveAppId: feishuLiveAppId, liveAppIdFp: 'abcdef', liveAppName: null,
+      storedAppId: feishuLiveAppId, storedAppIdFp: '9999', fingerprintMatch: 'match',
+    },
+  }));
+  await page.reload();
+  await openPanel(page);
+
+  // WBI-8a — default: the feishu card IS one row; the C1 live value sits in
+  // the hidden body, NOT on the collapsed face (实时值面收进展态内). Reads are
+  // structural + visibility, all judged directly (RED on the old tree by
+  // absence of the row).
+  const fdef = await page.evaluate(() => {
+    const card = document.querySelector('.social-card[data-channel="feishu"]');
+    if (!card) return { card: false };
+    const row = card.querySelector('[data-item-toggle]');
+    const body = card.querySelector('[data-item-body]');
+    const live = card.querySelector('[data-live]');
+    const archive = card.querySelector('[data-archive]');
+    return {
+      card: true,
+      itemface: card.classList.contains('social-card-itemface'),
+      row: !!row,
+      rowIsButton: row instanceof HTMLButtonElement,
+      ariaExpanded: row ? row.getAttribute('aria-expanded') : null,
+      bodyPresent: !!body,
+      bodyHidden: body ? body.hasAttribute('hidden') : null,
+      bodyVisible: body instanceof HTMLElement && body.offsetParent !== null,
+      pill: (card.querySelector('[data-status]') || {}).getAttribute
+        ? card.querySelector('[data-status]').getAttribute('data-status') : null,
+      name: ((card.querySelector('.social-card-name') || {}).textContent || '').trim(),
+      chevron: !!card.querySelector('.lucide-chevron-down'),
+      livePresent: !!live,
+      liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+      archivePresent: !!archive,
+      archiveVisible: archive instanceof HTMLElement && archive.offsetParent !== null,
+    };
+  });
+  check('WBI-8a feishu default = item row (aria-expanded=false, body hidden, live value NOT on the collapsed face, no chevron)',
+    fdef.card && fdef.itemface && fdef.row && fdef.rowIsButton && fdef.ariaExpanded === 'false'
+    && fdef.bodyPresent && fdef.bodyHidden === true && !fdef.bodyVisible
+    && fdef.pill === 'connected' && fdef.name.includes('飞书') && !fdef.chevron
+    && fdef.livePresent && !fdef.liveVisible
+    && fdef.archivePresent && !fdef.archiveVisible,
+    `row=${fdef.row} aria=${fdef.ariaExpanded} bodyHidden=${fdef.bodyHidden} bodyVisible=${fdef.bodyVisible} pill=${fdef.pill} name=${JSON.stringify(fdef.name)} chevron=${fdef.chevron} livePresent=${fdef.livePresent} liveVisible=${fdef.liveVisible} archivePresent=${fdef.archivePresent} archiveVisible=${fdef.archiveVisible} (the created face's live value AND unbind control both sit in the hidden body — visible only after a click; pre-change tree: the feishu card keeps the two-face card — no row, live value flat on the face ⇒ RED there)`);
+  await shot(page, 'wbi-8a-feishu-default-row');
+
+  await leg('WBI-8b one click expands the feishu face: the C1 live value shows INSIDE the expanded state', async () => {
+    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const b = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
+      return !!b && !b.hasAttribute('hidden');
+    }, undefined, { timeout: 4000 });
+    const ex = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const row = card.querySelector('[data-item-toggle]');
+      const body = card.querySelector('[data-item-body]');
+      const live = card.querySelector('[data-live]');
+      const archive = card.querySelector('[data-archive]');
+      return {
+        ariaExpanded: row.getAttribute('aria-expanded'),
+        bodyVisible: body instanceof HTMLElement && body.offsetParent !== null,
+        liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+        liveText: live ? (live.innerText || live.textContent || '').trim() : '',
+        archiveVisible: archive instanceof HTMLElement && archive.offsetParent !== null,
+      };
+    });
+    check('WBI-8b feishu expanded: aria=true, the live app value visible inside the body, the unbind control with it',
+      ex.ariaExpanded === 'true' && ex.bodyVisible && ex.liveVisible
+      && ex.liveText.includes('cli_live_mock0987654321') && ex.archiveVisible,
+      `aria=${ex.ariaExpanded} bodyVisible=${ex.bodyVisible} liveVisible=${ex.liveVisible} liveText=${JSON.stringify(ex.liveText)} archiveVisible=${ex.archiveVisible} (实时值在展态内 — the two-face card's created face showed it flat; 3cuts ③ moves it behind the click)`);
+    await shot(page, 'wbi-8b-feishu-expanded-live');
+  });
+
+  await leg('WBI-8c clicking the expanded feishu row collapses it (weixin\'s accordion paradigm)', async () => {
+    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const row = document.querySelector('.social-card[data-channel="feishu"] [data-item-toggle]');
+      const body = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden');
+    }, undefined, { timeout: 4000 });
+    const cl = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const body = card.querySelector('[data-item-body]');
+      const live = card.querySelector('[data-live]');
+      return {
+        ariaExpanded: card.querySelector('[data-item-toggle]').getAttribute('aria-expanded'),
+        bodyHidden: body.hasAttribute('hidden'),
+        liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+      };
+    });
+    check('WBI-8c feishu collapsed: the SAME target toggles both ways, the live value withdraws with the body',
+      cl.ariaExpanded === 'false' && cl.bodyHidden && !cl.liveVisible,
+      `aria=${cl.ariaExpanded} bodyHidden=${cl.bodyHidden} liveVisible=${cl.liveVisible} — no second control, no double-bind (the interaction language is the weixin card's, byte for byte)`);
+  });
+
+  await leg('WBI-8d feishu unbind ⇒ back to the default item view (fields kept ⇒ configuredNotLinked)', async () => {
+    // the real unbind stops the bridge — unregister the mock first (WBI-7's
+    // discipline), so the archived pill reads configuredNotLinked, and give
+    // the recreate leg a FRESH scan face (this page's weixin legs consumed
+    // the shared `done`).
+    apiState.registered = {};
+    resetScanFace();
+    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
+    await page.click('[data-archive="feishu"]', { timeout: 3000 });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const row = card && card.querySelector('[data-item-toggle]');
+      const body = card && card.querySelector('[data-item-body]');
+      const pill = card && card.querySelector('[data-status]');
+      return !!row && row.getAttribute('aria-expanded') === 'false'
+        && !!body && body.hasAttribute('hidden')
+        && !!pill && pill.getAttribute('data-status') === 'configuredNotLinked';
+    }, undefined, { timeout: 10000 });
+    const unbound = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const row = card.querySelector('[data-item-toggle]');
+      const body = card.querySelector('[data-item-body]');
+      return {
+        ariaExpanded: row.getAttribute('aria-expanded'),
+        bodyHidden: body.hasAttribute('hidden'),
+        pill: card.querySelector('[data-status]').getAttribute('data-status'),
+      };
+    });
+    check('WBI-8d feishu unbind ⇒ back to the default item view (fields kept ⇒ configuredNotLinked)',
+      unbound.ariaExpanded === 'false' && unbound.bodyHidden && unbound.pill === 'configuredNotLinked',
+      `aria=${unbound.ariaExpanded} bodyHidden=${unbound.bodyHidden} pill=${unbound.pill} — ruling ①'s fallback pin on the feishu side (the weixin side is WBI-7); the recreate leg re-begins the QR behind the collapsed row`);
+    await shot(page, 'wbi-8d-feishu-unbound-row');
+  });
+
+  await ctx.close();
+}
+
 async function withPanel(browser, base, theme, fn) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
   const page = await ctx.newPage();
@@ -2170,26 +2715,28 @@ async function apiSuite() {
   check('API without a token ⇒ 403', unauth.status === 403, `status=${unauth.status}`);
 }
 
-// ── ILINKRED: wechat-ilink red proof (damage the new card in the SERVED tree
+// ── ILINKRED: wechat-ilink red proof (damage the card in the SERVED tree
 //    ⇒ the SAME probes the production tree pins must fire) ───────────────────
 // Mutation-safe in the same sense as the FIXTURE / RED-FILTER legs above: the
 // damage happens to the bytes as they are served, in memory, and the tree on
 // disk is never touched. The probes below are the served-tree twins of IL1
-// (seal) and IL2 (field mirror); the production readings themselves are taken
-// off the repo module in afterSuite, which is why this leg reads the app's own
-// in-page module instance instead — module and DOM then come from the SAME
-// mutated bytes, so the reading cannot be an artefact of a stale import.
+// (unsealed face) and IL2 (field mirror); the production readings themselves
+// are taken off the repo module in afterSuite, which is why this leg reads the
+// app's own in-page module instance instead — module and DOM then come from the
+// SAME mutated bytes, so the reading cannot be an artefact of a stale import.
 //
-// TWO variants, each with its own judgement:
-//   · SOCIAL_MUTATE=ilink-unseal — the seal is dropped ⇒ IL1's inverse fires
-//     (the visible face is no longer feishu-only).
-//   · SOCIAL_MUTATE=ilink-fields — `baseurl` loses its pattern and
-//     `ilink_bot_id` flips to optional ⇒ IL2's inverse fires (the mirror no
-//     longer reproduces the contract five-tuple), while IL1 stays green — which
-//     is exactly what proves the two probes have separate teeth.
+// TWO variants, each with its own judgement (polarity INVERTED by
+// weixin-scanbind, 2026-10-03: the production card ships UNSEALED):
+//   · SOCIAL_MUTATE=ilink-reseal — the dropped seal is re-applied ⇒ IL1's
+//     inverse fires (the visible face collapses back to feishu-only).
+//   · SOCIAL_MUTATE=ilink-fields — `baseurl` AND `sidecar_url` lose their
+//     pattern (2 hits) and `ilink_bot_id` flips to optional (1 hit) ⇒ IL2's
+//     inverse fires (the mirror no longer reproduces the contract five-tuple),
+//     while IL1 stays green — which is exactly what proves the two probes have
+//     separate teeth.
 async function ilinkRedSuite(browser, base) {
   const variant = process.env.SOCIAL_MUTATE;
-  const expectHits = variant === 'ilink-unseal' ? 1 : 2;
+  const expectHits = variant === 'ilink-reseal' ? 1 : 3;
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   const page = await ctx.newPage();
   apiState.channels = {};
@@ -2215,28 +2762,30 @@ async function ilinkRedSuite(browser, base) {
     };
   }));
   check('IL-R the probe sees a card that IS damaged (this tree is not the production tree)',
-    variant === 'ilink-unseal'
-      ? served.hidden === false
+    variant === 'ilink-reseal'
+      ? served.hidden === true
       : !(served.fields.find((f) => f.key === 'baseurl') || {}).pattern
+        && !(served.fields.find((f) => f.key === 'sidecar_url') || {}).pattern
         && (served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required === false,
-    `hidden=${served.hidden} baseurl.pattern=${String((served.fields.find((f) => f.key === 'baseurl') || {}).pattern)} ilink_bot_id.required=${String((served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required)}`);
-  if (variant === 'ilink-unseal') {
-    // IL1 on the damaged tree: the seal is gone, so the visible face and the
-    // count BOTH move — the production pins (visible = {feishu}, count = 1) are
-    // red here, which is what gives IL1 teeth.
-    check('IL-R red proof: dropping the new card\'s seal unseals it (IL1 fires)',
-      served.hidden === false && served.visible.includes('weixin-ilink') && served.count === 2,
-      `visible=[${served.visible.join(',')}] count=${served.count} rendered=[${served.rendered.join(',')}] — production pins (visible={feishu}, count=1) are RED on this tree`);
+    `hidden=${served.hidden} baseurl.pattern=${String((served.fields.find((f) => f.key === 'baseurl') || {}).pattern)} sidecar_url.pattern=${String((served.fields.find((f) => f.key === 'sidecar_url') || {}).pattern)} ilink_bot_id.required=${String((served.fields.find((f) => f.key === 'ilink_bot_id') || {}).required)}`);
+  if (variant === 'ilink-reseal') {
+    // IL1 on the damaged tree: the seal is back, so the visible face and the
+    // count BOTH collapse — the production pins (visible = [weixin-ilink,
+    // feishu], count = 2) are red here, which is what gives IL1 teeth.
+    check('IL-R red proof: re-applying the seal collapses the visible face (IL1 fires)',
+      served.hidden === true && !served.visible.includes('weixin-ilink') && served.count === 1,
+      `visible=[${served.visible.join(',')}] count=${served.count} rendered=[${served.rendered.join(',')}] — production pins (visible=[weixin-ilink, feishu], count=2) are RED on this tree`);
   } else {
     // IL2 on the damaged tree: the mirror no longer reproduces the contract.
-    // The seal is intact, so IL1 must stay green here — the two probes are
+    // The seal stays dropped, so IL1 must stay green here — the two probes are
     // independent, not two names for one reading.
     const mr = ilinkMirror({ fields: served.fields, hidden: served.hidden });
     check('IL-R red proof: a damaged field mirror no longer matches the contract (IL2 fires)',
       !mr.ok, `mismatch=[${mr.mismatch.join('; ')}] — the production IL2 reading is RED on this tree`);
-    check('IL-R control: IL1\'s seal reading is UNAFFECTED by the field damage',
-      served.hidden === true && served.count === 1 && JSON.stringify(served.visible) === JSON.stringify(['feishu']),
-      `seal intact: hidden=${served.hidden} count=${served.count} visible=[${served.visible.join(',')}]`);
+    check('IL-R control: IL1\'s unsealed-face reading is UNAFFECTED by the field damage',
+      served.hidden === false && served.count === 2
+      && JSON.stringify(served.visible) === JSON.stringify(['weixin-ilink', 'feishu']),
+      `unsealed face intact: hidden=${served.hidden} count=${served.count} visible=[${served.visible.join(',')}]`);
   }
   await shot(page, `ilinkred-${variant}-1440-light`);
   await ctx.close();
@@ -2256,7 +2805,9 @@ try {
   // control. Runs LAST in the AFTER suite so its exact-path routes (`/api/
   // sessions`, `/feishu/default-session`, `/feishu/connection`) cannot leak into
   // the legs above. Wave-2's minimal-face anchors follow it for the same reason.
-  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); }
+  // weixin-binditem's [[bindItemSuite]] runs after THOSE for the same reason in
+  // turn: it mutates the shared apiState scan face, so nothing may inherit it.
+  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); await bindItemSuite(browser, base); }
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));

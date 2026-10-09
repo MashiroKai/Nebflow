@@ -100,7 +100,14 @@ object PromptSections:
      * Pre-rendered mounted-project list body (sorted bullet lines, or the
      * "当前无挂载项目" placeholder). From AgentCore via ProjectRuntimeRegistry.
      */
-    mountedProjectsText: String = ""
+    mountedProjectsText: String = "",
+    /**
+     * Pre-rendered available-executors list body (external-executors 批 #1225,
+     * S14 运行时半)：主 agent 可用集段——数据源 = GET /api/executors 检测面
+     * （ExecutorRegistry.availableLine，adapterReady ＋ detected）。仅根代理
+     * 渲染；非根会话空串 = 段不注入。
+     */
+    executorsText: String = ""
   )
 
   object PromptContext:
@@ -269,14 +276,15 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
   // ============================================================
   // 根代理路由纪律（冷启动路由批 2026-09-17；order 370，条件 isRootAgent）
   //
-  // 存在理由：Nebula 的提示词字面量（AgentLibrary.Seeds.Nebula）里作者六句
+  // 存在理由：Nebula 的提示词字面量（现 = nebflow.core.entity.BuiltinAgents，
+  // 史实 = AgentLibrary.Seeds.Nebula）里作者六句
   // spec 的 ④⑤⑥ 零落地 —— 没有一句规定「第一个动作是路由」、没有一句定义
   // Read 的用途是读回项目返回结果、也没有一句禁止根侧自行探文件系统或由
   // 设备名/主机名推断主机路径。冷启动实例因此以 10×Read 开场（探测 passwd
   // 文件、按主机名猜出的用户名目录、Desktop/Downloads、数据根下的 tasks.json
   // 等），0 次 Mail —— 见诊断件 .nebflow/reports/20260917_coldroute-diag.md。
   //
-  // 落点理由：AgentLibrary.seedDefaults() 对 agents/Nebula/system.md 是
+  // 落点理由：（史实）AgentLibrary.seedDefaults() 对 agents/Nebula/system.md 是
   // add-only（只在文件不存在时补写），既有 home 重启不刷新 ⇒ 改字面量对作者
   // 现有实例无效（诊断件已用隔离实例实测：加标记后重启，标记存活）。本段由
   // **引擎编译**注入、与盘面无关（先例 order 350 / order 360），重启同一 home
@@ -294,7 +302,7 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       |
       |Applies to every task that reaches you, before anything else:
       |
-      |1. **Route first.** Your first tool call routes the task: `Mail(address="project:<name>", message=<task>)` when a matching project already exists, or `ProjectCreate` and then that Mail when none does. No filesystem tool may run before this first routing call.
+      |1. **Route first.** Your first tool call routes the task: `Mail(address="project:<name>", message=<task>)` when a matching project already exists, or `Project` and then that Mail when none does. No filesystem tool may run before this first routing call.
       |2. **`Read` reads back results only** — a result a project or node returned to you. It is not a reconnaissance tool: the "Recon: Read only" line elsewhere in your prompt is not a licence to read in order to look around, and this section governs over that reading.
       |3. **No filesystem exploration.** Never use Read / Glob / Grep / Bash to hunt for a path, a username, a home directory or a workspace.
       |4. **No path inference from identity.** Device names, hostnames and `# Devices` entries are never evidence of a host path: never derive a username or home directory from them, and never go looking through system account files, shell rc files, or the user's Desktop / Downloads folders.
@@ -406,6 +414,24 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       630,
       condition = ctx => ctx.isRootAgent && ctx.mountedProjectsText.nonEmpty,
       renderer = ctx => s"# Mounted Projects\n\n${ctx.mountedProjectsText}"
+    ),
+    // --- 可用执行器段（external-executors 批 #1225，S14 运行时半）──────────
+    // 执行器选择反转后主 agent 的选择输入：可用集 = GET /api/executors 检测面
+    // （快照语义不变；nebflow.json executor 块止读——⑫）。仅根代理注入
+    // （isRootAgent，同 Mounted Projects 判据；分发器/节点会话零面）。
+    // 模型可见文案 ⚠ §16 待过目（最小化模板；终稿归 N3 ⑭）。
+    // 注入时机 = 会话装配快照（systemStable 生命周期重建时刷新；中期变化靠
+    // Delegate 失败面的显式可用集自纠错——fail-closed，零静默回落）。
+    PromptSection.dynamic(
+      640,
+      condition = ctx => ctx.isRootAgent && ctx.executorsText.nonEmpty,
+      renderer = ctx => s"""# Available executors (Delegate)
+
+`Delegate(task, project?, executor?)` runs a background worker. Pick `executor` per task; omit it for the built-in default. Available now:
+
+${ctx.executorsText}
+
+External executors receive the task text only — no platform tools or plugins are injected."""
     ),
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 630 Task List Protocol 段已删除
     // ——内容下迁进 TeamTask 三件 description（双轨期语义，阶段 3 随 team

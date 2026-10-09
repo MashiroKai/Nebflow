@@ -2,7 +2,9 @@
 //（移除手动刷新 + 列表实时自动同步 + 原地状态切换 + nb-toggle 公共组件）。
 // **2026-09-13 无审批批（装了就是信任）重写**；**2026-09-14 插件面板收敛批
 // （作者三裁之批一）再重写**：封禁/解封 UI 全量退场 ⇒ 卡片只剩**一个**控件 =
-// 派发开关（卡片右上、与状态药丸同排，乐观原地翻转）。
+// 派发开关（乐观原地翻转）。**2026-10-07 条目式批（作者 09:40 令）改口径**：
+// 该开关收进**展开详情区**（条目行 accordion 之外，只动层级）⇒ 依赖开关可点 /
+// 可聚焦的用例先展开条目行（`[data-plugin-item]`）。
 // **2026-09-15 UI 文案微批（作者令）**：该开关旁的**可见 label 小字**
 // 「任务分发器可见性」整体删除（toggle 本体自明，只留 aria-label）；默认态药丸
 // 也不再出「已启用」文字（药丸本体 + 状态样式保留；blocked/changed 仍出字）。
@@ -279,9 +281,11 @@ test('② new plugin appears via polling with enter animation — no manual refr
 test('③ dispatch toggle: optimistic in-place flip → registry convergence; zero list redraw, zero reload', async ({ page }) => {
   await loadShell(page);
 
-  // Expand the skill preview first — it must survive the whole toggle path.
-  await page.click('.plugins-card[data-plugin="e2e-hello"] .plugins-comp-toggle');
-  await page.waitForFunction(() => !document.querySelector('[data-expand-for="skills-e2e-hello"]')?.hidden);
+  // Expand the item row first (2026-10-07 条目式批：派发开关收进展开详情区) —
+  // the expansion must survive the whole toggle path.
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
+  await page.waitForFunction(() =>
+    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden);
 
   // Identity markers: card node, list container node, sibling card node.
   await page.evaluate(() => {
@@ -328,7 +332,7 @@ test('③ dispatch toggle: optimistic in-place flip → registry convergence; ze
       siblingIdentity: document.querySelector('.plugins-card[data-plugin="m-mid"]')?.__identityTag === 'sibling-identity',
       childCount: list.childElementCount,
       aria: card.querySelector('[data-plugin-dispatch]')?.getAttribute('aria-checked'),
-      expandStillVisible: !document.querySelector('[data-expand-for="skills-e2e-hello"]')?.hidden,
+      expandStillVisible: !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
       cardCount: document.querySelectorAll('#plugins-content .plugins-card').length,
     };
   });
@@ -339,7 +343,7 @@ test('③ dispatch toggle: optimistic in-place flip → registry convergence; ze
   expect(converged.childCount, 'no nodes added/removed by the toggle').toBe(3);
   expect(converged.cardCount, 'no full-page re-render (same card set)').toBe(3);
   expect(converged.aria, 'converged state ≡ backend (off)').toBe('false');
-  expect(converged.expandStillVisible, 'expanded skill block survived in place').toBe(true);
+  expect(converged.expandStillVisible, 'expanded detail area survived in place').toBe(true);
 
   // off → on via enable (same in-place path).
   await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
@@ -359,6 +363,10 @@ test('③b dispatch rollback: failed POST reverts the optimistic flip + error to
   await loadShell(page);
   failDispatch = true;
 
+  // 2026-10-07 条目式批：开关在展开详情区内 ⇒ 先展开条目行再点开关。
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
+  await page.waitForFunction(() =>
+    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden);
   await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
   // The toast is the definitive rollback signal (raised in the same block as
   // the revert + switch release).
@@ -421,7 +429,11 @@ test('⑤ 封禁态来自引擎侧（API/CLI）⇒ 收敛「已封禁」+ 派发
   expect(before.dispatchDisabled, 'precondition: dispatch usable').toBe(false);
   expect(before.blockLabel, 'precondition: 封禁入口已退场（DOM 零残留）').toBe(null);
 
-  // 面板上唯一的用户动作（派发开关）——wire 只可能是 enable/disable。
+  // 面板上唯一的用户动作（派发开关；2026-10-07 条目式批收在展开详情区内）——
+  // wire 只可能是 enable/disable。
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
+  await page.waitForFunction(() =>
+    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden);
   await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
   await page.waitForFunction(() =>
     document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('aria-checked') === 'false',
@@ -563,6 +575,10 @@ test('④ toggle.js contract: role=switch, aria-checked, Space/Enter keyboard, s
 
   // Keyboard: real input pipeline on the PANEL switch (m-mid's dispatch switch,
   // which starts on because the fixture's dispatch.authorEnabled defaults true).
+  // 2026-10-07 条目式批：开关在展开详情区内 ⇒ 键盘可达前提 = 先展开条目行。
+  await page.click('.plugins-card[data-plugin="m-mid"] [data-plugin-item]');
+  await page.waitForFunction(() =>
+    !document.querySelector('.plugins-card[data-plugin="m-mid"] .plugins-item-detail')?.hidden);
   const swSel = '.plugins-card[data-plugin="m-mid"] [data-plugin-dispatch]';
   await page.focus(swSel);
   const ariaBeforeKeys = await page.getAttribute(swSel, 'aria-checked');

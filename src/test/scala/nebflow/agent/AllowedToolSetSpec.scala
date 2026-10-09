@@ -94,6 +94,10 @@ class AllowedToolSetSpec extends FunSuite:
         flowNodeSession = flowNodeSession
       )
 
+    /** Probe the delegate-session tail（判据 = delegateSession 单独，引擎侧 DelegateSessions.isDelegateSession）。 */
+    def allowedWithDelegateSession(defn: AgentDef, delegateSession: Boolean): Set[String] =
+      buildAllowedToolSet(defn, 0, delegateSession = delegateSession)
+
   end CoreProbe
 
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
@@ -256,10 +260,11 @@ class AllowedToolSetSpec extends FunSuite:
   test("Delegate is Nebula-exclusive; SubTask is the team-member delegation tool"):
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val teamAgent = mkDef("backend", List("Read", "SubTask"))
-    // Delegate 已从 Nebula 固定面退役（史实：授能集合 −1 ⇒ 12，该时点值）：Nebula 不再携带它；
-    // agent.json 声明对 converged 面依旧失效（声明不授能）。该名对一切非 Nebula
-    // 身份仍由 NebulaExclusiveTools 剥离（惰性剥离项，防声明逃逸语义不变）。
-    assert(!CoreProbe.allowed(nebula).contains("Delegate"), "Nebula 不再携带 Delegate（本批退役；变异验红锚：加回固定面即红）")
+    // Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复进 Nebula 固定面
+    // （promptgov 批 2026-09-17 的退役令之授能面部分被取代——史实 −1 ⇒ 12 归档）：
+    // Nebula 在场携带；该名对一切非 Nebula 身份仍由 RootExclusiveTools 剥离
+    // （防声明逃逸语义不变）。
+    assert(CoreProbe.allowed(nebula).contains("Delegate"), "Nebula 在场携带 Delegate（2026-10-03 作者令② Delegate 直接触发 kernel——变异验红锚：摘掉即红）")
     assert(!CoreProbe.allowed(nebula).contains("SubTask"), "Nebula does not need SubTask (unless listed)")
     assert(!CoreProbe.allowed(teamAgent).contains("Delegate"), "non-Nebula never gets Delegate")
     assert(CoreProbe.allowed(teamAgent).contains("SubTask"), "team agent with SubTask listed keeps it")
@@ -334,9 +339,9 @@ class AllowedToolSetSpec extends FunSuite:
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val allowed = CoreProbe.allowed(nebula)
     assert(!allowed.contains("SubTask"), "Nebula (standalone category) unchanged — no SubTask")
-    // Delegate 本批已从 Nebula 固定面退役：即使声明里写着它，机制固定面不含即不授能
-    // —— 断言方向翻转（在场 → 不在场），力度不变；变异验红锚：加回固定面即红。
-    assert(!allowed.contains("Delegate"), "Nebula 不再携带 Delegate（本批退役；变异验红锚：加回固定面即红）")
+    // Delegate 已由 builtin-def 批 2026-10-03 恢复进 Nebula 固定面（史实退役批被
+    // 取代）：断言方向再翻转回「在场」，力度不变；变异验红锚：摘掉即红。
+    assert(allowed.contains("Delegate"), "Nebula 在场携带 Delegate（2026-10-03 作者令②；变异验红锚：摘掉即红）")
 
   // ===== Flow agents: Mail structurally disabled (08-14 P0 root cause) =====
 
@@ -597,7 +602,7 @@ class AllowedToolSetSpec extends FunSuite:
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
       "Mail",
-      "ProjectCreate",
+      "Project", // N2 project-tool 批 2026-10-06 ⑨A 更名（原 ProjectCreate）——件数零变化，纯换名
       "AgentControl", // 编排触发（R2 批：−Task +Mail 史实净 16；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 17 = 2026-09-18 18:18 令 +5；NodeList 摘除）
       "TaskList", // 任务编排（TaskList 批：快变状态出记忆）
       "SendMessage", // 通信（好友功能非旧体系，保留）
@@ -607,7 +612,7 @@ class AllowedToolSetSpec extends FunSuite:
       "Bash",
       "Write",
       "Edit", // 写手三件（2026-09-18 18:18 令恢复：+3）
-      "Card", // 可视化（2026-09-05 解封恢复）
+      // Card 已退役（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）——展示职责并入 Pop
       "Pop",
       "AskUserQuestion", // 用户面
       "Schedule", // 平台（TransferFile 退役 2026-09-14 #145）
@@ -630,8 +635,9 @@ class AllowedToolSetSpec extends FunSuite:
     Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute").foreach { t =>
       assert(!allowed.contains(t), s"退役件（R2 2026-09-12 + 2026-09-05 旧体系）不得出现: $t")
     }
-    // Delegate 本批已从 Nebula 固定面退役（退役件，与 Issue/NodeList 同型反向钉）
-    assert(!allowed.contains("Delegate"), "Nebula 面零 Delegate（本批退役；变异验红锚：加回固定面即红）")
+    // Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复进 Nebula 固定面（退役件
+    // 反向钉被取代——正向钉，与 Bash/Write/Edit 同型）；Issue/NodeList 维持反向钉。
+    assert(allowed.contains("Delegate"), "Nebula 在场携带 Delegate（2026-10-03 作者令②；变异验红锚：摘掉即红）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula 机制集**在场**含 Bash、含
     // Write、含 Edit——取代 2026-09-05 23:34 裁定之 root 面部分（仅 root 面）。
     // 变异验红锚：从机制集再摘任一件即红。
@@ -655,9 +661,9 @@ class AllowedToolSetSpec extends FunSuite:
       !CoreProbe.allowed(mkDef("project-dispatcher", Nil), isFlowNode = true).contains("TaskList"),
       "dispatcher 交付面零 TaskList"
     )
-    // general 固定集不含
-    assert(!AgentCore.GeneralFixedTools.contains("TaskList"), "general 固定集零 TaskList")
-    assert(!CoreProbe.allowed(mkDef("general", Nil), isFlowNode = true).contains("TaskList"), "general 交付面零 TaskList")
+    // 执行 agent 固定集不含（builtin-merge 批：general ⇒ nebflow）
+    assert(!AgentCore.NebflowFixedTools.contains("TaskList"), "nebflow 固定集零 TaskList")
+    assert(!CoreProbe.allowed(mkDef("nebflow", Nil), isFlowNode = true).contains("TaskList"), "nebflow 交付面零 TaskList")
 
   test("TaskList 防声明逃逸：非 Nebula 显式声明与 '*' 通配均剥离（RootExclusiveTools）"):
     assert(AgentCore.RootExclusiveTools.contains("TaskList"), "TaskList 进 RootExclusiveTools（剥离语义单点）")
@@ -727,25 +733,28 @@ class AllowedToolSetSpec extends FunSuite:
       "legacy catch-all（BaseTools）不授 Card"
     )
 
-  test("project-dispatcher 固定工具集（§C.1 + R2 2026-09-12）：Node 三件 + Mail + 读四件，声明无效"):
+  test("project-dispatcher 固定工具集（§C.1 + agentflow 批 2026-10-02）：Node 三件 + AskUserQuestion + 读四件，声明无效"):
     val declared = mkDef("project-dispatcher", List("Write", "Edit", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(declared, isFlowNode = true) // 分发器会话 spawn 即 isFlowNode=true
-    Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash").foreach { t =>
+    Set("NodeList", "NodeEdit", "NodeCancel", "AskUserQuestion", "Read", "Glob", "Grep", "Bash").foreach { t =>
       assert(allowed.contains(t), s"dispatcher fixed tool missing: $t")
     }
     assert(!allowed.contains("Write"), "dispatcher 不给 Write（只分解不产内容，§C.1）")
     assert(!allowed.contains("Edit"), "dispatcher 不给 Edit")
-    assert(!allowed.contains("AskUserQuestion"), "dispatcher 不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）")
-    // R2 断言反转（2026-09-12）：原「dispatcher 无 Mail」作废——R2 分发器面
-    // −NodeMessage +Mail 净 9；NodeMessage 退役后 dispatcher 投节点消息亦走 Mail(node:)。
+    // agentflow 批（2026-10-02）：分发器**现在持** AskUserQuestion（−Mail
+    // +AskUserQuestion，挂载点在 buildAllowedToolSet 末段按引擎侧身份 isDispatcher
+    // 追加）。§C.3「单次会话不阻塞等用户」的旧理由已不成立——卡答是本批的语义面。
+    // R2 断言反转（2026-09-12）：原「dispatcher 无 Mail」作废；agentflow 批再反转
+    // ——分发器面**零 Mail**（补件腿改走 NodeEdit(task=…) 整替）。
+    assert(!allowed.contains("Mail"), "agentflow 批: 分发器面零 Mail（−Mail，补件改走 NodeEdit(task=…) 整替）")
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，dispatcher 面零 NodeMessage")
     assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
-  test("general 固定 7 件（§C.4/§C.5；2026-09-10 作者裁定摘 Pop）——BaseTools + AskUserQuestion"):
-    val bare = mkDef("general", Nil)
-    val allowed = CoreProbe.allowed(bare, isFlowNode = true) // general 节点会话 isFlowNode=true
-    val seven = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion")
-    seven.foreach(t => assert(allowed.contains(t), s"general fixed tool missing: $t"))
+  test("nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继；N1 复名批随名）——BaseTools + AskUserQuestion + Subagent + AgentFlow"):
+    val bare = mkDef("nebflow", Nil)
+    val allowed = CoreProbe.allowed(bare, isFlowNode = true)
+    val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Subagent", "AgentFlow")
+    nine.foreach(t => assert(allowed.contains(t), s"nebflow fixed tool missing: $t"))
     // 钉死断言（2026-09-08 作者修订，D6 批D1 G6/G7）：general 默认面含回
     // AskUserQuestion——直达作者方案（节点提问经 InteractionHub 直达 Nebula
     // 窗口；分发器监督=node-ask 留痕审计）——变异验红锚
@@ -753,25 +762,40 @@ class AllowedToolSetSpec extends FunSuite:
     // 钉死断言（2026-09-10 作者裁定）：Pop 不在 general 固定面——节点交付物沿
     // out 边交链末端/Nebula，由 Nebula 决定是否展示——变异验红锚（加回即红）
     assert(!allowed.contains("Pop"), "general 节点不得持有 Pop（2026-09-10 裁定：Pop 收归 Nebula 专属）")
-    assert(!AgentCore.GeneralFixedTools.contains("Pop"), "GeneralFixedTools 零 Pop（定义层摘除）")
+    assert(!AgentCore.NebflowFixedTools.contains("Pop"), "NebflowFixedTools 零 Pop（定义层摘除；builtin-merge 批承继）")
     // 明保留（R2 细则 2026-09-12）：节点面 9 件不变、零 Mail——节点无消息工具，
     // 结果沿 out 边投递、终态走 node_report。本条**非** R2 反转对象（原「general 无
     // Mail」理由换成 R2「节点面不挂 Mail」细则，结论一致、理由更新）。
     assert(!allowed.contains("Mail"), "R2: general（节点面）不挂 Mail —— 节点无消息工具")
     assert(!allowed.contains("MultiEdit"), "general 无 MultiEdit（已从 ToolRegistry 删除）")
     // 声明无效（机制固定零配置）
-    val sneaky = mkDef("general", List("WebSearch", "Delegate"))
+    val sneaky = mkDef("nebflow", List("WebSearch", "Delegate", "Pop"))
     val sneakyAllowed = CoreProbe.allowed(sneaky)
-    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate"), "general: tools 声明整体失效")
+    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate") && !sneakyAllowed.contains("Pop") && !sneakyAllowed.contains("ChainWrite"), "nebflow: tools 声明整体失效（机制固定零配置；豁免恰 Subagent/AgentFlow 两件由静态集授能，ChainWrite 只在 delegateSession 尾段授能）")
     // Nebula / dispatcher 面不受影响（对照钉死）
     assert(
       AgentCore.fixedToolsFor(mkDef("Nebula", Nil)).contains("AskUserQuestion"),
       "Nebula 面保留 AskUserQuestion（从未摘除）"
     )
     assert(
-      !AgentCore.fixedToolsFor(mkDef("project-dispatcher", Nil)).contains("AskUserQuestion"),
-      "dispatcher 面照旧无 AskUserQuestion（§C.3：单次会话不阻塞等用户）"
+      AgentCore.fixedToolsFor(mkDef("project-dispatcher", Nil)).contains("AskUserQuestion"),
+      "dispatcher 面现持 AskUserQuestion（agentflow 批 2026-10-02：−Mail +AskUserQuestion）"
     )
+
+  // N1 刀3（S6=C · v3 §7.2 ①授权面扩＝创建者 delegate）：delegateSession 尾段
+  // 挂 Mail——地址面经 MailTool.layeredRoute 收窄为自己作用域的 `node:<id|name>`
+  // 腿（SenderRole.Delegate 单点）；挂载面授权 + 工具内地址面分层 = 双保险
+  // （TaskBoard/node_report 同款纪律）。工具内地址面在 MailNodeSubAddressSpec
+  // M1..M8 验收，本条钉挂载面（零 over-grant）。
+  test("N1 刀3 S6=C: the delegateSession tail carries Mail alongside the 刀2 delegate face; the default face gains nothing"):
+    val probe = mkDef("nebflow", Nil)
+    val withTail = CoreProbe.allowedWithDelegateSession(probe, delegateSession = true)
+    val plain = CoreProbe.allowedWithDelegateSession(probe, delegateSession = false)
+    Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite", "delegate_report").foreach { t =>
+      assert(withTail.contains(t), s"delegate face keeps the 刀2 grant: $t (got: ${withTail.toList.sorted})")
+    }
+    assert(withTail.contains("Mail"), "S6=C: the delegate face carries Mail (the node: sub-address authorization)")
+    assert(!plain.contains("Mail"), "non-delegate nebflow sessions gain nothing (no over-grant)")
 
   test("the six remain mechanism-fixed for non-converged agents — cannot be configured away"):
     // 阶段 2c 只收敛 Nebula/dispatcher/general 三定义；team/flow/普通 standalone

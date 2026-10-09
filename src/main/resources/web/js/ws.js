@@ -86,9 +86,12 @@ function convertAgentEvent(msg) {
     case 'agentStart':
       return { type: 'agentStart', sessionId: sid, agentId: msg.agentId || msg.name, name: msg.name };
     case 'agentTextDelta':
-      return { type: 'textDelta', sessionId: sid, delta: msg.delta || '' };
+      // B2 (RC-2): the block/round identity of the frame travels with the delta
+      // so sub-agent popups get the same deterministic segment boundary the
+      // primary window gets. `undefined` when the backend is older ⇒ unchanged.
+      return { type: 'textDelta', sessionId: sid, delta: msg.delta || '', round: msg.round, block: msg.block };
     case 'agentThinking':
-      return { type: 'thinkingDelta', sessionId: sid, delta: msg.delta || '' };
+      return { type: 'thinkingDelta', sessionId: sid, delta: msg.delta || '', round: msg.round, block: msg.block };
     case 'agentToolCallDetected':
       return { type: 'toolCallDetected', sessionId: sid, name: msg.name || '' };
     case 'agentToolStart':
@@ -133,7 +136,7 @@ const handlers = {};
 // and contributed to CSS-spinner jank (the compositor can't paint frames while
 // the main thread is busy).
 const GLOBAL_MSG_TYPES = new Set([
-  'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
+  'sessionList', 'serverConfig', 'toolsList', 'agentList', 'agentSessionList',
   'agentSystemPrompt', 'agentSystemPromptSaved',
   'configData', 'configUpdated', 'configUpdateFailed',
   'toolResultTtl', 'toolResultTtlSaved', 'modelOptions',
@@ -169,11 +172,13 @@ const GLOBAL_MSG_TYPES = new Set([
   // Project 域**项目级**事件（tabrealtime 批 2026-09-17，作者裁定 (b)/(e)）：
   //   projectCreated  {type,project,row{name,workspace,agentFile,description,createdAt},mounted}
   //   projectArchived {type,project,archivedAt}
-  // 同族：无 sessionId 的全应用广播（后端 emit 点 = NodeTools 创建腿 / RestApiRoutes
-  // 归档腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL——否则 :485-494 会把无
+  //   projectUnmounted {type,project,unmountedAt}   （N2 project-tool 批 2026-10-06：
+  //     Project 工具 action="unmount" 成功腿；载荷镜像 archived 三键形状）
+  // 同族：无 sessionId 的全应用广播（后端 emit 点 = Project 创建腿 / 归档 REST 腿 /
+  // unmount 工具腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL——否则 :485-494 会把无
   // sessionId 的非 GLOBAL 帧当会话内事件 ⇒ setActiveView(primary)，把用户正在看的
   // 会话/面板视图抢走。
-  'projectCreated', 'projectArchived',
+  'projectCreated', 'projectArchived', 'projectUnmounted',
   // 应用内工作区浏览器（workspace-picker Route C 兜底）响应帧：无 sessionId 的
   // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
   // TERMINAL 会把 activeView 换成 primary。
@@ -542,6 +547,9 @@ export function connect() {
     sendWs({type: 'memoryStatus'});
     sendWs({type: 'getLlmLog'});
     sendWs({type: 'getConfig'});
+    // perf-481 A4: the tool-description list (~93.5 KB) no longer rides every
+    // serverConfig frame — it is fetched once per connection instead.
+    sendWs({type: 'getToolsList'});
     sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
     // freezetimeout B2: 新连接从零计 miss；先清残留 interval 再武装 —— forceReconnect
     // 会置空 onclose 后 close()（不触发 onclose ⇒ 走不到下面的 clearInterval），若不在

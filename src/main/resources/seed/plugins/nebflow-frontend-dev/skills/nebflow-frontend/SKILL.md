@@ -4,7 +4,6 @@ description: Nebflow 客户端前端开发域知识——web/ 无构建 vanilla 
 when_to_use: Nebflow 客户端 UI 实现（布局/组件/交互/主题）。与同插件 visual-style（用户裁定硬规则，最高优先级）和 nebflow-qa 插件的 frontend-verification（自验方法论）分层配合：本 skill 管结构与实现规范，visual-style 管视觉裁定，frontend-verification 管怎么自验。
 language: zh
 status: active
-last_verified: 2026-09-03
 ---
 
 # Nebflow Frontend — 客户端前端开发域知识

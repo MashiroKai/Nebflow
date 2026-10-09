@@ -20,7 +20,8 @@ export function renderAskBubble(question) {
   row.appendChild(bubble);
   // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles too.
   row.appendChild(createMsgFooterBadge(Date.now(), question));
-  chat.appendChild(row);
+  // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此。
+  chat.append(row);
   smartScroll();
 }
 
@@ -40,6 +41,7 @@ export function renderSkillBubble(skillName, text) {
   row.appendChild(bubble);
   // v1.2 unified footer (2026-09-06 补齐批): skill bubbles too.
   row.appendChild(createMsgFooterBadge(Date.now(), text));
-  chat.appendChild(row);
+  // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此。
+  chat.append(row);
   smartScroll();
 }

@@ -81,14 +81,14 @@ object GlobTool extends Tool:
     val rawPattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
     // 阶段 2a 沙箱（§A.2/§A.8-8）：相对路径与缺省根按**会话根**解析——修掉默认根
-    // =JVM user.dir 的现状。[沙箱拆围栏批 S1/S2] 判据改取 SandboxPolicy.pathRoot
+    // =JVM user.dir 的现状。判据改取 SandboxPolicy.pathRoot
     // （会话根信号），不再取 sandbox.enabled（围栏总闸）：闸门退役或回退开关拨动
     // 都不得把缺省根打回 user.dir（design §4.4 S2 验收）。无会话根时保持旧行为
     // = user.dir。
     val workDir = System.getProperty("user.dir")
     val baseDir: os.Path = ToolPathUtil.searchBaseDir(ctx.sandbox, workDir)
 
-    // head_limit（20260909 Glob 修复批）：缺省 MAX_RESULTS；非法值给可行动文案
+    // head_limit：缺省 MAX_RESULTS；非法值给可行动文案
     val headLimit: Either[ToolError, Int] =
       input("head_limit").flatMap(_.asNumber).flatMap(_.toInt) match // JsonNumber.toInt: Option[Int]（可溢出）
         case None => Right(MAX_RESULTS)
@@ -114,15 +114,15 @@ object GlobTool extends Tool:
       else nebflow.shared.PathUtil.resolvePath(p, baseDir)
     }
     val workDirPath = baseDir
-    // pattern 静态前缀 → 搜索根（20260903 Glob 修复）：静态前缀（首个 glob 字符
+    // pattern 静态前缀 → 搜索根：静态前缀（首个 glob 字符
     // 前的目录部分，如 "src/main/resources/web/js"）含 "/" 时旧实现走 os-lib 单段
     // `/` 拼接 → InvalidSegment 崩（description 鼓励的 "src/**/*.ts" 写法自身必崩，
     // 当日 5 崩实锤）→ 改 os.RelPath 多段构造（os-lib 单段 `/` 拼接对多段相对
     // 路径必崩；同款多段构造先例见 PathUtil.resolvePath:99）。注意：os.RelPath 把 ".." 解析为 Up 段（允许逃逸，
     // 中段 ".." 被 NIO normalize 静默折叠），与旧行为（拒）不符 → 构造前显式拒绝
     // ".." 段并给可行动文案。"．" 段由 RelPath 归一（放宽无害——搜索根仍过
-    // §A.3 沙箱读闸门 canonicalize + readableRoots contain，2026-09-06 读宽批
-    // 后 contain 恒真、负向规则仍生效）。
+    // §A.3 沙箱读闸门 canonicalize + readableRoots contain（读侧放宽后
+    // 恒真、负向规则仍生效）。
     val searchRootEither: Either[ToolError, os.Path] =
       if baseFromPattern.startsWith("/") || (baseFromPattern.length >= 2 && baseFromPattern.charAt(1) == ':') then
         Right(os.Path(baseFromPattern))
@@ -147,13 +147,13 @@ object GlobTool extends Tool:
               )
       else Right(explicitPath.getOrElse(workDirPath))
 
-    // dot 显式判定（20260909 Glob 修复批）：用户 pattern 任一路径段以 "." 开头
+    // dot 显式判定：用户 pattern 任一路径段以 "." 开头
     // （如 ".git"、"*/.git"、".nebflow/*"）= 显式点名 dot 路径 → 放行隐藏文件；
     // 否则默认隐藏（负向 glob 实现，防误扫 .git/node_modules 内部）。
     val dotExplicit = rawPattern.replace('\\', '/').split('/').exists(_.startsWith("."))
 
-    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain（2026-09-06 读宽
-    // 批后 contain 恒真，检查链保留）；rg 从 canonical 根起跑（检查对象=执行
+    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain（读侧放宽后
+    // 恒真，检查链保留）；rg 从 canonical 根起跑（检查对象=执行
     // 对象）。rg 默认不跟随 symlink 下钻（无 --follow），遍历逃逸由该默认承担
     // （§A.8-4）。
     searchRootEither.flatMap { searchRootPath =>
@@ -161,9 +161,8 @@ object GlobTool extends Tool:
         FileSandbox.checkReadRoot(ctx, searchRootPath) match
           case Left(err) => Left(err)
           case Right(canonicalRoot) =>
-            // [沙箱拆围栏批 S1，R3=c1 读侧放开] agents/<agent>/memory.md 的**遍历
-            // 排除已退役**（原为 rg `--glob !memory.md`；其定义壳已由定义清理批
-            // v81 删除）：读侧不留假闸（排除拦不住 Bash cat，保留只制造「有保护」
+            // agents/<agent>/memory.md 的**遍历
+            // 排除已退役**（原为 rg `--glob !memory.md`；其定义壳已删除）：读侧不留假闸（排除拦不住 Bash cat，保留只制造「有保护」
             // 的错觉）。写侧例外仍由 FileSandbox.checkWrite 独立承载。
             runGlob(relPattern, canonicalRoot, workDir, Nil, dotExplicit, limit)
       }
@@ -178,12 +177,12 @@ object GlobTool extends Tool:
     dotExplicit: Boolean = false,
     headLimit: Int = MAX_RESULTS
   ): Either[ToolError, String] =
-    // relPattern → rg glob 映射（20260909 Glob 修复批）。rg 走 cwd 相对搜索
+    // relPattern → rg glob 映射。rg 走 cwd 相对搜索
     // （搜索根为进程 cwd、搜 "."，见下），gitignore 语义锚定搜索根：
     //  - 含 "/"：原样（"*/.git"、"中文*/**"、"**/*.ts" 语义即直觉）。
     //  - 无 "/" 且含 glob 字符：前导 "/" 锚定搜索根 → 单层语义。无锚定时 rg 的
     //    basename 语义会递归全树——旧实现 "*" 实为全量列举，大目录直接撞
-    //    500KB 输出上限（defect ① 根因）。
+    //    500KB 输出上限。
     //  - 无 "/" 纯字面名（如 ".git"）：basename 任意层匹配（find -name 语义，
     //    供「按名找文件」直觉；验收：".git" 命中 worktree 指针文件）。
     val rgGlob =
@@ -201,7 +200,7 @@ object GlobTool extends Tool:
       "--no-ignore",
       "--no-messages"
     )
-    // dot 默认隐藏（20260909）：rg 在显式 --glob 白名单存在时会跳过自身 hidden
+    // dot 默认隐藏：rg 在显式 --glob 白名单存在时会跳过自身 hidden
     // 过滤（rg 15 实证），故负向 glob 实现；"!.*/" 剪枝隐藏目录（.git/.svn/.hg
     // 等 dot 目录一并覆盖——旧五条 VCS 专用排除被替代）。pattern 显式含 "." 段
     // 时不加（显式点名放行，defect ③ 的 "*/.git" 场景）。
@@ -243,7 +242,7 @@ object GlobTool extends Tool:
           val shown = results.length
           val totalLines = lines.length
           val output = results.mkString("\n")
-          // 截断注记（20260909 defect ②）：超限不再硬报错——rg 500KB 截断时总数
+          // 截断注记：超限不再硬报错——rg 500KB 截断时总数
           // 未知如实说明；head_limit 截断时给精确总数与分页指引。
           val note =
             if rgTruncated then

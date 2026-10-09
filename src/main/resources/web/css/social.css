@@ -90,12 +90,15 @@
 }
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
-.social-card-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+/* weixin-scanbind (2026-10-03, 极简 pass): the rhythm loosens one step — the
+   list breathes at 10px, the cards carry 14px air — all values stay in the
+   existing token/length family (no new colour, radius or breakpoint). */
+.social-card-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .social-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: 10px;
+  padding: 14px 16px;
   border-radius: 14px;
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
@@ -132,12 +135,13 @@
   background: color-mix(in srgb, var(--color-frame-text) 10%, transparent);
   border-color: color-mix(in srgb, var(--color-frame-text) 20%, transparent);
 }
-/* 配置有误 — the only coloured state (--color-danger: the token with a
-   contrast ruling and a dark-theme counterpart). */
+/* 配置有误 — pill 本身就是图案载体（红 10% 底＋红 25% 边保留），字转中性
+   （--status-word），语义由词前 triangle-alert 图标（socialPanel.js 注入）承载。
+   （ui-status-redesign 批，分叉①=A；此前整 pill 红字。） */
 .social-status-pill[data-status="configInvalid"] {
-  color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-  border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
 }
 /* Phase-2 reserved: unreachable while `adapterRegistered` is false. Keeping the
    rule here documents the intent without creating any render point. */
@@ -148,12 +152,16 @@
 }
 /* feishu-panel (contract C2): fingerprint mismatch — the running bridge holds
    a different app than the stored credential. Same danger family as the
-   invalid-configuration state; no new colour token. */
+   invalid-configuration state; no new colour token. ui-status-redesign：字转
+   中性＋词前 unplug 图标（断链语义），红底红边 = 图案载体保留。 */
 .social-status-pill[data-status="failed"] {
-  color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-  border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
 }
+/* 危险 pill 词前图标（S13）：11px，与词距 3px，红由图标、字归中性。 */
+.social-status-pill[data-status="configInvalid"] .st-ic,
+.social-status-pill[data-status="failed"] .st-ic { width: 11px; height: 11px; margin-right: 3px; }
 
 .social-card-desc {
   font-size: 11px;
@@ -191,13 +199,15 @@
 }
 .social-secret-state { font-size: 10px; color: var(--color-frame-text-dim); }
 
-/* Wrong configuration is the ONLY state that gets the warning colour (W9). */
+/* Wrong configuration hint (W9) — ui-status-redesign：11px 通知句转中性字，
+   语义红由句首 triangle-alert 图标承载（.social-card-hint .st-ic）。 */
 .social-card-hint {
   font-size: 11px;
   line-height: 1.45;
-  color: var(--color-danger);
+  color: var(--status-word);
   overflow-wrap: anywhere;
 }
+.social-card-hint .st-ic { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
 .social-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .social-save-state { font-size: 10px; color: var(--color-frame-text-muted); }
 
@@ -228,9 +238,12 @@
        itself is gone with the fingerprint row, so the selector could never match
        again. The mismatch reading still reaches the user via the status pill. */
 
-/* Archive: the only off path (enabled=false), so it carries the danger family
-   while staying a plain glass button otherwise. */
-.social-btn-danger { color: var(--color-danger); }
+/* Archive: the only off path (enabled=false). ui-status-redesign（S10）：常显
+   危险文字项字转常规色，危险语义由行首 unplug 图标（红）承载；hover 时刻整键
+   （字＋图标）转红 = 交互红保留（铁律三）。 */
+.social-btn-danger { color: var(--color-frame-text); }
+.social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: 5px; }
+.social-btn-danger:hover, .social-btn-danger:hover .st-ic { color: var(--status-error-icon); }
 /* 🔴 socpanel-min wave-2: `.social-archive-hint` REMOVED — 0 emitters. The
    hint's permanent line went away and its copy (social.feishu.archive.hint)
    moved onto the unbind button's `title`, i.e. hover-at-intent, so no rule is
@@ -273,21 +286,21 @@
   .social-card-actions > button { flex: 1 1 auto; }
 }
 
-/* ── In-card scan block (social-fix, 2026-09-28) ───────────────────────────
-   The "scan to create" main path lives INSIDE the feishu card — one view
-   layer with the rest of the configuration, no sub-dialog, no overlay face.
-   Same visual family as the .social-live block: etched ground + hairline
-   border, existing tokens only (the former sub-dialog's own glass-panel,
-   head/title/body rules retire with it). */
+/* ── In-card scan block (social-fix, 2026-09-28; 极简 pass, weixin-scanbind
+   2026-10-03) ──────────────────────────────────────────────────────────────
+   The "scan to create" main path lives INSIDE each scanBind card — one view
+   layer with the rest of the configuration. 极简 ruling: the block itself is
+   FLAT (no box, no etched ground, no border) — the QR canvas is the only
+   visual anchor, lifted by the same soft shadow family the shell uses; the
+   status line reads muted so the code speaks first. Existing tokens only
+   (the former sub-dialog's own glass-panel, head/title/body rules retire
+   with it). */
 .social-scan-inline {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 12px 10px;
-  border: 1px solid var(--glass-border);
-  border-radius: 8px;
-  background: var(--glass-etched-bg);
+  gap: 12px;
+  padding: 6px 0 2px;
   min-width: 0;
 }
 .social-scan-qr {
@@ -301,6 +314,7 @@
   width: 200px;
   height: 200px;
   border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 18px rgba(0, 0, 0, 0.1);
 }
 /* Vendor-missing fallback: the verification URL itself, kept breakable. */
 .social-scan-fallback { font-size: 11px; color: var(--color-frame-text-muted); text-align: center; }
@@ -320,16 +334,71 @@
 .social-scan-status {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--color-frame-text);
+  color: var(--color-frame-text-muted);
   text-align: center;
   min-height: 18px;
   overflow-wrap: anywhere;
 }
+/* socialux-scanbind (author screenshot ruling 2026-10-06): the card's hint
+   line rides the SAME axis as the status line above it — the hint CONTAINER
+   gets the flex centering, icon + word centered as ONE unit (not a text-align
+   patch on the text node). Scoped to the scanBind card only: plain cards keep
+   their flush-left hint (path copy reads better left). Two companions are
+   mandatory: [hidden] needs its own display:none — display:flex would outrank
+   the UA's hidden style (the exact trap the remote-section hide hit, see the
+   index.html socpanel comment) — and the icon needs flex:none so a wrapping
+   hint can never shrink it. */
+.social-card-scanbind .social-card-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.social-card-scanbind .social-card-hint .st-ic { flex: none; }
+.social-card-scanbind .social-card-hint[hidden] { display: none; }
 /* 🔴 socpanel-min wave-2 (author ruling 2026-10-01): `.social-scan-manual` and
    its `:hover` state REMOVED — P2 of the audit, emitter grep = 0 (the manual
    fill-in control was already retired by social-fix, which left this rule
    behind). Note the spec's `[data-scan-manual]` reads an ATTRIBUTE, not this
    class, so its "no manual control" anchors are unaffected. */
+/* ── weixin-binditem (author order 2026-10-07 09:22): the weixin-ilink card
+   renders as an ITEM ROW (accordion). The row IS the card head (it keeps the
+   .social-card-head class for the W4 judging surface) as a real <button> —
+   one tab stop, Enter/Space toggles; the button reset below is what lets the
+   head styles apply unchanged. The working face lives in `[data-item-body]`,
+   withdrawn by `hidden` when collapsed — hidden, NOT deleted (the scan nodes
+   must stay in the DOM: the scan flow re-queries and writes them per tick).
+   The companion `[hidden] { display: none }` rule is the same trap-guard the
+   remote section carries (#social-section-remote above): if a future edit
+   ever gives the body an author `display`, the bare attribute would be
+   silently defeated. 🔴 weixin-binditem-3cuts (author order 2026-10-07,
+   ruling ②): `.social-item-chevron` and its aria-expanded rotate rule are
+   REMOVED with the node — the whole row is the click target, so the direction
+   hint is noise; the expand/collapse state reads through aria-expanded alone
+   (0 emitters left: the only emitter was itemCardHTML's row icon). The rules
+   stay restorable from git history. Existing tokens only — the focus ring
+   reuses the .social-input focus family. */
+.social-item-row {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.social-item-row:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.4);
+  outline-offset: 2px;
+}
+.social-item-body[hidden] { display: none; }
+
 @media (max-width: 480px) {
   .social-scan-canvas { width: 168px; height: 168px; }
 }
+

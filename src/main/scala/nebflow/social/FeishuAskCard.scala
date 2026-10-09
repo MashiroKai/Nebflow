@@ -57,6 +57,11 @@ object FeishuAskCard:
   val ToastAlreadyAnswered = "这个问题已经作答过了"
   val ToastCannotHandle = "这个操作无法处理"
 
+  /** The answered-state line prefix (askuser-remote P1, NEW §16 string — the
+    * A4 ruling: the callback response carries the updated card, where each
+    * answered question's buttons are replaced by one line 「已选：X」). */
+  val AnsweredPrefix = "已选："
+
   // ───────────────────────── local limits (A2) ─────────────────────────
 
   /** Local caps, deliberately conservative and NOT a claim about any remote
@@ -84,29 +89,79 @@ object FeishuAskCard:
     else if fitsOneCard(views) then List(oneCard(views, requestId))
     else views.map(v => oneCard(List(v), requestId))
 
-  private def oneCard(views: List[PromptView], requestId: String): String =
+  /** askuser-remote P1 (A6): the send face WITH attachment path lines — the
+    * same cards [[render]] builds, plus one attachment block per card. A
+    * separate entry (not a new parameter on the frozen [[render]]): the
+    * pre-P1 callers and their byte-contract stay untouched. */
+  def renderFull(views: List[PromptView], requestId: String, attachments: List[String]): List[String] =
+    if views.isEmpty then Nil
+    else if fitsOneCard(views) then List(oneCard(views, requestId, attachments = attachments))
+    else views.map(v => oneCard(List(v), requestId, attachments = attachments))
+
+  /** askuser-remote P1 (A4): the card with every answered question's buttons
+    * replaced by one 「已选：X」 line — the body the card callback RESPONSE
+    * returns, so the clicker's card flips to the answered state inside the
+    * 3-second callback window (方式一：立即更新), zero extra API calls.
+    * `answered` maps question index → the DISPLAY string (the chosen label,
+    * or the typed/fallback text for an Other answer). */
+  def answeredCard(
+    views: List[PromptView],
+    requestId: String,
+    answered: Map[Int, String],
+    attachments: List[String] = Nil
+  ): String =
+    oneCard(views, requestId, attachments = attachments, answered = answered)
+
+  private def oneCard(
+    views: List[PromptView],
+    requestId: String,
+    attachments: List[String] = Nil,
+    answered: Map[Int, String] = Map.empty
+  ): String =
     val elements = views.flatMap { v =>
       val head = if views.sizeIs > 1 then questionCopy(v.idx, views.size) + "\n" + v.question else v.question
       val section = Json.obj(
         "tag" -> Json.fromString("div"),
         "text" -> Json.obj("tag" -> Json.fromString("lark_md"), "content" -> Json.fromString(head))
       )
-      val buttons = v.options.zipWithIndex.map { (o, oi) => button(o.label, payload(requestId, v.idx, oi)) }
-      val other = if v.allowOther then List(button(OtherCopy, payload(requestId, v.idx, AskPromptCodec.OtherOptionIndex))) else Nil
-      val action = Json.obj(
-        "tag" -> Json.fromString("action"),
-        "actions" -> Json.arr((buttons ++ other)*)
-      )
-      List(section, action)
+      answered.get(v.idx) match
+        case Some(display) =>
+          // A4: this question is done — its answer replaces the buttons.
+          List(section, answeredLine(display))
+        case None =>
+          val buttons = v.options.zipWithIndex.map { (o, oi) => button(o.label, payload(requestId, v.idx, oi)) }
+          val other = if v.allowOther then List(button(OtherCopy, payload(requestId, v.idx, AskPromptCodec.OtherOptionIndex))) else Nil
+          val action = Json.obj(
+            "tag" -> Json.fromString("action"),
+            "actions" -> Json.arr((buttons ++ other)*)
+          )
+          List(section, action)
     }
+    val attachBlock =
+      if attachments.isEmpty then Nil
+      else List(Json.obj(
+        "tag" -> Json.fromString("div"),
+        "text" -> Json.obj(
+          "tag" -> Json.fromString("lark_md"),
+          "content" -> Json.fromString(AskPromptCodec.attachmentLines(attachments)))
+      ))
     Json.obj(
       "config" -> Json.obj("wide_screen_mode" -> Json.fromBoolean(true)),
       "header" -> Json.obj(
         "template" -> Json.fromString("blue"),
         "title" -> Json.obj("tag" -> Json.fromString("plain_text"), "content" -> Json.fromString(TitleCopy))
       ),
-      "elements" -> Json.arr(elements*)
+      "elements" -> Json.arr((elements ++ attachBlock)*)
     ).noSpaces
+
+  /** The one-line answered-state element (A4). */
+  private def answeredLine(display: String): Json =
+    Json.obj(
+      "tag" -> Json.fromString("div"),
+      "text" -> Json.obj(
+        "tag" -> Json.fromString("lark_md"),
+        "content" -> Json.fromString(AnsweredPrefix + display))
+    )
 
   private def button(label: String, value: Json): Json =
     Json.obj(

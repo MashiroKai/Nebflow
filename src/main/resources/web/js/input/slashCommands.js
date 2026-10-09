@@ -106,6 +106,10 @@ registerCommand({
   },
 });
 
+// /agents retired (ui-train-threefix A, 2026-10-07): the executor picker entry
+// left the user faces (settings section + this command + its locale keys).
+// ExecutorRegistry/detect (scala) untouched.
+
 /** Register skill commands from the server-provided skill list. */
 export function registerSkillCommands(skills) {
   // Remove previously registered skill commands

@@ -12,24 +12,24 @@ import java.time.format.DateTimeFormatter
 
 /**
  * SendMessage tool — A2A 一期 agent 发消息能力（friends-messaging-arch §7.1
- * 冻结设计 + 20260828 方向补充 spec §2），2026-09-14 附件腿批扩为**统一目标模型**
- * （作者 2026-09-11 方案候选 (a) + 09-13 新数裁定）：
+ * 冻结设计 + 方向补充 spec §2），附件腿批扩为**统一目标模型**
+ * （方案候选 (a) + 新数裁定）：
  *
  *   - `to = <好友解析串>` 或 `friend:<…>`：以用户身份发给 NebLink 好友（收方看到的
- *     是好友本人，冻结语义）。**文本 + 附件**（4b 腿 A，2026-09-14）：附件走服务端
+ *     是好友本人，冻结语义）。**文本 + 附件**（4b 腿 A）：附件走服务端
  *     存储转发（E1 建会话 → E2 分块上传 → 随消息发 id 列表），下载由对端经**应用内
- *     鉴权路由**取字节（裁定②）。服务端能力**无自报字段**（裁定④）⇒ 上传前做一次
+ *     鉴权路由**取字节。服务端能力**无自报字段** ⇒ 上传前做一次
  *     路由存在性探测（A-5 三态）：不支持 / 不可判 ⇒ **明确拒绝**并回执原因，
  *     附件既不上传也不静默丢弃（§5.1-C 静默不达是本条唯一禁形）。
  *   - `to = device:<deviceName|deviceId>`：发给**同账号**的另一台设备（G5：设备面
- *     「文本+附件」消息面既有，本批工具化）。字节走 Dropbox 分块通道（P2P 主腿 +
+ *     「文本+附件」消息面既有，此处工具化）。字节走 Dropbox 分块通道（P2P 主腿 +
  *     relay 兜底、每块校验、整件双侧 sha256、断点续传；单件 ≤1,073,741,824 B（1024 MB
- *     = 1 GiB，作者 2026-09-14 09:14 数）、单条 ≤9 件，超限 fail-fast 回显实际值）；接收端 auto-accept，落对端 Downloads、
+ *     = 1 GiB）、单条 ≤9 件，超限 fail-fast 回显实际值）；接收端 auto-accept，落对端 Downloads、
  *     面板可见。**不套**好友限速/权限档（U-2），带附件时落一条审计行
  *     （`RelayExecAudit` 同族）。
  *   - `to = local`：本机搬运显式分支（R3=3b）——把 `attachments` 复制进 `targetDir`
  *     （零网络、零传输闸；件数上限与设备腿同源）。
- *   - `to = group:<群名|群 id>`（gmsgsend 批，2026-09-15 · 补充卡 §6.1–§6.4）：
+ *   - `to = group:<群名|群 id>`（补充卡 §6.1–§6.4）：
  *     **以用户身份**发给「用户是成员」的群会话（群成员看到的是用户本人；消息带
  *     agent 标识，由服务端 `origin` 列承载，**非**新列/新字段）。一期**纯文本**。
  *     群存在且未解散 + 成员闸**全在服务端**（本工具零复制）；三档权限 / 双层限速 /
@@ -44,27 +44,27 @@ import java.time.format.DateTimeFormatter
  * FriendService.listGroups、发送走 FriendService.sendGroupAsAgent（档位/限速/确认链
  * 与 origin 写点全在那边，本工具零发送实现）。
  *
- * to 解析（好友支，2026-09-12 ⑦ 后的完整链）：**L0 备注** → L1 username 精确
+ * to 解析（好友支完整链）：**L0 备注** → L1 username 精确
  * （大小写不敏感，服务端唯一性口径一致）→ L2 昵称精确 → L3 昵称唯一前缀 →
  * **L4 邮箱 α**（前四级全未命中时走一次上游搜索回落，按命中卡 `userId` 精确回映射
  * 好友表）。多命中/零命中一律返回候选列表让模型自行纠错。解析 L0–L3 与候选文案的
- * **唯一实现点** = `nebflow.neblink.FriendRoster`（批 ⑩ 2026-09-12 收归）——本工具
+ * **唯一实现点** = `nebflow.neblink.FriendRoster`——本工具
  * 只委托；L4 是数据面回落（见 `lookupFriendBySearch`）。
  *
- * 设备解析（2026-09-14 自退役的**跨设备文件搬运工具**原样迁入，能力并入本工具设备腿）：deviceId 精确 →
+ * 设备解析（自已退役的**跨设备文件搬运工具**原样迁入，能力并入本工具设备腿）：deviceId 精确 →
  * deviceName 精确 → deviceId 前缀 → deviceName 前缀 → deviceName 包含，唯一候选
  * 才成功；零命中/多命中一律列可用设备与逐条命中依据（**禁静默首命中**）。
  *
  * 接线：GatewayMain 启动时 FriendMessageTool.initialize(friendService)
  * （RemoteExecutor.initialize 同款单例模式）+ 本工具按次把**会话靶**挂进
  * fiber-local（`SendConfirm.locally`），装配缝实现 `SendConfirm.production`
- * 在本次调用内读它并发确认卡（#147 接线段 2026-09-12）。**确认链只覆盖好友支**
- * ——设备支/本机支零治理（U-2 裁定：不套好友档位，闸位=大小/件数 + 审计行）。
+ * 在本次调用内读它并发确认卡（接线段）。**确认链只覆盖好友支**
+ * ——设备支/本机支零治理（不套好友档位，闸位=大小/件数 + 审计行）。
  * 授权（阶段 2d，设计 D.1-11）：机制固定唯一——仅 Root 的静态集
  * RootOrchestrationTools 携带（2c 起从声明制迁机制固定）；agent.json tools
  * 声明不再授能（buildAllowedToolSet 对 base 一律剥离本工具名，"*" 亦然——the
  * tool name IS the permission boundary）。
- * （本工具扩面后，**跨设备文件搬运工具**于 2026-09-14 同批退役——其**已退役工具名**与
+ * （本工具扩面后，**跨设备文件搬运工具**随后退役——其**已退役工具名**与
  * 迁移指引见 `AgentCore.RetiredToolGuides`（名单面照旧保留该名，本文件描述面不再点名）。）
  */
 object FriendMessageTool extends Tool:
@@ -73,7 +73,7 @@ object FriendMessageTool extends Tool:
   private val MaxMessageLength = 4000
 
   // ============================================================
-  // friendseal batch (2026-09-25) — the friends-feature seal (single source of
+  // the friends-feature seal (single source of
   // the error word; specs cite this same value). The seal = the ONE
   // `features.friends` config key (`FriendsSeal`, startup latch): the device
   // leg stays; friend/group/local calls are refused BEFORE any resolution or
@@ -131,7 +131,7 @@ Target-kind prefixes are case-insensitive and MUST be one of `friend:`, `device:
 When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the friend or group send first raises a confirmation card in the chat, naming the recipient (a friend's label, or the group name). The message is sent ONLY after the user approves it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back as an error saying so. Device sends and local copies are not gated by this tier. Wait for the tool result — do not assume anything went out."""
 
   /**
-   * Sealed-state face (friendseal batch, 2026-09-25): device leg only. The
+   * Sealed-state face: device leg only. The
    * friend/group/local kinds are named once, as SEALED, so a model that
    * remembers the wider face understands the refusal instead of retrying.
    * Written in full sentences with the same transport facts as the full face
@@ -188,7 +188,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
   )
 
   /**
-   * Sealed-state schema (friendseal batch, 2026-09-25): `to` names the device
+   * Sealed-state schema: `to` names the device
    * kind only; `overwrite` (local-copy-only parameter) is dropped from the
    * face. The engine performs zero JSON-Schema validation, so narrowing the
    * schema never blocks a stale caller from reaching `call` — where the
@@ -221,23 +221,23 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
   /**
    * Three-level resolution (spec §2 task item 2). Pure — public for tests.
    *
-   * 批 ⑩（2026-09-12，方案 `20260912_011320` §4.5 同步点 ③）：实现已收归唯一
+   * 实现已收归唯一
    * 单点 `FriendRoster.resolve`（与 `ListFriends` 共用同一份候选文案 —— 成功路径
    * 与失败路径同一套词表）。本方法**只做委托**：对外文案、L1–L3 解析顺序与逐字
    * 输出零变更，参数名校验与 IO 组合全在 `call` 侧不变。
    *
-   * 批 ⑦（同日）：`FriendRoster.resolve` 内部前置了 L0 备注层（⑦-D5）。
+   * `FriendRoster.resolve` 内部前置了 L0 备注层。
    */
   def resolveFriend(query: String, friends: List[FriendSummary]): Either[ToolError, FriendSummary] =
     FriendRosterPort.resolve(query, friends)
 
   /**
-   * L4 邮箱层（α 方案，⑦-D4/⑦-D11，本批唯一邮箱路径）。
+   * L4 邮箱层（α 方案，唯一邮箱路径）。
    *
    * `FriendRoster.resolve` 的 L0–L3 全未命中时，把 query 交给**既有**搜索端点
    * （`FriendService.searchUser` → `NeblinkClient.searchUser` → neblink-server
    * `GET /api/users/search`，username OR email 双键 NOCASE 精确）；命中卡自带
-   * `userId`（服务端 `SearchUserCard.user_id`，`~/.nebflow/projects/neblink-server/src/model.rs:491-500`）
+   * `userId`（服务端 `SearchUserCard.user_id`）
    * ⇒ 按 `userId` **精确回映射好友表**，映射成功才发送（搜索能命中非好友，而只有
    * 好友可被发消息）。
    *
@@ -291,7 +291,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
    * Send after resolution — extracted so the IO composition stays flat
    * (Scala 3: multi-line matches inside nested flatMap braces are fragile).
    *
-   * 确认链（#147 接线段，2026-09-12）：本工具是唯一持有 `ToolContext` 的调用侧
+   * 确认链（接线段）：本工具是唯一持有 `ToolContext` 的调用侧
    * ⇒ 由它把**会话靶**按次挂进 fiber-local（`SendConfirm.locally`），
    * `sendAsAgent` 侧的装配缝实现（`SendConfirm.production`）在本次调用内读它并
    * 发确认卡。`ask` 档与 auto 超限降级档都经此路；ctx 无交互面（REST 直调 /
@@ -304,14 +304,14 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
     ctx: ToolContext,
     attachments: List[os.Path] = Nil
   ): IO[Either[ToolError, String]] =
-    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):挂靶经注册器(agent 实现原地;
+    // 挂靶经注册器(agent 实现原地;
     // locally+targetFor 合并镜像,组合语义逐字等值)。
     SendConfirmPort
       .locally(ctx, recipientLabel(friend))(fs.sendAsAgent(friend.userId, message, attachments))
       .map {
-        // 回执形态（⑦-D6）：`备注（username）`——让用户/模型能确认「打到的是谁」。
+        // 回执形态：`备注（username）`——让用户/模型能确认「打到的是谁」。
         // 附件腿（4b A-4）：回执里显式带件数，与 `summarize` 的入参摘要同形
-        // （「成功但附件消失」是本批明令禁止的缺陷形态）。
+        // （「成功但附件消失」是禁绝的缺陷形态）。
         case Right(_) =>
           Right(
             if attachments.isEmpty then s"已发送给 ${recipientLabel(friend)}（${LocalTime.now().format(TimeFormat)}）"
@@ -356,7 +356,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
     message: String,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):挂靶经注册器(同好友支合并镜像)。
+    // 挂靶经注册器(同好友支合并镜像)。
     SendConfirmPort
       .locally(ctx, groupLabel(group))(fs.sendGroupAsAgent(group.groupId, message))
       .map {
@@ -412,7 +412,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
     end if
   end parseToKind
 
-  // ===== 设备面（2026-09-14 自退役的跨设备文件搬运工具原样迁入，语义零变更）=====
+  // ===== 设备面（自已退役的跨设备文件搬运工具原样迁入，语义零变更）=====
 
   /** 设备候选 + 命中依据（纯函数）：歧义报错逐条列出「区分依据」，**禁静默首命中**。 */
   private[tools] def deviceMatches(query: String, peers: List[PeerInfo]): List[(PeerInfo, String)] =
@@ -571,7 +571,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
                   IO.pure(Left(ToolError(s"Cannot create targetDir '$rawDir': ${e.getMessage}")))
                 case Right(_) =>
                   // 逐件复制：显式递归（foldLeftM 在此形状下类型推断会塌成
-                  // Either[Any,Any]，2026-09-14 编译教训——弃用）。
+                  // Either[Any,Any]，编译教训在案——弃用）。
                   def loop(rest: List[String], copied: List[String]): IO[Either[String, List[String]]] =
                     rest match
                       case Nil => IO.pure(Right(copied))
@@ -622,7 +622,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
       case Some(t) =>
         parseToKind(t) match
           case Left(reason) => bad(reason)
-          // friendseal gate (2026-09-25): ONE fail-closed point ahead of every
+          // friends seal: ONE fail-closed point ahead of every
           // sealed arm (local / friend / group) — before any resolution, roster
           // read, or send work. The DEVICE arm never matches this guard (the
           // leg that stays). Parsing still runs first, so malformed input keeps
@@ -637,9 +637,9 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
               case Some(m) if m.length > MaxMessageLength =>
                 bad(s"Message too long (${m.length} chars, max $MaxMessageLength).")
               case Some(m) =>
-                // 设备腿 `targetDir`（契约升版批，2026-09-14）：**受控支持**。
-                // 原先的显式拒绝（「…pending the author's call」）已被作者 16:20「现在升版」取代，
-                // 该句自 spec 起标注 provisional/存档，不得再作为待拍板项。本工具只把请求透传到
+                // 设备腿 `targetDir`（契约升版）：**受控支持**。
+                // 原先的显式拒绝（「…pending the author's call」）已被升版决定取代，
+                // 该句自 spec 起标注 provisional/存档，不得再作为待决项。本工具只把请求透传到
                 // 设备腿（`DropboxService.sendLocalFiles`）；**落点由接收端判定**
                 // （`TargetDirGuard`，spec §③）—— 发送端无法指定任意目录。
                 if attachments.exists(a => !java.nio.file.Paths.get(a.trim).isAbsolute) then
@@ -677,7 +677,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
                       )
                   end match
           case Right(ToKind.Friend(q)) =>
-            // 4b 腿 A-4：附件**不再一律拒绝** —— 裁定①「能发就能带附件」（下载权限跟
+            // 4b 腿 A-4：附件**不再一律拒绝** —— 口径「能发就能带附件」（下载权限跟
             // send 闸）。逐件校验路径形态（与设备支同文案），件数/大小/能力/上传全在
             // FriendService.sendAsAgent 单点（`AttachContract` 闸 + A-5 能力探测 +
             // E1/E2 上传链）。🔴 能力探测不可判 ⇒ **明确拒绝**（§G.3 禁未探测即携带

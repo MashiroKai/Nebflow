@@ -236,11 +236,13 @@ case class LoopConfig(
    */
   maxRounds: Int,
   /**
-   * verify 侧 agent 名（默认 "general"）：验证方 = 通用 agent + plugins 体系
-   * （阶段 2 裁定 A——verify 专业化按验证域经 plugins 分配；worker 与 verify
-   * 共享 node.plugins 注入）。显式指定其他已装载 agent 名亦可。
+   * verify 侧 agent 名（默认 = 内置执行 agent，[[nebflow.core.entity.BuiltinAgents.ExecutorName]]）：
+   * 验证方 = 执行 agent + plugins 体系（阶段 2 裁定 A——verify 专业化按验证域经
+   * plugins 分配；worker 与 verify 共享 node.plugins 注入）。显式指定其他已装载
+   * agent 名亦可。**常量引用，禁字面量**（builtin-merge 批 2026-10-03：旧执行名
+   * 已合并且不再是 builtin——读侧兜底见 EntityLoader.loadAgent）。
    */
-  verify: String = "general",
+  verify: String = nebflow.core.entity.BuiltinAgents.ExecutorName,
   /**
    * verify 校验清单模板（含验收基准说明），注入 verify 会话。空 → 执行期用
    * NodeEngine 内置默认清单（VerifyDefaultTask）。
@@ -635,10 +637,12 @@ object RetryPolicy:
 /**
  * Node 数据模型（§2.1 JSON 示例字段全量）。
  *
- * agent 字段（2026-09-05 插件架构对齐）：**新建节点一律落 "general"**（执行统一
- * 通用 agent，专业能力由 plugins 差异化——NodeEdit 已不接受 agent 参数）；字段
- * 保留 = 存量数据兼容读（旧节点 agent 值原样装载、nodeJson 照常输出），引擎
- * spawn 仍读 NodeDef.agent（spawnAndRun → EntityLoader.loadAgent）。
+ * agent 字段（2026-09-05 插件架构对齐；builtin-merge 批 2026-10-03 收敛）：**新建
+ * 节点一律落内置执行 agent**（[[nebflow.core.entity.BuiltinAgents.ExecutorName]]，
+ * 执行统一执行 agent，专业能力由 plugins 差异化——NodeEdit 已不接受 agent 参数）；
+ * 字段保留 = 存量数据兼容读（旧节点 agent 值原样装载、nodeJson 照常输出；旧执行
+ * 名经 EntityLoader.loadAgent 的解析兜底（BuiltinAgents.RetiredNames）落到执行
+ * agent），引擎 spawn 仍读 NodeDef.agent（spawnAndRun → EntityLoader.loadAgent）。
  *
  * description（2026-09-05 创建必写）：简短描述（非空 ≤200 字符，创建时 NodeEdit
  * 强校验），存 NodeDef 进 Flow Map 默认载荷（NodePayload）——按需读取第一层；
@@ -1726,7 +1730,21 @@ case class ProjectDef(
    * 单程语义：恢复 = 手工删除 project.json 中 archived/archivedAt 两键（本批无 UI）。
    */
   archived: Option[Boolean] = None,
-  archivedAt: Option[Long] = None
+  archivedAt: Option[Long] = None,
+  /**
+   * unmount 标记（N2 project-tool 批 2026-10-06，S17/⑩A 硬卸载档）：只有显式动作
+   * （`Project` 工具 `action="unmount"` → `ProjectStore.markUnmounted`）会设置；无任何
+   * 自动路径。unmount 三步序「先停后卸」——本键写入时该项目在飞任务已停（链/节点/
+   * dispatcher·delegate 会话），随后 `ProjectStore.list()` 源头过滤（面板 API 与
+   * startupMount 同源跳过），workspace 文件零删除零移动（硬约束）。解码侧可选——
+   * 存量 project.json 无此键 → withDefaults 解码 None（零迁移）；磁盘写入走
+   * markUnmounted 手术式原位插键（非全量 re-encode），未卸载项目文件不含此键
+   * （条件序列化，与 archived 同款）。单程语义：恢复 = 手工删除 project.json 中
+   * unmounted/unmountedAt 两键（`Project` 工具 create 面显式拒绝 unmounted 项目，
+   * 同 archived 先例形状）。
+   */
+  unmounted: Option[Boolean] = None,
+  unmountedAt: Option[Long] = None
 )
 
 object ProjectDef:

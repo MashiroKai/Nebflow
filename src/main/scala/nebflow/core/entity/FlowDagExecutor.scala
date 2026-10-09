@@ -1374,7 +1374,7 @@ object FlowDagExecutor:
             cases.keys.find(k => output.toLowerCase.contains(k.toLowerCase)) match
               case Some(hit) =>
                 logger.warnSync(
-                  s"Switch '$switchExpr': matched case '$hit' by substring containment (legacy fallback — prefer JSON/FlowReport verdicts)"
+                  s"Switch '$switchExpr': matched case '$hit' by substring containment (fallback — prefer JSON/FlowReport verdicts)"
                 )
                 hit
               case None => "unknown"

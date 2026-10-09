@@ -143,13 +143,54 @@ object FeishuCredentials:
             case _ => None
 
   /** Inverse of the `_ref` rendering: an absolute path stays as-is, the rendered
-    *  `~/<homeDirName>` form maps back under `root`, anything else is relative to
-    *  `root` (same convention as `SocialChannels.resolveRef`). */
+    * `~/<homeDirName>` form maps back under `root`, anything else is relative to
+    * `root` (same convention as `SocialChannels.resolveRef`). */
   private def resolveRef(root: os.Path, ref: String): os.Path =
     val rendered = s"~/${Branding.homeDirName}"
     if ref.startsWith(rendered + "/") then os.Path(root.toString + ref.drop(rendered.length), os.pwd)
     else if ref.startsWith("/") then os.Path(ref, os.pwd)
     else os.Path(root.toString + "/" + ref, os.pwd)
+
+  // ─────────── askuser-remote P1: the card-callback credential face ───────────
+
+  /** The card-callback credential pair (askuser-remote P1). The two secrets
+    * behind the feishu card's OPTIONAL `verification_token` / `encrypt_key`
+    * fields (schema `FieldSpec.secretName` = `social-feishu-verification-token`
+    * / `social-feishu-encrypt-key` — the slot existed since the socpanel
+    * batch; this batch is the first consumer). Held in memory only, `toString`
+    * overridden so an accidental interpolation can never leak either value. */
+  final case class CallbackCredentials(verificationToken: Option[String], encryptKey: Option[String]):
+    override def toString: String =
+      s"CallbackCredentials(verificationToken=${verificationToken.map(v => s"<len:${v.length}>").getOrElse("<absent>")}, " +
+        s"encryptKey=${encryptKey.map(v => s"<len:${v.length}>").getOrElse("<absent>")})"
+
+  /** Read the callback pair the same way [[resolve]] reads the app pair:
+    * `nebflow.json → socialChannels.channels.feishu.fields` carrying `<key>_ref`
+    * PATHS into `secrets/` — a value never lives in the config. Absent /
+    * unreadable / blank each degrade to `None` (the long-connection callback
+    * runs with empty credentials), and NOTHING here logs a value — only the
+    * caller-side name/length reading leaves. */
+  def resolveCallbackCredentials(root: os.Path): CallbackCredentials =
+    def readRef(ref: String): Option[String] =
+      val p = resolveRef(root, ref)
+      try
+        val v = os.read(p).trim
+        if v.isEmpty then None else Some(v)
+      catch case _: Exception => None
+    val fields = Option(
+      PathUtil.configJsonWritePath(root)
+    ).filter(p => java.nio.file.Files.exists(p.toNIO)).flatMap { cfg =>
+      readJson(cfg).toOption.map { j =>
+        j.hcursor.downField("socialChannels").downField("channels")
+          .downField("feishu").downField("fields").focus.getOrElse(Json.obj())
+      }
+    }
+    def fieldRef(name: String): Option[String] =
+      fields.flatMap(f => f.hcursor.downField(s"${name}_ref").as[String].toOption.map(_.trim).filter(_.nonEmpty))
+    CallbackCredentials(
+      verificationToken = fieldRef("verification_token").flatMap(readRef),
+      encryptKey = fieldRef("encrypt_key").flatMap(readRef)
+    )
 
   private def readJson(p: os.Path): Either[Failure, Json] =
     try

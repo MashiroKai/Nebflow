@@ -65,6 +65,14 @@ case class SharedResources(
   knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
   subAgentTaskStore: SubAgentTaskStore = new SubAgentTaskStore(PathUtil.dataRoot / "subagent-tasks"),
   usageRecordStore: UsageRecordStore = new UsageRecordStore(PathUtil.dataRoot / "usage-records"),
+  /**
+   * 分配决策通道探活（jev-plugins 批 #1226）：[[nebflow.llm.decision.DecisionHealthMonitor
+   * 单实例]]——写腿 = 插件分配器两腿（Jev / LLM 兜底，经 SharedResources 构造行的
+   * PluginAllocator 注册面闭包注入），读面 = `GET /api/decision/health` + Settings
+   * Jev 区探活显示。默认实例同步构造（pluginMcp Ref.unsafe 先例）——存量测试构造
+   * 零改动；每实例独立（spec 隔离防跨 suite 污染）。
+   */
+  decisionHealth: nebflow.llm.decision.DecisionHealthMonitor = new nebflow.llm.decision.DecisionHealthMonitor,
   voiceMutedRef: Ref[IO, Boolean],
   lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis()),
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
@@ -427,5 +435,33 @@ case class SharedResources(
         ctx: ToolContext
       ): ActorRef[List[String]] =
         AskUserAnswerBridge.ref(target, items, requestId, ctx)
+  )
+
+  // worktree-judge-fifo 批（#1224 增补 §3.1）：delegate 判定机注册（⑦ Jev 优先
+  // ＋SmallJudge 兜底——执行体在 llm.decision.DelegateJudgeMachine，core 只见
+  // DelegateJudgePort 注册器，分层纪律同 DelegateBudgetPort 三先例）。注册点 =
+  // 本构造行（生产 boot 与测试装配共用）。
+  nebflow.core.delegate.DelegateJudge.DelegateJudgePort.install(
+    nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
+  )
+
+  // task-rag 批（#1227 / §Batch 7）：TaskSearch 可选 Jev 重排注册（⑦ 家族在检索
+  // 面的同族落地——执行体在 llm.decision.JevTaskSearchRerank，core 只见
+  // TaskSearchRerank 注册器，分层纪律同 DelegateJudgePort 先例）。hotFace =
+  // 每次 rerank 现读 jev 配置（JevConfigReader 同款热读）；未配 Jev ⇒ 恒 None ⇒
+  // 跳过重排照常返回（原文「可选」的缺省路径）。
+  nebflow.core.index.TaskSearchRerank.install(
+    nebflow.llm.decision.JevTaskSearchRerank.hotFace()
+  )
+
+  // jev-plugins 批（#1226）：插件分配族注册（Jev 优先＋LlmAllocator 兜底＋fail-open
+  // 三态——判定机同族机制；执行体在 llm.decision.PluginAllocatorMachine，core 只见
+  // core.jev.PluginAllocator 注册器，分层纪律同上）。注册点 = 本构造行（生产 boot
+  // 与测试装配共用）；探活写腿闭包本实例的 decisionHealth（读面 = REST + 设置面）。
+  nebflow.core.jev.PluginAllocator.install(
+    nebflow.llm.decision.PluginAllocatorMachine.face(
+      providerRegistry,
+      health = Some(decisionHealth)
+    )
   )
 end SharedResources

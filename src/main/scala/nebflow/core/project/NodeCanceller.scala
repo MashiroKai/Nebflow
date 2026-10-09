@@ -889,7 +889,7 @@ private[project] trait NodeCanceller:
                   projectName,
                   nodeId,
                   "dead-session-reaped",
-                  s"dead-session node kept Running (no auto-fail, no delivery — killruling ruling #19 downgrade): ${err.take(220)}"
+                  s"dead-session node kept Running (no auto-fail, no delivery): ${err.take(220)}"
                 ) *>
                 remindDeadSession(n, sid.getOrElse("<session-gone>"), err) *>
                 // R3 保留：下游 barrier **告警腿**（只告警、不终态化——`deliverFailed`

@@ -111,6 +111,12 @@ final class WsDispatchCtx(
   sendAgentSessionListImpl: (io.circe.Json => IO[Unit], String) => IO[Unit],
   sendAgentSessionListByNameImpl: (io.circe.Json => IO[Unit], String) => IO[Unit],
   sendMemoryStatusImpl: (io.circe.Json => IO[Unit], String) => IO[Unit],
+  /**
+   * A4 (perf-481): the on-demand tool-description list. It used to ride every
+   * `serverConfig` frame (~93.5 KB each); the frontend now asks for it once per
+   * connection via `getToolsList`.
+   */
+  sendToolsListImpl: (io.circe.Json => IO[Unit]) => IO[Unit],
   expandTildeImpl: String => String,
   wsBrowseEventImpl: (String, String, Option[String], List[String], Option[String]) => Json,
   /**
@@ -197,6 +203,10 @@ final class WsDispatchCtx(
     sessionId: String
   ): IO[Unit] =
     sendMemoryStatusImpl(wsSend, sessionId)
+
+  /** A4 (perf-481): on-demand tool list — the `getToolsList` response face. */
+  def sendToolsList(wsSend: io.circe.Json => IO[Unit]): IO[Unit] = sendToolsListImpl(wsSend)
+
   def expandTilde(path: String): String = expandTildeImpl(path)
 
   def wsBrowseEvent(

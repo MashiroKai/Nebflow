@@ -57,8 +57,8 @@ export function stripCredentialParams(url) {
  *
  * The character class deliberately STOPS at `)` (plus quotes, whitespace and
  * the tag/attr delimiters, C2-21 / self-correction ⑨). The pre-batch class
- * `[^"'\s]+` did not, and the Card tool emits UNQUOTED CSS `url()`
- * (CardToolScanFaceSpec:103 locks that exact output) — so on one line the
+ * `[^"'\s]+` did not, and the Card tool emits UNQUOTED CSS `url()` (that
+ * output was locked by the now-retired `CardToolScanFaceSpec:103`) — so on one line the
  * match ran through `)}</style><img` and the credential was appended after a
  * tag name (DOM mangled), and across lines it landed OUTSIDE the `)`, leaving
  * the URL unauthenticated and the declaration broken. Quoted `src="…"` /

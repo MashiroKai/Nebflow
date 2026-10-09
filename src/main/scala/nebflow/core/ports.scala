@@ -78,10 +78,13 @@ trait FilePolicyPort:
    * `Some((layer, reason))` = the identity tables refuse this path (layer is
    * `Credential` for name/directory/known-entry shapes); `None` = they pass.
    * Same tables, same branch order, same messages as the endpoint's own step —
-   * one judgement, no copy, no parallel judge; 🔴 the endpoint's own verdict is
-   * unchanged (`nfCredentialDenyLayer` still reports `Namespace` first for such
-   * a path). Callers treat an unusable port as fail-closed, exactly as they do
-   * for [[endpointVerdictLayer]].
+   * one judgement, no copy, no parallel judge. Since the 2026-10-07 domain flip
+   * (askuser-attach-align, author 09:35/09:41 orders) the endpoint ladder
+   * itself IS the identity layers only (the Namespace reach branches and the
+   * FileType branch were retired there), so this member and
+   * [[endpointVerdictLayer]] answer the same question; the port member is kept
+   * for callers that name the identity question explicitly. Callers treat an
+   * unusable port as fail-closed, exactly as they do for [[endpointVerdictLayer]].
    */
   def credentialIdentityLayer(real: Path): Option[(FilePolicyPort.NfDenyLayer, String)]
 end FilePolicyPort

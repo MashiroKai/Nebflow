@@ -4,7 +4,6 @@ description: 前端自验与验证方法论——实现侧无后端 smoke harnes
 audience: nebflow-project
 language: zh
 status: active
-last_verified: 2026-09-02
 ---
 
 # Frontend Verification — 前端自验与验证方法论
@@ -59,7 +58,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 ## 6. 静态 serve 验收 / 资源路径
 
 - JVM 实例重启窗口不可得时：`python http.server` 指 worktree 的 `src/main/resources/web`，harness 用 `window.__api` stub 双向帧 + 计算样式断言替代视觉截图；curl 字节对比确认 serve 的是目标 commit 非旧缓存
-- **served-resource 验证**：curl 管道 `grep -c` 返回 0 **不是**修复缺失的证据（引号管道模式/缓存/boot 顺序都是 fluke 源）——用**字节数对比**（`wc -c` served 文件 == worktree 源文件）+ 一个唯一 marker token 的 grep 双重确认；且 health 200 ≠ 所有 web 路由已 warm，**应用完全 boot 后再重探**（先例：grep -c=0 + 错误 class 查询均像「未部署」，字节对比 28662==源 + marker=1 证明修复已 serve，E2E 随即通过）
+- **served-resource 验证**：curl 管道 `grep -c` 返回 0 **不是**修复缺失的证据（引号管道模式/缓存/boot 顺序都是 fluke 源）——用**字节数对比**（`wc -c` served 文件 == worktree 源文件）+ 一个唯一 marker token 的 grep 双重确认；且 health 200 ≠ 所有 web 路由已 warm，**应用完全 boot 后再重探**（先例形态：grep -c=0 与错误 class 查询均可呈现「未部署」假象，以字节数对比＋唯一 marker 双重确认后方能证明修复已 serve）
 - **静态资源嵌套路径**：http4s DSL `Root / "vendor" / file` 只匹配单段子文件，`/vendor/pdfjs/pdf.min.js`（两段）会 404——嵌套路径需 `startsWith("/vendor/monaco/")` 前缀 handler；代码审查阶段即可发现，省整轮 boot-test 循环
 - **产物二分法**（请求/写入绕过 patched API 时一步定位数据源）：string-replace 构建产物嫌疑字面值（如 './ice.webp'→'./BOGUS.webp'），看原始请求 URL 是否跟随；`getOwnPropertyDescriptor(CSSStyleDeclaration.prototype,'backgroundImage')===undefined` 证明命名属性 getter/setter 不在原型上——defineProperty 补丁必然静默空操作，运行时拦截不可行时改走构建期静态重写
 
@@ -74,7 +73,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 
 ## 8. 确定性真实 fallback 夹具
 
-配置 bogus primary（127.0.0.1:9 必挂）→ 真实免费模型 fallback，每 turn 必走 modelChanged 切换路径——mock 无法覆盖真实 WS 帧时序与 fallback 后 label 切换；老后端兼容用 wire 级 strip 模拟。
+配置 bogus primary（127.0.0.1:9 必挂）→ 真实 fallback 模型接管，每 turn 必走 modelChanged 切换路径——mock 无法覆盖真实 WS 帧时序与 fallback 后 label 切换；老后端兼容用 wire 级 strip 模拟。
 
 ## 9. 契约未落地的 mock-frame 交验模式
 
@@ -121,13 +120,13 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 
 ## Evidence
 
-- 消息搜索 v3.1：3 个自包含 harness（35/35+13/13 绿，fetch 计数断言、零移除零重排子序列断言），qa-frontend 直接复用框架与种子。
-- 弹窗发送链「看起来全接通」：探针 harness（打开→agentStart→stop→agentDone→重开→再发）T5 失败定位到 `_inputBound` 未重置——重开时 initInput 被跳过，正是用户「无法输入无法打断」根因。
-- friends-contract-harness：19 断言覆盖 8 endpoint wire-shape + 字段透传 + auth/net 事件；fmtTime(1234567890) 期望失败因代码分支 same-day→HH:mm vs older→M-D，改 today-at-09:30 确定性打同一天分支。
-- freeze-schedule：10 JS + 2 CSS + 2 locale 分层验证，checkJs 337 vs 基线 351 PASS；i18n "Thinking Mode"（大写 M）与 zh 推断不一致在编辑期捕获。
-- image viewer "File may be corrupted"：catch-all `**/api/**` 后注册 shadow 了 `**/api/nf-file**`；catch-all 提前注册即修。
-- onboarding 自测：typeOther('sk-test123') 命中 C1 隐藏 textarea，answers[0] 被写成 API key——可见性过滤后链路恢复。
-- ice.webp 404：DOM 埋点+CDP initiator 全空，产物二分法一步锁定组件 JS 字面量为唯一数据源；descriptor=undefined 定案构建期静态重写。
-- 双轨：产出者 30/30 复跑全绿 + 独立 19/19 盲点（formatDuration="1m 33s" 字面量、10 工具归拢≤50ms、摘要条计算样式×5、E7/E8 排除）。
-- v5 阶段 0 旧面板 popover：初版浮层嵌 `#activity-bar` 内，DOM 断言全绿（`hidden===false`+blur(24px) 全过）但屏幕完全看不见——bar 是 `overflow:hidden`+`backdrop-filter` 的圆角卡，filter 使其成为 fixed 后代包含块，浮层被裁成 48px 一条（截图取证）。改挂 body + JS 锚定后，用「视口内有盒 + elementFromPoint 命中 + clearsBar」三连断言 48/48 全绿。
-- usage-display 复验 27/27：bogus qadown 秒挂后 fallback <gateway-alias>/deepseek-v4-flash-ascend，modelChanged 帧全部真实 wire 数据。
+- 消息搜索弹窗：3 个自包含 harness（全用例绿：fetch 计数断言、零移除零重排子序列断言），qa-frontend 直接复用框架与种子。
+- 弹窗发送链「看起来全接通」：探针 harness 定位到 `_inputBound` 未重置——重开时 initInput 被跳过，即用户「无法输入无法打断」根因。
+- friends-contract-harness：断言覆盖 8 endpoint wire-shape + 字段透传 + auth/net 事件；时间格式化用例须固定同一天分支避免 same-day/older 漂移。
+- freeze-schedule：JS/CSS/locale 分层验证，checkJs 与基线对照 PASS；i18n 大小写与 zh 推断不一致在编辑期捕获。
+- image viewer "File may be corrupted"：catch-all `**/api/**` 后注册 shadow 了具体路由；catch-all 提前注册即修。
+- onboarding 自测：自由输入命中隐藏 textarea，答案被写成凭据形态串——可见性过滤后链路恢复。
+- 产物 404：DOM 埋点+CDP initiator 全空，产物二分法一步锁定组件 JS 字面量为唯一数据源；descriptor=undefined 定案构建期静态重写。
+- 双轨：产出者复跑全绿 + 独立盲点用例全绿（字面量格式、工具耗时、摘要条计算样式、排除项）。
+- 旧面板 popover：初版浮层嵌在内层圆角卡内，DOM 断言全绿但屏幕不可见——backdrop-filter 使其成为 fixed 后代包含块，浮层被裁成一条（截图取证）。改挂 body + JS 锚定后以「视口内有盒 + elementFromPoint 命中 + 解除卡约束」三连断言全绿。
+- usage-display 复验：bogus 配置秒挂后 fallback 到非默认模型别名，modelChanged 帧全部真实 wire 数据。

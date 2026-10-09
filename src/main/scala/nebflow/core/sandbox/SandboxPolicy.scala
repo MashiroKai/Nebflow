@@ -164,18 +164,24 @@ object SandboxPolicy:
       .map(s => PathUtil.dataRoot / s)
 
   /**
-   * §4.2-B 审计只读例外（2026-09-05 批次二机制四）：两个记忆文件的【精确路径】
+   * §4.2-B 审计只读例外（2026-09-05 批次二机制四）：记忆文件的【精确路径】
    * 进读面——审计类节点 Read 直读记忆真身（日志重建通道 A 的稳态替代）。
-   * 只精确放行这两个文件：读面以 contains(file, file)=equals 成立；写面零变化
-   * （本列表只进 readableRoots）；与 MemoryStore.userMemoryPath/agentMemoryPath
-   * 的路径契约由 SandboxSpec 断言（防漂移）。def 而非 val：跟随 setDataRoot。
+   * 只精确放行这几个文件：读面以 contains(file, file)=equals 成立；写面零变化
+   * （本列表只进 readableRoots）；与 MemoryStore 权威路径的契约由 SandboxSpec
+   * 断言（防漂移）。def 而非 val：跟随 setDataRoot。
    *
    * [2026-09-06 读宽批] 全盘读后「进读面」语义被吸收；本列表残留唯一承重 =
-   * readDenied 负向规则的例外集（Nebula memory.md 精确豁免一票拒），定义保留。
+   * readDenied 负向规则的例外集（Soul.md / 旧位 Nebula memory.md 精确豁免一票拒），
+   * 定义保留。
+   *
+   * personal-agent 批 2026-10-04：新增根层 `Soul.md`（新位）；**旧位
+   * `agents/Nebula/memory.md` 保留在列**——双读过渡期它是回落源，被负向规则
+   * 一票拒掉就会让「尚未迁移」的 home 读不到既有记忆。
    */
   def auditReadableFiles: List[os.Path] =
     List(
       PathUtil.dataRoot / "User.md",
+      PathUtil.dataRoot / "Soul.md",
       PathUtil.dataRoot / "agents" / RootAgentIdentity.Name / "memory.md"
     )
 

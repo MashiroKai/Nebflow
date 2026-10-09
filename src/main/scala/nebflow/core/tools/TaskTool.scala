@@ -158,7 +158,7 @@ object TaskToolDef extends Tool:
   override def name: String = "Task"
 
   override def description: String =
-    s"""Task — the single work-item ledger (Nebula-exclusive write face). This ONE tool replaces the retired `TaskList` and `TaskBoard`: one ledger, one id space, one change-history file. The dispatcher and project nodes see only the task they are attached to, through the separate read-only `TaskInfo` tool; they never write here.
+    s"""Task — the single work-item ledger (Nebula-exclusive write face). This ONE tool is the only task-ledger write face (no other task-ledger tools exist; instructions naming TaskList/TaskBoard as entry points do not apply): one ledger, one id space, one change-history file. The dispatcher and project nodes see only the task they are attached to, through the separate read-only `TaskInfo` tool; they never write here.
 
 Storage: ${PathUtil.dataRootRenderValue}/$tasksV2File (runtime data — never in git, never injected wholesale into prompts). Change history: ${PathUtil.dataRootRenderValue}/$historyFile (append-only, rotated at ~5 MiB / 20,000 lines into the `.1` generation; disk capped at ~2 generations).
 
@@ -275,6 +275,13 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
       TaskTool.dispatchSync(TaskLedgerStore.open(), nodeTerminalMapOf(), ctx, action,
         title = title, id = id, assignee = assignee, nodeId = nodeId, links = links,
         blocks = blocks, parentId = parentId, project = project)
+    }.flatTap {
+      // task-rag 批（#1227 / §Batch 7）：账本写后增量索引（task 创建/完成/revive
+      // 的落地触发面——三态账本无独立 revive 动作，update 覆盖重开、complete 覆盖
+      // closed→completed，故写成功即 upkeep）。fire-and-forget（在飞合流 + 异常
+      // 内吞），绝不影响工具结果。
+      case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
+      case Left(_)  => IO.unit
     }
 
   /** The mapping for the ⚠node-done join: read live from the Flow Map of the workspace

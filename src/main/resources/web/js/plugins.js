@@ -6,22 +6,49 @@
 //   本文件是该批的**前端主交付**，消费两轨共用的**冻结契约 C6**：GET /api/plugins
 //   每项含 `trusted` / `blocked`（新）/ `contentChanged`（新）。
 //
-//   • 统一插件系统（2026-09-04 重设计，形态不变）：Skill 与 MCP 统一为「插件」，
-//     页面只呈现插件卡片，skill/MCP 仅作卡片内的内容构成标注语（含 N 个技能·
-//     可展开 preview / MCP server 名+transport / 内建工具白名单 +N）。
+//   • **条目式形态（2026-10-07 作者 09:40 令，与微信②令同规格）**：默认每插件
+//     **仅一条目行**（chevron ＋ 名称 ＋ 版本/作者 meta ＋ 状态药丸 ＋ 一行摘要），
+//     点击条目行展开**详情区**（再点收回，accordion 语义自洽）；🔴 零 locale 键值
+//     变化——行摘要/详情正文全部现读既有字段（description / skills / mcpServers /
+//     toolsExtension / viewerContributions），入口与清单不新造文案。详情区构成：
+//       ├ 完整描述（与行摘要同字段；展开态行摘要隐藏防重复）
+//       ├ skills 清单（逐 skill id＋描述＋preview 既有投影；多 skill 时清单内滚动）
+//       ├ Plugin.md 入口（**包根有该文件才在场**：既有 /api/plugin-assets/<name>/
+//       │   Plugin.md 路由探针 200 ⇒ 在场——🔴 引擎/scala 零改动，approvalManifest
+//       │   契约无在场字段，探针一次/包/会话缓存；封禁包服务端 fail-closed 404 ⇒
+//       │   入口永不在场；点击经**既有 Canvas 通路**（workspace-open-item →
+//       │   markdown viewer）呈现内容，本面板只做入口呈现。可见标注 = 文件名
+//       │   「Plugin.md」本身（数据投影，非 locale 串），探测/读取失败 toast 走
+//       │   setPluginDispatch 同族（原始错误消息，零新串）。
+//       ├ 组件面（mcp/skills/org.nebflow 现读投影 = 既有 comp chips 族；org.nebflow
+//       │   行 = viewerContributions.viewers[].name 数据投影，无贡献不渲染）
+//       └ 启停操作钮 = 既有派发开关**原样收进展开态**（钩子/语义/乐观翻转零变，
+//           只动层级）＋ **收起态行尾第二视图**（2026-10-07 14:13 作者令①：
+//           `[data-plugin-dispatch-row]` 挂 `.plugins-card-state`，药丸后 chevron
+//           前；点击 stopPropagation 不触发展开；两视图一处状态源同源同步）。
+//     展开态默认收起；收敛管线（applyRegistryStates）保持节点身份 ⇒ 展开态跨
+//     轮询/开关收敛保持；整页重渲（locale 切换 / tab 恢复）无记忆 ⇒ 默认收起
+//     （🔴 不新造持久化）。
 //
-//   • **卡片形态（C7，2026-09-13 令；**2026-09-14 面板收敛批改口径**）**：
+//   • 统一插件系统（2026-09-04 重设计，形态不变）：Skill 与 MCP 统一为「插件」，
+//     页面只呈现插件条目，skill/MCP 仅作条目展开详情区的内容构成标注语（含
+//     N 个技能 / MCP server 名+transport / 内建工具白名单 +N）。
+//
+//   • **条目行形态（2026-10-07 条目式批改口径，原「卡片形态 C7」的头部/控件几何
+//     随脸退役）**：
 //       ┌ 内容审批开关 `[data-plugin-switch]` **退场**——「在位即信任」下它恒 on，
 //       │   留着只是噪声；且它的 off 会停掉在飞节点的插件 MCP（作者 09-12 踩过的坑）。
-//       ├ 状态药丸（右上）绑 `blocked` / `contentChanged`（**不绑 `trusted`**）：
+//       ├ 状态药丸（**条目行右端**）绑 `blocked` / `contentChanged`（**不绑 `trusted`**）：
 //       │   已封禁 > 内容已变更 > 默认（在位即信任）三态（优先级见 pluginStatus）。
 //       │   🔴 **2026-09-15 作者令（先删文字、后删空框）**：默认态不出文字；
 //       │   文字为空 ⇒ **整个药丸元素不渲染**（「删掉空框」）——判据是**元素
 //       │   count = 0**，不是「元素在但不可见」（🔴 禁 CSS 遮盖式假修）。
 //       │   封禁 / 内容已变更**仍出字且照常渲染**（那是可行动信号，不是说明性小字）。
-//       └ 派发开关 `[data-plugin-dispatch]` = **卡片右上、与状态药丸同排**的**唯一控件**
-//           （`.plugins-card-state` 内，药丸右侧）；🔴 **2026-09-15 作者令：可见文案
-//           「任务分发器可见性」小字整体删除**（toggle 本体自明）——
+//       └ 派发开关 `[data-plugin-dispatch]` = **展开详情区内**控件（原「唯一控件」
+//           ——`.plugins-item-actions` 行，2026-10-07 条目式批收进展开态）；
+//           2026-10-07 14:13 作者令①增补收起态行尾第二视图（同源，见上）；
+//           🔴 **2026-09-15 作者令：
+//           可见文案「任务分发器可见性」小字整体删除**（toggle 本体自明）——
 //           `plugins.dispatchLabel` 仅作 **aria-label** 保留（可访问性面；
 //           2026-09-14 作者三裁之批一引入，2026-09-15 只删可见文本）。
 //
@@ -82,7 +109,7 @@
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, statusIcon } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
 import { key } from './branding.js';
@@ -184,6 +211,14 @@ function pillOf(status) {
   return { key, text };
 }
 
+/** Pill inner HTML（ui-status-redesign，S13 / 盘点 #52）：pill = 图案载体（红底
+ *  红边保留），字转中性、词前 ban 图标（封禁形状语义）；amber changed 档不在
+ *  本批 54 点范围（红系盘点），字形不变。 */
+function pillInnerHtml(pill) {
+  const icon = pill.key === 'blocked' ? statusIcon('ban', 10, 'st-err') : '';
+  return icon + escapeHtml(pill.text);
+}
+
 /** Classify a manifest's DISPATCH-permission state (令 1 派发面,
  *  `manifest.dispatch`; drives the card's single control — the top-right
  *  「任务分发器可见性」 switch, 2026-09-14 面板收敛批).
@@ -220,13 +255,20 @@ function dispatchState(manifest, blocked) {
 }
 
 // ── Data assembly ──────────────────────────────────────────
+/** 面板隐藏 agent（2026-10-07 14:13 作者令②「任务分发器面板隐藏」）——枚举链
+ *  **第三过滤点**（前端兜底腿；判据语义与后端单点
+ *  `BuiltinAgents.PanelHiddenNames` 同源，后端 GET /api/agents 为权威过滤）。
+ *  🔴 只过滤本面板的 agents 列表枚举；`/api/agents/:name` 单取、编辑器深链、
+ *  生命周期面零触碰——藏的是可见性不是生命。#1229 物理删除候 S19③。 */
+const PANEL_HIDDEN_AGENTS = ['project-dispatcher'];
+
 /**
  * Load everything the page needs in one pass.
  * @returns {Promise<{registry: object, agents: Array}>}
  */
 async function loadPluginsData() {
   const [registry, agents] = await Promise.all([fetchPluginRegistry(), fetchAgents()]);
-  return { registry, agents };
+  return { registry, agents: agents.filter(a => !PANEL_HIDDEN_AGENTS.includes(a.name)) };
 }
 
 /** Per-agent model snapshot for the summary row's preset/model pills. */
@@ -266,15 +308,20 @@ function pluginsContentEl() {
   return content;
 }
 
-/** Composition annotation: skill count (expandable → previews). */
-function compositionSkills(skills, id) {
+/** Composition annotation: skill count（2026-10-07 条目式批：组件面投影 chip——
+ *  逐 skill 清单改由详情区 `.plugins-item-skills` 直接呈现，本 chip 不再是展开
+ *  toggle；`plugins.skillPreviewTitle` 的「展开」提示随之退场（title 属性删除，
+ *  零键值变化）。 */
+function compositionSkills(skills) {
   if (!skills.length) return '';
-  return `<button type="button" class="plugins-comp plugins-comp-toggle" data-expand="${esc(id)}"
-    aria-expanded="false" title="${esc(t('plugins.skillPreviewTitle'))}">${esc(t('plugins.compositionSkills', { n: skills.length }))}</button>`;
+  return `<span class="plugins-comp">${esc(t('plugins.compositionSkills', { n: skills.length }))}</span>`;
 }
 
-/** Expandable per-skill blocks (id + description + preview excerpt). */
-function skillExpandHtml(id, skills) {
+/** 详情区 per-skill 清单（既有投影原样：id ＋ 描述 ＋ preview 摘录）。
+ *  🔴 契约无 per-skill 状态字段（PluginSkill = id/name/description/path，
+ *  approvalManifest 下发 id/description/preview）⇒ 不新造；skill 可用性随
+ *  插件级状态药丸。多 skill 时 `.plugins-item-skills` 内滚动（CSS max-height）。 */
+function skillListHtml(skills) {
   if (!skills.length) return '';
   const items = skills.map(s => `
     <div class="plugins-skill-item">
@@ -284,7 +331,7 @@ function skillExpandHtml(id, skills) {
       </div>
       ${s.preview ? `<pre class="plugins-skill-preview">${esc(s.preview)}</pre>` : ''}
     </div>`).join('');
-  return `<div class="plugins-skill-expand" data-expand-for="${esc(id)}" hidden>${items}</div>`;
+  return `<div class="plugins-item-skills">${items}</div>`;
 }
 
 /** Composition annotation: MCP servers (name + transport, command/env in tooltip). */
@@ -307,28 +354,49 @@ function compositionTools(tools) {
   return `<span class="plugins-comp" title="${esc(tools.join(', '))}">${esc(t('plugins.compositionTools', { n: tools.length }))}</span>`;
 }
 
-/** Plugin card: identity + description summary + composition annotations
- *  + the status pill and the dispatch switch **on the same row** (card top-right).
+/** Composition annotation: org.nebflow/viewers.json 现读投影（canvas-media 批
+ *  2026-10-05 OD-2=V-C 内联下发的 `viewerContributions`）——viewer 名清单。
+ *  🔴 纯数据投影：前缀 = 包内目录命名空间字面量 `org.nebflow`（插件包布局事实，
+ *  非 locale 串），条目 = viewers[].name 声明数据；无贡献 ⇒ 不渲染（seed 12 包
+ *  现状全无 viewers.json ⇒ 本 chip 现网零在场，为未来声明包预备）。 */
+function compositionViewers(manifest) {
+  const vc = manifest.viewerContributions;
+  const names = (vc && typeof vc === 'object' && !Array.isArray(vc) && Array.isArray(vc.viewers))
+    ? vc.viewers.map(v => (v && typeof v === 'object' && typeof v.name === 'string') ? v.name : '').filter(Boolean)
+    : [];
+  if (!names.length) return '';
+  return `<span class="plugins-comp" title="${esc(names.join(', '))}">${esc(`org.nebflow: ${names.join('、')}`)}</span>`;
+}
+
+/** 条目行下行 chevron（2026-10-07 补充令改形：与社交面板 .social-item-chevron
+ *  同语言——chevron-down 展开翻转 180°；纯图标零文案）。 */
+const ITEM_CHEVRON_SVG = '<svg class="plugins-item-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+
+/** Plugin item row (multi-line card-item form, 2026-10-07 补充令五点口径):
+ *  line 1 = 完整 puzzle 图标 + 名称（独立行不截断，长名自然换行）+ 版本/作者
+ *  meta；右上 = 状态药丸 + chevron-down（展开翻转 180°，社交条目行同语言）；
+ *  line 2 = 一行摘要（独立行、最多两行 line-clamp 超出省略）。行高随内容自适应。
+ *  the whole row toggles the detail area (accordion 语义 = 点击展开 / 再点收回,
+ *  逐条目独立自洽).
  *
  *  DOM hooks (contract for tests AND for any future refactor):
- *    `[data-plugin-dispatch]` — 任务分发器可见性开关（令 1 既有钩子，保留不动；
- *                               2026-09-14 面板收敛批：位置改到卡片右上、与药丸同排）
- *    `.plugins-card-state`    — 右上角状态区（药丸 + 开关同排的容器）
+ *    `[data-plugin-item]`     — 条目行（点击/键盘 toggle 展开态；role=button +
+ *                               aria-expanded/aria-controls 可访问性面）
+ *    `.plugins-item-detail`   — 展开详情区（默认 hidden；accordion 载体）
+ *    `[data-plugin-dispatch]` — 任务分发器可见性开关·**展开态**（令 1 既有钩子，
+ *                               保留不动；2026-10-07 条目式批：层级改到详情区
+ *                               actions 行）
+ *    `[data-plugin-dispatch-row]` — 同一开关的**收起态行尾视图**（2026-10-07
+ *                               14:13 作者令①）：与上钩子同源同态（一处状态源、
+ *                               两处视图），点击 stopPropagation 不触发展开
+ *    `.plugins-card-state`    — 条目行右上状态区（药丸 + 行尾开关 + chevron 载体）
+ *    `[data-plugin-doc]`      — Plugin.md 入口（探针在场才显形；默认 hidden）
  *  🔴 2026-09-14 面板收敛批退场钩子（**生产代码零使用**，判据见报告静态腿）：
  *    `[data-plugin-more]` / `[data-plugin-menu]` / `[data-plugin-block]`
- *    ——「更多」按钮 + 就地菜单行 + 封禁/解封按钮（作者三裁之批一：面板不再提供
- *    封禁入口，在飞止损只走 API / CLI）。
- *  🔴 内容审批开关（hook `data-plugin-switch`）已随 2026-09-13 无审批批**退场**：
- *  生产代码零功能性使用。现场判据（逐字可复算）：
- *    • `grep -rn "data-plugin-switch" src/main/resources/web/ | grep -vcE ':[0-9]+:[[:space:]]*(\*|//)'`
- *      ⇒ **0**（该 hook 的全部命中都在本文件的注释内：`:14` 与本节；无选择器、
- *      模板或事件绑定的功能性使用）；
- *    • `grep -rn "data-plugin-switch" src/main/scala/` ⇒ **0**；
- *    • `grep -rn "data-plugin-switch" tests/` ⇒ 命中全为注释与「零残留」断言读取
- *      （`contentSwitchCount` / `contentSwitchThere` ⇒ `=== 0` / `false`），
- *      无任何正向使用。
- *  （2026-09-13 复核 R2：原判据 `grep -rn "pluginSwitch\|plugin-switch" src/ tests/`
- *  = 0 为**假**——实测 13 命中，且该式能匹配到自身 ⇒ 按上列可复算判据重写。） */
+ *  🔴 内容审批开关（hook `data-plugin-switch`）已随 2026-09-13 无审批批**退场**。
+ *  🔴 旧「skills chip toggle」机构（`.plugins-comp-toggle` / `[data-expand-for]` /
+ *     `.plugins-skill-expand`）随 2026-10-07 条目式批退场——skills 清单改由详情区
+ *     直接呈现（2026-10-07 前的面板形态见 git 历史）。 */
 function renderPluginCard(manifest) {
   const status = pluginStatus(manifest);
   const disp = dispatchState(manifest, status.blocked);
@@ -337,25 +405,55 @@ function renderPluginCard(manifest) {
   const servers = Array.isArray(manifest.mcpServers) ? manifest.mcpServers : [];
   const tools = Array.isArray(manifest.toolsExtension) ? manifest.toolsExtension : [];
   // Raw name (no pre-escaping): HTML attribute interpolation escapes at the
-  // template site (data-expand/data-expand-for), and the event handler
-  // CSS.escape()s the dataset value before the attribute-selector lookup.
-  // The old esc()-here + esc()-at-template double escape mangled names with
-  // &/quotes and left the querySelector concatenation one refactor away
-  // from a selector injection.
-  const expandId = `skills-${manifest.name}`;
+  // template site (data-plugin-item/aria-controls/data-plugin-doc), same
+  // discipline the old data-expand hook carried.
+  const name = manifest.name;
+  const detailId = `plugins-detail-${name}`;
 
   const metaBits = [];
   if (manifest.version) metaBits.push(`v${manifest.version}`);
   if (manifest.author) metaBits.push(t('plugins.author', { author: manifest.author }));
 
-  return `<div class="plugins-card${status.blocked ? ' blocked' : (status.contentChanged ? ' changed' : ' on')}" data-plugin="${esc(manifest.name)}">
-    <div class="plugins-card-head">
-      <div class="plugins-card-id">
-        <span class="plugins-card-name">${esc(contentText('plugin', manifest.name, 'name', manifest.name))}</span>
+  const desc = contentText('plugin', name, 'desc', manifest.description || '');
+  const composition = compositionSkills(skills) + compositionMcp(servers)
+    + compositionTools(tools) + compositionViewers(manifest);
+
+  return `<div class="plugins-card${status.blocked ? ' blocked' : (status.contentChanged ? ' changed' : ' on')}" data-plugin="${esc(name)}">
+    <div class="plugins-card-head" data-plugin-item="${esc(name)}" role="button" tabindex="0"
+      aria-expanded="false" aria-controls="${esc(detailId)}" title="${esc(t('plugins.detail'))}">
+      <div class="plugins-item-id">
+        ${statusIcon('puzzle', 14, 'plugins-item-icon')}
+        <span class="plugins-card-name">${esc(contentText('plugin', name, 'name', name))}</span>
         ${metaBits.length ? `<span class="plugins-card-meta">${esc(metaBits.join(' · '))}</span>` : ''}
       </div>
       <div class="plugins-card-state">
-        ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${esc(pill.text)}</span>` : ''}
+        ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${pillInnerHtml(pill)}</span>` : ''}
+        ${toggleHTML({
+          on: disp.on,
+          disabled: !!disp.blocked,
+          // 收起态行尾开关（2026-10-07 14:13 作者令①）：与状态药丸/chevron 同排，
+          // 药丸之后、chevron 之前（chevron 保持行末展开 affordance）。与展开态
+          // 详情区开关同一状态源（disp / cardSignature 单点），两处视图；
+          // 🔴 新钩子 `data-plugin-dispatch-row`——既有 `[data-plugin-dispatch]`
+          // 钩子语义/测试钉（详情区 actions 行）零变。点击 stopPropagation 由
+          // bindCardEvents 统一绑定（不触发整行 accordion）。
+          label: t('plugins.dispatchLabel'),
+          title: disp.title,
+          attrs: `data-plugin-dispatch-row="${esc(name)}"`
+            + (disp.blocked ? ` data-dispatch-blocked="${esc(disp.blocked)}"` : ''),
+        })}
+        ${ITEM_CHEVRON_SVG}
+      </div>
+      <span class="plugins-item-summary">${esc(desc)}</span>
+    </div>
+    <div class="plugins-item-detail" id="${esc(detailId)}" hidden>
+      ${manifest.description ? `<div class="plugins-card-desc">${esc(desc)}</div>` : ''}
+      <div class="plugins-dispatch-note"${disp.note ? '' : ' hidden'}>${esc(disp.note)}</div>
+      ${status.contentChanged ? `<div class="plugins-card-hint changed">${esc(t('plugins.changedHint'))}</div>` : ''}
+      ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
+      ${composition ? `<div class="plugins-card-composition">${composition}</div>` : ''}
+      <button type="button" class="plugins-item-doc" data-plugin-doc="${esc(name)}" hidden>${statusIcon('file-text', 12, '')}Plugin.md</button>
+      <div class="plugins-item-actions">
         <span class="plugins-card-dispatch">
           ${toggleHTML({
             on: disp.on,
@@ -365,38 +463,39 @@ function renderPluginCard(manifest) {
             // （🔴 不得把 toggle 的 aria-label 删成空）。
             label: t('plugins.dispatchLabel'),
             title: disp.title,
-            attrs: `data-plugin-dispatch="${esc(manifest.name)}"`
+            attrs: `data-plugin-dispatch="${esc(name)}"`
               + (disp.blocked ? ` data-dispatch-blocked="${esc(disp.blocked)}"` : ''),
           })}
         </span>
       </div>
+      ${skillListHtml(skills)}
     </div>
-    <div class="plugins-dispatch-note"${disp.note ? '' : ' hidden'}>${esc(disp.note)}</div>
-    ${manifest.description ? `<div class="plugins-card-desc">${esc(contentText('plugin', manifest.name, 'desc', manifest.description))}</div>` : ''}
-    ${(skills.length || servers.length || tools.length)
-      ? `<div class="plugins-card-composition">${compositionSkills(skills, expandId)}${compositionMcp(servers)}${compositionTools(tools)}</div>`
-      : ''}
-    ${status.contentChanged ? `<div class="plugins-card-hint changed">${esc(t('plugins.changedHint'))}</div>` : ''}
-    ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
-    ${skillExpandHtml(expandId, skills)}
   </div>`;
 }
 
-/** Rejected (load-failed) plugin card — informational only, no switch. */
+/** Rejected (load-failed) plugin row — informational only, no controls, not
+ *  expandable（无详情可展开 ⇒ 无 chevron/role=button；拒载原因即条目行摘要；
+ *  多行卡式同构：图标＋名称行 / 摘要行，badge 常在——2026-10-07 补充令改形）。 */
 function renderRejectedCard(entry) {
   return `<div class="plugins-card rejected" data-plugin="${esc(entry.name)}">
     <div class="plugins-card-head">
-      <div class="plugins-card-id">
+      <div class="plugins-item-id">
+        ${statusIcon('puzzle', 14, 'plugins-item-icon')}
         <span class="plugins-card-name">${esc(entry.name)}</span>
+      </div>
+      <div class="plugins-card-state">
         <span class="plugins-rejected-pill">${esc(t('plugins.rejected'))}</span>
       </div>
+      <span class="plugins-item-summary">${esc(entry.reason || '')}</span>
     </div>
-    <div class="plugins-card-desc">${esc(entry.reason || '')}</div>
   </div>`;
 }
 
 /** Agent summary row: name + description + preset/model 现状 — the whole row
- *  deep-links into the per-agent detail editor (openAgentDetail). */
+ *  deep-links into the per-agent detail editor (openAgentDetail).
+ *  builtin-def 批（2026-10-03 作者令①）：代码定义的四件内置 agent 带只读徽标——
+ *  面板对内置 agent 只读查看，编辑器进详情页也是只读（builtin 标记来自
+ *  GET /api/agents 的 `builtin` 字段）。 */
 function renderAgentRow(agent) {
   const model = agent.model || {};
   const preset = model.preset || '';
@@ -405,9 +504,12 @@ function renderAgentRow(agent) {
     preset ? esc(preset) : '',
     resolved ? esc(shortModel(resolved)) : '',
   ].filter(Boolean).map(p => `<span class="plugins-agent-meta-pill">${p}</span>`).join('');
+  const builtinBadge = agent.builtin
+    ? `<span class="plugins-agent-builtin-badge" title="${esc(t('plugins.builtinTitle'))}">${esc(t('plugins.builtinBadge'))}</span>`
+    : '';
   return `<div class="plugins-agent-row" data-detail-agent="${esc(agent.name)}" role="button" tabindex="0"
     title="${esc(t('plugins.detail'))}">
-    <span class="plugins-agent-name">${esc(contentText('agent', agent.name, 'name', agent.displayName || agent.name))}</span>
+    <span class="plugins-agent-name">${esc(contentText('agent', agent.name, 'name', agent.displayName || agent.name))}${builtinBadge}</span>
     <span class="plugins-agent-desc">${esc(contentText('agent', agent.name, 'desc', agent.description || ''))}</span>
     <span class="plugins-agent-meta">${meta}</span>
     <svg class="plugins-agent-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
@@ -489,12 +591,22 @@ function renderAuthRequired(content) {
   content.querySelector('[data-plugins-relogin]')?.addEventListener('click', () => openLoginModal());
 }
 
+/** All per-card dispatch-toggle views（一处状态源、两处视图——14:13 令①）：
+ *  展开态 `[data-plugin-dispatch]` ＋ 收起态行尾 `[data-plugin-dispatch-row]`。
+ *  乐观翻转/收敛/释放三条路径都必须遍历本集，两视图才不会漂移。 */
+function dispatchToggles(card) {
+  // Legacy hook first so querySelector('[data-plugin-dispatch]') consumers
+  // (domCardSignature / specs) keep reading the detail-area view.
+  return card
+    ? card.querySelectorAll('[data-plugin-dispatch], [data-plugin-dispatch-row]')
+    : [];
+}
+
 /** Optimistic in-place flip of one card's DISPATCH switch (no re-render) —
  *  the only optimistic path left on the card (the content switch retired
- *  2026-09-13), same in-flight latch discipline. */
+ *  2026-09-13), same in-flight latch discipline. Flips BOTH views. */
 function flipDispatchState(card, on) {
-  const sw = card.querySelector('[data-plugin-dispatch]');
-  if (sw) {
+  for (const sw of dispatchToggles(card)) {
     setToggleState(sw, on);
     sw.disabled = true; // in-flight guard — released by state convergence
   }
@@ -508,8 +620,9 @@ function flipDispatchState(card, on) {
  *  (零静默空操作)。
  *  （2026-09-14 面板收敛批：原同时释放的封禁/解封按钮已随该动作退场。） */
 function releaseCardActions(card) {
-  const dsw = card?.querySelector('[data-plugin-dispatch]');
-  if (dsw && !dsw.hasAttribute('data-dispatch-blocked')) dsw.disabled = false;
+  for (const dsw of dispatchToggles(card)) {
+    if (!dsw.hasAttribute('data-dispatch-blocked')) dsw.disabled = false;
+  }
 }
 
 /** Dispatch-permission action (令 1 派发面) — POST /api/plugins/:name/(enable|disable).
@@ -545,9 +658,10 @@ function registryOrder(registry) {
 
 /** Update one card's DOM in place to match its manifest (status pill / card
  *  classes, dispatch state, hints). Preserves node identity, listeners and the
- *  expanded skill block — this is how state changes avoid any list redraw.
+ *  accordion expansion state — this is how state changes avoid any list redraw.
  *  （2026-09-14 面板收敛批：原「次级动作行的展开态不在这里重置」一段随该行退场
- *  删除——面板已无就地菜单。） */
+ *  删除——面板已无就地菜单。2026-10-07 条目式批：展开态 = `.expanded` class +
+ *  detail `[hidden]` 属性，均不在本函数触碰面 ⇒ 跨轮询/开关收敛保持。） */
 function applyPluginCardState(card, manifest) {
   const status = pluginStatus(manifest);
   const disp = dispatchState(manifest, status.blocked);
@@ -562,7 +676,7 @@ function applyPluginCardState(card, manifest) {
   if (!pill.text) {
     pillEl?.remove();
   } else if (pillEl) {
-    pillEl.textContent = pill.text;
+    pillEl.innerHTML = pillInnerHtml(pill);
     pillEl.classList.remove('on', 'changed', 'blocked');
     pillEl.classList.add(pill.key);
   } else {
@@ -570,13 +684,13 @@ function applyPluginCardState(card, manifest) {
     if (stateBox) {
       pillEl = document.createElement('span');
       pillEl.className = `plugins-state-pill ${pill.key}`;
-      pillEl.textContent = pill.text;
+      pillEl.innerHTML = pillInnerHtml(pill);
       stateBox.insertBefore(pillEl, stateBox.firstChild);
     }
   }
   // 派发面（令 1）：开关态 = 作者意图层；blocked 时 disabled + 注明原因。
-  const dsw = card.querySelector('[data-plugin-dispatch]');
-  if (dsw) {
+  // 两处视图（展开态 + 收起态行尾）同源收敛——遍历 dispatchToggles，防漂移。
+  for (const dsw of dispatchToggles(card)) {
     setToggleState(dsw, disp.on);
     dsw.disabled = !!disp.blocked;
     dsw.title = disp.title;
@@ -593,17 +707,21 @@ function applyPluginCardState(card, manifest) {
   setCardHint(card, 'blocked', status.blocked, t('plugins.blockedHint'));
 }
 
-/** Insert / update / remove one card-level hint row (kept before the skill
- *  expand block, created on demand). */
+/** Insert / update / remove one card-level hint row (kept inside the expanded
+ *  detail area, before the skill list — created on demand).
+ *  ui-status-redesign（盘点 #52）：blocked 提示条 = 行首 ban 图标 + 中性正文
+ *  （红底红边图案由 CSS 保留）。
+ *  2026-10-07 条目式批：锚点自已退场的 `.plugins-skill-expand` 改挂
+ *  `.plugins-item-skills`（详情区末位的 skills 清单）。 */
 function setCardHint(card, kind, show, text) {
   let el = card.querySelector(`.plugins-card-hint.${kind}`);
   if (!show) { el?.remove(); return; }
   if (!el) {
     el = document.createElement('div');
     el.className = `plugins-card-hint ${kind}`;
-    card.insertBefore(el, card.querySelector('.plugins-skill-expand'));
+    card.insertBefore(el, card.querySelector('.plugins-item-skills'));
   }
-  el.textContent = text;
+  el.innerHTML = (kind === 'blocked' ? statusIcon('ban', 11, 'st-err') : '') + escapeHtml(text);
 }
 
 /** Derived per-card rendering signature (status + dispatch面). Convergence
@@ -750,47 +868,134 @@ window.addEventListener('locale-changed', () => {
   if (pluginsPanelActive()) renderPlugins();
 });
 
-/** Bind one plugin card's interactions (the dispatch switch + skill-expand
- *  toggles). Shared by the full render and the live-sync insert path. Idempotent
- *  via WeakSets (not expando properties — checkJs zero-new-errors discipline).
- *  （2026-09-14 面板收敛批：「更多」菜单开合与封禁/解封两条绑定随该 UI 退场。） */
+// ── Plugin.md 入口（2026-10-07 条目式批）───────────────────────────────────
+// 在场判据 = 既有 /api/plugin-assets/<name>/Plugin.md 路由 200（StaticRoutes
+// .pluginAssetsRoutes；GET-only，鉴权 = cookie `nebflow_token` 或 `?token=` 参数
+// ——登录流不落 cookie ⇒ 照 persistence.js:432 / ws.js:519 的 `?token=` 同族
+// 先例显式携带）。🔴 引擎/scala 零改动红线：approvalManifest 契约无在场字段，
+// 探针是唯一零 scala 判据；一次/包/会话缓存（Promise<string|null>）。
+// 封禁包：服务端 fail-closed 404（「封禁包永不内联」同向）⇒ 入口永不在场。
+// 点击 = 点击时现取正文 → 既有 Canvas 通路（workspace-open-item → markdown
+// viewer）；失败 toast 走 setPluginDispatch 同族（原始错误消息，零新串）。
+
+/** Cached per-name probe: resolves to the doc text when present, else null.
+ *  Never rejects (network/HTTP failures degrade to null ⇒ 入口不显形). */
+const pluginMdDocs = new Map();
+
+function pluginMdUrl(name) {
+  const tok = localStorage.getItem(key('token')) || '';
+  return `/api/plugin-assets/${encodeURIComponent(name)}/Plugin.md`
+    + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+}
+
+function probePluginMd(name) {
+  if (!pluginMdDocs.has(name)) {
+    pluginMdDocs.set(name, fetch(pluginMdUrl(name)).then(r => (r.ok ? r.text() : null)).catch(() => null));
+  }
+  return pluginMdDocs.get(name);
+}
+
+/** Fresh fetch at click time (single source of truth; throws on failure). */
+async function fetchPluginMd(name) {
+  const resp = await fetch(pluginMdUrl(name));
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.text();
+}
+
+/** Reveal the entry when (and only when) the package root has Plugin.md.
+ *  Idempotent via WeakSet（本文件既有纪律：不用 expando 属性）。The probe
+ *  resolves once per name; a later re-render reuses it (no re-fetch). */
+const mountedDocEntries = new WeakSet();
+
+function mountPluginMdEntry(card) {
+  const btn = card?.querySelector('[data-plugin-doc]');
+  const name = card?.getAttribute('data-plugin');
+  if (!btn || !name || mountedDocEntries.has(btn)) return;
+  mountedDocEntries.add(btn);
+  probePluginMd(name).then(text => {
+    if (text && btn.isConnected) btn.hidden = false; // 在场 ⇒ 入口在场；否则永缺席
+  });
+  btn.addEventListener('click', async () => {
+    try {
+      const content = await fetchPluginMd(name);
+      // 既有 Canvas 通路（explorer.js fileContent 臂同款事件契约 → canvas.js
+      // openWorkspaceItem → fileViewers markdown viewer）——本面板只做入口。
+      window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+        id: `plugin-md:${name}`,
+        title: 'Plugin.md',
+        itemType: 'markdown',
+        content,
+        pinned: false,
+        background: false,
+      }}));
+    } catch (e) {
+      window.__showToast?.(String(e?.message || e), 'error');
+    }
+  });
+}
+
+/** Bind one plugin item's interactions (row accordion toggle, dispatch switch,
+ *  Plugin.md entry). Shared by the full render and the live-sync insert path.
+ *  Idempotent via WeakSets (not expando properties — checkJs zero-new-errors
+ *  discipline).
+ *  （2026-09-14 面板收敛批：「更多」菜单开合与封禁/解封两条绑定随该 UI 退场；
+ *  2026-10-07 条目式批：skills chip toggle 绑定随该机构退场，改为条目行
+ *  accordion toggle。） */
 const boundDispatchSwitches = new WeakSet();
-const boundCompToggles = new WeakSet();
+const boundItemRows = new WeakSet();
 
 function bindCardEvents(card) {
+  // 条目行 accordion（2026-10-07 条目式批）：点击/Enter/Space 展开⇄收回详情区，
+  // aria-expanded 同步；逐条目独立（互不挤占）。
+  const row = card.querySelector('[data-plugin-item]');
+  if (row && !boundItemRows.has(row)) {
+    boundItemRows.add(row);
+    const toggleItem = () => {
+      const detail = card.querySelector('.plugins-item-detail');
+      if (!detail) return;
+      const show = detail.hidden;
+      detail.hidden = !show;
+      card.classList.toggle('expanded', show);
+      row.setAttribute('aria-expanded', show ? 'true' : 'false');
+    };
+    row.addEventListener('click', toggleItem);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleItem(); }
+    });
+  }
   // 派发开关（令 1 派发面）：只写 plugins.dispatch；blocked 时控制件自带
-  // disabled，故此处点击不可达（零静默空操作）。
-  const dsw = card.querySelector('[data-plugin-dispatch]');
-  if (dsw && !boundDispatchSwitches.has(dsw)) {
+  // disabled，故此处点击不可达（零静默空操作）。两处视图同绑（2026-10-07
+  // 14:13 令①）：展开态详情区 + 收起态行尾（同源同态）。
+  // 🔴 stopPropagation（14:13 令①硬条）：行尾开关在 `[data-plugin-item]`
+  // （role=button accordion）**内部**——click 冒泡会触发展开，Enter/Space 的
+  // keydown 冒泡同样会（`<button>` 原生 click 语义已激活开关本体，行不得再动）。
+  for (const dsw of dispatchToggles(card)) {
+    if (boundDispatchSwitches.has(dsw)) continue;
     boundDispatchSwitches.add(dsw);
-    dsw.addEventListener('click', () => {
+    dsw.addEventListener('click', (e) => {
+      e.stopPropagation(); // 收起态行尾开关不得触发整行 accordion（详情态无害）
       if (dsw.disabled) return;
-      const name = dsw.dataset.pluginDispatch;
+      const name = dsw.dataset.pluginDispatch || dsw.dataset.pluginDispatchRow;
       const enable = !dsw.classList.contains('on');
       const cardEl = dsw.closest('.plugins-card');
       flipDispatchState(cardEl, enable); // optimistic — converged/rolled back async
       setPluginDispatch(name, enable, cardEl);
     });
-  }
-  card.querySelectorAll('.plugins-comp-toggle').forEach(btn => {
-    if (boundCompToggles.has(btn)) return;
-    boundCompToggles.add(btn);
-    btn.addEventListener('click', () => {
-      const block = card.querySelector(`[data-expand-for="${CSS.escape(btn.dataset.expand)}"]`);
-      if (!block) return;
-      const show = block.hidden;
-      block.hidden = !show;
-      btn.setAttribute('aria-expanded', show ? 'true' : 'false');
-      btn.classList.toggle('open', show);
+    dsw.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
     });
-  });
+  }
+  mountPluginMdEntry(card);
 }
 
-/** Bind interactions: the dispatch switch (optimistic in-place toggling),
- *  skill-expand toggles, agent summary rows → per-agent detail tab.
+/** Bind interactions: the item-row accordion toggle, the dispatch switch
+ *  (optimistic in-place toggling), the Plugin.md entry, agent summary rows →
+ *  per-agent detail tab.
  *  (The manual refresh button was removed 2026-09-05 — the poller keeps the
  *  list live; see startPluginsPolling. The 更多 secondary action was removed
- *  2026-09-14 with the block/unblock UI.) */
+ *  2026-09-14 with the block/unblock UI. The skills chip-toggle was removed
+ *  2026-10-07 with the itemized form — the skill list now lives in the detail
+ *  area.) */
 function bindPluginsEvents(content) {
   content.querySelectorAll('.plugins-card').forEach(bindCardEvents);
 

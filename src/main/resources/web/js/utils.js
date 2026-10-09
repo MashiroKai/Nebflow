@@ -231,7 +231,7 @@ function protectMentions(seg, out) {
  * @returns {string}
  */
 function restoreMentions(html, blocks) {
-  return html.replace(/MENTIONBLOCK(\d+)END/g, (m, idx) => {
+  return html.replace(RE_MENTION_RESTORE, (m, idx) => {
     const rec = blocks[parseInt(idx, 10)];
     if (!rec) return m;
     const attr = escapeHtml(rec.canonical).replace(/"/g, '&quot;');
@@ -253,6 +253,25 @@ function restoreMentions(html, blocks) {
 //   the first (least recently used) key when over capacity.
 const MD_CACHE_CAP = 200;
 const _mdCache = new Map();
+
+// ---------- Precompiled hot-path regexes (修法 2, 2026-09-30) ----------
+// Every streaming frame re-runs these over the WHOLE accumulated text. A regex
+// literal in a function body allocates a fresh RegExp on each evaluation; on a
+// per-frame hot path that is pure waste. String.replace/split always start from
+// index 0 for a global regex, so hoisting them out is behaviour-preserving.
+const RE_VOICE = /<voice>([\s\S]+?)<\/voice>/g;
+const RE_CODE_SPLIT = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g;
+const RE_MATH_DISPLAY_DOLLAR = /\$\$([\s\S]+?)\$\$/g;
+const RE_MATH_DISPLAY_BRACKET = /\\\[([\s\S]+?)\\\]/g;
+const RE_MATH_INLINE_DOLLAR = /(^|[^\\$])\$(?![\s$])((?:\\\$|[^$\n])*?[^\s$])\$(?!\d)/g;
+const RE_MATH_INLINE_PAREN = /(^|[^\\])\\\((\S(?:[^\n]*\S)?)\\\)/g;
+// The <pre> wrap + close pair used to run as TWO whole-string replace passes.
+// They are disjoint (an opening tag can never be a `</pre>`), so ONE alternation
+// pass emits byte-identical output while scanning the HTML only once.
+const RE_PRE_TAG = /<pre[^>]*>|<\/pre>/g;
+const RE_VOICE_RESTORE = /VOICEBLOCK(\d+)END/g;
+const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
+const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
 
 export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
@@ -282,7 +301,7 @@ function _renderMarkdownWithMath(text, parseVoice) {
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
   if (parseVoice) {
-    let vp = text.replace(/<voice>([\s\S]+?)<\/voice>/g, (m, content) => {
+    let vp = text.replace(RE_VOICE, (m, content) => {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;
     });
@@ -307,26 +326,31 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
       return `MATHBLOCK${mathBlocks.length - 1}END`;
     };
     // Display math: $$...$$ and \[...\]
-    seg = seg.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => add(math, true));
-    seg = seg.replace(/\\\[([\s\S]+?)\\\]/g, (m, math) => add(math, true));
+    seg = seg.replace(RE_MATH_DISPLAY_DOLLAR, (m, math) => add(math, true));
+    seg = seg.replace(RE_MATH_DISPLAY_BRACKET, (m, math) => add(math, true));
     // Inline math: $...$ and \(...\). The opening delimiter must not be followed
     // by whitespace (or another $) and the closing one must not be preceded by
     // whitespace nor followed by a digit — otherwise currency prose such as
     // "$100 到 $200" pairs up and swallows the text in between.
-    seg = seg.replace(/(^|[^\\$])\$(?![\s$])((?:\\\$|[^$\n])*?[^\s$])\$(?!\d)/g,
+    seg = seg.replace(RE_MATH_INLINE_DOLLAR,
       (fullMatch, prefix, math) => prefix + add(math, false));
-    seg = seg.replace(/(^|[^\\])\\\((\S(?:[^\n]*\S)?)\\\)/g,
+    seg = seg.replace(RE_MATH_INLINE_PAREN,
       (fullMatch, prefix, math) => prefix + add(math, false));
     return seg;
   };
   protected_ = protected_
-    .split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g)
+    .split(RE_CODE_SPLIT)
     .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(seg), mentionBlocks)))
     .join('');
   let html = marked.parse(protected_, { headerIds: false });
-  // Wrap <pre> blocks with a copy button
-  html = html.replace(/(<pre[^>]*>)/g, '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="' + t('chat.copy') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>' + t('chat.copy') + '</span></button>$1');
-  html = html.replace(/<\/pre>/g, '</pre></div>');
+  // Wrap <pre> blocks with a copy button and close the wrapper in the SAME pass
+  // (修法 2: one whole-string scan instead of two). The alternation keeps the
+  // original per-tag output byte-for-byte: every `<pre…>` gets the wrap opener +
+  // button + the tag itself ($&), every `</pre>` becomes `</pre></div>`.
+  html = html.replace(RE_PRE_TAG, (tag) => {
+    if (tag === '</pre>') return '</pre></div>';
+    return '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="' + t('chat.copy') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>' + t('chat.copy') + '</span></button>' + tag;
+  });
   // Restore math blocks as KaTeX
   mathBlocks.forEach((block, i) => {
     const token = `MATHBLOCK${i}END`;
@@ -347,7 +371,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
     }
   });
   // Restore voice blocks as clickable green spans
-  html = html.replace(/VOICEBLOCK(\d+)END/g, (m, idx) => {
+  html = html.replace(RE_VOICE_RESTORE, (m, idx) => {
     const i = parseInt(idx);
     const vtext = voiceBlocks[i] || '';
     return '<span class="voice-block" data-voice-index="' + i + '">' + escapeHtml(vtext) + '</span>';
@@ -356,7 +380,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
   html = restoreMentions(html, mentionBlocks);
   // Tag images for lightbox zoom (click → full preview). Skip imgs that
   // already carry a class (raw HTML in markdown) to avoid duplicate attrs.
-  html = html.replace(/<img\b(?![^>]*\bclass=)/g, '<img class="nf-zoom-img"');
+  html = html.replace(RE_IMG_TAG, '<img class="nf-zoom-img"');
   return html;
 }
 
@@ -524,6 +548,38 @@ export function createIconsIn(root) {
     const svg = lucide.createElement([tag, attrs, children]);
     el.replaceWith(svg);
   }
+}
+
+// ── Status icon helper (ui-status-redesign 2026-10-05, 分叉①=A / ③=lucide) ──
+// State markers that must render inside innerHTML templates (state words,
+// pills, banners) without waiting for a createIconsIn pass. Renders the SAME
+// vendored lucide geometry (kebab→Pascal lookup, currentColor stroke — JS
+// strings must never hardcode a color; the consuming CSS class owns the
+// semantic token). Falls back to an `<i data-lucide>` placeholder when the
+// vendor lib has not loaded yet — a later createIconsIn pass upgrades it.
+// Size via width/height attrs (matches agentManager's inline-style usage);
+// always aria-hidden when paired with a visible status word — pass
+// { labelled: true } for icon-only carriers so the caller attaches
+// title/aria-label itself (usage rule ② of the design spec).
+const _STATUS_ICON_PASCAL_RE = /(\w)(\w*)(_|-|\s*)/g;
+export function statusIcon(name, size = 14, cls = '') {
+  let svg = '';
+  if (typeof lucide !== 'undefined' && lucide.icons && lucide.createElement) {
+    const pascal = name.replace(_STATUS_ICON_PASCAL_RE, (m, c, p) => c.toUpperCase() + p.toLowerCase());
+    const icon = lucide.icons[pascal];
+    if (icon) {
+      const el = lucide.createElement([
+        icon[0],
+        { ...icon[1], width: String(size), height: String(size), class: `st-ic ${cls}`.trim() },
+        icon[2],
+      ]);
+      svg = el.outerHTML;
+    }
+  }
+  if (!svg) {
+    svg = `<i data-lucide="${name}" class="st-ic ${cls}" style="width:${size}px;height:${size}px"></i>`;
+  }
+  return svg;
 }
 
 // Shorthand alias for escapeHtml
@@ -779,11 +835,23 @@ export function isNearBottom(el) {
  * *follow intent* snapshot, so it must only be written where the geometry is
  * authoritative (a real scroll event, or an explicit programmatic jump to the
  * bottom). See the A-branch path table for the staleness analysis.
+ *
+ * B4 (2026-10-04): ONE geometry probe per scroll event. The judgement computed
+ * here doubles as `syncScrollPill`'s input whenever the latch element is the
+ * same element the pill measures (`view.dom.chat` — true for the primary
+ * window and both popups, which all pass their chat container). The pill sync
+ * only re-probes when it is called with no judgement of its own (mutation
+ * observer / post-write call sites), where the geometry really may have moved.
+ *
+ * 🔴 Registration discipline: this is the view's ONLY scroll listener. Call
+ * sites must not add a second scroll listener that also calls it — that would
+ * put two probes back on every scroll event (the B4 defect).
  */
 export function updateScrollSnapped(view, el) {
   if (!view || !view.stream || !el) return;
-  view.stream.scrollSnapped = isNearBottom(el);
-  syncScrollPill(view);
+  const atBottom = isNearBottom(el);
+  view.stream.scrollSnapped = atBottom;
+  syncScrollPill(view, el === view.dom?.chat ? atBottom : undefined);
 }
 
 /**
@@ -804,6 +872,16 @@ export function smartScroll() {
   // Capture the follow intent BEFORE the pending render mutates the DOM —
   // the same schedule-time capture the rAF scroll paths use.
   const follow = shouldFollowBottom(view, chat);
+  // UI-G (author 2026-10-03 19:59): a subagent / flow popup window is a static
+  // display — it does not schedule scroll frames. One synchronous write instead
+  // of an animation frame: same final scroll position (克制 ≠ 破功), no rAF on
+  // that window. This is the single choke point every auto-scroll goes through
+  // (chat.js alone calls it 23 times), so no call site needs its own check.
+  if (typeof view.motionEnabled === 'function' && !view.motionEnabled()) {
+    if (follow || isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;
+    syncScrollPill(view);
+    return;
+  }
   requestAnimationFrame(() => {
     if (follow || isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;
     syncScrollPill(view);
@@ -821,6 +899,20 @@ export function smartScroll() {
 /** view -> pill record. The WeakMap is the canonical home so a session
  *  switch (resetStream replaces view.stream) cannot orphan the DOM node. */
 const _pillRecords = new WeakMap();
+
+/** B4 (2026-10-04): the element a view's pill geometry is measured against —
+ *  the same element `initScrollFollow` attaches to. Held here because
+ *  `initScrollFollow` may run AFTER `updateScrollSnapped` (main.js attaches the
+ *  window's scroll listener above its `initScrollFollow` call), so the pill
+ *  itself cannot know the element at decision time. WeakMap ⇒ no leak. */
+const _viewChats = new WeakMap();
+
+function viewChat(view) {
+  if (!view) return null;
+  const el = _viewChats.get(view) || view.dom?.chat || null;
+  if (el && !_viewChats.has(view)) _viewChats.set(view, el);
+  return el;
+}
 
 function pillRecord(view) {
   let rec = _pillRecords.get(view);
@@ -933,13 +1025,19 @@ export function countsAsRealMessage(row) {
   return true;
 }
 
-/** Recompute pill visibility + count from live geometry for one view. */
-export function syncScrollPill(view) {
+/** Recompute pill visibility + count from live geometry for one view.
+ *
+ *  `atBottom`, when passed, is a judgement already made this frame against the
+ *  view's own chat element (see updateScrollSnapped) — reuse it instead of
+ *  probing the geometry a second time. B4: at most one probe per scroll event.
+ *  Callers that have no judgement of their own (mutation observer, post-write
+ *  re-sync) omit it and pay the probe. */
+export function syncScrollPill(view, atBottom) {
   if (!view || !view.dom || !view.dom.chat) return;
   const rec = pillRecord(view);
   const el = ensureScrollPill(view);
   if (!el) return;
-  const atBottom = isNearBottom(view.dom.chat);
+  if (atBottom === undefined) atBottom = isNearBottom(viewChat(view) || view.dom.chat);
   rec.atBottom = atBottom;
   if (atBottom) rec.count = 0; // reached the bottom (any cause) → nothing unseen
   const show = !atBottom && rec.count > 0;
@@ -963,14 +1061,28 @@ function scrollPillDismiss(view) {
 
 /**
  * Attach the per-view scroll-follow machinery: row-level MutationObserver +
- * scroll listener for one ChatView. Idempotent. Call once per view (primary
- * at startup, popups when their ChatView is created).
+ * the view's ONE scroll listener. Idempotent. Call once per view (primary at
+ * startup, popups when their ChatView is created).
+ *
+ * 🔴 B4 (2026-10-04) — this is the ONLY place a scroll listener is attached for
+ * a view. The listener refreshes the follow-intent latch and drives the ↓ N
+ * pill from the judgement it already made, i.e. ONE geometry probe per scroll
+ * event for both. Before the fix each view had TWO listeners (this one probing
+ * for the pill + the call site's own probing for the latch) while the decision
+ * sites ran three times per event — 6 forced layout reads per wheel step, the
+ * measured B4 defect (`scrollHeightWidth` 360 / 60 steps vs the ≤120 criterion).
+ *
+ * `opts.onScroll` is the call site's pagination gate (main.js / bgAgentPopup.js
+ * scroll-up → older page), run on the same event after the follow update. It is
+ * registered with the view's one listener; a later call without it cannot add a
+ * second listener (guarded by `rec.obs`).
  */
-export function initScrollFollow(view) {
+export function initScrollFollow(view, opts = {}) {
   const chat = view && view.dom && view.dom.chat;
   if (!chat) return;
   const rec = pillRecord(view);
   if (rec.obs) return;
+  _viewChats.set(view, chat);
   rec.atBottom = isNearBottom(chat);
   rec.obs = new MutationObserver((mutations) => {
     let addedRows = 0;
@@ -1006,7 +1118,12 @@ export function initScrollFollow(view) {
     requestAnimationFrame(() => syncScrollPill(view));
   });
   rec.obs.observe(chat, { childList: true });
-  chat.addEventListener('scroll', () => syncScrollPill(view), { passive: true });
+  // The view's ONE scroll listener (B4). Latch + pill share this probe; the
+  // caller's pagination gate rides the same event.
+  chat.addEventListener('scroll', () => {
+    updateScrollSnapped(view, chat);
+    if (typeof opts.onScroll === 'function') opts.onScroll();
+  }, { passive: true });
   syncScrollPill(view);
 }
 
@@ -1141,7 +1258,8 @@ export function markCopyFailed(btn) {
   live.className = 'copy-failed-live';
   live.setAttribute('role', 'status');
   live.setAttribute('aria-live', 'polite');
-  live.textContent = t('chat.copyFailed');
+  // ui-status-redesign（盘点 #43 / S6）：词前 circle-x 红图标 + 中性词。
+  live.innerHTML = statusIcon('circle-x', 10, 'st-err') + t('chat.copyFailed');
   host.appendChild(live);
   setTimeout(() => {
     live.remove();
@@ -1193,7 +1311,10 @@ export function createMsgCopyButton(text) {
 export function isBgAgentId(id) {
   return typeof id === 'string' && (
     id.startsWith('delegate-') || id.startsWith('subtask-') ||
-    id.startsWith('node-') || id.startsWith('dispatcher-')
+    id.startsWith('subagent-') || id.startsWith('workflow-') ||
+    id.startsWith('node-') || id.startsWith('dispatcher-') ||
+    // external-executors 批 #1225：外部 CLI delegate 会话（external-<exec>-<id>）。
+    id.startsWith('external-')
   );
 }
 
@@ -1209,4 +1330,101 @@ export function truncateMiddle(str, max = 96, tailKeep = 24) {
   const headLen = max - tailKeep - 1; // 1 = the '…' itself
   if (headLen < 1) return s.slice(0, max);
   return s.slice(0, headLen) + '…' + (tailKeep > 0 ? s.slice(-tailKeep) : '');
+}
+
+// ── Shared minute-grid ticker (perf-481 A5: stagger / coalesce the cheap polls) ──
+//
+// WHY a shared ticker instead of one `setInterval(60_000)` per module: several
+// independent cheap refreshes (project list fallback, task-panel relative
+// timestamps) each owned their own 1-minute interval. Their phases were set at
+// module load, so they drift apart and the page emits a burst of unrelated
+// requests at arbitrary instants. Two modules on the same nominal period should
+// share ONE timer, and that timer should sit on the wall-clock minute boundary
+// so a refresh aligns with the user-visible "minute" instead of an arbitrary
+// offset from page load.
+//
+// The ticker is LATE-ARMED: it schedules a self-correcting `setTimeout` to the
+// next minute boundary, runs the subscribers once, then re-arms. That keeps the
+// timer phase stable across the drift a plain `setInterval` accumulates.
+//
+// Visibility: a page that is not visible must do ZERO work — the timer stops
+// (not just short-circuits) while `hidden` and re-arms on `visibilitychange`,
+// so a backgrounded tab holds no pending timer and issues no requests.
+//
+// The subscriber set is the single source of truth for "who refreshes on the
+// minute"; no module may create a second 1-minute polling timer.
+/** @type {Set<() => void>} */
+const minuteTickSubscribers = new Set();
+let minuteTickTimer = null;
+
+/** True while the shared minute ticker is armed (test/observability face). */
+export function minuteTickerArmed() {
+  return minuteTickTimer !== null;
+}
+
+function minuteTickDelay(now = Date.now()) {
+  const ms = 60_000 - (now % 60_000);
+  // 0-length delay would busy-spin exactly on the boundary; nudge by 1ms.
+  return ms === 60_000 ? 1 : ms;
+}
+
+function armMinuteTick() {
+  if (typeof document !== 'undefined' && document.hidden) {
+    // Background ⇒ hold NO pending timer at all (a short-circuit inside the
+    // callback would still wake the page once per minute).
+    if (minuteTickTimer !== null) {
+      clearTimeout(minuteTickTimer);
+      minuteTickTimer = null;
+    }
+    return;
+  }
+  if (minuteTickTimer !== null) return;
+  minuteTickTimer = setTimeout(() => {
+    minuteTickTimer = null;
+    // Re-arm FIRST so a throwing subscriber can never stop the cadence.
+    armMinuteTick();
+    for (const cb of [...minuteTickSubscribers]) {
+      try { cb(); } catch { /* one subscriber must not break the others */ }
+    }
+  }, minuteTickDelay());
+}
+
+function onVisibilityForMinuteTick() {
+  if (typeof document !== 'undefined' && !document.hidden) {
+    armMinuteTick();
+    // A tab waking up should not wait for the next boundary to catch up.
+    for (const cb of [...minuteTickSubscribers]) {
+      try { cb(); } catch { /* one subscriber must not break the others */ }
+    }
+  } else {
+    armMinuteTick(); // hidden ⇒ drops the pending timer
+  }
+}
+
+/**
+ * Subscribe to the shared minute-grid tick (runs once per wall-clock minute,
+ * only while the document is visible).
+ * @param {() => void} cb
+ * @returns {() => void} unsubscribe
+ */
+export function onMinuteTick(cb) {
+  if (typeof cb !== 'function') return () => {};
+  const first = minuteTickSubscribers.size === 0;
+  minuteTickSubscribers.add(cb);
+  if (first) {
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityForMinuteTick);
+    }
+    armMinuteTick();
+  }
+  return () => {
+    minuteTickSubscribers.delete(cb);
+    if (minuteTickSubscribers.size === 0 && minuteTickTimer !== null) {
+      clearTimeout(minuteTickTimer);
+      minuteTickTimer = null;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityForMinuteTick);
+      }
+    }
+  };
 }

@@ -6,13 +6,19 @@ import nebflow.gateway.NfFilePolicy
 /**
  * A14（C 批 / 票据腿）——工具侧扩展名白名单表与端点侧白名单表必须逐项相等。
  *
- * The two tables exist for two different jobs (FileRefs pre-filters which
- * references the Card/Pop tools turn into proxy URLs; NfFileAllowedExt is the
- * endpoint's own gate) and they have drifted before: the 2026-09-05 fix had to
- * delete avi/eot/wasm/obj/stl/gltf/glb from FileRefs because the endpoint no
- * longer served them. Equality is the cheap invariant that keeps them welded:
- * a future change to one table without the other fails here instead of
- * silently producing dead links (FileRefs-ahead) or 400s (endpoint-ahead).
+ * The two tables exist for two different jobs (FileRefs pre-filtered which
+ * references the Card/Pop tools turned into proxy URLs; NfFileAllowedExt was
+ * the endpoint's own gate) and they have drifted before: the 2026-09-05 fix had
+ * to delete avi/eot/wasm/obj/stl/gltf/glb from FileRefs because the endpoint no
+ * longer served them. Equality is the cheap invariant that keeps them welded.
+ *
+ * 🔴 2026-10-07 askuser-attach-align 批（作者 09:35/09:41 两令）：两张表**同时退役**
+ * ——端点阶梯的扩展名维与 FileRefs 的前置过滤双双撤除（Canvas viewer 注册表为准，
+ * 未注册类型渲染面下载兜底）；表本体与逐项相等不变量**保留**，防任何单侧复活。
+ * The namespace mirror (A1) keeps the same shape for the same reason — and the
+ * 2026-10-07 askuser-copy-land cut (§16.2 落刀) retires the prose leg with the
+ * judge: the table body stays welded (A1-mirror), while the tool prose must
+ * NOT enumerate the list anymore (the judge no longer reads it).
  *
  * Lives in `nebflow.core.tools` because `FileRefs` is `private[tools]`.
  */
@@ -55,7 +61,8 @@ class FileRefsWhitelistSpec extends FunSuite:
   // allowlist by hand, and the 2026-09-16 author ruling (#687-A) widened the
   // endpoint by exactly one entry (`docs`). These tests make that drift
   // impossible to ship: the tool-side constant must equal the endpoint's list
-  // item for item, and the prose the model reads must name it.
+  // item for item — and (since the 2026-10-07 flip) the prose the model reads
+  // must no longer name it.
 
   test("A1-mirror: FileRefs.DataRootServedNamespaces == NfFilePolicy.NfDataRootAllowlist (no namespace drift)") {
     assertEquals(FileRefs.DataRootServedNamespaces, NfFilePolicy.NfDataRootAllowlist)
@@ -74,10 +81,15 @@ class FileRefsWhitelistSpec extends FunSuite:
     )
   }
 
-  test("A1-mirror: the shipped tool descriptions name every served namespace (prose cannot drift)") {
+  test("A1-mirror (2026-10-07 flip): the shipped tool descriptions no longer enumerate the served namespaces (retired prose cannot silently return)") {
     val text = FileRefs.DataRootServedNamespacesText
-    List("Card" -> CardTool.description, "Pop" -> PopTool.description).foreach { (who, described) =>
-      assert(described.contains(text), s"$who's description must enumerate the served namespaces: $text")
+    // The 2026-10-07 askuser-copy-land cut (§16.2 落刀) rewrote PopTool's prose to
+    // "every readable local location qualifies" — the enumeration left the model face
+    // together with the judge that read it. This leg welds the PROSE side of that
+    // retirement: the list must not reappear in tool prose while the judge no longer
+    // reads it (same anti-single-side-revival weld as the retired tables above).
+    List("Pop" -> PopTool.description).foreach { (who, described) =>
+      assert(!described.contains(text), s"$who's description must not enumerate the retired namespace list: $text")
       assert(
         !described.contains("docs/**` is NOT served") && !described.contains("docs/** is NOT served"),
         s"$who's description still claims docs/** is not served"
@@ -85,9 +97,13 @@ class FileRefsWhitelistSpec extends FunSuite:
     }
   }
 
-  test("A1-judge: <dataRoot>/docs/** is allowed and NOTHING else moved (pure judge, no disk)") {
+  test("A1-judge (2026-10-07 flip): the namespace reach layer is RETIRED — only credential identity refuses (pure judge, no disk)") {
     // Pure reads (nfCredentialDeny touches no filesystem: it normalizes and
-    // compares prefixes), so this pins the widening without writing anything.
+    // compares prefixes), so this pins the FLIP without writing anything:
+    // former namespace refusals all read None now; the only refusing shapes
+    // left are the credential identity tables. (The R2 inode layer is not
+    // exercised here — this synthetic policy carries an empty inode set; the
+    // route-level inode pins live in NfTicketRoutesSpec A5/A6/A17-counter.)
     val root = java.nio.file.Paths.get("/tmp/nebflow-ns-mirror-spec/dataroot").normalize()
     val policy = NfFilePolicy.NfPathPolicy(
       root,
@@ -95,18 +111,30 @@ class FileRefsWhitelistSpec extends FunSuite:
       Set.empty
     )
     def deny(rel: String): Option[String] = NfFilePolicy.nfCredentialDeny(root.resolve(rel), policy)
-    assertEquals(deny("docs/x.svg"), None, "the batch: docs/** is served")
-    assertEquals(deny("docs/nested/deep/x.svg"), None, "…including nested subtrees")
+    // served (the whole former-namespace face, allowlisted member or not)
     List(
+      "docs/x.svg",
+      "docs/nested/deep/x.svg",
       "logs/x.svg",
       "sessions/x.svg",
       "usage-records/x.json",
-      "secrets/x.txt",
-      "auth.json",
-      "nebflow.json",
       "future-thing.json",
-      "docsmith/x.svg", // a prefix sibling of `docs` — the judge matches the head exactly, never by prefix
+      "docsmith/x.svg", // a prefix sibling of `docs` — irrelevant either way now
       "docsx/x.svg"
-    ).foreach(rel => assert(deny(rel).isDefined, s"$rel must STAY refused (one-entry widening)"))
+    ).foreach(rel => assertEquals(deny(rel), None, s"$rel must SERVE (namespace reach retired)"))
+    // still refused: credential identity only. Two sources since the flip:
+    //  - the root-free tables (credential-shaped basenames / directory segments)
+    //  - the ROOT-ANCHORED Nebflow seed (2026-10-07 askuser-attach-align 批):
+    //    `<dataRoot>/auth.json` / `<dataRoot>/nebflow.json` / the `<dataRoot>/secrets`
+    //    subtree are credential files BY IDENTITY now — the seed answers live for
+    //    every request, so they refuse here even though this synthetic policy's
+    //    inode set is empty (before the seed they were only caught by the
+    //    startup inode snapshot / the now-retired namespace reach).
+    assert(deny("auth.json").isDefined, "auth.json stays refused (credential-shaped basename)")
+    assert(deny("nebflow.json").isDefined, "nebflow.json stays refused (root-anchored seed)")
+    assert(
+      deny("secrets/x.txt").isDefined,
+      "the dataRoot secrets subtree stays refused (root-anchored seed, live — no longer the namespace layer's job)"
+    )
   }
 end FileRefsWhitelistSpec

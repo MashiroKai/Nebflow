@@ -3,6 +3,8 @@ import { activeView } from '../chatView.js';
 import { t } from '../i18n.js';
 import { renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
 import { parseTaskReturnText, buildTaskRefLine } from '../reference.js';
+// Root agent DISPLAY name（单读点 rootName.js；A 侧 deviceMail 标签批本簇改动随簇迁入）。
+import { rootDisplayName } from '../rootName.js';
 import { bindCollapsibleToggle } from './collapsible.js';
 import { createMsgFooterBadge } from './durationBadges.js';
 
@@ -124,7 +126,7 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam, intak
   // ⇒ 标签 = i18n「来自 <from_device> 的 Nebula」双语（sender 携带 from_device）。
   // 复用同一徽章位/同一蓝气泡样式；eventType 段（INFO）照常追加。
   if (source === 'deviceMail') {
-    parts.push(t('deviceMail.fromDevice', { device: sender || '?' }));
+    parts.push(t('deviceMail.fromDevice', { device: sender || '?', agent: rootDisplayName() }));
   } else if (sourceTeam) {
     parts.push(sender ? `${sourceTeam}/${sender}` : sourceTeam);
   } else {
@@ -246,6 +248,8 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
 export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header) {
   const chat = activeView.dom.chat;
   const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header);
-  chat.appendChild(row);
+  // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
+  // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
+  chat.append(row);
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }

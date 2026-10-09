@@ -36,19 +36,22 @@ import scala.concurrent.duration.*
  *  3. **(d) the P0 exemption is the literal**: `isDispatcherMailInterrupt` positive/negative
  *     polarity (first non-empty line, exact case) - the A3/R7 bypass pair survives as a
  *     mechanism, not a message type;
- *  4. **(b) kernel leg is Nebula-exclusive**: a non-root sender mailing `kernel` /
- *     `kernel:<id>` gets `MAIL_KERNEL_EXCLUSIVE` and nothing is sent (precedes every
+ *  4. **(b) kernel continuation leg is Nebula-exclusive** (ruling (b) carries over):
+ *     a non-root sender mailing `kernel:<id>` gets `MAIL_KERNEL_EXCLUSIVE` and nothing
+ *     is sent (precedes every
  *     routing/resource gate); the Nebula-root role passes the exclusive gate (the error
  *     degrades to the fixture-level missing-resources one, never the exclusive one);
  *     a `kernel:<id>` continuation miss on the real registry is `MAIL_KERNEL_NOT_LIVE`;
- *     the kernel START leg refuses `images` (text-only, B6 family);
- *  5. **model-visible text**: the base description carries the kernel-leg section, the
+ *     the bare-kernel SPAWN leg is RETIRED (builtin-def batch 2026-10-03, author
+ *     directive ② "Delegate triggers kernels; Mail communicates"): any role mailing a
+ *     bare `kernel` gets the explicit `MAIL_KERNEL_SPAWN_RETIRED` tombstone;
+ *  5. **model-visible text**: the base description carries the kernel continuation-leg section, the
  *     device retirement note and the `[INTERRUPT]` window-bypass line; the
  *     `AddressFaceRoot` role projection carries the kernel forms (the dispatcher /
  *     team faces must NOT - the kernel leg is Nebula-exclusive, so projecting it into
  *     other roles would advertise an address that only errors for them).
  *
- * Zero network, zero real kernel spawn (the START leg's happy path is DelegateTool's
+ * Zero network, zero real kernel spawn (triggering is DelegateTool's
  * spawn engine and is exercised there; this file pins the Mail-tool face of ruling (b)).
  */
 class MailModelRetiredSpec extends FunSuite:
@@ -148,12 +151,20 @@ class MailModelRetiredSpec extends FunSuite:
       List("message"),
       "required must stay exactly [message]"
     )
-    // the address face must declare the kernel forms (model-visible)
+    // the address face must declare the delegate continuation form (model-visible).
+    // P1-1 对齐（2026-10-03，任务书 P1-1）：unified-delegate 批把 `kernel` 起实例腿
+    // 退役——address 面现宣传 **delegate** 续聊语义（`delegate:<id>`，裸 `kernel`
+    // 是墓碑），旧断言钉的 `kernel`/`kernel:<id>` 两形态已与 `MailTool.scala` 的
+    // 墓碑自相矛盾。本批按裁定把断言对齐 delegate 语义（保留「地址面必须声明续聊
+    // 形态」的强度，不是删断言）。
     val addr = propDesc(MailTool.inputSchema, "address")
-    assert(addr.contains("kernel"), s"the address description must name the kernel leg: $addr")
-    assert(addr.contains("kernel:<id>"), s"the address description must name the continuation form: $addr")
+    assert(addr.contains("delegate:<id>"), s"the address description must name the delegate continuation form: $addr")
+    assert(
+      !addr.contains("\"kernel\"") && !addr.contains("\"kernel:<id>\""),
+      s"the address description must NOT advertise the retired kernel forms (delegate is the trigger): $addr"
+    )
 
-  test("① device tombstone: a stale `device=` call refuses with MAIL_DEVICE_RETIRED before everything (even before the required-parameter gates)"):
+  test("① device tombstone: a stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED before everything (even before the required-parameter gates)"):
     // with NO message and NO address: the tombstone still wins (it is read first)
     val bare = errOf(callRes(qIn("device" -> "KAI"), ctx()), "device + bare")
     assert(bare.contains(MailTool.ErrDeviceLegRetired), s"the tombstone must fire on a bare stale call, got: $bare")
@@ -189,13 +200,25 @@ class MailModelRetiredSpec extends FunSuite:
   // 3. (b) kernel leg - Nebula-exclusive, not-live continuation, text-only start
   // ============================================================
 
-  test("③ kernel exclusivity: a non-root sender mailing `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE (precedes every routing/resource gate)"):
+  test("③ bare-kernel spawn leg: ANY role mailing a bare `kernel` gets MAIL_KERNEL_SPAWN_UNSUPPORTED (Delegate is the trigger)"):
+    val system = ActorSystem(s"mailmodel-spawnret-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      for (label, c) <- List(
+        ("teamish ctx", ctx().copy(actorSystem = Some(system))),
+        ("dispatcher ctx", ctx(dispatcher = true).copy(actorSystem = Some(system))),
+        ("root ctx", ctx(nebulaRoot = true).copy(actorSystem = Some(system)))
+      ) do
+        val msg = errOf(callRes(qIn("address" -> "kernel", "message" -> "hi"), c), label)
+        assert(msg.contains(MailTool.ErrKernelSpawnRetired), s"$label: must carry the spawn-retired tombstone, got: $msg")
+        assert(msg.contains("Delegate"), s"$label: the tombstone must point at Delegate, got: $msg")
+    finally
+      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+
+  test("③ kernel exclusivity: a non-root sender mailing `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE (precedes every routing/resource gate)"):
     val system = ActorSystem(s"mailmodel-excl-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       for (label, addr, c) <- List(
-        ("teamish ctx, bare kernel", "kernel", ctx().copy(actorSystem = Some(system))),
         ("teamish ctx, continuation", "kernel:delegate-kernel-abc12345", ctx().copy(actorSystem = Some(system))),
-        ("dispatcher ctx, bare kernel", "kernel", ctx(dispatcher = true).copy(actorSystem = Some(system))),
         ("dispatcher ctx, continuation", "kernel:delegate-kernel-abc12345", ctx(dispatcher = true).copy(actorSystem = Some(system)))
       ) do
         val msg = errOf(callRes(qIn("address" -> addr, "message" -> "hi"), c), label)
@@ -205,28 +228,34 @@ class MailModelRetiredSpec extends FunSuite:
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
 
-  test("③ kernel exclusivity: the Nebula-root role passes the exclusive gate (the error degrades to the fixture-level missing-resources face, never the exclusive one)"):
-    val msg = errOf(callRes(qIn("address" -> "kernel", "message" -> "hi"), ctx(nebulaRoot = true)), "root + kernel")
+  test("③ kernel exclusivity: the Nebula-root role passes the exclusive gate on `kernel:<id>` (the error degrades to the fixture-level missing-resources face, never the exclusive one)"):
+    val msg = errOf(callRes(qIn("address" -> "kernel:delegate-kernel-abc12345", "message" -> "hi"), ctx(nebulaRoot = true)), "root + kernel:<id>")
     assert(!msg.contains(MailTool.ErrKernelExclusive), s"the root must NOT be refused by the exclusive gate, got: $msg")
+    assert(!msg.contains(MailTool.ErrKernelSpawnRetired), s"the continuation address must not hit the spawn tombstone, got: $msg")
 
-  test("③ kernel continuation miss: `kernel:<id>` against a real (empty) registry is MAIL_KERNEL_NOT_LIVE (fail-closed)"):
+  test("③ delegate continuation miss: `kernel:<id>`/`delegate:<id>` against an empty registry is DELEGATE_NOT_FOUND (fail-closed, unified-delegate batch)"):
     val tmp = os.temp.dir(prefix = "mailmodel-notlive")
     val system = ActorSystem(s"mailmodel-notlive-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val resources = mkResources(system, tmp, new RecordingLlm).unsafeRunSync()
       val c = ctx(nebulaRoot = true).copy(sharedResources = Some(resources), actorSystem = Some(system))
+      // 旧形态 `kernel:<id>` 是 delegate: 的同 id 空间别名（存量回执不打断）——
+      // 未注册 id 的失败面同一张：DELEGATE_NOT_FOUND（回显 id，指路 Delegate 回执）。
       val msg = errOf(callRes(qIn("address" -> "kernel:delegate-kernel-deadbeef", "message" -> "hi"), c), "not-live")
-      assert(msg.contains(MailTool.ErrKernelNotLive), s"a registry miss must be the not-live error, got: $msg")
+      assert(msg.contains("DELEGATE_NOT_FOUND"), s"a registry miss must be the not-found error, got: $msg")
       assert(msg.contains("delegate-kernel-deadbeef"), s"the error must echo the id, got: $msg")
+      // 新形态同面：delegate:<id> 未注册同样是 DELEGATE_NOT_FOUND。
+      val msg2 = errOf(callRes(qIn("address" -> "delegate:delegate-kernel-deadbeef", "message" -> "hi"), c), "not-live-new-form")
+      assert(msg2.contains("DELEGATE_NOT_FOUND"), s"the new form shares the miss face, got: $msg2")
       // pure-constructor pin
       val pure = MailTool.kernelNotLiveError("delegate-kernel-x")
       assert(pure.message.contains(MailTool.ErrKernelNotLive))
-      assert(pure.message.contains("kernel"), s"the error must name the way out (start a new one with kernel): ${pure.message}")
+      assert(pure.message.contains("Delegate"), s"the error must name the way out (start a new one with Delegate): ${pure.message}")
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       os.remove.all(tmp)
 
-  test("③ kernel START leg is text-only: `images` on address=kernel is the explicit vision-unsupported refusal (B6 family), nothing is spawned"):
+  test("③ kernel spawn leg: a bare `kernel` tombstones even with images attached (MAIL_KERNEL_SPAWN_UNSUPPORTED), nothing is spawned"):
     val tmp = os.temp.dir(prefix = "mailmodel-kimg")
     val system = ActorSystem(s"mailmodel-kimg-${java.util.UUID.randomUUID().toString.take(6)}")
     try
@@ -237,7 +266,11 @@ class MailModelRetiredSpec extends FunSuite:
       val input = qIn("address" -> "kernel", "message" -> "hi")
         .add("images", Json.arr(img.toString.asJson))
       val msg = errOf(callRes(input, c), "kernel + images")
-      assert(msg.contains(MailTool.ErrVisionUnsupportedLeg), s"the start leg must refuse images, got: $msg")
+      assert(msg.contains(MailTool.ErrKernelSpawnRetired), s"the retired spawn leg must tombstone (no resource gates first), got: $msg")
+      // pure-constructor pin
+      val pure = MailTool.kernelSpawnRetiredError("kernel")
+      assert(pure.message.contains(MailTool.ErrKernelSpawnRetired))
+      assert(pure.message.contains("Delegate"), s"the tombstone must point at Delegate: ${pure.message}")
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       os.remove.all(tmp)
@@ -255,7 +288,9 @@ class MailModelRetiredSpec extends FunSuite:
 
   test("④ base description: kernel leg, device retirement note and the [INTERRUPT] window line are all model-visible"):
     val d = MailTool.descriptionBase
-    assert(d.contains("## Kernel leg"), s"the kernel-leg section must exist: ${d.take(200)}")
+    assert(d.contains("## Kernel continuation leg"), s"the kernel continuation-leg section must exist: ${d.take(200)}")
+    assert(d.contains(MailTool.ErrKernelSpawnRetired), "the spawn-retired tombstone code must be named")
+    assert(!d.contains("`address=\"kernel\"` starts"), "the retired start-form wording must be gone")
     assert(d.contains("kernel:<id>"), "the continuation form must be documented")
     assert(d.contains(MailTool.ErrKernelExclusive), "the exclusive error code must be named")
     assert(d.contains(MailTool.ErrKernelNotLive), "the not-live error code must be named")
@@ -266,18 +301,18 @@ class MailModelRetiredSpec extends FunSuite:
     val root = MailTool.descriptionRoot
     val disp = MailTool.descriptionDispatcher
     val team = MailTool.descriptionBase
-    assert(root.contains("## Kernel leg"), s"the root face must carry the kernel-leg section")
-    assert(root.contains("start a Kernel"), s"the root face must document the start form")
+    assert(root.contains("## Kernel continuation leg"), s"the root face must carry the kernel continuation-leg section")
+    assert(root.contains("Delegate-only"), s"the root face must document the Delegate-only trigger face")
+    assert(root.contains("`kernel:<id>`"), "the root face must document the continuation form")
     // the dispatcher/base faces must NOT advertise the kernel ADDRESS forms (the word
     // "kernel" itself may still appear in the shared images/attachments sections)
-    assert(!disp.contains("## Kernel leg"), "the dispatcher face must NOT carry the kernel-leg section")
-    assert(!disp.contains("start a Kernel"), "the dispatcher face must NOT advertise the kernel start form")
-    assert(!disp.contains("`kernel` — start"), "the dispatcher face must NOT carry the root address line")
+    assert(!disp.contains("## Kernel continuation leg"), "the dispatcher face must NOT carry the kernel continuation-leg section")
+    assert(!disp.contains("`kernel:<id>` — continue"), "the dispatcher face must NOT carry the root address line")
     // the BASE face is the Q5 union face (fail-closed default for unknown identity): it
     // may carry the section, but ONLY together with the exclusivity statement - a
     // non-root reader of the base is still told the leg is not theirs, and the runtime
     // gate refuses them anyway (pinned above).
-    if team.contains("## Kernel leg") then
+    if team.contains("## Kernel continuation leg") then
       assert(team.contains("Nebula-exclusive"), "the base face must carry the exclusivity statement beside the section")
     // the projection contract stays intact: every role face is derived from the base by
     // pure section deletion (ToolFaceVariantSpec pins the byte-level form)

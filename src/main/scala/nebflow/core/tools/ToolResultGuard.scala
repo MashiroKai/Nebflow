@@ -7,7 +7,7 @@ import nebflow.shared.*
 /**
  * Guards against oversized tool results that would blow the LLM context window.
  *
- * Two layers (inspired by Claude Code):
+ * Two layers:
  *   1. Per-tool: if a single result exceeds the tool's maxResultSizeChars
  *      (clamped by Defaults.DefaultMaxResultSizeChars), persist to disk and
  *      replace LLM-visible content with a preview + file path.
@@ -48,7 +48,7 @@ object ToolResultGuard:
       val tool = ToolRegistry.TOOL_MAP.get(call.name)
       val declaredMax = tool.map(_.maxResultSizeChars).getOrElse(Defaults.DefaultMaxResultSizeChars)
       // Int.MaxValue (a tool declaring ∞) falls back to the default cap rather
-      // than skipping the guard — no tool is exempt (2026-09-01 #38, was a
+      // than skipping the guard — no tool is exempt (was a
       // full bypass for Read: single 512KB reads ~128K tokens straight into
       // context, and re-reads of persisted tool-results doubled it).
       val threshold = math.min(declaredMax, Defaults.DefaultMaxResultSizeChars)

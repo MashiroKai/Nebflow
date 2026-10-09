@@ -808,15 +808,45 @@ class NeblinkClient(
     withSession(token => sendRequest("POST", s"${config.url}$path", AttachmentCapability.ProbeBody, Some(token)))
       .map(AttachmentCapability.judge)
 
-  /**
-   * E1 创建上传会话（§B.1）：`{name,size,sha256}` → 201 `{attachmentId,receivedBytes,state}`。
-   * 错误码逐字按 §E.3（403 `not_friends` / 422 `ATTACH_TOO_LARGE`/`INVALID_ARGUMENT` / 429）。
-   */
-  def createAttachment(friendUserId: String, name: String, size: Long, sha256: String): IO[Either[String, Json]] =
+  /** E1 创建上传会话（§B.1）：`{name,size,sha256}` → 201 `{attachmentId,receivedBytes,state}`。
+    * 错误码逐字按 §E.3（403 `not_friends` / 422 `ATTACH_TOO_LARGE`/`INVALID_ARGUMENT` / 429）。
+    *
+    * 字段方言双兼容批（2026-09-22）：`preview` 在场 ⇒ 申报体**追加** `preview` 键（**末位**），
+    * 内层拼写由 `previewDialectId` 选定 —— **键名/键序全部由方言登记表算出**，本方法内**不存在**
+    * 任何写死的键集（这正是「server 换个字段名就又不行」的防治面）。`None` ⇒ 载荷与改前
+    * **逐字节相同**；给出**未登记**的方言 id ⇒ 返回 `Left`（**显式拒绝**，禁静默换方言、禁崩）。
+    * 对端 `#[serde(default)]` + `Option`（两版皆然）⇒ 旧服务端忽略多出的 `preview` 键 =
+    * §B.7 #14 的回落面，本方法零额外分支。 */
+  def createAttachment(
+    friendUserId: String,
+    name: String,
+    size: Long,
+    sha256: String,
+    preview: Option[AttachmentPreview] = None,
+    previewDialectId: String = AttachmentPreviewContract.DefaultSendDialectId
+  ): IO[Either[String, Json]] =
     withSession { token =>
-      val payload = Json.obj("name" -> name.asJson, "size" -> size.asJson, "sha256" -> sha256.asJson).noSpaces
-      val url = s"${config.url}/api/friends/${enc(friendUserId)}/attachments"
-      sendRequest("POST", url, payload, Some(token)).map(_.flatMap(json(_)))
+      val base = List("name" -> name.asJson, "size" -> size.asJson, "sha256" -> sha256.asJson)
+      val previewField: Either[String, Option[(String, Json)]] = preview match
+        case None => Right(None)
+        case Some(p) =>
+          if AttachmentPreviewContract.previewDialect(previewDialectId).isEmpty then
+            Left(
+              s"unknown preview dialect '$previewDialectId' (registered: ${AttachmentPreviewContract.dialectIds.mkString(", ")})"
+            )
+          else
+            AttachmentPreviewContract
+              .encodeInDialect(previewDialectId, p)
+              .map(js => Some(AttachmentPreviewContract.PreviewKey -> js))
+              .toRight(
+                s"preview not expressible in dialect '$previewDialectId' (mime=${p.mime}, digest=${p.sha256.isDefined})"
+              )
+      previewField match
+        case Left(err) => IO.pure(Left(err))
+        case Right(field) =>
+          val payload = Json.fromFields(base ++ field.toList).noSpaces
+          val url     = s"${config.url}/api/friends/${enc(friendUserId)}/attachments"
+          sendRequest("POST", url, payload, Some(token)).map(_.flatMap(json(_)))
     }
 
   /**

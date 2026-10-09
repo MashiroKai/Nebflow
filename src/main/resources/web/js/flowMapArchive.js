@@ -24,7 +24,7 @@
 
 import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath } from './utils.js';
+import { renderMarkdownWithMath, statusIcon } from './utils.js';
 import { fetchNodeResultDetail, fetchFlowMapArchive } from './nodeData.js';
 // 排队视图共享解析（queuepos 批 2026-09-15）：详情面板与主图卡读**同一份**解析（叶子模块，
 // 无循环依赖；见 mergeQueueView.js 头注）。详情面板此前**完全没有**排队字段（作者现场报）。
@@ -1111,12 +1111,12 @@ function resultErrorText(/** @type {string} */ state, /** @type {number=} */ sta
   return `${t('flowmap.archive.resultLoadFail', { reason: resultErrorReason(state, status) })} · ${t('flowmap.archive.resultLoadFailHint')}`;
 }
 
-/** 错误态 HTML（可读原因 + 可操作提示）。色用既有 --color-error token（与卡片
- *  failed 状态同源），inline 覆盖仅因结果区无对应错误类且 flowMap.css 在飞——
- *  CSS 解冻后应收编为 .md-error 一类（见批报告「需拍板项」）。
+/** 错误态 HTML（可读原因 + 可操作提示）。ui-status-redesign（盘点 #25）：红字
+ *  → 中性正文＋行首 circle-x 红图标；样式收编为 flowMap.css 的 .fm-md .md-error
+ *  （原批「CSS 解冻后应收编」项，本批落地），inline 覆盖随删。
  *  @param {string} state @param {number=} status @returns {string} */
 function resultErrorHtml(/** @type {string} */ state, /** @type {number=} */ status) {
-  return `<span class="md-empty" style="font-style:normal;opacity:1;color:var(--color-error)">${esc(resultErrorText(state, status))}</span>`;
+  return `<span class="md-error">${statusIcon('circle-x', 12, 'st-err')}<span>${esc(resultErrorText(state, status))}</span></span>`;
 }
 
 /** 换装守卫（2026-09-11 fmresult 批）＝**仅「渲染代未变」**。

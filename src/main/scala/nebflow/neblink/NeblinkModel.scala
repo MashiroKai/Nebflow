@@ -729,7 +729,10 @@ case class AttachmentSummary(
   size: Long,
   sha256: String,
   state: String,
-  mime: Option[String] = None
+  mime: Option[String] = None,
+  // 字段方言双兼容批（2026-09-22）：可选内联预览。`None` ⇒ 出参**省键**（不是 `null`）
+  // ⇒ 旧端载荷逐字节不变；`Some` ⇒ 按该对象**自己说的方言**（`dialectId`）回写。
+  preview: Option[AttachmentPreview] = None
 ):
   def stateKind: AttachmentState = AttachmentState.of(state)
 
@@ -740,6 +743,30 @@ case class AttachmentSummary(
   def downloadable: Boolean = stateKind == AttachmentState.Ready && id.nonEmpty
 
 end AttachmentSummary
+
+/** 图片附件的**内联预览** —— **方言无关的内部表示**（字段方言双兼容批 2026-09-22）。
+  *
+  * 刻意**不是**任何一版线上拼写的镜像：不同方言（`{mime,w,h,size,b64}` / `{fmt,w,h,bytes,sha256,b64}`）
+  * 在这一个形状上收敛，`dialectId` 记住「这个对象说哪一版」。拼写 ↔ 内部表示的翻译**只有一处**
+  * （[[AttachmentPreviewContract]] 的方言登记表；本 case class 只是载体，禁第二处校验/映射）。
+  *
+  *   · `mime` = **标准内部拼写**（full MIME `image/webp` / `image/jpeg`）—— 与线面方言无关；
+  *   · `w`/`h` = 预览件像素（长边 ≤1280）；`size` = **解码后**字节数；
+  *   · `sha256` = `Option`：**有的方言带摘要、有的不带**（方言 A 无摘要步）—— 缺席不是「残缺」，
+  *     但若该对象要按**带摘要的方言**（B）写出，缺摘要即拒（见 `encodeIn`）；
+  *   · `b64` = RFC 4648 §4 标准 base64（带 `=` 填充、**纯字串**、无 `data:` 前缀；`data:` 合成
+  *     只落客户端单点）；
+  *   · `dialectId` = 本对象说哪一版方言（解析面 = 被识别到的那版；产出面 = 申报的那版）。
+  */
+case class AttachmentPreview(
+  mime: String,
+  w: Int,
+  h: Int,
+  size: Long,
+  sha256: Option[String],
+  b64: String,
+  dialectId: String = AttachmentPreviewContract.DefaultSendDialectId
+)
 
 /** `AttachmentDto.state` 的客户端口径（唯一映射点，§B.7 ① 的线上枚举 + 越界兜底）。 */
 enum AttachmentState:
@@ -978,6 +1005,12 @@ object FriendCodecs:
   private def unreadableAttachment(rawState: String): AttachmentSummary =
     AttachmentSummary(id = "", name = "", size = 0L, sha256 = "", state = rawState)
 
+  /** 附件解码（**方言双兼容** · 2026-09-22）：`preview` 与 `mime` 同一条纪律 ——
+    * 键缺席 / `null` / **任何已登记方言都认不出该形状**（键集不匹配、mime 越域、长边越界、
+    * 字节数越界、摘要非 64 位小写 hex、b64 长度与字节数不自洽）⇒ `None` ⇒ 上层按「无预览」回落。
+    * 🔴 **降级是可见的**：`preview` 判不可用**不得**让整条附件解码失败（旧形态载荷仍然解得出，
+    * 既有键取值逐字段不变）—— 判定单点 = [[AttachmentPreviewContract.parsePreviewAttachment]]
+    * （按方言登记表逐条试，**零版本协商**）。 */
   given Decoder[AttachmentSummary] = Decoder.instance { c =>
     Right(
       AttachmentSummary(
@@ -986,7 +1019,8 @@ object FriendCodecs:
         size = longField(c, "size").getOrElse(0L),
         sha256 = strField(c, "sha256").getOrElse(""),
         state = strField(c, "state").getOrElse(""),
-        mime = strField(c, "mime")
+        mime = strField(c, "mime"),
+        preview = AttachmentPreviewContract.parsePreviewAttachment(c.value)
       )
     )
   }
@@ -1091,7 +1125,16 @@ object FriendCodecs:
   given Encoder[OutgoingRequestSummary] = deriveEncoder
   given Encoder[FriendListResponse] = deriveEncoder
 
-  /** 附件出参（§B.2 M6）：`mime` 缺席即**省键**（`skip_serializing_if` 同形）。 */
+  /** 附件出参（§B.2 M6）：`mime` 缺席即**省键**（`skip_serializing_if` 同形）。
+    *
+    * 传输集成批加性扩面（同一条纪律）：`preview` 为 `Some` ⇒ 随附件一起出、**追加末位**
+    * （结构体声明序的最后一项）；`None` ⇒ **省键**（不是 `null`）⇒ 无预览件的出参形态与
+    * 旧形态**逐字节一致**。🔴 必须**手写**：`deriveEncoder` 会按 case class 形状过滤，
+    * 而 `preview` 是**对象**（不是标量）—— 派生编码在这里既会漏键也会改键序。
+    * 方言双兼容批（2026-09-22）：内层对象由 [[AttachmentPreviewContract.encodePreview]] 按
+    * **该预览自己说的方言**（`dialectId`）写出 ⇒「收到哪套拼写就还哪套」的收发恒等；写出
+    * 失败（该方言说不出这个 MIME、或缺该方言要求的摘要）⇒ 该预览**整体省略**（省键而非半截）
+    * —— 与「无预览」同一形态，**禁**发形状不完整的字段。 */
   given Encoder[AttachmentSummary] = Encoder.instance { a =>
     Json.fromFields(
       List(
@@ -1100,7 +1143,11 @@ object FriendCodecs:
         Some("size" -> a.size.asJson),
         a.mime.map(m => "mime" -> m.asJson),
         Some("sha256" -> a.sha256.asJson),
-        Some("state" -> a.state.asJson)
+        Some("state" -> a.state.asJson),
+        for
+          p  <- a.preview
+          js <- AttachmentPreviewContract.encodePreview(p)
+        yield AttachmentPreviewContract.PreviewKey -> js
       ).flatten
     )
   }

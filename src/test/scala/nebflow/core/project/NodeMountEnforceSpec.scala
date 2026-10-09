@@ -219,22 +219,17 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
+      // N1 刀2 D2：merge=true 建位 seal（码 NODE_MERGE_UNSUPPORTED）——原
+      // NODE_MERGE_REQUIRES_UPSTREAM 校验族随建位面退役（seal 在一切校验前，
+      // 事故形态同样进不来）。
       assert(r1.isLeft, s"zero-upstream merge create must be rejected, got $r1")
       assert(
-        r1.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
-        s"error must carry NODE_MERGE_REQUIRES_UPSTREAM, got: $r1"
+        r1.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"error must carry NODE_MERGE_UNSUPPORTED, got: $r1"
       )
       assert(
-        r1.left.exists(m => m.contains("in-barrier") || m.contains("in")),
-        s"error must explain the semantics (fires via in-barrier of upstream delivery), got: $r1"
-      )
-      assert(
-        r1.left.exists(m => m.contains("never fire") || m.contains("pending forever")),
-        s"error must state the empty-mount consequence, got: $r1"
-      )
-      assert(
-        r2.isLeft && r2.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
-        s"explicit in=[] must be rejected identically, got: $r2"
+        r2.isLeft && r2.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"explicit in=[] must be rejected identically (seal precedes parsing), got: $r2"
       )
       assert(
         !snap.nodes.values.exists(n => n.name == "m0" || n.name == "m0b"),
@@ -277,8 +272,8 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     yield
       assert(r.isLeft, s"n-e8b82fd5 form (merge=true, task, in=[]) must be rejected, got: $r")
       assert(
-        r.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
-        s"rejection must carry NODE_MERGE_REQUIRES_UPSTREAM, got: $r"
+        r.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"rejection must carry NODE_MERGE_UNSUPPORTED (the seal supersedes the retired incident-form check), got: $r"
       )
       assert(
         !snap.nodes.values.exists(n => n.name == "merge-smoke-fix"),
@@ -382,19 +377,29 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       )
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "slow-up")
-      // 新合法顺序：上游已存在 → 合并节点 in=<upId> 创建
-      r <- nodeEdit(
-        nodeInput(
-          "me-m4",
-          "merge-m4",
-          "description" -> Json.fromString("m4 landing sink"),
-          "task" -> Json.fromString("landing"),
-          "in" -> Json.fromString(upId),
-          "out" -> Json.fromString("Nebula"),
-          "merge" -> Json.fromBoolean(true)
-        ),
-        ctx
-      )
+      // N1 刀2 D2：merge 建位 seal 后改存储面直种（in 镜像 §2.3 同款；barrier
+      // 触发是引擎面行为——上游完成经 deliverOut 沿镜像边投递结算）
+      sinkId = s"n-${f"${scala.util.Random.nextInt(0x1000000)}%06x"}"
+      _ <- rt.store.mutate { s =>
+        s.copy(nodes =
+          s.nodes ++
+            Map(
+              sinkId -> NodeDef(
+                id = sinkId,
+                name = "merge-m4",
+                agent = "general",
+                task = Some("landing"),
+                description = Some("m4 landing sink"),
+                status = NodeLifecycle.Wiring,
+                in = List(upId),
+                out = List(OutEdge.root),
+                merge = true,
+                createdAt = System.currentTimeMillis()
+              )
+            ) ++ Map(upId -> s.nodes(upId).copy(out = s.nodes(upId).out :+ OutEdge(to = sinkId)))
+        )
+      }
+      r = Right(s"seeded merge node $sinkId")
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "merge-m4", Set(NodeLifecycle.Completed))
       merge <- idOf(rt, "merge-m4").flatMap(id => rt.store.getNode(id)).map(_.getOrElse(fail("merge must exist")))
@@ -404,7 +409,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       plainJson = NodePayload.buildNodeJson(plain, now)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"merge create with existing upstream must succeed, got $r")
+      assert(r.isRight, s"seeded merge node must persist, got $r")
       assertEquals(merge.merge, true, "merge flag must persist")
       assertEquals(
         mergeJson.hcursor.get[Boolean]("merge").toOption,

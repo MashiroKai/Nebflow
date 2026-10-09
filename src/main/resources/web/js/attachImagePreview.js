@@ -21,9 +21,22 @@
 // `params-measure-realphoto.md`（样本口径：壁纸 = 压缩比乐观上界 / 实拍 = 实况 / UI 截图 = 悲观下界）。
 //
 // ── 出口契约 ──
-//   `makePreviewFrame(source, opts)` → `{ blob, mime, width, height, bytes, quality, longEdge,
+//   `makePreviewFrame(source, opts)` → `{ blob, mime, width, height, bytes, sha256, b64, quality, longEdge,
 //   rung, capMet, mode, upscaled, scaleRatio, source:{…}, ladder:[…], probe:{…}, format, formatReason }`
 //   即「Blob + 生成元数据（mime / 尺寸 / 字节数 / 实际档位）」。
+//
+// ── 摘要 / base64 出口（传输集成批 S5；字段方言双兼容批沿用）──
+//   `ok:true` 时出参**补两键**（**与方言无关**：这里只产「标准内部表示」的字节半边 ——
+//   线面拼写（`{mime,w,h,size,b64}` ⇄ `{fmt,w,h,bytes,sha256,b64}`）由
+//   `attachPreviewField.js` 的方言登记表在**写出时**决定，本件零方言知识）：
+//     · `sha256` = 对**所选 blob 字节**的 SHA-256（64 位小写 hex；实现单点 =
+//       `attachPreviewField.js::sha256HexOfBytes`，本件零第二份）；
+//     · `b64` = 同一份字节的标准 base64（RFC 4648 §4 带填充、无 `data:` 前缀；
+//       实现单点 = `attachPreviewField.js::bytesToBase64`）。
+//   三者与 `bytes`(= `blob.size`) 同源于**同一份字节** ⇒ 机械自洽（归一化面的
+//   `bytes` 交叉复核 + 上限族判定收口）。摘要/编码能力缺失 ⇒ `ok:false`
+//   （fail-closed：没有摘要就不成字段，禁发半截预览）。
+//   `q`（quality）**留本地、不上 wire**（生成参数，非契约键）。
 //
 // 🔴 **本件没有「这件是不是图片」的判据**（刻意）：判据单源在既有
 //   `attachmentPreview.js::isImageAttachmentName`（ext→itemType 的真源 = `fileViewers.js`）。
@@ -31,6 +44,10 @@
 //
 // 🔴 本件**零 DOM 查询、零全局副作用**：除按需建 canvas 外不触碰页面；模块可在无 DOM
 //   环境被 import（顶层不访问 `document`），DOM 缺失时以结构化 `ok:false` 收口而非抛栈。
+
+// S5（传输集成批）：摘要与 base64 的**实现单点**复用（`attachPreviewField.js` 零 import ⇒
+// 无环；两件同批落地 = 契约件头注「客户端镜像改动必须与本件同一批落地」的执行）。
+import { bytesToBase64, sha256HexOfBytes } from './attachPreviewField.js';
 
 /** 长边钳制上限（作者裁定：≤1280 px）。 */
 export const PREVIEW_MAX_LONG_EDGE = 1280;
@@ -285,6 +302,9 @@ export async function makePreviewFrame(source, opts) {
     width: 0,
     height: 0,
     bytes: 0,
+    // S5：线面字节半边（`ok:true` 才有值；任何失败腿恒空串 ⇒ 调用方判「无预览」，禁半截）。
+    sha256: '',
+    b64: '',
     quality: PREVIEW_BASE_QUALITY,
     longEdge: 0,
     rung: -1,
@@ -363,6 +383,17 @@ export async function makePreviewFrame(source, opts) {
     const last = base.ladder.length ? base.ladder[base.ladder.length - 1] : null;
     const pick = chosen ? chosen.reading : null;
     if (pick) {
+      // S5：对**同一份**所选 blob 字节取摘要与 base64 ⇒ 与 `bytes`(= blob.size) 机械自洽
+      //（同源一次取字节，禁第二份拷贝路径）。能力缺失/计算失败 ⇒ **fail-closed**：
+      // 线面字段六键全有或全无，没有 sha256 就不成字段 ⇒ 结构化拒（不发半截预览）。
+      try {
+        const raw = new Uint8Array(await chosen.blob.arrayBuffer());
+        base.sha256 = await sha256HexOfBytes(raw);
+        base.b64 = bytesToBase64(raw);
+      } catch (err) {
+        base.reason = `digest-failed:${errText(err)}`;
+        return base;
+      }
       base.ok = true;
       base.blob = chosen.blob;
       base.mime = pick.mime || format;

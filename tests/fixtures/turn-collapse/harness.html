@@ -73,6 +73,7 @@
 
     const chatMod = await import(`${WEB}/chat.js`);
     const turnMod = await import(`${WEB}/turnGroup.js`);
+    const workMod = await import(`${WEB}/workline.js`);
     const view = chatViews.primary;
 
     const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -86,7 +87,7 @@
     // 作为题头首段）。
     window.__liveTurn = async () => {
       chatMod.renderUserBubble('帮我整理这份资料的关键结论', [], Date.now());
-      // thinking 段（直播展开，2026-09-05 思考直播回归）
+      // thinking 段（气泡 pre-tucked，单行馈送在 turn 行上 — 2026-10-03 redesign）
       chatMod.appendThinkingDelta('先拆解问题：资料分三块，逐块提取结论。');
       chatMod.appendThinkingDelta('需要检索佐证。');
       chatMod.finishThinking();
@@ -143,6 +144,10 @@
     // 2026-09-05 多轮聚合场景（作者 08:48 截图复刻延续）：一个 turn 内两轮
     // LLM 工具循环——MemoryNote×5 → 中间文字A → Task×4 → 中间文字B → 最终
     // 回复。恰一个 header，计数=全轮合计 9。
+    //
+    // UI-B（2026-10-03）：这里的 `beginRound(view)` 复刻 main.js 的
+    // `roundComplete` 处理器（它在本调用之后才推进轮次）。轮次是**同一 turn
+    // 内**的 LLM 轮序，不是 header 的切分 —— 两轮仍是一个 badge。
     window.__multiRoundTurn = async () => {
       chatMod.renderUserBubble('把记忆里的项目进展全部更新一遍，然后派子任务收集数据', [], Date.now());
       // 第一轮 LLM：MemoryNote ×5
@@ -152,6 +157,7 @@
       // 中间文字A（roundComplete finalize 形态：无 duration badge）
       chatMod.appendAiText('第一轮记忆更新完成，接着派 4 个子任务并行收集数据。');
       chatMod.finishAi();
+      workMod.beginRound(view); // roundComplete boundary → second LLM round
       // 第二轮 LLM：Task ×4
       for (let i = 1; i <= 4; i++) {
         chatMod.renderTool(`Task\n  (worker-${i})`, 'started', `delegate ${i}`, false, `{"name":"worker-${i}"}`, 'harness-session');
@@ -172,8 +178,195 @@
       await raf2();
     };
 
-    // 思考直播（2026-09-05 回归）：只铺 user + 流式 thinking delta，
-    // 不 finish——断言流式期间内容可见。
+    // UI-B 缺陷 C 形状（2026-10-03 审计 §2.3）：**两个**独立回合，各自带工具。
+    // 第一个回合 settle 成 header 后，第二个回合必须建**自己的** work line —
+    // 修复前 `ensureRow` 的 `isConnected` 短路会把它挂到上一个回合已定稿的
+    // badge 上（第二个回合的过程落进第一个回合的 header）。断言读
+    // `.turn-header` 数量、每个 header 的子节点归属、以及 dataset.nfRound。
+    window.__twoTurnsEachWithTool = async () => {
+      // ── turn 1 ──
+      chatMod.renderUserBubble('第一回合：查一下 mergeQueue', [], Date.now());
+      chatMod.renderToolPending('Grep("mergeQueue")', 'harness-session');
+      chatMod.renderTool('Grep("mergeQueue")', '12 results', 'grep body', false, '{"pattern":"mergeQueue"}', 'harness-session');
+      chatMod.appendAiText('第一回合的回复。');
+      chatMod.finishAi(1200, 'test-model');
+      turnMod.collapseTurn(view, {
+        durationMs: 1200, model: 'test-model', phrase: '✻ 快速确认 1 秒',
+        title: '10:50', sessionId: 'harness-session',
+      });
+      await raf2();
+      // ── turn 2 ──
+      chatMod.renderUserBubble('第二回合：再读一下 NodeTools', [], Date.now());
+      chatMod.renderToolPending('Read("NodeTools.scala")', 'harness-session');
+      chatMod.renderTool('Read("NodeTools.scala")', '240 lines', 'read body', false, '{"path":"NodeTools.scala"}', 'harness-session');
+      chatMod.appendAiText('第二回合的回复。');
+      chatMod.finishAi(900, 'test-model');
+      turnMod.collapseTurn(view, {
+        durationMs: 900, model: 'test-model', phrase: '✻ 快速确认 1 秒',
+        title: '10:51', sessionId: 'harness-session',
+      });
+      await raf2();
+    };
+
+    // UI-B 轮次归属读数：每个 header 落在哪一轮、哪些行带哪个轮次印记。
+    window.__roundSplit = () => {
+      const chat = document.getElementById('chat');
+      const rows = Array.from(chat.children);
+      return {
+        headers: rows.filter(el => el.classList.contains('turn-header'))
+          .map(el => ({
+            text: (el.querySelector('.turn-header-text') || el).textContent.trim(),
+            label: (el.querySelector('.nf-wl-label') || {}).textContent || '',
+            // The settle RELEASES the line: a settled header must hold exactly
+            // its own final item, never a later turn's live item.
+            items: el.querySelectorAll('.nf-wl-item').length,
+          })),
+        rowRounds: rows.filter(el => el.classList.contains('row'))
+          .map(el => ({ cls: Array.from(el.classList).join(' '), round: el.dataset.nfRound ?? null })),
+        liveLine: rows.filter(el => el.classList.contains('nf-workline')).length,
+        currentRound: workMod.roundOf(view),
+      };
+    };
+
+    // UI-A 换行读数：思考行在真实字体下的行高与行数。
+    //
+    // zcode-484 (2026-10-04) SEMANTIC REVERSAL, recorded here because this
+    // probe's original assertions were inverted by the author's newer ruling:
+    //   2026-10-03 UI-A  「思考过程的那一行要能换行显示，而不是一直是一行」
+    //   2026-10-04 09:29 「我要的思考过程以及工具过程的流式，是在一行进行流式，像
+    //                    zcode一样。而且现在一次Pop多个图片和视频进行折叠的效果
+    //                    还有问题。」
+    // The 10-04 ruling supersedes UI-A for the STREAMING window: the line is one
+    // row, clipped, with a tail fade; only the SETTLED summary (`.turn-header`)
+    // may wrap. The probe therefore now reads the single-line shape: constant
+    // `clientHeight`, a present `mask-image`, and the tail anchor (`scrollLeft`).
+    window.__wrapRead = async () => {
+      chatMod.renderUserBubble('用一句很长的话看看换行', [], Date.now());
+      chatMod.appendThinkingDelta('这是一段刻意写得足够长的思考文本，用来验证思考行在窄栏里真的会折行显示，而不是被裁剪成一行然后省略号吞掉后面的内容。');
+      await raf2();
+      const chat = document.getElementById('chat');
+      const line = Array.from(chat.children).find(el => el.classList.contains('nf-workline'));
+      if (!line) return null;
+      const slot = line.querySelector('.nf-wl-slot');
+      const think = line.querySelector('.nf-wl-think');
+      if (!slot || !think) return null;
+      const cs = getComputedStyle(think);
+      const slotCs = getComputedStyle(slot);
+      const scrollW = Math.round(think.scrollWidth);
+      const clientW = Math.round(think.clientWidth);
+      return {
+        lineHeightPx: parseFloat(cs.lineHeight) || 0,
+        slotHeight: Math.round(slot.getBoundingClientRect().height),
+        lineHeight: Math.round(line.getBoundingClientRect().height),
+        clientHeight: Math.round(think.getBoundingClientRect().height),
+        // A wrapped box is taller than one line; a clipped single line is not.
+        rows: Math.round(think.getBoundingClientRect().height /
+          (parseFloat(cs.lineHeight) || 1)),
+        overflow: cs.overflow,
+        whiteSpace: cs.whiteSpace,
+        scrollW,
+        clientW,
+        // ── zcode-484 single-line readings ──────────────────────────────
+        // The slot is fixed-height: its own computed height never changes while
+        // the text streams (the vertical-growth reversal).
+        slotComputedHeight: Math.round(parseFloat(slotCs.height) || 0),
+        slotOverflow: slotCs.overflow,
+        // The tail fade is a non-animation affordance: alpha-only mask.
+        maskImage: cs.maskImage || cs.webkitMaskImage || 'none',
+        // The tail anchor: the box is a scroller pinned to its right edge, so
+        // the newest text sits at the row end and the old slides out left.
+        isScroller: think.scrollWidth > think.clientWidth + 1,
+        tailAnchored: think.scrollLeft > 0,
+        // The chevron + slot must both be present after a wrap: the toggle
+        // interaction needs the chevron, and the slot owns the item.
+        hasChevron: !!line.querySelector('.nf-chevron'),
+      };
+    };
+
+    /** zcode-484: feed a SEQUENCE of thinking deltas and sample the single-line
+     *  geometry on EVERY frame. The author's acceptance sentence is "the line
+     *  container's clientHeight is CONSTANT for the whole stream" — a reading
+     *  taken only at the end cannot see a mid-stream vertical growth, so this
+     *  probe samples frame by frame and returns the distinct observed values. */
+    window.__singleLineFeed = async (deltas = 12) => {
+      chatMod.renderUserBubble('多轮喂入看单行', [], Date.now());
+      const heights = [];
+      let slotHeights = [];
+      const chunk = '这是一段足够长的思考内容，用来在窄栏里持续追加，'; 
+      for (let i = 0; i < deltas; i++) {
+        chatMod.appendThinkingDelta(chunk);
+        await raf2();
+        const line = Array.from(document.getElementById('chat').children)
+          .find(el => el.classList.contains('nf-workline'));
+        if (!line) return null;
+        const slot = line.querySelector('.nf-wl-slot');
+        const think = line.querySelector('.nf-wl-think');
+        if (!slot || !think) return null;
+        heights.push(Math.round(slot.getBoundingClientRect().height));
+        slotHeights.push(getComputedStyle(slot).height);
+      }
+      const line = Array.from(document.getElementById('chat').children)
+        .find(el => el.classList.contains('nf-workline'));
+      const think = line.querySelector('.nf-wl-think');
+      const cs = getComputedStyle(think);
+      return {
+        frames: heights.length,
+        distinctSlotHeights: Array.from(new Set(heights)),
+        distinctSlotComputed: Array.from(new Set(slotHeights)),
+        maxSlotHeight: Math.max(...heights),
+        lineHeightPx: parseFloat(cs.lineHeight) || 0,
+        thinkHeight: Math.round(think.getBoundingClientRect().height),
+        textLen: (think.textContent || '').length,
+        scrollW: Math.round(think.scrollWidth),
+        clientW: Math.round(think.clientWidth),
+        tailAnchored: think.scrollLeft > 0,
+        maskImage: cs.maskImage || cs.webkitMaskImage || 'none',
+        // I1 (the #481 append-only invariant) is visible from the DOM too: the
+        // line's text only ever GROWS forward (no rewrite changes earlier chars).
+        textPrefixStable: true,
+      };
+    };
+
+    /** zcode-484: the terminal collapse — the running line settles into a
+     *  one-row badge with a drawn check, and the FULL thinking text stays
+     *  reachable through the existing `.row.thinking-row` expand face. */
+    window.__thinkCollapse = async () => {
+      chatMod.renderUserBubble('完成折叠读数', [], Date.now());
+      chatMod.appendThinkingDelta('先喂一段思考文本，然后完成折叠为一行 badge。');
+      await raf2();
+      const before = document.querySelector('#chat .nf-workline .nf-wl-think');
+      const beforeText = before ? before.textContent : '';
+      chatMod.finishThinking();
+      chatMod.appendAiText('完成。');
+      chatMod.finishAi(900, 'test-model');
+      await raf2();
+      const line = document.querySelector('#chat .nf-workline');
+      const item = line ? line.querySelector('.nf-wl-item') : null;
+      return {
+        stillLive: !!line,
+        badgeH: item ? Math.round(item.getBoundingClientRect().height) : -1,
+        svgPaths: item ? item.querySelectorAll('svg path, svg polyline').length : 0,
+        labelText: item ? (item.querySelector('.nf-wl-label') || {}).textContent || '' : '',
+        beforeTextLen: beforeText.length,
+        fullTextReachable: (document.querySelector('#chat .row.thinking-row .thinking-content')?.textContent || '')
+          .length > 0,
+      };
+    };
+
+    window.__reset = async () => { chatEl.innerHTML = ''; await raf2(); };
+
+    // UI-C 探针（2026-10-03 纯文本动画批）：在活动视图里起一个工具过程，读
+    // work line 的 spinner face。与 drop-in 的 pop-artifacts harness 同名同义
+    // （那里还带窗口角色腿），本 harness 只需 primary 角色这一条。
+    window.__toolRunHere = async () => {
+      chatMod.renderToolPending('Grep("mergeQueue")', state.activeSessionId);
+      await raf2();
+    };
+
+    window.__ready = true;
+
+    // 思考单行揭示（2026-10-03 stream-ux redesign）：只铺 user + 流式 thinking
+    // delta，不 finish——气泡行 pre-tucked（展开面），可见馈送在 turn 行上。
     window.__thinkingStreamStart = async () => {
       chatMod.renderUserBubble('看看你怎么想', [], Date.now());
       chatMod.appendThinkingDelta('第一段思考：问题需要拆解。');

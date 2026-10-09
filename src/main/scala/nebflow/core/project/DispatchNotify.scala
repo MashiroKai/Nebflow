@@ -7,32 +7,29 @@ import nebflow.shared.NebflowLogger
 import scala.concurrent.duration.*
 
 /**
- * dispatch-notify —— 节点终态结果回流任务分发器的单一通知通道（2026-09-05 批）。
+ * dispatch-notify —— 节点终态结果回流任务分发器的单一通知通道。
  *
- * 目标语义（作者 2026-09-05 20:53 触发任务）：显式开启 notifyDispatcher 标志的节点
+ * 目标语义：显式开启 notifyDispatcher 标志的节点
  * 到达终态后，其结果触发 project-dispatcher 新会话——复用既有触发链
  * （TriggerDispatcher → spawn/注入分发器单次会话），使分发器能基于节点结果继续
  * 规划（扩拓扑 / 建合并节点收口 / 收口 / 无动作判定）。
  *
- * 2026-09-07 批（失败事件投递分发器路由，设计 20260907_node-failure-event-
- * dispatcher-routing.md，作者 09:24 三裁定冻结）：接线 Failed reason——节点 failed
+ * 失败事件投递分发器路由：接线 Failed reason——节点 failed
  * 终态化后分发器被**及时**触发（不依赖 out 接线形态、不依赖 Nebula 人肉巡检）。
  * failed 通知**不查 notifyDispatcher flag**：flag 语义保持「completion 回流」不变；
  * failed 是异常低频事件，项目的拓扑主人对项目内任何失败都应知情（「无人订阅的
- * 失败」正是 2026-09-07 今晨宿主误杀事故的教训——节点悬空/僵尸收敛后分发器与
- * Nebula 双不知情）。防循环口径：failed 通知 → 分发器处置 → 新节点/重激活节点再
+ * 失败」——节点悬空/僵尸收敛后分发器与 Nebula 双不知情）。防循环口径：failed 通知 → 分发器处置 → 新节点/重激活节点再
  * failed → 再通知，这不是循环而是**重试回路**（每次通知对应一次真实的新失败），
  * 回路护栏由窗口熔断承担（见下），不需要 opt-in。
  *
- * == 单一通知入口（可扩展，监督化批共用） ==
+ * == 单一通知入口（可扩展，多 reason 共用） ==
  * 全部通知走唯一入口 [[notifyTerminal(reason, node)]]，带原因码 NotifyReason
- * （completion / failed / blocked / …）。completion（2026-09-05 批）与 failed
- * （2026-09-07 批）已接线；blocked 仍预留零动作（接口层锁死「组合不双触发」：
+ * （completion / failed / blocked / …）。completion 与 failed 已接线；blocked 仍预留零动作（接口层锁死「组合不双触发」：
  * blocked 重入由 FeedbackRouter 独占——同一节点终态唯一，failed 走 deliverFailed →
  * notifyTerminal(Failed)，blocked 走 blockedNode → FeedbackRouter.route，双通道在
  * 接口层结构性互斥）。
  *
- * == cancelled 回流（取消静默死锁修复批 2026-09-10，作者裁定 R1 方案 2） ==
+ * == cancelled 回流（R1 方案 2） ==
  * `NotifyReason.Cancelled` 与 failed **完全对称**：不查 notifyDispatcher flag、持久
  * 去重同款（notifySentAt + inFlight 占位）、tell-then-mark、补投扫描同款候选、预算
  * 耗尽「终态不翻转 + markSent + single-flight notice 升级」。
@@ -59,7 +56,7 @@ import scala.concurrent.duration.*
  *    重触发）+ 进程内 inFlight 占位关掉「直触发 vs 周期补投扫描」竞态窗口。占位在
  *    尝试结束后**释放**（attempt.guarantee）：持久去重由 notifySentAt 承担（guard
  *    链已查空标记），inFlight 只管并发在飞窗口——failed 节点被 NodeEdit 重激活
- *    （notifySentAt 随之清零，2026-09-07 批 failed 重激活放开）后再次真失败时，
+ *    （notifySentAt 随之清零——failed 重激活放开）后再次真失败时，
  *    占位不得永久挡住第二次通知（重试回路非循环口径，设计 §2.2）。
  *  - 投递时机 = tell-then-mark（V8 nebulaDeliveredAt 同款 at-least-once：崩溃在
  *    tell 与 mark 之间 → 重启后补投扫描重触发，宁重复不丢失）。
@@ -82,27 +79,26 @@ import scala.concurrent.duration.*
  *
  * == 触发时机与补投（设计约束④） ==
  * completion：completedNode 在终态落库+投递+deps 结算完成后调用本入口（1 行挂接）。
- * failed：NodeEngine.deliverFailed 尾部挂接（2026-09-07 批单点收口——failNode 与
+ * failed：NodeEngine.deliverFailed 尾部挂接（单点收口——failNode 与
  * autoFailDeadRunning 两口必经 deliverFailed；通知在 out 结算**之后**发出，分发器
- * spawn/注入时读到的 Flow Map 是结算后状态，拓扑判断不失真）。D5 起（20260908
- * wf1cde §3）failed 零结算：普通下游停等 pending/wiring、merge 下游转 blocked，
+ * spawn/注入时读到的 Flow Map 是结算后状态，拓扑判断不失真）。D5 起：failed 零结算：普通下游停等 pending/wiring、merge 下游转 blocked，
  * 通知文本尾部附停等等待者清单（E-③，[[waitingSuccessors]]）。宿主重启后未投递
  * 通知（notifySentAt 为空）由 ProjectActor.TtlTick(30s) 挂 [[redeliver]] 周期补投
  * （参照 redeliverUnconsumedNebulaResults 形态）。
- * 🔴 **killruling 批（2026-09-23 裁定 #19）改判**：`autoFailDeadRunning` 已降档为
+ * 🔴 **语义改判**：`autoFailDeadRunning` 已降档为
  * 「只提醒、节点留 Running」⇒ 该口**不再**必经 `deliverFailed`（死会话形态**不再产生
  * 分发器 failed 通知**）。本链现存的 failed 入口只剩 `failNode` 一族（含桥上的异常
  * 终态与 boot-recovery (c) 类）；死会话形态的可见性改由
  * `node-session-dead-reminder` 事件 + barrier 告警腿承载。
  *
- * == 打包窗口与预算并账（Q4，2026-09-11 任务分发器收件规则批） ==
+ * == 打包窗口与预算并账（Q4） ==
  * 守卫链（flag/状态/持久去重/占位/窗口熔断）全部保持**逐件**裁决不变；变化只在
  * 「投递 + 预算计数」这一步：通过守卫的件先进入按 reason 分账的打包缓冲
  * （[[NotifyBatch]]），**首件到达起算 5s 滚动窗口**（[[windowMs]]，默认
  * [[DefaultWindowMs]]，不随新件延长 ⇒ 单件延迟上界 5s），窗口结束时把本窗口的件
  * **合并为一次注入**（[[flushBatch]]），并按**一次注入**计一个预算单位。
  * 由此：一轮 TtlTick 内的密集扇出（N 件终态）只花 1 个预算单位、只注入 1 条分发器
- * 任务（**#62「第 6 件起静默失联」结构性消除**）；预算是成本保护（限流器口径），
+ * 任务（**「第 6 件起静默失联」结构性消除**）；预算是成本保护（限流器口径），
  * 窗口只改「怎么算一次」，不改任何护栏阈值。窗口是进程内状态：崩溃即丢，但件未
  * `markSent` ⇒ 仍在 [[redeliver]] 候选集，重启后补投（at-least-once 不破）。
  * `windowMs <= 0` ⇒ 同步逐条触发（窗口引入前的行为，测试接缝）。
@@ -116,7 +112,7 @@ final class DispatchNotify(
    * ——notice 语义非 blocked：节点保持终态，前端不可标 BLOCKED）。
    */
   escalate: (String, String) => IO[Unit],
-  /** 预留（2026-09-06 起不再在预算耗尽路径调用——节点不再转 blocked，无需 WS 刷新）。 */
+  /** 预留（已不再在预算耗尽路径调用——节点不再转 blocked，无需 WS 刷新）。 */
   emitUpdated: NodeDef => IO[Unit],
   /**
    * 触发通道（默认经 ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher；
@@ -147,7 +143,7 @@ final class DispatchNotify(
   cancelledCooldownMs: Long = DispatchNotify.FailedCooldownMs,
   cancelledWindowThreshold: Int = DispatchNotify.FailedWindowThreshold,
   /**
-   * 打包窗口（Q4，2026-09-11 任务分发器收件规则批）：同一 reason 的件在窗口内
+   * 打包窗口（Q4）：同一 reason 的件在窗口内
    * 到达即**合并为一次注入**，并按「一次注入」计一个预算单位（[[flushBatch]]）。
    * 默认 [[DispatchNotify.DefaultWindowMs]]（5s，写死）；**≤0 关闭打包**（同步逐条
    * 触发 = 窗口引入前的行为，测试接缝）。窗口是**滚动**的：首件到达起算，不随
@@ -156,7 +152,7 @@ final class DispatchNotify(
    */
   windowMs: Long = DispatchNotify.DefaultWindowMs,
   /**
-   * 回合跨度（R17②，b64 批 2026-09-13）：预算回合边界 = 每轮 [[redeliver]] 扫描，
+   * 回合跨度（R17②）：预算回合边界 = 每轮 [[redeliver]] 扫描，
    * 挂点 = `ProjectActor.TtlTick`，周期 = `GatewayMain.ttlScanner`（30s）。本参数只为
    * **定档推导**用（[[DispatchNotify.completionTier]]），不改变回合边界本身；
    * spec 注入小值使「档位公式」可确定性断言。
@@ -233,7 +229,7 @@ final class DispatchNotify(
 
   /**
    * completion 生效预算（R17② 重新定档；failed/cancelled **不定档**——异常态预算
-   * 保持 5/回合，风暴面由 failed 窗口熔断承担，本批不放大）。
+   * 保持 5/回合，风暴面由 failed 窗口熔断承担，不放大）。
    */
   private val completionBudgetMax: Int =
     DispatchNotify.completionTier(budgetMax, windowMs, roundSpanMs)
@@ -245,7 +241,7 @@ final class DispatchNotify(
     case _ => completionBudgetMax
 
   /**
-   * **cancelled 账本读数（判据 C4 的观测面，chaincancel 批 2026-09-17）**：
+   * **cancelled 账本读数（判据 C4 的观测面）**：
    * `(预算已用, 窗口内时间戳数, cooldown 截止毫秒)`。只读、不写、不改任何状态——
    * 供判据机械核对「链级取消腿：预算增量 == 1 且窗口/cooldown **零变化**」。
    * `private[project]` = 同包 spec 可见，不在生产调用面上。
@@ -300,7 +296,7 @@ final class DispatchNotify(
   /**
    * Q4 打包投递（窗口结束的唯一出口）：本窗口的件**合并为一次** `trigger`，并按
    * **一次注入**计一个预算单位（Q4「打包后按一次注入计数」）——一轮扫描内的密集
-   * 扇出不再从第 6 件起被预算静默丢弃（#62）。
+   * 扇出不再从第 6 件起被预算静默丢弃。
    *
    * 预算耗尽：逐件走 [[escalateBudgetExhaustedFor]]（节点保持终态 + markSent 退出
    * 候选集 + single-flight 监督通知）——账务口径与窗口引入前一致。
@@ -349,14 +345,14 @@ final class DispatchNotify(
   /**
    * 单一通知入口（可扩展）：终态节点 → 分发器通知。
    *
-   * guard 链按 reason 分流（2026-09-07 批起 failed 接线；blocked 仍接口层预留零
+   * guard 链按 reason 分流（failed 已接线；blocked 仍接口层预留零
    * 动作——组合不双触发由接口层锁定，blocked 重入由 FeedbackRouter 独占）。全路径
    * best-effort：内部错误只 WARN 不上抛（通知失败不拖垮终态链）。
    */
   def notifyTerminal(node: NodeDef, reason: NotifyReason): IO[Unit] =
     val guarded: IO[Boolean] = reason match
       case NotifyReason.Completion =>
-        // 守卫改走**通知策略单点**（b64 批 2026-09-13，R2/R3）：`notify == None`（存量）
+        // 守卫改走**通知策略单点**（R2/R3）：`notify == None`（存量）
         // ⇒ 回落 legacy flag（今天的行为，逐字节等价）；显式声明 ⇒ 仅 `dispatcher`
         // 回流（`root` 的根可见性由 out 边承担、`silent` 二者皆无）。持久去重按 store
         // 现读判定（见 [[markerEmpty]]——传入快照可能是标记前的）。
@@ -369,10 +365,9 @@ final class DispatchNotify(
         if node.status != NodeLifecycle.Failed then IO.pure(false)
         else markerEmpty(node.id)
       case NotifyReason.Cancelled =>
-        // R1（取消静默死锁修复批）：与 failed 完全对称——不查 flag。取消同样是
+        // R1：与 failed 完全对称——不查 flag。取消同样是
         // 「无人订阅的异常终态」：节点 out 被自动摘除、下游 barrier 带「待承接」
-        // 标停等，拓扑主人不知情就无人承接（本批三例 27.8–38.8 min 静默死锁的
-        // 直接成因）。持久去重同款按 store 现读判定。
+        // 标停等，拓扑主人不知情就无人承接（静默死锁的直接成因）。持久去重同款按 store 现读判定。
         if node.status != NodeLifecycle.Cancelled then IO.pure(false)
         else markerEmpty(node.id)
       case NotifyReason.Blocked =>
@@ -420,7 +415,7 @@ final class DispatchNotify(
     }
 
   /**
-   * completion 投递尝试（2026-09-05 批原路径；Q4 起改为**打包入队**——投递与预算
+   * completion 投递尝试（原路径；Q4 起改为**打包入队**——投递与预算
    * 计数在窗口结束时由 [[flushBatch]] 单点完成：切了窗口后行为逐字等价，未切窗口
    * 时同窗口的多件合并为一次注入）。
    */
@@ -428,8 +423,7 @@ final class DispatchNotify(
     enqueueNotify(NotifyReason.Completion, node, notifyTaskText(node, NotifyReason.Completion))
 
   /**
-   * **user-cancel 抑制态判据单点**（cancelsem 批 2 · failed 文本联动，2026-09-17
-   * 作者裁定 #696②）——返回「抑制本节点自动重试」的那个上游（用户主动取消者）；
+   * **user-cancel 抑制态判据单点**（failed 文本联动）——返回「抑制本节点自动重试」的那个上游（用户主动取消者）；
    * 非抑制态返回 `None`。
    *
    * 判据 = [[NodeEngine.retryOrNotify]] 第四态「抑制」的**同一函数、同一常量**：
@@ -458,12 +452,12 @@ final class DispatchNotify(
       case _ => IO.pure(None)
 
   /**
-   * failed 投递尝试（2026-09-07 批，设计 §3 护栏链）：窗口裁决在前（Suppress/
+   * failed 投递尝试（设计 §3 护栏链）：窗口裁决在前（Suppress/
    * CooldownOn 不耗预算不标记——冷却结束 redeliver 补投不丢失）→ 预算 →
    * tell-then-mark；预算耗尽 → failed 版升级（节点保持 failed + markSent 止重扫 +
    * single-flight notice）。
    *
-   * cancelsem 批 2 增量：Proceed 支在成型文本前先现读**抑制态**
+   * 增量：Proceed 支在成型文本前先现读**抑制态**
    * （[[userCancelSuppression]]，与 [[NodeEngine.retryOrNotify]] 同源同函数）——
    * 抑制态走 [[suppressedFailedNotifyTaskText]]（改劝「等承接 / 勿重激活」），
    * **非抑制态逐字不变**（四形态：无 retry / gen ≥ max / 上游引擎取消 / 上游
@@ -481,10 +475,10 @@ final class DispatchNotify(
       }
       .flatMap {
         case FailedWindowVerdict.Proceed =>
-          // 触发前现读等待者清单（wf1cde E-③）：停等下游随通知告知分发器
+          // 触发前现读等待者清单（E-③）：停等下游随通知告知分发器
           // （补投扫描路径同此口，清单一致）。Q4：文本在入队时成型，投递与预算
           // 计数在窗口结束时由 [[flushBatch]] 单点完成。
-          // cancelsem 批 2：文本成形前现读抑制态——抑制态 ⇒ 抑制变体（改劝），其余逐字不变。
+          // 文本成形前现读抑制态——抑制态 ⇒ 抑制变体（改劝），其余逐字不变。
           for
             waiters <- waitingSuccessors(node.id)
             suppressedBy <- userCancelSuppression(node)
@@ -529,7 +523,7 @@ final class DispatchNotify(
    * 触发/未标记」的全部欠账；窗口 Suppress 的 failed/cancelled 节点保持未标记留在
    * 候选集，冷却结束后由本扫描自然补投。
    *
-   * == 回合边界重置预算（2026-09-06 作者拍板；2026-09-07 批起两 reason 分账各自重置）==
+   * == 回合边界重置预算（两 reason 分账各自重置）==
    * 每轮扫描开启新一轮预算：先把 budgetUsed / failedBudgetUsed / cancelledBudgetUsed
    * 清零——预算不再按进程生命周期全局单调计数，而是按「分发器回合/通知识别链」计数、
    * 回合结束（本处=每轮 TtlTick 扫描边界）后重置。深度 ≤1 纵深防御的本意保留；既已落
@@ -539,7 +533,7 @@ final class DispatchNotify(
     budgetUsed.set(0) *> failedBudgetUsed.set(0) *> cancelledBudgetUsed.set(0) *> store.snapshot.flatMap { s =>
       val completions = s.nodes.values
         .filter(n =>
-          // 策略单点（b64 批 R2/R3）：显式 `silent` ⇒ 不入候选；缺键 ⇒ legacy flag。
+          // 策略单点（R2/R3）：显式 `silent` ⇒ 不入候选；缺键 ⇒ legacy flag。
           NotifyPolicy.completionNotifiesDispatcher(n) &&
             n.status == NodeLifecycle.Completed &&
             n.notifySentAt.isEmpty &&
@@ -567,15 +561,15 @@ final class DispatchNotify(
     }
 
   /**
-   * completion 预算耗尽（2026-09-06 作者拍板语义修正）：**不再翻转节点状态**——completedNode
+   * completion 预算耗尽（语义修正）：**不再翻转节点状态**——completedNode
    * 已先 deliverOut+settleDeps，下游已按完成推进，此时把节点转 blocked 会污染
-   * 完成事实 + 切断分发器回流（本批缺陷根因）。改为三动作：
+   * 完成事实 + 切断分发器回流（缺陷根因）。改为三动作：
    *   1. 落 notifySentAt（复用 [[markSent]]）→ 节点退出 [[redeliver]] 候选集
    *      （notifyDispatcher∧Completed∧notifySentAt.isEmpty∧result.nonEmpty），
    *      否则保持 completed 会被 TtlTick 每 30s 反复重扫 → 反复 escalate；
    *   2. 进程内 single-flight：仅首次预算耗尽向 Nebula 发一条非阻塞监督通知
    *      （notice 语义，非 blocked——eventType=blocked 会让前端标 BLOCKED，
-   *      作者看到「完成节点被标阻塞」）；后续耗尽只留痕不重报；
+   *      监督方看到「完成节点被标阻塞」）；后续耗尽只留痕不重报；
    *   3. FlowMapEventLog 审计一条（budget exhausted + kept completed）。
    * 全部 best-effort（通知失败不拖垮完成链）。
    */
@@ -583,7 +577,7 @@ final class DispatchNotify(
     markSent(node.id) *>
       budgetEscalated.modify(b => if b then (b, false) else (true, true)).flatMap {
         case false =>
-          // R17③（b64 批）：**每一次**耗尽都留**持久审计**（不止首件）——single-flight
+          // R17③：**每一次**耗尽都留**持久审计**（不止首件）——single-flight
           // 监督通知覆盖「有人被静默」这个事实，逐节点审计覆盖「是谁」。二者合起来
           // 使「耗尽语义不得回退为静默 markSent」在证据面可查（markSent + notice +
           // per-node 审计三件齐备）。
@@ -614,7 +608,7 @@ final class DispatchNotify(
       }
 
   /**
-   * failed 预算耗尽（2026-09-07 批，与 completion 版 [[escalateBudgetExhausted]]
+   * failed 预算耗尽（与 completion 版 [[escalateBudgetExhausted]]
    * 同构、single-flight 分账）：节点**保持 failed**（终态不翻转）+ markSent 退出
    * redeliver 候选集 + 首次耗尽发一条 notice 监督通知（notice 语义非 blocked）+
    * 审计。
@@ -643,12 +637,12 @@ final class DispatchNotify(
       }
 
   /**
-   * cancelled 投递尝试（取消静默死锁修复批，**R1 方案 2**；与 [[failedAttempt]]
+   * cancelled 投递尝试（**R1 方案 2**；与 [[failedAttempt]]
    * 同构、**账务独立**）：窗口裁决在前（Suppress / CooldownOn 不耗预算不标记——
    * 冷却结束 redeliver 补投不丢失）→ 预算 → tell-then-mark；预算耗尽 → cancelled
    * 版升级（节点保持 cancelled + markSent 止重扫 + single-flight notice）。
    *
-   * **账务裁定（R1 拍板项）：cancelled 与 failed 独立分账**（独立预算计数 +
+   * **账务口径（R1）：cancelled 与 failed 独立分账**（独立预算计数 +
    * 独立滚动窗口/cooldown）。理由：
    *   ① 与既有纪律同源——类头「防循环（两 reason 各自护栏、分账互不挤占）」已为
    *      completion/failed 立此先例：一类通知的用量不得挤占另一类；
@@ -677,7 +671,7 @@ final class DispatchNotify(
       .flatMap {
         case CancelledWindowVerdict.Proceed =>
           // Q4：同一 reason 的件在窗口内合并为一次注入（预算按一次注入计）。
-          // cancelsem 批 1：文本构建改为 IO（需现读链归属链 id）——入队与去重链逐字不变。
+          // 文本构建改为 IO（需现读链归属链 id）——入队与去重链逐字不变。
           waitingSuccessors(node.id).flatMap(waiters =>
             cancelledNotifyTaskText(node, waiters).flatMap(text => enqueueNotify(NotifyReason.Cancelled, node, text))
           )
@@ -733,7 +727,7 @@ final class DispatchNotify(
       }
 
   /**
-   * **R5 方案 4（2026-09-10 裁定）L3 硬恢复中间态「延后回流」占位**：把
+   * **R5 方案 4：L3 硬恢复中间态「延后回流」占位**：把
    * `notifySentAt` 写成占位，**不发送任何通知**。语义扩展（唯一一处）：该字段
    * 由「本代次已回流」加读为「本代次回流已处置」——`markSent` 与
    * [[holdTerminalNotify]] 都满足之，[[releaseTerminalNotify]] 归零。
@@ -755,11 +749,11 @@ final class DispatchNotify(
    * 归零——resume 成功（[[NodeEngine.hardResumeNode]] CAS 复活）与改判 failed
    * （[[NodeEngine.settleFailedHardResume]] 先归还再走 failNode 全链）。
    *
-   * **时序守卫（2026-09-11）**：只在节点仍处 Cancelled 中间态时写占位（见方法体）。
+   * **时序守卫**：只在节点仍处 Cancelled 中间态时写占位（见方法体）。
    */
   def holdTerminalNotify(nodeId: String): IO[Unit] =
     store.findNode(nodeId).flatMap {
-      // **时序守卫**（2026-09-11 实测补）：占位只在节点**仍处 L3 中间态**（Cancelled）时写入。
+      // **时序守卫**：占位只在节点**仍处 L3 中间态**（Cancelled）时写入。
       // 占位写点在取消尾链的**末尾**（emit → 审计事件 → cleanupPendingAsks → checkBarriersNow
       // → 占位），若终局腿（改判 failed 的 failNode / 成功复活的 CAS）先落，这一笔占位会反向
       // 覆盖终局的回流去重标记：最险的形态是「failed 通知被冷却窗口抑制（未 markSent）」——
@@ -824,13 +818,13 @@ final class DispatchNotify(
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
   /**
-   * D5 停等等待者清单（20260908 wf1cde §3.3 + E-③）：因本节点 failed 而停等的下游。
+   * D5 停等等待者清单（E-③）：因本节点 failed 而停等的下游。
    * 判定（status ∈ {pending, wiring} 的停等态）：in-barrier 等待 = in 引用本节点 ∧
    * 未收到其投递（deliveredTo 无此键——与 startNode barrier 闸门同构）；deps 等待 =
    * deps 引用本节点（depsSatisfied 只认 completed，failed 永不满足）。合并节点例外
    * 下游已转 blocked（可见终态 + merge-blocked 独立通报），不在停等集合，不入清单。
    *
-   * cancelled 侧扩展（R1/R4 取消静默死锁修复批）：被取消节点在**引擎自动摘除**后
+   * cancelled 侧扩展（R1/R4）：被取消节点在**引擎自动摘除**后
    * 已不在下游的 `in` 里（镜像 prune），改以 `pendingSuccession`（「待承接」标）
    * 留痕——故本判据并入该键，否则 cancelled 通知会误报「无下游等待者」。对 failed
    * 节点本键恒空 → failed 清单逐字不变（D5 行为零变化）。
@@ -853,10 +847,9 @@ final class DispatchNotify(
     }
 
   /**
-   * cancelled 版通知任务文本（取消静默死锁修复批 **R1 方案 2**；cancelsem 批 1
-   * 2026-09-17 增补：**source 分流** + 头行 `chain=` 字段）。
+   * cancelled 版通知任务文本（**R1 方案 2**；增补：**source 分流** + 头行 `chain=` 字段）。
    *
-   * **与 failed 文本必须区分**（作者裁定明令）：cancelled **不可重激活**
+   * **与 failed 文本必须区分**：cancelled **不可重激活**
    * （`NodeEdit` 的重激活闸只放行 `Blocked | Failed`，`NodeTools` 描述
    * `completed/cancelled not reactivatable (create successor instead)`），因此
    * **严禁照抄 failed 的四步 NodeEdit 重激活指引**——照抄会让分发器去「编辑
@@ -865,7 +858,7 @@ final class DispatchNotify(
    * 改接 / abandon（与设计 §6-R1「处置指引 = 承接（新建承接节点）/ 改接（改该节点
    * out → Nebula，触发下游 in 镜像 prune）/ abandon」逐条对应）。
    *
-   * == cancelsem 批 1：source 分流（R1 × R4）==
+   * == source 分流（R1 × R4）==
    * 来源由节点自身 result 反解（[[CancelSource.fromResult]] 单点，与引擎侧 R4 抑制
    * [[NodeEngine.retryOrNotify]] 的判据同源）：
    *   - `engine` / `unknown`：**处置指引逐字保留**（承接/改接/abandon——引擎误杀、
@@ -903,7 +896,7 @@ final class DispatchNotify(
        |处置指引（cancelled 是终态，但**与 failed 不同：不可重激活** —— NodeEdit 的重激活闸只放行 blocked/failed，编辑 cancelled 节点只会走普通编辑路径、不会复活它；因此 failed 的「NodeEdit 编辑触发 reactivate 重跑」那套指引对本节点**无效，请勿照用**）：
        |1. 承接（首选）：NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；再把该承接节点 append 进受影响下游的 in（NodeEdit 的 in 参数只增）——对该下游的任意实际变更会清掉它的「待承接」标记，其 barrier 才放行。
        |2. 改接（该轨确实不再需要）：**普通取消路径引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
-       |   **L3 硬恢复路径语义不同（U4，2026-09-11 与代码对齐）**：该路径取消时**不摘除**（resume 成功后拓扑必须完整，提前 prune 会让下游永远拿不到结果）；resume 失败则节点被**改判 failed**（不是留在 cancelled）——failed 侧按 D5 零结算停等，**同样不摘除**，下游 in 保持完整、等上游 NodeEdit 重激活重跑后自动续跑；此时若该轨确实不再需要，请用于该节点 out→Nebula 的 NodeEdit 触发 prune（幂等）。兜底腿：仅当引擎已无法定位该会话归属节点（节点已离活动区/归档）时，引擎才代做 cancelled 侧的**迟到摘除**（反向 prune 活动区引用 + 登记「待承接」+ 事件流留痕）；两者都查无则记 ERROR + 事件流（人工介入）。
+       |   **L3 硬恢复路径语义不同**：该路径取消时**不摘除**（resume 成功后拓扑必须完整，提前 prune 会让下游永远拿不到结果）；resume 失败则节点被**改判 failed**（不是留在 cancelled）——failed 侧按 D5 零结算停等，**同样不摘除**，下游 in 保持完整、等上游 NodeEdit 重激活重跑后自动续跑；此时若该轨确实不再需要，请用于该节点 out→Nebula 的 NodeEdit 触发 prune（幂等）。兜底腿：仅当引擎已无法定位该会话归属节点（节点已离活动区/归档）时，引擎才代做 cancelled 侧的**迟到摘除**（反向 prune 活动区引用 + 登记「待承接」+ 事件流留痕）；两者都查无则记 ERROR + 事件流（人工介入）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃；下游的「待承接」标记仍需按 1/2 处置，否则其 barrier 永久停等。
        |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
        |$waiterLine
@@ -913,7 +906,7 @@ final class DispatchNotify(
   end engineCancelledNotifyTaskText
 
   /**
-   * **user-cancel 变体**（cancelsem 批 1 · R1 × R4）：用户主动取消 ⇒ **不得重新派发**。
+   * **user-cancel 变体**（R1 × R4）：用户主动取消 ⇒ **不得重新派发**。
    *
    * 与 engine 变体共享头两行（`已被**取消**` / `reason=cancelled` / 取消原因 / 结果全文
    * 指引）与尾两行（前置检查 / 无需回报）；只替换处置指引块。
@@ -962,7 +955,7 @@ final class DispatchNotify(
       case names => s"下游等待者（cancelled 不投递不结算，且其 barrier 已被「待承接」标记闸住；承接/改接/放弃后自动续跑）：${names.mkString(", ")}。"
 
   /**
-   * 链级/级联取消腿的**批量前置标记**（R2 §2.3-1，chaincancel 批 2026-09-17）：把
+   * 链级/级联取消腿的**批量前置标记**（R2 §2.3-1）：把
    * 全成员 `notifySentAt` 写成"本代次回流已处置"。
    *
    * 为什么**必须**在取消动作之前调用（设计 D1 单账本的结构性承担点）：级联腿对**有
@@ -977,11 +970,11 @@ final class DispatchNotify(
     ids.toList.distinct.traverse_(markSent)
 
   /**
-   * **链级/级联取消的聚合通知腿**（R2 §2.3，chaincancel 批 2026-09-17）——"一次链级
+   * **链级/级联取消的聚合通知腿**（R2 §2.3）——"一次链级
    * 操作 ⇒ 一次注入"的唯一落点。
    *
-   * 与 [[cancelledAttempt]] 的**结构性差异**（本批的核心工程判定）：本腿**不进**
-   * `cancelledAttempt`（≈ :506-532 的窗口裁决）——风暴算术（`cancelledWindowThreshold`
+   * 与 [[cancelledAttempt]] 的**结构性差异**（核心工程判定）：本腿**不进**
+   * `cancelledAttempt`（其窗口裁决）——风暴算术（`cancelledWindowThreshold`
    * = 5 / 10min 窗口在**入队之前**裁决）在 N≥5 时会把逐节点通知压成 cooldown +
    * Suppress，5s 打包窗口**救不了**（窗口只合并"已入队"件）。故链级腿在窗口裁决
    * **之前**单点收口：一次 `trigger` + 一条 `chain-cancelled` 审计 + 1 个预算单位，
@@ -1036,13 +1029,13 @@ final class DispatchNotify(
           .as(1)
 
   /**
-   * **链级取消通知文本**（R2 §2.3 文本契约；作者三答 2/3 修订逐条落）。
+   * **链级取消通知文本**（R2 §2.3 文本契约）。
    *
    * 🔴 **严禁照抄 failed 的四步重激活指引**：cancelled 不可重激活（`NodeEdit` 的
    * 重激活闸只放行 `blocked | failed`）——照抄会把分发器引向无效动作（同
-   * [[cancelledNotifyTaskText]] 头注裁定）。本函数沿用 cancelled 版的承接/改接/
+   * [[cancelledNotifyTaskText]] 头注口径）。本函数沿用 cancelled 版的承接/改接/
    * abandon 三条出路，并加上**链级特有**信息：chainId、成员清单、保留/跳过清单、
-   * 「级联取代」声明（作者三答 1：下游连带 cancelled，**不再**留「待承接」便签，
+   * 「级联取代」声明（下游连带 cancelled，**不再**留「待承接」便签，
    * 故本文本**不**给"承接待承接标记"的指引）。
    */
   private def chainCancelledNotifyTaskText(
@@ -1078,7 +1071,7 @@ final class DispatchNotify(
         if waiters.isEmpty then "受影响下游等待者：无下游等待者。"
         else s"受影响下游等待者（被摘除 in 后分别处于 pending/wiring）：${waiters.mkString(", ")}。"
       }
-       |级联取代声明（作者裁定）：上游被取消 ⇒ 下游**连带 cancelled**，引擎**不再**留「待承接」便签——本文本**不**给承接/改接待承接标记的动作；下游若确实要续跑，按下方第 1 条新建替代节点重接拓扑。
+       |级联取代声明：上游被取消 ⇒ 下游**连带 cancelled**，引擎**不再**留「待承接」便签——本文本**不**给承接/改接待承接标记的动作；下游若确实要续跑，按下方第 1 条新建替代节点重接拓扑。
        |处置指引（cancelled 是终态，**与 failed 不同：不可重激活** —— NodeEdit 的重激活闸只放行 blocked/failed，编辑 cancelled 节点只会走普通编辑路径、不会复活它；failed 的「NodeEdit 编辑触发 reactivate 重跑」那套指引对本批节点**无效，请勿照用**）：
        |1. 承接（首选）：NodeEdit 新建替代节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）。
        |2. 该轨确实不再需要：无需额外动作（链级腿已把取消成员的 out 摘除并改接 Nebula，下游 in 镜像随之 prune）。
@@ -1090,10 +1083,10 @@ final class DispatchNotify(
   end chainCancelledNotifyTaskText
 
   /**
-   * failed 版通知任务文本（2026-09-07 批设计 §2.3 + 作者 09:24 裁定③——failed 可
+   * failed 版通知任务文本（设计 §2.3 + 条款③——failed 可
    * 重激活重跑：reactivate 为首选处置，换名新建降为换基线/重派备选）：err 摘要 +
    * 四动作清单 + 操作知识（分发器是单次会话无记忆，每次都要被告知）。
-   * D5 追加（20260908 wf1cde E-③）：尾部附停等等待者告知行——有则列节点名/id
+   * D5 追加（E-③）：尾部附停等等待者告知行——有则列节点名/id
    * （处置上游前先知影响面），无则明示「无下游等待者」（处置不再靠 NodeList 巡检猜）。
    */
   private def failedNotifyTaskText(node: NodeDef, waiters: List[String]): String =
@@ -1115,8 +1108,7 @@ final class DispatchNotify(
   end failedNotifyTaskText
 
   /**
-   * **failed 抑制态变体**（cancelsem 批 2 · 作者 2026-09-16 裁定 #696②「failed 文本
-   * 须感知抑制态」；形态取 (a) **改劝**，理由见批报告「修法形态选择」节）。
+   * **failed 抑制态变体**（「failed 文本须感知抑制态」；形态取 (a) **改劝**）。
    *
    * 触发条件单点 = [[userCancelSuppression]]（= [[NodeEngine.retryOrNotify]] 第四态，
    * 同源同函数）：本节点的 `retry.upstream` 是**用户主动取消**的节点 ⇒ 引擎本次
@@ -1129,7 +1121,7 @@ final class DispatchNotify(
    *     以为该节点不可救）；
    *   - **不**保留常态 failed 文本的「首选重激活」劝语（[[FailedReactivateLead]]
    *     与动作 1 的「NodeEdit 编辑…触发 reactivate 重跑——原节点复活」）——抑制态下
-   *     照它做会把用户刚停下的上游重新卷进来，正是作者点名的错误劝语；
+   *     照它做会把用户刚停下的上游重新卷进来，正是已知的错误劝语；
    *   - 改劝**等承接 / 勿重激活 / 勿重派**（[[UserCancelLead]] 同族措辞，上游 id 逐字
    *     点出，分发器无需自查即知被取消的是谁）；
    *   - 等待者行随抑制态改写（常态那句「上游修复重跑完成后自动续跑」在抑制态是**假
@@ -1141,7 +1133,7 @@ final class DispatchNotify(
    *
    * 可见性不丢（F3）：本变体照常走 dispatch-notify 全链（窗口熔断 / 预算 / 持久去重 /
    * 补投扫描 / tell-then-mark 逐字未改），抑制事实另在 `retry` 审计事件 + WARN 留痕
-   * （[[NodeEngine.retryOrNotify]] 侧，本批逐字未改）。
+   * （[[NodeEngine.retryOrNotify]] 侧，逐字未改）。
    */
   private def suppressedFailedNotifyTaskText(node: NodeDef, waiters: List[String], up: NodeDef): String =
     val errSummary = node.result.map(_.take(500)).getOrElse("(无错误文本)")
@@ -1171,14 +1163,14 @@ object DispatchNotify:
   val DefaultBudget: Int = 5
 
   /**
-   * **R1/R4 文本契约锚（cancelsem 批 1，2026-09-17）**：user-cancel 变体的可判读标记
+   * **R1/R4 文本契约锚**：user-cancel 变体的可判读标记
    * （通知文本与 spec / 复核位恒同源引用；改这两条即改对外契约，须同步改判据）。
    */
   val UserCancelLead: String = "用户主动取消"
   val NoReDispatchPhrase: String = "不得重新派发"
 
   /**
-   * **failed 抑制态变体的自描述头行字段**（cancelsem 批 2，2026-09-17）：与 cancelled
+   * **failed 抑制态变体的自描述头行字段**：与 cancelled
    * 变体的 `source=` / `chain=` 同族「自描述字段」纪律——判据与分发器一眼可判「这条
    * failed 的通知是**抑制态**产物（自动重试已被抑制），不是常态失败通知」。
    */
@@ -1194,9 +1186,9 @@ object DispatchNotify:
   val ChainUnknown: String = "(单节点链/未归属)"
 
   /**
-   * 打包窗口默认值（Q4 裁定，2026-09-11 任务分发器收件规则批）：写死 5s。
+   * 打包窗口默认值（Q4）：写死 5s。
    * 语义 = 同 reason 的件在该窗口内到达即合并为**一次注入**，并按「一次注入」
-   * 计一个预算单位（密集扇出不再从第 6 件起被预算静默丢弃，#62）。
+   * 计一个预算单位（密集扇出不再从第 6 件起被预算静默丢弃）。
    */
   val DefaultWindowMs: Long = 5000L
 
@@ -1207,11 +1199,11 @@ object DispatchNotify:
   val DefaultRoundSpanMs: Long = 30_000L
 
   /**
-   * **completion 预算重新定档**（R17②，作者 2026-09-13 裁定；b64 批）。
+   * **completion 预算重新定档**（R17②）。
    *
    * 旧档 5 的来源：opt-in 时代的防回流护栏（每回合最多 5 件）。新默认 `dispatcher`
    * （R2）把 completion 回流从「按需 opt-in」变成**默认路径**，每回合候选件数随批宽
-   * 增长——旧档下密集扇出批第 6 件起「静默失联分发器」（#62 的 P1 风险）。
+   * 增长——旧档下密集扇出批第 6 件起「静默失联分发器」（P1 风险）。
    *
    * Q4 打包窗口（[[DefaultWindowMs]] = 5s，首件起算不延长）已把**同窗**多件合并为
    * **一次注入**，并按一次注入计一个预算单位 ⇒ 每回合的注入次数不再等于候选件数。
@@ -1231,9 +1223,7 @@ object DispatchNotify:
       math.max(base, (windows + 1).toInt)
 
   /**
-   * failed 通知滚动窗口/冷却/阈值默认值（2026-09-07 批）：直接抄 FeedbackRouter
-   * 同名参数（10min/30min/5）——项目内护栏心智一致（设计 §10.2 建议、作者 09:24
-   * 裁定②确认）。
+   * failed 通知滚动窗口/冷却/阈值默认值：直接抄 FeedbackRouter 同名参数（10min/30min/5）——项目内护栏心智一致（设计 §10.2 建议）。
    */
   val FailedWindowMs: Long = FeedbackRouter.WindowMs
   val FailedCooldownMs: Long = FeedbackRouter.CooldownMs
@@ -1241,7 +1231,7 @@ object DispatchNotify:
 
   /**
    * 预算耗尽/窗口熔断监督通知的 eventType（notice 语义，非 blocked——eventType=blocked
-   * 会让前端标 BLOCKED，作者看到「终态节点被标阻塞」）。NodeEngine 注入 escalate
+   * 会让前端标 BLOCKED，监督方看到「终态节点被标阻塞」）。NodeEngine 注入 escalate
    * 闭包按本常量送 deliverToRoot。
    */
   val NoticeEventType: String = "notice"
@@ -1270,12 +1260,12 @@ object DispatchNotify:
   /**
    * NodeEngine 装配口（挂接最小化：engine 侧仅此一个 val）。
    *
-   * `triggerOverride`（取消静默死锁修复批，测试接缝）：Some 时取代
+   * `triggerOverride`（测试接缝）：Some 时取代
    * [[defaultTrigger]]——spec 用它捕获**通知文本原文**做断言（`defaultTrigger`
    * 在未挂 actorRef 的项目里只 WARN，文本无从观察）。生产调用点不传（默认 None
    * = 真实触发链，零行为变化）。
    *
-   * `windowMs`（Q4，2026-09-11）：打包窗口，默认 [[DefaultWindowMs]] = 5s。
+   * `windowMs`（Q4）：打包窗口，默认 [[DefaultWindowMs]] = 5s。
    * **测试接缝蕴含窗口关闭**：`triggerOverride` 存在 ⇒ `windowMs = 0`（同步逐条
    * 触发）——注入 stub 的 spec 不模拟时序，5s 墙钟等待会把确定性判据变成 flaky
    * 等待；生产恒 `None` ⇒ 恒 5s 窗口。要显式验证窗口行为时直接构造
@@ -1307,8 +1297,8 @@ end DispatchNotify
 
 /**
  * 通知原因码（单一入口 dispatchNotify(reason, node) 的 reason 维度）。
- * completion（2026-09-05 批）与 failed（2026-09-07 批）已接线；blocked 预留接口
- * （blocked 由 FeedbackRouter 重入独占——组合不双触发），监督化批按需扩展。
+ * completion 与 failed 已接线；blocked 预留接口
+ * （blocked 由 FeedbackRouter 重入独占——组合不双触发），后续 reason 按需扩展。
  */
 enum NotifyReason:
   case Completion
@@ -1316,7 +1306,7 @@ enum NotifyReason:
   case Blocked
 
   /**
-   * cancelled 终态回流（取消静默死锁修复批 2026-09-10，作者裁定 **R1 方案 2**）：
+   * cancelled 终态回流（**R1 方案 2**）：
    * 与 failed 对称——不查 notifyDispatcher flag（取消同样是「无人订阅的异常
    * 终态」，拓扑主人必须知情，否则 barrier 静默死锁无人可处置）。
    * **通知文本必须与 failed 区分**（cancelled 不可重激活，处置指引 = 承接/改接/

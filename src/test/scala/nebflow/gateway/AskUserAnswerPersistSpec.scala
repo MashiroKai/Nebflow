@@ -107,6 +107,42 @@ class AskUserAnswerPersistSpec extends CatsEffectSuite:
   // ============================================================
   // ④ 提问行：requestId 随行落盘（历史卡可 id 寻址）+ 旧行兼容
   // ============================================================
+  test("④b 编码（本批新增键）：AskUser 带 attachments ⇒ 落键；空/缺席 ⇒ 逐字不落键（与 requestId 同款「仅在场发」）") {
+    val withAtt = js(UiMessage.AskUser(askItems, Some("asknb-1a2b3c4d5e6f7a8b"), Some(List("/a/b.pdf", "/a/c.png"))))
+    assertEquals(
+      withAtt.hcursor.downField("attachments").as[List[String]].toOption,
+      Some(List("/a/b.pdf", "/a/c.png"))
+    )
+    assertEquals(withAtt.asObject.map(_.keys.toSet), Some(Set("type", "items", "requestId", "attachments")))
+
+    // 空列表 ⇒ 与「缺席」同一形态（不落键）：无附件载荷与既有字节契约逐字相等
+    assertEquals(js(UiMessage.AskUser(askItems, Some("r"), Some(Nil))).noSpaces, js(UiMessage.AskUser(askItems, Some("r"))).noSpaces)
+    assertEquals(
+      js(UiMessage.AskUser(askItems, Some("r"))).asObject.map(_.keys.toSet),
+      Some(Set("type", "items", "requestId"))
+    )
+
+    // 往返：解码面同值；形态不合（非字符串数组）⇒ 回落 None —— 不改变任何既有行的可解析性
+    assertEquals(
+      io.circe.parser
+        .decode[UiMessage](withAtt.noSpaces)
+        .toOption
+        .collect { case a: UiMessage.AskUser => a.attachments }
+        .flatten,
+      Some(List("/a/b.pdf", "/a/c.png"))
+    )
+    val malformed = Json.obj(
+      "type" -> Json.fromString("askUser"),
+      "items" -> Json.arr(Json.obj("question" -> Json.fromString("形态不合"))),
+      "attachments" -> Json.obj()
+    )
+    assertEquals(
+      io.circe.parser.decode[UiMessage](malformed.noSpaces).toOption.collect { case a: UiMessage.AskUser => a.attachments },
+      Some(None),
+      "形态不合的 attachments 必须回落 None，而不是让整行解析失败"
+    )
+  }
+
   test("④ 编码：AskUser 带 requestId ⇒ 落键；不带 ⇒ 只 {type, items}（旧行逐字不变）") {
     val withRid = js(UiMessage.AskUser(askItems, Some("asknb-1a2b3c4d5e6f7a8b")))
     assertEquals(withRid.hcursor.downField("requestId").as[String].toOption, Some("asknb-1a2b3c4d5e6f7a8b"))

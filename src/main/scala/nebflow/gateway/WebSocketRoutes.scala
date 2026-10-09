@@ -512,6 +512,32 @@ class WebSocketRoutes(
       }
     else logger.warn("Dropping interaction answer: no sessionId provided") *> IO.unit
 
+  /**
+   * askuser-remote P1 (2026-10-07): the BRIDGE answer leg — social bridges
+   * (a feishu card click, a weixin numbered reply) enter the SAME Answered
+   * convergence through this DEDICATED public method instead of the private
+   * frontend one, so bridge-sourced answers stay attributable (their own log
+   * line) and can never be confused with a frontend WS answer. Same
+   * primitives, same ghost-agent D2 guarantee: the hub is told, never
+   * routeToAgent.
+   */
+  def forwardBridgeInteractionAnswer(requestId: String, sessionId: String, payload: io.circe.Json): IO[Unit] =
+    if sessionId.nonEmpty then
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          for
+            rootSid <- resolveRootSessionId(sessionId)
+            _ <- logger.info(
+              s"bridge interaction answer: requestId=$requestId root=$rootSid keys=${payload.asObject.map(_.keys.toList.mkString(",")).getOrElse("-")}")
+            _ <- (hub ! nebflow.actor.InteractionHubCommand.Answered(
+              nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
+            )).void
+          yield ()
+        case None =>
+          logger.warn("Bridge interaction answer dropped: InteractionHub not spawned") *> IO.unit
+      }
+    else logger.warn("Dropping bridge interaction answer: no sessionId provided") *> IO.unit
+
   /** Resolve the permission-policy bucket (root session) of a sessionId. */
   private def resolveRootSessionId(sessionId: String): IO[String] =
     sharedResources.agentRegistry.get
@@ -850,19 +876,69 @@ class WebSocketRoutes(
                 )
             case None => (
               for
-                outbound <- Queue.unbounded[IO, WebSocketFrame]
+                // ── A2 (perf-481): bounded outbound queue ────────────────────
+                // Was `Queue.unbounded`: a slow/stalled subscriber never
+                // applied backpressure, so its queue grew without bound while
+                // the event loop kept paying "serialize + offer" for it.
+                //
+                // Overflow policy (plan OD-1, per-frame class):
+                //  · streaming increment (textDelta/thinkingDelta/…): drop the
+                //    OLDEST frame and enqueue the new one. A stream increment is
+                //    superseded by later ones, so losing the middle of a stream
+                //    costs at most a few rendered characters — never final state.
+                //  · control/status frame: do NOT drop. A dropped control frame
+                //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
+                //    showing "saved"); a throttled one delays it. So the
+                //    connection is torn down instead: the client reconnects and
+                //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
+                //    resync leg), which is a visible, recoverable failure rather
+                //    than a silent one.
+                // The class is computed once per event inside WsHub (see there).
+                outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
+                outboundOverflowClosed <- Deferred[IO, Unit]
 
-                perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
+                perConnWsSend = (text: String, isStream: Boolean) =>
+                  outbound
+                    .tryOffer(WebSocketFrame.Text(text))
+                    .flatMap {
+                      case true => IO.unit
+                      case false if isStream =>
+                        // Full queue + droppable frame ⇒ evict oldest, then take
+                        // the slot this frame just vacated. `tryTake` returning
+                        // None (a reader drained it concurrently) is fine — the
+                        // retry below either succeeds or is counted, never loops.
+                        outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
+                          IO(wsHub.noteOverflowDrop())
+                      case false =>
+                        // Full queue + control frame ⇒ tear this connection down.
+                        // The teardown rides the queue's own stream (see
+                        // `sendStream`), so there is no process-wide state and no
+                        // cross-connection leak.
+                        IO(wsHub.noteOverflowClose()) *>
+                          logger.warn(
+                            "WebSocket outbound queue full on a non-stream frame — closing " +
+                              s"this connection (capacity $OutboundQueueCapacity)"
+                          ) *>
+                          outboundOverflowClosed.complete(()).void
+                    }
                 hubConnId <- wsHub.register(perConnWsSend)
+
+                // A1: the hub now hands connections pre-serialized text. The
+                // handlers below (message dispatch, session list, the explorer
+                // watch table) still reason in Json, so they get an adapter that
+                // serializes on the way in — the point of A1 is that the *fan-out*
+                // no longer re-serializes per connection, not that Json is banned.
+                perConnJsonSend = (json: io.circe.Json) =>
+                  perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
 
                 // explorer-rt (chain-n-1981ce87): one watch-subscription table per
                 // connection. Chained into the finalizer below — a dropped
                 // connection releases every WatchService it registered.
-                watchSession = new ExplorerWatchSession(perConnWsSend, logger)
+                watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
 
                 receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
                   case WebSocketFrame.Text(text, _) =>
-                    handleMessage(text, perConnWsSend, watchSession).handleErrorWith { e =>
+                    handleMessage(text, perConnJsonSend, watchSession).handleErrorWith { e =>
                       logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                       IO.unit
                     }
@@ -874,8 +950,16 @@ class WebSocketRoutes(
                 // sendStream: read from outbound queue, send via WebSocket.
                 // Client disconnects are expected (browser tab close, network change) and
                 // produce IOException during write. Catch and swallow gracefully.
+                //
+                // A2: the stream races the queue against the overflow signal, so a
+                // control frame hitting a full queue actually ENDS the stream
+                // (the socket closes and the client reconnects + resyncs) instead
+                // of the frame being silently discarded. `interruptWhen` cancels
+                // the queue side on completion, and the server's own WebSocket
+                // close handling runs the receive pipe's finalizer.
                 sendStream = Stream
                   .fromQueueUnterminated(outbound)
+                  .interruptWhen(outboundOverflowClosed.get.attempt)
                   .handleErrorWith { e =>
                     Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
                   }
@@ -884,8 +968,6 @@ class WebSocketRoutes(
                 workScheduleCfg <- sharedResources.freezeScheduleRef.get
                 skipUntil <- sharedResources.freezeSkipUntilRef.get
                 sttSvc <- sttServiceRef.get
-                toolsList = ToolRegistry.ALL_TOOLS
-                  .map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
                 mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
                   io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                 })
@@ -909,7 +991,9 @@ class WebSocketRoutes(
                           )
                           .asJson,
                         "stt" -> SttService.serverConfigNode(sttSvc),
-                        "tools" -> toolsList.asJson,
+                        // A4: the tool list is served on demand (`getToolsList`),
+                        // not on every connect + config broadcast — see the note
+                        // above `toolsListJson`.
                         "mcpServers" -> mcpServers.asJson
                       )
                       .noSpaces
@@ -932,7 +1016,7 @@ class WebSocketRoutes(
                     logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
                   )
                 )
-                _ <- sessionService.sendSessionList(perConnWsSend, agentName)
+                _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
                 // R-1b：入账在 build 前（此处之后仅剩 build 本身，失败即自然不
                 // build ⇒ 无幽灵计数）；回减挂流 finalizer（连接关闭必走）。
                 guardHandle <- connGuard.acquireWs(wsIp)
@@ -1037,6 +1121,20 @@ class WebSocketRoutes(
       case req @ GET -> Root / "vendor" / "fonts" / file =>
         StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
 
+      case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/") =>
+        // Vendor SUBTREE passthrough (canvas-office-render-fix batch,
+        // 2026-10-06): the depth ≥ 2 shapes the monaco/pdfjs/fonts and
+        // single-segment cases above cannot match — the pptx-preview MVP's
+        // vendored /vendor/pptx-renderer/* answered 404 here and the renderer
+        // never loaded (real-instance reading). Third occurrence of the
+        // per-directory outage class on /vendor (monaco → pdfjs →
+        // pptx-renderer) — the jsRoutes lesson applied to the vendor tree:
+        // served by the standalone gap-filler, unit-pinned by
+        // VendorSubtreeRoutesSpec (see StaticRoutes.vendorSubtree scaladoc).
+        // This case sits AFTER the directory-specific cases, so their
+        // behavior is byte-identical; this only fills the 404ing gap.
+        StaticRoutes.vendorSubtree(req)
+
       case req @ GET -> Root / fileName =>
         val allowed =
           Set(
@@ -1140,9 +1238,34 @@ class WebSocketRoutes(
 
   end logInputHistory
 
+  /**
+   * A4 (perf-481): the full tool-description list, exposed as its OWN message
+   * instead of riding every `serverConfig` frame.
+   *
+   * Why: `serverConfig` carries five small config nodes, but the tool list alone
+   * is ~93.5 KB of tool descriptions. Embedding it made EVERY config broadcast —
+   * and every WS connect — a ~93.5 KB frame to every connection, for a payload
+   * the frontend never reads: `state.availableTools` is only ever WRITTEN
+   * (`main.js:2701`) and has ZERO read sites across `web/` (measured by grep
+   * over `src/main/resources/web/`, and re-confirmed by the DOM/e2e probe leg
+   * before this change).
+   *
+   * On-demand (plan OD-2 default) rather than deleted: the field is the only
+   * provider of `state.availableTools`, so dropping it outright would silently
+   * break any future consumer. `getToolsList` serves it on request, and the
+   * frontend asks once per connection — so the cost moves from "every config
+   * broadcast × every connection" to "once per connect".
+   */
+  private def toolsListJson: io.circe.Json =
+    ToolRegistry.ALL_TOOLS
+      .map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
+      .asJson
+
+  /** A4: the on-demand face of the tool list (`getToolsList` → this frame). */
+  private def sendToolsList(wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    wsSend(io.circe.Json.obj("type" -> "toolsList".asJson, "tools" -> toolsListJson))
+
   private def broadcastServerConfig: IO[Unit] =
-    val toolsList =
-      ToolRegistry.ALL_TOOLS.map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
       workScheduleCfg <- sharedResources.freezeScheduleRef.get
@@ -1170,7 +1293,8 @@ class WebSocketRoutes(
             )
             .asJson,
           "stt" -> SttService.serverConfigNode(sttSvc),
-          "tools" -> toolsList.asJson,
+          // A4: `tools` intentionally NOT here — see the note above the helper
+          // (it was ~93.5 KB on every broadcast; now served by `getToolsList`).
           "mcpServers" -> mcpServers.asJson
         )
       )
@@ -1344,6 +1468,20 @@ class WebSocketRoutes(
     WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
 
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
+
+  /**
+   * A2 (perf-481): per-connection outbound queue capacity, in frames.
+   *
+   * Sized as a bounded spill buffer for a transiently slow reader, NOT as a
+   * stream buffer: the largest frame the server emits is the ~21 KB
+   * `serverConfig`/`configData` family (A4 shrinks the tool-list one further),
+   * so 1024 frames bounds one connection's pending bytes to the low tens of MB
+   * even in the worst case, while a healthy reader drains far faster than the
+   * server enqueues. A reader that stays behind for this many frames is stalled
+   * by definition and gets the OD-1 policy applied (drop-oldest for stream
+   * increments, connection teardown for control frames).
+   */
+  private[gateway] val OutboundQueueCapacity = 1024
 
   /**
    * Text-stream engine behind the `textWindow` / `textIndex` / `textSearch` /
@@ -1660,6 +1798,7 @@ class WebSocketRoutes(
       sendAgentSessionListImpl = sendAgentSessionList,
       sendAgentSessionListByNameImpl = sendAgentSessionListByName,
       sendMemoryStatusImpl = sendMemoryStatus,
+      sendToolsListImpl = sendToolsList,
       expandTildeImpl = expandTilde,
       wsBrowseEventImpl = wsBrowseEvent,
       browseResultFrameImpl = WebSocketRoutes.browseFrame,
@@ -2301,12 +2440,18 @@ class WebSocketRoutes(
         end match
 
       case "askUser" =>
-        val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
         // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：随行落盘 requestId ⇒ 历史
         // 恢复出的卡可 id 寻址（重放腿按 id 替换、askUserClosed 关卡可达）。旧行缺席
         // ⇒ None ⇒ 前端回落形态兜底去重腿（`chat.js sameAskCards` ②）。
-        val askRid = hc.downField("requestId").as[String].toOption.filter(_.nonEmpty)
-        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items, askRid)))
+        // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：帧
+        // `attachments` 随行落盘 ⇒ 历史恢复腿读回后在卡上还原附件行（与 live 腿
+        // `renderAskUser` 同构、单点位于 `.option-box`）。帧 → 落盘行的取键形态
+        // = 伴生对象纯函数 `askUserRowFromFrame`（缺席 / 形态不合 / 空白 / 空列表
+        // 一律回落 None ⇒ 旧载荷逐字节不变）。
+        sharedResources.sessionStore.appendUiMessages(
+          sessionId,
+          List(WebSocketRoutes.askUserRowFromFrame(json))
+        )
 
       case "askPermission" =>
         val toolName = hc.downField("toolName").as[String].getOrElse("")
@@ -2671,4 +2816,35 @@ object WebSocketRoutes:
       "errorKind" -> kind.asJson,
       "error" -> msg.asJson
     )
+
+  // ============================================================
+  // askUser 历史恢复批 (2026-10-02, chain-askuser-histattach): the
+  // `askUser` frame → persisted-row builder — pure core, owned by this
+  // object so the paired spec can feed raw frame JSON. The WS
+  // recording leg (`WebSocketRoutes#makeRecordingWsSend`, `case "askUser"`)
+  // calls it exactly once, so the frame→row shape has ONE construction
+  // point (the persistence leg) and stays disjoint from the restoral leg
+  // (`WsSessionChatHandlers.handleGetHistory` → `SessionStore.getHistoryPage`
+  // → `given Encoder[UiMessage]`).
+  // ============================================================
+
+  /** `askUser` frame → the row written to `.ui.json`.
+    *
+    * Key-reading shape is the SAME loose fallback as the decoder
+    * (`UiMessage`'s `case "askUser"`): absent / malformed ⇒ `None`;
+    * blank `requestId` ⇒ `None`; empty `attachments` ⇒ `None` (dual of the
+    * encoder's "emit only in presence, empty ⇒ no key" rule — an absent or
+    * blank frame must produce byte-identical legacy rows).
+    */
+  private[gateway] def askUserRowFromFrame(frame: Json): UiMessage.AskUser =
+    val hc = frame.hcursor
+    val items = hc.downField("items").as[List[Json]].getOrElse(Nil)
+    val askRid = hc.downField("requestId").as[String].toOption.filter(_.nonEmpty)
+    val attachments = hc
+      .downField("attachments")
+      .as[Option[List[String]]]
+      .toOption
+      .flatten
+      .filter(_.nonEmpty)
+    UiMessage.AskUser(items, askRid, attachments)
 end WebSocketRoutes

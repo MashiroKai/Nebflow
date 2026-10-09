@@ -20,6 +20,7 @@ import docxViewer from './viewers/docx.js';
 import xlsxViewer from './viewers/xlsx.js';
 import pptxViewer from './viewers/pptx.js';
 import epubViewer from './viewers/epub.js';
+import videoViewer from './viewers/video.js';
 import largeTextViewer from './viewers/largeText.js';
 
 const registry = new Map();  // itemType → viewer protocol object
@@ -37,6 +38,7 @@ function registerBuiltIns() {
     codeViewer, jsonViewer, csvViewer,
     markdownViewer, yamlViewer, htmlViewer,
     imageViewer, pdfViewer, docxViewer, xlsxViewer, pptxViewer, epubViewer,
+    videoViewer,
   ]) {
     // The built-in viewer modules predate the ViewerProtocol typedef and
     // destructure ctx fields with locally-required shapes — cast at this

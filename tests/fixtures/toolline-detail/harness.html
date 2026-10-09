@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<!-- toolline-detail harness.html — static test harness for the 工具执行行增强批
+     (toolline-detail-x1, author 2026-10-06 16:51 令 + dispatcher 16:54 追加令).
+
+     Imports the REAL frontend modules (chatView.js / chat.js / workline.js /
+     turnGroup.js / state.js — no stubs, no bundling) and replays the exact
+     calls the app makes on WS events:
+
+       window.__tdUser(text)            → renderUserBubble (user turn opener)
+       window.__tdInject(text, src)     → renderInjectedBubble (blue injected
+                                          row — the injection-leg turn opener)
+       window.__tdCallStart(name)       → renderToolPending(name, sid) +
+                                          reset the arg-stream buffer (the
+                                          main.js toolCallDetected shape)
+       window.__tdArg(name, chunk)      → appendToolStreamDelta(name, chunk)
+                                          (the WS toolArgDelta shape)
+       window.__tdExecStart(label)      → renderToolPending(label, sid) (the
+                                          WS toolStart shape — full label)
+       window.__tdDone(label, summary,
+                       content, err,
+                       input)           → renderTool(...) (the WS toolEnd
+                                          shape → ③ 完成翻转)
+       window.__tdFinishTurn(ms, model) → appendAiText + finishAi + collapseTurn
+                                          (the main.js done handler shape)
+       window.__tdCensus()              → workline/badge census (positions,
+                                          detail text, node identity probe)
+       window.__tdReset()               → clear #chat
+
+     Module-private state access goes through the same public calls the WS
+     handlers make — no internals are reached into. The census reads ONLY the
+     DOM contract (classes/dataset), exactly like the settled spec family.
+
+     Served over a throwaway static file server spawned and killed by the spec
+     itself (never the 8080 host) — same discipline as tests/fixtures/turn-collapse.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>toolline-detail harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'td-harness-session';
+    // 真实 app 由 ws.js 开会话路径设置 view.sessionId（appendToolStreamDelta
+    // 以 activeView.sessionId 找 sessionToolCards 槽）——夹具同权直接赋值。
+    chatViews.primary.sessionId = 'td-harness-session';
+    // No real socket may exist in this harness.
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const turnMod = await import(`${WEB}/turnGroup.js`);
+    const view = chatViews.primary;
+    const SID = 'td-harness-session';
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    window.__tdUser = (text) => {
+      chatMod.renderUserBubble(text, [], Date.now());
+    };
+
+    window.__tdInject = (text, source) => {
+      chatMod.renderInjectedBubble(text, source || 'deviceMail', Date.now(), 'mail', '', '', 'immediate');
+    };
+
+    // toolCallDetected shape: pending card + arg-stream buffer reset (main.js :882).
+    window.__tdCallStart = async (name) => {
+      chatMod.renderToolPending(name, SID);
+      view.stream.toolStreamText = '';
+      view.stream.toolStreamToolName = name;
+      await raf2();
+    };
+
+    // WS toolArgDelta shape — caller awaits rAF itself when it wants the flush.
+    window.__tdArg = (name, chunk) => {
+      chatMod.appendToolStreamDelta(name, chunk);
+    };
+
+    // WS toolStart shape: full summarized label re-enters renderToolPending.
+    window.__tdExecStart = async (label) => {
+      chatMod.renderToolPending(label, SID);
+      await raf2();
+    };
+
+    // WS toolEnd shape → renderTool → ③ 完成翻转.
+    window.__tdDone = async (label, summary, content, isError, input) => {
+      chatMod.renderTool(label, summary, content, !!isError, input, SID);
+      await raf2();
+    };
+
+    // main.js done shape: final text + badge + collapse.
+    window.__tdFinishTurn = async (durationMs = 4200, model = 'test-model', text = '本回合的最终回复。', phrase = '✻ 快速确认 4 秒') => {
+      chatMod.appendAiText(text);
+      chatMod.finishAi(durationMs, model);
+      turnMod.collapseTurn(view, {
+        durationMs, model,
+        phrase,
+        title: '17:30',
+        sessionId: SID,
+      });
+      await raf2();
+    };
+
+    // Census: everything the specs assert, read off the DOM contract only.
+    window.__tdCensus = () => {
+      const chat = document.getElementById('chat');
+      const kids = Array.from(chat.children);
+      const line = kids.find(el => el.classList.contains('nf-workline'));
+      const item = line ? line.querySelector('.nf-wl-slot')?.lastElementChild : null;
+      const detail = item ? item.querySelector('.nf-wl-detail') : null;
+      const label = item ? item.querySelector('.nf-wl-label') : null;
+      const headers = kids.filter(k => k.classList.contains('turn-header'));
+      return {
+        linePresent: !!line,
+        linePrevIsUser: !!(line && line.previousElementSibling && line.previousElementSibling.classList &&
+          line.previousElementSibling.classList.contains('user')),
+        // 注入泡 = 行内子块（.row.user 行 + .bubble.injected），非行类。
+        linePrevIsInjected: !!(line && line.previousElementSibling &&
+          line.previousElementSibling.querySelector && line.previousElementSibling.querySelector('.bubble.injected')),
+        itemKind: item ? (item.classList.contains('is-done') ? 'done'
+                        : item.classList.contains('is-error') ? 'error' : 'running') : null,
+        itemText: label ? label.textContent : '',
+        detailPresent: !!detail,
+        detailText: detail ? detail.textContent : '',
+        detailNodeTag: detail ? (detail.__tdProbe || null) : null,
+        itemCount: item && item.parentElement ? item.parentElement.querySelectorAll('.nf-wl-item').length : 0,
+        headerCount: headers.length,
+        headerMeta: headers.map(h => ({
+          text: (h.querySelector('.turn-header-text')?.textContent || '').trim(),
+          prevIsUser: !!(h.previousElementSibling && h.previousElementSibling.classList &&
+            h.previousElementSibling.classList.contains('user')),
+          prevIsInjected: !!(h.previousElementSibling && h.previousElementSibling.querySelector &&
+            h.previousElementSibling.querySelector('.bubble.injected')),
+          top: Math.round(h.getBoundingClientRect().top),
+          tuckedScope: (() => {
+            // same walk as turnGroup.scopeFromHeader
+            const rows = [];
+            let n = h.nextElementSibling;
+            while (n && !n.classList.contains('turn-header') &&
+                   !(n.classList.contains('row') && n.classList.contains('user'))) {
+              rows.push(n);
+              n = n.nextElementSibling;
+            }
+            return {
+              rows: rows.length,
+              tucked: rows.filter(r => r.classList.contains('nf-tucked')).length,
+              tools: rows.filter(r => r.classList.contains('tool')).length,
+            };
+          })(),
+        })),
+        rows: kids.map(el => ({
+          cls: el.className,
+          top: Math.round(el.getBoundingClientRect().top),
+        })),
+      };
+    };
+
+    // Node-identity probe: tag the detail span, then a later census tells
+    // whether the SAME node survived the streaming frames (text-replacement
+    // discipline — no rebuild).
+    window.__tdProbeDetail = () => {
+      const el = document.querySelector('#chat .nf-workline .nf-wl-detail');
+      if (!el) return false;
+      el.__tdProbe = 'same-node';
+      return true;
+    };
+
+    window.__tdReset = async () => { chatEl.innerHTML = ''; await raf2(); };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

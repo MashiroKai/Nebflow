@@ -312,3 +312,138 @@ class SecretsRoutesSpec extends FunSuite:
       assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("managed_namespace"))
     }
   }
+
+  // ── Consumption face (secrets-consumption batch, 2026-10-01) ────────────
+  //
+  // The C-case model at the wire: a consumer is told a LOCATION, and the two
+  // non-value catalogue fields are editable. 🔴 No endpoint on this face
+  // returns a stored value — asserted structurally below, not merely by
+  // convention.
+
+  private val PATCH: Method = Method.PATCH
+
+  test("C1 · pointer: 200 with name/variableName/description/location, never a value") {
+    withRoutes { routes =>
+      put(routes, "vercel-token", MockValue)
+      val (st, body) = call(routes, GET, "/secrets/vercel-token/pointer")
+      assertEquals(st.code, 200)
+      val b = body.getOrElse(fail("no body"))
+      assertEquals(b.hcursor.get[String]("name").toOption, Some("vercel-token"))
+      assertEquals(b.hcursor.get[String]("variableName").toOption, Some("VERCEL_TOKEN"))
+      assertEquals(b.hcursor.get[String]("description").toOption, Some(""))
+      val loc = b.hcursor.get[String]("location").toOption.getOrElse(fail("no location"))
+      assert(loc.endsWith("/secrets/vercel-token"), s"the location is the query path: $loc")
+      // 🔴 The structural red line: no value key, and the raw wire body never
+      // mentions the stored value.
+      assert(b.asObject.get("value").isEmpty && b.asObject.get("content").isEmpty, s"body: $b")
+      assert(!b.noSpaces.contains(MockValue), "the pointer payload must never carry a value")
+    }
+  }
+
+  test("C2 · pointer on a missing name ⇒ 404 unknown_secret") {
+    withRoutes { routes =>
+      val (st, b) = call(routes, GET, "/secrets/ghost/pointer")
+      assertEquals(st.code, 404)
+      assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("unknown_secret"))
+    }
+  }
+
+  test("C3 · catalog: 200, one entry per secret, value-free end to end") {
+    withRoutes { routes =>
+      put(routes, "mock-a", MockValue)
+      put(routes, "mock-b", MockValue)
+      val (st, body) = call(routes, GET, "/secrets/catalog")
+      assertEquals(st.code, 200)
+      val entries = body.flatMap(_.hcursor.downField("secrets").values.map(_.toList))
+        .getOrElse(fail(s"expected a secrets array, got $body"))
+      assertEquals(entries.size, 2)
+      entries.foreach { e =>
+        val obj = e.asObject.getOrElse(fail(s"entry not an object: $e"))
+        assert(obj("value").isEmpty, s"entry must not carry a value key: $e")
+        assert(obj("location").isDefined && obj("variableName").isDefined && obj("description").isDefined,
+          s"entry shape: $e")
+      }
+      assert(!body.get.noSpaces.contains(MockValue), "the catalog payload must never carry a value")
+    }
+  }
+
+  test("C4 · PATCH metadata: whole-replace — set, then clear back to the derived default") {
+    withRoutes { routes =>
+      put(routes, "vercel-token", MockValue)
+      val (st1, _) = call(routes, PATCH, "/secrets/vercel-token",
+        Some(json("""{"variableName":"MY_DEPLOY_TOKEN","description":"deploys the docs site"}""")))
+      assertEquals(st1.code, 200)
+
+      val (_, b1) = call(routes, GET, "/secrets/vercel-token/pointer")
+      assertEquals(b1.flatMap(_.hcursor.get[String]("variableName").toOption), Some("MY_DEPLOY_TOKEN"))
+      assertEquals(b1.flatMap(_.hcursor.get[String]("description").toOption), Some("deploys the docs site"))
+
+      // A body without the keys CLEARS them (the replace contract), it does
+      // not leave the previous values in place.
+      val (st2, _) = call(routes, PATCH, "/secrets/vercel-token", Some(json("{}")))
+      assertEquals(st2.code, 200)
+      val (_, b2) = call(routes, GET, "/secrets/vercel-token/pointer")
+      assertEquals(b2.flatMap(_.hcursor.get[String]("variableName").toOption), Some("VERCEL_TOKEN"),
+        "clearing the override falls back to the derived default")
+      assertEquals(b2.flatMap(_.hcursor.get[String]("description").toOption), Some(""))
+    }
+  }
+
+  test("C5 · PATCH metadata: an invalid variable name ⇒ 400 invalid_variable_name, never a value") {
+    withRoutes { routes =>
+      put(routes, "mock-a", MockValue)
+      val (st, b) = call(routes, PATCH, "/secrets/mock-a",
+        Some(json("""{"variableName":"not a name"}""")))
+      assertEquals(st.code, 400)
+      assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("invalid_variable_name"))
+      assert(!b.map(_.noSpaces).getOrElse("").contains(MockValue), "the error body carries no value")
+      // A non-object body is refused by shape, before the store is consulted.
+      val (st2, b2) = call(routes, PATCH, "/secrets/mock-a", Some(Json.fromString("nope")))
+      assertEquals(st2.code, 400)
+      assertEquals(b2.flatMap(j => j.hcursor.get[String]("error").toOption), Some("invalid_metadata"))
+    }
+  }
+
+  test("C6 · PATCH metadata: a missing target ⇒ 404; metadata never mints a secret") {
+    withRoutes { routes =>
+      val (st, b) = call(routes, PATCH, "/secrets/ghost",
+        Some(json("""{"description":"x"}""")))
+      assertEquals(st.code, 404)
+      assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("unknown_secret"))
+    }
+  }
+
+  test("C7 · the consumption endpoints sit behind the same auth gate as the management face") {
+    withRoutes { routes =>
+      val checks = List(
+        call(routes, GET, "/secrets/catalog", bearer = None),
+        call(routes, GET, "/secrets/n1/pointer", bearer = None),
+        call(routes, PATCH, "/secrets/n1", Some(json("""{"description":"x"}""")), bearer = None)
+      )
+      checks.foreach { case (st, body) =>
+        assertEquals(st.code, 403, "the consumption face is authenticated too")
+        assertEquals(body, Some(json("""{"error":"Unauthorized"}""")),
+          "the auth failure must not distinguish reasons (anti-enumeration)")
+      }
+    }
+  }
+
+  test("C8 · the list answer gains the two catalogue fields WITHOUT losing its old shape") {
+    withRoutes { routes =>
+      put(routes, "mock-a", MockValue)
+      val (_, _) = call(routes, PATCH, "/secrets/mock-a",
+        Some(json("""{"variableName":"A_TOKEN","description":"a description"}""")))
+      val (st, body) = call(routes, GET, "/secrets")
+      assertEquals(st.code, 200)
+      val e = body.flatMap(_.hcursor.downField("secrets").values.map(_.toList)).getOrElse(fail("no array")).head
+      // Old keys intact (the existing panel keeps working)…
+      List("name", "size", "mtime", "mode", "refs").foreach { k =>
+        assert(e.asObject.exists(_(k).isDefined), s"pre-existing key '$k' must survive the extension: $e")
+      }
+      // …plus the two new ones, and still no value key.
+      assertEquals(e.hcursor.get[String]("variableName").toOption, Some("A_TOKEN"))
+      assertEquals(e.hcursor.get[String]("description").toOption, Some("a description"))
+      assert(e.asObject.exists(_("value").isEmpty), s"still no value key: $e")
+      assert(!body.get.noSpaces.contains(MockValue), "no value in the extended payload either")
+    }
+  }

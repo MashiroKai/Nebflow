@@ -77,25 +77,24 @@ class RootSixBaseToolsSpec extends FunSuite:
     }
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
-    // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // 17（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep）；
+    // 件数以单点常量 AgentCore.RootOrchestrationToolsExpectedSize 为准：
+    // 17（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17，builtin-def 批
+    // 2026-10-03 +Delegate ⇒ 19，pop 批 −Card ⇒ 18，unified-delegate 批 −AgentFlow ⇒ 17）；
     // 沿革（史实）：16 经 #145 附件腿批 −TransferFile 退役 ⇒ 15，
-    // 再经 09-16 18:41 令 −2 ⇒ 13，再经 Delegate 退役批 −1 ⇒ 12。
+    // 再经 09-16 18:41 令 −2 ⇒ 13，再经 promptgov 批 Delegate 退役 −1 ⇒ 12
+    // （该退役令之授能面已被 2026-10-03 作者令②取代）。
     // 旧「终态 = 15，已定」与「终态 = 13」口径均已被取代 ⇒ 归档。
     // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
     // friendseal (2026-09-25): flag-aware via the single derivation point —
     // constant − (sealed ? 1 : 0), computed from this same fixed-set snapshot.
-    assertEquals(
-      fixed.size,
-      nebflow.FriendsSealKit.expectedNebulaSize(fixed),
-      "Nebula 机制集件数 == 单点常量按 friendseal 封存态派生（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值，封存期交付面 = 17 − 1）"
-    )
+    assertEquals(fixed.size, nebflow.FriendsSealKit.expectedNebulaSize(fixed),
+      "Nebula 机制集件数 == 单点常量按 friendseal 封存态派生（不得各处写裸数字；在飞 18 = unified-delegate 批后 17 + task-rag 批 #1227 +TaskSearch，封存期交付面 = 18 − 1）")
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
-      17,
-      "RootOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）"
+      18,
+      "RootOrchestrationTools 实测恰 18 件（2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19，pop 批 −Card = 18，unified-delegate 批 −AgentFlow = 17，task-rag 批 #1227 +TaskSearch = 18；变异验红锚：再摘任一件即红）"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
@@ -103,19 +102,19 @@ class RootSixBaseToolsSpec extends FunSuite:
   test("② 六件基础 ⊆ general 机制集（GeneralFixedTools=六件+AskUserQuestion 恰七件；2026-09-10 摘 Pop）"):
     val six = AgentCore.BaseTools
     assert(
-      six.subsetOf(AgentCore.GeneralFixedTools),
-      s"general 固定集必须含基础六件（缺: ${six.diff(AgentCore.GeneralFixedTools)}）"
+      six.subsetOf(AgentCore.NebflowFixedTools),
+      s"nebflow 固定集必须含基础六件（缺: ${six.diff(AgentCore.NebflowFixedTools)}）"
     )
     assertEquals(
-      AgentCore.GeneralFixedTools.size,
-      7,
-      "general 固定集恰七件（BaseTools 六件 + AskUserQuestion；2026-09-08 作者修订恢复 AskUser；2026-09-10 作者裁定摘 Pop——收归 Nebula 专属）"
+      AgentCore.NebflowFixedTools.size,
+      9,
+      "nebflow 固定集恰九件（builtin-merge 批：BaseTools 六件 + AskUserQuestion + Subagent；N1 复名批随名 AgentFlow；AskUser 承继、零 Pop 承继）"
     )
     assert(
-      AgentCore.GeneralFixedTools.contains("AskUserQuestion"),
+      AgentCore.NebflowFixedTools.contains("AskUserQuestion"),
       "general 固定集含 AskUserQuestion（2026-09-08 作者修订恢复——变异验红锚）"
     )
-    assert(!AgentCore.GeneralFixedTools.contains("Pop"), "general 固定集零 Pop（2026-09-10 作者裁定——变异验红锚：加回即红）")
+    assert(!AgentCore.NebflowFixedTools.contains("Pop"), "nebflow 固定集零 Pop（2026-09-10 作者裁定承继——变异验红锚：加回即红）")
     val delivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     six.foreach(t => assert(delivered.contains(t), s"general 交付面缺基础六件之一: $t"))
 

@@ -219,22 +219,27 @@
   font-weight: 500;
   color: var(--color-frame-text);
 }
+/* ui-status-redesign（S10 / 盘点 #47）：常显「删除」文字项字转常规色，危险语义
+   由行首 trash-2 红图标（explorer.js 注入）承载；hover 实底红 = 交互红保留
+   （铁律三）。 */
 .explorer-selection-delete {
   pointer-events: auto; /* only the button is clickable inside the bar */
   padding: 3px 12px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-error);
+  color: var(--color-frame-text);
   background: transparent;
   border: 1px solid var(--glass-border, var(--color-frame-border));
   border-radius: 7px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
+.explorer-selection-delete .st-ic { color: var(--status-error-icon); margin-right: 5px; }
 .explorer-selection-delete:hover {
-  background: var(--color-error);
+  background: var(--status-error-icon);
   color: var(--color-surface);
 }
+.explorer-selection-delete:hover .st-ic { color: var(--color-surface); }
 @media (prefers-color-scheme: dark) {
   .explorer-selection-bar {
     background: var(--glass-bg, rgba(28, 31, 39, 0.85));
@@ -1043,6 +1048,28 @@ body.canvas-open.canvas-overlay #canvas-panel {
   transform-origin: 0 0;
   will-change: transform;
   -webkit-user-drag: none; /* Safari: no native drag ghost (see draggable=false in viewImage) */
+}
+
+/* ── Video viewer (HTML5 native controls only; canvas-video batch 2026-10-06) ── */
+.canvas-video-viewer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  gap: 10px;
+  height: 100%;
+}
+.canvas-video-viewer .image-info {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+.canvas-video-viewer video.canvas-video {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
 }
 
 /* ── PDF viewer (pdf.js canvas render, zoomable) ── */

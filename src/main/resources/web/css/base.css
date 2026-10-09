@@ -19,6 +19,21 @@
   --color-warning: #ff9800;
   --color-bubble-user: #95ec69;
 
+  /* ── 状态载体 token（ui-status-redesign 批，2026-10-05 作者拍板分叉①=A）──
+     铁律一「语义色只上载体，不上正文」：红/黄/绿仅允许出现在图标/圆点/描边/
+     底纹/进度环上；11–13px 状态词与通知正文一律 --status-word（= 既有
+     frame-text-muted 中性字，零新值）。四枚中唯一新增色值 = --status-warn-icon
+     亮档 #b45309（现值 #ff9800 图形对比 2.2:1 不达 WCAG 1.4.11 的 3:1）；
+     其余值均为仓内既有值或既有暗档值（#d64545 = 前 fm-gs-danger 旧值 /
+     #2e7d32 / #66bb6a / #f26b6b / #ffa83c = sapphire --amber-dark 暗档值）。
+     --color-error / --color-danger 保留现值不迁移：改版后正文字不再消费红
+     token，红 token 转供图标/描边/底纹（危险按钮族仍走 --btn-danger-*）。 */
+  --status-error-icon: #d64545;   /* 图标档：亮 4.4:1（图形 ≥3:1 ✓） */
+  --status-warn-icon: #b45309;    /* 图标档：亮 5.0:1 ✓（全案唯一新值） */
+  --status-success-icon: #2e7d32; /* 图标档：亮 5.1:1 ✓（仓内已有值） */
+  --status-word: var(--color-frame-text-muted); /* 状态词中性字（零新值） */
+  --st-ic-align: -0.125em; /* 状态图标行内基线微调 */
+
   /* Content area — light */
   --color-bg: #f5f6f8;
   --color-surface: #ffffff;
@@ -49,6 +64,17 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── 状态图标基类（ui-status-redesign 批）────────────────────────────────
+   utils.js statusIcon() 产出（lucide createElement，class="st-ic …"）与
+   <i data-lucide class="st-ic"> 兜底同享：行内对齐 + 禁收缩；颜色永远由消费方
+   CSS 类给语义 token（SVG stroke=currentColor，JS 串禁硬编码色值）。 */
+.st-ic { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; line-height: 0; vertical-align: var(--st-ic-align); }
+.st-ic svg, svg.st-ic { display: block; }
+/* 语义档三色（只上图标载体）：与状态 token 同名成对，供 statusIcon()/模板串引用。 */
+.st-err { color: var(--status-error-icon); }
+.st-warn { color: var(--status-warn-icon); }
+.st-ok { color: var(--status-success-icon); }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--color-bg);
@@ -95,6 +121,13 @@ body {
        **提亮**值（暗底提亮方向；与亮档「加深」方向相反、判据同一）：新读数 =
        面板底 5.56:1 / 玻璃底 5.87:1 / 页面底 6.12:1 ✔（三档均 ≥4.5:1）。 */
     --color-danger: #f26b6b;
+
+    /* 状态载体 token 暗档（ui-status-redesign 批）：与 --color-danger 暗档同值
+       (#f26b6b)；warn 暗档 = sapphire --amber-dark 既有值 (#ffa83c, 8.6:1 ✓)；
+       success 暗档 = 仓内既有 (#66bb6a, 7.0:1 ✓)。 */
+    --status-error-icon: #f26b6b;
+    --status-warn-icon: #ffa83c;
+    --status-success-icon: #66bb6a;
   }
 
   /* Dark mode scrollbar */
@@ -257,8 +290,10 @@ body.sidebar-collapsed #sidebar {
 .bypass-toggle[data-mode="auto-edits"] {
   color: #e8923c;
 }
+/* ui-status-redesign：auto-all 的红落在盾形图标（图案载体 ✓）上，色值归
+   --status-error-icon token（暗档随 token 提亮，亮档 4.4:1 图形达标）。 */
 .bypass-toggle[data-mode="auto-all"] {
-  color: var(--color-error);
+  color: var(--status-error-icon);
 }
 /* Dropdown menu — positioned relative to #main (not #header) so
    backdrop-filter can blur chat content instead of being trapped
@@ -335,7 +370,7 @@ body.sidebar-collapsed #sidebar {
 }
 .header-dropdown-menu button[data-mode="confirm-edits"]::before { background: var(--color-frame-text-muted); }
 .header-dropdown-menu button[data-mode="auto-edits"]::before { background: #e8923c; }
-.header-dropdown-menu button[data-mode="auto-all"]::before { background: var(--color-error); }
+.header-dropdown-menu button[data-mode="auto-all"]::before { background: var(--status-error-icon); }
 
 /* F4 (#433): global fallback permission toast — glass panel, no overlay */
 #global-perm-toasts {

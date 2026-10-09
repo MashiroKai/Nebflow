@@ -11,8 +11,8 @@ import nebflow.shared.PathUtil
  * key as `{preferred, fallbacks}` ([[AgentModelConfig]]). Resolution:
  *
  *   1. **Own chain** (non-empty `model` key) — settable agents only.
- *   2. **Nebula primary chain** — every other agent (kernel /
- *      project-dispatcher / general and all custom, team and flow agents)
+ *   2. **Nebula primary chain** — every other agent (the executor agent and all
+ *      custom, team and flow agents)
  *      follows Nebula's chain, re-read fresh on every resolution (per turn
  *      via the agent-def reload path, so /model edits take effect on running
  *      actors without any propagation step).
@@ -27,19 +27,35 @@ import nebflow.shared.PathUtil
  * audit, but the engine does not read them: they follow Nebula uniformly.
  *
  * The settable gate ([[SettableAgents]]) guards every write path: only these
- * four roles accept a model-chain write (REST `PUT /api/agents/:name/model`).
+ * roles accept a model-chain write (REST `PUT /api/agents/:name/model`).
  */
 object SchemePolicy:
 
   val NebulaName = "Nebula"
   val DispatcherName = "project-dispatcher"
-  val KernelName = "kernel"
-  val GeneralName = "general"
+
+  /** The executor role name (single point = [[nebflow.core.entity.BuiltinAgents.ExecutorName]]).
+    *
+    * P1-2 downstream-role-face convergence batch (2026-10-03): `kernel` and `general`
+    * were merged into the single executor agent by the builtin-merge batch
+    * (`f646eeeaa`) and left `BuiltinAgents.Names`, so they are no longer ROLES — the
+    * set below names the current executor instead of the two retired names. */
+  val ExecutorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   /** Roles whose model chain is user-settable (the /model write gate). */
-  val SettableAgents: Set[String] = Set(NebulaName, DispatcherName, KernelName, GeneralName)
+  val SettableAgents: Set[String] = Set(NebulaName, DispatcherName, ExecutorName)
 
-  def isSettable(name: String): Boolean = SettableAgents.contains(name)
+  /** Settability, with the retired names resolved through the single rename table
+    * ([[nebflow.core.entity.BuiltinAgents.resolveRetired]] — the same read-side
+    * fallback `EntityLoader.loadAgent` uses).
+    *
+    * Old-data compatibility (P0-1/P1-2, 2026-10-03): a stored `kernel` / `general`
+    * sidecar keeps being honoured and a stale client that still writes the retired
+    * name keeps acting on the same role — the pre-merge behaviour of an existing
+    * home, so the convergence does NOT silently move those chains onto the Nebula
+    * primary chain. */
+  def isSettable(name: String): Boolean =
+    SettableAgents.contains(name) || nebflow.core.entity.BuiltinAgents.resolveRetired(name).exists(SettableAgents.contains)
 
   /** `resolvedFrom` vocabulary (reported by GET /api/agents/:name/model). */
   final val OwnChainSource = "own-chain"

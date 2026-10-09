@@ -13,7 +13,7 @@ import java.time.Instant
 import scala.collection.mutable
 
 /**
- * TaskList 任务工具（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）。
+ * TaskList 任务工具。
  *
  * 动机（设计文档 ~/.nebflow/memory/tasklist-design.md）：「Nebula 把记忆当任务
  * 工具用」根因 = 记忆是唯一持久外部存储。三边界：记忆 = T1 慢变事实（永久）；
@@ -24,7 +24,7 @@ import scala.collection.mutable
  * 存储：`<dataRoot>/tasks.json`（~/.nebflow/tasks.json）——运行时数据层：
  * 不进 git、不进任何 system prompt 注入。落盘用 AtomicJson（tmp + ATOMIC_MOVE
  * rename，crash-safe）；进程内单锁串行化读-改-写；跨进程写入不在锁面内
- * （旧记忆工具同款取舍，description 已明示；该工具已退役——govmemory 批）。
+ * （旧记忆工具同款取舍，description 已明示；该工具已退役）。
  *
  * 无内存态：每次操作整读整写同一文件——重启后 tasks.json 自然持久（验收项）。
  *
@@ -66,8 +66,8 @@ import scala.collection.mutable
  * 压缩，MemoryHygieneSignal 先例）随 Nebula 记忆块注入一行 open 摘要；全 done
  * 后该行为空（提醒消失）。按需明细一律走本工具 list / show。
  *
- * 升级批（2026-09-11，spec `20260911_135217_tasklist-upgrade-spec` + 方案 D1–D6）：
- *   - `action=log`：作者补记（只读史，不改写 `note`——`note` 降级为「当前态摘要」）；
+ * 升级批（方案 D1–D6）：
+ *   - `action=log`：人工补记（只读史，不改写 `note`——`note` 降级为「当前态摘要」）；
  *   - `action=show`：单条全文（note 全文 / links / 依赖当前态 + 反查 / 父链 + 直接子 /
  *     变更史时间线）；对「主库已无、史文件仍有」的 id 走**降级渲染**（`[gone]`）；
  *   - 变更史独立落盘 `TaskListHistory`（append-only JSONL，不随任务 prune 消失）；
@@ -136,13 +136,13 @@ object TaskListStore:
   /** done 条目保留期（create 时惰性清理，「闭环即删」T2 精神）。 */
   val DoneTtlDays: Long = 30L
 
-  // ---- 写入侧容量上限（升级批 D3/R5；仅写路径校验，读路径零校验 ⇒ 存量零影响）----
+  // ---- 写入侧容量上限（升级批；仅写路径校验，读路径零校验 ⇒ 存量零影响）----
   /** `note` / `log text` 单条上限：先到为准（2,000 汉字 ≈ 6.1 KB < 8 KiB）。 */
   val NoteMaxChars: Int = 2000
   val TextMaxBytes: Int = 8 * 1024
 
-  // ---- `show` 窗口上限（升级批 D4/R5：全部为「展示预算」，非删除）----
-  /** 主区（note/log 内容变更 —— 作者 17:27 口径的史主体）预算。 */
+  // ---- `show` 窗口上限（升级批：全部为「展示预算」，非删除）----
+  /** 主区（note/log 内容变更的史主体）预算。 */
   val TimelineShowMaxEvents: Int = 50
   val TimelineShowMaxChars: Int = 20000
   val TimelineShowMaxBytes: Int = 32 * 1024
@@ -420,7 +420,7 @@ object TaskListStore:
 
   /**
    * 逐字段 diff → `update` 史行（单次调用最多 7 条：title/status/note/project/blocks/links/parentId）。
-   * **note 变更的 `from`/`to` 是两侧全文**（作者 17:27 口径：覆盖动作必须可还原）。
+   * **note 变更的 `from`/`to` 是两侧全文**（口径：覆盖动作必须可还原）。
    */
   private def updateEvents(old: Entry, next: Entry, actor: String, at: String): List[TaskListEvent] =
     val buf = mutable.ListBuffer[TaskListEvent]()
@@ -790,7 +790,7 @@ object TaskListStore:
     }
 
   /**
-   * `action=log`（R1）：给任务追加一条作者补记（结构化、工具写 `at`/`actor`）。
+   * `action=log`（R1）：给任务追加一条人工补记（结构化、工具写 `at`/`actor`）。
    * **`note` 零改写**（note 已降级为「当前态摘要」）；条目只读史不可编辑——需修正
    * 时再追加一条（`kind=log` 语义）。
    */
@@ -904,7 +904,7 @@ object TaskListStore:
 
   end noteBlock
 
-  /** 主区：note/log 内容变更（作者 17:27 口径的史主体）——时间序、内容可见。 */
+  /** 主区：note/log 内容变更（协议口径的史主体）——时间序、内容可见。 */
   private def renderNoteTimeline(sb: StringBuilder, hist: TaskListHistory.ReadResult): Unit =
     val noteEvents = hist.events.filter(TaskListHistory.isNoteEvent)
     val kept = mutable.ListBuffer[String]()
@@ -1085,11 +1085,11 @@ object TaskListStore:
 end TaskListStore
 
 /**
- * TaskList 工具（Nebula 专属编排件，2026-09-06 作者提议 + 首期无前端拍板）。
+ * TaskList 工具（Nebula 专属编排件）。
  *
  * 工具面隔离（硬约束）：仅 AgentCore.NebulaOrchestrationTools 携带（Nebula 固定面
  * 成员，TaskList 批 +1；件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点，
- * 此处不再写死数字——当前/终态 = 15（作者 2026-09-14 拍板）。沿革：R2 2026-09-12 后
+ * 此处不再写死数字——当前/终态 = 15。沿革：R2 后
  * 为 16 件（史实），再经 #145 `TransferFile` 退役 −1 ⇒ 15）；
  * NebulaExclusiveTools 防声明逃逸——dispatcher（DispatcherFixedTools）
  * / general（BaseTools+Pop）与任何非 Nebula 身份声明（含 "*"）均剥离。
@@ -1098,7 +1098,7 @@ object TaskListTool extends Tool:
 
   val name = "TaskList"
 
-  // `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：存储路径
+  // `def` + s-interpolation（home 硬编码 → 运行时动态化）：存储路径
   // 全部走 PathUtil.dataRootRenderValue —— 默认 home ⇒ `~/.nebflow/...`（与旧字面
   // 逐字节一致），隔离实例 ⇒ 该实例 home 绝对路径。`def` on purpose：dataRoot 可在
   // 对象初始化后被换根（--home / 测试 setDataRoot）。

@@ -3,6 +3,7 @@
 // (which does state.dom.chat.innerHTML = '') does NOT clear them.
 
 import state from './state.js';
+import { statusIcon } from './utils.js';
 
 let notificationIdCounter = 0;
 
@@ -65,11 +66,15 @@ function renderNotifications() {
 
   let html = '';
   toShow.forEach(n => {
-    const iconLabel = n.type === 'skill' ? 'S' : (n.type === 'reminder' ? 'R' : (n.type === 'conn' ? '!' : 'N'));
+    // ui-status-redesign（盘点 #7 / D 组）：conn 型「红方块＋白字符 !」→ wifi-off
+    // 真图标（红 = 图标载体 token），skill/reminder 首字母方块照旧；正文行不动。
+    const iconHtml = n.type === 'conn'
+      ? statusIcon('wifi-off', 13, 'st-err')
+      : (n.type === 'skill' ? 'S' : (n.type === 'reminder' ? 'R' : 'N'));
     const escapedText = escapeHtml(n.text);
     html += `
       <div class="notif-item" data-id="${escapeHtml(n.id)}">
-        <span class="notif-icon ${escapeHtml(n.type)}">${iconLabel}</span>
+        <span class="notif-icon ${escapeHtml(n.type)}">${iconHtml}</span>
         <span class="notif-text">${escapedText}</span>
         <button class="notif-close" data-id="${escapeHtml(n.id)}">&times;</button>
       </div>`;

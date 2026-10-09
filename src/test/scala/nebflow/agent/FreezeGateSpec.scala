@@ -921,7 +921,7 @@ class FreezeGateSpec extends CatsEffectSuite:
           "b7-probe"
         )
         hubEvents <- IO.ref(List.empty[Json])
-        _ <- wsHub.register(json => hubEvents.update(_ :+ json))
+        _ <- wsHub.registerListener(json => hubEvents.update(_ :+ json))
         dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
         rateLimiter <- RateLimiter.create()
         tracker <- FileChangeTracker.create(os.pwd.toString)

@@ -514,7 +514,7 @@ private[project] trait NodeGating:
             s"[$projectName] merge mutex KNOWN GAP (O-1): other registered project(s) [${names.mkString(", ")}] " +
               s"resolve to the SAME git dir '$mine' — merge holders are derived from THIS project's store only, " +
               "so mutual exclusion is NOT enforced across projects sharing one git dir " +
-              "(no claim/preemption implemented in this batch, per author ruling). " +
+              "(no claim/preemption implemented). " +
               s"merge-running now: mine=$mineRunning foreign=$foreignRunning. " +
               "Mitigation: never point two projects at one git dir."
           )

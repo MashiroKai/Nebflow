@@ -58,10 +58,13 @@ object FileSandbox:
       case Right(resolved) =>
         if policy.pathRoot.isEmpty then Right(resolved)
         else
-          // 与写根无关的独立例外（数据完整性规则）：agents 子树内非 Nebula 份
+          // 与写根无关的独立例外（数据完整性规则）：agents 子树内非根 agent 份
           // memory.md 写拒——同一条规则原读/写双闸消费，读侧随 S2 退役，写侧保留
-          // （例外集 = §4.2-B 审计只读白名单，Nebula 自身 memory.md 精确豁免）。
+          // （例外集 = §4.2-B 审计只读白名单，根 agent 自身 memory.md 精确豁免）。
           // canonical 域比较（symlink 间接路径同样拦截）。
+          // personal-agent 批 2026-10-04：新位 `~/.nebflow/Soul.md` 在**根层**、
+          // 不在 agents/ 子树内 ⇒ 天然不受本规则拦（随数据根写面放行）；旧位在
+          // 双读过渡期继续按上述豁免读写（既有记忆不失联）。
           val canonical = SandboxPolicy.canonicalize(resolved)
           if SandboxPolicy.readDenied(canonical) then
             Left(
@@ -72,7 +75,7 @@ object FileSandbox:
                   canonical,
                   policy,
                   reason = Some(
-                    "path matches the private-memory rule (agents/<agent>/memory.md is denied; the only exception is the audit-read-only whitelist for Nebula's own memory.md)"
+                    "path matches the private-memory rule (agents/<agent>/memory.md is denied; the only exception is the audit-read-only whitelist for the root agent's own memory.md)"
                   )
                 )
               )

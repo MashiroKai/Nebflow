@@ -91,7 +91,7 @@ object ModelChainConfig:
       case (Right(Some(d)), _) => Right(d)
       case (Right(None), Right(Some(p))) => Right(p)
       case (Right(None), Right(None)) =>
-        Left(io.circe.DecodingFailure("Missing field 'default' (or legacy 'primary')", c.history))
+        Left(io.circe.DecodingFailure("Missing field 'default' (alias 'primary' also accepted)", c.history))
       case (Left(err), _) => Left(err)
       case (_, Left(err)) => Left(err)
     for
@@ -234,6 +234,81 @@ object JevConfig:
   given Decoder[JevConfig] = deriveDecoder[JevConfig]
 
 /**
+ * Embedding 检索面配置节（task-rag 批 #1227 / §Batch 7）：顶层 `embedding` 块，
+ * 驱动 OpenAI 兼容 embeddings 端点（`POST {baseUrl}/embeddings`）。
+ *
+ *   "embedding": { "enabled": true, "baseUrl": "https://api.openai.com/v1",
+ *                  "model": "text-embedding-3-small", "keyRef": "openai-api-key",
+ *                  "timeoutMs": 20000 }
+ *
+ * ==Every field is optional ON PURPOSE==
+ * Form precedent = [[JevConfig]] (all-optional, `SearchConfig`-style graceful
+ * degrade): a partially written block decodes to its defaults instead of
+ * failing the whole service-config read.
+ *
+ * ==Graceful degrade (zero migration)==
+ * `enabled` absent/false, or a missing `baseUrl`/`model`, or a `keyRef` that
+ * resolves to no readable secret ⇒ the embedding face is OFF and task search
+ * falls back to lexical matching — existing users need zero migration. 🔴
+ * Absent means OFF is the SAFE default (same direction as `jev`): the face
+ * sends task/notes text off-machine.
+ *
+ * @param keyRef
+ *   NAME of a secret under `~/.nebflow/secrets/` (the `jev` reference form:
+ *   the config stores a POINTER, never a value; resolved by the consumer).
+ * @param timeoutMs
+ *   Per embeddings-call deadline. None → 20000.
+ */
+case class EmbeddingConfig(
+  enabled: Option[Boolean] = None,
+  baseUrl: Option[String] = None,
+  model: Option[String] = None,
+  keyRef: Option[String] = None,
+  timeoutMs: Option[Long] = None
+):
+  /** Toggle semantics: absent means OFF is the safe default for a face that
+    * sends task text off-machine (same direction as `JevConfig.isEnabled`). */
+  def isEnabled: Boolean = enabled.getOrElse(false)
+
+object EmbeddingConfig:
+  given Decoder[EmbeddingConfig] = deriveDecoder[EmbeddingConfig]
+
+/**
+ * Delegate 判定机 utility model 配置节（worktree-judge-fifo 批 #1224 增补 §一/§3.1
+ * —— SmallJudge 的「新可配 utility model」）: 顶层 `judge` 节，全字段可选。
+ *
+ * @param utilityModel
+ *   SmallJudge（LLM 兜底腿）的模型 ref（`providerId/modelId` 形态）。None =
+ *   缺省口径「根链首选」（registry 全局候选链首条）。Jev 优先腿不受本键影响
+ *   （Jev 走 `jev` 节自带的 provider/model）。
+ * @param timeoutMs
+ *   判定调用时限（worktree 判定与终态三态判定共用）。None → 默认 30s（判定
+ *   有界：spawn 腿与终态腿都绝不因判定机长悬）。
+ */
+case class JudgeConfig(
+  utilityModel: Option[String] = None,
+  timeoutMs: Option[Long] = None
+)
+
+object JudgeConfig:
+  given Decoder[JudgeConfig] = deriveDecoder[JudgeConfig]
+
+/**
+ * Collaboration-sync remote 节（batch78 三裁②，BA:330 移出＋参数化）：顶层
+ * `collabSync` 节。`remoteUrl` 缺省 `None` ⇒ dispatcher 提示词的协作同步句
+ * 整句不渲染（零本地信息缺省面）；配置存在时渲染同步句（句内 remote 名取
+ * 配置键名段 `collabSync`，非硬编码）。渲染时现读（BuiltinAgents.DispatcherPrompt
+ * 为 def）＋fail-safe（配置读失败等同未配置）。全字段可选：半节解码为缺省
+ * 而非抛（同 `jev` / `judge` 节教训）。
+ */
+case class CollabSyncConfig(
+  remoteUrl: Option[String] = None
+)
+
+object CollabSyncConfig:
+  given Decoder[CollabSyncConfig] = deriveDecoder[CollabSyncConfig]
+
+/**
  * Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
  * independently optional; None → Defaults. Applied at boot (LlmInterface
@@ -353,7 +428,25 @@ case class NebflowServiceConfig(
    * `Missing required field` ⇒ 防 GatewayMain 走 crash-recovery 用 `{}` 快照
    * 打回（同 `llm` 节的既有教训）。
    */
-  jev: Option[JevConfig] = None
+  jev: Option[JevConfig] = None,
+  /**
+   * Delegate 判定机 utility model 节（worktree-judge-fifo 批 #1224 增补）——见
+   * [[JudgeConfig]]。`None` = 未配置 ⇒ SmallJudge 走「根链首选」缺省、Jev 优先
+   * 腿照常由 `jev` 节决定；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。
+   */
+  judge: Option[JudgeConfig] = None,
+  /**
+   * Collaboration-sync remote 节（batch78 三裁②，BA:330 移出＋参数化）——见
+   * [[CollabSyncConfig]]。`None` = 未配置 ⇒ dispatcher 提示词的协作同步句整句
+   * 不渲染；渲染时现读，配置改动即席生效（无重启门槛）。
+   */
+  collabSync: Option[CollabSyncConfig] = None,
+  /**
+   * Embedding 检索面节（task-rag 批 #1227 / §Batch 7）——见 [[EmbeddingConfig]]。
+   * `None` = 未配置 ⇒ embedding 面关、任务检索走词法降级（零迁移）；全字段
+   * 可选，半节解码为缺省而非抛（同 `jev` / `judge` 节教训）。
+   */
+  embedding: Option[EmbeddingConfig] = None
 )
 
 object NebflowServiceConfig:
@@ -422,8 +515,16 @@ object Config:
   /**
    * 仅当 llm 节缺席、或 llm 存在但 providers 缺席时补一个空 providers；
    * 其余字段（含非法形态）原样保留——非法形态仍会正常解码失败，不被掩盖。
+   *
+   * 🔴 公开（而非 private）：任何**从原始 JSON 直接解**
+   * `NebflowServiceConfig` 的调用点都必须先过这里，否则冷启动中间态
+   * （种子只写 `plugins.trust`、无 `llm` 节）会因 `deriveDecoder` **不认**
+   * case class 默认值而解失败。实测缺陷（personal-agent 批）：WS 面
+   * `getOnboardingModels` 直接 raw-as 解码 ⇒ 全新 home 上回
+   * `{type:"error","message":"current config is unreadable"}`，引导的模型步骤
+   * 在主路径（首装）上直接断掉。单一实现对源 = [[loadFromJson]] 亦走本函数。
    */
-  private def ensureLlmDefaults(json: Json): Json =
+  private[nebflow] def ensureLlmDefaults(json: Json): Json =
     json.asObject match
       case None => json
       case Some(obj) =>

@@ -175,7 +175,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
   // ── 1. description 契约 ─────────────────────────────────
 
   test(
-    "A⓪ tool doc budget: NodeEdit description ≤7000 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050；nodegate 建位期声明闸批 dangling/verifierRoutePending/plugins-undeclared/out·role·merge 行内标记→6350；chainmodel 批一 chainId 声明参数行 + deps 链引用条款→7000)"
+    "A⓪ tool doc budget: NodeEdit description ≤7000 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050；nodegate 建位期声明闸批 dangling/verifierRoutePending/plugins-undeclared/out·role·merge 行内标记→6350；chainmodel 批一 chainId 声明参数行 + deps 链引用条款→7000；N1 刀2（2026-10-06）：A9 Scope&addressing 三句（delegate 作用域/PENDING 语义/双寻址）+ worktree/merge/dangling 三 seal 契约行——同窗删除 worktree/merge 两参数行与 out 行 dangling 括注并压缩（实测 −287），净增 321 ⇒ 预算 7000→7500)"
   ) {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
@@ -214,18 +214,24 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // the 7,000 budget is UNCHANGED (no budget raise needed). All semantic anchors below
     // re-read in place.
     assert(
-      d.length <= 7000,
-      s"NodeEdit description must stay ≤7000 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸+chainmodel 批一 chainId/deps链引用条款+panelscheme 批 retired 行合并), got ${d.length}"
+      d.length <= 7500,
+      s"NodeEdit description must stay ≤7500 chars (⑤b→…→chainmodel 批一→7000；N1 刀2 A9 三句+三 seal 契约行净增 321 ⇒ 7500——同窗已压缩 −287), got ${d.length}"
     )
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List(
         "nodename",
         "descriptionLong",
         "replace-on-provide",
-        "NODE_AGENT_RETIRED",
+        "NODE_AGENT_UNSUPPORTED",
         "EMPTY_NODE_CONNECTION",
-        "NODE_MERGE_REQUIRES_UPSTREAM",
-        "worktree",
+        // N1 刀2（D1/D2/③ seal，2026-10-06）：worktree/merge/dangling 三参数退役
+        // 契约必须常驻描述（分发器不读代码——丢锚 = 继续按旧习惯传参吃硬拒往返）。
+        "NODE_WORKTREE_UNSUPPORTED",
+        "NODE_MERGE_UNSUPPORTED",
+        "NODE_DANGLING_UNSUPPORTED",
+        // N1 刀2 A9（作用域/双寻址句）：delegate 会话面契约锚。
+        "DELEGATE_SCOPE_FOREIGN",
+        "CHAIN_ADDR_AMBIGUOUS",
         "abandon",
         "notifyDispatcher",
         "Nebula",
@@ -241,7 +247,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         "NODE_CHAIN_ID_INVALID",
         // panelscheme 批（2026-09-21）：preset 参数退役契约——退役错误码必须常驻描述
         // （分发器不读代码；丢这条 = 它会继续按旧习惯传 preset 吃一次硬拒往返）。
-        "NODE_PRESET_RETIRED",
+        "NODE_PRESET_UNSUPPORTED",
         // desc300 batch (2026-09-30): the new descriptionLong contract must stay resident —
         // a dispatcher that cannot see "longer text is truncated + spilled to a file whose path
         // comes back" would keep believing over-300 input is rejected.
@@ -491,7 +497,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 2. agent/skill/mcp 退役 ─────────────────────────────
 
-  test("B① passing agent/skill/mcp → rejected (NODE_AGENT_RETIRED, points at plugins)") {
+  test("B① passing agent/skill/mcp → rejected (NODE_AGENT_UNSUPPORTED, points at plugins)") {
     val ws = plainWorkspace("retired")
     val system = ActorSystem(s"slim-ret-${Random.nextInt(100000)}")
     for
@@ -537,17 +543,19 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       for (r, label) <- List((withAgent, "agent"), (withSkill, "skill"), (withMcp, "mcp")) do
         assert(r.isLeft, s"$label param must be rejected")
         assert(
-          r.left.exists(_.contains("NODE_AGENT_RETIRED")),
-          s"$label rejection must carry NODE_AGENT_RETIRED, got: ${r.left.getOrElse("")}"
+          r.left.exists(_.contains("NODE_AGENT_UNSUPPORTED")),
+          s"$label rejection must carry NODE_AGENT_UNSUPPORTED, got: ${r.left.getOrElse("")}"
         )
         assert(r.left.exists(_.contains("plugins")), s"$label rejection must point at plugins")
       assert(snap.nodes.isEmpty, "no node must be created from retired-param calls")
     end for
   }
 
-  // ── 3. worktree 布尔派生（创建时机裁决 a：NodeEdit 即时创建 fail-fast）──
+  // ── 3. worktree/merge/dangling 三 seal（N1 刀2 D1/D2/③：NodeEdit 不再代建
+  //    worktree、不再接 merge=true 新建、dangling 声明令牌退役——键在场即拒，
+  //    先于一切校验面与建位写点）──────────────────────────────────────────
 
-  test("C① worktree non-boolean (legacy string form) → WORKTREE_NOT_BOOLEAN") {
+  test("C① worktree (any form, legacy string included) → NODE_WORKTREE_UNSUPPORTED, zero side effects") {
     val ws = gitWorkspace("wtnb")
     val system = ActorSystem(s"slim-wtnb-${Random.nextInt(100000)}")
     for
@@ -565,15 +573,18 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         ),
         ctx
       )
+      snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield assert(
-      r.isLeft && r.left.exists(_.contains("WORKTREE_NOT_BOOLEAN")),
-      s"string worktree must be rejected, got: $r"
-    )
+    yield
+      assert(
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"worktree key must hit the seal, got: $r"
+      )
+      assert(snap.nodes.isEmpty, "seal precedes creation: no node from a sealed param")
     end for
   }
 
-  test("C② worktree=true on non-git workspace → fail-fast rejection, NO node created") {
+  test("C② worktree=true on a non-git workspace → NODE_WORKTREE_UNSUPPORTED (seal fires before any git probe), NO node created") {
     val ws = plainWorkspace("nogit")
     val system = ActorSystem(s"slim-nogit-${Random.nextInt(100000)}")
     for
@@ -595,14 +606,14 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(
-        r.isLeft && r.left.exists(_.contains("git repository")),
-        s"non-git workspace must reject worktree=true, got: $r"
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"non-git workspace worktree=true must hit the seal, got: $r"
       )
-      assert(snap.nodes.isEmpty, "fail-fast: node must NOT be created when worktree creation fails")
+      assert(snap.nodes.isEmpty, "seal: node must NOT be created")
     end for
   }
 
-  test("C③ worktree=true on git workspace → derived worktree+branch created immediately, node bound to it") {
+  test("C③ worktree=true on a git workspace → NODE_WORKTREE_UNSUPPORTED (the positive path is retired), NO node, NO worktree dir") {
     val ws = gitWorkspace("wtyes")
     val system = ActorSystem(s"slim-wtyes-${Random.nextInt(100000)}")
     for
@@ -621,25 +632,19 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         ctx
       )
       snap <- rt.store.snapshot
-      // worktrees[] 名单自动纳入（NodeList 载荷 worktree 标记链路）
-      payload <- NodeTools.buildNodeListPayload(rt)
-      wts = payload.hcursor.downField("worktrees").as[List[String]].toOption.getOrElse(Nil)
+      noDir <- IO.blocking(!os.exists(ws / ".nebflow" / "worktrees"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"worktree=true create must succeed, got: $r")
-      val n = snap.nodes.values.find(_.name == "调研-派生一")
-      assert(n.isDefined, "node must exist")
-      val bare = n.get.worktree
-      assert(bare.isDefined, s"node must carry worktree binding, node=$n")
-      val derived = bare.get
-      assert(os.exists(ws / ".nebflow" / "worktrees" / derived / ".git"), s"worktree dir must exist: $derived")
-      val branches = os.proc("git", "-C", ws.toString, "branch", "--list", derived).call(check = true).out.trim()
-      assert(branches.nonEmpty, s"same-name branch must exist for worktree '$derived', got: '$branches'")
-      assert(wts.contains(derived), s"worktrees[] must include the derived worktree, got: $wts")
+      assert(
+        r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"git workspace does not resurrect the retired path, got: $r"
+      )
+      assert(snap.nodes.isEmpty, "no node from the sealed path")
+      assert(noDir, "NodeEdit must not provision worktrees anymore (delegate-layer arbiter owns it)")
     end for
   }
 
-  test("C④ worktree on edit → WORKTREE_CREATE_ONLY (create-time binding)") {
+  test("C④ worktree on edit → NODE_WORKTREE_UNSUPPORTED (the seal precedes the edit path too)") {
     val ws = plainWorkspace("wtedit")
     val system = ActorSystem(s"slim-wte-${Random.nextInt(100000)}")
     for
@@ -659,18 +664,69 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       r <- nodeEdit(nodeInput("slim-wte", "n-w", "worktree" -> Json.fromBoolean(true)), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield assert(
-      r.isLeft && r.left.exists(_.contains("WORKTREE_CREATE_ONLY")),
-      s"worktree on edit must be refused, got: $r"
+      r.isLeft && r.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+      s"worktree on edit must hit the seal, got: $r"
     )
+    end for
+  }
+
+  test("C⑤ merge=true / dangling keys → NODE_MERGE_UNSUPPORTED / NODE_DANGLING_UNSUPPORTED (merge=false tolerated)") {
+    val ws = plainWorkspace("seal-md")
+    val system = ActorSystem(s"slim-seal-${Random.nextInt(100000)}")
+    for
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("slim-seal", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      mTrue <- nodeEdit(
+        nodeInput(
+          "slim-seal",
+          "n-mt",
+          "merge" -> Json.fromBoolean(true),
+          "in" -> Json.fromString("n-x"),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      dAngle <- nodeEdit(
+        nodeInput(
+          "slim-seal",
+          "n-da",
+          "dangling" -> Json.fromBoolean(true),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      mFalse <- nodeEdit(
+        nodeInput(
+          "slim-seal",
+          "n-mf",
+          "merge" -> Json.fromBoolean(false),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      snap <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(mTrue.isLeft && mTrue.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")), s"merge=true must hit the seal, got: $mTrue")
+      assert(dAngle.isLeft && dAngle.left.exists(_.contains("NODE_DANGLING_UNSUPPORTED")), s"dangling key must hit the seal, got: $dAngle")
+      assert(mFalse.isRight, s"merge=false is tolerated (create-only token semantics), got: $mFalse")
+      assert(snap.nodes.values.exists(_.name == "n-mf"), "tolerated merge=false create lands (id is n-<8hex>; nodename is the name)")
     end for
   }
 
   // ── 4. E2E：新 schema 建节点 → 执行至 completed → 载荷收敛 + 按需读取 ──
 
   test(
-    "E2E: plugins[approved]+description+worktree=true → completed; payload metadata-only; detail channel returns full result (panelscheme: preset 参数已退役)"
+    "E2E: plugins[approved]+description → completed; payload metadata-only; detail channel returns full result (panelscheme: preset 参数已退役；N1 刀2: worktree 参数退役——workspace 直跑)"
   ) {
-    val ws = gitWorkspace("e2e")
+    val ws = plainWorkspace("e2e")
     val system = ActorSystem(s"slim-e2e-${Random.nextInt(100000)}")
     for
       _ <- nebflow.core.plugin.PluginRegistry.approve("slim-e2e").flatMap {
@@ -687,8 +743,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
           "description" -> Json.fromString("端到端载荷收敛验证节点"),
           "task" -> Json.fromString("produce the result"),
           "out" -> Json.fromString("Nebula"),
-          "plugins" -> Json.arr(Json.fromString("slim-e2e")),
-          "worktree" -> Json.fromBoolean(true)
+          "plugins" -> Json.arr(Json.fromString("slim-e2e"))
         ),
         ctx
       )
@@ -714,13 +769,13 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     yield
       assert(created.isRight, s"E2E create must succeed, got: $created")
       val n = snap.nodes.values.find(_.name == "E2E-主节点").getOrElse(fail("node missing"))
-      // 执行统一 general + 配置面
-      assertEquals(n.agent, "general", "new node agent must be pinned to general")
+      // 执行统一内置执行 agent（builtin-merge 批 2026-10-03 收敛：旧名 general
+      // 已由 BuiltinAgents.ExecutorName 常量取代——本断言由字面量对齐常量，语义不变）
+      assertEquals(n.agent, nebflow.core.entity.BuiltinAgents.ExecutorName, "new node agent must be pinned to the built-in executor")
       assertEquals(n.plugins, List("slim-e2e"), "approved plugin must be allocated")
       // panelscheme 批（2026-09-21）：preset 参数退役——新建节点不再携带节点级方案
       assertEquals(n.preset, None, "retired preset param must leave new nodes preset-free")
-      assert(n.worktree.isDefined, "worktree=true must bind a worktree")
-      assert(os.exists(ws / ".nebflow" / "worktrees" / n.worktree.get / ".git"), "derived worktree must exist")
+      assertEquals(n.worktree, None, "N1 刀2 D1: NodeEdit no longer provisions worktrees — new nodes run in the workspace")
       // 默认载荷：元数据 only —— 无 result 键（全文与摘要都不进）
       val nodes = payload.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
       val mine =

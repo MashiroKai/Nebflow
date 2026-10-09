@@ -119,4 +119,89 @@ class StreamBatchingSpec extends CatsEffectSuite:
       tx <- IO(types.indexOf("textDelta"))
     yield assert(ti >= 0 && tx > ti, s"thinking must precede text; types=$types")
   }
+
+  // ── B2（RC-2，2026-10-04）：帧的块/轮次标识 ──────────────────────────────
+  // 反事实：B2 之前，textDelta / thinkingDelta 帧上**没有任何**段/轮次字段，
+  // 前端只能从累积字符串长度回退推段边界。以下三个用例把「帧必带 round/block」
+  // 与「block 在 round 内严格递增、跨 round 重置」钉成机械可查的事实。
+
+  private def marks(ref: Ref[IO, Vector[Json]]): IO[Vector[(String, Int, Int)]] =
+    ref.get.map(_.flatMap { j =>
+      val c = j.hcursor
+      for
+        t <- c.downField("type").as[String].toOption
+        r <- c.downField("round").as[Int].toOption
+        b <- c.downField("block").as[Int].toOption
+      yield (t, r, b)
+    })
+
+  /** T5：每个出网 delta 帧都携带 (round, block)。 */
+  test("StreamBatching T5 (B2): every delta frame carries a round/block mark") {
+    for
+      ref <- framesRef
+      p = StreamBatching.pipe(
+        sender(ref),
+        isSubagent = false,
+        sessionId = Some("s-b2"),
+        isAskMode = false,
+        isCompactTurn = false,
+        agentPath = "agent-under-test",
+        round = 7
+      )
+      _ <- Stream(
+        StreamChunk.ThinkingDelta("th"),
+        StreamChunk.TextDelta("tx"),
+        StreamChunk.Done(None, None, None, None)
+      ).through(p).compile.drain
+      ms <- marks(ref)
+    yield assert(
+      ms.nonEmpty && ms.forall(_._2 == 7) && ms.map(_._3).distinct.size == ms.size,
+      s"every delta frame must carry its own (round=7, block); got=$ms"
+    )
+  }
+
+  /** T6：同一管道内 block 严格递增（跨 flush 保留，不因 take 重置）。 */
+  test("StreamBatching T6 (B2): block increases strictly across flushes in one round") {
+    for
+      ref <- framesRef
+      p = StreamBatching.pipe(
+        sender(ref),
+        isSubagent = false,
+        sessionId = Some("s-b2"),
+        isAskMode = false,
+        isCompactTurn = false,
+        agentPath = "agent-under-test",
+        round = 3
+      )
+      // Two MaxBatch-sized bursts ⇒ two forced flushes, plus a trailing delta
+      // flushed by Done ⇒ three frames. The 2nd/3rd must continue the block
+      // sequence, not restart it (BatchState.marked survives take()).
+      burst = Stream((1 to StreamBatching.MaxBatch).map(i => StreamChunk.TextDelta(s"x$i"))*)
+      _ <- (burst ++ burst ++ Stream(StreamChunk.TextDelta("tail"), StreamChunk.Done(None, None, None, None)))
+        .through(p).compile.drain
+      ms <- marks(ref)
+      blocks = ms.map(_._3)
+    yield assert(
+      blocks.size >= 3 && blocks == blocks.sorted && blocks.distinct.size == blocks.size,
+      s"block must strictly increase across flushes; got=$blocks"
+    )
+  }
+
+  /** T7：round 由调用方给（= 本 turn 内第几个 LLM 轮次）——同一管道内恒定，
+   *  不同管道（不同 round）各自独立编号。 */
+  test("StreamBatching T7 (B2): round is taken from the caller, per-pipeline") {
+    for
+      r1 <- framesRef
+      r2 <- framesRef
+      mk = (ref: Ref[IO, Vector[Json]], round: Int) =>
+        StreamBatching.pipe(sender(ref), false, Some("s-b2"), false, false, "a", round = round)
+      _ <- Stream(StreamChunk.TextDelta("a1"), StreamChunk.Done(None, None, None, None)).through(mk(r1, 0)).compile.drain
+      _ <- Stream(StreamChunk.TextDelta("b1"), StreamChunk.Done(None, None, None, None)).through(mk(r2, 4)).compile.drain
+      m1 <- marks(r1)
+      m2 <- marks(r2)
+    yield assert(
+      m1.forall(_._2 == 0) && m2.forall(_._2 == 4) && m1.map(_._3) == m2.map(_._3),
+      s"each pipeline numbers its own block sequence under the caller's round; got m1=$m1 m2=$m2"
+    )
+  }
 end StreamBatchingSpec

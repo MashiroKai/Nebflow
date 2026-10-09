@@ -78,8 +78,14 @@ object InjectedInboxMirror:
    * 后端侧唯一副本，契约门 [[nebflow.agent.SubAgentInboxMirrorSpec]] 两侧逐字对账）。
    * 判据 = 「该会话在 UI 里由 bg-agent 弹窗承载」⇒ 与作者口径的「子代理窗口」
    * 同外延（`team-` 前缀**不在**内：`isBgAgentId` 不含它，其窗口不属于本批面）。
+   *
+   * P1-3 归因修正批（2026-10-03）：真产品缺陷——`SubagentTool` / `WorkflowTool`
+   * 阻塞桥（builtin-merge 批新增）创建的会话 id 用 `subagent-` / `workflow-` 前缀，
+   * 前端弹窗判据早已收录两者，后端本表当时未同步 ⇒ 镜像腿对这两个族的注入行
+   * **结构性漏投**。本批补齐两侧同源（单侧扩面正是契约门要禁的形态）。
    */
-  val SubAgentIdPrefixes: List[String] = List("delegate-", "subtask-", "node-", "dispatcher-")
+  val SubAgentIdPrefixes: List[String] =
+    List("delegate-", "subtask-", "subagent-", "workflow-", "node-", "dispatcher-")
 
   /** 是否子代理会话 id（前缀判据见 [[SubAgentIdPrefixes]]）。 */
   def isSubAgentSession(sessionId: String): Boolean =

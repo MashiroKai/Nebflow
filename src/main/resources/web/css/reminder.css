@@ -354,25 +354,30 @@
 .reminder-row.disabled .reminder-row-text { opacity: 0.4; }
 .reminder-row.disabled .reminder-row-time { opacity: 0.3; }
 
-/* overdue row */
+/* overdue row — ui-status-redesign（S12 / 盘点 #39）：红时间退役 → 中性等宽数字
+   （reminder.css 既有 tabular-nums），语义首读给行首 clock-alert 图标 +
+   「逾期」tag 图案（红边淡红底保留、字转中性）。 */
 .reminder-row.overdue .reminder-row-time {
-  color: var(--color-error);
+  color: var(--status-word);
 }
 
-/* overdue tag */
+/* overdue tag — 图案载体保留（红 8% 底 + 边），字转中性；词前 clock-alert 图标
+   由 scheduled-task.js 注入。 */
 .reminder-overdue-tag {
   display: inline-flex;
   align-items: center;
   font-size: 9px;
   font-weight: 500;
-  color: var(--color-error);
+  color: var(--status-word);
   background: rgba(244, 67, 54, 0.08);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 25%, transparent);
   padding: 0 5px;
   border-radius: 3px;
-  line-height: 16px;
+  line-height: 14px;
   letter-spacing: -0.01em;
   margin-left: 3px;
 }
+.reminder-overdue-tag .st-ic { width: 9px; height: 9px; margin-right: 2px; }
 
 /* ── Triggered (completed) Row ────────────────────────────────────────── */
 .reminder-row.triggered {

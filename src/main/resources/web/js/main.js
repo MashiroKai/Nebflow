@@ -18,7 +18,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
@@ -37,6 +37,9 @@ import {
   appendToolStreamDelta, cancelToolStreamRAF,
   formatResumeClock
 } from './chat.js';
+// stream-ux redesign (2026-10-03): the pre-token 「思考中」 placeholder lives
+// ON the turn line (dots + live timer), not in a bubble row.
+import { startWorklineDots, beginRound } from './workline.js';
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks } from './askPending.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -47,6 +50,7 @@ import {
   computeAgentStates
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
+import { rootDisplayName, initRootNameProbe } from './rootName.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
@@ -55,6 +59,10 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
+// delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
+// 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
+// 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
+import './delegateChainProvider.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -86,15 +94,14 @@ import { initUpdateCheck } from './updateCheck.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
-import { formatLiveDuration } from './chat.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
-// Side-effect import: flowAnim.js is the rAF orbit driver for Flow Map /
-// flow-run node dots (.solar-node). It used to ride in via the legacy
-// flow-canvas module (deleted 2026-09-05 旧 UI 退役); anchor it here so
-// Flow Map's orbit animation stays alive from boot.
-import './flowAnim.js';
+// flowAnim.js side-effect import REMOVED (flowmaptab-retire, #1228 两裁② 停用清单
+// 面 3 · 上游 a60af705d 申报 S10/S11 零复用——链视图为静态卡列表，动效全由 CSS 承担).
+// The module stays on disk orphan-exempted in scripts/build-web.mjs, pending the
+// #1229 per-project REST/WS retirement batch (tests/fixtures/orbit-anim-harness.html
+// still imports it directly for tests/orbit-anim.spec.mjs).
 // ctxthresh 批（2026-09-15 方案 A）：Header 上下文环 → 压缩阈值面板（自包含
 // 模块：注入 CSS + 把浮层挂成 #header 的兄弟节点 + 绑定环点击 + WS 收发）。
 import './ctxthresh.js';
@@ -116,7 +123,7 @@ import { initSecretsPanel } from './secretsPanel.js';
 import { friendsEnabled } from './featureFlags.js';
 // FE 组件化批次七(2026-09-28):main.js 顶层函数族抽取 —— import 回绑(主体调用点逐字不动;
 // window.* 挂钩行与顶层 setInterval/addEventListener 挂点保留在 main.js 原位置)。
-import { startThinkingTimer, stopThinkingTimer } from './main/thinkingTimer.js';
+import { stopThinkingTimer } from './main/thinkingTimer.js';
 import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/freeze.js';
 import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
 import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
@@ -675,7 +682,8 @@ onMessage('thinkingDelta', (msg, view) => {
     if (!state.turnExpecting[sid] && !activeView.stream.currentThinkingBubble && !activeView.stream.currentAiBubble) {
       return;
     }
-    appendThinkingDelta(msg.delta);
+    // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
+    appendThinkingDelta(msg.delta, { round: msg.round, block: msg.block });
   }
 });
 
@@ -692,7 +700,8 @@ onMessage('textDelta', (msg, view) => {
     clearRetryStatus();
     // Finish thinking bubble before first text delta
     if (activeView.stream.currentThinkingBubble) finishThinking();
-    appendAiText(msg.delta);
+    // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
+    appendAiText(msg.delta, { round: msg.round, block: msg.block });
   }
 });
 
@@ -727,20 +736,11 @@ onMessage('thinking', (msg, view) => {
   resetStreamTimeout(sid);
   armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
-    // Guard against duplicate thinking bubbles: check both state ref and DOM.
-    const existing = activeView.dom.chat.querySelector('.thinking-placeholder');
-    if (!activeView.stream.currentAiBubble && !existing) {
-      const { chat } = activeView.dom;
-      const row = document.createElement('div');
-      row.className = 'row ai';
-      activeView.stream.currentAiBubble = document.createElement('div');
-      activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      row.appendChild(activeView.stream.currentAiBubble);
-      chat.appendChild(row);
-      smartScroll();
-      // Start live timer after a brief moment so DOM is settled
-      requestAnimationFrame(() => startThinkingTimer());
-    }
+    // stream-ux redesign (2026-10-03): the pre-token face is the turn line's
+    // dots item — no placeholder bubble row any more (the old guard checked
+    // currentAiBubble + a .thinking-placeholder row; the line is idempotent
+    // per kind, so re-issued `thinking` frames cannot double-show).
+    startWorklineDots(activeView, state.turnStartTimes[sid]);
   }
 });
 
@@ -912,7 +912,9 @@ function updateHeaderModelInfo() {
   const pct = Math.min(Math.round(ratio * 100), 100);
   let barColor = '#4caf50';
   if (ratio > 0.5) barColor = '#d4a030';
-  if (ratio > 0.75) barColor = '#e53935';
+  // ui-status-redesign（盘点 #49，B 组）：>75% 红档字面量 → 状态 token（环=图案
+  // 载体保留）。CSS 变量经 style.stroke 消费（stroke 属性不支持 var()）。
+  if (ratio > 0.75) barColor = 'var(--status-error-icon)';
 
   const dragPct = el.dataset.ringDragPreviewPct ? Number(el.dataset.ringDragPreviewPct) : null;  // ctxring S1 (see ctxthresh.js header)
   const thresholdPct = dragPct != null ? Math.round(dragPct) : Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
@@ -936,9 +938,9 @@ function updateHeaderModelInfo() {
     const ring = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-ring-wrap'));
     if (ring) {
       ring.title = tooltip;
-      const ringFill = ring.querySelector('circle:nth-child(2)');
+      const ringFill = /** @type {SVGElement|null} */ (ring.querySelector('circle:nth-child(2)'));
       if (ringFill) {
-        ringFill.setAttribute('stroke', barColor);
+        ringFill.style.stroke = barColor;
         ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
       }
       const ringLine = ring.querySelector('.ctx-ring-threshold');
@@ -955,11 +957,10 @@ function updateHeaderModelInfo() {
     <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
       <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
         <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke="${barColor}" stroke-width="3.5"
-                stroke-dasharray="${dashLen} ${CIRC}"
+        <circle cx="18" cy="18" r="${R}" fill="none" stroke-width="3.5"
+                style="stroke:${barColor};stroke-dasharray:${dashLen} ${CIRC};transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"
                 stroke-linecap="round"
-                transform="rotate(-90 18 18)"
-                style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+                transform="rotate(-90 18 18)"/>
         <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
               transform="rotate(${thresholdAngle} 18 18)"
               class="ctx-ring-threshold"/>
@@ -1157,23 +1158,19 @@ onMessage('roundComplete', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
-    // Show thinking placeholder for the upcoming round — backend sent sessionBusy(true)
-    // after roundComplete, so the agent is still working.
+    // Show the turn line's dots for the upcoming round — backend sent
+    // sessionBusy(true) after roundComplete, so the agent is still working
+    // (stream-ux redesign: the dots live ON the line, not in a bubble).
     if (sid && state.busySessionIds.has(sid)) {
       if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
-      const { chat } = activeView.dom;
-      const existing = chat.querySelector('.thinking-placeholder');
-      if (!activeView.stream.currentAiBubble && !existing) {
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        activeView.stream.currentAiBubble = document.createElement('div');
-        activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
-        row.appendChild(activeView.stream.currentAiBubble);
-        chat.appendChild(row);
-        smartScroll();
-        requestAnimationFrame(() => startThinkingTimer());
-      }
+      startWorklineDots(activeView, state.turnStartTimes[sid]);
     }
+    // UI-B: this IS the round boundary. Order matters — startWorklineDots above
+    // may build a brand-new line (round resets to 0 there), so the advance must
+    // come AFTER it, or the first round of a new turn would be numbered 1.
+    // Re-issuing the dots on a line that is already up does not reset the
+    // counter, which is exactly right: the same turn keeps its round sequence.
+    beginRound(activeView);
   }
 });
 
@@ -1298,6 +1295,9 @@ onMessage('askUser', (msg, view) => {
   if (sid) setSessionAttention(sid, true);
   // D6 批 F2: upsert the global pending mirror (requestId-keyed, idempotent —
   // live first-send and replayed snapshot frames both land here).
+  // 附件位（本批）**刻意不进镜像**：`toEntry` 登记的字段面只服务待办条/徽标/跳转，
+  // 附件在那里零消费者；会话切换后的补渲染由 hub 的订阅重放帧（本文件 :1520 腿，
+  // 附完整 payload 含 attachments）承担 ⇒ 登记=多一份无消费方的状态。
   notePendingAsk(msg);
   // AskUser waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
@@ -1330,11 +1330,11 @@ onMessage('askUser', (msg, view) => {
   if (msg.replayed || msg.replaces) {
     if (view) {
       reclaimAskUserCards(view.dom.chat, msg.requestId, { legacyTwin: true });
-      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
+      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource, msg.attachments);
       if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
     } else if (sid) {
       // Non-active session: persist (deduped) so it can be restored on session switch
-      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid, msg.requestId);
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid, msg.requestId);
     }
     return;
   }
@@ -1350,11 +1350,11 @@ onMessage('askUser', (msg, view) => {
     // 在**任何**入口成立，顺手覆盖 `#433 F4` 兜底扇出把同一 requestId 经 broadcast
     // 多次送达同一窗的同 id 多送路径（两卡同 id 时后来的真身替换先前那张）。
     reclaimAskUserCards(activeView.dom.chat, msg.requestId, { legacyTwin: true });
-    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource, msg.attachments);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid);
   }
 });
 
@@ -1698,7 +1698,11 @@ onMessage('historyPage', (msg, view) => {
       // 历史恢复未作答卡。改前这里是「删掉**全部**带 .option-box 的 .row.ai」，
       // 会把更早那些**已作答**的历史卡一并从 DOM 里抹掉（超出本步语义）。
       reclaimAskUserCards(activeView.dom.chat, lastHistMsg.requestId, { legacyTwin: true });
-      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName });
+      // 附件位（本批）与另两条腿同形透传：`lastHistMsg.attachments` 今日恒 undefined
+      // —— 后端 `.ui.json` 落盘时**不写** attachments（WebSocketRoutes.scala:2294-2298
+      // 的 `UiMessage.AskUser(items, askRid)`）⇒ 历史行没有该键可透传，本处是**形态
+      // 对齐**的防御位，不是活路径（见过程件「构造性边界」一节）。
+      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName }, lastHistMsg.attachments);
     }
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
@@ -2130,9 +2134,13 @@ onMessage('serverConfig', (msg, view) => {
     state.serverThinking = msg.thinking;
     state.thinkingMode = msg.thinking;
   }
-  if (msg.tools) {
-    state.availableTools = msg.tools;
-  }
+  // Tool descriptions do NOT ride this frame (perf-481 A4): the server no longer
+  // attaches `tools` to `serverConfig`, so the old `if (msg.tools)` assignment
+  // here was a dead second writer next to the `toolsList` handler below. Removed
+  // rather than kept for compatibility — `msg.tools` can never be set by the
+  // shipped server, and a second writer face is exactly the drift source A4
+  // removed. The single writer is `onMessage('toolsList', ...)` (per-connection,
+  // on demand).
   // !== undefined (not truthiness): the schedule node must sync even when
   // falsy-but-present ({enabled:false,...}) so the settings panel always
   // echoes server truth (freeze-consistency fix 2026-08-27).
@@ -2169,6 +2177,15 @@ onMessage('serverConfig', (msg, view) => {
 // (09-05 五项裁定①：MCP 概念由 Plugins 系统全面取代，设置页入口移除)。
 // The backend still broadcasts mcpServersUpdate for other consumers.
 
+
+// --- Tool list (perf-481 A4) ---
+// The tool descriptions used to ride every `serverConfig` frame (~93.5 KB each,
+// connect + every config broadcast). They are now fetched once per connection
+// via `getToolsList`. Same assignment as before, so `state.availableTools`
+// keeps its single writer face.
+onMessage('toolsList', (msg) => {
+  if (msg.tools) state.availableTools = msg.tools;
+});
 onMessage('configData', (msg, view) => {
   state.configText = msg.config || '';
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
@@ -2301,6 +2318,7 @@ onMessage('deviceMailInjectFailed', (msg) => {
   addNotification('device-mail', t('deviceMail.injectFailed', {
     device: msg.fromDevice || '?',
     attempts: msg.attempts ?? '?',
+    agent: rootDisplayName(),
   }));
 });
 
@@ -2569,7 +2587,7 @@ function bgTaskOrigin(task) {
     else cat = 'nebula';
   }
   if (!label) {
-    label = cat === 'nebula' ? 'Nebula'
+    label = cat === 'nebula' ? rootDisplayName()
       : cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
       : (task.sessionId || 'node');
   }
@@ -3798,14 +3816,16 @@ onMessage('activeAgents', (msg) => {
   computeAgentStates();
 });
 
-// Scroll listener (primary window)
+// Scroll listener (primary window). B4 (2026-10-04): the follow-intent latch
+// refresh and the ↓ N pill now ride ONE listener, installed by initScrollFollow
+// below — the same place that owns the latch element (`view.dom.chat`). This
+// module keeps only the pagination gate and hands it to that installer, so the
+// primary window has exactly one scroll handler probing geometry once per event
+// (before the fix: this listener probed for the latch AND utils.js probed again
+// for the pill, three times per event → 6 forced reads per wheel step).
 const _primChat = chatViews.primary.dom.chat;
-_primChat.addEventListener('scroll', () => {
+const _primScrollGate = () => {
   const pv = chatViews.primary;
-  // Follow-intent latch, refreshed on every real scroll event with the shared
-  // near-bottom unit (A-branch convergence — was 40px here, 60/80/100
-  // elsewhere). Also drives the ↓ N pill via syncScrollPill.
-  updateScrollSnapped(pv, _primChat);
   // Scroll-to-top: load older messages
   if (_primChat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
     pv.pagination.loading = true;
@@ -3813,11 +3833,12 @@ _primChat.addEventListener('scroll', () => {
     showHistoryLoader();
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
-}, { passive: true });
+};
 
 // Per-view scroll-follow machinery for the primary window (row counting +
-// the "↓ N new messages" pill). Popups attach their own in ensureStepView.
-initScrollFollow(chatViews.primary);
+// "↓ N new messages" pill + the follow-intent latch + the pagination gate).
+// Popups attach their own in ensureStepView.
+initScrollFollow(chatViews.primary, { onScroll: _primScrollGate });
 
 // ---------- 6. Expose global Nebflow API for plugins ----------
 // Theme tokens extracted from CSS custom properties — agents can read these for consistency.
@@ -3862,6 +3883,12 @@ window.Nebflow = {
 // the one shared link leg (viewers/shared.js) before the first message renders.
 bindDocMarkupLinkBridge();
 emergencyCacheCleanup(); // Purge bloated localStorage cache before any writes
+// Root named-verdict probe (rootName.js, askuser-bubblename batch B-1): the
+// agentList displayName row is fallback-poisoned, so the persisted-name face
+// (header / ask badge / pending rows) reads the agent.json probe instead.
+// Fire-and-forget — the verdict re-renders the faces via
+// `nebflow-root-name-change` when it lands.
+initRootNameProbe();
 connect();
 chatViews.primary.dom.input.focus();
 

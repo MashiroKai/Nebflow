@@ -73,7 +73,7 @@ class MemoryHygieneSpec extends FunSuite:
     val agentBig = Some("x" * 24577) // > 24KB 软线
     val n = ContextRefresher.memoryHygieneNotice(small, agentBig, (false, false))
     assert(n.contains("IMMEDIATE TASK"))
-    assert(n.contains("memory.md"), "指明 agent 记忆文件")
+    assert(n.contains("Soul.md"), "指明 agent 记忆文件（personal-agent 批起为根层 Soul.md）")
 
   test("notice: 80% 超限优先于事件提醒（同一块不重复渲染两段）"):
     val userBig = Some("x" * 41000)

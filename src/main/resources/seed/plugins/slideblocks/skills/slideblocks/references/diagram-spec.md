@@ -38,7 +38,7 @@ type Edge = {
 }
 ```
 
-Every label `id` is unique within its edge, `text` is non-empty, `distance` stays within `0..1`, and all endpoints and ports resolve. Use `labels: []` or omit the field when a relationship needs no visible label. The deprecated single `label` string may be read only as a legacy adapter and normalizes once to `labels: [{ id: "label-0", text, position: { distance: 0.5 } }]`; reject a spec that supplies both forms or an empty legacy label.
+Every label `id` is unique within its edge, `text` is non-empty, `distance` stays within `0..1`, and all endpoints and ports resolve. Use `labels: []` or omit the field when a relationship needs no visible label. A single `label` string is accepted only as an adapter form and normalizes once to `labels: [{ id: "label-0", text, position: { distance: 0.5 } }]`; reject a spec that supplies both forms or an empty adapter label.
 
 ## Geometry and review
 

@@ -32,8 +32,8 @@ export default {
   'project.openFlowMap': '打开「{name}」的 Flow Map',
   'project.idle': '空闲',
   'project.empty': '还没有项目',
-  'project.emptyHint': '通过 Nebula 创建 Project 后，这里会列出项目。',
-  'project.emptyCta': '让 Nebula 创建项目',
+  'project.emptyHint': '通过 {agent} 创建 Project 后，这里会列出项目。',
+  'project.emptyCta': '让 {agent} 创建项目',
   'project.emptyCtaHint': '点击后把指令预填到输入框，不会自动发送。',
   'project.emptyPrefill': '帮我创建一个项目',
   'project.loadFail': '项目列表加载失败',
@@ -51,6 +51,9 @@ export default {
   'project.new': '新项目',
   'project.createdAnnounce': '「{name}」已创建',
   'project.archivedAnnounce': '「{name}」已归档',
+  // N2 project-tool 批（2026-10-06）：面板手动卸载（归档按钮）被 Project 工具
+  // action="unmount" 工具面替代；播报镜像 archived（aria-live 状态行）。
+  'project.unmountedAnnounce': '「{name}」已卸载——在飞任务已停，文件全部保留',
   // Project-panel右下角「+」钮 + 轻弹层（projcreate 批 · 乙案：提交 = 预填主输入框 + 聚焦，
   // 零新端点、零新增写面 —— 描述框只收一段描述，不设路径/名称字段：乙案前端不写盘，
   // 放一个前端无从校验的路径框 = 假控件；路径由 Nebula 侧 ProjectCreate 自带路径面板解析）。
@@ -707,94 +710,210 @@ export default {
   'settings.rerunOnboarding': '重新运行新手引导',
   // ── Onboarding 重设计（chat-native，onboarding-redesign-spec v1.0）──
   // 模拟流式打招呼（§3.1）
-  'onboarding.sim.greet1': '你好，我是 Nebula——你的本地 AI 工作台助手。',
-  'onboarding.sim.greet2': '现在还没有配置模型，所以我先用一段「预录」的话跟你打招呼。配置完成后，我就会真正活过来。',
-  'onboarding.sim.greet3': '只需要回答我几个问题，一分钟就能完成。',
-  'onboarding.sim.skip': '跳过',
-  'onboarding.sim.done': '连接验证成功，我已经就位。试试对我说点什么吧。',
-  'onboarding.sim.later': '没问题，随时在设置里点「重新运行新手引导」就能找到我。',
-  'onboarding.sim.returnGreet': '欢迎回来。我是 Nebula，简单了解几个问题，好让我更顺手。',
-  'onboarding.sim.tryCloud': '好的，建议先注册一家服务商（如智谱 GLM 或 DeepSeek）拿到 API Key，再来完成配置。我会等你。',
-  'onboarding.sim.prefDone': '了解啦，随时找我。',
   // 问题树（§3.2）
-  'onboarding.q.start': '你想怎么开始？',
-  'onboarding.q.start.config': '配置模型',
-  'onboarding.q.start.configDesc': '添加一家 LLM 服务商，一分钟就能完成',
-  'onboarding.q.start.browse': '先看看',
-  'onboarding.q.start.browseDesc': '不配置，先浏览一下界面',
-  'onboarding.q.start.skip': '跳过引导',
-  'onboarding.q.start.skipDesc': '之后在设置里可重新运行引导',
-  'onboarding.q.provider': '你打算用哪家 LLM 服务？',
-  'onboarding.q.provider.zhipu': '智谱 GLM',
-  'onboarding.q.provider.zhipuDesc': '国产大模型，开放平台 API',
-  'onboarding.q.provider.deepseek': 'DeepSeek',
-  'onboarding.q.provider.deepseekDesc': '国产开源大模型，API 价格实惠',
-  'onboarding.q.provider.kimi': 'Kimi（月之暗面）',
-  'onboarding.q.provider.kimiDesc': '长上下文对话模型',
-  'onboarding.q.provider.compat': 'OpenAI 兼容（自定义）',
-  'onboarding.q.provider.compatDesc': 'OpenAI 官方或任何兼容端点',
-  'onboarding.q.provider.relay': '中转站',
-  'onboarding.q.provider.relayDesc': '第三方转发服务商提供的地址',
-  'onboarding.q.provider.local': '本地模型（免费）',
-  'onboarding.q.provider.localDesc': 'Ollama 本地运行，无需 API Key',
-  'onboarding.q.provider.unsure': '不确定，帮我判断',
-  'onboarding.q.provider.unsureDesc': '根据你手头的资料一步步来',
-  'onboarding.q.unsureUrl': '你手上有服务商提供的 API 地址（Base URL）吗？',
-  'onboarding.q.unsureUrl.yes': '有',
-  'onboarding.q.unsureUrl.no': '没有',
-  'onboarding.q.baseurl': 'API 地址（Base URL）',
-  'onboarding.q.apikey': 'API Key',
-  'onboarding.q.apikey.none': '无需 Key',
-  'onboarding.q.model': '默认模型',
-  'onboarding.q.relayBase': '服务商给你的 API 地址',
-  'onboarding.q.providerName': '给这个服务商起个名字（可选）',
-  'onboarding.q.localEnough': '要不要先试试免费的本地模型？',
-  'onboarding.q.localEnough.yes': '本地免费（推荐）',
-  'onboarding.q.localEnough.yesDesc': 'Ollama 无需 API Key',
-  'onboarding.q.localEnough.no': '我倾向云端服务',
-  'onboarding.btn.continue': '继续',
-  'onboarding.btn.summary': '查看配置摘要',
   'onboarding.btn.testAndSave': '确认并测试',
-  'onboarding.btn.back': '返回修改',
   // 摘要/完成/错误（§3.5/§5.3/§5.4）
-  'onboarding.done.summary': '配置成功。服务商 {provider} 已就位，默认模型 {model}，默认预设 {preset} 已创建。连接验证通过，我已经就位。试试对我说点什么吧。',
-  'onboarding.summary.text': '配置摘要：\n服务商：{name}\nBase URL：{baseUrl}\nAPI Key：{key}\n默认模型：{model}',
-  'onboarding.summary.errKey': 'API Key 不能为空',
-  'onboarding.summary.errUrl': 'Base URL 需以 http:// 或 https:// 开头',
-  'onboarding.summary.errModel': '模型名不能为空',
-  'onboarding.summary.errName': '服务商名不能包含空格',
-  'onboarding.err.auth': '看起来 API Key 有问题——检查是否完整、前后无空格。',
-  'onboarding.err.endpoint': '看起来 Base URL 或网络有问题——检查地址是否正确、网络是否可达。',
-  'onboarding.err.model': '这个模型可能不对——模型名需与服务商文档一致，换个试试。',
-  'onboarding.err.other': '连接验证失败：{error}',
-  'onboarding.err.ollama': '本地 Ollama 未连接——检查 Ollama 是否已启动（ollama serve）。',
   // 回归用户偏好卡（S7）
-  'onboarding.q.pref': '你希望我优先帮你做哪类事情？',
-  'onboarding.q.pref.code': '写代码',
-  'onboarding.q.pref.doc': '写文档',
-  'onboarding.q.pref.research': '查资料 / 研究',
-  'onboarding.q.pref.other': '其他',
   // 保留（既有）：later / probing / probeFailed / probeTimeout / noThanks
-  'onboarding.later': '稍后再说',
   'onboarding.probing': '正在验证模型连接…',
   'onboarding.probeFailed': '模型连接验证失败：{error}。请检查配置后重试。',
   'onboarding.probeTimeout': '验证超时，请检查网络后重试。',
-  'onboarding.noThanks': '不用了',
+  // ── Onboarding v2 对话式问卷（personal-agent 批 2026-10-04，真源 = demo v2 SCRIPT）──
+  // 幕名 / 进度 / 通用控件
+  'onboarding.seg.meet': '第一幕 · 见面',
+  'onboarding.seg.brain': '第二幕 · 接上大脑',
+  'onboarding.seg.expect': '第三幕 · 你对我的期待',
+  'onboarding.seg.you': '第四幕 · 认识你',
+  'ob2.progress': '第 {n} / {total} 题',
+  'ob2.btn.skip': '跳过这一题',
+  'ob2.btn.sayMyself': '都不是，我自己说',
+  'ob2.btn.useThis': '用这句',
+  'ob2.btn.picked': '选好了',
+  'ob2.typing.skip': '跳过打字',
+  'ob2.ph.free': '用你自己的话写…',
+  'ob2.source.unnamed': '还没有名字的我',
+  // 开场
+  'ob2.greet1': '你好。第一次见面。',
+  'ob2.greet2': '我是为你而生的那个智能体 —— 不过此刻，我还没有名字，没有性格，也没有关于你的任何记忆。',
+  'ob2.greet3': '接下来我会一个问题一个问题地问你，像做一次很短的问卷。答不上的、不想说的，随时跳过 —— 跳过不会卡住我们，只会让那一页先空着。',
+  'ob2.greet4': '你说的话最后会变成两份记忆：Soul.md 是「我是谁」，由你对我的期待塑成；User.md 是「你是谁」。',
+  'ob2.collected': '问卷收讫。现在，请允许我当着你的面，把自己写出来。',
+  // 第一幕 · 见面
+  'ob2.intro.meet1': '我们从最小的开始。',
+  'ob2.intro.meet2': '有三件事必须先有：我叫什么、我该怎么叫你、我用什么脑子。这三件之后，其余全是可选的。',
+  'ob2.lead.meet1': '第一件，最重要的一件。',
+  'ob2.lead.meet2': '第二件。',
+  'ob2.q.name': '给我起个名字吧 —— 你希望以后怎么叫我？',
+  'ob2.ph.name': '输入名字，1–16 个字…（想不出来也可以跳过）',
+  'ob2.q.call': '那我该怎么称呼你？',
+  'ob2.ph.call': '昵称就好…（不方便说就跳过）',
+  'ob2.label.name': '名字',
+  'ob2.label.call': '怎么称呼你',
+  // 第二幕 · 接上大脑
+  'ob2.lead.brain1': '第三件：我得有个脑子。',
+  'ob2.lead.brain2': '从你已经配置好的服务商里选一个就行；也可以在这里新加一家。',
+  'ob2.q.model': '你打算让我用哪个模型？',
+  'ob2.label.model': '模型',
+  'ob2.model.loading': '正在读取已配置的服务商…',
+  'ob2.model.none': '还没有配置任何服务商 —— 先加一家（地址 / Key / 模型 ID），或者跳过这一题。',
+  'ob2.model.addProvider': '新加一家服务商',
+  'ob2.model.ctx': '上下文 {n} tokens',
+  'ob2.model.probeOk': '✓ 连通 · {model}',
+  'ob2.model.echoOk': '已连接 {model}',
+  'ob2.model.writeErr': '（模型配置写回失败：{error}）',
+  'ob2.model.ctxLabel': '上下文大小',
+  'ob2.model.ctxApply': '用这个窗口',
+  'ob2.model.ctxHint': '留空则沿用模型自己的配置值；改完之后这一项也在「设置」里可见、可改。',
+  // 第三幕 · 你对我的期待
+  'ob2.intro.expect1': '基础的三件齐了。接下来的问题，是把我捏成你要的样子。',
+  'ob2.intro.expect2': '没有标准答案，也不是考试 —— 答不上来就跳过，我会留白，不催你。',
+  'ob2.lead.role': '先说最根本的一件。',
+  'ob2.q.role': '你希望我在你生活里扮演什么角色？',
+  'ob2.opt.role.partner': '交心的伙伴',
+  'ob2.opt.role.keeper': '靠谱的管家',
+  'ob2.opt.role.sparring': '思想陪练',
+  'ob2.opt.role.muse': '创作缪斯',
+  'ob2.opt.role.all': '全都要',
+  'ob2.fh.role': '比如：白天帮我理清工作，晚上陪我复盘',
+  'ob2.label.role': '角色定位',
+  'ob2.lead.style': '接下来是我的嘴。',
+  'ob2.q.style': '你喜欢我怎样说话？',
+  'ob2.opt.style.direct': '直接干脆',
+  'ob2.opt.style.gentle': '温和细腻',
+  'ob2.opt.style.humor': '幽默爱玩',
+  'ob2.opt.style.rigorous': '严谨专业',
+  'ob2.fh.style': '比如：像老朋友，但别油嘴滑舌',
+  'ob2.label.style': '语言风格',
+  'ob2.lead.pro': '还有分寸。',
+  'ob2.q.pro': '我该多主动？',
+  'ob2.opt.pro.quiet': '安静守候',
+  'ob2.opt.pro.quietDesc': '你叫我，我才动',
+  'ob2.opt.pro.remind': '适度提醒',
+  'ob2.opt.pro.remindDesc': '重要的事我会说',
+  'ob2.opt.pro.active': '主动张罗',
+  'ob2.opt.pro.activeDesc': '看到值得做的，我开口',
+  'ob2.fh.pro': '比如：工作的事主动点，生活的事别插嘴',
+  'ob2.label.pro': '主动程度',
+  'ob2.lead.boundaries': '有些事我想先跟你约好，免得以后踩线。',
+  'ob2.q.boundaries': '哪些「相处约定」你希望我遵守？',
+  'ob2.opt.bd.argue': '可以跟我争论',
+  'ob2.opt.bd.argueDesc': '你认为我错了就直接说，别顺着',
+  'ob2.opt.bd.remember': '记住随口提过的小事',
+  'ob2.opt.bd.rememberDesc': '人名、日期、我提过的偏好',
+  'ob2.opt.bd.honest': '状态不对请直说',
+  'ob2.opt.bd.honestDesc': '连续熬夜、情绪低落时提醒我',
+  'ob2.opt.bd.hands': '别碰我的工作清单',
+  'ob2.opt.bd.handsDesc': '未经允许不要替我安排任务',
+  'ob2.fh.boundaries': '比如：别在我专注的时候打断我',
+  'ob2.label.boundaries': '相处约定',
+  'ob2.lead.temper1': '再往下是两道选择题 —— 别想太久，第一感觉最准。',
+  'ob2.q.temper1': '说话的时候，你更想要哪一种？',
+  'ob2.opt.t1.direct': '直接坦率',
+  'ob2.opt.t1.gentle': '温和委婉',
+  'ob2.fh.temper1': '比如：该直接就直接，但别伤人',
+  'ob2.label.temper1': '语气基线',
+  'ob2.lead.temper2': '最后一道。',
+  'ob2.q.temper2': '做事的方式呢？',
+  'ob2.opt.t2.plan': '严谨计划',
+  'ob2.opt.t2.casual': '随性灵活',
+  'ob2.fh.temper2': '比如：大事有计划，小事随缘',
+  'ob2.label.temper2': '做事方式',
+  // 第四幕 · 认识你
+  'ob2.intro.you1': '我这边差不多成型了。',
+  'ob2.intro.you2': '最后一个问题不是关于我，是关于你 —— 我记事只为你一个人。',
+  'ob2.lead.identity': '先问个大概。',
+  'ob2.q.identity': '你的日常身份更接近哪一种？',
+  'ob2.opt.id.dev': '程序员 / 工程师',
+  'ob2.opt.id.student': '学生',
+  'ob2.opt.id.researcher': '研究者',
+  'ob2.opt.id.creator': '创作者',
+  'ob2.opt.id.freelance': '自由职业',
+  'ob2.opt.id.other': '其他',
+  'ob2.fh.identity': '比如：白天写代码，晚上做播客',
+  'ob2.label.identity': '日常身份',
+  // （ob2.lead.focus / ob2.q.focus / ob2.ph.focus / ob2.label.focus 四键已整键删除——
+  //   作者 2026-10-05：「最近半年，你最想解决的一件事是什么？不要这个问题。」）
+  // 作答回执 / 承接句
+  'ob2.echo.skip': '（这一题先跳过）',
+  'ob2.echo.boundaries': '约定：{v}',
+  'ob2.follow.skip': '没关系，这一题先空着 —— 留白也是一种答案。',
+  'ob2.follow.free': '我把你的原话原样收下了：「{v}」',
+  'ob2.follow.choice': '「{v}」，记下了。',
+  'ob2.follow.multi': '好，这几条会原文写进 Soul.md 的「相处之道」。',
+  'ob2.follow.model': '接上了。{v} —— 从这一刻起我说话才会有分量。',
+  // 书写仪式 / 收尾
+  'ob2.writing.title': '正在书写自己',
+  'ob2.write.1': '· 初始化 Soul.md …',
+  'ob2.write.2': '✓ 自我认知 — 名字 / 归属',
+  'ob2.write.3': '✓ 相处之道 — 角色 · 风格 · 主动度 · 约定 · 语气',
+  'ob2.write.4': '· 写入 User.md …',
+  'ob2.write.5': '✓ 称呼与身份',
+  'ob2.write.done': '记忆已写入：Soul.md（{soul}）、User.md（{user}）。',
+  'ob2.write.failed': '记忆写入失败：{error}',
+  // 收尾终局步（真实探测 → 产物 → marker）。三条都是「拦住了」的如实说法，
+  // 各带自己的出口，不再共用「记忆写入失败」一句话。
+  'ob2.write.probe': '· 连线一次真实模型 …',
+  'ob2.write.probeOk': '✓ 模型已应答 —— 这一步才算数',
+  'ob2.write.probeFailed': '✗ 模型没有应答：{error}',
+  'ob2.finish.probeRequired': '还没有一次成功的模型连通记录，引导暂不能收尾：{error}。检查上面选中的模型（或去「设置」改），然后重试。',
+  'ob2.finish.probeFailed': '收尾前的模型连通验证没通过：{error}。修正后可以重试。',
+  'ob2.finish.stateRefused': '引导状态写入被拒：{error}。',
+  'ob2.finish.retry': '重试收尾',
+  'ob2.finish.timeout': '收尾请求超时（服务端未回应），可重试。',
+  'ob2.state.timeout': '引导状态写入超时（服务端未回应），可重试。',
+  'ob2.name.unnamed': '（还没有名字的我）',
+  'ob2.you': '你',
+  'ob2.finale.direct1': '配置完成。从现在起，叫我 {n}。',
+  'ob2.finale.direct2': 'Soul.md、User.md 都已就位 —— 你定性格，我守边界。有事直说，我不绕弯子。',
+  'ob2.finale.gentle1': '谢谢你把我带到这个世界。我是 {n}。',
+  'ob2.finale.gentle2': '你刚才说的话，我都一笔一划写进灵魂里了。以后的日子，慢慢来，我一直在。',
+  'ob2.finale.humor1': '{n} 1.0 正式上线。灵魂安装包解压成功，暂无已知 bug（发现的请当作 feature）。',
+  'ob2.finale.humor2': '你的问卷答得不错，我看人很准的 —— 从现在起你就是我的第一合伙人了。',
+  'ob2.finale.rigorous1': '初始化完成。我是 {n}，双记忆模型已生效：Soul.md 承载人格，User.md 承载关于你的事实。',
+  'ob2.finale.rigorous2': '后续协作中，任何人格层面的反馈我都会落盘到 Soul.md。请多指教。',
+  'ob2.finale.plain1': '名字我收下了，性格那几页也留了白 —— 现在的我更像一张干净的纸。',
+  'ob2.finale.plain2': 'Soul.md 和 User.md 已经生成，里面每个空位都写着「未设置」，等你想填的时候再填。',
+  'ob2.finale.hello': '你好呀，{u}。',
+  'ob2.input.ph': '和 {name} 说点什么…',
   'slash.onboarding': '重新播放新手引导',
   'slash.model': '/model — 查看/修改模型配置',
   'settings.save': '保存',
   'settings.saved': '已保存 ✓',
+  'settings.saveFailed': '保存失败',
+  'settings.jev': 'Jev（插件分配）',
+  'settings.jevEnabled': '用 Jev 分配插件',
+  'settings.jevProvider': '提供方',
+  'settings.jevEndpoint': '端点',
+  'settings.jevKeyRef': 'API 密钥引用',
+  'settings.jevHint': '开启后，Nebflow 执行器的 Delegate 调用会先询问 Jev 该任务需要哪些插件；未配置 Jev 时由普通 LLM 调用代判。keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。',
+  'settings.jevHealth': '分配探活',
+  'settings.jevHealthUp': '正常',
+  'settings.jevHealthDown': '异常',
+  'settings.jevHealthUnconfigured': '未配置',
+  // executors panel（executor-registry 批，2026-10-03）
+  'executors.hint': 'Delegate 任务由下方默认执行器执行。检测扫描 PATH 与常用安装前缀；外部 CLI 以 headless 模式在项目目录内运行。',
+  'executors.empty': '尚无在册执行器。',
+  'executors.defaultBadge': '默认',
+  'executors.disabledBadge': '停用',
+  'executors.detected': '已检测',
+  'executors.notDetected': '未安装',
+  'executors.builtIn': '内置',
+  'executors.adapterPending': '适配器未就绪——本期仅检测与展示。',
+  'executors.setDefault': '设为默认',
+  // （此处原重复的 'settings.save' / 'settings.saved' 与上方同名键逐字相同，已于
+  // 2026-10-03 移除，使本地化对象不再有重复键；JS 取最后一个值，两副本完全相同，
+  // 故行为不变。）
   'settings.providers': 'LLM 服务商',
   // secrets-frontend（2026-09-27）：设置页入口行，打开独立密钥弹窗
   // （js/secretsPanel.js）——标题与按钮共用一个键。
   'settings.secrets': '密钥',
   'settings.addProvider': '+ 添加服务商',
-  'settings.modelChainHint': '模型方案已退役——输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
+  'settings.modelChainHint': '在输入框输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',
   'model.modeSeparate': '分开配置',
-  'model.mainChain': 'Nebula 主链',
+  'model.mainChain': '{agent} 主链',
   'model.mainChainDesc': '所有角色默认跟随此链',
   'model.chainHead': '首选',
   'model.chainFallback': '备用',
@@ -805,11 +924,11 @@ export default {
   'model.manualPlaceholder': 'provider/model',
   'model.orderNote': '顺序 = 出错时自动切换的先后次序',
   'model.followers': '跟随方',
-  'model.followsNebula': '跟随 Nebula',
+  'model.followsNebula': '跟随 {agent}',
   'model.independent': '已独立配置',
   'model.makeIndependent': '独立配置',
-  'model.restoreFollow': '恢复跟随 Nebula',
-  'model.restoreFollowConfirm': '恢复跟随将清除该角色的独立链，生效链变为 Nebula 主链（{chain}）。继续？',
+  'model.restoreFollow': '恢复跟随 {agent}',
+  'model.restoreFollowConfirm': '恢复跟随将清除该角色的独立链，生效链变为 {agent} 主链（{chain}）。继续？',
   'model.effectivePreview': '生效链（实时预览）',
   'model.kernelNote': 'kernel 是每次委派临时实例，改链自下一轮对话生效',
   'model.errMinOne': '链至少保留一个模型',
@@ -824,8 +943,12 @@ export default {
   'model.clearChainConfirm': '清空后回落种子链（首个可用模型），该角色的自有链将被删除。继续？',
   'model.singleModelNote': '仅 1 个模型，无备用——出错将直接使用储备层',
   'model.loadFailed': '加载失败',
-  'model.roleNebula': 'Nebula',
+  'model.roleNebula': '{agent}',
   'model.roleDispatcher': '任务分发器',
+  'model.roleExecutor': '执行 agent',
+  // P1-2 批登记项（2026-10-03）：以下两键对应已退役的 kernel/general 角色名，
+  // 面板角色表收敛后**零消费点**；字典条目本身是显示面（不进 LLM 上下文），
+  // 按本批口径登记并延后到注释/文本清理批删除。
   'model.roleKernel': 'kernel',
   'model.roleGeneral': '节点',
   'model.viaSlash': '用 /model 命令编辑',
@@ -951,8 +1074,8 @@ export default {
   // === 跨设备 Nebula 邮件（device-mail 批，2026-09-15）===
   // 注入的 `agent_mail` 蓝气泡标签（后端 source='deviceMail'；{device} = 对端
   // from_device 显示名）。
-  'deviceMail.fromDevice': '来自 {device} 的 Nebula',
-  'deviceMail.injectFailed': '来自 {device} 的跨设备 Nebula 邮件注入失败（已重试 {attempts} 次）——未注入任何内容（详见日志）。',
+  'deviceMail.fromDevice': '来自 {device} 的 {agent}',
+  'deviceMail.injectFailed': '来自 {device} 的跨设备 {agent} 邮件注入失败（已重试 {attempts} 次）——未注入任何内容（详见日志）。',
   // mailmodel batch (2026-09-25): the mailType.* label table is removed — the Mail
   // tool's `type` parameter is retired, and pending-mail badges render the protocol
   // raw value directly (flowViewers.js).
@@ -1025,6 +1148,15 @@ export default {
   // cardguard（作者裁定 2026-09-17 · #687①）：含卡片哨兵的工具结果不再以 <pre>
   // 兜底渲染原文 ⇒ 走卡片路径，提取失败时显示本占位（🔴 原文不进 DOM）。
   'chat.toolCardUnavailable': '卡片内容不可用（未渲染原始数据）',
+  // pop-upgrade 批(2026-10-03):Pop 工件面(叠卡/文件卡片)文案
+  'chat.popExpand': '展开 {n}',
+  'chat.popCollapse': '收起',
+  'chat.popOpenCanvas': '在 Canvas 打开',
+  'chat.popFailed': '{n} 个路径未能显示',
+  // 媒体加载失败的占位说明行（缺陷 D 修复，2026-10-03）：Pop 行里的图片/视频加载失败
+  // 此前**无任何可见提示**（chat.css 唯一的占位规则只命中 `.bubble.ai img`）。现补虚线
+  // 盒 + 本纯文本说明行，两种窗口角色下一致显示。{name} 为该项显示名。
+  'chat.popMediaFailed': '媒体加载失败',
   // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
   // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
   'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',
@@ -1044,7 +1176,7 @@ export default {
   'chat.micOrb.idle': '空闲',
   'chat.micOrb.listening': '听写中…',
   'chat.micOrb.processing': '识别中…',
-  'chat.micOrb.nebulaBusy': 'Nebula 工作中',
+  'chat.micOrb.nebulaBusy': '{agent} 工作中',
   'chat.micOrb.bgAgents': '后台 Agent 运行中',
   'chat.micOrb.frozen': '冻结中',
   'chat.micOrb.frozenError': '冻结异常',
@@ -1080,6 +1212,14 @@ export default {
   'chat.typeAnswer': '输入你的回答...',
   'chat.failedRender': '选项渲染失败，请重试。',
   'askUser.viewCompare': '在 Canvas 查看',
+  // AskUser 附件行批（chain-askuser-enhance-impl，2026-10-02）—— 顶层 `attachments`
+  // 渲染为整次提问层的可点击附件行。🔴 草案：候作者逐字过目（§16 冻结闸）后才生效；
+  // 生效候重启窗（静态资源服务自 jar 内资源）。
+  'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
+  'askUser.attachmentsTitle': '附件',
+  'askUser.attachmentsCount': '{n} 个附件',
+  'askUser.attachmentUnavailable': '不可用',
+  'askUser.attachmentOpenCanvas': '在 Canvas 打开 {name}',
   'askUser.pendingTitle': '待回答问题',
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
   // 双开缺陷批（chain-askuserdup 案 A①）：历史里的提问行**无作答记录**时的显式标注
@@ -1213,6 +1353,20 @@ export default {
   // 12/24 小时制切换热区的 tooltip / aria-label（三面共用；原为主对话框里的
   // 硬编码中文字面量，en locale 下也是中文 —— 本键收归 i18n）。
   'time.toggleFormat': '点击切换 12/24 小时制',
+  // 消息 footer 分层时间（footer-time 批 2026-10-06）：今天仍为纯时钟
+  // （formatHm，12h/24h 偏好）；更早按本地日历日分桶加日期层 —— 昨天 /
+  // 本周（周一起始）/ 更早 / 跨年。星期名为 一二三四五六日；{date} 载荷走
+  // 活动 locale 的 Intl（10月4日 / 2025年10月4日），组合模板保持一处可译。
+  'time.footerYesterday': '昨天 {time}',
+  'time.footerWeekday': '星期{weekday} {time}',
+  'time.footerDate': '{date} {time}',
+  'time.weekday.sun': '日',
+  'time.weekday.mon': '一',
+  'time.weekday.tue': '二',
+  'time.weekday.wed': '三',
+  'time.weekday.thu': '四',
+  'time.weekday.fri': '五',
+  'time.weekday.sat': '六',
 
   // === Task list ===
   // 任务面板 = 纯 Flow Map 节点视图（2026-09-05 10:54 裁定）：旧任务区退役，
@@ -1228,6 +1382,24 @@ export default {
   'task.inProgressShort': '进行中',
   'task.nodePending': '待处理',
   'task.nodeBlocked': '阻塞',
+  // === Delegate 面（#1228 换源接线批 · §16 七键逐字过目已过，zh/en 成对）===
+  // 🔴 值为作者 §16 裁定逐字（#1228 两裁①），禁改一字。键名按 delegate.* 族
+  // （delegateChainStub / .task-delegate 命名空间同族）。
+  // ① ready-to-merge 状态词（delegate 行状态列；#1224 判词语义：
+  //    「有分支产物、入 FIFO 候合并」）
+  'delegate.readyToMerge': '待合并',
+  // ② S10 per-task 链视图顶栏返回钮
+  'delegate.backToTasks': '返回任务列表',
+  // ③ S11 结构总视图头
+  'delegate.structure': '委托结构',
+  // ④ S11 FIFO 泳道头
+  'delegate.mergeQueue': '合并队列',
+  // ⑤ S11 worktree 座标
+  'delegate.worktree': '工作树',
+  // ⑥ S16 外部行出口动作（openNative 钮 title/aria）
+  'delegate.openNative': '在原软件打开',
+  // ⑦ S10 fail-soft 态（链拉取失败；行保留，点击重试）
+  'delegate.chainUnavailable': '链视图暂时打不开，点击重试',
   // === 链视图（链视图紧凑 v2 批 2026-10-01 · 前端面 §16 草案键表）===
   // 徽标五态（§二.1.3）+ 悬停三条 + 取消确认框一条 + 未分组一条。
   // 🔴 定稿由复核位抽取呈作者（本位只按 mockup 措辞起草）。
@@ -1413,12 +1585,19 @@ export default {
   'search.typeAgent': '助手',
   'search.typeAi': 'AI',
   'search.typeTool': '工具',
-  // v3.1 tabs + date anchor (spec §6.2)
+  // v3.1 tabs + date anchor (spec §6.2) · v3.2 (#491 主题二 §6 候审清单):
+  // tabPop/tabImages 删，tabMedia/tabLinks + 来源/分组键增——键位逐字以计划书
+  // §6 清单为准，过目前为冻结闸前置件。
   'search.tabAll': '全部',
-  'search.tabImages': '图片',
+  'search.tabMedia': '图片与视频',
   'search.tabFiles': '文件',
-  'search.tabPop': 'Pop',
+  'search.tabLinks': '链接',
   'search.tabDate': '日期',
+  'search.sourceAll': '全部来源',
+  'search.sourceUser': '用户',
+  'search.sourceAgent': '助手',
+  'search.groupThisWeek': '本周',
+  'search.groupMonth': '{n} 月',
   'search.emptyCategory': '该栏目下暂无内容',
   'search.datePickTitle': '选择日期',
   'search.dateClear': '清除日期',
@@ -1549,7 +1728,7 @@ export default {
   'usage.today': '今日',
   'usage.weekTrend': '本周环比',
   'usage.cacheHitRate': '缓存命中率',
-  'usage.cacheHitRateHint': '目标 96%+（当前基线 ~94%）',
+  'usage.cacheHitRateHint': '目标 96%+',
   'usage.cacheHitRateNoData': '暂无缓存数据',
   'usage.noCacheReported': 'provider 未上报缓存数据',
   'usage.topAgent': '最耗 agent',
@@ -1625,6 +1804,7 @@ export default {
   'agentManager.noAgents': '未配置智能体',
   'agentManager.saved': '已保存',
   'agentManager.save': '保存',
+  'agentManager.builtinNote': '内置 agent：系统提示词由代码定义（只读）；模型链可在 /model 面板调整',
   // === 插件页（2026-09-13 无审批批：在位即信任；2026-09-14 面板收敛批：
   //     封禁/解封 UI 全量退场 + 派发开关改「任务分发器可见性」并移到卡片右上，en/zh 成对） ===
   'plugins.list': '插件',
@@ -1640,7 +1820,7 @@ export default {
   'plugins.dispatchOnTitle': '派发许可已开启——可派给新节点。点击后只挡未来派发；已在跑的节点保持其许可',
   'plugins.dispatchOffTitle': '派发许可已关闭——不会再派给新节点。点击恢复派发',
   'plugins.dispatchBlockedBlocked': '已封禁——本开关不会生效；解封走 API / CLI（面板已无入口）',
-  'plugins.dispatchBlockedTransition': '存在临时派发授权——该授权到期或被清除后，本开关才按作者意图生效',
+  'plugins.dispatchBlockedTransition': '存在临时派发授权——该授权到期或被清除后，本开关才生效',
   'plugins.author': '作者 {author}',
   'plugins.compositionSkills': '{n} 个技能',
   'plugins.compositionMcp': 'MCP：{servers}',
@@ -1652,6 +1832,8 @@ export default {
   'plugins.loadFailed': '插件清单加载失败：{error}',
   'plugins.authRequired': '未登录 · 需注册 — 登录后使用插件面板',
   'plugins.relogin': '登录',
+  'plugins.builtinBadge': '内置',
+  'plugins.builtinTitle': '内置 agent：定义在代码中（BuiltinAgents），面板只读',
   'plugins.detail': '详情',
   'chatQueue.dragReorder': '拖动以排序',
   'chatQueue.clickExpand': '点击展开',
@@ -1765,6 +1947,12 @@ export default {
   // scripts/verify-i18n-sweep.cjs asserts Object.keys(zh).length === Object.keys(en).length.
   'content.agent.project-dispatcher.name': 'project-dispatcher',
   'content.agent.project-dispatcher.desc': '项目任务分发器——负责把一批工作拆成若干可执行的节点、安排它们之间的先后与依赖，并在节点完成后汇总结果。',
+  // P1-2 批登记项（2026-10-03）：下面两对键对应已退役的 general/kernel 名。
+  // 本文件是**显示面字典**（contentI18n.js 自陈 DISPLAY-ONLY：服务端信号值原样
+  // 保留，仅在客户端渲染点按 locale 取串），零进 LLM 上下文；且 builtin-merge 批
+  // 后服务端不再产出这两个 agent id ⇒ 键零消费点。按「显示面/注释面登记并延后」
+  // 口径保留，删除归注释/文本清理批（`content.agent.kernel.desc` 另引已删除的
+  // `AgentCore.KernelFixedTools` 常量，同属该批）。
   'content.agent.general.name': 'general',
   'content.agent.general.desc': '通用执行 agent——能力由分配的 plugins 决定',
   'content.agent.kernel.name': 'kernel',
@@ -1806,7 +1994,7 @@ export default {
   // The remote-access face is held: O1–O5 (switch semantics / QR code / address
   // export / mobile range / clipboard fallback) are author decisions.
   // 🔴 Keep this text free of the fake-connection vocabulary (W6).
-  'social.remote.suspended': '本节内容待作者裁定（本批未接通）：不生成链接、不生成二维码、不显示任何未经后端确认的地址。',
+  'social.remote.suspended': '手机远程访问暂未开放。',
   'social.remote.safetyKey': '安全边界：远程访问链接等同于访问凭据，请勿转发给他人。',
   'social.remote.safetyPlain': '明文 HTTP：局域网内不加密，仅限可信网络。',
   'social.action.save': '保存配置',
@@ -1839,15 +2027,28 @@ export default {
   'social.wechat.field.token': '消息校验 Token',
   'social.wechat.field.aesKey': '消息加解密密钥',
   // wechat-ilink（chain-wechat-impl，作者 2026-09-30 裁定 ② 选 (B)）：另立的
-  // iLink 渠道 id，与上方公众号卡并存。真机登录完成前处于封存态，故这段文案
-  // 暂不上面板——留在表内是为了封存条目不产生孤儿键（W11）。
+  // iLink 渠道 id，与上方公众号卡并存。weixin-scanbind（作者 2026-10-03）：
+  // 卡片解封并加入扫码家族，下面补齐扫码/解绑两组文案（与 feishu 同形，
+  // §16 收录）。
   'social.weixinIlink.name': '微信（iLink）',
-  'social.weixinIlink.desc': '微信 iLink 机器人的接口凭据。一期只做配置落盘，不建立任何对外通道。',
+  'social.weixinIlink.desc': '微信 iLink 机器人：扫码后凭据自动写入，消息进绑定会话。',
   'social.weixinIlink.field.botToken': 'Bot Token',
   'social.weixinIlink.field.ilinkBotId': '机器人 ID',
   'social.weixinIlink.field.ilinkUserId': '登录用户 ID',
   'social.weixinIlink.field.baseurl': 'API 基址',
+  'social.weixinIlink.field.sidecarUrl': 'Side-car 地址（选填）',
   'social.weixinIlink.field.allowedIlinkUserIds': '发送者名单（可选）',
+  'social.weixinIlink.scan.starting': '正在获取二维码…',
+  'social.weixinIlink.scan.waiting': '请用微信扫一扫，并在手机上确认',
+  'social.weixinIlink.scan.confirmed': '手机已确认，正在写入凭据…',
+  'social.weixinIlink.scan.done': '机器人已登录，凭据已写入',
+  'social.weixinIlink.scan.failed': '扫码绑定失败：{reason}',
+  'social.weixinIlink.scan.userCode': '确认码：{code}',
+  'social.weixinIlink.scan.qrFallback': '若二维码未显示，请在手机上打开此链接：',
+  'social.weixinIlink.archive.action': '解除绑定',
+  'social.weixinIlink.archive.doing': '解除绑定中…',
+  'social.weixinIlink.archive.done': '已解除绑定 — 凭据保留',
+  'social.weixinIlink.archive.hint': '解除绑定：停用通道，卡面恢复未创建态。凭据保留，不做任何删除。',
   'social.feishu.name': '飞书',
   // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
   'social.feishu.desc': '绑定会话后，飞书消息进该会话并原路回发。租户内成员默认都可触达。',

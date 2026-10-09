@@ -21,12 +21,36 @@
 // `not_group_admin` 同族口径：**就地说清「没发出去」+ 原因**，不塞进任何 2xx。
 
 import { t } from './i18n.js';
+import { statusIcon, escapeHtml } from './utils.js';
 import { onMessage } from './ws.js';
 import { getAuthToken } from './neblink.js';
 import * as api from './friendsApi.js';
 // 闸位常量**唯一来源**（设备面 dropbox.js 的既有常量，本批只把它们导出，
 // 不改值、不改用法）⇒ 两个面不可能漂移出两个上限。
 import { ATTACH_MAX_FILE_BYTES, ATTACH_MAX_PER_MESSAGE, ATTACH_MAX_FILE_LABEL } from './dropbox.js';
+// ── 字段方言双兼容批：发送侧预览申报 ────────────────────────────────────────
+// 生成单点 = `attachImagePreview.makePreviewFrame`（出口带 bytes/mime/sha256/b64）；
+// 归一化单点 = `attachPreviewField.declarePreviewOf`（方言无关的内部形状，`null` = 不申报）；
+// **线面拼写**单点 = `attachPreviewField.wireFieldOf`（键名/键序由**方言 id 参数**决定
+// —— 本模块内不存在写死的键集，这正是「server 换个字段名就又不行」的防治面）。
+// 传输 = 整件上传**之前**向网关暂存路由 POST 一枚字段（同一 `uploadId` 键 + `dialect`
+// 查询参数说明本端在说哪一版）；网关在该 `uploadId` 的整件上传落地时**取走即删**并拼进
+// E1 申报体。🔴 预览是**建议性加性面**：生成 / 归一化 / 拼写 / 暂存任何一环失败 ⇒ 原样走
+// 「无预览」上传（逐字现状），零阻塞、零改写上传终态。两版方言的**外层键名相同**，
+// 差异全在内层子键名 ⇒ 旧服务端（`#[serde(default)]` + `Option`，两版皆然）忽略多出的
+// `preview` 键 = 静默无预览回落，本模块零额外分支。
+import { makePreviewFrame } from './attachImagePreview.js';
+import { declarePreviewOf, wireFieldOf, DEFAULT_SEND_DIALECT_ID } from './attachPreviewField.js';
+
+/**
+ * **本端发送时说的方言**（唯一旋钮，不是判据）—— 取值 = 契约件那一个默认值的同源引用
+ * （`attachPreviewField.js` 的 `DEFAULT_SEND_DIALECT_ID`，其真源 = Scala 契约件的
+ * `DefaultSendDialectId`），**不在本模块复写一份字面量**：对端换代只需改那一处。
+ * 换它即换内层子键名（`{mime,w,h,size,b64}` ⇄ `{fmt,w,h,bytes,sha256,b64}`），收发两侧
+ * 的解析/渲染/上传代码**零改动**。
+ * @type {string}
+ */
+export const SEND_DIALECT_ID = DEFAULT_SEND_DIALECT_ID;
 // ── 幂等键（attachkey 批）：**唯一生成点复用**，禁第二套 ────────────────────
 // 作者 2026-09-17 裁定 A：附件腿**不**自建生成器、**不**做独立判重 —— 直接取 P2-b 在
 // `messages.js` 铸键的**同一单点**（`newClientMsgId`，本批按裁定 A 给它加 `export`，
@@ -235,7 +259,10 @@ function uploadCardEl(item) {
     card.appendChild(el('span', 'fm-upload-note', t('messages.attachSent')));
   } else {
     // 失败 / 取消 / 未发（fail-closed 可见：**终态文案就在卡上**，不靠 toast 兜底）。
-    card.appendChild(el('span', 'fm-upload-note', item.error || t('messages.attachFailed')));
+    // ui-status-redesign（盘点 #42 / S5）：失败注记词转中性字 + 词前 circle-x 红图标。
+    const failNote = el('span', 'fm-upload-note');
+    failNote.innerHTML = statusIcon('circle-x', 11, 'st-err') + '<span>' + escapeHtml(item.error || t('messages.attachFailed')) + '</span>';
+    card.appendChild(failNote);
     // ── S4/S8 后的重试键（§5 R3-device + R4-device）──────────────────────
     // 仅在**外部腿**（设备，`onRetry` 在场）挂：设备附件腿无幂等键面 ⇒ 重试 = **新传输**
     // （重走入队，如实声明，不新造键面）。网页腿的失败重试面 = 既有 (c) 臂可重试提示
@@ -468,8 +495,40 @@ function findItem(uploadId) {
   return null;
 }
 
+/** 发送侧预览申报（best-effort）。任何失败 ⇒ **无预览**上传（诚实降级、零用户面差异）：
+ *  · 非图片（`file.type` 非 `image/*`）⇒ 不生成（生成器对解不了的图自报 `ok:false`，
+ *    归一化面同样按「无预览」收口 —— 这里只是省一次无谓解码）；
+ *  · 归一化 / 线面拼写失败（方言 id 未登记、该方言缺摘要、mime 越域）⇒ 不申报；
+ *  · 申报响应非 2xx / 网络失败 ⇒ 网关取不到暂存 ⇒ E1 无 `preview` 键 ⇒ 旧端语义。
+ * 🔴 **写哪一版方言** = 本函数头上的 `SEND_DIALECT_ID`（一个政策旋钮，不是判据）：
+ *    换它即换内层键名，收发两侧代码零改动。
+ * @param {object} item 上传条（取 `uploadId` 作暂存键） @param {File} file @param {string} targetId */
+async function stagePreviewDeclaration(item, file, targetId) {
+  try {
+    if (!file || typeof file.type !== 'string' || !file.type.startsWith('image/')) return;
+    const field = declarePreviewOf(await makePreviewFrame(file), { dialectId: SEND_DIALECT_ID });
+    if (!field) return;
+    const wire = wireFieldOf(field, SEND_DIALECT_ID);
+    if (!wire) return;
+    const token = getAuthToken();
+    const qs = new URLSearchParams({
+      conversationId: targetId,
+      name: file.name || 'attachment',
+      uploadId: item.uploadId,
+      dialect: SEND_DIALECT_ID,
+    });
+    await fetch(`/api/attachments/preview?${qs.toString()}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(wire),
+    });
+  } catch { /* best-effort by design：预览缺席永远不是上传失败 */ }
+}
+
 /** 单件上传（整件一次请求）。返回 `{ok:true, attachmentId}` 或 `{ok:false, code, message}`。 */
 async function uploadOne(item, file, targetId) {
+  // S7：先申报预览（best-effort），再发整件 —— 网关在整件上传里消费暂存并拼进 E1。
+  await stagePreviewDeclaration(item, file, targetId);
   const token = getAuthToken();
   const qs = new URLSearchParams({
     conversationId: targetId,

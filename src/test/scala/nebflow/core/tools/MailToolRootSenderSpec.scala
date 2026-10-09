@@ -97,7 +97,7 @@ class MailToolRootSenderSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  test("R2: Nebula sender + node:<id> ⇒ 显式报错并指明合法地址面（细则：Nebula 无 node 面）"):
+  test("R2: Nebula sender + node:<id|name> ⇒ N1 刀3 授权面扩：零挂载作用域 = 显式 CHAIN_NODE_NOT_FOUND（不猜不静默、指路 NodeList）"):
     val system = ActorSystem(s"mail-r2-neb-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
@@ -108,9 +108,13 @@ class MailToolRootSenderSpec extends FunSuite:
         .unsafeRunSync()
       res match
         case Left(err) =>
-          assert(err.message.contains("outside your address face"), s"须是越界报错：${err.message}")
-          assert(err.message.contains("project:<项目名>"), s"错误文案须指明 Nebula 的合法地址面：${err.message}")
-        case Right(v) => fail(s"Nebula 发 node: 必须显式报错，got: $v")
+          // N1 刀3（S6=C · v3 §7.2 ①授权面扩）：root 的 node: 腿从「越界」升格为
+          // 「跨已挂载 delegate 作用域解析」——旧 R2 钉（Nebula 无 node 面 ⇒
+          // outside-your-address-face）被设计取代。零挂载作用域 = 显式
+          // CHAIN_NODE_NOT_FOUND（不猜不静默），文案指路属主 delegate 的 NodeList。
+          assert(err.message.contains("CHAIN_NODE_NOT_FOUND"), s"须显式未找到：${err.message}")
+          assert(err.message.contains("NodeList"), s"文案须指路 NodeList：${err.message}")
+        case Right(v) => fail(s"零挂载作用域必须显式报错，got: $v")
     finally system.stopAll.unsafeRunSync()
 
   test("R2: Nebula sender + \"Nebula\"（自身）⇒ 显式报错（无自身地址）"):

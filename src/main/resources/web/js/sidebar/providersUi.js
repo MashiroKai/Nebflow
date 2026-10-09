@@ -4,9 +4,11 @@
 // (原 :70-71)、flushConfigToServer(原 :1607-1611,saveNewProvider 的写路径单点)。
 // escapeHtml 随段落于本模块(sidebar.js 全文件共用,由此单向提供)。
 import state from '../state.js';
-import { key } from '../branding.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
+// 探针单源（A 侧 uifix3 ② 抽共用）：POST /api/provider/models 的实现唯一属主 =
+// ../providerModels.js（onboarding 模型题与设置面同用一份，禁第二份）。
+import { fetchProviderModels } from '../providerModels.js';
 
 // ── Provider protocol face: display ←→ stored value (protoface-ui batch,
 // 2026-09-22) ────────────────────────────────────────────────────────────────
@@ -58,41 +60,12 @@ function flushConfigToServer() {
 // OpenRouter exposes context_length; OpenAI/Anthropic do not).
 let providerModelChoices = null;
 
-function providerAuthHeaders() {
-  const tok = localStorage.getItem(key('token')) || '';
-  return tok ? { Authorization: `Bearer ${tok}` } : {};
-}
-
-/** Normalize one models[] element: 'id-string' | {id, contextLength?} →
- *  {id, contextLength|null}. Unknown shapes are dropped. */
-function normalizeModelEntry(m) {
-  if (typeof m === 'string' && m) return { id: m, contextLength: null };
-  if (m && typeof m.id === 'string' && m.id) {
-    return { id: m.id, contextLength: Number.isFinite(m.contextLength) ? m.contextLength : null };
-  }
-  return null;
-}
-
-async function fetchProviderModels(baseUrl, apiKey) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10000);
-  try {
-    const resp = await fetch('/api/provider/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...providerAuthHeaders() },
-      body: JSON.stringify({ baseUrl, apiKey }),
-      signal: ctrl.signal,
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
-    const models = Array.isArray(data.models) ? data.models.map(normalizeModelEntry).filter(Boolean) : [];
-    return { ok: true, models };
-  } catch (e) {
-    return { ok: false, error: e.name === 'AbortError' ? 'timeout' : e.message };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// uifix3 ②: `providerAuthHeaders` / `normalizeModelEntry` / `fetchProviderModels`
+// moved verbatim to providerModels.js (the onboarding model question imports the
+// SAME probe now — 复用不另造). This module keeps only the fetched-list STATE
+// (providerModelChoices) and its readers (contextLengthFor / renderModelIdSelect).
+// 合流落位（A 侧 sidebar.js :1388-:1410 改动随簇迁入本模块）：探针实现单源 =
+// ../providerModels.js，本模块不再自持第二份。
 
 function contextLengthFor(id) {
   if (!id || !providerModelChoices) return null;

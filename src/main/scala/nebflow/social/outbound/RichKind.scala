@@ -41,15 +41,29 @@ enum RichKind:
 object RichKind:
 
   /**
-   * The card marker the frontend splits on. Authoritative definition =
-   * `nebflow.core.tools.CardTool.CardSentinel` (`CardTool.scala:447`), which is
-   * `private` to that object and therefore not reachable here.
+   * The card marker the frontend splits on. The literal was `CardTool`'s
+   * (`___CARD_HTML___{json}`), and that tool was retired by the author's
+   * 2026-10-03 pop-upgrade ruling — so the definition now lives on the two
+   * surviving sides of the wire, and both are authoritative:
+   *
+   *   - the frontend's card family regex `^___\w+_HTML___` /
+   *     `___\w+_JSON___` (`cardRegistry.js:630`), which is why the legacy
+   *     literal is still a marker a real payload can carry; and
+   *   - `SessionStore.isCardContent` (`SessionStore.scala:1448`), which exempts
+   *     anything starting `___` and containing `_HTML___` / `_JSON___` from UI
+   *     truncation — the same family, read on the persistence side.
    *
    * The literal is pinned instead of re-derived, and [[RichKind.isCardContent]]
    * is the only place that reads it — so a future drift is a one-line fix at
-   * one site. A public accessor on `CardTool` would remove the duplication
-   * entirely; that touches a production tool file, so it is reported as an
-   * explicit open item rather than done unilaterally.
+   * one site. Exposing one shared accessor would remove the duplication
+   * entirely; that touches a production tool file plus the JS face, so it is
+   * reported as an explicit open item rather than done unilaterally.
+   *
+   * 🔴 The Pop tool's live sibling sentinel (`___POP_JSON___`, `PopTool.Sentinel`)
+   * is deliberately NOT folded into this predicate: a Pop payload's items are
+   * RESOLVED artifact paths, i.e. image/document products, not HTML to render —
+   * see [[FeishuBridgePlugin.RichProduct]], which reads that payload and yields
+   * the item path. Only an HTML product belongs here.
    */
   val CardSentinel: String = "___CARD_HTML___"
 

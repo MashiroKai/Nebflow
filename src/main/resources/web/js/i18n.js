@@ -141,7 +141,13 @@ export function applyLocaleToHtml() {
   ];
   for (const [id, attr, key] of extras) {
     const el = document.getElementById(id);
-    if (el) el[attr] = t(key);
+    if (!el) continue;
+    // searchtitle-i18n (2026-10-06): 'text' must map to textContent — the old
+    // `el[attr] = …` was a silent NO-OP for it (a <span> has no `text` IDL
+    // attribute), so #search-modal-title kept its hardcoded English default in
+    // zh mode while its locale key ('search.title') sat wired but never applied.
+    if (attr === 'text') el.textContent = t(key);
+    else el[attr] = t(key);
   }
 
   // Agent modal field labels (by data-i18n attribute)

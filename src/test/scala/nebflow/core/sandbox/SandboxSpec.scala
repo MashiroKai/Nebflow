@@ -462,18 +462,22 @@ class SandboxSpec extends CatsEffectSuite:
     assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight, "User.md 必须可读")
   }
 
-  test("AUDIT-RO: §4.2-B 两记忆文件读通（User.md 根层 + Nebula memory.md）；写随数据根整目录放行（原「写仍拒」被 2026-09-05 写面裁定取代）") {
+  test("AUDIT-RO: §4.2-B 记忆文件读通（User.md 根层 + Soul.md 新位 + 旧位 Nebula memory.md）；写随数据根整目录放行（原「写仍拒」被 2026-09-05 写面裁定取代）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-auditro"))
     val ctx = ctxIn(tmp)
-    // 读通：User.md（根层精确文件）+ agents/Nebula/memory.md
+    // 读通：User.md（根层精确文件）+ Soul.md（personal-agent 批新位）+ 旧位 Nebula memory.md
     assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight, "User.md 必须进审计只读读面")
     assert(
+      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "Soul.md").toString).isRight,
+      "Soul.md（新位）必须进审计只读读面"
+    )
+    assert(
       FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
-      "Nebula memory.md 必须进审计只读读面"
+      "旧位 Nebula memory.md 必须进审计只读读面（双读过渡期回落源）"
     )
     // 写随数据根整目录放行（2026-09-05 数据根入可写面批：残留风险=纪律约束，
-    // 批次报告钉死；负向规则例外集同源 → Nebula memory.md 写闸同样豁免）
-    List("User.md", "agents/Nebula/memory.md").foreach { rel =>
+    // 批次报告钉死；负向规则例外集同源 → 根 agent 记忆文件写闸同样豁免）
+    List("User.md", "Soul.md", "agents/Nebula/memory.md").foreach { rel =>
       assert(
         FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString).isRight,
         s"~/.nebflow/$rel 随数据根整目录放行可写（残留风险=纪律约束）"
@@ -484,6 +488,7 @@ class SandboxSpec extends CatsEffectSuite:
       SandboxPolicy.auditReadableFiles.map(_.toString),
       List(
         nebflow.shared.MemoryStore.userMemoryPath.toString,
+        nebflow.shared.MemoryStore.soulMemoryPath.toString,
         nebflow.shared.MemoryStore.agentMemoryPath("Nebula").toString
       ),
       "audit paths must mirror MemoryStore paths"

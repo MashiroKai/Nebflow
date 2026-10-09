@@ -3,6 +3,9 @@
 // (外部主体仅只读方法调用,不直接赋值);currentDir(:61)/loadingDirs(:64) 属渲染
 // 与加载主体、被主体直接赋值,留守 explorer.js,不随本簇迁出。
 import { t } from '../i18n.js';
+// ui-status-redesign（S10 / 盘点 #47, A 侧 explorer.js 原 :197-:198 改动随簇迁入）：
+// 删除钮字转常规色，行首 trash-2 红图标承载。
+import { statusIcon, escapeHtml } from '../utils.js';
 
 // 主体侧回调注入(拆分批次纪律):getTargetDir/deleteSelected 留守 explorer.js 主体,
 // 子模块不得反向 import 之;rangeSelect/updateSelectionBar 所需的主体函数由主体在
@@ -127,7 +130,8 @@ function updateSelectionBar() {
 
     const delBtn = document.createElement('button');
     delBtn.className = 'explorer-selection-delete';
-    delBtn.textContent = t('explorer.delete');
+    // ui-status-redesign（S10 / 盘点 #47）：字转常规色，行首 trash-2 红图标承载。
+    delBtn.innerHTML = statusIcon('trash-2', 12, 'st-err') + escapeHtml(t('explorer.delete'));
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       deleteSelected();

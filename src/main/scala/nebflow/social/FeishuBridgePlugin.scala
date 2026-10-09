@@ -6,10 +6,12 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
+import nebflow.social.outbound.{AskPromptCodec, PromptAction, PromptFallback, PromptView, RichFeishuAdapter, RichKind}
 import nebflow.shared.NebflowLogger
 import nebflow.shared.SessionMeta
 
 import java.util.concurrent.atomic.AtomicBoolean
+import scala.util.Try
 
 /**
  * Feishu bridge adapter (feishubridge batch, 2026-09-25) — the consumer side the
@@ -66,10 +68,28 @@ final class FeishuBridgePlugin(
     * so a fresh read is both always-correct and free. The offline spec pins a
     * function to stay off the real config. */
   readDefaultSession: os.Path => Option[String] =
-    root => SocialChannels.defaultSessionId(root, FeishuBridgePlugin.Name)
+    root => SocialChannels.defaultSessionId(root, FeishuBridgePlugin.Name),
+  /** Rich-content factory seam (richcontent main-link batch, soc483). Production
+    * builds the live adapter from the credential resolved for THIS chat; the
+    * offline spec injects a recording adapter whose four outbound seams are
+    * fakes, so no test ever opens a socket or reads a credential (R-2). */
+  buildRichAdapter: (FeishuCredentials.Credential, String, String) => RichFeishuAdapter =
+    FeishuBridgePlugin.defaultRichAdapter,
+  /** The document extension authority handed to [[RichKind.of]] — the endpoint
+    * table reached through the existing same-package adapter
+    * ([[FeishuOutboundAdapter.defaultTable]]), so no second table exists. */
+  documentExtensions: Set[String] = FeishuBridgePlugin.defaultDocumentExtensions,
+  /** Interactive-card send seam (askuser-remote P1, A-3 拍板: the static 1.0
+    * two-button card). Same shape as the text [[send]] seam — production =
+    * [[FeishuBridgePlugin.defaultSendCard]] ([[FeishuChannel.sendInteractive]],
+    * the 2026-10-01 A9 seam, first caller this batch); the offline spec
+    * injects a recorder so no test touches the network. */
+  sendCard: FeishuBridgePlugin.SendCard = FeishuBridgePlugin.defaultSendCard
 ) extends BridgePlugin:
 
   private val logger = NebflowLogger.forName("nebflow.social.feishu-bridge")
+
+  import FeishuBridgePlugin.*
 
   def name: String = FeishuBridgePlugin.Name
 
@@ -80,12 +100,39 @@ final class FeishuBridgePlugin(
   /** session id → accumulated delta text for the turn in flight. */
   private[social] val pendingRef =
     cats.effect.Ref.unsafe[IO, Map[String, String]](Map.empty)
+  /** session id → the LAST rich product observed in the turn in flight
+    * (richcontent main-link batch, soc483).
+    *
+    * The turn's text (`textDelta`) and its artifacts (`toolEnd`) are DIFFERENT
+    * root events, and only `toolEnd` carries `content`; so the rich decision has
+    * to be remembered between the two. Kept per session and cleared exactly like
+    * the buffer — `done` reads + removes it, `interrupted`/`retryStatus` drop it
+    * (a torn turn is never a reply). `None` means "no rich product this turn",
+    * which is the pure-text path and must stay byte-identical. */
+  private[social] val richRef =
+    cats.effect.Ref.unsafe[IO, Map[String, RichProduct]](Map.empty)
   /** The member allowlist in force; empty = unrestricted (shipped default).
     * The pinned value is the INITIAL state so the gate is armed from
     * construction; start() re-reads the stored card config over it. */
   private[social] val allowedRef =
     cats.effect.Ref.unsafe[IO, List[String]](pinnedAllowedOpenIds.getOrElse(Nil))
-  private val ctxRef = cats.effect.Ref.unsafe[IO, Option[BridgeContext]](None)
+  /** askuser-remote P1 (A-5 拍板, the ONLY local ask state): requestId → the
+    * chat the card was sent to — a routing CACHE, never a second ledger. The
+    * ask AUTHORITY is the hub (`listPendingAsks`): an answered/closed/restarted
+    * ask simply is not in the hub snapshot any more, so a stale click reads
+    * 「已失效」 without this bridge holding a second copy of that truth. The
+    * cache exists for one purpose only — the chat-mismatch judge needs the
+    * chat the card was SENT to; after a bridge restart the cache is empty and
+    * a callback for a still-open hub ask is answered with the judge skipped
+    * (documented degrade: the allowlist gate still rules the clicker).
+    * Cleared on stop: a torn ask is never answered from a stale cache. */
+  private[social] val askChatRef =
+    cats.effect.Ref.unsafe[IO, Map[String, String]](Map.empty)
+  /** Package-visible for the LIVE rig probe (FeishuAskLiveProbe): the rig must
+    * arm the context WITHOUT start() — start would open a SECOND long
+    * connection alongside the rig's own listener. Visibility only; production
+    * arms it in start exactly as before. */
+  private[social] val ctxRef = cats.effect.Ref.unsafe[IO, Option[BridgeContext]](None)
   @volatile private var listener: Option[FeishuChannel.Listener] = None
   @volatile private var creds: Option[FeishuCredentials.Credential] = pinnedCreds
   @volatile private var region: String = "feishu" // hardcoded default (lark hidden, author 2026-09-25 ④)
@@ -127,6 +174,8 @@ final class FeishuBridgePlugin(
       creds = pinnedCreds
       starting.set(false)
     } *> pendingRef.set(Map.empty) // a torn turn is never a reply, also across restarts
+      *> richRef.set(Map.empty) // …and neither is a rich product from a torn turn
+      *> askChatRef.set(Map.empty) // askuser-remote P1: a torn ask's routing cache dies with the bridge
 
   // ───────────────────────────── inbound ─────────────────────────────
   /** The ONE sync→IO boundary: runs on the SDK's receive thread. Exceptions are
@@ -225,8 +274,14 @@ final class FeishuBridgePlugin(
   def liveAppId: Option[String] = creds.map(_.appId)
 
   private def openListener(ctx: BridgeContext, c: FeishuCredentials.Credential): Unit =
+    // askuser-remote P1: the callback credential pair rides the SAME
+    // zero-leak resolution face; the VALUES go into the SDK builder only.
+    val cb = FeishuCredentials.resolveCallbackCredentials(root)
     val l = new FeishuChannel.Listener(c.appId, c.appSecret, region = region,
-      handler = in => runIntake(ctx, in))
+      verificationToken = cb.verificationToken.getOrElse(""),
+      encryptKey = cb.encryptKey.getOrElse(""),
+      handler = in => runIntake(ctx, in),
+      cardHandler = a => runCardAction(ctx, a))
     val res = l.start()
     if res.ok then
       creds = Some(c)
@@ -258,21 +313,296 @@ final class FeishuBridgePlugin(
     }
 
   // ───────────────────────────── outbound ─────────────────────────────
+  /**
+   * The outbound decision (richcontent main-link batch, soc483).
+   *
+   * Three event kinds matter here, and they arrive as SEPARATE root events:
+   *
+   *   - `textDelta` — the turn's text, accumulated per session (unchanged);
+   *   - `toolEnd`   — the ONLY root event that carries the tool `content`, and
+   *     therefore the only place a rich product (a card payload or an artifact
+   *     path) can be observed. A rich product is remembered for the turn; any
+   *     other tool result leaves the memory as it was;
+   *   - `done`      — the turn closed. With a rich product remembered, the reply
+   *     goes down the rich leg ([[RichKind.of]] classification → the injected
+   *     [[RichFeishuAdapter]], which plans/renders/delivers and degrades to text
+   *     on every failure). With none, the reply is the accumulated text, through
+   *     the EXISTING [[reply]] path, byte-for-byte as before.
+   *
+   * 🔴 The rich leg is ADDITIVE by construction: it never suppresses the text
+   * reply (the accumulated text is still sent), and the no-product path never
+   * touches the rich code at all. `interrupted` / `retryStatus` clear both the
+   * buffer and the rich memory (a torn turn is never a reply).
+   */
   def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
     val c = event.hcursor
     c.downField("type").as[String].getOrElse("") match
       case "textDelta" =>
         c.downField("delta").as[String].getOrElse("") match
-          case ""   => IO.unit
+          case ""    => IO.unit
           case delta => pendingRef.update(m => m.updated(sessionId, m.getOrElse(sessionId, "") + delta))
+      case "toolEnd" =>
+        // A tool result is only a rich product when it was NOT an error; an
+        // errored tool's content is an error string, never an artifact.
+        if c.downField("isError").as[Boolean].getOrElse(false) then IO.unit
+        else
+          RichProduct.of(
+            content = c.downField("content").as[String].getOrElse(""),
+            input = c.downField("input").focus,
+            label = c.downField("label").as[String].getOrElse(""),
+            documentExtensions = documentExtensions
+          ) match
+            case None       => IO.unit
+            case Some(rich) => richRef.update(m => m.updated(sessionId, rich))
       case "done" =>
-        pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) }.flatMap { text =>
-          if text.trim.isEmpty then IO.unit else reply(sessionId, text)
+        (pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) },
+          richRef.modify { m => (m - sessionId, m.get(sessionId)) }).tupled.flatMap {
+          case (text, richOpt) =>
+            val textLeg = if text.trim.isEmpty then IO.unit else reply(sessionId, text)
+            val richLeg = richOpt match
+              case None       => IO.unit
+              case Some(rich) => deliverRich(sessionId, rich)
+            richLeg *> textLeg
         }
       // A retried or interrupted turn re-streams its text; the partial buffer
       // must never flush as a duplicated/garbled reply.
-      case "interrupted" | "retryStatus" => pendingRef.update(_ - sessionId)
-      case _                             => IO.unit
+      case "interrupted" | "retryStatus" =>
+        pendingRef.update(_ - sessionId) *> richRef.update(_ - sessionId)
+      // askuser-remote P1 (L0, D-2 拍板: each bridge grows its own branch —
+      // no second mechanism). The frame reached this bridge already (hub
+      // render → rootWsSend → wsHub broadcast); it simply had no arm before.
+      case "askUser" => onAskUserFrame(sessionId, c)
+      case "askUserClosed" =>
+        // 撤卡/台账清除 (P1 form): the hub slot is gone (withdraw / cleanup /
+        // restart), so the routing cache entry dies with it. A later click on
+        // the stale card then reads "no open prompt" → 「已失效」 — the 30-day
+        // / zombie closure the design pins, with zero extra API calls (a
+        // PATCH-based disable is a P2 candidate, not taken here).
+        val rid = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+        rid.fold(IO.unit)(r => askChatRef.update(_ - r))
+      case _ => IO.unit
+
+  // ───────────── askuser-remote P1: the askUser frame leg ─────────────
+
+  /** The outbound ask leg: hub `askUser` frame → flatten (D-1) → render →
+    * send. Degradations, in the frozen chain's order: a question needing a
+    * local-panel affordance sends the NUMBERED TEXT card instead (LocalOnly);
+    * a card the transport rejects sends the numbered text card instead
+    * (SendRejected); a session with no feishu binding has no addressee and
+    * the frame passes through untouched (the text leg's own rule). */
+  private[social] def onAskUserFrame(sessionId: String, c: io.circe.HCursor): IO[Unit] =
+    routesRef.get.flatMap { routes =>
+      routes.collectFirst { case (chatId, sid) if sid == sessionId => chatId } match
+        case None => IO.unit // not a feishu-bound session — other events simply pass through
+        case Some(chatId) =>
+          val requestId = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+          val items = c.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+          val attachments = c.downField("attachments").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+          val allViews = AskPromptCodec.viewsFromItemsJson(items)
+          (requestId, allViews) match
+            case (None, _) =>
+              IO(logger.warn(s"feishu bridge: askUser frame without requestId — dropped (no answer could ever be routed)"))
+            case (_, Nil) =>
+              IO(logger.warn(s"feishu bridge: askUser frame without a usable question — dropped"))
+            case (Some(rid), views) =>
+              // D-1 拍板: flatten ONCE — one AskUser = one question set sent in
+              // one pass; a question whose dependsOn cannot name a surviving
+              // sibling is not sent. Answer slots stay aligned with the FULL
+              // original set via the FlatSet (the callback side flattens the
+              // SAME frame items the same way, so the indices always agree).
+              val flat = AskPromptCodec.flatten(views)
+              askChatRef.update(_ + (rid -> chatId)).flatMap { _ =>
+                creds match
+                  case None =>
+                    IO(logger.warn(s"feishu bridge: ask card for chat $chatId dropped — no credential resolved"))
+                  case Some(cr) =>
+                    if FeishuAskCard.needsTextFallback(flat.views) then
+                      sendTextFallback(cr, chatId, flat.views,
+                        FeishuAskCard.fallbackReason(PromptFallback.LocalOnly(localOnlyReason(flat.views))))
+                    else
+                      sendAskCards(cr, chatId, rid, flat.views, attachments)
+              }
+    }
+
+  /** WHICH local affordance forced the text fallback — the fact, named (S-5
+    * interpolates it; the tokens are the field names, not new copy). */
+  private def localOnlyReason(views: List[PromptView]): String =
+    val reasons = List.newBuilder[String]
+    if views.exists(_.dirPicker) then reasons += "dirPicker"
+    if views.exists(_.canvas.nonEmpty) then reasons += "canvas"
+    if views.exists(_.options.exists(_.hasPreview)) then reasons += "preview"
+    reasons.result().mkString("/")
+
+  /** The card send leg (A-3: static 1.0 two-button cards) with the
+    * SendRejected fallback: every card goes through the interactive seam; if
+    * the transport rejected ALL of them, the whole set degrades to ONE
+    * numbered text card. A partial failure (some cards out, some rejected) is
+    * logged — the answers that DO arrive still route, and a second full text
+    * card would duplicate the questions the user can already see. */
+  private def sendAskCards(
+    cr: FeishuCredentials.Credential,
+    chatId: String,
+    rid: String,
+    views: List[PromptView],
+    attachments: List[String]
+  ): IO[Unit] =
+    val cards = FeishuAskCard.renderFull(views, rid, attachments)
+    cards.foldLeft(IO.pure(List.empty[FeishuChannel.SendResult])) { (acc, card) =>
+      acc.flatMap(rs => sendCard(cr.appId, cr.appSecret, region, chatId, card).map(rs :+ _))
+    }.flatMap { results =>
+      val rejected = results.count(!_.ok)
+      if rejected == 0 then
+        IO(logger.info(s"feishu bridge: ask card(s) delivered to chat $chatId (cards=${results.size})"))
+      else if rejected == results.size then
+        sendTextFallback(cr, chatId, views,
+          FeishuAskCard.fallbackReason(PromptFallback.SendRejected(results.head.code, results.head.msg)))
+      else
+        IO(logger.warn(s"feishu bridge: ask cards PARTIALLY delivered to chat $chatId " +
+          s"(ok=${results.size - rejected} rejected=$rejected) — no duplicate text card sent"))
+    }
+
+  /** The text fallback leg (S-5/S-6 frozen copy, the same slot machinery). */
+  private def sendTextFallback(
+    cr: FeishuCredentials.Credential,
+    chatId: String,
+    views: List[PromptView],
+    reason: String
+  ): IO[Unit] =
+    send(cr.appId, cr.appSecret, region, chatId, FeishuAskCard.renderText(views, reason)).flatMap { res =>
+      if res.ok then IO(logger.info(s"feishu bridge: ask TEXT fallback delivered to chat $chatId"))
+      else IO(logger.warn(s"feishu bridge: ask TEXT fallback rejected too code=${res.code} msg=${res.msg}"))
+    }
+
+  // ───────────── askuser-remote P1: the card.action.trigger leg ─────────────
+
+  /** The SDK-thread boundary — the intake shape ([[runIntake]]): the card
+    * callback handler runs on the SDK's dispatch thread and must answer the
+    * response synchronously (the 3-second window), so the whole chain runs
+    * through one `unsafeRunSync` here, error-contained upstream by
+    * [[FeishuChannel]]'s dispatcher. */
+  private def runCardAction(ctx: BridgeContext, a: FeishuChannel.CardAction): FeishuChannel.CardActionResponse =
+    handleCardAction(ctx, a).unsafeRunSync()
+
+  /** The callback chain (A-4/A-5 拍板): allowlist gate → hub snapshot (the
+    * open-ask AUTHORITY — no second ledger) → [[FeishuAskCard.parse]] →
+    * answers → `forwardInteractionAnswer` (the bridge answer leg) → the A4
+    * updated card in the response. Every refusal is a NAMED toast (S-7/8/9),
+    * never silence. */
+  private[social] def handleCardAction(ctx: BridgeContext, a: FeishuChannel.CardAction): IO[FeishuChannel.CardActionResponse] =
+    val refuse: String => IO[FeishuChannel.CardActionResponse] =
+      toast => IO.pure(FeishuChannel.CardActionResponse(toast = Some(toast), card = None))
+    allowedRef.get.flatMap { allowed =>
+      val gateOpen = allowed.isEmpty || a.openId.exists(allowed.contains)
+      if !gateOpen then
+        // Fail-closed, same judge as the text intake: a click from a sender we
+        // cannot place on the member list is refused (and logged), never answered.
+        IO(logger.warn(s"feishu bridge: card click from ${a.openId.getOrElse("<no-identity>")} refused — not on the member allowlist")) *>
+          refuse(FeishuAskCard.ToastCannotHandle)
+      else
+        ctx.listPendingAsks.flatMap { frames =>
+          val byRid = frames.flatMap(f => f.hcursor.downField("requestId").as[String].toOption.map(_ -> f)).toMap
+          val known = byRid.keySet
+          val ridRaw = a.value.hcursor.downField(FeishuAskCard.PayloadRequestId).as[String].toOption.map(_.trim).filter(_.nonEmpty)
+          askChatRef.get.flatMap { cache =>
+            val expected = ridRaw.flatMap(cache.get)
+            FeishuAskCard.parse(a.value, knownRequestIds = known, expectedChatId = expected,
+              callbackChatId = a.chatId, alreadyAnswered = Set.empty) match
+              case Left(reject) =>
+                // chat-mismatch / expired / duplicate / malformed — each its own toast.
+                IO(logger.info(s"feishu bridge: card click refused [${reject.reason}] ${reject.detail}")) *>
+                  refuse(FeishuAskCard.toastFor(reject))
+              case Right(action) =>
+                val rid = ridRaw.getOrElse("")
+                byRid.get(rid) match
+                  case None =>
+                    // parse accepted the rid (it was in the snapshot) — this arm is
+                    // belt-and-braces against a torn frame.
+                    refuse(FeishuAskCard.ToastExpired)
+                  case Some(frame) =>
+                    answerFromFrame(ctx, frame, rid, action, a).flatMap {
+                      case None => refuse(FeishuAskCard.ToastCannotHandle)
+                      case Some(cardBody) =>
+                        // The click's chat re-pins the cache when a restart had
+                        // emptied it (documented degrade: first click after a
+                        // restart pins the chat; the allowlist gate still ruled it).
+                        a.chatId.traverse_(cid => askChatRef.update(_.updated(rid, cid))).as(
+                          FeishuChannel.CardActionResponse(toast = None, card = Some(cardBody)))
+                    }
+            }
+        }
+    }
+
+  /** The happy path: frame items → the SAME flatten as the send leg → slots →
+    * forward → A4 answered card. `None` = the frame could not be re-reduced
+    * (items mutated under us — refuse rather than guess). */
+  private def answerFromFrame(
+    ctx: BridgeContext,
+    frame: Json,
+    rid: String,
+    action: PromptAction,
+    a: FeishuChannel.CardAction
+  ): IO[Option[String]] =
+    val rootSid = frame.hcursor.downField("sessionId").as[String].toOption.map(_.trim).filter(_.nonEmpty).getOrElse("")
+    val items = frame.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+    val attachments = frame.hcursor.downField("attachments").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+    val flat = AskPromptCodec.flatten(AskPromptCodec.viewsFromItemsJson(items))
+    if flat.views.isEmpty || rootSid.isEmpty then IO.pure(None)
+    else
+      AskPromptCodec.validate(flat.views, List(action)) match
+        case Left(why) =>
+          IO(logger.warn(s"feishu bridge: card click produced an invalid action ($why) — refused")) *> IO.pure(None)
+        case Right(_) =>
+          val kept = AskPromptCodec.answers(flat.views, List(action))
+          val answers = flat.expandAnswerSlots(kept)
+          val display = action match
+            case PromptAction.Pick(qi, oi) =>
+              flat.views.find(_.idx == qi).flatMap(_.options.lift(oi)).map(_.label)
+                .getOrElse(FeishuAskCard.OtherCopy)
+            case PromptAction.Other(_, text) =>
+              if text.isEmpty then FeishuAskCard.OtherCopy else text
+          ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
+            IO(logger.info(s"feishu bridge: card answer forwarded requestId=$rid root=$rootSid answers=${answers.size}")) *>
+            IO.pure(Some(FeishuAskCard.answeredCard(flat.views, rid, Map(action match
+              case PromptAction.Pick(qi, _)    => qi -> display
+              case PromptAction.Other(qi, _)   => qi -> display
+            ), attachments)))
+
+  /**
+   * The rich leg: classify the remembered product and deliver it through the
+   * injected adapter, degrading to text on every failure (the adapter's own
+   * contract — see [[RichFeishuAdapter.deliver]]).
+   *
+   * 🔴 Zero-secret: the credential is resolved ONLY here, through the existing
+   * [[FeishuCredentials.resolve]] path the text leg already uses, and is handed
+   * straight to the adapter factory. It is never logged, echoed, or stored.
+   */
+  private[social] def deliverRich(sessionId: String, rich: RichProduct): IO[Unit] =
+    routesRef.get.flatMap { routes =>
+      routes.collectFirst { case (chatId, sid) if sid == sessionId => chatId } match
+        case None => IO.unit // not a feishu-bound session — pass through, exactly as the text leg does
+        case Some(chatId) =>
+          creds match
+            case None =>
+              IO(logger.warn(s"feishu bridge: rich reply for chat $chatId dropped — no credential resolved"))
+            case Some(c) =>
+              val kind = RichKind.of(
+                content = rich.content,
+                path = rich.path.map(_.toString),
+                exists = rich.path.exists(p => Try(os.isFile(p)).getOrElse(false)),
+                documentExtensions = documentExtensions
+              )
+              val adapter = buildRichAdapter(c, region, chatId)
+              // 🔴 The adapter is called for EVERY classified kind, `Unknown`
+              // included: something WAS observed as a product this turn, so the
+              // recipient must be told what happened to it (`[未知类型] …`) — a
+              // silent return here would be exactly the drop this batch forbids.
+              adapter.deliver(kind, rich.path, rich.content).flatMap { results =>
+                val failed = results.filterNot(_.ok)
+                IO(logger.info(
+                  s"feishu bridge: rich reply to chat $chatId kind=$kind label=${rich.label} " +
+                    s"calls=${results.size} failed=${failed.size}"))
+              }
+    }
 
   private[social] def reply(sessionId: String, text: String): IO[Unit] =
     routesRef.get.flatMap { routes =>
@@ -302,11 +632,107 @@ object FeishuBridgePlugin:
   /** BridgePlugin.name — also the platform key in SessionMeta.bridges. */
   val Name = "feishu"
 
+  /**
+   * Rich-content plumbing of the main link (richcontent main-link batch, soc483).
+   *
+   * [[RichProduct]] is what a tool result can contribute to the outbound
+   * decision: the two observables [[RichKind.of]] reads (the leading `content`,
+   * which carries the card payload, and an artifact path).
+   *
+   * Why `content` and `input` are BOTH consulted: two different tools carry the
+   * artifact differently, and the produced result is the authority where it
+   * exists.
+   *
+   *   - a CARD product is the card sentinel + payload, i.e. the `content` itself
+   *     (the shape `RichKind.CardSentinel` pins);
+   *   - a Pop result is the pop sentinel + JSON whose `items[]` carry the
+   *     RESOLVED absolute paths (`PopTool`'s payload; that resolution is the
+   *     authority — re-deriving a path from the call arguments would be a second,
+   *     weaker judgement);
+   *   - failing both, the call's own `input` is read for a path argument, but
+   *     only for an extension that is a rich kind: an arbitrary file argument
+   *     must not turn a turn rich.
+   */
+  final case class RichProduct(content: String, path: Option[os.Path], label: String)
+
+  object RichProduct:
+
+    /** The pop payload sentinel — mirrors `nebflow.core.tools.PopTool.Sentinel`
+      * (the frontend splits on the same literal in `chat.js`). Pinned rather than
+      * imported so this file gains no `core.tools` dependency for one string;
+      * the tool and the frontend are the authority and this is a mirror. */
+    val PopSentinel: String = "___POP_JSON___"
+
+    /** Argument names a tool result may carry a path under. */
+    private val PathFields = List("filePath", "path", "file", "attachment", "artifact")
+
+    /** Read the rich product a tool result contributes, or `None` when it is not
+      * a rich product at all (the overwhelmingly common case). */
+    def of(content: String, input: Option[Json], label: String,
+        documentExtensions: Set[String]): Option[RichProduct] =
+      if RichKind.isCardContent(content) then Some(RichProduct(content, None, label))
+      else if content.startsWith(PopSentinel) then
+        PopProduct.fromPayload(content.stripPrefix(PopSentinel)).map(p => RichProduct(content, Some(p), label))
+      else
+        pathFromInput(input).filter(isRichPath(_, documentExtensions)).map(p => RichProduct("", Some(p), label))
+
+    /** A path argument on the tool call, if any. */
+    private def pathFromInput(input: Option[Json]): Option[os.Path] =
+      input.flatMap { j =>
+        val c = j.hcursor
+        val single = PathFields.flatMap(f => c.downField(f).as[String].toOption).map(_.trim).filter(_.nonEmpty)
+        val many = c.downField("paths").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+        (single ++ many).headOption.flatMap(p => Try(os.Path(p)).toOption)
+      }
+
+    /** True when the path's extension puts it in one of the two rich tables —
+      * the same predicate [[RichKind.of]] applies, used here to keep the fallback
+      * arm from calling an ordinary file argument "rich". */
+    private def isRichPath(p: os.Path, documentExtensions: Set[String]): Boolean =
+      val lower = p.toString.toLowerCase
+      nebflow.core.tools.ImageInject.imageExtensions.keys.exists(lower.endsWith) ||
+        (lower.lastIndexOf('.') match
+          case -1 => false
+          case i  => documentExtensions.contains(lower.substring(i + 1)))
+
+  /** One artifact read out of a Pop payload's `items[]`. Deliberately ONLY the
+    * two kinds the rich leg can carry: a `video` item rides the same payload
+    * shape but is not a rich-content product of this layer, so it is skipped
+    * rather than mis-delivered. If a payload carries only a video, the turn
+    * keeps its text reply. */
+  private object PopProduct:
+    /** First `image` item, else the first `file` item. `kind` / `path` are the
+      * payload's own field names (`PopTool.itemJson`). */
+    def fromPayload(json: String): Option[os.Path] =
+      io.circe.parser.parse(json).toOption.flatMap { j =>
+        val items = j.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+        def pick(kind: String): Option[os.Path] =
+          items
+            .find(i => i.hcursor.downField("kind").as[String].toOption.contains(kind))
+            .flatMap(i => i.hcursor.downField("path").as[String].toOption.map(_.trim).filter(_.nonEmpty))
+            .flatMap(p => Try(os.Path(p)).toOption)
+        pick("image").orElse(pick("file"))
+      }
+
   /** The human-readable label this channel announces in the source-marker block
     * (source-marker batch, 2026-10-01). Data only: the template lives on the
     * channel-agnostic side ([[nebflow.bridge.BridgeOrigin.marker]]), so a second
     * channel reuses it by supplying its own label — never by copying the text. */
   val ChannelDisplay = "飞书"
+
+  /** Production rich-adapter factory: the live adapter assembled from the
+    * credential THIS bridge already resolved and the bound chat id. The
+    * credential value is handed to the SDK seams only — never logged, echoed or
+    * stored ([[RichFeishuAdapter]]'s own zero-secret contract). */
+  def defaultRichAdapter(cred: FeishuCredentials.Credential, region: String, chatId: String): RichFeishuAdapter =
+    RichFeishuAdapter.live(cred, region, "chat_id", chatId)
+
+  /** The document extension authority for the main link: the endpoint table the
+    * existing same-package adapter already owns ([[FeishuOutboundAdapter.defaultTable]],
+    * itself welded to `NfFilePolicy.NfFileAllowedExt` by `FileRefsWhitelistSpec`
+    * A14). Referenced through that adapter rather than importing the gateway
+    * package here, so the `social` package gains no new upward edge. */
+  def defaultDocumentExtensions: Set[String] = FeishuOutboundAdapter.defaultTable
 
   /** Companion-side logger (the sync/guard legs live here, outside any instance). */
   private val log = NebflowLogger.forName("nebflow.social.feishu-bridge")
@@ -317,6 +743,15 @@ object FeishuBridgePlugin:
 
   def defaultSend(appId: String, appSecret: String, region: String, receiveId: String, text: String): IO[FeishuChannel.SendResult] =
     IO.blocking(FeishuChannel.sendText(appId, appSecret, region, "chat_id", receiveId, text))
+
+  /** Interactive-card send seam (askuser-remote P1, A-3): the same shape with
+    * the card JSON as the payload — production =
+    * [[FeishuChannel.sendInteractive]] (the 2026-10-01 A9 seam, first caller
+    * this batch); the offline spec injects a recorder. */
+  type SendCard = (String, String, String, String, String) => IO[FeishuChannel.SendResult]
+
+  def defaultSendCard(appId: String, appSecret: String, region: String, receiveId: String, cardJson: String): IO[FeishuChannel.SendResult] =
+    IO.blocking(FeishuChannel.sendInteractive(appId, appSecret, region, "chat_id", receiveId, cardJson))
 
   final case class ChannelConfig(region: String, allowedOpenIds: List[String])
 

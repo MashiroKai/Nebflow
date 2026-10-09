@@ -25,7 +25,9 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
+import { statusIcon, escapeHtml } from './utils.js';
 import { createDepVisibility } from './depVisibility.js';
+import { rootNameParams } from './rootName.js';
 
 // ── Shared helpers (model refs + chain display) ────────────
 
@@ -103,15 +105,17 @@ export function modelSourceNoteKey(model) {
 
 // ── Panel state ────────────────────────────────────────────
 
-const ROLES = ['Nebula', 'project-dispatcher', 'kernel', 'general'];
-const FOLLOWER_ROLES = ['project-dispatcher', 'kernel', 'general'];
+// P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
+// batch merged `kernel` + `general` into the single executor agent; the panel
+// therefore lists the CURRENT role names, mirroring SchemePolicy.SettableAgents.
+const ROLES = ['Nebula', 'project-dispatcher', 'nebflow'];
+const FOLLOWER_ROLES = ['project-dispatcher', 'nebflow'];
 /** Frontend mirror of SchemePolicy.SettableAgents (the /model write gate). */
 export const SETTABLE_ROLES = new Set(ROLES);
 const ROLE_KEY = {
   'Nebula': 'model.roleNebula',
   'project-dispatcher': 'model.roleDispatcher',
-  'kernel': 'model.roleKernel',
-  'general': 'model.roleGeneral',
+  'nebflow': 'model.roleExecutor',
 };
 
 /** Probed model ids per provider (dynamic layer, refreshed on demand). */
@@ -124,7 +128,7 @@ let panelOnKey = null; // the panel's document-level Escape handler
 /** role → { data: GET response|null, chain: string[]|null (null = follow), expanded: boolean } */
 const roleState = new Map();
 
-function roleLabel(role) { return t(ROLE_KEY[role] || role); }
+function roleLabel(role) { return t(ROLE_KEY[role] || role, rootNameParams()); }
 
 function fetchModelOf(role) {
   return fetch(`/api/agents/${encodeURIComponent(role)}/model`, { headers: authHeaders() })
@@ -223,11 +227,12 @@ function flashManualInput() {
 }
 
 // ── Inline error helper ────────────────────────────────────
+// ui-status-redesign（盘点 #38，S9 同族）：行首 circle-alert 红图标 + 中性正文。
 
 function flashInline(container, msg) {
   const el = container?.querySelector('.mp-inline-err');
   if (!el) return;
-  el.textContent = msg;
+  el.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
   el.classList.add('on');
   setTimeout(() => { el.classList.remove('on'); }, 2500);
 }
@@ -377,11 +382,11 @@ function statusChipHtml(role) {
   const st = roleState.get(role);
   const forked = (st?.chain || null) !== null;
   if (role === 'Nebula') {
-    return `<span class="mp-status mp-status-main">${esc(t('model.mainChain'))}</span>`;
+    return `<span class="mp-status mp-status-main">${esc(t('model.mainChain', rootNameParams()))}</span>`;
   }
   return forked
     ? `<span class="mp-status mp-status-fork">${esc(t('model.independent'))}</span>`
-    : `<span class="mp-status">${esc(t('model.followsNebula'))}</span>`;
+    : `<span class="mp-status">${esc(t('model.followsNebula', rootNameParams()))}</span>`;
 }
 
 /** Fork action shared by Nebula (seed → explicit) and followers (follow → fork). */
@@ -485,7 +490,7 @@ function buildFollowerBlock(container, role, commit) {
       // Follow state: live preview of the Nebula primary chain (re-read after
       // every save) + the explicit fork action. No copy is materialized here.
       body.innerHTML = `
-        <div class="mp-note">${esc(t('model.followsNebula'))} — ${esc(t('model.effectivePreview'))}</div>
+        <div class="mp-note">${esc(t('model.followsNebula', rootNameParams()))} — ${esc(t('model.effectivePreview'))}</div>
         <div class="mp-preview">${resolvedChainChipsHtml(st.data)}</div>`;
       if (role === 'kernel') {
         const kn = document.createElement('div');
@@ -509,12 +514,12 @@ function buildFollowerBlock(container, role, commit) {
       const restoreBtn = document.createElement('button');
       restoreBtn.type = 'button';
       restoreBtn.className = 'cfg-btn cfg-btn-sm mp-restore';
-      restoreBtn.textContent = t('model.restoreFollow');
+      restoreBtn.textContent = t('model.restoreFollow', rootNameParams());
       restoreBtn.addEventListener('click', () => {
         const preview = nebulaEffectiveRefs().join(' → ') || t('model.seedNote');
         window.__showConfirm?.(
-          t('model.restoreFollow'),
-          t('model.restoreFollowConfirm', { chain: preview }),
+          t('model.restoreFollow', rootNameParams()),
+          t('model.restoreFollowConfirm', { chain: preview, ...rootNameParams() }),
           async () => { await putChain(role, null); },
           { tone: 'neutral' },
         );

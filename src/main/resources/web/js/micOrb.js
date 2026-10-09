@@ -259,6 +259,7 @@
 import state from './state.js';
 import { t } from './i18n.js';
 import * as orbPresets from './orbPresets.js';
+import { rootDisplayName } from './rootName.js';
 
 /* ========================================================================
    9-state definition (spec §10.1 + §10.5). v8.3.0: color language lives in
@@ -1225,7 +1226,9 @@ class MicOrb {
      a11y name still describes what the control does. */
   updateA11y() {
     const s = STATE_BY_KEY[this.state] || STATE_BY_KEY.idle;
-    const label = t(s.i18n);
+    // The busy-state label names the agent the user is talking to — the DISPLAY
+    // name (rootName.js), never the mechanism key. Other states ignore `agent`.
+    const label = t(s.i18n, { agent: rootDisplayName() });
     const btnLabel = `${label} · ${t('input.voiceBtn')}`;
     if (this.btn) this.btn.setAttribute('aria-label', btnLabel);
     if (this.cssOrb) {

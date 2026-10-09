@@ -772,6 +772,7 @@ private[project] trait NodeDelivery:
               s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.RootDedupWindowMs}ms, rootSession=$rootSessionId)"
             ) *>
               nodeId.traverse_(id => markRootDelivered(id)) *>
+              notifyRedirectAudit(nodeId, status, "suppressed") *>
               IO.pure(RootNotifyOffer.Suppressed)
           case false =>
             (ref ! AgentCommand.ImmediateInput(
@@ -782,14 +783,47 @@ private[project] trait NodeDelivery:
               fromUser = false, // ② 服务端注入（节点状态），不是真人输入
               windowItems = windowItems
             )) *> nodeId.traverse_(id => markRootDelivered(id)) *>
+              notifyRedirectAudit(nodeId, status, "offered") *>
               IO.pure(RootNotifyOffer.Offered)
         }
       case None =>
         logger.warn(
           s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)"
         ) *>
+          notifyRedirectAudit(nodeId, status, "parked") *>
           IO.pure(RootNotifyOffer.Parked)
     }
+
+  /**
+   * **S19① 落真审计腿**（N1 刀3 · 设计 v3 §7.1「落真＝EventLog 留痕＋上报标记」；
+   * 候裁 v3-⑨ 分发器代裁照落）：delegate 作用域引擎（notifyTargetKind =
+   * CreatorDelegate）每次 root 通知 offer 落一行 `notify-redirected` 审计——目标 =
+   * **创建者 delegate 本人**（[[nebflow.core.delegate.DelegateNotify.NotifyRule]]
+   * .Target/Channel 常量单点复用，本腿即「N1 的 flow 接线消费本常量」的落点），
+   * outcome ∈ {offered, parked, suppressed}。**per-project 引擎零写零行为变化**
+   * （ProjectRoot 短路）。锚点 = notifyAuditWorkspace（delegate 宿主 = 基工作区，
+   * 寿命长于 worktree 座位——刀1 审计腿同款判据）。best-effort：审计失败只 WARN，
+   * 绝不回滚已完成的 offer/记账。
+   *
+   * 「上报标记」半边 = 既有 [[markRootDelivered]]（tell-then-mark，零改动）；
+   * 「creator 不 live＝滞留不旁路」= Parked 分支既有语义（不记账 ⇒ 补投扫描保留
+   * 候选；⑬A：不改投 Nebula、不建第二上送）。
+   */
+  private[project] def notifyRedirectAudit(nodeId: Option[String], status: String, outcome: String): IO[Unit] =
+    if notifyTargetKind != NodeEngine.NotifyTargetKind.CreatorDelegate then IO.unit
+    else
+      FlowMapEventLog
+        .append(
+          notifyAuditWorkspace.getOrElse(workspace),
+          projectName,
+          nodeId.getOrElse(""),
+          NodeEngine.NotifyRedirectedEventType,
+          s"target=${nebflow.core.delegate.DelegateNotify.NotifyRule.Target} " +
+            s"channel=${nebflow.core.delegate.DelegateNotify.NotifyRule.Channel} scope=$rootSessionId " +
+            s"status=$status outcome=$outcome — delegate-scope chain notification redirected to the creator " +
+            "delegate (S19①; no bypass on miss: the parked result stays a redelivery candidate)"
+        )
+        .handleErrorWith(e => logger.warn(s"notify-redirected audit append failed: ${e.getMessage}"))
 
   // ── root 通道通知打包窗（notifybatch 批 2026-09-18；作者 2026-09-18 三决策）────────
   //

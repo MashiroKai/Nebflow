@@ -1,8 +1,9 @@
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
-// 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到其
-// Flow Map 视图（不新开标签页），左上角「返回项目列表」切回列表；
-// 空 Flow Map（无节点）的项目 title 不可点。AGENTS.md 入口 → rules 式查看/编辑 overlay。
+// 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到
+// delegate-chain 链视图（#1228 两裁②：per-project Flow Map 就地视图停用，入口改指
+// per-task 链视图）；顶栏「返回任务列表」关闭页签回任务面板。AGENTS.md 入口 → rules
+// 式查看/编辑 overlay。
 //
 // ── 实时更新 + 载入/归档动画（tabrealtime 批 2026-09-17 · 作者五项裁定 (a)-(e)）──────
 // (a) 「项目标签页」= 本页签内的**项目卡片列表**（取证报告§主读法；代码面不存在
@@ -26,11 +27,16 @@
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
-import { esc, authHeaders } from './flowHelpers.js';
+import { esc } from './flowHelpers.js';
+import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
+import { rootNameParams } from './rootName.js';
 import { contentText } from './contentI18n.js';
-import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
-import { renderFlowMapInto } from './flowMapTab.js';
+import { fetchProjects, fetchFlowMap, summarize } from './nodeData.js';
+// 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图停用，
+// 对 flowMapTab 渲染入口的静态 import 随之摘除——flowMapTab.js 自此脱离模块图
+// （build-web ORPHAN_EXEMPTIONS 在案），文件留盘候 #1229 per-project REST/WS 退役批
+// 随引擎面整体删除；渲染件单源 = fmNodeCard.js（S10/S11 链视图在用）。
 import { openAgentFile } from './agentFileViewer.js';
 import { playFlip, prefersReducedMotion, snapshotRects } from './listFlip.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
@@ -47,17 +53,15 @@ const PROJECT_NEW_EMPHASIS_MS = 900;      // §F 一次性强调环保持时长
 const PROJECT_NEW_EMPHASIS_REDUCED_MS = 2000; // §F-3 降级：静态环保持 ~2s（新卡仍可辨识）
 const PROJECT_FLIP_MS = 240;              // §F 邻卡 FLIP 衔接
 const PROJECT_FLIP_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)'; // split.css:503 flex 族同值
-const PROJECTS_FALLBACK_POLL_MS = 60_000; // 兜底 C 频率：对齐 taskList.js:209 范式
 
 function openProjectTab() {
   const pane = getTabPane('projects');
   if (!pane) return;
   ensureFlowCss();
-  // 视图状态复位为列表：projects 标签页是「项目列表 ⇄ Flow Map 就地视图」双态页，
-  // 列表渲染进 .team-scroll；若当前在 Flow Map 就地视图（nav-bar + flowmap-view-body），
-  // 先清掉再建滚动体，避免列表渲染进旧 Flow Map 滚动体、或 nav-bar 残留在列表上方。
+  // 视图状态复位为列表：projects 标签页是「项目列表 ⇄ delegate-chain 就地视图」双态页，
+  // 列表渲染进 .team-scroll；若当前在就地视图（nav-bar + 视图体），先清掉再建滚动体，
+  // 避免列表渲染进旧视图滚动体、或 nav-bar 残留在列表上方。
   pane.dataset.projectsView = 'list';
-  delete pane.dataset.flowMapProject;
   if (pane.querySelector('.flowmap-nav-bar')) pane.innerHTML = '';
   const scroll = ensureScroll(pane); // mounts the "+" FAB at one single point (returns with any DOM rebuild)
   resetProjectsRetry(); // 用户动作打开面板 = 新一轮序列，重试预算重置
@@ -159,8 +163,10 @@ function closeProjectsCreateDialog(restoreFocus) {
  *  §二 可达性硬约束：落在之后 = 静默死代码，零报警）。 */
 function attachProjectsCreateFab(pane) {
   if (!pane) return;
-  // 视图守卫（作者已裁⑦：「+」仅列表视图）。
-  if (pane.dataset.projectsView === 'flow-map') {
+  // 视图守卫（作者已裁⑦：「+」仅列表视图）。delegate-chain 视图（S10/S11，#1228
+  // 换源接线批；per-project Flow Map 视图已停用退役）同为非列表视图：摘钮早退
+  // （链视图无创建面，亦无同锚浮钮冲突）。
+  if (pane.dataset.projectsView === 'delegate-chain') {
     pane.querySelector(`.${PROJECTS_CREATE_FAB}`)?.remove();
     return;
   }
@@ -238,21 +244,23 @@ function openProjectsCreateDialog(trigger) {
    *  only by the picker — there is no hand-typed input face. */
   let pickedPath = null;
 
-  /** 计数器（上限可发现）+ 超限染色（既有 `--color-danger`，零新色值）。 */
+  /** 计数器（上限可发现）。ui-status-redesign（盘点 #50）：超限不再染红数字——
+   *  数字转中性，行首 triangle-alert 琥珀图标（非阻断超量 = 警示档）。 */
   const renderCount = () => {
     const n = projectCreateLength(descEl.value);
-    countEl.textContent = t('project.createDescCount', { n: String(n) });
+    countEl.innerHTML = (n > PROJECT_CREATE_MAX ? statusIcon('triangle-alert', 11, 'st-warn') : '') + esc(t('project.createDescCount', { n: String(n) }));
     countEl.classList.toggle('is-over', n > PROJECT_CREATE_MAX);
   };
   /** Report an error: `role="alert"` row shown in place, NEVER silently swallowed
-   *  (the dialog stays open and the values are not cleared). */
+   *  (the dialog stays open and the values are not cleared).
+   *  ui-status-redesign（盘点 #35，S9 同族）：行首 circle-alert 红图标 + 中性正文。 */
   const showError = (msg) => {
-    errorEl.textContent = msg;
+    errorEl.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + esc(msg) + '</span>';
     errorEl.hidden = false;
   };
   const clearError = () => {
     errorEl.hidden = true;
-    errorEl.textContent = '';
+    errorEl.innerHTML = '';
   };
   const renderPath = () => {
     pathEl.textContent = pickedPath || t('project.createWorkspaceNone');
@@ -380,8 +388,8 @@ function openProjectsCreateDialog(trigger) {
 // （服务器已回来、WS 也已自动重连），只有用户「关面板重开」才恢复。
 // 本段给出两条**互相独立**的迟到对账通道（任一即可闭合窗口）：
 //   ① scheduleProjectsRetry：首取失败后按下面档位有界退避重拉（不依赖任何外部信号）；
-//   ② 文件尾 onReconnect：WS 重连时面板若非 ready 立即补一次（对齐 flowMapTab.js
-//      `onReconnect(() => refreshFlowMapViews())` / taskList.js 既有范式）。
+//   ② 文件尾 onReconnect：WS 重连时面板若非 ready 立即补一次（taskList.js 既有范式；
+//      原 flowMapTab 对照件随 per-project 视图停用退役，#1228 两裁②）。
 // 两条通道都复用下面 renderProjectsInto 的既有分支判定，**不新造状态、不改 empty/error
 // 判定**——空态与错误态依旧是两条独立分支，重试只是让「数据迟到」这件事能被再问一次。
 // 不掩盖失败：预算穷尽后仍停在 error 并保留原始原因（真有故障时错误态照旧驻留）。
@@ -585,7 +593,9 @@ function startCardExit(scroll, card) {
     PROJECT_CARD_EXIT_MS + 60);
 }
 
-/** 焦点移交（§F-3③）：焦点在退场卡内 ⇒ 移交下一张卡的归档按钮，无下一张则移交容器。 */
+/** 焦点移交（§F-3③）：焦点在退场卡内 ⇒ 移交下一张卡的项目标题，无下一张则移交容器。
+ *  （N2 project-tool 批 2026-10-06：面板手动卸载按钮随「被 Project 工具 unmount 面替代」
+ *  移除——原移交目标「下一张卡的归档按钮」随之改为本卡唯一交互件 .team-card-title。） */
 function releaseCardFocus(card) {
   if (!card.contains(document.activeElement)) return;
   const cards = projectCards(card.parentElement);
@@ -593,7 +603,7 @@ function releaseCardFocus(card) {
   const next =
     cards.slice(idx + 1).find((c) => c.dataset.exiting !== '1')
     || cards.slice(0, idx).reverse().find((c) => c.dataset.exiting !== '1');
-  const target = next?.querySelector('.project-archive-btn') || card.parentElement;
+  const target = next?.querySelector('.team-card-title') || card.parentElement;
   target?.focus?.();
 }
 
@@ -614,8 +624,8 @@ function renderEmptyState(scroll) {
   scroll.dataset.projectCount = '0';
   scroll.innerHTML = `<div class="team-empty">
       <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
-      <div class="hint">${esc(t('project.emptyHint'))}</div>
-      <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta'))}</button>
+      <div class="hint">${esc(t('project.emptyHint', rootNameParams()))}</div>
+      <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta', rootNameParams()))}</button>
       <div class="hint team-empty-cta-note">${esc(t('project.emptyCtaHint'))}</div>
     </div>`;
   bindEmptyCta(scroll);
@@ -629,9 +639,10 @@ function projectCardHtml(p) {
   return `
     <div class="team-card project-card" data-project="${esc(name)}" data-running="0">
       <div class="team-card-header">
-        <div class="team-card-title" data-open-flowmap="${esc(name)}" title="${esc(t('project.openFlowMap', { name }))}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span><span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
+        <!-- 入口键（project 域 Flow Map 提示键）已随晨裁②退役照荐落（§3.3 在案）：卡标题
+             不再挂「打开 Flow Map」提示（点击改指行为保留——delegate-chain 链视图，#1228 两裁②）。 -->
+        <div class="team-card-title" data-open-flowmap="${esc(name)}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span><span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
-        <button class="project-archive-btn" data-archive-project="${esc(name)}" title="${esc(t('project.archive'))}" aria-label="${esc(t('project.archiveTitle', { name }))}"><i data-lucide="archive"></i></button>
       </div>
       <div class="project-fields">
         <div class="project-field" title="${esc(p.workspace)}">
@@ -703,7 +714,10 @@ function applyCardEmptyState(card, empty) {
   title.classList.toggle('empty', empty);
   if (empty) delete title.dataset.openFlowmap; // 🔴 无节点 → 点进 Flow Map 无意义
   else title.dataset.openFlowmap = name;
-  title.title = empty ? t('project.noNodesHint', { name }) : t('project.openFlowMap', { name });
+  // 入口键 project.openFlowMap 退役（晨裁②）：非空卡标题零提示（点进行为保留）；
+  // 空态提示键 project.noNodesHint 非退役键，原样保留。
+  if (empty) title.title = t('project.noNodesHint', { name });
+  else title.removeAttribute('title');
   const tag = title.querySelector('.project-empty-tag');
   if (tag) tag.hidden = !empty;
 }
@@ -752,10 +766,13 @@ function bindProjectCard(card) {
   const title = card.querySelector('.team-card-title');
   title?.addEventListener('click', (e) => {
     e.stopPropagation();
-    // 同标签页切换：不开新标签页，当前 projects 标签页就地显示 Flow Map 视图
-    // （左上角「返回项目列表」回到列表视图）。
-    const name = title.dataset.openFlowmap;
-    if (name) openFlowMapInPlace(name);
+    // 🔴 入口改指（flowmaptab-retire · #1228 两裁② 停用清单面 1）：原 per-project
+    // Flow Map 就地视图（projectsView='flow-map' 分支）停用，入口改指 per-task 链视图
+    // ＝ delegate-chain 分支（S11 结构总视图 = 总 flowmap 改义面，渲染件 = fmNodeCard
+    // 单源）。per-task 读面候 N1：stub 空时视图自带 fail-soft（键 7）。
+    import('./delegateChainView.js')
+      .then(({ openDelegateChainStructure }) => openDelegateChainStructure())
+      .catch(() => {});
   });
   card.querySelector('[data-open-agent]')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -774,10 +791,10 @@ function bindProjectCard(card) {
       window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
     }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
   });
-  card.querySelector('[data-archive-project]')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    archiveProject(e.currentTarget?.getAttribute('data-archive-project') || '');
-  });
+  // N2 project-tool 批（2026-10-06）：原 `[data-archive-project]` 手动卸载按钮随
+  // 「面板手动卸载被工具面替代」移除（Project 工具 action="unmount" = 唯一卸载面；
+  // 卸载经 projectUnmounted 帧回声驱动本文件定点退场，见文末订阅）。REST
+  // POST /projects/<name>/archive 保留（软下线档现语义不动），仅失去面板入口。
 }
 
 // ── 空态 CTA：一键引导（方向 B · 行为 = 仅预填）────────────────────────────────
@@ -815,114 +832,22 @@ function prefillProjectPrompt(text) {
   return true;
 }
 
-/** 归档项目（迁移方案 v2 §6.1）：显式人工动作——确认弹层（防误触，复用
- *  window.__showConfirm 既有确认范式）→ POST /api/projects/<name>/archive →
- *  **立即对目标卡施加定点退场**（取证 §F-2 触发条件①：不等重拉返回——重拉的全量
- *  替换会吃掉动画；本批出口已改成定点增删，故重拉也不会再吃掉它）。
- *  后端 ProjectStore.list 源头过滤归档项 ⇒ 兜底 C 的下一次重拉名单里也不会有它。
- *  零删除零移动：仅 project.json 打归档标记，workspace 与定义文件全部保留。
- *  tone:'neutral'——归档可逆（可取消归档），确认钮不用 danger 红。
- *  后端同批广播的 projectArchived 帧随后到达本页（同一动作的回声）——由
- *  startCardExit 的 `data-exiting` 幂等闸吸收，不产生第二次退场/第二次渲染。 */
-function archiveProject(name) {
-  if (!name) return;
-  window.__showConfirm?.(
-    t('project.archiveTitle', { name }),
-    t('project.archiveConfirm', { name }),
-    async () => {
-      try {
-        const r = await fetch(`${API.projects}/${encodeURIComponent(name)}/archive`, {
-          method: 'POST',
-          headers: authHeaders(),
-        });
-        if (!r.ok) throw new Error(`archive ${r.status}`);
-        window.__showToast?.(t('project.archiveDone', { name }), 'success');
-        const scroll = projectsListScroll() || getTabPane('projects')?.querySelector('.team-scroll');
-        const card = scroll ? cardByName(scroll, name) : null;
-        if (scroll && card) {
-          startCardExit(scroll, card);            // 退场动画（280ms）→ 定点 remove + FLIP
-          announceProjects(scroll, t('project.archivedAnnounce', { name }));
-        } else {
-          rerenderProjectsTab();                  // 卡不在本列表可见面（正常不达）⇒ 兜一次权威重拉
-        }
-      } catch (e) {
-        window.__showToast?.(t('project.archiveFail', { name }), 'error');
-      }
-    },
-    { tone: 'neutral' }
-  );
-}
+/** 🔴 N2 project-tool 批（2026-10-06）：`archiveProject` 整件随面板手动卸载面移除
+ *  ——原「确认弹层 → POST /api/projects/<name>/archive → 定点退场」的面板按钮已被
+ *  Project 工具 `action="unmount"` 工具面替代（范围句第 4 条；面板卸载入口自此不存在，
+ *  卸载回声 = projectUnmounted 帧，见文末订阅）。软下线 REST（POST archive）保留、
+ *  现语义不动（仅失去面板入口）；locale 键面清理不在本批写面（projcreate 批先例：
+ *  失去调用点的键保留，键 face 归清理批），`project.archive*` 五键调用点归零在案。 */
 
-/** 同标签页进入 Flow Map 视图：不新开标签页，当前 projects 标签页就地切换。
- *  pane 结构：.flowmap-nav-bar（左上角「← 项目名」单元素返回入口，点击回列表；
- *  右侧 .flowmap-summary 摘要槽——2026-09-06 顶栏合并批，两行并一行，摘要内容由
- *  flowMapTab.renderFlowMap/renderFlowMapDiff 按 pane 口径查找写入）
- *  + .flowmap-view-body（Flow Map 渲染体）。
- *  Flow Map 的 fetch/渲染/TTL 由 flowMapTab 负责（renderFlowMapInto），这里只管
- *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。
- *  highlightNodeId：渲染完成后滚动定位并高亮该节点（任务列表节点条目点击跳转）。
- *  同项目视图已打开时走快速路径：不重建 pane DOM（轨道动画不被打断），仅重渲 + 高亮。 */
-function openFlowMapInPlace(projectName, highlightNodeId, highlightChainId) {
-  if (!projectName) return;
-  openTab('projects', t('project.title'), { type: 'projects', closable: true });
-  const pane = getTabPane('projects');
-  if (!pane) return;
-  const sameView = pane.dataset.projectsView === 'flow-map'
-    && pane.dataset.flowMapProject === projectName;
-  if (!sameView) {
-    ensureFlowCss();
-    // Flow Map in-place view carries its own floating layer (.fm-float-layer /
-    // .fm-fab, flowMap.css, same 16/16 corner); the "+" FAB is removed by
-    // attachProjectsCreateFab's own view guard.
-    pane.dataset.projectsView = 'flow-map';
-    pane.dataset.flowMapProject = projectName;
-    pane.innerHTML = `
-      <div class="flowmap-nav-bar">
-        <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(projectName)}" aria-label="${esc(t('project.backToProjects'))}">
-          <i data-lucide="arrow-left"></i><span class="flowmap-back-name">${esc(projectName)}</span>
-        </button>
-        <span class="flowmap-summary flowmap-nav-summary" aria-live="polite"></span>
-      </div>
-      <div class="flowmap-view-body" data-fm-project="${esc(projectName)}"></div>`;
-    pane.querySelector('[data-back-to-projects]').addEventListener('click', (e) => {
-      e.stopPropagation();
-      showProjectsList();
-    });
-    import('./utils.js').then(({ createIconsIn }) => createIconsIn(pane));
-  }
-  ensureFlowCss(); // same-view 快速路径（如 tab 恢复后直接跳转）也要保证样式在
-  renderFlowMapInto(pane.querySelector('.flowmap-view-body'), projectName,
-    { highlightNodeId: highlightNodeId || '', highlightChainId: highlightChainId || '' });
-}
-
-/** 任务列表节点条目点击跳转入口（taskList.js 动态 import）：打开（或聚焦）某项目
- *  的 Flow Map 就地视图并高亮该节点。 */
-export function openProjectFlowMapAt(projectName, nodeId) {
-  openFlowMapInPlace(projectName, nodeId);
-}
-
-/** 任务列表链徽标点击入口（链级抽象 P1 · spec §7-B ⭐）：打开（或聚焦）该项目的
- *  Flow Map 就地视图并 fit 到该链（相机 bbox，见 flowMapTab.highlightFlowMapChain）
- *  ——与节点定位入口（openProjectFlowMapAt）对称，二者互不叠加。 */
-export function openProjectFlowMapChain(projectName, chainId) {
-  if (!projectName || !chainId) return;
-  openTab('projects', t('project.title'), { type: 'projects', closable: true });
-  const pane = getTabPane('projects');
-  if (!pane) return;
-  // 链定位随渲染入口下发（视图未打开时首渲完成即 fit 该链；已打开走快速路径重渲）——
-  // 不在 openTab 后直接调 highlight（首渲是异步 fetch，那时卡还没入场）。
-  openFlowMapInPlace(projectName, '', chainId);
-}
-
-/** 返回项目列表：重置视图状态并重渲列表（projects 标签页同页切换回列表视图）。 */
-function showProjectsList() {
-  const pane = getTabPane('projects');
-  if (!pane) return;
-  openProjectTab();
-}
+/** 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图
+ *  整块退役（原 openFlowMapInPlace / openProjectFlowMapAt / openProjectFlowMapChain /
+ *  showProjectsList 四件随分支删除）——projectsView='flow-map' 视图种类自此不再产生，
+ *  项目卡标题入口改指 delegate-chain 链视图（见 bindProjectCard）。渲染/高亮件由上游
+ *  a60af705d 单源拆出（fmNodeCard.js），本文件零重复拆出、零复制双权威；flowMapTab.js
+ *  留盘候 #1229 随 REST/WS 引擎面整体退役。 */
 
 /** 供 test hook / 多标签页刷新。节点事件突发时防抖，避免每事件重拉全部项目+flowmap。
- *  视图分流：就地 Flow Map 视图刷新该项目的图（不闪回列表）；列表视图刷新卡片。 */
+ *  视图分流：delegate-chain 视图按 pane 记忆的模式重渲（不闪回列表）；列表视图刷新卡片。 */
 let projectsRenderTimer = null;
 let renderSeq = 0;
 /** 一次性重建闸：仅语言切换置位（卡内文案必须整体重写，定点刷新覆盖不到全部静态
@@ -933,9 +858,12 @@ export function rerenderProjectsTab() {
   projectsRenderTimer = setTimeout(() => {
     const pane = getTabPane('projects');
     if (!pane) return;
-    if (pane.dataset.projectsView === 'flow-map' && pane.dataset.flowMapProject) {
-      const body = pane.querySelector('.flowmap-view-body');
-      if (body) renderFlowMapInto(body, pane.dataset.flowMapProject);
+    // delegate-chain 视图分流（S10/S11 · #1228 换源接线批）：按 pane 记忆的模式
+    // 重渲链视图（数据面 = stub 读取口现读；不闪回列表）。
+    if (pane.dataset.projectsView === 'delegate-chain') {
+      import('./delegateChainView.js')
+        .then(({ rerenderDelegateChainPane }) => rerenderDelegateChainPane(pane))
+        .catch(() => {});
       return;
     }
     renderProjectsInto(ensureScroll(pane));
@@ -949,16 +877,16 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
   if (e.detail?.id === 'projects') openProjectTab();
 });
 
-// WS 事件驱动：列表视图的项目卡片（运行数/摘要）防抖刷新。Flow Map 就地视图的
-// 节点事件刷新由 flowMapTab 的增量管线负责（事件 payload 直接 diff 渲染 + 过渡
-// 动画）——这里若也全量重拉会覆盖它的 DOM、杀掉动画，故视图分流时跳过 flow-map。
+// WS 事件驱动：列表视图的项目卡片（运行数/摘要）防抖刷新。delegate-chain 就地视图
+// 不动列表 DOM（其数据面 = stub 读取口，刷新走 rerenderProjectsTab 的视图分流）。
 // 本批起这里的「重拉」不再全量替换 DOM：`renderProjectsInto` 只做名单差集 + 定点增删
 // （同名单 = 零 DOM 变更，仅摘要槽定点刷新），故事件驱动的刷新不会吃掉任何动画。
 import { onMessage, onReconnect, sendWs } from './ws.js';
 function rerenderProjectsListView() {
   const pane = getTabPane('projects');
   if (!pane) return;
-  if (pane.dataset.projectsView === 'flow-map') return;
+  // 非列表视图（delegate-chain 链视图）不动列表 DOM。
+  if (pane.dataset.projectsView === 'delegate-chain') return;
   rerenderProjectsTab();
 }
 onMessage('nodeCreated', () => rerenderProjectsListView());
@@ -976,10 +904,11 @@ onMessage('nodeRemoved', () => rerenderProjectsListView());
 // 就地 flow-map 视图 / 仍在 loading·error）时不动 DOM：空面板会在打开时现拉，
 // loading/error 交给既有取数路径（`rerenderProjectsTab` 走防抖重拉）。
 
-/** 列表视图的滚动体（面板没开 / 处于就地 Flow Map 视图 ⇒ null）。 */
+/** 列表视图的滚动体（面板没开 / 处于 delegate-chain 视图 ⇒ null）。 */
 function projectsListScroll() {
   const pane = getTabPane('projects');
-  if (!pane || pane.dataset.projectsView === 'flow-map') return null;
+  if (!pane) return null;
+  if (pane.dataset.projectsView === 'delegate-chain') return null;
   const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
   return scroll && scroll.isConnected ? scroll : null;
 }
@@ -1024,20 +953,41 @@ function onProjectArchivedFrame(msg) {
   announceProjects(scroll, t('project.archivedAnnounce', { name }));
 }
 
+/** 卸载回声（N2 project-tool 批 2026-10-06）：Project 工具 `action="unmount"` 成功腿
+ *  广播 `projectUnmounted{project,unmountedAt}`——处理面与 archived 帧同构（按名定点
+ *  退场 + aria 播报）。卸载后 GET /api/projects 名单源（ProjectStore.list）源头过滤
+ *  ⇒ 兜底 C 重拉名单也不会再有它。`data-exiting` 幂等闸吸收重复帧/回声。 */
+function onProjectUnmountedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const name = typeof msg?.project === 'string' ? msg.project : '';
+  if (!name) return;
+  const card = cardByName(scroll, name);
+  if (!card) return; // 已不在列表 / 面板未展示该项目 ⇒ no-op，无重复渲染
+  startCardExit(scroll, card); // 退场动画（280ms）→ 定点 remove + FLIP 衔接邻卡
+  announceProjects(scroll, t('project.unmountedAnnounce', { name }));
+}
+
 onMessage('projectCreated', (msg) => onProjectCreatedFrame(msg));
 onMessage('projectArchived', (msg) => onProjectArchivedFrame(msg));
+onMessage('projectUnmounted', (msg) => onProjectUnmountedFrame(msg));
 
 // ── 兜底 C：低频重拉（裁定 (c) 同批）──────────────────────────────────────────
 // 为什么必须有：进程外改动（有人直接编辑/删除 `~/.nebflow/projects/<name>/project.json`，
 // 或另一个实例写的盘）**任何事件方案都覆盖不到**——全仓无文件 watcher。取证 §H-5 明确
 // 声明此为不可覆盖面 ⇒ 事件面 + 低频重拉是唯一闭合方案。
-// 频率与范式对齐 taskList.js:209（`setInterval(refreshLastActive, 60_000)`）。
+// perf-481 A5：原先此处自持一个 60s `setInterval`，与 taskList.js 的相对时间拍**各自**
+// 计时 ⇒ 两次无关突发落在任意时刻。现改挂**全页共享的墙上分钟栅格**（utils.onMinuteTick）：
+// 周期仍是 1 分钟（请求数不变），但两拍合流为**每分钟一次突发**，且相位锚在分钟边界
+// 而非页面加载时刻。
 // 门控（§D-3）：文档可见 ∧ projects 页签在前台（`.canvas-tab-pane.active`，split.css:643）
 // ∧ 非 flow-map 就地视图 ∧ 面板已出列表（ready/empty；loading/error 由既有有界退避
 // 重试 + onReconnect 腿负责，不在此叠加第二个重试源）。
 // 与事件面不冲突：事件到达即刻定点增删、不等轮询；轮询仅在「名单与磁盘不一致」时
 // 产生一次定点增删（同名单 ⇒ reconcile 零 DOM 变更，只定点刷新摘要槽）。
-setInterval(() => {
+onMinuteTick(() => {
   if (document.visibilityState !== 'visible') return;
   const pane = getTabPane('projects');
   if (!pane || !pane.classList.contains('active')) return;
@@ -1046,7 +996,7 @@ setInterval(() => {
   const state = scroll.dataset.projectsState;
   if (state !== 'ready' && state !== 'empty') return;
   renderProjectsInto(scroll);
-}, PROJECTS_FALLBACK_POLL_MS);
+});
 
 // 切语言即重渲（contenti18n 批）：项目名/描述走 locale 映射（js/contentI18n.js），
 // 语言一变列表卡片必须重渲——本批前此处零监听。复用上面的视图分流判据
@@ -1065,7 +1015,8 @@ window.addEventListener('locale-changed', () => {
 onReconnect(() => {
   const pane = getTabPane('projects');
   if (!pane) return;
-  if (pane.dataset.projectsView === 'flow-map') return; // 视图分流同上面的节点事件面
+  // 视图分流同上面的节点事件面（delegate-chain 链视图无列表重拉面）。
+  if (pane.dataset.projectsView === 'delegate-chain') return;
   const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
   if (!scroll || !scroll.isConnected) return;
   if (scroll.dataset.projectsState === 'ready') return;

@@ -81,6 +81,20 @@ final class JevAllocator(
     )
 
   def allocate(taskText: String, catalog: List[CatalogEntry]): IO[JevAllocation] =
+    allocateFor(JevAllocator.DefaultSubject, taskText, catalog)
+
+  /**
+   * Subject-carrying form (jev-plugins 批 #1226): the composite
+   * ([[PluginAllocatorMachine]]) threads the dispatched object's id so the
+   * fallback/visibility events name the actual dispatch target instead of the
+   * generic subject. The port method above keeps the historical generic form —
+   * the shadow and any existing port consumer are byte-identical.
+   */
+  def allocateFor(
+    subject: String,
+    taskText: String,
+    catalog: List[CatalogEntry]
+  ): IO[JevAllocation] =
     if catalog.isEmpty then
       // An empty catalog is a legitimate "no capability face installed" state,
       // not a failure: the caller gets the empty set and dispatch proceeds.
@@ -99,14 +113,14 @@ final class JevAllocator(
             // string-matching the diagnostic would silently mis-classify the
             // moment a detail string is reworded.
             val kind = if err.isTimeout then JevFallbackKind.Timeout else JevFallbackKind.Failure
-            JevFallback.record(kind, "allocation", err.message)
+            JevFallback.record(kind, subject, err.message)
           case Right(selected) =>
-            JevFallback.recordSuccess("allocation", selected).as(JevAllocation.Allocated(selected))
+            JevFallback.recordSuccess(subject, selected).as(JevAllocation.Allocated(selected))
         }
         .handleErrorWith { e =>
           // Belt and braces: even a defect outside the provider's own error
           // channel must land on the fallback, never escape to the caller.
-          JevFallback.record(JevFallbackKind.Failure, "allocation", e.getClass.getSimpleName)
+          JevFallback.record(JevFallbackKind.Failure, subject, e.getClass.getSimpleName)
         }
 
   /**
@@ -181,6 +195,9 @@ object JevAllocator:
    * provider's own limit under it.
    */
   val DefaultStateCapChars: Int = 12000
+
+  /** Generic subject of the port-level `allocate` form (historical value, byte-kept). */
+  val DefaultSubject: String = "allocation"
 
   /**
    * Fixed `state` preamble, verbatim from the transferred scorer (`:62`).

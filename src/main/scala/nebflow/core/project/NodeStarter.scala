@@ -9,7 +9,6 @@ import nebflow.actor.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.{PluginMcpManager, PluginRegistry, PluginsConfig}
-import nebflow.core.skill.SkillService
 import nebflow.core.tools.BgTaskRegistry
 import nebflow.shared.{Message, NebflowLogger, PathUtil}
 
@@ -495,64 +494,11 @@ private[project] trait NodeStarter:
    * 文件拆分前的引用，已订正）；闸 D 在 `PluginMcpManager.revalidate`。
    */
   private def prepareNodePlugins(node: NodeDef): IO[Either[String, NodeEngine.PluginPreparation]] =
-    PluginsConfig.enabled.flatMap {
-      case false => IO.pure(Right(NodeEngine.PluginPreparation.empty))
-      case true =>
-        if node.plugins.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty))
-        else
-          node.plugins.traverse(PluginRegistry.resolve).flatMap { resolved =>
-            val errors = resolved.collect { case Left(e) => e }
-            if errors.nonEmpty then IO.pure(Left(errors.mkString(" | ")))
-            else
-              val defs = resolved.collect { case Right(d) => d }
-              defs.traverse(injectedPluginBlock).map { blocks =>
-                val inner = blocks.collect { case Right(b) if b.nonEmpty => b }
-                Right(
-                  NodeEngine.PluginPreparation(
-                    injectedBlock =
-                      if inner.isEmpty then ""
-                      else s"<injected-plugins>\n${inner.mkString("\n\n")}\n</injected-plugins>",
-                    mcpPlugins = defs.filter(_.mcpServers.nonEmpty),
-                    builtinTools = defs.flatMap(_.toolsExtension).distinct
-                  )
-                )
-              }
-            end if
-          }
-    }
-
-  /**
-   * 逐 plugin 逐 skill 读 SKILL.md 全文（frontmatter 去除 + ${SKILL_DIR} 替换，
-   * SkillService.loadSkill 单点复用——修复「模型自读拿不到替换」缺口，§B.4 ②）。
-   * 文件不可读 → Left（节点级失败，不静默降级）。
-   *
-   * 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：注入块里的
-   * `{{data_root}}` 在此渲染为实例数据根（PathUtil.substituteDataRoot，与
-   * AgentCore.buildSystemPrompt / DispatcherContextCatalog.render 同一实现）——
-   * 隔离实例的节点看到的是**本实例**的 home 路径，而非固定 `~/.nebflow`。
-   */
-  private def injectedPluginBlock(defn: PluginRegistry.PluginDef): IO[Either[String, String]] =
-    if defn.skills.isEmpty then IO.pure(Right(""))
-    else
-      defn.skills
-        .traverse { sk =>
-          SkillService.loadSkill(sk.path).flatMap {
-            case Some(content) =>
-              IO.pure[Either[String, String]](Right(s"""<plugin name="${defn.name}" skill="${sk.name}">\n${PathUtil
-                  .substituteDataRoot(content.content)}\n</plugin>"""))
-            case None =>
-              IO.pure[Either[String, String]](
-                Left(
-                  s"Plugin '${defn.name}' skill '${sk.id}' file unreadable: ${sk.path} — allocation refused (no silent degradation)"
-                )
-              )
-          }
-        }
-        .map { blocks =>
-          blocks.find(_.isLeft) match
-            case Some(Left(err)) => Left(err)
-            case _ => Right(blocks.collect { case Right(b) => b }.mkString("\n\n"))
-        }
+    // jev-plugins 批 #1226：解析块与 S9 分配分支单点迁至 PluginInjection（delegate
+    // spawn 腿与步级会话同源——「prepareNodePlugins 等价路径」单一真相源）。本处
+    // 仅传引擎作用域事实：delegate 作用域引擎（delegateScope=true）空声明走分配面，
+    // per-project 引擎逐字节旧行为。
+    PluginInjection.forNode(node, delegateScope = delegateScope, scopeKey = rootSessionId)
 
   /**
    * 内容面运行时重验（§B.5 信任联动，ProjectActor.TtlTick 30s 驱动）：停用**被封禁**

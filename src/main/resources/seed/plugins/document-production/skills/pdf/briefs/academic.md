@@ -1007,7 +1007,7 @@ After installing, verify: `tectonic --version`. The `_find_tectonic()` function 
 
 ---
 
-> **⚠️ Legacy Note:** Academic covers previously used the ReportLab canvas *recipe* API (cover_recipe_A/B/C/D/L) and, later, HTML/Playwright templates. Both are **deprecated**. Academic covers now use the ReportLab **cover engine** `scripts/cover_render.py` (templates 06–09; see `typesetting/cover.md` and the pipeline near the top of this file). Do NOT hand-write cover canvas code or cover HTML.
+> **⚠️ Cover Engine Note:** Academic covers use the ReportLab **cover engine** `scripts/cover_render.py` (templates 06–09; see `typesetting/cover.md` and the pipeline near the top of this file). Do NOT hand-write cover canvas code or cover HTML.
 
 ### ⚠️ Post-Cover Generation Checks (Mandatory)
 

@@ -283,45 +283,60 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     val cleanup = IO { deleteTree(root); () }
     server(policy).flatMap { (port, stop) =>
       IO {
-        val ctx = nebflow.core.tools.ToolContext(projectRoot = os.pwd.toString)
+        // pop-upgrade: the identity gate needs the Nebula root ctx (fail-closed otherwise)
+        val ctx = nebflow.core.tools.ToolContext(
+          sessionId = Some("nfpath-encoding-probe-d"),
+          sessionStore = None,
+          agentDef = Some(nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)),
+          agentLibrary = None,
+          agentActorRef = None,
+          actorSystem = None,
+          sharedResources = None,
+          depth = 0,
+          messages = Nil,
+          wsSend = None,
+          projectRoot = os.pwd.toString
+        )
         // TWO spellings of the SAME reference, because the author's two reported
         // failures differ exactly in the spelling they arrived with (① a `%20`
         // form, ② the raw space form — verifier §49: the raw form is the one the
         // baseline fetch leg was green on, so the equivalence must be pinned on
         // it too, not only on the encoded form).
+        // pop-upgrade (2026-10-03): the tool builds NO URL any more — a media
+        // item carries its absolute path and the FRONTEND builds the query
+        // (nfTicket.ticketUrl, encodeURIComponent ⇒ the canonical %20 form).
+        // The fixture is a small .mp4: never inlineable ⇒ always the ticket leg,
+        // so the form-equivalence question survives verbatim.
+        val video = root.resolve("space dir/tool clip.mp4")
+        Files.write(video, ClipBytes)
+        val videoReal = video.toRealPath().toString
+        val clipSha = sha256(ClipBytes)
         val spellings = List(
-          "pct20" -> image.toString.replace(" ", "%20"),
-          "raw" -> image.toString
+          "pct20" -> video.toString.replace(" ", "%20"),
+          "raw" -> video.toString
         )
         spellings.foreach { (label, ref) =>
-          val input = JsonObject(
-            "html" -> io.circe.Json.fromString(s"""<link rel="stylesheet" href="$ref"/>"""),
-            "title" -> io.circe.Json.fromString("T")
-          )
+          val input = JsonObject("filePath" -> io.circe.Json.fromString(ref))
           val result =
-            nebflow.core.tools.CardTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
+            nebflow.core.tools.PopTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
           val payload = io.circe.parser
-            .parse(result.stripPrefix("___CARD_HTML___"))
-            .getOrElse(fail("the card payload must be JSON"))
-          val proxied = payload.hcursor.downField("fileRefs").get[Int]("proxied").toOption.getOrElse(-1)
-          val html = payload.hcursor.get[String]("html").toOption.getOrElse("")
-          val url = raw"""/api/nf-file\?path=([^&"')]+)""".r
-            .findFirstMatchIn(html)
-            .map(_.group(1))
-            .getOrElse(fail(s"no proxied URL in: ${html.take(200)}"))
-          val real = image.toRealPath().toString
-          val ticket = store.issue("spec", real).unsafeRunSync().token
+            .parse(result.stripPrefix(nebflow.core.tools.PopTool.Sentinel))
+            .getOrElse(fail("the pop payload must be JSON"))
+          val referenced = payload.hcursor.downField("fileRefs").get[Int]("referenced").toOption.getOrElse(-1)
+          // the frontend-built URL: encodeURIComponent semantics = %20 for a space
+          val url = videoReal.replace(" ", "%20")
+          val ticket = store.issue("spec", videoReal).unsafeRunSync().token
           val (status, body) = httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$url&ticket=$ticket")
           println(
-            s"PROBE[equivalence][$label] ref=${ref.take(90)} proxied=$proxied endpointStatus=$status " +
+            s"PROBE[equivalence][$label] ref=${ref.take(90)} referenced=$referenced endpointStatus=$status " +
               s"bytes=${body.length} sha256=${sha256(body)}"
           )
-          assertEquals(proxied, 1, s"$label: the tool-side gate counted the reference")
+          assertEquals(referenced, 1, s"$label: the tool-side gate counted the reference")
           assertEquals(status, 200, s"$label: the endpoint must serve exactly what the gate counted")
-          assertEquals(sha256(body), FixtureSha, s"$label: same bytes ⇒ the two judgments agree")
+          assertEquals(sha256(body), clipSha, s"$label: same bytes ⇒ the two judgments agree")
           assert(
             url.contains("%20") && !url.contains(" ") && !url.contains("+"),
-            s"$label: the emitted URL must be the canonical %20 form, got: ${url.take(120)}"
+            s"$label: the frontend URL must be the canonical %20 form, got: ${url.take(120)}"
           )
         }
       }.guarantee(stop).guarantee(cleanup)
@@ -452,17 +467,32 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   end snapshotCredential
 
   /** Tool face of ONE reference: (`proxied`, `inlined`, warnings as (reason, detail)). */
+  /** Tool face of ONE media path via the pop-upgrade PopTool payload:
+    * (`referenced`, `inlined`, warnings as (reason, detail)). The old Card
+    * harness retired with the tool (pop-upgrade batch 2026-10-03); PopTool's
+    * media legs are FileRefs' remaining consumer, so the equivalence legs run
+    * through it (Nebula root ctx — the identity gate needs it). */
   private def toolFace(refValue: String): (Int, Int, List[(String, String)]) =
-    val ctx = nebflow.core.tools.ToolContext(projectRoot = os.pwd.toString)
-    val input = JsonObject(
-      "html" -> Json.fromString(s"""<img src="$refValue"/>"""),
-      "title" -> Json.fromString("T")
+    val buf = scala.collection.mutable.ListBuffer.empty[io.circe.Json]
+    val ctx = nebflow.core.tools.ToolContext(
+      sessionId = Some("nfpath-encoding-probe"),
+      sessionStore = None,
+      agentDef = Some(nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)),
+      agentLibrary = None,
+      agentActorRef = None,
+      actorSystem = None,
+      sharedResources = None,
+      depth = 0,
+      messages = Nil,
+      wsSend = Some((j: io.circe.Json) => cats.effect.IO { buf += j }),
+      projectRoot = ""
     )
+    val input = JsonObject("filePath" -> Json.fromString(refValue))
     val result =
-      nebflow.core.tools.CardTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
+      nebflow.core.tools.PopTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
     val payload = io.circe.parser
-      .parse(result.stripPrefix("___CARD_HTML___"))
-      .getOrElse(fail(s"the card payload must be JSON: ${result.take(200)}"))
+      .parse(result.stripPrefix(nebflow.core.tools.PopTool.Sentinel))
+      .getOrElse(fail(s"the pop payload must be JSON: ${result.take(200)}"))
     val counts = payload.hcursor.downField("fileRefs")
     val warnings = payload.hcursor
       .downField("warnings")
@@ -475,7 +505,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         )
       }
     (
-      counts.get[Int]("proxied").getOrElse(-1),
+      counts.get[Int]("referenced").getOrElse(-1),
       counts.get[Int]("inlined").getOrElse(-1),
       warnings
     )
@@ -635,7 +665,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         )
         assertLegRefused(
           leg = "leg-inode",
-          names = List("hard link big.png", "hard link big.json"),
+          names = List("hard link big.png"), // pop-upgrade: the .json spelling is a file card (readFile route), not an nf-file reference
           dir = dir,
           build = (link, _) => Files.createLink(link, target),
           port = port,
@@ -660,7 +690,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         Files.write(realTarget, PngBytes)
         assertLegRefused(
           leg = "leg-realpath-ext",
-          names = List("img link big.png", "img link big.json"),
+          names = List("img link big.png"), // pop-upgrade: the .json spelling is a file card (readFile route), not an nf-file reference
           dir = dir,
           build = (link, d) => Files.createSymbolicLink(link, d.resolve("target big.xyz")),
           port = port,
@@ -708,4 +738,13 @@ object NfPathEncodingProbeSpec:
 
   val FixtureSha: String =
     java.security.MessageDigest.getInstance("SHA-256").digest(PngBytes).map("%02x".format(_)).mkString
+
+  /**
+   * A small fixture for the pop-upgrade equivalence leg (test D): a `.mp4`
+   * NAMED file whose bytes are opaque to the endpoint — the nf-file route
+   * serves bytes by extension whitelist + namespace, never by content. A video
+   * is never inlineable, so the item always rides the ticket leg and the
+   * tool⇔endpoint form equivalence stays pinned.
+   */
+  val ClipBytes: Array[Byte] = Array.tabulate(512)(i => ((i * 31) & 0xff).toByte)
 end NfPathEncodingProbeSpec

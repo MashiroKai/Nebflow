@@ -108,18 +108,21 @@ object ProjectStore:
   end migrateAgentMd
 
   /**
-   * List all projects. 归档项目不在列（迁移方案 v2 §6.1）：本函数是全仓唯一列表源——
-   * 面板 API（RestApiRoutes GET /projects）与启动挂载（GatewayMain startupMount）
-   * 同源消费，源头过滤 → 归档即从面板消失 + 重启不自动挂载。
-   * 恢复显示 = 手工删除 project.json 中 archived/archivedAt 两键（单程语义，无自动路径）。
+   * List all projects. 归档与已卸载项目不在列（迁移方案 v2 §6.1 归档 + N2 project-tool
+   * 批 unmount，2026-10-06）：本函数是全仓唯一列表源——面板 API（GET /projects）与
+   * 启动挂载（GatewayMain startupMount）同源消费，源头过滤 ⇒ 归档即从面板消失 +
+   * 重启不自动挂载；unmount 同面（先停后卸，硬卸载档）⇒ 卸载即从面板消失 + 重启
+   * 不自动挂载（「项目列表过滤＋startupMount 跳过」单点）。
+   * 恢复显示 = 手工删除 project.json 中 archived/archivedAt（或 unmounted/unmountedAt）
+   * 两键（单程语义，无自动路径）。
    */
   def list(): IO[List[ProjectDef]] =
-    listAll().map(_.filterNot(_.archived.contains(true)))
+    listAll().map(_.filterNot(pd => pd.archived.contains(true) || pd.unmounted.contains(true)))
 
   /**
    * 全量定义（**含归档**）——同一读盘实现，list() 只在其上做归档过滤（语义零变化）。
    *
-   * 唯一消费者 = ProjectCreate 创建面的 workspace 占用扫描：占用者**含归档定义**
+   * 唯一消费者 = Project（原 ProjectCreate）创建面的 workspace 占用扫描：占用者**含归档定义**
    * （保守默认「宁误拒不误建」；该保守面由实施批分发器定，非作者逐字裁定，
    * 见报告「判据声明」节）。归档项若不参与占用扫描，就会出现「已占用 workspace
    * 被第二个 name 静默复用」——正是本批要堵的缺口。
@@ -170,6 +173,43 @@ object ProjectStore:
                 )
                 AtomicJson.writeSync(p, updated.noSpaces)
                 logger.infoSync(s"Project '$name' archived (marker written to project.json; files untouched)")
+                Right(ts)
+        end if
+      }
+
+  /**
+   * unmount 打标（N2 project-tool 批 2026-10-06，S17/⑩A 硬卸载档 · ②挂载面移除步）：
+   * 与 [[archive]] 同一手术式原位插键形状——读原始 Json → deepMerge 写入
+   * unmounted=true + unmountedAt → AtomicJson 原子写回。不走 ProjectDef 全量
+   * re-encode（derived codec 会把 None 字段编码为 null、重排既有字段布局）；手术式
+   * 插键保证存量字段逐字节稳定。零删除零移动：只重写这一个文件，workspace 与目录
+   * 不动。幂等：已卸载 → 不重写文件，返回既有 unmountedAt。调用方纪律：本方法只打标
+   * 不停任务——「先停后卸」的 ①停步由 ProjectUnmount.stopInFlight 在**前置**完成，
+   * 调用序错置即违反三步序（禁）。
+   * 返回 Right(卸载时间戳)；项目不存在/名字非法/JSON 损坏 → Left。
+   */
+  def markUnmounted(name: String): IO[Either[String, Long]] =
+    if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then
+      IO.pure(Left(s"Invalid project name: '$name'"))
+    else
+      IO.blocking {
+        val p = projectJsonPath(name)
+        if !os.exists(p) then Left(s"Project '$name' not found")
+        else
+          jsonParse(os.read(p)) match
+            case Left(e) => Left(s"Corrupt project.json for '$name': $e")
+            case Right(json) =>
+              val alreadyUnmounted = json.hcursor.downField("unmounted").as[Boolean].toOption.contains(true)
+              if alreadyUnmounted then
+                val at = json.hcursor.downField("unmountedAt").as[Long].toOption.getOrElse(System.currentTimeMillis())
+                Right(at)
+              else
+                val ts = System.currentTimeMillis()
+                val updated = json.deepMerge(
+                  Json.obj("unmounted" -> Json.fromBoolean(true), "unmountedAt" -> Json.fromLong(ts))
+                )
+                AtomicJson.writeSync(p, updated.noSpaces)
+                logger.infoSync(s"Project '$name' unmounted (marker written to project.json; files untouched)")
                 Right(ts)
         end if
       }

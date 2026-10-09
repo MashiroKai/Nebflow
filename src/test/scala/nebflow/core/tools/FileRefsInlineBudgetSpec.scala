@@ -70,90 +70,6 @@ class FileRefsInlineBudgetSpec extends FunSuite:
   private def dataUriOf(p: Path): String =
     FileRefs.readAsDataUri(p).fold(detail => fail(s"expected a data URI for $p: $detail"), identity)
 
-  // ── Card harness ────────────────────────────────────────────────────────
-
-  private val cardSentinel = "___CARD_HTML___"
-  private val cardCtx = ToolContext(projectRoot = os.pwd.toString)
-
-  // Data-root isolation (card-persist batch): the Card harness below renders
-  // cards, and rendering now writes the source to `<dataRoot>/cards/` — see
-  // `CardToolFileRefSpec` for the criterion.
-  private var savedRoot: os.Path = scala.compiletime.uninitialized
-  private var isolatedRoot: Path = null
-
-  override def beforeEach(context: BeforeEach): Unit =
-    super.beforeEach(context)
-    savedRoot = nebflow.shared.PathUtil.dataRoot
-    isolatedRoot = Files.createTempDirectory("inline-budget-dataroot-")
-    nebflow.shared.PathUtil.setDataRoot(os.Path(isolatedRoot, os.pwd))
-
-  override def afterEach(context: AfterEach): Unit =
-    nebflow.shared.PathUtil.setDataRoot(savedRoot)
-    Files
-      .walk(isolatedRoot)
-      .sorted(java.util.Comparator.reverseOrder())
-      .iterator()
-      .asScala
-      .foreach(Files.deleteIfExists)
-    super.afterEach(context)
-
-  private def card(html: String): Json =
-    val input = JsonObject("html" -> Json.fromString(html), "title" -> Json.fromString("T"))
-    val result = CardTool.call(input, cardCtx).unsafeRunSync().getOrElse(fail("expected Right"))
-    assert(result.startsWith(cardSentinel), s"payload must start with the sentinel: ${result.take(60)}")
-    io.circe.parser.parse(result.substring(cardSentinel.length)) match
-      case Right(json) => json
-      case Left(err) => fail(s"everything after the sentinel must be pure JSON: $err")
-
-  private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
-  private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
-
-  private def countOf(p: Json, field: String): Int =
-    p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
-  private def encode(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
-
-  // ── Pop harness (same shape as PopToolFileRefSpec: the identity gate needs a
-  //    Nebula root ctx) ─────────────────────────────────────────────────────
-
-  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
-
-  private def captureCtx(buf: scala.collection.mutable.ListBuffer[Json]): ToolContext =
-    ToolContext(
-      sessionId = Some("inline-budget-test"),
-      sessionStore = None,
-      agentDef = Some(nebulaDef),
-      agentLibrary = None,
-      agentActorRef = None,
-      actorSystem = None,
-      sharedResources = None,
-      depth = 0,
-      messages = Nil,
-      wsSend = Some((j: Json) => IO { buf += j }),
-      projectRoot = ""
-    )
-
-  private def popPath(file: Path): (String, Json) =
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
-      case Left(err) => fail(s"Pop failed: ${err.message}")
-      case Right(text) => (text, buf.head)
-
-  private def popHtml(dir: Path, html: String): (String, Json, String) =
-    val file = dir.resolve("report.html")
-    writeText(file, html)
-    val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
-      case Left(err) => fail(s"Pop failed: ${err.message}")
-      case Right(text) =>
-        val item = buf.head.hcursor.downField("item")
-        (text, buf.head, item.get[String]("content").toOption.getOrElse(""))
-
-  private def itemField(msg: Json, field: String): Option[String] =
-    msg.hcursor.downField("item").get[String](field).toOption
-
-  private def itemCounter(msg: Json, field: String): Int =
-    msg.hcursor.downField("item").downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
-
   // ── ① 常量 ──────────────────────────────────────────────────────────────
 
   test("budget: the cumulative cap is 40,000 chars and the per-image 5MB gate is untouched") {
@@ -253,26 +169,44 @@ class FileRefsInlineBudgetSpec extends FunSuite:
     }
   }
 
-  // ── ④ Card：文档顺序 + 累计账 ────────────────────────────────────────────
+  // ── ④ Pop：一次调用内的顺序账（pop-upgrade 批载荷面） ────────────────────
 
-  test("Card: two images whose total fits the cap are both embedded (39,996 chars)") {
-    withTempDir { dir =>
-      val a = writeSized(dir.resolve("a.png"), 14982, 0x41)
-      val b = writeSized(dir.resolve("b.png"), 14982, 0x42)
-      val each = FileRefs.dataUriChars(14982, "png")
-      assertEquals(each, 19998, "14,982 bytes ⇒ 19,998 chars of data: URI")
-      assert(each * 2 <= FileRefs.MaxInlinePayloadChars, "the fixture pair must fit the cap")
+  /** Pop harness (the identity gate needs a Nebula root ctx) → parsed payload. */
+  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
 
-      val p = card(s"""<img src="${a.toString}"/><img src="${b.toString}"/>""")
-      assertEquals(countOf(p, "inlined"), 2)
-      assertEquals(countOf(p, "proxied"), 0)
-      assertEquals(countOf(p, "deferred"), 0)
-      assertEquals(warningsOf(p), Nil)
-      assert(htmlOf(p).contains(dataUriOf(a)) && htmlOf(p).contains(dataUriOf(b)))
-    }
-  }
+  private def popPayload(paths: List[Path]): Json =
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    val ctx = ToolContext(
+      sessionId = Some("inline-budget-test"),
+      sessionStore = None,
+      agentDef = Some(nebulaDef),
+      agentLibrary = None,
+      agentActorRef = None,
+      actorSystem = None,
+      sharedResources = None,
+      depth = 0,
+      messages = Nil,
+      wsSend = Some((j: Json) => IO { buf += j }),
+      projectRoot = ""
+    )
+    val input = JsonObject("filePath" -> Json.arr(paths.map(p => p.toString.asJson)*))
+    PopTool.call(input, ctx).unsafeRunSync() match
+      case Left(err) => fail(s"Pop failed: ${err.message}")
+      case Right(raw) =>
+        assert(raw.startsWith(PopTool.Sentinel), s"payload sentinel expected: ${raw.take(60)}")
+        io.circe.parser.parse(raw.substring(PopTool.Sentinel.length)) match
+          case Right(json) => json
+          case Left(err)   => fail(s"payload must be pure JSON: $err")
 
-  test("Card: the image past the cap keeps its /api/nf-file reference (40,004 > 40,000 ⇒ deferred=1)") {
+  private def itemCounts(p: Json): (Boolean, Boolean) =
+    val items = p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+    val srcs = items.map(_.hcursor.get[String]("src").toOption)
+    (srcs(0).isDefined, srcs(1).isDefined)
+
+  private def countOf(p: Json, field: String): Int =
+    p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
+
+  test("Pop batch: the image past the cap is `referenced`, never warned — the FIRST path takes the budget"):
     withTempDir { dir =>
       val a = writeSized(dir.resolve("a.png"), 14983, 0x41)
       val b = writeSized(dir.resolve("b.png"), 14983, 0x42)
@@ -280,96 +214,41 @@ class FileRefsInlineBudgetSpec extends FunSuite:
       assertEquals(each, 20002, "14,983 bytes ⇒ 20,002 chars of data: URI")
       assert(each * 2 > FileRefs.MaxInlinePayloadChars, "the fixture pair must overflow the cap by 4 chars")
 
-      val p = card(s"""<img src="${a.toString}"/><img src="${b.toString}"/>""")
+      val p = popPayload(List(a, b))
       assertEquals(countOf(p, "inlined"), 1)
-      assertEquals(countOf(p, "deferred"), 1, "the over-budget item is counted deferred, not warned")
-      assertEquals(countOf(p, "proxied"), 1, "…and it is a proxy reference now — both counters, no overlap")
+      assertEquals(countOf(p, "referenced"), 1, "the over-budget item rides the ticket leg, counted only")
       assertEquals(countOf(p, "failed"), 0)
-      assertEquals(warningsOf(p), Nil, "an over-budget image is not a defect: the reference leg still renders it")
-      assert(htmlOf(p).contains(dataUriOf(a)), "the FIRST reference in document order takes the budget")
-      assert(htmlOf(p).contains(s"/api/nf-file?path=${encode(b.toString)}"), htmlOf(p).take(200))
-      assert(!htmlOf(p).contains(dataUriOf(b)), "the over-budget image must not be embedded")
+      assertEquals(p.hcursor.downField("warnings").as[List[Json]].toOption.getOrElse(Nil), Nil,
+        "an over-budget image is not a defect: the ticket leg still renders it")
+      assertEquals(itemCounts(p), (true, false), "input order decides who is embedded (first come, first served)")
     }
-  }
 
-  test("Card: the cap is spent in DOCUMENT ORDER — reversing the references swaps who is embedded") {
+  test("Pop batch: the budget is PER CALL — two separate calls each get their own 40,000"):
     withTempDir { dir =>
       val a = writeSized(dir.resolve("a.png"), 14983, 0x41)
       val b = writeSized(dir.resolve("b.png"), 14983, 0x42)
-
-      val forward = card(s"""<img src="${a.toString}"/><img src="${b.toString}"/>""")
-      val reverse = card(s"""<img src="${b.toString}"/><img src="${a.toString}"/>""")
-
-      assertEquals(countOf(forward, "inlined"), 1)
-      assertEquals(countOf(reverse, "inlined"), 1)
-      assertEquals(countOf(forward, "deferred"), 1)
-      assertEquals(countOf(reverse, "deferred"), 1)
-
-      assert(htmlOf(forward).contains(dataUriOf(a)) && !htmlOf(forward).contains(dataUriOf(b)))
-      assert(htmlOf(reverse).contains(dataUriOf(b)) && !htmlOf(reverse).contains(dataUriOf(a)))
-      // Same inputs, same rule ⇒ the outcome is a pure function of (order, sizes).
-      assertEquals(countOf(forward, "inlined") + countOf(forward, "deferred"), 2)
-      assertEquals(countOf(reverse, "inlined") + countOf(reverse, "deferred"), 2)
+      assertEquals(countOf(popPayload(List(a)), "inlined"), 1)
+      assertEquals(countOf(popPayload(List(b)), "inlined"), 1)
+      assertEquals(countOf(popPayload(List(a)), "referenced"), 0)
     }
-  }
 
-  test("Card: the budget is PER CALL — two separate calls each get their own 40,000") {
-    withTempDir { dir =>
-      val a = writeSized(dir.resolve("a.png"), 14983, 0x41)
-      val b = writeSized(dir.resolve("b.png"), 14983, 0x42)
-      // Each call embeds its own first image: the first call's spend must not
-      // leak into the second (a shared/static budget would starve it).
-      assertEquals(countOf(card(s"""<img src="${a.toString}"/>"""), "inlined"), 1)
-      assertEquals(countOf(card(s"""<img src="${b.toString}"/>"""), "inlined"), 1)
-      assertEquals(countOf(card(s"""<img src="${a.toString}"/>"""), "deferred"), 0)
-    }
-  }
-
-  // ── ⑤ Pop：HTML 面 + 直开图片腿 ──────────────────────────────────────────
-
-  test("Pop HTML face: the image past the cap is counted `deferred`, never warned") {
-    withTempDir { dir =>
-      val a = writeSized(dir.resolve("a.png"), 14983, 0x41)
-      val b = writeSized(dir.resolve("b.png"), 14983, 0x42)
-      val (result, msg, content) =
-        popHtml(dir, s"""<html><img src="${a.toString}"/><img src="${b.toString}"/></html>""")
-      // Pop's counter naming is the shipped one: `fileRefsJson(o.inlined, …)` puts
-      // the INLINED count in the `proxied` slot (PopTool.refPayload), and
-      // `deferred` counts what the reference leg serves instead. Read them as
-      // they ship — this batch adds no new Pop counter, only a second source of
-      // `deferred` (the cumulative budget).
-      assertEquals(itemCounter(msg, "proxied"), 1)
-      assertEquals(itemCounter(msg, "deferred"), 1)
-      assertEquals(itemCounter(msg, "failed"), 0)
-      assert(content.contains(dataUriOf(a)), "the first image is embedded")
-      assert(
-        content.contains(b.toString),
-        "the over-budget image keeps its raw src for the Canvas /api/nf-file rewrite"
-      )
-      assert(!content.contains(dataUriOf(b)))
-      assert(result.contains("fileRefs:"), "the counters ride in the result line when anything was deferred")
-      assert(!result.contains("warnings:"), "a deferred image is not a defect — no warnings section")
-    }
-  }
-
-  test("Pop direct-open: an image ≤29,982 bytes rides inline; 29,984 bytes is past the cap (metadata-only)") {
+  test("Pop direct-open: an image ≤29,982 bytes rides inline; 29,984 bytes is past the cap (ticket leg)"):
     withTempDir { dir =>
       // 29,982 B ⇒ 39,998 chars (fits); 29,984 B ⇒ 40,002 chars (over by 2).
       assertEquals(FileRefs.dataUriChars(29982, "png"), 39998)
       assertEquals(FileRefs.dataUriChars(29984, "png"), 40002)
 
       val fits = writeSized(dir.resolve("fits.png"), 29982, 0x41)
-      val (_, msgFits) = popPath(fits)
-      assert(itemField(msgFits, "objectUrl").isDefined, "inside the cap the bytes ride in the payload")
+      val pFits = popPayload(List(fits))
+      val itemsFits = pFits.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+      assert(itemsFits.head.hcursor.get[String]("src").toOption.isDefined, "inside the cap the bytes ride in the payload")
 
       val over = writeSized(dir.resolve("over.png"), 29984, 0x42)
-      val (_, msgOver) = popPath(over)
-      assertEquals(
-        itemField(msgOver, "objectUrl"),
-        None,
-        "past the cap: metadata only — the ticket leg fetches it (unchanged from the >5MB path)"
-      )
-      assertEquals(msgOver.hcursor.downField("item").get[Long]("size").toOption, Some(29984L))
+      val pOver = popPayload(List(over))
+      val itemsOver = pOver.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+      assertEquals(itemsOver.head.hcursor.get[String]("src").toOption, None,
+        "past the cap: metadata only — the ticket leg fetches it")
+      assertEquals(itemsOver.head.hcursor.get[Long]("size").toOption, Some(29984L))
+      assertEquals(countOf(pOver, "referenced"), 1)
     }
-  }
 end FileRefsInlineBudgetSpec

@@ -249,7 +249,7 @@ object SandboxRuntime:
       case None =>
         if !cfg.bashFailIfUnavailable then
           logger.warnSync(
-            "sandbox.bash.failIfUnavailable 已退役（design §4.2 U7：provider 不可用一律显式失败，不静默降级）——本配置项不再生效"
+            "sandbox.bash.failIfUnavailable 不是生效配置（design §4.2 U7：provider 不可用一律显式失败，不静默降级）——本配置项不生效"
           )
         if !cfg.enabled then
           activeProvider = SandboxProvider.Host

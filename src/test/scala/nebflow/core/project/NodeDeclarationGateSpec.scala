@@ -168,15 +168,19 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
     yield (ws, system, res, rt, ctx)
 
-  // ── ① merge sink 建位必须带 out ─────────────────────────────
+  // ── ① merge 建位面 seal（N1 刀2 D2 重写，2026-10-06）─────────
+  // 前身（merge sink 需带 out / dangling=true 令牌放行）随 merge=true 建位与
+  // dangling 参数一并退役：merge=true 键在场 = 首段 seal 拒（NODE_MERGE_UNSUPPORTED
+  // 文案逐字沿旧）；dangling 键在场 = seal 拒（NODE_DANGLING_UNSUPPORTED）；空 out
+  // （无任何声明令牌）= 合法（out nullable 裁定原样）。
 
   test(
-    "① merge sink without out and without dangling=true is refused (NODE_MERGE_SINK_NEEDS_OUT, zero writes); dangling=true declares it; merge WITH out unaffected"
+    "① merge=true on create/edit → the seal (NODE_MERGE_UNSUPPORTED, zero writes); dangling=true → the dangling seal; plain empty-out create stays legal (out nullable ruling intact)"
   ) {
     for
       (ws, system, _, rt, ctx) <- mkEnv("m1")
       _ <- seed(rt, mkNode("n-up1", "up1", NodeLifecycle.Wiring))
-      // 负控：merge + 空 out + 无声明 ⇒ 拒
+      // 负控①：merge + 空 out（旧 sink-a 形态）⇒ seal
       r1 <- nodeEdit(
         nodeInput(
           "decl-m1",
@@ -189,19 +193,7 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
       )
       // 零写断言：被拒建位不落库、上游零改边
       afterReject <- rt.store.snapshot
-      // 正控：同形态 + dangling=true ⇒ 放行（C-ii 令牌）
-      r2 <- nodeEdit(
-        nodeInput(
-          "decl-m1",
-          "sink-b",
-          "description" -> Json.fromString("landing sink"),
-          "merge" -> Json.fromBoolean(true),
-          "in" -> Json.fromString("n-up1"),
-          "dangling" -> Json.fromBoolean(true)
-        ),
-        ctx
-      )
-      // 回归钉：merge 带 out ⇒ 与本批前完全一致（零扰动）
+      // 负控②：merge + out 的旧「回归钉」形态也 seal（键在场即拒）
       r3 <- nodeEdit(
         nodeInput(
           "decl-m1",
@@ -213,12 +205,32 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
         ),
         ctx
       )
+      // 负控③：dangling=true 令牌 ⇒ dangling seal
+      r2 <- nodeEdit(
+        nodeInput(
+          "decl-m1",
+          "sink-b",
+          "description" -> Json.fromString("landing sink"),
+          "dangling" -> Json.fromBoolean(true)
+        ),
+        ctx
+      )
+      // 正控：空 out 无任何令牌 ⇒ 合法（out nullable 裁定原样，2026-09-12）
+      r4 <- nodeEdit(
+        nodeInput(
+          "decl-m1",
+          "sink-d",
+          "description" -> Json.fromString("plain task node, empty out"),
+          "task" -> Json.fromString("plain work, no exit yet")
+        ),
+        ctx
+      )
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(
-        r1.left.exists(_.contains("NODE_MERGE_SINK_NEEDS_OUT")),
-        s"merge sink without out must be refused, got: $r1"
+        r1.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"merge=true create must hit the seal, got: $r1"
       )
       assert(!afterReject.nodes.values.exists(_.name == "sink-a"), "the refused sink must not persist")
       assertEquals(
@@ -226,22 +238,29 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
         Nil,
         "the refused create must not touch the upstream's out (zero mirror writes)"
       )
-      assert(r2.isRight, s"merge sink + dangling=true must pass (C-ii token), got: $r2")
-      assert(r2.exists(_.contains("dangling=true")), s"the receipt must mark the dangling declaration, got: $r2")
-      val sinkB = s.nodes.values.find(_.name == "sink-b")
-      assert(sinkB.exists(_.merge), "sink-b is a merge node")
-      assert(sinkB.exists(_.out.isEmpty), "sink-b stays dangling (no out)")
-      assert(r3.isRight, s"merge sink WITH out must stay legal, got: $r3")
+      assert(
+        r3.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"merge=true WITH out must hit the same seal (key presence, not shape), got: $r3"
+      )
+      assert(
+        r2.left.exists(_.contains("NODE_DANGLING_UNSUPPORTED")),
+        s"dangling=true must hit the dangling seal, got: $r2"
+      )
+      assert(r4.isRight, s"plain empty-out create must stay legal (no token needed), got: $r4")
+      val d = s.nodes.values.find(_.name == "sink-d")
+      assert(d.exists(_.out.isEmpty), "sink-d stays dangling (no out), no declaration required")
+      assert(!s.nodes.values.exists(_.merge), "no merge node can be born anymore")
+      assertEquals(s.nodes.values.count(n => n.name == "sink-a" || n.name == "sink-b" || n.name == "sink-c"), 0)
   }
 
   // ── ② dangling 令牌面（⚠ 升级 + 审计；task 节点悬空合法零回退）──
 
   test(
-    "② dangling=true upgrades the wiring-gap notice and logs 'dangling-declared'; task-node dangling WITHOUT the token stays legal (2026-09-12 ruling intact)"
+    "② dangling=true → the dangling seal (declaration face retired; the undeclared empty-out create keeps the wiring-gap warning, out nullable ruling intact)"
   ) {
     for
       (ws, system, _, rt, ctx) <- mkEnv("d2")
-      // 负对照（合法形态回归钉）：task 节点空 out 无令牌 ⇒ 仍合法，⚠ 行是不带 declared 标记的原文案
+      // 正控（合法形态回归钉）：task 节点空 out 无令牌 ⇒ 仍合法，⚠ 行是不带 declared 标记的原文案
       r1 <- nodeEdit(
         nodeInput(
           "decl-d2",
@@ -251,18 +270,18 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
         ),
         ctx
       )
-      // 正面：dangling=true ⇒ ⚠ 带 declared 标记 + 审计事件
+      // 负控：dangling=true（旧声明令牌）⇒ seal 拒
       r2 <- nodeEdit(
         nodeInput(
           "decl-d2",
           "loose-b",
           "description" -> Json.fromString("declared dangling node"),
-          "task" -> Json.fromString("work without exit"),
+          "task" -> Json.fromString("work without exit two"),
           "dangling" -> Json.fromBoolean(true)
         ),
         ctx
       )
-      bid <- rt.store.snapshot.map(_.nodes.values.find(_.name == "loose-b").map(_.id).getOrElse(""))
+      aid <- rt.store.snapshot.map(_.nodes.values.find(_.name == "loose-a").map(_.id).getOrElse(""))
       audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -272,16 +291,15 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
         r1.exists(!_.contains("(dangling=true)")),
         s"the undeclared variant must NOT carry the declared marker, got: $r1"
       )
-      assert(r2.isRight, s"declared dangling create must pass, got: $r2")
-      assert(r2.exists(_.contains("(dangling=true)")), s"the receipt must carry the declared-dangling marker, got: $r2")
       assert(
-        audit.exists((t, id, _) => t == "dangling-declared" && id == bid),
-        s"a dangling-declared audit event must be logged for the declared create, got: $audit"
+        r2.left.exists(_.contains("NODE_DANGLING_UNSUPPORTED")),
+        s"dangling=true must hit the seal (the declaration face is retired), got: $r2"
       )
       assert(
-        !audit.exists((t, id, _) => t == "dangling-declared" && id != bid),
-        s"the undeclared create must NOT be audited as dangling-declared, got: $audit"
+        !audit.exists((t, _, _) => t == "dangling-declared"),
+        s"no dangling-declared audit may be logged anymore (the token cannot pass), got: $audit"
       )
+      assert(aid.nonEmpty, "the legal create persists")
   }
 
   // ── ③ verifier 建位路由闸 + 令牌 + 镜像腿 ────────────────────

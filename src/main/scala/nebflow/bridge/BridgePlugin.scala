@@ -62,6 +62,32 @@ trait BridgeContext:
 
   /** Update (or remove) the bridge config for a specific platform on a session. */
   def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit]
+
+  // ─────────── askuser-remote P1 (2026-10-07): the interaction face ───────────
+  // Three additions, each with a NO-OP default so every pre-existing
+  // implementor (and every offline fake) keeps compiling and behaving exactly
+  // as before. The production implementor is the gateway's BridgeContext
+  // (GatewayMain), which routes to the InteractionHub — the single ask
+  // authority (A-5 拍板: 禁第二份状态) and the single answer convergence point.
+
+  /** The hub's global pending-AskUser snapshot (`ListAllPendingAsks` frames,
+    * oldest first — each carries requestId / sessionId=root / items /
+    * attachments). The bridges' open-ask AUTHORITY: a bridge keeps at most a
+    * routing cache (requestId → chat), never a second ledger. Default = no
+    * hub reachable (offline fakes) → empty. */
+  def listPendingAsks: IO[List[Json]] = IO.pure(Nil)
+
+  /** Forward a bridge-sourced answer into the hub as
+    * `InteractionAnswered(requestId, rootSessionId, payload)` — the SAME
+    * command the frontend answer leg sends, entered through a DEDICATED
+    * bridge method (never mixed with the frontend WS leg). Default no-op. */
+  def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] = IO.unit
+
+  /** Ask the hub to close one pending slot by requestId (`CloseRequest`) —
+    * the B-3 新问顶旧问 primitive: a new ask on a channel that carries one
+    * active ask per sender retires the previous one precisely (never the
+    * session-wide sweep). Default no-op. */
+  def closeInteractionRequest(requestId: String): IO[Unit] = IO.unit
 end BridgeContext
 
 /** Where an inbound message came from, expressed channel-agnostically: a stable

@@ -49,8 +49,9 @@ import scala.concurrent.duration.*
  *  - S4 上游 running 时建 merge 节点：in 声明改接后，晚完成的按 completed 计入，
  *    barrier 归零触发合并真实落地（完成即投递——无人工 hold 闸）。
  *
- * 附 T0：NodeEdit create 校验（merge+worktree 拒绝；零上游 merge 拒绝；merge=true
- * 落库（in=<id> 合法顺序）；归档节点拒设 merge）。
+ * 附 T0：NodeEdit merge 建位 seal（N1 刀2 D2：merge=true/worktree/dangling 键在场
+ * 一律 NODE_*_UNSUPPORTED 拒——原「校验顺序」族随建位面退役）＋ 播种式 barrier
+ * 断言（seedMerge 直种 + 上游 running 窗口内不自动启动）。
  */
 class NodeMergeSpec extends CatsEffectSuite:
 
@@ -356,6 +357,60 @@ class NodeMergeSpec extends CatsEffectSuite:
 
   private def idOf(rt: ProjectRuntime, name: String): IO[String] = byName(rt, name).map(_.id)
 
+  // ── N1 刀2（2026-10-06）：merge 建位 seal 后的播种基建 ──
+  // NodeEdit 的 merge=true 建位已 seal（D2），本 spec 的主角（barrier 触发语义
+  // S1-S4 + blocked/failed 分流 S2/S3）是**引擎面**行为——存量 merge 节点照常
+  // 工作（cleanup 批前）。播种 = 存储面直种 NodeDef（in 镜像 §2.3：上游 out
+  // 追加指向本节点）＋ 引擎公共结算单点（NodeEdit 创建期 D1 同一调用：
+  // deliverOutTo / mergeBlockedByUpstreamFailure）。
+  private def seedMerge(
+    rt: ProjectRuntime,
+    name: String,
+    upstreams: List[String],
+    task: String,
+    description: String
+  ): IO[String] =
+    val mergeId = "n-" + f"${scala.util.Random.nextInt(0x1000000)}%06x"
+    rt.store.mutate(s =>
+      s.copy(nodes =
+        s.nodes ++
+          Map(
+            mergeId -> NodeDef(
+              id = mergeId,
+              name = name,
+              agent = "test-agent",
+              task = Some(task),
+              description = Some(description),
+              status = NodeLifecycle.Wiring,
+              in = upstreams,
+              out = List(OutEdge.root),
+              merge = true,
+              createdAt = System.currentTimeMillis()
+            )
+          ) ++
+          upstreams.map(up => up -> s.nodes(up).copy(out = s.nodes(up).out :+ OutEdge(to = mergeId))).toMap
+      )
+    ) *> IO.pure(mergeId)
+
+  /** 创建期 D1 保留投递的引擎公共单点（NodeEdit createNode 同一循环，逐字同判据）。 */
+  private def settleRetained(rt: ProjectRuntime, mergeId: String): IO[Unit] =
+    rt.store.getNode(mergeId).flatMap {
+      case None => IO.raiseError(new AssertionError(s"seeded merge '$mergeId' missing"))
+      case Some(m) =>
+        m.in
+          .foldLeft(IO.unit: IO[Unit]) { (acc, upId) =>
+            acc *> rt.store.findNode(upId).flatMap {
+              case Some(up)
+                  if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal
+                    .contains(up.status) =>
+                if m.merge && up.status == NodeLifecycle.Failed then
+                  rt.engine.mergeBlockedByUpstreamFailure(m, up, up.result.get)
+                else rt.engine.deliverOutTo(up, mergeId, up.result.get)
+              case _ => IO.unit
+            }
+          }
+    }
+
   private def waitStatus(
     rt: ProjectRuntime,
     name: String,
@@ -372,23 +427,22 @@ class NodeMergeSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  // ── T0 NodeEdit create 校验 ─────────────────────────────
+  // ── T0 NodeEdit merge 建位 seal（N1 刀2 D2）＋ 播种式 barrier 断言 ──
 
   test(
-    "T0: merge=true refuses worktree; zero-upstream merge refused (NODE_MERGE_REQUIRES_UPSTREAM); merge persists with in (legal order); archived node refuses merge"
+    "T0: merge=true (±worktree) on create/edit → the seals fire (zero writes); seeded merge with in stays un-started while its upstream runs (barrier wait, engine face)"
   ) {
     val ws = tempRoot / "ws-t0"
     os.makeDir.all(ws)
     initRepo(ws)
     val system = ActorSystem(s"merge-t0-${scala.util.Random.nextInt(100000)}")
-    // 上游 echo 延迟 1.5s：合并节点创建时上游仍 running（N2b 非自启断言的确定性窗口）
+    // 上游 echo 延迟 1.5s：合并节点播种时上游仍 running（barrier 等待语义的确定性窗口）
     val llm = MergeLlm(delayEcho = 1500.millis)
     for
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("merge-t0", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // N1: merge=true + worktree → 拒（校验顺序：merge+worktree 组合矛盾先于
-      // 零上游校验判——worktree 布尔化（flowmap-slim 批）后传 true 同样先被拦下）
+      // N1: merge=true + worktree → worktree seal 先于 merge seal（首段序：worktree→merge→dangling）
       n1 <- nodeEdit(
         nodeInput(
           "merge-t0",
@@ -401,7 +455,7 @@ class NodeMergeSpec extends CatsEffectSuite:
         ),
         ctx
       )
-      // N0: merge=true 零上游（mount-enforce 批，n-371cf932 事故形态）→ 拒
+      // N0: merge=true 零上游 → merge seal（原 NODE_MERGE_REQUIRES_UPSTREAM 校验族随建位面退役）
       n0 <- nodeEdit(
         nodeInput(
           "merge-t0",
@@ -413,8 +467,7 @@ class NodeMergeSpec extends CatsEffectSuite:
         ),
         ctx
       )
-      // N2: merge=true 落库（mount-enforce 批新合法顺序：上游先建且仍 running，
-      // 合并节点 in=<id> 后建——in 声明自动改接上游 out → 本节点）
+      // 上游先建（running 窗口）
       _ <- nodeEdit(
         nodeInput(
           "merge-t0",
@@ -427,23 +480,13 @@ class NodeMergeSpec extends CatsEffectSuite:
       )
       _ <- waitStatus(rt, "up-t0", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "up-t0")
-      n2 <- nodeEdit(
-        nodeInput(
-          "merge-t0",
-          "m2",
-          "task" -> CJson.fromString("merge-task"),
-          "description" -> CJson.fromString("merge landing sink"),
-          "out" -> CJson.fromString("Nebula"),
-          "in" -> CJson.fromString(upId),
-          "merge" -> CJson.fromBoolean(true)
-        ),
-        ctx
-      )
+      // N2（播种版）：merge 节点直种（in=<id>，上游 out 追加镜像）
+      m2Id <- seedMerge(rt, "m2", List(upId), "merge-task", "merge landing sink")
       m2 <- byName(rt, "m2")
-      // N2b: 合并节点不随创建自启（上游仍 running——barrier 等待语义，非空挂形态）
+      // N2b: 合并节点不随播种自启（上游仍 running——barrier 等待语义，非空挂形态）
       _ <- IO.sleep(300.millis)
       m2b <- byName(rt, "m2")
-      // N3: 归档节点拒设 merge（store 直种归档区——TTL 过期等价形态）
+      // N3: 归档节点 merge=true 编辑 → merge seal（原 create-only 校验随建位面退役）
       _ <- rt.store.mutateArchive(a =>
         a.copy(nodes =
           a.nodes + ("n-arch-x" -> NodeDef(
@@ -458,30 +501,38 @@ class NodeMergeSpec extends CatsEffectSuite:
         )
       )
       n3 <- nodeEdit(nodeInput("merge-t0", "arch-x", "merge" -> CJson.fromBoolean(true)), ctx)
+      snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(
-        n1.isLeft && n1.left.exists(_.contains("merge=true")),
-        s"N1 merge+worktree must refuse with actionable text, got $n1"
+        n1.isLeft && n1.left.exists(_.contains("NODE_WORKTREE_UNSUPPORTED")),
+        s"N1 merge+worktree must hit the worktree seal (first seal wins), got $n1"
       )
       assert(
-        n0.isLeft && n0.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
-        s"N0 zero-upstream merge must refuse (NODE_MERGE_REQUIRES_UPSTREAM), got $n0"
+        n0.isLeft && n0.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"N0 zero-upstream merge must hit the merge seal, got $n0"
       )
-      assert(n2.isRight, s"N2 merge create (with in) must succeed, got $n2")
-      assertEquals(m2.merge, true, "merge flag must persist")
+      assertEquals(m2.merge, true, "seeded merge flag persists")
       assertEquals(m2.worktree, None, "merge node must have no worktree")
       assertEquals(
         m2.status,
         NodeLifecycle.Wiring,
-        s"merge node (task, in non-empty) starts wiring (barrier wait), got ${m2.status}"
+        s"merge node (task, in non-empty) sits at wiring (barrier wait), got ${m2.status}"
       )
       assertEquals(
         m2b.status,
         NodeLifecycle.Wiring,
         s"merge node must NOT auto-start while its upstream is still running, got ${m2b.status}"
       )
-      assert(n3.isLeft && n3.left.exists(_.contains("create-only")), s"N3 merge on archived node must refuse, got $n3")
+      assert(
+        n3.isLeft && n3.left.exists(_.contains("NODE_MERGE_UNSUPPORTED")),
+        s"N3 merge=true edit must hit the merge seal, got $n3"
+      )
+      assert(
+        !snap.nodes.values.exists(n => n.name == "m1" || n.name == "m0"),
+        "sealed creates leave no nodes behind"
+      )
+      assert(snap.nodes.contains(m2Id), "the seeded merge node persists")
     end for
   }
 
@@ -526,19 +577,8 @@ class NodeMergeSpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Running))
       aId <- idOf(rt, "task-a")
       bId <- idOf(rt, "task-b")
-      // 合并节点最后建：in=<上游 id 清单>（in 声明自动改接两上游 out → merge-x）
-      _ <- nodeEdit(
-        nodeInput(
-          "merge-s1",
-          "merge-x",
-          "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
-          "description" -> CJson.fromString("batch landing sink s1"),
-          "out" -> CJson.fromString("Nebula"),
-          "in" -> CJson.arr(CJson.fromString(aId), CJson.fromString(bId)),
-          "merge" -> CJson.fromBoolean(true)
-        ),
-        ctx
-      )
+      // 合并节点最后建（播种面）：in=[a,b]（上游 out 追加镜像——两上游仍 running）
+      _ <- seedMerge(rt, "merge-x", List(aId, bId), mergeTask("task-a", "task-b"), "batch landing sink s1")
       _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "merge-x", Set(NodeLifecycle.Completed), timeout = 60.seconds)
@@ -622,18 +662,10 @@ class NodeMergeSpec extends CatsEffectSuite:
       bId <- idOf(rt, "task-b")
       // 合并节点最后建：in=[blocked 的 A, completed 的 B]——A 不投递（传播停止），
       // B 经 D1 保留投递结算；barrier 残缺 → 合并节点原地等待
-      _ <- nodeEdit(
-        nodeInput(
-          "merge-s2",
-          "merge-y",
-          "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
-          "description" -> CJson.fromString("batch landing sink s2"),
-          "out" -> CJson.fromString("Nebula"),
-          "in" -> CJson.arr(CJson.fromString(aId), CJson.fromString(bId)),
-          "merge" -> CJson.fromBoolean(true)
-        ),
-        ctx
-      )
+      // 合并节点最后建（播种面）：in=[blocked 的 A, completed 的 B]——A 不投递
+      // （传播停止），B 经 D1 保留投递结算；barrier 残缺 → 合并节点原地等待
+      mId <- seedMerge(rt, "merge-y", List(aId, bId), mergeTask("task-a", "task-b"), "batch landing sink s2")
+      _ <- settleRetained(rt, mId)
       _ <- IO.sleep(500.millis) // 若（不该发生的）触发，给窗口显形
       merge <- byName(rt, "merge-y")
       a <- byName(rt, "task-a")
@@ -714,18 +746,11 @@ class NodeMergeSpec extends CatsEffectSuite:
       bId <- idOf(rt, "task-b")
       // 合并节点最后建：in=[failed 的 A, completed 的 B]——创建期 D1 保留投递对
       // failed 上游分流（mount-enforce 批）：错误文本不作输入，转 blocked 可见终态
-      _ <- nodeEdit(
-        nodeInput(
-          "merge-s3",
-          "merge-z",
-          "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
-          "description" -> CJson.fromString("batch landing sink s3"),
-          "out" -> CJson.fromString("Nebula"),
-          "in" -> CJson.arr(CJson.fromString(aId), CJson.fromString(bId)),
-          "merge" -> CJson.fromBoolean(true)
-        ),
-        ctx
-      )
+      // 合并节点最后建（播种面）：in=[failed 的 A, completed 的 B]——D1 保留投递
+      // 对 failed 上游分流（settleRetained = NodeEdit 创建期同一引擎单点）：
+      // 错误文本不作输入，转 blocked 可见终态
+      mId <- seedMerge(rt, "merge-z", List(aId, bId), mergeTask("task-a", "task-b"), "batch landing sink s3")
+      _ <- settleRetained(rt, mId)
       _ <- waitStatus(rt, "merge-z", Set(NodeLifecycle.Blocked))
       _ <- IO.sleep(300.millis)
       merge <- byName(rt, "merge-z")
@@ -804,18 +829,8 @@ class NodeMergeSpec extends CatsEffectSuite:
       bId <- idOf(rt, "task-b")
       // 合并节点最后建：in=[a,b]（in 声明改接两上游 out → merge-w；两上游 running
       // → D1 均不投递，wiring 等待）
-      _ <- nodeEdit(
-        nodeInput(
-          "merge-s4",
-          "merge-w",
-          "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
-          "description" -> CJson.fromString("batch landing sink s4"),
-          "out" -> CJson.fromString("Nebula"),
-          "in" -> CJson.arr(CJson.fromString(aId), CJson.fromString(bId)),
-          "merge" -> CJson.fromBoolean(true)
-        ),
-        ctx
-      )
+      // 合并节点最后建（播种面）：in=[a,b]（两上游 running → D1 均不投递，wiring 等待）
+      _ <- seedMerge(rt, "merge-w", List(aId, bId), mergeTask("task-a", "task-b"), "batch landing sink s4")
       // 两上游仍 running（4s echo 未到）：merge 节点必须停留创建态 wiring（barrier 等待）
       _ <- IO.sleep(300.millis)
       preMerge <- byName(rt, "merge-w")

@@ -5,7 +5,6 @@ when_to_use: 需要**打开**一个页面并与之交互或读取其渲染后状
 audience: nebflow-project
 language: zh
 status: active
-last_verified: 2026-09-18
 ---
 
 # Browser Interaction — 浏览器交互纪律
@@ -17,8 +16,8 @@ last_verified: 2026-09-18
 
 | 你要做的事 | 走哪条路 | 真实边界 |
 |---|---|---|
-| 取某 URL 的**正文**（只读、不需要交互） | 内置 `WebFetch` | 无 DOM 树、无交互、无截图；反爬/JS 挑战页靠**分层回退链**决定成败，而**本机回退层现读不可用**（见 `references/overview.md` §二 硬边界表）⇒ 挑战页取不到时按 §五 如实记为能力缺口，不凑结果 |
-| **打开页面并与它交互**（点击/输入/选择/多页/截图） | **`Bash` 起一个 Node 脚本驱动 Playwright** | 真实可用：本仓 `node_modules/playwright` 已装（§七 自检读数） |
+| 取某 URL 的**正文**（只读、不需要交互） | 内置 `WebFetch` | 无 DOM 树、无交互、无截图；反爬/JS 挑战页靠**分层回退链**决定成败，而**回退层在本产品当前发行形态不可用**（见 `references/overview.md` §二 硬边界表）⇒ 挑战页取不到时按 §五 如实记为能力缺口，不凑结果 |
+| **打开页面并与它交互**（点击/输入/选择/多页/截图） | **`Bash` 起一个 Node 脚本驱动 Playwright** | 可用性以 §七 自检现测为准（`node_modules/playwright` 缺失即停，不凑结果） |
 | 需要**视觉证据**（看渲染/布局/样式/非 DOM 控件） | Playwright `page.screenshot({path})` 落盘 ⇒ 用 `Read` **读该图片文件** | 截图不落盘不成证据；不读图就下视觉结论 = 不合格 |
 | 关键字检索线索 | 内置 `WebSearch` | 检索是**线索**不是**结论**（另有搜索纪律件，不在此重复） |
 
@@ -99,16 +98,15 @@ last_verified: 2026-09-18
 
 ## 七、开工前自检（先证明载体真的在）
 
-长跑/起进程一律经**进程组包装器**启动并落花名册（本机无 `setsid`；工作区内包装器为
-`.nebflow/tools/wave-janitor.sh`）：
+长跑/起进程一律经**进程组包装器**启动并落花名册（macOS 无 `setsid`；包装器由运行环境提供）：
 
 ```bash
 # 1. Playwright 与浏览器是否在位（缺失 ⇒ 停手报确切错误，不要降级）
 node -e "console.log('playwright', require('playwright/package.json').version)"
-ls ~/Library/Caches/ms-playwright 2>/dev/null
+ls ~/Library/Caches/ms-playwright 2>/dev/null  # macOS 宿主面默认缓存路径；他平台路径不同，以实际环境为准
 
 # 2. 起一个**自有端口 + 自有目录**的被测服务（禁碰宿主的 :8080），经包装器起
-.nebflow/tools/wave-janitor.sh roster --node <nodeId> --tag httpd -- \
+<进程组包装器> roster --node <nodeId> --tag httpd -- \
   python3 -m http.server <自有端口> --directory <静态根>
 
 # 3. 驱动脚本：前台 + 显式超时 + 每步落盘（本机无 BSD timeout ⇒ 用 perl alarm 包装）
