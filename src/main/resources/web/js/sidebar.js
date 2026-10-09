@@ -14,6 +14,9 @@ import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
+// eyeSvg/eyeOffSvg（provider 密码域可见性切换图标）单源 = sidebar/providersUi.js（FE 拆分后
+// 迁入；JEV 密钥引用行本地批 2026-10-09 的新调用点自模块引入，禁第二份字面量）。
+import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
@@ -1233,9 +1236,10 @@ function bindSettingsEvents(content, cfg) {
   // 预填固定值 + disabled 禁用态（用户只填密钥引用）；其他提供方恢复可编辑，
   // 钉死值/空值让位（后端 JevSettings.resolve 对空端点自有默认，不发错值）。
   document.getElementById('cfg-jev-provider')?.addEventListener('change', function() {
-    const input = document.getElementById('cfg-jev-endpoint');
+    const input = /** @type {HTMLInputElement | null} */ (document.getElementById('cfg-jev-endpoint'));
     if (!input) return;
-    if (this.value === 'typesafe-jev') {
+    const provider = /** @type {HTMLSelectElement} */ (this).value;
+    if (provider === 'typesafe-jev') {
       input.value = JEV_PINNED_ENDPOINT;
       input.disabled = true;
       input.title = t('settings.jevEndpointFixed');
@@ -1256,10 +1260,13 @@ function bindSettingsEvents(content, cfg) {
   const jevEye = document.getElementById('jev-keyref-eye');
   if (jevEye) {
     jevEye.addEventListener('click', () => {
-      const input = document.getElementById('cfg-jev-keyref');
+      const input = /** @type {HTMLInputElement} */ (document.getElementById('cfg-jev-keyref'));
       if (!input) return;
-      const isMasked = input.style.webkitTextSecurity !== 'none';
-      input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
+      // -webkit-text-security 是非标属性：lib.dom 的 CSSStyleDeclaration 不带它，
+      // 经 any 视图读写（providers-modal 先例同型）。
+      const style = /** @type {any} */ (input.style);
+      const isMasked = style.webkitTextSecurity !== 'none';
+      style.webkitTextSecurity = isMasked ? 'none' : 'disc';
       jevEye.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
       const label = t(isMasked ? 'settings.jevKeyRefHide' : 'settings.jevKeyRefShow');
       jevEye.setAttribute('aria-label', label);
@@ -1607,7 +1614,7 @@ function bindSettingsEvents(content, cfg) {
 // listener for the whole app lifetime.
 document.addEventListener('click', (e) => {
   const settings = document.getElementById('settings-content');
-  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
+  if (!settings || !(e.target instanceof Element) || !settings.contains(e.target)) return;
   const rm = e.target.closest('.seg-remove');
   if (!rm) return;
   const row = rm.closest('.segment-row');
@@ -1620,8 +1627,8 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('change', (e) => {
   const settings = document.getElementById('settings-content');
-  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
-  if (!e.target.classList || !e.target.classList.contains('time-input')) return;
+  if (!settings || !(e.target instanceof Element) || !settings.contains(e.target)) return;
+  if (!e.target.classList.contains('time-input')) return;
   updateSegmentRowHint(e.target.closest('.segment-row'));
   markScheduleDirty();   // #334: local draft only — Save commits
 });

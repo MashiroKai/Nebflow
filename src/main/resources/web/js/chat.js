@@ -49,7 +49,7 @@ import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorkline
 // Root agent DISPLAY name (single read point — rootName.js). Leaf module
 // (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
 // the literal "Nebula".
-import { isRootNamed } from './rootName.js';
+import { isRootNamed, rootDisplayName } from './rootName.js';
 
 // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
 // label (same string the user reads on the card), so the single-line badge and
@@ -1858,7 +1858,7 @@ export function renderCompactStartCard(view = activeView) {
 
 export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
   const active = findActiveCompactCard(view);
-  const startTs = Number(active?.dataset.startTs) || 0;
+  const startTs = Number(/** @type {HTMLElement} */ (active)?.dataset.startTs) || 0;
   const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
   let label = t('chat.compacted', { before, after, detail: detail || '' });
   if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
@@ -2158,7 +2158,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       // 陈旧密码不得随提交顺路（与 A-2 同一语义，第二槽位面）。
       if (secretValues[qi] !== null && secretValues[qi] !== undefined) {
         secretValues[qi] = null;
-        const pw = wrapper.querySelector('.option-secret-input');
+        const pw = /** @type {HTMLInputElement} */ (wrapper.querySelector('.option-secret-input'));
         if (pw) pw.value = '';
       }
     },

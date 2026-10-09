@@ -55,7 +55,8 @@ export function attachChainDetailLayer(container, project, nodes) {
     const m = memberOfChainNode(n);
     if (m.id) byId.set(m.id, m);
   }
-  for (const card of container.querySelectorAll('.fm-node[data-node-id]')) {
+  for (const cardEl of container.querySelectorAll('.fm-node[data-node-id]')) {
+    const card = /** @type {HTMLElement} */ (cardEl);
     // 两层架构批（§C）：根卡/subagent 卡的详情承载 = 对话窗（data-flow-popup-card）
     // ——file-diff 详情层只属 flow-step 卡，跳过对话窗承载卡。
     if (card.dataset.flowPopupCard === '1') continue;

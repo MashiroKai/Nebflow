@@ -118,7 +118,7 @@ export function formatFooterTime(ms, now = new Date()) {
   // The date payload rides the runtime's locale data (the chatSearch calendar
   // precedent: calendar names/particles via Intl, no per-locale month tables);
   // the composition key keeps "date ␠ time" one localizable template.
-  const opts = { month: 'short', day: 'numeric' };
+  const opts = /** @type {Intl.DateTimeFormatOptions} */ ({ month: 'short', day: 'numeric' });
   if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
   return t('time.footerDate', { date: d.toLocaleDateString(getLocale(), opts), time });
 }

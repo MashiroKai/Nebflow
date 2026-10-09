@@ -352,7 +352,7 @@ function renderTaskBody(pane, key, opts = {}) {
     subText: 'Delegate', // 数据词不上键（H.4）
     noDesc: true,
   });
-  const rootCard = rootHolder.firstElementChild;
+  const rootCard = /** @type {HTMLElement} */ (rootHolder.firstElementChild);
   if (rootCard) {
     rootCard.dataset.flowPopupCard = '1'; // 点击 = 对话窗（brief/结果全文——九点⑦承载）
     rootCard.setAttribute('role', 'button');
@@ -393,7 +393,7 @@ function renderTaskBody(pane, key, opts = {}) {
       subText: srcWord || 'Subagent', // source 数据词（九点②归一口径）
       noDesc: true,
     });
-    const card = holder.firstElementChild;
+    const card = /** @type {HTMLElement} */ (holder.firstElementChild);
     if (card) {
       card.dataset.flowPopupCard = '1'; // 对话窗承载——file-diff 详情层跳过
       card.setAttribute('role', 'button');
@@ -1076,7 +1076,7 @@ function attachStructureArchive(body) {
   // 徽章脉冲 +1 + toast「#N 已完成并归档」（5s 撤销）。仅 L2 在图时呈现。
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     window.addEventListener('delegate-archived', (/** @type {CustomEvent} */ ev) => {
-      if (!pane || !pane.isConnected || pane.dataset.delegateMode !== 'structure') return;
+      if (!pane || !pane.isConnected || (/** @type {HTMLElement} */ (pane)).dataset.delegateMode !== 'structure') return;
       const detail = (ev && ev.detail) || {};
       if (badge) {
         refreshBadge().catch(() => {});

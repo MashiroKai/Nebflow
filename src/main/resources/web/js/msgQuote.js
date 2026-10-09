@@ -155,7 +155,9 @@ export function createMsgQuoteButton() {
   btn.innerHTML = QUOTE_SVG;
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const row = btn.closest('.row');
+    // __nfQuoteDesc 是本模块挂在行元素上的自定义载荷（expando）——lib.dom 无此
+    // 属性面，行引用按 any 视图读取（dataset 同视图）。
+    const row = /** @type {any} */ (btn.closest('.row'));
     const d = (row && row.__nfQuoteDesc) || {};
     const view = state.getActiveView && state.getActiveView();
     startQuote({

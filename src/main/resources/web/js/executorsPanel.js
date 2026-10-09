@@ -11,6 +11,9 @@ import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } f
 import { t } from './i18n.js';
 import { key } from './branding.js';
 import { executorIcon } from './executorIcons.js';
+// esc 单源 = diffRender.js（零依赖纯 HTML 模块；USRC 合并时补 import——拆分基线
+// checkJs 门禁把「新文件必须零错」当硬门，此文件原先漏引会运行时 ReferenceError）。
+import { esc } from './diffRender.js';
 
 function authHeaders() {
   const tok = localStorage.getItem(key('token')) || '';
@@ -93,8 +96,9 @@ export async function renderExecutors() {
     <div class="executor-list">${executors.map(cardHtml).join('')}</div>`;
   el.querySelectorAll('.executor-card-set').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const id = btn.dataset.id;
-      btn.disabled = true;
+      const setBtn = /** @type {HTMLButtonElement} */ (btn);
+      const id = setBtn.dataset.id;
+      setBtn.disabled = true;
       try {
         const resp = await fetch('/api/executors/default', {
           method: 'PUT',
@@ -114,5 +118,6 @@ export async function renderExecutors() {
 // Restore a persisted executors tab after refresh (canvas-tab-restore contract,
 // same as agentManager.js).
 window.addEventListener('canvas-tab-restore', (e) => {
-  if (e.detail?.id === 'executors') renderExecutors();
+  const detail = /** @type {CustomEvent} */ (e).detail;
+  if (detail?.id === 'executors') renderExecutors();
 });
