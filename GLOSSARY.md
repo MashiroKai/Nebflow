@@ -323,6 +323,7 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 ## 18. 能力两面分野（需求／持有／供给；triple 线回写，2026-10-09）
 
 > **出处注记（跨仓搬运；2026-10-09 补）**：三词条源＝triple 仓 `docs/fact/术语重述-vm词族与防撞车.md` §8（依《裁定-十六轮》§C-1；第三枚「供给」依《裁定-十九轮》P-13 增；源提交 `ba04f4e`）；执行＝主线批次 2026-10-09。
+> **本节引称（锚列路径基；2026-10-09 补，依 triple 线精度建议）**：「锚」列除注明者外均为**triple 仓内相对路径**（基＝`../triple/`）；`ir-v0.3`＝`../skill-engine/docs/ir-v0.3-command-surface.md`；`adjudications.md`＝`../nebflow-src/.zcode/plans/fact/adjudications.md`（工作树；行号以实测为准）。
 > **与 §10 维护规约的冲突（并置注明，不删改上文；同 §11/§17 先例）**：本批裁定先行、权威落点在跨仓（triple）——出处注记含提交 hash 属并置例外。
 
 | 词 | 定义一句 | 真值源（谁说了算） | 锚 |
