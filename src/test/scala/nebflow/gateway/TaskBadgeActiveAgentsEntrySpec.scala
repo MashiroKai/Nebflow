@@ -1,24 +1,28 @@
 package nebflow.gateway
 
-
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorRef
-import nebflow.actor.{AgentCommand, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent; the merge moved them to actor
+import nebflow.actor.{
+  AgentCommand,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent; the merge moved them to actor
 
-/** Task-badge contract on the activeAgents restore reply (taskbadge batch,
-  * 2026-09-27): the snapshot face of the sub-agents panel task attribution.
-  *
-  * The panel's rows are restored from the `activeAgents` snapshot after a page
-  * refresh (live agentStart events are never replayed), so the badge must ride
-  * the same entry: `taskId` = the registration-time snapshot on AgentRecord
-  * (dispatcher slot / NodeDef.taskId), `taskTitle` = the ledger title resolved
-  * by the getActiveAgents handler (one ledger read per snapshot, passed in).
-  *
-  * Wire form mirrors the `project` badge precedent: keys are ALWAYS present,
-  * empty string = no attribution (frontend falsy → no badge rendered) — a
-  * stable form, never conditional keys.
-  */
+/**
+ * Task-badge contract on the activeAgents restore reply (taskbadge batch,
+ * 2026-09-27): the snapshot face of the sub-agents panel task attribution.
+ *
+ * The panel's rows are restored from the `activeAgents` snapshot after a page
+ * refresh (live agentStart events are never replayed), so the badge must ride
+ * the same entry: `taskId` = the registration-time snapshot on AgentRecord
+ * (dispatcher slot / NodeDef.taskId), `taskTitle` = the ledger title resolved
+ * by the getActiveAgents handler (one ledger read per snapshot, passed in).
+ *
+ * Wire form mirrors the `project` badge precedent: keys are ALWAYS present,
+ * empty string = no attribution (frontend falsy → no badge rendered) — a
+ * stable form, never conditional keys.
+ */
 class TaskBadgeActiveAgentsEntrySpec extends FunSuite:
 
   private def rec(sessionId: String, kind: AgentKind, root: String = "root-1"): AgentRecord =

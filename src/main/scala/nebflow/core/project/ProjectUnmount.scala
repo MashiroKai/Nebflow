@@ -147,6 +147,7 @@ object ProjectUnmount:
                     }
                 }
             }
+          end if
     }
 
   // ============================================================
@@ -170,31 +171,35 @@ object ProjectUnmount:
       // ── 链腿（先链后节点：链级级联一次闭包，节点腿只兜零散 Running）──
       chains <- activeChainsToCancel(rt)
       _ <- chains.traverse_(cid => logger.info(s"[$canonical] unmount stop: cancelling chain $cid"))
-      cancelledChains <- chains.traverse { cid =>
-        rt.engine
-          .cancelChainAndRecord(cid, CancelSource.User, UnmountReason)
-          .attempt
-          .map {
-            case Right(Right(_)) => Some(cid)
-            case other =>
-              // 单成员链（CHAIN_SINGLE_MEMBER）/ 竞态消失（CHAIN_NOT_FOUND）→ 节点腿兜底，
-              // 不因单链失败中止卸载（中止判据只在排空步）。
-              logger.warn(s"[$canonical] unmount stop: chain $cid cancel skipped: ${other.toString.take(160)}")
-              None
-          }
-      }.map(_.flatten)
+      cancelledChains <- chains
+        .traverse { cid =>
+          rt.engine
+            .cancelChainAndRecord(cid, CancelSource.User, UnmountReason)
+            .attempt
+            .map {
+              case Right(Right(_)) => Some(cid)
+              case other =>
+                // 单成员链（CHAIN_SINGLE_MEMBER）/ 竞态消失（CHAIN_NOT_FOUND）→ 节点腿兜底，
+                // 不因单链失败中止卸载（中止判据只在排空步）。
+                logger.warn(s"[$canonical] unmount stop: chain $cid cancel skipped: ${other.toString.take(160)}")
+                None
+            }
+        }
+        .map(_.flatten)
       // ── 节点腿（链级联后现读快照；死会话走 reap 收殓，活会话走 cancel 信号）──
       snap <- rt.store.snapshot
       running = snap.nodes.values.filter(_.status == NodeLifecycle.Running).toList
       _ <- running.traverse_ { n =>
         rt.engine.isRunning(n.id).flatMap {
-          case true  => rt.engine.cancelNodeById(n.id)
+          case true => rt.engine.cancelNodeById(n.id)
           case false =>
-            rt.engine.reapStaleRunning(
-              n.id,
-              reason = s"project unmount: dead running session finalized during the stop step ($canonical)",
-              source = CancelSource.User
-            ).void
+            rt.engine
+              .reapStaleRunning(
+                n.id,
+                reason = s"project unmount: dead running session finalized during the stop step ($canonical)",
+                source = CancelSource.User
+              )
+              .void
         }
       }
       // ── 会话腿：dispatcher + 内部 delegate（supervisor 通道 = AgentControl 同原语）──
@@ -214,14 +219,16 @@ object ProjectUnmount:
         .toList
       _ <- (dispatcherSessions ++ delegateSessions).traverse_ { r =>
         logger.info(
-          s"[$canonical] unmount stop: cancelling ${if r.kind == AgentKind.Flow then "dispatcher" else "delegate"} session ${r.sessionId}"
+          s"[$canonical] unmount stop: cancelling ${
+              if r.kind == AgentKind.Flow then "dispatcher" else "delegate"
+            } session ${r.sessionId}"
         ) *> r.supervisorRef.traverse_(sup => sup ! AgentEvent.Cancelled(r.sessionId, UnmountReason))
       }
       // ── 排空：节点面（硬要求）→ 会话面（硬要求）──
       nodeDrain <- drainNodes(rt)
       sessionDrain <- nodeDrain match
         case Left(err) => IO.pure(Left(err))
-        case Right(_)  => drainSessions(agentRegistry, dispatcherSessions ++ delegateSessions)
+        case Right(_) => drainSessions(agentRegistry, dispatcherSessions ++ delegateSessions)
     yield sessionDrain.map(_ =>
       StopCounts(
         chainsCancelled = cancelledChains,
@@ -243,7 +250,7 @@ object ProjectUnmount:
           else
             rt.store.chainLedgerStore.chainControlOf(cid).attempt.map {
               case Right(ctl) => ctl.status != ChainLedger.StatusCancelled
-              case Left(_)    => false // 台账读不到 → 不猜，留给节点腿
+              case Left(_) => false // 台账读不到 → 不猜，留给节点腿
             }
       }
     })

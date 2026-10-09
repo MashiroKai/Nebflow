@@ -79,6 +79,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val pcWorkspaceRaw = hc.downField("workspace").as[String].getOrElse("").trim
     val pcName = hc.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
     val pcDesc = hc.downField("description").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    // v2.1 §A.5（2026-10-09 实施批）：可选 `device` = 项目放哪台设备（缺省 self =
+    // 现状零变化；对端设备 = 远端创建腿，G.13 半态回滚序，见 ProjectCreateService）。
+    val pcDevice = hc.downField("device").as[String].toOption.map(_.trim).filter(_.nonEmpty)
     val pcWs = PathUtil.expandTilde(pcWorkspaceRaw)
     if pcSessionId.nonEmpty && pcWs.nonEmpty then
       (for
@@ -110,29 +113,36 @@ private[gateway] object WsTasksWorkspaceHandlers:
             rootSessionId = Some(root),
             sessionId = Some(pcSessionId),
             wsSend = Some(projectCreateBroadcast)
-          )
+          ),
+          device = pcDevice
         )
         _ <- outcome match
           case Right(msg) =>
-            wsSend(io.circe.Json.obj(
-              "type" -> "projectCreateResult".asJson,
-              "ok" -> true.asJson,
-              "message" -> msg.asJson
-            ))
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "projectCreateResult".asJson,
+                "ok" -> true.asJson,
+                "message" -> msg.asJson
+              )
+            )
           case Left(err) =>
-            wsSend(io.circe.Json.obj(
-              "type" -> "projectCreateResult".asJson,
-              "ok" -> false.asJson,
-              "error" -> err.message.asJson
-            ))
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "projectCreateResult".asJson,
+                "ok" -> false.asJson,
+                "error" -> err.message.asJson
+              )
+            )
       yield ())
         .handleErrorWith { e =>
           logger.warn(s"projectCreate failed: ${e.getMessage}")
-          wsSend(io.circe.Json.obj(
-            "type" -> "projectCreateResult".asJson,
-            "ok" -> false.asJson,
-            "error" -> e.getMessage.asJson
-          ))
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "projectCreateResult".asJson,
+              "ok" -> false.asJson,
+              "error" -> e.getMessage.asJson
+            )
+          )
         }
     else
       logger.warn(

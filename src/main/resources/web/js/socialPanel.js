@@ -213,6 +213,23 @@
 //     [[scanBindCardHTML]] becomes the fallback for a future scanBind channel
 //     that has not joined. Zero locale key changes (§16: the feishu row reuses
 //     the same name/badge/live/archive copy the two-face card rendered).
+//
+// 🔴 UNBIND-ROW batch (author order 2026-10-08, 「解绑放到卡片外层」 over the
+//    landed item face — supersedes the weixin-binditem ruling ④ above): a
+//    CREATED card surfaces the unbind entry ON its collapsed row, so unbinding
+//    no longer requires expanding (the author's reference frame: the expanded
+//    weixin card was the only place the control lived; the collapsed feishu row
+//    showed no action at all). The entry is the row button's SIBLING chip in a
+//    `.social-item-line` wrapper — a nested <button> would be invalid HTML and
+//    would let the destructive action share the accordion's click, so state ⑤'s
+//    no-shared-click guarantee is kept by DOM structure exactly as the body
+//    placement kept it. Reused as-is: the `[data-archive]` handler (including
+//    the archive.hint hover copy — there is no confirm dialog to inherit), the
+//    unplug danger icon, the cfg-btn ghost family; NO glass chrome (the chip
+//    must not compete with the pill it sits beside). [[faceCreated]] gates the
+//    chip: not-created / binding cards render none. The expanded face keeps
+//    every other detail it had (the feishu C1 live block is untouched); the
+//    created weixin body is empty by design — its only detail moved to the row.
 // Zero engine change throughout (GET /api/social/channels stays read-only).
 
 import { t } from './i18n.js';
@@ -749,18 +766,45 @@ function scanBindCardHTML(ch) {
  *     hidden nodes, so expanding shows the QR mid-flow; expanding a card
  *     without a live session (re)begins one ([[toggleItemFace]] —
  *     [[beginInlineScan]] is idempotent).
- *   · created (states ③④) — the unbind row, plus — for the contract channels
- *     ([[CONTRACT_FACE_CHANNELS]], i.e. feishu; ruling ③) — the C1 live block:
+ *   · created (states ③④) — for the contract channels
+ *     ([[CONTRACT_FACE_CHANNELS]], i.e. feishu; ruling ③) the C1 live block:
  *     the real-time value shows ONLY inside the expanded state, the same
  *     accordion paradigm as the weixin card (default row / click to expand /
  *     click to collapse). The weixin item face still renders NO live block:
  *     the weixin channel has no connection endpoint ([[CONTRACT_FACE_CHANNELS]]
  *     is feishu-only), so its live container was permanently empty — exactly
  *     the empty-bar form the first order retired.
+ *   ★ unbind-row (author order 2026-10-08): the unbind entry no longer rides
+ *     the EXPANDED face — created cards surface it ON the collapsed row (a
+ *     low-key chip in the pill's row, unbindable without expanding), so
+ *     ruling ④'s "row stays single-purpose" trade is retired. The chip is the
+ *     row button's SIBLING (a nested <button> is invalid HTML and would let
+ *     the destructive action share the toggle's click — state ⑤'s guarantee,
+ *     kept by DOM structure, not by handler ordering). Not-created / binding
+ *     cards render no entry ([[faceCreated]] gates it), and the expanded face
+ *     keeps every other detail it had (the feishu live block is untouched).
+ *     ★ unbind-icon (author order 2026-10-08, same-day amendment): the chip
+ *     drops its WORD — the bare unplug glyph (the original unbind button's
+ *     broken-link icon) is the whole entry, the archive.hint copy riding the
+ *     `title` (hover tooltip = the a11y name + discoverability, per the
+ *     ruling). And the bound ROW carries NO application id: the weixin bot id
+ *     and the feishu app_id never ride the row — the bound row reads icon +
+ *     name + 已接入 pill + unbind icon, nothing else (the feishu live value
+ *     stays behind the click, in the body; the weixin bound body is empty).
  * Scan `done` drops the expansion ([[tickSession]]), so the card lands back on
  * the row with the bound badge; archive does the same ([[archiveChannel]] —
  * ruling ①: the unbind fallback to the item view is the SHIPPED behaviour,
  * confirmed with an evidence frame, zero code).
+ *   ★ social-fix-confirm (author order 2026-10-09, 已绑定行不可展开＋appId 不再
+ *     展示): a CREATED card renders NO interactive face at all — the row is a
+ *     static <div> (no [data-item-toggle], no aria-expanded/aria-controls, no
+ *     pointer), the expandable body is not built, and the C1 live block is not
+ *     rendered: the application id never surfaces on the panel in any state
+ *     (the value stays server-side/config-layer; the fingerprint mismatch still
+ *     reaches the pill via [[displayStatus]]'s in-memory reading). The accordion
+ *     interaction is the not-created face's alone (scan-to-bind needs it); the
+ *     unbind entry — now behind the shared glass confirm ([[requestArchive]]) —
+ *     is the bound row's only action, and it rides the row line as before.
  * The head keeps the `.social-card-head` class (W4's judging surface) on the
  * row <button> itself — one tab stop, Enter/Space toggles; the status pill is
  * the SAME pill the two-face card rendered (state ②: badge semantics ride the
@@ -776,25 +820,44 @@ function itemCardHTML(ch) {
   const hint = cardHint(ch, status);
   const expanded = itemExpanded.has(ch.id);
   const bodyId = `social-item-body-${escapeHtml(ch.id)}`;
-  const row = `<button type="button" class="social-card-head social-item-row" data-item-toggle="${escapeHtml(ch.id)}"
-        aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="${bodyId}">
-        <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
+  // social-fix-confirm (author order 2026-10-09, 已绑定行不可展开): a BOUND card
+  // renders a STATIC row — a <div>, not the accordion <button>: no
+  // [data-item-toggle], no aria-expanded / aria-controls, no click face at all
+  // (the pointer cursor belongs to the not-created row only — see
+  // .social-item-row-bound in css/social.css). The row's composition is
+  // unchanged: icon + name + status pill (unbind-icon ② — and no application id
+  // anywhere, see the body note below).
+  const rowInner = `<i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
         <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
-        <span class="social-status-pill plugins-state-pill" data-status="${status}">${pillInner(status, t(`social.status.${status}`))}</span>
-      </button>`;
-  // 3cuts ③: the contract channels' C1 live value rides the EXPANDED state —
-  // rendered into the body, visible only after a click (the weixin item face
-  // keeps no live block at all: no C1 source — the retired empty-bar form).
-  const body = created
-    ? `${CONTRACT_FACE_CHANNELS.includes(ch.id) ? liveBlockHTML(ch) : ''}
-       <div class="social-card-actions">
-         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t(archiveKey(ch.id, 'hint')))}">${statusIcon('unplug', 12, 'st-err')}${escapeHtml(t(archiveKey(ch.id, 'action')))}</button>
-         <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
-       </div>`
-    : scanInlineHTML();
+        <span class="social-status-pill plugins-state-pill" data-status="${status}">${pillInner(status, t(`social.status.${status}`))}</span>`;
+  const row = created
+    ? `<div class="social-card-head social-item-row social-item-row-bound">${rowInner}</div>`
+    : `<button type="button" class="social-card-head social-item-row" data-item-toggle="${escapeHtml(ch.id)}"
+        aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="${bodyId}">${rowInner}</button>`;
+  // unbind-row (author order 2026-10-08), amended by unbind-icon (same day):
+  // the unbind entry + its save-state span ride the ROW LINE as the row
+  // button's sibling (never a descendant — see the JSDoc above), and the
+  // entry is ICON-ONLY — the bare unplug glyph, no word on the row; the
+  // archive.hint copy stays on the `title` (hover tooltip; the a11y name),
+  // the action word stays in the locale table for the fallback renderer
+  // ([[scanBindCardHTML]]) and the save-state flow. Same data-archive
+  // handler, same danger icon; the classes are the existing quiet ghost
+  // family (cfg-btn/cfg-btn-sm + social-btn-danger), no glass chrome — a
+  // secondary action next to the pill, not a competing one.
+  const unbind = created
+    ? `<button type="button" class="cfg-btn cfg-btn-sm social-btn-danger social-item-unbind" data-archive="${escapeHtml(ch.id)}" title="${escapeHtml(t(archiveKey(ch.id, 'hint')))}">${statusIcon('unplug', 12, 'st-err')}</button>
+        <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>`
+    : '';
+  // 3cuts ③ rode the contract channels' C1 live value into the EXPANDED body;
+  // social-fix-confirm retires that face: a CREATED card builds NO body at all
+  // — nothing to expand, and the application id is not rendered on the panel
+  // in ANY state (the value stays server-side / config-layer only; the
+  // fingerprint verdict still reaches the pill through [[displayStatus]]'s
+  // in-memory reading). The scan body is the not-created face's alone.
+  const body = created ? '' : scanInlineHTML();
   return `<div class="social-card social-card-scanbind social-card-itemface" data-channel="${escapeHtml(ch.id)}">
-      ${row}
-      <div class="social-item-body" id="${bodyId}" data-item-body${expanded ? '' : ' hidden'}>${body}</div>
+      <div class="social-item-line">${row}${unbind}</div>
+      ${created ? '' : `<div class="social-item-body" id="${bodyId}" data-item-body${expanded ? '' : ' hidden'}>${body}</div>`}
       <div class="social-card-hint"${hint ? '' : ' hidden'}>${hint ? statusIcon('triangle-alert', 12, 'st-err') + escapeHtml(hint) : ''}</div>
     </div>`;
 }
@@ -1121,6 +1184,31 @@ async function recheck(channelId) {
 }
 
 // ── Archive (contract C5) ────────────────────────────────────────────────
+/**
+ * The unbind entry's door: the row icon opens the SHARED glass confirm
+ * ([[window.__showConfirm]] — the secretsPanel.js requestDelete precedent,
+ * visual with the global dialog), and only the confirm runs the EXISTING
+ * [[archiveChannel]]. The channel name is interpolated into the body copy
+ * ({name} → the channel's display name); the danger confirm button carries the
+ * channel's existing archive.action word (「解除绑定」) via [[showConfirm]]'s
+ * confirmLabel opt, 取消 sits beside it. Without the confirm helper the request
+ * is refused — never unbind on an unconfirmed click (requestDelete's own
+ * discipline). No fallback direct-run: a missing helper is a boot bug, and
+ * failing closed is the safe reading for a destructive action.
+ * @param {string} channelId
+ */
+function requestArchive(channelId) {
+  const ch = channelById(channelId);
+  if (!ch || !ch.scanBind) return;
+  if (typeof window.__showConfirm !== 'function') return;
+  window.__showConfirm(
+    t('social.archive.confirmTitle'),
+    t('social.archive.confirmMsg', { name: t(ch.nameKey) }),
+    () => void archiveChannel(channelId),
+    { confirmLabel: t(archiveKey(channelId, 'action')) },
+  );
+}
+
 /**
  * The archive action: enabled=false through the EXISTING save path. The empty
  * fields object hits the backend's surgical merge — every stored value,
@@ -1557,14 +1645,18 @@ function onDocumentClick(ev) {
   if (target.closest('#social-modal-close')) { closeSocialPanel(); return; }
   // weixin-binditem: the item row's toggle. Checked BEFORE the action buttons:
   // the row is the head, so everything inside it (icon, name, pill — the 3cuts
-  // order removed the chevron) toggles — and the unbind button, which lives in
-  // the BODY, can never reach this branch (it is not a descendant of the row),
-  // so a destructive action and the accordion toggle can never share one click
-  // (state ⑤).
+  // order removed the chevron) toggles — and the unbind button, which since the
+  // unbind-row order (2026-10-08) lives on the row LINE as the row's SIBLING,
+  // can never reach this branch (it is not a descendant of the row), so a
+  // destructive action and the accordion toggle can never share one click
+  // (state ⑤ — now guaranteed by DOM structure, as before).
   const item = target.closest('[data-item-toggle]');
   if (item instanceof HTMLElement && item.dataset.itemToggle) { toggleItemFace(item.dataset.itemToggle); return; }
   const arch = target.closest('[data-archive]');
-  if (arch instanceof HTMLElement && arch.dataset.archive) { void archiveChannel(arch.dataset.archive); return; }
+  // social-fix-confirm (2026-10-09): the unbind icon opens the shared glass
+  // confirm first ([[requestArchive]]); the EXISTING archive flow runs on
+  // confirm only.
+  if (arch instanceof HTMLElement && arch.dataset.archive) { requestArchive(arch.dataset.archive); return; }
   const save = target.closest('[data-save]');
   if (save instanceof HTMLElement && save.dataset.save) { saveChannel(save.dataset.save); return; }
   const re = target.closest('[data-recheck]');

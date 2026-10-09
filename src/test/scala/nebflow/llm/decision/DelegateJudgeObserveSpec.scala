@@ -46,17 +46,25 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
 
   // ── JevSettings：secrets 在位性 = 腿生命周期 ─────────────────────────────
 
-  test("keyRef names an absent secret ⇒ the jev leg is CLOSED (resolve=None); restoring the secret re-opens it on the next hot read") {
+  test(
+    "keyRef names an absent secret ⇒ the jev leg is CLOSED (resolve=None); restoring the secret re-opens it on the next hot read"
+  ) {
     withTempDataRoot { tmp =>
       for
-        closed <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None))
+        closed <- IO(
+          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None)
+        )
         _ <- IO {
           os.makeDir.all(tmp / "secrets")
           os.write(tmp / "secrets" / "obs-key", "sk-live")
         }
-        reopened <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None))
+        reopened <- IO(
+          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None)
+        )
         _ <- IO(os.remove(tmp / "secrets" / "obs-key"))
-        reclosed <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None))
+        reclosed <- IO(
+          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None)
+        )
       yield
         assertEquals(closed, None, "secret absent ⇒ leg closed (no doomed provider, no 403 burn)")
         assert(reopened.isDefined, "restoring the secret re-opens the leg (hot read, no restart)")
@@ -66,7 +74,9 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
     }
   }
 
-  test("no keyRef = no credential expected: the leg stays open (existing semantics); empty/unreadable secrets also close it") {
+  test(
+    "no keyRef = no credential expected: the leg stays open (existing semantics); empty/unreadable secrets also close it"
+  ) {
     withTempDataRoot { tmp =>
       for
         tokenless <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true))), health = None))
@@ -74,7 +84,9 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
           os.makeDir.all(tmp / "secrets")
           os.write(tmp / "secrets" / "empty-key", "   ")
         }
-        emptyClosed <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("empty-key"))), health = None))
+        emptyClosed <- IO(
+          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("empty-key"))), health = None)
+        )
         blankRef <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("  "))), health = None))
       yield
         assert(tokenless.isDefined, "keyRef absent ⇒ leg open (token None is a legal tokenless shape)")
@@ -91,20 +103,24 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
   /** OpenAI 形状回文（content 固定散文——无 JSON 判词 ⇒ parseVerdict 失败腿）。 */
   private def startProseServer(): HttpServer =
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
-    server.createContext("/v1/chat/completions", (exchange: HttpExchange) =>
-      val body =
-        """{"choices":[{"message":{"role":"assistant","content":"I judged it mentally: all good."}}]}""".getBytes(
-          StandardCharsets.UTF_8
-        )
-      exchange.getResponseHeaders.add("Content-Type", "application/json")
-      exchange.sendResponseHeaders(200, body.length)
-      exchange.getResponseBody.write(body)
-      exchange.getResponseBody.close()
-      hits.incrementAndGet()
-      ()
+    server.createContext(
+      "/v1/chat/completions",
+      (exchange: HttpExchange) =>
+        val body =
+          """{"choices":[{"message":{"role":"assistant","content":"I judged it mentally: all good."}}]}""".getBytes(
+            StandardCharsets.UTF_8
+          )
+        exchange.getResponseHeaders.add("Content-Type", "application/json")
+        exchange.sendResponseHeaders(200, body.length)
+        exchange.getResponseBody.write(body)
+        exchange.getResponseBody.close()
+        hits.incrementAndGet()
+        ()
     )
     server.start()
     server
+
+  end startProseServer
 
   private def judgeInput(id: String): DelegateJudge.TerminalInput =
     DelegateJudge.TerminalInput(
@@ -127,7 +143,9 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
     }
   }
 
-  test("smallJudgeVerdict with a real adapter returning non-JSON ⇒ None (parseVerdict-failure WARN path) — None semantics unchanged") {
+  test(
+    "smallJudgeVerdict with a real adapter returning non-JSON ⇒ None (parseVerdict-failure WARN path) — None semantics unchanged"
+  ) {
     withTempDataRoot { _ =>
       Dispatcher.parallel[IO].allocated.flatMap { case (dispatcher, _) =>
         val client = java.net.http.HttpClient
@@ -156,7 +174,11 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
           _ <- IO(server.stop(0))
         yield
           assertEquals(out, None, "non-JSON reply ⇒ parse failure ⇒ None (fallback takes over, never a guess)")
-          assertEquals(hits.get, 1, "the reply was really fetched over HTTP — the None came from the parse-failure WARN site, not a call failure")
+          assertEquals(
+            hits.get,
+            1,
+            "the reply was really fetched over HTTP — the None came from the parse-failure WARN site, not a call failure"
+          )
         end for
       }
     }

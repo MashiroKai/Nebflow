@@ -34,12 +34,12 @@ import scala.concurrent.duration.*
  * 🔴 提示词为**模型可见文案**——本批最小成稿（§16 待过目，终稿归 N3 提示词批）。
  */
 final class LlmAllocator(
-    /** 单次调用缝（生产 = registry.getAdapter(...).sendMessage；spec 注 canned 回文）。 */
-    singleCall: SendMessageParams => IO[Option[String]],
-    /** 分配调用时限（分配预算轴——与 R6 工具授权窗是两根轴，禁混同）。 */
-    timeoutMs: Long,
-    /** 模型候选（None = 无可用模型——腿不可用，Failure fail-open）。 */
-    candidate: IO[Option[ModelCandidate]]
+  /** 单次调用缝（生产 = registry.getAdapter(...).sendMessage；spec 注 canned 回文）。 */
+  singleCall: SendMessageParams => IO[Option[String]],
+  /** 分配调用时限（分配预算轴——与 R6 工具授权窗是两根轴，禁混同）。 */
+  timeoutMs: Long,
+  /** 模型候选（None = 无可用模型——腿不可用，Failure fail-open）。 */
+  candidate: IO[Option[ModelCandidate]]
 ):
 
   private val logger = NebflowLogger.forName("nebflow.llm.plugin-alloc")
@@ -48,15 +48,17 @@ final class LlmAllocator(
   private val AllocSessionId = "plugin-alloc"
 
   def allocateFor(
-      subject: String,
-      taskText: String,
-      catalog: List[CatalogEntry]
+    subject: String,
+    taskText: String,
+    catalog: List[CatalogEntry]
   ): IO[JevAllocation] =
     if catalog.isEmpty then
       // 空目录 = 合法「无能力面安装」态（JevAllocator 同款短路口）——零模型调用。
-      JevFallback.recordSuccess(subject, Nil, Some(PluginAllocatorMachine.LlmFallbackWire)).as(
-        JevAllocation.Allocated(Nil)
-      )
+      JevFallback
+        .recordSuccess(subject, Nil, Some(PluginAllocatorMachine.LlmFallbackWire))
+        .as(
+          JevAllocation.Allocated(Nil)
+        )
     else
       candidate.flatMap {
         case None =>
@@ -95,7 +97,9 @@ final class LlmAllocator(
    * 🔴 §16 待过目——除 state 模板（既有单源）外的新增文案 = 下两段，逐字报审。
    */
   private def prompt(taskText: String, catalog: List[CatalogEntry]): String =
-    val brief = if taskText.length > JevAllocator.DefaultStateCapChars then taskText.take(JevAllocator.DefaultStateCapChars) else taskText
+    val brief =
+      if taskText.length > JevAllocator.DefaultStateCapChars then taskText.take(JevAllocator.DefaultStateCapChars)
+      else taskText
     s"""${JevAllocator.StatePreamble}
 
 ${JevAllocator.BriefHeader}
@@ -134,8 +138,10 @@ end LlmAllocator
 
 object LlmAllocator:
 
-  /** 分配调用时限缺省（Jev 未配置时的兜底腿预算；与 DecisionProvider.DefaultTimeoutMs
-    * 同源口径——分配调用预算轴，实测决策延迟中位 ~0.9s，15s 是宽裕上界）。 */
+  /**
+   * 分配调用时限缺省（Jev 未配置时的兜底腿预算；与 DecisionProvider.DefaultTimeoutMs
+   * 同源口径——分配调用预算轴，实测决策延迟中位 ~0.9s，15s 是宽裕上界）。
+   */
   val DefaultTimeoutMs: Long = DecisionProvider.DefaultTimeoutMs
 
   /**
@@ -150,7 +156,7 @@ object LlmAllocator:
         val call = (params: SendMessageParams) =>
           registry.getAdapter(cand.providerId).flatMap(_.sendMessage(params)).attempt.map {
             case Right(resp) => Some(resp.reply)
-            case Left(_)     => None
+            case Left(_) => None
           }
         Some(new LlmAllocator(call, timeoutMs, IO.pure(Some(cand))))
     }

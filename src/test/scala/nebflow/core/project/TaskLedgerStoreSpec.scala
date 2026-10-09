@@ -114,7 +114,9 @@ class TaskLedgerStoreSpec extends FunSuite:
   // (terminal → open; the ledger backend of the Mail revive path)
   // ------------------------------------------------------------------
 
-  test("revive: completed → open; completedAt cleared; one revive history event + the author's verbatim note line (from=engine)") {
+  test(
+    "revive: completed → open; completedAt cleared; one revive history event + the author's verbatim note line (from=engine)"
+  ) {
     reset()
     val s = store
     s.createSync("revive-completed")
@@ -131,16 +133,26 @@ class TaskLedgerStoreSpec extends FunSuite:
     assertEquals(entry.closedAt, None)
 
     val history = TaskLedgerHistory.open().readFor(id, 1000).events
-    assert(history.exists(e => e.kind == TaskLedgerHistory.Kinds.Revive && e.detail.exists(_.contains("completed→open"))),
-      s"one kind=revive change-history event must exist (audit face, never silent), got: ${history.map(_.kind).mkString(",")}")
+    assert(
+      history.exists(e => e.kind == TaskLedgerHistory.Kinds.Revive && e.detail.exists(_.contains("completed→open"))),
+      s"one kind=revive change-history event must exist (audit face, never silent), got: ${history.map(_.kind).mkString(",")}"
+    )
     val notes = history.filter(_.kind == TaskLedgerHistory.Kinds.Note)
-    assert(notes.count(_.text.exists(_.contains(TaskLedgerStore.ReviveNoteText))) == 1,
-      s"exactly one note line with the author's verbatim body must exist, got: ${notes.map(_.text).mkString(" | ")}")
-    assert(notes.exists(e => e.text.contains(TaskLedgerStore.ReviveNoteText) && e.from.contains(TaskLedgerHistory.Origins.Engine)),
-      "the revive note line is an engine-side system event (from=engine)")
+    assert(
+      notes.count(_.text.exists(_.contains(TaskLedgerStore.ReviveNoteText))) == 1,
+      s"exactly one note line with the author's verbatim body must exist, got: ${notes.map(_.text).mkString(" | ")}"
+    )
+    assert(
+      notes.exists(e =>
+        e.text.contains(TaskLedgerStore.ReviveNoteText) && e.from.contains(TaskLedgerHistory.Origins.Engine)
+      ),
+      "the revive note line is an engine-side system event (from=engine)"
+    )
   }
 
-  test("revive: closed → open (a voided task the author re-orders is re-opened by the same primitive); closedAt cleared") {
+  test(
+    "revive: closed → open (a voided task the author re-orders is re-opened by the same primitive); closedAt cleared"
+  ) {
     reset()
     val s = store
     s.createSync("revive-closed")
@@ -154,11 +166,15 @@ class TaskLedgerStoreSpec extends FunSuite:
     assert(statusOf(id) == TaskLedgerStore.Status.Open)
     assertEquals(s.findSync(id).get.closedAt, None, "closedAt must be cleared by the revive")
     val history = TaskLedgerHistory.open().readFor(id, 1000).events
-    assert(history.exists(e => e.kind == TaskLedgerHistory.Kinds.Revive && e.detail.exists(_.contains("closed→open"))),
-      s"one kind=revive event naming the closed→open edge must exist, got: ${history.map(_.kind).mkString(",")}")
+    assert(
+      history.exists(e => e.kind == TaskLedgerHistory.Kinds.Revive && e.detail.exists(_.contains("closed→open"))),
+      s"one kind=revive event naming the closed→open edge must exist, got: ${history.map(_.kind).mkString(",")}"
+    )
   }
 
-  test("revive: unknown id ⇒ TASK_NOT_FOUND (the non-continuable face — a pruned entry's object is gone — is unchanged)") {
+  test(
+    "revive: unknown id ⇒ TASK_NOT_FOUND (the non-continuable face — a pruned entry's object is gone — is unchanged)"
+  ) {
     reset()
     val r = store.reviveSync("424242")
     assert(r.isLeft, r)
@@ -176,7 +192,10 @@ class TaskLedgerStoreSpec extends FunSuite:
     assert(statusOf(id) == TaskLedgerStore.Status.Open)
     val history = TaskLedgerHistory.open().readFor(id, 1000).events
     assert(!history.exists(_.kind == TaskLedgerHistory.Kinds.Revive), "no revive event on the no-op path")
-    assert(!history.exists(_.text.exists(_.contains(TaskLedgerStore.ReviveNoteText))), "no revive note on the no-op path")
+    assert(
+      !history.exists(_.text.exists(_.contains(TaskLedgerStore.ReviveNoteText))),
+      "no revive note on the no-op path"
+    )
   }
 
   test("revive: a revived entry is outside the terminal-prune predicate (the next create's lazy cleanup keeps it)") {
@@ -189,8 +208,10 @@ class TaskLedgerStoreSpec extends FunSuite:
     // the lazy prune runs on the next create; an `open` entry (revivedAt cleared the
     // terminal timestamps) must survive it
     assert(s.createSync("prune trigger").isRight)
-    assert(statusOf(id) == TaskLedgerStore.Status.Open,
-      "a revived (open) entry must never be eaten by the 30-day terminal cleanup")
+    assert(
+      statusOf(id) == TaskLedgerStore.Status.Open,
+      "a revived (open) entry must never be eaten by the 30-day terminal cleanup"
+    )
   }
 
   test("three-state: `update` cannot change the state (no status parameter exists)") {
@@ -284,7 +305,9 @@ class TaskLedgerStoreSpec extends FunSuite:
   test("storage: the id watermark is monotonic and ids are never reused") {
     reset()
     val s = store
-    val ids = (1 to 3).map { i => s.createSync(s"m$i"); s.entriesSync().map(_.id).max }
+    val ids = (1 to 3).map { i =>
+      s.createSync(s"m$i"); s.entriesSync().map(_.id).max
+    }
     // Each create advances the watermark: ids increase by exactly 1.
     assertEquals(ids.toList, List("1", "2", "3"))
     val json = io.circe.parser.parse(os.read(file)).toOption.get
@@ -367,8 +390,11 @@ class TaskLedgerStoreSpec extends FunSuite:
     val r = s.appendNoteSync(id, body)
     assert(r.isRight, r)
 
-    val events = os.read.lines(TaskLedgerHistory.open().file).toList
-      .flatMap(l => decode[TaskLedgerEvent](l).toOption).filter(_.id.contains(id))
+    val events = os.read
+      .lines(TaskLedgerHistory.open().file)
+      .toList
+      .flatMap(l => decode[TaskLedgerEvent](l).toOption)
+      .filter(_.id.contains(id))
     assert(events.size >= 2, s"an over-cap note must be split into segments, got ${events.size}")
     // Every character survives somewhere in the history (no silent truncation).
     val total = events.flatMap(_.text).map(_.takeWhile(_ == 'x').length).sum
@@ -388,9 +414,14 @@ class TaskLedgerStoreSpec extends FunSuite:
     s.appendNoteSync(id, "note before prune")
     // Backdate completedAt beyond the TTL by rewriting the ledger file directly.
     val raw = io.circe.parser.parse(os.read(file)).toOption.get
-    val patched = raw.mapObject(o => o.add("tasks", o("tasks").get.asArray.get.map { e =>
-      e.mapObject(ee => ee.add("completedAt", io.circe.Json.fromString("2020-01-01T00:00:00Z")))
-    }.asJson))
+    val patched = raw.mapObject(o =>
+      o.add(
+        "tasks",
+        o("tasks").get.asArray.get.map { e =>
+          e.mapObject(ee => ee.add("completedAt", io.circe.Json.fromString("2020-01-01T00:00:00Z")))
+        }.asJson
+      )
+    )
     os.write.over(file, patched.noSpaces)
 
     s.createSync("trigger-prune") // prune is lazy, triggered by create

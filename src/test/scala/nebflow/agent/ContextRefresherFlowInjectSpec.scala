@@ -117,8 +117,10 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       // chain resolution (Explorer is a non-role agent → follows the Nebula
       // chain; with no Nebula def in this fixture the seed chain applies,
       // i.e. an empty chain) — NOT the running def's model.
-      assert(d.model != injectedDef.model || d.model.isEmpty,
-        s"model must come from the fresh disk resolution, not the running snapshot: ${d.model}")
+      assert(
+        d.model != injectedDef.model || d.model.isEmpty,
+        s"model must come from the fresh disk resolution, not the running snapshot: ${d.model}"
+      )
   }
 
   test("loadCurrentDef does not invent FlowReport for non-flow defs") {

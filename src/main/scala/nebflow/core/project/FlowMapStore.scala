@@ -39,9 +39,11 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  */
 class FlowMapStore private (
   val project: String,
-  /** Workspace the store is rooted in: the project workspace for per-project
-    * stores, the BASE project workspace for scoped (delegate) stores — i.e.
-    * the canonical `<ws>/.nebflow/` face that surrounds the scope dir. */
+  /**
+   * Workspace the store is rooted in: the project workspace for per-project
+   * stores, the BASE project workspace for scoped (delegate) stores — i.e.
+   * the canonical `<ws>/.nebflow/` face that surrounds the scope dir.
+   */
   val baseWorkspace: String,
   private val statePath: os.Path,
   private val archivePath: os.Path,
@@ -1803,6 +1805,7 @@ object FlowMapStore:
                   .toSet
                 if riskyMembers.nonEmpty then risky.update(target, risky.getOrElse(target, Set.empty) ++ riskyMembers)
               case None => unknown += target
+          end if
       }
       DepTargets(ids.toList.distinct, unknown.toList.distinct, dead.toMap, risky.toMap)
 

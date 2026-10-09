@@ -70,7 +70,7 @@ object WeixinAskLiveProbe:
           exchange.getResponseHeaders.set("Content-Type", "application/json")
           exchange.sendResponseHeaders(200, resp.length.toLong)
           exchange.getResponseBody.write(resp)
-        finally exchange.close(),
+        finally exchange.close()
     )
     stub.start()
     val stubBase = s"http://127.0.0.1:${stub.getAddress.getPort}"
@@ -88,8 +88,10 @@ object WeixinAskLiveProbe:
     val hostState = root / "openclaw-state"
     val acctDir = hostState / "openclaw-weixin" / "accounts"
     os.makeDir.all(acctDir)
-    os.write.over(acctDir / "liveprobe-im-bot.json",
-      """{"token":"host-account-token-0123456789abcdef","userId":"wx_ask_liveprobe","savedAt":"2026-10-07T00:00:00.000Z"}""")
+    os.write.over(
+      acctDir / "liveprobe-im-bot.json",
+      """{"token":"host-account-token-0123456789abcdef","userId":"wx_ask_liveprobe","savedAt":"2026-10-07T00:00:00.000Z"}"""
+    )
     os.write.over(hostState / "openclaw-weixin" / "accounts.json", """["liveprobe-im-bot"]""")
     readout("fake host account", s"$hostState (1 account: liveprobe-im-bot)")
 
@@ -98,40 +100,63 @@ object WeixinAskLiveProbe:
     val hub = system.spawn(InteractionHub(), "interaction-hub").unsafeRunSync()
     val bridgeRef = new java.util.concurrent.atomic.AtomicReference[WeixinIlinkBridgePlugin](null)
 
-    /** The hub render target = the wsSend recording face GatewayMain registers:
-      * here it records the frame AND fans it out to the bridge's onAgentEvent
-      * (the wsHub-listener shape, in-process). */
+    /**
+     * The hub render target = the wsSend recording face GatewayMain registers:
+     * here it records the frame AND fans it out to the bridge's onAgentEvent
+     * (the wsHub-listener shape, in-process).
+     */
     def wsSend(frame: Json): IO[Unit] =
-      IO(println(s"  ▸ hub rendered: type=${frame.hcursor.downField("type").as[String].toOption.getOrElse("-")} " +
-        s"requestId=${frame.hcursor.downField("requestId").as[String].toOption.getOrElse("-")}")) *>
+      IO(
+        println(
+          s"  ▸ hub rendered: type=${frame.hcursor.downField("type").as[String].toOption.getOrElse("-")} " +
+            s"requestId=${frame.hcursor.downField("requestId").as[String].toOption.getOrElse("-")}"
+        )
+      ) *>
         IO(Option(bridgeRef.get).foreach(_.onAgentEvent("s1", frame).unsafeRunSync()))
 
     (hub ! InteractionHubCommand.RegisterRoot("s1", wsSend)).unsafeRunSync()
 
     // ── ④ the REAL bridge plugin with the REAL production outbound ──
     val askCtx = new BridgeContext:
-      override def injectMessage(sessionId: String, content: String, senderId: Option[String],
-          origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+      override def injectMessage(
+        sessionId: String,
+        content: String,
+        senderId: Option[String],
+        origin: Option[nebflow.bridge.BridgeOrigin] = None
+      ): IO[Unit] =
         IO(println(s"  ▸ injected as chat: session=$sessionId text=${content.take(60)}"))
       override def listPendingAsks: IO[List[Json]] =
         hub.?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply))
       override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] =
-        IO(println(s"  ▸ bridge answer leg → hub: requestId=$requestId root=$rootSessionId payload=${payload.noSpaces}")) *>
-          (hub ! InteractionHubCommand.Answered(
-            InteractionAnswered(requestId, rootSessionId, payload))).void
+        IO(
+          println(s"  ▸ bridge answer leg → hub: requestId=$requestId root=$rootSessionId payload=${payload.noSpaces}")
+        ) *>
+          (hub ! InteractionHubCommand.Answered(InteractionAnswered(requestId, rootSessionId, payload))).void
       override def closeInteractionRequest(requestId: String): IO[Unit] =
         IO(println(s"  ▸ bridge close leg → hub: requestId=$requestId (B-3 top-old)")) *>
           (hub ! InteractionHubCommand.CloseRequest(requestId)).void
       def interruptAgent(sessionId: String): IO[Unit] = IO.unit
       def sessionMeta(sessionId: String): IO[Option[nebflow.shared.SessionMeta]] = IO.none
       def listSessions: IO[List[nebflow.shared.SessionMeta]] =
-        IO.pure(List(nebflow.shared.SessionMeta(id = "s1", name = "s1", createdAt = 0L, updatedAt = 0L,
-          hasUnread = false,
-          bridges = Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> "wx_asker".asJson)))))
+        IO.pure(
+          List(
+            nebflow.shared.SessionMeta(
+              id = "s1",
+              name = "s1",
+              createdAt = 0L,
+              updatedAt = 0L,
+              hasUnread = false,
+              bridges = Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> "wx_asker".asJson))
+            )
+          )
+        )
       def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
 
-    val plugin = new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = None,
-      send = WeixinOutboundAdapter.sendLive) // the REAL production send
+    val plugin = new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      send = WeixinOutboundAdapter.sendLive
+    ) // the REAL production send
     bridgeRef.set(plugin)
     plugin.start(askCtx).unsafeRunSync()
     readout("bridge started", "REAL WeixinIlinkBridgePlugin, REAL sendLive, REAL hub faces")
@@ -145,15 +170,22 @@ object WeixinAskLiveProbe:
       "WEIXIN_SEND_TOKEN_FILE" -> WeixinOutboundAdapter.tokenPath(root).toString,
       "WEIXIN_SIDECAR_ILINK_BASE" -> stubBase,
       "OPENCLAW_STATE_DIR" -> (root / "openclaw-state").toString,
-      "WEIXIN_SIDECAR_SEND_BACKOFF_MS" -> "150",
+      "WEIXIN_SIDECAR_SEND_BACKOFF_MS" -> "150"
     ).run()
     val shimBase = s"http://127.0.0.1:$shimPort"
     awaitHealthy(shimBase, deadline = 10.seconds.fromNow)
     readout("real shim up", shimBase)
 
-    SocialChannels.save(root, WeixinIlinkBridgePlugin.Name,
-      io.circe.parser.parse(s"""{"fields":{"sidecar_url":"$shimBase","ilink_bot_id":"liveprobe@im.bot","ilink_user_id":"wx_asker"}}""")
-        .toOption.get) match
+    SocialChannels.save(
+      root,
+      WeixinIlinkBridgePlugin.Name,
+      io.circe.parser
+        .parse(
+          s"""{"fields":{"sidecar_url":"$shimBase","ilink_bot_id":"liveprobe@im.bot","ilink_user_id":"wx_asker"}}"""
+        )
+        .toOption
+        .get
+    ) match
       case Right(_) => readout("sidecar_url saved", shimBase)
       case Left(err) => throw new IllegalStateException(err.toString)
 
@@ -166,17 +198,18 @@ object WeixinAskLiveProbe:
       (exchange: HttpExchange) =>
         try
           val auth = Option(exchange.getRequestHeaders.getFirst("Authorization"))
-            .map(_.stripPrefix("Bearer ").trim).filter(_.nonEmpty)
+            .map(_.stripPrefix("Bearer ").trim)
+            .filter(_.nonEmpty)
           val body = new String(exchange.getRequestBody.readAllBytes, StandardCharsets.UTF_8)
           val resp: (Int, String) =
-            if !WeixinIngressToken.accepts(root, auth).unsafeRunSync() then
-              (403, """{"error":"Unauthorized"}""")
+            if !WeixinIngressToken.accepts(root, auth).unsafeRunSync() then (403, """{"error":"Unauthorized"}""")
             else
               io.circe.parser.parse(body).toOption match
                 case None => (400, """{"error":"invalid_field","reason":"not json"}""")
                 case Some(j) =>
                   WeixinIlinkBridgePlugin.parseInbound(j) match
-                    case Left(reason) => (400, Json.obj("error" -> "invalid_field".asJson, "reason" -> reason.asJson).noSpaces)
+                    case Left(reason) =>
+                      (400, Json.obj("error" -> "invalid_field".asJson, "reason" -> reason.asJson).noSpaces)
                     case Right(in) =>
                       val verdict = plugin.deliver(in).unsafeRunSync()
                       (200, verdict.json.noSpaces)
@@ -184,7 +217,7 @@ object WeixinAskLiveProbe:
           val bytes = resp._2.getBytes(StandardCharsets.UTF_8)
           exchange.sendResponseHeaders(resp._1, bytes.length.toLong)
           exchange.getResponseBody.write(bytes)
-        finally exchange.close(),
+        finally exchange.close()
     )
     ingress.start()
     val ingressUrl = s"http://127.0.0.1:$ingressPort/api/social/channels/weixin-ilink/ingress"
@@ -200,18 +233,24 @@ object WeixinAskLiveProbe:
       "WEIXIN_MSGLOOP_FIXTURE" -> fixture.toString,
       "WEIXIN_MSGLOOP_STATE_DIR" -> (root / "msgloop-state").toString,
       "OPENCLAW_STATE_DIR" -> (root / "openclaw-state").toString,
-      "WEIXIN_MSGLOOP_ACCOUNT_ID" -> "liveprobe-im-bot",
+      "WEIXIN_MSGLOOP_ACCOUNT_ID" -> "liveprobe-im-bot"
     ).run()
     readout("real msgloop up", s"FIXTURE mode, tails $fixture (zero iLink traffic)")
 
     def appendFixture(text: String, id: String): Unit =
-      val line = Json.obj(
-        "from_user_id" -> "wx_asker".asJson,
-        "message_id" -> id.asJson,
-        "item_list" -> Json.arr(Json.obj("type" -> 1.asJson, "text_item" -> Json.obj("text" -> text.asJson)))
-      ).noSpaces
-      Files.write(fixture, (line + "\n").getBytes(StandardCharsets.UTF_8),
-        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
+      val line = Json
+        .obj(
+          "from_user_id" -> "wx_asker".asJson,
+          "message_id" -> id.asJson,
+          "item_list" -> Json.arr(Json.obj("type" -> 1.asJson, "text_item" -> Json.obj("text" -> text.asJson)))
+        )
+        .noSpaces
+      Files.write(
+        fixture,
+        (line + "\n").getBytes(StandardCharsets.UTF_8),
+        java.nio.file.StandardOpenOption.CREATE,
+        java.nio.file.StandardOpenOption.APPEND
+      )
 
     // ── ⑧ THE ASK: a REAL hub Request → REAL frame → bridge → shim → stub ──
     def askOnce(rid: String, questions: List[(String, List[String], Boolean)]): Deferred[IO, List[String]] =
@@ -220,21 +259,35 @@ object WeixinAskLiveProbe:
         val base = scala.collection.mutable.ListBuffer[(String, Json)](
           "question" -> q.asJson,
           "options" -> Json.fromValues(labels.map(l => Json.obj("label" -> l.asJson))),
-          "allowOther" -> true.asJson)
+          "allowOther" -> true.asJson
+        )
         if multiple then base += "multiple" -> true.asJson
         Json.obj(base.toList*)
       }
       val payload = Json.obj(
-        "type" -> "askUser".asJson, "sessionId" -> "s1".asJson, "agentName" -> "liveprobe".asJson,
-        "items" -> Json.fromValues(items))
-      (hub ! InteractionHubCommand.Request(InteractionRequest(
-        requestId = rid, kind = InteractionKind.AskUser, payload = payload,
-        reply = InteractionReply.AskUserReply(Some(replyRecorder(slot))),
-        rootSessionId = "s1", sourceAgent = "liveprobe", sourceSession = "s1"))).unsafeRunSync()
+        "type" -> "askUser".asJson,
+        "sessionId" -> "s1".asJson,
+        "agentName" -> "liveprobe".asJson,
+        "items" -> Json.fromValues(items)
+      )
+      (hub ! InteractionHubCommand.Request(
+        InteractionRequest(
+          requestId = rid,
+          kind = InteractionKind.AskUser,
+          payload = payload,
+          reply = InteractionReply.AskUserReply(Some(replyRecorder(slot))),
+          rootSessionId = "s1",
+          sourceAgent = "liveprobe",
+          sourceSession = "s1"
+        )
+      )).unsafeRunSync()
       slot
+    end askOnce
 
-    /** The AskUserReply target: a one-shot actor that completes the slot — the
-      * same shape SendConfirm's oneShotReply serves. */
+    /**
+     * The AskUserReply target: a one-shot actor that completes the slot — the
+     * same shape SendConfirm's oneShotReply serves.
+     */
     def replyRecorder(slot: Deferred[IO, List[String]]): ActorRef[List[String]] =
       new ActorRef[List[String]]:
         def path: ActorPath = ActorPath("liveprobe", List("reply-slot"))
@@ -268,7 +321,9 @@ object WeixinAskLiveProbe:
       val a3 = slot3.get.timeout(30.seconds).unsafeRunSync()
       readout("例3 「他 手写的内容」", s"Other 腿：answers=$a3 (问1 槽=手写的内容，问2 槽空)")
 
-      banner("LIVE LOOPBACK VERDICT: 三例全链闭环 — hub → bridge ask card → shim → (fixture) → ingress 分流 → hub Answered → slot")
+      banner(
+        "LIVE LOOPBACK VERDICT: 三例全链闭环 — hub → bridge ask card → shim → (fixture) → ingress 分流 → hub Answered → slot"
+      )
     finally
       msgloop.destroy()
       shim.destroy()
@@ -277,6 +332,10 @@ object WeixinAskLiveProbe:
       Thread.sleep(300)
       system.stopAll.unsafeRunSync()
       println(s"    [cleanup] msgloop/shim/ingress/stub stopped; temp root left: $root")
+
+    end try
+
+  end main
 
   private def freePort(): Int =
     val s = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
@@ -289,7 +348,8 @@ object WeixinAskLiveProbe:
       try
         val resp = client.send(
           java.net.http.HttpRequest.newBuilder(java.net.URI.create(s"$base/healthz")).GET().build(),
-          java.net.http.HttpResponse.BodyHandlers.ofString())
+          java.net.http.HttpResponse.BodyHandlers.ofString()
+        )
         if resp.statusCode() == 200 then return
       catch case _: Exception => ()
       Thread.sleep(200)

@@ -1,0 +1,141 @@
+# Build
+target/
+project/target/
+project/project/
+
+# IDE
+.idea/
+.vscode/
+.metals/
+.bloop/
+.bsp/
+
+# System
+.DS_Store
+Thumbs.db
+
+# .nebflow/ 运行时层整体不入 repo（2026-09-08 裁定）
+/.nebflow/
+.nebflow-qc.log
+
+# Internal / development-only
+.claude/
+.codex/
+.envrc
+.java-version
+SKEL
+archives/
+temp/
+tmp/
+docs/
+test-envs.sh
+# CHANGELOG.md / CODEBASE.md are kept OUT of git tracking by author ruling
+# 2026-09-17 (they were tracked between 2026-09-14 and that ruling): their
+# content is archived at ~/.nebflow/docs/Nebflow/20260917_changelog-codebase-removal/,
+# and release notes are carried by the GitHub release body instead.
+/CHANGELOG.md
+/CODEBASE.md
+*demo*.html
+/nebflow
+nul
+cloud/**/node_modules/
+cloud/node_modules/
+
+# Sensitive
+*.env
+*.secret
+credentials.json
+.env
+*.env
+dist/
+beta.md
+# Root-level scratch file only (51c0882d). Must NOT match the vendored monaco
+# TS language dirs (vendor/monaco/vs/{language,basic-languages}/typescript/).
+/typescript
+
+# ZCode agent workspace
+.zcode/
+
+# Node / Playwright
+node_modules/
+test-results/
+# NOTE: package.json / package-lock.json are TRACKED since P1 (esbuild build
+# tooling, scripts/build-web.mjs) - they used to be ignored as scratch files.
+playwright.config.mjs
+
+# Test artifacts
+gui-test-screenshots/
+swarm/
+
+# Temp review reports
+.code-review-report.html
+.nebflow-review.html
+
+# Internal handover doc (contains server credentials)
+NEBLINK_HANDOVER.md
+build/
+
+# P1 web build tooling
+node_modules/
+
+# sbt 沙箱重定向目录（工作树内测试运行产物）
+.sbt/
+.ivy2/
+.coursier/
+
+# upload-deps.sh staging (batch artifacts, never committed)
+deps-staging/
+staging/
+
+# Python bytecode cache (packaging/gen-icons.py side artifacts)
+__pycache__/
+# AGENTS.md is a local workspace file, not part of the repo (author ruling 2026-09-17 10:43)
+/AGENTS.md
+
+# --- repo-audit batch (2026-09-19) — untracked-noise classes, appended (no existing line touched)
+# One line each: what it is / why it must not enter the repo.
+# JVM crash log: hs_err_pid<PID>.log, written by the JVM itself on a hard crash — state of one
+# dead process on one machine, never source.
+hs_err_pid*
+# JVM crash-replay log: replay_pid<PID>.log, written next to hs_err — same as above, never source.
+replay_pid*
+# Heap dump: *.hprof (binary, from -XX:+HeapDumpOnOutOfMemoryError / jmap) — a multi-hundred-MB
+# memory image of one run, never source.
+*.hprof
+# Merge / patch residue: *.orig (pre-merge copy) and *.rej (rejected patch hunk) — local conflict
+# scratch of a single working copy, never source.
+*.orig
+*.rej
+# Editor residue: *.swp (vim swap) and *~ (auto backup of the previous revision) — machine-local
+# editor state, never source.
+*.swp
+*~
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

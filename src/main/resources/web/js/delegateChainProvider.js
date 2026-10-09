@@ -25,9 +25,11 @@ import { onMessage, onReconnect } from './ws.js';
 import { authHeaders } from './flowHelpers.js';
 import {
   setSource,
+  setChildrenSource,
   rowFromRegistry,
   chainFromStoreRecord,
 } from './delegateChainStub.js';
+import { DELEGATE_API } from './delegateApi.js';
 
 /** 端点表（与 PresenceRoutes 挂载路径逐字对齐；Router("/api") 前缀）。 */
 export const CHAINS_API = {
@@ -44,6 +46,9 @@ function rowKey(r) {
 const mirror = { rows: [], chains: new Map(), seq: 0 };
 /** 已请求过、确认查无链的键（防 miss 键反复打点；行集刷新时清空重探）。 */
 const emptyKeys = new Set();
+/** 星型子代理镜像（G3；delegateId → children[]）。refresh 臂随行集刷新逐父拉取；
+ *  fail-soft：单父失败保留旧值（与链镜像同纪律），首刷前 = 空集。 */
+const childrenMirror = new Map();
 
 async function fetchJson(url) {
   const r = await fetch(url, { headers: authHeaders() });
@@ -85,7 +90,37 @@ async function refreshChain(key) {
   mirror.chains.set(key, projectChain(body));
 }
 
-/** 全量刷新：行投影 + 各行键链视图（并发逐键、单键失败不连累）。
+/** 星型子代理条目归一（G3 children[]；缺键容忍，零臆造——形状源 = SubAgentTask）。 */
+function projectChild(c) {
+  const src = c && typeof c === 'object' ? c : {};
+  return {
+    taskId: String(src.taskId || ''),
+    parentSessionId: String(src.parentSessionId || ''),
+    agentName: String(src.agentName || ''),
+    prompt: String(src.prompt || ''),
+    description: String(src.description || ''),
+    status: String(src.status || ''),
+    retryCount: typeof src.retryCount === 'number' ? src.retryCount : 0,
+    spawnedAt: typeof src.spawnedAt === 'number' ? src.spawnedAt : 0,
+    completedAt: typeof src.completedAt === 'number' ? src.completedAt : null,
+    lastError: String(src.lastError || ''),
+    source: String(src.source || ''),
+  };
+}
+
+/** 拉某父的星型子代理入镜像（fail-soft：任何失败保留旧值；404 = 父无记录 → 清空）。 */
+async function refreshChildren(delegateId) {
+  const body = await fetchJson(DELEGATE_API.children(delegateId));
+  if (!body) {
+    if (!childrenMirror.has(delegateId)) childrenMirror.set(delegateId, []);
+    return;
+  }
+  const kids = Array.isArray(body.children) ? body.children.map(projectChild) : [];
+  childrenMirror.set(delegateId, kids);
+}
+
+/** 全量刷新：行投影 + 各行键链视图（并发逐键、单键失败不连累）＋ G3 星型子代理
+ *  逐父刷新（仅内部行——外部执行器零平台工具，children 恒空集，免打点）。
  *  刷新完成即广播 delegate-chain-mirror-updated（#56 残项 · 换源即切 UI 承接位，
  *  晨裁② 2026-10-07）：面板渲染层监听此事件重渲——数据权威恒在本镜像（REST），
  *  事件零载荷、零帧解读（「帧只当触发器」纪律不变）。 */
@@ -94,14 +129,43 @@ async function refresh() {
   const body = await fetchJson(CHAINS_API.rows());
   if (!body || seq !== mirror.seq) return; // 已有更新刷新在途，丢弃旧结果
   const rows = (Array.isArray(body.rows) ? body.rows : []).map(projectRow);
+  // 两层架构批（§D 自动归档到达侦测）：记录面零删除（归档只加 archivedAt 旗），
+  // 在册窗消失的行 = 已归档（引擎终态单点写旗）。差集行细节随 delegate-archived
+  // 事件下发（L2 徽章脉冲 + toast 5s 撤销——消费方 delegateChainView；本件零 UI）。
+  if (mirror.rows.length && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    const nextKeys = new Set(rows.map(rowKey).filter(Boolean));
+    for (const prev of mirror.rows) {
+      const k = rowKey(prev);
+      if (k && !nextKeys.has(k)) {
+        window.dispatchEvent(new CustomEvent('delegate-archived', { detail: {
+          delegateId: String(prev.delegateId || ''),
+          taskNo: String(prev.taskNo || ''),
+          title: String(prev.title || ''),
+          status: String(prev.status || ''),
+        } }));
+      }
+    }
+  }
   mirror.rows = rows;
   emptyKeys.clear();
   const keys = Array.from(new Set(rows.map(rowKey).filter(Boolean)));
-  await Promise.all(keys.map((k) => refreshChain(k).catch(() => {})));
+  const childIds = Array.from(new Set(
+    rows.filter((r) => !r.external && r.delegateId).map((r) => r.delegateId),
+  ));
+  await Promise.all([
+    ...keys.map((k) => refreshChain(k).catch(() => {})),
+    ...childIds.map((id) => refreshChildren(id).catch(() => {})),
+  ]);
   if (seq !== mirror.seq) return; // 刷新期间又有更新在途——广播交给最新一轮
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(new CustomEvent('delegate-chain-mirror-updated'));
   }
+}
+
+/** 归档动作后的镜像即时对账（bgAgentPopup 归档入口回调；fire-and-forget fail-soft
+ *  ——归档行移历史窗，在册窗重刷后行自然退场）。 */
+export function refreshMirror() {
+  refresh().catch(() => {});
 }
 
 /** 按需补拉（getChainByTask 未命中键；fire-and-forget，读口本调用仍返回 null）。 */
@@ -125,6 +189,14 @@ const liveSource = {
 };
 
 setSource(liveSource);
+
+// G3 星型子代理读口挂接（delegate-ui 批）：渲染面（main.js 面板两级分组 /
+// bgAgentPopup 星型区 / taskList S1 标注）经 stub listDelegateChildren 读取本镜像。
+setChildrenSource({
+  listDelegateChildren(delegateId) {
+    return childrenMirror.get(String(delegateId == null ? '' : delegateId)) || [];
+  },
+});
 
 // ── 镜像驱动：boot 首刷 ＋ WS 触发防抖刷 ＋ 重连对账 ─────────────────────────
 

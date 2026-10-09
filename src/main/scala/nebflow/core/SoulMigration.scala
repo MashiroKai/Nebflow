@@ -75,6 +75,8 @@ object SoulMigration:
             MemoryStore.invalidateSoulCache()
             Outcome.Migrated(bytes)
 
+  end run
+
   /**
    * Boot 入口：执行并落一行 WARN/INFO 读数（**不抛**——迁移失败不得阻断启动）。
    * `GatewayMain` 在既有迁移块内调用本方法。
@@ -83,9 +85,11 @@ object SoulMigration:
     try
       run() match
         case Outcome.Migrated(bytes) =>
-          logger.infoSync(s"[soul-migration] migrated $bytes bytes to ${MemoryStore.soulMemoryPath} (legacy kept read-only)")
+          logger.infoSync(
+            s"[soul-migration] migrated $bytes bytes to ${MemoryStore.soulMemoryPath} (legacy kept read-only)"
+          )
         case Outcome.SkippedSoulExists => () // 幂等静默：健康 home 每 boot 走这条
-        case Outcome.SkippedNoSource   => () // 全新安装无旧数据：静默
+        case Outcome.SkippedNoSource => () // 全新安装无旧数据：静默
         case Outcome.Aborted(reason) =>
           logger.warnSync(s"[soul-migration] aborted (snapshot failed), zero writes: $reason")
     catch case e: Exception => logger.warnSync(s"[soul-migration] failed: ${e.getMessage}")

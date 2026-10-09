@@ -149,9 +149,10 @@ final class JevShadowEvaluator(
   private def append(rec: JevShadowRecord): IO[Unit] =
     IO.blocking {
       os.write.append(shadowPath, rec.asJson.noSpaces + "\n", createFolders = true)
-    }.void.handleErrorWith(e =>
-      IO(logger.warnSync(s"jev shadow append failed (${rec.nodeName}): ${e.getClass.getSimpleName}"))
-    )
+    }.void
+      .handleErrorWith(e =>
+        IO(logger.warnSync(s"jev shadow append failed (${rec.nodeName}): ${e.getClass.getSimpleName}"))
+      )
 
   /** Read back the records (evidence for the offline evaluation report). */
   def readAll: IO[List[Json]] =
@@ -164,6 +165,8 @@ final class JevShadowEvaluator(
           .flatMap(l => io.circe.parser.parse(l).toOption)
           .toList
     }
+
+end JevShadowEvaluator
 
 /**
  * Declarative stub for the REAL wiring (Face B① / P3).
@@ -212,6 +215,6 @@ object JevAllocationStub:
     IO {
       if wouldAllocate then
         logger.infoSync(s"jev allocation point is SHADOW-ONLY for '$nodeName' — the declared set is used unchanged")
-      else
-        logger.infoSync(s"jev allocation point not applicable for '$nodeName' (face off)")
+      else logger.infoSync(s"jev allocation point not applicable for '$nodeName' (face off)")
     }.void
+end JevAllocationStub

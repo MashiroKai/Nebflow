@@ -43,7 +43,11 @@ object NodeCancelTool extends Tool:
   )
 
   def summarize(input: JsonObject): String =
-    val id = input("chain").flatMap(_.asString).map(c => s"chain:$c").orElse(input("node-id").flatMap(_.asString)).getOrElse("?")
+    val id = input("chain")
+      .flatMap(_.asString)
+      .map(c => s"chain:$c")
+      .orElse(input("node-id").flatMap(_.asString))
+      .getOrElse("?")
     s"NodeCancel($id)"
 
   def summarizeResult(input: JsonObject, result: String): String = result

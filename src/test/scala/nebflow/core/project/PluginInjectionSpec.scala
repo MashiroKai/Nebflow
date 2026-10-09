@@ -60,6 +60,8 @@ class PluginInjectionSpec extends CatsEffectSuite:
       createFolders = true
     )
 
+  end writeSkillPlugin
+
   /** 总闸写入（nebflow.json plugins.enabled）。 */
   private def setPluginsEnabled(on: Boolean): Unit =
     os.write.over(
@@ -70,16 +72,23 @@ class PluginInjectionSpec extends CatsEffectSuite:
 
   /** 分配桩面：固定返回 names（via=Jev），并记录调用。 */
   private def installStub(
-      names: List[String],
-      calls: scala.collection.mutable.ListBuffer[String] = scala.collection.mutable.ListBuffer.empty
+    names: List[String],
+    calls: scala.collection.mutable.ListBuffer[String] = scala.collection.mutable.ListBuffer.empty
   ): scala.collection.mutable.ListBuffer[String] =
-    PluginAllocator.install(new PluginAllocator.Face:
-      def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
-        IO {
-          calls += s"$subject|${taskText.take(20)}"
-          PluginAllocator.PluginAllocationResult(JevAllocation.Allocated(names), Some(PluginAllocator.AllocationVia.Jev))
-        })
+    PluginAllocator.install(
+      new PluginAllocator.Face:
+        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+          IO {
+            calls += s"$subject|${taskText.take(20)}"
+            PluginAllocator.PluginAllocationResult(
+              JevAllocation.Allocated(names),
+              Some(PluginAllocator.AllocationVia.Jev)
+            )
+          }
+    )
     calls
+
+  end installStub
 
   private val node = NodeDef(
     id = "n1",
@@ -157,7 +166,9 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(calls.size, 0, "declared plugins short-circuit the allocation face")
   }
 
-  test("forNode S9: per-project engine (delegateScope=false) + empty declaration → legacy behaviour byte-identical (no allocation call)") {
+  test(
+    "forNode S9: per-project engine (delegateScope=false) + empty declaration → legacy behaviour byte-identical (no allocation call)"
+  ) {
     setPluginsEnabled(true)
     writeSkillPlugin("p1", "NEVER")
     val calls = installStub(List("p1"))
@@ -168,7 +179,9 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(os.exists(tempRoot / "chains"), false, "no step-plugins line without an allocation")
   }
 
-  test("forNode S9: delegate-scope engine + empty declaration → allocation + step-plugins structure line (ChainStore, zero new storage)") {
+  test(
+    "forNode S9: delegate-scope engine + empty declaration → allocation + step-plugins structure line (ChainStore, zero new storage)"
+  ) {
     setPluginsEnabled(true)
     writeSkillPlugin("p1", "STEP-ALLOC")
     val calls = installStub(List("p1"))

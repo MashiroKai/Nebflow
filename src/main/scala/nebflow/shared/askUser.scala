@@ -48,7 +48,32 @@ case class AskItem(
    * false；选择面不可用（动态 import 拒绝 / 目录列表超时或 error）时前端按需揭示
    * 降级输入面并聚焦，答案仍能成功上送（②-6 禁死路）。
    */
-  freeInput: Boolean = true
+  freeInput: Boolean = true,
+  /**
+   * secret 型 AskUser（设计规格 §1，2026-10-08 批）：true = 本题渲染**密码框**而非
+   * 选项/自由输入——用户的值只走「卡片密码框 → 专用 WS 键（secretSlots）→ 网关直写
+   * secrets（0600 F1 写序）」这一条路，请求方（Agent）永远只收 keyRef 指针回执
+   * （`{stored:true, keyRef, location, variableName}`），**从不收值**。缺省 false =
+   * 逐字节现状（字段缺席的旧载荷行为不变）。与 options/dirPicker/canvas 互斥
+   * （解析侧裁定：secret 胜出——options 剥除、dirPicker/canvas 题整条跳过，
+   * 见 `AskUserQuestionTool.parseItems`）。
+   */
+  secret: Boolean = false,
+  /**
+   * secret 题的落盘名（过 `SecretsStore.NamePattern` 校验）；缺省由网关派生
+   * `askuser-<requestId>-<题序>`。非法名不炸整卡——落 `stored:false` 回执。
+   */
+  secretName: Option[String] = None,
+  /**
+   * secret 题的**验证码通道**：true = 一次性值——默认 TTL 10 分钟，读取一次即
+   * 消费（原子 rename-out），用于 OTP/2FA 码而非长期密钥。缺省 false。
+   */
+  ephemeral: Boolean = false,
+  /**
+   * ephemeral 题的存活秒数（钳位 10–86400；缺省 600 = 10 分钟）。非 ephemeral
+   * 题忽略。
+   */
+  ttlSec: Option[Int] = None
 )
 
 case class AskOption(
@@ -120,6 +145,49 @@ object AskUserDispatch:
   def isFailure(answers: List[String]): Boolean =
     answers match
       case signal :: Nil => signal.startsWith(FailureMarker)
-      case _             => false
+      case _ => false
 
 end AskUserDispatch
+
+/**
+ * AskUser **取消信号**（askucancel 批，2026-10-08）—— hub `CancelRequest` 在终结
+ * 槽位时经**既有答复管道**（`InteractionReply.AskUserReply.replyTo`）投回请求方的
+ * 明确结论。与 [[AskUserDispatch]] 同一形态族（单槽自描述文本 + 单点判据），但
+ * 语义相反：它**是**要注入会话的（请求方必须知道「不会有答案了」），而派发失败
+ * 信号明确**不**注入。
+ *
+ * 两个消费点一律委托本对象（禁第二份副本，与全仓「一处实现、消费点委托」纪律同源）：
+ *  - `AskUserAnswerBridge.deliver`（非阻塞桥腿）：注入取消通告（`fromUser=false`，
+ *    带 `askUserCancelled` 来源标注——它不是用户答复，不能伪装成 user 气泡）；
+ *  - `ProjectTool.parsePanelAnswer`（阻塞面板腿）：判 `Shelved`（用户撤回 ≙ 既有
+ *    `__cancelled__` 哨兵的落点，但走**可判读信号**而非伪造答案）。
+ */
+object AskUserCancelled:
+
+  /** 机器可读锚：信号类别 = 用户发起的取消。 */
+  val Code = "ASKUSER_CANCELLED"
+
+  /** 人可读判读起点；机器判据（[[isCancelled]]）亦以它为准。 */
+  val Marker = s"AskUser CANCELLED ($Code)"
+
+  /**
+   * 取消信号（**单槽**）。自描述：类别 + requestId + 取消方 + 原因 + 后果（答案
+   * 永不投达）+ 与用户答复的判别句。
+   */
+  def signal(requestId: String, reason: String, by: String): List[String] =
+    List(
+      s"$Marker: requestId=$requestId reason=$reason by=$by — the question was withdrawn before an " +
+        s"answer arrived, so no answer will be delivered; proceed with your best judgment. " +
+        s"This is a cancellation notice, not a user answer."
+    )
+
+  /**
+   * 是否取消信号。空载荷（`Nil`）、空白文本与常规答复一律 `false` —— 判据形态与
+   * [[AskUserDispatch.isFailure]] 逐字同构（单槽 + 前缀匹配）。
+   */
+  def isCancelled(answers: List[String]): Boolean =
+    answers match
+      case signal :: Nil => signal.startsWith(Marker)
+      case _ => false
+
+end AskUserCancelled

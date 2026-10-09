@@ -2,28 +2,29 @@ package nebflow.shared
 
 import munit.FunSuite
 
-/** nodestate-bash 批 **I2「参数与开关层」** 读取单测 + 正控（2026-09-14）。
-  *
-  * 设计件（唯一权威）：`~/.nebflow/docs/Nebflow/20260914_075109_nodestate-bash-terminal-redesign__chain-n-6ff25c31.md`
-  * ——§4.2（自动转后台）/ §4.3.3 A1（豁免预算）/ §4.4.1 T1–T8 / §4.4.2 G1–G3 / §7.2 O1–O7。
-  *
-  * 本 spec 钉三件（对应 I2 验收判据 ②③）：
-  *   ① **默认值逐项**：新增腿 = 设计件逐字给定值（§4.2/O1 = 300000、A1/O2 = 600000、
-  *      O5 = 120000、T8 = 1800000、G2 = 300、G3 = 900）；既存现网阈值 T3/T5/T7 =
-  *      **旧行为现行取值**（600000 / 300 / 10000000）——🔴 I2 禁上调，设计件提案值
-  *      （1800s / 900s / 1e9）的翻值归 I5；
-  *      🔴 **T6 已退役**（killruling 批 2026-09-23 裁定 #3「去」M3 机制 ⇒ prop 与取数点
-  *      同删）——原三项断言（默认/翻转/清场）的断言对象已不存在，改为**退役回归锁**
-  *      （见 T6 节；断言数不变）。
-  *   ② **正控（现读）**：翻转 prop ⇒ **下一次读取**即为新值（证明取值点是
-  *      `sys.props.getOrElse` 每次调用现读，不是启动/对象初始化时的快照）；
-  *   ③ **清场**：移除 prop ⇒ 回到默认（防跨 suite 全局污染）。
-  *
-  * 🔴 I2 全层在 I2 内**零消费点**（静态断言 =
-  * `.nebflow/tools/20260914_nodestate-i2-params-check.sh` 的 §3）⇒ 本 spec 只验
-  * 「参数层可读 / 可翻转 / 默认不变」，**不验任何行为变化**——「零行为变化」的结构性
-  * 依据是「无消费点」，不是靠断言凑（判据①由该静态断言承载）。
-  */
+/**
+ * nodestate-bash 批 **I2「参数与开关层」** 读取单测 + 正控（2026-09-14）。
+ *
+ * 设计件（唯一权威）：`~/.nebflow/docs/Nebflow/20260914_075109_nodestate-bash-terminal-redesign__chain-n-6ff25c31.md`
+ * ——§4.2（自动转后台）/ §4.3.3 A1（豁免预算）/ §4.4.1 T1–T8 / §4.4.2 G1–G3 / §7.2 O1–O7。
+ *
+ * 本 spec 钉三件（对应 I2 验收判据 ②③）：
+ *   ① **默认值逐项**：新增腿 = 设计件逐字给定值（§4.2/O1 = 300000、A1/O2 = 600000、
+ *      O5 = 120000、T8 = 1800000、G2 = 300、G3 = 900）；既存现网阈值 T3/T5/T7 =
+ *      **旧行为现行取值**（600000 / 300 / 10000000）——🔴 I2 禁上调，设计件提案值
+ *      （1800s / 900s / 1e9）的翻值归 I5；
+ *      🔴 **T6 已退役**（killruling 批 2026-09-23 裁定 #3「去」M3 机制 ⇒ prop 与取数点
+ *      同删）——原三项断言（默认/翻转/清场）的断言对象已不存在，改为**退役回归锁**
+ *      （见 T6 节；断言数不变）。
+ *   ② **正控（现读）**：翻转 prop ⇒ **下一次读取**即为新值（证明取值点是
+ *      `sys.props.getOrElse` 每次调用现读，不是启动/对象初始化时的快照）；
+ *   ③ **清场**：移除 prop ⇒ 回到默认（防跨 suite 全局污染）。
+ *
+ * 🔴 I2 全层在 I2 内**零消费点**（静态断言 =
+ * `.nebflow/tools/20260914_nodestate-i2-params-check.sh` 的 §3）⇒ 本 spec 只验
+ * 「参数层可读 / 可翻转 / 默认不变」，**不验任何行为变化**——「零行为变化」的结构性
+ * 依据是「无消费点」，不是靠断言凑（判据①由该静态断言承载）。
+ */
 class NodestateBashI2ParamsSpec extends FunSuite:
 
   /** 本批 prop 名总表（清场用；防跨 suite 泄漏影响其它 suite）。 */
@@ -32,11 +33,11 @@ class NodestateBashI2ParamsSpec extends FunSuite:
     "nebflow.shell.sleepExemptBudgetMs", // 新参 ForegroundSleepExemptBudgetMs
     "nebflow.noderpt.reportFreezeGraceMs", // 新参 ReportFreezeGraceMs
     "nebflow.noderpt.deadSessionBgWaitGraceMs", // 新参 DeadSessionBgWaitGraceMs（T8）
-    "nebflow.stuck.suspectTickSec",             // 新参 StuckSuspectTickSec（G2）
-    "nebflow.stuck.demandTickSec",              // 新参 StuckDemandTickSec（G3）
-    "nebflow.stuck.thresholdMs",                // T3 prop 面（I2 新加）
-    "nebflow.shell.bgIdleTimeoutSec",           // T5 prop 面（I2 新加）
-    "nebflow.shell.cpuActiveThresholdNanos"     // T7 prop 面（I2 新加）
+    "nebflow.stuck.suspectTickSec", // 新参 StuckSuspectTickSec（G2）
+    "nebflow.stuck.demandTickSec", // 新参 StuckDemandTickSec（G3）
+    "nebflow.stuck.thresholdMs", // T3 prop 面（I2 新加）
+    "nebflow.shell.bgIdleTimeoutSec", // T5 prop 面（I2 新加）
+    "nebflow.shell.cpuActiveThresholdNanos" // T7 prop 面（I2 新加）
   )
 
   override def afterAll(): Unit = i2Props.foreach(p => sys.props.remove(p))
@@ -134,12 +135,12 @@ class NodestateBashI2ParamsSpec extends FunSuite:
   // 「不该改但被本波波及」单列登记在 impl result 的 grep 复检节。
   test("T6 已退役（killruling 批裁定 #3）：stuckDetectionGraceSec 既无 prop 面也无取数点（退役回归锁）") {
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "shared" / "Defaults.scala")
-    assert(!src.contains("getOrElse(\"nebflow.shell.stuckDetectionGraceSec\""),
-      "T6 prop 面必须已随 M3 同删（退役后零消费点 —— 留着会误导「还以为有 30s 档」）")
-    assert(!src.contains("def StuckDetectionGraceSec"),
-      "T6 取数点 def 必须已删（M3 是唯一消费点）")
-    assert(src.contains("def CpuActiveThresholdNanos"),
-      "T7（保留面）必须仍在册 —— 本条同时证「上两条不是读失败导致的恒真」（非空读对照）")
+    assert(
+      !src.contains("getOrElse(\"nebflow.shell.stuckDetectionGraceSec\""),
+      "T6 prop 面必须已随 M3 同删（退役后零消费点 —— 留着会误导「还以为有 30s 档」）"
+    )
+    assert(!src.contains("def StuckDetectionGraceSec"), "T6 取数点 def 必须已删（M3 是唯一消费点）")
+    assert(src.contains("def CpuActiveThresholdNanos"), "T7（保留面）必须仍在册 —— 本条同时证「上两条不是读失败导致的恒真」（非空读对照）")
   }
 
   test("T7 CpuActiveThresholdNanos：默认 10000000 = 10ms/窗 = 旧行为现行取值（提案 1e9 归 I5），prop 现读") {

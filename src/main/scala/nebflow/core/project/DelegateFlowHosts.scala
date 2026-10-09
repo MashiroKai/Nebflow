@@ -47,17 +47,18 @@ import scala.concurrent.duration.*
 
 /** 一个 delegate 作用域宿主：一张图 ＋ 一个引擎实例（实例可灭，盘面状态存）。 */
 final case class DelegateFlowRuntime(
-    /** 作用域键 = delegate 会话 id（= engine.rootSessionId）。 */
-    delegateId: String,
-    /** 挂载项目名；None = 默认 general 目录腿。 */
-    project: Option[String],
-    /** 存储根锚定工作区（项目 workspace / 默认 general 目录）——作用域目录在其 `.nebflow` 下。 */
-    baseWorkspace: String,
-    /** 节点座位（判是腿 = worktree；否则 = 基工作区）——引擎 spawn/解析用工作区。 */
-    engineCwd: String,
-    store: FlowMapStore,
-    engine: NodeEngine
+  /** 作用域键 = delegate 会话 id（= engine.rootSessionId）。 */
+  delegateId: String,
+  /** 挂载项目名；None = 默认 general 目录腿。 */
+  project: Option[String],
+  /** 存储根锚定工作区（项目 workspace / 默认 general 目录）——作用域目录在其 `.nebflow` 下。 */
+  baseWorkspace: String,
+  /** 节点座位（判是腿 = worktree；否则 = 基工作区）——引擎 spawn/解析用工作区。 */
+  engineCwd: String,
+  store: FlowMapStore,
+  engine: NodeEngine
 ):
+
   /** 作用域目录读数（挂载/隔离证据锚点）：`<baseWorkspace>/.nebflow/flow-maps/<scope>/`。 */
   def scopeDir: os.Path =
     os.Path(baseWorkspace, PathUtil.dataRoot) / ".nebflow" / FlowMapStore.FlowMapsDirName / delegateId
@@ -92,6 +93,8 @@ final case class DelegateFlowRuntime(
     actorRef = None,
     board = None
   )
+
+end DelegateFlowRuntime
 
 object DelegateFlowHosts:
   private val logger = NebflowLogger.forName("nebflow.delegate.flow-hosts")
@@ -128,21 +131,23 @@ object DelegateFlowHosts:
    * 失效，BootCrashRecoverySpec 先例同款纪律）。
    */
   def mount(
-      delegateId: String,
-      project: Option[String],
-      baseWorkspace: String,
-      engineCwd: String,
-      system: ActorSystem,
-      resources: AgentRuntimePort,
-      wsSend: Option[Json => IO[Unit]],
-      reportGateHold: Option[Boolean] = None,
-      rootNotifyQuietMs: Option[Long] = None,
-      destroyWindowMs: Option[Long] = None
+    delegateId: String,
+    project: Option[String],
+    baseWorkspace: String,
+    engineCwd: String,
+    system: ActorSystem,
+    resources: AgentRuntimePort,
+    wsSend: Option[Json => IO[Unit]],
+    reportGateHold: Option[Boolean] = None,
+    rootNotifyQuietMs: Option[Long] = None,
+    destroyWindowMs: Option[Long] = None
   ): IO[Option[DelegateFlowRuntime]] =
     if !FlowMapStore.validScopeId(delegateId) then
-      logger.warn(
-        s"delegate flow-host mount REFUSED: invalid scope id '$delegateId' (charset contract [a-zA-Z0-9._-], ≤128) — delegate continues without a scope map"
-      ).as(None)
+      logger
+        .warn(
+          s"delegate flow-host mount REFUSED: invalid scope id '$delegateId' (charset contract [a-zA-Z0-9._-], ≤128) — delegate continues without a scope map"
+        )
+        .as(None)
     else
       hosts.get.flatMap { cur =>
         cur.get(delegateId) match
@@ -160,8 +165,8 @@ object DelegateFlowHosts:
                 rootSessionId = delegateId, // 自根作用域（见方法注）
                 projectName = projectName,
                 emitEvent = emitScopeEvent(projectName, wsSend),
-                board = None,           // 项目任务板是 per-project face；作用域图零板块头
-                projectGoal = None,     // 项目目标行同上
+                board = None, // 项目任务板是 per-project face；作用域图零板块头
+                projectGoal = None, // 项目目标行同上
                 reportGateHold = reportGateHold,
                 rootNotifyQuietMs = rootNotifyQuietMs,
                 destroyWindowMs = destroyWindowMs,
@@ -185,6 +190,7 @@ object DelegateFlowHosts:
                   s"map=${rt.scopeDir}, seat=$engineCwd, root=self) — one delegate one map"
               )
             yield Some(rt)
+            end for
       }
 
   /**
@@ -231,9 +237,13 @@ object DelegateFlowHosts:
   def launchScanner(interval: FiniteDuration): IO[Unit] =
     def loop: IO[Unit] =
       IO.sleep(interval) *>
-        (all.flatMap(_.traverse_(h => tickHost(h).handleErrorWith(e =>
-          logger.warn(s"[delegate-flow-host] tick failed for scope '${h.delegateId}': ${e.getMessage}")
-        ))) *> reapOrphans).handleErrorWith(e =>
+        (all.flatMap(
+          _.traverse_(h =>
+            tickHost(h).handleErrorWith(e =>
+              logger.warn(s"[delegate-flow-host] tick failed for scope '${h.delegateId}': ${e.getMessage}")
+            )
+          )
+        ) *> reapOrphans).handleErrorWith(e =>
           logger.warn(s"[delegate-flow-host] scanner pass failed: ${e.getMessage}")
         ) *> IO.defer(loop)
     loop
@@ -262,6 +272,8 @@ object DelegateFlowHosts:
       chainSummaryLeg(h).handleErrorWith(e => warn("chain summary registration")(e).void) *>
       ledgerReconcileLeg(h).handleErrorWith(e => warn("chain ledger reconcile")(e).void)
 
+  end tickHost
+
   /**
    * 链级即时归档腿（TtlTick 同款骨架，作用域化）：sweepCompletedChainsDetailed 出库 →
    * WS nodeRemoved 逐节点（engine.emitRemoved 既有面）→ chain-archived 审计事件落
@@ -282,7 +294,9 @@ object DelegateFlowHosts:
             FlowMapEventLog.chainArchivedSummary(c.chainId, c.archivedAt, c.members),
             Some(c.chainId)
           )
-          .handleErrorWith(e => logger.warn(s"[delegate-flow-host] chain-archived append failed (${c.chainId}): ${e.getMessage}"))
+          .handleErrorWith(e =>
+            logger.warn(s"[delegate-flow-host] chain-archived append failed (${c.chainId}): ${e.getMessage}")
+          )
       }
       removals *> audits
     }
@@ -296,8 +310,7 @@ object DelegateFlowHosts:
     h.store
       .chainSummaryBatch(FlowMapStore.ChainSummaryMaxPerRound)
       .flatMap { case (head, tail) =>
-        val mark = (c: FlowMapStore.ChainSummary) =>
-          h.store.markChainSummarySent(c.chainId, System.currentTimeMillis())
+        val mark = (c: FlowMapStore.ChainSummary) => h.store.markChainSummarySent(c.chainId, System.currentTimeMillis())
         head.traverse_(mark) *> tail.traverse_(mark)
       }
 
@@ -315,7 +328,8 @@ object DelegateFlowHosts:
             chainId = ch.to
           )
           .handleErrorWith(e =>
-            logger.warn(s"[delegate-flow-host] chain-membership-changed append failed for ${ch.nodeId}: ${e.getMessage}")
+            logger
+              .warn(s"[delegate-flow-host] chain-membership-changed append failed for ${ch.nodeId}: ${e.getMessage}")
           )
       }
     }
@@ -327,20 +341,24 @@ object DelegateFlowHosts:
    * 宿主在（引擎要驱动它走完）。收割只灭实例，盘面零动作（write-through）。
    */
   private[project] def reapOrphans: IO[Int] =
-    all.flatMap(_.traverse { h =>
-      for
-        live <- h.engine.resources.agentRegistry.get.map(_.contains(h.delegateId))
-        snap <- h.store.snapshot
-        active = snap.nodes.values.exists(n => !NodeLifecycle.Terminal.contains(n.status))
-        _ <- if !live && !active then unmount(h.delegateId) else IO.unit
-      yield if !live && !active then 1 else 0
-    }).map(_.sum)
+    all
+      .flatMap(_.traverse { h =>
+        for
+          live <- h.engine.resources.agentRegistry.get.map(_.contains(h.delegateId))
+          snap <- h.store.snapshot
+          active = snap.nodes.values.exists(n => !NodeLifecycle.Terminal.contains(n.status))
+          _ <- if !live && !active then unmount(h.delegateId) else IO.unit
+        yield if !live && !active then 1 else 0
+      })
+      .map(_.sum)
 
-  /** 作用域 WS 事件帧（ProjectActor.emitNodeEvent 同族帧形，**零新增键**；项目名 =
-    * 作用域归名。wsSend 由调用方预路由——delegate 会话既有 routeWsSend 戳）。 */
+  /**
+   * 作用域 WS 事件帧（ProjectActor.emitNodeEvent 同族帧形，**零新增键**；项目名 =
+   * 作用域归名。wsSend 由调用方预路由——delegate 会话既有 routeWsSend 戳）。
+   */
   private def emitScopeEvent(
-      project: String,
-      wsSend: Option[Json => IO[Unit]]
+    project: String,
+    wsSend: Option[Json => IO[Unit]]
   )(eventType: String, nodeId: String, nodeJson: Json): IO[Unit] =
     wsSend.fold(IO.unit) { send =>
       send(

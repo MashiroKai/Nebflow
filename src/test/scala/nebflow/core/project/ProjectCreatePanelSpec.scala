@@ -16,7 +16,12 @@ import nebflow.actor.{
 }
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectTool, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}

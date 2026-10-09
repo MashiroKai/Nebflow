@@ -797,6 +797,7 @@ private[tools] object FileRefs:
                             )
                           )
           end match
+        end if
     catch
       case e: Exception =>
         RefDecision.Reject(

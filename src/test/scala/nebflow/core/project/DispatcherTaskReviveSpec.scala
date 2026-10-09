@@ -10,7 +10,10 @@ import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had them in nebflow.gateway; PR moved the family to core
+import nebflow.core.{
+  RateLimiter,
+  SessionStore
+} // W1 shim: main had them in nebflow.gateway; PR moved the family to core
 import nebflow.llm.ModelCandidate // W1 shim: ThinkingConfig split out — PR moved it to shared
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
@@ -51,6 +54,7 @@ class DispatcherTaskReviveSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"task revive test","tools":[],"category":"standalone"}"""
@@ -65,9 +69,10 @@ class DispatcherTaskReviveSpec extends CatsEffectSuite:
     val streamsDone: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val handle: LlmHandle[IO] = this
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)) ++
         Stream.eval(streamsDone.update(_ + 1)).drain
@@ -102,7 +107,7 @@ class DispatcherTaskReviveSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 25.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -147,6 +152,7 @@ class DispatcherTaskReviveSpec extends CatsEffectSuite:
       dispatcherLifecycleAnchorTaskTerminal = Some(anchor),
       dispatcherMaxConcurrentSessions = None
     )
+  end mount
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
@@ -155,18 +161,28 @@ class DispatcherTaskReviveSpec extends CatsEffectSuite:
     ProjectActor.ttlScanner(1.second).background.use(_ => body)
 
   private def newTask(title: String): String =
-    TaskLedgerStore.open()
+    TaskLedgerStore
+      .open()
       .createSyncReturningId(title = title, actor = TaskLedgerHistory.Actors.Dispatcher)
       .getOrElse(sys.error("create must succeed"))
 
   private type ActorRefT = nebflow.actor.ActorRef[ProjectActor.ProjectCommand]
 
   private def trigger(ref: ActorRefT, text: String, tid: String, revive: Boolean): IO[Unit] =
-    (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(text, "nebula-root", ProjectActor.SourceTask, None, Some(tid), revive)).void
+    (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
+      text,
+      "nebula-root",
+      ProjectActor.SourceTask,
+      None,
+      Some(tid),
+      revive
+    )).void
 
   // ── (1) residue eviction: the revive trigger never reuses a leftover session ──
 
-  test("(1) revive evicts the residue slot: old session destroyed (audit event reason=revived-by-mail), a DIFFERENT live session takes over") {
+  test(
+    "(1) revive evicts the residue slot: old session destroyed (audit event reason=revived-by-mail), a DIFFERENT live session takes over"
+  ) {
     val ws = tempRoot / "ws-revive-evict"
     os.makeDir.all(ws)
     val system = ActorSystem(s"revive-evict-${scala.util.Random.nextInt(100000)}")
@@ -193,22 +209,34 @@ class DispatcherTaskReviveSpec extends CatsEffectSuite:
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
         val oldSid = sid1.getOrElse(sys.error("the first session must have spawned"))
-        assertEquals(residue, List(oldSid),
-          s"with the anchor off, the completed task's session must still be in place (the residue this test evicts), got: $residue")
+        assertEquals(
+          residue,
+          List(oldSid),
+          s"with the anchor off, the completed task's session must still be in place (the residue this test evicts), got: $residue"
+        )
         assertEquals(after.size, 1, s"exactly one live session after the revive, got: $after")
-        assert(after.head != oldSid,
-          s"the revive trigger must NEVER reuse the residue session, got: revive=${after.head} residue=$oldSid")
-        val evictEvents = events.filter(l => l.contains("\"type\":\"dispatcher-revive-evict\"") && l.contains(s"task=$tid"))
-        assert(evictEvents.nonEmpty,
-          s"a dispatcher-revive-evict event naming the task must exist, got:\n${events.filter(_.contains("dispatcher")).mkString("\n")}")
-        assert(evictEvents.exists(_.contains(oldSid)) && evictEvents.exists(_.contains("reason=revived-by-mail")),
-          s"the evict event must name the destroyed session and the cause, got: $evictEvents")
+        assert(
+          after.head != oldSid,
+          s"the revive trigger must NEVER reuse the residue session, got: revive=${after.head} residue=$oldSid"
+        )
+        val evictEvents =
+          events.filter(l => l.contains("\"type\":\"dispatcher-revive-evict\"") && l.contains(s"task=$tid"))
+        assert(
+          evictEvents.nonEmpty,
+          s"a dispatcher-revive-evict event naming the task must exist, got:\n${events.filter(_.contains("dispatcher")).mkString("\n")}"
+        )
+        assert(
+          evictEvents.exists(_.contains(oldSid)) && evictEvents.exists(_.contains("reason=revived-by-mail")),
+          s"the evict event must name the destroyed session and the cause, got: $evictEvents"
+        )
     }
   }
 
   // ── (2) no residue ⇒ plain fresh spawn, zero evict noise ──
 
-  test("(2) revive trigger with an empty slot spawns normally: one fresh bound session, no dispatcher-revive-evict event") {
+  test(
+    "(2) revive trigger with an empty slot spawns normally: one fresh bound session, no dispatcher-revive-evict event"
+  ) {
     val ws = tempRoot / "ws-revive-clean"
     os.makeDir.all(ws)
     val system = ActorSystem(s"revive-clean-${scala.util.Random.nextInt(100000)}")
@@ -231,8 +259,10 @@ class DispatcherTaskReviveSpec extends CatsEffectSuite:
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
         assertEquals(sessions.size, 1, s"exactly one fresh bound session, got: $sessions")
-        assert(!events.exists(_.contains("\"type\":\"dispatcher-revive-evict\"")),
-          "the clean path must write no revive-evict event")
+        assert(
+          !events.exists(_.contains("\"type\":\"dispatcher-revive-evict\"")),
+          "the clean path must write no revive-evict event"
+        )
     }
   }
 

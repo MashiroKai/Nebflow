@@ -78,3 +78,4 @@ class ExternalOpenNativeSpec extends FunSuite:
     // 注入尝试：非法 sid 被剥掉 → 裸启动（不把任意文本拼进内层 shell）。
     assertEquals(ExternalOpenNative.resumeCommand("claude-code", Some("a; rm -rf /")), "claude")
   }
+end ExternalOpenNativeSpec

@@ -480,8 +480,7 @@ object ContextRefresher:
       // 阶段 2b Plugins（§B.4 第 3/4 步）：node 分配是 spawn 时运行时注入
       // （NodeEngine 写入 pluginMcpServers/pluginTools，不落 agent.json）——
       // 每 turn 热重载不得冲掉（flowContract 同款保活先例）。
-      pluginMcpServers =
-        if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else fresh.pluginMcpServers,
+      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else fresh.pluginMcpServers,
       pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else fresh.pluginTools
     )
 
@@ -555,7 +554,8 @@ object ContextRefresher:
       // ModelCandidate.contextWindow → spawn/update 写入状态；🔴 既有单点链，
       // 不另立旁路，本处只**消费**）。
       memoryBlock =
-        if shouldInjectMemory(isWorker, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
+        if shouldInjectMemory(isWorker, globalDef.name) then
+          buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
         else ""
     yield TurnContext(
       globalDef,

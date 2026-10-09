@@ -48,6 +48,7 @@ object OnboardingModelStep:
     modelMaxContext: Option[Int],
     effectiveContextWindow: Int
   ):
+
     def asJson: Json = Json.obj(
       "ref" -> ref.asJson,
       "providerId" -> providerId.asJson,
@@ -57,6 +58,8 @@ object OnboardingModelStep:
       "modelMaxContext" -> modelMaxContext.asJson,
       "effectiveContextWindow" -> effectiveContextWindow.asJson
     )
+
+  end ModelRow
 
   /**
    * **从已配置 provider 检出可用模型**（onboarding 模型步骤的主数据源）。
@@ -133,8 +136,9 @@ object OnboardingModelStep:
             val patched: Json = Json
               .obj("llm" -> Json.obj("providers" -> Json.obj(providerId -> updatedProvider)))
             Right(configJson.deepMerge(patched))
-    catch
-      case e: IllegalArgumentException => Left(Option(e.getMessage).getOrElse("invalid model ref"))
+          end if
+      end match
+    catch case e: IllegalArgumentException => Left(Option(e.getMessage).getOrElse("invalid model ref"))
 
   /**
    * 候选选择结果写回**同一配置存储**（case class 层面，供已在内存里持有配置的
@@ -160,8 +164,7 @@ object OnboardingModelStep:
             Right(
               cfg.copy(llm = cfg.llm.copy(providers = cfg.llm.providers.updated(providerId, updatedProvider)))
             )
-    catch
-      case e: IllegalArgumentException => Left(Option(e.getMessage).getOrElse("invalid model ref"))
+    catch case e: IllegalArgumentException => Left(Option(e.getMessage).getOrElse("invalid model ref"))
 
   /**
    * 读取某个 ref 的**生效**上下文窗口（clamp 后）。
@@ -220,12 +223,13 @@ object OnboardingModelStep:
           val base =
             if existing.asObject.exists(_.contains("name")) then existing
             else existing.deepMerge(Json.obj("name" -> nebflow.actor.RootAgentIdentity.Name.asJson))
-          val prior = existing.hcursor.downField("model").as[AgentModelConfig].toOption.getOrElse(AgentModelConfig.empty)
+          val prior =
+            existing.hcursor.downField("model").as[AgentModelConfig].toOption.getOrElse(AgentModelConfig.empty)
           val next = mergeChain(prior, trimmed)
           AtomicJson.writeSync(jsonPath, base.deepMerge(Json.obj("model" -> next.asJson)).noSpaces)
           Right(next)
-        catch
-          case e: IllegalArgumentException => Left(Option(e.getMessage).getOrElse(s"invalid model ref '$ref'"))
+        catch case e: IllegalArgumentException => Left(Option(e.getMessage).getOrElse(s"invalid model ref '$ref'"))
+      end if
     }
 
   /**

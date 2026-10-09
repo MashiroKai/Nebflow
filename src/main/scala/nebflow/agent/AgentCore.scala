@@ -29,13 +29,15 @@ private[agent] trait AgentCore extends AgentRegistryEmit with AgentStreamPipelin
 
 object AgentCore:
 
-  /** Nebula-root-session identity criterion (tool-face identity batch B1 /
-    * taskunify 2026-09-24, single source): `agentDef.name == "Nebula" && depth == 0`.
-    * Deliberately NOT the wider root-ish signals (`AgentRecord.kind == AgentKind.Root`
-    * is broader -- standalone root sessions also set kind=Root; `rootSessionId ==
-    * sessionId` needs a registry lookup = IO + registration timing). Consumers:
-    * `ToolContext.isNebulaRoot` / `ToolContext.isNebulaWriter`. (W1 provisional
-    * shim: ported verbatim from main's AgentCore -- the PR blob predates B1.) */
+  /**
+   * Nebula-root-session identity criterion (tool-face identity batch B1 /
+   * taskunify 2026-09-24, single source): `agentDef.name == "Nebula" && depth == 0`.
+   * Deliberately NOT the wider root-ish signals (`AgentRecord.kind == AgentKind.Root`
+   * is broader -- standalone root sessions also set kind=Root; `rootSessionId ==
+   * sessionId` needs a registry lookup = IO + registration timing). Consumers:
+   * `ToolContext.isNebulaRoot` / `ToolContext.isNebulaWriter`. (W1 provisional
+   * shim: ported verbatim from main's AgentCore -- the PR blob predates B1.)
+   */
   def isNebulaRoot(agentDef: Option[AgentDef], depth: Int): Boolean =
     agentDef.exists(_.name == "Nebula") && depth == 0
 
@@ -172,14 +174,14 @@ object AgentCore:
    * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryNote only —
    * see DreamAdmittedTools below).
    * - Delegate: 极简内核入口（**builtin-def 批 2026-10-03 在場恢复进
-     *   `RootOrchestrationTools`**，作者令② Delegate 直接触发 kernel；本集条目
-     *   继续承担**防声明逃逸**剥离——非 Nebula 身份的 agent.json/`"*"` 声明授不了）。
-     *   目标恒为内置 `kernel` def（代码级，BuiltinAgents 单点）；Team 成员委派走
-     *   SubTaskTool（self-clone + ephemeral）。
-     *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
-     *   史实：2026-09-05 08:40 作者裁定曾把 Delegate 移出 Nebula 固定面；
-     *   2026-09-10 指令 + 2026-09-11 R2-c 裁定以「极简内核」形态回归；
-     *   promptgov 批 2026-09-17 再摘（史实归档，被 2026-10-03 作者令②取代）。
+   *   `RootOrchestrationTools`**，作者令② Delegate 直接触发 kernel；本集条目
+   *   继续承担**防声明逃逸**剥离——非 Nebula 身份的 agent.json/`"*"` 声明授不了）。
+   *   目标恒为内置 `kernel` def（代码级，BuiltinAgents 单点）；Team 成员委派走
+   *   SubTaskTool（self-clone + ephemeral）。
+   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
+   *   史实：2026-09-05 08:40 作者裁定曾把 Delegate 移出 Nebula 固定面；
+   *   2026-09-10 指令 + 2026-09-11 R2-c 裁定以「极简内核」形态回归；
+   *   promptgov 批 2026-09-17 再摘（史实归档，被 2026-10-03 作者令②取代）。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
@@ -244,7 +246,7 @@ object AgentCore:
     // TaskSearch（task-rag 批 #1227 / §Batch 7）：Nebula 专属只读检索件——
     // 同享本集【防声明逃逸】通道：agent.json/插件声明（含 "*"）对一切非 Nebula
     // 身份不授能（真实授能 = RootOrchestrationTools 单点；TaskList 同域纪律）。
-    "TaskSearch",
+    "TaskSearch"
   )
 
   /**
@@ -459,20 +461,22 @@ object AgentCore:
     "MemoryNote"
   )
 
-  /** friendseal batch (2026-09-25): names stripped from the Nebula DELIVERY
-    * face while the friends feature is sealed. The static set above is
-    * UNCHANGED — its registry-full-set semantics and the
-    * `NebulaOrchestrationToolsExpectedSize` constant both stay untouched; the
-    * seal is conditionalization at this ONE consumption point (the only
-    * injection point for Nebula's fixed face, `fixedToolsFor`), reading the
-    * same `features.friends` latch as the frontend (`nebflow.core.FriendsSeal`).
-    * Currently exactly one name: `ListFriends` — sealed means the name never
-    * reaches the LLM (no schema, no description), and a hallucinated call is
-    * dropped by the allowed-set partition before any execution. SendMessage
-    * STAYS on the face (its device leg remains): sealing its friend/group/
-    * local arms happens inside the tool (`FRIENDS_SEALED`), and the
-    * `buildAllowedToolSet` base-strip of the name (declaration-escape channel)
-    * is deliberately NOT extended by this batch. */
+  /**
+   * friendseal batch (2026-09-25): names stripped from the Nebula DELIVERY
+   * face while the friends feature is sealed. The static set above is
+   * UNCHANGED — its registry-full-set semantics and the
+   * `NebulaOrchestrationToolsExpectedSize` constant both stay untouched; the
+   * seal is conditionalization at this ONE consumption point (the only
+   * injection point for Nebula's fixed face, `fixedToolsFor`), reading the
+   * same `features.friends` latch as the frontend (`nebflow.core.FriendsSeal`).
+   * Currently exactly one name: `ListFriends` — sealed means the name never
+   * reaches the LLM (no schema, no description), and a hallucinated call is
+   * dropped by the allowed-set partition before any execution. SendMessage
+   * STAYS on the face (its device leg remains): sealing its friend/group/
+   * local arms happens inside the tool (`FRIENDS_SEALED`), and the
+   * `buildAllowedToolSet` base-strip of the name (declaration-escape channel)
+   * is deliberately NOT extended by this batch.
+   */
   def friendsSealedStrip: Set[String] =
     if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
 
@@ -553,7 +557,7 @@ object AgentCore:
    *
    * **N1 复名批（2026-10-06，作者 23:04 授权）：Workflow → AgentFlow 复名沿革**
    * ——本批只动执行 agent 机制面（NebflowFixedTools/RootExclusiveTools/exclusive
-    * ToolsFor 随名）与墓碑表（删旧 "AgentFlow" 条目＋增 "Workflow" 条目），
+   * ToolsFor 随名）与墓碑表（删旧 "AgentFlow" 条目＋增 "Workflow" 条目），
    * `NebulaOrchestrationTools` 成员与件数 **17 不变**（旧 root 侧 AgentFlow 派发件
    * 2026-10-03 已退役，与本复名无涉——同名的先后两物，勿混）。复名连带细案沿
    * v2 §3（案 A「仅 legacy 形态拒收」）。
@@ -709,7 +713,6 @@ object AgentCore:
    * §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除（能力由 Edit
    * replace_all 覆盖）。
    */
-
 
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。

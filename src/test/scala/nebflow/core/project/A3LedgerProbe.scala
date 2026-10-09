@@ -35,6 +35,7 @@ import scala.collection.mutable
 object A3LedgerProbe:
 
   private var argv: Array[String] = Array.empty
+
   private def arg(name: String, dflt: String): String =
     val i = argv.indexOf("--" + name)
     if i >= 0 && i + 1 < argv.length then argv(i + 1) else dflt
@@ -48,7 +49,8 @@ object A3LedgerProbe:
 
   private def line(label: String, xs: Seq[Double]): String =
     if xs.isEmpty then f"    $label%-30s (no samples)"
-    else f"    $label%-30s n=${xs.size}%-5d p50=${pct(xs, 50)}%8.3f p95=${pct(xs, 95)}%8.3f p99=${pct(xs, 99)}%8.3f max=${xs.max}%8.3f ms"
+    else
+      f"    $label%-30s n=${xs.size}%-5d p50=${pct(xs, 50)}%8.3f p95=${pct(xs, 95)}%8.3f p99=${pct(xs, 99)}%8.3f max=${xs.max}%8.3f ms"
 
   private def t0: Long = 1_700_000_000_000L
 
@@ -195,8 +197,12 @@ object A3LedgerProbe:
     store.setChainControl("crash-chain", ChainLedger.StatusPaused, t0 + 900_000).unsafeRunSync()
     val afterAppendKeys = store.snapshot.unsafeRunSync().pausedChains.keySet
     val reopenClean = ChainLedgerStore.open("probe", path, arch).unsafeRunSync().snapshot.unsafeRunSync()
-    println(s"    BEFORE_APPEND          paused_chains=${beforePause.size} crash_chain_present=${beforePause.contains("crash-chain")}")
-    println(s"    AFTER_APPEND           paused_chains=${afterAppendKeys.size} crash_chain_present=${afterAppendKeys.contains("crash-chain")}")
+    println(
+      s"    BEFORE_APPEND          paused_chains=${beforePause.size} crash_chain_present=${beforePause.contains("crash-chain")}"
+    )
+    println(
+      s"    AFTER_APPEND           paused_chains=${afterAppendKeys.size} crash_chain_present=${afterAppendKeys.contains("crash-chain")}"
+    )
     println(
       s"    REOPEN_CLEAN           recovered=${reopenClean.pausedChains.contains("crash-chain")} " +
         s"(append acknowledged ⇒ must survive a reopen)"

@@ -145,7 +145,7 @@ object PluginBlockPolicy:
       val tableJson = value match
         case Some(v) => Json.obj(name -> v)
         case None => Json.obj()
-      AtomicJson.writeSync(configPath, Json.obj("plugins" -> Json.obj(table -> tableJson)).noSpaces)
+      AtomicJson.writeSyncRestricted(configPath, Json.obj("plugins" -> Json.obj(table -> tableJson)).noSpaces)
       Right(())
     else
       io.circe.parser.parse(os.read(configPath)) match
@@ -163,7 +163,7 @@ object PluginBlockPolicy:
           val out = Json.fromJsonObject(
             root.asObject.getOrElse(JsonObject.empty).add("plugins", newPlugins)
           )
-          AtomicJson.writeSync(configPath, out.noSpaces)
+          AtomicJson.writeSyncRestricted(configPath, out.noSpaces)
           Right(())
 
     end if

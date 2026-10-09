@@ -40,23 +40,23 @@ object VectorStore:
 
   /** 一条向量记录（连同检索返回面的展示字段——返回结构直接读盘面，零二次装配）。 */
   case class VectorRecord(
-      vector: List[Float],
-      dim: Int,
-      /** 嵌入模型 id —— hash 的组成部份：换模型 ⇒ 全量重嵌。 */
-      model: String,
-      /** 内容指纹 = sha256(model + "\n" + text)；增量索引判据。 */
-      hash: String,
-      kind: String,
-      title: String,
-      status: String,
-      /** 执行器图标键（iconKey = executor id，前端单点映射；空 = 无）。 */
-      executor: String,
-      /** 续聊地址（`delegate:<id>` 形态；空 = 无）。 */
-      address: String,
-      /** 关联账本条目 id（无 # 形态；空 = 无）。 */
-      taskId: String,
-      snippet: String,
-      updatedAt: String
+    vector: List[Float],
+    dim: Int,
+    /** 嵌入模型 id —— hash 的组成部份：换模型 ⇒ 全量重嵌。 */
+    model: String,
+    /** 内容指纹 = sha256(model + "\n" + text)；增量索引判据。 */
+    hash: String,
+    kind: String,
+    title: String,
+    status: String,
+    /** 执行器图标键（iconKey = executor id，前端单点映射；空 = 无）。 */
+    executor: String,
+    /** 续聊地址（`delegate:<id>` 形态；空 = 无）。 */
+    address: String,
+    /** 关联账本条目 id（无 # 形态；空 = 无）。 */
+    taskId: String,
+    snippet: String,
+    updatedAt: String
   )
 
   object VectorRecord:
@@ -83,7 +83,7 @@ object VectorStore:
         if !os.exists(file) then VectorFile()
         else
           decode[VectorFile](os.read(file)) match
-            case Right(f)  => f
+            case Right(f) => f
             case Left(err) =>
               logger.warnSync(s"[vectors] $FileName malformed, degrading to empty view: ${err.getMessage}")
               VectorFile()

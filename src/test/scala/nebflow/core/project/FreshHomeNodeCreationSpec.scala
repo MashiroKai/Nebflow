@@ -65,6 +65,7 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
   // ── 基建（NodeDeclarationGateSpec 同款；0 spawn）────────────────
 
   private class QuietLlm:
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
@@ -136,7 +137,11 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
   test("① fresh home: the agents directory is empty — no legacy `general` / `kernel` / builtin dirs on disk"):
     val agents = tempRoot / "agents"
     val dirs = if os.exists(agents) then os.list(agents).filter(os.isDir).map(_.last).toSet else Set.empty
-    assertEquals(dirs, Set.empty[String], s"the fresh home must carry ZERO agent directories, got: ${dirs.toList.sorted}")
+    assertEquals(
+      dirs,
+      Set.empty[String],
+      s"the fresh home must carry ZERO agent directories, got: ${dirs.toList.sorted}"
+    )
     // 反证面：本 spec 用的就是私有 home，不是宿主 ~/.nebflow（读出隔离读数）。
     assert(
       PathUtil.dataRoot.toString.startsWith(tempRoot.toString),
@@ -155,12 +160,22 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
     try
       val res = nodeEdit(nodeInput("fresh-create", "n-a"), ctx).unsafeRunSync()
       assert(res.isRight, s"node creation must succeed on a fresh home: $res")
-      val node = rt.store.snapshot.unsafeRunSync().nodes.values.find(_.name == "n-a").getOrElse(
-        fail("created node missing from the flow-map store")
+      val node = rt.store.snapshot
+        .unsafeRunSync()
+        .nodes
+        .values
+        .find(_.name == "n-a")
+        .getOrElse(
+          fail("created node missing from the flow-map store")
+        )
+      assertEquals(
+        node.agent,
+        BuiltinAgents.ExecutorName,
+        "the node's agent must be the built-in executor constant (no literal)"
       )
-      assertEquals(node.agent, BuiltinAgents.ExecutorName, "the node's agent must be the built-in executor constant (no literal)")
       assert(node.agent != "general", "the retired name must never be written back")
     finally system.stopAll.unsafeRunSync()
+    end try
 
   // ── ② 旧数据兜底：退役名解析 ────────────────────────────────
 
@@ -192,12 +207,19 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
       assertEquals(rt.store.snapshot.unsafeRunSync().nodes("n-legacy-1").agent, "general")
       // spawn 读面：引擎按 NodeDef.agent 走 EntityLoader.loadAgent ⇒ 退役名必须能解析。
       val resolved = EntityLoader.loadAgent(rt.store.snapshot.unsafeRunSync().nodes("n-legacy-1").agent).unsafeRunSync()
-      assert(resolved.isDefined, "a stored legacy agent name must resolve (else the old project cannot run on a fresh home)")
+      assert(
+        resolved.isDefined,
+        "a stored legacy agent name must resolve (else the old project cannot run on a fresh home)"
+      )
       assertEquals(resolved.get.name, BuiltinAgents.ExecutorName)
       // 编辑面照常可达（无 NODE_AGENT_RETIRED 误伤——那是参数闸，不是存量值闸）。
-      val edit = nodeEdit(nodeInput("fresh-legacy", "legacy-1").deepMerge(Json.obj("description" -> Json.fromString("edited legacy"))), ctx).unsafeRunSync()
+      val edit = nodeEdit(
+        nodeInput("fresh-legacy", "legacy-1").deepMerge(Json.obj("description" -> Json.fromString("edited legacy"))),
+        ctx
+      ).unsafeRunSync()
       assert(edit.isRight, s"editing a stored legacy node must work on a fresh home: $edit")
     finally system.stopAll.unsafeRunSync()
+    end try
 
   // ── ③ 写侧单点：NodeEdit 不再接受/产出退役名 ──────────────────
 
@@ -215,7 +237,8 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
   test("③ write face: the `verify` default schema text names the built-in executor (model-visible face)"):
     // 模型可见面：schema 里 verify 的缺省说明必须指向内置执行 agent 名（不是退役名）。
     val schema = NodeEditTool.inputSchema
-    val verifyDesc = schema("properties").flatMap(_.asObject)
+    val verifyDesc = schema("properties")
+      .flatMap(_.asObject)
       .flatMap(_("verify"))
       .flatMap(_.asObject)
       .flatMap(_("description"))
@@ -225,7 +248,10 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
       verifyDesc.contains(BuiltinAgents.ExecutorName),
       s"the verify default must be described with the executor constant, got: $verifyDesc"
     )
-    assert(!verifyDesc.contains("\"general\""), s"the verify description must not advertise the retired name: $verifyDesc")
+    assert(
+      !verifyDesc.contains("\"general\""),
+      s"the verify description must not advertise the retired name: $verifyDesc"
+    )
 
   test("③ write face: the missing-name fail-fast text points at the executor (no retired-name literal)"):
     // 建位 fail-fast 文案（库里连内置执行 agent 都没有 ⇒ 环境残缺）：模型可见面 + 操作面。

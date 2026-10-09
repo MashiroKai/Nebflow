@@ -46,6 +46,7 @@ class ChainWriteToolSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
@@ -100,8 +101,8 @@ class ChainWriteToolSpec extends CatsEffectSuite:
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n---\n")
         Stream
@@ -111,7 +112,12 @@ class ChainWriteToolSpec extends CatsEffectSuite:
   end ScriptLlm
 
   /** per-project 载体（A6 对照组用——分发器面挂载形态）。 */
-  private def mountCarrier(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[nebflow.core.project.ProjectRuntime] =
+  private def mountCarrier(
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources
+  ): IO[nebflow.core.project.ProjectRuntime] =
     for
       store <- nebflow.core.project.FlowMapStore.open(name, ws.toString)
       engine = new nebflow.core.project.NodeEngine(
@@ -136,7 +142,7 @@ class ChainWriteToolSpec extends CatsEffectSuite:
     yield rt
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -150,10 +156,10 @@ class ChainWriteToolSpec extends CatsEffectSuite:
 
   /** delegate 宿主挂载（spec 缺省参数定版：确定性腿显式关）。 */
   private def mount(
-      ws: os.Path,
-      delegateId: String,
-      system: ActorSystem,
-      res: SharedResources
+    ws: os.Path,
+    delegateId: String,
+    system: ActorSystem,
+    res: SharedResources
   ): IO[Option[nebflow.core.project.DelegateFlowRuntime]] =
     nebflow.core.project.DelegateFlowHosts.mount(
       delegateId = delegateId,
@@ -206,14 +212,17 @@ class ChainWriteToolSpec extends CatsEffectSuite:
     val empty = ChainWriteTool.validateStructure(Nil)
     assert(empty.left.exists(_.message.contains(ChainWriteTool.Codes.Empty)), empty.toString)
     // CHAIN_TOO_MANY_STEPS（cap = ChainWriteTool.MaxNodes）
-    val many = (1 to ChainWriteTool.MaxNodes + 1).map(i => ChainWriteTool.ChainNode(s"n$i", None, "t", Nil, None)).toList
+    val many =
+      (1 to ChainWriteTool.MaxNodes + 1).map(i => ChainWriteTool.ChainNode(s"n$i", None, "t", Nil, None)).toList
     val tooMany = ChainWriteTool.validateStructure(many)
     assert(tooMany.left.exists(_.message.contains(ChainWriteTool.Codes.TooMany)), tooMany.toString)
     // CHAIN_DUPLICATE_ID（批内）
-    val dup = ChainWriteTool.validateStructure(List(
-      ChainWriteTool.ChainNode("a", None, "t", Nil, None),
-      ChainWriteTool.ChainNode("a", None, "t2", Nil, None)
-    ))
+    val dup = ChainWriteTool.validateStructure(
+      List(
+        ChainWriteTool.ChainNode("a", None, "t", Nil, None),
+        ChainWriteTool.ChainNode("a", None, "t2", Nil, None)
+      )
+    )
     assert(dup.left.exists(_.message.contains(ChainWriteTool.Codes.DuplicateId)), dup.toString)
     // CHAIN_ID_INVALID（路径逃逸/空白/首字符非字母数字）
     Seq("../escape", "a b", ".hidden", "x/y").foreach { bad =>
@@ -221,30 +230,38 @@ class ChainWriteToolSpec extends CatsEffectSuite:
       assert(inv.left.exists(_.message.contains(ChainWriteTool.Codes.IdInvalid)), s"$bad: $inv")
     }
     // CHAIN_NAME_CONFLICT（批内重名）
-    val dupName = ChainWriteTool.validateStructure(List(
-      ChainWriteTool.ChainNode("a", Some("Same"), "t", Nil, None),
-      ChainWriteTool.ChainNode("b", Some("Same"), "t", Nil, None)
-    ))
+    val dupName = ChainWriteTool.validateStructure(
+      List(
+        ChainWriteTool.ChainNode("a", Some("Same"), "t", Nil, None),
+        ChainWriteTool.ChainNode("b", Some("Same"), "t", Nil, None)
+      )
+    )
     assert(dupName.left.exists(_.message.contains(ChainWriteTool.Codes.NameConflict)), dupName.toString)
     // CHAIN_NAME_ID_COLLISION（批内 name == 批内 id——R4 两空间不相交）
-    val collision = ChainWriteTool.validateStructure(List(
-      ChainWriteTool.ChainNode("a", None, "t", Nil, None),
-      ChainWriteTool.ChainNode("b", Some("a"), "t", Nil, None)
-    ))
+    val collision = ChainWriteTool.validateStructure(
+      List(
+        ChainWriteTool.ChainNode("a", None, "t", Nil, None),
+        ChainWriteTool.ChainNode("b", Some("a"), "t", Nil, None)
+      )
+    )
     assert(collision.left.exists(_.message.contains(ChainWriteTool.Codes.NameIdCollision)), collision.toString)
     // CHAIN_CYCLE（Kahn 判环）
-    val cyclic = ChainWriteTool.validateStructure(List(
-      ChainWriteTool.ChainNode("a", None, "t", List("b"), None),
-      ChainWriteTool.ChainNode("b", None, "t", List("a"), None)
-    ))
+    val cyclic = ChainWriteTool.validateStructure(
+      List(
+        ChainWriteTool.ChainNode("a", None, "t", List("b"), None),
+        ChainWriteTool.ChainNode("b", None, "t", List("a"), None)
+      )
+    )
     assert(cyclic.left.exists(_.message.contains(ChainWriteTool.Codes.Cycle)), cyclic.toString)
     // 合法批零拒绝（ diamond 无环 + name 域干净）
-    val ok = ChainWriteTool.validateStructure(List(
-      ChainWriteTool.ChainNode("a", Some("Alpha"), "t", Nil, None),
-      ChainWriteTool.ChainNode("b", None, "t", List("a"), None),
-      ChainWriteTool.ChainNode("c", None, "t", List("a"), None),
-      ChainWriteTool.ChainNode("d", None, "t", List("b", "c"), None)
-    ))
+    val ok = ChainWriteTool.validateStructure(
+      List(
+        ChainWriteTool.ChainNode("a", Some("Alpha"), "t", Nil, None),
+        ChainWriteTool.ChainNode("b", None, "t", List("a"), None),
+        ChainWriteTool.ChainNode("c", None, "t", List("a"), None),
+        ChainWriteTool.ChainNode("d", None, "t", List("b", "c"), None)
+      )
+    )
     assertEquals(ok, Right(()))
   }
 
@@ -274,7 +291,10 @@ class ChainWriteToolSpec extends CatsEffectSuite:
     val ws = os.temp.dir(prefix = "nb-cw-gate-", deleteOnExit = false)
     // 非 delegate 会话 → CHAINWRITE_SCOPE_FORBIDDEN（挂载面之外的调用一概拒）
     val nonDelegate = ChainWriteTool.call(nodesJson(("a", None, "t", Nil)), ToolContext(projectRoot = ws.toString))
-    assert(nonDelegate.unsafeRunSync().left.exists(_.message.contains(ChainWriteTool.Codes.NotDelegate)), nonDelegate.toString)
+    assert(
+      nonDelegate.unsafeRunSync().left.exists(_.message.contains(ChainWriteTool.Codes.NotDelegate)),
+      nonDelegate.toString
+    )
     // delegate 会话带 project 参数 → 显式拒（作用域归属不可由客户端参数伪造）
     val withProject = ChainWriteTool.call(
       JsonObject.fromIterable(nodesJson(("a", None, "t", Nil)).toMap + ("project" -> "some-else".asJson)),
@@ -283,12 +303,17 @@ class ChainWriteToolSpec extends CatsEffectSuite:
     assert(withProject.unsafeRunSync().isLeft, "project param must be refused")
     // delegate 会话 + 宿主查无 → DELEGATE_SCOPE_UNAVAILABLE
     val noHost = ChainWriteTool.call(nodesJson(("a", None, "t", Nil)), delegateCtx("delegate-general-bbbbbbbb", ws))
-    assert(noHost.unsafeRunSync().left.exists(_.message.contains(ChainWriteTool.Codes.ScopeUnavailable)), noHost.toString)
+    assert(
+      noHost.unsafeRunSync().left.exists(_.message.contains(ChainWriteTool.Codes.ScopeUnavailable)),
+      noHost.toString
+    )
   }
 
   // ── 整链登记往返 E2E（登记 → 全 pending → 放行 → settleDeps → 台账出生）──
 
-  test("register-release round trip: ack carries the chain id, everything lands pending, the entry runs, the downstream settles, the ledger is born") {
+  test(
+    "register-release round trip: ack carries the chain id, everything lands pending, the entry runs, the downstream settles, the ledger is born"
+  ) {
     val ws = os.temp.dir(prefix = "nb-cw-e2e-", deleteOnExit = false)
     val system = ActorSystem(s"cw-e2e-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-c1d2e3f4"
@@ -297,10 +322,16 @@ class ChainWriteToolSpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       mo <- mount(ws, delegateId, system, res)
       h = mo.getOrElse(fail("host must mount"))
-      ack <- ChainWriteTool.call(
-        namedChainJson("cw-e2e-chain", ("survey", None, "survey the ground", Nil), ("build", None, "build on the survey", List("survey"))),
-        delegateCtx(delegateId, ws)
-      ).map(_.getOrElse(fail("register must succeed")))
+      ack <- ChainWriteTool
+        .call(
+          namedChainJson(
+            "cw-e2e-chain",
+            ("survey", None, "survey the ground", Nil),
+            ("build", None, "build on the survey", List("survey"))
+          ),
+          delegateCtx(delegateId, ws)
+        )
+        .map(_.getOrElse(fail("register must succeed")))
       // ACK 携链号（非阻塞——登记即返）
       _ = assert(ack.contains("cw-e2e-chain"), ack)
       _ = assert(ack.contains("released"), ack)
@@ -309,25 +340,42 @@ class ChainWriteToolSpec extends CatsEffectSuite:
       reqs0 <- llm.fullReqs.get
       _ <- waitUntil(30.seconds)(llm.fullReqs.get.map(_.nonEmpty)) // 入口放行（后台 fork）
       entry <- h.store.getNode("survey").map(_.getOrElse(fail("entry must exist")))
-      _ <- waitUntil(45.seconds)(h.store.getNode("survey").map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status))))
+      _ <- waitUntil(45.seconds)(
+        h.store
+          .getNode("survey")
+          .map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
+      )
       done <- h.store.getNode("survey").map(_.getOrElse(fail("entry must exist")))
-      _ <- waitUntil(45.seconds)(h.store.getNode("build").map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status))))
+      _ <- waitUntil(45.seconds)(
+        h.store.getNode("build").map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
+      )
       down <- h.store.getNode("build").map(_.getOrElse(fail("downstream must exist")))
       events <- readEvents(ws)
       ledger <- h.store.chainLedgerStore.snapshot
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(s0.nodes("survey").status, nebflow.core.project.NodeLifecycle.Pending, "entry lands PENDING (whole-chain gate: 链齐才跑)")
+      assertEquals(
+        s0.nodes("survey").status,
+        nebflow.core.project.NodeLifecycle.Pending,
+        "entry lands PENDING (whole-chain gate: 链齐才跑)"
+      )
       assertEquals(s0.nodes("build").status, nebflow.core.project.NodeLifecycle.Pending, "downstream lands PENDING")
       assertEquals(s0.nodes("survey").chainId, Some("cw-e2e-chain"), "declared chain id is the membership")
       assertEquals(s0.nodes("build").chainId, Some("cw-e2e-chain"))
       assertEquals(reqs0, Nil, "registration must not spawn anything (release is a detached fork AFTER the ack state)")
       assertEquals(done.status, nebflow.core.project.NodeLifecycle.Completed, "entry node runs to completion")
       assertEquals(done.result, Some("CHAIN-NODE-DONE"))
-      assertEquals(down.status, nebflow.core.project.NodeLifecycle.Completed, "downstream settles via deps (settleDeps)")
+      assertEquals(
+        down.status,
+        nebflow.core.project.NodeLifecycle.Completed,
+        "downstream settles via deps (settleDeps)"
+      )
       assert(down.result.contains("CHAIN-NODE-DONE"), "upstream result block rides into the downstream input")
-      assert(events.exists(e => e.contains("chain-registered") && e.contains("cw-e2e-chain")), "audit line in the base-workspace event stream")
+      assert(
+        events.exists(e => e.contains("chain-registered") && e.contains("cw-e2e-chain")),
+        "audit line in the base-workspace event stream"
+      )
       assert(ledger.entries.contains("cw-e2e-chain"), "ChainLedger entry born (reconcile single point)")
       assertEquals(ledger.entries("cw-e2e-chain").members.toList.sorted, List("build", "survey"))
     end for
@@ -335,7 +383,9 @@ class ChainWriteToolSpec extends CatsEffectSuite:
 
   // ── 唯一域现读（R2/R4/id 两区）＋ deps 规范化（R6）───────────────────────
 
-  test("unique domains on the live scope: R2 name active-zone, R4 name≠id both zones, id both zones, R6 deps normalization") {
+  test(
+    "unique domains on the live scope: R2 name active-zone, R4 name≠id both zones, id both zones, R6 deps normalization"
+  ) {
     val ws = os.temp.dir(prefix = "nb-cw-uniq-", deleteOnExit = false)
     val system = ActorSystem(s"cw-uniq-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-d2e3f4a5"
@@ -345,22 +395,34 @@ class ChainWriteToolSpec extends CatsEffectSuite:
       h = mo.getOrElse(fail("host must mount"))
       // 预置活动区节点（id=n-seed, name=seed）——归档唯一域的可达面由 id 活动区命中
       // 与 R4（活动区 id）覆盖（归档写面无公开 API，归档 id 冲突判据同一集合函数）。
-      _ <- h.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-seed" -> nebflow.core.project.NodeDef(
-          id = "n-seed",
-          name = "seed",
-          agent = "general",
-          status = nebflow.core.project.NodeLifecycle.Completed,
-          createdAt = System.currentTimeMillis()
+      _ <- h.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-seed" -> nebflow.core.project.NodeDef(
+              id = "n-seed",
+              name = "seed",
+              agent = "general",
+              status = nebflow.core.project.NodeLifecycle.Completed,
+              createdAt = System.currentTimeMillis()
+            )
+          )
         )
-      )))
+      )
       rt = h.projectRuntime
       // id 两区冲突（活动区命中即拒）
       idDup <- ChainWriteTool.registerChain(rt, List(ChainWriteTool.ChainNode("n-seed", None, "t", Nil, None)), None)
       // R2：name 撞活动区既有名
-      nameDup <- ChainWriteTool.registerChain(rt, List(ChainWriteTool.ChainNode("fresh", Some("seed"), "t", Nil, None)), None)
+      nameDup <- ChainWriteTool.registerChain(
+        rt,
+        List(ChainWriteTool.ChainNode("fresh", Some("seed"), "t", Nil, None)),
+        None
+      )
       // R4：name == 既有 id
-      nameId <- ChainWriteTool.registerChain(rt, List(ChainWriteTool.ChainNode("fresh", Some("n-seed"), "t", Nil, None)), None)
+      nameId <- ChainWriteTool.registerChain(
+        rt,
+        List(ChainWriteTool.ChainNode("fresh", Some("n-seed"), "t", Nil, None)),
+        None
+      )
       // R6：批内 name 引用规范化（b 用 a 的 name "Alpha" 引用）
       ok <- ChainWriteTool.registerChain(
         rt,
@@ -372,16 +434,48 @@ class ChainWriteToolSpec extends CatsEffectSuite:
       )
       norm <- h.store.getNode("bb").map(_.getOrElse(fail("bb must land")))
       // R6：链外未知 id → CHAIN_DEPS_UNKNOWN
-      unknown <- ChainWriteTool.registerChain(rt, List(ChainWriteTool.ChainNode("cc", None, "t", List("ghost-x"), None)), None)
+      unknown <- ChainWriteTool.registerChain(
+        rt,
+        List(ChainWriteTool.ChainNode("cc", None, "t", List("ghost-x"), None)),
+        None
+      )
       // R6：链外歧义名（活动区现无重名——造两个同 name 的既有节点后按名引用）
-      _ <- h.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "dup-1" -> nebflow.core.project.NodeDef(id = "dup-1", name = "twin", agent = "general", status = nebflow.core.project.NodeLifecycle.Completed, createdAt = System.currentTimeMillis()),
-        "dup-2" -> nebflow.core.project.NodeDef(id = "dup-2", name = "twin", agent = "general", status = nebflow.core.project.NodeLifecycle.Completed, createdAt = System.currentTimeMillis())
-      )))
-      ambiguous <- ChainWriteTool.registerChain(rt, List(ChainWriteTool.ChainNode("dd", None, "t", List("twin"), None)), None)
+      _ <- h.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "dup-1" -> nebflow.core.project.NodeDef(
+              id = "dup-1",
+              name = "twin",
+              agent = "general",
+              status = nebflow.core.project.NodeLifecycle.Completed,
+              createdAt = System.currentTimeMillis()
+            ),
+            "dup-2" -> nebflow.core.project.NodeDef(
+              id = "dup-2",
+              name = "twin",
+              agent = "general",
+              status = nebflow.core.project.NodeLifecycle.Completed,
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      ambiguous <- ChainWriteTool.registerChain(
+        rt,
+        List(ChainWriteTool.ChainNode("dd", None, "t", List("twin"), None)),
+        None
+      )
       // chainName 在飞唯一域（活跃声明链号撞车）
-      _ <- ChainWriteTool.registerChain(rt, List(ChainWriteTool.ChainNode("ee", None, "t", Nil, None)), Some("taken-chain"))
-      chainDup <- ChainWriteTool.registerChain(rt, List(ChainWriteTool.ChainNode("ff", None, "t", Nil, None)), Some("taken-chain"))
+      _ <- ChainWriteTool.registerChain(
+        rt,
+        List(ChainWriteTool.ChainNode("ee", None, "t", Nil, None)),
+        Some("taken-chain")
+      )
+      chainDup <- ChainWriteTool.registerChain(
+        rt,
+        List(ChainWriteTool.ChainNode("ff", None, "t", Nil, None)),
+        Some("taken-chain")
+      )
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -401,8 +495,20 @@ class ChainWriteToolSpec extends CatsEffectSuite:
   test("dual addressing: id hit wins, unique name resolves, ambiguity lists candidates, miss is explicit") {
     import nebflow.core.project.{NodeDef, NodeLifecycle}
     val nodes = Map(
-      "id-1" -> NodeDef(id = "id-1", name = "alpha", agent = "general", status = NodeLifecycle.Completed, createdAt = 0L),
-      "id-2" -> NodeDef(id = "id-2", name = "twin", agent = "general", status = NodeLifecycle.Completed, createdAt = 0L),
+      "id-1" -> NodeDef(
+        id = "id-1",
+        name = "alpha",
+        agent = "general",
+        status = NodeLifecycle.Completed,
+        createdAt = 0L
+      ),
+      "id-2" -> NodeDef(
+        id = "id-2",
+        name = "twin",
+        agent = "general",
+        status = NodeLifecycle.Completed,
+        createdAt = 0L
+      ),
       "id-3" -> NodeDef(id = "id-3", name = "twin", agent = "general", status = NodeLifecycle.Completed, createdAt = 0L)
     )
     // id 命中即止（即使 name 也存在同名字面）
@@ -422,7 +528,9 @@ class ChainWriteToolSpec extends CatsEffectSuite:
 
   // ── A6 必红：零上游建即放行摘除（delegate 侧）＋ per-project 对照组 ────────
 
-  test("A6: a delegate-ctx NodeEdit entry create lands PENDING with no session and no started-running receipt; the per-project dispatcher face still auto-starts") {
+  test(
+    "A6: a delegate-ctx NodeEdit entry create lands PENDING with no session and no started-running receipt; the per-project dispatcher face still auto-starts"
+  ) {
     val ws = os.temp.dir(prefix = "nb-cw-a6-", deleteOnExit = false)
     val wsPj = os.temp.dir(prefix = "nb-cw-a6-pj-", deleteOnExit = false)
     val system = ActorSystem(s"cw-a6-${scala.util.Random.nextInt(1000000)}")
@@ -434,45 +542,67 @@ class ChainWriteToolSpec extends CatsEffectSuite:
       _ = mo.getOrElse(fail("host must mount"))
       _ <- mountCarrier("a6-carrier", wsPj, system, res)
       // delegate ctx：建入口节点（task、无 in）→ 必红判据 = Pending ∧ 无会话 ∧ 回执无 started running
-      delRes <- NodeEditTool.call(
-        JsonObject(
-          "nodename" -> "del-entry".asJson,
-          "task" -> "delegate side entry task".asJson,
-          "description" -> "delegate entry".asJson,
-          "plugins" -> io.circe.Json.arr()
-        ),
-        delegateCtx(delegateId, ws)
-      ).map(_.getOrElse(fail("delegate create must succeed")))
+      delRes <- NodeEditTool
+        .call(
+          JsonObject(
+            "nodename" -> "del-entry".asJson,
+            "task" -> "delegate side entry task".asJson,
+            "description" -> "delegate entry".asJson,
+            "plugins" -> io.circe.Json.arr()
+          ),
+          delegateCtx(delegateId, ws)
+        )
+        .map(_.getOrElse(fail("delegate create must succeed")))
       _ <- IO.sleep(700.millis) // 若误自动启动，fork 在此窗口内必然发出 LLM 请求
       delReqs <- llm.fullReqs.get
       h0 <- nebflow.core.project.DelegateFlowHosts.get(delegateId)
       h = h0.getOrElse(fail("host still mounted"))
       // NodeEdit 建位 id = n-<8hex>（nodename 是 name 不是 id）——按名取
-      delNode <- h.store.snapshot.map(_.nodes.values.find(_.name == "del-entry")).map(_.getOrElse(fail("delegate node must exist")))
+      delNode <- h.store.snapshot
+        .map(_.nodes.values.find(_.name == "del-entry"))
+        .map(_.getOrElse(fail("delegate node must exist")))
       // per-project 对照组（分发器面照旧建即跑）
-      pjRes <- NodeEditTool.call(
-        JsonObject(
-          "nodename" -> "pj-entry".asJson,
-          "task" -> "per-project entry task".asJson,
-          "description" -> "per-project entry".asJson,
-          "plugins" -> io.circe.Json.arr()
-        ),
-        ToolContext(projectRoot = wsPj.toString, projectName = Some("a6-carrier"), sessionId = Some("dispatcher-1"))
-      ).map(_.getOrElse(fail("per-project create must succeed")))
+      pjRes <- NodeEditTool
+        .call(
+          JsonObject(
+            "nodename" -> "pj-entry".asJson,
+            "task" -> "per-project entry task".asJson,
+            "description" -> "per-project entry".asJson,
+            "plugins" -> io.circe.Json.arr()
+          ),
+          ToolContext(projectRoot = wsPj.toString, projectName = Some("a6-carrier"), sessionId = Some("dispatcher-1"))
+        )
+        .map(_.getOrElse(fail("per-project create must succeed")))
       _ <- waitUntil(45.seconds)(llm.fullReqs.get.map(_.nonEmpty)) // 对照组：入口真的开跑（LLM 请求到账）
       rtPj <- nebflow.core.project.ProjectRuntimeRegistry.get("a6-carrier").map(_.getOrElse(fail("carrier registered")))
       _ <- waitUntil(45.seconds)(
-        rtPj.store.snapshot.map(_.nodes.values.find(_.name == "pj-entry")).map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
+        rtPj.store.snapshot
+          .map(_.nodes.values.find(_.name == "pj-entry"))
+          .map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
       )
-      pjNode <- rtPj.store.snapshot.map(_.nodes.values.find(_.name == "pj-entry")).map(_.getOrElse(fail("per-project node must exist")))
+      pjNode <- rtPj.store.snapshot
+        .map(_.nodes.values.find(_.name == "pj-entry"))
+        .map(_.getOrElse(fail("per-project node must exist")))
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(!delRes.contains("started running"), s"delegate receipt must NOT claim a start: $delRes")
-      assertEquals(delNode.status, nebflow.core.project.NodeLifecycle.Pending, "delegate entry lands PENDING (A6: 建位不自动 startNode)")
-      assertEquals(delReqs, Nil, "no session spawned on delegate create (release goes through the registration gate / settle sweep)")
+      assertEquals(
+        delNode.status,
+        nebflow.core.project.NodeLifecycle.Pending,
+        "delegate entry lands PENDING (A6: 建位不自动 startNode)"
+      )
+      assertEquals(
+        delReqs,
+        Nil,
+        "no session spawned on delegate create (release goes through the registration gate / settle sweep)"
+      )
       assert(pjRes.contains("started running"), s"per-project face keeps the legacy entry auto-start receipt: $pjRes")
-      assertEquals(pjNode.status, nebflow.core.project.NodeLifecycle.Completed, "per-project对照 entry runs to completion")
+      assertEquals(
+        pjNode.status,
+        nebflow.core.project.NodeLifecycle.Completed,
+        "per-project对照 entry runs to completion"
+      )
     end for
   }
 

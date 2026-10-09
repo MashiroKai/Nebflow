@@ -35,6 +35,7 @@ object DelegateNotify:
   object NotifyRule:
     val Target: String = "creator-delegate"
     val Channel: String = "immediate-input"
+
     /** 双通道并存（状态面 = delegate_report → DelegateRegistry）。 */
     val StatusChannel: String = "delegate-report"
   end NotifyRule

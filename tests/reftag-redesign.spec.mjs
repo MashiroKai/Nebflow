@@ -278,3 +278,45 @@ test('T7 修复验证截图（亮暗双主题）落盘 docs/Nebflow', async ({ p
   await scene();
   await page.screenshot({ path: join(DOCS, '20260903-reftag-filename-dup-fix-light.png') });
 });
+
+// imageref-media（2026-10-09 修复批）：图片文件引用的消息内面 = Pop 媒体预览卡。
+// 症状（用户 2026-10-09 07:45 现场报）：「引用文件」入口（explorer 右键 引用 /
+// 行拖拽，#303 P0 40c199bd1 归一为 refType:'file'）发的图片气泡走了通用文件引
+// 用卡 att-ref-card（文档图标[meta.icon 'image' 无 ICONS 条目 → refIcon 回落
+// ICONS.file] + 文件名 + IMG 角标[typeLabel] + 截断路径[source 行]），不是图片
+// 预览卡。修复后：图片引用在 renderMessageRef 先分流到 buildImageRefMediaFace
+// （.att-ref-media .pop-media-flat .pop-img，引用身份留在 dataset）；非图片文
+// 件引用保持 att-ref-card 原样（文件卡只给非图片）。harness 无后端 ⇒ 媒体字节
+// 票腿必然失败（.nf-img-failed）——本断言钉的是**面分类**（DOM 形状），字节腿
+// 由 pop-artifacts 族覆盖。
+test('T8 图片文件引用渲染媒体预览卡；非图片仍走文件引用卡', async ({ page }) => {
+  await gotoHarness(page, 'dark');
+
+  // 8a 图片引用：att-ref-card 不再出现；媒体预览卡在场（img 面件 + 引用身份）
+  await page.evaluate('window.__reftagTest.renderCard("imagefile")');
+  const probe = await page.evaluate(`(() => {
+    const stage = document.getElementById('message-stage');
+    const media = stage.querySelector('.att-ref-media.pop-media-flat');
+    return {
+      cardGone: !stage.querySelector('.att-ref-card'),
+      mediaPresent: !!media,
+      imgPresent: !!(media && media.querySelector('img.pop-img')),
+      refType: media ? media.dataset.refType : null,
+      refPath: media ? media.dataset.refPath : '',
+      textHasImgBadge: stage.textContent.includes('IMG'),
+    };
+  })()`);
+  expect(probe.cardGone).toBe(true);          // 文件引用卡退役（图片不再走该分支）
+  expect(probe.mediaPresent).toBe(true);      // 媒体预览卡在场
+  expect(probe.imgPresent).toBe(true);        // 预览面 = img 面件（.pop-img）
+  expect(probe.refType).toBe('file');         // 引用身份保留（refType/refPath）
+  expect(probe.refPath.endsWith('.png')).toBe(true);
+  expect(probe.textHasImgBadge).toBe(false);  // IMG 角标随 att-ref-card 一起退役
+
+  // 8b 非图片引用（.scala）：att-ref-card 原样 —— 文件卡只给非图片
+  await page.evaluate('window.__reftagTest.renderCard("file")');
+  const fileCard = await page.evaluate('window.__reftagTest.card()');
+  expect(fileCard).not.toBeNull();
+  expect(fileCard.refType).toBe('file');
+  expect(fileCard.badge).toBe('SCALA');       // 类型徽章仍在（非图片不走媒体面）
+});

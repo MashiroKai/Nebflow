@@ -26,7 +26,7 @@ import java.time.Instant
  *   ① Task 账本写路径后（create/update/complete/close —— update 覆盖 revive：
  *     三态账本无独立 revive 动作，closed→completed 由 complete 承担、重开由
  *     update 承担，见 TaskTool 描述）+ delegate_report 终态写后 —— fire-and-
-     * forget `upkeep`（TaskTool / DelegateReportTool 尾挂，绝不阻塞结果）；
+ * forget `upkeep`（TaskTool / DelegateReportTool 尾挂，绝不阻塞结果）；
  *   ② 启动补扫 = GatewayMain 装配点一次 `upkeep`（后台 fiber，永不阻塞启动）；
  *   ③ 检索前惰性 upkeep（search 自愈——任何漏网的增/改在下次检索前补齐）。
  * 🔴 接缝纪律：#1226 面（DelegateRegistry / DelegateTool / JevAllocator）零触碰
@@ -48,18 +48,18 @@ object TaskSearchIndex:
 
   /** 检索返回的一条命中（TaskSearch 工具返回结构的数据面）。 */
   final case class SearchHit(
-      entryId: String,
-      kind: String,
-      /** 账本条目 id（无 # 形态；delegate 命中且已绑任务时携带）。 */
-      taskId: String,
-      title: String,
-      status: String,
-      /** 执行器图标键（iconKey = executor id；空 = 无）。 */
-      executor: String,
-      /** 续聊地址 `delegate:<id>`（空 = 无）。 */
-      address: String,
-      snippet: String,
-      score: Double
+    entryId: String,
+    kind: String,
+    /** 账本条目 id（无 # 形态；delegate 命中且已绑任务时携带）。 */
+    taskId: String,
+    title: String,
+    status: String,
+    /** 执行器图标键（iconKey = executor id；空 = 无）。 */
+    executor: String,
+    /** 续聊地址 `delegate:<id>`（空 = 无）。 */
+    address: String,
+    snippet: String,
+    score: Double
   )
 
   final case class SearchResult(hits: List[SearchHit], mode: String, reranked: Boolean, totalIndexed: Int)
@@ -73,15 +73,15 @@ object TaskSearchIndex:
 
   /** 索引条目中间形态（text = 被嵌入的源文本；snippet = 返回面摘录）。 */
   final case class IndexEntry(
-      entryId: String,
-      kind: String,
-      taskId: String,
-      title: String,
-      status: String,
-      executor: String,
-      address: String,
-      snippet: String,
-      text: String
+    entryId: String,
+    kind: String,
+    taskId: String,
+    title: String,
+    status: String,
+    executor: String,
+    address: String,
+    snippet: String,
+    text: String
   )
 
   /** Notes 时间线摘要上限：末 3 条、各 200 字符（索引文本预算——千级条目可控）。 */
@@ -97,7 +97,8 @@ object TaskSearchIndex:
     val delegates = DelegateRegistry.list()
     // 反查表：taskId → 最新 delegate（executor 图标与续聊地址的任务侧投影）。
     val delegateByTask: Map[String, DelegateRegistry.Record] =
-      delegates.filter(_.taskId.exists(_.trim.nonEmpty))
+      delegates
+        .filter(_.taskId.exists(_.trim.nonEmpty))
         .groupBy(_.taskId.get)
         .map { case (t, rs) => t -> rs.maxBy(_.createdAt) }
 
@@ -196,78 +197,89 @@ object TaskSearchIndex:
   /** 生产形态：热读配置 → 有配置才扫描增量。配置关 = 快速 no-op（词法路径不依赖向量）。 */
   def upkeep(): IO[UpkeepStats] =
     EmbeddingService.resolveSettings() match
-      case None      => IO.pure(UpkeepStats(0, 0, 0, "off"))
-      case Some(st)  => upkeepWith(st, texts => EmbeddingService.embed(st, texts))
+      case None => IO.pure(UpkeepStats(0, 0, 0, "off"))
+      case Some(st) => upkeepWith(st, texts => EmbeddingService.embed(st, texts))
 
   /** Fire-and-forget 形态（写路径尾挂）：在飞合流，绝不向调用方上抛。 */
   def upkeepFireAndForget(): IO[Unit] =
     IO(upkeepInFlight.compareAndSet(false, true)).flatMap { claimed =>
       if !claimed then IO.unit
-      else upkeep().attempt.guarantee(IO(upkeepInFlight.set(false))).flatMap {
-        case Right(_) => IO.unit
-        case Left(e) =>
-          IO(logger.warnSync(s"task index upkeep failed (${e.getClass.getSimpleName}) — ignored")).void
-      }
+      else
+        upkeep().attempt.guarantee(IO(upkeepInFlight.set(false))).flatMap {
+          case Right(_) => IO.unit
+          case Left(e) =>
+            IO(logger.warnSync(s"task index upkeep failed (${e.getClass.getSimpleName}) — ignored")).void
+        }
     }
 
   /**
    * 增量维护（spec 可注入 embed 函数）：扫描条目 → hash 比对 → 只嵌变化者 →
- * 落盘 → 清陈旧。扫描/嵌入/落盘任何一环失败都不清空既有向量（写是原子的，
+   * 落盘 → 清陈旧。扫描/嵌入/落盘任何一环失败都不清空既有向量（写是原子的，
    * 读容忍——最坏 = 向量略陈旧，词法/余弦照常可用）。
    */
   def upkeepWith(
-      settings: EmbeddingService.EmbeddingSettings,
-      embed: List[String] => IO[Option[List[List[Float]]]]
+    settings: EmbeddingService.EmbeddingSettings,
+    embed: List[String] => IO[Option[List[List[Float]]]]
   ): IO[UpkeepStats] =
     IO.blocking(collectEntriesSync()).flatMap { entries =>
       val store = VectorStore.read()
       val byId = entries.map(e => e.entryId -> e).toMap
       val changed = entries.filter { e =>
         store.entries.get(e.entryId) match
-          case None      => true
+          case None => true
           case Some(rec) => rec.hash != textHash(settings.model, e.text)
       }
       val staleIds = store.entries.keys.filterNot(byId.contains).toList
-      if changed.isEmpty && staleIds.isEmpty then
-        IO.pure(UpkeepStats(entries.size, 0, 0, ModeEmbedding))
+      if changed.isEmpty && staleIds.isEmpty then IO.pure(UpkeepStats(entries.size, 0, 0, ModeEmbedding))
       else
-        changed.sliding(EmbeddingService.MaxBatch, EmbeddingService.MaxBatch).toList.traverse { batch =>
-          embed(batch.map(_.text)).flatMap {
-            case None =>
-              // 嵌入失败：本批跳过（保留旧向量——hash 未写回，下轮 upkeep 重试）。
-              IO(logger.warnSync(s"task index upkeep: ${batch.size} entries skipped (embed failed)")).as(Nil: List[(String, VectorStore.VectorRecord)])
-            case Some(vectors) =>
-              val now = Instant.now().toString
-              val records = batch.zip(vectors).map { case (e, vec) =>
-                e.entryId -> VectorStore.VectorRecord(
-                  vector = vec,
-                  dim = vec.size,
-                  model = settings.model,
-                  hash = textHash(settings.model, e.text),
-                  kind = e.kind,
-                  title = e.title,
-                  status = e.status,
-                  executor = e.executor,
-                  address = e.address,
-                  taskId = e.taskId,
-                  snippet = e.snippet,
-                  updatedAt = now
-                )
-              }.toMap
-              IO.pure(records.toList)
+        changed
+          .sliding(EmbeddingService.MaxBatch, EmbeddingService.MaxBatch)
+          .toList
+          .traverse { batch =>
+            embed(batch.map(_.text)).flatMap {
+              case None =>
+                // 嵌入失败：本批跳过（保留旧向量——hash 未写回，下轮 upkeep 重试）。
+                IO(logger.warnSync(s"task index upkeep: ${batch.size} entries skipped (embed failed)"))
+                  .as(Nil: List[(String, VectorStore.VectorRecord)])
+              case Some(vectors) =>
+                val now = Instant.now().toString
+                val records = batch
+                  .zip(vectors)
+                  .map { case (e, vec) =>
+                    e.entryId -> VectorStore.VectorRecord(
+                      vector = vec,
+                      dim = vec.size,
+                      model = settings.model,
+                      hash = textHash(settings.model, e.text),
+                      kind = e.kind,
+                      title = e.title,
+                      status = e.status,
+                      executor = e.executor,
+                      address = e.address,
+                      taskId = e.taskId,
+                      snippet = e.snippet,
+                      updatedAt = now
+                    )
+                  }
+                  .toMap
+                IO.pure(records.toList)
+            }
           }
-        }.flatMap { recordLists =>
-          val records = recordLists.flatten.toMap
-          val putRes = if records.isEmpty then Right(VectorStore.read()) else VectorStore.putAll(records)
-          val rmRes = if staleIds.isEmpty then Right(VectorStore.read()) else VectorStore.removeAll(staleIds)
-          (putRes, rmRes) match
-            case (Right(_), Right(_)) =>
-              IO.pure(UpkeepStats(entries.size, records.size, staleIds.size, ModeEmbedding))
-            case (Left(a), _) =>
-              IO(logger.warnSync(s"task index upkeep write failed: $a")).as(UpkeepStats(entries.size, 0, 0, ModeEmbedding))
-            case (_, Left(b)) =>
-              IO(logger.warnSync(s"task index upkeep prune failed: $b")).as(UpkeepStats(entries.size, records.size, 0, ModeEmbedding))
-        }
+          .flatMap { recordLists =>
+            val records = recordLists.flatten.toMap
+            val putRes = if records.isEmpty then Right(VectorStore.read()) else VectorStore.putAll(records)
+            val rmRes = if staleIds.isEmpty then Right(VectorStore.read()) else VectorStore.removeAll(staleIds)
+            (putRes, rmRes) match
+              case (Right(_), Right(_)) =>
+                IO.pure(UpkeepStats(entries.size, records.size, staleIds.size, ModeEmbedding))
+              case (Left(a), _) =>
+                IO(logger.warnSync(s"task index upkeep write failed: $a"))
+                  .as(UpkeepStats(entries.size, 0, 0, ModeEmbedding))
+              case (_, Left(b)) =>
+                IO(logger.warnSync(s"task index upkeep prune failed: $b"))
+                  .as(UpkeepStats(entries.size, records.size, 0, ModeEmbedding))
+          }
+      end if
     }
 
   // ── 检索 ──────────────────────────────────────────────────────────────
@@ -280,12 +292,12 @@ object TaskSearchIndex:
    * → top-k。query 空白 = 显式错误。绝不抛：一切降级都落在返回值里。
    */
   def search(
-      query: String,
-      k: Int = 8,
-      doUpkeep: Boolean = true,
-      embed: List[String] => IO[Option[List[List[Float]]]] = fallbackEmbed,
-      rerank: (String, List[TaskSearchRerank.Candidate]) => IO[Option[List[String]]] = TaskSearchRerank.rerank,
-      settings: Option[EmbeddingService.EmbeddingSettings] = EmbeddingService.resolveSettings()
+    query: String,
+    k: Int = 8,
+    doUpkeep: Boolean = true,
+    embed: List[String] => IO[Option[List[List[Float]]]] = fallbackEmbed,
+    rerank: (String, List[TaskSearchRerank.Candidate]) => IO[Option[List[String]]] = TaskSearchRerank.rerank,
+    settings: Option[EmbeddingService.EmbeddingSettings] = EmbeddingService.resolveSettings()
   ): IO[Either[String, SearchResult]] =
     val q = query.trim
     val cappedK = math.max(1, math.min(k, 25))
@@ -300,14 +312,16 @@ object TaskSearchIndex:
             embed(List(q)).flatMap {
               case Some(qvec :: _) =>
                 val store = VectorStore.read()
-                val scored = entries.flatMap { e =>
-                  store.entries.get(e.entryId).map { rec =>
-                    e -> cosine(qvec, rec.vector)
+                val scored = entries
+                  .flatMap { e =>
+                    store.entries.get(e.entryId).map { rec =>
+                      e -> cosine(qvec, rec.vector)
+                    }
                   }
-                }.filter(_._2 > 0.0).sortBy(-_._2)
+                  .filter(_._2 > 0.0)
+                  .sortBy(-_._2)
                 val pool = scored.take(math.max(cappedK, cappedK * PoolFactor))
-                if pool.isEmpty then
-                  IO.pure(Right(SearchResult(Nil, ModeEmbedding, reranked = false, total)))
+                if pool.isEmpty then IO.pure(Right(SearchResult(Nil, ModeEmbedding, reranked = false, total)))
                 else
                   val candidates = pool.map { case (e, s) => TaskSearchRerank.Candidate(e.entryId, e.text.take(2000)) }
                   rerank(q, candidates).map {
@@ -323,13 +337,18 @@ object TaskSearchIndex:
             }
           case None =>
             IO.pure(lexicalResult(q, cappedK, entries, total))
+        end match
       }
+
+    end if
+
+  end search
 
   /** 生产 embed 注入点（热读配置；面关 = None → 词法）。 */
   private def fallbackEmbed(texts: List[String]): IO[Option[List[List[Float]]]] =
     EmbeddingService.resolveSettings() match
-      case None      => IO.pure(None)
-      case Some(st)  => EmbeddingService.embed(st, texts)
+      case None => IO.pure(None)
+      case Some(st) => EmbeddingService.embed(st, texts)
 
   private def take[A](n: Int)(xs: List[A]): List[A] = xs.take(n)
 

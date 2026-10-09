@@ -12,9 +12,12 @@ import scala.concurrent.duration.*
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):静态面经注册器倒置
 object AskUserQuestionTool extends Tool:
 
-  /** 附件判据词汇（解析/探针/拒绝枚举）——**Pop 文件面同一套**（askuser-attach-align
-   *  批：禁第二套域规则/第二权威，作者 2026-10-07 09:41 令）。 */
+  /**
+   * 附件判据词汇（解析/探针/拒绝枚举）——**Pop 文件面同一套**（askuser-attach-align
+   *  批：禁第二套域规则/第二权威，作者 2026-10-07 09:41 令）。
+   */
   import FileRefs.*
+
   /** 工具名（`AgentCore.schemaVariantFor` 与本工具共用此一处字面量）。 */
   val Name = "AskUserQuestion"
 
@@ -70,6 +73,13 @@ Guidelines:
 Visual selection support (askuser-canvas direction C):
 - Set `canvas` on a question (absolute file path) to auto-open a comparison page in the Canvas panel when the question appears.
 - Set `preview` on an option to embed an inline thumbnail: `{"type": "swatch", "colors": ["#hex", ...]}` shows 1-5 color stripes; `{"type": "image", "src": "<url>"}` shows an image.
+
+Secret questions (secret: true):
+- Use for API keys, tokens, passwords, verification codes — anything the user must not paste as plain text. The question renders a password box instead of options.
+- The value travels exactly one path: card password box → gateway → the secrets store (owner-only 0600 file). YOU NEVER SEE THE VALUE: the answer message carries only a pointer receipt `{"stored":true,"keyRef":...,"location":...,"variableName":...}` (or `{"stored":false,"reason":...}` on failure).
+- Consume the value inside a Bash command via `$(cat <location>)` — it exists only inside that sub-shell. If the secret is allowlisted in nebflow.json (`secrets.inject`), it is also available as `$VARIABLE`. Discipline: the value is a service input only — never print it, write it to a file, or forward it.
+- `ephemeral: true` marks a one-time verification code (OTP/2FA): the store keeps it at most `ttlSec` seconds (default 600, clamp 10–86400) and the FIRST read consumes it — a second read fails. Ask again for a fresh code rather than retrying.
+- `secretName` optionally names the stored file (lowercase `[a-z0-9._-]`); default `askuser-<requestId>-<questionIndex>`. Secret questions do not accept options/dirPicker/canvas (options are stripped, violating questions are skipped).
 
 Conditional branching (dependsOn):
 - Give the upstream question an `id`, then set `dependsOn: {"ref": "<id>", "equals": "<answer>"}` on the dependent question.
@@ -131,6 +141,25 @@ Behavior:
               "canvas" -> io.circe.Json.obj(
                 "type" -> "string".asJson,
                 "description" -> "Optional absolute path to a comparison page that is auto-opened in the Canvas panel when this question appears.".asJson
+              ),
+              "secret" -> io.circe.Json.obj(
+                "type" -> "boolean".asJson,
+                "description" ->
+                  "Render a password input instead of options. The user's value is stored server-side (owner-only file); you receive ONLY a pointer receipt {stored, keyRef, location, variableName} — never the value. Incompatible with options/dirPicker/canvas (options are stripped, violating questions are skipped).".asJson
+              ),
+              "secretName" -> io.circe.Json.obj(
+                "type" -> "string".asJson,
+                "description" ->
+                  "Optional storage name for a secret question (lowercase [a-z0-9._-], max 64). Default: askuser-<requestId>-<questionIndex>.".asJson
+              ),
+              "ephemeral" -> io.circe.Json.obj(
+                "type" -> "boolean".asJson,
+                "description" ->
+                  "One-time verification-code mode for a secret question: the value expires (default 10 min) and the first read consumes it. Use for OTP/2FA codes, not long-lived keys.".asJson
+              ),
+              "ttlSec" -> io.circe.Json.obj(
+                "type" -> "integer".asJson,
+                "description" -> "TTL seconds for an ephemeral secret question (10-86400; default 600).".asJson
               ),
               "options" -> io.circe.Json.obj(
                 "type" -> "array".asJson,
@@ -209,6 +238,15 @@ Behavior:
    * Parse the raw `questions` JSON array into AskItems. Pure — spec-covered.
    * Malformed entries (empty question / empty option label) are skipped, matching
    * the historical behavior. `multiple` defaults to false when absent.
+   *
+   * secret 型题（本批，规格 §1/§5.7）的解析裁定：
+   *   · `secret:true` 与 `canvas` **互斥**——违例题**整条跳过**（与
+   *     空问题同一「跳过畸形条目」先例；秘密题渲染对比页 = 通道语义
+   *     直接矛盾，不静默改写发起方的题）。dirPicker 不经本工具下发。
+   *   · `secret:true` 携带 options ⇒ **secret 胜出**：选项剥除（密码面不渲染
+   *     选项，前端同样忽略），题保留——剥掉的是无意义的附件，不是问题本身。
+   *   · `ttlSec` 非法（非数 / ≤0）⇒ None（落库侧再钳位到 10–86400）。
+   * 四个新字段缺席 = 逐字节旧行为（`AskUserBuildJsonSpec` 字节契约不受影响）。
    */
   def parseItems(questionsJson: Seq[io.circe.Json]): List[AskItem] =
     questionsJson.flatMap { q =>
@@ -223,23 +261,49 @@ Behavior:
         yield QuestionDependency(ref, equals)
         val multiple = q.hcursor.downField("multiple").as[Boolean].getOrElse(false)
         val canvas = q.hcursor.downField("canvas").as[String].toOption
-        val options = q.hcursor.downField("options").as[List[io.circe.Json]].getOrElse(Nil)
-        val opts = options.flatMap { o =>
-          val label = o.hcursor.downField("label").as[String].getOrElse("")
-          if label.isBlank then None // skip options with empty label
-          else
-            val desc = o.hcursor.downField("description").as[String].toOption
-            val preview = for
-              pv <- o.hcursor.downField("preview").focus
-              t <- pv.hcursor.downField("type").as[String].toOption
-            yield AskPreview(
-              `type` = t,
-              colors = pv.hcursor.downField("colors").as[List[String]].toOption,
-              src = pv.hcursor.downField("src").as[String].toOption
+        val secret = q.hcursor.downField("secret").as[Boolean].toOption.getOrElse(false)
+        // 互斥闸（规格 §5.7）：secret × canvas = 畸形条目，整条跳过（与空问题同一
+        // 「跳过畸形条目」先例）。dirPicker 不经本工具下发（仅 ProjectTool 面板自造），
+        // 工具面无需第二条互斥腿。
+        if secret && canvas.nonEmpty then None
+        else
+          val secretName = q.hcursor.downField("secretName").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+          val ephemeral = q.hcursor.downField("ephemeral").as[Boolean].toOption.getOrElse(false)
+          val ttlSec = q.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0)
+          val options = q.hcursor.downField("options").as[List[io.circe.Json]].getOrElse(Nil)
+          val opts =
+            if secret then Nil // secret 胜出：密码面不携带选项（规格 §5.7）
+            else
+              options.flatMap { o =>
+                val label = o.hcursor.downField("label").as[String].getOrElse("")
+                if label.isBlank then None // skip options with empty label
+                else
+                  val desc = o.hcursor.downField("description").as[String].toOption
+                  val preview = for
+                    pv <- o.hcursor.downField("preview").focus
+                    t <- pv.hcursor.downField("type").as[String].toOption
+                  yield AskPreview(
+                    `type` = t,
+                    colors = pv.hcursor.downField("colors").as[List[String]].toOption,
+                    src = pv.hcursor.downField("src").as[String].toOption
+                  )
+                  Some(AskOption(label, desc, preview))
+              }
+          Some(
+            AskItem(
+              question,
+              opts,
+              id = id,
+              dependsOn = dependsOn,
+              multiple = multiple,
+              canvas = canvas,
+              secret = secret,
+              secretName = secretName,
+              ephemeral = ephemeral,
+              ttlSec = ttlSec
             )
-            Some(AskOption(label, desc, preview))
-        }
-        Some(AskItem(question, opts, id = id, dependsOn = dependsOn, multiple = multiple, canvas = canvas))
+          )
+        end if
       end if
     }.toList
 
@@ -330,10 +394,19 @@ Behavior:
   /**
    * 非阻塞 ack（唯一回执面）：机器可读（requestId + 问题数 + 附件数）+ 明确
    * 「不要在此等待」+ 未答兜底指令（丢答案的降级必须是**设计内**的，不是静默的）。
+   *
+   * secret 型题（本批）追加一段预期管理：`N secret question(s)` —— 告知模型
+   * 「答案稍后到达的形态是**指针回执**（keyRef/location），值永远不到达会话」，
+   * 防止模型把回执当缺失答案反复重问。纯函数；无 secret 题 ⇒ 输出与改前逐字节一致。
    */
   def nonBlockingAck(items: List[AskItem], requestId: String, attachments: List[String] = Nil): String =
     val attach = if attachments.isEmpty then "" else s" · ${attachments.size} attachment(s)"
-    s"requestId=$requestId · ${items.size} question(s)$attach · non-blocking: the answer will arrive later as a " +
+    val secrets = items.count(_.secret)
+    val secretNote =
+      if secrets == 0 then ""
+      else
+        s" · $secrets secret question(s): each answer arrives as a stored pointer (keyRef/location) — the value itself never enters this session; consume it via $$(cat <location>)"
+    s"requestId=$requestId · ${items.size} question(s)$attach$secretNote · non-blocking: the answer will arrive later as a " +
       "message in this session — do not wait for it; if no answer arrives and you cannot decide, proceed with your best judgment."
 
   /**
@@ -391,15 +464,18 @@ Behavior:
       case None =>
         // 任何形态都解析不成文件系统路径（含空串/纯空白）。
         hit.decision match
-          case RefDecision.Reject(rejected) => Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, rejected.detail))
-          case _ => Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, s"the reference could not be resolved: $raw"))
+          case RefDecision.Reject(rejected) =>
+            Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, rejected.detail))
+          case _ =>
+            Left(attachmentProbeError("ASKUSER_ATTACH_UNRESOLVED", raw, s"the reference could not be resolved: $raw"))
       case Some(path) =>
         hit.decision match
           case RefDecision.Reject(rejected) => Left(rejectionFromProbe(raw, rejected))
           case _ =>
             // 自有尺：单件 ≤ MaxAttachmentBytes（probe 的 200MB 代理闸已过）。
             val size =
-              try java.nio.file.Files.size(path) catch case _: Throwable => -1L
+              try java.nio.file.Files.size(path)
+              catch case _: Throwable => -1L
             if size < 0 then
               Left(
                 attachmentProbeError(
@@ -418,14 +494,27 @@ Behavior:
               )
             else Right(FileRefs.describe(path))
 
+            end if
+
+    end match
+
+  end validateOneAttachment
+
   /** 解析失败的共用构造（resolveCandidates 的 whenUnresolvable 腿）。 */
   private def unresolvableAttachment(value: String): RefDecision =
     RefDecision.Reject(
-      RejectedRef(value, None, FileRefFailure.Unresolvable, s"the path could not be resolved to a filesystem path: $value")
+      RejectedRef(
+        value,
+        None,
+        FileRefFailure.Unresolvable,
+        s"the path could not be resolved to a filesystem path: $value"
+      )
     )
 
-  /** 拒绝文案 = 输入路径回显 + probe 自己的可判读 detail（与 Pop 警告逐字同源）
-   *  + 双维度尾注 ——「何域可服务（类型面全放）、当前路径为何拒（detail）」齐备。 */
+  /**
+   * 拒绝文案 = 输入路径回显 + probe 自己的可判读 detail（与 Pop 警告逐字同源）
+   *  + 双维度尾注 ——「何域可服务（类型面全放）、当前路径为何拒（detail）」齐备。
+   */
   private def attachmentProbeError(fallbackCode: String, raw: String, detail: String): ToolError =
     attachmentError(fallbackCode, s"Attachment refused for `$raw` — $detail. ${RejectionTypeNote}")
 
@@ -458,6 +547,10 @@ Behavior:
    * `AgentProcessing` 据此命令的 `awaitsAnswer=true` 标了 `WaitingForUser` 并
    * `DelegateBudget.pause`，本函数是**同一条链的配对解除点**（缺它 ⇒ 会话永久停在
    * 等待态、内核预算永久暂停 = 造出「永不解除的等待」）。
+   *
+   * 🔴 2026-10-09 作者裁定：内核 wall-clock 预算已整体拆除——`resume` 现为无害
+   * no-op（DelegateBudget 墓碑壳）；本函数剩余职责 = 等待态解除（registry 触碰），
+   * 等待期治理只剩 `TaskStuckWatcher` 的 `WaitingForUser` 豁免。
    *
    * 注册表行存在 ⇒ status=Processing + 新活动戳（同 `AgentCore.touchRegistryActivity`
    * 语义，**绝不**造幽灵行）。sharedResources/sessionId 缺席（spec harness）⇒ no-op。
@@ -493,6 +586,7 @@ Behavior:
   def formatAnswer(items: List[AskItem], answers: List[String]): String =
     def present(item: Option[AskItem], raw: String): String =
       item match
+        case Some(i) if i.secret => formatSecretReceipt(raw)
         case Some(i) if i.multiple => formatMultiple(raw)
         case _ => raw
     if items.size <= 1 then answers.headOption.filter(_.nonEmpty).map(a => present(items.headOption, a)).getOrElse("")
@@ -500,8 +594,45 @@ Behavior:
       items.zipWithIndex
         .map { case (item, idx) =>
           val raw = answers.lift(idx).getOrElse("")
-          val answer = if raw.isEmpty then "(skipped)" else present(Some(item), raw)
+          // 空槽位：普通题保持既有 "(skipped)" 文案（逐字节不变）；secret 题给
+          // 「未提供」指引（渠道只答非 secret 题时该槽为空，模型须知道去哪补）。
+          val answer =
+            if raw.isEmpty then if item.secret then formatSecretReceipt(raw) else "(skipped)"
+            else present(Some(item), raw)
           s"${idx + 1}. ${item.question.take(60)}\n   → $answer"
         }
         .mkString("\n")
+
+  end formatAnswer
+
+  /**
+   * secret 题槽位的呈现（规格 §2「指针文本」单一渲染点，阻塞/非阻塞两腿与
+   * formatAnswer 同源）。槽位携带的是 hub `complete` 写入的**回执 JSON**
+   * （`{stored:true,keyRef,location,variableName[,ephemeral]}` / `{stored:false,reason}`）；
+   * 渲染成可执行的消费指引（`$(cat <location>)`）+ 工具纪律行（值只作服务输入，
+   * 禁打印/落盘/转发）。宽松读：非 JSON（旧快照/渠道空槽）原样透传或给「未提供」——
+   * 秘密题的槽位**从不**携带值，因此渲染面无需任何脱敏逻辑。
+   */
+  private def formatSecretReceipt(raw: String): String =
+    if raw.isBlank then "not provided (a secret question must be answered on the desktop panel)"
+    else
+      io.circe.parser.parse(raw).toOption.flatMap(_.asObject) match
+        case None => raw // 非 JSON：透传（防御性；正常链路只产回执 JSON）
+        case Some(o) =>
+          def str(k: String): String = o(k).flatMap(_.asString).getOrElse("")
+          val stored = o("stored").flatMap(_.asBoolean).getOrElse(false)
+          if stored then
+            val keyRef = str("keyRef")
+            val location = str("location")
+            val variableName = str("variableName")
+            val ephemeral = o("ephemeral").flatMap(_.asBoolean).getOrElse(false)
+            val oneTime =
+              if ephemeral then " ONE-TIME code: reading it consumes the file — ask for a fresh code on failure."
+              else ""
+            s"stored as keyRef=$keyRef → consume via $$(cat $location)$oneTime " +
+              s"(allowlisted env variable: $variableName). Discipline: the value is a service input only — " +
+              "never print it, write it to disk, or forward it."
+          else
+            val reason = str("reason")
+            s"NOT stored${if reason.isEmpty then "" else s" ($reason)"} — re-ask the user on the desktop panel."
 end AskUserQuestionTool

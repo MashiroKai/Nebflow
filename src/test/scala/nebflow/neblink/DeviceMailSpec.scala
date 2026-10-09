@@ -7,7 +7,13 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
-import nebflow.actor.{ActorSystem as NebActorSystem, AgentCommand, AgentKind, AgentRecord, Behaviors} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
+import nebflow.actor.{
+  ActorSystem as NebActorSystem,
+  AgentCommand,
+  AgentKind,
+  AgentRecord,
+  Behaviors
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
 import nebflow.core.tools.{FriendMessageTool, MailTool, ToolContext}
@@ -126,14 +132,18 @@ class DeviceMailSpec extends FunSuite:
 
   private def callErr(input: JsonObject): String =
     MailTool.call(input, bareCtx).unsafeRunSync() match
-      case Left(err)  => err.message
+      case Left(err) => err.message
       case Right(msg) => fail(s"expected an explicit error, got success: $msg")
 
-  test("retired: the Mail schema has NO `device` key (parameter face 6 keys, required stays [message] — address is the only target)"):
+  test(
+    "retired: the Mail schema has NO `device` key (parameter face 6 keys, required stays [message] — address is the only target)"
+  ):
     assert(!props.contains("device"), s"the device key must be GONE from the schema: $props")
     assertEquals(requiredOf, List("message"), "required must stay exactly [message]")
 
-  test("device face: any stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED (even address+device double-filled — the device guard outranks the old exclusivity gate)"):
+  test(
+    "device face: any stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED (even address+device double-filled — the device guard outranks the old exclusivity gate)"
+  ):
     val alone = callErr(JsonObject("device" -> "dev-b".asJson, "message" -> "hi".asJson))
     assert(alone.contains(s"[${MailTool.ErrDeviceLegRetired}]"), alone)
     assert(alone.contains("SendMessage"), s"the error must give the way out (machine face = SendMessage): $alone")
@@ -146,7 +156,9 @@ class DeviceMailSpec extends FunSuite:
     )
     assert(both.contains(s"[${MailTool.ErrDeviceLegRetired}]"), both)
 
-  test("retired: the target face is address-only — double-missing still reads MAIL_TARGET_MISSING and names the retirement"):
+  test(
+    "retired: the target face is address-only — double-missing still reads MAIL_TARGET_MISSING and names the retirement"
+  ):
     val msg = callErr(JsonObject("message" -> "hi".asJson))
     assert(msg.contains(s"[${MailTool.ErrTargetMissing}]"), msg)
     assert(msg.contains("'address'"), msg)
@@ -345,13 +357,25 @@ class DeviceMailSpec extends FunSuite:
       // （新增末位 `project`，main 侧 device-mail 批新增本 spec 时该批尚未落基线）。
       // notifypack 解 b 批（2026-09-23）：末位再 +1（`windowItems`，逐字忽略——device-mail
       // 腿恒非窗冲刷件，字段恒 `None`）。
-      case AgentCommand.ImmediateInput(text, _, source, eventType, sender, _, _, fromUser, _, _) => // W1 shim: +1 slot (windowItems, notifypack-b)
+      case AgentCommand.ImmediateInput(
+            text,
+            _,
+            source,
+            eventType,
+            sender,
+            _,
+            _,
+            fromUser,
+            _,
+            _
+          ) => // W1 shim: +1 slot (windowItems, notifypack-b)
         assertEquals(text, "[DEVICE-MAIL · from KAI-MBP]\nhello B")
         assertEquals(source, Some(DeviceMail.SourceDeviceMail))
         assertEquals(eventType, Some(DeviceMail.EventTypeInfo))
         assertEquals(sender, Some("KAI-MBP"))
         assertEquals(fromUser, false, "服务端注入不是真人输入（fromUser=false）")
       case other => fail(s"expected ImmediateInput, got $other")
+    end match
 
     // 蓝气泡帧由 AgentActor 的唯一发射点产出（本 spec 只钉注入面取值域）；
     // 告警帧在成功路径必须**为 0**。

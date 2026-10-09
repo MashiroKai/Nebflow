@@ -13,71 +13,80 @@ import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
 import java.nio.file.{Files, Path, StandardOpenOption}
 import scala.jdk.CollectionConverters.*
 
-/** Unified secrets store (secrets-panel backend leg, 2026-09-27).
-  *
-  * One management face over the EXISTING `~/.nebflow/secrets/` namespace —
-  * same directory, same discipline, zero storage change for the two existing
-  * writers (`SocialChannels.writeSecret`, `DaemonPanelStore.writeSecret`).
-  *
-  * 🔴 Two hard rules, both pinned by `SecretsStoreSpec`:
-  *
-  * ① Zero value exposure. Nothing in this file ever reads a stored value back:
-  * the read face answers metadata only (`list`), the write face takes a
-  * plaintext and never echoes it, and NO diagnostic (log line, error message,
-  * failure payload) may carry a value — name + exception class + path only
-  * (same credential protocol as `SocialChannels`/`CredentialFileAcl`).
-  *
-  * ② The write discipline IS the F1 fix order (`SocialChannels.writeSecret`,
-  * `SocialChannels.scala:304-333`): ① a target that does not exist is created
-  * `rw-------` from its very first byte (mode from the creation attribute, no
-  * "write, then narrow" window); ② a target that already exists is NARROWED
-  * BEFORE any new plaintext can land in it; ③ the plaintext is written IN
-  * PLACE (`TRUNCATE_EXISTING` — the inode is preserved, which is what
-  * `NfPathPolicy.credentialInodes` keys on; a rename would hand the credential
-  * a fresh inode); ④ `CredentialFileAcl.restrict` is the authoritative
-  * narrowing step. No private copy of the ACL logic — everything goes through
-  * `CredentialFileAcl`.
-  *
-  * Fail-closed doubles (`DaemonPanelStore.scala:189-206` shape): before any
-  * write — an existing secrets directory that is NOT 0700 refuses the write;
-  * after the write — a file that did not end up 0600 is deleted and the write
-  * refused. A failure removes whatever THIS call created or wrote; a
-  * pre-existing file that was never written into is left exactly as found. A
-  * secret is never reported as stored when it is not.
-  *
-  * Naming (`^[a-z0-9][a-z0-9._-]{0,63}$`): lowercase letter/digit first,
-  * charset `[a-z0-9._-]`, length 1-64. Two hard rejections on top: a name
-  * starting with `.` and a name ending with `.tmp` — `.名字.tmp` inside the
-  * secrets dir is the daemon panel's temp-file namespace
-  * (`DaemonPanelStore.scala:198`). The `social-`/`daemon-` prefixes are MANAGED
-  * namespaces: visible in the list, every write refused
-  * (`403 managed_namespace`) — they belong to their own panels.
-  *
-  * No actor face (backend dev rule): every effect sits on `IO.blocking` and
-  * every failure on an explicit `Either[Failure, *]` / `IO` channel.
-  */
+/**
+ * Unified secrets store (secrets-panel backend leg, 2026-09-27).
+ *
+ * One management face over the EXISTING `~/.nebflow/secrets/` namespace —
+ * same directory, same discipline, zero storage change for the two existing
+ * writers (`SocialChannels.writeSecret`, `DaemonPanelStore.writeSecret`).
+ *
+ * 🔴 Two hard rules, both pinned by `SecretsStoreSpec`:
+ *
+ * ① Zero value exposure. Nothing in this file ever reads a stored value back:
+ * the read face answers metadata only (`list`), the write face takes a
+ * plaintext and never echoes it, and NO diagnostic (log line, error message,
+ * failure payload) may carry a value — name + exception class + path only
+ * (same credential protocol as `SocialChannels`/`CredentialFileAcl`).
+ *
+ * ② The write discipline IS the F1 fix order (`SocialChannels.writeSecret`,
+ * `SocialChannels.scala:304-333`): ① a target that does not exist is created
+ * `rw-------` from its very first byte (mode from the creation attribute, no
+ * "write, then narrow" window); ② a target that already exists is NARROWED
+ * BEFORE any new plaintext can land in it; ③ the plaintext is written IN
+ * PLACE (`TRUNCATE_EXISTING` — the inode is preserved, which is what
+ * `NfPathPolicy.credentialInodes` keys on; a rename would hand the credential
+ * a fresh inode); ④ `CredentialFileAcl.restrict` is the authoritative
+ * narrowing step. No private copy of the ACL logic — everything goes through
+ * `CredentialFileAcl`.
+ *
+ * Fail-closed doubles (`DaemonPanelStore.scala:189-206` shape): before any
+ * write — an existing secrets directory that is NOT 0700 refuses the write;
+ * after the write — a file that did not end up 0600 is deleted and the write
+ * refused. A failure removes whatever THIS call created or wrote; a
+ * pre-existing file that was never written into is left exactly as found. A
+ * secret is never reported as stored when it is not.
+ *
+ * Naming (`^[a-z0-9][a-z0-9._-]{0,63}$`): lowercase letter/digit first,
+ * charset `[a-z0-9._-]`, length 1-64. Two hard rejections on top: a name
+ * starting with `.` and a name ending with `.tmp` — `.名字.tmp` inside the
+ * secrets dir is the daemon panel's temp-file namespace
+ * (`DaemonPanelStore.scala:198`). The `social-`/`daemon-` prefixes are MANAGED
+ * namespaces: visible in the list, every write refused
+ * (`403 managed_namespace`) — they belong to their own panels.
+ *
+ * No actor face (backend dev rule): every effect sits on `IO.blocking` and
+ * every failure on an explicit `Either[Failure, *]` / `IO` channel.
+ */
 class SecretsStore(
   val secretsDir: os.Path,
-  /** Data root of the install this store serves. The channel-reference scan
-    * reads `<root>/nebflow.json` (`socialChannels.*`) only — never a secret
-    * value, only stored path strings. */
+  /**
+   * Data root of the install this store serves. The channel-reference scan
+   * reads `<root>/nebflow.json` (`socialChannels.*`) only — never a secret
+   * value, only stored path strings.
+   */
   dataRoot: os.Path = PathUtil.dataRoot,
-  /** Daemons declaration file for the daemon-panel reference scan
-    * (`daemons.json`, `configPanel` blocks). Parameterized like `secretsDir`
-    * so tests never touch the real one. */
+  /**
+   * Daemons declaration file for the daemon-panel reference scan
+   * (`daemons.json`, `configPanel` blocks). Parameterized like `secretsDir`
+   * so tests never touch the real one.
+   */
   daemonsPath: os.Path = PathUtil.dataRoot / "daemons.json",
-  /** The credential-narrowing step; production leaves it at the shared
-    * `CredentialFileAcl` module and only the zero-residue test injects a
-    * failing one (same seam as `SocialChannels.save(restrict)`). */
+  /**
+   * The credential-narrowing step; production leaves it at the shared
+   * `CredentialFileAcl` module and only the zero-residue test injects a
+   * failing one (same seam as `SocialChannels.save(restrict)`).
+   */
   restrict: Path => Unit = (p: Path) => CredentialFileAcl.restrict(p),
-  /** The best-effort NAMESPACE-narrowing step (the directory leg of the write
-    * path). Production leaves it at the shared `CredentialFileAcl` module; the
-    * fail-closed test injects a no-op standing for "this namespace cannot be
-    * narrowed", which is the only way the directory gate's refusal arm
-    * (`Left(SecretMode)`) is reachable in-process — the real
-    * `CredentialFileAcl.restrictDirectory` succeeds on any directory we own,
-    * so without the seam that arm has no failing test. Same injection-seam
-    * pattern as [[restrict]]; the ACL logic itself is never copied here. */
+  /**
+   * The best-effort NAMESPACE-narrowing step (the directory leg of the write
+   * path). Production leaves it at the shared `CredentialFileAcl` module; the
+   * fail-closed test injects a no-op standing for "this namespace cannot be
+   * narrowed", which is the only way the directory gate's refusal arm
+   * (`Left(SecretMode)`) is reachable in-process — the real
+   * `CredentialFileAcl.restrictDirectory` succeeds on any directory we own,
+   * so without the seam that arm has no failing test. Same injection-seam
+   * pattern as [[restrict]]; the ACL logic itself is never copied here.
+   */
   restrictDirectory: Path => Unit = (p: Path) => CredentialFileAcl.restrictDirectory(p)
 ):
 
@@ -85,33 +94,38 @@ class SecretsStore(
 
   // ── Naming ─────────────────────────────────────────────────────────────
 
-  /** Service-side name validation (the ONLY path into the filesystem — the
-    * caller never hands us a path, only a name, and the charset excludes `/`,
-    * so the traversal face is closed by construction). */
+  /**
+   * Service-side name validation (the ONLY path into the filesystem — the
+   * caller never hands us a path, only a name, and the charset excludes `/`,
+   * so the traversal face is closed by construction).
+   */
   def validateName(name: String): Either[Failure, String] =
     if name.startsWith(".") then Left(Failure.InvalidName(name, "must not start with '.'"))
     else if name.endsWith(".tmp") then Left(Failure.InvalidName(name, "must not end with '.tmp'"))
-    else if name.length > MaxLen then
-      Left(Failure.InvalidName(name, s"too long (max $MaxLen characters)"))
+    else if name.length > MaxLen then Left(Failure.InvalidName(name, s"too long (max $MaxLen characters)"))
     else if !NamePattern.matcher(name).matches() then
       Left(Failure.InvalidName(name, "must match ^[a-z0-9][a-z0-9._-]{0,63}$ (lowercase charset)"))
     else Right(name)
 
-  /** Managed namespace check — `social-`/`daemon-` belong to their own panels.
-    * The list face still shows these files (metadata + refs); only writes are
-    * refused here. */
+  /**
+   * Managed namespace check — `social-`/`daemon-` belong to their own panels.
+   * The list face still shows these files (metadata + refs); only writes are
+   * refused here.
+   */
   def managedNamespace(name: String): Boolean =
     name.startsWith("social-") || name.startsWith("daemon-")
 
   // ── Consumption face (pointer semantics — never a value) ───────────────
 
-  /** Resolve `name` to its consumption pointer — the answer to "I need this
-    * credential; where do I get it?".
-    *
-    * 🔴 The returned `location` is a PATH. No branch of this method opens the
-    * secret file: the existence check reads directory metadata only. That is
-    * the mechanism, not a convention — a value cannot leak through a channel
-    * that never reads one. */
+  /**
+   * Resolve `name` to its consumption pointer — the answer to "I need this
+   * credential; where do I get it?".
+   *
+   * 🔴 The returned `location` is a PATH. No branch of this method opens the
+   * secret file: the existence check reads directory metadata only. That is
+   * the mechanism, not a convention — a value cannot leak through a channel
+   * that never reads one.
+   */
   def pointer(name: String): IO[Either[Failure, Pointer]] =
     validateName(name) match
       case Left(f) => IO.pure(Left(f))
@@ -120,45 +134,53 @@ class SecretsStore(
           if !Files.exists(path(name).toNIO) then Left(Failure.UnknownSecret(name))
           else
             val meta = SecretsCatalog.load(dataRoot)
-            Right(Pointer(
-              name = name,
-              variableName = SecretsCatalog.variableNameOf(name, meta),
-              description = SecretsCatalog.descriptionOf(name, meta),
-              location = SecretsCatalog.renderedLocation(dataRoot, secretsDir, name)
-            ))
+            Right(
+              Pointer(
+                name = name,
+                variableName = SecretsCatalog.variableNameOf(name, meta),
+                description = SecretsCatalog.descriptionOf(name, meta),
+                location = SecretsCatalog.renderedLocation(dataRoot, secretsDir, name)
+              )
+            )
         }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
   /** Every consumption pointer, sorted by name — the catalogue as data. */
   def pointers(): IO[Either[Failure, List[Pointer]]] =
     IO.blocking {
-      Right(SecretsCatalog.rows(secretsDir, dataRoot).map(r =>
-        Pointer(
-          name = r.name,
-          variableName = r.variableName,
-          description = r.description,
-          location = SecretsCatalog.renderedLocation(dataRoot, secretsDir, r.name)
-        )
-      ))
+      Right(
+        SecretsCatalog
+          .rows(secretsDir, dataRoot)
+          .map(r =>
+            Pointer(
+              name = r.name,
+              variableName = r.variableName,
+              description = r.description,
+              location = SecretsCatalog.renderedLocation(dataRoot, secretsDir, r.name)
+            )
+          )
+      )
     }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, secretsDir.toString)))))
 
-  /** Set the two non-value catalogue fields of an existing secret. A missing
-    * target is `404 unknown_secret` — metadata never mints a secret (the file
-    * is the credential; metadata describes it).
-    *
-    * 🔴 WHOLESALE REPLACE, and `None` means CLEAR — these two arguments are the
-    * values the secret ends up with, not a patch:
-    *
-    *   - `variableName = None` (or `Some("")`) drops the override, so the
-    *     secret reads under its derived default again (not "unchanged");
-    *   - `description = None` (or `Some("")`) clears the description.
-    *
-    * The alternative — a three-state set / clear / leave merge — makes the
-    * meaning of a call depend on which argument the caller happened to omit,
-    * which is exactly the shape that silently half-applies an edit. Both call
-    * sites (`PATCH /secrets/{name}`, `secretsMetadataBody`) already speak
-    * whole-replace, so this face states the same contract rather than adding a
-    * second, subtler one. Clearing BOTH leaves no sidecar entry at all
-    * ([[SecretsCatalog.save]] drops metadata that carries no field). */
+  /**
+   * Set the two non-value catalogue fields of an existing secret. A missing
+   * target is `404 unknown_secret` — metadata never mints a secret (the file
+   * is the credential; metadata describes it).
+   *
+   * 🔴 WHOLESALE REPLACE, and `None` means CLEAR — these two arguments are the
+   * values the secret ends up with, not a patch:
+   *
+   *   - `variableName = None` (or `Some("")`) drops the override, so the
+   *     secret reads under its derived default again (not "unchanged");
+   *   - `description = None` (or `Some("")`) clears the description.
+   *
+   * The alternative — a three-state set / clear / leave merge — makes the
+   * meaning of a call depend on which argument the caller happened to omit,
+   * which is exactly the shape that silently half-applies an edit. Both call
+   * sites (`PATCH /secrets/{name}`, `secretsMetadataBody`) already speak
+   * whole-replace, so this face states the same contract rather than adding a
+   * second, subtler one. Clearing BOTH leaves no sidecar entry at all
+   * ([[SecretsCatalog.save]] drops metadata that carries no field).
+   */
   def setMetadata(
     name: String,
     variableName: Option[String] = None,
@@ -179,32 +201,34 @@ class SecretsStore(
                   variableName.filter(_.nonEmpty),
                   description.filter(_.nonEmpty).getOrElse("")
                 )
-                if next == SecretsCatalog.Meta(None, "") then
-                  SecretsCatalog.save(dataRoot, current - name)
-                else
-                  SecretsCatalog.save(dataRoot, current.updated(name, next))
+                if next == SecretsCatalog.Meta(None, "") then SecretsCatalog.save(dataRoot, current - name)
+                else SecretsCatalog.save(dataRoot, current.updated(name, next))
                 SecretsCatalog.refresh(secretsDir, dataRoot)
                 Right(())
             }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
-  /** Re-render the catalogue after a store mutation. Best-effort: the secret
-    * itself is already stored, so a catalogue failure is logged loudly rather
-    * than turned into a write failure (reporting "not stored" when it is
-    * stored would be the worse lie — the same shape as the ACL warn-not-abort
-    * rule). */
+  /**
+   * Re-render the catalogue after a store mutation. Best-effort: the secret
+   * itself is already stored, so a catalogue failure is logged loudly rather
+   * than turned into a write failure (reporting "not stored" when it is
+   * stored would be the worse lie — the same shape as the ACL warn-not-abort
+   * rule).
+   */
   private def refreshCatalog(): Unit =
     try SecretsCatalog.refresh(secretsDir, dataRoot)
     catch case e: Exception => logger.warn(s"secrets catalog refresh failed: ${describe(e, secretsDir.toString)}")
 
   // ── Read face (metadata only — never a value) ──────────────────────────
 
-  /** One listed secret: name, size (bytes), mtime (epoch millis), the mode
-    * string (`0600` on a POSIX readback, `null` where the OS has no POSIX
-    * view), the referencing ids, and the two catalogue fields
-    * ([[SecretsCatalog]] — variable name + description; the third field of the
-    * catalogue model, the value, is the file itself and is never read back).
-    * No `value` key exists anywhere in this shape — enforced structurally by
-    * the routes spec. */
+  /**
+   * One listed secret: name, size (bytes), mtime (epoch millis), the mode
+   * string (`0600` on a POSIX readback, `null` where the OS has no POSIX
+   * view), the referencing ids, and the two catalogue fields
+   * ([[SecretsCatalog]] — variable name + description; the third field of the
+   * catalogue model, the value, is the file itself and is never read back).
+   * No `value` key exists anywhere in this shape — enforced structurally by
+   * the routes spec.
+   */
   final case class Entry(
     name: String,
     size: Long,
@@ -215,12 +239,14 @@ class SecretsStore(
     description: String
   )
 
-  /** List everything under `secretsDir`. A missing directory is an empty list
-    * (no secrets yet), not an error. Managed names are visible like any
-    * other; only writes distinguish them.
-    *
-    * Read-only by contract: it reads the metadata sidecar, and deliberately
-    * does NOT refresh the catalogue — a list must never write. */
+  /**
+   * List everything under `secretsDir`. A missing directory is an empty list
+   * (no secrets yet), not an error. Managed names are visible like any
+   * other; only writes distinguish them.
+   *
+   * Read-only by contract: it reads the metadata sidecar, and deliberately
+   * does NOT refresh the catalogue — a list must never write.
+   */
   def list(): IO[Either[Failure, List[Entry]]] =
     IO.blocking {
       if !Files.isDirectory(secretsDir.toNIO) then Right(Nil)
@@ -228,26 +254,30 @@ class SecretsStore(
         val names = os.list(secretsDir).filter(p => Files.isRegularFile(p.toNIO)).map(_.last).toList.sorted
         val refs = referencedByAll()
         val meta = SecretsCatalog.load(dataRoot)
-        Right(names.map(n =>
-          Entry(
-            name = n,
-            size = Files.size((secretsDir / n).toNIO),
-            mtime = Files.getLastModifiedTime((secretsDir / n).toNIO).toMillis,
-            mode = modeOf(secretsDir / n),
-            refs = refs.getOrElse(n, Nil),
-            variableName = SecretsCatalog.variableNameOf(n, meta),
-            description = SecretsCatalog.descriptionOf(n, meta)
+        Right(
+          names.map(n =>
+            Entry(
+              name = n,
+              size = Files.size((secretsDir / n).toNIO),
+              mtime = Files.getLastModifiedTime((secretsDir / n).toNIO).toMillis,
+              mode = modeOf(secretsDir / n),
+              refs = refs.getOrElse(n, Nil),
+              variableName = SecretsCatalog.variableNameOf(n, meta),
+              description = SecretsCatalog.descriptionOf(n, meta)
+            )
           )
-        ))
+        )
     }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, secretsDir.toString)))))
 
   // ── Write face ─────────────────────────────────────────────────────────
 
-  /** Create a new secret. An existing target is `409 already_exists` (the
-    * panel's POST semantics; overwrite goes through [[overwrite]] — no
-    * upsert, so a typo'd name can never silently mint a new file). The 64 KiB
-    * value cap is checked BEFORE any byte touches the filesystem (author
-    * ruling ⑦; `400 invalid_value`). */
+  /**
+   * Create a new secret. An existing target is `409 already_exists` (the
+   * panel's POST semantics; overwrite goes through [[overwrite]] — no
+   * upsert, so a typo'd name can never silently mint a new file). The 64 KiB
+   * value cap is checked BEFORE any byte touches the filesystem (author
+   * ruling ⑦; `400 invalid_value`).
+   */
   def create(name: String, value: String): IO[Either[Failure, Unit]] =
     validateName(name) match
       case Left(f) => IO.pure(Left(f))
@@ -265,8 +295,10 @@ class SecretsStore(
             }
         }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
-  /** Overwrite an existing secret entirely. A missing target is `404
-    * unknown_secret` (no upsert). The 64 KiB cap applies here too. */
+  /**
+   * Overwrite an existing secret entirely. A missing target is `404
+   * unknown_secret` (no upsert). The 64 KiB cap applies here too.
+   */
   def overwrite(name: String, value: String): IO[Either[Failure, Unit]] =
     validateName(name) match
       case Left(f) => IO.pure(Left(f))
@@ -284,13 +316,14 @@ class SecretsStore(
             }
         }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
-  /** Delete a secret. Guard rails in order — the managed check runs BEFORE
-    * the reference check (a managed name refuses even when unreferenced):
-    *   - missing target            → `404 unknown_secret`
-    *   - managed namespace         → `403 managed_namespace` (its own panel owns the lifecycle)
-    *   - referenced, non-managed   → `409 referenced` with the referrer list
-    *   - otherwise                 → delete the file, never a value in the payload
-    */
+  /**
+   * Delete a secret. Guard rails in order — the managed check runs BEFORE
+   * the reference check (a managed name refuses even when unreferenced):
+   *   - missing target            → `404 unknown_secret`
+   *   - managed namespace         → `403 managed_namespace` (its own panel owns the lifecycle)
+   *   - referenced, non-managed   → `409 referenced` with the referrer list
+   *   - otherwise                 → delete the file, never a value in the payload
+   */
   def delete(name: String, refs: List[String] = Nil): IO[Either[Failure, Unit]] =
     validateName(name) match
       case Left(f) => IO.pure(Left(f))
@@ -310,30 +343,30 @@ class SecretsStore(
               refreshCatalog()
               logger.info(s"Secret deleted: $name")
               Right(())
-            catch
-              case e: Exception => Left(Failure.Io(describe(e, name)))
+            catch case e: Exception => Left(Failure.Io(describe(e, name)))
         }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
   // ── Referenced-by (pure scan, two sources) ─────────────────────────────
 
-  /** Name → referencing ids, BOTH sources (plan card 问7):
-    *
-    * ① channel face: every `socialChannels.channels.<id>.fields.<storedKey>`
-    * value in `nebflow.json` that equals `<rendered root>/secrets/<name>` —
-    * the exact string `SocialChannels.persist` writes — contributes `<id>`;
-    * PLUS the definition-layer preset names (`SocialChannels.channels`
-    * secretName fields): a channel with a configured card claims its preset
-    * names even before a value was ever stored.
-    *
-    * ② daemon-panel face: every `daemons.json` daemon with a `configPanel`
-    * declaring a `secret` field contributes `DaemonPanelStore.secretName(id,
-    * key)` — the file's existence is the reference (the three-state probe's
-    * not-missing reading).
-    *
-    * Pure over its inputs (files + definitions, never a value): the same
-    * bytes in, the same mapping out — which is what makes it testable
-    * against fixture roots.
-    */
+  /**
+   * Name → referencing ids, BOTH sources (plan card 问7):
+   *
+   * ① channel face: every `socialChannels.channels.<id>.fields.<storedKey>`
+   * value in `nebflow.json` that equals `<rendered root>/secrets/<name>` —
+   * the exact string `SocialChannels.persist` writes — contributes `<id>`;
+   * PLUS the definition-layer preset names (`SocialChannels.channels`
+   * secretName fields): a channel with a configured card claims its preset
+   * names even before a value was ever stored.
+   *
+   * ② daemon-panel face: every `daemons.json` daemon with a `configPanel`
+   * declaring a `secret` field contributes `DaemonPanelStore.secretName(id,
+   * key)` — the file's existence is the reference (the three-state probe's
+   * not-missing reading).
+   *
+   * Pure over its inputs (files + definitions, never a value): the same
+   * bytes in, the same mapping out — which is what makes it testable
+   * against fixture roots.
+   */
   def referencedByAll(): Map[String, List[String]] =
     val out = scala.collection.mutable.Map.empty[String, List[String]]
     def claim(name: String, referrer: String): Unit =
@@ -343,18 +376,23 @@ class SecretsStore(
     channelConfig() match
       case Some(channels) =>
         channels.asObject.getOrElse(JsonObject.empty).toList.foreach { case (id, entry) =>
-          entry.hcursor.downField("fields").focus
-            .flatMap(_.asObject).getOrElse(JsonObject.empty).toList
+          entry.hcursor
+            .downField("fields")
+            .focus
+            .flatMap(_.asObject)
+            .getOrElse(JsonObject.empty)
+            .toList
             .foreach { case (_, v) =>
               v.asString.filter(_.nonEmpty) match
                 case Some(ref) =>
                   secretNameOfStoredRef(ref) match
                     case Some(n) => claim(n, s"social:$id")
-                    case None    => ()
+                    case None => ()
                 case None => ()
             }
         }
       case None => ()
+    end match
 
     // ① channel face — definition-layer preset names
     SocialChannels.channels.foreach { spec =>
@@ -376,17 +414,21 @@ class SecretsStore(
                 fieldsJson.asArray.getOrElse(Vector.empty).foreach { f =>
                   val key = f.hcursor.downField("key").as[String].getOrElse("")
                   val tpe = f.hcursor.downField("type").as[String].getOrElse("")
-                  if key.nonEmpty && tpe == "secret" then
-                    claim(daemonSecretName(id, key), s"daemon:$id")
+                  if key.nonEmpty && tpe == "secret" then claim(daemonSecretName(id, key), s"daemon:$id")
                 }
               case None => ()
         }
       case None => ()
+    end match
 
     out.toMap
 
-  /** Referenced-by for ONE name (the delete route's guard input): both scan
-    * sources of [[referencedByAll]], restricted to `name`. */
+  end referencedByAll
+
+  /**
+   * Referenced-by for ONE name (the delete route's guard input): both scan
+   * sources of [[referencedByAll]], restricted to `name`.
+   */
   def referencedBy(name: String): IO[List[String]] =
     IO.blocking(referencedByAll().getOrElse(name, Nil))
 
@@ -394,20 +436,24 @@ class SecretsStore(
 
   private def logger = nebflow.shared.NebflowLogger.forName("nebflow.core.secrets")
 
-  /** The validated filesystem target — the ONLY path construction in this
-    * file. `validateName` already excluded `/`, `.`-prefix and `.tmp`-suffix,
-    * so this cannot escape the directory. */
+  /**
+   * The validated filesystem target — the ONLY path construction in this
+   * file. `validateName` already excluded `/`, `.`-prefix and `.tmp`-suffix,
+   * so this cannot escape the directory.
+   */
   private def path(validatedName: String): os.Path = secretsDir / validatedName
 
-  /** The four-step write (`SocialChannels.writeSecret` order, see the class
-    * doc). `ours` = the file currently at the target was created or written
-    * by THIS call; on any failure it is removed — a pre-existing file that was
-    * never written into is left exactly as found.
-    *
-    * The directory gate runs AFTER the best-effort `restrictDirectory` (both
-    * legs), so the decision reads the mode the namespace actually has NOW —
-    * a legacy-wide `secrets/` is narrowed first and only refuses when the
-    * narrowing could not make it owner-only. */
+  /**
+   * The four-step write (`SocialChannels.writeSecret` order, see the class
+   * doc). `ours` = the file currently at the target was created or written
+   * by THIS call; on any failure it is removed — a pre-existing file that was
+   * never written into is left exactly as found.
+   *
+   * The directory gate runs AFTER the best-effort `restrictDirectory` (both
+   * legs), so the decision reads the mode the namespace actually has NOW —
+   * a legacy-wide `secrets/` is narrowed first and only refuses when the
+   * narrowing could not make it owner-only.
+   */
   private def writeThrough(name: String, plain: String): Either[Failure, Unit] =
     val target = path(name).toNIO
     var ours = false
@@ -455,26 +501,42 @@ class SecretsStore(
             try if Files.deleteIfExists(target) then "deleted" else "absent"
             catch case _: Exception => "undeletable"
           else "pre-existing-untouched"
-        Left(Failure.SecretMode(name,
-          s"could not store secret '$name': ${e.getClass.getSimpleName}: " +
-            s"${Option(e.getMessage).getOrElse("")} (path=$target residual=$residual)"))
+        Left(
+          Failure.SecretMode(
+            name,
+            s"could not store secret '$name': ${e.getClass.getSimpleName}: " +
+              s"${Option(e.getMessage).getOrElse("")} (path=$target residual=$residual)"
+          )
+        )
 
-  /** The post-write fail-closed double: a file that did not end up 0600 is
-    * deleted and the write refused — the plaintext never stays behind in a
-    * file we could not narrow (`DaemonPanelStore.scala:203-206` shape). */
+    end try
+
+  end writeThrough
+
+  /**
+   * The post-write fail-closed double: a file that did not end up 0600 is
+   * deleted and the write refused — the plaintext never stays behind in a
+   * file we could not narrow (`DaemonPanelStore.scala:203-206` shape).
+   */
   private def postVerify(name: String, target: Path): Either[Failure, Unit] =
     fileIsTight(target) match
       case true => Right(())
       case false =>
         try Files.deleteIfExists(target)
         catch case _: Exception => ()
-        Left(Failure.SecretMode(name,
-          s"could not restrict permissions on secret '$name'; refusing to store it (path=$target)"))
+        Left(
+          Failure.SecretMode(
+            name,
+            s"could not restrict permissions on secret '$name'; refusing to store it (path=$target)"
+          )
+        )
 
-  /** Create an EMPTY file `rw-------` from its very first byte — the mode
-    * comes from the creation attribute, so the "write, then narrow" window
-    * reported by socpanel-verify cannot exist (`SocialChannels.createOwnerOnly`
-    * verbatim semantics, `SocialChannels.scala:269-277`). */
+  /**
+   * Create an EMPTY file `rw-------` from its very first byte — the mode
+   * comes from the creation attribute, so the "write, then narrow" window
+   * reported by socpanel-verify cannot exist (`SocialChannels.createOwnerOnly`
+   * verbatim semantics, `SocialChannels.scala:269-277`).
+   */
   private def createOwnerOnly(path: Path): Unit =
     try
       Files.createFile(
@@ -490,15 +552,17 @@ class SecretsStore(
         try Files.deleteIfExists(path)
         catch case _: Exception => ()
         Files.createFile(path)
-  /** `secretsDir` exists AND carries any group/other bit ⇒ too open. A missing
-    * directory is not "too open" (the create leg builds it explicitly 0700). */
+
+  /**
+   * `secretsDir` exists AND carries any group/other bit ⇒ too open. A missing
+   * directory is not "too open" (the create leg builds it explicitly 0700).
+   */
   private def dirIsTight(p: Path): Boolean =
     try
       if !Files.exists(p) then true
       else
         val perms = Files.getPosixFilePermissions(p).asScala.toSet
-        perms == Set(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
-          PosixFilePermission.OWNER_EXECUTE)
+        perms == Set(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE)
     catch case _: Throwable => true // no POSIX view (Windows): the file ladder owns the decision there
 
   private def fileIsTight(p: Path): Boolean =
@@ -510,17 +574,21 @@ class SecretsStore(
   private def dirTooOpenDetail: String =
     s"secrets directory permissions are too permissive; refusing to write (path=$secretsDir)"
 
-  /** Best-effort directory narrowing — the DECISION is [[dirIsTight]], never
-    * this call (mirrors the `CredentialFileAcl` warn-not-abort caveat). Runs
-    * through the injected [[restrictDirectory]] seam; production default is
-    * the shared module. */
+  /**
+   * Best-effort directory narrowing — the DECISION is [[dirIsTight]], never
+   * this call (mirrors the `CredentialFileAcl` warn-not-abort caveat). Runs
+   * through the injected [[restrictDirectory]] seam; production default is
+   * the shared module.
+   */
   private def restrictDirectoryIfPresent(): Unit =
     try if Files.exists(secretsDir.toNIO) then restrictDirectory(secretsDir.toNIO)
     catch case _: Exception => ()
 
-  /** Mode string of `path` for the list face (`0600`-style on POSIX, `None`
-    * where the OS has no POSIX view — the mode renders `null`, the badge
-    * falls back to the permissive reading). Metadata only. */
+  /**
+   * Mode string of `path` for the list face (`0600`-style on POSIX, `None`
+   * where the OS has no POSIX view — the mode renders `null`, the badge
+   * falls back to the permissive reading). Metadata only.
+   */
   private def modeOf(p: os.Path): Option[String] =
     try
       val perms = Files.getPosixFilePermissions(p.toNIO).asScala.toSet
@@ -535,17 +603,21 @@ class SecretsStore(
       Some(s"$o$g$w")
     catch case _: Throwable => None
 
-  /** The `socialChannels.channels` subtree of nebflow.json, `None` when the
-    * config is absent or unparseable (the reference scan then simply claims
-    * nothing from stored refs; definition-layer names still apply). Reading
-    * this file never touches a secret value — the stored side keeps PATHS. */
+  /**
+   * The `socialChannels.channels` subtree of nebflow.json, `None` when the
+   * config is absent or unparseable (the reference scan then simply claims
+   * nothing from stored refs; definition-layer names still apply). Reading
+   * this file never touches a secret value — the stored side keeps PATHS.
+   */
   private def channelConfig(): Option[Json] =
     try
       val p = PathUtil.configJsonWritePath(dataRoot)
       if !Files.exists(p.toNIO) then None
       else
-        io.circe.parser.parse(os.read(p)).toOption.flatMap(
-          _.hcursor.downField("socialChannels").downField("channels").focus)
+        io.circe.parser
+          .parse(os.read(p))
+          .toOption
+          .flatMap(_.hcursor.downField("socialChannels").downField("channels").focus)
     catch case _: Throwable => None
 
   private def daemonsConfig(): Option[Json] =
@@ -554,10 +626,12 @@ class SecretsStore(
       else io.circe.parser.parse(os.read(daemonsPath)).toOption.flatMap(_.hcursor.downField("daemons").focus)
     catch case _: Throwable => None
 
-  /** A stored `_ref` value is `<rendered root>/secrets/<name>` — the exact
-    * string `SocialChannels.persist` writes (`renderRoot` renders `~/.nebflow`
-    * on a default install, the absolute root on an isolated one). Match BOTH
-    * renderings so an isolated instance's own paths are caught too. */
+  /**
+   * A stored `_ref` value is `<rendered root>/secrets/<name>` — the exact
+   * string `SocialChannels.persist` writes (`renderRoot` renders `~/.nebflow`
+   * on a default install, the absolute root on an isolated one). Match BOTH
+   * renderings so an isolated instance's own paths are caught too.
+   */
   private def secretNameOfStoredRef(ref: String): Option[String] =
     val markers = List(
       s"${renderedRoot()}/secrets/",
@@ -565,22 +639,28 @@ class SecretsStore(
     ).distinct
     markers.collectFirst(Function.unlift(m => if ref.startsWith(m) then Some(ref.drop(m.length)) else None))
 
-  /** Same rendering rule as `SocialChannels.renderRoot`: a default install
-    * renders `~/.nebflow`, an isolated root renders its own absolute path. */
+  /**
+   * Same rendering rule as `SocialChannels.renderRoot`: a default install
+   * renders `~/.nebflow`, an isolated root renders its own absolute path.
+   */
   private def renderedRoot(): String =
     if dataRoot == os.home / Branding.homeDirName then s"~/${Branding.homeDirName}"
     else dataRoot.toString
 
-  /** One-line diagnostic: exception CLASS + path, never a message body — the
-    * message could theoretically echo request content, and the class name is
-    * the whole story the credential protocol needs. */
+  /**
+   * One-line diagnostic: exception CLASS + path, never a message body — the
+   * message could theoretically echo request content, and the class name is
+   * the whole story the credential protocol needs.
+   */
   private def describe(e: Throwable, name: String): String =
     s"${e.getClass.getSimpleName} (name=$name path=$secretsDir)"
 
-  /** `DaemonPanelStore.secretName` verbatim shape (`DaemonPanelStore.scala:46`,
-    * via the same `safeName` sanitization) — the single source of the daemon
-    * family's backing-name mapping; instantiated through the shared store so
-    * the two faces cannot drift. */
+  /**
+   * `DaemonPanelStore.secretName` verbatim shape (`DaemonPanelStore.scala:46`,
+   * via the same `safeName` sanitization) — the single source of the daemon
+   * family's backing-name mapping; instantiated through the shared store so
+   * the two faces cannot drift.
+   */
   private def daemonSecretName(id: String, key: String): String =
     new nebflow.core.daemon.DaemonPanelStore(dataRoot).secretName(id, key)
 
@@ -588,33 +668,42 @@ end SecretsStore
 
 object SecretsStore:
 
-  /** One consumption record: WHICH credential, under what VARIABLE NAME, for
-    * WHAT purpose, and WHERE to query it. This is the whole C-case contract —
-    * the field that a value would occupy is a location string.
-    *
-    * It lives on the companion (not inside the class) so its type has a stable
-    * path: a class-nested case class is path-dependent on the store INSTANCE,
-    * which would make every caller's type signature mention a particular store
-    * rather than the shape itself. */
+  /**
+   * One consumption record: WHICH credential, under what VARIABLE NAME, for
+   * WHAT purpose, and WHERE to query it. This is the whole C-case contract —
+   * the field that a value would occupy is a location string.
+   *
+   * It lives on the companion (not inside the class) so its type has a stable
+   * path: a class-nested case class is path-dependent on the store INSTANCE,
+   * which would make every caller's type signature mention a particular store
+   * rather than the shape itself.
+   */
   final case class Pointer(name: String, variableName: String, description: String, location: String)
 
   /** Name contract: lowercase start, `[a-z0-9._-]`, 1-64 chars. */
   val NamePattern: java.util.regex.Pattern = java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9._-]{0,63}$")
   val MaxLen: Int = 64
 
-  /** Largest accepted value: 64 KiB (超限 400 invalid_value — 防误贴大文件,
-    * author ruling ⑦). Checked BEFORE any byte touches the filesystem. */
+  /**
+   * Largest accepted value: 64 KiB (超限 400 invalid_value — 防误贴大文件,
+   * author ruling ⑦). Checked BEFORE any byte touches the filesystem.
+   */
   val MaxValueBytes: Int = 64 * 1024
 
-  /** Failure vocabulary → the routes' error-code family
-    * (`RestApiRoutes` social face, `RestApiRoutes.scala:4211-4231`). Bodies
-    * carry the NAME and the code — never a value. */
+  /**
+   * Failure vocabulary → the routes' error-code family
+   * (`RestApiRoutes` social face, `RestApiRoutes.scala:4211-4231`). Bodies
+   * carry the NAME and the code — never a value.
+   */
   enum Failure:
     case InvalidName(name: String, reason: String)
     case InvalidValue(name: String, reason: String)
-    /** A variable-name override that is not a legal shell identifier (the
-      * catalogue's naming contract). Carries the REJECTED NAME — which is a
-      * field label the caller just supplied, never a secret value. */
+
+    /**
+     * A variable-name override that is not a legal shell identifier (the
+     * catalogue's naming contract). Carries the REJECTED NAME — which is a
+     * field label the caller just supplied, never a secret value.
+     */
     case InvalidVariableName(name: String, variableName: String)
     case UnknownSecret(name: String)
     case AlreadyExists(name: String)

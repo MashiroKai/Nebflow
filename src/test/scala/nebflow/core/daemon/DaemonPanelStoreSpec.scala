@@ -7,11 +7,12 @@ import munit.CatsEffectSuite
 
 import java.nio.file.Files
 
-/** daemonpanel Phase A — value store (backend F2/F4/F5 + credential states).
-  *
-  * Every case runs against a throwaway data root, so the suite never touches
-  * the real `~/.nebflow` secrets namespace.
-  */
+/**
+ * daemonpanel Phase A — value store (backend F2/F4/F5 + credential states).
+ *
+ * Every case runs against a throwaway data root, so the suite never touches
+ * the real `~/.nebflow` secrets namespace.
+ */
 class DaemonPanelStoreSpec extends CatsEffectSuite:
 
   private def json(s: String): Json = parse(s).fold(e => throw e, identity)
@@ -47,7 +48,11 @@ class DaemonPanelStoreSpec extends CatsEffectSuite:
   test("F2 · every declared secret field reads back as *** and non-secrets keep their value") {
     withRoot { (store, _) =>
       for
-        _ <- store.writeValues(decl, "mail", Map("host" -> Json.fromString("imap.test"), "password" -> Json.fromString("s3cret")))
+        _ <- store.writeValues(
+          decl,
+          "mail",
+          Map("host" -> Json.fromString("imap.test"), "password" -> Json.fromString("s3cret"))
+        )
         masked <- store.readMasked(decl, "mail")
       yield
         assertEquals(masked("password"), Json.fromString("***"))
@@ -62,7 +67,9 @@ class DaemonPanelStoreSpec extends CatsEffectSuite:
     withRoot { (store, root) =>
       for
         _ <- store.writeValues(decl, "mail", Map("password" -> Json.fromString("super-secret-value")))
-        valuesBytes <- IO.blocking(if os.exists(store.valuesPath("mail")) then os.read(store.valuesPath("mail")) else "")
+        valuesBytes <- IO.blocking(
+          if os.exists(store.valuesPath("mail")) then os.read(store.valuesPath("mail")) else ""
+        )
         secretBytes <- IO.blocking(os.read(store.secretPath("mail", "password")))
         // daemons.json is a different file; the store must not create one at all.
         daemonsExists <- IO.blocking(os.exists(root / "daemons.json"))
@@ -109,7 +116,11 @@ class DaemonPanelStoreSpec extends CatsEffectSuite:
   test("F3 · an undeclared key is rejected as unknown field and nothing is written") {
     withRoot { (store, _) =>
       for
-        result <- store.writeValues(decl, "mail", Map("host" -> Json.fromString("a"), "backdoor" -> Json.fromString("1")))
+        result <- store.writeValues(
+          decl,
+          "mail",
+          Map("host" -> Json.fromString("a"), "backdoor" -> Json.fromString("1"))
+        )
         exists <- IO.blocking(os.exists(store.valuesPath("mail")))
       yield
         assertEquals(result.left.toOption.exists(_.startsWith("unknown field")), true)
@@ -135,7 +146,11 @@ class DaemonPanelStoreSpec extends CatsEffectSuite:
   test("F4 · writing *** back leaves the stored bytes identical (cmp-equal)") {
     withRoot { (store, _) =>
       for
-        _ <- store.writeValues(decl, "mail", Map("host" -> Json.fromString("imap.test"), "password" -> Json.fromString("plain")))
+        _ <- store.writeValues(
+          decl,
+          "mail",
+          Map("host" -> Json.fromString("imap.test"), "password" -> Json.fromString("plain"))
+        )
         beforeValues <- IO.blocking(os.read(store.valuesPath("mail")))
         beforeSecret <- IO.blocking(os.read(store.secretPath("mail", "password")))
         // The UI echoes back exactly what it read: non-secrets as-is, secrets as ***.
@@ -185,3 +200,4 @@ class DaemonPanelStoreSpec extends CatsEffectSuite:
         assert(!exists, "nothing may be written into a permissive secrets dir")
     }
   }
+end DaemonPanelStoreSpec

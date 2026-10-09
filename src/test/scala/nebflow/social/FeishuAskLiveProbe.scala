@@ -58,7 +58,9 @@ object FeishuAskLiveProbe:
     // can land on the STABLE root; the LIVE instance's credential face lives
     // under `$HOME/.nebflow` — pin it explicitly (NEBFLOW_PROBE_DATA_ROOT
     // overrides, for a rig that wants a different isolation root).
-    val credsRoot = sys.env.get("NEBFLOW_PROBE_DATA_ROOT").map(os.Path(_, os.pwd))
+    val credsRoot = sys.env
+      .get("NEBFLOW_PROBE_DATA_ROOT")
+      .map(os.Path(_, os.pwd))
       .getOrElse(os.Path(sys.env.getOrElse("HOME", os.home.toString), os.pwd) / ".nebflow")
     println(s"  ▸ probe data root: $credsRoot")
     val cred = FeishuCredentials.resolve(credsRoot) match
@@ -66,8 +68,10 @@ object FeishuAskLiveProbe:
       case Left(err) =>
         println(s"  ▸ FATAL credential not resolved: $err")
         System.exit(2); ???
-    println(s"  ▸ credential source=${cred.source} appId=${FeishuCredentials.redacted(cred.appId)} " +
-      s"fp=${FeishuCredentials.fingerprint(cred.appId)}")
+    println(
+      s"  ▸ credential source=${cred.source} appId=${FeishuCredentials.redacted(cred.appId)} " +
+        s"fp=${FeishuCredentials.fingerprint(cred.appId)}"
+    )
     val cb = FeishuCredentials.resolveCallbackCredentials(credsRoot)
     println(s"  ▸ callback credentials: $cb")
 
@@ -77,12 +81,17 @@ object FeishuAskLiveProbe:
     val bridgeRef = new java.util.concurrent.atomic.AtomicReference[FeishuBridgePlugin](null)
 
     def wsSend(frame: Json): IO[Unit] =
-      IO(println(s"  ▸ hub rendered: type=${frame.hcursor.downField("type").as[String].toOption.getOrElse("-")} " +
-        s"requestId=${frame.hcursor.downField("requestId").as[String].toOption.getOrElse("-")}")) *>
+      IO(
+        println(
+          s"  ▸ hub rendered: type=${frame.hcursor.downField("type").as[String].toOption.getOrElse("-")} " +
+            s"requestId=${frame.hcursor.downField("requestId").as[String].toOption.getOrElse("-")}"
+        )
+      ) *>
         IO {
           try optionallyFanOut(frame)
-          catch case e: Throwable =>
-            println(s"  ▸ [fan-out] RAISED ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+          catch
+            case e: Throwable =>
+              println(s"  ▸ [fan-out] RAISED ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
         }
 
     def optionallyFanOut(frame: Json): Unit =
@@ -93,45 +102,68 @@ object FeishuAskLiveProbe:
     // ── ③ the REAL bridge (production seams; plugin root = a probe temp dir) ──
     val probeRoot = os.temp.dir(prefix = "nb-feishu-ask-live-")
     val askCtx = new nebflow.bridge.BridgeContext:
-      override def injectMessage(sessionId: String, content: String, senderId: Option[String],
-          origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+      override def injectMessage(
+        sessionId: String,
+        content: String,
+        senderId: Option[String],
+        origin: Option[nebflow.bridge.BridgeOrigin] = None
+      ): IO[Unit] =
         IO(println(s"  ▸ injected as chat: session=$sessionId text=${content.take(60)}"))
       override def listPendingAsks: IO[List[Json]] =
         hub.?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply))
       override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] =
-        IO(println(s"  ▸ bridge answer leg → hub: requestId=$requestId root=$rootSessionId payload=${payload.noSpaces}")) *>
-          (hub ! InteractionHubCommand.Answered(
-            InteractionAnswered(requestId, rootSessionId, payload))).void
+        IO(
+          println(s"  ▸ bridge answer leg → hub: requestId=$requestId root=$rootSessionId payload=${payload.noSpaces}")
+        ) *>
+          (hub ! InteractionHubCommand.Answered(InteractionAnswered(requestId, rootSessionId, payload))).void
       override def closeInteractionRequest(requestId: String): IO[Unit] =
         (hub ! InteractionHubCommand.CloseRequest(requestId)).void
       def interruptAgent(sessionId: String): IO[Unit] = IO.unit
       def sessionMeta(sessionId: String): IO[Option[nebflow.shared.SessionMeta]] = IO.none
       def listSessions: IO[List[nebflow.shared.SessionMeta]] =
-        IO.pure(List(nebflow.shared.SessionMeta(id = "probe-root", name = "probe-root", createdAt = 0L,
-          updatedAt = 0L, hasUnread = false,
-          bridges = Map(FeishuBridgePlugin.Name -> Json.obj("chat_id" -> chatId.asJson)))))
+        IO.pure(
+          List(
+            nebflow.shared.SessionMeta(
+              id = "probe-root",
+              name = "probe-root",
+              createdAt = 0L,
+              updatedAt = 0L,
+              hasUnread = false,
+              bridges = Map(FeishuBridgePlugin.Name -> Json.obj("chat_id" -> chatId.asJson))
+            )
+          )
+        )
       def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
 
     val plugin = new FeishuBridgePlugin(
       probeRoot,
-      send = FeishuBridgePlugin.defaultSend,       // REAL text seam (fallback leg)
+      send = FeishuBridgePlugin.defaultSend, // REAL text seam (fallback leg)
       // REAL card seam (A-3) + a receipt/timeout jacket: the rig MUST see the
       // send's outcome on stdout — the SDK REST call has no honest default
       // timeout, so a hung open.feishu.cn call would otherwise be invisible.
       sendCard = (appId, appSecret, region, receiveId, cardJson) =>
-        FeishuBridgePlugin.defaultSendCard(appId, appSecret, region, receiveId, cardJson)
+        FeishuBridgePlugin
+          .defaultSendCard(appId, appSecret, region, receiveId, cardJson)
           .timeout(25.seconds)
           .attempt
           .flatMap {
             case Right(res) =>
-              IO(println(s"  ▸ [send] card ok=${res.ok} code=${res.code} msg=${res.msg} " +
-                s"messageId=${res.messageId.getOrElse("-")} chat=${receiveId.take(10)}…")) *> IO.pure(res)
+              IO(
+                println(
+                  s"  ▸ [send] card ok=${res.ok} code=${res.code} msg=${res.msg} " +
+                    s"messageId=${res.messageId.getOrElse("-")} chat=${receiveId.take(10)}…"
+                )
+              ) *> IO.pure(res)
             case Left(e) =>
-              IO(println(s"  ▸ [send] card RAISED/TIMED-OUT ${e.getClass.getSimpleName}: " +
-                s"${Option(e.getMessage).getOrElse("").take(160)}")) *> IO.raiseError(e)
+              IO(
+                println(
+                  s"  ▸ [send] card RAISED/TIMED-OUT ${e.getClass.getSimpleName}: " +
+                    s"${Option(e.getMessage).getOrElse("").take(160)}"
+                )
+              ) *> IO.raiseError(e)
           },
-      pinnedAllowedOpenIds = None,                  // unrestricted (the rig's member gate is the author's own tenant)
-      pinnedCreds = Some(cred),
+      pinnedAllowedOpenIds = None, // unrestricted (the rig's member gate is the author's own tenant)
+      pinnedCreds = Some(cred)
     )
     bridgeRef.set(plugin)
     // start() would try to open a SECOND long connection (its own listener) —
@@ -145,19 +177,23 @@ object FeishuAskLiveProbe:
     // would open a second long connection.
     plugin.ctxRef.set(Some(askCtx)).unsafeRunSync()
     val listener = new FeishuChannel.Listener(
-      cred.appId, cred.appSecret, region = "feishu",
+      cred.appId,
+      cred.appSecret,
+      region = "feishu",
       verificationToken = cb.verificationToken.getOrElse(""),
       encryptKey = cb.encryptKey.getOrElse(""),
       handler = in => println(s"  ▸ [listen] inbound ${in.messageType} from ${in.chatId}"),
       cardHandler = a =>
         Try(plugin.handleCardAction(askCtx, a).unsafeRunSync()) match
           case scala.util.Success(resp) =>
-            println(s"  ▸ [card] click handled: toast=${resp.toast.getOrElse("-")} " +
-              s"card=${resp.card.map(c => s"${c.length}B").getOrElse("-")}")
+            println(
+              s"  ▸ [card] click handled: toast=${resp.toast.getOrElse("-")} " +
+                s"card=${resp.card.map(c => s"${c.length}B").getOrElse("-")}"
+            )
             resp
           case scala.util.Failure(e) =>
             println(s"  ▸ [card] handler raised ${e.getClass.getSimpleName}: ${e.getMessage}")
-            FeishuChannel.CardActionResponse.none,
+            FeishuChannel.CardActionResponse.none
     )
     val connect = listener.start()
     readout("long connection", s"ok=${connect.ok} detail=${connect.detail}")
@@ -167,16 +203,30 @@ object FeishuAskLiveProbe:
     // ── ④ THE ASK: a REAL hub Request → REAL frame → bridge → REAL card out ──
     val slot = Deferred[IO, List[String]].unsafeRunSync()
     val payload = Json.obj(
-      "type" -> "askUser".asJson, "sessionId" -> "probe-root".asJson, "agentName" -> "liveprobe".asJson,
-      "items" -> Json.fromValues(List(
-        Json.obj("question" -> "远程渠道 P1 终验：这张卡显示正常吗？".asJson,
-          "options" -> Json.fromValues(List(
-            Json.obj("label" -> "正常".asJson), Json.obj("label" -> "有问题".asJson))),
-          "allowOther" -> true.asJson))))
-    (hub ! InteractionHubCommand.Request(InteractionRequest(
-      requestId = "probe-ask-1", kind = InteractionKind.AskUser, payload = payload,
-      reply = InteractionReply.AskUserReply(Some(replySlot(slot))),
-      rootSessionId = "probe-root", sourceAgent = "liveprobe", sourceSession = "probe-root"))).unsafeRunSync()
+      "type" -> "askUser".asJson,
+      "sessionId" -> "probe-root".asJson,
+      "agentName" -> "liveprobe".asJson,
+      "items" -> Json.fromValues(
+        List(
+          Json.obj(
+            "question" -> "远程渠道 P1 终验：这张卡显示正常吗？".asJson,
+            "options" -> Json.fromValues(List(Json.obj("label" -> "正常".asJson), Json.obj("label" -> "有问题".asJson))),
+            "allowOther" -> true.asJson
+          )
+        )
+      )
+    )
+    (hub ! InteractionHubCommand.Request(
+      InteractionRequest(
+        requestId = "probe-ask-1",
+        kind = InteractionKind.AskUser,
+        payload = payload,
+        reply = InteractionReply.AskUserReply(Some(replySlot(slot))),
+        rootSessionId = "probe-root",
+        sourceAgent = "liveprobe",
+        sourceSession = "probe-root"
+      )
+    )).unsafeRunSync()
     Thread.sleep(4000) // let the card render + the send seam answer
 
     // ── ⑤ MACHINE LEG: wire-same-shape card.action.trigger through the LIVE dispatcher ──
@@ -186,18 +236,17 @@ object FeishuAskLiveProbe:
         "event_id" -> "probe-evt-1".asJson,
         "event_type" -> "card.action.trigger".asJson,
         "create_time" -> System.currentTimeMillis().toString.asJson,
-        "token" -> "".asJson,
+        "token" -> "".asJson
       ),
       "event" -> Json.obj(
         "operator" -> Json.obj("open_id" -> "ou_liveprobe-machine".asJson, "tenant_key" -> "".asJson),
         "token" -> "".asJson,
         "action" -> Json.obj(
           "tag" -> "button".asJson,
-          "value" -> Json.obj("nf" -> "ask".asJson, "rid" -> "probe-ask-1".asJson,
-            "qi" -> 0.asJson, "oi" -> 0.asJson),
+          "value" -> Json.obj("nf" -> "ask".asJson, "rid" -> "probe-ask-1".asJson, "qi" -> 0.asJson, "oi" -> 0.asJson)
         ),
-        "context" -> Json.obj("open_chat_id" -> chatId.asJson, "open_message_id" -> "om_probe".asJson),
-      ),
+        "context" -> Json.obj("open_chat_id" -> chatId.asJson, "open_message_id" -> "om_probe".asJson)
+      )
     )
     println(s"  ▸ [machine leg] feeding card.action.trigger (${wire.noSpaces.length}B) through the LIVE dispatcher")
     val rawResponse = listener.feedRawEvent(wire.noSpaces.getBytes("UTF-8"))
@@ -220,6 +269,8 @@ object FeishuAskLiveProbe:
     system.stopAll.unsafeRunSync()
     banner("probe done — card sent, machine leg proven, awaiting the author's one-click verdict in the report")
     System.exit(0)
+
+  end main
 
   private def replySlot(slot: Deferred[IO, List[String]]): ActorRef[List[String]] =
     new ActorRef[List[String]]:

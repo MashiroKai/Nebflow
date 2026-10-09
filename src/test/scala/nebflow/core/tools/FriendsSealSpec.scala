@@ -10,31 +10,31 @@ import nebflow.agent.AgentCore
 import nebflow.actor.AgentDef // W1 shim: main had nebflow.agent.AgentDef; the merge moved it to actor
 import nebflow.core.FriendsSeal
 
-/** friendseal batch (2026-09-25) — the seal's own contract (mechanical face of
-  * the author's five rulings):
-  *
-  *  - sealed default (no config key): `SendMessage` exposes the device-only
-  *    face; friend/group/local calls fail closed with `FRIENDS_SEALED` before
-  *    any resolution or send work; `ListFriends` is stripped from the Nebula
-  *    delivery face (the static set itself stays untouched — registry-full-set
-  *    semantics; size = constant − 1 via the single kit helper).
-  *  - the device leg is never sealed: its own validation errors still surface.
-  *  - unseal (config `features.friends: true` + restart — the spec seam lifts
-  *    the same latch): every face restores verbatim; the sealed gate stops
-  *    matching and the arms run their existing fail-loud paths.
-  *  - the config-parse half of the latch: only the literal boolean `true`
-  *    unseals; absent / false / wrong type / garbage => sealed.
-  */
+/**
+ * friendseal batch (2026-09-25) — the seal's own contract (mechanical face of
+ * the author's five rulings):
+ *
+ *  - sealed default (no config key): `SendMessage` exposes the device-only
+ *    face; friend/group/local calls fail closed with `FRIENDS_SEALED` before
+ *    any resolution or send work; `ListFriends` is stripped from the Nebula
+ *    delivery face (the static set itself stays untouched — registry-full-set
+ *    semantics; size = constant − 1 via the single kit helper).
+ *  - the device leg is never sealed: its own validation errors still surface.
+ *  - unseal (config `features.friends: true` + restart — the spec seam lifts
+ *    the same latch): every face restores verbatim; the sealed gate stops
+ *    matching and the arms run their existing fail-loud paths.
+ *  - the config-parse half of the latch: only the literal boolean `true`
+ *    unseals; absent / false / wrong type / garbage => sealed.
+ */
 class FriendsSealSpec extends CatsEffectSuite:
 
   private def ctx = ToolContext(projectRoot = "/tmp")
 
   private def defNebula = AgentDef(name = "Nebula", description = "", tools = Nil)
 
-  private def call(to: String, extra: (String, Json)*): IO[Either[ToolError, String]] = {
+  private def call(to: String, extra: (String, Json)*): IO[Either[ToolError, String]] =
     val base: Map[String, Json] = Map("to" -> to.asJson, "message" -> "hi".asJson) ++ extra.toMap
     FriendMessageTool.call(JsonObject.fromMap(base), ctx)
-  }
 
   // ══════════ sealed default — description / schema face ══════════
 
@@ -44,7 +44,10 @@ class FriendsSealSpec extends CatsEffectSuite:
     assert(!d.contains("Four target kinds"), "the four-kind face is gone")
     assert(!d.contains("`friend:<remark"), "no friend prefix doc")
     assert(!d.contains("`group:<groupName"), "no group prefix doc")
-    assert(d.contains("FRIENDS_SEALED"), "the seal is named (a model remembering the wider face understands the refusal)")
+    assert(
+      d.contains("FRIENDS_SEALED"),
+      "the seal is named (a model remembering the wider face understands the refusal)"
+    )
     assert(!d.contains("use `Mail` with the `device` parameter"), "stale Mail-device pointer stays gone in both states")
 
   test("sealed default: schema narrows (no friend/group/local prefix docs, overwrite dropped, required intact)"):
@@ -57,9 +60,12 @@ class FriendsSealSpec extends CatsEffectSuite:
     assert(toDesc.contains("`device:<deviceName|deviceId>`"), "device kind documented")
     val keys = schema("properties").flatMap(_.asObject) match
       case Some(o) => o.keys.toList.sorted
-      case None    => Nil
-    assertEquals(keys, List("attachments", "message", "targetDir", "to"),
-      "overwrite (local-copy-only parameter) is dropped from the sealed face")
+      case None => Nil
+    assertEquals(
+      keys,
+      List("attachments", "message", "targetDir", "to"),
+      "overwrite (local-copy-only parameter) is dropped from the sealed face"
+    )
     assertEquals(schema("required"), Some(List("to", "message").asJson), "required face unchanged")
 
   // ══════════ sealed default — the fail-closed call gate ══════════
@@ -86,9 +92,14 @@ class FriendsSealSpec extends CatsEffectSuite:
   test("sealed default: the DEVICE arm is never sealed (its own validation still surfaces)"):
     call("device:nonexistent-peer").map {
       case Left(err) =>
-        assert(!err.message.contains(FriendMessageTool.ErrFriendsSealed), s"device arm must not hit the seal: ${err.message}")
-        assert(err.message.contains("Device messaging is unavailable") || err.message.contains("No peer devices"),
-          s"the device arm's own fail-loud path ran: ${err.message}")
+        assert(
+          !err.message.contains(FriendMessageTool.ErrFriendsSealed),
+          s"device arm must not hit the seal: ${err.message}"
+        )
+        assert(
+          err.message.contains("Device messaging is unavailable") || err.message.contains("No peer devices"),
+          s"the device arm's own fail-loud path ran: ${err.message}"
+        )
       case Right(r) => fail(s"expected a device-leg error, got: $r")
     }
 
@@ -98,10 +109,16 @@ class FriendsSealSpec extends CatsEffectSuite:
     val delivered = AgentCore.fixedToolsFor(defNebula)
     assert(!delivered.contains("ListFriends"), "the roster tool's name never reaches the LLM")
     assert(delivered.contains("SendMessage"), "SendMessage stays (device leg)")
-    assertEquals(delivered.size, FriendsSealKit.expectedNebulaSize(delivered),
-      "flag-aware size via the single derivation point (never a bare number)")
-    assertEquals(AgentCore.RootOrchestrationTools.size, AgentCore.RootOrchestrationToolsExpectedSize,
-      "the STATIC set is untouched (registry-full-set semantics)")
+    assertEquals(
+      delivered.size,
+      FriendsSealKit.expectedNebulaSize(delivered),
+      "flag-aware size via the single derivation point (never a bare number)"
+    )
+    assertEquals(
+      AgentCore.RootOrchestrationTools.size,
+      AgentCore.RootOrchestrationToolsExpectedSize,
+      "the STATIC set is untouched (registry-full-set semantics)"
+    )
 
   // ══════════ unseal — every face restores ══════════
 
@@ -112,10 +129,13 @@ class FriendsSealSpec extends CatsEffectSuite:
       assert(d.contains("`friend:<remark|username|email|displayName>`"), "friend prefix doc restored")
       assert(d.contains("`group:<groupName|groupId>`"), "group prefix doc restored")
       assert(!d.contains("FRIENDS_SEALED"), "no seal wording in the full face")
-      assert(!d.contains("use `Mail` when the peer's agent must know"), "the stale Mail-device pointer stays gone (mailmodel retired that leg)")
+      assert(
+        !d.contains("use `Mail` when the peer's agent must know"),
+        "the stale Mail-device pointer stays gone (mailmodel retired that leg)"
+      )
       val hasOverwrite = FriendMessageTool.inputSchema("properties").flatMap(_.asObject) match
         case Some(o) => o.keys.exists(_ == "overwrite")
-        case None    => false
+        case None => false
       assert(hasOverwrite, "the local parameter is back")
     }
 
@@ -148,7 +168,10 @@ class FriendsSealSpec extends CatsEffectSuite:
               s"to=$to must pass the gate after unseal (no seal code), got: ${err.message}"
             )
             if to == "local" then
-              assert(err.message.contains("requires `attachments`"), s"to=local expected its own required-field error, got: ${err.message}")
+              assert(
+                err.message.contains("requires `attachments`"),
+                s"to=local expected its own required-field error, got: ${err.message}"
+              )
           case Right(r) => fail(s"to=$to expected an arm error, got: $r")
         }
       }

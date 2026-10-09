@@ -491,7 +491,9 @@ class MergeDesignGapSpec extends CatsEffectSuite:
 
   // ── U2/P1：merge 硬闸 ───────────────────────────────────────────
 
-  test("C-⑥: NODE_MERGE_IN_CAP — create legs superseded by #1224's NODE_MERGE_UNSUPPORTED seal; EDIT legs live: beyond 4 refused, =4 accepted") {
+  test(
+    "C-⑥: NODE_MERGE_IN_CAP — create legs superseded by #1224's NODE_MERGE_UNSUPPORTED seal; EDIT legs live: beyond 4 refused, =4 accepted"
+  ) {
     val ws = tempRoot / "ws-cap"; os.makeDir.all(ws)
     val system = ActorSystem(s"mgap-cap-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()

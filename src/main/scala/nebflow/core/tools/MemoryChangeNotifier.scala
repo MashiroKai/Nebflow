@@ -18,12 +18,13 @@ import nebflow.shared.MemoryPaths
  */
 object MemoryChangeNotifier:
 
-  /** Check if a file path is a memory file.
-    *
-    * 基准见 [[nebflow.shared.MemoryPaths.globalBases]]（并认运行时数据根与默认
-    * home 根，而不是单一 `user.home`）：隔离实例（`--home`）下判得中，同时不被
-    * 进程内不还原的 `setDataRoot` 打成漏判。
-    */
+  /**
+   * Check if a file path is a memory file.
+   *
+   * 基准见 [[nebflow.shared.MemoryPaths.globalBases]]（并认运行时数据根与默认
+   * home 根，而不是单一 `user.home`）：隔离实例（`--home`）下判得中，同时不被
+   * 进程内不还原的 `setDataRoot` 打成漏判。
+   */
   def isMemoryFile(filePath: String): Boolean =
     val normalized = MemoryPaths.normalizePath(filePath)
     val bases = MemoryPaths.globalBases

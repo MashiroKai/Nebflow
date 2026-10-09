@@ -81,13 +81,16 @@ class SeedAgentSelfHealSpec extends FunSuite:
   // ── ① 种子面零残留 ├────────────────────────────────────────
   test("manifest 零 agents: 条目 ∧ classpath 零 seed/agents 资源（builtin-def 2026-10-03 退役钉）"):
     val agentItems = manifestItems.filter(_.startsWith("agents:"))
-    assertEquals(agentItems, Nil,
-      "manifest 必须零 agents: 条目（四件 agent 代码定义——把任何 agents:* 条目写回 ⇒ 本条红，重启播种是产品决策）")
+    assertEquals(agentItems, Nil, "manifest 必须零 agents: 条目（四件 agent 代码定义——把任何 agents:* 条目写回 ⇒ 本条红，重启播种是产品决策）")
     for name <- BuiltinAgentProbe.names do
-      assert(getClass.getClassLoader.getResource(s"seed/agents/$name/system.md") == null,
-        s"seed/agents/$name 必须不在 classpath（种子镜像退役——代码即唯一权威；回滚 = revert 本批）")
-      assert(getClass.getClassLoader.getResource(s"seed/agents/$name/agent.json") == null,
-        s"seed/agents/$name/agent.json 必须不在 classpath")
+      assert(
+        getClass.getClassLoader.getResource(s"seed/agents/$name/system.md") == null,
+        s"seed/agents/$name 必须不在 classpath（种子镜像退役——代码即唯一权威；回滚 = revert 本批）"
+      )
+      assert(
+        getClass.getClassLoader.getResource(s"seed/agents/$name/agent.json") == null,
+        s"seed/agents/$name/agent.json 必须不在 classpath"
+      )
 
   // ── ② ensure() 对 agents/ 零写入零删除 ├─────────────────────
   test("ensure() 绝不创建、绝不改写、绝不删除 agents/ 树（boot 对 agent 磁盘面零触碰）"):
@@ -107,8 +110,10 @@ class SeedAgentSelfHealSpec extends FunSuite:
     ensure()
     ensure() // 连续两次 boot（幂等面一并覆盖）
 
-    assert(os.exists(stray / "agent.json") && os.read(stray / "agent.json").contains("userOwned"),
-      "手工 agent 文件逐字节保留（死信 ≠ 可删——零删除纪律）")
+    assert(
+      os.exists(stray / "agent.json") && os.read(stray / "agent.json").contains("userOwned"),
+      "手工 agent 文件逐字节保留（死信 ≠ 可删——零删除纪律）"
+    )
     val afterTree =
       os.walk(home / "agents").filter(os.isFile).map(p => p.relativeTo(home / "agents").toString -> os.mtime(p)).toMap
     assertEquals(afterTree, beforeTree, "boot 前后 agents/ 树零变化（零写入零删除，mtime 双证）")

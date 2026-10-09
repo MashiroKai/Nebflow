@@ -124,6 +124,31 @@ object RefResolver:
         else
           val datePart = if date.nonEmpty then s" | $date" else ""
           Some(s"[引用 · 好友消息 | 来自 $name($nl)$datePart]\n$body")
+      // quote-message 一期（spec 20261009 §3.2）：主聊天区消息引用 —— content-bearing
+      // ref，逐字镜像 friend-message 的形态。注入模板（钉死文本层格式）：
+      //   [引用 · 消息 | 来自 {senderName} | {MM-dd HH:mm}]
+      //   {fullText ≤1200}
+      // senderName/excerpt/fullText 一律过 sanitize（防伪造注入行）；fullText 截
+      // 1200（好友消息 4000 与指针 ref ~100 token 之间的取值，作者裁定）；时间取
+      // meta.ts（被引消息 epoch ms，前端随 ref 提供）。fullText 与 excerpt 均空 ⇒
+      // None（fail-open 跳过，不阻塞消息）。
+      case "chat-message" =>
+        val name = sanitize(src.downField("senderName").as[String].getOrElse(""))
+        val ts = ref.hcursor.downField("meta").downField("ts").as[Long].toOption.getOrElse(0L)
+        val content = c.downField("content")
+        val body = content
+          .downField("fullText")
+          .as[String]
+          .getOrElse("")
+          .filter(ch => ch >= ' ' || ch == '\n')
+          .take(1200)
+        val excerpt = sanitize(content.downField("excerpt").as[String].getOrElse(""))
+        val text = if body.nonEmpty then body else excerpt.take(1200)
+        if text.isEmpty then None
+        else
+          val fromPart = if name.nonEmpty then s" | 来自 $name" else ""
+          val datePart = if ts > 0 then s" | ${formatMsgTs(ts)}" else ""
+          Some(s"[引用 · 消息$fromPart$datePart]\n$text")
       case _ => None // "task" → return flow (processTaskReturns); unknown → skip
     end match
   end resolve
@@ -177,5 +202,13 @@ object RefResolver:
   private def fileNameOf(path: String): String =
     val clean = path.replace('\\', '/')
     clean.split('/').lastOption.getOrElse(path)
+
+  /**
+   * quote-message 一期：被引消息时间（epoch ms）→ 注入模板日期段 `MM-dd HH:mm`
+   *  （spec §3.2；系统默认时区，与会话内其余时间呈现同一时制）。
+   */
+  def formatMsgTs(ts: Long): String =
+    val d = java.time.Instant.ofEpochMilli(ts).atZone(java.time.ZoneId.systemDefault())
+    d.format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"))
 
 end RefResolver

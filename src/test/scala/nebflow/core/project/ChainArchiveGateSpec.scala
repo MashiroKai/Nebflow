@@ -127,7 +127,13 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
 
   // ── node shapes (the brief's §2.4 fixture forms, never hand-rolled) ──
 
-  private def verifierNode(id: String, name: String, verdict: Option[String], out: List[OutEdge], createdAt: Long): NodeDef =
+  private def verifierNode(
+    id: String,
+    name: String,
+    verdict: Option[String],
+    out: List[OutEdge],
+    createdAt: Long
+  ): NodeDef =
     NodeDef(
       id = id,
       name = name,
@@ -177,7 +183,13 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
    */
   private def formB(base: Long): Map[String, NodeDef] =
     Map(
-      "n-v2" -> verifierNode("n-v2", "V2", Some("pass"), List(OutEdge("n-w2", Set(OutEdge.Fail), OutEdge.Loop)), base - 300_000),
+      "n-v2" -> verifierNode(
+        "n-v2",
+        "V2",
+        Some("pass"),
+        List(OutEdge("n-w2", Set(OutEdge.Fail), OutEdge.Loop)),
+        base - 300_000
+      ),
       "n-w2" -> workerNode("n-w2", "W2", base - 200_000)
     )
 
@@ -189,7 +201,13 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
    */
   private def formA(base: Long): Map[String, NodeDef] =
     Map(
-      "n-v1" -> verifierNode("n-v1", "V1", Some("pass"), List(OutEdge("n-w1", Set(OutEdge.Fail), OutEdge.Loop)), base - 500_000),
+      "n-v1" -> verifierNode(
+        "n-v1",
+        "V1",
+        Some("pass"),
+        List(OutEdge("n-w1", Set(OutEdge.Fail), OutEdge.Loop)),
+        base - 500_000
+      ),
       "n-w1" -> workerNode("n-w1", "W1", base - 400_000),
       "n-s1" -> mergeNode("n-s1", "S1", List("n-w1", "n-v1"), base - 100_000)
     )
@@ -197,7 +215,9 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
   private def seed(store: FlowMapStore, nodes: Map[String, NodeDef]): IO[Unit] =
     store.mutate(s => s.copy(nodes = s.nodes ++ nodes)).void
 
-  private def fixture(tag: String): IO[(os.Path, ActorSystem, nebflow.actor.ActorRef[ProjectActor.ProjectCommand], ProjectRuntime)] =
+  private def fixture(
+    tag: String
+  ): IO[(os.Path, ActorSystem, nebflow.actor.ActorRef[ProjectActor.ProjectCommand], ProjectRuntime)] =
     val ws = tempRoot / s"ws-$tag-${System.nanoTime()}"
     os.makeDir.all(ws)
     val system = ActorSystem(s"cag-$tag-${scala.util.Random.nextInt(100000)}")
@@ -229,8 +249,16 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       )
     yield (ws, system, ref, rt)
 
+    end for
+
+  end fixture
+
   /** One production tick plus a bounded wait for the resulting audit line. */
-  private def tickAndWait(ref: nebflow.actor.ActorRef[ProjectActor.ProjectCommand], ws: os.Path, typ: String): IO[Unit] =
+  private def tickAndWait(
+    ref: nebflow.actor.ActorRef[ProjectActor.ProjectCommand],
+    ws: os.Path,
+    typ: String
+  ): IO[Unit] =
     val events = ws / ".nebflow" / FlowMapEventLog.FileName
     (ref ! ProjectActor.ProjectCommand.TtlTick).void *>
       waitUntil(30.seconds)(IO.blocking(os.exists(events) && os.read(events).contains(typ))) *>
@@ -275,13 +303,23 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(arch.size, 1, s"the component must archive exactly as before (release), got $arch")
-      assert(arch.forall(_._3.contains("unconsumedVerdicts") == false), s"chain-archived summaries stay untouched, got $arch")
+      assert(
+        arch.forall(_._3.contains("unconsumedVerdicts") == false),
+        s"chain-archived summaries stay untouched, got $arch"
+      )
       assertEquals(held.size, 1, s"exactly one chain-archive-held line, got $held")
-      assertEquals(held.head._2, "n-v2", "nodeId = the component's earliest createdAt node (same source as chain-archived)")
+      assertEquals(
+        held.head._2,
+        "n-v2",
+        "nodeId = the component's earliest createdAt node (same source as chain-archived)"
+      )
       val summary = held.head._3
       assert(summary.startsWith("chain=chain-n-v2 "), s"the summary must carry the component chain id, got $summary")
       assert(summary.contains("members=2"), s"members = the component member count, got $summary")
-      assert(summary.contains("unconsumedVerdicts=n-v2"), s"the summary must name the unconsumed verifier, got $summary")
+      assert(
+        summary.contains("unconsumedVerdicts=n-v2"),
+        s"the summary must name the unconsumed verifier, got $summary"
+      )
       assert(summary.contains("reason=pass-verdict-unconsumed"), s"the reason token must ride along, got $summary")
       assert(summary.contains("'(pass)<landing>'"), s"manual exit 1 must ride along, got $summary")
       assert(summary.contains("abandon=true"), s"manual exit 2 must ride along, got $summary")
@@ -313,13 +351,19 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       _ <- IO(
         println(
           "[spec] R5b swept=" +
-            swept.map(c => s"${c.chainId}(nodeId=${c.nodeId},members=${c.members},unconsumed=${c.unconsumedVerdicts})").mkString(" ") +
+            swept
+              .map(c => s"${c.chainId}(nodeId=${c.nodeId},members=${c.members},unconsumed=${c.unconsumedVerdicts})")
+              .mkString(" ") +
             "\n[spec] R5b active=" + activeAfter.mkString(",") +
             "\n[spec] R5b archived=" + archivedAfter.mkString(",")
         )
       )
     yield
-      assertEquals(swept.map(_.chainId).sorted, List("chain-n-v1", "chain-n-v2"), s"two components, got ${swept.map(_.chainId)}")
+      assertEquals(
+        swept.map(_.chainId).sorted,
+        List("chain-n-v1", "chain-n-v2"),
+        s"two components, got ${swept.map(_.chainId)}"
+      )
       val withReferrer = byId.getOrElse("chain-n-v1", fail("chain-n-v1 must be swept"))
       val consumerless = byId.getOrElse("chain-n-v2", fail("chain-n-v2 must be swept"))
       assertEquals(withReferrer.members, 3, "the referrer component holds three members")
@@ -369,14 +413,24 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(referrers.contains("n-w1"), s"precondition: the sink references the judged worker, got ${referrers.toList.sorted}")
-      assert(referrers.contains("n-v1"), s"precondition: the sink's in ledger names the verifier itself, got ${referrers.toList.sorted}")
+      assert(
+        referrers.contains("n-w1"),
+        s"precondition: the sink references the judged worker, got ${referrers.toList.sorted}"
+      )
+      assert(
+        referrers.contains("n-v1"),
+        s"precondition: the sink's in ledger names the verifier itself, got ${referrers.toList.sorted}"
+      )
       assert(
         NodePayload.verifierPassUnconsumed(snap.nodes("n-v1"), snap.nodes),
         "the visibility carrier (V-0prime) still reads true — the asymmetry between the two tiers is deliberate"
       )
       assertEquals(arch.size, 1, s"the component still archives as usual, got $arch")
-      assertEquals(held, Nil, s"a verifier with a settled consumer must NOT be reported (false-positive guard), got $held")
+      assertEquals(
+        held,
+        Nil,
+        s"a verifier with a settled consumer must NOT be reported (false-positive guard), got $held"
+      )
       assertEquals(active, Nil, "the whole component left the active area")
     end for
   }
@@ -416,7 +470,9 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       arch <- ofType(ws, FlowMapEventLog.ChainArchivedType)
       held <- ofType(ws, FlowMapEventLog.ChainArchiveHeldType)
       active <- rt.store.snapshot.map(_.nodes.keySet.toList)
-      _ <- IO(println(s"[spec] R7 chain-archived=${arch.size} chain-archive-held=${held.size} active=${active.mkString(",")}"))
+      _ <- IO(
+        println(s"[spec] R7 chain-archived=${arch.size} chain-archive-held=${held.size} active=${active.mkString(",")}")
+      )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(
@@ -454,7 +510,13 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       (1 to 35).toList.map { i =>
         val vid = f"n-v0-$i%02d"
         val wid = f"n-w0-$i%02d"
-        val verifier = verifierNode(vid, s"V0$i", Some("pass"), List(OutEdge(wid, Set(OutEdge.Fail), OutEdge.Loop)), base - i * 10_000L)
+        val verifier = verifierNode(
+          vid,
+          s"V0$i",
+          Some("pass"),
+          List(OutEdge(wid, Set(OutEdge.Fail), OutEdge.Loop)),
+          base - i * 10_000L
+        )
           .copy(task = None)
         val worker = workerNode(wid, s"W0$i", base - i * 10_000L - 1000).copy(task = None)
         s"chain-$vid" -> Map(vid -> verifier, wid -> worker)
@@ -501,7 +563,10 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       assertEquals(archived.size, 70, s"all 35 legacy records load (verifier + worker each), got ${archived.size}")
       assertEquals(active, Nil, "loading never populates the active area")
       assertEquals(verdicts, 35, "all 35 verdicts survive the load")
-      assert(loadedV0.size == 35, s"every legacy record reads as the strict V-0 shape (35 on record), got ${loadedV0.size}")
+      assert(
+        loadedV0.size == 35,
+        s"every legacy record reads as the strict V-0 shape (35 on record), got ${loadedV0.size}"
+      )
       assertEquals(afterFiles.keySet, beforeFiles.keySet, "the load writes no new batch file")
       assertEquals(afterFiles, beforeFiles, "every batch file stays byte- and mtime-identical (zero back-fill)")
       assertEquals(eventsExist, false, "the load path writes no audit line at all (zero trace, zero migration)")
@@ -536,7 +601,11 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       assertEquals(first.size, 1, s"the first tick reports the component once, got $first")
       assertEquals(second.size, 1, s"the second tick must not append a duplicate, got $second")
       assertEquals(third.size, 1, s"the third tick must not append a duplicate, got $third")
-      assertEquals(arch.size, 1, s"the archive announcement is a one-off too (the chain is gone after tick 1), got $arch")
+      assertEquals(
+        arch.size,
+        1,
+        s"the archive announcement is a one-off too (the chain is gone after tick 1), got $arch"
+      )
     end for
   }
 
@@ -579,9 +648,17 @@ class ChainArchiveGateSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(active, Nil, "the component left the active area (release)")
-      assertEquals(found, List("n-v2"), "an archived node is still reachable through findNode (cross-region contract untouched)")
+      assertEquals(
+        found,
+        List("n-v2"),
+        "an archived node is still reachable through findNode (cross-region contract untouched)"
+      )
       assertEquals(foundWorker, List("n-w2"), "the archived worker is reachable too")
-      assertEquals(members, List("n-v2", "n-w2"), "the chain resolution single point still derives the archived component")
+      assertEquals(
+        members,
+        List("n-v2", "n-w2"),
+        "the chain resolution single point still derives the archived component"
+      )
       assertEquals(unknown, Nil, "an unknown chain id degrades to an empty member list (never fabricates members)")
       for k <- List("verifierPassRoute", "unconsumedVerdicts", "unconsumed") do
         assert(!nodeKeys.contains(k), s"no new persisted node field may ride along, got '$k' in $nodeKeys")

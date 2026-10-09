@@ -98,8 +98,14 @@ class RouteSubagentWsSendSpec extends CatsEffectSuite:
 
   test("agentStart carries taskId+taskTitle when both defined (task badge live path)") {
     val (ref, send) = capture()
-    val routed = NodeRunner.routeSubagentWsSend(send, "root-1", "node-ab12cd34", Some("proj-alpha"),
-      taskId = Some("35"), taskTitle = Some("子代理面板任务归属标记"))
+    val routed = NodeRunner.routeSubagentWsSend(
+      send,
+      "root-1",
+      "node-ab12cd34",
+      Some("proj-alpha"),
+      taskId = Some("35"),
+      taskTitle = Some("子代理面板任务归属标记")
+    )
     for
       _ <- routed(Json.obj("type" -> "agentStart".asJson, "agentId" -> "node-ab12cd34".asJson))
       j <- first(ref)
@@ -112,8 +118,8 @@ class RouteSubagentWsSendSpec extends CatsEffectSuite:
 
   test("taskTitle=None emits taskId only (ledger miss degrades, form stays stable)") {
     val (ref, send) = capture()
-    val routed = NodeRunner.routeSubagentWsSend(send, "root-1", "dispatcher-77", Some("p"),
-      taskId = Some("12"), taskTitle = None)
+    val routed =
+      NodeRunner.routeSubagentWsSend(send, "root-1", "dispatcher-77", Some("p"), taskId = Some("12"), taskTitle = None)
     for
       _ <- routed(Json.obj("type" -> "agentStart".asJson, "agentId" -> "dispatcher-77".asJson))
       j <- first(ref)
@@ -135,17 +141,22 @@ class RouteSubagentWsSendSpec extends CatsEffectSuite:
 
   test("non-agentStart frames carry NO task keys (zero payload bloat, same gate as project)") {
     val (ref, send) = capture()
-    val routed = NodeRunner.routeSubagentWsSend(send, "root-1", "node-ab12cd34", Some("p"),
-      taskId = Some("35"), taskTitle = Some("t"))
+    val routed = NodeRunner.routeSubagentWsSend(
+      send,
+      "root-1",
+      "node-ab12cd34",
+      Some("p"),
+      taskId = Some("35"),
+      taskTitle = Some("t")
+    )
     for
       _ <- routed(Json.obj("type" -> "agentTextDelta".asJson, "delta" -> "hi".asJson))
       _ <- routed(Json.obj("type" -> "agentToolStart".asJson, "label" -> "Bash".asJson))
       frames <- ref.get
-    yield
-      frames.foreach { f =>
-        assertEquals(f.asObject.exists(_.contains("taskId")), false, s"unexpected taskId in ${f.noSpaces.take(80)}")
-        assertEquals(f.asObject.exists(_.contains("taskTitle")), false, s"unexpected taskTitle in ${f.noSpaces.take(80)}")
-      }
+    yield frames.foreach { f =>
+      assertEquals(f.asObject.exists(_.contains("taskId")), false, s"unexpected taskId in ${f.noSpaces.take(80)}")
+      assertEquals(f.asObject.exists(_.contains("taskTitle")), false, s"unexpected taskTitle in ${f.noSpaces.take(80)}")
+    }
   }
 
 end RouteSubagentWsSendSpec

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AskUser 视觉重设计 · 三风格对比选择包</title>
+<style>
+  /* 主题机制与产品一致：prefers-color-scheme + CSS 变量（规则体只引用 var()） */
+  :root{
+    --bg:#f4f5f7; --ink:#1c1e21; --dim:#7a7f87; --card:#ffffff;
+    --hairline:rgba(20,30,50,.14); --accent:#07c160; --code:rgba(20,30,50,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14161b; --ink:#e8eaee; --dim:#9aa0aa; --card:#1c1f27;
+      --hairline:rgba(200,215,240,.16); --code:rgba(200,215,240,.09);
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+    font-size:14px; line-height:1.65;
+  }
+  .wrap{max-width:1680px; margin:0 auto; padding:28px 32px 56px}
+  header.top{margin-bottom:8px}
+  h1{font-size:21px; font-weight:700; margin:0 0 4px}
+  .sub{color:var(--dim); font-size:12.5px}
+  .sub b{color:var(--ink); font-weight:600}
+  section{margin-top:34px}
+  h2{font-size:15.5px; font-weight:700; margin:0 0 4px; letter-spacing:.2px}
+  h2 .no{color:var(--accent); margin-right:6px}
+  .sec-note{color:var(--dim); font-size:12px; margin:0 0 14px}
+  hr.sep{border:0; border-top:1px solid var(--hairline); margin:30px 0 0}
+
+  /* 现状对照 */
+  .duo{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .shot{margin:0}
+  .shot img{width:100%; display:block; border-radius:8px; border:1px solid var(--hairline)}
+  .shot figcaption{font-size:11.5px; color:var(--dim); margin-top:6px; text-align:center}
+  .callout{
+    background:var(--card); border:1px solid var(--hairline); border-radius:8px;
+    padding:10px 14px; font-size:12.5px; color:var(--dim); margin-top:14px;
+  }
+  .callout b{color:var(--ink); font-weight:600}
+
+  /* ① 行为规格 */
+  .spec-card{background:var(--card); border:1px solid var(--hairline); border-radius:10px; padding:18px 22px}
+  .spec-card h3{font-size:13.5px; font-weight:700; margin:18px 0 8px}
+  .spec-card h3:first-child{margin-top:0}
+  .spec-card p{margin:6px 0; font-size:13px}
+  .spec-card ul{margin:6px 0; padding-left:20px; font-size:13px}
+  .spec-card li{margin:3px 0}
+  table.spec{width:100%; border-collapse:collapse; font-size:12.5px; margin:8px 0}
+  table.spec th, table.spec td{border:1px solid var(--hairline); padding:7px 10px; text-align:left; vertical-align:top}
+  table.spec th{background:var(--code); font-weight:600; white-space:nowrap}
+  table.spec td code, p code, li code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11.5px;
+    background:var(--code); border-radius:4px; padding:1px 5px;
+  }
+  .tag-a{color:var(--accent); font-weight:600}
+  .redline{color:#d4553a; font-weight:600}
+  @media (prefers-color-scheme: dark){ .redline{color:#e8785d} }
+
+  /* 三风格并排 */
+  .styles{display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px}
+  .style-col{background:var(--card); border:1px solid var(--hairline); border-radius:10px; padding:16px 16px 14px; display:flex; flex-direction:column}
+  .style-col .plan{font-size:11px; font-weight:700; letter-spacing:1.5px; color:var(--accent)}
+  .style-col h3{font-size:16px; font-weight:700; margin:2px 0 2px}
+  .style-col .imagery{font-size:12px; color:var(--dim); margin:0 0 10px}
+  .style-col .lang{font-size:12.5px; line-height:1.7; margin:0 0 12px; color:var(--ink)}
+  .style-col .lang b{font-weight:600}
+  .imglabel{font-size:11px; color:var(--dim); margin:10px 0 4px; letter-spacing:.5px}
+  .style-col img{width:100%; display:block; border-radius:6px; border:1px solid var(--hairline)}
+  .links{margin-top:12px; display:flex; gap:14px; flex-wrap:wrap}
+  .links a{font-size:12.5px; color:var(--accent); text-decoration:none; border-bottom:1px solid transparent}
+  .links a:hover{border-bottom-color:var(--accent)}
+  .rendernote{font-size:11px; color:var(--dim); margin-top:8px}
+
+  /* 底部声明 */
+  footer.declare{
+    margin-top:36px; background:var(--card); border:1px solid var(--hairline);
+    border-radius:10px; padding:16px 22px; font-size:12.5px; color:var(--dim);
+  }
+  footer.declare b{color:var(--ink); font-weight:600}
+  footer.declare p{margin:5px 0}
+  @media (max-width:1100px){ .styles{grid-template-columns:1fr} .duo{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>AskUser 视觉重设计 · 三风格对比选择包</h1>
+    <p class="sub">批次 2026-10-06 · Onboarding / AskUser 视觉重设计 · 作者对比用 · 纯静态页（双击即开）·
+      三套均按 <b>①「未命名态去名」</b>规格渲染：Header 名字区留空、气泡无发送者名</p>
+  </header>
+
+  <section id="before">
+    <h2><span class="no">现状对照</span>改前实渲（未去名的现样）</h2>
+    <p class="sec-note">真实前端树实渲（route 磁盘直服 + MockWebSocket 注真帧，零端口）。复现：node "design/20261006_askuser_redesign/pipeline/before-shot.cjs"</p>
+    <div class="duo">
+      <figure class="shot">
+        <img src="before/light.png" alt="现状亮档">
+        <figcaption>before · light（2560×1600 @2x）</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="before/dark.png" alt="现状暗档">
+        <figcaption>before · dark（2560×1600 @2x）</figcaption>
+      </figure>
+    </div>
+    <div class="callout">
+      <b>现样去名靶面（① 要改掉的字样）</b>：Header 中置「Nebula」；气泡发送者「NEBULA」（题文/承接句泡）与「还没有名字的我」（开场占位）；AskUser 卡来源徽标现本就不显（自问不显名先例）；待办条行「Nebula」。
+      注意：before 图里 AskUser 卡问句为<b>合成演示内容</b>（截图线上无真 pending ask），UI 面即真实渲染。
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section id="spec">
+    <h2><span class="no">①</span>行为规格「未命名态去名」（只写规格 · 作者选定风格后与其同批落码）</h2>
+    <p class="sec-note">全文见 BRIEF.md §2–§3。本节为装配摘要，供对比时同读。</p>
+    <div class="spec-card">
+      <h3>目标</h3>
+      <p>起名前 Header 名字区<b>留空</b>、气泡发送者名<b>不显示</b>默认名；起名后一切照旧。视觉三稿已按此渲染（口径 A 形态）。</p>
+
+      <h3>改动组件定位</h3>
+      <table class="spec">
+        <tr><th>面</th><th>组件落点</th><th>规格分支</th></tr>
+        <tr>
+          <td><b>N1</b> Header 中置名字区</td>
+          <td><code>sidebar.js</code> <code>updateHeaderSessionName()</code></td>
+          <td>未命名 → <code>sessionNameEl.textContent = ''</code>（或 display:none，<b>二选一候裁</b>；建议置空串 + 保留占位布局，避免 header 中置内容跳动）；已命名 → 现行为不变（事件链即时刷）。</td>
+        </tr>
+        <tr>
+          <td><b>N2</b> Onboarding 气泡发送者名</td>
+          <td><code>onboarding.js</code> <code>simBubble</code> / <code>sourceLabel</code></td>
+          <td>未命名且无显式 source → <b>不创建 / 隐藏</b> <code>.ask-user-source</code>（同 N4 现成手法：先判名再挂）；已命名 → <code>sourceLabel()</code> 照旧（含大写样式）。</td>
+        </tr>
+        <tr>
+          <td><b>N3</b> 开场两泡占位「还没有名字的我」</td>
+          <td><code>onboarding.js</code> 显式 <code>source</code> 文案位</td>
+          <td><span class="tag-a">口径 A（规格默认）</span>：一并隐藏，未命名一律无发送者名，视觉最净；<b>口径 B</b>：保留（「我是谁还没定」叙事，与 greet2 呼应）。<b>候作者裁</b>；三风格稿按口径 A 形态渲染。</td>
+        </tr>
+        <tr>
+          <td><b>N4</b> AskUser 卡来源徽标</td>
+          <td><code>chat.js</code> <code>renderAskUser</code></td>
+          <td>现状已隐（<code>badgeLabel === 'Nebula'</code> 不挂）——落码时把该字面量判定与统一 <code>isRootNamed()</code> 对齐（消双口径），行为不变。</td>
+        </tr>
+        <tr>
+          <td><b>N5</b> 待办条行来源标签</td>
+          <td><code>askPending.js</code> <code>askSourceLabel</code> 兜底</td>
+          <td>未命名且无 project → 自然落到「待回答问题」兜底；建议顺手纳入同一判定（同一未命名族），零新机制。</td>
+        </tr>
+      </table>
+      <p style="font-size:12px;color:var(--dim)">N6（语音 orb / 设备邮件 / modelPanel 等 <code>{agent}</code> 参数面）不在本批视觉稿范围；落码若改 <code>rootName.js</code> 兜底语义必须全量回归这些面——防误伤。</p>
+
+      <h3>「已命名」判定依据（现成键，禁新增存储）</h3>
+      <ul>
+        <li>判已命名 = 会话 override <code>state.rootDisplayName</code> 或 agentsData 根行 <code>displayName</code> 有值；建议在 <code>rootName.js</code> 落 <code>isRootNamed()</code> 单点，N1/N2/N4/N5 共用，禁各处自判。</li>
+        <li><span class="redline">🔴 禁用 <code>!== 'Nebula'</code> 字面量判定</span>：用户真起名「Nebula」会误判为未命名；机制名恒为 Nebula，字面量比对是 rootName.js 文件头明令禁区（判面 ≠ 显示面）。</li>
+      </ul>
+
+      <h3>边界口径候裁项</h3>
+      <table class="spec">
+        <tr><th>情形</th><th>建议口径</th></tr>
+        <tr><td>空串名 / 纯空白名（trim 后空）</td><td><b>算未命名</b>（留空渲染；现行为本就提交不了空白名，判定层同口径兜底）</td></tr>
+        <tr><td>skip 名字段（「跳过这一题」）</td><td>未命名（现行为仅非 skip 才 rename）</td></tr>
+        <tr><td>起名后改名 / 重跑 onboarding 改名</td><td>已命名，新名即时生效（现事件链不变）</td></tr>
+        <tr><td>历史会话（displayName 已落盘）重启进未跑 onboarding 的新机器</td><td>以 agentsData displayName 为准——有值即已命名</td></tr>
+        <tr><td>displayName 恰为字面量 'Nebula'</td><td><b>算已命名</b>（用户真实选择；判定看键不看值）</td></tr>
+        <tr><td>首帧时序（agentsData 未到 + 无 override）</td><td>先按未命名 → Header 留空；agentList 到达后已命名 → 走现有重刷链</td></tr>
+      </table>
+      <p style="font-size:12px;color:var(--dim)">回归面（落码批必测）：起名前 onboarding 全程截屏；起名瞬间 Header/气泡同步换新名；改名后重跑；AskUser 项目节点问（project 徽标不受 ① 影响）；N6 各面零变化。</p>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section id="styles">
+    <h2><span class="no">三风格并排</span>同一内容结构（BRIEF §1），语言差异只在材质 / 形状 / 层级 / 色彩</h2>
+    <p class="sec-note">每列自上而下：亮档 → 暗档实渲截图（1280×800 逻辑视口 @2x）；「打开 mockup」看可交互单文件源稿（跟随系统亮暗，刷新或切系统主题即可换档）。</p>
+    <div class="styles">
+
+      <div class="style-col">
+        <div class="plan">方案一 · style-1</div>
+        <h3>留白极简线框</h3>
+        <p class="imagery">意象：纸上的表格——「一张纸」</p>
+        <p class="lang"><b>去底色、细线描边、大留白</b>：零阴影零渐变零彩色（刻意连品牌绿也收掉），层级完全交给字号、字重与间距节奏；每卡唯一实底墨色主按钮（「用这句」「✓ 确认」，暗档反转为浅底墨字）立主次，气泡与题卡退成 1px 细线框（保留真实 DOM 的泡内嵌套关系），chips 细线胶囊，AskUser 选项退成分隔线表格行 + radio 线稿暗示，「其他...」虚线框标记自填通道，「跳过这一题」「取消」纯文字次级动作——以极致克制换主按钮的最高对比度。</p>
+        <div class="imglabel">LIGHT</div>
+        <img src="style-1/light.png" alt="style-1 亮档">
+        <div class="imglabel">DARK</div>
+        <img src="style-1/dark.png" alt="style-1 暗档">
+        <div class="links">
+          <a href="style-1/mockup.html">打开 mockup.html</a>
+          <a href="style-1/DESIGN.md">DESIGN.md</a>
+        </div>
+        <p class="rendernote">语言替换申报：无（沿用槽位语言）。</p>
+      </div>
+
+      <div class="style-col">
+        <div class="plan">方案二 · style-2</div>
+        <h3>轻浮层卡片</h3>
+        <p class="imagery">意象：界面上浮着一块精致面板——「一块浮层」</p>
+        <p class="lang"><b>以「离地高度 + 光」为唯一主次标尺</b>：地面平铺（L0），气泡退为安静薄片（L1，白/深卡面 + 发丝描边 + 极轻投影）；题卡与 AskUser 卡（L2）整体脱底上浮——16px 大圆角、轻渐变面、双层柔影 + 顶缘内高光，承载它们的题文气泡刻意做成无面「幽灵座」，拉开可见高度差；主行动按钮（L3）实色品牌绿 + 绿影，与描边幽灵「取消」、无底色「跳过这一题」形成一眼可辨的三级梯次。暗档同布局，仅覆写 :root 变量：卡面更亮一档、投影更深。表单感最弱、控件精致感最强。</p>
+        <div class="imglabel">LIGHT</div>
+        <img src="style-2/light.png" alt="style-2 亮档">
+        <div class="imglabel">DARK</div>
+        <img src="style-2/dark.png" alt="style-2 暗档">
+        <div class="links">
+          <a href="style-2/mockup.html">打开 mockup.html</a>
+          <a href="style-2/DESIGN.md">DESIGN.md</a>
+        </div>
+        <p class="rendernote">语言替换申报：无（沿用槽位语言）。</p>
+      </div>
+
+      <div class="style-col">
+        <div class="plan">方案三 · style-3</div>
+        <h3>气泡融合式</h3>
+        <p class="imagery">意象：题 = 泡——「对话本体」</p>
+        <p class="lang"><b>不是把卡做好看，而是让卡消失</b>：题卡就是一段结构化气泡，与开场泡共用同一材质、同一 16px 圆角族（AI 泡同款左下 4px 尾角）、同一发丝描边与 10px 间距律，控件全部直接坐在泡壁上；题头弱化成发丝线 + 绿点的泡内行内静音标，输入框是「还没长出来的小气泡」，chips 是答案的雏形小泡（选中即实心绿汇入对话流），主按钮唯二实心绿，跳过褪成右下角裸文本——层级全靠「实心绿 → 描边小泡 → 裸文本」材质落差。暗档只在 prefers-color-scheme 里翻转 :root 六组变量（取值同 base.css）。表单感归零、对话感最大化。</p>
+        <div class="imglabel">LIGHT</div>
+        <img src="style-3/light.png" alt="style-3 亮档">
+        <div class="imglabel">DARK</div>
+        <img src="style-3/dark.png" alt="style-3 暗档">
+        <div class="links">
+          <a href="style-3/mockup.html">打开 mockup.html</a>
+          <a href="style-3/DESIGN.md">DESIGN.md</a>
+        </div>
+        <p class="rendernote">语言替换申报：无（沿用槽位语言）。</p>
+      </div>
+
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <footer class="declare">
+    <p><b>落码声明</b>：三套均为纯视觉稿（design/ 子树内交付，<code>src/</code> 零触碰、零仓内代码改动）。<b>作者选定其一后</b>，才与 ①「未命名态去名」行为规格同批落码；本页不预设任何候选优先级。</p>
+    <p><b>文案零变更</b>：三稿产品固定文案逐字取 <code>src/main/resources/web/js/locales/zh-CN.js</code> 真源（题干 / 幕名 / 进度 / 按钮字 / chips / 跳过字 / 占位符 /「其他...」/「取消 / ✓ 确认」）；唯一例外 = 场景 B 问句与选项词为<b>合成演示内容</b>（AskUser 卡本为动态注入、无固定文案真源，与 before 截图同口径），三稿一致披露。落码时不改任何产品文案。</p>
+    <p><b>语言替换申报</b>：三套均<b>未申报替换</b>，分别沿用任务令槽位语言「留白极简线框 / 轻浮层卡片 / 气泡融合式」。</p>
+    <p style="margin-top:10px; font-size:11.5px">同内容结构注：三套布局同源（BRIEF §1 完整面盘点），场景 A（onboarding 第一题全景）+ 场景 B（AskUser 通用卡）同页覆盖；「每题必有跳过」红线只改形未删位；主题机制一律 <code>prefers-color-scheme</code> + CSS 变量（与产品一致）。</p>
+  </footer>
+
+</div>
+</body>
+</html>

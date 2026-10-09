@@ -305,7 +305,33 @@ object UiMessage:
      * 前端**必须回落「未作答」**（禁把历史一律读成「已作答」，方向见
      * `persistence.js askUserAnswerText`）。单一构造点 = [[UiMessage.askUserAnswer]]。
      */
-    answerOf: Option[String] = None
+    answerOf: Option[String] = None,
+    /**
+     * **消息引用快照**（quote-message 一期 2026-10-09，spec §3.3）：本条 user 行
+     * 所携带的「引用被引消息」快照 —— **只有 User 行带 quote**（引用附着在回复行
+     * 上，微信语义；ai/tool/ask 行永不是载体）。Json 形状（引擎不解释内部字段，
+     * 原样落盘原样下发）：
+     *   { "refMessageId": String, "excerpt": String ≤80, "senderRole": String,
+     *     "senderName": String?, "ts": Long? }
+     *
+     * 写入点唯一 = `WebSocketRoutes` typeless user 帧处理（从帧 `refs` 里取
+     * `refType==='chat-message'` 首条转成 quote，与 attJson 组装同段）。缺席即不
+     * 落键 ⇒ 无引用行与旧 `.ui.json` 行字节形态**逐字相同**（intake/header/
+     * answerOf 三先例同款条件编码）；旧前端读新行时 cursor 只读已知字段，多出的
+     * quote 键无感（§3.7 兼容矩阵）。
+     */
+    quote: Option[Json] = None,
+    /**
+     * **委托批改动文件 diff 载荷**（file-diff → 委托结果行，bug #58 修
+     * 2026-10-09）：delegate 终态注入行专属 —— `AgentActor#emitInjectedUserEvent`
+     * 的唯一写点从 ExternalEvent metadata `fileChanges` 同源取（形状 =
+     * `FileChangeReport` REST 面 {nodeId, generatedAt, root, files:[{path,
+     * changeType, added, removed, source, diffText?, degradedReason?}]}，引擎不
+     * 解释内部字段，原样落盘原样下发）。前端在注入行展开体里渲染「Changes」段
+     * （+/− 高亮）。缺席即不落键 ⇒ 非 delegate 行与旧 `.ui.json` 行字节形态
+     * **逐字相同**（intake/header/answerOf/quote 先例同款条件编码）。
+     */
+    fileChanges: Option[Json] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -431,7 +457,13 @@ object UiMessage:
       // 双开缺陷批「案 B」（2026-09-21，chain-askuserdup）：作答行的显式来源标记 ——
       // 本行是某个 requestId 卡的作答记录。缺席即不落键（旧 .ui.json 行的字节形态与
       // 旧读法逐字不变；旧行 ⇒ 前端回落「未作答」）。
-      m.answerOf.fold(withHeader)(r => withHeader.deepMerge(Json.obj("answerOf" -> r.asJson)))
+      val withAnswerOf = m.answerOf.fold(withHeader)(r => withHeader.deepMerge(Json.obj("answerOf" -> r.asJson)))
+      // quote-message 一期（2026-10-09，spec §3.3）：消息引用快照 —— 缺席即不落键
+      // ⇒ 无引用行与旧字节形态逐字相同。
+      val withQuote = m.quote.fold(withAnswerOf)(q => withAnswerOf.deepMerge(Json.obj("quote" -> q)))
+      // file-diff → 委托结果行（bug #58 修 2026-10-09）：diff 载荷缺席即不落键
+      // ⇒ 非 delegate 行与旧字节形态逐字相同。
+      m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -494,6 +526,11 @@ object UiMessage:
           header <- cursor.downField("header").as[Option[String]]
           // 案 B：作答行来源标记（旧行缺席 ⇒ None ⇒ 前端回落「未作答」）
           answerOf <- cursor.downField("answerOf").as[Option[String]]
+          // quote-message 一期：消息引用快照（旧行无本键 ⇒ None；形态不合同样回落
+          // None —— 新增可选键绝不改变任何既有行的可解析性）
+          quote <- cursor.downField("quote").as[Option[Json]]
+          // file-diff → 委托结果行：diff 载荷（旧行无本键 ⇒ None，同上兼容纪律）
+          fileChanges <- cursor.downField("fileChanges").as[Option[Json]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -506,7 +543,9 @@ object UiMessage:
           delivery,
           intake,
           header,
-          answerOf.filter(_.nonEmpty)
+          answerOf.filter(_.nonEmpty),
+          quote,
+          fileChanges
         )
       case "ai" =>
         for

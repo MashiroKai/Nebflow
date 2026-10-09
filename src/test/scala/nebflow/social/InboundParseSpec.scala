@@ -20,13 +20,14 @@ class InboundParseSpec extends FunSuite:
   test("IP-1 post degrades to readable lines, verbatim") {
     val raw =
       """{"title":"发布说明","content":[[{"tag":"text","text":"版本 "},{"tag":"a","text":"v2","href":"https://x/y"}],[{"tag":"at","user_id":"ou_1","user_name":"张三"},{"tag":"text","text":" 请看 "},{"tag":"img","image_key":"img_v2_k"}]]}"""
-    assertEquals(InboundParse.renderPost(raw),
-      Some("发布说明\n版本 v2(https://x/y)\n@张三 请看 [图片 image_key=img_v2_k]"))
+    assertEquals(InboundParse.renderPost(raw), Some("发布说明\n版本 v2(https://x/y)\n@张三 请看 [图片 image_key=img_v2_k]"))
   }
 
   test("IP-2 an unknown post tag leaves a visible trace (never silently dropped)") {
-    assertEquals(InboundParse.renderPost("""{"content":[[{"tag":"text","text":"a"},{"tag":"nope","x":"y"}]]}"""),
-      Some("a[nope]"))
+    assertEquals(
+      InboundParse.renderPost("""{"content":[[{"tag":"text","text":"a"},{"tag":"nope","x":"y"}]]}"""),
+      Some("a[nope]")
+    )
   }
 
   test("IP-3 empty content / null title degrade without inventing lines") {
@@ -41,9 +42,12 @@ class InboundParseSpec extends FunSuite:
     assertEquals(InboundParse.renderElement(io.circe.Json.obj("tag" -> io.circe.Json.fromString("hr"))), "")
     assertEquals(InboundParse.renderElement(io.circe.Json.obj("tag" -> io.circe.Json.fromString("emotion"))), "")
     // …but one carrying a value keeps its tag visible.
-    assertEquals(InboundParse.renderElement(
-      io.circe.Json.obj("tag" -> io.circe.Json.fromString("media"), "file_key" -> io.circe.Json.fromString("fk"))),
-      "[视频 file_key=fk]")
+    assertEquals(
+      InboundParse.renderElement(
+        io.circe.Json.obj("tag" -> io.circe.Json.fromString("media"), "file_key" -> io.circe.Json.fromString("fk"))
+      ),
+      "[视频 file_key=fk]"
+    )
   }
 
   // ───────────────────── @mentions (IP-4…IP-7) ─────────────────────
@@ -105,8 +109,10 @@ class InboundParseSpec extends FunSuite:
   }
 
   test("IP-9b every non-text, non-post type lands in the placeholder") {
-    assertEquals(InboundParse.bodyOf("file", "om_10", """{"file_key":"file_v2_x"}"""),
-      Option(InboundParse.unrecognized("file", "om_10", """{"file_key":"file_v2_x"}""")))
+    assertEquals(
+      InboundParse.bodyOf("file", "om_10", """{"file_key":"file_v2_x"}"""),
+      Option(InboundParse.unrecognized("file", "om_10", """{"file_key":"file_v2_x"}"""))
+    )
     assert(InboundParse.bodyOf("sticker", "om_11", "{}").exists(_.contains("[未识别的消息类型：sticker]")))
   }
 
@@ -147,3 +153,4 @@ class InboundParseSpec extends FunSuite:
     assertEquals(InboundParse.compose(q, None), Some(q.get))
     assertEquals(InboundParse.compose(None, None), None)
   }
+end InboundParseSpec

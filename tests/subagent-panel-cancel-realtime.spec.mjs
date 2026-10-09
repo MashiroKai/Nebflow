@@ -133,7 +133,7 @@ async function openPanel(page) {
 }
 
 test.describe('Sub-Agents 面板取消/终止实时刷新', () => {
-  test('dispatcher-* 会话取消：注入 agentStart 出行 → 注入取消 agentDone 帧 → 行 2s 内移除（无刷新）', async ({ page }) => {
+  test('dispatcher-* 会话：C1 过渡纪律不入一等陈列面（行零渲染·计数零）；取消 agentDone 仍走桶内终态清理（无刷新）', async ({ page }) => {
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(e.message));
     await bootApp(page);
@@ -143,45 +143,45 @@ test.describe('Sub-Agents 面板取消/终止实时刷新', () => {
     await page.evaluate(() => { window.__noReloadProbe = Symbol('alive'); });
 
     await inject(page, agentStartFrame(SID));
-    await openPanel(page);
+    // C1 过渡纪律（delegate-ui 批 2026-10-08 · 定稿蓝本 §1.2）：dispatcher-*/node-*
+    // 是 delegate 编排的引擎内部件——在册（桶内数据全量供管理/调试）但不入一等
+    // 陈列面：行零渲染、badge 计数零（指示器保持隐藏——0 可见即不计数的既定口径）。
     const row = page.locator(`.bg-task-row[data-node-session-id="${SID}"]`);
-    await expect(row).toHaveCount(1);
-    await expect(row.locator('.bg-task-kind')).toHaveText('Flow');
-    await expect(row.locator('.bg-task-status.bg-status-active')).toHaveCount(1);
-    // 徽标计数 = 1
-    await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('1');
-
-    // ── 被测行为：取消 → 后端补发 agentDone 帧 → 行实时移除 ──────────
-    await inject(page, cancelDoneFrame(SID));
-
-    // 2s 内行消失（会话级 done 分支同帧删行 + 归属视图渲染刷新）
-    await expect(row).toHaveCount(0, { timeout: 2000 });
-    // 面板转空态（非陈旧列表）
-    await expect(page.locator('#bgagent-dropdown .bg-dropdown-empty')).toHaveCount(1);
-    // 徽标隐藏（计数归零）
+    await expect(row).toHaveCount(0);
     await expect(page.locator('#bgagent-indicator.hidden')).toHaveCount(1);
-    // 状态机已清（后续 activeAgents 快照/事件不复活幽灵行）
+    // 数据侧在册（快照/管理面语义不变）
+    const bucketHas = await page.evaluate(async (sid) => {
+      const s = (await import('/js/state.js')).default;
+      const bucket = s.sessionBgAgents[Object.keys(s.sessionBgAgents)[0]] || {};
+      return Boolean(bucket[sid]);
+    }, SID);
+    expect(bucketHas).toBe(true);
+
+    // ── 被测行为：取消 → 后端补发 agentDone 帧 → 桶内条目实时移除（终态管线回归）──
+    await inject(page, cancelDoneFrame(SID));
     const bucketEmpty = await page.evaluate(async (sid) => {
       const s = (await import('/js/state.js')).default;
       return !s.sessionBgAgents[sid] || Object.keys(s.sessionBgAgents[sid]).length === 0;
     }, ROOT_SID);
     expect(bucketEmpty).toBe(true);
+    // 面板保持零行；徽标保持隐藏（计数全程零——C1 过滤与终态清理不打架）
+    await expect(page.locator('#bgagent-indicator.hidden')).toHaveCount(1);
     // 无刷新：探针仍活、URL 未变
     expect(await page.evaluate(() => Boolean(window.__noReloadProbe))).toBe(true);
     expect(page.url()).toContain('localhost:1');
     expect(pageErrors).toEqual([]);
   });
 
-  test('node-* 会话取消：同契约 2s 内移除', async ({ page }) => {
+  test('node-* 会话：C1 同款零渲染；取消 agentDone 同契约桶内清理', async ({ page }) => {
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(e.message));
     await bootApp(page);
 
     const SID = 'node-9988aabb';
     await inject(page, agentStartFrame(SID, { agentType: 'researcher', name: 'researcher', taskDescription: '跑实验' }));
-    await openPanel(page);
     const row = page.locator(`.bg-task-row[data-node-session-id="${SID}"]`);
-    await expect(row).toHaveCount(1);
+    await expect(row).toHaveCount(0);
+    await expect(page.locator('#bgagent-indicator.hidden')).toHaveCount(1);
 
     await inject(page, cancelDoneFrame(SID));
     await expect(row).toHaveCount(0, { timeout: 2000 });
@@ -189,13 +189,14 @@ test.describe('Sub-Agents 面板取消/终止实时刷新', () => {
     expect(pageErrors).toEqual([]);
   });
 
-  test('回归：取消不影响既有实时场景——新会话出行 / Processing 工具标签 / delegate 终态清理', async ({ page }) => {
+  test('回归：取消不影响既有实时场景——delegate 行实时出行与工具标签 / 终态清理；dispatcher 行保持零渲染', async ({ page }) => {
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(e.message));
     await bootApp(page);
 
     // ① 新会话实时出行（面板新增实时，先于取消修复既有）：注入 agentStart 后
     //    打开面板，行立即可见（状态实时入库；面板渲染于展开时对齐状态）。
+    //    dispatcher 行 = C1 过滤（零渲染），桶内照常在册。
     const DISPATCHER = 'dispatcher-live1111';
     const DELEGATE = 'delegate-Explorer-9f8e7d6c';
     await inject(page, agentStartFrame(DISPATCHER));
@@ -204,23 +205,30 @@ test.describe('Sub-Agents 面板取消/终止实时刷新', () => {
       agentId: DELEGATE, nodeSessionId: DELEGATE,
     }));
     // ② Processing 状态实时：agentToolStart → 行内工具标签（事件先于开面板
-    //    注入——开面板时的渲染读的是实时状态，非陈旧快照）。
+    //    注入——开面板时的渲染读的是实时状态，非陈旧快照）。标签腿改挂 delegate
+    //    行（dispatcher 行已随 C1 零渲染，工具标签语义由可见行承载）。
     await inject(page, {
-      type: 'agentToolStart', agentId: DISPATCHER, label: 'NodeEdit',
-      sessionId: ROOT_SID, rootSessionId: ROOT_SID, nodeSessionId: DISPATCHER,
+      type: 'agentToolStart', agentId: DELEGATE, label: 'NodeEdit',
+      sessionId: ROOT_SID, rootSessionId: ROOT_SID, nodeSessionId: DELEGATE,
     });
     await openPanel(page);
-    await expect(page.locator(`.bg-task-row[data-node-session-id="${DISPATCHER}"]`)).toHaveCount(1);
+    await expect(page.locator(`.bg-task-row[data-node-session-id="${DISPATCHER}"]`)).toHaveCount(0);
     await expect(page.locator(`.bg-task-row[data-node-session-id="${DELEGATE}"]`)).toHaveCount(1);
-    await expect(page.locator(`.bg-task-row[data-node-session-id="${DISPATCHER}"] .bgagent-tool`)).toContainText('NodeEdit');
+    await expect(page.locator(`.bg-task-row[data-node-session-id="${DELEGATE}"] .bgagent-tool`)).toContainText('NodeEdit');
 
     // ③ delegate 会话终态（既有 agentDone 路径回归）：2s 定时器移除行。
     await inject(page, cancelDoneFrame(DELEGATE));
     const delegateRow = page.locator(`.bg-task-row[data-node-session-id="${DELEGATE}"]`);
     await expect(delegateRow).toHaveCount(0, { timeout: 4000 });
 
-    // dispatcher 行不受 delegate 清理影响（同桶多行各自独立）
-    await expect(page.locator(`.bg-task-row[data-node-session-id="${DISPATCHER}"]`)).toHaveCount(1);
+    // dispatcher 条目不受 delegate 清理影响（同桶多行各自独立——桶内数据侧断言：
+    // 行虽 C1 零渲染，条目语义不变）
+    const bucketHasDispatcher = await page.evaluate(async (sid) => {
+      const s = (await import('/js/state.js')).default;
+      const bucket = s.sessionBgAgents[Object.keys(s.sessionBgAgents)[0]] || {};
+      return Boolean(bucket[sid]);
+    }, DISPATCHER);
+    expect(bucketHasDispatcher).toBe(true);
     expect(pageErrors).toEqual([]);
   });
 });

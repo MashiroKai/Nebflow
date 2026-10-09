@@ -57,8 +57,10 @@ object ChainStore:
   // DelegateRegistry 同一口径：单实例进程内写面）。
   private val writeLock = new Object
 
-  /** 追加一行（同步原子落盘）。键非法 / 落盘失败 = 静默容错（WARN 已在调用侧）：
-    * 账本是审计/下游数据源，绝不阻断 delegate 主链路。 */
+  /**
+   * 追加一行（同步原子落盘）。键非法 / 落盘失败 = 静默容错（WARN 已在调用侧）：
+   * 账本是审计/下游数据源，绝不阻断 delegate 主链路。
+   */
   def appendSync(key: String, kind: String, payload: Json): Unit =
     if !validKey(key) then ()
     else

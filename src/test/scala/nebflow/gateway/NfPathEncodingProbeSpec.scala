@@ -467,11 +467,13 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   end snapshotCredential
 
   /** Tool face of ONE reference: (`proxied`, `inlined`, warnings as (reason, detail)). */
-  /** Tool face of ONE media path via the pop-upgrade PopTool payload:
-    * (`referenced`, `inlined`, warnings as (reason, detail)). The old Card
-    * harness retired with the tool (pop-upgrade batch 2026-10-03); PopTool's
-    * media legs are FileRefs' remaining consumer, so the equivalence legs run
-    * through it (Nebula root ctx — the identity gate needs it). */
+  /**
+   * Tool face of ONE media path via the pop-upgrade PopTool payload:
+   * (`referenced`, `inlined`, warnings as (reason, detail)). The old Card
+   * harness retired with the tool (pop-upgrade batch 2026-10-03); PopTool's
+   * media legs are FileRefs' remaining consumer, so the equivalence legs run
+   * through it (Nebula root ctx — the identity gate needs it).
+   */
   private def toolFace(refValue: String): (Int, Int, List[(String, String)]) =
     val buf = scala.collection.mutable.ListBuffer.empty[io.circe.Json]
     val ctx = nebflow.core.tools.ToolContext(
@@ -665,7 +667,9 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         )
         assertLegRefused(
           leg = "leg-inode",
-          names = List("hard link big.png"), // pop-upgrade: the .json spelling is a file card (readFile route), not an nf-file reference
+          names = List(
+            "hard link big.png"
+          ), // pop-upgrade: the .json spelling is a file card (readFile route), not an nf-file reference
           dir = dir,
           build = (link, _) => Files.createLink(link, target),
           port = port,
@@ -690,7 +694,9 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         Files.write(realTarget, PngBytes)
         assertLegRefused(
           leg = "leg-realpath-ext",
-          names = List("img link big.png"), // pop-upgrade: the .json spelling is a file card (readFile route), not an nf-file reference
+          names = List(
+            "img link big.png"
+          ), // pop-upgrade: the .json spelling is a file card (readFile route), not an nf-file reference
           dir = dir,
           build = (link, d) => Files.createSymbolicLink(link, d.resolve("target big.xyz")),
           port = port,

@@ -251,7 +251,7 @@ Example (URL): {"filePath": "https://example.com"}"""
   private def looksLikeJsonArrayString(s: String): Boolean =
     val t = s.trim
     t.startsWith("[") && t.endsWith("]") &&
-      io.circe.parser.parse(t).toOption.exists(_.isArray)
+    io.circe.parser.parse(t).toOption.exists(_.isArray)
 
   /**
    * `filePath` accepts the shipped single string OR an array of strings
@@ -333,6 +333,8 @@ Example (URL): {"filePath": "https://example.com"}"""
                                 )
                               )
                             case None => Right((paths, None))
+                        end if
+                    end match
                   case None =>
                     Left(
                       ToolError(
@@ -369,10 +371,13 @@ Example (URL): {"filePath": "https://example.com"}"""
                 s"Pop: `filePath` arrived as a quoted array string (a single string holding a JSON array literal) — it was parsed into $n path(s) and shown this time. Next time pass a real JSON array, not a quoted array string."
               )
             )
+    end match
   end acceptQuotedArray
 
-  /** The unreadable-batch error for a non-empty-looking input that yielded no
-   *  path at all (a blank string, or an array of blanks/whitespace). */
+  /**
+   * The unreadable-batch error for a non-empty-looking input that yielded no
+   *  path at all (a blank string, or an array of blanks/whitespace).
+   */
   private val EmptyShapeError: ToolError =
     ToolError(
       "Pop: `filePath` was empty (no path string carried content) — pass a non-blank path or an array of paths."
@@ -441,8 +446,7 @@ Example (URL): {"filePath": "https://example.com"}"""
       case (Some(path), decision) =>
         val name = path.getFileName.toString
         val body: Either[RejectedRef, PopItem] =
-          if isImage || isVideo || isAudio then
-            mediaItem(value, path, ext, name, decision, budget, isVideo, isAudio)
+          if isImage || isVideo || isAudio then mediaItem(value, path, ext, name, decision, budget, isVideo, isAudio)
           else fileCardItem(value, path, ext, name)
         (body, hit.note)
   end buildItem
@@ -493,25 +497,39 @@ Example (URL): {"filePath": "https://example.com"}"""
         Left(RejectedRef(value, Some(describe(path)), FileRefFailure.Other, s"unexpected probe verdict: $other"))
   end mediaItem
 
-  private def inlineImage(value: String, path: Path, ext: String, name: String, dataUri: String): Either[RejectedRef, PopItem] =
-    sizeOf(path).map { size =>
-      Right(PopItem("image", name, describe(path), size = Some(size), ext = Some(ext), src = Some(dataUri)))
-    }.getOrElse(Left(notReadable(value, path)))
+  private def inlineImage(
+    value: String,
+    path: Path,
+    ext: String,
+    name: String,
+    dataUri: String
+  ): Either[RejectedRef, PopItem] =
+    sizeOf(path)
+      .map { size =>
+        Right(PopItem("image", name, describe(path), size = Some(size), ext = Some(ext), src = Some(dataUri)))
+      }
+      .getOrElse(Left(notReadable(value, path)))
 
   private def referencedImage(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
-    sizeOf(path).map { size =>
-      Right(PopItem("image", name, describe(path), size = Some(size), ext = Some(ext)))
-    }.getOrElse(Left(notReadable(value, path)))
+    sizeOf(path)
+      .map { size =>
+        Right(PopItem("image", name, describe(path), size = Some(size), ext = Some(ext)))
+      }
+      .getOrElse(Left(notReadable(value, path)))
 
   private def referencedVideo(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
-    sizeOf(path).map { size =>
-      Right(PopItem("video", name, describe(path), size = Some(size), ext = Some(ext)))
-    }.getOrElse(Left(notReadable(value, path)))
+    sizeOf(path)
+      .map { size =>
+        Right(PopItem("video", name, describe(path), size = Some(size), ext = Some(ext)))
+      }
+      .getOrElse(Left(notReadable(value, path)))
 
   private def referencedAudio(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
-    sizeOf(path).map { size =>
-      Right(PopItem("audio", name, describe(path), size = Some(size), ext = Some(ext)))
-    }.getOrElse(Left(notReadable(value, path)))
+    sizeOf(path)
+      .map { size =>
+        Right(PopItem("audio", name, describe(path), size = Some(size), ext = Some(ext)))
+      }
+      .getOrElse(Left(notReadable(value, path)))
 
   /** File-card leg: exists + regular + size — Canvas readFile fetches the bytes on open. */
   private def fileCardItem(value: String, path: Path, ext: String, name: String): Either[RejectedRef, PopItem] =
@@ -523,8 +541,12 @@ Example (URL): {"filePath": "https://example.com"}"""
         Left(RejectedRef(value, Some(describe(path)), FileRefFailure.NotFound, s"no file at ${describe(path)}$hint"))
       else if !Files.isRegularFile(path) then
         Left(
-          RejectedRef(value, Some(describe(path)), FileRefFailure.NotRegularFile,
-            s"${describe(path)} is a directory or another non-regular file")
+          RejectedRef(
+            value,
+            Some(describe(path)),
+            FileRefFailure.NotRegularFile,
+            s"${describe(path)} is a directory or another non-regular file"
+          )
         )
       else
         val size = Files.size(path)
@@ -540,16 +562,26 @@ Example (URL): {"filePath": "https://example.com"}"""
         )
     catch
       case e: Exception =>
-        Left(RejectedRef(value, Some(describe(path)), FileRefFailure.Other,
-          s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
+        Left(
+          RejectedRef(
+            value,
+            Some(describe(path)),
+            FileRefFailure.Other,
+            s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+          )
+        )
 
   private def sizeOf(path: Path): Option[Long] =
     try Some(Files.size(path))
     catch case _: Exception => None
 
   private def notReadable(value: String, path: Path): RejectedRef =
-    RejectedRef(value, Some(describe(path)), FileRefFailure.NotReadable,
-      s"${describe(path)} is present but its size could not be read")
+    RejectedRef(
+      value,
+      Some(describe(path)),
+      FileRefFailure.NotReadable,
+      s"${describe(path)} is present but its size could not be read"
+    )
 
   // ── payload ───────────────────────────────────────────────────────────────
 
@@ -579,6 +611,8 @@ Example (URL): {"filePath": "https://example.com"}"""
       "items" -> Json.arr(items.map(itemJson)*)
     )
 
+  end payloadJson
+
   /**
    * The **model-facing projection** (Card's `modelFacingResult` precedent):
    * the payload's data URIs are browser food, and their size is exactly what
@@ -591,10 +625,20 @@ Example (URL): {"filePath": "https://example.com"}"""
     payloadOf(result) match
       case Some(p) =>
         val fileRefs = p.hcursor.downField("fileRefs").focus.getOrElse(Json.obj())
-        val media = p.hcursor.downField("items").focus.getOrElse(Json.arr()).asArray
-          .map(_.count(i => Set("image", "video", "audio").contains(i.hcursor.get[String]("kind").toOption.getOrElse(""))))
+        val media = p.hcursor
+          .downField("items")
+          .focus
+          .getOrElse(Json.arr())
+          .asArray
+          .map(
+            _.count(i => Set("image", "video", "audio").contains(i.hcursor.get[String]("kind").toOption.getOrElse("")))
+          )
           .getOrElse(0)
-        val files = p.hcursor.downField("items").focus.getOrElse(Json.arr()).asArray
+        val files = p.hcursor
+          .downField("items")
+          .focus
+          .getOrElse(Json.arr())
+          .asArray
           .map(_.count(i => i.hcursor.get[String]("kind").toOption.contains("file")))
           .getOrElse(0)
         Json
@@ -687,6 +731,7 @@ Example (URL): {"filePath": "https://example.com"}"""
                 val payload = payloadJson(items.toList, rejects.toList, notes.toList.distinct)
                 s"$Sentinel${payload.noSpaces}"
               }.map(Right(_))
+            end if
     end match
   end doCall
 
@@ -712,6 +757,8 @@ Example (URL): {"filePath": "https://example.com"}"""
           case _ => "?"
     s"Pop\n  ($label)"
 
+  end summarize
+
   def summarizeResult(input: JsonObject, result: String): String =
     result match
       case r if r.startsWith("Opened ") => r // URL leg, unchanged face
@@ -719,7 +766,9 @@ Example (URL): {"filePath": "https://example.com"}"""
         payloadOf(result) match
           case Some(p) =>
             val items = p.hcursor.downField("items").as[List[Json]].getOrElse(Nil)
-            val media = items.count(i => i.hcursor.get[String]("kind").toOption.exists(k => k == "image" || k == "video" || k == "audio"))
+            val media = items.count(i =>
+              i.hcursor.get[String]("kind").toOption.exists(k => k == "image" || k == "video" || k == "audio")
+            )
             val files = items.count(i => i.hcursor.get[String]("kind").toOption.contains("file"))
             val failed = p.hcursor.downField("fileRefs").get[Int]("failed").toOption.getOrElse(0)
             // Visibility (toolfail-batch discipline): a Pop whose items were

@@ -21,14 +21,20 @@ import nebflow.core.tools.ImageInject
 enum ContentClass:
   /** No attachment path reference: the existing text leg. */
   case Text
+
   /** Path extension is in the repo's single image table ([[ImageInject.imageExtensions]]). */
   case Image
+
   /** Path extension is in the repo's allowed-extension table and is not an image. */
   case Document
+
   /** The event carries a card product marker: this turn's visible product is an HTML card. */
   case Card
+
   /** Nothing matched. `reason` is never empty: an undecidable class is an explicit class. */
   case Unknown(reason: String)
+
+end ContentClass
 
 object ContentClass:
 
@@ -41,8 +47,10 @@ object ContentClass:
    */
   type StatProbe = os.Path => Option[Artifact]
 
-  /** Production probe. A path that cannot be read back is simply absent, which
-    * the caller turns into [[ContentClass.Unknown]] rather than an exception. */
+  /**
+   * Production probe. A path that cannot be read back is simply absent, which
+   * the caller turns into [[ContentClass.Unknown]] rather than an exception.
+   */
   val fsStat: StatProbe = p =>
     try
       if os.exists(p) then
@@ -51,9 +59,11 @@ object ContentClass:
       else None
     catch case _: Throwable => None
 
-  /** Lower-cased extension INCLUDING the dot (`.png`), or "" when there is none.
-    * A leading-dot name (`.gitignore`) counts as "no extension" -- the dot is at
-    * index 0 of the base name. */
+  /**
+   * Lower-cased extension INCLUDING the dot (`.png`), or "" when there is none.
+   * A leading-dot name (`.gitignore`) counts as "no extension" -- the dot is at
+   * index 0 of the base name.
+   */
   def extensionOf(name: String): String =
     val base = name.substring(name.lastIndexOf('/') + 1)
     val dot = base.lastIndexOf('.')
@@ -119,21 +129,22 @@ object ContentClass:
    * stays usable from any channel that can answer those two questions.
    */
   def classify(
-      cardMarker: Boolean,
-      paths: List[os.Path],
-      stat: StatProbe = fsStat,
-      table: ExtensionTable = emptyTable
+    cardMarker: Boolean,
+    paths: List[os.Path],
+    stat: StatProbe = fsStat,
+    table: ExtensionTable = emptyTable
   ): ContentClass =
     if cardMarker then Card
     else
       paths match
-        case Nil      => Text
-        case p :: _   => classifyPath(p, stat, table)
+        case Nil => Text
+        case p :: _ => classifyPath(p, stat, table)
 
   /** Plain-language reading of a class -- for logs and degraded text, never for credentials. */
   def describe(c: ContentClass): String = c match
-    case Text            => "text"
-    case Image           => "image"
-    case Document        => "document"
-    case Card            => "card"
+    case Text => "text"
+    case Image => "image"
+    case Document => "document"
+    case Card => "card"
     case Unknown(reason) => s"unknown ($reason)"
+end ContentClass

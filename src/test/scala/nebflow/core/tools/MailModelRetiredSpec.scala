@@ -8,12 +8,20 @@ import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.*
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had nebflow.gateway.{RateLimiter, SessionStore}; PR re-homed both to core
+import nebflow.core.{
+  RateLimiter,
+  SessionStore
+} // W1 shim: main had nebflow.gateway.{RateLimiter, SessionStore}; PR re-homed both to core
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -67,8 +75,8 @@ class MailModelRetiredSpec extends FunSuite:
     JsonObject.fromIterable(fields.map((k, v) => k -> Json.fromString(v)))
 
   private def ctx(
-      dispatcher: Boolean = false,
-      nebulaRoot: Boolean = false
+    dispatcher: Boolean = false,
+    nebulaRoot: Boolean = false
   ): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
@@ -84,11 +92,14 @@ class MailModelRetiredSpec extends FunSuite:
   /** Assert the call failed and return the error text (red-side evidence = the got text). */
   private def errOf(res: Either[ToolError, String], label: String): String =
     res match
-      case Left(e)  => e.message
+      case Left(e) => e.message
       case Right(v) => fail(s"$label: must be rejected, got: $v")
 
   private def prop(schema: JsonObject, name: String): JsonObject =
-    schema("properties").flatMap(_.asObject).flatMap(_(name)).flatMap(_.asObject)
+    schema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_(name))
+      .flatMap(_.asObject)
       .getOrElse(fail(s"parameter '$name' missing from the Mail schema"))
 
   private def propDesc(schema: JsonObject, name: String): String =
@@ -97,11 +108,13 @@ class MailModelRetiredSpec extends FunSuite:
   // ── resources fixture (kernel continuation leg reads the real agent registry) ──
 
   private class RecordingLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
@@ -139,7 +152,9 @@ class MailModelRetiredSpec extends FunSuite:
   // 1. (e) device key retired - tombstone first
   // ============================================================
 
-  test("① schema: the property set is exactly the 6 surviving keys; `device` and `type` are gone; required stays [message]"):
+  test(
+    "① schema: the property set is exactly the 6 surviving keys; `device` and `type` are gone; required stays [message]"
+  ):
     val props = MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("no properties"))
     assertEquals(
       props.keys.toSet,
@@ -164,33 +179,47 @@ class MailModelRetiredSpec extends FunSuite:
       s"the address description must NOT advertise the retired kernel forms (delegate is the trigger): $addr"
     )
 
-  test("① device tombstone: a stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED before everything (even before the required-parameter gates)"):
+  test(
+    "① device tombstone: a stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED before everything (even before the required-parameter gates)"
+  ):
     // with NO message and NO address: the tombstone still wins (it is read first)
     val bare = errOf(callRes(qIn("device" -> "KAI"), ctx()), "device + bare")
     assert(bare.contains(MailTool.ErrDeviceLegRetired), s"the tombstone must fire on a bare stale call, got: $bare")
     // with a full valid-shaped call: still the tombstone
-    val full = errOf(callRes(qIn("device" -> "KAI", "address" -> "project:any", "message" -> "hi"), ctx()), "device + full")
+    val full =
+      errOf(callRes(qIn("device" -> "KAI", "address" -> "project:any", "message" -> "hi"), ctx()), "device + full")
     assert(full.contains(MailTool.ErrDeviceLegRetired), s"the tombstone must fire on a shaped stale call, got: $full")
     // pure-constructor pin (the spec-visible seam the error text is built from)
     val pure = MailTool.deviceLegRetiredError("KAI")
     assert(pure.message.contains(MailTool.ErrDeviceLegRetired))
     assert(pure.message.contains("KAI"), s"the error must echo the offending value: ${pure.message}")
-    assert(pure.message.contains("SendMessage"), s"the error must give the way out (files go via SendMessage): ${pure.message}")
+    assert(
+      pure.message.contains("SendMessage"),
+      s"the error must give the way out (files go via SendMessage): ${pure.message}"
+    )
 
   // ============================================================
   // 2. (d) type key retired - fail-open BY RULING (stale value == absent)
   // ============================================================
 
-  test("② type: a stale `type=` value is indistinguishable from the key being absent (no tombstone - both engine branches are re-homed)"):
+  test(
+    "② type: a stale `type=` value is indistinguishable from the key being absent (no tombstone - both engine branches are re-homed)"
+  ):
     val c = ctx(dispatcher = true)
     val withType = callRes(qIn("address" -> "node:n-9", "message" -> "hi", "type" -> "FOLLOW_UP"), c)
     val withoutType = callRes(qIn("address" -> "node:n-9", "message" -> "hi"), c)
-    assertEquals(withType, withoutType,
-      "a stale type= value must be silently ignored (zero semantic left for it to carry)")
+    assertEquals(
+      withType,
+      withoutType,
+      "a stale type= value must be silently ignored (zero semantic left for it to carry)"
+    )
 
   test("② the P0 window exemption is the [INTERRUPT] literal (mechanism, not a type) - polarity table"):
     assert(MailTool.isDispatcherMailInterrupt("[INTERRUPT]\nbody"), "exact first line must match")
-    assert(MailTool.isDispatcherMailInterrupt("\n  [INTERRUPT]  \nbody"), "blank leading lines are skipped, trim applies")
+    assert(
+      MailTool.isDispatcherMailInterrupt("\n  [INTERRUPT]  \nbody"),
+      "blank leading lines are skipped, trim applies"
+    )
     assert(!MailTool.isDispatcherMailInterrupt("plain reply\n[INTERRUPT]"), "a later line must NOT bypass")
     assert(!MailTool.isDispatcherMailInterrupt("[interrupt]\nbody"), "lowercase must NOT bypass")
     assert(!MailTool.isDispatcherMailInterrupt("[INTERRUPT] now"), "adjacent text breaks the literal")
@@ -200,40 +229,69 @@ class MailModelRetiredSpec extends FunSuite:
   // 3. (b) kernel leg - Nebula-exclusive, not-live continuation, text-only start
   // ============================================================
 
-  test("③ bare-kernel spawn leg: ANY role mailing a bare `kernel` gets MAIL_KERNEL_SPAWN_UNSUPPORTED (Delegate is the trigger)"):
+  test(
+    "③ bare-kernel spawn leg: ANY role mailing a bare `kernel` gets MAIL_KERNEL_SPAWN_UNSUPPORTED (Delegate is the trigger)"
+  ):
     val system = ActorSystem(s"mailmodel-spawnret-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       for (label, c) <- List(
-        ("teamish ctx", ctx().copy(actorSystem = Some(system))),
-        ("dispatcher ctx", ctx(dispatcher = true).copy(actorSystem = Some(system))),
-        ("root ctx", ctx(nebulaRoot = true).copy(actorSystem = Some(system)))
-      ) do
+          ("teamish ctx", ctx().copy(actorSystem = Some(system))),
+          ("dispatcher ctx", ctx(dispatcher = true).copy(actorSystem = Some(system))),
+          ("root ctx", ctx(nebulaRoot = true).copy(actorSystem = Some(system)))
+        )
+      do
         val msg = errOf(callRes(qIn("address" -> "kernel", "message" -> "hi"), c), label)
-        assert(msg.contains(MailTool.ErrKernelSpawnRetired), s"$label: must carry the spawn-retired tombstone, got: $msg")
+        assert(
+          msg.contains(MailTool.ErrKernelSpawnRetired),
+          s"$label: must carry the spawn-retired tombstone, got: $msg"
+        )
         assert(msg.contains("Delegate"), s"$label: the tombstone must point at Delegate, got: $msg")
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
 
-  test("③ kernel exclusivity: a non-root sender mailing `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE (precedes every routing/resource gate)"):
+    end try
+
+  test(
+    "③ kernel exclusivity: a non-root sender mailing `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE (precedes every routing/resource gate)"
+  ):
     val system = ActorSystem(s"mailmodel-excl-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       for (label, addr, c) <- List(
-        ("teamish ctx, continuation", "kernel:delegate-kernel-abc12345", ctx().copy(actorSystem = Some(system))),
-        ("dispatcher ctx, continuation", "kernel:delegate-kernel-abc12345", ctx(dispatcher = true).copy(actorSystem = Some(system)))
-      ) do
+          ("teamish ctx, continuation", "kernel:delegate-kernel-abc12345", ctx().copy(actorSystem = Some(system))),
+          (
+            "dispatcher ctx, continuation",
+            "kernel:delegate-kernel-abc12345",
+            ctx(dispatcher = true).copy(actorSystem = Some(system))
+          )
+        )
+      do
         val msg = errOf(callRes(qIn("address" -> addr, "message" -> "hi"), c), label)
         assert(msg.contains(MailTool.ErrKernelExclusive), s"$label: must carry the exclusive code, got: $msg")
-        assert(!msg.contains("missing resources") && !msg.contains("No actor system"),
-          s"$label: the exclusive gate must fire BEFORE the resource gates, got: $msg")
+        assert(
+          !msg.contains("missing resources") && !msg.contains("No actor system"),
+          s"$label: the exclusive gate must fire BEFORE the resource gates, got: $msg"
+        )
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
 
-  test("③ kernel exclusivity: the Nebula-root role passes the exclusive gate on `kernel:<id>` (the error degrades to the fixture-level missing-resources face, never the exclusive one)"):
-    val msg = errOf(callRes(qIn("address" -> "kernel:delegate-kernel-abc12345", "message" -> "hi"), ctx(nebulaRoot = true)), "root + kernel:<id>")
-    assert(!msg.contains(MailTool.ErrKernelExclusive), s"the root must NOT be refused by the exclusive gate, got: $msg")
-    assert(!msg.contains(MailTool.ErrKernelSpawnRetired), s"the continuation address must not hit the spawn tombstone, got: $msg")
+    end try
 
-  test("③ delegate continuation miss: `kernel:<id>`/`delegate:<id>` against an empty registry is DELEGATE_NOT_FOUND (fail-closed, unified-delegate batch)"):
+  test(
+    "③ kernel exclusivity: the Nebula-root role passes the exclusive gate on `kernel:<id>` (the error degrades to the fixture-level missing-resources face, never the exclusive one)"
+  ):
+    val msg = errOf(
+      callRes(qIn("address" -> "kernel:delegate-kernel-abc12345", "message" -> "hi"), ctx(nebulaRoot = true)),
+      "root + kernel:<id>"
+    )
+    assert(!msg.contains(MailTool.ErrKernelExclusive), s"the root must NOT be refused by the exclusive gate, got: $msg")
+    assert(
+      !msg.contains(MailTool.ErrKernelSpawnRetired),
+      s"the continuation address must not hit the spawn tombstone, got: $msg"
+    )
+
+  test(
+    "③ delegate continuation miss: `kernel:<id>`/`delegate:<id>` against an empty registry is DELEGATE_NOT_FOUND (fail-closed, unified-delegate batch)"
+  ):
     val tmp = os.temp.dir(prefix = "mailmodel-notlive")
     val system = ActorSystem(s"mailmodel-notlive-${java.util.UUID.randomUUID().toString.take(6)}")
     try
@@ -245,17 +303,25 @@ class MailModelRetiredSpec extends FunSuite:
       assert(msg.contains("DELEGATE_NOT_FOUND"), s"a registry miss must be the not-found error, got: $msg")
       assert(msg.contains("delegate-kernel-deadbeef"), s"the error must echo the id, got: $msg")
       // 新形态同面：delegate:<id> 未注册同样是 DELEGATE_NOT_FOUND。
-      val msg2 = errOf(callRes(qIn("address" -> "delegate:delegate-kernel-deadbeef", "message" -> "hi"), c), "not-live-new-form")
+      val msg2 =
+        errOf(callRes(qIn("address" -> "delegate:delegate-kernel-deadbeef", "message" -> "hi"), c), "not-live-new-form")
       assert(msg2.contains("DELEGATE_NOT_FOUND"), s"the new form shares the miss face, got: $msg2")
       // pure-constructor pin
       val pure = MailTool.kernelNotLiveError("delegate-kernel-x")
       assert(pure.message.contains(MailTool.ErrKernelNotLive))
-      assert(pure.message.contains("Delegate"), s"the error must name the way out (start a new one with Delegate): ${pure.message}")
+      assert(
+        pure.message.contains("Delegate"),
+        s"the error must name the way out (start a new one with Delegate): ${pure.message}"
+      )
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       os.remove.all(tmp)
 
-  test("③ kernel spawn leg: a bare `kernel` tombstones even with images attached (MAIL_KERNEL_SPAWN_UNSUPPORTED), nothing is spawned"):
+    end try
+
+  test(
+    "③ kernel spawn leg: a bare `kernel` tombstones even with images attached (MAIL_KERNEL_SPAWN_UNSUPPORTED), nothing is spawned"
+  ):
     val tmp = os.temp.dir(prefix = "mailmodel-kimg")
     val system = ActorSystem(s"mailmodel-kimg-${java.util.UUID.randomUUID().toString.take(6)}")
     try
@@ -266,7 +332,10 @@ class MailModelRetiredSpec extends FunSuite:
       val input = qIn("address" -> "kernel", "message" -> "hi")
         .add("images", Json.arr(img.toString.asJson))
       val msg = errOf(callRes(input, c), "kernel + images")
-      assert(msg.contains(MailTool.ErrKernelSpawnRetired), s"the retired spawn leg must tombstone (no resource gates first), got: $msg")
+      assert(
+        msg.contains(MailTool.ErrKernelSpawnRetired),
+        s"the retired spawn leg must tombstone (no resource gates first), got: $msg"
+      )
       // pure-constructor pin
       val pure = MailTool.kernelSpawnRetiredError("kernel")
       assert(pure.message.contains(MailTool.ErrKernelSpawnRetired))
@@ -274,6 +343,8 @@ class MailModelRetiredSpec extends FunSuite:
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       os.remove.all(tmp)
+
+    end try
 
   test("③ kernel error texts are self-contained (the receipt faces the model actually reads)"):
     val excl = MailTool.kernelExclusiveError("kernel", "Teamish")
@@ -297,7 +368,9 @@ class MailModelRetiredSpec extends FunSuite:
     assert(d.contains(MailTool.ErrDeviceLegRetired), "the device retirement code must be named")
     assert(d.contains("[INTERRUPT]"), "the window-bypass literal must be documented")
 
-  test("④ role projection: the kernel ADDRESS forms live ONLY in the Nebula-root face (other roles keep only the shared vision/attachment mentions of the word)"):
+  test(
+    "④ role projection: the kernel ADDRESS forms live ONLY in the Nebula-root face (other roles keep only the shared vision/attachment mentions of the word)"
+  ):
     val root = MailTool.descriptionRoot
     val disp = MailTool.descriptionDispatcher
     val team = MailTool.descriptionBase
@@ -306,7 +379,10 @@ class MailModelRetiredSpec extends FunSuite:
     assert(root.contains("`kernel:<id>`"), "the root face must document the continuation form")
     // the dispatcher/base faces must NOT advertise the kernel ADDRESS forms (the word
     // "kernel" itself may still appear in the shared images/attachments sections)
-    assert(!disp.contains("## Kernel continuation leg"), "the dispatcher face must NOT carry the kernel continuation-leg section")
+    assert(
+      !disp.contains("## Kernel continuation leg"),
+      "the dispatcher face must NOT carry the kernel continuation-leg section"
+    )
     assert(!disp.contains("`kernel:<id>` — continue"), "the dispatcher face must NOT carry the root address line")
     // the BASE face is the Q5 union face (fail-closed default for unknown identity): it
     // may carry the section, but ONLY together with the exclusivity statement - a
@@ -316,7 +392,6 @@ class MailModelRetiredSpec extends FunSuite:
       assert(team.contains("Nebula-exclusive"), "the base face must carry the exclusivity statement beside the section")
     // the projection contract stays intact: every role face is derived from the base by
     // pure section deletion (ToolFaceVariantSpec pins the byte-level form)
-    assert(MailTool.descriptionRoot.length <= MailTool.descriptionBase.length,
-      "the projection must be deletion-only")
+    assert(MailTool.descriptionRoot.length <= MailTool.descriptionBase.length, "the projection must be deletion-only")
 
 end MailModelRetiredSpec

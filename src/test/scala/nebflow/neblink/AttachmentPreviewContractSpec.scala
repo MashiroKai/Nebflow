@@ -33,25 +33,41 @@ class AttachmentPreviewContractSpec extends FunSuite:
   private def jsonOf(s: String): Json =
     parse(s) match
       case Right(j) => j
-      case Left(e)  => fail(s"bad test json: ${e.getMessage}")
+      case Left(e) => fail(s"bad test json: ${e.getMessage}")
 
-  /** **改前字面量夹具**（判据 ⑥ 的独立参照）：这是本批改动前 `AttachmentSummary` 的唯一出参
-    * 形态 —— 手写字面量（**不是**由被测编码器产出），故「逐字节相等」是同一条判据的真检查。 */
-  private val legacyLiteral = """{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready"}"""
+  /**
+   * **改前字面量夹具**（判据 ⑥ 的独立参照）：这是本批改动前 `AttachmentSummary` 的唯一出参
+   * 形态 —— 手写字面量（**不是**由被测编码器产出），故「逐字节相等」是同一条判据的真检查。
+   */
+  private val legacyLiteral =
+    """{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready"}"""
   private val legacyNoMimeLiteral = """{"id":"a1","name":"p.jpg","size":900000,"sha256":"ab12","state":"ready"}"""
 
   private val legacySummary =
-    AttachmentSummary(id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready", mime = Some("image/jpeg"))
+    AttachmentSummary(
+      id = "a1",
+      name = "p.jpg",
+      size = 900000L,
+      sha256 = "ab12",
+      state = "ready",
+      mime = Some("image/jpeg")
+    )
 
-  private val b64Nine = "AQIDBAUGBwgJ"          // 9 字节 ⇒ 12 字符（4 × ceil(9/3)）
-  private val sha64   = "a" * 64
+  private val b64Nine = "AQIDBAUGBwgJ" // 9 字节 ⇒ 12 字符（4 × ceil(9/3)）
+  private val sha64 = "a" * 64
 
   /** 方言 A 的夹具（五键，full MIME，无摘要）。 */
   private def previewAJson(w: Int = 4, h: Int = 3, size: Long = 9L, b64: String = b64Nine): String =
     s"""{"mime":"image/webp","w":$w,"h":$h,"size":$size,"b64":"$b64"}"""
 
   /** 方言 B 的夹具（六键，裸格式名，带摘要）。 */
-  private def previewBJson(w: Int = 4, h: Int = 3, size: Long = 9L, sha: String = sha64, b64: String = b64Nine): String =
+  private def previewBJson(
+    w: Int = 4,
+    h: Int = 3,
+    size: Long = 9L,
+    sha: String = sha64,
+    b64: String = b64Nine
+  ): String =
     s"""{"fmt":"webp","w":$w,"h":$h,"bytes":$size,"sha256":"$sha","b64":"$b64"}"""
 
   private val goodA = jsonOf(previewAJson())
@@ -62,8 +78,14 @@ class AttachmentPreviewContractSpec extends FunSuite:
   test("dialects: both known spellings are registered; key order is derived; unknown ids are refused") {
     assertEquals(AttachmentPreviewContract.PreviewKey, "preview")
     assertEquals(AttachmentPreviewContract.dialectIds, List("mime5", "fmt6"))
-    assertEquals(AttachmentPreviewContract.previewDialect("mime5").map(_.keyOrder), Some(List("mime", "w", "h", "size", "b64")))
-    assertEquals(AttachmentPreviewContract.previewDialect("fmt6").map(_.keyOrder), Some(List("fmt", "w", "h", "bytes", "sha256", "b64")))
+    assertEquals(
+      AttachmentPreviewContract.previewDialect("mime5").map(_.keyOrder),
+      Some(List("mime", "w", "h", "size", "b64"))
+    )
+    assertEquals(
+      AttachmentPreviewContract.previewDialect("fmt6").map(_.keyOrder),
+      Some(List("fmt", "w", "h", "bytes", "sha256", "b64"))
+    )
     assertEquals(AttachmentPreviewContract.previewDialect("never-heard-of-it"), None)
     // 默认发面方言必须是**登记在册**的一条（政策旋钮不能指到表外）
     assert(AttachmentPreviewContract.previewDialect(AttachmentPreviewContract.DefaultSendDialectId).isDefined)
@@ -100,8 +122,18 @@ class AttachmentPreviewContractSpec extends FunSuite:
     assertEquals(AttachmentPreviewContract.parseIn(AttachmentPreviewContract.MimeFiveKey, goodB), None)
     assertEquals(AttachmentPreviewContract.parseIn(AttachmentPreviewContract.FormatSixKey, goodA), None)
     // 附件层入口（真收面路径）：同一个附件对象，两版载荷都读得进
-    assertEquals(AttachmentPreviewContract.parsePreviewAttachment(jsonOf(s"""{"id":"a1","preview":${previewAJson()}}""")).map(_.dialectId), Some("mime5"))
-    assertEquals(AttachmentPreviewContract.parsePreviewAttachment(jsonOf(s"""{"id":"a1","preview":${previewBJson()}}""")).map(_.dialectId), Some("fmt6"))
+    assertEquals(
+      AttachmentPreviewContract
+        .parsePreviewAttachment(jsonOf(s"""{"id":"a1","preview":${previewAJson()}}"""))
+        .map(_.dialectId),
+      Some("mime5")
+    )
+    assertEquals(
+      AttachmentPreviewContract
+        .parsePreviewAttachment(jsonOf(s"""{"id":"a1","preview":${previewBJson()}}"""))
+        .map(_.dialectId),
+      Some("fmt6")
+    )
   }
 
   // ── 判据 ②：发面不写死（同一表示 → 两套键名，由参数决定）─────────────
@@ -137,9 +169,14 @@ class AttachmentPreviewContractSpec extends FunSuite:
     val hybrid = jsonOf(s"""{"mime":"image/webp","w":4,"h":3,"bytes":9,"sha256":"$sha64","b64":"$b64Nine"}""")
     assertEquals(AttachmentPreviewContract.parsePreview(hybrid), None)
     // 附件整体仍然解得出（降级可见、**不**炸）；既有键逐字段不变
-    val att = jsonOf(s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":$thirdParty}""")
+    val att = jsonOf(
+      s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":$thirdParty}"""
+    )
     assertEquals(att.as[AttachmentSummary].map(_.preview), Right(None))
-    assertEquals(att.as[AttachmentSummary].map(a => (a.id, a.name, a.size, a.sha256, a.state)), Right(("a1", "p.jpg", 900000L, "ab12", "ready")))
+    assertEquals(
+      att.as[AttachmentSummary].map(a => (a.id, a.name, a.size, a.sha256, a.state)),
+      Right(("a1", "p.jpg", 900000L, "ab12", "ready"))
+    )
     // 形状非对象
     assertEquals(AttachmentPreviewContract.parsePreview(Json.Null), None)
     assertEquals(AttachmentPreviewContract.parsePreview(Json.fromString("webp")), None)
@@ -171,7 +208,12 @@ class AttachmentPreviewContractSpec extends FunSuite:
     assertEquals(noMime.asJson.noSpaces, legacyNoMimeLiteral)
     // 解码面：旧形态（无该键）与显式 null 都 ⇒ None，且既有六键取值不变
     assertEquals(jsonOf(legacyLiteral).as[AttachmentSummary], Right(legacySummary))
-    assertEquals(jsonOf(s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":null}""").as[AttachmentSummary].toOption.flatMap(_.preview), None)
+    assertEquals(
+      jsonOf(
+        s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":null}"""
+      ).as[AttachmentSummary].toOption.flatMap(_.preview),
+      None
+    )
   }
 
   // ── 判据 ⑦：上限族逐条边界（两版同判）──────────────────────────────
@@ -195,7 +237,10 @@ class AttachmentPreviewContractSpec extends FunSuite:
     assert(AttachmentPreviewContract.sha256HexOk("0" * 64))
     assert(!AttachmentPreviewContract.sha256HexOk("0" * 64 + " "))
     // B **必须**带摘要：把它整键删掉 ⇒ 不成形状（不是「退化成 A」）
-    assertEquals(AttachmentPreviewContract.parsePreview(Json.fromFields(goodB.asObject.get.toList.filterNot(_._1 == "sha256"))), None)
+    assertEquals(
+      AttachmentPreviewContract.parsePreview(Json.fromFields(goodB.asObject.get.toList.filterNot(_._1 == "sha256"))),
+      None
+    )
     // b64 串长上限（先验长、再解码）
     assertEquals(AttachmentPreviewContract.parsePreview(jsonOf(previewAJson(size = 9L, b64 = "A" * 349529))), None)
     // 长度与字节数不自洽（免解码完整性判据）
@@ -203,14 +248,25 @@ class AttachmentPreviewContractSpec extends FunSuite:
     assertEquals(AttachmentPreviewContract.parsePreview(jsonOf(previewBJson(size = 9L, b64 = "AQIDBAU"))), None)
     // mime 取值域：A 只认 full MIME、B 只认裸格式名（互不接受对方的拼法）
     assertEquals(AttachmentPreviewContract.parsePreview(jsonOf(previewAJson().replace("image/webp", "webp"))), None)
-    assertEquals(AttachmentPreviewContract.parsePreview(jsonOf(previewBJson().replace("\"webp\"", "\"image/webp\""))), None)
+    assertEquals(
+      AttachmentPreviewContract.parsePreview(jsonOf(previewBJson().replace("\"webp\"", "\"image/webp\""))),
+      None
+    )
     // 各自缺一个键 ⇒ 整体不可用（无「部分预览」形态）
     for k <- AttachmentPreviewContract.MimeFiveKey.keyOrder do
       val o = goodA.asObject.get.remove(k)
-      assertEquals(AttachmentPreviewContract.parsePreview(Json.fromJsonObject(o)), None, s"missing '$k' must refuse the five-key field")
+      assertEquals(
+        AttachmentPreviewContract.parsePreview(Json.fromJsonObject(o)),
+        None,
+        s"missing '$k' must refuse the five-key field"
+      )
     for k <- AttachmentPreviewContract.FormatSixKey.keyOrder do
       val o = goodB.asObject.get.remove(k)
-      assertEquals(AttachmentPreviewContract.parsePreview(Json.fromJsonObject(o)), None, s"missing '$k' must refuse the six-key field")
+      assertEquals(
+        AttachmentPreviewContract.parsePreview(Json.fromJsonObject(o)),
+        None,
+        s"missing '$k' must refuse the six-key field"
+      )
   }
 
   // ── 判据 ⑧：旧服务端形态（无 preview 键）⇒ 零报错、逐字段不变 ────────
@@ -226,8 +282,12 @@ class AttachmentPreviewContractSpec extends FunSuite:
     // 网关 REST 出口的重编码（旧服务端 × 新客户端）：仍与该行的旧字节形态逐字节相等
     assertEquals(head.asJson.noSpaces, legacyLiteral)
     // 带**某一版方言**预览的那一行：既有键逐字段不变 + 预览按**那一版**回写
-    val withA = jsonOf(s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":${previewAJson()}}""")
-    val withB = jsonOf(s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":${previewBJson()}}""")
+    val withA = jsonOf(
+      s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":${previewAJson()}}"""
+    )
+    val withB = jsonOf(
+      s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":${previewBJson()}}"""
+    )
     assertEquals(withA.asJson.noSpaces, legacyLiteral.dropRight(1) + "," + s""""preview":${previewAJson()}}""")
     assertEquals(withB.asJson.noSpaces, legacyLiteral.dropRight(1) + "," + s""""preview":${previewBJson()}}""")
   }
@@ -240,7 +300,10 @@ class AttachmentPreviewContractSpec extends FunSuite:
       val out = withPreview.asJson.noSpaces
       assert(out.startsWith(legacyLiteral.dropRight(1) + ","), s"legacy key prefix changed: $out")
       assert(out.endsWith("}"), s"unexpected tail: $out")
-      assert(out.contains("," + "\"" + AttachmentPreviewContract.PreviewKey + "\":"), s"preview must be appended last: $out")
+      assert(
+        out.contains("," + "\"" + AttachmentPreviewContract.PreviewKey + "\":"),
+        s"preview must be appended last: $out"
+      )
       // 附件对象面往返：解码 → 预览逐字段等价 + 方言 id 保持（出参 → 入参同形）
       val back = jsonOf(out).as[AttachmentSummary].toOption.get
       assertEquals(back, withPreview)

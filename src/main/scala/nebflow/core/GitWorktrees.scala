@@ -133,6 +133,10 @@ object GitWorktrees:
             err
           }
 
+    end match
+
+  end createWorktree
+
   /**
    * Create a plain branch (no checkout, no worktree) — the S13 no-worktree
    * leg: `git branch <branch> <baseRef>` in the project itself; the shared
@@ -148,13 +152,128 @@ object GitWorktrees:
   def branchExists(ws: os.Path, branch: String): Boolean =
     Try(git(ws, "rev-parse", "--verify", "--quiet", branch)).toOption.exists(_.isRight)
 
-  /** Per-project merge-contention key — the same semantics as the old engine's
-    * merge mutex key: `realpath(git-common-dir)` (a worktree and its main repo
-    * share ONE key), falling back to the canonical workspace path when the
-    * directory is not inside a git repo. Owned here (not imported from the
-    * `core.project` engine family) so the delegate family carries zero
-    * dependency on surfaces scheduled for #1229 removal.
-    */
+  /**
+   * Count of branch commits not reachable from `baseBranch`（`git log --oneline
+   * <base>..<branch>` 行数）—— ready-to-merge 资格的确定性读数（空分支不得进
+   * 合并轮：`git merge --no-ff` 对祖先分支只会 Already up-to-date，空轮无产物）。
+   * Fail-soft 形态同 [[statusDigest]]：git 面任何一步不可读（非 repo / ref 不
+   * 存在 / git 失败）计 0，绝不抛。
+   */
+  def commitsAhead(ws: os.Path, baseBranch: String, branch: String): Int =
+    Try(git(ws, "log", "--oneline", s"$baseBranch..$branch")).toOption
+      .flatMap(_.toOption)
+      .map(out => out.linesIterator.count(_.trim.nonEmpty))
+      .getOrElse(0)
+
+  /**
+   * One commit's identity for read-only range enumeration（漂移闸归因读数：sha +
+   * 全部父 sha + 标题——父数 ≥2 = merge 提交，父[1] = 被合并分支的 tip）。
+   */
+  final case class CommitInfo(sha: String, parents: List[String], subject: String)
+
+  /**
+   * Full commit sha of a ref (`rev-parse --verify --quiet`)，ref 缺失/不可读 = None
+   * （fail-soft——漂移闸的「不可确证」通道，与 [[commitsAhead]] 的计 0 同族但保真：
+   * 这里 None 必须与「读到了但值如此」可分）。
+   */
+  def resolveRef(ws: os.Path, ref: String): Option[String] =
+    Try(git(ws, "rev-parse", "--verify", "--quiet", s"$ref^{commit}")).toOption
+      .flatMap(_.toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+  /** Merge-base of two refs (full sha)，任一 ref 不可读 = None（fail-soft 同上）。 */
+  def mergeBase(ws: os.Path, a: String, b: String): Option[String] =
+    Try(git(ws, "merge-base", a, b)).toOption
+      .flatMap(_.toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+  /**
+   * True when `a` is an ancestor of (or equal to) `b`（`merge-base --is-ancestor`，
+   * rc 0/1 语义可分）——漂移闸搭载提交随并归属的判据；rc ≥2 = 不可确证 = None。
+   */
+  def isAncestor(ws: os.Path, a: String, b: String): Option[Boolean] =
+    Try {
+      val res = os
+        .proc("git", "-C", ws.toString, "merge-base", "--is-ancestor", a, b)
+        .call(cwd = ws, check = false, mergeErrIntoOut = true)
+      res.exitCode match
+        case 0 => Some(true)
+        case 1 => Some(false)
+        case _ => None
+    }.toOption.flatten
+
+  /**
+   * Commits reachable from `to` but not from `from`（`git log from..to`，新→旧）；
+   * 任一行解析失败 = 整体 None（全有或全无——部分真值不进漂移闸证据）。
+   */
+  def rangeCommits(ws: os.Path, from: String, to: String): Option[List[CommitInfo]] =
+    Try(git(ws, "log", "--format=%H%x01%P%x01%s", s"$from..$to")).toOption
+      .flatMap(_.toOption)
+      .map(_.linesIterator.filter(_.trim.nonEmpty).toList)
+      .flatMap(lines => lines.traverse(parseCommitInfo))
+
+  // unit-separated log line: sha ␁ parents(space-joined) ␁ subject
+  private def parseCommitInfo(line: String): Option[CommitInfo] =
+    line.split('\u0001') match
+      case Array(sha, parents, subject) =>
+        Some(CommitInfo(sha.trim, parents.trim.split(" ").toList.filter(_.nonEmpty), subject))
+      case _ => None
+
+  /** Local branch tips as `(shortName, fullSha)`，任一行解析失败 = None（fail-soft 同上）。 */
+  def branchTips(ws: os.Path): Option[List[(String, String)]] =
+    Try(git(ws, "for-each-ref", "refs/heads", "--format=%(objectname) %(refname:short)")).toOption
+      .flatMap(_.toOption)
+      .map(_.linesIterator.filter(_.trim.nonEmpty).toList)
+      .flatMap(lines => lines.traverse(parseRefLine))
+
+  private def parseRefLine(line: String): Option[(String, String)] =
+    line.trim.split(" ", 2) match
+      case Array(sha, name) if sha.nonEmpty && name.nonEmpty => Some((name, sha))
+      case _ => None
+
+  /**
+   * One commit's identity by ref (`git log -1 <ref>`) — the mechanical merge
+   * acceptance gate's parent-structure reading (P1-1①: base HEAD must be a
+   * two-parent merge whose 2nd parent is the delegate branch tip). ref 不可读 /
+   * 行解析失败 = None（fail-soft 同 [[resolveRef]] 家族）。
+   */
+  def commitInfo(ws: os.Path, ref: String): Option[CommitInfo] =
+    Try(git(ws, "log", "--format=%H%x01%P%x01%s", "-1", ref)).toOption
+      .flatMap(_.toOption)
+      .flatMap(_.linesIterator.filter(_.trim.nonEmpty).toList.headOption)
+      .flatMap(parseCommitInfo)
+
+  /**
+   * Remove a worktree (`git worktree remove <path>`) — NO force. Post-merge
+   * cleanup (P2-4) only: a dirty/locked worktree is refused by git itself and
+   * the caller keeps the scene (WARN only, never force).
+   */
+  def removeWorktree(ws: os.Path, path: String): Either[String, String] =
+    git(ws, "worktree", "remove", path).leftMap { err =>
+      logger.warn(s"git worktree remove '$path' failed (kept in place): $err")
+      err
+    }
+
+  /**
+   * Delete a branch (`git branch -d <branch>`) — lowercase -d ONLY (git refuses
+   * unmerged branches; the zero-ahead guard). Never -D (P2-4 守卫：绝不 force).
+   */
+  def deleteBranch(ws: os.Path, branch: String): Either[String, String] =
+    git(ws, "branch", "-d", branch).leftMap { err =>
+      logger.warn(s"git branch -d '$branch' failed (kept): $err")
+      err
+    }
+
+  /**
+   * Per-project merge-contention key — the same semantics as the old engine's
+   * merge mutex key: `realpath(git-common-dir)` (a worktree and its main repo
+   * share ONE key), falling back to the canonical workspace path when the
+   * directory is not inside a git repo. Owned here (not imported from the
+   * `core.project` engine family) so the delegate family carries zero
+   * dependency on surfaces scheduled for #1229 removal.
+   */
   def projectKeyOf(ws: os.Path): String =
     val common = Try(git(ws, "rev-parse", "--git-common-dir")).toOption.flatMap(_.toOption).map(_.trim)
     common match
@@ -179,14 +298,13 @@ object GitWorktrees:
 
     val branchLine = currentBranch(ws) match
       case Some(b) => s"branch: $b"
-      case None    => "branch: (detached or unknown)"
+      case None => "branch: (detached or unknown)"
     val base = baseBranch.filter(_.nonEmpty)
     val commitLines =
       base match
         case None => Nil
         case Some(b) =>
-          Try(git(ws, "log", "--oneline", "--max-count=5", s"$b..HEAD"))
-            .toOption
+          Try(git(ws, "log", "--oneline", "--max-count=5", s"$b..HEAD")).toOption
             .flatMap(_.toOption)
             .map(_.linesIterator.toList.filter(_.nonEmpty))
             .getOrElse(Nil)
@@ -202,9 +320,12 @@ object GitWorktrees:
       List(
         Some(branchLine) ++ base.map(b => s"base: $b"),
         section("commits ahead of base (max 5)", commitLines),
-        section("uncommitted changes (max 10)", plainDirty.take(10)).map(s => s + (if plainDirty.size > 10 then s"\n  … (+${plainDirty.size - 10} more)" else "")),
+        section("uncommitted changes (max 10)", plainDirty.take(10)).map(s =>
+          s + (if plainDirty.size > 10 then s"\n  … (+${plainDirty.size - 10} more)" else "")
+        ),
         section("unmerged (conflict) paths", unmergedLines.take(10))
       ).flatten
     sections.mkString("\n")
+  end statusDigest
 
 end GitWorktrees

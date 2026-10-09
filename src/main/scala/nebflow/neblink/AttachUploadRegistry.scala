@@ -57,9 +57,11 @@ final class AttachUploadRegistry(
   /** 在飞 id 快照（读数/诊断用）。 */
   def inFlight: IO[Set[String]] = ref.get.map(_.filterNot(_.startsWith(AttachUploadRegistry.CancelPrefix)))
 
-  /** 暂存一枚预览申报（同 `uploadId` 重复暂存 = **替换**，浏览器重试申报天然幂等）。
-    * `declaredDialect` = 客户端在查询参数里**另说**的方言 id（`None` = 未说）。
-    * 表满（≥ [[AttachUploadRegistry.PreviewStageCap]]）⇒ `false`（调用方按「无预览」收场）。 */
+  /**
+   * 暂存一枚预览申报（同 `uploadId` 重复暂存 = **替换**，浏览器重试申报天然幂等）。
+   * `declaredDialect` = 客户端在查询参数里**另说**的方言 id（`None` = 未说）。
+   * 表满（≥ [[AttachUploadRegistry.PreviewStageCap]]）⇒ `false`（调用方按「无预览」收场）。
+   */
   def stagePreview(
     uploadId: String,
     p: AttachmentPreview,
@@ -106,13 +108,16 @@ object AttachUploadRegistry:
 
   def create: IO[AttachUploadRegistry] =
     for
-      r  <- Ref.of[IO, Set[String]](Set.empty)
+      r <- Ref.of[IO, Set[String]](Set.empty)
       pv <- Ref.of[IO, Vector[(String, AttachmentPreview, Option[String])]](Vector.empty)
     yield new AttachUploadRegistry(r, pv)
 
-  /** 供 [[nebflow.agent.SharedResources]] 的字段缺省值使用（同其既有 `Ref.unsafe` 先例：
-    * 缺省值只在构造期求值一次，构造方 = GatewayMain 单点）。 */
+  /**
+   * 供 [[nebflow.agent.SharedResources]] 的字段缺省值使用（同其既有 `Ref.unsafe` 先例：
+   * 缺省值只在构造期求值一次，构造方 = GatewayMain 单点）。
+   */
   def unsafe: AttachUploadRegistry = new AttachUploadRegistry(
     Ref.unsafe[IO, Set[String]](Set.empty),
     Ref.unsafe[IO, Vector[(String, AttachmentPreview, Option[String])]](Vector.empty)
   )
+end AttachUploadRegistry

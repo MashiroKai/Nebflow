@@ -64,17 +64,19 @@ object JevTaskSearchRerank:
           if candidates.isEmpty then IO.pure(None)
           else
             val catalog = candidates.map(c => nebflow.core.jev.CatalogEntry(sanitizeName(c.id), c.text))
-            a.allocate(query, catalog).map {
-              case JevAllocation.Allocated(selected) =>
-                val sel = selected.toSet
-                // 入选者在前、未入选者续后（两组各自保持候选原序）；全集排列。
-                val inSet = candidates.collect { case c if sel.contains(sanitizeName(c.id)) => c.id }
-                val rest = candidates.map(_.id).filterNot(id => sel.contains(sanitizeName(id)))
-                Some(inSet ++ rest)
-              case _: JevAllocation.FellBack => None
-            }.handleErrorWith { e =>
-              IO(logger.warnSync(s"jev rerank allocate failed (${e.getClass.getSimpleName}) — skipped")).as(None)
-            }
+            a.allocate(query, catalog)
+              .map {
+                case JevAllocation.Allocated(selected) =>
+                  val sel = selected.toSet
+                  // 入选者在前、未入选者续后（两组各自保持候选原序）；全集排列。
+                  val inSet = candidates.collect { case c if sel.contains(sanitizeName(c.id)) => c.id }
+                  val rest = candidates.map(_.id).filterNot(id => sel.contains(sanitizeName(id)))
+                  Some(inSet ++ rest)
+                case _: JevAllocation.FellBack => None
+              }
+              .handleErrorWith { e =>
+                IO(logger.warnSync(s"jev rerank allocate failed (${e.getClass.getSimpleName}) — skipped")).as(None)
+              }
   end faceFor
 
 end JevTaskSearchRerank

@@ -528,7 +528,38 @@ class WebSocketRoutes(
           for
             rootSid <- resolveRootSessionId(sessionId)
             _ <- logger.info(
-              s"bridge interaction answer: requestId=$requestId root=$rootSid keys=${payload.asObject.map(_.keys.toList.mkString(",")).getOrElse("-")}")
+              s"bridge interaction answer: requestId=$requestId root=$rootSid keys=${payload.asObject.map(_.keys.toList.mkString(",")).getOrElse("-")}"
+            )
+            // askuser-remote P1 反射补口（2026-10-09，feishu-answer-card-flip）：
+            // 桥面作答此前只进 hub + 会话注入，桌面端两面都收不到（.ui.json 无作答行
+            // ⇒ 刷新后历史卡永远「未答」；无关卡帧 ⇒ 活卡不翻面——2026-10-09 12:36
+            // 用户报单根因）。web 腿（handleAskUserAnswer）两面都做，此处对齐：
+            // 落库行（同款单一构造点）+ askUserAnsweredRemote 翻面帧。两面 best-effort
+            // （与取消落盘同款降级：失败只 WARN，作答照常进 hub）；askUser 形闸由
+            // BridgeAnswerReflection 单点把持（许可类载荷 ⇒ 双跳过，改前行为不变）。
+            // 秘密槽判据走 hub 只读查询（SecretSlotsOf，与 web 腿 secretSlotsFor 同一
+            // 权威同一形态；查询失败 ⇒ 空集，hub 侧守卫兜底拒收明文回流）。
+            secretIdxs <- hub
+              .?[Option[List[nebflow.actor.SecretSlotSpec]]](reply =>
+                nebflow.actor.InteractionHubCommand.SecretSlotsOf(requestId, reply))
+              .map(_.getOrElse(Nil).map(_.idx).toSet)
+              .handleErrorWith(_ => IO.pure(Set.empty[Int]))
+            _ <- BridgeAnswerReflection.rowFor(requestId, payload, secretIdxs).traverse_ { row =>
+                  sharedResources.sessionStore
+                    .appendUiMessages(rootSid, List(row))
+                    .handleErrorWith(e =>
+                      logger.warn(
+                        s"bridge answer ui-row append failed requestId=$requestId root=$rootSid: ${e.getMessage}"
+                      )
+                    )
+                }
+            _ <- BridgeAnswerReflection.frame(rootSid, requestId, payload, secretIdxs).traverse_ { f =>
+                  wsHub
+                    .broadcast(f)
+                    .handleErrorWith(e =>
+                      logger.warn(s"bridge answer flip broadcast failed requestId=$requestId root=$rootSid: ${e.getMessage}")
+                    )
+                }
             _ <- (hub ! nebflow.actor.InteractionHubCommand.Answered(
               nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
             )).void
@@ -772,8 +803,12 @@ class WebSocketRoutes(
    * into a session's agent. Reuses the same logic as WebSocket user messages:
    * rate limiting, UiMessage recording, agent routing.
    */
-  def handleBridgeMessage(sessionId: String, content: String, senderId: Option[String] = None,
-      origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+  def handleBridgeMessage(
+    sessionId: String,
+    content: String,
+    senderId: Option[String] = None,
+    origin: Option[nebflow.bridge.BridgeOrigin] = None
+  ): IO[Unit] =
     if content.isEmpty || sessionId.isEmpty then IO.unit
     else
       rateLimiter.check("bridge").flatMap { allowed =>
@@ -798,7 +833,10 @@ class WebSocketRoutes(
           logger.info(s"Bridge message for session $sessionId: ${faces.modelPayload.take(60)}... $source") *>
             // Record as UiMessage — DISPLAY face: bare content, no marker.
             sharedResources.sessionStore
-              .appendUiMessages(sessionId, List(UiMessage.User(faces.sessionDisplay, Nil, timestamp = System.currentTimeMillis())))
+              .appendUiMessages(
+                sessionId,
+                List(UiMessage.User(faces.sessionDisplay, Nil, timestamp = System.currentTimeMillis()))
+              )
               .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
             // Push to frontend in real-time so it shows without switching sessions
             // — DISPLAY face: bare content, no marker.
@@ -921,8 +959,7 @@ class WebSocketRoutes(
                 // watch table) still reason in Json, so they get an adapter that
                 // serializes on the way in — the point of A1 is that the *fan-out*
                 // no longer re-serializes per connection, not that Json is banned.
-                perConnJsonSend = (json: io.circe.Json) =>
-                  perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
+                perConnJsonSend = (json: io.circe.Json) => perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
 
                 // explorer-rt (chain-n-1981ce87): one watch-subscription table per
                 // connection. Chained into the finalizer below — a dropped
@@ -1315,7 +1352,9 @@ class WebSocketRoutes(
         val updated = json.mapObject { obj =>
           obj.add("thinkingConfig", tc.asJson)
         }
-        os.write.over(path, updated.spaces2, createFolders = true)
+        // Restricted form (keyaudit-quickfix ①): nebflow.json carries provider
+        // apiKeys — the file lands 0600 instead of the umask default 0644.
+        AtomicJson.writeSyncRestricted(path, updated.spaces2)
       }
     }
 
@@ -1333,7 +1372,8 @@ class WebSocketRoutes(
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = nebflow.core.schedule.FreezeSchedule.mergeIntoConfig(json, cfg)
-        os.write.over(path, updated.spaces2, createFolders = true)
+        // Restricted form (keyaudit-quickfix ①) — same rationale as persistThinkingConfig.
+        AtomicJson.writeSyncRestricted(path, updated.spaces2)
       }
     }
 
@@ -1357,7 +1397,8 @@ class WebSocketRoutes(
           val updatedMcp = Json.fromJsonObject(mcpObj.add(serverId, updatedServer))
           obj.add("mcpServers", updatedMcp)
         }
-        os.write.over(path, updated.spaces2, createFolders = true)
+        // Restricted form (keyaudit-quickfix ①) — same rationale as persistThinkingConfig.
+        AtomicJson.writeSyncRestricted(path, updated.spaces2)
       }
     }
 
@@ -1451,10 +1492,12 @@ class WebSocketRoutes(
     Json.obj(fields.toList*)
   end wsBrowseEvent
 
-  /** picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
-    * `browsePath` frame builders. Body lives in the companion object (pure core,
-    * spec-callable — `deletePathsSafely` precedent), these are the seam the
-    * handler uses. */
+  /**
+   * picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+   * `browsePath` frame builders. Body lives in the companion object (pure core,
+   * spec-callable — `deletePathsSafely` precedent), these are the seam the
+   * handler uses.
+   */
   private[gateway] def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
     WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
 
@@ -1692,13 +1735,41 @@ class WebSocketRoutes(
                                "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
                              )
                            }
+                           // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
+                           // refType==='chat-message' 的**首条**转成落盘 quote 快照
+                           // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
+                           // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
+                           val quoteJson = quoteFromRefs(json)
                            val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
                            sharedResources.sessionStore
                              .appendUiMessages(
                                msgSessionId,
-                               List(UiMessage.User(content, attJson, injected, timestamp = System.currentTimeMillis()))
+                               List(
+                                 UiMessage.User(
+                                   content,
+                                   attJson,
+                                   injected,
+                                   timestamp = System.currentTimeMillis(),
+                                   quote = quoteJson
+                                 )
+                               )
                              )
                              .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
+                           // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
+                           // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
+                           // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
+                           // 的 `if (item.path)` 闸）。把与 ui.json 同形的 [{name,type,path}]
+                           // 回传请求方连接，前端据此原位重渲用户媒体行。纯文本帧（无附件）
+                           // 不发；旧前端未知帧类型 = handlers 无登记 = no-op，协议零破坏。
+                             *> (if attJson.nonEmpty then
+                                   wsSend(
+                                     io.circe.Json.obj(
+                                       "type" -> "attachmentsSaved".asJson,
+                                       "sessionId" -> msgSessionId.asJson,
+                                       "attachments" -> attJson.asJson
+                                     )
+                                   )
+                                 else IO.unit)
                          else IO.unit) *> {
                           // 任务工具重做（2026-08-30）：打回语义退役——
                           // taskRefs/refs(refType=task) 的 processTaskReturns
@@ -2010,6 +2081,50 @@ class WebSocketRoutes(
       if refType != "task" then RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block))
     }
     IO.unit
+
+  /**
+   * quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里 refType==='chat-message'
+   * 的首条 → 落盘 quote 快照 Json（UiMessage.User.quote）。形状（引擎不解释内部
+   * 字段，原样落盘原样下发）：
+   *   { refMessageId, excerpt ≤80, senderRole, senderName?, ts? }
+   * 无 chat-message ref / 形态不合 ⇒ None（编码器缺席不落键，旧行字节形态不变）。
+   * excerpt 一律过 RefResolver.sanitize 再截 80（引用块快照的防伪同源）。
+   */
+  private def quoteFromRefs(frame: io.circe.Json): Option[io.circe.Json] =
+    val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
+    refs.find(r => r.hcursor.downField("refType").as[String].getOrElse("") == "chat-message").flatMap { ref =>
+      val c = ref.hcursor
+      val src = c.downField("source")
+      val mid = RefResolver.sanitize(src.downField("messageId").as[String].getOrElse(""))
+      if mid.isEmpty then None
+      else
+        val excerpt = RefResolver
+          .sanitize(c.downField("content").downField("excerpt").as[String].getOrElse(""))
+          .take(80)
+        val role = RefResolver.sanitize(src.downField("senderRole").as[String].getOrElse("user"))
+        val base = scala.collection.mutable.LinkedHashMap[String, io.circe.Json](
+          "refMessageId" -> mid.asJson,
+          "excerpt" -> excerpt.asJson,
+          "senderRole" -> role.asJson
+        )
+        src
+          .downField("senderName")
+          .as[String]
+          .toOption
+          .map(RefResolver.sanitize)
+          .filter(_.nonEmpty)
+          .foreach(n => base("senderName") = n.asJson)
+        c.downField("meta")
+          .downField("ts")
+          .as[Long]
+          .toOption
+          .filter(_ > 0)
+          .foreach(ts => base("ts") = ts.asJson)
+        Some(io.circe.Json.fromJsonObject(io.circe.JsonObject.fromIterable(base)))
+      end if
+    }
+
+  end quoteFromRefs
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.
@@ -2704,7 +2819,10 @@ object WebSocketRoutes:
    * Standalone (zero class deps) so the contract is directly unit-testable
    * (ActiveAgentsEntrySpec).
    */
-  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None,
+  def activeAgentEntryJson(
+    rec: AgentRecord,
+    meta: Option[SessionMeta],
+    retryCount: Option[Int] = None,
     taskTitle: Option[String] = None // taskbadge batch (main-side): title resolved by the caller via the ledger
   ): Json =
     Json.obj(
@@ -2749,20 +2867,23 @@ object WebSocketRoutes:
   // browseErrorFrame / BrowseEntryCap).
   // ============================================================
 
-  /** How many entries a `browsePath` frame carries before `truncated` turns on —
-    * the ONE ruler for that leg (was a literal `take(200)`). */
+  /**
+   * How many entries a `browsePath` frame carries before `truncated` turns on —
+   * the ONE ruler for that leg (was a literal `take(200)`).
+   */
   private[gateway] val BrowseEntryCap: Int = 2000
 
-  /** picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
-    * `browsePath` success frame. Pure core: the spec calls it directly.
-    *
-    * A. **No silent truncation**: `total` is the full FILTERED entry count and
-    *    `truncated` says whether the cap cut it.
-    * B. `query` filters SERVER-side (case-insensitive substring on the entry
-    *    name) BEFORE the cap; `query` is echoed back so the frontend can
-    *    discard a frame that answers a stale filter string.
-    */
-  private[gateway] def browseFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json = {
+  /**
+   * picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+   * `browsePath` success frame. Pure core: the spec calls it directly.
+   *
+   * A. **No silent truncation**: `total` is the full FILTERED entry count and
+   *    `truncated` says whether the cap cut it.
+   * B. `query` filters SERVER-side (case-insensitive substring on the entry
+   *    name) BEFORE the cap; `query` is echoed back so the frontend can
+   *    discard a frame that answers a stale filter string.
+   */
+  private[gateway] def browseFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
     val q = query.trim.toLowerCase
     // ONE listing pass: lexical order (pre-existing), then filter, then cap.
     val all = os
@@ -2783,10 +2904,13 @@ object WebSocketRoutes:
       "truncated" -> (matched.size > shown.size).asJson,
       "query" -> query.asJson
     )
-  }
 
-  /** The `browsePath` failure frame (C): same shape, empty `entries`, plus a
-    * typed `errorKind` (`invalid-path` / `not-a-directory` / `unreadable`). */
+  end browseFrame
+
+  /**
+   * The `browsePath` failure frame (C): same shape, empty `entries`, plus a
+   * typed `errorKind` (`invalid-path` / `not-a-directory` / `unreadable`).
+   */
   private[gateway] def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
     Json.obj(
       "type" -> "browseResult".asJson,
@@ -2810,14 +2934,15 @@ object WebSocketRoutes:
   // → `given Encoder[UiMessage]`).
   // ============================================================
 
-  /** `askUser` frame → the row written to `.ui.json`.
-    *
-    * Key-reading shape is the SAME loose fallback as the decoder
-    * (`UiMessage`'s `case "askUser"`): absent / malformed ⇒ `None`;
-    * blank `requestId` ⇒ `None`; empty `attachments` ⇒ `None` (dual of the
-    * encoder's "emit only in presence, empty ⇒ no key" rule — an absent or
-    * blank frame must produce byte-identical legacy rows).
-    */
+  /**
+   * `askUser` frame → the row written to `.ui.json`.
+   *
+   * Key-reading shape is the SAME loose fallback as the decoder
+   * (`UiMessage`'s `case "askUser"`): absent / malformed ⇒ `None`;
+   * blank `requestId` ⇒ `None`; empty `attachments` ⇒ `None` (dual of the
+   * encoder's "emit only in presence, empty ⇒ no key" rule — an absent or
+   * blank frame must produce byte-identical legacy rows).
+   */
   private[gateway] def askUserRowFromFrame(frame: Json): UiMessage.AskUser =
     val hc = frame.hcursor
     val items = hc.downField("items").as[List[Json]].getOrElse(Nil)

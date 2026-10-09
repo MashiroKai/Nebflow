@@ -9,26 +9,27 @@ import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.{Files, Path, Paths}
 import scala.jdk.CollectionConverters.*
 
-/** Storage for daemon config-panel VALUES (daemonpanel Phase A).
-  *
-  * Discipline: **declaration inline, values external**. The declaration lives
-  * in `daemons.json` (`DaemonConfig.configPanel`), while values live in a
-  * separate file so a value change never rewrites the declaration:
-  *
-  *   - non-secret values -> `~/.nebflow/daemon-config/<id>.json` (mode 0600)
-  *   - secret values     -> `~/.nebflow/secrets/<name>` (existing namespace:
-  *     dir 0700 / value 0600 — this is NOT a new mechanism, see the design
-  *     evidence D-1)
-  *
-  * Secrets are never written into `daemons.json`, and never read back into the
-  * UI: the read view masks every `type:"secret"` field as `"***"`, a written
-  * `"***"` keeps the stored value, and an empty string means "do not modify".
-  *
-  * Permission handling is FAIL-CLOSED and local: `CredentialFileAcl.restrict`
-  * is warn-not-abort (fail-open), so it is deliberately not relied upon — this
-  * store checks modes itself and refuses to read/write a credential whose
-  * permissions are too wide.
-  */
+/**
+ * Storage for daemon config-panel VALUES (daemonpanel Phase A).
+ *
+ * Discipline: **declaration inline, values external**. The declaration lives
+ * in `daemons.json` (`DaemonConfig.configPanel`), while values live in a
+ * separate file so a value change never rewrites the declaration:
+ *
+ *   - non-secret values -> `~/.nebflow/daemon-config/<id>.json` (mode 0600)
+ *   - secret values     -> `~/.nebflow/secrets/<name>` (existing namespace:
+ *     dir 0700 / value 0600 — this is NOT a new mechanism, see the design
+ *     evidence D-1)
+ *
+ * Secrets are never written into `daemons.json`, and never read back into the
+ * UI: the read view masks every `type:"secret"` field as `"***"`, a written
+ * `"***"` keeps the stored value, and an empty string means "do not modify".
+ *
+ * Permission handling is FAIL-CLOSED and local: `CredentialFileAcl.restrict`
+ * is warn-not-abort (fail-open), so it is deliberately not relied upon — this
+ * store checks modes itself and refuses to read/write a credential whose
+ * permissions are too wide.
+ */
 class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
 
   private val logger = NebflowLogger.forName("nebflow.daemon.panelstore")
@@ -40,9 +41,10 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
   def secretsDir: os.Path = dataRoot / "secrets"
   def valuesPath(id: String): os.Path = configDir / s"${safeName(id)}.json"
 
-  /** Backing secret file name. Deterministic and namespaced so it cannot
-    * collide with an unrelated credential, inside the EXISTING `secrets/` dir.
-    */
+  /**
+   * Backing secret file name. Deterministic and namespaced so it cannot
+   * collide with an unrelated credential, inside the EXISTING `secrets/` dir.
+   */
   def secretName(id: String, key: String): String = s"daemon-${safeName(id)}-${safeName(key)}"
 
   def secretPath(id: String, key: String): os.Path = secretsDir / secretName(id, key)
@@ -52,11 +54,12 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
 
   // ── Read ───────────────────────────────────────────────────────────────
 
-  /** Panel read view: field key -> value, with every secret masked.
-    *
-    * A declared field with no stored value falls back to its declared default,
-    * so the UI always shows something meaningful for an unconfigured daemon.
-    */
+  /**
+   * Panel read view: field key -> value, with every secret masked.
+   *
+   * A declared field with no stored value falls back to its declared default,
+   * so the UI always shows something meaningful for an unconfigured daemon.
+   */
   def readMasked(decl: DaemonPanelSchema.Declaration, id: String): IO[Map[String, Json]] =
     loadValues(id).map { stored =>
       decl.fields.map { f =>
@@ -65,9 +68,10 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
       }.toMap
     }
 
-  /** Stored values as-is (secrets resolved to their file content). Only for
-    * internal use / the credential probe — never for a UI response.
-    */
+  /**
+   * Stored values as-is (secrets resolved to their file content). Only for
+   * internal use / the credential probe — never for a UI response.
+   */
   def loadValues(id: String): IO[Map[String, Json]] =
     IO.blocking {
       val p = valuesPath(id)
@@ -84,16 +88,17 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
 
   // ── Write ──────────────────────────────────────────────────────────────
 
-  /** Apply an incoming value map.
-    *
-    * Every key must be declared (`unknown field`), every value must match its
-    * declared type (`invalid value`). Secret semantics: `"***"` keeps the
-    * stored value, `""` does not modify it, anything else replaces it.
-    *
-    * When the resulting non-secret value map is byte-identical to what is
-    * already stored, the file is NOT rewritten — that is what makes the
-    * F4 round-trip (`cmp` equal) hold exactly rather than approximately.
-    */
+  /**
+   * Apply an incoming value map.
+   *
+   * Every key must be declared (`unknown field`), every value must match its
+   * declared type (`invalid value`). Secret semantics: `"***"` keeps the
+   * stored value, `""` does not modify it, anything else replaces it.
+   *
+   * When the resulting non-secret value map is byte-identical to what is
+   * already stored, the file is NOT rewritten — that is what makes the
+   * F4 round-trip (`cmp` equal) hold exactly rather than approximately.
+   */
   def writeValues(
     decl: DaemonPanelSchema.Declaration,
     id: String,
@@ -117,7 +122,7 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
             secretEdits = incoming.toList.collect { case (k, v) if byKey(k).isSecret => (byKey(k), v) }
             written <- secretEdits.foldLeft(IO.pure(Right(()): Either[String, Unit])) { (acc, pair) =>
               acc.flatMap {
-                case Left(e)  => IO.pure(Left(e))
+                case Left(e) => IO.pure(Left(e))
                 case Right(_) => writeSecret(id, pair._1.key, pair._2)
               }
             }
@@ -140,9 +145,14 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
                 else saveValues(id, next).as(Right(()))
           yield result
 
+      end match
+
+    end if
+
+  end writeValues
+
   private def validateValue(f: DaemonPanelSchema.PanelField, v: Json): Either[String, Unit] =
-    if v.isNull then
-      if f.required then Left("required field cannot be empty") else Right(())
+    if v.isNull then if f.required then Left("required field cannot be empty") else Right(())
     else
       f.ftype match
         case "string" | "text" => if v.isString then Right(()) else Left("expected a string")
@@ -158,13 +168,13 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
                 case _ =>
                   f.max match
                     case Some(hi) if d > hi => Left(s"must be <= $hi")
-                    case _                  => Right(())
+                    case _ => Right(())
         case "boolean" => if v.isBoolean then Right(()) else Left("expected a boolean")
         case "enum" =>
           v.asString match
             case Some(s) if f.options.contains(s) => Right(())
-            case Some(s)                          => Left(s"'$s' is not one of ${f.options.mkString(", ")}")
-            case None                             => Left("expected one of the declared options")
+            case Some(s) => Left(s"'$s' is not one of ${f.options.mkString(", ")}")
+            case None => Left("expected one of the declared options")
         case other => Left(s"unsupported type '$other'")
 
   private def saveValues(id: String, values: Map[String, Json]): IO[Unit] =
@@ -208,11 +218,12 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
 
   // ── Credential three-state (Phase B readiness, read-only) ─────────────
 
-  /** Three-state probe per declared secret field:
-    *   - `missing`    no backing file
-    *   - `permissive` file or dir permissions are wider than 0600 / 0700
-    *   - `ok`         file exists, mode 0600, dir 0700
-    */
+  /**
+   * Three-state probe per declared secret field:
+   *   - `missing`    no backing file
+   *   - `permissive` file or dir permissions are wider than 0600 / 0700
+   *   - `ok`         file exists, mode 0600, dir 0700
+   */
   def credentialStates(
     decl: DaemonPanelSchema.Declaration,
     id: String
@@ -221,7 +232,8 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
       decl.fields.filter(_.isSecret).map { f =>
         val name = secretName(id, f.key)
         val p = secretsDir / name
-        if !os.exists(p) then DaemonPanelSchema.CredentialState(f.key, name, DaemonPanelSchema.CredentialStates.Missing, None)
+        if !os.exists(p) then
+          DaemonPanelSchema.CredentialState(f.key, name, DaemonPanelSchema.CredentialStates.Missing, None)
         else
           val mode = fileMode(p)
           val tight = fileIsTight(p) && dirIsTight(secretsDir)
@@ -264,9 +276,10 @@ class DaemonPanelStore(dataRoot: os.Path = PathUtil.dataRoot):
       s"$o$g$w"
     }
 
-  /** Best-effort tightening; the fail-closed decision is `dirIsTight` above,
-    * never this call (mirrors the CredentialFileAcl warn-not-abort caveat).
-    */
+  /**
+   * Best-effort tightening; the fail-closed decision is `dirIsTight` above,
+   * never this call (mirrors the CredentialFileAcl warn-not-abort caveat).
+   */
   private def restrictDir(p: os.Path): Unit =
     try
       os.perms.set(p, "rwx------")

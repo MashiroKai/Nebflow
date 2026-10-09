@@ -41,6 +41,7 @@ trait JevAllocatorPort:
    *   model-visible (see [[CatalogEntry]]).
    */
   def allocate(taskText: String, catalog: List[CatalogEntry]): IO[JevAllocation]
+end JevAllocatorPort
 
 /**
  * One capability catalog entry as the allocation face sees it.

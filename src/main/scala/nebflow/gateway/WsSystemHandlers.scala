@@ -304,10 +304,10 @@ private[gateway] object WsSystemHandlers:
   end handleGetAgentSystemPrompt
 
   private def handleUpdateAgentSystemPrompt(
-      ctx: WsDispatchCtx,
-      text: String,
-      wsSend: io.circe.Json => IO[Unit],
-      watchSession: ExplorerWatchSession
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
   ): IO[Unit] =
     import ctx.*
     val json = parsedJson(text)
@@ -318,7 +318,9 @@ private[gateway] object WsSystemHandlers:
       // 做只读查看」）：builtin 名的 prompt 写通道显式拒绝（loud，禁静默成功——
       // 客户端拿到 error 信封而不是 saved 回执）。
       if nebflow.core.entity.BuiltinAgents.isBuiltin(agentName) then
-        logger.warn(s"Rejected updateAgentSystemPrompt for '$agentName' — built-in agents are code-defined and read-only")
+        logger.warn(
+          s"Rejected updateAgentSystemPrompt for '$agentName' — built-in agents are code-defined and read-only"
+        )
         wsSend(
           io.circe.Json.obj(
             "type" -> "error".asJson,
@@ -329,6 +331,10 @@ private[gateway] object WsSystemHandlers:
         agentService.updateSystemPrompt(agentName, systemMd) *>
           wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
     else IO.unit
+
+    end if
+
+  end handleUpdateAgentSystemPrompt
 
   private def handleUpdateAgentTools(
     ctx: WsDispatchCtx,

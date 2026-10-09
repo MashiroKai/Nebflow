@@ -20,8 +20,9 @@ object ChatCommand extends CliCommand:
    *
    * The first frame used to be a private shape
    * `{"type":"command","command":"createSession"}` which is NOT in the WS
-   * vocabulary — WebSocketRoutes' `case "command"` handles clear/compact/fork
-   * only, so the gateway silently ignored it. The real vocabulary is
+   * vocabulary — `handleCommand` handles `fork` only since 2026-10-09
+   * (/clear /compact handlers removed with the slash commands), so the gateway
+   * silently ignored it. The real vocabulary is
    * `switchSession` / `createSession` (WebSocketRoutes.scala:2015, :2030).
    */
   private[cli] def sessionFrame(sessionArg: Option[String]): Json =

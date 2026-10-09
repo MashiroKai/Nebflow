@@ -62,12 +62,15 @@ private[tools] class JobHealth(
   val lastActivityMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
   val outputLineCount: AtomicInteger = new AtomicInteger(0),
   val startedAtMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
-  /** Whether a "process dead" notification has already been sent — prevents spam.
-    * 🔴 只提醒改造后本旗**只剩 B2 消费**（B1 已降为只提醒腿）。
-    */
+  /**
+   * Whether a "process dead" notification has already been sent — prevents spam.
+   * 🔴 只提醒改造后本旗**只剩 B2 消费**（B1 已降为只提醒腿）。
+   */
   val deadNotified: AtomicBoolean = new AtomicBoolean(false),
-  /** B1「只提醒」腿的单发旗：提醒**不杀** ⇒ 不得再与 B2
-    * 共用 [[deadNotified]]（那会把 B2 的单发预算提前烧掉）。CAS 单发，防 30s 节拍刷屏。 */
+  /**
+   * B1「只提醒」腿的单发旗：提醒**不杀** ⇒ 不得再与 B2
+   * 共用 [[deadNotified]]（那会把 B2 的单发预算提前烧掉）。CAS 单发，防 30s 节拍刷屏。
+   */
   val slowNotified: AtomicBoolean = new AtomicBoolean(false),
   /**
    * 后台任务输出查看：逐行输出汇聚口——runProcess 的 stdout/
@@ -216,8 +219,10 @@ final class ShellSession private (
     // 输出查看：逐行输出汇聚口（BgTaskOutputStore 缓冲 sink，
     // BashTool 后台路径注入）。None = 无缓冲（默认，兼容既有调用方/测试）。
     outputSink: Option[String => Unit] = None,
-    /** B1「只提醒」腿的审计出口（见 [[startJobHealthCheck]]
-      * 同名参数）：None = 无项目上下文 / spec 直调 ⇒ 只留 `logger.warn`。 */
+    /**
+     * B1「只提醒」腿的审计出口（见 [[startJobHealthCheck]]
+     * 同名参数）：None = 无项目上下文 / spec 直调 ⇒ 只留 `logger.warn`。
+     */
     onSlowDetected: Option[String => IO[Unit]] = None
   ): IO[String] =
     lifecycleMutex.lock.surround {
@@ -861,25 +866,26 @@ final class ShellSession private (
 
   end startHeartbeat
 
-  /** Auto-background policy ("no hard cap; auto-background at
-    * 60min; backgrounded commands have no limit"): adopt an ALREADY-RUNNING
-    * foreground execution as a background job. Isomorphic to the registration
-    * half of executeBackground (BackgroundJob entry + heartbeat + B1 sensor +
-    * on_complete callback), with two differences:
-    *   1. No spawn — the process is already running; its fiber (started by the
-    *      caller via `start`) is passed in and wrapped by a watcher fiber that
-    *      completes the deferred and fires on_complete, mirroring
-    *      backgroundExecute (including its prefer-existing-error semantics).
-    *   2. B2 hard timeout is exempted by construction — the production face
-    *      passes `Defaults.BashBackgroundNoHardTimeoutMs`, so the B2 stall kill
-    *      is unreachable and the job runs to completion (background has no time
-    *      limit). B1 stays alert-only; persistent semantics are not applicable
-    *      (an adopted job is always a waiting-type task).
-    * The adopted process was registered into session activeProcesses by
-    * runProcess's bracket from the start, so restart/Stop killSessionProcesses
-    * coverage and cancelBackgroundJob / getBackgroundResult /
-    * getBackgroundJobHealth work identically to native background jobs.
-    */
+  /**
+   * Auto-background policy ("no hard cap; auto-background at
+   * 60min; backgrounded commands have no limit"): adopt an ALREADY-RUNNING
+   * foreground execution as a background job. Isomorphic to the registration
+   * half of executeBackground (BackgroundJob entry + heartbeat + B1 sensor +
+   * on_complete callback), with two differences:
+   *   1. No spawn — the process is already running; its fiber (started by the
+   *      caller via `start`) is passed in and wrapped by a watcher fiber that
+   *      completes the deferred and fires on_complete, mirroring
+   *      backgroundExecute (including its prefer-existing-error semantics).
+   *   2. B2 hard timeout is exempted by construction — the production face
+   *      passes `Defaults.BashBackgroundNoHardTimeoutMs`, so the B2 stall kill
+   *      is unreachable and the job runs to completion (background has no time
+   *      limit). B1 stays alert-only; persistent semantics are not applicable
+   *      (an adopted job is always a waiting-type task).
+   * The adopted process was registered into session activeProcesses by
+   * runProcess's bracket from the start, so restart/Stop killSessionProcesses
+   * coverage and cancelBackgroundJob / getBackgroundResult /
+   * getBackgroundJobHealth work identically to native background jobs.
+   */
   def adoptAsBackgroundJob(
     jobId: String,
     fiber: Fiber[IO, Throwable, Either[Throwable, ProcessResult]],
@@ -916,7 +922,8 @@ final class ShellSession private (
                     IO.delay(cb(existing))
                       .flatten
                       .handleErrorWith(e =>
-                        NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
+                        NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
+                      )
                   }
               case _ =>
                 deferred.complete(result).attempt.void *>
@@ -924,10 +931,12 @@ final class ShellSession private (
                     IO.delay(cb(result))
                       .flatten
                       .handleErrorWith(e =>
-                        NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
+                        NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
+                      )
                   }
             }
-          }.start
+          }
+          .start
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
@@ -990,10 +999,12 @@ final class ShellSession private (
     hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
     stuckWindowSec: Int = Defaults.BashStuckWindowSec,
     checkIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
-    /** B1「只提醒」腿的审计出口（判据留作读数传感器、动作换只提醒）：命中 idle 判据时以 summary 回调一次，
-      * 由挂载面（BashTool，持有 project/workspace/节点身份）写 `bg-slow` 事件。
-      * `None`（无项目上下文 / spec 直调）⇒ 只留 `logger.warn`。
-      * 🔴 与 #27 mount-stalled 同族：**只写事件、不终态化、不杀进程**。 */
+    /**
+     * B1「只提醒」腿的审计出口（判据留作读数传感器、动作换只提醒）：命中 idle 判据时以 summary 回调一次，
+     * 由挂载面（BashTool，持有 project/workspace/节点身份）写 `bg-slow` 事件。
+     * `None`（无项目上下文 / spec 直调）⇒ 只留 `logger.warn`。
+     * 🔴 与 #27 mount-stalled 同族：**只写事件、不终态化、不杀进程**。
+     */
     onSlowDetected: Option[String => IO[Unit]] = None
   ): IO[Option[Fiber[IO, Throwable, Unit]]] =
     val intervalSec = checkIntervalSec
@@ -1040,7 +1051,7 @@ final class ShellSession private (
 
               if !isSleepLike && idleMs > idleTimeoutMs && !progress then
                 // B1：idle timeout（300s 无输出）——CPU 豁免已并入 progress 判断
-                //（CPU 忙 → progress=true → 不进入此分支）。
+                // （CPU 忙 → progress=true → 不进入此分支）。
                 // 🔴 只提醒改造后：本支从
                 // **杀**降为 **只提醒**——判据（上方 `if`，逐字未变）继续作为**读数
                 // 传感器**；动作换为「写 `bg-slow` 审计事件（经 `onSlowDetected`，
@@ -1058,8 +1069,11 @@ final class ShellSession private (
                   logger.warn(
                     s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — " +
                       "sensor only, NOT auto-cancelling"
-                  ) *> onSlowDetected.fold(IO.unit)(_(summary)).handleErrorWith(e =>
-                    logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}")) *>
+                  ) *> onSlowDetected
+                    .fold(IO.unit)(_(summary))
+                    .handleErrorWith(e =>
+                      logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}")
+                    ) *>
                     // 🔴 提醒腿**必须继续循环**（旧写法是杀 = 终止，故无递归）：不杀 ⇒
                     // 进程仍活着 ⇒ B2（硬超时后停滞观察）仍须有开火机会，且 `bg-slow`
                     // 之外再无其它出口守卫。（`slowNotified` 已置位 ⇒ 不再重复提醒。）
@@ -1285,10 +1299,12 @@ object ShellSession:
     sessionId: String,
     initialDir: Option[String] = None,
     sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None,
-    /** Allowlisted secret values for this session's command environments
-      * (secrets-consumption batch). Default empty = no injection; resolved by
-      * the caller at session creation, so an existing session keeps the
-      * environment it was created with. */
+    /**
+     * Allowlisted secret values for this session's command environments
+     * (secrets-consumption batch). Default empty = no injection; resolved by
+     * the caller at session creation, so an existing session keeps the
+     * environment it was created with.
+     */
     secretEnv: Map[String, String] = Map.empty
   ): IO[ShellSession] =
     createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir, sandbox, secretEnv)))

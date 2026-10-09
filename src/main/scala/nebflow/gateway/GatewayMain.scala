@@ -415,13 +415,13 @@ object GatewayMain extends IOApp:
               // 原文件保留只读备份（回滚路径见 SoulMigration 头注）。失败不阻断
               // 启动（与上两行迁移同款纪律）。
             nebflow.core.SoulMigration.runAtBoot()
-              // LLM 日志记录（2026-09-13「默认关」批 + D-A 持久化）：启动时以
-              // nebflow.json 顶层 `llmLog.enabled` 落盘值为准；**无落盘值 ⇒ 保持
-              // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启
-              // 保持（旧缺陷：内存开关不落盘，宿主重启静默回落 true）。
-              // fail-safe：节缺失 / 非法 ⇒ None ⇒ 默认关（loadEnabled 纯解析）。
-              // 生效读数落一行启动日志（infoSync：本块为语句序列，非 IO 组合）——
-              // 供「重启后只读复验」直接 grep，无需触碰运行实例。
+            // LLM 日志记录（2026-09-13「默认关」批 + D-A 持久化）：启动时以
+            // nebflow.json 顶层 `llmLog.enabled` 落盘值为准；**无落盘值 ⇒ 保持
+            // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启
+            // 保持（旧缺陷：内存开关不落盘，宿主重启静默回落 true）。
+            // fail-safe：节缺失 / 非法 ⇒ None ⇒ 默认关（loadEnabled 纯解析）。
+            // 生效读数落一行启动日志（infoSync：本块为语句序列，非 IO 组合）——
+            // 供「重启后只读复验」直接 grep，无需触碰运行实例。
             locally {
               val persistedLlmLog = nebflow.core.LlmLogWriter.loadEnabled(config.llmLog)
               persistedLlmLog.foreach(nebflow.core.LlmLogWriter.setEnabled)
@@ -715,12 +715,13 @@ object GatewayMain extends IOApp:
                                   // flow-maps/ 作用域族，旧路径族零触碰）。
                                   val delegateScopeCrashSweep: IO[Unit] =
                                     if nebflow.shared.Defaults.CrashRecoveryEnabled then
-                                      nebflow.core.project.ProjectCrashRecovery.recoverDelegateScopes().flatMap { scopes =>
-                                        if scopes > 0 then
-                                          logger.info(
-                                            s"Boot delegate-scope sweep: $scopes scope(s) had crashed nodes claimed (rehydrate/failed)"
-                                          )
-                                        else IO.unit
+                                      nebflow.core.project.ProjectCrashRecovery.recoverDelegateScopes().flatMap {
+                                        scopes =>
+                                          if scopes > 0 then
+                                            logger.info(
+                                              s"Boot delegate-scope sweep: $scopes scope(s) had crashed nodes claimed (rehydrate/failed)"
+                                            )
+                                          else IO.unit
                                       }
                                     else IO.unit
                                   // 宿主启动自动重入（boot-wake 批 2026-09-13，方案件 A 档 A1；
@@ -746,6 +747,33 @@ object GatewayMain extends IOApp:
                                         logger.info(s"Boot dispatcher wake: ${r.summary}")
                                       }
                                     else IO.unit
+                                  // P2-5 合并队列跨重启恢复 boot sweep（引擎加固批
+                                  // 2026-10-09）：扫 ChainStore `merge-queue` 账本的中断
+                                  // 成员（末行 enqueued/reminder-sent 无后继 dequeued），
+                                  // 按 readyAt 原值重挂 MergeQueue（外部腿 CLI resume /
+                                  // 内置腿续起会话+rekey）；挂不进 WARN+blocked+报父
+                                  // （F2 队文件 correlationId 幂等）。排在 startupMount/
+                                  // projectBootWake 之后（父会话注册表已就绪）；无候选 =
+                                  // 零动作；失败只 WARN 绝不阻塞启动。
+                                  val mergeQueueBootSweep: IO[Unit] =
+                                    nebflow.agent.MergeQueueBootSweep
+                                      .sweep(
+                                        sharedResources,
+                                        reviveInternal = Some(
+                                          nebflow.agent.MergeQueueBootSweep.internalRevival(
+                                            sharedResources,
+                                            actorSystem,
+                                            Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                          )
+                                        ),
+                                        wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                      )
+                                      .attempt
+                                      .flatMap {
+                                        case Right(r) => logger.info(s"Merge-queue boot sweep: ${r.summary}").void
+                                        case Left(e) =>
+                                          logger.warn(s"Merge-queue boot sweep failed: ${e.getMessage}").void
+                                      }
                                   // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
                                   // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
                                   // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
@@ -814,7 +842,7 @@ object GatewayMain extends IOApp:
                                       hotRestart = Some(hotRestart),
                                       updateOrchestrator = Some(updateOrchestrator)
                                     )
-                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
+                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -830,17 +858,24 @@ object GatewayMain extends IOApp:
                                     val configService = ConfigService
 
                                     // --- Bridge Manager (plugins: telegram, etc.) ---
-                                    val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String], Option[nebflow.bridge.BridgeOrigin]) => IO[Unit]]] =
+                                    val bridgeInjectRef: Ref[IO, Option[
+                                      (String, String, Option[String], Option[nebflow.bridge.BridgeOrigin]) => IO[Unit]
+                                    ]] =
                                       Ref.unsafe(None)
 
                                     // Holder for wsRoutes so we can wire bridge refs after safe construction
                                     var wsRoutesHolder: Option[WebSocketRoutes] = None
 
                                     val bridgeCtx = new BridgeContext:
-                                      def injectMessage(sessionId: String, content: String, senderId: Option[String],
-                                          origin: Option[nebflow.bridge.BridgeOrigin] = None)
-                                        : IO[Unit] =
-                                        bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId, origin)))
+                                      def injectMessage(
+                                        sessionId: String,
+                                        content: String,
+                                        senderId: Option[String],
+                                        origin: Option[nebflow.bridge.BridgeOrigin] = None
+                                      ): IO[Unit] =
+                                        bridgeInjectRef.get.flatMap(
+                                          _.fold(IO.unit)(_(sessionId, content, senderId, origin))
+                                        )
                                       def interruptAgent(sessionId: String): IO[Unit] =
                                         wsRoutesHolder match
                                           case Some(routes) =>
@@ -868,11 +903,15 @@ object GatewayMain extends IOApp:
                                             // contained empty response), never a silent empty that
                                             // would read as "no ask open".
                                             hub.?[List[Json]](reply =>
-                                              nebflow.actor.InteractionHubCommand.ListAllPendingAsks(reply))
+                                              nebflow.actor.InteractionHubCommand.ListAllPendingAsks(reply)
+                                            )
                                           case None => IO.pure(Nil)
                                         }
-                                      override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json)
-                                        : IO[Unit] =
+                                      override def forwardInteractionAnswer(
+                                        requestId: String,
+                                        rootSessionId: String,
+                                        payload: Json
+                                      ): IO[Unit] =
                                         wsRoutesHolder match
                                           case Some(routes) =>
                                             routes.forwardBridgeInteractionAnswer(requestId, rootSessionId, payload)
@@ -883,6 +922,17 @@ object GatewayMain extends IOApp:
                                             (hub ! nebflow.actor.InteractionHubCommand.CloseRequest(requestId)).void
                                           case None => IO.unit
                                         }
+                                      // askucancel 批（2026-10-08）：用户发起的取消（渠道关键字腿）
+                                      // —— 与上一条（B-3 机器回收）不同闸：走共享执行器（hub
+                                      // CancelRequest：kind 闸 + 发起方终结通知 + 裁决 + 取消落盘行）。
+                                      override def cancelInteractionRequest(
+                                        requestId: String,
+                                        reason: String,
+                                        by: String
+                                      ): IO[Unit] =
+                                        AskUserCancelRoutes
+                                          .cancelOnce(sharedResources, sessionStore, requestId, reason, by)
+                                          .void
 
                                     val bridgeSetup: IO[BridgeManager] =
                                       BridgeManager.create(bridgeCtx)
@@ -1194,6 +1244,14 @@ object GatewayMain extends IOApp:
                                                 }
                                               )
 
+                                              // v2.1 阶段 1（2026-10-09 实施批）：设备腿 delegate
+                                              // 通道收件面装配——spawn（本设备作为执行设备）与
+                                              // result/accept（本设备作为编排权威）的 presence 数据
+                                              // 通道 handler。与 DeviceMailInbox 同缝同序（先例）；
+                                              // 未接线（NebLink 未配置）⇒ initialize 内显式 WARN +
+                                              // 跳过（DeviceDelegate.initialize 自带 fail-soft 门）。
+                                              nebflow.core.delegate.DeviceDelegate.initialize(sharedResourcesFinal)
+
                                               // --- Daemon Service (external process lifecycle) ---
                                               val daemonService = new DaemonService(dispatcher)
                                               val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
@@ -1330,20 +1388,19 @@ object GatewayMain extends IOApp:
                                                           Router(
                                                             "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
                                                               .presenceWsRoutes(wsb) <+> StaticRoutes
-                                                                .pluginAssetsRoutes(
-                                                                  token,
-                                                                  // canvas-media Wave1 (OD-2=V-C): the
-                                                                  // Trusted-only resolver feeding the
-                                                                  // tokenized plugin-asset route.
-                                                                  name =>
-                                                                    nebflow.core.plugin.PluginRegistry
-                                                                      .scan()
-                                                                      .map(
-                                                                        _.find(p =>
-                                                                          p.name == name && p.trust.trusted
-                                                                        ).map(p => os.Path(p.dir))
-                                                                      )
-                                                                )),
+                                                              .pluginAssetsRoutes(
+                                                                token,
+                                                                // canvas-media Wave1 (OD-2=V-C): the
+                                                                // Trusted-only resolver feeding the
+                                                                // tokenized plugin-asset route.
+                                                                name =>
+                                                                  nebflow.core.plugin.PluginRegistry
+                                                                    .scan()
+                                                                    .map(
+                                                                      _.find(p => p.name == name && p.trust.trusted)
+                                                                        .map(p => os.Path(p.dir))
+                                                                    )
+                                                              )),
                                                             // Logto AC+PKCE loopback callback (RFC 8252) —
                                                             // root-level, outside /api: the provider's browser
                                                             // redirect carries no gateway token.
@@ -1359,7 +1416,9 @@ object GatewayMain extends IOApp:
                                                         // Wire bridge inject ref
                                                         val wireBridge = wsRoutesHolder match
                                                           case Some(wsRoutes) =>
-                                                            bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage(_, _, _, _)))
+                                                            bridgeInjectRef.set(
+                                                              Some(wsRoutes.handleBridgeMessage(_, _, _, _))
+                                                            )
                                                           case None => IO.unit
                                                         wireBridge *> (for
                                                           _ <- logger.info(
@@ -1497,14 +1556,20 @@ object GatewayMain extends IOApp:
                                                           // start is idempotent at plugin level, so the startAll
                                                           // pass below is a no-op for it. Otherwise this is an
                                                           // unregister no-op and boot behaves exactly as before.
-                                                          _ <- nebflow.social.FeishuBridgePlugin.sync(bridgeManager, PathUtil.dataRoot)
+                                                          _ <- nebflow.social.FeishuBridgePlugin.sync(
+                                                            bridgeManager,
+                                                            PathUtil.dataRoot
+                                                          )
                                                           // wechat iLink batch: boot-time resync for the
                                                           // weixin-ilink side-car seam — same closed loop
                                                           // (enabled ∧ verified ⇒ registered and started),
                                                           // same shape as the feishu line above. The seam
                                                           // holds no socket, so this never blocks boot and
                                                           // an unconfigured install is an unregister no-op.
-                                                          _ <- nebflow.social.WeixinIlinkBridgePlugin.sync(bridgeManager, PathUtil.dataRoot)
+                                                          _ <- nebflow.social.WeixinIlinkBridgePlugin.sync(
+                                                            bridgeManager,
+                                                            PathUtil.dataRoot
+                                                          )
                                                           // Register bridge as WsHub listener for agent events
                                                           // perf-481 A1: this is a hub LISTENER (it reads
                                                           // the event fields), not a connection — the two

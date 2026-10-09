@@ -137,13 +137,12 @@ class WsHubUnregisterSpec extends CatsEffectSuite:
       _ <- h.broadcast(Json.obj("type" -> "textDelta".asJson, "delta" -> "abc".asJson))
       _ <- h.broadcast(Json.obj("type" -> "configUpdated".asJson))
       got <- seen.get
-    yield
-      assertEquals(
-        got,
-        List(
-          ("""{"type":"textDelta","delta":"abc"}""", true),
-          ("""{"type":"configUpdated"}""", false)
-        ),
-        "连接回调收到的是已序列化文本 + 帧分类（流式增量 vs 控制帧）"
-      )
+    yield assertEquals(
+      got,
+      List(
+        ("""{"type":"textDelta","delta":"abc"}""", true),
+        ("""{"type":"configUpdated"}""", false)
+      ),
+      "连接回调收到的是已序列化文本 + 帧分类（流式增量 vs 控制帧）"
+    )
 end WsHubUnregisterSpec

@@ -165,17 +165,19 @@ case class AgentRecord(
    * meta.agentName → displayName → sessionId 三档。
    */
   displayName: Option[String] = None,
-  /** **Task attribution** (taskbadge batch 2026-09-27: subagent panel task badge) --
-    * the task id this session serves, snapshotted at registration from the same
-    * source as spawn time (dispatcher = the ProjectActor slot's taskId;
-    * node/loop = NodeDef.taskId; same source and same value as
-    * SpawnParams.taskId -> ToolContext.taskId). None = no attribution (legacy
-    * data / non-Project domain / slot already cleared -- default = existing
-    * registration sites untouched). **Recovery-path data source**:
-    * activeAgentEntryJson emits taskId (+ ledger title taskTitle) so the
-    * frontend still renders the task badge after a refresh; the live path
-    * injects it via routeSubagentWsSend's agentStart frame (same dual-face
-    * contract as project). */
+  /**
+   * **Task attribution** (taskbadge batch 2026-09-27: subagent panel task badge) --
+   * the task id this session serves, snapshotted at registration from the same
+   * source as spawn time (dispatcher = the ProjectActor slot's taskId;
+   * node/loop = NodeDef.taskId; same source and same value as
+   * SpawnParams.taskId -> ToolContext.taskId). None = no attribution (legacy
+   * data / non-Project domain / slot already cleared -- default = existing
+   * registration sites untouched). **Recovery-path data source**:
+   * activeAgentEntryJson emits taskId (+ ledger title taskTitle) so the
+   * frontend still renders the task badge after a refresh; the live path
+   * injects it via routeSubagentWsSend's agentStart frame (same dual-face
+   * contract as project).
+   */
   taskId: Option[String] = None,
   /**
    * 正信号（**进展证据**）时间戳（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）。
@@ -408,15 +410,17 @@ case class SessionContext(
    * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。
    */
   flowNodeRole: Option[String] = None,
-  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①): the task id
-    * this session is attributed to (a dispatcher = the task it was created to serve; a
-    * project node = the task recorded as its origin). Set at the NodeEngine / ProjectActor
-    * spawn points -> passed through AgentCore into `ToolContext.taskId` -- the **only
-    * source** of `TaskInfo`'s zero-parameter attribution resolution (engine-side identity,
-    * never a client parameter), and the criterion of the engine-side uplink refusal face
-    * (no fingerprint ⇒ fail-closed).
-    * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
-    * direct REST calls). */
+  /**
+   * **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①): the task id
+   * this session is attributed to (a dispatcher = the task it was created to serve; a
+   * project node = the task recorded as its origin). Set at the NodeEngine / ProjectActor
+   * spawn points -> passed through AgentCore into `ToolContext.taskId` -- the **only
+   * source** of `TaskInfo`'s zero-parameter attribution resolution (engine-side identity,
+   * never a client parameter), and the criterion of the engine-side uplink refusal face
+   * (no fingerprint ⇒ fail-closed).
+   * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
+   * direct REST calls).
+   */
   taskId: Option[String] = None,
   /**
    * 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
@@ -626,6 +630,53 @@ case class CompactionState(
   lastModel: Option[String] = None
 )
 
+/**
+ * 乒乓压缩（主会话无感上下文压缩一期，2026-10-09 spec §A4/§H1-1）在飞影子作业。
+ * shadowId = `ppc-<mainSessionId>-<forkMsgCount>`（逻辑 id，仅日志/档案/去重关联，
+ * 影子腿不注册 AgentActor、无 sessionId —— spec §B2-2）；forkMsgCount = fork 时刻
+ * `state.messages.size`（换入三步的 Δ 切分锚点）。
+ */
+case class PingpongShadowJob(
+  shadowId: String,
+  forkMsgCount: Int,
+  forkedAt: Long
+)
+
+/**
+ * 影子腿已产出的 S（解析成功、等待轮边界换入）。sMessages = 解析产物
+ * （一期恒单条 `<context-compact mode="pingpong">` User 消息，spec §C3）。
+ */
+case class PingpongSReady(
+  shadowId: String,
+  sMessages: List[Message],
+  forkMsgCount: Int,
+  forkedAt: Long,
+  sTokensEst: Int,
+  latencyMs: Long
+)
+
+/**
+ * 乒乓压缩旁车状态（spec §H1-1）。全部字段的唯一写者 = 主 actor 的消息处理 IO 链；
+ * 影子 fiber 只经命令消息（PingpongSwapReady / PingpongShadowFailed）回投结果，
+ * 零直接写（spec §B2-3 / §R4 单写者纪律）。
+ *
+ *  - shadowPending：单飞行互斥位（A4）——fork 前置检查要求为空；**解锁条件 = 换入
+ *    三步全落地**（持久化 + 内存切换 + 状态清理），影子失败同样清位（进退避）。
+ *  - sReadyPending：S 已就绪、等待轮边界（§D2-2 processing 到达时只置位不换）。
+ *  - forkQueued：布尔排队位（A4，不堆叠）——影子在飞期间再过阈值置 true；换入
+ *    完成时按 estimated(S+Δ) > threshold 复查裁决是否乒乓第二拍（§A2）。
+ *  - ppFailures / lastPpFailureAt：影子失败计数 + 退避锚（30s×2^n，对齐
+ *    CompactConfig backoff 口径）；连续 circuitBreakerMax(3) 次 → 回落老同步路径
+ *    一拍（§E-1）。
+ */
+case class PingpongState(
+  shadowPending: Option[PingpongShadowJob] = None,
+  sReadyPending: Option[PingpongSReady] = None,
+  forkQueued: Boolean = false,
+  ppFailures: Int = 0,
+  lastPpFailureAt: Long = 0L
+)
+
 case class AgentSessionInfo(
   address: String,
   agentName: String,
@@ -695,7 +746,15 @@ case class AgentState(
    * （默认值只在 object AgentState.apply 提供——case class 字段带默认会与
    * 自定义 apply 的全默认参数形成重载冲突。）
    */
-  loopTurnKey: Long
+  loopTurnKey: Long,
+  /**
+   * 乒乓压缩旁车状态（主会话无感上下文压缩一期，2026-10-09 spec §H1-1）。
+   * 🔴 无默认参：case class 合成 apply 与伴生自定义 apply 均带默认参时重载
+   * 歧义（E046）——默认值由伴生 apply 提供（同名参、默认 PingpongState()），
+   * 全部既有构造点（named-apply 走伴生）零改动；合成 apply 仅 .copy 消费。
+   * 非 pingpong 会话恒为空值（行为零漂移，spec §G1）。
+   */
+  pingpong: PingpongState
 )
 
 object AgentState:
@@ -757,9 +816,11 @@ object AgentState:
     /** 节点角色（nrloop 一期，详见 SessionContext.flowNodeRole）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
-    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): set on the
-      * spawn side, see SessionContext.taskId. Default None = no attribution (pre-existing
-      * nodes / the Nebula root / team / dual-track flow / direct REST calls). */
+    /**
+     * **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): set on the
+     * spawn side, see SessionContext.taskId. Default None = no attribution (pre-existing
+     * nodes / the Nebula root / team / dual-track flow / direct REST calls).
+     */
     taskId: Option[String] = None,
     flowNodeName: Option[String] = None,
     /** 链级抽象 P2（§9.2 项 2）：节点所属链 id 快照（None = 无链/非项目会话）。 */
@@ -782,7 +843,9 @@ object AgentState:
      * 默认 None = 无覆盖 ⇒ 走现值函数（除 root spawn 外**所有**构造点零改动）。
      */
     compactThresholdRatio: Option[Double] = None,
-    loopTurnKey: Long = 0L
+    loopTurnKey: Long = 0L,
+    /** 乒乓压缩旁车状态（spec §H1-1）：默认空 = 全部既有构造点零改动。 */
+    pingpong: PingpongState = PingpongState()
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -828,7 +891,8 @@ object AgentState:
       None,
       None,
       nebflow.shared.Counters.Empty,
-      loopTurnKey
+      loopTurnKey,
+      pingpong
     )
   end apply
 end AgentState
@@ -973,10 +1037,13 @@ extension (s: AgentState)
   def flowNodeId: Option[String] = s.session.flowNodeId
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
-  /** **Task attribution fingerprint** (taskunify batch 2026-09-24): the task id this
-    * session is attributed to, see SessionContext.taskId. The single consumer chain =
-    * AgentCore → ToolContext.taskId → `TaskInfo`'s zero-parameter attribution
-    * resolution. */
+
+  /**
+   * **Task attribution fingerprint** (taskunify batch 2026-09-24): the task id this
+   * session is attributed to, see SessionContext.taskId. The single consumer chain =
+   * AgentCore → ToolContext.taskId → `TaskInfo`'s zero-parameter attribution
+   * resolution.
+   */
   def taskId: Option[String] = s.session.taskId
   def flowNodeName: Option[String] = s.session.flowNodeName
 
@@ -1060,6 +1127,26 @@ extension (s: AgentState)
 
   def withPendingCompaction(job: Option[CompactionJob]): AgentState =
     s.copy(compaction = s.compaction.copy(pendingJob = job))
+
+  // ── 乒乓压缩旁车状态（主会话无感上下文压缩一期，2026-10-09 spec §H1-1）──
+  // 读取直用 case class 成员 `state.pingpong`（不加同名 extension——E194 阴影）。
+
+  def withPingpong(p: PingpongState): AgentState = s.copy(pingpong = p)
+
+  /** 全清（ResetSession / 换入作废 / 回落复位共用）——回到无乒乓状态。 */
+  def withPingpongCleared: AgentState = s.copy(pingpong = PingpongState())
+
+  def withShadowPending(job: Option[PingpongShadowJob]): AgentState =
+    s.copy(pingpong = s.pingpong.copy(shadowPending = job))
+
+  def withSReadyPending(ready: Option[PingpongSReady]): AgentState =
+    s.copy(pingpong = s.pingpong.copy(sReadyPending = ready))
+
+  def withForkQueued(queued: Boolean): AgentState =
+    s.copy(pingpong = s.pingpong.copy(forkQueued = queued))
+
+  def withPpFailures(failures: Int, at: Long): AgentState =
+    s.copy(pingpong = s.pingpong.copy(ppFailures = failures, lastPpFailureAt = at))
 
   def withCompactionFailures(failures: Int): AgentState =
     s.copy(compaction = s.compaction.copy(compactionFailures = failures))

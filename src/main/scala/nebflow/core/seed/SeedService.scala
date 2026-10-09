@@ -76,7 +76,7 @@ import scala.jdk.CollectionConverters.*
  *  - 不一致且 runtime digest == 信任记录 digest（干净快照，用户未改）→ **覆盖前备份**
  *    （`<root>/plugins-backups/<ts>_pre-sync-<name>/`，逐文件 pre-sha256；与
  *    已退役 agents 面（reconcileAgent，builtin-def 批 2026-10-03 删除）的
-   *    `agents-backups` 形态逐项对称）→ 种子镜像
+ *    `agents-backups` 形态逐项对称）→ 种子镜像
  *    覆盖（含删除 runtime 独有文件）+ 自动 re-approve → 冷启动插件与最新种子一致
  *  - 不一致且 runtime digest ≠ 信任记录 digest（用户改过）→ 跳过 + WARN（用户编辑 > 种子）
  *  - 不一致且无信任记录 → 跳过 + WARN（无仲裁基准，保守不覆盖）

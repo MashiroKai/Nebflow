@@ -196,7 +196,9 @@ class FileRefsInlineBudgetSpec extends FunSuite:
         assert(raw.startsWith(PopTool.Sentinel), s"payload sentinel expected: ${raw.take(60)}")
         io.circe.parser.parse(raw.substring(PopTool.Sentinel.length)) match
           case Right(json) => json
-          case Left(err)   => fail(s"payload must be pure JSON: $err")
+          case Left(err) => fail(s"payload must be pure JSON: $err")
+
+  end popPayload
 
   private def itemCounts(p: Json): (Boolean, Boolean) =
     val items = p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
@@ -218,8 +220,11 @@ class FileRefsInlineBudgetSpec extends FunSuite:
       assertEquals(countOf(p, "inlined"), 1)
       assertEquals(countOf(p, "referenced"), 1, "the over-budget item rides the ticket leg, counted only")
       assertEquals(countOf(p, "failed"), 0)
-      assertEquals(p.hcursor.downField("warnings").as[List[Json]].toOption.getOrElse(Nil), Nil,
-        "an over-budget image is not a defect: the ticket leg still renders it")
+      assertEquals(
+        p.hcursor.downField("warnings").as[List[Json]].toOption.getOrElse(Nil),
+        Nil,
+        "an over-budget image is not a defect: the ticket leg still renders it"
+      )
       assertEquals(itemCounts(p), (true, false), "input order decides who is embedded (first come, first served)")
     }
 
@@ -241,13 +246,19 @@ class FileRefsInlineBudgetSpec extends FunSuite:
       val fits = writeSized(dir.resolve("fits.png"), 29982, 0x41)
       val pFits = popPayload(List(fits))
       val itemsFits = pFits.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
-      assert(itemsFits.head.hcursor.get[String]("src").toOption.isDefined, "inside the cap the bytes ride in the payload")
+      assert(
+        itemsFits.head.hcursor.get[String]("src").toOption.isDefined,
+        "inside the cap the bytes ride in the payload"
+      )
 
       val over = writeSized(dir.resolve("over.png"), 29984, 0x42)
       val pOver = popPayload(List(over))
       val itemsOver = pOver.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
-      assertEquals(itemsOver.head.hcursor.get[String]("src").toOption, None,
-        "past the cap: metadata only — the ticket leg fetches it")
+      assertEquals(
+        itemsOver.head.hcursor.get[String]("src").toOption,
+        None,
+        "past the cap: metadata only — the ticket leg fetches it"
+      )
       assertEquals(itemsOver.head.hcursor.get[Long]("size").toOption, Some(29984L))
       assertEquals(countOf(pOver, "referenced"), 1)
     }

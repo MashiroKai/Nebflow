@@ -10,25 +10,28 @@ import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.{Authorization, `Content-Type`}
 
-/** Batch B2 ("立项（最小形态）") — the OpenAI wire-format shim + its alias
-  * route. Two families of assertions:
-  *
-  *   1. `OpenAiChatShim` pure mapping (OpenAI body ⇄ in-tree case classes), with
-  *      the discriminating failures that prove the shim's predicates have
-  *      resolution — a refusal must be an explicit `Left`, never a silently
-  *      dropped field.
-  *   2. `ChatRoutes.routes` — the alias path is registered on the SAME routes
-  *      value as the in-tree paths and sits behind the SAME auth gate, and the
-  *      two existing paths are unchanged.
-  */
+/**
+ * Batch B2 ("立项（最小形态）") — the OpenAI wire-format shim + its alias
+ * route. Two families of assertions:
+ *
+ *   1. `OpenAiChatShim` pure mapping (OpenAI body ⇄ in-tree case classes), with
+ *      the discriminating failures that prove the shim's predicates have
+ *      resolution — a refusal must be an explicit `Left`, never a silently
+ *      dropped field.
+ *   2. `ChatRoutes.routes` — the alias path is registered on the SAME routes
+ *      value as the in-tree paths and sits behind the SAME auth gate, and the
+ *      two existing paths are unchanged.
+ */
 class OpenAiChatShimSpec extends CatsEffectSuite:
 
   private val Token = "test-token-b2"
 
   private class ScriptedLlm(resp: LlmResponse) extends LlmHandle[IO]:
     val seen = cats.effect.Ref.unsafe[IO, List[LlmRequest]](Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       seen.update(req :: _).as(resp)
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -49,17 +52,19 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
       )
     )
 
-  /** Wire-faithful request builder: raw UTF-8 bytes + an explicit
-    * `application/json` content type.
-    *
-    * Deliberately NOT `withEntity(String)` / `withEntity(Array[Byte])` with the
-    * ambient implicits: a scope importing `org.http4s.circe.CirceEntityCodec.*`
-    * also has http4s-circe's `jsonEncoderOf[F, A: Encoder]`, which wins for
-    * those types and encodes the payload **as a JSON value** — a `String`
-    * becomes a JSON string literal (`"{\"model\":…}"`) and an `Array[Byte]`
-    * becomes a JSON array of numbers (`[123,34,…]`). Both were measured with a
-    * body probe during this batch. Passing the byte-array encoder explicitly
-    * sends the bytes verbatim, which is what an OpenAI client does. */
+  /**
+   * Wire-faithful request builder: raw UTF-8 bytes + an explicit
+   * `application/json` content type.
+   *
+   * Deliberately NOT `withEntity(String)` / `withEntity(Array[Byte])` with the
+   * ambient implicits: a scope importing `org.http4s.circe.CirceEntityCodec.*`
+   * also has http4s-circe's `jsonEncoderOf[F, A: Encoder]`, which wins for
+   * those types and encodes the payload **as a JSON value** — a `String`
+   * becomes a JSON string literal (`"{\"model\":…}"`) and an `Array[Byte]`
+   * becomes a JSON array of numbers (`[123,34,…]`). Both were measured with a
+   * body probe during this batch. Passing the byte-array encoder explicitly
+   * sends the bytes verbatim, which is what an OpenAI client does.
+   */
   private def req(body: String, withAuth: Boolean = true): Request[IO] =
     val base = Request[IO](Method.POST, Uri.unsafeFromString("/v1/chat/completions"))
       .withEntity(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))(
@@ -77,15 +82,17 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
       )
       .withContentType(`Content-Type`(MediaType.application.json))
 
-  /** Read a response body as parsed JSON through the same explicit parser the
-    * route uses — independent of the ambient implicit `EntityDecoder[Json]`
-    * (which resolves to the JSON-string decoder on this spec's import scope;
-    * measured with a body probe during this batch). */
+  /**
+   * Read a response body as parsed JSON through the same explicit parser the
+   * route uses — independent of the ambient implicit `EntityDecoder[Json]`
+   * (which resolves to the JSON-string decoder on this spec's import scope;
+   * measured with a body probe during this batch).
+   */
   private def respJson(resp: Response[IO]): IO[Json] =
     resp.bodyText.compile.string.map(raw =>
       io.circe.parser.parse(raw) match
         case Right(j) => j
-        case Left(e)  => fail(s"non-JSON response body: $e — raw=$raw")
+        case Left(e) => fail(s"non-JSON response body: $e — raw=$raw")
     )
 
   // ── 1. request mapping ───────────────────────────────────────────────────
@@ -499,23 +506,27 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
 
   test("route: alias path requires auth exactly like the in-tree paths") {
     val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), Token).routes
-    val body = """{"model":"paid/paid-model","messages":[{"role":"user","content":"x"}],"session_id":"s","agent_id":"a"}"""
-    List("/v1/chat", "/v1/chat/completions").traverse { path =>
-      routes(
-        Request[IO](Method.POST, Uri.unsafeFromString(path)).withEntity(body)
-      ).value.map(resp => (path, resp.map(_.status)))
-    }.map { got =>
-      got.foreach {
-        case (path, Some(status)) => assertEquals(status, Status.Unauthorized, s"path=$path")
-        case (path, None)         => fail(s"path=$path fell through the route table")
+    val body =
+      """{"model":"paid/paid-model","messages":[{"role":"user","content":"x"}],"session_id":"s","agent_id":"a"}"""
+    List("/v1/chat", "/v1/chat/completions")
+      .traverse { path =>
+        routes(
+          Request[IO](Method.POST, Uri.unsafeFromString(path)).withEntity(body)
+        ).value.map(resp => (path, resp.map(_.status)))
       }
-    }
+      .map { got =>
+        got.foreach {
+          case (path, Some(status)) => assertEquals(status, Status.Unauthorized, s"path=$path")
+          case (path, None) => fail(s"path=$path fell through the route table")
+        }
+      }
   }
 
   test("route: with a valid token the alias answers 200 in the OpenAI shape") {
     val llm = new ScriptedLlm(mkResponse(reply = "pong"))
     val routes = new ChatRoutes(llm, Token).routes
-    val body = """{"model":"paid/paid-model","messages":[{"role":"user","content":"ping"}],"session_id":"s","agent_id":"a"}"""
+    val body =
+      """{"model":"paid/paid-model","messages":[{"role":"user","content":"ping"}],"session_id":"s","agent_id":"a"}"""
     routes(req(body)).value.flatMap {
       case None => fail("the alias route fell through")
       case Some(resp) =>

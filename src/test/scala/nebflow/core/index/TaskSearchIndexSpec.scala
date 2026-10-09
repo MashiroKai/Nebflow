@@ -28,8 +28,10 @@ class TaskSearchIndexSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp)
     f(tmp).guarantee(IO(PathUtil.setDataRoot(original)) *> IO(os.remove.all(tmp)))
 
-  /** fixture 设置与嵌入函数：含 "alpha" ⇒ vecA；含 "beta" ⇒ 与 vecA 夹角 0.9 的
-    * vecB；否则 vecC（可判序的确定性映射——alpha 查询命中序 = a1(1.0) → b*(0.9)）。 */
+  /**
+   * fixture 设置与嵌入函数：含 "alpha" ⇒ vecA；含 "beta" ⇒ 与 vecA 夹角 0.9 的
+   * vecB；否则 vecC（可判序的确定性映射——alpha 查询命中序 = a1(1.0) → b*(0.9)）。
+   */
   private val fixtureSettings = EmbeddingService.EmbeddingSettings(
     baseUrl = "https://fixture.invalid/v1",
     model = "fixture-emb",
@@ -40,6 +42,7 @@ class TaskSearchIndexSpec extends CatsEffectSuite:
   private val vecA = List(1.0f, 0.0f, 0.0f)
   private val vecB = List(0.9f, 0.43589f, 0.0f)
   private val vecC = List(0.0f, 0.0f, 1.0f)
+
   private def fixtureEmbed(texts: List[String]): IO[Option[List[List[Float]]]] =
     IO.pure(
       Some(texts.map { t =>
@@ -210,8 +213,14 @@ class TaskSearchIndexSpec extends CatsEffectSuite:
         val noRerank: (String, List[TaskSearchRerank.Candidate]) => IO[Option[List[String]]] =
           (_, _) => IO.pure(None)
         val res = TaskSearchIndex
-          .search("alpha", k = 3, doUpkeep = false, embed = fixtureEmbed, rerank = noRerank,
-            settings = Some(fixtureSettings))
+          .search(
+            "alpha",
+            k = 3,
+            doUpkeep = false,
+            embed = fixtureEmbed,
+            rerank = noRerank,
+            settings = Some(fixtureSettings)
+          )
           .unsafeRunSync()
           .fold(e => fail(e), identity)
         assertEquals(res.mode, TaskSearchIndex.ModeEmbedding)
@@ -228,8 +237,14 @@ class TaskSearchIndexSpec extends CatsEffectSuite:
         val rer: (String, List[TaskSearchRerank.Candidate]) => IO[Option[List[String]]] =
           (_, _) => IO.pure(Some(order))
         val res2 = TaskSearchIndex
-          .search("alpha", k = 3, doUpkeep = false, embed = fixtureEmbed, rerank = rer,
-            settings = Some(fixtureSettings))
+          .search(
+            "alpha",
+            k = 3,
+            doUpkeep = false,
+            embed = fixtureEmbed,
+            rerank = rer,
+            settings = Some(fixtureSettings)
+          )
           .unsafeRunSync()
           .fold(e => fail(e), identity)
         assertEquals(res2.reranked, true)

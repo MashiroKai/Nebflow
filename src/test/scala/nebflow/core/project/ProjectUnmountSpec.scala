@@ -103,7 +103,15 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     rt.store
       .mutate(s =>
         s.copy(nodes =
-          s.nodes + (id -> NodeDef(id = id, name = name, agent = "general", task = None, in = in, status = status, createdAt = createdAt))
+          s.nodes + (id -> NodeDef(
+            id = id,
+            name = name,
+            agent = "general",
+            task = None,
+            in = in,
+            status = status,
+            createdAt = createdAt
+          ))
         )
       )
       .void
@@ -158,8 +166,10 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       )
     yield received
 
-  /** 幂等停会话的桩 supervisor：收 Cancelled → 留痕 + 清 registry 行（镜像真桥
-    * 「Cancelled → 清 registry + 停 agent」的最小闭环）。 */
+  /**
+   * 幂等停会话的桩 supervisor：收 Cancelled → 留痕 + 清 registry 行（镜像真桥
+   * 「Cancelled → 清 registry + 停 agent」的最小闭环）。
+   */
   private def drainingSupervisor(
     agentRegistry: Ref[IO, Map[String, AgentRecord]],
     sessionId: String
@@ -179,12 +189,13 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     def loop: Behavior[AgentEvent] =
       Behaviors.receiveMessage[AgentEvent] {
         case AgentEvent.Cancelled(sid, reason) => received.update(_ :+ s"$sid:$reason").as(loop)
-        case _                                 => IO.pure(loop)
+        case _ => IO.pure(loop)
       }
     loop
 
   private def projectJson(name: String): io.circe.Json =
-    jsonParse(os.read(ProjectStore.projectJsonPath(name))).getOrElse(throw new IllegalStateException("corrupt test project.json"))
+    jsonParse(os.read(ProjectStore.projectJsonPath(name)))
+      .getOrElse(throw new IllegalStateException("corrupt test project.json"))
 
   /** 摘掉两枚卸载键后的 project.json（手术式插键的对账基准）。 */
   private def stripUnmountKeys(j: io.circe.Json): io.circe.Json =
@@ -210,7 +221,14 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       //  - 孤立死会话 Running 节点（链腿 CHAIN_SINGLE_MEMBER → 节点腿 reap 兜底）
       _ <- seedNode(rt, "n-solo", "solo", NodeLifecycle.Running, createdAt = t0 + 2)
       //  - dispatcher 会话 + 归属 delegate 会话（桩桥收 Cancelled 即清行）
-      _ <- registerSession(res.agentRegistry, system, "dispatcher-um01", AgentKind.Flow, Some("p-3step"), drainingSupervisor(res.agentRegistry, "dispatcher-um01"))
+      _ <- registerSession(
+        res.agentRegistry,
+        system,
+        "dispatcher-um01",
+        AgentKind.Flow,
+        Some("p-3step"),
+        drainingSupervisor(res.agentRegistry, "dispatcher-um01")
+      )
       _ <- IO.blocking {
         DelegateRegistry.put(
           DelegateRegistry.Record(
@@ -225,7 +243,14 @@ class ProjectUnmountSpec extends CatsEffectSuite:
           )
         )
       }
-      delReceived <- registerSession(res.agentRegistry, system, "delegate-um01", AgentKind.Delegate, None, drainingSupervisor(res.agentRegistry, "delegate-um01"))
+      delReceived <- registerSession(
+        res.agentRegistry,
+        system,
+        "delegate-um01",
+        AgentKind.Delegate,
+        None,
+        drainingSupervisor(res.agentRegistry, "delegate-um01")
+      )
       dispRegistered <- res.agentRegistry.get.map(_.contains("dispatcher-um01"))
       _ = assert(dispRegistered, "fixture: dispatcher session must be registered before unmount")
       // 零删基线（挂载/播种之后的文件集合）：
@@ -248,7 +273,11 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       val r = report.getOrElse(throw new AssertionError(s"unmount must succeed: $report"))
       // ── ①停 ──
       assert(r.chainsCancelled.contains("chain-n-c1"), s"chain leg must cancel the active chain: ${r.chainsCancelled}")
-      assertEquals(r.nodesCancelled.toSet, Set("n-solo"), "node leg sweeps only unchained Running (chain members n-c1 ride the chain leg's cascade — finality asserted below): " + r.nodesCancelled)
+      assertEquals(
+        r.nodesCancelled.toSet,
+        Set("n-solo"),
+        "node leg sweeps only unchained Running (chain members n-c1 ride the chain leg's cascade — finality asserted below): " + r.nodesCancelled
+      )
       assertEquals(r.sessionsCancelled, List("dispatcher-um01"), "dispatcher leg")
       assertEquals(r.delegatesCancelled, List("delegate-um01"), "delegate leg")
       assertEquals(snapAfter.nodes("n-c1").status, NodeLifecycle.Cancelled, "chain head finalized cancelled")
@@ -256,23 +285,49 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       assertEquals(snapAfter.nodes("n-solo").status, NodeLifecycle.Cancelled, "dead running reaped to cancelled")
       assert(delGot.exists(_.startsWith("delegate-um01:")), s"delegate supervisor must receive Cancelled: $delGot")
       // ── ②移 ──
-      assert(!listAfter.exists(_.name == "p-3step"), "unmounted project must vanish from the list face (GET /projects + startupMount 同源)")
+      assert(
+        !listAfter.exists(_.name == "p-3step"),
+        "unmounted project must vanish from the list face (GET /projects + startupMount 同源)"
+      )
       assert(listAllAfter.exists(_.name == "p-3step"), "definition stays on disk (listAll unchanged)")
       assert(registryAfter.isEmpty, "runtime must be unregistered")
       assertEquals(jsonAfter.hcursor.downField("unmounted").as[Boolean].toOption, Some(true), "marker key written")
       assert(jsonAfter.hcursor.downField("unmountedAt").as[Long].toOption.exists(_ > 0), "timestamp written")
-      assertEquals(r.unmountedAt, jsonAfter.hcursor.downField("unmountedAt").as[Long].toOption.getOrElse(0L), "report carries the written timestamp")
-      assert(!regRowsAfter.contains("dispatcher-um01") && !regRowsAfter.contains("delegate-um01"), "sessions drained from the registry")
+      assertEquals(
+        r.unmountedAt,
+        jsonAfter.hcursor.downField("unmountedAt").as[Long].toOption.getOrElse(0L),
+        "report carries the written timestamp"
+      )
+      assert(
+        !regRowsAfter.contains("dispatcher-um01") && !regRowsAfter.contains("delegate-um01"),
+        "sessions drained from the registry"
+      )
       // ── ③零删（无删除无移动）──
-      assertEquals(wsBefore.keySet -- wsAfter.keySet, Set.empty[String], "hard constraint: zero file deletions in the workspace")
+      assertEquals(
+        wsBefore.keySet -- wsAfter.keySet,
+        Set.empty[String],
+        "hard constraint: zero file deletions in the workspace"
+      )
       val outsideBefore = wsBefore.filterNot(k => k._1.startsWith(".nebflow"))
       val outsideAfter = wsAfter.filterNot(k => k._1.startsWith(".nebflow"))
-      assertEquals(outsideAfter, outsideBefore, "files outside .nebflow/ must be byte-identical (flow-map/ledger/audit writes are the stop step's legal inside-.nebflow side effects)")
-      assertEquals(projBefore.keySet, projAfter.keySet, "projects/<name>/ file set unchanged (marker written in place, nothing added/removed)")
+      assertEquals(
+        outsideAfter,
+        outsideBefore,
+        "files outside .nebflow/ must be byte-identical (flow-map/ledger/audit writes are the stop step's legal inside-.nebflow side effects)"
+      )
+      assertEquals(
+        projBefore.keySet,
+        projAfter.keySet,
+        "projects/<name>/ file set unchanged (marker written in place, nothing added/removed)"
+      )
       // project.json = 原文 + 恰两键（其余字段逐字节语义稳定）：手术式插键的对账面。
       // 两侧同剥：create 序列化按 archived 先例为 Option.None 写显式 null（jsonBefore
       // 自带 unmounted/unmountedAt:null 位），剥键对账只关心「除两键外无漂移」。
-      assertEquals(stripUnmountKeys(jsonAfter), stripUnmountKeys(jsonBefore), "project.json diff = exactly the two unmount keys")
+      assertEquals(
+        stripUnmountKeys(jsonAfter),
+        stripUnmountKeys(jsonBefore),
+        "project.json diff = exactly the two unmount keys"
+      )
     end for
   }
 
@@ -308,13 +363,21 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     yield
       val at = archivedSoft.getOrElse(throw new AssertionError(s"archive must succeed: $archivedSoft"))
       assert(at > 0, "archive returns a timestamp")
-      assertEquals(softSnap.nodes("n-soft").status, NodeLifecycle.Running, "archive must NOT stop in-flight tasks (soft tier)")
+      assertEquals(
+        softSnap.nodes("n-soft").status,
+        NodeLifecycle.Running,
+        "archive must NOT stop in-flight tasks (soft tier)"
+      )
       assert(softMounted.isDefined, "archive must NOT tear down the runtime")
       assert(!softList.exists(_.name == "p-tier-soft"), "archive filters the list face (existing semantics)")
       assertEquals(softAfter, softBefore, "archive is zero-deletion zero-move (byte-for-byte)")
       val hard = hardReport.getOrElse(throw new AssertionError(s"unmount must succeed: $hardReport"))
       assert(hard.nodesCancelled.contains("n-hard"), "unmount stops the running node first (hard tier)")
-      assertEquals(hardSnap.nodes("n-hard").status, NodeLifecycle.Cancelled, "node finalized before the mount face moved")
+      assertEquals(
+        hardSnap.nodes("n-hard").status,
+        NodeLifecycle.Cancelled,
+        "node finalized before the mount face moved"
+      )
       assert(hardMounted.isEmpty, "unmount removes the runtime")
       assert(!hardList.exists(_.name == "p-tier-hard"), "unmount filters the list face")
       assertEquals(hardBefore.keySet -- hardAfter.keySet, Set.empty[String], "unmount is zero-deletion (files kept)")
@@ -353,7 +416,14 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     val res = minimalResources(ws)
     for
       rt <- mountProject("p-abort", ws, system, res)
-      received <- registerSession(res.agentRegistry, system, "dispatcher-abort", AgentKind.Flow, Some("p-abort"), undyingSupervisor)
+      received <- registerSession(
+        res.agentRegistry,
+        system,
+        "dispatcher-abort",
+        AgentKind.Flow,
+        Some("p-abort"),
+        undyingSupervisor
+      )
       projBefore = projectJson("p-abort")
       result <- ProjectUnmount.unmount("p-abort", res.agentRegistry, _ => IO.unit)
       stillMounted <- ProjectRuntimeRegistry.get("p-abort")
@@ -365,8 +435,14 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     yield
       assert(result.isLeft, s"an undying session must abort the unmount: $result")
       val err = result.swap.toOption.get
-      assert(err.contains("drain") && err.contains("dispatcher-abort"), s"abort must name the drain and the survivor: $err")
-      assert(got.exists(_.startsWith("dispatcher-abort:")), s"stop step must have sent the cancel BEFORE removing: $got")
+      assert(
+        err.contains("drain") && err.contains("dispatcher-abort"),
+        s"abort must name the drain and the survivor: $err"
+      )
+      assert(
+        got.exists(_.startsWith("dispatcher-abort:")),
+        s"stop step must have sent the cancel BEFORE removing: $got"
+      )
       assert(stillMounted.isDefined, "abort keeps the runtime mounted (step 2 never ran)")
       assert(listAfter.exists(_.name == "p-abort"), "abort keeps the project on the list face")
       assertEquals(projAfter, projBefore, "abort writes nothing to project.json (no marker)")

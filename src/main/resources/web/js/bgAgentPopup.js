@@ -17,6 +17,284 @@ import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls, onCancelResult, isFailedSnapshotStatus } from './managePanel.js';
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 import { cleanupCardIframes } from './cardRegistry.js';
+// 两层架构批（2026-10-09 · 规格 §A 净化）：弹窗只留 G4 单查一个数据缝——星型区
+// （G3 children）迁任务列表（§B）、flow 节点区迁 L1 委托流程图（§C）、归档动作
+// 全后台化（引擎终态自动归档 + L2 抽屉管理）。收起式摘要条 = 九点⑦承载面平移的
+// 可见性保底（作者裁定：弹窗保留收起式摘要条承载 brief/结果）。
+import { fetchDelegateDetail, isDelegateDomainId } from './delegateApi.js';
+// 修订批（九点⑦ · 2026-10-09）：判词→状态映射（结果区词面）——stub 读取口单源。
+import { verdictToStatus } from './delegateChainStub.js';
+
+// P2-4 cycle cut（flowAgentPopup 同款先例）：showToast 动态 import 破环。净化批
+// （2026-10-09）后本文件暂零 toast 消费点（归档入口已迁 L2 抽屉）——常量在册保留
+// （失去调用点的件先留＝projcreate 先例，键 face 归清理批）。
+const showToast = (msg, type) =>
+  import('./modal.js').then((m) => m.showToast(msg, type)).catch(() => {});
+
+// ── delegate 摘要条样式（两层架构批 2026-10-09 · 规格 WF-01 净化形态；自注入，
+//    不动 flowAgentPopup 的共享 POPUP_CSS——两弹窗模块同载但样式域分离）──────────
+// 净化（用户需求 1 + 规格 §A）：详情条旧件（子代理 ×N 计数／星型子代理行族／
+// flow 节点区／头部归档小图标）全部移除——子代理显示迁任务列表（§B），归档动作
+// 全后台化（引擎终态自动归档 + L2 抽屉管理）。保留 = 收起式摘要条（九点⑦承载面
+// 平移的可见性保底：一行摘要 + 点开 brief/结果全文）。
+if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegate-strip-css')) {
+  document.head.insertAdjacentHTML('beforeend', `<style id="bgagent-delegate-strip-css">
+.bgagent-delegate-strip {
+  border-bottom: 1px solid rgba(128,128,128,0.18);
+  padding: 6px 14px;
+  font-size: 12px;
+}
+/* 收起式摘要条（WF-01）：默认收起 = 一行（任务 chip + brief 摘要 + 结果词 +
+   展开 chevron）；点开 = 任务 brief 全文 + 判词 + 报告全文（九点⑦正文不丢）。 */
+.bgagent-strip-toggle {
+  display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%;
+  padding: 2px 0; border: none; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.bgagent-strip-toggle:hover .bgagent-strip-briefline { color: var(--color-text, inherit); }
+.bgagent-strip-chip {
+  flex-shrink: 0; padding: 1px 8px; border-radius: 8px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
+  background: var(--color-frame-hover, rgba(128,128,128,0.12));
+}
+.bgagent-strip-briefline {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
+}
+.bgagent-strip-result {
+  flex-shrink: 0; font-weight: 500; color: var(--color-text, inherit);
+}
+.bgagent-strip-result[hidden] { display: none; }
+.bgagent-strip-chev {
+  flex-shrink: 0; width: 12px; height: 12px; display: inline-flex;
+  color: var(--color-frame-text-dim, rgba(128,128,128,0.6));
+  transition: transform 0.15s ease;
+}
+.bgagent-strip-chev svg { width: 12px; height: 12px; display: block; }
+.bgagent-strip-toggle[aria-expanded="true"] .bgagent-strip-chev { transform: rotate(180deg); }
+.bgagent-strip-body {
+  margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(128,128,128,0.18);
+  max-height: 38vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.bgagent-strip-body[hidden] { display: none; }
+.bgagent-strip-plugins {
+  color: var(--color-frame-text-dim, rgba(128,128,128,0.6));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bgagent-strip-sec {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+/* hidden 属性守卫（修订批截图期发现）：author display 规则会压过 UA 的
+   [hidden]{display:none}——结果区（在飞无判词）收起时以空壳区透出。零空区
+   纪律（数据到位才显）靠本守卫成立。 */
+.bgagent-strip-sec[hidden],
+.bgagent-strip-verdict[hidden] { display: none; }
+.bgagent-strip-sec-label {
+  font-weight: 600; font-size: 10px; letter-spacing: 0.02em;
+  color: var(--color-frame-text-dim, rgba(128,128,128,0.6)); flex-shrink: 0;
+}
+.bgagent-strip-tasktext {
+  font-size: 12px; line-height: 1.5; color: var(--color-text, inherit);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 88px; overflow-y: auto;
+}
+.bgagent-strip-verdict {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  font-size: 12px; color: var(--color-text, inherit);
+}
+.bgagent-strip-verdict-word { flex-shrink: 0; font-weight: 500; }
+.bgagent-strip-verdict-reason {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
+}
+.bgagent-strip-report {
+  font-size: 12px; line-height: 1.5; color: var(--color-text, inherit);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 132px; overflow-y: auto;
+}
+</style>`);
+}
+
+/** 判词 → 行状态词键（与 taskList.DELEGATE_WORD_KEY 同族映射；零 locale 新键）。 */
+const STRIP_VERDICT_KEY = {
+  completed: 'flowmap.done',
+  blocked: 'task.nodeBlocked',
+  'ready-to-merge': 'delegate.readyToMerge',
+};
+
+/** 收起/展开 chevron（与 taskList 折叠钮同一 lucide 描边语言，内联 SVG 单源）。 */
+const STRIP_CHEV_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+
+/**
+ * 挂 delegate 收起式摘要条（两层架构批 2026-10-09 · 规格 WF-01）：任务 brief 摘要
+ * 一行 + 结果词（收起态）；点开展开 = brief 全文 + 判词 + 报告全文（九点⑦正文面）。
+ * 仅 delegate 域会话（delegate-* 与 external-* 前缀）。数据 = G4 聚合单查（record
+ * .plugins/record.archivedAt/verdict/record.reportDetail/record.taskId）；来源失败
+ * → 条整体缺席（fail-soft）。brief 正文 = 会话历史首条注入行（getHistoryPage 回执
+ * 侧 fillStripTaskBody 单点回填——G4 task 键只有台账标题截断形，正文唯一权威在历史）。
+ * @param {string} nodeSessionId @param {Element} modal @param {Element} chatContainer
+ */
+function mountDelegateStrip(nodeSessionId, modal, chatContainer) {
+  if (!isDelegateDomainId(nodeSessionId)) return;
+  const strip = document.createElement('div');
+  strip.className = 'bgagent-delegate-strip';
+  strip.dataset.delegateStrip = nodeSessionId;
+  strip.hidden = true; // 数据到位才显（零空条）
+  modal.insertBefore(strip, chatContainer);
+
+  // 收起态一行：任务 chip + brief 摘要 + 结果词 + chevron。
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'bgagent-strip-toggle';
+  toggle.setAttribute('aria-expanded', 'false');
+  const chip = document.createElement('span');
+  chip.className = 'bgagent-strip-chip';
+  chip.textContent = t('flowmap.archive.taskLabel'); // 「任务」——节点详情同键
+  const briefLine = document.createElement('span');
+  briefLine.className = 'bgagent-strip-briefline';
+  const resultWord = document.createElement('span');
+  resultWord.className = 'bgagent-strip-result';
+  resultWord.hidden = true; // 在飞无判词 = 缺席（零空位）
+  const chev = document.createElement('span');
+  chev.className = 'bgagent-strip-chev';
+  chev.innerHTML = STRIP_CHEV_SVG;
+  chev.setAttribute('aria-hidden', 'true');
+  toggle.appendChild(chip);
+  toggle.appendChild(briefLine);
+  toggle.appendChild(resultWord);
+  toggle.appendChild(chev);
+  strip.appendChild(toggle);
+
+  // 展开态正文：plugins 数据行（G4）+ 任务 brief 全文 + 结果（判词/报告）。
+  const body = document.createElement('div');
+  body.className = 'bgagent-strip-body';
+  body.hidden = true; // 默认收起（WF-01）
+  const plugins = document.createElement('div');
+  plugins.className = 'bgagent-strip-plugins';
+  body.appendChild(plugins);
+
+  const taskSec = document.createElement('div');
+  taskSec.className = 'bgagent-strip-sec';
+  const taskLabel = document.createElement('span');
+  taskLabel.className = 'bgagent-strip-sec-label';
+  taskLabel.textContent = t('flowmap.archive.taskLabel');
+  taskSec.appendChild(taskLabel);
+  const taskText = document.createElement('div');
+  taskText.className = 'bgagent-strip-tasktext';
+  taskText.hidden = true; // 正文到位才显（零空区）
+  taskSec.appendChild(taskText);
+  body.appendChild(taskSec);
+
+  const resultSec = document.createElement('div');
+  resultSec.className = 'bgagent-strip-sec';
+  const resultLabel = document.createElement('span');
+  resultLabel.className = 'bgagent-strip-sec-label';
+  resultLabel.textContent = t('flowmap.archive.resultLabel'); // 「结果」——节点详情同键
+  resultSec.appendChild(resultLabel);
+  const verdictRow = document.createElement('div');
+  verdictRow.className = 'bgagent-strip-verdict';
+  const verdictWord = document.createElement('span');
+  verdictWord.className = 'bgagent-strip-verdict-word';
+  const verdictReason = document.createElement('span');
+  verdictReason.className = 'bgagent-strip-verdict-reason';
+  verdictRow.appendChild(verdictWord);
+  verdictRow.appendChild(verdictReason);
+  resultSec.appendChild(verdictRow);
+  const reportText = document.createElement('div');
+  reportText.className = 'bgagent-strip-report';
+  resultSec.appendChild(reportText);
+  resultSec.hidden = true; // 无判词无报告 = 缺席（在飞常态）
+  body.appendChild(resultSec);
+  strip.appendChild(body);
+
+  // 收起/展开（单条内切换；对话流不受影响——脚注/弹窗机制零触碰）。
+  toggle.addEventListener('click', () => {
+    const open = body.hidden;
+    body.hidden = !open;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  /** G4 单查（并行面已随星型区移除——弹窗只剩一个数据缝）；失败 → 条缺席。 */
+  fetchDelegateDetail(nodeSessionId).then((detail) => {
+    if (!popupOverlay || currentStepId !== nodeSessionId) return; // 弹窗已切走 → 静默弃
+    const record = (detail && detail.record && typeof detail.record === 'object') ? detail.record : null;
+    if (!detail) return; // 拉取失败 → 条缺席（fail-soft，弹窗主体不受影响）
+    const pluginNames = record && Array.isArray(record.plugins)
+      ? record.plugins.map((p) => String(p || '')).filter(Boolean) : [];
+    if (pluginNames.length) {
+      plugins.textContent = `plugins: ${pluginNames.join(', ')}`; // 数据原文非文案
+      plugins.title = plugins.textContent;
+    } else {
+      plugins.hidden = true;
+    }
+    // 任务 brief：G4 task 键 = 台账标题（截断形）——先占位（收起行 + 全文同源），
+    // 正文由历史回执回填（fillStripTaskBody 单点；历史不可达时标题即诚实降级面）。
+    // 回执竞态守卫：历史 brief 已到（briefSource=history）→ 台账标题不再回写
+    // （正文唯一权威在历史——台账标题只是历史不可达时的降级占位）。
+    const ledgerTask = detail && detail.task && typeof detail.task === 'object' ? detail.task : null;
+    const ledgerTitle = String((ledgerTask && ledgerTask.title) || (record && record.title) || '');
+    if (ledgerTitle && strip.dataset.briefSource !== 'history') {
+      briefLine.textContent = ledgerTitle;
+      briefLine.title = ledgerTitle;
+      taskText.textContent = ledgerTitle;
+      taskText.title = ledgerTitle;
+      taskText.hidden = false;
+    }
+    // 结果（九点⑦）：判词（词+reason）＋ 报告正文（record.reportDetail 全文）。
+    const verdict = detail && detail.verdict && typeof detail.verdict === 'object' ? detail.verdict : null;
+    const reportDetail = String((record && record.reportDetail) || '');
+    if (verdict || reportDetail) {
+      const st = verdict ? verdictToStatus(String(verdict.verdict || '')) : '';
+      const wordKey = STRIP_VERDICT_KEY[st] || '';
+      const word = wordKey ? t(wordKey) : String((verdict && verdict.verdict) || '');
+      verdictWord.textContent = word;
+      verdictReason.textContent = String((verdict && verdict.reason) || '');
+      verdictReason.title = String((verdict && verdict.reason) || '');
+      verdictRow.hidden = !verdict;
+      reportText.textContent = reportDetail;
+      reportText.hidden = !reportDetail;
+      resultSec.hidden = !verdict && !reportDetail;
+      if (word) {
+        resultWord.textContent = word; // 收起态结果词
+        resultWord.hidden = false;
+      }
+    }
+    // 归档态回显随头部归档小图标一并退役（规格 §A 移除清单 4）——G6 单旗仍在
+    // 引擎侧（自动归档写），弹窗零归档件。
+    strip.hidden = false;
+  }).catch(() => { /* fail-soft：条缺席，弹窗主体不受影响 */ });
+}
+
+/**
+ * 任务 brief 正文回填（九点⑦单点）：getHistoryPage 首刷回执里首条 delegate 注入行
+ * = 派发 brief 全文（引擎侧唯一持久正文面）。弹窗已切走 → 静默弃；条缺席 → 弃。
+ * 回填双写点 = 收起态一行摘要 + 展开态正文（同一文本，两层呈现）。
+ * @param {string} nodeSessionId @param {Array<any>} messages */
+function fillStripTaskBody(nodeSessionId, messages) {
+  if (currentStepId !== nodeSessionId) return;
+  const strip = popupOverlay && popupOverlay.querySelector(`[data-delegate-strip="${CSS.escape(nodeSessionId)}"]`);
+  if (!strip) return;
+  const brief = (Array.isArray(messages) ? messages : []).find((m) => m && m.type === 'user' &&
+    m.injected === true && (m.source === 'delegate' || m.source === 'subtask'));
+  const text = brief && typeof brief.text === 'string' ? brief.text.trim() : '';
+  if (!text) return;
+  // 历史正文 = 唯一权威（覆盖台账标题占位——首刷回执与 G4 单查并行，到序不定）。
+  const el = strip.querySelector('.bgagent-strip-tasktext');
+  if (el) {
+    el.textContent = text;
+    el.title = text;
+    el.hidden = false;
+  }
+  // 收起态一行摘要同源更新（首刷回执前 = 台账标题占位，正文到位即换真值）。
+  const line = strip.querySelector('.bgagent-strip-briefline');
+  if (line) {
+    line.textContent = text;
+    line.title = text;
+  }
+  strip.dataset.briefSource = 'history'; // G4 回执侧竞态守卫读位（台账标题让位）
+}
 
 // ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -84,6 +362,13 @@ function ensureStepView(sessionId) {
   const view = new ChatView('bgagent-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
+  // （c）面（作者 2026-10-08 裁定 · 定向重开）：subagent 弹窗的**在飞过程行**走
+  // 9.19 裸行形态——turn-line 剧场（workline 单行呈现 + 过程卡预 tucked，10-03
+  // stream-ux）只属主窗。弹窗在飞 = thinking 气泡裸流（§③ 5 行窗上限照钉）+
+  // 工具卡裸行可见（9.19 同形），弹窗内不建 turn-line；终态收拢（turn-header
+  // + tuckRows）与主窗同一 9.19 统一面（883712c40），零变化。chat.js / main.js
+  // 各在飞渲染点读此标志分流；主窗与 flow 弹窗不置位 ⇒ 呈现零触碰。
+  view.nfBareProcessRows = true;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.
   view.visible = false;
   // Register in the global view registry so findViewBySessionId() can route
@@ -217,6 +502,11 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   const footer = popupOverlay.querySelector('#bgagent-footer');
   modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
+
+  // delegate 收起式摘要条（两层架构批 WF-01：brief 摘要一行 + 点开 brief/结果
+  // 全文）——弹窗头与聊天体之间，数据到位才显（fail-soft 缺席）；弹窗本体内
+  // 子代理显示/归档件为零（净化口径：弹窗 DOM 无「子代理」字样、无归档钮）。
+  mountDelegateStrip(nodeSessionId, modal, entry.container);
 
   // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
   const v = entry.view;
@@ -562,6 +852,8 @@ export function handleBgAgentHistory(msg) {
       // active (running/thinking/tool/frozen/stuck) — terminal event gathers it.
       const busyTail = ['running', 'thinking', 'tool', 'frozen', 'stuck'].includes(entry.meta.status);
       restoreFromBackendHistory(msg.messages, { busyTail });
+      // 九点⑦：首刷回执含派发 brief（首条 delegate 注入行全文）→ 详情条任务区回填。
+      fillStripTaskBody(msg.sessionId, msg.messages);
       entry.container.appendChild(keptLive);
 
       requestAnimationFrame(() => {
@@ -598,6 +890,8 @@ export function handleBgAgentHistory(msg) {
     // active (running/thinking/tool/frozen/stuck) — terminal event gathers it.
     const busyTail = ['running', 'thinking', 'tool', 'frozen', 'stuck'].includes(entry.meta.status);
     restoreFromBackendHistory(msg.messages, { busyTail });
+    // 九点⑦：首刷回执含派发 brief（首条 delegate 注入行全文）→ 详情条任务区回填。
+    fillStripTaskBody(msg.sessionId, msg.messages);
 
     requestAnimationFrame(() => {
       entry.container.scrollTop = entry.container.scrollHeight;

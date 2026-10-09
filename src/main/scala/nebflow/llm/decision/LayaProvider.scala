@@ -36,7 +36,8 @@ final class LayaProvider(
   def predict(req: DecisionRequest): IO[Either[DecisionError, DecisionResponse]] =
     val m = req.model.filter(_.nonEmpty).getOrElse(model)
     val body = LayaRequestAdapter.requestBody(req, m, minConfidence).noSpaces
-    post(body).map(_.flatMap(JevWireCodec.parseResponse))
+    post(body)
+      .map(_.flatMap(JevWireCodec.parseResponse))
       .flatTap(outcome => DecisionHttpTransport.record(health, outcome))
 
   /**
@@ -82,13 +83,21 @@ final class LayaProvider(
     val healthUrl = endpoint.replaceAll("/predict/?$", "/health")
     IO.blocking {
       try
-        val resp = basicRequest.get(uri"$healthUrl").readTimeout(timeoutMs.millis).response(asStringAlways).send(SharedBackend.instance)
+        val resp = basicRequest
+          .get(uri"$healthUrl")
+          .readTimeout(timeoutMs.millis)
+          .response(asStringAlways)
+          .send(SharedBackend.instance)
         if resp.code.isSuccess then Right(resp.code.code)
         else Left(DecisionHttpTransport.classifyStatus(resp.code.code, resp.body))
       catch
         case e: Exception =>
           Left(DecisionHttpTransport.classifyException(DecisionHttpTransport.messageChainOf(e)))
     }
+
+  end probeHealth
+
+end LayaProvider
 
 object LayaProvider:
 
@@ -114,3 +123,4 @@ object LayaProvider:
       minConfidence = minConfidence,
       health = settings.health
     )
+end LayaProvider

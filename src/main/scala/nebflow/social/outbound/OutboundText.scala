@@ -19,14 +19,16 @@ import scala.annotation.tailrec
  */
 object OutboundText:
 
-  /** Every character class this conversion is responsible for. Exposed so the
-    * acceptance reading can name what it looks for; the actual judgement lives
-    * in [[bareMarkers]], which distinguishes delimiters from prose.
-    *
-    * The `_` family is listed here for the same reason as the rest: it is a
-    * markdown emphasis delimiter (`_em_`, `__st__`), and leaving it out of this
-    * list is exactly how the underscore leg stayed invisible to the reading
-    * while the asterisk leg was covered. */
+  /**
+   * Every character class this conversion is responsible for. Exposed so the
+   * acceptance reading can name what it looks for; the actual judgement lives
+   * in [[bareMarkers]], which distinguishes delimiters from prose.
+   *
+   * The `_` family is listed here for the same reason as the rest: it is a
+   * markdown emphasis delimiter (`_em_`, `__st__`), and leaving it out of this
+   * list is exactly how the underscore leg stayed invisible to the reading
+   * while the asterisk leg was covered.
+   */
   val markers: List[String] =
     List("`", "*", "~~", "# ", "> ", "```", "_", "__")
 
@@ -48,18 +50,19 @@ object OutboundText:
     // Fenced blocks are handled LINE-WISE, before any inline reshaping: a fence
     // line is dropped, and the code between fences is passed through untouched
     // (the code is content; only the ``` delimiters are markdown syntax).
-    val (out, _) = lines.foldLeft((List.empty[String], false)) {
-      case ((acc, inFence), line) =>
-        val trimmed = line.trim
-        if trimmed.startsWith("```") then (acc, !inFence)
-        else if inFence then (acc :+ line, inFence)
-        else (acc :+ plainLine(line), inFence)
+    val (out, _) = lines.foldLeft((List.empty[String], false)) { case ((acc, inFence), line) =>
+      val trimmed = line.trim
+      if trimmed.startsWith("```") then (acc, !inFence)
+      else if inFence then (acc :+ line, inFence)
+      else (acc :+ plainLine(line), inFence)
     }
     out.mkString("\n")
 
-  /** `[label](url)` -> `label (url)`; `![alt](url)` -> `alt (url)`. The scan is
-    * hand-rolled rather than regex-driven so nested parens in a URL cannot make
-    * the whole block vanish (a dropped link is a dropped link). */
+  /**
+   * `[label](url)` -> `label (url)`; `![alt](url)` -> `alt (url)`. The scan is
+   * hand-rolled rather than regex-driven so nested parens in a URL cannot make
+   * the whole block vanish (a dropped link is a dropped link).
+   */
   private def unwrapLinks(s: String): String =
     val sb = new StringBuilder
     var i = 0
@@ -82,7 +85,10 @@ object OutboundText:
           sb.append(s.charAt(i)); i += 1
       else
         sb.append(s.charAt(i)); i += 1
+    end while
     sb.toString
+
+  end unwrapLinks
 
   /** Index of the `)` matching the `(` at `open`, or -1. */
   private def matchingParen(s: String, open: Int): Int =
@@ -139,7 +145,12 @@ object OutboundText:
           sb.append(stripSyntax("`"))
           sb.append(stripSyntax(tail))
           carryOn = false
+        end if
+      end if
+    end while
     sb.toString
+
+  end plainLine
 
   /** The per-span reshaping for content OUTSIDE inline code. */
   private def stripSyntax(span: String): String =
@@ -161,22 +172,26 @@ object OutboundText:
       s = s.replace("*", "").replace("~~", "").replace("~", "")
       s
 
-  /** Unwrap the underscore emphasis family (`_em_`, `__st__`), PAIR-wise.
-    *
-    * `_` is the only markdown delimiter that also occurs INSIDE ordinary words,
-    * so a bare `.replace("_", "")` would destroy `snake_case` and `__name__`-ish
-    * identifiers. The rule here is the same discipline [[plainLine]] already
-    * applies to backticks -- a delimiter is a delimiter only when it comes in a
-    * PAIR, a lone one is punctuation and stays -- with one extra condition for
-    * this family: a run of underscores may only open (and a closing run may only
-    * close) when it sits OUTSIDE a word. `_em_` is therefore unwrapped, while
-    * `a_b_c`, `x__y` and `https://e.example/a_b_c` are left exactly as written.
-    *
-    * Known limit, stated rather than hidden: `__init__` and `__strong__` have
-    * byte-identical local structure (word-char content between two double runs,
-    * non-word neighbours outside), so no local rule can unwrap one and keep the
-    * other. This conversion keeps the emphasis reading -- a bare `__` is markdown
-    * syntax on the wire and is the case the acceptance criterion is about. */
+  end stripSyntax
+
+  /**
+   * Unwrap the underscore emphasis family (`_em_`, `__st__`), PAIR-wise.
+   *
+   * `_` is the only markdown delimiter that also occurs INSIDE ordinary words,
+   * so a bare `.replace("_", "")` would destroy `snake_case` and `__name__`-ish
+   * identifiers. The rule here is the same discipline [[plainLine]] already
+   * applies to backticks -- a delimiter is a delimiter only when it comes in a
+   * PAIR, a lone one is punctuation and stays -- with one extra condition for
+   * this family: a run of underscores may only open (and a closing run may only
+   * close) when it sits OUTSIDE a word. `_em_` is therefore unwrapped, while
+   * `a_b_c`, `x__y` and `https://e.example/a_b_c` are left exactly as written.
+   *
+   * Known limit, stated rather than hidden: `__init__` and `__strong__` have
+   * byte-identical local structure (word-char content between two double runs,
+   * non-word neighbours outside), so no local rule can unwrap one and keep the
+   * other. This conversion keeps the emphasis reading -- a bare `__` is markdown
+   * syntax on the wire and is the case the acceptance criterion is about.
+   */
   private def unwrapUnderscores(s: String): String =
     val sb = new StringBuilder
     var i = 0
@@ -195,6 +210,8 @@ object OutboundText:
         i += 1
     sb.toString
 
+  end unwrapUnderscores
+
   private def isWordChar(c: Char): Boolean =
     Character.isLetterOrDigit(c) || c == '_'
 
@@ -204,15 +221,19 @@ object OutboundText:
     while j < s.length && s.charAt(j) == '_' do j += 1
     j - i
 
-  /** May the run at `i` (of length `n`) OPEN a delimiter pair? Only outside a
-    * word, and only when content follows it. */
+  /**
+   * May the run at `i` (of length `n`) OPEN a delimiter pair? Only outside a
+   * word, and only when content follows it.
+   */
   private def opensDelimiter(s: String, i: Int, n: Int): Boolean =
     (i == 0 || !isWordChar(s.charAt(i - 1))) &&
       i + n < s.length && !s.charAt(i + n).isWhitespace
 
-  /** Index of the run that CLOSES the pair opened before `from`, or -1 when
-    * there is none. Pair means: at least as long, outside a word on its right,
-    * and with non-empty content in between. */
+  /**
+   * Index of the run that CLOSES the pair opened before `from`, or -1 when
+   * there is none. Pair means: at least as long, outside a word on its right,
+   * and with non-empty content in between.
+   */
   private def closingRun(s: String, from: Int, n: Int): Int =
     var j = from
     var found = -1
@@ -247,12 +268,14 @@ object OutboundText:
     val atLineStart = List("> ", "# ").filter(p => s.linesIterator.exists(_.startsWith(p)))
     (anywhere ++ atLineStart ++ bareUnderscores(s)).distinct
 
-  /** Paired underscore delimiters still on the wire, if any. Deliberately NOT a
-    * bare `s.contains("_")`: that would flag `snake_case`, `a_b_c` in a URL and
-    * every ordinary identifier -- a false-positive alarm, not a reading. The
-    * scan reuses [[opensDelimiter]] / [[closingRun]], the same pair-plus-
-    * word-boundary rule the conversion applies, so the judgement and the
-    * conversion cannot drift apart on this family. */
+  /**
+   * Paired underscore delimiters still on the wire, if any. Deliberately NOT a
+   * bare `s.contains("_")`: that would flag `snake_case`, `a_b_c` in a URL and
+   * every ordinary identifier -- a false-positive alarm, not a reading. The
+   * scan reuses [[opensDelimiter]] / [[closingRun]], the same pair-plus-
+   * word-boundary rule the conversion applies, so the judgement and the
+   * conversion cannot drift apart on this family.
+   */
   private def bareUnderscores(s: String): List[String] =
     val found = scala.collection.mutable.ListBuffer.empty[String]
     var i = 0
@@ -270,9 +293,13 @@ object OutboundText:
   /** URLs surviving in the text: `label (url)` outputs plus bare URLs. */
   def links(s: String): List[String] =
     val paren = """\(([a-zA-Z][a-zA-Z0-9+.\-]*://[^\s()]+)\)""".r
-      .findAllMatchIn(s).map(_.group(1)).toList
+      .findAllMatchIn(s)
+      .map(_.group(1))
+      .toList
     val bare = """[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s()]+""".r
-      .findAllMatchIn(s).map(_.matched).toList
+      .findAllMatchIn(s)
+      .map(_.matched)
+      .toList
     (paren ++ bare).distinct
 
   // ── placeholders (design card section 7.1 / 7.2) ──────────────────────────
@@ -291,3 +318,4 @@ object OutboundText:
   /** The size gate's explicit refusal, carrying the actual value and the limit. */
   def sizeRejected(bytes: Long, limit: Long): String =
     s"[尺寸闸拒绝] ${bytes} 字节超过上限 ${limit} 字节 — 原件未上传"
+end OutboundText

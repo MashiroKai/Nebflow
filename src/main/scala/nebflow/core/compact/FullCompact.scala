@@ -50,57 +50,139 @@ object FullCompact:
    * always summarizes at least one message — a no-shrink compaction (death
    * loop) is impossible by construction. See [[preservedTail]].
    *
+   * 2026-10-09 (乒乓压缩一期): `mode = PingpongMode` adds the pingpong branch
+   * (spec §C) — (a) `<summary>…</summary>` is REQUIRED (a hard-cap-truncated
+   * output loses the closing tag and must fail the parse, never leak raw text
+   * into the swapped-in context); (b) NO preserved tail (preservedRounds 恒 0,
+   * §C2 — the verbatim Δ region is re-attached by the swap itself, double
+   * preservation would duplicate turns); (c) label carries
+   * `mode="pingpong" forkSeq=<forkMsgCount> preservedRounds=0` (forkSeq = the
+   * swap's Δ anchor; `preservedRoundsOf`'s regex keeps reading); (d) the
+   * summary body is hard-cap checked (PingpongSummaryHardCapTokens) — over cap
+   * ⇒ Left ⇒ §E retry-then-fallback. The `mode = "full"` default path is
+   * byte-identical to the pre-pingpong behavior.
+   *
    * @param text            LLM response text (contains <analysis>, <summary>, <files>)
    * @param originalMessages Original message history before compaction (the
    *                         compaction input, typically ending with the
    *                         compact reminder — it is excluded here)
    * @param projectRoot     Project root for file path resolution
    * @param recentReadPaths Recently read file paths (from ReadTracker) for automatic restoration
+   * @param mode            "full" (default, inline path) | "pingpong" (shadow-leg branch)
+   * @param forkSeq         pingpong only: forkMsgCount at fork time (label + swap anchor)
    * @return Right(CompactOutcome) or Left(errorMessage)
    */
   def parseResponseDetailed(
     text: String,
     originalMessages: List[Message],
     projectRoot: String = "",
-    recentReadPaths: List[String] = Nil
+    recentReadPaths: List[String] = Nil,
+    mode: String = "full",
+    forkSeq: Int = 0
   ): Either[String, CompactOutcome] =
     if text.isEmpty then Left("Compact LLM returned empty response")
     else
+      val isPingpong = mode == PingpongMode
       // 1. Strip <analysis> block (drafting scratchpad)
       val withoutAnalysis = stripAnalysis(text)
 
-      // 2. Extract <summary> content
-      val summaryText = extractSummary(withoutAnalysis)
+      // 2. Extract <summary> content (pingpong: tags required — §C3)
+      val summaryExtracted = extractSummaryBlock(withoutAnalysis, required = isPingpong)
 
-      // 3. Build file restore content from ReadTracker paths
-      val fileRestoreSection = buildFileRestoreSection(recentReadPaths, Set.empty, projectRoot)
+      summaryExtracted.flatMap { summaryText =>
+        // 3. Build file restore content from ReadTracker paths
+        val fileRestoreSection = buildFileRestoreSection(recentReadPaths, Set.empty, projectRoot)
 
-      // 4. Pick the preserved tail rounds (verbatim, guardrailed)
-      val config = CompactConfig()
-      val conversation = dropTrailingCompactReminder(originalMessages)
-      val (preserved, roundsKept) = preservedTail(conversation, config)
+        // 4. Pick the preserved tail rounds (verbatim, guardrailed).
+        //    Pingpong: Δ rides verbatim behind S via the swap — preservedRounds
+        //    stays 0 to avoid double-preservation (§C2).
+        val config = CompactConfig()
+        val conversation = dropTrailingCompactReminder(originalMessages)
+        val (preserved, roundsKept) =
+          if isPingpong then (Nil, 0)
+          else preservedTail(conversation, config)
 
-      // 5. Assemble summary message
-      val tailNote =
-        if roundsKept > 0 then
-          s"Last $roundsKept round(s) (${preserved.size} messages) are preserved VERBATIM after " +
-            "this summary — they are the live conversation tail (the active task), not to be re-summarized.\n\n"
-        else ""
-      val message = Message(
-        MessageRole.User,
-        Left(
-          s"<context-compact mode=\"full\" preservedRounds=$roundsKept>" +
-            s"Compressed ${conversation.size - preserved.size} messages into summary.\n\n" +
-            tailNote +
-            summaryText +
-            "\n\n" + ContinuationPrompt +
-            fileRestoreSection +
-            "\n</context-compact>"
-        )
-      )
+        // 5. Hard cap (pingpong §C3): the summary body over PingpongSummaryHardCapTokens
+        //    fails the parse → §E-3 retry-once-then-fallback.
+        val capChecked =
+          if isPingpong && pingpongSummaryOverHardCap(summaryText) then
+            Left(
+              s"pingpong summary exceeds the $PingpongSummaryHardCapTokens-token hard cap (${summaryText.length} chars)"
+            )
+          else Right(())
 
-      Right(CompactOutcome(message :: preserved, roundsKept))
+        capChecked.map { _ =>
+          // 6. Assemble summary message
+          val tailNote =
+            if roundsKept > 0 then
+              s"Last $roundsKept round(s) (${preserved.size} messages) are preserved VERBATIM after " +
+                "this summary — they are the live conversation tail (the active task), not to be re-summarized.\n\n"
+            else ""
+          val label =
+            if isPingpong then s"<context-compact mode=\"pingpong\" forkSeq=$forkSeq preservedRounds=0>"
+            else s"<context-compact mode=\"full\" preservedRounds=$roundsKept>"
+          val message = Message(
+            MessageRole.User,
+            Left(
+              label +
+                s"Compressed ${conversation.size - preserved.size} messages into summary.\n\n" +
+                tailNote +
+                summaryText +
+                "\n\n" + ContinuationPrompt +
+                fileRestoreSection +
+                "\n</context-compact>"
+            )
+          )
+
+          CompactOutcome(message :: preserved, roundsKept)
+        }
+      }
   end parseResponseDetailed
+
+  /**
+   * Pingpong-mode entry (shadow leg §C): tag-required parse, no preserved tail,
+   * forkSeq label. See [[parseResponseDetailed]] for the branch contract.
+   */
+  def parsePingpongResponse(
+    text: String,
+    originalMessages: List[Message],
+    projectRoot: String = "",
+    recentReadPaths: List[String] = Nil,
+    forkSeq: Int = 0
+  ): Either[String, CompactOutcome] =
+    parseResponseDetailed(
+      text,
+      originalMessages,
+      projectRoot,
+      recentReadPaths,
+      mode = PingpongMode,
+      forkSeq = forkSeq
+    )
+
+  /** `mode="pingpong"` — the label enum value written by [[parsePingpongResponse]]. */
+  val PingpongMode: String = "pingpong"
+
+  /**
+   * §C3 hard cap on the shadow's summary body (mechanism-level enforcement:
+   * over cap ⇒ parse Left ⇒ §E retry/fallback).
+   */
+  val PingpongSummaryHardCapTokens: Int = 8192
+
+  private def pingpongSummaryOverHardCap(summaryText: String): Boolean =
+    TokenEstimator.estimate(List(Message(MessageRole.User, Left(summaryText)))) > PingpongSummaryHardCapTokens
+
+  /**
+   * Recovery idempotence guard (§E-8): a crash AFTER the swap persist but BEFORE
+   * the pingpong state-file clear leaves `phase=s-ready` on disk with the
+   * swapped list already loaded — a matching label proves the swap landed and
+   * only the sidecar needs clearing (never re-apply, which would drop Δ).
+   */
+  def isPingpongSummaryWithForkSeq(msg: Message, forkMsgCount: Int): Boolean =
+    msg.content match
+      case Left(text) =>
+        text.startsWith("<context-compact mode=\"pingpong\"") &&
+        text.contains(s"forkSeq=$forkMsgCount")
+      case _ => false
 
   /**
    * Compatibility wrapper — discards the preservedRounds count. The actor
@@ -239,13 +321,20 @@ object FullCompact:
     if result.trim.isEmpty then text else result
 
   /**
-   * Extract content from <summary>...</summary> tags.
-   * Falls back to full text if no summary tags found.
+   * Extract <summary>…</summary>; when `required` (pingpong §C3), a missing
+   * pair is a parse ERROR instead of a raw-text fallback — a hard-cap-truncated
+   * output loses the closing tag, and silently promoting the raw text (label
+   * fragments, dangling markup) into the swapped-in context is exactly the
+   * failure the cap exists to prevent (§E-2/#3: retry once, then fall back).
+   * The non-required mode preserves the historical fallback (full raw text)
+   * for the legacy "full" path.
    */
-  private def extractSummary(text: String): String =
+  private def extractSummaryBlock(text: String, required: Boolean): Either[String, String] =
     "(?s)<summary>(.*?)</summary>".r.findFirstMatchIn(text) match
-      case Some(m) => m.group(1).trim
-      case None => text.trim
+      case Some(m) => Right(m.group(1).trim)
+      case None if required =>
+        Left("pingpong summary missing <summary>…</summary> pair (output truncated at the hard cap?)")
+      case None => Right(text.trim)
 
   // ------------------------------------------------------------------
   // File restoration from ReadTracker

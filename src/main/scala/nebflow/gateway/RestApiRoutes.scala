@@ -66,7 +66,8 @@ class RestApiRoutes(
   private given RestApiCtx = ctx
 
   def routes: HttpRoutes[IO] =
-    HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+> ConfigRoutes.routes(ctx) <+>
+    HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+> AskUserCancelRoutes.routes(ctx) <+>
+      ConfigRoutes.routes(ctx) <+>
       ProjectsRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+> NeblinkRoutes.routes(ctx) <+>
       SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx)
 

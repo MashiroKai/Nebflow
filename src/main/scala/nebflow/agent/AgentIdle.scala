@@ -217,6 +217,9 @@ private[agent] object AgentIdle:
           _ <- ctx.cancelCurrentTurn()
 
           _ <- state.readTracker.fold(IO.unit)(t => t.clear())
+          // §E-10：/clear 作废影子——清 state.json + 清全部乒乓位（消息已 Nil，C₀
+          // 作废；在飞影子的迟到 SwapReady 由 shadowPending 校验丢弃）。
+          _ <- state.sessionId.fold(IO.unit)(sid => PingpongStateFile.clear(sid))
         yield
           val resetState = state
             .withMessages(Nil)
@@ -226,6 +229,7 @@ private[agent] object AgentIdle:
             .withLastCompactionFailureAt(0L)
             .withRecentMessageIds(Nil)
             .invalidateSystemStableCache
+            .withPingpongCleared
           idle(agentDef, resources, depth, parentRef, resetState)
 
       case AgentCommand.TriggerCompaction(mode, replyDeferred, postCompactInstruction) =>
@@ -256,16 +260,39 @@ private[agent] object AgentIdle:
             "model-switch-compact",
             s"newWindow=$window estimated=$estimatedTokens threshold=$threshold msgs=${newState.messages.size}"
           )
-          handleTriggerCompaction(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            newState,
-            "full",
-            None,
-            resumeAfterCompact = false
-          )
+          // ── 乒乓门（§A3 判定点之二 / §G1）───────────────────────────────
+          // 谓词假 / 开关关 ⇒ AgentPingpong.forkOrLegacyModelSwitch 的 legacy 腿 =
+          // 下行原 handleTriggerCompaction 调用形态逐字；影子在飞 ⇒ 布尔排队位
+          // （§A4，不堆叠）后回 idle；三连败 ⇒ 回落老路径一拍（§E-1）；退避窗 ⇒
+          // 本点不压，回 idle（阈值判定自然再触发）。
+          val pp = newState.pingpong
+          val ppCfg = CompactConfig()
+          if pp.shadowPending.isDefined then
+            AgentPingpong.logQueued(
+              agentDef,
+              depth,
+              newState,
+              s"model-switch estimated=$estimatedTokens threshold=$threshold"
+            )
+            IO.pure(idle(agentDef, resources, depth, parentRef, newState.withForkQueued(true)))
+          else if pp.ppFailures >= ppCfg.circuitBreakerMax then
+            handleTriggerCompaction(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              newState.withPpFailures(0, 0L),
+              "full",
+              None,
+              resumeAfterCompact = false
+            )
+          else if pp.ppFailures > 0 && !ppCfg.isBackoffSatisfied(
+              pp.ppFailures,
+              System.currentTimeMillis() - pp.lastPpFailureAt
+            )
+          then IO.pure(idle(agentDef, resources, depth, parentRef, newState))
+          else AgentPingpong.forkOrLegacyModelSwitch(agentDef, resources, depth, parentRef, newState)
+          end if
         else IO.pure(idle(agentDef, resources, depth, parentRef, newState))
         end if
 
@@ -341,6 +368,9 @@ private[agent] object AgentIdle:
                 s,
                 Some(eventType),
                 agentName,
+                // file-diff → 委托结果行（bug #58 修）：idle 直投腿同源透传
+                // delegate 终态 metadata 的 diff 载荷（缺席 = 旧行为逐字）。
+                fileChanges = metadata("fileChanges"),
                 sessionProject = state.projectName,
                 waitingForBatch = waiting
               )
@@ -490,6 +520,27 @@ private[agent] object AgentIdle:
             ) *> IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
 
+      // ── 乒乓压缩（主会话无感上下文压缩一期，2026-10-09）──────────────────
+      // §D2-1：S 就绪且主腿 idle ⇒ 立即执行三步原子换入（AgentPingpong.executeSwap；
+      // 换入先于下一件输入的 dispatch——本 case 原子完成后才回 idle）。僵尸件
+      // （shadowPending 不匹配）在校验处丢弃。
+      case cmd: AgentCommand.PingpongSwapReady =>
+        AgentPingpong
+          .handleSwapReadyIdle(agentDef, resources, depth, state, cmd)
+          .map(st => idle(agentDef, resources, depth, parentRef, st))
+
+      // §E-1：影子失败置态（idle 版）——计数 + 清位；主腿本就闲，全程无感。
+      case cmd: AgentCommand.PingpongShadowFailed =>
+        AgentPingpong
+          .handleShadowFailed(agentDef, depth, state, cmd)
+          .map(st => idle(agentDef, resources, depth, parentRef, st))
+
+      // §E-7/8/9：重启恢复（spawn 自投；非根会话经 RootAgentIdentity 谓词闸恒 no-op）。
+      case AgentCommand.PingpongRecover =>
+        AgentPingpong
+          .recoverAtIdle(agentDef, resources, depth, state)
+          .map(st => idle(agentDef, resources, depth, parentRef, st))
+
       // 2026-09-13（permshield S1）：`AgentCommand.SetSafetyMode` 已退役（档位 =
       // 应用级持久值，WS/REST 写入口直接落盘 + 热读，无需通知活 agent 改副本）；
       // 由下方 catch-all 兜底为状态不变。三处（idle/processing/frozen）同。
@@ -537,7 +588,18 @@ private[agent] object AgentIdle:
       // `ImmediateInput.windowItems`，与其余各接线点共用 [[expandRootNotify]]。
       // 🔴 唤醒数：N 件载荷共享**同一次** `pipeLlmCall`（一次 sendStream）——把 N 件各自
       // 转成 `UserInput` 再回投 self 会开 N 个 turn（正是本批要消灭的形态）。
-      case imm @ AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser, project, windowItems) =>
+      case imm @ AgentCommand.ImmediateInput(
+            text,
+            blocks,
+            source,
+            eventType,
+            sender,
+            senderTeam,
+            delivery,
+            fromUser,
+            project,
+            windowItems
+          ) =>
         windowItems match
           case Some(items) if items.nonEmpty =>
             val expanded = expandRootNotify(imm)
@@ -545,8 +607,9 @@ private[agent] object AgentIdle:
             val carrierMessages = expanded.map(item =>
               (item.blocks match
                 case Some(b) if b.nonEmpty => Message(MessageRole.User, Right(b))
-                case _                     => Message(MessageRole.User, Left(item.text))
-              ).copy(source = injectionSourceFor(item.fromUser, item.source)))
+                case _ => Message(MessageRole.User, Left(item.text))
+              ).copy(source = injectionSourceFor(item.fromUser, item.source))
+            )
             for
               _ <- IO(
                 logAgentEvent(
@@ -600,6 +663,7 @@ private[agent] object AgentIdle:
                 DispatchCause.Gated
               )
             yield result
+            end for
           case _ =>
             for _ <- ctx.self ! AgentCommand.UserInput(
                 text,

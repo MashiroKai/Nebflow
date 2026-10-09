@@ -238,12 +238,22 @@ object ProjectStore:
   ): IO[Either[String, ProjectDef]] =
     createWithScaffold(name, workspace, description, agentMdTemplate).map(_.map(_._1))
 
-  /** [[create]] + 本次补缺的逐件报告（③-9 结果文案的数据源）。 */
+  /**
+   * [[create]] + 本次补缺的逐件报告（③-9 结果文案的数据源）。
+   *
+   * `origin`（v2.1 §A.5，2026-10-09 实施批）：缺省 None = 现状零变化；`Some(o)`
+   * 且 `o.device` 非 self ⇒ **remote-origin 创建**——本地零脚手架（**绝不**在
+   * workspace 路径上 makeDir/写文件——该路径是远端设备的本盘路径，本机落笔即
+   * G.12 路径错觉），ProjectDef.origin 落字段 + agentFile 指向 origin 盘的
+   * AGENTS.md（远端脚手架腿由调用方（ProjectCreateService）在**本函数之前**经
+   * remote-exec 完成——G.13 半态回滚序：先校验 + 远端脚手架，再原子写本定义）。
+   */
   def createWithScaffold(
     name: String,
     workspace: String,
     description: Option[String],
-    agentMdTemplate: String
+    agentMdTemplate: String,
+    origin: Option[ProjectOrigin] = None
   ): IO[Either[String, (ProjectDef, ScaffoldReport)]] =
     if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then
       IO.pure(Left(s"Invalid project name: '$name'"))
@@ -252,18 +262,31 @@ object ProjectStore:
         if os.exists(projectJsonPath(name)) then Left(s"Project '$name' already exists")
         else
           val ws = os.Path(workspace, PathUtil.dataRoot)
-          val agentFile = (ws / "AGENTS.md").toString
           val now = System.currentTimeMillis()
-          val pd = ProjectDef(
-            name = name,
-            description = description,
-            workspace = ws.toString,
-            agentFile = agentFile,
-            createdAt = now
-          )
+          val remote = origin.exists(o => !ProjectOrigin.isSelfLiteral(o.device))
+          val pd =
+            if remote then
+              ProjectDef(
+                name = name,
+                description = description,
+                workspace = ws.toString,
+                agentFile = s"${origin.get.path}/AGENTS.md",
+                createdAt = now,
+                origin = origin
+              )
+            else
+              ProjectDef(
+                name = name,
+                description = description,
+                workspace = ws.toString,
+                agentFile = (ws / "AGENTS.md").toString,
+                createdAt = now,
+                origin = origin
+              )
           os.makeDir.all(projectDir(name))
           AtomicJson.writeSync(projectJsonPath(name), pd.asJson.noSpaces)
-          val report = ensureScaffoldSync(ws, agentMdTemplate)
+          // remote-origin：本地零脚手架（空报告——脚手架已由远端腿完成并验收）。
+          val report = if remote then ScaffoldReport(Nil) else ensureScaffoldSync(ws, agentMdTemplate)
           Right((pd, report))
       }
 

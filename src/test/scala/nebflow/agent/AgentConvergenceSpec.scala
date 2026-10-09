@@ -40,9 +40,11 @@ class AgentConvergenceSpec extends FunSuite:
   private def mkDef(name: String, tools: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools)
 
-  /** 节点实际执行的 agent 名（建位落名 + spawn 读名的同一单点）。
-    * P1-3 归因修正（2026-10-03）：旧断言用手搓 "general" 造节点身份——该名已非
-    * 内置名，落 legacyFixedTools catch-all ⇒ 假红。判据源对齐生产落名。 */
+  /**
+   * 节点实际执行的 agent 名（建位落名 + spawn 读名的同一单点）。
+   * P1-3 归因修正（2026-10-03）：旧断言用手搓 "general" 造节点身份——该名已非
+   * 内置名，落 legacyFixedTools catch-all ⇒ 假红。判据源对齐生产落名。
+   */
   private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   // ===== §G.3-① Nebula 工具清单 = §C.1 矩阵 =====
@@ -164,7 +166,9 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== 分发器固定集 =====
 
-  test("dispatcher LLM tool list == Node 三件 + AskUserQuestion + 读四件（isFlowNode spawn 形态；agentflow 批 −Mail +AskUserQuestion）"):
+  test(
+    "dispatcher LLM tool list == Node 三件 + AskUserQuestion + 读四件（isFlowNode spawn 形态；agentflow 批 −Mail +AskUserQuestion）"
+  ):
     val delivered = CoreProbe.toolList(mkDef("project-dispatcher"), isFlowNode = true).toSet
     assertEquals(
       delivered,
@@ -183,7 +187,9 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== 执行 agent 固定 9 件（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）=====
 
-  test("执行 agent LLM tool list == NebflowFixedTools 9 件（isFlowNode 节点形态；2026-09-08 恢复 AskUser；2026-09-10 摘 Pop；builtin-merge 批 +Subagent；N1 复名批 Workflow→AgentFlow 随名）"):
+  test(
+    "执行 agent LLM tool list == NebflowFixedTools 9 件（isFlowNode 节点形态；2026-09-08 恢复 AskUser；2026-09-10 摘 Pop；builtin-merge 批 +Subagent；N1 复名批 Workflow→AgentFlow 随名）"
+  ):
     // P1-3 归因修正（2026-10-03）：原断言用手搓 "general" 名造节点身份——该名已
     // 非内置名（builtin-merge 批收敛名集 = {Nebula, project-dispatcher, nebflow,
     // subagent}），落 legacyFixedTools catch-all ⇒ 实测 6 件 BaseTools 全族假红。
@@ -222,9 +228,18 @@ class AgentConvergenceSpec extends FunSuite:
     // 未注册名 ⇒ 声明（含 wildcard）对任何身份都不授能（allowedSet 里可能有惰性
     // 字符串，但 buildToolList 按注册表过滤 ⇒ LLM 面永远缺席——「未注册名自然缺席」
     // 即本 spec 判据面的定义）。
-    assert(!CoreProbe.toolList(mkDef("memo", List("MemoryNote"))).contains("MemoryNote"), "standalone 声明无效（未注册名不进 LLM 面）")
-    assert(!CoreProbe.toolList(mkDef("omni", List("*"))).contains("MemoryNote"), "wildcard 也不给（记忆写面=Nebula+dream 的静态面语义随注销仅存于剥离函数）")
-    assert(!CoreProbe.toolList(mkDef("dream", List("*"))).contains("MemoryNote"), "dream wildcard 同样缺席（豁免只放授能面，注册表墙先于豁免生效）")
+    assert(
+      !CoreProbe.toolList(mkDef("memo", List("MemoryNote"))).contains("MemoryNote"),
+      "standalone 声明无效（未注册名不进 LLM 面）"
+    )
+    assert(
+      !CoreProbe.toolList(mkDef("omni", List("*"))).contains("MemoryNote"),
+      "wildcard 也不给（记忆写面=Nebula+dream 的静态面语义随注销仅存于剥离函数）"
+    )
+    assert(
+      !CoreProbe.toolList(mkDef("dream", List("*"))).contains("MemoryNote"),
+      "dream wildcard 同样缺席（豁免只放授能面，注册表墙先于豁免生效）"
+    )
     val executorDef = CoreProbe.allowed(mkDef(executorName, List("MemoryNote")))
     assert(!executorDef.contains("MemoryNote"), "执行 agent 身份同样无 MemoryNote 授能——剥离语义不变")
 
@@ -238,7 +253,20 @@ class AgentConvergenceSpec extends FunSuite:
     // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends/Subagent/AgentFlow（+ChainWrite +TaskSearch）对 dream 不得放开
     assertEquals(
       AgentCore.RootExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite", "TaskSearch"),
+      Set(
+        "Schedule",
+        "Delegate",
+        "AgentControl",
+        "TaskList",
+        "TaskBoard",
+        "node_report",
+        "Pop",
+        "ListFriends",
+        "Subagent",
+        "AgentFlow",
+        "ChainWrite",
+        "TaskSearch"
+      ),
       "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent；N1 复名批 AgentFlow 随名＋新增 ChainWrite；task-rag 批 #1227 +TaskSearch——防声明逃逸条目同样剥离；TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula / TaskSearch 仅 Nebula）"
     )
     val sneakyDream =
@@ -252,7 +280,20 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
     assertEquals(
       AgentCore.exclusiveToolsFor("dream"),
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends", "Subagent", "AgentFlow", "ChainWrite", "TaskSearch"),
+      Set(
+        "Schedule",
+        "Delegate",
+        "AgentControl",
+        "TaskList",
+        "TaskBoard",
+        "node_report",
+        "Pop",
+        "ListFriends",
+        "Subagent",
+        "AgentFlow",
+        "ChainWrite",
+        "TaskSearch"
+      ),
       "dream 剥十二件（原八件 + builtin-merge 批 Subagent + N1 复名批 AgentFlow 随名/ChainWrite 新增 + task-rag 批 #1227 TaskSearch——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
     )
     // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）

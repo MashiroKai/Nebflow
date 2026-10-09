@@ -129,7 +129,11 @@ class EmbeddingServiceSpec extends CatsEffectSuite:
           .fold(e => fail(s"write failed: $e"), _ => ())
         val cursor2 = parser.parse(os.read(PathUtil.configJsonReadPath(tmp))).fold(throw _, identity).hcursor
         assertEquals(cursor2.downField("embedding").downField("model").as[String], Right("emb-2"))
-        assertEquals(cursor2.downField("embedding").downField("baseUrl").as[String], Right("https://api.example.com/v1"), "未提及键原样保留")
+        assertEquals(
+          cursor2.downField("embedding").downField("baseUrl").as[String],
+          Right("https://api.example.com/v1"),
+          "未提及键原样保留"
+        )
       }
     }.unsafeRunSync()
   }

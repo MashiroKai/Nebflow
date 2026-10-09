@@ -529,7 +529,8 @@ private[gateway] object SocialRoutes:
                         req.body,
                         hooks,
                         st.map(_.preview),
-                        st.map(_.sendDialectId).getOrElse(nebflow.neblink.AttachmentPreviewContract.DefaultSendDialectId)
+                        st.map(_.sendDialectId)
+                          .getOrElse(nebflow.neblink.AttachmentPreviewContract.DefaultSendDialectId)
                       )
                     })
                       .guarantee(if cancellable then registry.release(uploadId) else IO.unit)
@@ -596,36 +597,43 @@ private[gateway] object SocialRoutes:
               end if
         }
 
-      /** **预览申报暂存**（传输集成批 S7 · 跨仓契约 §B.4/§B.6 P1 的网关段；字段方言双兼容批 2026-09-22）。
-        *
-        * 浏览器在整件上传**之前**先 POST 本路由（同 `conversationId` / `name` / `uploadId` 参数
-        * + JSON 体 = **某一版方言**的预览对象）。本层只做四件事：**形态闸**（`uploadId` 复用
-        * [[nebflow.neblink.AttachUploadId]] 唯一判定，与上传/取消路由同一把键同一道闸）、
-        * **方言识别 + 契约判定**（体 = [[nebflow.neblink.AttachmentPreviewContract.parsePreview]]
-        * 的唯一解析口径：按**方言登记表逐条试**，`{mime,w,h,size,b64}` 与 `{fmt,w,h,bytes,sha256,b64}`
-        * **都认**；几何 / 体积 / b64 长度自洽 / 摘要拼写逐条同判 —— 任一方言都不认 ⇒ `400`
-        * 并**列出已登记方言**，**零暂存**）、**暂存**（`AttachUploadRegistry.stagePreview`，有界；
-        * 表满 ⇒ `200 {staged:false}`）、**不写死发面方言**（`dialect` 查询参数可显式指定，未给
-        * ⇒ 以识别结果为准，识别不出的层不参与）。
-        *
-        * E1 侧的拼装发生在**整件上传路由**（`takePreview` 取走即删，消费一次读）；本路由**零上游
-        * 调用** ⇒ 预览申报失败不产生任何 neblink-server 副作用。
-        *
-        * 🔴 **预览是建议性加性面**：本路由任何失败（400 / 网络 / `staged:false`）⇒ 客户端按
-        * 「无预览」原样上传（§B.7 #14 的回落面）；失败形态的差异只供读数，不构成用户可见差异。
-        * 🔴 **未知方言**（第三种，登记表里没有）⇒ 与「形状不认识」同一收口：`400` + 已登记方言
-        * 清单 ⇒ 客户端**回落无预览**（禁崩、禁静默丢件）。
-        */
+      /**
+       * **预览申报暂存**（传输集成批 S7 · 跨仓契约 §B.4/§B.6 P1 的网关段；字段方言双兼容批 2026-09-22）。
+       *
+       * 浏览器在整件上传**之前**先 POST 本路由（同 `conversationId` / `name` / `uploadId` 参数
+       * + JSON 体 = **某一版方言**的预览对象）。本层只做四件事：**形态闸**（`uploadId` 复用
+       * [[nebflow.neblink.AttachUploadId]] 唯一判定，与上传/取消路由同一把键同一道闸）、
+       * **方言识别 + 契约判定**（体 = [[nebflow.neblink.AttachmentPreviewContract.parsePreview]]
+       * 的唯一解析口径：按**方言登记表逐条试**，`{mime,w,h,size,b64}` 与 `{fmt,w,h,bytes,sha256,b64}`
+       * **都认**；几何 / 体积 / b64 长度自洽 / 摘要拼写逐条同判 —— 任一方言都不认 ⇒ `400`
+       * 并**列出已登记方言**，**零暂存**）、**暂存**（`AttachUploadRegistry.stagePreview`，有界；
+       * 表满 ⇒ `200 {staged:false}`）、**不写死发面方言**（`dialect` 查询参数可显式指定，未给
+       * ⇒ 以识别结果为准，识别不出的层不参与）。
+       *
+       * E1 侧的拼装发生在**整件上传路由**（`takePreview` 取走即删，消费一次读）；本路由**零上游
+       * 调用** ⇒ 预览申报失败不产生任何 neblink-server 副作用。
+       *
+       * 🔴 **预览是建议性加性面**：本路由任何失败（400 / 网络 / `staged:false`）⇒ 客户端按
+       * 「无预览」原样上传（§B.7 #14 的回落面）；失败形态的差异只供读数，不构成用户可见差异。
+       * 🔴 **未知方言**（第三种，登记表里没有）⇒ 与「形状不认识」同一收口：`400` + 已登记方言
+       * 清单 ⇒ 客户端**回落无预览**（禁崩、禁静默丢件）。
+       */
       case req @ POST -> Root / "attachments" / "preview" =>
         withAuth(req) {
-          val conversationId   = req.params.getOrElse("conversationId", "")
-          val uploadIdForm     = AttachUploadId.validate(req.params.getOrElse("uploadId", ""))
-          val declaredDialect  = req.params.get("dialect").map(_.trim).filter(_.nonEmpty)
+          val conversationId = req.params.getOrElse("conversationId", "")
+          val uploadIdForm = AttachUploadId.validate(req.params.getOrElse("uploadId", ""))
+          val declaredDialect = req.params.get("dialect").map(_.trim).filter(_.nonEmpty)
           // 未知方言 id ⇒ 立刻拒绝（**不推测**：静默换方言正是「换字段名就又不行」的根因）。
-          val dialectKnown     = declaredDialect.forall(d => AttachmentPreviewContract.previewDialect(d).isDefined)
-          val dialectDomain    = AttachmentPreviewContract.dialectIds.mkString(", ")
+          val dialectKnown = declaredDialect.forall(d => AttachmentPreviewContract.previewDialect(d).isDefined)
+          val dialectDomain = AttachmentPreviewContract.dialectIds.mkString(", ")
           if conversationId.trim.isEmpty then
-            BadRequest(Json.obj("ok" -> false.asJson, "code" -> "invalid_argument".asJson, "error" -> "Missing conversationId".asJson))
+            BadRequest(
+              Json.obj(
+                "ok" -> false.asJson,
+                "code" -> "invalid_argument".asJson,
+                "error" -> "Missing conversationId".asJson
+              )
+            )
           else if !dialectKnown then
             BadRequest(
               Json.obj(
@@ -685,6 +693,7 @@ private[gateway] object SocialRoutes:
                         )
                       )
             }
+          end if
         }
 
       /**

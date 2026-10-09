@@ -81,7 +81,9 @@ class ShellStuckDetectorSpec extends FunSuite:
   // 手段 = 源码面静态读（免构建、与上面的行为用例互补）：行为用例证「不误杀」，
   // 本条证「杀器本体不存在」——两者不可互相代替（杀器删掉后，行为用例的绿**变得
   // 平凡**：没有探测器自然不会误杀 ⇒ 需要一条钉住「探测器确实不在」的断言）。
-  test("killruling #3: the 30s background stuck detector is GONE (no detector fiber, no 30s kill wording, no orphan prop)") {
+  test(
+    "killruling #3: the 30s background stuck detector is GONE (no detector fiber, no 30s kill wording, no orphan prop)"
+  ) {
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "shell.scala")
     assert(
       !src.contains("Command produced no output within"),

@@ -30,6 +30,7 @@ class NodeMergeSealSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"merge seal spec agent","tools":[],"category":"standalone"}"""
@@ -43,6 +44,7 @@ class NodeMergeSealSpec extends CatsEffectSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -83,7 +85,9 @@ class NodeMergeSealSpec extends CatsEffectSuite:
     )
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> project.asJson) :: ("nodename" -> nodename.asJson) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> project.asJson) :: ("nodename" -> nodename.asJson) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   test("⑥ seal: merge=true create is refused with NODE_MERGE_UNSUPPORTED (dispatch as Delegate tasks instead)") {
     val ws = tempRoot / "ws-seal"
@@ -101,7 +105,11 @@ class NodeMergeSealSpec extends CatsEffectSuite:
       assert(sealRes.isLeft, "merge=true create must be refused")
       val msg = sealRes.left.toOption.get.message
       assert(msg.contains("NODE_MERGE_UNSUPPORTED"), s"error must carry the *_UNSUPPORTED family code, got: $msg")
-      assert(msg.contains("Delegate tasks"), s"the error must state the behavioral replacement (dispatch as Delegate tasks), got: $msg")
+      assert(
+        msg.contains("Delegate tasks"),
+        s"the error must state the behavioral replacement (dispatch as Delegate tasks), got: $msg"
+      )
+    end for
   }
 
   test("⑥ control: merge absent / merge=false creates still work — the seal is merge-only (zero legacy drift)") {
@@ -112,17 +120,29 @@ class NodeMergeSealSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
       _ <- mountProject("seal-2", ws, system, res)
       plain <- NodeEditTool.call(
-        nodeInput("seal-2", "plain-node", "description" -> "plain work".asJson, "task" -> "plain work".asJson).asObject.get,
+        nodeInput(
+          "seal-2",
+          "plain-node",
+          "description" -> "plain work".asJson,
+          "task" -> "plain work".asJson
+        ).asObject.get,
         mkCtx(res, system, ws.toString)
       )
       explicitFalse <- NodeEditTool.call(
-        nodeInput("seal-2", "plain-node-2", "description" -> "more work".asJson, "task" -> "more work".asJson, "merge" -> false.asJson).asObject.get,
+        nodeInput(
+          "seal-2",
+          "plain-node-2",
+          "description" -> "more work".asJson,
+          "task" -> "more work".asJson,
+          "merge" -> false.asJson
+        ).asObject.get,
         mkCtx(res, system, ws.toString)
       )
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       assert(plain.isRight, s"no merge key ⇒ legacy create must succeed: $plain")
       assert(explicitFalse.isRight, s"merge=false ⇒ legacy create must succeed: $explicitFalse")
+    end for
   }
 
   // E2E 实测断点（2026-10-07 n1-e2e rig）：schema 已删 merge 属性 ⇒ 宽容客户端（LLM
@@ -145,15 +165,25 @@ class NodeMergeSealSpec extends CatsEffectSuite:
         mkCtx(res, system, ws.toString)
       )
       falseString <- NodeEditTool.call(
-        nodeInput("seal-3", "plain-node-3", "description" -> "str work".asJson, "task" -> "str work".asJson, "merge" -> "false".asJson).asObject.get,
+        nodeInput(
+          "seal-3",
+          "plain-node-3",
+          "description" -> "str work".asJson,
+          "task" -> "str work".asJson,
+          "merge" -> "false".asJson
+        ).asObject.get,
         mkCtx(res, system, ws.toString)
       )
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       assert(lower.isLeft, "merge=\"true\" (string) must be refused — the seal is not bypassable by type confusion")
-      assert(lower.left.toOption.get.message.contains("NODE_MERGE_UNSUPPORTED"), "string form carries the same family code")
+      assert(
+        lower.left.toOption.get.message.contains("NODE_MERGE_UNSUPPORTED"),
+        "string form carries the same family code"
+      )
       assert(padded.isLeft, "merge=\"  TRUE \" (padded/upper) must be refused the same way")
       assert(falseString.isRight, s"merge=\"false\" (string) stays on the tolerated legacy leg: $falseString")
+    end for
   }
 
 end NodeMergeSealSpec

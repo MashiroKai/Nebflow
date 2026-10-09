@@ -52,9 +52,11 @@ object RichRenderProbe:
 
   private def esc(s: String): String = s.replace("\\", "\\\\").replace("\"", "'").replace("\n", " ")
 
-  /** The card page. Real markup with real CSS so the screenshot has real
-    *  structure — a blank page would be rejected by HC-3's distinct-byte floor,
-    *  which is exactly why a substantive page is used here. */
+  /**
+   * The card page. Real markup with real CSS so the screenshot has real
+   *  structure — a blank page would be rejected by HC-3's distinct-byte floor,
+   *  which is exactly why a substantive page is used here.
+   */
   private val CardHtml: String =
     """<!doctype html>
       |<html><head><meta charset="utf-8"><title>nebflow rich outbound probe</title>
@@ -89,8 +91,7 @@ object RichRenderProbe:
       pb.redirectErrorStream(true)
       val p = pb.start()
       val out = new String(p.getInputStream.readAllBytes(), "UTF-8").trim
-      if p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) then
-        if out.isEmpty then 0 else out.lines().count().toInt
+      if p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) then if out.isEmpty then 0 else out.lines().count().toInt
       else
         p.destroyForcibly(); -1
     catch case _: Throwable => -1
@@ -114,7 +115,9 @@ object RichRenderProbe:
     val realHome = Option(System.getenv("HOME")).getOrElse("<unset>")
     val outDir = new File(homeDir, "tmp/outbound-render")
     outDir.mkdirs()
-    write(evidenceDir, "render-precheck.json",
+    write(
+      evidenceDir,
+      "render-precheck.json",
       s"""{
          |  "ts": "${now()}",
          |  "isolatedHome": "${esc(homeDir.getAbsolutePath)}",
@@ -122,9 +125,12 @@ object RichRenderProbe:
          |  "isolatedDiffersFromRealHome": ${homeDir.getAbsolutePath != realHome},
          |  "javaHome": "${esc(Option(System.getenv("JAVA_HOME")).getOrElse("<unset>"))}",
          |  "outDir": "${esc(outDir.getAbsolutePath)}"
-         |}""".stripMargin)
-    println(s"[probe] D-3 PRECHECK isolatedHome=${homeDir.getAbsolutePath} realHome=$realHome " +
-      s"differs=${homeDir.getAbsolutePath != realHome}")
+         |}""".stripMargin
+    )
+    println(
+      s"[probe] D-3 PRECHECK isolatedHome=${homeDir.getAbsolutePath} realHome=$realHome " +
+        s"differs=${homeDir.getAbsolutePath != realHome}"
+    )
 
     val before = chromeProcs()
     val started = System.currentTimeMillis()
@@ -135,16 +141,22 @@ object RichRenderProbe:
     val detected = RichRenderer.ChromeRenderer.detect
 
     if !available then
-      write(evidenceDir, "render-reading.json",
-        s"""{"ts":"${now()}","mode":"render","renderOk":false,"detail":"no Chrome binary detected on this host"}""")
+      write(
+        evidenceDir,
+        "render-reading.json",
+        s"""{"ts":"${now()}","mode":"render","renderOk":false,"detail":"no Chrome binary detected on this host"}"""
+      )
       println("[probe] NO-CHROME: no render product can be produced on this host")
       System.exit(1)
 
-    println(s"[probe] renderer=ChromeRenderer available=$available binary=${detected.map(_.toString).getOrElse("<none>")}")
+    println(
+      s"[probe] renderer=ChromeRenderer available=$available binary=${detected.map(_.toString).getOrElse("<none>")}"
+    )
 
     val outPng = os.Path(new File(outDir, "card-probe.png").toPath, os.pwd)
     try
-      val r = renderer.render(CardHtml, outPng, RichFeishuAdapter.DefaultWidth, RichFeishuAdapter.DefaultHeight)
+      val r = renderer
+        .render(CardHtml, outPng, RichFeishuAdapter.DefaultWidth, RichFeishuAdapter.DefaultHeight)
         .unsafeRunSync()(using cats.effect.unsafe.IORuntime.global)
       val elapsed = System.currentTimeMillis() - started
       println(s"[probe] RENDER ok=${r.ok} bytes=${r.bytes} geometry=${r.width}x${r.height} elapsedMs=$elapsed")
@@ -190,7 +202,9 @@ object RichRenderProbe:
              |    "distinctPixelColours": $distinctPixels,
              |    "geometryMatchesDeclared": ${w == RichFeishuAdapter.DefaultWidth && h == RichFeishuAdapter.DefaultHeight}""".stripMargin
 
-      write(evidenceDir, "render-reading.json",
+      write(
+        evidenceDir,
+        "render-reading.json",
         s"""{
            |  "ts": "${now()}",
            |  "mode": "render",
@@ -211,30 +225,43 @@ object RichRenderProbe:
            |  "independentMeasurement": {
            |    $independent
            |  }
-           |}""".stripMargin)
+           |}""".stripMargin
+      )
       if !r.ok then exitCode = 1
     catch
       case e: Throwable =>
-        write(evidenceDir, "render-reading.json",
-          s"""{"ts":"${now()}","mode":"render","exception":"${esc(e.getClass.getName)}: ${esc(Option(e.getMessage).getOrElse(""))}"}""")
+        write(
+          evidenceDir,
+          "render-reading.json",
+          s"""{"ts":"${now()}","mode":"render","exception":"${esc(e.getClass.getName)}: ${esc(
+              Option(e.getMessage).getOrElse("")
+            )}"}"""
+        )
         println(s"[probe] EXCEPTION ${e.getClass.getName}: ${Option(e.getMessage).getOrElse("")}")
         exitCode = 1
+    end try
 
     // ── teardown reading: nothing resident may be left behind (HC-2 / D-2) ──
     Thread.sleep(1000)
     val after = chromeProcs()
-    write(evidenceDir, "render-teardown.json",
+    write(
+      evidenceDir,
+      "render-teardown.json",
       s"""{
          |  "ts": "${now()}",
          |  "chromeProcsBefore": $before,
          |  "chromeProcsAfter": $after,
          |  "leaked": ${after > before},
          |  "elapsedTotalMs": ${System.currentTimeMillis() - started}
-         |}""".stripMargin)
-    println(s"[probe] TEARDOWN chromeProcsBefore=$before chromeProcsAfter=$after " +
-      s"leaked=${after > before} elapsedTotalMs=${System.currentTimeMillis() - started}")
+         |}""".stripMargin
+    )
+    println(
+      s"[probe] TEARDOWN chromeProcsBefore=$before chromeProcsAfter=$after " +
+        s"leaked=${after > before} elapsedTotalMs=${System.currentTimeMillis() - started}"
+    )
 
     println(s"[probe] DONE exit=$exitCode")
     System.exit(exitCode)
+  end main
 
 end RichRenderProbe

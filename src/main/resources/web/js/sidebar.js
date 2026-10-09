@@ -778,6 +778,12 @@ function effortFromConfig() {
 // 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
 // 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
 // （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
+// ── Jev 面板三改（用户 2026-10-09 23:11 截图反馈）─────────────────────────
+// 钉死端点单点：Jev 版（provider=typesafe-jev）的端点是固定的——镜像后端
+// DecisionProvider.DefaultTypesafeEndpoint（llm/decision/DecisionProvider.scala:270），
+// 前端无后端常量导入面，此处是唯一拼写点（渲染钉死 / 提供方切换 / 恢复钉死共用）。
+const JEV_PINNED_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
+
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
@@ -849,50 +855,85 @@ export function renderSettings() {
     </div>
     <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
     <div class="settings-section">
-      <!-- Jev section (executor-registry batch, 2026-10-03; ui-train-threefix B,
-           2026-10-07: toggle-ized per author five-order B — the nb-toggle row on
-           top decides usage; the detail body (provider / endpoint / keyRef +
-           hint + save) is visible only while the toggle is on, same pattern as
-           #schedule-editor: collapsing keeps the inputs in the DOM, so collapse
-           ≠ clear and an already-configured setup survives untouched. The
-           allocation health row keeps its slot below the body, visible in both
-           states. Write face = PUT /api/config/jev, whitelist keys only.) -->
-      <div class="settings-section-title">${t('settings.jev')}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.jevEnabled')}</span>
-        ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
-      </div>
-      <div id="jev-detail-body" style="display:${cfg.jev && cfg.jev.enabled ? 'block' : 'none'};padding:4px 0 8px;">
-        <div class="settings-row">
-          <span class="settings-label">${t('settings.jevProvider')}</span>
-          <select class="cfg-select" id="cfg-jev-provider" style="width:auto">
-            ${['typesafe-jev', 'laya'].map(p => `<option value="${p}"${(cfg.jev && cfg.jev.provider) === p ? ' selected' : ''}>${p}</option>`).join('')}
-          </select>
+      <!-- Jev card (executor-registry batch, 2026-10-03; ui-train-threefix B,
+           2026-10-07 toggle-ized; secrets-ui-redesign 2026-10-08; 三改
+           2026-10-09 用户反馈①②③). 收起态 = 标题「Jev（插件分配）」+ 开关
+           （+chevron）一行：行体热区是真实 button (#jev-head, 含标题+chevron，
+           aria-expanded/aria-controls)，点击原位展开/收起细节——开关是行内
+           兄弟钮，不进热区（三改①，密钥面板行内化同语言：常态极简、点行
+           展开、collapse ≠ clear）。开关只作用法闸（usage gate），与展开态
+           解耦（旧「开=展开」耦合随三改①退役）。分配通道状态行随细节入
+           折叠体（展开才见，三改①原话「点击展开才显示细节」）。端点行按
+           提供方钉死：typesafe-jev → 预填 JEV_PINNED_ENDPOINT + disabled
+           禁用态（用户只填密钥引用，三改②）；laya 保持可编辑。keyRef 是
+           指针 NAME（.cfg-password-wrap + 眼睛，provider-modal 先例），保存
+           仍是显式 PUT /api/config/jev 白名单键。健康徽标读 legs 分腿载荷
+           （三改③，jev 不可用→已回退 llm 的如实显示见渲染块）。-->
+      <div class="cfg-card" id="jev-card">
+        <div class="cfg-card-head">
+          <button type="button" class="cfg-card-head-btn" id="jev-head" aria-expanded="false" aria-controls="jev-detail-body" title="${t('settings.jevToggleDetails')}">
+            <span class="cfg-card-title">${t('settings.jev')}</span>
+            <span class="cfg-head-chev" aria-hidden="true">${statusIcon('chevron-right', 14)}</span>
+          </button>
+          ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
         </div>
-        <div class="settings-row">
-          <span class="settings-label">${t('settings.jevEndpoint')}</span>
-          <input class="cfg-input" id="cfg-jev-endpoint" style="width:auto" placeholder="https://api.typesafe.ai/v1/systemone" value="${escapeHtml((cfg.jev && cfg.jev.endpoint) || '')}">
+        <div id="jev-detail-body" style="display:none;">
+          <div class="cfg-card-divider"></div>
+          <div class="cfg-row">
+            <span class="cfg-row-label">${t('settings.jevProvider')}</span>
+            <span class="cfg-row-main">
+              <select class="cfg-select" id="cfg-jev-provider">
+                ${['typesafe-jev', 'laya'].map(p => `<option value="${p}"${(cfg.jev && cfg.jev.provider) === p ? ' selected' : ''}>${p}</option>`).join('')}
+              </select>
+            </span>
+          </div>
+          <div class="cfg-row">
+            <span class="cfg-row-label">${t('settings.jevEndpoint')}</span>
+            <span class="cfg-row-main"><input class="cfg-input" id="cfg-jev-endpoint" placeholder="${(cfg.jev && cfg.jev.provider) === 'laya' ? 'http://127.0.0.1:8080/predict' : JEV_PINNED_ENDPOINT}" value="${escapeHtml((cfg.jev && cfg.jev.provider) === 'laya' ? ((cfg.jev && cfg.jev.endpoint) || '') : JEV_PINNED_ENDPOINT)}" ${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : 'disabled'} title="${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : t('settings.jevEndpointFixed')}" spellcheck="false"></span>
+          </div>
+          <div class="cfg-row">
+            <span class="cfg-row-label">${t('settings.jevKeyRef')}</span>
+            <span class="cfg-row-main">
+              <span class="cfg-password-wrap">
+                <input class="cfg-input" type="text" id="cfg-jev-keyref" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}" autocomplete="off" style="-webkit-text-security:disc" spellcheck="false">
+                <button type="button" class="cfg-eye-btn" id="jev-keyref-eye" tabindex="-1" aria-label="${t('settings.jevKeyRefShow')}" aria-pressed="false" title="${t('settings.jevKeyRefShow')}">${eyeSvg}</button>
+              </span>
+            </span>
+          </div>
+          <div class="cfg-hint">${t('settings.jevHint')}</div>
+          <div class="card-actions">
+            <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
+            <span class="spacer"></span>
+            <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">${t('settings.save')}</button>
+          </div>
+          <div class="cfg-card-divider"></div>
+          <div class="cfg-row jev-health-row">
+            <span class="cfg-row-label">${t('settings.jevHealth')}</span>
+            <span class="cfg-row-main"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>
+          </div>
         </div>
-        <div class="settings-row">
-          <span class="settings-label">${t('settings.jevKeyRef')}</span>
-          <input class="cfg-input" id="cfg-jev-keyref" style="width:auto" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}">
-        </div>
-        <div class="cfg-hint">${t('settings.jevHint')}</div>
-        <button class="cfg-btn" id="btn-save-jev">${t('settings.save')}</button>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.jevHealth')}</span>
-        <span class="settings-jev-health" id="settings-jev-health">…</span>
       </div>
     </div>
     <div class="settings-section">
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
-           2026-09-27 19:20): one row / one button only — the list itself
-           lives in the standalone dedicated dialog (#secrets-overlay, owned
-           by js/secretsPanel.js), not inside #settings-modal. Placement per
-           brief §三: after MODEL PRESETS, before ADVANCED. -->
+           2026-09-27 19:20): one row only — the list itself lives in the
+           standalone dedicated dialog (#secrets-overlay, owned by
+           js/secretsPanel.js), not inside #settings-modal. Placement per
+           brief §三: after MODEL PRESETS, before ADVANCED.
+           secrets-ui-redesign 2026-10-08: the dashed full-width cfg-btn-add
+           becomes a glass row-card entry (key icon + row name + "{n} secrets"
+           subtitle + count pill + chevron). The count is the length of
+           GET /api/secrets — metadata only (the contract has no read-value
+           face); read via refreshSecretsEntryCount() below (module cache +
+           the 'secrets-changed' nudge from secretsPanel.js). -->
       <div class="settings-section-title">${t('settings.secrets')}</div>
-      <button class="cfg-btn cfg-btn-add" id="btn-open-secrets">${t('settings.secrets')}</button>
+      <button type="button" class="secrets-entry" id="btn-open-secrets">
+        ${statusIcon('key-round', 16)}
+        <span class="entry-name">${t('settings.secretsManage')}</span>
+        <span class="entry-sub" id="secrets-entry-sub">…</span>
+        <span class="count-pill" id="secrets-entry-pill">…</span>
+        ${statusIcon('chevron-right', 14)}
+      </button>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
@@ -950,6 +991,9 @@ export function renderSettings() {
   renderSettingsAvatar();
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
+  // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
+  // module-side, repainted on every render and on `secrets-changed`.
+  refreshSecretsEntryCount();
 
   // friendseal batch (2026-09-25 ①-A): the settings-page device expansion
   // area (chat entry per device). Lazy import — the P2-4 cycle-cut precedent:
@@ -1104,6 +1148,49 @@ onMessage('autostartStatusResult', (msg) => {
 });
 
 
+// ── Secrets entry count (secrets-ui-redesign, 2026-10-08) ───────────────────
+// The entry row carries an "{n} secrets" subtitle + a count pill. The count is
+// the LIST LENGTH of GET /api/secrets — metadata only (the contract has no
+// read-value face; secretsPanel.js's discipline header applies verbatim).
+// Cached for 60s so settings re-renders don't re-fetch; secretsPanel.js
+// dispatches a `secrets-changed` event after every successful list read,
+// which busts the cache and re-paints immediately (add/delete reflect at once).
+/** @type {{n: number|null, at: number}} */
+let secretsCountCache = { n: null, at: 0 };
+
+/** Paint a known count onto the entry row (0 = the "no secrets yet" wording). */
+function paintSecretsEntryCount(n) {
+  const pill = document.getElementById('secrets-entry-pill');
+  const sub = document.getElementById('secrets-entry-sub');
+  if (!pill || !sub) return;
+  pill.textContent = String(n);
+  sub.textContent = n > 0 ? t('settings.secretsCount', { n }) : t('settings.secretsNone');
+}
+
+/** Read the count (cached ≤60s) and paint it; a failure keeps the "…"
+ *  placeholder — the same silent-catch convention as the health probe below. */
+function refreshSecretsEntryCount() {
+  const pill = document.getElementById('secrets-entry-pill');
+  const sub = document.getElementById('secrets-entry-sub');
+  if (!pill || !sub) return;
+  if (secretsCountCache.n !== null && Date.now() - secretsCountCache.at < 60000) {
+    paintSecretsEntryCount(secretsCountCache.n);
+    return;
+  }
+  fetch('/api/secrets', { headers: authHeaders() })
+    .then(r => (r.ok ? r.json() : null))
+    .then(data => {
+      const rows = Array.isArray(data && data.secrets) ? data.secrets : [];
+      secretsCountCache = { n: rows.length, at: Date.now() };
+      if (!pill.isConnected || !sub.isConnected) return;
+      paintSecretsEntryCount(rows.length);
+    })
+    .catch(() => {});
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('secrets-changed', () => { secretsCountCache.at = 0; refreshSecretsEntryCount(); });
+}
+
 function bindSettingsEvents(content, cfg) {
   // Thinking effort selector (#345, user ruling 2026-08-20): OpenAI-style
   // off/low/medium/high dropdown replaces the Anthropic numeric budget input.
@@ -1142,15 +1229,62 @@ function bindSettingsEvents(content, cfg) {
 
   // ── Jev section: explicit save (whitelist keys only; PUT /api/config/jev).
   // keyRef is a NAME under ~/.nebflow/secrets/ — a pointer, never a value.
-  // Toggle = usage gate: flipping it also expands/collapses the detail body
-  // (work-schedule #schedule-editor pattern — the inputs stay in the DOM while
-  // collapsed, so a collapsed body never clears configured values).
+  // 三改①（2026-10-09 用户反馈①）：开关只作用法闸——不再联动展开/收起细节
+  // （旧「开=展开」耦合退役）。展开/收起唯一入口 = 卡头行体 #jev-head（真实
+  // button：点击 + Enter/Space 原位开合；开关是行内兄弟钮，点击永不冒泡进
+  // 热区）。折叠体常驻 DOM：collapse ≠ clear（输入值跨开合存活）。
   document.getElementById('toggle-jev')?.addEventListener('click', function() {
-    const enabled = !this.classList.contains('on');
-    setToggleState(this, enabled);
-    const body = document.getElementById('jev-detail-body');
-    if (body) body.style.display = enabled ? 'block' : 'none';
+    setToggleState(this, !this.classList.contains('on'));
   });
+
+  // 三改①：卡头行体点击 → 原位展开/收起（aria-expanded 与 chevron 旋转随态）。
+  document.getElementById('jev-head')?.addEventListener('click', function() {
+    const body = document.getElementById('jev-detail-body');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : 'block';
+    this.setAttribute('aria-expanded', String(!open));
+  });
+
+  // 三改②（2026-10-09 用户反馈②）：提供方切换联动端点钉死——typesafe-jev =
+  // 预填固定值 + disabled 禁用态（用户只填密钥引用）；其他提供方恢复可编辑，
+  // 钉死值/空值让位（后端 JevSettings.resolve 对空端点自有默认，不发错值）。
+  document.getElementById('cfg-jev-provider')?.addEventListener('change', function() {
+    const input = document.getElementById('cfg-jev-endpoint');
+    if (!input) return;
+    if (this.value === 'typesafe-jev') {
+      input.value = JEV_PINNED_ENDPOINT;
+      input.disabled = true;
+      input.title = t('settings.jevEndpointFixed');
+      input.placeholder = JEV_PINNED_ENDPOINT;
+    } else {
+      input.disabled = false;
+      input.title = '';
+      input.placeholder = 'http://127.0.0.1:8080/predict';
+      if (input.value === JEV_PINNED_ENDPOINT || !input.value.trim()) input.value = '';
+    }
+  });
+
+  // keyRef masking (secrets-ui-redesign, 2026-10-08): the field starts masked
+  // (-webkit-text-security:disc inline, provider-modal precedent at :1854) and
+  // the eye reveals it. Same inline-style flip as the precedent at :1893-1900;
+  // aria-label/aria-pressed track the state (secretsPanel applyMask reading:
+  // the label names the ACTION the click performs).
+  const jevEye = document.getElementById('jev-keyref-eye');
+  if (jevEye) {
+    jevEye.addEventListener('click', () => {
+      const input = document.getElementById('cfg-jev-keyref');
+      if (!input) return;
+      const isMasked = input.style.webkitTextSecurity !== 'none';
+      input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
+      jevEye.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
+      const label = t(isMasked ? 'settings.jevKeyRefHide' : 'settings.jevKeyRefShow');
+      jevEye.setAttribute('aria-label', label);
+      jevEye.title = label;
+      jevEye.setAttribute('aria-pressed', isMasked ? 'true' : 'false');
+    });
+  }
+
   document.getElementById('btn-save-jev')?.addEventListener('click', async function() {
     const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
     const provider = document.getElementById('cfg-jev-provider')?.value || 'typesafe-jev';
@@ -1168,14 +1302,33 @@ function bindSettingsEvents(content, cfg) {
       });
       ok = resp.ok;
     } catch (e) { ok = false; }
-    this.textContent = ok ? t('settings.saved') : t('settings.saveFailed');
-    setTimeout(() => { this.textContent = t('settings.save'); }, 1500);
+    // Inline feedback (secrets-ui-redesign, 2026-10-08): the button text no
+    // longer swaps — a role=status line beside the right-aligned primary
+    // button flashes the outcome for 1.5s (the old swap's duration
+    // convention; the copy reuses settings.saved / settings.saveFailed).
+    const stateEl = document.getElementById('jev-save-state');
+    if (stateEl) {
+      stateEl.innerHTML = ok
+        ? statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('settings.saved'))
+        : statusIcon('circle-alert', 11, 'st-err') + escapeHtml(t('settings.saveFailed'));
+      setTimeout(() => { if (stateEl.isConnected) stateEl.innerHTML = ''; }, 1500);
+    }
   });
 
-  // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07).
-  // Read-only probe = GET /api/decision/health (DecisionHealthMonitor; the write
-  // legs are the plugin-allocation calls themselves). A fetch failure leaves the
-  // "…" placeholder (same convention as the executor-current label above).
+  // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07;
+  // secrets-ui-redesign 2026-10-08: the bare word becomes a tri-state
+  // .st-badge — activity(st-ok)=up · octagon-alert(st-err)=down + reason
+  // (truncated inside the pill, full text on title) · circle-dashed(muted)=not
+  // configured. Same reading as secrets-mode-badge: the ICON carries the
+  // colour, the word stays neutral (--status-word). A fetch failure keeps the
+  // muted "…" placeholder — the unchanged silent-catch convention.)
+  // Read-only probe = GET /api/decision/health (DecisionHealthMonitor; the
+  // write legs are the plugin-allocation calls themselves).
+  // 三改③（2026-10-09 用户反馈③）：legs 分腿载荷——jev 腿 down 而通道 up
+  // （llm 接管产出）→ warn 徽标「Jev 不可用 → 已回退 llm」+ jev 腿 reason
+  // 尾巴（title 全文）；两腿全挂 → err「异常」+ title 双腿 reason。无 legs
+  // 的旧载荷走既有三态，零回归。零新色值：warn 档用既有 --status-warn-icon
+  // token（base.css 既有，暗亮两态随 token）。
   {
     const slot = document.getElementById('settings-jev-health');
     if (slot) {
@@ -1184,10 +1337,29 @@ function bindSettingsEvents(content, cfg) {
         .then(data => {
           const d = data && data.decision;
           if (!d || !slot.isConnected) return;
-          const word = d.status === 'up' ? t('settings.jevHealthUp')
-            : d.status === 'down' ? t('settings.jevHealthDown')
+          const up = d.status === 'up';
+          const down = d.status === 'down';
+          const legs = d.legs || null;
+          const jevLeg = legs && legs.jev;
+          // 回退态：通道有产出（up）但 jev 腿 down —— llm 兜底腿接管。
+          const fellBack = !!(up && jevLeg && jevLeg.status === 'down');
+          const icon = fellBack ? 'triangle-alert'
+            : up ? 'activity' : down ? 'octagon-alert' : 'circle-dashed';
+          const cls = fellBack ? 'st-warn' : up ? 'st-ok' : down ? 'st-err' : '';
+          const tone = fellBack ? 'warn' : up ? 'ok' : down ? 'err' : 'mut';
+          const word = fellBack ? t('settings.jevHealthFallback')
+            : up ? t('settings.jevHealthUp')
+            : down ? t('settings.jevHealthDown')
             : t('settings.jevHealthUnconfigured');
-          slot.textContent = (d.status === 'down' && d.reason) ? `${word} — ${d.reason}` : word;
+          const jevReason = jevLeg && jevLeg.status === 'down' && jevLeg.reason ? String(jevLeg.reason) : '';
+          const reason = fellBack ? jevReason : (down && d.reason ? String(d.reason) : '');
+          // title 全文：双腿如实并陈（回退后 llm 腿再挂 = jev + llm 两条都在）。
+          const llmReason = down && d.reason ? String(d.reason) : '';
+          const fullTitle = [jevReason, llmReason].filter(Boolean).join(' | ') || word;
+          slot.dataset.tone = tone;
+          slot.title = fullTitle;
+          slot.innerHTML = statusIcon(icon, 10, cls) + escapeHtml(word)
+            + (reason ? `<span class="badge-reason">— ${escapeHtml(reason)}</span>` : '');
         })
         .catch(() => {});
     }

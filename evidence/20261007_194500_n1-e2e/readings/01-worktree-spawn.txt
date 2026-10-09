@@ -1,0 +1,14 @@
+## ① spawn 判定机 worktree+branch 读数（2026-10-07 19:48:44）
+### git branch -a
++ delegate/delegate-nebflow-a8379b0f
+* main
+
+### git worktree list
+/private/tmp/n1-e2e-rig/proj                                               56a95ec [main]
+/private/tmp/n1-e2e-rig/proj/.nebflow/worktrees/delegate-nebflow-a8379b0f  56a95ec [delegate/delegate-nebflow-a8379b0f]
+
+### worktrees dir
+total 0
+drwxr-xr-x@ 3 kaiyu  wheel   96 10月  7 19:48 .
+drwxr-xr-x@ 8 kaiyu  wheel  256 10月  7 19:48 ..
+drwxr-xr-x@ 5 kaiyu  wheel  160 10月  7 19:48 delegate-nebflow-a8379b0f

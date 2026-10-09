@@ -75,12 +75,16 @@ import scala.collection.immutable.ListMap
 final class FeishuScanBind(
   /** Active data root (the same root `SocialChannels.save` persists under). */
   root: os.Path,
-  /** SDK boundary seam. Production = [[FeishuScanBind.sdkRegister]]; tests
-    * inject a fake — zero network, zero registration. */
+  /**
+   * SDK boundary seam. Production = [[FeishuScanBind.sdkRegister]]; tests
+   * inject a fake — zero network, zero registration.
+   */
   registerFn: FeishuScanBind.RegisterFn = FeishuScanBind.sdkRegister,
-  /** The post-persist activation leg. Production wiring passes
-    * `FeishuBridgePlugin.sync(manager, root)` (the ONE activation point); the
-    * offline spec injects a recorder. */
+  /**
+   * The post-persist activation leg. Production wiring passes
+   * `FeishuBridgePlugin.sync(manager, root)` (the ONE activation point); the
+   * offline spec injects a recorder.
+   */
   activate: IO[Unit] = IO.unit
 ):
 
@@ -97,9 +101,11 @@ final class FeishuScanBind(
     Ref.unsafe[IO, Option[(String, Fiber[IO, Throwable, Unit])]](None)
 
   // ───────────────────────────── begin ─────────────────────────────
-  /** Start a scan-bind session. Returns `{"scanId": …, "state": "starting"}`;
-    * progress is observed through [[status]]. Never blocks on the SDK: the
-    * register call runs on a background fiber (`IO(blocking)`). */
+  /**
+   * Start a scan-bind session. Returns `{"scanId": …, "state": "starting"}`;
+   * progress is observed through [[status]]. Never blocks on the SDK: the
+   * register call runs on a background fiber (`IO(blocking)`).
+   */
   def begin(): IO[Json] =
     for
       _ <- supersede()
@@ -109,46 +115,54 @@ final class FeishuScanBind(
       _ <- activeRef.set(Some((scanId, fiber)))
     yield Json.obj("scanId" -> scanId.asJson, "state" -> "starting".asJson)
 
-  /** Single-flight: mark a still-open predecessor `Failed` and cancel its
-    * fiber. Terminal states (Done/Failed) are left untouched. The cancel runs
-    * on its own fiber: `Fiber.cancel` waits for finalization, and the abandoned
-    * `register()` may sit in a socket read that ignores interrupts — `begin`
-    * must never block on that unwind (its result path is severed either way:
-    * the guarded state writes refuse a cancelled session, and the cancelled
-    * fiber never reaches persist/activate). */
+  /**
+   * Single-flight: mark a still-open predecessor `Failed` and cancel its
+   * fiber. Terminal states (Done/Failed) are left untouched. The cancel runs
+   * on its own fiber: `Fiber.cancel` waits for finalization, and the abandoned
+   * `register()` may sit in a socket read that ignores interrupts — `begin`
+   * must never block on that unwind (its result path is severed either way:
+   * the guarded state writes refuse a cancelled session, and the cancelled
+   * fiber never reaches persist/activate).
+   */
   private def supersede(): IO[Unit] =
     activeRef.getAndSet(None).flatMap {
       case None => IO.unit
       case Some((oldId, fiber)) =>
         // `Starting` is a value case (no payload type) — matched by value; the
         // payload cases carry real types and match by type.
-        statesRef.update(m => m.updatedWith(oldId) {
-          case Some(_: State.QrReady) | Some(_: State.Polling) =>
-            Some(State.Failed(SupersededReason))
-          case Some(State.Starting) => Some(State.Failed(SupersededReason))
-          case other                => other
-        }) *> fiber.cancel.start.void
+        statesRef.update(m =>
+          m.updatedWith(oldId) {
+            case Some(_: State.QrReady) | Some(_: State.Polling) =>
+              Some(State.Failed(SupersededReason))
+            case Some(State.Starting) => Some(State.Failed(SupersededReason))
+            case other => other
+          }
+        ) *> fiber.cancel.start.void
     }
 
-  /** Registry grows by one entry per begin — cap it (insertion-ordered drop of
-    * the oldest entries); a status reader only ever looks at recent sessions. */
+  /**
+   * Registry grows by one entry per begin — cap it (insertion-ordered drop of
+   * the oldest entries); a status reader only ever looks at recent sessions.
+   */
   private def prune(m: ListMap[String, State]): ListMap[String, State] =
     if m.size <= MaxSessions then m else m.drop(m.size - MaxSessions)
 
   private def registerFiber(scanId: String): IO[Unit] =
     IO.blocking(registerFn(buildOptions(scanId))).attempt.flatMap {
       case Right(result) => persistAndFinish(scanId, result)
-      case Left(e: ExpiredException)      => fail(scanId, "expired", e)
+      case Left(e: ExpiredException) => fail(scanId, "expired", e)
       case Left(e: AccessDeniedException) => fail(scanId, "access_denied", e)
-      case Left(e: RegisterAppException)  => fail(scanId, "register_failed", e)
-      case Left(e: InterruptedException)  => IO.unit // cancelled mid-call; state already superseded
-      case Left(e)                        => fail(scanId, "internal_error", e)
+      case Left(e: RegisterAppException) => fail(scanId, "register_failed", e)
+      case Left(e: InterruptedException) => IO.unit // cancelled mid-call; state already superseded
+      case Left(e) => fail(scanId, "internal_error", e)
     }
 
   // ───────────────────────────── status ─────────────────────────────
-  /** Read-only projection for `GET …/scan-bind/status`. `None` = unknown (or
-    * pruned) scanId. The payload NEVER carries a credential — see the class
-    * doc. */
+  /**
+   * Read-only projection for `GET …/scan-bind/status`. `None` = unknown (or
+   * pruned) scanId. The payload NEVER carries a credential — see the class
+   * doc.
+   */
   def status(scanId: String): IO[Option[Json]] =
     statesRef.get.map(_.get(scanId).map(s => stateJson(scanId, s)))
 
@@ -159,23 +173,26 @@ final class FeishuScanBind(
       case State.Starting =>
         base("starting")
       case State.QrReady(url, code, expireAt) =>
-        base("qr_ready").deepMerge(Json.obj(
-          "qrUrl" -> url.asJson, "userCode" -> code.asJson,
-          "remainSec" -> remainSec(expireAt, now).asJson))
+        base("qr_ready").deepMerge(
+          Json.obj("qrUrl" -> url.asJson, "userCode" -> code.asJson, "remainSec" -> remainSec(expireAt, now).asJson)
+        )
       case State.Polling(url, code, expireAt) =>
-        base("polling").deepMerge(Json.obj(
-          "qrUrl" -> url.asJson, "userCode" -> code.asJson,
-          "remainSec" -> remainSec(expireAt, now).asJson))
+        base("polling").deepMerge(
+          Json.obj("qrUrl" -> url.asJson, "userCode" -> code.asJson, "remainSec" -> remainSec(expireAt, now).asJson)
+        )
       case State.Done(appId) =>
         base("done").deepMerge(Json.obj("appId" -> appId.asJson))
       case State.Failed(reason) =>
         base("failed").deepMerge(Json.obj("error" -> reason.asJson))
+    end match
+  end stateJson
 
   private def remainSec(expireAt: Long, now: Long): Long = math.max(0L, (expireAt - now) / 1000L)
 
   // ─────────────────────── SDK option assembly ───────────────────────
   private def buildOptions(scanId: String): RegisterAppOptions =
-    RegisterAppOptions.newBuilder()
+    RegisterAppOptions
+      .newBuilder()
       .source(SourceTag)
       // Approved pending-decision ③: the ZCode-style preset copy. The platform
       // supports a {user} placeholder in the name; the shipped copy stays the
@@ -188,9 +205,11 @@ final class FeishuScanBind(
       .onStatusChange(s => runOnSdkThread(onStatusChange(scanId, s)))
       .build()
 
-  /** The ONE SDK-thread → IO boundary (same shape as `FeishuBridgePlugin.intake`
-    * on the SDK receive thread): the callback runs inside the blocking
-    * `register()` call, `unsafeRunSync` keeps callback ordering strict. */
+  /**
+   * The ONE SDK-thread → IO boundary (same shape as `FeishuBridgePlugin.intake`
+   * on the SDK receive thread): the callback runs inside the blocking
+   * `register()` call, `unsafeRunSync` keeps callback ordering strict.
+   */
   private def runOnSdkThread(io: IO[Unit]): Unit =
     try io.unsafeRunSync()
     catch
@@ -198,15 +217,17 @@ final class FeishuScanBind(
       case e: Exception =>
         logger.warn(s"feishu scan-bind: registry update from SDK callback failed: ${e.getClass.getSimpleName}")
 
-  /** Guarded state write for SDK callbacks: only OPEN sessions advance. A
-    * superseded (`Failed`) or finished (`Done`) session can still receive late
-    * callbacks from the abandoned SDK call (cancel cannot interrupt a blocked
-    * socket read) — they must never resurrect or overwrite a terminal state. */
+  /**
+   * Guarded state write for SDK callbacks: only OPEN sessions advance. A
+   * superseded (`Failed`) or finished (`Done`) session can still receive late
+   * callbacks from the abandoned SDK call (cancel cannot interrupt a blocked
+   * socket read) — they must never resurrect or overwrite a terminal state.
+   */
   private def advance(scanId: String)(f: PartialFunction[State, State]): IO[Unit] =
     statesRef.modify { m =>
       val next = m.get(scanId) match
         case Some(s) if f.isDefinedAt(s) => prune(m.updated(scanId, f(s)))
-        case _                           => m
+        case _ => m
       (next, ())
     }
 
@@ -259,13 +280,17 @@ final class FeishuScanBind(
           statesRef.update(m => m.updated(scanId, State.Failed(reason)))
     }
 
-  /** Status-facing reason from a save failure. `SocialChannels.Failure`
-    * messages are built by our own code (field names, paths, exception class
-    * names) and never embed the plaintext, so the reason is safe to surface. */
+  end persistAndFinish
+
+  /**
+   * Status-facing reason from a save failure. `SocialChannels.Failure`
+   * messages are built by our own code (field names, paths, exception class
+   * names) and never embed the plaintext, so the reason is safe to surface.
+   */
   private def renderSaveFailure(err: SocialChannels.Failure): String = err match
     case SocialChannels.Failure.InvalidField(f, r) => s"invalid field $f: $r"
-    case SocialChannels.Failure.SecretMode(f, r)   => s"could not store $f: $r"
-    case SocialChannels.Failure.Io(r)              => s"storage error: $r"
+    case SocialChannels.Failure.SecretMode(f, r) => s"could not store $f: $r"
+    case SocialChannels.Failure.Io(r) => s"storage error: $r"
     case SocialChannels.Failure.UnknownChannel(id) => s"unknown channel $id"
 
   private def fail(scanId: String, kind: String, e: Throwable): IO[Unit] =
@@ -302,29 +327,37 @@ object FeishuScanBind:
   /** Reason surfaced when a newer begin supersedes an open session (⑧). */
   val SupersededReason = "superseded by a newer scan-bind session"
 
-  /** The short code a phone shows after scanning lives in the verification URL
-    * (plan card A3 ④: the SDK's `QRCodeInfo` carries only url+expireIn, so the
-    * code is extracted from the URL query; the platform form is
-    * `user_code=XXXX-XXXX`). Empty string when absent — the QR alone remains
-    * sufficient. */
+  /**
+   * The short code a phone shows after scanning lives in the verification URL
+   * (plan card A3 ④: the SDK's `QRCodeInfo` carries only url+expireIn, so the
+   * code is extracted from the URL query; the platform form is
+   * `user_code=XXXX-XXXX`). Empty string when absent — the QR alone remains
+   * sufficient.
+   */
   def extractUserCode(url: String): String =
     try
       val q = url.indexOf('?')
       if q < 0 then ""
       else
-        url.substring(q + 1).split('&').toList
+        url
+          .substring(q + 1)
+          .split('&')
+          .toList
           .map(p => p.split("=", 2).toList)
-          .collectFirst { case k :: v :: _ if k == "user_code" || k == "userCode" =>
-            java.net.URLDecoder.decode(v, "UTF-8")
+          .collectFirst {
+            case k :: v :: _ if k == "user_code" || k == "userCode" =>
+              java.net.URLDecoder.decode(v, "UTF-8")
           }
           .getOrElse("")
     catch case _: Exception => ""
 
-  /** Session state machine (plan card §5.2):
-    * `Starting → QrReady(qrUrl, userCode, expireAt) → Polling → Done(appId) |
-    * Failed(reason)`. `Starting` is the pre-QR window (the SDK only delivers
-    * the QR after its init round-trip); superseded open sessions land in
-    * `Failed`. */
+  /**
+   * Session state machine (plan card §5.2):
+   * `Starting → QrReady(qrUrl, userCode, expireAt) → Polling → Done(appId) |
+   * Failed(reason)`. `Starting` is the pre-QR window (the SDK only delivers
+   * the QR after its init round-trip); superseded open sessions land in
+   * `Failed`.
+   */
   enum State:
     case Starting
     case QrReady(qrUrl: String, userCode: String, expireAt: Long)

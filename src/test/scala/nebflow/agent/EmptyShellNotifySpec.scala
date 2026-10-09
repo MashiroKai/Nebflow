@@ -146,7 +146,9 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
 
   end runCompletedPayload
 
-  test("四修①: whitespace-only tail + zero tools = empty burn → restart chain, then the deterministic precheck's blocked verdict (never a fake completion)") {
+  test(
+    "四修①: whitespace-only tail + zero tools = empty burn → restart chain, then the deterministic precheck's blocked verdict (never a fake completion)"
+  ) {
     // Last assistant message: thinking block + whitespace-only text ("\n\n")
     val messages = List(
       Message(MessageRole.User, Left("do the thing")),
@@ -158,11 +160,16 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
     val payload = runCompletedPayload("ws", messages)
     // The terminal payload carries the honest blocked verdict line (budget
     // exhausted after maxRestarts pushes; judge-less precheck renders blocked).
-    assert(payload.contains("[delegate-judge] verdict: blocked"), s"empty burn must end blocked, got: ${payload.take(160)}")
+    assert(
+      payload.contains("[delegate-judge] verdict: blocked"),
+      s"empty burn must end blocked, got: ${payload.take(160)}"
+    )
     assert(payload.contains("deterministic precheck"), s"the precheck marker must be named, got: ${payload.take(160)}")
   }
 
-  test("tools were called + whitespace tail ⇒ NOT an empty burn: trim guard keeps '(no text output)' on the completion path") {
+  test(
+    "tools were called + whitespace tail ⇒ NOT an empty burn: trim guard keeps '(no text output)' on the completion path"
+  ) {
     val messages = List(
       Message(MessageRole.User, Left("do the thing")),
       Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("t1", "Bash", io.circe.JsonObject.empty)))),
@@ -174,7 +181,10 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
     )
     val payload = runCompletedPayload("ws2", messages)
     assert(payload.contains("(no text output)"), s"expected '(no text output)' marker, got: ${payload.take(120)}")
-    assert(!payload.trim.endsWith(":"), s"payload must not end with bare colon (empty shell), got: ${payload.take(120)}")
+    assert(
+      !payload.trim.endsWith(":"),
+      s"payload must not end with bare colon (empty shell), got: ${payload.take(120)}"
+    )
   }
 
   test("normal text tail still produces '\"desc\":\\n<text>' form") {

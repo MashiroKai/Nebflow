@@ -132,9 +132,11 @@ object MemoryBudget:
   /** 超硬顶 —— 拒绝。 */
   final case class Exceeded(override val bytes: Long, hardCap: Long) extends Verdict
 
-  /** target 标识（"user" / "agent" / "project"）。project 维度
-    * （project-memory 批）：单个项目的 `<workspace>/.nebflow/memory.md`，
-    * 常量独立于全局两级。 */
+  /**
+   * target 标识（"user" / "agent" / "project"）。project 维度
+   * （project-memory 批）：单个项目的 `<workspace>/.nebflow/memory.md`，
+   * 常量独立于全局两级。
+   */
   def verdict(target: String, newSizeBytes: Long): Verdict =
     target match
       case "user" =>
@@ -196,10 +198,18 @@ object MemoryBudget:
   // 文案（调用方包装成 ToolError / 结果附录）
   // ---------------------------------------------------------------
 
-  /** 超限拒绝消息体（MemoryDirectWriteGuard / MemoryWriteGate 预算拒绝共用文案基底；
-    * govmemory 批起为直写口径）。project 维度的真实路径由调用方经 targetPath 传入
-    * （各项目 workspace 不同，无法从 target 常量推出）。 */
-  def exceededMessage(action: String, target: String, targetPath: String, newSizeBytes: Long, newContent: String): String =
+  /**
+   * 超限拒绝消息体（MemoryDirectWriteGuard / MemoryWriteGate 预算拒绝共用文案基底；
+   * govmemory 批起为直写口径）。project 维度的真实路径由调用方经 targetPath 传入
+   * （各项目 workspace 不同，无法从 target 常量推出）。
+   */
+  def exceededMessage(
+    action: String,
+    target: String,
+    targetPath: String,
+    newSizeBytes: Long,
+    newContent: String
+  ): String =
     val (label, hard) = target match
       case "user" => ("~/.nebflow/User.md", UserHardBytes)
       case "agent" => ("~/.nebflow/Soul.md", AgentHardBytes)
@@ -212,5 +222,6 @@ object MemoryBudget:
        |${topSections(newContent)}
        |Trim stale/duplicate entries in place (the append and the remove/update are paired in the same round; memory-consolidation skill), or demote detail into ~/.nebflow/memory/<id>.md files.
        |A write that shrinks the file stays exempt from the hard cap. (MEMORYEDIT_BUDGET)""".stripMargin
+  end exceededMessage
 
 end MemoryBudget

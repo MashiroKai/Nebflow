@@ -384,9 +384,11 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   // extensions the video viewer claims (viewers/video.js extensions mirror
   // FileTypeRegistry's video family verbatim).
 
-  /** A GET carrying a raw Range header — deliberately NOT the typed
-    * `org.http4s.headers.Range` model, so the test stays decoupled from
-    * http4s header-model API shapes across versions. */
+  /**
+   * A GET carrying a raw Range header — deliberately NOT the typed
+   * `org.http4s.headers.Range` model, so the test stays decoupled from
+   * http4s header-model API shapes across versions.
+   */
   private def getRange(path: String, range: String) =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
       .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("Range"), range))
@@ -400,10 +402,16 @@ class NfFileRoutesSpec extends CatsEffectSuite:
       IO {
         val resp = get(s"/api/nf-file?path=${mp4.toString}&ticket=${ticketFor(mp4.toString)}").get
         assertEquals(resp.status, Status.Ok)
-        assertEquals(headerOf(resp, "Content-Type"), Some("video/mp4"),
-          s"a full .mp4 response must be typed video/mp4, got ${headerOf(resp, "Content-Type")}")
-        assertEquals(headerOf(resp, "Accept-Ranges"), Some("bytes"),
-          s"the capability the <video> progress bar relies on must be advertised, got ${headerOf(resp, "Accept-Ranges")}")
+        assertEquals(
+          headerOf(resp, "Content-Type"),
+          Some("video/mp4"),
+          s"a full .mp4 response must be typed video/mp4, got ${headerOf(resp, "Content-Type")}"
+        )
+        assertEquals(
+          headerOf(resp, "Accept-Ranges"),
+          Some("bytes"),
+          s"the capability the <video> progress bar relies on must be advertised, got ${headerOf(resp, "Accept-Ranges")}"
+        )
       }
     }
   }
@@ -413,8 +421,11 @@ class NfFileRoutesSpec extends CatsEffectSuite:
       IO {
         val resp = getRange(s"/api/nf-file?path=${mp4.toString}&ticket=${ticketFor(mp4.toString)}", "bytes=0-1023").get
         assertEquals(resp.status, Status.PartialContent, "a single Range request must be answered 206, not 200")
-        assertEquals(headerOf(resp, "Content-Range"), Some("bytes 0-1023/4096"),
-          s"Content-Range must carry the slice AND the total, got ${headerOf(resp, "Content-Range")}")
+        assertEquals(
+          headerOf(resp, "Content-Range"),
+          Some("bytes 0-1023/4096"),
+          s"Content-Range must carry the slice AND the total, got ${headerOf(resp, "Content-Range")}"
+        )
         val served = resp.body.compile.toVector.unsafeRunSync()
         assertEquals(served.length, 1024, "the 206 body must be exactly the requested slice")
       }

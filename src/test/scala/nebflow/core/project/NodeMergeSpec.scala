@@ -392,6 +392,8 @@ class NodeMergeSpec extends CatsEffectSuite:
       )
     ) *> IO.pure(mergeId)
 
+  end seedMerge
+
   /** 创建期 D1 保留投递的引擎公共单点（NodeEdit createNode 同一循环，逐字同判据）。 */
   private def settleRetained(rt: ProjectRuntime, mergeId: String): IO[Unit] =
     rt.store.getNode(mergeId).flatMap {

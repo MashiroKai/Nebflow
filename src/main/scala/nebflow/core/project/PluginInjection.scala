@@ -7,7 +7,14 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.core.delegate.ChainStore
-import nebflow.core.jev.{JevAllocation, JevDeclarationDuty, JevFallback, JevFallbackKind, PluginAllocator, PluginCatalog}
+import nebflow.core.jev.{
+  JevAllocation,
+  JevDeclarationDuty,
+  JevFallback,
+  JevFallbackKind,
+  PluginAllocator,
+  PluginCatalog
+}
 import nebflow.core.plugin.{PluginRegistry, PluginsConfig}
 import nebflow.core.skill.SkillService
 import nebflow.shared.{NebflowLogger, PathUtil}
@@ -54,8 +61,8 @@ object PluginInjection:
    * `Left` 仅出自**解析/注入**失败（spawn 显式拒）；分配三态全数落到 `Right`。
    */
   def allocatePreparation(
-      subject: String,
-      taskText: String
+    subject: String,
+    taskText: String
   ): IO[Either[String, (NodeEngine.PluginPreparation, AllocatedSet)]] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "disabled")))
@@ -64,21 +71,22 @@ object PluginInjection:
           if catalog.isEmpty then
             // 空目录 = 合法「无能力面安装」态（JevAllocator 同款短路口）：零模型调用，
             // 空集分配成功（duty = Allocated(empty)）。recordSuccess 落一条 allocated 行。
-            JevFallback.recordSuccess(subject, Nil).as(
-              Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "empty-catalog"))
-            )
+            JevFallback
+              .recordSuccess(subject, Nil)
+              .as(
+                Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "empty-catalog"))
+              )
           else
             PluginAllocator.allocatePlugins(subject, taskText, catalog).flatMap { result =>
               val (mode, names) = result.allocation match
                 case JevAllocation.Allocated(ns) =>
                   result.via.map(_.wire).getOrElse("jev") -> ns
                 case JevAllocation.FellBack(JevFallbackKind.Off, _) => ("off", Nil)
-                case JevAllocation.FellBack(_, _)                   => ("fail-open", Nil)
+                case JevAllocation.FellBack(_, _) => ("fail-open", Nil)
               logDuty(subject, result)
               if InertModes.contains(mode) then
                 IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
-              else if names.isEmpty then
-                IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+              else if names.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
               else resolvePreparation(names).map(_.map(prep => (prep, AllocatedSet(names, mode))))
             }
         }
@@ -93,9 +101,9 @@ object PluginInjection:
    * （ChainStore.keyFor 既有归一口径，零新建存储⑤A）。
    */
   def forNode(
-      node: NodeDef,
-      delegateScope: Boolean,
-      scopeKey: String
+    node: NodeDef,
+    delegateScope: Boolean,
+    scopeKey: String
   ): IO[Either[String, NodeEngine.PluginPreparation]] =
     if node.plugins.nonEmpty then resolvePreparation(node.plugins)
     else if !delegateScope then IO.pure(Right(NodeEngine.PluginPreparation.empty))
@@ -186,7 +194,7 @@ object PluginInjection:
         .map { blocks =>
           blocks.find(_.isLeft) match
             case Some(Left(err)) => Left(err)
-            case _               => Right(blocks.collect { case Right(b) => b }.mkString("\n\n"))
+            case _ => Right(blocks.collect { case Right(b) => b }.mkString("\n\n"))
         }
 
   /**
@@ -196,9 +204,9 @@ object PluginInjection:
    */
   private def logDuty(subject: String, result: PluginAllocator.PluginAllocationResult): Unit =
     val (allocatedRan, names, fallbackReason) = result.allocation match
-      case JevAllocation.Allocated(ns)                           => (true, ns, None)
-      case JevAllocation.FellBack(JevFallbackKind.Off, reason)   => (false, Nil, Some(reason))
-      case JevAllocation.FellBack(_, reason)                     => (true, Nil, Some(reason))
+      case JevAllocation.Allocated(ns) => (true, ns, None)
+      case JevAllocation.FellBack(JevFallbackKind.Off, reason) => (false, Nil, Some(reason))
+      case JevAllocation.FellBack(_, reason) => (true, Nil, Some(reason))
     val duty = JevDeclarationDuty.evaluate(allocatedRan, names, fallbackReason)
     val via = result.via.map(_.wire).getOrElse("-")
     logger.infoSync(

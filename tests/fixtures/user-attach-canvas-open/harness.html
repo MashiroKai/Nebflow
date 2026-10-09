@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<!-- user-attach-canvas-open harness.html — 用户附件「点击 → Canvas 打开」统一批
+     (2026-10-08) 的静态测试 harness。
+
+     驱动**真实前端模块**（chatView.js / chat.js / popArtifacts.js——无 stub、
+     无打包），重放应用在 live 发送腿的确切调用序：
+       ① renderUserBubble(text, atts) — atts = 线上形状（只有 data/preview，
+          **没有 path** —— 后端此刻还没落盘）；
+       ② patchUserMediaRow(sessionId, saved) — attachmentsSaved 帧到达后的
+          原位重渲（popArtifacts 的消费端）。
+     探针读渲染后的 DOM + workspace-open-item 事件（Canvas 打开单点）。
+
+     与 pop-artifacts harness 的关键差异：那里的 user fixture 自带 `path`
+     （历史恢复形状），从未覆盖 live 线上形状（无 path）——那正是本批修的盲区。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>user-attach-canvas-open harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const state = (await import(`${WEB}/state.js`)).default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    // 真实应用里视图在打开会话时经 setSession 绑定 sessionId（chatView.js:216）——
+    // renderUserBubble 的登记腿读 activeView.sessionId，harness 必须同样绑定。
+    chatViews.primary.setSession('user-attach-harness');
+    state.activeSessionId = 'user-attach-harness';
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const popMod = await import(`${WEB}/popArtifacts.js`);
+    const view = chatViews.primary;
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /** 确定性尺寸的 SVG data URI（无真实字节，渲染零请求）。 */
+    function svgDataUri(w, h) {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h +
+        '" viewBox="0 0 ' + w + ' ' + h + '"><rect width="100%" height="100%" fill="#2a4d8f"/></svg>';
+      return 'data:image/svg+xml;base64,' + btoa(svg);
+    }
+
+    /* ── live 线上形状（input.js addFileAttachment 的真实产物）：无 path ── */
+    const liveImg = (name) => ({ type: 'image', mimeType: 'image/jpeg', data: 'xx', name, preview: svgDataUri(800, 600) });
+    const liveFile = (name, size) => ({ type: 'text', mimeType: 'application/pdf', data: '', name, hash: 'h', size: size || 2048 });
+
+    /** ① live 发送腿：一图一文件，均无 path（线上此刻的真实形状）。 */
+    window.__userLiveNoPath = async () => {
+      chatMod.renderUserBubble('一图一文件', [liveImg('shot.png'), liveFile('notes.pdf')], Date.now());
+      await raf2();
+    };
+
+    /** 两张图（stack 形态）的 live 发送。 */
+    window.__userLiveTwoImages = async () => {
+      chatMod.renderUserBubble('两张图', [liveImg('u1.png'), liveImg('u2.png')], Date.now());
+      await raf2();
+    };
+
+    /** ② attachmentsSaved 消费端（chat.js 订阅转发的同参调用）。 */
+    window.__patchSaved = (saved) => popMod.patchUserMediaRow('user-attach-harness', saved);
+
+    /** 行形态读数：行数、角标 Canvas 按钮、行是否仍在文档。 */
+    window.__rowShape = () => {
+      const rows = Array.from(document.querySelectorAll('#chat > .row.user-media'));
+      return {
+        rows: rows.length,
+        connected: rows.map(r => r.isConnected),
+        cornerBtns: document.querySelectorAll('#chat .row.user-media .pop-media-canvas').length,
+        fileCards: document.querySelectorAll('#chat .row.user-media .file-card').length,
+        imgs: document.querySelectorAll('#chat .row.user-media .pop-img').length,
+      };
+    };
+
+    /** 捕获 workspace-open-item（Canvas 打开单点）下执行 `fn`。 */
+    window.__captureOpenEvents = async (fn) => {
+      const seen = [];
+      const onOpen = (e) => seen.push(e.detail ? {
+        id: e.detail.id, title: e.detail.title, absPath: e.detail.absPath,
+      } : null);
+      window.addEventListener('workspace-open-item', onOpen);
+      try { await fn(); } finally { window.removeEventListener('workspace-open-item', onOpen); }
+      return seen;
+    };
+
+    /** 点击用户媒体行的第一张媒体脸；返回是否弹了灯箱。 */
+    window.__clickMediaFace = async () => {
+      const media = document.querySelector('#chat .row.user-media .pop-img, #chat .row.user-media .pop-video');
+      if (!media) return { clicked: false };
+      media.click();
+      await new Promise(r => setTimeout(r, 60));
+      return { clicked: true, lightbox: !!document.querySelector('.nf-lightbox') };
+    };
+
+    /** 点击用户媒体行里的文件卡。 */
+    window.__clickFileCard = async () => {
+      const card = document.querySelector('#chat .row.user-media .file-card');
+      if (!card) return { clicked: false };
+      card.click();
+      await new Promise(r => setTimeout(r, 30));
+      return { clicked: true };
+    };
+
+    /** 点击媒体行的角标 Canvas 按钮（补丁后才有）。 */
+    window.__clickCornerBtn = async () => {
+      const btn = document.querySelector('#chat .row.user-media .pop-media-canvas');
+      if (!btn) return { clicked: false };
+      btn.click();
+      await new Promise(r => setTimeout(r, 30));
+      return { clicked: true };
+    };
+
+    window.__clearChat = () => { chatEl.innerHTML = ''; };
+    window.__closeLightbox = () => { const lb = document.querySelector('.nf-lightbox'); if (lb) lb.remove(); };
+    window.__ready = true;
+  </script>
+</body>
+</html>

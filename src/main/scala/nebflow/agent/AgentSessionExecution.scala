@@ -135,8 +135,55 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           shouldCompact match
             case Some(detail) =>
               logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "auto-compact-trigger", detail)
-              Some(startDirectCompaction(agentDef, resources, depth, parentRef, state, replyTo, processing, "full"))
+              // ── 乒乓门（主会话无感上下文压缩一期，2026-10-09 spec §G1/§A3/§A4）──
+              // 全部行为差异收在本门之后（spec §G1 零改动论证）：
+              //   影子在飞（含其 S 待换入窗）⇒ 布尔排队位（不堆叠）后照常续跑（§A4）；
+              //   影子失败退避窗（30s×2^n）⇒ 本派发跳过 fork，主腿照常服务（§E-1）；
+              //   影子三连败（= circuitBreakerMax）⇒ 回落老同步路径一拍（§E-1）；
+              //   其余（谓词假 / 开关关 / 门开首次越阈）⇒ AgentPingpong.forkOrLegacyAuto
+              //   内部分流：门关走下行 startDirectCompaction 逐字，门开 fork 影子后主腿
+              //   照常续跑本派发。0.95 硬守卫与熔断应急在本函数上半段原样先行（乒乓
+              //   不绕过最终安全网，§A2）。
+              val pp = state.pingpong
+              if pp.shadowPending.isDefined then
+                if pp.forkQueued then None
+                else
+                  AgentPingpong.logQueued(agentDef, depth, state, detail)
+                  Some(
+                    pipeLlmCall(agentDef, resources, depth, parentRef, state.withForkQueued(true), replyTo, processing)
+                  )
+              else if pp.ppFailures >= config.circuitBreakerMax then
+                Some(
+                  IO(
+                    logAgentEvent(
+                      agentDef,
+                      depth,
+                      state.sessionId,
+                      state.sessionName,
+                      "pp-fallback",
+                      s"failures=${pp.ppFailures}/${config.circuitBreakerMax} → legacy sync compaction (§E-1)"
+                    )
+                  ) *> startDirectCompaction(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    state.withPpFailures(0, 0L),
+                    replyTo,
+                    processing,
+                    "full"
+                  )
+                )
+              else if pp.ppFailures > 0 && !config.isBackoffSatisfied(
+                  pp.ppFailures,
+                  System.currentTimeMillis() - pp.lastPpFailureAt
+                )
+              then None
+              else
+                Some(AgentPingpong.forkOrLegacyAuto(agentDef, resources, depth, parentRef, state, replyTo, processing))
+              end if
             case None => None
+          end match
         end if
 
       end if
@@ -2236,7 +2283,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 尾部（全部角色过滤与 NebulaExclusiveTools 剥离之后）；插件声明不授能
     // （不在 BuiltinToolWhitelist）。信号消费点 = 终态判定机（DelegateJudge
     // selfReport 输入 + 判定机失败回落）与任务列表状态面。
-    val withDelegateReport = if delegateSession then withDispatcherAsk + nebflow.core.tools.DelegateReportTool.Name else withDispatcherAsk
+    val withDelegateReport =
+      if delegateSession then withDispatcherAsk + nebflow.core.tools.DelegateReportTool.Name else withDispatcherAsk
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
     // NodeEdit/NodeList/NodeCancel（分发器三件的作用域面）+ ChainWrite（整链登记）。
     // TaskBoard/node_report/delegate_report 同款「挂载面 + 工具内身份拒绝」双保险：

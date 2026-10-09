@@ -504,7 +504,9 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       )
       // 拒绝文案自描述 + 不回溯叙述先前行为
       _ = assert(
-        toolResults.exists(t => t.contains("does not accept a `mode` parameter") && t.contains("always asks in a non-blocking way")),
+        toolResults.exists(t =>
+          t.contains("does not accept a `mode` parameter") && t.contains("always asks in a non-blocking way")
+        ),
         s"拒绝文案不可判读：$toolResults"
       )
       // 零副作用：哨兵在闸之后才可能派发

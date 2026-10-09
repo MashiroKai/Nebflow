@@ -26,14 +26,22 @@ import java.nio.file.Files
  *  - team/flow 两层聚合是面板污染源（team/flow 入口已随 sidebar flag 封存）
  *    ——teams 与 flows 各自的 agents 域 agent 不得再出现在面板。
  *
- * fixture：三 keeper（Nebula/project-dispatcher/general）+ 三类干扰目录 +
+ * fixture：三 keeper（Nebula/nebflow/subagent）+ 三类干扰目录 +
  * teams/flows 各一个域 agent → 断言恰三 keeper、layer 恒 "global"、无 scope。
+ *
+ * keeper 名集校正（prompt-panel 面板批 2026-10-09 顺带）：builtin-def 批
+ * （2026-10-03）后收敛名 = Nebula/nebflow/subagent + 过渡保留的
+ * project-dispatcher，general/kernel 为退役死信名；面板隐藏批
+ * （2026-10-07 14:13 作者令②）再把 project-dispatcher 挡在面板枚举外。
+ * 旧 fixture 的 {Nebula, project-dispatcher, general} 三元组与现行为
+ * 不符（general 已不出现在面板、project-dispatcher 被隐藏过滤）——本文件
+ * 随现行为校正，判据语义（恰三可见 keeper、无泄漏、无 scope）零改写。
  */
 class AgentPanelConvergenceSpec extends CatsEffectSuite:
 
   private val TestToken = "panel-convergence-token"
 
-  private val Keepers = Set("Nebula", "project-dispatcher", "general")
+  private val Keepers = Set("Nebula", "nebflow", "subagent")
 
   private def writeAgentJson(dir: os.Path, name: String): Unit =
     os.makeDir.all(dir)

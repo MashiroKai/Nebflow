@@ -103,7 +103,9 @@ object A2A4HttpProbe:
               s"${tl.hcursor.downField("tools").focus.flatMap(_.asArray).map(_.size).getOrElse(-1)}"
           )
           println(
-            f"     serverConfig ${cfgBytes}%,d B vs criterion <= 25,600 B: ${if cfgBytes <= 25600 then "PASS" else "FAIL"}"
+            f"     serverConfig ${cfgBytes}%,d B vs criterion <= 25,600 B: ${
+                if cfgBytes <= 25600 then "PASS" else "FAIL"
+              }"
           )
           println("== end (exit 0) ==")
         }

@@ -147,7 +147,10 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       Message(MessageRole.User, Left("go")),
       Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("t1", "Bash", io.circe.JsonObject.empty)))),
       Message(MessageRole.User, Right(List(ContentBlock.ToolResult("t1", "ok")))),
-      Message(MessageRole.Assistant, Right(List(ContentBlock.Text("partial"), ContentBlock.ToolUse("t2", "Read", io.circe.JsonObject.empty))))
+      Message(
+        MessageRole.Assistant,
+        Right(List(ContentBlock.Text("partial"), ContentBlock.ToolUse("t2", "Read", io.circe.JsonObject.empty)))
+      )
     )
     assertEquals(BackoffSupervisor.sessionToolCalls(msgs), 2)
     assertEquals(BackoffSupervisor.sessionToolCalls(thinkingOnlyMessages), 0)
@@ -156,15 +159,24 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
 
   test("isEmptyBurnCompletion: zero tools + (no text | stub) = true; real text or any tool = false") {
     assert(BackoffSupervisor.isEmptyBurnCompletion(Nil), "silent empty completion is an empty burn")
-    assert(BackoffSupervisor.isEmptyBurnCompletion(thinkingOnlyMessages), "thinking-only turn-ended-empty is an empty burn")
-    assert(BackoffSupervisor.isEmptyBurnCompletion(stubMessages), "the max_tokens stub is NOT real output (the incident form)")
+    assert(
+      BackoffSupervisor.isEmptyBurnCompletion(thinkingOnlyMessages),
+      "thinking-only turn-ended-empty is an empty burn"
+    )
+    assert(
+      BackoffSupervisor.isEmptyBurnCompletion(stubMessages),
+      "the max_tokens stub is NOT real output (the incident form)"
+    )
     assert(
       !BackoffSupervisor.isEmptyBurnCompletion(List(Message(MessageRole.Assistant, Left("did the work")))),
       "real text output is the judge's input, not an empty burn"
     )
     assert(
       !BackoffSupervisor.isEmptyBurnCompletion(
-        thinkingOnlyMessages :+ Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("t9", "Bash", io.circe.JsonObject.empty))))
+        thinkingOnlyMessages :+ Message(
+          MessageRole.Assistant,
+          Right(List(ContentBlock.ToolUse("t9", "Bash", io.circe.JsonObject.empty)))
+        )
       ),
       "any tool call disqualifies the empty-burn verdict"
     )
@@ -172,7 +184,9 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
 
   // ── 行为面：delegate 轨两级处置 ─────────────────────────────────────────
 
-  test("delegate track: empty Completed restarts (nudge injected, restarting status); budget exhausted ⇒ terminal verdict blocked (precheck), never a fake completion") {
+  test(
+    "delegate track: empty Completed restarts (nudge injected, restarting status); budget exhausted ⇒ terminal verdict blocked (precheck), never a fake completion"
+  ) {
     val system = ActorSystem(s"bsup-eb-1-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-bsup-eb-")
     val parentSid = "eb-parent-1"
@@ -195,7 +209,8 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
         BackoffSupervisor(
           childRef = firstChild,
           childSpawnFn = (_, _) =>
-            spawned.update(_ + 1) *> system.spawn(mkRecordingChild(childCmds), s"eb-child-${scala.util.Random.nextInt(100000)}"),
+            spawned.update(_ + 1) *> system
+              .spawn(mkRecordingChild(childCmds), s"eb-child-${scala.util.Random.nextInt(100000)}"),
           childName = childSid,
           parentRef = Some(parentRef),
           description = "parrot bicycle loop",
@@ -219,7 +234,7 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       _ <- waitUntil(10.seconds)(
         parentEvents.get.map(_.exists {
           case e: AgentCommand.ExternalEvent => e.eventType == "completed"
-          case _                             => false
+          case _ => false
         })
       )
       _ <- IO.sleep(300.millis) // 终态清理链沉降
@@ -230,16 +245,26 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       _ <- system.stopAll
     yield
       // 两次续推：新 child 各收到一次「空烧 nudge」（非旧 completed 报文）
-      val nudges = cmds.collect { case u: AgentCommand.UserInput => u.text }
+      val nudges = cmds
+        .collect { case u: AgentCommand.UserInput => u.text }
         .filter(_.contains("NO output and NO tool calls"))
       assertEquals(nudges.size, 2, s"each empty-burn restart must inject the nudge, got: $nudges")
       // 判定机不在场（端口未装）＋确定性预检 → 父收到的唯一完成报文携带 blocked 判词行
       val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(ext.size, 1, s"exactly one terminal notification, got: $events")
       assertEquals(ext.head.eventType, "completed")
-      assert(ext.head.payload.contains("[delegate-judge] verdict: blocked"), s"honest verdict line must reach the parent: ${ext.head.payload}")
-      assert(ext.head.payload.contains("deterministic precheck"), s"the precheck marker must be named: ${ext.head.payload}")
-      assert(!ext.head.payload.contains("(no text output)\n\n[delegate-judge] verdict: completed"), "the fake-completed form must be gone")
+      assert(
+        ext.head.payload.contains("[delegate-judge] verdict: blocked"),
+        s"honest verdict line must reach the parent: ${ext.head.payload}"
+      )
+      assert(
+        ext.head.payload.contains("deterministic precheck"),
+        s"the precheck marker must be named: ${ext.head.payload}"
+      )
+      assert(
+        !ext.head.payload.contains("(no text output)\n\n[delegate-judge] verdict: completed"),
+        "the fake-completed form must be gone"
+      )
       // 审计行：source=precheck
       val precheckLines = chainLines.filter(_.payload.hcursor.get[String]("source").toOption.contains("precheck"))
       assertEquals(precheckLines.size, 1, s"exactly one precheck verdict line, got: $chainLines")
@@ -247,7 +272,11 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       // 断点续推痕迹：任务库历经 restarting（retryCount 1→2）后落 completed（blocked 判词行的既有报父语义）
       val task = tasks.find(_.taskId == childSid).get
       assertEquals(task.retryCount, 2, "two empty-burn restarts must be counted")
-      assertEquals(task.status, "completed", "the blocked-verdict release rides the completed eventType (existing judge semantics)")
+      assertEquals(
+        task.status,
+        "completed",
+        "the blocked-verdict release rides the completed eventType (existing judge semantics)"
+      )
     end for
   }
 
@@ -268,7 +297,8 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
         BackoffSupervisor(
           childRef = firstChild,
           childSpawnFn = (_, _) =>
-            spawned.update(_ + 1) *> system.spawn(mkRecordingChild(childCmds), s"eb2-child-${scala.util.Random.nextInt(100000)}"),
+            spawned.update(_ + 1) *> system
+              .spawn(mkRecordingChild(childCmds), s"eb2-child-${scala.util.Random.nextInt(100000)}"),
           childName = childSid,
           parentRef = Some(parentRef),
           description = "subtask empty burn",
@@ -291,7 +321,7 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       _ <- waitUntil(10.seconds)(
         parentEvents.get.map(_.exists {
           case e: AgentCommand.ExternalEvent => e.eventType == "failed"
-          case _                             => false
+          case _ => false
         })
       )
       _ <- IO.sleep(300.millis)

@@ -15,6 +15,16 @@
 //
 // 纪律：本件零用户可见文案（无 locale 触碰）、零引擎/Scala 触碰；schema 变更
 // 只允许「加宽」（N1 定稿字段并入），已命名键是跨批契约、禁改名。
+//
+// delegate-ui 批（2026-10-08 · 定稿蓝本 §3 三值归属）加宽两件（均纯加宽、旧行
+// 缺键容忍不臆造）：
+//   ① DelegateRow 加宽 G1 `orchestrationMode`（single/subagent-star/agentflow；
+//      null → ''，读面禁折叠 None→single——过渡启发兜底归渲染层）＋ G6
+//      `archivedAt` ＋ G5 行内排队条件键 `mergeQueue`/`mergeQueuePos`（引擎闸
+//      单点判据透传，未排队 = null；🔴 禁前端复刻判据）。
+//   ② 星型子代理读取口（G3 `GET /api/delegates/:id/children` 投影）：
+//      setChildrenSource 挂 provider（照 setSource 换源缝同款），渲染面经
+//      listDelegateChildren 读取——零 WS 直连。
 
 // ── 规范 schema（最小集）─────────────────────────────────────────────────
 
@@ -41,6 +51,18 @@ export const ROW_STATUS = {
 const ROW_STATUS_VALUES = new Set(Object.values(ROW_STATUS));
 
 /**
+ * 编排模式值域（G1，delegate-ui 批 2026-10-08）：引擎 DelegateRegistry.Mode* 同族。
+ * 权威 = rows 行内 `orchestrationMode`；旧盘记录 = null → 前端过渡启发兜底
+ * （渲染层禁折叠 null→single——null 表示「未知」，不是「单干」）。
+ * @enum {string}
+ */
+export const ORCHESTRATION_MODES = {
+  SINGLE: 'single',
+  SUBAGENT_STAR: 'subagent-star',
+  AGENTFLOW: 'agentflow',
+};
+
+/**
  * 帧类型最小集——「已落集」＝ #1224 已落库的 ChainStore 三行族（逐键契约见
  * 引擎面各 payload 构造点，下方 ADAPTER 注释逐键对照）；「候定集」＝ N1 结构帧
  * （整链登记/链节点状态帧），**仅声明、不解读**——适配层原样透传进
@@ -49,7 +71,7 @@ const ROW_STATUS_VALUES = new Set(Object.values(ROW_STATUS));
  */
 export const FRAME_KINDS = {
   // 已落集（#1224 ChainStore 写入行，键逐字对齐引擎面）：
-  DELEGATE_SPAWN: 'delegate-spawn',   // DelegateWorkspace.spawnPayload：delegateId/executor/project/branch/worktree/cwd/baseWorkspace/baseBranch/baseSha
+  DELEGATE_SPAWN: 'delegate-spawn',   // DelegateWorkspace.spawnPayload：delegateId/executor/project/branch/worktree/cwd/baseWorkspace/baseBranch/baseSha；jev-plugins additive: plugins[]/allocation (optional — absent in old rows)
   TERMINAL_VERDICT: 'terminal-verdict', // DelegateJudge.verdictPayload：delegateId/taskId/verdict/reason/source
   MERGE_QUEUE: 'merge-queue',         // MergeQueue.record：action/delegateId/branch/projectKey/readyAt(+extra)
   // 候定集（N1 结构帧，字段未定稿——透传不解读）：
@@ -69,6 +91,29 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {string} status            ROW_STATUS 值域
  * @property {boolean} external         外部执行器（executor ≠ nebflow）⇒ S16 粗粒度行
  * @property {string} project           挂载项目名（'' = 默认 general 目录）
+ * @property {string} orchestrationMode G1 编排模式（ORCHESTRATION_MODES 值域；'' = 旧盘
+ *                                      null/缺键——过渡启发兜底，禁折叠为 single）
+ * @property {number|null} archivedAt   G6 归档时间戳 epoch ms（null = 在册未归档）
+ * @property {{projectKey: string, ahead: string[], holder: string|null, reminderSent: boolean}|null} mergeQueue
+ *                                      G5 行内排队可见性槽（引擎闸透传；未排队 = null）
+ * @property {{position: number, total: number, readyAt: number, branch: string, baseBranch: string}|null} mergeQueuePos
+ *                                      G5 行内排队位次（引擎自排序透传；未排队 = null）
+ */
+
+/**
+ * 星型子代理条目（G3 `GET /api/delegates/:id/children` 投影；SubAgentTask 形）。
+ * @typedef {Object} DelegateChild
+ * @property {string} taskId            子会话 id（subtask- / subagent- / 嵌套 delegate- 前缀）
+ * @property {string} parentSessionId   父 delegate 会话 id
+ * @property {string} agentName         子代理名（数据原文）
+ * @property {string} prompt            派发 prompt 全文
+ * @property {string} description       任务描述
+ * @property {string} status            running|completed|failed|restarting（store 值域原样）
+ * @property {number} retryCount
+ * @property {number} spawnedAt         epoch ms
+ * @property {number|null} completedAt  epoch ms
+ * @property {string} lastError
+ * @property {string} source            subagent|subtask|delegate（过滤归消费端）
  */
 
 /**
@@ -87,8 +132,9 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {string} taskId            存储键（台账号优先，delegateId 回落——ChainStore.keyFor 同口径）
  * @property {string} delegateId        主 delegate（单 delegate 链现形；N1 多节点链 = nodes 加宽）
  * @property {ChainNode[]} nodes        链节点（N1 定稿前 = 单 delegate 节点形）
- * @property {{branch: string, worktree: string, cwd: string, baseWorkspace: string, baseBranch: string, baseSha: string}|null} worktree
- *                                      spawn 行投影（S11 自动建 worktree 面的数据源；无分支腿 = null）
+ * @property {{branch: string, worktree: string, cwd: string, baseWorkspace: string, baseBranch: string, baseSha: string, plugins: string[], allocation: string}|null} worktree
+ *                                      spawn 行投影（S11 自动建 worktree 面的数据源；无分支腿 = null）。
+ *                                      plugins/allocation = jev-plugins 批 additive 两键（旧行缺键 → []/''）
  * @property {{verdict: string, reason: string, source: string, at: number}|null} verdict
  *                                      terminal-verdict 行投影（三判词 + reason）
  * @property {Array<{delegateId: string, branch: string, projectKey: string, readyAt: number, action: string, at: number}>} mergeQueue
@@ -130,6 +176,10 @@ export function rowFromRegistry(record, live) {
   else if (reported === 'blocked') status = ROW_STATUS.BLOCKED;
   else if (live && live.status) status = normalizeStatus(live.status);
   else status = ROW_STATUS.RUNNING;
+  // G1/G5/G6 加宽（delegate-ui 批）：缺键容忍——旧盘 null → mode '' / archivedAt
+  // null / 队列两键 null（读面禁折叠 None→single；未排队缺键纪律在引擎侧）。
+  const q = r.mergeQueue && typeof r.mergeQueue === 'object' ? r.mergeQueue : null;
+  const qp = r.mergeQueuePos && typeof r.mergeQueuePos === 'object' ? r.mergeQueuePos : null;
   return {
     taskNo: String(r.taskId || ''),
     delegateId: String(r.id || ''),
@@ -138,6 +188,21 @@ export function rowFromRegistry(record, live) {
     status,
     external: executor !== '' && executor !== 'nebflow',
     project: String(r.project || ''),
+    orchestrationMode: String(r.orchestrationMode || ''),
+    archivedAt: typeof r.archivedAt === 'number' ? r.archivedAt : null,
+    mergeQueue: q ? {
+      projectKey: String(q.projectKey || ''),
+      ahead: Array.isArray(q.ahead) ? q.ahead.map((x) => String(x || '')) : [],
+      holder: q.holder == null ? null : String(q.holder),
+      reminderSent: q.reminderSent === true,
+    } : null,
+    mergeQueuePos: qp ? {
+      position: typeof qp.position === 'number' ? qp.position : 0,
+      total: typeof qp.total === 'number' ? qp.total : 0,
+      readyAt: typeof qp.readyAt === 'number' ? qp.readyAt : 0,
+      branch: String(qp.branch || ''),
+      baseBranch: String(qp.baseBranch || ''),
+    } : null,
   };
 }
 
@@ -173,6 +238,8 @@ export function chainFromStoreRecord(record) {
       // 最新一行生效（重 spawn 覆盖旧投影；行序 = 时间序，引擎面 append 保序）。
       if (at >= spawnAt) {
         spawnAt = at;
+        // plugins/allocation: jev-plugins additive spawn payload keys (#1226) —
+        // absent in old rows → []/'' (missing-tolerant, no fabrication).
         worktree = {
           branch: String(p.branch || ''),
           worktree: String(p.worktree || ''),
@@ -180,6 +247,8 @@ export function chainFromStoreRecord(record) {
           baseWorkspace: String(p.baseWorkspace || ''),
           baseBranch: String(p.baseBranch || ''),
           baseSha: String(p.baseSha || ''),
+          plugins: Array.isArray(p.plugins) ? p.plugins.map((x) => String(x || '')) : [],
+          allocation: String(p.allocation || ''),
         };
       }
     } else if (kind === FRAME_KINDS.TERMINAL_VERDICT) {
@@ -334,21 +403,64 @@ export function getChainByTask(taskNo) {
   }
 }
 
+// ── 星型子代理读取口（G3 投影；setSource 换源缝同款第二读口）───────────────
+
+/** @type {Map<string, DelegateChild[]>} */
+const fixtureChildren = new Map();
+/** @type {{listDelegateChildren: function(string): DelegateChild[]}|null} */
+let childrenSource = null;
+
+/**
+ * 星型子代理换源钩子（与 setSource 同款唯一写入点；传 null/缺形 → 回落空源）。
+ * @param {{listDelegateChildren: function(string): DelegateChild[]}} [provider]
+ */
+export function setChildrenSource(provider) {
+  childrenSource = provider && typeof provider.listDelegateChildren === 'function'
+    ? provider
+    : null;
+}
+
+/**
+ * 某 delegate 的星型子代理清单（G3 读取口；查无/源故障 → []，绝不崩渲染面）。
+ * 夹具在场 = 恒夹具优先（harness 兼容缝，同 rows/chains 口径）。
+ * @param {string} delegateId @returns {DelegateChild[]}
+ */
+export function listDelegateChildren(delegateId) {
+  const k = String(delegateId == null ? '' : delegateId);
+  if (fixtureChildren.has(k)) return fixtureChildren.get(k) || [];
+  if (fixtureChildren.size > 0) return []; // 夹具态且该父无条目 = 空集（不落 provider）
+  try {
+    const out = childrenSource ? childrenSource.listDelegateChildren(k) : [];
+    return Array.isArray(out) ? out : [];
+  } catch (_) {
+    return [];
+  }
+}
+
 // ── harness 注入口（测试专用；产品路径零调用）────────────────────────────
 
 /**
- * 装 stub 夹具（harness/单测专用）。rows/chains 均可选；chains 以 taskId 键挂。
- * @param {{rows?: DelegateRow[], chains?: ChainView[]}} [fx]
+ * 装 stub 夹具（harness/单测专用）。rows/chains/children 均可选；chains 以 taskId 键挂，
+ * children 以 parentSessionId（delegateId）键挂。
+ * @param {{rows?: DelegateRow[], chains?: ChainView[], children?: Object<string, DelegateChild[]>}} [fx]
  */
 export function __setFixture(fx) {
   const f = fx && typeof fx === 'object' ? fx : {};
   fixtureRows.clear();
   fixtureChains.clear();
+  fixtureChildren.clear();
   for (const r of (Array.isArray(f.rows) ? f.rows : [])) {
     if (r && typeof r === 'object') fixtureRows.set(String(r.delegateId || r.taskNo || ''), r);
   }
   for (const c of (Array.isArray(f.chains) ? f.chains : [])) {
     if (c && typeof c === 'object') fixtureChains.set(String(c.taskId || ''), c);
+  }
+  const kids = f.children && typeof f.children === 'object' ? f.children : null;
+  if (kids) {
+    for (const k of Object.keys(kids)) {
+      const arr = Array.isArray(kids[k]) ? kids[k].filter((c) => c && typeof c === 'object') : [];
+      fixtureChildren.set(String(k), arr);
+    }
   }
 }
 
@@ -356,4 +468,5 @@ export function __setFixture(fx) {
 export function __resetFixture() {
   fixtureRows.clear();
   fixtureChains.clear();
+  fixtureChildren.clear();
 }

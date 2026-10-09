@@ -97,6 +97,14 @@
       source: { kind: 'workspace', path: '/Users/dev/Documents/20260902_超长标题截断省略号验证_这是一个非常非常长的文件名用来验证固定宽度下省略号生效.txt' },
       anchor: { kind: 'none' },
     },
+    // imageref-media（2026-10-09 修复批）：图片文件引用（explorer 引用/拖拽同构
+    // 输入形状）——消息内面必须分流到 Pop 媒体预览卡，不再是 att-ref-card。
+    imagefile: {
+      refType: 'file',
+      source: { kind: 'workspace', path: '/Users/dev/Desktop/截屏2026-10-09 07.45.12.png',
+                fileName: '截屏2026-10-09 07.45.12.png', title: '截屏2026-10-09 07.45.12.png' },
+      anchor: { kind: 'none' },
+    },
     // ── 20260903 文件名重复修复回归输入 ──
     // canvas 标签页把「显示标题」当 fileName（canvas.js refInputForTab: name =
     // tab.title || basename）——标题无扩展名时 extLabel 曾把整个名字当「扩展名」，

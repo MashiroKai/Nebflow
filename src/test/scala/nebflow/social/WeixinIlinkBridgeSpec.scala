@@ -73,18 +73,27 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
+
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] =
       config.fold(IO.unit)(c => bound.update(_ :+ ((sessionId, platform, c))))
 
   end RecordingCtx
 
-  /** Recording context that ALSO captures the origin descriptor of each
-    *  injection (soc483: the inbound source marker). */
+  /**
+   * Recording context that ALSO captures the origin descriptor of each
+   *  injection (soc483: the inbound source marker).
+   */
   private final class OriginRecordingCtx(sessions: List[SessionMeta]) extends BridgeContext:
+
     val origins: Ref[IO, List[Option[nebflow.bridge.BridgeOrigin]]] =
       Ref.unsafe[IO, List[Option[nebflow.bridge.BridgeOrigin]]](Nil)
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] =
       origins.update(_ :+ origin)
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
@@ -549,8 +558,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
 
   // ─────────── soc483: baseurl save-face validation (positive + counter-example) ───────────
 
-  /** The card's own documented shape: the two required plain fields plus the
-    *  required secret, so a save cannot fail for a reason other than the URL. */
+  /**
+   * The card's own documented shape: the two required plain fields plus the
+   *  required secret, so a save cannot fail for a reason other than the URL.
+   */
   private def saveBody(baseurl: String): Json =
     io.circe.parser
       .parse(
@@ -564,10 +575,17 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     SocialChannels.save(root, WeixinIlinkBridgePlugin.Name, saveBody("https://open.example.com/api")) match
       case Right(_) => ()
       case Left(err) => fail(s"a path-carrying https baseurl must be accepted, got: $err")
-    val stored = SocialChannels.channelsJson(root).hcursor
-      .downField("channels").downField(WeixinIlinkBridgePlugin.Name).downField("fields")
-    assertEquals(stored.downField("baseurl").as[String].toOption,
-      Some("https://open.example.com/api"), "the value must be stored verbatim")
+    val stored = SocialChannels
+      .channelsJson(root)
+      .hcursor
+      .downField("channels")
+      .downField(WeixinIlinkBridgePlugin.Name)
+      .downField("fields")
+    assertEquals(
+      stored.downField("baseurl").as[String].toOption,
+      Some("https://open.example.com/api"),
+      "the value must be stored verbatim"
+    )
   }
 
   test("WI-B2 a non-URL baseurl is STILL refused (the fix did not open the gate)") {
@@ -600,10 +618,14 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     // the pattern predicate the two paths share, at the card-definition level.
     val baseurl = SocialChannels.channel(WeixinIlinkBridgePlugin.Name).get.fields.find(_.key == "baseurl").get
     assertEquals(baseurl.pattern, Some("^https?://.*"))
-    assert("https://open.example.com/x/y".matches(baseurl.pattern.get),
-      "the shared pattern must accept a path-carrying URL (save) …")
-    assert(!"notaurl".matches(baseurl.pattern.get),
-      "…and refuse a bare word (verified), through the SAME pattern object")
+    assert(
+      "https://open.example.com/x/y".matches(baseurl.pattern.get),
+      "the shared pattern must accept a path-carrying URL (save) …"
+    )
+    assert(
+      !"notaurl".matches(baseurl.pattern.get),
+      "…and refuse a bare word (verified), through the SAME pattern object"
+    )
   }
 
   // ─────────── soc483: the weixin inbound source marker ───────────
@@ -618,19 +640,25 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     yield
       assertEquals(got.size, 1, "exactly one injection carries an origin")
       val o = got.head.getOrElse(fail("the injection must carry an origin descriptor"))
-      assertEquals(o.channelId, WeixinIlinkBridgePlugin.Name,
-        "the channel id is this bridge's own stable name")
-      assertEquals(o.channelDisplay, WeixinIlinkBridgePlugin.ChannelDisplay,
-        "the display label comes from this channel's own constant")
-      assert(o.channelDisplay != FeishuBridgePlugin.ChannelDisplay,
-        "the label must never be a copy of another channel's label")
+      assertEquals(o.channelId, WeixinIlinkBridgePlugin.Name, "the channel id is this bridge's own stable name")
+      assertEquals(
+        o.channelDisplay,
+        WeixinIlinkBridgePlugin.ChannelDisplay,
+        "the display label comes from this channel's own constant"
+      )
+      assert(
+        o.channelDisplay != FeishuBridgePlugin.ChannelDisplay,
+        "the label must never be a copy of another channel's label"
+      )
       assertEquals(o.chatRef, None, "iLink carries no conversation reference ⇒ the marker renders the neutral `-`")
+    end for
   }
 
   test("WI-S2 the label rides the marker template: the rendered block names this channel only") {
     val origin = nebflow.bridge.BridgeOrigin(
       channelId = WeixinIlinkBridgePlugin.Name,
-      channelDisplay = WeixinIlinkBridgePlugin.ChannelDisplay)
+      channelDisplay = WeixinIlinkBridgePlugin.ChannelDisplay
+    )
     val marker = nebflow.bridge.BridgeOrigin.marker(origin, Some("wx_alice"))
     assert(marker.contains(WeixinIlinkBridgePlugin.ChannelDisplay), marker)
     assert(marker.contains(WeixinIlinkBridgePlugin.Name), marker)
@@ -648,12 +676,21 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      send = _ => (to, text) => calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
+      send = _ =>
+        (to, text) =>
+          calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
     )
     for
       _ <- p.start(new RecordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "toolEnd".asJson, "sessionId" -> "s1".asJson,
-        "content" -> "___CARD_HTML___{}".asJson, "isError" -> false.asJson))
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj(
+          "type" -> "toolEnd".asJson,
+          "sessionId" -> "s1".asJson,
+          "content" -> "___CARD_HTML___{}".asJson,
+          "isError" -> false.asJson
+        )
+      )
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       got <- calls.get
     yield assertEquals(got, Nil, "toolEnd observes nothing; done with an empty buffer sends nothing")
@@ -669,13 +706,17 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   // → inject. WI-AB7 pins the closure end to end through the UNCHANGED
   // outbound reverse read.
 
-  /** The plugin with a recording send seam (the WI-S3 shape) — for the
-    * auto-bind ⇄ outbound-loop cases. No socket is ever opened. */
+  /**
+   * The plugin with a recording send seam (the WI-S3 shape) — for the
+   * auto-bind ⇄ outbound-loop cases. No socket is ever opened.
+   */
   private def pluginWithRecorder(root: os.Path, calls: Ref[IO, List[(String, String)]]): WeixinIlinkBridgePlugin =
     new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      send = _ => (to, text) => calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
+      send = _ =>
+        (to, text) =>
+          calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
     )
 
   test("WI-AB1 an unbound sender + a default session ⇒ auto-binds (source=auto + boundAt), then injects there") {
@@ -702,12 +743,19 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         Some("wx_new"),
         "the binding carries the sender id — the return address the outbound reverse read consumes"
       )
-      assertEquals(cfg.hcursor.downField("source").as[String].toOption, Some("auto"),
-        "auto-bindings are marked `auto` so the bindings face can tell them from manual ones")
+      assertEquals(
+        cfg.hcursor.downField("source").as[String].toOption,
+        Some("auto"),
+        "auto-bindings are marked `auto` so the bindings face can tell them from manual ones"
+      )
       assert(cfg.hcursor.downField("boundAt").as[Long].toOption.isDefined, "the binding is timestamped")
-      assertEquals(routes.get("wx_new"), Some("s_default"),
-        "the local routes table is updated in the same step — the turn in flight can already be replied to")
+      assertEquals(
+        routes.get("wx_new"),
+        Some("s_default"),
+        "the local routes table is updated in the same step — the turn in flight can already be replied to"
+      )
       assertEquals(got, List(("s_default", "hello", Some("wx_new"))))
+    end for
   }
 
   test("WI-AB2 the second message from an auto-bound sender rides the binding; no re-bind") {
@@ -748,6 +796,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         "the binding is written even when this message carries nothing injectable — the address must exist for the NEXT message"
       )
       assertEquals(got, List.empty, "nothing is injected (no text is ever fabricated)")
+    end for
   }
 
   test("WI-AB4 an UNRESOLVABLE sender never mints a binding (an empty key would hijack every anonymous sender)") {
@@ -761,8 +810,11 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       bound <- c.bound.get
       got <- c.injected.get
     yield
-      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"),
-        "the pre-existing fallback (inject via the default session) is byte-identical for unresolvable senders")
+      assertEquals(
+        v,
+        WeixinIlinkBridgePlugin.Verdict.Injected("s_default"),
+        "the pre-existing fallback (inject via the default session) is byte-identical for unresolvable senders"
+      )
       assertEquals(bound, List.empty, "no binding without a resolvable sender id")
       assertEquals(got, List(("s_default", "hello", None)))
   }
@@ -805,9 +857,215 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "hi".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
+    yield assertEquals(
+      got,
+      List(("wx_new", "hi")),
+      "the session's flush resolves the sender through the SAME table the auto-bind wrote — the return path exists"
+    )
+  }
+
+  // ─────────────── weixin-inbound-media batch: the media arm ───────────────
+  //
+  // The side-car lands image/file/video items on disk BEFORE delivery and
+  // rides mediaPath/mediaKind/mediaName/mediaMime with the placeholder label
+  // still in `text`. The media arm sits ahead of both text arms: a landed
+  // path injects the 「[图片] 已存至 …」 line (the label is replaced); a path
+  // that died in between fails CLOSED to the bare label — still delivered
+  // (the side-car never holds its cursor for a media leg). Without a media
+  // path every pre-media arm is byte-identical (WI-R3 / WI-AB3 pin that).
+
+  /**
+   * A media-shaped inbound like the side-car sends it: the placeholder label
+   * in `text`, the landed fields riding along.
+   */
+  private def mediaInbound(
+    senderId: Option[String],
+    mediaPath: Option[String],
+    kind: Option[String] = Some("image"),
+    name: Option[String] = Some("pic.png"),
+    text: Option[String] = Some("[图片]"),
+    messageId: Option[String] = Some("m_media")
+  ): WeixinIlinkBridgePlugin.Inbound =
+    WeixinIlinkBridgePlugin.Inbound(senderId, text, messageId, mediaPath, kind, name, None)
+
+  test("WI-M1 parseInbound carries the four media fields; absent ⇒ None; unknown fields still ignored") {
+    def j(s: String): Json = io.circe.parser.parse(s).toOption.get
+    assertEquals(
+      WeixinIlinkBridgePlugin.parseInbound(
+        j(
+          """{"senderId":"wx_a","text":"[图片]","messageId":"m1","mediaPath":"/tmp/x.png","mediaKind":"image","mediaName":"pic.png","mediaMime":"image/png"}"""
+        )
+      ),
+      Right(
+        WeixinIlinkBridgePlugin.Inbound(
+          Some("wx_a"),
+          Some("[图片]"),
+          Some("m1"),
+          Some("/tmp/x.png"),
+          Some("image"),
+          Some("pic.png"),
+          Some("image/png")
+        )
+      )
+    )
+    assertEquals(
+      WeixinIlinkBridgePlugin.parseInbound(j("""{"senderId":"wx_a","text":"hi"}""")),
+      Right(WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("hi"), None, None, None, None, None)),
+      "no media fields ⇒ plain text-shaped Inbound"
+    )
+    assertEquals(
+      WeixinIlinkBridgePlugin.parseInbound(j("""{"senderId":"wx_a","text":"hi","futureField":42}""")),
+      Right(WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("hi"))),
+      "the silent-ignore contract for unknown fields is unchanged"
+    )
+  }
+
+  test("WI-M2 mediaLabel/mediaLine: kind map (image/video/file/absent/garbage) and the exact wording") {
+    assertEquals(WeixinIlinkBridgePlugin.mediaLabel(Some("image")), "[图片]")
+    assertEquals(WeixinIlinkBridgePlugin.mediaLabel(Some("video")), "[视频]")
+    assertEquals(WeixinIlinkBridgePlugin.mediaLabel(Some("file")), "[文件]")
+    assertEquals(WeixinIlinkBridgePlugin.mediaLabel(None), "[文件]", "absent kind ⇒ the file-ish default")
+    assertEquals(
+      WeixinIlinkBridgePlugin.mediaLabel(Some("voice")),
+      "[文件]",
+      "an unrecognized kind never fabricates a label"
+    )
+    assertEquals(
+      WeixinIlinkBridgePlugin.mediaLine("/tmp/m.png", Some("image"), Some("pic.png")),
+      "[图片] 已存至 /tmp/m.png（原始文件名 pic.png），可用 Read 查看"
+    )
+    assertEquals(
+      WeixinIlinkBridgePlugin.mediaLine("/tmp/v.mp4", Some("video"), None),
+      "[视频] 已存至 /tmp/v.mp4，可用 Read 查看",
+      "no wire name ⇒ the parenthetical is dropped"
+    )
+  }
+
+  test("WI-M3 a landed media path injects the media line, replacing the shim's placeholder label") {
+    val dir = os.temp.dir(prefix = "nb-weixin-media-")
+    val media = dir / "m1-pic.png"
+    os.write(media, "png")
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin()
+    for
+      _ <- started(p, c)
+      v <- p.intake(c, mediaInbound(Some("wx_alice"), Some(media.toString)))
+      got <- c.injected.get
     yield
-      assertEquals(got, List(("wx_new", "hi")),
-        "the session's flush resolves the sender through the SAME table the auto-bind wrote — the return path exists")
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"))
+      assertEquals(
+        got,
+        List(
+          ("s1", WeixinIlinkBridgePlugin.mediaLine(media.toString, Some("image"), Some("pic.png")), Some("wx_alice"))
+        ),
+        "the label text the shim sent is REPLACED by the media line"
+      )
+  }
+
+  test("WI-M4 a media path missing at injection fails CLOSED: the bare label is injected (still delivered)") {
+    val gone = os.temp.dir(prefix = "nb-weixin-media-gone-") / "never-landed.png"
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin()
+    withAppender { appender =>
+      val before = messages(appender).length
+      val (v, injected) = (for
+        _ <- started(p, c)
+        v <- p.intake(c, mediaInbound(Some("wx_alice"), Some(gone.toString)))
+        got <- c.injected.get
+      yield (v, got)).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      val got = injected.map(_._2)
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"), "the degrade still DELIVERS (never a hold)")
+      assertEquals(got, List("[图片]"), "the bare placeholder label rides instead")
+      assert(
+        fired.exists(l => l.contains("path missing at injection") && l.contains(gone.toString)),
+        s"the fail-closed WARN must be observable, got $fired"
+      )
+    }
+  }
+
+  test("WI-M5 a media message from a NEW sender auto-binds (semantics unchanged) AND injects the media line") {
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = plugin(root = root)
+    val media = os.temp.dir(prefix = "nb-weixin-media-ab-") / "m9-report.pdf"
+    os.write(media, "pdf")
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      _ <- started(p, c)
+      v <- p.intake(
+        c,
+        mediaInbound(
+          Some("wx_new"),
+          Some(media.toString),
+          kind = Some("file"),
+          name = Some("report.pdf"),
+          text = Some("[文件]")
+        )
+      )
+      bound <- c.bound.get
+      got <- c.injected.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
+      assertEquals(
+        bound.map { case (sid, plat, cfg) => (sid, plat, cfg.hcursor.downField("source").as[String].toOption) },
+        List(("s_default", WeixinIlinkBridgePlugin.Name, Some("auto"))),
+        "the binding semantics are unchanged (the address precedes the body)"
+      )
+      assertEquals(
+        got.map(_._2),
+        List(WeixinIlinkBridgePlugin.mediaLine(media.toString, Some("file"), Some("report.pdf")))
+      )
+    end for
+  }
+
+  test("WI-M6 an UNRESOLVABLE sender's media message rides the default-session fallback (no binding, media line)") {
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = plugin(root = root)
+    val media = os.temp.dir(prefix = "nb-weixin-media-anon-") / "m1-image.png"
+    os.write(media, "png")
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      _ <- started(p, c)
+      v <- p.intake(c, mediaInbound(None, Some(media.toString)))
+      bound <- c.bound.get
+      got <- c.injected.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
+      assertEquals(bound, List.empty, "no binding without a resolvable sender id (unchanged)")
+      assertEquals(
+        got.map(_._2),
+        List(WeixinIlinkBridgePlugin.mediaLine(media.toString, Some("image"), Some("pic.png")))
+      )
+  }
+
+  test("WI-M7 a media message with NO session to serve it drops as before (the media arm adds no routing)") {
+    val c = new RecordingCtx(Nil)
+    val p = plugin()
+    for
+      _ <- started(p, c)
+      v <- p.intake(c, mediaInbound(Some("wx_none"), Some("/tmp/landed.png")))
+      got <- c.injected.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNoSession))
+      assertEquals(got, List.empty)
+  }
+
+  test("WI-M8 a media message OFF the allowlist is still gated FIRST (the gate rules the media arm too)") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin(allowed = Some(List("wx_alice")))
+    for
+      _ <- started(p, c)
+      v <- p.intake(c, mediaInbound(Some("wx_mallory"), Some("/tmp/landed.png")))
+      got <- c.injected.get
+    yield
+      assertEquals(
+        v,
+        WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNotOnAllowlist),
+        "a landed media path must not bypass the sender gate"
+      )
+      assertEquals(got, List.empty)
   }
 
 end WeixinIlinkBridgeSpec

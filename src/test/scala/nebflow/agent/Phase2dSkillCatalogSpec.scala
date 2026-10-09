@@ -41,9 +41,11 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   override val munitIOTimeout: FiniteDuration = 180.seconds
 
-  /** 节点实际执行的 agent 名（builtin-merge 批 2026-10-03 收敛单点）。
-    * P1-3 归因修正（2026-10-03）：旧夹具/断言按已退役名 `general` 造身份——该名已
-    * 非内置名（BuiltinAgents.Names），判据源对齐生产执行名。 */
+  /**
+   * 节点实际执行的 agent 名（builtin-merge 批 2026-10-03 收敛单点）。
+   * P1-3 归因修正（2026-10-03）：旧夹具/断言按已退役名 `general` 造身份——该名已
+   * 非内置名（BuiltinAgents.Names），判据源对齐生产执行名。
+   */
   private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   private val tempRoot: os.Path = os.pwd / "target" / "test-2d-skill-catalog"

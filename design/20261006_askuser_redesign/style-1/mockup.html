@@ -1,0 +1,303 @@
+<!doctype html>
+<!-- style-1 留白极简线框：细边线/无底色分区，层级 = 字号+字重+间距；主按钮实底墨色。
+     双主题：prefers-color-scheme + CSS 变量（暗档仅覆写 :root 变量值，规则体只引 var）。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>style-1 · 留白极简线框</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafaf8;
+    --ink: #1c1e22;
+    --ink-2: #454951;
+    --ink-3: #757a83;
+    --line: rgba(28, 30, 34, 0.14);
+    --line-strong: rgba(28, 30, 34, 0.30);
+    --btn-bg: #1c1e22;
+    --btn-ink: #fafaf8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121419;
+      --ink: #e9ebef;
+      --ink-2: #b7bcc5;
+      --ink-3: #848a95;
+      --line: rgba(255, 255, 255, 0.13);
+      --line-strong: rgba(255, 255, 255, 0.30);
+      --btn-bg: #e9ebef;
+      --btn-ink: #14161b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── Header：未命名态，名字区留空 ── */
+  .topbar {
+    flex: none;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tb-side { width: 46px; display: flex; align-items: center; gap: 10px; }
+  .tb-right { justify-content: flex-end; }
+  .tb-title { flex: 1; text-align: center; font-size: 15px; font-weight: 600; }
+  .glyph-panel {
+    width: 18px; height: 14px;
+    border: 1.5px solid var(--ink-3);
+    border-radius: 3.5px;
+    position: relative;
+    opacity: 0.65;
+  }
+  .glyph-panel::after {
+    content: '';
+    position: absolute;
+    left: 5px; top: -1.5px; bottom: -1.5px;
+    width: 1.5px;
+    background: var(--ink-3);
+  }
+  .glyph-dot {
+    width: 9px; height: 9px;
+    border: 1.5px solid var(--ink-3);
+    border-radius: 50%;
+    opacity: 0.65;
+  }
+
+  /* ── 聊天主体：窄栏居左，大留白 ── */
+  .chat { flex: 1; overflow: hidden; padding: 18px 32px 14px; }
+  .thread { max-width: 640px; margin: 0 auto; }
+  .msg + .msg { margin-top: 12px; }
+  .bubble {
+    max-width: 580px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    padding: 13px 18px;
+    background: transparent;
+  }
+  .bubble p { margin: 0; font-size: 14.5px; line-height: 1.6; }
+
+  /* ── 题卡：泡内嵌套，纸上的表格 ── */
+  .bubble .q { margin-top: 10px; font-size: 15px; font-weight: 600; letter-spacing: 0.2px; }
+  .ask-card {
+    margin-top: 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 13px;
+    background: transparent;
+  }
+  .ask-meta {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+  }
+  .free-row { display: flex; gap: 8px; }
+  .field {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    font-family: inherit;
+  }
+  .field::placeholder { color: var(--ink-3); }
+  .btn-primary {
+    flex: none;
+    padding: 8px 18px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--btn-bg);
+    color: var(--btn-ink);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    font-family: inherit;
+  }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip {
+    padding: 5px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink-2);
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .card-foot { display: flex; align-items: center; margin-top: 10px; }
+  .foot-spacer { flex: 1; }
+  .skip {
+    border: none;
+    background: none;
+    padding: 2px 4px;
+    color: var(--ink-3);
+    font-size: 13px;
+    font-family: inherit;
+  }
+
+  /* ── AskUser 通用卡：即气泡框本身，选项走分隔线表格 ── */
+  .option-q { font-size: 15px; font-weight: 600; letter-spacing: 0.2px; }
+  .opt-list { margin-top: 8px; }
+  .opt-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 6px;
+    border: none;
+    border-top: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    text-align: left;
+    font-family: inherit;
+  }
+  .opt-row:first-child { border-top: none; }
+  .radio {
+    flex: none;
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--ink-3);
+    border-radius: 50%;
+  }
+  .opt-other {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 8px;
+    color: var(--ink-2);
+  }
+  .opt-input {
+    display: block;
+    width: 100%;
+    min-height: 46px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    line-height: 1.55;
+    font-family: inherit;
+    resize: none;
+  }
+  .opt-input::placeholder { color: var(--ink-3); }
+  .opt-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+  }
+  .cancel {
+    border: none;
+    background: none;
+    padding: 2px 4px;
+    color: var(--ink-3);
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .check { margin-right: 6px; }
+
+  /* ── 底部输入区（示意）── */
+  .composer {
+    flex: none;
+    border-top: 1px solid var(--line);
+  }
+  .composer-in {
+    max-width: 640px;
+    margin: 0 auto;
+    height: 54px;
+    display: flex;
+    align-items: center;
+    color: var(--ink-3);
+    font-size: 13.5px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="tb-side"><span class="glyph-panel" aria-hidden="true"></span></div>
+    <div class="tb-title"><!-- 未命名态：名字区留空 --></div>
+    <div class="tb-side tb-right">
+      <span class="glyph-dot" aria-hidden="true"></span>
+      <span class="glyph-dot" aria-hidden="true"></span>
+    </div>
+  </header>
+
+  <main class="chat">
+    <div class="thread">
+
+      <section class="msg">
+        <div class="bubble">
+          <p>你好。第一次见面。</p>
+        </div>
+      </section>
+
+      <section class="msg">
+        <div class="bubble">
+          <p>第一件，最重要的一件。</p>
+          <p class="q">给我起个名字吧 —— 你希望以后怎么叫我？</p>
+          <div class="ask-card">
+            <div class="ask-meta">第一幕 · 见面 · 第 1 / 10 题</div>
+            <div class="free-row">
+              <input class="field" type="text" placeholder="输入名字，1–16 个字…（想不出来也可以跳过）">
+              <button class="btn-primary" type="button">用这句</button>
+            </div>
+            <div class="chip-row">
+              <button class="chip" type="button">星尘</button>
+              <button class="chip" type="button">洛书</button>
+              <button class="chip" type="button">阿涅</button>
+              <button class="chip" type="button">Nova</button>
+              <button class="chip" type="button">海豹</button>
+            </div>
+            <div class="card-foot">
+              <span class="foot-spacer"></span>
+              <button class="skip" type="button">跳过这一题</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="msg">
+        <div class="bubble">
+          <p class="option-q">这是一张 AskUser 通用卡（before 对照用）。</p>
+          <div class="opt-list">
+            <button class="opt-row" type="button"><span class="radio" aria-hidden="true"></span>选项一</button>
+            <button class="opt-row" type="button"><span class="radio" aria-hidden="true"></span>选项二</button>
+            <button class="opt-row" type="button"><span class="radio" aria-hidden="true"></span>选项三</button>
+          </div>
+          <button class="opt-row opt-other" type="button">其他...</button>
+          <textarea class="opt-input" placeholder="输入你的回答..."></textarea>
+          <div class="opt-foot">
+            <button class="cancel" type="button">取消</button>
+            <button class="btn-primary" type="button"><span class="check">✓</span>确认</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="composer">
+    <div class="composer-in"><span>输入消息...</span></div>
+  </footer>
+
+</div>
+</body>
+</html>

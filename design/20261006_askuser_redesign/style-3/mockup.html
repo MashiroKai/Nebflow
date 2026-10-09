@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>风格三 · 气泡融合式</title>
+<style>
+/* ============================================================
+   style-3 · 气泡融合式（Bubble-Fusion）
+   题 = 泡：题卡不是卡，是一段「结构化气泡」直接长在对话流里。
+   同一圆角族：泡 16px（AI 尾角左下 4px）→ 控件 14px → 微件 4px/圆。
+   同一间距律：泡内纵向 10px 节奏，件距 6-8px。
+   同一材质：控件全部坐在气泡本体上，无内层盒、无内层描边。
+   主题机制 = prefers-color-scheme + CSS 变量（暗档只覆写 :root 变量值，
+   规则体一律 var(--x) 引用 —— 严禁后置 @media 覆盖同属性色值）。
+   ============================================================ */
+:root {
+  color-scheme: light dark;
+  --bg: #f5f6f8;              /* base.css --color-bg 亮 */
+  --ink: #1b1e26;             /* base.css --color-text 亮 */
+  --dim: #6b6e76;             /* base.css --color-text-dim 亮 */
+  --bubble: #ffffff;          /* base.css --color-bubble-ai 亮 */
+  --bubble-bd: rgba(0, 0, 0, 0.04);   /* .bubble.ai 现值 whisper edge */
+  --bubble-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --hairline: rgba(0, 0, 0, 0.11);
+  --field: rgba(0, 0, 0, 0.035);
+  --green: #07c160;           /* base.css --color-primary */
+  --green-shadow: rgba(7, 193, 96, 0.26);
+  --tail: 4px;                /* AI 尾角收角现值 */
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #13161c;            /* base.css --color-bg 暗 */
+    --ink: #e8eaed;           /* base.css --color-text 暗 */
+    --dim: #9ba0aa;           /* base.css --color-text-dim 暗 */
+    --bubble: #1c1f27;        /* base.css --color-bubble-ai 暗 */
+    --bubble-bd: rgba(255, 255, 255, 0.055);
+    --bubble-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    --hairline: rgba(255, 255, 255, 0.11);
+    --field: rgba(255, 255, 255, 0.055);
+    --green-shadow: rgba(7, 193, 96, 0.18);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14.5px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 顶部 Header：未命名态 → 名字区留空（居中位保留，一字不写） ── */
+.top {
+  flex: 0 0 auto;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+.top-side { flex: 1; display: flex; align-items: center; gap: 16px; }
+.top-side.right { justify-content: flex-end; }
+.top-side svg { width: 17px; height: 17px; color: var(--dim); opacity: 0.55; display: block; }
+.top-name {
+  flex: 1.4;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  min-height: 1em;   /* 名字区留空：布局占位保留，内容为空 */
+}
+
+/* ── 对话流 ── */
+.chat { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.col {
+  width: 780px;
+  margin: 0 auto;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.row { display: flex; width: 100%; }
+.row.ai { justify-content: flex-start; }
+
+/* 泡 = 唯一容器。题卡的「卡感」全部让位给泡的材质。 */
+.bubble {
+  max-width: 700px;
+  padding: 11px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--bubble-bd);
+  border-bottom-left-radius: var(--tail);   /* AI 尾角：与普通泡同一收角 */
+  background: var(--bubble);
+  box-shadow: var(--bubble-shadow);
+}
+.bubble p { margin: 0; }
+.bubble p + p { margin-top: 6px; }
+.bubble .q { font-weight: 600; margin-top: 6px; }
+
+/* 题头弱化为泡内行内标：一个绿点 + 10.5px 静音行，无底无框 */
+.beat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 11px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  color: var(--dim);
+}
+.beat i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  opacity: 0.85;
+  flex: 0 0 auto;
+}
+
+/* 输入行：输入框本身是一个「还没长出来的小泡」（14px 圆角族） */
+.free-row { display: flex; gap: 8px; margin-top: 10px; min-width: 420px; }
+.answer {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 13px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+  resize: none;
+}
+.answer::placeholder { color: var(--dim); opacity: 0.72; }
+
+/* 主按钮：唯一实心绿，与输入框同 14px 圆角 → 同排同族 */
+.primary {
+  flex: 0 0 auto;
+  padding: 8px 17px;
+  border: none;
+  border-radius: 14px;
+  background: var(--green);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 1px 3px var(--green-shadow);
+}
+.primary.wide { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; }
+
+/* 候选 chips = 「小气泡」：答案的雏形，选中即汇入对话流（实心绿） */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip {
+  padding: 5px 13px;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip.picked { background: var(--green); border-color: var(--green); color: #fff; font-weight: 500; }
+
+/* 跳过 = 裸文本次级动作：退到最后，无框无底，一眼让位 */
+.actions { display: flex; align-items: center; margin-top: 12px; }
+.actions .spacer { flex: 1; }
+.skip {
+  border: none;
+  background: none;
+  padding: 2px 2px;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* AskUser 通用卡：同一套融合语言，textarea 即输入区 */
+.area { display: block; width: 100%; margin-top: 10px; min-height: 42px; }
+.btn-row { display: flex; gap: 8px; margin-top: 10px; }
+.ghost {
+  flex: 0 0 auto;
+  padding: 8px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 场景分幅：聊天气泡常见的居中细线分隔（mockup 注记，非产品文案） */
+.scene-divider {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 1px;
+  opacity: 0.8;
+}
+.scene-divider::before, .scene-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+/* ── 底部输入区示意（非考核面） ── */
+.composer { flex: 0 0 auto; padding: 8px 20px 12px; }
+.bar {
+  max-width: 780px;
+  margin: 0 auto;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 5px 0 16px;
+  border: 1px solid var(--bubble-bd);
+  border-radius: 16px;              /* 与泡同族圆角：输入条也是一条泡 */
+  background: var(--bubble);
+  box-shadow: var(--bubble-shadow);
+}
+.bar .ph { flex: 1; color: var(--dim); opacity: 0.72; font-size: 13.5px; }
+.send {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px var(--green-shadow);
+}
+.send svg { width: 15px; height: 15px; display: block; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-side">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="3"/><line x1="9.5" y1="4" x2="9.5" y2="20"/></svg>
+  </div>
+  <div class="top-name"><!-- 未命名态：Header 名字区留空 --></div>
+  <div class="top-side right">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><line x1="16" y1="16" x2="20.5" y2="20.5"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.4-7 10-4-1.6-7-5.5-7-10V6l7-3z"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>
+  </div>
+</header>
+
+<main class="chat">
+  <div class="col">
+
+    <div class="scene-divider"><span>场景 A · Onboarding 第一题</span></div>
+
+    <div class="row ai">
+      <div class="bubble">
+        <p>你好。第一次见面。</p>
+        <p>我是为你而生的那个智能体 —— 不过此刻，我还没有名字，没有性格，也没有关于你的任何记忆。</p>
+      </div>
+    </div>
+
+    <div class="row ai">
+      <div class="bubble">
+        <p>我们从最小的开始。</p>
+        <p>有三件事必须先有：我叫什么、我该怎么叫你、我用什么脑子。这三件之后，其余全是可选的。</p>
+      </div>
+    </div>
+
+    <div class="row ai">
+      <div class="bubble">
+        <p>第一件，最重要的一件。</p>
+        <p class="q">给我起个名字吧 —— 你希望以后怎么叫我？</p>
+        <div class="beat"><i></i>第一幕 · 见面 · 第 1 / 10 题</div>
+        <div class="free-row">
+          <input class="answer" placeholder="输入名字，1–16 个字…（想不出来也可以跳过）">
+          <button class="primary">用这句</button>
+        </div>
+        <div class="chip-row">
+          <button class="chip">星尘</button>
+          <button class="chip">洛书</button>
+          <button class="chip">阿涅</button>
+          <button class="chip">Nova</button>
+          <button class="chip">海豹</button>
+        </div>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="skip">跳过这一题</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="scene-divider"><span>场景 B · AskUser 通用卡</span></div>
+
+    <div class="row ai">
+      <div class="bubble">
+        <p class="q">Soul.md 初稿写好了，现在要给你过目吗？</p>
+        <div class="chip-row">
+          <button class="chip">现在看</button>
+          <button class="chip">稍后再说</button>
+          <button class="chip">直接保存</button>
+          <button class="chip picked">其他...</button>
+        </div>
+        <textarea class="answer area">先给我看目录结构就行</textarea>
+        <div class="btn-row">
+          <button class="ghost">取消</button>
+          <button class="primary wide">✓ 确认</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<footer class="composer">
+  <div class="bar">
+    <span class="ph">输入消息...</span>
+    <span class="send">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.6L22 12 3.4 3.4 3.3 10l13 2-13 2z"/></svg>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -44,15 +44,17 @@ object BlockingSubagent:
   /** 单次侦察硬超时（wall-clock；不含人机等待——本会话不等人）。 */
   val Timeout: FiniteDuration = 15.minutes
 
-  /** 阻塞运行一次子会话。返回子会话最终文本。
-    *
-    * @param defName spawn 目标的内置定义名：`subagent`（只读侦察面，默认）或
-    *   `nebflow`（执行面——WorkflowTool 的步骤用这套，步骤要写要执行）。 */
+  /**
+   * 阻塞运行一次子会话。返回子会话最终文本。
+   *
+   * @param defName spawn 目标的内置定义名：`subagent`（只读侦察面，默认）或
+   *   `nebflow`（执行面——WorkflowTool 的步骤用这套，步骤要写要执行）。
+   */
   def run(
-      prompt: String,
-      description: String,
-      ctx: ToolContext,
-      defName: String = nebflow.core.entity.BuiltinAgents.SubagentName
+    prompt: String,
+    description: String,
+    ctx: ToolContext,
+    defName: String = nebflow.core.entity.BuiltinAgents.SubagentName
   ): IO[Either[ToolError, String]] =
     (ctx.actorSystem, ctx.sharedResources) match
       case (Some(system), Some(resources)) =>
@@ -122,7 +124,9 @@ object BlockingSubagent:
                   childWsSend(
                     io.circe.Json.obj("type" -> "agentDone".asJson, "agentId" -> childId.asJson)
                   ).attempt.void.as(
-                    Left(ToolError(s"Subagent did not finish within $Timeout — cancelled. Narrow the question and retry."))
+                    Left(
+                      ToolError(s"Subagent did not finish within $Timeout — cancelled. Narrow the question and retry.")
+                    )
                   )
               }
             // 叶子终态回收——桥已定局（成功或超时），
@@ -136,30 +140,32 @@ object BlockingSubagent:
               completed = result.isRight
             )
           yield result
+          end for
       case _ =>
         IO.pure(Left(ToolError("Subagent requires ActorSystem and SharedResources")))
 
   private def rootOf(ctx: ToolContext): String =
     ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
 
-  /** 叶子终态回收——镜像 [[BackoffSupervisor]]
-    * `notifyParentAndStop` 的结算面，减去父通知（父的结果 = 工具返回值本身，
-    * 已随桥交付，不重投）：
-    *   ① task store 终态化（bridge 见到终态帧 = completed；超时兜底 = cancelled，
-    *      与 AgentControl cancel 腿的 taskStatusOverride 同词表）；
-    *   ② agentRegistry 移除——getActiveAgents 的契约「registry 有记录 = 任务
-    *      在飞（完成即注销）」由此恢复（WebSocketRoutes.filterActiveAgents）；
-    *   ③ InteractionHub ask 槽清理（僵尸审批卡防线，与监督者同款）；
-    *   ④ child Stop——idle 永驻的子 actor 退场（AgentIdle Stop 分支：
-    *      cancelTurn + 杀 shell + 生命周期钩子 + stopped）。
-    * 全程 fail-soft：任何一腿失败只落日志，绝不改写工具结果。
-    */
+  /**
+   * 叶子终态回收——镜像 [[BackoffSupervisor]]
+   * `notifyParentAndStop` 的结算面，减去父通知（父的结果 = 工具返回值本身，
+   * 已随桥交付，不重投）：
+   *   ① task store 终态化（bridge 见到终态帧 = completed；超时兜底 = cancelled，
+   *      与 AgentControl cancel 腿的 taskStatusOverride 同词表）；
+   *   ② agentRegistry 移除——getActiveAgents 的契约「registry 有记录 = 任务
+   *      在飞（完成即注销）」由此恢复（WebSocketRoutes.filterActiveAgents）；
+   *   ③ InteractionHub ask 槽清理（僵尸审批卡防线，与监督者同款）；
+   *   ④ child Stop——idle 永驻的子 actor 退场（AgentIdle Stop 分支：
+   *      cancelTurn + 杀 shell + 生命周期钩子 + stopped）。
+   * 全程 fail-soft：任何一腿失败只落日志，绝不改写工具结果。
+   */
   private[tools] def reap(
-      resources: nebflow.core.AgentRuntimePort,
-      parentSessionId: String,
-      childId: String,
-      childRef: nebflow.actor.ActorRef[nebflow.actor.AgentCommand],
-      completed: Boolean
+    resources: nebflow.core.AgentRuntimePort,
+    parentSessionId: String,
+    childId: String,
+    childRef: nebflow.actor.ActorRef[nebflow.actor.AgentCommand],
+    completed: Boolean
   ): IO[Unit] =
     val status = if completed then "completed" else "cancelled"
     val taskUpdate = resources.subAgentTaskStore
@@ -168,29 +174,37 @@ object BlockingSubagent:
     val registryRemove = resources.agentRegistry
       .update(_ - childId)
       .handleErrorWith(e => logger.warn(s"subagent $childId registry remove failed: ${e.getMessage}"))
-    val askCleanup = resources.interactionHubRef.get.flatMap {
-      case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.CleanupForSession(childId)).void
-      case None      => IO.unit
-    }.handleErrorWith(e => logger.warn(s"subagent $childId ask-slot cleanup failed: ${e.getMessage}"))
+    val askCleanup = resources.interactionHubRef.get
+      .flatMap {
+        case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.CleanupForSession(childId)).void
+        case None => IO.unit
+      }
+      .handleErrorWith(e => logger.warn(s"subagent $childId ask-slot cleanup failed: ${e.getMessage}"))
     val stop = (childRef ! nebflow.actor.AgentCommand.Stop(s"subagent-terminal($status)"))
       .handleErrorWith(e => logger.warn(s"subagent $childId stop offer failed: ${e.getMessage}"))
     taskUpdate *> registryRemove *> askCleanup *> stop *>
       logger.info(s"subagent $childId reaped at terminal: status=$status, registry entry removed, actor stopped")
 
+  end reap
+
   /** wsSend 间谍：agentDone/agentEnd 且 nodeSessionId 命中 ⇒ 完成桥。 */
   private[tools] def spy(
-      done: Deferred[IO, Option[String]],
-      childId: String,
-      base: io.circe.Json => IO[Unit]
+    done: Deferred[IO, Option[String]],
+    childId: String,
+    base: io.circe.Json => IO[Unit]
   ): io.circe.Json => IO[Unit] = json =>
-    base(json) *>
-      {
-        val obj = json.asObject
-        val t = obj.flatMap(_("type")).flatMap(_.asString)
-        val nsid = obj.flatMap(_("nodeSessionId")).flatMap(_.asString).orElse(obj.flatMap(_("agentId")).flatMap(_.asString))
-        if (t == Some("agentDone") || t == Some("agentEnd")) && (nsid.isEmpty || nsid.contains(childId)) then
-          obj.flatMap(_("finalText")).flatMap(_.asString).match
+    base(json) *> {
+      val obj = json.asObject
+      val t = obj.flatMap(_("type")).flatMap(_.asString)
+      val nsid =
+        obj.flatMap(_("nodeSessionId")).flatMap(_.asString).orElse(obj.flatMap(_("agentId")).flatMap(_.asString))
+      if (t == Some("agentDone") || t == Some("agentEnd")) && (nsid.isEmpty || nsid.contains(childId)) then
+        obj
+          .flatMap(_("finalText"))
+          .flatMap(_.asString)
+          .match
             case Some(text) => done.complete(Some(text)).attempt.void
-            case None       => done.complete(None).attempt.void
-        else IO.unit
-      }
+            case None => done.complete(None).attempt.void
+      else IO.unit
+    }
+end BlockingSubagent

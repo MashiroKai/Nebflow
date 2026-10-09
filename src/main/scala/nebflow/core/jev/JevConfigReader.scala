@@ -51,3 +51,4 @@ object JevConfigReader:
 
   /** Gate verdict for the current on-disk state (the common call shape). */
   def outcome: IO[JevGateOutcome] = snapshot.map(JevGate.effective)
+end JevConfigReader

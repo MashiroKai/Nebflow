@@ -76,7 +76,9 @@ class AgentFlowToolSpec extends FunSuite:
     assert(err.message.contains(AgentFlowTool.LegacyShapeCode), err.message)
   }
 
-  test("N-3: AgentFlow(description=\"lbl\") alone does NOT trigger the guard — it falls to the normal missing-steps error") {
+  test(
+    "N-3: AgentFlow(description=\"lbl\") alone does NOT trigger the guard — it falls to the normal missing-steps error"
+  ) {
     val input = JsonObject("description" -> "lbl".asJson)
     assertEquals(AgentFlowTool.legacyGuardHit(input), false, "no task/project key ⇒ not a legacy dispatch shape")
     // 正常缺参错（文案原样——形态判据的边界即此）

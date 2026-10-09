@@ -58,7 +58,7 @@ class PopToolFileRefSpec extends FunSuite:
         assert(raw.startsWith(PopTool.Sentinel), s"result must start with the sentinel: ${raw.take(80)}")
         io.circe.parser.parse(raw.substring(PopTool.Sentinel.length)) match
           case Right(json) => json
-          case Left(err)   => fail(s"payload must be pure JSON: $err")
+          case Left(err) => fail(s"payload must be pure JSON: $err")
 
   private def itemsOf(p: Json): List[Json] =
     p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
@@ -119,9 +119,13 @@ class PopToolFileRefSpec extends FunSuite:
   test("aggregate counters: three failures collapse into counted, distinct warnings"):
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     val p = payloadOf(
-      JsonObject("filePath" -> Json.arr(
-        "/tmp/poprefs-a.png".asJson, "/tmp/poprefs-a.png".asJson, "/tmp/poprefs-b.png".asJson
-      )),
+      JsonObject(
+        "filePath" -> Json.arr(
+          "/tmp/poprefs-a.png".asJson,
+          "/tmp/poprefs-a.png".asJson,
+          "/tmp/poprefs-b.png".asJson
+        )
+      ),
       buf
     )
     assertEquals(counter(p, "failed"), 2, "distinct references")
@@ -192,10 +196,14 @@ class PopToolFileRefSpec extends FunSuite:
     // The set mirrors FileRefs.AllowedExtensions' audio family exactly; `ogg`
     // is claimed by the VIDEO side (both the whitelist's own comment blocks and
     // VideoExtensions file it there), so no extension may classify both ways.
-    assert(!PopTool.AudioExtensions.exists(PopTool.VideoExtensions.contains),
-      "audio and video extension sets must stay disjoint")
-    assert(PopTool.AudioExtensions == Set("mp3", "wav", "oga", "flac", "aac", "m4a"),
-      "the audio family is pinned to the whitelist's audio block")
+    assert(
+      !PopTool.AudioExtensions.exists(PopTool.VideoExtensions.contains),
+      "audio and video extension sets must stay disjoint"
+    )
+    assert(
+      PopTool.AudioExtensions == Set("mp3", "wav", "oga", "flac", "aac", "m4a"),
+      "the audio family is pinned to the whitelist's audio block"
+    )
 
   test("a browser-unrenderable image format (tiff) is a FILE card, not a media item"):
     val dir = tempDir("tiff")
@@ -215,7 +223,10 @@ class PopToolFileRefSpec extends FunSuite:
     val p = payloadOf(JsonObject("filePath" -> escaped.asJson), buf)
     val items = itemsOf(p)
     assertEquals(items.size, 1, "the decoded form resolves the file")
-    assert(items.head.hcursor.get[String]("src").toOption.exists(_.startsWith("data:image/png;base64,")), "it inlines too")
+    assert(
+      items.head.hcursor.get[String]("src").toOption.exists(_.startsWith("data:image/png;base64,")),
+      "it inlines too"
+    )
     assert(
       notesOf(p).exists(_.contains("decoded form")),
       s"the disclosure must name the decoded form: ${notesOf(p)}"
@@ -235,7 +246,8 @@ class PopToolFileRefSpec extends FunSuite:
       .unsafeRunSync()
       .toOption
       .getOrElse(fail("expected Right"))
-    val input = JsonObject("filePath" -> Json.arr((dir / "here.png").toString.asJson, (dir / "ghost.png").toString.asJson))
+    val input =
+      JsonObject("filePath" -> Json.arr((dir / "here.png").toString.asJson, (dir / "ghost.png").toString.asJson))
     assertEquals(
       PopTool.summarizeResult(input, raw),
       "Pop: 1 media + 0 file card(s) shown in chat — 1 path(s) NOT shown"

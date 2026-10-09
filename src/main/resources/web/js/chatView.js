@@ -12,6 +12,9 @@
 
 import state from './state.js';
 import { cleanupCardIframes } from './cardRegistry.js';
+// quote-message 一期：引用条随视图生命周期（切会话 = saveDraft/restoreDraft 往返，
+// chat-message ref 在 pendingAttachments 里随草稿同存同取；strip 显隐在此单点同步）。
+import { renderQuoteStrip } from './msgQuote.js';
 
 // ── Active view (set by ws.js before handler dispatch) ──────────────────
 // Module-level mutable binding. ES module imports are live: when
@@ -272,6 +275,12 @@ export class ChatView {
     this.dom.input.style.height = 'auto';
     // Render attachment preview for restored image/file attachments
     if (this.dom.attPreview) this.dom.attPreview.innerHTML = '';
+    // quote-message 一期：引用 chip 随新会话草稿复原/清空（数据单点 = pendingAttachments；
+    // 2026-10-09 改版：chip 宿主 = 附件条 attPreview，与附件同一落面 —— popups 无
+    // attPreview 宿主 ⇒ 跳过，renderQuoteStrip 内部动态导入亦兜底早退，零影响）。
+    if (this.dom.attPreview) {
+      renderQuoteStrip({ attPreviewEl: this.dom.attPreview, attachments: this.pendingAttachments });
+    }
     if (this.pendingAttachments.length > 0) {
       import('./chat.js').then(({ renderAttachmentPreview }) => {
         setActiveView(this);

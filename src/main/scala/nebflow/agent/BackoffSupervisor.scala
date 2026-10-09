@@ -77,6 +77,11 @@ object BackoffSupervisor:
       // barrier 释放 / registry 清理 / child Stop）全部复用既有终态路径。
       // 计时生命周期：register（此处）→ pause/resume（ask 两个既有单点）→
       // release（notifyParentAndStop / respawn）。
+      // 🔴 2026-10-09 作者裁定拆除（追加式注释，原块保持原样）：上块的 3600s
+      // wall-clock 预算已整体拆除——DelegateBudget.register/pause/resume/release
+      // 现为墓碑壳 no-op（见 DelegateBudget.scala），下方三处调用仅作调用点兼容
+      // 保留、永不产生 "timeout"/"merge-window-timeout" 取消。delegate 治理 =
+      // TaskStuckWatcher 无进展判据（与 node 节点同哲学：无超时、只治真卡死）。
       val budgetArmedIO: IO[Unit] =
         if source == "delegate" then
           DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
@@ -164,14 +169,24 @@ object BackoffSupervisor:
               .attempt
               .flatMap {
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix)) =>
-                  notifyParentAndStop("completed", payload + suffix, JsonObject.empty)
+                  // file-diff → 委托结果行（bug #58 修 2026-10-09）：完成批次携带
+                  // 改动文件 diff 载荷（metadata.fileChanges）——父会话注入行的
+                  // 产物卡展开即 diff 视图。空报告 = 不带键（行字节形态不变）。
+                  fileChangesMetadata().flatMap(fc => notifyParentAndStop("completed", payload + suffix, fc))
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
                   // 合并窗预算重挂（旧窗口随工作相终结释放；DelegateBudget ∈
                   // agent 层——core 钩子只回 Outcome，重挂留在本层，分层纪律）。
                   DelegateBudget
                     .release(subagentId)
-                    .*>(DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "merge-window-timeout")))
-                    .*>(logger.info(s"BackoffSupervisor: delegate $subagentId held for merge round (fresh merge-window budget armed)"))
+                    .*>(
+                      DelegateBudget
+                        .register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "merge-window-timeout"))
+                    )
+                    .*>(
+                      logger.info(
+                        s"BackoffSupervisor: delegate $subagentId held for merge round (fresh merge-window budget armed)"
+                      )
+                    )
                     .as(
                       active(
                         childRef,
@@ -197,10 +212,14 @@ object BackoffSupervisor:
                     )
                 case Left(err) =>
                   // 判定钩子自身缺陷绝不吞终态：按既有完成语义报父（fail-open）。
-                  logger.warn(s"BackoffSupervisor: terminal judge hook failed for $subagentId: ${err.getMessage} — legacy completed path")
-                  notifyParentAndStop("completed", payload, JsonObject.empty)
+                  logger.warn(
+                    s"BackoffSupervisor: terminal judge hook failed for $subagentId: ${err.getMessage} — legacy completed path"
+                  )
+                  fileChangesMetadata().flatMap(fc => notifyParentAndStop("completed", payload, fc))
               }
           else notifyParentAndStop("completed", payload, JsonObject.empty)
+          end if
+        end completeNormally
 
         event match
           case AgentEvent.Completed(_, messages) =>
@@ -240,6 +259,7 @@ object BackoffSupervisor:
                     "failureType" -> "empty-burn".asJson
                   )
                 )
+              end if
 
           case AgentEvent.Failed(sessionId, error) =>
             val sessionInfo =
@@ -248,15 +268,17 @@ object BackoffSupervisor:
               case AgentErrorType.LlmFailed => true
               case AgentErrorType.Timeout => true
               case _ => false
-            notifyParentAndStop(
-              "failed",
-              s""""$description": ${error.message}$sessionInfo""",
-              JsonObject(
-                "failedSessionId" -> subagentId.asJson,
-                "retryable" -> retryable.asJson,
-                "failureType" -> error.errorType.toString.asJson
-              )
+            val failureMeta = JsonObject(
+              "failedSessionId" -> subagentId.asJson,
+              "retryable" -> retryable.asJson,
+              "failureType" -> error.errorType.toString.asJson
             )
+            // file-diff → 委托结果行（同完成腿）：失败前已写入的文件同样出 diff
+            // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）。
+            val withFc =
+              if source == "delegate" then fileChangesMetadata().map(_.deepMerge(failureMeta))
+              else IO.pure(failureMeta)
+            withFc.flatMap(fc => notifyParentAndStop("failed", s""""$description": ${error.message}$sessionInfo""", fc))
 
           case AgentEvent.Cancelled(_, reason) =>
             // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
@@ -277,6 +299,8 @@ object BackoffSupervisor:
               ),
               taskStatusOverride = Some("cancelled")
             )
+        end match
+      end receive
 
       override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
         signal match
@@ -285,7 +309,9 @@ object BackoffSupervisor:
             val recentRestarts = restartHistory.filter(t => now - t < withinTimeRange.toMillis)
 
             if recentRestarts.length < maxRestarts then
-              logger.info(s"BackoffSupervisor: child $childName crashed, restarting #${recentRestarts.length + 1}/$maxRestarts")
+              logger.info(
+                s"BackoffSupervisor: child $childName crashed, restarting #${recentRestarts.length + 1}/$maxRestarts"
+              )
               respawn(ctx, "crashed", now, recentRestarts)
             else
               logger.warn(
@@ -326,8 +352,10 @@ object BackoffSupervisor:
         val newHistory = now :: recentRestarts
 
         val triggerLine =
-          if trigger == "crashed" then s"child $childName crashed, restarting #$newRestartCount/$maxRestarts after ${delay}ms backoff"
-          else s"child $childName ended empty (no text, zero tool calls — empty burn), pushing again #$newRestartCount/$maxRestarts after ${delay}ms backoff"
+          if trigger == "crashed" then
+            s"child $childName crashed, restarting #$newRestartCount/$maxRestarts after ${delay}ms backoff"
+          else
+            s"child $childName ended empty (no text, zero tool calls — empty burn), pushing again #$newRestartCount/$maxRestarts after ${delay}ms backoff"
         val nudgeText =
           if trigger == "crashed" then
             "[system] Your previous turn was interrupted by a crash. " +
@@ -413,8 +441,7 @@ object BackoffSupervisor:
           // burn: the four-fix ① nudge — act with tools, produce output).
           // Otherwise re-inject the original prompt (fresh start fallback).
           _ <-
-            if recoveredMessages.nonEmpty then
-              newChild ! AgentCommand.UserInput(nudgeText, Some(ctx.self))
+            if recoveredMessages.nonEmpty then newChild ! AgentCommand.UserInput(nudgeText, Some(ctx.self))
             else newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
           _ <- logger.info(
             s"BackoffSupervisor: respawned $childName ($trigger), " +
@@ -450,6 +477,35 @@ object BackoffSupervisor:
         )
         end for
       end respawn
+
+      /**
+       * file-diff → 委托结果行（bug #58 修，2026-10-09）：本 delegate 批次的
+       * 改动文件报告，作为终态 ExternalEvent 的 `fileChanges` metadata 随行——
+       * 父会话注入行的产物卡展开即 diff 视图（git 仓内 git diff 优先、非 git 走
+       * 工具捕获快照，口径同 1ef741ee 原设计）。数据源 = DelegateRegistry 行的
+       * cwd/worktree（spawn 时落盘，终态仍可读）+ FileChangeLedger 的会话桶。
+       * 空报告/任何失败 = 空 JsonObject（metadata 不带键，行字节形态不变）——
+       * 生成是 best-effort，绝不拖垮终态交付。
+       */
+      private def fileChangesMetadata(): IO[JsonObject] =
+        IO.blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId)).flatMap {
+          case Some(rec) =>
+            nebflow.core.project.FileChangeReport
+              .delegateBatchMetadata(
+                workspace = rec.cwd,
+                worktree = rec.worktree,
+                delegateId = subagentId,
+                ledger = nebflow.core.FileChangeLedger.unsafe
+              )
+              .handleErrorWith(e =>
+                logger.warn(s"delegate file-change metadata failed for $subagentId: ${e.getMessage}").as(None)
+              )
+              .map {
+                case Some(json) => JsonObject("fileChanges" -> json)
+                case None => JsonObject.empty
+              }
+          case None => IO.pure(JsonObject.empty)
+        }
 
       /** Notify parent via ExternalEvent, clean up registry, stop self. */
       private def notifyParentAndStop(
@@ -498,7 +554,32 @@ object BackoffSupervisor:
               metadata = metadata,
               correlationId = Some(subagentId)
             )
-          case None => IO.unit
+          case None =>
+            // mail-continuation delivery backstop（2026-10-09）：parentRef=None ⇒
+            // 本终态结果**没有任何投递对象**——历史分支是裸 IO.unit，结果在回传
+            // 环节静默蒸发（实测两起：Mail 续接的会话正常跑完、父会话零消息）。
+            // 兜底 = 绝不静默：响亮 WARN（带 payload 头部）＋ wsSend 在场时补一帧
+            // 显式终态事件。taskStore 状态写入（上方）照常落盘 ⇒ 面板仍见终态。
+            // 正常派发腿恒传活父引用（ctx.agentActorRef），本分支只在「Mail 续接
+            // 时父已不 live」或未来调用方漏传时触发——低频、且正是必须出声的形态。
+            logger.warn(
+              s"[terminal-result-undelivered] $source session '$subagentId' reached '$eventType' but no parent ref exists " +
+                s"(parent session '$parentSessionId' not live at spawn) — the result was NOT delivered to any session. " +
+                s"Payload head: ${payload.take(500)}"
+            ) *>
+              (wsSend match
+                case Some(send) =>
+                  send(
+                    Json.obj(
+                      "type" -> "delegateResultUndelivered".asJson,
+                      "sessionId" -> subagentId.asJson,
+                      "rootSessionId" -> parentSessionId.asJson,
+                      "source" -> source.asJson,
+                      "eventType" -> eventType.asJson,
+                      "description" -> description.asJson
+                    )
+                  ).handleErrorWith(e => logger.warn(s"delegateResultUndelivered WS frame failed: ${e.getMessage}"))
+                case None => IO.unit)
 
         // 终态三清（R2-c §7#4 + 本设计）：① hub 槽（僵尸 ask 卡：内核已死，
         // 卡片再没人能接——全仓唯一的其它清理入口是项目引擎，触及不到内核这种

@@ -763,7 +763,6 @@ object PluginRegistry:
                   warnings += s"tools.json decode failed (${err.getMessage}) — tools extension ignored"
                   (Right(Nil): Either[(String, String), List[String]])
 
-
       // org.nebflow/viewers.json（canvas-media 批 2026-10-05，OD-3=K-1）：manifest
       // `extensions["org.nebflow/viewers"]` 声明文件名（字符串，与 org.nebflow/tools
       // 同形态——K-1 零 schema 变更）；未声明时回落 org.nebflow/viewers.json。
@@ -1322,13 +1321,13 @@ object PluginRegistry:
     val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     if !os.exists(configPath) then
       // 首次写：只落 plugins.trust 骨架（不伪造其他配置键）
-      AtomicJson.writeSync(configPath, transform(Json.obj()).noSpaces)
+      AtomicJson.writeSyncRestricted(configPath, transform(Json.obj()).noSpaces)
       Right(())
     else
       io.circe.parser.parse(os.read(configPath)) match
         case Left(err) => Left(s"nebflow.json unparseable — refusing to rewrite for trust update: ${err.message}")
         case Right(root) =>
-          AtomicJson.writeSync(configPath, transform(root).noSpaces)
+          AtomicJson.writeSyncRestricted(configPath, transform(root).noSpaces)
           Right(())
 
   // ── 装载可见性（P1 静默缩容，2026-09-10 可见性批；无审批批 2026-09-13 口径更新）───

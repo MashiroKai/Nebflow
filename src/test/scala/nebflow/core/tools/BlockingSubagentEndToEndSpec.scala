@@ -52,9 +52,9 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
     os.remove.all(tempRoot)
 
   /** 脚本化 LLM：记录每个会话收到的请求，并按其 sessionId 回文本。 */
-  private class ScriptedLlm(script: String => String, captured: TrieMap[String, LlmRequest])
-      extends LlmHandle[IO]:
+  private class ScriptedLlm(script: String => String, captured: TrieMap[String, LlmRequest]) extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -107,13 +107,18 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       .map { out =>
         assert(out.isRight, s"the blocking bridge must COMPLETE (not timeout / not 'ended without a final text'): $out")
         assertEquals(out.getOrElse(""), "SUBAGENT-FINAL-TEXT")
-        assert(captured.keys.exists(_.startsWith("subagent-")), s"the child session must have run a turn: ${captured.keys.toList}")
+        assert(
+          captured.keys.exists(_.startsWith("subagent-")),
+          s"the child session must have run a turn: ${captured.keys.toList}"
+        )
       }
       .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
 
   // ── AgentFlow（N1 复名批：ex-Workflow 薄壳）——steps → ChainWrite 登记闸 ──
 
-  test("P0-2 AgentFlow thin shell: a two-step DAG registers through the chain gate, the entry runs, and step b settles after a completes"):
+  test(
+    "P0-2 AgentFlow thin shell: a two-step DAG registers through the chain gate, the entry runs, and step b settles after a completes"
+  ):
     val captured = TrieMap[String, LlmRequest]()
     val system = nebflow.actor.ActorSystem("bse2e-af")
     val llm = new ScriptedLlm(_ => "STEP-TEXT", captured)
@@ -179,7 +184,10 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
         // 逐级交付证明：步骤 b 的 prompt 必带步骤 a 的结果块（=== Node a === 头）——
         // 薄壳下数据流仍沿边投递（buildInput 上游结果块）。
         val reqTexts = captured.values.toList.flatMap(_.messages.lastOption).map(m => m.textContent).mkString("\n")
-        assert(captured.size >= 2, s"both steps must actually run a turn, got ${captured.size}: ${captured.keys.toList}")
+        assert(
+          captured.size >= 2,
+          s"both steps must actually run a turn, got ${captured.size}: ${captured.keys.toList}"
+        )
         assert(reqTexts.contains("=== Node a ==="), s"step b's prompt must carry step a's result block: $reqTexts")
       }
       .guarantee(
@@ -194,7 +202,9 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
   // 本 spec 钉终态三清：桥完成后 ① registry 条目已摘除 ② task 记录终态化
   // completed（带 completedAt）③ 桥本身未破（finalText 仍在——回归前置）。
 
-  test("stuck-panel: BlockingSubagent.run reaps the leaf child at terminal — registry entry removed + task record terminalized"):
+  test(
+    "stuck-panel: BlockingSubagent.run reaps the leaf child at terminal — registry entry removed + task record terminalized"
+  ):
     val system = nebflow.actor.ActorSystem("bse2e-reap")
     val captured = TrieMap[String, LlmRequest]()
     (for
@@ -218,7 +228,10 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
         assert(childSids.nonEmpty, s"the child session must have run a turn: $capturedSids")
         // ① registry：僵尸条目必须已被摘除（getActiveAgents 不再上报）
         childSids.foreach { sid =>
-          assert(!registry.contains(sid), s"zombie registry entry must be reaped, still present: sid=$sid registry=${registry.keys.toList}")
+          assert(
+            !registry.contains(sid),
+            s"zombie registry entry must be reaped, still present: sid=$sid registry=${registry.keys.toList}"
+          )
         }
         // ② task store：spawn 记录的 running 必须终态化 completed + completedAt
         val recs = tasks.filter(t => childSids.contains(t.taskId))
@@ -238,9 +251,14 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       os.read(repoRoot / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "BlockingSubagent.scala")
     )
     val hits = src.map(_.linesIterator.count(_.contains("\"finalText\""))).sum
-    assertEquals(hits, 2, s"the producer (AgentEvent) + the reader (BlockingSubagent) must be the ONLY two `\"finalText\"` hits in main, got $hits")
+    assertEquals(
+      hits,
+      2,
+      s"the producer (AgentEvent) + the reader (BlockingSubagent) must be the ONLY two `\"finalText\"` hits in main, got $hits"
+    )
     assert(
-      os.read(repoRoot / "src" / "main" / "scala" / "nebflow" / "actor" / "AgentEvent.scala").contains("\"finalText\" -> ft.asJson"),
+      os.read(repoRoot / "src" / "main" / "scala" / "nebflow" / "actor" / "AgentEvent.scala")
+        .contains("\"finalText\" -> ft.asJson"),
       "the producer (AgentEvent.toJson) must be present"
     )
 

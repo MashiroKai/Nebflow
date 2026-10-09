@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
-import io.circe.{Json}
+import io.circe.Json
 
 import nebflow.core.entity.BuiltinAgents
 import nebflow.core.project.*
@@ -31,7 +31,7 @@ import nebflow.core.project.*
  *   - `deps` → 规范化为 id 形（R6：批内 id／批内 name 皆收，链外仅收 id）后落
  *     `NodeDef.deps`，并**综合接线**：上游 out 追加指向下游的缺省 pass 边 ＋ 下游
  *     in 镜像——deps 的「等完成」与结果的「沿边投递」由底座同一套边语义承载
-     * （AgentFlow/ChainWrite 步进会话吃到上游结果块，数据流不因登记面而分叉）；
+ * （AgentFlow/ChainWrite 步进会话吃到上游结果块，数据流不因登记面而分叉）；
  *   - 末端节点（批内无下游依赖者）自动补显式门集根边 `(pass)Nebula`（:result）＝
  *     完成通知投**创建者 delegate 本人**（自根作用域——刀1 H5 已实证的投递面；
  *     非隐式 bare 形态，v3-⑨ 荐读法）。中段节点不挂根边（零噪音）。
@@ -114,7 +114,13 @@ object ChainWriteTool extends Tool:
   )
 
   /** 登记批节点（解析后的规范形：name 缺省 = id；deps = 原始引用，规范化在校验段）。 */
-  final case class ChainNode(id: String, name: Option[String], task: String, deps: List[String], description: Option[String])
+  final case class ChainNode(
+    id: String,
+    name: Option[String],
+    task: String,
+    deps: List[String],
+    description: Option[String]
+  )
 
   def summarize(input: JsonObject): String =
     val n = input("nodes").flatMap(_.asArray).map(_.size).getOrElse(0)
@@ -128,16 +134,23 @@ object ChainWriteTool extends Tool:
 
   def parseNodes(input: JsonObject): Either[ToolError, List[ChainNode]] =
     input("nodes").flatMap(_.asArray) match
-      case None => Left(ToolError("Missing required parameter: nodes (an array of {id, name?, task, deps?, description?})."))
+      case None =>
+        Left(ToolError("Missing required parameter: nodes (an array of {id, name?, task, deps?, description?})."))
       case Some(arr) =>
         arr.foldLeft[Either[ToolError, List[ChainNode]]](Right(Nil)) { (acc, item) =>
           for
             ns <- acc
-            obj <- item.asObject.toRight(ToolError("each node must be an object {id, name?, task, deps?, description?}."))
-            id <- obj("id").flatMap(_.asString).map(_.trim).toRight(ToolError("each node needs an \"id\" string."))
-            task <- obj("task").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).toRight(
-              ToolError(s"node '$id' needs a non-empty \"task\" brief. (${Codes.TaskRequired})")
+            obj <- item.asObject.toRight(
+              ToolError("each node must be an object {id, name?, task, deps?, description?}.")
             )
+            id <- obj("id").flatMap(_.asString).map(_.trim).toRight(ToolError("each node needs an \"id\" string."))
+            task <- obj("task")
+              .flatMap(_.asString)
+              .map(_.trim)
+              .filter(_.nonEmpty)
+              .toRight(
+                ToolError(s"node '$id' needs a non-empty \"task\" brief. (${Codes.TaskRequired})")
+              )
             name = obj("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
             deps = obj("deps").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil)
             desc = obj("description").flatMap(_.asString)
@@ -151,12 +164,15 @@ object ChainWriteTool extends Tool:
   def validateStructure(nodes: List[ChainNode]): Either[ToolError, Unit] =
     if nodes.isEmpty then Left(ToolError(s"nodes is empty — nothing to register. (${Codes.Empty})"))
     else if nodes.size > MaxNodes then
-      Left(ToolError(s"Too many nodes (${nodes.size}) — the cap is $MaxNodes. Split into multiple chains. (${Codes.TooMany})"))
+      Left(
+        ToolError(
+          s"Too many nodes (${nodes.size}) — the cap is $MaxNodes. Split into multiple chains. (${Codes.TooMany})"
+        )
+      )
     else
       val ids = nodes.map(_.id)
       val dupIds = ids.diff(ids.distinct)
-      if dupIds.nonEmpty then
-        Left(ToolError(s"Duplicate node id(s): ${dupIds.mkString(", ")}. (${Codes.DuplicateId})"))
+      if dupIds.nonEmpty then Left(ToolError(s"Duplicate node id(s): ${dupIds.mkString(", ")}. (${Codes.DuplicateId})"))
       else
         val badId = ids.find(!validNodeId(_))
         if badId.isDefined then
@@ -179,7 +195,11 @@ object ChainWriteTool extends Tool:
           else
             val badName = names.find(n => n.trim.isEmpty || n.length > 120)
             if badName.isDefined then
-              Left(ToolError(s"node name must be 1-120 characters (got '${badName.get.take(20)}…'). (${Codes.NameInvalid})"))
+              Left(
+                ToolError(
+                  s"node name must be 1-120 characters (got '${badName.get.take(20)}…'). (${Codes.NameInvalid})"
+                )
+              )
             else
               // R4（批内形态）：name 不得等于批内任何 id（两地址空间不相交）。
               val collisions = names.filter(idSet(nodes).contains)
@@ -193,6 +213,10 @@ object ChainWriteTool extends Tool:
               else if hasCycleNormalized(nodes) then
                 Left(ToolError(s"Cycle detected in deps — the chain must be a DAG. (${Codes.Cycle})"))
               else Right(())
+            end if
+          end if
+        end if
+      end if
 
   private def idSet(nodes: List[ChainNode]): Set[String] = nodes.map(_.id).toSet
 
@@ -221,7 +245,8 @@ object ChainWriteTool extends Tool:
       s"(${Codes.NotDelegate})"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    if !nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then IO.pure(Left(ToolError(notDelegateError)))
+    if !nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
+      IO.pure(Left(ToolError(notDelegateError)))
     else if input.contains("project") then
       IO.pure(
         Left(
@@ -247,9 +272,9 @@ object ChainWriteTool extends Tool:
    * 一个落库事务，一个放行点）。全部校验在任何写之前完成（all-or-nothing）。
    */
   private[tools] def registerChain(
-      rt: ProjectRuntime,
-      nodes: List[ChainNode],
-      chainName: Option[String]
+    rt: ProjectRuntime,
+    nodes: List[ChainNode],
+    chainName: Option[String]
   ): IO[Either[ToolError, String]] =
     validateStructure(nodes) match
       case Left(err) => IO.pure(Left(err))
@@ -283,15 +308,17 @@ object ChainWriteTool extends Tool:
                 )
               }
             // R2：name 唯一域＝活动区（归档链不占名——可复用、可作解析候选）
-            val nameCheck: Option[ToolError] = nodes.flatMap { n =>
-              n.name.toList.flatMap(nm => s.nodes.values.find(nd => nd.name == nm).map(nm -> _))
-            }.collectFirst { case (nm, holder) =>
-              val holderChain = chainView.getOrElse(holder.id, "-")
-              ToolError(
-                s"node name '$nm' is already used by $holderChain#${holder.id} in this scope's active map — names are " +
-                  "addresses and must be unique; pick another name. " + s"(${Codes.NameConflict})"
-              )
-            }
+            val nameCheck: Option[ToolError] = nodes
+              .flatMap { n =>
+                n.name.toList.flatMap(nm => s.nodes.values.find(nd => nd.name == nm).map(nm -> _))
+              }
+              .collectFirst { case (nm, holder) =>
+                val holderChain = chainView.getOrElse(holder.id, "-")
+                ToolError(
+                  s"node name '$nm' is already used by $holderChain#${holder.id} in this scope's active map — names are " +
+                    "addresses and must be unique; pick another name. " + s"(${Codes.NameConflict})"
+                )
+              }
             // R4：name ≠ 任何既有 id（两区全集）
             val idCollisions = nodes.flatMap(n => n.name.toList.filter(combined.contains))
             val r4Check: Option[ToolError] =
@@ -355,27 +382,24 @@ object ChainWriteTool extends Tool:
                   // 末端（批内无下游者）显式门集根边 (pass)Nebula :result = 完成通知投
                   // 创建者 delegate 本人（v3-⑨ 荐读法，非隐式 bare 形态）。
                   if downs.isEmpty then List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result)) else edges
-                val newNodes: Map[String, NodeDef] = nodes
-                  .map { n =>
-                    val deps = depsNorm.getOrElse(n.id, Nil)
-                    n.id ->
-                      NodeDef(
-                        id = n.id,
-                        name = n.name.getOrElse(n.id),
-                        agent = BuiltinAgents.ExecutorName,
-                        task = Some(n.task),
-                        description =
-                          Some(n.description.map(_.trim).filter(_.nonEmpty).getOrElse(n.task.trim.take(60))),
-                        in = deps,
-                        deps = deps,
-                        out = outEdgesOf(n.id),
-                        status = NodeLifecycle.Pending,
-                        createdAt = now,
-                        plugins = Nil,
-                        chainId = Some(cid)
-                      )
-                  }
-                  .toMap
+                val newNodes: Map[String, NodeDef] = nodes.map { n =>
+                  val deps = depsNorm.getOrElse(n.id, Nil)
+                  n.id ->
+                    NodeDef(
+                      id = n.id,
+                      name = n.name.getOrElse(n.id),
+                      agent = BuiltinAgents.ExecutorName,
+                      task = Some(n.task),
+                      description = Some(n.description.map(_.trim).filter(_.nonEmpty).getOrElse(n.task.trim.take(60))),
+                      in = deps,
+                      deps = deps,
+                      out = outEdgesOf(n.id),
+                      status = NodeLifecycle.Pending,
+                      createdAt = now,
+                      plugins = Nil,
+                      chainId = Some(cid)
+                    )
+                }.toMap
                 // 批外上游（既有节点）out 追加指向新下游（appendEdgeTo 同语义：幂等、不覆盖既有门控）
                 val upstreamIds = depsNorm.values.flatten.filterNot(byId.contains).toSet
                 val mutateIO = rt.store.mutateWithResult { st =>
@@ -388,10 +412,9 @@ object ChainWriteTool extends Tool:
                         val targets = dependents.getOrElse(up, Nil).filter(byId.contains)
                         val added = targets.filterNot(t => un.out.exists(_.to == t))
                         if added.isEmpty then acc
-                        else {
+                        else
                           touched = up :: touched
                           acc.copy(nodes = acc.nodes.updated(up, un.copy(out = un.out ++ added.map(t => OutEdge(t)))))
-                        }
                   }
                   (withUpstreams, touched.distinct)
                 }
@@ -413,7 +436,7 @@ object ChainWriteTool extends Tool:
                       touchedUps.traverse_(up =>
                         rt.store.getNode(up).flatMap {
                           case Some(n) => rt.engine.emitUpdated(n)
-                          case None    => IO.unit
+                          case None => IO.unit
                         }
                       )
                     )
@@ -427,8 +450,7 @@ object ChainWriteTool extends Tool:
                         .as(
                           Right(
                             s"Chain '$cid' registered with ${nodes.size} node(s) [${nodes.map(_.id).mkString(", ")}] — " +
-                              (if entries.nonEmpty then
-                                 s"released: entry node(s) ${entries.mkString(", ")} starting; "
+                              (if entries.nonEmpty then s"released: entry node(s) ${entries.mkString(", ")} starting; "
                                else "") +
                               "end-node results arrive here as completion notifications. Non-blocking: do NOT wait idle " +
                               "and do NOT re-dispatch the same work."
@@ -436,6 +458,7 @@ object ChainWriteTool extends Tool:
                         )
                     }
                 }
+            end match
           }
         }
 

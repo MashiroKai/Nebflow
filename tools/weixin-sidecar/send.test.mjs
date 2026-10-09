@@ -17,10 +17,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeSendHandler, buildTextMessageReq, parseLosslessIds } from "./send.mjs";
+import {
+  makeSendHandler,
+  buildTextMessageReq,
+  buildImageItem,
+  buildFileItem,
+  encryptAesEcb,
+  aesEcbPaddedSize,
+  parseLosslessIds,
+} from "./send.mjs";
 
 // ───────────────────────── harness ─────────────────────────
 
@@ -385,4 +394,315 @@ test("send: empty host account index ⇒ 500 no_host_account (never a silent fal
     assert.equal(res.status, 500);
     assert.match(res.body.error, /no_host_account/);
   });
+});
+
+// ───────────────────────── media leg (weixin-media batch) ─────────────────────────
+// The full official pipeline against a LOCAL stub only (egress discipline): one
+// stub server plays BOTH iLink (getuploadurl, sendmessage) and the CDN (the
+// upload_full_url it issues points back at itself). 🔴 Every media test pins
+// WEIXIN_SIDECAR_ILINK_BASE to the stub — nothing here can reach Tencent.
+
+/** A raw wire stub: records {url, headers, body:Buffer}; handler answers. */
+function stubWire(handler) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks);
+      seen.push({ url: req.url, headers: req.headers, body });
+      handler(req, res, body, seen[seen.length - 1]);
+    });
+  });
+  return {
+    seen,
+    listen: () =>
+      new Promise((resolve) =>
+        server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${server.address().port}`)),
+      ),
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
+/** A stub playing the WHOLE media pipeline. Options: cdnStatus (each CDN
+ * answer's status), downloadParam (null ⇒ the header is OMITTED), uploadRet
+ * (the getuploadurl ret). One server plays iLink AND the CDN: the
+ * upload_full_url it issues points back at itself. */
+function mediaPipeline(opts = {}) {
+  const counts = { getuploadurl: 0, cdn: 0, sendmessage: 0 };
+  let port = 0;
+  const stub = stubWire((req, res) => {
+    if (req.url === "/ilink/bot/getuploadurl") {
+      counts.getuploadurl++;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          ret: opts.uploadRet ?? 0,
+          upload_full_url: `http://127.0.0.1:${port}/cdn-upload?ticket=t1`,
+        }),
+      );
+    } else if (req.url.startsWith("/cdn-upload")) {
+      counts.cdn++;
+      const st = opts.cdnStatus ?? 200;
+      if (st === 200) {
+        const headers = opts.downloadParam === null ? {} : { "x-encrypted-param": opts.downloadParam ?? "dlp-abc" };
+        res.writeHead(200, headers);
+        res.end("ok");
+      } else {
+        res.writeHead(st, { "x-error-message": "cdn refuses" });
+        res.end("no");
+      }
+    } else if (req.url === "/ilink/bot/sendmessage") {
+      counts.sendmessage++;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end('{"ret":0,"message_id":777}');
+    } else {
+      res.writeHead(404);
+      res.end("{}");
+    }
+  });
+  return {
+    seen: stub.seen,
+    counts,
+    listen: async () => {
+      const base = await stub.listen();
+      port = Number(base.split(":").pop());
+      return base;
+    },
+    close: stub.close,
+  };
+}
+
+/** A small temp file with stable bytes (its own PNG-ish magic header). */
+function tempMediaFile(name, size = 24) {
+  const bytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), crypto.randomBytes(size)]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nb-media-test-"));
+  const p = path.join(dir, name);
+  fs.writeFileSync(p, bytes);
+  return { path: p, bytes };
+}
+
+test("media: image pipeline mirrors the official wire — getuploadurl → AES-ECB CDN POST → image_item", async () => {
+  const img = tempMediaFile("pop.png");
+  const stub = mediaPipeline();
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "shim-tok", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token-xyz"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "shim-tok", body: { to: "wx_alice", image_path: img.path } });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.delivered, true);
+        assert.deepEqual(res.body.media, { kind: "image", bytes: img.bytes.length, name: "pop.png" });
+        assert.equal(res.body.message_id, "777");
+
+        // ① getuploadurl body: the official field set, padded ciphertext size
+        const up = stub.seen.find((e) => e.url === "/ilink/bot/getuploadurl");
+        const upBody = JSON.parse(up.body.toString("utf-8"));
+        assert.equal(upBody.media_type, 1, "UploadMediaType.IMAGE");
+        assert.equal(upBody.to_user_id, "wx_alice");
+        assert.equal(upBody.rawsize, img.bytes.length);
+        assert.equal(upBody.rawfilemd5, crypto.createHash("md5").update(img.bytes).digest("hex"));
+        assert.equal(upBody.filesize, aesEcbPaddedSize(img.bytes.length), "the ciphertext size rides the request");
+        assert.equal(upBody.no_need_thumb, true);
+        assert.match(upBody.filekey, /^[0-9a-f]{32}$/);
+        assert.match(upBody.aeskey, /^[0-9a-f]{32}$/);
+        assert.equal(up.headers["authorization"], "Bearer bot-token-xyz", "the HOST token rides iLink, never the shim token");
+        assert.deepEqual(upBody.base_info, { channel_version: "2.4.9", bot_agent: "NebflowSidecar/1.0" });
+
+        // ② CDN POST: octet-stream ciphertext that DECRYPTS to the plaintext
+        const cdn = stub.seen.find((e) => e.url.startsWith("/cdn-upload"));
+        assert.equal(cdn.headers["content-type"], "application/octet-stream");
+        const decipher = crypto.createDecipheriv("aes-128-ecb", Buffer.from(upBody.aeskey, "hex"), null);
+        const plain = Buffer.concat([decipher.update(cdn.body), decipher.final()]);
+        assert.ok(plain.equals(img.bytes), "the CDN body decrypts (AES-128-ECB/PKCS7) to the original file");
+        assert.equal(cdn.body.length, aesEcbPaddedSize(img.bytes.length));
+
+        // ③ exactly ONE sendmessage carrying ONE image_item
+        assert.equal(stub.counts.sendmessage, 1);
+        const msg = JSON.parse(stub.seen.find((e) => e.url === "/ilink/bot/sendmessage").body.toString("utf-8")).msg;
+        assert.equal(msg.to_user_id, "wx_alice");
+        assert.equal(msg.item_list.length, 1);
+        const item = msg.item_list[0];
+        const expected = buildImageItem({ downloadParam: "dlp-abc", aeskeyHex: upBody.aeskey, fileSizeCiphertext: upBody.filesize });
+        assert.deepEqual(item, expected);
+        assert.equal(item.image_item.media.encrypt_query_param, "dlp-abc", "the CDN header becomes the download param");
+        assert.equal(item.image_item.media.aes_key, Buffer.from(upBody.aeskey, "utf-8").toString("base64"));
+        assert.equal(item.image_item.media.encrypt_type, 1);
+        assert.equal(item.image_item.mid_size, upBody.filesize);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("media: a caption TEXT rides FIRST as its own sendmessage (official sendMediaItems)", async () => {
+  const img = tempMediaFile("cap.png");
+  const stub = mediaPipeline();
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "wx_alice", text: "看图", image_path: img.path } });
+        assert.equal(res.status, 200);
+        const sends = stub.seen.filter((e) => e.url === "/ilink/bot/sendmessage").map((e) => JSON.parse(e.body.toString("utf-8")).msg);
+        assert.equal(sends.length, 2);
+        assert.equal(sends[0].item_list[0].type, 1, "the caption goes first");
+        assert.equal(sends[0].item_list[0].text_item.text, "看图");
+        assert.equal(sends[1].item_list[0].type, 2);
+        assert.notEqual(sends[0].client_id, sends[1].client_id, "each request carries its own client_id");
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("media: file leg — media_type FILE, file_item{media,file_name,md5,len}", async () => {
+  const doc = tempMediaFile("report.pdf", 48);
+  const stub = mediaPipeline({ downloadParam: "dlp-file" });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "wx_bob", file_path: doc.path } });
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body.media, { kind: "file", bytes: doc.bytes.length, name: "report.pdf" });
+        const upBody = JSON.parse(stub.seen.find((e) => e.url === "/ilink/bot/getuploadurl").body.toString("utf-8"));
+        assert.equal(upBody.media_type, 3, "UploadMediaType.FILE");
+        const msg = JSON.parse(stub.seen.find((e) => e.url === "/ilink/bot/sendmessage").body.toString("utf-8")).msg;
+        const expected = buildFileItem({
+          downloadParam: "dlp-file",
+          aeskeyHex: upBody.aeskey,
+          fileName: "report.pdf",
+          md5: crypto.createHash("md5").update(doc.bytes).digest("hex"),
+          fileSize: doc.bytes.length,
+        });
+        assert.deepEqual(msg.item_list[0], expected);
+        assert.equal(msg.item_list[0].file_item.len, String(doc.bytes.length), "len is the PLAINTEXT size, as a string");
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("media: validation — no text and no path / both paths / relative path / missing file ⇒ 400, zero iLink calls", async () => {
+  const img = tempMediaFile("ok.png");
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: "http://127.0.0.1:1" },
+    async () => {
+      const { ctx } = makeCtx(fakeState(["tok"]), "http://127.0.0.1:1");
+      const handle = makeSendHandler(ctx);
+      const neither = await callHandler(handle, { token: "t", body: { to: "a" } });
+      assert.equal(neither.status, 400);
+      assert.match(neither.body.error, /one of 'text', 'image_path', 'file_path'/);
+      const both = await callHandler(handle, { token: "t", body: { to: "a", image_path: img.path, file_path: img.path } });
+      assert.equal(both.status, 400);
+      assert.match(both.body.error, /mutually exclusive/);
+      const rel = await callHandler(handle, { token: "t", body: { to: "a", image_path: "relative/pop.png" } });
+      assert.equal(rel.status, 400);
+      assert.match(rel.body.error, /absolute/);
+      const gone = await callHandler(handle, { token: "t", body: { to: "a", file_path: "/nonexistent-nb-media/x.pdf" } });
+      assert.equal(gone.status, 400);
+      assert.match(gone.body.error, /media_path_unreadable/);
+    },
+  );
+});
+
+test("media: CDN 5xx retries to the official budget then 502 — NO sendmessage ever fires", async () => {
+  const img = tempMediaFile("f.png", 16);
+  const stub = mediaPipeline({ cdnStatus: 500 });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "a", image_path: img.path } });
+        assert.equal(res.status, 502);
+        assert.match(res.body.error, /CDN upload failed after 3 attempts/);
+        assert.equal(stub.counts.cdn, 3, "the official UPLOAD_MAX_RETRIES budget");
+        assert.equal(stub.counts.sendmessage, 0, "no media item is sent from a failed upload");
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("media: CDN 4xx aborts immediately (deterministic, exactly one CDN attempt)", async () => {
+  const img = tempMediaFile("f.png", 16);
+  const stub = mediaPipeline({ cdnStatus: 403 });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "a", image_path: img.path } });
+        assert.equal(res.status, 502);
+        assert.match(res.body.error, /CDN upload client error 403/);
+        assert.equal(stub.counts.cdn, 1);
+        assert.equal(stub.counts.sendmessage, 0);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("media: a CDN 200 without x-encrypted-param is retried then refused", async () => {
+  const img = tempMediaFile("f.png", 16);
+  const stub = mediaPipeline({ downloadParam: null });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "a", image_path: img.path } });
+        assert.equal(res.status, 502);
+        assert.match(res.body.error, /missing x-encrypted-param/);
+        assert.equal(stub.counts.cdn, 3);
+        assert.equal(stub.counts.sendmessage, 0);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("media: getuploadurl ret!==0 ⇒ deterministic 502, no CDN attempt", async () => {
+  const img = tempMediaFile("f.png", 16);
+  const stub = mediaPipeline({ uploadRet: -1 });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "a", image_path: img.path } });
+        assert.equal(res.status, 502);
+        assert.match(res.body.error, /getuploadurl ret=-1/);
+        assert.equal(stub.counts.getuploadurl, 1, "a protocol rejection is never retried");
+        assert.equal(stub.counts.cdn, 0);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
 });

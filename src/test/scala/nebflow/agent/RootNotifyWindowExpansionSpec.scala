@@ -10,7 +10,10 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.AgentCommand // W1 shim: main had nebflow.actor.AgentCommand; the merge moved it to actor (protocol.scala follow-move)
 import nebflow.actor.AgentDef // W1 shim: main had nebflow.actor.AgentDef; the merge moved it to actor
-import nebflow.actor.{AgentKind, AgentRecord} // W1 shim: main had them in nebflow.agent (AgentState); the merge moved them to actor
+import nebflow.actor.{
+  AgentKind,
+  AgentRecord
+} // W1 shim: main had them in nebflow.agent (AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
@@ -55,14 +58,18 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 90.seconds
 
-  /** LLM stub = 唤醒计数器 + 闸门。每次 `sendStream` 先登记请求，再等一个许可 ⇒
-    * 测试可在「turn 已发起但未结束」的窗口内观测队列与帧。 */
+  /**
+   * LLM stub = 唤醒计数器 + 闸门。每次 `sendStream` 先登记请求，再等一个许可 ⇒
+   * 测试可在「turn 已发起但未结束」的窗口内观测队列与帧。
+   */
   private class GatedLlm(
     requests: Ref[IO, List[LlmRequest]],
     gate: Semaphore[IO]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -105,7 +112,7 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
   )(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil($label): condition not met within $timeout"))
@@ -131,9 +138,11 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       hc.downField("injected").as[Boolean].toOption.contains(true)
     }
 
-  /** turn 收尾帧（`{type:"sessionBusy", busy:false}`）——**确定性**的「已回 idle」判据。
-    * 不用 registry `status`：`AgentRecord.status` 注册时默认 `Idle`，用它会在 turn 1
-    * 开跑**之前**就为真（首轮实测踩到）。 */
+  /**
+   * turn 收尾帧（`{type:"sessionBusy", busy:false}`）——**确定性**的「已回 idle」判据。
+   * 不用 registry `status`：`AgentRecord.status` 注册时默认 `Idle`，用它会在 turn 1
+   * 开跑**之前**就为真（首轮实测踩到）。
+   */
   private def idleFrames(frames: List[Json]): List[Json] =
     frames.filter { j =>
       val hc = j.hcursor
@@ -147,7 +156,8 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
   /** 载荷（= 队列快照里的窗冲刷件）。 */
   private def carrierPayload(items: List[(String, String, String, String)]): AgentCommand.ImmediateInput =
     AgentCommand.ImmediateInput(
-      text = "[Node 本批 2 件终态通知（root 通道打包窗合并，项目 rootnotifyproj）]\n── [1/2] [completed] node-1 (n-1) ──\nBODY_ONE\n\n── [2/2] [failed] node-2 (n-2) ──\nBODY_TWO",
+      text =
+        "[Node 本批 2 件终态通知（root 通道打包窗合并，项目 rootnotifyproj）]\n── [1/2] [completed] node-1 (n-1) ──\nBODY_ONE\n\n── [2/2] [failed] node-2 (n-2) ──\nBODY_TWO",
       source = Some("node"),
       eventType = Some("failed"),
       sender = Some("rootnotifyproj/node-1"),
@@ -155,7 +165,9 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       windowItems = Some(items.map((t, n, s, sd) => AgentCommand.WindowItem(t, n, s, sd)))
     )
 
-  test("R1–R4: the tagged window carrier injects N messages + N bubbles in ONE turn, while untagged items stay item-by-item") {
+  test(
+    "R1–R4: the tagged window carrier injects N messages + N bubbles in ONE turn, while untagged items stay item-by-item"
+  ) {
     val system = ActorSystem("notifypack-expand")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -169,7 +181,12 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         frames <- Ref.of[IO, List[Json]](Nil)
         gate <- Semaphore[IO](0)
         resources <- mkResources(system, tmp, new GatedLlm(requests, gate))
-        nebulaDef = AgentDef(name = "Nebula", description = "window expansion root", tools = List("Read"), systemPrompt = "")
+        nebulaDef = AgentDef(
+          name = "Nebula",
+          description = "window expansion root",
+          tools = List("Read"),
+          systemPrompt = ""
+        )
         ref <- system.spawn(
           AgentActor(
             agentDef = nebulaDef,
@@ -228,12 +245,31 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         afterPlain <- requests.get
         framesAfterPlain <- frames.get
         queueAfterPlain <- CompactionQueueStore.load(sid).map(_.map(_.imms).getOrElse(Nil))
-      yield
-        (queued, queueSizes, payloadOrder, payloadSenders, afterCarrier, framesAfterCarrier,
-          queueAfterCarrier, afterPlain, framesAfterPlain, queueAfterPlain)
+      yield (
+        queued,
+        queueSizes,
+        payloadOrder,
+        payloadSenders,
+        afterCarrier,
+        framesAfterCarrier,
+        queueAfterCarrier,
+        afterPlain,
+        framesAfterPlain,
+        queueAfterPlain
+      )
 
-      val (queued, queueSizes, payloadOrder, payloadSenders, afterCarrier, framesAfterCarrier,
-        queueAfterCarrier, afterPlain, framesAfterPlain, queueAfterPlain) = program.unsafeRunSync()
+      val (
+        queued,
+        queueSizes,
+        payloadOrder,
+        payloadSenders,
+        afterCarrier,
+        framesAfterCarrier,
+        queueAfterCarrier,
+        afterPlain,
+        framesAfterPlain,
+        queueAfterPlain
+      ) = program.unsafeRunSync()
 
       // ── R1 · 队列层：载体占 1 个元素（载荷 2 件）──────────────────────────────
       assertEquals(queued.size, 2, s"queue must hold exactly TWO elements (carrier + plain): $queued")
@@ -281,9 +317,7 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         s"NEVER one merged-digest bubble (the unexpanded form is exactly what this batch removes): $carrierFrames"
       )
       assert(
-        !carrierFrames.exists(f =>
-          field(f, "text").exists(t => t.contains("BODY_ONE") && t.contains("BODY_TWO"))
-        ),
+        !carrierFrames.exists(f => field(f, "text").exists(t => t.contains("BODY_ONE") && t.contains("BODY_TWO"))),
         s"no bubble may carry BOTH items (that is route ② / the unexpanded regression): $carrierFrames"
       )
       // 身份↔正文的逐件配对（防「N 帧但串件」）：sender 的 node-N 必须配 BODY_ 同号
@@ -305,7 +339,11 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       )
 
       // ── R4 · 负对照（无标记件仍逐条）＋ 载体已出队、普通件留队 ────────────────
-      assertEquals(queueAfterCarrier.map(_.windowItems), List(None), "only the untagged item stays queued after the carrier drain")
+      assertEquals(
+        queueAfterCarrier.map(_.windowItems),
+        List(None),
+        "only the untagged item stays queued after the carrier drain"
+      )
       assertEquals(afterPlain.size, 3, "the untagged item opens its OWN turn (per-item semantics unchanged)")
       val plainTurnUserTexts = afterPlain(2).messages
         .filter(_.role == nebflow.shared.MessageRole.User)
@@ -331,15 +369,18 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       assertEquals(queueAfterPlain.size, 0, "queue drained item-by-item to empty")
 
       // 展开读数的**逆运算**证据（幂等）：展开出的虚拟件不得再带窗标记
-      val expanded = TurnBoundaryDrains.expandWindowFlush(carrierPayload(
-        List(("BODY_ONE", "node-1", "completed", "rootnotifyproj/node-1"))
-      ))
+      val expanded = TurnBoundaryDrains.expandWindowFlush(
+        carrierPayload(
+          List(("BODY_ONE", "node-1", "completed", "rootnotifyproj/node-1"))
+        )
+      )
       assert(expanded.forall(_.windowItems.isEmpty), "expanded items must not carry the tag again (idempotence)")
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   /* ── R5 · IDLE 到达（**生产常态时序**）──────────────────────────────────────────
@@ -356,7 +397,9 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
    * 逐条（一件一次唤醒）、且**不得**被展开/重复注入；r3 的负对照只覆盖 mid-turn 的
    * 无标记件，本用例把同一判据补到 idle 到达态。
    */
-  test("R5 (production-nominal): a carrier arriving while the agent is IDLE injects N bubbles in ONE wake; untagged items keep item-by-item semantics") {
+  test(
+    "R5 (production-nominal): a carrier arriving while the agent is IDLE injects N bubbles in ONE wake; untagged items keep item-by-item semantics"
+  ) {
     val system = ActorSystem("notifypack-idle-arrival")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -372,7 +415,12 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         // the agent genuinely RETURNS TO IDLE (no choreography masking the state).
         gate <- Semaphore[IO](20)
         resources <- mkResources(system, tmp, new GatedLlm(requests, gate))
-        nebulaDef = AgentDef(name = "Nebula", description = "idle arrival root", tools = List("Read"), systemPrompt = "")
+        nebulaDef = AgentDef(
+          name = "Nebula",
+          description = "idle arrival root",
+          tools = List("Read"),
+          systemPrompt = ""
+        )
         ref <- system.spawn(
           AgentActor(
             agentDef = nebulaDef,
@@ -397,7 +445,9 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
           frames.get.map(f => idleFrames(f).size >= 1)
         )
         wakesAfterTurn1 <- requests.get.map(_.size)
-        _ <- IO(assert(wakesAfterTurn1 == 1, s"precondition: exactly ONE wake for the human turn, got $wakesAfterTurn1"))
+        _ <- IO(
+          assert(wakesAfterTurn1 == 1, s"precondition: exactly ONE wake for the human turn, got $wakesAfterTurn1")
+        )
 
         // phase 2: the window-flush carrier arrives while the agent is IDLE
         // (the production-nominal arrival for node notifications).
@@ -447,8 +497,14 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       val carrierReq = afterCarrier(wakesAfterTurn1)
       val carrierUserTexts = carrierReq.messages.filter(_.role == nebflow.shared.MessageRole.User).map(_.textContent)
       // 逐件：每件正文各自成为**独立**上下文消息
-      assert(carrierUserTexts.contains("BODY_ONE"), s"item 1 body must be its OWN context message (idle path):\n$carrierUserTexts")
-      assert(carrierUserTexts.contains("BODY_TWO"), s"item 2 body must be its OWN context message (idle path):\n$carrierUserTexts")
+      assert(
+        carrierUserTexts.contains("BODY_ONE"),
+        s"item 1 body must be its OWN context message (idle path):\n$carrierUserTexts"
+      )
+      assert(
+        carrierUserTexts.contains("BODY_TWO"),
+        s"item 2 body must be its OWN context message (idle path):\n$carrierUserTexts"
+      )
       // 🔴 变异判别（永久保留）：idle 路径**绝不**能只带合并摘要本体
       assert(
         !carrierUserTexts.exists(t => t.contains("BODY_ONE") && t.contains("BODY_TWO")),
@@ -477,7 +533,9 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         "each idle-path bubble carries its OWN state (not flattened)"
       )
       assertEquals(
-        idleCarrierFrames.map(f => (field(f, "sender").getOrElse("<none>"), field(f, "text").getOrElse("<none>"))).sorted,
+        idleCarrierFrames
+          .map(f => (field(f, "sender").getOrElse("<none>"), field(f, "text").getOrElse("<none>")))
+          .sorted,
         List(("rootnotifyproj/node-1", "BODY_ONE"), ("rootnotifyproj/node-2", "BODY_TWO")),
         "per-item pairing on the idle path: identity and body come from the SAME payload item"
       )
@@ -516,5 +574,6 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 end RootNotifyWindowExpansionSpec

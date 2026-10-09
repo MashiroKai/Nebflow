@@ -78,6 +78,8 @@ object AttachmentPreviewContract:
     /** 本方言取值域（报告/错误文案用）。 */
     def mimeDomain: List[String] = toCanonical.keys.toList.sorted
 
+  end PreviewDialect
+
   /**
    * 方言 **A** = 五键 `{mime,w,h,size,b64}`：
    * `neblink-server` 现读 main（`41e12af`，对齐批 `6b2af54`）的 `AttachmentPreviewDto`；
@@ -103,7 +105,8 @@ object AttachmentPreviewContract:
    */
   val FormatSixKey: PreviewDialect = PreviewDialect(
     id = "fmt6",
-    note = "six keys {fmt,w,h,bytes,sha256,b64}; bare format names; digest step (neblink-server 4399d7a4c / xferpreview-impl2)",
+    note =
+      "six keys {fmt,w,h,bytes,sha256,b64}; bare format names; digest step (neblink-server 4399d7a4c / xferpreview-impl2)",
     mimeKey = "fmt",
     bytesKey = "bytes",
     digestKey = Some("sha256"),
@@ -219,21 +222,21 @@ object AttachmentPreviewContract:
   def parseIn(dialect: PreviewDialect, json: Json): Option[AttachmentPreview] =
     json.asObject.flatMap { o =>
       val rawMime = strOf(o, dialect.mimeKey)
-      val w       = intOf(o, "w")
-      val h       = intOf(o, "h")
-      val size    = longOf(o, dialect.bytesKey)
-      val b64     = strOf(o, "b64")
-      val digest  = dialect.digestKey.flatMap(k => strOf(o, k))
+      val w = intOf(o, "w")
+      val h = intOf(o, "h")
+      val size = longOf(o, dialect.bytesKey)
+      val b64 = strOf(o, "b64")
+      val digest = dialect.digestKey.flatMap(k => strOf(o, k))
       for
-        rm  <- rawMime
-        m   <- dialect.toCanonical.get(rm)
-        pw  <- w
-        ph  <- h
-        sz  <- size
-        bs  <- b64
-        dg  <- dialect.digestKey match
-                 case Some(_) => digest.filter(sha256HexOk).map(Some(_))
-                 case None    => Some(None)
+        rm <- rawMime
+        m <- dialect.toCanonical.get(rm)
+        pw <- w
+        ph <- h
+        sz <- size
+        bs <- b64
+        dg <- dialect.digestKey match
+          case Some(_) => digest.filter(sha256HexOk).map(Some(_))
+          case None => Some(None)
         if dimsOk(pw, ph) && sizeOk(sz) && b64Ok(bs, sz)
       yield AttachmentPreview(mime = m, w = pw, h = ph, size = sz, sha256 = dg, b64 = bs, dialectId = dialect.id)
     }
@@ -272,23 +275,25 @@ object AttachmentPreviewContract:
     // 🔴 取值域判定落在**标准内部 mime** 上（`Mimes`），方言只提供拼写映射 —— 把 `mimeAllowed`
     //    套在**拼写**上会把 `fmt6` 的 `"webp"` 误判越域（实测踩到：六键写面恒 None）。
     val canonical = Option.when(mimeAllowed(p.mime))(p.mime)
-    val spelling  = canonical.flatMap(dialect.fromCanonical.get)
-    val digest   = dialect.digestKey match
+    val spelling = canonical.flatMap(dialect.fromCanonical.get)
+    val digest = dialect.digestKey match
       case Some(k) => p.sha256.filter(sha256HexOk).map(s => Some(k -> Json.fromString(s)))
-      case None    => Some(None)
+      case None => Some(None)
     for
-      _  <- canonical
+      _ <- canonical
       sp <- spelling
       dg <- digest
       if payloadOk(p)
     yield Json.fromFields(
       List(
         dialect.mimeKey -> Json.fromString(sp),
-        "w"             -> Json.fromInt(p.w),
-        "h"             -> Json.fromInt(p.h),
+        "w" -> Json.fromInt(p.w),
+        "h" -> Json.fromInt(p.h),
         dialect.bytesKey -> Json.fromLong(p.size)
       ) ++ dg.toList ++ List("b64" -> Json.fromString(p.b64))
     )
+
+  end encodeIn
 
   /** 按 id 取方言再编码（未登记 id ⇒ `None`，**不回落**：静默换方言是「换字段名就又不行」的根因）。 */
   def encodeInDialect(id: String, p: AttachmentPreview): Option[Json] =

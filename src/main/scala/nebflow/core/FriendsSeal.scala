@@ -41,20 +41,26 @@ object FriendsSeal:
 
   private val logger = NebflowLogger(getClass)
 
-  /** Base state from the boot-time config read. Default = sealed (see class
-    * doc: the value must be deterministic before init and on every spec JVM). */
+  /**
+   * Base state from the boot-time config read. Default = sealed (see class
+   * doc: the value must be deterministic before init and on every spec JVM).
+   */
   @volatile private var enabledBase: Boolean = false
 
   /** Spec-only unseal refcount (never touched by production code). */
   private val unsealRequests = new java.util.concurrent.atomic.AtomicInteger(0)
 
-  /** true = the friends feature is sealed (the default posture). (Named
-    * `isSealed` because `sealed` is a Scala 3 soft keyword.) */
+  /**
+   * true = the friends feature is sealed (the default posture). (Named
+   * `isSealed` because `sealed` is a Scala 3 soft keyword.)
+   */
   def isSealed: Boolean = unsealRequests.get() == 0 && !enabledBase
 
-  /** Boot latch (GatewayMain.runGateway): read `<home>/nebflow.json` once and
-    * latch `features.friends`. Absent key / false / unparseable => sealed.
-    * Same dual-read path as `ConfigService` (`PathUtil.configJsonReadPath`). */
+  /**
+   * Boot latch (GatewayMain.runGateway): read `<home>/nebflow.json` once and
+   * latch `features.friends`. Absent key / false / unparseable => sealed.
+   * Same dual-read path as `ConfigService` (`PathUtil.configJsonReadPath`).
+   */
   def initFromDisk(): Unit =
     val enabled =
       try
@@ -64,20 +70,26 @@ object FriendsSeal:
       catch case _: Exception => false
     enabledBase = enabled
     val state = if enabled then "unsealed" else "sealed"
-    logger.info(s"[friends-seal] features.friends latch: $state (startup latch — a config edit takes effect on restart)")
+    logger.info(
+      s"[friends-seal] features.friends latch: $state (startup latch — a config edit takes effect on restart)"
+    )
 
-  /** Pure config-parse half of the latch (spec-visible; `initFromDisk` is its
-    * only production caller): ONLY the literal boolean `true` unpins the seal —
-    * absent key, `false`, a wrong-typed value, or an unparseable file all stay
-    * sealed (the default posture never depends on input shape). */
+  /**
+   * Pure config-parse half of the latch (spec-visible; `initFromDisk` is its
+   * only production caller): ONLY the literal boolean `true` unpins the seal —
+   * absent key, `false`, a wrong-typed value, or an unparseable file all stay
+   * sealed (the default posture never depends on input shape).
+   */
   def parseEnabled(configJson: String): Boolean =
     parse(configJson).toOption
       .flatMap(_.hcursor.downField("features").downField("friends").as[Boolean].toOption)
       .getOrElse(false)
 
-  /** Spec seam: lift the seal (ref-counted). Every `testUnseal()` must be
-    * paired with `testReseal()` (guarantee/finally) — see `FriendsSealKit`
-    * in test scope, the single wrapper specs should use. */
+  /**
+   * Spec seam: lift the seal (ref-counted). Every `testUnseal()` must be
+   * paired with `testReseal()` (guarantee/finally) — see `FriendsSealKit`
+   * in test scope, the single wrapper specs should use.
+   */
   def testUnseal(): Unit = unsealRequests.incrementAndGet()
 
   /** Spec seam: drop one unseal request (pairs with `testUnseal`). */

@@ -1195,9 +1195,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
   ): IO[ActorRef[ProjectActor.ProjectCommand]] =
     system.spawn(
       ProjectActor(
-        ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, "nebula-root",
+        ProjectActor.ProjectConfig(
+          rt.project,
+          rt.engine,
+          system,
+          res,
+          "nebula-root",
           dispatcherIdleWindowMs = idleWindowMs,
-          dispatcherLifecycleAnchorTaskTerminal = anchorTaskTerminal)
+          dispatcherLifecycleAnchorTaskTerminal = anchorTaskTerminal
+        )
       ),
       name
     )
@@ -1231,7 +1237,14 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         gate <- cats.effect.Deferred[IO, Unit]
         res <- SpecResources.mkResources(system, tempRoot, new GatedLlm(gate))
         rt0 <- mountProject("acc-task1", ws, system, res)
-        ref <- spawnProjectActor(rt0, system, res, "proj-task1", idleWindowMs = Some(2000L), anchorTaskTerminal = Some(false))
+        ref <- spawnProjectActor(
+          rt0,
+          system,
+          res,
+          "proj-task1",
+          idleWindowMs = Some(2000L),
+          anchorTaskTerminal = Some(false)
+        )
         _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
         ctx = mkCtx(res, system, ws.toString)
         r <- MailTool.call(

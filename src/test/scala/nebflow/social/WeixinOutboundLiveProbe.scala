@@ -48,13 +48,14 @@ object WeixinOutboundLiveProbe:
           recorded.add(
             s"POST ${exchange.getRequestURI}  auth=$auth  authType=${exchange.getRequestHeaders.getFirst("AuthorizationType")}" +
               s"  uin=${Option(exchange.getRequestHeaders.getFirst("X-WECHAT-UIN")).map(l => s"${l}B").getOrElse("-")}" +
-              s"  app=${exchange.getRequestHeaders.getFirst("iLink-App-Id")}/${exchange.getRequestHeaders.getFirst("iLink-App-ClientVersion")}\n  body=$body")
+              s"  app=${exchange.getRequestHeaders.getFirst("iLink-App-Id")}/${exchange.getRequestHeaders.getFirst("iLink-App-ClientVersion")}\n  body=$body"
+          )
           // RAW answer: a JS/Java number literal would already lose uint64 precision
           val resp = "{\"ret\":0,\"message_id\":987654321098765432}".getBytes(StandardCharsets.UTF_8)
           exchange.getResponseHeaders.set("Content-Type", "application/json")
           exchange.sendResponseHeaders(200, resp.length.toLong)
           exchange.getResponseBody.write(resp)
-        finally exchange.close(),
+        finally exchange.close()
     )
     stub.start()
     val stubBase = s"http://127.0.0.1:${stub.getAddress.getPort}"
@@ -62,7 +63,9 @@ object WeixinOutboundLiveProbe:
 
     // ── ② temp engine home: token mint + card (sidecar_url patched once the shim port is known) ──
     val root = os.temp.dir(prefix = "nb-weixin-out-live-")
-    val token = WeixinOutboundAdapter.ensureToken(root).unsafeRunSync()
+    val token = WeixinOutboundAdapter
+      .ensureToken(root)
+      .unsafeRunSync()
       .fold(e => throw new IllegalStateException(s"token mint failed: $e"), identity)
     readout("engine token minted", s"${WeixinOutboundAdapter.tokenPath(root)} (owner-only, ${token.length}B)")
     SocialChannels.save(
@@ -73,7 +76,7 @@ object WeixinOutboundLiveProbe:
           """{"enabled":true,"fields":{"ilink_bot_id":"liveprobe@im.bot","ilink_user_id":"wx_liveprobe","bot_token":"engine-side-never-used","sidecar_url":""}}"""
         )
         .toOption
-        .get,
+        .get
     ) match
       case Right(_) => readout("channel card saved", "weixin-ilink enabled+verified")
       case Left(err) => throw new IllegalStateException(s"card save failed: $err")
@@ -82,8 +85,10 @@ object WeixinOutboundLiveProbe:
     val stateDir = os.temp.dir(prefix = "nb-weixin-out-live-openclaw-")
     val acctDir = stateDir / "openclaw-weixin" / "accounts"
     os.makeDir.all(acctDir)
-    os.write.over(acctDir / "liveprobe-im-bot.json",
-      """{"token":"host-account-token-0123456789abcdef","userId":"wx_liveprobe","savedAt":"2026-10-07T00:00:00.000Z"}""")
+    os.write.over(
+      acctDir / "liveprobe-im-bot.json",
+      """{"token":"host-account-token-0123456789abcdef","userId":"wx_liveprobe","savedAt":"2026-10-07T00:00:00.000Z"}"""
+    )
     os.write.over(stateDir / "openclaw-weixin" / "accounts.json", """["liveprobe-im-bot"]""")
     readout("fake host account", s"$stateDir (1 account: liveprobe-im-bot)")
 
@@ -96,14 +101,14 @@ object WeixinOutboundLiveProbe:
       "WEIXIN_SEND_TOKEN_FILE" -> WeixinOutboundAdapter.tokenPath(root).toString,
       "WEIXIN_SIDECAR_ILINK_BASE" -> stubBase,
       "OPENCLAW_STATE_DIR" -> stateDir.toString,
-      "WEIXIN_SIDECAR_SEND_BACKOFF_MS" -> "200",
+      "WEIXIN_SIDECAR_SEND_BACKOFF_MS" -> "200"
     ).run()
     val shimBase = s"http://127.0.0.1:$shimPort"
     try
       SocialChannels.save(
         root,
         WeixinIlinkBridgePlugin.Name,
-        io.circe.parser.parse(s"""{"fields":{"sidecar_url":"$shimBase"}}""").toOption.get,
+        io.circe.parser.parse(s"""{"fields":{"sidecar_url":"$shimBase"}}""").toOption.get
       ) match
         case Right(_) => readout("sidecar_url", shimBase)
         case Left(err) => throw new IllegalStateException(err.toString)
@@ -112,9 +117,15 @@ object WeixinOutboundLiveProbe:
       readout("shim healthz", "ok (state=idle, login leg untouched)")
 
       // ── ⑤ THE CHAIN: engine adapter → shim → stub iLink ──
-      val res = WeixinOutboundAdapter.sendLive(root)("filehelper", "weixin-outbound fixture reply — engine→shim→iLink chain probe").unsafeRunSync()
-      readout("ENGINE reading", s"ok=${res.ok} delivered=${res.delivered} id=${res.messageId.getOrElse("-")} code=${res.code} reason=${res.reason}")
-      if recorded.isEmpty then throw new IllegalStateException("the stub recorded NOTHING — the chain did not reach iLink")
+      val res = WeixinOutboundAdapter
+        .sendLive(root)("filehelper", "weixin-outbound fixture reply — engine→shim→iLink chain probe")
+        .unsafeRunSync()
+      readout(
+        "ENGINE reading",
+        s"ok=${res.ok} delivered=${res.delivered} id=${res.messageId.getOrElse("-")} code=${res.code} reason=${res.reason}"
+      )
+      if recorded.isEmpty then
+        throw new IllegalStateException("the stub recorded NOTHING — the chain did not reach iLink")
       readout("WIRE at stub iLink", s"${recorded.size} sendmessage call(s):")
       recorded.asScala.toList.zipWithIndex.foreach((line, i) => println(f"    [$i] $line"))
 
@@ -123,8 +134,10 @@ object WeixinOutboundLiveProbe:
       os.makeDir.all(WeixinOutboundAdapter.tokenPath(root2) / os.up)
       os.write.over(WeixinOutboundAdapter.tokenPath(root2), "a-completely-different-token")
       SocialChannels.save(
-        root2, WeixinIlinkBridgePlugin.Name,
-        io.circe.parser.parse(s"""{"fields":{"sidecar_url":"$shimBase"}}""").toOption.get)
+        root2,
+        WeixinIlinkBridgePlugin.Name,
+        io.circe.parser.parse(s"""{"fields":{"sidecar_url":"$shimBase"}}""").toOption.get
+      )
       val res2 = WeixinOutboundAdapter.sendLive(root2)("filehelper", "should never leave the shim").unsafeRunSync()
       readout("NEGATIVE reading (wrong token)", s"ok=${res2.ok} code=${res2.code} reason=${res2.reason}")
       if res2.ok || res2.reason != "shim_auth_rejected" then
@@ -139,6 +152,10 @@ object WeixinOutboundLiveProbe:
       stub.stop(0)
       println(s"    [cleanup] shim stopped, stub stopped; temp roots left for inspection: $root")
 
+    end try
+
+  end main
+
   private def freePort(): Int =
     val s = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
     try s.getLocalPort
@@ -150,7 +167,8 @@ object WeixinOutboundLiveProbe:
       try
         val resp = client.send(
           java.net.http.HttpRequest.newBuilder(java.net.URI.create(s"$base/healthz")).GET().build(),
-          java.net.http.HttpResponse.BodyHandlers.ofString())
+          java.net.http.HttpResponse.BodyHandlers.ofString()
+        )
         if resp.statusCode() == 200 then return
       catch case _: Exception => ()
       Thread.sleep(200)
@@ -158,3 +176,4 @@ object WeixinOutboundLiveProbe:
 
   private def banner(s: String): Unit = println(s"\n══════ $s ══════")
   private def readout(k: String, v: String): Unit = println(s"  ▸ $k: $v")
+end WeixinOutboundLiveProbe

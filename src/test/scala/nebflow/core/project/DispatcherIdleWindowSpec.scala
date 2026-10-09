@@ -322,10 +322,11 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
     val flipped = sys.props.get("nebflow.dispatcher.idleWindowMs")
     try
       sys.props.remove("nebflow.dispatcher.idleWindowMs")
-      assert(nebflow.shared.Defaults.DispatcherIdleWindowMs >= 3_600_000L,
-        s"默认窗必须 ≥ 1 h（现读 ${nebflow.shared.Defaults.DispatcherIdleWindowMs}）")
-      assert(nebflow.shared.Defaults.DispatcherIdleWindowMs > 0L,
-        "抬阈值 ≠ 关闭保活（`> 0` 才走保活腿；`≤0` 是回退档，两者不得混为一谈）")
+      assert(
+        nebflow.shared.Defaults.DispatcherIdleWindowMs >= 3_600_000L,
+        s"默认窗必须 ≥ 1 h（现读 ${nebflow.shared.Defaults.DispatcherIdleWindowMs}）"
+      )
+      assert(nebflow.shared.Defaults.DispatcherIdleWindowMs > 0L, "抬阈值 ≠ 关闭保活（`> 0` 才走保活腿；`≤0` 是回退档，两者不得混为一谈）")
     finally flipped.foreach(v => sys.props("nebflow.dispatcher.idleWindowMs") = v)
   }
 

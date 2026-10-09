@@ -47,6 +47,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -55,28 +56,46 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
 
   /** 判定机在场的证明件：被问即炸——确定性预检必须零 LLM 消耗。 */
   private class ExplodingJudge extends DelegateJudge.DelegateJudgePort.Face:
+
     def decideWorktree(task: String): IO[Option[Boolean]] =
       IO.raiseError(new RuntimeException("judge must NOT be consulted when the deterministic precheck fires"))
+
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.raiseError(new RuntimeException("judge must NOT be consulted when the deterministic precheck fires"))
 
   private def seedRecord(id: String, taskId: Option[String]): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(
-        id = id, executor = "nebflow", cwd = tempRoot.toString, project = None, taskId = taskId,
-        parentSessionId = "nebula-root", title = "seeded", createdAt = 1L,
-        branch = None, baseBranch = Some("main"), projectWorkspace = Some(tempRoot.toString)
+        id = id,
+        executor = "nebflow",
+        cwd = tempRoot.toString,
+        project = None,
+        taskId = taskId,
+        parentSessionId = "nebula-root",
+        title = "seeded",
+        createdAt = 1L,
+        branch = None,
+        baseBranch = Some("main"),
+        projectWorkspace = Some(tempRoot.toString)
       )
     )
 
   private def noopRefs(system: ActorSystem): IO[(ActorRef[AgentCommand], ActorRef[AgentEvent])] =
     for
-      child <- system.spawn(new Behavior[AgentCommand]:
-        def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] = IO.pure(this)
-      , s"child-${scala.util.Random.nextInt(100000)}")
-      sup <- system.spawn(new Behavior[AgentEvent]:
-        def receive(ctx: nebflow.actor.ActorContext[AgentEvent], msg: AgentEvent): IO[Behavior[AgentEvent]] = IO.pure(this)
-      , s"sup-${scala.util.Random.nextInt(100000)}")
+      child <- system.spawn(
+        new Behavior[AgentCommand]:
+          def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
+            IO.pure(this)
+        ,
+        s"child-${scala.util.Random.nextInt(100000)}"
+      )
+      sup <- system.spawn(
+        new Behavior[AgentEvent]:
+          def receive(ctx: nebflow.actor.ActorContext[AgentEvent], msg: AgentEvent): IO[Behavior[AgentEvent]] =
+            IO.pure(this)
+        ,
+        s"sup-${scala.util.Random.nextInt(100000)}"
+      )
     yield (child, sup)
 
   private def verdictLines(delegateId: String): List[(String, String)] =
@@ -91,7 +110,9 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
 
   private def lastVerdict(delegateId: String): Option[(String, String)] = verdictLines(delegateId).lastOption
 
-  test("① deterministic precheck: zero tool calls + empty resultText ⇒ blocked WITHOUT consulting the judge (source=precheck)") {
+  test(
+    "① deterministic precheck: zero tool calls + empty resultText ⇒ blocked WITHOUT consulting the judge (source=precheck)"
+  ) {
     val system = ActorSystem(s"dtp-1-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -100,8 +121,15 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         (child, sup) <- noopRefs(system)
         _ = seedRecord("delegate-precheck-empty", Some("81"))
         outcome <- DelegateTerminal.onCompleted(
-          res, "delegate-precheck-empty", "nebula-root", "t", "画一个「鹦鹉骑自行车」的循环动画",
-          resultText = "", child, sup, sessionToolCalls = Some(0)
+          res,
+          "delegate-precheck-empty",
+          "nebula-root",
+          "t",
+          "画一个「鹦鹉骑自行车」的循环动画",
+          resultText = "",
+          child,
+          sup,
+          sessionToolCalls = Some(0)
         )
         v = lastVerdict("delegate-precheck-empty")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
@@ -113,6 +141,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         assertEquals(v, Some(("blocked", "precheck")), "the chain line carries verdict=blocked source=precheck")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
+    end try
   }
 
   test("② the max_tokens empty-burn stub is NOT real output: stub + zero tools ⇒ blocked (the incident form)") {
@@ -124,8 +153,15 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         (child, sup) <- noopRefs(system)
         _ = seedRecord("delegate-precheck-stub", Some("82"))
         outcome <- DelegateTerminal.onCompleted(
-          res, "delegate-precheck-stub", "nebula-root", "t", "brief",
-          resultText = Defaults.MaxTokensStubText, child, sup, sessionToolCalls = Some(0)
+          res,
+          "delegate-precheck-stub",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = Defaults.MaxTokensStubText,
+          child,
+          sup,
+          sessionToolCalls = Some(0)
         )
         v = lastVerdict("delegate-precheck-stub")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
@@ -134,9 +170,12 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         assertEquals(v, Some(("blocked", "precheck")))
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
+    end try
   }
 
-  test("③ honesty when both judge legs fail AND no self-report: legacy completed semantics stay, but the line reads (unjudged — judge unavailable)") {
+  test(
+    "③ honesty when both judge legs fail AND no self-report: legacy completed semantics stay, but the line reads (unjudged — judge unavailable)"
+  ) {
     val system = ActorSystem(s"dtp-3-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -146,8 +185,15 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         (child, sup) <- noopRefs(system)
         _ = seedRecord("delegate-unjudged", Some("83"))
         outcome <- DelegateTerminal.onCompleted(
-          res, "delegate-unjudged", "nebula-root", "t", "brief",
-          resultText = "real result text", child, sup, sessionToolCalls = Some(0)
+          res,
+          "delegate-unjudged",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "real result text",
+          child,
+          sup,
+          sessionToolCalls = Some(0)
         )
         v = lastVerdict("delegate-unjudged")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
@@ -160,9 +206,12 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         assert(line.contains("(unjudged — judge unavailable)"), s"the honest marker must be in the verdict line: $line")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
+    end try
   }
 
-  test("④ no false positives: real text, counted tools, or uncounted sessions all bypass the precheck; a self-report is never 'unjudged'") {
+  test(
+    "④ no false positives: real text, counted tools, or uncounted sessions all bypass the precheck; a self-report is never 'unjudged'"
+  ) {
     val system = ActorSystem(s"dtp-4-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -174,20 +223,41 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         _ = DelegateJudge.DelegateJudgePort.clear()
         _ = seedRecord("delegate-tools3", Some("84"))
         r1 <- DelegateTerminal.onCompleted(
-          res, "delegate-tools3", "nebula-root", "t", "brief",
-          resultText = "", child, sup, sessionToolCalls = Some(3)
+          res,
+          "delegate-tools3",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "",
+          child,
+          sup,
+          sessionToolCalls = Some(3)
         )
         _ = seedRecord("delegate-uncounted", Some("85"))
         r2 <- DelegateTerminal.onCompleted(
-          res, "delegate-uncounted", "nebula-root", "t", "brief",
-          resultText = "", child, sup, sessionToolCalls = None
+          res,
+          "delegate-uncounted",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "",
+          child,
+          sup,
+          sessionToolCalls = None
         )
         // (b) 自申报在场 ⇒ 不是 unjudged（自申报背书完成）。
         _ = seedRecord("delegate-selfrep", Some("86"))
         _ = DelegateRegistry.updateReport("delegate-selfrep", "finish", "declared", "")
         r3 <- DelegateTerminal.onCompleted(
-          res, "delegate-selfrep", "nebula-root", "t", "brief",
-          resultText = "did the work", child, sup, sessionToolCalls = Some(0)
+          res,
+          "delegate-selfrep",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "did the work",
+          child,
+          sup,
+          sessionToolCalls = Some(0)
         )
         v1 = lastVerdict("delegate-tools3")
         v2 = lastVerdict("delegate-uncounted")
@@ -197,13 +267,17 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         // 有工具/未计数 → 预检让路（判定机缺席 → unjudged completed，非 blocked）
         assertEquals(v1, Some(("completed", "unjudged")), "tools present ⇒ not an empty burn even with empty text")
         assertEquals(v2, Some(("completed", "unjudged")), "uncounted sessions bypass the precheck (no invented data)")
-        assert(r1.toString.contains("(unjudged — judge unavailable)"), s"tools+no-text with the judge down is honestly unjudged: $r1")
+        assert(
+          r1.toString.contains("(unjudged — judge unavailable)"),
+          s"tools+no-text with the judge down is honestly unjudged: $r1"
+        )
         // 自申报背书 → source 仍是 judge 口径，行不带 unjudged 标注
         assertEquals(v3.map(_._1), Some("completed"))
         assertEquals(v3.map(_._2), Some("judge"), "a self-reported finish is NOT the unjudged form")
         assert(!r3.toString.contains("unjudged"), s"self-report backed completions keep the plain line: $r3")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
+    end try
   }
 
   test("⑤ pure anchors: hasRealOutput / deterministicPrecheck / verdictLineCompleted") {
@@ -217,7 +291,11 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
     assertEquals(DelegateTerminal.deterministicPrecheck(Defaults.MaxTokensStubText, Some(0)).isDefined, true)
     assertEquals(DelegateTerminal.deterministicPrecheck("", Some(2)), None, "tools were called ⇒ not an empty burn")
     assertEquals(DelegateTerminal.deterministicPrecheck("", None), None, "uncounted ⇒ precheck skipped")
-    assertEquals(DelegateTerminal.deterministicPrecheck("done", Some(0)), None, "real text ⇒ judge's input, not the precheck's")
+    assertEquals(
+      DelegateTerminal.deterministicPrecheck("done", Some(0)),
+      None,
+      "real text ⇒ judge's input, not the precheck's"
+    )
     // 判词行措辞（作者令原文形态）
     assertEquals(DelegateTerminal.verdictLineCompleted(unjudged = false), "\n\n[delegate-judge] verdict: completed.")
     assertEquals(

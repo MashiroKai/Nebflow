@@ -84,6 +84,8 @@ object JevSettings:
                 health = health
               )
             )
+          end if
+        end if
     }
 
   /** Read the config block out of the loaded service config (hot read). */
@@ -116,3 +118,4 @@ object JevSettings:
           logger.warnSync(s"jev.keyRef '$name' is unreadable (${e.getClass.getSimpleName}) — decision face disabled")
           None
     }
+end JevSettings

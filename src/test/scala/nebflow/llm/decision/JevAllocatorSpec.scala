@@ -47,9 +47,12 @@ class JevAllocatorSpec extends CatsEffectSuite:
     assertEquals(
       qs.map(_.id),
       List(
-        "need_backend-dev", "fit_backend-dev",
-        "need_visual-report", "fit_visual-report",
-        "need_mail-ops", "fit_mail-ops"
+        "need_backend-dev",
+        "fit_backend-dev",
+        "need_visual-report",
+        "fit_visual-report",
+        "need_mail-ops",
+        "fit_mail-ops"
       )
     )
     // need_ is a CHOICE question whose criteria is a MAP — the shape the
@@ -346,9 +349,12 @@ class JevAllocatorSpec extends CatsEffectSuite:
       def predict(req: DecisionRequest) =
         IO { seen.set(req.state); Right(DecisionResponse(None, Map.empty, None)) }
 
+end JevAllocatorSpec
+
 /** A provider that must never be called; counts calls to prove it. */
 object NoopProvider extends DecisionProvider[IO]:
   @volatile var calls: Int = 0
   def id: String = "typesafe-jev"
+
   def predict(req: DecisionRequest): IO[Either[DecisionError, DecisionResponse]] =
     IO { calls += 1; Right(DecisionResponse(None, Map.empty, None)) }

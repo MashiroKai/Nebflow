@@ -135,8 +135,10 @@ class OnboardingServiceSpec extends FunSuite:
         LlmMeta(sessionId = "llm-probe", agentId = "llm-probe", providerId = providerId, model = "m", durationMs = 1)
     )
 
-  /** The answer of a SPECIFIC candidate — what a real chain returns when the
-    *  picked model (or a fallback covering for it) answers. */
+  /**
+   * The answer of a SPECIFIC candidate — what a real chain returns when the
+   *  picked model (or a fallback covering for it) answers.
+   */
   private def okResponseFor(providerId: String, model: String): LlmResponse =
     okResponse(providerId).copy(meta = okResponse(providerId).meta.copy(model = model))
 
@@ -234,8 +236,10 @@ class OnboardingServiceSpec extends FunSuite:
     assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), None)
   }
 
-  /** The config body the probe consults to tell "does not exist" from "did not
-    *  answer" — the shape `configService.getConfig` returns. */
+  /**
+   * The config body the probe consults to tell "does not exist" from "did not
+   *  answer" — the shape `configService.getConfig` returns.
+   */
   private def probeCfg(providerId: String, modelIds: String*): String =
     io.circe.Json
       .obj(
@@ -243,7 +247,8 @@ class OnboardingServiceSpec extends FunSuite:
           "providers" -> io.circe.Json.obj(
             providerId -> io.circe.Json.obj(
               "baseUrl" -> io.circe.Json.fromString("https://example.invalid/v1/"),
-              "models" -> io.circe.Json.arr(modelIds.map(id => io.circe.Json.obj("id" -> io.circe.Json.fromString(id)))*)
+              "models" -> io.circe.Json
+                .arr(modelIds.map(id => io.circe.Json.obj("id" -> io.circe.Json.fromString(id)))*)
             )
           )
         )

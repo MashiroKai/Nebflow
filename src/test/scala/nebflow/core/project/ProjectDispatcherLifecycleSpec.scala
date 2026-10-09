@@ -172,7 +172,16 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
     ProjectActor.ttlScanner(1.second).background.use { _ =>
       for
         resources <- mkResources(system, tempRoot, new RecordingLlm)
-        rt <- mount("disp-normal", ws, system, resources, j => wsEvents.update(j :: _), Some(1500L), 1, anchorTaskTerminal = Some(false))
+        rt <- mount(
+          "disp-normal",
+          ws,
+          system,
+          resources,
+          j => wsEvents.update(j :: _),
+          Some(1500L),
+          1,
+          anchorTaskTerminal = Some(false)
+        )
         actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
         _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("建一个调研节点", "nebula-root")).void
         // #28 接线在位：agentStart 经路由包装到达 engine wsSend（nodeSessionId=dispatcher-*）

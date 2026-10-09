@@ -604,8 +604,11 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assertEquals(evL1.hcursor.get[String]("action").toOption, Some("halt"))
       assertEquals(evL1.hcursor.get[String]("sessionId").toOption, Some("dispatcher-ab12cd34"))
       // L1**零动作**：在飞请求未被完成（L1 起不再有自动接手者——本批要显式登记的代价）
-      assertEquals(afterL1, None,
-        s"L1 must take NO action on in-flight requests (retired by killruling ruling #28), got $afterL1")
+      assertEquals(
+        afterL1,
+        None,
+        s"L1 must take NO action on in-flight requests (retired by killruling ruling #28), got $afterL1"
+      )
       // 两拍各一帧（L1 halt / L2 hard-abort）——升级链真实的逐拍推进。
       assert(wsEvents.size == 2, s"expected two taskStuck broadcasts (L1 + L2), got $wsEvents")
       assertEquals(wsEvents.last.hcursor.get[String]("action").toOption, Some("hard-abort"))

@@ -31,23 +31,27 @@ object OutboundPlanner:
    * @param reasons      closed-vocabulary reasons, for the warn log and the evidence
    */
   final case class OutboundPlan(
-      cls: ContentClass,
-      calls: List[ChannelCall],
-      degradedText: Option[String],
-      rejection: Option[AttachContract.AttachError],
-      reasons: List[String]
+    cls: ContentClass,
+    calls: List[ChannelCall],
+    degradedText: Option[String],
+    rejection: Option[AttachContract.AttachError],
+    reasons: List[String]
   ):
+
     /** A plan is compliant only if nothing was silently dropped. */
     def noSilentDrop: Boolean =
       (calls.nonEmpty || degradedText.nonEmpty) &&
         (degradedText.isEmpty || degradedText.exists(_.nonEmpty))
 
   object OutboundPlan:
+
     def text(cls: ContentClass, body: String): OutboundPlan =
       OutboundPlan(cls, List(ChannelCall.SendText(body)), None, None, Nil)
 
-  /** The closed reason vocabulary (design card section 7.1). A free-form reason
-    * would make the reading unjudgeable. */
+  /**
+   * The closed reason vocabulary (design card section 7.1). A free-form reason
+   * would make the reading unjudgeable.
+   */
   object Reason:
     val RenderUnavailable = "渲染件不可用"
     val RenderTimeout = "渲染超时"
@@ -144,13 +148,13 @@ object OutboundPlanner:
    * and the original path.
    */
   def cardRenderFailed(
-      originalPath: Option[os.Path],
-      bytes: Long,
-      reason: String
+    originalPath: Option[os.Path],
+    bytes: Long,
+    reason: String
   ): OutboundPlan =
     val body = originalPath match
       case Some(p) => OutboundText.unrendered(reason, p, bytes)
-      case None    => s"[未渲染] $reason"
+      case None => s"[未渲染] $reason"
     OutboundPlan(
       ContentClass.Card,
       calls = Nil,
@@ -158,6 +162,8 @@ object OutboundPlanner:
       rejection = None,
       reasons = List(reason)
     )
+
+  end cardRenderFailed
 
   /**
    * Plan an UNKNOWN-class payload (design card section 7.2).
@@ -183,11 +189,11 @@ object OutboundPlanner:
    * adapter uses so that the unknown/text arms cannot drift apart.
    */
   def plan(
-      cls: ContentClass,
-      path: Option[os.Path],
-      text: Option[String],
-      fileName: Option[String],
-      bytes: Long
+    cls: ContentClass,
+    path: Option[os.Path],
+    text: Option[String],
+    fileName: Option[String],
+    bytes: Long
   ): OutboundPlan =
     cls match
       case ContentClass.Text =>
@@ -237,10 +243,11 @@ object OutboundPlanner:
   private def gate(bytes: Long): Option[AttachContract.AttachError] =
     AttachContract.checkFileSize(bytes) match
       case Left(err) => Some(err)
-      case Right(_)  => None
+      case Right(_) => None
 
   /** The attachment-count gate, for a multi-part outbound (N calls at once). */
   def checkCount(n: Int): Option[AttachContract.AttachError] =
     AttachContract.checkAttachmentCount(n) match
       case Left(err) => Some(err)
-      case Right(_)  => None
+      case Right(_) => None
+end OutboundPlanner

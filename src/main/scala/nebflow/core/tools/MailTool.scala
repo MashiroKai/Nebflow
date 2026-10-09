@@ -105,16 +105,18 @@ object MailTool extends Tool:
   val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
   val ErrKernelSpawnRetired: String = "MAIL_KERNEL_SPAWN_UNSUPPORTED"
 
-  /** Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
-    *
-    * The tail pointer is SEAL-AWARE. With the
-    * friends feature sealed (the default posture), SendMessage's friend/group/
-    * local targets — including the this-machine local copy — answer
-    * `FRIENDS_SEALED`, so the pointer names the surviving `device:` target
-    * explicitly; unsealed, the original sentence is kept verbatim (zero
-    * behavior change while the flag is on). `def` (not `val`): the latch is a
-    * boot-time constant, but this word table must follow it without a second
-    * source. */
+  /**
+   * Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
+   *
+   * The tail pointer is SEAL-AWARE. With the
+   * friends feature sealed (the default posture), SendMessage's friend/group/
+   * local targets — including the this-machine local copy — answer
+   * `FRIENDS_SEALED`, so the pointer names the surviving `device:` target
+   * explicitly; unsealed, the original sentence is kept verbatim (zero
+   * behavior change while the flag is on). `def` (not `val`): the latch is a
+   * boot-time constant, but this word table must follow it without a second
+   * source.
+   */
   private[tools] def targetMissingMessage: String =
     s"[$ErrTargetMissing] Missing target: fill 'address' (an agent/team/project target — e.g. " +
       "\"project:<name>\", a team name, or a member short name). This tool takes no 'device' parameter " +
@@ -123,8 +125,7 @@ object MailTool extends Tool:
          "files for another machine go via SendMessage's `device:` target — its friend/group/local " +
            "targets (including the local this-machine copy) are sealed (FRIENDS_SEALED) until the " +
            "feature is unsealed."
-       else
-         "files for another machine's user go via SendMessage.")
+       else "files for another machine's user go via SendMessage.")
 
   /** Retirement refusal for a stale caller's `device=` (pure constructor, for direct spec testing). */
   private[tools] def deviceLegRetiredError(device: String): ToolError =
@@ -175,21 +176,25 @@ object MailTool extends Tool:
   // owning wave — until then the buffer simply stays empty.)
   // ============================================================
 
-  /** One batching-window entry of this leg: body + enqueue time (for backpressure
-    * readings) + the **delivery closure** (used for end-of-window injection; captures
-    * the ref/ctx and eventType at enqueue time). Semantics = "the reply is decided,
-    * only its injection is deferred". */
+  /**
+   * One batching-window entry of this leg: body + enqueue time (for backpressure
+   * readings) + the **delivery closure** (used for end-of-window injection; captures
+   * the ref/ctx and eventType at enqueue time). Semantics = "the reply is decided,
+   * only its injection is deferred".
+   */
   private final case class DispatcherMailEntry(
-      text: String,
-      atMs: Long,
-      deliver: String => IO[Unit]
+    text: String,
+    atMs: Long,
+    deliver: String => IO[Unit]
   )
 
-  /** 缓冲状态：`entries` = 尚未注入的件（FIFO）；`windowArmed` = 本窗计时在走
-    * （防同窗第二件重复起算 ⇒ 保持「首件起算、不随新件延长」）。 */
+  /**
+   * 缓冲状态：`entries` = 尚未注入的件（FIFO）；`windowArmed` = 本窗计时在走
+   * （防同窗第二件重复起算 ⇒ 保持「首件起算、不随新件延长」）。
+   */
   private final case class DispatcherMailState(
-      entries: Vector[DispatcherMailEntry] = Vector.empty,
-      windowArmed: Boolean = false
+    entries: Vector[DispatcherMailEntry] = Vector.empty,
+    windowArmed: Boolean = false
   )
 
   /** 进程内缓冲（与 `NodeEngine.rootNotifyBatchState` 同款 `Ref.unsafe` 单点）。 */
@@ -212,19 +217,23 @@ object MailTool extends Tool:
   private[tools] def dispatcherMailWindowArmed: IO[Boolean] =
     dispatcherMailState.get.map(_.windowArmed)
 
-  /** P0 exemption grade (): a leg whose body's **first line is the
-    * `[INTERRUPT]` literal** does not enter the buffer — mechanism-based judgment. */
+  /**
+   * P0 exemption grade (): a leg whose body's **first line is the
+   * `[INTERRUPT]` literal** does not enter the buffer — mechanism-based judgment.
+   */
   private[tools] def isDispatcherMailInterrupt(text: String): Boolean =
     text.linesIterator.find(_.trim.nonEmpty).exists(_.trim == "[INTERRUPT]")
 
   /** 背压告警阈值：排队超过本值即对**该件**补一条 WARN（件不丢、不阻断，只提示）。 */
   private[tools] val DispatcherMailBackpressureWarnMs: Long = 30000L
 
-  /** **入队 + 首件起算滚动窗**（分发器回复 root 的生产者侧打包入口）。
-    * 返回 `None` = 已入窗；返回 `Some(text)` = 旁路（关窗或 P0 豁免）。 */
+  /**
+   * **入队 + 首件起算滚动窗**（分发器回复 root 的生产者侧打包入口）。
+   * 返回 `None` = 已入窗；返回 `Some(text)` = 旁路（关窗或 P0 豁免）。
+   */
   private def enqueueDispatcherReply(
-      text: String,
-      deliver: String => IO[Unit]
+    text: String,
+    deliver: String => IO[Unit]
   ): IO[Option[String]] =
     val windowMs = dispatcherMailWindowMs
     if windowMs <= 0 || isDispatcherMailInterrupt(text) then IO.pure(Some(text))
@@ -233,8 +242,10 @@ object MailTool extends Tool:
       dispatcherMailState
         .modify { s =>
           val arm = !s.windowArmed
-          (s.copy(entries = s.entries :+ DispatcherMailEntry(text, nowMs, deliver), windowArmed = true),
-            (arm, s.entries.size + 1))
+          (
+            s.copy(entries = s.entries :+ DispatcherMailEntry(text, nowMs, deliver), windowArmed = true),
+            (arm, s.entries.size + 1)
+          )
         }
         .flatMap { case (armWindow, depth) =>
           (if depth >= 5 then
@@ -246,8 +257,14 @@ object MailTool extends Tool:
               .as(None)
         }
 
-  /** **窗口结束的唯一出口**：取队首 ≤N 件 → **一次**注入（N=1 ⇒ 正文逐字不变；
-    * N≥2 ⇒ 合并正文，走**首件**闭包并在正文内分节）⇒ 溢出件留队、计时重启。 */
+    end if
+
+  end enqueueDispatcherReply
+
+  /**
+   * **窗口结束的唯一出口**：取队首 ≤N 件 → **一次**注入（N=1 ⇒ 正文逐字不变；
+   * N≥2 ⇒ 合并正文，走**首件**闭包并在正文内分节）⇒ 溢出件留队、计时重启。
+   */
   private[tools] def flushDispatcherReplies(): IO[Unit] =
     dispatcherMailState
       .modify { s =>
@@ -279,8 +296,8 @@ object MailTool extends Tool:
 
   // ── 测试接缝（`private[tools]`：spec 直调，避开真实窗长等待与 root 会话依赖）──
   private[tools] def enqueueDispatcherReplyForTest(
-      text: String,
-      deliver: String => IO[Unit]
+    text: String,
+    deliver: String => IO[Unit]
   ): IO[Option[String]] = enqueueDispatcherReply(text, deliver)
 
   private[tools] def flushDispatcherRepliesWithMaxForTest(n: Int): IO[Unit] =
@@ -458,8 +475,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   // 三面并集）—— Q5 口径冻结 `inputSchema` 不动。
   // ============================================================
 
-  /** **基础变体**（= 上面的 `description`）：**逐字节不变**——未登记/未知身份的
-    * 会话看到的那一份（fail-closed 默认面）。 */
+  /**
+   * **基础变体**（= 上面的 `description`）：**逐字节不变**——未登记/未知身份的
+   * 会话看到的那一份（fail-closed 默认面）。
+   */
   val descriptionBase: String = description
 
   /** 地址面各段的**逐字常量**（逐字节取自基础 `description`；由 spec 逐段断言）。 */
@@ -612,8 +631,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // Mail 模型裁定: the `device` tombstone gate — **ahead of
     // every other judgment and delivery side effect** (same order as the existing
     // fail-fast discipline; the key is no longer in the schema, only stale callers send it).
-    if deviceTombstone.isDefined then
-      IO.pure(Left(deviceLegRetiredError(deviceTombstone.get)))
+    if deviceTombstone.isDefined then IO.pure(Left(deviceLegRetiredError(deviceTombstone.get)))
     else if address.isEmpty then IO.pure(Left(ToolError(targetMissingMessage)))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
     // delivery 退役：`delivery="queue"` ⇒
@@ -684,8 +702,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                               // a literal first line => `interrupt`, otherwise `info`. The dispatcher->root
                               // leg's batching-window exemption uses the same judgment (see
                               // deliverToRootAgent / isDispatcherMailInterrupt).
-                              val legacyEventType = if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
-                              if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, legacyEventType, ctx, system)
+                              val legacyEventType =
+                                if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
+                              if address.contains("://") then
+                                deliverToAddress(address, effectiveMessage, blocks, legacyEventType, ctx, system)
                               else deliverToShortName(address, effectiveMessage, blocks, legacyEventType, ctx, system)
                       end match
                   }
@@ -698,11 +718,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   // R2 分层地址面
   // ============================================================
 
-  /** 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。
-    * S6=C（N1 刀3 · v3 §7.2）新增 Delegate 面：delegate 会话（引擎侧
-    * `DelegateSessions.isDelegateSession` 前缀判据单点）的地址面 = 自己作用域的
-    * `node:<id|name>` 腿（挂载面授权在 buildAllowedToolSet 尾段，工具内本枚举
-    * 分层为第二保险——双保险同 TaskBoard/node_report 纪律）。 */
+  /**
+   * 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。
+   * S6=C（N1 刀3 · v3 §7.2）新增 Delegate 面：delegate 会话（引擎侧
+   * `DelegateSessions.isDelegateSession` 前缀判据单点）的地址面 = 自己作用域的
+   * `node:<id|name>` 腿（挂载面授权在 buildAllowedToolSet 尾段，工具内本枚举
+   * 分层为第二保险——双保险同 TaskBoard/node_report 纪律）。
+   */
   private enum SenderRole:
     case Root, Dispatcher, Delegate, Teamish
 
@@ -714,10 +736,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
 
   private val NodePrefix = "node:"
   private val ProjectPrefix = "project:"
-  /** kernel leg: the `kernel:<id>` continuation
-    * form's prefix (the bare `kernel` form = start a new instance, judged in
-    * [[layeredRoute]]). id = the full session id `delegate-kernel-<8hex>` (the registry
-    * key, unambiguous). */
+
+  /**
+   * kernel leg: the `kernel:<id>` continuation
+   * form's prefix (the bare `kernel` form = start a new instance, judged in
+   * [[layeredRoute]]). id = the full session id `delegate-kernel-<8hex>` (the registry
+   * key, unambiguous).
+   */
   private val KernelPrefix = "kernel:"
 
   /** 统一 delegate 续聊地址前缀。 */
@@ -730,10 +755,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   /** 分层地址面的显式越界报错（细则：错误消息必须指明**该角色的合法地址面**）。 */
   private def outOfFaceError(address: String, role: SenderRole): ToolError =
     val face = role match
-      case SenderRole.Root       => rootFace
+      case SenderRole.Root => rootFace
       case SenderRole.Dispatcher => dispatcherFace
-      case SenderRole.Delegate   => delegateFace
-      case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
+      case SenderRole.Delegate => delegateFace
+      case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
     ToolError(
       s"Address '$address' is outside your address face. Your role may only mail: $face. " +
         "There is no silent fallback and no fuzzy matching — use one of the listed forms."
@@ -742,10 +767,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   private def unresolvableError(address: String, role: SenderRole): ToolError =
     ToolError(
       s"Cannot resolve address '$address' — it is not a recognizable target in your address face (${role match
-          case SenderRole.Root       => rootFace
+          case SenderRole.Root => rootFace
           case SenderRole.Dispatcher => dispatcherFace
-          case SenderRole.Delegate   => delegateFace
-          case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
+          case SenderRole.Delegate => delegateFace
+          case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
         }). No fallback was applied."
     )
 
@@ -771,14 +796,12 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // ── delegate leg: the Nebula-exclusive
     // continuation address ── `delegate:<id>` 续聊/补充；旧 `kernel:<id>` 形态
     // 作为别名同路（同一 id 空间，存量回执不打断），裸 `kernel` 保持墓碑。
-    if address == "kernel" then
-      Some(IO.pure(Left(kernelSpawnRetiredError(address))))
+    if address == "kernel" then Some(IO.pure(Left(kernelSpawnRetiredError(address))))
     else if address.startsWith(DelegatePrefix) || address.startsWith(KernelPrefix) then
       val (prefix, isLegacyForm) =
         if address.startsWith(DelegatePrefix) then (DelegatePrefix, false) else (KernelPrefix, true)
       Some(
-        if role != SenderRole.Root then
-          IO.pure(Left(kernelExclusiveError(address, role.toString)))
+        if role != SenderRole.Root then IO.pure(Left(kernelExclusiveError(address, role.toString)))
         else deliverToDelegate(address.stripPrefix(prefix).trim, message, blocks, ctx, system, isLegacyForm)
       )
     else if address.startsWith(NodePrefix) then
@@ -793,8 +816,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
       //   - teamish → 既有越界报错（合法面文案指明，零静默兜底）。
       val nodeRef = address.stripPrefix(NodePrefix).trim
       Some(
-        if nodeRef.isEmpty then
-          IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id或名>\".")))
+        if nodeRef.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id或名>\".")))
         else if role == SenderRole.Delegate then
           countMailUsage(
             deliverToScopeNode(nodeRef, withChainAnnotation(message, chainId), imagePaths, ctx),
@@ -1097,40 +1119,49 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
     else
       nebflow.core.project.DelegateFlowHosts.all.flatMap { hosts =>
-        hosts.traverse { h =>
-          NodeTools.resolveNodeRefIO(h.projectRuntime, nodeRef).map(_.map(n => (h, n)))
-        }.flatMap { hits =>
-          val resolved = hits.collect { case Right(pair) => pair }
-          val failures = hits.collect { case Left(err) => err }
-          if resolved.size > 1 then
-            val candidates =
-              resolved.map((h, n) => s"scope ${h.delegateId} → ${n.id}(${n.task.getOrElse("").take(30)})").mkString(", ")
-            IO.pure(
-              Left(
-                ToolError(
-                  s"'$nodeRef' matches ${resolved.size} nodes across delegate scopes — $candidates — " +
-                    "address by node id, or rename. (CHAIN_ADDR_AMBIGUOUS)"
-                )
-              )
-            )
-          else
-            resolved.headOption match
-              case Some((h, node)) =>
-                mailAttribution("info", ctx).flatMap { attribution =>
-                  h.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
-                }
-              case None =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"no node '$nodeRef' (id or name) in any mounted delegate chain scope" +
-                        (if hosts.isEmpty then " (no delegate scopes are mounted right now)"
-                         else s" (${hosts.size} scope(s) checked${if failures.isEmpty then "" else "; per-scope lookup notes: " + failures.mkString(" | ")})") +
-                        " — check NodeList on the owning delegate session. (CHAIN_NODE_NOT_FOUND)"
-                    )
+        hosts
+          .traverse { h =>
+            NodeTools.resolveNodeRefIO(h.projectRuntime, nodeRef).map(_.map(n => (h, n)))
+          }
+          .flatMap { hits =>
+            val resolved = hits.collect { case Right(pair) => pair }
+            val failures = hits.collect { case Left(err) => err }
+            if resolved.size > 1 then
+              val candidates =
+                resolved
+                  .map((h, n) => s"scope ${h.delegateId} → ${n.id}(${n.task.getOrElse("").take(30)})")
+                  .mkString(", ")
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"'$nodeRef' matches ${resolved.size} nodes across delegate scopes — $candidates — " +
+                      "address by node id, or rename. (CHAIN_ADDR_AMBIGUOUS)"
                   )
                 )
-        }
+              )
+            else
+              resolved.headOption match
+                case Some((h, node)) =>
+                  mailAttribution("info", ctx).flatMap { attribution =>
+                    h.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
+                  }
+                case None =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"no node '$nodeRef' (id or name) in any mounted delegate chain scope" +
+                          (if hosts.isEmpty then " (no delegate scopes are mounted right now)"
+                           else
+                             s" (${hosts.size} scope(s) checked${
+                                 if failures.isEmpty then ""
+                                 else "; per-scope lookup notes: " + failures.mkString(" | ")
+                               })") +
+                          " — check NodeList on the owning delegate session. (CHAIN_NODE_NOT_FOUND)"
+                      )
+                    )
+                  )
+            end if
+          }
       }
 
   // ============================================================
@@ -1151,9 +1182,11 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   // existing BackoffSupervisor parent uplink).
   // ============================================================
 
-  /** Kernel-leg delivery — continuation only (the caller's NebulaRoot identity has
-    * already been verified in [[layeredRoute]]; the bare-kernel SPAWN leg retired in
-    * Delegate is the only kernel trigger). */
+  /**
+   * Kernel-leg delivery — continuation only (the caller's NebulaRoot identity has
+   * already been verified in [[layeredRoute]]; the bare-kernel SPAWN leg retired in
+   * Delegate is the only kernel trigger).
+   */
   /**
    * delegate 续聊腿——`delegate:<id>`：
    *   - **live**：注入 UserInput（replyTo=supervisor，turn 边界消费，结果仍走
@@ -1166,21 +1199,33 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * `kernel:<id>` 是同 id 空间的旧形态别名（isLegacyForm=true 时回执提示新形态）。
    */
   private def deliverToDelegate(
-      id: String,
-      message: String,
-      blocks: Option[List[ContentBlock]],
-      ctx: ToolContext,
-      system: ActorSystem,
-      isLegacyForm: Boolean
+    id: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext,
+    system: ActorSystem,
+    isLegacyForm: Boolean
   ): IO[Either[ToolError, String]] =
     (ctx.sharedResources, ctx.actorSystem) match
       case (Some(res), Some(sys)) =>
         if id.isEmpty then
-          IO.pure(Left(ToolError(s"Malformed address — expected \"delegate:<instanceId>\" (the id the Delegate receipt carried).")))
+          IO.pure(
+            Left(
+              ToolError(
+                s"Malformed address — expected \"delegate:<instanceId>\" (the id the Delegate receipt carried)."
+              )
+            )
+          )
         else
           DelegateRegistry.find(id) match
             case None =>
-              IO.pure(Left(ToolError(s"No delegate instance '$id' on record (DELEGATE_NOT_FOUND) — the Delegate receipt's continuation address is authoritative; check it verbatim.")))
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"No delegate instance '$id' on record (DELEGATE_NOT_FOUND) — the Delegate receipt's continuation address is authoritative; check it verbatim."
+                  )
+                )
+              )
             case Some(record) =>
               res.agentRegistry.get.flatMap { reg =>
                 reg.get(id) match
@@ -1195,66 +1240,116 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                       fromUser = false
                     )).void *>
                       nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
-                      IO.pure(Right(s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."))
+                      IO.pure(
+                        Right(
+                          s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."
+                        )
+                      )
                   case _ =>
                     // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
                     // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。
-                    if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
-                      nebflow.core.executor.ExternalSessionRunner
-                        .continueExternal(record, message, parentRef = None, wsSend = ctx.wsSend, resources = res)
-                        .map(_.left.map(ToolError(_)))
-                    else
-                      continueDelegate(record, id, message, ctx, sys, res)
+                    // 续起腿的 parentRef = 原记录 parentSessionId 的**活引用**（续聊
+                    // 结果回传锚点）——历史上这里传 None ⇒ BackoffSupervisor/
+                    // ExternalSessionRunner 的终态通知成了 no-op，续聊会话跑完后结果
+                    // 静默蒸发（实测 2026-10-09 两起：会话从存活列表消失、父会话零
+                    // 消息、工作实际已完成）。父不 live 时传 None 也可，监督者的
+                    // terminal-result-undelivered 兜底会发出可见告警，绝不静默。
+                    resolveContinuationParentRef(res, record).flatMap { parentRef =>
+                      if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
+                        nebflow.core.executor.ExternalSessionRunner
+                          .continueExternal(
+                            record,
+                            message,
+                            parentRef = parentRef,
+                            wsSend = ctx.wsSend,
+                            resources = res
+                          )
+                          .map(_.left.map(ToolError(_)))
+                      else continueDelegate(record, id, message, ctx, sys, res, parentRef)
+                    }
               }
       case _ =>
         IO.pure(Left(ToolError("Cannot deliver to the delegate leg: missing resources.")))
 
+  /**
+   * 续聊腿的结果回传锚点：原 delegate 记录里 `parentSessionId`（当初派发者会话，
+   * 通常是 Nebula 根）的**当前活引用**。None = 父会话此刻不在统一注册表（已删除/
+   * 重启后未重挂）——续聊仍可起，但其终态结果没有可投递对象，由监督者的
+   * terminal-result-undelivered 兜底发出可见告警（绝不允许静默丢失）。
+   */
+  private def resolveContinuationParentRef(
+    res: nebflow.core.AgentRuntimePort,
+    record: DelegateRegistry.Record
+  ): IO[Option[ActorRef[AgentCommand]]] =
+    if record.parentSessionId.isEmpty then IO.pure(None)
+    else res.agentRegistry.get.map(_.get(record.parentSessionId).map(_.ref))
+
   /** 终态 delegate 的续起：补充信息即新输入，座位/项目/台账继承记录。 */
   private def continueDelegate(
-      record: DelegateRegistry.Record,
-      id: String,
-      message: String,
-      ctx: ToolContext,
-      system: ActorSystem,
-      res: AgentRuntimePort
+    record: DelegateRegistry.Record,
+    id: String,
+    message: String,
+    ctx: ToolContext,
+    system: ActorSystem,
+    res: AgentRuntimePort,
+    parentRef: Option[ActorRef[AgentCommand]]
   ): IO[Either[ToolError, String]] =
     val brief =
       s"""[continuation of delegate $id — the instance finished; this supplement is your new primary instruction]
 [workspace] ${record.cwd} (file tools need absolute paths; Bash cwd is not guaranteed)
 
 $message"""
-    DelegateTool.spawnBackground(
-      agentDef = nebflow.core.entity.BuiltinAgents.entry(DelegateTool.KernelAgentName).map(_.toAgentDef).get,
-      task = brief,
-      description = s"continuation: ${record.title}",
-      workspace = record.cwd,
-      project = record.project,
-      taskId = record.taskId,
-      system = system,
-      resources = res,
-      parentDepth = 0,
-      parentRef = None,
-      wsSend = None,
-      parentSessionId = Some(record.parentSessionId),
-      rootSessionId = record.parentSessionId
-    ).map {
-      case Left(err) => Left(err)
-      case Right((newId, _)) =>
-        record.taskId.foreach { tid =>
-          scala.util.Try(
-            TaskLedgerStore.open().appendNoteSync(
-              tid,
-              s"Mail supplement → continued as $newId",
-              from = TaskLedgerHistory.Origins.Nebula,
-              actor = TaskLedgerHistory.Actors.Nebula
+    DelegateTool
+      .spawnBackground(
+        // 提示词来源拆分批（2026-10-08）：续聊复活腿同属 delegate 面——走
+        // `delegateEntry`（delegate_report 纪律的系统提示词），与新鲜派发腿
+        // （DelegateTool.spawnKernel）同路；节点面恒走 entry，两来源机械可分。
+        agentDef = nebflow.core.entity.BuiltinAgents.delegateEntry(DelegateTool.KernelAgentName).map(_.toAgentDef).get,
+        task = brief,
+        description = s"continuation: ${record.title}",
+        workspace = record.cwd,
+        project = record.project,
+        taskId = record.taskId,
+        system = system,
+        resources = res,
+        parentDepth = 0,
+        // 结果回传锚点（mail-continuation delivery 修 2026-10-09）：续起会话的监督者
+        // 必须拿到原父会话的活引用，终态 ExternalEvent 才有投递对象——此前恒 None，
+        // 续聊结果在 notifyParentAndStop 的 None 分支被静默丢弃。
+        parentRef = parentRef,
+        wsSend = None,
+        parentSessionId = Some(record.parentSessionId),
+        rootSessionId = record.parentSessionId
+      )
+      .map {
+        case Left(err) => Left(err)
+        case Right((newId, _)) =>
+          record.taskId.foreach { tid =>
+            scala.util.Try(
+              TaskLedgerStore
+                .open()
+                .appendNoteSync(
+                  tid,
+                  s"Mail supplement → continued as $newId",
+                  from = TaskLedgerHistory.Origins.Nebula,
+                  actor = TaskLedgerHistory.Actors.Nebula
+                )
             )
+          }
+          val legacy =
+            if id != newId then s" (the finished instance $id stays archived; this is a fresh session)" else ""
+          val parentLiveNote = parentRef match
+            // 父不 live：立即说破（Mail 时点可见），终态还有监督者兜底告警——双端都不静默。
+            case None =>
+              s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now, so this continuation's " +
+                "result CANNOT be delivered back to it automatically — when the session finishes the outcome is logged loudly " +
+                "and recorded in the task panel instead of being injected."
+            case Some(_) => ""
+          Right(
+            s"[delegate #$id] Instance was not live — your message CONTINUED the delegate as a fresh session $newId$legacy, same workspace and task ledger. Its result is delivered back when it finishes.$parentLiveNote"
           )
-        }
-        val legacy = if id != newId then s" (the finished instance $id stays archived; this is a fresh session)" else ""
-        Right(
-          s"[delegate #$id] Instance was not live — your message CONTINUED the delegate as a fresh session $newId$legacy, same workspace and task ledger. Its result is delivered back when it finishes."
-        )
-    }
+      }
+  end continueDelegate
 
   // ============================================================
   // 附件面路线 A——`attachments` 通用附件面
@@ -1477,42 +1572,46 @@ $message"""
   // 与退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、
   // `RestApiRoutes` 的队列检视/取消端点 —— 禁碰）。摘除属另议。
 
-  /** The `[task #N] …` receipt header of the project leg (task-continuation): the ordinary (non-revived) face is byte-for-byte the historical string;
-    * the revive face reports a verbatim continuation line — `前态=` carries the
-    * ACTUAL prior state (`completed` | `closed`), and the Chinese literal is the
-    * author-given receipt text quoted as-is (the one intentional non-English string in
-    * this batch). */
+  /**
+   * The `[task #N] …` receipt header of the project leg (task-continuation): the ordinary (non-revived) face is byte-for-byte the historical string;
+   * the revive face reports a verbatim continuation line — `前态=` carries the
+   * ACTUAL prior state (`completed` | `closed`), and the Chinese literal is the
+   * author-given receipt text quoted as-is (the one intentional non-English string in
+   * this batch).
+   */
   private def receiptHeader(taskId: String, address: String, revivedPrior: Option[String]): String =
     revivedPrior match
       case Some(prior) => s"[task #$taskId] Task 上下文已继承（前态=$prior，已重启）· dispatcher re-mounted"
-      case None        => s"[task #$taskId] Project '$address' dispatcher triggered"
+      case None => s"[task #$taskId] Project '$address' dispatcher triggered"
 
-  /** #28 阶段 0 §3.2：Mail(→project) 触发分发器（试点期新旧并存）。
-    * queue/immediate 两个入口共用——address 是已挂载 project → 返回
-    * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
-    * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
-    * Node results are delivered along out edges (§2.7), never back through Mail.
-    *
-    * -- ruling c①: **an explicit parameter, no address-syntax
-    * extension**) --
-    * Semantics (the "first Mail" concept is gone):
-    *   ① **without** `task` ⇒ treated as creating a dispatcher: the engine **creates a task
-    *      automatically** and spawns it, and the receipt header returns the **task number**
-    *      (the caller continues from it);
-    *   ② **with** `task` ⇒ **continue** that task's dispatcher (active ⇒ inject / inactive ⇒
-    *      spawn or inject per the slot table), 🔴 **never create a new one**;
-    *   ③ **with** `task` pointing at a **terminal** task (`completed` / `closed`) ⇒ REVIVE
-    *      (task-continuation ruling): the entry
-    *      flips back to `open` ([[TaskLedgerStore.reviveSync]] — state flip + change-history
-    *      event + the verbatim note line), a **fresh** dispatcher session is
-    *      mounted (`TriggerDispatcher(revive = true)` — residue slots are evicted inside
-    *      the single actor, never reused), and the receipt header reports
-    *      `Task 上下文已继承（前态=<prior>，已重启）· dispatcher re-mounted`;
-    *   ④ `task` pointing at a **non-existent / pruned** task ⇒ **refused** + a readable
-    *      reason (fail-closed — the non-continuable face is unchanged).
-    * Also: after a successful delivery the engine **appends the Mail body as one record on
-    * that task's note timeline** (structured: `from` + timestamp + body; the only write
-    * path, and the tool layer has no note parameter). */
+  /**
+   * #28 阶段 0 §3.2：Mail(→project) 触发分发器（试点期新旧并存）。
+   * queue/immediate 两个入口共用——address 是已挂载 project → 返回
+   * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
+   * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
+   * Node results are delivered along out edges (§2.7), never back through Mail.
+   *
+   * -- ruling c①: **an explicit parameter, no address-syntax
+   * extension**) --
+   * Semantics (the "first Mail" concept is gone):
+   *   ① **without** `task` ⇒ treated as creating a dispatcher: the engine **creates a task
+   *      automatically** and spawns it, and the receipt header returns the **task number**
+   *      (the caller continues from it);
+   *   ② **with** `task` ⇒ **continue** that task's dispatcher (active ⇒ inject / inactive ⇒
+   *      spawn or inject per the slot table), 🔴 **never create a new one**;
+   *   ③ **with** `task` pointing at a **terminal** task (`completed` / `closed`) ⇒ REVIVE
+   *      (task-continuation ruling): the entry
+   *      flips back to `open` ([[TaskLedgerStore.reviveSync]] — state flip + change-history
+   *      event + the verbatim note line), a **fresh** dispatcher session is
+   *      mounted (`TriggerDispatcher(revive = true)` — residue slots are evicted inside
+   *      the single actor, never reused), and the receipt header reports
+   *      `Task 上下文已继承（前态=<prior>，已重启）· dispatcher re-mounted`;
+   *   ④ `task` pointing at a **non-existent / pruned** task ⇒ **refused** + a readable
+   *      reason (fail-closed — the non-continuable face is unchanged).
+   * Also: after a successful delivery the engine **appends the Mail body as one record on
+   * that task's note timeline** (structured: `from` + timestamp + body; the only write
+   * path, and the tool layer has no note parameter).
+   */
   private def routeToProject(
     address: String,
     message: String,
@@ -1552,18 +1651,26 @@ $message"""
                 // traveled as the task id -- slot keys poisoned, appendNoteSync missed,
                 // and every session attached from the receipt got a TaskInfo
                 // TASK_NOT_FOUND.)
-                IO.blocking(ledger.createSyncReturningId(
-                  title = s"$address — ${message.take(120).replace("\n", " ")}",
-                  actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher)).map {
+                IO.blocking(
+                  ledger.createSyncReturningId(
+                    title = s"$address — ${message.take(120).replace("\n", " ")}",
+                    actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher
+                  )
+                ).map {
                   case Left(err) => Left(err)
                   case Right(id) => Right((id, None))
                 }
               case Some(tid) =>
                 IO.blocking(ledger.findSync(tid.stripPrefix("#").trim)).flatMap {
                   case None =>
-                    IO.pure(Left(ToolError(
-                      s"Mail: no task '#${tid.stripPrefix("#")}' in the ledger — it was never created (or it was pruned after reaching " +
-                        s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})")))
+                    IO.pure(
+                      Left(
+                        ToolError(
+                          s"Mail: no task '#${tid.stripPrefix("#")}' in the ledger — it was never created (or it was pruned after reaching " +
+                            s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})"
+                        )
+                      )
+                    )
                   case Some(entry) if entry.status != nebflow.core.project.TaskLedgerStore.Status.Open =>
                     // Revive branch (the old TASK_STATUS terminal-refusal lived here —
                     // both terminal states (`completed` and `closed`)
@@ -1571,7 +1678,7 @@ $message"""
                     // pruned face above stays an explicit error.
                     IO.blocking(ledger.reviveSync(entry.id)).map {
                       case Left(err) => Left(err)
-                      case Right(_)  => Right((entry.id, Some(entry.status)))
+                      case Right(_) => Right((entry.id, Some(entry.status)))
                     }
                   case Some(entry) => IO.pure(Right((entry.id, None)))
                 }
@@ -1592,17 +1699,26 @@ $message"""
                 // the root-injection side, not on a message type here).
                 mailAttribution("info", ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
                   (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
-                    message, rootSid, ProjectActor.SourceTask, Some(attribution), Some(taskIdStr),
-                    revive = revivedPrior.isDefined)).void *>
+                    message,
+                    rootSid,
+                    ProjectActor.SourceTask,
+                    Some(attribution),
+                    Some(taskIdStr),
+                    revive = revivedPrior.isDefined
+                  )).void *>
                     // Automatic note append (ruling n: the only write path is engine-side,
                     // never through the tool layer): the Mail body becomes one record on that
                     // task's note timeline. A history-append failure does not fail the main
                     // delivery (the Mail is already sent) but it **must be stated explicitly**
                     // (never silently).
-                    IO.blocking(ledger.appendNoteSync(
-                      taskIdStr, message,
-                      from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
-                      actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula)) *>
+                    IO.blocking(
+                      ledger.appendNoteSync(
+                        taskIdStr,
+                        message,
+                        from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
+                        actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
+                      )
+                    ) *>
                     IO.pure(Some(Right(receiptHeader(taskIdStr, address, revivedPrior))))
                 }
             }
@@ -1771,7 +1887,8 @@ $message"""
    * (the tunnel side logs WARN and ignores `agent_mail` frames), but the **visibility is not
    * reverted** — the same-machine injection path and the specs still go through this single
    * point (a second copy of the same expression is forbidden: two copies always drift). Zero
-   * semantic change, zero authorization-face change. */
+   * semantic change, zero authorization-face change.
+   */
   private[nebflow] def resolveRoots(
     res: AgentRuntimePort,
     senderSessionId: String,

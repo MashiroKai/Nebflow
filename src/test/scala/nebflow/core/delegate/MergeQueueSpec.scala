@@ -48,6 +48,7 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   /** 收单 actor：把收到的 UserInput 记进共享缓冲（text + replyTo ref 逐条留存）。 */
   private class Sink(records: ListBuffer[(String, Option[ActorRef[AgentEvent]])]) extends Behavior[AgentCommand]:
+
     def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
       msg match
         case AgentCommand.UserInput(text, replyTo, _, _, _, source, _, _, _, _, _, _, _) =>
@@ -61,18 +62,22 @@ class MergeQueueSpec extends CatsEffectSuite:
   private val sups = scala.collection.mutable.Map.empty[String, ActorRef[AgentEvent]]
 
   private def entry(
-      system: ActorSystem,
-      records: ListBuffer[(String, Option[ActorRef[AgentEvent]])],
-      delegateId: String,
-      projectKey: String,
-      readyAt: Long,
-      taskId: Option[String] = Some("31")
+    system: ActorSystem,
+    records: ListBuffer[(String, Option[ActorRef[AgentEvent]])],
+    delegateId: String,
+    projectKey: String,
+    readyAt: Long,
+    taskId: Option[String] = Some("31")
   ): IO[MergeQueue.Entry] =
     for
       child <- system.spawn(new Sink(records), s"child-$delegateId")
-      sup <- system.spawn(new Behavior[AgentEvent]:
-        def receive(ctx: nebflow.actor.ActorContext[AgentEvent], msg: AgentEvent): IO[Behavior[AgentEvent]] = IO.pure(this)
-      , s"sup-$delegateId")
+      sup <- system.spawn(
+        new Behavior[AgentEvent]:
+          def receive(ctx: nebflow.actor.ActorContext[AgentEvent], msg: AgentEvent): IO[Behavior[AgentEvent]] =
+            IO.pure(this)
+        ,
+        s"sup-$delegateId"
+      )
     yield
       sups(delegateId) = sup
       MergeQueue.Entry(
@@ -115,8 +120,15 @@ class MergeQueueSpec extends CatsEffectSuite:
       both = records.toList
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      assertEquals(first.size, 1, "single-flight: only the FIRST injected entry's reminder may appear before the dequeue")
-      assert(first.head._1.contains("<system-reminder>"), "the merge reminder must be a system-reminder wrapped injection")
+      assertEquals(
+        first.size,
+        1,
+        "single-flight: only the FIRST injected entry's reminder may appear before the dequeue"
+      )
+      assert(
+        first.head._1.contains("<system-reminder>"),
+        "the merge reminder must be a system-reminder wrapped injection"
+      )
       assertEquals(
         first.head._2,
         Some(sups("d-late")),
@@ -124,14 +136,24 @@ class MergeQueueSpec extends CatsEffectSuite:
       )
       // 第二次注入 = readyAt 更早的 d-early（若实现按入队序，这里会拿到 d-early 之外的东西或保持等待）
       assertEquals(both.size, 2, "after the holder's terminal the queued entry must be injected (pump)")
-      assert(both(1)._1.contains("delegate/d-early"), s"the SECOND merge turn must be d-early (readyAt rank), got: ${both(1)._1.take(120)}")
+      assert(
+        both(1)._1.contains("delegate/d-early"),
+        s"the SECOND merge turn must be d-early (readyAt rank), got: ${both(1)._1.take(120)}"
+      )
       assertEquals(both(1)._2, Some(sups("d-early")), "the released entry's turn targets its own supervisor")
-      assertEquals(chainLines("reminder-sent").size, 2, "both injections must be audited as reminder-sent ChainStore lines")
+      assertEquals(
+        chainLines("reminder-sent").size,
+        2,
+        "both injections must be audited as reminder-sent ChainStore lines"
+      )
+    end for
   }
 
   // ── ② 单飞行（同项目第二并入队不注入） ──────────────────────────────
 
-  test("② single-flight per project: a second ready-to-merge in the SAME project queues without injection until the in-flight merge terminates") {
+  test(
+    "② single-flight per project: a second ready-to-merge in the SAME project queues without injection until the in-flight merge terminates"
+  ) {
     val system = ActorSystem(s"mq-2-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     for
@@ -151,11 +173,14 @@ class MergeQueueSpec extends CatsEffectSuite:
       assert(afterRelease(1)._1.contains("delegate/d-b"), "the released entry is the queued one")
       assertEquals(afterRelease(1)._2, Some(sups("d-b")), "the released entry's turn targets its own supervisor")
       assert(MergeQueue.find("d-a").isEmpty, "the terminal entry is dequeued")
+    end for
   }
 
   // ── ③ 跨项目并行 ─────────────────────────────────────────────────────
 
-  test("③ cross-project: two different projectKeys each inject immediately (per-project single-flight never blocks the other)") {
+  test(
+    "③ cross-project: two different projectKeys each inject immediately (per-project single-flight never blocks the other)"
+  ) {
     val system = ActorSystem(s"mq-3-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     for
@@ -173,7 +198,9 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   // ── ④ 合并指令文本 ───────────────────────────────────────────────────
 
-  test("④ merge brief pins the direction: git -C <baseWs> merge --no-ff <branch>, system-reminder wrapped, conflict = STOP") {
+  test(
+    "④ merge brief pins the direction: git -C <baseWs> merge --no-ff <branch>, system-reminder wrapped, conflict = STOP"
+  ) {
     val system = ActorSystem(s"mq-4-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     for
@@ -181,10 +208,20 @@ class MergeQueueSpec extends CatsEffectSuite:
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       val brief = MergeQueue.mergeBriefFor(e)
-      assert(brief.startsWith("<system-reminder>"), "merge brief must be a system-reminder injection (S12: node-reminder same channel)")
-      assert(brief.contains(s"git -C ${e.baseWs} merge --no-ff ${e.branch}"), "the exact single command must be spelled out (worktree leg: direction pinned to the BASE workspace)")
-      assert(brief.toLowerCase.contains("stop"), "conflict/refusal must instruct a clean stop (no resolution, no force)")
+      assert(
+        brief.startsWith("<system-reminder>"),
+        "merge brief must be a system-reminder injection (S12: node-reminder same channel)"
+      )
+      assert(
+        brief.contains(s"git -C ${e.baseWs} merge --no-ff ${e.branch}"),
+        "the exact single command must be spelled out (worktree leg: direction pinned to the BASE workspace)"
+      )
+      assert(
+        brief.toLowerCase.contains("stop"),
+        "conflict/refusal must instruct a clean stop (no resolution, no force)"
+      )
       assert(brief.contains(e.baseBranch), "the target base branch must be named")
+    end for
   }
 
   // ── ⑤ 幂等与审计 ─────────────────────────────────────────────────────

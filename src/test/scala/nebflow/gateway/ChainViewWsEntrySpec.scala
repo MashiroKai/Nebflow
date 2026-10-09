@@ -58,6 +58,7 @@ class ChainViewWsEntrySpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"chainview ws entry spec agent","tools":[],"category":"standalone"}"""
@@ -99,6 +100,10 @@ class ChainViewWsEntrySpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt)
     yield Rig(rt, ws, res)
 
+    end for
+
+  end mount
+
   private def withRig[A](name: String)(f: Rig => IO[A]): IO[A] =
     val system = ActorSystem(s"chainview-ws-$name-${scala.util.Random.nextInt(100000)}")
     for
@@ -113,24 +118,27 @@ class ChainViewWsEntrySpec extends CatsEffectSuite:
   private def linearChain(rig: Rig): IO[Unit] =
     rig.rt.store
       .mutate(s =>
-        s.copy(nodes = s.nodes ++ List(
-          "n-a" -> NodeDef(
-            id = "n-a",
-            name = "n-a",
-            agent = "general",
-            status = NodeLifecycle.Pending,
-            out = List(OutEdge("n-b")),
-            createdAt = 1000L
-          ),
-          "n-b" -> NodeDef(
-            id = "n-b",
-            name = "n-b",
-            agent = "general",
-            status = NodeLifecycle.Pending,
-            in = List("n-a"),
-            createdAt = 2000L
-          )
-        ).toMap))
+        s.copy(nodes =
+          s.nodes ++ List(
+            "n-a" -> NodeDef(
+              id = "n-a",
+              name = "n-a",
+              agent = "general",
+              status = NodeLifecycle.Pending,
+              out = List(OutEdge("n-b")),
+              createdAt = 1000L
+            ),
+            "n-b" -> NodeDef(
+              id = "n-b",
+              name = "n-b",
+              agent = "general",
+              status = NodeLifecycle.Pending,
+              in = List("n-a"),
+              createdAt = 2000L
+            )
+          ).toMap
+        )
+      )
       .void
 
   private def statusOf(rig: Rig, id: String): IO[String] =

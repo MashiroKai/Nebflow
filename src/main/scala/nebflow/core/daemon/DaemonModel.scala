@@ -45,6 +45,7 @@ case class DaemonConfig(
 )
 
 object DaemonConfig:
+
   /**
    * Derived encoder, with the `configPanel` key DROPPED when it is None:
    *      a panel-less config must re-serialize byte-for-byte as it always did

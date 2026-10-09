@@ -247,6 +247,24 @@ private[agent] object AgentFinishTurn:
     // 拦截也复用此收尾——queue 延迟投递但本 turn 正常结束（Done/持久化/debt
     // 照常；pendingMailQueueCount 保留，子 agent 完成事件驱动的下一次
     // finishTurnCont 会重检 gate 再 drain）。
+    // ── 乒乓换入腿（主会话无感上下文压缩一期，2026-10-09 spec §D2-2/§D3）──────
+    // sReadyPending 在位 ⇒ 本 returnToIdle 即轮边界（finishTurn 落盘后、下一件
+    // 输入 dispatch 前）：三步原子换入在本 IO 链内联执行（构建→durable 持久化→
+    // 指针切换，AgentPingpong.executeSwap）。landed=true ⇒ 换入 durable 写已落
+    // S+Δ，回合收尾的常规存盘被跳过（防换入前的旧列表迟到回写覆盖换入结果；换入
+    // 后的每次轮末存盘天然携带 S+Δ 自愈）。landed=false（§E-5/6 弃换）⇒ 照常走
+    // 原存盘。非 pingpong 会话（sReadyPending 恒 None）⇒ None，原路径逐字节不变。
+    // 队列 drain 分支（事件/即时件/邮件投递）不在此换——sReadyPending 存活到该
+    // 注入轮结束后的下一个 returnToIdle（同为轮边界，工具配对安全；S 不丢）。
+    final case class BoundarySwap(landed: Boolean, state: AgentState)
+    def pingpongBoundarySwap: IO[Option[BoundarySwap]] =
+      (state.pingpong.sReadyPending, state.sessionId) match
+        case (Some(ready), Some(sid)) =>
+          AgentPingpong
+            .executeSwap(agentDef, resources, depth, state, sid, ready)
+            .map(o => Some(BoundarySwap(o.landed, o.state)))
+        case _ => IO.pure(None)
+
     def returnToIdle: IO[Behavior[AgentCommand]] =
       val effectiveInputTokens = state.latestUsage
         .map(_.inputTokens)
@@ -302,15 +320,19 @@ private[agent] object AgentFinishTurn:
           }
       for
         _ <- emitDoneIO
-        _ <- state.sessionId.fold(IO.unit)(sid =>
-          ctx.forkTurn(
-            (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
-              resources.sessionStore.flushIndex)
-              .handleErrorWith(e =>
-                NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
+        swapDone <- pingpongBoundarySwap
+        _ <- swapDone match
+          case Some(s) if s.landed => IO.unit // 换入 durable 写已落 S+Δ —— 常规存盘跳过
+          case _ =>
+            state.sessionId.fold(IO.unit)(sid =>
+              ctx.forkTurn(
+                (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
+                  resources.sessionStore.flushIndex)
+                  .handleErrorWith(e =>
+                    NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
+                  )
               )
-          )
-        )
+            )
         _ <-
           // #25 (THE fix): the terminal Completed must NOT fire while spawned
           // sub-agents are in flight — BackoffSupervisor.notifyParentAndStop
@@ -340,20 +362,26 @@ private[agent] object AgentFinishTurn:
           val queued = state.execution.pendingUserInputs
           if queued.isEmpty then queued else queued.tail
         val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
-        val updatedState = state
+        // 乒乓换入腿落地（2026-10-09 一期）：landed ⇒ swapBase = 换入后状态
+        // （messages = S :: drop(forkMsgCount)，乒乓位全清，latestUsage 已清，缓存
+        // v2 已失效）；弃换/未挂 ⇒ swapBase = 原 state（行为逐字）。idle 底座与
+        // 队列字段全部取自 swapBase，保持同一谱系。
+        val swapBase = swapDone.map(_.state).getOrElse(state)
+        val baseMessages = swapBase.messages
+        val updatedState = swapBase
           .copy(execution =
             ExecutionContext
-              .idle(newMessages, state.execution.turnIdx)
+              .idle(baseMessages, swapBase.execution.turnIdx)
               .copy(
                 interaction = keptInteraction,
                 // Preserve queue when compaction is in progress — CompactionComplete drains it.
-                pendingImmediateInputs = state.execution.pendingImmediateInputs,
+                pendingImmediateInputs = swapBase.execution.pendingImmediateInputs,
                 pendingUserInputs = remainingUserInputs,
                 // Sub-agent barrier: held subtask/delegate results and the
                 // outstanding count survive the turn boundary (the batch may
                 // still be running — they are injected when it completes).
-                pendingEvents = state.execution.pendingEvents,
-                outstandingSubagentResults = state.execution.outstandingSubagentResults,
+                pendingEvents = swapBase.execution.pendingEvents,
+                outstandingSubagentResults = swapBase.execution.outstandingSubagentResults,
                 // #25: parked completion debt survives the turn boundary —
                 // paid off when a later turn ends with the barrier at 0.
                 owedCompletion = owedAfter,
@@ -365,10 +393,10 @@ private[agent] object AgentFinishTurn:
                 // (`pendingMailQueueCount > 0`) is permanently false and the
                 // disk queue wedges until another MailQueued arrives. The two
                 // earlier injection branches already carry it; this tail must too.
-                pendingMailQueueCount = state.execution.pendingMailQueueCount
+                pendingMailQueueCount = swapBase.execution.pendingMailQueueCount
               )
           )
-          .withMailTurnCount(state.mailTurnCount + 1)
+          .withMailTurnCount(swapBase.mailTurnCount + 1)
         idle(agentDef, resources, depth, parentRef, updatedState)
       end for
     end returnToIdle

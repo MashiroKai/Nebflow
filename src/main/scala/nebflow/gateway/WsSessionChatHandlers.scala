@@ -38,6 +38,7 @@ private[gateway] object WsSessionChatHandlers:
 
   private[gateway] val handlers: Map[String, WsDispatch.WsHandler] = Map(
     "askUserAnswer" -> handleAskUserAnswer,
+    "askUserCancel" -> handleAskUserCancel,
     "permissionAnswer" -> handlePermissionAnswer,
     "interrupt" -> handleInterrupt,
     "restartAgent" -> handleRestartAgent,
@@ -73,21 +74,235 @@ private[gateway] object WsSessionChatHandlers:
     // 未走信封助手:sessionId 与 answers 组成 Either 元组匹配(分支语义逐处保持),非单值空串回退同形,保持原样(2026-09-24)
     (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
       case (Right(answers), Right(askSessionId)) =>
-        val answerText = answers.mkString("\n")
         val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
-        sessionStore.appendUiMessages(
-          askSessionId,
-          // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：作答行经**单一构造
-          // 点**落盘，带显式来源标记 answerOf = 被作答的 requestId ⇒ 历史恢复
-          // 取值由**数据**决定，不再靠「askUser 条目后面第一条 user 行」的邻接
-          // 启发式（该启发式在非阻塞提问/作答后继续打字的形态下会取偏 ⇒ 取样
-          // null ⇒ 历史卡被渲染成「已作答」⇒ 重放去重判据被击穿 ⇒ 同 id 双卡）。
-          List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis()))
-        ) *>
-          forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
+        // askuser-secret 批（2026-10-08，规格 §2「唯一新闸口」）：先问 hub 该卡是否
+        // 携 secret 型题——无（旧卡 / 无 requestId / hub 未装配 / 查询失败）⇒ 与
+        // 改前**逐字节同路径**；有 ⇒ 秘密槽分流（值落 sink、.ui.json 落脱敏行、
+        // hub 载荷带 stored 回执），见 [[handleSecretAwareAnswer]]。
+        secretSlotsFor(sharedResources, requestId).flatMap {
+          case Nil =>
+            // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）作答行单一构造点逐字
+            // 保留：秘密题缺席的卡与改前同形（answers-only 载荷、原样行文本）。
+            val answerText = answers.mkString("\n")
+            sessionStore.appendUiMessages(
+              askSessionId,
+              List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis()))
+            ) *>
+              forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
+          case specs => handleSecretAwareAnswer(ctx, answers, hc, requestId, askSessionId, specs)
+        }
       case _ => IO.unit
     end match
   end handleAskUserAnswer
+
+  /**
+   * askuser-secret 批（规格 §2 值通道图的本落点）：
+   *
+   *   ① 值分流：帧的 `secretSlots` 专用键（`[{idx, value}]`）逐槽调
+   *      `AskUserSecretSink.store`（0600 F1 写序；ephemeral 题进 `.otp/`）。值
+   *      **不进** `answers`、不进任何载荷字段、不进日志。
+   *   ② `.ui.json` 脱敏行：秘密槽落「已安全存储 <keyRef>（<location>）」/
+   *      「未存储：<reason>」；旧前端把值打在明文 `answers` 槽 ⇒ 落「拒收」行
+   *      （值不落盘），随后 hub 守卫拒收整卡并保留（secret-slot-mismatch）。
+   *   ③ hub 载荷：`{answers: <原样>, stored: [回执]}`——新前端线协议下秘密槽
+   *      answers 位恒空串；回执由 hub `complete` 占位化进答复槽，auditAnswer 由
+   *      hub 侧脱敏（只记 slot 数与 keyRef）。
+   *
+   * 失败面（sink 拒存）⇒ `stored:false` 回执（SecretsStore.Failure 词表，含类别
+   * 与路径、无值）随载荷上行：卡照常完成、Agent 收到 `{stored:false, reason}`，
+   * 可重问。ephemeral 题落库后顺手清扫一次过期验证码（惰性 + 活动触发，无独立
+   * 守护进程）。
+   */
+  private def handleSecretAwareAnswer(
+    ctx: WsDispatchCtx,
+    answers: List[String],
+    hc: io.circe.HCursor,
+    requestId: String,
+    askSessionId: String,
+    specs: List[SecretSlotSpec]
+  ): IO[Unit] =
+    import ctx.*
+    val slotValues: Map[Int, String] =
+      hc.downField("secretSlots")
+        .as[List[Json]]
+        .toOption
+        .getOrElse(Nil)
+        .flatMap { s =>
+          val idx = s.hcursor.downField("idx").as[Int].toOption
+          val value = s.hcursor.downField("value").as[String].toOption.getOrElse("")
+          idx.filter(i => !value.isBlank).map(i => i -> value)
+        }
+        .toMap
+    val anyEphemeral = specs.exists(_.ephemeral)
+    def storeOne(spec: SecretSlotSpec): IO[Option[Json]] =
+      slotValues.get(spec.idx) match
+        case None => IO.pure(None) // 未作答的秘密槽：无回执，占位由 hub 留空
+        case Some(value) =>
+          nebflow.core.secrets.AskUserSecretSink
+            .store(
+              nebflow.shared.PathUtil.dataRoot,
+              nebflow.core.secrets.AskUserSecretSink.StoreRequest(
+                requestId = requestId,
+                questionIndex = spec.idx,
+                value = value,
+                nameHint = spec.secretName,
+                ephemeral = spec.ephemeral,
+                ttlSec = spec.ttlSec
+              )
+            )
+            .map {
+              case Right(r) =>
+                Some(
+                  Json.obj(
+                    "idx" -> spec.idx.asJson,
+                    "stored" -> true.asJson,
+                    "keyRef" -> r.keyRef.asJson,
+                    "location" -> r.location.asJson,
+                    "variableName" -> r.variableName.asJson
+                  )
+                )
+              case Left(f) =>
+                Some(Json.obj("idx" -> spec.idx.asJson, "stored" -> false.asJson, "reason" -> failWord(f).asJson))
+            }
+    def failWord(f: nebflow.core.secrets.SecretsStore.Failure): String = f match
+      case nebflow.core.secrets.SecretsStore.Failure.InvalidName(n, r) => s"invalid_name: $n ($r)"
+      case nebflow.core.secrets.SecretsStore.Failure.InvalidValue(n, r) => s"invalid_value: $n ($r)"
+      case nebflow.core.secrets.SecretsStore.Failure.SecretMode(n, r) => s"secret_mode: $n ($r)"
+      case nebflow.core.secrets.SecretsStore.Failure.UnknownSecret(n) => s"unknown_secret: $n"
+      case nebflow.core.secrets.SecretsStore.Failure.ManagedNamespace(n) => s"managed_namespace: $n"
+      case nebflow.core.secrets.SecretsStore.Failure.AlreadyExists(n) => s"already_exists: $n"
+      case nebflow.core.secrets.SecretsStore.Failure.Referenced(n, refs) => s"referenced: $n (${refs.mkString(",")})"
+      case nebflow.core.secrets.SecretsStore.Failure.InvalidVariableName(n, v) => s"invalid_variable_name: $n ($v)"
+      case nebflow.core.secrets.SecretsStore.Failure.Io(r) => s"io: $r"
+    val secretIdxs = specs.map(_.idx).toSet
+    // .ui.json 作答行（槽对齐，逐槽替换秘密槽；值永不落行）：秘密槽先置空，落库
+    // 回执产出后回填 keyRef/location（下方 finalRow）。
+    val rowLines: List[String] =
+      answers.indices.map { i =>
+        if !secretIdxs.contains(i) then answers.lift(i).getOrElse("")
+        else if answers.lift(i).exists(!_.isBlank) then // 旧前端把值打进了明文槽
+          "该题为安全输入题：明文作答未接收——请刷新页面后在桌面面板作答"
+        else "" // 新前端：值在 secretSlots，行文本由回执回填
+      }.toList
+    for
+      receipts <- specs.foldLeft(IO.pure(List.empty[Option[Json]])) { (acc, spec) =>
+        acc.flatMap(rs => storeOne(spec).map(rs :+ _))
+      }
+      _ <-
+        if anyEphemeral then
+          IO.blocking(nebflow.core.secrets.AskUserSecretSink.sweepExpired(nebflow.shared.PathUtil.dataRoot))
+            .handleErrorWith(_ => IO.unit)
+        else IO.unit
+      // 脱敏行内嵌 keyRef/location（storeOne 已产出回执——回填行文本）。
+      finalRow =
+        val byIdx = receipts.flatten
+          .map(r => r.hcursor.downField("idx").as[Int].toOption -> r)
+          .collect { case (Some(i), r) =>
+            i -> r
+          }
+          .toMap
+        rowLines.zipWithIndex
+          .map { (line, i) =>
+            byIdx.get(i) match
+              case Some(r) if r.hcursor.downField("stored").as[Boolean].toOption.getOrElse(false) =>
+                s"已安全存储 ${r.hcursor.downField("keyRef").as[String].getOrElse("?")}（${r.hcursor.downField("location").as[String].getOrElse("?")}）"
+              case Some(r) =>
+                s"未存储：${r.hcursor.downField("reason").as[String].getOrElse("unstorable")}"
+              case None => line
+          }
+          .mkString("\n")
+      _ <- logger.info(
+        s"askUserAnswer (secret-aware) requestId=$requestId root=$askSessionId slots=${specs.size} " +
+          s"stored=${receipts.flatten.count(r => r.hcursor.downField("stored").as[Boolean].toOption.getOrElse(false))} " +
+          s"plainLeakRefused=${secretIdxs.count(i => answers.lift(i).exists(!_.isBlank))}"
+      )
+      _ <- sessionStore.appendUiMessages(
+        askSessionId,
+        // 案 B 单一构造点不变（见 legacy 腿注）；秘密槽的行文本 = 脱敏行（本批）。
+        List(UiMessage.askUserAnswer(finalRow, requestId, System.currentTimeMillis()))
+      )
+      payload = Json.obj(
+        "answers" -> answers.asJson, // 原样上行：秘密槽明文值由 hub 守卫拒收（fail-closed）
+        "stored" -> receipts.flatten.asJson
+      )
+      _ <- forwardInteractionAnswer(requestId, askSessionId, payload)
+    yield ()
+    end for
+  end handleSecretAwareAnswer
+
+  /**
+   * hub 只读查询：该 requestId 的卡携带哪些 secret 槽（空 = 无秘密题 / 槽位不在 /
+   * hub 未装配 / 查询失败——一律回落旧路径，hub 侧守卫兜底拒收明文回流）。
+   */
+  private def secretSlotsFor(sharedResources: SharedResources, requestId: String): IO[List[SecretSlotSpec]] =
+    if requestId.trim.isEmpty then IO.pure(Nil)
+    else
+      sharedResources.interactionHubRef.get.flatMap {
+        case None => IO.pure(Nil)
+        case Some(hub) =>
+          hub
+            .?[Option[List[SecretSlotSpec]]](reply => InteractionHubCommand.SecretSlotsOf(requestId, reply))
+            .map(_.getOrElse(Nil))
+            .handleErrorWith { e =>
+              nebflow.shared.NebflowLogger
+                .forName("nebflow.ws")
+                .warn(
+                  s"secret-slot lookup failed for requestId=$requestId — proceeding on the legacy path: ${e.getMessage}"
+                )
+              IO.pure(Nil)
+            }
+      }
+
+  /**
+   * askucancel 批（2026-10-08）：**取消一个仍在等待作答的 AskUser 问题**。
+   * 帧 = `{type:"askUserCancel", requestId, reason?, by?}`（requestId 必填——
+   * askUser 帧 / 工具 ack 携带的 `asknb-…`/`panel-…` id；hub 是唯一权威，无需
+   * sessionId）。执行走共享执行器 `AskUserCancelRoutes.cancelOnce`（hub
+   * `CancelRequest`：kind 闸 + 发起方终结通知 + 幂等裁决；Cancelled 时在卡片
+   * 所属会话追加 `__cancelled__` 落盘行）。结果帧（回本连接）：
+   * `{type:"askUserCancelResult", ok, requestId, state, error?}`，state ∈
+   * cancelled / unknown / not-ask-user / no-hub——重复取消与取消已答问题回
+   * `unknown`（幂等终态，不是错误面）。前端「已取消」态的实时面由 hub 广播的
+   * `askUserClosed{reason:"user-cancelled"}` 承载（既有消费点零改动；reason 文案
+   * 映射是前端位扩展点）。
+   */
+  private def handleAskUserCancel(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val hc = json.hcursor
+    val requestId = hc.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    val reason = hc.downField("reason").as[String].toOption.map(_.trim).filter(_.nonEmpty).getOrElse("user-cancelled")
+    val by = hc.downField("by").as[String].toOption.map(_.trim).filter(_.nonEmpty).getOrElse("web")
+    def resultFrame(ok: Boolean, v: AskUserCancelRoutes.Verdict): IO[Unit] =
+      wsSend(
+        v.json(requestId.getOrElse(""))
+          .deepMerge(
+            Json.obj("type" -> "askUserCancelResult".asJson, "ok" -> ok.asJson)
+          )
+      )
+    requestId match
+      case None =>
+        wsSend(
+          Json.obj(
+            "type" -> "askUserCancelResult".asJson,
+            "ok" -> false.asJson,
+            "requestId" -> "".asJson,
+            "state" -> "bad-request".asJson,
+            "error" -> "askUserCancel requires requestId".asJson
+          )
+        )
+      case Some(rid) =>
+        AskUserCancelRoutes.cancelOnce(sharedResources, sessionStore, rid, reason, by).flatMap { v =>
+          logger.info(s"askUserCancel requestId=$rid by=$by → ${v.state}") *>
+            resultFrame(v.ok, v)
+        }
+    end match
+  end handleAskUserCancel
 
   private def handlePermissionAnswer(
     ctx: WsDispatchCtx,
@@ -476,33 +691,11 @@ private[gateway] object WsSessionChatHandlers:
     import ctx.*
     val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
     command match
-      case "clear" =>
-        val clearSessionId =
-          inboundEnvelope(text).sessionId
-        logger.info("Session cleared") *>
-          sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
-          sessionStore.appendUiMessages(
-            clearSessionId,
-            List(UiMessage.System("Context cleared. LLM memory reset.", Some("slash.clearDone")))
-          ) *>
-          sharedResources.taskStore.deleteAll(clearSessionId) *>
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "taskListUpdate".asJson,
-              "tasks" -> io.circe.Json.arr(),
-              "sessionId" -> clearSessionId.asJson
-            )
-          ) *>
-          ensureAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
-      case "compact" =>
-        val compactSessionId =
-          inboundEnvelope(text).sessionId
-        val instruction =
-          parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
-        logger.info("Manual compaction triggered") *>
-          ensureAgent(compactSessionId)(ref =>
-            ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
-          )
+      // "clear" / "compact" removed (user instruction 2026-10-09 23:12): the
+      // /clear and /compact slash commands left the UI command face, so their
+      // gateway handlers are gone too. Unknown names (these included) fall
+      // through to `case _` — a silent no-op. Auto-compaction
+      // (AgentCommand.TriggerCompaction) is engine-internal and unaffected.
       case "fork" =>
         val forkSessionId =
           inboundEnvelope(text).sessionId
@@ -729,27 +922,32 @@ private[gateway] object WsSessionChatHandlers:
         IO.blocking {
           val ids = active.flatMap(_.taskId).distinct
           ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
-        }.handleErrorWith(_ => IO.pure(Map.empty[String, String])).flatMap { titles =>
-          active
-            .traverse { rec =>
-              // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-              // 字段之一；Ephemeral/无任务记录 → 0）
-              sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                  WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount),
-                    taskTitle = rec.taskId.flatMap(titles.get))
+        }.handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+          .flatMap { titles =>
+            active
+              .traverse { rec =>
+                // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                // 字段之一；Ephemeral/无任务记录 → 0）
+                sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                  sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                    WebSocketRoutes.activeAgentEntryJson(
+                      rec,
+                      meta,
+                      taskOpt.map(_.retryCount),
+                      taskTitle = rec.taskId.flatMap(titles.get)
+                    )
+                  }
                 }
               }
-            }
-            .flatMap { agents =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "activeAgents".asJson,
-                  "agents" -> agents.asJson
+              .flatMap { agents =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "activeAgents".asJson,
+                    "agents" -> agents.asJson
+                  )
                 )
-              )
-            }
-        }
+              }
+          }
       }
     }
   end handleGetActiveAgents

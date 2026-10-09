@@ -441,7 +441,9 @@ object ChainLedger:
           cancellingChains = st.cancellingChains - cid
         )
       case StatusPaused => st.copy(updatedAt = now, pausedChains = st.pausedChains.updated(cid, now))
-      case _            => st.copy(updatedAt = now, pausedChains = st.pausedChains - cid)
+      case _ => st.copy(updatedAt = now, pausedChains = st.pausedChains - cid)
+
+  end withChainControl
 
   /**
    * **链控状态读数载体**（chainview 批 2026-10-01）：链控三原语的返回面 / REST 响应体 /

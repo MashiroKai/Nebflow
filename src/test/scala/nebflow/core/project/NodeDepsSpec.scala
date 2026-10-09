@@ -1579,7 +1579,10 @@ class NodeDepsSpec extends CatsEffectSuite:
       // ── R4 防误伤：活链放行 ──
       assert(rLive.isRight, s"R4: an all-completed chain ref must STILL be accepted, got: $rLive")
       // ── R5 防误伤：failed 成员放行 + RISKY WARN ──
-      assert(rFailed.isRight, s"R5: a failed-member chain ref must be ACCEPTED (reactivatable ⇒ not dead), got: $rFailed")
+      assert(
+        rFailed.isRight,
+        s"R5: a failed-member chain ref must be ACCEPTED (reactivatable ⇒ not dead), got: $rFailed"
+      )
       assert(
         rFailed.exists(_.contains("⚠ chain 'failed-chain'")),
         s"R5: the receipt must carry the RISKY warning line, got: $rFailed"

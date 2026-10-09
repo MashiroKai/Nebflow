@@ -13,6 +13,9 @@
 // P0 范围（v1.1）：输入框引用块定高/截断/可展开（A1-A6）+ 各入口产出引用（B 组）+ 拉到根目录（E 组）。
 // 消息内引用卡片（mode='message'）+ 点击跳转 = P1/P2，本模块预留 renderRefBlock mode 分支。
 import { t } from './i18n.js';
+// imageref-media（2026-10-09 修复批）：图片文件引用的消息内面 = Pop 媒体预览卡
+// （构建器单点在 popArtifacts；popArtifacts 不回引本模块，无环）。
+import { buildImageRefMediaFace } from './popArtifacts.js';
 
 /** Stable-ish ref id (内部用，非用户可见) — refType + monotonic counter. */
 let _refSeq = 0;
@@ -170,6 +173,31 @@ export function makeReference(input) {
       content: { preview, fullText },
       meta: { icon: 'message-circle', typeLabel: t('ref.typeFriendMessage'), date },
       display: { label: t('ref.fromFriend', { name: friendName }), preview, pageBadge: date },
+    };
+  }
+
+  // quote-message 一期（spec 20261009 §3.1）：主聊天区消息引用 —— content-bearing
+  // ref（逐字镜像上方 friend-message 形态；fullText 帽 1200 由前端组装方
+  // msgQuote.js fullTextOf 截好，此处再兜一道）。稳定 id 钉在被引消息的
+  // data-msg-id 上（用户行 = clientMessageId，与引擎帧同键）。
+  if (rt === 'chat-message') {
+    const content = input.content || {};
+    const fullText = String(content.fullText || '').slice(0, 1200);
+    const preview = String(content.excerpt || previewOf('', fullText, 60));
+    return {
+      type: 'ref', refType: 'chat-message',
+      id: src.messageId ? `ref:chatmsg:${src.messageId}` : nextRefId('chatmsg'),
+      source: {
+        kind: src.kind || 'chat-message',
+        sessionId: src.sessionId || '',
+        messageId: src.messageId || '',
+        senderRole: src.senderRole || 'user',
+        senderName: src.senderName || '',
+      },
+      anchor,
+      content: { excerpt: preview, fullText },
+      meta: { icon: 'message-circle', typeLabel: t('messages.quote'), ts: (input.meta && input.meta.ts) || 0 },
+      display: { label: src.senderName ? `${src.senderName}：${preview}` : preview, preview },
     };
   }
 
@@ -415,6 +443,7 @@ function chipIcon(ref) {
     case 'document': return ICONS.document;
     case 'task': return ICONS.clipboard;
     case 'html-element': return ICONS.code;
+    case 'chat-message': return ICONS['message-circle'];
     default: return ICONS.file;
   }
 }
@@ -427,6 +456,11 @@ function chipTitle(ref) {
   const anc = ref.anchor || {};
   if (ref.refType === 'task') {
     return (`#${src.taskId != null ? src.taskId : ''} ${src.title || ''}`).trim();
+  }
+  if (ref.refType === 'chat-message') {
+    // quote-message 一期（spec §7.2）：标题 = 被引用者名：摘要（ref.display.label
+    // 已按此拼好；名字空时回落纯摘要）。
+    return ref.display?.label || ref.content?.excerpt || '';
   }
   if (ref.refType === 'document') {
     return src.title || src.fileName || (src.path || '').split('/').pop() || '';
@@ -577,7 +611,29 @@ export function buildTaskRefLine(p) {
   return line;
 }
 
+/** imageref-media（2026-10-09 修复批）：文件引用是否指向图片。与 extLabel 同一
+ *  扩展名族（png/jpg/jpeg/gif/webp，reference.js:40 的 IMG 表）＋ mimeType 图像
+ *  前缀兜底（canvas 标签引用可能 fileName 无扩展名）。非图片恒 false——文件卡
+ *  只给非图片。 */
+function isImageFileRef(ref) {
+  if (!ref || ref.refType !== 'file') return false;
+  const src = ref.source || {};
+  const base = String(src.fileName || src.title || src.path || '').split('/').pop() || '';
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return true;
+  const mime = String(src.mimeType || (ref.meta && ref.meta.mimeType) || '');
+  return mime.startsWith('image/');
+}
+
 function renderMessageRef(ref) {
+  // imageref-media（2026-10-09 修复批）：图片文件引用先分流到 Pop 媒体预览卡
+  // （buildImageRefMediaFace）。修复前本函数对 refType:'file' 一律出 att-ref-card
+  // ——图片被渲染成「文档图标 + 文件名 + IMG 角标 + 截断路径」的文件卡（用户
+  // 2026-10-09 07:45 现场报；文档图标本身 = meta.icon 'image' 无对应 ICONS 条目、
+  // refIcon 回落 ICONS.file 的二次症状）。引用身份以 dataset 留在媒体卡上
+  // （refType/refPath），点击 = openPopArtifact 开 Canvas（与 jumpRef 同族）。
+  if (isImageFileRef(ref)) return buildImageRefMediaFace(ref);
   // Task references converge to the one-line form above (same shape as the
   // injected [打回任务] collapse); file/document/html-element keep the card.
   if (ref.refType === 'task') {

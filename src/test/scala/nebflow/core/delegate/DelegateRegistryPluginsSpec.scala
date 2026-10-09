@@ -42,7 +42,10 @@ class DelegateRegistryPluginsSpec extends FunSuite:
         plugins = Some(List("backend-dev", "visual-report"))
       )
     )
-    assertEquals(DelegateRegistry.find("delegate-nebflow-abc12345").flatMap(_.plugins), Some(List("backend-dev", "visual-report")))
+    assertEquals(
+      DelegateRegistry.find("delegate-nebflow-abc12345").flatMap(_.plugins),
+      Some(List("backend-dev", "visual-report"))
+    )
   }
 
   test("an explicit empty allocation (Some(Nil)) survives the round trip — 显式空 ≠ 未分配") {

@@ -783,28 +783,62 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
   // leg => synchronous cancelNode => detachCancelledUpstream; zero background
   // races, same harness discipline as NodeCleanupLivenessSpec).
 
-  /** Cancel-leg victim fixture: the worker is RUNNING with no live fiber (NodeCancel
-    * takes the deterministic reap leg => synchronous cancelNode =>
-    * detachCancelledUpstream); the verifier is ALREADY cancelled: its own rewire to
-    * the Nebula exit destroyed its declared fail face, which is exactly the #380
-    * n-5d9070a3 shape: visible face says INVALID, alert face said nothing. */
+  /**
+   * Cancel-leg victim fixture: the worker is RUNNING with no live fiber (NodeCancel
+   * takes the deterministic reap leg => synchronous cancelNode =>
+   * detachCancelledUpstream); the verifier is ALREADY cancelled: its own rewire to
+   * the Nebula exit destroyed its declared fail face, which is exactly the #380
+   * n-5d9070a3 shape: visible face says INVALID, alert face said nothing.
+   */
   private def cancelVictimFixture(store: FlowMapStore, now: Long): IO[Unit] =
     for
-      _ <- seed(store, NodeDef(id = "n-work", name = "WORK", agent = "general", status = NodeLifecycle.Running,
-        task = Some("work"), startedAt = Some(now - 10_000), createdAt = now - 90_000))
-      _ <- seed(store, NodeDef(id = "n-ver", name = "VER", agent = "general", status = NodeLifecycle.Cancelled,
-        task = Some("judge"), in = List("n-work"), role = NodeRoles.Verifier,
-        out = List(OutEdge.nebula), result = Some("cancelled[source=user]: reason=spec"),
-        completedAt = Some(now - 5_000), createdAt = now - 60_000))
+      _ <- seed(
+        store,
+        NodeDef(
+          id = "n-work",
+          name = "WORK",
+          agent = "general",
+          status = NodeLifecycle.Running,
+          task = Some("work"),
+          startedAt = Some(now - 10_000),
+          createdAt = now - 90_000
+        )
+      )
+      _ <- seed(
+        store,
+        NodeDef(
+          id = "n-ver",
+          name = "VER",
+          agent = "general",
+          status = NodeLifecycle.Cancelled,
+          task = Some("judge"),
+          in = List("n-work"),
+          role = NodeRoles.Verifier,
+          out = List(OutEdge.nebula),
+          result = Some("cancelled[source=user]: reason=spec"),
+          completedAt = Some(now - 5_000),
+          createdAt = now - 60_000
+        )
+      )
     yield ()
 
-  private def nodeCancelTool(project: String, nodeId: String, res: SharedResources,
-                             system: ActorSystem, ws: os.Path): IO[Either[String, String]] =
-    nebflow.core.tools.NodeCancelTool.call(
-      Json.obj("project" -> Json.fromString(project), "node-id" -> Json.fromString(nodeId)).asObject.get,
-      mkCtx(res, system, ws.toString)).map(_.left.map(_.message))
+  private def nodeCancelTool(
+    project: String,
+    nodeId: String,
+    res: SharedResources,
+    system: ActorSystem,
+    ws: os.Path
+  ): IO[Either[String, String]] =
+    nebflow.core.tools.NodeCancelTool
+      .call(
+        Json.obj("project" -> Json.fromString(project), "node-id" -> Json.fromString(nodeId)).asObject.get,
+        mkCtx(res, system, ws.toString)
+      )
+      .map(_.left.map(_.message))
 
-  test("C1 cancel leg: cancelling a route-lost verifier's worker surfaces the victim in the SAME detach (exactly one verifier-route-lost scoped 'cancel detach'; the alert face was silent right before)") {
+  test(
+    "C1 cancel leg: cancelling a route-lost verifier's worker surfaces the victim in the SAME detach (exactly one verifier-route-lost scoped 'cancel detach'; the alert face was silent right before)"
+  ) {
     val ws = tempRoot / "ws-c1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"vrg-c1-${scala.util.Random.nextInt(100000)}")
@@ -817,8 +851,12 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
       keyBefore <- routeKeyOf(rt, "n-ver")
       auditBefore <- readAudit(ws)
       lostBefore = auditBefore.count(_._1 == "verifier-route-lost")
-      _ <- IO(println(s"[spec] C1 BEFORE - verifierRoute=$keyBefore ; verifier-route-lost lines=$lostBefore " +
-        "(the #380 three-nothing baseline: view face INVALID, alert face silent)"))
+      _ <- IO(
+        println(
+          s"[spec] C1 BEFORE - verifierRoute=$keyBefore ; verifier-route-lost lines=$lostBefore " +
+            "(the #380 three-nothing baseline: view face INVALID, alert face silent)"
+        )
+      )
       r <- nodeCancelTool("vrg-c1", "n-work", res, system, ws)
       work <- node(rt, "n-work")
       ver <- node(rt, "n-ver")
@@ -828,28 +866,48 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // (0) baseline (the #380 three-nothing face): the rejection state sits on the visible face while the alert face has zero lines
-      assertEquals(keyBefore, Some("lost"),
-        "precondition: the cancelled verifier already reads INVALID on the visible face (judgement D)")
-      assertEquals(lostBefore, 0, "precondition: zero verifier-route-lost lines before the cancel (the silent baseline)")
+      assertEquals(
+        keyBefore,
+        Some("lost"),
+        "precondition: the cancelled verifier already reads INVALID on the visible face (judgement D)"
+      )
+      assertEquals(
+        lostBefore,
+        0,
+        "precondition: zero verifier-route-lost lines before the cancel (the silent baseline)"
+      )
       assert(r.isRight, s"NodeCancel must succeed, got: $r")
       // (1) the existing detach semantics are untouched (R4 closeout: in-mirror prune + marker + own out -> Nebula)
       assertEquals(work.status, NodeLifecycle.Cancelled, "the worker is cancelled (existing cancel semantics)")
       assertEquals(work.out, List(OutEdge.nebula), "the worker's own out still collapses to the Nebula exit marker")
       assert(!ver.in.contains("n-work"), "the victim verifier's in-mirror of the cancelled worker is pruned (existing)")
-      assert(ver.pendingSuccession.contains("n-work"), "the victim verifier carries the pendingSuccession marker (existing)")
+      assert(
+        ver.pendingSuccession.contains("n-work"),
+        "the victim verifier carries the pendingSuccession marker (existing)"
+      )
       // (2) the NEW visibility: exactly one line for the batch, subject = the victim verifier, scope=cancel detach, actionable form rides along
-      assertEquals(lost.map(_._2).distinct, List("n-ver"),
-        s"exactly one verifier-route-lost with the VICTIM VERIFIER as subject, got ${lost.map(l => s"[${l._2}] ${l._3}")}")
-      assert(lost.forall(_._3.contains("scope=cancel detach")),
-        s"the line must carry scope=cancel detach, got ${lost.map(_._3)}")
+      assertEquals(
+        lost.map(_._2).distinct,
+        List("n-ver"),
+        s"exactly one verifier-route-lost with the VICTIM VERIFIER as subject, got ${lost.map(l => s"[${l._2}] ${l._3}")}"
+      )
+      assert(
+        lost.forall(_._3.contains("scope=cancel detach")),
+        s"the line must carry scope=cancel detach, got ${lost.map(_._3)}"
+      )
       assert(lost.forall(_._3.contains("victims=1")), "the batched closeout reports exactly one victim")
-      assert(lost.exists(_._3.contains("NODE_VERIFIER_NEEDS_ROUTE")),
-        "the actionable restore form rides along (same family shape as the retire leg)")
+      assert(
+        lost.exists(_._3.contains("NODE_VERIFIER_NEEDS_ROUTE")),
+        "the actionable restore form rides along (same family shape as the retire leg)"
+      )
       // (3) the alert face and the visible face share one criterion (judgement D single source => the two faces cannot disagree)
       assertEquals(keyAfter, Some("lost"), "the visible-face derived key agrees with the emitted alert")
+    end for
   }
 
-  test("C2 cancel leg negative matrix: a healthy-route verifier, an empty-out two-phase verifier and a non-verifier downstream all stay silent (zero event, zero WARN write)") {
+  test(
+    "C2 cancel leg negative matrix: a healthy-route verifier, an empty-out two-phase verifier and a non-verifier downstream all stay silent (zero event, zero WARN write)"
+  ) {
     val ws = tempRoot / "ws-c2"
     os.makeDir.all(ws)
     val system = ActorSystem(s"vrg-c2-${scala.util.Random.nextInt(100000)}")
@@ -858,19 +916,61 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("vrg-c2", ws, system, res, frames)
-      _ <- seed(rt.store, NodeDef(id = "n-work", name = "WORK", agent = "general", status = NodeLifecycle.Running,
-        task = Some("work"), startedAt = Some(now - 10_000), createdAt = now - 90_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-work",
+          name = "WORK",
+          agent = "general",
+          status = NodeLifecycle.Running,
+          task = Some("work"),
+          startedAt = Some(now - 10_000),
+          createdAt = now - 90_000
+        )
+      )
       // (a) a verifier with a HEALTHY fail route: the detach does not take its declared face (target stays resolvable in the active map) => not a victim
-      _ <- seed(rt.store, NodeDef(id = "n-ver", name = "VER", agent = "general", status = NodeLifecycle.Pending,
-        task = Some("judge"), in = List("n-work"), role = NodeRoles.Verifier,
-        out = List(OutEdge("n-land"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
-        createdAt = now - 60_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-ver",
+          name = "VER",
+          agent = "general",
+          status = NodeLifecycle.Pending,
+          task = Some("judge"),
+          in = List("n-work"),
+          role = NodeRoles.Verifier,
+          out = List(OutEdge("n-land"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
+          createdAt = now - 60_000
+        )
+      )
       // (b) boundary (i): an empty-out two-phase-token verifier is legal by judgement D => never a victim
-      _ <- seed(rt.store, NodeDef(id = "n-emptyout", name = "EMPTYOUT", agent = "general", status = NodeLifecycle.Pending,
-        task = Some("judge"), in = List("n-work"), role = NodeRoles.Verifier, out = Nil, createdAt = now - 50_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-emptyout",
+          name = "EMPTYOUT",
+          agent = "general",
+          status = NodeLifecycle.Pending,
+          task = Some("judge"),
+          in = List("n-work"),
+          role = NodeRoles.Verifier,
+          out = Nil,
+          createdAt = now - 50_000
+        )
+      )
       // (c) a non-verifier downstream: the role gate never flags it
-      _ <- seed(rt.store, NodeDef(id = "n-land", name = "LAND", agent = "general", status = NodeLifecycle.Pending,
-        task = Some("land"), in = List("n-work"), createdAt = now - 40_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-land",
+          name = "LAND",
+          agent = "general",
+          status = NodeLifecycle.Pending,
+          task = Some("land"),
+          in = List("n-work"),
+          createdAt = now - 40_000
+        )
+      )
       r <- nodeCancelTool("vrg-c2", "n-work", res, system, ws)
       work <- node(rt, "n-work")
       ver <- node(rt, "n-ver")
@@ -887,9 +987,16 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
         assert(!nd.in.contains("n-work"), s"$id: the in-mirror of the cancelled worker must be pruned (existing)")
         assert(nd.pendingSuccession.contains("n-work"), s"$id: the pendingSuccession marker must land (existing)")
       // zero victims => zero event, zero alert: healthy route, two-phase token and non-verifier all silent
-      assertEquals(audit.count(_._1 == "verifier-route-lost"), 0,
-        s"zero verifier-route-lost lines in the whole audit, got ${audit.filter(_._1 == "verifier-route-lost")}")
-      assertEquals(verKey, None,
-        "the healthy verifier's route still resolves (cancelled-but-present target) => no rejection-state key")
+      assertEquals(
+        audit.count(_._1 == "verifier-route-lost"),
+        0,
+        s"zero verifier-route-lost lines in the whole audit, got ${audit.filter(_._1 == "verifier-route-lost")}"
+      )
+      assertEquals(
+        verKey,
+        None,
+        "the healthy verifier's route still resolves (cancelled-but-present target) => no rejection-state key"
+      )
+    end for
   }
 end VerifierRouteGuardSpec

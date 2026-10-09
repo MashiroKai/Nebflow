@@ -467,21 +467,31 @@ class PromptSectionsSpec extends munit.FunSuite:
   test("order-360 段：段长门 ≤400 B（实测 388 B）+ 输出契约两要求各有一句"):
     withIsolatedDataRoot {
       val bytes = NodeSessionAlwaysOnSection.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
-      assert(bytes <= NodeSessionAlwaysOnSectionMaxBytes,
-        s"段长门：$bytes B 超 ${NodeSessionAlwaysOnSectionMaxBytes} B（本段进每次 node LLM 调用）")
+      assert(
+        bytes <= NodeSessionAlwaysOnSectionMaxBytes,
+        s"段长门：$bytes B 超 ${NodeSessionAlwaysOnSectionMaxBytes} B（本段进每次 node LLM 调用）"
+      )
       // 要求 1：末条输出 = 节点结果 / 自身完成汇报
-      assert(NodeSessionAlwaysOnSection.contains("Your last output is the node result"),
-        s"要求 1（末条输出 = 节点结果）:\n$NodeSessionAlwaysOnSection")
-      assert(NodeSessionAlwaysOnSection.contains("your own completion report"),
-        s"要求 1（= 自身完成汇报）:\n$NodeSessionAlwaysOnSection")
+      assert(
+        NodeSessionAlwaysOnSection.contains("Your last output is the node result"),
+        s"要求 1（末条输出 = 节点结果）:\n$NodeSessionAlwaysOnSection"
+      )
+      assert(
+        NodeSessionAlwaysOnSection.contains("your own completion report"),
+        s"要求 1（= 自身完成汇报）:\n$NodeSessionAlwaysOnSection"
+      )
       // 要求 2：自包含、禁指代收尾
       assert(NodeSessionAlwaysOnSection.contains("self-contained"), "要求 2（自包含）")
       assert(NodeSessionAlwaysOnSection.contains("\"see above\""), "要求 2（点名禁 see above）")
       // 段仍是指针：权威位不变（node_report description + 协议脚注）
-      assert(NodeSessionAlwaysOnSection.contains("`node_report` description")
-        && NodeSessionAlwaysOnSection.contains("Node protocol footnote"), "指针目标不得悬空")
+      assert(
+        NodeSessionAlwaysOnSection.contains("`node_report` description")
+          && NodeSessionAlwaysOnSection.contains("Node protocol footnote"),
+        "指针目标不得悬空"
+      )
       // order-360 段在节点身份下仍注入（条件维度不变）
-      val blocks = buildConditionalBlocks(PromptContext(availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name)))
+      val blocks =
+        buildConditionalBlocks(PromptContext(availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name)))
       assert(blocks.contains("## Node terminal report"), s"order-360 段注入丢失：$blocks")
       assert(blocks.contains("Your last output is the node result"), s"段正文注入丢失：$blocks")
     }

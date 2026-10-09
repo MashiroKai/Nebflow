@@ -247,7 +247,7 @@ test('isBgAgentId admits node-/dispatcher- (bg-agent popup pipeline gate)', asyn
   expect(await isBgAgentId(page, 'sess-1')).toBe(false);
 });
 
-test('node/dispatcher rows render in the dropdown (name · task + Flow kind chip)', async ({ page }) => {
+test('node/dispatcher rows stay OUT of the dropdown (C1 过渡纪律 · delegate-ui 批：桶内全量、陈列面零渲染零计数)', async ({ page }) => {
   await bootApp(page);
 
   await inject(page, {
@@ -267,10 +267,17 @@ test('node/dispatcher rows render in the dropdown (name · task + Flow kind chip
     const v = s.getActiveView && s.getActiveView();
     if (v && v.dom && v.dom.bgagentIndicatorEl) v.dom.bgagentIndicatorEl.click();
   });
+  // C1 过渡呈现纪律（delegate-ui 批 2026-10-08 · 定稿蓝本 §1.2）：node-*/dispatcher-*
+  // 是 delegate 编排的引擎内部件——过渡期在册但不入一等陈列面：行零渲染、badge 零计数。
   const rows = page.locator('#bgagent-dropdown .bg-task-row');
-  await expect(rows).toHaveCount(1);
-  // 名称行: name · task; kind 徽章: Flow
-  await expect(rows.first()).toContainText('test-agent');
-  await expect(rows.first()).toContainText('调研');
-  await expect(rows.first()).toContainText('Flow');
+  await expect(rows).toHaveCount(0);
+  // 修订批九点⑤（2026-10-09）：空态自动收起——无内容不渲染空态区块（头计数 ·0 即真值）。
+  await expect(page.locator('#bgagent-dropdown .bg-dropdown-empty')).toHaveCount(0);
+  // 数据侧在册不变（快照/管理面照读全量桶）
+  const bucketHas = await page.evaluate(async (sid) => {
+    const s = (await import('/js/state.js')).default;
+    const bucket = s.sessionBgAgents[Object.keys(s.sessionBgAgents)[0]] || {};
+    return Boolean(bucket[sid]);
+  }, 'node-42');
+  expect(bucketHas).toBe(true);
 });

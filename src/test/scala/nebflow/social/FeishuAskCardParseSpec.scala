@@ -19,17 +19,24 @@ import nebflow.social.outbound.{AskPromptCodec, PromptAction, PromptView, Prompt
  */
 class FeishuAskCardParseSpec extends FunSuite:
 
-  private def view(idx: Int, q: String, opts: List[String], allowOther: Boolean = true,
-      multiple: Boolean = false): PromptView =
+  private def view(
+    idx: Int,
+    q: String,
+    opts: List[String],
+    allowOther: Boolean = true,
+    multiple: Boolean = false
+  ): PromptView =
     PromptView(idx, q, opts.map(PromptOption(_)), allowOther = allowOther, multiple = multiple)
 
   private def payload(rid: String, qi: Int, oi: Int, ns: String = "ask", extra: Map[String, Json] = Map.empty): Json =
-    Json.obj(
-      "nf" -> Json.fromString(ns),
-      "rid" -> Json.fromString(rid),
-      "qi" -> Json.fromInt(qi),
-      "oi" -> Json.fromInt(oi)
-    ).deepMerge(Json.obj(extra.toSeq*))
+    Json
+      .obj(
+        "nf" -> Json.fromString(ns),
+        "rid" -> Json.fromString(rid),
+        "qi" -> Json.fromInt(qi),
+        "oi" -> Json.fromInt(oi)
+      )
+      .deepMerge(Json.obj(extra.toSeq*))
 
   // ───────────────────────── T-4: callback → action, with named refusals ─────────────────────────
 
@@ -49,38 +56,73 @@ class FeishuAskCardParseSpec extends FunSuite:
     val r = FeishuAskCard.parse(payload("ask-gone", 0, 0), knownRequestIds = Set("ask-1"))
     assertEquals(r.left.toOption.map(_.reason), Some("unknown-request-id"))
     // an empty id is as unknown as a stale one
-    assertEquals(FeishuAskCard.parse(payload("", 0, 0), knownRequestIds = Set("ask-1")).left.toOption.map(_.reason),
-      Some("unknown-request-id"))
+    assertEquals(
+      FeishuAskCard.parse(payload("", 0, 0), knownRequestIds = Set("ask-1")).left.toOption.map(_.reason),
+      Some("unknown-request-id")
+    )
   }
 
   test("T-4d a callback from another chat is refused, not answered into the wrong conversation") {
-    val ok = FeishuAskCard.parse(payload("ask-1", 0, 0), knownRequestIds = Set("ask-1"),
-      expectedChatId = Some("oc_a"), callbackChatId = Some("oc_a"))
+    val ok = FeishuAskCard.parse(
+      payload("ask-1", 0, 0),
+      knownRequestIds = Set("ask-1"),
+      expectedChatId = Some("oc_a"),
+      callbackChatId = Some("oc_a")
+    )
     assertEquals(ok, Right(PromptAction.Pick(0, 0)))
-    val bad = FeishuAskCard.parse(payload("ask-1", 0, 0), knownRequestIds = Set("ask-1"),
-      expectedChatId = Some("oc_a"), callbackChatId = Some("oc_b"))
+    val bad = FeishuAskCard.parse(
+      payload("ask-1", 0, 0),
+      knownRequestIds = Set("ask-1"),
+      expectedChatId = Some("oc_a"),
+      callbackChatId = Some("oc_b")
+    )
     assertEquals(bad.left.toOption.map(_.reason), Some("chat-mismatch"))
   }
 
   test("T-4e out-of-range indices and repeats are refused by name (never clamped)") {
-    assertEquals(FeishuAskCard.parse(payload("ask-1", -1, 0), knownRequestIds = Set("ask-1"))
-      .left.toOption.map(_.reason), Some("index-out-of-range"))
-    assertEquals(FeishuAskCard.parse(payload("ask-1", 0, -2), knownRequestIds = Set("ask-1"))
-      .left.toOption.map(_.reason), Some("index-out-of-range"))
-    assertEquals(FeishuAskCard.parse(payload("ask-1", 0, 0), knownRequestIds = Set("ask-1"),
-      alreadyAnswered = Set(0)).left.toOption.map(_.reason), Some("duplicate"))
+    assertEquals(
+      FeishuAskCard.parse(payload("ask-1", -1, 0), knownRequestIds = Set("ask-1")).left.toOption.map(_.reason),
+      Some("index-out-of-range")
+    )
+    assertEquals(
+      FeishuAskCard.parse(payload("ask-1", 0, -2), knownRequestIds = Set("ask-1")).left.toOption.map(_.reason),
+      Some("index-out-of-range")
+    )
+    assertEquals(
+      FeishuAskCard
+        .parse(payload("ask-1", 0, 0), knownRequestIds = Set("ask-1"), alreadyAnswered = Set(0))
+        .left
+        .toOption
+        .map(_.reason),
+      Some("duplicate")
+    )
     // a non-integer index is a refusal, not a default to question 0
-    assertEquals(FeishuAskCard.parse(Json.obj(
-      "nf" -> Json.fromString("ask"), "rid" -> Json.fromString("ask-1"),
-      "qi" -> Json.fromString("zero"), "oi" -> Json.fromInt(0)),
-      knownRequestIds = Set("ask-1")).left.toOption.map(_.reason), Some("index-out-of-range"))
+    assertEquals(
+      FeishuAskCard
+        .parse(
+          Json.obj(
+            "nf" -> Json.fromString("ask"),
+            "rid" -> Json.fromString("ask-1"),
+            "qi" -> Json.fromString("zero"),
+            "oi" -> Json.fromInt(0)
+          ),
+          knownRequestIds = Set("ask-1")
+        )
+        .left
+        .toOption
+        .map(_.reason),
+      Some("index-out-of-range")
+    )
   }
 
   test("T-4f the reserved index is the free-text action, and it carries the trimmed input") {
-    val r = FeishuAskCard.parse(payload("ask-1", 0, AskPromptCodec.OtherOptionIndex,
-      extra = Map("input_value" -> Json.fromString("  自定义  "))), knownRequestIds = Set("ask-1"))
+    val r = FeishuAskCard.parse(
+      payload("ask-1", 0, AskPromptCodec.OtherOptionIndex, extra = Map("input_value" -> Json.fromString("  自定义  "))),
+      knownRequestIds = Set("ask-1")
+    )
     assertEquals(r, Right(PromptAction.Other(0, "自定义")))
-    val empty = FeishuAskCard.parse(payload("ask-1", 0, AskPromptCodec.OtherOptionIndex), knownRequestIds = Set("ask-1"))
+    val empty =
+      FeishuAskCard.parse(payload("ask-1", 0, AskPromptCodec.OtherOptionIndex), knownRequestIds = Set("ask-1"))
     assertEquals(empty, Right(PromptAction.Other(0, "")))
   }
 
@@ -95,8 +137,10 @@ class FeishuAskCardParseSpec extends FunSuite:
 
   test("T-5b each question's own option label lands in its own slot") {
     val views = List(view(0, "Q0", List("A0", "A1")), view(1, "Q1", List("B0")))
-    assertEquals(AskPromptCodec.answers(views, List(PromptAction.Pick(0, 1), PromptAction.Pick(1, 0))),
-      List("A1", "B0"))
+    assertEquals(
+      AskPromptCodec.answers(views, List(PromptAction.Pick(0, 1), PromptAction.Pick(1, 0))),
+      List("A1", "B0")
+    )
   }
 
   test("T-5c a free-text answer fills the slot with the trimmed input; a blank input leaves it empty") {
@@ -144,10 +188,23 @@ class FeishuAskCardParseSpec extends FunSuite:
   test("validation names the offending index instead of failing generically") {
     val views = List(view(0, "Q0", List("A0")))
     assertEquals(AskPromptCodec.validate(views, List(PromptAction.Pick(0, 0))), Right(()))
-    assert(AskPromptCodec.validate(views, List(PromptAction.Pick(0, 3))).left.toOption.get
-      .startsWith("option-index-out-of-range"))
-    assert(AskPromptCodec.validate(views, List(PromptAction.Pick(5, 0))).left.toOption.get
-      .startsWith("question-index-out-of-range"))
+    assert(
+      AskPromptCodec
+        .validate(views, List(PromptAction.Pick(0, 3)))
+        .left
+        .toOption
+        .get
+        .startsWith("option-index-out-of-range")
+    )
+    assert(
+      AskPromptCodec
+        .validate(views, List(PromptAction.Pick(5, 0)))
+        .left
+        .toOption
+        .get
+        .startsWith("question-index-out-of-range")
+    )
     // the reserved index is never an option, so it passes the range check
     assertEquals(AskPromptCodec.validate(views, List(PromptAction.Other(0, "t"))), Right(()))
   }
+end FeishuAskCardParseSpec

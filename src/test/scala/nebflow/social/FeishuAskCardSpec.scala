@@ -17,20 +17,31 @@ import nebflow.social.outbound.{AskPromptCodec, PromptView, PromptOption}
  */
 class FeishuAskCardSpec extends FunSuite:
 
-  private def view(idx: Int, q: String, opts: List[String], allowOther: Boolean = true,
-      multiple: Boolean = false): PromptView =
+  private def view(
+    idx: Int,
+    q: String,
+    opts: List[String],
+    allowOther: Boolean = true,
+    multiple: Boolean = false
+  ): PromptView =
     PromptView(idx, q, opts.map(PromptOption(_)), allowOther = allowOther, multiple = multiple)
 
   private def values(cardJson: String): List[Json] =
     val json = parse(cardJson).toOption.get
-    json.hcursor.downField("elements").as[List[Json]].getOrElse(Nil)
+    json.hcursor
+      .downField("elements")
+      .as[List[Json]]
+      .getOrElse(Nil)
       .filter(_.hcursor.downField("tag").as[String].toOption.contains("action"))
       .flatMap(_.hcursor.downField("actions").as[List[Json]].getOrElse(Nil))
       .flatMap(_.hcursor.downField("value").focus)
 
   private def buttons(cardJson: String): List[Json] =
     val json = parse(cardJson).toOption.get
-    json.hcursor.downField("elements").as[List[Json]].getOrElse(Nil)
+    json.hcursor
+      .downField("elements")
+      .as[List[Json]]
+      .getOrElse(Nil)
       .filter(_.hcursor.downField("tag").as[String].toOption.contains("action"))
       .flatMap(_.hcursor.downField("actions").as[List[Json]].getOrElse(Nil))
 
@@ -44,13 +55,18 @@ class FeishuAskCardSpec extends FunSuite:
     assertEquals(cards.size, 1)
     val vs = values(cards.head)
     assertEquals(vs.size, 3, s"two options + the Other entry:\n${cards.head}")
-    assertEquals(vs.map(v => (field(v, "nf"), field(v, "rid"), intField(v, "qi"), intField(v, "oi"))),
+    assertEquals(
+      vs.map(v => (field(v, "nf"), field(v, "rid"), intField(v, "qi"), intField(v, "oi"))),
       List[(Option[String], Option[String], Option[Int], Option[Int])](
         (Some("ask"), Some("ask-abc"), Some(0), Some(0)),
         (Some("ask"), Some("ask-abc"), Some(0), Some(1)),
-        (Some("ask"), Some("ask-abc"), Some(0), Some(-1))))
-    assertEquals(buttons(cards.head).map(b => field(b.hcursor.downField("text").focus.get, "content")),
-      List(Some("A"), Some("B"), Some(FeishuAskCard.OtherCopy)))
+        (Some("ask"), Some("ask-abc"), Some(0), Some(-1))
+      )
+    )
+    assertEquals(
+      buttons(cards.head).map(b => field(b.hcursor.downField("text").focus.get, "content")),
+      List(Some("A"), Some("B"), Some(FeishuAskCard.OtherCopy))
+    )
   }
 
   test("T-1b the payload never carries a session id (the answer resolves it from its own ledger)") {
@@ -80,8 +96,15 @@ class FeishuAskCardSpec extends FunSuite:
 
   test("T-2b the header and title use the reviewed copy") {
     val card = FeishuAskCard.render(List(view(0, "Q", List("A"))), "ask-1").head
-    assertEquals(parse(card).toOption.get.hcursor.downField("header").downField("title")
-      .downField("content").as[String].toOption, Some(FeishuAskCard.TitleCopy))
+    assertEquals(
+      parse(card).toOption.get.hcursor
+        .downField("header")
+        .downField("title")
+        .downField("content")
+        .as[String]
+        .toOption,
+      Some(FeishuAskCard.TitleCopy)
+    )
   }
 
   // ───────────────────────── T-3: over the local caps ⇒ sequential cards ─────────────────────────
@@ -91,12 +114,17 @@ class FeishuAskCardSpec extends FunSuite:
     val cards = FeishuAskCard.render(views, "ask-over")
     assertEquals(cards.size, views.size, "one card per question once the cap is exceeded")
     cards.foreach { c =>
-      assertEquals(values(c).flatMap(v => intField(v, "qi")).distinct.size, 1,
-        s"a sequential card carries exactly one question:\n$c")
+      assertEquals(
+        values(c).flatMap(v => intField(v, "qi")).distinct.size,
+        1,
+        s"a sequential card carries exactly one question:\n$c"
+      )
     }
     // the whole set still spans every question index
-    assertEquals(cards.flatMap(c => values(c).flatMap(v => intField(v, "qi"))).distinct.sorted,
-      (0 until views.size).toList)
+    assertEquals(
+      cards.flatMap(c => values(c).flatMap(v => intField(v, "qi"))).distinct.sorted,
+      (0 until views.size).toList
+    )
   }
 
   test("T-3b too many options on one question also overflows, and the caps are local (not claimed remote)") {
@@ -104,8 +132,12 @@ class FeishuAskCardSpec extends FunSuite:
     assertEquals(FeishuAskCard.fitsOneCard(views), false)
     assertEquals(FeishuAskCard.render(views, "ask-o").size, 1, "one question still is one card")
     // exactly at the cap still fits
-    assertEquals(FeishuAskCard.fitsOneCard(
-      List(view(0, "Q", (0 until FeishuAskCard.MaxOptionsPerQuestion).toList.map(i => s"o$i")))), true)
+    assertEquals(
+      FeishuAskCard.fitsOneCard(
+        List(view(0, "Q", (0 until FeishuAskCard.MaxOptionsPerQuestion).toList.map(i => s"o$i")))
+      ),
+      true
+    )
   }
 
   test("T-3c an empty prompt renders no card at all") {
@@ -116,9 +148,18 @@ class FeishuAskCardSpec extends FunSuite:
 
   test("T-12 the text fallback triggers on a local-panel element, purely") {
     assertEquals(FeishuAskCard.needsTextFallback(List(view(0, "Q", List("A")))), false)
-    assertEquals(FeishuAskCard.needsTextFallback(List(PromptView(0, "Q", List(PromptOption("A")), dirPicker = true))), true)
-    assertEquals(FeishuAskCard.needsTextFallback(List(PromptView(0, "Q", List(PromptOption("A")), canvas = Some("/x.html")))), true)
-    assertEquals(FeishuAskCard.needsTextFallback(List(PromptView(0, "Q", List(PromptOption("A", hasPreview = true))))), true)
+    assertEquals(
+      FeishuAskCard.needsTextFallback(List(PromptView(0, "Q", List(PromptOption("A")), dirPicker = true))),
+      true
+    )
+    assertEquals(
+      FeishuAskCard.needsTextFallback(List(PromptView(0, "Q", List(PromptOption("A")), canvas = Some("/x.html")))),
+      true
+    )
+    assertEquals(
+      FeishuAskCard.needsTextFallback(List(PromptView(0, "Q", List(PromptOption("A", hasPreview = true))))),
+      true
+    )
   }
 
   test("T-12b the degraded text names the reason and numbers the options, closing with the instruction") {
@@ -160,3 +201,4 @@ class FeishuAskCardSpec extends FunSuite:
     assertEquals(views(2).options.head.hasPreview, true)
     assertEquals(AskPromptCodec.requiresLocalElements(views), true)
   }
+end FeishuAskCardSpec

@@ -1,7 +1,8 @@
 /* Combined verification harness for the 08-29 batch:
    GROUP A: ② onboarding sealed (flag off -> zero UI; flag on -> greeting renders)
-   GROUP B: ③ slash sealed — D1-B 白名单形态（2026-09-17 裁定）: with the master gate
-            off, typing '/' lists the whitelist ONLY (/clear + /compact); every other
+   GROUP B: ③ slash sealed — D1-B 白名单形态（2026-09-17 裁定）+ 摘除（用户指令
+            2026-10-09）: with the master gate off, typing '/' lists the whitelist
+            ONLY (/model since /clear + /compact were removed); every other
             name (/ask, /onboarding, /plan, /fork, skill/flow commands) stays plain text
    GROUP C: ④ permission escalation buttons (conditional render + wire upgradeMode)
    Static server must serve the worktree web/ root. */
@@ -120,8 +121,8 @@ ${extraBody || ''}
       out.sealedResults = ['/ask', '/onboarding', '/plan', '/fork', '/web-search', '/'].map(n => inputMod.handleSlash(n));
       return out;
     });
-    ok('B1 slash sealed (D1-B): typing / opens the whitelist dropdown only (= ["/clear","/compact"])',
-      r.dropdownOnAfterSlash === true && r.dropdownItems === 2 && JSON.stringify(r.dropdownNames) === JSON.stringify(['/clear', '/compact']), r);
+    ok('B1 slash sealed (D1-B + 摘除 2026-10-09): typing / opens the whitelist dropdown only (= ["/model"]; /clear /compact removed)',
+      r.dropdownOnAfterSlash === true && r.dropdownItems === 1 && JSON.stringify(r.dropdownNames) === JSON.stringify(['/model']), r);
     ok('B2 slash sealed (D1-B): handleSlash returns false for every non-whitelisted name (plain text path)',
       r.handleSlashResult === false && Array.isArray(r.sealedResults) && r.sealedResults.every(x => x === false), r);
     ok('B3 initInput ran clean', !r.initErr, r.initErr);

@@ -7,6 +7,7 @@ import io.circe.syntax.*
 import io.circe.{Codec, Decoder, Encoder}
 import nebflow.actor.status
 import nebflow.core.SubAgentTaskStorePort
+import nebflow.core.delegate.{DelegateRegistry, DelegateSessions}
 import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-G/M4):SubAgentTask 模型与伴生 codec 已剪出
@@ -70,6 +71,16 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
   def loadTasks(parentSessionId: String): IO[List[SubAgentTask]] =
     withLock(readTasksSync(parentSessionId))
 
+  /**
+   * 星型子代理按父投影（delegate-ui 批 2026-10-08 · G3 查询面）：`GET /api/delegates/
+   * :id/children` 的唯一数据源——本 store 本就按父分文件（`<parentSessionId>.json`），
+   * 本投影 = 该文件的整表读（持锁纪律与 loadTasks 同缝）；条目自带 `source`
+   * （subagent/subtask/delegate——嵌套 Delegate 也在本域），过滤归消费端。查无文件 =
+   * Nil（子代理计数 0，绝不 404——空集是合法形态）。
+   */
+  def findByParent(parentSessionId: String): IO[List[SubAgentTask]] =
+    withLock(readTasksSync(parentSessionId))
+
   def saveTasks(parentSessionId: String, tasks: List[SubAgentTask]): IO[Unit] =
     withLock(writeTasksSync(parentSessionId, tasks))
 
@@ -77,7 +88,24 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
   def recordTask(task: SubAgentTask): IO[Unit] =
     withLock {
       writeTasksSync(task.parentSessionId, readTasksSync(task.parentSessionId) :+ task)
+      upgradeParentOrchestrationMode(task.parentSessionId)
     }
+
+  /**
+   * G1 编排模式惰性升级挂钩（delegate-ui 批 2026-10-08，**单点**）：星型子代理记账
+   * 动作（本 store recordTask）= 模式升级的唯一触发面——任何工具形（Subagent /
+   * Subtask / 嵌套 Delegate）一经记账，父 delegate 的 orchestrationMode 升至
+   * `subagent-star`（flow 结构由 AgentFlow 链登记点升 `agentflow`，值域顶、只上
+   * 不下——见 [[DelegateRegistry.upgradeOrchestrationMode]] 的秩守卫）。双闸保守：
+   * 前缀闸（`delegate-`）+ 记录闸（父确有 DelegateRegistry 记录）⇒ root/节点会话
+   * 的同名记账零触碰；升级失败只 WARN，绝不影响记账主路径（fail-soft）。
+   */
+  private def upgradeParentOrchestrationMode(parentSessionId: String): Unit =
+    if DelegateSessions.isDelegateSession(Some(parentSessionId)) then
+      DelegateRegistry.upgradeOrchestrationMode(parentSessionId, DelegateRegistry.ModeSubagentStar) match
+        case Right(()) => ()
+        case Left(err) =>
+          logger.warnSync(s"orchestrationMode upgrade skipped for '$parentSessionId': $err")
 
   /** Update a task's status. */
   def updateStatus(

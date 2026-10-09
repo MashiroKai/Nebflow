@@ -44,6 +44,13 @@ object AskUserAnswerBridge:
   private val logger = NebflowLogger.forName("nebflow.agent.askuser")
 
   /**
+   * 取消通告的注入来源定名（askucancel 批，2026-10-08）。`fromUser=false` +
+   * 本标注 ⇒ 前端按注入来源呈现（不是 user 气泡）——取消通告是引擎侧结论，
+   * 永不伪装成用户发言。
+   */
+  val CancelSource = "askUserCancelled"
+
+  /**
    * 桥的唯一构造点。`requestId` 进 path（日志/诊断可归因），`items` 用于把
    * 答复格式化成模型可读文本（与阻塞模式**同一** `formatAnswer`）。
    */
@@ -83,7 +90,31 @@ object AskUserAnswerBridge:
     answers: List[String],
     ctx: ToolContext
   ): IO[Unit] =
-    if AskUserDispatch.isFailure(answers) then
+    if nebflow.shared.AskUserCancelled.isCancelled(answers) then
+      // askucancel 批（2026-10-08）：取消通告**要**注入（与派发失败信号相反）——
+      // 非阻塞 ack 曾向模型承诺「答案稍后作为消息到达」；问题被取消后若不注入，
+      // 模型就在等一条永不来的消息。通告文本 = 信号本体（自描述：requestId/reason/
+      // 与用户答复的判别句），fromUser=false + CancelSource 标注。
+      val text = answers.head
+      sessionAlive(ctx).flatMap {
+        case false =>
+          logger.warn(
+            s"askUser answer bridge: requestId=$requestId — cancel notice dropped, the requesting session is gone " +
+              s"(sessionId=${ctx.sessionId.getOrElse("<unknown>")})"
+          )
+        case true =>
+          logger.info(
+            s"askUser answer bridge: requestId=$requestId → cancellation notice injected into " +
+              s"session=${ctx.sessionId.getOrElse("<unknown>")}"
+          ) *>
+            (target ! AgentCommand.ImmediateInput(
+              text = text,
+              source = Some(CancelSource),
+              eventType = Some(CancelSource),
+              fromUser = false
+            ))
+      }
+    else if AskUserDispatch.isFailure(answers) then
       logger.warn(
         s"askUser answer bridge: requestId=$requestId — dispatch FAILED " +
           s"(${AskUserDispatch.UnavailableCode}); the question was never shown, so this is not a user " +

@@ -505,7 +505,9 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
 
   // ── C4 降级兜底：未被认领的 running 残留仍由 watchdog **接手（提醒腿）** ──────
 
-  test("C4: unclaimed running residue is still picked up by the dead-session watchdog (degraded fallback = reminder leg)") {
+  test(
+    "C4: unclaimed running residue is still picked up by the dead-session watchdog (degraded fallback = reminder leg)"
+  ) {
     val ws = tempRoot / "ws-c4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bcr-c4-${scala.util.Random.nextInt(1000000)}")
@@ -529,13 +531,21 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       // 处置交人工/分发器面。本用例的主题（「sweep 整体失败时 watchdog 仍接得住」）
       // 逐字保留——接住的事实从「写 failed」改为「写提醒」，**断言数不减**（2 → 3，多出
       // 的一条正是降档新增的 reminder 覆盖腿，它证明「先补提醒覆盖再降档」的顺序义务）。
-      assertEquals(n.status, NodeLifecycle.Running,
-        "the degraded fallback must NOT converge the residue to failed any more (killruling ruling #19: reminder only)")
+      assertEquals(
+        n.status,
+        NodeLifecycle.Running,
+        "the degraded fallback must NOT converge the residue to failed any more (killruling ruling #19: reminder only)"
+      )
       assertEquals(n.result, None, "the reminder leg writes no result (no terminal write)")
-      assert(events.exists(_.contains("dead-session-reaped")),
-        "the downgraded watchdog must still leave its audit trace (dead-session-reaped, wording updated)")
-      assert(events.exists(_.contains("node-session-dead-reminder")),
-        "the reminder-coverage leg must fire (ordering duty: coverage added BEFORE the downgrade)")
+      assert(
+        events.exists(_.contains("dead-session-reaped")),
+        "the downgraded watchdog must still leave its audit trace (dead-session-reaped, wording updated)"
+      )
+      assert(
+        events.exists(_.contains("node-session-dead-reminder")),
+        "the reminder-coverage leg must fire (ordering duty: coverage added BEFORE the downgrade)"
+      )
+    end for
   }
 
   // ── C6 bgWait：认领清空 + 死亡告知 ─────────────────────────────────

@@ -42,6 +42,18 @@ import scala.concurrent.duration.*
  */
 private[gateway] object PresenceRoutes:
 
+  /**
+   * 绑定即通批 (weixin bind-through, 2026-10-11): the per-channel
+   * default-session whitelist — the two cards that carry a defaultSessionId
+   * today (feishu since the C4 batch, weixin-ilink since the bind-through
+   * batch). A new card joins by adding its channel id HERE — deliberately
+   * explicit, never "any channel id".
+   */
+  private val DefaultSessionChannels = Set(
+    nebflow.social.FeishuBridgePlugin.Name,
+    nebflow.social.WeixinIlinkBridgePlugin.Name
+  )
+
   def routes(wsb: WebSocketBuilder2[IO], ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
 
@@ -77,18 +89,25 @@ private[gateway] object PresenceRoutes:
      * the SAME begin/status face the feishu card ships, keyed to the
      * weixin-ilink channel. The QR leg stays behind the production
      * [[nebflow.social.WeixinIlinkScanBind.sidecarLogin]] thunk (the official
-     * plugin's side-car owns the login); the activation leg is the ONE sync
-     * point ([[nebflow.social.WeixinIlinkBridgePlugin.sync]]) — identical
-     * wiring to the weixin save endpoint's resync, so runtime state is never
-     * assembled two different ways. LAZY for the same two reasons as
-     * [[feishuScanBind]] above (spec-only null manager + one registry per
-     * mounted routes value).
+     * plugin's side-car owns the login); the activation leg OPENS with the
+     * ONE sync point ([[nebflow.social.WeixinIlinkBridgePlugin.sync]]) —
+     * identical wiring to the weixin save endpoint's resync, so runtime state
+     * is never assembled two different ways — and then appends the 绑定即通
+     * follow-up legs (weixin bind-through batch, 2026-10-11: the
+     * defaultSessionId write + the sidecar provision, both total/contained
+     * inside [[nebflow.social.WeixinBindAutoWire]] so a broken leg can never
+     * flip a finished binding off `Done`; the sync leg's raise semantics are
+     * unchanged). LAZY for the same two reasons as [[feishuScanBind]] above
+     * (spec-only null manager + one registry per mounted routes value).
      */
     lazy val weixinScanBind = new nebflow.social.WeixinIlinkScanBind(
       PathUtil.dataRoot,
       loginFn = nebflow.social.WeixinIlinkScanBind.sidecarLogin(PathUtil.dataRoot),
-      activate = sharedResources.bridgeManager.fold(IO.unit)(m =>
-        nebflow.social.WeixinIlinkBridgePlugin.sync(m, PathUtil.dataRoot)
+      activate = nebflow.social.WeixinBindAutoWire.productionActivate(
+        sharedResources.bridgeManager,
+        PathUtil.dataRoot,
+        listSessions = () => sessionStore.listSessions,
+        gatewayPort = gatewayPort
       )
     )
 
@@ -247,6 +266,28 @@ private[gateway] object PresenceRoutes:
               }
       }
     end daemonPanelContext
+
+    /**
+     * 输出面 JSON 投影（delegate-ui 批 2026-10-08 抽出为**单一形状源**）：
+     * `/delegates/:id/output` 增量臂与 G4 聚合单查（`GET /delegates/:id`）的 `output`
+     * 头共用——两处形状漂移 = 第二权威，禁。
+     */
+    def externalOutputJson(o: nebflow.core.executor.ExternalOutputStore.ExternalOutput): Json =
+      Json.obj(
+        "taskId" -> o.taskId.asJson,
+        "status" -> o.status.asJson,
+        "totalBytes" -> o.totalBytes.asJson,
+        "totalLines" -> o.totalLines.asJson,
+        "truncated" -> o.truncated.asJson,
+        "output" -> o.output.asJson,
+        "nextOffset" -> o.nextOffset.asJson,
+        "startedAtMs" -> o.startedAtMs.asJson,
+        "finishedAtMs" -> o.finishedAtMs.asJson,
+        "exitCode" -> o.exitCode.asJson,
+        "errorHint" -> o.errorHint.asJson,
+        "cliSessionId" -> o.cliSessionId.asJson,
+        "mailboxDepth" -> o.mailboxDepth.asJson
+      )
 
     HttpRoutes.of[IO] {
       case req @ GET -> Root / "neblink" / "presence" =>
@@ -407,9 +448,12 @@ private[gateway] object PresenceRoutes:
       // #1228 stub §四.3 唯一硬依赖 + §四.4 活性提示位 = agentRegistry 快照同面携带；
       // 真源 = DelegateRegistry 持久记录 × live × terminal-verdict 判词行——投影语义
       // 与 fail-soft 纪律见 nebflow.core.project.ChainsReadFace 头注）。
+      // delegate-ui 批 2026-10-08（G6 历史窗）：`?archived=1` = 只出已归档（archivedAt
+      // 在册）；缺省 = 在册窗（未归档）。两窗互补零重叠。
       case req @ GET -> Root / "chains" =>
         withAuth(req) {
-          sharedResources.agentRegistry.get.flatMap(reg => ChainsReadFace.rowsJson(reg).flatMap(Ok(_)))
+          val archived = req.params.get("archived").contains("1")
+          sharedResources.agentRegistry.get.flatMap(reg => ChainsReadFace.rowsJson(reg, archived).flatMap(Ok(_)))
         }
 
       // GET /api/chains/:key — per-task 链视图（A8 读面下半）：record = ChainStore
@@ -514,25 +558,93 @@ private[gateway] object PresenceRoutes:
           else
             nebflow.core.executor.ExternalOutputStore.read(id, offset).flatMap {
               case None =>
-                NotFound(Json.obj("error" -> s"External delegate '$id' has no output buffer (unknown or evicted)".asJson))
-              case Some(o) =>
-                Ok(
-                  Json.obj(
-                    "taskId" -> o.taskId.asJson,
-                    "status" -> o.status.asJson,
-                    "totalBytes" -> o.totalBytes.asJson,
-                    "totalLines" -> o.totalLines.asJson,
-                    "truncated" -> o.truncated.asJson,
-                    "output" -> o.output.asJson,
-                    "nextOffset" -> o.nextOffset.asJson,
-                    "startedAtMs" -> o.startedAtMs.asJson,
-                    "finishedAtMs" -> o.finishedAtMs.asJson,
-                    "exitCode" -> o.exitCode.asJson,
-                    "errorHint" -> o.errorHint.asJson,
-                    "cliSessionId" -> o.cliSessionId.asJson,
-                    "mailboxDepth" -> o.mailboxDepth.asJson
-                  )
+                NotFound(
+                  Json.obj("error" -> s"External delegate '$id' has no output buffer (unknown or evicted)".asJson)
                 )
+              case Some(o) => Ok(externalOutputJson(o))
+            }
+        }
+
+      // GET /delegates/:id — delegate 聚合单查（delegate-ui 批 2026-10-08 · G4，视图④
+      // 详情首绘单缝）：record 全量 + live 活性提示 + verdict 最新判词 + task 台账全文 +
+      // childrenCount（星型子代理计数 = SubAgentTaskStore.findByParent 整表读）+ output
+      // 头（外部执行器留存首窗；内部执行器无缓冲 = null——增量面仍走 /output 臂）。
+      // 投影语义 = ChainsReadFace.delegateJson（零新存储，全现读既有面）。
+      // 404 = 查无记录；400 = 非法 id。
+      case req @ GET -> Root / "delegates" / id =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else
+            sharedResources.agentRegistry.get.flatMap { reg =>
+              sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
+                ChainsReadFace.delegateJson(id, reg, children.size).flatMap {
+                  case None =>
+                    NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
+                  case Some(core) =>
+                    nebflow.core.executor.ExternalOutputStore.read(id, 0L).flatMap {
+                      case None => Ok(core.deepMerge(Json.obj("output" -> Json.Null)))
+                      case Some(o) => Ok(core.deepMerge(Json.obj("output" -> externalOutputJson(o))))
+                    }
+                }
+              }
+            }
+        }
+
+      // GET /delegates/:id/children — 星型子代理查询（delegate-ui 批 2026-10-08 · G3，
+      // 视图②④星型区数据缝）：数据源 = SubAgentTaskStore.findByParent 单点（按父分
+      // 文件整表读——条目 source 自带形态 subagent/subtask/delegate，过滤归消费端）。
+      // agentflow 的 flow 子结构不走本面（= /api/chains/:key 的 chain.nodes 投影）。
+      // 404 = 父无记录；400 = 非法 id；查无文件 = 空集（count 0，非 404）。
+      case req @ GET -> Root / "delegates" / id / "children" =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else
+            IO.blocking(nebflow.core.delegate.DelegateRegistry.find(id)).flatMap {
+              case None =>
+                NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
+              case Some(_) =>
+                sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
+                  Ok(
+                    Json.obj(
+                      "delegateId" -> id.asJson,
+                      "count" -> children.size.asJson,
+                      "children" -> children.asJson
+                    )
+                  )
+                }
+            }
+        }
+
+      // POST /delegates/:id/archive — 归档动作（delegate-ui 批 2026-10-08 · G6，视图④
+      // 归档入口的引擎缝）：`archivedAt = now` 单旗写（幂等：已归档 = 原时间戳零重写）；
+      // **零删除纪律**——记录/子代理记账/链记录原样留存（children 随档 = 查询面按
+      // parentSessionId 原样可达），历史窗 = `GET /api/chains?archived=1`。404 = 查无
+      // 记录；400 = 非法 id。
+      case req @ POST -> Root / "delegates" / id / "archive" =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else
+            IO.blocking(nebflow.core.delegate.DelegateRegistry.archive(id)).flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right(ts) => Ok(Json.obj("id" -> id.asJson, "archived" -> true.asJson, "archivedAt" -> ts.asJson))
+            }
+        }
+
+      // POST /delegates/:id/unarchive — 反归档（delegate/flowmap 两层架构批 2026-10-09
+      // · G4-2，L2 归档抽屉「恢复」动作的引擎缝）：`archivedAt` 摘旗（幂等：未归档 =
+      // 原样零写）；**零删除纪律不破**——记录/子代理记账/链记录原样，只是回在册窗
+      // （L2 平铺面）。404 = 查无记录；400 = 非法 id。
+      case req @ POST -> Root / "delegates" / id / "unarchive" =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else
+            IO.blocking(nebflow.core.delegate.DelegateRegistry.unarchive(id)).flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right(_) => Ok(Json.obj("id" -> id.asJson, "archived" -> false.asJson))
             }
         }
 
@@ -567,7 +679,9 @@ private[gateway] object PresenceRoutes:
                   IO.blocking(p.waitFor()).void.start.void *>
                     Ok(Json.obj("opened" -> true.asJson, "command" -> echo.asJson))
                 }.handleErrorWith { e =>
-                  BadRequest(Json.obj("error" -> s"open-native failed: ${e.getMessage}".asJson, "command" -> echo.asJson))
+                  BadRequest(
+                    Json.obj("error" -> s"open-native failed: ${e.getMessage}".asJson, "command" -> echo.asJson)
+                  )
                 }
             }
         }
@@ -601,7 +715,17 @@ private[gateway] object PresenceRoutes:
                       "flows" -> defn.flows.asJson,
                       // builtin-def 批（2026-10-03 作者令①）：代码定义 agent 的
                       // 只读标记——面板据此关闭 prompt 编辑器与保存通道。
-                      "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(defn.name).asJson
+                      "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(defn.name).asJson,
+                      // prompt-panel 面板批（2026-10-09）：builtin nebflow 的提示词
+                      // 双面投影（delegate 默认页签 + node 第二页签）——仅两面确异时
+                      // 非空，其余 agent 恒空数组（前端回落单 prompt 展示，响应形状
+                      // 向后兼容）。判据单点 = BuiltinAgents.panelPromptFaces。
+                      "promptFaces" -> nebflow.core.entity.BuiltinAgents
+                        .panelPromptFaces(defn.name)
+                        .map { case (face, prompt) =>
+                          Json.obj("face" -> face.asJson, "systemPrompt" -> prompt.asJson)
+                        }
+                        .asJson
                     )
                   )
             yield result
@@ -1000,6 +1124,53 @@ private[gateway] object PresenceRoutes:
         withAuth(req) {
           IO.blocking(nebflow.social.SocialChannels.defaultSessionId(PathUtil.dataRoot, "feishu"))
             .flatMap(sid => Ok(Json.obj("sessionId" -> sid.asJson)))
+        }
+
+      // 绑定即通批 (weixin bind-through, 2026-10-11): the default-session face
+      // grows a PER-CHANNEL spelling — PUT/GET /social/channels/{channel}/
+      // default-session, whitelist {feishu, weixin-ilink}. The literal feishu
+      // arms above still match first and keep their byte-identical behavior;
+      // this pair serves the SAME set/clear/read contract for weixin-ilink
+      // (the scan-bind auto-wire writes it; the REST face can read/backfill).
+      // An off-whitelist channel answers the same `400 unknown_channel` shape
+      // the social save face answers for an unknown card
+      // (socialErrorResponse's UnknownChannel arm). Both arms sit behind the
+      // same withAuth gate as the literal pair.
+      case req @ PUT -> Root / "social" / "channels" / channel / "default-session" =>
+        withAuth(req) {
+          if !DefaultSessionChannels.contains(channel) then
+            BadRequest(Json.obj("error" -> "unknown_channel".asJson, "channel" -> channel.asJson))
+          else
+            req.as[Json].attempt.flatMap {
+              case Left(_) =>
+                BadRequest(
+                  Json.obj(
+                    "error" -> "invalid_field".asJson,
+                    "reason" -> "request body must be a JSON object".asJson
+                  )
+                )
+              case Right(body) =>
+                val sid = body.hcursor
+                  .downField("sessionId")
+                  .as[Option[String]]
+                  .getOrElse(None)
+                  .map(_.trim)
+                  .filter(_.nonEmpty)
+                IO.blocking(nebflow.social.SocialChannels.setDefaultSessionId(PathUtil.dataRoot, channel, sid))
+                  .flatMap {
+                    case Right(_) => Ok(Json.obj("ok" -> true.asJson, "sessionId" -> sid.asJson))
+                    case Left(err) => socialErrorResponse(err)
+                  }
+            }
+        }
+
+      case req @ GET -> Root / "social" / "channels" / channel / "default-session" =>
+        withAuth(req) {
+          if !DefaultSessionChannels.contains(channel) then
+            BadRequest(Json.obj("error" -> "unknown_channel".asJson, "channel" -> channel.asJson))
+          else
+            IO.blocking(nebflow.social.SocialChannels.defaultSessionId(PathUtil.dataRoot, channel))
+              .flatMap(sid => Ok(Json.obj("sessionId" -> sid.asJson)))
         }
 
       // feiscanbind (2026-09-27): the scan-bind main path, on the same social
@@ -1752,7 +1923,7 @@ private[gateway] object PresenceRoutes:
         case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t
       }
       nebflow.social.WeixinIngressToken.accepts(PathUtil.dataRoot, bearer).flatMap {
-        case true  => f
+        case true => f
         case false => Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       }
 

@@ -18,10 +18,12 @@ class BridgeOriginSpec extends FunSuite:
 
   test("the marker names the channel, the sender and the conversation") {
     val m = BridgeOrigin.marker(feishu, Some("ou_sender"))
-    assertEquals(m,
+    assertEquals(
+      m,
       """<system-reminder>
         |以下消息来自飞书（社交接口 · 渠道 feishu）· 发送方：ou_sender · 会话：oc_123
-        |</system-reminder>""".stripMargin)
+        |</system-reminder>""".stripMargin
+    )
   }
 
   test("a missing sender renders the fixed placeholder, never an empty slot") {
@@ -65,10 +67,14 @@ class BridgeOriginSpec extends FunSuite:
 
   test("CRITERION 1 (session display face): the recorded/broadcast string never carries the marker") {
     val f = BridgeOrigin.faces(Some(feishu), Some("ou_sender"), "hello")
-    assert(!f.sessionDisplay.contains(BridgeOrigin.MarkerOpen),
-      s"会话显示面不得含 ${BridgeOrigin.MarkerOpen}，现读到：${f.sessionDisplay}")
-    assert(!f.sessionDisplay.contains(BridgeOrigin.MarkerClose),
-      s"会话显示面不得含 ${BridgeOrigin.MarkerClose}，现读到：${f.sessionDisplay}")
+    assert(
+      !f.sessionDisplay.contains(BridgeOrigin.MarkerOpen),
+      s"会话显示面不得含 ${BridgeOrigin.MarkerOpen}，现读到：${f.sessionDisplay}"
+    )
+    assert(
+      !f.sessionDisplay.contains(BridgeOrigin.MarkerClose),
+      s"会话显示面不得含 ${BridgeOrigin.MarkerClose}，现读到：${f.sessionDisplay}"
+    )
     // and it is the bare content, not a re-derived variant
     assertEquals(f.sessionDisplay, "hello")
   }
@@ -127,11 +133,17 @@ class BridgeOriginSpec extends FunSuite:
     assert(iMeta > iFaces, "the ExternalEvent metadata must carry the structured origin")
 
     // and the pre-fix form is gone: no consumer may take the composed string again
-    assert(!src.contains("UiMessage.User(labelled"),
-      "the recorded row is fed a labelled string again — the marker leaks back into the session display face")
-    assert(!src.contains("\"text\" -> labelled"),
-      "the broadcast is fed a labelled string again — the marker leaks back into the session display face")
-    assert(!src.contains("val labelled = nebflow.bridge.BridgeOrigin.compose("),
-      "handleBridgeMessage composes a single string again instead of splitting the faces")
+    assert(
+      !src.contains("UiMessage.User(labelled"),
+      "the recorded row is fed a labelled string again — the marker leaks back into the session display face"
+    )
+    assert(
+      !src.contains("\"text\" -> labelled"),
+      "the broadcast is fed a labelled string again — the marker leaks back into the session display face"
+    )
+    assert(
+      !src.contains("val labelled = nebflow.bridge.BridgeOrigin.compose("),
+      "handleBridgeMessage composes a single string again instead of splitting the faces"
+    )
   }
-
+end BridgeOriginSpec

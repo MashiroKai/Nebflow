@@ -90,7 +90,6 @@ object NodeEditTool extends Tool:
   private[tools] def mergeSealRequested(input: JsonObject): Boolean =
     input("merge").exists(v => v.asBoolean.contains(true) || v.asString.exists(_.trim.equalsIgnoreCase("true")))
 
-
   /**
    * descriptionLong stored-length cap: the
    * stored value is truncated to this many characters; longer input is NOT an error — the
@@ -146,9 +145,9 @@ object NodeEditTool extends Tool:
   private def dropDescriptionLongSpill(workspace: String, nodeId: String): IO[String] =
     IO.blocking(FlowMapStore.deleteDescriptionLongSpill(workspace, nodeId))
       .map {
-        case Right(true)  => "; descriptionLong spill file deleted"
+        case Right(true) => "; descriptionLong spill file deleted"
         case Right(false) => ""
-        case Left(err)    => s"; ⚠ descriptionLong spill file could not be deleted ($err)"
+        case Left(err) => s"; ⚠ descriptionLong spill file could not be deleted ($err)"
       }
       .handleErrorWith(e =>
         IO.pure(s"; ⚠ descriptionLong spill file could not be deleted (${Option(e.getMessage).getOrElse(e.toString)})")
@@ -435,7 +434,10 @@ object NodeEditTool extends Tool:
     val loopProvided = loopJson.exists(j => !j.isNull)
     val loopEnabled = loopJson.flatMap(_.asBoolean).getOrElse(false)
     val maxRounds = input("maxRounds").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(5)
-    val verify = input("verify").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val verify = input("verify")
+      .flatMap(_.asString)
+      .map(_.trim)
+      .filter(_.nonEmpty)
       .getOrElse(BuiltinAgents.ExecutorName)
     val verifyTask = input("verifyTask").flatMap(_.asString).getOrElse("")
     implicit val loopFlag: NodeEditLoop =
@@ -1015,11 +1017,41 @@ object NodeEditTool extends Tool:
                               )
                             )
                           )
-                        case Some(_) => proceed(rt, nodename, agentName, task, description, descriptionLong, plugins, ins, deps, out, verifierRoutePending, pluginsDeclared, autoStart)
+                        case Some(_) =>
+                          proceed(
+                            rt,
+                            nodename,
+                            agentName,
+                            task,
+                            description,
+                            descriptionLong,
+                            plugins,
+                            ins,
+                            deps,
+                            out,
+                            verifierRoutePending,
+                            pluginsDeclared,
+                            autoStart
+                          )
                       }
                     case None =>
-                      proceed(rt, nodename, agentName, task, description, descriptionLong, plugins, ins, deps, out, verifierRoutePending, pluginsDeclared, autoStart)
+                      proceed(
+                        rt,
+                        nodename,
+                        agentName,
+                        task,
+                        description,
+                        descriptionLong,
+                        plugins,
+                        ins,
+                        deps,
+                        out,
+                        verifierRoutePending,
+                        pluginsDeclared,
+                        autoStart
+                      )
               }
+    end match
 
   end createNode
 
@@ -1194,16 +1226,31 @@ object NodeEditTool extends Tool:
           // 拒绝面留痕（create 侧）：建位期的
           // `NODE_MERGE_PASS_ONLY` 硬拒此前零事件——落一笔 `edge-changed` + `reason=refused`。
           NodeTools
-            .emitRefused(rt, nodeId, "ensureMergePassOnly", NodeTools.errorCodeOf(mergeGate.get, "NODE_MERGE_PASS_ONLY"))
+            .emitRefused(
+              rt,
+              nodeId,
+              "ensureMergePassOnly",
+              NodeTools.errorCodeOf(mergeGate.get, "NODE_MERGE_PASS_ONLY")
+            )
             .as(Left(ToolError(mergeGate.get)))
         else if retryGate.isDefined then IO.pure(Left(ToolError(retryGate.get)))
         else if verdictGate.isDefined then
           NodeTools
-            .emitRefused(rt, nodeId, "verdictRouteGate", NodeTools.errorCodeOf(verdictGate.get, "NODE_VERIFIER_NEEDS_ROUTE"))
+            .emitRefused(
+              rt,
+              nodeId,
+              "verdictRouteGate",
+              NodeTools.errorCodeOf(verdictGate.get, "NODE_VERIFIER_NEEDS_ROUTE")
+            )
             .as(Left(ToolError(verdictGate.get)))
         else if loopGate.isDefined then
           NodeTools
-            .emitRefused(rt, nodeId, "loopGateViolation", NodeTools.errorCodeOf(loopGate.get, "NODE_LOOP_GATE_INCOMPLETE"))
+            .emitRefused(
+              rt,
+              nodeId,
+              "loopGateViolation",
+              NodeTools.errorCodeOf(loopGate.get, "NODE_LOOP_GATE_INCOMPLETE")
+            )
             .as(Left(ToolError(loopGate.get)))
         else if dup.isDefined then
           IO.pure(
@@ -1342,7 +1389,7 @@ object NodeEditTool extends Tool:
                       // 审计的补偿面；FlowMapEventLog.append 追加式先例 = abandoned /
                       // reactivated，零载荷漂移）。（dangling-declared 审计随 N1 刀2 ③
                       // dangling 键 seal 退役——空 out 无需声明。）
-                    (if pendingRouteWarn.isDefined then
+                      (if pendingRouteWarn.isDefined then
                          FlowMapEventLog.append(
                            rt.project.workspace,
                            rt.project.name,
@@ -1454,15 +1501,15 @@ object NodeEditTool extends Tool:
                         (if notifyWarn.nonEmpty then "\n" + notifyWarn.mkString("\n") else "") +
                         // 悬空提示（O-B 必做 4）：空 out = 结果保留、接线后自动投递——
                         // N1 刀2 ③ dangling 声明令牌退役，统一原文案（可疑口径）。
-                        (if out.isEmpty then
-                           "\n" + NodeTools.wiringGapHint(nodename, nodeId).mkString("\n")
+                        (if out.isEmpty then "\n" + NodeTools.wiringGapHint(nodename, nodeId).mkString("\n")
                          else "") +
                         // Pass-outlet gap hint (verdict-consumer batch · case A tier (a)
                         // warning only, design card §2.1): a verifier with a non-empty
                         // declaredOut but no pass outlet ⇒ one ⚠ line on the tail
                         // (the `wiringGapHint` shape: non-blocking, zero rejection
                         // paths).
-                        (if passOutletGap then "\n" + NodeTools.verifierPassOutletGapHint(nodename, nodeId).mkString("\n")
+                        (if passOutletGap then
+                           "\n" + NodeTools.verifierPassOutletGapHint(nodename, nodeId).mkString("\n")
                          else "") +
                         // pending verifier ⚠ + plugins 声明面警告
                         // （P2a flag-off / P3 文本扫描）——WARNING 族同款形态
@@ -1474,7 +1521,8 @@ object NodeEditTool extends Tool:
                     // the spill file follows the value just
                     // written, so the receipt carries a path that is true now (S16-4 sentence +
                     // ABSOLUTE path). Appended only on success — a rejected create leaves no file.
-                    NodeEditTool.syncDescriptionLongSpill(rt, nodeId, descriptionLong)
+                    NodeEditTool
+                      .syncDescriptionLongSpill(rt, nodeId, descriptionLong)
                       .map(dlSpill => created0.map(_ + dlSpill))
                   }
                 end if
@@ -1580,9 +1628,9 @@ object NodeEditTool extends Tool:
                     // spill file goes with it (best-effort — a delete failure must not fail
                     // the abandon; the reading is recorded in the abandoned event).
                     rt.engine.cleanupPendingAsks(c.sessionRef) *>
-                      NodeEditTool.dropDescriptionLongSpill(rt.project.workspace, c.id).map { spillNote =>
-                        abandonReceipt(c) + spillNote
-                      }
+                    NodeEditTool.dropDescriptionLongSpill(rt.project.workspace, c.id).map { spillNote =>
+                      abandonReceipt(c) + spillNote
+                    }
                 }
             }
           case _ =>
@@ -1751,7 +1799,8 @@ object NodeEditTool extends Tool:
     // 判据 = 归一化后不等（幂等重发不拒）。死会话 running 的写入需求由 Mail(node:) 的
     // appendUndelivered 兜底承接 ⇒ 本闸统一按「running ⇒ 拒」处理，不做活/死分档。
     else if task.isDefined && node.status == NodeLifecycle.Running
-      && NodeTools.normalizeTask(task.get) != node.task.map(NodeTools.normalizeTask).getOrElse("") then
+      && NodeTools.normalizeTask(task.get) != node.task.map(NodeTools.normalizeTask).getOrElse("")
+    then
       IO.pure(
         Left(
           ToolError(
@@ -2366,7 +2415,9 @@ object NodeEditTool extends Tool:
                                                         s.copy(nodes =
                                                           s.nodes.updated(
                                                             node.id,
-                                                            fresh.copy(descriptionLong = storeDescriptionLong(descriptionLong))
+                                                            fresh.copy(descriptionLong =
+                                                              storeDescriptionLong(descriptionLong)
+                                                            )
                                                           )
                                                         )
                                                       case None => s
@@ -2802,7 +2853,9 @@ object NodeEditTool extends Tool:
                                                 rt.store.snapshot.map { s =>
                                                   s.nodes
                                                     .get(node.id)
-                                                    .exists(fresh => NodeTools.verifierPassOutletMissing(fresh, s.nodes))
+                                                    .exists(fresh =>
+                                                      NodeTools.verifierPassOutletMissing(fresh, s.nodes)
+                                                    )
                                                 }
                                               _ <-
                                                 if passOutletGap then

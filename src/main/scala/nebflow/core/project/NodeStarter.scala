@@ -866,36 +866,41 @@ private[project] trait NodeStarter:
               ): IO[Unit] =
                 val cooldownMs = nebflow.shared.Defaults.StuckRecoveryCooldownMs
                 IO.sleep(cooldownMs.millis) *>
-                  store.getNode(nodeId).flatMap {
-                    case Some(n) if n.status == NodeLifecycle.Running =>
-                      for
-                        mapped <- nodeSessions.get.map(_.get(nodeId))
-                        reg <- resources.agentRegistry.get
-                        resumed = mapped.exists(reg.contains)
-                        _ <-
-                          if resumed then IO.unit // 已被恢复链复活 ⇒ 交出控制权（零写）
-                          else
-                            FlowMapEventLog.append(
-                              workspace,
-                              projectName,
-                              nodeId,
-                              "bg-wait-timeout",
-                              s"background wait cap recheck after ${cooldownMs / 1000}s cooling-off: the node is still " +
-                                s"suspended with no live session and no recovery leg took it over " +
-                                s"(${waiting.size} task(s) were pending at suspension: " +
-                                s"${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — " +
-                                "handing over to human supervision (no further auto-finalize, no auto-resume; " +
-                                "the node stays Running)"
-                            ) *>
-                              logger.warn(
-                                s"Node '$nodeName' ($nodeId) background wait cap recheck: still suspended after the " +
-                                  s"${cooldownMs / 1000}s cooling-off with no auto-resume — needs human action " +
-                                  "(node kept Running)"
-                              )
-                      yield ()
-                    case _ => IO.unit // 已终态/已归档/状态已变 ⇒ no-op（幂等）
-                  }.handleErrorWith(e =>
-                    logger.warn(s"bg-wait cap recheck for node $nodeId failed: ${e.getMessage}")).start.void
+                  store
+                    .getNode(nodeId)
+                    .flatMap {
+                      case Some(n) if n.status == NodeLifecycle.Running =>
+                        for
+                          mapped <- nodeSessions.get.map(_.get(nodeId))
+                          reg <- resources.agentRegistry.get
+                          resumed = mapped.exists(reg.contains)
+                          _ <-
+                            if resumed then IO.unit // 已被恢复链复活 ⇒ 交出控制权（零写）
+                            else
+                              FlowMapEventLog.append(
+                                workspace,
+                                projectName,
+                                nodeId,
+                                "bg-wait-timeout",
+                                s"background wait cap recheck after ${cooldownMs / 1000}s cooling-off: the node is still " +
+                                  s"suspended with no live session and no recovery leg took it over " +
+                                  s"(${waiting.size} task(s) were pending at suspension: " +
+                                  s"${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — " +
+                                  "handing over to human supervision (no further auto-finalize, no auto-resume; " +
+                                  "the node stays Running)"
+                              ) *>
+                                logger.warn(
+                                  s"Node '$nodeName' ($nodeId) background wait cap recheck: still suspended after the " +
+                                    s"${cooldownMs / 1000}s cooling-off with no auto-resume — needs human action " +
+                                    "(node kept Running)"
+                                )
+                        yield ()
+                      case _ => IO.unit // 已终态/已归档/状态已变 ⇒ no-op（幂等）
+                    }
+                    .handleErrorWith(e => logger.warn(s"bg-wait cap recheck for node $nodeId failed: ${e.getMessage}"))
+                    .start
+                    .void
+              end armBgWaitRecheck
               // 终局记账 → failed 注明文案（含 agent 消化失败通知后的最终输出，
               // 截断防串膨胀；杀因原文净化同上）。
               def bgFailureMessage(

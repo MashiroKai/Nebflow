@@ -51,3 +51,4 @@ object DecisionProviders:
       "keyRefResolved" -> settings.token.isDefined.toString,
       "choiceHighBasePolicy" -> settings.choiceHighBasePolicy.getOrElse("-")
     )
+end DecisionProviders

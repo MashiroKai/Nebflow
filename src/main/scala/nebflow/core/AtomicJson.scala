@@ -51,6 +51,78 @@ object AtomicJson:
     end try
   end writeSync
 
+  // ── Credential-adjacent writes: owner-only at rest (keyaudit-quickfix ①) ──
+  //
+  // nebflow.json / stt-config.json carry provider apiKeys in cleartext, but the
+  // plain [[writeSync]] lets the tmp file (and therefore, after the rename, the
+  // final file) inherit the process umask — measured 0644, i.e. group/other
+  // READABLE on a default install. This variant is [[writeSync]] with the
+  // credential face: the file lands `rw-------` from its first observable byte,
+  // reusing [[CredentialFileAcl]] as the one ACL authority (no second ACL
+  // implementation lives here).
+
+  /** Effectful restricted write — runs on the blocking thread pool. */
+  def writeRestricted(path: os.Path, content: String): IO[Unit] =
+    IO.blocking(writeSyncRestricted(path, content))
+
+  /**
+   * [[writeSync]] for credential-adjacent JSON (nebflow.json, stt-config.json).
+   *
+   * Ordering IS the guarantee (the SocialChannels F1 rule — no "write, then
+   * narrow" window at the target path):
+   *   ① the tmp file is created with mode `rw-------` from its creation
+   *      attribute ([[CredentialFileAcl.PosixMode]]) wherever the filesystem
+   *      offers POSIX attributes;
+   *   ② [[CredentialFileAcl.restrict]] re-asserts owner-only on the tmp before
+   *      the move — a no-op when ① landed, and the DECLARED narrowing step on
+   *      filesystems without the attribute view (Windows: the DACL ladder).
+   *   ③ the ATOMIC_MOVE rename carries the tmp's mode onto the target, so a
+   *      pre-existing wide-mode file (the legacy 0644 installs) converges to
+   *      0600 on its very next save — no migration script, no window in which
+   *      the new plaintext sits in a not-yet-narrowed file.
+   *
+   * Failure/cleanup semantics are byte-identical to [[writeSync]]: the old file
+   * is untouched on failure, tmp residue is cleaned best-effort.
+   */
+  def writeSyncRestricted(path: os.Path, content: String): Unit =
+    val tmp = path / os.up / s"${path.last}.tmp.${java.util.UUID.randomUUID()}"
+    try
+      java.nio.file.Files.createDirectories(path.toNIO.getParent)
+      // ① owner-only from the tmp's very first byte: the mode comes from the
+      // creation attribute (the fresh UUID name makes CREATE semantics safe).
+      try
+        java.nio.file.Files.createFile(
+          tmp.toNIO,
+          java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+            java.nio.file.attribute.PosixFilePermissions.fromString(CredentialFileAcl.PosixMode)
+          )
+        )
+      catch
+        // No POSIX attribute view (Windows et al.): create plain — step ② is
+        // the declared narrowing step there (same shape as
+        // SocialChannels.createOwnerOnly's declared fallback).
+        case _: UnsupportedOperationException => java.nio.file.Files.createFile(tmp.toNIO)
+      java.nio.file.Files.write(
+        tmp.toNIO,
+        content.getBytes("UTF-8"),
+        java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+        java.nio.file.StandardOpenOption.WRITE
+      )
+      CredentialFileAcl.restrict(tmp.toNIO) // ② the authoritative narrowing step
+      java.nio.file.Files.move(
+        tmp.toNIO,
+        path.toNIO,
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+        java.nio.file.StandardCopyOption.ATOMIC_MOVE
+      )
+    catch
+      case e: Throwable =>
+        try if os.exists(tmp) then os.remove(tmp)
+        catch case _: Exception => ()
+        throw e
+    end try
+  end writeSyncRestricted
+
   /**
    * Durability-first variant of [[writeSync]] for caches and state files whose
    * loss on a crash-window matters more than fail-loud atomicity: the temp
@@ -178,7 +250,9 @@ object AtomicJson:
           // 「损坏绝不静默」guarantee silently lost. Match the `Either` directly.
           io.circe.parser.parse(text) match
             case Right(_) => JournalRead(checkpoint = Some(text), records = records)
-            case Left(_)  => JournalRead(records = records, checkpointError = Some(s"${path.last} corrupt"))
+            case Left(_) => JournalRead(records = records, checkpointError = Some(s"${path.last} corrupt"))
+    end if
+  end readAll
 
   /**
    * Frame bytes currently carried by the journal's complete records (0 when it
@@ -281,7 +355,7 @@ object AtomicJson:
     forceParentDir(path)
     val j = journalPathOf(path)
     try if os.exists(j) then os.remove(j)
-    catch case _: Exception => ()   // a leftover journal only costs a replay
+    catch case _: Exception => () // a leftover journal only costs a replay
 
   /**
    * fsync the directory holding `path`, so a rename into it is itself durable.
@@ -314,7 +388,8 @@ object AtomicJson:
     else
       val text =
         try os.read(j)
-        catch case _: Exception => return Nil
+        catch
+          case _: Exception => return Nil
       // Only lines that END with '\n' are framed records; the tail after the
       // last '\n' (which may be '' when the file ends cleanly) is discarded.
       val framed = text.split("\n", -1).toList.dropRight(1)
@@ -326,8 +401,10 @@ object AtomicJson:
           else
             scala.util.Try(io.circe.parser.parse(l)).toOption match
               case Some(_) => out += Note(l, recordBytes(l))
-              case None => stop = true     // torn frame: discard it and everything after
+              case None => stop = true // torn frame: discard it and everything after
       }
       out.toList
+    end if
+  end readJournalRecords
 
 end AtomicJson

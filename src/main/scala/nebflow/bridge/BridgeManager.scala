@@ -21,15 +21,17 @@ class BridgeManager private (
   def register(plugin: BridgePlugin): IO[Unit] =
     pluginsRef.update(_ + (plugin.name -> plugin))
 
-  /** Stop one plugin (if present) and remove it from the map (feishubridge
-    * batch). Stop errors are logged, never swallowed into silence, and the
-    * removal happens regardless — a plugin whose stop failed must not stay
-    * registered. Absent name = no-op, so callers can resync unconditionally.
-    *
-    * Completion is logged on the success / absent-name path too: the only
-    * previous trace of a deactivation was the ABSENCE of a `started` line,
-    * which cannot tell "never attempted" from "verdict false" from "start
-    * failed". Every path through this method is now readable from the log. */
+  /**
+   * Stop one plugin (if present) and remove it from the map (feishubridge
+   * batch). Stop errors are logged, never swallowed into silence, and the
+   * removal happens regardless — a plugin whose stop failed must not stay
+   * registered. Absent name = no-op, so callers can resync unconditionally.
+   *
+   * Completion is logged on the success / absent-name path too: the only
+   * previous trace of a deactivation was the ABSENCE of a `started` line,
+   * which cannot tell "never attempted" from "verdict false" from "start
+   * failed". Every path through this method is now readable from the log.
+   */
   def unregister(name: String): IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       plugins.get(name).traverse_ { p =>
@@ -39,8 +41,10 @@ class BridgeManager private (
       } *> pluginsRef.update(_ - name) *> logger.info(s"Bridge plugin '$name' unregistered")
     }
 
-  /** Start one registered plugin by name (feishubridge batch). Errors are
-    * contained and logged, mirroring [[startAll]]'s per-plugin discipline. */
+  /**
+   * Start one registered plugin by name (feishubridge batch). Errors are
+   * contained and logged, mirroring [[startAll]]'s per-plugin discipline.
+   */
   def startOne(name: String): IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       plugins.get(name).traverse_ { p =>
@@ -50,14 +54,18 @@ class BridgeManager private (
       }
     }
 
-  /** The currently registered plugin names — the read side the REST probe face
-    * answers `adapterRegistered` from (feishubridge batch). */
+  /**
+   * The currently registered plugin names — the read side the REST probe face
+   * answers `adapterRegistered` from (feishubridge batch).
+   */
   def registeredNames: IO[Set[String]] =
     pluginsRef.get.map(_.keySet)
 
-  /** The registered plugin INSTANCE by name — the read side the feishu panel
-    * connection face uses to ask the live adapter what it actually connected
-    * to (feishu-bind batch, 2026-09-27). None = not registered. */
+  /**
+   * The registered plugin INSTANCE by name — the read side the feishu panel
+   * connection face uses to ask the live adapter what it actually connected
+   * to (feishu-bind batch, 2026-09-27). None = not registered.
+   */
   def plugin(name: String): IO[Option[BridgePlugin]] =
     pluginsRef.get.map(_.get(name))
 
@@ -72,9 +80,11 @@ class BridgeManager private (
         }
     }
 
-  /** Stop every plugin. Mirrors [[startAll]]'s per-plugin log discipline: the
-    * success of each stop is readable, not only its failure — a shutdown that
-    * logged nothing was indistinguishable from one that never ran. */
+  /**
+   * Stop every plugin. Mirrors [[startAll]]'s per-plugin log discipline: the
+   * success of each stop is readable, not only its failure — a shutdown that
+   * logged nothing was indistinguishable from one that never ran.
+   */
   def stopAll: IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       plugins.values.toList.traverse_ { p =>

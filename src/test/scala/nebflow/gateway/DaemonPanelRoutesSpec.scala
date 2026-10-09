@@ -11,24 +11,28 @@ import nebflow.agent.SharedResources
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.core.daemon.{DaemonPanelSchema, DaemonService}
 import nebflow.llm.ModelCandidate
-import nebflow.shared.{NebflowServiceConfig, ServiceLlmConfig} // W1 shim: main had them in nebflow.llm; the PR moved config to shared
+import nebflow.shared.{
+  NebflowServiceConfig,
+  ServiceLlmConfig
+} // W1 shim: main had them in nebflow.llm; the PR moved config to shared
 import org.http4s.*
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.typelevel.ci.CIString
 
 import java.nio.file.Files
 
-/** daemonpanel Phase A — the three config-panel endpoints (backend F2–F9).
-  *
-  * Exercises the real http4s routes through `RestApiRoutes`, against a
-  * throwaway data root, so the status codes, the fail-closed degradation and
-  * the masking discipline are asserted at the wire level rather than inferred
-  * from the validator.
-  *
-  * Criteria covered here: F3 (400 unknown field), F6 (401), F7 (409 no config
-  * panel), F8 (invalid declaration ⇒ 409, hidden whole), F9 (web denied /
-  * allowed), plus F2 (masking) and the F4 (*** round-trip) at HTTP level.
-  */
+/**
+ * daemonpanel Phase A — the three config-panel endpoints (backend F2–F9).
+ *
+ * Exercises the real http4s routes through `RestApiRoutes`, against a
+ * throwaway data root, so the status codes, the fail-closed degradation and
+ * the masking discipline are asserted at the wire level rather than inferred
+ * from the validator.
+ *
+ * Criteria covered here: F3 (400 unknown field), F6 (401), F7 (409 no config
+ * panel), F8 (invalid declaration ⇒ 409, hidden whole), F9 (web denied /
+ * allowed), plus F2 (masking) and the F4 (*** round-trip) at HTTP level.
+ */
 class DaemonPanelRoutesSpec extends FunSuite:
 
   private val token = "dp-test-token"
@@ -92,6 +96,10 @@ class DaemonPanelRoutesSpec extends FunSuite:
       try os.remove.all(root)
       catch case _: Throwable => ()
 
+    end try
+
+  end withRoutes
+
   private def call(
     routes: HttpRoutes[IO],
     method: Method,
@@ -102,13 +110,15 @@ class DaemonPanelRoutesSpec extends FunSuite:
     val base = Request[IO](method, Uri.unsafeFromString(path))
     val authed = bearer.fold(base)(t => base.putHeaders(Header.Raw(CIString("Authorization"), s"Bearer $t")))
     val req = body match
-      case None       => authed
+      case None => authed
       case Some(json) => authed.withEntity(json.noSpaces)
     routes(req).value.unsafeRunSync() match
       case None => fail(s"route fell through: $method $path")
       case Some(resp) =>
         val text = resp.body.compile.toVector.unsafeRunSync().map(_.toChar).mkString
         (resp.status, if text.isEmpty then None else parse(text).toOption)
+
+  end call
 
   private val validPanel =
     """{"fields": [{"key": "host", "label": "Host", "type": "string"}, {"key": "password", "label": "PW", "type": "secret"}]}"""
@@ -124,8 +134,14 @@ class DaemonPanelRoutesSpec extends FunSuite:
     withRoutes(daemonWith("mail", Some(validPanel))) { routes =>
       assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel", bearer = None)._1, Status.Forbidden)
       assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel", bearer = Some("wrong"))._1, Status.Forbidden)
-      assertEquals(call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{}}""")), None)._1, Status.Forbidden)
-      assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel/credentials", bearer = None)._1, Status.Forbidden)
+      assertEquals(
+        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{}}""")), None)._1,
+        Status.Forbidden
+      )
+      assertEquals(
+        call(routes, Method.GET, "/daemons/mail/config-panel/credentials", bearer = None)._1,
+        Status.Forbidden
+      )
     }
   }
 
@@ -137,7 +153,10 @@ class DaemonPanelRoutesSpec extends FunSuite:
       assertEquals(status, Status.Conflict)
       assertEquals(body.flatMap(_.hcursor.get[String]("error").toOption), Some("no config panel"))
       // The write endpoint degrades identically.
-      assertEquals(call(routes, Method.PUT, "/daemons/plain/config-panel", Some(json("""{"values":{}}""")))._1, Status.Conflict)
+      assertEquals(
+        call(routes, Method.PUT, "/daemons/plain/config-panel", Some(json("""{"values":{}}""")))._1,
+        Status.Conflict
+      )
       assertEquals(call(routes, Method.GET, "/daemons/plain/config-panel/credentials")._1, Status.Conflict)
     }
   }
@@ -181,7 +200,12 @@ class DaemonPanelRoutesSpec extends FunSuite:
     withRoutes(daemonWith("mail", Some(validPanel))) { routes =>
       // Write a secret, then read it back.
       assertEquals(
-        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"host":"imap.test","password":"plaintext-pw"}}""")))._1,
+        call(
+          routes,
+          Method.PUT,
+          "/daemons/mail/config-panel",
+          Some(json("""{"values":{"host":"imap.test","password":"plaintext-pw"}}"""))
+        )._1,
         Status.Ok
       )
       val (status, body) = call(routes, Method.GET, "/daemons/mail/config-panel")
@@ -209,13 +233,20 @@ class DaemonPanelRoutesSpec extends FunSuite:
     // `port` is declared as a bounded number; a string is not acceptable.
     val numeric = """{"fields": [{"key": "port", "type": "number", "min": 1, "max": 100}]}"""
     withRoutes(daemonWith("mail", Some(numeric))) { routes =>
-      val (status, body) = call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"port":"abc"}}""")))
+      val (status, body) =
+        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"port":"abc"}}""")))
       assertEquals(status, Status.BadRequest)
       assertEquals(body.flatMap(_.hcursor.get[String]("error").toOption), Some("invalid value"))
       // Out-of-range is rejected the same way.
-      assertEquals(call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"port":500}}""")))._1, Status.BadRequest)
+      assertEquals(
+        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"port":500}}""")))._1,
+        Status.BadRequest
+      )
       // A legal value inside the range is accepted.
-      assertEquals(call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"port":50}}""")))._1, Status.Ok)
+      assertEquals(
+        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"port":50}}""")))._1,
+        Status.Ok
+      )
     }
   }
 
@@ -223,14 +254,22 @@ class DaemonPanelRoutesSpec extends FunSuite:
 
   test("F4 · writing back *** keeps the stored secret byte-identical") {
     withRoutes(daemonWith("mail", Some(validPanel))) { routes =>
-      val put1 = call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"host":"h","password":"keep"}}""")))
+      val put1 = call(
+        routes,
+        Method.PUT,
+        "/daemons/mail/config-panel",
+        Some(json("""{"values":{"host":"h","password":"keep"}}"""))
+      )
       assertEquals(put1._1, Status.Ok)
       val secretPath = PathUtil.dataRoot / "secrets" / "daemon-mail-password"
       val before = os.read(secretPath)
       // Echo back exactly what the read view returned.
       val read = call(routes, Method.GET, "/daemons/mail/config-panel")._2
       val masked = read.flatMap(_.hcursor.downField("values").focus).getOrElse(Json.Null)
-      assertEquals(call(routes, Method.PUT, "/daemons/mail/config-panel", Some(Json.obj("values" -> masked)))._1, Status.Ok)
+      assertEquals(
+        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(Json.obj("values" -> masked)))._1,
+        Status.Ok
+      )
       assertEquals(os.read(secretPath), before, "*** round-trip rewrote the secret (F4)")
     }
   }
@@ -240,7 +279,12 @@ class DaemonPanelRoutesSpec extends FunSuite:
   test("F5 · the plaintext secret never reaches daemons.json (口径 α)") {
     withRoutes(daemonWith("mail", Some(validPanel))) { routes =>
       assertEquals(
-        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"password":"top-secret-value"}}""")))._1,
+        call(
+          routes,
+          Method.PUT,
+          "/daemons/mail/config-panel",
+          Some(json("""{"values":{"password":"top-secret-value"}}"""))
+        )._1,
         Status.Ok
       )
       val daemonsBytes = os.read(PathUtil.dataRoot / "daemons.json")
@@ -254,7 +298,12 @@ class DaemonPanelRoutesSpec extends FunSuite:
   test("F9 · the credential probe reports the three states and leaks no value") {
     withRoutes(daemonWith("mail", Some(validPanel))) { routes =>
       assertEquals(
-        call(routes, Method.PUT, "/daemons/mail/config-panel", Some(json("""{"values":{"password":"probe-plaintext"}}""")))._1,
+        call(
+          routes,
+          Method.PUT,
+          "/daemons/mail/config-panel",
+          Some(json("""{"values":{"password":"probe-plaintext"}}"""))
+        )._1,
         Status.Ok
       )
       val (status, body) = call(routes, Method.GET, "/daemons/mail/config-panel/credentials")
@@ -315,8 +364,10 @@ class DaemonPanelRoutesSpec extends FunSuite:
     val open = doc.lastIndexOf("<!--", idx)
     open >= 0 && doc.indexOf("-->", open) > idx
 
-  /** A `kind:"web"` + `htmlFile` daemon whose panel file lives in the data
-    * root's servable namespace (`docs/`). `allowWeb` is on. */
+  /**
+   * A `kind:"web"` + `htmlFile` daemon whose panel file lives in the data
+   * root's servable namespace (`docs/`). `allowWeb` is on.
+   */
   private def withHtmlPanel(
     fileContent: String,
     relPath: String = "docs/panel.html"
@@ -478,7 +529,6 @@ class DaemonPanelRoutesSpec extends FunSuite:
     }
   }
 
-
   test("F1 · a daemon with no declaration contributes an unchanged key set") {
     withRoutes(daemonWith("mail", None)) { routes =>
       val (status, body) = call(routes, Method.GET, "/daemons")
@@ -491,3 +541,4 @@ class DaemonPanelRoutesSpec extends FunSuite:
       keys.foreach(k => assert(expected.subsetOf(k), s"missing baseline keys: ${expected.diff(k)}"))
     }
   }
+end DaemonPanelRoutesSpec

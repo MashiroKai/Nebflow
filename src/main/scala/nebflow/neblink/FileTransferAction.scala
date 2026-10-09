@@ -31,16 +31,30 @@ import nebflow.shared.{AttachContract, PathUtil}
  *
  * 通道能力**保留**：本 action、`NeblinkClient.relayTransferGet|Put`、
  * `/api/neblink/transfer`、`NeblinkService.receiveFile|sendFile` 一个不删。
+ *
+ * ── v2.1 阶段 1（spec §C.1-3 / §C.2 / §C.4）新增 `direction=list` ──
+ *
+ *   - `direction=list` ⇒ **元数据目录列举**（name/type/size/mtime/broken），
+ *     **不传字节、不拉全量内容**——文件浏览器远端目录面的接收端（无感面②）。
+ *   - **出口白名单**（v2 §C.4）：`scope = "browse"` 的请求（list 与 get 同闸）只
+ *     服务白名单根内的路径——登记过的项目 workspace（本机定义 + 绑到本机的
+ *     origin）+ captures/ + uploads/（+ 配置追加根）。**无 `scope` 键的既有调用
+ *     逐字节不变**（capture 回拉 / A1 读图回拉等既有腿零回归——双轨灰度）。
  */
 object FileTransferAction:
+
+  /** 浏览面 scope 键（新面专用；缺省无键 = legacy 语义零变化）。 */
+  val ScopeBrowse = "browse"
 
   def handle(params: JsonObject): IO[Either[String, Json]] =
     val direction = params("direction").flatMap(_.asString).getOrElse("get")
     val pathStr = params("path").flatMap(_.asString).getOrElse("")
     val contentB64 = params("content").flatMap(_.asString).getOrElse("")
     val overwrite = params("overwrite").flatMap(_.asBoolean).getOrElse(false)
+    val scope = params("scope").flatMap(_.asString).getOrElse("")
 
     if pathStr.isEmpty then IO.pure(Left("Missing path"))
+    else if direction == "list" then handleList(pathStr, scope)
     else
       val expanded = PathUtil.expandTilde(pathStr)
       val pathEither =
@@ -54,45 +68,121 @@ object FileTransferAction:
       pathEither match
         case Left(err) => IO.pure(Left(err))
         case Right(path) =>
-          direction match
-            case "probe" =>
-              // 续传探针：权威 offset = 落盘实际长度；前缀摘要**重算**（不信任何持久化字段）。
-              IO.blocking {
-                val size = if os.exists(path) && os.isFile(path) then os.size(path) else 0L
-                Right(
-                  Json.obj(
-                    "bytesReceived" -> size.asJson,
-                    "totalBytes" -> params("totalBytes").flatMap(_.asNumber).flatMap(_.toLong).getOrElse(size).asJson,
-                    "prefixSha256" -> ChunkedTransfer.hashFileStreaming(path, size).asJson
-                  )
-                )
-              }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
-            case "put" if hasChunkParams(params) =>
-              IO.blocking(chunkedPut(params, path, contentB64, overwrite)).handleErrorWith(e => IO.pure(Left(msgOf(e))))
-            case _ =>
-              // ===== legacy 整件路径（**与今天逐字节一致**）=====
-              IO.blocking {
-                direction match
-                  case "get" =>
-                    if !os.exists(path) || !os.isFile(path) then Left(s"File not found: $pathStr")
-                    else
-                      val content = os.read.bytes(path)
-                      val b64 = java.util.Base64.getEncoder.encodeToString(content)
-                      Right(Json.obj("content" -> b64.asJson, "size" -> content.length.asJson))
-                  case "put" =>
-                    if contentB64.isEmpty then Left("Missing content for put")
-                    else
-                      val content = java.util.Base64.getDecoder.decode(contentB64)
-                      if !overwrite && os.exists(path) then Left(s"File exists: $pathStr (use overwrite)")
-                      else legacyPutPreservingExisting(path, content)
-                  case other => Left(s"Unknown direction: $other")
-              }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
+          // v2 §C.4 出口白名单：只对**显式 browse scope** 生效（新浏览器面专用）。
+          // 判据拒绝先行（在既有分支之前——白名单外的 browse 请求零字节、零元数据外泄）。
+          if scope == ScopeBrowse then
+            EgressWhitelist.checkBrowseAccess(path).flatMap {
+              case Some(reason) => IO.pure(Left(reason))
+              case None => handleLegacyAndChunked(direction, path, pathStr, contentB64, overwrite, params)
+            }
+          else handleLegacyAndChunked(direction, path, pathStr, contentB64, overwrite, params)
 
       end match
 
     end if
 
   end handle
+
+  /** 既有 get/put/probe/分块分支（原 handle 体逐字，行为零变化）。 */
+  private def handleLegacyAndChunked(
+    direction: String,
+    path: os.Path,
+    pathStr: String,
+    contentB64: String,
+    overwrite: Boolean,
+    params: JsonObject
+  ): IO[Either[String, Json]] =
+    direction match
+      case "probe" =>
+        // 续传探针：权威 offset = 落盘实际长度；前缀摘要**重算**（不信任何持久化字段）。
+        IO.blocking {
+          val size = if os.exists(path) && os.isFile(path) then os.size(path) else 0L
+          Right(
+            Json.obj(
+              "bytesReceived" -> size.asJson,
+              "totalBytes" -> params("totalBytes").flatMap(_.asNumber).flatMap(_.toLong).getOrElse(size).asJson,
+              "prefixSha256" -> ChunkedTransfer.hashFileStreaming(path, size).asJson
+            )
+          )
+        }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
+      case "put" if hasChunkParams(params) =>
+        IO.blocking(chunkedPut(params, path, contentB64, overwrite)).handleErrorWith(e => IO.pure(Left(msgOf(e))))
+      case _ =>
+        // ===== legacy 整件路径（**与今天逐字节一致**）=====
+        IO.blocking {
+          direction match
+            case "get" =>
+              if !os.exists(path) || !os.isFile(path) then Left(s"File not found: $pathStr")
+              else
+                val content = os.read.bytes(path)
+                val b64 = java.util.Base64.getEncoder.encodeToString(content)
+                Right(Json.obj("content" -> b64.asJson, "size" -> content.length.asJson))
+            case "put" =>
+              if contentB64.isEmpty then Left("Missing content for put")
+              else
+                val content = java.util.Base64.getDecoder.decode(contentB64)
+                if !overwrite && os.exists(path) then Left(s"File exists: $pathStr (use overwrite)")
+                else legacyPutPreservingExisting(path, content)
+            case other => Left(s"Unknown direction: $other")
+        }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
+  end handleLegacyAndChunked
+
+  /**
+   * `direction=list`（v2.1 阶段 1 §C.1-3）：远端目录**仅元数据**——逐件独立 stat
+   * （坏件降级 broken=true，同 gateway `FsOps.listDirEntries` 的容错先例），返回
+   * `entries[{name,type,size,mtime,broken}]`。**零字节流动**：目录面永远只有元数据
+   * （C.2 批量边界：「系统从不因浏览目录而预取」）。
+   */
+  private def handleList(pathStr: String, scope: String): IO[Either[String, Json]] =
+    val expanded = PathUtil.expandTilde(pathStr)
+    val pathEither =
+      if PathUtil.isAbsolute(expanded) then
+        try Right(PathUtil.resolvePath(expanded))
+        catch case e: Exception => Left(s"Invalid path: $expanded")
+      else
+        try Right(os.pwd / os.RelPath(expanded))
+        catch case e: Exception => Left(s"Invalid path: $expanded")
+
+    pathEither match
+      case Left(err) => IO.pure(Left(err))
+      case Right(path) =>
+        val gate: IO[Option[String]] =
+          if scope == ScopeBrowse then EgressWhitelist.checkBrowseAccess(path)
+          else IO.pure(None) // legacy list（无 scope 键）：不设白名单（新方向，无存量调用方）
+        gate.flatMap {
+          case Some(reason) => IO.pure(Left(reason))
+          case None =>
+            IO.blocking {
+              if !os.exists(path) then Left(s"Directory not found: $pathStr")
+              else if !os.isDir(path) then Left(s"Not a directory: $pathStr")
+              else
+                val entries = os
+                  .list(path)
+                  .map { p =>
+                    val stat = scala.util.Try {
+                      val isDir = os.isDir(p)
+                      if isDir then (isDir, 0L, 0L) else (isDir, os.size(p), os.mtime(p))
+                    }.toOption
+                    stat match
+                      case Some((isDir, size, mtime)) => (p.last, isDir, size, mtime, false)
+                      case None => (p.last, false, 0L, 0L, true)
+                  }
+                  .sortBy { case (name, isDir, _, _, _) => (if isDir then 0 else 1, name.toLowerCase) }
+                  .map { case (name, isDir, size, mtime, broken) =>
+                    Json.obj(
+                      "name" -> name.asJson,
+                      "type" -> (if isDir then "dir" else "file").asJson,
+                      "size" -> size.asJson,
+                      "mtime" -> mtime.asJson,
+                      "broken" -> broken.asJson
+                    )
+                  }
+                  .toSeq
+                Right(Json.obj("path" -> path.toString.asJson, "entries" -> entries.asJson))
+            }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
+        }
+    end match
+  end handleList
 
   /**
    * legacy 整件 put 的**撞名保护**（dropnam 批 · 作者 2026-09-19 裁定② 明确要求本分支也在保护面内）：

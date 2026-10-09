@@ -89,3 +89,4 @@ class DelegateRegistrySpec extends CatsEffectSuite:
     assert(line.contains("Mail"), line)
     assert(!line.contains("kernel:delegate-kernel"), line)
   }
+end DelegateRegistrySpec

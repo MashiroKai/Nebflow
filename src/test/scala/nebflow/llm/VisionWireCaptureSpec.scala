@@ -52,16 +52,20 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
   private val PortVision = 18571
   private val PortVisionFallback = 18572
 
-  /** One 8x8 RGB PNG (164 bytes) — small enough to inline, real enough that
-    * the serializer treats it as an opaque base64 payload. */
+  /**
+   * One 8x8 RGB PNG (164 bytes) — small enough to inline, real enough that
+   * the serializer treats it as an opaque base64 payload.
+   */
   private val SrcImageB64: String =
     "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAa0lEQVR42hWNQREAQQzCKqVSIgUplYIUpCDlbnkSJswMOzBouMFDhg4zyy4sWm7xkqX7g1e+CA4Mgf6KEatXS5ywiKh+cOy9sY47fOTo/cCsn0LmjE1M/YOweWKFCw4JzQ/K9t2pXHFJafkAliFIATL1UtgAAAAASUVORK5CYII="
   private val SrcImageBytes: Int = 164
 
   private val messageStart =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"
+
   private def textDelta(t: String) =
     s"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"$t\"}}\n\n"
+
   private val okTail =
     Seq(
       "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
@@ -70,13 +74,15 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
       "data: [DONE]\n\n"
     ).mkString
 
-  /** Capture the FULL outbound request body (read before responding — the JDK
-    * HttpServer requires the request body to be consumed), then answer with a
-    * well-formed Anthropic SSE stream so the real chain completes. */
+  /**
+   * Capture the FULL outbound request body (read before responding — the JDK
+   * HttpServer requires the request body to be consumed), then answer with a
+   * well-formed Anthropic SSE stream so the real chain completes.
+   */
   private def startCapturingMock(
-      port: Int,
-      sink: AtomicReference[String],
-      hits: java.util.concurrent.atomic.AtomicInteger
+    port: Int,
+    sink: AtomicReference[String],
+    hits: java.util.concurrent.atomic.AtomicInteger
   ): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
@@ -100,10 +106,12 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
       server
     }
 
-  /** No vision knob exists post-(甲) — the fixture is a plain configured model.
-    * That absence is the point: nothing in the config face can suppress images
-    * any more, so the only way to make the wire assertion red is to re-insert a
-    * strip step in the code path (mutation 2). */
+  /**
+   * No vision knob exists post-(甲) — the fixture is a plain configured model.
+   * That absence is the point: nothing in the config face can suppress images
+   * any more, so the only way to make the wire assertion red is to re-insert a
+   * strip step in the code path (mutation 2).
+   */
   private def mkConfig(port: Int): NebflowServiceConfig =
     NebflowServiceConfig(
       llm = ServiceLlmConfig(
@@ -132,8 +140,10 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
       agentModel = Some(AgentModelConfig(preferred = Some("v/m1"), fallbacks = Nil))
     )
 
-  /** Parse the captured Anthropic outbound body and count image blocks whose
-    * source is base64 (AnthropicAdapter.scala:53-61 serialization shape). */
+  /**
+   * Parse the captured Anthropic outbound body and count image blocks whose
+   * source is base64 (AnthropicAdapter.scala:53-61 serialization shape).
+   */
   private def countImageBlocks(body: String): Int =
     val json = parser.parse(body).getOrElse(Json.Null)
     val parts = json.hcursor
@@ -183,8 +193,9 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
       result <- runTurn(mkConfig(PortVision))
       _ <- IO.blocking(server.stop(0)).attempt.void
     yield result
-    val result = try program.unsafeRunSync()
-    finally if server != null then server.stop(0)
+    val result =
+      try program.unsafeRunSync()
+      finally if server != null then server.stop(0)
 
     assert(result.isRight, s"turn should complete against the mock: $result")
     assertEquals(hits.get(), 1, "the mock provider must be contacted exactly once")
@@ -215,8 +226,9 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
       result <- runTurn(mkConfig(PortVisionFallback))
       _ <- IO.blocking(server.stop(0)).attempt.void
     yield result
-    val result = try program.unsafeRunSync()
-    finally if server != null then server.stop(0)
+    val result =
+      try program.unsafeRunSync()
+      finally if server != null then server.stop(0)
 
     assert(result.isRight, s"turn should complete against the mock: $result")
     val body = sink.get()

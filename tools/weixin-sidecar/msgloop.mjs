@@ -30,13 +30,35 @@
  *                               presence = FIXTURE mode (zero iLink traffic),
  *                               lines flow through the same deliver leg
  *   WEIXIN_MSGLOOP_STATE_DIR    lock/cursor state root (default: plugin mirror)
- *   WEIXIN_MSGLOOP_ACCOUNT_ID   bot account override (default: newest indexed)
+ *   WEIXIN_MSGLOOP_ACCOUNT_ID   bot account override (default: newest indexed;
+ *                               startup pin only — self-heal may re-target)
  *
  * 🔴 Zero-secret discipline (from shim.mjs): no token value ever logged —
  * length/shape only. Mutex plane (§1.2): one consumer per bot account via
  * <accountId>.msgloop.lock (pid+heartbeat liveness, stale preemption,
  * owner-checked release). Cursor plane: the plugin's own <accountId>.sync.json
  * (byte-compatible; advanced only after a 2xx verdict — at-least-once).
+ *
+ * Self-heal (msgloop self-heal batch, 2026-10-08): a QR re-bind revokes the
+ * previous bot token server-side (the -14 loop) and lands a NEW index entry,
+ * so the loop re-reads the account index (once on -14; every pause wake ≤60s;
+ * throttled to ≥5min while polling) and adopts the newest valid account
+ * in-process — mutex released owner-checked, fresh per-account cursor, zero
+ * restart. Kill-switch semantics above are unchanged.
+ *
+ * Inbound media (weixin-inbound-media batch, 2026-10-08): IMAGE (type 2) /
+ * FILE (4) / VIDEO (5) items additionally land on local disk BEFORE the
+ * deliver leg — download + AES-128-ECB decrypt from the item's CDN reference,
+ * saved under <NEBFLOW_HOME>/media/weixin-inbound/<accountId>/<messageId>-<name>
+ * (official 2.4.9 mirrors: media/media-download.ts, cdn/pic-decrypt.ts,
+ * cdn/aes-ecb.ts — download direction; the upload twins live in send.mjs).
+ * A landed item rides the ingress body as mediaPath/mediaKind/mediaName/
+ * mediaMime with the placeholder label still in `text`; ANY media failure
+ * (download / decrypt / timeout / >100MB) degrades to the existing
+ * placeholder-label delivery — the cursor is NEVER held for a media leg
+ * (at-least-once, §T6). Voice stays out of scope (its transcript already
+ * rides as text). v1 keeps NO automatic cleanup: the media dir grows with
+ * traffic — an ops concern, swept by hand.
  *
  * Shared helpers are EXPORTED for the outbound batch (contract §2④): import
  * from this file, never rewrite.
@@ -86,6 +108,7 @@ const STALE_TOKEN_PAUSE_MS = 60 * 60 * 1000; // session-guard.js SESSION_PAUSE_D
 const MUTEX_STALE_MS = 120_000; // > 3× live cycle; heartbeat refreshes EVERY cycle
 const MUTEX_RETRY_MS = 60_000;
 const FIXTURE_POLL_GAP_MS = 1_000;
+const ACCOUNT_RECHECK_MS = 5 * 60_000; // self-heal: index re-read throttle while polling (pause wakes re-read on EVERY ≤60s wake)
 
 function log(level, msg) {
   const line = `${new Date().toISOString()} ${level} msgloop: ${msg}`;
@@ -198,14 +221,314 @@ export function messageIdOf(msg) {
   return null;
 }
 
-/** The ingress body (contract §2 wire shape). */
-export function toInboundBody(msg) {
+/**
+ * The ingress body (contract §2 wire shape). `media` — the deliver leg's media
+ * step result (weixin-inbound-media batch) — rides as the four optional fields
+ * ONLY when the item landed on disk; `text` keeps the placeholder label either
+ * way (the engine rewrites its own richer line when the path is good).
+ */
+export function toInboundBody(msg, media = null) {
   const body = { senderId: String(msg?.from_user_id ?? "") };
   const text = messageBody(msg);
   if (text) body.text = text;
   const id = messageIdOf(msg);
   if (id) body.messageId = id;
+  if (media) {
+    body.mediaPath = media.mediaPath;
+    body.mediaKind = media.mediaKind;
+    body.mediaName = media.mediaName;
+    body.mediaMime = media.mediaMime;
+  }
   return body;
+}
+
+// ───── weixin-inbound-media batch: CDN download + decrypt + persist ─────
+// Download-direction mirrors of the official 2.4.9 plugin (media/
+// media-download.ts downloadMediaFromItem, cdn/pic-decrypt.ts
+// downloadAndDecryptBuffer + parseAesKey, cdn/aes-ecb.ts decryptAesEcb,
+// media/mime.ts getMimeFromFilename). The upload twins (encrypt side) live in
+// send.mjs — same family, opposite direction, same CDN base constant.
+
+const MEDIA_MAX_BYTES = 100 * 1024 * 1024; // media-download.ts WEIXIN_MEDIA_MAX_BYTES
+// send.mjs §0.4 budget twins: network-class failures retry, deterministic
+// refusals (protocol) abort at once. Env-tunable for ops; defaults aligned.
+const MEDIA_ATTEMPTS = Math.max(1, Number(process.env.WEIXIN_SIDECAR_MEDIA_ATTEMPTS ?? 2));
+const MEDIA_BACKOFF_MS = Number(process.env.WEIXIN_SIDECAR_MEDIA_BACKOFF_MS ?? 1_000);
+const MEDIA_DOWNLOAD_TIMEOUT_MS = Number(process.env.WEIXIN_SIDECAR_MEDIA_TIMEOUT_MS ?? 30_000); // send.mjs CDN_TIMEOUT_MS twin
+/** accounts.ts CDN_BASE_URL — the download fallback base (send.mjs's twin). */
+const CDN_DEFAULT_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
+/** MessageItemType → mediaKind (voice 3 stays out of scope: transcript rides as text). */
+const MEDIA_KINDS = { 2: "image", 4: "file", 5: "video" };
+/** sniffImageMime → the file-name extension for a landed image (no wire name). */
+const IMAGE_EXT = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/bmp": ".bmp" };
+
+/** The media root: <NEBFLOW_HOME>/media/weixin-inbound (NEBFLOW_HOME twin of
+ * send.mjs nebflowHome(); read per call so ops/tests can re-point it). */
+export function mediaRootOf() {
+  const home = process.env.NEBFLOW_HOME?.trim() || path.join(os.homedir(), ".nebflow");
+  return path.join(home, "media", "weixin-inbound");
+}
+
+/**
+ * pic-decrypt.ts parseAesKey mirror: CDNMedia.aes_key arrives in two wild
+ * encodings — base64(16 raw bytes) (images' media.aes_key) or base64(32 hex
+ * chars) (file/voice/video, and images' image_item.aeskey after the hex→base64
+ * normalize). Anything else is a deterministic refusal (protocol: the CDN
+ * retry budget must not spin on a bad key).
+ */
+export function parseAesKey(aesKeyBase64, label = "media") {
+  const decoded = Buffer.from(String(aesKeyBase64 ?? ""), "base64");
+  if (decoded.length === 16) return decoded;
+  if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decoded.toString("ascii"))) {
+    return Buffer.from(decoded.toString("ascii"), "hex"); // base64 → hex string → raw bytes
+  }
+  const err = new Error(`${label}: aes_key must decode to 16 raw bytes or a 32-char hex string, got ${decoded.length}B`);
+  err.protocol = true;
+  throw err;
+}
+
+/** aes-ecb.ts decryptAesEcb mirror — AES-128-ECB, PKCS7 (the node default). */
+export function decryptAesEcb(ciphertext, key) {
+  const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
+/** mime.ts getMimeFromFilename mirror (the ported table; unknown → octet-stream). */
+const FILE_EXT_MIME = {
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".txt": "text/plain",
+  ".csv": "text/csv",
+  ".zip": "application/zip",
+  ".tar": "application/x-tar",
+  ".gz": "application/gzip",
+  ".mp3": "audio/mpeg",
+  ".ogg": "audio/ogg",
+  ".wav": "audio/wav",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".mkv": "video/x-matroska",
+  ".avi": "video/x-msvideo",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+};
+export function mimeFromFilename(filename) {
+  const ext = path.extname(String(filename ?? "")).toLowerCase();
+  return FILE_EXT_MIME[ext] ?? "application/octet-stream";
+}
+
+/** Image containers by magic bytes; unrecognized → "image/*" (the official
+ * inbound MediaType spelling for images — we never guess a wrong exact mime). */
+export function sniffImageMime(buf) {
+  const b = Buffer.from(buf ?? []);
+  const latin1 = (from, to) => b.subarray(from, to).toString("latin1"); // byte-faithful (ascii strips the high bit)
+  if (b.length >= 8 && latin1(0, 8) === "\x89PNG\r\n\x1a\n") return "image/png";
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.length >= 6 && (latin1(0, 6) === "GIF87a" || latin1(0, 6) === "GIF89a")) return "image/gif";
+  if (b.length >= 12 && latin1(0, 4) === "RIFF" && latin1(8, 12) === "WEBP") return "image/webp";
+  if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) return "image/bmp";
+  return "image/*";
+}
+
+/**
+ * A peer-controlled file_name must never steer the save path: basename only,
+ * separators/control chars flattened, leading dots pinned, UTF-8 byte-capped
+ * (CJK names survive — this is the name the agent will see in the injection
+ * line). `fallback` covers an absent/empty name.
+ */
+export function safeFileName(raw, fallback) {
+  const cleaned = path
+    .basename(String(raw ?? ""))
+    .replace(/[\\/\x00-\x1f]/g, "_")
+    .replace(/^\.+/, "_")
+    .trim();
+  if (!cleaned || cleaned === "_") return fallback;
+  let out = cleaned;
+  while (Buffer.byteLength(out, "utf-8") > 200) out = out.slice(0, -1);
+  return out;
+}
+
+/** message ids are numeric wire strings — flatten defensively for the file name. */
+function safeId(raw) {
+  return String(raw ?? "").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 80);
+}
+
+/** pic-decrypt.ts fetchCdnBytes twin, plus the 100MB bound: a declared
+ * content-length over the bound is refused up-front; a server that lies about
+ * it is cut off mid-stream (bounded memory). Client-refusal statuses (4xx) are
+ * deterministic (protocol); server trouble retries within the §0.4 budget. */
+async function fetchCdnBytes(url, { label, fetchImpl }) {
+  const res = await fetchImpl(url, { signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS) });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const err = new Error(`CDN download ${res.status} ${res.statusText} body=${body.slice(0, 200)}`);
+    err.protocol = res.status >= 400 && res.status < 500;
+    throw err;
+  }
+  const declared = Number(res.headers?.get?.("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MEDIA_MAX_BYTES) {
+    try { res.body?.cancel(); } catch { /* already gone */ }
+    const err = new Error(`CDN object exceeds the ${MEDIA_MAX_BYTES}-byte bound (content-length ${declared})`);
+    err.protocol = true;
+    throw err;
+  }
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of res.body) {
+    total += chunk.length;
+    if (total > MEDIA_MAX_BYTES) {
+      try { res.body?.cancel(); } catch { /* already gone */ }
+      const err = new Error(`CDN object exceeds the ${MEDIA_MAX_BYTES}-byte bound mid-stream`);
+      err.protocol = true;
+      throw err;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * pic-decrypt.ts downloadAndDecryptBuffer mirror (download direction): the
+ * server's full_url wins; ${cdn}/download?encrypted_query_param=… is the
+ * fallback spelling (cdn-url.ts buildCdnDownloadUrl). AES-128-ECB decrypt with
+ * the parsed key. Raises on any stage — the caller owns the degrade.
+ */
+async function downloadAndDecryptBuffer({ encryptedQueryParam, aesKeyBase64, fullUrl, cdnBase, label, fetchImpl }) {
+  const key = parseAesKey(aesKeyBase64, label);
+  const trimmedFull = typeof fullUrl === "string" ? fullUrl.trim() : "";
+  const trimmedParam = typeof encryptedQueryParam === "string" ? encryptedQueryParam.trim() : "";
+  let url;
+  if (trimmedFull) url = trimmedFull;
+  else if (trimmedParam) {
+    url = `${cdnBase.replace(/\/+$/, "")}/download?encrypted_query_param=${encodeURIComponent(trimmedParam)}`;
+  } else {
+    const err = new Error(`${label}: no CDN download URL (need full_url or encrypt_query_param)`);
+    err.protocol = true;
+    throw err;
+  }
+  debug(`media: ${label} GET ${url.replace(/([?&][^=]+=)[^&]+/g, "$1…")}`);
+  const encrypted = await fetchCdnBytes(url, { label, fetchImpl });
+  const decrypted = decryptAesEcb(encrypted, key);
+  debug(`media: ${label} decrypted ${encrypted.length}B → ${decrypted.length}B`);
+  return decrypted;
+}
+
+/** The §0.4-shaped retry wrapper: network-class failures retry within the
+ * MEDIA_ATTEMPTS budget; a deterministic (protocol) refusal propagates at
+ * once. Same boundary as send.mjs withNetworkRetry, download direction. */
+async function withMediaRetry(label, fn) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MEDIA_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (err?.protocol) throw err;
+      warn(`media: ${label} attempt ${attempt}/${MEDIA_ATTEMPTS} failed (${classifyFetchError(err)}: ${err.message})`);
+      if (attempt < MEDIA_ATTEMPTS) await new Promise((r) => setTimeout(r, MEDIA_BACKOFF_MS));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * The deliver-leg media step (weixin-inbound-media batch): find the FIRST
+ * image/file/video item, download + decrypt + persist it to
+ * <mediaRoot>/<accountId>/<messageId>-<name>, and return the four wire fields
+ * {mediaPath, mediaKind, mediaName, mediaMime}. v1 keeps NO automatic cleanup —
+ * the dir grows with traffic (swept by hand; see the header note). null = the
+ * message carries no in-scope item OR anything failed: the caller degrades to
+ * the placeholder-label delivery and the cursor is NEVER held for a media leg
+ * (this function is TOTAL — it does not throw). `deps` is the test/ops seam
+ * (fetchImpl / mediaRoot / now / cdnBase); a live call passes just {accountId}.
+ */
+export async function processInboundMedia(msg, deps = {}) {
+  try {
+    const accountId = normalizeAccountId(deps.accountId ?? "");
+    const item = (msg?.item_list ?? []).find((it) => MEDIA_KINDS[it.type]);
+    if (!item || !accountId) return null;
+    const kind = MEDIA_KINDS[item.type];
+    const label = `${kind} msg=${messageIdOf(msg) ?? "?"}`;
+    const media = item.image_item ?? item.file_item ?? item.video_item;
+    const encryptedParam = typeof media?.media?.encrypt_query_param === "string" ? media.media.encrypt_query_param : "";
+    const fullUrl = typeof media?.media?.full_url === "string" ? media.media.full_url : "";
+    if (!encryptedParam.trim() && !fullUrl.trim()) {
+      debug(`media: ${label} carries no CDN reference — placeholder only`);
+      return null;
+    }
+    // The official inbound key preference: image_item.aeskey (the hex spelling)
+    // wins over media.aes_key; every spelling funnels through parseAesKey.
+    const itemKey = kind === "image" ? item.image_item?.aeskey : undefined;
+    const aesKeyBase64 =
+      typeof itemKey === "string" && itemKey.trim()
+        ? Buffer.from(itemKey.trim(), "hex").toString("base64")
+        : typeof media?.media?.aes_key === "string"
+          ? media.media.aes_key
+          : "";
+    if (!aesKeyBase64.trim()) {
+      debug(`media: ${label} carries no aes_key — placeholder only`);
+      return null;
+    }
+    const buf = await withMediaRetry(label, () =>
+      downloadAndDecryptBuffer({
+        encryptedQueryParam: encryptedParam,
+        aesKeyBase64,
+        fullUrl,
+        cdnBase: deps.cdnBase ?? CDN_DEFAULT_BASE,
+        label,
+        fetchImpl: deps.fetchImpl ?? fetch,
+      }),
+    );
+    if (buf.length === 0) {
+      const err = new Error(`${label}: decrypted buffer is empty`);
+      err.protocol = true;
+      throw err;
+    }
+    // media-download.ts naming/mime per kind: file → file_name guesses the
+    // mime; video lands as a plain mp4; image → magic-byte sniff (the official
+    // passes neither name nor mime for images and lets the store infer).
+    let name;
+    let mime;
+    if (kind === "file") {
+      name = safeFileName(item.file_item?.file_name, "file.bin");
+      mime = mimeFromFilename(item.file_item?.file_name ?? "");
+    } else if (kind === "video") {
+      name = "video.mp4";
+      mime = "video/mp4";
+    } else {
+      mime = sniffImageMime(buf);
+      name = `image${IMAGE_EXT[mime] ?? ".bin"}`;
+    }
+    const dir = path.join(deps.mediaRoot ?? mediaRootOf(), accountId);
+    fs.mkdirSync(dir, { recursive: true }); // v1: no automatic cleanup — grows with traffic
+    const id = messageIdOf(msg) || `noid-${(deps.now ?? Date.now)()}`;
+    const mediaPath = path.join(dir, `${safeId(id)}-${name}`);
+    fs.writeFileSync(mediaPath, buf); // overwrite ⇒ an at-least-once redelivery is idempotent
+    info(`media: ${label} landed ${buf.length}B → ${mediaPath} (${mime})`);
+    return { mediaPath, mediaKind: kind, mediaName: name, mediaMime: mime };
+  } catch (err) {
+    warn(
+      `media: ${kind4(msg)} download failed (${err?.protocol ? "protocol" : classifyFetchError(err)}: ${err?.message}) ` +
+        "— degrading to the placeholder label, cursor NOT held",
+    );
+    return null;
+  }
+}
+
+/** The item-kind label for the failure line (kind is lost by the outer catch). */
+function kind4(msg) {
+  const item = (msg?.item_list ?? []).find((it) => MEDIA_KINDS[it.type]);
+  return item ? MEDIA_KINDS[item.type] : "media";
 }
 
 // ───────────────────────────── mutex (§1.2) ─────────────────────────────
@@ -306,15 +629,79 @@ function saveCursor(accountId, buf) {
   fs.writeFileSync(cursorPathOf(accountId), JSON.stringify({ get_updates_buf: buf }));
 }
 
+// ─────────── self-heal account plane (msgloop self-heal batch, 2026-10-08) ───────────
+
+/**
+ * Newest USABLE account in the index (self-heal selection): walk newest→oldest
+ * and return the first id whose account file loads with a non-empty token —
+ * null when none qualifies (so the caller keeps the status quo + a warning).
+ * Pure: index + loader injected, zero fs/zero token values, so the offline
+ * spec (msgloop-selfheal.test.mjs) can pin the discipline. `index` holds
+ * ALREADY-NORMALIZED ids (the live caller maps listIndexedAccountIds() through
+ * normalizeAccountId — startup selection normalizes the same way).
+ * @param {string[]} index normalized account ids, oldest → newest
+ * @param {(id: string) => {token?: unknown} | null} loader
+ * @returns {string | null}
+ */
+export function latestValidAccountId(index, loader) {
+  for (let i = index.length - 1; i >= 0; i--) {
+    const id = String(index[i] ?? "").trim();
+    if (!id) continue;
+    const acct = loader(id);
+    if (acct && typeof acct.token === "string" && acct.token.trim()) return id;
+  }
+  return null;
+}
+
+/**
+ * The keep/switch verdict (self-heal core, pure): (current id, normalized
+ * index, loader) ⇒ {action: "keep"|"switch", accountId, reason}. Switch iff
+ * the newest VALID indexed account differs from the current one — a re-bind
+ * lands a newer entry (adopt it); a missing/tokenless current file degrades to
+ * the newest still-valid entry (fall back); an empty/unreadable index never
+ * switches and never throws (keep + reason ⇒ the loop logs and holds).
+ * @param {string} currentId
+ * @param {string[]} index normalized account ids, oldest → newest
+ * @param {(id: string) => {token?: unknown} | null} loader
+ * @returns {{action: "keep" | "switch", accountId: string, reason: string}}
+ */
+export function decideAccountSwitch(currentId, index, loader) {
+  const latest = latestValidAccountId(index, loader);
+  if (!latest) {
+    return {
+      action: "keep",
+      accountId: currentId,
+      reason: index.length ? "no indexed account file carries a usable token" : "account index is empty",
+    };
+  }
+  if (latest === currentId) {
+    return { action: "keep", accountId: currentId, reason: "current account is the newest valid indexed one" };
+  }
+  const curAt = index.indexOf(currentId);
+  const newAt = index.indexOf(latest);
+  return {
+    action: "switch",
+    accountId: latest,
+    reason:
+      curAt === -1 ? "current account is not in the index"
+      : newAt > curAt ? "newer valid indexed account"
+      : "current account file has no usable token",
+  };
+}
+
 // ───────────────────────── deliver leg (§2 wire contract) ─────────────────────────
 
 /**
  * One message → the Nebflow ingest seam. Returns {delivered, status, verdict}.
  * 403 re-reads the token file once (rotation pickup) before giving up; the
  * cursor NEVER advances on auth/network failure (at-least-once, §T6).
+ * weixin-inbound-media batch: the media step runs BEFORE the body is built —
+ * a landed item adds the four media fields, a failed one degrades to the
+ * placeholder label (the step is contained; it never holds the cursor).
  */
-export async function deliverToIngress(msg) {
-  const body = JSON.stringify(toInboundBody(msg));
+export async function deliverToIngress(msg, accountId = loopAccount) {
+  const media = await processInboundMedia(msg, { accountId });
+  const body = JSON.stringify(toInboundBody(msg, media));
   for (let attempt = 1; attempt <= 2; attempt++) {
     const token = readIngressToken();
     if (!token) {
@@ -376,15 +763,36 @@ const sleep = (ms, stop) =>
     stop?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
   });
 
-/** monitor.js mirror: long-poll → deliver each → cursor after 2xx. -14 = 1h pause. */
+/**
+ * monitor.js mirror: long-poll → deliver each → cursor after 2xx. -14 = the
+ * self-heal check first (newer valid indexed account ⇒ return a switch handoff
+ * to the outer loop; otherwise the session-guard 1h pause), plus a periodic
+ * index re-read (every pause wake, throttled to ACCOUNT_RECHECK_MS while
+ * polling). Returns the {action: "switch", accountId, reason, trigger} handoff
+ * on a self-heal switch, undefined on ownership loss / stop.
+ */
 async function liveLoop(accountId, stop) {
   let cursor = loadCursor(accountId);
   info(`live: ${cursor ? `resuming cursor (${cursor.length}B buf)` : "fresh cursor"} — ${ILINK_BASE}/ilink/bot/getupdates`);
   let failures = 0;
   let pausedUntil = 0;
   let pollTimeoutMs = LONG_POLL_TIMEOUT_MS;
+  let lastAccountCheckAt = 0; // self-heal throttle (0 ⇒ first cycle re-reads at once)
+  /** the one self-heal re-read (pure core; ids normalized like startup selection):
+   *  a switch verdict carries the trigger and IS the handoff; a keep verdict
+   *  comes back with its reason so the caller logs exactly why it held. */
+  const healCheck = (trigger) => {
+    const d = decideAccountSwitch(accountId, listIndexedAccountIds().map(normalizeAccountId), loadAccount);
+    return d.action === "switch" ? { ...d, trigger } : d;
+  };
   while (!stop?.aborted) {
-    if (Date.now() < pausedUntil) { await sleep(Math.min(pausedUntil - Date.now(), 60_000), stop); continue; }
+    const paused = Date.now() < pausedUntil;
+    if (paused || Date.now() - lastAccountCheckAt >= ACCOUNT_RECHECK_MS) {
+      lastAccountCheckAt = Date.now();
+      const heal = healCheck(paused ? "index re-read during -14 pause" : "periodic index re-read");
+      if (heal.action === "switch") return heal;
+    }
+    if (paused) { await sleep(Math.min(pausedUntil - Date.now(), 60_000), stop); continue; }
     if (!heartbeatMutex(accountId)) return;
     const acct = loadAccount(accountId);
     const token = acct?.token?.trim();
@@ -410,8 +818,15 @@ async function liveLoop(accountId, stop) {
     }
     if ((resp.errcode ?? resp.ret ?? 0) !== 0) {
       if (resp.errcode === STALE_TOKEN_ERRCODE || resp.ret === STALE_TOKEN_ERRCODE) {
+        // Self-heal arm: a -14 here is a server-side revocation — the QR
+        // re-bind has (or is about to) land a fresh index entry. Re-read the
+        // index once now; switch only when a DIFFERENT valid account exists,
+        // else keep the session-guard 1h pause (the pause wakes re-read the
+        // index every ≤60s, so a later re-bind is still adopted in-process).
+        const heal = healCheck("errcode -14");
+        if (heal.action === "switch") return heal;
         pausedUntil = Date.now() + STALE_TOKEN_PAUSE_MS;
-        error("live: bot token stale (-14) — pausing this account for 1h (session-guard mirror)");
+        error(`live: bot token stale (-14) — no newer valid account in the index (${heal.reason}); pausing this account for 1h (session-guard mirror)`);
         continue;
       }
       failures += 1;
@@ -425,7 +840,7 @@ async function liveLoop(accountId, stop) {
     let allDelivered = true;
     for (const m of resp.msgs ?? []) {
       info(`live: inbound from=${String(m?.from_user_id ?? "") || "unresolved"} body=${shape(messageBody(m))}`);
-      const r = await deliverToIngress(m);
+      const r = await deliverToIngress(m, accountId);
       if (!r.delivered) { allDelivered = false; break; }
       info(`live: verdict ${JSON.stringify(r.verdict)}`);
     }
@@ -474,7 +889,7 @@ async function fixtureLoop(accountId, stop) {
         try { msg = JSON.parse(line); } catch { warn(`fixture: skipping non-JSON line: ${line.slice(0, 80)}`); }
         if (msg) {
           info(`fixture: inbound from=${String(msg?.from_user_id ?? "")} body=${shape(messageBody(msg))}`);
-          const r = await deliverToIngress(msg);
+          const r = await deliverToIngress(msg, accountId);
           if (r.delivered) info(`fixture: verdict ${JSON.stringify(r.verdict)}`);
           else {
             warn(`fixture: NOT delivered (HTTP ${r.status}) — line held, will redeliver`);
@@ -506,7 +921,7 @@ export function startMsgLoop() {
     warn(`fixture path must be absolute: ${FIXTURE}`);
     return;
   }
-  const accountId = normalizeAccountId(ACCOUNT_OVERRIDE || listIndexedAccountIds().at(-1) || (FIXTURE ? "fixture-im-bot" : ""));
+  let accountId = normalizeAccountId(ACCOUNT_OVERRIDE || listIndexedAccountIds().at(-1) || (FIXTURE ? "fixture-im-bot" : ""));
   if (!accountId) {
     error("no bot account resolvable (index empty; set WEIXIN_MSGLOOP_ACCOUNT_ID)");
     return;
@@ -524,13 +939,24 @@ export function startMsgLoop() {
   (async () => {
     for (;;) {
       if (stop.signal.aborted) return;
-      if (acquireMutex(accountId, stop.signal)) {
+      const held = accountId; // the account THIS iteration's mutex/cursor belong to
+      if (acquireMutex(held, stop.signal)) {
+        let next = null;
         try {
-          await (FIXTURE ? fixtureLoop(accountId, stop.signal) : liveLoop(accountId, stop.signal));
-          return; // loop exited: ownership lost or stop signalled
+          next = await (FIXTURE ? fixtureLoop(held, stop.signal) : liveLoop(held, stop.signal));
         } finally {
-          releaseMutex(accountId);
+          releaseMutex(held); // owner-checked; always the account we held
         }
+        // Self-heal switch: loopAccount flips AFTER the release (a signal in
+        // between releases the old id — owner-checked, so a re-release is a
+        // no-op) and the loop re-enters with the new account + its own cursor.
+        if (!stop.signal.aborted && next?.action === "switch" && next.accountId) {
+          accountId = normalizeAccountId(next.accountId);
+          loopAccount = accountId;
+          info(`self-heal: account ${held} → ${accountId} (${next.reason}; trigger: ${next.trigger}) — same process, fresh cursor`);
+          continue;
+        }
+        return; // loop exited: ownership lost or stop signalled
       }
       await sleep(MUTEX_RETRY_MS, stop.signal);
     }

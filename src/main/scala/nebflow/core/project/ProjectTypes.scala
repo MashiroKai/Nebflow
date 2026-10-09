@@ -350,10 +350,12 @@ object OutEdge:
   val RootDefaultOn: Set[String] = Set(Pass, Failed)
   val RootTarget = "Nebula"
 
-  /** Pre-W1 names for the same two declarations (`NebulaTarget` / `NebulaDefaultOn`,
-    * see the block comment above). Bound directly to the current declarations so the
-    * literal `"Nebula"` and the `{pass,failed}` gate set have exactly **one** source
-    * and cannot drift apart. */
+  /**
+   * Pre-W1 names for the same two declarations (`NebulaTarget` / `NebulaDefaultOn`,
+   * see the block comment above). Bound directly to the current declarations so the
+   * literal `"Nebula"` and the `{pass,failed}` gate set have exactly **one** source
+   * and cannot drift apart.
+   */
   val NebulaDefaultOn: Set[String] = RootDefaultOn
   val NebulaTarget = RootTarget
 
@@ -965,23 +967,25 @@ case class NodeDef(
    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。
    */
   chainId: Option[String] = None,
-  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①, a single
-    * field `taskId: Option[String]`, the same shape as `chainId`): this node is attributed
-    * to its **task id** (an entry id in the unified ledger
-    * `~/.nebflow/tasks-v2.json`).
-    *
-    * Write point = the node's **single construction point** ([[NodeTools]]'s create),
-    * taking the **engine-side identity** `ctx.taskId` -- 🔴 it must **not** be taken from
-    * `NodeEditTool`'s `project` parameter (that parameter **can override**
-    * `ctx.projectName` ⇒ client-forgeable; the value discipline is the same as
-    * `BoardCaller.fromContext`'s "engine-side identity, never a client parameter").
-    *
-    * A legacy flow-map.json without this key → withDefaults decodes `None` (**zero
-    * migration**).
-    *
-    * (W1 provisional shim: field appended at the END of the parameter list -- main's
-    * copy places it last too; positional constructions keep compiling. The uplink
-    * refusal face that consumes it lands with the owning wave.) */
+  /**
+   * **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①, a single
+   * field `taskId: Option[String]`, the same shape as `chainId`): this node is attributed
+   * to its **task id** (an entry id in the unified ledger
+   * `~/.nebflow/tasks-v2.json`).
+   *
+   * Write point = the node's **single construction point** ([[NodeTools]]'s create),
+   * taking the **engine-side identity** `ctx.taskId` -- 🔴 it must **not** be taken from
+   * `NodeEditTool`'s `project` parameter (that parameter **can override**
+   * `ctx.projectName` ⇒ client-forgeable; the value discipline is the same as
+   * `BoardCaller.fromContext`'s "engine-side identity, never a client parameter").
+   *
+   * A legacy flow-map.json without this key → withDefaults decodes `None` (**zero
+   * migration**).
+   *
+   * (W1 provisional shim: field appended at the END of the parameter list -- main's
+   * copy places it last too; positional constructions keep compiling. The uplink
+   * refusal face that consumes it lands with the owning wave.)
+   */
   taskId: Option[String] = None
 )
 
@@ -1492,12 +1496,14 @@ object NodePayload:
           "id" -> h.id.asJson,
           "name" -> h.name.asJson,
           "role" -> h.role.asJson,
-          "lastVerdict" -> h.lastVerdict.asJson)
+          "lastVerdict" -> h.lastVerdict.asJson
+        )
       }
       "mergeVerdictGate" -> Json.obj(
         "blocked" -> true.asJson,
         "heldBy" -> held.asJson,
-        "reason" -> MergeMutexPolicy.VerdictGateReason.asJson)
+        "reason" -> MergeMutexPolicy.VerdictGateReason.asJson
+      )
     }
     Json.obj(
       (baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields ++ mergeVerdictGateFields ++ verifierRouteFields)*
@@ -1693,6 +1699,8 @@ object ChainCancelErrors:
     s"$AlreadyCancelled: chain '$chainId' was cancelled — cancellation is irreversible (its members " +
       "are already terminal), so it cannot be resumed; re-create the work as a new chain instead"
 
+end ChainCancelErrors
+
 /** Project 实体定义（§1.1，projects/<name>/project.json）。 */
 case class ProjectDef(
   name: String,
@@ -1736,8 +1744,49 @@ case class ProjectDef(
    * 同 archived 先例形状）。
    */
   unmounted: Option[Boolean] = None,
-  unmountedAt: Option[Long] = None
+  unmountedAt: Option[Long] = None,
+  /**
+   * origin 指针（v2.1 §C.1-2 / §A.5，2026-10-09 实施批）：项目本体的**设备归属**。
+   * `None` = 缺省 `{self, workspace}`——存量项目零迁移（解码侧可选，withDefaults
+   * 缺键 ⇒ None ⇒ 现状行为逐字节）。`Some(o)` 且 `o.device` 非 self ⇒ 项目本体
+   * 在该设备上：host 只持指针（**状态权威单点不破**），执行派生路由到 origin 设备
+   * （[[nebflow.core.tools.DelegateTool]] 的 project 派生路由），文件面按需取件
+   * （FileTransfer direction=list/get）。挂载面（[[ProjectRuntimeRegistry.mount]]）
+   * 拒绝 remote-origin 项目——FlowMap/TaskBoard 存储根会写进远端路径（G.12 路径
+   * 错觉），远端项目的执行面整体在 origin 设备。
+   */
+  origin: Option[ProjectOrigin] = None
 )
+
+/**
+ * 项目 origin 指针（v2.1 §C.0：指针 = `{device, path}`）。
+ *
+ * `device` 取值域：字面 `"self"`（= 编排权威本机，创建面缺省显式化）或对端设备
+ * deviceId（稳定标识；显示名由消费面经 neblink 名册现查）。`path` = 设备上的
+ * 项目工作区**绝对路径**（设备本盘语义——不解析、不迁移）。
+ */
+final case class ProjectOrigin(
+  device: String,
+  path: String
+)
+
+object ProjectOrigin:
+
+  /** 字面 self 标记（= 编排权威本机）。 */
+  val Self: String = "self"
+
+  /** self 字面判据（`self` / 空 = 本机；其余按对端 deviceId 处理）。 */
+  def isSelfLiteral(device: String): Boolean =
+    device.trim.isEmpty || device.trim.equalsIgnoreCase(Self)
+
+  /**
+   * codec（两键定形）：伴生对象 give ⇒ `ProjectDef` 的 ConfiguredCodec.derived
+   * 与任何手工 decode 都能解析 `origin`；`Option[ProjectOrigin]` 缺键 = None
+   * （withDefaults——存量 project.json 零迁移）。
+   */
+  given Codec[ProjectOrigin] = Codec.forProduct2("device", "path")(ProjectOrigin.apply)(o => (o.device, o.path))
+
+end ProjectOrigin
 
 object ProjectDef:
 

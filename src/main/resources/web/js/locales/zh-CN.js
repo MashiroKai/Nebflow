@@ -352,6 +352,16 @@ export default {
   // quotejump 批（跳转「必须可跳」）：引用块的**按钮语义**可访问名（含被引摘要文本）。
   // 无跳转实现/坐标不可得时该属性不挂（`paintJumpAffordance` 单点）。
   'messages.quoteJumpAria': '跳转到被引消息：{text}',
+  // ── quote-message 一期（主聊天区消息右键引用，spec §6 清单）新增 9 键 ──────
+  'chat.quoteJumpHint': '跳转到被引消息',
+  'chat.quoteDeleted': '原消息已删除',
+  'chat.quoteDeletedSnapshot': '原消息已删除 · 已保留快照文',
+  'chat.quoteSenderMe': '我',
+  'chat.quoteTypeImage': '[图片]',
+  'chat.quoteTypeFile': '[文件]',
+  'chat.quoteTypeTool': '[工具]',
+  'chat.quoteTypeAsk': '[提问]',
+  'chat.quoteTypeSystem': '[系统]',
   'messages.multiSelect': '多选转发',
   'messages.selectedCount': '已选 {n} 条',
   'messages.forward': '转发',
@@ -885,11 +895,20 @@ export default {
   'settings.jevProvider': '提供方',
   'settings.jevEndpoint': '端点',
   'settings.jevKeyRef': 'API 密钥引用',
-  'settings.jevHint': '开启后，Nebflow 执行器的 Delegate 调用会先询问 Jev 该任务需要哪些插件；未配置 Jev 时由普通 LLM 调用代判。keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。',
-  'settings.jevHealth': '分配探活',
+  // secrets-ui-redesign（2026-10-08 设计稿落定）：hint 只留安全关键句一行；
+  // 健康行三态词补齐（此前四键缺失，t() 未命中回退键名 → 裸键名当文案的 bug）。
+  'settings.jevHint': 'keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。',
+  'settings.jevHealth': '分配通道',
   'settings.jevHealthUp': '正常',
   'settings.jevHealthDown': '异常',
   'settings.jevHealthUnconfigured': '未配置',
+  'settings.jevKeyRefShow': '显示密钥引用',
+  'settings.jevKeyRefHide': '隐藏密钥引用',
+  // jev-panel-threefix（2026-10-09 用户反馈三点）：行体开合 title / 钉死端点
+  // 解释 / 回退态徽标词（如实反映「Jev 不可用 → 已回退 llm」）。
+  'settings.jevToggleDetails': '展开或收起分配设置',
+  'settings.jevEndpointFixed': 'Jev 版端点固定，无需填写',
+  'settings.jevHealthFallback': 'Jev 不可用 → 已回退 llm',
   // executors panel（executor-registry 批，2026-10-03）
   'executors.hint': 'Delegate 任务由下方默认执行器执行。检测扫描 PATH 与常用安装前缀；外部 CLI 以 headless 模式在项目目录内运行。',
   'executors.empty': '尚无在册执行器。',
@@ -907,6 +926,12 @@ export default {
   // secrets-frontend（2026-09-27）：设置页入口行，打开独立密钥弹窗
   // （js/secretsPanel.js）——标题与按钮共用一个键。
   'settings.secrets': '密钥',
+  // secrets-ui-redesign（2026-10-08 设计稿落定）：入口行改玻璃行卡——
+  // 行名「密钥管理」+「N 个密钥」副词 + count pill（数量由 GET /api/secrets 读取，
+  // 元数据 only）。
+  'settings.secretsManage': '密钥管理',
+  'settings.secretsCount': '{n} 个密钥',
+  'settings.secretsNone': '尚无密钥',
   'settings.addProvider': '+ 添加服务商',
   'settings.modelChainHint': '在输入框输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
   // /model 面板文案（modelcfg Phase 1）
@@ -1215,11 +1240,11 @@ export default {
   // AskUser 附件行批（chain-askuser-enhance-impl，2026-10-02）—— 顶层 `attachments`
   // 渲染为整次提问层的可点击附件行。🔴 草案：候作者逐字过目（§16 冻结闸）后才生效；
   // 生效候重启窗（静态资源服务自 jar 内资源）。
-  'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
   'askUser.attachmentsTitle': '附件',
   'askUser.attachmentsCount': '{n} 个附件',
   'askUser.attachmentUnavailable': '不可用',
   'askUser.attachmentOpenCanvas': '在 Canvas 打开 {name}',
+  'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
   'askUser.pendingTitle': '待回答问题',
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
   // 双开缺陷批（chain-askuserdup 案 A①）：历史里的提问行**无作答记录**时的显式标注
@@ -1227,6 +1252,11 @@ export default {
   'askUser.historyUnanswered': '历史无作答记录（待定）',
   // 多 AskUser 并发批（#250）
   'askUser.turnInterrupted': '本轮已中断（提问作废）',
+  // askucancel 批位2（2026-10-08）：用户取消终态（卡上「取消」按钮 / REST / WS /
+  // 渠道取消入口共用——hub CancelRequest → askUserClosed{reason:"user-cancelled"}
+  // 广播与 `__cancelled__` 历史落盘行走同一文案）。
+  'askUser.cancelled': '已取消（不再等待作答）',
+  'askUser.cancelFailed': '取消未生效（{state}），问题可能已被处理',
   'askUser.nextPending': '下一张待办（{n}）',
   'askUser.cardGone': '该提问已不存在，已从待办条移除',
   'askUser.pendingSyncFailed': '待办同步失败，列表可能不完整',
@@ -1235,6 +1265,15 @@ export default {
   'askUser.rejectUnknown': '答复对应的提问已失效，卡片仍保留，请重新作答',
   'askUser.rejectNoMatch': '找不到对应的待答提问，请重新作答',
   'askUser.rejectGeneric': '答复未被接受，请重新作答',
+  // askuser-secret 批（2026-10-08）：密码题面（showOptions secret 分支）+ 明文回流
+  // 拒收 toast（hub reason="secret-slot-mismatch"，规格 §5.1）。
+  'askUser.secretPlaceholder': '输入密钥 / 验证码（不显示明文）',
+  'askUser.secretShow': '显示',
+  'askUser.secretHide': '隐藏',
+  'askUser.secretHint': '该值将加密存入本机 secrets（仅所有者可读）；代理只收到存储指针，看不到明文。',
+  'askUser.secretEphemeralHint': '验证码模式：一次读取后即作废（10 分钟内有效）；代理只收到存储指针。',
+  'askUser.secretStoredLine': '已安全存储（回执已注入会话）',
+  'askUser.rejectSecret': '密码题收到了明文作答（旧版页面不识别安全输入）——值已丢弃未存储，请刷新本页后在卡片上重新输入',
   'chat.waitingQuestion': '等待问题...',
   'chat.askFailed': '询问失败',
   'chat.askLabel': '询问',
@@ -1299,9 +1338,9 @@ export default {
   'think.18': '乘风掠过几片星云，飞了 {d}',
 
   // === Slash commands ===
-  'slash.clear': '清除 LLM 上下文（保留聊天记录）',
+  //（/clear /compact 的下拉帮助文案随命令摘除退役，2026-10-09；*Done 两条保留 ——
+  // compact 态发送路径与持久化队列回放仍会翻译它们，摘除前的引擎 UI 历史亦然）
   'slash.clearDone': '上下文已清除，LLM 记忆已重置。',
-  'slash.compact': '手动触发上下文压缩',
   'slash.compactDone': '压缩已触发...',
   'slash.fork': '分叉此会话（继承完整对话历史）',
   'slash.forkPending': '正在分叉会话...',
@@ -1400,6 +1439,25 @@ export default {
   'delegate.openNative': '在原软件打开',
   // ⑦ S10 fail-soft 态（链拉取失败；行保留，点击重试）
   'delegate.chainUnavailable': '链视图暂时打不开，点击重试',
+  // delegate-ui 批（2026-10-08 · 视图④ delegate 详情条：星型区头/归档入口）
+  'delegate.children': '子代理',
+  'delegate.archive': '归档',
+  'delegate.archived': '已归档',
+  'delegate.archiveFailed': '归档失败',
+  // delegate-ui 修订批（用户九点③⑨ · 2026-10-09）
+  'delegate.chainSteps': '链 {n} 步',
+  'delegate.flowNodes': 'flow 节点',
+  // === delegate/flowmap 两层架构批（2026-10-09 · 规格 §C/§D/§E/H.4）===
+  // 两层标题键（E 两层视觉签名）＋ 抽屉/自动归档键（D 唯一归档面）＋ L1 空态。
+  // kidsBadge/flowBadge 不另设键：子代理词复用 delegate.children，flow 保持数据词。
+  'delegate.flowmap.title': '委托流程图',
+  'delegate.projectflow.title': '项目流程图',
+  'delegate.kids.empty': '尚未产生 subagent / flow 调用',
+  'delegate.archive.toast': '{n} 已完成并归档',
+  'delegate.archive.undo': '撤销',
+  'delegate.archive.restore': '恢复',
+  'delegate.archive.openFlow': '流程图 →',
+  'delegate.archive.drawerTitle': '已归档委托',
   // === 链视图（链视图紧凑 v2 批 2026-10-01 · 前端面 §16 草案键表）===
   // 徽标五态（§二.1.3）+ 悬停三条 + 取消确认框一条 + 未分组一条。
   // 🔴 定稿由复核位抽取呈作者（本位只按 mockup 措辞起草）。
@@ -1876,6 +1934,13 @@ export default {
   'agentManager.systemPrompt': '系统提示词',
   'agentManager.viewSource': '查看源码',
   'agentManager.viewRendered': '查看渲染',
+  // prompt-panel 面板批（2026-10-09）：内置 nebflow 详情页提示词双面页签——
+  // delegate 面（默认）+ node 面。本四键只管标注；正文来自 GET /api/agents/:name
+  // 的 `promptFaces` 字段（判据单点 = BuiltinAgents.panelPromptFaces）。
+  'agentManager.faceDelegate': 'Delegate 目标',
+  'agentManager.faceNode': 'Node（flow 节点）',
+  'agentManager.faceDelegateHint': 'Delegate 会话收到的系统提示词（delegate_report 纪律）。',
+  'agentManager.faceNodeHint': 'flow 节点会话收到的系统提示词（node_report 纪律）。',
   'explorer.newFile': '新建文件',
   'explorer.newFolder': '新建文件夹',
   'daemons.delete': '删除',
@@ -2004,6 +2069,10 @@ export default {
   'social.action.notReady': '通道状态尚未载入——正在重连，请稍后重试',
   'social.action.recheck': '重新检查',
   'social.action.close': '关闭',
+  // social-fix-confirm（作者指令 2026-10-09，§16 收录）：解绑二次确认——渠道名
+  // 由 {name} 动态代入，确认钮文案复用各渠道既有 archive.action（「解除绑定」）。
+  'social.archive.confirmTitle': '解除绑定',
+  'social.archive.confirmMsg': '解除后需要重新扫码接入，确定解除「{name}」的绑定？',
   'social.secret.placeholder': '粘贴凭据（填入后不回显）',
   'social.secret.stored': '已写入 · 不回显',
   'social.secret.empty': '未写入',
@@ -2082,30 +2151,32 @@ export default {
   'social.telegram.field.chatId': '目标会话 ID',
   'social.telegram.field.apiBase': 'API 基址',
   // secrets-frontend（2026-09-27）：独立密钥弹窗（文案已收 §16 出件）。
-  // 值在本面只写不读——任何文案都不描述已存值的内容。
+  // 行内化（2026-10-09 07:42 拍板）：编辑器弹窗与 FAB 退役，一切操作在列表
+  // 行内完成——值字段常显占位点（••••••），眼睛点击才经鉴权读取单条回显，
+  // 回遮即清空回占位；列表与其他任何文案都不含值（secrets-readback 批
+  // 2026-10-09 纪律不变）。
   'secrets.title': '密钥',
   'secrets.close': '关闭',
-  'secrets.add': '新建密钥',
-  'secrets.addTitle': '新建密钥',
-  'secrets.replaceTitle': '替换密钥值',
+  'secrets.tailAdd': '＋ 新建密钥',
   'secrets.name': '名称',
   'secrets.nameHint': '小写「服务-用途」，例如 aliyun-oss',
   'secrets.value': '值',
+  'secrets.dotsPlaceholder': '••••••',
   'secrets.showValue': '显示值',
   'secrets.hideValue': '隐藏值',
-  'secrets.valuePlaceholder': '粘贴值。只写一次，之后不再显示。',
-  'secrets.replacePlaceholder': '保存后整体替换已存值。旧值不会显示。',
-  'secrets.replace': '替换值',
+  'secrets.rowHint': '点击展开，原位编辑',
+  'secrets.overwriteHint': '直接输入即覆盖当前值：Enter 或「保存」提交；点行外保存并收起；Esc 放弃并收起。',
+  'secrets.valuePlaceholder': '粘贴值。保存后可在本面板查看与修改。',
   'secrets.delete': '删除',
   'secrets.save': '保存',
-  'secrets.cancel': '取消',
+  'secrets.saved': '已保存 ✓',
   'secrets.state.ok': '仅所有者可读写',
   'secrets.state.permissive': '权限过宽',
   'secrets.referencedBy': '被引用：{refs}',
   'secrets.deleteTitle': '删除密钥',
-  'secrets.deleteConfirm': '删除「{name}」？此操作不可撤销。',
-  'secrets.deleteConfirmRefs': '「{name}」正被引用：{refs}。删除会导致它们失联。此操作不可撤销。',
-  'secrets.empty': '还没有密钥。新建一个后，服务与助手都可按路径引用——值只写一次，之后不再显示。',
+  'secrets.deleteConfirm': '删除后不可恢复，确定删除「{name}」？',
+  'secrets.deleteConfirmRefs': '「{name}」正被引用：{refs}。删除会导致它们失联，删除后不可恢复。',
+  'secrets.empty': '还没有密钥。新建一个后，服务与助手都可按路径引用——值可随时在本面板查看与修改。',
   'secrets.invalidName': '只能用小写字母、数字和「.」「-」「_」，字母或数字开头，最长 64 字符。',
   'secrets.reservedName': '「social-」「daemon-」开头之名由各自面板管理。',
   'secrets.error.notFound': '该密钥已不存在——可能已在别处被删除。',

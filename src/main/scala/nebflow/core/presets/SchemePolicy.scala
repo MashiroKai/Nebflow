@@ -37,31 +37,37 @@ object SchemePolicy:
   val RootName = RootAgentIdentity.Name
   val DispatcherName = "project-dispatcher"
 
-  /** The executor agent name (single point = [[nebflow.core.entity.BuiltinAgents.ExecutorName]]).
-    *
-    * P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
-    * batch (`f646eeeaa`) merged `kernel` + `general` into this one execution agent,
-    * so the inheritance table below is written in terms of the CURRENT name; the
-    * retired spellings stay resolvable through the rename table
-    * ([[resolveRole]]), which is what keeps a stored old-data sidecar behaving as
-    * it did before the merge. */
+  /**
+   * The executor agent name (single point = [[nebflow.core.entity.BuiltinAgents.ExecutorName]]).
+   *
+   * P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
+   * batch (`f646eeeaa`) merged `kernel` + `general` into this one execution agent,
+   * so the inheritance table below is written in terms of the CURRENT name; the
+   * retired spellings stay resolvable through the rename table
+   * ([[resolveRole]]), which is what keeps a stored old-data sidecar behaving as
+   * it did before the merge.
+   */
   val ExecutorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   /** 面板可设模型方案的 agent 全集（作者令 2026-09-21：仅这两类）。 */
   val SettableAgents: Set[String] = Set(RootName, DispatcherName)
 
-  /** 动态继承表：agent → 它跟随其**当前**方案的根 agent。
-    *
-    * 执行 agent（合并后取代 kernel + general）跟随**分发器**当前方案——节点执行
-    * 会话的模型链口径（原 `general` 行）在合并后仍是本表的承重面：节点无自有
-    * 设置，分发器派发时所选方案 = 节点的唯一路径。 */
+  /**
+   * 动态继承表：agent → 它跟随其**当前**方案的根 agent。
+   *
+   * 执行 agent（合并后取代 kernel + general）跟随**分发器**当前方案——节点执行
+   * 会话的模型链口径（原 `general` 行）在合并后仍是本表的承重面：节点无自有
+   * 设置，分发器派发时所选方案 = 节点的唯一路径。
+   */
   val InheritsFrom: Map[String, String] = Map(
     ExecutorName -> DispatcherName
   )
 
-  /** 角色名归一（**读侧解析兜底的单点**）：退役名（`kernel` / `general`，见
-    * [[nebflow.core.entity.BuiltinAgents.RetiredNames]]）落到合并后的执行 agent 名；
-    * 其余名字原样返回。写侧一律直接写现名，读侧经本函数据此判继承/可设。 */
+  /**
+   * 角色名归一（**读侧解析兜底的单点**）：退役名（`kernel` / `general`，见
+   * [[nebflow.core.entity.BuiltinAgents.RetiredNames]]）落到合并后的执行 agent 名；
+   * 其余名字原样返回。写侧一律直接写现名，读侧经本函数据此判继承/可设。
+   */
   def resolveRole(name: String): String =
     nebflow.core.entity.BuiltinAgents.resolveRetired(name).getOrElse(name)
 

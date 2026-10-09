@@ -74,3 +74,4 @@ class DelegateRegistryCliSessionSpec extends CatsEffectSuite:
       }
     }.unsafeRunSync()
   }
+end DelegateRegistryCliSessionSpec

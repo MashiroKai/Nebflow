@@ -34,28 +34,33 @@ object SchemePolicy:
   val NebulaName = "Nebula"
   val DispatcherName = "project-dispatcher"
 
-  /** The executor role name (single point = [[nebflow.core.entity.BuiltinAgents.ExecutorName]]).
-    *
-    * P1-2 downstream-role-face convergence batch (2026-10-03): `kernel` and `general`
-    * were merged into the single executor agent by the builtin-merge batch
-    * (`f646eeeaa`) and left `BuiltinAgents.Names`, so they are no longer ROLES — the
-    * set below names the current executor instead of the two retired names. */
+  /**
+   * The executor role name (single point = [[nebflow.core.entity.BuiltinAgents.ExecutorName]]).
+   *
+   * P1-2 downstream-role-face convergence batch (2026-10-03): `kernel` and `general`
+   * were merged into the single executor agent by the builtin-merge batch
+   * (`f646eeeaa`) and left `BuiltinAgents.Names`, so they are no longer ROLES — the
+   * set below names the current executor instead of the two retired names.
+   */
   val ExecutorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   /** Roles whose model chain is user-settable (the /model write gate). */
   val SettableAgents: Set[String] = Set(NebulaName, DispatcherName, ExecutorName)
 
-  /** Settability, with the retired names resolved through the single rename table
-    * ([[nebflow.core.entity.BuiltinAgents.resolveRetired]] — the same read-side
-    * fallback `EntityLoader.loadAgent` uses).
-    *
-    * Old-data compatibility (P0-1/P1-2, 2026-10-03): a stored `kernel` / `general`
-    * sidecar keeps being honoured and a stale client that still writes the retired
-    * name keeps acting on the same role — the pre-merge behaviour of an existing
-    * home, so the convergence does NOT silently move those chains onto the Nebula
-    * primary chain. */
+  /**
+   * Settability, with the retired names resolved through the single rename table
+   * ([[nebflow.core.entity.BuiltinAgents.resolveRetired]] — the same read-side
+   * fallback `EntityLoader.loadAgent` uses).
+   *
+   * Old-data compatibility (P0-1/P1-2, 2026-10-03): a stored `kernel` / `general`
+   * sidecar keeps being honoured and a stale client that still writes the retired
+   * name keeps acting on the same role — the pre-merge behaviour of an existing
+   * home, so the convergence does NOT silently move those chains onto the Nebula
+   * primary chain.
+   */
   def isSettable(name: String): Boolean =
-    SettableAgents.contains(name) || nebflow.core.entity.BuiltinAgents.resolveRetired(name).exists(SettableAgents.contains)
+    SettableAgents
+      .contains(name) || nebflow.core.entity.BuiltinAgents.resolveRetired(name).exists(SettableAgents.contains)
 
   /** `resolvedFrom` vocabulary (reported by GET /api/agents/:name/model). */
   final val OwnChainSource = "own-chain"
@@ -65,8 +70,10 @@ object SchemePolicy:
   /** A chain is usable when at least one slot carries a ref. */
   def hasChain(c: AgentModelConfig): Boolean = c.preferred.isDefined || c.fallbacks.nonEmpty
 
-  /** Read the raw `model` chain from an agent's agent.json, fresh per call.
-    * Missing file / unparseable JSON / absent key => None (fail-safe). */
+  /**
+   * Read the raw `model` chain from an agent's agent.json, fresh per call.
+   * Missing file / unparseable JSON / absent key => None (fail-safe).
+   */
   def ownChainOf(agent: String): Option[AgentModelConfig] =
     val jsonPath = PathUtil.dataRoot / "agents" / agent / "agent.json"
     if !os.exists(jsonPath) then None
@@ -100,7 +107,7 @@ object SchemePolicy:
     else
       nebulaChain().filter(hasChain) match
         case Some(primary) => (primary, NebulaChainSource)
-        case None          => seedChain()
+        case None => seedChain()
 
   private def seedChain(): (AgentModelConfig, String) =
     val chain = readSeedChain()
@@ -123,9 +130,13 @@ object SchemePolicy:
         }
         .getOrElse(Nil)
 
-  /** Providers-derived seed: first provider (JSON field order) with models,
-    * its first model. JsonObject preserves insertion order, so "first" is the
-    * first provider in the user's config file. */
+  end readGlobalChainDefault
+
+  /**
+   * Providers-derived seed: first provider (JSON field order) with models,
+   * its first model. JsonObject preserves insertion order, so "first" is the
+   * first provider in the user's config file.
+   */
   private def readFromProviders(): List[String] =
     val nebflowJson = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(nebflowJson) then Nil
@@ -139,7 +150,9 @@ object SchemePolicy:
           .flatMap { providers =>
             providers.toIterable.view
               .flatMap { (name, pj) =>
-                pj.hcursor.downField("models").focus
+                pj.hcursor
+                  .downField("models")
+                  .focus
                   .flatMap(_.asArray)
                   .flatMap(_.headOption)
                   .flatMap(m => m.hcursor.downField("id").as[String].toOption)
@@ -150,5 +163,7 @@ object SchemePolicy:
               .headOption
           }
       firstRef.toList
+    end if
+  end readFromProviders
 
 end SchemePolicy

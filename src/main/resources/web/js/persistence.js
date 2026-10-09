@@ -26,6 +26,12 @@ import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bin
 import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow } from './popArtifacts.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
+// quote-message 一期（2026-10-09，spec §7.5）：历史重放行挂 data-msg-id（页内
+// index + mount token）+ 可引用行右键菜单 + UiMessage.User.quote 引用块重渲。
+import { beginHistoryMount, historyMsgId, attachQuoteMenu, renderQuoteBlock, syncQuoteJumpStates } from './msgQuote.js';
+// quote-message 一期：被引用者名（助手/工具/提问行）= agent 显示名 —— ownAgentName
+// （会话行）缺席时回落 rootDisplayName（叶模块，只读 state，无环）。
+import { rootDisplayName } from './rootName.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds the unified v1.2 footer pill (time + copy), matching finishAi() in
@@ -597,7 +603,9 @@ export function restoreFromStorage(opts = {}) {
       // content — skip them.
       if (m.injected && m.source) {
         if (isOutgoingInjection(m, ownerSessionId)) return;
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header));
+        // fileChanges（file-diff → 委托结果行 bug #58 修）：缓存恢复读同一字段
+        //（main.js saveMsg 落缓存；缺席 ⇒ undefined = 旧行为逐字不变）。
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -946,6 +954,10 @@ export function restoreFromStorage(opts = {}) {
 export function restoreFromBackendHistory(msgs, opts = {}) {
   const { scrollToBottom = true, busyTail = false } = opts;
   const chat = activeView.dom.chat;
+  // quote-message 一期：每次恢复换一个 mount token（historyMsgId 的尾巴）——
+  // prepend 分页对本函数整页重跑 ⇒ 页内 index 重置，裸 index 会撞号；mount token
+  // 同时让「跨重挂载」的旧引用 id 天然失配 ⇒ 引用块退化快照态（无死指针）。
+  beginHistoryMount();
   // The caller points activeView at the view that received this historyPage
   // frame (chatView#setActiveView; the sub-agent panels own their own ChatView
   // with their own sessionId), so that view identifies the session owning
@@ -972,8 +984,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         // deferMd with parseVoice=false (same as the live path): injected
         // messages join the rAF markdown batch — no synchronous render storm
         // on hard-refresh (P0-2).
+        // fileChanges（bug #58 修）：后端历史分页行同字段透传（缺席 = 旧行为）。
         fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam,
-          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header));
+          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -983,6 +996,14 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
+      // quote-message 一期（spec §7.5）：重放行挂 h<index>-<mount> id + 右键菜单
+      // （用户文本行 = 复制 + 引用；快照数据全在行内，重放腿引用零引擎依赖）。
+      row.dataset.msgId = historyMsgId(i);
+      attachQuoteMenu(row, {
+        kind: 'text', text: m.text || '',
+        sessionId: ownerSessionId || undefined, messageId: row.dataset.msgId,
+        senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: m.timestamp || Date.now(),
+      });
       // Ask ANSWER marker (AskUser 强制展开修令, author 2026-10-06 19:29): a
       // recorded card answer rides `answerOf` (案 B single construction point,
       // UiMessage.askUserAnswer). The row stays a normal user bubble here, but
@@ -992,6 +1013,14 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // workline turnAnchor same exemption). Absent on pre-案B rows ⇒ those
       // keep the legacy split behaviour (unchanged).
       if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
+      // quote-message 一期（spec §3.4）：`m.quote` 在场 ⇒ 气泡上方引用块（与
+      // live 腿同一渲染器 renderQuoteBlock；快照文随行落盘自包含 —— ui.json 裁剪/
+      // 换设备/分页都稳）。目标行可点性在 fragment 挂载后由 syncQuoteJumpStates
+      // 统一收敛（页内靠后的目标行此刻可能尚未创建）；未命中 ⇒ 快照文 +
+      // 「原消息已删除」注记 + 无指针（无死点击）。
+      if (m.quote && typeof m.quote === 'object') {
+        row.appendChild(renderQuoteBlock(m.quote));
+      }
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -1058,6 +1087,12 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       if (m.text) {
         const row = document.createElement('div');
         row.className = 'row ai';
+        // quote-message 一期：助手文本行挂 id + 右键（复制 + 引用）。
+        row.dataset.msgId = historyMsgId(i);
+        attachQuoteMenu(row, {
+          kind: 'text', text: m.text || '',
+          senderRole: 'ai', senderName: ownAgentName() || rootDisplayName(), ts: m.timestamp || Date.now(),
+        });
         const bubble = document.createElement('div');
         bubble.className = 'bubble ai';
         deferMd(bubble, m.text || '');
@@ -1073,6 +1108,13 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     } else if (m.type === 'tool') {
       const row = document.createElement('div');
       row.className = 'row tool';
+      // quote-message 一期：工具卡行挂 id + 右键「引用」（摘要 = [工具] label ·
+      // summary≤40 —— UiMessage.Tool 自带一行摘要）。
+      row.dataset.msgId = historyMsgId(i);
+      attachQuoteMenu(row, {
+        kind: 'tool', label: m.label || '', summary: m.summary || '',
+        senderRole: 'tool', senderName: ownAgentName() || rootDisplayName(), ts: Date.now(),
+      });
       // #346 v2 stats: tool input rides the row for the turn header's
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
@@ -1186,6 +1228,13 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // ones (question wrappers, descriptions, previews, Other input).
       const row = document.createElement('div');
       row.className = 'row ai';
+      // quote-message 一期：AskUser 卡行挂 id + 右键「引用」（摘要 = [提问]
+      // 首个 question 剥标签后首行；剥标签先例 = askUserQuestionText）。
+      row.dataset.msgId = historyMsgId(i);
+      attachQuoteMenu(row, {
+        kind: 'ask', question: askUserQuestionText(m.items),
+        senderRole: 'askUser', senderName: ownAgentName() || rootDisplayName(), ts: m.timestamp || Date.now(),
+      });
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
@@ -1323,6 +1372,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
   });
   chat.appendChild(fragment);
+  // quote-message 一期：fragment 已入 DOM ⇒ 引用块可点性统一收敛（挂载时目标行
+  // 可能在本页靠后位置，创建顺序倒挂 ⇒ 此刻才有完整答案）。
+  syncQuoteJumpStates(chat);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
   // #491: doc-order replay keeps each artifact beside its Pop tool row — same
   // as the live path and the storage-replay path; no re-anchor.

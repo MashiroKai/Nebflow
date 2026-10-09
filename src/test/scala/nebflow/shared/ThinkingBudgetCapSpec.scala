@@ -44,9 +44,14 @@ class ThinkingBudgetCapSpec extends FunSuite:
 
   test("the cap equals the UI client default form (32000) — no silent value drift") {
     assertEquals(Defaults.SubagentThinkingBudgetCap, 32000)
-    assertEquals(ThinkingConfig().budgetTokens, Defaults.SubagentThinkingBudgetCap, "config default == the cap (same UI form)")
+    assertEquals(
+      ThinkingConfig().budgetTokens,
+      Defaults.SubagentThinkingBudgetCap,
+      "config default == the cap (same UI form)"
+    )
     // toLlmJson on a capped worker config renders the wire shape the adapters read.
-    val wire = ThinkingConfig.toLlmJson(ThinkingConfig.cappedForSubagent(ThinkingConfig(enabled = true, budgetTokens = 200000)))
+    val wire =
+      ThinkingConfig.toLlmJson(ThinkingConfig.cappedForSubagent(ThinkingConfig(enabled = true, budgetTokens = 200000)))
     assertEquals(wire.hcursor.get[Int]("budget_tokens").toOption, Some(32000))
     assertEquals(wire.hcursor.get[String]("type").toOption, Some("enabled"))
   }

@@ -143,7 +143,9 @@ class GroupTargetParseSpec extends FunSuite:
     // friendseal flag injection (2026-09-25): the sealed schema's message description
     // is the device-only face — lift the latch for this full-face pin.
     nebflow.FriendsSealKit.withUnsealedSync {
-      val d = FriendMessageTool.inputSchema("properties").flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
+      val d = FriendMessageTool
+        .inputSchema("properties")
+        .flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
         .getOrElse(fail("message description 缺席"))
       assert(d.contains("friend/device/group targets"), s"message 描述未覆盖群支: $d")
       assert(d.contains("a group target always requires non-empty text"), s"缺群支空文本口径: $d")

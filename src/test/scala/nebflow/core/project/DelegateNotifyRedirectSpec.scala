@@ -41,6 +41,7 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
@@ -95,8 +96,8 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n---\n")
         Stream
@@ -130,10 +131,10 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
     yield rt
 
   private def registerRecorder(
-      res: SharedResources,
-      system: ActorSystem,
-      sid: String,
-      kind: AgentKind
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String,
+    kind: AgentKind
   ): IO[Ref[IO, List[AgentCommand]]] =
     for
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -147,7 +148,7 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
     b
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -167,7 +168,7 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
   private def hostNode(h: DelegateFlowRuntime, id: String): IO[NodeDef] =
     h.store.snapshot.map(_.nodes.get(id)).map {
       case Some(n) => n
-      case None    => fail(s"node '$id' must exist in scope ${h.delegateId}")
+      case None => fail(s"node '$id' must exist in scope ${h.delegateId}")
     }
 
   private def readEvents(ws: os.Path): IO[List[String]] =
@@ -178,10 +179,10 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
 
   /** delegate 宿主挂载（生产形态：S19① CreatorDelegate 引擎；确定性腿显式关）。 */
   private def mount(
-      ws: os.Path,
-      delegateId: String,
-      system: ActorSystem,
-      res: SharedResources
+    ws: os.Path,
+    delegateId: String,
+    system: ActorSystem,
+    res: SharedResources
   ): IO[DelegateFlowRuntime] =
     DelegateFlowHosts
       .mount(
@@ -200,13 +201,13 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
 
   /** 播种运行中节点（sessionRef 持久＋transcript 在盘 = 重水化可完成），out 边可配。 */
   private def seedRunningNode(
-      ws: os.Path,
-      delegateId: String,
-      nodeId: String,
-      sessionRef: Option[String],
-      out: List[OutEdge],
-      system: ActorSystem,
-      res: SharedResources
+    ws: os.Path,
+    delegateId: String,
+    nodeId: String,
+    sessionRef: Option[String],
+    out: List[OutEdge],
+    system: ActorSystem,
+    res: SharedResources
   ): IO[os.Path] =
     for
       h <- mount(ws, delegateId, system, res)
@@ -243,7 +244,9 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
 
   // ── R1 改向送达 ─────────────────────────────────────────────────────────
 
-  test("R1: explicit (pass)Nebula edge delivers to the live creator delegate exactly once, with the notify-redirected audit landing on the base workspace (NotifyRule consumed)") {
+  test(
+    "R1: explicit (pass)Nebula edge delivers to the live creator delegate exactly once, with the notify-redirected audit landing on the base workspace (NotifyRule consumed)"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dnr-r1-", deleteOnExit = false)
     val system = ActorSystem(s"dnr-r1-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-11aa22bb"
@@ -263,13 +266,21 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Completed)
-      assertEquals(imms.count(_.text.contains("[Node 'node-n-r1' completed]")), 1,
-        "v3-⑨: the explicit gate-set Nebula edge remaps to the creator delegate (S19①, no exception)")
+      assertEquals(
+        imms.count(_.text.contains("[Node 'node-n-r1' completed]")),
+        1,
+        "v3-⑨: the explicit gate-set Nebula edge remaps to the creator delegate (S19①, no exception)"
+      )
       assert(a.nebulaDeliveredAt.isDefined, "delivered ⇒ ledger marked (tell-then-mark unchanged)")
       assertEquals(redirects.size, 1, "exactly one redirect audit line for the one root-channel offer")
-      assert(redirects.head.contains(s"target=${DelegateNotify.NotifyRule.Target}"),
-        "audit carries NotifyRule.Target=creator-delegate (the constant is consumed, not decorative)")
-      assert(redirects.head.contains(s"channel=${DelegateNotify.NotifyRule.Channel}"), "audit carries the ImmediateInput channel")
+      assert(
+        redirects.head.contains(s"target=${DelegateNotify.NotifyRule.Target}"),
+        "audit carries NotifyRule.Target=creator-delegate (the constant is consumed, not decorative)"
+      )
+      assert(
+        redirects.head.contains(s"channel=${DelegateNotify.NotifyRule.Channel}"),
+        "audit carries the ImmediateInput channel"
+      )
       assert(redirects.head.contains("outcome=offered"), "audit records the delivery fact")
       assert(redirects.head.contains(delegateId), "audit names the creator scope")
     end for
@@ -277,7 +288,9 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
 
   // ── R2 bare "Nebula" = 零投递标记照旧 ────────────────────────────────────
 
-  test("R2: bare 'Nebula' (implicit gate = signal exit marker) delivers NOTHING even with the creator live — the ledger-only branch is untouched") {
+  test(
+    "R2: bare 'Nebula' (implicit gate = signal exit marker) delivers NOTHING even with the creator live — the ledger-only branch is untouched"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dnr-r2-", deleteOnExit = false)
     val system = ActorSystem(s"dnr-r2-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-22bb33cc"
@@ -316,7 +329,9 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
 
   // ── R3 creator 不 live＝滞留不旁路 ＋ 复活补投 ───────────────────────────
 
-  test("R3: dead creator ⇒ PARKED with zero bystander delivery and outcome=parked audit; revival redelivers exactly once") {
+  test(
+    "R3: dead creator ⇒ PARKED with zero bystander delivery and outcome=parked audit; revival redelivers exactly once"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dnr-r3-", deleteOnExit = false)
     val system = ActorSystem(s"dnr-r3-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-33cc44dd"
@@ -337,16 +352,19 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       revived <- registerRecorder(res, system, delegateId, AgentKind.Delegate)
       redelivered <- h.engine.redeliverUnconsumedRootResults()
       _ <- waitUntil(10.seconds)(revived.get.map(_.exists {
-            case m: AgentCommand.ImmediateInput => m.text.contains("[Node 'node-n-r3' completed]")
-            case _                              => false
-          }))
+        case m: AgentCommand.ImmediateInput => m.text.contains("[Node 'node-n-r3' completed]")
+        case _ => false
+      }))
       imms <- revived.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
       a2 <- hostNode(h, "n-r3")
       _ <- DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Completed, "the node completes regardless of the creator's liveness")
-      assert(a.nebulaDeliveredAt.isEmpty, "dead creator ⇒ ledger NOT marked (Parked retention, redelivery candidate kept)")
+      assert(
+        a.nebulaDeliveredAt.isEmpty,
+        "dead creator ⇒ ledger NOT marked (Parked retention, redelivery candidate kept)"
+      )
       assertEquals(bystanderBefore.size, 0, "zero bypass: the bystander root session receives nothing (⑬A)")
       assertEquals(parkedAudit.size, 1, "the parked offer is audited (outcome=parked)")
       // 复活补投：恰一次 ＋ 记账置位。
@@ -369,12 +387,11 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       _ <- rt.engine.offerRootNotify("probe", "n-r4", "completed", Some("n-r4"))
       events <- readEvents(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(
-        events.count(_.contains(NodeEngine.NotifyRedirectedEventType)),
-        0,
-        "per-project face: zero notify-redirected audit (the redirect is delegate-scope-only)"
-      )
+    yield assertEquals(
+      events.count(_.contains(NodeEngine.NotifyRedirectedEventType)),
+      0,
+      "per-project face: zero notify-redirected audit (the redirect is delegate-scope-only)"
+    )
     end for
   }
 

@@ -184,7 +184,14 @@ class VerifierPassOutletGuardSpec extends CatsEffectSuite:
       // waiting on its in-barrier (no background start race inside the assertion window)
       _ <- seed(
         rt.store,
-        NodeDef(id = "n-w", name = "WORK", agent = "general", task = Some("work"), status = NodeLifecycle.Pending, createdAt = now - 90_000)
+        NodeDef(
+          id = "n-w",
+          name = "WORK",
+          agent = "general",
+          task = Some("work"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 90_000
+        )
       )
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -251,7 +258,14 @@ class VerifierPassOutletGuardSpec extends CatsEffectSuite:
       rt <- mountProject("vpg-r1b", ws, system, res, frames)
       _ <- seed(
         rt.store,
-        NodeDef(id = "n-w", name = "WORK", agent = "general", task = Some("work"), status = NodeLifecycle.Pending, createdAt = now - 90_000)
+        NodeDef(
+          id = "n-w",
+          name = "WORK",
+          agent = "general",
+          task = Some("work"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 90_000
+        )
       )
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -312,8 +326,22 @@ class VerifierPassOutletGuardSpec extends CatsEffectSuite:
       rt <- mountProject("vpg-r2", ws, system, res, frames)
       _ <- seed(
         rt.store,
-        NodeDef(id = "n-w", name = "WORK", agent = "general", task = Some("work"), status = NodeLifecycle.Pending, createdAt = now - 90_000),
-        NodeDef(id = "n-land", name = "LAND", agent = "general", task = Some("land"), status = NodeLifecycle.Pending, createdAt = now - 80_000)
+        NodeDef(
+          id = "n-w",
+          name = "WORK",
+          agent = "general",
+          task = Some("work"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 90_000
+        ),
+        NodeDef(
+          id = "n-land",
+          name = "LAND",
+          agent = "general",
+          task = Some("land"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 80_000
+        )
       )
       ctx = mkCtx(res, system, ws.toString)
       created <- nodeEdit(
@@ -356,14 +384,20 @@ class VerifierPassOutletGuardSpec extends CatsEffectSuite:
         verRewired.out.exists(e => e.on.contains(OutEdge.Pass) && !OutEdge.isLoopEdge(e)),
         s"the pass leg must be wired into out, got ${verRewired.out}"
       )
-      assertEquals(afterRewire.size, 1, s"rewiring adds ZERO further events (derived ⇒ no bookkeeping), got $afterRewire")
+      assertEquals(
+        afterRewire.size,
+        1,
+        s"rewiring adds ZERO further events (derived ⇒ no bookkeeping), got $afterRewire"
+      )
       assertEquals(afterRepeat.size, 1, s"a repeated identical edit stays idempotent, got $afterRepeat")
     end for
   }
 
   // ── R3: no false positive on a healthy verifier ────────────────────
 
-  test("R3 (a) no false positive: a verifier created with both legs (pass landing + fail route) is silent on the pass face") {
+  test(
+    "R3 (a) no false positive: a verifier created with both legs (pass landing + fail route) is silent on the pass face"
+  ) {
     val ws = tempRoot / "ws-r3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"vpg-r3-${scala.util.Random.nextInt(100000)}")
@@ -374,8 +408,22 @@ class VerifierPassOutletGuardSpec extends CatsEffectSuite:
       rt <- mountProject("vpg-r3", ws, system, res, frames)
       _ <- seed(
         rt.store,
-        NodeDef(id = "n-w", name = "WORK", agent = "general", task = Some("work"), status = NodeLifecycle.Pending, createdAt = now - 90_000),
-        NodeDef(id = "n-land", name = "LAND", agent = "general", task = Some("land"), status = NodeLifecycle.Pending, createdAt = now - 80_000)
+        NodeDef(
+          id = "n-w",
+          name = "WORK",
+          agent = "general",
+          task = Some("work"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 90_000
+        ),
+        NodeDef(
+          id = "n-land",
+          name = "LAND",
+          agent = "general",
+          task = Some("land"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 80_000
+        )
       )
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -509,8 +557,23 @@ class VerifierPassOutletGuardSpec extends CatsEffectSuite:
       rt <- mountProject("vpg-r10", ws, system, res, frames)
       _ <- seed(
         rt.store,
-        NodeDef(id = "n-w", name = "WORK", agent = "general", task = Some("work"), status = NodeLifecycle.Completed, createdAt = now - 90_000, completedAt = Some(now - 80_000)),
-        NodeDef(id = "n-land", name = "LAND", agent = "general", task = Some("land"), status = NodeLifecycle.Pending, createdAt = now - 85_000),
+        NodeDef(
+          id = "n-w",
+          name = "WORK",
+          agent = "general",
+          task = Some("work"),
+          status = NodeLifecycle.Completed,
+          createdAt = now - 90_000,
+          completedAt = Some(now - 80_000)
+        ),
+        NodeDef(
+          id = "n-land",
+          name = "LAND",
+          agent = "general",
+          task = Some("land"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 85_000
+        ),
         // the V-0 shape on record (35 live instances): verdict written, fail route only
         NodeDef(
           id = "n-v0",
@@ -575,7 +638,10 @@ class VerifierPassOutletGuardSpec extends CatsEffectSuite:
       )
       for (label, ks) <- List("v0-payload" -> listKeysV0, "ok-payload" -> listKeysOk) do
         assert(!ks.contains("verifierPassRoute"), s"$label: no pass-face key may appear, got $ks")
-        assert(!ks.contains("verifierRoute"), s"$label: the fail-face key must stay absent here (healthy fail route), got $ks")
+        assert(
+          !ks.contains("verifierRoute"),
+          s"$label: the fail-face key must stay absent here (healthy fail route), got $ks"
+        )
       // the visibility carrier exists as a predicate (deliberately NOT wired into the
       // payload: the brief's §2.1 file table lists no payload key for this batch)
       assert(NodePayload.verifierPassUnconsumed(v0, snap.nodes), "the V-0 predicate must read true")

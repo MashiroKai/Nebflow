@@ -10,7 +10,17 @@ import nebflow.agent.SharedResources
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.ModelCandidate
-import nebflow.shared.{Defaults, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.shared.{
+  Defaults,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig
+}
 import nebflow.shared.given
 
 import scala.concurrent.duration.*
@@ -45,6 +55,7 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
@@ -99,8 +110,8 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n---\n")
         Stream
@@ -135,10 +146,10 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
     yield rt
 
   private def registerRecorder(
-      res: SharedResources,
-      system: ActorSystem,
-      sid: String,
-      kind: AgentKind
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String,
+    kind: AgentKind
   ): IO[Ref[IO, List[AgentCommand]]] =
     for
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -152,7 +163,7 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
     b
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -173,7 +184,7 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
   private def hostNode(h: DelegateFlowRuntime, id: String): IO[NodeDef] =
     h.store.snapshot.map(_.nodes.get(id)).map {
       case Some(n) => n
-      case None    => fail(s"node '$id' must exist in scope ${h.delegateId}")
+      case None => fail(s"node '$id' must exist in scope ${h.delegateId}")
     }
 
   private def readEvents(ws: os.Path): IO[List[String]] =
@@ -184,11 +195,11 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
 
   /** delegate 宿主挂载（spec 缺省参数定版：确定性腿显式关）。 */
   private def mount(
-      ws: os.Path,
-      delegateId: String,
-      system: ActorSystem,
-      res: SharedResources,
-      cwd: os.Path = null
+    ws: os.Path,
+    delegateId: String,
+    system: ActorSystem,
+    res: SharedResources,
+    cwd: os.Path = null
   ): IO[Option[DelegateFlowRuntime]] =
     DelegateFlowHosts.mount(
       delegateId = delegateId,
@@ -205,12 +216,12 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
 
   /** 播种崩溃残留：挂载 → 写入 running 节点（sessionRef 持久）→ 卸载（模拟进程死亡）。 */
   private def seedResidue(
-      ws: os.Path,
-      delegateId: String,
-      nodeId: String,
-      sessionRef: Option[String],
-      system: ActorSystem,
-      res: SharedResources
+    ws: os.Path,
+    delegateId: String,
+    nodeId: String,
+    sessionRef: Option[String],
+    system: ActorSystem,
+    res: SharedResources
   ): IO[os.Path] =
     for
       mo <- mount(ws, delegateId, system, res)
@@ -288,16 +299,18 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       mo <- mount(ws, delegateId, system, res)
       h = mo.getOrElse(fail("mount must succeed"))
       _ <- h.store.mutate(s =>
-        s.copy(nodes = s.nodes ++ Map(
-          "done-1" -> NodeDef(
-            id = "done-1",
-            name = "wired",
-            agent = "general",
-            status = NodeLifecycle.Completed,
-            result = Some("wired ok"),
-            createdAt = System.currentTimeMillis()
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "done-1" -> NodeDef(
+              id = "done-1",
+              name = "wired",
+              agent = "general",
+              status = NodeLifecycle.Completed,
+              result = Some("wired ok"),
+              createdAt = System.currentTimeMillis()
+            )
           )
-        ))
+        )
       )
       _ <- DelegateFlowHosts.unmount(delegateId)
       afterUnmount <- DelegateFlowHosts.isMounted(delegateId)
@@ -314,19 +327,32 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
 
   // ── H3+H4 boot sweep：认领续跑 + creator 不 live＝滞留不旁路 ─────────────
 
-  test("H3/H4: sweep rehydrates a crashed scope node to completion; with the creator dead the result is RETAINED (Parked, no bypass, no dispatcher notify), and a second pass is a no-op") {
+  test(
+    "H3/H4: sweep rehydrates a crashed scope node to completion; with the creator dead the result is RETAINED (Parked, no bypass, no dispatcher notify), and a second pass is a no-op"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dfh-h3-", deleteOnExit = false)
     val system = ActorSystem(s"dfh-h3-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-3c4d5e6f"
     val sid = "node-h3aa11bb"
-    val llm = ScriptLlm(text => if text.contains("crashed during your last turn") then "SCOPE-RECOVERED" else "UNEXPECTED")
+    val llm =
+      ScriptLlm(text => if text.contains("crashed during your last turn") then "SCOPE-RECOVERED" else "UNEXPECTED")
     for
       res <- mkResources(system, llm.handle)
       _ <- mountCarrier("dfh-carrier-h3", ws, system, res) // sweep 载体（ActorSystem/resources）
       legacy <- FlowMapStore.open("dfh-carrier-h3", ws.toString) // v3-⑧ 对照面：存量 per-project flow-map
-      _ <- legacy.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "legacy-1" -> NodeDef(id = "legacy-1", name = "legacy", agent = "general", status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis())
-      )))
+      _ <- legacy.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "legacy-1" -> NodeDef(
+              id = "legacy-1",
+              name = "legacy",
+              agent = "general",
+              status = NodeLifecycle.Wiring,
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       legacyBefore <- IO.blocking(os.read(ws / ".nebflow" / "flow-map.json"))
       scopeDir <- seedResidue(ws, delegateId, "n-h3", Some(sid), system, res)
       _ = seedTranscript(sid, List(msg(MessageRole.User, "原始任务"), msg(MessageRole.Assistant, "WIP-HALF")))
@@ -389,7 +415,9 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
 
   // ── H5 creator live：自根投递 ───────────────────────────────────────────
 
-  test("H5: with the delegate session live, the completed node delivers to the delegate itself exactly once (self-rooted routing)") {
+  test(
+    "H5: with the delegate session live, the completed node delivers to the delegate itself exactly once (self-rooted routing)"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dfh-h5-", deleteOnExit = false)
     val system = ActorSystem(s"dfh-h5-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-5e6f7a8b"
@@ -411,7 +439,11 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Completed)
-      assertEquals(imms.count(_.text.contains("[Node 'node-n-h5' completed]")), 1, "exactly one delivery to the delegate session")
+      assertEquals(
+        imms.count(_.text.contains("[Node 'node-n-h5' completed]")),
+        1,
+        "exactly one delivery to the delegate session"
+      )
       assert(a.nebulaDeliveredAt.isDefined, "live creator ⇒ ledger marked (delivery fact)")
       val _ = scopeDir
     end for
@@ -429,14 +461,34 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       _ <- registerRecorder(res, system, liveId, AgentKind.Delegate) // live 会话在册
       mL <- mount(ws, liveId, system, res)
       hL = mL.getOrElse(fail("live host must mount"))
-      _ <- hL.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "lt" -> NodeDef(id = "lt", name = "live-terminal", agent = "general", status = NodeLifecycle.Completed, createdAt = System.currentTimeMillis())
-      )))
+      _ <- hL.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "lt" -> NodeDef(
+              id = "lt",
+              name = "live-terminal",
+              agent = "general",
+              status = NodeLifecycle.Completed,
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       mD <- mount(ws, deadId, system, res)
       hD = mD.getOrElse(fail("dead host must mount"))
-      _ <- hD.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "dt" -> NodeDef(id = "dt", name = "dead-terminal", agent = "general", status = NodeLifecycle.Cancelled, createdAt = System.currentTimeMillis())
-      )))
+      _ <- hD.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "dt" -> NodeDef(
+              id = "dt",
+              name = "dead-terminal",
+              agent = "general",
+              status = NodeLifecycle.Cancelled,
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       reaped <- DelegateFlowHosts.reapOrphans
       liveKept <- DelegateFlowHosts.isMounted(liveId)
       deadKept <- DelegateFlowHosts.isMounted(deadId)
@@ -458,7 +510,13 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       res <- mkResources(system, ScriptLlm(_ => "UNUSED").handle)
       _ <- mount(ws, delegateId, system, res)
       before <- DelegateFlowHosts.isMounted(delegateId)
-      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(res, delegateId, "parent-1", "completed", "completed")
+      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(
+        res,
+        delegateId,
+        "parent-1",
+        "completed",
+        "completed"
+      )
       after <- DelegateFlowHosts.isMounted(delegateId)
       mapKept <- IO.blocking(os.exists(ws / ".nebflow" / "flow-maps" / delegateId / "flow-map.json"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)

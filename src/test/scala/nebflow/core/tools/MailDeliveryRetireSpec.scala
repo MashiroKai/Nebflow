@@ -7,7 +7,12 @@ import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.AgentDef
 import nebflow.agent.*
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{MailQueueStore, TeamSessionRegistry}
@@ -114,7 +119,9 @@ class MailDeliveryRetireSpec extends FunSuite:
   private def propsOf: JsonObject =
     MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("Mail schema has no properties"))
 
-  test("schema (mailparams re-pin + taskunify `task` + mailmodel re-pin): the `delivery` key is retired from the schema; the property set is exactly 6 entries and excludes the retired keys"):
+  test(
+    "schema (mailparams re-pin + taskunify `task` + mailmodel re-pin): the `delivery` key is retired from the schema; the property set is exactly 6 entries and excludes the retired keys"
+  ):
     // 机械锚 ①：该键**零命中** + 集合**精确等值**（任何与本批无关的增 / 删 / 改名一律红）。
     assert(
       !propsOf.keys.toSet.contains("delivery"),
@@ -255,15 +262,23 @@ class MailDeliveryRetireSpec extends FunSuite:
   //    and every routing gate).
   // ============================================================
 
-  test("device face: a stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED — the device guard outranks the delivery guard and every routing gate"):
+  test(
+    "device face: a stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED — the device guard outranks the delivery guard and every routing gate"
+  ):
     val msg = rejectedMsg(
       MailTool.call(qJson("device" -> "KAI", "message" -> "hi", "delivery" -> "queue"), ctx()).unsafeRunSync(),
       "device leg"
     )
     // The DEVICE tombstone fires first: the error carries the device retirement code,
     // NOT the queue retirement code (even though delivery="queue" was also present).
-    assert(msg.contains(MailTool.ErrDeviceLegRetired), s"the stale device= call must hit the device tombstone, got: $msg")
-    assert(!msg.contains(MailTool.ErrDeliveryQueueRetired), s"the device tombstone sits BEFORE the delivery tombstone, got: $msg")
+    assert(
+      msg.contains(MailTool.ErrDeviceLegRetired),
+      s"the stale device= call must hit the device tombstone, got: $msg"
+    )
+    assert(
+      !msg.contains(MailTool.ErrDeliveryQueueRetired),
+      s"the device tombstone sits BEFORE the delivery tombstone, got: $msg"
+    )
     assert(msg.contains("takes no 'device' parameter"), s"the error must state the device face, got: $msg")
     assert(msg.contains("KAI"), s"the error must echo the offending device value, got: $msg")
     assert(msg.contains("nothing was sent"), s"fail-closed: must declare zero side effects, got: $msg")

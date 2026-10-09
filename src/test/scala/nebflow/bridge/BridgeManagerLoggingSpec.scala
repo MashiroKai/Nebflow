@@ -12,24 +12,30 @@ import org.slf4j.LoggerFactory
 
 import scala.jdk.CollectionConverters.*
 
-/** Observability spec for the [[BridgeManager]] lifecycle legs.
-  *
-  * Why this exists: a deactivation reaches [[BridgeManager.unregister]], and on
-  * the success / absent-name path that leg used to emit nothing. The only
-  * readable trace of it was the ABSENCE of `Bridge plugin 'x' started`, which
-  * conflates three distinct situations — never attempted, verdict false, start
-  * failed. These guards pin the per-leg log line so the negative verdict is
-  * readable from the log alone.
-  *
-  * The log lines are captured with a logback ListAppender on the
-  * `nebflow.bridge` logger (same in-repo form as OpenAiAdapterSpec) — no new
-  * test dependency, logback is already a main dependency.
-  */
+/**
+ * Observability spec for the [[BridgeManager]] lifecycle legs.
+ *
+ * Why this exists: a deactivation reaches [[BridgeManager.unregister]], and on
+ * the success / absent-name path that leg used to emit nothing. The only
+ * readable trace of it was the ABSENCE of `Bridge plugin 'x' started`, which
+ * conflates three distinct situations — never attempted, verdict false, start
+ * failed. These guards pin the per-leg log line so the negative verdict is
+ * readable from the log alone.
+ *
+ * The log lines are captured with a logback ListAppender on the
+ * `nebflow.bridge` logger (same in-repo form as OpenAiAdapterSpec) — no new
+ * test dependency, logback is already a main dependency.
+ */
 class BridgeManagerLoggingSpec extends CatsEffectSuite:
 
   private object NoopCtx extends BridgeContext:
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] = IO.unit
+
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] = IO.unit
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(Nil)
@@ -42,14 +48,16 @@ class BridgeManagerLoggingSpec extends CatsEffectSuite:
 
   private def newCalls: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
 
-  /** Attach a list appender to the `nebflow.bridge` logger, run `io`, and hand
-    * back both the result and every event that logger emitted. */
+  /**
+   * Attach a list appender to the `nebflow.bridge` logger, run `io`, and hand
+   * back both the result and every event that logger emitted.
+   */
   private def capture[A](io: IO[A]): IO[(A, List[ILoggingEvent])] =
     val lb = LoggerFactory.getLogger("nebflow.bridge").asInstanceOf[LogbackLogger]
     val appender = new ListAppender[ILoggingEvent]
     IO.delay { appender.start(); lb.addAppender(appender) }
-      .bracket { _ => io.map(a => (a, appender.list.asScala.toList)) }(
-        _ => IO.delay { lb.detachAppender(appender); appender.stop() }
+      .bracket { _ => io.map(a => (a, appender.list.asScala.toList)) }(_ =>
+        IO.delay { lb.detachAppender(appender); appender.stop() }
       )
 
   private def infos(events: List[ILoggingEvent]): List[String] =

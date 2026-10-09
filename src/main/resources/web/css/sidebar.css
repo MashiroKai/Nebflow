@@ -702,6 +702,197 @@
   color: var(--color-frame-text);
 }
 
+/* ── Jev glass card · status badges · secrets entry row (secrets-ui-redesign,
+   2026-10-08; prototype proto-secrets/index.html §3) ────────────────────────
+   Every value below is a token transcription (prototype transcribed them from
+   base.css / sapphire.css / secrets.css): --color-frame-*, --glass-etched-bg,
+   --status-*, and color-mix of existing tokens only — zero new colour, zero
+   new radius family. */
+.cfg-card {
+  border: 1px solid var(--color-frame-border-light);
+  background: var(--glass-etched-bg);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.cfg-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.cfg-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+}
+/* 三改①（2026-10-09 用户反馈①）：卡头行体=点击展开热区——真实 button（标题
+   + chevron，aria-expanded 随态），toggle 是行内兄弟钮（不进热区）。行 hover
+   语言 = secrets-row-head（--color-frame-hover，零新色值）；chevron 旋转 =
+   task-tree/turn-header 先例（rotate 90deg, 0.15s 控件过渡惯例）。 */
+.cfg-card-head-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cfg-card-head-btn:focus { outline: none; }
+.cfg-card-head-btn:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12); }
+.cfg-head-chev {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--color-frame-text-muted);
+  flex: 0 0 auto;
+  transition: color 0.15s;
+}
+.cfg-head-chev svg { transition: transform 0.15s; }
+.cfg-card-head:hover .cfg-head-chev { color: var(--color-frame-text); }
+.cfg-card-head-btn[aria-expanded="true"] .cfg-head-chev svg { transform: rotate(90deg); }
+.cfg-card-divider { height: 1px; background: var(--color-frame-border-light); }
+.cfg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  min-height: 44px;
+}
+.cfg-row + .cfg-row { border-top: 1px solid var(--color-frame-border-light); }
+.cfg-row-label { font-size: 13px; color: var(--color-frame-text); flex: none; }
+.cfg-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+/* Card row lane caps inputs at the prototype's 280px (proto .cfg-select /
+   .cfg-input `max-width: 280px`). */
+.cfg-row-main .cfg-select,
+.cfg-row-main .cfg-input { width: 100%; max-width: 280px; }
+/* keyRef 遮蔽行：.cfg-password-wrap 先例（sidebar.css:1259）原样复用；卡内
+   行道里占满行宽、同封顶 280px（原型 .pwd-wrap flex:1 1 auto; max-width:280px）。 */
+.cfg-row-main .cfg-password-wrap { flex: 1 1 auto; max-width: 280px; }
+.cfg-card .cfg-hint { padding: 0 14px 10px; margin-top: -4px; line-height: 1.45; }
+/* 卡底动作行：内联反馈 + spacer + 保存钮右对齐（取代独立的块级保存行）。 */
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--color-frame-border-light);
+}
+.card-actions .spacer { flex: 1; }
+.inline-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--status-word);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.inline-state .st-ic { width: 11px; height: 11px; }
+/* 状态徽标族（secrets-mode-badge 同读法：图案载彩色，字中性 --status-word）。 */
+.st-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  color: var(--status-word);
+  flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
+}
+.st-badge .st-ic { width: 10px; height: 10px; }
+.st-badge[data-tone="ok"] {
+  background: color-mix(in srgb, var(--status-success-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-success-icon) 22%, transparent);
+}
+.st-badge[data-tone="err"] {
+  background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
+}
+/* 三改③（2026-10-09）：回退态（jev 腿挂→llm 接管，通道仍有产出）= warn 档。
+   色值 = 既有 --status-warn-icon token（base.css 品牌四色案成员，暗亮两态随
+   token 自适应）——零新色值；同款 color-mix 配方照 ok/err 档。 */
+.st-badge[data-tone="warn"] {
+  background: color-mix(in srgb, var(--status-warn-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn-icon) 25%, transparent);
+}
+.st-badge[data-tone="warn"] .st-ic { color: var(--status-warn-icon); }
+.st-badge[data-tone="mut"] {
+  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
+}
+.st-badge[data-tone="mut"] .st-ic { color: var(--color-frame-text-muted); }
+/* down 态的 reason 尾巴：截断 + title 全文（徽标永不撑破行）。 */
+.st-badge .badge-reason {
+  color: var(--color-frame-text-muted);
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* 健康行（三改① 2026-10-09：随细节入折叠体——展开才见，用户原话「点击展开
+   才显示细节」）：比表单行矮一档（原型 inline 40px）。 */
+.jev-health-row { min-height: 40px; }
+/* 密钥入口行：玻璃行卡（key 图标 + 行名 + 副词 + count pill + chevron），
+   取代虚线满宽 .cfg-btn-add。 */
+.secrets-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 11px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid var(--color-frame-border-light);
+  background: var(--glass-etched-bg);
+  transition: all 0.15s;
+}
+.secrets-entry:hover {
+  background: var(--color-frame-hover);
+  border-color: var(--color-frame-border);
+}
+.secrets-entry .st-ic { color: var(--color-frame-text-muted); flex: 0 0 auto; }
+.secrets-entry .entry-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-frame-text-bright);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.secrets-entry .entry-sub { font-size: 11px; color: var(--color-frame-text-muted); flex: none; }
+.count-pill {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
+  color: var(--color-frame-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+
 /* STT 高级设置折叠面板（用户 2026-08-20 打回：默认收起，免费路径为默认）——
    复用 settings-row 基线，chevron 旋转表达开合，无新增颜色 token。 */
 .stt-advance-toggle-row {
@@ -1666,6 +1857,35 @@
   border-color: rgba(91,127,191,0.3);
 }
 .agent-detail-prompt-toggle svg { width: 14px; height: 14px; stroke-width: 2; }
+
+/* Prompt face tabs (prompt-panel 面板批 2026-10-09): builtin nebflow 详情页的
+   提示词双面页签（delegate 默认面 + node 面）。只读展示——无编辑器、无保存通道，
+   与内置 agent 只读口径一致。 */
+.agent-detail-face-tabs {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px; flex-shrink: 0;
+}
+.agent-detail-face-tab {
+  font: 500 11px -apple-system, sans-serif;
+  padding: 3px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.agent-detail-face-tab:hover { color: var(--color-text); border-color: rgba(91,127,191,0.3); }
+.agent-detail-face-tab.active {
+  background: rgba(91,127,191,0.12);
+  border-color: rgba(91,127,191,0.45);
+  color: var(--color-text);
+}
+.agent-detail-face-hint {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  margin-bottom: 6px; flex-shrink: 0;
+}
 
 /* Rendered markdown view of the system prompt (shares .canvas-md-viewer styles).
    Flex-fills the section like the textarea; scrolls internally on long prompts. */

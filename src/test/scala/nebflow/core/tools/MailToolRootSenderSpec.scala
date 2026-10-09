@@ -117,6 +117,8 @@ class MailToolRootSenderSpec extends FunSuite:
         case Right(v) => fail(s"零挂载作用域必须显式报错，got: $v")
     finally system.stopAll.unsafeRunSync()
 
+    end try
+
   test("R2: Nebula sender + \"Nebula\"（自身）⇒ 显式报错（无自身地址）"):
     val system = ActorSystem(s"mail-r2-self-${java.util.UUID.randomUUID().toString.take(6)}")
     try

@@ -145,7 +145,10 @@ class AskUserBuildJsonSpec extends FunSuite:
       Right(List("/data/docs/a.pdf", "/data/plots/b.png"))
     )
     // 顶层 = items 的兄弟键（不是 items 里的元素键）
-    assertEquals(json.asObject.map(_.keys.toSet), Some(Set("type", "sessionId", "agentName", "sourceAgent", "sourceSession", "attachments", "items")))
+    assertEquals(
+      json.asObject.map(_.keys.toSet),
+      Some(Set("type", "sessionId", "agentName", "sourceAgent", "sourceSession", "attachments", "items"))
+    )
     val item0 = json.hcursor.downField("items").as[List[Json]].toOption.get.head
     assertEquals(item0.hcursor.downField("attachments").focus, None, "附件不得挂到单条问题上")
   }
@@ -163,6 +166,38 @@ class AskUserBuildJsonSpec extends FunSuite:
         .noSpaces,
       expected
     )
+  }
+
+  // ---- askuser-secret 批（2026-10-08 · 规格 §4.3）：secret 型题四键只在场发 ----
+
+  test("SEC1: secret 题四键在场发（secret/secretName/ephemeral/ttlSec），零 options") {
+    val items = List(
+      AskItem("API key?", Nil, secret = true, secretName = Some("my-api-key"), ephemeral = true, ttlSec = Some(120))
+    )
+    val item0 = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head
+    assertEquals(item0.hcursor.downField("secret").as[Boolean], Right(true))
+    assertEquals(item0.hcursor.downField("secretName").as[String], Right("my-api-key"))
+    assertEquals(item0.hcursor.downField("ephemeral").as[Boolean], Right(true))
+    assertEquals(item0.hcursor.downField("ttlSec").as[Int], Right(120))
+    assertEquals(item0.hcursor.downField("options").as[List[Json]], Right(Nil), "secret 题零选项（值永不在载荷）")
+  }
+
+  test("SEC2: secret=true 而其余缺省 ⇒ 只落 secret 键（缺省键不出现）") {
+    val items = List(AskItem("key?", Nil, secret = true))
+    val item0 = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head
+    assertEquals(
+      item0.hcursor.keys.map(_.toSet).getOrElse(Set.empty),
+      Set("question", "options", "allowOther", "secret")
+    )
+  }
+
+  test("SEC3(零回归): secret=false（显式或缺省）⇒ 载荷逐字节等于既有形态") {
+    val items = List(AskItem("Continue?", List(AskOption("yes"), AskOption("no")), secret = false))
+    val expected =
+      """{"type":"askUser","sessionId":"root-1","agentName":"Backend","sourceAgent":"Backend",""" +
+        """"sourceSession":"team-abc","items":[{"question":"Continue?","options":[{"label":"yes"},{"label":"no"}],""" +
+        """"allowOther":true}]}"""
+    assertEquals(frame(items).noSpaces, expected)
   }
 
 end AskUserBuildJsonSpec

@@ -191,7 +191,14 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
                     ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
                     // file-diff feature: append one ledger event per successful write
                     ctx.fileChangeLedger.traverse_(
-                      _.recordToolResult(ctx.sessionId, ctx.flowNodeId, ctx.taskId, "MultiEdit", filePath.toString, result)
+                      _.recordToolResult(
+                        ctx.sessionId,
+                        ctx.flowNodeId,
+                        ctx.taskId,
+                        "MultiEdit",
+                        filePath.toString,
+                        result
+                      )
                     ) *>
                     MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
                   record.as(Right(result))

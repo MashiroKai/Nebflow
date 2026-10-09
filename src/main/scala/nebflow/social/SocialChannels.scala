@@ -383,6 +383,16 @@ object SocialChannels:
     var ours = false // the file currently at `target` was created or written by THIS call
     try
       Files.createDirectories(target.getParent)
+      // Directory face (keyaudit-quickfix ②, the A6「目录兜底」shape): the file
+      // bits stop a reader who KNOWS the path; a world-readable secrets/ still
+      // lets any local principal enumerate which credentials exist. Narrow the
+      // namespace to 0700 once per write — idempotent ([[CredentialFileAcl.
+      // restrictDirectory]] leaves already-owner-only dirs alone, no-op on
+      // Windows) — and BEFORE any plaintext can exist anywhere under it. A
+      // narrowing failure throws into the catch below ⇒ the write is refused
+      // (fail-closed, same vocabulary as the file face; at this point `ours`
+      // is still false, so a pre-existing file stays exactly as found).
+      CredentialFileAcl.restrictDirectory(target.getParent)
       if Files.exists(target) then restrict(target) // ② narrow the pre-existing file BEFORE the plaintext
       else createOwnerOnly(target) // ① created owner-only from its very first byte
       ours = true
@@ -535,7 +545,10 @@ object SocialChannels:
           val out = Json.fromJsonObject(
             rootJson.asObject.getOrElse(JsonObject.empty).add("socialChannels", nextSocial)
           )
-          AtomicJson.writeSync(p, out.noSpaces)
+          // Restricted form (keyaudit-quickfix ①): nebflow.json carries provider
+          // apiKeys — this writer replaces the whole file, so it must land 0600
+          // too, or the next channel save would re-widen the namespace.
+          AtomicJson.writeSyncRestricted(p, out.noSpaces)
           logger.infoSync(
             s"socialChannels: channel '$id' config written (enabled ${previous.map(_.toString).getOrElse("<absent>")} -> ${next.map(_.toString).getOrElse("<absent>")})"
           )

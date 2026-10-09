@@ -5,7 +5,6 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import munit.CatsEffectSuite
 
-
 /**
  * picker-trunc (2026-09-22 author ruling: A+B+C in ONE batch) — the picker's
  * `browsePath` frame, pinned at the frame builder itself.
@@ -39,9 +38,11 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
 
   private val cap = 2000 // the shipped [[WebSocketRoutes.BrowseEntryCap]]
 
-  /** Build the frame exactly as the handler does (the builder is the unit under
-    * test; the WS plumbing is exercised by the in-flight readings in
-    * `.nebflow/evidence/20260922_picker-impl/`). */
+  /**
+   * Build the frame exactly as the handler does (the builder is the unit under
+   * test; the WS plumbing is exercised by the in-flight readings in
+   * `.nebflow/evidence/20260922_picker-impl/`).
+   */
   private def frame(dir: os.Path, query: String = "", display: Option[String] = None): Json =
     WebSocketRoutes.browseFrame(dir, display.getOrElse(dir.toString), query, cap)
 
@@ -61,7 +62,7 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
       (0 until n).foreach(i => os.makeDir(dir / f"d$i%05d"))
     }.attempt.flatMap {
       case Right(_) => test(dir).guarantee(cleanup)
-      case Left(e)  => cleanup *> IO.raiseError(e)
+      case Left(e) => cleanup *> IO.raiseError(e)
     }
 
   private def realDir(rel: String): Option[os.Path] =
@@ -155,7 +156,9 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
           val j = frame(dir)
           val ns = names(j)
           val real = os.list(dir).count(os.isDir)
-          println(s"HOUSE-deep[Containers] real_dirs=$real frame_entries=${ns.size} total=${total(j)} truncated=${truncated(j)}")
+          println(
+            s"HOUSE-deep[Containers] real_dirs=$real frame_entries=${ns.size} total=${total(j)} truncated=${truncated(j)}"
+          )
           assertEquals(total(j), real.toInt, "total must equal the REAL directory count")
           assertEquals(truncated(j), ns.size < total(j), "the word must agree with the frame body")
           if real > 200 then assert(ns.size > 200, "the old 200 cap must no longer bite")
@@ -167,7 +170,10 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
     // 3000 dirs, of which exactly cap+1 match "m" — the filtered set itself
     // crosses the cap, so this also pins the self-consistency A asked for.
     val dir = os.temp.dir(prefix = "picker-filter-")
-    val cleanup = IO { try os.remove.all(dir) catch case _: Throwable => () }
+    val cleanup = IO {
+      try os.remove.all(dir)
+      catch case _: Throwable => ()
+    }
     IO {
       (0 until 999).foreach(i => os.makeDir(dir / f"d$i%05d"))
       (0 until cap + 1).foreach(i => os.makeDir(dir / f"m$i%05d"))
@@ -190,7 +196,10 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
 
   test("B2. search reaches an entry the cap CUT (the whole point of A+B together)"):
     val dir = os.temp.dir(prefix = "picker-cut-")
-    val cleanup = IO { try os.remove.all(dir) catch case _: Throwable => () }
+    val cleanup = IO {
+      try os.remove.all(dir)
+      catch case _: Throwable => ()
+    }
     IO {
       (0 until 3000).foreach(i => os.makeDir(dir / f"m$i%05d"))
     }.attempt.flatMap {
@@ -247,7 +256,8 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
     }
 
   test("C2. an unusable path answers a TYPED error, never a silent empty list"):
-    val bad = WebSocketRoutes.browseErrorFrame("/no/such/dir/xyz", "invalid-path", "No such directory: /no/such/dir/xyz", "")
+    val bad =
+      WebSocketRoutes.browseErrorFrame("/no/such/dir/xyz", "invalid-path", "No such directory: /no/such/dir/xyz", "")
     IO {
       assertEquals(bad.hcursor.get[String]("errorKind").toOption, Some("invalid-path"))
       assert(bad.hcursor.get[String]("error").exists(_.contains("No such directory")))
@@ -258,8 +268,11 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
     } *> withDirs(0) { dir =>
       IO {
         val empty = frame(dir)
-        assertEquals(empty.hcursor.downField("errorKind").succeeded, false,
-          "an EMPTY directory must NOT be reported as an error")
+        assertEquals(
+          empty.hcursor.downField("errorKind").succeeded,
+          false,
+          "an EMPTY directory must NOT be reported as an error"
+        )
         assertEquals(total(empty), 0)
         assertEquals(truncated(empty), false)
       }
@@ -311,3 +324,4 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
         assertEquals(newKeys, Set("total", "truncated", "query"), "the additions are exactly the declared ones")
       }
     }
+end PickerBrowseFrameSpec

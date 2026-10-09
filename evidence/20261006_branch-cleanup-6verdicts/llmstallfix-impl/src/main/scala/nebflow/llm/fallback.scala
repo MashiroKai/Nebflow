@@ -1,0 +1,326 @@
+package nebflow.llm
+
+import cats.effect.{IO, Temporal}
+import cats.syntax.all.*
+import nebflow.shared.*
+
+import scala.concurrent.duration.*
+import scala.util.Random
+
+class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
+
+  override def getMessage: String =
+    val summary = attempts
+      .map { a =>
+        s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
+      }
+      .mkString("\n")
+    s"All providers failed:\n$summary"
+
+/**
+ * Raised when the all-Down gate ([[ProviderHealthMonitor.waitForAnyUp]]) timed
+ * out waiting for any provider to recover. Deliberately NOT a
+ * `java.util.concurrent.TimeoutException`: that type is classified Permanent
+ * (stream-first-token timeouts skip retries by design, 0bf832c0), which would
+ * kill the agent's llm-fail retry loop exactly when providers are recovering.
+ * This error means "waited, none recovered yet" — the canonical transient
+ * case, so [[Fallback.classifyError]] maps it to Transient and the 3-attempt
+ * llm-fail-retry backstop fires.
+ */
+class AllProvidersDownTimeout(val waitedMs: Long) extends RuntimeException(
+  s"all providers down: none recovered within ${waitedMs}ms"
+)
+
+/**
+ * Raised when a single turn has already made [[Fallback.MaxTurnLlmCalls]]
+ * failed-retry re-dispatches (plan C: normal tool-loop calls do NOT count).
+ * Token incident (2026-08-18): retry amplification re-sends the full
+ * ~250k-token context on every retry, so an unbounded retry storm can burn
+ * hundreds of millions of tokens in minutes. This error is classified
+ * Permanent — the agent's llm-fail retry loop must NOT fire again (that would
+ * defeat the budget). The turn fails fast with an explicit reason instead of
+ * silently looping.
+ */
+class TurnBudgetExceeded(val turnId: Long, val calls: Int) extends RuntimeException(
+  s"turn LLM budget exceeded: $calls retry calls in turn $turnId (max ${Fallback.MaxTurnLlmCalls}) — failing fast to stop retry amplification"
+)
+
+case class FallbackResult[T](
+  data: T,
+  attempts: List[FallbackAttempt],
+  usedCandidate: ModelCandidate
+)
+
+object Fallback:
+  private val JitterMinMs = 1000
+  private val JitterMaxMs = 3000
+  private val DefaultTimeoutMs = Defaults.LlmTimeoutMs
+  val MaxRetries: Int = 1
+  val InitialBackoffMs: Long = 1000L
+  val MaxBackoffMs: Long = 10000L
+
+  /** 案①（LLM 硬杀波 · `chain-llmstall-fix`，2026-09-21 作者绿灯）——**全链失败轮次上限**：
+    * 一次 `sendStream` 内，候选链最多被整体重投这么多轮；轮次耗尽 ⇒
+    * `FallbackExhaustedError`（显式终局），不再回到 `attemptWithHealthCheck`。
+    *
+    * 动因（定谳报告 20260921_182544 §一.4）：全链 400（Format ⇒ `evict = false`，见
+    * [[classifyError]]）时无人被 markDown ⇒ health-check 过滤返回**同一全链** ⇒
+    * `tryCandidate ⇄ attemptWithHealthCheck` 无计数 / 无退避 / 无终态地闭环：流不产
+    * chunk 也不抛错 ⇒ agent 无活动信号 ⇒ 600s 后看门狗硬杀。
+    *
+    * 取值 2 的依据（**回归共存硬约束**，非任意）：既有 `FormatErrorNoEvictSpec` T1
+    * 断言「a/m1 命中恰好 1 次 + b 成功」——轮内语义只在「整链试完」时才推进轮次，
+    * 上限 ≥ 2 保证「一次完整候选遍历 + 一次换轮重试」这条既有合法路径零变化。
+    * 单测锚点：`AllCandidatesFormatLoopSpec`（全链 400 必须在该上限内终止）。 */
+  val MaxChainRounds: Int = 2
+
+  /**
+   * Per-turn LLM RETRY budget (2026-08-18 token incident, plan C): a single
+   * turn may make at most this many failed-retry re-dispatches (incremented
+   * only in the AgentActor LlmFailed retry branch). Normal tool-loop calls do
+   * NOT count — tool-intensive agents (read → edit → compile → ...) are free
+   * to call the LLM as often as their loop needs. Exceeding it raises
+   * [[TurnBudgetExceeded]] (Permanent → no further retry): same-turn failures
+   * still fail fast after ≤4 retry re-dispatches, so retry-amplification
+   * protection (full ~250k-context re-sends) is preserved.
+   */
+  val MaxTurnLlmCalls: Int = 4
+
+  /** Overload-class failures (429 rate-limit / 529 overloaded) need a long
+   *  backoff before retry — they mean the provider is saturated, not dead.
+   *  gate-wedge 止损 (2026-08-20): raised 5s → 60s to match the standard
+   *  rate-limit window (litellm-class resolvers refill per 60s). Retrying at
+   *  the window edge just burns another 429 and re-sends the full context. */
+  val OverloadBackoffMinMs: Long = 60_000L
+
+  /** 案① A4（chain-llmstall-fix）：**Format 类失败的终局语义单点定义**——结构化
+    * 400（`HttpError` 分支）与 stringly 400（`invalid request` / `bad request` / `400`
+    * 文本分支）共用本工厂。三元组逐字等于两条路径改造前的取值：
+    * `reason = Format` / `permanence = Permanent` / `evict = false`（400 = provider 解析并
+    * 拒绝了我们的请求 ⇒ 它活着 ⇒ 不驱逐，只跳本次请求）。
+    *
+    * **与案① A1/A2 的关系**：本工厂只定「分类」，不定「终局」——终局由 stream 层的
+    * 轮次上限（`Fallback.MaxChainRounds`）给出（interface.scala `tryCandidate` 的
+    * `case Nil` 出口）。两处 Format 路径都走同一个 `ErrorPermanence.Permanent` 分支 ⇒
+    * 同受该上限约束，这就是 A4 要求的「两处同受约束」。 */
+  private[llm] def formatClassification(
+    statusCode: Option[Int],
+    message: Option[String]
+  ): ErrorClassification =
+    ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, statusCode, message, evict = false)
+
+  def classifyError(error: Throwable): ErrorClassification =
+    // Check for structured sttp4 HttpError first
+    error match
+      case e: sttp.client4.HttpError[?] =>
+        val c = e.statusCode.code
+        val reason = c match
+          case 401 | 403 => FailoverReason.Auth
+          case 404 => FailoverReason.ModelNotFound
+          case 429 => FailoverReason.RateLimit
+          case 500 | 502 | 503 => FailoverReason.ServerError
+          case 529 => FailoverReason.Overloaded
+          case 400 => FailoverReason.Format
+          case _ => FailoverReason.ProviderError
+        // Context overflow affects all providers — abort immediately.
+        // Other 400 errors are permanent for this provider but may not affect others.
+        // 审计 20260903 子项②：400 Format 类 = 请求形状 vs 契约问题，provider
+        // 本身健康（秒回 400 = 活着）——不参与驱逐（evict=false），只跳本次请求。
+        // 上下文溢出仍 Fatal（影响所有 provider，保持现行为）。
+        val msgLower = Option(e.getMessage).map(_.toLowerCase).getOrElse("")
+        val isContextOverflow = msgLower.contains("context_length_exceeded")
+          || msgLower.contains("maximum context length")
+          || msgLower.contains("reduce the length of the messages")
+        val permanence = c match
+          case 400 if isContextOverflow => ErrorPermanence.Fatal
+          case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
+          case _ => ErrorPermanence.Transient
+        val evict = !(c == 400 && !isContextOverflow)
+        if c == 400 && !isContextOverflow then
+          // 案① A4（chain-llmstall-fix）：结构化 400-Format 与下方 stringly 残余路径
+          // **同源收口**——两者都经 [[formatClassification]]，终局语义（Format /
+          // Permanent / evict=false）在树内只有一份定义，不会各自漂移。
+          // 两处同受 stream 层案① A1/A2 的轮次上限约束：无论哪条路径产生 Permanent，
+          // 都被 interface.scala `tryCandidate` 的同一 `round` 递归管辖（`case Nil`
+          // 出口 = 唯一终局点），不再存在「跳完无人约束」的闭环。
+          formatClassification(Some(c), Some(error.getMessage))
+        else ErrorClassification(reason, permanence, Some(c), Some(error.getMessage), evict)
+      case e: AllProvidersDownTimeout =>
+        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
+      case e: TurnBudgetExceeded =>
+        // Turn LLM budget exhausted — the llm-fail retry loop must NOT fire
+        // again (it would re-send the same full context and defeat the budget).
+        ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Permanent, message = Some(e.getMessage))
+      case e: StuckAbort =>
+        // gate-wedge P1-1: the WATCHER killed this request on purpose (agent
+        // unresponsive to Stop). The provider is innocent — no markDown, no
+        // same-provider retry, no next-provider fallback (that would re-send
+        // the full context the watcher just tried to stop burning). Abort the
+        // whole stream; the agent's bounded turn-retry loop takes over.
+        ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Fatal, message = Some(e.getMessage))
+      case e: RecoverableAbort =>
+        // Hard-recovery P6 (2026-09-07): the TRANSPORT of this request was
+        // force-aborted (SessionKick / watcher L2) to unwedge a parked body
+        // read. Stream-level semantics identical to StuckAbort — Fatal, no
+        // provider fallback (partial content must never be stitched across
+        // providers; the provider is innocent, no markDown/evict). The
+        // DIFFERENCE lives at the agent layer: AgentActor.llmFailureRetryable
+        // treats RecoverableAbort as retryable (re-send the whole turn within
+        // the existing OverloadRetryMax/MaxTurnLlmCalls budget) or yields to
+        // queued user input at the turn boundary — see 设计 §9 细化 1.
+        ErrorClassification(
+          FailoverReason.Unknown,
+          ErrorPermanence.Fatal,
+          message = Some(e.getMessage),
+          evict = false
+        )
+      case e: StreamInactivityTimeout =>
+        // Flow-node supervision P1 (2026-08-26): a phase-2 mid-stream stall is
+        // upstream jitter, not a dead provider — Transient so the agent layer
+        // can retry the turn from a clean checkpoint (within MaxTurnLlmCalls).
+        // firstToken timeouts and the 600s whole-stream no-progress guard stay
+        // Permanent (typed TimeoutException below) — those mean dead provider /
+        // system-level hang, the strict fail-fast path is correct for them.
+        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
+      case _: java.util.concurrent.TimeoutException =>
+        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some("timeout"))
+      case _ =>
+        val msg = Option(error.getMessage).map(_.toLowerCase).getOrElse("")
+        if msg.contains("connection reset") || msg.contains("econnreset") || msg.contains("econnrefused") || msg
+            .contains(
+              "epipe"
+            ) || msg.contains("broken pipe") || msg.contains("chunked") || msg.contains("invalid chunk") || msg
+            .contains("transfer encoding") || msg.contains("reading_length")
+        then
+          ErrorClassification(
+            FailoverReason.ConnectionReset,
+            ErrorPermanence.Transient,
+            message = Some(error.getMessage)
+          )
+        else if msg.contains("timeout") || msg.contains("timed out") then
+          ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else if msg.contains("auth") || msg.contains("unauthorized") || msg.contains("403") || msg.contains("401") then
+          ErrorClassification(FailoverReason.Auth, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else if msg.contains("rate limit") || msg.contains("429") then
+          ErrorClassification(FailoverReason.RateLimit, ErrorPermanence.Transient, message = Some(error.getMessage))
+        else if msg.contains("overloaded") || msg.contains("529") then
+          ErrorClassification(FailoverReason.Overloaded, ErrorPermanence.Transient, message = Some(error.getMessage))
+        else if msg.contains("server error") || msg.contains("500") || msg.contains("502") || msg.contains("503") then
+          ErrorClassification(FailoverReason.ServerError, ErrorPermanence.Transient, message = Some(error.getMessage))
+        else if msg.contains("model not found") || msg.contains("404") then
+          ErrorClassification(FailoverReason.ModelNotFound, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
+          // 同上（子项②）：stringly 400 形状同样不驱逐（与非流式 adapter 结构化
+          // HttpError 之外的残余路径保持一致语义）。案① A4：与结构化路径共用
+          // [[formatClassification]] ⇒ 终局语义单点定义（先前是两份字面副本）。
+          formatClassification(None, Some(error.getMessage))
+        else if msg.contains("empty response") || msg.contains("no content") then
+          ErrorClassification(FailoverReason.EmptyStream, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))
+        end if
+
+  end classifyError
+
+  private def withTimeoutIO[A](ioa: IO[A], ms: Long): IO[A] =
+    ioa.timeout(ms.millis)
+
+  def sleepWithJitter(minMs: Int, maxMs: Int): IO[Unit] =
+    val delay = minMs + java.util.concurrent.ThreadLocalRandom.current().nextInt(maxMs - minMs)
+    IO.sleep(delay.millis)
+
+  /**
+   * Pure retry-delay decision (extracted for testability, 2026-08-18 token
+   * incident): overload-class failures (429/529) always wait ≥
+   * [[OverloadBackoffMinMs]] — the provider is saturated, a long backoff gives
+   * it a chance to recover instead of hammering it. Other transients keep the
+   * exponential ramp. `jitterMs` is caller-provided randomness (0..<2000).
+   */
+  def retryDelayMs(backoffMs: Long, reason: FailoverReason, jitterMs: Long): Long =
+    val delay = math.min(backoffMs + jitterMs, MaxBackoffMs)
+    val isOverload = reason == FailoverReason.Overloaded || reason == FailoverReason.RateLimit
+    if isOverload then math.max(delay, OverloadBackoffMinMs) else delay
+
+  def tryProviderWithFallback[T](
+    candidates: List[ModelCandidate],
+    action: ModelCandidate => IO[T],
+    maxRetries: Int = MaxRetries,
+    onAttempt: Option[FallbackAttempt => IO[Unit]] = None,
+    onProviderExhausted: Option[ModelCandidate => IO[Unit]] = None
+  ): IO[FallbackResult[T]] =
+
+    def tryWithRetry(
+      candidate: ModelCandidate,
+      retriesLeft: Int,
+      backoffMs: Long,
+      priorFailures: List[FallbackAttempt]
+    )(fallback: List[FallbackAttempt] => IO[FallbackResult[T]]): IO[FallbackResult[T]] =
+      val start = System.currentTimeMillis()
+      withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
+        case Right(result) =>
+          val attempt = FallbackAttempt(
+            candidate.providerId,
+            candidate.model,
+            None,
+            None,
+            System.currentTimeMillis() - start,
+            maxRetries - retriesLeft,
+            java.time.Instant.now().toString
+          )
+          val successNotify =
+            if priorFailures.nonEmpty then
+              onAttempt.traverse_(
+                _.apply(
+                  attempt.copy(
+                    reason = Some(FailoverReason.Unknown),
+                    message = Some(s"Switched to ${candidate.providerId}/${candidate.model} successfully")
+                  )
+                )
+              )
+            else IO.unit
+          successNotify *> IO.pure(FallbackResult(result, priorFailures :+ attempt, candidate))
+        case Left(error) =>
+          val classification = classifyError(error)
+          val durationMs = System.currentTimeMillis() - start
+          val failAttempt = FallbackAttempt(
+            candidate.providerId,
+            candidate.model,
+            Some(classification.reason),
+            Some(classification.permanence),
+            durationMs,
+            maxRetries - retriesLeft,
+            java.time.Instant.now().toString,
+            classification.message.orElse(Option(error.getMessage))
+          )
+          onAttempt.traverse_(_.apply(failAttempt))
+          val allFailures = priorFailures :+ failAttempt
+
+          val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
+
+          classification.permanence match
+            case ErrorPermanence.Fatal =>
+              // Error affects all providers (e.g. context overflow) — abort immediately
+              notifyExhausted *> IO.raiseError(new FallbackExhaustedError(allFailures))
+            case ErrorPermanence.Permanent =>
+              notifyExhausted *> fallback(allFailures)
+            case ErrorPermanence.Transient =>
+              if retriesLeft > 0 then
+                val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+                // Overload-class (429/529): provider is saturated — back off
+                // ≥5s before retrying, never hammer it (token incident lesson).
+                val effectiveDelay = retryDelayMs(backoffMs, classification.reason, jitter)
+                IO.sleep(effectiveDelay.millis) *>
+                  tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
+              else notifyExhausted *> fallback(allFailures)
+      }
+    end tryWithRetry
+
+    def loop(remaining: List[ModelCandidate], attempts: List[FallbackAttempt]): IO[FallbackResult[T]] =
+      remaining match
+        case Nil =>
+          IO.raiseError(new FallbackExhaustedError(attempts))
+        case candidate :: rest =>
+          tryWithRetry(candidate, maxRetries, InitialBackoffMs, attempts)(failures => loop(rest, failures))
+
+    loop(candidates, Nil)
+  end tryProviderWithFallback
+end Fallback

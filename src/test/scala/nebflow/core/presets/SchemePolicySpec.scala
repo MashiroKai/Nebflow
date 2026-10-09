@@ -135,10 +135,18 @@ class SchemePolicySpec extends FunSuite:
     // 名称策略经 resolveRole 把它们归一到执行 agent 行（dispatcher 继承）⇒ 旧数据
     // home 的面板/装载面语义与合并前一致。
     val kernel = lib.loadFromDir(tempRoot / "agents" / "kernel").getOrElse(fail("kernel def missing"))
-    assertEquals(kernel.model, Some(DeepChain), "retired kernel must resolve through the executor row (dispatcher chain)")
+    assertEquals(
+      kernel.model,
+      Some(DeepChain),
+      "retired kernel must resolve through the executor row (dispatcher chain)"
+    )
     assertEquals(kernel.preset, Some("deep"), "panel pill must show the inherited preset name")
     val general = lib.loadFromDir(tempRoot / "agents" / "general").getOrElse(fail("general def missing"))
-    assertEquals(general.model, Some(DeepChain), "retired general must resolve through the executor row (dispatcher chain)")
+    assertEquals(
+      general.model,
+      Some(DeepChain),
+      "retired general must resolve through the executor row (dispatcher chain)"
+    )
     assertEquals(general.preset, Some("deep"))
 
   test("loadFromDir: dispatcher 改方案 → 退役名 def 随变（动态跟随，无缓存）"):

@@ -105,8 +105,10 @@ private[gateway] object ProjectsRoutes:
       //   · 每条成功腿发一帧 `chainState`（`ProjectActor.chainStateFrame` 单点），
       //     经**既有** wsHub.broadcast 全连接广播（与上方 archive 腿同面，🔴 零第二套推送面）。
 
-      /** 三端点共用的骨架见 object 级 [[chainControlRoute]]（本块内**禁**放 `def`：
-        * 路由块的 case 序列是单个部分函数字面量，case 之间不容许定义）。 */
+      /**
+       * 三端点共用的骨架见 object 级 [[chainControlRoute]]（本块内**禁**放 `def`：
+       * 路由块的 case 序列是单个部分函数字面量，case 之间不容许定义）。
+       */
 
       case req @ POST -> Root / "projects" / name / "chains" / chainId / "pause" =>
         withAuth(req) {
@@ -249,14 +251,17 @@ private[gateway] object ProjectsRoutes:
             case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
             case Some(rt) =>
               IO.blocking {
-                val f = os.Path(rt.project.workspace, PathUtil.dataRoot) / ".nebflow" / FileChangeReport.FileChangesDirName / s"$nodeId.json"
+                val f = os.Path(
+                  rt.project.workspace,
+                  PathUtil.dataRoot
+                ) / ".nebflow" / FileChangeReport.FileChangesDirName / s"$nodeId.json"
                 if os.exists(f) then Right(os.read(f))
                 else Left(())
               }.flatMap {
                 case Right(text) =>
                   io.circe.parser.parse(text) match
                     case Right(json) => Ok(json)
-                    case Left(_)     => NotFound(Json.obj("error" -> s"file-change report for '$nodeId' is corrupt".asJson))
+                    case Left(_) => NotFound(Json.obj("error" -> s"file-change report for '$nodeId' is corrupt".asJson))
                 case Left(_) => NotFound(Json.obj("error" -> s"no file-change report for node '$nodeId'".asJson))
               }
           }
@@ -310,12 +315,12 @@ private[gateway] object ProjectsRoutes:
    * `ctx` 经参数显式传入（原本由块内 `import ctx.*` 隐式带入）。
    */
   private def chainControlRoute(
-      ctx: RestApiCtx,
-      name: String,
-      chainId: String,
-      action: (ProjectRuntime, String) => IO[Either[String, ChainLedger.ChainControl]],
-      auditType: String,
-      auditSummary: ChainLedger.ChainControl => String
+    ctx: RestApiCtx,
+    name: String,
+    chainId: String,
+    action: (ProjectRuntime, String) => IO[Either[String, ChainLedger.ChainControl]],
+    auditType: String,
+    auditSummary: ChainLedger.ChainControl => String
   ): IO[Response[IO]] =
     import ctx.*
     if chainId.trim.isEmpty then BadRequest(Json.obj("error" -> "chainId is required".asJson))
@@ -342,5 +347,7 @@ private[gateway] object ProjectsRoutes:
                 .flatMap(Ok(_))
           }
       }
+    end if
+  end chainControlRoute
 
 end ProjectsRoutes

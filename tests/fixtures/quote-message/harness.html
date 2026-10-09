@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<!-- quote-message harness.html — 主聊天区「消息右键引用（微信式）」一期（2026-10-09）
+     的静态测试 harness。
+
+     驱动**真实前端模块**（chatView.js / chat.js / popArtifacts.js / persistence.js /
+     msgQuote.js / reference.js / contextMenu.js —— 无 stub、无打包），覆盖 spec §7.1-5
+     的五个前端落点：
+       ① 行挂 data-msg-id（用户行 clientMessageId / live c-* / 历史 h<idx>-<mount>）
+       ② 右键菜单（contextMenu.showPopupMenu 同壳）→ startQuote 替换语义 → 引用 chip
+       ③ renderUserBubble 气泡上方引用块（chat-message ref 消费面单点）
+       ④ 同屏跳转 + 1.8s 高亮（data-quote-jump="ready" 判据单点）
+       ⑤ restoreFromBackendHistory 重渲 m.quote（命中 ready / 未命中删除降级）
+     2026-10-09 用户反馈改版：composer 引用 chip 与附件 chip **同条带**（宿主 =
+     #attachment-preview，输入框上方），无独立 #msg-quote-strip 宿主；探针读
+     渲染后的 DOM + 引用 chip 显隐/几何 + pendingAttachments 引用态。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>quote-message harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/sapphire.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/input.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/split.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #wrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
+    #chat {
+      flex: 1; width: 680px; max-width: 96vw; margin: 0 auto; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+    #input-bar { display: flex; align-items: flex-end; width: 680px; margin: 0 auto; padding: 8px; }
+    #input-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+    #input { width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="chat"></div>
+    <div id="input-bar">
+      <div id="input-wrap">
+        <div id="attachment-preview"></div>
+        <textarea id="input" rows="1" placeholder="Type a message..."></textarea>
+      </div>
+    </div>
+  </div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const state = (await import(`${WEB}/state.js`)).default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', {
+      chat: chatEl,
+      attPreview: document.getElementById('attachment-preview'),
+      input: document.getElementById('input'),
+    });
+    setActiveView(chatViews.primary);
+    chatViews.primary.setSession('quote-harness');
+    state.activeSessionId = 'quote-harness';
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const quoteMod = await import(`${WEB}/msgQuote.js`);
+    const persistMod = await import(`${WEB}/persistence.js`);
+    const view = chatViews.primary;
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /* ── 行渲染入口（真实模块）────────────────────────────────────────── */
+    window.__renderUserRow = (text, ts) => {
+      chatMod.renderUserBubble(text, [], ts || Date.now(), { msgId: text === 'IDPROBE' ? 'cm-idprobe' : undefined });
+      return view.dom.chat.lastElementChild?.dataset.msgId || null;
+    };
+
+    /** 带引用发送腿（input.js send 的渲染半边）：引用态 ref 在 pendingAttachments。 */
+    window.__renderUserRowWithQuote = (text, msgId) => {
+      chatMod.renderUserBubble(text, view.pendingAttachments.slice(), Date.now(), { msgId: msgId || 'cm-quote-1' });
+      return view.dom.chat.lastElementChild;
+    };
+
+    window.__renderToolRow = (label, summary) => {
+      chatMod.renderTool(label, summary, '', false, '', view.sessionId);
+      return view.dom.chat.querySelector('.row.tool:last-of-type')?.dataset.msgId || null;
+    };
+
+    window.__renderInjectedRow = (text) => {
+      chatMod.renderInjectedBubble(text, 'mail', Date.now(), 'INFO', '', '');
+      return view.dom.chat.lastElementChild?.dataset.msgId || null;
+    };
+
+    window.__renderHistory = async (msgs) => {
+      persistMod.restoreFromBackendHistory(msgs, { scrollToBottom: false, busyTail: false });
+      await raf2();
+      return window.__msgIds();
+    };
+
+    /* ── 读数 ─────────────────────────────────────────────────────────── */
+    window.__rows = () => Array.from(document.querySelectorAll('#chat > .row'));
+    window.__msgIds = () => window.__rows().map(r => r.dataset.msgId || null);
+    window.__rowById = (id) => document.querySelector(`#chat .row[data-msg-id="${CSS.escape(String(id))}"]`);
+
+    window.__quoteBlocks = () => Array.from(document.querySelectorAll('#chat .msg-quote-block'));
+    window.__quoteShape = (rowId) => {
+      const row = window.__rowById(rowId);
+      if (!row) return null;
+      const box = row.querySelector('.msg-quote-block');
+      if (!box) return null;
+      const sender = box.querySelector('.msg-quote-sender');
+      const bubble = row.querySelector('.bubble.user:not(.att-bubble)');
+      return {
+        text: (box.querySelector('.msg-quote-text') || {}).textContent || '',
+        sender: sender ? sender.textContent : '',
+        jump: box.dataset.quoteJump || '',
+        role: box.getAttribute('role') || '',
+        note: (box.querySelector('.msg-quote-note') || {}).textContent || '',
+        hasBubble: !!bubble,
+        bubbleText: bubble ? bubble.textContent : '',
+        quoteBlockFirst: !!(bubble && box.nextElementSibling === bubble),
+        inBubbleRefCards: row.querySelectorAll('.att-ref-bubble').length,
+        pointer: getComputedStyle(box).cursor,
+      };
+    };
+
+    /* ── 引用态（2026-10-09 改版：chip 宿主 = #attachment-preview，输入框上方）── */
+    window.__quoteStripState = () => {
+      const host = document.getElementById('attachment-preview');
+      const chip = host && host.querySelector('.att-ref[data-ref-type="chat-message"]');
+      const input = document.getElementById('input');
+      const cr = chip ? chip.getBoundingClientRect() : null;
+      const ir = input ? input.getBoundingClientRect() : null;
+      return {
+        hidden: !chip,
+        hostId: chip ? (chip.parentElement.id || chip.parentElement.className || '') : '',
+        chipText: chip ? (chip.textContent || '') : '',
+        chipTitle: chip ? chip.getAttribute('aria-label') || '' : '',
+        refType: chip ? (chip.dataset.refType || '') : '',
+        hasRemove: !!(chip && chip.querySelector('.att-ref-remove')),
+        aboveInput: !!(cr && ir && cr.bottom <= ir.top + 1),
+        chipHeight: cr ? Math.round(cr.height) : 0,
+        chipWidth: cr ? Math.round(cr.width) : 0,
+        chipBg: chip ? getComputedStyle(chip).backgroundColor : '',
+      };
+    };
+    /** 引用+附件并存形态读数（同条带/同大小/换行不越界）。 */
+    window.__chipLayout = () => {
+      const host = document.getElementById('attachment-preview');
+      const input = document.getElementById('input');
+      const chip = host && host.querySelector('.att-ref[data-ref-type="chat-message"]');
+      const file = host && host.querySelector('.att-file');
+      const rect = (el) => {
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, width: b.width, height: b.height };
+      };
+      const hr = rect(host), ir = rect(input), cr = rect(chip), fr = rect(file);
+      const inHost = (r) => !!(r && hr && r.top >= hr.top - 1 && r.bottom <= hr.bottom + 1);
+      return {
+        host: hr, input: ir, quote: cr, file: fr,
+        quoteAboveInput: !!(cr && ir && cr.bottom <= ir.top + 1),
+        fileAboveInput: !!(fr && ir && fr.bottom <= ir.top + 1),
+        sameRow: !!(cr && fr && Math.abs(cr.top - fr.top) < 3),
+        quoteInHost: inHost(cr), fileInHost: inHost(fr),
+        bothInHost: inHost(cr) && inHost(fr),
+        noHorizontalOverflow: !!(host && host.scrollWidth <= host.clientWidth + 1),
+        heightDelta: (cr && fr) ? Math.abs(cr.height - fr.height) : null,
+      };
+    };
+    /** 附件条塞一枚文件 chip（并存形态用 —— 与 addFileAttachment 同数据形状的最小件）。 */
+    window.__attachPlainFile = (name) => {
+      view.pendingAttachments.push({ type: 'text', mimeType: 'text/plain', name: name || 'file.txt', data: '', hash: '', size: 10 });
+      chatMod.renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
+      return view.pendingAttachments.length;
+    };
+    window.__pendingQuoteCount = () => quoteMod.quoteAttOf(view.pendingAttachments) ? 1 : 0;
+    window.__pendingQuoteExcerpt = () => {
+      const q = quoteMod.quoteAttOf(view.pendingAttachments);
+      return q ? (q.content ? q.content.excerpt : '') : '';
+    };
+    window.__startQuoteOn = async (rowId) => {
+      const row = window.__rowById(rowId);
+      if (!row) return { ok: false, why: 'no row' };
+      row.dispatchEvent(new MouseEvent('contextmenu', { clientX: 300, clientY: 300, bubbles: true, cancelable: true }));
+      const menu = document.querySelector('.fm-context-menu');
+      if (!menu) return { ok: false, why: 'no menu' };
+      const items = Array.from(menu.querySelectorAll('button')).map(b => b.textContent);
+      const quoteBtn = Array.from(menu.querySelectorAll('button')).find(b => b.textContent === '引用');
+      if (!quoteBtn) return { ok: false, why: 'no quote item', items };
+      quoteBtn.click();
+      await new Promise(r => setTimeout(r, 20));
+      return { ok: true, items };
+    };
+    window.__menuLabelsOn = (rowId) => {
+      const row = window.__rowById(rowId);
+      if (!row) return [];
+      row.dispatchEvent(new MouseEvent('contextmenu', { clientX: 300, clientY: 300, bubbles: true, cancelable: true }));
+      const menu = document.querySelector('.fm-context-menu');
+      const items = menu ? Array.from(menu.querySelectorAll('button')).map(b => b.textContent) : [];
+      if (menu) menu.remove();
+      return items;
+    };
+    window.__clearQuoteViaX = async () => {
+      const x = document.querySelector('#attachment-preview .att-ref[data-ref-type="chat-message"] .att-ref-remove');
+      if (!x) return { clicked: false };
+      x.click();
+      await new Promise(r => setTimeout(r, 20));
+      return { clicked: true };
+    };
+    // 2026-10-09 改版后落面是异步委托（renderQuoteStrip → 动态 import chat.js 重渲
+    // 附件条）：探针统一 settle 20ms 再返回，读数不在渲染竞态窗口里采样。
+    window.__startQuoteDirect = async (d) => {
+      const ok = quoteMod.startQuote(d);
+      await new Promise(r => setTimeout(r, 20));
+      return ok;
+    };
+
+    /* ── 纯引用帧闸（空引用不发）读数：input.js 懒加载（其静态依赖链只挂监听，
+     *    无导入期媒体/WS 副作用 —— 2026-10-09 批核对）；视图 dom 补 sendBtn /
+     *    inputBar 最小件后跑同一 syncRefOnlyGate。 ── */
+    window.__gateProbe = async () => {
+      if (!window.__inputMod) window.__inputMod = await import(`${WEB}/input.js`);
+      const m = window.__inputMod;
+      if (!view.dom.sendBtn) {
+        const btn = document.createElement('button');
+        btn.id = 'send-btn';
+        document.getElementById('input-bar').appendChild(btn);
+        view.dom.sendBtn = btn;
+        view.dom.inputBar = document.getElementById('input-bar');
+      }
+      const blocked = m.syncRefOnlyGate(view);
+      return { refOnly: m.isRefOnlyFrame(view), blocked, disabled: view.dom.sendBtn.disabled };
+    };
+
+    /* ── footer 引用按钮（B11：点按钮 = 与右键引用同效）───────────────────
+     * 挂钮走 rAF 延迟收敛（attachQuoteMenu → scheduleQuoteButtonMount），
+     * 探针前先等两帧再读行内徽章。 */
+    window.__quoteButtonOn = async (rowId) => {
+      await raf2();
+      const row = window.__rowById(rowId);
+      if (!row) return { present: false, why: 'no row' };
+      const b = row.querySelector('.duration-badge .msg-quote-btn');
+      if (!b) return { present: false };
+      return {
+        present: true,
+        family: b.classList.contains('msg-copy'),
+        title: b.title,
+        badge: !!b.closest('.duration-badge'),
+        nextToCopy: !!(b.previousElementSibling && b.previousElementSibling.classList.contains('msg-copy')),
+      };
+    };
+    window.__clickQuoteButtonOn = async (rowId) => {
+      const shape = await window.__quoteButtonOn(rowId);
+      if (!shape || !shape.present) return { ok: false, why: 'no button' };
+      window.__rowById(rowId).querySelector('.duration-badge .msg-quote-btn').click();
+      await new Promise(r => setTimeout(r, 20));
+      return { ok: true };
+    };
+
+    /* ── 跳转 + 高亮 ──────────────────────────────────────────────────── */
+    window.__jumpFromQuote = async (rowId) => {
+      const row = window.__rowById(rowId);
+      if (!row) return { ok: false };
+      const box = row.querySelector('.msg-quote-block');
+      if (!box) return { ok: false };
+      const before = chatEl.scrollTop;
+      box.click();
+      // 滚动是同步写，但满载跑批下 30ms 单点采样会撞上其它渲染的滚动复位 ——
+      // 400ms 窗口轮询。判据 = **结果面**：目标行滚入视口（完全可见）—— 引用块
+      // 本来就居中时 jumpToQuote 居中写为亚像素 no-op（目标已在视口正中，行为正确），
+      // 断言「scrollTop 必须变化」会把正确的居中命中误判为失败。
+      const deadline = Date.now() + 400;
+      let jumped = chatEl.scrollTop !== before;
+      while (!jumped && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 50));
+        jumped = chatEl.scrollTop !== before;
+      }
+      const target = window.__rowById(box.dataset.refMessageId);
+      let inView = false;
+      if (target) {
+        const tr = target.getBoundingClientRect();
+        const cr = chatEl.getBoundingClientRect();
+        inView = tr.top >= cr.top - 1 && tr.bottom <= cr.bottom + 1;
+      }
+      return {
+        ok: true,
+        jumped,
+        inView,
+        scrolledTo: chatEl.scrollTop,
+        flash: !!(target && target.classList.contains('quote-target-flash')),
+        targetFound: !!target,
+      };
+    };
+
+    window.__clearChat = () => { chatEl.innerHTML = ''; };
+    window.__makeRowsTall = () => {
+      // 让 #chat 产生可滚动高度（跳转位移断言的前提）。#chat 在 chat.css 是
+      // flex column 容器 ⇒ 占位块必须 flex:none，否则默认 flex-shrink:1 会把它
+      // 压回容器高（可滚动前提失效）。
+      const pad = document.createElement('div');
+      pad.style.height = '1600px';
+      pad.style.flex = 'none';
+      chatEl.insertBefore(pad, chatEl.firstChild);
+    };
+    window.__ready = true;
+  </script>
+</body>
+</html>

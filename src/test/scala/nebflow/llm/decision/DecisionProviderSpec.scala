@@ -100,7 +100,10 @@ class DecisionProviderSpec extends CatsEffectSuite:
     val resp = parsed.toOption.get
     assertEquals(resp.model, Some("jev-1.13.0"))
     assertEquals(resp.usage.map(u => (u.inputTokens, u.outputTokens)), Some((394L, 77L)))
-    assertEquals(resp.answers("q2"), DecisionAnswer.Choice("frustrated", Some(0.98), Map("angry" -> 0.01, "frustrated" -> 0.99, "calm" -> 0.0)))
+    assertEquals(
+      resp.answers("q2"),
+      DecisionAnswer.Choice("frustrated", Some(0.98), Map("angry" -> 0.01, "frustrated" -> 0.99, "calm" -> 0.0))
+    )
     assertEquals(resp.answers("q1"), DecisionAnswer.Noul(0.98))
     resp.answers("q3") match
       case s: DecisionAnswer.Score =>
@@ -245,6 +248,7 @@ class DecisionProviderSpec extends CatsEffectSuite:
       assert(!view.values.exists(_.contains("LEAK-CANARY")), s"resolvedView must never carry key material: $view")
       assertEquals(view.get("keyRefResolved"), Some("true"))
     finally PathUtil.setDataRoot(original)
+    end try
   }
 
   test("a present secret resolves to its value and the empty case resolves to none") {
@@ -303,7 +307,10 @@ class DecisionProviderSpec extends CatsEffectSuite:
       assertEquals(after.hcursor.downField("jev").downField("provider").as[String], Right("typesafe-jev"))
       // Untouched neighbours survive byte-for-byte, including the credential
       // the targeted write must never disturb or echo.
-      assertEquals(after.hcursor.downField("llm").downField("providers").downField("p").downField("apiKey").as[String], Right("SECRET-KEY"))
+      assertEquals(
+        after.hcursor.downField("llm").downField("providers").downField("p").downField("apiKey").as[String],
+        Right("SECRET-KEY")
+      )
       assertEquals(after.hcursor.downField("plugins").downField("enabled").as[Boolean], Right(true))
 
       // A second write updates one key and leaves the earlier one in place.
@@ -321,8 +328,12 @@ class DecisionProviderSpec extends CatsEffectSuite:
         .unsafeRunSync()
       assert(refused.isLeft, "a value-carrying credential key must not be writable on this face")
       val after3 = io.circe.parser.parse(os.read(path)).toOption.get
-      assert(after3.hcursor.downField("jev").downField("apiKey").focus.isEmpty, "the refused write must not have landed")
+      assert(
+        after3.hcursor.downField("jev").downField("apiKey").focus.isEmpty,
+        "the refused write must not have landed"
+      )
     finally PathUtil.setDataRoot(original)
+    end try
   }
 
   // ── end-to-end over a mock endpoint (both providers, one transport) ─────
@@ -439,3 +450,4 @@ class DecisionProviderSpec extends CatsEffectSuite:
       }
     }.unsafeToFuture()
   }
+end DecisionProviderSpec

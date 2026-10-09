@@ -32,7 +32,7 @@ class ExternalOutputStoreSpec extends CatsEffectSuite:
       _ <- ExternalOutputStore.append(id, "line-1")
       _ <- ExternalOutputStore.append(id, "line-2")
       first <- ExternalOutputStore.read(id, 0)
-      tail  <- ExternalOutputStore.read(id, first.get.nextOffset)
+      tail <- ExternalOutputStore.read(id, first.get.nextOffset)
     yield
       val f = first.get
       assertEquals(f.status, "running")
@@ -60,23 +60,23 @@ class ExternalOutputStoreSpec extends CatsEffectSuite:
   }
 
   test("kill: running entry with a process gets killed and reports true; unknown/terminal = false") {
-    val id  = freshId()
+    val id = freshId()
     val id2 = freshId()
     // 真进程：sleep 一会的 sh（killProcessTree 有真实靶子）。
     val p = new java.lang.ProcessBuilder("sh", "-c", "sleep 30").start()
     (for
-      live <- ExternalOutputStore.kill(id) // 无条目 → false
-      _ <- ExternalOutputStore.open(id)
-      dead <- ExternalOutputStore.kill(id) // 有条目但无进程句柄 → false（不假报成功）
-      _ <- ExternalOutputStore.open(id2)
-      _ <- ExternalOutputStore.attachProcess(id2, p)
-      killed <- ExternalOutputStore.kill(id2)
-      exited <- IO.blocking(p.waitFor())
-    yield
-      assertEquals(live, false)
-      assertEquals(dead, false)
-      assertEquals(killed, true)
-      assert(!p.isAlive) // 进程被终止（SIGTERM 家族）
+        live <- ExternalOutputStore.kill(id) // 无条目 → false
+        _ <- ExternalOutputStore.open(id)
+        dead <- ExternalOutputStore.kill(id) // 有条目但无进程句柄 → false（不假报成功）
+        _ <- ExternalOutputStore.open(id2)
+        _ <- ExternalOutputStore.attachProcess(id2, p)
+        killed <- ExternalOutputStore.kill(id2)
+        exited <- IO.blocking(p.waitFor())
+      yield
+        assertEquals(live, false)
+        assertEquals(dead, false)
+        assertEquals(killed, true)
+        assert(!p.isAlive) // 进程被终止（SIGTERM 家族）
     ).unsafeRunSync()
   }
 
@@ -105,25 +105,25 @@ class ExternalOutputStoreSpec extends CatsEffectSuite:
   test("resetForNewRun: terminal entry resets with cliSessionId+mailbox kept; running entry refuses") {
     val id = freshId()
     (for
-      running <- ExternalOutputStore.resetForNewRun(id) // 尚无条目 → false（open 先行）
-      _ <- ExternalOutputStore.open(id)
-      refuse <- ExternalOutputStore.resetForNewRun(id) // running 条目拒绝重置
-      _ <- ExternalOutputStore.setCliSession(id, "sess-42")
-      _ <- ExternalOutputStore.enqueue(id, "late mail")
-      _ <- ExternalOutputStore.finalizeTask(id, "completed", exitCode = Some(0))
-      _ <- ExternalOutputStore.append(id, "old-run tail") // 终态后补写（旧轮留痕）
-      reset <- ExternalOutputStore.resetForNewRun(id)
-      after <- ExternalOutputStore.read(id, 0)
-      cli <- ExternalOutputStore.cliSessionIdOf(id)
-      depth <- ExternalOutputStore.mailboxDepth(id)
-    yield
-      assertEquals(running, false)
-      assertEquals(refuse, false)
-      assertEquals(reset, true)
-      assertEquals(after.get.status, "running")
-      assertEquals(after.get.totalLines, 0L) // fresh 缓冲（旧轮缓冲随重置清空）
-      assertEquals(cli, Some("sess-42")) // 续聊锚点跨轮保留
-      assertEquals(depth, 1) // mailbox 跨轮保留
+        running <- ExternalOutputStore.resetForNewRun(id) // 尚无条目 → false（open 先行）
+        _ <- ExternalOutputStore.open(id)
+        refuse <- ExternalOutputStore.resetForNewRun(id) // running 条目拒绝重置
+        _ <- ExternalOutputStore.setCliSession(id, "sess-42")
+        _ <- ExternalOutputStore.enqueue(id, "late mail")
+        _ <- ExternalOutputStore.finalizeTask(id, "completed", exitCode = Some(0))
+        _ <- ExternalOutputStore.append(id, "old-run tail") // 终态后补写（旧轮留痕）
+        reset <- ExternalOutputStore.resetForNewRun(id)
+        after <- ExternalOutputStore.read(id, 0)
+        cli <- ExternalOutputStore.cliSessionIdOf(id)
+        depth <- ExternalOutputStore.mailboxDepth(id)
+      yield
+        assertEquals(running, false)
+        assertEquals(refuse, false)
+        assertEquals(reset, true)
+        assertEquals(after.get.status, "running")
+        assertEquals(after.get.totalLines, 0L) // fresh 缓冲（旧轮缓冲随重置清空）
+        assertEquals(cli, Some("sess-42")) // 续聊锚点跨轮保留
+        assertEquals(depth, 1) // mailbox 跨轮保留
     ).unsafeRunSync()
   }
 

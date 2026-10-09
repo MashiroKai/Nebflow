@@ -23,8 +23,7 @@ object NebflowError:
       // rate-limit failure must never be re-labelled as a vision-capability
       // failure — that would be the same class of machine mis-diagnosis this
       // batch removes.
-      if hadImage && !transient then
-        "这条消息里的图片没能送出去：当前模型链没有一个支持看图。请改用支持看图的模型，或去掉图片后重发。"
+      if hadImage && !transient then "这条消息里的图片没能送出去：当前模型链没有一个支持看图。请改用支持看图的模型，或去掉图片后重发。"
       else if transient then "LLM 服务暂时不可用，请稍后重试"
       else if lower.contains("auth") then "LLM 认证失败，请检查 API Key 配置"
       else s"AI request failed: $summary"

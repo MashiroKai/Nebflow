@@ -534,6 +534,7 @@ final class NeblinkPresenceService(
         .buildAsync(URI.create(wsUri), listener)
         .get(budgetMs, TimeUnit.MILLISECONDS)
       (ws, slot)
+    end handshakeAttempt
 
     val wsUri = buildWsUri(host, port, id)
     try
@@ -1211,11 +1212,13 @@ final class NeblinkPresenceService(
   private[neblink] def presenceHandshakeHeaders(id: DeviceIdentity): List[(String, String)] =
     List(nebflow.shared.DeviceHeader -> id.deviceId)
 
-  /** deviceId-compat query carrier (deviceface-hardening batch, main-side):
-    * the SAME uri shape as [[buildWsUri]] plus the legacy query parameters —
-    * dialled only as the SECOND attempt when a peer answered `400 Missing
-    * deviceId` on the header-carrier attempt. (W1 provisional shim: ported
-    * verbatim from main so main-side specs compile.) */
+  /**
+   * deviceId-compat query carrier (deviceface-hardening batch, main-side):
+   * the SAME uri shape as [[buildWsUri]] plus the legacy query parameters —
+   * dialled only as the SECOND attempt when a peer answered `400 Missing
+   * deviceId` on the header-carrier attempt. (W1 provisional shim: ported
+   * verbatim from main so main-side specs compile.)
+   */
   private[neblink] def buildCompatWsUri(host: String, port: Int, id: DeviceIdentity): String =
     val params = Map(
       "deviceId" -> id.deviceId,
@@ -1227,11 +1230,13 @@ final class NeblinkPresenceService(
     val query = params.map((k, v) => s"$k=${enc(v)}").mkString("&")
     s"ws://$host:$port/api/neblink/presence?$query"
 
-  /** Legacy-shape rejection classifier (deviceface-hardening batch, main-side):
-    * true ONLY for a 400 upgrade rejection — the pre-A1 "Missing deviceId"
-    * shape that authorizes the compat retry. 403 fires at the trust gate
-    * BEFORE deviceId validation and must not be retried with more identity
-    * material. (W1 provisional shim: ported verbatim from main.) */
+  /**
+   * Legacy-shape rejection classifier (deviceface-hardening batch, main-side):
+   * true ONLY for a 400 upgrade rejection — the pre-A1 "Missing deviceId"
+   * shape that authorizes the compat retry. 403 fires at the trust gate
+   * BEFORE deviceId validation and must not be retried with more identity
+   * material. (W1 provisional shim: ported verbatim from main.)
+   */
   private[neblink] def isLegacyMissingDeviceIdRejection(t: Throwable): Boolean =
     var cur: Throwable = t
     var depth = 0

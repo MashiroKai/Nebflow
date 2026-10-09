@@ -9,38 +9,46 @@ import nebflow.shared.SessionMeta
 
 import java.nio.file.attribute.PosixFilePermissions
 
-/** The config→verify→activate closed loop, pinned offline (feishubridge batch,
-  * 2026-09-25; upstream plan card `20260925_195206_socchannel-plan2` §4).
-  *
-  * The loop's ONE activation point is [[FeishuBridgePlugin.sync]]: config
-  * `enabled` ∧ mechanical verification ⇒ the adapter is registered with the
-  * REAL [[BridgeManager]] (and started exactly once); anything else ⇒ it is
-  * not (and a previously registered adapter is stopped and removed). The
-  * `factory` seam keeps the socket-opening plugin out of the test — the fake
-  * records lifecycle calls instead, so "registered" here means exactly "the
-  * REST probe face would answer adapterRegistered=true for it".
-  *
-  * Verification semantics under test: every REQUIRED field present and valid —
-  * a plain field matching its pattern, a secret field with a stored `_ref`
-  * whose probe triple (exists/modeOk/readable) is all true. The spec writes
-  * only its own temporary data root; the real ~/.nebflow is never touched.
-  */
+/**
+ * The config→verify→activate closed loop, pinned offline (feishubridge batch,
+ * 2026-09-25; upstream plan card `20260925_195206_socchannel-plan2` §4).
+ *
+ * The loop's ONE activation point is [[FeishuBridgePlugin.sync]]: config
+ * `enabled` ∧ mechanical verification ⇒ the adapter is registered with the
+ * REAL [[BridgeManager]] (and started exactly once); anything else ⇒ it is
+ * not (and a previously registered adapter is stopped and removed). The
+ * `factory` seam keeps the socket-opening plugin out of the test — the fake
+ * records lifecycle calls instead, so "registered" here means exactly "the
+ * REST probe face would answer adapterRegistered=true for it".
+ *
+ * Verification semantics under test: every REQUIRED field present and valid —
+ * a plain field matching its pattern, a secret field with a stored `_ref`
+ * whose probe triple (exists/modeOk/readable) is all true. The spec writes
+ * only its own temporary data root; the real ~/.nebflow is never touched.
+ */
 class FeishuAdapterActivationSpec extends CatsEffectSuite:
 
   private def tmpRoot(): os.Path = os.temp.dir(prefix = "nb-feishu-act-")
 
   /** A valid-looking card save: required plain fields + both required secrets. */
   private def fullBody(): Json =
-    io.circe.parser.parse(
-      """{"enabled":true,"fields":{"app_id":"cli_0123456789abcdef","region":"feishu",
+    io.circe.parser
+      .parse(
+        """{"enabled":true,"fields":{"app_id":"cli_0123456789abcdef","region":"feishu",
         |"app_secret":"test-plain-secret","verification_token":"test-plain-vt"}}""".stripMargin
-    ).toOption.get
+      )
+      .toOption
+      .get
 
   private def body(json: String): Json = io.circe.parser.parse(json).toOption.get
 
   private val noopCtx: BridgeContext = new BridgeContext:
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] = IO.unit
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] = IO.unit
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(Nil)
@@ -68,8 +76,7 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
   private def narrowSecret(path: os.Path): Unit =
     os.makeDir.all(path / os.up)
     os.write(path, "x", createFolders = true)
-    java.nio.file.Files.setPosixFilePermissions(
-      path.toNIO, PosixFilePermissions.fromString("rw-------"))
+    java.nio.file.Files.setPosixFilePermissions(path.toNIO, PosixFilePermissions.fromString("rw-------"))
 
   // ───────────────────────────── the gate ─────────────────────────────
 
@@ -104,17 +111,31 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assertEquals(startsN, 1)
       assertEquals(probeLive.toOption.get.hcursor.downField("adapterRegistered").as[Boolean].toOption, Some(true))
       assertEquals(
-        channelsLive.hcursor.downField("channels").downField("feishu").downField("adapterRegistered").as[Boolean].toOption,
-        Some(true))
+        channelsLive.hcursor
+          .downField("channels")
+          .downField("feishu")
+          .downField("adapterRegistered")
+          .as[Boolean]
+          .toOption,
+        Some(true)
+      )
       assertEquals(probeDefault.toOption.get.hcursor.downField("adapterRegistered").as[Boolean].toOption, Some(false))
+    end for
   }
 
-  test("ACT-3 enabled but NOT verified (required secret absent) ⇒ NOT registered — the flip cannot be bought with config alone") {
+  test(
+    "ACT-3 enabled but NOT verified (required secret absent) ⇒ NOT registered — the flip cannot be bought with config alone"
+  ) {
     val (starts, stops) = newCounters
     val root = tmpRoot()
     for
-      _ <- IO(SocialChannels.save(root, "feishu",
-        body("""{"enabled":true,"fields":{"app_id":"cli_0123456789abcdef","region":"feishu"}}""")))
+      _ <- IO(
+        SocialChannels.save(
+          root,
+          "feishu",
+          body("""{"enabled":true,"fields":{"app_id":"cli_0123456789abcdef","region":"feishu"}}""")
+        )
+      )
       verified <- IO(SocialChannels.verified(root, "feishu"))
       manager <- BridgeManager.create(noopCtx)
       _ <- FeishuBridgePlugin.sync(manager, root, fakeFactory(starts, stops))
@@ -124,6 +145,7 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assert(!verified, "missing required secrets must fail verification")
       assertEquals(names, Set.empty[String], "unverified config must not flip the adapter")
       assertEquals(startsN, 0)
+    end for
   }
 
   test("ACT-4 disabled ⇒ unregistered again (toggle off tears the adapter down)") {
@@ -135,8 +157,9 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       manager <- BridgeManager.create(noopCtx)
       _ <- FeishuBridgePlugin.sync(manager, root, fakeFactory(starts, stops))
       before <- manager.registeredNames
-      _ <- IO(SocialChannels.save(root, "feishu",
-        body("""{"enabled":false,"fields":{}}"""))) // surgical merge keeps the fields
+      _ <- IO(
+        SocialChannels.save(root, "feishu", body("""{"enabled":false,"fields":{}}"""))
+      ) // surgical merge keeps the fields
       enabled <- IO(SocialChannels.isEnabled(root, "feishu"))
       _ <- FeishuBridgePlugin.sync(manager, root, fakeFactory(starts, stops))
       after <- manager.registeredNames
@@ -146,6 +169,7 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assert(!enabled, "the toggle must be off")
       assertEquals(after, Set.empty[String], "disabled ⇒ the adapter is torn down and removed")
       assert(stopsN >= 1, "teardown must go through the plugin's stop")
+    end for
   }
 
   test("ACT-5 a pattern-violating app_id fails verification even when secrets are readable (hand-edited config)") {
@@ -214,20 +238,33 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
 
   // ─────────── A1-boot (feishu-boot-seal rework): the boot leg rewrites nothing ───────────
 
-  /** The `channels.feishu` subtree, canonicalised identically on both sides of a
-    * measurement — the criterion's object (A1). */
+  /**
+   * The `channels.feishu` subtree, canonicalised identically on both sides of a
+   * measurement — the criterion's object (A1).
+   */
   private def feishuSubtree(root: os.Path): String =
-    SocialChannels.readChannels(root).hcursor
-      .downField("channels").downField("feishu").focus.getOrElse(Json.obj()).noSpaces
+    SocialChannels
+      .readChannels(root)
+      .hcursor
+      .downField("channels")
+      .downField("feishu")
+      .focus
+      .getOrElse(Json.obj())
+      .noSpaces
 
   private def sha256(s: String): String =
-    java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes("UTF-8"))
-      .map("%02x".format(_)).mkString
+    java.security.MessageDigest
+      .getInstance("SHA-256")
+      .digest(s.getBytes("UTF-8"))
+      .map("%02x".format(_))
+      .mkString
 
   private def configBytes(root: os.Path): String = os.read(nebflow.shared.PathUtil.configJsonWritePath(root))
 
-  test("A1-boot golden: `enabled ∧ verified` ⇒ sync activates AND the feishu subtree's " +
-    "canonical JSON hashes identically before/after the boot path (zero rewrite)") {
+  test(
+    "A1-boot golden: `enabled ∧ verified` ⇒ sync activates AND the feishu subtree's " +
+      "canonical JSON hashes identically before/after the boot path (zero rewrite)"
+  ) {
     // The criterion the brief states for state ①: the BOOT leg (the ONE activation
     // point, FeishuBridgePlugin.sync) is run to completion on a golden world
     // (enabled=true ∧ verified=true) and the channel subtree must not move a byte.
@@ -271,10 +308,13 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assertEquals(after, before, "the subtree must be identical (same canonical JSON)")
       assertEquals(afterSha, beforeSha, "A1: feishu 子树规范化 JSON 的 sha256 前后相等（boot 路径零改写）")
       assertEquals(afterBytes, beforeBytes, "stronger: not one byte of the config file moves across the boot path")
+    end for
   }
 
-  test("A1-boot/red-tooth: a write with NO opinion about the switch must not close it — " +
-    "the boot gate still activates (red pre-change)") {
+  test(
+    "A1-boot/red-tooth: a write with NO opinion about the switch must not close it — " +
+      "the boot gate still activates (red pre-change)"
+  ) {
     // The defect's reachable face at the boot boundary: the store is fed by a body
     // that says nothing about `enabled` (the shape that flipped the live channel at
     // 2026-09-28 18:00:06), and the NEXT boot leg then decides whether the adapter
@@ -301,15 +341,25 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assertEquals(names, Set("feishu"), "the boot gate must still activate the adapter")
       assertEquals(afterSha, beforeSha, "A1: 子树 sha256 前后相等（boot 路径零改写）")
       assertEquals(
-        SocialChannels.readChannels(root).hcursor.downField("channels").downField("feishu")
-          .downField("fields").downField("region").as[String].toOption,
+        SocialChannels
+          .readChannels(root)
+          .hcursor
+          .downField("channels")
+          .downField("feishu")
+          .downField("fields")
+          .downField("region")
+          .as[String]
+          .toOption,
         Some("lark"),
         "the field the body DID have an opinion about still lands (the write is not suppressed)"
       )
+    end for
   }
 
-  test("ACT-8 sync with a factory returning a non-feishu plugin instance completes — " +
-    "the fingerprint guard is a no-op there (feishu-bind batch)") {
+  test(
+    "ACT-8 sync with a factory returning a non-feishu plugin instance completes — " +
+      "the fingerprint guard is a no-op there (feishu-bind batch)"
+  ) {
     // The lifecycle fakes are plain BridgePlugins, not FeishuBridgePlugin
     // instances, so the P0-2 guard appended to sync has nothing to read. Pinned:
     // the guard's type-test must never crash or alter the sync outcome for
@@ -327,3 +377,4 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assertEquals(names, Set("feishu"), "the guard must not break the sync of a foreign plugin instance")
       assertEquals(startsN, 1, "the plugin is still started exactly once")
   }
+end FeishuAdapterActivationSpec

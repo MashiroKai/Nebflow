@@ -40,49 +40,82 @@ object DelegateRegistry:
    * 缺键，会让存量记录在 list 里静默消失，禁）。
    */
   final case class Record(
-      id: String,
-      executor: String,
-      /** 派发时解析的工作目录（项目 workspace 或默认 general 目录；worktree 腿 = worktree 路径）。 */
-      cwd: String,
-      /** 挂载项目名（缺省派发 = None → cwd 为默认 general 目录）。 */
-      project: Option[String],
-      /** 关联的 TaskLedger 条目 id（"12" 形态，无 #）。 */
-      taskId: Option[String],
-      /** 派发者（Nebula 根）会话 id——结果回投与 Mail 排队路由锚点。 */
-      parentSessionId: String,
-      /** 任务摘要（列表显示用；全文在 TaskLedger）。 */
-      title: String,
-      createdAt: Long,
-      /** 工作分支（S13 分支纪律：恒 `delegate/<id>`；非 git 工作区 = None）。 */
-      branch: Option[String] = None,
-      /** worktree 目录（R6 判是腿；判否腿 = None——分支建在项目内）。 */
-      worktree: Option[String] = None,
-      /** spawn 时基分支（合并轮的 `merge --no-ff` 目标；非 git 工作区 = None）。 */
-      baseBranch: Option[String] = None,
-      /** 基工作区（合并执行的 `git -C` 目标；worktree 腿 = 项目 workspace，就地腿 = cwd）。 */
-      projectWorkspace: Option[String] = None,
-      /** delegate_report 状态槽：finish | blocked（未申报 = None）。 */
-      reportStatus: Option[String] = None,
-      /** 申报 detail（blocked 的原因承载）。 */
-      reportDetail: Option[String] = None,
-      /** 申报 suggestion（可选）。 */
-      reportSuggestion: Option[String] = None,
-      /**
-       * 外部执行器的 CLI 侧会话 id（external-executors 批 #1225）——resume 续聊
-       * 锚点（claude session_id / codex thread_id / zcode session_id），从适配流
-       * 首帧取得后回写。None = 内部执行器或外部首帧尚未到达（续聊退化形态见
-       * ExternalSessionRunner.startResumeTurn：带前文的续聊 brief，仍在同地址
-       * 同执行器内，零回落）。缺省 None：旧盘面文件无此字段照常解码（向后兼容）。
-       */
-      cliSessionId: Option[String] = None,
-      /**
-       * 分配插件集（jev-plugins 批 #1226 · S9 可查面）：本 delegate spawn 时分配面
-       * 授予的包名集（task 行结构帧的 plugins 摘要供源；渲染归 #1228）。**分配动作
-       * 发生即记**（`Some(Nil)` = 显式空分配）；`None` = 分配未发生（plugins 总闸关 /
-       * 外部执行器腿——外部执行器零注入，恒 None）。缺省 None：旧盘面文件无此字段
-       * 照常解码（向后兼容，cliSessionId 同款纪律）。
-       */
-      plugins: Option[List[String]] = None
+    id: String,
+    executor: String,
+    /** 派发时解析的工作目录（项目 workspace 或默认 general 目录；worktree 腿 = worktree 路径）。 */
+    cwd: String,
+    /** 挂载项目名（缺省派发 = None → cwd 为默认 general 目录）。 */
+    project: Option[String],
+    /** 关联的 TaskLedger 条目 id（"12" 形态，无 #）。 */
+    taskId: Option[String],
+    /** 派发者（Nebula 根）会话 id——结果回投与 Mail 排队路由锚点。 */
+    parentSessionId: String,
+    /** 任务摘要（列表显示用；全文在 TaskLedger）。 */
+    title: String,
+    createdAt: Long,
+    /** 工作分支（S13 分支纪律：恒 `delegate/<id>`；非 git 工作区 = None）。 */
+    branch: Option[String] = None,
+    /** worktree 目录（R6 判是腿；判否腿 = None——分支建在项目内）。 */
+    worktree: Option[String] = None,
+    /** spawn 时基分支（合并轮的 `merge --no-ff` 目标；非 git 工作区 = None）。 */
+    baseBranch: Option[String] = None,
+    /** 基工作区（合并执行的 `git -C` 目标；worktree 腿 = 项目 workspace，就地腿 = cwd）。 */
+    projectWorkspace: Option[String] = None,
+    /** delegate_report 状态槽：finish | blocked（未申报 = None）。 */
+    reportStatus: Option[String] = None,
+    /** 申报 detail（blocked 的原因承载）。 */
+    reportDetail: Option[String] = None,
+    /** 申报 suggestion（可选）。 */
+    reportSuggestion: Option[String] = None,
+    /**
+     * 外部执行器的 CLI 侧会话 id（external-executors 批 #1225）——resume 续聊
+     * 锚点（claude session_id / codex thread_id / zcode session_id），从适配流
+     * 首帧取得后回写。None = 内部执行器或外部首帧尚未到达（续聊退化形态见
+     * ExternalSessionRunner.startResumeTurn：带前文的续聊 brief，仍在同地址
+     * 同执行器内，零回落）。缺省 None：旧盘面文件无此字段照常解码（向后兼容）。
+     */
+    cliSessionId: Option[String] = None,
+    /**
+     * 分配插件集（jev-plugins 批 #1226 · S9 可查面）：本 delegate spawn 时分配面
+     * 授予的包名集（task 行结构帧的 plugins 摘要供源；渲染归 #1228）。**分配动作
+     * 发生即记**（`Some(Nil)` = 显式空分配）；`None` = 分配未发生（plugins 总闸关 /
+     * 外部执行器腿——外部执行器零注入，恒 None）。缺省 None：旧盘面文件无此字段
+     * 照常解码（向后兼容，cliSessionId 同款纪律）。
+     */
+    plugins: Option[List[String]] = None,
+    /**
+     * 编排模式（delegate-ui 批 2026-10-08 · G1）：本 delegate 实际呈现的编排形态
+     * ——`single`（纯本体，缺省初值）/ `subagent-star`（星型：已在 SubAgentTaskStore
+     * 域记账过子代理——Subagent/Subtask/嵌套 Delegate 任一 spawn 记账点惰性升级）/
+     * `agentflow`（flow 结构：AgentFlow 链登记成功惰性升级，值域顶——升级只上不下，
+     * 两形态混用时 flow 胜出）。**写点两处**：spawn 初值（[[nebflow.core.tools.DelegateTool]]
+     * 内置腿 + [[nebflow.core.executor.ExternalSessionRunner]] 外部腿——外部执行器
+     * 零平台工具，恒 single）＋ 惰性升级（记账点单写 [[upgradeOrchestrationMode]]）。
+     * 缺省 None：旧盘面记录 = 前端过渡启发（面板 kind 前缀判）兜底——**禁在读面把
+     * None 折叠成 single**（会剥夺存量行的启发兜底）。
+     */
+    orchestrationMode: Option[String] = None,
+    /**
+     * 判定机的「会否改文件」裁决（引擎加固批 2026-10-09）：spawn 时判定机产物
+     * 随记录持久化——终态只读座位诚实化（P2-3）的判据面（`Some(false)` = 只读
+     * 座位）。`None` = 无绑定（非 git / 建败降级）/ 旧盘面记录（缺键照常解码，
+     * 向后兼容同 cliSessionId 纪律）。
+     */
+    worktreeJudged: Option[Boolean] = None,
+    /**
+     * 归档时间戳（delegate-ui 批 2026-10-08 · G6，epoch millis）：`None` = 在册
+     * （rows 默认窗）；`Some` = 历史窗（`GET /api/chains?archived=1`）。**零删除
+     * 纪律**：归档只加时间戳旗（记录/子代理记账/链记录原样留存——children 随档 =
+     * 查询面按 parentSessionId 原样可达），绝不删行。缺省 None：旧盘面照常解码。
+     */
+    archivedAt: Option[Long] = None,
+    /**
+     * origin 标记（v2.1 阶段 1 §A.3，2026-10-09 实施批）：**执行设备侧**记录本会话
+     * 是「受委托」形态——值 = 派活 host 的 deviceId（`delegated-by:<hostDeviceId>`
+     * 的载体，验收 #2 的 `sessions/` 标记读数）。编排侧（host）派发记录 = None。
+     * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    delegatedBy: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -150,9 +183,91 @@ object DelegateRegistry:
   /** 进程内读-改-写串行化（updateReport 临界区；与 ChainStore.writeLock 各管各件）。 */
   private val writeLock = new Object
 
-  /** JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
-    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
-    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。 */
+  // ── 编排模式值域（G1，delegate-ui 批 2026-10-08）────────────────────────
+
+  /** 纯本体（spawn 初值；外部执行器恒此值）。 */
+  val ModeSingle = "single"
+
+  /** 星型：SubAgentTaskStore 域记过账（Subagent/Subtask/嵌套 Delegate 子代理）。 */
+  val ModeSubagentStar = "subagent-star"
+
+  /** flow 结构：AgentFlow 链登记成功。值域顶（与星型混用时胜出）。 */
+  val ModeAgentflow = "agentflow"
+
+  /** 升级序（只上不下）：single(0) < subagent-star(1) < agentflow(2)。未知值 = 0（保守底）。 */
+  private def modeRank(m: String): Int =
+    if m == ModeAgentflow then 2 else if m == ModeSubagentStar then 1 else 0
+
+  /**
+   * 编排模式惰性升级单写（G1）：读-改-写（同步整写），**只上不下**——目标秩不高于
+   * 现值 = 零写（幂等）。查无记录 = `Left`（调用方 fail-soft 吞掉——升级挂点是
+   * 「顺手记账」语义，绝不阻断主路径；无记录 = 非 delegate 会话/旧盘面，本就该跳过）。
+   */
+  def upgradeOrchestrationMode(id: String, mode: String): Either[String, Unit] =
+    if !validId(id) then Left(s"orchestrationMode upgrade: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"orchestrationMode upgrade: no registry record for '$id'")
+          case Some(rec) =>
+            val cur = rec.orchestrationMode.getOrElse(ModeSingle)
+            if modeRank(mode) <= modeRank(cur) then Right(())
+            else
+              try
+                put(rec.copy(orchestrationMode = Some(mode)))
+                Right(())
+              catch case e: Throwable => Left(s"orchestrationMode upgrade: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 归档单写（G6，delegate-ui 批 2026-10-08）：`archivedAt = now` 单旗，**零删除**——
+   * 记录本体/子代理记账/链记录原样留存（历史窗 = 读面按本旗过滤，见
+   * [[nebflow.core.project.ChainsReadFace]] rows 臂 `?archived=1`）。幂等：已归档 =
+   * 返回原时间戳（零重写）。查无记录 = `Left`（归档动作只对真实 spawn 生效）。
+   */
+  def archive(id: String): Either[String, Long] =
+    if !validId(id) then Left(s"archive: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"archive: no registry record for '$id'")
+          case Some(rec) =>
+            rec.archivedAt match
+              case Some(ts) => Right(ts) // 幂等：已归档原样返回，零重写
+              case None =>
+                val ts = System.currentTimeMillis()
+                try
+                  put(rec.copy(archivedAt = Some(ts)))
+                  Right(ts)
+                catch case e: Throwable => Left(s"archive: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 反归档单写（delegate/flowmap 两层架构批 2026-10-09 · G4-2）：`archivedAt = None`
+   * ——归档抽屉「恢复」动作的引擎缝（历史窗 → 在册窗回流）。幂等：未归档 = `Right`
+   * 零写；查无记录 = `Left`。**零删除纪律不破**：恢复只摘旗，记录本体/子代理记账/
+   * 链记录原样（与 [[archive]] 对偶的单点反操作——写锁同缝串行）。
+   */
+  def unarchive(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"unarchive: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"unarchive: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.archivedAt.isEmpty then Right(()) // 幂等：未归档零写
+            else
+              try
+                put(rec.copy(archivedAt = None))
+                Right(())
+              catch case e: Throwable => Left(s"unarchive: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
+   * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
+   * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。
+   */
   given io.circe.Encoder[Record] = io.circe.generic.semiauto.deriveEncoder
 
   given io.circe.Decoder[Record] = (c: io.circe.HCursor) =>
@@ -174,6 +289,10 @@ object DelegateRegistry:
       reportSuggestion <- c.get[Option[String]]("reportSuggestion")
       cliSessionId <- c.get[Option[String]]("cliSessionId")
       plugins <- c.get[Option[List[String]]]("plugins")
+      orchestrationMode <- c.get[Option[String]]("orchestrationMode")
+      worktreeJudged <- c.get[Option[Boolean]]("worktreeJudged")
+      archivedAt <- c.get[Option[Long]]("archivedAt")
+      delegatedBy <- c.get[Option[String]]("delegatedBy")
     yield Record(
       id,
       executor,
@@ -191,7 +310,11 @@ object DelegateRegistry:
       reportDetail,
       reportSuggestion,
       cliSessionId,
-      plugins
+      plugins,
+      orchestrationMode,
+      worktreeJudged,
+      archivedAt,
+      delegatedBy
     )
 
 end DelegateRegistry

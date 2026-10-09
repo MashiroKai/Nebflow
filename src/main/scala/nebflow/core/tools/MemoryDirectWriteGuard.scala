@@ -52,16 +52,17 @@ object MemoryDirectWriteGuard:
 
   private val lastRemindedAt = new ConcurrentHashMap[String, Long]()
 
-  /** Classify a path against the three budgeted memory layers.
-    * `Some("user" | "agent" | "project")` = budgeted layer; `None` = not guarded.
-    *
-    * `"agent"` 层已从 `agents/<root>/memory.md` 上收到
-    * 根层 `<root>/Soul.md`（与 `User.md` 同级）。**双读过渡**⇒两处都判 `"agent"`
-    * （旧位仍可被直写，归档期不能失去预算保护）。路径基见
-    * [[nebflow.shared.MemoryPaths.globalBases]]——并认运行时数据根与默认 home 根，
-    * 使层判定与进程内换根顺序解耦（此前只认运行时根 ⇒ 被不还原的 setDataRoot
-    * 的相邻 suite 打成全 `None`，闸门 fail-open + 顺序相关假红）。
-    */
+  /**
+   * Classify a path against the three budgeted memory layers.
+   * `Some("user" | "agent" | "project")` = budgeted layer; `None` = not guarded.
+   *
+   * `"agent"` 层已从 `agents/<root>/memory.md` 上收到
+   * 根层 `<root>/Soul.md`（与 `User.md` 同级）。**双读过渡**⇒两处都判 `"agent"`
+   * （旧位仍可被直写，归档期不能失去预算保护）。路径基见
+   * [[nebflow.shared.MemoryPaths.globalBases]]——并认运行时数据根与默认 home 根，
+   * 使层判定与进程内换根顺序解耦（此前只认运行时根 ⇒ 被不还原的 setDataRoot
+   * 的相邻 suite 打成全 `None`，闸门 fail-open + 顺序相关假红）。
+   */
   def classify(pathStr: String): Option[String] =
     val normalized = MemoryPaths.normalizePath(pathStr)
     val bases = MemoryPaths.globalBases
@@ -70,22 +71,27 @@ object MemoryDirectWriteGuard:
     else if bases.exists(b => normalized == s"$b/Soul.md") then Some("agent")
     else if bases.exists(b => normalized == s"$b/agents/$rootName/memory.md") then Some("agent")
     else if normalized.endsWith("/.nebflow/memory.md")
-      && !MemoryPaths.isUnderGlobalBase(normalized, bases) then Some("project")
+      && !MemoryPaths.isUnderGlobalBase(normalized, bases)
+    then Some("project")
     else None
 
-  /** Current file size; missing/unreadable ⇒ 0 (first write ⇒ anything is net
-    * growth, matching MemoryWriteGate.preSizeBytes semantics). Read-only. */
+  /**
+   * Current file size; missing/unreadable ⇒ 0 (first write ⇒ anything is net
+   * growth, matching MemoryWriteGate.preSizeBytes semantics). Read-only.
+   */
   private def preSizeBytes(pathStr: String): Long =
     Try(if Files.exists(Paths.get(pathStr)) then Files.size(Paths.get(pathStr)).toLong else 0L)
       .getOrElse(0L)
 
-  /** Budget pre-check (read-only, zero file writes). `Left` = refuse with a
-    * structured error (caller must not write); `Right` = allowed.
-    *
-    * `projectedContent` = the full file content this write would produce (Write:
-    * the new content; Edit: the updated buffer). Refusal only fires when the
-    * projected size is net growth past the hard cap — shrinkExempt (byte ratio,
-    * single-sourced) is consulted first so the self-rescue path stays open. */
+  /**
+   * Budget pre-check (read-only, zero file writes). `Left` = refuse with a
+   * structured error (caller must not write); `Right` = allowed.
+   *
+   * `projectedContent` = the full file content this write would produce (Write:
+   * the new content; Edit: the updated buffer). Refusal only fires when the
+   * projected size is net growth past the hard cap — shrinkExempt (byte ratio,
+   * single-sourced) is consulted first so the self-rescue path stays open.
+   */
   def preCheck(pathStr: String, projectedContent: String): Either[ToolError, Unit] =
     classify(pathStr) match
       case None => Right(())
@@ -98,21 +104,23 @@ object MemoryDirectWriteGuard:
             case MemoryBudget.Exceeded(_, _) =>
               Left(ToolError(MemoryBudget.exceededMessage("write", target, pathStr, projected, projectedContent)))
             case MemoryBudget.Warn(_, _, _) => Right(())
-            case MemoryBudget.Within        => Right(())
+            case MemoryBudget.Within => Right(())
 
-  /** Post-write reminder text (""): empty = no reminder (not a budgeted layer,
-    * within budget, or suppressed by the 24h window). Non-empty = a
-    * `<system-reminder>` block the caller appends to the tool result.
-    * Reads the file size from disk (POST-WRITE state). */
+  /**
+   * Post-write reminder text (""): empty = no reminder (not a budgeted layer,
+   * within budget, or suppressed by the 24h window). Non-empty = a
+   * `<system-reminder>` block the caller appends to the tool result.
+   * Reads the file size from disk (POST-WRITE state).
+   */
   def postWriteReminder(pathStr: String, nowMs: Long = System.currentTimeMillis()): String =
     classify(pathStr) match
       case None => ""
       case Some(target) =>
         val (soft, hard) = target match
-          case "user"    => (MemoryBudget.UserSoftBytes, MemoryBudget.UserHardBytes)
-          case "agent"   => (MemoryBudget.AgentSoftBytes, MemoryBudget.AgentHardBytes)
+          case "user" => (MemoryBudget.UserSoftBytes, MemoryBudget.UserHardBytes)
+          case "agent" => (MemoryBudget.AgentSoftBytes, MemoryBudget.AgentHardBytes)
           case "project" => (MemoryBudget.ProjectSoftBytes, MemoryBudget.ProjectHardBytes)
-          case other     => (-1L, -1L) // unreachable: classify only yields the three
+          case other => (-1L, -1L) // unreachable: classify only yields the three
         val bytes = preSizeBytes(pathStr)
         if bytes <= soft then ""
         else
@@ -136,8 +144,10 @@ object MemoryDirectWriteGuard:
          |Consolidate this turn: trim stale batch-status sections and superseded rulings first (replace in place, never append a correction beside the old line), or demote detail into `~/.nebflow/memory/<id>.md` files. Further writes past the hard cap will be refused until the file is back under budget.
          |</system-reminder>"""
 
-  /** Test hook: clear the suppression ledger (spec only; production code must
-    * not call this). */
+  /**
+   * Test hook: clear the suppression ledger (spec only; production code must
+   * not call this).
+   */
   private[tools] def resetForTest(): Unit = lastRemindedAt.clear()
 
 end MemoryDirectWriteGuard

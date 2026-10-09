@@ -51,42 +51,51 @@ object RichRenderer:
 
   private val logger = NebflowLogger.forName("nebflow.social.outbound.render")
 
-  /** HC-2: the bounded wall clock for one render. Measured on this host: the
-    *  product is on disk in well under a second, so 30 s is ~30× headroom. The
-    *  budget bounds the PRODUCT wait, not the (never-arriving) process exit. */
+  /**
+   * HC-2: the bounded wall clock for one render. Measured on this host: the
+   *  product is on disk in well under a second, so 30 s is ~30× headroom. The
+   *  budget bounds the PRODUCT wait, not the (never-arriving) process exit.
+   */
   val DefaultTimeoutMs: Long = 30000L
 
-  /** How long the product's size must hold still before it is treated as
-    *  complete. Chrome writes the file in one pass, so one quiet interval is
-    *  enough; the guard exists so a partially-written file is never judged. */
+  /**
+   * How long the product's size must hold still before it is treated as
+   *  complete. Chrome writes the file in one pass, so one quiet interval is
+   *  enough; the guard exists so a partially-written file is never judged.
+   */
   val StableWindowMs: Long = 150L
 
-  /** HC-3: the content floor, over DISTINCT DECODED PIXEL COLOURS (not file
-    *  bytes — see [[RichRenderer.inspect]] for why the byte-statistics version
-    *  does not work). The design card's probe produced a full-colour page; a
-    *  single-colour bitmap produces exactly 1. The threshold is deliberately tiny
-    *  (any real content clears it) so it cannot be mistaken for a quality score —
-    *  it only rejects empty/solid output. */
+  /**
+   * HC-3: the content floor, over DISTINCT DECODED PIXEL COLOURS (not file
+   *  bytes — see [[RichRenderer.inspect]] for why the byte-statistics version
+   *  does not work). The design card's probe produced a full-colour page; a
+   *  single-colour bitmap produces exactly 1. The threshold is deliberately tiny
+   *  (any real content clears it) so it cannot be mistaken for a quality score —
+   *  it only rejects empty/solid output.
+   */
   val MinDistinctPixels: Int = 5
 
-  /** Outcome of a render attempt. Both branches are readings; a failure is never
-    *  thrown past this boundary — the caller needs to degrade, not to crash a
-    *  turn.
-    *
-    * `reason` carries a value from the CLOSED vocabulary of design card §7.1
-    * (see [[RichDegrade.Reason]]), because that string is what the recipient
-    * sees; `detail` carries the technical explanation, which goes to the log.
-    * Keeping them separate is what lets the user-visible line stay matchable
-    * while the operator still gets the specifics. */
+  /**
+   * Outcome of a render attempt. Both branches are readings; a failure is never
+   *  thrown past this boundary — the caller needs to degrade, not to crash a
+   *  turn.
+   *
+   * `reason` carries a value from the CLOSED vocabulary of design card §7.1
+   * (see [[RichDegrade.Reason]]), because that string is what the recipient
+   * sees; `detail` carries the technical explanation, which goes to the log.
+   * Keeping them separate is what lets the user-visible line stay matchable
+   * while the operator still gets the specifics.
+   */
   final case class RenderResult(
-      ok: Boolean,
-      path: Option[os.Path],
-      bytes: Long,
-      width: Int,
-      height: Int,
-      reason: String,
-      detail: String
+    ok: Boolean,
+    path: Option[os.Path],
+    bytes: Long,
+    width: Int,
+    height: Int,
+    reason: String,
+    detail: String
   ):
+
     def toJson: io.circe.Json =
       io.circe.Json.obj(
         "ok" -> io.circe.Json.fromBoolean(ok),
@@ -98,13 +107,18 @@ object RichRenderer:
         "detail" -> io.circe.Json.fromString(detail)
       )
 
+  end RenderResult
+
   object RenderResult:
+
     /** A failure with the closed-vocabulary reason and the technical detail. */
     def failed(reason: String, detail: String): RenderResult =
       RenderResult(false, None, 0L, 0, 0, reason, detail)
 
-    /** Failures whose reason is not specifically a timeout or a bad product —
-      *  i.e. "the engine could not do it on this host". */
+    /**
+     * Failures whose reason is not specifically a timeout or a bad product —
+     *  i.e. "the engine could not do it on this host".
+     */
     def engineUnavailable(detail: String): RenderResult =
       failed(RichDegrade.Reason.EngineUnavailable, detail)
 
@@ -115,16 +129,22 @@ object RichRenderer:
     def invalidProduct(path: os.Path, bytes: Long, w: Int, h: Int, detail: String): RenderResult =
       RenderResult(false, Some(path), bytes, w, h, RichDegrade.Reason.RenderInvalid, detail)
 
-  /** A refusal that is ALSO logged. The log line is a signal, never a substitute
-    *  for the reading handed back: design card §7.3 #4 forbids the three swallow
-    *  idioms (`case _ => ()`, `case _ => IO.unit`, "only `logger.warn`"), and
-    *  this helper exists so no call site is tempted into one. The line carries a
-    *  path and a reason, zero credentials. */
+  end RenderResult
+
+  /**
+   * A refusal that is ALSO logged. The log line is a signal, never a substitute
+   *  for the reading handed back: design card §7.3 #4 forbids the three swallow
+   *  idioms (`case _ => ()`, `case _ => IO.unit`, "only `logger.warn`"), and
+   *  this helper exists so no call site is tempted into one. The line carries a
+   *  path and a reason, zero credentials.
+   */
   private def logged(r: RenderResult): RenderResult =
     // `warnSync` (not `warn`): this helper is called from synchronous contexts, and
     // `NebflowLogger.warn` returns an `IO[Unit]` — a bare `logger.warn(...)`
     // statement evaluates to that uncalled IO and the line never reaches the log.
-    logger.warnSync(s"outbound render failed path=${r.path.map(_.toString).getOrElse("<none>")} reason=${r.reason} detail=${r.detail}")
+    logger.warnSync(
+      s"outbound render failed path=${r.path.map(_.toString).getOrElse("<none>")} reason=${r.reason} detail=${r.detail}"
+    )
     r
 
   /**
@@ -140,6 +160,7 @@ object RichRenderer:
   /** The injected "no renderer on this host" implementation (HC-5). */
   object Unavailable extends Renderer:
     def available: Boolean = false
+
     def render(html: String, outPng: os.Path, width: Int, height: Int): IO[RenderResult] =
       IO.pure(RenderResult.engineUnavailable("rendering engine unavailable on this host"))
 
@@ -154,9 +175,9 @@ object RichRenderer:
    * mirrored — not re-derived — here; the mirror is reported as an open item.
    */
   final class ChromeRenderer(
-      binary: Option[os.Path] = ChromeRenderer.detect,
-      timeoutMs: Long = DefaultTimeoutMs,
-      stableWindowMs: Long = StableWindowMs
+    binary: Option[os.Path] = ChromeRenderer.detect,
+    timeoutMs: Long = DefaultTimeoutMs,
+    stableWindowMs: Long = StableWindowMs
   ) extends Renderer:
 
     def available: Boolean = binary.exists(p => Files.isExecutable(p.toNIO))
@@ -225,31 +246,45 @@ object RichRenderer:
               val elapsedMs = (System.nanoTime() - started) / 1000000L
 
               if !stable then
-                logged(RenderResult.timedOut(
-                  s"no stable render product within ${timeoutMs}ms (last size ${if lastSize < 0 then "absent" else s"$lastSize bytes"})"))
+                logged(RenderResult.timedOut(s"no stable render product within ${timeoutMs}ms (last size ${
+                    if lastSize < 0 then "absent" else s"$lastSize bytes"
+                  })"))
               else
                 inspect(outPng, width, height) match
-                  case Right(r)  => r.copy(detail = s"${r.detail} (stable after ${elapsedMs}ms)")
+                  case Right(r) => r.copy(detail = s"${r.detail} (stable after ${elapsedMs}ms)")
                   case Left(err) => logged(err)
             catch
               case e: Throwable =>
-                logged(RenderResult.engineUnavailable(
-                  s"render leg threw ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
+                logged(
+                  RenderResult.engineUnavailable(
+                    s"render leg threw ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+                  )
+                )
             finally
               // 🔴 The single point that guarantees no browser outlives this call.
               // Chrome does not exit on its own here, so the child is reaped
               // unconditionally whether we succeeded, timed out, or threw.
               if proc != null then
                 if proc.isAlive then proc.destroyForcibly()
-                try proc.waitFor(5, TimeUnit.SECONDS) catch case _: InterruptedException => ()
+                try proc.waitFor(5, TimeUnit.SECONDS)
+                catch case _: InterruptedException => ()
               Files.deleteIfExists(tmpHtml)
               deleteRecursively(profileDir)
+            end try
           }
-          // Belt for the blocking wrapper: an interruption must still surface as a
-          // reading rather than as a failed turn.
-          .handleErrorWith(e =>
-            IO.pure(logged(RenderResult.engineUnavailable(
-              s"render leg aborted: ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))))
+            // Belt for the blocking wrapper: an interruption must still surface as a
+            // reading rather than as a failed turn.
+            .handleErrorWith(e =>
+              IO.pure(
+                logged(
+                  RenderResult.engineUnavailable(
+                    s"render leg aborted: ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+                  )
+                )
+              )
+            )
+
+  end ChromeRenderer
 
   object ChromeRenderer:
 
@@ -274,10 +309,16 @@ object RichRenderer:
           )
       candidates.find(p => Files.isExecutable(p.toNIO))
 
-  /** Best-effort recursive delete for the per-render Chrome profile. Bounded and
-    *  silent on failure: the directory lives in the caller's temporary face, so a
-    *  leftover is a tidiness issue (the caller's TTL sweeper collects it), never a
-    *  lease on a live process. */
+    end detect
+
+  end ChromeRenderer
+
+  /**
+   * Best-effort recursive delete for the per-render Chrome profile. Bounded and
+   *  silent on failure: the directory lives in the caller's temporary face, so a
+   *  leftover is a tidiness issue (the caller's TTL sweeper collects it), never a
+   *  lease on a live process.
+   */
   private def deleteRecursively(dir: Path): Unit =
     try
       if Files.exists(dir) then
@@ -285,9 +326,26 @@ object RichRenderer:
         try
           val it = stream.sorted(java.util.Comparator.reverseOrder()).iterator()
           while it.hasNext do
-            try Files.deleteIfExists(it.next()) catch case _: java.io.IOException => ()
+            try Files.deleteIfExists(it.next())
+            catch case _: java.io.IOException => ()
         finally stream.close()
     catch case _: java.io.IOException => ()
+
+  /**
+   * 单参变体（social-webshot batch, 2026-10-09）：整页截图（fullPage）的高度
+   * 只有渲染完才知道，无法事先声明几何——所以几何从产物 IHDR 读出后代入双参
+   * [[inspect]]，声明几何在这里天然自洽；承重的判定是 PNG magic + 可解码 +
+   * 非纯色像素下限。短于 PNG 头的产物是显式失败，不是异常。
+   */
+  def inspect(p: os.Path): Either[RenderResult, RenderResult] =
+    if !Files.exists(p.toNIO) then Left(RenderResult.engineUnavailable(s"no render product at $p"))
+    else
+      val bytes = Files.readAllBytes(p.toNIO)
+      if bytes.length < 24 then
+        Left(RenderResult.invalidProduct(p, bytes.length.toLong, 0, 0, "render output is shorter than a PNG header"))
+      else
+        val (w, h) = pngSize(bytes)
+        inspect(p, w, h)
 
   /**
    * HC-3, the success judgement, as a reading over a produced file: PNG magic +
@@ -312,24 +370,52 @@ object RichRenderer:
       val magicOk = bytes.length >= 8 &&
         (bytes(0) & 0xff) == 0x89 && bytes(1) == 'P'.toByte && bytes(2) == 'N'.toByte && bytes(3) == 'G'.toByte
       if !magicOk then
-        Left(RenderResult.invalidProduct(p, size, 0, 0,
-          "render output is not a PNG (the first four bytes are not \\x89PNG)"))
+        Left(
+          RenderResult
+            .invalidProduct(p, size, 0, 0, "render output is not a PNG (the first four bytes are not \\x89PNG)")
+        )
       else
         val (w, h) = pngSize(bytes)
         if w != expectedWidth || h != expectedHeight then
-          Left(RenderResult.invalidProduct(p, size, w, h,
-            s"render output geometry $w×$h does not match the declared ${expectedWidth}×${expectedHeight}"))
+          Left(
+            RenderResult.invalidProduct(
+              p,
+              size,
+              w,
+              h,
+              s"render output geometry $w×$h does not match the declared ${expectedWidth}×${expectedHeight}"
+            )
+          )
         else
           distinctPixels(p) match
             case None =>
-              Left(RenderResult.invalidProduct(p, size, w, h,
-                "render output carries a PNG header but could not be decoded as an image"))
+              Left(
+                RenderResult.invalidProduct(
+                  p,
+                  size,
+                  w,
+                  h,
+                  "render output carries a PNG header but could not be decoded as an image"
+                )
+              )
             case Some(distinct) if distinct <= MinDistinctPixels =>
-              Left(RenderResult.invalidProduct(p, size, w, h,
-                s"render output is empty/solid: $distinct distinct pixel colour(s), floor is > $MinDistinctPixels"))
+              Left(
+                RenderResult.invalidProduct(
+                  p,
+                  size,
+                  w,
+                  h,
+                  s"render output is empty/solid: $distinct distinct pixel colour(s), floor is > $MinDistinctPixels"
+                )
+              )
             case Some(distinct) =>
-              Right(RenderResult(true, Some(p), size, w, h, "",
-                s"PNG $w×$h, $size bytes, $distinct distinct pixel colours"))
+              Right(
+                RenderResult(true, Some(p), size, w, h, "", s"PNG $w×$h, $size bytes, $distinct distinct pixel colours")
+              )
+
+        end if
+
+      end if
 
   /** Distinct RGB values in a decoded image, or `None` if it will not decode. */
   private def distinctPixels(p: os.Path): Option[Int] =

@@ -12,19 +12,25 @@ import nebflow.social.outbound.{AskPromptCodec, PromptView}
 
 /**
  * Offline spec for the weixin numbered-reply ask legs (askuser-remote P1,
- * 2026-10-07, 卡 B / 拍板 B-1…B-4). Pins:
+ * 2026-10-07, 卡 B / 拍板 B-1…B-4; askuser-media-split batch additions pinned
+ * at the bottom). Pins:
  *
  *   - the numbered text card render (frozen-copy reuse + the NEW footer line;
  *     no 「其他…」 option line — free text is the 0/他 PREFIX leg);
  *   - the reply parser (B-1 bare-number/问.编/comma-multi + B-2 prefix-only
- *     Other + out-of-range refusals);
+ *     Other + the media-split exact-option-label arm with case/whitespace
+ *     tolerance + out-of-range refusals);
  *   - the intake splitter: the ask legs sit BETWEEN the allowlist gate and
  *     the injection arms; non-ask text falls through byte-identically;
  *   - B-3: a new ask retires the previous OPEN one by precise CloseRequest
  *     and takes the slot; askUserClosed clears it; an answered tombstone
  *     refuses a repeat read of the numbers (never a second injection);
  *   - B-4 案甲: a >4000-char reply degrades to 摘要+拉取指令 with the full
- *     text on a 「全文」 pull, segmented within the first tier.
+ *     text on a 「全文」 pull, segmented within the first tier;
+ *   - media split (askuser-media-split batch): existing attachments ride the
+ *     MEDIA seam BEFORE the text card (image-table ext → image_path, else
+ *     file_path); delivered attachments never repeat as 附件路径 lines — only
+ *     undelivered ones (missing file / failed send) keep theirs.
  *
  * Mutation safety: every gate below is red-by-construction if the matching
  * decision is removed — the gate-first ordering (an ask leg before the
@@ -36,16 +42,24 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
   private def tmpRoot(): os.Path = os.temp.dir(prefix = "nb-weixin-ask-")
 
-  /** Recording context: captures injections, the forwarded hub answers and
-    * the precise close requests — the three hub faces the ask legs use. */
+  /**
+   * Recording context: captures injections, the forwarded hub answers and
+   * the precise close requests — the three hub faces the ask legs use.
+   */
   private final class AskCtx(sessions: List[SessionMeta] = Nil) extends BridgeContext:
-    val injected: Ref[IO, List[(String, String)]]   = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val injected: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
     val forwarded: Ref[IO, List[(String, String, Json)]] = Ref.unsafe[IO, List[(String, String, Json)]](Nil)
-    val closed: Ref[IO, List[String]]               = Ref.unsafe[IO, List[String]](Nil)
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+    val closed: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] =
       injected.update(_ :+ ((sessionId, content)))
     override def listPendingAsks: IO[List[Json]] = IO.pure(Nil)
+
     override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] =
       forwarded.update(_ :+ ((requestId, rootSessionId, payload)))
     override def closeInteractionRequest(requestId: String): IO[Unit] = closed.update(_ :+ requestId)
@@ -59,15 +73,55 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   private final class Out:
     val sent: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
     val fail: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
+
     val seam: WeixinIlinkBridgePlugin.Send = (to, text) =>
       sent.update(_ :+ ((to, text))).flatMap { _ =>
-        fail.get.map(f => WeixinOutboundAdapter.SendResult(ok = !f, delivered = !f, Some("m-1"),
-          if f then 500 else 200, if f then "delivery_failed: test" else "delivered"))
+        fail.get.map(f =>
+          WeixinOutboundAdapter.SendResult(
+            ok = !f,
+            delivered = !f,
+            Some("m-1"),
+            if f then 500 else 200,
+            if f then "delivery_failed: test" else "delivered"
+          )
+        )
       }
 
+  end Out
+
+  /**
+   * Recording MEDIA seam (askuser-media-split batch) — every media payload the
+   * bridge would hand the side-car, with a flippable ok.
+   */
+  private final class MediaOut(ok: Boolean = true):
+
+    val sent: Ref[IO, List[(String, WeixinOutboundAdapter.WeixinMedia)]] =
+      Ref.unsafe[IO, List[(String, WeixinOutboundAdapter.WeixinMedia)]](Nil)
+
+    val seam: WeixinIlinkBridgePlugin.SendMedia = (to, media) =>
+      sent
+        .update(_ :+ ((to, media)))
+        .as(
+          WeixinOutboundAdapter.SendResult(
+            ok,
+            delivered = ok,
+            Some("md-1"),
+            if ok then 200 else 500,
+            if ok then "delivered" else "delivery_failed: test"
+          )
+        )
+
+  end MediaOut
+
   private def meta(senderId: String): SessionMeta =
-    SessionMeta(id = "s1", name = "s1", createdAt = 0L, updatedAt = 0L, hasUnread = false,
-      bridges = Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> senderId.asJson)))
+    SessionMeta(
+      id = "s1",
+      name = "s1",
+      createdAt = 0L,
+      updatedAt = 0L,
+      hasUnread = false,
+      bridges = Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> senderId.asJson))
+    )
 
   private def started(out: Out, sessions: List[SessionMeta]): IO[(WeixinIlinkBridgePlugin, AskCtx)] =
     val ctx = AskCtx(sessions)
@@ -77,21 +131,31 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   /** A hub-shaped askUser frame (two questions, the first multi-select). */
   private def askFrame(rid: String, root: String, items: List[Json], attachments: List[String] = Nil): Json =
     val fields = scala.collection.mutable.ListBuffer[(String, Json)](
-      "type" -> "askUser".asJson, "sessionId" -> root.asJson, "requestId" -> rid.asJson,
-      "items" -> Json.fromValues(items))
+      "type" -> "askUser".asJson,
+      "sessionId" -> root.asJson,
+      "requestId" -> rid.asJson,
+      "items" -> Json.fromValues(items)
+    )
     if attachments.nonEmpty then fields += "attachments" -> attachments.asJson
     Json.obj(fields.toList*)
 
-  private def itemJson(question: String, labels: List[String], multiple: Boolean = false,
-    id: Option[String] = None, dependsOnRef: Option[String] = None): Json =
+  private def itemJson(
+    question: String,
+    labels: List[String],
+    multiple: Boolean = false,
+    id: Option[String] = None,
+    dependsOnRef: Option[String] = None
+  ): Json =
     val base = scala.collection.mutable.ListBuffer[(String, Json)](
       "question" -> question.asJson,
       "options" -> Json.fromValues(labels.map(l => Json.obj("label" -> l.asJson))),
-      "allowOther" -> true.asJson)
+      "allowOther" -> true.asJson
+    )
     if multiple then base += "multiple" -> true.asJson
     id.foreach(i => base += "id" -> i.asJson)
     dependsOnRef.foreach(r => base += "dependsOn" -> Json.obj("ref" -> r.asJson, "equals" -> "x".asJson))
     Json.obj(base.toList*)
+  end itemJson
 
   private def simpleItems: List[Json] = List(itemJson("用哪个?", List("甲", "乙", "丙")))
 
@@ -99,8 +163,15 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
   test("WA-R1 the numbered card: frozen question/option shapes + NEW footer, no 「其他…」 line") {
     val (text, truncated) = WeixinAskLeg.renderAskText(
-      List(PromptView(0, "用哪个?", nebflow.social.outbound.PromptOption("甲") :: nebflow.social.outbound.PromptOption("乙") :: Nil)),
-      List("/tmp/a.png"))
+      List(
+        PromptView(
+          0,
+          "用哪个?",
+          nebflow.social.outbound.PromptOption("甲") :: nebflow.social.outbound.PromptOption("乙") :: Nil
+        )
+      ),
+      List("/tmp/a.png")
+    )
     assert(text.startsWith("第 1/1 问 用哪个?\n  1) 甲\n  2) 乙"), s"head+numbered options: $text")
     assert(text.contains(nebflow.social.outbound.AskPromptCodec.AttachmentLineHead + "\n- /tmp/a.png"))
     assert(text.contains(FeishuAskCard.DegradeFoot))
@@ -112,8 +183,10 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   test("WA-R2 the truncated form cuts the question TEXT only, keeps numbering+footer") {
     val long = "长" * 5000
     val (text, truncated) = WeixinAskLeg.renderAskTextTruncated(
-      List(PromptView(0, long, List(nebflow.social.outbound.PromptOption("甲")))), Nil,
-      questionBudget = 3200)
+      List(PromptView(0, long, List(nebflow.social.outbound.PromptOption("甲")))),
+      Nil,
+      questionBudget = 3200
+    )
     assert(truncated)
     assert(text.contains(WeixinAskLeg.TruncatedMark))
     assert(text.length < long.length)
@@ -132,21 +205,47 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
   // ───────────────────────── the reply parser ─────────────────────────
 
-  private val one = List(PromptView(0, "单选?", List(
-    nebflow.social.outbound.PromptOption("甲"), nebflow.social.outbound.PromptOption("乙"), nebflow.social.outbound.PromptOption("丙"))))
-  private val multiOne = List(PromptView(0, "多选?", List(
-    nebflow.social.outbound.PromptOption("甲"), nebflow.social.outbound.PromptOption("乙"), nebflow.social.outbound.PromptOption("丙")), multiple = true))
+  private val one = List(
+    PromptView(
+      0,
+      "单选?",
+      List(
+        nebflow.social.outbound.PromptOption("甲"),
+        nebflow.social.outbound.PromptOption("乙"),
+        nebflow.social.outbound.PromptOption("丙")
+      )
+    )
+  )
+
+  private val multiOne = List(
+    PromptView(
+      0,
+      "多选?",
+      List(
+        nebflow.social.outbound.PromptOption("甲"),
+        nebflow.social.outbound.PromptOption("乙"),
+        nebflow.social.outbound.PromptOption("丙")
+      ),
+      multiple = true
+    )
+  )
+
   private val twoQuestions = List(
     PromptView(0, "一?", List(nebflow.social.outbound.PromptOption("甲"), nebflow.social.outbound.PromptOption("乙"))),
-    PromptView(1, "二?", List(nebflow.social.outbound.PromptOption("丙"), nebflow.social.outbound.PromptOption("丁"))))
+    PromptView(1, "二?", List(nebflow.social.outbound.PromptOption("丙"), nebflow.social.outbound.PromptOption("丁")))
+  )
 
   test("WA-P1 bare number = the FIRST question's option (B-1)") {
     assertEquals(WeixinAskLeg.parseReply("2", one), Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 1)))))
   }
 
   test("WA-P2 comma list on a multiple question → the picks in reply order") {
-    assertEquals(WeixinAskLeg.parseReply("1,3", multiOne),
-      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0), nebflow.social.outbound.PromptAction.Pick(0, 2)))))
+    assertEquals(
+      WeixinAskLeg.parseReply("1,3", multiOne),
+      Right(
+        Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0), nebflow.social.outbound.PromptAction.Pick(0, 2)))
+      )
+    )
   }
 
   test("WA-P3 comma list on a SINGLE question is refused, never clamped") {
@@ -155,17 +254,23 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   }
 
   test("WA-P4 问.编 explicit addressing (B-1 兜底)") {
-    assertEquals(WeixinAskLeg.parseReply("2.1", twoQuestions),
-      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(1, 0)))))
+    assertEquals(
+      WeixinAskLeg.parseReply("2.1", twoQuestions),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(1, 0))))
+    )
     assertEquals(WeixinAskLeg.parseReply("2.9", twoQuestions), Left(WeixinAskLeg.RangeReject))
     assertEquals(WeixinAskLeg.parseReply("3.1", twoQuestions), Left(WeixinAskLeg.RangeReject))
   }
 
   test("WA-P5 the 0/他 PREFIX is the only free-text leg (B-2); bare text is chat") {
-    assertEquals(WeixinAskLeg.parseReply("他 自己写一个", one),
-      Right(Some(List(nebflow.social.outbound.PromptAction.Other(0, "自己写一个")))))
-    assertEquals(WeixinAskLeg.parseReply("0 自己写一个", one),
-      Right(Some(List(nebflow.social.outbound.PromptAction.Other(0, "自己写一个")))))
+    assertEquals(
+      WeixinAskLeg.parseReply("他 自己写一个", one),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Other(0, "自己写一个"))))
+    )
+    assertEquals(
+      WeixinAskLeg.parseReply("0 自己写一个", one),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Other(0, "自己写一个"))))
+    )
     assertEquals(WeixinAskLeg.parseReply("你好", one), Right(None))
     assertEquals(WeixinAskLeg.parseReply("全文", one), Right(None))
     assertEquals(WeixinAskLeg.parseReply("0", one), Left(WeixinAskLeg.RangeReject))
@@ -174,6 +279,63 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
   test("WA-P6 out-of-range numbers are refused with the ONE readable line") {
     assertEquals(WeixinAskLeg.parseReply("9", one), Left(WeixinAskLeg.RangeReject))
+  }
+
+  // ───────── media-split batch: the exact-option-label arm (C2) ─────────
+
+  test("WA-P7 exact option label answers: case/whitespace tolerant; not-number-shaped; non-label text stays chat") {
+    val labeled = List(
+      PromptView(
+        0,
+        "继续吗?",
+        List(nebflow.social.outbound.PromptOption("继续 执行"), nebflow.social.outbound.PromptOption("取消"))
+      ),
+      PromptView(1, "选谁?", List(nebflow.social.outbound.PromptOption("等我"), nebflow.social.outbound.PromptOption("别人")))
+    )
+    // exact match
+    assertEquals(
+      WeixinAskLeg.parseReply("取消", labeled),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 1))))
+    )
+    // surrounding + internal whitespace tolerance (incl. the full-width space)
+    assertEquals(
+      WeixinAskLeg.parseReply("  继续 执行  ", labeled),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0))))
+    )
+    assertEquals(
+      WeixinAskLeg.parseReply("继续执行", labeled),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0))))
+    )
+    assertEquals(
+      WeixinAskLeg.parseReply("继 续　执 行", labeled),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0))))
+    )
+    // ASCII case tolerance
+    assertEquals(
+      WeixinAskLeg
+        .parseReply("continue", List(PromptView(0, "q?", List(nebflow.social.outbound.PromptOption("Continue"))))),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0))))
+    )
+    // a duplicate label resolves to the FIRST question carrying it (B-1 rule)
+    val dup = List(
+      PromptView(0, "一?", List(nebflow.social.outbound.PromptOption("甲"))),
+      PromptView(1, "二?", List(nebflow.social.outbound.PromptOption("甲"), nebflow.social.outbound.PromptOption("乙")))
+    )
+    assertEquals(WeixinAskLeg.parseReply("甲", dup), Right(Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0)))))
+    assertEquals(WeixinAskLeg.parseReply("乙", dup), Right(Some(List(nebflow.social.outbound.PromptAction.Pick(1, 1)))))
+    // number-shaped text NEVER reaches the label arm — a label that looks like
+    // a number is still interpreted as a number (range refusal here)
+    assertEquals(
+      WeixinAskLeg.parseReply("9", List(PromptView(0, "q?", List(nebflow.social.outbound.PromptOption("9"))))),
+      Left(WeixinAskLeg.RangeReject)
+    )
+    // non-label free text stays chat (不误吞)
+    assertEquals(WeixinAskLeg.parseReply("你好", labeled), Right(None))
+    // the 0/他 prefix keeps precedence over the label arm
+    assertEquals(
+      WeixinAskLeg.parseReply("他 取消也不干", labeled),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Other(0, "取消也不干"))))
+    )
   }
 
   // ───────────────────────── the intake splitter ─────────────────────────
@@ -264,8 +426,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   test("WI-A7 the gate rules the ask legs: a non-member's digits are dropped BEFORE any ask leg") {
     val out = Out()
     val ctx = AskCtx(List(meta("wx_a")))
-    val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(List("wx_a")),
-      send = _ => out.seam)
+    val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(List("wx_a")), send = _ => out.seam)
     for
       _ <- p.start(ctx)
       _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems))
@@ -300,8 +461,10 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     for
       (p, ctx) <- started(out, List(meta("wx_a")))
       _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "askUserClosed".asJson,
-        "sessionId" -> "s1".asJson, "requestId" -> "rid-1".asJson))
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj("type" -> "askUserClosed".asJson, "sessionId" -> "s1".asJson, "requestId" -> "rid-1".asJson)
+      )
       v <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("2"), Some("m1")))
       injected <- ctx.injected.get
     yield
@@ -310,22 +473,95 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     end for
   }
 
-  test("WI-B3 the ask card reaches the sender THROUGH the outbound seam (L0 wiring)") {
+  test(
+    "WI-B3 media split: existing attachments ride the MEDIA seam FIRST; the text card keeps only undelivered path lines"
+  ) {
     val out = Out()
+    val mout = MediaOut()
+    val root = tmpRoot()
+    val png = root / "shot.png"; os.write(png, "png-bytes")
+    val doc = root / "notes.md"; os.write(doc, "md-bytes")
+    val ctx = AskCtx(List(meta("wx_a")))
+    val p = new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      send = _ => out.seam,
+      sendMedia = _ => mout.seam
+    )
     for
-      (p, _) <- started(out, List(meta("wx_a")))
-      _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems, attachments = List("/tmp/x.md")))
-      sent <- out.sent.get
+      _ <- p.start(ctx)
+      _ <- p.onAgentEvent(
+        "s1",
+        askFrame("rid-1", "s1", simpleItems, attachments = List(png.toString, doc.toString, " /gone/missing.md "))
+      )
+      media <- mout.sent.get
+      texts <- out.sent.get
     yield
-      assertEquals(sent.map(_._1), List("wx_a"))
-      val card = sent.head._2
+      // media FIRST, in list order: image-table ext → image_path, else
+      // file_path; the missing path never reaches the seam
+      assertEquals(media.map(_._1), List("wx_a", "wx_a"))
+      assertEquals(media(0)._2.imagePath.map(_.trim), Some(png.toString))
+      assertEquals(media(1)._2.filePath.map(_.trim), Some(doc.toString))
+      assertEquals(texts.size, 1, "exactly the ask text follows the media")
+      val card = texts.head._2
       assert(card.contains("第 1/1 问 用哪个?"))
       assert(card.contains(WeixinAskLeg.NumberFooter))
-      // The weixin text card travels through OutboundText.toPlain, whose
-      // frozen list-marker rewrite (`- ` → `· `) also hits the attachment
-      // line — the PATH is what A6 pins; the marker is transport-adapted.
-      assert(card.contains("附件路径："))
-      assert(card.contains("· /tmp/x.md"))
+      assert(
+        !card.contains("shot.png") && !card.contains("notes.md"),
+        "delivered attachments must not repeat as path lines"
+      )
+      assert(
+        card.contains("附件路径：") && card.contains("/gone/missing.md"),
+        "the undelivered path stays visible (A6 degrade)"
+      )
+    end for
+  }
+
+  test("WI-B3a media split degrade: a FAILED media send keeps its path line in the text card") {
+    val out = Out()
+    val mout = MediaOut(ok = false)
+    val root = tmpRoot()
+    val png = root / "shot.png"; os.write(png, "png-bytes")
+    val ctx = AskCtx(List(meta("wx_a")))
+    val p = new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      send = _ => out.seam,
+      sendMedia = _ => mout.seam
+    )
+    for
+      _ <- p.start(ctx)
+      _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems, attachments = List(png.toString)))
+      media <- mout.sent.get
+      texts <- out.sent.get
+    yield
+      assertEquals(media.size, 1, "the send WAS attempted")
+      assertEquals(texts.size, 1)
+      assert(texts.head._2.contains("附件路径："), "the failed attachment degrades to its path line")
+      assert(texts.head._2.contains("shot.png"))
+    end for
+  }
+
+  test("WI-B3b no attachments ⇒ zero media calls, the card is the pre-split shape") {
+    val out = Out()
+    val mout = MediaOut()
+    val ctx = AskCtx(List(meta("wx_a")))
+    val p = new WeixinIlinkBridgePlugin(
+      tmpRoot(),
+      pinnedAllowedIlinkUserIds = None,
+      send = _ => out.seam,
+      sendMedia = _ => mout.seam
+    )
+    for
+      _ <- p.start(ctx)
+      _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems))
+      media <- mout.sent.get
+      texts <- out.sent.get
+    yield
+      assertEquals(media, List.empty)
+      assertEquals(texts.size, 1)
+      assert(texts.head._2.contains("第 1/1 问 用哪个?"))
+      assert(!texts.head._2.contains("附件路径："))
     end for
   }
 
@@ -333,10 +569,17 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val out = Out()
     for
       (p, ctx) <- started(out, List(meta("wx_a")))
-      _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", List(
-        itemJson("一?", List("甲"), id = Some("q1")),
-        itemJson("不可达?", List("乙"), id = Some("q2"), dependsOnRef = Some("nope"))
-      )))
+      _ <- p.onAgentEvent(
+        "s1",
+        askFrame(
+          "rid-1",
+          "s1",
+          List(
+            itemJson("一?", List("甲"), id = Some("q1")),
+            itemJson("不可达?", List("乙"), id = Some("q2"), dependsOnRef = Some("nope"))
+          )
+        )
+      )
       v <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("1"), Some("m1")))
       fw <- ctx.forwarded.get
     yield
@@ -385,16 +628,19 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正常回复".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       sent <- out.sent.get
-    yield
-      assertEquals(sent, List(("wx_a", "正常回复")))
+    yield assertEquals(sent, List(("wx_a", "正常回复")))
     end for
   }
 
   test("WI-P3 verdict json faces (the two new consumed outcomes)") {
-    assertEquals(WeixinIlinkBridgePlugin.Verdict.Answered("r1").json,
-      Json.obj("verdict" -> "answered".asJson, "requestId" -> "r1".asJson))
-    assertEquals(WeixinIlinkBridgePlugin.Verdict.Pulled(2).json,
-      Json.obj("verdict" -> "full-text".asJson, "segments" -> 2.asJson))
+    assertEquals(
+      WeixinIlinkBridgePlugin.Verdict.Answered("r1").json,
+      Json.obj("verdict" -> "answered".asJson, "requestId" -> "r1".asJson)
+    )
+    assertEquals(
+      WeixinIlinkBridgePlugin.Verdict.Pulled(2).json,
+      Json.obj("verdict" -> "full-text".asJson, "segments" -> 2.asJson)
+    )
   }
 
 end WeixinAskLegSpec

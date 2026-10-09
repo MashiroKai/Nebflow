@@ -19,28 +19,40 @@ trait ChannelAdapter:
   /** "feishu" / "wechat". */
   def channelId: String
 
-  /** Classify an event payload. Implementations call [[ContentClass.classify]]
-    * with the extension table they can reach -- they do not re-implement it. */
+  /**
+   * Classify an event payload. Implementations call [[ContentClass.classify]]
+   * with the extension table they can reach -- they do not re-implement it.
+   */
   def classify(event: Json): ContentClass
 
-  /** Render a payload that needs pixels. Returning the payload unchanged means
-    * "I cannot render this"; it never means "drop it". */
+  /**
+   * Render a payload that needs pixels. Returning the payload unchanged means
+   * "I cannot render this"; it never means "drop it".
+   */
   def render(p: OutboundPayload): IO[OutboundPayload]
 
-  /** Execute the calls. One [[ChannelCallResult]] per call -- count conservation.
-    * There is deliberately no arm that discards a call. */
+  /**
+   * Execute the calls. One [[ChannelCallResult]] per call -- count conservation.
+   * There is deliberately no arm that discards a call.
+   */
   def dispatch(calls: List[ChannelCall]): IO[List[ChannelCallResult]]
 
-  /** The single degradation entry. `reason` is never empty; the produced body
-    * carries the `[未渲染]` / `[未知类型]` prefix so the fallback is visible on
-    * the wire instead of being swallowed. */
+  /**
+   * The single degradation entry. `reason` is never empty; the produced body
+   * carries the `[未渲染]` / `[未知类型]` prefix so the fallback is visible on
+   * the wire instead of being swallowed.
+   */
   def degrade(p: OutboundPayload, reason: String): OutboundPayload.DegradedText
+
+end ChannelAdapter
 
 object ChannelAdapter:
 
-  /** Shared degradation body builder so every channel words the fallback the
-    * same way. `bytes` is what the original artifact weighed, when known. */
+  /**
+   * Shared degradation body builder so every channel words the fallback the
+   * same way. `bytes` is what the original artifact weighed, when known.
+   */
   def degradedBody(reason: String, originalPath: Option[os.Path], bytes: Long): String =
     originalPath match
       case Some(p) => OutboundText.unrendered(reason, p, bytes)
-      case None    => s"[未渲染] $reason"
+      case None => s"[未渲染] $reason"

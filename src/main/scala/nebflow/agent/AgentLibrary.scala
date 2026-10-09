@@ -54,9 +54,11 @@ class AgentLibrary(
       IO.blocking(nebflow.core.entity.BuiltinAgents.entry(name).map(_.toAgentDef))
     else loadAll().map(_.get(name))
 
-  /** Write a system.md file for the given agent.
-    * Builtins are read-only (author directive ①: the code prompt is the only
-    * source) — a write attempt is refused loudly (WARN, no write, no error). */
+  /**
+   * Write a system.md file for the given agent.
+   * Builtins are read-only (author directive ①: the code prompt is the only
+   * source) — a write attempt is refused loudly (WARN, no write, no error).
+   */
   def updateSystemPrompt(name: String, content: String): IO[Unit] = IO.blocking {
     if nebflow.core.entity.BuiltinAgents.isBuiltin(name) then
       logger.warnSync(
@@ -104,6 +106,7 @@ class AgentLibrary(
           true
         case Left(err) =>
           throw new RuntimeException(s"Failed to parse agent.json for '$name': ${err.getMessage}")
+    end if
   }
 
   /** Read a system.md file. Builtins serve the CODE prompt (read-only face). */

@@ -123,10 +123,13 @@ class FileRefsServabilityScopeSpec extends FunSuite:
       wsSend = Some((j: Json) => IO { buf += j }),
       projectRoot = ""
     )
-    val result = PopTool.call(JsonObject("filePath" -> Json.fromString(ref)), popCtx).unsafeRunSync()
+    val result = PopTool
+      .call(JsonObject("filePath" -> Json.fromString(ref)), popCtx)
+      .unsafeRunSync()
       .getOrElse(fail("expected Right"))
     assert(result.startsWith(PopTool.Sentinel), s"payload sentinel expected: ${result.take(60)}")
     io.circe.parser.parse(result.substring(PopTool.Sentinel.length)).fold(err => fail(s"payload JSON: $err"), identity)
+  end popImage
 
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
 
@@ -170,11 +173,15 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val aAuth = FileRefs.servableByEndpointLayered(authReal)
     val aAlias = FileRefs.servableByEndpointLayered(aliasReal)
     val aPlain = FileRefs.servableByEndpointLayered(plainReal)
-    println(s"[SCOPE-READING] rootA auth=${aAuth.map(t => (t._1, t._2))} alias=${aAlias.map(t => (t._1, t._2))} plain=${aPlain.map(t => (t._1, t._2))}")
+    println(s"[SCOPE-READING] rootA auth=${aAuth.map(t => (t._1, t._2))} alias=${aAlias
+        .map(t => (t._1, t._2))} plain=${aPlain.map(t => (t._1, t._2))}")
     // root-anchored seed (auth.json inside the data root) fires as Credential
     assertEquals(aAuth.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Credential))
-    assertEquals(aAlias.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.CredentialInode),
-      "the alias's innocuous name passes identity; the root's own inode snapshot catches it")
+    assertEquals(
+      aAlias.map(_._1),
+      Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.CredentialInode),
+      "the alias's innocuous name passes identity; the root's own inode snapshot catches it"
+    )
     assertEquals(aPlain, None, "any credential-clean file is served from this data root (namespace layer retired)")
 
     // In force: rootB ⇒ the very same alias inode belongs to NO root in
@@ -270,7 +277,11 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     assertEquals(refs(asImage, "failed"), 0, "nothing failed: the bytes are in the payload")
     assertEquals(warningsOf(asImage), Nil)
     assert(
-      asImage.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+      asImage.hcursor
+        .downField("items")
+        .as[List[Json]]
+        .toOption
+        .getOrElse(Nil)
         .exists(_.hcursor.get[String]("src").toOption.exists(_.startsWith("data:image/png;base64,"))),
       "the payload carries the data: URI"
     )
@@ -310,7 +321,11 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     assertEquals(refs(p, "failed"), 1)
     assertEquals(reasons(p), List("not-servable"))
     assert(
-      !p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+      !p.hcursor
+        .downField("items")
+        .as[List[Json]]
+        .toOption
+        .getOrElse(Nil)
         .exists(_.hcursor.get[String]("src").toOption.exists(_.startsWith("data:"))),
       "no data: URI was produced"
     )
@@ -355,7 +370,11 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     assertEquals(refs(p, "failed"), 0)
     assertEquals(warningsOf(p), Nil)
     assert(
-      p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
+      p.hcursor
+        .downField("items")
+        .as[List[Json]]
+        .toOption
+        .getOrElse(Nil)
         .exists(_.hcursor.get[String]("src").toOption.exists(_.startsWith("data:image/png;base64,"))),
       "the payload carries the data: URI"
     )

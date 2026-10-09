@@ -53,12 +53,16 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("sess-9f13")))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }, List("Planning the move.", "Done."))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, List("Bash", "Read"))
-    assertEquals(frames.collect { case f: ExternalExecutor.Frame.Final => f },
-      List(ExternalExecutor.Frame.Final("Moved the file.", failed = false)))
+    assertEquals(
+      frames.collect { case f: ExternalExecutor.Frame.Final => f },
+      List(ExternalExecutor.Frame.Final("Moved the file.", failed = false))
+    )
   }
 
   test("claude-code: error result flags failed; noise lines yield zero frames, never throw") {
-    val err = ExternalExecutor.ClaudeCode.parseLine("""{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}""")
+    val err = ExternalExecutor.ClaudeCode.parseLine(
+      """{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}"""
+    )
     assertEquals(err, List(ExternalExecutor.Frame.Final("boom", failed = true)))
 
     val noise = List("", "   ", "not json at all", "[1,2,3]", """{"type":"other"}""")
@@ -98,10 +102,8 @@ class ExternalExecutorSpec extends CatsEffectSuite:
   }
 
   test("codex launchArgs: fresh = exec --json (repo check skipped); resume = exec resume") {
-    assertEquals(ExternalExecutor.Codex.launchArgs("t", None),
-      List("exec", "--json", "--skip-git-repo-check", "t"))
-    assertEquals(ExternalExecutor.Codex.launchArgs("t", Some("th-77")),
-      List("exec", "resume", "--json", "th-77", "t"))
+    assertEquals(ExternalExecutor.Codex.launchArgs("t", None), List("exec", "--json", "--skip-git-repo-check", "t"))
+    assertEquals(ExternalExecutor.Codex.launchArgs("t", Some("th-77")), List("exec", "resume", "--json", "th-77", "t"))
   }
 
   // ── zcode 适配器（晨裁①-B：--json 摘要方言＋stream-json 兼容方言）fixture 回放 ──
@@ -126,10 +128,14 @@ class ExternalExecutorSpec extends CatsEffectSuite:
       "}"
     ).flatMap(ExternalExecutor.ZCode.parseLine)
 
-    assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s },
-      List(Some("sess_95edc895-c65b-445d-9d84-f1ec5605b5cc")))
-    assertEquals(frames.collect { case f: ExternalExecutor.Frame.Final => f.text },
-      List("ok — done \"quickly\"\nsecond line"))
+    assertEquals(
+      frames.collect { case ExternalExecutor.Frame.Start(s) => s },
+      List(Some("sess_95edc895-c65b-445d-9d84-f1ec5605b5cc"))
+    )
+    assertEquals(
+      frames.collect { case f: ExternalExecutor.Frame.Final => f.text },
+      List("ok — done \"quickly\"\nsecond line")
+    )
     assertEquals(frames.collect { case f: ExternalExecutor.Frame.Final => f.failed }, List(false))
   }
 
@@ -146,8 +152,10 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("sess_abc"), Some("sess_abc")))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }, List("Working."))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, List("Bash"))
-    assertEquals(frames.collect { case f: ExternalExecutor.Frame.Final => f },
-      List(ExternalExecutor.Frame.Final("All done.", failed = false)))
+    assertEquals(
+      frames.collect { case f: ExternalExecutor.Frame.Final => f },
+      List(ExternalExecutor.Frame.Final("All done.", failed = false))
+    )
   }
 
   test("zcode: turn.failed flags failed; projection.status=error 摘要亦然; 噪声行零帧绝不抛") {
@@ -159,24 +167,28 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     val errSummary = ExternalExecutor.ZCode.parseLine(
       """{"type":"result","sessionId":"sess_x","response":"partial","projection":{"status":"error"}}"""
     )
-    assertEquals(errSummary,
-      List(ExternalExecutor.Frame.Start(Some("sess_x")), ExternalExecutor.Frame.Final("partial", failed = true)))
+    assertEquals(
+      errSummary,
+      List(ExternalExecutor.Frame.Start(Some("sess_x")), ExternalExecutor.Frame.Final("partial", failed = true))
+    )
 
-    val noise = List("", "   ", "not json", "{", "}", "[1,2,3]", """  "eventCount": 3,""",
-      """  "traceId": "abc",""").flatMap(ExternalExecutor.ZCode.parseLine)
+    val noise =
+      List("", "   ", "not json", "{", "}", "[1,2,3]", """  "eventCount": 3,""", """  "traceId": "abc",""").flatMap(
+        ExternalExecutor.ZCode.parseLine
+      )
     assertEquals(noise, Nil)
   }
 
   test("zcode launchArgs: fresh = -p + --json; resume = --resume 前置（晨裁①-B 旗标轮换）") {
-    assertEquals(ExternalExecutor.ZCode.launchArgs("t", None),
-      List("-p", "t", "--json"))
-    assertEquals(ExternalExecutor.ZCode.launchArgs("t", Some("zc-1")),
-      List("--resume", "zc-1", "-p", "t", "--json"))
+    assertEquals(ExternalExecutor.ZCode.launchArgs("t", None), List("-p", "t", "--json"))
+    assertEquals(ExternalExecutor.ZCode.launchArgs("t", Some("zc-1")), List("--resume", "zc-1", "-p", "t", "--json"))
   }
 
   // ── 注册表与选择面 ──────────────────────────────────────────────
 
-  test("registry: three real adapters; hermes has NO adapter object (placeholder lives in ExecutorRegistry.defs only)") {
+  test(
+    "registry: three real adapters; hermes has NO adapter object (placeholder lives in ExecutorRegistry.defs only)"
+  ) {
     assertEquals(ExternalExecutor.all.map(_.id), List("zcode", "claude-code", "codex"))
     assertEquals(ExternalExecutor.forId("hermes"), None)
     assert(ExecutorRegistry.defs.find(_.id == "hermes").exists(d => !d.adapterReady))
@@ -185,7 +197,10 @@ class ExternalExecutorSpec extends CatsEffectSuite:
   test("selection: absent param resolves built-in nebflow (缺省语义)") {
     assertEquals(ExecutorRegistry.resolveRequested(None), Right(ExecutorRegistry.ResolvedSelection.Internal))
     assertEquals(ExecutorRegistry.resolveRequested(Some("")), Right(ExecutorRegistry.ResolvedSelection.Internal))
-    assertEquals(ExecutorRegistry.resolveRequested(Some("  nebflow ")), Right(ExecutorRegistry.ResolvedSelection.Internal))
+    assertEquals(
+      ExecutorRegistry.resolveRequested(Some("  nebflow ")),
+      Right(ExecutorRegistry.ResolvedSelection.Internal)
+    )
   }
 
   test("selection (⑫止读): executor block default/disabled are NOT consulted — config can't steer the pick") {
@@ -220,13 +235,22 @@ class ExternalExecutorSpec extends CatsEffectSuite:
             fail("fail-closed violated: silent fallback to nebflow")
           case Right(_) => fail("expected explicit failure")
 
-      assertNoFallback(ExecutorRegistry.resolveRequested(Some("no-such-cli"), pathEnv = "", probeDirs = Nil), "not in the registry")
-      assertNoFallback(ExecutorRegistry.resolveRequested(Some("hermes"), pathEnv = "", probeDirs = Nil), "adapter is not wired")
-      assertNoFallback(ExecutorRegistry.resolveRequested(Some("claude-code"), pathEnv = "", probeDirs = Nil), "not detected")
+      assertNoFallback(
+        ExecutorRegistry.resolveRequested(Some("no-such-cli"), pathEnv = "", probeDirs = Nil),
+        "not in the registry"
+      )
+      assertNoFallback(
+        ExecutorRegistry.resolveRequested(Some("hermes"), pathEnv = "", probeDirs = Nil),
+        "adapter is not wired"
+      )
+      assertNoFallback(
+        ExecutorRegistry.resolveRequested(Some("claude-code"), pathEnv = "", probeDirs = Nil),
+        "not detected"
+      )
       // 错误面带可用集（自纠错输入）——内置兜底恒在可用集里。
       ExecutorRegistry.resolveRequested(Some("claude-code"), pathEnv = "", probeDirs = Nil) match
         case Left(msg) => assert(msg.contains("nebflow"), s"available-set line should list nebflow: $msg")
-        case other     => fail(s"expected Left, got $other")
+        case other => fail(s"expected Left, got $other")
     }
   }
 
@@ -260,3 +284,4 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assert(sid.startsWith("external-claude-code-"), sid)
     assert(nebflow.core.delegate.DelegateRegistry.validId(sid), sid)
   }
+end ExternalExecutorSpec

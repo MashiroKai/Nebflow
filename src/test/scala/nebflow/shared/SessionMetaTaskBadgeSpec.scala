@@ -5,26 +5,27 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
 
-/** Task-badge payload contract (taskbadge batch, 2026-09-27): the session-list
-  * wire face of the sub-agents panel task attribution.
-  *
-  * Three faces pinned here (the batch's spec requirements (a)(b)(c)):
-  *
-  *  - (a) payload field shape: attribution present → `taskId`/`taskTitle` keys in
-  *    the encoded session JSON with the ledger title; no attribution → keys
-  *    absent (empty-value form is stable, never null/empty-string noise);
-  *  - (b) SessionMeta backward compatibility: old-form bytes (no new keys) decode
-  *    zero-migration, and the two new fields default to None so every existing
-  *    constructor call site compiles unchanged;
-  *  - (c) multi-task coexistence: [[SessionMeta.withTaskAttribution]] merges each
-  *    session's OWN task keys side by side (two tasks in one list never bleed
-  *    into each other), and unattributed sessions stay byte-identical.
-  *
-  * Wire-only discipline: the enrichment helper is the same face as
-  * `withEffectiveSafetyModes` (exit overlay); `SessionStore.saveIndex` must never
-  * gain these keys — the disk-bytes-unchanged side is enforced by construction
-  * (the case class fields default to None and no saveIndex path sets them).
-  */
+/**
+ * Task-badge payload contract (taskbadge batch, 2026-09-27): the session-list
+ * wire face of the sub-agents panel task attribution.
+ *
+ * Three faces pinned here (the batch's spec requirements (a)(b)(c)):
+ *
+ *  - (a) payload field shape: attribution present → `taskId`/`taskTitle` keys in
+ *    the encoded session JSON with the ledger title; no attribution → keys
+ *    absent (empty-value form is stable, never null/empty-string noise);
+ *  - (b) SessionMeta backward compatibility: old-form bytes (no new keys) decode
+ *    zero-migration, and the two new fields default to None so every existing
+ *    constructor call site compiles unchanged;
+ *  - (c) multi-task coexistence: [[SessionMeta.withTaskAttribution]] merges each
+ *    session's OWN task keys side by side (two tasks in one list never bleed
+ *    into each other), and unattributed sessions stay byte-identical.
+ *
+ * Wire-only discipline: the enrichment helper is the same face as
+ * `withEffectiveSafetyModes` (exit overlay); `SessionStore.saveIndex` must never
+ * gain these keys — the disk-bytes-unchanged side is enforced by construction
+ * (the case class fields default to None and no saveIndex path sets them).
+ */
 class SessionMetaTaskBadgeSpec extends FunSuite:
 
   private def meta(
@@ -78,7 +79,7 @@ class SessionMetaTaskBadgeSpec extends FunSuite:
       "safetyMode" -> "auto-all".asJson
     )
     decode[SessionMeta](old.noSpaces) match
-      case Left(e)  => fail(s"old-form bytes must decode zero-migration: $e")
+      case Left(e) => fail(s"old-form bytes must decode zero-migration: $e")
       case Right(m) =>
         assertEquals(m.taskId, None)
         assertEquals(m.taskTitle, None)
@@ -89,7 +90,7 @@ class SessionMetaTaskBadgeSpec extends FunSuite:
   test("(b) pre-ctxthresh-era bytes (missing several later keys) still decode") {
     val older = """{"id":"uuid-2","name":"Legacy","updatedAt":1,"hasUnread":true,"bypass":true}"""
     decode[SessionMeta](older) match
-      case Left(e)  => fail(s"legacy bytes must decode: $e")
+      case Left(e) => fail(s"legacy bytes must decode: $e")
       case Right(m) =>
         assertEquals(m.taskId, None)
         assertEquals(m.safetyMode, "auto-all") // legacy bypass migration intact
@@ -119,7 +120,8 @@ class SessionMetaTaskBadgeSpec extends FunSuite:
       ),
       "confirm-edits"
     )
-    val enriched = SessionMeta.withTaskAttribution(base, Map("dispatcher-aaa" -> "12", "dispatcher-bbb" -> "35"), titles)
+    val enriched =
+      SessionMeta.withTaskAttribution(base, Map("dispatcher-aaa" -> "12", "dispatcher-bbb" -> "35"), titles)
     val arr = enriched.asArray.get
     val first = arr(0)
     val second = arr(1)

@@ -305,22 +305,23 @@ object LlmInterface extends LlmRuntime:
 
   // ── Vision observability helper ────────────────────────
 
-  /** True when the request payload carries at least one `ContentBlock.Image`.
-    *
-    * visionfix (甲): this REPLACES the former `hasImage` + `stripImages`
-    * ("Vision PreCheck helpers") pair. Both were deleted with the batch: the
-    * strip mechanism sent a text placeholder instead of the image, and its only
-    * reason to exist was the keyword-heuristic demotion chain, also deleted.
-    *
-    * What survives is the OBSERVABILITY half — a structured marker on the
-    * existing LLM log line so "this turn really carried an image" stays
-    * machine-assertable (author ruling: log-side marker only, zero new
-    * user-facing text). This is a pure predicate; nothing is rewritten.
-    *
-    * Public (not `private[llm]`) because the send-point callers that must report
-    * it live in `nebflow.agent` and `nebflow.gateway`; the former
-    * `private[llm] hasImage` was cross-package invisible (plan card ③-2 (ii)).
-    */
+  /**
+   * True when the request payload carries at least one `ContentBlock.Image`.
+   *
+   * visionfix (甲): this REPLACES the former `hasImage` + `stripImages`
+   * ("Vision PreCheck helpers") pair. Both were deleted with the batch: the
+   * strip mechanism sent a text placeholder instead of the image, and its only
+   * reason to exist was the keyword-heuristic demotion chain, also deleted.
+   *
+   * What survives is the OBSERVABILITY half — a structured marker on the
+   * existing LLM log line so "this turn really carried an image" stays
+   * machine-assertable (author ruling: log-side marker only, zero new
+   * user-facing text). This is a pure predicate; nothing is rewritten.
+   *
+   * Public (not `private[llm]`) because the send-point callers that must report
+   * it live in `nebflow.agent` and `nebflow.gateway`; the former
+   * `private[llm] hasImage` was cross-package invisible (plan card ③-2 (ii)).
+   */
   def hadImageIn(messages: List[Message]): Boolean =
     messages.exists(_.content match
       case Right(blocks) => blocks.exists(_.isInstanceOf[ContentBlock.Image])
@@ -901,119 +902,214 @@ object LlmInterface extends LlmRuntime:
                                         // skip this provider). Both the belief and the reason value are
                                         // gone, so the provider's own classification is used as-is.
                                         val classification = rawClassification
-                                          // Seam guard: content chunks that enter the final
-                                          // aggregation (TextDelta / ThinkingDelta /
-                                          // ToolCallChunk) were already pulled downstream
-                                          // (compile.toList) — they CANNOT be recalled.
-                                          // Continuing the fallback chain would stitch the
-                                          // next provider's output after our partial content
-                                          // into the same aggregation — user-visible
-                                          // duplication (production evidence 2026-08-20: one
-                                          // stream mixing qwen tool_use fragments with kimi
-                                          // end_turn/usage). The old timeout carve-out
-                                          // (reset lock + fall through) was exactly this
-                                          // seam. Timeout-with-partial-content now behaves
-                                          // like every other error-with-partial-content:
-                                          // the whole stream fails; the agent's llm-fail
-                                          // path surfaces it (per the 2026-08-18 token-
-                                          // incident ruling, non-overload transients do not
-                                          // auto-retry at the agent level).
-                                          val isTimeout = classification.reason == FailoverReason.Timeout
-                                          fs2.Stream.eval(lockedRef.get).flatMap { locked =>
-                                            if locked then
-                                              val seamWarn =
-                                                if isTimeout then
+                                        // Seam guard: content chunks that enter the final
+                                        // aggregation (TextDelta / ThinkingDelta /
+                                        // ToolCallChunk) were already pulled downstream
+                                        // (compile.toList) — they CANNOT be recalled.
+                                        // Continuing the fallback chain would stitch the
+                                        // next provider's output after our partial content
+                                        // into the same aggregation — user-visible
+                                        // duplication (production evidence 2026-08-20: one
+                                        // stream mixing qwen tool_use fragments with kimi
+                                        // end_turn/usage). The old timeout carve-out
+                                        // (reset lock + fall through) was exactly this
+                                        // seam. Timeout-with-partial-content now behaves
+                                        // like every other error-with-partial-content:
+                                        // the whole stream fails; the agent's llm-fail
+                                        // path surfaces it (per the 2026-08-18 token-
+                                        // incident ruling, non-overload transients do not
+                                        // auto-retry at the agent level).
+                                        val isTimeout = classification.reason == FailoverReason.Timeout
+                                        fs2.Stream.eval(lockedRef.get).flatMap { locked =>
+                                          if locked then
+                                            val seamWarn =
+                                              if isTimeout then
+                                                logger.warn(
+                                                  s"Stream aborted after partial content " +
+                                                    s"(${candidate.providerId}/${candidate.model}): " +
+                                                    "inactivity timeout — provider switch suppressed " +
+                                                    "(emitted chunks cannot be recalled; stitched-output guard)"
+                                                )
+                                              else IO.unit
+                                            fs2.Stream.eval(seamWarn) *> fs2.Stream
+                                              .eval(IO.raiseError(err))
+                                          else
+                                            val attempt = FallbackAttempt(
+                                              candidate.providerId,
+                                              candidate.model,
+                                              Some(classification.reason),
+                                              Some(classification.permanence),
+                                              0,
+                                              maxRetries - retriesLeft,
+                                              java.time.Instant.now().toString,
+                                              classification.message.orElse(Option(err.getMessage))
+                                            )
+                                            val notify = onAttempt.traverse_(_.apply(attempt))
+                                            val downReason = classification.message
+                                              .orElse(Option(err.getMessage))
+                                              .getOrElse(classification.reason.toString)
+
+                                            // 案① A5（作者令「随案① 落地带上」）：4xx 的 provider
+                                            // 响应体**不受 llmLog `enabled` 开关门控**，常驻落盘
+                                            // （`logs/router/{date}_httperror.jsonl`）。动因：事故当日
+                                            // 11,102 条 `permanent error (Format)` 的**响应体原文缺失**
+                                            // （默认关 ⇒ 一行不写），三条候选成因无法区分。只落状态码 +
+                                            // 响应体 + 关联 id；LlmLogWriter 侧结构性不接受任何请求头 /
+                                            // 凭据参数，且对响应体做一次防御性凭据抹除（见
+                                            // [[nebflow.core.LlmLogWriter.logHttpError]]）。
+                                            def retain4xx: IO[Unit] =
+                                              classification.statusCode
+                                                .filter(c => c >= 400 && c < 500)
+                                                .traverse_(code =>
+                                                  nebflow.core.LlmLogWriter.logHttpError(
+                                                    statusCode = code,
+                                                    body = classification.message
+                                                      .orElse(Option(err.getMessage))
+                                                      .getOrElse(""),
+                                                    requestId = key,
+                                                    sessionId = req.sessionId,
+                                                    agentId = req.agentId,
+                                                    providerId = candidate.providerId,
+                                                    model = candidate.model
+                                                  )
+                                                )
+
+                                            classification.permanence match
+                                              case ErrorPermanence.Fatal =>
+                                                // Error affects all providers — abort entire stream
+                                                fs2.Stream.eval(
                                                   logger.warn(
-                                                    s"Stream aborted after partial content " +
-                                                      s"(${candidate.providerId}/${candidate.model}): " +
-                                                      "inactivity timeout — provider switch suppressed " +
-                                                      "(emitted chunks cannot be recalled; stitched-output guard)"
+                                                    s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
                                                   )
-                                                else IO.unit
-                                              fs2.Stream.eval(seamWarn) *> fs2.Stream
-                                                .eval(IO.raiseError(err))
-                                            else
-                                              val attempt = FallbackAttempt(
-                                                candidate.providerId,
-                                                candidate.model,
-                                                Some(classification.reason),
-                                                Some(classification.permanence),
-                                                0,
-                                                maxRetries - retriesLeft,
-                                                java.time.Instant.now().toString,
-                                                classification.message.orElse(Option(err.getMessage))
-                                              )
-                                              val notify = onAttempt.traverse_(_.apply(attempt))
-                                              val downReason = classification.message
-                                                .orElse(Option(err.getMessage))
-                                                .getOrElse(classification.reason.toString)
-
-                                              // 案① A5（作者令「随案① 落地带上」）：4xx 的 provider
-                                              // 响应体**不受 llmLog `enabled` 开关门控**，常驻落盘
-                                              // （`logs/router/{date}_httperror.jsonl`）。动因：事故当日
-                                              // 11,102 条 `permanent error (Format)` 的**响应体原文缺失**
-                                              // （默认关 ⇒ 一行不写），三条候选成因无法区分。只落状态码 +
-                                              // 响应体 + 关联 id；LlmLogWriter 侧结构性不接受任何请求头 /
-                                              // 凭据参数，且对响应体做一次防御性凭据抹除（见
-                                              // [[nebflow.core.LlmLogWriter.logHttpError]]）。
-                                              def retain4xx: IO[Unit] =
-                                                classification.statusCode
-                                                  .filter(c => c >= 400 && c < 500)
-                                                  .traverse_(code =>
-                                                    nebflow.core.LlmLogWriter.logHttpError(
-                                                      statusCode = code,
-                                                      body = classification.message
-                                                        .orElse(Option(err.getMessage))
-                                                        .getOrElse(""),
-                                                      requestId = key,
-                                                      sessionId = req.sessionId,
-                                                      agentId = req.agentId,
-                                                      providerId = candidate.providerId,
-                                                      model = candidate.model
+                                                    *> failureRef.update(_ :+ attempt)
+                                                    *> notify
+                                                    *> retain4xx
+                                                ) *> fs2.Stream.raiseError[IO](
+                                                  new FallbackExhaustedError(
+                                                    List(attempt),
+                                                    hadImage = hadImageIn(req.messages)
+                                                  )
+                                                )
+                                              case ErrorPermanence.Permanent =>
+                                                // 审计 20260903 子项②③——eviction 分流：
+                                                //  - evict=false（400 Format/重放形状类）：provider 秒回
+                                                //    400 恰恰证明它活着（解析并拒绝了我们的请求），失败根源
+                                                //    是重放形状 vs 契约——不驱逐，只跳本次请求。markDown 在此
+                                                //    只会制造 flap：探测空历史永远成功 → 秒回 UP → 下一个
+                                                //    fallback 再 400（实锤：deepseek 7min 35 次 DOWN）。
+                                                //  - reason=Timeout（首 token 看门狗 TimeoutException 走
+                                                //    Permanent 分类）：软下线回避窗——「慢 ≠ 死」，窗口后自然
+                                                //    回链，无需探测恢复。
+                                                //  - quota=true（配额分层，令 2026-09-21 19:16 腿 b）：
+                                                //    **计划性额度耗尽**（403 / 429-1308）⇒ 换链 + 配额软回避窗
+                                                //    （QuotaAvoidWindowMs ≫ 瞬时窗）。阻塞等待无意义：短窗内
+                                                //    不会自愈，探测也不会把它救回来 ⇒ 不用 markDown 进探测集。
+                                                //  - 其余（Auth/404/EmptyStream 等确证死亡）：维持 markDown。
+                                                val eviction =
+                                                  if !classification.evict then IO.unit
+                                                  else if classification.quota then
+                                                    healthMonitor.softAvoid(
+                                                      candidate.providerId,
+                                                      candidate.model,
+                                                      Defaults.QuotaAvoidWindowMs,
+                                                      label = "quota exhausted"
                                                     )
+                                                  else if classification.reason == FailoverReason.Timeout then
+                                                    healthMonitor.softAvoid(
+                                                      candidate.providerId,
+                                                      candidate.model,
+                                                      Defaults.TimeoutAvoidWindowMs
+                                                    )
+                                                  else
+                                                    healthMonitor
+                                                      .markDown(candidate.providerId, candidate.model, downReason)
+                                                fs2.Stream.eval(
+                                                  logger.warn(
+                                                    s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                                    // 案① A3：补回被丢弃的 provider 响应体（原 warn 只报
+                                                    // reason 串 —— 这正是事故当日「无法定因」的直接原因）。
+                                                    // 前缀 `permanent error (Format)` 逐字保留（现场 grep 锚点）。
+                                                    //
+                                                    // 🔴 隐私面（与 A5 同口径）：provider 可能把收到的凭据
+                                                    // 回显在错误体里 ⇒ 落盘前先走 `redactSecrets`。不抹除的话
+                                                    // 本行会在事故形态下（秒级重投 × 每候选每轮一条）把密钥
+                                                    // 写进 nebflow.log，而同一份响应体在 httperror.jsonl 里
+                                                    // 反而是抹除过的——两条腿不一致。截断 + 抹除都不影响
+                                                    // 「响应体可读」这个 A3 目的。
+                                                      + classification.message
+                                                        .map(m =>
+                                                          s" — provider response: ${nebflow.core.LlmLogWriter.redactSecrets(m.take(2048))}"
+                                                        )
+                                                        .getOrElse("")
+                                                      + s" [status=${classification.statusCode.map(_.toString).getOrElse("n/a")}, " +
+                                                      s"evict=${classification.evict}, round=$round/${Fallback.MaxChainRounds}]"
                                                   )
-
-                                              classification.permanence match
-                                                case ErrorPermanence.Fatal =>
-                                                  // Error affects all providers — abort entire stream
+                                                    *> failureRef.update(_ :+ attempt)
+                                                    *> notify
+                                                    *> retain4xx
+                                                    *> eviction
+                                                ) *> tryCandidate(
+                                                  rest,
+                                                  maxRetries,
+                                                  Fallback.InitialBackoffMs,
+                                                  attempted + candidateKey(candidate),
+                                                  round
+                                                )
+                                              case ErrorPermanence.Transient =>
+                                                if retriesLeft > 0 && !isTimeout then
+                                                  // Only retry same provider for non-timeout errors.
+                                                  // Timeout means the provider is unresponsive — skip to next.
+                                                  val jitter =
+                                                    java.util.concurrent.ThreadLocalRandom
+                                                      .current()
+                                                      .nextLong(0, 2000)
+                                                  // gate-wedge 止损: route through retryDelayMs so
+                                                  // overload-class (429/529) waits >= the rate window
+                                                  // (OverloadBackoffMinMs) — the old inline
+                                                  // min(backoff+jitter, max) had no overload floor on
+                                                  // the stream path.
+                                                  val delay = Fallback.retryDelayMs(
+                                                    backoffMs,
+                                                    classification.reason,
+                                                    jitter
+                                                  )
                                                   fs2.Stream.eval(
-                                                    logger.warn(
-                                                      s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
-                                                    )
-                                                      *> failureRef.update(_ :+ attempt)
-                                                      *> notify
-                                                      *> retain4xx
-                                                  ) *> fs2.Stream.raiseError[IO](
-                                                    new FallbackExhaustedError(
-                                                      List(attempt),
-                                                      hadImage = hadImageIn(req.messages)
-                                                    )
+                                                    notify *> logger.warn(
+                                                      s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
+                                                    ) *> IO.sleep(delay.millis)
+                                                  ) *> tryCandidate(
+                                                    remaining,
+                                                    retriesLeft - 1,
+                                                    backoffMs * 2,
+                                                    attempted,
+                                                    round
                                                   )
-                                                case ErrorPermanence.Permanent =>
-                                                  // 审计 20260903 子项②③——eviction 分流：
-                                                  //  - evict=false（400 Format/重放形状类）：provider 秒回
-                                                  //    400 恰恰证明它活着（解析并拒绝了我们的请求），失败根源
-                                                  //    是重放形状 vs 契约——不驱逐，只跳本次请求。markDown 在此
-                                                  //    只会制造 flap：探测空历史永远成功 → 秒回 UP → 下一个
-                                                  //    fallback 再 400（实锤：deepseek 7min 35 次 DOWN）。
-                                                  //  - reason=Timeout（首 token 看门狗 TimeoutException 走
-                                                  //    Permanent 分类）：软下线回避窗——「慢 ≠ 死」，窗口后自然
-                                                  //    回链，无需探测恢复。
-                                                  //  - quota=true（配额分层，令 2026-09-21 19:16 腿 b）：
-                                                  //    **计划性额度耗尽**（403 / 429-1308）⇒ 换链 + 配额软回避窗
-                                                  //    （QuotaAvoidWindowMs ≫ 瞬时窗）。阻塞等待无意义：短窗内
-                                                  //    不会自愈，探测也不会把它救回来 ⇒ 不用 markDown 进探测集。
-                                                  //  - 其余（Auth/404/EmptyStream 等确证死亡）：维持 markDown。
+                                                else
+                                                  // Timeout / retries exhausted — try next provider
+                                                  val skipMsg =
+                                                    if isTimeout then "inactivity timeout, skipping to next provider"
+                                                    else "retries exhausted"
+                                                  // Branch reachable only with locked=false (the seam guard
+                                                  // above propagates every error once partial content was
+                                                  // streamed), so the lock needs no reset.
+                                                  // 审计 20260903 子项③：Timeout 类降级软下线——超时 = 慢，
+                                                  // 不是死。跳过本次请求 + 软回避窗（TimeoutAvoidWindowMs），
+                                                  // 不 markDown 不进探测集，窗口到期自然回链；markDown
+                                                  // 保留给 Auth/404 等确证死亡。非超时 Transient 耗尽
+                                                  // （如 429 重试耗尽）维持原 markDown 行为。
+                                                  // 配额分层（令 2026-09-21 19:16 腿 b）：配额类恒为
+                                                  // Permanent（不可自愈），正常不到达本分支；此处仍置于
+                                                  // 最前作为防御一致性——任何路径的配额类都走配额窗 + 换链，
+                                                  // 绝不落进 markDown/阻塞等待。
                                                   val eviction =
-                                                    if !classification.evict then IO.unit
-                                                    else if classification.quota then
+                                                    if classification.quota then
                                                       healthMonitor.softAvoid(
                                                         candidate.providerId,
                                                         candidate.model,
                                                         Defaults.QuotaAvoidWindowMs,
                                                         label = "quota exhausted"
                                                       )
-                                                    else if classification.reason == FailoverReason.Timeout then
+                                                    else if isTimeout then
                                                       healthMonitor.softAvoid(
                                                         candidate.providerId,
                                                         candidate.model,
@@ -1021,31 +1117,17 @@ object LlmInterface extends LlmRuntime:
                                                       )
                                                     else
                                                       healthMonitor
-                                                        .markDown(candidate.providerId, candidate.model, downReason)
+                                                        .markDown(
+                                                          candidate.providerId,
+                                                          candidate.model,
+                                                          downReason
+                                                        )
                                                   fs2.Stream.eval(
                                                     logger.warn(
-                                                      s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
-                                                      // 案① A3：补回被丢弃的 provider 响应体（原 warn 只报
-                                                      // reason 串 —— 这正是事故当日「无法定因」的直接原因）。
-                                                      // 前缀 `permanent error (Format)` 逐字保留（现场 grep 锚点）。
-                                                      //
-                                                      // 🔴 隐私面（与 A5 同口径）：provider 可能把收到的凭据
-                                                      // 回显在错误体里 ⇒ 落盘前先走 `redactSecrets`。不抹除的话
-                                                      // 本行会在事故形态下（秒级重投 × 每候选每轮一条）把密钥
-                                                      // 写进 nebflow.log，而同一份响应体在 httperror.jsonl 里
-                                                      // 反而是抹除过的——两条腿不一致。截断 + 抹除都不影响
-                                                      // 「响应体可读」这个 A3 目的。
-                                                        + classification.message
-                                                          .map(m =>
-                                                            s" — provider response: ${nebflow.core.LlmLogWriter.redactSecrets(m.take(2048))}"
-                                                          )
-                                                          .getOrElse("")
-                                                        + s" [status=${classification.statusCode.map(_.toString).getOrElse("n/a")}, " +
-                                                        s"evict=${classification.evict}, round=$round/${Fallback.MaxChainRounds}]"
+                                                      s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
                                                     )
                                                       *> failureRef.update(_ :+ attempt)
                                                       *> notify
-                                                      *> retain4xx
                                                       *> eviction
                                                   ) *> tryCandidate(
                                                     rest,
@@ -1054,92 +1136,10 @@ object LlmInterface extends LlmRuntime:
                                                     attempted + candidateKey(candidate),
                                                     round
                                                   )
-                                                case ErrorPermanence.Transient =>
-                                                  if retriesLeft > 0 && !isTimeout then
-                                                    // Only retry same provider for non-timeout errors.
-                                                    // Timeout means the provider is unresponsive — skip to next.
-                                                    val jitter =
-                                                      java.util.concurrent.ThreadLocalRandom
-                                                        .current()
-                                                        .nextLong(0, 2000)
-                                                    // gate-wedge 止损: route through retryDelayMs so
-                                                    // overload-class (429/529) waits >= the rate window
-                                                    // (OverloadBackoffMinMs) — the old inline
-                                                    // min(backoff+jitter, max) had no overload floor on
-                                                    // the stream path.
-                                                    val delay = Fallback.retryDelayMs(
-                                                      backoffMs,
-                                                      classification.reason,
-                                                      jitter
-                                                    )
-                                                    fs2.Stream.eval(
-                                                      notify *> logger.warn(
-                                                        s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
-                                                      ) *> IO.sleep(delay.millis)
-                                                    ) *> tryCandidate(
-                                                      remaining,
-                                                      retriesLeft - 1,
-                                                      backoffMs * 2,
-                                                      attempted,
-                                                      round
-                                                    )
-                                                  else
-                                                    // Timeout / retries exhausted — try next provider
-                                                    val skipMsg =
-                                                      if isTimeout then
-                                                        "inactivity timeout, skipping to next provider"
-                                                      else "retries exhausted"
-                                                    // Branch reachable only with locked=false (the seam guard
-                                                    // above propagates every error once partial content was
-                                                    // streamed), so the lock needs no reset.
-                                                    // 审计 20260903 子项③：Timeout 类降级软下线——超时 = 慢，
-                                                    // 不是死。跳过本次请求 + 软回避窗（TimeoutAvoidWindowMs），
-                                                    // 不 markDown 不进探测集，窗口到期自然回链；markDown
-                                                    // 保留给 Auth/404 等确证死亡。非超时 Transient 耗尽
-                                                    // （如 429 重试耗尽）维持原 markDown 行为。
-                                                    // 配额分层（令 2026-09-21 19:16 腿 b）：配额类恒为
-                                                    // Permanent（不可自愈），正常不到达本分支；此处仍置于
-                                                    // 最前作为防御一致性——任何路径的配额类都走配额窗 + 换链，
-                                                    // 绝不落进 markDown/阻塞等待。
-                                                    val eviction =
-                                                      if classification.quota then
-                                                        healthMonitor.softAvoid(
-                                                          candidate.providerId,
-                                                          candidate.model,
-                                                          Defaults.QuotaAvoidWindowMs,
-                                                          label = "quota exhausted"
-                                                        )
-                                                      else if isTimeout then
-                                                        healthMonitor.softAvoid(
-                                                          candidate.providerId,
-                                                          candidate.model,
-                                                          Defaults.TimeoutAvoidWindowMs
-                                                        )
-                                                      else
-                                                        healthMonitor
-                                                          .markDown(
-                                                            candidate.providerId,
-                                                            candidate.model,
-                                                            downReason
-                                                          )
-                                                    fs2.Stream.eval(
-                                                      logger.warn(
-                                                        s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
-                                                      )
-                                                        *> failureRef.update(_ :+ attempt)
-                                                        *> notify
-                                                        *> eviction
-                                                    ) *> tryCandidate(
-                                                      rest,
-                                                      maxRetries,
-                                                      Fallback.InitialBackoffMs,
-                                                      attempted + candidateKey(candidate),
-                                                      round
-                                                    )
-                                                  end if
-                                              end match
-                                            end if
-                                          }
+                                                end if
+                                            end match
+                                          end if
+                                        }
                                       }
                                   } // end per-attempt abortedRef flatMap (hard-recovery P1/P6)
 

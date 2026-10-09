@@ -58,14 +58,16 @@ object NfFileRoutes:
   // satisfiable-looking but out-of-bounds range.
   // ────────────────────────────────────────────────────────────────────────
 
-  /** Parsed single byte range: inclusive `start`..`end` against a known size.
-    *
-    * Syntax check vs satisfiability are deliberately ONE function over `size`:
-    * the route calls it twice (syntax against `Long.MaxValue` to tell "no
-    * usable Range" from "a Range we must answer", then against the real file
-    * size to resolve the slice) so a syntactically-fine but out-of-bounds
-    * range lands on 416 while a malformed/multi-range header lands on the
-    * RFC's ignore-and-serve-200. */
+  /**
+   * Parsed single byte range: inclusive `start`..`end` against a known size.
+   *
+   * Syntax check vs satisfiability are deliberately ONE function over `size`:
+   * the route calls it twice (syntax against `Long.MaxValue` to tell "no
+   * usable Range" from "a Range we must answer", then against the real file
+   * size to resolve the slice) so a syntactically-fine but out-of-bounds
+   * range lands on 416 while a malformed/multi-range header lands on the
+   * RFC's ignore-and-serve-200.
+   */
   private def parseByteRange(value: String, size: Long): Option[(Long, Long)] =
     val m = """^bytes=(\d*)-(\d*)$""".r.findFirstMatchIn(value.trim)
     m.flatMap { m =>
@@ -75,19 +77,24 @@ object NfFileRoutes:
         // suffix form `bytes=-n`: the FINAL n bytes
         last.toLongOption.collect { case n if n > 0 => (math.max(size - n, 0L), size - 1) }
       else
-        first.toLongOption.collect { case s if s < size =>
-          val end = last.toLongOption.fold(size - 1)(e => math.min(e, size - 1))
-          (s, end)
+        first.toLongOption.collect {
+          case s if s < size =>
+            val end = last.toLongOption.fold(size - 1)(e => math.min(e, size - 1))
+            (s, end)
         }
     }.filter((start, end) => start <= end)
+
+  end parseByteRange
 
   /** The byte-range the request carries, if any. */
   private def requestedRange(req: Request[IO]): Option[String] =
     req.headers.get(org.typelevel.ci.CIString("Range")).map(_.head.value)
 
-  /** Content-Type derived the same way StaticFile derives it (MediaType by
-    * extension from the shared MimeDB), so a 206 slice and the 200 whole
-    * always agree. None → no header (StaticFile's own fallback shape). */
+  /**
+   * Content-Type derived the same way StaticFile derives it (MediaType by
+   * extension from the shared MimeDB), so a 206 slice and the 200 whole
+   * always agree. None → no header (StaticFile's own fallback shape).
+   */
   private def contentTypeFor(real: fs2.io.file.Path): Option[`Content-Type`] =
     val name = real.toString
     val dot = name.lastIndexOf('.')
@@ -97,14 +104,15 @@ object NfFileRoutes:
   /**
    * Serve `bytes start..end` (inclusive) of the file with 206 + Content-Range.
    * The stream is exactly `end-start+1` bytes (`readRange` takes an
-    * END-EXCLUSIVE bound) and Content-Length is set to match, so Ember emits a
+   * END-EXCLUSIVE bound) and Content-Length is set to match, so Ember emits a
    * plain fixed-length body.
    */
   private def serveRange(real: fs2.io.file.Path, size: Long, start: Long, end: Long): Response[IO] =
     val len = end - start + 1
     Response[IO](Status.PartialContent)
       .putHeaders(
-        org.http4s.headers.`Content-Range`(org.http4s.RangeUnit.Bytes, org.http4s.headers.Range.SubRange(start, end), Some(size)),
+        org.http4s.headers
+          .`Content-Range`(org.http4s.RangeUnit.Bytes, org.http4s.headers.Range.SubRange(start, end), Some(size)),
         org.http4s.headers.`Accept-Ranges`.bytes,
         Header.Raw(org.typelevel.ci.CIString("Content-Length"), len.toString)
       )

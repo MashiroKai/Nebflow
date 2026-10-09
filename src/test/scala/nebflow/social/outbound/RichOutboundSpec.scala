@@ -2,6 +2,7 @@ package nebflow.social.outbound
 
 import cats.effect.IO
 import cats.effect.Ref
+import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.shared.AttachContract
 
@@ -34,10 +35,12 @@ class RichOutboundSpec extends CatsEffectSuite:
 
   private def tmpDir(): os.Path = os.temp.dir(prefix = "nb-rich-outbound-")
 
-  /** A REAL PNG of the requested size, written through the JDK's own encoder —
-    *  noise, not a solid colour, so it clears the distinct-pixel floor the way a
-    *  browser screenshot does. Hand-writing bytes would risk a file that is not
-    *  actually decodable, which would make the judgement vacuous. */
+  /**
+   * A REAL PNG of the requested size, written through the JDK's own encoder —
+   *  noise, not a solid colour, so it clears the distinct-pixel floor the way a
+   *  browser screenshot does. Hand-writing bytes would risk a file that is not
+   *  actually decodable, which would make the judgement vacuous.
+   */
   private def writeNoisePng(path: os.Path, w: Int, h: Int): os.Path =
     val img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
     val rnd = new java.util.Random(42L)
@@ -52,8 +55,10 @@ class RichOutboundSpec extends CatsEffectSuite:
     ImageIO.write(img, "png", path.toNIO.toFile)
     path
 
-  /** Structurally valid but a single flat colour — the shape an empty/blank
-    *  render produces, and the thing HC-3 must reject. */
+  /**
+   * Structurally valid but a single flat colour — the shape an empty/blank
+   *  render produces, and the thing HC-3 must reject.
+   */
   private def writeSolidPng(path: os.Path, w: Int, h: Int, rgb: Int): os.Path =
     val img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
     var y = 0
@@ -67,8 +72,10 @@ class RichOutboundSpec extends CatsEffectSuite:
     ImageIO.write(img, "png", path.toNIO.toFile)
     path
 
-  /** A sparse file of the requested length — exercises the REAL gate without
-    *  writing a gigabyte. */
+  /**
+   * A sparse file of the requested length — exercises the REAL gate without
+   *  writing a gigabyte.
+   */
   private def sparseFile(path: os.Path, bytes: Long): os.Path =
     Files.createDirectories(path.toNIO.getParent)
     val ch = Files.newByteChannel(path.toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
@@ -78,24 +85,29 @@ class RichOutboundSpec extends CatsEffectSuite:
     finally ch.close()
     path
 
-  /** Recording renderer: never starts a process, counts its invocations (so a
-    *  test can prove the image/document legs do NOT render), and captures the HTML
-    *  it was handed (so `htmlOf`'s extraction is pinned). */
+  /**
+   * Recording renderer: never starts a process, counts its invocations (so a
+   *  test can prove the image/document legs do NOT render), and captures the HTML
+   *  it was handed (so `htmlOf`'s extraction is pinned).
+   */
   private final class RecordingRenderer(
-      result: RichRenderer.RenderResult,
-      produce: Option[(os.Path, Int, Int) => Unit] = None
+    result: RichRenderer.RenderResult,
+    produce: Option[(os.Path, Int, Int) => Unit] = None
   ) extends RichRenderer.Renderer:
     val calls: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val lastHtml: Ref[IO, String] = Ref.unsafe[IO, String]("")
     def available: Boolean = true
+
     def render(html: String, outPng: os.Path, width: Int, height: Int): IO[RichRenderer.RenderResult] =
       calls.update(_ + 1) *> lastHtml.set(html) *> IO.blocking {
         if result.ok then produce.foreach(f => f(outPng, width, height))
         result
       }
 
-  /** Records every outbound call. Defaults are all-success; the flags let a test
-    *  drive the failure branch of one leg without touching the others. */
+  /**
+   * Records every outbound call. Defaults are all-success; the flags let a test
+   *  drive the failure branch of one leg without touching the others.
+   */
   private final class Recorder(imageOk: Boolean = true, fileOk: Boolean = true, sendOk: Boolean = true):
     val images: Ref[IO, List[os.Path]] = Ref.unsafe[IO, List[os.Path]](Nil)
     val files: Ref[IO, List[(os.Path, String)]] = Ref.unsafe[IO, List[(os.Path, String)]](Nil)
@@ -103,36 +115,52 @@ class RichOutboundSpec extends CatsEffectSuite:
     val texts: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
 
     def uploadImage: RichFeishuAdapter.UploadImage = p =>
-      images.update(_ :+ p).map(_ =>
-        if imageOk then RichFeishuAdapter.UploadResult(true, "img_key_1", 0, "ok")
-        else RichFeishuAdapter.UploadResult(false, "", 230020, "upload refused"))
+      images
+        .update(_ :+ p)
+        .map(_ =>
+          if imageOk then RichFeishuAdapter.UploadResult(true, "img_key_1", 0, "ok")
+          else RichFeishuAdapter.UploadResult(false, "", 230020, "upload refused")
+        )
 
     def uploadFile: RichFeishuAdapter.UploadFile = (p, n) =>
-      files.update(_ :+ ((p, n))).map(_ =>
-        if fileOk then RichFeishuAdapter.UploadResult(true, "file_key_1", 0, "ok")
-        else RichFeishuAdapter.UploadResult(false, "", 230021, "upload refused"))
+      files
+        .update(_ :+ ((p, n)))
+        .map(_ =>
+          if fileOk then RichFeishuAdapter.UploadResult(true, "file_key_1", 0, "ok")
+          else RichFeishuAdapter.UploadResult(false, "", 230021, "upload refused")
+        )
 
     def sendMsg: RichFeishuAdapter.SendMsg = (t, c) =>
-      msgs.update(_ :+ ((t, c))).map(_ =>
-        if sendOk then RichFeishuAdapter.SendResult(true, Some("om_msg_1"), 0, "ok")
-        else RichFeishuAdapter.SendResult(false, None, 230030, "send refused"))
+      msgs
+        .update(_ :+ ((t, c)))
+        .map(_ =>
+          if sendOk then RichFeishuAdapter.SendResult(true, Some("om_msg_1"), 0, "ok")
+          else RichFeishuAdapter.SendResult(false, None, 230030, "send refused")
+        )
 
     def sendText: RichFeishuAdapter.SendText = t =>
-      texts.update(_ :+ t).map(_ =>
-        if sendOk then RichFeishuAdapter.SendResult(true, Some("om_text_1"), 0, "ok")
-        else RichFeishuAdapter.SendResult(false, None, 230031, "text send refused"))
+      texts
+        .update(_ :+ t)
+        .map(_ =>
+          if sendOk then RichFeishuAdapter.SendResult(true, Some("om_text_1"), 0, "ok")
+          else RichFeishuAdapter.SendResult(false, None, 230031, "text send refused")
+        )
+
+  end Recorder
 
   private def adapter(
-      rec: Recorder,
-      renderer: RichRenderer.Renderer = RichRenderer.Unavailable
+    rec: Recorder,
+    renderer: RichRenderer.Renderer = RichRenderer.Unavailable,
+    shot: WebPageShot.Renderer = WebPageShot.Unavailable
   ): RichFeishuAdapter =
     // The render-output face is injected as a temp directory: the production
     // default reads the process-global data root, which other suites mutate, so a
-    // spec that used it would be coupled to their state.
-    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer,
-      () => tmpDir())
+    // spec that used it would be coupled to their state. The shot seam defaults
+    // to Unavailable so no test ever starts node (the offline discipline).
+    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer, () => tmpDir(), shot)
 
   private val CardHtml = """<!doctype html><html><body><h1>hello card</h1></body></html>"""
+
   private def cardPayload(html: String = CardHtml): String =
     RichKind.CardSentinel + io.circe.Json.obj("html" -> io.circe.Json.fromString(html)).noSpaces
 
@@ -147,14 +175,16 @@ class RichOutboundSpec extends CatsEffectSuite:
     assertEquals(RichKind.of(cardPayload(), None, true, DocumentExts), RichKind.Card)
     assertEquals(RichKind.of("", Some(img.toString), true, DocumentExts), RichKind.Image)
     assertEquals(RichKind.of("", Some(doc.toString), true, DocumentExts), RichKind.Document)
-    assert(RichKind.of("", Some((tmpDir() / "a.xyz").toString), false, DocumentExts).isInstanceOf[RichKind.Unknown],
-      "an unknown extension must classify as Unknown, never be guessed into a rich kind")
+    assert(
+      RichKind.of("", Some((tmpDir() / "a.xyz").toString), false, DocumentExts).isInstanceOf[RichKind.Unknown],
+      "an unknown extension must classify as Unknown, never be guessed into a rich kind"
+    )
   }
 
   test("R-1b classification is fail-closed: a missing path is Unknown with a non-empty reason") {
     RichKind.of("", Some("/nonexistent/nope.png"), exists = false, DocumentExts) match
       case RichKind.Unknown(r) => assert(r.trim.nonEmpty, "an Unknown must always explain itself")
-      case other               => fail(s"expected Unknown for a non-existent path, got $other")
+      case other => fail(s"expected Unknown for a non-existent path, got $other")
   }
 
   test("R-1c image detection reuses the existing authority table (ImageInject), not a second list") {
@@ -172,21 +202,38 @@ class RichOutboundSpec extends CatsEffectSuite:
   // ─────────────────── R-2 no silent drop, ever ───────────────────
 
   test("R-2 Unknown produces exactly one text call and is NEVER silently dropped") {
+    // social-webshot batch: the pinned line is now the FRIENDLY one-liner — the
+    // mechanism wording (`extension is in neither authority table: …`) went to
+    // the adapter's WARN log, never to the recipient. The product is a real
+    // on-disk file of an off-table extension: the exact shape of the 2026-10-09
+    // incident (`diagram.html` 透出英文机制报错).
     val rec = Recorder()
-    adapter(rec).deliver(RichKind.Unknown("extension is in neither authority table: xyz"), None).flatMap { results =>
-      for
-        texts <- rec.texts.get
-        imgs  <- rec.images.get
-        files <- rec.files.get
-        msgs  <- rec.msgs.get
-      yield
-        assertEquals(results.size, 1, "one intent must yield exactly one reading (count conservation)")
-        assertEquals(imgs.size, 0, "an unknown kind must never upload an image")
-        assertEquals(files.size, 0, "an unknown kind must never upload a file")
-        assertEquals(msgs.size, 0, "an unknown kind must never send an image/file message")
-        assertEquals(texts.size, 1, "an unknown kind must still say something")
-        assert(texts.head.contains("[未知类型]"), s"the placeholder must be machine-matchable, got: ${texts.head}")
-    }
+    val odd = tmpDir() / "diagram.xyz"
+    Files.write(odd.toNIO, Array[Byte](1, 2, 3))
+    adapter(rec)
+      .deliver(RichKind.Unknown("extension is in neither authority table: xyz"), Some(odd))
+      .flatMap { results =>
+        for
+          texts <- rec.texts.get
+          imgs <- rec.images.get
+          files <- rec.files.get
+          msgs <- rec.msgs.get
+        yield
+          assertEquals(results.size, 1, "one intent must yield exactly one reading (count conservation)")
+          assertEquals(imgs.size, 0, "an unknown kind must never upload an image")
+          assertEquals(files.size, 0, "an unknown kind must never upload a file")
+          assertEquals(msgs.size, 0, "an unknown kind must never send an image/file message")
+          assertEquals(texts.size, 1, "an unknown kind must still say something")
+          val line = texts.head
+          assert(line.contains(RichDegrade.UnsupportedPrefix), s"the placeholder must be machine-matchable, got: $line")
+          assert(line.contains("原件在桌面端"), s"the line must point at the desktop original: $line")
+          assert(line.contains(odd.toString), s"the line must carry the absolute original path: $line")
+          assert(line.contains("diagram.xyz"), s"the line must name the file: $line")
+          assert(
+            !line.contains("authority") && !line.contains("neither") && !line.contains("extension"),
+            s"mechanism vocabulary must not leak to the recipient: $line"
+          )
+      }
   }
 
   test("R-2b a rich kind with no path still degrades to one text (fail-closed one step earlier)") {
@@ -196,7 +243,8 @@ class RichOutboundSpec extends CatsEffectSuite:
       yield
         assertEquals(results.size, 1)
         assertEquals(texts.size, 1)
-        assert(texts.head.contains("[未知类型]"), texts.head)
+        assert(texts.head.contains(RichDegrade.UnreachablePrefix), texts.head)
+        assert(texts.head.contains("没有可发送的文件"), texts.head)
     }
   }
 
@@ -222,8 +270,8 @@ class RichOutboundSpec extends CatsEffectSuite:
     adapter(rec, renderer).deliver(RichKind.Image, Some(p)).flatMap { results =>
       for
         calls <- renderer.calls.get
-        imgs  <- rec.images.get
-        msgs  <- rec.msgs.get
+        imgs <- rec.images.get
+        msgs <- rec.msgs.get
       yield
         assertEquals(calls, 0, "route D: an already-raster product must never be re-rendered")
         assertEquals(imgs, List(p), "the uploaded artefact must be the original file, byte-for-byte unchanged")
@@ -241,23 +289,28 @@ class RichOutboundSpec extends CatsEffectSuite:
     val produced = tmpDir() / "card.png"
     val renderer = new RecordingRenderer(
       RichRenderer.RenderResult(true, Some(produced), 4096L, 600, 320, "", "PNG 600x320"),
-      Some((p, w, h) => { writeNoisePng(p, w, h); () })
+      Some((p, w, h) =>
+        writeNoisePng(p, w, h); ()
+      )
     )
     val rec = Recorder()
 
     adapter(rec, renderer).deliver(RichKind.Card, None, cardPayload()).flatMap { results =>
       for
         calls <- renderer.calls.get
-        imgs  <- rec.images.get
-        msgs  <- rec.msgs.get
+        imgs <- rec.images.get
+        msgs <- rec.msgs.get
         texts <- rec.texts.get
       yield
         assertEquals(calls, 1, "a card must be rendered exactly once")
         assertEquals(imgs.size, 1, "the render product must be uploaded exactly once")
         assertEquals(imgs.head, produced, "the uploaded artefact must be the render product")
         assertEquals(msgs.map(_._1), List("image"), "the card is carried as an image message")
-        assertEquals(texts, List(RichPlanner.InteractivePanelNote),
-          "the interactive-panel note must be sent, verbatim and exactly once")
+        assertEquals(
+          texts,
+          List(RichPlanner.InteractivePanelNote),
+          "the interactive-panel note must be sent, verbatim and exactly once"
+        )
         assertEquals(texts.head, "交互版见本地面板", "the note is a fixed, author-approved string")
         assertEquals(results.size, 2, "card = image send + note send, two readings")
     }
@@ -270,7 +323,9 @@ class RichOutboundSpec extends CatsEffectSuite:
     val produced = tmpDir() / "card.png"
     val renderer = new RecordingRenderer(
       RichRenderer.RenderResult(true, Some(produced), 4096L, 600, 320, "", "PNG 600x320"),
-      Some((p, w, h) => { writeNoisePng(p, w, h); () })
+      Some((p, w, h) =>
+        writeNoisePng(p, w, h); ()
+      )
     )
     adapter(Recorder(), renderer).deliver(RichKind.Card, None, cardPayload()).flatMap { _ =>
       renderer.lastHtml.get.map { html =>
@@ -284,14 +339,15 @@ class RichOutboundSpec extends CatsEffectSuite:
   // ─────────────────── R-5 render failure: placeholder + note ───────────────────
 
   test("R-5 a failed render sends [未渲染] PLUS the note, and uploads nothing") {
-    val renderer = new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
+    val renderer =
+      new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
     val rec = Recorder()
 
     adapter(rec, renderer).deliver(RichKind.Card, None, cardPayload()).flatMap { _ =>
       for
-        imgs  <- rec.images.get
+        imgs <- rec.images.get
         files <- rec.files.get
-        msgs  <- rec.msgs.get
+        msgs <- rec.msgs.get
         texts <- rec.texts.get
       yield
         assertEquals(imgs.size, 0, "a failed render must not upload anything")
@@ -304,8 +360,7 @@ class RichOutboundSpec extends CatsEffectSuite:
   }
 
   test("R-5b the render timeout branch is a reading, not an exception") {
-    val renderer = new RecordingRenderer(
-      RichRenderer.RenderResult.timedOut("no stable render product within 30000ms"))
+    val renderer = new RecordingRenderer(RichRenderer.RenderResult.timedOut("no stable render product within 30000ms"))
     val rec = Recorder()
     adapter(rec, renderer).deliver(RichKind.Card, None, cardPayload()).flatMap { results =>
       rec.texts.get.map { texts =>
@@ -320,7 +375,9 @@ class RichOutboundSpec extends CatsEffectSuite:
     val produced = tmpDir() / "card.png"
     val renderer = new RecordingRenderer(
       RichRenderer.RenderResult(true, Some(produced), 4096L, 600, 320, "", "PNG 600x320"),
-      Some((p, w, h) => { writeNoisePng(p, w, h); () })
+      Some((p, w, h) =>
+        writeNoisePng(p, w, h); ()
+      )
     )
     val rec = Recorder(imageOk = false)
 
@@ -340,26 +397,36 @@ class RichOutboundSpec extends CatsEffectSuite:
     // The gate's authority, asserted directly: no second constant was created for
     // this leg (design card §6.1).
     assertEquals(AttachContract.MaxFileBytes, 1_073_741_824L)
-    assertEquals(AttachContract.checkFileSize(AttachContract.MaxFileBytes).isRight, true,
-      "exactly at the limit must pass — the gate is `>` not `>=`")
+    assertEquals(
+      AttachContract.checkFileSize(AttachContract.MaxFileBytes).isRight,
+      true,
+      "exactly at the limit must pass — the gate is `>` not `>=`"
+    )
 
     val rec = Recorder()
     val big = sparseFile(tmpDir() / "huge.pdf", AttachContract.MaxFileBytes + 1)
     adapter(rec).deliver(RichKind.Document, Some(big)).flatMap { results =>
       for
-        imgs  <- rec.images.get
+        imgs <- rec.images.get
         files <- rec.files.get
-        msgs  <- rec.msgs.get
+        msgs <- rec.msgs.get
         texts <- rec.texts.get
       yield
-        assertEquals(imgs.size + files.size + msgs.size, 0,
-          "an oversize product must produce ZERO uploads and ZERO sends (the gate runs before the upload leg)")
+        assertEquals(
+          imgs.size + files.size + msgs.size,
+          0,
+          "an oversize product must produce ZERO uploads and ZERO sends (the gate runs before the upload leg)"
+        )
         assertEquals(texts.size, 1, "the refusal must be reported")
         assert(texts.head.contains("尺寸闸拒绝"), s"§7.1 reason missing: ${texts.head}")
-        assert(texts.head.contains(AttachContract.Codes.AttachTooLarge),
-          s"the existing error code must be echoed: ${texts.head}")
-        assert(texts.head.contains((AttachContract.MaxFileBytes + 1).toString),
-          s"§6.2 requires echoing the ACTUAL size: ${texts.head}")
+        assert(
+          texts.head.contains(AttachContract.Codes.AttachTooLarge),
+          s"the existing error code must be echoed: ${texts.head}"
+        )
+        assert(
+          texts.head.contains((AttachContract.MaxFileBytes + 1).toString),
+          s"§6.2 requires echoing the ACTUAL size: ${texts.head}"
+        )
         assertEquals(results.size, 1, "count conservation holds on the refusal path too")
     }
   }
@@ -382,8 +449,8 @@ class RichOutboundSpec extends CatsEffectSuite:
     adapter(rec).deliver(RichKind.Document, Some(p)).flatMap { results =>
       for
         files <- rec.files.get
-        imgs  <- rec.images.get
-        msgs  <- rec.msgs.get
+        imgs <- rec.images.get
+        msgs <- rec.msgs.get
         texts <- rec.texts.get
       yield
         assertEquals(imgs.size, 0, "a document must not go down the image leg")
@@ -402,8 +469,11 @@ class RichOutboundSpec extends CatsEffectSuite:
     assertEquals(RichFeishuAdapter.fileTypeOf("book.docx"), "doc")
     assertEquals(RichFeishuAdapter.fileTypeOf("sheet.xlsx"), "xls")
     assertEquals(RichFeishuAdapter.fileTypeOf("deck.pptx"), "ppt")
-    assertEquals(RichFeishuAdapter.fileTypeOf("archive.bin"), "stream",
-      "an unmapped extension must fall back to STREAM, not be refused")
+    assertEquals(
+      RichFeishuAdapter.fileTypeOf("archive.bin"),
+      "stream",
+      "an unmapped extension must fall back to STREAM, not be refused"
+    )
   }
 
   // ─────────────────── R-8 the HC-3 judgement itself ───────────────────
@@ -425,11 +495,13 @@ class RichOutboundSpec extends CatsEffectSuite:
     // file-level byte count accepts it. Measured here: bytes are large, decoded
     // colours are exactly 1. HC-3 must judge the pixels.
     val distinctBytes = Files.readAllBytes(p.toNIO).distinct.length
-    assert(distinctBytes > RichRenderer.MinDistinctPixels,
+    assert(
+      distinctBytes > RichRenderer.MinDistinctPixels,
       s"fixture sanity: a solid PNG is expected to have many distinct BYTES ($distinctBytes), " +
-        "which is exactly why byte statistics cannot be the criterion")
+        "which is exactly why byte statistics cannot be the criterion"
+    )
     RichRenderer.inspect(p, 32, 24) match
-      case Right(_)  => fail("a solid-colour image must NOT be accepted as a successful render")
+      case Right(_) => fail("a solid-colour image must NOT be accepted as a successful render")
       case Left(err) => assert(err.detail.contains("empty/solid"), err.detail)
   }
 
@@ -437,20 +509,20 @@ class RichOutboundSpec extends CatsEffectSuite:
     val p = tmpDir() / "fake.png"
     Files.write(p.toNIO, """<svg xmlns="http://www.w3.org/2000/svg"/>""".getBytes("UTF-8"))
     RichRenderer.inspect(p, 10, 10) match
-      case Right(_)  => fail("a renamed SVG must never be accepted as a render product")
+      case Right(_) => fail("a renamed SVG must never be accepted as a render product")
       case Left(err) => assert(err.detail.contains("not a PNG"), err.detail)
   }
 
   test("R-8d HC-3 rejects a geometry mismatch") {
     val p = writeNoisePng(tmpDir() / "wrong.png", 20, 20)
     RichRenderer.inspect(p, 600, 320) match
-      case Right(_)  => fail("a render whose size differs from the declared geometry must be rejected")
+      case Right(_) => fail("a render whose size differs from the declared geometry must be rejected")
       case Left(err) => assert(err.detail.contains("does not match"), err.detail)
   }
 
   test("R-8e HC-3 rejects a missing product") {
     RichRenderer.inspect(tmpDir() / "absent.png", 10, 10) match
-      case Right(_)  => fail("a missing product must be a failure")
+      case Right(_) => fail("a missing product must be a failure")
       case Left(err) => assert(err.detail.contains("no render product"), err.detail)
   }
 
@@ -461,7 +533,8 @@ class RichOutboundSpec extends CatsEffectSuite:
     val img = writeNoisePng(tmpDir() / "a.png", 8, 8)
     val doc = tmpDir() / "b.pdf"
     Files.write(doc.toNIO, Array[Byte](9))
-    val failing = new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
+    val failing =
+      new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
 
     val legs = for
       _ <- adapter(rec).deliver(RichKind.Image, Some(img))
@@ -473,9 +546,9 @@ class RichOutboundSpec extends CatsEffectSuite:
     legs.flatMap { _ =>
       for
         texts <- rec.texts.get
-        imgs  <- rec.images.get
+        imgs <- rec.images.get
         files <- rec.files.get
-        msgs  <- rec.msgs.get
+        msgs <- rec.msgs.get
       yield
         val all = (texts ++ imgs.map(_.toString) ++ files.map(_._1.toString) ++ msgs.map(_._2)).mkString("\n")
         assert(!all.contains("appSecret"), s"a credential marker leaked into the produced output: $all")
@@ -504,12 +577,24 @@ class RichOutboundSpec extends CatsEffectSuite:
       case other => fail(s"unexpected plan: $other")
   }
 
-  test("R-10b the degrade vocabulary is closed and the placeholders are exactly §7.1/§7.2") {
+  test("R-10b the degrade vocabulary is closed and the placeholders are the friendly Chinese face") {
     val p = tmpDir() / "x.pdf"
     assert(RichDegrade.renderFailed(RichDegrade.Reason.RenderTimeout, p, 12L).startsWith("[未渲染] 渲染超时"))
-    assert(RichDegrade.unknown("why", Some(p)).startsWith("[未知类型] why"))
-    assertEquals(RichDegrade.unknown("", Some(p)).startsWith("[未知类型] unspecified"), true,
-      "an empty reason must be normalized, never passed through")
+    // b-layer, on-disk off-table type → [暂不支持] + 原件在桌面端 + path; the
+    // mechanism wording of the classification reason never renders (social-webshot).
+    val line = RichDegrade.unknown(Some(tmpDir() / "diagram.html"))
+    assert(line.startsWith(s"${RichDegrade.UnsupportedPrefix} 这个格式在聊天里看不了（diagram.html）"), line)
+    assert(line.contains("原件在桌面端"), line)
+    assert(!line.contains("authority") && !line.contains("neither"), s"mechanism words must not render: $line")
+    // missing-face: the original is gone (or the event carried no path) → [未送达].
+    assert(
+      RichDegrade
+        .unknown(Some(p), missing = true)
+        .startsWith(s"${RichDegrade.UnreachablePrefix} 原件没找到")
+    )
+    assertEquals(RichDegrade.unknown(None, missing = true), "[未送达] 这条消息没有可发送的文件")
+    // a-layer note: the original path rides the text leg, fixed builder output.
+    assertEquals(RichDegrade.webPageNote(p), s"网页原件（桌面端可打开）：$p")
     assert(RichDegrade.renderFailed("r", p, 1L).contains("原件："))
   }
 
@@ -524,8 +609,9 @@ class RichOutboundSpec extends CatsEffectSuite:
   test("R-11 the outbound package contains none of the swallow idioms (design card §7.3 #4)") {
     val rel = os.RelPath("src/main/scala/nebflow/social/outbound")
     val candidates = List(os.pwd / rel, os.Path(System.getProperty("user.dir"), os.pwd) / rel)
-    val dir = candidates.find(os.exists).getOrElse(fail(
-      s"could not locate the outbound package; tried:\n${candidates.mkString("\n")}"))
+    val dir = candidates
+      .find(os.exists)
+      .getOrElse(fail(s"could not locate the outbound package; tried:\n${candidates.mkString("\n")}"))
     val sources = os.list(dir).filter(p => p.last.endsWith(".scala"))
     assert(sources.nonEmpty, s"expected source files under $dir")
     sources.foreach { f =>
@@ -559,7 +645,10 @@ class RichOutboundSpec extends CatsEffectSuite:
     val produced = tmpDir() / "card.png"
     val renderer = new RecordingRenderer(
       RichRenderer.RenderResult(true, Some(produced), 4096L, 600, 320, "", "PNG 600x320"),
-      Some((p, w, h) => { writeNoisePng(p, w, h); () }))
+      Some((p, w, h) =>
+        writeNoisePng(p, w, h); ()
+      )
+    )
     val a = adapter(rec, renderer)
 
     for
@@ -576,47 +665,268 @@ class RichOutboundSpec extends CatsEffectSuite:
       // card: render → upload the render product → msg_type=image → the note.
       assertEquals(imgs, List(png, produced), "image leg then the card's render product, in that order")
       assertEquals(files.map(_._1), List(doc), "the document leg uploads the original file")
-      assertEquals(msgs.map(_._1), List("image", "file", "image"),
-        "three sends: image, file, then the card screenshot")
+      assertEquals(msgs.map(_._1), List("image", "file", "image"), "three sends: image, file, then the card screenshot")
       assertEquals(texts, List(RichPlanner.InteractivePanelNote), "only the card contributes a text call")
+    end for
   }
 
-  test("R-12b RichDegradeProbe's three failure cases hold as assertions on the same code path") {
-    // Mirror of the probe's A/B/C cases: (A) a card whose renderer cannot run,
-    // (B) an oversize document, (C) an undecidable kind. All three must land on
-    // exactly one visible text with the machine-matchable placeholder.
-    val failing = new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
+  test("R-12b RichDegradeProbe's failure cases hold as assertions on the same code path") {
+    // Mirror of the probe's A/B/C/D cases: (A) a card whose renderer cannot run,
+    // (B) an oversize document, (C) an off-table on-disk product (the incident
+    // shape — friendly line, no mechanism words), (D) a missing product. All
+    // four must land on exactly one visible text with a machine-matchable
+    // Chinese placeholder.
+    val failing =
+      new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
     val recA = Recorder()
     val recB = Recorder()
     val recC = Recorder()
+    val recD = Recorder()
     val big = sparseFile(tmpDir() / "huge.pdf", AttachContract.MaxFileBytes + 1)
+    val offTable = tmpDir() / "diagram.xyz"
+    Files.write(offTable.toNIO, Array[Byte](1, 2, 3))
+    val gone = tmpDir() / "gone.png"
 
     for
       _ <- adapter(recA, failing).deliver(RichKind.Card, None, cardPayload())
       _ <- adapter(recB).deliver(RichKind.Document, Some(big))
-      _ <- adapter(recC).deliver(RichKind.Unknown("extension is in neither authority table: xyz"), None)
+      _ <- adapter(recC).deliver(RichKind.Unknown("extension is in neither authority table: xyz"), Some(offTable))
+      _ <- adapter(recD).deliver(RichKind.Unknown("path does not exist or is not a regular file: gone"), Some(gone))
       textsA <- recA.texts.get
       textsB <- recB.texts.get
       textsC <- recC.texts.get
-      imgsA  <- recA.images.get
+      textsD <- recD.texts.get
+      imgsA <- recA.images.get
       filesB <- recB.files.get
     yield
       assertEquals(imgsA.size, 0, "A: a failed render uploads nothing")
-      assert(textsA.size == 1 && textsA.head.contains("[未渲染]") && textsA.head.contains("交互版见本地面板"),
-        s"A: expected the placeholder + the note, got $textsA")
+      assert(
+        textsA.size == 1 && textsA.head.contains("[未渲染]") && textsA.head.contains("交互版见本地面板"),
+        s"A: expected the placeholder + the note, got $textsA"
+      )
       assertEquals(filesB.size, 0, "B: an oversize product never reaches the upload leg")
-      assert(textsB.size == 1 && textsB.head.contains("尺寸闸拒绝") && textsB.head.contains("ATTACH_TOO_LARGE"),
-        s"B: expected the size-gate line with the existing code, got $textsB")
-      assert(textsC.size == 1 && textsC.head.contains("[未知类型]"),
-        s"C: expected the unknown-type placeholder, got $textsC")
+      assert(
+        textsB.size == 1 && textsB.head.contains("尺寸闸拒绝") && textsB.head.contains("ATTACH_TOO_LARGE"),
+        s"B: expected the size-gate line with the existing code, got $textsB"
+      )
+      assert(
+        textsC.size == 1 && textsC.head.contains(RichDegrade.UnsupportedPrefix)
+          && textsC.head.contains("原件在桌面端") && textsC.head.contains("diagram.xyz"),
+        s"C: expected the friendly unsupported line, got $textsC"
+      )
+      assert(
+        textsD.size == 1 && textsD.head.contains(RichDegrade.UnreachablePrefix)
+          && textsD.head.contains(gone.toString),
+        s"D: expected the unreachable line naming the product, got $textsD"
+      )
+    end for
   }
 
-  /** Remove Scala block comments and per-line `//` trailing comments. Good enough
-    *  for an idiom scan: string literals containing `//` would only make the scan
-    *  *weaker* on that line, never produce a false positive. */
+  // ───────── pop batch-media fix: the parser carries ALL items, in order ─────────
+
+  /** A Pop payload string with the given items (PopTool.itemJson field names). */
+  private def popPayload(items: Json*): String =
+    RichProduct.PopSentinel + Json.obj("items" -> Json.arr(items*)).noSpaces
+
+  private def popItem(kind: String, name: String, p: String): Json =
+    Json.obj("kind" -> Json.fromString(kind), "name" -> Json.fromString(name), "path" -> Json.fromString(p))
+
+  private def parse(payload: String): Option[RichProduct] =
+    RichProduct.of(payload, input = None, label = "Pop", documentExtensions = DocumentExts)
+
+  test("R-P1 an 11-image Pop parses to 11 media items in payload order (the old read kept only the first)") {
+    val paths = (1 to 11).map(i => s"/tmp/nb-popfix/p$i.png").toList
+    val payload = popPayload(paths.map(p => popItem("image", p.split('/').last, p))*)
+    val rich = parse(payload).getOrElse(fail("an 11-image payload must parse to a product"))
+    assertEquals(rich.media, paths.map(os.Path(_)), "ALL items carried, order preserved")
+    assertEquals(rich.path, Some(os.Path(paths.head)), "path is the derived head, nothing more")
+    assertEquals(rich.label, "Pop")
+  }
+
+  test("R-P2 a MIXED image+file+video payload keeps payload order and skips only the video") {
+    val payload = popPayload(
+      popItem("image", "a.png", "/tmp/nb-popfix/a.png"),
+      popItem("video", "v.mp4", "/tmp/nb-popfix/v.mp4"), // rides the shape, not a rich product — skipped
+      popItem("file", "b.pdf", "/tmp/nb-popfix/b.pdf"),
+      popItem("image", "c.png", "/tmp/nb-popfix/c.png")
+    )
+    val rich = parse(payload).getOrElse(fail("a mixed payload must parse to a product"))
+    assertEquals(
+      rich.media,
+      List(os.Path("/tmp/nb-popfix/a.png"), os.Path("/tmp/nb-popfix/b.pdf"), os.Path("/tmp/nb-popfix/c.png")),
+      "carriable items in payload order; the video skipped, never mis-delivered"
+    )
+  }
+
+  test("R-P3 a video-only payload is NOT a rich product; an item without a path is skipped, not fatal") {
+    assertEquals(
+      parse(popPayload(popItem("video", "v.mp4", "/tmp/nb-popfix/v.mp4"))),
+      None,
+      "the old single-channel contract stands: video-only keeps the turn's text reply"
+    )
+    val partial = parse(
+      popPayload(
+        popItem("image", "gone", ""), // empty path — the tool's reject face, not a path
+        popItem("image", "a.png", "/tmp/nb-popfix/a.png")
+      )
+    )
+    assertEquals(
+      partial.map(_.media),
+      Some(List(os.Path("/tmp/nb-popfix/a.png"))),
+      "the usable item survives a neighbour's empty path"
+    )
+    assertEquals(parse(RichProduct.PopSentinel + "not json at all"), None, "an unparseable payload is no product")
+    assertEquals(parse(popPayload()), None, "an items-less payload is no product")
+  }
+
+  // ───────── social-webshot batch: html 出站（2026-10-09 裁定：文件直发、截图兜底）─────────
+
+  /**
+   * Recording shot seam: never starts node; counts invocations, captures the html
+   * input, and can produce a REAL noise PNG at the out path (so the upload leg is
+   * exercised with decodable bytes).
+   */
+  private final class RecordingShot(
+    result: Either[String, os.Path],
+    produce: Option[os.Path => Unit] = None
+  ) extends WebPageShot.Renderer:
+    val calls: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
+    val lastInput: Ref[IO, String] = Ref.unsafe[IO, String]("")
+    def available: Boolean = true
+
+    def shot(htmlFile: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
+      calls.update(_ + 1) *> lastInput.set(htmlFile.toString) *> IO.blocking {
+        result match
+          case Right(_) => produce.foreach(f => f(outPng)); result
+          case left => left
+      }
+
+  private def writeHtml(dir: os.Path): os.Path =
+    val p = dir / "diagram.html"
+    Files.write(p.toNIO, "<html><body><h1>diagram</h1></body></html>".getBytes("UTF-8"))
+    p
+
+  test("W-1 an on-disk html product goes out AS THE ORIGINAL FILE (msg_type=file); the shot seam is never consulted") {
+    val rec = Recorder()
+    val html = writeHtml(tmpDir())
+    val shot = new RecordingShot(Right(tmpDir() / "never.png"))
+    adapter(rec, shot = shot)
+      .deliver(RichKind.Unknown("extension is in neither authority table: html"), Some(html))
+      .flatMap { results =>
+        for
+          calls <- shot.calls.get
+          files <- rec.files.get
+          msgs <- rec.msgs.get
+          imgs <- rec.images.get
+          texts <- rec.texts.get
+        yield
+          assertEquals(calls, 0, "文件腿成功 ⇒ 零截图调用（截图只是兜底，不再是默认腿）")
+          assertEquals(files, List((html, "diagram.html")), "the ORIGINAL html rides the existing file upload leg")
+          assertEquals(msgs.map(_._1), List("file"), "msg_type=file — the file-message leg, not an image")
+          assertEquals(imgs.size, 0, "no screenshot, no image upload")
+          assertEquals(texts.size, 0, "the original IS the message — the file leg carries no companion note")
+          assertEquals(results.size, 1, "one intent, one reading (count conservation)")
+          assert(results.forall(_.ok), s"all readings ok, got ${results.map(_.detail)}")
+      }
+  }
+
+  test("W-2 a FILE-leg failure (channel refuses the upload) demotes to the full-page shot: image + original-path note") {
+    val rec = Recorder(fileOk = false)
+    val html = writeHtml(tmpDir())
+    val produced = tmpDir() / "page.png"
+    val shot = new RecordingShot(Right(produced), Some(p => writeNoisePng(p, 40, 30)))
+    adapter(rec, shot = shot)
+      .deliver(RichKind.Unknown("extension is in neither authority table: html"), Some(html))
+      .flatMap { results =>
+        for
+          calls <- shot.calls.get
+          input <- shot.lastInput.get
+          files <- rec.files.get
+          imgs <- rec.images.get
+          msgs <- rec.msgs.get
+          texts <- rec.texts.get
+        yield
+          assertEquals(files.map(_._1), List(html), "the file leg WAS attempted first (the shot is the fallback)")
+          assertEquals(calls, 1, "the shot is consulted only after the file leg failed")
+          assertEquals(input, html.toString, "the shot seam receives the ORIGINAL html file, not derived content")
+          assertEquals(imgs.size, 1, "the shot product is uploaded once")
+          assertEquals(msgs.map(_._1), List("image"), "the fallback rides the image leg (msg_type=image)")
+          assertEquals(texts, List(RichDegrade.webPageNote(html)), "the original-path note rides the FALLBACK face only")
+          assert(texts.head.contains(html.toString), s"the note must carry the original path: ${texts.head}")
+          assertEquals(results.size, 2, "shot send + note = two readings")
+          assert(results.forall(_.ok), s"all readings ok, got ${results.map(_.detail)}")
+      }
+  }
+
+  test("W-2b the file leg failing AND the shot failing lands on exactly one friendly b-layer line") {
+    val rec = Recorder(fileOk = false)
+    val html = writeHtml(tmpDir())
+    val failing = new RecordingShot(Left(RichDegrade.Reason.RenderTimeout))
+    adapter(rec, shot = failing)
+      .deliver(RichKind.Unknown("extension is in neither authority table: html"), Some(html))
+      .flatMap { results =>
+        for
+          calls <- failing.calls.get
+          imgs <- rec.images.get
+          msgs <- rec.msgs.get
+          texts <- rec.texts.get
+        yield
+          assertEquals(calls, 1, "the shot was attempted (after the file leg failed)")
+          assertEquals(imgs.size + msgs.size, 0, "a failed chain uploads and sends nothing rich")
+          assertEquals(texts.size, 1, "the b-layer is exactly one visible line")
+          val line = texts.head
+          assert(line.contains(RichDegrade.UnsupportedPrefix), line)
+          assert(line.contains("原件在桌面端") && line.contains(html.toString), line)
+          assert(
+            !line.toLowerCase.contains("timeout") && !line.contains("渲染超时"),
+            s"the closed-vocab reason stays in the log, not in the chat: $line"
+          )
+      }
+  }
+
+  test("W-3 an off-table NON-web product never consults the shot seam (straight to b)") {
+    val rec = Recorder()
+    val odd = tmpDir() / "notes.xyz"
+    Files.write(odd.toNIO, Array[Byte](1))
+    val shot = new RecordingShot(Right(tmpDir() / "never.png"))
+    adapter(rec, shot = shot)
+      .deliver(RichKind.Unknown("extension is in neither authority table: xyz"), Some(odd))
+      .flatMap { _ =>
+        for
+          calls <- shot.calls.get
+          texts <- rec.texts.get
+        yield
+          assertEquals(calls, 0, "only html/htm may reach the shot seam")
+          assertEquals(texts.size, 1)
+          assert(texts.head.contains(RichDegrade.UnsupportedPrefix) && texts.head.contains(odd.toString), texts.head)
+      }
+  }
+
+  test("W-4 the web-page predicate table and the offline detection face") {
+    assert(WebPageShot.isWebPage(os.Path("/tmp/a/diagram.html", os.pwd)))
+    assert(WebPageShot.isWebPage(os.Path("/tmp/a/DIAGRAM.HTML", os.pwd)), "case-insensitive")
+    assert(WebPageShot.isWebPage(os.Path("/tmp/a/x.htm", os.pwd)))
+    assert(!WebPageShot.isWebPage(os.Path("/tmp/a/x.htmlx", os.pwd)), "no suffix leakage across extensions")
+    assert(!WebPageShot.isWebPage(os.Path("/tmp/a/noext", os.pwd)))
+    assert(!WebPageShot.NodePlaywright(script = None).available, "no script ⇒ not available")
+    // Unavailable never lies: Left with the closed-vocab engine reason.
+    WebPageShot.Unavailable.shot(os.Path("/tmp/a.html", os.pwd), os.Path("/tmp/out.png", os.pwd)).map {
+      case Left(reason) => assertEquals(reason, RichDegrade.Reason.EngineUnavailable)
+      case Right(_) => fail("Unavailable must never fake a shot")
+    }
+  }
+
+  /**
+   * Remove Scala block comments and per-line `//` trailing comments. Good enough
+   *  for an idiom scan: string literals containing `//` would only make the scan
+   *  *weaker* on that line, never produce a false positive.
+   */
   private def stripComments(src: String): String =
     val noBlocks = src.replaceAll("(?s)/\\*.*?\\*/", "")
-    noBlocks.linesIterator.map { line =>
-      val i = line.indexOf("//")
-      if i >= 0 then line.substring(0, i) else line
-    }.mkString("\n")
+    noBlocks.linesIterator
+      .map { line =>
+        val i = line.indexOf("//")
+        if i >= 0 then line.substring(0, i) else line
+      }
+      .mkString("\n")
+end RichOutboundSpec

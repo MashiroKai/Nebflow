@@ -26,6 +26,10 @@
 //      .nebflow/evidence/20261007_101748_askuser-badge-regroup/）：挂起卡终态
 //      不开组（live 双轮全链无并列 badge 面）＋ 真实两轮历史形 reload 一枚
 //      header ＋ busyTail 交换中途重放不被轮1中间 badge 骗出假完成 header。
+//      B1 的等待面呈现（原「平铺」半面）经 AskUser 过程默认折叠令（主人
+//      2026-10-08 现场反馈「调用 AskUser ⇒ 过程面板被自动展开」判缺陷）改判为
+//      默认折叠——结构面（不开组、一枚 header）不动；取证
+//      .nebflow/evidence/20261008_askuser-collapse-x1/。
 // Run: npx playwright test tests/askuser-expandfix.spec.mjs
 
 import { test, expect } from '@playwright/test';
@@ -196,8 +200,12 @@ test.describe('AskUser 强制展开修令 (2026-10-06 19:29)', () => {
     await page.evaluate(() => window.__axFinishTurn(4200, 'test-model', '卡片已发出。'));
     const m1 = await page.evaluate(() => window.__axCensus());
     expect(m1.headers).toHaveLength(0); // 修复点：不落 badge、不开组（并列组的源头）
-    expect(m1.tools.every(x => !x.tucked)).toBe(true); // 等待面平铺（=busyTail 开尾同形）
-    expect(m1.childSeq[1]).toBe('tool(FLAT)');
+    // 等待面（AskUser 过程默认折叠令 · 主人 2026-10-08 现场反馈，改判 10-07 令的
+    // 「等待面平铺」半面）：挂起卡终态不开组依旧，但过程行保持 tucked 默认折叠、
+    // 展开只由用户动作触发——与 9.19 形态一致（9.19 collapseTurn 无挂起卡分支，
+    // ack 终态普通过程 header+tuck）。
+    expect(m1.tools.every(x => x.tucked)).toBe(true);
+    expect(m1.childSeq[1]).toBe('tool(tucked)');
     // 作答 → 续跑：工作行锚轮顶，全程无第二 badge 面
     await page.evaluate(() => window.__axAnswerCard('req-b'));
     await page.evaluate(() => window.__axCallStart('Bash'));

@@ -27,15 +27,25 @@ class ChainStoreSpec extends FunSuite:
     ChainStore.appendSync("31", "merge-queue", Json.obj("action" -> "enqueued".asJson))
     val rec = ChainStore.readSync("31").getOrElse(fail("record must exist"))
     assertEquals(rec.taskId, "31")
-    assertEquals(rec.entries.map(_.kind), List("delegate-spawn", "terminal-verdict", "merge-queue"), "append order preserved (time-ordered chain)")
+    assertEquals(
+      rec.entries.map(_.kind),
+      List("delegate-spawn", "terminal-verdict", "merge-queue"),
+      "append order preserved (time-ordered chain)"
+    )
     assertEquals(rec.entries.head.payload.hcursor.get[String]("branch").toOption, Some("delegate/d-x"))
     assert(rec.entries.forall(_.at > 0), "every entry carries its timestamp")
   }
 
-  test("keyFor: task ledger id wins when valid; delegateId is the fallback; invalid keys are refused at the write boundary") {
+  test(
+    "keyFor: task ledger id wins when valid; delegateId is the fallback; invalid keys are refused at the write boundary"
+  ) {
     assertEquals(ChainStore.keyFor(Some("31"), "delegate-nebflow-abc"), "31")
     assertEquals(ChainStore.keyFor(None, "delegate-nebflow-abc"), "delegate-nebflow-abc")
-    assertEquals(ChainStore.keyFor(Some("../escape"), "d-1"), "d-1", "a path-traversal ledger id must not become the key")
+    assertEquals(
+      ChainStore.keyFor(Some("../escape"), "d-1"),
+      "d-1",
+      "a path-traversal ledger id must not become the key"
+    )
     assertEquals(ChainStore.keyFor(Some(""), "d-1"), "d-1")
     // 非法键写入 = 静默拒（不落盘、不抛）
     ChainStore.appendSync("../escape", "delegate-spawn", Json.obj())

@@ -34,8 +34,8 @@ object ExternalOpenNative:
       case Some(sid) =>
         ExternalExecutor.forId(executorId) match
           case Some(ex) if ex.id == "codex" => s"codex resume $sid"
-          case Some(ex)                     => ex.interactiveResumeCommand(Some(sid))
-          case None                         => executorId
+          case Some(ex) => ex.interactiveResumeCommand(Some(sid))
+          case None => executorId
 
   /**
    * 平台模板（argv）。osName 取 `os.name` 小写子串判定（"mac"/"win"，其余按
@@ -43,23 +43,23 @@ object ExternalOpenNative:
    * xterm——执行面 NotFound 时回显提示）。
    */
   def templateFor(
-      osName: String,
-      cwd: String,
-      executorId: String,
-      cliSessionId: Option[String],
-      linuxTerminals: List[String] = List("x-terminal-emulator", "gnome-terminal", "konsole", "xterm")
+    osName: String,
+    cwd: String,
+    executorId: String,
+    cliSessionId: Option[String],
+    linuxTerminals: List[String] = List("x-terminal-emulator", "gnome-terminal", "konsole", "xterm")
   ): (String, List[String]) =
-    val os      = osName.toLowerCase
-    val resume  = resumeCommand(executorId, cliSessionId)
-    val inner   = s"cd ${shQuote(cwd)} && $resume"
+    val os = osName.toLowerCase
+    val resume = resumeCommand(executorId, cliSessionId)
+    val inner = s"cd ${shQuote(cwd)} && $resume"
     if os.contains("mac") then
       // Terminal.app：do script 打开新窗并执行（＋resume 一气呵成）。
       val script = s"""tell application \"Terminal\" to do script ${'"'}$inner${'"'}"""
       ("osascript", List("-e", script))
-    else if os.contains("win") then
-      ("cmd", List("/c", "start", "", "cmd", "/k", inner))
+    else if os.contains("win") then ("cmd", List("/c", "start", "", "cmd", "/k", inner))
     else
       val term = linuxTerminals.headOption.getOrElse("xterm")
       (term, List("-e", s"sh -c ${shQuote(inner)}"))
+  end templateFor
 
 end ExternalOpenNative

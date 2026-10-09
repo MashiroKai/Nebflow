@@ -197,6 +197,10 @@ end AgentLibraryView
  * AskUserQuestionTool.restoreRegistryAfterAnswer 的答复单点恢复信号(R11 第 4 层/
  * U1=C-a + U8=(ii))。agent 的 `DelegateBudget` 实现本 Face(注册点 = SharedResources
  * 构造行,生产 boot 与测试装配共用);pause/register/release 仍由 agent 侧直用,不入本面。
+ *
+ * 🔴 2026-10-09 作者裁定:wall-clock 预算已整体拆除——`resume` 现为结构性 no-op,
+ * 本面仅为调用点兼容保留(拆除后 delegate 治理 = TaskStuckWatcher 无进展判据,见
+ * DelegateBudget.scala 墓碑壳文档)。
  */
 object DelegateBudgetPort:
 

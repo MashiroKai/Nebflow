@@ -37,25 +37,64 @@ object ExternalJudgeHook:
 
   /** 判定素材（结果输入 = CLI final 文本——原书不变）。 */
   final case class Input(
-      id: String,
-      executor: String,
-      workspace: String,
-      project: Option[String],
-      taskId: Option[String],
-      /** 任务摘要（DelegateRegistry.title）。 */
-      title: String,
-      /** CLI final 文本（终态结果）。 */
-      finalText: String,
-      exitCode: Option[Int],
-      /** 进程/流面已显式失败（fail-closed 面）。 */
-      processFailed: Boolean
+    id: String,
+    executor: String,
+    workspace: String,
+    project: Option[String],
+    taskId: Option[String],
+    /** 任务摘要（DelegateRegistry.title）。 */
+    title: String,
+    /** CLI final 文本（终态结果）。 */
+    finalText: String,
+    exitCode: Option[Int],
+    /** 进程/流面已显式失败（fail-closed 面）。 */
+    processFailed: Boolean,
+    /**
+     * git 摘要（引擎加固批 2026-10-09，P1-2 判定缝接线素材）：引擎采集的
+     * [[nebflow.core.GitWorktrees.statusDigest]] ＋漂移注记（P1-2 注记级覆盖）。
+     * 非 git 工作区 = ""（判定机侧同内部腿的空摘要语义）。
+     */
+    gitDigest: String = "",
+    /** true = 本次 settle 是合并轮 resume 的终态（合并指令经 MergeQueue 注入过）。 */
+    mergeRound: Boolean = false
   )
 
   /**
    * #1224 接线点：`ExternalJudgeHook.classify = input => IO(Some(verdict))`。
    * 缺省 = 恒 None（缝未接线——进程结果直判）。volatile 单点，进程级唯一。
+   *
+   * 引擎加固批 2026-10-09（P1-2）：[[defaultClassify]] 把缝接到同一判定机
+   * （DelegateJudgePort——SharedResources 构造行装配，与内部腿同族）。接线后
+   * 外部腿终态可产出三态判词；`ready-to-merge` 由 runner 并入 MergeQueue
+   * （外部通道条目——合并轮经续聊通道注入，settle 终态再判）。
    */
   @volatile var classify: Input => IO[Option[Verdict]] = _ => IO.pure(None)
+
+  /**
+   * 缺省接线工厂（P1-2）：同一 DelegateJudge 判定机（Jev 优先＋SmallJudge 兜底）
+   * → 三态镜像。`TerminalInput.taskBrief` = 判定素材里的任务摘要（title——外部
+   * 腿无平台 brief 注入，title 即派发描述）；gitDigest / mergeRound 直传。装配点
+   * = `agent.SharedResources` 构造行（DelegateJudgePort.install 邻位——同一注册
+   * 纪律：构造即注册，幂等）。
+   */
+  def defaultClassify(): Input => IO[Option[Verdict]] = input =>
+    DelegateJudge.DelegateJudgePort
+      .judgeTerminal(
+        DelegateJudge.TerminalInput(
+          delegateId = input.id,
+          taskBrief = input.title,
+          resultText = input.finalText,
+          gitDigest = input.gitDigest,
+          selfReport = None,
+          mergeRound = input.mergeRound,
+          sessionToolCalls = None
+        )
+      )
+      .map(_.map {
+        case DelegateJudge.Verdict.Completed => Verdict.Completed
+        case DelegateJudge.Verdict.Blocked(r) => Verdict.Blocked(r)
+        case DelegateJudge.Verdict.ReadyToMerge => Verdict.ReadyToMerge
+      })
 
   /** runner 的终态决策入口：缝优先，缝未接线走进程结果直判。 */
   def decide(input: Input): IO[Option[Verdict]] =

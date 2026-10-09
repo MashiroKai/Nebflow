@@ -66,13 +66,14 @@ interface Window {
 
 /** Global confirm dialog (set by modal.js initModals). Signature mirrors
  *  modal.js showConfirm — including the optional opts (tone: 'danger'
- *  default | 'neutral'). */
+ *  default | 'neutral'; confirmLabel: per-call confirm-button word, the social
+ *  unbind flow's 「解除绑定」). */
 interface Window {
   __showConfirm?: (
     title: string,
     message: string,
     onConfirm: () => void,
-    opts?: { tone?: 'danger' | 'neutral' }
+    opts?: { tone?: 'danger' | 'neutral', confirmLabel?: string }
   ) => void;
 }
 

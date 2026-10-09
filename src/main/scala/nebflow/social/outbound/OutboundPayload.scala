@@ -11,6 +11,7 @@ enum OutboundPayload:
   case ImageFile(path: os.Path, mimeType: String)
   case DocumentFile(path: os.Path, fileName: String, bytes: Long)
   case CardHtml(html: String, title: Option[String], rendered: Option[os.Path])
+
   /** section 7 degraded carrier: unknown/failed => text plus a placeholder note. */
   case DegradedText(body: String, reason: String, originalPath: Option[os.Path])
 
@@ -22,14 +23,16 @@ enum ChannelCall:
   case SendPost(title: Option[String], paragraphs: List[String], imageKeys: List[String])
   case SendInteractive(cardJson: String)
 
-/** Outcome of one dispatched call. Every call yields one of these -- count
-  * conservation is an invariant (design card section 7.3, criterion 1). */
+/**
+ * Outcome of one dispatched call. Every call yields one of these -- count
+ * conservation is an invariant (design card section 7.3, criterion 1).
+ */
 final case class ChannelCallResult(
-    call: ChannelCall,
-    ok: Boolean,
-    code: Int,
-    messageId: Option[String],
-    detail: String
+  call: ChannelCall,
+  ok: Boolean,
+  code: Int,
+  messageId: Option[String],
+  detail: String
 )
 
 object ChannelCallResult:
@@ -39,5 +42,10 @@ object ChannelCallResult:
 
   /** A failure reading is an evidence artifact: `detail` must never be empty. */
   def failed(call: ChannelCall, code: Int, detail: String): ChannelCallResult =
-    ChannelCallResult(call = call, ok = false, code = code, messageId = None,
-      detail = if detail.trim.isEmpty then "unspecified failure" else detail)
+    ChannelCallResult(
+      call = call,
+      ok = false,
+      code = code,
+      messageId = None,
+      detail = if detail.trim.isEmpty then "unspecified failure" else detail
+    )

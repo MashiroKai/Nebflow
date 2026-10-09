@@ -146,6 +146,8 @@ When to use:
           )
       }
 
+  end withExternalRootGuard
+
   private def kindRejection(
     rec: AgentRecord,
     action: String,
@@ -504,7 +506,8 @@ When to use:
       // DelegateRegistry（持久地址簿）；与 ExternalOutputStore 的活体/终态留存
       // 条目 join——只展示有缓冲面的行（重启后进程消失的外部任务由下方
       // orphanRows 面覆盖：外部任务同在 runningTasks，无 registry 行即 orphan）。
-      externalRows <- nebflow.core.delegate.DelegateRegistry.list()
+      externalRows <- nebflow.core.delegate.DelegateRegistry
+        .list()
         .filter(_.executor != nebflow.core.executor.ExecutorRegistry.DefaultId)
         .traverse(rec => nebflow.core.executor.ExternalOutputStore.read(rec.id, 0).map(_.map(o => (rec, o))))
         .map(_.flatten)
@@ -628,7 +631,8 @@ When to use:
           rec.title.take(48)
         )
       }
-      val table = (header :: rows ++ orphanRows ++ externalRowList).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
+      val table =
+        (header :: rows ++ orphanRows ++ externalRowList).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
       val scopeNote =
         if anchorsOpt.isDefined then
           "\nScope: your team subtree only (own members + their sub-agents) — root sessions and other teams' agents are hidden."
@@ -795,7 +799,13 @@ When to use:
               )
             )
           case None =>
-            IO.pure(Left(ToolError(s"No external delegate '$sessionId' on record (DelegateRegistry). Run AgentControl(action=list).")))
+            IO.pure(
+              Left(
+                ToolError(
+                  s"No external delegate '$sessionId' on record (DelegateRegistry). Run AgentControl(action=list)."
+                )
+              )
+            )
       case Some(o) =>
         nebflow.core.delegate.DelegateRegistry.find(sessionId) match
           case Some(rec) =>

@@ -39,7 +39,9 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
 
   /** Set the threshold prop for the duration of `io`, always cleared after. */
   private def withThreshold[A](ms: Long)(io: IO[A]): IO[A] =
-    IO(System.setProperty(ThresholdProp, ms.toString)).flatMap(_ => io.guarantee(IO(System.clearProperty(ThresholdProp))))
+    IO(System.setProperty(ThresholdProp, ms.toString)).flatMap(_ =>
+      io.guarantee(IO(System.clearProperty(ThresholdProp)))
+    )
 
   private def jobIdOf(receipt: String): String =
     """Job ID: (\w+)""".r.findFirstMatchIn(receipt).map(_.group(1)).getOrElse(fail(s"no job id in receipt: $receipt"))
@@ -48,29 +50,33 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
   private def query(jobId: String): IO[String] =
     BashTool.call(JsonObject("background_job_id" -> jobId.asJson), ToolContext(projectRoot = "/tmp")).map {
       case Right(out) => out
-      case Left(e)    => fail(s"background query failed: ${e.message}")
+      case Left(e) => fail(s"background query failed: ${e.message}")
     }
 
   /** Poll the query face until `want` appears or the deadline passes. */
-  private def pollUntil(jobId: String, want: String, deadline: FiniteDuration): IO[String] = {
+  private def pollUntil(jobId: String, want: String, deadline: FiniteDuration): IO[String] =
     def loop: IO[String] =
       query(jobId).flatMap { out =>
         if out.contains(want) then IO.pure(out) else IO.sleep(400.millis) *> loop
       }
     loop.timeout(deadline)
-  }
 
   /** Poll the session face until the job completes (consumes the result). */
-  private def pollCompleted(shell: ShellSession, jobId: String, deadlineMs: Long): IO[Either[Throwable, ProcessResult]] = {
+  private def pollCompleted(
+    shell: ShellSession,
+    jobId: String,
+    deadlineMs: Long
+  ): IO[Either[Throwable, ProcessResult]] =
     def loop: IO[Either[Throwable, ProcessResult]] =
       shell.getBackgroundResult(jobId).flatMap {
         case Some(res) => IO.pure(res)
-        case None      => IO.sleep(300.millis) *> loop
+        case None => IO.sleep(300.millis) *> loop
       }
     loop.timeout(deadlineMs.millis)
-  }
 
-  test("A-1 explicit wait budget auto-backgrounds a still-running command (receipt + job id, process alive, result delivered on completion)") {
+  test(
+    "A-1 explicit wait budget auto-backgrounds a still-running command (receipt + job id, process alive, result delivered on completion)"
+  ) {
     val input = JsonObject(
       "command" -> "sleep 10 && echo auto-bg-done".asJson,
       "description" -> "auto-bg-budget".asJson,
@@ -89,7 +95,12 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
       jobId = jobIdOf(receipt)
       _ <- (for
         health <- query(jobId)
-        _ <- IO(assert(health.contains("[Background job running]"), s"process must still be alive right after conversion: $health"))
+        _ <- IO(
+          assert(
+            health.contains("[Background job running]"),
+            s"process must still be alive right after conversion: $health"
+          )
+        )
         completed <- pollUntil(jobId, "[Background job completed]", 30.seconds)
         _ <- IO(assert(completed.contains("auto-bg-done"), s"output retrievable after completion: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
@@ -99,13 +110,21 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
   test("A-5 default threshold arm: MAX_TIMEOUT reads the compressible prop per call (default-arm plumbing)") {
     withThreshold(2000L) {
       IO(assert(BashTool.MAX_TIMEOUT == 2000L, s"MAX_TIMEOUT must read the prop per call, got ${BashTool.MAX_TIMEOUT}"))
-    } *> IO(assert(BashTool.MAX_TIMEOUT == nebflow.shared.Defaults.BashMaxTimeoutMs, "cleared prop must fall back to the default"))
+    } *> IO(
+      assert(
+        BashTool.MAX_TIMEOUT == nebflow.shared.Defaults.BashMaxTimeoutMs,
+        "cleared prop must fall back to the default"
+      )
+    )
   }
 
-  test("A-2 waiting-type background task survives past the old 30min/4h hard cap (compressed config proves the wiring exemption)") {
+  test(
+    "A-2 waiting-type background task survives past the old 30min/4h hard cap (compressed config proves the wiring exemption)"
+  ) {
     val bgCtx = ToolContext(
       projectRoot = "/tmp",
-      bashConfig = nebflow.shared.BashResilienceConfig(hardTimeoutMs = 1000, stuckWindowSec = 1, healthCheckIntervalSec = 1)
+      bashConfig =
+        nebflow.shared.BashResilienceConfig(hardTimeoutMs = 1000, stuckWindowSec = 1, healthCheckIntervalSec = 1)
     )
     val input = JsonObject(
       "command" -> "sleep 8 && echo bg-unlimited-done".asJson,
@@ -117,7 +136,7 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
       receipt <- IO {
         result match
           case Right(out) => out
-          case Left(e)    => fail(s"background start failed: ${e.message}")
+          case Left(e) => fail(s"background start failed: ${e.message}")
       }
       jobId = jobIdOf(receipt)
       _ <- (for
@@ -132,7 +151,9 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
     yield ())
   }
 
-  test("A-3 adopted foreground execution: deferred + on_complete fire with the real output; health face same as native bg") {
+  test(
+    "A-3 adopted foreground execution: deferred + on_complete fire with the real output; health face same as native bg"
+  ) {
     val got = new AtomicReference[Option[Either[Throwable, ProcessResult]]](None)
     for
       shell <- ShellSession.forSession("auto-bg-adopt")
@@ -152,12 +173,14 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         res <- pollCompleted(shell, "adopt1", 20000)
         _ <- IO {
           res match
-            case Right(pr) => assert(pr.stdout.contains("adopted-done"), s"output retrievable via the query face: ${pr.stdout}")
-            case Left(e)   => fail(s"expected success, got: ${e.getMessage}")
+            case Right(pr) =>
+              assert(pr.stdout.contains("adopted-done"), s"output retrievable via the query face: ${pr.stdout}")
+            case Left(e) => fail(s"expected success, got: ${e.getMessage}")
           assert(got.get().exists(_.isRight), s"on_complete must fire with the real result: ${got.get()}")
         }
       yield ()).guarantee(ShellSession.destroySession("auto-bg-adopt").attempt.void)
     yield ()
+    end for
   }
 
   test("A-4 adopted job explicit cancel kills the still-running process tree") {
@@ -176,7 +199,12 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         _ <- IO(assert(h1.isEmpty, s"job removed after cancel: $h1"))
         proc = health.processRef.get()
         _ <- IO.sleep(500.millis)
-        _ <- IO(assert(proc == null || !proc.isAlive, s"process tree must be killed by cancel: alive=${proc != null && proc.isAlive}"))
+        _ <- IO(
+          assert(
+            proc == null || !proc.isAlive,
+            s"process tree must be killed by cancel: alive=${proc != null && proc.isAlive}"
+          )
+        )
       yield ()).guarantee(ShellSession.destroySession("auto-bg-cancel").attempt.void)
     yield ()
   }

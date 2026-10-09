@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 670 538">
+  <title>wings spread</title>
+  <g transform="translate(208,448)">
+    <g fill="#d8d8d8" stroke="#111111" stroke-width="10" stroke-linejoin="round">
+      <path d="M 0 0 Q 42.0 -185.4 -37.6 -358.0 Q -14.8 -179.4 0 0 Z"/>
+      <path d="M 0 0 Q 2.3 -173.2 -96.5 -315.6 Q -44.4 -159.0 0 0 Z"/>
+      <path d="M 0 0 Q -20.1 -140.4 -118.4 -242.7 Q -55.6 -123.1 0 0 Z"/>
+    </g>
+    <g fill="#ffffff" stroke="#111111" stroke-width="10" stroke-linejoin="round">
+      <path d="M 0 0 Q 144.6 -174.9 371.6 -173.3 Q 178.4 -102.4 0 0 Z"/>
+      <path d="M 0 0 Q 118.4 -208.4 351.4 -264.8 Q 164.1 -147.7 0 0 Z"/>
+      <path d="M 0 0 Q 64.3 -199.2 252.6 -290.6 Q 118.6 -152.0 0 0 Z"/>
+      <path d="M 0 0 Q 17.0 -163.4 150.0 -259.8 Q 71.5 -131.9 0 0 Z"/>
+    </g>
+  </g>
+</svg>

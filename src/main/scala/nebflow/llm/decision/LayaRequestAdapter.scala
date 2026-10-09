@@ -54,6 +54,8 @@ object LayaRequestAdapter:
           .map(j => base.asObject.map(o => io.circe.Json.fromJsonObject(o.add("min_confidence", j))).getOrElse(base))
           .getOrElse(base)
 
+  end requestBody
+
   /** Apply the per-question LAYA adaptations; emits the capacity warning. */
   private[decision] def adaptQuestion(q: DecisionQuestion): DecisionQuestion =
     q match
@@ -86,3 +88,4 @@ object LayaRequestAdapter:
     q match
       case c: DecisionQuestion.Choice => c.criteria.keySet.size == c.criteria.size
       case _ => true
+end LayaRequestAdapter

@@ -25,15 +25,17 @@ enum RichCall:
   case UploadImage(path: os.Path, thenSendImage: Boolean)
   case UploadFile(path: os.Path, fileName: String, thenSendFile: Boolean)
 
-/** Reading for one attempted call. `detail` is non-empty on every failure —
-  *  that is the machine-checkable half of "never drop silently" (design card
-  *  §7.3 #2). */
+/**
+ * Reading for one attempted call. `detail` is non-empty on every failure —
+ *  that is the machine-checkable half of "never drop silently" (design card
+ *  §7.3 #2).
+ */
 final case class RichCallResult(
-    call: RichCall,
-    ok: Boolean,
-    code: Int,
-    messageId: Option[String],
-    detail: String
+  call: RichCall,
+  ok: Boolean,
+  code: Int,
+  messageId: Option[String],
+  detail: String
 )
 
 /**
@@ -45,6 +47,13 @@ final case class RichCallResult(
  * downstream reader can match on it instead of parsing prose.
  */
 object RichDegrade:
+
+  /**
+   * 机器可匹配的占位符（social-webshot batch）：原 `[未知类型]` 前缀随英文机制
+   * 原因一并退役（机制词泄漏进用户聊天的实况见 [[unknown]] 的文档）。
+   */
+  val UnsupportedPrefix: String = "[暂不支持]"
+  val UnreachablePrefix: String = "[未送达]"
 
   /** The closed reason vocabulary of design card §7.1. */
   object Reason:
@@ -73,27 +82,66 @@ object RichDegrade:
   def cardNotRendered(reason: String, payloadBytes: Long): String =
     s"[未渲染] $reason — 原件：卡片内容（HTML 载荷，$payloadBytes 字节）"
 
-  /** §7.2: `[未知类型] <reason> — 原件：<path>`. `path` may be absent (an event
-    *  with no product path at all still gets a line, never a silence). */
-  def unknown(reason: String, path: Option[os.Path]): String =
-    val r = if reason.trim.isEmpty then "unspecified" else reason.trim
-    path match
-      case Some(p) => s"[未知类型] $r — 原件：$p"
-      case None    => s"[未知类型] $r"
+  /**
+   * b 层：渠道既带不了也渲不了的类型，给用户的一行友好中文（social-webshot
+   * batch, 2026-10-09）。原 §7.2 模板 `[未知类型] <reason> — 原件：<path>` 退役：
+   * `reason` 是分类器的机制词汇（如 `extension is in neither authority table:
+   * html`），用户实况证明它会被原样透到聊天里——机制词现在只进日志（调用方
+   * WARN），本行只回答用户关心的事：什么看不了、原件在哪。
+   *
+   * 两个占位符保持机器可匹配（§7.3 #2 的精神不变，只是中文化）：
+   *   - `[暂不支持]` —— 原件在盘上、但类型带不出去（本次实况的形状）；
+   *   - `[未送达]` —— 原件本身已不可达（路径不存在/非普通文件/事件没带路径）。
+   *
+   * @param path    产物的绝对路径（有则附上，桌面端可打开）
+   * @param missing 原件已不在盘上（分类时 exists=false，或事件根本没带路径）
+   */
+  def unknown(path: Option[os.Path], missing: Boolean = false): String =
+    if missing then
+      path match
+        case Some(p) => s"$UnreachablePrefix 原件没找到（可能已被清理）：$p"
+        case None => s"$UnreachablePrefix 这条消息没有可发送的文件"
+    else
+      val name = path.fold("该文件")(_.last)
+      path match
+        case Some(p) => s"$UnsupportedPrefix 这个格式在聊天里看不了（$name），原件在桌面端：$p"
+        case None => s"$UnsupportedPrefix 这个格式在聊天里看不了（$name）"
 
-  /** §6.2 step 4: the oversize reading also becomes the user-visible tail.
-    *  `code` / `actual` / `limit` come from the EXISTING gate error, not from a
-    *  second set of constants. */
+  /**
+   * 截图兜底腿的伴行注（social-webshot batch；2026-10-09 裁定后只在「文件腿
+   * 失败 → 截图」面出现）：html 以截图（派生图）发出时，文字腿附原件绝对路径
+   * ——用户可在桌面端 Canvas 打开原件（交互/原始形态只有桌面有）。文件腿直发
+   * 成功时不发本注——原件本身就是消息。
+   */
+  def webPageNote(original: os.Path): String =
+    s"网页原件（桌面端可打开）：$original"
+
+  /**
+   * §6.2 step 4: the oversize reading also becomes the user-visible tail.
+   *  `code` / `actual` / `limit` come from the EXISTING gate error, not from a
+   *  second set of constants.
+   */
   def tooLarge(err: AttachContract.AttachError, path: os.Path): String =
     val actual = err.actual.map(_.toString).getOrElse("?")
     val limit = err.limit.map(_.toString).getOrElse(AttachContract.MaxFileBytes.toString)
     s"[未渲染] ${Reason.SizeGateRejected} — 原件：$path（$actual 字节，上限 $limit 字节，${err.code}）"
 
-/** Fail-closed ledger reading: one per attempted call, so the count of intents
-  *  and the count of readings are equal by construction (§7.3 #1). */
+end RichDegrade
+
+/**
+ * Fail-closed ledger reading: one per attempted call, so the count of intents
+ *  and the count of readings are equal by construction (§7.3 #1).
+ */
 object RichLedger:
+
   def of(call: RichCall, ok: Boolean, code: Int, messageId: Option[String], detail: String): RichCallResult =
-    RichCallResult(call, ok, code, messageId, if ok then detail else if detail.trim.isEmpty then "unspecified failure" else detail)
+    RichCallResult(
+      call,
+      ok,
+      code,
+      messageId,
+      if ok then detail else if detail.trim.isEmpty then "unspecified failure" else detail
+    )
 
 /**
  * The pure planner: one decision in, one intent list out. No IO anywhere, so
@@ -112,34 +160,49 @@ object RichPlanner:
    */
   val InteractivePanelNote: String = "交互版见本地面板"
 
-  /** Card, rendered successfully: the static screenshot first, then the note
-    *  that points at the live version. Two calls, in this order — the order is
-    *  part of the contract, not an implementation detail. */
+  /**
+   * Card, rendered successfully: the static screenshot first, then the note
+   *  that points at the live version. Two calls, in this order — the order is
+   *  part of the contract, not an implementation detail.
+   */
   def planCard(rendered: os.Path): List[RichCall] =
     List(RichCall.UploadImage(rendered, thenSendImage = true), RichCall.SendText(InteractivePanelNote))
 
-  /** Card, NOT rendered: a single degraded text carrying both the §7.1
-    *  placeholder and the note, so the recipient learns that the static product
-    *  failed AND that a live version exists. Zero upload, zero image send. */
+  /**
+   * Card, NOT rendered: a single degraded text carrying both the §7.1
+   *  placeholder and the note, so the recipient learns that the static product
+   *  failed AND that a live version exists. Zero upload, zero image send.
+   */
   def degradeCard(reason: String, path: os.Path, bytes: Long): List[RichCall] =
     List(RichCall.SendText(RichDegrade.renderFailed(reason, path, bytes) + "\n" + InteractivePanelNote))
 
-  /** Image product: sent as-is (route D). Real bytes, no re-encode, no render —
-    *  handing a PNG to a renderer would be pure loss and would risk violating
-    *  the "no mock image" rule. */
+  /**
+   * Image product: sent as-is (route D). Real bytes, no re-encode, no render —
+   *  handing a PNG to a renderer would be pure loss and would risk violating
+   *  the "no mock image" rule.
+   */
   def planImage(path: os.Path): List[RichCall] =
     List(RichCall.UploadImage(path, thenSendImage = true))
 
-  /** Document product: sent as the original file (route E for PDFs — no
-    *  rasterisation at all, the file IS the deliverable). */
+  /**
+   * Document product: sent as the original file (route E for PDFs — no
+   *  rasterisation at all, the file IS the deliverable).
+   */
   def planDocument(path: os.Path, fileName: String): List[RichCall] =
     List(RichCall.UploadFile(path, fileName, thenSendFile = true))
 
-  /** Unknown kind: fail-closed to text, never a silent drop. */
-  def planUnknown(reason: String, path: Option[os.Path]): List[RichCall] =
-    List(RichCall.SendText(RichDegrade.unknown(reason, path)))
+  /**
+   * Unknown kind: fail-closed to text, never a silent drop. The mechanism
+   * `reason` is NOT rendered (see [[RichDegrade.unknown]]): it belongs to the
+   * caller's WARN log, the recipient gets the friendly one-liner.
+   */
+  def planUnknown(path: Option[os.Path], missing: Boolean = false): List[RichCall] =
+    List(RichCall.SendText(RichDegrade.unknown(path, missing)))
 
-  /** Size-gate rejection: zero upload, zero send of the product; one explicit
-    *  text reading with the actual byte count and the limit. */
+  /**
+   * Size-gate rejection: zero upload, zero send of the product; one explicit
+   *  text reading with the actual byte count and the limit.
+   */
   def planTooLarge(err: AttachContract.AttachError, path: os.Path): List[RichCall] =
     List(RichCall.SendText(RichDegrade.tooLarge(err, path)))
+end RichPlanner

@@ -58,7 +58,10 @@ class MailDispatcherReplyBatchSpec extends FunSuite:
     MailTool.flushDispatcherReplies().unsafeRunSync()
     assertEquals(captured.size, 1, "N entries => one injection (the core reading of this batch)")
     val merged = captured.head
-    assert(merged.contains("body-1") && merged.contains("body-2") && merged.contains("body-3"), "every entry's full text survives (no folding, no loss)")
+    assert(
+      merged.contains("body-1") && merged.contains("body-2") && merged.contains("body-3"),
+      "every entry's full text survives (no folding, no loss)"
+    )
     assert(merged.indexOf("body-1") < merged.indexOf("body-2"), "in-batch order kept")
     assert(merged.indexOf("body-2") < merged.indexOf("body-3"), "in-batch order kept")
 
@@ -79,7 +82,11 @@ class MailDispatcherReplyBatchSpec extends FunSuite:
     val captured = scala.collection.mutable.ListBuffer.empty[String]
     val deliver: String => IO[Unit] = t => IO { captured += t; () }
     val r = MailToolTestAccess.enqueue("[INTERRUPT]\nurgent body", deliver).unsafeRunSync()
-    assertEquals(r, Some("[INTERRUPT]\nurgent body"), "first-line [INTERRUPT] => bypass (the caller walks the immediate path)")
+    assertEquals(
+      r,
+      Some("[INTERRUPT]\nurgent body"),
+      "first-line [INTERRUPT] => bypass (the caller walks the immediate path)"
+    )
     assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0, "never enters the buffer")
     assertEquals(captured.toList, Nil, "this layer does not inject (the call site's immediate path is responsible)")
 
@@ -92,19 +99,30 @@ class MailDispatcherReplyBatchSpec extends FunSuite:
       assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0)
     }
 
-  test("G · [INTERRUPT] literal polarity: first non-empty line only, exact case — later lines and lowercase do NOT bypass"):
+  test(
+    "G · [INTERRUPT] literal polarity: first non-empty line only, exact case — later lines and lowercase do NOT bypass"
+  ):
     // positive: the first non-empty line, trimmed, exact
     assert(MailTool.isDispatcherMailInterrupt("[INTERRUPT]\nbody"), "exact first line must match")
-    assert(MailTool.isDispatcherMailInterrupt("\n  [INTERRUPT]  \nbody"), "blank leading lines are skipped; trim applies")
+    assert(
+      MailTool.isDispatcherMailInterrupt("\n  [INTERRUPT]  \nbody"),
+      "blank leading lines are skipped; trim applies"
+    )
     // negative: the literal on a LATER line is ordinary text (never bypasses)
-    assert(!MailTool.isDispatcherMailInterrupt("plain reply\n[INTERRUPT]"), "a later line must NOT trigger the exemption")
+    assert(
+      !MailTool.isDispatcherMailInterrupt("plain reply\n[INTERRUPT]"),
+      "a later line must NOT trigger the exemption"
+    )
     // negative: case-sensitive — the lowercase variant is ordinary text
     assert(!MailTool.isDispatcherMailInterrupt("[interrupt]\nbody"), "lowercase must NOT trigger the exemption")
     // negative: not a prefix/suffix match — adjacent characters break the literal
     assert(!MailTool.isDispatcherMailInterrupt("[INTERRUPT] now"), "adjacent text breaks the literal")
 
+end MailDispatcherReplyBatchSpec
+
 /** Test seam: direct `private[tools]` face calls (same precedent as `MailQueueNebulaSpec`). */
 object MailToolTestAccess:
+
   def enqueue(text: String, deliver: String => IO[Unit]): IO[Option[String]] =
     MailTool.enqueueDispatcherReplyForTest(text, deliver)
 
@@ -119,11 +137,13 @@ object MailToolTestAccess:
       if old == null then System.clearProperty("nebflow.mail.dispatcherBatchMs")
       else System.setProperty("nebflow.mail.dispatcherBatchMs", old)
 
-  /** IO-level bracket of `withWindowMs`: the prop is set before `io` RUNS and restored
-    * after it completes (the window length is read at enqueue time, so specs that drive
-    * the production `MailTool.call` with a dispatcher identity must close the window on
-    * the RUN, not around the IO construction). Absorbed from the mailunify branch's
-    * `withWindowClosed` technique (read-only inventory, mailmodel batch 2026-09-25). */
+  /**
+   * IO-level bracket of `withWindowMs`: the prop is set before `io` RUNS and restored
+   * after it completes (the window length is read at enqueue time, so specs that drive
+   * the production `MailTool.call` with a dispatcher identity must close the window on
+   * the RUN, not around the IO construction). Absorbed from the mailunify branch's
+   * `withWindowClosed` technique (read-only inventory, mailmodel batch 2026-09-25).
+   */
   def withWindowMsIO[A](ms: Long)(io: IO[A]): IO[A] =
     IO {
       val old = System.getProperty("nebflow.mail.dispatcherBatchMs")
@@ -135,3 +155,4 @@ object MailToolTestAccess:
         else System.setProperty("nebflow.mail.dispatcherBatchMs", old)
       })
     }
+end MailToolTestAccess

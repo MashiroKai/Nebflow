@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<!-- uploads-restore-image harness.html — 「历史重渲染后用户图片 src 可 200 取回」
+     (refresh-image fix, 2026-10-09) 的静态测试 harness。
+
+     驱动**真实前端模块**（persistence.js 的 restore 侧行装配单点），重放刷新后
+     两条恢复腿（localStorage 缓存 / 后端 ui.json history）的确切取字节链：
+       buildUserAttachmentRows(row, atts)
+         → buildUserMediaRow(atts, {resolver: attachmentImageUrl})
+         → hydrateMedia: 无 inline preview ⇒ resolver(path) ⇒ /uploads/<sid>/<file>
+     两条缓存腿都剥 preview（sanitizeForCache / ui.json 只落 {name,type,path}），
+     刷新后唯一字节源就是 uploads 路由 —— 本 harness 断言该 URL **可 200 取回**
+     （静态服务器与修复后的网关路由同语义：路径段 percent-DECODE 后取件）。
+
+     负例（missing 文件）在同一 harness 里证明取字节腿真的发生了：404 ⇒
+     nf-img-failed + nf-media-failed-note（hydrateMedia 的终态契约）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>uploads-restore-image harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+            width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const state = (await import(`${WEB}/state.js`)).default;
+    state.ws = { readyState: 1, send: () => {} };
+
+    const pers = await import(`${WEB}/persistence.js`);
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const settle = async () => {
+      await raf2();
+      // hydrateMedia 的失败面（resolver null ⇒ 同步 fail；fetch error ⇒ 异步）——
+      // 多让一拍，保证负例的错误事件已经落地。
+      await new Promise(r => setTimeout(r, 80));
+    };
+
+    /** 后端 ui.json / sanitizeForCache 落盘的真实形状：只有 {name,type,path}。 */
+    window.__restoreUserImage = async ({ name, path }) => {
+      const row = document.createElement('div');
+      row.className = 'row user';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user';
+      bubble.textContent = '历史行';
+      row.appendChild(bubble);
+      const mediaRow = pers.buildUserAttachmentRows(row, [{ name, type: 'image', path }]);
+      const chat = document.getElementById('chat');
+      chat.appendChild(row);
+      if (mediaRow) chat.appendChild(mediaRow);
+      await settle();
+      return mediaRow ? true : false;
+    };
+
+    /** 每张 .pop-img 的读数：src / 失败标记 / 是否真解码出像素。 */
+    window.__imgStates = () =>
+      Array.from(document.querySelectorAll('#chat .row.user-media .pop-img')).map(img => ({
+        src: img.src,
+        failed: img.classList.contains('nf-img-failed'),
+        failedFlag: img.dataset.nfMediaFailed === '1',
+        loaded: img.complete && img.naturalWidth > 0,
+      }));
+
+    /** 失败注记行（appendFailureNote 的读数）。 */
+    window.__failedNotes = () =>
+      Array.from(document.querySelectorAll('#chat .nf-media-failed-note')).map(n => n.textContent);
+
+    /** 「src 可 200 取回」的直接读数：对 img.src 再发一次同源取件。 */
+    window.__fetchImg = async (idx) => {
+      const img = document.querySelectorAll('#chat .row.user-media .pop-img')[idx];
+      if (!img) return { ok: false, status: 0 };
+      const res = await fetch(img.src);
+      const buf = await res.arrayBuffer();
+      return { ok: res.ok, status: res.status, bytes: buf.byteLength };
+    };
+
+    window.__clearChat = () => { document.getElementById('chat').innerHTML = ''; };
+    window.__ready = true;
+  </script>
+</body>
+</html>

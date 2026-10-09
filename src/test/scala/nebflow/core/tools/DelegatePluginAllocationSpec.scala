@@ -82,11 +82,14 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       createFolders = true
     )
 
+  end writeSkillPlugin
+
   private class RecordingLlm(capture: TrieMap[String, LlmRequest]) extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): fs2.Stream[IO, StreamChunk] =
       val put = IO(capture.update(req.sessionId, req)).void
       fs2.Stream.eval(put).drain ++ fs2.Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
@@ -120,29 +123,40 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** 分配桩面：固定集合 + 调用记录。⚠️ 必须在 `mkResources` **之后**调用——
-    * SharedResources 构造即装配生产 face（providerRegistry=null），先装的桩会被覆盖。 */
+  /**
+   * 分配桩面：固定集合 + 调用记录。⚠️ 必须在 `mkResources` **之后**调用——
+   * SharedResources 构造即装配生产 face（providerRegistry=null），先装的桩会被覆盖。
+   */
   private def installStub(names: List[String], calls: ListBuffer[String] = ListBuffer.empty): ListBuffer[String] =
-    PluginAllocator.install(new PluginAllocator.Face:
-      def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
-        IO {
-          calls += subject
-          PluginAllocator.PluginAllocationResult(JevAllocation.Allocated(names), Some(PluginAllocator.AllocationVia.Jev))
-        })
+    PluginAllocator.install(
+      new PluginAllocator.Face:
+        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+          IO {
+            calls += subject
+            PluginAllocator.PluginAllocationResult(
+              JevAllocation.Allocated(names),
+              Some(PluginAllocator.AllocationVia.Jev)
+            )
+          }
+    )
     calls
 
   /** 全败桩（两臂全败 → 端口 Failure fail-open），并记录调用。 */
   private def installFailingStub(calls: ListBuffer[String] = ListBuffer.empty): ListBuffer[String] =
-    PluginAllocator.install(new PluginAllocator.Face:
-      def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
-        IO {
-          calls += subject
-          PluginAllocator.PluginAllocationResult(JevAllocation.FellBack(JevFallbackKind.Failure, "stub down"), None)
-        })
+    PluginAllocator.install(
+      new PluginAllocator.Face:
+        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+          IO {
+            calls += subject
+            PluginAllocator.PluginAllocationResult(JevAllocation.FellBack(JevFallbackKind.Failure, "stub down"), None)
+          }
+    )
     calls
 
-  /** spawn 是异步启动（adapter→actor→LLM sendStream），brief 到达 RecordingLlm 需要
-    * 轮询等待（NodePluginChainSpec.waitUntil 同款）。 */
+  /**
+   * spawn 是异步启动（adapter→actor→LLM sendStream），brief 到达 RecordingLlm 需要
+   * 轮询等待（NodePluginChainSpec.waitUntil 同款）。
+   */
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -154,8 +168,10 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** spawnBackground 直呼（内置执行器腿单点——Mail 续聊复活腿同点复用）。返回值附
-    * 带系统停机句柄（测试卫生：会话 actor 随 system.stopAll 收敛）。 */
+  /**
+   * spawnBackground 直呼（内置执行器腿单点——Mail 续聊复活腿同点复用）。返回值附
+   * 带系统停机句柄（测试卫生：会话 actor 随 system.stopAll 收敛）。
+   */
   private def spawn(res: SharedResources, task: String): IO[(Either[ToolError, (String, String)], IO[Unit])] =
     val system = ActorSystem(s"dpalloc-${scala.util.Random.nextInt(100000)}")
     DelegateTool
@@ -175,6 +191,8 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
         judgeWorkspace = false
       )
       .map(r => (r, system.stopAll.attempt.void))
+
+  end spawn
 
   test("spawn leg: the allocated set rides the brief and the grant, and lands in the queryable records") {
     writeSkillPlugin("p1", "DELEGATE-ALLOC-MARKER")
@@ -205,6 +223,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       assertEquals(payload.hcursor.get[String]("allocation").toOption, Some("jev"))
       assertEquals(holds.get(sid), None, "a skills-only package holds no MCP server")
       assert(ack.contains(sid), "the ack carries the continuation address payload")
+    end for
   }
 
   test("spawn leg fail-open: the allocation family failing leaves an empty injection and a normal spawn") {
@@ -226,6 +245,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       val first = capture.values.head.messages.head.textContent
       assert(!first.contains("<injected-plugins>"), "an empty allocation ⇒ byte-identical legacy brief")
       assertEquals(rec.flatMap(_.plugins), Some(Nil), "fail-open is an explicit empty allocation (Some(Nil), not None)")
+    end for
   }
 
   test("spawn leg off: the allocator absent (port unregistered) records no set — None, not Some(Nil)") {

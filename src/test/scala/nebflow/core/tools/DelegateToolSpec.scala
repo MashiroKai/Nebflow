@@ -106,14 +106,20 @@ class DelegateToolSpec extends CatsEffectSuite:
     val d = DelegateTool.description
     assert(d.toLowerCase.contains("self-contained brief"), "description must state the brief fact")
     assert(d.contains("delegate:<id>"), "description must state the continuation address form")
-    assert(d.contains("No hard concurrency limit"), "description must state the author-directed no-limit face (2026-09-26)")
+    assert(
+      d.contains("No hard concurrency limit"),
+      "description must state the author-directed no-limit face (2026-09-26)"
+    )
     assert(!d.contains("at most 4"), "the retired 4-cap wording must be gone from the description")
     // unified-delegate 守护：kernel:<id> 旧地址形态不再出现在 description
     assert(!d.contains("kernel:<id>"), "the retired kernel:<id> address must be gone, got the description")
     assert(!d.contains("persistent"), "persistent mode must be gone")
 
   test("summarize: task first-line label — stray keys must NOT surface"):
-    assertEquals(DelegateTool.summarize(JsonObject("task" -> "pull the log\nsecond line".asJson)), "Delegate(pull the log)")
+    assertEquals(
+      DelegateTool.summarize(JsonObject("task" -> "pull the log\nsecond line".asJson)),
+      "Delegate(pull the log)"
+    )
     // label = 任务首行截断 60；stray 键（description/device）不被消费。
     assertEquals(
       DelegateTool.summarize(JsonObject("task" -> "pull the log".asJson, "device" -> "KAI".asJson)),
@@ -146,27 +152,39 @@ class DelegateToolSpec extends CatsEffectSuite:
         // reaches the spawn prerequisites — here failing only on the absent
         // ActorSystem (suite runs without one by design).
         assert(err.message.contains("requires ActorSystem"), err.message)
-        assert(!err.message.contains("Kernel agent definition"),
-          "the old kernel-missing refusal must be retired, got: " + err.message)
-        assert(!err.message.contains("Restore the definition and retry"),
-          "the old restore-and-retry refusal must be retired, got: " + err.message)
+        assert(
+          !err.message.contains("Kernel agent definition"),
+          "the old kernel-missing refusal must be retired, got: " + err.message
+        )
+        assert(
+          !err.message.contains("Restore the definition and retry"),
+          "the old restore-and-retry refusal must be retired, got: " + err.message
+        )
       case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
 
-  test("code-defined def: stray disk files CANNOT influence the kernel prompt (single source = code, builtin-def 2026-10-03)"):
+  test(
+    "code-defined def: stray disk files CANNOT influence the kernel prompt (single source = code, builtin-def 2026-10-03)"
+  ):
     for
       _ <- reset()
       // 写入全套磁盘假定义（mirror system.md + agent.json）：对收敛名都是死信
       _ = os.write.over(agentsDir / "kernel" / "system.md", "MIRROR-PROMPT-MARKER", createFolders = true)
-      _ = os.write.over(agentsDir / "kernel" / "agent.json",
+      _ = os.write.over(
+        agentsDir / "kernel" / "agent.json",
         Json.obj("name" -> "kernel".asJson, "description" -> "STRAY-DESCRIPTION-MARKER".asJson).noSpaces,
-        createFolders = true)
+        createFolders = true
+      )
       res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.toAgentDef).get)
     yield
       assertEquals(res.name, "nebflow")
-      assert(!res.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
-        "the disk mirror is a dead letter — the prompt comes from BuiltinAgents (code)")
-      assert(!res.description.contains("STRAY-DESCRIPTION-MARKER"),
-        "the disk agent.json is a dead letter — the description comes from BuiltinAgents (code)")
+      assert(
+        !res.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
+        "the disk mirror is a dead letter — the prompt comes from BuiltinAgents (code)"
+      )
+      assert(
+        !res.description.contains("STRAY-DESCRIPTION-MARKER"),
+        "the disk agent.json is a dead letter — the description comes from BuiltinAgents (code)"
+      )
       assertEquals(res.category, "standalone", "converged name pins the category")
 
   test("code-defined def carries the kernel contract (when-to-use / boundary / plugin pointer)"):
@@ -175,12 +193,15 @@ class DelegateToolSpec extends CatsEffectSuite:
       res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.toAgentDef).get)
     yield
       assertEquals(res.name, "nebflow")
-      assert(res.systemPrompt.contains("`<injected-plugins>` is your capability assignment"),
-        "the plugin-assignment discipline reached the merged prompt")
-      assert(res.systemPrompt.contains("BLOCKED"),
-        "the capability-boundary (BLOCKED) contract reached the merged prompt")
-      assert(!res.systemPrompt.startsWith("<!--"),
-        "the code prompt carries no seed-machinery HTML comment")
+      assert(
+        res.systemPrompt.contains("`<injected-plugins>` is the capability assigned to you"),
+        "the plugin-assignment discipline reached the merged prompt (wording aligned 2026-10-08: the pre-split assertion string 'is your capability assignment' no longer matched HEAD's model-visible text — an existing red, realigned here to the standing wording, no assertion weakened: BLOCKED + no-HTML-comment pins stay)"
+      )
+      assert(
+        res.systemPrompt.contains("BLOCKED"),
+        "the capability-boundary (BLOCKED) contract reached the merged prompt"
+      )
+      assert(!res.systemPrompt.startsWith("<!--"), "the code prompt carries no seed-machinery HTML comment")
 
   test("unified-delegate: default workspace is created and the call reaches spawn prerequisites"):
     for
@@ -194,8 +215,7 @@ class DelegateToolSpec extends CatsEffectSuite:
     for
       _ <- reset()
       res <- DelegateTool.call(JsonObject("task" -> "do work".asJson, "project" -> "no-such-project".asJson), ctxWith())
-    yield
-      assert(res.left.exists(_.message.contains("DELEGATE_PROJECT_UNMOUNTED")), res.toString)
+    yield assert(res.left.exists(_.message.contains("DELEGATE_PROJECT_UNMOUNTED")), res.toString)
 
   test("continuation address: the receipt-facing constant is the delegate: form"):
     val line = nebflow.core.delegate.DelegateRegistry.continuationLine("delegate-kernel-abc12345")
@@ -241,19 +261,29 @@ class DelegateToolSpec extends CatsEffectSuite:
       "code-defined prompt (BuiltinAgents)" -> prompt
     )
     for (name, text) <- faces do
-      assert(text.contains("No hard concurrency limit"),
-        s"$name must promise no hard concurrency limit (author 2026-09-26)")
+      assert(
+        text.contains("No hard concurrency limit"),
+        s"$name must promise no hard concurrency limit (author 2026-09-26)"
+      )
       assert(!text.contains("at most 4"), s"$name must not carry the retired 4-cap wording: $name")
     // builtin-def 批：种子资源已退役——classpath 上不得再有 seed/agents 面。
     val gone = Option(getClass.getClassLoader.getResource("seed/agents/kernel/system.md"))
-    assert(gone.isEmpty, "seed/agents resources are retired (builtin-def 2026-10-03) — the classpath must not carry them")
+    assert(
+      gone.isEmpty,
+      "seed/agents resources are retired (builtin-def 2026-10-03) — the classpath must not carry them"
+    )
 
-  test("the concurrency gate stays retired at the source face (the 5th concurrent spawn is admitted - nothing rejects it)"):
+  test(
+    "the concurrency gate stays retired at the source face (the 5th concurrent spawn is admitted - nothing rejects it)"
+  ):
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "DelegateTool.scala")
     assert(!src.contains("MaxConcurrentPerRoot"), "the retired cap constant must stay out of the spawn-path source")
     assert(!src.contains("concurrencyCheck"), "the retired gate check must stay out of the spawn-path source")
     assert(!src.contains("concurrencyError"), "the retired gate error must stay out of the spawn-path source")
-    assert(!src.contains("case class InFlight"), "the retired in-flight snapshot type must stay out of the spawn-path source")
+    assert(
+      !src.contains("case class InFlight"),
+      "the retired in-flight snapshot type must stay out of the spawn-path source"
+    )
 
   // ---------- 4. 设备面摘除后的行为（2026-09-14 作者裁定 U1/U2） ----------
   // 摘除前本段 = 「设备预检 fail-fast 正控 + 负控」两条（预检函数已随 S1b 全删）。
@@ -290,15 +320,18 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
-  test("nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (9 items) and excludes orchestration/message tools"):
+  test(
+    "nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (9 items) and excludes orchestration/message tools"
+  ):
     val face = nebflow.agent.AgentCore.NebflowFixedTools
     assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow")
     assertEquals(face.size, 9)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
-    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop").foreach { t =>
-      assert(!face.contains(t), s"nebflow must not hold: $t")
-    }
+    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop")
+      .foreach { t =>
+        assert(!face.contains(t), s"nebflow must not hold: $t")
+      }
     assertEquals(
       nebflow.agent.AgentCore
         .fixedToolsFor(AgentDef(name = "nebflow", description = "", tools = Nil, systemPrompt = "")),

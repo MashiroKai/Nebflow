@@ -51,7 +51,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 14px 12px 20px;
+  /* social-fix-confirm (2026-10-09, 水平留白对称): right padding aligns to the
+     shell's 20px rhythm (the body's L/R and this header's own left value —
+     existing values only). Measured asymmetry: the title sat 21px from the
+     modal edge, the close button 15px; cards measured 21/21 and the embedded
+     appId box 16/16 — the header chrome was the one unequal layer. */
+  padding: 14px 20px 12px 20px;
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
   gap: 8px;
@@ -397,6 +402,84 @@
   outline-offset: 2px;
 }
 .social-item-body[hidden] { display: none; }
+
+/* ── unbind-row (author order 2026-10-08): the unbind entry ON the row ──────
+   Created cards surface the entry on the collapsed row — the chip is the row
+   button's SIBLING inside this line (a nested <button> is invalid HTML and
+   would share the toggle's click). Existing tokens only: the line borrows the
+   card-head rhythm (flex + 8px gap), the chip is the plain cfg-btn ghost
+   family + the existing danger face — a secondary action beside the pill, no
+   glass chrome, no new container border. unbind-icon (same-day amendment):
+   the chip is ICON-ONLY — the bare unplug glyph, the word lives on the title;
+   the bound row reads icon + name + pill + unbind icon, nothing else. */
+.social-item-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+/* 🔴 Zero flex-basis, deliberately NOT `1 1 auto`: the row is a <button>, and
+   a button's automatic flex base inside a wrapped line overstates its content
+   size, which pushed the chip to a second line (measured live: base 484 vs a
+   157 max-content). Basis 0 = the row grows to fill what the chip leaves. */
+.social-item-line .social-item-row { flex: 1 1 0; min-width: 0; }
+.social-item-unbind { flex: 0 0 auto; }
+/* 🔴 Ghost face: sapphire Pattern B (loaded last) paints every
+   .cfg-btn:not(.cfg-btn-primary) with the full glass material — the chip would
+   read as a boxed primary-ish action competing with the pill it sits beside.
+   It takes the system's OWN Pattern A face instead (transparent at rest, the
+   1px border kept but transparent to reserve the edge — no layout shift), so
+   the entry reads as a quiet icon action: the red unplug glyph alone (unbind-
+   icon: word off the row — the archive.hint copy rides the title), and the
+   existing .social-btn-danger hover keeps the glyph red (交互红).
+   (0,3,0)/(0,3,1) to outrank sapphire's (0,2,0)/(0,3,0). */
+.social-card .social-item-line .social-item-unbind,
+.social-card .social-item-line .social-item-unbind:hover {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+/* ── social-fix-confirm (author order 2026-10-09): the bound row is static,
+   the unbind chip gets a hover ────────────────────────────────────────────
+   ① The BOUND row (`.social-item-row-bound`, a <div> since this batch —
+      socialPanel.js itemCardHTML) is a STATIC face: no accordion, no action,
+      so the pointer cursor resets here; the accordion row (not-created) keeps
+      its pointer. No hover feedback either — the row carries nothing clickable
+      (the unbind chip is its SIBLING and carries the affordance).
+   ② The unbind chip's hover wash: the danger family's OWN material — the
+      10%/25% color-mix pair the failed/configInvalid pills use, keyed on
+      --status-error-icon (themed ⇒ dark and light both hold; 与「已接入」绿徽
+      并排不冲突). Same specificity as the ghost reset above, LATER in the
+      sheet: it wins at :hover only, so the resting ghost face is unchanged. */
+.social-item-row-bound { cursor: default; }
+.social-card .social-item-line .social-item-unbind:hover {
+  background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
+}
+/* ── social-hover-fix (author order 2026-10-09): the icon-ONLY chip is a
+   symmetric box ───────────────────────────────────────────────────────────
+   User report (screenshot): the hover wash reads 「图标偏左、右侧空一截」.
+   Root cause: `.social-btn-danger .st-ic { margin-right: 5px }` (social.css
+   :250) is built for icon+WORD pairs; on the WORDLESS chip it leaves a 5px
+   ghost gap on the right — measured live (pre-fix): 左留白 11px / 右留白
+   16px, glyph 2.5px left of center; the padding itself (cfg-btn-sm 4px
+   10px, sidebar.css:1180) is already symmetric. Fix stays scoped
+   to the chip: flex-centering on both axes + margin 0 ⇒ width = glyph +
+   the untouched symmetric padding; rest and hover share one box (the wash
+   is background-only), so 常态 is healed by the same rule. The icon+word
+   danger buttons elsewhere (.social-card-actions, line :741 face) keep
+   their 5px icon-word gap — (0,4,0) here outranks (0,2,0) without touching
+   them. Vertical: align-items:center pins the 12px svg mid-box
+   (12px glyph in 4px/4px padding ⇒ 5px/5px), independent of baseline. */
+.social-card .social-item-line .social-item-unbind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.social-card .social-item-line .social-item-unbind .st-ic { margin: 0; }
 
 @media (max-width: 480px) {
   .social-scan-canvas { width: 168px; height: 168px; }

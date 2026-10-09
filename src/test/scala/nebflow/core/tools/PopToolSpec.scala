@@ -76,7 +76,7 @@ class PopToolSpec extends FunSuite:
     assert(result.startsWith(PopTool.Sentinel), s"result must start with the sentinel: ${result.take(80)}")
     io.circe.parser.parse(result.substring(PopTool.Sentinel.length)) match
       case Right(json) => json
-      case Left(err)   => fail(s"everything after the sentinel must be pure JSON: $err")
+      case Left(err) => fail(s"everything after the sentinel must be pure JSON: $err")
 
   private def itemsOf(p: Json): List[Json] =
     p.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil)
@@ -111,11 +111,13 @@ class PopToolSpec extends FunSuite:
     os.write.over(dir / "report.pdf", Array.fill(8)(0x43.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(
-      JsonObject("filePath" -> Json.arr(
-        (dir / "a.png").toString.asJson,
-        (dir / "b.mp4").toString.asJson,
-        (dir / "report.pdf").toString.asJson
-      )),
+      JsonObject(
+        "filePath" -> Json.arr(
+          (dir / "a.png").toString.asJson,
+          (dir / "b.mp4").toString.asJson,
+          (dir / "report.pdf").toString.asJson
+        )
+      ),
       buf
     ) match
       case Right(raw) =>
@@ -130,6 +132,8 @@ class PopToolSpec extends FunSuite:
         assertEquals(pdf.hcursor.get[String]("itemType").toOption, Some("pdf"), "file cards carry the viewer itemType")
       case Left(err) => fail(s"Pop failed: ${err.message}")
 
+    end match
+
   test("audio joins the media face beside image/video (canvas-media Wave2, OD-1 = (b))"):
     // One call: image + audio + document — the audio item is PAYLOAD media
     // (kind "audio", ticket leg), not a file card, and the input order is the
@@ -140,11 +144,13 @@ class PopToolSpec extends FunSuite:
     os.write.over(dir / "report.pdf", Array.fill(8)(0x43.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(
-      JsonObject("filePath" -> Json.arr(
-        (dir / "a.png").toString.asJson,
-        (dir / "tone.mp3").toString.asJson,
-        (dir / "report.pdf").toString.asJson
-      )),
+      JsonObject(
+        "filePath" -> Json.arr(
+          (dir / "a.png").toString.asJson,
+          (dir / "tone.mp3").toString.asJson,
+          (dir / "report.pdf").toString.asJson
+        )
+      ),
       buf
     ) match
       case Right(raw) =>
@@ -160,11 +166,14 @@ class PopToolSpec extends FunSuite:
         assertEquals(fileRefs.get[Int]("failed").toOption, Some(0))
       case Left(err) => fail(s"Pop failed: ${err.message}")
 
+    end match
+
   test("modelFacingResult counts an audio item as media, not files (canvas-media Wave2)"):
     val dir = tempDir("modelface-audio")
     os.write.over(dir / "tone.wav", Array.fill(8)(0x57.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    val raw = pop(JsonObject("filePath" -> (dir / "tone.wav").toString.asJson), buf).toOption.getOrElse(fail("expected Right"))
+    val raw =
+      pop(JsonObject("filePath" -> (dir / "tone.wav").toString.asJson), buf).toOption.getOrElse(fail("expected Right"))
     val model = PopTool.modelFacingResult(raw)
     val p = io.circe.parser.parse(model).toOption.getOrElse(fail(s"model face must be JSON: $model"))
     assertEquals(p.hcursor.get[Int]("media").toOption, Some(1), "audio rides the media counter")
@@ -194,7 +203,7 @@ class PopToolSpec extends FunSuite:
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(JsonObject.empty, buf) match
       case Left(err) => assert(err.message.contains("filePath"), err.message)
-      case Right(_)  => fail("empty input must be refused")
+      case Right(_) => fail("empty input must be refused")
 
     pop(JsonObject("filePath" -> Json.arr("https://example.com".asJson)), buf) match
       case Right(text) =>
@@ -208,12 +217,12 @@ class PopToolSpec extends FunSuite:
       buf
     ) match
       case Left(err) => assert(err.message.contains("cannot be batched"), err.message)
-      case Right(_)  => fail("a URL mixed with file paths must be refused")
+      case Right(_) => fail("a URL mixed with file paths must be refused")
 
     val many = Json.arr(List.fill(PopTool.MaxPopFiles + 1)("x.png").map(_.asJson)*)
     pop(JsonObject("filePath" -> many), buf) match
       case Left(err) => assert(err.message.contains("at most"), err.message)
-      case Right(_)  => fail("an over-cap batch must be refused")
+      case Right(_) => fail("an over-cap batch must be refused")
     assertEquals(buf.size, 1, "only the lone-URL leg sent a popFile frame; the refusals sent none")
 
   // ====================================================================
@@ -231,9 +240,11 @@ class PopToolSpec extends FunSuite:
   // now parses into the array it holds with an upfront notes disclosure (S9);
   // its own bad forms still refuse with the guard text verbatim (S9b).
 
-  /** The `filePath` acceptance must be no wider than the declared schema and no
+  /**
+   * The `filePath` acceptance must be no wider than the declared schema and no
    *  narrower: every shape the schema admits is walked, every shape it does not
-   *  is refused by name. */
+   *  is refused by name.
+   */
   test("S1: an array of mixed-type paths is accepted in order (the batch form, unchanged)"):
     val dir = tempDir("s1")
     os.write.over(dir / "a.png", Array.fill(8)(0x41.toByte))
@@ -241,15 +252,17 @@ class PopToolSpec extends FunSuite:
     os.write.over(dir / "c.pdf", Array.fill(8)(0x43.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(
-      JsonObject("filePath" -> Json.arr(
-        (dir / "a.png").toString.asJson,
-        (dir / "b.mp4").toString.asJson,
-        (dir / "c.pdf").toString.asJson
-      )),
+      JsonObject(
+        "filePath" -> Json.arr(
+          (dir / "a.png").toString.asJson,
+          (dir / "b.mp4").toString.asJson,
+          (dir / "c.pdf").toString.asJson
+        )
+      ),
       buf
     ) match
       case Right(raw) => assertEquals(kindsOf(payloadOf(raw)), List("image", "video", "file"))
-      case Left(err)  => fail(s"S1 must stay accepted: ${err.message}")
+      case Left(err) => fail(s"S1 must stay accepted: ${err.message}")
 
   test("S2: a lone string path is accepted (the single-value form, unchanged)"):
     val dir = tempDir("s2")
@@ -257,7 +270,7 @@ class PopToolSpec extends FunSuite:
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(JsonObject("filePath" -> (dir / "only.png").toString.asJson), buf) match
       case Right(raw) => assertEquals(kindsOf(payloadOf(raw)), List("image"))
-      case Left(err)  => fail(s"S2 must stay accepted: ${err.message}")
+      case Left(err) => fail(s"S2 must stay accepted: ${err.message}")
 
   test("S3: an empty array names the empty-batch shape (never the generic missing-filePath text)"):
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
@@ -279,20 +292,20 @@ class PopToolSpec extends FunSuite:
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(JsonObject("filePath" -> Json.obj("path" -> "a.png".asJson)), buf) match
       case Left(err) => assert(err.message.contains("got object"), err.message)
-      case Right(_)  => fail("S5 must be refused")
+      case Right(_) => fail("S5 must be refused")
 
   test("S6: a URL mixed with file paths keeps its shipped refusal (message unchanged)"):
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(JsonObject("filePath" -> Json.arr("https://example.com".asJson, "/tmp/x.png".asJson)), buf) match
       case Left(err) => assert(err.message.contains("cannot be batched"), err.message)
-      case Right(_)  => fail("S6 must be refused")
+      case Right(_) => fail("S6 must be refused")
 
   test("S7: an over-cap batch keeps its shipped refusal (message unchanged)"):
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     val many = Json.arr(List.fill(PopTool.MaxPopFiles + 1)("/tmp/x.png").map(_.asJson)*)
     pop(JsonObject("filePath" -> many), buf) match
       case Left(err) => assert(err.message.contains("at most"), err.message)
-      case Right(_)  => fail("S7 must be refused")
+      case Right(_) => fail("S7 must be refused")
 
   test("S8: a non-string ARRAY ELEMENT is refused by index + type (was: silently dropped, Right)"):
     val dir = tempDir("s8")
@@ -325,11 +338,15 @@ class PopToolSpec extends FunSuite:
             "it was parsed into 2 path(s) and shown this time. " +
             "Next time pass a real JSON array, not a quoted array string."
         assert(notes.contains(disclosure), s"§16 upfront disclosure missing: $notes")
-        val model = io.circe.parser.parse(PopTool.modelFacingResult(raw)).toOption
+        val model = io.circe.parser
+          .parse(PopTool.modelFacingResult(raw))
+          .toOption
           .getOrElse(fail(s"model face must be JSON: ${PopTool.modelFacingResult(raw).take(80)}"))
         val modelNotes = model.hcursor.downField("notes").as[List[String]].toOption.getOrElse(Nil)
         assertEquals(modelNotes, notes, "the model-facing projection carries the same notes verbatim")
       case Left(err) => fail(s"S9 must be accepted with the disclosure note: ${err.message}")
+
+    end match
 
   test("S9b: a quoted array string whose own contents are bad still refuses with the guard text"):
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
@@ -348,26 +365,37 @@ class PopToolSpec extends FunSuite:
     // Built through the REAL adapter-side marker producer, so the key cannot
     // drift from `ToolInputJson.RawArgsKey`.
     val marked = nebflow.llm.providers.ToolInputJson.malformedInput("""{"filePath": 1""")
-    assert(marked.contains(nebflow.llm.providers.ToolInputJson.RawArgsKey),
-      "the spec must exercise the real marker key")
+    assert(
+      marked.contains(nebflow.llm.providers.ToolInputJson.RawArgsKey),
+      "the spec must exercise the real marker key"
+    )
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(marked, buf) match
       case Left(err) =>
         assert(err.message.contains("could not be parsed"), err.message)
         assert(err.message.contains("""{"filePath": 1"""), "the raw arguments must ride the message")
-        assert(!err.message.contains("requires a `filePath`"),
-          s"the misleading 'missing filePath' text must not survive: ${err.message}")
+        assert(
+          !err.message.contains("requires a `filePath`"),
+          s"the misleading 'missing filePath' text must not survive: ${err.message}"
+        )
       case Right(_) => fail("S10 must be refused")
 
   test("schema ↔ behaviour: the declared filePath domain and the acceptance walk are isomorphic"):
-    val fp = PopTool.inputSchema("properties").flatMap(_.asObject)
-      .flatMap(_("filePath")).flatMap(_.asObject).getOrElse(fail("filePath must be declared"))
+    val fp = PopTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("filePath"))
+      .flatMap(_.asObject)
+      .getOrElse(fail("filePath must be declared"))
 
     // (a) the DECLARATION carries the array bounds the walk enforces
     val declaredTypes = fp("type").flatMap(_.asArray).getOrElse(Nil).flatMap(_.asString)
     assertEquals(declaredTypes, List("string", "array"), "both supported forms are declared")
-    assertEquals(fp("items").flatMap(_.asObject).flatMap(_("type")).flatMap(_.asString), Some("string"),
-      "the array element type is declared — the old schema promised arrays of ANYTHING")
+    assertEquals(
+      fp("items").flatMap(_.asObject).flatMap(_("type")).flatMap(_.asString),
+      Some("string"),
+      "the array element type is declared — the old schema promised arrays of ANYTHING"
+    )
     assertEquals(fp("minItems").flatMap(_.asNumber).flatMap(_.toInt), Option(1))
     assertEquals(fp("maxItems").flatMap(_.asNumber).flatMap(_.toInt), Option(PopTool.MaxPopFiles))
 
@@ -386,7 +414,7 @@ class PopToolSpec extends FunSuite:
     val bad = scala.collection.mutable.ListBuffer.empty[Json]
     pop(JsonObject("filePath" -> Json.arr("a.png".asJson, Json.obj())), bad) match
       case Left(err) => assert(err.message.contains("filePath[1]"), err.message)
-      case Right(_)  => fail("the declared element type must be enforced")
+      case Right(_) => fail("the declared element type must be enforced")
 
   test("PopTool's raw-args marker key stays byte-identical to the adapter's"):
     // `nebflow.core` cannot import `nebflow.llm` (dependency direction), so the
@@ -419,14 +447,18 @@ class PopToolSpec extends FunSuite:
     val dir = tempDir("modelface")
     os.write.over(dir / "shot.png", Array.fill(8)(0x42.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    val raw = pop(JsonObject("filePath" -> (dir / "shot.png").toString.asJson), buf).toOption.getOrElse(fail("expected Right"))
+    val raw =
+      pop(JsonObject("filePath" -> (dir / "shot.png").toString.asJson), buf).toOption.getOrElse(fail("expected Right"))
     val model = PopTool.modelFacingResult(raw)
     assert(!model.contains(PopTool.Sentinel), "the model face never carries the sentinel")
     assert(!model.contains("base64"), "the model face never carries data URIs")
     val p = io.circe.parser.parse(model).toOption.getOrElse(fail(s"model face must be JSON: $model"))
     assertEquals(p.hcursor.get[Int]("media").toOption, Some(1))
     assertEquals(p.hcursor.get[Int]("files").toOption, Some(0))
-    assert(p.hcursor.get[String]("note").toOption.exists(_.contains("act on")), "the projection tells the model what to act on")
+    assert(
+      p.hcursor.get[String]("note").toOption.exists(_.contains("act on")),
+      "the projection tells the model what to act on"
+    )
   }
 
   test("summarize: one file names it, a batch names the first file +N"):
@@ -435,7 +467,9 @@ class PopToolSpec extends FunSuite:
       "Pop\n  (shot.png)"
     )
     assertEquals(
-      PopTool.summarize(JsonObject("filePath" -> Json.arr("/tmp/a.png".asJson, "/tmp/b.png".asJson, "/tmp/c.mp4".asJson))),
+      PopTool.summarize(
+        JsonObject("filePath" -> Json.arr("/tmp/a.png".asJson, "/tmp/b.png".asJson, "/tmp/c.mp4".asJson))
+      ),
       "Pop\n  (a.png +2)"
     )
 
@@ -482,7 +516,7 @@ class PopToolSpec extends FunSuite:
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     pop(JsonObject("filePath" -> (dir / "shot.png").toString.asJson), buf) match
       case Right(raw) => assert(raw.startsWith(PopTool.Sentinel), raw.take(60))
-      case Left(err)  => fail(s"Nebula root session must be admitted: ${err.message}")
+      case Left(err) => fail(s"Nebula root session must be admitted: ${err.message}")
     assertEquals(buf.size, 0, "the admitted file face sends no WS message")
 
   test("identity gate: non-Nebula agent identities are denied (general / project-dispatcher / dream)"):

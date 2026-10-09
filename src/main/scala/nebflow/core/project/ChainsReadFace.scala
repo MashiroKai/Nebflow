@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.delegate.{ChainStore, DelegateRegistry}
+import nebflow.core.delegate.{ChainStore, DelegateRegistry, MergeQueue}
 
 /**
  * ChainsReadFace —— **per-task 只读读面**（N1 刀3 · 设计 v3 §3 A8 / §9；#1228 stub
@@ -22,7 +22,7 @@ import nebflow.core.delegate.{ChainStore, DelegateRegistry}
  *     优先，delegateId 回落）。响应 = `record`（[[ChainStore]] 三行族原样 JSON——前端
  *     既有 chainFromStoreRecord 适配层的直接输入）+ `chain`（delegate 作用域
  *     **FlowMap 衍生投影**：已挂载宿主现读；未挂载 = 盘面探针式 open 只读——崩溃恢复
-     * 「探针式 open 幂等收敛」同款；作用域目录不存在（外部执行器/从未建图）= null，
+ * 「探针式 open 幂等收敛」同款；作用域目录不存在（外部执行器/从未建图）= null，
  *     视图降级为三行族投影）。节点态映射 = v3 §9 逐字表（[[rowStatusOf]] 单点）：
  *     pending/wiring→pending、running/interrupted→running、completed/blocked/failed/
  *     cancelled 直映；ChainView 形（taskId/delegateId/nodes/worktree/verdict/
@@ -39,24 +39,59 @@ import nebflow.core.delegate.{ChainStore, DelegateRegistry}
 
 object ChainsReadFace:
 
-  /** 任务行投影（rows 臂）。`registry` = agentRegistry 快照（活性提示单源）。 */
-  def rowsJson(registry: Map[String, nebflow.actor.AgentRecord]): IO[Json] =
+  /**
+   * 任务行投影（rows 臂）。`registry` = agentRegistry 快照（活性提示单源）。
+   * `archived`（delegate-ui 批 2026-10-08 · G6 历史窗）：`false`（缺省）= 在册窗
+   * （`archivedAt` 缺席的记录）；`true` = 历史窗（`?archived=1`，只出已归档）——
+   * 两窗互补零重叠，归档旗零删除（记录本体原样）。
+   */
+  def rowsJson(registry: Map[String, nebflow.actor.AgentRecord], archived: Boolean = false): IO[Json] =
     IO.blocking(DelegateRegistry.list()).flatMap { records =>
-      records.traverse(rowJson(registry)).map(rows => Json.obj("rows" -> rows.asJson))
+      val scoped = records.filter(rec => rec.archivedAt.isDefined == archived)
+      scoped.traverse(rowJson(registry)).map(rows => Json.obj("rows" -> rows.asJson))
     }
 
-  /** 单行投影：Record 原样 + live 提示 + 最新 terminal-verdict 判词（ready-to-merge 供给源）。 */
+  /**
+   * 单行投影：Record 原样 + live 提示 + 最新 terminal-verdict 判词（ready-to-merge 供给源）
+   * + G1 mode（Record 字段随 asJson 原样透出，None = null ⇒ 前端过渡启发兜底）+
+   * G5 行内排队条件键（`mergeQueue`/`mergeQueuePos`，判据单点 = [[MergeQueue.queueViewOf]]，
+   * 未排队缺键）。
+   */
   private def rowJson(registry: Map[String, nebflow.actor.AgentRecord])(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
       val live = registry.get(rec.id).map(_ => Json.obj("status" -> "running".asJson))
       val verdict = latestVerdict(key)
+      val queue = MergeQueue.queueViewOf(rec.id)
       rec.asJson.asObject match
         case Some(obj) =>
           val withLive = live.fold(obj)(v => obj.add("live", v))
           val withVerdict = verdict.fold(withLive)(v => withLive.add("verdict", v))
-          Json.fromJsonObject(withVerdict)
+          val withQueue = queue.fold(withVerdict) { q =>
+            withVerdict
+              .add(
+                "mergeQueue",
+                Json.obj(
+                  "projectKey" -> q.projectKey.asJson,
+                  "ahead" -> q.ahead.asJson,
+                  "holder" -> q.holder.fold(Json.Null)(_.asJson),
+                  "reminderSent" -> q.reminderSent.asJson
+                )
+              )
+              .add(
+                "mergeQueuePos",
+                Json.obj(
+                  "position" -> q.position.asJson,
+                  "total" -> q.total.asJson,
+                  "readyAt" -> q.readyAt.asJson,
+                  "branch" -> q.branch.asJson,
+                  "baseBranch" -> q.baseBranch.asJson
+                )
+              )
+          }
+          Json.fromJsonObject(withQueue)
         case None => rec.asJson
+      end match
     }.handleErrorWith(e =>
       nebflow.shared.NebflowLogger
         .forName("nebflow.core.project.chains-read-face")
@@ -71,7 +106,14 @@ object ChainsReadFace:
         .filter(_.kind == VerdictRowKind)
         .sortBy(_.at)
         .lastOption
-        .map(e => Json.obj("verdict" -> payloadString(e, "verdict").asJson, "reason" -> payloadString(e, "reason").asJson, "source" -> payloadString(e, "source").asJson, "at" -> e.at.asJson))
+        .map(e =>
+          Json.obj(
+            "verdict" -> payloadString(e, "verdict").asJson,
+            "reason" -> payloadString(e, "reason").asJson,
+            "source" -> payloadString(e, "source").asJson,
+            "at" -> e.at.asJson
+          )
+        )
     }
 
   private val VerdictRowKind = "terminal-verdict"
@@ -91,7 +133,7 @@ object ChainsReadFace:
         case Some(rec) =>
           val storeRecord = IO.blocking(ChainStore.readSync(key)).map {
             case Some(r) => r.asJson
-            case None    => Json.obj("taskId" -> key.asJson, "entries" -> List.empty[Json].asJson)
+            case None => Json.obj("taskId" -> key.asJson, "entries" -> List.empty[Json].asJson)
           }
           scopeProjection(rec).flatMap { chain =>
             storeRecord.map(record =>
@@ -102,6 +144,39 @@ object ChainsReadFace:
                   // chain 缺席 = JSON null（作用域图不存在——视图降级为三行族投影）。
                   "chain" -> chain.getOrElse(Json.Null)
                 )
+              )
+            )
+          }
+      }
+
+  /**
+   * delegate 聚合单查投影（delegate-ui 批 2026-10-08 · G4，`GET /api/delegates/:id`
+   * 读面——视图④详情首绘单缝）：`record` 全量 + `live` 活性提示（rows 臂同源同形）+
+   * `verdict` 最新判词 + `task` 台账全文（taskId → TaskLedger；无号/查无 = null）+
+   * `childrenCount`（星型子代理计数，由路由侧经 [[nebflow.agent.SubAgentTaskStore]]
+   * .findByParent 供给——本面不持 store，零第二读取路径）。`None` = 查无记录/非法 id
+   * （HTTP 404/400 面）。`output` 头（外部执行器增量读首窗）由路由侧并挂（与
+   * `/delegates/:id/output` 同源单点，本面零触碰 executor 域）。**零新存储**：全部
+   * 现读既有面。
+   */
+  def delegateJson(id: String, registry: Map[String, nebflow.actor.AgentRecord], childrenCount: Int): IO[Option[Json]] =
+    if !DelegateRegistry.validId(id) then IO.pure(None)
+    else
+      IO.blocking(DelegateRegistry.find(id)).flatMap {
+        case None => IO.pure(None)
+        case Some(rec) =>
+          IO.blocking {
+            val verdict = latestVerdict(ChainStore.keyFor(rec.taskId, rec.id))
+            val task = rec.taskId.flatMap(tid => TaskLedgerStore.open().findSync(tid))
+            (verdict, task)
+          }.map { case (verdict, task) =>
+            Some(
+              Json.obj(
+                "record" -> rec.asJson,
+                "live" -> registry.get(id).map(_ => Json.obj("status" -> "running".asJson)).getOrElse(Json.Null),
+                "verdict" -> verdict.getOrElse(Json.Null),
+                "task" -> task.map(_.asJson).getOrElse(Json.Null),
+                "childrenCount" -> childrenCount.asJson
               )
             )
           }
@@ -121,7 +196,8 @@ object ChainsReadFace:
       case None =>
         val baseWs = rec.projectWorkspace.getOrElse(rec.cwd)
         IO.blocking {
-          val dir = os.Path(baseWs, nebflow.shared.PathUtil.dataRoot) / ".nebflow" / FlowMapStore.FlowMapsDirName / rec.id
+          val dir =
+            os.Path(baseWs, nebflow.shared.PathUtil.dataRoot) / ".nebflow" / FlowMapStore.FlowMapsDirName / rec.id
           if os.exists(dir) && os.isDir(dir) then Some(dir) else None
         }.flatMap {
           case None => IO.pure(None)
@@ -139,32 +215,39 @@ object ChainsReadFace:
         }
     }
 
-  /** 活动区节点 → ChainNode 形 JSON（label=任务首行，description=短描述，状态经
-    * [[rowStatusOf]] v3 §9 映射表单点；执行器 = ''（继承链——ChainNode 契约））。 */
+  /**
+   * 活动区节点 → ChainNode 形 JSON（label=任务首行，description=短描述，状态经
+   * [[rowStatusOf]] v3 §9 映射表单点；执行器 = ''（继承链——ChainNode 契约））。
+   */
   private def chainNodesJson(scope: String, mounted: Boolean, s: FlowMapState): Json =
     Json.obj(
       "scope" -> scope.asJson,
       "mounted" -> mounted.asJson,
       "nodes" ->
-        s.nodes.values.toList.sortBy(_.createdAt).map { n =>
-          val label = n.task
-            .map(_.linesIterator.nextOption().getOrElse("").trim.take(NodePayload.TaskPreviewMaxChars))
-            .filter(_.nonEmpty)
-            .getOrElse(n.name)
-          Json.obj(
-            "id" -> n.id.asJson,
-            "kind" -> "flow-step".asJson,
-            "label" -> label.asJson,
-            "description" -> n.description.getOrElse("").asJson,
-            "status" -> rowStatusOf(n.status).asJson,
-            "deps" -> n.deps.asJson,
-            "executor" -> "".asJson
-          )
-        }.asJson
+        s.nodes.values.toList
+          .sortBy(_.createdAt)
+          .map { n =>
+            val label = n.task
+              .map(_.linesIterator.nextOption().getOrElse("").trim.take(NodePayload.TaskPreviewMaxChars))
+              .filter(_.nonEmpty)
+              .getOrElse(n.name)
+            Json.obj(
+              "id" -> n.id.asJson,
+              "kind" -> "flow-step".asJson,
+              "label" -> label.asJson,
+              "description" -> n.description.getOrElse("").asJson,
+              "status" -> rowStatusOf(n.status).asJson,
+              "deps" -> n.deps.asJson,
+              "executor" -> "".asJson
+            )
+          }
+          .asJson
     )
 
-  /** 底座节点态 → ROW_STATUS 映射（v3 §9 逐字表；interrupted = 运行族休眠态归
-    * running——sendNodeMessage 同判据先例；未知态归 pending 非终态保守侧）。 */
+  /**
+   * 底座节点态 → ROW_STATUS 映射（v3 §9 逐字表；interrupted = 运行族休眠态归
+   * running——sendNodeMessage 同判据先例；未知态归 pending 非终态保守侧）。
+   */
   private[project] def rowStatusOf(nodeStatus: String): String = nodeStatus match
     case "pending" | "wiring" => "pending"
     case "running" | "interrupted" => "running"

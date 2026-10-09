@@ -50,7 +50,7 @@ class JevTaskSearchRerankSpec extends CatsEffectSuite:
     val out = face.rerank("find relevant items", candidates).unsafeRunSync()
     val order = out match
       case Some(o) => o
-      case None    => fail("expected Some(ordering), got None")
+      case None => fail("expected Some(ordering), got None")
     // 入选者前置（保持候选原序 rel-a → rel-b），未入选续后（原序 1 → 9）；全集排列
     assertEquals(order, List("delegate:rel-a", "delegate:rel-b", "task:1", "task:9"))
     assertEquals(order.size, candidates.size, "重排不增删命中")
@@ -60,19 +60,21 @@ class JevTaskSearchRerankSpec extends CatsEffectSuite:
     val fallingBack = new JevAllocatorPort:
       def allocate(taskText: String, catalog: List[nebflow.core.jev.CatalogEntry]): IO[JevAllocation] =
         IO.pure(JevAllocation.FellBack(JevFallbackKind.Timeout, "fixture timeout"))
-    JevTaskSearchRerank.faceFor(Some(fallingBack))
+    JevTaskSearchRerank
+      .faceFor(Some(fallingBack))
       .rerank("q", List(candidate("task:1")))
       .unsafeRunSync() match
-      case None  => ()
+      case None => ()
       case other => fail(s"FellBack ⇒ skip (None), got $other")
 
     val throwing = new JevAllocatorPort:
       def allocate(taskText: String, catalog: List[nebflow.core.jev.CatalogEntry]): IO[JevAllocation] =
         IO.raiseError(new RuntimeException("fixture provider crash"))
-    JevTaskSearchRerank.faceFor(Some(throwing))
+    JevTaskSearchRerank
+      .faceFor(Some(throwing))
       .rerank("q", List(candidate("task:1")))
       .unsafeRunSync() match
-      case None  => ()
+      case None => ()
       case other => fail(s"exception ⇒ skip (None), got $other")
   }
 
@@ -84,7 +86,7 @@ class JevTaskSearchRerankSpec extends CatsEffectSuite:
     try
       val face = JevTaskSearchRerank.face()
       face.rerank("q", List(candidate("task:1"))).unsafeRunSync() match
-        case None  => ()
+        case None => ()
         case other => fail(s"unconfigured Jev ⇒ skip (None), got $other")
     finally
       nebflow.shared.PathUtil.setDataRoot(original)

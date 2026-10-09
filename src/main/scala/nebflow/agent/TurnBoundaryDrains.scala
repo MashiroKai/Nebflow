@@ -41,18 +41,20 @@ object TurnBoundaryDrains:
   // tree hosts this standalone object) so the notifypack window-expansion
   // feature and its main-side specs survive the merge.)
 
-  /** 窗冲刷载荷的展开（notifypack 解 b 批 · 载体 A-ii）。
-    *
-    * 队列语义不变：本函数**不改** [[drainHead]]——它只把元素**内部**携带的
-    * N 件载荷展开为 N 个虚拟件，供同一 turn 内逐件注入（N 气泡 / 1 次唤醒）。
-    * 判据 = 元素自带 [[AgentCommand.ImmediateInput.windowItems]]（唯一写入点 =
-    * `NodeEngine.flushRootNotify` 的 `case many`）⇒ 作用域非模糊判断，是可机械
-    * 验定的谓词。缺席（用户消息腿 / Mail / deviceMail / flow / askUser 等）⇒
-    * **恒等返回**（1→1），逐条逐 turn 语义逐字不变。
-    *
-    * 🔴 本函数 = 谓词与幂等性的**唯一定义处**。幂等：展开出的虚拟件
-    * `windowItems = None` ⇒ 不可二次展开（防递归放大）。逐件 `sender` 来自
-    * **写入点**（该处 `projectName` 在作用域内）⇒ 此处零字符串手术。 */
+  /**
+   * 窗冲刷载荷的展开（notifypack 解 b 批 · 载体 A-ii）。
+   *
+   * 队列语义不变：本函数**不改** [[drainHead]]——它只把元素**内部**携带的
+   * N 件载荷展开为 N 个虚拟件，供同一 turn 内逐件注入（N 气泡 / 1 次唤醒）。
+   * 判据 = 元素自带 [[AgentCommand.ImmediateInput.windowItems]]（唯一写入点 =
+   * `NodeEngine.flushRootNotify` 的 `case many`）⇒ 作用域非模糊判断，是可机械
+   * 验定的谓词。缺席（用户消息腿 / Mail / deviceMail / flow / askUser 等）⇒
+   * **恒等返回**（1→1），逐条逐 turn 语义逐字不变。
+   *
+   * 🔴 本函数 = 谓词与幂等性的**唯一定义处**。幂等：展开出的虚拟件
+   * `windowItems = None` ⇒ 不可二次展开（防递归放大）。逐件 `sender` 来自
+   * **写入点**（该处 `projectName` 在作用域内）⇒ 此处零字符串手术。
+   */
   def expandWindowFlush(imm: AgentCommand.ImmediateInput): List[AgentCommand.ImmediateInput] =
     imm.windowItems match
       case Some(items) if items.nonEmpty =>
@@ -66,18 +68,20 @@ object TurnBoundaryDrains:
         )
       case _ => List(imm)
 
-  /** [[drainHead]] 的载荷展开包装：队列层语义 = `drainHead`（逐字不动），
-    * 返回值在**队首恰有窗冲刷载荷**时展开为 N 个虚拟件。空队 / compaction 挂起
-    * （`drainHead` 返回 `None`）⇒ `Nil`，与改前逐字同形。
-    *
-    * `A => List[A]` 形参使本函数**对元素类型无假设**（本 object 现为纯决策层、零业务
-    * 依赖）；root 通知语义只经 `expand = windowItems 判据` 注入。 */
+  /**
+   * [[drainHead]] 的载荷展开包装：队列层语义 = `drainHead`（逐字不动），
+   * 返回值在**队首恰有窗冲刷载荷**时展开为 N 个虚拟件。空队 / compaction 挂起
+   * （`drainHead` 返回 `None`）⇒ `Nil`，与改前逐字同形。
+   *
+   * `A => List[A]` 形参使本函数**对元素类型无假设**（本 object 现为纯决策层、零业务
+   * 依赖）；root 通知语义只经 `expand = windowItems 判据` 注入。
+   */
   def drainHeadExpanded[A](queue: List[A], compactionPending: Boolean)(
-      expand: A => List[A]
+    expand: A => List[A]
   ): (List[A], List[A]) =
     drainHead(queue, compactionPending) match
       case (Some(head), tail) => (expand(head), tail)
-      case (None, tail)       => (Nil, tail)
+      case (None, tail) => (Nil, tail)
 
   /** True for ExternalEvents carrying a Delegate/SubTask result. */
   def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =

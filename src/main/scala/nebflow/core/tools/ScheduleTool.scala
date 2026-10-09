@@ -43,17 +43,57 @@ as an instruction — you then execute it.
 - **content** (create): Task content — a natural-language instruction describing what you
   should do when the task fires. Write it as a direct command you would execute ("汇报 XX 进度",
   "整理记忆", "review the latest commits"). Include any necessary context (which project, what scope).
-- **triggerAt** (create): When the task should fire. Must be in the future. Accepted formats:
-  1. Epoch milliseconds (UTC), e.g. 1755298800000
-  2. ISO 8601 with zone, e.g. "2026-08-16T21:00:00+08:00" (safest — no ambiguity)
-  3. ISO 8601 / date without zone, e.g. "2026-08-16T21:00", "2026-08-16 21:00", "2026-08-16" —
-     interpreted in the system timezone
-  4. Natural language: "21:30" or "at 21:30" (today, or tomorrow if already past),
-     "tomorrow" (09:00), "tomorrow at 21:00", "in 30 minutes", "in 2 hours", "in 1 day"
-- **repeat** (create, optional): Recurrence pattern. One of "hourly", "daily", "weekly". Omit for a one-shot task.
+- **triggerAt** (create): When the task should fire. A JSON integer (epoch ms) or a QUOTED
+  JSON string — NEVER a bare unquoted ISO literal (that is invalid JSON). Must be in the
+  future. Accepted string forms, in parser priority order:
+  1. "1791612000000" — epoch ms as a 13-digit digit-string (= 2026-10-10T14:00:00+08:00)
+  2. ISO 8601 WITH zone — "2026-10-10T14:00:00+08:00" or "2026-10-10T06:00:00Z" (safest —
+     no ambiguity; use dashes, never slashes)
+  3. ISO 8601 / date WITHOUT zone — "2026-10-10T14:00", "2026-10-10 14:00",
+     "2026-10-10 14:00:30", "2026-10-10" — interpreted in the system timezone
+  4. Natural language, exactly these shapes: "21:30" / "at 21:30" (today, or tomorrow if
+     already past), "tomorrow" (= 09:00), "tomorrow at 21:00", "in 30 minutes",
+     "in 2 hours", "in 1 day", "in 90m"
+  NOT supported — convert to a supported form yourself before calling: weekday names
+  ("Monday", "周一"), Chinese time phrases ("明天下午3点" → 15:00), "7pm" (→ "19:00"),
+  "next week", slash dates ("2026/10/10"). Only the bare "HH:mm" form auto-rolls to the
+  next day when already past; an absolute form lying in the past is REJECTED — roll it
+  forward yourself.
+- **repeat** (create, optional): "hourly" | "daily" | "weekly" — omit for a one-shot task
+  (a literal "once" is tolerated and treated as omitted). This is NOT cron: the next fire =
+  previous triggerAt + 1h / 24h / 7d, so the clock time of your FIRST triggerAt is the
+  anchor — set it to the next occurrence of the wanted time (e.g. an every-day-09:00
+  routine armed at 14:00 → triggerAt "tomorrow at 09:00", repeat "daily").
 - **name** (create, recommended): Stable identifier for upsert. Same name replaces the old
   task (across all sessions). Required practice for recurring/routine tasks; omit for one-offs.
 - **id** (cancel): Task id to cancel — from action=list.
+
+## Establish "now" before calling (top failure cause)
+
+Your context does NOT show the current date/time — never invent an absolute date.
+- Easiest: use a relative form ("in 30 minutes", "21:30") — no date arithmetic needed, and
+  a past "HH:mm" rolls to tomorrow automatically.
+- For an absolute timestamp, first get the real clock: Bash {command:"date '+%s %z'"} gives
+  epoch SECONDS (×1000 = ms) and the local UTC offset (e.g. +0800 → "+08:00").
+- Every Schedule rejection embeds the server's current time (formatted; parse errors also
+  carry raw epoch ms and zone id) — recalibrate from that line instead of guessing again.
+
+## Examples
+
+{"action":"create", "content":"汇总今日 commit 并向用户汇报进度", "triggerAt":"in 30 minutes", "name":"evening-commit-digest"}
+{"action":"create", "content":"整理记忆并输出明日三件事", "triggerAt":"tomorrow at 09:00", "repeat":"daily", "name":"morning-review"}
+{"action":"create", "content":"提醒用户 review PR #42", "triggerAt":"2026-10-10T17:00:00+08:00", "name":"pr42-review-reminder"}
+{"action":"list"}
+{"action":"cancel", "id":"af17698a"}
+
+## Common Mistakes (each costs a wasted round-trip)
+
+- Invented absolute date (you cannot see today) → use a relative form, or `date '+%s %z'` first.
+- Bare unquoted ISO literal in the arguments JSON → always a number or a quoted string.
+- Absolute triggerAt in the past → only "HH:mm" auto-rolls; roll absolute forms forward yourself.
+- repeat "weekly" assumed to mean "every Monday" → it means +7d from your anchor; put the
+  first triggerAt on the wanted weekday.
+- Routine duplicated after a restart → you omitted `name`, so upsert could not converge it.
 
 ## Notes
 
@@ -75,17 +115,17 @@ as an instruction — you then execute it.
         ),
         "content" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "(create) Task content — what should happen when the task fires".asJson
+          "description" -> "(create) The instruction to execute when the task fires — a direct, self-contained command (\"汇报今日 commit 进度\"); include whatever context it needs.".asJson
         ),
         "triggerAt" -> Json.obj(
-          "type" -> Json.arr("integer".asJson, "string".asJson),
+          "type" -> "string".asJson,
           "description" ->
-            """(create) When the task fires. Epoch ms (integer), ISO 8601 ("2026-08-16T21:00:00+08:00"), or natural language ("tomorrow at 21:00", "in 2 hours", "21:30"). Must be in the future.""".asJson
+            """(create) When the task fires. Schema type is string, but a bare JSON integer (epoch ms) is also accepted — never a bare unquoted ISO literal (invalid JSON). String forms: "2026-10-10T14:00:00+08:00" (ISO with zone; dashes not slashes), "tomorrow at 09:00", "in 30 minutes", "21:30" (auto-rolls to tomorrow when already past). Must be in the future — if unsure of today's date, use a relative form or get the time via Bash first.""".asJson
         ),
         "repeat" -> Json.obj(
           "type" -> "string".asJson,
           "enum" -> Json.arr("hourly".asJson, "daily".asJson, "weekly".asJson),
-          "description" -> "(create) Recurrence pattern. Omit for one-shot.".asJson
+          "description" -> "(create) \"hourly\" | \"daily\" | \"weekly\". Omit for one-shot (\"once\" is tolerated = omitted). Not cron: next fire = previous triggerAt + 1h/24h/7d — the first triggerAt's clock time is the anchor, so set it to the next occurrence of the wanted time.".asJson
         ),
         "name" -> Json.obj(
           "type" -> "string".asJson,
@@ -252,7 +292,8 @@ as an instruction — you then execute it.
           IO.pure(
             Left(
               ToolError(
-                s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, current ${formatTime(now)})."
+                s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, " +
+                  s"current ${formatTime(now)} = $now ms, zone ${ZoneId.systemDefault().getId})."
               )
             )
           )

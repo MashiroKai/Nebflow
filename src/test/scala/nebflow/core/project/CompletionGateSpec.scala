@@ -453,9 +453,7 @@ class CompletionGateSpec extends CatsEffectSuite:
       aId <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a").map(_.id))
       _ = aId.getOrElse(fail("gate-a must be created"))
       _ <- rt.store.mutate(s =>
-        s.copy(nodes =
-          s.nodes.updated(aId.get, s.nodes(aId.get).copy(worktree = Some("gate-wt")))
-        )
+        s.copy(nodes = s.nodes.updated(aId.get, s.nodes(aId.get).copy(worktree = Some("gate-wt"))))
       )
       _ = mkWt(ws, "gate-wt")
     yield (rt, events, system)

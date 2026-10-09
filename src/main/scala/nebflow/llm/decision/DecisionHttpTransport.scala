@@ -66,8 +66,10 @@ private[decision] object DecisionHttpTransport:
     else if code >= 500 then DecisionError.Server(s"HTTP $code: $excerpt")
     else DecisionError.Transport(s"HTTP $code: $excerpt")
 
-  /** Exception classification: a timeout reads as a timeout, everything else
-    * as transport — mirroring the search leg's message sniffing. */
+  /**
+   * Exception classification: a timeout reads as a timeout, everything else
+   * as transport — mirroring the search leg's message sniffing.
+   */
   private[decision] def classifyException(raw: String): DecisionError =
     val lower = raw.toLowerCase
     if lower.contains("timed out") || lower.contains("timeout") then DecisionError.Timeout(raw.take(120))
@@ -105,3 +107,4 @@ private[decision] object DecisionHttpTransport:
         outcome match
           case Right(_) => h.recordDecisionSuccess()
           case Left(e) => h.recordDecisionFailure(e.message)
+end DecisionHttpTransport

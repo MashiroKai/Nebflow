@@ -13,17 +13,17 @@
 import state from './state.js';
 
 /** The root agent's display name. Read chain: in-session onboarding override →
- *  agentsData row → the agent.json probe's authoritative read (rootName boot
- *  race: the header can render before agentList arrives — the file leg keeps
- *  the named home's REAL name on that first paint instead of the mechanism
- *  fallback; steady state the two agree, since the gateway derives the row from
- *  the same file). `agentList` already sends `displayName || name`; the
- *  mechanism name is the last-resort fallback. */
+ *  the agent.json probe's authoritative read (rootName boot race: the header can
+ *  render before agentList arrives — the file leg keeps the named home's REAL
+ *  name on that first paint, and it outranks the agentsData row so a fallback-
+ *  poisoned row can never mask the user's persisted name) → agentsData row →
+ *  mechanism name as the last-resort fallback. Steady state the file and the row
+ *  agree, since the gateway derives the row from the same file. */
 export function rootDisplayName() {
   const override = state.rootDisplayName;
   if (override) return override;
   const a = (state.agentsData || []).find((x) => x.name === 'Nebula');
-  return (a && (a.displayName || a.name)) || state.rootAgentFileName || 'Nebula';
+  return state.rootAgentFileName || (a && (a.displayName || a.name)) || 'Nebula';
 }
 
 /** True when the user has actually NAMED the root agent — either the in-session

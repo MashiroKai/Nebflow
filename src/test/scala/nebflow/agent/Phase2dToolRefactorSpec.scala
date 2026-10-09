@@ -56,7 +56,9 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 18 件 = 2026-09-18 18:18 令 +5 后值 + builtin-def 批 +Delegate − pop 批 −Card − unified-delegate 批 −AgentFlow）、零 Issue、零 NodeList（逐件不变）"):
+  test(
+    "D.1-1: Nebula fixed set == §C.1 清单（在飞 18 件 = 2026-09-18 18:18 令 +5 后值 + builtin-def 批 +Delegate − pop 批 −Card − unified-delegate 批 −AgentFlow）、零 Issue、零 NodeList（逐件不变）"
+  ):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set(
@@ -127,7 +129,9 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(fixed.contains("Write"), "Nebula 机制集含 Write（2026-09-18 18:18 令恢复）")
     assert(fixed.contains("Edit"), "Nebula 机制集含 Edit（2026-09-18 18:18 令恢复）")
 
-  test("D.1-1（agentflow 批）: dispatcher fixed set == Node 三件 + AskUserQuestion + 读四件 + TaskBoard（−Mail +AskUserQuestion，9→9）"):
+  test(
+    "D.1-1（agentflow 批）: dispatcher fixed set == Node 三件 + AskUserQuestion + 读四件 + TaskBoard（−Mail +AskUserQuestion，9→9）"
+  ):
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("project-dispatcher")),
       Set("NodeList", "NodeEdit", "NodeCancel", "AskUserQuestion", "Read", "Glob", "Grep", "Bash", "TaskBoard"),
@@ -248,8 +252,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // friendseal (2026-09-25): the delivery face carries ListFriends iff the
     // friends feature is unsealed (sealed default strips the name; the device
     // leg of SendMessage is unaffected).
-    assertEquals(delivered.contains("ListFriends"), !nebflow.core.FriendsSeal.isSealed,
-      "ListFriends rides the delivery face iff unsealed (seal strips the name, never deletes it)")
+    assertEquals(
+      delivered.contains("ListFriends"),
+      !nebflow.core.FriendsSeal.isSealed,
+      "ListFriends rides the delivery face iff unsealed (seal strips the name, never deletes it)"
+    )
     assert(!delivered.exists(_.contains(LegacyToolName)), "旧名零残留（LLM 交付面）")
     assert(!AgentCore.RootOrchestrationTools.exists(_.contains(LegacyToolName)), "旧名零残留（Nebula 机制固定集）")
     assert(!ToolRegistry.TOOL_MAP.contains(LegacyToolName), "旧名零残留（注册表——旧调用名解析失败，按未知工具明确报错，不静默）")

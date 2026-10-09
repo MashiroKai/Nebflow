@@ -36,8 +36,10 @@ object FeishuLiveProbe:
   private def now(): String =
     DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(ChronoUnit.MILLIS))
 
-  /** Append-or-create one evidence file. The JSON written here is built by the
-    *  adapter's own `toJson` faces, which carry no credential material. */
+  /**
+   * Append-or-create one evidence file. The JSON written here is built by the
+   *  adapter's own `toJson` faces, which carry no credential material.
+   */
   private def write(dir: File, name: String, json: Json): Unit =
     val w = new PrintWriter(new File(dir, name), "UTF-8")
     try w.println(json.spaces2)
@@ -67,9 +69,13 @@ object FeishuLiveProbe:
     println(s"[probe] exit=$exitCode")
     System.exit(exitCode)
 
-  /** Resolve the credential and dispatch, returning the exit code rather than
-    *  exiting here — [[main]] owns the single exit point so teardown can never
-    *  be skipped. */
+  end main
+
+  /**
+   * Resolve the credential and dispatch, returning the exit code rather than
+   *  exiting here — [[main]] owns the single exit point so teardown can never
+   *  be skipped.
+   */
   private def runMode(mode: String, rest: Array[String], evidenceDir: File): Int =
     // The credential is read from the ACTIVE data root (honours --home/NEBFLOW_HOME).
     val root = nebflow.shared.PathUtil.dataRoot
@@ -83,8 +89,10 @@ object FeishuLiveProbe:
       case Right(cred) =>
         // 🔴 Only ever the masked id + fingerprint reach stdout/evidence.
         println(s"[probe] credential source=${cred.source}")
-        println(s"[probe] appId=${FeishuCredentials.redacted(cred.appId)} " +
-          s"len=${cred.appId.length} fp=${FeishuCredentials.fingerprint(cred.appId)}")
+        println(
+          s"[probe] appId=${FeishuCredentials.redacted(cred.appId)} " +
+            s"len=${cred.appId.length} fp=${FeishuCredentials.fingerprint(cred.appId)}"
+        )
         println(s"[probe] appSecret len=${cred.appSecret.length} fp=${FeishuCredentials.fingerprint(cred.appSecret)}")
         run(mode, rest, cred, dir)
 
@@ -98,8 +106,10 @@ object FeishuLiveProbe:
           val text = rest.lift(2).getOrElse("Nebflow feishu channel probe")
           val res = FeishuChannel.sendText(cred.appId, cred.appSecret, "feishu", receiveIdType, receiveId, text)
           write(dir, "send.json", res.toJson)
-          println(s"[probe] SEND ok=${res.ok} code=${res.code} msg=${res.msg} " +
-            s"messageId=${res.messageId.getOrElse("<none>")} sentAt=${res.sentAt}")
+          println(
+            s"[probe] SEND ok=${res.ok} code=${res.code} msg=${res.msg} " +
+              s"messageId=${res.messageId.getOrElse("<none>")} sentAt=${res.sentAt}"
+          )
           if res.ok then 0 else 3
 
         case "listen" =>
@@ -113,7 +123,9 @@ object FeishuLiveProbe:
           val secs = rest.lift(3).flatMap(_.toIntOption).getOrElse(60)
           val res = FeishuChannel.sendText(cred.appId, cred.appSecret, "feishu", receiveIdType, receiveId, text)
           write(dir, "send.json", res.toJson)
-          println(s"[probe] SEND ok=${res.ok} code=${res.code} messageId=${res.messageId.getOrElse("<none>")} sentAt=${res.sentAt}")
+          println(
+            s"[probe] SEND ok=${res.ok} code=${res.code} messageId=${res.messageId.getOrElse("<none>")} sentAt=${res.sentAt}"
+          )
           hold(listener, secs, dir)
 
         case _ =>
@@ -123,15 +135,21 @@ object FeishuLiveProbe:
       listener.stop()
       println(s"[probe] teardown done connected=${listener.connected} lastErr=${listener.lastErr.getOrElse("<none>")}")
 
-  /** Connect, then collect for `secs` — printing each inbound event and its
-    *  receive timestamp. Always returns (never blocks past the budget), so the
-    *  caller's `finally` teardown is reached.
-    *
-    *  Exit code: 0 when the handshake succeeded (even with zero events — an empty
-    *  window is a legitimate reading, not a failure); 4 when the handshake did
-    *  not complete. The count of received events is reported in the readings
-    *  rather than encoded here, so "handshake ok but nothing arrived" stays
-    *  distinguishable from "could not connect". */
+    end try
+
+  end run
+
+  /**
+   * Connect, then collect for `secs` — printing each inbound event and its
+   *  receive timestamp. Always returns (never blocks past the budget), so the
+   *  caller's `finally` teardown is reached.
+   *
+   *  Exit code: 0 when the handshake succeeded (even with zero events — an empty
+   *  window is a legitimate reading, not a failure); 4 when the handshake did
+   *  not complete. The count of received events is reported in the readings
+   *  rather than encoded here, so "handshake ok but nothing arrived" stays
+   *  distinguishable from "could not connect".
+   */
   private def hold(listener: FeishuChannel.Listener, secs: Int, dir: File): Int =
     val connect = listener.start()
     write(dir, "connect.json", connect.toJson)
@@ -147,8 +165,10 @@ object FeishuLiveProbe:
         case Some(r) =>
           n += 1
           received += r.toJson
-          println(s"[probe] RECEIVED#${n} at=${r.receivedAt} messageId=${r.inbound.messageId} " +
-            s"chatId=${r.inbound.chatId} type=${r.inbound.messageType} text=${r.inbound.text.getOrElse("<non-text>")}")
+          println(
+            s"[probe] RECEIVED#${n} at=${r.receivedAt} messageId=${r.inbound.messageId} " +
+              s"chatId=${r.inbound.chatId} type=${r.inbound.messageType} text=${r.inbound.text.getOrElse("<non-text>")}"
+          )
           write(dir, "received.json", Json.arr(received.toSeq*))
         case None => () // budget slice expired with nothing delivered
     // Zero received is written as an EMPTY array too, so the evidence file always
@@ -156,5 +176,6 @@ object FeishuLiveProbe:
     if n == 0 then write(dir, "received.json", Json.arr())
     println(s"[probe] LISTEN window ${secs}s closed, received=$n")
     0
+  end hold
 
 end FeishuLiveProbe

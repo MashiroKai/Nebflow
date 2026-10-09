@@ -1032,6 +1032,14 @@ export async function openWorkspaceItem(item) {
   // Never re-render over unsaved edits or a mounted source-mode editor.
   if (tabs.has(id)) {
     if (pinned) pinTab(id);
+    // D 项（2026-10-08 主人报「Pop 出的 SVG 媒体卡点击无反应」）：落在**既有
+    // 页签**上的打开必须可见。本分支早退（不走 openTab ⇒ 无 openCanvas），原先
+    // 只 setActiveTab —— 面板折叠时等于把激活写进隐藏面板，用户看到的是
+    // 「点了没反应」；刷新后 restore 经 openTab 重开面板，才显得「刷新就好了」。
+    // 补齐 state 4 语义（同文件 onCanvasPanelButtonClick :455 既有先例：
+    // tab open + Canvas closed ⇒ openCanvas + setActiveTab）。background 刷新
+    // 仍不抢激活（同下方 :1067 口径），面板开着的路径零变化。
+    if (!item.background && !isCanvasOpen()) openCanvas();
     const entry = tabs.get(id);
     entry._refreshing = false;  // response arrived (or user-initiated open)
     // A response arrived = the file was freshly checked. Update unconditionally
@@ -1086,12 +1094,17 @@ export async function openWorkspaceItem(item) {
       import('./ws.js'),
       import('./state.js')
     ]).then(([{ sendWs }, { default: state }]) => {
-      const sid = state?.activeSessionId;
-      if (sendWs && sid) {
+      // D 项（2026-10-08）：🔴 摘掉旧 `if (sendWs && sid)` 的 `&& sid` 静默吞——
+      // pop.readFile 的后端派发（WsFileOpsHandlers.scala:44 → handlePopReadFile）
+      // 只读 path、不读 sessionId，旧闸在 activeSessionId 为空时把整次打开静默
+      // 蒸发（点击零反馈零日志）。对齐同文件另两个发送点（scheduleFileRefresh /
+      // sendFileRestoreRequests 均不发会话闸）：sessionId 仅透传（无会话 ⇒
+      // undefined）；WS 未连时 sendWs 自带有界排队、重连补发（ws.js sendWs）。
+      if (sendWs) {
         window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
           detail: { path: absPath, pinned: !!pinned }
         }));
-        sendWs({ type: 'pop.readFile', path: absPath, sessionId: sid });
+        sendWs({ type: 'pop.readFile', path: absPath, sessionId: state?.activeSessionId });
       }
     });
     return;
@@ -1336,6 +1349,10 @@ function persistTabs() {
       // Teams/Flows panels no longer exist client-side — persisting them
       // would re-open dead panes on every reload.
       if (t.type === 'teams' || t.type === 'flows') continue;
+      // Skip delegate-diff tabs (2026-10-10 裁定): their payload lives in the
+      // chat card (click re-opens the view); a restored pane would be empty —
+      // canvas-tab-restore has no renderer that can refetch a batch payload.
+      if (t.type === 'filechanges') continue;
       serializable.push({
         id: t.id,
         title: t.title,

@@ -15,23 +15,25 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.typelevel.ci.CIString
 
 import java.nio.file.Files
+import scala.jdk.CollectionConverters.*
 
-/** secrets-panel backend leg — the four routes at the wire level (2026-09-27).
-  *
-  * Exercises the real http4s routes through `RestApiRoutes` against a
-  * throwaway data root (same shape as `DaemonPanelRoutesSpec`), so the status
-  * codes and the red lines are asserted at the wire rather than inferred:
-  *
-  *   - no token ⇒ 403 `{"error":"Unauthorized"}` (no reason detail);
-  *   - 🔴 the list response NEVER carries a `value` key (structural assert);
-  *   - `confirm` missing / mismatched ⇒ 400 `confirm_mismatch`;
-  *   - managed namespace writes ⇒ 403 `managed_namespace` (visible in list);
-  *   - referenced delete ⇒ 409 `referenced` with the referrer list;
-  *   - oversized value ⇒ 400 `invalid_value`.
-  *
-  * All values are mock values; the fixture root is a temp directory, so the
-  * real `~/.nebflow/secrets/` is never touched.
-  */
+/**
+ * secrets-panel backend leg — the four routes at the wire level (2026-09-27).
+ *
+ * Exercises the real http4s routes through `RestApiRoutes` against a
+ * throwaway data root (same shape as `DaemonPanelRoutesSpec`), so the status
+ * codes and the red lines are asserted at the wire rather than inferred:
+ *
+ *   - no token ⇒ 403 `{"error":"Unauthorized"}` (no reason detail);
+ *   - 🔴 the list response NEVER carries a `value` key (structural assert);
+ *   - `confirm` missing / mismatched ⇒ 400 `confirm_mismatch`;
+ *   - managed namespace writes ⇒ 403 `managed_namespace` (visible in list);
+ *   - referenced delete ⇒ 409 `referenced` with the referrer list;
+ *   - oversized value ⇒ 400 `invalid_value`.
+ *
+ * All values are mock values; the fixture root is a temp directory, so the
+ * real `~/.nebflow/secrets/` is never touched.
+ */
 class SecretsRoutesSpec extends FunSuite:
 
   private val token = "secrets-test-token"
@@ -79,6 +81,8 @@ class SecretsRoutesSpec extends FunSuite:
       releaseDispatcher.unsafeRunSync()
       try os.remove.all(root)
       catch case _: Throwable => ()
+    end try
+  end withRoutes
 
   // HTTP method aliases (http4s `Method.GET` etc.).
   private val GET: Method = Method.GET
@@ -103,9 +107,13 @@ class SecretsRoutesSpec extends FunSuite:
       val text = resp.body.compile.toVector.unsafeRunSync().map(_.toChar).mkString
       (resp.status, if text.isEmpty then None else parse(text).toOption)
 
-  /** POST a fixture secret (create — the PUT fixture helper of the earlier
-    * draft became a POST after the no-upsert ruling: PUT on a missing name is
-    * 404 by contract). */
+  end call
+
+  /**
+   * POST a fixture secret (create — the PUT fixture helper of the earlier
+   * draft became a POST after the no-upsert ruling: PUT on a missing name is
+   * 404 by contract).
+   */
   private def put(routes: HttpRoutes[IO], name: String, value: String): Unit =
     val (st, _) = call(routes, POST, s"/secrets/$name", Some(json(s"""{"value":"$value"}""")))
     assertEquals(st.code, 200, s"POST fixture $name must succeed (got $st)")
@@ -122,8 +130,11 @@ class SecretsRoutesSpec extends FunSuite:
       )
       checks.foreach { case (st, body) =>
         assertEquals(st.code, 403, "all four arms sit behind withAuth")
-        assertEquals(body, Some(json("""{"error":"Unauthorized"}""")),
-          "the auth failure must not distinguish reasons (anti-enumeration)")
+        assertEquals(
+          body,
+          Some(json("""{"error":"Unauthorized"}""")),
+          "the auth failure must not distinguish reasons (anti-enumeration)"
+        )
       }
     }
   }
@@ -136,7 +147,8 @@ class SecretsRoutesSpec extends FunSuite:
       put(routes, "mock-b", MockValue)
       val (st, body) = call(routes, GET, "/secrets")
       assertEquals(st.code, 200)
-      val secrets = body.flatMap(_.hcursor.downField("secrets").values.map(_.toList))
+      val secrets = body
+        .flatMap(_.hcursor.downField("secrets").values.map(_.toList))
         .getOrElse(fail(s"expected a secrets array, got $body"))
       assertEquals(secrets.size, 2)
       secrets.foreach { e =>
@@ -144,11 +156,13 @@ class SecretsRoutesSpec extends FunSuite:
         // Structural red line: no entry may carry a value key at any nesting.
         assert(obj("value").isEmpty, s"entry must not carry a value key: $e")
         assert(obj("value_ref").isEmpty && obj("content").isEmpty, s"entry: $e")
-        assert(obj("name").isDefined && obj("size").isDefined && obj("mtime").isDefined &&
-          obj("mode").isDefined && obj("refs").isDefined, s"entry shape: $e")
+        assert(
+          obj("name").isDefined && obj("size").isDefined && obj("mtime").isDefined &&
+            obj("mode").isDefined && obj("refs").isDefined,
+          s"entry shape: $e"
+        )
       }
-      assertEquals(secrets.map(_.hcursor.get[String]("name")).map(_.toOption.get).sorted,
-        List("mock-a", "mock-b"))
+      assertEquals(secrets.map(_.hcursor.get[String]("name")).map(_.toOption.get).sorted, List("mock-a", "mock-b"))
       // The wire body as a whole never mentions the mock value either.
       val raw = body.get.noSpaces
       assert(!raw.contains(MockValue), "the list payload must never contain a stored value")
@@ -219,13 +233,14 @@ class SecretsRoutesSpec extends FunSuite:
       // Inclusive cap, asserted at the wire: exactly MaxValueBytes bytes is a
       // legal POST (200), MaxValueBytes + 1 is 400 invalid_value.
       val exact = "x" * nebflow.core.secrets.SecretsStore.MaxValueBytes
-      val (stOk, _) = call(routes, POST, "/secrets/mock-boundary",
-        Some(json(s"""{"value":"$exact"}""")))
-      assertEquals(stOk.code, 200,
-        s"a value of exactly ${nebflow.core.secrets.SecretsStore.MaxValueBytes} bytes must store")
+      val (stOk, _) = call(routes, POST, "/secrets/mock-boundary", Some(json(s"""{"value":"$exact"}""")))
+      assertEquals(
+        stOk.code,
+        200,
+        s"a value of exactly ${nebflow.core.secrets.SecretsStore.MaxValueBytes} bytes must store"
+      )
       val over = "x" * (nebflow.core.secrets.SecretsStore.MaxValueBytes + 1)
-      val (stOver, bOver) = call(routes, PUT, "/secrets/mock-boundary",
-        Some(json(s"""{"value":"$over"}""")))
+      val (stOver, bOver) = call(routes, PUT, "/secrets/mock-boundary", Some(json(s"""{"value":"$over"}""")))
       assertEquals(stOver.code, 400)
       assertEquals(bOver.flatMap(j => j.hcursor.get[String]("error").toOption), Some("invalid_value"))
     }
@@ -260,15 +275,20 @@ class SecretsRoutesSpec extends FunSuite:
       // Visible + inspectable in the list.
       val (lst, body) = call(routes, GET, "/secrets")
       assertEquals(lst.code, 200)
-      val names = body.flatMap(_.hcursor.downField("secrets").values.map(_.toList))
-        .getOrElse(fail("no secrets array")).map(_.hcursor.get[String]("name"))
-      assert(names.exists(_.toOption.contains("social-telegram-bot-token")),
-        "managed names must be listable")
+      val names = body
+        .flatMap(_.hcursor.downField("secrets").values.map(_.toList))
+        .getOrElse(fail("no secrets array"))
+        .map(_.hcursor.get[String]("name"))
+      assert(names.exists(_.toOption.contains("social-telegram-bot-token")), "managed names must be listable")
       // Writes refused — POST / PUT / DELETE all 403.
-      assertEquals(call(routes, POST, "/secrets/social-telegram-bot-token",
-        Some(json(s"""{"value":"$MockValue"}""")))._1.code, 403)
-      assertEquals(call(routes, PUT, "/secrets/social-telegram-bot-token",
-        Some(json(s"""{"value":"$MockValue"}""")))._1.code, 403)
+      assertEquals(
+        call(routes, POST, "/secrets/social-telegram-bot-token", Some(json(s"""{"value":"$MockValue"}""")))._1.code,
+        403
+      )
+      assertEquals(
+        call(routes, PUT, "/secrets/social-telegram-bot-token", Some(json(s"""{"value":"$MockValue"}""")))._1.code,
+        403
+      )
       val (dst, db) = call(routes, DELETE, "/secrets/social-telegram-bot-token?confirm=social-telegram-bot-token")
       assertEquals(dst.code, 403, "delete of a managed name refuses even with the right confirm")
       assertEquals(db.flatMap(j => j.hcursor.get[String]("error").toOption), Some("managed_namespace"))
@@ -287,9 +307,11 @@ class SecretsRoutesSpec extends FunSuite:
       os.perms.set(root / "secrets" / "feishu-app-cred", "rw-------")
       // An isolated (non-default) root renders its ABSOLUTE path in stored
       // refs — write the fixture ref the way SocialChannels.persist would.
-      os.write.over(root / "nebflow.json",
+      os.write.over(
+        root / "nebflow.json",
         s"""{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":
-           |{"app_secret_ref":"$root/secrets/feishu-app-cred"}}}}}""".stripMargin)
+           |{"app_secret_ref":"$root/secrets/feishu-app-cred"}}}}}""".stripMargin
+      )
       val (st, b) = call(routes, DELETE, "/secrets/feishu-app-cred?confirm=feishu-app-cred")
       assertEquals(st.code, 409)
       assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("referenced"))
@@ -354,14 +376,17 @@ class SecretsRoutesSpec extends FunSuite:
       put(routes, "mock-b", MockValue)
       val (st, body) = call(routes, GET, "/secrets/catalog")
       assertEquals(st.code, 200)
-      val entries = body.flatMap(_.hcursor.downField("secrets").values.map(_.toList))
+      val entries = body
+        .flatMap(_.hcursor.downField("secrets").values.map(_.toList))
         .getOrElse(fail(s"expected a secrets array, got $body"))
       assertEquals(entries.size, 2)
       entries.foreach { e =>
         val obj = e.asObject.getOrElse(fail(s"entry not an object: $e"))
         assert(obj("value").isEmpty, s"entry must not carry a value key: $e")
-        assert(obj("location").isDefined && obj("variableName").isDefined && obj("description").isDefined,
-          s"entry shape: $e")
+        assert(
+          obj("location").isDefined && obj("variableName").isDefined && obj("description").isDefined,
+          s"entry shape: $e"
+        )
       }
       assert(!body.get.noSpaces.contains(MockValue), "the catalog payload must never carry a value")
     }
@@ -370,8 +395,12 @@ class SecretsRoutesSpec extends FunSuite:
   test("C4 · PATCH metadata: whole-replace — set, then clear back to the derived default") {
     withRoutes { routes =>
       put(routes, "vercel-token", MockValue)
-      val (st1, _) = call(routes, PATCH, "/secrets/vercel-token",
-        Some(json("""{"variableName":"MY_DEPLOY_TOKEN","description":"deploys the docs site"}""")))
+      val (st1, _) = call(
+        routes,
+        PATCH,
+        "/secrets/vercel-token",
+        Some(json("""{"variableName":"MY_DEPLOY_TOKEN","description":"deploys the docs site"}"""))
+      )
       assertEquals(st1.code, 200)
 
       val (_, b1) = call(routes, GET, "/secrets/vercel-token/pointer")
@@ -383,8 +412,11 @@ class SecretsRoutesSpec extends FunSuite:
       val (st2, _) = call(routes, PATCH, "/secrets/vercel-token", Some(json("{}")))
       assertEquals(st2.code, 200)
       val (_, b2) = call(routes, GET, "/secrets/vercel-token/pointer")
-      assertEquals(b2.flatMap(_.hcursor.get[String]("variableName").toOption), Some("VERCEL_TOKEN"),
-        "clearing the override falls back to the derived default")
+      assertEquals(
+        b2.flatMap(_.hcursor.get[String]("variableName").toOption),
+        Some("VERCEL_TOKEN"),
+        "clearing the override falls back to the derived default"
+      )
       assertEquals(b2.flatMap(_.hcursor.get[String]("description").toOption), Some(""))
     }
   }
@@ -392,8 +424,7 @@ class SecretsRoutesSpec extends FunSuite:
   test("C5 · PATCH metadata: an invalid variable name ⇒ 400 invalid_variable_name, never a value") {
     withRoutes { routes =>
       put(routes, "mock-a", MockValue)
-      val (st, b) = call(routes, PATCH, "/secrets/mock-a",
-        Some(json("""{"variableName":"not a name"}""")))
+      val (st, b) = call(routes, PATCH, "/secrets/mock-a", Some(json("""{"variableName":"not a name"}""")))
       assertEquals(st.code, 400)
       assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("invalid_variable_name"))
       assert(!b.map(_.noSpaces).getOrElse("").contains(MockValue), "the error body carries no value")
@@ -406,8 +437,7 @@ class SecretsRoutesSpec extends FunSuite:
 
   test("C6 · PATCH metadata: a missing target ⇒ 404; metadata never mints a secret") {
     withRoutes { routes =>
-      val (st, b) = call(routes, PATCH, "/secrets/ghost",
-        Some(json("""{"description":"x"}""")))
+      val (st, b) = call(routes, PATCH, "/secrets/ghost", Some(json("""{"description":"x"}""")))
       assertEquals(st.code, 404)
       assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("unknown_secret"))
     }
@@ -422,8 +452,11 @@ class SecretsRoutesSpec extends FunSuite:
       )
       checks.foreach { case (st, body) =>
         assertEquals(st.code, 403, "the consumption face is authenticated too")
-        assertEquals(body, Some(json("""{"error":"Unauthorized"}""")),
-          "the auth failure must not distinguish reasons (anti-enumeration)")
+        assertEquals(
+          body,
+          Some(json("""{"error":"Unauthorized"}""")),
+          "the auth failure must not distinguish reasons (anti-enumeration)"
+        )
       }
     }
   }
@@ -431,8 +464,12 @@ class SecretsRoutesSpec extends FunSuite:
   test("C8 · the list answer gains the two catalogue fields WITHOUT losing its old shape") {
     withRoutes { routes =>
       put(routes, "mock-a", MockValue)
-      val (_, _) = call(routes, PATCH, "/secrets/mock-a",
-        Some(json("""{"variableName":"A_TOKEN","description":"a description"}""")))
+      val (_, _) = call(
+        routes,
+        PATCH,
+        "/secrets/mock-a",
+        Some(json("""{"variableName":"A_TOKEN","description":"a description"}"""))
+      )
       val (st, body) = call(routes, GET, "/secrets")
       assertEquals(st.code, 200)
       val e = body.flatMap(_.hcursor.downField("secrets").values.map(_.toList)).getOrElse(fail("no array")).head
@@ -447,3 +484,141 @@ class SecretsRoutesSpec extends FunSuite:
       assert(!body.get.noSpaces.contains(MockValue), "no value in the extended payload either")
     }
   }
+
+  // ── Single-secret value readback (secrets-readback batch, 2026-10-09) ───
+  //
+  // The panel editor opens with the STORED value prefilled (author ruling
+  // 2026-10-09 07:03), so the face now carries exactly ONE value-returning
+  // endpoint: GET /secrets/{name}/value. The red lines it must hold at the
+  // wire: authenticated (same gate, indistinguishable 403); single-name
+  // explicit read only; the response carries exactly {name, value}; the
+  // route's log line names the secret and NEVER the value.
+
+  test("V1 · readback: 200 with exactly {name, value}; the single read carries the stored value") {
+    withRoutes { routes =>
+      put(routes, "mock-a", MockValue)
+      val (st, body) = call(routes, GET, "/secrets/mock-a/value")
+      assertEquals(st.code, 200)
+      val b = body.getOrElse(fail("no body"))
+      assertEquals(b.hcursor.get[String]("name").toOption, Some("mock-a"))
+      assertEquals(
+        b.hcursor.get[String]("value").toOption,
+        Some(MockValue),
+        "the explicit single read DOES return the stored value"
+      )
+      // Exactly two keys — no refs / metadata sidecar / second channel.
+      assertEquals(b.asObject.map(_.keys.toSet), Some(Set("name", "value")))
+      // A managed name is READ-visible (the list shows it; only its lifecycle
+      // writes belong to its own panel).
+      val root = PathUtil.dataRoot
+      os.makeDir.all(root / "secrets")
+      os.write.over(root / "secrets" / "social-telegram-bot-token", MockValue)
+      os.perms.set(root / "secrets" / "social-telegram-bot-token", "rw-------")
+      val (stm, bm) = call(routes, GET, "/secrets/social-telegram-bot-token/value")
+      assertEquals(stm.code, 200, "managed namespaces stay read-visible")
+      assertEquals(bm.flatMap(_.hcursor.get[String]("value").toOption), Some(MockValue))
+    }
+  }
+
+  test("V2 · readback: ONE trailing CRLF/LF stripped (consumption idiom), inner newlines kept") {
+    withRoutes { routes =>
+      val root = PathUtil.dataRoot
+      os.makeDir.all(root / "secrets")
+      os.write.over(root / "secrets" / "multiline", "line-one\nline-two\n")
+      os.perms.set(root / "secrets" / "multiline", "rw-------")
+      val (st, body) = call(routes, GET, "/secrets/multiline/value")
+      assertEquals(st.code, 200)
+      assertEquals(
+        body.flatMap(_.hcursor.get[String]("value").toOption),
+        Some("line-one\nline-two"),
+        "one trailing LF stripped, inner newlines intact"
+      )
+      os.write.over(root / "secrets" / "crlf", "token-abc\r\n")
+      os.perms.set(root / "secrets" / "crlf", "rw-------")
+      val (st2, body2) = call(routes, GET, "/secrets/crlf/value")
+      assertEquals(st2.code, 200)
+      assertEquals(
+        body2.flatMap(_.hcursor.get[String]("value").toOption),
+        Some("token-abc"),
+        "one trailing CRLF stripped"
+      )
+    }
+  }
+
+  test("V3 · readback refusals: missing ⇒ 404, invalid name ⇒ 400, oversized ⇒ 400 — bodies never carry a value") {
+    withRoutes { routes =>
+      val (st1, b1) = call(routes, GET, "/secrets/ghost/value")
+      assertEquals(st1.code, 404)
+      assertEquals(b1.flatMap(j => j.hcursor.get[String]("error").toOption), Some("unknown_secret"))
+      val (st2, b2) = call(routes, GET, "/secrets/.hidden/value")
+      assertEquals(st2.code, 400)
+      assertEquals(b2.flatMap(j => j.hcursor.get[String]("error").toOption), Some("invalid_name"))
+      // A foreign oversized file (the write face could never have produced it)
+      // is refused rather than handed out unbounded.
+      val root = PathUtil.dataRoot
+      os.makeDir.all(root / "secrets")
+      os.write.over(root / "secrets" / "toobig", "x" * (nebflow.core.secrets.SecretsStore.MaxValueBytes + 1))
+      os.perms.set(root / "secrets" / "toobig", "rw-------")
+      val (st3, b3) = call(routes, GET, "/secrets/toobig/value")
+      assertEquals(st3.code, 400)
+      assertEquals(b3.flatMap(j => j.hcursor.get[String]("error").toOption), Some("invalid_value"))
+      List(b1, b2, b3).foreach { b =>
+        assert(!b.map(_.noSpaces).getOrElse("").contains(MockValue), "no refusal body carries a value")
+      }
+    }
+  }
+
+  test("V4 · readback sits behind the same auth gate ⇒ 403 Unauthorized without a token") {
+    withRoutes { routes =>
+      put(routes, "mock-a", MockValue)
+      val (st, body) = call(routes, GET, "/secrets/mock-a/value", bearer = None)
+      assertEquals(st.code, 403, "the value face is authenticated too")
+      assertEquals(
+        body,
+        Some(json("""{"error":"Unauthorized"}""")),
+        "the auth failure must not distinguish reasons (anti-enumeration)"
+      )
+    }
+  }
+
+  test("V5 · 列表无值 / 单条读取有值 / 日志无值 — one run, three red lines") {
+    withRoutes { routes =>
+      // Capture this route's log lines (AnthropicEmptyEventWarnSpec appender shape).
+      val lbLogger = org.slf4j.LoggerFactory
+        .getLogger("nebflow.gateway.secrets")
+        .asInstanceOf[ch.qos.logback.classic.Logger]
+      val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+      appender.start()
+      lbLogger.addAppender(appender)
+      try
+        put(routes, "mock-a", MockValue)
+        // ① 列表无值 — the list AND catalog answers stay value-free.
+        val (lst, listBody) = call(routes, GET, "/secrets")
+        assertEquals(lst.code, 200)
+        assert(!listBody.get.noSpaces.contains(MockValue), "① the list must not carry the value")
+        val (cat, catBody) = call(routes, GET, "/secrets/catalog")
+        assertEquals(cat.code, 200)
+        assert(!catBody.get.noSpaces.contains(MockValue), "the catalog must not carry the value")
+        // ② 单条读取有值 — the explicit single read DOES carry it.
+        val (rd, rdBody) = call(routes, GET, "/secrets/mock-a/value")
+        assertEquals(rd.code, 200)
+        assertEquals(rdBody.flatMap(_.hcursor.get[String]("value").toOption), Some(MockValue))
+        // ③ 日志无值 — the read is logged by NAME, never by value.
+        val events = appender.list.asScala.toList
+        assert(
+          events.exists(_.getFormattedMessage.contains("mock-a")),
+          s"the read is logged (which secret, not what it holds): ${events.map(_.getFormattedMessage)}"
+        )
+        events.foreach { e =>
+          assert(
+            !e.getFormattedMessage.contains(MockValue),
+            s"🔴 a log line must never carry the value: ${e.getFormattedMessage}"
+          )
+        }
+      finally
+        lbLogger.detachAppender(appender)
+        appender.stop()
+      end try
+    }
+  }
+end SecretsRoutesSpec

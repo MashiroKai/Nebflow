@@ -161,7 +161,8 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       project = "replay",
       updatedAt = t0 + 1,
       entries = Map(
-        "chain-a" -> ChainLedger.Entry(chainId = "chain-a", anchor = "a", bornAt = t0, members = List("a"), memberCount = 1)
+        "chain-a" -> ChainLedger
+          .Entry(chainId = "chain-a", anchor = "a", bornAt = t0, members = List("a"), memberCount = 1)
       ),
       rounds = List(round(1))
     )
@@ -173,10 +174,13 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
         AtomicJson.writeSync(path, state2.asJson.noSpaces)
         AtomicJson.appendSync(
           path,
-          ChainLedger.JournalRecord(
-            base = 0,
-            state = state2.copy(rounds = state2.rounds)
-          ).asJson.noSpaces
+          ChainLedger
+            .JournalRecord(
+              base = 0,
+              state = state2.copy(rounds = state2.rounds)
+            )
+            .asJson
+            .noSpaces
         )
       }
       store <- open("replay", path, arch)
@@ -211,16 +215,20 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
     val path = d / ChainLedger.FileName
     val arch = d / ChainLedger.ArchiveDirName
     val journal = AtomicJson.journalPathOf(path)
-    val goodRecord = ChainLedger.JournalRecord(
-      base = 0,
-      state = ChainLedger.State(
-        project = "corrupt",
-        updatedAt = t0,
-        entries = Map(
-          "chain-a" -> ChainLedger.Entry(chainId = "chain-a", anchor = "a", bornAt = t0, members = List("a"), memberCount = 1)
+    val goodRecord = ChainLedger
+      .JournalRecord(
+        base = 0,
+        state = ChainLedger.State(
+          project = "corrupt",
+          updatedAt = t0,
+          entries = Map(
+            "chain-a" -> ChainLedger
+              .Entry(chainId = "chain-a", anchor = "a", bornAt = t0, members = List("a"), memberCount = 1)
+          )
         )
       )
-    ).asJson.noSpaces
+      .asJson
+      .noSpaces
     for
       // (a) 全新目录：两文件皆缺
       (fresh, warnsFresh) <- withWarnAppender {
@@ -268,8 +276,7 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       checkpointText <- IO.blocking(os.read(path))
       journalText <- IO.blocking(os.read(journal))
       rec <- IO.fromEither(
-        jsonParse(journalText.linesIterator.toList.last)
-          .left
+        jsonParse(journalText.linesIterator.toList.last).left
           .map(e => new AssertionError(s"journal 最后一行必须可解析：$e"))
           .flatMap(_.as[ChainLedger.JournalRecord].left.map(e => new AssertionError(e.getMessage)))
       )
@@ -281,8 +288,7 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       journalGone <- IO.blocking(!os.exists(journal))
       foldedText <- IO.blocking(os.read(path))
       folded <- IO.fromEither(
-        jsonParse(foldedText)
-          .left
+        jsonParse(foldedText).left
           .map(e => new AssertionError(s"折叠后的 checkpoint 必须可解析：$e"))
           .flatMap(_.as[ChainLedger.State].left.map(e => new AssertionError(e.getMessage)))
       )
@@ -295,7 +301,11 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       assertEquals(rec.state.rounds.size, 0, "本次无新轮 ⇒ 记录的新增段为空（不重写已落盘段）")
       assertEquals(rec.state.project, "shape", "非轮字段全量在记录里（记录是完整快照，非 diff）")
       assert(rec.state.entries.keySet.contains("chain-a"), "本次变更的条目必须被记录带走")
-      assertEquals(jsonParse(checkpointText).toOption.flatMap(_.as[ChainLedger.State].toOption).map(_.rounds.size), Some(2), "未折叠 ⇒ checkpoint 逐字不变（仍是 2 条）")
+      assertEquals(
+        jsonParse(checkpointText).toOption.flatMap(_.as[ChainLedger.State].toOption).map(_.rounds.size),
+        Some(2),
+        "未折叠 ⇒ checkpoint 逐字不变（仍是 2 条）"
+      )
       assertEquals(st.rounds.size, 2, "内存态 = checkpoint 2 条 + 新增 0 条")
       // ── 折叠：checkpoint 前进承载全量 + journal 清空 ───────────────
       assert(journalGone, "达阈值 ⇒ journal 必须被截断（折叠后半步）")
@@ -316,7 +326,13 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       // 新路径：阈值极小（每次 persist 都折叠 ⇒ checkpoint 恒为最新态）
       store <- open("equiv", path, arch, rotateBytes = 1L)
       _ <- store.reconcile(List(proto("chain-a", List("a", "b"))), Set("a", "b"), Map.empty, Set.empty, t0)
-      _ <- store.reconcile(List(proto("chain-a", List("a", "b")), proto("chain-c", List("c"))), Set("a", "b", "c"), Map.empty, Set.empty, t0 + 1)
+      _ <- store.reconcile(
+        List(proto("chain-a", List("a", "b")), proto("chain-c", List("c"))),
+        Set("a", "b", "c"),
+        Map.empty,
+        Set.empty,
+        t0 + 1
+      )
       st <- store.snapshot
       onDisk <- IO.blocking(os.read(path))
       journalGone <- IO.blocking(!os.exists(journal))
@@ -374,7 +390,7 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       assert(checkpointPresent, "首写必建 checkpoint（台账是权威面，必须在盘）")
       assert(journalPresent, "默认阈值下本次不折叠 ⇒ journal 有记录")
       // 变异: 让 `loadState` 在 checkpoint 缺失时直接返回空账（不读 journal）⇒ 本断言翻红
-      //（这正是「checkpoint 丢失 ⇒ 丢载荷」的错法）。
+      // （这正是「checkpoint 丢失 ⇒ 丢载荷」的错法）。
       assertEquals(stA2.entries.keySet, Set("chain-a", "chain-c"), "checkpoint 缺失 ⇒ journal 独立还原")
       assertEquals(stA2.project, "jonly", "项目名取自记录（override 到本次 project）")
       // 变异: 让折叠只写「增量段」而非全量 ⇒ checkpoint 独立还原缺 rounds/entries ⇒ 翻红。

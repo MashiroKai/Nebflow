@@ -51,14 +51,23 @@ class MemoryDirectWriteGuardSpec extends FunSuite:
     val p = (ws / ".nebflow" / "memory.md").toString
     assertEquals(MemoryDirectWriteGuard.classify(p), Some("project"))
     // 全局 home 域内的同名相对形态不算 project 层（全局三层判定优先）
-    assertEquals(MemoryDirectWriteGuard.classify(s"$home/.nebflow/memory.md"), None,
-      "global-home memory.md is not a project layer (not a budgeted target)")
+    assertEquals(
+      MemoryDirectWriteGuard.classify(s"$home/.nebflow/memory.md"),
+      None,
+      "global-home memory.md is not a project layer (not a budgeted target)"
+    )
 
   test("classify: 非预算层 ⇒ None（detail 文件 / 其它 agent / 普通文件）"):
-    assertEquals(MemoryDirectWriteGuard.classify(s"$home/.nebflow/memory/abc123.md"), None,
-      "detail files stay outside the whitelist")
-    assertEquals(MemoryDirectWriteGuard.classify(s"$home/.nebflow/agents/Coder/memory.md"), None,
-      "non-Nebula agent memory stays outside")
+    assertEquals(
+      MemoryDirectWriteGuard.classify(s"$home/.nebflow/memory/abc123.md"),
+      None,
+      "detail files stay outside the whitelist"
+    )
+    assertEquals(
+      MemoryDirectWriteGuard.classify(s"$home/.nebflow/agents/Coder/memory.md"),
+      None,
+      "non-Nebula agent memory stays outside"
+    )
     assertEquals(MemoryDirectWriteGuard.classify("/tmp/whatever/notes.md"), None)
 
   // ── preCheck：写前检查（只读、零写盘）─────────────────────
@@ -82,8 +91,10 @@ class MemoryDirectWriteGuardSpec extends FunSuite:
   test("preCheck: 非预算层不设闸（detail 文件任意大小都放行）"):
     val p = os.temp.dir() / "detail-xyz.md"
     val projected = "x" * (MemoryBudget.AgentHardBytes.toInt + 1000)
-    assert(MemoryDirectWriteGuard.preCheck(p.toString, projected).isRight,
-      "unclassified paths pass the guard (whitelist scope)")
+    assert(
+      MemoryDirectWriteGuard.preCheck(p.toString, projected).isRight,
+      "unclassified paths pass the guard (whitelist scope)"
+    )
 
   test("preCheck: 软警区（超软线未超硬顶）⇒ Right 放行（提醒面交给 postWriteReminder）"):
     val ws = os.temp.dir(prefix = "nb-mdwg-spec-soft") / "ws"
@@ -91,8 +102,10 @@ class MemoryDirectWriteGuardSpec extends FunSuite:
     val p = ws / ".nebflow" / "memory.md"
     os.write.over(p, "x" * (MemoryBudget.ProjectSoftBytes.toInt + 10)) // 软警区实件
     val projected = "y" * (MemoryBudget.ProjectSoftBytes.toInt + 20)
-    assert(MemoryDirectWriteGuard.preCheck(p.toString, projected).isRight,
-      "warn zone passes the pre-check; only the hard cap refuses")
+    assert(
+      MemoryDirectWriteGuard.preCheck(p.toString, projected).isRight,
+      "warn zone passes the pre-check; only the hard cap refuses"
+    )
 
   // ── postWriteReminder：超限即时提醒 + 24h 防骚扰 ──────────
 
@@ -127,13 +140,19 @@ class MemoryDirectWriteGuardSpec extends FunSuite:
     os.write.over(p, "x" * (MemoryBudget.ProjectSoftBytes + 10).toInt)
     val t0 = Epoch
     assert(MemoryDirectWriteGuard.postWriteReminder(p.toString, nowMs = t0).nonEmpty, "first reminder fires")
-    assert(MemoryDirectWriteGuard.postWriteReminder(p.toString, nowMs = t0 + 3600_000L).isEmpty,
-      "same key within 24h is suppressed")
-    assert(MemoryDirectWriteGuard.postWriteReminder(p.toString, nowMs = t0 + 23L * 3600_000L).isEmpty,
-      "still suppressed near the window edge")
+    assert(
+      MemoryDirectWriteGuard.postWriteReminder(p.toString, nowMs = t0 + 3600_000L).isEmpty,
+      "same key within 24h is suppressed"
+    )
+    assert(
+      MemoryDirectWriteGuard.postWriteReminder(p.toString, nowMs = t0 + 23L * 3600_000L).isEmpty,
+      "still suppressed near the window edge"
+    )
     MemoryDirectWriteGuard.resetForTest()
-    assert(MemoryDirectWriteGuard.postWriteReminder(p.toString, nowMs = t0 + 3600_000L).nonEmpty,
-      "ledger cleared ⇒ reminder fires again")
+    assert(
+      MemoryDirectWriteGuard.postWriteReminder(p.toString, nowMs = t0 + 3600_000L).nonEmpty,
+      "ledger cleared ⇒ reminder fires again"
+    )
 
   test("postWriteReminder: 预算内 ⇒ 空；非预算层 ⇒ 空"):
     val ws = os.temp.dir(prefix = "nb-mdwg-within") / "ws"
@@ -150,8 +169,10 @@ class MemoryDirectWriteGuardSpec extends FunSuite:
     val projected = "- 记忆条目\n" * 6000 // ~24B/行 × 6000 ≈ 144KB > 50KB 硬顶
     val projectedBytes = projected.getBytes(StandardCharsets.UTF_8).length.toLong
     assert(projectedBytes > MemoryBudget.UserHardBytes, "fixture must exceed the cap in bytes")
-    assert(MemoryDirectWriteGuard.preCheck(userPath, projected).isLeft,
-      "multi-byte content is budgeted by bytes, not chars")
+    assert(
+      MemoryDirectWriteGuard.preCheck(userPath, projected).isLeft,
+      "multi-byte content is budgeted by bytes, not chars"
+    )
 
   // ── 换根顺序无关（回归：personal-agent 批 2026-10-04 的实测缺陷）─────────
   //
@@ -167,17 +188,21 @@ class MemoryDirectWriteGuardSpec extends FunSuite:
     val foreign = os.temp.dir(prefix = "nb-mdwg-foreign-root")
     try
       PathUtil.setDataRoot(foreign) // 模拟一个不还原的相邻 suite
-      assertEquals(MemoryDirectWriteGuard.classify(userPath), Some("user"),
-        "user 层判定不得随进程内换根丢失（否则闸门 fail-open）")
-      assertEquals(MemoryDirectWriteGuard.classify(agentPath), Some("agent"),
-        "agent 层（旧位）同样不得丢失")
-      assertEquals(MemoryDirectWriteGuard.classify(s"$home/.nebflow/Soul.md"), Some("agent"),
-        "agent 层（新根层 Soul.md）同样不得丢失")
+      assertEquals(MemoryDirectWriteGuard.classify(userPath), Some("user"), "user 层判定不得随进程内换根丢失（否则闸门 fail-open）")
+      assertEquals(MemoryDirectWriteGuard.classify(agentPath), Some("agent"), "agent 层（旧位）同样不得丢失")
+      assertEquals(
+        MemoryDirectWriteGuard.classify(s"$home/.nebflow/Soul.md"),
+        Some("agent"),
+        "agent 层（新根层 Soul.md）同样不得丢失"
+      )
       // 换根后，隔离实例自己的路径也必须认（不能只认默认 home）
-      assertEquals(MemoryDirectWriteGuard.classify(s"$foreign/User.md"), Some("user"),
-        "隔离实例的数据根仍是合法基")
+      assertEquals(MemoryDirectWriteGuard.classify(s"$foreign/User.md"), Some("user"), "隔离实例的数据根仍是合法基")
       // 全局 home 域内的 memory.md 依旧不是 project 层
-      assertEquals(MemoryDirectWriteGuard.classify(s"$home/.nebflow/memory.md"), None,
-        "global-home memory.md stays outside the project layer")
+      assertEquals(
+        MemoryDirectWriteGuard.classify(s"$home/.nebflow/memory.md"),
+        None,
+        "global-home memory.md stays outside the project layer"
+      )
     finally PathUtil.setDataRoot(savedRoot)
+    end try
 end MemoryDirectWriteGuardSpec

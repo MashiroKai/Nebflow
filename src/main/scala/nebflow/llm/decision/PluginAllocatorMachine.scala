@@ -31,21 +31,26 @@ import nebflow.shared.NebflowLogger
  * [[LlmAllocator]]，随件报审）。
  */
 final class JevPluginAllocator(
-    /** Jev 腿热读装配：None = 配置面解不出 provider（gate 之外的兜底进路）。 */
-    jevLeg: IO[Option[JevAllocator]],
-    /** LLM 兜底腿装配：None = 无可用模型候选（腿不可用）。 */
-    llmLeg: IO[Option[LlmAllocator]],
-    /** 门快照（每分配热读——PluginsConfig.enabled/JevConfigReader 同款纪律）。 */
-    gate: IO[JevGateOutcome],
-    health: Option[DecisionHealthPort]
+  /** Jev 腿热读装配：None = 配置面解不出 provider（gate 之外的兜底进路）。 */
+  jevLeg: IO[Option[JevAllocator]],
+  /** LLM 兜底腿装配：None = 无可用模型候选（腿不可用）。 */
+  llmLeg: IO[Option[LlmAllocator]],
+  /** 门快照（每分配热读——PluginsConfig.enabled/JevConfigReader 同款纪律）。 */
+  gate: IO[JevGateOutcome],
+  health: Option[DecisionHealthPort]
 ) extends PluginAllocator.Face:
 
   private val logger = NebflowLogger.forName("nebflow.llm.plugin-alloc")
 
+  /** 分腿记账键（三改③，2026-10-09）：写腿与显示面（REST `legs` 块 + 设置页
+    * 徽标）共用同一拼写。 */
+  private val JevLegKey = "jev"
+  private val LlmLegKey = "llm"
+
   override def allocatePlugins(
-      subject: String,
-      taskText: String,
-      catalog: List[CatalogEntry]
+    subject: String,
+    taskText: String,
+    catalog: List[CatalogEntry]
   ): IO[PluginAllocator.PluginAllocationResult] =
     gate.flatMap {
       case JevGateOutcome.Applied(_) =>
@@ -53,34 +58,55 @@ final class JevPluginAllocator(
           case Some(jev) =>
             jev.allocateFor(subject, taskText, catalog).flatMap {
               case alloc @ JevAllocation.Allocated(_) =>
-                recordHealth(true, None).as(
+                recordHealth(
+                  legs = Map(JevLegKey -> DecisionHealth.Up),
+                  effective = DecisionHealth.Up
+                ).as(
                   PluginAllocator.PluginAllocationResult(alloc, Some(PluginAllocator.AllocationVia.Jev))
                 )
               case fell @ JevAllocation.FellBack(kind, reason) =>
-                // Jev 腿运行了但回落 ⇒ LLM 兜底（⑦ 同族口径：未配置或失败都兜）。
-                recordHealth(false, Some(s"jev leg: $reason")) *>
-                  fallbackLeg(subject, taskText, catalog, Some(s"jev leg fell back (${kind.wire})"))
+                // 三改③回退观测点（2026-10-09 用户反馈②③）：Jev 腿不可用
+                // （超时/网络/鉴权——`DecisionError` 分类件）⇒ WARN 行 + 分腿
+                // 记账，然后 LLM 兜底腿**自动接管，分配不丢**（⑦ 同族口径：
+                // 未配置或失败都兜）。
+                IO(logger.warnSync(
+                  s"plugin allocation '$subject': jev leg unavailable ($reason) — falling back to the llm leg (allocation preserved)"
+                )) *>
+                  fallbackLeg(
+                    subject, taskText, catalog,
+                    viaNote = Some(s"jev leg fell back (${kind.wire})"),
+                    jevState = Some(DecisionHealth.Down(s"jev leg: $reason", System.currentTimeMillis()))
+                  )
             }
           case None =>
-            fallbackLeg(subject, taskText, catalog, Some("jev provider unavailable"))
+            fallbackLeg(subject, taskText, catalog, Some("jev provider unavailable"), jevState = None)
         }
       case JevGateOutcome.Off(reason) =>
-        // 未配 Jev（原文）——LLM 兜底腿直接承接。
-        fallbackLeg(subject, taskText, catalog, Some(s"jev gate off (${reason.message})"))
+        // 未配 Jev（原文）——LLM 兜底腿直接承接；jev 腿没跑 = 不造 jev 腿键。
+        fallbackLeg(subject, taskText, catalog, Some(s"jev gate off (${reason.message})"), jevState = None)
     }
   end allocatePlugins
 
-  /** LLM 兜底腿：产出集合 = `LlmFallback`；腿也败 = fail-open（JevFallback 已记账）。 */
+  /** LLM 兜底腿：产出集合 = `LlmFallback`；腿也败 = fail-open（JevFallback 已记账）。
+    *
+    * `jevState` = 本次调用 jev 腿的终态（None = 腿没跑，不造键——显示面据此
+    * 区分「没跑」与「跑了挂了」）。通道整体终态语义与三改前一致：兜底腿的
+    * 产出/失败就是通道终态。 */
   private def fallbackLeg(
-      subject: String,
-      taskText: String,
-      catalog: List[CatalogEntry],
-      viaNote: Option[String]
+    subject: String,
+    taskText: String,
+    catalog: List[CatalogEntry],
+    viaNote: Option[String],
+    jevState: Option[DecisionHealth]
   ): IO[PluginAllocator.PluginAllocationResult] =
     viaNote.foreach(n => logger.infoSync(s"plugin allocation '$subject': llm fallback leg ($n)"))
     llmLeg.flatMap {
       case None =>
-        recordHealth(false, Some("no llm candidate")).as(
+        val llmState = DecisionHealth.Down("no llm candidate", System.currentTimeMillis())
+        recordHealth(
+          legs = jevState.map(s => Map(JevLegKey -> s)).getOrElse(Map.empty) + (LlmLegKey -> llmState),
+          effective = llmState
+        ).as(
           PluginAllocator.PluginAllocationResult(
             JevAllocation.FellBack(JevFallbackKind.Failure, "llm allocator: no model candidate available"),
             via = None
@@ -89,22 +115,30 @@ final class JevPluginAllocator(
       case Some(llm) =>
         llm.allocateFor(subject, taskText, catalog).flatMap {
           case alloc @ JevAllocation.Allocated(_) =>
-            recordHealth(true, None).as(
+            recordHealth(
+              legs = jevState.map(s => Map(JevLegKey -> s)).getOrElse(Map.empty) + (LlmLegKey -> DecisionHealth.Up),
+              effective = DecisionHealth.Up
+            ).as(
               PluginAllocator.PluginAllocationResult(alloc, Some(PluginAllocator.AllocationVia.LlmFallback))
             )
           case fell @ JevAllocation.FellBack(kind, reason) =>
-            recordHealth(false, Some(s"llm leg: $reason")).as(
+            val llmState = DecisionHealth.Down(s"llm leg: $reason", System.currentTimeMillis())
+            recordHealth(
+              legs = jevState.map(s => Map(JevLegKey -> s)).getOrElse(Map.empty) + (LlmLegKey -> llmState),
+              effective = llmState
+            ).as(
               PluginAllocator.PluginAllocationResult(fell, via = None)
             )
         }
     }
 
-  private def recordHealth(up: Boolean, reason: Option[String]): IO[Unit] =
+  end fallbackLeg
+
+  /** 三改③写腿：分腿终态 + 通道整体终态一并交探活通道（单写者 = 本编排体）。 */
+  private def recordHealth(legs: Map[String, DecisionHealth], effective: DecisionHealth): IO[Unit] =
     health match
       case None => IO.unit
-      case Some(h) =>
-        if up then h.recordDecisionSuccess()
-        else h.recordDecisionFailure(reason.getOrElse("plugin allocation failed"))
+      case Some(h) => h.recordAllocationOutcome(legs, effective)
 
 end JevPluginAllocator
 
@@ -126,8 +160,10 @@ object PluginAllocatorMachine:
       health = health
     )
 
-  /** Jev 腿热读装配（未配置/解不出 provider = None → 兜底腿承接）。分配调用时限
-    * 内置于 JevAllocator（JevSettings.timeoutMs——构建单点）。 */
+  /**
+   * Jev 腿热读装配（未配置/解不出 provider = None → 兜底腿承接）。分配调用时限
+   * 内置于 JevAllocator（JevSettings.timeoutMs——构建单点）。
+   */
   private def jevLeg: IO[Option[JevAllocator]] =
     IO.blocking(JevAllocator.fromConfig(health = None))
 

@@ -169,8 +169,7 @@ object FileChangeTracker:
         ): java.nio.file.FileVisitResult =
           val rel = rootPath.relativize(file).toString
           val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
-          if
-            Files.isRegularFile(file) &&
+          if Files.isRegularFile(file) &&
             !segments.exists(ExcludedDirs.contains) &&
             !ExcludedFiles.contains(segments.last)
           then
@@ -179,6 +178,7 @@ object FileChangeTracker:
               catch case _: Exception => 0L
             collected.update(rel, modTime)
           java.nio.file.FileVisitResult.CONTINUE
+        end visitFile
       Files.walkFileTree(rootPath, visitor)
       collected.toMap
     catch case _: Exception => Map.empty

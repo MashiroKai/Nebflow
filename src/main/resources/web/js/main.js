@@ -35,6 +35,7 @@ import {
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
   appendToolStreamDelta, cancelToolStreamRAF,
+  bareProcessRows,
   formatResumeClock
 } from './chat.js';
 // stream-ux redesign (2026-10-03): the pre-token 「思考中」 placeholder lives
@@ -63,6 +64,10 @@ import { initMicOrb } from './micOrb.js';
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
 // 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
 import './delegateChainProvider.js';
+// delegate-ui 批（2026-10-08 · 定稿蓝本 §1.2）：面板两级化（C2/R6）经 stub 读取口
+// 取 G1 编排模式（rows）与 G3 星型子代理投影（children）——读 port 单缝，禁渲染面
+// 直连 WS/REST（数据权威恒在 provider 镜像）。
+import { listDelegateRows, listDelegateChildren, getChainByTask } from './delegateChainStub.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -1302,7 +1307,26 @@ onMessage('roundComplete', (msg, view) => {
     // (stream-ux redesign: the dots live ON the line, not in a bubble).
     if (sid && state.busySessionIds.has(sid)) {
       if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
-      startWorklineDots(activeView, state.turnStartTimes[sid]);
+      // （c）面（作者 2026-10-08 裁定）：subagent 弹窗在飞过程行 = 9.19 裸行形态 —
+      // 轮界点面恢复 9.19 的 .thinking-placeholder 气泡（9.19 main.js roundComplete
+      // 同构；首个 thinking delta 到达时既有移除腿照常拆掉它），不建 turn-line
+      // dots。差异申报：9.19 的 live 秒计时器不恢复——UI-G（10-03 静态窗令，
+      // 后令治前令）弹窗零定时器；.nf-static 容器内 CSS 动画本就归零。
+      if (bareProcessRows(activeView)) {
+        const chat = activeView.dom.chat;
+        const existing = chat.querySelector('.thinking-placeholder');
+        if (!activeView.stream.currentAiBubble && !existing) {
+          const row = document.createElement('div');
+          row.className = 'row ai';
+          activeView.stream.currentAiBubble = document.createElement('div');
+          activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
+          row.appendChild(activeView.stream.currentAiBubble);
+          chat.appendChild(row);
+          smartScroll();
+        }
+      } else {
+        startWorklineDots(activeView, state.turnStartTimes[sid]);
+      }
     }
     // UI-B: this IS the round boundary. Order matters — startWorklineDots above
     // may build a brand-new line (round resets to 0 there), so the advance must
@@ -1514,8 +1538,38 @@ onMessage('askUserClosed', (msg) => {
   // interrupted (`reason:"turn-interrupted"`), not only when the source session
   // died — map the reason to a matching lock note (unknown/absent reason keeps
   // the historical text).
-  const note = msg.reason === 'turn-interrupted' ? t('askUser.turnInterrupted') : t('askUser.sourceClosed');
+  // askucancel 批位2（2026-10-08）：用户取消终结（hub CancelRequest 广播；reason
+  // 缺省 "user-cancelled"、自定义串透传，见 InteractionHub.handleCancelRequest）
+  // ⇒ 卡片转「已取消」锁定态。既有两路零回归：`turn-interrupted` → 本轮中断文案；
+  // 缺席（来源死亡，handleCleanupForSession 无 reason 键）与 `caller-withdrew`
+  // （#147 调用侧撤回，语义 ≠ 用户取消）→ 历史来源关闭文案。
+  const note = msg.reason === 'turn-interrupted' ? t('askUser.turnInterrupted')
+    : (msg.reason && msg.reason !== 'caller-withdrew') ? t('askUser.cancelled')
+    : t('askUser.sourceClosed');
   closeAskUserCard(msg.sessionId, msg.requestId, note);
+  removePendingAsk(msg.requestId);
+});
+
+// askucancel 批位2（2026-10-08）：卡上/渠道取消的裁决回执（{type, ok, requestId,
+// state, error?}，state ∈ cancelled/unknown/not-ask-user/no-hub/bad-request）。
+// ok=true 的关卡面已由 askUserClosed 广播先行承载（引擎序：hub 先广播后回执，
+// 见 handleCancelRequest ③）；仅 !ok 需要可见提示 —— 幂等 unknown / 非 AskUser 卡 /
+// 无 hub / 请求形状错时卡不转「已取消」，静默 = 点了没反应（#250 ⑥ 同款教训）。
+onMessage('askUserCancelResult', (msg) => {
+  if (msg && msg.ok) return;
+  const st = (msg && msg.state) || 'unknown';
+  window.__showToast?.(t('askUser.cancelFailed', { state: st }), 'error');
+});
+
+// 飞书/渠道作答的桌面翻面帧（askuser-remote P1 反射补口 2026-10-09，feishu-answer-card-flip）：
+// 桥面作答（飞书卡片点击/微信编号回复）此前只进 hub + 会话注入，桌面活卡不翻面、
+// .ui.json 无作答行 ⇒「我在飞书回答了问题，但是好像前端的问题卡片没有做相应的变化」。
+// 引擎（WebSocketRoutes.forwardBridgeInteractionAnswer）现落库 + 广播本帧；
+// closeAskUserCard 以**作答原文**为锁定文案（与卡片自身确认路径同一终态 '-> <answer>'），
+// requestId 寻址、已答幂等跳过（与 askUserClosed 双达安全）；pending 条目随卡清。
+onMessage('askUserAnsweredRemote', (msg) => {
+  if (!msg || !msg.requestId) return;
+  closeAskUserCard(msg.sessionId, msg.requestId, msg.answerText);
   removePendingAsk(msg.requestId);
 });
 
@@ -1540,7 +1594,10 @@ onMessage('interactionAnswerRejected', (msg) => {
   const key = {
     'shape-mismatch': 'askUser.rejectShape',
     'unknown-request-id': 'askUser.rejectUnknown',
-    'no-kind-compatible': 'askUser.rejectNoMatch'
+    'no-kind-compatible': 'askUser.rejectNoMatch',
+    // askuser-secret 批（2026-10-08）：秘密槽明文回流（旧前端不识别 secret 键，
+    // 值打进了普通 answers）——hub 拒收保卡，值未存储；toast 指引刷新。
+    'secret-slot-mismatch': 'askUser.rejectSecret'
   }[msg.reason] || 'askUser.rejectGeneric';
   window.__showToast?.(t(key), 'error');
 });
@@ -2053,12 +2110,15 @@ state.updateBgAgentIndicator = updateBgAgentIndicator;
 // live in the agent popup — A13).
 
 /** Derive the AgentKind from the session-id prefix when the snapshot kind is
- *  absent (live agentStart carries no kind field). */
+ *  absent (live agentStart carries no kind field).
+ *  修订批（用户九点② · 2026-10-09）：「SubTask」UI 标注更名 delegate 语义——显示词
+ *  归一为 Delegate（subtask 工具引擎侧注册面照旧，见报告；会话 id 前缀 `subtask-`
+ *  是后端协议保留不改，此处只改面板 kind 徽标词）。 */
 function bgAgentKindFromSession(sessionId) {
   const raw = sessionId || '';
   if (raw.startsWith('team-')) return 'Team';
   if (raw.startsWith('delegate-')) return 'Delegate';
-  if (raw.startsWith('subtask-')) return 'SubTask';
+  if (raw.startsWith('subtask-')) return 'Delegate';
   // builtin-merge 批（2026-10-03）：Subagent（只读侦察）与 Workflow 步级子会话。
   // N1 复名批（2026-10-06，v2 ①）：Workflow 工具复名 AgentFlow——显示标签随名
   // 翻转；会话 id 前缀 `workflow-` 是存储/归因命名空间，保留不改（v2 §3.4）。
@@ -2107,30 +2167,27 @@ function isDispatcherSession(id) {
   return typeof id === 'string' && id.startsWith('dispatcher-');
 }
 
+/** C1 过渡呈现纪律（delegate-ui 批 2026-10-08 · 定稿蓝本 §1.2）：`dispatcher-*` /
+ *  `node-*` 是 delegate 编排的引擎内部件——过渡期（P0-P3）**在册但不入一等陈列面**：
+ *  数据侧 activeAgents 快照保持全量（管理/调试面照读），仅渲染入口过滤此处单点
+ *  （计数与列表同走 visibleBgAgentEntries，badge 与面板永不打架）。终态（P4）内部
+ *  会话形态删除，过滤自然成空。取代旧「dispatcher 仅 active 才准入」口径
+ *  （2026-09-14 16:30 author ruling）——显示侧收得更紧，活性/注册语义零触碰。 */function isC1InternalOrchestration(id, info) {
+  const sid = String((info && info.sessionId) || id || '');
+  return isDispatcherSession(sid) || isDispatcherSession(info && info.sessionId) ||
+    sid.startsWith('node-');
+}
+
 /** Panel admission口径 (author ruling 2026-09-14 16:30, asknb-6d626dd4307a4d31):
  *  「只显示运行中的，计数也只计算运行中的，空闲不显示。」
  *
- *  The dispatcher session survives its turn inside the keep-alive window
- *  (Defaults.DispatcherIdleWindowMs, default 30min — ProjectActor.scala:702-712
- *  keeps the registry entry, :888-947 sweeps it later), so the registry
- *  snapshot legitimately reports it with status Idle. This is a display-side
- *  (呈现出/计数) rule only — NOT a liveness change: inside the window the
- *  dispatcher is still alive and still holds the singleton slot, so an empty
- *  panel does not mean no dispatcher exists.
- *
- *  「运行中」 is nailed down as `bgRowState(info) === 'active'` — the bottom
- *  rung of the done > stuck > frozen > error > idle > active ladder, i.e. not
- *  Idle / WaitingForUser and not done / stuck / frozen / error. Admitting only
- *  'active' covers the 2s `agentDone` window too (the row keeps done=true
- *  before its delayed delete — main.js agentDone handler).
- *
- *  `dispatcher-` rows are admitted ONLY while active; every other prefix keeps
- *  its existing口径 (hidden = not rendered AND not counted — same bucket, same
- *  口径 as the list, so the badge can never disagree with the dropdown). */
+ *  delegate-ui 批（2026-10-08）更新：`dispatcher-` 与 `node-` 前缀全滤（C1 过渡纪律，
+ *  见 isC1InternalOrchestration）；其余前缀沿用既有口径——hidden = not rendered AND
+ *  not counted（same bucket, same 口径 as the list, so the badge can never
+ *  disagree with the dropdown）。 */
 function isBgRowVisible(id, info) {
-  const dispatcher = isDispatcherSession(id) || isDispatcherSession(info && info.sessionId);
-  if (!dispatcher) return true;
-  return bgRowState(info) === 'active';
+  if (isC1InternalOrchestration(id, info)) return false;
+  return true;
 }
 
 /** The visible rows of a bucket — the ONE read used by the badge count, the
@@ -2159,6 +2216,298 @@ function armBgUptimeTick(view) {
   }, 15000);
 }
 
+// ── delegate-ui 批（2026-10-08 · 定稿蓝本 §1.2 / §2 R6+C2）：面板两级化 ─────────
+// 层级总则（C2）：桶 = 主会话（root）不变；一级行 = delegate 行（delegate-*/external-*）
+// 作为组头，徽标 = 编排模式（G1 权威）；二级行 = 缩进一格的子行——星型（G3 投影 ∪
+// live 行）平铺挂父下、agentflow（chain.nodes flow-step 投影）按 flow 结构缩进；子行
+// 徽标 = 自身 kind。数据侧全程走 stub 读取口（rows/children/chain——provider 镜像），
+// 禁渲染面直连 WS/REST。非 delegate 编排形态中仅 C1 集（dispatcher-*/node-*）被滤
+// （isBgRowVisible 单点）；其余未被认领的行（ephemeral/dag/team 等）按原序缀后照 render。
+
+/** G1 mode → 组头徽标词（kind 词 = 面板既有数据词，非 locale 文案）。权威 = rows 行内
+ *  `orchestrationMode`；subagent-star → Subagent、agentflow → Flow（R6：badge 跟模式
+ *  走，项目内 delegate 不再标 Flow）。single/''（旧盘 null）= 过渡启发兜底：快照 kind
+ *  优先（external- → External 信息保留），前缀启发（bgAgentKindFromSession）殿后——
+ *  单一切换点收敛在该启发函数，P4 后自然消失。 */
+function bgDelegateBadgeWord(info, row) {
+  const mode = String((row && row.orchestrationMode) || '');
+  if (mode === 'subagent-star') return 'Subagent';
+  if (mode === 'agentflow') return 'Flow';
+  // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
+  return bgKindDisplayWord(info && info.kind) ||
+    bgAgentKindFromSession((info && info.sessionId) || '') || '';
+}
+
+/** Store 子条目状态 → 面板行状态（SubAgentTask 值域 running|completed|failed|restarting；
+ *  未知归 active 保守侧——不臆造终态）。 */
+function bgStoreChildState(status) {
+  if (status === 'completed') return 'done';
+  if (status === 'failed') return 'error';
+  return 'active';
+}
+
+/** Store 子条目 kind 词（source 数据词：subagent/subtask/delegate；大写形态与面板
+ *  既有 kind 词族对齐——数据非文案，零 locale 键）。修订批九点②（2026-10-09）：
+ *  「subtask」显示词更名 delegate 语义（SubTask→Delegate；数据原文保留在
+ *  source 字段与 title，不丢真源）。 */
+function bgChildKindWord(source) {
+  if (source === 'subagent') return 'Subagent';
+  if (source === 'subtask' || source === 'delegate') return 'Delegate';
+  return String(source || '');
+}
+
+/** 快照/帧 kind 值 → 面板显示词（修订批九点②补漏 · 2026-10-09）：activeAgents
+ *  快照与 taskStuck 帧携带引擎协议 kind 值（AgentKind.SubTask = "SubTask"）——
+ *  显示面统一更名 delegate 语义（SubTask→Delegate）；权限矩阵消费的协议值
+ *  （managePanel.OPERABLE_KINDS 'SubTask'）不受影响——本函数只在**渲染点**用，
+ *  不改写 info.kind 数据面（真源原样保留）。 */
+function bgKindDisplayWord(kind) {
+  const k = String(kind || '');
+  if (k === 'SubTask' || k === 'subtask') return 'Delegate';
+  return k;
+}
+
+/** flow 节点状态 → 面板状态词键（ROW_STATUS 值域；既有键复用，零新键）。 */
+const BG_FLOW_WORD_KEY = {
+  pending: 'task.nodePending',
+  running: 'task.inProgressShort',
+  blocked: 'task.nodeBlocked',
+  completed: 'flowmap.done',
+  failed: 'flowmap.fail',
+  cancelled: 'flowmap.st.cancelled',
+};
+
+/**
+ * 两级结构组装（C2）：groups = delegate 组头（含子行三源）；leftovers = 未被认领的
+ * 非 delegate 行（原序）。子行三源：
+ *   ① live 行被 G3 映射认领（childSessionId → parent，映射单点 = G3 store，零前端派生）；
+ *   ② G3 store 子条目（不在注册表的终态子——刷新/终态后 live 帧缺席，G3 投影 = 结构
+ *      唯一供源）；
+ *   ③ agentflow flow 结构行（chain.nodes 的 flow-step 投影；live workflow-* 会话在
+ *      delegate 作用域自根成桶不经本面板，画布态细粒度结构 = S10 面非本面板职责）。
+ * 嵌套 delegate（G3 source=delegate）作为**子行**渲染（C2 两级帽——其子结构随其
+ * 详情弹窗下钻，不在本面板再展开）。
+ * @param {Array<[string, any]>} entries visibleBgAgentEntries 产出
+ * @returns {{groups: Array<Object>, leftovers: Array<Array<any>>}}
+ */
+function bgDelegateGroups(entries) {
+  const rows = listDelegateRows();
+  const rowByDelegate = new Map();
+  for (const r of rows) rowByDelegate.set(String(r.delegateId || ''), r);
+  const childOwner = new Map(); // childSessionId → parentDelegateId（G3 投影；首写胜出）
+  for (const r of rows) {
+    if (r.external === true) continue; // 外部执行器零平台工具 ⇒ children 恒空集（免打点）
+    for (const c of listDelegateChildren(r.delegateId)) {
+      const cid = String((c && c.taskId) || '');
+      if (cid && !childOwner.has(cid)) childOwner.set(cid, String(r.delegateId || ''));
+    }
+  }
+  // Pass 1：组头认领（delegate-* / external-*；被 G3 认领的嵌套 delegate 不作组头）。
+  const groups = [];
+  const groupByDelegate = new Map();
+  const leftovers = [];
+  for (const [id, info] of entries) {
+    const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
+    if (!childOwner.has(sid) && (sid.startsWith('delegate-') || sid.startsWith('external-'))) {
+      const row = rowByDelegate.get(sid) || null;
+      const key = String((row && (row.taskNo || row.delegateId)) || sid);
+      const g = { id, info, sid, row, key, children: [] };
+      groups.push(g);
+      groupByDelegate.set(sid, g);
+    } else {
+      leftovers.push([id, info]);
+    }
+  }
+  // Pass 2：live 子行认领（父组缺席 = 跨窗/竞态 ⇒ 按 leftover 原样呈现，零丢失）。
+  for (const pair of leftovers.slice()) {
+    const [id, info] = pair;
+    const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
+    const parent = childOwner.get(sid);
+    const g = parent ? groupByDelegate.get(parent) : null;
+    if (g) {
+      g.children.push({ type: 'live', id, info, sid });
+      leftovers.splice(leftovers.indexOf(pair), 1);
+    }
+  }
+  // Pass 3：store 子条目（去重——已在场的 live 子行不重复）+ flow 结构行。
+  for (const g of groups) {
+    const present = new Set(g.children.map((c) => c.sid));
+    for (const c of listDelegateChildren(g.sid)) {
+      const cid = String((c && c.taskId) || '');
+      if (cid && !present.has(cid)) g.children.push({ type: 'store', child: c, sid: cid });
+    }
+    const chain = g.key ? getChainByTask(g.key) : null;
+    const flowSteps = chain && Array.isArray(chain.nodes)
+      ? chain.nodes.filter((n) => n && n.kind === 'flow-step')
+      : [];
+    for (const n of flowSteps) g.children.push({ type: 'flow', node: n });
+  }
+  return { groups, leftovers };
+}
+
+/**
+ * 面板行 HTML（原 renderBgAgentDropdown map 体原样抽出——行渲染语义零改动；新增
+ * opts.childLevel/headLevel 两级锚与 opts.badgeWord 徽标覆写两个纯呈现参数）。
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string}} [opts]
+ * @returns {string}
+ */
+function bgTaskRowHtml(id, info, opts = {}) {
+  const rowState = bgRowState(info);
+  const terminal = rowState === 'done' || rowState === 'error';
+  const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
+  const dotClass = {
+    active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
+    error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
+  }[rowState];
+  // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
+  const kind = (opts && opts.badgeWord) || bgKindDisplayWord(info.kind) ||
+    bgAgentKindFromSession(info.sessionId || id);
+  const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
+  // Project attribution (2026-09-06 author ruling): Flow rows carry the
+  // owning project's name next to the kind chip — muted plain text,
+  // visually subordinate to the chip, never competing with the node name.
+  // Absent (Root/direct delegates) → no badge at all.
+  const projectPart = info.project
+    ? '<span class="bg-task-project" title="' + escapeHtml(info.project) + '">' + escapeHtml(info.project) + '</span>'
+    : '';
+  // Task attribution badge (2026-09-27 taskbadge batch): `#<id> · <title>` chip
+  // per row — the per-row task marker under the multi-task dispatcher
+  // architecture (rows from different tasks sit side by side in one bucket;
+  // the badge is what makes them distinguishable). No attribution (kernel /
+  // system / legacy / slot cleared) → no badge at all — an explicit empty
+  // badge would be noise on every non-task row. Long titles truncate at the
+  // RENDER layer only (CSS ellipsis + full text in the title tooltip).
+  const taskBadgeText = info.taskId
+    ? (info.taskTitle ? '#' + info.taskId + ' · ' + info.taskTitle : '#' + info.taskId)
+    : '';
+  const taskPart = taskBadgeText
+    ? '<span class="bg-task-badge" title="' + escapeHtml(t('subagents.taskBadge', { text: taskBadgeText })) + '">'
+      + escapeHtml(taskBadgeText) + '</span>'
+    : '';
+  const displayName = info.name || id;
+  const taskText = info.task ? displayName + ' · ' + info.task : displayName;
+  const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
+  // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
+  const uptimePart = (!terminal && info.startedAt)
+    ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
+    : '';
+  // Retries chip: only when >0 (0 is noise — user ruling ②).
+  const retries = info.retryCount || 0;
+  const retriesPart = retries > 0
+    ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
+    : '';
+  // Stuck: restrained label with idle seconds (manage-panel semantics) —
+  // ui-status-redesign（S2 / 盘点 #12）：词前 timer-off 红图标 + 中性字。
+  // NO inline cancel/restart buttons — operations live in the agent popup (A13).
+  // Hard-recovery P7 (2026-09-07): the label mirrors the REAL action the
+  // backend performed (halt / hard-abort / restart / failed) — "auto-
+  // restarting" only ever shows when an actual restart was triggered.
+  const stuckPart = (rowState === 'stuck' && info.stuck)
+    ? '<span class="bg-task-stuck" role="alert">' + statusIcon('timer-off', 11, 'st-err') + escapeHtml(
+        info.stuck.action === 'restart'
+          ? t('manage.stuckAutoRestart')
+          : info.stuck.action === 'hard-abort'
+            ? t('manage.stuckHardAbort')
+            : info.stuck.action === 'failed'
+              ? t('manage.stuckFailed')
+              : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
+      ) + '</span>'
+    : '';
+  const toolLabel = info.currentTool || '';
+  const toolPart = (toolLabel && !terminal)
+    ? '<span class="bgagent-tool" title="' + escapeHtml(toolLabel) + '">↳ ' + escapeHtml(toolLabel) + '</span>'
+    : '';
+  // The sub-agent's OWN session id — agentStart carries it as
+  // msg.nodeSessionId (delegate-*/subtask-*/team-<sid>/dag-*). Every row
+  // is clickable; the click handler strips the team- prefix and routes
+  // dag-*/bare sids to the flow popup (same view the Flow panel uses).
+  const sessionId = info.sessionId || (isBgAgentId(id) ? id : '');
+  const clickAttr = sessionId
+    ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}"`
+    : '';
+  const levelCls = (opts.headLevel ? ' bg-task-row-head' : '') + (opts.childLevel ? ' bg-task-row-child' : '');
+  return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + levelCls + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
+    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+    '<div class="bg-task-info">' +
+      // Single-line row (2026-09-27 badge-inline batch, author order: task
+      // badge joins the uptime line): state / kind / project / name / badge
+      // / retries / uptime share ONE line — uptime stays pinned right via
+      // .bg-task-uptime margin-left:auto; project / name / badge truncate
+      // (CSS ellipsis + the existing title tooltips, subagents.taskBadge
+      // family included); fixed chips never shrink. Pure layout: data
+      // sources, tooltip keys, dot / kind / state semantics and counting
+      // are untouched. Supersedes the old meta+name two-line split for THIS
+      // panel only (#bgagent-dropdown); the background-tasks panel
+      // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
+      '<div class="bg-task-line bg-task-main">' +
+        '<span class="bg-task-state bg-state-' + rowState + '">' +
+          (rowState === 'stuck' ? statusIcon('timer-off', 11, 'st-err')
+            : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
+            : '') +
+          escapeHtml(statusLabel) + '</span>' +
+        kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
+      '</div>' +
+      stuckPart + toolPart +
+    '</div>' +
+  '</div>';
+}
+
+/** Store 子条目轻行（不在注册表的终态子——结构可见、状态由 store 条目承载；词复用
+ *  面板状态词既有键）。点击 = 与 live 子行同一详情承载（bgAgentPopup 历史恢复）。 */
+function bgStoreChildHtml(child) {
+  const c = child && typeof child === 'object' ? child : {};
+  const sid = String(c.taskId || '');
+  const state = bgStoreChildState(String(c.status || ''));
+  const statusLabel = t('subagents.status.' + (state === 'active' ? 'running' : state));
+  const dotClass = { active: 'bg-status-active', done: 'bg-status-done', error: 'bg-status-error' }[state] || 'bg-status-idle';
+  const kindWord = bgChildKindWord(String(c.source || ''));
+  const name = String(c.agentName || '') || sid;
+  const desc = String(c.description || c.prompt || '');
+  const namePart = '<span class="bg-task-name" title="' + escapeHtml(desc ? name + ' · ' + desc : name) + '">' + escapeHtml(name) + '</span>';
+  const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
+  const retries = c.retryCount || 0;
+  const retriesPart = retries > 0
+    ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
+    : '';
+  return '<div class="bg-task-row bg-task-row-child" role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
+    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+    '<div class="bg-task-info">' +
+      '<div class="bg-task-line bg-task-main">' +
+        '<span class="bg-task-state bg-state-' + (state === 'active' ? 'running' : state) + '">' + escapeHtml(statusLabel) + '</span>' +
+        kindPart + namePart + retriesPart +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/** agentflow flow 结构行（chain.nodes 的 flow-step 投影；徽标 = 自身 kind AgentFlow）。
+ *  点击 = S10 per-task 链视图（flow 节点详情 = 卡面即详情，「零新增弹层」纪律）。 */
+function bgFlowChildHtml(node, delegateKey) {
+  const n = node && typeof node === 'object' ? node : {};
+  const label = String(n.label || n.id || '');
+  const st = String(n.status || 'pending');
+  const wordKey = BG_FLOW_WORD_KEY[st] || '';
+  const dotClass = {
+    pending: 'bg-status-idle', running: 'bg-status-active', completed: 'bg-status-done',
+    failed: 'bg-status-error', cancelled: 'bg-status-done', blocked: 'bg-status-stuck',
+  }[st] || 'bg-status-idle';
+  const deps = Array.isArray(n.deps) ? n.deps.map((d) => String(d || '')).filter(Boolean) : [];
+  const depPart = deps.length
+    ? '<span class="bg-task-project" title="deps: ' + escapeHtml(deps.join(',')) + '">← ' + escapeHtml(deps.join(',')) + '</span>'
+    : '';
+  return '<div class="bg-task-row bg-task-row-child" role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
+    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+    '<div class="bg-task-info">' +
+      '<div class="bg-task-line bg-task-main">' +
+        '<span class="bg-task-state">' + escapeHtml(wordKey ? t(wordKey) : st) + '</span>' +
+        '<span class="bg-task-kind">AgentFlow</span>' +
+        '<span class="bg-task-name">' + escapeHtml(label) + '</span>' +
+        depPart +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
 function renderBgAgentDropdown() {
   if (!activeView) return;
   const dropdownEl = activeView.dom.bgagentDropdownEl;
@@ -2175,107 +2524,27 @@ function renderBgAgentDropdown() {
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
   if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
   if (entries.length === 0) {
-    // Empty state (spec §6): restrained i18n line, never fake rows.
-    listEl.innerHTML = '<div class="bg-dropdown-empty">' + escapeHtml(t('subagents.empty')) + '</div>';
+    // 空态自动收起（修订批九点⑤ · 2026-10-09）：无内容不渲染空态区块——列表留白，
+    // 头部计数（·0）即空态真值（原 spec §6 空态文案行停用，键保留）。
+    listEl.innerHTML = '';
     return;
   }
-  listEl.innerHTML = entries.map(([id, info]) => {
-    const rowState = bgRowState(info);
-    const terminal = rowState === 'done' || rowState === 'error';
-    const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
-    const dotClass = {
-      active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
-      error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
-    }[rowState];
-    const kind = info.kind || bgAgentKindFromSession(info.sessionId || id);
-    const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
-    // Project attribution (2026-09-06 author ruling): Flow rows carry the
-    // owning project's name next to the kind chip — muted plain text,
-    // visually subordinate to the chip, never competing with the node name.
-    // Absent (Root/direct delegates) → no badge at all.
-    const projectPart = info.project
-      ? '<span class="bg-task-project" title="' + escapeHtml(info.project) + '">' + escapeHtml(info.project) + '</span>'
-      : '';
-    // Task attribution badge (2026-09-27 taskbadge batch): `#<id> · <title>` chip
-    // per row — the per-row task marker under the multi-task dispatcher
-    // architecture (rows from different tasks sit side by side in one bucket;
-    // the badge is what makes them distinguishable). No attribution (kernel /
-    // system / legacy / slot cleared) → no badge at all — an explicit empty
-    // badge would be noise on every non-task row. Long titles truncate at the
-    // RENDER layer only (CSS ellipsis + full text in the title tooltip).
-    const taskBadgeText = info.taskId
-      ? (info.taskTitle ? '#' + info.taskId + ' · ' + info.taskTitle : '#' + info.taskId)
-      : '';
-    const taskPart = taskBadgeText
-      ? '<span class="bg-task-badge" title="' + escapeHtml(t('subagents.taskBadge', { text: taskBadgeText })) + '">'
-        + escapeHtml(taskBadgeText) + '</span>'
-      : '';
-    const displayName = info.name || id;
-    const taskText = info.task ? displayName + ' · ' + info.task : displayName;
-    const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
-    // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
-    const uptimePart = (!terminal && info.startedAt)
-      ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
-      : '';
-    // Retries chip: only when >0 (0 is noise — user ruling ②).
-    const retries = info.retryCount || 0;
-    const retriesPart = retries > 0
-      ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
-      : '';
-    // Stuck: restrained label with idle seconds (manage-panel semantics) —
-    // ui-status-redesign（S2 / 盘点 #12）：词前 timer-off 红图标 + 中性字。
-    // NO inline cancel/restart buttons — operations live in the agent popup (A13).
-    // Hard-recovery P7 (2026-09-07): the label mirrors the REAL action the
-    // backend performed (halt / hard-abort / restart / failed) — "auto-
-    // restarting" only ever shows when an actual restart was triggered.
-    const stuckPart = (rowState === 'stuck' && info.stuck)
-      ? '<span class="bg-task-stuck" role="alert">' + statusIcon('timer-off', 11, 'st-err') + escapeHtml(
-          info.stuck.action === 'restart'
-            ? t('manage.stuckAutoRestart')
-            : info.stuck.action === 'hard-abort'
-              ? t('manage.stuckHardAbort')
-              : info.stuck.action === 'failed'
-                ? t('manage.stuckFailed')
-                : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
-        ) + '</span>'
-      : '';
-    const toolLabel = info.currentTool || '';
-    const toolPart = (toolLabel && !terminal)
-      ? '<span class="bgagent-tool" title="' + escapeHtml(toolLabel) + '">↳ ' + escapeHtml(toolLabel) + '</span>'
-      : '';
-    // The sub-agent's OWN session id — agentStart carries it as
-    // msg.nodeSessionId (delegate-*/subtask-*/team-<sid>/dag-*). Every row
-    // is clickable; the click handler strips the team- prefix and routes
-    // dag-*/bare sids to the flow popup (same view the Flow panel uses).
-    const sessionId = info.sessionId || (isBgAgentId(id) ? id : '');
-    const clickAttr = sessionId
-      ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}"`
-      : '';
-    return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
-      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
-      '<div class="bg-task-info">' +
-        // Single-line row (2026-09-27 badge-inline batch, author order: task
-        // badge joins the uptime line): state / kind / project / name / badge
-        // / retries / uptime share ONE line — uptime stays pinned right via
-        // .bg-task-uptime margin-left:auto; project / name / badge truncate
-        // (CSS ellipsis + the existing title tooltips, subagents.taskBadge
-        // family included); fixed chips never shrink. Pure layout: data
-        // sources, tooltip keys, dot / kind / state semantics and counting
-        // are untouched. Supersedes the old meta+name two-line split for THIS
-        // panel only (#bgagent-dropdown); the background-tasks panel
-        // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
-        '<div class="bg-task-line bg-task-main">' +
-          '<span class="bg-task-state bg-state-' + rowState + '">' +
-            (rowState === 'stuck' ? statusIcon('timer-off', 11, 'st-err')
-              : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
-              : '') +
-            escapeHtml(statusLabel) + '</span>' +
-          kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
-        '</div>' +
-        stuckPart + toolPart +
-      '</div>' +
-    '</div>';
-  }).join('');
+  // ── 两级渲染（C2/R6）：delegate 组头（徽标=编排模式）＋缩进一格子行 ──
+  const { groups, leftovers } = bgDelegateGroups(entries);
+  const htmlParts = [];
+  for (const g of groups) {
+    htmlParts.push(bgTaskRowHtml(g.id, g.info, {
+      headLevel: true,
+      badgeWord: bgDelegateBadgeWord(g.info, g.row),
+    }));
+    for (const c of g.children) {
+      if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true }));
+      else if (c.type === 'store') htmlParts.push(bgStoreChildHtml(c.child));
+      else htmlParts.push(bgFlowChildHtml(c.node, g.key));
+    }
+  }
+  for (const [id, info] of leftovers) htmlParts.push(bgTaskRowHtml(id, info, {}));
+  listEl.innerHTML = htmlParts.join('');
   // ui-status-redesign：statusIcon() 兜底占位（<i data-lucide>）在此升级为真图标
   // （vendor lib 已就绪时上面已是内联 SVG，此调用零替换、幂等）。
   createIconsIn(listEl);
@@ -2307,6 +2576,40 @@ function renderBgAgentDropdown() {
         // Close the dropdown
         if (dropdown) dropdown.classList.add('hidden');
       }
+    });
+  });
+
+  // delegate-ui 批（C2/R5）：store 子条目行（不在注册表的终态子）点击 = 同一套详情
+  // 承载（bgAgentPopup 历史恢复）；agentflow flow 行点击 = S10 per-task 链视图
+  // （flow 节点详情 = 卡面即详情，零新增弹层）。
+  const storeChildBySid = new Map();
+  for (const g of groups) {
+    for (const c of g.children) {
+      if (c.type === 'store') storeChildBySid.set(c.sid, c.child);
+    }
+  }
+  listEl.querySelectorAll('[data-child-session]').forEach(row => {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sid = row.getAttribute('data-child-session');
+      const c = sid ? storeChildBySid.get(sid) : null;
+      if (c) {
+        const dropdown = activeView.dom.bgagentDropdownEl;
+        openBgAgentPopup(sid, String(c.agentName || '') || sid, String(c.description || c.prompt || ''));
+        if (dropdown) dropdown.classList.add('hidden');
+      }
+    });
+  });
+  listEl.querySelectorAll('[data-flow-delegate-key]').forEach(row => {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = row.getAttribute('data-flow-delegate-key');
+      if (!key) return;
+      const dropdown = activeView.dom.bgagentDropdownEl;
+      import('./delegateChainView.js').then(({ openDelegateChainTask }) => {
+        openDelegateChainTask(key, {});
+      }).catch(() => {});
+      if (dropdown) dropdown.classList.add('hidden');
     });
   });
 
@@ -2872,7 +3175,9 @@ onMessage('user', (msg, view) => {
     // （persistence.js 的 restoreFromStorage / restoreFromBackendHistory）都读 `m.header`，
     // 漏落这一枚 ⇒ 走缓存的重载把 header 丢成 undefined、降级成旧标签。
     // 旧帧缺该字段 ⇒ null（同 intake：缺席即回落，逐字不变）。
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null }, sid);
+    // fileChanges（file-diff → 委托结果行 bug #58 修）：delegate 终态 diff 载荷随行
+    // 进缓存——两条缓存恢复读路径读 `m.fileChanges`，漏落 ⇒ 重载丢 diff（header 先例）。
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null }, sid);
   }
   // Window ownership. First disjunct = the pre-existing rule, unchanged: a frame
   // whose sessionId is the globally active session renders into the active view.
@@ -2888,7 +3193,8 @@ onMessage('user', (msg, view) => {
       (view && view === activeView && msg.nodeSessionId && activeView.sessionId === msg.nodeSessionId)) {
     // 气泡四段式统一批（2026-09-15）：帧上的 `header`（引擎已渲染）逐字透传——
     // 缺席（旧帧 / 词表外 source）时 `buildInjectedRow` 回落既有标签组装。
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header);
+    // fileChanges（bug #58 修）：delegate 终态 diff 载荷同位透传（缺席 = 旧行为）。
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges);
     smartScroll();
   }
 });
@@ -3965,6 +4271,45 @@ initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
   ro.observe(header);
   ro.observe(overlays);
   syncTopReserve();
+})();
+
+// uifix-taskbar-flow (2026-10-09): #top-overlays is in normal flow now (chat.css),
+// so the task list / banner band RESIZES #chat's viewport instead of covering it.
+// The scrolled content never moves (scrollTop untouched — zero jump by
+// construction) and the reserve block above self-parks at the 8px baseline (the
+// band's bottom can no longer exceed chat's top). The one state that still
+// needs help here: EXPAND shrinks the chat viewport ⇒ the last message ends up
+// below the fold (COLLAPSE self-corrects via the browser's scrollTop clamp).
+// Re-pin with the app's OWN follow intent — shouldFollowBottom (latch ‖ live
+// near-bottom, shared NEAR_BOTTOM_PX unit): the latch is refreshed by every
+// scroll event INCLUDING these pins, so the pin stays exactly as sticky as the
+// user's own follow state — a manual scroll up disarms it on that event, a
+// scroll back re-arms it. Mid-scroll readers are never yanked; nobody who kept
+// to the bottom loses the latest turn. This handler only writes scrollTop and
+// refreshes the pill geometry — the latch and pill counters stay follow-batch
+// owned (single source).
+//
+// KNOWN-PREEXISTING (measured 2026-10-09 e2e, NOT this fix's scope): content
+// growing BELOW the viewport (streaming text reveal, late markdown re-render)
+// fires NO scroll event, so the follow latch never refreshes and render-site
+// smartScroll pins miss growth gaps — a pinned reader can be stranded above the
+// fold during boot history replay (dist wobbles 91~652px, old AND new layout).
+// Domain of the scroll-follow batch — handing the diagnosis over.
+(() => {
+  const overlays = document.getElementById('top-overlays');
+  const chat = document.getElementById('chat');
+  if (!overlays || !chat || !window.ResizeObserver) return;
+  const view = () => (typeof chatViews !== 'undefined' ? chatViews.primary : null);
+  const pinIfFollowing = () => {
+    if (document.hidden) return;
+    if (!shouldFollowBottom(view(), chat)) return;
+    chat.scrollTop = chat.scrollHeight;
+    refreshScrollPill(view());
+  };
+  new ResizeObserver(() => {
+    if (overlays.getBoundingClientRect().height === 0) return;
+    pinIfFollowing();
+  }).observe(overlays);
 })();
 initMemory();
 initExplorer();

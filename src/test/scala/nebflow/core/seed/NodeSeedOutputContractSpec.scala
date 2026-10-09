@@ -5,13 +5,19 @@ import munit.FunSuite
 /**
  * node-output contract · 定义面钉子（2026-09-24 立面；govmemory 批 2026-09-25 随
  * seed 对齐改写判据；builtin-def 批 2026-10-03 随 agent 定义上收代码再改判据源；
- * P0-1 批 2026-10-03 判据源名对齐）。
+ * P0-1 批 2026-10-03 判据源名对齐；提示词来源拆分批 2026-10-08 判据源＝**节点面**）。
  *
  * govmemory 批按方案 §1.1/§1.2 把运行面纪律逐段并入 general 的 system prompt
  * （运行面 dual-track 交付体例取代原单轨段）。该 prompt 的**唯一权威源**现为
  * `nebflow.core.entity.BuiltinAgents`（builtin-def 批 2026-10-03 作者令①「唯一标准
  * 源就是代码」——seed/agents 资源树已删，磁盘 system.md 是死信），本 spec 的判据源
- * 随之指向代码定义。现行钉面（①②随 2026-10-07 N3 修订批 dual-track 体例退役翻转）：
+ * 随之指向代码定义。**提示词来源拆分批（2026-10-08）**：`nebflow` 执行名的系统
+ * 提示词按会话面拆成两个独立来源——flow 节点面（`NebflowNodePrompt`，经 `entry`
+ * 解析）与 delegate 面（`NebflowDelegatePrompt`，经 `delegateEntry` 解析，delegate_report
+ * 纪律、零 node_report，判据门 = `nebflow.core.entity.PromptFaceSplitSpec`）。
+ * 本 spec 判定的是**节点面来源**（判据源 = `entry(ExecutorName).systemPrompt`，
+ * 即 `NodeStarter` → `EntityLoader.loadAgent` 的节点 spawn 实读路径）。现行钉面
+ * （①②随 2026-10-07 N3 修订批 dual-track 体例退役翻转）：
  *  ① 末条输出 = 自身交付物（首内容行＝节点身份句「You are a task node」开头即承
  *     载；曾为 dual-track 双轨体例开头承载）；
  *  ② 结果自包含（五要素 Report 段在位）＋ dual-track 体例防复活（!Deliver in two
@@ -24,12 +30,12 @@ import munit.FunSuite
  * 改为 `BuiltinAgents.ExecutorName`（= `nebflow`），节点会话实收的提示词因此是本
  * `entry(ExecutorName)` 条目；本 spec 原钉 `entry("general")`，在 f646eeeaa 形态上
  * 恒 `None`（`general` 已非 builtin）⇒ 3/3 假红。契约文本本身**未削弱**：本批把
- * 该契约原样回填进执行 agent 的代码提示词（`BuiltinAgents.NebflowPrompt`），判据源
- * 随之改为「节点实际执行的 agent」，而不是放宽断言。
+ * 该契约原样回填进执行 agent 的代码提示词（现 = `BuiltinAgents.NebflowNodePrompt`），
+ * 判据源随之改为「节点实际执行的 agent」，而不是放宽断言。
  *
  * 面性质：本文件只读 `BuiltinAgents` 的代码定义，不写盘、不碰 `PathUtil.dataRoot`。
  * 引擎贡献面（`NodeEngine.ProtocolFootnote` 与 `PromptSections.NodeSessionAlwaysOnSection`）
- * 不在本 spec 判定内。
+ * 不在本 spec 判定内。delegate 面来源与双面分离判据 = `PromptFaceSplitSpec`。
  */
 class NodeSeedOutputContractSpec extends FunSuite:
 
@@ -37,7 +43,8 @@ class NodeSeedOutputContractSpec extends FunSuite:
   private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   private def promptText: String =
-    nebflow.core.entity.BuiltinAgents.entry(executorName)
+    nebflow.core.entity.BuiltinAgents
+      .entry(executorName)
       .map(_.systemPrompt)
       .getOrElse(fail(s"BuiltinAgents must carry a code-defined '$executorName' entry"))
 
@@ -45,21 +52,19 @@ class NodeSeedOutputContractSpec extends FunSuite:
     promptText.split("\n", -1).toList.filterNot(_.trim.startsWith("<!--"))
 
   test("执行 agent 代码级 prompt 首内容行 = 节点身份句（末条输出 = 自身交付物；五要素 Report 段在位）"):
-    val firstContent = contentLines.dropWhile(_.trim.isEmpty).headOption.getOrElse(
-      fail("prompt has no content lines")
-    )
-    assert(firstContent.startsWith("You are a task node"),
-      s"首内容行语域被改：${firstContent.take(80)}")
+    val firstContent = contentLines
+      .dropWhile(_.trim.isEmpty)
+      .headOption
+      .getOrElse(
+        fail("prompt has no content lines")
+      )
+    assert(firstContent.startsWith("You are a task node"), s"首内容行语域被改：${firstContent.take(80)}")
     val text = promptText
-    assert(text.contains("your final assistant text IS the deliverable"),
-      "交付物身份句在位（node deliverable semantics）")
-    assert(text.contains("## Report (your final text)"),
-      "五要素 Report 段在位（single-track evidence block）")
-    assert(!text.contains("Deliver in two parts"),
-      "dual-track 体例已退役（防复活）")
+    assert(text.contains("your final assistant text IS the deliverable"), "交付物身份句在位（node deliverable semantics）")
+    assert(text.contains("## Report (your final text)"), "五要素 Report 段在位（single-track evidence block）")
+    assert(!text.contains("Deliver in two parts"), "dual-track 体例已退役（防复活）")
     // 退役体例零复活（零出现）
-    assertEquals(contentLines.count(_.contains("Deliver in two parts")), 0,
-      "dual-track 体例已退役（任何行零出现，防复活）")
+    assertEquals(contentLines.count(_.contains("Deliver in two parts")), 0, "dual-track 体例已退役（任何行零出现，防复活）")
 
   test("执行 agent 代码级 prompt 输出契约语义在正文 + node_report 义务在位"):
     val text = promptText
@@ -69,8 +74,7 @@ class NodeSeedOutputContractSpec extends FunSuite:
     assert(text.contains("Report first, then write your wrap-up text"), "报告先行句在位")
     assert(text.contains("never terminalizes"), "未申报语义在位")
     // 节点工具面行在位（执行面陈述）
-    assert(text.contains("Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion"),
-      "节点工具面行在位")
+    assert(text.contains("Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion"), "节点工具面行在位")
 
   test("执行 agent 代码级 prompt 零 HTML 注释（种子批源注记形态随种子退役；注释不进模型上下文）"):
     // builtin-def 批：prompt = 代码定义，从结构上不携带种子面的 HTML 批源注记。

@@ -34,9 +34,11 @@ class PluginAllocatorPortSpec extends CatsEffectSuite:
 
   test("installed face defect → Failure fail-open (the port belt-and-braces never rethrows)") {
     withTempDataRoot { _ =>
-      PluginAllocator.install(new PluginAllocator.Face:
-        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
-          IO.raiseError(new RuntimeException("boom")))
+      PluginAllocator.install(
+        new PluginAllocator.Face:
+          def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+            IO.raiseError(new RuntimeException("boom"))
+      )
       PluginAllocator.allocatePlugins("s", "t", catalog).map { r =>
         r.allocation match
           case JevAllocation.FellBack(JevFallbackKind.Failure, reason) =>
@@ -48,9 +50,16 @@ class PluginAllocatorPortSpec extends CatsEffectSuite:
 
   test("installed face result passes through with its via tag") {
     withTempDataRoot { _ =>
-      PluginAllocator.install(new PluginAllocator.Face:
-        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
-          IO.pure(PluginAllocator.PluginAllocationResult(JevAllocation.Allocated(List("p1")), Some(PluginAllocator.AllocationVia.Jev))))
+      PluginAllocator.install(
+        new PluginAllocator.Face:
+          def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+            IO.pure(
+              PluginAllocator.PluginAllocationResult(
+                JevAllocation.Allocated(List("p1")),
+                Some(PluginAllocator.AllocationVia.Jev)
+              )
+            )
+      )
       PluginAllocator.allocatePlugins("s", "t", catalog).map { r =>
         assertEquals(r.via, Some(PluginAllocator.AllocationVia.Jev))
         assertEquals(r.allocation, JevAllocation.Allocated(List("p1")))

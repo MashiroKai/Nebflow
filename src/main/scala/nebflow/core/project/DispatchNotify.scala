@@ -1222,9 +1222,7 @@ object DispatchNotify:
       val windows = (roundSpanMs + windowMs - 1) / windowMs // ceil
       math.max(base, (windows + 1).toInt)
 
-  /**
-   * failed 通知滚动窗口/冷却/阈值默认值：直接抄 FeedbackRouter 同名参数（10min/30min/5）——项目内护栏心智一致（设计 §10.2 建议）。
-   */
+  /** failed 通知滚动窗口/冷却/阈值默认值：直接抄 FeedbackRouter 同名参数（10min/30min/5）——项目内护栏心智一致（设计 §10.2 建议）。 */
   val FailedWindowMs: Long = FeedbackRouter.WindowMs
   val FailedCooldownMs: Long = FeedbackRouter.CooldownMs
   val FailedWindowThreshold: Int = FeedbackRouter.WindowThreshold

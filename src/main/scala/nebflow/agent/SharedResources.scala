@@ -231,8 +231,10 @@ case class SharedResources(
         val ids = attribution.values.toList.distinct
         val titlesIo: IO[Map[String, String]] =
           if ids.isEmpty then IO.pure(Map.empty[String, String])
-          else IO.blocking(ids.map(id =>
-            id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap)
+          else
+            IO.blocking(
+              ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
+            )
         titlesIo
           .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
           .map(titles => nebflow.shared.SessionMeta.withTaskAttribution(base, attribution, titles))
@@ -450,6 +452,12 @@ case class SharedResources(
   nebflow.core.delegate.DelegateJudge.DelegateJudgePort.install(
     nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
   )
+
+  // 引擎加固批 2026-10-09（P1-2）：外部执行器判定缝**缺省接线**——同一判定机
+  // （上方安装的 DelegateJudgePort face）服务外部腿终态三态判词；ready-to-merge
+  // 由 ExternalSessionRunner.settle 并入 MergeQueue（外部通道条目）。幂等赋值
+  // （@volatile 单点）；未走到本构造的进程 = 恒 None 缝（进程结果直判，原缺省）。
+  nebflow.core.delegate.ExternalJudgeHook.classify = nebflow.core.delegate.ExternalJudgeHook.defaultClassify()
 
   // task-rag 批（#1227 / §Batch 7）：TaskSearch 可选 Jev 重排注册（⑦ 家族在检索
   // 面的同族落地——执行体在 llm.decision.JevTaskSearchRerank，core 只见

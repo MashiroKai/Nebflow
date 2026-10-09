@@ -113,7 +113,9 @@ object ExternalOutputStore:
   /** 流面取到 CLI 会话 id 时回写（续聊锚点；首个胜出，不覆盖）。 */
   def setCliSession(id: String, cliSessionId: String): IO[Unit] =
     if cliSessionId.nonEmpty then
-      entries.update(m => m.updatedWith(id)(_.map(e => e.copy(cliSessionId = e.cliSessionId.orElse(Some(cliSessionId))))))
+      entries.update(m =>
+        m.updatedWith(id)(_.map(e => e.copy(cliSessionId = e.cliSessionId.orElse(Some(cliSessionId)))))
+      )
     else IO.unit
 
   def cliSessionIdOf(id: String): IO[Option[String]] =
@@ -121,7 +123,11 @@ object ExternalOutputStore:
 
   /** 缓冲 append（读取线程逐行；运行/终态均可补写——终态错误面留痕）。 */
   def append(id: String, line: String): IO[Unit] =
-    entries.update(m => m.updatedWith(id)(_.map(e => { e.buffer.append(line); e })))
+    entries.update(m =>
+      m.updatedWith(id)(_.map(e =>
+        e.buffer.append(line); e
+      ))
+    )
 
   /** 读取切片（同 bg-tasks 输出面形态）。任务未知 → None（REST 404）。 */
   def read(id: String, offset: Long): IO[Option[ExternalOutput]] =
@@ -148,10 +154,10 @@ object ExternalOutputStore:
 
   /** 终态化（completed/failed/blocked/cancelled）。幂等——首个终态胜出。 */
   def finalizeTask(
-      id: String,
-      status: String,
-      exitCode: Option[Int] = None,
-      errorHint: Option[String] = None
+    id: String,
+    status: String,
+    exitCode: Option[Int] = None,
+    errorHint: Option[String] = None
   ): IO[Unit] =
     entries.update { m =>
       m.get(id) match
@@ -164,7 +170,7 @@ object ExternalOutputStore:
             errorHint = errorHint.map(_.take(200)),
             seq = seq
           )
-          val next0   = m + (id -> updated)
+          val next0 = m + (id -> updated)
           val terminal = next0.collect { case (k, ent) if ent.status != "running" => k -> ent.seq }
           if terminal.size > MaxRetained then next0 - terminal.minBy(_._2)._1
           else next0
@@ -192,7 +198,7 @@ object ExternalOutputStore:
     entries.modify { m =>
       m.get(id) match
         case Some(e) if e.mailbox.nonEmpty => (m + (id -> e.copy(mailbox = Queue.empty)), e.mailbox)
-        case _                             => (m, Queue.empty[String])
+        case _ => (m, Queue.empty[String])
     }
 
   /**
@@ -206,7 +212,7 @@ object ExternalOutputStore:
         case Some(e) if e.status == "running" =>
           e.process match
             case Some(p) => nebflow.core.util.ProcessTree.killProcessTree(p).as(true)
-            case None    => IO.pure(false)
+            case None => IO.pure(false)
         case _ => IO.pure(false)
     }
 

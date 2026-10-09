@@ -32,8 +32,10 @@ class FeishuOutboundSpec extends CatsEffectSuite:
 
   private def path(name: String): os.Path = os.Path(s"/tmp/nebflow-socoutbound/$name")
 
-  /** Recording renderer: counts calls so "the image branch must not render" is
-    * an assertion rather than a comment. */
+  /**
+   * Recording renderer: counts calls so "the image branch must not render" is
+   * an assertion rather than a comment.
+   */
   private final class RecordingRenderer(val available: Boolean) extends OutboundRenderer:
     val calls = new java.util.concurrent.atomic.AtomicInteger(0)
     def render(p: OutboundPayload): IO[OutboundPayload] = IO { calls.incrementAndGet(); p }
@@ -41,18 +43,30 @@ class FeishuOutboundSpec extends CatsEffectSuite:
   private final class RecordingUploads(fail: Boolean = false):
     val images = new java.util.concurrent.atomic.AtomicInteger(0)
     val files = new java.util.concurrent.atomic.AtomicInteger(0)
+
     val imageFn: FeishuOutboundAdapter.UploadImage = p =>
-      IO { images.incrementAndGet(); if fail then FeishuOutboundAdapter.UploadResult.failed(230002, "rejected") else FeishuOutboundAdapter.UploadResult.ok("img_key_1") }
+      IO {
+        images.incrementAndGet();
+        if fail then FeishuOutboundAdapter.UploadResult.failed(230002, "rejected")
+        else FeishuOutboundAdapter.UploadResult.ok("img_key_1")
+      }
+
     val fileFn: FeishuOutboundAdapter.UploadFile = (p, n) =>
-      IO { files.incrementAndGet(); if fail then FeishuOutboundAdapter.UploadResult.failed(230002, "rejected") else FeishuOutboundAdapter.UploadResult.ok("file_key_1") }
+      IO {
+        files.incrementAndGet();
+        if fail then FeishuOutboundAdapter.UploadResult.failed(230002, "rejected")
+        else FeishuOutboundAdapter.UploadResult.ok("file_key_1")
+      }
+
+  end RecordingUploads
 
   private def adapter(
-      renderer: OutboundRenderer = OutboundRenderer.unavailable,
-      uploads: RecordingUploads = RecordingUploads()
+    renderer: OutboundRenderer = OutboundRenderer.unavailable,
+    uploads: RecordingUploads = RecordingUploads()
   ): FeishuOutboundAdapter =
     new FeishuOutboundAdapter(
-      sendText = (_, _, _, _, _) => IO.pure(
-        FeishuChannel.SendResult(true, Some("om_1"), 0, "ok", "2026-09-30T00:00:00Z", "chat_id")),
+      sendText = (_, _, _, _, _) =>
+        IO.pure(FeishuChannel.SendResult(true, Some("om_1"), 0, "ok", "2026-09-30T00:00:00Z", "chat_id")),
       uploadImage = uploads.imageFn,
       uploadFile = uploads.fileFn,
       renderer = renderer,
@@ -73,7 +87,7 @@ class FeishuOutboundSpec extends CatsEffectSuite:
     assertEquals(ContentClass.classify(cardMarker = true, List(png), artifact(png), table), ContentClass.Card)
     ContentClass.classify(cardMarker = false, List(odd), artifact(odd), table) match
       case ContentClass.Unknown(reason) => assert(reason.nonEmpty, "an unknown class always carries a non-empty reason")
-      case other                        => fail(s"expected Unknown, got $other")
+      case other => fail(s"expected Unknown, got $other")
   }
 
   test("OB-R2 the extension table is the repo's single authority, and no second table is invented") {
@@ -90,8 +104,11 @@ class FeishuOutboundSpec extends CatsEffectSuite:
     val odd = path("mystery.zzz")
     val plan = OutboundPlanner.unknown("extension not in any known table: /tmp/mystery.zzz", odd, Some("body text"))
     assertEquals(plan.calls, List.empty, "an unknown class mints no channel call")
-    assertEquals(plan.degradedText.map(_.linesIterator.count(_.contains("[未知类型]"))), Some(1),
-      "exactly one [未知类型] note — an IO.unit arm would produce zero and go red here")
+    assertEquals(
+      plan.degradedText.map(_.linesIterator.count(_.contains("[未知类型]"))),
+      Some(1),
+      "exactly one [未知类型] note — an IO.unit arm would produce zero and go red here"
+    )
     assert(plan.degradedText.exists(_.contains("mystery.zzz")), "the original path survives into the degradation")
     assert(plan.degradedText.exists(_.contains("body text")), "the original text survives into the degradation")
     assert(plan.noSilentDrop)
@@ -114,8 +131,11 @@ class FeishuOutboundSpec extends CatsEffectSuite:
     val html = path("card.html")
     val plan = OutboundPlanner.cardRenderFailed(Some(html), 4096L, OutboundPlanner.Reason.RenderUnavailable)
     assertEquals(plan.calls, List.empty, "no upload and no send may be minted for a failed render")
-    assertEquals(plan.degradedText.map(_.linesIterator.count(_.contains("[未渲染]"))), Some(1),
-      "exactly one [未渲染] placeholder — a silent arm would produce zero and go red here")
+    assertEquals(
+      plan.degradedText.map(_.linesIterator.count(_.contains("[未渲染]"))),
+      Some(1),
+      "exactly one [未渲染] placeholder — a silent arm would produce zero and go red here"
+    )
     assert(plan.degradedText.exists(_.contains("card.html")))
     assert(plan.degradedText.exists(_.contains(OutboundPlanner.Reason.RenderUnavailable)))
     assertEquals(uploads.images.get(), 0)
@@ -148,8 +168,11 @@ See [docs](https://example.com/a) and https://bare.example/b
 val x = 1
 ```"""
     val plain = OutboundText.toPlain(md)
-    assertEquals(OutboundText.bareMarkers(plain), List.empty,
-      s"bare markdown markers survived: ${OutboundText.bareMarkers(plain)}")
+    assertEquals(
+      OutboundText.bareMarkers(plain),
+      List.empty,
+      s"bare markdown markers survived: ${OutboundText.bareMarkers(plain)}"
+    )
     assert(!plain.contains("**"), "no emphasis delimiters")
     assert(!plain.contains("~~"), "no strikethrough delimiters")
     // The underscore family is the one the fixture above already carried while
@@ -159,14 +182,19 @@ val x = 1
     assert(!plain.contains("_em_"), s"underscore emphasis delimiter survived: $plain")
     assert(plain.contains(" and em and "), s"the emphasis content must survive as words: $plain")
     val idents = OutboundText.toPlain("call snake_case and x__y and https://e.example/a_b_c now")
-    assertEquals(idents, "call snake_case and x__y and https://e.example/a_b_c now",
-      "an underscore inside a word (or a URL) is punctuation, not a delimiter")
-    assertEquals(OutboundText.bareMarkers(idents), List.empty,
-      s"the pair rule must not flag ordinary identifiers: ${OutboundText.bareMarkers(idents)}")
+    assertEquals(
+      idents,
+      "call snake_case and x__y and https://e.example/a_b_c now",
+      "an underscore inside a word (or a URL) is punctuation, not a delimiter"
+    )
+    assertEquals(
+      OutboundText.bareMarkers(idents),
+      List.empty,
+      s"the pair rule must not flag ordinary identifiers: ${OutboundText.bareMarkers(idents)}"
+    )
     // ... while a genuine, wire-visible pair IS flagged: the predicate would be
     // worthless if it were silent on the very family it was extended for.
-    assert(OutboundText.bareMarkers("a _em_ b").nonEmpty,
-      "the predicate must see a bare underscore pair")
+    assert(OutboundText.bareMarkers("a _em_ b").nonEmpty, "the predicate must see a bare underscore pair")
     val urls = OutboundText.links(plain)
     assert(urls.contains("https://example.com/a"), s"the labelled link died: $urls")
     assert(urls.contains("https://bare.example/b"), s"the bare link died: $urls")
@@ -197,8 +225,8 @@ val x = 1
     val uploads = RecordingUploads(fail = true)
     val a = adapter(OutboundRenderer.unavailable, uploads)
     val html = path("card.html")
-    val d = a.degrade(OutboundPayload.CardHtml("<html/>", Some("t"), Some(html)),
-      OutboundPlanner.Reason.RenderUnavailable)
+    val d =
+      a.degrade(OutboundPayload.CardHtml("<html/>", Some("t"), Some(html)), OutboundPlanner.Reason.RenderUnavailable)
     val rendered = s"${d.body} ${d.reason} ${d.originalPath.map(_.toString).getOrElse("")}"
     assert(!rendered.contains("test-secret"), "the credential value must never reach a degraded body")
     assert(!rendered.toLowerCase.contains("appsecret"), "no credential key either")
@@ -214,8 +242,7 @@ val x = 1
       ChannelCall.UploadImage(path("x.png"), thenSendImage = true),
       ChannelCall.UploadFile(path("y.pdf"), "y.pdf", thenSendFile = true)
     )
-    for
-      results <- a.dispatch(calls)
+    for results <- a.dispatch(calls)
     yield
       assertEquals(results.size, calls.size, "N calls in => N results out (count conservation)")
       assertEquals(results.map(_.call), calls, "results line up with the calls, in order")
@@ -230,23 +257,23 @@ val x = 1
     assertEquals(a.classify(cardEvent), ContentClass.Card)
     val textEvent = Json.obj("type" -> Json.fromString("done"), "text" -> Json.fromString("plain"))
     assertEquals(a.classify(textEvent), ContentClass.Text)
-    val unknownEvent = Json.obj("type" -> Json.fromString("done"),
-      "path" -> Json.fromString("/tmp/nebflow-socoutbound/nope.zzz"))
+    val unknownEvent =
+      Json.obj("type" -> Json.fromString("done"), "path" -> Json.fromString("/tmp/nebflow-socoutbound/nope.zzz"))
     a.classify(unknownEvent) match
       case ContentClass.Unknown(reason) => assert(reason.nonEmpty)
-      case other                        => fail(s"expected Unknown for a missing path, got $other")
+      case other => fail(s"expected Unknown for a missing path, got $other")
   }
 
   test("OB-R12 the text leg reaches the wire de-marked-up while the in-session original is untouched") {
     val sent = new java.util.concurrent.atomic.AtomicReference[List[String]](Nil)
     val a = new FeishuOutboundAdapter(
-      sendText = (_, _, _, _, text) => IO { sent.updateAndGet(_ :+ text); FeishuChannel.SendResult(true, Some("om_1"), 0, "ok", "t", "chat_id") },
+      sendText = (_, _, _, _, text) =>
+        IO { sent.updateAndGet(_ :+ text); FeishuChannel.SendResult(true, Some("om_1"), 0, "ok", "t", "chat_id") },
       uploadImage = FeishuOutboundAdapter.noUpload,
       uploadFile = FeishuOutboundAdapter.noUploadFile,
       creds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec"))
     )
-    for
-      results <- a.dispatch(List(ChannelCall.SendText(OutboundText.toPlain("**hi** and _em_ [d](https://e.com/x)"))))
+    for results <- a.dispatch(List(ChannelCall.SendText(OutboundText.toPlain("**hi** and _em_ [d](https://e.com/x)"))))
     yield
       assert(results.forall(_.ok))
       val out = sent.get().headOption.getOrElse(fail("nothing reached the send seam"))
@@ -257,11 +284,18 @@ val x = 1
 
   // ───────── the WIRED bridge leg (the only production file this batch edits) ─────────
 
-  /** Recording BridgeContext: the bridge spec's shape, reused here so the wired
-    * leg is judged through the real event entry rather than a private method. */
+  /**
+   * Recording BridgeContext: the bridge spec's shape, reused here so the wired
+   * leg is judged through the real event entry rather than a private method.
+   */
   private final class BridgeCtx(sessions: List[SessionMeta]) extends BridgeContext:
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] = IO.unit
+
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] = IO.unit
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
@@ -269,7 +303,11 @@ val x = 1
 
   private def boundMeta(id: String, chatId: String): SessionMeta =
     SessionMeta(
-      id = id, name = id, createdAt = 0L, updatedAt = 0L, hasUnread = false,
+      id = id,
+      name = id,
+      createdAt = 0L,
+      updatedAt = 0L,
+      hasUnread = false,
       bridges = Map("feishu" -> Json.obj("chat_id" -> Json.fromString(chatId)))
     )
 
@@ -278,17 +316,20 @@ val x = 1
     val p = new FeishuBridgePlugin(
       os.temp.dir(prefix = "nb-socoutbound-bridge-"),
       send = (_, _, _, receiveId, text) =>
-        IO { sent.updateAndGet(_ :+ s"$receiveId|$text"); FeishuChannel.SendResult(true, Some("om_1"), 0, "ok", "t", "chat_id") },
+        IO {
+          sent.updateAndGet(_ :+ s"$receiveId|$text");
+          FeishuChannel.SendResult(true, Some("om_1"), 0, "ok", "t", "chat_id")
+        },
       pinnedAllowedOpenIds = None,
-      pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")))
+      pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec"))
+    )
     // The model's own writing: raw markdown, exactly as the session shows it.
     // The underscore pair is in here on purpose: it is the family that reached
     // the wire verbatim while the asterisk family was already being unwrapped.
     val raw = "**bold** and `code` and _em_ — see [docs](https://e.com/x) and # heading"
 
     def delta(s: String): Json =
-      Json.obj("type" -> Json.fromString("textDelta"), "sessionId" -> Json.fromString(s),
-        "delta" -> Json.fromString(s))
+      Json.obj("type" -> Json.fromString("textDelta"), "sessionId" -> Json.fromString(s), "delta" -> Json.fromString(s))
     def done(s: String): Json =
       Json.obj("type" -> Json.fromString("done"), "sessionId" -> Json.fromString(s))
 
@@ -307,15 +348,17 @@ val x = 1
         else fail(s"malformed record: $wire")
       // The red-by-construction core: without the reply() conversion this is raw
       // markdown and bareMarkers is non-empty.
-      assertEquals(OutboundText.bareMarkers(body), List.empty,
-        s"bare markdown reached the wire: ${OutboundText.bareMarkers(body)}")
+      assertEquals(
+        OutboundText.bareMarkers(body),
+        List.empty,
+        s"bare markdown reached the wire: ${OutboundText.bareMarkers(body)}"
+      )
       assert(!body.contains("**"), s"emphasis delimiter survived: $body")
       assert(!body.contains("`"), s"inline-code delimiter survived: $body")
       assert(!body.contains("_em_"), s"underscore emphasis reached the wire: $body")
       assert(body.contains(" and em "), s"the emphasis content must survive as words: $body")
       // Links stay alive as bare URLs, labels stay as words.
-      assertEquals(OutboundText.links(body), List("https://e.com/x"),
-        s"the link must survive the wired leg: $body")
+      assertEquals(OutboundText.links(body), List("https://e.com/x"), s"the link must survive the wired leg: $body")
       assert(body.contains("docs"), s"the link label survives as words: $body")
       // The conversion really happened (a no-op passthrough would satisfy the
       // marker assertion above only if the input had no markers -- guarded below).
@@ -323,8 +366,15 @@ val x = 1
       // The conversion is a PURE function applied to the outbound argument: the
       // session-side copy is never rewritten, so the original still carries its
       // own markup. Asserted directly so the red above cannot be vacuous.
-      assert(OutboundText.bareMarkers(raw).nonEmpty,
-        "the original really does carry bare markers (else the red above is vacuous)")
-      assertEquals(OutboundText.toPlain(raw), body,
-        "the wire body is exactly the one conversion applied to the original")
+      assert(
+        OutboundText.bareMarkers(raw).nonEmpty,
+        "the original really does carry bare markers (else the red above is vacuous)"
+      )
+      assertEquals(
+        OutboundText.toPlain(raw),
+        body,
+        "the wire body is exactly the one conversion applied to the original"
+      )
+    end for
   }
+end FeishuOutboundSpec

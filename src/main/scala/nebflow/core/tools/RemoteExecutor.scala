@@ -519,6 +519,106 @@ class RemoteExecutor(
           else Right(java.util.Base64.getDecoder.decode(b64))
       case Left(err) => Left(s"decode: ${err.getMessage}")
 
+  // ---- v2.1 阶段 1：浏览面公开口（direction=list 元数据 + scope=get 单件） ----
+
+  /**
+   * 浏览面**元数据目录列举**（§C.1-3 无感面②）：对端 `FileTransfer direction=list,
+   * scope=browse`——只拿元数据（name/type/size/mtime/broken），**零字节流动**。
+   * 消费方 = 项目创建面的远端目录校验（G.13 序①）+ WS 文件浏览器 `device` 腿。
+   * dispatch 与既有腿同族（P2P 优先 → relay 回落）。
+   */
+  def transferListScoped(peer: PeerInfo, dirPath: String): IO[Either[String, Json]] =
+    val params = JsonObject(
+      "direction" -> "list".asJson,
+      "path" -> dirPath.asJson,
+      "scope" -> "browse".asJson
+    )
+    dispatchBrowse(peer, "FileTransfer", params).flatMap {
+      case Right(out) => IO.blocking(decode[Json](out).left.map(err => s"decode: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /**
+   * 浏览面**单件取件**（§C.2「看哪个下哪个」）：对端 `FileTransfer direction=get,
+   * scope=browse`——出口白名单在对端闸（EgressWhitelist），大小闸在本侧
+   * （[[MaxScopedFetchBytes]]，超限显式报错引导显式批量/dropbox 通道）。
+   * 返回**字节**（落盘归调用方——pickups 单点）。
+   */
+  def transferGetScoped(peer: PeerInfo, remotePath: String): IO[Either[String, Array[Byte]]] =
+    val params = JsonObject(
+      "direction" -> "get".asJson,
+      "path" -> remotePath.asJson,
+      "scope" -> "browse".asJson
+    )
+    dispatchBrowse(peer, "FileTransfer", params).flatMap {
+      case Right(out) =>
+        IO.blocking {
+          decode[Json](out) match
+            case Right(json) =>
+              val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+              if size > MaxScopedFetchBytes then
+                Left(s"file too large for single fetch: $size bytes > $MaxScopedFetchBytes limit — use explicit batch transfer (dropbox) instead")
+              else
+                val b64 = json.hcursor.downField("content").as[String].getOrElse("")
+                if b64.isEmpty then Left("empty content")
+                else Right(java.util.Base64.getDecoder.decode(b64))
+            case Left(err) => Left(s"decode: ${err.getMessage}")
+        }
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /**
+   * 浏览面 dispatch 单点：P2P 优先 → relay 回落（与 [[transferGetBytes]] 同族判定，
+   * 拒绝与既有 capture 腿共用同一 dispatch 核心语义；浏览面独用本入口——禁旁路）。
+   */
+  private def dispatchBrowse(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject
+  ): IO[Either[String, String]] =
+    p2pExecuteWithRetry(
+      peer,
+      toolName,
+      params,
+      60.seconds,
+      "",
+      P2pPathDecision.probeBudget(true),
+      kind = "browse"
+    ).flatMap {
+      case Right(out) => IO.pure(Right(out))
+      case Left(p2pErr) =>
+        currentRelayClient.flatMap {
+          case Some(client) =>
+            relayExecAudited(client, peer, toolName, params, "", kind = "browse")
+          case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(120)} (no relay client)"))
+        }
+    }
+
+  /** 浏览面单件大小闸（dropbox 大件通道引导线之上的硬闸；与 10MiB capture 闸分档）。 */
+  val MaxScopedFetchBytes: Long = 50L * 1024 * 1024
+
+  /**
+   * 远端**单文件 Write**（v2.1 §A.5 远端创建脚手架腿的唯一落笔口）：走既有
+   * remote-exec Write 工具通道（对端 createFolders 语义幂等建目录）；projectRoot
+   * = 目标父目录（对端侧路径基座）。与工具级 remote-exec 六件的原语义同一通道，
+   * 只是把「模型显式调用」换成「创建面的机械落笔」——零新通道。
+   */
+  def writeRemoteFileForScaffold(
+    peer: PeerInfo,
+    remotePath: String,
+    content: String
+  ): IO[Either[String, String]] =
+    val parent = remotePath.replaceAll("""[/\\]+""", "/").split("/").dropRight(1).mkString("/")
+    // 参数键 = Write 工具 schema（file_path/content，WriteTool.scala）。
+    val params = JsonObject(
+      "file_path" -> remotePath.asJson,
+      "content" -> content.asJson
+    )
+    executeViaBestPath(peer, "Write", params, 60.seconds, parent, kind = "scaffold").map {
+      case Right(out) => Right(out)
+      case Left(err) => Left(err.message)
+    }
+
   // ---- A1：设备腿读图的视觉块回填（调用侧，2026-09-16 作者裁定） ----
 
   /**
@@ -907,15 +1007,43 @@ class RemoteExecutor(
     budget: P2pPathDecision.ProbeBudget
   ): IO[Either[ToolError, String]] =
     IO.blocking {
-      val body = io.circe.Json.obj(
+      val apiPath = "/api/neblink/remote-exec"
+      val bodyStr = io.circe.Json.obj(
         "action" -> toolName.asJson,
         "params" -> params.asJson
-      )
+      ).noSpaces
+      // v2.1 §A.4（2026-10-09 实施批）：配对设备对设备面请求**恒附** HMAC 头
+      // （发送侧无条件签名；收端是否 enforce 由其 deviceAuth 档自主——双轨灰度的
+      // 两端解耦）。未配对（devices.json 无本对端键）= 头集与改前逐字节相同，
+      // 零回归。canonical = DeviceHmac 唯一拼装点，收端 verifyHeaders 同源。
+      val hmacHeaders: List[sttp.model.Header] =
+        nebflow.core.device.DeviceRegistry.secretForSync(peer.deviceId) match
+          case Some(key) if key.nonEmpty =>
+            val ts = (System.currentTimeMillis() / 1000).toString
+            val nonce = nebflow.core.device.DeviceHmac.newNonce()
+            val sig = nebflow.core.device.DeviceHmac.sign(
+              key,
+              nebflow.core.device.DeviceHmac.canonical(
+                selfDeviceId,
+                ts,
+                nonce,
+                "POST",
+                apiPath,
+                nebflow.core.device.DeviceHmac.bodySha256(bodyStr)
+              )
+            )
+            List(
+              sttp.model.Header(nebflow.core.device.DeviceHmac.HeaderTs, ts),
+              sttp.model.Header(nebflow.core.device.DeviceHmac.HeaderNonce, nonce),
+              sttp.model.Header(nebflow.core.device.DeviceHmac.HeaderSignature, sig)
+            )
+          case _ => Nil
       val resp = basicRequest
-        .post(sttp.model.Uri.unsafeParse(s"$endpoint/api/neblink/remote-exec"))
+        .post(sttp.model.Uri.unsafeParse(s"$endpoint$apiPath"))
         .contentType("application/json")
         .header(nebflow.shared.DeviceHeader, selfDeviceId)
-        .body(body.noSpaces)
+        .headers(hmacHeaders*)
+        .body(bodyStr)
         .readTimeout(timeout)
         .response(asStringAlways)
         .send(backendFor(budget))
@@ -1233,8 +1361,10 @@ object RemoteExecutor:
     instance = Some(new RemoteExecutor(neblinkService, dispatcher, relayClient))
     // ④ captures TTL 清扫（xdev 批 2026-09-15）：启动即清一次 + 每 6h 周期清。
     // 清扫失败只 WARN（CapturePull.sweepExpired 内已兜），绝不影响网关启动。
+    // v2.1 阶段 1（2026-10-09）：pickups 落盘（PointerPickup，§C.2 按需取件的
+    // 本地读数端）同 fiber 同周期——逐件留痕语义同族。
     dispatcher.unsafeRunAndForget(
-      (CapturePull.sweepExpired().attempt *> IO.sleep(6.hours)).foreverM.void
+      (CapturePull.sweepExpired().attempt *> PointerPickup.sweepExpired().attempt *> IO.sleep(6.hours)).foreverM.void
     )
 
   /** Get the current instance, or None if neblink is not initialized. */
@@ -1253,8 +1383,11 @@ object RemoteExecutor:
    * 后「精确唯一命中」场景与旧代码常见路径一致；被拒的只有**真歧义**（精确多
    * 命中 / 模糊多命中）——旧代码在这种场景会静默选中任意一台，正是判红① 的
    * 「同名投错机器」失败形态。纯函数（不触实例状态）⇒ 放 object 供同包测试。
+   * v2.1 阶段 1：可见域从 `private[tools]` 放宽到 `private[nebflow]`——项目
+   * 创建面（ProjectCreateService 的远端创建腿）按同一解析单点选设备（禁第二份
+   * 分层匹配实现），行为零变化。
    */
-  private[tools] def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
+  private[nebflow] def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
     val exact = peers.filter(_.deviceName.equalsIgnoreCase(deviceName))
     val fuzzy = peers.filter(p =>
       p.deviceId.startsWith(deviceName) ||

@@ -672,7 +672,14 @@
   margin-top: 6px;
   width: 264px;
   z-index: 20;
-  background: var(--glass-bg);
+  /* 2026-10-08 readability fix: this popover lives INSIDE #search-modal, and
+     an ancestor with its own backdrop-filter forms a backdrop root — the blur
+     below can only sample paints within the modal subtree, so the half
+     hanging over the chat stayed sharp through the 0.55-white --glass-bg
+     veil. The blur stays (it still frosts the card-overlap half, and
+     msg-search-v3-smoke B5 pins it); the tint is deepened so bleed-through
+     text is illegible (light: white .88, macOS-popover frost range). */
+  background: rgba(255, 255, 255, 0.88);
   -webkit-backdrop-filter: blur(24px) saturate(1.15);
   backdrop-filter: blur(24px) saturate(1.15);
   border: 1px solid var(--glass-border);
@@ -686,6 +693,7 @@
 }
 @media (prefers-color-scheme: dark) {
   #search-date-popover {
+    background: rgba(24, 28, 38, 0.92);  /* dark --glass-bg family, deepened same way */
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
@@ -696,7 +704,9 @@
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-/* 8px top arrow pointing at the Date tab. --cal-arrow-left set by JS. */
+/* 8px top arrow pointing at the Date tab. --cal-arrow-left set by JS.
+   background: inherit → tracks the popover body tint (incl. the dark override)
+   so the arrow never seams against the deepened frost. */
 #search-date-popover::before {
   content: '';
   position: absolute;
@@ -704,7 +714,7 @@
   left: var(--cal-arrow-left, 50%);
   width: 8px; height: 8px;
   transform: translateX(-50%) rotate(45deg);
-  background: var(--glass-bg);
+  background: inherit;
   border-left: 1px solid var(--glass-border);
   border-top: 1px solid var(--glass-border);
 }

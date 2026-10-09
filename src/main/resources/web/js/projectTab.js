@@ -91,6 +91,7 @@ function ensureScroll(pane) {
   // `git merge-file` 试算 rc=0 零冲突、`checkJs` 不红，但挂载语句不可达 ⇒ 钮永不
   // 出现且**零报警**（本批唯一的静默失败形态）。
   attachProjectsCreateFab(pane); // 「+」钮：同款单点挂载（DOM 重建后随之回归；幂等）
+  attachProjectsFlowmapFab(pane); // 「项目流程图」钮（文件夹树批 A2）：同款单点挂载
   return scroll;
 }
 
@@ -123,6 +124,7 @@ export function openProjectsTab() {
 //   write face; only their call sites = 0 are recorded) — see the deliverable's
 //   "superseded" section.
 const PROJECTS_CREATE_FAB = 'proj-create-fab';
+const PROJECTS_FLOWMAP_FAB = 'proj-flowmap-fab';
 const PROJECT_CREATE_OVERLAY = 'proj-create-overlay';
 const PROJECT_CREATE_DESC_ID = 'proj-create-desc';
 const PROJECT_CREATE_WS_ID = 'proj-create-ws';
@@ -186,6 +188,40 @@ function attachProjectsCreateFab(pane) {
   });
   pane.appendChild(btn);
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(btn));
+}
+
+/** 「项目流程图」圆钮（任务列表文件夹树批 · 方案 A2 · 2026-10-09）：L1 顶栏结构
+ *  入口钮退役（delegateChainView R7）后，L2 的唯一命名入口迁挂项目面板列表视图——
+ *  右下角「+」钮上方 10px 叠一枚同语言 40px 圆钮（network 图标；材质 =
+ *  .proj-flowmap-fab，全 --glass-control-* token 零新色值）。点击 =
+ *  openDelegateChainStructure()（与项目卡标题点按同路；标题点按入口保留不动）。
+ *  幂等 + 视图守卫两重沿 attachProjectsCreateFab 范式：① 已在场不重建；②
+ *  delegate-chain 视图（S10/S11）摘钮早退（入口在该视图内无语义）。 */
+function attachProjectsFlowmapFab(pane) {
+  if (!pane) return;
+  if (pane.dataset.projectsView === 'delegate-chain') {
+    pane.querySelector(`.${PROJECTS_FLOWMAP_FAB}`)?.remove();
+    return;
+  }
+  if (pane.querySelector(`.${PROJECTS_FLOWMAP_FAB}`)) return; // 已在场 ⇒ 幂等早退
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = PROJECTS_FLOWMAP_FAB;
+  btn.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/>' +
+    '<rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/>' +
+    '<path d="M12 12V8"/></svg>';
+  btn.title = t('delegate.projectflow.title'); // 既有键（零新 locale 键）
+  btn.setAttribute('aria-label', t('delegate.projectflow.title'));
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    import('./delegateChainView.js')
+      .then(({ openDelegateChainStructure }) => openDelegateChainStructure())
+      .catch(() => {});
+  });
+  pane.appendChild(btn);
 }
 
 /** 打开轻弹层（单例）。结构 = `chat.css` 既有 `.wsp-*` 族（不自造弹层），

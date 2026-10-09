@@ -17,6 +17,26 @@
 // 消息节点判据走**属性名**（`data-message-id` / `data-msg-id`）而不是调用方传谓词：
 // 谓词参数在 `region.children`（`Element`）上取 `.dataset` 会各面各写一次类型断言，
 // 断言一旦漏写就是新面的 checkJs 红。
+//
+// ── 贴底判定单源（follow-batch 2026-10-08）────────────────────────────────
+// 本面（好友/群消息窗）的「贴底」阈值在此**唯一**命名：`AT_BOTTOM_PX = 40`，
+// 即 `preserveScrollAnchor` 自合并期起一直在用的同一个值（钉底优先于锚点保持
+// 的那行判据）。取值理由：
+//   · 它是**既有值**——改判据数值 = 改本面已验收的滚动行为，本批无授权这么做；
+//   · 量级正确：小于一行单条气泡的行距（agent 面 1440×900 实测单行行距
+//     ~65-75px，utils.js `NEAR_BOTTOM_PX` 注），40px ⇒ 「还没真正离开最后一条」；
+//   · 单源纪律：跟随钉底（appendMessage）、锚点补偿（preserveScrollAnchor）与
+//     「↓ N 条新消息」胶囊的显隐判定**共用同一份**——本面内不出现第二个数。
+// 主窗 agent 面的 44px（`utils.js NEAR_BOTTOM_PX`）是另一面的既定实测值，不动；
+// 两面各自单源，互不越界。
+export const AT_BOTTOM_PX = 40;
+
+/** 与 `preserveScrollAnchor` 同一份贴底判定（≤ AT_BOTTOM_PX 视为仍在底部）。
+ *  跟随/胶囊决策点用这一个函数，禁再写第二份距离算式。 */
+export function isAtBottom(region) {
+  if (!region) return true;
+  return region.scrollHeight - region.scrollTop - region.clientHeight <= AT_BOTTOM_PX;
+}
 
 /** 消息节点判据的唯一落点（属性名 → 是否命中）。 */
 const isMessageNode = (n, attr) => {
@@ -53,7 +73,8 @@ export function preserveScrollAnchor(region, mutate, msgIdAttr) {
   if (!region) { mutate(); return; }
   const st = region.scrollTop;
   // 已在底部 ⇒ 用户要的是「跟着最新走」，钉底优先于锚点保持（与既有 sticky 语义一致）。
-  const atBottom = region.scrollHeight - region.scrollTop - region.clientHeight <= 40;
+  // 判据单源 = isAtBottom（AT_BOTTOM_PX）——与本面的跟随/胶囊决策同一份。
+  const atBottom = isAtBottom(region);
   const anchor = firstVisibleMessage(region, st, msgIdAttr);
   const anchorTop = anchor ? anchor.offsetTop : 0;
 

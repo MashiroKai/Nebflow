@@ -546,7 +546,9 @@ class ChainLedgerSpec extends CatsEffectSuite:
   // bounded). `verify` remains the explicit full-audit entrypoint, and
   // `resolveDeep` keeps old numbers reachable via a lazy per-file scan.
 
-  test("T15 open-time cold audit is budget-bounded: over-budget open skips the cold read; resolveDeep stays lazy-correct; explicit verify still audits") {
+  test(
+    "T15 open-time cold audit is budget-bounded: over-budget open skips the cold read; resolveDeep stays lazy-correct; explicit verify still audits"
+  ) {
     val dir = os.temp.dir(prefix = "nb-chain-ledger-budget-", deleteOnExit = false)
     val path = dir / ChainLedger.FileName
     val arch = dir / ChainLedger.ArchiveDirName

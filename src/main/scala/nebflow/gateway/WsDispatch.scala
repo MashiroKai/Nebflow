@@ -226,8 +226,10 @@ final class WsDispatchCtx(
   def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
     browseErrorFrameImpl(displayPath, kind, msg, query)
 
-  /** How many entries a `browsePath` frame carries before `truncated` turns on —
-    * the ONE ruler for that leg (was a literal `take(200)`). */
+  /**
+   * How many entries a `browsePath` frame carries before `truncated` turns on —
+   * the ONE ruler for that leg (was a literal `take(200)`).
+   */
   def browseEntryCap: Int = browseEntryCapImpl
 
   def resolveExplorerBaseRoot(
@@ -263,12 +265,16 @@ final class WsDispatchCtx(
   ): IO[Unit] =
     executeSkillImpl(skillName, input, sessionId, wsSend)
 
-  /** Resolve the permission-policy bucket (delivery root) of a sessionId — the
-    * same server-side judge `ensureAgent`/`askUserAnswer` use, so `projectCreate`
-    * never invents a root. */
+  /**
+   * Resolve the permission-policy bucket (delivery root) of a sessionId — the
+   * same server-side judge `ensureAgent`/`askUserAnswer` use, so `projectCreate`
+   * never invents a root.
+   */
   def resolveRootSessionId(sessionId: String): IO[String] = resolveRootSessionIdImpl(sessionId)
 
-  /** The `projectCreate` broadcast channel: the SAME `wsHub` the node events and
-    * the created project's `projectCreated` frame use. */
+  /**
+   * The `projectCreate` broadcast channel: the SAME `wsHub` the node events and
+   * the created project's `projectCreated` frame use.
+   */
   def projectCreateBroadcast(json: io.circe.Json): IO[Unit] = projectCreateBroadcastImpl(json)
 end WsDispatchCtx

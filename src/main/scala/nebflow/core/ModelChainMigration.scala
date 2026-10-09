@@ -33,18 +33,23 @@ object ModelChainMigration:
 
   private val NebulaRef = "Nebula"
   private val DefaultPresetRef = "LowCost"
-  /** Role agents whose stored `preset` references the one-time migration cleans
-    * up. P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
-    * batch merged `kernel` + `general` into [[nebflow.core.entity.BuiltinAgents.ExecutorName]],
-    * and the retired spellings here are the OLD-DATA face — an existing home still
-    * carries their sidecars and still needs the same stale-key cleanup, so they are
-    * derived from the single rename table rather than re-spelled as literals. */
+
+  /**
+   * Role agents whose stored `preset` references the one-time migration cleans
+   * up. P1-2 downstream-role-face convergence batch (2026-10-03): the builtin-merge
+   * batch merged `kernel` + `general` into [[nebflow.core.entity.BuiltinAgents.ExecutorName]],
+   * and the retired spellings here are the OLD-DATA face — an existing home still
+   * carries their sidecars and still needs the same stale-key cleanup, so they are
+   * derived from the single rename table rather than re-spelled as literals.
+   */
   private val RoleAgents: List[String] =
     List(NebulaRef, "project-dispatcher", nebflow.core.entity.BuiltinAgents.ExecutorName)
       ++ nebflow.core.entity.BuiltinAgents.RetiredNames.keys
 
-  /** Nebula's default chain — the shipped default chain, verbatim. Used when
-    * Nebula's catalog reference cannot be resolved from the catalog file. */
+  /**
+   * Nebula's default chain — the shipped default chain, verbatim. Used when
+   * Nebula's catalog reference cannot be resolved from the catalog file.
+   */
   val DefaultNebulaChain: AgentModelConfig = AgentModelConfig(
     preferred = Some("zhipu/GLM-5.3-Flash"),
     fallbacks = List(
@@ -101,16 +106,23 @@ object ModelChainMigration:
             AtomicJson.writeSync(jsonPath, updated.noSpaces)
             logger.infoSync(
               s"model-chain migration: '$name' preset reference '$ref' -> " +
-                resolved.fold("follows the Nebula chain")(_ => "own model chain"))
+                resolved.fold("follows the Nebula chain")(_ => "own model chain")
+            )
           }
         case None =>
           logger.warnSync(s"model-chain migration: skipped unreadable $jsonPath")
 
+    end if
+
+  end migrateAgent
+
   private def stripPresetKey(json: Json): Json =
     json.asObject.map(obj => Json.fromFields(obj.toMap.removed("preset"))).getOrElse(json)
 
-  /** Seal the catalog file in place: rename with a timestamp suffix. A home
-    * already migrated has nothing at the original path — no-op. */
+  /**
+   * Seal the catalog file in place: rename with a timestamp suffix. A home
+   * already migrated has nothing at the original path — no-op.
+   */
   private def sealCatalog(presetsFile: os.Path): Unit =
     if os.exists(presetsFile) then
       val ts = java.time.format.DateTimeFormatter

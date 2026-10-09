@@ -347,6 +347,50 @@
   opacity: 1;
 }
 
+/* ── 「项目流程图」圆钮（任务列表文件夹树批 · 方案 A2 · 2026-10-09）────────────
+   L1 顶栏结构入口钮退役（R7）后，L2 唯一命名入口迁挂项目面板列表视图：叠在「+」
+   钮上方 10px（16+40+10=66），材质 = .proj-create-fab 逐值克隆（--glass-control-*
+   玻璃族，零新色值）；icon = lucide network 同源描边（inline svg 17px）。
+   幂等+视图守卫范式复用 attachProjectsCreateFab（delegate-chain 视图摘钮早退）。 */
+.proj-flowmap-fab {
+  position: absolute;
+  bottom: 66px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 45;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  opacity: 0.6;
+  padding: 0;
+}
+.proj-flowmap-fab svg { width: 17px; height: 17px; }
+.proj-flowmap-fab:hover {
+  background: var(--glass-control-bg-hover);
+  opacity: 1;
+  transform: scale(1.05);
+}
+.proj-flowmap-fab:focus { outline: none; }
+.proj-flowmap-fab:focus-visible {
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 0 0 2px var(--glass-control-border);
+  opacity: 1;
+}
+
 /* 让位：列表底部为「+」钮留空，防遮挡末行卡。
    🔴 判据（上游 §三.5 实算）：`.team-scroll` 内容盒底边 = 12 + 24 = 36（距面板底），
    落在钮的纵向带 [16, 56] 内；取 P = 72 = 16 + 40 + 16（4px 基数）⇒ 内容盒底边
@@ -530,6 +574,14 @@
   gap: 12px;
 }
 .delegate-chain-card { flex: 0 0 auto; }
+/* 卡片流内定位钉（delegate-ui 批 2026-10-08 · R3 聚合分组时实测暴露；两层架构批
+   2026-10-09 扩 L1 任务视图）：FLOW_CSS `.solar-node` 的 position:absolute（主图
+   画布口径）使 plain 卡全部压在 flex 容器 static position 上彼此叠盖（abspos flex
+   子项 = 「唯一 flex item」静位口径）——链视图卡列表（L2 平铺）与 L1 委托流程图
+   卡列表（根卡/subagent 卡/flow-step 下钻层）改流内定位（relative），分组头/多卡
+   横排才成立；主图画布（无本组祖先）零触碰。 */
+.delegate-chain-list .solar-node.fm-node,
+.delegate-chain-taskview .solar-node.fm-node { position: relative; }
 /* Node cards wired to the node detail layer (chainDetailEntry.js) read as
    clickable; keyboard focus parity with the main-graph cards. */
 .delegate-chain-list .fm-node.chain-detail-openable { cursor: pointer; }
@@ -607,4 +659,51 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+}
+
+/* ── delegate-ui 修订批（用户九点②③④⑧ · 2026-10-09）────────────────────────
+   ③ 链摘要行：链小点 + 「链 N 步」同一行（多节点链；单节点链不渲染）。
+   ④ 待合并链卡名次 chip（引擎位次透传；FIFO 泳道已撤——零连线零明细行）。
+   ⑧ 结构视图右上角归档 FAB（.delegate-archive-fab 样式随 delegateChainView.js
+   自注入块——此处只放链摘要行/名次 chip 两个静态件）。 */
+.delegate-chain-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.delegate-chain-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-muted, #888);
+  opacity: 0.55;
+}
+.delegate-chain-dot.st-running { background: var(--color-primary, #07c160); opacity: 1; }
+.delegate-chain-dot.st-completed { background: var(--color-success, #4caf50); opacity: 1; }
+.delegate-chain-dot.st-failed { background: var(--status-error-icon, #f44336); opacity: 1; }
+.delegate-chain-dot.st-cancelled { background: var(--color-warning, #ff9800); }
+.delegate-chain-dot.st-blocked { background: rgb(var(--amber)); opacity: 1; }
+.delegate-chain-dot.st-pending { background: var(--color-text-muted, #888); }
+.delegate-chain-steps {
+  flex: 0 0 auto;
+  margin-left: 3px;
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+}
+.delegate-card-rank {
+  flex: 0 0 auto;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: rgb(var(--sapphire) / 0.14);
+  font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--sapphire));
 }

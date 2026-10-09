@@ -71,21 +71,29 @@ class AgentDefSpec extends CatsEffectSuite:
     os.write.over(nebulaDir / "system.md", "STRAY-DISK-PROMPT")
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    assert(!result("Nebula").description.contains("STRAY-DISC-DESCRIPTION"),
-      "the disk agent.json is a dead letter — description comes from code")
-    assert(!result("Nebula").systemPrompt.contains("STRAY-DISK-PROMPT"),
-      "the disk system.md is a dead letter — the prompt comes from code")
+    assert(
+      !result("Nebula").description.contains("STRAY-DISC-DESCRIPTION"),
+      "the disk agent.json is a dead letter — description comes from code"
+    )
+    assert(
+      !result("Nebula").systemPrompt.contains("STRAY-DISK-PROMPT"),
+      "the disk system.md is a dead letter — the prompt comes from code"
+    )
 
   test("updateSystemPrompt refuses builtin names (read-only face) and writes custom names"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     // builtin：响亮拒绝（WARN，零写盘）
     lib.updateSystemPrompt("Nebula", "New prompt.").unsafeRunSync()
-    assert(!os.exists(tmpDir / "Nebula" / "system.md"),
-      "builtin prompt write must be refused — no disk mirror is created")
+    assert(
+      !os.exists(tmpDir / "Nebula" / "system.md"),
+      "builtin prompt write must be refused — no disk mirror is created"
+    )
     val readBack = lib.readSystemPrompt("Nebula").unsafeRunSync()
-    assert(readBack.exists(_.nonEmpty) && !readBack.contains("New prompt."),
-      "readSystemPrompt for a builtin serves the CODE prompt")
+    assert(
+      readBack.exists(_.nonEmpty) && !readBack.contains("New prompt."),
+      "readSystemPrompt for a builtin serves the CODE prompt"
+    )
     // custom：写通道照旧
     lib.updateSystemPrompt("CustomAgent", "Custom prompt.").unsafeRunSync()
     assertEquals(os.read(tmpDir / "CustomAgent" / "system.md"), "Custom prompt.")
@@ -100,8 +108,10 @@ class AgentDefSpec extends CatsEffectSuite:
     val result = lib.loadAll().unsafeRunSync()
     assert(result.contains("Nebula"), "Nebula comes from code regardless of disk state")
     assert(result("Nebula").systemPrompt.nonEmpty)
-    assert(!result("Nebula").systemPrompt.contains("Prompt from disk."),
-      "even a well-formed disk system.md is a dead letter for a builtin")
+    assert(
+      !result("Nebula").systemPrompt.contains("Prompt from disk."),
+      "even a well-formed disk system.md is a dead letter for a builtin"
+    )
 
   test("multiple custom agents loaded from disk and coexist with the four builtins"):
     val tmpDir = os.temp.dir()

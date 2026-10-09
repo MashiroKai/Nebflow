@@ -74,10 +74,13 @@ class FlowMapScopeStoreSpec extends CatsEffectSuite:
     for
       s1 <- FlowMapStore.openScope(scope, "proj", ws)
       _ <- s1.mutate { st =>
-        st.copy(nodes = st.nodes ++ Map(
-          "a" -> node("a", "up", NodeLifecycle.Completed).copy(result = Some("up done"), ttlExpireAt = Some(now + 100000)),
-          "b" -> node("b", "down", NodeLifecycle.Pending).copy(in = List("a"))
-        ))
+        st.copy(nodes =
+          st.nodes ++ Map(
+            "a" -> node("a", "up", NodeLifecycle.Completed)
+              .copy(result = Some("up done"), ttlExpireAt = Some(now + 100000)),
+            "b" -> node("b", "down", NodeLifecycle.Pending).copy(in = List("a"))
+          )
+        )
       }
       _ <- s1.reconcileChainLedger(System.currentTimeMillis())
       s2 <- FlowMapStore.openScope(scope, "proj", ws)
@@ -105,7 +108,9 @@ class FlowMapScopeStoreSpec extends CatsEffectSuite:
       snapA <- a.snapshot
       snapB <- b.snapshot
       dirA <- IO.blocking(os.list(os.Path(ws) / ".nebflow" / "flow-maps").map(_.last).toList)
-      rawB <- IO.blocking(os.read(os.Path(ws) / ".nebflow" / "flow-maps" / "delegate-test-agent-dd44" / "flow-map.json"))
+      rawB <- IO.blocking(
+        os.read(os.Path(ws) / ".nebflow" / "flow-maps" / "delegate-test-agent-dd44" / "flow-map.json")
+      )
       parsedB <- IO.fromEither(jsonParse(rawB).flatMap(_.as[FlowMapState]))
     yield
       assertEquals(snapA.nodes.size, 1)
@@ -121,7 +126,9 @@ class FlowMapScopeStoreSpec extends CatsEffectSuite:
 
   // ── S4 v3-⑧ 存量归档不迁移 ───────────────────────────────────────────
 
-  test("S4: legacy per-project flow-map.json stays byte-identical across scope mount + sweep enumeration (no migration)") {
+  test(
+    "S4: legacy per-project flow-map.json stays byte-identical across scope mount + sweep enumeration (no migration)"
+  ) {
     val ws = freshWorkspace()
     // 存量面：由**旧面 store 自己**写一份含节点的 per-project flow-map.json（真存量形态）。
     for
@@ -169,7 +176,10 @@ class FlowMapScopeStoreSpec extends CatsEffectSuite:
     yield
       assertEquals(leftovers, Nil, s"no directories created for invalid ids, got: $leftovers")
       assert(!escaped, "path traversal must not escape the flow-maps root")
-      assert(FlowMapStore.validScopeId("delegate-general-9f8e7d6c"), "well-formed delegate session ids are valid scopes")
+      assert(
+        FlowMapStore.validScopeId("delegate-general-9f8e7d6c"),
+        "well-formed delegate session ids are valid scopes"
+      )
     end for
   }
 

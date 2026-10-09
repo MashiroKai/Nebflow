@@ -285,6 +285,21 @@ function renderAgentDetail(pane, name, detail, model) {
   // System prompt
   const prompt = detail?.systemPrompt || '';
 
+  // prompt-panel 面板批（2026-10-09）：builtin nebflow 的提示词双面页签——
+  // delegate 面（默认，与列表行/详情头的 Delegate 目标描述同面）+ node 面
+  // （flow 节点会话收到的正文）。faces 由 GET /api/agents/:name 的 `promptFaces`
+  // 下发（判据单点 = BuiltinAgents.panelPromptFaces，仅两面确异时非空）；单面
+  // agent 该区不渲染，展示与批前逐字节一致。页签只读（内置提示词无编辑器）。
+  const faces = builtin && Array.isArray(detail?.promptFaces) ? detail.promptFaces : [];
+  const showFaces = faces.length > 1;
+  const FACE_LABEL_KEYS = { delegate: 'agentManager.faceDelegate', node: 'agentManager.faceNode' };
+  const FACE_HINT_KEYS = { delegate: 'agentManager.faceDelegateHint', node: 'agentManager.faceNodeHint' };
+  const faceTabsHtml = showFaces ? `
+        <div class="agent-detail-face-tabs" id="agent-detail-face-tabs">${faces.map((f, i) => `
+          <button type="button" class="agent-detail-face-tab${i === 0 ? ' active' : ''}" data-face="${esc(f.face || '')}">${esc(t(FACE_LABEL_KEYS[f.face]) || f.face)}</button>`).join('')}
+        </div>
+        <div class="agent-detail-face-hint" id="agent-detail-face-hint">${esc(t(FACE_HINT_KEYS[faces[0].face] || ''))}</div>` : '';
+
   pane.innerHTML = `
     <div class="agent-detail">
       <div class="agent-detail-header">
@@ -310,6 +325,7 @@ function renderAgentDetail(pane, name, detail, model) {
           <span class="agent-detail-label">${t('agentManager.systemPrompt')}</span>
           ${builtin ? '' : `<button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="${t('agentManager.viewSource')}">${CODE_ICON_SVG}</button>`}
         </div>
+        ${faceTabsHtml}
         <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
         ${builtin ? '' : `<textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
         <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>`}
@@ -321,10 +337,29 @@ function renderAgentDetail(pane, name, detail, model) {
 
   if (builtin) {
     // Read-only face: rendered prompt only, no editor, no save.
+    // prompt-panel 面板批（2026-10-09）：双面时默认渲染第一面（delegate 面），
+    // 点页签切换正文与标注行；单面时 faces 为空 → 回落 detail.systemPrompt，
+    // 行为与批前一致。
     const roRender = pane.querySelector('#agent-detail-prompt-render');
-    import('./utils.js').then(({ renderMarkdownWithMath }) => {
-      if (pane.isConnected) roRender.innerHTML = renderMarkdownWithMath(prompt);
-    });
+    const hintEl = pane.querySelector('#agent-detail-face-hint');
+    let activeFace = faces[0] || null;
+    const renderActiveFace = () => {
+      import('./utils.js').then(({ renderMarkdownWithMath }) => {
+        if (pane.isConnected) roRender.innerHTML = renderMarkdownWithMath(activeFace ? (activeFace.systemPrompt || '') : prompt);
+      });
+    };
+    renderActiveFace();
+    if (showFaces) {
+      const tabsEl = pane.querySelector('#agent-detail-face-tabs');
+      tabsEl?.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-face]');
+        if (!btn) return;
+        activeFace = faces.find(f => f.face === btn.dataset.face) || faces[0];
+        tabsEl.querySelectorAll('.agent-detail-face-tab').forEach(b => b.classList.toggle('active', b === btn));
+        if (hintEl) hintEl.textContent = t(FACE_HINT_KEYS[activeFace.face] || '');
+        renderActiveFace();
+      });
+    }
     return;
   }
 

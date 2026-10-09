@@ -44,8 +44,10 @@ class VisionIntentMarkerSpec extends CatsEffectSuite:
 
   private val messageStart =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"
+
   private def textDelta(t: String) =
     s"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"$t\"}}\n\n"
+
   private val okTail =
     Seq(
       "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
@@ -155,8 +157,12 @@ class VisionIntentMarkerSpec extends CatsEffectSuite:
         lines <- IO.blocking(visionIntentLines(dir))
       yield (res, lines)
     }
-    val (res, lines) = try program.unsafeRunSync()
-    finally if server != null then try server.stop(0) catch case _: Throwable => ()
+    val (res, lines) =
+      try program.unsafeRunSync()
+      finally
+        if server != null then
+          try server.stop(0)
+          catch case _: Throwable => ()
 
     assert(res.isRight, s"turn should complete against the mock: $res")
     assertEquals(lines.size, 1, s"exactly one vision_intent marker expected, got ${lines.size}")
@@ -207,8 +213,12 @@ class VisionIntentMarkerSpec extends CatsEffectSuite:
         lines <- IO.blocking(visionIntentLines(dir))
       yield (res, lines, hits.get())
     }
-    val (res, lines, _) = try program.unsafeRunSync()
-    finally if server != null then try server.stop(0) catch case _: Throwable => ()
+    val (res, lines, _) =
+      try program.unsafeRunSync()
+      finally
+        if server != null then
+          try server.stop(0)
+          catch case _: Throwable => ()
 
     assert(res.isRight, s"turn should complete against the mock: $res")
     assertEquals(lines.size, 1, s"exactly one marker expected, got ${lines.size}")

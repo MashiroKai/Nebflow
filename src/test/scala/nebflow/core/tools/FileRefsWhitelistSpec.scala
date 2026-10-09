@@ -81,7 +81,9 @@ class FileRefsWhitelistSpec extends FunSuite:
     )
   }
 
-  test("A1-mirror (2026-10-07 flip): the shipped tool descriptions no longer enumerate the served namespaces (retired prose cannot silently return)") {
+  test(
+    "A1-mirror (2026-10-07 flip): the shipped tool descriptions no longer enumerate the served namespaces (retired prose cannot silently return)"
+  ) {
     val text = FileRefs.DataRootServedNamespacesText
     // The 2026-10-07 askuser-copy-land cut (§16.2 落刀) rewrote PopTool's prose to
     // "every readable local location qualifies" — the enumeration left the model face
@@ -97,7 +99,9 @@ class FileRefsWhitelistSpec extends FunSuite:
     }
   }
 
-  test("A1-judge (2026-10-07 flip): the namespace reach layer is RETIRED — only credential identity refuses (pure judge, no disk)") {
+  test(
+    "A1-judge (2026-10-07 flip): the namespace reach layer is RETIRED — only credential identity refuses (pure judge, no disk)"
+  ) {
     // Pure reads (nfCredentialDeny touches no filesystem: it normalizes and
     // compares prefixes), so this pins the FLIP without writing anything:
     // former namespace refusals all read None now; the only refusing shapes

@@ -54,21 +54,25 @@ object WeixinIngressToken:
 
   private val logger = NebflowLogger.forName("nebflow.social.weixin-ingress-token")
 
-  /** File name under `<dataRoot>/secrets/`. The shim learns the path out of
-    * band (its token-file env — spelled `WEIXIN_SEND_TOKEN_FILE` since the
-    * weixin-autobind batch, 2026-10-07, which moved it into the outbound
-    * `WEIXIN_SEND_TOKEN[_FILE]` family; the pre-rename
-    * `WEIXIN_MSGLOOP_TOKEN_FILE` stays readable shim-side for one
-    * compatibility release), never from an API response. */
+  /**
+   * File name under `<dataRoot>/secrets/`. The shim learns the path out of
+   * band (its token-file env — spelled `WEIXIN_SEND_TOKEN_FILE` since the
+   * weixin-autobind batch, 2026-10-07, which moved it into the outbound
+   * `WEIXIN_SEND_TOKEN[_FILE]` family; the pre-rename
+   * `WEIXIN_MSGLOOP_TOKEN_FILE` stays readable shim-side for one
+   * compatibility release), never from an API response.
+   */
   val FileName = "weixin-ilink-ingress-token"
 
   def path(root: os.Path): os.Path = root / "secrets" / FileName
 
-  /** Mint-or-keep. Concurrent callers are safe: the create winner owns the
-    * file, the loser finds it existing and keeps it — a failure cleanup never
-    * deletes a file this call did not create or rewrite. A pre-existing file
-    * that is empty or not a well-formed token is residue and is regenerated
-    * IN PLACE (narrow-before-plaintext, inode preserved). */
+  /**
+   * Mint-or-keep. Concurrent callers are safe: the create winner owns the
+   * file, the loser finds it existing and keeps it — a failure cleanup never
+   * deletes a file this call did not create or rewrite. A pre-existing file
+   * that is empty or not a well-formed token is residue and is regenerated
+   * IN PLACE (narrow-before-plaintext, inode preserved).
+   */
   def ensure(root: os.Path): IO[Unit] = IO.blocking {
     val p = path(root).toNIO
     if Files.exists(p) && isWellFormed(readRaw(p)) then ()
@@ -89,29 +93,35 @@ object WeixinIngressToken:
             try Files.deleteIfExists(p)
             catch case _: Exception => ()
           throw e
+    end if
   }
 
-  /** Track-2 verification for the ingest route: does `bearer` match the stored
-    * token? Total and side-effect free; EVERY failure mode (no header, no file,
-    * unreadable, corrupt, mismatch) is the same `false`, and the caller answers
-    * the byte-identical 403 the admin track fails with. */
+  /**
+   * Track-2 verification for the ingest route: does `bearer` match the stored
+   * token? Total and side-effect free; EVERY failure mode (no header, no file,
+   * unreadable, corrupt, mismatch) is the same `false`, and the caller answers
+   * the byte-identical 403 the admin track fails with.
+   */
   def accepts(root: os.Path, bearer: Option[String]): IO[Boolean] =
     bearer match
       case None => IO.pure(false)
       case Some(provided) =>
-        IO.blocking(readRaw(path(root).toNIO)).redeem(
-          _ => false,
-          stored =>
-            isWellFormed(stored) && java.security.MessageDigest.isEqual(
-              provided.getBytes("UTF-8"),
-              stored.getBytes("UTF-8")
-            )
-        )
+        IO.blocking(readRaw(path(root).toNIO))
+          .redeem(
+            _ => false,
+            stored =>
+              isWellFormed(stored) && java.security.MessageDigest.isEqual(
+                provided.getBytes("UTF-8"),
+                stored.getBytes("UTF-8")
+              )
+          )
 
   // ───────────────────────────── internals ─────────────────────────────
 
-  /** The token shape this module mints and accepts: 43 base64url chars
-    * (32 bytes, unpadded). Anything else reads as corrupt residue. */
+  /**
+   * The token shape this module mints and accepts: 43 base64url chars
+   * (32 bytes, unpadded). Anything else reads as corrupt residue.
+   */
   private val TokenPattern = "^[A-Za-z0-9_-]{43}$"
 
   private def isWellFormed(s: String): Boolean = s.nonEmpty && s.matches(TokenPattern)
@@ -125,14 +135,19 @@ object WeixinIngressToken:
     new SecureRandom().nextBytes(bytes)
     Base64.getUrlEncoder.withoutPadding().encodeToString(bytes)
 
-  /** Created `rw-------` from its first byte on POSIX (the F1 rule); on a
-    * filesystem without POSIX attribute support the plain create is immediately
-    * followed by the shared restrict BEFORE any plaintext is written, so the
-    * narrowing still precedes the secret on every platform (the same fallback
-    * shape [[SocialChannels.createOwnerOnly]] documents). */
+  /**
+   * Created `rw-------` from its first byte on POSIX (the F1 rule); on a
+   * filesystem without POSIX attribute support the plain create is immediately
+   * followed by the shared restrict BEFORE any plaintext is written, so the
+   * narrowing still precedes the secret on every platform (the same fallback
+   * shape [[SocialChannels.createOwnerOnly]] documents).
+   */
   private def createOwnerOnly(p: Path): Unit =
     try
-      Files.createFile(p, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString(CredentialFileAcl.PosixMode)))
+      Files.createFile(
+        p,
+        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString(CredentialFileAcl.PosixMode))
+      )
     catch
       case _: UnsupportedOperationException =>
         Files.createFile(p)

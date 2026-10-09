@@ -235,8 +235,12 @@ class NodeEditWorktreeBaselineSpec extends CatsEffectSuite:
   test("WTB-4 createWorktree still provisions worktree+branch (util face intact for the delegate spawn leg)") {
     val ws = mkRepo("util")
     for
-      created <- IO.blocking(GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt"))
-      second <- IO.blocking(GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt-2"))
+      created <- IO.blocking(
+        GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt")
+      )
+      second <- IO.blocking(
+        GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt-2")
+      )
     yield
       val c = created.getOrElse(fail(s"util create must succeed: $created"))
       assert(os.exists(c.path / ".git"), s"worktree dir must exist: ${c.path}")

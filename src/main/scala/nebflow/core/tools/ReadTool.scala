@@ -163,15 +163,23 @@ Guidelines:
       if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
       else if Files.isDirectory(filePath) then
         Left(ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents."))
-      else if Files.size(filePath) > MAX_FILE_BYTES then
-        val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
-        val shortName = filePath.getFileName.toString
+      // 大文件守卫只拦「无参整读」。offset/limit/filter 任一显式传入 = 有界分段
+      // 请求（返回窗口仍由 limit/MAX_LINE_COUNT 封顶）→ 放行超限文件，走流式窗口读。
+      else if Files.size(filePath) > MAX_FILE_BYTES && !hasBoundedRequest(input) then
+        // 文案带完整路径 + 真实上限。旧写法 ${MAX_FILE_BYTES / 1024 / 1024} 是
+        // Int 整除：512KB(524288) → 512 → 0，报错显示 "limit 0MB"。
+        val fileSize = Files.size(filePath)
         Left(
           ToolError(
-            s"File too large to read safely: $shortName (${f"$sizeMb%.1f"}MB, limit ${MAX_FILE_BYTES / 1024 / 1024}MB). " +
+            s"File too large to read safely: $filePath (${formatMb(fileSize)}MB, limit ${formatMb(MAX_FILE_BYTES)}MB). " +
               s"Use offset/limit to read specific sections, or Bash with head/tail."
           )
         )
+      else if Files.size(filePath) > MAX_FILE_BYTES then
+        // 超限 + 分段请求：流式只取请求窗口，绝不 readAllBytes 进内存
+        // （巨型日志 offset/limit 分段读的 OOM 防护）。
+        try streamWindow(input, filePath)
+        catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
       else
         try
           val content = new String(Files.readAllBytes(filePath), java.nio.charset.StandardCharsets.UTF_8)
@@ -222,6 +230,61 @@ Guidelines:
         IO.pure(Right(output))
       case Left(err) => IO.pure(Left(err))
     }
+
+  /** 一位小数的 MB 显示。上限值必须走这里：Int 整除会把 <1MB 的上限折叠成 "0MB"。 */
+  private def formatMb(bytes: Long): String = f"${bytes.toDouble / 1024 / 1024}%.1f"
+
+  /** offset/limit/filter 任一显式传入 = 有界分段请求（大文件放行，走流式窗口）。 */
+  private def hasBoundedRequest(input: JsonObject): Boolean =
+    input("offset").flatMap(_.asNumber).isDefined ||
+      input("limit").flatMap(_.asNumber).isDefined ||
+      input("filter").flatMap(_.asString).exists(_.nonEmpty)
+
+  /**
+   * 超限文件的流式窗口读（offset/limit/filter 分段请求专用）：逐行扫，只物化请求
+   * 窗口（≤ limit/MAX_LINE_COUNT 行），绝不 readAllBytes —— 巨型日志分段读是
+   * O(window) 内存而非 O(file)。选择语义与上方小文件内存路径逐字一致：filter
+   * 先筛（保留原始行号）→ offset/limit 切片；行号与 suffix 文案（showing X of
+   * Y lines / matched lines）同款。返回型别与内存路径同型 (String, Boolean)
+   * （布尔 = isPartialView，下游 flatMap 同样只取 output）。
+   */
+  private def streamWindow(input: JsonObject, filePath: Path): Either[ToolError, (String, Boolean)] =
+    val filterOpt = input("filter").flatMap(_.asString).filter(_.nonEmpty)
+    val regex = filterOpt.map(java.util.regex.Pattern.compile(_))
+    val start = input("offset").flatMap(_.asNumber).flatMap(_.toInt).map(_ - 1).getOrElse(0)
+    val want = input("limit").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(MAX_LINE_COUNT)
+
+    val window = scala.collection.mutable.ListBuffer.empty[(Int, String)]
+    var totalLines = 0 // 物理行总数（对应内存路径 allLines.length）
+    var matched = 0 // filter 命中数（对应 workingLines.length；无 filter 时 = 行号）
+    val reader = Files.newBufferedReader(filePath, java.nio.charset.StandardCharsets.UTF_8)
+    try
+      var line = reader.readLine()
+      while line != null do
+        val originalIdx = totalLines
+        totalLines += 1
+        if regex.fold(true)(_.matcher(line).find()) then
+          if matched >= start && window.size < want then window += ((originalIdx, line))
+          matched += 1
+        line = reader.readLine()
+
+      val selected = window.toList
+      val result = selected.map { case (idx, l) => s"${idx + 1}\t$l" }.mkString("\n")
+      val showedLines = selected.length
+      val suffix =
+        if filterOpt.isDefined then
+          val filterInfo = s", filter: \"${filterOpt.get}\" — $matched match(es) in $totalLines lines"
+          if showedLines < matched then s"\n\n(showing $showedLines of $matched matched lines$filterInfo)"
+          else s"\n\n($matched matched lines$filterInfo)"
+        else if showedLines < totalLines then s"\n\n(showing $showedLines of $totalLines lines)"
+        else ""
+      val isPartialView = start > 0 || showedLines < (if filterOpt.isDefined then matched else totalLines)
+      Right((result + suffix, isPartialView))
+    finally reader.close()
+
+    end try
+
+  end streamWindow
 
   /**
    * Extract image content blocks when the Read result is an image file.

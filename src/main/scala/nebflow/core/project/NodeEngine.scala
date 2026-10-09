@@ -124,18 +124,22 @@ class NodeEngine(
    * [[nebflow.shared.Defaults.RootNotifyBatchMax]]（生产默认 10）。
    */
   private[project] val rootNotifyBatchMax: Option[Int] = None,
-  /** 🔴 **Uplink fail-closed gate** (taskunify merge batch 2026-09-24 · ruling T ·
-    * implplan §10.4): `None` = read
-    * [[nebflow.shared.Defaults.TaskLedgerUplinkFailClosed]] (**production default false =
-    * legacy behaviour byte-for-byte**); `Some(true)` = enabled (every uplink without an
-    * attribution fingerprint is refused + double trace). Specs inject through this
-    * constructor seam — same reason as `stallReNotifyMs`. (W1 provisional shim:
-    * parameter surface ported from main so main-side specs compile; the uplink
-    * refusal face that consumes it lands with the owning wave.) */
+  /**
+   * 🔴 **Uplink fail-closed gate** (taskunify merge batch 2026-09-24 · ruling T ·
+   * implplan §10.4): `None` = read
+   * [[nebflow.shared.Defaults.TaskLedgerUplinkFailClosed]] (**production default false =
+   * legacy behaviour byte-for-byte**); `Some(true)` = enabled (every uplink without an
+   * attribution fingerprint is refused + double trace). Specs inject through this
+   * constructor seam — same reason as `stallReNotifyMs`. (W1 provisional shim:
+   * parameter surface ported from main so main-side specs compile; the uplink
+   * refusal face that consumes it lands with the owning wave.)
+   */
   taskLedgerUplinkFailClosed: Option[Boolean] = None,
-  /** Loud-alert window effective value (same seam): None = read
-    * [[nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN]]. (W1 provisional
-    * shim: same surface-only port as above.) */
+  /**
+   * Loud-alert window effective value (same seam): None = read
+   * [[nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN]]. (W1 provisional
+   * shim: same surface-only port as above.)
+   */
   taskLedgerUplinkLoudAlertFirstN: Option[Int] = None,
   /**
    * **S19① 通知目标形态**（N1 刀3 · 设计 v3 §7.1；候裁 v3-⑨ 分发器代裁照落）：
@@ -175,53 +179,60 @@ class NodeEngine(
     with NodeStarter:
   private[project] val logger = NebflowLogger.forName("nebflow.node.engine")
 
-  /** Uplink fail-closed effective value (re-read on every check; there is no online flip
-    * route ⇒ changing the prop in production requires a host restart). */
+  /**
+   * Uplink fail-closed effective value (re-read on every check; there is no online flip
+   * route ⇒ changing the prop in production requires a host restart).
+   */
   private def uplinkFailClosedEnabled: Boolean =
     taskLedgerUplinkFailClosed.getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkFailClosed)
 
-  /** In-process count of uplink refusals (used **only** for the "first N loud alerts"
-    * window; the persistent criterion face is the event file, which does not depend on this
-    * counter). */
+  /**
+   * In-process count of uplink refusals (used **only** for the "first N loud alerts"
+   * window; the persistent criterion face is the event file, which does not depend on this
+   * counter).
+   */
   private val uplinkRefusals: java.util.concurrent.atomic.AtomicLong =
     new java.util.concurrent.atomic.AtomicLong(0L)
 
-  /** 🔴 **Uplink attribution gate (the common precondition of U1–U7; ruling T's single
-    * mechanism point)**.
-    *
-    * Semantics: when a node's **attribution cannot be resolved** (no `taskId` fingerprint),
-    * that node's uplink notifications are **all refused** (Q2ⓐ strict fail-closed, no grace
-    * period, no exemption). Returns `true` = **allowed**, `false` = already refused.
-    *
-    * 🔴 **Double trace + the three text elements (criteria 10.4.4/10.4.5 · ruling T ⓑ)**:
-    *   ① **event face** = one [[FlowMapEventLog.UplinkRefusedType]] (`grep uplink-refused`);
-    *   ② **log face** = one WARN (plus an extra ALERT inside the window, prefix
-    *      `[UPLINK-REFUSED]`);
-    *   ③ that same text carries the **node id** ∧ the **refusal reason**
-    *      (`no-attribution`) ∧ the **way out** (`register-attribution` / `node_report` /
-    *      `Flow Map` / `manual`).
-    * **Silence is forbidden, and a log line alone is forbidden** — criterion 10.4.5 states
-    * plainly "log only, no event face = red".
-    *
-    * 🔴 **One refusal ⇒ exactly one event** (criteria 10.4.1/10.4.2): **no same-key window
-    * suppression, no merging** ("two in a row ⇒ two events" is a hard criterion; this is
-    * **deliberately different** from `enqueueRootNotify`'s merging semantics).
-    *
-    * `kind` = the uplink class (`failed` / `completed` / `landing` / `reentry` / `escalate` /
-    * `cancelled` / `redelivery`). 🔴 **The landing/merge class must carry `landing`** (the
-    * core of criterion 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`).
-    *
-    * 🔴 **U8 (`node_report`) is unaffected**: this gate only intercepts the **engine-side
-    * uplink circuit** (delivery of node notifications). A node's own terminal declaration
-    * goes through `NodeReportRegistry` (keyed by sessionId) and **never passes through this
-    * function**. */
+  /**
+   * 🔴 **Uplink attribution gate (the common precondition of U1–U7; ruling T's single
+   * mechanism point)**.
+   *
+   * Semantics: when a node's **attribution cannot be resolved** (no `taskId` fingerprint),
+   * that node's uplink notifications are **all refused** (Q2ⓐ strict fail-closed, no grace
+   * period, no exemption). Returns `true` = **allowed**, `false` = already refused.
+   *
+   * 🔴 **Double trace + the three text elements (criteria 10.4.4/10.4.5 · ruling T ⓑ)**:
+   *   ① **event face** = one [[FlowMapEventLog.UplinkRefusedType]] (`grep uplink-refused`);
+   *   ② **log face** = one WARN (plus an extra ALERT inside the window, prefix
+   *      `[UPLINK-REFUSED]`);
+   *   ③ that same text carries the **node id** ∧ the **refusal reason**
+   *      (`no-attribution`) ∧ the **way out** (`register-attribution` / `node_report` /
+   *      `Flow Map` / `manual`).
+   * **Silence is forbidden, and a log line alone is forbidden** — criterion 10.4.5 states
+   * plainly "log only, no event face = red".
+   *
+   * 🔴 **One refusal ⇒ exactly one event** (criteria 10.4.1/10.4.2): **no same-key window
+   * suppression, no merging** ("two in a row ⇒ two events" is a hard criterion; this is
+   * **deliberately different** from `enqueueRootNotify`'s merging semantics).
+   *
+   * `kind` = the uplink class (`failed` / `completed` / `landing` / `reentry` / `escalate` /
+   * `cancelled` / `redelivery`). 🔴 **The landing/merge class must carry `landing`** (the
+   * core of criterion 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`).
+   *
+   * 🔴 **U8 (`node_report`) is unaffected**: this gate only intercepts the **engine-side
+   * uplink circuit** (delivery of node notifications). A node's own terminal declaration
+   * goes through `NodeReportRegistry` (keyed by sessionId) and **never passes through this
+   * function**.
+   */
   private[project] def uplinkAllowed(node: NodeDef, kind: String): IO[Boolean] =
     if !uplinkFailClosedEnabled then IO.pure(true)
     else if node.taskId.exists(_.trim.nonEmpty) then IO.pure(true)
     else
       val n = uplinkRefusals.incrementAndGet()
       val reason = "no-attribution"
-      val way = "register-attribution/fix the node's taskId, or report through node_report; visibility stays via the Flow Map"
+      val way =
+        "register-attribution/fix the node's taskId, or report through node_report; visibility stays via the Flow Map"
       val loud = taskLedgerUplinkLoudAlertFirstN
         .getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN)
       val text =
@@ -243,19 +254,21 @@ class NodeEngine(
          else logger.warn(text)) *>
         IO.pure(false)
 
-  /** Name-resolving wrapper for the U5 uplink gate (implplan §10.4 U5 "the three escalate
-    * channels"): those three escalate seams only have the signature `(text, nodeName)` (the
-    * injection face of `FeedbackRouter` / `DispatchNotify`) ⇒ resolve the node by name first,
-    * then go through [[uplinkAllowed]] (**the same single-point gate**, no second criterion).
-    * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
-    * exists but has no attribution", not "the node cannot be found" (the latter is the
-    * existing chain's own alert face, which this gate does not take over). */
+  /**
+   * Name-resolving wrapper for the U5 uplink gate (implplan §10.4 U5 "the three escalate
+   * channels"): those three escalate seams only have the signature `(text, nodeName)` (the
+   * injection face of `FeedbackRouter` / `DispatchNotify`) ⇒ resolve the node by name first,
+   * then go through [[uplinkAllowed]] (**the same single-point gate**, no second criterion).
+   * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
+   * exists but has no attribution", not "the node cannot be found" (the latter is the
+   * existing chain's own alert face, which this gate does not take over).
+   */
   private[project] def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
     if !uplinkFailClosedEnabled then IO.pure(true)
     else
       store.snapshot.map(_.nodes.values.find(_.name == nodeName)).flatMap {
         case Some(n) => uplinkAllowed(n, kind)
-        case None    => IO.pure(true)
+        case None => IO.pure(true)
       }
 
   /** 完成门腿 1 生效值（每次判定现读；无在线翻转路由 ⇒ 生产侧改 prop 需重启宿主）。 */
@@ -347,9 +360,11 @@ class NodeEngine(
   private[project] val recentRootDeliveries: Ref[IO, Map[(String, String), Long]] =
     Ref.unsafe[IO, Map[(String, String), Long]](Map.empty)
 
-  /** Pre-W1 name for [[recentRootDeliveries]] -- the same `Ref` instance, so the
-    * dedup window table keeps exactly one source (the PR-side rename is a pure
-    * rename; see `git log -SrecentRootDeliveries`). */
+  /**
+   * Pre-W1 name for [[recentRootDeliveries]] -- the same `Ref` instance, so the
+   * dedup window table keeps exactly one source (the PR-side rename is a pure
+   * rename; see `git log -SrecentRootDeliveries`).
+   */
   private[project] val recentNebulaDeliveries: Ref[IO, Map[(String, String), Long]] = recentRootDeliveries
 
   /**
@@ -396,7 +411,8 @@ class NodeEngine(
    *
    * noderpt 批 A 段（2026-09-11 代裁 6）：判据**原样保留**（bg 等待不算死），只补
    * 「在事件里标出该态节点供人监督」——命中该豁免时单发一条
-   * [[NodeEngine.DeadSessionBgWaitEventType]] 事件（进程内每节点一条，防 30s 节拍刷屏）。 */
+   * [[NodeEngine.DeadSessionBgWaitEventType]] 事件（进程内每节点一条，防 30s 节拍刷屏）。
+   */
   def settleStaleRunningNodes(): IO[Unit] =
     store.snapshot.flatMap { s =>
       s.nodes.values
@@ -494,40 +510,50 @@ class NodeEngine(
           )
     }
 
-  /** 死会话 running 节点的**提醒腿**（killruling 批 2026-09-23 作者裁定 **#19**「降档」）。
-    *
-    * 改判前：`autoFailDeadRunning` 把死会话 running 节点收敛成 `failed` 终态 + 投递失败
-    * 通知（`deliverFailed`）。作者裁定降档：**不写终态**（复用 #30 L3 挂起腿形态 = 停旧
-    * 会话 / 节点留 `Running`）、`deliverFailed` 同删、`checkBarriersNow` 改**告警腿**
-    * （只告警不终态化，与 #27 mount-stalled 同族）。
-    *
-    * 🔴 顺序义务（令第 6 条「**先补提醒覆盖再降档**」，裸降档 ⇒ dead-session 节点永久挂）：
-    * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`，
-    * 与既有 `fireQuiescentEvent`（提醒阶梯的只写事件档）同款形态：**只提醒、永不判死、
-    * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。
-    *
-    * 🔴 `private[project]`（not `private`）because the single caller that remains after the
-    * killruling #19 downgrade lives in the `NodeCanceller` trait (`autoFailDeadRunning`):
-    * the class-private form is invisible across the split and would force a duplicate
-    * reminder leg — one reminder implementation, reachable from the trait that needs it. */
+  /**
+   * 死会话 running 节点的**提醒腿**（killruling 批 2026-09-23 作者裁定 **#19**「降档」）。
+   *
+   * 改判前：`autoFailDeadRunning` 把死会话 running 节点收敛成 `failed` 终态 + 投递失败
+   * 通知（`deliverFailed`）。作者裁定降档：**不写终态**（复用 #30 L3 挂起腿形态 = 停旧
+   * 会话 / 节点留 `Running`）、`deliverFailed` 同删、`checkBarriersNow` 改**告警腿**
+   * （只告警不终态化，与 #27 mount-stalled 同族）。
+   *
+   * 🔴 顺序义务（令第 6 条「**先补提醒覆盖再降档**」，裸降档 ⇒ dead-session 节点永久挂）：
+   * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`，
+   * 与既有 `fireQuiescentEvent`（提醒阶梯的只写事件档）同款形态：**只提醒、永不判死、
+   * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。
+   *
+   * 🔴 `private[project]`（not `private`）because the single caller that remains after the
+   * killruling #19 downgrade lives in the `NodeCanceller` trait (`autoFailDeadRunning`):
+   * the class-private form is invisible across the split and would force a duplicate
+   * reminder leg — one reminder implementation, reachable from the trait that needs it.
+   */
   private[project] def remindDeadSession(node: NodeDef, sessionId: String, err: String): IO[Unit] =
-    FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
+    FlowMapEventLog.append(
+      workspace,
+      projectName,
+      node.id,
+      NodeEngine.NodeSessionDeadReminderEventType,
       s"dead-session node kept Running (session '$sessionId' has no live session) — needs human supervision; " +
-        s"no auto-fail, no delivery: ${err.take(160)}") *>
+        s"no auto-fail, no delivery: ${err.take(160)}"
+    ) *>
       logger.warn(
         s"Node '${node.name}' (${node.id}) session '$sessionId' is dead — kept Running, reminder only " +
-          "(no failed convergence, no failed delivery)")
+          "(no failed convergence, no failed delivery)"
+      )
 
-  /** 会话已死提醒腿（killruling 批 2026-09-23，作者裁定 #19「先补提醒覆盖再降档」）。
-    *
-    * 触发点 = 提醒阶梯的 `candidates.find(reg.contains) == None`（改前为 `IO.unit`
-    * 「注入不可达 ⇒ 跳过」）。语义与 [[fireQuiescentEvent]] 同款——**只写事件不注入**：
-    * 会话已死 ⇒ 注入物理不可达，但「该节点该拍仍未申报且会话已死」这一事实必须可见。
-    * 单发节流复用 [[quiescentNotified]]（与 quiescent 档同键记账）：
-    * `NodeReportReminderQuiescentMs`（现读默认 4h）一拍，防 30s 节拍刷屏——与
-    * quiescent 档「每拍一次事件」的纪律同源；`≤0` 亦同款（关闭节流 = 每拍都写）。
-    * 判据强度：`reportPendingSince` 已置 + 过了第 N 拍 + 无活会话 ⇒ 提醒**永不停**
-    * （节点保持 Running，处置交人工）。 */
+  /**
+   * 会话已死提醒腿（killruling 批 2026-09-23，作者裁定 #19「先补提醒覆盖再降档」）。
+   *
+   * 触发点 = 提醒阶梯的 `candidates.find(reg.contains) == None`（改前为 `IO.unit`
+   * 「注入不可达 ⇒ 跳过」）。语义与 [[fireQuiescentEvent]] 同款——**只写事件不注入**：
+   * 会话已死 ⇒ 注入物理不可达，但「该节点该拍仍未申报且会话已死」这一事实必须可见。
+   * 单发节流复用 [[quiescentNotified]]（与 quiescent 档同键记账）：
+   * `NodeReportReminderQuiescentMs`（现读默认 4h）一拍，防 30s 节拍刷屏——与
+   * quiescent 档「每拍一次事件」的纪律同源；`≤0` 亦同款（关闭节流 = 每拍都写）。
+   * 判据强度：`reportPendingSince` 已置 + 过了第 N 拍 + 无活会话 ⇒ 提醒**永不停**
+   * （节点保持 Running，处置交人工）。
+   */
   private def deadSessionReminder(
     node: NodeDef,
     since: Long,
@@ -542,15 +568,23 @@ class NodeEngine(
         if intervalMs > 0 && last > 0 && now - last < intervalMs then IO.unit
         else
           quiescentNotified.update(_ + (node.id -> now)) *>
-            FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
+            FlowMapEventLog.append(
+              workspace,
+              projectName,
+              node.id,
+              NodeEngine.NodeSessionDeadReminderEventType,
               s"node_report still missing at reminder rung $rung and NO live session is registered " +
                 s"(candidates=[${candidates.mkString(",")}], alive=[${candidates.filter(aliveProbe).mkString(",")}]) — " +
-                s"waited ${elapsed / 1000}s since $since: reminder only, node stays Running (never failed, never killed)") *>
+                s"waited ${elapsed / 1000}s since $since: reminder only, node stays Running (never failed, never killed)"
+            ) *>
             logger.warn(
               s"Node '${node.name}' (${node.id}) has no live session at reminder rung $rung " +
-                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running)")
+                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running)"
+            )
       }
     }
+
+  end deadSessionReminder
 
   /**
    * quiescent 档（第 maxRungs 拍之后）：**不注入**，每 `quiescentIntervalMs` 写一条
@@ -715,6 +749,7 @@ class NodeEngine(
                         t => OutEdge.resolveTargetId(st.nodes, t).getOrElse(t)
                       )
                     )
+                  end if
                 case None => (st, Nil)
             }
             .flatMap { case (_, edgeViews) =>
@@ -837,7 +872,7 @@ class NodeEngine(
         // double trace.
         uplinkAllowed(node, "failed").flatMap {
           case false => IO.unit
-          case true  => enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+          case true => enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
         }
       case _ => markRootDelivered(node.id)
     val rootIO = nebulaIO
@@ -1182,13 +1217,16 @@ class NodeEngine(
           // ——把 N 件原始载荷挂在本件上，供消费侧在同一边界（同一 turn）逐件展开
           // （N 气泡 / 1 次唤醒）。`text` / `sender`（= 首件）/ `eventType` / 去重键 /
           // 记账序**逐字不变**。
-          windowItems = Some(many.map(e =>
-            AgentCommand.WindowItem(
-              text = e.text,
-              nodeName = e.nodeName,
-              status = e.status,
-              sender = s"$projectName/${e.nodeName}"
-            )))
+          windowItems = Some(
+            many.map(e =>
+              AgentCommand.WindowItem(
+                text = e.text,
+                nodeName = e.nodeName,
+                status = e.status,
+                sender = s"$projectName/${e.nodeName}"
+              )
+            )
+          )
         ).flatMap {
           case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markRootDelivered)
           case _ => IO.unit
@@ -1244,10 +1282,12 @@ class NodeEngine(
       }
     }
 
-  /** Pre-W1 name for [[dedupeRootDelivery]] (the PR-side `Root`/`nebula*` rename is a pure
-    * rename: `git log -SdedupeRootDelivery` lands on the synthetic PR head, not on an
-    * organised main-side rename) -- delegates to the single implementation, so there is
-    * exactly one dedup criterion. */
+  /**
+   * Pre-W1 name for [[dedupeRootDelivery]] (the PR-side `Root`/`nebula*` rename is a pure
+   * rename: `git log -SdedupeRootDelivery` lands on the synthetic PR head, not on an
+   * organised main-side rename) -- delegates to the single implementation, so there is
+   * exactly one dedup criterion.
+   */
   private[project] def dedupeNebulaDelivery(identity: String, status: String): IO[Boolean] =
     dedupeRootDelivery(identity, status)
 
@@ -1273,17 +1313,21 @@ class NodeEngine(
         }.void
     }
 
-  /** Pre-W1 name for [[markRootDelivered]] (pure rename, same attribution as
-    * [[dedupeNebulaDelivery]]) -- delegates to the single ledger write point, so the
-    * `nebulaDeliveredAt` anchor keeps exactly one writer. */
+  /**
+   * Pre-W1 name for [[markRootDelivered]] (pure rename, same attribution as
+   * [[dedupeNebulaDelivery]]) -- delegates to the single ledger write point, so the
+   * `nebulaDeliveredAt` anchor keeps exactly one writer.
+   */
   private[project] def markNebulaDelivered(nodeId: String): IO[Unit] =
     markRootDelivered(nodeId)
 
-  /** **Pre-W1 name for [[redeliverUnconsumedRootResults]]** (W2b' backfill; same W1 rename
-    * family as the other `Nebula*`/`root*` pairs -- `git log -SredeliverUnconsumedNebulaResults`
-    * lands on the synthetic PR head and on main's own dispatch-notify/notifybatch batches, which
-    * main later re-spelled). Delegates to the one scan implementation: a second scan would keep
-    * its own candidate criterion and could double-deliver against the 30 s leg. */
+  /**
+   * **Pre-W1 name for [[redeliverUnconsumedRootResults]]** (W2b' backfill; same W1 rename
+   * family as the other `Nebula*`/`root*` pairs -- `git log -SredeliverUnconsumedNebulaResults`
+   * lands on the synthetic PR head and on main's own dispatch-notify/notifybatch batches, which
+   * main later re-spelled). Delegates to the one scan implementation: a second scan would keep
+   * its own candidate criterion and could double-deliver against the 30 s leg.
+   */
   def redeliverUnconsumedNebulaResults(): IO[Int] =
     redeliverUnconsumedRootResults()
 
@@ -1360,7 +1404,8 @@ class NodeEngine(
             // leave the trace rather than drop silently).
             uplinkAllowed(n, "redelivery").flatMap {
               case false => IO.unit
-              case true  => enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id))
+              case true =>
+                enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id))
             }
           )
           _ <- if stale.nonEmpty then deliverStaleSummary(stale) else IO.unit
@@ -1428,12 +1473,14 @@ end NodeEngine
 
 object NodeEngine:
 
-  /** **会话已死提醒事件类型**（killruling 批 2026-09-23 作者裁定 **#19**「先补提醒覆盖
-    * 再降档」）：提醒阶梯碰上「节点 Running 且过了第 N 拍，但候会话在 `agentRegistry`
-    * 里**全无活记录**」时，改前是 `IO.unit`（注入不可达 ⇒ 静默跳过）⇒ 该形态在阶梯面
-    * **零可见性**。降档后 `autoFailDeadRunning` 也不再判死 ⇒ 若不补本腿，该形态将完全
-    * 无人管。本事件即覆盖补齐件（与 `fireQuiescentEvent` 同款：只写事件、不注入、
-    * 永不判死、永不杀）。 */
+  /**
+   * **会话已死提醒事件类型**（killruling 批 2026-09-23 作者裁定 **#19**「先补提醒覆盖
+   * 再降档」）：提醒阶梯碰上「节点 Running 且过了第 N 拍，但候会话在 `agentRegistry`
+   * 里**全无活记录**」时，改前是 `IO.unit`（注入不可达 ⇒ 静默跳过）⇒ 该形态在阶梯面
+   * **零可见性**。降档后 `autoFailDeadRunning` 也不再判死 ⇒ 若不补本腿，该形态将完全
+   * 无人管。本事件即覆盖补齐件（与 `fireQuiescentEvent` 同款：只写事件、不注入、
+   * 永不判死、永不杀）。
+   */
   val NodeSessionDeadReminderEventType: String = "node-session-dead-reminder"
 
   /**
@@ -1445,12 +1492,11 @@ object NodeEngine:
    */
   val NotifyRedirectedEventType: String = "notify-redirected"
 
-  /**
-   * S19① 通知目标形态（判别单点；见构造参 [[NodeEngine.notifyTargetKind]]）。
-   */
+  /** S19① 通知目标形态（判别单点；见构造参 [[NodeEngine.notifyTargetKind]]）。 */
   private[project] enum NotifyTargetKind:
     /** per-project 面：root 通道目标 = 项目根会话（既有行为，逐字节不变）。 */
     case ProjectRoot
+
     /** delegate 作用域面：root 通道目标 = 创建者 delegate（NotifyRule.Target）。 */
     case CreatorDelegate
   end NotifyTargetKind

@@ -348,6 +348,16 @@ export default {
   // quotejump batch (jump = "must be jumpable"): accessible name for the quote
   // block's button semantics (carries the quoted summary text).
   'messages.quoteJumpAria': 'Jump to quoted message: {text}',
+  // ── quote-message phase 1 (main-chat right-click quote, spec §6 list): 9 new keys ──
+  'chat.quoteJumpHint': 'Jump to quoted message',
+  'chat.quoteDeleted': 'Original message deleted',
+  'chat.quoteDeletedSnapshot': 'Original message deleted · snapshot kept',
+  'chat.quoteSenderMe': 'Me',
+  'chat.quoteTypeImage': '[Image]',
+  'chat.quoteTypeFile': '[File]',
+  'chat.quoteTypeTool': '[Tool]',
+  'chat.quoteTypeAsk': '[Q&A]',
+  'chat.quoteTypeSystem': '[System]',
   'messages.multiSelect': 'Multi-select',
   'messages.selectedCount': '{n} selected',
   'messages.forward': 'Forward',
@@ -914,11 +924,22 @@ export default {
   'settings.jevProvider': 'Provider',
   'settings.jevEndpoint': 'Endpoint',
   'settings.jevKeyRef': 'API key reference',
-  'settings.jevHint': 'When enabled, Nebflow-agent Delegate calls ask Jev which plugins a task needs. Without Jev, a regular LLM call decides. keyRef is a secret NAME under ~/.nebflow/secrets/, never the value.',
-  'settings.jevHealth': 'Decision health',
+  // secrets-ui-redesign (2026-10-08 design handoff): the hint keeps only the
+  // safety-critical line; the health-row tri-state words fill the four keys
+  // that were missing (t() miss fell back to the key itself → bare key names
+  // rendered as copy).
+  'settings.jevHint': 'keyRef is a secret NAME under ~/.nebflow/secrets/ — a pointer, never the value.',
+  'settings.jevHealth': 'Allocation channel',
   'settings.jevHealthUp': 'Up',
   'settings.jevHealthDown': 'Down',
-  'settings.jevHealthUnconfigured': 'Unconfigured',
+  'settings.jevHealthUnconfigured': 'Not configured',
+  'settings.jevKeyRefShow': 'Show key reference',
+  'settings.jevKeyRefHide': 'Hide key reference',
+  // jev-panel-threefix (2026-10-09 user feedback, three points): head-row
+  // toggle title / pinned-endpoint explanation / fallback badge word.
+  'settings.jevToggleDetails': 'Expand or collapse allocation settings',
+  'settings.jevEndpointFixed': 'Endpoint is fixed for the Jev edition — no entry needed',
+  'settings.jevHealthFallback': 'Jev unavailable → fell back to llm',
   // executors panel (executor-registry batch, 2026-10-03)
   'executors.hint': 'Delegate runs tasks on the default executor below. Detection scans PATH and common install prefixes; external CLIs run headless in their project directory.',
   'executors.empty': 'No executors registered.',
@@ -937,6 +958,12 @@ export default {
   // secrets-frontend (2026-09-27): the settings-page entry row opens the
   // standalone secrets dialog (js/secretsPanel.js) — one key for title + button.
   'settings.secrets': 'Secrets',
+  // secrets-ui-redesign (2026-10-08 design handoff): the entry row becomes a
+  // glass row card — row name "Manage secrets" + an "{n} secrets" subtitle +
+  // a count pill (the count is read off GET /api/secrets, metadata only).
+  'settings.secretsManage': 'Manage secrets',
+  'settings.secretsCount': '{n} secrets',
+  'settings.secretsNone': 'No secrets yet',
   'settings.addProvider': '+ Add Provider',
   'settings.modelChainHint': 'Type the /model command to configure per-role model chains in unified or per-role mode.',
   // /model panel (modelcfg Phase 1)
@@ -1260,11 +1287,11 @@ export default {
   // 🔴 Draft: author word-for-word review (§16 freeze gate) before it takes
   // effect; effective on the next restart window (static assets are served
   // from inside the jar).
-  'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
   'askUser.attachmentsTitle': 'Attachments',
   'askUser.attachmentsCount': '{n} attachments',
   'askUser.attachmentUnavailable': 'unavailable',
   'askUser.attachmentOpenCanvas': 'Open {name} in Canvas',
+  'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
   'askUser.pendingTitle': 'Pending questions',
   'askUser.sourceClosed': 'Source closed (node cancelled)',
   // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a
@@ -1274,6 +1301,11 @@ export default {
   'askUser.historyUnanswered': 'No recorded answer in history (pending)',
   // Multi AskUser concurrency batch (#250)
   'askUser.turnInterrupted': 'Turn interrupted (question void)',
+  // askucancel bit2 (2026-10-08): user-cancel terminal state (card button /
+  // REST / WS / channel cancel entries all funnel into hub CancelRequest →
+  // askUserClosed{reason:"user-cancelled"} broadcast + `__cancelled__` history row).
+  'askUser.cancelled': 'Cancelled (no longer awaiting an answer)',
+  'askUser.cancelFailed': 'Cancel did not take effect ({state}); the question may already be resolved',
   'askUser.nextPending': 'Next pending ({n})',
   'askUser.cardGone': 'That question is gone — removed from the pending list',
   'askUser.pendingSyncFailed': 'Pending-question sync failed — the list may be incomplete',
@@ -1282,6 +1314,16 @@ export default {
   'askUser.rejectUnknown': 'That question is no longer active — the card is still open, please answer again',
   'askUser.rejectNoMatch': 'No matching pending question — please answer again',
   'askUser.rejectGeneric': 'Answer not accepted — please answer again',
+  // askuser-secret batch (2026-10-08): secret-question face (showOptions secret
+  // branch) + the plain-text-reflux rejection toast (hub reason
+  // "secret-slot-mismatch", spec §5.1).
+  'askUser.secretPlaceholder': 'Enter the key / verification code (masked)',
+  'askUser.secretShow': 'Show',
+  'askUser.secretHide': 'Hide',
+  'askUser.secretHint': 'The value is stored in the local secrets store (owner-only); the agent receives a stored pointer only — never the value.',
+  'askUser.secretEphemeralHint': 'One-time code mode: the first read consumes it (valid 10 minutes); the agent receives a stored pointer only.',
+  'askUser.secretStoredLine': 'securely stored (receipt injected into the session)',
+  'askUser.rejectSecret': 'A secret question received a plain-text answer (this page predates secure input) — the value was discarded unstored; refresh this page and re-enter it on the card',
   'chat.waitingQuestion': 'Waiting for question...',
   'chat.askFailed': 'Ask failed',
   'chat.askLabel': 'Ask',
@@ -1347,9 +1389,10 @@ export default {
   'think.18': 'Rode a stellar wind past the nebulas, flew for {d}',
 
   // === Slash commands ===
-  'slash.clear': 'Clear LLM context (keeps chat history)',
+  // (/clear //compact dropdown help removed with the commands, 2026-10-09; the
+  // *Done strings stay — the compact-mode send path and persisted-queue replay
+  // still translate them, as may pre-removal engine UI history)
   'slash.clearDone': 'Context cleared. LLM memory reset.',
-  'slash.compact': 'Manually trigger context compaction',
   'slash.compactDone': 'Compaction triggered...',
   'slash.fork': 'Fork this session (branch the conversation)',
   'slash.forkPending': 'Forking session...',
@@ -1449,6 +1492,27 @@ export default {
   'delegate.openNative': 'Open in original app',
   // ⑦ S10 fail-soft state (chain fetch failed; row kept, click to retry)
   'delegate.chainUnavailable': 'Chain view unavailable — click to retry',
+  // delegate-ui batch (2026-10-08 · view ④ delegate detail strip: star section
+  // header / archive entry)
+  'delegate.children': 'Sub-agents',
+  'delegate.archive': 'Archive',
+  'delegate.archived': 'Archived',
+  'delegate.archiveFailed': 'Archive failed',
+  // delegate-ui revision batch (user's 9 points ③⑨ · 2026-10-09)
+  'delegate.chainSteps': 'chain · {n} steps',
+  'delegate.flowNodes': 'Flow nodes',
+  // === delegate/flowmap two-layer batch (2026-10-09 · spec §C/§D/§E/H.4) ===
+  // Two-layer title keys (E visual signatures) + drawer/auto-archive keys (D the
+  // only archive face) + L1 empty hint. kidsBadge/flowBadge reuse existing keys:
+  // sub-agent word = delegate.children, flow stays a data word.
+  'delegate.flowmap.title': 'Delegate flow',
+  'delegate.projectflow.title': 'Project flow',
+  'delegate.kids.empty': 'No subagent / flow calls yet',
+  'delegate.archive.toast': '{n} completed and archived',
+  'delegate.archive.undo': 'Undo',
+  'delegate.archive.restore': 'Restore',
+  'delegate.archive.openFlow': 'Flow →',
+  'delegate.archive.drawerTitle': 'Archived delegates',
   // === Chain view (chain-view compact v2 batch, 2026-10-01 · front-end face,
   //     §16 draft key table) ===
   // Five badge states (§II.1.3) + three hover labels + cancel dialog + ungrouped.
@@ -1932,6 +1996,13 @@ export default {
   'agentManager.systemPrompt': 'System Prompt',
   'agentManager.viewSource': 'View source',
   'agentManager.viewRendered': 'View rendered',
+  // prompt-panel batch (2026-10-09): builtin nebflow detail page prompt face tabs —
+  // delegate face (default) + node face. Labels only; prompts come from the
+  // `promptFaces` field of GET /api/agents/:name (BuiltinAgents.panelPromptFaces).
+  'agentManager.faceDelegate': 'Delegate target',
+  'agentManager.faceNode': 'Node (flow node)',
+  'agentManager.faceDelegateHint': 'System prompt carried by delegate sessions (delegate_report discipline).',
+  'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node_report discipline).',
   'explorer.newFile': 'New File',
   'explorer.newFolder': 'New Folder',
   'daemons.delete': 'Delete',
@@ -2059,6 +2130,11 @@ export default {
   'social.action.notReady': 'Channel state not loaded yet — reconnecting, please retry',
   'social.action.recheck': 'Check again',
   'social.action.close': 'Close',
+  // social-fix-confirm (author order 2026-10-09, §16-collected): the unbind
+  // glass confirm — {name} carries the channel display name; the confirm
+  // button reuses each channel's existing archive.action word.
+  'social.archive.confirmTitle': 'Unbind',
+  'social.archive.confirmMsg': 'After unbinding, the channel must be scanned in again. Unbind "{name}"?',
   'social.secret.placeholder': 'Paste the credential (never echoed back)',
   'social.secret.stored': 'Written · not echoed',
   'social.secret.empty': 'Not written',
@@ -2137,31 +2213,33 @@ export default {
   'social.telegram.field.chatId': 'Target chat ID',
   'social.telegram.field.apiBase': 'API base URL',
   // secrets-frontend (2026-09-27): the standalone secrets dialog (§16-collected
-  // copy). Values are write-only on this face — no copy line ever describes a
-  // stored value's content.
+  // copy). 行内化 (author ruling 2026-10-09 07:42): the editor modal and the
+  // FAB are retired — everything happens inline in the rows. The value field
+  // shows placeholder dots at rest; the eye fetches the single authenticated
+  // read on demand and re-masking clears it back to the placeholder; the list
+  // and every other copy stay value-free (secrets-readback batch, 2026-10-09).
   'secrets.title': 'Secrets',
   'secrets.close': 'Close',
-  'secrets.add': 'Add Secret',
-  'secrets.addTitle': 'Add secret',
-  'secrets.replaceTitle': 'Replace secret value',
+  'secrets.tailAdd': '＋ Add Secret',
   'secrets.name': 'Name',
   'secrets.nameHint': 'Lowercase service-purpose, e.g. aliyun-oss',
   'secrets.value': 'Value',
+  'secrets.dotsPlaceholder': '••••••',
   'secrets.showValue': 'Show value',
   'secrets.hideValue': 'Hide value',
-  'secrets.valuePlaceholder': 'Paste the value. It is written once and never displayed again.',
-  'secrets.replacePlaceholder': 'Saving replaces the stored value entirely. The old value is never displayed.',
-  'secrets.replace': 'Replace Value',
+  'secrets.rowHint': 'Click to edit in place',
+  'secrets.overwriteHint': 'Typing overwrites the stored value — Enter or Save commits; clicking away saves and collapses; Esc discards and collapses.',
+  'secrets.valuePlaceholder': 'Paste the value. You can view and edit it later from this panel.',
   'secrets.delete': 'Delete',
   'secrets.save': 'Save',
-  'secrets.cancel': 'Cancel',
+  'secrets.saved': 'Saved ✓',
   'secrets.state.ok': 'owner-only',
   'secrets.state.permissive': 'permissions too open',
   'secrets.referencedBy': 'Referenced by {refs}',
   'secrets.deleteTitle': 'Delete secret',
-  'secrets.deleteConfirm': 'Delete "{name}"? This cannot be undone.',
+  'secrets.deleteConfirm': 'This cannot be undone. Delete "{name}"?',
   'secrets.deleteConfirmRefs': '"{name}" is referenced by: {refs}. Deleting breaks them. This cannot be undone.',
-  'secrets.empty': 'No secrets yet. Add one and services or agents can reference it by path — the value is written once and never shown.',
+  'secrets.empty': 'No secrets yet. Add one and services or agents can reference it by path — values stay viewable and editable from this panel.',
   'secrets.invalidName': 'Use lowercase letters, digits, ".", "-", "_" — start with a letter or digit, at most 64 characters.',
   'secrets.reservedName': 'Names starting with "social-" or "daemon-" are managed by their own panels.',
   'secrets.error.notFound': 'That secret no longer exists — it may have been deleted elsewhere.',

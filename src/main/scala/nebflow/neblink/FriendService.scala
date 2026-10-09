@@ -1325,7 +1325,7 @@ final class FriendService(
   ): IO[Either[(String, String), AttachUpload.Uploaded]] =
     AttachUploadId.validate(uploadId) match
       case Left(reason) => IO.pure(Left((AttachUploadId.ErrorCode, reason)))
-      case Right(id)    => uploadStreamChecked(conversationId, displayName, id, body, hooks, preview, previewDialectId)
+      case Right(id) => uploadStreamChecked(conversationId, displayName, id, body, hooks, preview, previewDialectId)
 
   /**
    * [[uploadStream]] 的**已过形态闸续体**。

@@ -132,19 +132,21 @@ case class ToolContext(
    * 工作区根。None = 旧行为（初 cwd = 沙箱根）逐字节不变。
    */
   sessionCwd: Option[String] = None,
-  /** **Task attribution fingerprint** (a single
-    * field, the same shape as `chainId`): the task id this session is attributed to (a
-    * dispatcher = the task it was created to serve; a project node = the task recorded as
-    * its origin). Passed through by AgentCore from SessionContext (**engine-side identity,
-    * never a client parameter**) -- the resolution source of `TaskInfo`'s read-only
-    * attributed single entry (zero parameters ⇒ attribution can only come from here) and the
-    * criterion of the engine-side uplink refusal face (no fingerprint ⇒ a fail-closed
-    * refusal + a double trace).
-    * 🔴 **Value discipline**: it must **not** be taken from `NodeEditTool`'s `project`
-    * parameter (that parameter can override `ctx.projectName` ⇒ client-forgeable); it must
-    * take `ctx`'s engine-side identity.
-    * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
-    * direct REST calls). */
+  /**
+   * **Task attribution fingerprint** (a single
+   * field, the same shape as `chainId`): the task id this session is attributed to (a
+   * dispatcher = the task it was created to serve; a project node = the task recorded as
+   * its origin). Passed through by AgentCore from SessionContext (**engine-side identity,
+   * never a client parameter**) -- the resolution source of `TaskInfo`'s read-only
+   * attributed single entry (zero parameters ⇒ attribution can only come from here) and the
+   * criterion of the engine-side uplink refusal face (no fingerprint ⇒ a fail-closed
+   * refusal + a double trace).
+   * 🔴 **Value discipline**: it must **not** be taken from `NodeEditTool`'s `project`
+   * parameter (that parameter can override `ctx.projectName` ⇒ client-forgeable); it must
+   * take `ctx`'s engine-side identity.
+   * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
+   * direct REST calls).
+   */
   taskId: Option[String] = None
 ):
   /**
@@ -158,28 +160,31 @@ case class ToolContext(
   // 单点已下沉 actor.RootAgentIdentity(AgentCore 不留转发别名)。
   def isRootAgent: Boolean = RootAgentIdentity.isRootAgent(agentDef, depth)
 
-  /** 「Nebula 本体根会话」身份判据的**运行期求值面**——**纯委托**给单点 [[nebflow.agent.AgentCore.isNebulaRoot]]
-    * （同一份实现的第二个求值面；第一个 = 定义期挑 schema 变体）。**禁**在此
-    * 重写 `name=="Nebula" && depth==0`（判红：spec 的静态断言）。
-    *
-    * 派生 def（不是字段）⇒ 零构造点改动；`agentDef=None`（REST 直调 / harness）
-    * fail-closed 为 false。
-    *
-    * (W1 provisional shim: ported from main -- the PR blob predates the B1
-    * batch; FQN reference, no import, so the merge keeps main's single
-    * `core/tools/types.scala -> nebflow.agent` edge and nothing else.)
-    */
+  /**
+   * 「Nebula 本体根会话」身份判据的**运行期求值面**——**纯委托**给单点 [[nebflow.agent.AgentCore.isNebulaRoot]]
+   * （同一份实现的第二个求值面；第一个 = 定义期挑 schema 变体）。**禁**在此
+   * 重写 `name=="Nebula" && depth==0`（判红：spec 的静态断言）。
+   *
+   * 派生 def（不是字段）⇒ 零构造点改动；`agentDef=None`（REST 直调 / harness）
+   * fail-closed 为 false。
+   *
+   * (W1 provisional shim: ported from main -- the PR blob predates the B1
+   * batch; FQN reference, no import, so the merge keeps main's single
+   * `core/tools/types.scala -> nebflow.agent` edge and nothing else.)
+   */
   def isNebulaRoot: Boolean = nebflow.agent.AgentCore.isNebulaRoot(agentDef, depth)
 
-  /** **The symmetric identity gate**: the Nebula root session
-    * may write the task ledger.
-    * The criterion is [[ToolContext.isNebulaRoot]] (**a delegated single point**; never
-    * re-write the expression here); `agentDef=None` (direct REST calls / a spec harness / a
-    * non-agent context) is fail-closed false -- the same discipline as "a direct REST call
-    * never writes the ledger", and **not** "nobody can write".
-    * This is the `Task` tool's second (runtime) identity gate; the first = the mount face
-    * (neither the dispatcher's fixed set nor a node session sees `Task`, and a non-Nebula
-    * agent.json declaration grants nothing). */
+  /**
+   * **The symmetric identity gate**: the Nebula root session
+   * may write the task ledger.
+   * The criterion is [[ToolContext.isNebulaRoot]] (**a delegated single point**; never
+   * re-write the expression here); `agentDef=None` (direct REST calls / a spec harness / a
+   * non-agent context) is fail-closed false -- the same discipline as "a direct REST call
+   * never writes the ledger", and **not** "nobody can write".
+   * This is the `Task` tool's second (runtime) identity gate; the first = the mount face
+   * (neither the dispatcher's fixed set nor a node session sees `Task`, and a non-Nebula
+   * agent.json declaration grants nothing).
+   */
   def isNebulaWriter: Boolean = isNebulaRoot
 end ToolContext
 

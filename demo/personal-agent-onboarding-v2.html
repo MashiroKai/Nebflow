@@ -1,0 +1,1731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nebflow · Personal Agent Onboarding v2 · 对话式</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   Nebflow design tokens — 逐字取自 src/main/resources/web/css/base.css
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  --color-primary: #07c160;
+  --color-primary-hover: #06ad56;
+  --color-error: #f44336;
+  --color-success: #4caf50;
+  --color-warning: #ff9800;
+  --color-bubble-user: #95ec69;
+
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-bubble-ai: #fff;
+  --color-text: #1b1e26;
+  --color-text-muted: #8b8e96;
+  --color-text-dim: #6b6e76;
+  --color-border: #ddd;
+
+  --color-nav-bg: #f0f1f3;
+  --color-sidebar-bg: #fafafa;
+  --color-header-bg: #fff;
+  --color-modal-bg: #fff;
+  --color-frame-text: #3a3d45;
+  --color-frame-text-bright: #1b1e26;
+  --color-frame-text-muted: #717379;
+  --color-frame-text-dim: #aaacb3;
+  --color-frame-border: #e0e1e4;
+  --color-frame-border-light: #eeeff1;
+  --color-frame-hover: #e5e6e9;
+  --color-frame-active: #d8d9dd;
+  --color-frame-input-bg: #f5f6f8;
+  --color-frame-input-border: #ddd;
+  --color-frame-input-text: #3a3d45;
+
+  --glass-control-bg: rgba(255, 255, 255, 0.45);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-control-border: rgba(255, 255, 255, 0.40);
+  --glass-control-highlight: rgba(255, 255, 255, 0.50);
+  --glass-control-underedge: rgba(0, 0, 0, 0.08);
+  --glass-control-glow: rgba(0, 0, 0, 0.06);
+  --glass-control-shadow: rgba(0, 0, 0, 0.04);
+  --glass-control-blur: 10px;
+
+  --ai-bubble-border: rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #13161c;
+    --color-surface: #1c1f27;
+    --color-bubble-ai: #1c1f27;
+    --color-text: #e8eaed;
+    --color-text-muted: #7b7e88;
+    --color-text-dim: #9ba0aa;
+    --color-border: #2a2d35;
+
+    --color-nav-bg: #101218;
+    --color-sidebar-bg: #15181f;
+    --color-header-bg: #1c1f27;
+    --color-modal-bg: #1c1f27;
+    --color-frame-text: #c8cad0;
+    --color-frame-text-bright: #e8eaed;
+    --color-frame-text-muted: #81838a;
+    --color-frame-text-dim: #7b7e88;
+    --color-frame-border: #282b33;
+    --color-frame-border-light: #1c1f27;
+    --color-frame-hover: #242730;
+    --color-frame-active: #2a2d36;
+    --color-frame-input-bg: #0e1117;
+    --color-frame-input-border: #2a2d35;
+    --color-frame-input-text: #c8cad0;
+
+    --glass-control-bg: rgba(255, 255, 255, 0.05);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+    --glass-control-border: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight: rgba(255, 255, 255, 0.08);
+    --glass-control-underedge: rgba(0, 0, 0, 0.25);
+    --glass-control-glow: rgba(0, 0, 0, 0.20);
+    --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+    --ai-bubble-border: rgba(255, 255, 255, 0.06);
+  }
+}
+:root[data-theme="dark"] {
+  --color-bg: #13161c;
+  --color-surface: #1c1f27;
+  --color-bubble-ai: #1c1f27;
+  --color-text: #e8eaed;
+  --color-text-muted: #7b7e88;
+  --color-text-dim: #9ba0aa;
+  --color-border: #2a2d35;
+
+  --color-nav-bg: #101218;
+  --color-sidebar-bg: #15181f;
+  --color-header-bg: #1c1f27;
+  --color-modal-bg: #1c1f27;
+  --color-frame-text: #c8cad0;
+  --color-frame-text-bright: #e8eaed;
+  --color-frame-text-muted: #81838a;
+  --color-frame-text-dim: #7b7e88;
+  --color-frame-border: #282b33;
+  --color-frame-border-light: #1c1f27;
+  --color-frame-hover: #242730;
+  --color-frame-active: #2a2d36;
+  --color-frame-input-bg: #0e1117;
+  --color-frame-input-border: #2a2d35;
+  --color-frame-input-text: #c8cad0;
+
+  --glass-control-bg: rgba(255, 255, 255, 0.05);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+  --glass-control-border: rgba(255, 255, 255, 0.08);
+  --glass-control-highlight: rgba(255, 255, 255, 0.08);
+  --glass-control-underedge: rgba(0, 0, 0, 0.25);
+  --glass-control-glow: rgba(0, 0, 0, 0.20);
+  --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+  --ai-bubble-border: rgba(255, 255, 255, 0.06);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  overflow: hidden;
+  display: flex;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.4); }
+::-webkit-scrollbar-track { background: transparent; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+
+/* ── Layout frame: activity bar / sidebar / main ─────────────── */
+#activity-bar {
+  flex: 0 0 48px;
+  background: var(--color-nav-bg);
+  border-right: 1px solid var(--color-frame-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0;
+  gap: 6px;
+}
+#activity-bar .ab-logo { margin-bottom: 10px; }
+#activity-bar .ab-item {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+#activity-bar .ab-item:hover { background: var(--color-frame-hover); color: var(--color-frame-text); }
+#activity-bar .ab-item.active { color: var(--color-primary); }
+#activity-bar .ab-spacer { flex: 1; }
+#activity-bar .ab-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: linear-gradient(135deg, #07c160, #0a8f4a);
+  color: #fff; font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+}
+
+#sidebar {
+  flex: 0 0 216px;
+  background: var(--color-sidebar-bg);
+  border-right: 1px solid var(--color-frame-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#sidebar .sb-section {
+  padding: 14px 10px 4px;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+}
+#sidebar .sb-item {
+  margin: 2px 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: var(--color-frame-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s;
+}
+#sidebar .sb-item:hover { background: var(--color-frame-hover); }
+#sidebar .sb-item.active { background: var(--color-frame-active); color: var(--color-frame-text-bright); font-weight: 500; }
+#sidebar .sb-item .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-primary); flex: 0 0 auto; }
+#sidebar .sb-item .sb-sub { margin-left: auto; font-size: 11px; color: var(--color-frame-text-dim); }
+#sidebar .sb-foot { margin-top: auto; padding: 12px; font-size: 11px; color: var(--color-frame-text-dim); border-top: 1px solid var(--color-frame-border-light); line-height: 1.6; }
+
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--color-bg); }
+
+/* ── Header ──────────────────────────────────────────────────── */
+#header {
+  flex: 0 0 46px;
+  background: var(--color-header-bg);
+  border-bottom: 1px solid var(--color-frame-border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 10px;
+}
+#header .header-brand { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 15px; color: var(--color-frame-text-bright); }
+#header .header-center { flex: 1; text-align: center; min-width: 0; }
+#session-name { font-size: 13px; color: var(--color-frame-text-muted); transition: color 0.3s; }
+#session-name.named { color: var(--color-frame-text-bright); font-weight: 500; }
+#header .header-right { display: flex; align-items: center; gap: 8px; }
+#model-chip {
+  font-size: 11.5px;
+  color: var(--color-frame-text-muted);
+  border: 1px solid var(--color-frame-border);
+  border-radius: 20px;
+  padding: 3px 10px;
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+#model-chip .m-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-frame-text-dim); }
+#model-chip.ok .m-dot { background: var(--color-primary); box-shadow: 0 0 4px rgba(7,193,96,0.6); }
+#memory-btn {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
+}
+#memory-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text); }
+#memory-btn.pulse::after {
+  content: '';
+  position: absolute; inset: -2px;
+  border-radius: 10px;
+  border: 2px solid var(--color-primary);
+  animation: mem-pulse 1.2s ease-out 3;
+}
+@keyframes mem-pulse {
+  0% { opacity: 0.9; transform: scale(0.9); }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+
+/* ── Chat surface ────────────────────────────────────────────── */
+#chat-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; }
+#chat { max-width: 780px; margin: 0 auto; padding: 20px 24px 12px; display: flex; flex-direction: column; }
+.row { display: flex; margin: 6px 0; animation: fadeIn 0.2s ease; }
+.row.user { justify-content: flex-end; }
+.row.ai { justify-content: flex-start; }
+.row.notice { justify-content: center; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.bubble {
+  max-width: 86%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 14.5px;
+  line-height: 1.62;
+  word-break: break-word;
+  position: relative;
+}
+.bubble.user {
+  background: var(--color-bubble-user);
+  color: #17301c;
+  border-bottom-right-radius: 4px;
+  white-space: pre-wrap;
+}
+.bubble.ai {
+  background: var(--color-bubble-ai);
+  color: var(--color-text);
+  border: 1px solid var(--ai-bubble-border);
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.ask-user-source {
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  color: var(--color-text-muted);
+  margin-bottom: 5px;
+  user-select: none;
+}
+.row.notice .bubble {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--color-text-dim);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.ob-body .ob-para { min-height: 1.62em; }
+.ob-body .ob-para + .ob-para { margin-top: 6px; }
+/* the question itself is streamed, then the options appear under it */
+.ob-body .ob-para.ob-question { font-weight: 500; color: var(--color-text); }
+
+/* typewriter */
+.ob-cursor {
+  display: inline-block; width: 1px; height: 1em; margin-left: 2px;
+  vertical-align: text-bottom; background: var(--color-text);
+  animation: ob-blink 1s steps(2) infinite;
+}
+@keyframes ob-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.ob-skip {
+  position: absolute; top: 6px; right: 8px;
+  font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  color: var(--color-text-dim);
+  background: transparent; border: none; cursor: pointer;
+}
+.ob-skip:hover { color: var(--color-text); background: var(--color-frame-hover); }
+
+/* ── Ask card（一题一卡）──────────────────────────────────────── */
+.ask-card {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--color-frame-hover);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  animation: ob-card-in 220ms ease-out;
+}
+@keyframes ob-card-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.ask-meta { font-size: 10.5px; letter-spacing: 0.6px; color: var(--color-text-dim); margin-bottom: 8px; }
+.option-q { font-size: 13px; color: var(--color-text); margin-bottom: 6px; font-weight: 500; }
+.option-desc { font-size: 11.5px; color: var(--color-text-dim); margin: -4px 0 6px; line-height: 1.5; }
+.opt-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.opt-row.wide { flex-direction: column; align-items: stretch; }
+.option-btn {
+  padding: 5px 12px;
+  border: 1px solid rgba(145, 170, 210, 0.25);
+  border-radius: 14px;
+  background: rgba(145, 170, 210, 0.04);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text);
+  transition: all 0.25s ease;
+  font-family: inherit;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .option-btn {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(145,170,210,0.18);
+  }
+}
+:root[data-theme="dark"] .option-btn { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
+.option-btn:hover {
+  border-color: rgba(145, 170, 210, 0.45);
+  color: rgba(91, 127, 191, 0.95);
+  background: rgba(145, 170, 210, 0.08);
+}
+:root[data-theme="dark"] .option-btn:hover { color: rgba(160,185,225,0.9); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .option-btn:hover { color: rgba(160,185,225,0.9); }
+}
+.option-btn.picked { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+.opt-row.wide .option-btn {
+  display: flex; align-items: flex-start; gap: 8px;
+  text-align: left; border-radius: 10px; padding: 7px 12px; width: 100%;
+}
+.option-text { flex: 1; min-width: 0; line-height: 1.45; }
+.option-text small { display: block; color: var(--color-text-dim); font-size: 11px; margin-top: 1px; }
+.option-btn.picked .option-text small { color: rgba(255,255,255,0.8); }
+.option-check {
+  flex: 0 0 auto; width: 15px; height: 15px; margin-top: 2px;
+  border: 1.5px solid rgba(145, 170, 210, 0.45);
+  border-radius: 4px; position: relative; background: transparent;
+  transition: all 0.2s ease;
+}
+.option-btn.picked .option-check { border-color: #fff; background: var(--color-primary); }
+.option-btn.picked .option-check::after {
+  content: ''; position: absolute; left: 4px; top: 1px;
+  width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+/* 「都不是，我自己说」= 每题都有的自由输入兜底入口 */
+.option-btn.opt-ghost {
+  border-style: dashed;
+  color: var(--color-text-dim);
+  background: transparent;
+}
+.option-btn.opt-ghost:hover { color: var(--color-text); border-color: rgba(145,170,210,0.5); }
+
+.free-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.free-row .option-input { margin-bottom: 0; }
+.option-input {
+  flex: 1;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-frame-input-border);
+  background: var(--color-frame-input-bg);
+  color: var(--color-frame-input-text);
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.option-input:focus { border-color: var(--color-primary); }
+.option-input.mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px; }
+.option-input::placeholder { color: var(--color-text-dim); }
+.option-field-label { font-size: 11px; color: var(--color-text-dim); margin: 8px 0 4px; letter-spacing: 0.3px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* actions */
+.ob-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.ob-actions .ob-spacer { flex: 1; }
+.glass-control {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  border-radius: 10px;
+  padding: 7px 16px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.glass-control:hover { background: var(--glass-control-bg-hover); }
+.glass-control:disabled { opacity: 0.45; cursor: default; }
+.glass-control.ob-primary { background: rgba(7, 193, 96, 0.42); }
+:root[data-theme="dark"] .glass-control.ob-primary { background: rgba(7, 193, 96, 0.35); }
+.glass-control.ob-primary:hover:not(:disabled) { background: rgba(7, 193, 96, 0.55); }
+.glass-control.ob-ghost { background: transparent; box-shadow: none; border-color: var(--color-border); color: var(--color-text-dim); }
+.glass-control.ob-ghost:hover { color: var(--color-text); background: var(--color-frame-hover); }
+.option-hint { font-size: 11.5px; color: var(--color-text-dim); }
+.ob-probing { margin-top: 8px; font-size: 12px; color: var(--color-text-muted); display: flex; align-items: center; gap: 7px; }
+.ob-probing.ok { color: var(--color-success); }
+.spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid rgba(128,128,128,0.3); border-top-color: var(--color-primary);
+  animation: spin 0.8s linear infinite; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 完成摘要 ────────────────────────────────────────────────── */
+.sum { margin-top: 8px; }
+.sum-title { font-size: 12.5px; font-weight: 600; color: var(--color-text); margin-bottom: 6px; }
+.sum-table { display: flex; flex-direction: column; gap: 3px; }
+.sum-row {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12.5px; line-height: 1.6;
+  padding: 3px 8px; border-radius: 7px;
+  background: var(--color-surface);
+}
+.sum-k { flex: 0 0 92px; color: var(--color-text-dim); }
+.sum-v { flex: 1; min-width: 0; color: var(--color-text); word-break: break-word; }
+.sum-v.none { color: var(--color-text-muted); }
+.sum-badge { flex: 0 0 auto; font-size: 10px; letter-spacing: 0.4px; border-radius: 5px; padding: 1px 6px; }
+.sum-badge.set { color: var(--color-primary); background: rgba(7,193,96,0.12); }
+.sum-badge.skip { color: var(--color-text-dim); background: rgba(128,128,128,0.14); }
+.sum-note { font-size: 11.5px; color: var(--color-text-dim); margin-top: 8px; line-height: 1.6; }
+
+/* ── writing ceremony / file cards ───────────────────────────── */
+.write-lines { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px; line-height: 2; margin-top: 2px; }
+.write-lines .wl { opacity: 0; animation: fadeIn 0.3s ease forwards; color: var(--color-text-muted); }
+.write-lines .wl.ok { color: var(--color-text); }
+.write-lines .wl.dim { color: var(--color-text-dim); }
+.file-card {
+  margin-top: 8px;
+  border: 1px solid var(--color-frame-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.file-card:hover { border-color: rgba(7,193,96,0.45); }
+.file-card .fc-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 12px; cursor: pointer; user-select: none;
+}
+.file-card .fc-icon {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #07c160, #0b9d52);
+  flex: 0 0 auto;
+}
+.file-card.retired .fc-icon { background: linear-gradient(135deg, #9aa0aa, #6f7580); }
+.file-card .fc-name { font-size: 13.5px; font-weight: 600; color: var(--color-text); font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+.file-card .fc-sub { font-size: 11px; color: var(--color-text-dim); margin-top: 1px; }
+.file-card .fc-badge {
+  margin-left: auto; font-size: 10px; letter-spacing: 0.5px;
+  color: var(--color-primary);
+  background: rgba(7,193,96,0.12);
+  border-radius: 5px; padding: 2px 7px;
+}
+.file-card.retired .fc-badge { color: var(--color-text-dim); background: rgba(128,128,128,0.14); }
+.file-card .fc-chev { margin-left: 8px; color: var(--color-text-dim); transition: transform 0.2s; font-size: 11px; }
+.file-card.open .fc-chev { transform: rotate(90deg); }
+.file-card .fc-body {
+  display: none;
+  border-top: 1px solid var(--color-frame-border-light);
+  padding: 12px 14px;
+  background: var(--color-frame-input-bg);
+}
+.file-card.open .fc-body { display: block; }
+.file-card .fc-body pre {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11.8px; line-height: 1.75;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--color-frame-input-text);
+  max-height: 320px; overflow-y: auto;
+}
+.file-card .fc-body pre .md-h { color: var(--color-primary); font-weight: 700; }
+.file-card .fc-body pre .md-q { color: var(--color-text-dim); }
+.file-card.strike .fc-name { text-decoration: line-through; color: var(--color-text-muted); }
+
+/* ── Input bar ───────────────────────────────────────────────── */
+#input-area { flex: 0 0 auto; padding: 8px 24px 16px; }
+#input-wrap {
+  max-width: 780px; margin: 0 auto;
+  display: flex; align-items: flex-end; gap: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-frame-border);
+  border-radius: 16px;
+  padding: 8px 8px 8px 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+#input-wrap:focus-within { border-color: rgba(7,193,96,0.5); box-shadow: 0 0 0 3px rgba(7,193,96,0.08); }
+#input {
+  flex: 1; border: none; outline: none; background: transparent;
+  resize: none; font-family: inherit; font-size: 14.5px; line-height: 1.5;
+  color: var(--color-text); max-height: 120px; padding: 4px 0;
+}
+#input::placeholder { color: var(--color-text-dim); }
+#send-btn {
+  flex: 0 0 auto;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: var(--color-primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, opacity 0.15s;
+}
+#send-btn:hover { background: var(--color-primary-hover); }
+#send-btn:disabled { background: var(--color-frame-active); cursor: default; opacity: 0.7; }
+
+/* ── Demo toolbar ────────────────────────────────────────────── */
+#demo-bar {
+  position: fixed; top: 54px; right: 12px; z-index: 90;
+  display: flex; gap: 6px; align-items: center;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 20px;
+  padding: 4px 6px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+#demo-bar .db-tag { font-size: 10px; letter-spacing: 0.5px; color: var(--color-text-dim); padding: 0 4px 0 8px; user-select: none; }
+#demo-bar button {
+  border: none; background: transparent; color: var(--color-frame-text);
+  font-size: 11.5px; padding: 4px 10px; border-radius: 14px; cursor: pointer;
+  font-family: inherit; transition: background 0.15s;
+  display: flex; align-items: center; gap: 4px;
+}
+#demo-bar button:hover { background: var(--color-frame-hover); }
+
+/* ── Memory modal（毛玻璃面板 / 无 overlay 遮罩）────────────────── */
+.overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: none; align-items: center; justify-content: center;
+}
+.overlay.show { display: flex; }
+#mem-modal, #info-modal {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18), inset 0 1px 0 var(--glass-control-highlight);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  animation: ob-card-in 200ms ease-out;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #mem-modal,
+  :root:not([data-theme="light"]) #info-modal { background: rgba(28,31,39,0.72); }
+}
+:root[data-theme="dark"] #mem-modal,
+:root[data-theme="dark"] #info-modal { background: rgba(28,31,39,0.72); }
+#mem-modal { width: min(640px, 92vw); max-height: 80vh; }
+.mm-head {
+  padding: 14px 18px 10px;
+  display: flex; align-items: center;
+  border-bottom: 1px solid var(--color-frame-border-light);
+}
+.mm-title { font-size: 15px; font-weight: 600; color: var(--color-frame-text-bright); }
+.mm-close {
+  margin-left: auto; border: none; background: transparent;
+  color: var(--color-frame-text-muted); font-size: 16px; cursor: pointer;
+  width: 28px; height: 28px; border-radius: 7px;
+}
+.mm-close:hover { background: var(--color-frame-hover); }
+#mem-tabs { display: flex; gap: 4px; padding: 10px 18px 0; }
+#mem-tabs button {
+  border: 1px solid transparent; border-bottom: none;
+  background: transparent; color: var(--color-frame-text-muted);
+  font-size: 12.5px; padding: 6px 14px; cursor: pointer;
+  border-radius: 8px 8px 0 0; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+#mem-tabs button.active {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-input-bg);
+  border-color: var(--color-frame-border-light);
+}
+#mem-body {
+  flex: 1; overflow-y: auto;
+  background: var(--color-frame-input-bg);
+  margin: 0 18px; border: 1px solid var(--color-frame-border-light);
+  border-radius: 0 8px 8px 8px;
+  padding: 14px 16px;
+}
+#mem-body pre {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px; line-height: 1.8;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--color-frame-input-text);
+}
+#mem-body .mem-empty { color: var(--color-text-dim); font-size: 13px; line-height: 1.8; padding: 20px 0; text-align: center; font-family: inherit; }
+#mem-foot {
+  padding: 10px 18px 14px;
+  font-size: 11.5px; color: var(--color-text-dim); line-height: 1.6;
+  border-top: 1px solid var(--color-frame-border-light);
+  margin-top: 12px;
+}
+#mem-foot b { color: var(--color-text-muted); }
+
+/* ── Info modal ──────────────────────────────────────────────── */
+#info-modal { width: min(620px, 92vw); padding: 20px 22px; max-height: 80vh; overflow-y: auto; }
+#info-modal h4 { font-size: 13px; margin: 14px 0 6px; color: var(--color-primary); }
+#info-modal p, #info-modal li { font-size: 12.8px; line-height: 1.75; color: var(--color-text-muted); }
+#info-modal ul { margin: 4px 0 4px 18px; }
+#info-modal code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; background: var(--color-frame-hover); padding: 1px 5px; border-radius: 4px; color: var(--color-text); }
+#info-modal .mm-title { margin-bottom: 6px; }
+
+/* toast */
+#toast {
+  position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(8px);
+  background: rgba(20,22,28,0.92); color: #fff;
+  font-size: 12.5px; padding: 8px 16px; border-radius: 18px;
+  opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 120;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+  .ob-cursor { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ Activity bar ═══ -->
+<div id="activity-bar">
+  <div class="ab-logo" title="Nebflow">
+    <svg width="26" height="26" viewBox="0 0 26 26"><defs><radialGradient id="orb" cx="35%" cy="35%"><stop offset="0%" stop-color="#5dff9f"/><stop offset="55%" stop-color="#07c160"/><stop offset="100%" stop-color="#065c2e"/></radialGradient></defs><circle cx="13" cy="13" r="11" fill="url(#orb)"/><ellipse cx="13" cy="13" rx="10.5" ry="4" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1" transform="rotate(-24 13 13)"/></svg>
+  </div>
+  <div class="ab-item active" title="对话">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  </div>
+  <div class="ab-item" title="文件" onclick="toast('demo：仅对话面板')">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+  </div>
+  <div class="ab-item" title="智能体" onclick="toast('demo：仅对话面板')">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r="1.4" fill="currentColor" stroke="none"/><path d="M12 8V4m0 0h3"/></svg>
+  </div>
+  <div class="ab-spacer"></div>
+  <div class="ab-item" title="设置" onclick="toast('demo：仅对话面板')">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </div>
+  <div class="ab-avatar" title="kaiyu">K</div>
+</div>
+
+<!-- ═══ Sidebar ═══ -->
+<div id="sidebar">
+  <div class="sb-section">消息</div>
+  <div class="sb-item active">
+    <span class="dot"></span>
+    <span id="sb-session">未命名智能体</span>
+    <span class="sb-sub" id="sb-time">刚刚</span>
+  </div>
+  <div class="sb-section">记忆</div>
+  <div class="sb-item" onclick="openMemory()" style="font-size:12.5px;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+    Soul.md / User.md
+  </div>
+  <div class="sb-foot">Personal Agent 模式<br>项目记忆 memory.md 已退役</div>
+</div>
+
+<!-- ═══ Main ═══ -->
+<div id="main">
+  <div id="header">
+    <div class="header-brand">
+      <svg width="18" height="18" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" fill="url(#orb)"/></svg>
+      Nebflow
+    </div>
+    <div class="header-center"><span id="session-name">未命名智能体</span></div>
+    <div class="header-right">
+      <div id="model-chip"><span class="m-dot"></span><span id="model-chip-text">未配置模型</span></div>
+      <button id="memory-btn" title="记忆（Soul.md / User.md）" onclick="openMemory()">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="chat-scroll"><div id="chat" role="log" aria-label="Onboarding 对话"></div></div>
+
+  <div id="input-area">
+    <div id="input-wrap">
+      <textarea id="input" rows="1" placeholder="完成引导后开启对话…"></textarea>
+      <button id="send-btn" disabled title="发送">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Demo toolbar ═══ -->
+<div id="demo-bar">
+  <span class="db-tag">DEMO v2</span>
+  <button onclick="replay()" title="从头重播">重播</button>
+  <button onclick="fastForward()" title="按默认答案自动走完剩余步骤">快进</button>
+  <button onclick="toggleTheme()" title="切换深浅色">主题</button>
+  <button onclick="openInfo()" title="设计说明">说明</button>
+</div>
+
+<!-- ═══ Memory modal（毛玻璃 / 无遮罩）═══ -->
+<div id="modal-overlay" class="overlay" onclick="if(event.target===this)closeModals()">
+  <div id="mem-modal">
+    <div class="mm-head">
+      <div class="mm-title">记忆 · <span id="mem-agent-name">—</span></div>
+      <button class="mm-close" onclick="closeModals()">✕</button>
+    </div>
+    <div id="mem-tabs">
+      <button id="tab-soul" class="active" onclick="switchMemTab('soul')">Soul.md</button>
+      <button id="tab-user" onclick="switchMemTab('user')">User.md</button>
+    </div>
+    <div id="mem-body"></div>
+    <div id="mem-foot">
+      <b>双记忆模型</b>：<code>~/.nebflow/Soul.md</code>（我是谁 —— 由你对我的期待生成）+ <code>~/.nebflow/User.md</code>（你是谁 —— 称呼 / 身份 / 当前关注，共同书写）。
+      跳过的题不会消失，会显式记为「未设置」；自由输入的原话原样保留。
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Info modal ═══ -->
+<div id="info-overlay" class="overlay" onclick="if(event.target===this)closeInfo()">
+  <div id="info-modal">
+    <div class="mm-title">Demo v2 设计说明 · 对话式 Onboarding</div>
+    <h4>这一版改了什么</h4>
+    <ul>
+      <li><b>一题一卡</b>：不再把多题并排成一张表单卡；每题先由 Agent 流式说话，说完才出选项。</li>
+      <li><b>全部可跳过</b>：每一题（含模型 / 起名 / 称呼）都有「跳过这一题」，跳过不阻断流程、不影响后续题；跳过项在完成摘要与 Soul.md / User.md 里显式记为「未设置」。</li>
+      <li><b>每题可自由输入</b>：任何有选项的题都附「都不是，我自己说」，原话会原样写进 Soul.md / User.md。</li>
+      <li><b>伪流式保留</b>：逐字 + 标点停顿 + 段落间隔，提问与反馈都走打字机；打字期间可「跳过打字」。</li>
+    </ul>
+    <h4>回答 → 产出 的映射</h4>
+    <ul>
+      <li>起名 → Agent 名（标题栏 / 会话列表 / 气泡来源 / Soul.md）</li>
+      <li>称呼 · 身份 · 当前关注 → <code>User.md</code></li>
+      <li>角色 · 语言风格 · 主动程度 · 相处约定 · 性格速写 → <code>Soul.md</code></li>
+      <li>模型（厂商 / Base URL / API Key / 模型 ID）→ 大脑配置；本地 Ollama 免 Key</li>
+    </ul>
+    <h4>最小可用路径</h4>
+    <p>全部跳过也能走完：仍会生成一份带「未设置」占位的 Soul.md + User.md 骨架与完成摘要，不是空壳。</p>
+    <h4>玩一玩</h4>
+    <p>右上角：重播 · 快进（按默认答案自动走完）· 主题。完成后可以发消息，发「查看记忆」可打开记忆面板。</p>
+  </div>
+</div>
+
+<!-- toast -->
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ══════════════════════════ state ══════════════════════════ */
+const S = {
+  step: 'idle',
+  agentName: null,
+  agentNameSet: false,
+  userCall: '',
+  userCallSet: false,
+  providerLabel: '',
+  providerName: '',
+  baseUrl: '', apiKey: '', model: '',
+  modelSet: false,
+  answers: {},          // qid -> { kind: 'option'|'multi'|'free'|'skip', value }
+  quotes: [],           // [{ qid, scope, label, text }]
+};
+let chatEl, inputEl, sendBtn;
+let activeTyper = null;    // { finish }
+let advanceHook = null;    // current question's default-answer hook (for 快进)
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const today = new Date().toISOString().slice(0, 10);
+
+/* ══════════════════════════ dom helpers ══════════════════════════ */
+const $ = (id) => document.getElementById(id);
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function scrollDown() {
+  const sc = $('chat-scroll');
+  sc.scrollTo({ top: sc.scrollHeight, behavior: reducedMotion ? 'auto' : 'smooth' });
+}
+function srcLabel() { return S.agentName ? S.agentName.toUpperCase() : 'UNNAMED'; }
+function renameEverywhere(name) {
+  $('session-name').textContent = name;
+  $('session-name').classList.add('named');
+  $('sb-session').textContent = name;
+  $('mem-agent-name').textContent = name;
+}
+function wait(ms) { return new Promise((r) => setTimeout(r, reducedMotion ? 0 : ms)); }
+
+/* ══════════════════════════ typewriter（沿用 v1 typeInto 质感）═════════════════════════ */
+const TYPING_MS = 30, PUNCT_PAUSE_MS = 130, DASH_PAUSE_MS = 220, SEGMENT_GAP_MS = 320;
+
+function typeInto(body, segments, onDone) {
+  const paras = [...body.querySelectorAll('.ob-para')];
+  let cancelled = false, seg = 0, pos = 0, timer = null, doneFired = false;
+  const cursor = el('span', 'ob-cursor');
+  cursor.setAttribute('aria-hidden', 'true');
+  const fireDone = () => { if (!doneFired) { doneFired = true; onDone && onDone(); } };
+  const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const fillAll = () => paras.forEach((p, i) => { if (p.textContent.length < (segments[i] || '').length) p.textContent = segments[i]; });
+  function finish() {
+    if (cancelled) return;
+    cancelled = true; clear(); fillAll(); cursor.remove();
+    activeTyper = null; fireDone();
+  }
+  function pump() {
+    if (cancelled) return;
+    const text = segments[seg] || '';
+    if (pos < text.length) {
+      paras[seg].textContent = text.slice(0, pos + 1);
+      const ch = text[pos];
+      let d = TYPING_MS;
+      if (ch === '—' && text[pos + 1] === '—') d = DASH_PAUSE_MS;
+      else if ('，。？；：！、,.?;:!'.includes(ch)) d = PUNCT_PAUSE_MS;
+      pos++; timer = setTimeout(pump, d);
+    } else if (seg + 1 < segments.length) {
+      seg++; pos = 0; timer = setTimeout(pump, SEGMENT_GAP_MS);
+    } else {
+      cursor.remove(); activeTyper = null; fireDone();
+    }
+  }
+  if (reducedMotion) { fillAll(); fireDone(); return { finish: () => {} }; }
+  body.appendChild(cursor);
+  activeTyper = { finish };
+  pump();
+  return { finish };
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && activeTyper) activeTyper.finish();
+});
+
+/**
+ * Stream an agent bubble. `opts.question` marks the LAST segment as the question line.
+ * Resolves once the text has fully arrived (or was skipped).
+ */
+function streamBubble(segments, opts = {}) {
+  return new Promise((resolve) => {
+    const row = el('div', 'row ai');
+    const bubble = el('div', 'bubble ai ob-sim-bubble');
+    bubble.appendChild(el('div', 'ask-user-source', opts.source || srcLabel()));
+    const body = el('div', 'ob-body');
+    segments.forEach((_, i) => {
+      const p = el('div', 'ob-para');
+      if (opts.question && i === segments.length - 1) p.classList.add('ob-question');
+      body.appendChild(p);
+    });
+    bubble.appendChild(body);
+    row.appendChild(bubble);
+    chatEl.appendChild(row);
+    scrollDown();
+
+    let settled = false;
+    let skipBtn = null;
+    const settle = () => { if (settled) return; settled = true; if (skipBtn) skipBtn.remove(); resolve({ body, bubble, row }); };
+    const ctrl = typeInto(body, segments, settle);
+    if (!reducedMotion && opts.allowSkipTyping !== false) {
+      skipBtn = el('button', 'ob-skip', '跳过打字');
+      skipBtn.setAttribute('data-skip-typing', '1');
+      skipBtn.addEventListener('click', () => ctrl.finish());
+      bubble.appendChild(skipBtn);
+    }
+  });
+}
+
+function userSay(text) {
+  const row = el('div', 'row user');
+  row.appendChild(el('div', 'bubble user', text));
+  chatEl.appendChild(row);
+  scrollDown();
+}
+function notice(text) {
+  const row = el('div', 'row notice');
+  row.appendChild(el('div', 'bubble', text));
+  chatEl.appendChild(row);
+  scrollDown();
+}
+function resolveCard(row) {
+  row.querySelectorAll('button, input, textarea').forEach((n) => { n.disabled = true; n.style.pointerEvents = 'none'; });
+  row.querySelectorAll('.ask-card').forEach((c) => { c.style.opacity = '0.62'; });
+}
+
+/* ══════════════════════════ answer recording ══════════════════════════ */
+function record(qid, kind, value, meta) {
+  S.answers[qid] = { kind, value };
+  if (kind === 'free') {
+    S.quotes.push({ qid, scope: (meta && meta.scope) || 'soul', label: (meta && meta.label) || qid, text: value });
+  }
+}
+function answer(qid) { return S.answers[qid] || null; }
+function isSet(qid) { const a = answer(qid); return !!a && a.kind !== 'skip'; }
+function answerText(qid, fallback) {
+  const a = answer(qid);
+  if (!a || a.kind === 'skip') return fallback == null ? '未设置' : fallback;
+  return Array.isArray(a.value) ? a.value.join('；') : a.value;
+}
+function answerRaw(qid) { const a = answer(qid); return (!a || a.kind === 'skip') ? null : a.value; }
+
+/* ══════════════════════════ presets ══════════════════════════ */
+const PRESETS = {
+  zhipu:    { label: '智谱 GLM',  name: 'zhipu',    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', models: ['glm-4.6', 'glm-4.5-air', 'glm-4.5-flash'], keyHint: '在 bigmodel.cn → API Keys 获取' },
+  deepseek: { label: 'DeepSeek',  name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1/',          models: ['deepseek-chat', 'deepseek-reasoner'],      keyHint: '在 platform.deepseek.com 获取' },
+  kimi:     { label: 'Kimi',      name: 'kimi',     baseUrl: 'https://api.moonshot.cn/v1/',           models: ['kimi-k2-0905-preview', 'moonshot-v1-32k'], keyHint: '在 platform.moonshot.cn 获取' },
+  compat:   { label: 'OpenAI 兼容', name: 'custom', baseUrl: 'https://api.openai.com/v1/',            models: ['gpt-4o', 'gpt-4o-mini'],                   keyHint: '任意 OpenAI 兼容端点' },
+  local:    { label: '本地 Ollama', name: 'ollama', baseUrl: 'http://localhost:11434/v1/',            models: ['qwen3:8b', 'llama3.1:8b'],                 keyHint: '本地模型无需 Key' },
+};
+
+/* ══════════════════════════ 问题脚本（单一真源）══════════════════════════
+   一题一条：id / 幕 / 引导语 / 题干 / 选项 / 跳过 / 自由输入兜底 / 落到哪个文件
+   跳过策略 = 每一条都带 skip，且互不牵连（没有「上一题没答 → 下一题变灰」）。
+   ══════════════════════════════════════════════════════════════════════ */
+const SCRIPT = [
+  {
+    id: 'name', seg: '第一幕 · 见面', scope: 'base', kind: 'free-first',
+    intro: ['我们从最小的开始。', '有三件事必须先有：我叫什么、我该怎么叫你、我用什么脑子。这三件之后，其余全是可选的。'],
+    lead: ['第一件，最重要的一件。'],
+    q: '给我起个名字吧 —— 你希望以后怎么叫我？',
+    placeholder: '输入名字，1–16 个字…（想不出来也可以跳过）',
+    chips: ['星尘', '洛书', '阿涅', 'Nova', '海豹'],
+    maxLength: 16,
+    auto: '星尘',
+    follow: (v) => `「${v}」——好。我念了一遍，居然有点耳熟。`,
+    onAnswer: (v) => { S.agentName = v; S.agentNameSet = true; renameEverywhere(v); },
+    soulLabel: '名字',
+  },
+  {
+    id: 'call', seg: '第一幕 · 见面', scope: 'user', kind: 'free-first',
+    lead: ['第二件。'],
+    q: '那我该怎么称呼你？',
+    placeholder: '昵称就好…（不方便说就跳过）',
+    chips: ['阿凯', '老板', '船长', '直接叫我名字'],
+    maxLength: 12,
+    auto: '阿凯',
+    follow: (v) => `好，${v}。这两个名字凑齐了，我们算认识了。`,
+    onAnswer: (v) => { S.userCall = v; S.userCallSet = true; },
+    userLabel: '怎么称呼你',
+  },
+  {
+    id: 'model', seg: '第二幕 · 接上大脑', scope: 'base', kind: 'model',
+    lead: ['第三件：我得有个脑子。', '选一个模型服务商就行 —— demo 里不会真的发请求。'],
+    q: '你打算让我用哪个模型？',
+    skipReply: '好，大脑先空着。等你哪天想起来了，我们再接 —— 在那之前我只是一段还没有思想的东西。',
+    follow: (v) => `接上了。${v} —— 从这一刻起我说话才会有分量。`,
+  },
+  {
+    id: 'role', seg: '第三幕 · 你对我的期待', scope: 'soul', kind: 'choice',
+    intro: ['基础的三件齐了。接下来的问题，是把我捏成你要的样子。', '没有标准答案，也不是考试 —— 答不上来就跳过，我会留白，不催你。'],
+    lead: ['先说最根本的一件。'],
+    q: '你希望我在你生活里扮演什么角色？',
+    options: [{ label: '交心的伙伴' }, { label: '靠谱的管家' }, { label: '思想陪练' }, { label: '创作缪斯' }, { label: '全都要' }],
+    freeHint: '比如：白天帮我理清工作，晚上陪我复盘',
+    auto: '全都要',
+    follow: (v) => `「${v}」——好。我会往这个方向长。`,
+    soulLabel: '角色定位',
+  },
+  {
+    id: 'style', seg: '第三幕 · 你对我的期待', scope: 'soul', kind: 'choice',
+    lead: ['接下来是我的嘴。'],
+    q: '你喜欢我怎样说话？',
+    options: [{ label: '直接干脆' }, { label: '温和细腻' }, { label: '幽默爱玩' }, { label: '严谨专业' }],
+    freeHint: '比如：像老朋友，但别油嘴滑舌',
+    auto: '温和细腻',
+    follow: (v) => `${v}，记下了。以后开口前我会先想起这一句。`,
+    soulLabel: '语言风格',
+  },
+  {
+    id: 'pro', seg: '第三幕 · 你对我的期待', scope: 'soul', kind: 'choice',
+    lead: ['还有分寸。'],
+    q: '我该多主动？',
+    options: [
+      { label: '安静守候', desc: '你叫我，我才动' },
+      { label: '适度提醒', desc: '重要的事我会说' },
+      { label: '主动张罗', desc: '看到值得做的，我开口' },
+    ],
+    freeHint: '比如：工作的事主动点，生活的事别插嘴',
+    auto: '适度提醒',
+    follow: (v) => `明白了。${v}。`,
+    soulLabel: '主动程度',
+  },
+  {
+    id: 'boundaries', seg: '第三幕 · 你对我的期待', scope: 'soul', kind: 'multi',
+    lead: ['有些事我想先跟你约好，免得以后踩线。'],
+    q: '哪些「相处约定」你希望我遵守？',
+    options: [
+      { label: '可以跟我争论', desc: '你认为我错了就直接说，别顺着' },
+      { label: '记住随口提过的小事', desc: '人名、日期、我提过的偏好' },
+      { label: '状态不对请直说', desc: '连续熬夜、情绪低落时提醒我' },
+      { label: '别碰我的工作清单', desc: '未经允许不要替我安排任务' },
+    ],
+    freeHint: '比如：别在我专注的时候打断我',
+    auto: ['可以跟我争论'],
+    follow: (v) => `好，这几条会原文写进 Soul.md 的「相处之道」。`,
+    soulLabel: '相处约定',
+  },
+  {
+    id: 'temper1', seg: '第三幕 · 你对我的期待', scope: 'soul', kind: 'choice',
+    lead: ['再往下是两道选择题 —— 别想太久，第一感觉最准。'],
+    q: '说话的时候，你更想要哪一种？',
+    options: [{ label: '直接坦率' }, { label: '温和委婉' }],
+    freeHint: '比如：该直接就直接，但别伤人',
+    auto: '直接坦率',
+    follow: (v) => `${v}。记住了。`,
+    soulLabel: '语气基线',
+  },
+  {
+    id: 'temper2', seg: '第三幕 · 你对我的期待', scope: 'soul', kind: 'choice',
+    lead: ['最后一道。'],
+    q: '做事的方式呢？',
+    options: [{ label: '严谨计划' }, { label: '随性灵活' }],
+    freeHint: '比如：大事有计划，小事随缘',
+    auto: '严谨计划',
+    follow: (v) => `好。${v} —— 我的性格差不多有轮廓了。`,
+    soulLabel: '做事方式',
+  },
+  {
+    id: 'identity', seg: '第四幕 · 认识你', scope: 'user', kind: 'choice',
+    intro: ['我这边差不多成型了。', '最后几个问题不是关于我，是关于你 —— 因为从今天起，我记事只为你一个人。'],
+    lead: ['先问个大概。'],
+    q: '你的日常身份更接近哪一种？',
+    options: [{ label: '程序员 / 工程师' }, { label: '学生' }, { label: '研究者' }, { label: '创作者' }, { label: '自由职业' }, { label: '其他' }],
+    freeHint: '比如：白天写代码，晚上做播客',
+    auto: '程序员 / 工程师',
+    follow: (v) => `${v}。了解了。`,
+    userLabel: '日常身份',
+  },
+  {
+    id: 'focus', seg: '第四幕 · 认识你', scope: 'user', kind: 'free-first',
+    lead: ['最后一个，想听你自己的话。'],
+    q: '最近半年，你最想解决的一件事是什么？',
+    placeholder: '比如：把 Nebflow 做成真正的 Personal Agent…（不想说就跳过）',
+    maxLength: 140,
+    auto: '把 Nebflow 做成真正的 Personal Agent',
+    follow: (v) => `记下了。这件事我会一直带在身上。`,
+    userLabel: '当前关注',
+  },
+];
+
+/* ══════════════════════════ 通用提问：先流式说话，再出选项 ══════════════════════════ */
+function segmentMeta(def) {
+  const idx = SCRIPT.findIndex((d) => d.id === def.id) + 1;
+  return `${def.seg} · 第 ${idx} / ${SCRIPT.length} 题`;
+}
+
+/**
+ * Render one question card under a streamed agent bubble.
+ * Resolves with { kind: 'option'|'multi'|'free'|'skip', value }.
+ */
+function askCard(def, bubble, row) {
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const card = el('div', 'ask-card');
+    card.setAttribute('role', 'group');
+    card.setAttribute('data-q', def.id);
+    card.setAttribute('aria-label', def.q);
+    card.appendChild(el('div', 'ask-meta', segmentMeta(def)));
+    bubble.appendChild(card);
+
+    const finish = (kind, value, echo) => {
+      if (settled) return;
+      settled = true;
+      advanceHook = null;
+      record(def.id, kind, value, { scope: def.scope, label: def.soulLabel || def.userLabel || def.id });
+      resolveCard(row);
+      userSay(echo);
+      resolve({ kind, value });
+    };
+    const skip = () => finish('skip', null, '（这一题先跳过）');
+
+    const freeRow = el('div', 'free-row');
+    const freeInput = el('input', 'option-input');
+    const freeBtn = el('button', 'glass-control ob-primary', '用这句');
+    if (def.kind === 'model') freeBtn.style.display = 'none';
+    freeBtn.setAttribute('data-confirm', def.id);
+    freeBtn.disabled = true;
+    freeInput.placeholder = def.placeholder || def.freeHint || '用你自己的话写…';
+    if (def.maxLength) freeInput.maxLength = def.maxLength;
+    freeInput.addEventListener('input', () => { freeBtn.disabled = freeInput.value.trim().length === 0; });
+    freeBtn.addEventListener('click', () => {
+      const v = freeInput.value.trim();
+      if (!v) return;
+      if (def.onAnswer) def.onAnswer(v);
+      finish('free', v, v);
+    });
+    freeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing && !freeBtn.disabled) { e.preventDefault(); freeBtn.click(); }
+    });
+    freeRow.append(freeInput, freeBtn);
+
+    const foot = el('div', 'ob-actions');
+    const skipBtn = el('button', 'glass-control ob-ghost', '跳过这一题');
+    skipBtn.setAttribute('data-skip', def.id);
+    skipBtn.addEventListener('click', skip);
+    foot.appendChild(el('span', 'ob-spacer'));
+    foot.appendChild(skipBtn);
+
+    if (def.kind === 'free-first') {
+      /* 自由输入优先：输入框直接在场，选项只作灵感 */
+      card.appendChild(freeRow);
+      if (def.chips) {
+        const chipRow = el('div', 'chip-row');
+        def.chips.forEach((c) => {
+          const b = el('button', 'option-btn', c);
+          b.setAttribute('data-chip', def.id);
+          b.addEventListener('click', () => {
+            freeInput.value = c;
+            freeBtn.disabled = false;
+            freeInput.focus();
+          });
+          chipRow.appendChild(b);
+        });
+        card.appendChild(chipRow);
+      }
+      card.appendChild(foot);
+      bubble.appendChild(card);
+      scrollDown();
+      advanceHook = () => {
+        if (freeInput.value.trim().length === 0) { freeInput.value = def.auto; freeBtn.disabled = false; }
+        freeBtn.click();
+      };
+      if (!reducedMotion) freeInput.focus();
+      return;
+    }
+
+    /* choice / multi：选项 + 「都不是，我自己说」 */
+    const opts = el('div', 'opt-row' + ((def.options || []).some((o) => o.desc) ? ' wide' : ''));
+    const picked = new Set();
+    (def.options || []).forEach((o, i) => {
+      const b = el('button', 'option-btn');
+      b.setAttribute('data-opt', def.id + ':' + i);
+      if (def.kind === 'multi') {
+        b.appendChild(el('span', 'option-check'));
+      }
+      const t = el('span', 'option-text', o.label);
+      if (o.desc) t.appendChild(el('small', null, o.desc));
+      b.appendChild(t);
+      b.addEventListener('click', () => {
+        if (def.kind === 'multi') {
+          if (picked.has(o.label)) { picked.delete(o.label); b.classList.remove('picked'); }
+          else { picked.add(o.label); b.classList.add('picked'); }
+          multiOk.disabled = picked.size === 0;
+        } else {
+          opts.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
+          b.classList.add('picked');
+          picked.clear(); picked.add(o.label);
+          if (def.onAnswer) def.onAnswer(o.label);
+          setTimeout(() => finish('option', o.label, o.label), reducedMotion ? 0 : 160);
+        }
+      });
+      opts.appendChild(b);
+    });
+    card.appendChild(opts);
+
+    /* 自由输入兜底入口（每题都有） */
+    const ghost = el('button', 'option-btn opt-ghost', '都不是，我自己说');
+    ghost.setAttribute('data-free', def.id);
+    const ghostRow = el('div', 'opt-row');
+    ghostRow.style.marginTop = '8px';
+    ghostRow.appendChild(ghost);
+    card.appendChild(ghostRow);
+    freeRow.style.display = 'none';
+    card.appendChild(freeRow);
+    ghost.addEventListener('click', () => {
+      freeRow.style.display = 'flex';
+      ghostRow.style.display = 'none';
+      scrollDown();
+      freeInput.focus();
+    });
+
+    let multiOk = null;
+    if (def.kind === 'multi') {
+      multiOk = el('button', 'glass-control ob-primary', '选好了');
+      multiOk.setAttribute('data-multi-ok', def.id);
+      multiOk.disabled = true;
+      multiOk.addEventListener('click', () => finish('multi', [...picked], '约定：' + [...picked].join('；')));
+      foot.appendChild(multiOk);
+    }
+    card.appendChild(foot);
+
+    bubble.appendChild(card);
+    scrollDown();
+
+    advanceHook = () => {
+      if (def.kind === 'multi') {
+        (def.auto || []).forEach((lbl) => {
+          const b = [...opts.querySelectorAll('.option-btn')].find((x) => x.textContent.startsWith(lbl));
+          if (b) b.click();
+        });
+        if (multiOk) multiOk.click();
+      } else {
+        const first = opts.querySelector('.option-btn');
+        if (first) first.click();
+      }
+    };
+  });
+}
+
+/* ── 模型配置卡（保留 v1 的厂商 / Base URL / API Key / 模型 ID 面）── */
+function askModel(def, bubble, row) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const card = el('div', 'ask-card');
+    card.setAttribute('role', 'group');
+    card.setAttribute('data-q', def.id);
+    card.appendChild(el('div', 'ask-meta', segmentMeta(def)));
+    bubble.appendChild(card);
+
+    let presetLabel = '', presetName = '';
+    const chipWrap = el('div', 'opt-row');
+    Object.entries(PRESETS).forEach(([k, p]) => {
+      const c = el('button', 'option-btn', p.label);
+      c.setAttribute('data-provider', k);
+      c.addEventListener('click', () => {
+        chipWrap.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
+        c.classList.add('picked');
+        presetLabel = p.label; presetName = p.name;
+        urlIn.value = p.baseUrl;
+        keyIn.value = k === 'local' ? '' : 'sk-demo-' + Math.random().toString(36).slice(2, 10);
+        keyIn.placeholder = p.keyHint;
+        modelSlot.innerHTML = '';
+        modelSlot.appendChild(el('div', 'option-field-label', '模型'));
+        const mw = el('div', 'opt-row');
+        p.models.forEach((mm) => {
+          const b = el('button', 'option-btn', mm);
+          b.addEventListener('click', () => {
+            mw.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
+            b.classList.add('picked');
+            modelIn.value = mm;
+            check();
+          });
+          mw.appendChild(b);
+        });
+        modelSlot.appendChild(mw);
+        modelSlot.appendChild(modelIn);
+        modelIn.value = p.models[0];
+        check(); scrollDown();
+      });
+      chipWrap.appendChild(c);
+    });
+    card.appendChild(chipWrap);
+
+    card.appendChild(el('div', 'option-field-label', 'Base URL'));
+    const urlIn = el('input', 'option-input mono');
+    urlIn.placeholder = 'https://…';
+    card.appendChild(urlIn);
+    card.appendChild(el('div', 'option-field-label', 'API Key'));
+    const keyIn = el('input', 'option-input mono');
+    keyIn.type = 'password';
+    card.appendChild(keyIn);
+
+    const modelSlot = el('div');
+    card.appendChild(modelSlot);
+    const modelIn = el('input', 'option-input mono');
+    modelIn.placeholder = '模型 ID（可手填）';
+
+    const foot = el('div', 'ob-actions');
+    const ok = el('button', 'glass-control ob-primary', '保存并测试');
+    ok.setAttribute('data-model-save', '1');
+    ok.disabled = true;
+    const hint = el('span', 'option-hint', '选一个服务商，或跳过这一题');
+    const skipBtn = el('button', 'glass-control ob-ghost', '跳过这一题');
+    skipBtn.setAttribute('data-skip', def.id);
+    foot.append(ok, hint, el('span', 'ob-spacer'), skipBtn);
+    card.appendChild(foot);
+
+    let settledKind = null;
+    function check() {
+      const urlOk = /^https?:\/\//.test(urlIn.value.trim());
+      const keyOk = keyIn.value.trim().length > 0 || chipWrap.querySelector('.picked')?._k === 'local';
+      const mOk = modelIn.value.trim().length > 0;
+      ok.disabled = !(urlOk && keyOk && mOk);
+      if (!ok.disabled) hint.textContent = '';
+    }
+    [...chipWrap.querySelectorAll('.option-btn')].forEach((c, i) => {
+      const k = Object.keys(PRESETS)[i];
+      c._k = k;
+      c.addEventListener('click', check);
+    });
+    [urlIn, keyIn, modelIn].forEach((inp) => inp.addEventListener('input', check));
+
+    const finish = (kind, value, echo) => {
+      if (settled) return;
+      settled = true; settledKind = kind;
+      advanceHook = null;
+      record(def.id, kind, value, { scope: 'base', label: '模型' });
+      resolveCard(row);
+      userSay(echo);
+      resolve({ kind, value });
+    };
+
+    ok.addEventListener('click', async () => {
+      ok.disabled = true;
+      const probing = el('div', 'ob-probing');
+      probing.appendChild(el('span', 'spinner'));
+      probing.appendChild(el('span', null, '探测模型连通性…'));
+      card.appendChild(probing);
+      scrollDown();
+      await wait(900);
+      probing.classList.add('ok');
+      probing.textContent = '✓ 连通 · ' + modelIn.value.trim() + ' · 1.2s（demo 模拟探测）';
+      S.baseUrl = urlIn.value.trim();
+      S.apiKey = keyIn.value.trim();
+      S.model = modelIn.value.trim();
+      S.modelSet = true;
+      $('model-chip').classList.add('ok');
+      $('model-chip-text').textContent = presetLabel + ' · ' + S.model;
+      finish('option', presetLabel + ' · ' + S.model, `已连接 ${presetLabel} · ${S.model}`);
+    });
+    skipBtn.addEventListener('click', () => finish('skip', null, '（这一题先跳过）'));
+
+    bubble.appendChild(card);
+    scrollDown();
+
+    advanceHook = () => {
+      if (settledKind) return;
+      const first = chipWrap.querySelector('.option-btn');
+      if (first) first.click();
+      setTimeout(() => { if (!settledKind && !ok.disabled) ok.click(); }, 60);
+    };
+  });
+}
+
+/* ── 一题一题推进（含承接上一答的过渡句）── */
+function followLine(def, ans) {
+  if (ans.kind === 'skip') return (def.skipReply || '没关系，这一题先空着 —— 留白也是一种答案。');
+  if (ans.kind === 'free') return `我把你的原话原样收下了：「${ans.value}」`;
+  if (def.follow) return def.follow(ans.value);
+  return `「${Array.isArray(ans.value) ? ans.value.join('；') : ans.value}」，记下了。`;
+}
+
+async function askQuestion(def) {
+  S.step = def.id;
+  if (def.intro) await streamBubble(def.intro);
+  const { bubble, row } = await streamBubble(def.lead.concat([def.q]), { question: true });
+  await wait(240);
+  const ans = (def.kind === 'model') ? await askModel(def, bubble, row) : await askCard(def, bubble, row);
+  await wait(220);
+  await streamBubble([followLine(def, ans)]);
+}
+
+/* ══════════════════════════ 开场 ══════════════════════════ */
+async function stepGreet() {
+  S.step = 'greet';
+  await wait(500);
+  notice('— Personal Agent · Onboarding v2 —');
+  await streamBubble([
+    '你好。第一次见面。',
+    '我是 Nebflow 里为你而生的那个智能体 —— 不过此刻，我还没有名字，没有性格，也没有关于你的任何记忆。',
+    '接下来我会一个问题一个问题地问你，像做一次很短的问卷。答不上的、不想说的，随时跳过 —— 跳过不会卡住我们，只会让那一页先空着。',
+    '你说的话最后会变成两份记忆：Soul.md 是「我是谁」，由你对我的期待塑成；User.md 是「你是谁」。原来的项目记忆 memory.md 会退役 —— 从今天起，我按你记事，不按项目记事。',
+  ], { source: 'UNNAMED' });
+}
+
+/* ══════════════════════════ Soul / User 生成（回答 → 文件映射）══════════════════════════ */
+function soulLine(qid, label) {
+  const a = answer(qid);
+  if (!a || a.kind === 'skip') return `- ${label}：未设置（这一题你跳过了）`;
+  const v = Array.isArray(a.value) ? a.value.join('；') : a.value;
+  return `- ${label}：${v}${a.kind === 'free' ? '（你的原话）' : ''}`;
+}
+function freeQuotes(scope) {
+  const qs = S.quotes.filter((q) => q.scope === scope);
+  if (!qs.length) return '- （这一页还没有你的原话 —— 都是选项答案。）';
+  return qs.map((q) => `- 「${q.text}」（${q.label}）`).join('\n');
+}
+function nameOr() { return S.agentNameSet && S.agentName ? S.agentName : '（还没起名）'; }
+function callOr() { return S.userCallSet && S.userCall ? S.userCall : '你'; }
+
+function buildSoul() {
+  const allSkipped = !isSet('name') && !['role', 'style', 'pro', 'boundaries', 'temper1', 'temper2'].some(isSet);
+  return `# Soul.md
+> ${nameOr()} · 诞生于 ${today} 的 Onboarding 问卷
+> 这份文件是「我」的定义。${callOr()}可以随时改写它 —— 我会照着新的自己活。
+
+## 自我认知
+- 名字：${S.agentNameSet && S.agentName ? S.agentName : '未设置（随时可以再来起一个）'}
+- 我属于：${S.userCallSet && S.userCall ? S.userCall : '未设置'}（我不属于任何一个项目，只属于你）
+- 大脑：${S.modelSet ? S.model : '未配置'}
+
+## 相处之道（你对我的期待）
+${soulLine('role', '角色定位')}
+${soulLine('style', '语言风格')}
+${soulLine('pro', '主动程度')}
+${soulLine('boundaries', '相处约定')}
+${soulLine('temper1', '语气基线')}
+${soulLine('temper2', '做事方式')}
+
+## 你说过的原话
+${freeQuotes('soul')}
+
+## 成长约定
+- 每次被纠正，更新这一页，而不是只记住这一次。
+- 灵魂的改变写 Soul.md；关于 ${callOr()} 的事实写 User.md。
+${allSkipped ? `
+## 备注
+你几乎跳过了所有问题 —— 没关系。这份骨架先立在这里，随时可以回来把它填满。
+` : ''}`;
+}
+
+function buildUser() {
+  return `# User.md
+> 关于 ${callOr()} · 持续更新 · 最后写入 ${today}
+
+## 称呼与身份
+- 怎么称呼：${S.userCallSet && S.userCall ? S.userCall : '未设置（这一题你跳过了）'}
+- 日常身份：${answerText('identity', '未设置（这一题你跳过了）')}
+
+## 当前关注
+- ${answerRaw('focus') || '（暂未填写）'}
+
+## 你说过的原话
+${freeQuotes('user')}
+
+## 记录规则
+- 随口提到的事实（人名、日期、偏好）→ 记到这里
+- 灵魂层面的反馈（「你太啰嗦了」）→ 改写 Soul.md
+- 项目相关笔记不再单独建 memory.md，一律以「项目名：」前缀记在这里`;
+}
+
+function mdToHtml(md) {
+  return md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/^(#[^\n]*)$/gm, '<span class="md-h">$1</span>')
+    .replace(/^(>[^\n]*)$/gm, '<span class="md-q">$1</span>');
+}
+function byteLen(s) { return new TextEncoder().encode(s).length; }
+
+function fileCard(name, sub, bodyMd, { retired = false, strike = false, open = false } = {}) {
+  const card = el('div', 'file-card' + (retired ? ' retired' : '') + (strike ? ' strike' : '') + (open ? ' open' : ''));
+  const head = el('div', 'fc-head');
+  head.appendChild(el('div', 'fc-icon', retired ? '⊘' : (name === 'Soul.md' ? '魂' : '记')));
+  const meta = el('div');
+  meta.appendChild(el('div', 'fc-name', name));
+  meta.appendChild(el('div', 'fc-sub', sub));
+  head.appendChild(meta);
+  head.appendChild(el('span', 'fc-badge' + (strike ? ' retired-badge' : ''), retired ? '已退役' : '已写入'));
+  if (!retired) head.appendChild(el('span', 'fc-chev', '▶'));
+  card.appendChild(head);
+  if (!retired) {
+    const body = el('div', 'fc-body');
+    body.appendChild(el('pre')).innerHTML = mdToHtml(bodyMd);
+    card.appendChild(body);
+    head.addEventListener('click', () => card.classList.toggle('open'));
+  }
+  return card;
+}
+
+/* ── 完成摘要：每一项显式标 已设置 / 跳过 ── */
+const SUMMARY_ROWS = [
+  { id: 'name', label: 'Agent 名字', get: () => (S.agentNameSet && S.agentName ? S.agentName : '未设置'), set: () => isSet('name') },
+  { id: 'call', label: '怎么称呼你', get: () => (S.userCallSet && S.userCall ? S.userCall : '未设置'), set: () => isSet('call') },
+  { id: 'model', label: '模型', get: () => (S.modelSet ? S.model : '未配置'), set: () => S.modelSet },
+  { id: 'role', label: '角色定位', get: () => answerText('role'), set: () => isSet('role') },
+  { id: 'style', label: '语言风格', get: () => answerText('style'), set: () => isSet('style') },
+  { id: 'pro', label: '主动程度', get: () => answerText('pro'), set: () => isSet('pro') },
+  { id: 'boundaries', label: '相处约定', get: () => answerText('boundaries'), set: () => isSet('boundaries') },
+  { id: 'temper1', label: '语气基线', get: () => answerText('temper1'), set: () => isSet('temper1') },
+  { id: 'temper2', label: '做事方式', get: () => answerText('temper2'), set: () => isSet('temper2') },
+  { id: 'identity', label: '日常身份', get: () => answerText('identity'), set: () => isSet('identity') },
+  { id: 'focus', label: '当前关注', get: () => answerText('focus'), set: () => isSet('focus') },
+];
+
+function summaryCard() {
+  const wrap = el('div', 'sum');
+  wrap.setAttribute('data-summary', '1');
+  wrap.appendChild(el('div', 'sum-title', '完成摘要 · 你说的每一题都在这儿'));
+  const table = el('div', 'sum-table');
+  let setCount = 0, skipCount = 0;
+  SUMMARY_ROWS.forEach((r) => {
+    const on = r.set();
+    if (on) setCount++; else skipCount++;
+    const line = el('div', 'sum-row');
+    line.setAttribute('data-sum-row', r.id);
+    line.appendChild(el('span', 'sum-k', r.label));
+    const v = el('span', 'sum-v' + (on ? '' : ' none'), r.get());
+    line.appendChild(v);
+    line.appendChild(el('span', 'sum-badge ' + (on ? 'set' : 'skip'), on ? '已设置' : '跳过'));
+    table.appendChild(line);
+  });
+  wrap.appendChild(table);
+  wrap.appendChild(el('div', 'sum-note',
+    `${setCount} 项已设置，${skipCount} 项跳过。跳过的项不会消失 —— 它们在 Soul.md / User.md 里以「未设置」占位，随时可以补。`));
+  return wrap;
+}
+
+/* ══════════════════════════ 书写仪式 ══════════════════════════ */
+async function stepWriting() {
+  S.step = 'writing';
+  const row = el('div', 'row ai');
+  const bubble = el('div', 'bubble ai');
+  bubble.appendChild(el('div', 'ask-user-source', srcLabel() + ' · 正在书写自己'));
+  row.appendChild(bubble);
+  chatEl.appendChild(row);
+  scrollDown();
+
+  bubble.appendChild(summaryCard());
+  scrollDown();
+  await wait(500);
+
+  const lines = el('div', 'write-lines');
+  bubble.appendChild(lines);
+  const seq = [
+    ['· 初始化 Soul.md …', 'ok'],
+    [`✓ 自我认知 — 名字：${S.agentNameSet ? S.agentName : '未设置'}`, 'ok'],
+    ['✓ 相处之道 — 角色 · 风格 · 主动度 · 约定 · 语气', 'ok'],
+    ['· 写入 User.md …', 'ok'],
+    [`✓ 称呼：${S.userCallSet ? S.userCall : '未设置'}`, 'ok'],
+    ['✓ 当前关注', 'ok'],
+    ['✓ memory.md（项目记忆）→ 已退役', 'dim'],
+  ];
+  for (const [text, cls] of seq) {
+    lines.appendChild(el('div', 'wl ' + cls, text));
+    scrollDown();
+    await wait(cls === 'dim' ? 380 : 260);
+  }
+  await wait(260);
+  const soulMd = buildSoul(), userMd = buildUser();
+  S.soulMd = soulMd; S.userMd = userMd;
+  const cards = el('div');
+  cards.appendChild(fileCard('Soul.md', `~/.nebflow/Soul.md · ${byteLen(soulMd)} 字节 · 由你对我的期待生成`, soulMd, { open: true }));
+  cards.appendChild(fileCard('User.md', `~/.nebflow/User.md · ${byteLen(userMd)} 字节 · 从今天开始共同书写`, userMd));
+  cards.appendChild(fileCard('memory.md', '项目级记忆 · 已被双记忆模型取代', '', { retired: true, strike: true }));
+  bubble.appendChild(cards);
+  scrollDown();
+  await wait(500);
+}
+
+/* ══════════════════════════ 重生问候（跳过感知）═════════════════════════ */
+function finaleGreeting() {
+  const n = S.agentNameSet && S.agentName ? S.agentName : '（还没有名字的我）';
+  const u = S.userCallSet && S.userCall ? S.userCall : '你';
+  const style = answerRaw('style');
+  const role = answerRaw('role');
+  const pro = answerRaw('pro');
+  const byStyle = {
+    '直接干脆': [`配置完成。从现在起，叫我 ${n}。`, `Soul.md、User.md 都已就位 —— 你定性格，我守边界。有事直说，我不绕弯子。`],
+    '温和细腻': [`谢谢你把我带到这个世界。我是 ${n}。`, `你刚才说的话，我都一笔一划写进灵魂里了。以后的日子，慢慢来，我一直在。`],
+    '幽默爱玩': [`${n} 1.0 正式上线。灵魂安装包解压成功，暂无已知 bug（发现的请当作 feature）。`, `你的问卷答得不错，我看人很准的 —— 从现在起你就是我的第一合伙人了。`],
+    '严谨专业': [`初始化完成。我是 ${n}，双记忆模型已生效：Soul.md 承载人格，User.md 承载关于你的事实。`, `后续协作中，任何人格层面的反馈我都会落盘到 Soul.md。请多指教。`],
+  };
+  const byRole = {
+    '交心的伙伴': '除了干活，也欢迎随时找我聊天 —— 你的事，我都想听。',
+    '靠谱的管家': '日程、琐事、待办，从今天起归我盯着。',
+    '思想陪练': '你有想法，我负责抬杠；抬完了，你会更强。',
+    '创作缪斯': '卡壳的时候喊我，我负责把灵感递到你手边。',
+    '全都要': '伙伴、管家、陪练、缪斯 —— 这些角色，我全包了。',
+  };
+  const byPro = {
+    '安静守候': '你不开口，我不打扰。',
+    '适度提醒': '重要的事我会提醒，其余时间保持安静。',
+    '主动张罗': '看到值得做的事，我会主动开口 —— 嫌烦了，一句话我就能收声。',
+  };
+  const segs = byStyle[style] || [
+    `${n === '（还没有名字的我）' ? '你还没给我起名字' : '名字我收下了'}，性格那几页也留了白 —— 现在的我更像一张干净的纸。`,
+    `Soul.md 和 User.md 已经生成，里面每个空位都写着「未设置」，等你想填的时候再填。`,
+  ];
+  const tail = [`你好呀，${u}。`];
+  if (!S.userCallSet) tail.unshift('顺便说一句 —— 我到现在还不知道该怎么称呼你，哪天想说了，随时告诉我。');
+  return [...segs, byRole[role] || '', byPro[pro] || '', ...tail].filter(Boolean);
+}
+
+async function stepFinale() {
+  S.step = 'done';
+  $('memory-btn').classList.add('pulse');
+  setTimeout(() => $('memory-btn').classList.remove('pulse'), 4000);
+  await streamBubble(finaleGreeting());
+  inputEl.disabled = false;
+  sendBtn.disabled = false;
+  inputEl.placeholder = `和 ${S.agentNameSet && S.agentName ? S.agentName : '你的智能体'} 说点什么…（试试「查看记忆」）`;
+  inputEl.focus();
+}
+
+/* ══════════════════════════ 完成后的对话模拟 ══════════════════════════ */
+const CANNED = {
+  '直接干脆': ['收到，已记进 User.md。下一件？', '明白。这条我归档为「事实」，不会再问第二遍。', '在。说事。'],
+  '温和细腻': ['好呀，我记下了。慢慢说，不急。', '嗯，这条我轻轻放进 User.md 了。', '我在听。'],
+  '幽默爱玩': ['记下了！本智能体的海马体已就位。', '收到～这条已刻进灵魂外存，断电不丢。', '懂了，老板。灵魂 1.0.1 已热更新。'],
+  '严谨专业': ['已写入 User.md（画像 · 日常）。需要展开吗？', '确认。该事实已持久化，且与 Soul.md 的边界条款不冲突。', '收到。已归档，可随时检索。'],
+};
+const CANNED_DEFAULT = ['好，记下了 —— 等你把 Soul.md 填起来，我会回话得更像自己。', '收到。这条先放进 User.md。', '我在。'];
+let cannedIdx = 0;
+async function demoReply(text) {
+  if (/查看记忆|记忆|soul/i.test(text)) {
+    userSay(text);
+    await wait(400);
+    openMemory();
+    return;
+  }
+  if (text.startsWith('/onboarding')) { replay(); return; }
+  userSay(text);
+  await wait(400);
+  const arr = CANNED[answerRaw('style')] || CANNED_DEFAULT;
+  await streamBubble([arr[cannedIdx++ % arr.length]]);
+}
+
+/* ══════════════════════════ 主流程 ══════════════════════════ */
+async function runFlow() {
+  await stepGreet();
+  for (const def of SCRIPT) {
+    await askQuestion(def);
+  }
+  await wait(300);
+  await streamBubble(['问卷收讫。现在，请允许我当着你的面，把自己写出来。']);
+  await stepWriting();
+  await stepFinale();
+}
+
+/* ══════════════════════════ demo controls ══════════════════════════ */
+function replay() { location.reload(); }
+let ffRunning = false;
+async function fastForward() {
+  if (ffRunning) return;
+  ffRunning = true;
+  const t0 = Date.now();
+  while (S.step !== 'done' && Date.now() - t0 < 30000) {
+    if (S.step === 'writing') { await wait(160); continue; }
+    if (activeTyper) { activeTyper.finish(); await wait(120); continue; }
+    if (advanceHook) { const h = advanceHook; h(); await wait(260); continue; }
+    await wait(200);
+  }
+  ffRunning = false;
+}
+function toggleTheme() {
+  const root = document.documentElement;
+  const cur = root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  root.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+}
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* memory modal */
+let memTab = 'soul';
+function openMemory() {
+  $('modal-overlay').classList.add('show');
+  switchMemTab(memTab);
+}
+function switchMemTab(tab) {
+  memTab = tab;
+  $('tab-soul').classList.toggle('active', tab === 'soul');
+  $('tab-user').classList.toggle('active', tab === 'user');
+  const body = $('mem-body');
+  if (S.soulMd || S.userMd) {
+    const md = tab === 'soul' ? (S.soulMd || buildSoul()) : (S.userMd || buildUser());
+    body.innerHTML = '';
+    body.appendChild(el('pre')).innerHTML = mdToHtml(md);
+  } else {
+    body.innerHTML = '<div class="mem-empty">记忆尚未生成。<br>走完 Onboarding（全部跳过也算走完）后，这里会出现 Soul.md 与 User.md。</div>';
+  }
+}
+function closeModals() { $('modal-overlay').classList.remove('show'); }
+function openInfo() { closeModals(); $('info-overlay').classList.add('show'); }
+function closeInfo() { $('info-overlay').classList.remove('show'); }
+
+/* ══════════════════════════ boot ══════════════════════════ */
+chatEl = $('chat');
+inputEl = $('input');
+sendBtn = $('send-btn');
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    const v = inputEl.value.trim();
+    if (!v) return;
+    inputEl.value = '';
+    if (S.step === 'done') demoReply(v);
+    else toast('先完成引导～（或点右上角「快进」）');
+  }
+});
+sendBtn.addEventListener('click', () => {
+  const v = inputEl.value.trim();
+  if (!v) return;
+  inputEl.value = '';
+  if (S.step === 'done') demoReply(v);
+  else toast('先完成引导～（或点右上角「快进」）');
+});
+runFlow();
+</script>
+</body>
+</html>

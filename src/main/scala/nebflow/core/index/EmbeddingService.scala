@@ -37,10 +37,10 @@ object EmbeddingService:
 
   /** Resolved, ready-to-call settings (`None` = the whole face is off). */
   final case class EmbeddingSettings(
-      baseUrl: String,
-      model: String,
-      token: Option[String],
-      timeoutMs: Long
+    baseUrl: String,
+    model: String,
+    token: Option[String],
+    timeoutMs: Long
   )
 
   /** Per-call text cap (chars) — a single oversized note must not blow the request. */
@@ -85,6 +85,7 @@ object EmbeddingService:
                   timeoutMs = c.timeoutMs.filter(_ > 0).getOrElse(DefaultTimeoutMs)
                 )
               )
+          end match
       }
     catch
       case e: Exception =>
@@ -178,7 +179,8 @@ object EmbeddingService:
               case Some(vectors) if vectors.size == capped.size => Some(vectors)
               case Some(vectors) =>
                 logger.warnSync(
-                  s"embedding response arity mismatch (${vectors.size} vectors for ${capped.size} inputs) — treated as failure")
+                  s"embedding response arity mismatch (${vectors.size} vectors for ${capped.size} inputs) — treated as failure"
+                )
                 None
               case None =>
                 logger.warnSync("embedding response malformed — treated as failure (lexical fallback)")
@@ -189,14 +191,19 @@ object EmbeddingService:
         catch
           case e: Exception =>
             logger.warnSync(
-              s"embedding call failed (${e.getClass.getSimpleName}) — treated as failure (lexical fallback)")
+              s"embedding call failed (${e.getClass.getSimpleName}) — treated as failure (lexical fallback)"
+            )
             None
       }
+
+    end if
+
+  end embed
 
   /** The common call shape: resolve hot, then embed; off/failure ⇒ `None`. */
   def embedResolved(texts: List[String], configPath: Option[String] = None): IO[Option[List[List[Float]]]] =
     resolveSettings(configPath) match
-      case None      => IO.pure(None)
-      case Some(st)  => embed(st, texts)
+      case None => IO.pure(None)
+      case Some(st) => embed(st, texts)
 
 end EmbeddingService

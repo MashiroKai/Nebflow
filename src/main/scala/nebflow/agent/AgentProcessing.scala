@@ -579,6 +579,7 @@ private[agent] object AgentProcessing:
           _ <- killSessionShellProcesses(stoppedState)
           _ <- fireLifecycleStopHooks(resources, stoppedState)
         yield Behaviors.stopped
+        end for
 
       // Normal batch continuation. The deferred variant above never falls
       // through here — it stops the actor.
@@ -939,6 +940,7 @@ private[agent] object AgentProcessing:
             _ <- killSessionShellProcesses(state)
             _ <- fireLifecycleStopHooks(resources, state)
           yield Behaviors.stopped
+        end if
 
       case AgentCommand.ClearReadTracker =>
         clearReadTrackerStay(state)(IO.pure(processing(agentDef, resources, depth, parentRef, state, pending)))
@@ -1189,6 +1191,9 @@ private[agent] object AgentProcessing:
               s,
               Some(eventType),
               agentName,
+              // file-diff → 委托结果行（bug #58 修）：delegate 终态事件 metadata
+              // 携带的改动文件 diff 载荷，随注入行落盘/下发（缺席 = 旧行为逐字）。
+              fileChanges = metadata("fileChanges"),
               sessionProject = state.projectName
             )
           case None => IO.unit
@@ -1268,6 +1273,10 @@ private[agent] object AgentProcessing:
             // （否则「等人回答」会被判成真卡死并触发破坏性的 Stop→hard-cancel 链），
             // 且内核的 3600s wall-clock 预算在等待期暂停（R11 第 4 层 / U1=C-a +
             // U8=(ii)：等待无界/不计入预算）。
+            // 🔴 2026-10-09 作者裁定拆除（追加式注释，原块保持原样）：该 wall-clock
+            // 预算已整体拆除——下方 `DelegateBudget.pause` 现为墓碑壳无害 no-op；
+            // 等待期治理只剩本处 `WaitingForUser` 豁免（TaskStuckWatcher）。
+            //
             //
             // 🔴 本批（root 2026-10-02 令 #462 裁①「非阻塞-only」）后的判据 = **命令面
             // 客观事实** `awaitsAnswer`，不再是历史工具面模式枚举 `AskMode.parksTurn`：
@@ -1283,16 +1292,16 @@ private[agent] object AgentProcessing:
               else IO.unit
             waitMarks *>
               (hub ! InteractionHubCommand.Request(
-              InteractionRequest(
-                requestId = requestId,
-                kind = InteractionKind.AskUser,
-                payload = payload,
-                reply = InteractionReply.AskUserReply(replyToOpt),
-                rootSessionId = rootSid,
-                sourceAgent = srcAgent,
-                sourceSession = srcSession
-              )
-            )).void *> nodeAskEventIO
+                InteractionRequest(
+                  requestId = requestId,
+                  kind = InteractionKind.AskUser,
+                  payload = payload,
+                  reply = InteractionReply.AskUserReply(replyToOpt),
+                  rootSessionId = rootSid,
+                  sourceAgent = srcAgent,
+                  sourceSession = srcSession
+                )
+              )).void *> nodeAskEventIO
           case None =>
             // 承接面缺席（early boot / headless / harness）：问题从未上卡 ⇒ 答复
             // 永不投达。本腿对 `replyTo` 给出**可判读的失败信号**（自描述：失败
@@ -1403,6 +1412,21 @@ private[agent] object AgentProcessing:
       case AgentCommand.SessionClosed(address) =>
         val updated = state.agentSessions.filterNot(_.address == address)
         agentSessionsStay(state, updated)(s => IO.pure(processing(agentDef, resources, depth, parentRef, s, pending)))
+
+      // ── 乒乓压缩（主会话无感上下文压缩一期，2026-10-09）──────────────────
+      // §D2-2：S 就绪但本会话轮进行中 ⇒ 只置 sReadyPending + 落 state.json
+      // （phase=s-ready，崩溃后 S 续用的依据）；换入挂在本轮 finishTurn→idle 边界
+      // （本轮提交与换入之间不插入任何 LLM 调用，进行中的轮绝不被换底）。
+      case cmd: AgentCommand.PingpongSwapReady =>
+        AgentPingpong
+          .handleSwapReadyRecorded(agentDef, depth, state, cmd)
+          .map(st => processing(agentDef, resources, depth, parentRef, st, pending))
+
+      // §E-1：影子失败置态（processing 版）——计数 + 清位，主腿无感知继续 C+Δ。
+      case cmd: AgentCommand.PingpongShadowFailed =>
+        AgentPingpong
+          .handleShadowFailed(agentDef, depth, state, cmd)
+          .map(st => processing(agentDef, resources, depth, parentRef, st, pending))
 
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
@@ -1677,7 +1701,11 @@ private[agent] object AgentProcessing:
     val imageMsgs =
       if imageBlocks.nonEmpty then List(Message(MessageRole.User, Right(imageBlocks))) else Nil
     tc.compactedMessages.getOrElse(current) ++
-      List(Message(MessageRole.Assistant, Right(assistantBlocks.toList)), Message(MessageRole.User, Right(resultBlocks))) ++
+      List(
+        Message(MessageRole.Assistant, Right(assistantBlocks.toList)),
+        Message(MessageRole.User, Right(resultBlocks))
+      ) ++
       imageMsgs
+  end batchMessages
 
 end AgentProcessing

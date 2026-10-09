@@ -337,7 +337,9 @@ class InterruptRecoverySpec extends CatsEffectSuite:
     end for
   }
 
-  test("R1a-guard: while draining both failure writers refuse (failNode via class-c claim on Running AND on interrupted; the dead-session watchdog writes nothing) and never deliverFailed") {
+  test(
+    "R1a-guard: while draining both failure writers refuse (failNode via class-c claim on Running AND on interrupted; the dead-session watchdog writes nothing) and never deliverFailed"
+  ) {
     val ws = tempRoot / "ws-r1a-g"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ir-r1ag-${scala.util.Random.nextInt(1000000)}")
@@ -368,29 +370,52 @@ class InterruptRecoverySpec extends CatsEffectSuite:
       imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(claim1, None, "class-c claim must NOT report a disposition it could not apply (no false 'failed' record)")
+      assertEquals(
+        claim1,
+        None,
+        "class-c claim must NOT report a disposition it could not apply (no false 'failed' record)"
+      )
       assertEquals(claim3, None)
-      assertEquals(g1.status, NodeLifecycle.Interrupted, "failNode refuses to write failed while draining (already-flipped form)")
-      assertEquals(g3.status, NodeLifecycle.Interrupted, "failNode refuses to write failed while draining (interrupted form)")
+      assertEquals(
+        g1.status,
+        NodeLifecycle.Interrupted,
+        "failNode refuses to write failed while draining (already-flipped form)"
+      )
+      assertEquals(
+        g3.status,
+        NodeLifecycle.Interrupted,
+        "failNode refuses to write failed while draining (interrupted form)"
+      )
       assertEquals(g2.status, NodeLifecycle.Running, "the dead-session watchdog writes nothing while draining")
       assertEquals(g1.result, None, "no failure result written while draining")
       assertEquals(g3.result, None)
       assertEquals(g2.result, None, "no failure result on the dead-session node either (downgraded leg)")
-      assert(events.exists(e => e.contains("\"interrupted\"") && e.contains("failed write suppressed while draining")),
-        s"failNode guard must leave an audit note, got: ${events.filter(_.contains("suppressed")).mkString("|").take(400)}")
+      assert(
+        events.exists(e => e.contains("\"interrupted\"") && e.contains("failed write suppressed while draining")),
+        s"failNode guard must leave an audit note, got: ${events.filter(_.contains("suppressed")).mkString("|").take(400)}"
+      )
       // 🔴 killruling 批 #19 后本行断言**改对象**：降档前判据 = 「autoFailDeadRunning 的
       // failed 写被守卫拒绝」；降档后该腿**本就不写 failed** ⇒ 守卫面改断其**提醒腿**
       // 同样在 draining 期被抑制（文案逐字：`dead-session reminder suppressed while draining`）。
-      assert(events.exists(e => e.contains("\"interrupted\"") && e.contains("dead-session reminder suppressed while draining")),
-        s"the dead-session reminder leg must be suppressed while draining, got: ${events.filter(_.contains("suppressed")).mkString("|").take(400)}")
+      assert(
+        events.exists(e =>
+          e.contains("\"interrupted\"") && e.contains("dead-session reminder suppressed while draining")
+        ),
+        s"the dead-session reminder leg must be suppressed while draining, got: ${events.filter(_.contains("suppressed")).mkString("|").take(400)}"
+      )
       assert(!events.exists(_.contains("dead-session-reaped")), "no dead-session convergence while draining")
       assert(!events.exists(_.contains("node-session-dead-reminder")), "no dead-session reminder while draining")
       assert(!events.exists(_.contains("failed (class c)")), "no boot-recovery failure disposition while draining")
-      assert(imms.forall(!_.text.contains("failed")),
-        s"deliverFailed must NOT fire while draining, got: ${imms.map(_.text.take(80)).mkString("|")}")
+      assert(
+        imms.forall(!_.text.contains("failed")),
+        s"deliverFailed must NOT fire while draining, got: ${imms.map(_.text.take(80)).mkString("|")}"
+      )
+    end for
   }
 
-  test("R1a-guard-control: with draining NOT set the failNode path DOES converge to failed (proves the guard is load-bearing) while the downgraded dead-session leg still writes nothing") {
+  test(
+    "R1a-guard-control: with draining NOT set the failNode path DOES converge to failed (proves the guard is load-bearing) while the downgraded dead-session leg still writes nothing"
+  ) {
     val ws = tempRoot / "ws-r1a-c"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ir-r1ac-${scala.util.Random.nextInt(1000000)}")
@@ -410,15 +435,26 @@ class InterruptRecoverySpec extends CatsEffectSuite:
       imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(a.status, NodeLifecycle.Failed, "without draining the class-c path fails the node (pre-batch behaviour)")
+      assertEquals(
+        a.status,
+        NodeLifecycle.Failed,
+        "without draining the class-c path fails the node (pre-batch behaviour)"
+      )
       // 🔴 killruling 批 #19 改判：死会话腿**已降档**（只提醒、节点留 Running）⇒ 对照组
       // 里它**照样不写 failed**——这正是「降档与守卫解耦」的读数：draining 开关对它
       // 已无终态面影响（本断言值从 Failed 改为 Running，与 Z1 同源）。
-      assertEquals(b.status, NodeLifecycle.Running,
-        "the downgraded dead-session leg writes nothing even without draining (killruling ruling #19)")
+      assertEquals(
+        b.status,
+        NodeLifecycle.Running,
+        "the downgraded dead-session leg writes nothing even without draining (killruling ruling #19)"
+      )
       assert(events.exists(_.contains("dead-session-reaped")))
-      assert(events.exists(_.contains("failed (class c)")), "boot-recovery failure disposition present without draining")
+      assert(
+        events.exists(_.contains("failed (class c)")),
+        "boot-recovery failure disposition present without draining"
+      )
       assert(imms.exists(_.text.contains("failed")), "failed notification fires without draining")
+    end for
   }
 
   // ══ R1b 资格扩展认领续跑 ════════════════════════════════════════════

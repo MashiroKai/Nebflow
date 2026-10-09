@@ -82,8 +82,7 @@ object NodeTools:
    *                `resolveProject` 内原样保留）。
    */
   def resolveRuntime(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
-    if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
-      resolveDelegateScope(project, ctx)
+    if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then resolveDelegateScope(project, ctx)
     else resolveProject(project, ctx)
 
   /** delegate 会话的宿主查无（fail-closed，可行动：重挂触发点在 spawn/续聊腿）。 */
@@ -130,7 +129,7 @@ object NodeTools:
     else
       nodes.values.filter(_.name == r).toList match
         case single :: Nil => Right(single.id)
-        case Nil           => Left(chainNodeNotFoundError(r))
+        case Nil => Left(chainNodeNotFoundError(r))
         case many =>
           val candidates = many.map(n => s"${n.id}(${n.task.getOrElse("").take(30)})").mkString(", ")
           Left(
@@ -148,7 +147,7 @@ object NodeTools:
           s.nodes.get(id).map(n => IO.pure(Right(n))).getOrElse {
             rt.store.findNode(id).map {
               case Some(n) => Right(n)
-              case None    => Left(chainNodeNotFoundError(ref))
+              case None => Left(chainNodeNotFoundError(ref))
             }
           }
         case Left(err) =>
@@ -156,7 +155,7 @@ object NodeTools:
           rt.store.archiveSnapshot.map { arch =>
             arch.nodes.values.filter(_.name == ref.trim).toList match
               case single :: Nil => Right(single)
-              case _             => Left(err)
+              case _ => Left(err)
           }
     }
 
@@ -166,8 +165,7 @@ object NodeTools:
    * 空列表（无任何挂载项目）给单独一行提示。
    */
   def mountError(name: String, available: List[String]): String =
-    if available.isEmpty then
-      s"Project '$name' is not mounted. No projects are currently mounted. Use Project first."
+    if available.isEmpty then s"Project '$name' is not mounted. No projects are currently mounted. Use Project first."
     else s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use Project first."
 
   /** 引用节点存在性（活动区 + 归档区）。 */
@@ -480,13 +478,11 @@ object NodeTools:
    * shapes on record. That asymmetry is the card's hard ruling (§3.1), not an oversight.
    */
   def inConsumersOf(nodes: Map[String, NodeDef]): Set[String] =
-    nodes.values.iterator
-      .flatMap { n =>
-        val fromDeps =
-          if n.deps.isEmpty then Nil else FlowMapStore.resolveDepTargets(n.deps, nodes).ids
-        (n.in ++ fromDeps).distinct
-      }
-      .toSet
+    nodes.values.iterator.flatMap { n =>
+      val fromDeps =
+        if n.deps.isEmpty then Nil else FlowMapStore.resolveDepTargets(n.deps, nodes).ids
+      (n.in ++ fromDeps).distinct
+    }.toSet
 
   /** Singular reading of [[inConsumersOf]] (does not re-expand anything beyond the scan). */
   def inConsumerOf(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
@@ -737,6 +733,7 @@ object NodeTools:
         reason
       )
       outViews ++ inViews
+    end edgeTrace
 
     /** `None` ⇒ 零写（幂等出口）；`Some` ⇒ 逐边/逐项一行落 `edge-changed`。 */
     def emit(views: List[FlowMapEventLog.EdgeChangeView]): IO[Unit] =
@@ -840,6 +837,8 @@ object NodeTools:
         )
       )
 
+  end appendEdgeViews
+
   /**
    * 纯函数：**建位（create）事务的边集变更视图**。
    *
@@ -874,6 +873,8 @@ object NodeTools:
       reason
     )
     outViews ++ inViews
+
+  end createdEdgeViews
 
   /**
    * **编辑期拒绝面留痕**（IO 包装 = 唯一 IO 点）。
@@ -1409,7 +1410,9 @@ object NodeTools:
   def chainRefDeadError(ref: String, deadMembers: Map[String, Set[String]]): String =
     val named = deadMembers.toList
       .sortBy(_._1)
-      .map((cid, ids) => s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}")
+      .map((cid, ids) =>
+        s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}"
+      )
       .mkString("; ")
     s"Dead chain reference '${chainRefShown(ref)}' in deps: the chain EXISTS but its member set is constructively unsatisfiable — " +
       s"$named. `cancelled` is a non-reactivatable terminal (unlike `failed`, which can be re-activated): the gate waits for EVERY " +
@@ -1642,8 +1645,8 @@ object NodeTools:
         "cancelledAt" -> ctl.cancelledAt.map(_.asJson).getOrElse(Json.Null)
       )
       cm match
-        case None          => base
-        case Some(cmInfo)  =>
+        case None => base
+        case Some(cmInfo) =>
           base.deepMerge(
             Json.obj(
               "title" -> cmInfo.title.asJson,
@@ -1761,7 +1764,8 @@ object NodeTools:
           // NodeEngine.mergeVerdictGateBatch (pure read of the gate's own holder list) — 🔴
           // no re-derivation, 🔴 no file ticket layer, 🔴 no event-stream replay. Only held
           // positions carry the key; a normally queued position never does.
-          mergeVerdictGate = mergeVerdictGates.get(n.id))
+          mergeVerdictGate = mergeVerdictGates.get(n.id)
+        )
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
           case None => base

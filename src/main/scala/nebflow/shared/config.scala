@@ -223,9 +223,11 @@ case class JevConfig(
   timeoutMs: Option[Long] = None,
   choiceHighBasePolicy: Option[String] = None
 ):
-  /** Toggle semantics: absent means OFF is the SAFE default for a face that
-    * sends node task text off-machine. (Contrast `plugins.enabled`, which
-    * defaults true — there the safe direction is the other way.) */
+  /**
+   * Toggle semantics: absent means OFF is the SAFE default for a face that
+   * sends node task text off-machine. (Contrast `plugins.enabled`, which
+   * defaults true — there the safe direction is the other way.)
+   */
   def isEnabled: Boolean = enabled.getOrElse(false)
 
 object JevConfig:
@@ -264,8 +266,10 @@ case class EmbeddingConfig(
   keyRef: Option[String] = None,
   timeoutMs: Option[Long] = None
 ):
-  /** Toggle semantics: absent means OFF is the safe default for a face that
-    * sends task text off-machine (same direction as `JevConfig.isEnabled`). */
+  /**
+   * Toggle semantics: absent means OFF is the safe default for a face that
+   * sends task text off-machine (same direction as `JevConfig.isEnabled`).
+   */
   def isEnabled: Boolean = enabled.getOrElse(false)
 
 object EmbeddingConfig:
@@ -325,9 +329,11 @@ case class ServiceLlmConfig(
   // provider 缺失 → 空映射 = 未配置 LLM 的合法中间态（种子写 plugins.trust
   // 时可能只落 plugins 键、无 llm 节；解码缺省此处，见 NebflowServiceConfig.llm）。
   providers: Map[String, ProviderConfig] = Map.empty,
-  /** #339 D-b：llm.model 已退役——默认模型唯一来源是 Nebula 主链（agent.json
-    * `model` 键；未配 = provider 推导种子链，SchemePolicy 单点）。Option 化的
-    * schema 仅容忍存量文件的 llm.model 节（可解析但被忽略）。 */
+  /**
+   * #339 D-b：llm.model 已退役——默认模型唯一来源是 Nebula 主链（agent.json
+   * `model` 键；未配 = provider 推导种子链，SchemePolicy 单点）。Option 化的
+   * schema 仅容忍存量文件的 llm.model 节（可解析但被忽略）。
+   */
   model: Option[ModelChainConfig] = None,
   streamTimeouts: Option[StreamTimeoutsConfig] = None
 )
@@ -416,15 +422,19 @@ case class NebflowServiceConfig(
    * 旧行为回退点（§4.5）。
    */
   sandbox: Option[io.circe.Json] = None,
-  /** LLM 日志记录开关持久化（2026-09-13「默认关」批，D-A）：顶层 `llmLog` 节
-    * 原样 JSON——`LlmLogWriter.loadEnabled` fail-safe 解析（缺失 / 非法 ⇒ None
-    * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
-    * 仅用户显式开/关（WS `setLlmLog`）才写入本键。 */
+  /**
+   * LLM 日志记录开关持久化（2026-09-13「默认关」批，D-A）：顶层 `llmLog` 节
+   * 原样 JSON——`LlmLogWriter.loadEnabled` fail-safe 解析（缺失 / 非法 ⇒ None
+   * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
+   * 仅用户显式开/关（WS `setLlmLog`）才写入本键。
+   */
   llmLog: Option[io.circe.Json] = None,
-  /** daemon 配置面板（daemonpanel Phase A）的顶层 `daemonPanel` 节原样 JSON。
-    * 现读唯一消费者 = `DaemonPanelSchema.allowWeb`：`kind:"web"` 逃生口**默认
-    * 关闭**，只有本节显式 `{"allowWeb":true}` 才生效（缺省/非法 ⇒ 拒绝，fail-closed）。
-    * 开关本身是作者动作，agent 改它会留下可见 diff。无效值不影响其它键解码。 */
+  /**
+   * daemon 配置面板（daemonpanel Phase A）的顶层 `daemonPanel` 节原样 JSON。
+   * 现读唯一消费者 = `DaemonPanelSchema.allowWeb`：`kind:"web"` 逃生口**默认
+   * 关闭**，只有本节显式 `{"allowWeb":true}` 才生效（缺省/非法 ⇒ 拒绝，fail-closed）。
+   * 开关本身是作者动作，agent 改它会留下可见 diff。无效值不影响其它键解码。
+   */
   daemonPanel: Option[io.circe.Json] = None,
   /**
    * JeV 决策分配面（Face A / P1-A2）的顶层 `jev` 节——见 [[JevConfig]]。

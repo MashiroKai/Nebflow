@@ -10,34 +10,37 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.duration.*
 
-/** 腿 A（chain `neblink-lifecycle-fix`）·「`enabled=false` 不得跨重启」活动面 gate。
-  *
-  * 判词（作者 2026-09-22 二择裁定 A 腿）：`enabled` 从未接线成控制 ⇒ 登出后重启，
-  * 服务照样拨号、照样把本机灌回服务端连接表。修法方向**由作者给定**：不得改成
-  * 「启动时不建 service」（登录面挂在 `neblinkService` 上，不建 ⇒ 用户再也无法
-  * 重新登录）；正解 = **服务照建，活动面 gate 在 `enabled` 上**。
-  *
-  * 本 spec 逐腿钉住「空转」（零外发）与「运行期可翻转」（无需重启）两件事：
-  *  - ① sync 拍（`NeblinkService.syncLoop` → `runSyncCycle` 钩子）：`enabled=false`
-  *    时**一拍都不跑**；`true` 时照跑（负控 —— 否则「零」可能只是循环没起来）；
-  *  - ② discovery 腿（`NeblinkDiscovery.discoverCycle`）+ ③ heartbeat 腿
-  *    （`heartbeatCycle`）—— presence 拨号的**唯一驱动源**（`presenceService.syncPeers`
-  *    只被这两条腿调用，见 `NeblinkDiscovery.scala:97` / `:123`）⇒ 两条腿零外发
-  *    ⇔ 零 presence 拨号；
-  *  - ④ relay 隧道腿（`NeblinkRelayTunnel.connectLoop`）：`enabled=false` 时
-  *    **零升级尝试**（tokenGetter 一次都不被读 ⇒ 连「准备拨号」都不发生）；
-  *  - ⑤ 运行期翻转：`updateConfig(enabled=true)`（登录成功路径的等价物）后
-  *    **一拍内**恢复外发 —— 证明判据是**逐拍现读**、不是启动期快照（禁重启依赖）。
-  *
-  * 🔴 本 spec 全程只打**桩**（stub）与**环回夹具**，零真实外发、零生产端点。
-  */
+/**
+ * 腿 A（chain `neblink-lifecycle-fix`）·「`enabled=false` 不得跨重启」活动面 gate。
+ *
+ * 判词（作者 2026-09-22 二择裁定 A 腿）：`enabled` 从未接线成控制 ⇒ 登出后重启，
+ * 服务照样拨号、照样把本机灌回服务端连接表。修法方向**由作者给定**：不得改成
+ * 「启动时不建 service」（登录面挂在 `neblinkService` 上，不建 ⇒ 用户再也无法
+ * 重新登录）；正解 = **服务照建，活动面 gate 在 `enabled` 上**。
+ *
+ * 本 spec 逐腿钉住「空转」（零外发）与「运行期可翻转」（无需重启）两件事：
+ *  - ① sync 拍（`NeblinkService.syncLoop` → `runSyncCycle` 钩子）：`enabled=false`
+ *    时**一拍都不跑**；`true` 时照跑（负控 —— 否则「零」可能只是循环没起来）；
+ *  - ② discovery 腿（`NeblinkDiscovery.discoverCycle`）+ ③ heartbeat 腿
+ *    （`heartbeatCycle`）—— presence 拨号的**唯一驱动源**（`presenceService.syncPeers`
+ *    只被这两条腿调用，见 `NeblinkDiscovery.scala:97` / `:123`）⇒ 两条腿零外发
+ *    ⇔ 零 presence 拨号；
+ *  - ④ relay 隧道腿（`NeblinkRelayTunnel.connectLoop`）：`enabled=false` 时
+ *    **零升级尝试**（tokenGetter 一次都不被读 ⇒ 连「准备拨号」都不发生）；
+ *  - ⑤ 运行期翻转：`updateConfig(enabled=true)`（登录成功路径的等价物）后
+ *    **一拍内**恢复外发 —— 证明判据是**逐拍现读**、不是启动期快照（禁重启依赖）。
+ *
+ * 🔴 本 spec 全程只打**桩**（stub）与**环回夹具**，零真实外发、零生产端点。
+ */
 class NeblinkActivityGateSpec extends CatsEffectSuite:
 
   private var tmpDir: java.nio.file.Path = null
   private var savedRoot: os.Path = scala.compiletime.uninitialized
 
-  /** 🔴 必须换数据根：宿主真实 home 的 `neblink/config.json` 现在是 `enabled=true`
-    * （现读 2026-09-22），不隔离 ⇒「默认 false」类断言会被宿主配置污染。 */
+  /**
+   * 🔴 必须换数据根：宿主真实 home 的 `neblink/config.json` 现在是 `enabled=true`
+   * （现读 2026-09-22），不隔离 ⇒「默认 false」类断言会被宿主配置污染。
+   */
   override def beforeEach(context: BeforeEach): Unit =
     super.beforeEach(context)
     savedRoot = PathUtil.dataRoot
@@ -49,9 +52,12 @@ class NeblinkActivityGateSpec extends CatsEffectSuite:
     os.remove.all(os.Path(tmpDir, os.pwd))
     super.afterEach(context)
 
-  /** 外发计数器桩：`discover` / `heartbeat` 各计一次 —— 两腿的**唯一**外发入口。
-    * 覆写后不触网（`NeblinkServerConfig.url` 指向丢弃端口也无妨：永不发出）。 */
-  private final class CountingClient extends NeblinkClient(
+  /**
+   * 外发计数器桩：`discover` / `heartbeat` 各计一次 —— 两腿的**唯一**外发入口。
+   * 覆写后不触网（`NeblinkServerConfig.url` 指向丢弃端口也无妨：永不发出）。
+   */
+  private final class CountingClient
+      extends NeblinkClient(
         NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"),
         0
       ):
@@ -68,6 +74,8 @@ class NeblinkActivityGateSpec extends CatsEffectSuite:
 
     override def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] =
       IO(heartbeatCalls.incrementAndGet()).as(Right(Nil))
+
+  end CountingClient
 
   private def withStack[A](
     body: (NeblinkService, NeblinkPresenceService, NeblinkDiscovery, CountingClient) => IO[A]
@@ -105,6 +113,7 @@ class NeblinkActivityGateSpec extends CatsEffectSuite:
       yield
         assertEquals(cyclesWhileDisabled, 0, "enabled=false 时 sync 拍必须零 cycle（否则登出后重启仍会拨号）")
         assert(cyclesAfterEnable >= 1, s"enabled=true 后必须照跑（负控：证明零不是循环没起来）：$cyclesAfterEnable")
+      end for
     }
   }
 
@@ -151,10 +160,12 @@ class NeblinkActivityGateSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(0, dispatcher, 300.millis)
-        _ <- ms.updateConfig(_.copy(
-          enabled = false,
-          neblinkServer = Some(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = false,
+            neblinkServer = Some(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"))
+          )
+        )
         tokenReads = new AtomicInteger(0)
         tunnel = new NeblinkRelayTunnel(
           ms,

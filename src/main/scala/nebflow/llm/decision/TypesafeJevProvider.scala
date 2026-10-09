@@ -34,6 +34,8 @@ final class TypesafeJevProvider(
       .map(_.flatMap(JevWireCodec.parseResponse))
       .flatTap(outcome => DecisionHttpTransport.record(health, outcome))
 
+end TypesafeJevProvider
+
 object TypesafeJevProvider:
 
   /**
@@ -53,3 +55,4 @@ object TypesafeJevProvider:
       timeoutMs = settings.timeoutMs,
       health = settings.health
     )
+end TypesafeJevProvider

@@ -368,6 +368,8 @@ object NfFilePolicy extends FilePolicyPort:
         Some((NfDenyLayer.Credential, "this filename is a known credential shape"))
       else None
 
+  end nfCredentialIdentityLayerOnly
+
   /**
    * The file's **own identity** — the credential tables (known credential
    * locations, credential directory segments, credential-shaped basenames)

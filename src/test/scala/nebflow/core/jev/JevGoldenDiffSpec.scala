@@ -40,8 +40,10 @@ class JevGoldenDiffSpec extends CatsEffectSuite:
     f(tmp).guarantee(IO(PathUtil.setDataRoot(original)) *> IO(os.remove.all(tmp)))
 
   private val baselineNoJev = """{"llm":{"providers":{}},"plugins":{"enabled":true},"mcpServers":{}}"""
+
   private val withJevOff =
     """{"llm":{"providers":{}},"plugins":{"enabled":true},"mcpServers":{},"jev":{"enabled":false,"provider":"typesafe-jev"}}"""
+
   private val withJevOn =
     """{"llm":{"providers":{}},"plugins":{"enabled":true},"mcpServers":{},"jev":{"enabled":true,"provider":"typesafe-jev","timeoutMs":15000}}"""
 
@@ -171,3 +173,4 @@ class JevGoldenDiffSpec extends CatsEffectSuite:
       }
     }
   }
+end JevGoldenDiffSpec

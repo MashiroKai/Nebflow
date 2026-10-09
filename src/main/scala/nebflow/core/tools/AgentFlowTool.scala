@@ -64,7 +64,8 @@ object AgentFlowTool extends Tool:
             "properties" -> io.circe.Json.obj(
               "id" -> io.circe.Json.obj("type" -> "string".asJson),
               "task" -> io.circe.Json.obj("type" -> "string".asJson),
-              "deps" -> io.circe.Json.obj("type" -> "array".asJson, "items" -> io.circe.Json.obj("type" -> "string".asJson))
+              "deps" -> io.circe.Json
+                .obj("type" -> "array".asJson, "items" -> io.circe.Json.obj("type" -> "string".asJson))
             ),
             "required" -> io.circe.Json.arr("id".asJson, "task".asJson)
           )
@@ -116,15 +117,23 @@ object AgentFlowTool extends Tool:
       else
         val ids = steps.map(_.id)
         val dup = ids.diff(ids.distinct)
-        if dup.nonEmpty then Left(ToolError(s"Duplicate step id(s): ${dup.mkString(", ")}. (${ChainWriteTool.Codes.DuplicateId})"))
+        if dup.nonEmpty then
+          Left(ToolError(s"Duplicate step id(s): ${dup.mkString(", ")}. (${ChainWriteTool.Codes.DuplicateId})"))
         else
           val known = ids.toSet
           val unknownDeps = steps.flatMap(_.deps.filterNot(known.contains)).distinct
           if unknownDeps.nonEmpty then
-            Left(ToolError(s"deps reference unknown step id(s): ${unknownDeps.mkString(", ")}. (${ChainWriteTool.Codes.DepsUnknown})"))
-          else if hasCycle(steps) then Left(ToolError(s"Cycle detected in deps — the flow must be a DAG. (${ChainWriteTool.Codes.Cycle})"))
+            Left(
+              ToolError(
+                s"deps reference unknown step id(s): ${unknownDeps.mkString(", ")}. (${ChainWriteTool.Codes.DepsUnknown})"
+              )
+            )
+          else if hasCycle(steps) then
+            Left(ToolError(s"Cycle detected in deps — the flow must be a DAG. (${ChainWriteTool.Codes.Cycle})"))
           else Right(steps)
     }
+
+  end parseSteps
 
   /** Kahn 判环（纯函数）。 */
   private[tools] def hasCycle(steps: List[Step]): Boolean =
@@ -168,7 +177,22 @@ object AgentFlowTool extends Tool:
             nebflow.core.project.DelegateFlowHosts.get(ctx.sessionId.getOrElse("")).flatMap {
               case None =>
                 IO.pure(Left(ToolError(NodeTools.scopeUnavailableError(ctx.sessionId.getOrElse("")))))
-              case Some(h) => ChainWriteTool.registerChain(h.projectRuntime, nodes, chainName = None)
+              case Some(h) =>
+                ChainWriteTool.registerChain(h.projectRuntime, nodes, chainName = None).flatMap {
+                  case Left(err) => IO.pure(Left(err))
+                  case Right(ok) =>
+                    // G1 编排模式惰性升级（delegate-ui 批 2026-10-08）：flow 结构确立
+                    // （链登记成功）⇒ orchestrationMode 升 `agentflow`（值域顶，只上不
+                    // 下；升级器自带记录闸与幂等秩守卫，失败不阻断本次链登记回执）。
+                    IO.blocking(
+                      nebflow.core.delegate.DelegateRegistry
+                        .upgradeOrchestrationMode(
+                          ctx.sessionId.getOrElse(""),
+                          nebflow.core.delegate.DelegateRegistry.ModeAgentflow
+                        )
+                    ).void
+                      .as(Right(ok))
+                }
             }
 
 end AgentFlowTool

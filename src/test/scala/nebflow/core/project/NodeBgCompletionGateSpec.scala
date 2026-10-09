@@ -542,7 +542,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       jobs <- awaitJobs(llm)
       // 任务一直不完成 → 1.2s 兜底 → **转挂起**（节点保持 Running）
       // 判据 = `bg-wait-timeout` 事件出现（阈值到点的确定性读数）——不再等终态
-      //（改判后本路径**不产生终态**，等 Terminal 会永久挂）。
+      // （改判后本路径**不产生终态**，等 Terminal 会永久挂）。
       _ <- waitUntil(20.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait-timeout\""))))
       _ <- IO.sleep(500.millis) // 给「假如仍有终态写」留观察窗口（护栏）
       done <- byName(rt, "cap-a")
@@ -551,12 +551,18 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // 🔴 改后断言（原 2 条 :502-503 ⇒ 改后仍 2 条 + 保留 :504/:505 两条 = 4 条，断言数不减）
-      assertEquals(done.status, NodeLifecycle.Running,
-        "wait cap must SUSPEND the node (kept Running) — never finalize it failed (killruling ruling #17)")
-      assert(done.result.forall(!_.contains("wait cap exceeded")),
-        s"no failed cap annotation may be written any more: ${done.result}")
+      assertEquals(
+        done.status,
+        NodeLifecycle.Running,
+        "wait cap must SUSPEND the node (kept Running) — never finalize it failed (killruling ruling #17)"
+      )
+      assert(
+        done.result.forall(!_.contains("wait cap exceeded")),
+        s"no failed cap annotation may be written any more: ${done.result}"
+      )
       assert(events.exists(_.contains("\"bg-wait\"")), "bg-wait audit expected")
       assert(events.exists(_.contains("\"bg-wait-timeout\"")), "bg-wait-timeout audit expected")
+    end for
   }
 
   // ── G6 下游 out 交互：bg 等待先于终态投递 ──────────────────────

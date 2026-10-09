@@ -209,7 +209,9 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
     yield
       assert(r1.isRight, s"the out rewrite must be accepted, got: $r1")
       assert(r2.isRight, s"the idempotent re-submit must be accepted, got: $r2")
-      val summary1 = lines1.map(l => io.circe.parser.parse(l).toOption.flatMap(_.hcursor.get[String]("summary").toOption).getOrElse(""))
+      val summary1 = lines1.map(l =>
+        io.circe.parser.parse(l).toOption.flatMap(_.hcursor.get[String]("summary").toOption).getOrElse("")
+      )
       val outRows = summary1.filter(s => s.contains("owner=n-a") && s.contains("kind=out"))
       assertEquals(outRows.size, 1, s"R1: exactly one out row expected, got: $summary1")
       assert(
@@ -226,6 +228,7 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
       )
       assertEquals(lines2.size, lines1.size, "R2 idempotence: re-submitting the same out must add ZERO rows")
       assert(raw.nonEmpty, "the audit file must exist")
+    end for
   }
 
   // ── R3：deps 替换 ─────────────────────────────────────────────────────
@@ -265,6 +268,7 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
         depsRow.exists(s => s.contains("from=n-x") && s.contains("to=n-y")),
         s"R3: the replacement must render from=X to=Y, got: $depsRow"
       )
+    end for
   }
 
   // ── R4：摘边边身份（abandon）──────────────────────────────────────────
@@ -312,6 +316,7 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
         audit.exists((t, id, _) => t == "abandoned" && id == "n-b"),
         s"the existing abandoned line must stay verbatim (same type + nodeId), got: $audit"
       )
+    end for
   }
 
   // ── R5：零回归负控 ────────────────────────────────────────────────────
@@ -350,6 +355,7 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
         Nil,
         s"R5②: cancelling an isolated node (no incident edges) must emit ZERO edge-changed rows, got: $lines2"
       )
+    end for
   }
 
   // ── R6：actor 面（节点会话重激活）─────────────────────────────────────
@@ -366,7 +372,12 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
       ctx = nodeCtx(base)
       _ <- seed(rt, mkNode("n-rv", "RV", NodeLifecycle.Blocked, out = List(OutEdge.root)))
       r <- nodeEdit(
-        nodeInput("edge-r6", "RV", "description" -> Json.fromString("revived"), "task" -> Json.fromString("revived task")),
+        nodeInput(
+          "edge-r6",
+          "RV",
+          "description" -> Json.fromString("revived"),
+          "task" -> Json.fromString("revived task")
+        ),
         ctx
       )
       audit <- readAudit(ws)
@@ -379,6 +390,7 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
       assert(!summary.contains("source=human"), s"R6: a node session must NOT fall back to source=human, got: $summary")
       assert(summary.contains("source=node"), s"R6: source=node expected, got: $summary")
       assert(summary.contains("actor=session-node-abc123"), s"R6: actor=<sessionId> expected, got: $summary")
+    end for
   }
 
   test("R6b: a dispatcher session records source=dispatcher; a zero-identity context falls back to human") {
@@ -416,6 +428,7 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
         !d2.contains("actor="),
         s"R6b: a missing identity must NOT emit an empty-valued actor key, got: $d2"
       )
+    end for
   }
 
   // ── R7：拒绝面 ────────────────────────────────────────────────────────
@@ -439,7 +452,12 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
         ctx
       )
       r <- nodeEdit(
-        nodeInput("edge-r7", "SRC", "description" -> Json.fromString("src"), "out" -> Json.fromString("(failed)M:signal")),
+        nodeInput(
+          "edge-r7",
+          "SRC",
+          "description" -> Json.fromString("src"),
+          "out" -> Json.fromString("(failed)M:signal")
+        ),
         ctx
       )
       summaries <- edgeLines(ws).map(
@@ -459,6 +477,7 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
         refused.exists(s => s.contains("owner=n-src") && s.contains("from=-") && s.contains("to=-")),
         s"R7: the refusal row must name the owner with from=- to=-, got: $refused"
       )
+    end for
   }
 
   // ── 幂等负控：零变更 ⇒ 零行（R5 的纯函数面镜像）──────────────────────
@@ -479,3 +498,4 @@ class EdgeChangedEventSpec extends CatsEffectSuite:
     )
     assertEquals(m, Nil, "unchanged in mirrors must yield zero views")
   }
+end EdgeChangedEventSpec

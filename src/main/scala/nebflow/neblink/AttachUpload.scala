@@ -65,9 +65,11 @@ object AttachUpload:
   /** 一条上传的成功回执。 */
   final case class Uploaded(attachmentId: String, name: String, size: Long, sha256: String)
 
-  /** 桌面腿入口：字节源 = 本机磁盘件（size 与整件摘要由本函数自盘上取）。
-    * 桌面腿（agent 代发 `os.Path` 件）**不产预览**（预览只能由浏览器端生成器产出）
-    * ⇒ 固定 `preview = None`，E1 申报体与改前逐字节相同。 */
+  /**
+   * 桌面腿入口：字节源 = 本机磁盘件（size 与整件摘要由本函数自盘上取）。
+   * 桌面腿（agent 代发 `os.Path` 件）**不产预览**（预览只能由浏览器端生成器产出）
+   * ⇒ 固定 `preview = None`，E1 申报体与改前逐字节相同。
+   */
   def uploadFile(
     cli: NeblinkClient,
     conversationId: String,
@@ -78,7 +80,7 @@ object AttachUpload:
     for
       size <- IO.blocking(os.stat(path).size)
       whole <- IO.blocking(NeblinkFiles.sha256OfFile(path))
-      out   <- pushFile(cli, conversationId, displayName, size, whole, path, preview = None, hooks = hooks)
+      out <- pushFile(cli, conversationId, displayName, size, whole, path, preview = None, hooks = hooks)
     yield out
 
   /**

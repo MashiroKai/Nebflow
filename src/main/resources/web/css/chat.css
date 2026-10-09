@@ -6,20 +6,23 @@
   min-width: 0;
   position: relative;
 }
-/* Top fade + bottom fade removed — #chat box now clips at header center
-   and input bar center. The glass blur provides the transition. */
+/* Top fade + bottom fade removed. uifix-taskbar-flow (2026-10-09): #chat box
+   now clips at the #top-overlays band's bottom edge (the band is IN FLOW, see
+   that block) + 2px breathing gap — scrolled content can never pass under the
+   task bar / banner stack, at ANY scroll position. The old header-center anchor
+   (margin-top 45px) + JS padding-top reserve only protected scrollTop≈0; every
+   scrolled state slid messages under the glass header AND the task bar (the
+   "39 任务 collapsed bar covering the first bubble line" author report). */
 #chat {
   flex: 1;
   overflow-y: auto;
-  /* margin-top ≈ header center (16px header-offset + ~29px half header height).
-     margin-bottom is 0 — chat fills to #main bottom; spacing below the last
-     message is now controlled by JS (padding-bottom = #input-area height).
-     padding-top is likewise JS-owned (main.js top-reserve block): the 8px here
-     is only the no-overlay baseline — the real inset is raised to the measured
-     #header+#top-overlays band so a first message is never born under the task
-     list at scrollTop 0 (and #header/#top-overlays stay out of #main's flow, so
-     scrolled content still passes under the glass header). */
-  margin: 45px 0 0;
+  /* margin-top = 2px breathing below the in-flow #top-overlays band (band
+     bottom + 2 = chat top). margin-bottom is 0 — chat fills to #main bottom;
+     spacing below the last message is controlled by JS (padding-bottom =
+     #input-area height). padding-top stays JS-owned (main.js top-reserve
+     block): with the band in flow that measurement is ≤ 0 forever, so the
+     block self-parks at the 8px baseline below and never writes again. */
+  margin: 2px 0 0;
   padding: 8px 0 36px;
   display: flex;
   flex-direction: column;
@@ -346,6 +349,13 @@
   background: var(--color-frame-hover);
   box-shadow: inset 2px 0 0 rgb(var(--sapphire) / 0.8);
 }
+/* delegate-ui 批（2026-10-08 · C2 两级层级）：一级行 = delegate 组头（bg-task-row-head，
+   细顶界线分组）；二级行 = 缩进一格的子行（bg-task-row-child）。纯布局，零新色令牌
+   （沿用既有 muted/hover 变量）。 */
+.bg-task-row-head { border-top: 1px solid var(--glass-control-border); }
+.bg-dropdown-list .bg-task-row-head:first-child { border-top: none; }
+.bg-task-row-child { padding-left: 18px; }
+.bg-task-row-child .bg-task-name { font-size: 12px; }
 .bg-task-line {
   display: flex;
   /* Unified panel spec §2.2: text slots (state/name/uptime) share the L3
@@ -824,7 +834,10 @@
 .duration-badge .msg-recall:hover { opacity: 0.6; color: var(--color-warning, #e5a00d); }
 
 .bubble {
-  max-width: 100%;
+  /* 气泡宽度上限 = 消息列宽的 80%。百分比相对 .row 内容盒解析——.row 作为 #chat
+     （无水平 padding 的纵向 flex）的拉伸子项恒为全行宽，故长内容只换行、永不
+     铺满聊天区，非贴边一侧恒留 ≥20% 空白；user 右贴 / ai 左贴对齐方向不变。 */
+  max-width: 80%;
   padding: 10px 14px;
   border-radius: 16px;
   font-size: 14.5px;
@@ -2501,12 +2514,27 @@
 }
 
 /* ===== Top Overlays (task list + notifications) ===== */
+/* uifix-taskbar-flow (2026-10-09): absolute(top:68px) → NORMAL FLOW.
+   Root cause of the "39 任务 collapsed bar covering the first bubble line"
+   author report: this stack FLOATED over #chat (z-index 25) and the JS
+   padding-top reserve only cleared it at scrollTop≈0 — any scrolled state slid
+   bubbles under the bar (measured 2026-10-09, e2e taskbar-flow-overlap: 1 row
+   covered collapsed / 5 rows expanded), and every expand/collapse made the
+   reserve+scrollTop compensation chase a 0.3s transition (content shoved
+   around, scrollTop rewritten 7440→7032). In flow the band OCCUPIES its own
+   layout space: #chat's box top is pinned to the band bottom (+2px, #chat
+   margin-top), so overlap is impossible at any scroll position and
+   expand/collapse only changes the band's own height — #chat's viewport
+   resizes, the scrolled content does not move by a single pixel (scrollTop
+   untouched by construction; pinned-to-bottom is re-pinned by the band RO in
+   main.js). margin-top 68px = the old absolute top:68px anchor verbatim: every
+   preceding #main sibling (#header, .header-dropdown-menu, #bgagent-dropdown,
+   #bg-dropdown, #reminder-panel, #daemon-panel) is out of flow, so this is the
+   first in-flow child and lands exactly where the overlay sat. */
 #top-overlays {
-  position: absolute;
-  top: 68px;
-  left: 0;
-  right: 0;
-  z-index: 25;
+  flex-shrink: 0;
+  margin-top: 68px;
+  z-index: 25; /* still a flex item — z-index applies without position */
   display: flex;
   flex-direction: column;
   pointer-events: none;
@@ -3644,6 +3672,10 @@
 }
 .wsp-err .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
 .wsp-err span { word-break: break-all; min-width: 0; }
+/* [hidden] 守卫（social.css 先例）：上面的 display:flex 声明按级联来源压过 UA 的
+   [hidden]{display:none} ⇒ 无错误时空容器仍渲染成一条空红框（面包屑与列表间）。
+   显式补回隐藏，showErr/hideErr 的 hidden 属性语义才成立。 */
+.wsp-err[hidden] { display: none; }
 
 /* Empty-state second line (the way out), under the .wsp-empty fact line */
 .wsp-empty-hint {
@@ -3839,28 +3871,29 @@
   mask-image: none;
 }
 /* The label is ONE row while the turn runs: clipped, never wrapped, never
-   ellipsised (the tail is carried by the fade below, not by a `…`).
-   `flex: 1 1 auto` makes the label's BOX span the rest of the row — the mask
-   region (the last 40px, below) then holds no ink whenever the label fits, so
-   a short label is not faded by accident. The terminal badge resets the mask
-   (see `.is-final` above): a settled summary is fully legible. */
+   ellipsised. `flex: 1 1 auto` makes the label's BOX span the rest of the row.
+   The tail fade lives on `.nf-wl-clip` (below, ui-polish 2026-10-08): the old
+   right-edge mask dissolved exactly the newest text the tail anchor pins to the
+   right edge; the fade now belongs to the LEFT edge and only when the box
+   actually overflows. */
 .nf-wl-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;
   flex: 1 1 auto;
   min-width: 0;
-  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
-  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
 }
 /* ── ② 运行中类型化细节行（toolline-detail 批 2026-10-06）────────────────
-   muted 小字细节骑在运行项 label 之后：单行（nowrap + 裁剪）+ 同款尾部 fade，
-   新内容在右、旧内容左滑出（worklineToolDetail 的 1e7 尾锚）。色 = 既有
-   --color-text-muted token（暗档随 token 提亮，ui-status token 面④）；字号
-   11px 降半档，不喧宾。label 让位：有细节时 label 收缩为内容宽（封顶 55%），
+   muted 小字细节骑在运行项 label 之后：单行（nowrap + 裁剪），新内容在右、
+   旧内容左滑出（worklineToolDetail 的 1e7 尾锚）。字号 11px 降半档，不喧宾，
+   层级由字号承担。label 让位：有细节时 label 收缩为内容宽（封顶 55%），
    细节占其余空间——无细节时布局逐字节同旧。终态摘除：完成翻转 / header 定稿
    都走 buildItem 新建项，细节 span 不进终态。UI-G 静态窗随 .nf-static 全局
-   关动画（fade 是 mask 非动画，与 .nf-wl-label 同款豁免列）。 */
+   关动画。
+   ui-polish 2026-10-08（作者令「右侧文字太暗」）：细节字色从
+   --color-text-muted（暗档 #7b7e88，页底 ≈4.4:1 @11px，低于 A13 的 4.5:1
+   铁律）提到 --color-text-dim —— 项目标准次级文字档（A13「must clear 4.5:1
+   on the page bg in both themes」），复用既有 token，不发明新色。 */
 .nf-wl-detail {
   white-space: nowrap;
   overflow: hidden;
@@ -3869,16 +3902,26 @@
   min-width: 0;
   margin-left: -4px; /* label gap 10px 的视觉续接（细节是 label 的延长流） */
   font-size: 11px;
-  color: var(--color-text-muted);
-  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
-  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
+  color: var(--color-text-dim);
 }
 .nf-wl-item:has(.nf-wl-detail) > .nf-wl-label {
   flex: 0 1 auto;
   max-width: 55%;
 }
-.nf-static .nf-wl-detail { -webkit-mask-image: none !important; mask-image: none !important; }
 .nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
+
+/* ── 尾部 fade：左缘 + 溢出门控（ui-polish 2026-10-08，作者令「右侧文字和
+   光标太暗」）────────────────────────────────────────────────────────────
+   尾锚（workline.js pinTail：scrollLeft = 1e7）把最新文字与光标钉在盒子右缘，
+   旧方向（右缘 →transparent）淡没的恰好就是它们（before 取证 think-right /
+   label-right：右缘整段 →0 alpha）。滑动方向既然是「新进右、旧出左」，软切
+   就属于左缘。类由 pinTail 在溢出时挂上：未溢出（短 label）无 mask，短文案
+   不被淡出误伤——原右向 mask「fits 则 fade 区无墨」的性质由门控等价保留。
+   A6 / ui-batch 的 maskImage ≠ none 钉在溢出流式窗内依旧成立。 */
+.nf-wl-clip {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 40px, #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 40px, #000 100%);
+}
 
 /* pre-token dots (the old placeholder bubble's face, moved onto the line) —
    PURE TEXT pulse (UI-C): the three dots cycle opacity only. */
@@ -3897,7 +3940,13 @@
   content: "\25DC";
   display: block; width: 14px; line-height: 14px; text-align: center;
   color: var(--color-primary);
-  animation: nf-wl-frames 0.8s steps(1, end) infinite;
+  /* ui-polish 2026-10-08（作者令「spinner 旋转卡顿、不连贯」）：旧实现用
+     steps(1) 逐帧切换 `content` 字形（◜◝◟◞ 四态，0.8s 一圈 = 每态定格
+     200ms），且 `content` 不可合成——每次切换都是主线程重绘，流式把主线程
+     占满时掉帧即见顿挫。改为同一月牙字形的 `transform: rotate` + linear：
+     合成器动画，匀速连贯，0.8s 周期与顺时针方向不变。 */
+  will-change: transform;
+  animation: nf-wl-frames 0.8s linear infinite;
 }
 .nf-wl-chk { width: 16px; height: 16px; opacity: 1; }
 .nf-wl-chk::before {
@@ -3944,7 +3993,10 @@
    flows in at the right edge, old content slides out to the left), which is why
    text-align is irrelevant here.
    Cadence is still the CSS caret blink — no per-token DOM rebuild (A3/A7) and
-   no transform keyframes (UI-C). */
+   no transform keyframes (UI-C).
+   Tail fade: moved to `.nf-wl-clip` (above, ui-polish 2026-10-08) — the old
+   right-edge mask dissolved exactly the newest text + the caret that the tail
+   anchor pins to the right edge. */
 .nf-wl-think {
   display: block;
   flex: 1 1 auto;
@@ -3953,12 +4005,6 @@
   overflow: hidden;
   overflow-wrap: normal;
   vertical-align: baseline;
-  /* Tail fade (A41: no `mask-image` anywhere in this tree before this batch):
-     the rightmost 40px dissolve into the background, so the clipped tail reads
-     as "sliding out" rather than as a hard cut. Alpha-only ⇒ theme-independent
-     (works on the light, dark and `opacity:0.9` surfaces alike). */
-  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
-  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 40px), transparent 100%);
 }
 .nf-wl-think::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
 .nf-wl-item.is-done .nf-wl-think::after { display: none; }
@@ -3966,11 +4012,8 @@
 @keyframes nf-wl-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes nf-wl-fadeout { from { opacity: 1; } to { opacity: 0; } }
 @keyframes nf-wl-frames {
-  0% { content: "\25DC"; }
-  25% { content: "\25DD"; }
-  50% { content: "\25DE"; }
-  75% { content: "\25DF"; }
-  100% { content: "\25DC"; }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 @keyframes nf-wl-textpulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.9; } }
 @keyframes nf-wl-blink { 50% { opacity: 0; } }
@@ -3985,7 +4028,8 @@
 .nf-static,
 .nf-static * { animation: none !important; transition: none !important; }
 .nf-static .nf-wl-think,
-.nf-static .nf-wl-label { -webkit-mask-image: none !important; mask-image: none !important; }
+.nf-static .nf-wl-label,
+.nf-static .nf-wl-detail { -webkit-mask-image: none !important; mask-image: none !important; }
 
 /* ---------- message entrance animations (stream-ux redesign 2026-10-03) ----------
    EVERY message is "one message, one animation": the whole bubble pops in once
@@ -4029,7 +4073,8 @@
   /* The tail fade is not motion, but under an explicit reduced-motion request
      the edge is left as a plain cut (matching the static-window rule). */
   .nf-wl-think,
-  .nf-wl-label { -webkit-mask-image: none; mask-image: none; }
+  .nf-wl-label,
+  .nf-wl-detail { -webkit-mask-image: none; mask-image: none; }
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -4522,3 +4567,58 @@
   background: rgba(0, 0, 0, 0.55); color: rgba(255, 255, 255, 0.92);
   pointer-events: none;
 }
+
+/* ── 消息右键引用（微信式）一期（quote-message 批 2026-10-09，spec §5/§7.6）────
+   零新色值对照（逐值来源）：
+   · 引用块填充 rgba(0,0,0,.035) / 暗 rgba(255,255,255,.055) — friends.css:1394/1412
+     .fm-quote-block D1 裁定同值；
+   · 文字 var(--color-text-muted) — base.css 既有；
+   · 跳转高亮 var(--sapphire-tint-15) — sapphire.css:54（fmQuoteTargetFlash 同值）；
+   · 焦点环 rgb(var(--sapphire)/0.5) — friends.css:1427 同款；
+   · 引用条宿主形态 — friends.css .fm-quote-strip 同族（D2 裁定：输入条下方）。
+   🔴 无 accent bar、无左缘色条（好友窗设计硬约束沿用）。
+   引用块两行 clamp（作者裁定 2026-10-09：与好友窗 D1 两行式一致）。 */
+.msg-quote-block {
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.035);
+  box-shadow: none;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-muted, #888);
+  max-width: 100%;
+}
+.msg-quote-block .msg-quote-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.msg-quote-block .msg-quote-sender { font-weight: 600; }
+@media (prefers-color-scheme: dark) {
+  .msg-quote-block { background: rgba(255, 255, 255, 0.055); }
+}
+/* 降级注记（「原消息已删除」；.fm-quote-note 同族：再降一档不透明度）。 */
+.msg-quote-note { opacity: 0.75; font-size: 11px; margin-top: 2px; }
+.msg-quote-note:empty { display: none; }
+/* 可点态（判据单点 = data-quote-jump="ready"；不可得 ⇒ 无指针无按钮语义，
+   禁「点了没反应」半成品入口 —— friends.css paintJumpAffordance 同纪律）。 */
+.msg-quote-block[data-quote-jump="ready"] { cursor: pointer; }
+.msg-quote-block[data-quote-jump="ready"]:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.row.quote-target-flash { animation: msgQuoteTargetFlash 1.8s ease; border-radius: 12px; }
+@keyframes msgQuoteTargetFlash {
+  0% { background: var(--sapphire-tint-15); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row.quote-target-flash { animation-duration: 0.01s; }
+}
+/* 引用 chip 宿主（2026-10-09 用户反馈改版）：原独立宿主 #msg-quote-strip（输入框
+   下方整宽条）退役 —— 引用 chip 与附件 chip 同条带落 #attachment-preview（渲染单点
+   = chat.js renderAttachmentPreview），尺寸作用域规则见 input.css「quote-message
+   引用 chip」段。 */

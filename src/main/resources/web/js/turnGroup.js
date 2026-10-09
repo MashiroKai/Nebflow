@@ -366,21 +366,31 @@ export function collapseTurn(view, meta = {}) {
   // re-open ABOVE it — two parallel badge faces, the author's screenshot — and
   // the re-terminal would dissolve that badge again (stale-cursor heal). Same
   // ruling as 0584bf0bb's replay side, 作答不是开轮事件: keep the group OPEN —
-  // reveal the process rows (failTurn's flat-for-waiting precedent; identical
-  // to the busyTail open-tail face a reload shows at this same moment), drop
-  // the line (E5: it must not outlive the turn), and leave the closure cursor
-  // untouched. The answer's continuation then joins the SAME group and the
-  // exchange's REAL terminal builds the ONE header over pre+post rows — the
-  // replay face (spec A2). Predicate = chat.js's own pending-ask selector face
-  // (an `.option-box` without a resolved `.option-answer` line, as in the
+  // drop the line (E5: it must not outlive the turn), and leave the closure
+  // cursor untouched. The answer's continuation then joins the SAME group and
+  // the exchange's REAL terminal builds the ONE header over pre+post rows —
+  // the replay face (spec A2). Predicate = chat.js's own pending-ask selector
+  // face (an `.option-box` without a resolved `.option-answer` line, as in the
   // session-attention broadcast); a card answered mid-turn (the confirm path
   // appends the answer line) takes the normal close below.
+  //
+  // 展开面收回（AskUser 过程默认折叠令 · 主人 2026-10-08 现场反馈）：10-07 令的
+  // 「reveal the process rows」半面（failTurn flat-for-waiting 先例）被 10-08
+  // 反馈判为缺陷 —— 「调用 AskUser ⇒ 工具过程面板被自动展开」。9.19 双路参照
+  // （tag 2026.9.19 = a14dff6f7 与装配 jar web/js/turnGroup.js，两路提取逐字节
+  // 相等）确证 9.19 无本分支：ack 终态走普通过程（header + tuckRows，:320），
+  // 过程默认折叠、展开只由用户动作触发。故此处**不揭任何行**——组保持开启
+  // （10-07 令的结构面原样：答后续轮并入同组、一枚 header、闭组光标不动），
+  // 过程行保持出生时的 tucked 态，真实终态 settle 时照常一枚 header 收拢；
+  // 待答窗内无 header 可点 ⇒ 展开仅发生在真实终态之后（用户动作，不回归）。
   if (rows.some(r => r.querySelector('.option-box:not(:has(.option-answer))'))) {
-    for (const el of scope) {
-      if (el.classList && el.classList.contains('nf-tucked')) el.classList.remove('nf-tucked');
-    }
+    // 折叠面恢复原语（10-08 令）：tuckRows 幂等 —— 出生即 tucked 的行原样；
+    // 被 turnScope 的 stale-cursor heal（dissolveTurnChrome，**首轮即问**时闭组
+    // 光标尚不存在 ⇒ heal 必跑并剥光 tuck 标）揭开的行在此重新压回。真实终态
+    // 照常一枚 header 收拢（heal 再揭 → 普通关组 tuckRows 复原，终态同形）。
+    tuckRows(rows.filter(isTuckableRow));
     removeWorkline(view);
-    return null; // group stays open — no header, no markClosed
+    return null; // group stays open — no header, no markClosed; rows stay tucked (2026-10-08 令)
   }
   const tuckable = rows.filter(isTuckableRow);
   let header = null;

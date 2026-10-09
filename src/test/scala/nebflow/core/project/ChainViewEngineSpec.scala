@@ -97,6 +97,7 @@ class ChainViewEngineSpec extends CatsEffectSuite:
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield Rig(rt, ws, res, frames)
+    end for
   end mount
 
   private def withRig[A](name: String)(f: Rig => IO[A]): IO[A] =
@@ -183,7 +184,9 @@ class ChainViewEngineSpec extends CatsEffectSuite:
   /** 本链成员的 settle-sweep **启动**留痕（本批负判据面：paused 链成员**零**启动行）。 */
   private def startAudit(rig: Rig, ids: List[String]): IO[List[(String, String)]] =
     audit(rig).map(
-      _.collect { case (t, id, sum, _) if t == "settle-sweep" && sum.contains("startNode forked") && ids.contains(id) => (id, sum) }
+      _.collect {
+        case (t, id, sum, _) if t == "settle-sweep" && sum.contains("startNode forked") && ids.contains(id) => (id, sum)
+      }
     )
 
   /** A → B → C 三节点线性链（全 pending）：chainId = `chain-n-a`（createdAt 最早）。 */
@@ -229,14 +232,22 @@ class ChainViewEngineSpec extends CatsEffectSuite:
         starts <- List("n-a", "n-b", "n-c").traverse(startedAtOf(rig, _))
         startLines <- startAudit(rig, List("n-a", "n-b", "n-c"))
       yield
-        assertEquals(paused.map(_.status), Right(ChainLedger.StatusPaused), s"pauseChain must report paused, got $paused")
+        assertEquals(
+          paused.map(_.status),
+          Right(ChainLedger.StatusPaused),
+          s"pauseChain must report paused, got $paused"
+        )
         assert(controlStarted.isDefined, "precondition: the sweep must still start a NON-paused chain in the same tick")
         assertEquals(
           sts,
           List(NodeLifecycle.Pending, NodeLifecycle.Pending, NodeLifecycle.Pending),
           "a paused chain must dispatch ZERO further nodes (no member leaves pending)"
         )
-        assertEquals(starts, List(None, None, None), "no member of a paused chain may get a session spawned (startedAt empty)")
+        assertEquals(
+          starts,
+          List(None, None, None),
+          "no member of a paused chain may get a session spawned (startedAt empty)"
+        )
         assertEquals(
           startLines,
           Nil,
@@ -263,7 +274,11 @@ class ChainViewEngineSpec extends CatsEffectSuite:
         afterAudit <- startAudit(rig, List("n-a", "n-b", "n-c"))
       yield
         assertEquals(held, List(NodeLifecycle.Pending, NodeLifecycle.Pending, NodeLifecycle.Pending), "paused ⇒ held")
-        assertEquals(resumed.map(_.status), Right(ChainLedger.StatusActive), s"resumeChain must report active, got $resumed")
+        assertEquals(
+          resumed.map(_.status),
+          Right(ChainLedger.StatusActive),
+          s"resumeChain must report active, got $resumed"
+        )
         assert(
           afterAudit.exists(_._1 == "n-a"),
           s"resume must produce a settle-sweep start line for n-a (no one-shot latch), got $afterAudit"
@@ -410,9 +425,15 @@ class ChainViewEngineSpec extends CatsEffectSuite:
             .withHeaders(Headers("Authorization" -> s"Bearer $token"))
         pauseResp <- routes.routes(call("chain-n-a", "pause")).value.map(_.getOrElse(fail("pause route fell through")))
         pauseBody <- pauseResp.as[Json]
-        resumeResp <- routes.routes(call("chain-n-a", "resume")).value.map(_.getOrElse(fail("resume route fell through")))
+        resumeResp <- routes
+          .routes(call("chain-n-a", "resume"))
+          .value
+          .map(_.getOrElse(fail("resume route fell through")))
         resumeBody <- resumeResp.as[Json]
-        cancelResp <- routes.routes(call("chain-n-a", "cancel")).value.map(_.getOrElse(fail("cancel route fell through")))
+        cancelResp <- routes
+          .routes(call("chain-n-a", "cancel"))
+          .value
+          .map(_.getOrElse(fail("cancel route fell through")))
         cancelBody <- cancelResp.as[Json]
         missResp <- routes
           .routes(call("chain-n-zzz", "pause"))
@@ -451,6 +472,7 @@ class ChainViewEngineSpec extends CatsEffectSuite:
           stateChanged.forall(_._4 == "chain-n-a"),
           s"the audit line must carry the top-level chainId, got $stateChanged"
         )
+      end for
     }
   }
 

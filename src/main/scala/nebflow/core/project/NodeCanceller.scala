@@ -186,7 +186,10 @@ private[project] trait NodeCanceller:
    * 返回态照旧 `paused`。可行动错误：链不存在 ⇒ `CHAIN_NOT_FOUND`；单成员/孤立
    * ⇒ `CHAIN_SINGLE_MEMBER`（与 [[cancelChain]] 同判据：链级原语不静默降级为节点级）。
    */
-  def pauseChain(chainId: String, now: Long = System.currentTimeMillis()): IO[Either[String, ChainLedger.ChainControl]] =
+  def pauseChain(
+    chainId: String,
+    now: Long = System.currentTimeMillis()
+  ): IO[Either[String, ChainLedger.ChainControl]] =
     store.chainMembersOf(chainId).flatMap {
       case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
       case Some(cm) if cm.info.memberIds.size < 2 => IO.pure(Left(ChainCancelErrors.singleMember(chainId)))
@@ -203,10 +206,12 @@ private[project] trait NodeCanceller:
    * 幂等：对活跃链 resume ⇒ 台账零写，返回态 `active`。恢复后 settle sweep 当轮即恢复
    * 正常结算（闸是**现读**台账、非一次性闩 ⇒ 无需任何清账动作）。
    */
-  def resumeChain(chainId: String, now: Long = System.currentTimeMillis()): IO[Either[String, ChainLedger.ChainControl]] =
+  def resumeChain(
+    chainId: String,
+    now: Long = System.currentTimeMillis()
+  ): IO[Either[String, ChainLedger.ChainControl]] =
     store.chainLedgerStore.chainControlOf(chainId).flatMap { cur =>
-      if cur.status == ChainLedger.StatusCancelled then
-        IO.pure(Left(ChainCancelErrors.alreadyCancelled(chainId)))
+      if cur.status == ChainLedger.StatusCancelled then IO.pure(Left(ChainCancelErrors.alreadyCancelled(chainId)))
       else
         store.chainMembersOf(chainId).flatMap {
           case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
@@ -852,7 +857,8 @@ private[project] trait NodeCanceller:
    *
    * fresh 守卫（R2）保留：只在 `status==Running` 时提醒——节点已终态/状态已变 ⇒ 拒写
    * （并发完成/取消不被本路径覆盖）。draining 守卫（中断恢复语义批）逐字保留。
-   * 审计事件独立（`dead-session-reaped` **改文案**：不再说 converged-to-failed）。 */
+   * 审计事件独立（`dead-session-reaped` **改文案**：不再说 converged-to-failed）。
+   */
   private[project] def autoFailDeadRunning(nodeId: String, err: String): IO[Unit] =
     // draining 守卫（中断恢复语义批 2026-09-13，spec §2.3-3，与 failNode 头部同款）：
     // 优雅关机窗口内 watchdog 若把「内存态已蒸发」误读成死会话，会把节点的中断现场
@@ -865,7 +871,9 @@ private[project] trait NodeCanceller:
         NodeEngine.InterruptedEventType,
         s"dead-session reminder suppressed while draining (graceful shutdown): ${err.take(200)}"
       ) *>
-        logger.warn(s"Node $nodeId dead-session reminder suppressed while draining (graceful shutdown): ${err.take(200)}")
+        logger.warn(
+          s"Node $nodeId dead-session reminder suppressed while draining (graceful shutdown): ${err.take(200)}"
+        )
     else
       for
         now <- IO(System.currentTimeMillis())

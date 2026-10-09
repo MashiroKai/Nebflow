@@ -15,6 +15,9 @@ import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
 import { ticketUrl } from './nfTicket.js';
 import { makeReference } from './reference.js';
+// quote-message 一期：引用条落面/清理（引用态数据面 = pendingAttachments 的
+// chat-message ref；发送/排队清空后同步引用条显隐）。
+import { renderQuoteStrip } from './msgQuote.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
@@ -93,7 +96,10 @@ const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabl
 // entries carrying `_skill` on every skillList frame, and a whitelist living in
 // the table could be widened by such a re-registration. Keys = the command
 // names exactly as typed (and exactly as used as table keys).
-const SLASH_ALLOWED = new Set(['/clear', '/compact', '/model']);
+// 摘除（用户指令 2026-10-09 23:12）：/clear 与 /compact 已从命令面退役
+// （白名单成员 + 内置表条目 + 引擎侧 case 一并摘除）；二者按封存面语义降级为
+// 纯文本直发。表内保留的内置命令只剩 /model。
+const SLASH_ALLOWED = new Set(['/model']);
 /** May `cmd` be listed/dispatched? Whichever is in the whitelist · always;
  *  everything else only while the master gate is open. */
 const slashAllowed = (cmd) => SLASH_ALLOWED.has(cmd) || SLASH_ENABLED();
@@ -111,48 +117,17 @@ const slashCommands = {
       import('./onboarding.js').then(m => m.replayOnboarding()).catch(() => {});
     }
   },
-  // 回挂（作者令 2026-09-17：D1-B 白名单 + D2 历史语义 + D4 二段式）。表体逐字取自
-  // 摘除前形态 `71afa4a9b^:src/main/resources/web/js/input.js:33-44`（`/clear`）与
-  // `:45-50`（`/compact`），仅做两处机械适配：`/clear` 体内 `delete state.sessionTasks[...]`
-  // 与 `renderTaskList([])` 两行不再接回 —— 两者已随旧任务区退役（台账 `state.js:160`
-  // 与本文件 :12），`state.sessionTasks` 现已 undefined（保留 = 点按 `/clear` 抛 TypeError）。
-  // 位置：追加在内置表末位（保持既有条目次序不动 ⇒ 总闸放行面 matches[0] 仍是 `/ask`）；
-  // 默认（白名单）面列表按插入序 = `/clear` → `/compact`。
-  '/clear': {
-    desc: () => t('slash.clear'),
-    run: () => {
-      const v = activeView;
-      sendWs({type:'command', command:'clear', sessionId: v.sessionId});
-      // Clean up stream state — remove orphaned thinking placeholders and
-      // reset stream variables so the next message starts fresh.
-      if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-      cancelToolStreamRAF();
-      v.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
-        const row = el.closest('.row');
-        if (row) row.remove();
-      });
-      v.stream.currentAiBubble = null;
-      v.stream.aiText = '';
-      v.stream.currentThinkingBubble = null;
-      v.stream.thinkingText = '';
-      v.stream.toolStreamText = '';
-      v.stream.toolStreamToolName = '';
-      renderSystemBubble(t('slash.clearDone'));
-    }
-  },
-  '/compact': {
-    desc: () => t('slash.compact'),
-    run: () => {
-      enterCompactMode();
-    }
-  }
+  // 回挂面已摘除（用户指令 2026-10-09 23:12）：/clear 与 /compact 的内置表条目
+  // （含下拉补全项与 desc 帮助文案）整体退役 —— 前身逐字形态见 git 历史
+  // `71afa4a9b^:src/main/resources/web/js/input.js:33-50`；引擎侧
+  // WsSessionChatHandlers.handleCommand 的 clear/compact case 同批摘除。
 };
 
 /**
  * Register a UI-only slash command (mirrors the registerSkillCommands
  * table-insertion pattern). uiOnly = the run() opens UI / flips local state
  * and never injects a message, so the busy-session pass-through (send path)
- * applies just like /clear. The admission whitelist stays the literal
+ * applies just like /model. The admission whitelist stays the literal
  * SLASH_ALLOWED set above — registering a command here never widens it.
  * @param {{ name: string, desc: () => string, uiOnly?: boolean, run: (text?: string) => void }} cmd
  */
@@ -164,7 +139,8 @@ export function registerCommand({ name, desc, uiOnly, run }) {
 }
 
 // /model — UI-only: opens the model-chain panel, never injects a message
-// (ruling ④-A: whitelisted alongside /clear /compact). The panel module is
+// (whitelisted alone since 2026-10-09: /clear /compact were removed from the
+// command face by user instruction). The panel module is
 // loaded on first use; a load failure stays silent (the input simply clears).
 registerCommand({
   name: '/model',
@@ -207,7 +183,7 @@ export function registerSkillCommands(skills) {
 // ---------- Slash Command Handler ----------
 export function handleSlash(text) {
   const cmd = text.trim().split(/\s/)[0]; // 解析**先于**判定（D1-B：白名单按命令名判）
-  if (!slashAllowed(cmd)) return false; // SEALED: '/' is plain text（白名单两条除外）
+  if (!slashAllowed(cmd)) return false; // SEALED: '/' is plain text（白名单命令除外）
   if (slashCommands[cmd] && slashCommands[cmd].run) {
     slashCommands[cmd].run(text);
     return true;
@@ -766,6 +742,7 @@ export function send() {
     input.style.height = 'auto';
     v.pendingAttachments = [];
     v.dom.attPreview.innerHTML = '';
+    renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：排队后引用 chip 随 pending 清空
     saveInputDraft(v.sessionId);
     setTimeout(() => { v.isSending = false; }, 300);
     return;
@@ -798,14 +775,19 @@ export function send() {
     setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
-  renderUserBubble(text, v.pendingAttachments);
+  // quote-message 一期（spec §3.6）：clientMessageId 生成上提到 renderUserBubble
+  // 之前 —— 用户行的 data-msg-id = 这个 id（与引擎帧 clientMessageId 同键，为二期
+  // 引擎 id 收口预留）。
+  const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  renderUserBubble(text, v.pendingAttachments, undefined, { msgId: clientMessageId });
   saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
     ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
     : a.type === 'ref'
       ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
       : { type: a.type, name: a.name, preview: a.preview })});
   // Save to input history
-  if (text && text !== '/clear') {
+  // (/clear 特判已随命令摘除退役 —— /clear 现在就是普通文本消息，照常入历史)
+  if (text) {
     state.inputHistory.push(text);
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {
@@ -820,7 +802,6 @@ export function send() {
   v.historyIndex = -1;
   v.historyDraft = '';
   try {
-    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     // v2 §5.2/§6.1 + B (2026-08-20): taskRefs carry taskId/sessionId/subject —
     // 描述/产出不重复进载荷（agent 凭 taskId 定位任务，记忆里有上下文）；
     // 用户意见 = 本帧 content（§5.4，后端落 notes）。
@@ -854,6 +835,7 @@ export function send() {
   input.style.height = 'auto';
   v.pendingAttachments = [];
   v.dom.attPreview.innerHTML = '';
+  renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：发送完成 = 引用态消费（清空时机之一，spec §2.2）
   // Immediately clear the draft for this session so it is not restored after refresh
   saveInputDraft(v.sessionId);
   // ①-2 (2026-09-11) 乐观置位时序校验 —— 本地派发 = 新 turn 的起点，因此它「在
@@ -928,11 +910,12 @@ export function persistQueue() {
         mode: it.mode || null,
         // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
         // (+ subject as the display name); #303: ref blocks keep their full
-        // Reference shape; file/image keep type+name only — EXCEPT pasted-text
-        // attachments, whose base64 data IS the only copy of the content (the
-        // file never existed on disk). Keep small text payloads (<=400KB
-        // base64) so drain-after-refresh still delivers the content; images
-        // stay stripped (too large for localStorage).
+        // Reference shape; file/image keep type+name plus their CLASSIFICATION
+        // metadata (mimeType + hash/size) — EXCEPT pasted-text attachments,
+        // whose base64 data IS the only copy of the content (the file never
+        // existed on disk). Keep small text payloads (<=400KB base64) so
+        // drain-after-refresh still delivers the content; data/preview payloads
+        // still never persist (too large for localStorage).
         attachments: (it.attachments || []).map(a => a.type === 'taskRef'
           ? { type: 'taskRef', taskId: a.taskId, sessionId: a.sessionId, subject: a.subject, name: a.subject }
           : a.type === 'ref'
@@ -945,7 +928,18 @@ export function persistQueue() {
               // （取证稿 §3.3 的降噪口径：噪声化 = 另一种静默）。
               // 标记随队列项一起落 localStorage ⇒ 跨刷新存活，撤回时据此给**可判读**
               // 文案（下面 recallQueuedItem），而不是让用户以为附件还在。
-              : { type: a.type, name: a.name, ...(a.data || a.preview ? { stripped: true } : {}) })
+              //
+              // busyfix-image-mime（2026-10-09，缺陷 #45 批申报）：载荷剥离 ≠ 分类元数据
+              // 剥离。mimeType 是后端图片分类的**唯一判据**（WebSocketRoutes.scala:1616
+              // 读帧，:1734 `mimeType.startsWith("image/") ⇒ type:"image"`），剥掉它 ⇒
+              // 重发帧被落库成 `type:"file", path:null` = 历史重放永久文件卡（实证
+              // 5cc7590a….ui.json「截屏2026-10-02 09.08.27.png」行）。metadata 保留后：
+              // 无刷新路径 data 本就在内存队列 ⇒ 重发帧 mimeType+data 齐全，与直接发送
+              // 完全同路（image 分支 + 落 uploads + 重放媒体预览）；刷新路径字节本就
+              // 不可恢复（既有取舍，stripped 标记如实申报），但分类不再谎报。
+              // hash/size 顺带保留 = 超大 text 附件的磁盘解析引用（后端
+              // findLocalFile/Spotlight 判据 hash 非空 + size>0，WebSocketRoutes.scala:1675）。
+              : { type: a.type, name: a.name, mimeType: a.mimeType, hash: a.hash || '', size: a.size || 0, ...(a.data || a.preview ? { stripped: true } : {}) })
       }));
     }
     localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
@@ -1112,6 +1106,9 @@ function recallQueuedItem(sessionId, item) {
       if (view.dom.attPreview) {
         renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
       }
+      // quote-message 一期：排队项撤回输入框 —— chat-message ref 随附件原样回填；
+      // 2026-10-09 改版后引用 chip 与附件同条带 ⇒ 上面的 renderAttachmentPreview
+      // 一次重建即同时复原两者（数据单点 = pendingAttachments，无需二次落面调用）。
       // Refresh blind spot: persistQueue() reduces images/large payloads to a
       // {type, name} skeleton, so such an item cannot be restored for real.
       //

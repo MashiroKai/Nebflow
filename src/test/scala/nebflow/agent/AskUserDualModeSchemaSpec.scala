@@ -132,8 +132,8 @@ class AskUserDualModeSchemaSpec extends FunSuite:
         "askUserNonBlocking",
         "isRootAgent"
       )
-    do
-      assert(!src.contains(retired), s"已退役符号 `$retired` 又出现在工具源文件里（变体面残留）")
+    do assert(!src.contains(retired), s"已退役符号 `$retired` 又出现在工具源文件里（变体面残留）")
+    end for
   }
 
   // ============================================================
@@ -253,13 +253,16 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     // AgentActor 迁至 AgentProcessing.scala；本批（root 2026-10-02 令 #462 裁①）
     // 再把门控判据由 `AskMode.parksTurn(askMode)` 换成命令面客观事实 `awaitsAnswer`。
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "agent" / "AgentProcessing.scala")
-    val iBranch = src.indexOf("case AgentCommand.AskUser(requestId, items, replyToOpt, askAttachments, awaitsAnswer) =>")
+    val iBranch =
+      src.indexOf("case AgentCommand.AskUser(requestId, items, replyToOpt, askAttachments, awaitsAnswer) =>")
     assert(iBranch > 0, "AgentProcessing 的 AskUser 分支未承接 attachments/awaitsAnswer（本批未接线）")
     // `parksTurn` 只许作为**注释里的历史叙述**出现（本批起无该调用）——扫可执行码面。
     val codeOnly = """(?s)/\*.*?\*/""".r
       .replaceAllIn(src, " ")
       .linesIterator
-      .map { l => val i = l.indexOf("//"); if i < 0 then l else l.take(i) }
+      .map { l =>
+        val i = l.indexOf("//"); if i < 0 then l else l.take(i)
+      }
       .mkString("\n")
     assert(!codeOnly.contains("parksTurn"), "AgentProcessing 仍在调用 parksTurn（等待态门控未退场）")
     val iCond = src.indexOf("if awaitsAnswer then", iBranch)

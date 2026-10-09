@@ -41,6 +41,8 @@ enum JevDeclarationDuty:
   /** The allocation failed and fell back; the dispatcher default mount applies. */
   case AllocatedViaFallback(reason: String)
 
+end JevDeclarationDuty
+
 object JevDeclarationDuty:
 
   /**
@@ -77,6 +79,8 @@ object JevDeclarationDuty:
   def isSatisfied(duty: JevDeclarationDuty): Boolean = duty match
     case JevDeclarationDuty.AllocationMissing => false
     case _ => true
+
+end JevDeclarationDuty
 
 /**
  * The pre-JeV (legacy) duty semantic, kept so the shadow can compare them.

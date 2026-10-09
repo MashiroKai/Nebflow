@@ -62,13 +62,16 @@ object RichKind:
    * 🔴 The Pop tool's live sibling sentinel (`___POP_JSON___`, `PopTool.Sentinel`)
    * is deliberately NOT folded into this predicate: a Pop payload's items are
    * RESOLVED artifact paths, i.e. image/document products, not HTML to render —
-   * see [[FeishuBridgePlugin.RichProduct]], which reads that payload and yields
+   * see [[RichProduct]] (channel-agnostic since the weixin-media batch, which
+   * promoted it out of the feishu bridge), which reads that payload and yields
    * the item path. Only an HTML product belongs here.
    */
   val CardSentinel: String = "___CARD_HTML___"
 
-  /** True when `content` is a card payload (design card §1 `card` row: the
-    *  source marker, not the extension — a card's visible product is HTML). */
+  /**
+   * True when `content` is a card payload (design card §1 `card` row: the
+   *  source marker, not the extension — a card's visible product is HTML).
+   */
   def isCardContent(content: String): Boolean =
     content.startsWith(CardSentinel)
 
@@ -94,10 +97,10 @@ object RichKind:
    *                     lower-case, without the leading dot
    */
   def of(
-      content: String,
-      path: Option[String],
-      exists: Boolean,
-      documentExtensions: Set[String]
+    content: String,
+    path: Option[String],
+    exists: Boolean,
+    documentExtensions: Set[String]
   ): RichKind =
     if isCardContent(content) then Card
     else
@@ -109,7 +112,7 @@ object RichKind:
           val isImage = ImageInject.imageExtensions.keys.exists(lower.endsWith)
           val ext = lower.lastIndexOf('.') match
             case -1 => ""
-            case i  => lower.substring(i + 1)
+            case i => lower.substring(i + 1)
           if !exists then unknown(s"path does not exist or is not a regular file: $p")
           else if isImage then Image
           else if ext.nonEmpty && documentExtensions.contains(ext) then Document

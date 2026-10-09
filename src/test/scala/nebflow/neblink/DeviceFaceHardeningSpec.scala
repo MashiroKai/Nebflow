@@ -139,7 +139,10 @@ class DeviceFaceHardeningSpec extends FunSuite:
       )
       assert(compat.contains("deviceName="), s"peer display metadata stays on the compat URL: $compat")
       // header contract is byte-identical on the compat path (header semantics unchanged)
-      assertEquals(ps.presenceHandshakeHeaders(id), List(nebflow.shared.DeviceHeader /* W1 shim: R6 moved the constant to shared (PeerModels) */ -> "dev-abc"))
+      assertEquals(
+        ps.presenceHandshakeHeaders(id),
+        List(nebflow.shared.DeviceHeader /* W1 shim: R6 moved the constant to shared (PeerModels) */ -> "dev-abc")
+      )
       // and the PRIMARY URI form stays clean (A1② above re-asserts it too)
       assert(!ps.buildWsUri("10.0.0.5", 8099, id).contains("deviceId"), "primary URI must stay free of deviceId")
     }
@@ -163,7 +166,10 @@ class DeviceFaceHardeningSpec extends FunSuite:
       assert(!ps.isLegacyMissingDeviceIdRejection(wrapped404), "404 = wrong path — must NOT trigger the compat retry")
       assert(!ps.isLegacyMissingDeviceIdRejection(wrapped500), "5xx = server-side failure — must NOT trigger the retry")
       // non-handshake failures keep their own classification
-      assert(!ps.isLegacyMissingDeviceIdRejection(new java.net.ConnectException("refused")), "refusal is not a compat case")
+      assert(
+        !ps.isLegacyMissingDeviceIdRejection(new java.net.ConnectException("refused")),
+        "refusal is not a compat case"
+      )
       assert(
         !ps.isLegacyMissingDeviceIdRejection(new java.util.concurrent.TimeoutException("budget")),
         "budget timeout is not a compat case"

@@ -391,24 +391,37 @@ export function startWorklineDots(view, startedAt) {
   }, 1000);
 }
 
+/** Tail anchor + overflow-gated head fade (ui-polish 2026-10-08). The `1e7`
+ *  clamp write stays THE anchor (newest text at the right edge). Classifying
+ *  the box costs the B4 frame budget's ONE geometry read (reading `scrollLeft`
+ *  back — clamped > 0 ⇔ the box overflows): an overflowing box gets
+ *  `.nf-wl-clip`, whose fade lives on the LEFT edge — where old text exits —
+ *  so the newest text and the caret at the right edge keep full ink (the old
+ *  right-edge mask dissolved exactly them). A fitting box gets no mask, so a
+ *  short label keeps its plain clipped edge. */
+function pinTail(el) {
+  el.scrollLeft = 1e7;
+  el.classList.toggle('nf-wl-clip', el.scrollLeft > 0);
+}
+
 /** Tool (or other single-line process) STARTED: spinner + label. Re-issuing the
  *  same key just refreshes the label (toolCallDetected → toolStart for the same
  *  tool must not flicker a roll).
  *  zcode-484: the label is ONE clipped, tail-faded row like the thinking text,
- *  so the refresh path re-anchors it to its right edge (`1e7` clamp, no layout
- *  read — see thinkingWorklineItem's doc for the discipline). */
+ *  so the refresh path re-anchors it to its right edge (`1e7` clamp — pinTail,
+ *  no other layout read — see thinkingWorklineItem's doc for the discipline). */
 export function startWorklineItem(view, label, kind = 'tool') {
   const wl = ensureRow(view);
   if (!wl) return;
   const key = label;
   if (wl.item && wl.key === key && wl.kind === kind) {
     const labelEl = wl.item.querySelector('.nf-wl-label');
-    if (labelEl) { labelEl.textContent = label; labelEl.scrollLeft = 1e7; }
+    if (labelEl) { labelEl.textContent = label; pinTail(labelEl); }
     return;
   }
   swap(wl, buildItem(label, 'spin'), { key, kind, roll: true });
   const fresh = wl.item && wl.item.querySelector('.nf-wl-label');
-  if (fresh) fresh.scrollLeft = 1e7;
+  if (fresh) pinTail(fresh);
 }
 
 /** Same item COMPLETED: drawn check + bounce, in place (no roll).
@@ -446,8 +459,9 @@ export function failWorklineItem(view, key, resultText) {
  *    挡迟刷帧，本守卫兜直喂路径的残余增量）；
  *  · 跨帧复用：span 首次创建后只做 textContent 替换（流式帧零节点重建，
  *    与本行 spinner 的元素复用同纪律）；文本未变时零写；
- *  · 单行纪律：nowrap + 裁剪 + 尾部 fade（CSS 同 .nf-wl-label 档），右侧
- *    尾锚 `scrollLeft = 1e7`（同 thinkingWorklineItem 的 clamp 惯例，零布局读）。 */
+ *  · 单行纪律：nowrap + 裁剪 + 尾部 fade（CSS 同 .nf-wl-label 档，.nf-wl-clip
+ *    左缘 fade），右侧尾锚 `scrollLeft = 1e7`（pinTail——同 thinkingWorklineItem
+ *    的 clamp 惯例）。 */
 export function worklineToolDetail(view, text) {
   const wl = state(view);
   if (!wl || !wl.item || wl.kind !== 'tool') return;
@@ -461,7 +475,7 @@ export function worklineToolDetail(view, text) {
     wl.item.appendChild(el);
   }
   if (el.textContent !== next) el.textContent = next;
-  el.scrollLeft = 1e7;
+  pinTail(el);
 }
 
 /** Thinking: the badge shows the thinking text as TEXT (UI-C text cadence). The
@@ -471,13 +485,14 @@ export function worklineToolDetail(view, text) {
  *  text scrolls inside it.
  *
  *  THE TAIL ANCHOR: after every append the box is pinned to its right edge
- *  (`scrollLeft = 1e7`, the same clamp idiom chat.js uses for the chat
- *  scroll container). New content therefore flows in at the right and the older
- *  content slides out to the left, under the CSS tail fade — the zcode shape.
- *  The anchor is written AFTER the append, never before, and never reads a
- *  geometry property: the `1e7` write is itself the clamp, so this adds no
- *  layout read to the streaming frame (the B4 one-geometry-read-per-frame
- *  discipline; cargo-culting `scrollWidth` here would be one read per delta).
+ *  (`pinTail` — the `1e7` clamp idiom chat.js uses for the chat scroll
+ *  container). New content therefore flows in at the right and the older
+ *  content slides out to the left, under the CSS head fade — the zcode shape.
+ *  The anchor is written AFTER the append, never before. The ui-polish
+ *  2026-10-08 classification read (scrollLeft back from pinTail) is the ONE
+ *  geometry read the B4 one-geometry-read-per-frame discipline budgets for
+ *  this frame — cargo-culting `scrollWidth` here would be a second read per
+ *  delta.
  *
  *  Cadence stays the CSS caret, never a per-token DOM rebuild (A3/A7). Later
  *  calls only replace/extend the string — the prefix test below appends just
@@ -512,7 +527,7 @@ export function thinkingWorklineItem(view, text) {
   think._nfText = next;
   // Tail anchor (see the doc above): pin the scroller to its right edge so the
   // newest text sits at the row's end and the old text slides out left.
-  think.scrollLeft = 1e7;
+  pinTail(think);
 }
 
 /** Thinking finished: swap the reveal for the completed label + check. */

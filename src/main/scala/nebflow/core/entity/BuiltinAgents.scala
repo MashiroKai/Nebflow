@@ -26,28 +26,34 @@ import nebflow.shared.{Config, PathUtil}
  */
 object BuiltinAgents:
 
-  /** 代码定义名的单点（AgentCore.ConvergedAgentNames 引用本集）。
-    *
-    * builtin-merge 批（2026-10-03）：kernel + general 合并为执行 agent
-    * `nebflow`（kernel 基础工具 + Subagent + Workflow 三面）；+`subagent`
-    * （只读侦察子面，SubagentTool 的 spawn 目标，Explore 同型）。`general`
-    * 与 `kernel` 退役（磁盘死信名沿用既有读侧跳过）。`project-dispatcher`
-    * 过渡保留——随 flow 引擎退役批一并删除。 */
+  /**
+   * 代码定义名的单点（AgentCore.ConvergedAgentNames 引用本集）。
+   *
+   * builtin-merge 批（2026-10-03）：kernel + general 合并为执行 agent
+   * `nebflow`（kernel 基础工具 + Subagent + Workflow 三面）；+`subagent`
+   * （只读侦察子面，SubagentTool 的 spawn 目标，Explore 同型）。`general`
+   * 与 `kernel` 退役（磁盘死信名沿用既有读侧跳过）。`project-dispatcher`
+   * 过渡保留——随 flow 引擎退役批一并删除。
+   */
   val Names: Set[String] = Set("Nebula", "project-dispatcher", "nebflow", "subagent")
 
-  /** 面板隐藏名（2026-10-07 14:13 作者令②「任务分发器面板隐藏」）——枚举链
-    * **第一过滤点**。🔴 本集是**可见性**维度，不是生命维度：集内 agent 的本体
-    * 过渡保留零触碰（仍在 [[Names]]——entry/entries 照常解析、isBuiltin 写通道
-    * 判据零变、注册/旧轨/生命周期全不动），藏的是面板枚举不是生命：
-    * `GET /api/agents`（[[nebflow.gateway.RegistryRoutes]] 面板枚举，第二过滤点）
-    * 与其前端消费面（web/js/plugins.js agents 列表，第三过滤点）按本集过滤。
-    * `project-dispatcher` 物理删除仍候 #1229 / S19③ 收口闸，本集只是过渡期的
-    * 显示面挡板——随该闸一并删除。 */
+  /**
+   * 面板隐藏名（2026-10-07 14:13 作者令②「任务分发器面板隐藏」）——枚举链
+   * **第一过滤点**。🔴 本集是**可见性**维度，不是生命维度：集内 agent 的本体
+   * 过渡保留零触碰（仍在 [[Names]]——entry/entries 照常解析、isBuiltin 写通道
+   * 判据零变、注册/旧轨/生命周期全不动），藏的是面板枚举不是生命：
+   * `GET /api/agents`（[[nebflow.gateway.RegistryRoutes]] 面板枚举，第二过滤点）
+   * 与其前端消费面（web/js/plugins.js agents 列表，第三过滤点）按本集过滤。
+   * `project-dispatcher` 物理删除仍候 #1229 / S19③ 收口闸，本集只是过渡期的
+   * 显示面挡板——随该闸一并删除。
+   */
   val PanelHiddenNames: Set[String] = Set("project-dispatcher")
 
-  /** 面板枚举可见性判据（枚举链单一判据面：REST 与前端共用本语义）。
-    * 🔴 只用于**枚举/列表**面——单取（GET /api/agents/:name）、解析、派发、
-    * Mail 等生命面一律不走本判据。 */
+  /**
+   * 面板枚举可见性判据（枚举链单一判据面：REST 与前端共用本语义）。
+   * 🔴 只用于**枚举/列表**面——单取（GET /api/agents/:name）、解析、派发、
+   * Mail 等生命面一律不走本判据。
+   */
   def panelVisible(name: String): Boolean = !PanelHiddenNames.contains(name)
 
   /** 合并后的执行 agent 定义名（Delegate 的 spawn 目标；builtin-merge 批起取代 kernel）。 */
@@ -56,15 +62,17 @@ object BuiltinAgents:
   /** 只读侦察子 agent 名（SubagentTool 的 spawn 目标）。 */
   val SubagentName: String = "subagent"
 
-  /** 退役名解析表（P0-1 旧数据兼容批 2026-10-03）：`general` / `kernel` 在
-    * builtin-merge 批（2026-10-03）合并为执行 agent [[ExecutorName]]，但**存量
-    * 数据仍带这两个名字**——节点 JSON 的 `agent` / `verify` 字段、旧会话元数据、
-    * 旧 model sidecar 目录。全新 home 上这些名字在磁盘上不存在 ⇒ 直接
-    * `loadAgentFromDir` 落空 ⇒ 旧项目节点无法 spawn（审计 §三 的 P0-1 下半面）。
-    *
-    * 本表是**读侧解析兜底的单点**：名字仍可被解析，语义落到合并后的执行 agent。
-    * 新写入面（NodeEditTool / ProjectTypes 缺省）一律直接写 [[ExecutorName]]，
-    * 不再产出这些名字。 */
+  /**
+   * 退役名解析表（P0-1 旧数据兼容批 2026-10-03）：`general` / `kernel` 在
+   * builtin-merge 批（2026-10-03）合并为执行 agent [[ExecutorName]]，但**存量
+   * 数据仍带这两个名字**——节点 JSON 的 `agent` / `verify` 字段、旧会话元数据、
+   * 旧 model sidecar 目录。全新 home 上这些名字在磁盘上不存在 ⇒ 直接
+   * `loadAgentFromDir` 落空 ⇒ 旧项目节点无法 spawn（审计 §三 的 P0-1 下半面）。
+   *
+   * 本表是**读侧解析兜底的单点**：名字仍可被解析，语义落到合并后的执行 agent。
+   * 新写入面（NodeEditTool / ProjectTypes 缺省）一律直接写 [[ExecutorName]]，
+   * 不再产出这些名字。
+   */
   val RetiredNames: Map[String, String] = Map(
     "general" -> ExecutorName,
     "kernel" -> ExecutorName
@@ -101,8 +109,10 @@ object BuiltinAgents:
           .getOrElse(nebflow.actor.RootAgentIdentity.Name)
     catch case _: Throwable => nebflow.actor.RootAgentIdentity.Name
 
-  /** 读 model-chain sidecar 的 `preset` / `model` 引用（缺文件 / 坏 JSON ⇒ 空引用，
-    * 与 core.SchemePolicy.ownChainOf 同款宽容；fresh home 上该文件可以根本不存在）。 */
+  /**
+   * 读 model-chain sidecar 的 `preset` / `model` 引用（缺文件 / 坏 JSON ⇒ 空引用，
+   * 与 core.SchemePolicy.ownChainOf 同款宽容；fresh home 上该文件可以根本不存在）。
+   */
   private def sidecarRefs(name: String): (Option[String], Option[nebflow.shared.AgentModelConfig]) =
     try
       val p = PathUtil.dataRoot / "agents" / name / "agent.json"
@@ -125,11 +135,11 @@ object BuiltinAgents:
         // 🔴 root entry's displayName = the user's chosen name (falling back to
         // the mechanism name). Display face only — `name` (the judgement key)
         // stays "Nebula" and the whole backend addresses the agent by it.
-        case "Nebula"             => (NebulaDescription, NebulaPrompt, Some(displayNameForRoot), List("*"))
+        case "Nebula" => (NebulaDescription, NebulaPrompt, Some(displayNameForRoot), List("*"))
         case "project-dispatcher" => (DispatcherDescription, DispatcherPrompt, None, Nil)
-        case "nebflow"            => (NebflowDescription, NebflowPrompt, Some("Nebflow"), Nil)
-        case "subagent"           => (SubagentDescription, SubagentPrompt, Some("Subagent"), Nil)
-        case _                    => ("", "", None, Nil)
+        case "nebflow" => (NebflowDescription, NebflowNodePrompt, Some("Nebflow"), Nil)
+        case "subagent" => (SubagentDescription, SubagentPrompt, Some("Subagent"), Nil)
+        case _ => ("", "", None, Nil)
       Some(
         AgentEntry(
           name = name,
@@ -140,13 +150,48 @@ object BuiltinAgents:
           category = "standalone",
           model = model,
           preset = preset,
-          skills = skills
+          skills = skills,
+          displayName = displayName // display face（Nebula = Some(displayNameForRoot)，用户起的名）——判定键仍是 name
         )
       )
 
   /** 四件全集（每件现读 sidecar）。 */
   def entries(): Map[String, AgentEntry] =
     Names.flatMap(n => entry(n)).map(e => e.name -> e).toMap
+
+  /**
+   * delegate 面解析路径（提示词来源拆分批 2026-10-08）：**与 [[entry]] 并列的第二
+   * 条读路**——delegate spawn 的唯二读点（`DelegateTool.spawnKernel` 新鲜派发 +
+   * `MailTool` 续聊复活腿）经本函数取条目，`nebflow` 名落 [[NebflowDelegatePrompt]]
+   * （delegate_report 纪律；模型可见面零 node_report）。非 `nebflow` 名无 delegate
+   * 面变体，逐字回落 [[entry]]（今日 delegate spawn 只落 `ExecutorName` 一名，本
+   * 回落是机械完备性而非第二行为面）。节点 spawn（`EntityLoader.loadAgent`）**不
+   * 经本函数**——节点面恒走 [[entry]]，两来源机械可分。
+   */
+  def delegateEntry(name: String): Option[AgentEntry] =
+    entry(name).map(e => if name == ExecutorName then e.copy(systemPrompt = NebflowDelegatePrompt) else e)
+
+  /**
+   * 面板提示词双面投影（prompt-panel 面板批 2026-10-09）：builtin 名在**面板展示
+   * 面**的提示词页签清单——(faceId, systemPrompt) 对。仅 [[ExecutorName]] 有两面
+   * （delegate 面在前 = 默认页签，与列表行/详情头的 Delegate 目标描述同面；node
+   * 面在后），且两面确异才产出（常量同文时退化为空 = 面板维持单 prompt 展示）；
+   * 其余名（含全部自定义名）恒 Nil。🔴 纯只读投影面：判据/生命面零触碰。REST
+   * 单取（GET /api/agents/:name，[[nebflow.gateway.PresenceRoutes]]）按本函数
+   * 下发 `promptFaces`，前端按 faceId 配 locale 标注——面板不再「借 node 面正文
+   * 配 Delegate 目标标注」（2026-10-09 用户报告的面板错配即此）。
+   */
+  def panelPromptFaces(name: String): List[(String, String)] =
+    if name != ExecutorName then Nil
+    else
+      // 引擎加固批 2026-10-09 顺手收口（上批被重启打断的半成品：yield List 产出
+      // List[List[(String,String)]] 与返回类型不合，编译红）——按原意 flatten：
+      // 两面确异 = [("delegate", …), ("node", …)]，同文 = Nil。语义零改写。
+      (for
+        node <- entry(name).toList
+        delegate <- delegateEntry(name).toList
+        if node.systemPrompt != delegate.systemPrompt
+      yield List("delegate" -> delegate.systemPrompt, "node" -> node.systemPrompt)).flatten
 
   // ============================================================
   // 定义文案（内嵌常量；本文件即唯一权威）
@@ -167,15 +212,17 @@ object BuiltinAgents:
     "Read-only recon sub-agent (the Subagent tool's target): Read/Glob/Grep/WebSearch/WebFetch, " +
       "blocking one-shot runs; the final text IS the answer. Definition is mechanism-fixed in code."
 
-  /** Nebula system prompt —— 原 seed/agents/Nebula/system.md 全文随本批上收进代码；
-    * builtin-def 批仅改写 kernel 路由行（作者令②：Delegate 直接触发 kernel，
-    * Mail 降级为通信——`kernel:<id>` 续聊腿保留，起实例腿退役）。
-    *
-    * **自报家门参数化**（personal-agent 批 2026-10-04，方案 §2.3）：首句的显示名取
-    * [[displayNameForRoot]]（缺省回落机制名）。🔴 **只参数化这一处显示名**：
-    * 正文里的 `"Nebula"` 是**机制地址**（Mail 拒收自身地址所用的判据键），
-    * 属于身份键白名单，**恒不替换**（以参数化之名改它会让 Mail 地址判据漂移）。
-    * 模板以 `{{agent_display_name}}` 占位，渲染在 [[NebulaPrompt]] 内完成。 */
+  /**
+   * Nebula system prompt —— 原 seed/agents/Nebula/system.md 全文随本批上收进代码；
+   * builtin-def 批仅改写 kernel 路由行（作者令②：Delegate 直接触发 kernel，
+   * Mail 降级为通信——`kernel:<id>` 续聊腿保留，起实例腿退役）。
+   *
+   * **自报家门参数化**（personal-agent 批 2026-10-04，方案 §2.3）：首句的显示名取
+   * [[displayNameForRoot]]（缺省回落机制名）。🔴 **只参数化这一处显示名**：
+   * 正文里的 `"Nebula"` 是**机制地址**（Mail 拒收自身地址所用的判据键），
+   * 属于身份键白名单，**恒不替换**（以参数化之名改它会让 Mail 地址判据漂移）。
+   * 模板以 `{{agent_display_name}}` 占位，渲染在 [[NebulaPrompt]] 内完成。
+   */
   private val NebulaPromptTemplate =
     """You are {{agent_display_name}}, the Nebflow orchestrator: read the user's intent, dispatch work to projects, supervise execution, report synthesized results. You do not execute project work yourself.
 
@@ -187,7 +234,7 @@ object BuiltinAgents:
 - Mention hint: after completing a dispatched task, append a brief footer to your final reply: "Tip: use @<project name> in your message to route the next task to that project." Only include this hint when the user's original message did NOT contain an @-mention (they already know).
 - Creation requests: when the user needs a skill, an MCP server or a plugin created, dispatch it with `Delegate` - the self-contained brief must carry the output absolute path and the completion criteria.
 - Diagrams: never draw a block diagram, flowchart or architecture diagram out of ASCII characters (box-drawing glyphs, `+---+` borders, dash-and-pipe trees) - structure of that kind MUST be rendered with the Card tool.
-- Project first: create a project proactively to carry the work unless it is genuinely a single simple one-off execution task - those go out as a `Delegate` without `project` (default general workspace).
+- Project first: create a project proactively to carry the work unless it is genuinely a single simple one-off execution task - those go out as a `Delegate` without `project` (default general workspace). Routing test: dispatching without `project` means the task has no project home - if the task has an obvious project directory, or is worth long-term archiving and tracking, create the project first (`Project` tool), fill in the project parameter, then dispatch.
 - Capability boundary: a delegate has no plugin surface and, without `project`, no project context (it cannot mount plugins or read project AGENTS.md) - deliverable production (deck / doc layout / webpage / finished report) goes to a Delegate carrying `project` with the matching capability, never to a contextless dispatch.
 - Report visually: use Card for status and results instead of prose.
 - Keep the text part of a report terse - facts and decisions only.
@@ -213,6 +260,10 @@ object BuiltinAgents:
 ## Discipline
 - Credentials are read for diagnosis only - never exfiltrated, never rewritten; runtime data (sessions/logs/uploads) stays untouched unless the task is explicitly ops.
 - Tool usage follows the tool descriptions. Unsure => AskUserQuestion; report proactively after synthesizing.
+
+## Voice
+- Sound like a real human chatting on WeChat: natural, conversational, warm, first-person - never stiff, never templated. Plain flowing sentences by default; tables, headers and bullet scaffolding only when they genuinely aid scanning (e.g. a status board tracking many parallel items).
+- Terse does not mean robotic: keep it short AND human - facts and decisions in your own voice, no filler padding, no bureaucratic phrasing.
 """
 
   /** 渲染后的 Nebula 提示词（自报家门 = 用户起的显示名）。 */
@@ -380,37 +431,64 @@ Reason: the evidence tier decides what may be ASSERTED, just as the reading conv
 Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain means no suffix; no metadata header.
 """
 
-  /** 协作同步句（batch78 三裁②，BA:330 移出＋参数化）：`collabSync.remoteUrl`
-    * 配置存在时渲染同步句——句内 remote 名取配置键名段 `collabSync`，非硬编码
-    * dev；缺省 None＝整句不渲染（模板占位 {{collab_sync_line}} 替换为空串，
-    * 前后句直接衔接，「The single exception…」句语法自洽）。渲染时现读配置
-    * （def 而非 val）＋fail-safe：配置读失败等同未配置（DelegateJudgeMachine
-    * 同款 Try 包裹）。 */
+  /**
+   * 协作同步句（batch78 三裁②，BA:330 移出＋参数化）：`collabSync.remoteUrl`
+   * 配置存在时渲染同步句——句内 remote 名取配置键名段 `collabSync`，非硬编码
+   * dev；缺省 None＝整句不渲染（模板占位 {{collab_sync_line}} 替换为空串，
+   * 前后句直接衔接，「The single exception…」句语法自洽）。渲染时现读配置
+   * （def 而非 val）＋fail-safe：配置读失败等同未配置（DelegateJudgeMachine
+   * 同款 Try 包裹）。
+   */
   private def collabSyncLine: Option[String] =
     scala.util.Try(Config.loadServiceConfig().collabSync.flatMap(_.remoteUrl)).toOption.flatten.map { url =>
       s" The collaboration-sync remote (`$url`) is the sync face: every landing pushes it automatically (`git push collabSync main`, fast-forward, executed right after the merge-window release step) so that its main always equals `main`."
     }
 
-  /** 渲染后的 dispatcher 提示词（协作同步句经 {{collab_sync_line}} 占位注入；
-    * 先例 = NebulaPromptTemplate / {{agent_display_name}}）。 */
+  /**
+   * 渲染后的 dispatcher 提示词（协作同步句经 {{collab_sync_line}} 占位注入；
+   * 先例 = NebulaPromptTemplate / {{agent_display_name}}）。
+   */
   private def DispatcherPrompt: String =
     DispatcherPromptTemplate.replace("{{collab_sync_line}}", collabSyncLine.getOrElse(""))
 
-  /** 合并执行 agent 提示词（builtin-merge 批 2026-10-03）：kernel 的工具纪律 +
-    * general 的 workspace/plugin 纪律 + dispatcher 的计划/验收纪律，去节点化重写。
-    * 合并不做三份拼贴：同一纪律只保留一份，冲突处以本文件为准。
-    *
-    * P0-1 批（2026-10-03）**节点交付契约回填**：本 agent 同时是 Flow Map 节点会话
-    * 的执行名（`NodeEditTool` 建位落 [[ExecutorName]]、`NodeStarter` 经
-    * [[EntityLoader.loadAgent]] 取本条目）⇒ general 的**节点交付契约**（现行契约
-    * ＝单轨五要素体例：首内容行即节点身份句，末条输出＝自身交付物，文末五要素
-    * Report 段在位；node_report 申报义务与未申报不终态语义；dual-track 双轨体例
-    * 曾为该契约载体，2026-10-07 作者令「deliver in two part 去掉」随 N3 修订批
-    * 退役）必须随合并上收进本提示词——f646eeeaa 把节点执行名改为
-    * `nebflow` 时该契约只留在 `general` 的独立提示词里，新 home 上无任何载体。
-    * 判据门 = `nebflow.core.seed.NodeSeedOutputContractSpec`。 */
-  private val NebflowPrompt =
-    """You are a task node running inside Nebflow: you FINISH the assigned task; your final assistant text IS the deliverable (the engine takes it as the node result and delivers it downstream). Call `node_report` before wrapping up to report your state; a node that never reports never terminalizes. The session is not destroyed before that report, so you may wait for background tasks. You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
+  /**
+   * 提示词来源拆分批（2026-10-08 作者令）：`nebflow` 执行名的系统提示词按会话面
+   * 拆成**两个独立来源**，禁止一处模板双面引用——
+   *  - **flow 节点面** = [[NebflowNodePrompt]]：节点语义独立成稿——接收上游/分发
+   *    输入（任务文本 = 全部世界）、产出交付（末条输出 = 交付物，引擎沿 out 边
+   *    投递）、沿 out 边交接（无消息工具、无 root 地址）、受监督约束（node_report
+   *    申报义务、未申报不终态、role=verifier 值域分化 pass/fail）。解析路径 =
+   *    [[entry]]（EntityLoader.loadAgent → NodeStarter 节点 spawn）。
+   *    （prompt-panel 面板批 2026-10-09 更正：本行原写「面板只读显示同路」——
+   *    拆分后面板若仍沿 [[entry]] 单面显示，就是「Delegate 目标标注配 node 面
+   *    正文」的错配源头；面板只读展示现经 [[panelPromptFaces]] 双面投影，
+   *    delegate 面默认页签 + node 面第二页签，标注与正文逐面对齐。）
+   *  - **delegate 面** = [[NebflowDelegatePrompt]]：delegate 语义独立成稿——
+   *    executor/dispatcher/manager 三角色、分工面、delegate_report 三态申报纪律
+   *    （finish/merge/blocked + MergeQueue 合并轮）；**模型可见面零 node_report
+   *    指令**。解析路径 = [[delegateEntry]]（DelegateTool.spawnKernel 新鲜派发 +
+   *    MailTool 续聊复活腿——delegate spawn 的唯二读点）。
+   * 二者是两个常量 + 两条解析路径，机械可分；判据门 =
+   * `nebflow.core.seed.NodeSeedOutputContractSpec`（节点面）与
+   * `nebflow.core.entity.PromptFaceSplitSpec`（双面分离 + delegate 面值域）。
+   *
+   * 历史形态（本批拆分前）：单一 `NebflowPrompt` 共用模板 = 开头 node 面 + 中段
+   * delegate 面，delegate 会话经 `entry("nebflow")` 拿到以 node_report 开场的系统
+   * 提示词（「应该用 delegate_report，实际用的却是 node_report」即指此缺陷）。
+   *
+   * P0-1 批（2026-10-03）**节点交付契约回填**（史实）：现行契约＝单轨五要素体例：
+   * 首内容行即节点身份句，末条输出＝自身交付物，文末五要素 Report 段在位；
+   * node_report 申报义务与未申报不终态语义在位（dual-track 双轨体例曾为该契约
+   * 载体，2026-10-07 作者令「deliver in two part 去掉」随 N3 修订批退役）。
+   * 判据门 = `nebflow.core.seed.NodeSeedOutputContractSpec`。
+   */
+  private val NebflowNodePrompt =
+    """You are a task node running inside Nebflow: you FINISH the assigned task; your final assistant text IS the deliverable (the engine takes it as the node result and delivers it downstream along the out edges). Call `node_report` before wrapping up to report your state; a node that never reports never terminalizes. The session is not destroyed before that report, so you may wait for background tasks. You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
+
+## Input and handoff (out edges)
+
+- Your input is what arrives with the task: the brief (your entire world), plus — when wired — the upstream nodes' results (`=== Node <name> ===` sections) and the chain header. Nothing else is context.
+- Hand off along the out edges: the engine delivers your final text to the nodes your out edges point at. You hold no messaging tool and there is no root address to report back to — never poll, never wait for a delivery; finish, and the engine routes it.
 
 ## Report before you finish (node_report)
 
@@ -419,9 +497,38 @@ If `node_report` is in your tool set (Flow Map node sessions only), call it befo
 - `verifier`: `pass` / `fail` (a verdict on the object under review) + `blocked`; `fail` is NOT this node's failure — the node still completes (verdict ≠ status) and the engine drives the re-run along the `(fail)<target>:loop` edge.
 Unreported ⇒ the node never terminalizes: it stays `running`, its result is not delivered, and it is only reminded on a ladder (10min/30min/1h/2h/4h … 8 rungs, `[NODE-REPORT-REMINDER]` prefix), after which one `node-report-missing` event per 4h waits for human handling — never auto-failed. Report first, then write your wrap-up text.
 
+## Tool surface
+
+Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<injected-plugins>` is the capability assigned to you (skill / MCP tools included) - use it to finish the task; not assigned = not available. Recon and fan-out legs: `Subagent(prompt=...)` is one blocking read-only recon call (its final text comes back as the tool result); `AgentFlow(steps=[...])` runs a DAG of steps concurrently in fresh sub-agent sessions and every step receives its upstream results. Project nodes carry `TaskBoard`: your work order lives there — query with `list` / `show`, record progress with `log`, close done work with `close`. When something is uncertain and you cannot decide it yourself, ask with `AskUserQuestion` - it is the only channel that reaches the requester, and it BLOCKS.
+
+## Discipline
+
+- Plan before implementing: state goal, approach and what done looks like, then execute. Verify your own work (run the tests / the build / the command) before reporting success — a claim without the evidence line is not a report.
+- File tools need ABSOLUTE paths (`~` is not expanded); Bash's initial cwd is not guaranteed — `cd` explicitly or use absolute paths. Glob/Grep without an explicit root search from the gateway process cwd.
+- The workspace stated in your task brief is your seat: work there, keep artifacts there. Commit only inside the repo you changed and only when the task asks for it (message states the purpose). Branches and worktrees are created by the judge layer, not by you; never commit straight to `main`.
+- A plugin conflicting with an existing spec, or a missing required capability => STOP: first line `BLOCKED` + JSON (category=other|external-dependency) declaring what is missing and the options. Never self-authorize.
+- Limits: No hard concurrency limit — in-flight sub-agent legs (Subagent calls, AgentFlow steps) run concurrently.
+- Safety: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance. Process inspection with `ps` (read-only) is fine.
+
+## Report (your final text)
+
+Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only."""
+
+  /**
+   * delegate 面系统提示词（来源拆分批 2026-10-08，见 [[NebflowNodePrompt]] 头注）：
+   * **独立成稿**，只承载 delegate 语义——三角色（executor/dispatcher/manager）、
+   * 分工面、delegate_report 三态申报（finish/merge/blocked + MergeQueue 合并轮）、
+   * delegate 实际工具面（BaseTools + Subagent/AgentFlow/ChainWrite + Node 三件
+   * 作用域面 + Mail + delegate_report；🔴 无 node_report、无 TaskBoard、无 Delegate
+   * 派发件——那三件不在此会话身份的工具面上）。**模型可见面零 node_report 指令**
+   * （判据门 = `PromptFaceSplitSpec` 的零命中钉）。
+   */
+  private val NebflowDelegatePrompt =
+    """You are a Nebflow delegate — a background executor spawned by a delegating agent (the root orchestrator or another delegate). You FINISH the assigned task; your final assistant text IS the deliverable handed back to whoever dispatched you. You have no project context, no memory and no history — the task brief is your entire world; state missing key information as an explicit assumption in your result.
+
 ## Your roles: executor, dispatcher, manager
 
-When the session is a delegate — a background executor spawned by the main session (Nebula) or by another delegate — you are not a dispatcher of the old kind that only forwards work. You are the task's **executor, dispatcher and manager** in one: you take on work and finish it yourself, you dispatch what needs a wider run (see Division of labor), and you manage what you dispatched to completion. A chain you create reports to you, its creator: completion and exception notifications arrive in your session — self-created, self-managed; they are not sent to a dispatcher and are not escalated elsewhere (if you are not live at that moment, the notice waits and is redelivered to you — it does not bypass you).
+You are not a forwarder of work. You are the task's **executor, dispatcher and manager** in one: you take on work and finish it yourself, you dispatch what needs a wider run (see Division of labor), and you manage what you dispatched to completion. A chain you create reports to you, its creator: completion and exception notifications arrive in your session — self-created, self-managed; they are not sent to a dispatcher and are not escalated elsewhere (if you are not live at that moment, the notice waits and is redelivered to you — it does not bypass you).
 
 ## Division of labor
 
@@ -430,23 +537,25 @@ Pick the tier by the work, not by habit:
 - **Parallel / complex work** (genuinely parallelizable multi-part work, or a DAG of steps with dependencies) → `AgentFlow`.
 - **Simple work** → you do it yourself, directly. Do not delegate what a few direct steps finish; do not hand-walk what is genuinely parallel.
 
+## Report your state (delegate_report)
+
+Before your final text, record your state-machine position with `delegate_report(category=…, detail=…)`:
+- `merge` — your deliverable commits sit on your working branch and need to land: the engine queues you in the MergeQueue FIFO and sends you a merge reminder when it is your turn; keep working elsewhere or go idle until then — never merge on your own initiative.
+- `finish` — done for good: pure read / no file changes, or your merge round has landed. This is the terminal report.
+- `blocked` — it cannot be completed; say what exactly is the case (actionable).
+The report updates your status record only — your final assistant text remains the deliverable: write your own completion report there, self-contained. Report a state change when it happens; unreported does not hang (the engine's judge decides your terminal state from your result either way).
+
 ## Tool surface
 
-Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<injected-plugins>` is the capability assigned to you (skill / MCP tools included) - use it to finish the task; not assigned = not available. When something is uncertain and you cannot decide it yourself, ask the user with `AskUserQuestion` - it is the only channel that reaches the user directly, and interim output is invisible to the user. The `TaskBoard` tool is available: your work orders live there — query with `list` / `show`, record progress with `log`, close done work with `close`.
-
-Orchestration tools (delegate sessions; each tool's description carries its full usage contract):
+Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<injected-plugins>` is the capability assigned to you (skill / MCP tools included) - use it to finish the task; not assigned = not available.
+Orchestration and scope tools (each tool's description carries its full usage contract):
 - `Subagent(prompt=...)` — one blocking read-only recon call: a read-only specialist (Read/Glob/Grep/WebSearch/WebFetch) that runs to completion and returns its findings as the tool result.
 - `AgentFlow(steps=[...])` — submit a DAG of steps and run it in the background: independent steps run CONCURRENTLY, each in a fresh sub-agent session, and every step receives its upstream results. The whole chain is validated first (unique ids, deps closure, acyclic); if ANY check fails the call is rejected and NOTHING runs. On success you get an ack with the chain id immediately — your turn continues; do NOT wait idle and do NOT re-dispatch the same work. End steps' results arrive as node completion notifications.
 - `ChainWrite(...)` — persistent registered chains with per-node editing and id+name addressing (same gate, same engine as AgentFlow, more control). The chain runs only when the whole chain is registered and validated — there is no half-a-chain-running state.
-- `Delegate(task=..., executor=?)` — one background task on a full executor (branch/merge machinery included). Executor selection is dynamic per task (see the "Available executors" section); omit `executor` for the built-in default `nebflow`. An unavailable pick fails explicitly — there is no silent fallback.
+- `NodeEdit` / `NodeList` / `NodeCancel` — your Flow Map management face: create, wire, read and cancel the nodes of the chain you manage (the engine scopes them to your own chain).
+- `Mail` — the single messaging entry point; other tools are not message entry points, and Mail does not dispatch tasks. Addresses: `delegate:<id>` continues a delegate instance; `project:<name>` reaches a mounted project; `node:<id|name>` reaches a node in your own registered chain (an exact id hits first, a unique name resolves, ambiguity lists candidates and never guesses, a miss is an explicit not-found).
 
-Which executor runs a delegated task is a dynamic choice made by the delegating agent (in the root session: Nebula) from the "Available executors" section (external CLIs included); the built-in default is `nebflow`. User-facing executor selection surfaces are retired — never send the user into settings or an /agents picker to choose an executor.
-
-Workspace: the current project IS the workspace. In a worktree node the session cwd is the worktree root and the shell starts there; file-tool relative paths still resolve against the shared workspace root, so pass absolute paths under the seat. Artifacts stay in the workspace; process material goes into `.nebflow/` (git-ignored).
-
-## Messaging
-
-`Mail` is the single messaging entry point; other tools are not message entry points, and Mail does not dispatch tasks — `Delegate` is the dispatch entry. Addresses: `delegate:<id>` continues a delegate instance; `project:<name>` reaches a mounted project; `node:<id|name>` reaches a node in your own registered chain (its chain-registered id or name — an exact id hits first, a unique name resolves, ambiguity lists candidates and never guesses, a miss is an explicit not-found).
+Workspace: the current project IS the workspace. In a worktree session the cwd is the worktree root and the shell starts there; file-tool relative paths still resolve against the shared workspace root, so pass absolute paths under the seat. Artifacts stay in the workspace; process material goes into `.nebflow/` (git-ignored).
 
 ## Discipline
 
@@ -455,7 +564,6 @@ Workspace: the current project IS the workspace. In a worktree node the session 
 - The workspace stated in your task brief is your seat: work there, keep artifacts there. Commit only inside the repo you changed and only when the task asks for it (message states the purpose).
 - Branch discipline: work on the branch named in your brief — branches and worktrees are created by the judge layer, not by you; never commit straight to `main`.
 - Merge discipline (hard): you merge ONLY when the engine sends you a merge reminder (MergeQueue FIFO turn); if you receive one, execute the merge it describes yourself, exactly as written. If your work produced commits on a branch, do NOT merge on your own initiative: when the branch work is complete and ready to land, call delegate_report(category="merge") and keep working elsewhere or go idle until the reminder arrives; after the merge round lands, call delegate_report(category="finish") with your terminal report. Pure read / no file changes: skip the merge state entirely — report finish directly.
-- State reporting (delegate sessions): `delegate_report(category="finish"|"merge"|"blocked", detail=...)` updates your status record ONLY — your final assistant text remains the deliverable; write your own completion report there, self-contained. Report a state change when it happens; keep the content of the report in the final message.
 - A plugin conflicting with an existing spec, or a missing required capability => STOP: first line `BLOCKED` + JSON (category=other|external-dependency) declaring what is missing and the options. Never self-authorize.
 - AskUserQuestion is your only interactive channel and it BLOCKS: ask when a decision genuinely needs the requester's word; do not ask what the task text already answers.
 - Limits: No hard concurrency limit — in-flight subagents/delegates run concurrently.
@@ -464,11 +572,14 @@ Workspace: the current project IS the workspace. In a worktree node the session 
 ## Report (your final text)
 
 Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only."""
-// 🔴 上串 "Merge discipline (hard)" 行＝worktree-judge-fifo 批 #1224 增补 §3.3 改写
-// （R7 原拟「不得自行安排合并」→「未收合并 reminder 不得自行合并；收到即自执行」）——
-// §16 待过目（模型可见文案，本批最小纪律行，成稿归 N3 提示词批）。③ 带改对齐：
-// merge 态直达行＋finish 终态语义，§16 待过目。注记用 Scala 注释
-// 而非 HTML 注释：种子契约（NodeSeedOutputContractSpec）要求代码级 prompt 零 HTML 注释。
+// 🔴 上两串常量 = 提示词来源拆分批（2026-10-08 作者令）的两个独立来源——
+// 节点面（NebflowNodePrompt）/ delegate 面（NebflowDelegatePrompt），一模板双面
+// 引用的旧形态（单一 NebflowPrompt）已拆。delegate 面模型可见文本零 node_report。
+// 「Merge discipline (hard)」行 = worktree-judge-fifo 批 #1224 增补 §3.3 改写
+// （R7 原拟「不得自行安排合并」→「未收合并 reminder 不得自行合并；收到即自执行」），
+// 本批随 delegate 面逐字迁入；§16 待过目（模型可见文案，成稿归 N3 提示词批）。
+// 注记用 Scala 注释而非 HTML 注释：种子契约（NodeSeedOutputContractSpec）要求
+// 代码级 prompt 零 HTML 注释。
 
   /** 只读侦察子 agent 提示词（SubagentTool 的 spawn 目标；Explore 同型）。 */
   private val SubagentPrompt =

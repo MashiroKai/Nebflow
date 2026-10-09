@@ -137,6 +137,7 @@ class ChainLedgerStore private (
             committedRounds = st.rounds.size
             pendingBytes = 0L
       finally persistLock.release()
+      end try
     }
 
   /** 现读 journal 待折叠字节（诊断/量具面；不改变状态）。 */
@@ -449,23 +450,27 @@ class ChainLedgerStore private (
             if !os.exists(archiveDir) then Nil
             else os.list(archiveDir).filter(_.last.endsWith(".json")).toList
           }.flatMap { files =>
-            files.foldLeft(IO.pure(List.empty[(Int, Option[String])])) { (acc, f) =>
-              acc.flatMap { out =>
-                IO.blocking {
-                  jsonParse(os.read(f)).flatMap(_.as[RoundFile]) match
-                    case Right(r) =>
-                      val hit =
-                        r.entries.find(_.chainId == id).map(_.chainId)
-                          .orElse(r.aliases.find(_.alias == id).map(_.canonical))
-                      (r.round, hit) :: out
-                    case Left(e) =>
-                      logger.warnSync(s"chain-ledger[$project] cold file corrupt: ${f.last}: $e — skipped")
-                      out
+            files
+              .foldLeft(IO.pure(List.empty[(Int, Option[String])])) { (acc, f) =>
+                acc.flatMap { out =>
+                  IO.blocking {
+                    jsonParse(os.read(f)).flatMap(_.as[RoundFile]) match
+                      case Right(r) =>
+                        val hit =
+                          r.entries
+                            .find(_.chainId == id)
+                            .map(_.chainId)
+                            .orElse(r.aliases.find(_.alias == id).map(_.canonical))
+                        (r.round, hit) :: out
+                      case Left(e) =>
+                        logger.warnSync(s"chain-ledger[$project] cold file corrupt: ${f.last}: $e — skipped")
+                        out
+                  }
                 }
               }
-            }.map { out =>
-              out.sortBy(_._1).reverse.collectFirst { case (_, Some(canonical)) => canonical }
-            }
+              .map { out =>
+                out.sortBy(_._1).reverse.collectFirst { case (_, Some(canonical)) => canonical }
+              }
           }
     }
 
@@ -615,9 +620,7 @@ class ChainLedgerStore private (
 
   // ── 自检（启动期 / verify 位）────────────────────────
 
-  /**
-   * Cold-archive byte size (metadata only — file names and sizes, zero content reads).
-   */
+  /** Cold-archive byte size (metadata only — file names and sizes, zero content reads). */
   private def coldArchiveBytes: Long =
     if !os.exists(archiveDir) then 0L
     else

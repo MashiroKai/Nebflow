@@ -42,14 +42,17 @@ import io.circe.syntax.*
 enum DecisionQuestionType:
   case Score, Choice, Noul
 
-  /** Wire spelling — used both in the request question object and in the
-    * answer object's `type` field. */
+  /**
+   * Wire spelling — used both in the request question object and in the
+   * answer object's `type` field.
+   */
   def wire: String = this match
     case Score => "score"
     case Choice => "choice"
     case Noul => "noul"
 
 object DecisionQuestionType:
+
   def fromWire(s: String): Option[DecisionQuestionType] = s match
     case "score" => Some(Score)
     case "choice" => Some(Choice)
@@ -97,6 +100,8 @@ object DecisionQuestion:
     instructions: String
   ) extends DecisionQuestion:
     def qtype: DecisionQuestionType = DecisionQuestionType.Noul
+
+end DecisionQuestion
 
 /** One answer of a decision response (canonical form). */
 sealed trait DecisionAnswer extends Product with Serializable:
@@ -163,6 +168,7 @@ object DecisionAnswer:
    * arbitrary one.
    */
   val YesThreshold: Double = 0.5
+end DecisionAnswer
 
 /** Token usage of one decision call (JeV returns `input_tokens`/`output_tokens`). */
 final case class DecisionUsage(inputTokens: Long, outputTokens: Long)
@@ -224,6 +230,8 @@ enum DecisionError:
     case Malformed(d) => s"decision API malformed response: $d"
     case Transport(d) => s"decision API transport error: $d"
 
+end DecisionError
+
 /**
  * The decision-provider trait (P0 #1: independent of `ProviderAdapter`).
  *
@@ -277,8 +285,10 @@ object DecisionProvider:
   /** Capacity threshold above which LAYA precision degrades (card §A.2.4 ②). */
   val LayaChoiceHighBaseThreshold: Int = 20
 
-  /** Read a JSON number as a long, tolerating an integral float encoding
-    * (`2.0` must not be discarded as "not a number"). */
+  /**
+   * Read a JSON number as a long, tolerating an integral float encoding
+   * (`2.0` must not be discarded as "not a number").
+   */
   private[decision] def uintOf(j: Json): Option[Long] =
     j.asNumber.flatMap { n =>
       n.toLong.orElse {

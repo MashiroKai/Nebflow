@@ -17,12 +17,14 @@ object BashTool extends Tool:
 
   val DEFAULT_TIMEOUT = 30_000L // 30s — fallback for synchronous remote-exec only
 
-  /** Auto-background: the former "max timeout / kill
-    * line" is now the foreground auto-background threshold — a foreground command
-    * still running when this value (or an explicit, clamped `timeout`) is reached
-    * is adopted into the background registry, never killed by time. `def` (not
-    * `val`) so the spec prop compression of Defaults.BashMaxTimeoutMs takes
-    * effect at every call. */
+  /**
+   * Auto-background: the former "max timeout / kill
+   * line" is now the foreground auto-background threshold — a foreground command
+   * still running when this value (or an explicit, clamped `timeout`) is reached
+   * is adopted into the background registry, never killed by time. `def` (not
+   * `val`) so the spec prop compression of Defaults.BashMaxTimeoutMs takes
+   * effect at every call.
+   */
   def MAX_TIMEOUT: Long = Defaults.BashMaxTimeoutMs
 
   val name = "Bash"
@@ -392,7 +394,22 @@ Git safety:
       .map(t => t.max(1L).min(MAX_TIMEOUT))
     val commandOpt = input("command").flatMap(_.asString)
     val command = commandOpt.getOrElse("")
-    val (actualCommand, tailN) = extractTailTruncation(command)
+    // askuser-secret 批（2026-10-08，规格 §2「读取 = 原子 rename 出目录再读」）：
+    // 一次性验证码的唯一消费闸。命令引用 `secrets/.otp/` 下的文件 ⇒ 先原子消费
+    // （rename-out，防两次 Bash 同时读到）并把值折进**本条命令**的环境变量
+    // （命令文本改写为变量引用，零值落命令/日志）；引用已消费/过期 ⇒ 显式拒绝，
+    // 不执行（方法尾部统一判读）。不含 otp 引用的命令在此零开销透传（字符串
+    // 标记检测，内容零改动）。
+    val otpFace: Either[String, (String, Map[String, String])] =
+      nebflow.core.secrets.AskUserSecretSink.consumeOtpReferences(
+        command,
+        nebflow.shared.PathUtil.dataRoot
+      )
+    val commandForExec = otpFace match
+      case Left(_) => command // 拒绝面在方法尾部短路（body 不执行）
+      case Right((rew, _env)) => rew
+    val otpEnv = otpFace.fold(_ => Map.empty[String, String], _._2)
+    val (actualCommand, tailN) = extractTailTruncation(commandForExec)
     val background = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
     val desc = input("description").flatMap(_.asString)
     val bgJobId = input("background_job_id").flatMap(_.asString)
@@ -421,61 +438,66 @@ Git safety:
     val secretEnv: Map[String, String] =
       val injection = nebflow.core.secrets.SecretInjection.load(nebflow.shared.PathUtil.dataRoot)
       val entries = nebflow.core.secrets.SecretInjection.resolve(injection, ctx.agentDef.map(_.name))
-      val env = nebflow.core.secrets.SecretInjection.materialize(
-        nebflow.shared.PathUtil.dataRoot / "secrets", entries)
+      val env = nebflow.core.secrets.SecretInjection.materialize(nebflow.shared.PathUtil.dataRoot / "secrets", entries)
       // Audible, name-only: which allowlisted secrets did NOT resolve. A
       // silently absent variable is the failure mode that costs an hour of
       // debugging, and a NAME never leaks anything.
       val missing = nebflow.core.secrets.SecretInjection.unresolved(entries, env)
       if missing.nonEmpty then
-        NebflowLogger.forName("nebflow.secrets")
+        NebflowLogger
+          .forName("nebflow.secrets")
           .warn(s"allowlisted secrets did not resolve (absent / unreadable / oversized): ${missing.mkString(", ")}")
       env
 
     // If background_job_id is provided, enter query/cancel mode
-    bgJobId match
+    // (askuser-secret 批：执行面前先经 otpFace 拒绝闸——引用已消费/过期的一次性
+    // 验证码的命令在此显式失败，不执行、不部分消费。)
+    val runPlan = bgJobId match
       case Some(jobId) =>
         // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
         // sessionId, so a query that created the session first would otherwise
         // hand the later execute path a session created without injection.
-        ShellSession.forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt,
-          secretEnv = secretEnv).flatMap { shell =>
-          if cancelBg then
-            shell.cancelBackgroundJob(jobId).map { cancelled =>
-              if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
-              else Right(s"[Background job not found] Job ID: $jobId")
-            }
-          else
-            shell.getBackgroundResult(jobId).flatMap {
-              case None =>
-                // Job still running — fetch health info for the agent
-                shell.getBackgroundJobHealth(jobId).map {
-                  case Some(h) =>
-                    val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
-                    val isStuck = h.idleMs > stuckThreshold
-                    val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
-                    val stuckWarning =
-                      if isStuck then
-                        s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
-                      else ""
-                    Right(
-                      s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
-                    )
-                  case None =>
-                    Right(s"[Background job pending] Job ID: $jobId")
-                }
-              case Some(Left(e)) =>
-                val errMsg = e match
-                  case _: TimeoutException => "[Command timed out]"
-                  case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
-              case Some(Right(result)) =>
-                val out = cleanOutput(sanitizeCardOutput(result.stdout))
-                val cleanedErr = cleanOutput(result.stderr)
-                val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
-                IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
-            }
-        }
+        // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
+        // ⇒ 与改前逐字节同参）。
+        ShellSession
+          .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
+          .flatMap { shell =>
+            if cancelBg then
+              shell.cancelBackgroundJob(jobId).map { cancelled =>
+                if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
+                else Right(s"[Background job not found] Job ID: $jobId")
+              }
+            else
+              shell.getBackgroundResult(jobId).flatMap {
+                case None =>
+                  // Job still running — fetch health info for the agent
+                  shell.getBackgroundJobHealth(jobId).map {
+                    case Some(h) =>
+                      val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
+                      val isStuck = h.idleMs > stuckThreshold
+                      val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
+                      val stuckWarning =
+                        if isStuck then
+                          s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
+                        else ""
+                      Right(
+                        s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
+                      )
+                    case None =>
+                      Right(s"[Background job pending] Job ID: $jobId")
+                  }
+                case Some(Left(e)) =>
+                  val errMsg = e match
+                    case _: TimeoutException => "[Command timed out]"
+                    case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                  IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
+                case Some(Right(result)) =>
+                  val out = cleanOutput(sanitizeCardOutput(result.stdout))
+                  val cleanedErr = cleanOutput(result.stderr)
+                  val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
+                  IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
+              }
+          }
       case None =>
         if command.isEmpty then IO.pure(Right("[Empty command]"))
         else
@@ -490,8 +512,12 @@ Git safety:
             )
           else
             ShellSession
-              .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt,
-                secretEnv = secretEnv)
+              .forSession(
+                sessionId,
+                initialDir = sessionInitialDir,
+                sandbox = sandboxOpt,
+                secretEnv = secretEnv ++ otpEnv
+              ) // otpEnv：一次性验证码（空 Map = 改前同参）
               .flatMap { shell =>
                 if background then
                   val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
@@ -564,7 +590,11 @@ Git safety:
                 else IO.unit
               }
           end if
-    end match
+
+    // askuser-secret 批：otpFace 拒绝闸（消费失败 ⇒ 原命令不执行）。
+    otpFace match
+      case Left(refusal) => IO.pure(Left(ToolError(refusal)))
+      case Right(_) => runPlan
 
   end doCall
 
@@ -654,23 +684,27 @@ Git safety:
 
   end executeForeground
 
-  /** Unwrap a started fiber's Outcome into its value (Cancelled/Error rethrown).
-    * join alone returns Outcome[IO, Throwable, A]; the foreground race and the
-    * adoption watcher both want the plain A. */
+  /**
+   * Unwrap a started fiber's Outcome into its value (Cancelled/Error rethrown).
+   * join alone returns Outcome[IO, Throwable, A]; the foreground race and the
+   * adoption watcher both want the plain A.
+   */
   /** Unwrap a fiber's join Outcome into its value (Cancelled/Error rethrown). */
   private def unwrapOutcome[A](oc: cats.effect.kernel.Outcome[IO, Throwable, A]): IO[A] =
     oc match
       case cats.effect.kernel.Outcome.Succeeded(fa) => fa
-      case cats.effect.kernel.Outcome.Errored(e)    => IO.raiseError[A](e)
+      case cats.effect.kernel.Outcome.Errored(e) => IO.raiseError[A](e)
       case cats.effect.kernel.Outcome.Canceled() =>
         IO.raiseError[A](new InterruptedException("foreground command fiber cancelled"))
 
   private def joinResult[A](fiber: Fiber[IO, Throwable, A]): IO[A] =
     fiber.join.flatMap(unwrapOutcome)
 
-  /** Render a foreground outcome: real result / stall-watchdog error / generic
-    * error. With the time kill retired, the only
-    * TimeoutException reaching here is the foreground no-progress ceiling. */
+  /**
+   * Render a foreground outcome: real result / stall-watchdog error / generic
+   * error. With the time kill retired, the only
+   * TimeoutException reaching here is the foreground no-progress ceiling.
+   */
   private def formatOutcome(
     outcome: Either[Throwable, ProcessResult],
     desc: Option[String],
@@ -683,13 +717,15 @@ Git safety:
       case Left(e) =>
         Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
 
-  /** Auto-background: adopt a still-running foreground execution as a background
-    * job and produce the receipt. Registry / indicator / completion-notify faces
-    * are fully aligned with an explicit run_in_background (BgTaskRegistry + WS
-    * indicator + BgTaskOutputStore + makeNotifyCallback); the only gap = no live
-    * tail lines (foreground-phase output lines were consumed by the read threads
-    * before the store existed — the running detail card shows 0 lines; the
-    * background_job_id query still returns the full output after completion). */
+  /**
+   * Auto-background: adopt a still-running foreground execution as a background
+   * job and produce the receipt. Registry / indicator / completion-notify faces
+   * are fully aligned with an explicit run_in_background (BgTaskRegistry + WS
+   * indicator + BgTaskOutputStore + makeNotifyCallback); the only gap = no live
+   * tail lines (foreground-phase output lines were consumed by the read threads
+   * before the store existed — the running detail card shows 0 lines; the
+   * background_job_id query still returns the full output after completion).
+   */
   private def autoBackground(
     shell: ShellSession,
     execFiber: Fiber[IO, Throwable, Either[Throwable, ProcessResult]],
@@ -1020,17 +1056,19 @@ Git safety:
         notifyFrontend.void *> notifyAgent
     }
 
-  /** `bg-slow` 审计腿（「只提醒」）：
-    * 把「后台任务被判停滞」这一事实写进项目事件流（nodeId = 节点 id，与 #27
-    * mount-stalled 同族：**只写事件、不终态化、不杀进程**）。
-    *
-    * 🔴 依赖方向：`core.tools` **不得**依赖 `core.project`（BashTool 经 `FlowMapEventLog`
-    * 在本模块内对项目面**零新增依赖**——`FlowMapEventLog` 是 project 包内的事件写入器，
-    * 而本模块已有的 layer 边界只禁 `core.project`→`core.tools` 的反向。为守住「不新增
-    * 跨层 import」，本腿经 `ToolContext` 已注入的**引擎侧身份**（`projectName` /
-    * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与 `NodeReportTool`
-    * 的 `ctx.projectName → ProjectRuntimeRegistry → workspace` 单点同款（判据不猜：
-    * 解析不到 ⇒ 静默 no-op，只留 `logger.warn`；猜错 = 把事件写进别人的日志更糟）。 */
+  /**
+   * `bg-slow` 审计腿（「只提醒」）：
+   * 把「后台任务被判停滞」这一事实写进项目事件流（nodeId = 节点 id，与 #27
+   * mount-stalled 同族：**只写事件、不终态化、不杀进程**）。
+   *
+   * 🔴 依赖方向：`core.tools` **不得**依赖 `core.project`（BashTool 经 `FlowMapEventLog`
+   * 在本模块内对项目面**零新增依赖**——`FlowMapEventLog` 是 project 包内的事件写入器，
+   * 而本模块已有的 layer 边界只禁 `core.project`→`core.tools` 的反向。为守住「不新增
+   * 跨层 import」，本腿经 `ToolContext` 已注入的**引擎侧身份**（`projectName` /
+   * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与 `NodeReportTool`
+   * 的 `ctx.projectName → ProjectRuntimeRegistry → workspace` 单点同款（判据不猜：
+   * 解析不到 ⇒ 静默 no-op，只留 `logger.warn`；猜错 = 把事件写进别人的日志更糟）。
+   */
   private def auditBgSlow(ctx: ToolContext, jobId: String, summary: String): IO[Unit] =
     val nodeId = ctx.flowNodeId.map(_.trim).filter(_.nonEmpty)
     ctx.projectName.map(_.trim).filter(_.nonEmpty) match
@@ -1039,14 +1077,20 @@ Git safety:
         nebflow.core.project.ProjectRuntimeRegistry.get(name).flatMap {
           case None => IO.unit
           case Some(rt) =>
-            nebflow.core.project.FlowMapEventLog.append(
-              rt.project.workspace,
-              rt.project.name,
-              nodeId.getOrElse(ctx.sessionId.getOrElse("")),
-              "bg-slow",
-              summary
-            ).handleErrorWith(e => logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}"))
+            nebflow.core.project.FlowMapEventLog
+              .append(
+                rt.project.workspace,
+                rt.project.name,
+                nodeId.getOrElse(ctx.sessionId.getOrElse("")),
+                "bg-slow",
+                summary
+              )
+              .handleErrorWith(e => logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}"))
         }
+
+    end match
+
+  end auditBgSlow
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(

@@ -53,11 +53,13 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
   private val t0 = 1750000000000L
 
   private def stateWithChain(chainId: String): ChainLedger.State =
-    ChainLedger.observe(
-      ChainLedger.State(project = "p"),
-      List(ChainInfo(id = chainId, memberIds = List("n-a", "n-b"))),
-      t0
-    ).state
+    ChainLedger
+      .observe(
+        ChainLedger.State(project = "p"),
+        List(ChainInfo(id = chainId, memberIds = List("n-a", "n-b"))),
+        t0
+      )
+      .state
 
   // ── L1 the intent is readable (the carrier of criterion 3) ────────────────
 
@@ -86,7 +88,11 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       ChainLedger.StatusActive,
       "an in-flight cancel intent is NOT a terminal state: the projection stays active (the cancelled > paused priority is untouched)"
     )
-    assertEquals(ChainLedger.cancelledAtOf(after, "chain-l2"), None, "cancelledAt must stay empty while the cancel is in progress")
+    assertEquals(
+      ChainLedger.cancelledAtOf(after, "chain-l2"),
+      None,
+      "cancelledAt must stay empty while the cancel is in progress"
+    )
     assertEquals(ChainLedger.pausedAtOf(after, "chain-l2"), None, "the intent must not touch pausedChains")
     assert(
       !ChainLedger.blocksDispatch(after, "chain-l2"),
@@ -99,15 +105,27 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
   test("L3: the terminal cancel write clears the in-progress intent in the SAME state rewrite") {
     val st = stateWithChain("chain-l3")
     val inFlight = ChainLedger.withChainCancelIntent(st, "chain-l3", t0 + 1000L)
-    assertEquals(ChainLedger.cancellingAtOf(inFlight, "chain-l3", t0 + 1000L).isDefined, true, "precondition: intent readable")
+    assertEquals(
+      ChainLedger.cancellingAtOf(inFlight, "chain-l3", t0 + 1000L).isDefined,
+      true,
+      "precondition: intent readable"
+    )
     val landed = ChainLedger.withChainControl(inFlight, "chain-l3", ChainLedger.StatusCancelled, t0 + 2000L)
     assertEquals(
       ChainLedger.cancellingAtOf(landed, "chain-l3", t0 + 2000L),
       None,
       "a chain must never read as both 'cancelling' and 'cancelled' — the terminal write clears the intent atomically"
     )
-    assertEquals(ChainLedger.cancelledAtOf(landed, "chain-l3"), Some(t0 + 2000L), "the terminal cancellation itself must still be recorded")
-    assertEquals(ChainLedger.statusOf(landed, "chain-l3"), ChainLedger.StatusCancelled, "projection priority stays cancelled > paused > active")
+    assertEquals(
+      ChainLedger.cancelledAtOf(landed, "chain-l3"),
+      Some(t0 + 2000L),
+      "the terminal cancellation itself must still be recorded"
+    )
+    assertEquals(
+      ChainLedger.statusOf(landed, "chain-l3"),
+      ChainLedger.StatusCancelled,
+      "projection priority stays cancelled > paused > active"
+    )
   }
 
   // ── L4 read-time TTL filter + lazy prune on write ─────────────────────────
@@ -127,7 +145,11 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       None,
       "past the window the intent reads as absent — a crash between intent and cancel must not leave a permanent 'cancelling' chain"
     )
-    assertEquals(ChainLedger.cancellingChainsAt(recorded, past), Map.empty[String, Long], "the enumeration honours the same TTL")
+    assertEquals(
+      ChainLedger.cancellingChainsAt(recorded, past),
+      Map.empty[String, Long],
+      "the enumeration honours the same TTL"
+    )
     val pruned = ChainLedger.withChainCancelIntent(recorded, "chain-l4", past)
     assertEquals(
       pruned.cancellingChains.keySet,
@@ -174,7 +196,11 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
         Some(now + 50L),
         "the terminal cancellation survives the reopen"
       )
-      assert(!finalDisk.contains(s""""chain-l5":$now"""), "the stale intent row must not remain on disk after the terminal write")
+      assert(
+        !finalDisk.contains(s""""chain-l5":$now"""),
+        "the stale intent row must not remain on disk after the terminal write"
+      )
+    end for
   }
 
   // ── L6 division of labour: a node-level cancel must not fabricate a chain intent
@@ -224,6 +250,10 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt)
     yield (rt, ws, system, res)
 
+    end for
+
+  end mountRig
+
   private def seedChain(rt: ProjectRuntime, chainId: String, a: String, b: String): IO[Unit] =
     // The weakly-connected component forms through a REAL out edge (same
     // convention as `ChainCancelSpec.linearChain`); seeding only `deps` does not
@@ -231,10 +261,26 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
     // which the precondition assertion caught on the spot.
     rt.store
       .mutate(s =>
-        s.copy(nodes = s.nodes ++ Map(
-          a -> NodeDef(id = a, name = a, agent = "general", status = NodeLifecycle.Pending, out = List(OutEdge(b)), createdAt = 1L),
-          b -> NodeDef(id = b, name = b, agent = "general", status = NodeLifecycle.Pending, in = List(a), createdAt = 2L)
-        ))
+        s.copy(nodes =
+          s.nodes ++ Map(
+            a -> NodeDef(
+              id = a,
+              name = a,
+              agent = "general",
+              status = NodeLifecycle.Pending,
+              out = List(OutEdge(b)),
+              createdAt = 1L
+            ),
+            b -> NodeDef(
+              id = b,
+              name = b,
+              agent = "general",
+              status = NodeLifecycle.Pending,
+              in = List(a),
+              createdAt = 2L
+            )
+          )
+        )
       )
       .void
 
@@ -249,13 +295,21 @@ class DeferredCancelLedgerSpec extends CatsEffectSuite:
       ledgerPath = ws / ".nebflow" / ChainLedger.FileName
       // Precondition read from the PERSISTED face, not just memory
       before <- IO.blocking(if os.exists(ledgerPath) then os.read(ledgerPath) else "")
-      _ <- IO(assert(!before.contains("cancellingChains"), s"precondition: no intent face before the chain cancel (file=${os.exists(ledgerPath)})"))
+      _ <- IO(
+        assert(
+          !before.contains("cancellingChains"),
+          s"precondition: no intent face before the chain cancel (file=${os.exists(ledgerPath)})"
+        )
+      )
       // The chain leg must register the intent BEFORE any node is signalled
       rep <- rt.engine.cancelChain("chain-n-l6a", CancelSource.User, "user wants this track gone")
       snap <- rt.store.chainLedgerStore.snapshot
       afterIntent <- IO.blocking(if os.exists(ledgerPath) then os.read(ledgerPath) else "")
     yield
-      assert(resolved.exists(_.info.memberIds.size >= 2), s"precondition: a 2-member chain must resolve, got: $resolved")
+      assert(
+        resolved.exists(_.info.memberIds.size >= 2),
+        s"precondition: a 2-member chain must resolve, got: $resolved"
+      )
       assert(rep.isRight, s"the chain cancel must be accepted, got: $rep")
       assert(
         afterIntent.contains("cancellingChains"),

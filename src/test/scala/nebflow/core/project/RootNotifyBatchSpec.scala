@@ -7,7 +7,12 @@ import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.*
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
@@ -307,20 +312,37 @@ class RootNotifyBatchSpec extends FunSuite:
   // 既有 12 项断言）。本节只做**加法**：正例 / 恒等负例 / 队列语义守卫 / 压缩守卫 /
   // 幂等 / 写入点唯一性。
 
-  test("N1/N2/N5 GREEN: the merged carrier carries N windowItems (arrival order, write-point sender) and a plain item is identity") {
+  test(
+    "N1/N2/N5 GREEN: the merged carrier carries N windowItems (arrival order, write-point sender) and a plain item is identity"
+  ) {
     withFixture("n1", quietMs = 400L, batchMax = 10) { (store, engine, recorded, _) =>
-      val nodes = List(node("n-n1-1", result = "N1_BODY_ONE"), node("n-n1-2", status = NodeLifecycle.Failed, result = "N1_BODY_TWO"))
+      val nodes = List(
+        node("n-n1-1", result = "N1_BODY_ONE"),
+        node("n-n1-2", status = NodeLifecycle.Failed, result = "N1_BODY_TWO")
+      )
       val io = for
         _ <- seed(store, nodes)
         // 直走打包入口（与 A5/A6 同款接缝）：文本逐件自带状态段，允许多状态混批
-        _ <- engine.enqueueRootNotify("[Node 'node-n-n1-1' completed]\nN1_BODY_ONE", "node-n-n1-1", NodeLifecycle.Completed, Some("n-n1-1"))
-        _ <- engine.enqueueRootNotify("[Node 'node-n-n1-2' failed]\nN1_BODY_TWO", "node-n-n1-2", NodeLifecycle.Failed, Some("n-n1-2"))
+        _ <- engine.enqueueRootNotify(
+          "[Node 'node-n-n1-1' completed]\nN1_BODY_ONE",
+          "node-n-n1-1",
+          NodeLifecycle.Completed,
+          Some("n-n1-1")
+        )
+        _ <- engine.enqueueRootNotify(
+          "[Node 'node-n-n1-2' failed]\nN1_BODY_TWO",
+          "node-n-n1-2",
+          NodeLifecycle.Failed,
+          Some("n-n1-2")
+        )
         ms <- awaitImms(recorded, min = 1)
         _ <- IO.sleep(600.millis)
         after <- imms(recorded)
       yield after
       val after = io.unsafeRunSync()
-      println(s"[RootNotifyBatchSpec] N1 DIAG injections=${after.size} payloads=${after.flatMap(_.windowItems).map(_.map(w => (w.text.take(20), w.status, w.sender)))}")
+      println(
+        s"[RootNotifyBatchSpec] N1 DIAG injections=${after.size} payloads=${after.flatMap(_.windowItems).map(_.map(w => (w.text.take(20), w.status, w.sender)))}"
+      )
       assertEquals(clue(after.size), 1, "carrier stays ONE queue element (route ① — queue arithmetic untouched)")
       val carrier = after.head
       // N1：载荷 = N 件，序 == 到达序，逐件自带身份/状态/项目名前缀
@@ -378,7 +400,10 @@ class RootNotifyBatchSpec extends FunSuite:
       TurnBoundaryDrains.expandWindowFlush
     // N3：队列只移除 1 个元素（载体不论载荷多少件，都只占 1 槽）
     val (taken, tail) =
-      TurnBoundaryDrains.drainHeadExpanded(List[AgentCommand.ImmediateInput](carrier, tailItem), compactionPending = false)(expand)
+      TurnBoundaryDrains.drainHeadExpanded(
+        List[AgentCommand.ImmediateInput](carrier, tailItem),
+        compactionPending = false
+      )(expand)
     assertEquals(clue(taken.size), 1, "one payload item ⇒ one virtual item (payload count, not queue count)")
     assertEquals(clue(tail), List(tailItem), "queue arithmetic: exactly ONE element removed")
     // N4：压缩挂起 ⇒ 载体一件都不展开（guard 覆盖载体，语义与 drainHead 逐字同形）
@@ -393,12 +418,17 @@ class RootNotifyBatchSpec extends FunSuite:
     // 判据 = 源码现读计数（禁语义判断）：`windowItems = Some(` 的写入点全仓恰 1 处，
     // 且必须落在 `NodeEngine.flushRootNotify` 的 `case many` 分支内。
     val mainRoot = os.pwd / "src" / "main" / "scala"
-    val writeSites = os.walk(mainRoot).filter(os.isFile).filter(_.ext == "scala").flatMap { f =>
-      os.read(f).linesIterator.zipWithIndex.collect {
-        case (line, i) if line.contains("windowItems = Some(") && !line.trim.startsWith("//") =>
-          s"${f.relativeTo(mainRoot)}:${i + 1}"
+    val writeSites = os
+      .walk(mainRoot)
+      .filter(os.isFile)
+      .filter(_.ext == "scala")
+      .flatMap { f =>
+        os.read(f).linesIterator.zipWithIndex.collect {
+          case (line, i) if line.contains("windowItems = Some(") && !line.trim.startsWith("//") =>
+            s"${f.relativeTo(mainRoot)}:${i + 1}"
+        }
       }
-    }.toList
+      .toList
     assertEquals(
       clue(writeSites).map(_.replaceAll(":\\d+$", "")).distinct,
       List("nebflow/core/project/NodeEngine.scala"),
@@ -406,7 +436,6 @@ class RootNotifyBatchSpec extends FunSuite:
     )
     assertEquals(clue(writeSites.size), 1, s"exactly ONE write site (mechanical count): $writeSites")
   }
-
 
   test("A2 GREEN: single item zero drift — windowed single is BYTE-IDENTICAL to the window-off (legacy) single") {
     def capture(quiet: Long): AgentCommand.ImmediateInput =

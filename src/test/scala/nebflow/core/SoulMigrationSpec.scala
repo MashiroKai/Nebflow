@@ -171,7 +171,10 @@ class SoulMigrationSpec extends FunSuite:
     // 默认 128k ⇒ 128000 × 4 × 10% = 51200 > 既有两级硬顶 ⇒ 生效值 = 常量本身
     assertEquals(MemoryBudget.injectionCapBytes(nebflow.shared.Defaults.ContextWindow), 51200L)
     assertEquals(MemoryBudget.userInjectionHardBytes(nebflow.shared.Defaults.ContextWindow), MemoryBudget.UserHardBytes)
-    assertEquals(MemoryBudget.agentInjectionHardBytes(nebflow.shared.Defaults.ContextWindow), MemoryBudget.AgentHardBytes)
+    assertEquals(
+      MemoryBudget.agentInjectionHardBytes(nebflow.shared.Defaults.ContextWindow),
+      MemoryBudget.AgentHardBytes
+    )
     // 小窗口 ⇒ 收紧
     assertEquals(MemoryBudget.userInjectionHardBytes(32000), 12800L)
     assertEquals(MemoryBudget.agentInjectionHardBytes(32000), 12800L)
@@ -192,7 +195,10 @@ class SoulMigrationSpec extends FunSuite:
     val atDefault = nebflow.agent.ContextRefresher.memoryHygieneNotice(None, mid, (false, false))
     assertEquals(atDefault, "", "默认 128k 窗口下 15KB 未超 24KB 软线 ⇒ 零打扰")
     val atSmall = nebflow.agent.ContextRefresher.memoryHygieneNotice(
-      None, mid, (false, false), contextWindow = 32000
+      None,
+      mid,
+      (false, false),
+      contextWindow = 32000
     )
     assert(atSmall.contains("IMMEDIATE TASK"), s"32k 窗口下应升级（软线 10240 < 15000）: $atSmall")
     assert(atSmall.contains("Soul.md"), "指明 Soul 文件")

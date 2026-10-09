@@ -35,17 +35,16 @@ class BashToolForegroundSpec extends CatsEffectSuite:
   private def query(jobId: String): IO[String] =
     BashTool.call(JsonObject("background_job_id" -> jobId.asJson), ToolContext(projectRoot = "/tmp")).map {
       case Right(out) => out
-      case Left(e)    => fail(s"background query failed: ${e.message}")
+      case Left(e) => fail(s"background query failed: ${e.message}")
     }
 
   /** Poll the query face until `want` appears or the deadline passes. */
-  private def pollUntil(jobId: String, want: String, deadline: FiniteDuration): IO[String] = {
+  private def pollUntil(jobId: String, want: String, deadline: FiniteDuration): IO[String] =
     def loop: IO[String] =
       query(jobId).flatMap { out =>
         if out.contains(want) then IO.pure(out) else IO.sleep(400.millis) *> loop
       }
     loop.timeout(deadline)
-  }
 
   test("short foreground command returns real output (no conversion below the budget)") {
     runBash("sleep 2 && echo hello-foreground").map {
@@ -150,7 +149,9 @@ class BashToolForegroundSpec extends CatsEffectSuite:
       jobId = """Job ID: (\w+)""".r.findFirstMatchIn(receipt).map(_.group(1)).getOrElse(fail(s"no job id: $receipt"))
       _ <- (for
         health <- query(jobId)
-        _ <- IO(assert(health.contains("[Background job running]"), s"tree must still be alive past the budget: $health"))
+        _ <- IO(
+          assert(health.contains("[Background job running]"), s"tree must still be alive past the budget: $health")
+        )
         // The agent-side kill handle: explicit cancel must promptly tear the tree down.
         cancel <- BashTool
           .call(
@@ -161,7 +162,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
         _ <- IO {
           cancel match
             case Right(out) => assert(out.contains("[Background job cancelled]"), s"cancel face: $out")
-            case Left(e)    => fail(s"cancel failed: ${e.message}")
+            case Left(e) => fail(s"cancel failed: ${e.message}")
         }
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())

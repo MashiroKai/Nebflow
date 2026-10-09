@@ -11,9 +11,22 @@ import nebflow.actor.AgentDef // W1 shim: main had nebflow.agent.AgentDef; PR mo
 import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.FileChangeTracker
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
-import nebflow.core.project.{FlowMapStore, NodeEngine, ProjectActor, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry, TaskLedgerData, TaskLedgerHistory, TaskLedgerStore}
+import nebflow.core.project.{
+  FlowMapStore,
+  NodeEngine,
+  ProjectActor,
+  ProjectDef,
+  ProjectRuntime,
+  ProjectRuntimeRegistry,
+  TaskLedgerData,
+  TaskLedgerHistory,
+  TaskLedgerStore
+}
 import nebflow.core.task.FileTaskStore
-import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had them in nebflow.gateway; PR moved the family to core
+import nebflow.core.{
+  RateLimiter,
+  SessionStore
+} // W1 shim: main had them in nebflow.gateway; PR moved the family to core
 import nebflow.llm.ModelCandidate // W1 shim: ThinkingConfig split out — PR moved it to shared
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
@@ -79,21 +92,25 @@ class MailTerminalReviveSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  /** Records every ProjectCommand the Mail project leg sends (the `revive` flag and the
-    * slot-binding taskId both travel on TriggerDispatcher — asserted, never assumed). */
+  /**
+   * Records every ProjectCommand the Mail project leg sends (the `revive` flag and the
+   * slot-binding taskId both travel on TriggerDispatcher — asserted, never assumed).
+   */
   private def mkRecordingActor(
-      record: Ref[IO, List[ProjectActor.ProjectCommand]]
+    record: Ref[IO, List[ProjectActor.ProjectCommand]]
   ): Behavior[ProjectActor.ProjectCommand] =
     def loop: Behavior[ProjectActor.ProjectCommand] =
       Behaviors.receiveMessage[ProjectActor.ProjectCommand](cmd => record.update(_ :+ cmd).as(loop))
     loop
 
   private class StubLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
@@ -128,7 +145,7 @@ class MailTerminalReviveSpec extends FunSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 25.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -141,17 +158,19 @@ class MailTerminalReviveSpec extends FunSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def mountWithRecordingActor(
-      name: String,
-      ws: os.Path,
-      system: ActorSystem,
-      res: SharedResources,
-      record: Ref[IO, List[ProjectActor.ProjectCommand]]
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources,
+    record: Ref[IO, List[ProjectActor.ProjectCommand]]
   ): IO[ActorRef[ProjectActor.ProjectCommand]] =
     for
       ref <- system.spawn(mkRecordingActor(record), s"$name-recorder")
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -160,52 +179,67 @@ class MailTerminalReviveSpec extends FunSuite:
         notifyTriggerOverride = Some((_: String) => IO.unit),
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, Some(ref))
       _ <- ProjectRuntimeRegistry.register(rt)
     yield ref
 
   /** Create one task through the real ledger write face and return the bare id. */
   private def newTask(title: String): String =
-    TaskLedgerStore.open()
+    TaskLedgerStore
+      .open()
       .createSyncReturningId(title = title, actor = TaskLedgerHistory.Actors.Dispatcher)
       .getOrElse(sys.error("create must succeed"))
 
-  /** The revive-class note lines on the task's note timeline (the flip annotation only;
-    * Mail-body notes are `from=nebula` and never carry the verbatim string). */
+  /**
+   * The revive-class note lines on the task's note timeline (the flip annotation only;
+   * Mail-body notes are `from=nebula` and never carry the verbatim string).
+   */
   private def reviveNoteCount(tid: String): Int =
-    TaskLedgerHistory.open()
-      .readFor(tid, Int.MaxValue, TaskLedgerHistory.isNoteEvent).events
+    TaskLedgerHistory
+      .open()
+      .readFor(tid, Int.MaxValue, TaskLedgerHistory.isNoteEvent)
+      .events
       .count(_.text.exists(_.contains(TaskLedgerStore.ReviveNoteText)))
 
   /** (receipt, trigger info) after one `Mail(address="project:…", task=…)`. */
   private def mailWithTask(
-      name: String,
-      ws: os.Path,
-      system: ActorSystem,
-      task: Option[String],
-      expectedTriggers: Int
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    task: Option[String],
+    expectedTriggers: Int
   ): IO[(Either[ToolError, String], List[(String, Boolean)])] =
     for
       record <- Ref.of[IO, List[ProjectActor.ProjectCommand]](Nil)
       resources <- mkResources(system)
       _ <- mountWithRecordingActor(name, ws, system, resources, record)
       res <- task match
-        case Some(tid) => MailTool.call(qIn("address" -> s"project:$name", "message" -> "continuation mail", "task" -> tid), ctx(system))
-        case None      => MailTool.call(qIn("address" -> s"project:$name", "message" -> "continuation mail"), ctx(system))
+        case Some(tid) =>
+          MailTool.call(
+            qIn("address" -> s"project:$name", "message" -> "continuation mail", "task" -> tid),
+            ctx(system)
+          )
+        case None => MailTool.call(qIn("address" -> s"project:$name", "message" -> "continuation mail"), ctx(system))
       _ <- waitUntil(10.seconds)(record.get.map(_.size >= expectedTriggers))
       cmds <- record.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      val triggers = cmds.collect {
-        case ProjectActor.ProjectCommand.TriggerDispatcher(_, _, _, _, tid, revive) => (tid.getOrElse(""), revive)
+      val triggers = cmds.collect { case ProjectActor.ProjectCommand.TriggerDispatcher(_, _, _, _, tid, revive) =>
+        (tid.getOrElse(""), revive)
       }
       (res, triggers)
 
   // ── (1) completed 续行 ──
 
-  test("(1) completed revival: receipt `…Task 上下文已继承（前态=completed，已重启）· dispatcher re-mounted` verbatim, status flips open, verbatim note line, trigger carries revive=true"):
+  test(
+    "(1) completed revival: receipt `…Task 上下文已继承（前态=completed，已重启）· dispatcher re-mounted` verbatim, status flips open, verbatim note line, trigger carries revive=true"
+  ):
     val ws = tempRoot / "ws-revive-completed"
     os.makeDir.all(ws)
     val system = ActorSystem(s"mail-revive-c-${java.util.UUID.randomUUID().toString.take(6)}")
@@ -216,20 +250,29 @@ class MailTerminalReviveSpec extends FunSuite:
 
       val receipt = res match
         case Right(r) => r
-        case Left(e)  => fail(s"the completed task must be REVIVED, not refused, got error: ${e.message}")
-      assertEquals(receipt,
+        case Left(e) => fail(s"the completed task must be REVIVED, not refused, got error: ${e.message}")
+      assertEquals(
+        receipt,
         s"[task #$tid] Task 上下文已继承（前态=completed，已重启）· dispatcher re-mounted",
-        "the revive receipt header must be the author's verbatim string with 前态=completed")
+        "the revive receipt header must be the author's verbatim string with 前态=completed"
+      )
 
       val entry = TaskLedgerStore.open().findSync(tid).getOrElse(fail("the revived entry must still exist"))
       assertEquals(entry.status, TaskLedgerStore.Status.Open, "the revival flips the terminal state back to open")
-      assertEquals(reviveNoteCount(tid), 1,
-        "exactly one note-timeline line with the author's verbatim body must exist after one revival")
-      assertEquals(triggers, List((tid, true)),
-        s"the trigger must carry the bare taskId and revive=true, got: $triggers")
+      assertEquals(
+        reviveNoteCount(tid),
+        1,
+        "exactly one note-timeline line with the author's verbatim body must exist after one revival"
+      )
+      assertEquals(
+        triggers,
+        List((tid, true)),
+        s"the trigger must carry the bare taskId and revive=true, got: $triggers"
+      )
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       ProjectRuntimeRegistry.clear
+    end try
 
   // ── (2) closed 续行 ──
 
@@ -245,20 +288,25 @@ class MailTerminalReviveSpec extends FunSuite:
 
       val receipt = res match
         case Right(r) => r
-        case Left(e)  => fail(s"the closed task must be REVIVED (re-open), not refused, got error: ${e.message}")
-      assertEquals(receipt,
+        case Left(e) => fail(s"the closed task must be REVIVED (re-open), not refused, got error: ${e.message}")
+      assertEquals(
+        receipt,
         s"[task #$tid] Task 上下文已继承（前态=closed，已重启）· dispatcher re-mounted",
-        "the revive receipt header must name the actual prior state (closed)")
+        "the revive receipt header must name the actual prior state (closed)"
+      )
       assertEquals(TaskLedgerStore.open().findSync(tid).map(_.status), Some(TaskLedgerStore.Status.Open))
       assertEquals(reviveNoteCount(tid), 1)
       assertEquals(triggers, List((tid, true)))
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       ProjectRuntimeRegistry.clear
+    end try
 
   // ── (3) 不可续面零变化 ──
 
-  test("(3) non-continuable face unchanged: a never-created number returns the byte-identical TASK_NOT_FOUND text and delivers nothing"):
+  test(
+    "(3) non-continuable face unchanged: a never-created number returns the byte-identical TASK_NOT_FOUND text and delivers nothing"
+  ):
     val ws = tempRoot / "ws-revive-missing"
     os.makeDir.all(ws)
     val system = ActorSystem(s"mail-revive-m-${java.util.UUID.randomUUID().toString.take(6)}")
@@ -266,17 +314,23 @@ class MailTerminalReviveSpec extends FunSuite:
       val (res, triggers) = mailWithTask("revive-proj-missing", ws, system, Some("424242"), 0).unsafeRunSync()
 
       val err = res match
-        case Left(e)  => e.message
+        case Left(e) => e.message
         case Right(r) => fail(s"a never-created task number must stay an explicit error, got receipt: $r")
       assert(err.contains("(TASK_NOT_FOUND)"), s"the error code face is unchanged, got: $err")
-      assert(err.contains("it was never created (or it was pruned after reaching a terminal state)"),
-        s"the readable-reason face is byte-unchanged, got: $err")
+      assert(
+        err.contains("it was never created (or it was pruned after reaching a terminal state)"),
+        s"the readable-reason face is byte-unchanged, got: $err"
+      )
       assertEquals(triggers, Nil, "nothing may be delivered for a non-existent task")
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       ProjectRuntimeRegistry.clear
 
-  test("(3b) pruned face unchanged: a 30-day-expired terminal entry is lazily pruned by the next create, then Mail(task=it) = TASK_NOT_FOUND (real prune path)"):
+    end try
+
+  test(
+    "(3b) pruned face unchanged: a 30-day-expired terminal entry is lazily pruned by the next create, then Mail(task=it) = TASK_NOT_FOUND (real prune path)"
+  ):
     val ws = tempRoot / "ws-revive-pruned"
     os.makeDir.all(ws)
     val system = ActorSystem(s"mail-revive-p-${java.util.UUID.randomUUID().toString.take(6)}")
@@ -290,21 +344,22 @@ class MailTerminalReviveSpec extends FunSuite:
       val f = tempRoot / TaskLedgerStore.FileName
       val backdatedAt = Instant.now().minusSeconds(31L * 24 * 3600).toString
       val data = io.circe.parser.decode[TaskLedgerData](os.read(f)).getOrElse(fail("ledger file must decode"))
-      val backdated = data.copy(tasks = data.tasks.map(t =>
-        if t.id == tid then t.copy(completedAt = Some(backdatedAt)) else t))
+      val backdated =
+        data.copy(tasks = data.tasks.map(t => if t.id == tid then t.copy(completedAt = Some(backdatedAt)) else t))
       os.write.over(f, backdated.asJson.noSpaces)
       assert(ledger.createSyncReturningId("prune trigger").isRight)
       assertEquals(ledger.findSync(tid), None, "the 31-day terminal entry must be gone after the lazy prune")
 
       val (res, triggers) = mailWithTask("revive-proj-pruned", ws, system, Some(tid), 0).unsafeRunSync()
       val err = res match
-        case Left(e)  => e.message
+        case Left(e) => e.message
         case Right(r) => fail(s"a pruned task number must stay TASK_NOT_FOUND (the object is gone), got: $r")
       assert(err.contains("(TASK_NOT_FOUND)"), s"got: $err")
       assertEquals(triggers, Nil, "nothing may be delivered for a pruned task")
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       ProjectRuntimeRegistry.clear
+    end try
 
   // ── (4) 非终态路径零变化 ──
 
@@ -318,21 +373,29 @@ class MailTerminalReviveSpec extends FunSuite:
 
       val receipt = res match
         case Right(r) => r
-        case Left(e)  => fail(s"an open task continues exactly as before, got error: ${e.message}")
-      assertEquals(receipt,
+        case Left(e) => fail(s"an open task continues exactly as before, got error: ${e.message}")
+      assertEquals(
+        receipt,
         s"[task #$tid] Project 'revive-proj-open' dispatcher triggered",
-        "the ordinary receipt header must be byte-identical to the historical string")
-      assertEquals(TaskLedgerStore.open().findSync(tid).map(_.status), Some(TaskLedgerStore.Status.Open),
-        "an open task is NOT re-flipped by its own continuation Mail")
+        "the ordinary receipt header must be byte-identical to the historical string"
+      )
+      assertEquals(
+        TaskLedgerStore.open().findSync(tid).map(_.status),
+        Some(TaskLedgerStore.Status.Open),
+        "an open task is NOT re-flipped by its own continuation Mail"
+      )
       assertEquals(reviveNoteCount(tid), 0, "no revive note on the ordinary path")
       assertEquals(triggers, List((tid, false)), "the ordinary trigger carries revive=false")
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       ProjectRuntimeRegistry.clear
+    end try
 
   // ── (5) 连续两次续行幂等 ──
 
-  test("(5) double continuation is idempotent: the second Mail finds the task open ⇒ ordinary path, no second flip / no second revive note"):
+  test(
+    "(5) double continuation is idempotent: the second Mail finds the task open ⇒ ordinary path, no second flip / no second revive note"
+  ):
     val ws = tempRoot / "ws-revive-twice"
     os.makeDir.all(ws)
     val system = ActorSystem(s"mail-revive-t-${java.util.UUID.randomUUID().toString.take(6)}")
@@ -342,8 +405,10 @@ class MailTerminalReviveSpec extends FunSuite:
 
       // first Mail: the revival
       val (res1, triggers1) = mailWithTask("revive-proj-twice", ws, system, Some(tid), 1).unsafeRunSync()
-      assert(res1.exists(_.contains("Task 上下文已继承（前态=completed，已重启）· dispatcher re-mounted")),
-        s"the first Mail must revive, got: $res1")
+      assert(
+        res1.exists(_.contains("Task 上下文已继承（前态=completed，已重启）· dispatcher re-mounted")),
+        s"the first Mail must revive, got: $res1"
+      )
       assertEquals(triggers1, List((tid, true)))
       assertEquals(reviveNoteCount(tid), 1)
 
@@ -351,16 +416,22 @@ class MailTerminalReviveSpec extends FunSuite:
       val (res2, triggers2) = mailWithTask("revive-proj-twice", ws, system, Some(tid), 1).unsafeRunSync()
       val receipt2 = res2 match
         case Right(r) => r
-        case Left(e)  => fail(s"the second continuation must NOT error (idempotent ordinary path), got: ${e.message}")
-      assertEquals(receipt2,
+        case Left(e) => fail(s"the second continuation must NOT error (idempotent ordinary path), got: ${e.message}")
+      assertEquals(
+        receipt2,
         s"[task #$tid] Project 'revive-proj-twice' dispatcher triggered",
-        "the second Mail takes the ordinary receipt face, byte-identical")
-      assertEquals(TaskLedgerStore.open().findSync(tid).map(_.status), Some(TaskLedgerStore.Status.Open),
-        "no second flip (open → open is not a revival)")
+        "the second Mail takes the ordinary receipt face, byte-identical"
+      )
+      assertEquals(
+        TaskLedgerStore.open().findSync(tid).map(_.status),
+        Some(TaskLedgerStore.Status.Open),
+        "no second flip (open → open is not a revival)"
+      )
       assertEquals(reviveNoteCount(tid), 1, "no second revive note may be written")
       assertEquals(triggers2, List((tid, false)), "the second trigger carries revive=false")
     finally
       system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
       ProjectRuntimeRegistry.clear
+    end try
 
 end MailTerminalReviveSpec

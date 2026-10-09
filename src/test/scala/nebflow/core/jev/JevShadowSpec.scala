@@ -49,7 +49,11 @@ class JevShadowSpec extends CatsEffectSuite:
     def predict(req: DecisionRequest) =
       val answers = catalog.map { e =>
         val need = if yes.contains(e.name) then "yes" else "no"
-        s"need_${e.name}" -> (DecisionAnswer.Choice(need, None, Map("yes" -> (if need == "yes" then 1.0 else 0.0))) : DecisionAnswer)
+        s"need_${e.name}" -> (DecisionAnswer.Choice(
+          need,
+          None,
+          Map("yes" -> (if need == "yes" then 1.0 else 0.0))
+        ): DecisionAnswer)
       }.toMap
       IO.pure(Right(DecisionResponse(None, answers, None)))
 
@@ -83,7 +87,10 @@ class JevShadowSpec extends CatsEffectSuite:
     // The divergence this whole shadow exists to measure: a node that declared
     // nothing but WAS allocated (empty) flips from unsatisfied to satisfied.
     assert(!JevLegacyDeclarationDuty.isSatisfied(keyProvided = false), "legacy: no key => refused")
-    assert(JevDeclarationDuty.isSatisfied(JevDeclarationDuty.Allocated(empty = true)), "new: allocated-empty => satisfied")
+    assert(
+      JevDeclarationDuty.isSatisfied(JevDeclarationDuty.Allocated(empty = true)),
+      "new: allocated-empty => satisfied"
+    )
     assert(!JevDeclarationDuty.isSatisfied(JevDeclarationDuty.AllocationMissing))
     // Both agree on the ordinary cases.
     assert(JevLegacyDeclarationDuty.isSatisfied(keyProvided = true))
@@ -98,7 +105,8 @@ class JevShadowSpec extends CatsEffectSuite:
 
   test("the shadow records both arms and flags divergence, changing nothing") {
     withTempDataRoot { tmp =>
-      val shadow = new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")), 15000L)), enabled = true)
+      val shadow =
+        new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")), 15000L)), enabled = true)
       for
         rec <- shadow.evaluate("n-1", "task", catalog, declaredCapabilities = Nil, keyProvided = false)
         _ = assert(rec.isDefined, "the shadow must produce a record when enabled")
@@ -116,7 +124,8 @@ class JevShadowSpec extends CatsEffectSuite:
 
   test("agreement is recorded as non-divergence when the declared set matches") {
     withTempDataRoot { _ =>
-      val shadow = new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")), 15000L)), enabled = true)
+      val shadow =
+        new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")), 15000L)), enabled = true)
       shadow.evaluate("n-1", "t", catalog, declaredCapabilities = List("backend-dev"), keyProvided = true).map { rec =>
         val r = rec.get
         assertEquals(r.legacySatisfied, true)
@@ -249,3 +258,4 @@ class JevShadowSpec extends CatsEffectSuite:
       JevAllocationStub.observe("n", wouldAllocate = true).map(_ => ())
     }
   }
+end JevShadowSpec

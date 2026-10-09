@@ -110,3 +110,4 @@ replay_pid*
 # editor state, never source.
 *.swp
 *~
+.nebflow/

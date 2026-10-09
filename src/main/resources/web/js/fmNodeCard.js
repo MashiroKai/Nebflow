@@ -246,11 +246,14 @@ export function chainCardHtml(n, pos, originX) {
 //   opts.headPrefix head 行前置 HTML（S10 卡＝ChainNode，执行器图标置于 head 行首）；
 //   opts.subText    副行文本覆盖（ChainNode 无 preset/plugins 面）；'' = 副行整行省略
 //                   （零空行），title 属性同步收窄为「名（状态词）」。
+//   opts.noDesc     描述/运行中说明行整行省略（delegate-ui 修订批 2026-10-09 九点③：
+//                   S10 链视图「节点下方的文字解释全部删掉」——S10 传 true；主图缺省
+//                   false 输出逐字节不变）。
 //   状态词面：ready-to-merge（delegate 链新态）走 FM_NODE_ST_KEY 新条目（主图节点
 //   值域不含该状态 ⇒ 主图渲染逐字节不变）。
 /** @param {any} n @param {{x: number, y: number, h?: number}} pos
  *  @param {number} originX @param {(id: string) => string|null} [nameOf]
- *  @param {{plain?: boolean, headPrefix?: string, subText?: string}} [opts] */
+ *  @param {{plain?: boolean, headPrefix?: string, subText?: string, noDesc?: boolean}} [opts] */
 export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
   const o = opts || {};
   if (n && n.chainCard) return chainCardHtml(n, pos, originX); // 折叠链卡单点分派
@@ -300,11 +303,11 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
   // 行，不新增卡内纵行（88px 卡纵向不可加行）。
   const loopPhase = (st === 'running' && n.loopPhase && n.loop && typeof n.loop === 'object')
     ? esc(t(`flowmap.loopPhase.${n.loopPhase === 'verify' ? 'verify' : 'worker'}`)) : '';
-  const desc = descText
+  const desc = o.noDesc ? '' : (descText
     ? `<div class="fm-desc" title="${esc(descText)}">${esc(descText.slice(0, 46))}${descText.length > 46 ? '…' : ''}</div>`
     : (st === 'running'
         ? `<div class="fm-desc running">${loopPhase || esc(t('flowmap.cardRunning'))}</div>`
-        : '');
+        : ''));
   // 等待脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps → 列出全部等待对象
   //（in = 等结果投递，deps = 等完成信号；上游已归档 → i18n 纯文字诚实降级，
   //  原 ⏳ 图标按裁定①换内联 SVG 沙漏，文字单独 ellipsis 截断）

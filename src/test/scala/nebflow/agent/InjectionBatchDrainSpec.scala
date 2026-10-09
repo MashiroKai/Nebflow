@@ -111,7 +111,10 @@ class InjectionBatchDrainSpec extends FunSuite:
 
     // ③ 队列层读数：载体在队列中恒占 1 个元素（豁免不改队列算术）
     val (taken, tail) =
-      TurnBoundaryDrains.drainHeadExpanded(List[AgentCommand.ImmediateInput](carrier, plain), compactionPending = false)(
+      TurnBoundaryDrains.drainHeadExpanded(
+        List[AgentCommand.ImmediateInput](carrier, plain),
+        compactionPending = false
+      )(
         TurnBoundaryDrains.expandWindowFlush
       )
     assertEquals(taken.size, 2, "载体展开出 2 个虚拟件（同一 turn 内注入）")

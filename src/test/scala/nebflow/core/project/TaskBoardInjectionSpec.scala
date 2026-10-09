@@ -90,8 +90,10 @@ class TaskBoardInjectionSpec extends FunSuite:
     assert(fn.contains("terminal declaration, not that report"), s"申报（node_report）≠ 汇报，两者是两件事:\n$fn")
     assert(fn.contains("Keep it self-contained"), s"要求 2 的抬头句:\n$fn")
     assert(fn.contains("\"see above\""), s"指代收尾必须点名禁用:\n$fn")
-    assert(fn.contains("restate the conclusion, the artifact paths and the numbers in full"),
-      s"自包含的可操作判据（写全结论/路径/数字）:\n$fn")
+    assert(
+      fn.contains("restate the conclusion, the artifact paths and the numbers in full"),
+      s"自包含的可操作判据（写全结论/路径/数字）:\n$fn"
+    )
     // 末行锚不受新行影响（新行只能插在它之前）
     assertEquals(fn.linesIterator.toList.last, "TaskBoard work order ⇒ close = done, blocked = stuck.")
 

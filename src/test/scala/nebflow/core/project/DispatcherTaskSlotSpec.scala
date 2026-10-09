@@ -56,6 +56,7 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"task slot test","tools":[],"category":"standalone"}"""
@@ -70,9 +71,10 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
     val streamsDone: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val handle: LlmHandle[IO] = this
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)) ++
         Stream.eval(streamsDone.update(_ + 1)).drain
@@ -107,7 +109,7 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 25.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -151,6 +153,7 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
       // None = read through Defaults.DispatcherMaxConcurrentSessions (== 0 = gate off)
       dispatcherMaxConcurrentSessions = None
     )
+  end mount
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
@@ -158,22 +161,33 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
   private def withScanner[A](body: IO[A]): IO[A] =
     ProjectActor.ttlScanner(1.second).background.use(_ => body)
 
-  /** Create one task through the unified ledger's real write face and return the bare id.
-    * (r2 P0 fix, 2026-09-25: reads the PURE id via `createSyncReturningId` -- the old
-    * regex scrape of the rendered `[OK] ...` banner was the same smell the fix removes.) */
+  /**
+   * Create one task through the unified ledger's real write face and return the bare id.
+   * (r2 P0 fix, 2026-09-25: reads the PURE id via `createSyncReturningId` -- the old
+   * regex scrape of the rendered `[OK] ...` banner was the same smell the fix removes.)
+   */
   private def newTask(title: String): String =
-    TaskLedgerStore.open()
+    TaskLedgerStore
+      .open()
       .createSyncReturningId(title = title, actor = TaskLedgerHistory.Actors.Dispatcher)
       .getOrElse(sys.error("create must succeed"))
 
   private type ActorRefT = nebflow.actor.ActorRef[ProjectActor.ProjectCommand]
 
   private def trigger(ref: ActorRefT, text: String, tid: String): IO[Unit] =
-    (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(text, "nebula-root", ProjectActor.SourceTask, None, Some(tid))).void
+    (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
+      text,
+      "nebula-root",
+      ProjectActor.SourceTask,
+      None,
+      Some(tid)
+    )).void
 
   // ── (1) two tasks ⇒ two live dispatcher sessions ──
 
-  test("(1) one task one dispatcher: two tasks triggered back-to-back get two DISTINCT live sessions (default cap reads through as 0 = gate off), zero refusal events") {
+  test(
+    "(1) one task one dispatcher: two tasks triggered back-to-back get two DISTINCT live sessions (default cap reads through as 0 = gate off), zero refusal events"
+  ) {
     val ws = tempRoot / "ws-two-tasks"
     os.makeDir.all(ws)
     val system = ActorSystem(s"slot-two-${scala.util.Random.nextInt(100000)}")
@@ -195,17 +209,21 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
         events <- eventLines(ws)
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
-        assertEquals(sids.distinct.size, 2,
-          s"two tasks must own two distinct live dispatcher sessions, got: $sids")
+        assertEquals(sids.distinct.size, 2, s"two tasks must own two distinct live dispatcher sessions, got: $sids")
         assertEquals(sids.size, 2, s"no third session may exist, got: $sids")
-        assertEquals(events.count(_.contains("\"type\":\"dispatcher-concurrency-refused\"")), 0,
-          "the default (gate off) must not refuse the second task's dispatcher")
+        assertEquals(
+          events.count(_.contains("\"type\":\"dispatcher-concurrency-refused\"")),
+          0,
+          "the default (gate off) must not refuse the second task's dispatcher"
+        )
     }
   }
 
   // ── (2) terminal tears down its OWN slot only ──
 
-  test("(2) task A reaches completed ⇒ exactly A's session is torn down (event carries task=A) while B's session stays alive") {
+  test(
+    "(2) task A reaches completed ⇒ exactly A's session is torn down (event carries task=A) while B's session stays alive"
+  ) {
     val ws = tempRoot / "ws-slot-terminal"
     os.makeDir.all(ws)
     val system = ActorSystem(s"slot-term-${scala.util.Random.nextInt(100000)}")
@@ -230,29 +248,42 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
         // event append lands (expireTaskTerminalDispatcher), so a file read racing the
         // size==1 beat can miss the event (observed once as a flake, 2026-09-28) — wait
         // for the event to land, bounded, then read
-        _ <- waitUntil(20.seconds)(eventLines(ws).map(_.exists(l =>
-          l.contains("\"type\":\"dispatcher-task-terminal\"") && l.contains(s"task=$tidA"))))
+        _ <- waitUntil(20.seconds)(
+          eventLines(ws).map(
+            _.exists(l => l.contains("\"type\":\"dispatcher-task-terminal\"") && l.contains(s"task=$tidA"))
+          )
+        )
         events <- eventLines(ws)
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
         // the surviving session is exactly the one that is NOT the session A's terminal
         // event names (the event line carries both the session id and the task id)
-        val terminalA = events.filter(l => l.contains("\"type\":\"dispatcher-task-terminal\"") && l.contains(s"task=$tidA"))
-        assert(terminalA.nonEmpty,
-          s"a dispatcher-task-terminal event for task A must exist, got:\n${events.filter(_.contains("dispatcher-task-terminal")).mkString("\n")}")
+        val terminalA =
+          events.filter(l => l.contains("\"type\":\"dispatcher-task-terminal\"") && l.contains(s"task=$tidA"))
+        assert(
+          terminalA.nonEmpty,
+          s"a dispatcher-task-terminal event for task A must exist, got:\n${events.filter(_.contains("dispatcher-task-terminal")).mkString("\n")}"
+        )
         val sidA = terminalA.flatMap(l => both.find(s => l.contains(s))).headOption
         assert(sidA.isDefined, s"A's terminal event must name one of the two live sessions, got: $terminalA")
         assertEquals(sidsAfter.size, 1, s"exactly B's session must survive, got: $sidsAfter")
-        assertEquals(sidsAfter.toSet, both.filter(_ != sidA.get).toSet,
-          s"completing task A must tear down exactly A's slot; B's session must survive, got: $sidsAfter vs before $both")
-        assert(!events.exists(l => l.contains("\"type\":\"dispatcher-task-terminal\"") && l.contains(s"task=$tidB")),
-          "task B must NOT be terminalized by A's completion")
+        assertEquals(
+          sidsAfter.toSet,
+          both.filter(_ != sidA.get).toSet,
+          s"completing task A must tear down exactly A's slot; B's session must survive, got: $sidsAfter vs before $both"
+        )
+        assert(
+          !events.exists(l => l.contains("\"type\":\"dispatcher-task-terminal\"") && l.contains(s"task=$tidB")),
+          "task B must NOT be terminalized by A's completion"
+        )
     }
   }
 
   // ── (3) empty slot ⇒ rebuild on re-trigger ──
 
-  test("(3) empty-slot rebuild: after A's slot was torn down, a re-trigger of the SAME task id spawns a FRESH session (new id), never resurrects the old one") {
+  test(
+    "(3) empty-slot rebuild: after A's slot was torn down, a re-trigger of the SAME task id spawns a FRESH session (new id), never resurrects the old one"
+  ) {
     val ws = tempRoot / "ws-slot-rebuild"
     os.makeDir.all(ws)
     val system = ActorSystem(s"slot-reb-${scala.util.Random.nextInt(100000)}")
@@ -278,8 +309,10 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
         assertEquals(sids2.size, 1, s"exactly one live session after the rebuild, got: $sids2")
-        assert(sids2.head != sid1,
-          s"the rebuild must spawn a NEW session id (slot-key miss ⇒ spawn), got: rebuild=${sids2.head} first=$sid1")
+        assert(
+          sids2.head != sid1,
+          s"the rebuild must spawn a NEW session id (slot-key miss ⇒ spawn), got: rebuild=${sids2.head} first=$sid1"
+        )
     }
   }
 

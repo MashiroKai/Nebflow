@@ -107,8 +107,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     nebflow.FriendsSealKit.withUnsealedSync {
       val res = callTool(
         obj(
-          "to"          -> Json.fromString("alice"),
-          "message"     -> Json.fromString("hi"),
+          "to" -> Json.fromString("alice"),
+          "message" -> Json.fromString("hi"),
           "attachments" -> Json.arr(Json.fromString("/tmp/a.bin"))
         )
       ).unsafeRunSync()
@@ -131,8 +131,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     nebflow.FriendsSealKit.withUnsealedSync {
       val res = callTool(
         obj(
-          "to"          -> Json.fromString("alice"),
-          "message"     -> Json.fromString("hi"),
+          "to" -> Json.fromString("alice"),
+          "message" -> Json.fromString("hi"),
           "attachments" -> Json.arr(Json.fromString("relative.bin"))
         )
       ).unsafeRunSync()
@@ -264,9 +264,9 @@ class SendMessageAttachSpec extends CatsEffectSuite:
         val b = tmpFile(src, "b.bin", 7)
         callTool(
           obj(
-            "to"          -> Json.fromString("local"),
+            "to" -> Json.fromString("local"),
             "attachments" -> Json.arr(Json.fromString(a.toString), Json.fromString(b.toString)),
-            "targetDir"   -> Json.fromString(dst.toString)
+            "targetDir" -> Json.fromString(dst.toString)
           )
         ).unsafeRunSync() match
           case Right(msg) =>
@@ -292,9 +292,9 @@ class SendMessageAttachSpec extends CatsEffectSuite:
         os.write.over(dst / "a.txt", Array.fill(9)('y'.toByte))
         val refused = callTool(
           obj(
-            "to"          -> Json.fromString("local"),
+            "to" -> Json.fromString("local"),
             "attachments" -> Json.arr(Json.fromString(a.toString)),
-            "targetDir"   -> Json.fromString(dst.toString)
+            "targetDir" -> Json.fromString(dst.toString)
           )
         ).unsafeRunSync()
         assert(refused.isLeft)
@@ -303,10 +303,10 @@ class SendMessageAttachSpec extends CatsEffectSuite:
 
         val replaced = callTool(
           obj(
-            "to"          -> Json.fromString("local"),
+            "to" -> Json.fromString("local"),
             "attachments" -> Json.arr(Json.fromString(a.toString)),
-            "targetDir"   -> Json.fromString(dst.toString),
-            "overwrite"   -> Json.fromBoolean(true)
+            "targetDir" -> Json.fromString(dst.toString),
+            "overwrite" -> Json.fromBoolean(true)
           )
         ).unsafeRunSync()
         assert(replaced.isRight, replaced.left.toOption.get.message)
@@ -319,9 +319,11 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     // friendseal flag injection (2026-09-25): the local leg's own required-field
     // errors live behind the seal guard — lift the latch for both probes.
     nebflow.FriendsSealKit.withUnsealedSync {
-      val noDir = callTool(obj("to" -> Json.fromString("local"), "attachments" -> Json.arr(Json.fromString("/tmp/x")))).unsafeRunSync()
+      val noDir = callTool(obj("to" -> Json.fromString("local"), "attachments" -> Json.arr(Json.fromString("/tmp/x"))))
+        .unsafeRunSync()
       assert(noDir.isLeft && noDir.left.toOption.get.message.contains("requires `targetDir`"))
-      val noFiles = callTool(obj("to" -> Json.fromString("local"), "targetDir" -> Json.fromString("/tmp/x"))).unsafeRunSync()
+      val noFiles =
+        callTool(obj("to" -> Json.fromString("local"), "targetDir" -> Json.fromString("/tmp/x"))).unsafeRunSync()
       assert(noFiles.isLeft && noFiles.left.toOption.get.message.contains("requires `attachments`"))
     }
 
@@ -358,7 +360,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     // and narrows `to` — this test pins the FULL face, so it runs with the latch lifted.
     nebflow.FriendsSealKit.withUnsealedSync {
       val schema = FriendMessageTool.inputSchema
-      val props  = schema("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
+      val props = schema("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
       assert(props.contains("attachments"))
       assert(props.contains("targetDir"))
       assert(props.contains("overwrite"))

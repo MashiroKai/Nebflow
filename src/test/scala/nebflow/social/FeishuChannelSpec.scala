@@ -21,10 +21,13 @@ class FeishuChannelSpec extends FunSuite:
 
   private def tmpRoot(): os.Path = os.temp.dir(prefix = "nb-feishu-")
 
-  /** POSIX-only creation attribute: the mode comes from the creation call, so the
-    *  file never exists for an instant with a wider mode (same discipline the
-    *  production writer follows). */
-  private def narrowAttr: java.nio.file.attribute.FileAttribute[java.util.Set[java.nio.file.attribute.PosixFilePermission]] =
+  /**
+   * POSIX-only creation attribute: the mode comes from the creation call, so the
+   *  file never exists for an instant with a wider mode (same discipline the
+   *  production writer follows).
+   */
+  private def narrowAttr
+    : java.nio.file.attribute.FileAttribute[java.util.Set[java.nio.file.attribute.PosixFilePermission]] =
     PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
 
   // ─────────────────────── inbound mapping ───────────────────────
@@ -53,8 +56,13 @@ class FeishuChannelSpec extends FunSuite:
 
   test("inboundFrom builds a message from complete getter values") {
     val r = FeishuMessage.inboundFrom(
-      eventId = Some("evt_1"), messageId = Some("om_1"), chatId = Some("oc_1"),
-      messageType = Some("text"), contentRaw = Some("""{"text":"hi"}"""), createTime = Some("1700000000000"))
+      eventId = Some("evt_1"),
+      messageId = Some("om_1"),
+      chatId = Some("oc_1"),
+      messageType = Some("text"),
+      contentRaw = Some("""{"text":"hi"}"""),
+      createTime = Some("1700000000000")
+    )
     assert(r.isRight)
     val in = r.toOption.get
     assertEquals(in.messageId, "om_1")
@@ -77,18 +85,16 @@ class FeishuChannelSpec extends FunSuite:
     assert(noCid.left.toOption.get.contains("chat_id"))
 
     // Empty strings are as absent as nulls.
-    val blank = FeishuMessage.inboundFrom(None, Some(""), Some(""), Some("text"),
-      Some("""{"text":"x"}"""), None)
+    val blank = FeishuMessage.inboundFrom(None, Some(""), Some(""), Some("text"), Some("""{"text":"x"}"""), None)
     assert(blank.isLeft)
     // …and a blank message id with a real chat id is still a refusal.
-    val mixed = FeishuMessage.inboundFrom(None, Some(""), Some("oc_9"), Some("text"),
-      Some("""{"text":"x"}"""), None)
+    val mixed = FeishuMessage.inboundFrom(None, Some(""), Some("oc_9"), Some("text"), Some("""{"text":"x"}"""), None)
     assert(mixed.isLeft)
   }
 
   test("inboundFrom tolerates a missing eventId and a non-text body") {
-    val r = FeishuMessage.inboundFrom(None, Some("om_2"), Some("oc_2"), Some("image"),
-      Some("""{"image_key":"k"}"""), None)
+    val r =
+      FeishuMessage.inboundFrom(None, Some("om_2"), Some("oc_2"), Some("image"), Some("""{"image_key":"k"}"""), None)
     assert(r.isRight)
     assertEquals(r.toOption.get.eventId, None)
     assertEquals(r.toOption.get.text, None)
@@ -96,8 +102,17 @@ class FeishuChannelSpec extends FunSuite:
   }
 
   test("Inbound.toJson carries no credential field") {
-    val in = FeishuMessage.inboundFrom(Some("evt"), Some("om_3"), Some("oc_3"), Some("text"),
-      Some("""{"text":"hello"}"""), Some("1700000000000")).toOption.get
+    val in = FeishuMessage
+      .inboundFrom(
+        Some("evt"),
+        Some("om_3"),
+        Some("oc_3"),
+        Some("text"),
+        Some("""{"text":"hello"}"""),
+        Some("1700000000000")
+      )
+      .toOption
+      .get
     val keys = in.toJson.asObject.get.keys.toSet
     // feishubridge: `senderId` joined the wire shape (tenant-scoped sender
     // identity for the member-allowlist gate — not a credential). Absent stays
@@ -108,8 +123,23 @@ class FeishuChannelSpec extends FunSuite:
     // absent, and none is credential material. This is the ONE breaking
     // compatibility point of that batch (design card I-5a): the assertion is an
     // exact key set, so any added key turns it red by design.
-    assertEquals(keys, Set("eventId", "messageId", "chatId", "messageType", "content", "text", "createTime",
-      "senderId", "parentId", "rootId", "mentions", "parsed"))
+    assertEquals(
+      keys,
+      Set(
+        "eventId",
+        "messageId",
+        "chatId",
+        "messageType",
+        "content",
+        "text",
+        "createTime",
+        "senderId",
+        "parentId",
+        "rootId",
+        "mentions",
+        "parsed"
+      )
+    )
     assertEquals(in.toJson.hcursor.downField("senderId").focus, Some(io.circe.Json.Null))
     assertEquals(in.toJson.hcursor.downField("parentId").focus, Some(io.circe.Json.Null))
     assertEquals(in.toJson.hcursor.downField("rootId").focus, Some(io.circe.Json.Null))
@@ -142,8 +172,11 @@ class FeishuChannelSpec extends FunSuite:
   test("legacy flat feishu.json is read (appId/appSecret camelCase)") {
     val root = tmpRoot()
     val p = root / "feishu.json"
-    os.write(p, """{"appId":"cli_abcdefghij1234567890","appSecret":"s3cr3t-value-of-length-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------"))
+    os.write(
+      p,
+      """{"appId":"cli_abcdefghij1234567890","appSecret":"s3cr3t-value-of-length-32-chars"}""",
+      perms = os.PermSet.fromString("rw-------")
+    )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, s"expected resolution, got $r")
     assertEquals(r.toOption.get.appId, "cli_abcdefghij1234567890")
@@ -172,8 +205,10 @@ class FeishuChannelSpec extends FunSuite:
     // but no app_secret_ref) also exists: the schema entry holds no usable
     // credential, the legacy file is still half-written, and resolution must
     // fail loudly rather than fabricate a credential out of either.
-    os.write(root / "nebflow.json",
-      """{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_fromschema0000000000"}}}}}""")
+    os.write(
+      root / "nebflow.json",
+      """{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_fromschema0000000000"}}}}}"""
+    )
     assert(FeishuCredentials.resolve(root).isLeft)
   }
 
@@ -187,14 +222,21 @@ class FeishuChannelSpec extends FunSuite:
   test("resolution order: a complete schema credential WINS over a legacy flat file (schema-first)") {
     val root = tmpRoot()
     os.makeDir.all(root / "secrets")
-    os.write(root / "secrets" / "social-feishu-app-secret", "schema-side-secret-value",
-      perms = os.PermSet.fromString("rw-------"))
-    os.write(root / "nebflow.json",
+    os.write(
+      root / "secrets" / "social-feishu-app-secret",
+      "schema-side-secret-value",
+      perms = os.PermSet.fromString("rw-------")
+    )
+    os.write(
+      root / "nebflow.json",
       """{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_schemawins0000001",""" +
-        """"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}""")
-    os.write(root / "feishu.json",
+        """"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}"""
+    )
+    os.write(
+      root / "feishu.json",
       """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------"))
+      perms = os.PermSet.fromString("rw-------")
+    )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, s"expected a credential, got $r")
     assertEquals(r.toOption.get.appId, "cli_schemawins0000001", "the schema app_id must win")
@@ -204,9 +246,11 @@ class FeishuChannelSpec extends FunSuite:
 
   test("resolution order: no schema entry falls back to the legacy flat file") {
     val root = tmpRoot()
-    os.write(root / "feishu.json",
+    os.write(
+      root / "feishu.json",
       """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------"))
+      perms = os.PermSet.fromString("rw-------")
+    )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, "the legacy file remains the fallback when the schema has no credential")
     assertEquals(r.toOption.get.appId, "cli_legacyapp00000001")
@@ -218,11 +262,15 @@ class FeishuChannelSpec extends FunSuite:
     // A card that was toggled on but never carried credentials (e.g. region
     // only) holds no credential information — the legacy fallback may speak.
     val root = tmpRoot()
-    os.write(root / "nebflow.json",
-      """{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":{"region":"feishu"}}}}}""")
-    os.write(root / "feishu.json",
+    os.write(
+      root / "nebflow.json",
+      """{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":{"region":"feishu"}}}}}"""
+    )
+    os.write(
+      root / "feishu.json",
       """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------"))
+      perms = os.PermSet.fromString("rw-------")
+    )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, "a credential-less schema entry must be transparent to resolution")
     assertEquals(r.toOption.get.appId, "cli_legacyapp00000001")
@@ -232,11 +280,16 @@ class FeishuChannelSpec extends FunSuite:
   test("schema-side resolution reads app_id inline and app_secret via its _ref path") {
     val root = tmpRoot()
     os.makeDir.all(root / "secrets")
-    os.write(root / "secrets" / "social-feishu-app-secret", "schema-side-secret",
-      perms = os.PermSet.fromString("rw-------"))
-    os.write(root / "nebflow.json",
+    os.write(
+      root / "secrets" / "social-feishu-app-secret",
+      "schema-side-secret",
+      perms = os.PermSet.fromString("rw-------")
+    )
+    os.write(
+      root / "nebflow.json",
       s"""{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_fromschema0000000000",""" +
-        """"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}""")
+        """"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}"""
+    )
     val r = FeishuCredentials.resolve(root)
     // The `~/.nebflow/...` render form maps back under THIS root, so the tmp file
     // is found rather than the real home's.
@@ -290,3 +343,4 @@ class FeishuChannelSpec extends FunSuite:
     val r = FeishuCredentials.resolve(root)
     assert(r.isLeft, "an empty root cannot resolve a credential")
   }
+end FeishuChannelSpec

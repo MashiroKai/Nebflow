@@ -87,10 +87,17 @@ class AskUserHistoryAttachmentsSpec extends CatsEffectSuite:
 
   test("⑤ 帧 requestId 取键形态与改前逐字一致（缺席 / 形态不合 ⇒ None）") {
     assertEquals(WebSocketRoutes.askUserRowFromFrame(askFrame()).requestId, None, "缺席 ⇒ None")
-    assertEquals(WebSocketRoutes.askUserRowFromFrame(askFrame("requestId" -> Json.fromInt(7))).requestId, None, "形态不合 ⇒ None")
+    assertEquals(
+      WebSocketRoutes.askUserRowFromFrame(askFrame("requestId" -> Json.fromInt(7))).requestId,
+      None,
+      "形态不合 ⇒ None"
+    )
     // 逐字对齐既有腿（`as[String].toOption.filter(_.nonEmpty)`：空白串仍是「在场」，
     // 本批不越界改这条语义 —— 仅作改前/改后同形自证）。
-    assertEquals(WebSocketRoutes.askUserRowFromFrame(askFrame("requestId" -> Json.fromString("   "))).requestId, Some("   "))
+    assertEquals(
+      WebSocketRoutes.askUserRowFromFrame(askFrame("requestId" -> Json.fromString("   "))).requestId,
+      Some("   ")
+    )
   }
 
   // ============================================================

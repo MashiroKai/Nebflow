@@ -178,7 +178,9 @@ class StreamBatchingSpec extends CatsEffectSuite:
       // sequence, not restart it (BatchState.marked survives take()).
       burst = Stream((1 to StreamBatching.MaxBatch).map(i => StreamChunk.TextDelta(s"x$i"))*)
       _ <- (burst ++ burst ++ Stream(StreamChunk.TextDelta("tail"), StreamChunk.Done(None, None, None, None)))
-        .through(p).compile.drain
+        .through(p)
+        .compile
+        .drain
       ms <- marks(ref)
       blocks = ms.map(_._3)
     yield assert(
@@ -187,16 +189,24 @@ class StreamBatchingSpec extends CatsEffectSuite:
     )
   }
 
-  /** T7：round 由调用方给（= 本 turn 内第几个 LLM 轮次）——同一管道内恒定，
-   *  不同管道（不同 round）各自独立编号。 */
+  /**
+   * T7：round 由调用方给（= 本 turn 内第几个 LLM 轮次）——同一管道内恒定，
+   *  不同管道（不同 round）各自独立编号。
+   */
   test("StreamBatching T7 (B2): round is taken from the caller, per-pipeline") {
     for
       r1 <- framesRef
       r2 <- framesRef
       mk = (ref: Ref[IO, Vector[Json]], round: Int) =>
         StreamBatching.pipe(sender(ref), false, Some("s-b2"), false, false, "a", round = round)
-      _ <- Stream(StreamChunk.TextDelta("a1"), StreamChunk.Done(None, None, None, None)).through(mk(r1, 0)).compile.drain
-      _ <- Stream(StreamChunk.TextDelta("b1"), StreamChunk.Done(None, None, None, None)).through(mk(r2, 4)).compile.drain
+      _ <- Stream(StreamChunk.TextDelta("a1"), StreamChunk.Done(None, None, None, None))
+        .through(mk(r1, 0))
+        .compile
+        .drain
+      _ <- Stream(StreamChunk.TextDelta("b1"), StreamChunk.Done(None, None, None, None))
+        .through(mk(r2, 4))
+        .compile
+        .drain
       m1 <- marks(r1)
       m2 <- marks(r2)
     yield assert(

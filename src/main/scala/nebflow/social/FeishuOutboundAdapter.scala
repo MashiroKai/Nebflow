@@ -32,17 +32,21 @@ import nebflow.shared.{AttachContract, NebflowLogger}
  * [[FeishuCredentials]] exactly where the existing send path already does.
  */
 final class FeishuOutboundAdapter(
-    val sendText: (String, String, String, String, String) => IO[FeishuChannel.SendResult],
-    val uploadImage: FeishuOutboundAdapter.UploadImage,
-    val uploadFile: FeishuOutboundAdapter.UploadFile,
-    val renderer: OutboundRenderer = OutboundRenderer.unavailable,
-    /** The extension table handed in by the caller -- the endpoint authority by
-      * default. See [[ContentClass.ExtensionTable]] for why it is a parameter. */
-    val table: ContentClass.ExtensionTable = FeishuOutboundAdapter.defaultTable,
-    /** Pinned credentials for the offline spec; production resolves them through
-      * the existing path. Kept opaque: they are handed to the SDK only. */
-    val creds: Option[FeishuCredentials.Credential] = None,
-    val region: String = "feishu"
+  val sendText: (String, String, String, String, String) => IO[FeishuChannel.SendResult],
+  val uploadImage: FeishuOutboundAdapter.UploadImage,
+  val uploadFile: FeishuOutboundAdapter.UploadFile,
+  val renderer: OutboundRenderer = OutboundRenderer.unavailable,
+  /**
+   * The extension table handed in by the caller -- the endpoint authority by
+   * default. See [[ContentClass.ExtensionTable]] for why it is a parameter.
+   */
+  val table: ContentClass.ExtensionTable = FeishuOutboundAdapter.defaultTable,
+  /**
+   * Pinned credentials for the offline spec; production resolves them through
+   * the existing path. Kept opaque: they are handed to the SDK only.
+   */
+  val creds: Option[FeishuCredentials.Credential] = None,
+  val region: String = "feishu"
 ) extends ChannelAdapter:
 
   private val logger = NebflowLogger.forName("nebflow.social.feishu-outbound")
@@ -77,8 +81,10 @@ final class FeishuOutboundAdapter(
 
   // ─────────────────────────── rendering ───────────────────────────
 
-  /** Delegates to the injected renderer. A renderer that cannot run returns the
-    * payload untouched, which the planner reads as an explicit render failure. */
+  /**
+   * Delegates to the injected renderer. A renderer that cannot run returns the
+   * payload untouched, which the planner reads as an explicit render failure.
+   */
   def render(p: OutboundPayload): IO[OutboundPayload] = renderer.render(p)
 
   // ─────────────────────────── degradation ───────────────────────────
@@ -94,7 +100,10 @@ final class FeishuOutboundAdapter(
     p match
       case OutboundPayload.ImageFile(path, _) =>
         OutboundPayload.DegradedText(
-          ChannelAdapter.degradedBody(why, Some(path), sizeOf(path).getOrElse(0L)), why, Some(path))
+          ChannelAdapter.degradedBody(why, Some(path), sizeOf(path).getOrElse(0L)),
+          why,
+          Some(path)
+        )
       case OutboundPayload.DocumentFile(path, _, bytes) =>
         OutboundPayload.DegradedText(ChannelAdapter.degradedBody(why, Some(path), bytes), why, Some(path))
       case OutboundPayload.CardHtml(_, _, rendered) =>
@@ -102,6 +111,8 @@ final class FeishuOutboundAdapter(
       case OutboundPayload.Text(body) =>
         OutboundPayload.DegradedText(s"$body\n[未渲染] $why", why, None)
       case d: OutboundPayload.DegradedText => d
+
+  end degrade
 
   private def sizeOf(p: os.Path): Option[Long] =
     try if os.exists(p) then Some(os.size(p)) else None
@@ -124,11 +135,11 @@ final class FeishuOutboundAdapter(
           IO.pure(ChannelCallResult.failed(call, -1, "no credential resolved — nothing was sent"))
         case Some(c) =>
           sendText(c.appId, c.appSecret, region, "", text).flatMap { res =>
-            if res.ok then
-              IO.pure(ChannelCallResult.ok(call, res.messageId, s"text delivered (${res.receiveIdType})"))
+            if res.ok then IO.pure(ChannelCallResult.ok(call, res.messageId, s"text delivered (${res.receiveIdType})"))
             else
               val detail = s"text rejected: ${res.msg}"
-              logger.warn(s"feishu outbound: $detail (code=${res.code})")
+              logger
+                .warn(s"feishu outbound: $detail (code=${res.code})")
                 .as(ChannelCallResult.failed(call, res.code, detail))
           }
 
@@ -142,8 +153,9 @@ final class FeishuOutboundAdapter(
           val detail = s"image upload rejected (${up.msg}) — path ${path.toString}"
           logger.warn(s"feishu outbound: $detail").as(ChannelCallResult.failed(call, up.code, detail))
         else if thenSendImage then
-          IO.pure(ChannelCallResult.ok(call, up.key.orElse(up.messageId),
-            s"image uploaded key=${up.key.getOrElse("-")}"))
+          IO.pure(
+            ChannelCallResult.ok(call, up.key.orElse(up.messageId), s"image uploaded key=${up.key.getOrElse("-")}")
+          )
         else IO.pure(ChannelCallResult.ok(call, up.key, "image uploaded"))
       }
 
@@ -152,17 +164,23 @@ final class FeishuOutboundAdapter(
         if !up.ok then
           val detail = s"file upload rejected (${up.msg}) — path ${path.toString}"
           logger.warn(s"feishu outbound: $detail").as(ChannelCallResult.failed(call, up.code, detail))
-        else IO.pure(ChannelCallResult.ok(call, up.key.orElse(up.messageId),
-          s"file uploaded key=${up.key.getOrElse("-")}"))
+        else
+          IO.pure(
+            ChannelCallResult.ok(call, up.key.orElse(up.messageId), s"file uploaded key=${up.key.getOrElse("-")}")
+          )
       }
 
     case ChannelCall.SendPost(title, paragraphs, imageKeys) =>
-      IO.pure(ChannelCallResult.failed(call, -1,
-        "post (rich text) is not landed in this batch — see the design card's open decision D-4"))
+      IO.pure(
+        ChannelCallResult
+          .failed(call, -1, "post (rich text) is not landed in this batch — see the design card's open decision D-4")
+      )
 
     case ChannelCall.SendInteractive(cardJson) =>
-      IO.pure(ChannelCallResult.failed(call, -1,
-        "interactive cards are not landed in this batch — see the design card's open decision D-3"))
+      IO.pure(
+        ChannelCallResult
+          .failed(call, -1, "interactive cards are not landed in this batch — see the design card's open decision D-3")
+      )
 
   /**
    * The size gate, exposed so the adapter applies the SAME constant the planner
@@ -171,7 +189,7 @@ final class FeishuOutboundAdapter(
   def sizeGate(bytes: Long): Option[AttachContract.AttachError] =
     AttachContract.checkFileSize(bytes) match
       case Left(err) => Some(err)
-      case Right(_)  => None
+      case Right(_) => None
 
   /** Classify + plan in one step: the single entry a caller needs. */
   def planFor(event: Json): OutboundPlanner.OutboundPlan =
@@ -188,29 +206,35 @@ object FeishuOutboundAdapter:
 
   /** Outcome of one lark upload. `key` is `image_key` / `file_key` -- never a secret. */
   final case class UploadResult(
-      ok: Boolean,
-      key: Option[String],
-      messageId: Option[String],
-      code: Int,
-      msg: String
+    ok: Boolean,
+    key: Option[String],
+    messageId: Option[String],
+    code: Int,
+    msg: String
   )
 
   object UploadResult:
+
     def ok(key: String): UploadResult =
       UploadResult(ok = true, key = Some(key), messageId = None, code = 0, msg = "ok")
+
     def failed(code: Int, msg: String): UploadResult =
       UploadResult(ok = false, key = None, messageId = None, code = code, msg = msg)
 
   type UploadImage = os.Path => IO[UploadResult]
   type UploadFile = (os.Path, String) => IO[UploadResult]
 
-  /** The endpoint authority's table, welded to the tool-side twin by
-    * `FileRefsWhitelistSpec` A14. Passed in rather than imported by the
-    * definition layer (see [[ContentClass.ExtensionTable]]). */
+  /**
+   * The endpoint authority's table, welded to the tool-side twin by
+   * `FileRefsWhitelistSpec` A14. Passed in rather than imported by the
+   * definition layer (see [[ContentClass.ExtensionTable]]).
+   */
   val defaultTable: ContentClass.ExtensionTable = NfFilePolicy.NfFileAllowedExt
 
-  /** An upload seam that refuses everything -- the default so a mis-wired
-    * adapter fails visibly instead of pretending. */
+  /**
+   * An upload seam that refuses everything -- the default so a mis-wired
+   * adapter fails visibly instead of pretending.
+   */
   val noUpload: UploadImage = _ => IO.pure(UploadResult.failed(-1, "no upload seam wired"))
   val noUploadFile: UploadFile = (_, _) => IO.pure(UploadResult.failed(-1, "no upload seam wired"))
 

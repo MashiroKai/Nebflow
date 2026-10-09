@@ -86,6 +86,7 @@ class PluginViewerContributionSpec extends CatsEffectSuite:
   // blockable：完好的贡献，供封禁测试（内联面 fail-closed）
 
   private val declared = pluginDir("declared")
+
   writeManifest(
     declared,
     "declared",
@@ -101,6 +102,7 @@ class PluginViewerContributionSpec extends CatsEffectSuite:
   os.write.over(fallback / "org.nebflow" / "extra.json", "{}") // 真未知兄弟条目
 
   private val declaredMissing = pluginDir("declared-missing")
+
   writeManifest(
     declaredMissing,
     "declared-missing",
@@ -139,7 +141,7 @@ class PluginViewerContributionSpec extends CatsEffectSuite:
   private def manifestOf(name: String): IO[io.circe.Json] =
     scan.map(_.find(_.name == name)).map {
       case Some(p) => PluginRegistry.approvalManifest(p)
-      case None    => fail(s"'$name' must be loaded")
+      case None => fail(s"'$name' must be loaded")
     }
 
   // ── K-1 装载（声明形态 + 默认回落）────────────────────────
@@ -225,7 +227,10 @@ class PluginViewerContributionSpec extends CatsEffectSuite:
     manifestOf("declared").map { m =>
       val c = m.hcursor.downField("viewerContributions")
       assertEquals(
-        c.downField("viewers").as[List[io.circe.Json]].toOption.map(_.map(_.hcursor.downField("name").as[String].toOption)),
+        c.downField("viewers")
+          .as[List[io.circe.Json]]
+          .toOption
+          .map(_.map(_.hcursor.downField("name").as[String].toOption)),
         Some(List(Some("demo"))),
         "the declaration must ride inline with GET /api/plugins"
       )

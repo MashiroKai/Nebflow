@@ -4,7 +4,15 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallbackKind, JevGateOutcome, JevGateReason, JevGateSnapshot, PluginAllocator}
+import nebflow.core.jev.{
+  CatalogEntry,
+  JevAllocation,
+  JevFallbackKind,
+  JevGateOutcome,
+  JevGateReason,
+  JevGateSnapshot,
+  PluginAllocator
+}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmProtocol, PathUtil, ProviderConfig}
 
@@ -43,13 +51,22 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       params => IO { calls.update(params.model, params.messages.headOption.map(_.textContent).getOrElse("")); reply },
       timeoutMs = 15000L,
       candidate = IO.pure(
-        Some(ModelCandidate(providerId = "p", provider = ProviderConfig("https://x", "k", LlmProtocol.OpenAI), model = "util-1"))
+        Some(
+          ModelCandidate(
+            providerId = "p",
+            provider = ProviderConfig("https://x", "k", LlmProtocol.OpenAI),
+            model = "util-1"
+          )
+        )
       )
     )
 
   test("parsePlugins: bare, fenced and prose-wrapped JSON all parse; catalog order-preserving dedup") {
     val a = llm(None)
-    assertEquals(a.parsePlugins("""{"plugins":["visual-report","backend-dev","visual-report"]}""", catalog), Right(List("visual-report", "backend-dev")))
+    assertEquals(
+      a.parsePlugins("""{"plugins":["visual-report","backend-dev","visual-report"]}""", catalog),
+      Right(List("visual-report", "backend-dev"))
+    )
     assertEquals(a.parsePlugins("```json\n{\"plugins\": [\"backend-dev\"]}\n```", catalog), Right(List("backend-dev")))
     assertEquals(
       a.parsePlugins("I would allocate: {\"plugins\":[\"backend-dev\"]} — done.", catalog),
@@ -63,7 +80,9 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     assertEquals(a.parsePlugins("""{"plugins":["backend-dev","no-such-pkg"]}""", catalog), Right(List("backend-dev")))
   }
 
-  test("parsePlugins: missing key / non-array / non-string members / non-JSON are all refusals (never a fabricated success)") {
+  test(
+    "parsePlugins: missing key / non-array / non-string members / non-JSON are all refusals (never a fabricated success)"
+  ) {
     val a = llm(None)
     assert(a.parsePlugins("""{"other":1}""", catalog).isLeft)
     assert(a.parsePlugins("""{"plugins":"backend-dev"}""", catalog).isLeft)
@@ -94,30 +113,47 @@ class LlmAllocatorSpec extends CatsEffectSuite:
                 None
               )
             )
-          ),
+          )
+      ,
       15000L
     )
 
   private def jevFailing(kind: DecisionError): JevAllocator =
-    new JevAllocator(new DecisionProvider[IO]:
-      def id: String = "typesafe-jev"
-      def predict(req: DecisionRequest) = IO.pure(Left(kind)), 15000L)
+    new JevAllocator(
+      new DecisionProvider[IO]:
+        def id: String = "typesafe-jev"
+        def predict(req: DecisionRequest) = IO.pure(Left(kind))
+      ,
+      15000L
+    )
 
   private def machine(
-      jev: Option[JevAllocator],
-      llmOpt: Option[LlmAllocator],
-      gate: JevGateOutcome,
-      health: Option[DecisionHealthMonitor] = None
+    jev: Option[JevAllocator],
+    llmOpt: Option[LlmAllocator],
+    gate: JevGateOutcome,
+    health: Option[DecisionHealthMonitor] = None
   ): JevPluginAllocator =
     new JevPluginAllocator(IO.pure(jev), IO.pure(llmOpt), IO.pure(gate), health)
 
-  private val gateOn = JevGateOutcome.Applied(JevGateSnapshot(configured = true, enabled = true, provider = "typesafe-jev", timeoutMs = 15000L, choiceHighBasePolicy = ""))
+  private val gateOn = JevGateOutcome.Applied(
+    JevGateSnapshot(
+      configured = true,
+      enabled = true,
+      provider = "typesafe-jev",
+      timeoutMs = 15000L,
+      choiceHighBasePolicy = ""
+    )
+  )
   private val gateOff = JevGateOutcome.Off(JevGateReason.NotConfigured)
 
   test("three states ① jev: gate applied + jev leg allocates — the llm leg is never consulted") {
     val llmCalls = TrieMap.empty[String, String]
     withTempDataRoot { _ =>
-      machine(Some(jevAnswering(List("backend-dev"))), Some(llm(Some("""{"plugins":["visual-report"]}"""), llmCalls)), gateOn)
+      machine(
+        Some(jevAnswering(List("backend-dev"))),
+        Some(llm(Some("""{"plugins":["visual-report"]}"""), llmCalls)),
+        gateOn
+      )
         .allocatePlugins("delegate-x", "task", catalog)
         .map { r =>
           assertEquals(r.via, Some(PluginAllocator.AllocationVia.Jev))
@@ -140,7 +176,11 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   test("three states ②b llm-fallback: jev leg ran but fell back → the llm leg catches (判定机同族: 失败也兜)") {
     withTempDataRoot { _ =>
-      machine(Some(jevFailing(DecisionError.Timeout("boom"))), Some(llm(Some("""{"plugins":["backend-dev"]}"""))), gateOn)
+      machine(
+        Some(jevFailing(DecisionError.Timeout("boom"))),
+        Some(llm(Some("""{"plugins":["backend-dev"]}"""))),
+        gateOn
+      )
         .allocatePlugins("delegate-x", "task", catalog)
         .map { r =>
           assertEquals(r.via, Some(PluginAllocator.AllocationVia.LlmFallback))
@@ -189,8 +229,9 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       yield
         assertEquals(h1, DecisionHealth.Up)
         h2 match
-          case DecisionHealth.Down(reason, _) => assert(reason.nonEmpty, "the Down state carries the classified diagnostic")
-          case other                          => fail(s"expected Down, got: $other")
+          case DecisionHealth.Down(reason, _) =>
+            assert(reason.nonEmpty, "the Down state carries the classified diagnostic")
+          case other => fail(s"expected Down, got: $other")
     }
   }
 

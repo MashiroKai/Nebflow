@@ -8,8 +8,9 @@
 //   2. longtask 计数（>50ms 主线程任务，PerformanceObserver）。
 //   3. CDP Performance.getMetrics 增量：LayoutCount / RecalcStyleCount /
 //      TaskDuration —— 细节行流式是否引入每帧布局/样式抖动。
-//   4. 动画面普查：spinner 的 getAnimations 形态（nf-wl-frames 纯文本 steps，
-//      opacity/content 离散步进——transform-only 纪律的现态确认）。
+//   4. 动画面普查：spinner 的 getAnimations 形态（nf-wl-frames —— ui-polish
+//      2026-10-08 起 = transform: rotate + linear 合成器动画；旧的 steps 内容
+//      轮换因「旋转卡顿、不连贯」退役，机制钉同步换轨）。
 //
 // 判定线（处方口径）：p95 帧距 < 32ms（≥~30fps）、无 >100ms 帧、流式窗口
 // longtask = 0。顺 = 如实报「已落+读数」收项，不再动 CSS。
@@ -149,9 +150,11 @@ test.describe('① spinner smoothness — measured readings (546cf831c 落刀复
     await page.evaluate(() => window.__tdExecStart('Bash\n  (sleep 120)'));
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r())));
 
-    // 动画面普查：spinner 帧本体动画 = nf-wl-frames（纯文本 steps）。
-    // 动画挂在 ::before 伪元素上（UI-C 纯文本 spinner）——普查走
-    // document.getAnimations() 按 pseudoElement 过滤 + ::before 计算样式。
+    // 动画面普查：spinner 帧本体动画 = nf-wl-frames（transform: rotate 旋转）。
+    // 动画挂在 ::before 伪元素上——普查走 document.getAnimations() 按
+    // pseudoElement 过滤 + ::before 计算样式。ui-polish 2026-10-08（作者令
+    // 「spinner 旋转卡顿、不连贯」）：steps 内容轮换退役，机制钉换轨为
+    // linear 匀速 + infinite 迭代（合成器动画；同一月牙字形、同一 0.8s 周期）。
     const animCensus = await page.evaluate(() => {
       const spin = document.querySelector('#chat .nf-workline .nf-wl-spin');
       const anims = document.getAnimations().filter(a =>
@@ -162,15 +165,17 @@ test.describe('① spinner smoothness — measured readings (546cf831c 落刀复
         count: anims.length,
         names: anims.map(a => a.animationName || 'css'),
         pseudoElement: anims.map(a => a.effect?.pseudoElement || 'self'),
-        cs: beforeCs ? (({ animationName, animationDuration, animationTimingFunction }) =>
-          ({ animationName, animationDuration, animationTimingFunction }))(beforeCs) : null,
+        cs: beforeCs ? (({ animationName, animationDuration, animationTimingFunction, animationIterationCount }) =>
+          ({ animationName, animationDuration, animationTimingFunction, animationIterationCount }))(beforeCs) : null,
         text: beforeCs ? beforeCs.content : null,
       };
     });
     expect(animCensus.count).toBeGreaterThan(0);
     expect(animCensus.cs.animationName).toBe('nf-wl-frames');
-    // 纯文本 steps 轮换（UI-C）：无 transform/rotate 动画残留在 spinner 上。
-    expect(animCensus.cs.animationTimingFunction).toContain('steps');
+    // ui-polish 2026-10-08：transform: rotate + linear infinite（合成器匀速
+    // 旋转）；动画本体仍在 ::before 上，非脚本驱动。
+    expect(animCensus.cs.animationTimingFunction).toBe('linear');
+    expect(animCensus.cs.animationIterationCount).toBe('infinite');
 
     const metrics = await perfMetrics(page);
     const before = metrics.read();

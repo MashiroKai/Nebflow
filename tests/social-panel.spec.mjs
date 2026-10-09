@@ -191,6 +191,107 @@
 //    before measuring the in-card QR (the geometry anchor would otherwise
 //    read a hidden canvas). Zero locale key changes; mock-driven throughout
 //    (夹具优先 — no real binding flow, zero production writes).
+//
+// 🔴 UNBIND-ROW (author order 2026-10-08, 「解绑放到卡片外层」 — supersedes the
+//    binditem ruling ④ "the unbind control rides the EXPANDED face"): a CREATED
+//    item-face card surfaces the unbind entry ON its collapsed row (a quiet
+//    cfg-btn/social-btn-danger chip, the row button's SIBLING in a
+//    `.social-item-line` wrapper — never a descendant, so the destructive
+//    action still cannot share the toggle's click). Not-created / binding cards
+//    render no entry; the expanded face keeps every other detail (the feishu
+//    C1 live block is untouched; the created weixin body is empty by design).
+//    Re-pointed anchors (each RED on the pre-change tree, served via
+//    SOCIAL_WEB_ROOT — the same red-leg discipline as above):
+//      WBI-5  the `archiveInsideBody` clause → `archiveOnRow` (the chip lives
+//             on the row line now);
+//      WBI-6  rewritten — 6a: the chip IS visible on the collapsed row (the
+//             flip of the old "present but not visible"), hover copy unchanged;
+//             6b: exactly ONE entry, and it is NOT inside the body (the move is
+//             complete — no duplicate);
+//      WBI-7  the unbind click happens from the COLLAPSED row (collapse first,
+//             then click) — the anchor now proves the order's headline: unbind
+//             without expanding;
+//      WBI-8a the `archiveVisible` clause flips (the feishu chip shows on the
+//             collapsed row; the C1 live value stays in the hidden body);
+//      WBI-8b stays GREEN on both trees (a reading, not a flip: the chip is
+//             visible expanded too — it merely rides the row, not the body).
+//    Zero locale key changes; zero engine change; mock-driven throughout.
+//
+// 🔴 UNBIND-ICON AMENDMENT (author order 2026-10-08, same day, two points):
+//    ① the chip drops its WORD — the bare unplug glyph (the original unbind
+//    button's broken-link icon) is the whole entry; the archive.hint copy
+//    stays on the `title` (hover tooltip = a11y name + discoverability), the
+//    action word stays in the locale table (the fallback renderer and the
+//    save-state flow still consume it). ② the BOUND ROW carries no application
+//    id at all — the weixin bot id and the feishu app_id never ride the row
+//    (verified: on the unbind-row tree neither id rendered on the row — the
+//    feishu C1 live value sat in the hidden body, the weixin bound body was
+//    empty — so point ② lands as INVARIANT PINS, not removals): the bound row
+//    reads icon + name + 已接入 pill + unbind icon, 别无他物, and both channels'
+//    bound rows are byte-identical in composition. Re-pointed anchors:
+//      WBI-6a grows the row-composition + id-absence clauses (row text ===
+//             name + badge; no `wxid_` token) — the composition clause is RED
+//             on the unbind-row tree (the chip still carried the word);
+//      WBI-6b `label.includes(actionCopy)` → the chip is TEXT-FREE (label='',
+//             the `.st-ic` glyph present, title === hint) — RED on the
+//             unbind-row tree, where the chip still carries the word;
+//      WBI-8a grows the feishu-side composition + id-absence clauses (row
+//             text === name + badge; no `cli_` token — neither the stored
+//             app_id nor the live value may surface; WBI-8b keeps pinning the
+//             live value INSIDE the expanded body) — composition RED on the
+//             unbind-row tree for the same reason.
+//    Zero locale key changes; zero engine change; mock-driven throughout.
+//
+// 🔴 SOCIAL-FIX-CONFIRM (author order 2026-10-09, 社交接口面板三处 UI 修正):
+//    ① 水平留白对称 — the modal header's right padding aligns to the shell's
+//      20px rhythm (was 14). Measured live: title side 21px vs close side 15px;
+//      the two suspected layers (cards vs modal edge 21/21, appId box vs card
+//      16/16) already measured EQUAL — the header chrome was the one unequal
+//      layer. New anchor UX-1 (header padding L === R === 20px).
+//    ② 已绑定行不可展开＋appId 不再渲染 — a CREATED item-face card renders a
+//      STATIC row (a <div>, no [data-item-toggle], no aria-expanded /
+//      aria-controls, cursor: default) and builds NO body at all; the C1 live
+//      block (the application id) is not rendered on the item face in ANY
+//      state (the value stays server-side/config-layer; the fingerprint
+//      mismatch still reaches the pill via the in-memory reading). The
+//      accordion is the not-created face's alone (WBI-1..4 unchanged). Flipped
+//      anchors, each RED on the pre-change tree (SOCIAL_SUITE=after
+//      SOCIAL_WEB_ROOT=<baseline>/web):
+//        SF-1c   `liveBlock` flips to ABSENCE (the container is gone);
+//        MIN2-⑩  `[data-live]` 1 → 0 (SF-1c's container anchor re-pinned);
+//        MIN2-⑪  re-pinned to the row-absence reading (0 by construction);
+//        MIN2-A6 unlinked: empty-container → NO container, and the modal text
+//                carries no `cli_` token (the stored app_id is the probe);
+//        MIN2-⑫  linked: "one row with the value" → the live value renders
+//                NOWHERE (innerText + innerHTML probe), A6b folded in;
+//        WBI-5   created = static row (no toggle, no body) + archiveOnRow;
+//        WBI-6a  `bodyHidden` → the body is ABSENT; row composition kept;
+//        WBI-6b  the expand click is gone — no toggle exists, a click on the
+//                static row toggles nothing; the icon-only chip clauses stay;
+//        WBI-7   the unbind click routes through the glass confirm
+//                ([[driveConfirm]]; was: direct archiveChannel);
+//        WBI-8a  livePresent flips to ABSENCE + the modal-wide `cli_` probe;
+//        WBI-8b  FLIPPED: the created feishu row is NOT expandable and the C1
+//                live value renders nowhere (was: value inside the expanded
+//                body);
+//        WBI-8c  re-pinned: no aria-expanded attribute exists in the created
+//                card and a click on the row changes nothing (was: collapse);
+//        WBI-8d  the leading expand click is gone (nothing to expand); the
+//                unbind fallback pin itself is unchanged.
+//      New anchors: WBI-9a (the bound row is static: cursor default, no
+//      aria-expanded, click is inert), WBI-9b (the unbind confirm flow: the
+//      icon opens the shared glass confirm carrying the channel name, 解除绑定
+//      on the danger button; cancel ⇒ no POST; confirm ⇒ the existing archive
+//      POST + face flip), WBI-9c (hover: the chip gains the danger 10% wash,
+//      the resting face stays transparent).
+//    ③ 解除绑定 hover＋确认弹窗 — the unbind icon opens the shared glass
+//      confirm (#modal-overlay, the requestDelete precedent) before the
+//      EXISTING archive flow; modal.js showConfirm grew the additive
+//      `confirmLabel` opt (every open path re-sets the label, so a custom one
+//      can never leak into the session/folder delete dialogs — pinned by
+//      WBI-9b's label reading). Two additive locale keys
+//      (`social.archive.confirmTitle` / `confirmMsg`, {name} interpolated).
+//    Mock-driven throughout; zero engine change.
 
 // Run:
 //   node tests/social-panel.spec.mjs
@@ -708,6 +809,7 @@ async function afterSuite(browser, base) {
     'src/main/resources/web/js/friendGroups.js',
     'src/main/resources/web/js/i18n.js',
     'src/main/resources/web/js/modal.js',
+    'src/main/resources/web/js/vendor-globals.d.ts', // social-fix-confirm: __showConfirm's confirmLabel opt typed here
     'src/main/resources/web/js/modelPanel.js',
     'src/main/resources/web/js/notificationBanner.js',
     'src/main/resources/web/js/persistence.js',
@@ -721,6 +823,7 @@ async function afterSuite(browser, base) {
     'src/main/resources/web/js/workspacePicker.js',
     'tests/toast-glass.spec.mjs',
     'tests/social-panel.spec.mjs',
+    'tests/social-panel-fix-shots.mjs', // social-fix-confirm: this batch's shot script
   ];
   let diff = '';
   try {
@@ -883,8 +986,10 @@ async function afterSuite(browser, base) {
               // ITEM ROW (a real <button> carrying the same .social-card-head
               // class — the accordion toggle), so the icon/name/status probe
               // reads identically; the control discriminator still holds
-              // because the working face (scan block / archive) stays in the
-              // DOM inside the row's body — hidden, NOT deleted.
+              // because the working face stays in the DOM inside the card —
+              // unbind-row (2026-10-08): the archive chip rides the row line
+              // (a sibling of the row button), the scan block keeps its
+              // hidden body — present, never deleted.
               noCardToggle: !c.querySelector('.nb-toggle'),
               control: !!c.querySelector('.social-scan-inline, [data-archive]'),
             } : null;
@@ -1126,7 +1231,13 @@ async function afterSuite(browser, base) {
         //    was removed (P4) while the container class stayed, so "the scan
         //    block is gone from the created face" is read off the class now.
         scanInlineGone: !card.querySelector('.social-scan-inline'),
+        // 🔴 RE-POINTED by social-fix-confirm (2026-10-09): the C1 live block is
+        //    not rendered on the item face any more — the application id never
+        //    surfaces on the panel (the value stays server-side/config-layer).
+        //    The reading flipped from presence to absence; RED on the
+        //    pre-change tree, where the created face rendered the container.
         liveBlock: !!card.querySelector('[data-live]'),
+        cliProbe: /cli_[0-9a-zA-Z]+/.test(document.getElementById('social-modal').textContent || ''),
         bindings: !!card.querySelector('[data-bindings]'),
         // 🔴 socpanel-min wave-2 (A5): the happy-path credential line is gone,
         //    so this anchors ABSENCE. `hint` is '' both when the node is hidden
@@ -1153,9 +1264,16 @@ async function afterSuite(browser, base) {
     //    happy-path credential COPY; a healthy created card now says nothing, so
     //    it asserts the empty+hidden form instead. RED on both pre-change trees
     //    (wave-1's tree renders the ok copy; the merge-base tree renders it too).
-    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card; bindings block absent since socpanel-min)',
+    // 🔴 FLIPPED AGAIN by social-fix-confirm (2026-10-09): `liveBlock` asserted
+    //    the C1 container's PRESENCE; the application id no longer renders on
+    //    the panel in any state, so the SAME reading asserts ABSENCE (container
+    //    gone + no `cli_` token anywhere in the modal text). RED on the
+    //    pre-change tree, where the created face rendered the container with
+    //    the live value inside (and the fixture's stored app_id rode the row
+    //    probe text? — no: the id never rode the ROW; the container carried it).
+    check('SF-1c scan done ⇒ the SAME card flips to created (rebuild stays in-card; bindings block absent since socpanel-min; the app id renders nowhere since social-fix-confirm)',
       createdFace.pill === 'connected' && createdFace.archive && createdFace.scanInlineGone
-      && createdFace.liveBlock && createdFace.bindings === false
+      && !createdFace.liveBlock && !createdFace.cliProbe && createdFace.bindings === false
       && createdFace.hint === '' && createdFace.hintHidden === true
       && createdFace.probeVocab === 0,
       JSON.stringify(createdFace));
@@ -1833,6 +1951,7 @@ async function min2Suite(browser, base) {
     return {
       liveContainers: card.querySelectorAll('[data-live]').length,
       liveRows: card.querySelectorAll('[data-live] .social-live-row').length,
+      modalLiveRows: modal.querySelectorAll('[data-live] .social-live-row').length,
       liveText: live ? live.innerText.trim() : '(no container)',
       fp: card.querySelectorAll('[data-fp]').length,
       liveEnabled: card.querySelectorAll('[data-live-enabled]').length,
@@ -1845,23 +1964,32 @@ async function min2Suite(browser, base) {
       modalText: modal ? modal.innerText : '',
     };
   }, {});
-  // ⑩ container presence — SF-1c's anchor must survive the row removals.
-  check('MIN2-⑩ created face: the .social-live container is still present (SF-1c anchor kept)',
-    dark.liveContainers === 1,
-    `[data-live] count = ${dark.liveContainers} (must be 1 — the container is SF-1c's judging surface and refreshCard's re-render target)`);
-  // ⑪ row ceiling — three rows was the pre-change shape.
-  check('MIN2-⑪ created face: the live block renders at most one row (three-row shape broken)',
-    dark.liveRows === 0 || dark.liveRows === 1,
-    `rows = ${dark.liveRows} (∈{0,1}; pre-change tree renders 3 ⇒ this reading is RED there)`);
+  // ⑩ container presence — 🔴 RE-POINTED by social-fix-confirm (2026-10-09):
+  //    the application id no longer renders on the panel in any state, so the
+  //    C1 container left the item face WITH the value (RED on the pre-change
+  //    tree, where the created face still rendered exactly 1).
+  check('MIN2-⑩ created face: the .social-live container is GONE (social-fix-confirm re-point of the SF-1c anchor — the app id renders nowhere)',
+    dark.liveContainers === 0,
+    `[data-live] count = ${dark.liveContainers} (must be 0 — the container left with the value; pre-change tree renders 1 ⇒ this reading is RED there)`);
+  // ⑪ row ceiling — 🔴 RE-POINTED (same batch): no live ROW anywhere in the
+  // modal (0 by construction now; the pre-change tree rendered 3, then 1).
+  check('MIN2-⑪ created face: zero live-application rows anywhere in the modal',
+    dark.liveRows === 0 && dark.modalLiveRows === 0,
+    `card rows = ${dark.liveRows}, modal-wide rows = ${dark.modalLiveRows} (both must be 0; pre-change tree renders 1 in the card ⇒ RED there)`);
   check('MIN2-A1 created face: the fingerprint row is gone ([data-fp] = 0)',
     dark.fp === 0 && dark.liveWarn === 0,
     `[data-fp]=${dark.fp} .social-live-warn=${dark.liveWarn} (pre-change tree: the mismatch-capable fingerprint row ⇒ RED there; a mismatch now reads off the status pill, not the DOM)`);
   check('MIN2-A2 created face: the bridge row is gone ([data-live-enabled] = 0)',
     dark.liveEnabled === 0,
     `[data-live-enabled]=${dark.liveEnabled} (pre-change tree: 1 ⇒ RED there)`);
-  check('MIN2-A6 created face: an unlinked bridge renders an EMPTY container, not the "unknown" explainer',
-    dark.liveText === '' && !dark.modalText.includes(A6_UNKNOWN),
-    `live text = ${JSON.stringify(dark.liveText)} — appUnknown copy on screen = ${dark.modalText.includes(A6_UNKNOWN)} (pre-change tree renders it ⇒ RED there; the row is conditional on a REAL app, never on a post-render text comparison)`);
+  // 🔴 RE-POINTED by social-fix-confirm (2026-10-09): "empty container, not the
+  //    unknown explainer" → NO container at all, no explainer copy, and no
+  //    `cli_` token anywhere in the rendered text (the mock config's stored
+  //    app_id `cli_9999999999999999` is the absence probe — the value stays
+  //    server-side/config-layer).
+  check('MIN2-A6 created face: the unlinked bridge renders NO container, no "unknown" explainer, and no app-id token',
+    dark.liveContainers === 0 && !dark.modalText.includes(A6_UNKNOWN) && !dark.modalText.includes('cli_'),
+    `containers=${dark.liveContainers} live text = ${JSON.stringify(dark.liveText)} — appUnknown copy on screen = ${dark.modalText.includes(A6_UNKNOWN)}, cli_ token on screen = ${dark.modalText.includes('cli_')} (pre-change tree renders container + copy ⇒ RED there)`);
   check('MIN2-A3 created face: the card description line is gone',
     dark.desc === 0,
     `.social-card-desc in the feishu card = ${dark.desc} (pre-change tree: 1 ⇒ RED there; plainCardHTML keeps its own — sealed-family surface, out of scope)`);
@@ -1879,27 +2007,38 @@ async function min2Suite(browser, base) {
   //    card would be vacuous (0 on both trees — a check that can never go red).
 
   // ── Leg 2: the connection endpoint reports a REAL application ─────────────
+  // 🔴 RE-POINTED by social-fix-confirm (2026-10-09): was "exactly one row, the
+  //    application VALUE only" — the value no longer renders anywhere, so this
+  //    leg now proves the strongest absence: the LINKED bridge's live app id
+  //    appears in neither the rendered text nor the raw HTML of the panel (the
+  //    raw-HTML half catches value= attributes / hidden carriers), and the
+  //    stored app_id stays dark too.
   liveAppId = 'cli_live_abcdef012345';
   await page.reload();
   await openPanel(page);
   const lit = await page.evaluate(() => {
+    const modal = document.getElementById('social-modal');
     const card = document.querySelector('.social-card[data-channel="feishu"]');
     const rows = card.querySelectorAll('[data-live] .social-live-row');
     return {
+      liveBlocks: card.querySelectorAll('[data-live]').length,
       rows: rows.length,
       labels: card.querySelectorAll('[data-live] .social-live-label').length,
       values: card.querySelectorAll('[data-live] .social-live-value').length,
       rowText: rows[0] ? rows[0].innerText.trim() : '',
       fp: card.querySelectorAll('[data-fp]').length,
+      text: modal ? modal.innerText : '',
+      html: modal ? modal.innerHTML : '',
     };
   });
-  check('MIN2-⑫ linked bridge: exactly one row, the application VALUE only, and no label span',
-    lit.rows === 1 && lit.labels === 0 && lit.values === 1
-    && lit.rowText.includes('cli_live_abcdef012345') && lit.fp === 0,
-    `rows=${lit.rows} labels=${lit.labels} values=${lit.values} text=${JSON.stringify(lit.rowText)} [data-fp]=${lit.fp} (pre-change tree: 3 rows, each with a label span, plus the label copy ⇒ RED there)`);
-  check('MIN2-A6b linked bridge: the removed application-label copy no longer renders',
-    !lit.rowText.includes(A6_LABEL),
-    `row text = ${JSON.stringify(lit.rowText)} — label copy ${JSON.stringify(A6_LABEL)} present = ${lit.rowText.includes(A6_LABEL)} (pre-change tree renders it ⇒ RED there)`);
+  check('MIN2-⑫ linked bridge: the live application VALUE renders nowhere on the panel (text + raw HTML), container gone (social-fix-confirm re-point)',
+    lit.liveBlocks === 0 && lit.rows === 0 && lit.fp === 0
+    && !lit.text.includes('cli_live_abcdef012345') && !lit.html.includes('cli_live_abcdef012345')
+    && !lit.text.includes('cli_9999999999999999'),
+    `blocks=${lit.liveBlocks} rows=${lit.rows} fp=${lit.fp} liveId-in-text=${lit.text.includes('cli_live_abcdef012345')} liveId-in-html=${lit.html.includes('cli_live_abcdef012345')} (pre-change tree: the value rode the body's row ⇒ RED there; the fingerprint mismatch would still reach the pill via the in-memory reading)`);
+  check('MIN2-A6b linked bridge: the removed application-label copy no longer renders (re-pointed to the modal text — the row that carried it is gone)',
+    !lit.text.includes(A6_LABEL),
+    `label copy ${JSON.stringify(A6_LABEL)} present = ${lit.text.includes(A6_LABEL)} (pre-change tree renders it in the row ⇒ RED there)`);
 
   // ── Leg 3: the NOT-created face — where the P4 attribute actually lived ────
   // 🔴 WHY THIS LEG EXISTS (found by running the red leg): `data-scan-inline` is
@@ -1965,39 +2104,79 @@ async function min2Suite(browser, base) {
 //   WBI-4  scanning  — the badge rides the existing semantics (②): during
 //                      polling the pill stays the channelStatus reading while
 //                      the scan status line advances to the confirmed copy.
-//   WBI-5  done      — the card auto-collapses back to the row (③), the pill
-//                      reads connected, and the retired empty-bar form stays
-//                      retired: zero [data-live] on the weixin card, the scan
-//                      block gone, the unbind control inside the body.
-//   WBI-6  unbind    — the unbind control rides the EXPANDED face (④):
-//                      present-but-not-visible collapsed, visible expanded,
-//                      hover copy unchanged (archive.hint on the title).
-//   WBI-7  archive   — unbind returns the card to the default row (ruling ①:
-//                      the SHIPPED fallback, confirmed — the evidence frame
-//                      rides the batch report); the recreate leg re-begins the
-//                      scan behind it (expand ⇒ QR).
+//   WBI-5  done      — RE-POINTED by social-fix-confirm: the card lands on its
+//                      STATIC bound row (③) — pill connected, NO toggle, NO
+//                      body — the scan block gone, zero [data-live], the unbind
+//                      entry ON the row line (unbind-row re-point: was "inside
+//                      the body").
+//   WBI-6  unbind    — REWRITTEN by unbind-row (supersedes ④ "rides the
+//                      EXPANDED face"), amended by unbind-icon, and RE-POINTED
+//                      by social-fix-confirm: 6a the entry IS visible on the
+//                      STATIC bound row (the body is GONE — no "hidden" state
+//                      any more), hover copy unchanged (archive.hint on the
+//                      title); 6b exactly one entry, NO toggle and NO body on
+//                      the created card (the expand click is gone). unbind-icon
+//                      amendments stay: 6a also pins the row composition (text
+//                      = name + badge; no bot id on the row), 6b pins the
+//                      ICON-ONLY chip (label='', glyph present, title === hint).
+//   WBI-7  archive   — RE-POINTED by social-fix-confirm: unbind from the
+//                      STATIC row routes through the SHARED glass confirm
+//                      ([[driveConfirm]]); the EXISTING archive flow then
+//                      returns the card to the default row (ruling ① fallback
+//                      + the order's headline: no expansion needed); the
+//                      recreate leg re-begins the scan behind it (expand ⇒ QR).
 //   WBI-8  3cuts ③   — feishu JOINS the item face. WAS the both-trees control
 //                      ("keeps the two-face card"); the ruling retires that
 //                      face, so the anchor flipped and grew legs:
-//     WBI-8a default — the feishu card IS one row: aria-expanded="false",
-//                      body hidden, pill = connected (created fixture), the
-//                      C1 live value NOT on the collapsed face, NO chevron.
-//     WBI-8b expand  — one click ⇒ the C1 live value shows INSIDE the
-//                      expanded state (实时值在展态内), the unbind control with
-//                      it; aria-expanded="true".
-//     WBI-8c collapse— the SAME click target collapses it (weixin's accordion
-//                      paradigm, byte for byte).
-//     WBI-8d unbind  — unbind returns the feishu card to the default row
-//                      (fields kept ⇒ configuredNotLinked) — ruling ①'s pin
-//                      on the feishu side.
+//     WBI-8a default — RE-POINTED by social-fix-confirm: the feishu card is a
+//                      STATIC bound row (no toggle, no body), pill = connected
+//                      (created fixture), NO live container, the app id
+//                      renders nowhere (text + raw HTML probe), the unbind
+//                      chip ON the row (unbind-row re-point), NO chevron; row
+//                      composition (unbind-icon) stays.
+//     WBI-8b expand  — FLIPPED by social-fix-confirm: the bound row is NOT
+//                      expandable and the C1 live value renders nowhere
+//                      (was: one click revealed the value inside the body).
+//     WBI-8c collapse— RE-POINTED by social-fix-confirm: the bound row is
+//                      INERT — zero aria-expanded, zero bodies, click-inert
+//                      (innerHTML unchanged), no pointer cursor (was: the
+//                      same target collapses).
+//     WBI-8d unbind  — RE-POINTED by social-fix-confirm: the leading expand
+//                      click is gone; unbind rides the confirm (WBI-9b pins
+//                      the dialog) and returns the feishu card to the default
+//                      row (fields kept ⇒ configuredNotLinked) — ruling ①'s
+//                      pin on the feishu side.
+//   WBI-9  social-fix-confirm — NEW: 9b the unbind icon opens the SHARED glass
+//                      confirm (channel name interpolated, 解除绑定 on the
+//                      danger button; 取消 ⇒ no POST; confirm ⇒ the existing
+//                      archive POST), 9c the chip's hover wash (danger 10%,
+//                      resting ghost face unchanged).
+//   UX-1  social-fix-confirm ① — NEW: the modal header's horizontal padding is
+//                      symmetric at the shell rhythm (20px/20px; was 14 right).
 //
 // 🔴 RED LEG (same discipline as the flipped anchors above): run the AFTER
-//    suite against the pre-change tree —
+//    suite against a pre-change tree —
 //      SOCIAL_SUITE=after SOCIAL_WEB_ROOT=<baseline>/web node tests/social-panel.spec.mjs
-//    — WBI-1 fails there ONLY via its chevron clause (the item face itself
-//    landed in the previous batch), and WBI-8a..d fail wholesale (the old
-//    tree renders the two-face feishu card: no [data-item-toggle="feishu"]).
-//    WBI-2..7 stay GREEN there (they pin the previous batch's landed face).
+//    — what must fire depends on the baseline's vintage:
+//      · social-fix-confirm baseline (the unbind-icon face): the re-pointed
+//        legs fire — WBI-5 (static row), WBI-6a (body gone), WBI-6b (no
+//        toggle/no body), WBI-7 + WBI-8d (the confirm drive: the click unbound
+//        directly there, so the dialog wait throws), WBI-8a (static row +
+//        cli_ probe), WBI-8b (flip), WBI-8c (inert row), WBI-9b (no dialog),
+//        UX-1 (14px right); SF-1c + MIN2-⑩/⑪/A6/⑫/A6b fire on their flipped
+//        clauses.
+//      · unbind-icon baseline (chip on the row, still WITH its word): the
+//        social-fix-confirm legs above PLUS the amendment clauses — WBI-6a
+//        (row composition: the extra 解除绑定 token), WBI-6b (label non-empty),
+//        WBI-8a (row composition, feishu side).
+//      · unbind-row baseline (the binditem-3cuts face): WBI-5 (archiveOnRow),
+//        WBI-6a/6b, WBI-7 (the collapsed-row click cannot land — the control
+//        hides with the body) and WBI-8a are RED; WBI-8b pins the live value
+//        INSIDE the body there (green on that tree by its OLD reading — this
+//        suite's flipped reading is red, which is the point).
+//      · 3cuts baseline (the two-face feishu card): WBI-1 fails ONLY via its
+//        chevron clause, WBI-8a..d fail wholesale (no [data-item-toggle="feishu"]).
+//      · original pre-binditem tree: WBI-1..8 fail by absence (no row exists).
 //    The legs below therefore guard their clicks: on a tree without the
 //    probed face a missing selector must record a named RED, not kill the
 //    run ([[leg]] catches and emits).
@@ -2019,6 +2198,19 @@ async function bindItemSuite(browser, base) {
     try { await fn(); } catch (e) {
       check(name, false, `red-by-absence (pre-change tree): ${String((e && e.message) || e).slice(0, 200)}`);
     }
+  };
+  /** social-fix-confirm: the unbind click lands in the SHARED glass confirm
+   *  (#modal-overlay + #delete-box) — drive it (confirm) or cancel it. On the
+   *  pre-change tree the click ran archiveChannel directly, so the dialog
+   *  never opens and the wait throws (the leg records its RED). */
+  const driveConfirm = async (confirm) => {
+    await page.waitForFunction(() => document.getElementById('modal-overlay')?.classList.contains('on'), undefined, { timeout: 4000 });
+    await page.waitForFunction(() => {
+      const box = document.getElementById('delete-box');
+      return !!box && box.offsetParent !== null;
+    }, undefined, { timeout: 4000 });
+    await page.click(confirm ? '#delete-confirm' : '#delete-cancel', { timeout: 3000 });
+    await page.waitForFunction(() => !document.getElementById('modal-overlay').classList.contains('on'), undefined, { timeout: 4000 });
   };
   const readCard = () => page.evaluate(() => {
     const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
@@ -2105,70 +2297,106 @@ async function bindItemSuite(browser, base) {
     await shot(page, 'wbi-4-scanning');
   });
 
-  await leg('WBI-5 scan done ⇒ auto-collapse to the item view (③)', async () => {
+  await leg('WBI-5 scan done ⇒ the card lands on its STATIC bound row (③; social-fix-confirm re-point)', async () => {
     apiState.scan.state = 'done';
     await page.waitForFunction(() => {
       const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
       const row = card && card.querySelector('[data-item-toggle]');
       const body = card && card.querySelector('[data-item-body]');
       const pill = card && card.querySelector('[data-status]');
-      return !!row && row.getAttribute('aria-expanded') === 'false'
-        && !!body && body.hasAttribute('hidden')
+      // social-fix-confirm: the created card is a STATIC row — no toggle, no
+      // body at all (RED on the pre-change tree, which kept both).
+      return !!card && !row && !body
         && !!pill && pill.getAttribute('data-status') === 'connected';
     }, undefined, { timeout: 15000 });
     const done = await readCard();
-    const archiveInsideBody = await page.evaluate(() => {
+    // 🔴 unbind-row re-point: the entry moved OUT of the body onto the row
+    //    line — the pin moves with it (RED on the pre-change tree, where the
+    //    chip still sits in the hidden body).
+    const archiveOnRow = await page.evaluate(() => {
       const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      const line = card.querySelector('.social-item-line');
       const body = card.querySelector('[data-item-body]');
-      return !!body && !!body.querySelector('[data-archive]');
+      return !!line && !!line.querySelector('[data-archive]') && !(body && body.querySelector('[data-archive]'));
     });
-    check('WBI-5 scan done ⇒ auto-collapse to the item view (③); the empty-bar form stays retired',
-      done.pill === 'connected' && done.ariaExpanded === 'false' && done.bodyHidden && !done.bodyVisible
-      && done.scanInline === false && done.liveBlocks === 0 && archiveInsideBody,
-      `pill=${done.pill} aria=${done.ariaExpanded} bodyHidden=${done.bodyHidden} scanInline=${done.scanInline} live=${done.liveBlocks} archiveInsideBody=${archiveInsideBody} (pre-change tree: the done card kept a wide created face with an ALWAYS-EMPTY [data-live] bar — the form this order retires; RED there)`);
+    check('WBI-5 scan done ⇒ static bound row: pill connected, NO toggle, NO body (social-fix-confirm); the empty-bar form stays retired',
+      done.pill === 'connected' && !done.row && !done.bodyPresent && !done.bodyVisible
+      && done.scanInline === false && done.liveBlocks === 0 && archiveOnRow,
+      `pill=${done.pill} row=${done.row} bodyPresent=${done.bodyPresent} scanInline=${done.scanInline} live=${done.liveBlocks} archiveOnRow=${archiveOnRow} (social-fix-confirm: the bound card renders no interactive face and no app id; unbind-row: the entry rides the row line — both RED on the pre-change tree)`);
     await shot(page, 'wbi-5-done-back-to-row');
   });
 
-  await leg('WBI-6 the unbind control rides the EXPANDED face (④)', async () => {
+  await leg('WBI-6 the unbind entry rides the STATIC bound row (unbind-row + social-fix-confirm re-point; unbind-icon amends the face)', async () => {
     const collapsed = await readCard();
     const unbindCollapsed = await page.evaluate(() => {
       const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
       const btn = card.querySelector('[data-archive]');
+      const line = card.querySelector('.social-item-line');
       return {
         present: !!btn,
         visible: btn instanceof HTMLElement && btn.offsetParent !== null,
         title: btn ? btn.getAttribute('title') : '',
+        onRowLine: !!btn && !!btn.closest('.social-item-line'),
+        notInRowButton: !!btn && !(btn.closest('[data-item-toggle]')),
+        lineText: line ? (line.innerText || '').trim() : '',
       };
     });
     const hintCopy = ZH['social.weixinIlink.archive.hint'] || EN['social.weixinIlink.archive.hint'] || '';
-    check('WBI-6a collapsed: the unbind control exists but is NOT visible (④ — rides the expanded face)',
-      collapsed.bodyHidden && unbindCollapsed.present && !unbindCollapsed.visible
-      && unbindCollapsed.title === hintCopy,
-      `present=${unbindCollapsed.present} visible=${unbindCollapsed.visible} title=${JSON.stringify(unbindCollapsed.title)} (hover copy unchanged — zero new keys)`);
-    await page.click('[data-item-toggle="weixin-ilink"]', { timeout: 3000 });
-    const unbindExpanded = await page.evaluate(() => {
+    // unbind-icon needles: the row's WHOLE visible text is name + badge — the
+    // stored bot id (wxid_mock_bot, live in the mock config) must not surface.
+    const weixinName = ZH['social.weixinIlink.name'] || EN['social.weixinIlink.name'] || '';
+    const connectedWord = ZH['social.status.connected'] || EN['social.status.connected'] || '';
+    const rowText = (unbindCollapsed.lineText || '').replace(/\s+/g, '');
+    // 🔴 social-fix-confirm re-point: the body is ABSENT on the created card
+    //    (was "body hidden") — RED on the pre-change tree, which kept it.
+    check('WBI-6a bound: the unbind entry IS visible on the static row (④ retired — unbind without expanding; the body is GONE since social-fix-confirm); the row text is name + badge ONLY (unbind-icon: no word, no bot id)',
+      !collapsed.bodyPresent && unbindCollapsed.present && unbindCollapsed.visible
+      && unbindCollapsed.onRowLine && unbindCollapsed.notInRowButton
+      && unbindCollapsed.title === hintCopy
+      && rowText === weixinName + connectedWord && !rowText.includes('wxid_'),
+      `present=${unbindCollapsed.present} visible=${unbindCollapsed.visible} onRowLine=${unbindCollapsed.onRowLine} notInRowButton=${unbindCollapsed.notInRowButton} title=${JSON.stringify(unbindCollapsed.title)} lineText=${JSON.stringify(unbindCollapsed.lineText)} bodyPresent=${collapsed.bodyPresent} (hover copy unchanged — zero new keys; social-fix-confirm: the bound card renders no body at all — RED on the pre-change tree. unbind-icon: the row reads icon + name + 已接入 + unbind icon, 别无他物)`);
+    // 6b — the move is COMPLETE: exactly one entry, not inside a body (there
+    // IS no body on the created card any more — social-fix-confirm), and —
+    // unbind-icon — it is a bare glyph: no word on the chip, the archive.hint
+    // copy riding the title (a11y name + discoverability). The old expand
+    // click is gone: a created card has no [data-item-toggle] to click.
+    const unbindRead = await page.evaluate(() => {
       const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
-      const btn = card.querySelector('[data-archive]');
+      const btns = card.querySelectorAll('[data-archive]');
+      const body = card.querySelector('[data-item-body]');
+      const btn = btns[0];
       return {
+        count: btns.length,
+        inBody: !!body && !!body.querySelector('[data-archive]'),
         visible: btn instanceof HTMLElement && btn.offsetParent !== null,
         label: btn ? (btn.textContent || '').trim() : '',
-        bodyVisible: card.querySelector('[data-item-body]').offsetParent !== null,
+        iconOnly: btn ? !!btn.querySelector('.st-ic') : false,
+        title: btn ? btn.getAttribute('title') : '',
+        hasToggle: !!card.querySelector('[data-item-toggle]'),
+        hasBody: !!body,
       };
     });
-    const actionCopy = ZH['social.weixinIlink.archive.action'] || EN['social.weixinIlink.archive.action'] || '';
-    check('WBI-6b expanded: the unbind control is visible inside the body (existing copy, zero new keys)',
-      unbindExpanded.visible && unbindExpanded.bodyVisible
-      && unbindExpanded.label.includes(actionCopy),
-      `visible=${unbindExpanded.visible} label=${JSON.stringify(unbindExpanded.label)} — 取舍 declared: the row stays single-purpose, so the toggle and the destructive action can never share one click (⑤'s no-ambiguity clause)`);
-    await shot(page, 'wbi-6b-expanded-unbind');
+    check('WBI-6b exactly ONE unbind entry, on the row line, ICON-ONLY (unbind-icon: the word is gone); the created card renders NO toggle and NO body (social-fix-confirm re-point — the expand click is gone)',
+      unbindRead.count === 1 && !unbindRead.inBody && unbindRead.visible
+      && unbindRead.label === '' && unbindRead.iconOnly
+      && unbindRead.title === hintCopy
+      && unbindRead.hasToggle === false && unbindRead.hasBody === false,
+      `count=${unbindRead.count} inBody=${unbindRead.inBody} visible=${unbindRead.visible} label=${JSON.stringify(unbindRead.label)} iconOnly=${unbindRead.iconOnly} title=${JSON.stringify(unbindRead.title)} hasToggle=${unbindRead.hasToggle} hasBody=${unbindRead.hasBody} (social-fix-confirm: nothing to expand — RED on the pre-change tree, whose row button still existed; unbind-icon: the bare unplug glyph is the whole chip)`);
+    await shot(page, 'wbi-6b-expanded-no-duplicate');
   });
 
-  await leg('WBI-7 unbind ⇒ default item view; recreate re-begins the QR behind the row', async () => {
+  await leg('WBI-7 unbind from the STATIC bound row (through the glass confirm) ⇒ default item view; recreate re-begins the QR behind the row', async () => {
     // The recreate leg must poll a FRESH scan face (WBI-5 consumed the global
     // `done`), and the real unbind stops the bridge — unregister the mock.
     resetScanFace();
     apiState.registered = {};
+    // social-fix-confirm re-point: the bound card has NO expansion to collapse
+    // (the old collapse-click is gone) — THIS click IS the unbind, straight
+    // off the static row, and it routes through the shared glass confirm
+    // ([[driveConfirm]]); on the pre-change tree the click ran archiveChannel
+    // directly, so the dialog wait throws (the leg's RED).
     await page.click('[data-archive="weixin-ilink"]', { timeout: 3000 });
+    await driveConfirm(true);
     await page.waitForFunction(() => {
       const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
       const row = card && card.querySelector('[data-item-toggle]');
@@ -2222,6 +2450,8 @@ async function bindItemSuite(browser, base) {
     const body = card.querySelector('[data-item-body]');
     const live = card.querySelector('[data-live]');
     const archive = card.querySelector('[data-archive]');
+    const line = card.querySelector('.social-item-line');
+    const modal = document.getElementById('social-modal');
     return {
       card: true,
       itemface: card.classList.contains('social-card-itemface'),
@@ -2235,80 +2465,99 @@ async function bindItemSuite(browser, base) {
         ? card.querySelector('[data-status]').getAttribute('data-status') : null,
       name: ((card.querySelector('.social-card-name') || {}).textContent || '').trim(),
       chevron: !!card.querySelector('.lucide-chevron-down'),
+      lineText: line ? (line.innerText || '').trim() : '',
       livePresent: !!live,
       liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+      // social-fix-confirm: the app id renders NOWHERE — both the C1 live
+      // value (cli_live_mock0987654321) and the stored app_id
+      // (cli_mock0123456789ab) are probed on the panel's text and raw HTML.
+      cliText: /cli_[0-9a-zA-Z]+/.test((modal && modal.innerText) || ''),
+      cliHtml: /cli_[0-9a-zA-Z]+/.test((modal && modal.innerHTML) || ''),
       archivePresent: !!archive,
       archiveVisible: archive instanceof HTMLElement && archive.offsetParent !== null,
     };
   });
-  check('WBI-8a feishu default = item row (aria-expanded=false, body hidden, live value NOT on the collapsed face, no chevron)',
-    fdef.card && fdef.itemface && fdef.row && fdef.rowIsButton && fdef.ariaExpanded === 'false'
-    && fdef.bodyPresent && fdef.bodyHidden === true && !fdef.bodyVisible
+  // unbind-icon needles: the feishu row's WHOLE visible text is name + badge —
+  // neither the stored app_id (cli_mock0123456789ab, in the mock config) nor
+  // the C1 live value (cli_live_mock0987654321) may surface on the row;
+  // 🔴 social-fix-confirm: neither may surface ANYWHERE on the panel (there is
+  // no "behind the click" any more — WBI-8b pins the non-expansion side).
+  const feishuName = ZH['social.feishu.name'] || EN['social.feishu.name'] || '';
+  const feishuConnected = ZH['social.status.connected'] || EN['social.status.connected'] || '';
+  const feishuRowText = (fdef.lineText || '').replace(/\s+/g, '');
+  check('WBI-8a feishu bound = STATIC item row (no toggle, no body, NO live container, unbind chip ON the row, no chevron); the app id renders nowhere on the panel (social-fix-confirm re-point); the row text is name + badge ONLY (unbind-icon)',
+    fdef.card && fdef.itemface && !fdef.row && !fdef.bodyPresent
+    && !fdef.bodyVisible
     && fdef.pill === 'connected' && fdef.name.includes('飞书') && !fdef.chevron
-    && fdef.livePresent && !fdef.liveVisible
-    && fdef.archivePresent && !fdef.archiveVisible,
-    `row=${fdef.row} aria=${fdef.ariaExpanded} bodyHidden=${fdef.bodyHidden} bodyVisible=${fdef.bodyVisible} pill=${fdef.pill} name=${JSON.stringify(fdef.name)} chevron=${fdef.chevron} livePresent=${fdef.livePresent} liveVisible=${fdef.liveVisible} archivePresent=${fdef.archivePresent} archiveVisible=${fdef.archiveVisible} (the created face's live value AND unbind control both sit in the hidden body — visible only after a click; pre-change tree: the feishu card keeps the two-face card — no row, live value flat on the face ⇒ RED there)`);
+    && !fdef.livePresent
+    && !fdef.cliText && !fdef.cliHtml
+    && fdef.archivePresent && fdef.archiveVisible
+    && feishuRowText === feishuName + feishuConnected,
+    `row=${fdef.row} bodyPresent=${fdef.bodyPresent} pill=${fdef.pill} name=${JSON.stringify(fdef.name)} chevron=${fdef.chevron} lineText=${JSON.stringify(fdef.lineText)} livePresent=${fdef.livePresent} cliText=${fdef.cliText} cliHtml=${fdef.cliHtml} archivePresent=${fdef.archivePresent} archiveVisible=${fdef.archiveVisible} (social-fix-confirm: the accordion and the C1 body are the not-created face's alone — the container/row/button readings are RED on the pre-change tree, which kept all three; unbind-icon: the row reads icon + name + 已接入 + unbind icon, 别无他物)`);
   await shot(page, 'wbi-8a-feishu-default-row');
 
-  await leg('WBI-8b one click expands the feishu face: the C1 live value shows INSIDE the expanded state', async () => {
-    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
-    await page.waitForFunction(() => {
-      const b = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
-      return !!b && !b.hasAttribute('hidden');
-    }, undefined, { timeout: 4000 });
-    const ex = await page.evaluate(() => {
+  // 🔴 FLIPPED by social-fix-confirm (2026-10-09): the created feishu row is
+  //    NOT expandable any more, and the C1 live value renders NOWHERE on the
+  //    panel — text and raw HTML probed (the raw half would catch value=
+  //    attributes / hidden carriers). RED on the pre-change tree, where the
+  //    row button existed, one click revealed the body, and the value rode it.
+  await leg('WBI-8b the bound feishu row is NOT expandable; the C1 live value renders nowhere (social-fix-confirm flip)', async () => {
+    const st = await page.evaluate(() => {
       const card = document.querySelector('.social-card[data-channel="feishu"]');
-      const row = card.querySelector('[data-item-toggle]');
-      const body = card.querySelector('[data-item-body]');
-      const live = card.querySelector('[data-live]');
+      const modal = document.getElementById('social-modal');
       const archive = card.querySelector('[data-archive]');
       return {
-        ariaExpanded: row.getAttribute('aria-expanded'),
-        bodyVisible: body instanceof HTMLElement && body.offsetParent !== null,
-        liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
-        liveText: live ? (live.innerText || live.textContent || '').trim() : '',
+        toggle: !!card.querySelector('[data-item-toggle]'),
+        body: !!card.querySelector('[data-item-body]'),
+        live: card.querySelectorAll('[data-live]').length,
         archiveVisible: archive instanceof HTMLElement && archive.offsetParent !== null,
+        cliText: /cli_[0-9a-zA-Z]+/.test((modal && modal.innerText) || ''),
+        cliHtml: /cli_[0-9a-zA-Z]+/.test((modal && modal.innerHTML) || ''),
       };
     });
-    check('WBI-8b feishu expanded: aria=true, the live app value visible inside the body, the unbind control with it',
-      ex.ariaExpanded === 'true' && ex.bodyVisible && ex.liveVisible
-      && ex.liveText.includes('cli_live_mock0987654321') && ex.archiveVisible,
-      `aria=${ex.ariaExpanded} bodyVisible=${ex.bodyVisible} liveVisible=${ex.liveVisible} liveText=${JSON.stringify(ex.liveText)} archiveVisible=${ex.archiveVisible} (实时值在展态内 — the two-face card's created face showed it flat; 3cuts ③ moves it behind the click)`);
-    await shot(page, 'wbi-8b-feishu-expanded-live');
+    check('WBI-8b feishu bound: NO toggle, NO body, NO live container — the live app id renders nowhere on the panel (text + raw HTML); the unbind chip stays on the row',
+      !st.toggle && !st.body && st.live === 0 && !st.cliText && !st.cliHtml && st.archiveVisible,
+      `toggle=${st.toggle} body=${st.body} live=${st.live} cliText=${st.cliText} cliHtml=${st.cliHtml} archiveVisible=${st.archiveVisible} (实时值不再上屏 — the value stays server-side/config-layer; the fingerprint mismatch would still reach the pill via the in-memory reading. RED on the pre-change tree: the row was a real button, one click revealed the value inside the body)`);
+    await shot(page, 'wbi-8b-feishu-bound-static');
   });
 
-  await leg('WBI-8c clicking the expanded feishu row collapses it (weixin\'s accordion paradigm)', async () => {
-    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
-    await page.waitForFunction(() => {
-      const row = document.querySelector('.social-card[data-channel="feishu"] [data-item-toggle]');
-      const body = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
-      return !!row && row.getAttribute('aria-expanded') === 'false'
-        && !!body && body.hasAttribute('hidden');
-    }, undefined, { timeout: 4000 });
-    const cl = await page.evaluate(() => {
+  // 🔴 RE-POINTED by social-fix-confirm (was "click collapses"): the bound row
+  //    is INERT — zero aria-expanded attributes, zero bodies, and a click on
+  //    the row changes nothing (the subtree is byte-identical after).
+  await leg('WBI-8c the bound feishu row is inert: no aria-expanded, a click on the row changes nothing', async () => {
+    const before = await page.evaluate(() => {
       const card = document.querySelector('.social-card[data-channel="feishu"]');
-      const body = card.querySelector('[data-item-body]');
-      const live = card.querySelector('[data-live]');
+      return card.innerHTML;
+    });
+    await page.click('.social-card[data-channel="feishu"] .social-item-row', { timeout: 3000 });
+    await page.waitForTimeout(150);
+    const after = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
       return {
-        ariaExpanded: card.querySelector('[data-item-toggle]').getAttribute('aria-expanded'),
-        bodyHidden: body.hasAttribute('hidden'),
-        liveVisible: live instanceof HTMLElement && live.offsetParent !== null,
+        html: card.innerHTML,
+        aria: card.querySelectorAll('[aria-expanded]').length,
+        bodies: card.querySelectorAll('[data-item-body]').length,
+        cursor: getComputedStyle(card.querySelector('.social-item-row')).cursor,
       };
     });
-    check('WBI-8c feishu collapsed: the SAME target toggles both ways, the live value withdraws with the body',
-      cl.ariaExpanded === 'false' && cl.bodyHidden && !cl.liveVisible,
-      `aria=${cl.ariaExpanded} bodyHidden=${cl.bodyHidden} liveVisible=${cl.liveVisible} — no second control, no double-bind (the interaction language is the weixin card's, byte for byte)`);
+    check('WBI-8c feishu bound: zero aria-expanded / zero bodies / click-inert (innerHTML unchanged) and the row carries NO pointer cursor',
+      after.aria === 0 && after.bodies === 0 && after.html === before && after.cursor === 'default',
+      `aria=${after.aria} bodies=${after.bodies} htmlUnchanged=${after.html === before} cursor=${after.cursor} (social-fix-confirm: the interaction language is the not-created face's alone; RED on the pre-change tree, whose row was a button with aria-expanded and a pointer)`);
   });
 
-  await leg('WBI-8d feishu unbind ⇒ back to the default item view (fields kept ⇒ configuredNotLinked)', async () => {
+  await leg('WBI-8d feishu unbind (through the glass confirm) ⇒ back to the default item view (fields kept ⇒ configuredNotLinked)', async () => {
     // the real unbind stops the bridge — unregister the mock first (WBI-7's
     // discipline), so the archived pill reads configuredNotLinked, and give
     // the recreate leg a FRESH scan face (this page's weixin legs consumed
     // the shared `done`).
     apiState.registered = {};
     resetScanFace();
-    await page.click('[data-item-toggle="feishu"]', { timeout: 3000 });
+    // social-fix-confirm re-point: the bound card has NO expansion — the old
+    // leading expand click is gone; the unbind click comes straight off the
+    // static row and routes through the shared glass confirm (WBI-9b pins the
+    // dialog's own face; this leg pins the OUTCOME).
     await page.click('[data-archive="feishu"]', { timeout: 3000 });
+    await driveConfirm(true);
     await page.waitForFunction(() => {
       const card = document.querySelector('.social-card[data-channel="feishu"]');
       const row = card && card.querySelector('[data-item-toggle]');
@@ -2333,6 +2582,100 @@ async function bindItemSuite(browser, base) {
       `aria=${unbound.ariaExpanded} bodyHidden=${unbound.bodyHidden} pill=${unbound.pill} — ruling ①'s fallback pin on the feishu side (the weixin side is WBI-7); the recreate leg re-begins the QR behind the collapsed row`);
     await shot(page, 'wbi-8d-feishu-unbound-row');
   });
+
+  // ── WBI-9 + UX-1 — social-fix-confirm (2026-10-09): the confirm flow, the
+  //    hover face, the chrome rhythm ──────────────────────────────────────────
+  // Re-bind the feishu card (WBI-8a's fixture path; 8d left it not-created and
+  // unregistered), then: 9c hovers the chip (state-neutral), 9b drives the
+  // confirm to its two outcomes (cancel ⇒ no POST; confirm ⇒ the EXISTING
+  // archive POST), UX-1 reads the header's horizontal padding.
+  apiState.channels.feishu = { enabled: true, fields: { ...CREATED_FIXTURE.feishu.fields } };
+  apiState.probes.feishu = JSON.parse(JSON.stringify(CREATED_FIXTURE.feishu.probe));
+  apiState.registered.feishu = true;
+  apiState.posts = [];
+  await page.reload();
+  await openPanel(page);
+
+  await leg('WBI-9c the unbind chip hover: the danger 10% wash on hover, the ghost face stays transparent at rest', async () => {
+    const read = () => page.evaluate(() => {
+      const btn = document.querySelector('.social-card[data-channel="feishu"] [data-archive]');
+      const cs = getComputedStyle(btn);
+      return { bg: cs.backgroundColor, border: cs.borderColor };
+    });
+    const transparent = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
+    const rest = await read();
+    await page.hover('[data-archive="feishu"]');
+    await page.waitForTimeout(350); // the control's own transition budget
+    const hov = await read();
+    check('WBI-9c unbind chip: transparent at rest, a red wash + red edge on hover (--status-error-icon color-mix, the danger pill family\'s material)',
+      transparent(rest.bg) && !transparent(hov.bg) && !transparent(hov.border),
+      `rest=${JSON.stringify(rest)} hover=${JSON.stringify(hov)} (themed token — dark and light both hold; the resting ghost face is unchanged: same specificity, later in the sheet wins at :hover only)`);
+    await shot(page, 'wbi-9c-unbind-hover');
+  });
+
+  await leg('WBI-9b the unbind icon opens the SHARED glass confirm; 取消 never POSTs, 解除绑定 runs the existing archive', async () => {
+    // ① the dialog face: shared #delete-box, danger tone, channel name in the
+    //    body copy, the channel's archive.action word on the confirm button.
+    await page.click('[data-archive="feishu"]', { timeout: 3000 });
+    await page.waitForFunction(() => document.getElementById('modal-overlay')?.classList.contains('on'), undefined, { timeout: 4000 });
+    const dlg = await page.evaluate(() => {
+      const box = document.getElementById('delete-box');
+      const confirmBtn = document.getElementById('delete-confirm');
+      return {
+        visible: !!box && box.offsetParent !== null,
+        title: (document.getElementById('delete-title') || {}).textContent || '',
+        msg: (document.getElementById('delete-msg') || {}).textContent || '',
+        confirmLabel: (confirmBtn || {}).textContent || '',
+        neutral: box ? box.classList.contains('confirm-neutral') : null,
+      };
+    });
+    const feishuName = ZH['social.feishu.name'] || EN['social.feishu.name'] || '';
+    const confirmWord = ZH['social.feishu.archive.action'] || EN['social.feishu.archive.action'] || '';
+    const titleWord = ZH['social.archive.confirmTitle'] || EN['social.archive.confirmTitle'] || '';
+    const msgNeedle = (ZH['social.archive.confirmMsg'] || EN['social.archive.confirmMsg'] || '')
+      .replace('{name}', feishuName);
+    check('WBI-9b① the glass confirm carries the channel name and the danger 解除绑定 button (shared #delete-box, danger tone)',
+      dlg.visible && dlg.title === titleWord && dlg.msg === msgNeedle && msgNeedle.includes(feishuName)
+      && dlg.confirmLabel === confirmWord && dlg.neutral === false,
+      `visible=${dlg.visible} title=${JSON.stringify(dlg.title)} msg=${JSON.stringify(dlg.msg)} confirmLabel=${JSON.stringify(dlg.confirmLabel)} neutral=${dlg.neutral} (modal.js showConfirm's additive confirmLabel opt — every open path re-sets the label, so a custom one can never leak into the session/folder delete dialogs; RED on the pre-change tree: the click unbound directly, no dialog existed)`);
+    await shot(page, 'wbi-9b-unbind-confirm');
+    // ② 取消 ⇒ the dialog closes, the destructive path never fired.
+    await page.click('#delete-cancel', { timeout: 3000 });
+    await page.waitForFunction(() => !document.getElementById('modal-overlay').classList.contains('on'), undefined, { timeout: 4000 });
+    const cancels = apiState.posts.filter((p) => p.id === 'feishu' && p.body && p.body.enabled === false).length;
+    check('WBI-9b② cancel ⇒ no unbind POST (the destructive path is confirm-gated)',
+      cancels === 0,
+      `archive POSTs so far = ${cancels} (must be 0 after the cancel; RED on the pre-change tree: the click POSTed immediately)`);
+    // ③ the icon again → 解除绑定 ⇒ the EXISTING archive flow: one POST with
+    //    {enabled:false, fields:{}}, the face flips back to the not-created row.
+    //    (The real unbind stops the bridge — unregister the mock first, the
+    //    WBI-7 discipline: with registered.feishu still true the archived pill
+    //    would read connected, not configuredNotLinked.)
+    apiState.registered = {};
+    await page.click('[data-archive="feishu"]', { timeout: 3000 });
+    await driveConfirm(true);
+    await page.waitForFunction(() => {
+      const pill = document.querySelector('.social-card[data-channel="feishu"] [data-status]');
+      return !!pill && pill.getAttribute('data-status') === 'configuredNotLinked';
+    }, undefined, { timeout: 10000 });
+    const unbinds = apiState.posts.filter((p) => p.id === 'feishu' && p.body && p.body.enabled === false);
+    check('WBI-9b③ confirm ⇒ exactly one archive POST (enabled:false) and the face flips back to the not-created row',
+      unbinds.length === 1 && unbinds[0].body && unbinds[0].body.enabled === false,
+      `archive POSTs = ${unbinds.length}, body = ${JSON.stringify((unbinds[0] || {}).body)} (the EXISTING [[archiveChannel]] flow, confirm-gated)`);
+  });
+
+  // ── UX-1 — social-fix-confirm ①: the modal chrome's horizontal rhythm ──────
+  // The header's right padding aligns to the shell's 20px (was 14). Measured
+  // live: the title side sat 21px from the modal edge and the close button
+  // 15px, while the cards (21/21) and the embedded box (16/16) already
+  // measured EQUAL — the header chrome was the one unequal layer.
+  const ux1 = await page.evaluate(() => {
+    const cs = getComputedStyle(document.querySelector('.social-modal-header'));
+    return { left: cs.paddingLeft, right: cs.paddingRight };
+  });
+  check('UX-1 modal header: horizontal padding symmetric at the shell rhythm (20px / 20px — was 14px on the right)',
+    ux1.left === '20px' && ux1.right === '20px',
+    `padding-left=${ux1.left} padding-right=${ux1.right} (RED on the pre-change tree: 20px/14px; existing values only — 20 is the body's own L/R token)`);
 
   await ctx.close();
 }

@@ -1,0 +1,397 @@
+<!doctype html>
+<!-- style-2 · 轻浮层卡片 · AskUser/Onboarding 视觉稿（纯视觉，零功能面；文案逐字取 BRIEF §1.8 真源） -->
+<!-- 双主题机制：prefers-color-scheme + CSS 变量（暗档只覆写 :root 变量值，规则体一律 var() 引用） -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>style-2 · 轻浮层卡片</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    /* ── 地面（L0） ── */
+    --bg1: #f7f8fa;
+    --bg0: #f0f1f5;
+    --hair: rgba(20, 26, 40, 0.07);
+    --rail: rgba(255, 255, 255, 0.55);
+    /* ── L1 气泡：安贴面 ── */
+    --bubble: #ffffff;
+    --bubble-bd: rgba(20, 26, 40, 0.06);
+    --sh-b: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 14px rgba(16, 24, 40, 0.05);
+    /* ── L2 浮层卡：轻渐变面 + 发丝描边 + 柔影 + 顶缘高光 ── */
+    --card-top: #ffffff;
+    --card-bot: #f5f7fa;
+    --card-bd: rgba(20, 26, 40, 0.08);
+    --sh-c: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.10);
+    --hl: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    /* ── 文字 ── */
+    --ink: #1b1e26;
+    --ink2: #62666f;
+    --ink3: #8f939c;
+    /* ── 控件 ── */
+    --field: #f2f3f6;
+    --field-bd: rgba(20, 26, 40, 0.05);
+    --chip: #ffffff;
+    --chip-bd: rgba(20, 26, 40, 0.10);
+    --sh-chip: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --green: #0ac065;
+    --green2: #07a854;
+    --sh-btn: 0 2px 6px rgba(7, 193, 96, 0.30), 0 6px 18px rgba(7, 193, 96, 0.20);
+    --ring: 0 0 0 3px rgba(7, 193, 96, 0.14);
+    --icon: #8f939c;
+    --amber-bg: rgba(196, 148, 28, 0.15);
+    --amber-ink: #96690a;
+    --orb-1: #86dcff; --orb-2: #2f7ee2; --orb-3: #14418f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg1: #161922;
+      --bg0: #101319;
+      --hair: rgba(255, 255, 255, 0.06);
+      --rail: rgba(255, 255, 255, 0.03);
+      --bubble: #1c1f27;
+      --bubble-bd: rgba(255, 255, 255, 0.055);
+      --sh-b: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.28);
+      --card-top: #272c3a;
+      --card-bot: #1f232d;
+      --card-bd: rgba(255, 255, 255, 0.09);
+      --sh-c: 0 2px 4px rgba(0, 0, 0, 0.35), 0 14px 36px rgba(0, 0, 0, 0.50);
+      --hl: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      --ink: #e8eaed;
+      --ink2: #a7acb8;
+      --ink3: #7b8090;
+      --field: #171a22;
+      --field-bd: rgba(255, 255, 255, 0.06);
+      --chip: #242936;
+      --chip-bd: rgba(255, 255, 255, 0.09);
+      --sh-chip: 0 1px 2px rgba(0, 0, 0, 0.30);
+      --green: #0ac065;
+      --green2: #069a4e;
+      --sh-btn: 0 2px 8px rgba(7, 193, 96, 0.32);
+      --ring: 0 0 0 3px rgba(7, 193, 96, 0.22);
+      --icon: #7b8090;
+      --amber-bg: rgba(232, 176, 75, 0.16);
+      --amber-ink: #e6b765;
+      --orb-1: #86dcff; --orb-2: #2f7ee2; --orb-3: #14418f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, sans-serif;
+    background: linear-gradient(180deg, var(--bg1), var(--bg0));
+    color: var(--ink);
+    font-size: 14.5px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { display: grid; grid-template-columns: 56px 1fr; height: 100vh; overflow: hidden; }
+
+  /* ── 左侧图标栏 ── */
+  .rail {
+    border-right: 1px solid var(--hair);
+    background: var(--rail);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 0 16px; gap: 6px;
+  }
+  .rail .logo {
+    width: 30px; height: 30px; border-radius: 9px; margin-bottom: 14px;
+    background: radial-gradient(circle at 30% 28%, var(--orb-1), var(--orb-2) 58%, var(--orb-3));
+    box-shadow: 0 2px 8px rgba(20, 60, 140, 0.28);
+  }
+  .rail svg { width: 20px; height: 20px; stroke: var(--icon); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .rail .ic { padding: 8px; border-radius: 10px; }
+  .rail .spring { flex: 1; }
+
+  /* ── 主列 ── */
+  .main { display: flex; flex-direction: column; min-width: 0; }
+
+  /* 顶栏（未命名态：名字区留空） */
+  .topbar {
+    height: 52px; flex: none;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .tb-left { display: flex; gap: 4px; }
+  .tb-right { display: flex; gap: 4px; align-items: center; justify-content: flex-end; }
+  .topbar svg { width: 19px; height: 19px; stroke: var(--icon); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .tb-ic { padding: 6px; border-radius: 9px; }
+  .tb-center { display: flex; align-items: center; gap: 8px; }
+  /* 未命名态：#session-name 为空 —— 此处按去名规则不渲染任何文字 */
+  .tb-name { font-size: 15px; font-weight: 600; }
+  .badge-pending {
+    min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+    background: var(--amber-bg); color: var(--amber-ink);
+    font-size: 11.5px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    margin-left: 6px;
+  }
+
+  /* ── 聊天区 ── */
+  .chat { flex: 1; overflow: hidden; padding: 18px 24px 8px; }
+  .thread { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
+  .row.ai { display: flex; }
+  .bubble {
+    max-width: 680px;
+    background: var(--bubble);
+    border: 1px solid var(--bubble-bd);
+    border-radius: 16px; border-bottom-left-radius: 6px;
+    box-shadow: var(--sh-b);
+    padding: 9px 14px;
+    line-height: 1.55;
+  }
+  .bubble p { margin: 0; }
+  .bubble p + p { margin-top: 5px; }
+
+  /* 承载题卡的「幽灵泡」：气泡退后成无面安装座，卡直接浮于地面之上 */
+  .bubble.ghost {
+    background: none; border: none; box-shadow: none;
+    border-radius: 0; padding: 2px 0 0; max-width: 680px; width: 100%;
+  }
+  .ob-lead { padding: 0 14px; line-height: 1.55; }
+  .ob-q { padding: 0 14px; margin-top: 3px; font-weight: 600; line-height: 1.55; }
+
+  /* ── L2 浮层卡（Onboarding 题卡） ── */
+  .ask-card {
+    margin-top: 10px;
+    max-width: 560px;
+    background: linear-gradient(180deg, var(--card-top), var(--card-bot));
+    border: 1px solid var(--card-bd);
+    border-radius: 16px;
+    box-shadow: var(--sh-c), var(--hl);
+    padding: 13px 14px 12px;
+  }
+  .ask-meta {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11px; font-weight: 500; letter-spacing: 0.5px;
+    color: var(--ink2);
+    margin-bottom: 10px;
+  }
+  .ask-meta .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--green); box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.14); flex: none; }
+  .free-row { display: flex; gap: 8px; margin-top: 0; }
+  .option-input {
+    flex: 1; min-width: 0;
+    padding: 8px 12px;
+    border: 1px solid var(--field-bd);
+    border-radius: 12px;
+    font-size: 13px; font-family: inherit;
+    background: var(--field); color: var(--ink);
+    outline: none;
+  }
+  .option-input.is-focus { background: var(--bubble); border-color: var(--green); box-shadow: var(--ring); }
+  .option-input::placeholder, .option-custom-input::placeholder { color: var(--ink3); }
+  .ob-primary {
+    flex: none;
+    padding: 8px 16px;
+    border: none; border-radius: 12px;
+    background: linear-gradient(180deg, var(--green), var(--green2));
+    color: #fff; font-size: 13.5px; font-weight: 600; font-family: inherit;
+    box-shadow: var(--sh-btn);
+    cursor: pointer;
+  }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip {
+    padding: 6px 13px;
+    border: 1px solid var(--chip-bd); border-radius: 999px;
+    background: var(--chip); color: var(--ink);
+    font-size: 13px; font-family: inherit;
+    box-shadow: var(--sh-chip);
+    cursor: pointer;
+  }
+  .ob-actions { display: flex; align-items: center; margin-top: 8px; }
+  .ob-spacer { flex: 1; }
+  .ob-skip {
+    border: none; background: none;
+    padding: 5px 10px; border-radius: 10px;
+    color: var(--ink2); font-size: 12.5px; font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* ── L2 浮层卡（AskUser 通用卡） ── */
+  .option-box {
+    margin-top: 0;
+    max-width: 560px;
+    background: linear-gradient(180deg, var(--card-top), var(--card-bot));
+    border: 1px solid var(--card-bd);
+    border-radius: 16px;
+    box-shadow: var(--sh-c), var(--hl);
+    padding: 13px 14px 13px;
+  }
+  .option-q { font-size: 14px; font-weight: 600; line-height: 1.5; margin-bottom: 10px; }
+  .option-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .opt-ghost-dim { color: var(--ink2); }
+  .option-custom-input {
+    width: 100%; margin-top: 10px;
+    min-height: 46px; resize: none;
+    padding: 8px 12px;
+    border: 1px solid var(--field-bd);
+    border-radius: 12px;
+    font-size: 13px; font-family: inherit; line-height: 1.5;
+    background: var(--field); color: var(--ink);
+    outline: none;
+  }
+  .option-btn-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .option-cancel {
+    flex: none;
+    padding: 8px 16px;
+    border: 1px solid var(--chip-bd); border-radius: 12px;
+    background: none; color: var(--ink2);
+    font-size: 13.5px; font-family: inherit;
+    cursor: pointer;
+  }
+  .option-confirm {
+    flex: 1;
+    padding: 8px 16px;
+    border: none; border-radius: 12px;
+    background: linear-gradient(180deg, var(--green), var(--green2));
+    color: #fff; font-size: 13.5px; font-weight: 600; font-family: inherit;
+    box-shadow: var(--sh-btn);
+    cursor: pointer;
+    text-align: center;
+  }
+
+  /* ── 底部输入区（示意，非考核面） ── */
+  .composer { flex: none; padding: 10px 24px 16px; }
+  .composer-inner {
+    max-width: 860px; margin: 0 auto;
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bubble);
+    border: 1px solid var(--bubble-bd);
+    border-radius: 18px;
+    box-shadow: var(--sh-b);
+    padding: 9px 12px;
+  }
+  .orb {
+    width: 32px; height: 32px; border-radius: 999px; flex: none;
+    background: radial-gradient(circle at 32% 28%, var(--orb-1), var(--orb-2) 58%, var(--orb-3));
+    box-shadow: 0 2px 8px rgba(20, 60, 140, 0.25);
+  }
+  .composer-input { flex: 1; font-size: 14px; color: var(--ink3); }
+  .composer svg { width: 20px; height: 20px; stroke: var(--icon); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .composer .clip { padding: 6px; }
+  .send {
+    width: 34px; height: 34px; border-radius: 999px; flex: none;
+    border: none;
+    background: linear-gradient(180deg, var(--green), var(--green2));
+    box-shadow: var(--sh-btn);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .send svg { width: 16px; height: 16px; stroke: #fff; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 左栏 -->
+  <aside class="rail">
+    <div class="logo"></div>
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H4l2.2-2.6A8 8 0 1 1 21 12z"/></svg></div>
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+    <div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 4v16M4 9h16"/></svg></div>
+    <div class="spring"></div>
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div>
+    <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+  </aside>
+
+  <!-- 主列 -->
+  <div class="main">
+
+    <!-- 顶栏：未命名态 → 名字区留空 -->
+    <header class="topbar">
+      <div class="tb-left">
+        <span class="tb-ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9.5 4v16"/></svg></span>
+      </div>
+      <div class="tb-center">
+        <span class="tb-name"></span><!-- 去名规则：未命名 → 空 -->
+        <span class="tb-ic"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9.5 7V4.5M14.5 7V4.5M9.5 19.5V17M14.5 19.5V17M7 9.5H4.5M7 14.5H4.5M19.5 9.5H17M19.5 14.5H17"/></svg></span>
+      </div>
+      <div class="tb-right">
+        <span class="tb-ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></span>
+        <span class="tb-ic"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/></svg></span>
+        <span class="tb-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span>
+        <span class="tb-ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span>
+        <span class="badge-pending">1</span>
+        <span class="tb-ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M14.5 4v16"/></svg></span>
+      </div>
+    </header>
+
+    <!-- 聊天区：气泡无发送者名（去名渲染规则） -->
+    <div class="chat">
+      <div class="thread">
+
+        <div class="row ai">
+          <div class="bubble">
+            <p>你好。第一次见面。</p>
+            <p>我是为你而生的那个智能体 —— 不过此刻，我还没有名字，没有性格，也没有关于你的任何记忆。</p>
+          </div>
+        </div>
+
+        <div class="row ai">
+          <div class="bubble">
+            <p>我们从最小的开始。</p>
+            <p>有三件事必须先有：我叫什么、我该怎么叫你、我用什么脑子。这三件之后，其余全是可选的。</p>
+          </div>
+        </div>
+
+        <!-- 场景 A · Onboarding 第一幕第一题：幽灵泡承载题卡 -->
+        <div class="row ai">
+          <div class="bubble ghost">
+            <div class="ob-lead">第一件，最重要的一件。</div>
+            <div class="ob-q">给我起个名字吧 —— 你希望以后怎么叫我？</div>
+            <div class="ask-card">
+              <div class="ask-meta"><span class="dot"></span>第一幕 · 见面 · 第 1 / 10 题</div>
+              <div class="free-row">
+                <input class="option-input is-focus" type="text" placeholder="输入名字，1–16 个字…（想不出来也可以跳过）">
+                <button class="ob-primary" type="button">用这句</button>
+              </div>
+              <div class="chip-row">
+                <button class="chip" type="button">星尘</button>
+                <button class="chip" type="button">洛书</button>
+                <button class="chip" type="button">阿涅</button>
+                <button class="chip" type="button">Nova</button>
+                <button class="chip" type="button">海豹</button>
+              </div>
+              <div class="ob-actions">
+                <span class="ob-spacer"></span>
+                <button class="ob-skip" type="button">跳过这一题</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 场景 B · AskUser 通用卡（问题为合成演示内容，同 before 稿口径） -->
+        <div class="row ai">
+          <div class="bubble ghost">
+            <div class="option-box">
+              <div class="option-q">要我现在把刚写好的 Soul.md 念给你听吗？</div>
+              <div class="option-opts">
+                <button class="chip" type="button">好，念给我听</button>
+                <button class="chip" type="button">先不用，我自己看</button>
+                <button class="chip opt-ghost-dim" type="button">其他...</button>
+              </div>
+              <textarea class="option-custom-input" placeholder="输入你的回答..."></textarea>
+              <div class="option-btn-row">
+                <button class="option-cancel" type="button">取消</button>
+                <button class="option-confirm" type="button">✓ 确认</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 底部输入区（示意） -->
+    <div class="composer">
+      <div class="composer-inner">
+        <div class="orb"></div>
+        <div class="composer-input">输入消息...</div>
+        <span class="clip"><svg viewBox="0 0 24 24"><path d="M20 11l-7.6 7.6a5 5 0 0 1-7-7L13 4a3.4 3.4 0 0 1 4.8 4.8L10.5 16a1.8 1.8 0 0 1-2.5-2.5L15 6.5"/></svg></span>
+        <button class="send" type="button"><svg viewBox="0 0 24 24"><path d="M4 12l16-7-4.5 14L11 14z"/><path d="M11 14l9-9"/></svg></button>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

@@ -234,12 +234,12 @@ object ProjectCrashRecovery:
    * 宿主扫描器的 settle 腿兜底，[[DelegateFlowHosts.launchScanner]]）。
    */
   def recoverDelegateScopes(
-      concurrency: Int = Defaults.CrashRecoveryConcurrency,
-      // 测试接缝（recoverProject trigger 同款纪律；生产调用点零传参 = 引擎缺省行为）：
-      // 本工程测试 JVM 下 sys.props 注入静默失效（BootCrashRecoverySpec 先例），重挂宿主
-      // 的确定性腿经显式参数注入。
-      reportGateHold: Option[Boolean] = None,
-      rootNotifyQuietMs: Option[Long] = None
+    concurrency: Int = Defaults.CrashRecoveryConcurrency,
+    // 测试接缝（recoverProject trigger 同款纪律；生产调用点零传参 = 引擎缺省行为）：
+    // 本工程测试 JVM 下 sys.props 注入静默失效（BootCrashRecoverySpec 先例），重挂宿主
+    // 的确定性腿经显式参数注入。
+    reportGateHold: Option[Boolean] = None,
+    rootNotifyQuietMs: Option[Long] = None
   ): IO[Int] =
     DelegateFlowHosts.sweepRoots.flatMap { roots =>
       roots
@@ -262,11 +262,11 @@ object ProjectCrashRecovery:
 
   /** 单作用域恢复：重挂宿主 → 快段认领（同判据）→ 慢段 rehydrate（fork）。返回动作数。 */
   private def recoverDelegateScope(
-      baseWorkspace: String,
-      scope: String,
-      concurrency: Int,
-      reportGateHold: Option[Boolean],
-      rootNotifyQuietMs: Option[Long]
+    baseWorkspace: String,
+    scope: String,
+    concurrency: Int,
+    reportGateHold: Option[Boolean],
+    rootNotifyQuietMs: Option[Long]
   ): IO[Int] =
     DelegateRegistry.find(scope) match
       case None =>
@@ -291,13 +291,13 @@ object ProjectCrashRecovery:
         )
 
   private def recoverDelegateScopeOn(
-      baseWorkspace: String,
-      scope: String,
-      project: Option[String],
-      engineCwd: String,
-      concurrency: Int,
-      reportGateHold: Option[Boolean],
-      rootNotifyQuietMs: Option[Long]
+    baseWorkspace: String,
+    scope: String,
+    project: Option[String],
+    engineCwd: String,
+    concurrency: Int,
+    reportGateHold: Option[Boolean],
+    rootNotifyQuietMs: Option[Long]
   ): IO[Int] =
     // system/resources 载体：启动挂载后的任一项目 runtime（boot 链序 = startupMount 先行；
     // 零项目挂载 = 无 ActorSystem 载体 → WARN 跳过，宿主扫描器 +30s 兜底重试面不存在
@@ -336,18 +336,19 @@ object ProjectCrashRecovery:
                   if candidates.isEmpty then DelegateFlowHosts.unmount(scope).as(0) // 无残留：即开即卸
                   else
                     for
-                      outcomes: List[(String, Option[Either[String, NodeEngine.ResumeContext]])] <- candidates.traverse { n =>
-                        h.engine
-                          .bootRecoveryClaim(n)
-                          .map(out => (n.id, out))
-                          .handleErrorWith(e =>
-                            logger
-                              .error(
-                                s"[boot-recovery] claim failed for delegate-scope node '${n.name}' (${n.id}): ${Option(e.getMessage).getOrElse(e.toString)} — left to the scope scanner's settle leg"
-                              )
-                              .as((n.id, None))
-                          )
-                      }
+                      outcomes: List[(String, Option[Either[String, NodeEngine.ResumeContext]])] <- candidates
+                        .traverse { n =>
+                          h.engine
+                            .bootRecoveryClaim(n)
+                            .map(out => (n.id, out))
+                            .handleErrorWith(e =>
+                              logger
+                                .error(
+                                  s"[boot-recovery] claim failed for delegate-scope node '${n.name}' (${n.id}): ${Option(e.getMessage).getOrElse(e.toString)} — left to the scope scanner's settle leg"
+                                )
+                                .as((n.id, None))
+                            )
+                        }
                       resumed = outcomes.collect { case (id, Some(Right(ctx))) => (id, ctx) }
                       failed = outcomes.count(_._2.exists(_.isLeft))
                       _ = logger.info(

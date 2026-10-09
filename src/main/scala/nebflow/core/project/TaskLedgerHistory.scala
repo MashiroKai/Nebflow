@@ -65,6 +65,7 @@ case class TaskLedgerEvent(
   links: List[String] = Nil,
   detail: Option[String] = None
 )
+
 object TaskLedgerEvent:
   given Configuration = Configuration.default.withDefaults
   given Codec[TaskLedgerEvent] = ConfiguredCodec.derived
@@ -72,8 +73,10 @@ object TaskLedgerEvent:
 class TaskLedgerHistory private ():
   import TaskLedgerHistory.*
 
-  /** `def` not `val`: `PathUtil.dataRoot` can be re-rooted by tests (`setDataRoot`) --
-    * the same family of trap. */
+  /**
+   * `def` not `val`: `PathUtil.dataRoot` can be re-rooted by tests (`setDataRoot`) --
+   * the same family of trap.
+   */
   def file: os.Path = PathUtil.dataRoot / FileName
 
   def archiveFile: os.Path = PathUtil.dataRoot / ArchiveFileName
@@ -82,8 +85,10 @@ class TaskLedgerHistory private ():
   // Write: append (rotation check -> trailing-newline fix -> append)
   // ------------------------------------------------------------------
 
-  /** Append one event; `None` = success, `Some(reason)` = failure (the caller then
-    * attaches a NOTE to the result line or reports an error -- **never silently**). */
+  /**
+   * Append one event; `None` = success, `Some(reason)` = failure (the caller then
+   * attaches a NOTE to the result line or reports an error -- **never silently**).
+   */
   def appendSync(ev: TaskLedgerEvent): Option[String] =
     try
       val rotated = rotateIfNeeded()
@@ -96,8 +101,10 @@ class TaskLedgerHistory private ():
         logger.warnSync(s"[taskledger] history append failed ($reason) — path=$file")
         Some(reason)
 
-  /** If the active file's last byte is not `\n`, append one first (a safeguard against a
-    * crash's half-written line gluing onto the next one). */
+  /**
+   * If the active file's last byte is not `\n`, append one first (a safeguard against a
+   * crash's half-written line gluing onto the next one).
+   */
   private def ensureTrailingNewline(): Unit =
     if os.exists(file) then
       val raf = new java.io.RandomAccessFile(file.toIO, "r")
@@ -108,9 +115,11 @@ class TaskLedgerHistory private ():
           if raf.read() != '\n' then os.write.append(file, "\n", createFolders = true)
       finally raf.close()
 
-  /** Lazy rotation (called only on the write path): the active file crossing a threshold
-    * ⇒ rename to overwrite generation `.1` + write a `rotate` event as the new active
-    * file's first line. Returns whether a rotation happened. */
+  /**
+   * Lazy rotation (called only on the write path): the active file crossing a threshold
+   * ⇒ rename to overwrite generation `.1` + write a `rotate` event as the new active
+   * file's first line. Returns whether a rotation happened.
+   */
   private def rotateIfNeeded(): Boolean =
     if !os.exists(file) then false
     else
@@ -125,14 +134,19 @@ class TaskLedgerHistory private ():
             at = Instant.now().toString,
             kind = Kinds.Rotate,
             actor = Actors.System,
-            detail = Some(s"rotated lines=$lines bytes=$size to=$ArchiveFileName (previous generation dropped)"))
+            detail = Some(s"rotated lines=$lines bytes=$size to=$ArchiveFileName (previous generation dropped)")
+          )
           os.write.over(file, ev.asJson.noSpaces + "\n")
           logger.warnSync(s"[taskledger] history rotated: lines=$lines bytes=$size (archive=$ArchiveFileName)")
           true
         catch
           case e: Exception =>
-            logger.warnSync(s"[taskledger] history rotation failed (${e.getMessage}) — appending to active file unchanged")
+            logger.warnSync(
+              s"[taskledger] history rotation failed (${e.getMessage}) — appending to active file unchanged"
+            )
             false
+
+      end if
 
   private def countLines(): Int =
     try os.read.lines(file).count(_.trim.nonEmpty)
@@ -142,11 +156,13 @@ class TaskLedgerHistory private ():
   // Read: generation `.1` + active (archive before active ⇒ naturally ascending)
   // ------------------------------------------------------------------
 
-  /** Read one entry's events: return the most recent `limit` in ascending line order
-    * (`only` = class filter, used for the independent read windows of "the note mainline"
-    * and "the state-class secondary section"); `total` = the number of rows matching this
-    * id that also pass `only`; `skipped` = the number of rows that matched the prefilter
-    * but could not be parsed. The read path never writes. */
+  /**
+   * Read one entry's events: return the most recent `limit` in ascending line order
+   * (`only` = class filter, used for the independent read windows of "the note mainline"
+   * and "the state-class secondary section"); `total` = the number of rows matching this
+   * id that also pass `only`; `skipped` = the number of rows that matched the prefilter
+   * but could not be parsed. The read path never writes.
+   */
   def readFor(id: String, limit: Int = Int.MaxValue, only: TaskLedgerEvent => Boolean = _ => true): ReadResult =
     val needle = s""""id":"$id""""
     val buf = scala.collection.mutable.ListBuffer[TaskLedgerEvent]()
@@ -177,8 +193,12 @@ class TaskLedgerHistory private ():
     scan(file)
     ReadResult(events = buf.toList, total = total, skipped = skipped)
 
-  /** Cheap probe (no JSON parsing): whether this id ever appeared in the history files --
-    * used to decide an archive hit. */
+  end readFor
+
+  /**
+   * Cheap probe (no JSON parsing): whether this id ever appeared in the history files --
+   * used to decide an archive hit.
+   */
   def countLinesFor(id: String): Int =
     val needle = s""""id":"$id""""
     def count(path: os.Path): Int =
@@ -191,51 +211,64 @@ end TaskLedgerHistory
 
 object TaskLedgerHistory:
 
-  val FileName        = "tasks-v2-history.jsonl"
+  val FileName = "tasks-v2-history.jsonl"
   val ArchiveFileName = "tasks-v2-history.1.jsonl"
 
-  /** Active-file rotation thresholds (> 5 MiB or > 20,000 lines, whichever comes first) ⇒
-    * on-disk hard cap ≤ 2 generations ≈ 10 MiB. The values follow the current code (the
-    * task book's §② ruling: "rotation parameters follow the current code = 5 MiB /
-    * 20,000 lines"). */
+  /**
+   * Active-file rotation thresholds (> 5 MiB or > 20,000 lines, whichever comes first) ⇒
+   * on-disk hard cap ≤ 2 generations ≈ 10 MiB. The values follow the current code (the
+   * task book's §② ruling: "rotation parameters follow the current code = 5 MiB /
+   * 20,000 lines").
+   */
   val RotationMaxBytes: Long = 5L * 1024 * 1024
-  val RotationMaxLines: Int  = 20_000
+  val RotationMaxLines: Int = 20_000
 
-  /** Line-count probe threshold: a file under 1 MiB cannot exceed the 20,000-line
-    * threshold (the rotation check is O(1) in the normal case). */
+  /**
+   * Line-count probe threshold: a file under 1 MiB cannot exceed the 20,000-line
+   * threshold (the rotation check is O(1) in the normal case).
+   */
   val LineCountProbeBytes: Long = 1L * 1024 * 1024
 
-  /** actor value domain: derived engine-side (Nebula / dispatcher / flow node / the
-    * tool's built-in system). */
+  /**
+   * actor value domain: derived engine-side (Nebula / dispatcher / flow node / the
+   * tool's built-in system).
+   */
   object Actors:
-    val Nebula     = "nebula"
+    val Nebula = "nebula"
     val Dispatcher = "dispatcher"
-    val Node       = "node"
-    val System     = "system"
+    val Node = "node"
+    val System = "system"
 
-  /** The **origin domain** of note-class events (the `from` field value; ruling n:
-    * structured = `from` + timestamp + body excerpt). */
+  /**
+   * The **origin domain** of note-class events (the `from` field value; ruling n:
+   * structured = `from` + timestamp + body excerpt).
+   */
   object Origins:
     /** Nebula's Mail-driven automatic append (the only normal write path). */
     val Nebula = "nebula"
+
     /** Engine-side system events (attribution repair / migration class). */
     val Engine = "engine"
 
-  /** Event kind value domain (registry-style extension: a new kind = add one word here +
-    * call it at the write point; the read side needs no change). */
+  /**
+   * Event kind value domain (registry-style extension: a new kind = add one word here +
+   * call it at the write point; the read side needs no change).
+   */
   object Kinds:
-    val Note       = "note"       // note-timeline entry (auto-appended by the engine on Mail)
-    val Create     = "create"
-    val Update     = "update"
-    val Complete   = "complete"
-    val Close      = "close"
-    val Revive     = "revive"     // terminal -> open (Mail task-continuation batch, 2026-09-28)
-    val Prune      = "prune"
+    val Note = "note" // note-timeline entry (auto-appended by the engine on Mail)
+    val Create = "create"
+    val Update = "update"
+    val Complete = "complete"
+    val Close = "close"
+    val Revive = "revive" // terminal -> open (Mail task-continuation batch, 2026-09-28)
+    val Prune = "prune"
     val Quarantine = "quarantine"
-    val Rotate     = "rotate"
+    val Rotate = "rotate"
 
-  /** Note-mainline test (the `show` main section): note-class events form the timeline
-    * body; state-class events fall back to the secondary section. */
+  /**
+   * Note-mainline test (the `show` main section): note-class events form the timeline
+   * body; state-class events fall back to the secondary section.
+   */
   def isNoteEvent(ev: TaskLedgerEvent): Boolean =
     ev.kind == Kinds.Note || (ev.kind == Kinds.Update && ev.next.isDefined)
 
@@ -246,8 +279,10 @@ object TaskLedgerHistory:
 
   def open(): TaskLedgerHistory = instance
 
-  /** Read result: `events` ascending (the most recent `limit`); `total` = total matches;
-    * `skipped` = number of bad rows. */
+  /**
+   * Read result: `events` ascending (the most recent `limit`); `total` = total matches;
+   * `skipped` = number of bad rows.
+   */
   final case class ReadResult(
     events: List[TaskLedgerEvent] = Nil,
     total: Int = 0,

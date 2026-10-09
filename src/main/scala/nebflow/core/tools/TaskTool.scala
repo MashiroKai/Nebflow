@@ -29,42 +29,51 @@ import nebflow.core.project.{TaskLedgerHistory, TaskLedgerRenderer, TaskLedgerSt
  */
 object TaskTool:
 
-  /** Permission refusal (actionable text: names the identity, the violation point, and a
-    * way out). */
-  private def forbidden(reason: String): ToolError = ToolError(
-    s"Task: permission denied — $reason (${TaskLedgerStore.Codes.Forbidden})")
+  /**
+   * Permission refusal (actionable text: names the identity, the violation point, and a
+   * way out).
+   */
+  private def forbidden(reason: String): ToolError =
+    ToolError(s"Task: permission denied — $reason (${TaskLedgerStore.Codes.Forbidden})")
 
-  /** Unauthorized read (no attachment) refusal: `TaskInfo`'s fail-closed text (with a way
-    * out). */
+  /**
+   * Unauthorized read (no attachment) refusal: `TaskInfo`'s fail-closed text (with a way
+   * out).
+   */
   private def noAttachment(session: String): ToolError = ToolError(
     s"TaskInfo: this session has no task attachment — no origin task is recorded for session '$session'. " +
       s"It never falls back to the whole ledger and never shows another task's data. " +
       s"Report the missing attachment through your normal report channel (node_report / your final text) instead. " +
-      s"(${TaskLedgerStore.Codes.NoAttachment})")
+      s"(${TaskLedgerStore.Codes.NoAttachment})"
+  )
 
   // ------------------------------------------------------------------
   // Task (the write face)
   // ------------------------------------------------------------------
 
-  /** Engine-side write-right test: **exclusively the Nebula root session** (ruling §3,
-    * "a single write right").
-    *
-    * The criterion is `ctx.isNebulaWriter` (delegating to the single point
-    * `AgentCore.isNebulaRoot`; never re-writing the expression) -- that is, `agentDef.name
-    * == "Nebula"` AND `depth == 0`. The dispatcher, project nodes, team, dual-track flow
-    * sessions and direct REST calls (`agentDef=None` ⇒ fail-closed false) are all
-    * **refused**.
-    *
-    * Why not the complement-style criterion "not a dispatcher and not a node ⇒ allowed":
-    * that would silently let **any unidentified side session** (direct REST calls, a
-    * harness, a future new shape) onto the write face -- a single write right is an
-    * **authorization face** and must be fail-closed (only an explicit identity gets in),
-    * never "everything not excluded gets in". This is
-    * `buildAllowedToolSet`'s fail-closed discipline applied at runtime. */
+  /**
+   * Engine-side write-right test: **exclusively the Nebula root session** (ruling §3,
+   * "a single write right").
+   *
+   * The criterion is `ctx.isNebulaWriter` (delegating to the single point
+   * `AgentCore.isNebulaRoot`; never re-writing the expression) -- that is, `agentDef.name
+   * == "Nebula"` AND `depth == 0`. The dispatcher, project nodes, team, dual-track flow
+   * sessions and direct REST calls (`agentDef=None` ⇒ fail-closed false) are all
+   * **refused**.
+   *
+   * Why not the complement-style criterion "not a dispatcher and not a node ⇒ allowed":
+   * that would silently let **any unidentified side session** (direct REST calls, a
+   * harness, a future new shape) onto the write face -- a single write right is an
+   * **authorization face** and must be fail-closed (only an explicit identity gets in),
+   * never "everything not excluded gets in". This is
+   * `buildAllowedToolSet`'s fail-closed discipline applied at runtime.
+   */
   def writableBy(ctx: ToolContext): Boolean = ctx.isNebulaWriter
 
-  /** The six-verb dispatch (the synchronous core; `call` invokes it inside
-    * IO.blocking -- unit-testable). */
+  /**
+   * The six-verb dispatch (the synchronous core; `call` invokes it inside
+   * IO.blocking -- unit-testable).
+   */
   def dispatchSync(
     ledger: TaskLedgerStore,
     nodeTerminal: Map[String, String],
@@ -81,51 +90,87 @@ object TaskTool:
   ): Either[ToolError, String] =
     if !writableBy(ctx) then
       val who = if ctx.isDispatcher then "a dispatcher session" else "a project node session"
-      Left(forbidden(s"$who may not write the task ledger — creation, state changes and every field edit belong to " +
-        s"Nebula. Use the read-only `TaskInfo` for the task you are attached to, and report through your report channel"))
+      Left(
+        forbidden(
+          s"$who may not write the task ledger — creation, state changes and every field edit belong to " +
+            s"Nebula. Use the read-only `TaskInfo` for the task you are attached to, and report through your report channel"
+        )
+      )
     else
       action match
         case "create" =>
-          ledger.createSync(title = title.getOrElse(""), assignee = assignee, nodeId = nodeId,
-            blocksRaw = blocks, linksRaw = links, parentId = parentId, project = project)
+          ledger.createSync(
+            title = title.getOrElse(""),
+            assignee = assignee,
+            nodeId = nodeId,
+            blocksRaw = blocks,
+            linksRaw = links,
+            parentId = parentId,
+            project = project
+          )
         case "update" =>
           id match
-            case None => Left(ToolError(s"Task: update requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})"))
+            case None =>
+              Left(
+                ToolError(s"Task: update requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})")
+              )
             case Some(i) =>
-              ledger.updateSync(i, title = title, assignee = assignee, nodeId = nodeId,
-                blocksRaw = blocks, linksRaw = links, parentId = parentId, project = project)
+              ledger.updateSync(
+                i,
+                title = title,
+                assignee = assignee,
+                nodeId = nodeId,
+                blocksRaw = blocks,
+                linksRaw = links,
+                parentId = parentId,
+                project = project
+              )
         case "complete" =>
           id match
-            case None => Left(ToolError(s"Task: complete requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})"))
+            case None =>
+              Left(
+                ToolError(s"Task: complete requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})")
+              )
             case Some(i) => ledger.completeSync(i)
         case "close" =>
           id match
-            case None => Left(ToolError(s"Task: close requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})"))
+            case None =>
+              Left(
+                ToolError(s"Task: close requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})")
+              )
             case Some(i) => ledger.closeSync(i)
         case "list" =>
           ledger.listSync(status = None, assignee = assignee, project = project, nodeTerminal = nodeTerminal)
         case "show" =>
           id match
-            case None => Left(ToolError(s"Task: show requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})"))
+            case None =>
+              Left(ToolError(s"Task: show requires `id` (entry id from action=list). (${TaskLedgerStore.Codes.Param})"))
             case Some(i) => ledger.showSync(i, nodeTerminal)
         case other =>
-          Left(ToolError(
-            s"Task: unknown action '$other' — one of create/update/list/complete/close/show. (${TaskLedgerStore.Codes.Param})"))
+          Left(
+            ToolError(
+              s"Task: unknown action '$other' — one of create/update/list/complete/close/show. (${TaskLedgerStore.Codes.Param})"
+            )
+          )
 
   // ------------------------------------------------------------------
   // TaskInfo (the read-only attributed single entry)
   // ------------------------------------------------------------------
 
-  /** Attachment resolution (**zero parameters**; ruling F: an explicit `id` parameter was
-    * rejected) -- resolved from the **session identity**, never from client parameters. No
-    * attachment ⇒ `Left(TASKINFO_NO_ATTACHMENT)` (**no fallback to the whole ledger**). */
+  /**
+   * Attachment resolution (**zero parameters**; ruling F: an explicit `id` parameter was
+   * rejected) -- resolved from the **session identity**, never from client parameters. No
+   * attachment ⇒ `Left(TASKINFO_NO_ATTACHMENT)` (**no fallback to the whole ledger**).
+   */
   def attachedTaskId(ctx: ToolContext): Either[ToolError, String] =
     ctx.taskId.filter(_.trim.nonEmpty) match
       case Some(t) => Right(t)
-      case None    => Left(noAttachment(ctx.sessionId.getOrElse("(unknown)")))
+      case None => Left(noAttachment(ctx.sessionId.getOrElse("(unknown)")))
 
-  /** Read-only rendering of the attributed single entry. If resolution succeeds but the
-    * ledger has no such entry ⇒ an explicit error (**no** fallback, **no** guessing). */
+  /**
+   * Read-only rendering of the attributed single entry. If resolution succeeds but the
+   * ledger has no such entry ⇒ an explicit error (**no** fallback, **no** guessing).
+   */
   def infoSync(
     ledger: TaskLedgerStore,
     ctx: ToolContext
@@ -136,14 +181,19 @@ object TaskTool:
         case Some(entry) =>
           val history = TaskLedgerHistory.open()
           val notes = history.readFor(taskId, TaskLedgerRenderer.TimelineNoteMaxVersions, TaskLedgerHistory.isNoteEvent)
-          val states = history.readFor(taskId, TaskLedgerRenderer.TimelineStateMaxLines, ev => !TaskLedgerHistory.isNoteEvent(ev))
+          val states =
+            history.readFor(taskId, TaskLedgerRenderer.TimelineStateMaxLines, ev => !TaskLedgerHistory.isNoteEvent(ev))
           Right(TaskLedgerRenderer.renderInfo(entry, all, notes, states))
         case None =>
-          Left(ToolError(
-            s"TaskInfo: your session is attached to task #$taskId, but the ledger has no such entry " +
-              s"(it may have been pruned ${TaskLedgerStore.TerminalTtlDays} days after reaching a terminal state). " +
-              s"Nothing is reconstructed or guessed here. Report it through your normal channel. " +
-              s"(${TaskLedgerStore.Codes.NotFound})"))
+          Left(
+            ToolError(
+              s"TaskInfo: your session is attached to task #$taskId, but the ledger has no such entry " +
+                s"(it may have been pruned ${TaskLedgerStore.TerminalTtlDays} days after reaching a terminal state). " +
+                s"Nothing is reconstructed or guessed here. Report it through your normal channel. " +
+                s"(${TaskLedgerStore.Codes.NotFound})"
+            )
+          )
+      end match
     }
 
 end TaskTool
@@ -199,8 +249,10 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
 - There is no `project` WALL here: unlike the retired per-project board, this is one ledger shared by the whole instance. A `project` field is a free-form tag, not a storage location.
 - Cross-process writers are not locked. A corrupted ledger degrades reads to an empty view (never a crash); the first write after corruption quarantines the file under a `.corrupt-<millis>` name — nothing is silently overwritten, and the quarantine is recorded in the history."""
 
-  /** Path literals (same source as the store/history constants; local private aliases to
-    * avoid long qualified names). */
+  /**
+   * Path literals (same source as the store/history constants; local private aliases to
+   * avoid long qualified names).
+   */
   private def tasksV2File: String = TaskLedgerStore.FileName
   private def historyFile: String = TaskLedgerHistory.FileName
 
@@ -208,43 +260,43 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "action" -> Json.obj(
-        "type"        -> "string".asJson,
-        "enum"        -> Json.arr("create".asJson, "update".asJson, "list".asJson, "complete".asJson,
-          "close".asJson, "show".asJson),
+        "type" -> "string".asJson,
+        "enum" -> Json
+          .arr("create".asJson, "update".asJson, "list".asJson, "complete".asJson, "close".asJson, "show".asJson),
         "description" -> "create / update / list / complete / close / show (see description).".asJson
       ),
       "id" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Entry id (from list). Required for update / complete / close / show.".asJson
       ),
       "title" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Entry title (≤300 chars). Required for create; optional replacement for update.".asJson
       ),
       "assignee" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Node id | \"dispatcher\" | \"author\". create: optional (default \"dispatcher\"); update: replacement (empty string clears); list: exact filter.".asJson
       ),
       "nodeId" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Optional Flow Map node link (NodeDef.id). create: optional; update: replacement (empty string clears).".asJson
       ),
       "links" -> Json.obj(
-        "type"        -> "array".asJson,
-        "items"       -> Json.obj("type" -> "string".asJson),
+        "type" -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
         "description" -> "Free-form anchors (doc path | commit | id), ≤20 items of ≤300 chars. create: initial list; update: FULL replacement ([] clears). NOT validated for reachability.".asJson
       ),
       "blocks" -> Json.obj(
-        "type"        -> "array".asJson,
-        "items"       -> Json.obj("type" -> "string".asJson),
+        "type" -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
         "description" -> "Ids of entries this one depends on. create: initial list; update: FULL replacement ([] clears). `complete` is refused while a dependency is still open.".asJson
       ),
       "parentId" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Parent entry id (sub-task relation). create: optional; update: empty string clears; depth ≤5, cycles and unknown ids rejected.".asJson
       ),
       "project" -> Json.obj(
-        "type"        -> "string".asJson,
+        "type" -> "string".asJson,
         "description" -> "Free-form project tag. create: optional; update: empty string clears; list: exact-match filter. This is a tag, NOT a storage location — the ledger is a single instance-wide file.".asJson
       )
     ),
@@ -261,31 +313,44 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
 
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     IO.blocking {
-      val action   = input("action").flatMap(_.asString).getOrElse("")
-      val title    = input("title").flatMap(_.asString)
-      val id       = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+      val action = input("action").flatMap(_.asString).getOrElse("")
+      val title = input("title").flatMap(_.asString)
+      val id = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
       val assignee = input("assignee").flatMap(_.asString)
-      val nodeId   = input("nodeId").flatMap(_.asString)
-      val links    = input("links").flatMap(_.as[List[String]].toOption)
-      val blocks   = input("blocks").flatMap(_.as[List[String]].toOption)
+      val nodeId = input("nodeId").flatMap(_.asString)
+      val links = input("links").flatMap(_.as[List[String]].toOption)
+      val blocks = input("blocks").flatMap(_.as[List[String]].toOption)
       val parentId = input("parentId").flatMap(_.asString)
-      val project  = input("project").flatMap(_.asString)
+      val project = input("project").flatMap(_.asString)
       (action, title, id, assignee, nodeId, links, blocks, parentId, project)
     }.map { case (action, title, id, assignee, nodeId, links, blocks, parentId, project) =>
-      TaskTool.dispatchSync(TaskLedgerStore.open(), nodeTerminalMapOf(), ctx, action,
-        title = title, id = id, assignee = assignee, nodeId = nodeId, links = links,
-        blocks = blocks, parentId = parentId, project = project)
+      TaskTool.dispatchSync(
+        TaskLedgerStore.open(),
+        nodeTerminalMapOf(),
+        ctx,
+        action,
+        title = title,
+        id = id,
+        assignee = assignee,
+        nodeId = nodeId,
+        links = links,
+        blocks = blocks,
+        parentId = parentId,
+        project = project
+      )
     }.flatTap {
       // task-rag 批（#1227 / §Batch 7）：账本写后增量索引（task 创建/完成/revive
       // 的落地触发面——三态账本无独立 revive 动作，update 覆盖重开、complete 覆盖
       // closed→completed，故写成功即 upkeep）。fire-and-forget（在飞合流 + 异常
       // 内吞），绝不影响工具结果。
       case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
-      case Left(_)  => IO.unit
+      case Left(_) => IO.unit
     }
 
-  /** The mapping for the ⚠node-done join: read live from the Flow Map of the workspace
-    * this session's project belongs to (empty when there is none). */
+  /**
+   * The mapping for the ⚠node-done join: read live from the Flow Map of the workspace
+   * this session's project belongs to (empty when there is none).
+   */
   private def nodeTerminalMapOf(): Map[String, String] = Map.empty
 end TaskToolDef
 
@@ -312,10 +377,12 @@ What it returns: the task's id, title, state (`open` / `closed` / `completed`), 
 
 If your session carries no task attachment (no origin task recorded), this tool FAILS with an explicit error naming your session and the reason — it never falls back to showing the whole ledger, and it never shows another task's data. That failure is deliberate policy: a session with no accountable task may not read task data. Report the missing attachment through your normal report channel instead."""
 
-  /** 🔴 **Zero parameters**: `properties` = an empty object, `required` = an empty array.
-    * The attachment is described in the description; addressing keys such as
-    * `id`/`taskId`/`project` **must not** appear -- as soon as one does, the model tries to
-    * fill it and the unauthorized read face is opened up by a client parameter. */
+  /**
+   * 🔴 **Zero parameters**: `properties` = an empty object, `required` = an empty array.
+   * The attachment is described in the description; addressing keys such as
+   * `id`/`taskId`/`project` **must not** appear -- as soon as one does, the model tries to
+   * fill it and the unauthorized read face is opened up by a client parameter.
+   */
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(),

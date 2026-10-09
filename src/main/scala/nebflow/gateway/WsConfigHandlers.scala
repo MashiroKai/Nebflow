@@ -186,7 +186,10 @@ private[gateway] object WsConfigHandlers:
         oldCfgOpt.flatMap { oldCfg =>
           SttService.mergeConfig(oldCfg, patch) match
             case Some(cfgJson) =>
-              AtomicJson.write(SttService.configPath, cfgJson.noSpaces) *>
+              // Restricted form (keyaudit-quickfix ①): stt-config.json carries the
+              // STT apiKey in cleartext — the file lands 0600 (legacy files
+              // converge on their next save).
+              AtomicJson.writeRestricted(SttService.configPath, cfgJson.noSpaces) *>
                 SttService.create().flatMap { svc =>
                   sttServiceRef.set(svc) *> logger.info(
                     s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}"
@@ -255,9 +258,10 @@ private[gateway] object WsConfigHandlers:
           val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
           parse(existing).foreach { json =>
             val updated = json.mapObject(_.add("toolResultTtl", cfg.asJson))
-            // writeSync (not write): we are already inside IO.blocking —
-            // the IO-returning variant would be built, not run.
-            AtomicJson.writeSync(path, updated.noSpaces)
+            // writeSyncRestricted (not write): we are already inside IO.blocking —
+            // the IO-returning variant would be built, not run. Restricted form
+            // (keyaudit-quickfix ①): nebflow.json lands 0600, not umask 0644.
+            AtomicJson.writeSyncRestricted(path, updated.noSpaces)
           }
         }
         // 冻结修复（2026-08-27）：同族排序——persist 成功才热更 ref，
@@ -677,6 +681,7 @@ private[gateway] object WsConfigHandlers:
                 )
               )
           }
+    end match
   end handleSetOnboardingAnswers
 
   /**
@@ -738,18 +743,20 @@ private[gateway] object WsConfigHandlers:
           chainErr <- chainRes match
             case Left(err) => IO.pure(Some(err))
             case Right(_) => IO.pure(None)
-          ctxErr <- IO.blocking {
-            io.circe.parser.parse(cfgStr).toOption match
-              case None => Left("current config is unreadable")
-              case Some(json) => nebflow.core.OnboardingModelStep.applySelectionJson(json, ref, ctxWindow)
-          }.flatMap {
-            case Left(err) => IO.pure(Some(err))
-            case Right(patched) =>
-              configService.updateConfig(patched.noSpaces).map {
-                case Left(err) => Some(err)
-                case Right(_) => None
-              }
-          }
+          ctxErr <- IO
+            .blocking {
+              io.circe.parser.parse(cfgStr).toOption match
+                case None => Left("current config is unreadable")
+                case Some(json) => nebflow.core.OnboardingModelStep.applySelectionJson(json, ref, ctxWindow)
+            }
+            .flatMap {
+              case Left(err) => IO.pure(Some(err))
+              case Right(patched) =>
+                configService.updateConfig(patched.noSpaces).map {
+                  case Left(err) => Some(err)
+                  case Right(_) => None
+                }
+            }
         yield chainErr.orElse(ctxErr)
     end modelWrite
     modelWrite.flatMap { modelErr =>
@@ -805,7 +812,9 @@ private[gateway] object WsConfigHandlers:
         // JSON 直接 `.as[...]` 必然解失败，全新 home 上此帧回
         // `{type:"error", ...}`，引导的模型步骤在主路径上断掉。单一实现与
         // [[Config.loadServiceConfig]] 完全同源（此处原先漏了这一步）。
-        io.circe.parser.parse(cfgStr).toOption
+        io.circe.parser
+          .parse(cfgStr)
+          .toOption
           .map(nebflow.shared.Config.ensureLlmDefaults)
           .flatMap(_.as[nebflow.shared.NebflowServiceConfig].toOption)
       }.flatMap {
@@ -855,18 +864,19 @@ private[gateway] object WsConfigHandlers:
     val probe =
       if modelRef.isDefined then configService.getConfig.map(cfg => (Some(cfg): Option[String]))
       else IO.pure(None)
-    probe.flatMap(cfgOpt => nebflow.core.OnboardingService.probeLlm(sharedResources.llm, modelRef, cfgOpt)).flatMap { pr =>
-      wsSend(
-        io.circe.Json.obj(
-          "type" -> "probeResult".asJson,
-          "ok" -> pr.ok.asJson,
-          "provider" -> pr.provider.asJson,
-          "error" -> pr.error.asJson,
-          // Echo the measured ref so the caller (and an out-of-band reading) can
-          // tell WHICH model answered rather than assuming the picked one did.
-          "requested" -> modelRef.asJson
+    probe.flatMap(cfgOpt => nebflow.core.OnboardingService.probeLlm(sharedResources.llm, modelRef, cfgOpt)).flatMap {
+      pr =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "probeResult".asJson,
+            "ok" -> pr.ok.asJson,
+            "provider" -> pr.provider.asJson,
+            "error" -> pr.error.asJson,
+            // Echo the measured ref so the caller (and an out-of-band reading) can
+            // tell WHICH model answered rather than assuming the picked one did.
+            "requested" -> modelRef.asJson
+          )
         )
-      )
     }
   end handleProbeLlm
 

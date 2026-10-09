@@ -81,17 +81,18 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     )
 
   private class NullLlm:
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
       ): Stream[IO, StreamChunk] = Stream.empty
 
   private def record(
-      id: String,
-      taskId: Option[String],
-      projectWorkspace: Option[String] = None
+    id: String,
+    taskId: Option[String],
+    projectWorkspace: Option[String] = None
   ): DelegateRegistry.Record =
     DelegateRegistry.Record(
       id = id,
@@ -115,7 +116,9 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
 
   // ── C1 行投影 ───────────────────────────────────────────────────────────
 
-  test("C1: rows project the registry record with the live hint and the latest terminal-verdict; absent sources leave the keys out") {
+  test(
+    "C1: rows project the registry record with the live hint and the latest terminal-verdict; absent sources leave the keys out"
+  ) {
     val liveRec = record("delegate-general-11aa22bb", Some("42"))
     val deadRec = record("delegate-general-22bb33cc", None)
     DelegateRegistry.put(liveRec)
@@ -124,14 +127,20 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     ChainStore.appendSync(
       "42",
       "terminal-verdict",
-      io.circe.Json.obj("verdict" -> "ready-to-merge".asJson, "reason" -> "branch ready".asJson, "source" -> "self-report".asJson)
+      io.circe.Json
+        .obj("verdict" -> "ready-to-merge".asJson, "reason" -> "branch ready".asJson, "source" -> "self-report".asJson)
     )
     val registry = Map("delegate-general-11aa22bb" -> agentRecord("delegate-general-11aa22bb"))
     ChainsReadFace.rowsJson(registry).map { body =>
       val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
       assertEquals(rows.size, 2, "one row per registry record")
-      val live = rows.find(_.hcursor.get[String]("id").toOption.contains(liveRec.id)).getOrElse(fail("live row missing"))
-      assertEquals(live.hcursor.get[String]("title").toOption, Some("spec chain"), "record fields pass through verbatim")
+      val live =
+        rows.find(_.hcursor.get[String]("id").toOption.contains(liveRec.id)).getOrElse(fail("live row missing"))
+      assertEquals(
+        live.hcursor.get[String]("title").toOption,
+        Some("spec chain"),
+        "record fields pass through verbatim"
+      )
       assertEquals(
         live.hcursor.downField("live").get[String]("status").toOption,
         Some("running"),
@@ -143,8 +152,12 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         "latest terminal-verdict row supplies ready-to-merge (v3 §9 verbatim)"
       )
       assertEquals(live.hcursor.downField("verdict").get[String]("reason").toOption, Some("branch ready"))
-      val dead = rows.find(_.hcursor.get[String]("id").toOption.contains(deadRec.id)).getOrElse(fail("dead row missing"))
-      assert(dead.hcursor.downField("live").focus.isEmpty, "no registry presence ⇒ no live key (adapter keeps authority)")
+      val dead =
+        rows.find(_.hcursor.get[String]("id").toOption.contains(deadRec.id)).getOrElse(fail("dead row missing"))
+      assert(
+        dead.hcursor.downField("live").focus.isEmpty,
+        "no registry presence ⇒ no live key (adapter keeps authority)"
+      )
       // 无判词键：deadRec 的键 = delegateId 回落（keyFor）——42 行不属它。
       assert(dead.hcursor.downField("verdict").focus.isEmpty, "no verdict row on its own key ⇒ no verdict key")
     }
@@ -152,7 +165,9 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
 
   // ── C2 链投影 ───────────────────────────────────────────────────────────
 
-  test("C2: mounted scope projects FlowMap nodes through the v3 §9 status map; unmounted probes the disk read-only; missing dir degrades to null") {
+  test(
+    "C2: mounted scope projects FlowMap nodes through the v3 §9 status map; unmounted probes the disk read-only; missing dir degrades to null"
+  ) {
     val ws = os.temp.dir(prefix = "nb-crf-c2-", deleteOnExit = false)
     val system = ActorSystem(s"crf-c2-${scala.util.Random.nextInt(1000000)}")
     val mountedId = "delegate-general-33cc44dd"
@@ -178,13 +193,41 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
           case None => IO.raiseError(new AssertionError("host must mount"))
           case Some(h) =>
             h.store.mutate { s =>
-              s.copy(nodes = s.nodes ++ Map(
-                "n-a" -> NodeDef(id = "n-a", name = "alpha", agent = "general", task = Some("first line of the task\nsecond"),
-                  description = Some("short desc"), deps = List("n-b"), status = NodeLifecycle.Pending, createdAt = 1L),
-                "n-b" -> NodeDef(id = "n-b", name = "beta", agent = "general", status = NodeLifecycle.Running, createdAt = 2L),
-                "n-c" -> NodeDef(id = "n-c", name = "gamma", agent = "general", status = NodeLifecycle.Completed, createdAt = 3L),
-                "n-d" -> NodeDef(id = "n-d", name = "delta", agent = "general", status = NodeLifecycle.Failed, createdAt = 4L)
-              ))
+              s.copy(nodes =
+                s.nodes ++ Map(
+                  "n-a" -> NodeDef(
+                    id = "n-a",
+                    name = "alpha",
+                    agent = "general",
+                    task = Some("first line of the task\nsecond"),
+                    description = Some("short desc"),
+                    deps = List("n-b"),
+                    status = NodeLifecycle.Pending,
+                    createdAt = 1L
+                  ),
+                  "n-b" -> NodeDef(
+                    id = "n-b",
+                    name = "beta",
+                    agent = "general",
+                    status = NodeLifecycle.Running,
+                    createdAt = 2L
+                  ),
+                  "n-c" -> NodeDef(
+                    id = "n-c",
+                    name = "gamma",
+                    agent = "general",
+                    status = NodeLifecycle.Completed,
+                    createdAt = 3L
+                  ),
+                  "n-d" -> NodeDef(
+                    id = "n-d",
+                    name = "delta",
+                    agent = "general",
+                    status = NodeLifecycle.Failed,
+                    createdAt = 4L
+                  )
+                )
+              )
             }.void
         }
       _ <- IO(DelegateRegistry.put(record(mountedId, None)))
@@ -196,12 +239,26 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         os.makeDir.all(dir)
         os.write.over(
           dir / "flow-map.json",
-          FlowMapState(project = ghostId, updatedAt = 0L, nodes = Map(
-            "g-1" -> NodeDef(id = "g-1", name = "ghost-node", agent = "general", status = NodeLifecycle.Wiring, createdAt = 1L)
-          )).asJson.noSpaces
+          FlowMapState(
+            project = ghostId,
+            updatedAt = 0L,
+            nodes = Map(
+              "g-1" -> NodeDef(
+                id = "g-1",
+                name = "ghost-node",
+                agent = "general",
+                status = NodeLifecycle.Wiring,
+                createdAt = 1L
+              )
+            )
+          ).asJson.noSpaces
         )
       }
-      registry = Map(mountedId -> agentRecord(mountedId), ghostId -> agentRecord(ghostId), noDirId -> agentRecord(noDirId))
+      registry = Map(
+        mountedId -> agentRecord(mountedId),
+        ghostId -> agentRecord(ghostId),
+        noDirId -> agentRecord(noDirId)
+      )
       mountedBody <- ChainsReadFace.chainJson(mountedId, registry)
       ghostBody <- ChainsReadFace.chainJson(ghostId, registry)
       missingBody <- ChainsReadFace.chainJson("delegate-general-no-such-scope-here", registry)
@@ -218,7 +275,11 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       val a = nodes.head
       assertEquals(a.hcursor.get[String]("id").toOption, Some("n-a"))
       assertEquals(a.hcursor.get[String]("kind").toOption, Some("flow-step"), "ChainNode kind contract")
-      assertEquals(a.hcursor.get[String]("label").toOption, Some("first line of the task"), "label = task first line (≤80)")
+      assertEquals(
+        a.hcursor.get[String]("label").toOption,
+        Some("first line of the task"),
+        "label = task first line (≤80)"
+      )
       assertEquals(a.hcursor.get[String]("description").toOption, Some("short desc"))
       assertEquals(a.hcursor.get[String]("status").toOption, Some("pending"), "pending/wiring ⇒ pending")
       assertEquals(a.hcursor.downField("deps").as[List[String]].toOption, Some(List("n-b")))
@@ -235,7 +296,11 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       val g = ghostBody.getOrElse(fail("on-disk scope must project via probe"))
       assertEquals(g.hcursor.downField("chain").get[Boolean]("mounted").toOption, Some(false))
       val gnodes = g.hcursor.downField("chain").downField("nodes").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      assertEquals(gnodes.flatMap(_.hcursor.get[String]("status").toOption), List("pending"), "wiring ⇒ pending through the probe")
+      assertEquals(
+        gnodes.flatMap(_.hcursor.get[String]("status").toOption),
+        List("pending"),
+        "wiring ⇒ pending through the probe"
+      )
       assert(!ghostMounted, "the probe never mounts into the hosts registry (read-only)")
       // 无目录（记录在册）= chain null 降级；查无记录 = None（HTTP 404 面）；
       // 非法键 = None（HTTP 400 面）；探针零建目录。

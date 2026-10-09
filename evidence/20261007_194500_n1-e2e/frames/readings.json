@@ -1,0 +1,117 @@
+[
+ {
+  "face": "A",
+  "frame": "badge-before.png",
+  "turnHeaders": [
+   "done",
+   "done"
+  ],
+  "optionBox": {
+   "resolved": false,
+   "buttons": 5
+  },
+  "note": "pending ask card visible (buttons incl. options + Other); live turn has NO settled data-turn-state yet; prior onboarding turns settled done"
+ },
+ {
+  "face": "B",
+  "frame": "tool-live.png",
+  "row": {
+   "label": "Delegate(【BRIEF-U2】在项目工作区 docs/ 下新建 ui-probe.md …)",
+   "detail": "【BRIEF-U2】在项目工作区 docs/ 下新建 ui-probe.md，写入一行「ui-face-b ok 1791376140502」，用 Bash cat 确认内容，然后写一句完成报告。…",
+   "cls": "nf-wl-item"
+  },
+  "note": "live tool row: spinner + label scroll-clamped + .nf-wl-detail streaming span (toolline-detail 批) — captured mid-call"
+ },
+ {
+  "face": "B",
+  "frame": "tool-done.png",
+  "rows": [
+   {
+    "cls": "nf-wl-item is-done",
+    "label": "Delegate(…) — Delegate task started in the background (task #2). Executor: nebflow; workspace: …/delegate-nebflow-d423a0e4; branch: delegate/delegate-neb…"
+   }
+  ],
+  "note": "completion flip: is-done + resultText 单行摘要（toolEnd 帧字段）原位替换"
+ },
+ {
+  "face": "A",
+  "frame": "(redo)",
+  "headersBeforeAnswer": [
+   "done",
+   "done",
+   "done",
+   "done"
+  ],
+  "boxButtons": [
+   "red标记色为红色",
+   "blue标记色为蓝色",
+   "其他...",
+   "取消",
+   "确认"
+  ],
+  "note": "pending ask card: no settled badge state on live turn; prior turns done"
+ },
+ {
+  "face": "A",
+  "frame": "badge-after.png",
+  "settled": false,
+  "heads": [
+   "done",
+   "done",
+   "done",
+   "done"
+  ],
+  "answerRows": [],
+  "resolved": false,
+  "clickedOption": "red标记色为红色",
+  "note": "answered: card resolved + badge settled to done; conditional grouping (answer row under same group)"
+ },
+ {
+  "face": "A",
+  "frame": "badge-after.png",
+  "settled": true,
+  "headsBefore": [
+   "done",
+   "done",
+   "done",
+   "done"
+  ],
+  "selected": "red标记色为红色",
+  "confirm": "confirmed",
+  "heads": [
+   "done",
+   "done",
+   "done",
+   "done",
+   "done"
+  ],
+  "answerRows": [],
+  "resolved": true,
+  "note": "two-step: radio select → 确认; card resolved + badge settles done (conditional grouping face)"
+ },
+ {
+  "face": "C",
+  "frame": "panel-toggle.png",
+  "selector": ".plugins-card-state .nb-toggle",
+  "state": {
+   "aria": "true",
+   "cls": "nb-toggle on",
+   "cardName": ""
+  },
+  "note": "plugins panel cards with row-end dispatch nb-toggle (29ca386ad)"
+ },
+ {
+  "face": "C",
+  "frame": "panel-toggle-flipped.png",
+  "after": {
+   "aria": "false",
+   "cls": "nb-toggle"
+  },
+  "note": "optimistic flip + POST enable/disable + converge"
+ },
+ {
+  "face": "C",
+  "restored": "true",
+  "note": "toggled back"
+ }
+]

@@ -236,7 +236,7 @@ test.describe('UI-B — 轮次切分', () => {
 /* ═══════════ UI-C — pure-text animation ═══════════ */
 
 test.describe('UI-C — 纯文本动画', () => {
-  test('C1: the badge animates through TEXT/CSS only — no transform keyframes', async ({ browser }) => {
+  test('C1: the line animates via CSS text/form — the ONLY transform keyframe is the spinner rotation', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__toolRunHere());
 
@@ -265,8 +265,16 @@ test.describe('UI-C — 纯文本动画', () => {
     expect(read, 'the work line exists').not.toBeNull();
     expect(read.spinHasGlyph, 'the spinner is a TEXT glyph (a ::before content)').toBe(true);
     expect(read.animations.length, 'the line still animates (pure text/form)').toBeGreaterThan(0);
-    expect(read.transformFrames,
-      `NO keyframe moves/rotates/scales anything; offenders: ${JSON.stringify(read.transformFrames)}`)
+    // ui-polish 2026-10-08（作者令「spinner 旋转卡顿、不连贯」）：spinner 换成
+    // 合成器动画 `nf-wl-frames`（transform: rotate + linear infinite，steps
+    // 内容轮换退役）。UI-C 的克制在其余处全部存活：除 spinner 自身旋转外，
+    // 不得有任何 keyframe 平移/缩放/旋转（无 roll、无 slide、无 bounce）。
+    const rotation = read.transformFrames.filter(n => n === 'nf-wl-frames');
+    const strays = read.transformFrames.filter(n => n !== 'nf-wl-frames');
+    expect(rotation, 'the spinner carries exactly its own rotate keyframe')
+      .toEqual(['nf-wl-frames']);
+    expect(strays,
+      `NO keyframe besides the spinner rotation may move/scale/translate; offenders: ${JSON.stringify(strays)}`)
       .toEqual([]);
     expect(pageErrors).toEqual([]);
     await context.close();

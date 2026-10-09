@@ -104,6 +104,15 @@ object InteractionHub:
               // 精确回收 —— 同一会话同时挂着别的 ask 时不得被误伤（超时撤回若走
               // CleanupForSession 就会误杀同会话的其它 pending 卡）。
               ctx.forkTurn(handleCloseRequest(pending, rootWsSend, requestId)) *> IO.pure(behavior)
+            case InteractionHubCommand.CancelRequest(requestId, reason, by, reply) =>
+              // askucancel 批（2026-10-08）：用户发起的取消——按 requestId 精确终结
+              // 一个 AskUser 槽位。与上一条（调用侧撤回，#147）的差别 = kind 闸 +
+              // 发起方终结通知 + 显式裁决（见 InteractionHubCommand.CancelRequest 注）。
+              ctx.forkTurn(handleCancelRequest(pending, rootWsSend, requestId, reason, by, reply)) *> IO.pure(behavior)
+            case InteractionHubCommand.SecretSlotsOf(requestId, reply) =>
+              // askuser-secret 批（2026-10-08）：只读 secret 槽位查询（网关作答闸的
+              // 判据来源）——见 InteractionHubCommand.SecretSlotsOf 注。
+              ctx.forkTurn(handleSecretSlotsOf(pending, requestId, reply)) *> IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -365,6 +374,61 @@ object InteractionHub:
       case InteractionKind.Permission => renderPermission(req)
 
   // ============================================================
+  // askuser-secret 批（2026-10-08）：secret 槽位判据（本文件内单一实现，守卫/
+  // complete/审计三处消费点一律委托）。
+  // ============================================================
+
+  /** pending 载荷 items 里的 secret 型题位次（0-based，按 items 序）。 */
+  private[agent] def secretSlotsOf(p: PendingRequest): List[Int] =
+    p.payload.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil).zipWithIndex.collect {
+      case (item, i) if item.hcursor.downField("secret").as[Boolean].toOption.getOrElse(false) => i
+    }
+
+  /** 单题的一次性参数（审计/回执用；非 ephemeral 题恒 None）。 */
+  private def ephemeralTtlOf(p: PendingRequest, idx: Int): Option[Int] =
+    p.payload.hcursor
+      .downField("items")
+      .as[List[Json]]
+      .toOption
+      .getOrElse(Nil)
+      .lift(idx)
+      .flatMap(_.hcursor.downField("ttlSec").as[Int].toOption)
+
+  private def isEphemeralSlot(p: PendingRequest, idx: Int): Boolean =
+    p.payload.hcursor
+      .downField("items")
+      .as[List[Json]]
+      .toOption
+      .getOrElse(Nil)
+      .lift(idx)
+      .exists(_.hcursor.downField("ephemeral").as[Boolean].toOption.getOrElse(false))
+
+  /**
+   * 只读查询（SecretSlotsOf）：槽位在册且 kind=AskUser ⇒ 回 secret 槽参数；否则
+   * None（网关按旧路径透传，hub 守卫兜底）。
+   */
+  private def handleSecretSlotsOf(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    requestId: String,
+    reply: ActorRef[Option[List[SecretSlotSpec]]]
+  ): IO[Unit] =
+    pending.get
+      .map(m =>
+        m.get(requestId).filter(_.kind == InteractionKind.AskUser).map { p =>
+          p.payload.hcursor.downField("items").as[List[Json]].toOption.getOrElse(Nil).zipWithIndex.collect {
+            case (item, i) if item.hcursor.downField("secret").as[Boolean].toOption.getOrElse(false) =>
+              SecretSlotSpec(
+                idx = i,
+                secretName = item.hcursor.downField("secretName").as[String].toOption.map(_.trim).filter(_.nonEmpty),
+                ephemeral = item.hcursor.downField("ephemeral").as[Boolean].toOption.getOrElse(false),
+                ttlSec = item.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0)
+              )
+          }
+        }
+      )
+      .flatMap(specs => (reply ! specs).void)
+
+  // ============================================================
   // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe.
   //
   // Returns whether a root session currently has a client window registered
@@ -413,14 +477,31 @@ object InteractionHub:
               // would strand the pending deferred forever with
               // the card gone (user cannot re-answer what they cannot see;
               // and since R1, wait-timeout-fix, no timeout would ever release it).
+              val (reason, why) =
+                if p.kind == InteractionKind.AskUser &&
+                  ans.payload.hcursor
+                    .downField("answers")
+                    .as[List[String]]
+                    .toOption
+                    .exists(secretValueInPlainAnswers(p, _))
+                then
+                  // askuser-secret 批（规格 §5.1）：秘密槽明文回流（旧前端不识别
+                  // secret 键）——专用 reason 让前端 toast 给出「刷新页面」指引，
+                  // 卡片保留、值就地丢弃（不落任何存储）。
+                  (
+                    "secret-slot-mismatch",
+                    s"secret question slot(s) received a plain-text answer — the value was DISCARDED unstored; " +
+                      s"refresh the web panel (frontend must send secret values on the secretSlots key) — " +
+                      s"card RETAINED for requestId=${ans.requestId}"
+                  )
+                else
+                  (
+                    "shape-mismatch",
+                    s"answer shape does not match kind=${p.kind} of requestId=${ans.requestId} — card RETAINED"
+                  )
               (
                 m,
-                rejectAnswer(
-                  rootWsSend,
-                  ans,
-                  "shape-mismatch",
-                  s"answer shape does not match kind=${p.kind} of requestId=${ans.requestId} — card RETAINED"
-                )
+                rejectAnswer(rootWsSend, ans, reason, why)
               )
           case None => (m, rejectAnswer(rootWsSend, ans, "unknown-request-id", s"unknown requestId=${ans.requestId}"))
       else
@@ -462,6 +543,15 @@ object InteractionHub:
    *
    * P0-1（spec §2.4，验收 A1-5）：`McpPermissionReply` **同款必需 `approved: Boolean`**
    * —— 缺 `approved`（或非布尔）的答复**不消费卡**，与既有 Permission 判据逐字同构。
+   *
+   * askuser-secret 批（规格 §5.1 最高风险项）：AskUserReply 在此之上加**秘密槽
+   * fail-closed 守卫**——识别不了 `secret` 键的旧前端把密码题当普通自由输入渲染，
+   * 值会打在普通 `answers` 槽里回流（全链明文）。判据：任一 secret 题（
+   * [[secretSlotsOf]]，pending 载荷 items 是唯一判据源）的 `answers` 槽**非空**
+   * ⇒ 整条答复 shape-mismatch 拒收、**卡保留**（#12 语义）+ 既有
+   * `interactionAnswerRejected` 广播 → 前端 toast 提示刷新。绝不静默降级。
+   * 新前端的线协议：秘密槽的 `answers` 位**恒空串**（值走 `secretSlots` 专用键，
+   * 网关落库后以 `stored` 回执数组随载荷上行，`complete` 时才占位化）。
    */
   private[agent] def answerCompletes(p: PendingRequest, ans: InteractionAnswered): Boolean =
     p.reply match
@@ -470,7 +560,19 @@ object InteractionHub:
       case InteractionReply.McpPermissionReply(_) =>
         ans.payload.hcursor.downField("approved").as[Boolean].isRight
       case InteractionReply.AskUserReply(_) =>
-        ans.payload.hcursor.downField("answers").as[List[String]].isRight
+        ans.payload.hcursor.downField("answers").as[List[String]].toOption match
+          case None => false
+          case Some(answers) => !secretValueInPlainAnswers(p, answers)
+
+  /**
+   * 秘密槽明文回流判据（守卫单一实现）：secret 题 answers 槽非空 = 旧前端/非法
+   * 客户端把值打进了明文通道。回执 JSON 占位**不算**泄漏（那是 complete 自己
+   * 写入下游的形态，不会出现在上行载荷里；防御性放行）。
+   */
+  private[agent] def secretValueInPlainAnswers(p: PendingRequest, answers: List[String]): Boolean =
+    secretSlotsOf(p).exists { i =>
+      answers.lift(i).exists(a => a.nonEmpty && !a.startsWith("(secret"))
+    }
 
   /**
    * 多 AskUser 并发批（#250 第⑥项，2026-09-13 作者裁定「6 项全补」）：
@@ -621,6 +723,99 @@ object InteractionHub:
           )
     }.flatten
 
+  // ============================================================
+  // askucancel 批（2026-10-08）：用户发起的取消（CancelRequest）。
+  //
+  // 三段语义（与 handleCloseRequest 的差别各占一段）：
+  //   ① kind 闸：只终结 InteractionKind.AskUser 槽位；permission/mcpPermission 卡
+  //      各有自身生命周期（approve/deny 即终态），误触取消回 NotAskUser，不静默。
+  //   ② 发起方终结通知：撤回信号（nebflow.shared.AskUserCancelled.signal）经槽位
+  //      既有答复管道（AskUserReply.replyTo）投达请求方——同一条管道平时送答案，
+  //      取消时送「不会有答案了」的明确结论：阻塞面板腿（ProjectTool.pathPanel）
+  //      据此判 Shelved 解除挂起 + 恢复预算；非阻塞桥腿（AskUserAnswerBridge）
+  //      注入取消通告给发起的代理/节点。
+  //   ③ 显式裁决：Cancelled（携带 root/sourceSession，调用方据此追加取消落盘行）/
+  //      UnknownRequestId（幂等：重复取消、取消已答问题、取消从未存在的 id 同一终态）/
+  //      NotAskUser。裁决在广播**之后**回——调用方拿到 Cancelled 时前端关卡帧已在途。
+  // 广播面与 handleCloseRequest 逐字同族（askUserClosed 走 ALL registered roots；
+  // 两条既有消费点零改动：main.js onMessage('askUserClosed')、两桥的 askUserClosed
+  // 分支各自清本地路由缓存/台账）。reason 缺省补 "user-cancelled"。
+  // ============================================================
+  private def handleCancelRequest(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+    requestId: String,
+    reason: String,
+    by: String,
+    reply: Option[ActorRef[AskCancelOutcome]]
+  ): IO[Unit] =
+    val effectiveReason = if reason.nonEmpty then reason else "user-cancelled"
+    def respond(outcome: AskCancelOutcome): IO[Unit] =
+      reply.fold(IO.unit)(r => (r ! outcome).void)
+    pending.modify { m =>
+      m.get(requestId) match
+        case None =>
+          // 幂等：已答复/已回收/从未存在 —— 同一终态，不报错、不广播。
+          (
+            m,
+            respond(AskCancelOutcome.UnknownRequestId) *>
+              logger.debug(
+                s"CancelRequest for unknown requestId=$requestId (already answered, closed, or never existed)"
+              )
+          )
+        case Some(p) if p.kind != InteractionKind.AskUser =>
+          (
+            m,
+            respond(AskCancelOutcome.NotAskUser(p.kind)) *>
+              logger.info(
+                s"CancelRequest refused for requestId=$requestId (kind=${p.kind} is not AskUser — " +
+                  "only AskUser questions are cancellable; permission cards resolve by approve/deny)"
+              )
+          )
+        case Some(p) =>
+          (
+            m - requestId,
+            for
+              _ <- logger.info(
+                s"CancelRequest $requestId (kind=AskUser) — cancelled by=$by reason=$effectiveReason; closing the card"
+              )
+              // R10/U5=F-b 审计行（cancel 单点）——best-effort。
+              _ <- audit
+                .info(
+                  s"event=cancel requestId=$requestId sourceSession=${p.sourceSession} " +
+                    s"rootSessionId=${p.rootSessionId} kind=${p.kind} by=$by reason=$effectiveReason"
+                )
+                .handleErrorWith(_ => IO.unit)
+              // ② 发起方终结通知（先于广播：会话侧先拿到结论，前端关卡帧随后在途）。
+              _ <- p.reply match
+                case InteractionReply.AskUserReply(replyToOpt) =>
+                  replyToOpt.fold(IO.unit)(r =>
+                    (r ! nebflow.shared.AskUserCancelled.signal(requestId, effectiveReason, by)).void
+                  )
+                case _ => IO.unit
+              sends <- rootWsSend.get
+              _ <- sends.toList.traverse_ { case (sid, ws) =>
+                ws(
+                  Json.obj(
+                    "type" -> "askUserClosed".asJson,
+                    "sessionId" -> sid.asJson,
+                    "requestId" -> requestId.asJson,
+                    "sourceSession" -> p.sourceSession.asJson,
+                    "reason" -> effectiveReason.asJson
+                  )
+                ).handleErrorWith(e =>
+                  logger.warn(
+                    s"CancelRequest broadcast failed requestId=$requestId root=$sid: ${e.getMessage}"
+                  ) *> IO.unit
+                )
+              }
+              _ <- respond(AskCancelOutcome.Cancelled(requestId, p.kind, p.rootSessionId, p.sourceSession))
+            yield ()
+          )
+    }.flatten
+
+  end handleCancelRequest
+
   /**
    * R10/U5=F-b 审计行（answer 单点），`via` = card。best-effort。
    *
@@ -637,13 +832,65 @@ object InteractionHub:
       )
       .handleErrorWith(_ => IO.unit)
 
-  private def complete(p: PendingRequest, ans: InteractionAnswered, via: String = "card"): IO[Unit] =
+  // 可见性 `private[agent]`（同 `PendingRequest` 先例 · McpPermissionReplaySpec 形态）：
+  // askuser-secret 批验收「回执 JSON 的 answers 秘密槽位被占位化」需对**生产本体**取值，
+  // spec 在包内直接捕获 delivered 载荷。零行为影响（同包可见性放宽）。
+  private[agent] def complete(p: PendingRequest, ans: InteractionAnswered, via: String = "card"): IO[Unit] =
     val approved = ans.payload.hcursor.downField("approved").as[Boolean].toOption
     val answers = ans.payload.hcursor.downField("answers").as[List[String]].toOption
     // P0-1（spec §2.4/§2.5）：mcpPermission 的答复面比 permission 多 scope/upgradeMode。
     val mcpAnswer =
       if p.kind == InteractionKind.McpPermission then nebflow.shared.McpPermissionAnswer.decode(ans.payload)
       else None
+    // askuser-secret 批（规格 §2）：秘密槽占位化 + 审计脱敏（hub 侧单一实现）。
+    val secretIdxs = if p.kind == InteractionKind.AskUser then secretSlotsOf(p) else Nil
+    // 占位化：网关随载荷上行的 `stored` 回执（AskUserSecretSink.Receipt 的 Json 形）
+    // 折进 answers 的秘密槽位——回执 = 指针（keyRef/location/variableName），零值。
+    // 无回执的秘密槽（渠道只答非 secret 题 / 落库失败缺席）保持空串（下游渲染
+    // 「未提供」）。非 secret 卡 ⇒ 恒等（字节不变）。
+    val storedReceipts: List[Json] =
+      if secretIdxs.isEmpty then Nil
+      else ans.payload.hcursor.downField("stored").as[List[Json]].toOption.getOrElse(Nil)
+    def answersForDelivery: List[String] =
+      if secretIdxs.isEmpty then answers.getOrElse(Nil)
+      else
+        val base = Array.fill(itemsCountOf(p))("")
+        answers.getOrElse(Nil).zipWithIndex.foreach { case (a, i) => if i < base.length then base(i) = a }
+        storedReceipts.foreach { r =>
+          val c = r.hcursor
+          val idx = c.downField("idx").as[Int].toOption
+          val ok = c.downField("stored").as[Boolean].toOption.getOrElse(false)
+          idx.filter(secretIdxs.contains).foreach { i =>
+            if ok then
+              base(i) = Json
+                .obj(
+                  "stored" -> Json.fromBoolean(true),
+                  "keyRef" -> Json.fromString(c.downField("keyRef").as[String].getOrElse("")),
+                  "location" -> Json.fromString(c.downField("location").as[String].getOrElse("")),
+                  "variableName" -> Json.fromString(c.downField("variableName").as[String].getOrElse("")),
+                  "ephemeral" -> Json.fromBoolean(isEphemeralSlot(p, i))
+                )
+                .noSpaces
+            else
+              base(i) = Json
+                .obj(
+                  "stored" -> Json.fromBoolean(false),
+                  "reason" -> Json.fromString(c.downField("reason").as[String].getOrElse("unstorable"))
+                )
+                .noSpaces
+          }
+        }
+        base.toList
+    // R10 审计脱敏（规格 §2「auditAnswer 只记 slot 数与 keyRef」）：有秘密槽的卡
+    // 不再把答案拼接进审计行——只记总槽数、秘密槽数与 keyRef 名单。
+    val secretAudit: Option[String] =
+      if secretIdxs.isEmpty then None
+      else
+        val keyRefs = storedReceipts.flatMap(r => r.hcursor.downField("keyRef").as[String].toOption)
+        Some(
+          s"answers=${answersForDelivery.size} slots, secret=${secretIdxs.size} " +
+            s"keyRefs=[${keyRefs.mkString(",")}] (secret values withheld)"
+        )
     // P0-2（spec §2.5 + §6 #2 建议口径「启用（L0-L2；不落盘）」）：卡答 scope=session 且
     // approved ⇒ 记 (serverId, tool) 会话内免审。**只内存**（SessionApprovals 无落盘面）；
     // **只对 L0-L2**（L3 恒审红线在判定侧强制，见 McpToolGate.decide）。
@@ -669,15 +916,17 @@ object InteractionHub:
       _ <- auditAnswer(
         ans.requestId,
         p,
-        answers
-          .map(_.mkString(" | "))
-          .orElse(
-            mcpAnswer.map(a =>
-              s"approved=${a.approved} scope=${a.scope.getOrElse("once")} upgrade=${a.upgradeMode.getOrElse("-")}"
+        secretAudit.getOrElse(
+          answers
+            .map(_.mkString(" | "))
+            .orElse(
+              mcpAnswer.map(a =>
+                s"approved=${a.approved} scope=${a.scope.getOrElse("once")} upgrade=${a.upgradeMode.getOrElse("-")}"
+              )
             )
-          )
-          .orElse(approved.map(a => s"approved=$a"))
-          .getOrElse("-"),
+            .orElse(approved.map(a => s"approved=$a"))
+            .getOrElse("-")
+        ),
         via
       )
       _ <- IO.delay(rememberSessionApproval)
@@ -687,10 +936,17 @@ object InteractionHub:
         case InteractionReply.McpPermissionReply(deferred) =>
           mcpAnswer.fold(IO.unit)(a => deferred.complete(a).void.handleErrorWith(_ => IO.unit))
         case InteractionReply.AskUserReply(replyTo) =>
-          replyTo.fold(IO.unit)(r => (r ! answers.getOrElse(Nil)))
+          replyTo.fold(IO.unit)(r => (r ! answersForDelivery))
     yield ()
     end for
   end complete
+
+  /**
+   * pending 载荷 items 的题数（answersForDelivery 的补齐基准——渠道腿恒发全长
+   * 数组，此处兜底防越界）。
+   */
+  private def itemsCountOf(p: PendingRequest): Int =
+    p.payload.hcursor.downField("items").as[List[Json]].toOption.map(_.size).getOrElse(0)
 end InteractionHub
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-B=B1):InteractionHubCommand 命令 ADT 已整体

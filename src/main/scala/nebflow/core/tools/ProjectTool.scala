@@ -15,7 +15,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorRef, AgentCommand}
 import nebflow.core.project.*
-import nebflow.shared.{AskItem, AskUserDispatch, InteractionRequestId, PathUtil}
+import nebflow.shared.{AskItem, AskUserCancelled, AskUserDispatch, InteractionRequestId, PathUtil}
 
 import scala.util.Try
 
@@ -61,7 +61,10 @@ object ProjectTool extends Tool:
           "type" -> "string".asJson,
           "description" -> "Absolute path to the project workspace (create only). Omit to pop the interactive path-selection panel (AskUserQuestion-style card).".asJson
         ),
-        "description" -> Json.obj("type" -> "string".asJson, "description" -> "Optional one-line description (create only)".asJson)
+        "description" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Optional one-line description (create only)".asJson
+        )
       ),
       "required" -> Json.arr()
     )
@@ -84,7 +87,7 @@ object ProjectTool extends Tool:
     input("action").flatMap(_.asString).map(_.trim.toLowerCase(java.util.Locale.ROOT)).getOrElse("create") match
       // N2 project-tool 批：unmount 面（S17/⑩A 三步序；实施单点 ProjectUnmount）。
       case "unmount" => unmountFace(rawName, ctx)
-      case "create"  => createFace(rawName, rawWorkspace, description, ctx)
+      case "create" => createFace(rawName, rawWorkspace, description, ctx)
       case other =>
         IO.pure(
           Left(
@@ -93,6 +96,8 @@ object ProjectTool extends Tool:
             )
           )
         )
+
+  end call
 
   /** create 面（原 ProjectCreate 语义，逐字保持）。 */
   private def createFace(
@@ -158,6 +163,8 @@ object ProjectTool extends Tool:
                 )
               )
             )
+
+        end match
 
   /** unmount 结果句（成功/幂等两态；report 计数逐项可读，幂等态显式声明 no-op）。 */
   private def renderUnmountResult(r: ProjectUnmount.UnmountReport): String =
@@ -447,19 +454,24 @@ object ProjectTool extends Tool:
      * **与 `Shelved` 是两回事**：问题从未上卡，用户没有「关闭面板」这一动作。
      */
     case class Failed(signal: String) extends PanelAnswer
+  end PanelAnswer
 
   /** 去尾部斜杠（Scala String.stripTrailing 无参版，斜杠语义手写）。 */
   private def stripTrailingSlashes(s: String): String = s.replaceAll("/+$", "")
 
   /**
    * 面板答案解析（纯函数，spec 覆盖）：派发失败信号 → Failed（明确报错，**不是**
-   * 用户动作）；首槽空 / 取消哨兵 → Shelved；'~' 展开后非绝对 → BadPath；
-   * 合法 → Chosen（去尾斜杠）。
+   * 用户动作）；取消信号（askucancel 批：hub CancelRequest 经既有答复管道投回的
+   * `AskUserCancelled` 信号——用户在网页/渠道侧撤销了这张工作区卡）→ Shelved（与
+   * 既有 `__cancelled__` 哨兵同一落点：用户撤回 ≙ 搁置，预算恢复走配对的
+   * `answerLanded`，不造第二套终态）；首槽空 / 取消哨兵 → Shelved；'~' 展开后非
+   * 绝对 → BadPath；合法 → Chosen（去尾斜杠）。
    * isAbsolute 为跨平台判定（POSIX / 盘符 / UNC）——朴素 startsWith("/")
    * 会拒绝 Windows 盘符答案（diag-win-paths P1）。
    */
   private def parsePanelAnswer(answers: List[String]): PanelAnswer =
     if AskUserDispatch.isFailure(answers) then PanelAnswer.Failed(answers.head)
+    else if AskUserCancelled.isCancelled(answers) then PanelAnswer.Shelved
     else
       val raw = answers.headOption.map(_.trim).getOrElse("")
       if raw.isEmpty || raw == CancelSentinel then PanelAnswer.Shelved

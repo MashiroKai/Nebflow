@@ -38,29 +38,42 @@ class ExecutorRegistrySpec extends CatsEffectSuite:
 
   test("resolveBinFrom: PATH leg hits an existing file") {
     withFakeBin("zcode") { dir =>
-      val hit = ExecutorRegistry.resolveBinFrom(pathEnv = dir.toString, probeDirs = Nil, binName = "zcode", windows = false)
+      val hit =
+        ExecutorRegistry.resolveBinFrom(pathEnv = dir.toString, probeDirs = Nil, binName = "zcode", windows = false)
       assertEquals(hit, Some((dir / "zcode").toString))
     }
   }
 
   test("resolveBinFrom: probe-dir leg fires when PATH misses") {
     withFakeBin("zcode") { dir =>
-      val hit = ExecutorRegistry.resolveBinFrom(pathEnv = "/nonexistent-legacy-path", probeDirs = List(dir.toString), binName = "zcode", windows = false)
+      val hit = ExecutorRegistry.resolveBinFrom(
+        pathEnv = "/nonexistent-legacy-path",
+        probeDirs = List(dir.toString),
+        binName = "zcode",
+        windows = false
+      )
       assertEquals(hit, Some((dir / "zcode").toString))
     }
   }
 
   test("resolveBinFrom: total miss is None, never throws") {
-    val miss = ExecutorRegistry.resolveBinFrom(pathEnv = "", probeDirs = List("/nonexistent-a", "/nonexistent-b"), binName = "definitely-not-a-bin-xyz", windows = false)
+    val miss = ExecutorRegistry.resolveBinFrom(
+      pathEnv = "",
+      probeDirs = List("/nonexistent-a", "/nonexistent-b"),
+      binName = "definitely-not-a-bin-xyz",
+      windows = false
+    )
     assertEquals(miss, None)
   }
 
   test("resolveBinFrom: windows form probes .exe/.cmd suffixes") {
     withFakeBin("zcode.cmd") { dir =>
-      val hit = ExecutorRegistry.resolveBinFrom(pathEnv = dir.toString, probeDirs = Nil, binName = "zcode", windows = true)
+      val hit =
+        ExecutorRegistry.resolveBinFrom(pathEnv = dir.toString, probeDirs = Nil, binName = "zcode", windows = true)
       assertEquals(hit, Some((dir / "zcode.cmd").toString))
       // 非 windows 形态不吃 .cmd
-      val nix = ExecutorRegistry.resolveBinFrom(pathEnv = dir.toString, probeDirs = Nil, binName = "zcode", windows = false)
+      val nix =
+        ExecutorRegistry.resolveBinFrom(pathEnv = dir.toString, probeDirs = Nil, binName = "zcode", windows = false)
       assertEquals(nix, None)
     }
   }
@@ -144,15 +157,15 @@ class ExecutorRegistrySpec extends CatsEffectSuite:
   test("setExecutorSection: unknown key / unknown default / builtin-disable are all refused") {
     ConfigService.setExecutorSection(Map("apiKey" -> "x".asJson)).map {
       case Left(err) => assert(err.contains("unknown key"))
-      case other     => fail(s"expected refusal, got $other")
+      case other => fail(s"expected refusal, got $other")
     }
     ConfigService.setExecutorSection(Map("default" -> "no-such".asJson)).map {
       case Left(err) => assert(err.contains("unknown default"))
-      case other     => fail(s"expected refusal, got $other")
+      case other => fail(s"expected refusal, got $other")
     }
     ConfigService.setExecutorSection(Map("disabled" -> List("nebflow").asJson)).map {
       case Left(err) => assert(err.contains("cannot be disabled"))
-      case other     => fail(s"expected refusal, got $other")
+      case other => fail(s"expected refusal, got $other")
     }
   }
 
@@ -166,3 +179,4 @@ class ExecutorRegistrySpec extends CatsEffectSuite:
         assertEquals(ExecutorRegistry.effectiveDefault, "codex")
     }
   }
+end ExecutorRegistrySpec

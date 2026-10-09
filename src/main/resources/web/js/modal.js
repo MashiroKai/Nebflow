@@ -85,11 +85,14 @@ let pendingFolderDelete = false;
 let pendingFolderDeleteId = null;
 
 export function showDeleteModal(sessionId, sessionName) {
-  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, deleteConfirmBtn, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
   deleteTitle.textContent = t('delete.sessionTitle');
   deleteMsg.textContent = t('delete.sessionMsg', { name: sessionName });
+  // Label reset on the sibling open path — see showConfirm's confirmLabel note
+  // (a custom label from the social unbind flow must never leak into here).
+  if (deleteConfirmBtn) deleteConfirmBtn.textContent = t('modal.deleteConfirm');
   state.pendingDeleteId = sessionId;
   pendingBatchDelete = false;
   pendingFolderDelete = false;
@@ -131,12 +134,15 @@ let pendingConfirmCallback = null;
  * @param {string} title — dialog title
  * @param {string} message — dialog body text
  * @param {Function} onConfirm — called when user clicks Confirm
- * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral' } — 'neutral'（可逆动作，
- *   如项目归档）→ 确认钮走 glass-control 中性材质（#delete-box.confirm-neutral）；
- *   默认 'danger' 保留红色语义。状态在每次打开时重设，无残留。
+ * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral', confirmLabel?: string } —
+ *   'neutral'（可逆动作，如项目归档）→ 确认钮走 glass-control 中性材质
+ *   （#delete-box.confirm-neutral）；默认 'danger' 保留红色语义。
+ *   confirmLabel（social-fix-confirm 2026-10-09，社交面板解绑流）：本次确认钮的
+ *   文案（如「解除绑定」）。每个打开路径都会重设按钮文案——下方与 showDeleteModal
+ *   各自回落到 modal.deleteConfirm，定制文案绝不残留到下一次弹窗。
  */
 export function showConfirm(title, message, onConfirm, opts = {}) {
-  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, deleteConfirmBtn, modalOverlay } = state.dom;
   if (!deleteBox) { onConfirm?.(); return; }
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
@@ -147,6 +153,7 @@ export function showConfirm(title, message, onConfirm, opts = {}) {
   pendingFolderDelete = false;
   state.pendingDeleteId = null;
   deleteBox.classList.toggle('confirm-neutral', opts.tone === 'neutral');
+  if (deleteConfirmBtn) deleteConfirmBtn.textContent = opts.confirmLabel || t('modal.deleteConfirm');
   modalOverlay.classList.add('on');
 }
 

@@ -68,7 +68,12 @@ private[gateway] object WsFileOpsHandlers:
     val hc = json.hcursor
     val exSessionId = hc.downField("sessionId").as[String].getOrElse("")
     val subPath = hc.downField("path").as[String].getOrElse("")
-    if exSessionId.nonEmpty then
+    // v2.1 阶段 1 §C.1-3（2026-10-09 实施批）：可选 `device` 键——缺省/缺键 =
+    // 本地腿逐字节（存量零回归）；对端设备 = scope=browse 元数据列举（**零字节
+    // 流动**，出口白名单在对端闸），帧形与本地腿同构 + additive `device` 标注。
+    val exDevice = hc.downField("device").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    if exSessionId.nonEmpty && exDevice.isDefined then listRemoteDir(ctx, exDevice.get, subPath, wsSend)
+    else if exSessionId.nonEmpty then
       val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
       (for
         pr <- resolveExplorerBaseRoot(exSessionId, overrideRoot)
@@ -102,6 +107,98 @@ private[gateway] object WsFileOpsHandlers:
     else IO.unit
     end if
   end handleListDir
+
+  /**
+   * `device` 参数的目标解析单点（listDir / readFile 两腿共用；v2.1 阶段 1 §C）：
+   *   - `Right(None)` = 目标本机（名字/id 与本机身份相符）——调用方走既有本地腿
+   *     （避免本机↔本机的无谓网络环回）；
+   *   - `Right(Some(peer))` = 对端设备（resolvePeer 分层匹配 + 一次现扫重试——
+   *     RemoteExecutor.execute 同族序）；
+   *   - `Left` = **显式失败**（NebLink 未启用 / 设备不可解析——G.12 同款
+   *     fail-closed：设备不在线就是错误帧，绝不静默落本机）。
+   */
+  private def resolveBrowseTarget(device: String)(using
+    ctx: WsDispatchCtx
+  ): IO[Either[String, Option[PeerInfo]]] =
+    import ctx.*
+    sharedResources.neblinkService match
+      case None => IO.pure(Left("NebLink is not enabled on this host (no device network)"))
+      case Some(ns) =>
+        ns.identity.flatMap { id =>
+          if device.equalsIgnoreCase(id.deviceId) || device.equalsIgnoreCase(id.deviceName) then
+            IO.pure(Right(None))
+          else
+            ns.peers.flatMap { peers =>
+              nebflow.core.tools.RemoteExecutor.resolvePeer(device, peers) match
+                case Right(peer) => IO.pure(Right(Some(peer)))
+                case Left(_) =>
+                  ns.scanNow.flatMap { refreshed =>
+                    nebflow.core.tools.RemoteExecutor.resolvePeer(device, refreshed) match
+                      case Right(peer) => IO.pure(Right(Some(peer)))
+                      case Left(err) => IO.pure(Left(err.message))
+                  }
+            }
+        }
+
+  /**
+   * `listDir` 对端腿（v2.1 阶段 1 §C.1-3 无感面②）：scope=browse 元数据列举，
+   * 帧形与本地腿同构（`dirListing` + `entries[{name,type,size,mtime,broken}]`；
+   * `resolvedPath` = 对端权威路径），additive `device` 标注来源。任何失败 =
+   * 显式 error 帧（可读原因，不静默）。
+   */
+  private def listRemoteDir(
+    ctx: WsDispatchCtx,
+    device: String,
+    remoteDir: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    import ctx.*
+    resolveBrowseTarget(device)(using ctx).flatMap {
+      case Left(err) =>
+        wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson))
+      case Right(None) =>
+        // 防御分支（正常不可达：self 目标在 handleListDir 已走本地腿）。
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "dirListing".asJson,
+            "error" -> s"'$device' resolved to this device — re-send without the device key".asJson,
+            "device" -> device.asJson
+          )
+        )
+      case Right(Some(peer)) =>
+        nebflow.core.tools.RemoteExecutor.current match
+          case None =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "dirListing".asJson,
+                "error" -> "remote executor not initialized (NebLink disabled?)".asJson,
+                "device" -> device.asJson
+              )
+            )
+          case Some(re) =>
+            re.transferListScoped(peer, remoteDir).flatMap {
+              case Right(json) =>
+                val entries = json.hcursor.downField("entries").as[Vector[io.circe.Json]].getOrElse(Vector.empty)
+                val resolved = json.hcursor.downField("path").as[String].getOrElse(remoteDir)
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "dirListing".asJson,
+                    "path" -> remoteDir.asJson,
+                    "resolvedPath" -> resolved.asJson,
+                    "entries" -> io.circe.Json.fromValues(entries),
+                    "device" -> device.asJson
+                  )
+                )
+              case Left(err) =>
+                logger.warn(s"remote listDir failed for ${peer.deviceName}: $err")
+                wsSend(
+                  io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson)
+                )
+            }
+    }.handleErrorWith { e =>
+      logger.warn(s"remote listDir failed: ${e.getMessage}")
+      wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson, "device" -> device.asJson))
+    }
 
   private def handleWatchSubscribe(
     ctx: WsDispatchCtx,
@@ -182,7 +279,14 @@ private[gateway] object WsFileOpsHandlers:
     val hc = json.hcursor
     val rdSessionId = hc.downField("sessionId").as[String].getOrElse("")
     val filePath = hc.downField("path").as[String].getOrElse("")
-    if rdSessionId.nonEmpty && filePath.nonEmpty then
+    // v2.1 阶段 1 §C.2（2026-10-09 实施批）：可选 `device` 键——对端单件取件
+    // （scope=browse，出口白名单在对端闸；落盘 = PointerPickup 单点，absPath =
+    // 本地 pickup——uploads 白名单子树，二进制腿 /api/nf-file 可取回）。缺键 =
+    // 本地腿逐字节（存量零回归）。
+    val rdDevice = hc.downField("device").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    if rdSessionId.nonEmpty && filePath.nonEmpty && rdDevice.isDefined then
+      readRemoteFile(ctx, rdDevice.get, filePath, wsSend)
+    else if rdSessionId.nonEmpty && filePath.nonEmpty then
       val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten.filter(_.nonEmpty)
       (for
         pr <- overrideRoot match
@@ -273,6 +377,86 @@ private[gateway] object WsFileOpsHandlers:
     else IO.unit
     end if
   end handleReadFile
+
+  /**
+   * `readFile` 对端腿（v2.1 阶段 1 §C.2「按需取件」）：scope=browse 单件取件 →
+   * PointerPickup 落盘 → 与本地腿同构的 `fileContent` 帧（additive `device`）。
+   *   - 文本腿：content 内联（本地 2MB 截断规则同规）；
+   *   - 二进制腿：零 content 元数据帧，`absPath` = 本地 pickup（`uploads` 白名单
+   *     子树 ⇒ 前端既有 `/api/nf-file` 取回路径可用，零策略改动）。
+   * 任何失败 = 显式 error 帧（**绝不静默**——离线/未配对/白名单外都带可读原因）。
+   */
+  private def readRemoteFile(
+    ctx: WsDispatchCtx,
+    device: String,
+    remotePath: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    import ctx.*
+    def errorFrame(msg: String): io.circe.Json =
+      io.circe.Json.obj(
+        "type" -> "fileContent".asJson,
+        "error" -> msg.asJson,
+        "path" -> remotePath.asJson,
+        "device" -> device.asJson
+      )
+    resolveBrowseTarget(device)(using ctx).flatMap {
+      case Left(err) => wsSend(errorFrame(err))
+      case Right(None) =>
+        // 防御分支（正常不可达：self 目标在 handleReadFile 已走本地腿）。
+        wsSend(errorFrame(s"'$device' resolved to this device — re-send without the device key"))
+      case Right(Some(peer)) =>
+        nebflow.core.tools.RemoteExecutor.current match
+          case None => wsSend(errorFrame("remote executor not initialized (NebLink disabled?)"))
+          case Some(re) =>
+            re.transferGetScoped(peer, remotePath).flatMap {
+              case Left(err) =>
+                logger.warn(s"remote readFile failed for ${peer.deviceName}: $err")
+                wsSend(errorFrame(err))
+              case Right(bytes) =>
+                IO.blocking(nebflow.core.tools.PointerPickup.save(peer.deviceId, remotePath, bytes)).flatMap { local =>
+                  val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
+                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+                  val fileName = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse(remotePath)
+                  val mtimeMs = scala.util.Try(os.mtime(local)).getOrElse(0L)
+                  if entry.binary then
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> remotePath.asJson,
+                        "absPath" -> local.toString.asJson,
+                        "itemType" -> entry.itemType.asJson,
+                        "fileName" -> fileName.asJson,
+                        "size" -> bytes.length.asJson,
+                        "mtimeMs" -> mtimeMs.asJson,
+                        "device" -> device.asJson
+                      )
+                    )
+                  else
+                    // 文本腿：与本地 readFile 的 2MB 截断规则同规（字节面截断 + 同款标记行）。
+                    val content =
+                      if bytes.length > 2 * 1024 * 1024 then
+                        new String(bytes, 0, 2 * 1024 * 1024, "UTF-8") + "\n\n[... file truncated at 2MB]"
+                      else new String(bytes, "UTF-8")
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> remotePath.asJson,
+                        "absPath" -> local.toString.asJson,
+                        "content" -> content.asJson,
+                        "itemType" -> entry.itemType.asJson,
+                        "fileName" -> fileName.asJson,
+                        "size" -> bytes.length.asJson,
+                        "mtimeMs" -> mtimeMs.asJson,
+                        "device" -> device.asJson
+                      )
+                    )
+                }
+            }
+    }.handleErrorWith { e =>
+      logger.warn(s"remote readFile failed: ${e.getMessage}")
+      wsSend(errorFrame(e.getMessage))
+    }
 
   private def handlePopReadFile(
     ctx: WsDispatchCtx,
@@ -961,17 +1145,16 @@ private[gateway] object WsFileOpsHandlers:
           // has always consumed `path`); the raw `~` form stays in the
           // error arm only.
           (Some(dir), browseResultFrame(dir, dir.toString, query, browseEntryCap))
-    }.flatMap {
-      case (dirOpt, frame) =>
-        dirOpt match
-          case Some(dir) =>
-            logger.info(
-              s"browsePath: path=$rawPath query=$query cap=$browseEntryCap " +
-                s"total=${frame.hcursor.get[Int]("total").getOrElse(-1)} " +
-                s"truncated=${frame.hcursor.get[Boolean]("truncated").getOrElse(false)} resolved=${dir.toString}"
-            )
-          case None => ()
-        wsSend(frame)
+    }.flatMap { case (dirOpt, frame) =>
+      dirOpt match
+        case Some(dir) =>
+          logger.info(
+            s"browsePath: path=$rawPath query=$query cap=$browseEntryCap " +
+              s"total=${frame.hcursor.get[Int]("total").getOrElse(-1)} " +
+              s"truncated=${frame.hcursor.get[Boolean]("truncated").getOrElse(false)} resolved=${dir.toString}"
+          )
+        case None => ()
+      wsSend(frame)
     }.handleErrorWith { e =>
       // An unreadable directory (permissions, I/O error) is reported with
       // the same typed frame — never silently an empty list.

@@ -169,9 +169,7 @@ end InjectionAttribution
  * `None`（呈现为普通 user 气泡）⇒ 本常量**不承担前端登记面**，只作后端归因口径。
  */
 object AskUserAnswerSource:
-  /**
-   * 非阻塞答复的注入来源定名——真人点卡作答，故与 `fromUser=true` 同行。
-   */
+  /** 非阻塞答复的注入来源定名——真人点卡作答，故与 `fromUser=true` 同行。 */
   val AnswerSource = "askUserAnswer"
 end AskUserAnswerSource
 
@@ -231,11 +229,13 @@ object AgentCommand:
     project: Option[String] = None
   ) extends AgentCommand
 
-  /** 窗冲刷载荷的单件（`ImmediateInput.windowItems` 的元素）。字段与既有
-    * `RootNotifyEntry`（`NodeEngine.scala:6247`）同源 ⇒ 合并腿构造时直接映射、
-    * 零二次转换；`nodeName`/`status` 即逐件气泡的身份与状态段来源，`sender` = 逐件
-    * 完整身份 `"<项目名>/<节点名>"`（**写入点**用 `projectName` 构造，展开点零字符串
-    * 手术 ⇒ 与 `NotificationHeader.split` 的「首个 `/`」切分口径结构同源）。 */
+  /**
+   * 窗冲刷载荷的单件（`ImmediateInput.windowItems` 的元素）。字段与既有
+   * `RootNotifyEntry`（`NodeEngine.scala:6247`）同源 ⇒ 合并腿构造时直接映射、
+   * 零二次转换；`nodeName`/`status` 即逐件气泡的身份与状态段来源，`sender` = 逐件
+   * 完整身份 `"<项目名>/<节点名>"`（**写入点**用 `projectName` 构造，展开点零字符串
+   * 手术 ⇒ 与 `NotificationHeader.split` 的「首个 `/`」切分口径结构同源）。
+   */
   case class WindowItem(text: String, nodeName: String, status: String, sender: String)
 
   case class ImmediateInput(
@@ -279,29 +279,31 @@ object AgentCommand:
      * ⇒ 置末使既有位置调用逐字保持可编译。
      */
     project: Option[String] = None,
-    /** **通知窗冲刷载荷（notifypack 解 b 批 · 作者裁定 A · 载体 A-ii）**：
-      * root 通道通知打包窗冲刷件在**队列里是 1 个元素**（生产者侧已合并，见
-      * `NodeEngine.flushRootNotify` 的 `case many`），本字段承载其 N 件原始载荷 ⇒
-      * 消费侧可在同一边界（同一 turn）**逐件**展开注入（N 气泡 / 1 次唤醒）。
-      *
-      * **取值域**：`None`（默认；全部非窗腿与单件腿）｜`Some(items)`（仅 N≥2 的窗冲刷件）。
-      * **写入点（唯一）**：`NodeEngine.flushRootNotify` 的 `case many` 分支
-      *   （现读 `NodeEngine.scala:6349`）——该分支现读是 N≥2 的唯一合并出口。
-      * **读取点（判据唯一）**：`TurnBoundaryDrains.expandWindowFlush`（`AgentActor:109`）
-      *   ——它是谓词与幂等性的**唯一定义处**；接线点共 **6** 处，全部经它，无一自造谓词：
-      *   三个 turn 边界（`AgentActor:1884` / `:2191` / `:3510`）、压缩后恢复
-      *   （`AgentActor:504`，经 `expandRootNotify` 单点绑定 `:444`）、以及 **idle 直投腿**
-      *   （`AgentActor:1497`——节点终态通知在上一个 turn 结束后才到 = 本链的生产常态
-      *   到达路径）。
-      * **语义边界**：本字段**零会计/零去重/零生命周期**参与面——`text` / `sender` /
-      *   `eventType` / 60s 去重键 / `markNebulaDelivered` 记账序**全部逐字不变**；
-      *   本字段只决定「消费侧把这一件展开成几条」。
-      *
-      * **位置刻意置末**（`project` 之后 · 与 `project` 自身的置末纪律同源）：本仓存在
-      *   **位置实参**构造点（`CompactionQueueStore:103`）与两处**位置模式解构点**
-      *   （`AgentActor:1497`、`DeviceMailSpec:410`）。置末使位置实参构造点逐字保持可
-      *   编译；两处解构点须各追加一个 `_` 槽位（否则 arity 不匹配编译失败——即
-      *   「向后兼容」的机械判据：编译器保证无一处被静默漏改）。 */
+    /**
+     * **通知窗冲刷载荷（notifypack 解 b 批 · 作者裁定 A · 载体 A-ii）**：
+     * root 通道通知打包窗冲刷件在**队列里是 1 个元素**（生产者侧已合并，见
+     * `NodeEngine.flushRootNotify` 的 `case many`），本字段承载其 N 件原始载荷 ⇒
+     * 消费侧可在同一边界（同一 turn）**逐件**展开注入（N 气泡 / 1 次唤醒）。
+     *
+     * **取值域**：`None`（默认；全部非窗腿与单件腿）｜`Some(items)`（仅 N≥2 的窗冲刷件）。
+     * **写入点（唯一）**：`NodeEngine.flushRootNotify` 的 `case many` 分支
+     *   （现读 `NodeEngine.scala:6349`）——该分支现读是 N≥2 的唯一合并出口。
+     * **读取点（判据唯一）**：`TurnBoundaryDrains.expandWindowFlush`（`AgentActor:109`）
+     *   ——它是谓词与幂等性的**唯一定义处**；接线点共 **6** 处，全部经它，无一自造谓词：
+     *   三个 turn 边界（`AgentActor:1884` / `:2191` / `:3510`）、压缩后恢复
+     *   （`AgentActor:504`，经 `expandRootNotify` 单点绑定 `:444`）、以及 **idle 直投腿**
+     *   （`AgentActor:1497`——节点终态通知在上一个 turn 结束后才到 = 本链的生产常态
+     *   到达路径）。
+     * **语义边界**：本字段**零会计/零去重/零生命周期**参与面——`text` / `sender` /
+     *   `eventType` / 60s 去重键 / `markNebulaDelivered` 记账序**全部逐字不变**；
+     *   本字段只决定「消费侧把这一件展开成几条」。
+     *
+     * **位置刻意置末**（`project` 之后 · 与 `project` 自身的置末纪律同源）：本仓存在
+     *   **位置实参**构造点（`CompactionQueueStore:103`）与两处**位置模式解构点**
+     *   （`AgentActor:1497`、`DeviceMailSpec:410`）。置末使位置实参构造点逐字保持可
+     *   编译；两处解构点须各追加一个 `_` 槽位（否则 arity 不匹配编译失败——即
+     *   「向后兼容」的机械判据：编译器保证无一处被静默漏改）。
+     */
     windowItems: Option[List[WindowItem]] = None
   ) extends AgentCommand
 
@@ -328,8 +330,10 @@ object AgentCommand:
      * 这是**命令面**的客观事实——`AskUserQuestionTool` 一律非阻塞 ⇒ 恒 `false`；
      * 仍在阻塞等待的两个**既有构造点**（`ProjectTool.pathPanel` 与
      * `SendConfirm`）中，走本命令的那个必须置 `true`，否则 `AgentProcessing` 不标
-     * `WaitingForUser`（`TaskStuckWatcher` 会把「等人选路径」误判为真卡死并硬取消）
-     * 且不暂停内核 wall-clock 预算（等人在 R11 第 4 层口径下不计入预算）。
+     * `WaitingForUser`（`TaskStuckWatcher` 会把「等人选路径」误判为真卡死并硬取消）。
+     * 🔴 2026-10-09 作者裁定：内核 wall-clock 预算已整体拆除（DelegateBudget 为
+     * 墓碑壳 no-op）——等待期治理只剩本豁免；「等待期不计入预算」的 R11 第 4 层
+     * 口径随之失效，等待本身无界。
      *
      * 缺省 `false` ⇒ AskUserQuestion 链与 SendConfirm 链均不受影响。
      */
@@ -401,6 +405,36 @@ object AgentCommand:
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
     postCompactInstruction: Option[String] = None
   ) extends AgentCommand
+
+  // ── 乒乓压缩（主会话无感上下文压缩一期，2026-10-09 spec §B2-3/§D2/§E）──
+  // 影子腿的唯一产出物 S 经本命令交回主 actor（单生产者=影子 fiber，单消费者=主
+  // actor；actor 邮箱即 CompactionJob.replyDeferred 的 Deferred 同型交接面）。
+  // 影子 fiber 不写任何会话文件 / 不注册 / 无 sessionId（spec §B2 四重只读）。
+
+  /**
+   * S 解析成功。主 actor 按自身状态处置：idle → 立即换入（§D2-1）；
+   * processing/frozen → 只置 sReadyPending，finishTurn→idle 边界换入（§D2-2）。
+   */
+  case class PingpongSwapReady(
+    shadowId: String,
+    sMessages: List[Message],
+    forkMsgCount: Int,
+    forkedAt: Long,
+    sTokensEst: Int
+  ) extends AgentCommand
+
+  /**
+   * 影子腿失败（LLM 错误 / 空文本 / 解析 Left）。置失败态：ppFailures+1、清位、
+   * 退避 30s×2^n 后下个判定点重新 fork；连续 3 次回落老同步路径（spec §E-1/2/3）。
+   */
+  case class PingpongShadowFailed(shadowId: String, err: String) extends AgentCommand
+
+  /**
+   * 重启恢复（spec §E-7/8/9）：spawn 时自投（仅根会话），idle 处读
+   * `sessions/<id>/pingpong/state.json`——phase=compacting → 作废重触发；
+   * phase=s-ready → S 续用换入（幂等：已换入则仅清档）。
+   */
+  case object PingpongRecover extends AgentCommand
 
   case class Retry(reason: String) extends AgentCommand
 
@@ -501,6 +535,7 @@ object AgentCommand:
 
     /** Marker reason of the deferred-cancel variant (`Stop()`). */
     val DeferredReason: String = "Node cancelled (deferred)"
+  end Stop
 
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand

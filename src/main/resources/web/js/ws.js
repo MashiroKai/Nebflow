@@ -195,6 +195,12 @@ const GLOBAL_MSG_TYPES = new Set([
   // 弹窗私有请求-响应（与 cancelAgentResult 同族）；必须 GLOBAL：无 sessionId 时
   // GLOBAL 保视图不换（flow-map 面板正在看的项目不该被取消动作切走视图）。
   'chainCancelResult',
+  // askucancel 批位2（2026-10-08）：askUserCancel 帧的裁决回执 {type, ok,
+  // requestId, state, error?} —— 无 sessionId 的**本连接**直回帧（与
+  // chainCancelResult 同「弹窗私有请求-响应」族）。🔴 必须入 GLOBAL：无 sessionId
+  // 的非 GLOBAL 帧会被 :485-494 当会话内事件 ⇒ setActiveView(primary)，取消一张
+  // 后台问题的卡也会把用户正在看的视图抢走。消费点 = main.js（仅 !ok → toast）。
+  'askUserCancelResult',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

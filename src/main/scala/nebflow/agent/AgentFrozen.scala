@@ -718,6 +718,24 @@ private[agent] object AgentFrozen:
       case AgentCommand.ResetSession =>
         resetSessionHandler(agentDef, resources, depth, parentRef, state)
 
+      // ── 乒乓压缩（主会话无感上下文压缩一期，2026-10-09）──────────────────
+      // frozen 态与 processing 同款只记录：S 就绪只置位（换入随解冻后的第一个
+      // finishTurn→idle 边界落地）；影子失败置态计数。两类命令均无 fiber 等待
+      // （影子经命令回投），不触碰冻结判定（§D2-2）。
+      case cmd: AgentCommand.PingpongSwapReady =>
+        AgentPingpong
+          .handleSwapReadyRecorded(agentDef, depth, state, cmd)
+          .map(st =>
+            frozen(agentDef, resources, depth, parentRef, st, replyTo, resumeAt, reason, retryCount, escalation)
+          )
+
+      case cmd: AgentCommand.PingpongShadowFailed =>
+        AgentPingpong
+          .handleShadowFailed(agentDef, depth, state, cmd)
+          .map(st =>
+            frozen(agentDef, resources, depth, parentRef, st, replyTo, resumeAt, reason, retryCount, escalation)
+          )
+
       case _ =>
         // stale LlmComplete/LlmFailed/ToolsComplete/TriggerCompaction 等 → 丢弃
         // 留在 frozen（这些消息属于被 gate 拦下的 turn，没有 fiber 在等待它们）。

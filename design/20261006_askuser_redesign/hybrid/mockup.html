@@ -1,0 +1,363 @@
+<!doctype html>
+<!-- hybrid · 1×2 杂交稿：基底 = style-1 规整骨架（纸面/布局/间距律/字号层级/控件细线描边）；
+     叠层 = style-2 浮层容器（渐变面/16px 圆角/发丝描边/双层柔影/顶缘高光）+ 承卡泡幽灵座；
+     主按钮 = style-2 品牌绿实底渐变 + 绿影（--green #0ac065 恒定）。浮层只做容器，内里控件守 style-1。
+     双主题：prefers-color-scheme + CSS 变量（暗档仅覆写 :root 变量值，规则体只引 var()）。
+     未命名态按口径 A 三处去名：Header 名字区留空 / 气泡无发送者名位 / 开场占位「还没有名字的我」不渲染。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hybrid · 规整纸面 × 浮层卡片</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    /* ── ① 骨架层 token（style-1 原样）── */
+    --bg: #fafaf8;
+    --ink: #1c1e22;
+    --ink-2: #454951;
+    --ink-3: #757a83;
+    --line: rgba(28, 30, 34, 0.14);
+    --line-strong: rgba(28, 30, 34, 0.30);
+    /* ── ② 浮层容器 token（style-2 原样）── */
+    --card-top: #ffffff;
+    --card-bot: #f5f7fa;
+    --card-bd: rgba(20, 26, 40, 0.08);
+    --sh-c: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.10);
+    --hl: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    /* ── ③ 绿按钮 token（#0ac065 = style-2 确切色值，两档恒定；
+           渐变深端在其词表内取深档绿 #069a4e，保亮档对地对比）── */
+    --green: #0ac065;
+    --green2: #069a4e;
+    --btn-ink: #ffffff;
+    --sh-btn: 0 2px 6px rgba(7, 193, 96, 0.30), 0 6px 18px rgba(7, 193, 96, 0.20);
+    --ring: 0 0 0 3px rgba(7, 193, 96, 0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121419;
+      --ink: #e9ebef;
+      --ink-2: #b7bcc5;
+      --ink-3: #848a95;
+      --line: rgba(255, 255, 255, 0.13);
+      --line-strong: rgba(255, 255, 255, 0.30);
+      --card-top: #272c3a;
+      --card-bot: #1f232d;
+      --card-bd: rgba(255, 255, 255, 0.09);
+      --sh-c: 0 2px 4px rgba(0, 0, 0, 0.35), 0 14px 36px rgba(0, 0, 0, 0.50);
+      --hl: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      --green: #0ac065;
+      --green2: #069a4e;
+      --sh-btn: 0 2px 8px rgba(7, 193, 96, 0.32);
+      --ring: 0 0 0 3px rgba(7, 193, 96, 0.22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── Header（style-1 骨架原样）：未命名态，名字区留空 ── */
+  .topbar {
+    flex: none;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tb-side { width: 46px; display: flex; align-items: center; gap: 10px; }
+  .tb-right { justify-content: flex-end; }
+  .tb-title { flex: 1; text-align: center; font-size: 15px; font-weight: 600; }
+  .glyph-panel {
+    width: 18px; height: 14px;
+    border: 1.5px solid var(--ink-3);
+    border-radius: 3.5px;
+    position: relative;
+    opacity: 0.65;
+  }
+  .glyph-panel::after {
+    content: '';
+    position: absolute;
+    left: 5px; top: -1.5px; bottom: -1.5px;
+    width: 1.5px;
+    background: var(--ink-3);
+  }
+  .glyph-dot {
+    width: 9px; height: 9px;
+    border: 1.5px solid var(--ink-3);
+    border-radius: 50%;
+    opacity: 0.65;
+  }
+
+  /* ── 聊天主体（style-1 骨架：窄栏居中、泡间 12px）── */
+  .chat { flex: 1; overflow: hidden; padding: 18px 32px 14px; }
+  .thread { max-width: 640px; margin: 0 auto; }
+  .msg + .msg { margin-top: 12px; }
+
+  /* L1 对话泡（style-1 细线描边原样） */
+  .bubble {
+    max-width: 580px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    padding: 13px 18px;
+    background: transparent;
+  }
+  .bubble p { margin: 0; font-size: 14.5px; line-height: 1.6; }
+
+  /* ── 幽灵座（style-2 手法）：承卡泡去面去影，题文直接坐纸面 ── */
+  .bubble.ghost {
+    background: none; border: none; box-shadow: none;
+    border-radius: 0; padding: 0;
+    max-width: 640px; width: 100%;
+  }
+  .ob-lead { padding: 0 14px; font-size: 14.5px; line-height: 1.6; }
+  .ob-q {
+    padding: 0 14px; margin-top: 4px;
+    font-size: 15px; font-weight: 600; letter-spacing: 0.2px; line-height: 1.6;
+  }
+
+  /* ── L2 浮层卡容器（style-2 外壳 token 原样：渐变面+发丝描边+双层柔影+顶缘高光）── */
+  .ask-card {
+    margin-top: 12px;
+    max-width: 560px;
+    background: linear-gradient(180deg, var(--card-top), var(--card-bot));
+    border: 1px solid var(--card-bd);
+    border-radius: 16px;
+    box-shadow: var(--sh-c), var(--hl);
+    padding: 13px;
+  }
+
+  /* 内里控件（style-1 细线规整原样：透明底+1px 细线） */
+  .ask-meta {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+  }
+  .free-row { display: flex; gap: 8px; }
+  .field {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    font-family: inherit;
+  }
+  .field::placeholder { color: var(--ink-3); }
+  .field:focus { outline: none; border-color: var(--green); box-shadow: var(--ring); }
+
+  /* L3 主按钮（style-2 绿实底渐变+绿影原样；半径取 12 与 16 卡面同族） */
+  .btn-primary {
+    flex: none;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(180deg, var(--green), var(--green2));
+    color: var(--btn-ink);
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    font-family: inherit;
+    box-shadow: var(--sh-btn);
+    cursor: pointer;
+  }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip {
+    padding: 5px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink-2);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .card-foot { display: flex; align-items: center; margin-top: 10px; }
+  .foot-spacer { flex: 1; }
+  .skip {
+    border: none;
+    background: none;
+    padding: 2px 4px;
+    color: var(--ink-3);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* ── L2 浮层卡（AskUser 通用卡）：同壳；内里 = style-1 分隔线表格+radio 线稿 ── */
+  .option-box {
+    max-width: 560px;
+    background: linear-gradient(180deg, var(--card-top), var(--card-bot));
+    border: 1px solid var(--card-bd);
+    border-radius: 16px;
+    box-shadow: var(--sh-c), var(--hl);
+    padding: 13px;
+  }
+  .option-q { font-size: 15px; font-weight: 600; letter-spacing: 0.2px; }
+  .opt-list { margin-top: 8px; }
+  .opt-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 6px;
+    border: none;
+    border-top: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    text-align: left;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .opt-row:first-child { border-top: none; }
+  .radio {
+    flex: none;
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--ink-3);
+    border-radius: 50%;
+  }
+  .opt-other {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 8px;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .opt-input {
+    display: block;
+    width: 100%;
+    min-height: 46px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13.5px;
+    line-height: 1.55;
+    font-family: inherit;
+    resize: none;
+  }
+  .opt-input::placeholder { color: var(--ink-3); }
+  .opt-input:focus { outline: none; border-color: var(--green); box-shadow: var(--ring); }
+  .opt-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+  }
+  .cancel {
+    border: none;
+    background: none;
+    padding: 2px 4px;
+    color: var(--ink-3);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .check { margin-right: 6px; }
+
+  /* ── 底部输入区（示意，非考核面；style-1 骨架原样）── */
+  .composer { flex: none; border-top: 1px solid var(--line); }
+  .composer-in {
+    max-width: 640px;
+    margin: 0 auto;
+    height: 54px;
+    display: flex;
+    align-items: center;
+    color: var(--ink-3);
+    font-size: 13.5px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="tb-side"><span class="glyph-panel" aria-hidden="true"></span></div>
+    <div class="tb-title"><!-- 未命名态（口径 A）：名字区留空，不渲染任何文字 --></div>
+    <div class="tb-side tb-right">
+      <span class="glyph-dot" aria-hidden="true"></span>
+      <span class="glyph-dot" aria-hidden="true"></span>
+    </div>
+  </header>
+
+  <main class="chat">
+    <div class="thread">
+
+      <!-- 开场泡（去名规则：不渲染发送者名位；开场占位「还没有名字的我」一并按口径 A 不渲） -->
+      <section class="msg">
+        <div class="bubble">
+          <p>你好。第一次见面。</p>
+        </div>
+      </section>
+
+      <!-- 场景 A · Onboarding 第一幕第一题：承卡泡 = 幽灵座，题文坐纸面，题卡浮于纸面 -->
+      <section class="msg">
+        <div class="bubble ghost">
+          <div class="ob-lead">第一件，最重要的一件。</div>
+          <div class="ob-q">给我起个名字吧 —— 你希望以后怎么叫我？</div>
+          <div class="ask-card">
+            <div class="ask-meta">第一幕 · 见面 · 第 1 / 10 题</div>
+            <div class="free-row">
+              <input class="field" type="text" placeholder="输入名字，1–16 个字…（想不出来也可以跳过）">
+              <button class="btn-primary" type="button">用这句</button>
+            </div>
+            <div class="chip-row">
+              <button class="chip" type="button">星尘</button>
+              <button class="chip" type="button">洛书</button>
+              <button class="chip" type="button">阿涅</button>
+              <button class="chip" type="button">Nova</button>
+              <button class="chip" type="button">海豹</button>
+            </div>
+            <div class="card-foot">
+              <span class="foot-spacer"></span>
+              <button class="skip" type="button">跳过这一题</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 场景 B · AskUser 通用卡（合成演示文同 before 稿口径）：幽灵座直托浮卡 -->
+      <section class="msg">
+        <div class="bubble ghost">
+          <div class="option-box">
+            <div class="option-q">这是一张 AskUser 通用卡（before 对照用）。</div>
+            <div class="opt-list">
+              <button class="opt-row" type="button"><span class="radio" aria-hidden="true"></span>选项一</button>
+              <button class="opt-row" type="button"><span class="radio" aria-hidden="true"></span>选项二</button>
+              <button class="opt-row" type="button"><span class="radio" aria-hidden="true"></span>选项三</button>
+            </div>
+            <button class="opt-row opt-other" type="button">其他...</button>
+            <textarea class="opt-input" placeholder="输入你的回答..."></textarea>
+            <div class="opt-foot">
+              <button class="cancel" type="button">取消</button>
+              <button class="btn-primary" type="button"><span class="check">✓</span>确认</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="composer">
+    <div class="composer-in"><span>输入消息...</span></div>
+  </footer>
+
+</div>
+</body>
+</html>

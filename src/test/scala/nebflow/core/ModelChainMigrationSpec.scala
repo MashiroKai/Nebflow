@@ -4,11 +4,13 @@ import munit.FunSuite
 import nebflow.shared.AgentModelConfig
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 
-/** ModelChainMigration — one-time preset→chain migration (boot call,
-  * idempotent). Verifies the migration table: Nebula's effective preset
-  * reference becomes its own model chain verbatim; the other role agents'
-  * preset keys are removed; the catalog file is sealed with a timestamp
-  * suffix; a second run is a no-op. */
+/**
+ * ModelChainMigration — one-time preset→chain migration (boot call,
+ * idempotent). Verifies the migration table: Nebula's effective preset
+ * reference becomes its own model chain verbatim; the other role agents'
+ * preset keys are removed; the catalog file is sealed with a timestamp
+ * suffix; a second run is a no-op.
+ */
 class ModelChainMigrationSpec extends FunSuite:
 
   private val lowCost = AgentModelConfig(
@@ -87,8 +89,10 @@ class ModelChainMigrationSpec extends FunSuite:
       writeAgent(root, "Nebula", """{"preset":"LowCost","name":"Nebula"}""")
       ModelChainMigration.migrateLegacyPresetRefs()
       val nebula = readAgent(root, "Nebula")
-      assertEquals(nebula.hcursor.downField("model").as[AgentModelConfig].toOption,
-        Some(ModelChainMigration.DefaultNebulaChain))
+      assertEquals(
+        nebula.hcursor.downField("model").as[AgentModelConfig].toOption,
+        Some(ModelChainMigration.DefaultNebulaChain)
+      )
       assertEquals(ModelChainMigration.DefaultNebulaChain, lowCost)
     }
   }
@@ -108,8 +112,10 @@ class ModelChainMigrationSpec extends FunSuite:
       writeAgent(root, "Nebula", """{"name":"Nebula","model":{"preferred":"a/b","fallbacks":[]}}""")
       ModelChainMigration.migrateLegacyPresetRefs()
       val nebula = readAgent(root, "Nebula")
-      assertEquals(nebula.hcursor.downField("model").as[AgentModelConfig].toOption,
-        Some(AgentModelConfig(Some("a/b"), Nil)))
+      assertEquals(
+        nebula.hcursor.downField("model").as[AgentModelConfig].toOption,
+        Some(AgentModelConfig(Some("a/b"), Nil))
+      )
       assertEquals(os.list(root).filter(_.last.startsWith("model-presets.json")).toList, Nil)
     }
   }
@@ -123,3 +129,4 @@ class ModelChainMigrationSpec extends FunSuite:
       assertEquals(coder.hcursor.downField("preset").as[String].toOption, Some("LowCost"))
     }
   }
+end ModelChainMigrationSpec

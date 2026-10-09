@@ -316,23 +316,25 @@ object AgentActor extends AgentCore with AgentSession:
         case _ => true
     }
 
-  /** root 通知窗载荷展开的**单点绑定**（notifypack 解 b 批 · 作者裁定 A）：全部消费侧
-    * 接线点共用同一个展开器 ⇒ 语义只有一处定义（与仓内「单一来源」纪律同源）。
-    * 判据（`windowItems.isDefined`）与幂等性全在
-    * [[TurnBoundaryDrains.expandWindowFlush]] 内（唯一定义处），此处不做任何额外判断：
-    * `windowItems = None` 的件恒等返回（1→1）⇒ 用户消息腿与其余全部注入腿零影响。
-    *
-    * 接线点（6）＝turn 边界三处（`AgentFinishTurn.finishTurnCont`、
-    * `AgentProcessing` 的 recoverable-abort 腿与 tools-complete 腿）、压缩后恢复
-    * （[[drainQueuesAfterCompaction]]，经本单点绑定）与 **idle 直投腿**
-    * （`AgentIdle.idle` —— 本链的生产常态到达路径）。
-    *
-    * W3 回填（2026-09-29）：`0b26aa857`/`ee1c8058c` 那对 Revert/Reapply 把本成员与它的
-    * 全部接线一起从合并树里抹掉（载体 `TurnBoundaryDrains.expandWindowFlush` 因 W1
-    * shim 留在树上，但生产调用点归零）。本件按 MAINPRE `6903f202a` 的语义逐字恢复；
-    * 可见性取 `private[agent]`（MAINPRE 为 `private` —— 该处三处接线都在本 object 内，
-    * 现树同域实现已按 2026-09-25 行为保持重构拆至 `AgentIdle` / `AgentProcessing` /
-    * `AgentFinishTurn` 三件，与同域助手 `drainQueuesAfterCompaction` 的可见性同款）。 */
+  /**
+   * root 通知窗载荷展开的**单点绑定**（notifypack 解 b 批 · 作者裁定 A）：全部消费侧
+   * 接线点共用同一个展开器 ⇒ 语义只有一处定义（与仓内「单一来源」纪律同源）。
+   * 判据（`windowItems.isDefined`）与幂等性全在
+   * [[TurnBoundaryDrains.expandWindowFlush]] 内（唯一定义处），此处不做任何额外判断：
+   * `windowItems = None` 的件恒等返回（1→1）⇒ 用户消息腿与其余全部注入腿零影响。
+   *
+   * 接线点（6）＝turn 边界三处（`AgentFinishTurn.finishTurnCont`、
+   * `AgentProcessing` 的 recoverable-abort 腿与 tools-complete 腿）、压缩后恢复
+   * （[[drainQueuesAfterCompaction]]，经本单点绑定）与 **idle 直投腿**
+   * （`AgentIdle.idle` —— 本链的生产常态到达路径）。
+   *
+   * W3 回填（2026-09-29）：`0b26aa857`/`ee1c8058c` 那对 Revert/Reapply 把本成员与它的
+   * 全部接线一起从合并树里抹掉（载体 `TurnBoundaryDrains.expandWindowFlush` 因 W1
+   * shim 留在树上，但生产调用点归零）。本件按 MAINPRE `6903f202a` 的语义逐字恢复；
+   * 可见性取 `private[agent]`（MAINPRE 为 `private` —— 该处三处接线都在本 object 内，
+   * 现树同域实现已按 2026-09-25 行为保持重构拆至 `AgentIdle` / `AgentProcessing` /
+   * `AgentFinishTurn` 三件，与同域助手 `drainQueuesAfterCompaction` 的可见性同款）。
+   */
   private[agent] def expandRootNotify(imm: AgentCommand.ImmediateInput): List[AgentCommand.ImmediateInput] =
     TurnBoundaryDrains.expandWindowFlush(imm)
 
@@ -500,7 +502,17 @@ object AgentActor extends AgentCore with AgentSession:
      * 由调用点逐处传入（本方法不读 `state`——沿用既有「state 字段显式传参」纪律）。
      */
     sessionProject: Option[String] = None,
-    waitingForBatch: Boolean = false
+    waitingForBatch: Boolean = false,
+    /**
+     * file-diff → 委托结果行（bug #58 修，2026-10-09）：delegate 终态事件
+     * metadata 携带的**改动文件 diff 载荷**（`FileChangeReport.delegateBatchMetadata`
+     * 产物，形状 = REST `file-changes` 面 {nodeId,generatedAt,root,files:[…]}）。
+     * 随注入帧（WS `fileChanges` 键）与 `.ui.json` 行**同源落盘** ⇒ live 渲染与
+     * 历史恢复同构获得 diff 视图。缺席（None = 非 delegate 源 / 零改动 / 生成
+     * 失败）即不落键 ⇒ 旧行字节形态与旧读法逐字不变（intake/header/quote 先例
+     * 同款条件编码）。
+     */
+    fileChanges: Option[Json] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       val base = Json.obj(
@@ -545,6 +557,10 @@ object AgentActor extends AgentCore with AgentSession:
       val withWaiting =
         if waitingForBatch then withHeader.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
         else withHeader
+      // file-diff → 委托结果行（bug #58 修）：diff 载荷只在在场时并帧/并行
+      // （缺席即不落键——旧帧/旧行字节形态逐字不变）。
+      val withFileChanges =
+        fileChanges.fold(withWaiting)(fc => withWaiting.deepMerge(Json.obj("fileChanges" -> fc)))
       // bluebubble 批（2026-09-12）：注入行的落盘**在唯一发射点收口**。
       // 本方法是全仓唯一的 injected user 帧发射点（grep `"injected" -> true` 单命中），
       // 故它也是这条 .ui.json 记录的唯一写者——此前落盘依赖 WS 录制层
@@ -576,7 +592,10 @@ object AgentActor extends AgentCore with AgentSession:
         // 气泡四段式统一批（2026-09-15）：**已渲染 header 随行落盘**——
         // 历史恢复路径逐字渲染同一串（引擎单一来源；前端不再二次拼接）。
         // 词表外 source ⇒ None ⇒ 不落键（旧读法逐字不变，前端走旧回落）。
-        header = headerOpt
+        header = headerOpt,
+        // file-diff → 委托结果行（bug #58 修）：与 WS 帧**同一实例**同源落盘
+        // （live 与历史恢复逐字同构；缺席 ⇒ 不落键，旧行逐字不变）。
+        fileChanges = fileChanges
       )
       val persist =
         if text.nonEmpty then
@@ -608,7 +627,7 @@ object AgentActor extends AgentCore with AgentSession:
             .void
         else IO.unit
       ctx.forkTurn(
-        persist *> wsSend(withWaiting)
+        persist *> wsSend(withFileChanges)
           .handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}")) *> inboxMirror
       )
     }
@@ -661,13 +680,15 @@ object AgentActor extends AgentCore with AgentSession:
      */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
-    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task
-      * id this session is attributed to (a dispatcher = the task it was created to serve; a
-      * project node = the task recorded as its origin). Injected at NodeEngine / ProjectActor
-      * spawn -> passed through AgentCore into `ToolContext.taskId` -- the only source of
-      * `TaskInfo`'s zero-parameter attribution resolution (engine-side identity, never a
-      * client parameter). Default None = no attribution (pre-existing nodes / the Nebula
-      * root / team / dual-track flow / direct REST calls). */
+    /**
+     * **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task
+     * id this session is attributed to (a dispatcher = the task it was created to serve; a
+     * project node = the task recorded as its origin). Injected at NodeEngine / ProjectActor
+     * spawn -> passed through AgentCore into `ToolContext.taskId` -- the only source of
+     * `TaskInfo`'s zero-parameter attribution resolution (engine-side identity, never a
+     * client parameter). Default None = no attribution (pre-existing nodes / the Nebula
+     * root / team / dual-track flow / direct REST calls).
+     */
     taskId: Option[String] = None,
     /**
      * D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
@@ -728,53 +749,60 @@ object AgentActor extends AgentCore with AgentSession:
       // NOTE: `ctx.self !` returns IO[Unit] — a bare statement would be
       // built-not-run (2026-08-30 probe: setup-time self-send silently
       // dropped), so it MUST be sequenced into the factory's IO.
-      (ctx.self ! AgentCommand.RecoverPersistedQueues) *> IO.pure(
-        idle(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          AgentState(
-            messages = initialMessages,
-            status = AgentStatus.Idle,
-            depth = depth,
-            sessionId = sessionId,
-            sessionName = sessionName,
-            pendingCompaction = None,
-            latestUsage = None,
-            pendingAskUser = None,
-            pendingPermission = None,
-            wsSend = wsSend,
-            readTracker = readTracker,
-            fileHistory = fileHistory,
-            contextWindow = contextWindow,
-            projectRoot = projectRoot,
-            rulesMd = rulesMd,
-            agentsMd = agentsMd,
-            folderId = folderId,
-            safetyMode = safetyMode,
-            gitBranch = gitBranch,
-            expectsMail = expectsMail,
-            rootSessionId = effectiveRootSessionId,
-            isSubTaskWorker = isSubTaskWorker,
-            freezeExempt = freezeExempt,
-            isFlowNode = isFlowNode,
-            userFacingNode = userFacingNode,
-            flowNodeId = flowNodeId,
-            isDispatcher = isDispatcher,
-            flowNodeRole = flowNodeRole,
-            projectName = projectName,
-            taskId = taskId,
-            flowNodeName = flowNodeName,
-            flowChainId = flowChainId,
-            sandboxEnabled = sandboxEnabled,
-            sandboxRoot = sandboxRoot,
-            sessionCwd = sessionCwd,
-            projectSession = projectSession,
-            compactThresholdRatio = compactThresholdRatio
-          )
-        )(using ctx)
-      )
+      (ctx.self ! AgentCommand.RecoverPersistedQueues) *>
+        // 乒乓压缩重启恢复自投（主会话无感上下文压缩一期，2026-10-09 spec §E-7/8）：
+        // phase=compacting → 作废重触发；phase=s-ready → S 续用换入（幂等闸防重换）。
+        // 仅根会话非 no-op（recoverAtIdle 内含 RootAgentIdentity 谓词闸，此处
+        // 同谓词预筛避免无谓 IO）；邮箱序保证先于任何外部投递处理。
+        (if RootAgentIdentity.isRootAgent(Some(agentDef), depth) then ctx.self ! AgentCommand.PingpongRecover
+         else IO.unit) *>
+        IO.pure(
+          idle(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            AgentState(
+              messages = initialMessages,
+              status = AgentStatus.Idle,
+              depth = depth,
+              sessionId = sessionId,
+              sessionName = sessionName,
+              pendingCompaction = None,
+              latestUsage = None,
+              pendingAskUser = None,
+              pendingPermission = None,
+              wsSend = wsSend,
+              readTracker = readTracker,
+              fileHistory = fileHistory,
+              contextWindow = contextWindow,
+              projectRoot = projectRoot,
+              rulesMd = rulesMd,
+              agentsMd = agentsMd,
+              folderId = folderId,
+              safetyMode = safetyMode,
+              gitBranch = gitBranch,
+              expectsMail = expectsMail,
+              rootSessionId = effectiveRootSessionId,
+              isSubTaskWorker = isSubTaskWorker,
+              freezeExempt = freezeExempt,
+              isFlowNode = isFlowNode,
+              userFacingNode = userFacingNode,
+              flowNodeId = flowNodeId,
+              isDispatcher = isDispatcher,
+              flowNodeRole = flowNodeRole,
+              projectName = projectName,
+              taskId = taskId,
+              flowNodeName = flowNodeName,
+              flowChainId = flowChainId,
+              sandboxEnabled = sandboxEnabled,
+              sandboxRoot = sandboxRoot,
+              sessionCwd = sessionCwd,
+              projectSession = projectSession,
+              compactThresholdRatio = compactThresholdRatio
+            )
+          )(using ctx)
+        )
     }
 
   private def buildHookContext(state: AgentState): nebflow.core.hooks.HookContext =
@@ -912,6 +940,16 @@ object AgentActor extends AgentCore with AgentSession:
       // true) stay byte-identical (2026-09-17 作者裁定 ②-7：dirPicker 卡显式置 false，
       // 前端据此不渲染自由输入 textarea / 不恢复草稿)
       if !item.freeInput then base += "freeInput" -> false.asJson
+      // secret 型题（本批，规格 §1/§4.3）：四个新键**只在场发**——secret=false 的
+      // 题（含全部历史载荷）逐字节不变（AskUserBuildJsonSpec 字节契约延续）。载荷里
+      // 只有「这是一道密码题 + 落盘名/一次性参数」这些**元数据**：值走
+      // secretSlots 专用 WS 键，永远不进 items/answers/载荷任何字段。
+      if item.secret then
+        base += "secret" -> true.asJson
+        item.secretName.foreach(n => base += "secretName" -> n.asJson)
+        if item.ephemeral then
+          base += "ephemeral" -> true.asJson
+          item.ttlSec.foreach(t => base += "ttlSec" -> t.asJson)
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)
@@ -1490,6 +1528,10 @@ object AgentActor extends AgentCore with AgentSession:
       // WaitingForUser (mirror of the Interrupt handler), the registry row
       // must never keep a waiting status for a turn that no longer exists.
       _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+      // §E-10（乒乓压缩一期，2026-10-09）：/clear 作废影子——清 state.json +
+      // 清全部乒乓位（消息已 Nil，C₀ 作废；在飞影子的迟到 SwapReady 由
+      // shadowPending 校验丢弃）。非 pingpong 会话无 sidecar 文件 ⇒ 清理恒 no-op。
+      _ <- state.sessionId.fold(IO.unit)(sid => PingpongStateFile.clear(sid))
     yield
       val resetState = state
         .withMessages(Nil)
@@ -1499,6 +1541,7 @@ object AgentActor extends AgentCore with AgentSession:
         .withLastCompactionFailureAt(0L)
         .withRecentMessageIds(Nil)
         .invalidateSystemStableCache
+        .withPingpongCleared
         .resetToIdle(Nil)
       idle(agentDef, resources, depth, parentRef, resetState)
   end resetSessionHandler

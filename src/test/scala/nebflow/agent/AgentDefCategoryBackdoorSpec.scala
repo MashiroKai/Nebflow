@@ -40,11 +40,13 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     // two deletions must be atomic.
   )
 
-  /** friendseal (2026-09-25): flag-aware expectation for the Nebula face — the
-    * MechanismFixed registry above stays UNTOUCHED; the sealed default strips
-    * ListFriends at the single delivery point (AgentCore.friendsSealedStrip), so
-    * every expectation compared against a delivered face subtracts the same strip
-    * derived from the snapshot it is compared against. Never a bare number. */
+  /**
+   * friendseal (2026-09-25): flag-aware expectation for the Nebula face — the
+   * MechanismFixed registry above stays UNTOUCHED; the sealed default strips
+   * ListFriends at the single delivery point (AgentCore.friendsSealedStrip), so
+   * every expectation compared against a delivered face subtracts the same strip
+   * derived from the snapshot it is compared against. Never a bare number.
+   */
   private def mechanismFace(name: String): Set[String] =
     val face = MechanismFixed.getOrElse(name, fail(s"$name 无机制固定集常量登记"))
     if name == "Nebula" then

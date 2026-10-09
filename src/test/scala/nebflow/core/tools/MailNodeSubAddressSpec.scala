@@ -8,7 +8,17 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand, AgentKind, AgentRecord, Behaviors}
 import nebflow.agent.SharedResources
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.core.project.{DelegateFlowHosts, DelegateFlowRuntime, FlowMapStore, NodeDef, NodeLifecycle, OutEdge, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
+import nebflow.core.project.{
+  DelegateFlowHosts,
+  DelegateFlowRuntime,
+  FlowMapStore,
+  NodeDef,
+  NodeLifecycle,
+  OutEdge,
+  ProjectDef,
+  ProjectRuntime,
+  ProjectRuntimeRegistry
+}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
 import nebflow.shared.given
@@ -40,6 +50,7 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
@@ -88,19 +99,20 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
     )
 
   private class ScriptLlm(respond: String => String):
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
       ): Stream[IO, StreamChunk] =
         Stream(StreamChunk.TextDelta(respond("")), StreamChunk.Done(None, None))
 
   private def registerRecorder(
-      res: SharedResources,
-      system: ActorSystem,
-      sid: String,
-      kind: AgentKind
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String,
+    kind: AgentKind
   ): IO[Ref[IO, List[AgentCommand]]] =
     for
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -114,7 +126,12 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
     b
 
   /** delegate 作用域宿主挂载（确定性腿显式关）。 */
-  private def mount(ws: os.Path, delegateId: String, system: ActorSystem, res: SharedResources): IO[DelegateFlowRuntime] =
+  private def mount(
+    ws: os.Path,
+    delegateId: String,
+    system: ActorSystem,
+    res: SharedResources
+  ): IO[DelegateFlowRuntime] =
     DelegateFlowHosts
       .mount(
         delegateId = delegateId,
@@ -132,11 +149,11 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
 
   /** 作用域内播种一个节点（状态/名字/sessionRef 可配）。 */
   private def seedNode(
-      h: DelegateFlowRuntime,
-      id: String,
-      name: String,
-      status: String,
-      sessionRef: Option[String] = None
+    h: DelegateFlowRuntime,
+    id: String,
+    name: String,
+    status: String,
+    sessionRef: Option[String] = None
   ): IO[Unit] =
     h.store.mutate { s =>
       s.copy(nodes =
@@ -158,7 +175,7 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
   private def nodeOf(h: DelegateFlowRuntime, id: String): IO[NodeDef] =
     h.store.snapshot.map(_.nodes.get(id)).map {
       case Some(n) => n
-      case None    => fail(s"node '$id' must exist in scope ${h.delegateId}")
+      case None => fail(s"node '$id' must exist in scope ${h.delegateId}")
     }
 
   private def delegateCtx(system: ActorSystem, res: SharedResources, sid: String): ToolContext =
@@ -180,7 +197,9 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
 
   // ── M1..M5 delegate 作用域腿（双寻址四态 + 三态）──────────────────────────
 
-  test("M1..M4: the delegate leg resolves id-first, unique name, explicit ambiguity, explicit miss (A5 order on its own scope)") {
+  test(
+    "M1..M4: the delegate leg resolves id-first, unique name, explicit ambiguity, explicit miss (A5 order on its own scope)"
+  ) {
     val ws = os.temp.dir(prefix = "nb-mns-m1-", deleteOnExit = false)
     val system = ActorSystem(s"mns-m1-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-11aa22bb"
@@ -202,21 +221,34 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(byId.isRight, s"id hit must deliver, got: ${byId.left.map(_.message)}")
-      assert(byId.toOption.get.contains("running") || byId.toOption.get.toLowerCase.contains("injected"),
-        s"id-hit receipt names the running inject: ${byId.toOption.get}")
+      assert(
+        byId.toOption.get.contains("running") || byId.toOption.get.toLowerCase.contains("injected"),
+        s"id-hit receipt names the running inject: ${byId.toOption.get}"
+      )
       assertEquals(byName, byId, "unique name hit rides the same leg as the id hit")
-      assertEquals(injects.count(_.text.contains("[NODE-MESSAGE]")), 2,
-        "exactly two live injections (id + name addressing of the same node)")
-      assert(ambiguous.left.exists(_.message.contains("CHAIN_ADDR_AMBIGUOUS")),
-        s"ambiguous name must list candidates: ${ambiguous.left.map(_.message)}")
-      assert(ambiguous.left.exists(m => m.message.contains("n-b1") && m.message.contains("n-b2")),
-        "the ambiguity error lists both candidates")
-      assert(miss.left.exists(_.message.contains("CHAIN_NODE_NOT_FOUND")),
-        s"zero hit is explicit: ${miss.left.map(_.message)}")
+      assertEquals(
+        injects.count(_.text.contains("[NODE-MESSAGE]")),
+        2,
+        "exactly two live injections (id + name addressing of the same node)"
+      )
+      assert(
+        ambiguous.left.exists(_.message.contains("CHAIN_ADDR_AMBIGUOUS")),
+        s"ambiguous name must list candidates: ${ambiguous.left.map(_.message)}"
+      )
+      assert(
+        ambiguous.left.exists(m => m.message.contains("n-b1") && m.message.contains("n-b2")),
+        "the ambiguity error lists both candidates"
+      )
+      assert(
+        miss.left.exists(_.message.contains("CHAIN_NODE_NOT_FOUND")),
+        s"zero hit is explicit: ${miss.left.map(_.message)}"
+      )
     end for
   }
 
-  test("M5: the engine three states survive verbatim through the delegate leg (running inject / pending brief append / terminal refuse)") {
+  test(
+    "M5: the engine three states survive verbatim through the delegate leg (running inject / pending brief append / terminal refuse)"
+  ) {
     val ws = os.temp.dir(prefix = "nb-mns-m5-", deleteOnExit = false)
     val system = ActorSystem(s"mns-m5-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-general-55ee66ff"
@@ -239,17 +271,24 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
     yield
       assert(toRunning.isRight)
       assertEquals(injects.count(_.text.contains("[NODE-MESSAGE]")), 1, "running ⇒ turn-boundary injection")
-      assert(toPending.toOption.get.contains("Message appended"), s"pending ⇒ brief append receipt: ${toPending.toOption.get}")
+      assert(
+        toPending.toOption.get.contains("Message appended"),
+        s"pending ⇒ brief append receipt: ${toPending.toOption.get}"
+      )
       assert(pend.task.exists(_.contains("supplement text")), "pending append lands the message in the node brief")
       assert(pend.task.exists(_.contains("NodeMessage")), "append uses the existing「分发器补充（NodeMessage）」section")
-      assert(toTerminal.left.exists(_.message.contains("NODE_TERMINAL_NO_MESSAGE")),
-        s"terminal ⇒ explicit refuse: ${toTerminal.left.map(_.message)}")
+      assert(
+        toTerminal.left.exists(_.message.contains("NODE_TERMINAL_NO_MESSAGE")),
+        s"terminal ⇒ explicit refuse: ${toTerminal.left.map(_.message)}"
+      )
     end for
   }
 
   // ── M6 root 跨作用域腿 ──────────────────────────────────────────────────
 
-  test("M6: the root leg resolves across mounted delegate scopes — unique hit routes, cross-scope ambiguity lists scope-qualified candidates, miss is explicit") {
+  test(
+    "M6: the root leg resolves across mounted delegate scopes — unique hit routes, cross-scope ambiguity lists scope-qualified candidates, miss is explicit"
+  ) {
     val ws = os.temp.dir(prefix = "nb-mns-m6-", deleteOnExit = false)
     val system = ActorSystem(s"mns-m6-${scala.util.Random.nextInt(1000000)}")
     val scopeA = "delegate-general-66ff77aa"
@@ -277,8 +316,10 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
       assert(unique.isRight, s"unique cross-scope hit must deliver: ${unique.left.map(_.message)}")
       assertEquals(injects.count(_.text.contains("[NODE-MESSAGE]")), 1, "delivered to the owning scope's live node")
       assert(ambiguous.left.exists(_.message.contains("CHAIN_ADDR_AMBIGUOUS")), "cross-scope ambiguity is explicit")
-      assert(ambiguous.left.exists(m => m.message.contains(scopeA) && m.message.contains(scopeB)),
-        "candidates are scope-qualified")
+      assert(
+        ambiguous.left.exists(m => m.message.contains(scopeA) && m.message.contains(scopeB)),
+        "candidates are scope-qualified"
+      )
       assert(miss.left.exists(_.message.contains("CHAIN_NODE_NOT_FOUND")), "cross-scope miss is explicit")
     end for
   }
@@ -304,16 +345,30 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = "mns-proj", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = 0L)
+      pd = ProjectDef(
+        name = "mns-proj",
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = 0L
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
       live <- registerRecorder(res, system, nodeSid, AgentKind.Flow)
       _ <- store.mutate { s =>
-        s.copy(nodes = s.nodes ++ Map(
-          "n-x" -> NodeDef(id = "n-x", name = "worker", agent = "general", task = Some("t"),
-            out = List(OutEdge.root), status = NodeLifecycle.Running, sessionRef = Some(nodeSid),
-            createdAt = System.currentTimeMillis())
-        ))
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-x" -> NodeDef(
+              id = "n-x",
+              name = "worker",
+              agent = "general",
+              task = Some("t"),
+              out = List(OutEdge.root),
+              status = NodeLifecycle.Running,
+              sessionRef = Some(nodeSid),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
       }.void
       dispCtx = ToolContext(
         projectRoot = os.pwd.toString,

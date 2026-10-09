@@ -4,14 +4,16 @@ import munit.FunSuite
 import nebflow.shared.AgentModelConfig
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 
-/** SchemePolicy v2 — role-based model-chain resolution:
-  * own chain (settable roles) > Nebula primary chain (everyone else, fresh
-  * read) > seed chain (Nebula unconfigured).
-  *
-  * P1-2 对齐（2026-10-03）：builtin-merge 批把 `kernel`+`general` 合并为执行
-  * agent（BuiltinAgents.ExecutorName）⇒ SettableAgents 收敛为三元组；旧名经
-  * `resolveRetired` 单点表继续可解析（旧数据 sidecar 语义不变），本 spec 的
-  * 夹具按「现名 + 退役名仍可解析」双层断言重写。 */
+/**
+ * SchemePolicy v2 — role-based model-chain resolution:
+ * own chain (settable roles) > Nebula primary chain (everyone else, fresh
+ * read) > seed chain (Nebula unconfigured).
+ *
+ * P1-2 对齐（2026-10-03）：builtin-merge 批把 `kernel`+`general` 合并为执行
+ * agent（BuiltinAgents.ExecutorName）⇒ SettableAgents 收敛为三元组；旧名经
+ * `resolveRetired` 单点表继续可解析（旧数据 sidecar 语义不变），本 spec 的
+ * 夹具按「现名 + 退役名仍可解析」双层断言重写。
+ */
 class SchemePolicySpec extends FunSuite:
 
   /** 执行 agent 名（builtin-merge 批收敛单点）。 */
@@ -38,13 +40,21 @@ class SchemePolicySpec extends FunSuite:
     os.write.over(dir / "agent.json", json)
 
   private def writeNebula(root: os.Path, model: Option[AgentModelConfig]): Unit =
-    val modelJson = model.map(m =>
-      s"""{"preferred":${m.preferred.map(p => s"\"$p\"").getOrElse("null")},"fallbacks":${m.fallbacks.map(s => s"\"$s\"").mkString("[", ",", "]")}}"""
-    ).getOrElse("null")
+    val modelJson = model
+      .map(m =>
+        s"""{"preferred":${m.preferred
+            .map(p => s"\"$p\"")
+            .getOrElse("null")},"fallbacks":${m.fallbacks.map(s => s"\"$s\"").mkString("[", ",", "]")}}"""
+      )
+      .getOrElse("null")
     writeAgent(root, "Nebula", s"""{"name":"Nebula","model":$modelJson}""")
 
   private def providersJson(entries: (String, String)*): String =
-    val providers = entries.map { case (pid, mid) => s""""$pid":{"baseUrl":"http://127.0.0.1:1","apiKey":"k","protocol":"openai","models":[{"id":"$mid","contextWindow":8192}]}""" }.mkString(",")
+    val providers = entries
+      .map { case (pid, mid) =>
+        s""""$pid":{"baseUrl":"http://127.0.0.1:1","apiKey":"k","protocol":"openai","models":[{"id":"$mid","contextWindow":8192}]}"""
+      }
+      .mkString(",")
     s"""{"llm":{"providers":{$providers}}}"""
 
   // ── write gate ────────────────────────────────────────────
@@ -117,8 +127,10 @@ class SchemePolicySpec extends FunSuite:
     withRoot("live-follow") { root =>
       writeNebula(root, Some(lowCost))
       assertEquals(SchemePolicy.resolveModel(executorName, None)._1, lowCost)
-      os.write.over(root / "agents" / "Nebula" / "agent.json",
-        """{"name":"Nebula","model":{"preferred":"kimi/kimi-k3","fallbacks":[]}}""")
+      os.write.over(
+        root / "agents" / "Nebula" / "agent.json",
+        """{"name":"Nebula","model":{"preferred":"kimi/kimi-k3","fallbacks":[]}}"""
+      )
       val (chain, from) = SchemePolicy.resolveModel(executorName, None)
       assertEquals(chain.preferred, Some("kimi/kimi-k3"))
       assertEquals(from, SchemePolicy.NebulaChainSource)
@@ -174,9 +186,11 @@ class SchemePolicySpec extends FunSuite:
 
   test("seed chain: legacy llm.model wins over providers while it exists") {
     withRoot("seed-llmmodel") { root =>
-      os.write.over(root / "nebflow.json",
+      os.write.over(
+        root / "nebflow.json",
         """{"llm":{"providers":{"Z":{"baseUrl":"http://127.0.0.1:1","apiKey":"k","protocol":"openai","models":[{"id":"m2","contextWindow":8192}]}},"""
-          + """"model":{"default":"Z/m9","fallbacks":["A/m1"]}}}""")
+          + """"model":{"default":"Z/m9","fallbacks":["A/m1"]}}}"""
+      )
       assertEquals(SchemePolicy.readSeedChain(), List("Z/m9", "A/m1"))
     }
   }
@@ -191,3 +205,4 @@ class SchemePolicySpec extends FunSuite:
       assertEquals(SchemePolicy.readSeedChain(), Nil)
     }
   }
+end SchemePolicySpec

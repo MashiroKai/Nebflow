@@ -36,16 +36,17 @@ object PluginAllocator:
 
     /** 审计/结构帧承载词（ChainStore `allocation` 字段值域的前两态）。 */
     def wire: String = this match
-      case Jev         => "jev"
+      case Jev => "jev"
       case LlmFallback => "llm-fallback"
 
   /** 一次插件分配的完整结果：分配值 + 产出臂。 */
   final case class PluginAllocationResult(
-      allocation: JevAllocation,
-      via: Option[AllocationVia]
+    allocation: JevAllocation,
+    via: Option[AllocationVia]
   )
 
   object PluginAllocationResult:
+
     val failOpen: PluginAllocationResult = PluginAllocationResult(
       JevAllocation.FellBack(JevFallbackKind.Failure, "plugin allocation failed — fail-open"),
       via = None
@@ -53,10 +54,11 @@ object PluginAllocator:
 
   /** 接线面（执行体实现；单方法，带 subject 供审计事件定位对象）。 */
   trait Face:
+
     def allocatePlugins(
-        subject: String,
-        taskText: String,
-        catalog: List[CatalogEntry]
+      subject: String,
+      taskText: String,
+      catalog: List[CatalogEntry]
     ): IO[PluginAllocationResult]
   end Face
 
@@ -75,9 +77,9 @@ object PluginAllocator:
    * 分配面任何形态的失败都不允许 wedge 派发。
    */
   def allocatePlugins(
-      subject: String,
-      taskText: String,
-      catalog: List[CatalogEntry]
+    subject: String,
+    taskText: String,
+    catalog: List[CatalogEntry]
   ): IO[PluginAllocationResult] =
     face.get match
       case None =>

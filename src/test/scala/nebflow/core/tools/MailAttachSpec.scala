@@ -6,15 +6,30 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorSystem
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
-import nebflow.core.{RateLimiter, SessionStore} // W1 shim: main had nebflow.gateway.{RateLimiter, SessionStore}; PR re-homed both to core
+import nebflow.core.{
+  RateLimiter,
+  SessionStore
+} // W1 shim: main had nebflow.gateway.{RateLimiter, SessionStore}; PR re-homed both to core
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{AttachContract, ContentBlock, LlmHandle, LlmRequest, LlmResponse, StreamChunk} // W1 shim: main had nebflow.dropbox.AttachContract (PR-side home) + the shared protocol types
+import nebflow.shared.{
+  AttachContract,
+  ContentBlock,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  StreamChunk
+} // W1 shim: main had nebflow.dropbox.AttachContract (PR-side home) + the shared protocol types
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 import nebflow.shared.ThinkingConfig // W1 shim: main had nebflow.llm.ThinkingConfig; PR moved it to shared
 import fs2.Stream
@@ -63,9 +78,9 @@ class MailAttachSpec extends FunSuite:
     base.add(key, Json.arr(ps.map(_.asJson)*))
 
   private def ctx(
-      dispatcher: Boolean = false,
-      nebulaRoot: Boolean = false,
-      projectName: Option[String] = None
+    dispatcher: Boolean = false,
+    nebulaRoot: Boolean = false,
+    projectName: Option[String] = None
   ): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
@@ -79,13 +94,16 @@ class MailAttachSpec extends FunSuite:
   private def rejected(res: Either[ToolError, String], label: String): String =
     res match
       case Left(err) => err.message
-      case Right(v)  => fail(s"$label: must be rejected, got: $v")
+      case Right(v) => fail(s"$label: must be rejected, got: $v")
 
   private def callErr(input: JsonObject, c: ToolContext): String =
     rejected(MailTool.call(input, c).unsafeRunSync(), "call")
 
   private def prop(schema: JsonObject, name: String): JsonObject =
-    schema("properties").flatMap(_.asObject).flatMap(_(name)).flatMap(_.asObject)
+    schema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_(name))
+      .flatMap(_.asObject)
       .getOrElse(fail(s"parameter '$name' missing from the Mail schema"))
 
   private def propDesc(schema: JsonObject, name: String): String =
@@ -151,20 +169,19 @@ class MailAttachSpec extends FunSuite:
 
   test("② P1：三面描述都宣称 `attachments` 参数存在，且零「没有该参数」类反向断言"):
     val faces = List(
-      "descriptionBase"       -> MailTool.descriptionBase,
+      "descriptionBase" -> MailTool.descriptionBase,
       "descriptionNebulaRoot" -> MailTool.descriptionRoot,
       "descriptionDispatcher" -> MailTool.descriptionDispatcher
     )
     for (label, raw) <- faces do
       val f = n(raw)
-      assert(f.contains("`attachments` parameter"),
-        s"$label: 必须宣称 `attachments` 参数（模型只读描述/schema ⇒ 不宣称则能力实际不可用）")
-      assert(!f.contains("Mail has no general attachments"),
-        s"$label: 仍自称「无通用附件」= 与 schema 的 `attachments` 互斥")
-      assert(!f.contains("no `attachments` parameter"),
-        s"$label: 仍自称「没有 `attachments` 参数」= 与 schema 互斥")
-      assert(!f.contains("`SendMessage`'s `attachments` — pure transport"),
-        s"$label: still points the general-attachment landing at SendMessage (the tool has the parameter; the pointer is stale)")
+      assert(f.contains("`attachments` parameter"), s"$label: 必须宣称 `attachments` 参数（模型只读描述/schema ⇒ 不宣称则能力实际不可用）")
+      assert(!f.contains("Mail has no general attachments"), s"$label: 仍自称「无通用附件」= 与 schema 的 `attachments` 互斥")
+      assert(!f.contains("no `attachments` parameter"), s"$label: 仍自称「没有 `attachments` 参数」= 与 schema 互斥")
+      assert(
+        !f.contains("`SendMessage`'s `attachments` — pure transport"),
+        s"$label: still points the general-attachment landing at SendMessage (the tool has the parameter; the pointer is stale)"
+      )
       // mailmodel batch (2026-09-25): the device leg (and its 4000-char budget sentence)
       // is retired - the description must no longer advertise the gate. (The one-line
       // retirement NOTE that names MAIL_DEVICE_RETIRED stays by design; only the
@@ -241,13 +258,20 @@ class MailAttachSpec extends FunSuite:
       assert(msg.contains("Nothing was sent"), s"fail-fast 必须自陈零投递: $msg")
     finally os.remove.all(tmp)
 
+    end try
+
   test("③ 闸位先于投递腿：合法件 + 不存在件混合 ⇒ 仍零投递（先于 `no actor system`）"):
     val tmp = os.temp.dir(prefix = "mailattach-mix")
     val ok = tmp / "ok.bin"
     os.write(ok, Array[Byte](1, 2, 3))
     try
       val msg = callErr(
-        withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", ok.toString, (tmp / "gone.bin").toString),
+        withArr(
+          qIn("address" -> "backend", "message" -> "hi"),
+          "attachments",
+          ok.toString,
+          (tmp / "gone.bin").toString
+        ),
         ctx()
       )
       assert(msg.contains("does not exist"), s"逐件判必须报出坏件: $msg")
@@ -258,8 +282,10 @@ class MailAttachSpec extends FunSuite:
   // ④ B6：同机腿 `images` ⇒ 显式拒绝（治静默丢）
   // ============================================================
 
-  /** `address` 腿的 `images` 走 G3 共用管线（先 `resolveImages` 落盘校验，再路由）⇒
-    * 要真的走到「同机腿拒绝」，图件必须**真实存在**（虚构路径会先被 G3 的存在性判拦下）。 */
+  /**
+   * `address` 腿的 `images` 走 G3 共用管线（先 `resolveImages` 落盘校验，再路由）⇒
+   * 要真的走到「同机腿拒绝」，图件必须**真实存在**（虚构路径会先被 G3 的存在性判拦下）。
+   */
   private def realImage(tmp: os.Path): os.Path =
     val p = tmp / "img-1.png"
     os.write(p, Array[Byte](0x89.toByte, 'P'.toByte, 'N'.toByte, 'G'.toByte, 1, 2, 3))
@@ -325,20 +351,22 @@ class MailAttachSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -396,13 +424,15 @@ class MailAttachSpec extends FunSuite:
     r.messages
       .map { m =>
         m.content match
-          case Left(s)       => s
+          case Left(s) => s
           case Right(blocks) => blocks.collect { case ContentBlock.Text(t) => t }.mkString("\n")
       }
       .mkString("\n")
 
-  /** 轮询等待接受方 turn 落定（**有界等待**，不用固定 sleep：固定睡眠在连续 JVM 负载下会假红，
-    * 而「等到了才断言」同时堵住负控的空集假绿 —— 空结果由调用方显式判红）。 */
+  /**
+   * 轮询等待接受方 turn 落定（**有界等待**，不用固定 sleep：固定睡眠在连续 JVM 负载下会假红，
+   * 而「等到了才断言」同时堵住负控的空集假绿 —— 空结果由调用方显式判红）。
+   */
   private def awaitRequests(llm: RecordingLlm, deadlineMs: Long): IO[List[LlmRequest]] =
     IO.defer {
       llm.requests.get.flatMap { rs =>
@@ -426,7 +456,11 @@ class MailAttachSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(s"$teamName/member", agentName = Some("member"), flowName = Some(teamName))
+      memberMeta <- sessionStore.createSession(
+        s"$teamName/member",
+        agentName = Some("member"),
+        flowName = Some(teamName)
+      )
       _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
       _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
@@ -462,7 +496,11 @@ class MailAttachSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(s"$teamName/member", agentName = Some("member"), flowName = Some(teamName))
+      memberMeta <- sessionStore.createSession(
+        s"$teamName/member",
+        agentName = Some("member"),
+        flowName = Some(teamName)
+      )
       _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
       _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)

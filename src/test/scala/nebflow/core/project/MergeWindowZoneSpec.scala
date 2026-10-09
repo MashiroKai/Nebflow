@@ -272,7 +272,10 @@ class MergeWindowZoneSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // fixture sanity: the archived upstreams really are OUTSIDE the active zone
-      assert(!live.contains("n-u1") && !live.contains("n-u2"), "fixture sanity: U1/U2 must live in the archive zone only")
+      assert(
+        !live.contains("n-u1") && !live.contains("n-u2"),
+        "fixture sanity: U1/U2 must live in the archive zone only"
+      )
       assert(live.contains("n-a") && live.contains("n-b"), "fixture sanity: both sinks are active")
       assertEquals(a.createdAt, t0 - 9000L, "fixture sanity: A is created EARLIER than B")
       assertEquals(b.createdAt, t0 - 8000L, "fixture sanity: B is created later than A")
@@ -636,7 +639,10 @@ class MergeWindowZoneSpec extends CatsEffectSuite:
       // and never grows through this path. The caliber difference between the two gates
       // narrows to zero; it is not widened.
       assert(
-        MergeMutexPolicy.upsOf(block, live).map(_.id).toSet
+        MergeMutexPolicy
+          .upsOf(block, live)
+          .map(_.id)
+          .toSet
           .subsetOf(MergeMutexPolicy.upsOf(block, combined).map(_.id).toSet),
         "the upstream resolution is monotone (active-only ⊂ combined) — that is why the filter can only tighten"
       )

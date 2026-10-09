@@ -69,6 +69,33 @@ object InteractionHubCommand:
   final case class CloseRequest(requestId: String) extends InteractionHubCommand
 
   /**
+   * askucancel 批（2026-10-08）：**用户发起的取消**——按 `requestId` 精确终结一个
+   * 仍在等待作答的 AskUser 问题。与 [[CloseRequest]] 的三点差别（CloseRequest 语义
+   * 逐字节保留：调用侧撤回，无 kind 闸、无裁决、无发起方通知）：
+   *
+   *   ① **kind 闸**：只服务 `InteractionKind.AskUser` 槽位（permission/confirm 卡
+   *      各有自身生命周期——approve/deny 即终态、SendConfirm 有超时自撤）⇒ 非
+   *      AskUser 槽位回 `AskCancelOutcome.NotAskUser`，不静默；
+   *   ② **发起方终结通知**：撤回信号（`AskUserCancelled.signal`）经槽位既有答复
+   *      管道投达请求方——阻塞面板腿（pathPanel）据此判 Shelved 解除挂起；非阻塞
+   *      桥腿注入取消通告（发起的代理/节点收到明确结论，而非永久等一条永不来的答复）；
+   *   ③ **显式裁决**：`reply` 在场时回 `Cancelled`（含 root/sourceSession，供调用方
+   *      追加取消落盘行）/ `UnknownRequestId`（已答/已收/从未存在——幂等，重复取消
+   *      语义明确）/ `NotAskUser`。
+   *
+   * 广播面与 CloseRequest 同族：`askUserClosed{requestId, sourceSession, reason}`
+   * 走**全部**已注册 root 窗口（fallback 渲染的卡也收得到），`reason` 缺省
+   * `"user-cancelled"`（旧前端忽略未知键；前端按 reason 映射「已取消」文案是
+   * 前端位的扩展点）。
+   */
+  final case class CancelRequest(
+    requestId: String,
+    reason: String = "",
+    by: String = "",
+    reply: Option[ActorRef[AskCancelOutcome]] = None
+  ) extends InteractionHubCommand
+
+  /**
    * 工具面按角色分化批 B6（2026-09-13）：**只读**可达性查询 ——
    * `rootSessionId` 当前是否有已注册的客户端窗口（`RegisterRoot` 的 wsSend）。
    * 非阻塞 AskUserQuestion 在注册槽位**之前**用它做前置预检：非阻塞下没人等待
@@ -80,4 +107,47 @@ object InteractionHubCommand:
    * `fallback:true` 语义保持不变）。
    */
   final case class RootReachable(rootSessionId: String, reply: ActorRef[Boolean]) extends InteractionHubCommand
+
+  /**
+   * askuser-secret 批（2026-10-08）：**只读**槽位查询 —— `requestId` 的 pending
+   * AskUser 卡里哪些题是 secret 型（含各自的落盘名/一次性参数）。唯一消费方 =
+   * 网关 `handleAskUserAnswer`：`.ui.json` 脱敏行与 hub 载荷占位**必须**由引擎侧
+   * 判定哪些槽是秘密槽（旧前端把值打在普通 `answers` 里时，网关靠它识别「明文
+   * 泄漏企图」并落拒收行——前端自报的任何标记都不可信）。hub 是槽位唯一权威，
+   * 故查询走 hub；只读（不碰 pending/渲染/广播），`Option.empty` = 无此槽位
+   * （已答/已收/从未存在——网关按旧路径透传，hub 侧守卫兜底拒收）。
+   */
+  final case class SecretSlotsOf(requestId: String, reply: ActorRef[Option[List[SecretSlotSpec]]])
+      extends InteractionHubCommand
 end InteractionHubCommand
+
+/**
+ * askuser-secret 批：一条 secret 型题的落库参数（hub 从 pending 载荷的 items 里
+ * 解出，经 [[InteractionHubCommand.SecretSlotsOf]] 回给网关）。零值字段——值只在
+ * `askUserAnswer` 帧的 `secretSlots` 键里，本类型只是「哪几题、按什么名字落」。
+ */
+final case class SecretSlotSpec(
+  idx: Int,
+  secretName: Option[String] = None,
+  ephemeral: Boolean = false,
+  ttlSec: Option[Int] = None
+)
+
+/** askucancel 批（2026-10-08）：`CancelRequest` 的裁决载荷（经 `reply` 回调用方）。 */
+sealed trait AskCancelOutcome
+
+object AskCancelOutcome:
+
+  /**
+   * 槽位已终结并广播。`rootSessionId` = 卡片渲染/落盘所属会话；`sourceSession` =
+   * 发起提问的会话（审计/归因）。
+   */
+  final case class Cancelled(requestId: String, kind: InteractionKind, rootSessionId: String, sourceSession: String)
+      extends AskCancelOutcome
+
+  /** 幂等终态：该 requestId 无在册槽位（已作答 / 已被回收 / 从未存在）。 */
+  case object UnknownRequestId extends AskCancelOutcome
+
+  /** 槽位在册但不是 AskUser（permission / mcpPermission / confirm 卡不进本取消面）。 */
+  final case class NotAskUser(kind: InteractionKind) extends AskCancelOutcome
+end AskCancelOutcome

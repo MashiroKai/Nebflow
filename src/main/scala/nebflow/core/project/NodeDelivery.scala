@@ -533,10 +533,17 @@ private[project] trait NodeDelivery:
           // refused + double trace (**replacing** the notification, not adding to it; a refusal
           // leaves `nebulaDeliveredAt` unset, but the redelivery scan itself passes the gate at
           // U7, so it cannot revive the node by bypassing this gate).
-          else uplinkAllowed(node, "completed").flatMap {
-            case false => IO.unit
-            case true  => enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
-          }
+          else
+            uplinkAllowed(node, "completed").flatMap {
+              case false => IO.unit
+              case true =>
+                enqueueRootNotify(
+                  s"[Node '${node.name}' completed]\n$resultText",
+                  node.name,
+                  "completed",
+                  Some(node.id)
+                )
+            }
         case t => settleTo(node, t)
 
     end if
@@ -662,11 +669,13 @@ private[project] trait NodeDelivery:
       enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
     else markRootDelivered(node.id)
 
-  /** **Pre-W1 name for [[rootDelivery]]** (W2b' backfill; same W1 rename family as
-    * [[deliverToNebula]], attribution identical: `git log -SnebulaDelivery` lands on the
-    * synthetic PR head and on the main-side notifybatch batch whose body main re-spelled).
-    * Delegates to the single pass-edge/root-edge arbitration point -- re-deriving it here
-    * would fork the R5 notify-policy ruling (suppress vs. deliver vs. ledger-only). */
+  /**
+   * **Pre-W1 name for [[rootDelivery]]** (W2b' backfill; same W1 rename family as
+   * [[deliverToNebula]], attribution identical: `git log -SnebulaDelivery` lands on the
+   * synthetic PR head and on the main-side notifybatch batch whose body main re-spelled).
+   * Delegates to the single pass-edge/root-edge arbitration point -- re-deriving it here
+   * would fork the R5 notify-policy ruling (suppress vs. deliver vs. ledger-only).
+   */
   private[project] def nebulaDelivery(
     node: NodeDef,
     resultText: String,
@@ -703,12 +712,14 @@ private[project] trait NodeDelivery:
   ): IO[Unit] =
     offerRootNotify(text, nodeName, status, nodeId).void
 
-  /** **Pre-W1 name for [[deliverToRoot]]** (W2b' backfill; the `DeliverToNebula` spelling of the
-    * same single offer point). `git log -SdeliverToNebula` lands on the synthetic PR head plus
-    * the notifypack/notifybatch batches that main later re-spelled as `deliverToRoot`, so the
-    * divergence is W1 rename fallout rather than an organised main-side rename. Bound to the
-    * one implementation -- a second offer point would break the "single flush exit" contract
-    * that `enqueueRootNotify` and [[flushRootNotify]] rely on. */
+  /**
+   * **Pre-W1 name for [[deliverToRoot]]** (W2b' backfill; the `DeliverToNebula` spelling of the
+   * same single offer point). `git log -SdeliverToNebula` lands on the synthetic PR head plus
+   * the notifypack/notifybatch batches that main later re-spelled as `deliverToRoot`, so the
+   * divergence is W1 rename fallout rather than an organised main-side rename. Bound to the
+   * one implementation -- a second offer point would break the "single flush exit" contract
+   * that `enqueueRootNotify` and [[flushRootNotify]] rely on.
+   */
   private[project] def deliverToNebula(
     text: String,
     nodeName: String,
@@ -740,7 +751,8 @@ private[project] trait NodeDelivery:
    *
    * `windowItems`（notifypack 解 b 批 · 2026-09-23）：**默认 `None`** ⇒ 既有全部调用点
    * （`deliverToRoot` 单件腿 / 两条旁路 / `deliverStaleSummary`）逐字保持改前形态
-   * （帧里不出现该键的载荷）；唯 [[flushRootNotify]] 的 `case many` 传 `Some(...)`。 */
+   * （帧里不出现该键的载荷）；唯 [[flushRootNotify]] 的 `case many` 传 `Some(...)`。
+   */
   private[project] def offerRootNotify(
     text: String,
     nodeName: String,

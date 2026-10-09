@@ -49,8 +49,9 @@ object TaskSearchRerank:
       case Some(f) =>
         f.rerank(query, candidates).handleErrorWith { e =>
           IO(
-            nebflow.shared.NebflowLogger.forName("nebflow.index.rerank").warnSync(
-              s"task search rerank failed (${e.getClass.getSimpleName}) — skipped, keeping incoming order")
+            nebflow.shared.NebflowLogger
+              .forName("nebflow.index.rerank")
+              .warnSync(s"task search rerank failed (${e.getClass.getSimpleName}) — skipped, keeping incoming order")
           ).as(None)
         }
 

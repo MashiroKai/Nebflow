@@ -5,13 +5,14 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 
-/** daemonpanel Phase A — declaration validator (backend F1–F9 + F12 pins).
-  *
-  * These specs are the RED/GREEN instrument for the backend criteria: each one
-  * is written so that the pre-change tree fails it (the feature does not exist)
-  * and the post-change tree passes it. They also serve as the mutation surface:
-  * flipping a whitelist entry or the fail-closed branch must turn them red.
-  */
+/**
+ * daemonpanel Phase A — declaration validator (backend F1–F9 + F12 pins).
+ *
+ * These specs are the RED/GREEN instrument for the backend criteria: each one
+ * is written so that the pre-change tree fails it (the feature does not exist)
+ * and the post-change tree passes it. They also serve as the mutation surface:
+ * flipping a whitelist entry or the fail-closed branch must turn them red.
+ */
 class DaemonPanelSchemaSpec extends CatsEffectSuite:
 
   private def json(s: String): Json = parse(s).fold(e => throw e, identity)
@@ -72,7 +73,7 @@ class DaemonPanelSchemaSpec extends CatsEffectSuite:
     def rejected(raw: String): Unit =
       DaemonPanelSchema.validate(json(raw), allowWeb = false) match
         case Right(_) => fail(s"expected rejection: $raw")
-        case Left(_)  => ()
+        case Left(_) => ()
     rejected("""{"fields": [{"key": "a", "type": "string"}, {"key": "a", "type": "number"}]}""")
     rejected("""{"version": 2, "fields": [{"key": "a", "type": "string"}]}""")
     rejected("""{"kind": "native", "fields": [{"key": "a", "type": "string"}]}""")
@@ -83,7 +84,7 @@ class DaemonPanelSchemaSpec extends CatsEffectSuite:
     def rejected(raw: String): Unit =
       DaemonPanelSchema.validate(json(raw), allowWeb = false) match
         case Right(_) => fail(s"expected rejection: $raw")
-        case Left(_)  => ()
+        case Left(_) => ()
     rejected("""{"fields": [{"key": "m", "type": "enum"}]}""")
     rejected("""{"fields": [{"key": "m", "type": "string", "options": ["a"]}]}""")
     // A default outside the declared options is rejected too.
@@ -123,7 +124,7 @@ class DaemonPanelSchemaSpec extends CatsEffectSuite:
     def rejected(url: String): Unit =
       DaemonPanelSchema.validate(json(s"""{"kind": "web", "url": "$url"}"""), allowWeb = true) match
         case Right(_) => fail(s"expected rejection for url '$url'")
-        case Left(_)  => ()
+        case Left(_) => ()
     rejected("/relative/config")
     rejected("javascript:alert(1)")
     rejected("http://user:pass@localhost:3000/config")
@@ -137,7 +138,7 @@ class DaemonPanelSchemaSpec extends CatsEffectSuite:
     def rejected(f: String): Unit =
       DaemonPanelSchema.validate(json(s"""{"kind": "web", "htmlFile": "$f"}"""), allowWeb = true) match
         case Right(_) => fail(s"expected rejection for htmlFile '$f'")
-        case Left(_)  => ()
+        case Left(_) => ()
     rejected("/etc/passwd")
     rejected("../../secrets/auth.json")
     rejected("a/../../b.html")

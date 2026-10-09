@@ -39,10 +39,12 @@ object CompactionQueueStore:
 
   // ── Codecs (hand-written, few fields; ContentBlock codec reused) ──
 
-  /** notifypack solution-b batch (2026-09-23): codec for the window-flush payload
-    * element (`ImmediateInput.windowItems`). Hand-written like its siblings — four
-    * plain String fields, all required (the decoder is only reached for entries the
-    * encoder itself wrote). */
+  /**
+   * notifypack solution-b batch (2026-09-23): codec for the window-flush payload
+   * element (`ImmediateInput.windowItems`). Hand-written like its siblings — four
+   * plain String fields, all required (the decoder is only reached for entries the
+   * encoder itself wrote).
+   */
   given Encoder[AgentCommand.WindowItem] = Encoder.instance { w =>
     Json.obj(
       "text" -> w.text.asJson,

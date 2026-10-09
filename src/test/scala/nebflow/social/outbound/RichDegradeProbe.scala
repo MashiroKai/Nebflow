@@ -22,8 +22,11 @@ import java.time.temporal.ChronoUnit
  * batch forbids reading).
  *
  * 🔴 No credential, no network, no browser: the probes below are (a) the
- * degraded-render path, (b) the oversized-product path, (c) the unknown-kind
- * path. `System.exit` is the last statement (the ≤120s self-exit obligation).
+ * degraded-render path, (b) the oversized-product path, (c) the off-table html
+ * path with the file upload refused AND the shot seam unavailable (the
+ * 2026-10-09 incident shape under the same-day ruling: the demoted shot lands
+ * on the friendly line, no mechanism words), (d) the missing-product path.
+ * `System.exit` is the last statement (the ≤120s self-exit obligation).
  *
  * Modes:
  *   degrade <isolatedHomeDir> <evidenceDir>
@@ -38,8 +41,10 @@ object RichDegradeProbe:
     try w.println(text)
     finally w.close()
 
-  /** Records what the adapter would have sent, and reports success — so the
-    *  reading shows the DECISION rather than a transport outcome. */
+  /**
+   * Records what the adapter would have sent, and reports success — so the
+   *  reading shows the DECISION rather than a transport outcome.
+   */
   private final class Recorder:
     var images: List[String] = Nil
     var files: List[String] = Nil
@@ -49,15 +54,23 @@ object RichDegradeProbe:
     def uploadImage: RichFeishuAdapter.UploadImage = p =>
       images = images :+ p.toString
       cats.effect.IO.pure(RichFeishuAdapter.UploadResult(true, "img_probe_key", 0, "ok"))
+
     def uploadFile: RichFeishuAdapter.UploadFile = (p, n) =>
       files = files :+ s"$p ($n)"
-      cats.effect.IO.pure(RichFeishuAdapter.UploadResult(true, "file_probe_key", 0, "ok"))
+      // 2026-10-09 同日裁定后 html 走「文件腿直发、失败才截图」链；本探针测的是
+      // 降级链，故文件上传一律拒绝（案例 B 的超大件在闸前已被拒，不受影响），
+      // 这样案例 C 才能走到截图兜底（Unavailable ⇒ 友好 b 层一行）。
+      cats.effect.IO.pure(RichFeishuAdapter.UploadResult(false, "", 230021, "upload refused (probe)"))
+
     def sendMsg: RichFeishuAdapter.SendMsg = (t, c) =>
       msgs = msgs :+ ((t, c))
       cats.effect.IO.pure(RichFeishuAdapter.SendResult(true, Some("om_probe"), 0, "ok"))
+
     def sendText: RichFeishuAdapter.SendText = t =>
       texts = texts :+ t
       cats.effect.IO.pure(RichFeishuAdapter.SendResult(true, Some("om_probe"), 0, "ok"))
+
+  end Recorder
 
   private def esc(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "'").replace("\n", "\\n")
@@ -69,13 +82,26 @@ object RichDegradeProbe:
 
     // A renderer that always fails — the host-without-Chrome case (HC-5).
     val failing = RichRenderer.Unavailable
+    // The shot seam is pinned Unavailable: the probe measures DECISIONS, never a
+    // real node subprocess (the probe's own no-browser discipline).
     val adapter = new RichFeishuAdapter(
-      rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, failing, () => os.Path(rendered.toPath, os.pwd))
+      rec.uploadImage,
+      rec.uploadFile,
+      rec.sendMsg,
+      rec.sendText,
+      failing,
+      () => os.Path(rendered.toPath, os.pwd),
+      WebPageShot.Unavailable
+    )
 
     val cardPayload =
-      RichKind.CardSentinel + io.circe.Json.obj("html" -> io.circe.Json.fromString(
-        """<!doctype html><html><body><h1>interactive card</h1><script>console.log("live")</script></body></html>"""
-      )).noSpaces
+      RichKind.CardSentinel + io.circe.Json
+        .obj(
+          "html" -> io.circe.Json.fromString(
+            """<!doctype html><html><body><h1>interactive card</h1><script>console.log("live")</script></body></html>"""
+          )
+        )
+        .noSpaces
 
     val rt = cats.effect.unsafe.IORuntime.global
     import cats.effect.unsafe.implicits.*
@@ -89,8 +115,12 @@ object RichDegradeProbe:
     // (b) oversized document — sparse, so the REAL gate is exercised without a GB
     val big = new File(new File(System.getenv("HOME")), "tmp/nb-probe-huge.pdf")
     big.getParentFile.mkdirs()
-    val ch = Files.newByteChannel(big.toPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-      StandardOpenOption.TRUNCATE_EXISTING)
+    val ch = Files.newByteChannel(
+      big.toPath,
+      StandardOpenOption.CREATE,
+      StandardOpenOption.WRITE,
+      StandardOpenOption.TRUNCATE_EXISTING
+    )
     try
       ch.position(nebflow.shared.AttachContract.MaxFileBytes) // one byte over the limit
       ch.write(java.nio.ByteBuffer.wrap(Array[Byte](0)))
@@ -100,9 +130,28 @@ object RichDegradeProbe:
     val filesB = rec.files
     rec.texts = Nil
 
-    // (c) unknown kind
-    val resC = adapter.deliver(RichKind.Unknown("extension is in neither authority table: xyz"), None).unsafeRunSync()
+    // (c) off-table product on disk — the 2026-10-09 incident shape: a real
+    // diagram.html whose extension is in neither authority table. Per the
+    // same-day ruling the FILE leg runs first; this probe refuses the file
+    // upload, and the shot seam is Unavailable, so the demoted shot falls
+    // through to the friendly b-layer line.
+    val html = new File(rendered, "diagram.html")
+    write(rendered, "diagram.html", "<html><body><h1>diagram</h1></body></html>")
+    val resC = adapter
+      .deliver(RichKind.Unknown("extension is in neither authority table: html"), Some(os.Path(html.toPath, os.pwd)))
+      .unsafeRunSync()
     val textsC = rec.texts
+    rec.texts = Nil
+
+    // (d) missing product — the original is gone ⇒ the [未送达] face.
+    val gone = new File(rendered, "gone.png")
+    val resD = adapter
+      .deliver(
+        RichKind.Unknown(s"path does not exist or is not a regular file: $gone"),
+        Some(os.Path(gone.toPath, os.pwd))
+      )
+      .unsafeRunSync()
+    val textsD = rec.texts
 
     big.delete()
 
@@ -122,7 +171,10 @@ object RichDegradeProbe:
          |      "text0": "${esc(textsA.headOption.getOrElse(""))}",
          |      "carriesUnrenderedPlaceholder": ${textsA.exists(_.contains("[未渲染]"))},
          |      "carriesInteractivePanelNote": ${textsA.exists(_.contains("交互版见本地面板"))},
-         |      "verdict": "${if imagesA.isEmpty && textsA.exists(t => t.contains("[未渲染]") && t.contains("交互版见本地面板")) then "PASS" else "FAIL"}"
+         |      "verdict": "${
+          if imagesA.isEmpty && textsA.exists(t => t.contains("[未渲染]") && t.contains("交互版见本地面板")) then "PASS"
+          else "FAIL"
+        }"
          |    },
          |    {
          |      "id": "B-document-oversize",
@@ -133,21 +185,51 @@ object RichDegradeProbe:
          |      "textsSent": ${textsB.size},
          |      "text0": "${esc(textsB.headOption.getOrElse(""))}",
          |      "echoesExistingErrorCode": ${textsB.exists(_.contains("ATTACH_TOO_LARGE"))},
-         |      "echoesActualSize": ${textsB.exists(_.contains((nebflow.shared.AttachContract.MaxFileBytes + 1).toString))},
-         |      "verdict": "${if filesB.isEmpty && textsB.exists(t => t.contains("尺寸闸拒绝") && t.contains("ATTACH_TOO_LARGE")) then "PASS" else "FAIL"}"
+         |      "echoesActualSize": ${textsB.exists(
+          _.contains((nebflow.shared.AttachContract.MaxFileBytes + 1).toString)
+        )},
+         |      "verdict": "${
+          if filesB.isEmpty && textsB.exists(t => t.contains("尺寸闸拒绝") && t.contains("ATTACH_TOO_LARGE")) then "PASS"
+          else "FAIL"
+        }"
          |    },
          |    {
-         |      "id": "C-unknown-kind",
-         |      "input": "RichKind.Unknown(extension is in neither authority table: xyz)",
+         |      "id": "C-html-off-table-file-refused-shot-unavailable",
+         |      "input": "on-disk diagram.html, RichKind.Unknown(extension is in neither authority table: html), file upload refused, webshot=Unavailable",
          |      "readings": ${resC.size},
          |      "textsSent": ${textsC.size},
          |      "text0": "${esc(textsC.headOption.getOrElse(""))}",
-         |      "carriesUnknownPlaceholder": ${textsC.exists(_.contains("[未知类型]"))},
-         |      "verdict": "${if textsC.exists(_.contains("[未知类型]")) then "PASS" else "FAIL"}"
+         |      "carriesFriendlyUnsupportedLine": ${textsC.exists(t =>
+          t.contains(RichDegrade.UnsupportedPrefix) && t.contains("原件在桌面端") && t.contains("diagram.html")
+        )},
+         |      "leaksMechanismWording": ${textsC.exists(t => t.contains("authority") || t.contains("neither"))},
+         |      "verdict": "${
+          if textsC.exists(t =>
+              t.contains(RichDegrade.UnsupportedPrefix) && t.contains("原件在桌面端") && !t.contains("authority")
+            )
+          then "PASS"
+          else "FAIL"
+        }"
+         |    },
+         |    {
+         |      "id": "D-missing-product",
+         |      "input": "RichKind.Unknown(path does not exist), path names a gone.png",
+         |      "readings": ${resD.size},
+         |      "textsSent": ${textsD.size},
+         |      "text0": "${esc(textsD.headOption.getOrElse(""))}",
+         |      "carriesUnreachableLine": ${textsD.exists(t =>
+          t.contains(RichDegrade.UnreachablePrefix) && t.contains("gone.png")
+        )},
+         |      "verdict": "${
+          if textsD.exists(t => t.contains(RichDegrade.UnreachablePrefix) && t.contains("gone.png")) then "PASS"
+          else "FAIL"
+        }"
          |    }
          |  ]
          |}""".stripMargin
     json
+
+  end run
 
   def main(args: Array[String]): Unit =
     if args.length < 2 then
@@ -163,9 +245,14 @@ object RichDegradeProbe:
       if json.contains("\"verdict\": \"FAIL\"") then System.exit(1) else System.exit(0)
     catch
       case e: Throwable =>
-        write(evidenceDir, "degrade-reading.json",
-          s"""{"ts":"${now()}","exception":"${esc(e.getClass.getName)}: ${esc(Option(e.getMessage).getOrElse(""))}"}""")
+        write(
+          evidenceDir,
+          "degrade-reading.json",
+          s"""{"ts":"${now()}","exception":"${esc(e.getClass.getName)}: ${esc(Option(e.getMessage).getOrElse(""))}"}"""
+        )
         println(s"[degrade-probe] EXCEPTION ${e.getClass.getName}: ${Option(e.getMessage).getOrElse("")}")
         System.exit(1)
+    end try
+  end main
 
 end RichDegradeProbe

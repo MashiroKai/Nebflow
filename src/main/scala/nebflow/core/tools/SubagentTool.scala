@@ -41,7 +41,8 @@ object SubagentTool extends Tool:
   )
 
   def summarize(input: JsonObject): String =
-    val label = input("description").flatMap(_.asString).orElse(input("prompt").flatMap(_.asString).map(_.take(40))).getOrElse("")
+    val label =
+      input("description").flatMap(_.asString).orElse(input("prompt").flatMap(_.asString).map(_.take(40))).getOrElse("")
     s"Subagent($label)"
 
   def summarizeResult(input: JsonObject, result: String): String =
@@ -53,3 +54,4 @@ object SubagentTool extends Tool:
     if prompt.trim.isEmpty then
       IO.pure(Left(ToolError("Missing required parameter: prompt — give the sub-agent a self-contained question.")))
     else BlockingSubagent.run(prompt, description, ctx)
+end SubagentTool

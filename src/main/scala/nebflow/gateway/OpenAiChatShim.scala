@@ -13,39 +13,42 @@ import nebflow.shared.{
   TokenUsage
 }
 
-/** OpenAI wire-format shim for the EXISTING inbound chat face (batch B2,
-  * "立项（最小形态）"; author ruling 2026-09-24).
-  *
-  * Scope = exactly three wire differences between the in-tree inbound face
-  * (`ChatRoutes.routes`, `POST /api/v1/chat`) and the OpenAI shape:
-  *   1. path name — the alias lives in the same `ChatRoutes` (see `routes`);
-  *   2. request body — OpenAI has no `sessionId`/`agentId`;
-  *   3. response body — in-tree `LlmResponse` vs OpenAI `choices[]`.
-  * Nothing else: no `/v1/models`, no SSE semantics, no second auth face, no new
-  * dependency. Everything here is pure Json ⇄ case-class conversion so it is
-  * unit-testable without a live gateway.
-  *
-  * Disciple applied throughout — **faithful or refuse, never silently drop**.
-  * A field that cannot be carried into the in-tree request is refused with an
-  * explicit `400` naming the offending parameter, instead of being ignored;
-  * a field whose omission cannot change the response shape the caller parses
-  * (pure sampling knobs) is accepted and declared not-carried (see
-  * `ignoredFields`). Unknown fields are ignored for forward compatibility
-  * (declared).
-  *
-  * 🔴 Identity (`session_id` / `agent_id`) is the batch's load-bearing design
-  * point: the in-tree face REQUIRES both, OpenAI's format has neither, and the
-  * shim is forbidden from inventing a placeholder identity (same-family
-  * prohibition as `NodeTools.scala:3512-3521`). The conservative form is
-  * implemented: both must be supplied by the caller as Nebflow extension fields
-  * on the request body; absent/empty ⇒ explicit 400. See the batch report's
-  * "sessionId/agentId disposition" section for the alternatives and their cost.
-  */
+/**
+ * OpenAI wire-format shim for the EXISTING inbound chat face (batch B2,
+ * "立项（最小形态）"; author ruling 2026-09-24).
+ *
+ * Scope = exactly three wire differences between the in-tree inbound face
+ * (`ChatRoutes.routes`, `POST /api/v1/chat`) and the OpenAI shape:
+ *   1. path name — the alias lives in the same `ChatRoutes` (see `routes`);
+ *   2. request body — OpenAI has no `sessionId`/`agentId`;
+ *   3. response body — in-tree `LlmResponse` vs OpenAI `choices[]`.
+ * Nothing else: no `/v1/models`, no SSE semantics, no second auth face, no new
+ * dependency. Everything here is pure Json ⇄ case-class conversion so it is
+ * unit-testable without a live gateway.
+ *
+ * Disciple applied throughout — **faithful or refuse, never silently drop**.
+ * A field that cannot be carried into the in-tree request is refused with an
+ * explicit `400` naming the offending parameter, instead of being ignored;
+ * a field whose omission cannot change the response shape the caller parses
+ * (pure sampling knobs) is accepted and declared not-carried (see
+ * `ignoredFields`). Unknown fields are ignored for forward compatibility
+ * (declared).
+ *
+ * 🔴 Identity (`session_id` / `agent_id`) is the batch's load-bearing design
+ * point: the in-tree face REQUIRES both, OpenAI's format has neither, and the
+ * shim is forbidden from inventing a placeholder identity (same-family
+ * prohibition as `NodeTools.scala:3512-3521`). The conservative form is
+ * implemented: both must be supplied by the caller as Nebflow extension fields
+ * on the request body; absent/empty ⇒ explicit 400. See the batch report's
+ * "sessionId/agentId disposition" section for the alternatives and their cost.
+ */
 object OpenAiChatShim:
 
-  /** A refused request. `status` is 400 for every wire-shape refusal (this face
-    * introduces no new status vocabulary); `param` mirrors the OpenAI error
-    * envelope's field pointer, `code` its machine-readable tag. */
+  /**
+   * A refused request. `status` is 400 for every wire-shape refusal (this face
+   * introduces no new status vocabulary); `param` mirrors the OpenAI error
+   * envelope's field pointer, `code` its machine-readable tag.
+   */
   final case class Rejected(
     param: Option[String],
     code: String,
@@ -53,17 +56,19 @@ object OpenAiChatShim:
   ):
     def status: Int = 400
 
-  /** Pure sampling knobs: accepted and deliberately NOT carried into the
-    * in-tree request. This set is closed by a rule, not by taste — every member
-    * is a field whose omission cannot change the SHAPE of the response the
-    * caller parses (`messages[]` role/content/image). Anything that could
-    * change that shape (stream / n>1 / response_format / logprobs / tools /
-    * tool round-trip) is refused instead, never dropped.
-    *
-    * `stream` and `n` appear here because they are accepted only at their
-    * no-op values (`stream:false`, `n:1` = exactly this face's behaviour);
-    * `guardUnsupported` refuses every other value. Membership therefore reads
-    * as "when accepted, this field was not carried" — which is true. */
+  /**
+   * Pure sampling knobs: accepted and deliberately NOT carried into the
+   * in-tree request. This set is closed by a rule, not by taste — every member
+   * is a field whose omission cannot change the SHAPE of the response the
+   * caller parses (`messages[]` role/content/image). Anything that could
+   * change that shape (stream / n>1 / response_format / logprobs / tools /
+   * tool round-trip) is refused instead, never dropped.
+   *
+   * `stream` and `n` appear here because they are accepted only at their
+   * no-op values (`stream:false`, `n:1` = exactly this face's behaviour);
+   * `guardUnsupported` refuses every other value. Membership therefore reads
+   * as "when accepted, this field was not carried" — which is true.
+   */
   val ignoredFields: Set[String] = Set(
     "temperature",
     "top_p",
@@ -85,8 +90,10 @@ object OpenAiChatShim:
 
   // ── request: OpenAI body → in-tree LlmRequest ────────────────────────────
 
-  /** Convert an OpenAI `chat.completions` request body into the in-tree
-    * [[LlmRequest]]. Left = refused (explicit, actionable, no silent drop). */
+  /**
+   * Convert an OpenAI `chat.completions` request body into the in-tree
+   * [[LlmRequest]]. Left = refused (explicit, actionable, no silent drop).
+   */
   def toLlmRequest(body: Json): Either[Rejected, LlmRequest] =
     val cur = body.hcursor
     for
@@ -111,14 +118,20 @@ object OpenAiChatShim:
       agentModel = Some(AgentModelConfig(preferred = Some(modelRef), fallbacks = Nil))
     )
 
-  /** `model` is required by the OpenAI contract and is **carried**, not ignored:
-    * [[toLlmRequest]] puts it into `LlmRequest.agentModel`, the in-tree carrier
-    * for "which model serves this request" (the same field the in-tree agents
-    * populate — `AgentCore.scala:946`), so the registry builds the candidate
-    * chain from it (`registry.scala:189`) instead of the global preset. The form
-    * accepted is the in-tree model ref `<provider>/<model>`; a bare OpenAI model
-    * name cannot be resolved without inventing a mapping ⇒ refused (declared, see
-    * the batch report's field table), never silently substituted. */
+    end for
+
+  end toLlmRequest
+
+  /**
+   * `model` is required by the OpenAI contract and is **carried**, not ignored:
+   * [[toLlmRequest]] puts it into `LlmRequest.agentModel`, the in-tree carrier
+   * for "which model serves this request" (the same field the in-tree agents
+   * populate — `AgentCore.scala:946`), so the registry builds the candidate
+   * chain from it (`registry.scala:189`) instead of the global preset. The form
+   * accepted is the in-tree model ref `<provider>/<model>`; a bare OpenAI model
+   * name cannot be resolved without inventing a mapping ⇒ refused (declared, see
+   * the batch report's field table), never silently substituted.
+   */
   private def readModel(cur: io.circe.ACursor): Either[Rejected, String] =
     cur.downField("model").as[String] match
       case Right(m) if m.trim.nonEmpty =>
@@ -131,13 +144,14 @@ object OpenAiChatShim:
   private val modelFormError = Rejected(
     param = Some("model"),
     code = "invalid_model",
-    message =
-      "model must be a non-empty string in the form <provider>/<model> " +
-        "(this face resolves models against the gateway's own provider catalog)"
+    message = "model must be a non-empty string in the form <provider>/<model> " +
+      "(this face resolves models against the gateway's own provider catalog)"
   )
 
-  /** `session_id` / `agent_id`: Nebflow extensions to the OpenAI body (OpenAI's
-    * format carries no session/agent identity). Required — see the object doc. */
+  /**
+   * `session_id` / `agent_id`: Nebflow extensions to the OpenAI body (OpenAI's
+   * format carries no session/agent identity). Required — see the object doc.
+   */
   private def readExtension(
     cur: io.circe.ACursor,
     field: String
@@ -149,16 +163,17 @@ object OpenAiChatShim:
           Rejected(
             param = Some(field),
             code = "missing_identity",
-            message =
-              s"$field is required: this face carries no session identity of its own, " +
-                "and inventing a placeholder identity is not allowed. " +
-                "Send it as a top-level field alongside the OpenAI body fields."
+            message = s"$field is required: this face carries no session identity of its own, " +
+              "and inventing a placeholder identity is not allowed. " +
+              "Send it as a top-level field alongside the OpenAI body fields."
           )
         )
 
-  /** Fields this face refuses: each one would either change the response shape
-    * or require the full tool round-trip, so silently dropping it would change
-    * the caller's contract. */
+  /**
+   * Fields this face refuses: each one would either change the response shape
+   * or require the full tool round-trip, so silently dropping it would change
+   * the caller's contract.
+   */
   private def guardUnsupported(cur: io.circe.ACursor): Either[Rejected, Unit] =
     val checks: List[(String, String, String)] = List(
       (
@@ -211,10 +226,16 @@ object OpenAiChatShim:
             )
           case _ => Right(())
 
-  /** `present` includes `false`, `""` and `{}` — a caller that sends
-    * `stream: false` is stating a preference this face cannot honor as written
-    * for the *streaming* fields, but `false` on `stream` means "not streaming",
-    * which is exactly this face. Handled by the per-field test below. */
+    end match
+
+  end guardUnsupported
+
+  /**
+   * `present` includes `false`, `""` and `{}` — a caller that sends
+   * `stream: false` is stating a preference this face cannot honor as written
+   * for the *streaming* fields, but `false` on `stream` means "not streaming",
+   * which is exactly this face. Handled by the per-field test below.
+   */
   private def isMeaningful(focus: Option[Json]): Boolean =
     focus.exists {
       case Json.Null => false
@@ -225,20 +246,21 @@ object OpenAiChatShim:
       case _ => true
     }
 
-  /** `messages` → in-tree `List[Message]`. Accepts the OpenAI content forms
-    * (plain string, or an array of `text` / `image_url` parts). Roles are the
-    * three the in-tree `MessageRole` models; OpenAI's `role:"tool"` and
-    * assistant `tool_calls` have no in-tree counterpart that this face carries
-    * ⇒ refused, not dropped. */
+  /**
+   * `messages` → in-tree `List[Message]`. Accepts the OpenAI content forms
+   * (plain string, or an array of `text` / `image_url` parts). Roles are the
+   * three the in-tree `MessageRole` models; OpenAI's `role:"tool"` and
+   * assistant `tool_calls` have no in-tree counterpart that this face carries
+   * ⇒ refused, not dropped.
+   */
   private def readMessages(cur: io.circe.ACursor): Either[Rejected, List[Message]] =
     cur.downField("messages").as[Option[List[Json]]] match
       case Right(Some(msgs)) if msgs.nonEmpty =>
-        msgs.zipWithIndex.foldLeft[Either[Rejected, List[Message]]](Right(Nil)) {
-          case (acc, (m, idx)) =>
-            for
-              done <- acc
-              one <- readMessage(m, idx)
-            yield done :+ one
+        msgs.zipWithIndex.foldLeft[Either[Rejected, List[Message]]](Right(Nil)) { case (acc, (m, idx)) =>
+          for
+            done <- acc
+            one <- readMessage(m, idx)
+          yield done :+ one
         }
       case _ =>
         Left(
@@ -283,6 +305,10 @@ object OpenAiChatShim:
               )
             else readContent(c, role, idx)
 
+    end match
+
+  end readMessage
+
   private def readContent(
     c: io.circe.ACursor,
     role: MessageRole,
@@ -297,13 +323,14 @@ object OpenAiChatShim:
         Right(Message(role, Left(j.asString.getOrElse(""))))
       case Some(j) if j.isArray =>
         val parts = j.asArray.getOrElse(Vector.empty)
-        parts.zipWithIndex.foldLeft[Either[Rejected, List[ContentBlock]]](Right(Nil)) {
-          case (acc, (p, pi)) =>
+        parts.zipWithIndex
+          .foldLeft[Either[Rejected, List[ContentBlock]]](Right(Nil)) { case (acc, (p, pi)) =>
             for
               done <- acc
               one <- readPart(p, idx, pi)
             yield done :+ one
-        }.map(blocks => Message(role, Right(blocks)))
+          }
+          .map(blocks => Message(role, Right(blocks)))
       case Some(_) =>
         Left(
           Rejected(
@@ -355,10 +382,16 @@ object OpenAiChatShim:
           )
         )
 
-  /** The in-tree image block carries base64 (`ContentBlock.Image(data,
-    * mediaType)`, rendered outbound as `data:<mediaType>;base64,<data>` —
-    * `OpenAiAdapter.scala:144`). A remote image URL is therefore NOT carryable:
-    * fetching it would be a new network face. Refused, not dropped. */
+    end match
+
+  end readPart
+
+  /**
+   * The in-tree image block carries base64 (`ContentBlock.Image(data,
+   * mediaType)`, rendered outbound as `data:<mediaType>;base64,<data>` —
+   * `OpenAiAdapter.scala:144`). A remote image URL is therefore NOT carryable:
+   * fetching it would be a new network face. Refused, not dropped.
+   */
   private def parseDataUrl(url: String, idx: Int, pi: Int): Either[Rejected, ContentBlock] =
     val prefix = "data:"
     val marker = ";base64,"
@@ -379,13 +412,15 @@ object OpenAiChatShim:
 
   // ── response: in-tree LlmResponse → OpenAI body ──────────────────────────
 
-  /** Convert the in-tree [[LlmResponse]] into an OpenAI `chat.completion`
-    * body. `model` reports what ACTUALLY served the request (`meta.providerId` /
-    * `meta.model`), so a substituted candidate is always visible to the caller.
-    *
-    * Deliberately not carried (no OpenAI counterpart in the completion object;
-    * declared, not silently lost): `searchInfo` (a provider-native extension)
-    * and the `meta` diagnostics (duration / fallback chain / context window). */
+  /**
+   * Convert the in-tree [[LlmResponse]] into an OpenAI `chat.completion`
+   * body. `model` reports what ACTUALLY served the request (`meta.providerId` /
+   * `meta.model`), so a substituted candidate is always visible to the caller.
+   *
+   * Deliberately not carried (no OpenAI counterpart in the completion object;
+   * declared, not silently lost): `searchInfo` (a provider-native extension)
+   * and the `meta` diagnostics (duration / fallback chain / context window).
+   */
   def toOpenAiResponse(resp: LlmResponse): Json =
     val toolCalls = resp.toolCalls.map(toolCallJson)
     val content: Json =
@@ -395,8 +430,7 @@ object OpenAiChatShim:
       "content" -> content
     )
     val message =
-      if toolCalls.nonEmpty then
-        messageBase.deepMerge(Json.obj("tool_calls" -> Json.fromValues(toolCalls)))
+      if toolCalls.nonEmpty then messageBase.deepMerge(Json.obj("tool_calls" -> Json.fromValues(toolCalls)))
       else messageBase
     val choice = Json.obj(
       "index" -> 0.asJson,
@@ -412,10 +446,14 @@ object OpenAiChatShim:
     )
     resp.usage.map(usageJson) match
       case Some(u) => base.deepMerge(Json.obj("usage" -> u))
-      case None    => base
+      case None => base
 
-  /** Same rendering as the outbound OpenAI adapter (`OpenAiAdapter.scala:117`):
-    * `arguments` is the compact JSON string of the tool input. */
+  end toOpenAiResponse
+
+  /**
+   * Same rendering as the outbound OpenAI adapter (`OpenAiAdapter.scala:117`):
+   * `arguments` is the compact JSON string of the tool input.
+   */
   private def toolCallJson(tc: ToolCall): Json =
     Json.obj(
       "id" -> tc.id.asJson,
@@ -440,8 +478,10 @@ object OpenAiChatShim:
         )
       case None => base
 
-  /** OpenAI-shaped error envelope. `status` is always 400 for this face's
-    * refusals; the JSON body carries the field pointer and the machine tag. */
+  /**
+   * OpenAI-shaped error envelope. `status` is always 400 for this face's
+   * refusals; the JSON body carries the field pointer and the machine tag.
+   */
   def errorEnvelope(r: Rejected): Json =
     Json.obj(
       "error" -> Json.obj(

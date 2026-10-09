@@ -121,15 +121,15 @@ private[gateway] object RegistryRoutes:
             globalList = globalAgents.values.toList
               .filter(a => nebflow.core.entity.BuiltinAgents.panelVisible(a.name))
               .map { a =>
-              Json.obj(
-                "name" -> a.name.asJson,
-                "description" -> a.description.asJson,
-                "displayName" -> a.name.asJson,
-                "category" -> a.category.asJson,
-                "layer" -> "global".asJson,
-                "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(a.name).asJson
-              )
-            }
+                Json.obj(
+                  "name" -> a.name.asJson,
+                  "description" -> a.description.asJson,
+                  "displayName" -> a.displayName.getOrElse(a.name).asJson,
+                  "category" -> a.category.asJson,
+                  "layer" -> "global".asJson,
+                  "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(a.name).asJson
+                )
+              }
             result <- Ok(Json.obj("agents" -> globalList.asJson))
           yield result
         }

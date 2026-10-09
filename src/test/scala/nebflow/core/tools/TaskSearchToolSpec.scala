@@ -37,7 +37,8 @@ class TaskSearchToolSpec extends CatsEffectSuite:
   test("search result carries the full return shape: task #N, title, status, executor, address, snippet") {
     withTempDataRoot { tmp =>
       IO {
-        val id = TaskLedgerStore.open()
+        val id = TaskLedgerStore
+          .open()
           .createSyncReturningId(title = "Ship the billing exporter")
           .fold(e => fail(e.message), identity)
         DelegateRegistry.put(
@@ -52,10 +53,12 @@ class TaskSearchToolSpec extends CatsEffectSuite:
             createdAt = 1L
           )
         )
-        val res = TaskSearchTool.call(
-          jsonObject("query" -> io.circe.Json.fromString("billing exporter")),
-          ToolContext(projectRoot = tmp.toString)
-        ).unsafeRunSync()
+        val res = TaskSearchTool
+          .call(
+            jsonObject("query" -> io.circe.Json.fromString("billing exporter")),
+            ToolContext(projectRoot = tmp.toString)
+          )
+          .unsafeRunSync()
         val out = res.fold(e => fail(e.message), identity)
         // Mail 地址面提示句（§16 串）在场
         assert(out.contains("Mail address face:"), s"缺地址面提示句: $out")
@@ -73,7 +76,11 @@ class TaskSearchToolSpec extends CatsEffectSuite:
         assertEquals(taskHit.get.downField("title").as[String], Right("Ship the billing exporter"))
         assertEquals(taskHit.get.downField("status").as[String], Right("open"))
         assertEquals(taskHit.get.downField("executor").as[String], Right("zcode"), "执行器图标键 = 绑定执行器投影")
-        assertEquals(taskHit.get.downField("address").as[String], Right("delegate:delegate-zcode-1234abcd"), "address = delegate:<id>")
+        assertEquals(
+          taskHit.get.downField("address").as[String],
+          Right("delegate:delegate-zcode-1234abcd"),
+          "address = delegate:<id>"
+        )
         assert(taskHit.get.downField("snippet").as[String].isRight)
         // delegate 面：同地址同执行器，状态 = 申报槽（未申报 = null）
         assertEquals(delegateHit.get.downField("address").as[String], Right("delegate:delegate-zcode-1234abcd"))
@@ -86,11 +93,17 @@ class TaskSearchToolSpec extends CatsEffectSuite:
   test("lexical degradation: no embedding config → mode=lexical, same shape, Mail hint present") {
     withTempDataRoot { tmp =>
       IO {
-        TaskLedgerStore.open().createSyncReturningId(title = "Refactor the widget cache").fold(e => fail(e.message), identity)
-        val out = TaskSearchTool.call(
-          jsonObject("query" -> io.circe.Json.fromString("widget cache")),
-          ToolContext(projectRoot = tmp.toString)
-        ).unsafeRunSync().fold(e => fail(e.message), identity)
+        TaskLedgerStore
+          .open()
+          .createSyncReturningId(title = "Refactor the widget cache")
+          .fold(e => fail(e.message), identity)
+        val out = TaskSearchTool
+          .call(
+            jsonObject("query" -> io.circe.Json.fromString("widget cache")),
+            ToolContext(projectRoot = tmp.toString)
+          )
+          .unsafeRunSync()
+          .fold(e => fail(e.message), identity)
         assert(out.contains("mode=lexical"), s"词法降级模式标注: $out")
         assert(out.contains("Mail address face:"), "降级路径同一地址面提示")
         assert(out.contains("Refactor the widget cache"))
@@ -101,16 +114,21 @@ class TaskSearchToolSpec extends CatsEffectSuite:
   test("empty result and blank query are explicit, well-shaped failures") {
     withTempDataRoot { tmp =>
       IO {
-        val none = TaskSearchTool.call(
-          jsonObject("query" -> io.circe.Json.fromString("zzzyyxxx")),
-          ToolContext(projectRoot = tmp.toString)
-        ).unsafeRunSync().fold(e => fail(e.message), identity)
+        val none = TaskSearchTool
+          .call(
+            jsonObject("query" -> io.circe.Json.fromString("zzzyyxxx")),
+            ToolContext(projectRoot = tmp.toString)
+          )
+          .unsafeRunSync()
+          .fold(e => fail(e.message), identity)
         assert(none.contains("no hits"), s"空命中显式措辞: $none")
         assert(none.contains("mode=lexical"))
-        val blank = TaskSearchTool.call(
-          jsonObject("query" -> io.circe.Json.fromString("  ")),
-          ToolContext(projectRoot = tmp.toString)
-        ).unsafeRunSync()
+        val blank = TaskSearchTool
+          .call(
+            jsonObject("query" -> io.circe.Json.fromString("  ")),
+            ToolContext(projectRoot = tmp.toString)
+          )
+          .unsafeRunSync()
         assert(blank.isLeft, "空白 query = 显式错误")
       }
     }.unsafeRunSync()
@@ -120,16 +138,24 @@ class TaskSearchToolSpec extends CatsEffectSuite:
     withTempDataRoot { tmp =>
       IO {
         // 缺省（未注册）：跳过照常返回
-        assertEquals(TaskSearchRerank.rerank("q", List(TaskSearchRerank.Candidate("task:1", "t"))).unsafeRunSync(), None)
+        assertEquals(
+          TaskSearchRerank.rerank("q", List(TaskSearchRerank.Candidate("task:1", "t"))).unsafeRunSync(),
+          None
+        )
 
         // 执行体异常：吞掉 → None（检索面绝不炸）
         TaskSearchRerank.install { (q, c) => IO.raiseError[Option[List[String]]](new RuntimeException("boom")) }
-        assertEquals(TaskSearchRerank.rerank("q", List(TaskSearchRerank.Candidate("task:1", "t"))).unsafeRunSync(), None)
+        assertEquals(
+          TaskSearchRerank.rerank("q", List(TaskSearchRerank.Candidate("task:1", "t"))).unsafeRunSync(),
+          None
+        )
         TaskSearchRerank.clear()
 
         // 在册 face：排列透传
         TaskSearchRerank.install { (q, c) => IO.pure(Some(c.map(_.id).reverse)) }
-        val got = TaskSearchRerank.rerank("q", List(TaskSearchRerank.Candidate("task:1", "t"), TaskSearchRerank.Candidate("task:2", "u"))).unsafeRunSync()
+        val got = TaskSearchRerank
+          .rerank("q", List(TaskSearchRerank.Candidate("task:1", "t"), TaskSearchRerank.Candidate("task:2", "u")))
+          .unsafeRunSync()
         assertEquals(got, Some(List("task:2", "task:1")))
       }
     }.unsafeRunSync()

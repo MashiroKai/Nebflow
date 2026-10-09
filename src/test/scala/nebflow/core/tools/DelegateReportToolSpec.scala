@@ -31,14 +31,22 @@ class DelegateReportToolSpec extends CatsEffectSuite:
   private def ctx(sessionId: Option[String]): ToolContext =
     ToolContext(projectRoot = tempRoot.toString, sessionId = sessionId)
 
-  private def call(sessionId: Option[String] = Some("delegate-nebflow-abc"))(input: (String, Json)*): IO[Either[String, String]] =
+  private def call(sessionId: Option[String] = Some("delegate-nebflow-abc"))(
+    input: (String, Json)*
+  ): IO[Either[String, String]] =
     DelegateReportTool.call(Json.obj(input.toList*).asObject.get, ctx(sessionId)).map(_.left.map(_.message))
 
   private def seed(id: String): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(
-        id = id, executor = "nebflow", cwd = tempRoot.toString, project = None, taskId = Some("77"),
-        parentSessionId = "nebula-root", title = "seeded", createdAt = 1L
+        id = id,
+        executor = "nebflow",
+        cwd = tempRoot.toString,
+        project = None,
+        taskId = Some("77"),
+        parentSessionId = "nebula-root",
+        title = "seeded",
+        createdAt = 1L
       )
     )
 
@@ -80,6 +88,7 @@ class DelegateReportToolSpec extends CatsEffectSuite:
       assertEquals(rec.map(_.taskId), Some(Some("77")))
       assertEquals(rec.map(_.title), Some("seeded"))
       assertEquals(rec.map(_.executor), Some("nebflow"))
+    end for
   }
 
   test("no record, no write: reporting from an unspawned session id is refused, not fabricated") {
@@ -87,12 +96,17 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     yield assert(res.left.exists(_.contains("no registry record")))
   }
 
-  test("backward-compatible decode: a legacy record JSON without the new fields still decodes (deriveDecoder would drop it)") {
+  test(
+    "backward-compatible decode: a legacy record JSON without the new fields still decodes (deriveDecoder would drop it)"
+  ) {
     seed("delegate-nebflow-legacy")
     // 模拟旧版记录：重写为无 report*/branch/worktree/baseBranch/projectWorkspace 键的 JSON
-    val legacy = io.circe.parser.parse(
-      """{"id":"delegate-nebflow-legacy","executor":"nebflow","cwd":"/tmp","project":null,"taskId":"1","parentSessionId":"p","title":"old","createdAt":5}"""
-    ).toOption.get
+    val legacy = io.circe.parser
+      .parse(
+        """{"id":"delegate-nebflow-legacy","executor":"nebflow","cwd":"/tmp","project":null,"taskId":"1","parentSessionId":"p","title":"old","createdAt":5}"""
+      )
+      .toOption
+      .get
     os.write.over(PathUtil.dataRoot / "delegates" / "delegate-nebflow-legacy.json", legacy.noSpaces)
     val rec = DelegateRegistry.find("delegate-nebflow-legacy")
     assertEquals(rec.map(_.title), Some("old"), "legacy record must survive the tolerant decoder")

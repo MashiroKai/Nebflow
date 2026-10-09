@@ -246,8 +246,14 @@ private[agent] object AgentCompactionHandlers:
     postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val config = CompactConfig()
-    if state.pendingCompaction.isDefined then
-      val reason = "Compaction already in progress"
+    // §E-11 双路径竞争（手动 /compact 与影子同时在飞）：单飞行互斥扩展——乒乓影子
+    // 在飞（含其 S 待换入窗）时手动压缩一并拒绝，两入口同检（自动触发点同检见
+    // maybeAutoCompact 的 shadowPending 分支）。非 pingpong 会话 shadowPending 恒
+    // None ⇒ 本判定与原「Compaction already in progress」逐字不变（§G1）。
+    if state.pendingCompaction.isDefined || state.pingpong.shadowPending.isDefined then
+      val reason =
+        if state.pendingCompaction.isDefined then "Compaction already in progress"
+        else "Pingpong shadow compaction in progress"
       for
         _ <- replyDeferred.fold(IO.unit)(d => d.complete(Left(reason)).void.handleErrorWith(_ => IO.unit))
         _ <- ctx.forkTurn(

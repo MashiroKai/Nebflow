@@ -319,28 +319,36 @@ object MergeMutexPolicy:
   // impact, and it never feeds a gate — the gate predicate, the FIFO order and the
   // semantics of `mergeQueue` / `mergeQueuePos` are byte-level unchanged.
 
-  /** The single reason token this slot may carry (frozen literal; consumers translate it,
-    * never re-derive it). It reuses the wording family of the existing verdict-gate hold
-    * message ("a non-pass verdict") and invents no third vocabulary. */
+  /**
+   * The single reason token this slot may carry (frozen literal; consumers translate it,
+   * never re-derive it). It reuses the wording family of the existing verdict-gate hold
+   * message ("a non-pass verdict") and invents no third vocabulary.
+   */
   val VerdictGateReason: String = "verdict-not-pass"
 
-  /** Rendered value for an upstream verifier with no declared verdict (`None`) or an empty
-    * one — the same `"none"` wording the engine's verdict-gate hold message already uses
-    * (`NodeEngine.logVerdictGateHold`). */
+  /**
+   * Rendered value for an upstream verifier with no declared verdict (`None`) or an empty
+   * one — the same `"none"` wording the engine's verdict-gate hold message already uses
+   * (`NodeEngine.logVerdictGateHold`).
+   */
   val VerdictGateNone: String = "none"
 
-  /** One entry of the upstream verifier list holding this merge position.
-    *
-    * @param role        the upstream node's `role` verbatim (same raw-value discipline as the
-    *                    existing `role` payload key).
-    * @param lastVerdict the upstream node's `lastVerdict` verbatim, or [[VerdictGateNone]]
-    *                    when undeclared / empty. */
+  /**
+   * One entry of the upstream verifier list holding this merge position.
+   *
+   * @param role        the upstream node's `role` verbatim (same raw-value discipline as the
+   *                    existing `role` payload key).
+   * @param lastVerdict the upstream node's `lastVerdict` verbatim, or [[VerdictGateNone]]
+   *                    when undeclared / empty.
+   */
   final case class VerdictGateHolder(id: String, name: String, role: String, lastVerdict: String)
 
-  /** Payload value of the conditional key `mergeVerdictGate` (see [[VerdictGateReason]]).
-    *
-    * @param heldBy the upstream verifiers whose current verdict is not `pass` — the very list
-    *               the gate itself acts on (single point, never a second predicate). */
+  /**
+   * Payload value of the conditional key `mergeVerdictGate` (see [[VerdictGateReason]]).
+   *
+   * @param heldBy the upstream verifiers whose current verdict is not `pass` — the very list
+   *               the gate itself acts on (single point, never a second predicate).
+   */
   final case class VerdictGate(heldBy: List[VerdictGateHolder])
 
   /** rank 次序键的**元数据**（载荷 `mergeQueue.rank`；对外冻结字面量，前端只读不派生）。 */

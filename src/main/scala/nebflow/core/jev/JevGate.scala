@@ -66,12 +66,14 @@ enum JevGateOutcome:
 
 object JevGate:
 
-  /** Provider ids the gate accepts (mirrors `llm.decision.DecisionProvider`).
-    *
-    * Duplicated as literals ON PURPOSE: `core` must not import `llm` (the
-    * dependency direction is `shared <- core <- cli/gateway`). The duplication
-    * is pinned by a spec that asserts the two lists agree, so drift fails a
-    * test instead of silently changing behaviour. */
+  /**
+   * Provider ids the gate accepts (mirrors `llm.decision.DecisionProvider`).
+   *
+   * Duplicated as literals ON PURPOSE: `core` must not import `llm` (the
+   * dependency direction is `shared <- core <- cli/gateway`). The duplication
+   * is pinned by a spec that asserts the two lists agree, so drift fails a
+   * test instead of silently changing behaviour.
+   */
   val KnownProviders: List[String] = List("typesafe-jev", "laya")
 
   /**
@@ -94,3 +96,4 @@ object JevGate:
   def isApplied(snapshot: JevGateSnapshot): Boolean = effective(snapshot) match
     case JevGateOutcome.Applied(_) => true
     case _ => false
+end JevGate

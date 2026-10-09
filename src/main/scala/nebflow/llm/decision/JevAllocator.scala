@@ -59,21 +59,25 @@ import nebflow.shared.NebflowLogger
 final class JevAllocator(
   provider: DecisionProvider[IO],
   timeoutMs: Long,
-  /** Maximum characters of the TASK-BRIEF portion of `state`.
-    *
-    * The cap bounds the BRIEF, not the composed state: the preamble and the
-    * catalog section are composed around it, exactly as the transferred scorer
-    * composes them (`setscore_one.mjs:58` slices `brief`, `:62-67` wraps it).
-    * `String.length`/`take` count UTF-16 code units, which is also what the
-    * scorer's `brief.length`/`slice` count — the two truncations agree on where
-    * the boundary falls. */
+  /**
+   * Maximum characters of the TASK-BRIEF portion of `state`.
+   *
+   * The cap bounds the BRIEF, not the composed state: the preamble and the
+   * catalog section are composed around it, exactly as the transferred scorer
+   * composes them (`setscore_one.mjs:58` slices `brief`, `:62-67` wraps it).
+   * `String.length`/`take` count UTF-16 code units, which is also what the
+   * scorer's `brief.length`/`slice` count — the two truncations agree on where
+   * the boundary falls.
+   */
   stateCapChars: Int = JevAllocator.DefaultStateCapChars
 ) extends JevAllocatorPort:
 
   private val logger = NebflowLogger.forName("nebflow.jev.alloc")
 
-  /** Choice criteria of a `need_` question — the fixed yes/no pair, in the
-    * transferred scorer's words (`setscore_one.mjs:75-78`). */
+  /**
+   * Choice criteria of a `need_` question — the fixed yes/no pair, in the
+   * transferred scorer's words (`setscore_one.mjs:75-78`).
+   */
   private val NeedCriteria: Map[String, Option[String]] =
     Map(
       "yes" -> Some("required for this task's primary purpose"),
@@ -154,9 +158,8 @@ final class JevAllocator(
         ),
         DecisionQuestion.Score(
           id = s"fit_${entry.name}",
-          instructions =
-            s"How well does the '${entry.name}' capability package fit this task's primary purpose, " +
-              "by the task text alone?",
+          instructions = s"How well does the '${entry.name}' capability package fit this task's primary purpose, " +
+            "by the task text alone?",
           criteria = List("poor", "partial", "good")
         )
       )
@@ -171,19 +174,25 @@ final class JevAllocator(
    * silently shrinking the set.
    */
   private[decision] def select(resp: DecisionResponse, catalog: List[CatalogEntry]): List[String] =
-    catalog.filter { entry =>
-      val qid = s"need_${entry.name}"
-      resp.answers.get(qid) match
-        case Some(a) =>
-          DecisionAnswer.pYes(a) match
-            case Some(p) => p >= DecisionAnswer.YesThreshold
-            case None =>
-              logger.warnSync(s"need question '$qid' answered without a probabilities[yes] read — treated as not required")
-              false
-        case None =>
-          logger.warnSync(s"need question '$qid' has no answer in the response — treated as not required")
-          false
-    }.map(_.name)
+    catalog
+      .filter { entry =>
+        val qid = s"need_${entry.name}"
+        resp.answers.get(qid) match
+          case Some(a) =>
+            DecisionAnswer.pYes(a) match
+              case Some(p) => p >= DecisionAnswer.YesThreshold
+              case None =>
+                logger.warnSync(
+                  s"need question '$qid' answered without a probabilities[yes] read — treated as not required"
+                )
+                false
+          case None =>
+            logger.warnSync(s"need question '$qid' has no answer in the response — treated as not required")
+            false
+      }
+      .map(_.name)
+
+end JevAllocator
 
 object JevAllocator:
 
@@ -253,3 +262,4 @@ object JevAllocator:
       settings <- JevSettings.fromConfig(health, configPath)
       provider <- DecisionProviders.build(settings)
     yield new JevAllocator(provider, settings.timeoutMs)
+end JevAllocator

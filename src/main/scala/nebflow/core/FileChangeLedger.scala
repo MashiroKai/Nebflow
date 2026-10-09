@@ -18,8 +18,9 @@ object FileChangeType:
  *  @param changeType     "added" (file created by this call) or "modified"
  *  @param addedLines     lines added by this call
  *  @param removedLines   lines removed by this call
- *  @param diffText       unified diff body (hunks only, no OK: header) when it
- *                        fits [[FileChangeLedger.MaxCapturedDiffChars]]; None otherwise
+ *  @param diffText       unified diff body (hunks only, no OK: header); stored
+ *                        verbatim — the capture-time char cap was removed
+ *                        (2026-10-10 ruling, Canvas renders full bodies)
  *  @param degradedReason present when diffText is None: why the diff body was dropped
  *  @param sourceTool     the tool that produced the change ("Write" / "Edit" / "MultiEdit")
  *  @param timestamp      epoch millis of the write
@@ -59,7 +60,11 @@ class FileChangeLedger(private val state: Ref[IO, Map[String, Vector[FileChangeE
       state.update { m =>
         keys.foldLeft(m) { (acc, key) =>
           val next = acc.getOrElse(key, Vector.empty) :+ event
-          acc.updated(key, if next.length > FileChangeLedger.MaxEventsPerKey then next.takeRight(FileChangeLedger.MaxEventsPerKey) else next)
+          acc.updated(
+            key,
+            if next.length > FileChangeLedger.MaxEventsPerKey then next.takeRight(FileChangeLedger.MaxEventsPerKey)
+            else next
+          )
         }
       }
 
@@ -95,12 +100,6 @@ object FileChangeLedger:
 
   /** Per-key event cap; the oldest events are evicted first (bounded memory). */
   val MaxEventsPerKey: Int = 200
-
-  /**
-   * Capture-time cap on a stored diff body. Larger diffs keep their added/
-   * removed counts but carry no diffText (degradedReason = "diff-too-large").
-   */
-  val MaxCapturedDiffChars: Int = 100000
 
   /** Global instance — SharedResources' default; tests build isolated ones via [[make]]. */
   val unsafe: FileChangeLedger = new FileChangeLedger(Ref.unsafe[IO, Map[String, Vector[FileChangeEvent]]](Map.empty))
@@ -145,22 +144,22 @@ object FileChangeLedger:
       val (diff, degraded) = capBody(body)
       // Counts come from the header stats (authoritative) when parseable, with
       // a body recount as fallback for hand-formed results.
-      val (added, removed) = DiffUtil.parseUpdatedStats(header).getOrElse((countLines(body, '+'), countLines(body, '-')))
+      val (added, removed) =
+        DiffUtil.parseUpdatedStats(header).getOrElse((countLines(body, '+'), countLines(body, '-')))
       Some(
         FileChangeEvent(path, FileChangeType.Modified, added, removed, diff, degraded, tool, now)
       )
     else None
+    end if
   end parseToolResult
 
   private def isDiffLine(l: String): Boolean =
     l.isEmpty || l.startsWith("@@") || l.startsWith(" ") || l.startsWith("+") || l.startsWith("-")
 
-  /** Apply the capture-time diff cap: oversized bodies degrade to counts-only. */
+  /** Bodies ship verbatim (2026-10-10 ruling): empty body = no diff (counts-only,
+    * no reason — nothing was dropped), otherwise the full body is kept. */
   private def capBody(body: String): (Option[String], Option[String]) =
-    if body.isEmpty then (None, None)
-    else if body.length > MaxCapturedDiffChars then
-      (None, Some(s"diff-too-large: ${body.length} chars exceeds capture cap $MaxCapturedDiffChars"))
-    else (Some(body), None)
+    if body.isEmpty then (None, None) else (Some(body), None)
 
   /** Count diff payload lines with the given marker, stopping at non-diff lines. */
   private def countLines(body: String, marker: Char): Int =
@@ -172,7 +171,8 @@ object FileChangeLedger:
    * Coalesce a session's events into one per path (delivery is per-file):
    * changeType escalates to "added" when any event created the file; counts sum
    * across events; diff bodies join in write order (an edit journal — each
-   * event's hunks render independently); oversized joins degrade to counts-only.
+   * event's hunks render independently). Joins keep the full merged body (no
+   * capture cap, 2026-10-10 ruling); a join over two None bodies stays None.
    * Input order is preserved (first appearance), matching an ascending timeline.
    */
   def coalesce(events: List[FileChangeEvent]): List[FileChangeEvent] =
@@ -190,19 +190,18 @@ object FileChangeLedger:
               case (Some(a), None) => Some(a)
               case (None, Some(b)) => Some(b)
               case (None, None) => None
-            val (diffText, degraded) =
-              diffJoin match
-                case Some(j) if j.length > MaxCapturedDiffChars =>
-                  (None, Some(s"diff-too-large: ${j.length} chars exceeds capture cap $MaxCapturedDiffChars"))
-                case other => (other, None)
+            val diffText = diffJoin
             val degradedFinal =
               if diffText.isEmpty then
-                degraded.orElse(prev.degradedReason).orElse(e.degradedReason).orElse(Some("diff-too-large"))
+                prev.degradedReason.orElse(e.degradedReason)
               else None
             merged.put(
               e.path,
               prev.copy(
-                changeType = if prev.changeType == FileChangeType.Added || e.changeType == FileChangeType.Added then FileChangeType.Added else FileChangeType.Modified,
+                changeType =
+                  if prev.changeType == FileChangeType.Added || e.changeType == FileChangeType.Added then
+                    FileChangeType.Added
+                  else FileChangeType.Modified,
                 addedLines = prev.addedLines + e.addedLines,
                 removedLines = prev.removedLines + e.removedLines,
                 diffText = diffText,

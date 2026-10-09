@@ -235,6 +235,7 @@ class AskUserDualModeToolSpec extends FunSuite:
   // 构造行注册（`SharedResources.scala:419`），本 spec 不构造 SharedResources ⇒
   // 自接线到**同一**生产实现（不复制、不伪造第二份桥）。
   nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   nebflow.core.AskUserAnswerPort.install(
     new nebflow.core.AskUserAnswerPort.Face:
       def ref(
@@ -382,7 +383,8 @@ class AskUserDualModeToolSpec extends FunSuite:
 
   test("附件拒绝④: 件数超上限（单点常量 AttachContract.MaxAttachmentsPerMessage）") {
     val root = freshRoot("count")
-    val files = (1 to AttachContract.MaxAttachmentsPerMessage + 1).map(i => servedFile(root, s"projects/demo/f$i.pdf")).toList
+    val files =
+      (1 to AttachContract.MaxAttachmentsPerMessage + 1).map(i => servedFile(root, s"projects/demo/f$i.pdf")).toList
     PathUtil.setDataRoot(os.Path(root))
     val err = assertRejected(files.map(_.toString), AskUserQuestionTool.AttachCountCode, "件数超限")
     assert(err.message.contains(s"${AttachContract.MaxAttachmentsPerMessage}"), err.message)
@@ -419,7 +421,8 @@ class AskUserDualModeToolSpec extends FunSuite:
     assertEquals(java.nio.file.Files.size(exact), AskUserQuestionTool.MaxAttachmentBytes)
     assertEquals(
       AskUserQuestionTool
-        .validateAttachments(List(exact.toString)).isRight,
+        .validateAttachments(List(exact.toString))
+        .isRight,
       true,
       "恰好等于单件上限的文件被误拒（上限语义应为 ≤）"
     )
@@ -439,7 +442,14 @@ class AskUserDualModeToolSpec extends FunSuite:
   test("附件判据零复制（机械读数）: 工具源文件内无第二份判据表、无直连 FilePolicyPort（判据经 FileRefs/Pop 同一入口）") {
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "AskUserQuestionTool.scala")
     // 判据本体只能在 FilePolicyPort 实现侧（gateway.NfFilePolicy）出现
-    for banned <- List("NfDataRootAllowlist", "NfCredentialNamePattern", "NfCredentialPathSegments", "NfExternalCredentialEntries", "NfFileAllowedExt", "AllowedExtensions")
+    for banned <- List(
+        "NfDataRootAllowlist",
+        "NfCredentialNamePattern",
+        "NfCredentialPathSegments",
+        "NfExternalCredentialEntries",
+        "NfFileAllowedExt",
+        "AllowedExtensions"
+      )
     do assert(!src.contains(banned), s"工具层出现第二份判据表 `$banned`（禁复制）")
     // 09:41 令「禁自造第二套域规则/第二权威」：工具层不直连端口（端口问答收拢在
     // FileRefs——Pop 的同一入口），解析/探针 = FileRefs 两个单点。

@@ -582,28 +582,29 @@ object LlmLogWriter:
 
   // ── Vision intent marker (visionfix 甲 · author ruling: log-side only) ──
 
-  /** Structured marker: "the payload handed to this provider carried N>=1 image
-    * block". Written to the same sse JSONL stream as [[logIntake]], so a request
-    * can be traced request_id → intake → vision_intent → sse/response.
-    *
-    * WHY this exists (author ruling 2026-09-23): under (甲) an image always goes
-    * out, and whether the far end accepts it is the provider's call. If an
-    * endpoint silently drops the image (HTTP 200, image never enters the model
-    * input), NOTHING in this repository can observe it. The marker cannot detect
-    * that either — but it makes "we did send an image on this request"
-    * machine-assertable, which is the only half of the problem we own. It is the
-    * log-side replacement for the deleted strip mechanism's incidental
-    * visibility, with zero new user-facing text (author: no user-facing marker).
-    *
-    * 🔴 Deliberately takes `hadImage` as a PARAMETER rather than reading
-    * `request.messages` itself: the caller computes it from the SAME value it
-    * passes to the adapter, so a reintroduced strip step at the send point would
-    * make this marker report `hadImage=false` (mutation-2 red) instead of
-    * silently reporting the pre-strip payload.
-    *
-    * Field set is minimal by design: hadImage + provider + model + the existing
-    * correlation ids. No credentials, no key material, no request bodies.
-    */
+  /**
+   * Structured marker: "the payload handed to this provider carried N>=1 image
+   * block". Written to the same sse JSONL stream as [[logIntake]], so a request
+   * can be traced request_id → intake → vision_intent → sse/response.
+   *
+   * WHY this exists (author ruling 2026-09-23): under (甲) an image always goes
+   * out, and whether the far end accepts it is the provider's call. If an
+   * endpoint silently drops the image (HTTP 200, image never enters the model
+   * input), NOTHING in this repository can observe it. The marker cannot detect
+   * that either — but it makes "we did send an image on this request"
+   * machine-assertable, which is the only half of the problem we own. It is the
+   * log-side replacement for the deleted strip mechanism's incidental
+   * visibility, with zero new user-facing text (author: no user-facing marker).
+   *
+   * 🔴 Deliberately takes `hadImage` as a PARAMETER rather than reading
+   * `request.messages` itself: the caller computes it from the SAME value it
+   * passes to the adapter, so a reintroduced strip step at the send point would
+   * make this marker report `hadImage=false` (mutation-2 red) instead of
+   * silently reporting the pre-strip payload.
+   *
+   * Field set is minimal by design: hadImage + provider + model + the existing
+   * correlation ids. No credentials, no key material, no request bodies.
+   */
   def logVisionIntent(
     requestId: String,
     sessionId: String,

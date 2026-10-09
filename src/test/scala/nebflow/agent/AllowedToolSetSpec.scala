@@ -264,7 +264,10 @@ class AllowedToolSetSpec extends FunSuite:
     // （promptgov 批 2026-09-17 的退役令之授能面部分被取代——史实 −1 ⇒ 12 归档）：
     // Nebula 在场携带；该名对一切非 Nebula 身份仍由 RootExclusiveTools 剥离
     // （防声明逃逸语义不变）。
-    assert(CoreProbe.allowed(nebula).contains("Delegate"), "Nebula 在场携带 Delegate（2026-10-03 作者令② Delegate 直接触发 kernel——变异验红锚：摘掉即红）")
+    assert(
+      CoreProbe.allowed(nebula).contains("Delegate"),
+      "Nebula 在场携带 Delegate（2026-10-03 作者令② Delegate 直接触发 kernel——变异验红锚：摘掉即红）"
+    )
     assert(!CoreProbe.allowed(nebula).contains("SubTask"), "Nebula does not need SubTask (unless listed)")
     assert(!CoreProbe.allowed(teamAgent).contains("Delegate"), "non-Nebula never gets Delegate")
     assert(CoreProbe.allowed(teamAgent).contains("SubTask"), "team agent with SubTask listed keeps it")
@@ -694,7 +697,11 @@ class AllowedToolSetSpec extends FunSuite:
     // point (AgentCore.friendsSealedStrip), so the expected face subtracts the same
     // strip derived from this snapshot. Never a bare number, never a relaxed assertion.
     val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
-    assertEquals(allowed, AgentCore.RootOrchestrationTools -- sealStrip, "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量（friendseal 封存期按单点 strip 派生），与声明无关")
+    assertEquals(
+      allowed,
+      AgentCore.RootOrchestrationTools -- sealStrip,
+      "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量（friendseal 封存期按单点 strip 派生），与声明无关"
+    )
     Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
       assert(allowed.contains(t), s"Nebula 文件面六件因**机制集**而在场（2026-09-18 18:18 令；非因声明）: $t")
     }
@@ -746,7 +753,9 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，dispatcher 面零 NodeMessage")
     assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
-  test("nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继；N1 复名批随名）——BaseTools + AskUserQuestion + Subagent + AgentFlow"):
+  test(
+    "nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继；N1 复名批随名）——BaseTools + AskUserQuestion + Subagent + AgentFlow"
+  ):
     val bare = mkDef("nebflow", Nil)
     val allowed = CoreProbe.allowed(bare, isFlowNode = true)
     val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Subagent", "AgentFlow")
@@ -767,7 +776,12 @@ class AllowedToolSetSpec extends FunSuite:
     // 声明无效（机制固定零配置）
     val sneaky = mkDef("nebflow", List("WebSearch", "Delegate", "Pop"))
     val sneakyAllowed = CoreProbe.allowed(sneaky)
-    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate") && !sneakyAllowed.contains("Pop") && !sneakyAllowed.contains("ChainWrite"), "nebflow: tools 声明整体失效（机制固定零配置；豁免恰 Subagent/AgentFlow 两件由静态集授能，ChainWrite 只在 delegateSession 尾段授能）")
+    assert(
+      !sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate") && !sneakyAllowed.contains(
+        "Pop"
+      ) && !sneakyAllowed.contains("ChainWrite"),
+      "nebflow: tools 声明整体失效（机制固定零配置；豁免恰 Subagent/AgentFlow 两件由静态集授能，ChainWrite 只在 delegateSession 尾段授能）"
+    )
     // Nebula / dispatcher 面不受影响（对照钉死）
     assert(
       AgentCore.fixedToolsFor(mkDef("Nebula", Nil)).contains("AskUserQuestion"),
@@ -783,7 +797,9 @@ class AllowedToolSetSpec extends FunSuite:
   // 腿（SenderRole.Delegate 单点）；挂载面授权 + 工具内地址面分层 = 双保险
   // （TaskBoard/node_report 同款纪律）。工具内地址面在 MailNodeSubAddressSpec
   // M1..M8 验收，本条钉挂载面（零 over-grant）。
-  test("N1 刀3 S6=C: the delegateSession tail carries Mail alongside the 刀2 delegate face; the default face gains nothing"):
+  test(
+    "N1 刀3 S6=C: the delegateSession tail carries Mail alongside the 刀2 delegate face; the default face gains nothing"
+  ):
     val probe = mkDef("nebflow", Nil)
     val withTail = CoreProbe.allowedWithDelegateSession(probe, delegateSession = true)
     val plain = CoreProbe.allowedWithDelegateSession(probe, delegateSession = false)

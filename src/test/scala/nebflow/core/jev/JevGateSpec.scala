@@ -29,7 +29,13 @@ class JevGateSpec extends CatsEffectSuite:
   // ── the gate is a pure function of its snapshot ─────────────────────────
 
   test("applied requires BOTH configured and enabled (author sentence 3)") {
-    val on = JevGateSnapshot(configured = true, enabled = true, provider = "typesafe-jev", timeoutMs = 15000L, choiceHighBasePolicy = "")
+    val on = JevGateSnapshot(
+      configured = true,
+      enabled = true,
+      provider = "typesafe-jev",
+      timeoutMs = 15000L,
+      choiceHighBasePolicy = ""
+    )
     assertEquals(JevGate.effective(on), JevGateOutcome.Applied(on))
     assert(JevGate.isApplied(on))
 
@@ -41,7 +47,13 @@ class JevGateSpec extends CatsEffectSuite:
   }
 
   test("an unknown or empty provider id is refused rather than defaulted") {
-    val base = JevGateSnapshot(configured = true, enabled = true, provider = "typesafe-jev", timeoutMs = 15000L, choiceHighBasePolicy = "")
+    val base = JevGateSnapshot(
+      configured = true,
+      enabled = true,
+      provider = "typesafe-jev",
+      timeoutMs = 15000L,
+      choiceHighBasePolicy = ""
+    )
     assertEquals(JevGate.effective(base.copy(provider = "")), JevGateOutcome.Off(JevGateReason.ProviderMissing))
     assertEquals(JevGate.effective(base.copy(provider = "openai")), JevGateOutcome.Off(JevGateReason.ProviderMissing))
     assert(JevGate.isApplied(base.copy(provider = "laya")))
@@ -77,7 +89,12 @@ class JevGateSpec extends CatsEffectSuite:
   test("a configured block reads its scalars and applies") {
     withTempDataRoot { tmp =>
       for
-        _ <- IO(os.write.over(tmp / "nebflow.json", """{"jev":{"enabled":true,"provider":"laya","timeoutMs":2500,"choiceHighBasePolicy":"warn"}}"""))
+        _ <- IO(
+          os.write.over(
+            tmp / "nebflow.json",
+            """{"jev":{"enabled":true,"provider":"laya","timeoutMs":2500,"choiceHighBasePolicy":"warn"}}"""
+          )
+        )
         snap <- JevConfigReader.snapshot
         _ = assert(snap.configured)
         _ = assert(snap.enabled)
@@ -102,7 +119,9 @@ class JevGateSpec extends CatsEffectSuite:
         _ = assertEquals(off, JevGateOutcome.Off(JevGateReason.ToggleOff))
         _ <- IO(os.write.over(tmp / "nebflow.json", """{"jev":{"enabled":true,"provider":"typesafe-jev"}}"""))
         on <- JevConfigReader.outcome
-        _ = assert(on match { case JevGateOutcome.Applied(_) => true; case _ => false })
+        _ = assert(on match
+          case JevGateOutcome.Applied(_) => true;
+          case _ => false)
       yield ()
     }
   }
@@ -166,3 +185,4 @@ class JevGateSpec extends CatsEffectSuite:
       yield ()
     }
   }
+end JevGateSpec

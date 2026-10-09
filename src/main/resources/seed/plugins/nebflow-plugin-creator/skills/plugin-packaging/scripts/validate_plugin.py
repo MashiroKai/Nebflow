@@ -28,7 +28,7 @@
 #   - manifest name ≠ 目录名    PluginRegistry.scala:642-644
 #
 # 三档 profile（批1 D4 甲案：单脚本演进；严格度分档按计划§2.1）：
-#   --profile official  官方面硬闸（适用=OFFICIAL_FACE 9 包产品名单；名单外包不适用
+#   --profile official  官方面硬闸（适用=OFFICIAL_FACE 8 包产品名单；名单外包不适用
 #                       此档）。M1-M15 全量 + C 组 fatal 镜像；
 #                       退出码≠0 即阻断；WARN 逐条处置或挂豁免记录（流程面）。
 #   --profile creator   creator 产出交付闸（默认档）。M1-M15 全量 + fatal 镜像；退出码
@@ -59,6 +59,7 @@
 #
 # M8 口径注记：触发词「核心词全命中」是 description-quality skill / 人审判定项
 # （词表按包能力域圈定），不进本脚本硬依赖——脚本只机械拦截「无触发场景句」。
+# M12 号位注记：M12 现为虚位保留；未来行数类新规则可复用该号位，复用须全链申报。
 
 import argparse
 import hashlib
@@ -76,13 +77,13 @@ RESERVED_PREFIX = "nebflow-plugin-"
 OFFICIAL_BASELINE = {"nebflow-plugin-creator", "visual-report", "slideblocks"}
 # C9 保留 namespace 前缀（OfficialPackages.scala:51 逐字「nebflow-」；🔴 禁收窄/改写）
 RESERVED_OFFICIAL_PREFIX = "nebflow-"
-# 官方面 9 包名单：--profile official 的适用面。名单外包（engineering-methods /
+# 官方面 8 包名单：--profile official 的适用面。名单外包（engineering-methods /
 # nebflow-frontend-dev / nebflow-qa）不属 seed 官方面。仅作适用面核对提示用，
 # 不改 M4 白名单语义。
 OFFICIAL_FACE = frozenset({
     "browser-use", "computer-use", "design-spec", "explorer-toolkit",
     "nebflow-plugin-creator", "web-search-toolkit", "document-production",
-    "visual-report", "slideblocks",
+    "visual-report",
 })
 # §B.6 工具白名单（PluginRegistry.scala:104；越界 → PLUGIN_TOOLS_ILLEGAL 拒载 :754-760）
 TOOL_WHITELIST = {"WebSearch", "WebFetch", "Curl"}
@@ -967,7 +968,7 @@ def main():
     ap = argparse.ArgumentParser(description="Nebflow 插件包机械校验 M1-M15 + C 组镜像（三档 profile）")
     ap.add_argument("pkg", help="插件包目录（含 plugin.json）")
     ap.add_argument("--profile", choices=("official", "creator", "user"), default="creator",
-                    help="严格度分档：official=官方面硬闸（适用 9 包）／creator=creator 产出交付闸"
+                    help="严格度分档：official=官方面硬闸（适用 8 包）／creator=creator 产出交付闸"
                          "（默认）／user=提示级（退出码恒 0）")
     ap.add_argument("--allow", action="append", default=[], metavar="NAME",
                     help="追加官方白名单名（保留前缀豁免），可重复")
@@ -1002,7 +1003,7 @@ def main():
         except Exception:
             pass
         if dirbase not in OFFICIAL_FACE and manifest_name_hint not in OFFICIAL_FACE:
-            out("[INFO] 此包不在官方面 9 包名单内——official 档不适用此包")
+            out("[INFO] 此包不在官方面 8 包名单内——official 档不适用此包")
 
     manifest = None
     # M1 manifest 可解析、顶层 object

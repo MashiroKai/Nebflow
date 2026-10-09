@@ -44,7 +44,9 @@ import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
 import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
-import { preserveScrollAnchor } from './msgScrollAnchor.js';
+// follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
+// 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
+import { preserveScrollAnchor, isAtBottom } from './msgScrollAnchor.js';
 // 设备会话统一批 MVP-1（2026-09-15）：设备腿的**数据面**访问器（唯一属主 = dropbox.js，
 // 含 WS 帧 `dropbox-history`/`dropbox-message` + L2 缓存 + 附件队列/闸位）。本模块只
 // **消费**它们，不复制任何取数/合并/落盘逻辑（卡 §6.2：否则造第三实现）。
@@ -1383,6 +1385,26 @@ function renderChatModal(conv) {
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
 
+  // ── 贴底跟随 + 「↓ N 条新消息」回底胶囊（follow 批 2026-10-08，主人反馈）────────
+  // 目标（与主窗 agent 面同语义，A-branch 2026-09-11 / B4 2026-10-04 的本面对应）：
+  //   ① 新消息到达且视口贴底 ⇒ 跟随钉底（appendMessage 判定）；
+  //   ② 用户上翻读历史（已离开贴底区）⇒ 不强拉，胶囊报数、点击回底。
+  // 贴底判定单源 = msgScrollAnchor.isAtBottom（AT_BOTTOM_PX=40，取值理由在那边）。
+  // 本窗滚动判定点**只有这一处**监听：每次滚动重读贴底态并同步胶囊（回底即清零）；
+  // 只读几何 + 胶囊态，**不写滚动位**（锚点补偿仍归 preserveScrollAnchor 单点）。
+  flow.addEventListener('scroll', () => fmSyncFollowPill(), { passive: true });
+  // 胶囊 DOM/样式/文案全复用 agent 面既有件（零新 CSS、零新 i18n 键）：
+  // `.scroll-new-pill` = chat.css:3691（全局载入，index.html:37）；文案键
+  // `chat.newMessages`（en.js:1178 / zh-CN.js:1137，「↓ {n} 条新消息」）。挂
+  // `.fm-modal`（position:relative，friends.css:618）内绝对定位，落位 =
+  // flow 下缘与窗底之间那截（输入条/引用条/多选条）之上 12px，显示时现算。
+  const followPill = document.createElement('button');
+  followPill.type = 'button';
+  followPill.className = 'scroll-new-pill hidden';
+  followPill.setAttribute('aria-live', 'polite');
+  followPill.addEventListener('click', fmFollowBottom);
+  modal.appendChild(followPill);
+
   // ── msgmenu 一期 + visup-b（作者 2026-09-19 04:22 照案）：两个新 UI 面 ─────────
   // ① 引用态条（**D2：挂输入条下方**）—— 组件本体仍是既有输入框引用块渲染器
   //    （`renderRefBlock(mode:'input', closeStyle:'disc')` ⇒ ❌ = 主窗口同类件，修正①）；
@@ -1576,6 +1598,9 @@ function renderChatModal(conv) {
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];
+  // follow 批：跟随/胶囊态随窗同拍归零（跨窗残留 = 上个会话的未读数）。
+  fmFollowPill = followPill;
+  fmUnseenCount = 0;
   // msgmenu 一期：两个新态同拍归零（关窗重开 ⇒ 选中归零、无跨窗引用态）。
   selectionMode = false;
   selectedIds.clear();
@@ -3075,6 +3100,9 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
  *  （不引入 `Number(id)` 排序 —— mock 面的字符串 id 会被 NaN 打乱既有顺序）。 */
 function appendMessages(msgs) {
   const conv = currentConv();
+  // follow 批：真正新增的条目数（去重后）在此统计；贴底判定取**渲染前**几何
+  // （渲染后 preserveScrollAnchor 自会钉底/锚定，判定已失真）。
+  let added = 0;
   for (const m of msgs) {
     // U-b 回显认领：REST keyset 增量先于 POST 响应到达时，就地锚定乐观项
     // （不新增气泡/条目）。「本机所发」判据 = 服务端记录里的 `senderId` ——
@@ -3090,9 +3118,12 @@ function appendMessages(msgs) {
     const hint = conv ? oursBySenderId(m, conv) : null;
     if (hint !== null) markOurs(m, hint);
     if (claimPendingSend(m, conv && conv.conversationId, ours)) continue;
-    if (!chatMsgs.some(x => String(x.id) === String(m.id))) chatMsgs.push(m);
+    if (!chatMsgs.some(x => String(x.id) === String(m.id))) { chatMsgs.push(m); added++; }
   }
+  const atBottom = modalEls ? isAtBottom(modalEls.flow) : true;
   renderMessages(chatMsgs, { stickBottom: false });
+  // follow 批：非贴底且有到达 ⇒ 不强拉（锚点补偿已保住阅读位），胶囊报数。
+  if (added > 0 && !atBottom) { fmUnseenCount += added; fmSyncFollowPill(); }
 }
 
 // ── 加载更早消息（keyset id-window backward walk）────────
@@ -3229,6 +3260,41 @@ function prependMessages(older) {
   flow.scrollTop = flow.scrollHeight - prevHeight + prevTop;
 }
 
+// ── 贴底跟随/回底胶囊·状态与腿（follow 批 2026-10-08）─────────────────────
+// 状态生命周期与窗同拍：`fmFollowPill`/`fmUnseenCount` 在 renderChatModal 的
+// reset 块归零重挂，`closeChat` 随 overlay.remove() 一起弃置（胶囊是 modal 子节点）。
+// 计数语义与 agent 面 `syncScrollPill` 对齐：只数「离开贴底区后到达的消息条目」；
+// 本机所发不计数（本机发送即回底，计数同拍归零）。
+let fmUnseenCount = 0;
+let fmFollowPill = null;
+
+/** 胶囊唯一同步点（滚动监听 / 到达计数 / 回底腿都汇到这里；幂等、自愈）：
+ *  任何原因回到贴底区 ⇒ 无未读，计数清零、胶囊隐藏；否则按计数显隐 + 现算落位。 */
+function fmSyncFollowPill() {
+  if (!fmFollowPill || !modalEls) return;
+  const flow = modalEls.flow;
+  if (isAtBottom(flow)) fmUnseenCount = 0;
+  const show = fmUnseenCount > 0;
+  fmFollowPill.classList.toggle('hidden', !show);
+  if (!show) return;
+  const label = t('chat.newMessages', { n: fmUnseenCount });
+  if (fmFollowPill.textContent !== label) fmFollowPill.textContent = label;
+  const modal = fmFollowPill.parentElement;
+  if (modal && flow) {
+    const below = modal.offsetHeight - (flow.offsetTop + flow.offsetHeight);
+    fmFollowPill.style.bottom = `${Math.max(below, 0) + 12}px`;
+  }
+}
+
+/** 「回到最新」腿（胶囊点击 / 本机发送 / 本机回显 / 贴底到达共用）：
+ *  钉底 + 计数归零 + 胶囊收敛，一步到位（与主窗「本机消息恒回底」裁定同向）。 */
+function fmFollowBottom() {
+  if (!modalEls) return;
+  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  fmUnseenCount = 0;
+  fmSyncFollowPill();
+}
+
 /**
  * @param {any} m 服务端消息
  * @param {boolean} [ours] 调用方确证「这是本机所发」（WS 面 = 事件类型
@@ -3240,7 +3306,7 @@ function appendMessage(m, ours = false) {
   // U-b 回显认领：本条就是本地未决乐观项的回显 ⇒ 就地锚定真 id 并**复用原节点**
   // （气泡数不变、条目数不变）。锚定后与「响应腿」同后置条件 ⇒ 幂等。
   if (claimPendingSend(m, conv.conversationId, ours)) {
-    modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+    fmFollowBottom(); // 本机所发的回显：回底 + 跟随复位（原为无条件钉底，语义不变）
     persistConversation(conv);
     return;
   }
@@ -3249,9 +3315,15 @@ function appendMessage(m, ours = false) {
   // 只留一个节点 —— 重复气泡会让 M5「渲染 id 序列」直接不等。
   const dup = modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(String(m.id))}"]`);
   if (dup) dup.remove();
+  // follow 批（2026-10-08）：到达不再无条件强拉（旧形态 `scrollTop = scrollHeight`
+  // 会把正在读历史的用户整个拽走）。贴底判定取**追加前**几何（与主窗 scrollSnapped
+  // 同一拍纪律：先判后长）；贴底 ⇒ 跟随；已离开 ⇒ 保持原位，胶囊报数。本机所发
+  // （非乐观腿的自播帧）仍恒回底 —— 主窗裁定（2026-09-11 A-branch）同向。
+  const atBottom = isAtBottom(modalEls.flow);
   modalEls.flow.appendChild(bubbleEl(m, conv));
   createIconsIn(modalEls.flow);
-  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  if (atBottom || ours) fmFollowBottom();
+  else { fmUnseenCount++; fmSyncFollowPill(); }
   persistConversation(conv); // ⑨ 落盘：WS 帧自带 body，无需再问服务端
 }
 
@@ -4278,7 +4350,7 @@ function armOptimisticText(conv, body, list) {
   applyPhase(wrap, PHASE.SENDING); // S2：气泡左侧 14px 环（既有 CSS，零新规则）
   modalEls.flow.appendChild(wrap);
   createIconsIn(modalEls.flow);
-  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  fmFollowBottom(); // 本机发送：恒回底（原为裸钉底，现同拍复位跟随/胶囊态）
   // U-b：登记为「发送中的乐观项」——回显（WS 自播帧 / REST keyset 增量 / 设备 keyset
   // 重取）若先于响应到达，由 `claim` 认领回这一条（不新增气泡）。
   const pending = { tempId, convId: conv.conversationId || '', body, node: wrap, entry: optimistic, anchoredTo: null };
@@ -4420,7 +4492,7 @@ function mountOptimisticAttachBubble(conv, files, text) {
   wrap.dataset.sendPhase = 'local-pending'; // QA 读数面（发送阶段）
   modalEls.flow.appendChild(wrap);
   createIconsIn(modalEls.flow);
-  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  fmFollowBottom(); // 本机发送：恒回底（原为裸钉底，现同拍复位跟随/胶囊态）
   /** @type {any} */
   const pending = {
     tempId, convId: conv.conversationId || '', body: text, node: wrap, entry,

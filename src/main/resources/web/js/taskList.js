@@ -24,9 +24,87 @@ import { NODE_STATUS_CLS } from './nodeData.js';
 // setSource()（REST /api/chains 快照 + WS 触发的防抖镜像），本渲染面零数据权威、
 // 零 provider 直引（架构钉：换源只在 main.js 单缝）；夹具在场 = 恒夹具优先
 // （harness 兼容缝）。
-import { listDelegateRows, getChainByTask, verdictToStatus } from './delegateChainStub.js';
+import { listDelegateRows, getChainByTask, listDelegateChildren } from './delegateChainStub.js';
 import { fetchDelegateOutput, openDelegateNative } from './delegateApi.js';
 import { executorIcon } from './executorIcons.js';
+
+// ── delegate/flowmap 两层架构批（2026-10-09 · 规格 §B WF-02 / §E）──────────────
+// 子代理显示从弹窗迁入任务列表：行内徽标（users+N / flow 链步数）+ expanded 逐
+// 子代理行族 + flow「链 N 步」单行。source 数据词归一（九点②同款；main.js
+// bgChildKindWord 为面板同族映射——本件本地镜像同判据）。
+function childSourceWord(source) {
+  const s = String(source || '');
+  if (s === 'subtask' || s === 'delegate') return 'Delegate';
+  return s;
+}
+
+/** 子条目 store 状态 → 行状态词键值域（subagents.status.*；零新键）。 */
+function childStateKey(status) {
+  if (status === 'completed') return 'done';
+  if (status === 'failed') return 'error';
+  return 'running'; // running|restarting|未知 → 保守运行侧
+}
+
+/** 子条目时长尾（spawnedAt → completedAt｜在跑 = now；数据非文案：m/h 裸数字）。 */
+function childDurationText(c) {
+  const spawned = c && typeof c.spawnedAt === 'number' ? c.spawnedAt : 0;
+  if (!spawned) return '';
+  const end = c && typeof c.completedAt === 'number' && c.completedAt > 0 ? c.completedAt : Date.now();
+  const mins = Math.max(0, Math.round((end - spawned) / 60_000));
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h`;
+}
+
+/** 行内徽标内联 SVG（lucide 同源描边语言；卡内小尺寸 12px）。 */
+const BADGE_USERS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+const BADGE_FLOW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>';
+
+/**
+ * 行内子代理/flow 徽标（§B collapsed）：users+N（G3 children 镜像计数）与
+ * flow+N（chain.nodes flow-step 计数）。**零自造数据**：无读数不渲染（九点同款
+ * 降级纪律——children 恒空集/链无 flow-step = 无徽标）；外部行不渲染（children
+ * 恒空集守卫）。title = 数据原文（计数+名单）。
+ * @param {any} r DelegateRow @param {HTMLElement} row @returns {void} */
+function appendInlineBadges(r, row) {
+  if (!r || r.external === true) return; // 外部执行器零平台工具 ⇒ children 恒空集
+  const delegateId = String(r.delegateId || '');
+  const kids = delegateId ? listDelegateChildren(delegateId) : [];
+  const kidNames = kids.map((c) => String((c && (c.agentName || c.taskId)) || '')).filter(Boolean);
+  if (kids.length) {
+    const badge = document.createElement('span');
+    badge.className = 'task-kids-badge';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.innerHTML = `${BADGE_USERS_SVG}<span class="task-kids-badge-n">${kids.length}</span>`;
+    badge.title = `${t('delegate.children')} ×${kids.length}${kidNames.length ? ` — ${kidNames.join(', ')}` : ''}`;
+    row.appendChild(badge);
+  }
+  const key = delegateRowKey(r);
+  const chain = key ? getChainByTask(key) : null;
+  const flowSteps = chain && Array.isArray(chain.nodes)
+    ? chain.nodes.filter((n) => n && n.kind === 'flow-step') : [];
+  if (flowSteps.length) {
+    const badge = document.createElement('span');
+    badge.className = 'task-flow-badge';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.innerHTML = `${BADGE_FLOW_SVG}<span class="task-flow-badge-n">${flowSteps.length}</span>`;
+    badge.title = t('delegate.chainSteps', { n: String(flowSteps.length) });
+    row.appendChild(badge);
+  }
+}
+
+/**
+ * L1 委托流程图唯一行内入口（两层架构批 · 规格 §C/E；文件夹树批 2026-10-09 起
+ * **调用方 = 树子行**：行尾 workflow 钮已退役——根行点击 = 展开/收起结构树，
+ * 子节点行（subagent/flow/链 Node）点击 = 跳 L1）。taskList 仅存这一条动态 import
+ * （legacy-ui-retire 静态钉：单一 openDelegateChainTask 引线，零结构视图引用）。
+ * @param {string} key @param {any} meta
+ * @param {{expandFlow?: boolean, anchorNode?: string}} [opts] anchorNode = flow
+ *        第三层「点具体 Node」锚（L1 打开即展开 flow-step 层并定位该节点卡）。 */
+function openL1(key, meta, opts = {}) {
+  import('./delegateChainView.js').then(({ openDelegateChainTask }) => {
+    openDelegateChainTask(key, meta, opts);
+  }).catch(() => {});
+}
 
 // ── 面板会话门（沿用原节点区块自有判定；delegate 行主面同门）────────────────
 /** Nebula 统一面板才渲染面板行。独立命名空间（不复用已退役的旧任务域判定）——
@@ -99,6 +177,35 @@ function ensureLastActiveTimer(running) {
 const REDUCED_MOTION = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// ── delegate-ui 修订批（用户九点①④⑥ · 2026-10-09）─────────────────────────
+// ① 任务列表只显示在跑的 delegate：非活性行（completed/failed/cancelled 终态）
+//    随完成移出列表——过滤单点在此（渲染入口），读取口/镜像保持全量在册
+//    （数据面零改写；终态行仍在结构总视图 S11 与归档窗可达）。
+//    活性值域 = pending/running/blocked/ready-to-merge（排队合并仍是活跃工作——
+//    ④ 待合并行带名次留列，终态不留）。
+const ACTIVE_ROW_STATUSES = new Set(['pending', 'running', 'blocked', 'ready-to-merge']);
+
+/**
+ * 运行态 glyph（用户九点⑥ · 2026-10-09）：delegate 运行态统一对齐 flowmap 节点
+ * 现行的「三点轨道旋转」视觉（.solar-orbit 同语言：3 环 3 点、120° 相位、整体
+ * 旋转），替代旧单环 task-node-spin。12px 行内节奏不变（glyph 槽尺寸沿用）。
+ * @returns {HTMLElement} */
+function buildOrbitGlyph() {
+  const g = document.createElement('span');
+  g.className = 'task-node-orbit';
+  g.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 3; i++) {
+    const ring = document.createElement('span');
+    ring.className = 'task-node-orbit-ring';
+    ring.style.setProperty('--orbit-phase', `${i * 120}deg`);
+    const dot = document.createElement('span');
+    dot.className = 'task-node-orbit-dot';
+    ring.appendChild(dot);
+    g.appendChild(ring);
+  }
+  return g;
+}
+
 // ── 状态 glyph（面板行共用设计语言：delegate 行沿用节点行 glyph 族）────────
 
 /**
@@ -111,7 +218,9 @@ function buildNodeGlyph(st, cls) {
   const g = document.createElement('span');
   g.setAttribute('aria-hidden', 'true');
   if (st === 'running') {
-    g.className = 'task-node-spin';
+    // 用户九点⑥：delegate 运行态 = 三点轨道旋转（flowmap 节点同款视觉）。
+    g.appendChild(buildOrbitGlyph());
+    g.className = 'task-node-glyph-running';
   } else if (st === 'blocked') {
     // blocked（阻塞）：琥珀实心点（警示态，区别于 failed 终结红）
     g.className = 'task-node-dot task-node-dot-blocked';
@@ -155,24 +264,52 @@ function delegateRowKey(r) {
   return String((r && (r.taskNo || r.delegateId)) || '');
 }
 
-/** 链视图有可渲染内容（FSM 展开守卫：内部链帧可用才可展开——空链不进 expanded）。 */
-function delegateChainRenderable(chain) {
-  return !!(chain && (chain.worktree || chain.verdict ||
-    (Array.isArray(chain.mergeQueue) && chain.mergeQueue.length) ||
-    (Array.isArray(chain.frames) && chain.frames.length) ||
-    (Array.isArray(chain.nodes) && chain.nodes.length)));
+// ── 任务列表「文件夹树」批（2026-10-09 · 对账报告 §一 R2/R3/R5 定稿）──────────
+// 根 delegate = root；subagent 子代理行与 flow 链行 = root 下同级子节点；flow 子行
+// 可再展开第三层（链 Node 1/2/3…——用户手绘新增，数据源 = chain.nodes 链数据）。
+// 全行热区零侧边按钮：内部行行尾 workflow 钮退役（根行点击 = 展开/收起；子行点击
+// = 跳 L1）；外部行 openNative 钮保留（S16 唯一出口边界，不在「侧边按钮」禁令内）。
+// 解释帧（worktree/verdict/raw）退场（R3：L1 已有同源投影，树 = 纯结构）。
+
+/** flow 第三层展开记忆（渲染层内存，不入 DOM/storage——与 expandedDelegates 同纪律；
+ *  键 = 行键）。收起 root 不清除（重渲后展开态保留）。 */
+const expandedFlowTrees = new Set();
+
+/** 行首 disclosure chevron（12px 示能；▸，展开后 CSS 随 aria-expanded 旋转成 ▾）。
+ *  叶行（外部行/待合并行/空树行）= 不可见占位（Finder 对齐纪律：保证全列文本对齐
+ *  ——chevron 是示能不是按钮，热区仍全行）。 */
+const TREE_CHEV_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
+function buildTreeChevron(leaf) {
+  const c = document.createElement('span');
+  c.className = 'task-tree-chev' + (leaf ? ' task-tree-chev-leaf' : '');
+  c.setAttribute('aria-hidden', 'true');
+  c.innerHTML = TREE_CHEV_SVG;
+  return c;
+}
+
+/** 树展开守卫（FSM；替代旧 delegateChainRenderable——R3 解释帧退场后 worktree/
+ *  verdict/frames 不再构成展开面）：树非空即「有 children ∪ 有 flow-step」。
+ *  空树 root = 叶行（无 chevron 示能、无展开面、点击零动作——零空态区块纪律延伸）。 */
+function delegateTreeOpenable(r) {
+  if (!r || typeof r !== 'object') return false;
+  const delegateId = String(r.delegateId || '');
+  if (delegateId && listDelegateChildren(delegateId).length) return true;
+  const chain = getChainByTask(delegateRowKey(r));
+  return !!(chain && Array.isArray(chain.nodes) &&
+    chain.nodes.some((n) => n && n.kind === 'flow-step'));
 }
 
 /**
- * Delegate 行（S1 collapsed 态）：`[执行器图标] #N 标题 [状态词] [相对时间]`。
- * 视觉复用 .task-node 行族（零新增 CSS；设计语言与面板既有行同源），外加
- * .task-delegate 命名空间锚与 data-delegate-* 数据锚。
- * 交互（FSM 照图）：
- *   - 内部行（executor=nebflow）：点行 = 展开/收回（S1 expanded；内部链帧可用才可
- *     展开——空链点击零动作）；行尾 workflow 钮 = S10 入口（per-task 链视图，
- *     delegateChainView 动态引——模块图不静态耦合，同 projectTab 惯例）。
- *   - 外部行（S16 coarse 守卫终态）：点行零动作（展开守卫——细则不展示）；行尾
- *     openNative 钮（title/aria = §16 键 6）= 出口；进度 meta 行（offset 增量轮询）。
+ * Delegate 行（S1 collapsed 态，文件夹树 root）：`[chevron][执行器图标] #N 标题
+ * [状态词] [相对时间]`。视觉复用 .task-node 行族（零新增 CSS；设计语言与面板既有
+ * 行同源），外加 .task-delegate 命名空间锚与 data-delegate-* 数据锚。
+ * 交互（树批定稿 · 全行热区零侧边按钮）：
+ *   - 内部可展开行（树非空）：行首 12px chevron = 展开示能；**点行任意处 = 展开/
+ *     收起结构树**（aria-expanded/FSM 照旧；行尾 workflow 钮退役——L1 入口移交子行）。
+ *   - 叶行（外部行 S16 守卫终态 / 待合并行九点④名次终态 / 空树行）：chevron 只留
+ *     不可见占位，点行零动作、无展开面。
+ *   - 外部行行尾 openNative 钮保留（S16 唯一出口；title/aria = §16 键 6）＋进度
+ *     meta 行（offset 增量轮询）。
  * @param {any} r DelegateRow（delegateChainStub 规范 schema）
  * @returns {HTMLElement} */
 function buildDelegateRow(r) {
@@ -183,6 +320,11 @@ function buildDelegateRow(r) {
   const st = String(row0.status || 'running');
   const wordKey = DELEGATE_WORD_KEY[st] || '';
   const external = row0.external === true;
+  // 用户九点④：待合并行只显示排队名次——不显示详细信息、不可展开（行本体不是
+  // 展开钮、点击零动作；链帧信息面不进 S1 expanded，名次 = 引擎 G5 位次透传）。
+  const queued = st === 'ready-to-merge';
+  // 文件夹树：内部非排队行 ∧ 树非空才可展开（空树 = 叶行）。
+  const openable = !external && !queued && delegateTreeOpenable(row0);
 
   const row = document.createElement('div');
   row.className = 'task-node task-delegate';
@@ -191,9 +333,10 @@ function buildDelegateRow(r) {
   row.dataset.delegateId = delegateId;
   row.dataset.delegateStatus = st;
   if (external) row.dataset.external = '1';
-  if (!external) {
-    // 内部行 = S1 展开钮（role/aria-expanded 只属可展开行；外部行是 S16 守卫终态，
-    // 行本体不是按钮——出口在 openNative 钮上）。
+  // 行首 disclosure chevron（第一视觉槽；叶行 = 不可见占位保证全列文本对齐）。
+  row.appendChild(buildTreeChevron(!openable));
+  if (openable) {
+    // 可展开行 = S1 展开钮（role/aria-expanded 只属可展开行；叶行行本体不是按钮）。
     row.setAttribute('role', 'button');
     row.setAttribute('aria-expanded', expandedDelegates.has(taskNo || delegateId) ? 'true' : 'false');
   }
@@ -252,6 +395,26 @@ function buildDelegateRow(r) {
     row.appendChild(wordEl);
   }
 
+  // 用户九点②④：合并态不显示 FIFO——行侧唯一可见面 = 「待合并」旁的排队名次
+  // （#N，引擎 G5 mergeQueuePos.position 原样透传；未排队/缺键 = 无名次，禁派生）。
+  if (queued && row0.mergeQueuePos && typeof row0.mergeQueuePos.position === 'number' &&
+      row0.mergeQueuePos.position > 0) {
+    const qp = row0.mergeQueuePos;
+    const rankEl = document.createElement('span');
+    rankEl.className = 'task-delegate-rank';
+    rankEl.setAttribute('aria-hidden', 'true');
+    rankEl.textContent = `#${qp.position}`;
+    const titleBits = [`#${qp.position}`, qp.total ? `/ ${qp.total}` : '',
+      qp.branch || ''].filter(Boolean);
+    rankEl.title = titleBits.join(' '); // 数据原文（位次/分支），非文案
+    row.appendChild(rankEl);
+  }
+
+  // 两层架构批（§B WF-02）：行内子代理/flow 徽标（users+N / flow+N）——插在状态
+  // 词（含名次 chip）与时间之间；缺读数不渲染（零自造数据）；queued 行只有徽标
+  // 无展开面（九点④共处）。
+  appendInlineBadges(row0, row);
+
   const createdAt = typeof row0.createdAt === 'number' ? row0.createdAt : Date.parse(String(row0.createdAt || ''));
   if (Number.isFinite(createdAt) && createdAt > 0) {
     const time = document.createElement('span');
@@ -262,29 +425,11 @@ function buildDelegateRow(r) {
     row.appendChild(time);
   }
 
-  // 行尾动作区：S10 入口（内部行）/ openNative 出口（外部行）。
-  const actions = document.createElement('span');
-  actions.className = 'task-delegate-actions';
-  if (!external) {
-    const openBtn = document.createElement('button');
-    openBtn.type = 'button';
-    openBtn.className = 'task-delegate-btn';
-    // 入口键 project.openFlowMap 已随晨裁②退役照荐落（§3.3 在案）——按钮
-    // title/aria 改行数据原文（数据非文案纪律，零 locale 键）。
-    const openLabel = labelBits.join(' ');
-    openBtn.title = openLabel;
-    openBtn.setAttribute('aria-label', openLabel);
-    openBtn.innerHTML = '<i data-lucide="workflow"></i>';
-    openBtn.addEventListener('click', (e) => {
-      e.stopPropagation(); // 行点击语义 = S1 展开；链视图入口不叠加
-      import('./delegateChainView.js').then(({ openDelegateChainTask }) => {
-        // project passthrough (file-diff diff entry): the chain view needs the
-        // row's mounted project name to fetch per-node change reports.
-        openDelegateChainTask(taskNo || delegateId, { taskNo, delegateId, title, status: st, executor: String(row0.executor || ''), project: String(row0.project || '') });
-      }).catch(() => {});
-    });
-    actions.appendChild(openBtn);
-  } else {
+  // 行尾动作区（树批 R2/R8）：内部行整段退役（L1 入口 = 子行点击，全行热区零侧边
+  // 按钮）；仅外部行保留 openNative 出口（S16 唯一出口边界，不在禁令内）。
+  if (external) {
+    const actions = document.createElement('span');
+    actions.className = 'task-delegate-actions';
     const nativeBtn = document.createElement('button');
     nativeBtn.type = 'button';
     nativeBtn.className = 'task-delegate-btn';
@@ -302,11 +447,12 @@ function buildDelegateRow(r) {
       }
     });
     actions.appendChild(nativeBtn);
+    row.appendChild(actions);
   }
-  row.appendChild(actions);
 
-  // 行点击 = S1 展开/收回（仅内部行 ∧ 链帧可用；外部行守卫终态零动作）。
-  if (!external) {
+  // 行点击 = S1 展开/收回（仅树非空的内部非排队行；叶行守卫终态零动作——九点④：
+  // 待合并不可展开，空树行无展开面）。
+  if (openable) {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       const key = taskNo || delegateId;
@@ -315,9 +461,6 @@ function buildDelegateRow(r) {
         rerenderWithNodes();
         return;
       }
-      // FSM 展开守卫：内部链帧可用 ∧ 内部执行器。链不可用 → 零动作（不进 expanded）。
-      const chain = getChainByTask(key);
-      if (!delegateChainRenderable(chain)) return;
       expandedDelegates.add(key);
       rerenderWithNodes();
     });
@@ -326,53 +469,164 @@ function buildDelegateRow(r) {
 }
 
 /**
- * S1 expanded 面板：delegate 链帧树（行下方就地展开）。已落集三行族**解读渲染**
- * （spawn → worktree 座行；verdict → 判词状态词+reason；merge-queue → 队列行）；
- * 候定集（chain-registered/chain-node-state）与未知帧**只透传不解读**（kind+at 原样
- * 列出——禁造第二权威，同 stub 纪律）。调用前提 = 展开守卫已过
- * （delegateChainRenderable）。数据 = getChainByTask 读取口（fail-soft：null → null）。
+ * S1 expanded 面板 = 文件夹树（行下方就地展开 · 树批 R3/R4/R5 重组）：root 下同级
+ * 子节点 = subagent 子代理行族 + flow 链行（缩进导轨+叉枝见 CSS）；解释帧
+ * （worktree/verdict/raw）退场——同源投影 L1 已有（delegateChainView），树 = 纯结构。
+ * 交互：子代理/flow 子行点击 = 跳该 delegate 的 L1 委托流程图（openL1 单缝；flow
+ * 子行带 expandFlow 锚点，对话窗入口无损平移到 L1 根卡/子卡）；flow 子行 chevron =
+ * 第三层展开/收起（链 Node 1/2/3…，节点名+状态点）；点具体 Node = 跳 L1 并锚到
+ * 该节点。数据 = stub 读取口（children/chain＝provider 镜像），零 WS 直连。
  * @param {any} r DelegateRow @returns {HTMLElement|null} */
 function buildDelegateDetail(r) {
   const key = delegateRowKey(r);
   const chain = getChainByTask(key);
-  if (!chain) return null;
   const box = document.createElement('div');
   box.className = 'task-delegate-detail';
   box.dataset.delegateDetail = key;
-  const addFrame = (cls, text, title) => {
-    const el = document.createElement('div');
-    el.className = `task-delegate-frame${cls ? ` ${cls}` : ''}`;
-    const v = document.createElement('span');
-    v.className = 'task-delegate-frame-text';
-    v.textContent = text;
-    if (title) v.title = title;
-    el.appendChild(v);
-    box.appendChild(el);
+  const rowMeta = r && typeof r === 'object' ? r : {};
+  const meta = {
+    taskNo: String(rowMeta.taskNo || ''),
+    delegateId: String(rowMeta.delegateId || ''),
+    title: String(rowMeta.title || ''),
+    status: String(rowMeta.status || ''),
+    executor: String(rowMeta.executor || ''),
+    project: String(rowMeta.project || ''),
   };
-  // 已落集①：delegate-spawn 投影（branch/worktree/cwd 数据行）。
-  if (chain.worktree) {
-    const bits = [chain.worktree.branch, chain.worktree.worktree || chain.worktree.cwd,
-      chain.worktree.baseBranch ? `← ${chain.worktree.baseBranch}` : ''].filter(Boolean);
-    addFrame('task-delegate-frame-spawn', bits.join(' · '), bits.join(' · '));
+  // 子代理行族（§B 逐行形态保留；点击语义树批改 = 跳 L1——R4「树层管导航、L1 管
+  // 详情」两层分工；净化后对话窗入口无损平移到 L1 根卡/子卡点击）。
+  const kids = listDelegateChildren(String(rowMeta.delegateId || ''));
+  if (kids.length) {
+    const list = document.createElement('div');
+    list.className = 'task-kids-list';
+    for (const c of kids) {
+      const src = c && typeof c === 'object' ? c : {};
+      const sid = String(src.taskId || '');
+      if (!sid) continue;
+      const state = childStateKey(String(src.status || ''));
+      const childRow = document.createElement('button');
+      childRow.type = 'button';
+      childRow.className = 'bgagent-child-row';
+      childRow.dataset.childSession = sid;
+      childRow.setAttribute('aria-label', t('delegate.flowmap.title')); // 子行跳 L1（§五.6）
+      const dot = document.createElement('span');
+      dot.className = 'bgagent-child-dot bg-state-' + state;
+      childRow.appendChild(dot);
+      const name = document.createElement('span');
+      name.className = 'bgagent-child-name';
+      name.textContent = String(src.agentName || '') || sid;
+      childRow.appendChild(name);
+      const st = document.createElement('span');
+      st.className = 'bgagent-child-status';
+      st.textContent = t('subagents.status.' + state);
+      childRow.appendChild(st);
+      const source = childSourceWord(String(src.source || ''));
+      if (source) {
+        const sw = document.createElement('span');
+        sw.className = 'bgagent-child-source';
+        sw.textContent = source; // 显示词（九点②：subtask→Delegate；数据原文在 title）
+        sw.title = String(src.source || '');
+        childRow.appendChild(sw);
+      }
+      const retries = typeof src.retryCount === 'number' && src.retryCount > 0 ? src.retryCount : 0;
+      if (retries) {
+        const rt = document.createElement('span');
+        rt.className = 'bgagent-child-retries';
+        rt.textContent = `×${retries}`; // G3 retryCount 数据（重试徽标；0 = 无噪声不渲染）
+        rt.title = `${t('manage.retry')} ×${retries}`;
+        childRow.appendChild(rt);
+      }
+      const dur = childDurationText(src);
+      if (dur) {
+        const durEl = document.createElement('span');
+        durEl.className = 'bgagent-child-time';
+        durEl.textContent = dur;
+        childRow.appendChild(durEl);
+      }
+      const desc = String(src.description || src.prompt || '');
+      childRow.title = desc || t('delegate.flowmap.title');
+      childRow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openL1(key, meta); // 子行点击 = 跳该 delegate 的 L1 委托流程图（用户令）
+      });
+      list.appendChild(childRow);
+    }
+    if (list.children.length) box.appendChild(list);
   }
-  // 已落集②：terminal-verdict 投影（判词状态词复用行词表 + reason 数据）。
-  if (chain.verdict) {
-    const wordKey = DELEGATE_WORD_KEY[verdictToStatus(chain.verdict.verdict)] || '';
-    const bits = [wordKey ? t(wordKey) : String(chain.verdict.verdict || ''),
-      chain.verdict.reason || ''].filter(Boolean);
-    addFrame('task-delegate-frame-verdict', bits.join(' — '), bits.join(' — '));
-  }
-  // 已落集③：merge-queue 行（branch + readyAt 相对时刻；顺序 = 源侧投影序）。
-  for (const q of (Array.isArray(chain.mergeQueue) ? chain.mergeQueue : [])) {
-    const bits = [q.branch || q.delegateId,
-      q.readyAt ? formatLastActive(new Date(q.readyAt).toISOString()) : ''].filter(Boolean);
-    addFrame('task-delegate-frame-queue', bits.join(' · '), bits.join(' · '));
-  }
-  // 候定集/未知帧：透传不解读（kind + at 原样；字段零解读）。
-  for (const f of (Array.isArray(chain.frames) ? chain.frames : [])) {
-    const bits = [String(f.kind || ''),
-      f.at ? formatLastActive(new Date(f.at).toISOString()) : ''].filter(Boolean);
-    addFrame('task-delegate-frame-raw', bits.join(' · '), bits.join(' · '));
+  // flow 子行（§B 单行保留：flow chip + 链小点图 + 「链 N 步」，九点③语言）：行
+  // 点击 = L1 flow 下钻锚点（expandFlow——L1 打开即展开 flow-step 层，R5 语义不变
+  // 原位升级为树子节点）；行首 chevron = 第三层展开/收起（链 Node 1/2/3…）。
+  const flowSteps = chain && Array.isArray(chain.nodes)
+    ? chain.nodes.filter((n) => n && n.kind === 'flow-step')
+    : [];
+  if (flowSteps.length) {
+    const flowRow = document.createElement('button');
+    flowRow.type = 'button';
+    flowRow.className = 'task-flow-row';
+    flowRow.setAttribute('aria-label', t('delegate.flowmap.title')); // 行点击 = 跳 L1
+    flowRow.title = t('delegate.flowmap.title'); // L1 入口（aria 语义位）
+    const chev = buildTreeChevron(false);
+    chev.addEventListener('click', (e) => {
+      // chevron = 第三层展开/收起热区（其余全行 = 跳 L1——flow 子行双语义分工）。
+      e.stopPropagation();
+      if (expandedFlowTrees.has(key)) expandedFlowTrees.delete(key);
+      else expandedFlowTrees.add(key);
+      rerenderWithNodes();
+    });
+    flowRow.appendChild(chev);
+    flowRow.setAttribute('aria-expanded', expandedFlowTrees.has(key) ? 'true' : 'false');
+    const chip = document.createElement('span');
+    chip.className = 'task-flow-chip';
+    chip.textContent = 'flow'; // 数据词不上键（H.4：Subagent/Delegate/flow 保持数据词）
+    flowRow.appendChild(chip);
+    const metaEl = document.createElement('span');
+    metaEl.className = 'delegate-chain-meta';
+    for (const n of flowSteps) {
+      const dot = document.createElement('span');
+      dot.className = `delegate-chain-dot st-${String((n && n.status) || 'pending')}`;
+      dot.title = String((n && (n.label || n.id)) || '');
+      metaEl.appendChild(dot);
+    }
+    const steps = document.createElement('span');
+    steps.className = 'delegate-chain-steps';
+    steps.textContent = t('delegate.chainSteps', { n: String(flowSteps.length) });
+    metaEl.appendChild(steps);
+    flowRow.appendChild(metaEl);
+    flowRow.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openL1(key, meta, { expandFlow: true });
+    });
+    box.appendChild(flowRow);
+    // flow 第三层（用户手绘新增）：flow 子行展开后列出链上 Node 1/2/3…（节点名+
+    // 状态点，数据源 = chain.nodes 链数据——沿用 L2 链数据）；点具体 Node = 跳 L1
+    // 并锚到对应节点（anchorNode）。默认收起（零空态区块纪律延伸到树第三层）。
+    if (expandedFlowTrees.has(key)) {
+      const nodesBox = document.createElement('div');
+      nodesBox.className = 'task-flow-nodes';
+      for (const n of flowSteps) {
+        const nodeId = String((n && n.id) || '');
+        if (!nodeId) continue;
+        const nodeLabel = String((n && (n.label || n.id)) || '');
+        const nodeRow = document.createElement('button');
+        nodeRow.type = 'button';
+        nodeRow.className = 'task-flow-node-row';
+        nodeRow.dataset.flowNodeId = nodeId;
+        nodeRow.title = nodeLabel; // 数据原文（悬停全文）
+        const dot = document.createElement('span');
+        dot.className = `delegate-chain-dot st-${String((n && n.status) || 'pending')}`;
+        dot.title = nodeLabel;
+        nodeRow.appendChild(dot);
+        const nameEl = document.createElement('span');
+        nameEl.className = 'task-flow-node-name';
+        nameEl.textContent = nodeLabel;
+        nodeRow.appendChild(nameEl);
+        nodeRow.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openL1(key, meta, { expandFlow: true, anchorNode: nodeId });
+        });
+        nodesBox.appendChild(nodeRow);
+      }
+      if (nodesBox.children.length) box.appendChild(nodesBox);
+    }
   }
   return box.children.length ? box : null;
 }
@@ -389,7 +643,9 @@ function buildDelegateSection(rows) {
   for (const r of list) {
     const rowKey = delegateRowKey(r);
     section.appendChild(buildDelegateRow(r));
-    if (!r || r.external === true) continue; // 外部行 = S16 守卫终态，无展开面
+    // 外部行（S16 守卫终态）/待合并行（九点④名次终态：不显示详细信息、不可展开）
+    // 均无展开面。
+    if (!r || r.external === true || r.status === 'ready-to-merge') continue;
     if (!expandedDelegates.has(rowKey)) continue;
     const detail = buildDelegateDetail(r);
     if (detail) section.appendChild(detail);
@@ -535,7 +791,11 @@ export function renderTaskList(_tasks, container, sessionId) {
   // 快照镜像）；镜像刷新（boot/WS 触发/重连）经 delegate-chain-mirror-updated
   // 事件驱动重渲，本函数零 WS 知识。
   const showRows = sessionShowsNodeEntries(sessionId);
-  const delegateRows = showRows ? listDelegateRows() : [];
+  // 用户九点①（2026-10-09）：任务列表只显示在跑的 delegate——终态行（completed/
+  // failed/cancelled）随完成移出列表；归档行（archivedAt 在场）不入列。过滤单点 =
+  // 本渲染入口（读取口/镜像保持全量在册——S11 结构视图与归档窗不受影响）。
+  const delegateRows = (showRows ? listDelegateRows() : [])
+    .filter((r) => r && ACTIVE_ROW_STATUSES.has(String(r.status)) && r.archivedAt == null);
 
   // delegate 行主面：统计/行全 delegate 口径（统计口径归换源批——a60af705d 申报面）。
   // 无行 → 面板收起（.has-tasks 才展开，既有空态兜底）。

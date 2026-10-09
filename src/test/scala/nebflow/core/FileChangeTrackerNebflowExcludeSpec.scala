@@ -101,4 +101,4 @@ class FileChangeTrackerNebflowExcludeSpec extends CatsEffectSuite:
         }
       assertIO(scan.map(_.keySet), Set("src/Demo.scala"))
     }
-
+end FileChangeTrackerNebflowExcludeSpec

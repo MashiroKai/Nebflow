@@ -236,7 +236,7 @@ object PluginDispatchPolicy:
     val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     if !os.exists(configPath) then
       val fresh = Json.obj("plugins" -> Json.obj("dispatch" -> Json.obj(name -> transform(Json.obj()))))
-      AtomicJson.writeSync(configPath, fresh.noSpaces)
+      AtomicJson.writeSyncRestricted(configPath, fresh.noSpaces)
       Right(())
     else
       io.circe.parser.parse(os.read(configPath)) match
@@ -255,7 +255,7 @@ object PluginDispatchPolicy:
           val out = Json.fromJsonObject(
             root.asObject.getOrElse(JsonObject.empty).add("plugins", newPlugins)
           )
-          AtomicJson.writeSync(configPath, out.noSpaces)
+          AtomicJson.writeSyncRestricted(configPath, out.noSpaces)
           Right(())
 
     end if

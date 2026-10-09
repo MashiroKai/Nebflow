@@ -36,9 +36,7 @@ import cats.effect.IO
  */
 object DispatcherContextCatalog:
 
-  /**
-   * Plugin 能力目录段：单点委托 [[PluginRegistry.renderCatalog]]（段头/行格式/过滤链与调试预览同字节输出，无本地重复实现）。
-   */
+  /** Plugin 能力目录段：单点委托 [[PluginRegistry.renderCatalog]]（段头/行格式/过滤链与调试预览同字节输出，无本地重复实现）。 */
   def pluginSection(): IO[String] = PluginRegistry.renderCatalog()
 
   /**

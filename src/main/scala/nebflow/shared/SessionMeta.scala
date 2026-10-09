@@ -28,38 +28,42 @@ case class SessionMeta(
   safetyMode: String = "auto-all",
   gitBranch: Option[String] = None,
   flowName: Option[String] = None,
-  /** **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键
-    * `compactThresholdRatio` 落 `<dataRoot>/sessions/_index.json`（与 `modelRef`
-    * 同处，`:13`）。`None` = 无覆盖 ⇒ 判定/上报走现值函数
-    * （[[nebflow.agent.CompactThresholdOverride]]，口径②）。
-    *
-    * 跨重启**保留**（作者卡答采纳设计 §9-O4(a)）：**不**照抄
-    * `clearAllSessionModels()` 的启动清零——比例是纯标量、无「旧配置快照」陈旧
-    * 风险；用户显式设定不应每次重启失效。老会话无该键 ⇒ Decoder 得 `None` ⇒
-    * 走现值函数（零格式迁移，向后兼容）。
-    *
-    * 🔴 **位置刻意置末**（`flowName` 之后）：本 case class 存在**位置参数**构造点
-    * （下方 Decoder 的 `SessionMeta(...)` 逐位置列表），插在中间会把旧实参错位
-    * ⇒ 置末使既有位置调用逐字保持可编译。 */
+  /**
+   * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键
+   * `compactThresholdRatio` 落 `<dataRoot>/sessions/_index.json`（与 `modelRef`
+   * 同处，`:13`）。`None` = 无覆盖 ⇒ 判定/上报走现值函数
+   * （[[nebflow.agent.CompactThresholdOverride]]，口径②）。
+   *
+   * 跨重启**保留**（作者卡答采纳设计 §9-O4(a)）：**不**照抄
+   * `clearAllSessionModels()` 的启动清零——比例是纯标量、无「旧配置快照」陈旧
+   * 风险；用户显式设定不应每次重启失效。老会话无该键 ⇒ Decoder 得 `None` ⇒
+   * 走现值函数（零格式迁移，向后兼容）。
+   *
+   * 🔴 **位置刻意置末**（`flowName` 之后）：本 case class 存在**位置参数**构造点
+   * （下方 Decoder 的 `SessionMeta(...)` 逐位置列表），插在中间会把旧实参错位
+   * ⇒ 置末使既有位置调用逐字保持可编译。
+   */
   compactThresholdRatio: Option[Double] = None,
-  /** **Task attribution** (taskbadge batch 2026-09-27: subagent panel task badge) --
-    * the task id + task title carried by the session payload. **Wire-only**:
-    * backfilled at read time only by the session-list **exit** overlay
-    * ([[withTaskAttribution]], via SharedResources.overlaySessionList;
-    * attribution = AgentRegistry's AgentRecord.taskId + TaskLedgerStore titles).
-    * Must **never** enter the SessionStore.saveIndex persisted serialization
-    * (on-disk bytes unchanged; attribution is engine-side dynamic state --
-    * persisting it would freeze it stale).
-    *
-    * Empty state = `None` (kernel instances / system sessions / legacy sessions /
-    * dispatcher slot already cleared) => the Encoder omits both keys => old
-    * consumers unaffected; existing `_index.json` (no new keys) decodes with zero
-    * migration (both keys default to None, same discipline as `flowName` /
-    * `compactThresholdRatio`).
-    * 🔴 **Deliberately positioned last** (after `compactThresholdRatio`): this
-    * class has **positional-argument** construction sites (the Decoder's
-    * positional `SessionMeta(...)` argument list); appending keeps every existing
-    * positional call compiling verbatim. */
+  /**
+   * **Task attribution** (taskbadge batch 2026-09-27: subagent panel task badge) --
+   * the task id + task title carried by the session payload. **Wire-only**:
+   * backfilled at read time only by the session-list **exit** overlay
+   * ([[withTaskAttribution]], via SharedResources.overlaySessionList;
+   * attribution = AgentRegistry's AgentRecord.taskId + TaskLedgerStore titles).
+   * Must **never** enter the SessionStore.saveIndex persisted serialization
+   * (on-disk bytes unchanged; attribution is engine-side dynamic state --
+   * persisting it would freeze it stale).
+   *
+   * Empty state = `None` (kernel instances / system sessions / legacy sessions /
+   * dispatcher slot already cleared) => the Encoder omits both keys => old
+   * consumers unaffected; existing `_index.json` (no new keys) decodes with zero
+   * migration (both keys default to None, same discipline as `flowName` /
+   * `compactThresholdRatio`).
+   * 🔴 **Deliberately positioned last** (after `compactThresholdRatio`): this
+   * class has **positional-argument** construction sites (the Decoder's
+   * positional `SessionMeta(...)` argument list); appending keeps every existing
+   * positional call compiling verbatim.
+   */
   taskId: Option[String] = None,
   taskTitle: Option[String] = None
 )
@@ -85,21 +89,23 @@ object SessionMeta:
       .map(s => s.asJson.deepMerge(Json.obj("safetyMode" -> modeJson)))
       .asJson
 
-  /** taskbadge batch 2026-09-27: **task-attribution enrichment** for the
-    * session-list exit (wire-only, same face as [[withEffectiveSafetyModes]] --
-    * 🔴 must not be used for the SessionStore.saveIndex persisted serialization).
-    * **Pure function, zero class deps** (same standalone-testable discipline as
-    * filterActiveAgents: attribution/titles are both resolved by the caller into
-    * plain Maps; this function performs no IO).
-    *
-    * @param sessionsJson output of `withEffectiveSafetyModes` (session JSON array)
-    * @param attribution  sessionId -> taskId (resolved by the caller via AgentRegistry)
-    * @param titles       taskId -> title (resolved by the caller via the unified ledger)
-    *
-    * With attribution => per-session deepMerge of `taskId` (plus `taskTitle` when
-    * a title exists); without => that session's JSON stays **byte-identical**
-    * (both keys absent = the empty-state contract). Non-array input is returned
-    * as-is. */
+  /**
+   * taskbadge batch 2026-09-27: **task-attribution enrichment** for the
+   * session-list exit (wire-only, same face as [[withEffectiveSafetyModes]] --
+   * 🔴 must not be used for the SessionStore.saveIndex persisted serialization).
+   * **Pure function, zero class deps** (same standalone-testable discipline as
+   * filterActiveAgents: attribution/titles are both resolved by the caller into
+   * plain Maps; this function performs no IO).
+   *
+   * @param sessionsJson output of `withEffectiveSafetyModes` (session JSON array)
+   * @param attribution  sessionId -> taskId (resolved by the caller via AgentRegistry)
+   * @param titles       taskId -> title (resolved by the caller via the unified ledger)
+   *
+   * With attribution => per-session deepMerge of `taskId` (plus `taskTitle` when
+   * a title exists); without => that session's JSON stays **byte-identical**
+   * (both keys absent = the empty-state contract). Non-array input is returned
+   * as-is.
+   */
   def withTaskAttribution(
     sessionsJson: Json,
     attribution: Map[String, String],
@@ -108,7 +114,7 @@ object SessionMeta:
     sessionsJson.asArray.fold(sessionsJson) { arr =>
       Json.fromValues(arr.map { s =>
         val enriched = for
-          sid       <- s.hcursor.get[String]("id").toOption
+          sid <- s.hcursor.get[String]("id").toOption
           taskIdOpt <- attribution.get(sid)
         yield
           val withId = s.deepMerge(Json.obj("taskId" -> taskIdOpt.asJson))
@@ -134,9 +140,7 @@ object SessionMeta:
     val withGit = m.gitBranch.fold(withSafety)(b => withSafety.deepMerge(Json.obj("gitBranch" -> b.asJson)))
     val withFlow = m.flowName.fold(withGit)(f => withGit.deepMerge(Json.obj("flowName" -> f.asJson)))
     val withRatio =
-      m.compactThresholdRatio.fold(withFlow)(r =>
-        withFlow.deepMerge(Json.obj("compactThresholdRatio" -> r.asJson))
-      )
+      m.compactThresholdRatio.fold(withFlow)(r => withFlow.deepMerge(Json.obj("compactThresholdRatio" -> r.asJson)))
     // taskbadge batch: the two task-attribution keys -- None => the key is
     // omitted entirely (old consumers unaffected).
     val withTaskId = m.taskId.fold(withRatio)(t => withRatio.deepMerge(Json.obj("taskId" -> t.asJson)))

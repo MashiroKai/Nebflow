@@ -46,8 +46,10 @@ object ExternalExecutor:
     /** 工具调用开始（label 面向进度行）。 */
     final case class Tool(label: String) extends Frame
 
-    /** 终局帧：CLI final 文本（结果取 CLI final 文本——原书不变）。failed=true
-      * 表示流面显式报错（result error / turn.failed）。 */
+    /**
+     * 终局帧：CLI final 文本（结果取 CLI final 文本——原书不变）。failed=true
+     * 表示流面显式报错（result error / turn.failed）。
+     */
     final case class Final(text: String, failed: Boolean) extends Frame
 
   end Frame
@@ -89,8 +91,8 @@ object ExternalExecutor:
    *   {"type":"result","subtype":"success","result":"...","is_error":false}
    */
   object ClaudeCode extends ExternalExecutor:
-    val id                    = "claude-code"
-    val displayName           = "Claude Code"
+    val id = "claude-code"
+    val displayName = "Claude Code"
 
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String] =
       val base = List("-p", task, "--output-format", "stream-json", "--verbose")
@@ -103,14 +105,19 @@ object ExternalExecutor:
             List(Frame.Start(str(j, "session_id")))
           case Some("assistant") =>
             val content = j.hcursor.downField("message").downField("content")
-            content.as[List[Json]].toOption.getOrElse(Nil).collect {
-              case block if block.hcursor.downField("type").as[String].toOption.contains("text") =>
-                block.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
-              case block if block.hcursor.downField("type").as[String].toOption.contains("tool_use") =>
-                block.hcursor.downField("name").as[String].toOption.toList.map(Frame.Tool.apply)
-            }.flatten
+            content
+              .as[List[Json]]
+              .toOption
+              .getOrElse(Nil)
+              .collect {
+                case block if block.hcursor.downField("type").as[String].toOption.contains("text") =>
+                  block.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+                case block if block.hcursor.downField("type").as[String].toOption.contains("tool_use") =>
+                  block.hcursor.downField("name").as[String].toOption.toList.map(Frame.Tool.apply)
+              }
+              .flatten
           case Some("result") =>
-            val text  = str(j, "result").getOrElse("")
+            val text = str(j, "result").getOrElse("")
             val isErr = j.hcursor.downField("is_error").as[Boolean].toOption.getOrElse(false)
             val subtypeErr = j.hcursor.downField("subtype").as[String].toOption.exists(_.startsWith("error"))
             List(Frame.Final(text, failed = isErr || subtypeErr))
@@ -134,7 +141,7 @@ object ExternalExecutor:
    * 续聊：`codex exec resume <thread_id> <task>`。
    */
   object Codex extends ExternalExecutor:
-    val id          = "codex"
+    val id = "codex"
     val displayName = "Codex"
 
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String] =
@@ -156,13 +163,23 @@ object ExternalExecutor:
                 Frame.Tool(str(item, "tool").getOrElse("mcp_tool_call"))
             }
           case Some("item.completed") =>
-            j.hcursor.downField("item").focus.toList.collect {
-              case item if item.hcursor.downField("type").as[String].toOption.contains("agent_message") =>
-                item.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
-            }.flatten
+            j.hcursor
+              .downField("item")
+              .focus
+              .toList
+              .collect {
+                case item if item.hcursor.downField("type").as[String].toOption.contains("agent_message") =>
+                  item.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+              }
+              .flatten
           case Some("turn.failed") =>
-            val msg = j.hcursor.downField("error").downField("message").as[String].toOption
-              .orElse(j.hcursor.downField("error").as[String].toOption).getOrElse("turn failed")
+            val msg = j.hcursor
+              .downField("error")
+              .downField("message")
+              .as[String]
+              .toOption
+              .orElse(j.hcursor.downField("error").as[String].toOption)
+              .getOrElse("turn failed")
             List(Frame.Final(msg, failed = true))
           case _ => Nil
       }
@@ -195,7 +212,7 @@ object ExternalExecutor:
    *    选型（stream-json 有逐帧流式进度），仅 launchArgs 一行翻转，解析面不动。
    */
   object ZCode extends ExternalExecutor:
-    val id          = "zcode"
+    val id = "zcode"
     val displayName = "ZCode"
 
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String] =
@@ -208,7 +225,7 @@ object ExternalExecutor:
       else
         parseJson(trimmed) match
           case Some(j) => parseFrameJson(j) // 方言一：整行 JSON（事件流 JSONL／紧凑 result 行）
-          case None    => parseSummaryLine(trimmed) // 方言二：--json pretty 摘要文档的键值行
+          case None => parseSummaryLine(trimmed) // 方言二：--json pretty 摘要文档的键值行
 
     /** 方言一：JSONL 事件帧与紧凑 result 行。 */
     private def parseFrameJson(j: Json): List[Frame] =
@@ -230,13 +247,20 @@ object ExternalExecutor:
               case _ => Nil // reasoning_* / start / end / tool_input_delta 等零帧
           }
         case Some("tool.updated") =>
-          j.hcursor.downField("payload").focus.toList.collect {
-            case p if p.hcursor.downField("kind").as[String].toOption.exists(k => k == "started" || k == "scheduled") =>
-              p.hcursor.downField("toolName").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Tool.apply)
-          }.flatten
+          j.hcursor
+            .downField("payload")
+            .focus
+            .toList
+            .collect {
+              case p
+                  if p.hcursor.downField("kind").as[String].toOption.exists(k => k == "started" || k == "scheduled") =>
+                p.hcursor.downField("toolName").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Tool.apply)
+            }
+            .flatten
         case Some("turn.failed") =>
           val payload = j.hcursor.downField("payload")
-          val msg = payload.focus.flatMap(p => str(p, "message"))
+          val msg = payload.focus
+            .flatMap(p => str(p, "message"))
             .orElse(payload.downField("error").focus.flatMap(p => str(p, "message")))
             .getOrElse("turn failed")
           List(Frame.Final(msg, failed = true))
@@ -244,20 +268,28 @@ object ExternalExecutor:
 
     /** 摘要 projection.status 有 error 词即带 failed（正常成功路径＝idle 等）。 */
     private def summaryFailed(j: Json): Boolean =
-      j.hcursor.downField("projection").downField("status").as[String].toOption
+      j.hcursor
+        .downField("projection")
+        .downField("status")
+        .as[String]
+        .toOption
         .exists(_.equalsIgnoreCase("error"))
 
     // 方言二：pretty 摘要（JSON.stringify(x,null,2)）的一键一行形态；锚定行首键名，
     // 字符串值 JSON 转义后单行，行尾可有逗号。
     private val SessionIdLine = """^"sessionId"\s*:\s*"([^"]+)"\s*,?$""".r
-    private val ResponseLine  = """^"response"\s*:\s*"(.*)"\s*,?$""".r
+    private val ResponseLine = """^"response"\s*:\s*"(.*)"\s*,?$""".r
 
     private def parseSummaryLine(trimmed: String): List[Frame] =
       trimmed match
         case SessionIdLine(sid) => List(Frame.Start(Some(sid)))
         case ResponseLine(escaped) =>
           // 值按 JSON 字符串字面量再解析还原转义（\" 与 \n 等）；坏形零帧不抛。
-          io.circe.parser.parse("\"" + escaped + "\"").toOption.flatMap(_.asString).toList
+          io.circe.parser
+            .parse("\"" + escaped + "\"")
+            .toOption
+            .flatMap(_.asString)
+            .toList
             .map(text => Frame.Final(text, failed = false))
         case _ => Nil
 
@@ -267,8 +299,10 @@ object ExternalExecutor:
 
   // ── 注册表 ────────────────────────────────────────────────────
 
-  /** 已建适配器（hermes 占位在 [[ExecutorRegistry]].defs，adapterReady=false，
-    * 选择面显式拒绝——此处故意无占位对象）。 */
+  /**
+   * 已建适配器（hermes 占位在 [[ExecutorRegistry]].defs，adapterReady=false，
+   * 选择面显式拒绝——此处故意无占位对象）。
+   */
   val all: List[ExternalExecutor] = List(ZCode, ClaudeCode, Codex)
 
   def forId(id: String): Option[ExternalExecutor] = all.find(_.id == id)

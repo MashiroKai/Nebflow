@@ -43,7 +43,8 @@ class WsHub extends EventSink, WsHubPort:
   private val listenersRef: Ref[IO, Map[String, Json => IO[Unit]]] =
     Ref.unsafe[IO, Map[String, Json => IO[Unit]]](Map.empty)
 
-  /** Register a connection; returns a handle for later unregister.
+  /**
+   * Register a connection; returns a handle for later unregister.
    *
    *  @param wsSend takes the **already serialized** frame text plus the frame
    *                class (`isStreamFrame`) — see the class note: serialization
@@ -58,7 +59,8 @@ class WsHub extends EventSink, WsHubPort:
     val id = java.util.UUID.randomUUID().toString.take(8)
     listenersRef.update(_ + (id -> onEvent)) *> IO.pure(id)
 
-  /** Remove a registration — **both** faces.
+  /**
+   * Remove a registration — **both** faces.
    *
    *  == 为什么必须两面都摘（perf-481 A1 返工；先前只摘 `connsRef`）==
    *  两个注册表共用**同一个 id 空间**（`register` / `registerListener` 都是
@@ -75,7 +77,8 @@ class WsHub extends EventSink, WsHubPort:
   def unregister(id: String): IO[Unit] =
     connsRef.update(_ - id) *> listenersRef.update(_ - id)
 
-  /** Broadcast a JSON message to every registered connection.
+  /**
+   * Broadcast a JSON message to every registered connection.
    *
    *  The JSON is serialized ONCE here (and its frame class computed once) and
    *  the same string is handed to every connection — the per-connection work is

@@ -184,7 +184,8 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
             ("auth.json", "credential-path"),
             ("nebflow.json", "credential-path"),
             ("secrets/x.txt", "credential-path")
-          ) do
+          )
+        do
           val real = env.pathOf(rel).toRealPath()
           val resp = env.read(s"path=${url(real)}&ticket=${env.ticketFor(real)}").get
           assertEquals(resp.status, Status.Forbidden, s"$rel")
@@ -280,17 +281,17 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         val rejected = body.hcursor.downField("rejected").values.getOrElse(Vector.empty).toList
         // A11 — the credential path got no ticket, and is reported
         assert(!tickets.contains(cred.toString))
-        assert(rejected.exists(j =>
-          j.hcursor.downField("path").as[String].toOption.contains(cred.toString) &&
-            j.hcursor.downField("reason").as[String].toOption.contains("credential-path")
-        ))
+        assert(
+          rejected.exists(j =>
+            j.hcursor.downField("path").as[String].toOption.contains(cred.toString) &&
+              j.hcursor.downField("reason").as[String].toOption.contains("credential-path")
+          )
+        )
         // A12 (retired 2026-10-07): the extension face no longer rejects —
         // the formerly "bad extension" file is SIGNED like any other
         // credential-clean local file.
         assert(tickets.contains(formerBadExt.toString), "the extension gate is retired: vps.env must sign")
-        assert(!rejected.exists(j =>
-          j.hcursor.downField("path").as[String].toOption.contains(formerBadExt.toString)
-        ))
+        assert(!rejected.exists(j => j.hcursor.downField("path").as[String].toOption.contains(formerBadExt.toString)))
         // A16 — the opaque value must not leak the path it unlocks
         val token = body.hcursor
           .downField("tickets")
@@ -417,7 +418,10 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
           .issue(
             Json.obj(
               "sessionId" -> Json.fromString("spec"),
-              "paths" -> Json.arr((credCases.map((p, _) => Json.fromString(p.toString)) ++ serveCases.map(p => Json.fromString(p.toString)))*)
+              "paths" -> Json.arr(
+                (credCases.map((p, _) => Json.fromString(p.toString)) ++ serveCases
+                  .map(p => Json.fromString(p.toString)))*
+              )
             )
           )
           .get

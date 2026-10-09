@@ -43,8 +43,70 @@ object ConfigService:
         }
   }
 
+  /**
+   * The mask literal — the SAME convention the write side's [[mergeConfig]]
+   * treats as "keep the stored value" (`incoming.asString == Some("***")`),
+   * so a masked read that round-trips through updateConfig can never clobber
+   * the real key. One literal, both sides.
+   */
+  val SecretMask: String = "***"
+
+  /**
+   * Read-side secret projection (keyaudit-quickfix ③): `llm.providers.<id>.
+   * apiKey` and `search.apiKey` are masked to `"***"`. Everything else keeps
+   * its value verbatim — including the `jev` / `embedding` `keyRef` pointers
+   * (those are secret NAMES, never values). (Object key order may re-seat in
+   * the re-serialization; JSON key order is not semantic anywhere downstream.)
+   *
+   * A body that does not parse is handed back unchanged (the write side
+   * ref-parse-fails on it identically; there is no round-trip to protect).
+   */
+  def maskSecrets(raw: String): String =
+    parse(raw).toOption match
+      case None => raw
+      case Some(json) => maskSecretsJson(json).spaces2
+
+  /** JSON-level core of [[maskSecrets]] (spec-facing pure form). */
+  def maskSecretsJson(json: Json): Json =
+    maskProviderApiKeys(maskSearchApiKey(json))
+
+  /** `llm.providers.<id>.apiKey` → `"***"` (absent key ⇒ untouched). */
+  private def maskProviderApiKeys(json: Json): Json =
+    (for
+      root <- json.asObject
+      llm <- root("llm").flatMap(_.asObject)
+      providers <- llm("providers").flatMap(_.asObject)
+    yield
+      val masked = JsonObject.fromIterable(providers.toMap.map { case (id, p) =>
+        id -> p.mapObject(o => if o.contains("apiKey") then o.add("apiKey", Json.fromString(SecretMask)) else o)
+      })
+      Json.fromJsonObject(root.add("llm", Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(masked)))))
+    ).getOrElse(json)
+
+  /** `search.apiKey` → `"***"` (absent key ⇒ untouched). */
+  private def maskSearchApiKey(json: Json): Json =
+    (for
+      root <- json.asObject
+      search <- root("search").flatMap(_.asObject)
+      if search.contains("apiKey")
+    yield Json.fromJsonObject(
+      root.add("search", Json.fromJsonObject(search.add("apiKey", Json.fromString(SecretMask))))
+    )).getOrElse(json)
+
   def getConfig: IO[String] = IO.blocking {
-    if os.exists(configPath) then os.read(configPath) else "{}"
+    // Read-side masking (keyaudit-quickfix ③): the wire faces (REST
+    // GET /api/config, WS getConfig) must not echo the stored keys. Every
+    // consumer of this method is safe under the mask:
+    //   · config wire faces — the frontend already treats `"***"` as "do not
+    //     prefill / keep stored" (sidebar.js provider form sends `***` for an
+    //     empty key input; mergeConfig preserves it on the write side);
+    //   · onboarding model step / probe — consume model ids and presence
+    //     only, never a key value; the probe's real LLM call goes through the
+    //     in-memory ProviderRegistry, not this string;
+    //   · finishOnboarding's contextWindow write-back — deepMerges the masked
+    //     tree into updateConfig, where mergeConfig's `***` rule keeps the
+    //     stored key. Round-trip closed by construction.
+    if os.exists(configPath) then maskSecrets(os.read(configPath)) else "{}"
   }
 
   /** Validate config JSON — returns list of errors. Empty list means valid. */
@@ -142,7 +204,11 @@ object ConfigService:
                 // Write path: always the brand config name — the first
                 // read-modify-write after a rename completes the file
                 // migration (existing was read through the legacy fallback).
-                os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), merged, createFolders = true)
+                // Restricted form (keyaudit-quickfix ①): nebflow.json carries
+                // provider apiKeys in cleartext — the file lands 0600 instead
+                // of the umask default 0644 (legacy files converge on their
+                // next save; no migration script).
+                AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), merged)
               }
               .attempt
               .flatMap {
@@ -183,7 +249,8 @@ object ConfigService:
         val existing = if os.exists(configPath) then os.read(configPath) else "{}"
         val parsed = parse(existing).getOrElse(Json.obj())
         val updated = parsed.mapObject(_.add("safety", Json.obj("defaultMode" -> mode.asJson)))
-        os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2, createFolders = true)
+        // Restricted form (keyaudit-quickfix ①) — same rationale as updateConfig.
+        AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
       }
     }
 
@@ -216,7 +283,8 @@ object ConfigService:
             Json.fromJsonObject(section.add("enabled", enabled.asJson))
           )
         )
-        AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+        // Restricted form (keyaudit-quickfix ①) — same rationale as updateConfig.
+        AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
       }
     }
 
@@ -259,10 +327,12 @@ object ConfigService:
                 .getOrElse(JsonObject.empty)
               val updatedSection = values.foldLeft(section) { case (acc, (k, v)) => acc.add(k, v) }
               val updated = parsed.mapObject(_.add(JEV_SECTION, Json.fromJsonObject(updatedSection)))
-              AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+              AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
               Right(())
         }
       }
+    end if
+  end setJevSection
 
   /** 顶层节名（写侧单点，避免字符串散落）。 */
   private val JEV_SECTION = "jev"
@@ -310,10 +380,12 @@ object ConfigService:
                 .getOrElse(JsonObject.empty)
               val updatedSection = values.foldLeft(section) { case (acc, (k, v)) => acc.add(k, v) }
               val updated = parsed.mapObject(_.add(EMBEDDING_SECTION, Json.fromJsonObject(updatedSection)))
-              AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+              AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
               Right(())
         }
       }
+    end if
+  end setEmbeddingSection
 
   /** 顶层节名（写侧单点）。 */
   private val EMBEDDING_SECTION = "embedding"
@@ -367,10 +439,13 @@ object ConfigService:
                   .getOrElse(JsonObject.empty)
                 val updatedSection = values.foldLeft(section) { case (acc, (k, v)) => acc.add(k, v) }
                 val updated = parsed.mapObject(_.add(EXECUTOR_SECTION, Json.fromJsonObject(updatedSection)))
-                AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+                AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
                 Right(())
           }
         }
+      end if
+    end if
+  end setExecutorSection
 
   /** 顶层节名（写侧单点，避免字符串散落）。 */
   private val EXECUTOR_SECTION = "executor"

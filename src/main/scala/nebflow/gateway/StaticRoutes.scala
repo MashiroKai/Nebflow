@@ -186,13 +186,34 @@ object StaticRoutes:
       if !(Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token)) then
         Forbidden("Invalid token")
       else
-        val segs = req.uri.path.segments.map(_.encoded).toList
+        // Percent-DECODE each segment before the lookup (refresh-image fix,
+        // 2026-10-09): the wire path is always percent-encoded (browsers encode
+        // <img src> per WHATWG; the frontend's attachmentImageUrl
+        // encodeURIComponent's each part) while the on-disk name is the decoded
+        // form. Matching on `encoded` looked up the literal `%E6…%20…` spelling
+        // and 404'd every upload whose name has non-ASCII characters or spaces —
+        // i.e. every macOS screenshot (「截屏2026-10-09 07.10.22.jpg」), which is
+        // exactly why restored history showed broken-image placeholders while the
+        // pre-refresh live row (inline data: preview) rendered fine.
+        // `Segment.decoded` defaults (bytecode-verified, 0.23.30): UTF-8,
+        // plusIsSpace=false (a literal `+` stays `+` on a path — query-string
+        // form semantics must NOT leak here), nothing skipped. Decoding happens
+        // BEFORE the guards below so a `%2E%2E` evasion decodes INTO them.
+        val segs = req.uri.path.segments.map(s => s.decoded()).toList
         // Path shape is exactly <sid>/<filename> — two segments after "uploads".
         if segs.sizeIs != 3 then NotFound()
         else
           val relParts = segs.drop(1) // drop "uploads"
-          // Block path traversal (same guard style as voice-models)
-          if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+          // Block path traversal (same guard style as voice-models). Post-decode
+          // additions: a segment that DECODES to something carrying `/` (from
+          // %2F — no real POSIX filename contains one, and `../uploads/…` would
+          // re-enter the base through os.RelPath up-segments) or NUL (from %00 —
+          // java.nio would throw InvalidPathException → 500) can only be an
+          // evasion, so it gets the same uniform 404 the old literal lookup
+          // produced for both.
+          if relParts
+              .exists(s => s == ".." || s.contains("\\") || s.contains('/') || s.contains('\u0000'))
+          then NotFound()
           else
             val uploadsBase = PathUtil.dataRoot / "uploads"
             val filePath = uploadsBase / os.RelPath(relParts.mkString("/"))

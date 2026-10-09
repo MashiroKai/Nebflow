@@ -15,6 +15,14 @@ import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
+// quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
+// msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
+import { attachQuoteMenu, renderQuoteBlock, quoteFromRef, nextChatMsgId, syncQuoteJumpStates, scheduleQuoteButtonMount } from './msgQuote.js';
+// file-diff → 委托结果行（bug #58 修 2026-10-09）：注入行展开体里的「Changes」段
+// 渲染器复用 diffRender.js（零依赖纯 HTML 模块，与 Flow Map 节点详情同一实现；
+// 样式 = css/diffView.css 既有类，chat 面只追加容器级规则）。
+import { renderFileChangesHtml } from './diffRender.js';
+import { openFileChangesCanvas } from './diffCanvas.js';
 // 令牌头（2026-09-20 收尾批）：`/api/tts` 服务端已加门 ⇒ 本调用点必须带 Authorization。
 // 复用既存的同族 helper（flowHelpers.authHeaders，全仓 6 处同族实例），**不新造**令牌读取
 // 机制。依赖方向安全：flowHelpers.js 只 import './branding.js'，无环。
@@ -50,6 +58,15 @@ function worklineLabel(rawLabel) {
   const parts = localizeToolLabel(rawLabel).split('\n', 2);
   return parts[0];
 }
+
+/** （c）面 · 作者 2026-10-08 裁定：subagent 弹窗的**在飞过程行**走 9.19 裸行
+ *  形态。置位点唯一（bgAgentPopup.js ensureStepView → view.nfBareProcessRows
+ *  = true）；主窗（primary）与 flow 弹窗不置位 ⇒ turn-line 剧场原样。本谓词
+ *  是 chat.js 各在飞渲染点的唯一分流读点（main.js 经导出同名函数读同一标志）。 */
+function bareProcessRows(view) {
+  return !!(view && view.nfBareProcessRows);
+}
+export { bareProcessRows };
 
 /** ③ 完成翻转（toolline-detail 批 2026-10-06）：工具完成勾选时 turn 行翻转为
  *  单行结果摘要——「<工具名> — <本地化 summary>」。数据 = toolEnd 帧前端
@@ -356,10 +373,28 @@ export function clearBusy(sessionId) {
 }
 
 // ---------- User bubble ----------
-export function renderUserBubble(text, attachments, timestamp) {
+/**
+ * Render the user's own message row.
+ * @param {string} text
+ * @param {Array} attachments
+ * @param {number} [timestamp]
+ * @param {{msgId?: string}} [opts]  quote-message 一期（spec §3.6/§3.4）：msgId =
+ *   本行的稳定 id（用户发送腿传 clientMessageId，与引擎帧同键；其余调用点缺省
+ *   生成 c-<rand>）。行挂 data-msg-id = 引用跳转的唯一寻址面。
+ */
+export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row user';
+  row.dataset.msgId = (opts && opts.msgId) || nextChatMsgId();
+  // quote-message 一期：带引用发送 ⇒ 气泡上方引用块（微信形态）。数据单点 =
+  // 附件里的 chat-message ref（live/排队/草稿恢复共用同一形状 ⇒ 三个入路零
+  // 额外处理）；该 ref 不进气泡内的 ref 卡循环（引用块是它唯一的消费面）。
+  const quoteAtt = (attachments || []).find(a => a && a.type === 'ref' && a.refType === 'chat-message');
+  if (quoteAtt) {
+    const quote = quoteFromRef(quoteAtt);
+    if (quote) row.appendChild(renderQuoteBlock(quote));
+  }
 
   // Text bubble (separate)
   if (text) {
@@ -388,6 +423,9 @@ export function renderUserBubble(text, attachments, timestamp) {
   const mediaAtts = [];
   (attachments || []).forEach(att => {
     if (att && (att.type === 'ref' || att.type === 'taskRef')) {
+      // quote-message 一期：引用态 ref 的唯一消费面 = 上方引用块（不进 ref 卡
+      // 循环，否则同一引用渲染两遍）。
+      if (att.type === 'ref' && att.refType === 'chat-message') return;
       const bubble = document.createElement('div');
       bubble.className = 'bubble user att-bubble';
       // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
@@ -409,19 +447,49 @@ export function renderUserBubble(text, attachments, timestamp) {
   // Timestamp + copy button (unified v1.2 footer pill)
   const ts = timestamp || Date.now();
   row.appendChild(createMsgFooterBadge(ts, text));
+  // quote-message 一期（spec §2.1）：用户文本行右键 = 复制 + 引用（好友窗 msgmenu
+  // 同壳 showPopupMenu；引用走 msgQuote.startQuote 替换语义）。
+  attachQuoteMenu(row, {
+    kind: 'text', text,
+    sessionId: activeView.sessionId, messageId: row.dataset.msgId,
+    senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts,
+  });
 
   appendChatRow(chat, row);
   // The independent media/file card row (same .row.pop-artifact family the Pop
   // faces use) — time order = message order: user row, then its cards, then
   // whatever the conversation appends next (AC-S4's DOM shape).
   const mediaRow = buildUserMediaRow(mediaAtts);
-  if (mediaRow) appendChatRow(chat, mediaRow);
+  if (mediaRow) {
+    // 用户附件点击统一批（2026-10-08）：live 发送时行先于后端落盘渲染，item 无
+    // path —— 媒体整面点击只能落到 pathless 灯箱、文件卡点击是死的。把行登记进
+    // popArtifacts 的待补表，`attachmentsSaved` 帧（后端 ui.json 落盘后回传）到达
+    // 后用同一套 builders 原位重渲：item 带 path ⇒ 点击 = openPopArtifact 单点
+    // （与 Pop 三修 ② 整面点击开 Canvas、与历史恢复腿三者同构）。
+    registerUserMediaRow(activeView.sessionId, mediaRow, mediaAtts);
+    appendChatRow(chat, mediaRow);
+  }
+  // quote-message 一期：可点性收敛（引用块挂载时目标行可能尚未渲染 ⇒ 追加后
+  // 统一重判 data-quote-jump；未命中 ⇒ 降级注记，无死指针）。
+  syncQuoteJumpStates(chat);
   // UNCONDITIONAL by author ruling (2026-09-11 A-branch): the user's own
   // message always brings the viewport back to the bottom — the near-bottom
   // judgement must NOT gate this site. Do not "converge" it.
   chat.scrollTop = chat.scrollHeight;
   return { type: 'user', text, timestamp: ts, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
 }
+
+// ---------- 用户附件落盘路径回传（attachmentsSaved） ----------
+// 用户附件点击统一批（2026-10-08）：后端把附件落盘（uploads/<sid>/…，或命中本机
+// 原文件）并写 ui.json 后，向请求方连接回传 {type:'attachmentsSaved', sessionId,
+// attachments:[{name,type,path}]}。本订阅按会话把对应 live 行原位重渲——openPopArtifact
+// 单点开 Canvas（popArtifacts.patchUserMediaRow 的注释承载全部契约：顺序对齐 /
+// name 防错位 / path null 不补）。会话级帧：用户已切走的会话被 ws.js :646 过滤丢弃
+// ——该会话重入时由历史恢复腿（persistence.buildUserAttachmentRows，自带 path）接管。
+// 旧后端不发此帧 ⇒ 订阅永不触发 ⇒ 行为与改前一致（无回归面）。
+onMessage('attachmentsSaved', (msg) => {
+  if (msg && msg.sessionId) patchUserMediaRow(msg.sessionId, msg.attachments);
+});
 
 // ---------- Injected bubble (task P+Q: tool-injected prompts & result notifications) ----------
 // Mail/Delegate/SubTask/Skill/Flow/ExternalEvent injections arrive as WS
@@ -597,8 +665,17 @@ function appendDeliveryBadge(label, delivery) {
  *  is the single source; the frontend must NOT concatenate a second time).
  *  Absent (old history rows, sources outside the engine KIND vocabulary,
  *  e.g. the in-flight device-mail source) ⇒ falls back to
- *  `injectedSourceLabel` above, byte-identical to before. */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header) {
+ *  `injectedSourceLabel` above, byte-identical to before.
+ *  fileChanges (optional, file-diff → 委托结果行 bug #58 修 2026-10-09；展开改
+ *  Canvas 为 2026-10-10 裁定): the per-batch changed-file diff payload carried
+ *  by delegate terminal events (engine `FileChangeReport.delegateBatchMetadata`
+ *  — same wire shape as the REST file-changes face). Present with files ⇒ a
+ *  collapsed「Changes」section mounts inside the expanded body showing ONLY the
+ *  header stats line + per-file rows (badge / +a −r / source tag) — the diff
+ *  bodies render in the CANVAS panel (diffCanvas.openFileChangesCanvas), never
+ *  inline in the bubble; the collapsed label keeps the quiet `N files +a −r`
+ *  hint. Absent (non-delegate rows / old history) ⇒ render unchanged. */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -641,8 +718,52 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake)
   ));
   appendDeliveryBadge(label, delivery);
+  // file-diff → 委托结果行（bug #58 修）：折叠态的安静提示——「N files +a −r」。
+  // 发现性钉子（「为什么我看不到」正是本案的用户报告形态）；缺载荷 ⇒ 零渲染。
+  if (Array.isArray(fileChanges?.files) && fileChanges.files.length) {
+    const hint = document.createElement('span');
+    hint.className = 'nf-row-hint';
+    const tot = fileChanges.files.reduce((acc, f) => {
+      acc.a += Number(f?.added) || 0; acc.r += Number(f?.removed) || 0; return acc;
+    }, { a: 0, r: 0 });
+    hint.textContent = ` · ${fileChanges.files.length} file${fileChanges.files.length === 1 ? '' : 's'} +${tot.a} −${tot.r}`;
+    label.appendChild(hint);
+  }
   bubble.appendChild(label);
   bubble.appendChild(content);
+  // file-diff → 委托结果行（2026-10-10 裁定）：展开体尾部挂「Changes」段，但只保留
+  // header 统计行 + 文件行（徽标 / +a −r / 来源 tag）——diff 体不再内联展开；
+  // 点头部（聚焦第一个文件）或任一文件行（聚焦该文件）→ Canvas 打开 diff 视图
+  // （diffCanvas.openFileChangesCanvas，复用 diffRender.js 渲染单源）。
+  // 事件委托挂在段根上：一个监听器覆盖头部与全部文件行（键盘 Enter/Space 同效）。
+  if (Array.isArray(fileChanges?.files) && fileChanges.files.length) {
+    const sec = document.createElement('div');
+    sec.innerHTML = renderFileChangesHtml(fileChanges, { mode: 'chat' });
+    const node = sec.firstElementChild;
+    if (node) {
+      const openInCanvas = (row, head) => {
+        const idx = row ? Number(row.dataset.fcFile) : 0;
+        openFileChangesCanvas(fileChanges, { focusIndex: Number.isFinite(idx) ? idx : 0 });
+      };
+      /** @param {MouseEvent} ev */
+      const onFcClick = (ev) => {
+        const el = /** @type {HTMLElement} */ (ev.target);
+        openInCanvas(el.closest('[data-fc-file]'), el.closest('[data-fc-open]'));
+      };
+      /** @param {KeyboardEvent} ev */
+      const onFcKey = (ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        const el = /** @type {HTMLElement} */ (ev.target);
+        const target = el.closest('[data-fc-file], [data-fc-open]');
+        if (!target) return;
+        ev.preventDefault();
+        openInCanvas(target.closest('[data-fc-file]'), target);
+      };
+      node.addEventListener('click', onFcClick);
+      node.addEventListener('keydown', onFcKey);
+      content.appendChild(node);
+    }
+  }
   row.appendChild(bubble);
 
   // Timestamp + copy button (unified v1.2 footer pill). History restore may
@@ -651,6 +772,16 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   if ((timestamp && timestamp > 0) || trimmed) {
     row.appendChild(createMsgFooterBadge(timestamp, trimmed));
   }
+  // quote-message 一期（spec §2.1/§2.5）：注入通知行可引用。挂点在本纯 builder
+  // ⇒ live（renderInjectedBubble）与历史恢复（persistence.js）同构获得 data-msg-id
+  // 与右键菜单（复制 = 正文纯文本；引用摘要 = header 或正文首行，senderRole='agent'）。
+  row.dataset.msgId = nextChatMsgId();
+  attachQuoteMenu(row, {
+    kind: 'text', text: trimmed,
+    messageId: row.dataset.msgId,
+    senderRole: 'agent', senderName: injectedSourceLabel(source, eventType, sender, sourceTeam, intake),
+    ts: timestamp || Date.now(),
+  });
   return row;
 }
 
@@ -659,10 +790,12 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
  *  bottom unconditionally, which yanked the user out of history they were
  *  reading (`chat.scrollTop = chat.scrollHeight`). It now follows the shared
  *  near-bottom judgement (utils.js shouldFollowBottom) so a notification that
- *  arrives while the user is scrolled up stays put and raises the ↓ N pill. */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header) {
+ *  arrives while the user is scrolled up stays put and raises the ↓ N pill.
+ *  fileChanges (optional): delegate 终态 diff 载荷透传（bug #58 修）——live 帧
+ *  与历史恢复（persistence.js）走同一 builder，渲染逐字同构。 */
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header, fileChanges) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges);
   appendChatRow(chat, row);
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }
@@ -841,6 +974,17 @@ export function finishAi(durationMs, model) {
     // animation class even if the CSS rule were ever narrowed.
     if (firstPaint && activeView.motionEnabled()) bubble.classList.add('nf-pop');
     const ts = Date.now();
+    // quote-message 一期（spec §2.1/§2.5）：助手文本行挂 id + 右键（复制 + 引用）。
+    // 挂点在终态收口（finishAi）——流式期行是中间面，id 与菜单在这里一次成形。
+    {
+      const aiRow = bubble.closest('.row');
+      if (aiRow) {
+        tagQuotableRow(aiRow, {
+          kind: 'text', text: activeView.stream.aiText || '',
+          senderRole: 'ai', senderName: rootDisplayName(), ts,
+        });
+      }
+    }
     let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
@@ -859,6 +1003,20 @@ export function finishAi(durationMs, model) {
       el.addEventListener('click', () => VoicePlayer.replay(el));
       VoicePlayer.enqueue(el.textContent, el);
     });
+    // ── 跟随钉底（2026-10-08 修复：整泡渲染丢失跟随腿）─────────────────────
+    // stream-ux（01bf2f88b, 2026-10-02）把 appendAiText 的每帧 rAF 渲染收成此处
+    // 一次性 final render 时，旧调度腿自带的 rafScrollChat（snapped||near-bottom
+    // 跟随）没有跟过来：累积期空泡行一直贴底（尾钉在写），final render 一帧把
+    // 气泡撑高数百 px ⇒ 距底距离一次性跳出 NEAR_BOTTOM_PX，本轮回答整块落在视
+    // 口下方（工作线钉在 composer 上缘、答案从 composer 下缘渗出），且 done 之
+    // 后再无任何 append 事件来消费 scrollSnapped latch ⇒ 停在旧位不跟随。
+    // 此处补回与 renderInjectedBubble / appendAiText 尾钉同一份单源判据
+    // （utils.js shouldFollowBottom = 跟随意图 latch ∥ 几何贴底）：用户已上翻
+    // 读历史 ⇒ 不打扰（↓ N 胶囊语义不变）。同步写、不排 rAF —— 与 UI-G 弹窗
+    // 静态面纪律一致（弹窗本无 rAF 调度）。
+    if (shouldFollowBottom(activeView, activeView.dom.chat)) {
+      activeView.dom.chat.scrollTop = activeView.dom.chat.scrollHeight;
+    }
     const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model, timestamp: ts };
     activeView.stream.currentAiBubble = null;
     activeView.stream.aiText = '';
@@ -1083,6 +1241,12 @@ export function finishAgent(agentId) {
       a.bubble.innerHTML = renderMarkdownWithMath(a.text);
       // v1.2 unified footer (2026-09-06 补齐批): agent rows get time + copy.
       if (a.row) a.row.appendChild(createMsgFooterBadge(Date.now(), a.text));
+      // 跟随钉底（2026-10-08，与 finishAi 同族同修）：agent 流式帧经
+      // scheduleStreamRender→rafScrollChat 跟随，终态 final render（含 footer
+      // 行）是一次原地长高，旧腿不覆盖此处 ⇒ 同一判据补回；已上翻不打扰。
+      if (shouldFollowBottom(activeView, activeView.dom.chat)) {
+        activeView.dom.chat.scrollTop = activeView.dom.chat.scrollHeight;
+      }
     }
   }
   if (activeView.stream.activeAgentId === agentId) activeView.stream.activeAgentId = null;
@@ -1097,7 +1261,33 @@ export function finishAgent(agentId) {
 // imported from here — re-export, not redefinition (single source in
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow } from './popArtifacts.js';
+
+/** quote-message 一期：AskUser 卡首个 question 的纯文本（剥 HTML 标签；镜像
+ *  persistence.js askUserQuestionText 的剥标签先例 —— chat.js 不反向 import
+ *  persistence（会成环），两处同步点 = 标签剥法 `replace(/<[^>]*>/g,' ')`。 */
+function askUserCardQuestionText(items) {
+  const first = Array.isArray(items) ? items.find(it => it && String(it.question || '').trim()) : null;
+  return first ? String(first.question || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+}
+
+/** quote-message 一期：行挂消息 id + 右键菜单（幂等 —— id 只在缺席时补、菜单用
+ *  行级旗标防重复挂）。工具卡两段生命期（renderToolPending 建 id / renderTool 完成
+ *  面补菜单带 label+summary）都收敛到这里。
+ *  footer 引用按钮批：菜单已挂过的行（round 边界二次 finishAi 复用同行）刷新行上
+ *  描述符并重排一次徽章收敛 —— 追加的新 footer 徽章也要补引用按钮（首挂的收敛在
+ *  attachQuoteMenu 内）。 */
+function tagQuotableRow(row, d) {
+  if (!row) return;
+  if (!row.dataset.msgId) row.dataset.msgId = nextChatMsgId();
+  if (!row.__nfQuoteMenu) {
+    row.__nfQuoteMenu = true;
+    attachQuoteMenu(row, { ...d, messageId: row.dataset.msgId });
+  } else {
+    row.__nfQuoteDesc = { ...d, messageId: row.dataset.msgId };
+    scheduleQuoteButtonMount(row);
+  }
+}
 
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
@@ -1108,8 +1298,12 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // ③ 完成翻转（toolline-detail 批）：行文本 = 单行结果摘要（工具名 — 摘要），
   // 不再停留运行中 label；运行细节 span 随项重建自然卸下。
   const resultText = toolLineResultText(label, summary);
-  if (isError) failWorklineItem(activeView, worklineLabel(label), resultText);
-  else doneWorklineItem(activeView, worklineLabel(label), resultText);
+  // （c）面：弹窗裸行 —— 完成翻转属 turn-line 剧场，弹窗不落行（工具卡本体
+  // 即 9.19 的完成面：icon + label — summary）。
+  if (!bareProcessRows(activeView)) {
+    if (isError) failWorklineItem(activeView, worklineLabel(label), resultText);
+    else doneWorklineItem(activeView, worklineLabel(label), resultText);
+  }
 
   // Cancel any pending streaming rAF so it doesn't overwrite the final render
   cancelToolStreamRAF();
@@ -1152,7 +1346,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     // Pre-tucked (stream-ux redesign 2026-10-03): the card is the expand face;
     // the turn line owns the live spinner. Reused pending rows were born
     // tucked by renderToolPending.
-    row.className = 'row tool nf-tucked';
+    // （c）面：弹窗裸行（9.19 形态）—— 在飞工具卡可见；终态由 turnGroup 收拢
+    // （9.19 同一收拢路径）。
+    row.className = bareProcessRows(activeView) ? 'row tool' : 'row tool nf-tucked';
     card = document.createElement('div');
     card.className = 'tool-card';
     row.appendChild(card);
@@ -1160,6 +1356,12 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
+  // quote-message 一期（spec §2.1/§2.5）：工具卡行挂 id + 右键「引用」（仅引用，
+  // 无正文可复制；摘要 = [工具] label · summary≤40）。复用 pending 行幂等。
+  tagQuotableRow(row, {
+    kind: 'tool', label, summary,
+    senderRole: 'tool', senderName: rootDisplayName(), ts: Date.now(),
+  });
   // UI-B: stamp the owning round on a freshly built row (a reused pending row
   // already carries its start round from renderToolPending — the completion
   // must not re-attribute it to a later round).
@@ -1345,7 +1547,9 @@ export function renderToolPending(label, sessionId) {
   // stream-ux §二.1.1: a tool STARTED — the single-line badge shows a spinner +
   // the tool's first label line. Idempotent per label, so the expected
   // toolCallDetected → toolStart double event does not flicker a roll.
-  startWorklineItem(activeView, worklineLabel(label), 'tool');
+  // （c）面：弹窗裸行 —— 不建 turn-line；在飞面 = 可见的 pending 工具卡
+  // （spinner + label，9.19 形态）。worklineToolDetail 细节流自守卫（无行即空转）。
+  if (!bareProcessRows(activeView)) startWorklineItem(activeView, worklineLabel(label), 'tool');
   if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
     const row = activeView.stream.currentAiBubble.closest('.row');
@@ -1419,7 +1623,12 @@ export function renderToolPending(label, sessionId) {
   }
 
   const row = document.createElement('div');
-  row.className = 'row tool nf-tucked'; // expand face — the turn line owns the run (2026-10-03)
+  // （c）面：弹窗裸行（9.19 形态）—— pending 卡在飞可见；主窗保持预 tucked
+  // （expand face — the turn line owns the run, 2026-10-03）。
+  row.className = bareProcessRows(activeView) ? 'row tool' : 'row tool nf-tucked';
+  // quote-message 一期：行 id 自诞生即挂（跳转寻址面；右键菜单由完成面
+  // renderTool 的 tagQuotableRow 统一补 —— 那里才有 label+summary 完整摘要）。
+  row.dataset.msgId = nextChatMsgId();
   // UI-B: the row carries the round it belongs to (a tool that starts in one
   // round and completes in the next keeps its START round, so the split never
   // re-attributes it). Read by the badge-split spec through dataset.nfRound.
@@ -2382,6 +2591,10 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   // requestId and stay untagged.
   if (requestId) box.dataset.requestId = requestId;
   const answers = new Array(questions.length).fill(null);
+  // askuser-secret 批（规格 §1/§3）：secret 题的值**只**进这一槽（confirm 时折进
+  // secretSlots 专用 WS 键）——绝不写 answers[qi]，因此普通答案通道/草稿/历史行
+  // 都不会碰到值。null = 未作答（confirm 闸与 shouldShow 重置共用该语义）。
+  const secretValues = new Array(questions.length).fill(null);
   const confirmLabel = doneLabel || t('chat.confirm');
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
   const questionWrappers = [];
@@ -2413,10 +2626,24 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         const input = /** @type {HTMLTextAreaElement|null} */ (wrapper.querySelector('.option-custom-input'));
         if (input) input.value = '';
       }
+      // askuser-secret 批：被条件隐藏的 secret 题同样清值（DOM 输入 + 槽位），
+      // 陈旧密码不得随提交顺路（与 A-2 同一语义，第二槽位面）。
+      if (secretValues[qi] !== null && secretValues[qi] !== undefined) {
+        secretValues[qi] = null;
+        const pw = wrapper.querySelector('.option-secret-input');
+        if (pw) pw.value = '';
+      }
     },
   });
   function updateVisibility() {
     visibility.update();
+  }
+
+  // askuser-secret 批：作答判定单一谓词（初始态与 checkAllAnswered 共用）——
+  // 普通题看 answers[qi]；secret 题看 secretValues[qi]（非空 = 已作答）。
+  function isAnswered(qi) {
+    if (questions[qi] && questions[qi].secret === true) return !!secretValues[qi];
+    return answers[qi] !== null;
   }
 
   // --- Multi-select: recompute answers[qi] from the DOM picked state ---
@@ -2447,6 +2674,52 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     q.className = 'option-q';
     q.innerHTML = item.question;
     wrapper.appendChild(q);
+
+    // askuser-secret 批（规格 §1/§3）：secret 题 = 密码框（遮蔽 + 「显示」眼睛
+    // 切换）。零选项、零 textarea、零草稿恢复（freeInput:false 先例）——整段
+    // 选项/自由输入机制经 early-return 跳过。值只进 secretValues[qi]；确认后
+    // DOM 值立即清空（confirm 路径）。inline 样式自包含（本批不动 chat.css）。
+    if (item.secret === true) {
+      const row = document.createElement('div');
+      row.className = 'option-secret-row';
+      row.style.cssText = 'display:flex;gap:8px;align-items:stretch;margin-top:6px;';
+      const pw = document.createElement('input');
+      pw.type = 'password';
+      pw.className = 'option-secret-input';
+      pw.autocomplete = 'off';
+      pw.spellcheck = false;
+      pw.placeholder = t('askUser.secretPlaceholder');
+      pw.style.cssText = 'flex:1;min-width:0;padding:8px 10px;border-radius:8px;' +
+        'border:1px solid var(--color-border, rgba(128,128,128,0.35));' +
+        'background:var(--color-surface, rgba(127,127,127,0.08));color:inherit;font:inherit;';
+      const eye = document.createElement('button');
+      eye.type = 'button';
+      eye.className = 'option-secret-eye';
+      eye.textContent = t('askUser.secretShow');
+      eye.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid var(--color-border, rgba(128,128,128,0.35));' +
+        'background:transparent;color:var(--color-text-muted, #888);font:inherit;cursor:pointer;';
+      eye.onclick = () => {
+        const show = pw.type === 'password';
+        pw.type = show ? 'text' : 'password';
+        eye.textContent = show ? t('askUser.secretHide') : t('askUser.secretShow');
+      };
+      pw.oninput = () => {
+        secretValues[qi] = pw.value;
+        updateVisibility();
+        checkAllAnswered();
+      };
+      row.appendChild(pw);
+      row.appendChild(eye);
+      wrapper.appendChild(row);
+      const hint = document.createElement('div');
+      hint.className = 'option-secret-hint';
+      hint.style.cssText = 'margin-top:6px;font-size:12px;color:var(--color-text-muted, #888);';
+      hint.textContent = item.ephemeral ? t('askUser.secretEphemeralHint') : t('askUser.secretHint');
+      wrapper.appendChild(hint);
+      box.appendChild(wrapper);
+      updateVisibility();
+      return; // secret 题到此为止：下面的选项/自由输入/草稿机制整段跳过
+    }
 
     // 工作区选择卡（dirPicker=true）：问题下方渲染「选择工作区」大目标——内联 SVG
     // 描边文件夹图标（禁 emoji）。点击目标或卡片空白区整体 → 应用内目录浏览器
@@ -2719,7 +2992,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'option-confirm';
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
-  confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
+  confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
   confirmBtn.onclick = () => {
     // Lock the card: drop it from the Canvas answer registry (E6: late
     // _nfAskAnswer postMessages find no entry and are silently discarded).
@@ -2731,18 +3004,38 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     confirmBtn.style.display = 'none';
     cancelBtn.style.display = 'none';
 
+    // askuser-secret 批：终态行逐槽映射——secret 槽只显示「已安全存储」占位
+    // （值从不进 DOM 文本/草稿/任何持久面）。先取 secretSlots 快照，随后立即
+    // 清空内存槽与 DOM 输入值（规格 §3「确认后立即清空 DOM 值」）。
+    const secretSlots = questions
+      .map((qz, qi) => (qz && qz.secret === true) && secretValues[qi] ? { idx: qi, value: secretValues[qi] } : null)
+      .filter(Boolean);
+    const displayParts = questions
+      .map((qz, qi) => {
+        if (qz && qz.secret === true) return secretValues[qi] ? t('askUser.secretStoredLine') : '';
+        const a = answers[qi];
+        if (!a) return '';
+        return Array.isArray(a) ? '[' + a.join(', ') + ']' : a;
+      })
+      .filter(Boolean);
     const ansDiv = document.createElement('div');
     ansDiv.className = 'option-answer';
-    ansDiv.textContent = '-> ' + answers
-      .filter(a => a)
-      .map(a => Array.isArray(a) ? '[' + a.join(', ') + ']' : a)
-      .join(', ');
+    ansDiv.textContent = '-> ' + displayParts.join(', ');
     box.appendChild(ansDiv);
+    questions.forEach((qz, qi) => {
+      if (qz && qz.secret === true) {
+        secretValues[qi] = null; // 内存槽立即清（快照已取）
+        const pw = questionWrappers[qi] && questionWrappers[qi].querySelector('.option-secret-input');
+        if (pw) pw.value = ''; // 规格 §3「确认后立即清空 DOM 值」
+      }
+    });
 
     if (askSessionId) clearAskDrafts(askSessionId);
     // Multi-select answers serialize as JSON array strings; the wire stays one string slot per question.
+    // askuser-secret 批：secret 槽的 answers 位恒空串（hub 以 stored 回执占位化），
+    // 值走 secretSlots 专用键（网关检出后直写 secrets——值不进普通 answers 通道）。
     const finalAnswers = answers.map(a => Array.isArray(a) ? JSON.stringify(a) : (a !== null ? a : ''));
-    if (onConfirm) onConfirm(finalAnswers);
+    if (onConfirm) onConfirm(finalAnswers, secretSlots);
   };
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(confirmBtn);
@@ -2777,7 +3070,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   smartScroll();
 
   function checkAllAnswered() {
-    confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
+    confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
   }
 }
 
@@ -3011,6 +3304,14 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   if (sid && state.sessionToolCards[sid]) { state.sessionToolCards[sid].remove(); delete state.sessionToolCards[sid]; }
   const row = document.createElement('div');
   row.className = 'row ai';
+  // quote-message 一期（spec §2.1/§2.5）：AskUser 卡行挂 id + 右键「引用」
+  // （摘要 = [提问] 首个 question 剥标签后首行 ≤60；question 富文本剥标签取纯
+  // 文本先例 = persistence.js askUserQuestionText）。
+  row.dataset.msgId = nextChatMsgId();
+  attachQuoteMenu(row, {
+    kind: 'ask', question: askUserCardQuestionText(items),
+    senderRole: 'askUser', senderName: agentName || rootDisplayName(), ts: Date.now(),
+  });
   // Ghost seat (askuser-hybrid 重皮 2026-10-06): this bubble's only payload is
   // the AskUser card (+ source badge / optional canvas button) — the bubble
   // de-faces so the card floats directly on the paper. Content-bearing bubbles
@@ -3063,9 +3364,18 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   // Use the sessionId from the askUser message, not the currently active session
   const targetSid = askSessionId || activeView.sessionId;
   try {
-    showOptions(bubble, items, (answers) => {
+    showOptions(bubble, items, (answers, secretSlots) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers, ...(requestId && { requestId }) }));
+        // askuser-secret 批（规格 §2 值通道）：密码题的值走 `secretSlots` 专用键
+        // （网关检出后直写 secrets——值不进普通 answers 通道、不进 .ui.json）。
+        // 无秘密题 ⇒ 与改前逐字节同帧（secretSlots 键缺席）。
+        state.ws.send(JSON.stringify({
+          type: 'askUserAnswer',
+          sessionId: targetSid,
+          answers,
+          ...(Array.isArray(secretSlots) && secretSlots.length > 0 ? { secretSlots } : {}),
+          ...(requestId && { requestId })
+        }));
       }
       // D6 批 F2: card-answer resolves the pending slot locally — the hub does
       // not echo a frame for card answers, so this callback is the only
@@ -3074,8 +3384,21 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
       broadcastAskState(targetSid, requestId);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
+      // askucancel 批位2（2026-10-08）：卡上「取消」改走 hub 取消原语（askUserCancel
+      // 帧 → CancelRequest：kind 闸 + 发起方终结通知 + 幂等裁决 + Cancelled 时
+      // `__cancelled__` 落盘行），取代旧的 `__cancelled__` 哨兵答复（askUserAnswer ——
+      // hub 记 answered，非取消语义）。「已取消」锁定文案由 askUserClosed
+      // （reason=user-cancelled）广播 → closeAskUserCard 追加，本回调不自画终态行
+      // （closeAskUserCard 对已带作答行的卡幂等跳过）；失败面 = askUserCancelResult
+      // !ok → toast（main.js），卡保持既有 cancelBtn.onclick 锁定形态。
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'], ...(requestId && { requestId }) }));
+        if (requestId) {
+          state.ws.send(JSON.stringify({ type: 'askUserCancel', requestId, by: 'web' }));
+        } else {
+          // 理论不可达（live 卡恒带 requestId，hub 是唯一 id 源）；无 id 兜底保留
+          // 改前哨兵行为，不静默无操作。
+          state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
+        }
       }
       removePendingAsk(requestId);
       broadcastAskState(targetSid, requestId);
@@ -3265,6 +3588,17 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
       ansDiv.textContent = '-> ' + formatHistoryAnswer(answerText);
     }
     box.appendChild(ansDiv);
+  } else {
+    // askucancel 批位2（2026-10-08）：历史恢复的已取消卡补显式「已取消」标注——
+    // 改前该分支只锁卡（灰化 + 按钮在场禁用）无任何文字，终态语义不可读。挂
+    // `.option-answer`（案 A① 定死的语义 =「已作答」）是如实回放：`__cancelled__`
+    // 本就是引擎取消裁决落盘的作答行；顺带让 legacyTwin ② 判据（「确无作答记录」
+    // 才可被无 id 兜底替换）不再命中已终态的取消卡 —— 有作答记录 ⇒ 不可删，
+    // 与 sameAskCards 的教义一致（不许拿「有作答行」当「已答」的反面用）。
+    const cancelDiv = document.createElement('div');
+    cancelDiv.className = 'option-answer';
+    cancelDiv.textContent = '-> ' + t('askUser.cancelled');
+    box.appendChild(cancelDiv);
   }
 }
 
@@ -3484,13 +3818,19 @@ export function renderAttachmentPreview(target) {
     // ── 全局引用（#303 v1.1）：type='ref'（新统一模型）与旧 type='taskRef'
     // 都走 renderRefBlock —— 输入框引用块定高/截断/可展开（A1-A6）。旧 taskRef
     // 经 normalizeTaskRef 归一为 refRefType='task' 渲染（§2.4 渐进收敛）。──
+    // quote-message 引用 chip（2026-10-09 用户反馈改版）：chat-message ref 与其它
+    // 载荷**同条带**渲染在本附件条（#attachment-preview，输入框上方），形态 =
+    // 胶囊 chip（尺寸档见 input.css 作用域规则；颜色/图标/✕ 圆盘沿用现状）。
+    // 原整宽引用条 #msg-quote-strip 退役，引用态渲染自此与附件单点合一。
     if (att.type === 'ref' || att.type === 'taskRef') {
       const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
       const remove = () => {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
-      const card = renderRefBlock(ref, { mode: 'input' }, remove);
+      const card = renderRefBlock(ref,
+        att.refType === 'chat-message' ? { mode: 'input', closeStyle: 'disc' } : { mode: 'input' },
+        remove);
       attPreview.appendChild(card);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
@@ -3996,7 +4336,9 @@ export function appendThinkingDelta(delta, mark) {
     // bubble during the run — the turn line carries the single-line reveal.
     // The bubble is the EXPAND face, so it is born pre-tucked; content still
     // renders into it (rAF below) and turnGroup untucks it on demand.
-    row.className = 'row ai thinking-row nf-tucked';
+    // （c）面：弹窗裸行（9.19 形态）—— 在飞 thinking 气泡可见裸流；§③ 5 行窗
+    // 上限照钉（下方 rAF 的 applyThinkingWindowCap 与主窗同一入口，后令治前令）。
+    row.className = bareProcessRows(activeView) ? 'row ai thinking-row' : 'row ai thinking-row nf-tucked';
     // UI-B: the process row carries the round it belongs to (same contract as
     // the tool rows), so a reader can verify the round split from the DOM.
     stampRound(activeView, row);
@@ -4039,7 +4381,9 @@ export function appendThinkingDelta(delta, mark) {
   // accumulated thinking text on ONE line. Each delta only writes the target
   // width (a CSS step transition does the cadence) — the row is never rebuilt
   // per token (A2/A3/A7).
-  thinkingWorklineItem(activeView, activeView.stream.thinkingText);
+  // （c）面：弹窗裸行 —— 单行揭示属 turn-line 剧场，弹窗不落行；思考流本体
+  // 走上方可见气泡（9.19 形态）。
+  if (!bareProcessRows(activeView)) thinkingWorklineItem(activeView, activeView.stream.thinkingText);
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
   // which view global state points to at fire time.
@@ -4100,7 +4444,9 @@ export function finishThinking() {
   if (activeView.stream.currentThinkingBubble) {
     // stream-ux §二.1.1: thinking COMPLETED — the work-line swaps the width
     // reveal for the drawn check and keeps the text on the single line.
-    thinkingWorklineDone(activeView, activeView.stream.thinkingText);
+    // （c）面：弹窗裸行 —— thinking 完成面 = 气泡本体收拢（下方 2026-09-07
+    // 09:24 自动收拢，9.19 同在），不落 turn-line 完成项。
+    if (!bareProcessRows(activeView)) thinkingWorklineDone(activeView, activeView.stream.thinkingText);
     const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
       // 件①：收尾同一口径渲染（图片节点照旧存活 ⇒ 终结帧不再重拉一次、不再跳一次）

@@ -62,6 +62,7 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
 
   /** Quiet LLM stub: this spec judges the terminal write point only; turns do not participate. */
   private class QuietLlm:
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
@@ -197,7 +198,11 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
         second <- rt.engine.cancelNodes(List("n-k3a"), CancelSource.User, "chain cancel: second", cascade = false)
         twice <- nodeOf(rt, "n-k3a")
       yield
-        assertEquals(first.cancelled.map(_.nodeId), List("n-k3a"), "precondition: the first cancel terminalizes the node")
+        assertEquals(
+          first.cancelled.map(_.nodeId),
+          List("n-k3a"),
+          "precondition: the first cancel terminalizes the node"
+        )
         assertEquals(once.status, NodeLifecycle.Cancelled, "precondition: the node is cancelled after the first call")
         assertEquals(second.cancelled, Nil, s"K3a: the entry point must skip a terminal node, got: ${second.cancelled}")
         assertEquals(
@@ -257,12 +262,11 @@ class DeferredCancelResultSpec extends CatsEffectSuite:
         _ <- seed(rt, mkNode("n-k4", NodeLifecycle.Running, result = None))
         _ <- cancel(rt, "n-k4", "chain cancel: nothing produced yet")
         after <- nodeOf(rt, "n-k4")
-      yield
-        assertEquals(
-          after.result,
-          Some(s"cancelled[source=${CancelSource.UserCode}]: reason=chain cancel: nothing produced yet"),
-          "K4: no artifact ⇒ the result stays exactly the cancel reason (this item only changes the produced-artifact face)"
-        )
+      yield assertEquals(
+        after.result,
+        Some(s"cancelled[source=${CancelSource.UserCode}]: reason=chain cancel: nothing produced yet"),
+        "K4: no artifact ⇒ the result stays exactly the cancel reason (this item only changes the produced-artifact face)"
+      )
     }
   }
 

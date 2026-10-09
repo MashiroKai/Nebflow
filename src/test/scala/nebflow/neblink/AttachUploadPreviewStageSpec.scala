@@ -22,10 +22,10 @@ class AttachUploadPreviewStageSpec extends FunSuite:
     parse(s).fold(e => fail(s"bad test json: ${e.getMessage}"), identity)
 
   private val b64Nine = "AQIDBAUGBwgJ"
-  private val sha64   = "a" * 64
+  private val sha64 = "a" * 64
 
   private val fiveKey = jsonOf(s"""{"mime":"image/webp","w":4,"h":3,"size":9,"b64":"$b64Nine"}""")
-  private val sixKey  = jsonOf(s"""{"fmt":"webp","w":4,"h":3,"bytes":9,"sha256":"$sha64","b64":"$b64Nine"}""")
+  private val sixKey = jsonOf(s"""{"fmt":"webp","w":4,"h":3,"bytes":9,"sha256":"$sha64","b64":"$b64Nine"}""")
 
   private def staged(json: io.circe.Json, declared: Option[String] = None): PreviewStaged =
     val p = AttachmentPreviewContract.parsePreview(json)
@@ -65,8 +65,8 @@ class AttachUploadPreviewStageSpec extends FunSuite:
 
   test("staging registry: same-key replaces, take consumes once, the table is bounded") {
     val reg = AttachUploadRegistry.create.unsafeRunSync()
-    val p5  = staged(fiveKey).preview
-    val p6  = staged(sixKey).preview
+    val p5 = staged(fiveKey).preview
+    val p6 = staged(sixKey).preview
     // 缺席 ⇒ None（E1 无 preview 键）
     assertEquals(reg.takePreview("u-absent").unsafeRunSync(), None)
     // 暂存 → 取出（消费一次读）
@@ -77,7 +77,10 @@ class AttachUploadPreviewStageSpec extends FunSuite:
     // 同键重复暂存 = **替换**（浏览器重试申报天然幂等）；另说的方言一并更新
     assert(reg.stagePreview("u2", p5).unsafeRunSync())
     assert(reg.stagePreview("u2", p6, Some("fmt6")).unsafeRunSync())
-    assertEquals(reg.takePreview("u2").unsafeRunSync().map(s => (s.preview.dialectId, s.declaredDialect)), Some(("fmt6", Some("fmt6"))))
+    assertEquals(
+      reg.takePreview("u2").unsafeRunSync().map(s => (s.preview.dialectId, s.declaredDialect)),
+      Some(("fmt6", Some("fmt6")))
+    )
     // 有界：表满**且**键不在表中 ⇒ 拒绝暂存（调用方按「无预览」收场，零阻塞）
     val cap = AttachUploadRegistry.PreviewStageCap
     val reg2 = AttachUploadRegistry.create.unsafeRunSync()
@@ -91,7 +94,7 @@ class AttachUploadPreviewStageSpec extends FunSuite:
 
   test("staging does not disturb the in-flight/cancel bookkeeping it shares the object with") {
     val reg = AttachUploadRegistry.create.unsafeRunSync()
-    val p5  = staged(fiveKey).preview
+    val p5 = staged(fiveKey).preview
     reg.register("u9").unsafeRunSync()
     assert(reg.stagePreview("u9", p5).unsafeRunSync())
     assertEquals(reg.inFlight.unsafeRunSync(), Set("u9"))
@@ -116,3 +119,4 @@ class AttachUploadPreviewStageSpec extends FunSuite:
     assertEquals(AttachmentPreviewContract.encodeInDialect("fmt6", p5), None)
     assertEquals(AttachmentPreviewContract.encodeInDialect("fmt6", staged(sixKey).preview).isDefined, true)
   }
+end AttachUploadPreviewStageSpec

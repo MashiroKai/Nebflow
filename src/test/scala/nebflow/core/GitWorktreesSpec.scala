@@ -63,12 +63,18 @@ class GitWorktreesSpec extends FunSuite:
       val c = created.toOption.get
       assertEquals(c.path.toString, (repo / ".nebflow" / "worktrees" / "delegate-nebflow-abc123").toString)
       assertEquals(GitWorktrees.currentBranch(c.path), Some("delegate/delegate-nebflow-abc123"))
-      assertEquals(GitWorktrees.headSha(c.path), baseSha, "the worktree starts at the creating repo's HEAD (no main fallback)")
+      assertEquals(
+        GitWorktrees.headSha(c.path),
+        baseSha,
+        "the worktree starts at the creating repo's HEAD (no main fallback)"
+      )
       // 主仓 HEAD 不动（worktree 是旁支检出）
       assertEquals(GitWorktrees.currentBranch(repo), Some("main"))
   }
 
-  test("createWorktree: NodeEditTool legacy parity — branch travels WITH the dir candidate (`-b <name>` verbatim), empty base falls back to 'node'") {
+  test(
+    "createWorktree: NodeEditTool legacy parity — branch travels WITH the dir candidate (`-b <name>` verbatim), empty base falls back to 'node'"
+  ) {
     if !gitAvailable then ()
     else
       val repo = tempRoot / "legacy-repo"
@@ -81,7 +87,11 @@ class GitWorktreesSpec extends FunSuite:
       val n2 = GitWorktrees.createWorktree(repo, dirBase = "节点任务", branch = "节点任务")
       assert(n2.isRight, s"candidate -2 must succeed: ${n2.left.toOption.get.take(200)}")
       assertEquals(n2.toOption.get.name, "节点任务-2")
-      assertEquals(GitWorktrees.currentBranch(n2.toOption.get.path), Some("节点任务-2"), "legacy leg: branch follows the candidate dir name")
+      assertEquals(
+        GitWorktrees.currentBranch(n2.toOption.get.path),
+        Some("节点任务-2"),
+        "legacy leg: branch follows the candidate dir name"
+      )
       // 空 base → "node" 回落（抽取前原行为）
       val n3 = GitWorktrees.createWorktree(repo, dirBase = "", branch = "")
       assert(n3.isRight)
@@ -95,13 +105,19 @@ class GitWorktreesSpec extends FunSuite:
       mkRepo(repo)
       val r = GitWorktrees.createBranch(repo, "delegate/delegate-nebflow-xyz", "HEAD")
       assert(r.isRight, s"branch creation must succeed: $r")
-      assertEquals(GitWorktrees.currentBranch(repo), Some("main"), "shared working tree HEAD must NOT move (option (b) checkout is out)")
+      assertEquals(
+        GitWorktrees.currentBranch(repo),
+        Some("main"),
+        "shared working tree HEAD must NOT move (option (b) checkout is out)"
+      )
       assert(GitWorktrees.branchExists(repo, "delegate/delegate-nebflow-xyz"))
       // 基点 = HEAD（与 main 同 commit）
       val baseSha = GitWorktrees.headSha(repo)
       val branchSha =
         os.proc("git", "-C", repo.toString, "rev-parse", "--short", "delegate/delegate-nebflow-xyz")
-          .call(check = true, stdout = os.Pipe).out.trim()
+          .call(check = true, stdout = os.Pipe)
+          .out
+          .trim()
       assertEquals(branchSha, baseSha.getOrElse(fail("base sha must resolve")))
   }
 

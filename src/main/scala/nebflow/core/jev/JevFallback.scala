@@ -65,8 +65,10 @@ object JevFallback:
 
   private val logger = NebflowLogger.forName("nebflow.jev")
 
-  /** Append-only event log (same directory convention as the plugin-dispatch
-    * audit, `PluginDispatchPolicy.audit`). */
+  /**
+   * Append-only event log (same directory convention as the plugin-dispatch
+   * audit, `PluginDispatchPolicy.audit`).
+   */
   private def eventPath: os.Path = PathUtil.dataRoot / "logs" / "jev-allocation.jsonl"
 
   /**
@@ -94,6 +96,10 @@ object JevFallback:
           )
         (warn *> appendEvent(event, subject, reason)).as(JevAllocation.FellBack(kind, reason))
 
+    end match
+
+  end record
+
   /**
    * Append one visibility event.
    *
@@ -118,9 +124,10 @@ object JevFallback:
         ++ via.toList.map(v => "via" -> v)
       val line = fields.map { case (k, v) => s""""$k":${Json.fromString(v).noSpaces}""" }.mkString("{", ",", "}")
       os.write.append(eventPath, line + "\n", createFolders = true)
-    }.void.handleErrorWith(e =>
-      IO(logger.warnSync(s"jev allocation event append failed ($event/$subject): ${e.getClass.getSimpleName}"))
-    )
+    }.void
+      .handleErrorWith(e =>
+        IO(logger.warnSync(s"jev allocation event append failed ($event/$subject): ${e.getClass.getSimpleName}"))
+      )
 
   /**
    * Record a SUCCESSFUL allocation too.
@@ -142,3 +149,4 @@ object JevFallback:
     via: Option[String] = None
   ): IO[Unit] =
     appendEvent("allocated", subject, "ok", Some(capabilities), via)
+end JevFallback

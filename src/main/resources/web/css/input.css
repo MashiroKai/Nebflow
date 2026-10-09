@@ -538,6 +538,28 @@
 @media (prefers-reduced-motion: reduce) {
   .att-ref { animation: none; }
 }
+
+/* ── quote-message 引用 chip（2026-10-09 用户反馈改版）: composer 引用 chip 与
+   附件 chip 同条带（宿主 = #attachment-preview，输入框上方）同大小 —— 尺寸取
+   .att-file 档（11px 字号 / 3px 8px 内距 / 6px 圆角 / 4px 间距）。材质（sapphire
+   alpha token）、message-circle 图标、实心圆白 ✕ 全部沿用现状（零新色值）。
+   作用域 = 附件条内的 chat-message chip（data-ref-type 锚定）：其它 .att-ref
+   chip（file/document/task/html-element）维持上方 28px 紧凑档逐值不变。
+   溢出处理 = 宿主既有 flex-wrap 换行（chips 换行不横向溢出）。── */
+#attachment-preview .att-ref[data-ref-type="chat-message"] {
+  height: auto;
+  gap: 4px;
+  padding: 3px 6px 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+#attachment-preview .att-ref[data-ref-type="chat-message"] .att-ref-label { max-width: 220px; }
+/* ✕ 圆盘随 chip 同比例缩小（同字形/同色/同居中纪律，仅尺寸档位）—— 与 .att-file
+   的紧凑高度对齐；hover 态沿用共用块「红底白 ✕」钉回（input.css 上方同段）。 */
+#attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove { width: 13px; height: 13px; }
+#attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove svg { width: 7px; height: 7px; }
 .att-error {
   background: rgba(244, 67, 54, 0.12);
   color: var(--color-error);

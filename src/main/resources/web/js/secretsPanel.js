@@ -6,42 +6,75 @@
 // the settings page carries only a one-row entry button (sidebar.js
 // renderSettings → #btn-open-secrets, i18n key `settings.secrets`).
 //
-// Scope of this batch (dispatcher): the CONSUMPTION mechanism (env-like
-// consumption + agent invisibility) is NOT implemented here — seed files are
-// untouched. This module is the panel face only, developed against the
-// plan-card contract (问2) while the parallel backend leg
-// (secrets-backend-impl) lands its four routes:
-//   GET    /api/secrets                → {"secrets":[{name,size,mtime,mode,refs}]}
-//   POST   /api/secrets/{name}         body {"value"} — 409 already_exists
-//   PUT    /api/secrets/{name}         body {"value"} — 404 unknown_secret
-//   DELETE /api/secrets/{name}?confirm=<name> — 400 confirm_mismatch,
-//          409 referenced (refs list), 403 managed_namespace
+// 行内化 (author ruling 2026-10-09 07:42: 「我想直接就是把密钥的值放在条目
+// 这一页啊，有个小眼睛去点。平时就是点点点，直接就可以查看修改，不需要弹窗」):
+// the editor sub-dialog (#secrets-form) AND the floating「+」(#secrets-fab)
+// are RETIRED. Every operation happens inline in the list rows.
 //
-// 🔴 SECURITY DISCIPLINE (plan card §二, binding on this face):
-//   · The value lives ONLY in a draft variable, ONLY until the request body
-//     is assembled; on success the textarea AND the draft are cleared
-//     immediately. Never localStorage, never rendered back, never echoed.
-//   · The editor textarea ALWAYS starts empty — in replace mode the stored
-//     value is never fetched and never displayed (write-only semantics).
+// 行内化二轮 · 原位展开编辑 (author feedback 2026-10-09 08:32: 「可以对Ui布局
+// 再进行优化一下 不用都放同一行，保持极简干净的布局，另外修改的时候也不要
+// 影响布局，就在原位进行修改。…就是原位进行修改」— iPhone 提醒事项式)：
+// the row is now a two-face unit:
+//   · Rest face = ONE minimal line: name (left) + permission badge (only
+//     when permissive — the security signal stays on the list face). NO
+//     buttons, NO field, NO metadata — the eye, the editor and delete do not
+//     exist in the resting DOM.
+//   · Click the row → it expands IN PLACE downward into its edit detail
+//     (value field + eye + meta + 保存/删除); rows below shift naturally —
+//     no popup, no global reflow. One row open at a time.
+//
+// 行内化三轮 · 点点微调 (author feedback 2026-10-09 23:06: 「密钥面板这个
+// 点点的长度跟这个密钥的长度不一致。然后没有点击展开的时候，可以不显示点点」):
+//   · Rest face drops the dots span entirely (收起不显示点点) — the only
+//     value face left is the expanded detail's field placeholder.
+//   · That placeholder is LENGTH-FAITHFUL: one dot per stored byte, from the
+//     list's `size` metadata (maskPlaceholder below) — no value is read to
+//     paint it; byte-exact for ASCII secrets, and over-wide dots clip inside
+//     the one-row field (css .secrets-value::placeholder white-space: pre).
+//   · 保存 / Enter commits through the existing PUT; click-outside commits
+//     a CHANGED field (Reminders dismiss-to-save) and collapses; Esc
+//     collapses WITHOUT committing; failure keeps the detail open with the
+//     text for another try; success flashes 「已保存 ✓」on the resting face.
+//   · Eye (masked+empty) → ONE authenticated GET /api/secrets/{name}/value
+//     → plaintext fills the field, mask off. Eye again → mask ON and the
+//     FETCHED plaintext burns back to the placeholder face (清空回占位，
+//     下次揭示再拉). Collapsing the row removes the whole detail (a stronger
+//     burn). A locally-typed draft is never burned by the eye — masking
+//     local text is a presentation-only toggle.
+//   · Create: the dashed「＋ 新建密钥」tail row (always present, list end)
+//     expands in place into a name+value draft; Enter / 保存 submits through
+//     the existing POST; Esc discards.
+//   · Delete: unchanged (in-detail control, hover danger tint, glass confirm,
+//     DELETE ?confirm=<name>).
+//
+// 🔴 SECURITY DISCIPLINE (plan card §二, readback ruling 2026-10-09 07:03,
+//   unchanged in spirit by 行内化):
+//   · The list carries METADATA ONLY (name/size/mtime/mode/refs) and the
+//     module strips any stray `value` key off the wire rows. The ONE
+//     value-bearing call this module makes is GET /api/secrets/{name}/value
+//     (authenticated, single-name) — issued ONLY by an eye click on a
+//     masked-and-empty field, never while the list renders. One fetch per
+//     reveal: a click while the fetch is in flight CANCELS it (token bump),
+//     and the per-row token (revealSeq) drops stale replies so a slow
+//     response can never land in a re-masked field, a re-rendered row or a
+//     closed panel.
+//   · A fetched plaintext exists in exactly two places — the row field
+//     (revealed) and the baselines Map (change-detection baseline, entry
+//     deleted the moment the field re-masks / rests / the panel closes).
+//     Re-masking clears the field; committing clears it too. Never
+//     localStorage, never an attribute, never rendered into the list.
 //   · Names go through escapeHtml when interpolated into templates; every
 //     dynamic text is set via textContent. innerHTML carries literals and
-//     escaped names only — never a value.
-//   · The list carries METADATA ONLY (name/size/mtime/mode/refs); there is
-//     no read-value endpoint on the contract and none is called.
-//
-// Apple-style redesign (author order 2026-09-30, apple-ui batch): the create
-// entry is a floating bottom-right「+」on the shell (#secrets-fab, the Canvas
-// `.proj-create-fab` precedent), and the value field gains an eye toggle
-// masking the value THE USER IS TYPING in this form. 🔴 The toggle's entire
-// subject is the typed draft: it is a presentation-layer mask on the local
-// textarea, so the zero-value-exposure rule above is untouched — nothing is
-// fetched, nothing stored is rendered.
+//     escaped names only — never a value. Logs/errors carry names and
+//     STATUS codes only.
 //
 // Precedents: socialPanel.js (module shape, glass dialog family, api()),
 // daemons.js:454-456 (window.__showConfirm), sidebar.js renderSettings
-// (entry row, .cfg-btn-add), css/secrets.css (this batch; sapphire.css
-// untouched). All user-visible copy goes through t() (i18n.js); en + zh-CN
-// locale files ship the same key set in the same batch.
+// (entry row), sidebar.js jev save-state (inline「已保存 ✓」feedback,
+// statusIcon('circle-check', 11, 'st-ok')), css/secrets.css (this batch;
+// sapphire.css untouched). All user-visible copy goes through t()
+// (i18n.js); en + zh-CN locale files ship the same key set in the same
+// batch.
 
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
@@ -61,19 +94,33 @@ const EYE_OFF_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
  *  exists on the wire shape; anything unexpected is dropped below).
  *  @type {{name: string, size: number, mtime: number|null, mode: string, refs: string[]}[]} */
 let secrets = [];
-/** Which secret the editor is replacing ('' = create mode). */
-let editorTarget = '';
-/** The ONE place a typed value exists (create or replace) — cleared the
- *  moment the request body is built and again on any close.
- *  @type {string} */
-let draftValue = '';
+/** Monotonic reveal token source. Each eye-driven fetch takes the next
+ *  token and stamps it on the row; only the STILL-CURRENT token for that
+ *  row may apply the reply (a slow response must never land in a re-masked
+ *  field, a re-rendered row or a closed panel — seq guard, 防串行). */
+let revealSeq = 0;
+/** Change-detection baselines: name → the stored value CURRENTLY DISPLAYED
+ *  in that row's field (set by the fetch reply, deleted on re-mask / rest /
+ *  commit / panel close). An undefined baseline simply means "unknown" —
+ *  any non-empty local text then counts as a change (overwrite intent).
+ *  The map holds plaintext ONLY while that plaintext is on screen.
+ *  @type {Map<string, string>} */
+const baselines = new Map();
+/** Whether the tail row is expanded into the create draft. */
+let draftOpen = false;
+/** One draft POST at a time. */
+let draftBusy = false;
+/** The row currently expanded into its edit detail ('' = none). One at a
+ *  time — expanding one row commits-and-collapses the previously open one. */
+let openName = '';
+/** Row to re-expand after the next renderList: a commit-triggered re-read
+ *  must not eat the row the user just clicked. */
+let pendingOpen = '';
+/** Row to flash「已保存 ✓」on after the next renderList — the flash lives on
+ *  the row's RESTING face (the detail is gone by then). */
+let savedFlashName = '';
 /** Focusable-element trap state (which element opened the dialog). */
 let lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (null);
-/** Whether the value field is masked. Default TRUE — the field starts masked
- *  in BOTH modes (create and replace), and a toggle flips it. The state is
- *  a presentation flag over the local textarea only; the text itself is never
- *  touched by a toggle (no value is read, moved or re-set here). */
-let valueMasked = true;
 let initialized = false;
 
 // ── Backend adapter (same token pattern as socialPanel.js) ───────────────
@@ -117,6 +164,26 @@ async function fetchSecrets() {
 }
 
 /**
+ * GET /api/secrets/{name}/value — the ONE value-bearing call this module makes
+ * (readback ruling 2026-10-09, carried into 行内化): issued only by an eye
+ * click on a masked-and-empty row field; the list face stays metadata-only.
+ * The authenticated response carries exactly {name, value}. Errors reject
+ * with a `.status` so the caller can reuse the shared error-copy mapping.
+ * @param {string} name
+ * @returns {Promise<string>}
+ */
+async function fetchSecretValue(name) {
+  const resp = await api(`/api/secrets/${encodeURIComponent(name)}/value`);
+  if (!resp.ok) {
+    // `.status` rides the error so the caller can reuse the shared error-copy
+    // mapping (Object.assign keeps the checkJs face of Error clean).
+    throw Object.assign(new Error(`GET /api/secrets/${name}/value ${resp.status}`), { status: resp.status });
+  }
+  const data = await resp.json().catch(() => null);
+  return data && typeof data.value === 'string' ? data.value : '';
+}
+
+/**
  * Map an error status to its translated copy (plan card 问2 error family).
  * Unknown statuses fall back to the generic io line. Error bodies carry a
  * name + code, never a value — this face only reads the STATUS.
@@ -141,7 +208,7 @@ function modal() { return document.getElementById('secrets-modal'); }
 /** @returns {HTMLElement|null} */
 function listEl() { return document.querySelector('#secrets-list'); }
 /** @returns {HTMLElement|null} */
-function formEl() { return document.querySelector('#secrets-form'); }
+function addRowEl() { return listEl()?.querySelector('.secrets-add-row') || null; }
 
 /**
  * The panel's readiness state, exposed the standard way: `aria-busy` on the
@@ -159,6 +226,25 @@ function formatSize(bytes) {
   return `${bytes.toLocaleString('en-US')} B`;
 }
 
+/**
+ * The expanded edit field's mask placeholder: ONE dot per stored BYTE, taken
+ * from the list row's `size` metadata (三轮 2026-10-09 23:06:「点点的长度跟
+ * 这个密钥的长度不一致」— the fixed 6-dot face could not describe the stored
+ * length; this one does). A placeholder NEVER reads the value: byte-size is
+ * the length proxy the list already carries (SecretsStore writes the value
+ * byte-for-byte, so bytes == characters for ASCII secrets; multi-byte values
+ * may paint slightly more dots). The glyph reuses the i18n dotsPlaceholder
+ * face so the dot is the same character the panel has always shown; a
+ * degenerate/unknown size falls back to that same fixed face.
+ * @param {number} size byte length from the list metadata
+ * @returns {string}
+ */
+function maskPlaceholder(size) {
+  const face = t('secrets.dotsPlaceholder') || '••••••';
+  const glyph = face.charAt(0) || '•';
+  return glyph.repeat(Number.isFinite(size) && size > 0 ? size : face.length);
+}
+
 /** Epoch millis → M-D HH:mm (locale-neutral numeric face; the UI never
  *  localizes secret metadata through toLocaleString date formats). */
 function formatMtime(ms) {
@@ -171,11 +257,150 @@ function formatMtime(ms) {
   return `${mm}-${dd} ${hh}:${mi}`;
 }
 
+// ── Row helpers ──────────────────────────────────────────────────────────
+/** @param {HTMLElement} row @returns {HTMLTextAreaElement|null} */
+function rowField(row) {
+  const f = row.querySelector('[data-edit]');
+  return f instanceof HTMLTextAreaElement ? f : null;
+}
+/** @param {HTMLElement} row @returns {HTMLElement|null} */
+function rowEye(row) {
+  const e = row.querySelector('[data-eye]');
+  return e instanceof HTMLElement ? e : null;
+}
+
+/**
+ * Paint the mask state onto one eye button. This is the ONLY place an eye's
+ * face is written, so the glyph, the label and aria-pressed can never
+ * disagree. The label names the ACTION the click performs (reveal while
+ * masked, mask while revealed) — the standard disclosure-toggle reading.
+ * @param {HTMLElement|null} eye
+ * @param {boolean} masked
+ */
+function eyeFace(eye, masked) {
+  if (!eye) return;
+  eye.innerHTML = masked ? EYE_SVG : EYE_OFF_SVG;
+  const key = masked ? 'secrets.showValue' : 'secrets.hideValue';
+  eye.setAttribute('aria-label', t(key));
+  eye.title = t(key);
+  eye.setAttribute('aria-pressed', masked ? 'false' : 'true');
+}
+
+/** The row element currently expanded into its edit detail, or null. */
+function openRowEl() {
+  if (!openName) return null;
+  const row = listEl()?.querySelector(`.secrets-row[data-name="${CSS.escape(openName)}"]`);
+  return row instanceof HTMLElement ? row : null;
+}
+
+/**
+ * Burn one row's detail back to its resting face (dots). Everything transient
+ * dies here: the displayed plaintext lives only inside the detail subtree, so
+ * removing it is the strongest possible 回遮清空 — no field, no value, no
+ * placeholder-but-dots anywhere.
+ * @param {HTMLElement} row
+ * @param {string} name
+ */
+function closeRowFace(row, name) {
+  baselines.delete(name);
+  row.querySelector('.secrets-row-detail')?.remove();
+  row.removeAttribute('data-open');
+  row.querySelector('[data-row-head]')?.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Expand a row in place: build its edit detail beneath the resting head (the
+ * rows below shift naturally — no popup, no global reflow). Exactly ONE row
+ * is open at a time: expanding over an open row commits-and-collapses that
+ * one first and re-opens this one after the re-read settles (pendingOpen).
+ * @param {HTMLElement} row
+ */
+function expandRow(row) {
+  const name = row.dataset.name || '';
+  if (!name || openName === name || row.querySelector('.secrets-row-detail')) return;
+  const s = secrets.find((x) => x.name === name);
+  if (!s) return;
+  if (openName) {
+    const prev = openRowEl();
+    if (prev) {
+      pendingOpen = name;
+      void collapseRow(prev, { commit: true });
+      return; // renderList re-expands us after the re-read
+    }
+  }
+  if (draftOpen) discardDraft(false);
+  const head = row.querySelector('[data-row-head]');
+  row.setAttribute('data-open', '');
+  head?.setAttribute('aria-expanded', 'true');
+  head?.insertAdjacentHTML('afterend', detailHTML(s));
+  openName = name;
+  rowField(row)?.focus(); // click row → ready to type
+}
+
+/**
+ * Collapse a row back to its resting face.
+ *  · commit:false — Esc semantics: discard the typed draft, collapse now.
+ *  · commit otherwise — the completion path (保存 / Enter / click-outside):
+ *    an empty or unchanged field just collapses (no request); a changed one
+ *    PUTs through the existing save path — success re-reads the list (the
+ *    row lands closed,「已保存 ✓」flashes on its resting face), failure
+ *    toasts and KEEPS the detail open with the text for another try.
+ * Either way an in-flight reveal for this row is killed first: the token
+ * bump turns a late reply into a stale drop (迟到丢弃), and the revealing
+ * flag is cleared so a future re-expansion starts honest.
+ * @param {HTMLElement} row
+ * @param {{commit?: boolean}} [opts]
+ * @returns {Promise<void>}
+ */
+async function collapseRow(row, opts = {}) {
+  const name = row.dataset.name || '';
+  if (openName === name) openName = '';
+  row.dataset.revealToken = String(++revealSeq);
+  delete row.dataset.revealing;
+  if (opts.commit === false) { closeRowFace(row, name); return; }
+  const field = rowField(row);
+  const val = field ? field.value : '';
+  const baseline = baselines.get(name);
+  if (!field || !val || (baseline !== undefined && val === baseline)) {
+    closeRowFace(row, name);
+    return;
+  }
+  if (row.dataset.committing) return; // one PUT in flight per row
+  row.dataset.committing = '1';
+  setBusy(true);
+  try {
+    const resp = await api(`/api/secrets/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: val }), // the plaintext's single appearance
+    });
+    if (!resp.ok) {
+      window.__showToast?.(errorText(resp.status), 'error');
+      return; // keep the detail + typed text for another try
+    }
+    baselines.delete(name);
+    savedFlashName = name;
+    await loadAll(); // fresh metadata; the row lands closed, flash paints
+  } catch {
+    window.__showToast?.(t('secrets.error.io', { code: 'io' }), 'error');
+  } finally {
+    delete row.dataset.committing;
+    setBusy(false);
+  }
+}
+
 // ── Rendering ────────────────────────────────────────────────────────────
 /**
- * One row. Name (escaped) · size (tabular-nums) · mtime · mode badge
- * (two states) · referenced-by line · inline [replace] [delete]. NO value
- * face exists anywhere in this template — metadata only.
+ * One row's RESTING face (行内化二轮 2026-10-09; 三轮 2026-10-09 23:06 drops
+ * the dots). ONE minimal line: name (left) + permission badge (only when
+ * permissive — the security signal stays visible without expanding) + the
+ * transient saved-flash slot. NO field, NO eye, NO delete, NO metadata, and
+ * since 三轮 NO value dots — the resting row carries no value face at all.
+ * The head is a real button: the whole row is the tap target (Reminders row
+ * affordance). Those controls are built lazily by detailHTML on expansion,
+ * so the resting DOM carries neither an edit control nor a button. METADATA
+ * ONLY ever crosses the wire; no value face exists in either face of this
+ * template.
  * @param {{name: string, size: number, mtime: number|null, mode: string, refs: string[]}} s
  * @returns {string}
  */
@@ -186,96 +411,115 @@ function rowHTML(s) {
     // 图标（权限档形状语义）；红底红边图案由 secrets.css 保留。
     ? `<span class="secrets-mode-badge" data-mode="permissive">${statusIcon('octagon-alert', 10, 'st-err')}${escapeHtml(t('secrets.state.permissive'))}</span>`
     : `<span class="secrets-mode-badge" data-mode="ok">${escapeHtml(t('secrets.state.ok'))}</span>`;
-  const refsLine = s.refs.length
-    ? `<div class="secrets-row-refs">${escapeHtml(t('secrets.referencedBy', { refs: s.refs.join(', ') }))}</div>`
-    : '';
   const name = escapeHtml(s.name);
   return `<div class="secrets-row" data-name="${name}">
-      <div class="secrets-row-main">
+      <button type="button" class="secrets-row-head" data-row-head="${name}" aria-expanded="false" aria-controls="secrets-detail-${name}" title="${escapeHtml(t('secrets.rowHint'))}">
         <span class="secrets-row-name">${name}</span>
         ${modeBadge}
-        <div class="secrets-row-meta">
-          <span class="secrets-row-size">${formatSize(s.size)}</span>
-          <span class="secrets-row-mtime">${formatMtime(s.mtime)}</span>
-        </div>
-      </div>
-      ${refsLine}
+        <span class="secrets-row-status" role="status" aria-live="polite"></span>
+      </button>
+    </div>`;
+}
+
+/**
+ * One row's EXPANDED detail (原位展开编辑): the value field (empty at rest,
+ * placeholder dots, masked) + eye + the iconized metadata line + the
+ * 保存/删除 actions, rendered INSIDE the row — rows below shift naturally.
+ * The eye on a masked-and-empty field is the ONE value fetch; the meta
+ * items (size/mtime/refs) moved here from the old resting face (二轮极简).
+ * @param {{name: string, size: number, mtime: number|null, mode: string, refs: string[]}} s
+ * @returns {string}
+ */
+function detailHTML(s) {
+  const metaItems = [
+    `<span class="m">${statusIcon('box', 10)}${escapeHtml(formatSize(s.size))}</span>`,
+    `<span class="m">${statusIcon('clock', 10)}${escapeHtml(formatMtime(s.mtime))}</span>`,
+    s.refs.length
+      ? `<span class="m">${statusIcon('link', 10)}${escapeHtml(t('secrets.referencedBy', { refs: s.refs.join(', ') }))}</span>`
+      : '',
+  ];
+  const name = escapeHtml(s.name);
+  // The inline edit field: EMPTY when the detail opens. The placeholder is
+  // the LENGTH-FAITHFUL mask (maskPlaceholder: one dot per stored byte from
+  // the size metadata — expansion never fetches). title carries the
+  // overwrite warning (a11y tooltip; the eye's aria labels the reveal
+  // action). data-edit/data-eye carry the NAME for event routing — never a
+  // value.
+  const field = `<textarea class="secrets-input secrets-value masked" rows="1" data-edit="${name}" placeholder="${escapeHtml(maskPlaceholder(s.size))}" title="${escapeHtml(t('secrets.overwriteHint'))}" aria-label="${escapeHtml(t('secrets.value'))}: ${name}" autocomplete="off" spellcheck="false"></textarea>`;
+  const eye = `<button type="button" class="secrets-value-eye" data-eye="${name}" aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${EYE_SVG}</button>`;
+  return `<div class="secrets-row-detail" id="secrets-detail-${name}" data-detail="${name}">
+      <div class="secrets-row-value">${field}${eye}</div>
+      <div class="secrets-row-meta">${metaItems.join('')}</div>
       <div class="secrets-row-actions">
-        <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-replace="${name}">${escapeHtml(t('secrets.replace'))}</button>
         <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-delete="${name}">${escapeHtml(t('secrets.delete'))}</button>
+        <button type="button" class="cfg-btn cfg-btn-primary cfg-btn-sm" data-save="${name}">${escapeHtml(t('secrets.save'))}</button>
       </div>
     </div>`;
 }
 
-/** Full list render from backend truth (createIconsIn for the close icons). */
+/** Collapsed tail-row face: the dashed「＋ 新建密钥」trigger (cfg-btn-add
+ *  dashed language; the FAB + empty-state button retired with the modal).
+ *  The ＋ glyph is part of the i18n value (both locales), not the template. */
+function addTriggerHTML() {
+  return `<button type="button" class="secrets-add-trigger" data-add>${escapeHtml(t('secrets.tailAdd'))}</button>`;
+}
+
+/** Expanded tail-row face: the in-place create draft (name + value fields,
+ *  inline error line, 保存 confirm; Enter submits, Esc discards). The draft
+ *  eye is a presentation-only mask toggle on the TYPED value — nothing is
+ *  stored yet, so it never fetches. */
+function draftHTML() {
+  return `<div class="secrets-add-form">
+      <input type="text" class="secrets-input" data-draft-name placeholder="${escapeHtml(t('secrets.nameHint'))}" aria-label="${escapeHtml(t('secrets.name'))}" autocomplete="off" spellcheck="false">
+      <div class="secrets-row-value">
+        <textarea class="secrets-input secrets-value masked" rows="1" data-draft-value placeholder="${escapeHtml(t('secrets.valuePlaceholder'))}" aria-label="${escapeHtml(t('secrets.value'))}" autocomplete="off" spellcheck="false"></textarea>
+        <button type="button" class="secrets-value-eye" data-draft-eye aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${EYE_SVG}</button>
+      </div>
+      <div class="secrets-add-actions">
+        <span class="secrets-draft-error" role="alert" hidden></span>
+        <button type="button" class="cfg-btn cfg-btn-primary" data-draft-save>${escapeHtml(t('secrets.save'))}</button>
+      </div>
+    </div>`;
+}
+
+/** Full list render from backend truth (metadata only). The tail add row is
+ *  ALWAYS present (empty list → guidance copy + the same row, plan card
+ *  问1). A render is a truth reset: rows come back at the resting face
+ *  (openName cleared), then the two transient wishes replay — pendingOpen
+ *  (the row the user clicked while a commit's re-read was in flight) and
+ *  savedFlashName (the「已保存 ✓」flash on the resting face). */
 function renderList() {
   const list = listEl();
   if (!list) return;
-  if (!secrets.length) {
-    // Empty state: guidance copy + the add button (plan card 问1).
-    list.innerHTML = `<div class="cfg-empty">${escapeHtml(t('secrets.empty'))}</div>
-        <button type="button" class="glass-control cfg-btn cfg-btn-add" data-add>${escapeHtml(t('secrets.add'))}</button>`;
-    return;
+  const empty = secrets.length
+    ? ''
+    : `<div class="cfg-empty">${escapeHtml(t('secrets.empty'))}</div>`;
+  list.innerHTML = empty + secrets.map(rowHTML).join('') + `<div class="secrets-add-row"${draftOpen ? ' data-open' : ''}>${draftOpen ? draftHTML() : addTriggerHTML()}</div>`;
+  openName = ''; // fresh DOM — nothing is expanded yet
+  if (pendingOpen) {
+    const row = list.querySelector(`.secrets-row[data-name="${CSS.escape(pendingOpen)}"]`);
+    pendingOpen = '';
+    if (row instanceof HTMLElement) expandRow(row);
   }
-  list.innerHTML = secrets.map(rowHTML).join('');
+  if (savedFlashName) {
+    paintRowSaved(savedFlashName);
+    savedFlashName = '';
+  }
 }
 
 /** Captions living in index.html (the shell is text-free; the panel
- *  translates its own subtree — socialPanel.js applyStaticText precedent). */
+ *  translates its own subtree — socialPanel.js applyStaticText precedent).
+ *  行内化: only the shell header remains static; every row/draft caption is
+ *  rendered fresh by rowHTML/draftHTML on each renderList. */
 function applyStaticText() {
   const map = [
     ['secrets-modal-title', 'secrets.title'],
     ['secrets-modal-close', 'secrets.close', 'title'],
-    ['secrets-form-title', editorTarget ? 'secrets.replaceTitle' : 'secrets.addTitle'],
-    ['secrets-form-close', 'secrets.close', 'title'],
   ];
   for (const [id, key, attr] of map) {
     const el = document.getElementById(id);
     if (!el) continue;
     if (attr) el.setAttribute(attr, t(key)); else el.textContent = t(key);
-  }
-  const nameLabel = document.getElementById('secrets-name-label');
-  if (nameLabel) nameLabel.textContent = t('secrets.name');
-  const nameInput = /** @type {HTMLInputElement|null} */ (document.getElementById('secrets-name-input'));
-  if (nameInput) nameInput.placeholder = t('secrets.nameHint');
-  const nameHint = document.getElementById('secrets-name-hint');
-  if (nameHint) nameHint.textContent = t('secrets.nameHint');
-  const valueLabel = document.getElementById('secrets-value-label');
-  if (valueLabel) valueLabel.textContent = t('secrets.value');
-  const valueArea = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
-  if (valueArea) valueArea.placeholder = t(editorTarget ? 'secrets.replacePlaceholder' : 'secrets.valuePlaceholder');
-  const saveBtn = document.getElementById('secrets-form-save');
-  if (saveBtn) saveBtn.textContent = t('secrets.save');
-  const cancelBtn = document.getElementById('secrets-form-cancel');
-  if (cancelBtn) cancelBtn.textContent = t('secrets.cancel');
-  // Create entry = the shell's floating「+」(Canvas FAB precedent: title and
-  // aria-label carry the SAME key, so hover and screen reader cannot diverge).
-  const fab = document.getElementById('secrets-fab');
-  if (fab) {
-    fab.title = t('secrets.add');
-    fab.setAttribute('aria-label', t('secrets.add'));
-    fab.setAttribute('aria-haspopup', 'dialog');
-  }
-  applyMask();
-}
-
-/**
- * Paint the current mask state onto the value field and its toggle. This is
- * the ONLY place the mask is applied, so the class, the button label and the
- * glyph can never disagree.
- */
-function applyMask() {
-  const area = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
-  const eye = document.getElementById('secrets-value-eye');
-  if (area) area.classList.toggle('masked', valueMasked);
-  if (eye) {
-    // The label names the ACTION the click performs (reveal while masked,
-    // mask while revealed) — the standard disclosure-toggle reading.
-    const key = valueMasked ? 'secrets.showValue' : 'secrets.hideValue';
-    eye.innerHTML = valueMasked ? EYE_SVG : EYE_OFF_SVG;
-    eye.setAttribute('aria-label', t(key));
-    eye.title = t(key);
-    eye.setAttribute('aria-pressed', valueMasked ? 'false' : 'true');
   }
 }
 
@@ -287,77 +531,85 @@ async function loadAll() {
   try {
     secrets = await fetchSecrets();
     renderList();
+    // secrets-ui-redesign (2026-10-08): nudge the settings-page entry row's
+    // count pill — sidebar.js listens for `secrets-changed`, busts its 60s
+    // cache and re-reads this same metadata-only list.
+    window.dispatchEvent(new CustomEvent('secrets-changed'));
   } catch {
     secrets = [];
+    openName = '';
+    pendingOpen = '';
+    savedFlashName = '';
     const list = listEl();
     if (list) {
-      list.innerHTML = `<div class="cfg-empty">${escapeHtml(t('secrets.error.io', { code: 'io' }))}</div>
-          <button type="button" class="glass-control cfg-btn cfg-btn-add" data-add>${escapeHtml(t('secrets.add'))}</button>`;
+      list.innerHTML = `<div class="cfg-empty">${escapeHtml(t('secrets.error.io', { code: 'io' }))}</div><div class="secrets-add-row">${addTriggerHTML()}</div>`;
     }
   } finally {
     setBusy(false);
   }
 }
 
-// ── Editor (create / replace sub-dialog) ─────────────────────────────────
+// ── Reveal (the eye) ─────────────────────────────────────────────────────
 /**
- * Open the editor. Create mode: editable name + naming hint. Replace mode:
- * the name is readonly and the textarea starts EMPTY — the stored value is
- * never fetched, never displayed (write-only replace semantics).
- * @param {string} name '' for create, the target name for replace
+ * The row eye. Three readings by field state:
+ *  · revealed → mask ON; FETCHED plaintext burns back to the placeholder
+ *    face (清空回占位，下次揭示再拉); a locally-typed draft is KEPT (masking
+ *    it is presentation-only — it never left the user's hands).
+ *  · masked + local text → unmask in place (no fetch, no overwrite).
+ *  · masked + empty → THE value fetch: exactly one authenticated GET, reply
+ *    applied only if this row's token is still current, the field is still
+ *    attached, the panel is still open and the field is still masked+empty.
+ * @param {HTMLElement} row
  */
-function openEditor(name) {
-  editorTarget = name;
-  draftValue = '';
-  const form = formEl();
-  if (!form) return;
-  const title = document.getElementById('secrets-form-title');
-  if (title) title.textContent = t(name ? 'secrets.replaceTitle' : 'secrets.addTitle');
-  const nameInput = /** @type {HTMLInputElement|null} */ (document.getElementById('secrets-name-input'));
-  if (nameInput) {
-    nameInput.value = name;
-    nameInput.readOnly = !!name;
-    nameInput.placeholder = t('secrets.nameHint');
+function revealRow(row) {
+  const field = rowField(row);
+  const eye = rowEye(row);
+  if (!field || !eye) return;
+  const name = row.dataset.name || '';
+  if (!field.classList.contains('masked')) {
+    field.classList.add('masked');
+    if (field.dataset.held === 'fetched') { field.value = ''; delete field.dataset.held; }
+    baselines.delete(name);
+    eyeFace(eye, true);
+    return;
   }
-  // 🔴 The textarea ALWAYS starts empty — never seeded with a stored value.
-  const valueArea = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
-  if (valueArea) {
-    valueArea.value = '';
-    valueArea.placeholder = t(name ? 'secrets.replacePlaceholder' : 'secrets.valuePlaceholder');
+  if (field.value) { // local typed draft → presentation-layer unmask only
+    field.classList.remove('masked');
+    eyeFace(eye, false);
+    return;
   }
-  // Every open starts masked, whatever the previous session left behind.
-  valueMasked = true;
-  applyMask();
-  const nameHint = document.getElementById('secrets-name-hint');
-  if (nameHint) nameHint.textContent = t('secrets.nameHint');
-  const err = document.getElementById('secrets-form-error');
-  if (err) { err.hidden = true; err.textContent = ''; }
-  const state = document.getElementById('secrets-form-state');
-  if (state) state.textContent = '';
-  form.hidden = false;
-  // Grow the shell so the inset editor fits (css: #secrets-modal.editor-open).
-  modal()?.classList.add('editor-open');
-  if (nameInput instanceof HTMLElement) nameInput.focus();
+  if (row.dataset.revealing) {
+    // A fetch is in flight and the field is still masked+empty: this click
+    // CANCELS the pending reveal — the token bump makes the late reply a
+    // stale drop (fast-toggle seq guard, 防串行).
+    row.dataset.revealToken = String(++revealSeq);
+    delete row.dataset.revealing;
+    return;
+  }
+  const token = String(++revealSeq);
+  row.dataset.revealing = '1';
+  row.dataset.revealToken = token;
+  fetchSecretValue(name).then((value) => {
+    delete row.dataset.revealing;
+    if (row.dataset.revealToken !== token) return;   // a newer toggle owns the row
+    if (!field.isConnected) return;                  // row re-rendered away
+    const ov = overlay();
+    if (!ov || !ov.classList.contains('on')) return; // panel closed meanwhile
+    if (!field.classList.contains('masked') || field.value) return; // typed meanwhile
+    baselines.set(name, value);
+    field.dataset.held = 'fetched';
+    field.value = value;
+    field.classList.remove('masked');
+    eyeFace(eye, false);
+  }).catch((e) => {
+    delete row.dataset.revealing;
+    if (row.dataset.revealToken !== token || !field.isConnected) return;
+    const status = e && typeof e.status === 'number' ? e.status : 0;
+    window.__showToast?.(status ? errorText(status) : t('secrets.error.io', { code: 'io' }), 'error');
+  });
 }
 
-/** Close the editor and burn the draft — the value never outlives the form. */
-function closeEditor() {
-  draftValue = '';
-  editorTarget = '';
-  const form = formEl();
-  if (form) form.hidden = true;
-  modal()?.classList.remove('editor-open');
-  const valueArea = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
-  if (valueArea) valueArea.value = '';
-  // The mask resets with the draft: the next open starts masked.
-  valueMasked = true;
-  applyMask();
-  const nameInput = /** @type {HTMLInputElement|null} */ (document.getElementById('secrets-name-input'));
-  if (nameInput) nameInput.value = '';
-  const err = document.getElementById('secrets-form-error');
-  if (err) { err.hidden = true; err.textContent = ''; }
-}
-
+// ── Inline edit (commit / revert) ────────────────────────────────────────
 /** Client-side name shape check (plan card 问5: ^[a-z0-9][a-z0-9._-]{0,63}$;
  *  hard reds: no leading dot, no .tmp suffix). The server re-validates —
  *  this is face guidance, not the authority.
@@ -368,48 +620,101 @@ function validName(name) {
   return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(name) && !name.endsWith('.tmp');
 }
 
+/** Flash「已保存 ✓」into a row's status slot (jev card save-state precedent:
+ *  role=status live region, ~1.6s decay, cleared only if still connected).
+ *  The slot lives on the row's RESTING head — the flash lands after the
+ *  commit's re-read has already collapsed the detail. */
+function paintRowSaved(name) {
+  const row = listEl()?.querySelector(`.secrets-row[data-name="${CSS.escape(name)}"]`);
+  const st = row?.querySelector('.secrets-row-status');
+  if (!(st instanceof HTMLElement)) return;
+  st.innerHTML = statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('secrets.saved'));
+  setTimeout(() => { if (st.isConnected) st.innerHTML = ''; }, 1600);
+}
+
+// ── Create draft (tail row) ──────────────────────────────────────────────
+/** Expand the tail row into the draft (in place —焦点自动落名称字段). The
+ *  draft and an open row are mutually exclusive: expanding the draft
+ *  commits-and-collapses any open row first (one expansion at a time). */
+function openDraftInPlace(focus = true) {
+  const row = addRowEl();
+  if (!row) return;
+  const open = openRowEl();
+  if (open) void collapseRow(open, { commit: true });
+  draftOpen = true;
+  row.setAttribute('data-open', '');
+  row.innerHTML = draftHTML();
+  const nameInput = row.querySelector('[data-draft-name]');
+  if (focus && nameInput instanceof HTMLElement) nameInput.focus();
+}
+
+/** Collapse the draft back to the dashed trigger; the draft burns here. */
+function discardDraft(refocus = true) {
+  draftOpen = false;
+  const row = addRowEl();
+  if (!row) return;
+  row.removeAttribute('data-open');
+  row.innerHTML = addTriggerHTML();
+  if (refocus) {
+    const trigger = row.querySelector('[data-add]');
+    if (trigger instanceof HTMLElement) trigger.focus();
+  }
+}
+
+function showDraftError(msg) {
+  const err = addRowEl()?.querySelector('.secrets-draft-error');
+  if (err instanceof HTMLElement) {
+    err.innerHTML = statusIcon('circle-alert', 11, 'st-err') + escapeHtml(msg);
+    err.hidden = false;
+  }
+}
+
+function clearDraftError() {
+  const err = addRowEl()?.querySelector('.secrets-draft-error');
+  if (err instanceof HTMLElement) { err.hidden = true; err.textContent = ''; }
+}
+
 /**
- * Build + send the create/replace request. The draft value goes into the
- * request body ONCE and is cleared immediately after — success or failure —
- * so no plaintext survives the call in memory of this module.
- * @returns {Promise<boolean>}
+ * Submit the draft through the existing POST path (create mode of the old
+ * editor: client-side name shape check, 409 → conflict copy, value into the
+ * body once). Success collapses the draft and re-reads the list — the new
+ * row lands from backend truth.
+ * @returns {Promise<void>}
  */
-async function saveEditor() {
-  const nameInput = /** @type {HTMLInputElement|null} */ (document.getElementById('secrets-name-input'));
-  const valueArea = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('secrets-value-input'));
-  const err = document.getElementById('secrets-form-error');
-  const stateEl = document.getElementById('secrets-form-state');
-  const showErr = (/** @type {string} */ msg) => {
-    // ui-status-redesign（盘点 #36，S9 同族）：行首 circle-alert 红图标 + 中性正文。
-    if (err) { err.innerHTML = statusIcon('circle-alert', 11, 'st-err') + escapeHtml(msg); err.hidden = false; }
-  };
-  const name = (editorTarget || (nameInput ? nameInput.value.trim() : ''));
-  if (!name) { showErr(t('secrets.invalidName')); return false; }
-  if (!editorTarget && !validName(name)) { showErr(t('secrets.invalidName')); return false; }
-  const value = draftValue;
-  if (!value) { showErr(t('secrets.error.emptyValue')); return false; }
-  const replacing = !!editorTarget;
+async function submitDraft() {
+  if (draftBusy) return;
+  const row = addRowEl();
+  if (!row) return;
+  const nameEl = row.querySelector('[data-draft-name]');
+  const valueEl = row.querySelector('[data-draft-value]');
+  const name = nameEl instanceof HTMLInputElement ? nameEl.value.trim() : '';
+  const value = valueEl instanceof HTMLTextAreaElement ? valueEl.value : '';
+  clearDraftError();
+  if (!name || !validName(name)) {
+    showDraftError(t('secrets.invalidName'));
+    if (nameEl instanceof HTMLElement) nameEl.focus();
+    return;
+  }
+  if (!value) {
+    showDraftError(t('secrets.error.emptyValue'));
+    if (valueEl instanceof HTMLElement) valueEl.focus();
+    return;
+  }
+  draftBusy = true;
   setBusy(true);
   try {
     const resp = await api(`/api/secrets/${encodeURIComponent(name)}`, {
-      method: replacing ? 'PUT' : 'POST',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value }), // the plaintext's single appearance
     });
-    if (!resp.ok) { showErr(errorText(resp.status)); return false; }
-    // Success: the draft is gone, the textarea is empty again, the list
-    // re-reads backend truth (metadata only).
-    draftValue = '';
-    if (valueArea) valueArea.value = '';
-    valueMasked = true;
-    closeEditor();
-    if (stateEl) stateEl.textContent = '';
-    await loadAll();
-    return true;
+    if (!resp.ok) { showDraftError(errorText(resp.status)); return; }
+    draftOpen = false;
+    await loadAll(); // the new row lands in place
   } catch {
-    showErr(t('secrets.error.io', { code: 'io' }));
-    return false;
+    showDraftError(t('secrets.error.io', { code: 'io' }));
   } finally {
+    draftBusy = false;
     setBusy(false);
   }
 }
@@ -439,6 +744,7 @@ function requestDelete(name) {
         await loadAll(); // 409 referenced re-reads the fresh refs list
         return;
       }
+      baselines.delete(name);
       await loadAll();
     } catch {
       window.__showToast?.(t('secrets.error.io', { code: 'io' }), 'error');
@@ -463,7 +769,15 @@ export function openSecretsPanel() {
 export function closeSecretsPanel() {
   const ov = overlay();
   if (!ov) return;
-  closeEditor(); // the form never outlives the panel; the draft burns here
+  // Everything transient burns here: displayed plaintext (the baselines are
+  // deleted entry-by-entry as details close, but a hard clear cannot hurt —
+  // no value ever outlives the panel), the draft and the expansion state
+  // (the DOM rebuilds from backend truth on the next open).
+  baselines.clear();
+  draftOpen = false;
+  openName = '';
+  pendingOpen = '';
+  savedFlashName = '';
   ov.classList.remove('on');
   // Focus back to the settings entry row button (or wherever we came from).
   const btn = document.getElementById('btn-open-secrets');
@@ -479,18 +793,15 @@ function onOverlayClick(ev) {
 
 /**
  * Escape shield — CAPTURE phase (family precedent: main.js's global Esc
- * handler shields #modal-overlay the same way). This is the first dialog
- * that nests INSIDE the settings page, and the settings page carries its
- * own bubble-phase document Esc (sidebar.js initNavTabs: any Escape with
- * the settings overlay open closes it). Without the shield, one Esc inside
- * this dialog would close BOTH the dialog and the settings page behind it,
- * dropping the user back to the chat face. Capture on document runs before
- * every bubble-phase listener, so handling + stopping the event here gives
- * the two-stage contract (editor → dialog) exclusive ownership of Esc while
- * this dialog is open. Scoped strictly to "this overlay is open": every
- * other face keeps its existing Esc behavior untouched. When the unified
- * confirm dialog (#modal-overlay, opened by the delete flow) is up, the
- * global capture handler owns that Esc — this shield stands down.
+ * handler shields #modal-overlay the same way). Three-stage contract, now
+ * expansion-aware (行内化二轮): draft open → discard the draft; a row is
+ * expanded → collapse it WITHOUT committing (Esc = 放弃并收起, the typed
+ * draft burns with the detail); otherwise close the dialog. Capture on
+ * document runs before every bubble-phase listener, so handling + stopping
+ * the event here gives this contract exclusive ownership of Esc while this
+ * dialog is open. Scoped strictly to "this overlay is open". When the
+ * unified confirm dialog (#modal-overlay, opened by the delete flow) is up,
+ * the global capture handler owns that Esc — this shield stands down.
  */
 function onKeydownCapture(ev) {
   if (ev.key !== 'Escape') return;
@@ -500,16 +811,38 @@ function onKeydownCapture(ev) {
   if (confirmOverlay && confirmOverlay.classList.contains('on')) return;
   ev.preventDefault();
   ev.stopPropagation();
-  const form = formEl();
-  if (form && !form.hidden) { closeEditor(); return; }
+  if (draftOpen) { discardDraft(); return; }
+  const row = openRowEl();
+  if (row) { void collapseRow(row, { commit: false }); return; }
   closeSecretsPanel();
 }
 
-/** Tab must not escape the open dialog (Escape is owned by the capture
- *  shield above). */
+/**
+ * Bubble-phase keys inside the dialog: Tab = focus trap; Enter (no shift)
+ * completes — a row's edit field commits-and-collapses its row (same path
+ * as the 保存 button), a draft field submits the draft (both preventDefault
+ * so the textarea never swallows the newline). Enter on a resting head
+ * button is the button's native click → expandRow.
+ */
 function onKeydown(ev) {
   const ov = overlay();
   if (!ov || !ov.classList.contains('on')) return;
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    const target = ev.target instanceof Element ? ev.target : null;
+    if (!target) return;
+    if (target.matches('[data-edit]')) {
+      ev.preventDefault();
+      const row = target.closest('.secrets-row');
+      if (row instanceof HTMLElement) void collapseRow(row, { commit: true });
+      return;
+    }
+    if (target.matches('[data-draft-name],[data-draft-value]')) {
+      ev.preventDefault();
+      void submitDraft();
+      return;
+    }
+    return;
+  }
   if (ev.key !== 'Tab') return;
   const m = modal();
   if (!m) return;
@@ -534,30 +867,74 @@ function onDocumentClick(ev) {
   if (!target) return;
   if (target.closest('#btn-open-secrets')) { openSecretsPanel(); return; }
   if (target.closest('#secrets-modal-close')) { closeSecretsPanel(); return; }
-  // Create entry (author order 2026-09-30): the shell's floating「+」. The
-  // `data-add` path below stays live as the SECONDARY entry (empty-state
-  // guidance button) — it routes to the same openEditor('').
-  if (target.closest('#secrets-fab')) { openEditor(''); return; }
-  if (target.closest('[data-add]')) { openEditor(''); return; }
-  if (target.closest('#secrets-value-eye')) { valueMasked = !valueMasked; applyMask(); return; }
-  if (target.closest('#secrets-form-close')) { closeEditor(); return; }
-  if (target.closest('#secrets-form-cancel')) { closeEditor(); return; }
-  if (target.closest('#secrets-form-save')) { void saveEditor(); return; }
-  const replace = target.closest('[data-replace]');
-  if (replace instanceof HTMLElement && replace.dataset.replace) {
-    openEditor(replace.dataset.replace);
+  // Resting head (行内化二轮): the whole row is the tap target. Click a
+  // resting row → expand it in place; click the OPEN row's head again →
+  // commit-and-collapse (the dismiss-to-save reading, symmetric toggle).
+  const head = target.closest('[data-row-head]');
+  if (head instanceof HTMLElement) {
+    const row = head.closest('.secrets-row');
+    if (row instanceof HTMLElement) {
+      if (openName === row.dataset.name) void collapseRow(row, { commit: true });
+      else expandRow(row);
+    }
+    return;
+  }
+  // Create entry (行内化 2026-10-09 07:42): the dashed tail row — the ONLY
+  // create face (FAB + empty-state button retired with the editor modal).
+  if (target.closest('[data-add]')) { openDraftInPlace(); return; }
+  // Row eye (the value fetch / mask toggle) — lives in the expanded detail;
+  // the draft's own eye ([data-draft-eye]) is presentation-only below.
+  const eye = target.closest('[data-eye]');
+  if (eye instanceof HTMLElement && eye.dataset.eye) {
+    const row = eye.closest('.secrets-row');
+    if (row instanceof HTMLElement) revealRow(row);
+    return;
+  }
+  if (target.closest('[data-draft-eye]')) {
+    const wrap = target.closest('.secrets-add-row');
+    const field = wrap?.querySelector('[data-draft-value]');
+    const draftEye = wrap?.querySelector('[data-draft-eye]');
+    if (field instanceof HTMLTextAreaElement) {
+      const masked = !field.classList.contains('masked');
+      field.classList.toggle('masked', masked);
+      eyeFace(draftEye instanceof HTMLElement ? draftEye : null, masked);
+    }
+    return;
+  }
+  if (target.closest('[data-draft-save]')) { void submitDraft(); return; }
+  // Detail actions: 保存 = the explicit commit-and-collapse; 删除 = the
+  // unchanged glass-confirm flow. Both sit INSIDE the open row, so neither
+  // trips the outside-collapse below.
+  const save = target.closest('[data-save]');
+  if (save instanceof HTMLElement) {
+    const row = save.closest('.secrets-row');
+    if (row instanceof HTMLElement) void collapseRow(row, { commit: true });
     return;
   }
   const del = target.closest('[data-delete]');
   if (del instanceof HTMLElement && del.dataset.delete) requestDelete(del.dataset.delete);
+  // Click-outside completion (点行外): a click anywhere outside the open row
+  // finishes it — a changed field PUTs (Reminders dismiss-to-save), then the
+  // row collapses. Standing down for clicks inside the glass confirm overlay
+  // (#modal-overlay — its 取消/删除 buttons are outside the row; the delete
+  // flow owns those clicks, and a cancel must NOT collapse the row mid-flow).
+  const open = openRowEl();
+  if (open && target.closest('.secrets-row') !== open && !target.closest('#modal-overlay')) {
+    void collapseRow(open, { commit: true });
+  }
 }
 
-/** The textarea feeds the draft only (value discipline); the name field is
- *  never stored anywhere but the form until save assembles the request. */
+/** Row fields feed only their own value (value discipline); any local input
+ *  marks the field's content as a LOCAL draft — the eye then knows a
+ *  re-mask must keep it, and a fetched value can never be confused with
+ *  user text. Fetch replies set the value programmatically → no input
+ *  event → the flag stays honest. (Blur is deliberately NOT a commit in
+ *  the 二轮 model — completion is owned by 保存 / Enter / the click-outside
+ *  collapse, so a stray focusout can never double-fire a PUT.) */
 function onInput(ev) {
   const el = ev.target instanceof HTMLTextAreaElement ? ev.target : null;
-  if (!el || el.id !== 'secrets-value-input') return;
-  draftValue = el.value;
+  if (!el || !el.matches('[data-edit]')) return;
+  el.dataset.held = 'local';
 }
 
 /** Boot wiring. Idempotent; document-level (survives settings re-renders —

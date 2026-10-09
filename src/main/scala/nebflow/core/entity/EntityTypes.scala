@@ -24,7 +24,10 @@ case class AgentEntry(
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None, // references a named preset in model-presets.json
   skills: List[String] = Nil, // skill names this agent can see (frontmatter injection)
-  flows: List[String] = Nil // legacy flows whitelist (parsed per decision A①; FlowTrigger injection retired 2026-09-06)
+  flows: List[String] =
+    Nil, // legacy flows whitelist (parsed per decision A①; FlowTrigger injection retired 2026-09-06)
+  displayName: Option[String] =
+    None // display face only (agent.json `displayName`); None = fall back to `name` (the judgement key)
 )
 
 object AgentEntry:
@@ -41,6 +44,7 @@ object AgentEntry:
       preset <- c.downField("preset").as[Option[String]]
       skills <- c.downField("skills").as[Option[List[String]]]
       flows <- c.downField("flows").as[Option[List[String]]]
+      displayName <- c.downField("displayName").as[Option[String]]
     yield AgentEntry(
       name.getOrElse(""),
       description,
@@ -53,7 +57,8 @@ object AgentEntry:
       model,
       preset,
       skills.getOrElse(Nil),
-      flows.getOrElse(Nil)
+      flows.getOrElse(Nil),
+      displayName
     )
   }
 
@@ -68,7 +73,8 @@ object AgentEntry:
       "model" -> a.model.asJson,
       "preset" -> a.preset.asJson,
       "skills" -> a.skills.asJson,
-      "flows" -> a.flows.asJson
+      "flows" -> a.flows.asJson,
+      "displayName" -> a.displayName.asJson
     )
   }
 
@@ -105,7 +111,8 @@ object AgentEntry:
         model = Some(resolvedModel),
         preset = effPreset,
         skills = a.skills,
-        flows = a.flows
+        flows = a.flows,
+        displayName = a.displayName // display face carried through (disk custom agents: loadCustomFromDir 已解析同名字段)
       )
   end extension
 end AgentEntry

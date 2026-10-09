@@ -87,7 +87,10 @@ object OnboardingService:
 
   /** 读答案（无文件 / 无该键 ⇒ 空表）。 */
   def readAnswers(): IO[Map[String, io.circe.Json]] = IO.blocking {
-    readStoredJson().flatMap(_.hcursor.downField(AnswersKey).focus.flatMap(_.asObject)).map(_.toMap).getOrElse(Map.empty)
+    readStoredJson()
+      .flatMap(_.hcursor.downField(AnswersKey).focus.flatMap(_.asObject))
+      .map(_.toMap)
+      .getOrElse(Map.empty)
   }
 
   /**
@@ -264,6 +267,10 @@ object OnboardingService:
           .handleErrorWith(e => IO.pure(probeFailure(e)))
           .timeoutTo(15.seconds, IO.pure(ProbeResult(ok = false, provider = None, error = Some("timeout_15s"))))
 
+    end match
+
+  end probeLlm
+
   /** The root agent's stored chain, or an empty one — never throws. */
   private def ownChainOrEmpty(): AgentModelConfig =
     try
@@ -323,7 +330,10 @@ object OnboardingService:
           if providers.downField(providerId).focus.isEmpty then
             Some(s"unknown provider '$providerId' (not in the current config)")
           else
-            val modelIds = providers.downField(providerId).downField("models").focus
+            val modelIds = providers
+              .downField(providerId)
+              .downField("models")
+              .focus
               .flatMap(_.asArray)
               .getOrElse(Vector.empty)
               .flatMap(_.hcursor.downField("id").as[String].toOption)

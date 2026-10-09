@@ -51,6 +51,11 @@ import { t } from './i18n.js';
 import state from './state.js';
 import { escapeHtml, smartScroll, localizeToolLabel, localizeToolSummary } from './utils.js';
 import { ticketUrl, reMint } from './nfTicket.js';
+// quote-message 一期（2026-10-09）：用户媒体/文件卡行挂消息 id + 右键「引用」。
+// 摘要 = [图片]/[文件] 文件名（spec §2.5 表）。挂点在本 builder ⇒ live 发送、
+// 历史恢复（persistence.buildUserAttachmentRows）、attachmentsSaved 原位重渲
+// （patchUserMediaRow 走 replaceWith ⇒ 重建后仍带 id/菜单）三路同构。
+import { attachQuoteMenu, nextChatMsgId } from './msgQuote.js';
 
 export const POP_SENTINEL = '___POP_JSON___';
 
@@ -766,6 +771,18 @@ export function buildUserMediaRow(attachments, opts) {
   // 'row user'), so .row.user's positioning owns the side — no second
   // alignment system.
   row.className = 'row pop-artifact user user-media';
+  // quote-message 一期（spec §2.1/§2.5）：媒体/文件行可引用（仅引用项，无正文
+  // 可复制）。多条 stack 摘要取首项（引用对象 = 行）。
+  row.dataset.msgId = nextChatMsgId();
+  {
+    const first = items[0] || {};
+    const d = first.kind === 'image' || first.kind === 'video'
+      ? { kind: 'image', fileName: first.name, path: first.path }
+      : { kind: 'file', fileName: first.name || (first.path || '').split('/').pop(), path: first.path };
+    attachQuoteMenu(row, {
+      ...d, senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: Date.now(),
+    });
+  }
   const group = document.createElement('div');
   group.className = 'pop-group';
   row.appendChild(group);
@@ -773,6 +790,72 @@ export function buildUserMediaRow(attachments, opts) {
   else if (media.length > 1) group.appendChild(buildMediaStack(media));
   files.forEach(f => group.appendChild(buildFileCard(f)));
   return row;
+}
+
+/* ── imageref-media（2026-10-09 修复批）：图片文件引用的消息内面 ─────────────
+ * 症状（用户 2026-10-09 07:45 现场报）：「引用文件」入口（explorer 右键 引用 /
+ * explorer 行拖拽 / canvas 引用——#303 P0 40c199bd1 归一）把一切文件引用成
+ * refType:'file'，消息内引用面（reference.renderMessageRef）对文件引用只出
+ * att-ref-card（文档图标 + 文件名 + IMG 角标[typeLabel] + 截断路径[source 行]）
+ * ——图片引用没有媒体预览分支。本构建器给图片引用**同一张 Pop 媒体预览卡**
+ * （buildMediaFlat 复用，零第二套面）：ref.source.path 是工作区绝对路径，字节走
+ * hydrateMedia 的 nf-file 票腿（不传 resolver ⇒ 不走 uploads 腿，与 explorer /
+ * Canvas 读工作区图片同一路由）；整面点击 = openMediaItemClick → openPopArtifact
+ * 单点开 Canvas（ref 恒带 path，与引用跳转 jumpRef 同一动作族）。引用身份保留在
+ * dataset（refType/refPath）+ .att-ref-media 标记类（spec 钩）。非图片引用不进
+ * 此分支——文件卡只给非图片。 */
+export function buildImageRefMediaFace(ref) {
+  const src = (ref && ref.source) || {};
+  const name = String(src.fileName || src.title || '');
+  const path = typeof src.path === 'string' ? src.path : '';
+  const item = { kind: 'image', name, path, ext: extOf(name) };
+  const face = buildMediaFlat(item);
+  face.classList.add('att-ref-media');
+  face.dataset.refType = 'file';
+  face.dataset.refPath = path;
+  return face;
+}
+
+/* ── attachmentsSaved 原位补丁（用户附件点击统一批 2026-10-08）──────────────
+ * live 发送腿的行渲染早于后端落盘：item 只有 data/preview、没有 `path`，于是
+ * 每张脸都在「作者刚发完就看的那一条」上降级（媒体整面点击走 pathless 灯箱、
+ * 文件卡点击是死的三修 ②/#491 形态）。后端在 ui.json 落盘后回传
+ * `attachmentsSaved`（WebSocketRoutes.scala，载荷 = 与 ui.json 同形的
+ * [{name,type,path}]），本模块——行的唯一属主——用**同一套 builders** 原位
+ * 重渲该行：补丁后的行与历史恢复腿、与 Pop 行逐字节同构，打开动作仍是
+ * openPopArtifact 单点，零第二套开法。 */
+
+/** sessionId → [{row, atts}] FIFO（上限 8）：等待落盘路径的 live 行。上限只是
+ *  防御性保鲜——正常流里帧在发送后毫秒级到达即消费掉条目；帧丢失（旧后端）时
+ *  条目随上限滚动，且 att 对象本就被在 DOM 的行闭包持有，登记不放大保留面。 */
+const pendingUserMediaRows = new Map();
+const PENDING_MEDIA_ROWS_CAP = 8;
+
+/** Live 渲染登记钩子（chat.js renderUserBubble 唯一调用方）。 */
+export function registerUserMediaRow(sessionId, row, atts) {
+  if (!sessionId || !row || !Array.isArray(atts) || !atts.length) return;
+  const list = pendingUserMediaRows.get(sessionId) || [];
+  list.push({ row, atts });
+  if (list.length > PENDING_MEDIA_ROWS_CAP) list.splice(0, list.length - PENDING_MEDIA_ROWS_CAP);
+  pendingUserMediaRows.set(sessionId, list);
+}
+
+/** `attachmentsSaved` 消费端：`saved` 与行的 atts 顺序严格一致（同一条非 ref
+ *  线上列表，index 对 index），name 逐位对表做错位防御；path 为 null（保存失败/
+ *  未解析）的项保持原样——那张脸维持 pathless 现状，绝不派假 open。 */
+export function patchUserMediaRow(sessionId, saved) {
+  const list = pendingUserMediaRows.get(sessionId);
+  if (!list || !list.length || !Array.isArray(saved) || !saved.length) return;
+  const i = list.findIndex(e =>
+    e.atts.length === saved.length &&
+    saved.every((s, k) => s && e.atts[k] && s.name === e.atts[k].name));
+  if (i < 0) return;
+  const entry = list.splice(i, 1)[0];
+  saved.forEach((s, k) => {
+    if (s && typeof s.path === 'string' && s.path) entry.atts[k].path = s.path;
+  });
+  const fresh = buildUserMediaRow(entry.atts);
+  if (fresh && entry.row.isConnected) entry.row.replaceWith(fresh);
 }
 
 /**

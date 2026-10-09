@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- 管线验证用最小页：证明双主题切换 + 可读字号。非交付物。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark;
+    --bg: #f5f5f7; --ink: #1d1d1f; --card-bg: #ffffff; --card-bd: rgba(0,0,0,0.12); }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101418; --ink: #e8eaed; --card-bg: rgba(255,255,255,0.06); --card-bd: rgba(255,255,255,0.14); }
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    font: 15px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--ink);
+  }
+  .card {
+    border: 1px solid var(--card-bd); border-radius: 12px;
+    padding: 18px 22px; max-width: 560px; background: var(--card-bg);
+  }
+  .meta { font-size: 10.5px; letter-spacing: 0.6px; opacity: 0.62; }
+  button { font-size: 13px; padding: 6px 14px; border-radius: 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <div class="meta">PIPELINE CHECK · 第 1 幕 · 第 1 / 10 题</div>
+  <div class="card">给我起个名字吧 —— 你希望以后怎么叫我？</div>
+  <button>用这句</button>
+</body>
+</html>

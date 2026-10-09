@@ -111,9 +111,11 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
       }
   }
 
-  /** OpenAI-shaped refusal: the same 4xx status the shim declares plus the
-    * OpenAI error envelope (`type`/`param`/`code`), so a caller that parses the
-    * OpenAI error shape gets usable feedback instead of a bare status. */
+  /**
+   * OpenAI-shaped refusal: the same 4xx status the shim declares plus the
+   * OpenAI error envelope (`type`/`param`/`code`), so a caller that parses the
+   * OpenAI error shape gets usable feedback instead of a bare status.
+   */
   private def openAiRejected(
     rejected: OpenAiChatShim.Rejected
   ): IO[org.http4s.Response[IO]] =
@@ -123,12 +125,14 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
         .withEntity(OpenAiChatShim.errorEnvelope(rejected))
     )
 
-  /** visionfix (甲): shared failure mapping for both chat faces. `llmReq` is
-    * `None` only on a decode failure, where there is no request to inspect.
-    * The "images could not be delivered" wording is chosen from
-    * `FallbackExhaustedError.hadImage` (set at the send point in
-    * `LlmInterface`) or, as a fallback, from the request body — `hadImageIn` is
-    * the single predicate. */
+  /**
+   * visionfix (甲): shared failure mapping for both chat faces. `llmReq` is
+   * `None` only on a decode failure, where there is no request to inspect.
+   * The "images could not be delivered" wording is chosen from
+   * `FallbackExhaustedError.hadImage` (set at the send point in
+   * `LlmInterface`) or, as a fallback, from the request body — `hadImageIn` is
+   * the single predicate.
+   */
   private def llmFailureResponse(
     llmReq: Option[LlmRequest]
   ): Throwable => IO[org.http4s.Response[IO]] = {
@@ -149,10 +153,12 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
       InternalServerError(Json.obj("error" -> msg.asJson))
   }
 
-  /** visionfix (甲): did this REST request carry image content? Used to pick the
-    * "images could not be delivered" wording instead of a generic chain failure.
-    * `LlmInterface.hadImageIn` is the single predicate (public for exactly this
-    * cross-package use). */
+  /**
+   * visionfix (甲): did this REST request carry image content? Used to pick the
+   * "images could not be delivered" wording instead of a generic chain failure.
+   * `LlmInterface.hadImageIn` is the single predicate (public for exactly this
+   * cross-package use).
+   */
   private def nabflowHadImage(req: LlmRequest): Boolean =
     nebflow.llm.LlmInterface.hadImageIn(req.messages)
 

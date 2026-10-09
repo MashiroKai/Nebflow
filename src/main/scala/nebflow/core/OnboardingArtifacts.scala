@@ -62,6 +62,7 @@ object OnboardingArtifacts:
     case Skip, Choice, Free, Multi, Model
 
   object Kind:
+
     def fromString(s: String): Kind = s match
       case "skip" => Skip
       case "free" => Free
@@ -156,8 +157,7 @@ object OnboardingArtifacts:
     val nameLine = name.getOrElse(SkippedName)
     val belong = callOf(answers).map(c => s"$c（我不属于任何一个项目，只属于你）").getOrElse("未设置（我不属于任何一个项目，只属于你）")
     val notes =
-      if allSkipped then
-        s"""
+      if allSkipped then s"""
            |## 备注
            |你几乎跳过了所有问题 —— 没关系。这份骨架先立在这里，随时可以回来把它填满。
            |""".stripMargin
@@ -186,10 +186,14 @@ object OnboardingArtifacts:
        |- 灵魂的改变写 Soul.md；关于 ${call} 的事实写 User.md。
        |$notes""".stripMargin
 
-  /** 生成 `User.md` 全文（同样保证全跳过时结构完整）。
-    *
-    * 「最近半年，你最想解决的一件事是什么？」整题移除（作者 2026-10-05）⇒
-    * 原 `## 当前关注` 段随之收口，不留悬空段、不留 `（暂未填写）` 占位。 */
+  end buildSoul
+
+  /**
+   * 生成 `User.md` 全文（同样保证全跳过时结构完整）。
+   *
+   * 「最近半年，你最想解决的一件事是什么？」整题移除（作者 2026-10-05）⇒
+   * 原 `## 当前关注` 段随之收口，不留悬空段、不留 `（暂未填写）` 占位。
+   */
   def buildUser(answers: Map[String, Answer]): String =
     val call = callOr(answers)
     val callLine = callOf(answers).getOrElse(SkippedCall)
@@ -208,6 +212,8 @@ object OnboardingArtifacts:
        |- 随口提到的事实（人名、日期、偏好）→ 记到这里
        |- 灵魂层面的反馈（「你太啰嗦了」）→ 改写 Soul.md
        |- 项目相关笔记一律以「项目名：」前缀记在这里""".stripMargin
+
+  end buildUser
 
   /**
    * 落盘两份文件 + 起名结果写回 `displayName`。幂等可重跑（覆盖式写入）。
@@ -238,6 +244,10 @@ object OnboardingArtifacts:
       allSkipped = allSkipped,
       skipped = skipped
     )
+
+    end for
+
+  end apply
 
   /**
    * 起名结果 → `agents/<root>/agent.json` 的 `displayName`。

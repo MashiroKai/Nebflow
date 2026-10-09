@@ -59,13 +59,15 @@ class FileChangeLedgerSpec extends CatsEffectSuite:
     assertEquals(ev.removedLines, 1)
   }
 
-  test("parseToolResult: oversized body degrades to counts-only with a reason") {
+  test("parseToolResult: oversized body keeps the full body (capture char cap removed, 2026-10-10)") {
+    // User ruling 2026-10-10: no diff character cap anywhere on the fileChanges
+    // face — Canvas renders the full body, so capture stores it verbatim.
     val bigBody = "@@ -1,1 +1,2 @@\n" + List.fill(6000)("+" + "x" * 20).mkString("\n") // > 100k chars
     val result = s"OK:UPDATED Huge.txt, 6000 added, 0 removed\n$bigBody"
     val ev = FileChangeLedger.parseToolResult("Write", "/tmp/Huge.txt", result, 4L).get
     assertEquals(ev.addedLines, 6000)
-    assertEquals(ev.diffText, None)
-    assert(ev.degradedReason.exists(_.startsWith("diff-too-large")))
+    assertEquals(ev.diffText, Some(bigBody))
+    assertEquals(ev.degradedReason, None)
   }
 
   test("parseToolResult: non-OK strings return None") {
@@ -73,21 +75,35 @@ class FileChangeLedgerSpec extends CatsEffectSuite:
   }
 
   test("record: per-key cap evicts the oldest events") {
-    FileChangeLedger.make().flatMap { ledger =>
-      List.tabulate(FileChangeLedger.MaxEventsPerKey + 5) { i =>
-        ledger.record(List("k"), FileChangeEvent(s"/f$i", FileChangeType.Modified, 1, 0, None, None, "Edit", i.toLong))
-      }.sequence *> ledger.snapshot("k")
-    }.map { events =>
-      assertEquals(events.length, FileChangeLedger.MaxEventsPerKey)
-      assertEquals(events.head.timestamp, 5L) // oldest 5 evicted
-    }
+    FileChangeLedger
+      .make()
+      .flatMap { ledger =>
+        List
+          .tabulate(FileChangeLedger.MaxEventsPerKey + 5) { i =>
+            ledger.record(
+              List("k"),
+              FileChangeEvent(s"/f$i", FileChangeType.Modified, 1, 0, None, None, "Edit", i.toLong)
+            )
+          }
+          .sequence *> ledger.snapshot("k")
+      }
+      .map { events =>
+        assertEquals(events.length, FileChangeLedger.MaxEventsPerKey)
+        assertEquals(events.head.timestamp, 5L) // oldest 5 evicted
+      }
   }
 
   test("multi-key attribution: node drain keeps the task and session buckets") {
     FileChangeLedger.make().flatMap { ledger =>
       for
-        _ <- ledger.record(List("sid-1", "node-1", "task-7"), FileChangeEvent("/a", FileChangeType.Modified, 1, 0, None, None, "Edit", 1L))
-        _ <- ledger.record(List("sid-2", "node-2", "task-7"), FileChangeEvent("/b", FileChangeType.Modified, 1, 0, None, None, "Write", 2L))
+        _ <- ledger.record(
+          List("sid-1", "node-1", "task-7"),
+          FileChangeEvent("/a", FileChangeType.Modified, 1, 0, None, None, "Edit", 1L)
+        )
+        _ <- ledger.record(
+          List("sid-2", "node-2", "task-7"),
+          FileChangeEvent("/b", FileChangeType.Modified, 1, 0, None, None, "Write", 2L)
+        )
         node1 <- ledger.drain("node-1")
         node1Again <- ledger.drain("node-1")
         taskBucket <- ledger.snapshot("task-7")
@@ -101,9 +117,12 @@ class FileChangeLedgerSpec extends CatsEffectSuite:
   }
 
   test("recordToolResult: parse failure records nothing") {
-    FileChangeLedger.make().flatMap { l =>
-      l.recordToolResult(Some("s"), None, None, "Edit", "/x", "not-an-ok-result") *> l.snapshot("s")
-    }.map(events => assertEquals(events, Nil))
+    FileChangeLedger
+      .make()
+      .flatMap { l =>
+        l.recordToolResult(Some("s"), None, None, "Edit", "/x", "not-an-ok-result") *> l.snapshot("s")
+      }
+      .map(events => assertEquals(events, Nil))
   }
 
   test("coalesce: same-path events merge (counts sum, changeType escalates, diffs join in write order)") {

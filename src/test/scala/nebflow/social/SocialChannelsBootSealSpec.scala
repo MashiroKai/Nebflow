@@ -53,7 +53,12 @@ class SocialChannelsBootSealSpec extends FunSuite:
 
   /** The stored channel entry, exactly as the writer left it. */
   private def entry(root: os.Path, id: String): Json =
-    SocialChannels.readChannels(root).hcursor.downField("channels").downField(id).focus
+    SocialChannels
+      .readChannels(root)
+      .hcursor
+      .downField("channels")
+      .downField(id)
+      .focus
       .getOrElse(Json.obj())
 
   private def enabledOf(root: os.Path, id: String): Option[Boolean] =
@@ -91,13 +96,15 @@ class SocialChannelsBootSealSpec extends FunSuite:
     saved(root, "feishu", json("""{"fields":{"region":"lark"}}"""))
 
     assertEquals(
-      enabledOf(root, "feishu"), Some(true),
+      enabledOf(root, "feishu"),
+      Some(true),
       "缺键 ⇒ 保持现值（禁止 getOrElse(false)：该次调用不得产生「用户关通道」语义）"
     )
     assert(SocialChannels.isEnabled(root, "feishu"), "the activation gate still reads the channel as enabled")
     assertEquals(fieldOf(root, "feishu", "region"), Some("lark"), "present plain fields still merge")
     assertEquals(
-      fieldOf(root, "feishu", "app_id"), Some("cli_aa32140e8af85d25"),
+      fieldOf(root, "feishu", "app_id"),
+      Some("cli_aa32140e8af85d25"),
       "fields absent from the body survive the surgical merge"
     )
     val stampAfter = entry(root, "feishu").hcursor.downField("updatedAt").as[Long].toOption
@@ -145,7 +152,8 @@ class SocialChannelsBootSealSpec extends FunSuite:
     val root = tmpRoot()
     saved(root, "feishu", verifiedBody(None)) // a body with no switch and no stored value
     assertEquals(
-      hasEnabledKey(root, "feishu"), false,
+      hasEnabledKey(root, "feishu"),
+      false,
       "从未存过 ⇒ 键保持缺席（不得把「从未表态」物化成 false）"
     )
     // The READ side keeps its own (correct) conflation: a store with no
@@ -153,7 +161,8 @@ class SocialChannelsBootSealSpec extends FunSuite:
     // not the engine making a decision for the user.
     val channels = SocialChannels.channelsJson(root).hcursor.downField("channels")
     assertEquals(
-      channels.downField("feishu").downField("enabled").as[Boolean].toOption, Some(false),
+      channels.downField("feishu").downField("enabled").as[Boolean].toOption,
+      Some(false),
       "the read side still answers false for an absent key (unchanged semantics)"
     )
     assertEquals(SocialChannels.isEnabled(root, "feishu"), false)
@@ -166,8 +175,10 @@ class SocialChannelsBootSealSpec extends FunSuite:
 
   test("A1 golden explicit `enabled:true`: the switch is written and every other key of the file survives") {
     val root = tmpRoot()
-    os.write(root / "nebflow.json",
-      """{"version":3,"theme":"dark","socialChannels":{"version":1,"channels":{"wechat":{"enabled":true,"fields":{"app_id":"wx0123456789abcdef"},"updatedAt":111}}},"unrelatedKey":{"nested":[1,2,3]}}""")
+    os.write(
+      root / "nebflow.json",
+      """{"version":3,"theme":"dark","socialChannels":{"version":1,"channels":{"wechat":{"enabled":true,"fields":{"app_id":"wx0123456789abcdef"},"updatedAt":111}}},"unrelatedKey":{"nested":[1,2,3]}}"""
+    )
 
     saved(root, "feishu", verifiedBody(Some(true)))
 
@@ -175,18 +186,31 @@ class SocialChannelsBootSealSpec extends FunSuite:
     assertEquals(file.hcursor.downField("version").as[Int].toOption, Some(3), "top-level keys survive")
     assertEquals(file.hcursor.downField("theme").as[String].toOption, Some("dark"))
     assertEquals(
-      file.hcursor.downField("unrelatedKey").downField("nested").as[List[Int]].toOption, Some(List(1, 2, 3)),
+      file.hcursor.downField("unrelatedKey").downField("nested").as[List[Int]].toOption,
+      Some(List(1, 2, 3)),
       "unrelated subtrees survive verbatim"
     )
     assertEquals(enabledOf(root, "feishu"), Some(true), "the golden path writes the switch")
     assertEquals(
-      file.hcursor.downField("socialChannels").downField("channels").downField("wechat")
-        .downField("updatedAt").as[Long].toOption, Some(111L),
+      file.hcursor
+        .downField("socialChannels")
+        .downField("channels")
+        .downField("wechat")
+        .downField("updatedAt")
+        .as[Long]
+        .toOption,
+      Some(111L),
       "a sibling channel entry is untouched"
     )
     assertEquals(
-      file.hcursor.downField("socialChannels").downField("channels").downField("wechat")
-        .downField("enabled").as[Boolean].toOption, Some(true),
+      file.hcursor
+        .downField("socialChannels")
+        .downField("channels")
+        .downField("wechat")
+        .downField("enabled")
+        .as[Boolean]
+        .toOption,
+      Some(true),
       "a sibling channel's switch is untouched"
     )
     // Re-saving with the SAME body is idempotent on the switch: the golden leg
@@ -202,20 +226,25 @@ class SocialChannelsBootSealSpec extends FunSuite:
     saved(root, "feishu", verifiedBody(Some(true)))
     val before = os.read(root / "nebflow.json")
 
-    val plugin = new FeishuBridgePlugin(root,
-      pinnedCreds = Some(FeishuCredentials.Credential("cli_otherapp0000001", "injected-secret", "spec")))
+    val plugin = new FeishuBridgePlugin(
+      root,
+      pinnedCreds = Some(FeishuCredentials.Credential("cli_otherapp0000001", "injected-secret", "spec"))
+    )
     // A stored-A-connected-B world: the running bridge resolves a DIFFERENT app
     // (`cli_otherapp0000001`) than the one on file (`cli_aa32140e8af85d25`).
     val json = FeishuBridgePlugin.connectionJson(root, Some(plugin))
 
     assertEquals(
-      json.hcursor.downField("fingerprintMatch").as[String].toOption, Some("mismatch"),
+      json.hcursor.downField("fingerprintMatch").as[String].toOption,
+      Some("mismatch"),
       "失配必须读成 mismatch（状态标记），而不是静默改写配置"
     )
-    assertEquals(json.hcursor.downField("enabled").as[Boolean].toOption, Some(true),
-      "the stored switch is reported as-is")
-    assertEquals(os.read(root / "nebflow.json"), before,
-      "零配置改写：读一次 connection face 不得动盘上任何字节（更不得写 enabled=false）")
+    assertEquals(
+      json.hcursor.downField("enabled").as[Boolean].toOption,
+      Some(true),
+      "the stored switch is reported as-is"
+    )
+    assertEquals(os.read(root / "nebflow.json"), before, "零配置改写：读一次 connection face 不得动盘上任何字节（更不得写 enabled=false）")
     assertEquals(enabledOf(root, "feishu"), Some(true))
   }
 end SocialChannelsBootSealSpec

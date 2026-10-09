@@ -40,8 +40,10 @@ import java.nio.file.{Files, Path}
  */
 object FeishuCredentials:
 
-  /** The credential pair, held in memory only. `toString` is overridden so an
-    *  accidental interpolation (`s"$creds"`) cannot leak the secret. */
+  /**
+   * The credential pair, held in memory only. `toString` is overridden so an
+   *  accidental interpolation (`s"$creds"`) cannot leak the secret.
+   */
   final case class Credential(appId: String, appSecret: String, source: String):
     override def toString: String = s"Credential(appId=${redacted(appId)}, appSecret=<redacted>, source=$source)"
 
@@ -51,9 +53,11 @@ object FeishuCredentials:
     case Unreadable(reason: String)
     case Incomplete(reason: String)
 
-  /** Mask a value for display: keep the first/last 4 chars of anything long
-    *  enough, otherwise emit nothing but the length. Mirrors the prep node's
-    *  evidence convention (masked id + length + digest only). */
+  /**
+   * Mask a value for display: keep the first/last 4 chars of anything long
+   *  enough, otherwise emit nothing but the length. Mirrors the prep node's
+   *  evidence convention (masked id + length + digest only).
+   */
   def redacted(v: String): String =
     if v.length > 8 then s"${v.take(4)}${"*" * (v.length - 8)}${v.takeRight(4)}"
     else s"<len:$v.length>"
@@ -66,38 +70,48 @@ object FeishuCredentials:
   /** The legacy flat file (`~/.nebflow/feishu.json`), if present. */
   def legacyPath(root: os.Path): os.Path = root / "feishu.json"
 
-  /** The in-repo schema's field storage (`secrets/<name>`), per
-    *  `SocialChannels.secretPath`. */
+  /**
+   * The in-repo schema's field storage (`secrets/<name>`), per
+   *  `SocialChannels.secretPath`.
+   */
   private def schemaSecretPath(root: os.Path, name: String): os.Path = root / "secrets" / name
 
-  /** Resolve the credential pair. `root` is the active data root (honours
-    *  `--home` / `NEBFLOW_HOME` through [[PathUtil.dataRoot]]).
-    *
-    *  🔴 Resolution order (feishu-bind batch, 2026-09-27 — the schema-first
-    *  flip): SCHEMA first, legacy file as FALLBACK.
-    *    - a resolvable schema credential wins;
-    *    - no schema credential at all (no config, no feishu entry, or an entry
-    *      whose fields carry neither app_id nor app_secret_ref) falls through
-    *      to the legacy flat file;
-    *    - neither source ⇒ the same Missing failure as before, naming both
-    *      candidate locations.
-    *  A schema entry that declared a credential but whose secret file is gone
-    *  stays an explicit error (never a silent fallthrough to legacy): the
-    *  bridge must not quietly reconnect a DIFFERENT app than the stored one —
-    *  that surface is what the fingerprint guard (FeishuBridgePlugin.sync)
-    *  exists to expose. */
+  /**
+   * Resolve the credential pair. `root` is the active data root (honours
+   *  `--home` / `NEBFLOW_HOME` through [[PathUtil.dataRoot]]).
+   *
+   *  🔴 Resolution order (feishu-bind batch, 2026-09-27 — the schema-first
+   *  flip): SCHEMA first, legacy file as FALLBACK.
+   *    - a resolvable schema credential wins;
+   *    - no schema credential at all (no config, no feishu entry, or an entry
+   *      whose fields carry neither app_id nor app_secret_ref) falls through
+   *      to the legacy flat file;
+   *    - neither source ⇒ the same Missing failure as before, naming both
+   *      candidate locations.
+   *  A schema entry that declared a credential but whose secret file is gone
+   *  stays an explicit error (never a silent fallthrough to legacy): the
+   *  bridge must not quietly reconnect a DIFFERENT app than the stored one —
+   *  that surface is what the fingerprint guard (FeishuBridgePlugin.sync)
+   *  exists to expose.
+   */
   def resolve(root: os.Path): Either[Failure, Credential] =
     fromSocialChannelsSchema(root).orElse(fromLegacyFile(root)) match
       case Some(Right(c)) => Right(c)
       case Some(Left(err)) => Left(err)
-      case None => Left(Failure.Missing(
-        s"no Feishu credential found: neither ${root}/nebflow.json → socialChannels.channels.feishu.fields " +
-          s"nor ${legacyPath(root)} (flat appId/appSecret) is present"))
+      case None =>
+        Left(
+          Failure.Missing(
+            s"no Feishu credential found: neither ${root}/nebflow.json → socialChannels.channels.feishu.fields " +
+              s"nor ${legacyPath(root)} (flat appId/appSecret) is present"
+          )
+        )
 
-  /** ② The legacy flat file — the FALLBACK (feishu-bind flip). Returns `None`
-    *  when the file does not exist (so the caller can fall through); a
-    *  present-but-unusable file is an error, not a silent fallthrough — a
-    *  half-written credential must not look like "no credential". */
+  /**
+   * ② The legacy flat file — the FALLBACK (feishu-bind flip). Returns `None`
+   *  when the file does not exist (so the caller can fall through); a
+   *  present-but-unusable file is an error, not a silent fallthrough — a
+   *  half-written credential must not look like "no credential".
+   */
   private def fromLegacyFile(root: os.Path): Option[Either[Failure, Credential]] =
     val p = legacyPath(root)
     if !Files.exists(p.toNIO) then None
@@ -109,15 +123,27 @@ object FeishuCredentials:
           val secret = j.hcursor.downField("appSecret").as[String].toOption.filter(_.nonEmpty)
           (id, secret) match
             case (Some(a), Some(s)) => Some(Right(Credential(a, s, s"file:$p")))
-            case _ => Some(Left(Failure.Incomplete(
-              s"${p} exists but does not carry both appId and appSecret (keys present: " +
-                j.asObject.map(_.keys.toList.sorted.mkString(",")).getOrElse("<not an object>") + ")")))
+            case _ =>
+              Some(
+                Left(
+                  Failure.Incomplete(
+                    s"${p} exists but does not carry both appId and appSecret (keys present: " +
+                      j.asObject.map(_.keys.toList.sorted.mkString(",")).getOrElse("<not an object>") + ")"
+                  )
+                )
+              )
 
-  /** ① The in-repo schema, AUTHORITATIVE: `nebflow.json →
-    *  socialChannels.channels.feishu.fields`. `app_id` is inline, `app_secret`
-    *  is a `_ref` path pointing into `secrets/`. An entry whose fields carry
-    *  neither `app_id` nor `app_secret_ref` returns `None` — it holds no
-    *  credential information, so the legacy fallback may speak. */
+    end if
+
+  end fromLegacyFile
+
+  /**
+   * ① The in-repo schema, AUTHORITATIVE: `nebflow.json →
+   *  socialChannels.channels.feishu.fields`. `app_id` is inline, `app_secret`
+   *  is a `_ref` path pointing into `secrets/`. An entry whose fields carry
+   *  neither `app_id` nor `app_secret_ref` returns `None` — it holds no
+   *  credential information, so the legacy fallback may speak.
+   */
   private def fromSocialChannelsSchema(root: os.Path): Option[Either[Failure, Credential]] =
     val cfg = PathUtil.configJsonWritePath(root)
     if !Files.exists(cfg.toNIO) then None
@@ -125,26 +151,51 @@ object FeishuCredentials:
       readJson(cfg) match
         case Left(err) => Some(Left(err))
         case Right(j) =>
-          val fields = j.hcursor.downField("socialChannels").downField("channels")
-            .downField("feishu").downField("fields").focus.getOrElse(Json.obj())
+          val fields = j.hcursor
+            .downField("socialChannels")
+            .downField("channels")
+            .downField("feishu")
+            .downField("fields")
+            .focus
+            .getOrElse(Json.obj())
           val id = fields.hcursor.downField("app_id").as[String].toOption.filter(_.nonEmpty)
           val secretRef = fields.hcursor.downField("app_secret_ref").as[String].toOption.filter(_.nonEmpty)
           (id, secretRef) match
             case (Some(a), Some(ref)) =>
               val secretPath = resolveRef(root, ref)
               if !Files.exists(secretPath.toNIO) then
-                Some(Left(Failure.Missing(
-                  s"socialChannels.feishu.fields.app_secret_ref points at $secretPath, which does not exist")))
+                Some(
+                  Left(
+                    Failure.Missing(
+                      s"socialChannels.feishu.fields.app_secret_ref points at $secretPath, which does not exist"
+                    )
+                  )
+                )
               else
                 try Some(Right(Credential(a, os.read(secretPath).trim, s"schema:$secretPath")))
-                catch case e: Exception =>
-                  Some(Left(Failure.Unreadable(
-                    s"could not read the app_secret referenced by $secretPath: ${e.getClass.getSimpleName}")))
+                catch
+                  case e: Exception =>
+                    Some(
+                      Left(
+                        Failure.Unreadable(
+                          s"could not read the app_secret referenced by $secretPath: ${e.getClass.getSimpleName}"
+                        )
+                      )
+                    )
+              end if
             case _ => None
 
-  /** Inverse of the `_ref` rendering: an absolute path stays as-is, the rendered
-    * `~/<homeDirName>` form maps back under `root`, anything else is relative to
-    * `root` (same convention as `SocialChannels.resolveRef`). */
+          end match
+
+    end if
+
+  end fromSocialChannelsSchema
+
+  /**
+   * Inverse of the `_ref` rendering: an absolute path stays as-is, the rendered
+   * `~/<homeDirName>` form maps back under `root`, anything else is relative to
+   * `root` (same convention as `SocialChannels.resolveRef`).
+   */
   private def resolveRef(root: os.Path, ref: String): os.Path =
     val rendered = s"~/${Branding.homeDirName}"
     if ref.startsWith(rendered + "/") then os.Path(root.toString + ref.drop(rendered.length), os.pwd)
@@ -153,23 +204,28 @@ object FeishuCredentials:
 
   // ─────────── askuser-remote P1: the card-callback credential face ───────────
 
-  /** The card-callback credential pair (askuser-remote P1). The two secrets
-    * behind the feishu card's OPTIONAL `verification_token` / `encrypt_key`
-    * fields (schema `FieldSpec.secretName` = `social-feishu-verification-token`
-    * / `social-feishu-encrypt-key` — the slot existed since the socpanel
-    * batch; this batch is the first consumer). Held in memory only, `toString`
-    * overridden so an accidental interpolation can never leak either value. */
+  /**
+   * The card-callback credential pair (askuser-remote P1). The two secrets
+   * behind the feishu card's OPTIONAL `verification_token` / `encrypt_key`
+   * fields (schema `FieldSpec.secretName` = `social-feishu-verification-token`
+   * / `social-feishu-encrypt-key` — the slot existed since the socpanel
+   * batch; this batch is the first consumer). Held in memory only, `toString`
+   * overridden so an accidental interpolation can never leak either value.
+   */
   final case class CallbackCredentials(verificationToken: Option[String], encryptKey: Option[String]):
+
     override def toString: String =
       s"CallbackCredentials(verificationToken=${verificationToken.map(v => s"<len:${v.length}>").getOrElse("<absent>")}, " +
         s"encryptKey=${encryptKey.map(v => s"<len:${v.length}>").getOrElse("<absent>")})"
 
-  /** Read the callback pair the same way [[resolve]] reads the app pair:
-    * `nebflow.json → socialChannels.channels.feishu.fields` carrying `<key>_ref`
-    * PATHS into `secrets/` — a value never lives in the config. Absent /
-    * unreadable / blank each degrade to `None` (the long-connection callback
-    * runs with empty credentials), and NOTHING here logs a value — only the
-    * caller-side name/length reading leaves. */
+  /**
+   * Read the callback pair the same way [[resolve]] reads the app pair:
+   * `nebflow.json → socialChannels.channels.feishu.fields` carrying `<key>_ref`
+   * PATHS into `secrets/` — a value never lives in the config. Absent /
+   * unreadable / blank each degrade to `None` (the long-connection callback
+   * runs with empty credentials), and NOTHING here logs a value — only the
+   * caller-side name/length reading leaves.
+   */
   def resolveCallbackCredentials(root: os.Path): CallbackCredentials =
     def readRef(ref: String): Option[String] =
       val p = resolveRef(root, ref)
@@ -181,8 +237,13 @@ object FeishuCredentials:
       PathUtil.configJsonWritePath(root)
     ).filter(p => java.nio.file.Files.exists(p.toNIO)).flatMap { cfg =>
       readJson(cfg).toOption.map { j =>
-        j.hcursor.downField("socialChannels").downField("channels")
-          .downField("feishu").downField("fields").focus.getOrElse(Json.obj())
+        j.hcursor
+          .downField("socialChannels")
+          .downField("channels")
+          .downField("feishu")
+          .downField("fields")
+          .focus
+          .getOrElse(Json.obj())
       }
     }
     def fieldRef(name: String): Option[String] =
@@ -192,21 +253,27 @@ object FeishuCredentials:
       encryptKey = fieldRef("encrypt_key").flatMap(readRef)
     )
 
+  end resolveCallbackCredentials
+
   private def readJson(p: os.Path): Either[Failure, Json] =
     try
       parse(os.read(p)) match
-        case Right(j)  => Right(j)
+        case Right(j) => Right(j)
         case Left(err) => Left(Failure.Unreadable(s"$p is not valid JSON: ${err.message}"))
-    catch case e: Exception =>
-      Left(Failure.Unreadable(s"$p could not be read: ${e.getClass.getSimpleName}"))
+    catch
+      case e: Exception =>
+        Left(Failure.Unreadable(s"$p could not be read: ${e.getClass.getSimpleName}"))
 
-  /** The mechanical `{exists, mode, modeOk, readable}` reading for one credential
-    *  path — the same shape the REST probe face answers with, reusable by the
-    *  three-state table. Content is never touched. */
+  /**
+   * The mechanical `{exists, mode, modeOk, readable}` reading for one credential
+   *  path — the same shape the REST probe face answers with, reusable by the
+   *  three-state table. Content is never touched.
+   */
   def aclReading(path: Path): Json =
-    val exists = try Files.exists(path) catch case _: Exception => false
-    if !exists then
-      Json.obj("exists" -> false.asJson, "modeOk" -> false.asJson, "readable" -> false.asJson)
+    val exists =
+      try Files.exists(path)
+      catch case _: Exception => false
+    if !exists then Json.obj("exists" -> false.asJson, "modeOk" -> false.asJson, "readable" -> false.asJson)
     else
       val osName = CredentialFileAcl.currentOsName
       val mode =
@@ -216,12 +283,17 @@ object FeishuCredentials:
           catch case _: Exception => "<unreadable>"
       val modeOk =
         if CredentialFileAcl.isWindows(osName) then
-          try CredentialFileAcl.systemWindowsAcl.readAcl(path)
-                .exists(m => m.missing(CredentialFileAcl.expectedBits).isEmpty)
+          try
+            CredentialFileAcl.systemWindowsAcl
+              .readAcl(path)
+              .exists(m => m.missing(CredentialFileAcl.expectedBits).isEmpty)
           catch case _: Exception => false
         else mode == CredentialFileAcl.PosixMode
-      val readable = try Files.isReadable(path) catch case _: Exception => false
-      Json.obj("exists" -> true.asJson, "mode" -> mode.asJson,
-        "modeOk" -> modeOk.asJson, "readable" -> readable.asJson)
+      val readable =
+        try Files.isReadable(path)
+        catch case _: Exception => false
+      Json.obj("exists" -> true.asJson, "mode" -> mode.asJson, "modeOk" -> modeOk.asJson, "readable" -> readable.asJson)
+    end if
+  end aclReading
 
 end FeishuCredentials

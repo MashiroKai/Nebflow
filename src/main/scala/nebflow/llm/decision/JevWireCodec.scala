@@ -74,6 +74,8 @@ object JevWireCodec:
       case _: DecisionQuestion.Noul => base
     Json.fromJsonObject(withCriteria)
 
+  end questionJson
+
   /**
    * Parse a response body into canonical answers.
    *
@@ -135,6 +137,10 @@ object JevWireCodec:
         c.downField("noul").as[Double].toOption match
           case None => Left(DecisionError.Malformed("noul answer has no numeric 'noul'"))
           case Some(v) => Right(DecisionAnswer.Noul(v))
+
+    end match
+
+  end parseAnswer
 
   private def parseUsage(json: Json): Option[DecisionUsage] =
     val c = json.hcursor.downField("usage")

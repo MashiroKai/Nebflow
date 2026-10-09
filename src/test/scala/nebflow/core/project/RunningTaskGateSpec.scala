@@ -68,6 +68,7 @@ class RunningTaskGateSpec extends CatsEffectSuite:
   /** 静默 LLM 桩（本 spec 只验 0 spawn 的编辑期判据面）。 */
   private class QuietLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -377,3 +378,4 @@ class RunningTaskGateSpec extends CatsEffectSuite:
     )
     assert(!d.contains("NODE_RUNNING_TASK_FROZEN"), "本批不落描述改写提案（§16 过目件）")
   }
+end RunningTaskGateSpec

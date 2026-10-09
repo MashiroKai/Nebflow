@@ -29,20 +29,35 @@ class DelegateJudgeMachineSpec extends FunSuite:
   // ── SmallJudge JSON 解析 ─────────────────────────────────────────────
 
   test("parseVerdict: bare, fenced and prose-wrapped JSON all parse; verdict+reason land") {
-    assertEquals(DelegateJudgeMachine.parseVerdict("""{"verdict":"ready-to-merge","reason":"commits on branch"}"""), Some(Verdict.ReadyToMerge))
+    assertEquals(
+      DelegateJudgeMachine.parseVerdict("""{"verdict":"ready-to-merge","reason":"commits on branch"}"""),
+      Some(Verdict.ReadyToMerge)
+    )
     assertEquals(
       DelegateJudgeMachine.parseVerdict("```json\n{\"verdict\": \"completed\", \"reason\": \"\"}\n```"),
       Some(Verdict.Completed)
     )
     assertEquals(
-      DelegateJudgeMachine.parseVerdict("The judge says: {\"verdict\":\"blocked\",\"reason\":\"merge conflict in a.scala\"} (end)"),
+      DelegateJudgeMachine.parseVerdict(
+        "The judge says: {\"verdict\":\"blocked\",\"reason\":\"merge conflict in a.scala\"} (end)"
+      ),
       Some(Verdict.Blocked("merge conflict in a.scala"))
     )
-    assertEquals(DelegateJudgeMachine.parseVerdict("{\"verdict\":\"blocked\"}"), Some(Verdict.Blocked("small-judge: blocked")), "missing reason gets the default reason, not None")
+    assertEquals(
+      DelegateJudgeMachine.parseVerdict("{\"verdict\":\"blocked\"}"),
+      Some(Verdict.Blocked("small-judge: blocked")),
+      "missing reason gets the default reason, not None"
+    )
   }
 
-  test("parseVerdict: unknown verdict values and non-JSON text are rejected (None = fallback leg, never a fabricated verdict)") {
-    assertEquals(DelegateJudgeMachine.parseVerdict("{\"verdict\":\"failed\",\"reason\":\"x\"}"), None, "'failed' is engine-side and cannot be declared (taskbook wording)")
+  test(
+    "parseVerdict: unknown verdict values and non-JSON text are rejected (None = fallback leg, never a fabricated verdict)"
+  ) {
+    assertEquals(
+      DelegateJudgeMachine.parseVerdict("{\"verdict\":\"failed\",\"reason\":\"x\"}"),
+      None,
+      "'failed' is engine-side and cannot be declared (taskbook wording)"
+    )
     assertEquals(DelegateJudgeMachine.parseVerdict("no json here"), None)
     assertEquals(DelegateJudgeMachine.parseVerdict(""), None)
   }
@@ -55,7 +70,11 @@ class DelegateJudgeMachineSpec extends FunSuite:
 
   test("extractJsonObject: first {...} to last } wins (tolerates leading/trailing prose)") {
     val j = DelegateJudgeMachine.extractJsonObject("""intro {"a":{"b":1}} outro""")
-    assertEquals(j.flatMap(_.hcursor.get[Int]("a").toOption), None, "nested object is NOT flattened (outer object is the parse root)")
+    assertEquals(
+      j.flatMap(_.hcursor.get[Int]("a").toOption),
+      None,
+      "nested object is NOT flattened (outer object is the parse root)"
+    )
     assertEquals(j.flatMap(o => o.hcursor.downField("a").get[Int]("b").toOption), Some(1))
     assertEquals(DelegateJudgeMachine.extractJsonObject("{}").isDefined, true)
     assertEquals(DelegateJudgeMachine.extractJsonObject("nope"), None)
@@ -74,11 +93,18 @@ class DelegateJudgeMachineSpec extends FunSuite:
 
   test("verdictFromChoice: the three legal labels map to the three states; blocked carries the mergeRound marker") {
     assertEquals(DelegateJudgeMachine.verdictFromChoice(choiceResponse("completed"), input()), Some(Verdict.Completed))
-    assertEquals(DelegateJudgeMachine.verdictFromChoice(choiceResponse("ready-to-merge"), input()), Some(Verdict.ReadyToMerge))
+    assertEquals(
+      DelegateJudgeMachine.verdictFromChoice(choiceResponse("ready-to-merge"), input()),
+      Some(Verdict.ReadyToMerge)
+    )
     val blocked = DelegateJudgeMachine.verdictFromChoice(choiceResponse("blocked"), input(mergeRound = true))
     assertEquals(blocked.isDefined, true)
     assert(blocked.get.toString.contains("blocked"), "blocked verdict carries its reason channel")
-    assertEquals(DelegateJudgeMachine.verdictFromChoice(choiceResponse("failed"), input()), None, "unknown label → None (fallback leg), never a guess")
+    assertEquals(
+      DelegateJudgeMachine.verdictFromChoice(choiceResponse("failed"), input()),
+      None,
+      "unknown label → None (fallback leg), never a guess"
+    )
   }
 
   // ── VerdictWire 往返（core 侧承重键） ────────────────────────────────

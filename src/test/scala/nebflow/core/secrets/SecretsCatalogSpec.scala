@@ -5,21 +5,22 @@ import munit.FunSuite
 
 import java.nio.file.Files
 
-/** secrets-consumption batch (2026-10-01) — the three-field catalogue face.
-  *
-  * Pins the C-case contract end to end:
-  *   - the three fields (variable name / value / description), where the VALUE
-  *     is the owner-only file and never appears in any derived artefact;
-  *   - pointer semantics: every consumer-facing answer carries a LOCATION, not
-  *     a value;
-  *   - the zero-value red line, asserted mechanically over both the rendered
-  *     catalogue and the pointer payloads;
-  *   - the injection allowlist's default-empty no-op, and the per-entry
-  *     fail-safe (a missing or oversized secret is skipped, never raised).
-  *
-  * Every case runs against a throwaway root; the real `~/.nebflow/secrets/` is
-  * never read or written. All values are mock values.
-  */
+/**
+ * secrets-consumption batch (2026-10-01) — the three-field catalogue face.
+ *
+ * Pins the C-case contract end to end:
+ *   - the three fields (variable name / value / description), where the VALUE
+ *     is the owner-only file and never appears in any derived artefact;
+ *   - pointer semantics: every consumer-facing answer carries a LOCATION, not
+ *     a value;
+ *   - the zero-value red line, asserted mechanically over both the rendered
+ *     catalogue and the pointer payloads;
+ *   - the injection allowlist's default-empty no-op, and the per-entry
+ *     fail-safe (a missing or oversized secret is skipped, never raised).
+ *
+ * Every case runs against a throwaway root; the real `~/.nebflow/secrets/` is
+ * never read or written. All values are mock values.
+ */
 class SecretsCatalogSpec extends FunSuite:
 
   private val MockValue = "test-secret-value-catalog"
@@ -90,10 +91,13 @@ class SecretsCatalogSpec extends FunSuite:
   test("C5 · description: set, read back, and cleared") {
     withStore { (store, _) =>
       assert(store.create("mock-a", MockValue).unsafeRunSync().isRight)
-      assert(store.setMetadata("mock-a", description = Some("Deploy token for the docs site"))
-        .unsafeRunSync().isRight)
-      assertEquals(store.pointer("mock-a").unsafeRunSync().toOption.get.description,
-        "Deploy token for the docs site")
+      assert(
+        store
+          .setMetadata("mock-a", description = Some("Deploy token for the docs site"))
+          .unsafeRunSync()
+          .isRight
+      )
+      assertEquals(store.pointer("mock-a").unsafeRunSync().toOption.get.description, "Deploy token for the docs site")
       assert(store.setMetadata("mock-a", description = None).unsafeRunSync().isRight)
       assertEquals(store.pointer("mock-a").unsafeRunSync().toOption.get.description, "")
     }
@@ -101,8 +105,10 @@ class SecretsCatalogSpec extends FunSuite:
 
   test("C6 · metadata never mints a secret: a missing target is unknown_secret") {
     withStore { (store, _) =>
-      assertEquals(store.setMetadata("no-such-secret", description = Some("x")).unsafeRunSync(),
-        Left(SecretsStore.Failure.UnknownSecret("no-such-secret")))
+      assertEquals(
+        store.setMetadata("no-such-secret", description = Some("x")).unsafeRunSync(),
+        Left(SecretsStore.Failure.UnknownSecret("no-such-secret"))
+      )
     }
   }
 
@@ -164,8 +170,12 @@ class SecretsCatalogSpec extends FunSuite:
   test("C11 · delete drops the metadata entry (no orphan for a future同名 secret)") {
     withStore { (store, root) =>
       assert(store.create("mock-a", MockValue).unsafeRunSync().isRight)
-      assert(store.setMetadata("mock-a", variableName = Some("A_TOKEN"), description = Some("d"))
-        .unsafeRunSync().isRight)
+      assert(
+        store
+          .setMetadata("mock-a", variableName = Some("A_TOKEN"), description = Some("d"))
+          .unsafeRunSync()
+          .isRight
+      )
       assert(SecretsCatalog.load(root).contains("mock-a"))
       assert(store.delete("mock-a").unsafeRunSync().isRight)
       assertEquals(SecretsCatalog.load(root).get("mock-a"), None)
@@ -184,8 +194,10 @@ class SecretsCatalogSpec extends FunSuite:
       import java.nio.file.attribute.PosixFilePermissions
       def mode(p: os.Path): String =
         PosixFilePermissions.toString(Files.getPosixFilePermissions(p.toNIO))
-      assume(!nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
-        "POSIX-only mode readback")
+      assume(
+        !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+        "POSIX-only mode readback"
+      )
       assertEquals(mode(SecretsCatalog.metaPath(root)), "rw-------")
       assertEquals(mode(SecretsCatalog.catalogPath(root)), "rw-------")
     }
@@ -194,10 +206,13 @@ class SecretsCatalogSpec extends FunSuite:
   test("C13 · metadata round-trips through the sidecar; a malformed sidecar degrades to defaults") {
     withStore { (store, root) =>
       assert(store.create("mock-a", MockValue).unsafeRunSync().isRight)
-      assert(store.setMetadata("mock-a", variableName = Some("A_TOKEN"), description = Some("desc here"))
-        .unsafeRunSync().isRight)
-      assertEquals(SecretsCatalog.load(root).get("mock-a"),
-        Some(SecretsCatalog.Meta(Some("A_TOKEN"), "desc here")))
+      assert(
+        store
+          .setMetadata("mock-a", variableName = Some("A_TOKEN"), description = Some("desc here"))
+          .unsafeRunSync()
+          .isRight
+      )
+      assertEquals(SecretsCatalog.load(root).get("mock-a"), Some(SecretsCatalog.Meta(Some("A_TOKEN"), "desc here")))
       assertEquals(store.pointer("mock-a").unsafeRunSync().toOption.get.variableName, "A_TOKEN")
 
       // A malformed sidecar must not make the secrets unlistable.
@@ -219,8 +234,8 @@ class SecretsCatalogSpec extends FunSuite:
   }
 
   test("C15 · rendered table survives a description carrying a separator or a newline") {
-    val rendered = SecretsCatalog.render(List(
-      SecretsCatalog.Row("n", "N", "has | a pipe and\nan embedded newline", 0L)))
+    val rendered =
+      SecretsCatalog.render(List(SecretsCatalog.Row("n", "N", "has | a pipe and\nan embedded newline", 0L)))
     val body = rendered.linesIterator.toList
     // Header + separator + exactly one row: an unsanitised description would
     // split the row across lines and break the table.

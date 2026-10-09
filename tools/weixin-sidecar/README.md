@@ -21,25 +21,9 @@
 | `/login/begin` | GET | 重启登录会话；QR 已取到则即时回 `{"state":"qr_ready","qrUrl":…,"expireIn":…}`，否则 `{"state":"starting"}`（≤4s 等首码） |
 | `/login/status` | GET | 会话投影：`starting / qr_ready / polling / done / failed`；`done` **仅首次**携带 `credentials{bot_token,ilink_bot_id,ilink_user_id}`，此后不再出现 token |
 | `/healthz` | GET | 运维探针（契约外，仅本机） |
-| `/send` | POST | **出站段（weixin-outbound 批，独立文件 `send.mjs`）**：引擎回程投递。Bearer 共享 token 必带（常量时比较；未配置 token ⇒ 503 关门）；body `{"to","text","account"?}`；200＝iLink `ret=0` 受理（携 `message_id`，uint64 无损字符串化）。详见批报告安全设计段与下表 env |
 
 安全面：只绑 loopback（该契约缝无鉴权，按设计仅本机可达）；token 不落日志
-（只记长度）；`done` 后凭证只出一次。`/send` 例外：出站面**带鉴权**（引擎
-铸造的共享 token，双向呈现同一凭证体系；bot_token 零过引擎↔shim 线路，shim
-自读宿主账号文件）。
-
-## 出站段 env（`send.mjs`；标注「候与入站批对账归一」者为暂定名）
-
-| 变量 | 缺省 | 说明 |
-|---|---|---|
-| `WEIXIN_SEND_TOKEN` | — | 共享 token 直配值（最高优先；改值需重启） |
-| `WEIXIN_SEND_TOKEN_FILE` | — | 共享 token 文件路径（每请求现读，换文件即撤销） |
-| （缺省文件） | `~/.nebflow/secrets/weixin-ilink-send-token` | 引擎铸造位；`NEBFLOW_HOME` 可重根 |
-| `WEIXIN_SIDECAR_ILINK_BASE` | 官方 `https://ilinkai.weixin.qq.com` | 出站 iLink base（测试/运维缝；登录腿不受影响） |
-| `WEIXIN_SIDECAR_SEND_TIMEOUT_MS` | 15000 | 单次 sendmessage 超时（官方 DEFAULT_API_TIMEOUT_MS 同值） |
-| `WEIXIN_SIDECAR_SEND_ATTEMPTS` | 2 | 仅网络类失败重试预算；HTTP 4xx/5xx 与 `ret!==0` 绝不重试 |
-| `WEIXIN_SIDECAR_SEND_BACKOFF_MS` | 1000 | 重试退避 |
-
+（只记长度）；`done` 后凭证只出一次。
 
 ## 手动起停（最小可用 / 今日验证用）
 
@@ -72,6 +56,31 @@ tail -f ~/Library/Logs/nebflow-weixin-sidecar/{out,err}.log      # 日志
 `KeepAlive=true + RunAtLoad=true`：崩溃自动拉起、开机自启；独立 LaunchAgent，
 不依赖任何 Nebflow watchdog（watchdog 移除不受影响）。安装脚本对既有 plist
 先备份（`*.bak-<ts>`），循配置面备份纪律。
+
+### 环境驱动安装与 `--print-config`（配置生成 / 平台安装解耦）
+
+安装脚本是环境驱动的：引擎在扫码绑定成功后注入环境变量、零手工接线调用；
+plist 的 `EnvironmentVariables` 只写入「已提供」的变量，三个变量全部缺省时
+输出与历史版本逐字节等价（裸跑行为不变）。
+
+| 环境变量 | 含义 | 缺省 |
+|---|---|---|
+| `WEIXIN_SIDECAR_PORT` | sidecar 控制端口 | `8787` |
+| `WEIXIN_MSGLOOP_INGRESS_URL` | 引擎 ingress 完整 URL（msgloop 入站投递） | 不写入 plist |
+| `WEIXIN_SEND_TOKEN_FILE` | shim token 文件路径（send/msgloop 鉴权） | 不写入 plist |
+| `WEIXIN_SIDECAR_PLIST_DIR` | plist 输出目录覆盖（仅供离线演练） | `~/Library/LaunchAgents` |
+
+```bash
+bash tools/weixin-sidecar/install-launchd.sh --print-config   # 平台中立面：解析后打印 JSON，不触碰 launchd、不落盘
+```
+
+`--print-config` 输出含 `port / ingressUrl / tokenFile / plistPath / logDir /
+plistText`（`plistText` 为将写入的完整 plist 文本）；launchd bootstrap 只是
+macOS 平台安装面，未来其他平台安装器消费同一解析结果。端口预检收窄：只对
+解析出的 sidecar 端口上「命令行含 shim.mjs 的监听进程」执行 stop，否则报错
+退出、绝不 kill 无关监听者（多实例宿主安全）。引擎调用面：
+`os.proc("bash", <repo>/tools/weixin-sidecar/install-launchd.sh)` + 环境变量
+注入（`OPENCLAW_STATE_DIR` 引擎不注入，sidecar 自解析宿主账号目录）。
 
 ## 登录成功后的宿主侧镜像（默认开，`--no-account-sync` 关）
 

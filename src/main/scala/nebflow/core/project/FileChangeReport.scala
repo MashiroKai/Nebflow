@@ -45,11 +45,11 @@ private val fileDiffLogger = NebflowLogger.forName("nebflow.filediff")
  */
 object FileChangeReport:
 
-  /** Files above this size are not read into a diff — counts-only entry. */
+  /** Files above this size are not read into a diff — counts-only entry.
+    * Memory guard only (whole-file read on the completion path), NOT a diff
+    * char cap: every diff CHARACTER cap on this face was removed by the
+    * 2026-10-10 ruling (chat-face 60k / per-file 200k / ledger capture 100k). */
   val MaxFileBytesForDiff: Long = 1024L * 1024
-
-  /** Per-file cap on a computed diff body; larger diffs degrade to counts-only. */
-  val MaxDiffCharsPerFile: Int = 200000
 
   /** Directory name under `<workspace>/.nebflow/` (git-ignored). */
   val FileChangesDirName: String = "file-changes"
@@ -117,6 +117,51 @@ object FileChangeReport:
   def reportFilePath(workspace: String, nodeId: String): String =
     (os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / FileChangesDirName / s"$nodeId.json").toString
 
+  // ── Delegate-completion chat face (file-diff → delegate result row) ───────
+
+  /**
+   * Build one delegate batch's file-change report and shape it as the
+   * `fileChanges` metadata payload carried by the terminal ExternalEvent
+   * (delegate-completion → injected result row → chat diff view).
+   *
+   * Generation condition (bug #58 fix, 2026-10-09): ANY delegate batch that
+   * changed files — not only project flow-map nodes. Sources per the original
+   * acceptance order: git face first (read-only status/diff in the delegate
+   * cwd/worktree — covers Bash-side writes the tool layer never sees), then
+   * the session's tool-captured ledger slice (non-git workspaces; the
+   * delegate session id is always a ledger attribution key). `None` when the
+   * batch produced no file changes (nothing to attach — the row stays
+   * byte-identical to before). Never throws: every failure logs a warning and
+   * degrades to None — the completion delivery is untouched.
+   *
+   * Wire shape (2026-10-10 ruling): the FULL report JSON — no chat-face char
+   * cap. The former 60000-char batch strip ("batch-too-large") is retired:
+   * the frontend opens the diff in the Canvas panel, which renders the full
+   * bodies, so the payload must carry them verbatim.
+   */
+  def delegateBatchMetadata(
+    workspace: String,
+    worktree: Option[String],
+    delegateId: String,
+    ledger: FileChangeLedger,
+    runner: CompletionGate.GitRunner = CompletionGate.defaultRunner
+  ): IO[Option[Json]] =
+    val leg = for
+      // Drain (not peek) the delegate session's slice: the session id bucket
+      // has no other consumer (flow-node reports drain by node id), so this
+      // both scopes the report to this batch and frees the memory bucket.
+      events <- ledger.drain(delegateId)
+      report <- build(workspace, worktree, delegateId, events, runner)
+    yield if report.files.isEmpty then None else Some(reportJson(report))
+    leg
+      .timeout(ReportTimeout)
+      .handleErrorWith(e =>
+        fileDiffLogger.warn(
+          s"delegate file-change metadata for '$delegateId' skipped: ${Option(e.getMessage).getOrElse(e.toString)}"
+        ) *> IO.pure(None)
+      )
+  end delegateBatchMetadata
+
   // ── Build (git via injected read-only runner) ─────────────────────────────
 
   /**
@@ -142,11 +187,12 @@ object FileChangeReport:
       toplevel <- gitToplevel(root, runner)
       statusLines <- toplevel match
         case Some(r) => gitStatus(r, runner)
-        case None    => IO.pure(Nil)
+        case None => IO.pure(Nil)
       gitEntries <- gitEntriesFor(root, statusLines, runner)
       covered = gitEntries.map(_.path).toSet
       ledgerEntries = ledgerOnlyEntries(root, events, covered)
     yield Report(nodeId, System.currentTimeMillis(), root, (gitEntries ++ ledgerEntries).sortBy(_.path))
+    end for
   end build
 
   /**
@@ -224,6 +270,7 @@ object FileChangeReport:
           else if x == 'A' then FileChangeType.Added
           else FileChangeType.Modified
         Some(PorcelainPath(path, changeType))
+    end if
   end parsePorcelain
 
   /** porcelain v1 wraps exotic paths in double quotes — unwrap the common form. */
@@ -245,7 +292,7 @@ object FileChangeReport:
         runner(root, List("diff", "HEAD", "--", path)).map {
           case Right(diff) if diff.trim.nonEmpty =>
             val (a, r) = countsFromDiff(diff)
-            capEntry(path, FileChangeType.Deleted, a, r, diff, SourceGit)
+            fullEntry(path, FileChangeType.Deleted, a, r, diff, SourceGit)
           case _ =>
             Entry(path, FileChangeType.Deleted, 0, 0, SourceGit, None, Some("git-diff-unavailable"))
         }
@@ -255,7 +302,7 @@ object FileChangeReport:
         runner(root, List("diff", "HEAD", "--", path)).flatMap {
           case Right(diff) if diff.trim.nonEmpty =>
             val (a, r) = countsFromDiff(diff)
-            IO.pure(capEntry(path, FileChangeType.Modified, a, r, diff, SourceGit))
+            IO.pure(fullEntry(path, FileChangeType.Modified, a, r, diff, SourceGit))
           case Right(_) =>
             // Status says dirty but the HEAD diff is empty (e.g. mode-only or
             // staged-then-reverted): degrade honestly instead of fabricating.
@@ -264,7 +311,7 @@ object FileChangeReport:
             runner(root, List("diff", "--", path)).map {
               case Right(diff) if diff.trim.nonEmpty =>
                 val (a, r) = countsFromDiff(diff)
-                capEntry(path, FileChangeType.Modified, a, r, diff, SourceGit)
+                fullEntry(path, FileChangeType.Modified, a, r, diff, SourceGit)
               case _ =>
                 Entry(path, FileChangeType.Modified, 0, 0, SourceGit, None, Some("git-diff-unavailable"))
             }
@@ -300,23 +347,23 @@ object FileChangeReport:
             case init :+ last if last.isEmpty && raw.length > 1 => init
             case other => other
           val n = lines.length
-          if n == 0 then
-            Entry(path, FileChangeType.Added, 0, 0, SourceGit, None, None)
+          if n == 0 then Entry(path, FileChangeType.Added, 0, 0, SourceGit, None, None)
           else
             val body = s"@@ -0,0 +1,$n @@\n" + lines.map(l => "+" + l).mkString("\n")
-            capEntry(path, FileChangeType.Added, n, 0, body, SourceGit)
+            fullEntry(path, FileChangeType.Added, n, 0, body, SourceGit)
           end if
+        end if
+      end if
     }.handleError { e =>
       fileDiffLogger.warn(s"file-change read failed for $path: ${e.getMessage}")
       Entry(path, FileChangeType.Added, 0, 0, SourceGit, None, Some("file-unreadable"))
     }
   end readAsAllAdditions
 
-  /** Apply the per-file diff char cap: oversized bodies degrade to counts-only. */
-  private def capEntry(path: String, changeType: String, a: Int, r: Int, diff: String, source: String): Entry =
-    if diff.length > MaxDiffCharsPerFile then
-      Entry(path, changeType, a, r, source, None, Some(s"diff-too-large: ${diff.length} chars exceeds cap $MaxDiffCharsPerFile"))
-    else Entry(path, changeType, a, r, source, Some(diff), None)
+  /** Full-fidelity entry: the diff body ships verbatim (2026-10-10 ruling —
+    * no per-file char cap; Canvas renders oversized bodies in full). */
+  private def fullEntry(path: String, changeType: String, a: Int, r: Int, diff: String, source: String): Entry =
+    Entry(path, changeType, a, r, source, Some(diff), None)
 
   /** Count +/- payload lines in a git diff body (file headers +++/--- excluded). */
   private[project] def countsFromDiff(diff: String): (Int, Int) =
@@ -341,7 +388,15 @@ object FileChangeReport:
         val degraded =
           if e.diffText.isEmpty then e.degradedReason.orElse(Some("diff-unavailable"))
           else None
-        Entry(relativize(root, e.path), e.changeType, e.addedLines, e.removedLines, SourceToolLedger, e.diffText, degraded)
+        Entry(
+          relativize(root, e.path),
+          e.changeType,
+          e.addedLines,
+          e.removedLines,
+          SourceToolLedger,
+          e.diffText,
+          degraded
+        )
       }
   end ledgerOnlyEntries
 

@@ -1,0 +1,1614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nebflow · Personal Agent Onboarding Demo</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   Nebflow design tokens — 逐字取自 src/main/resources/web/css/base.css
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  --color-primary: #07c160;
+  --color-primary-hover: #06ad56;
+  --color-error: #f44336;
+  --color-success: #4caf50;
+  --color-warning: #ff9800;
+  --color-bubble-user: #95ec69;
+
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-bubble-ai: #fff;
+  --color-text: #1b1e26;
+  --color-text-muted: #8b8e96;
+  --color-text-dim: #6b6e76;
+  --color-border: #ddd;
+
+  --color-nav-bg: #f0f1f3;
+  --color-sidebar-bg: #fafafa;
+  --color-header-bg: #fff;
+  --color-modal-bg: #fff;
+  --color-frame-text: #3a3d45;
+  --color-frame-text-bright: #1b1e26;
+  --color-frame-text-muted: #717379;
+  --color-frame-text-dim: #aaacb3;
+  --color-frame-border: #e0e1e4;
+  --color-frame-border-light: #eeeff1;
+  --color-frame-hover: #e5e6e9;
+  --color-frame-active: #d8d9dd;
+  --color-frame-input-bg: #f5f6f8;
+  --color-frame-input-border: #ddd;
+  --color-frame-input-text: #3a3d45;
+
+  --glass-control-bg: rgba(255, 255, 255, 0.45);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-control-border: rgba(255, 255, 255, 0.40);
+  --glass-control-highlight: rgba(255, 255, 255, 0.50);
+  --glass-control-underedge: rgba(0, 0, 0, 0.08);
+  --glass-control-glow: rgba(0, 0, 0, 0.06);
+  --glass-control-shadow: rgba(0, 0, 0, 0.04);
+  --glass-control-blur: 10px;
+
+  --ai-bubble-border: rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #13161c;
+    --color-surface: #1c1f27;
+    --color-bubble-ai: #1c1f27;
+    --color-text: #e8eaed;
+    --color-text-muted: #7b7e88;
+    --color-text-dim: #9ba0aa;
+    --color-border: #2a2d35;
+
+    --color-nav-bg: #101218;
+    --color-sidebar-bg: #15181f;
+    --color-header-bg: #1c1f27;
+    --color-modal-bg: #1c1f27;
+    --color-frame-text: #c8cad0;
+    --color-frame-text-bright: #e8eaed;
+    --color-frame-text-muted: #81838a;
+    --color-frame-text-dim: #7b7e88;
+    --color-frame-border: #282b33;
+    --color-frame-border-light: #1c1f27;
+    --color-frame-hover: #242730;
+    --color-frame-active: #2a2d36;
+    --color-frame-input-bg: #0e1117;
+    --color-frame-input-border: #2a2d35;
+    --color-frame-input-text: #c8cad0;
+
+    --glass-control-bg: rgba(255, 255, 255, 0.05);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+    --glass-control-border: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight: rgba(255, 255, 255, 0.08);
+    --glass-control-underedge: rgba(0, 0, 0, 0.25);
+    --glass-control-glow: rgba(0, 0, 0, 0.20);
+    --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+    --ai-bubble-border: rgba(255, 255, 255, 0.06);
+  }
+}
+:root[data-theme="dark"] {
+  --color-bg: #13161c;
+  --color-surface: #1c1f27;
+  --color-bubble-ai: #1c1f27;
+  --color-text: #e8eaed;
+  --color-text-muted: #7b7e88;
+  --color-text-dim: #9ba0aa;
+  --color-border: #2a2d35;
+
+  --color-nav-bg: #101218;
+  --color-sidebar-bg: #15181f;
+  --color-header-bg: #1c1f27;
+  --color-modal-bg: #1c1f27;
+  --color-frame-text: #c8cad0;
+  --color-frame-text-bright: #e8eaed;
+  --color-frame-text-muted: #81838a;
+  --color-frame-text-dim: #7b7e88;
+  --color-frame-border: #282b33;
+  --color-frame-border-light: #1c1f27;
+  --color-frame-hover: #242730;
+  --color-frame-active: #2a2d36;
+  --color-frame-input-bg: #0e1117;
+  --color-frame-input-border: #2a2d35;
+  --color-frame-input-text: #c8cad0;
+
+  --glass-control-bg: rgba(255, 255, 255, 0.05);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+  --glass-control-border: rgba(255, 255, 255, 0.08);
+  --glass-control-highlight: rgba(255, 255, 255, 0.08);
+  --glass-control-underedge: rgba(0, 0, 0, 0.25);
+  --glass-control-glow: rgba(0, 0, 0, 0.20);
+  --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+  --ai-bubble-border: rgba(255, 255, 255, 0.06);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  overflow: hidden;
+  display: flex;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.4); }
+::-webkit-scrollbar-track { background: transparent; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+
+/* ── Layout frame: activity bar / sidebar / main ─────────────── */
+#activity-bar {
+  flex: 0 0 48px;
+  background: var(--color-nav-bg);
+  border-right: 1px solid var(--color-frame-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0;
+  gap: 6px;
+}
+#activity-bar .ab-logo { margin-bottom: 10px; }
+#activity-bar .ab-item {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+#activity-bar .ab-item:hover { background: var(--color-frame-hover); color: var(--color-frame-text); }
+#activity-bar .ab-item.active { color: var(--color-primary); }
+#activity-bar .ab-spacer { flex: 1; }
+#activity-bar .ab-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: linear-gradient(135deg, #07c160, #0a8f4a);
+  color: #fff; font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+}
+
+#sidebar {
+  flex: 0 0 216px;
+  background: var(--color-sidebar-bg);
+  border-right: 1px solid var(--color-frame-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#sidebar .sb-section {
+  padding: 14px 10px 4px;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+}
+#sidebar .sb-item {
+  margin: 2px 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: var(--color-frame-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s;
+}
+#sidebar .sb-item:hover { background: var(--color-frame-hover); }
+#sidebar .sb-item.active { background: var(--color-frame-active); color: var(--color-frame-text-bright); font-weight: 500; }
+#sidebar .sb-item .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-primary); flex: 0 0 auto; }
+#sidebar .sb-item .sb-sub { margin-left: auto; font-size: 11px; color: var(--color-frame-text-dim); }
+#sidebar .sb-foot { margin-top: auto; padding: 12px; font-size: 11px; color: var(--color-frame-text-dim); border-top: 1px solid var(--color-frame-border-light); line-height: 1.6; }
+
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--color-bg); }
+
+/* ── Header ──────────────────────────────────────────────────── */
+#header {
+  flex: 0 0 46px;
+  background: var(--color-header-bg);
+  border-bottom: 1px solid var(--color-frame-border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 10px;
+}
+#header .header-brand { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 15px; color: var(--color-frame-text-bright); }
+#header .header-center { flex: 1; text-align: center; min-width: 0; }
+#session-name { font-size: 13px; color: var(--color-frame-text-muted); transition: color 0.3s; }
+#session-name.named { color: var(--color-frame-text-bright); font-weight: 500; }
+#header .header-right { display: flex; align-items: center; gap: 8px; }
+#model-chip {
+  font-size: 11.5px;
+  color: var(--color-frame-text-muted);
+  border: 1px solid var(--color-frame-border);
+  border-radius: 20px;
+  padding: 3px 10px;
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+#model-chip .m-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-frame-text-dim); }
+#model-chip.ok .m-dot { background: var(--color-primary); box-shadow: 0 0 4px rgba(7,193,96,0.6); }
+#memory-btn {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
+}
+#memory-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text); }
+#memory-btn.pulse::after {
+  content: '';
+  position: absolute; inset: -2px;
+  border-radius: 10px;
+  border: 2px solid var(--color-primary);
+  animation: mem-pulse 1.2s ease-out 3;
+}
+@keyframes mem-pulse {
+  0% { opacity: 0.9; transform: scale(0.9); }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+
+/* ── Chat surface ────────────────────────────────────────────── */
+#chat-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; }
+#chat { max-width: 780px; margin: 0 auto; padding: 20px 24px 12px; display: flex; flex-direction: column; }
+.row { display: flex; margin: 6px 0; animation: fadeIn 0.2s ease; }
+.row.user { justify-content: flex-end; }
+.row.ai { justify-content: flex-start; }
+.row.notice { justify-content: center; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.bubble {
+  max-width: 86%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 14.5px;
+  line-height: 1.62;
+  word-break: break-word;
+  position: relative;
+}
+.bubble.user {
+  background: var(--color-bubble-user);
+  color: #17301c;
+  border-bottom-right-radius: 4px;
+  white-space: pre-wrap;
+}
+.bubble.ai {
+  background: var(--color-bubble-ai);
+  color: var(--color-text);
+  border: 1px solid var(--ai-bubble-border);
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.ask-user-source {
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  color: var(--color-text-muted);
+  margin-bottom: 5px;
+  user-select: none;
+}
+.row.notice .bubble {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--color-text-dim);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+/* typewriter */
+.ob-cursor {
+  display: inline-block; width: 1px; height: 1em; margin-left: 2px;
+  vertical-align: text-bottom; background: var(--color-text);
+  animation: ob-blink 1s steps(2) infinite;
+}
+@keyframes ob-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.ob-skip {
+  position: absolute; top: 6px; right: 8px;
+  font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  color: var(--color-text-dim);
+  background: transparent; border: none; cursor: pointer;
+}
+.ob-skip:hover { color: var(--color-text); background: var(--color-frame-hover); }
+
+/* ── Universal Option Box（对齐 chat.css .option-box）────────── */
+.option-box {
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--color-frame-hover);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  animation: ob-card-in 200ms ease-out;
+}
+@keyframes ob-card-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.option-step { font-size: 10.5px; letter-spacing: 0.6px; color: var(--color-text-dim); margin-bottom: 4px; }
+.option-q { font-size: 13px; color: var(--color-text); margin-bottom: 6px; font-weight: 500; }
+.option-q + .option-q, .option-q { margin-top: 8px; }
+.option-box .option-q:first-of-type { margin-top: 0; }
+.option-desc { font-size: 11.5px; color: var(--color-text-dim); margin: -4px 0 6px; line-height: 1.5; }
+.option-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.option-opts.multi { flex-direction: column; align-items: stretch; }
+.option-btn {
+  padding: 5px 12px;
+  border: 1px solid rgba(145, 170, 210, 0.25);
+  border-radius: 14px;
+  background: rgba(145, 170, 210, 0.04);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text);
+  transition: all 0.25s ease;
+  font-family: inherit;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .option-btn {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(145,170,210,0.18);
+  }
+}
+:root[data-theme="dark"] .option-btn { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
+.option-btn:hover {
+  border-color: rgba(145, 170, 210, 0.45);
+  color: rgba(91, 127, 191, 0.95);
+  background: rgba(145, 170, 210, 0.08);
+}
+:root[data-theme="dark"] .option-btn:hover { color: rgba(160,185,225,0.9); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .option-btn:hover { color: rgba(160,185,225,0.9); }
+}
+.option-btn.picked { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+.option-opts.multi .option-btn {
+  display: flex; align-items: flex-start; gap: 8px;
+  text-align: left; border-radius: 10px; padding: 7px 12px; width: 100%;
+}
+.option-opts.multi .option-btn .option-text { flex: 1; min-width: 0; line-height: 1.45; }
+.option-opts.multi .option-btn .option-text small { display: block; color: var(--color-text-dim); font-size: 11px; margin-top: 1px; }
+.option-opts.multi .option-btn.picked .option-text small { color: rgba(255,255,255,0.8); }
+.option-check {
+  flex: 0 0 auto; width: 15px; height: 15px; margin-top: 2px;
+  border: 1.5px solid rgba(145, 170, 210, 0.45);
+  border-radius: 4px; position: relative; background: transparent;
+  transition: all 0.2s ease;
+}
+.option-btn.picked .option-check { border-color: #fff; background: var(--color-primary); }
+.option-btn.picked .option-check::after {
+  content: ''; position: absolute; left: 4px; top: 1px;
+  width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.option-input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-frame-input-border);
+  background: var(--color-frame-input-bg);
+  color: var(--color-frame-input-text);
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+  margin-bottom: 8px;
+}
+.option-input:focus { border-color: var(--color-primary); }
+.option-input.mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px; }
+.option-input::placeholder { color: var(--color-text-dim); }
+.option-field-label { font-size: 11px; color: var(--color-text-dim); margin: 2px 0 4px; letter-spacing: 0.3px; }
+
+/* slider rows */
+.slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.slider-row .sl-endl { flex: 0 0 64px; font-size: 11px; color: var(--color-text-dim); text-align: right; }
+.slider-row .sl-endr { flex: 0 0 64px; font-size: 11px; color: var(--color-text-dim); }
+.slider-row input[type="range"] { flex: 1; accent-color: var(--color-primary); height: 22px; cursor: pointer; }
+.slider-row .sl-val {
+  flex: 0 0 26px; text-align: center; font-size: 11px; font-weight: 600;
+  color: var(--color-primary);
+  background: rgba(7,193,96,0.1);
+  border-radius: 6px; padding: 1px 0;
+}
+
+/* actions */
+.ob-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.glass-control {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  border-radius: 10px;
+  padding: 7px 16px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.glass-control:hover { background: var(--glass-control-bg-hover); }
+.glass-control:disabled { opacity: 0.45; cursor: default; }
+.glass-control.ob-primary { background: rgba(7, 193, 96, 0.42); }
+:root[data-theme="dark"] .glass-control.ob-primary { background: rgba(7, 193, 96, 0.35); }
+.glass-control.ob-primary:hover:not(:disabled) { background: rgba(7, 193, 96, 0.55); }
+.option-hint { font-size: 11.5px; color: var(--color-warning); margin-left: 4px; }
+.ob-probing { margin-top: 8px; font-size: 12px; color: var(--color-text-muted); display: flex; align-items: center; gap: 7px; }
+.ob-probing.ok { color: var(--color-success); }
+.spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid rgba(128,128,128,0.3); border-top-color: var(--color-primary);
+  animation: spin 0.8s linear infinite; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Soul writing ceremony ───────────────────────────────────── */
+.write-lines { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px; line-height: 2; margin-top: 2px; }
+.write-lines .wl { opacity: 0; animation: fadeIn 0.3s ease forwards; color: var(--color-text-muted); }
+.write-lines .wl.ok { color: var(--color-text); }
+.write-lines .wl .wl-ico { color: var(--color-success); margin-right: 6px; }
+.write-lines .wl.dim { color: var(--color-text-dim); }
+.file-card {
+  margin-top: 8px;
+  border: 1px solid var(--color-frame-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.file-card:hover { border-color: rgba(7,193,96,0.45); }
+.file-card .fc-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 12px; cursor: pointer; user-select: none;
+}
+.file-card .fc-icon {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #07c160, #0b9d52);
+  flex: 0 0 auto;
+}
+.file-card.retired .fc-icon { background: linear-gradient(135deg, #9aa0aa, #6f7580); }
+.file-card .fc-name { font-size: 13.5px; font-weight: 600; color: var(--color-text); font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+.file-card .fc-sub { font-size: 11px; color: var(--color-text-dim); margin-top: 1px; }
+.file-card .fc-badge {
+  margin-left: auto; font-size: 10px; letter-spacing: 0.5px;
+  color: var(--color-primary);
+  background: rgba(7,193,96,0.12);
+  border-radius: 5px; padding: 2px 7px;
+}
+.file-card.retired .fc-badge { color: var(--color-text-dim); background: rgba(128,128,128,0.14); }
+.file-card .fc-badge.retired-badge { color: #c0392b; background: rgba(192,57,43,0.1); }
+.file-card .fc-chev { margin-left: 8px; color: var(--color-text-dim); transition: transform 0.2s; font-size: 11px; }
+.file-card.open .fc-chev { transform: rotate(90deg); }
+.file-card .fc-body {
+  display: none;
+  border-top: 1px solid var(--color-frame-border-light);
+  padding: 12px 14px;
+  background: var(--color-frame-input-bg);
+}
+.file-card.open .fc-body { display: block; }
+.file-card .fc-body pre {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11.8px; line-height: 1.75;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--color-frame-input-text);
+  max-height: 300px; overflow-y: auto;
+}
+.file-card .fc-body pre .md-h { color: var(--color-primary); font-weight: 700; }
+.file-card .fc-body pre .md-q { color: var(--color-text-dim); }
+.file-card.strike .fc-name { text-decoration: line-through; color: var(--color-text-muted); }
+
+/* ── Input bar ───────────────────────────────────────────────── */
+#input-area { flex: 0 0 auto; padding: 8px 24px 16px; }
+#input-wrap {
+  max-width: 780px; margin: 0 auto;
+  display: flex; align-items: flex-end; gap: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-frame-border);
+  border-radius: 16px;
+  padding: 8px 8px 8px 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+#input-wrap:focus-within { border-color: rgba(7,193,96,0.5); box-shadow: 0 0 0 3px rgba(7,193,96,0.08); }
+#input {
+  flex: 1; border: none; outline: none; background: transparent;
+  resize: none; font-family: inherit; font-size: 14.5px; line-height: 1.5;
+  color: var(--color-text); max-height: 120px; padding: 4px 0;
+}
+#input::placeholder { color: var(--color-text-dim); }
+#send-btn {
+  flex: 0 0 auto;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: var(--color-primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, opacity 0.15s;
+}
+#send-btn:hover { background: var(--color-primary-hover); }
+#send-btn:disabled { background: var(--color-frame-active); cursor: default; opacity: 0.7; }
+
+/* ── Demo toolbar ────────────────────────────────────────────── */
+#demo-bar {
+  position: fixed; top: 54px; right: 12px; z-index: 90;
+  display: flex; gap: 6px; align-items: center;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 20px;
+  padding: 4px 6px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+#demo-bar .db-tag { font-size: 10px; letter-spacing: 0.5px; color: var(--color-text-dim); padding: 0 4px 0 8px; user-select: none; }
+#demo-bar button {
+  border: none; background: transparent; color: var(--color-frame-text);
+  font-size: 11.5px; padding: 4px 10px; border-radius: 14px; cursor: pointer;
+  font-family: inherit; transition: background 0.15s;
+  display: flex; align-items: center; gap: 4px;
+}
+#demo-bar button:hover { background: var(--color-frame-hover); }
+
+/* ── Memory modal ────────────────────────────────────────────── */
+#modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.35);
+  display: none; align-items: center; justify-content: center;
+}
+#modal-overlay.show { display: flex; }
+#info-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.35);
+  display: none; align-items: center; justify-content: center;
+}
+#info-overlay.show { display: flex; }
+#mem-modal {
+  width: min(640px, 92vw);
+  max-height: 80vh;
+  background: var(--color-modal-bg);
+  border: 1px solid var(--color-frame-border);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  animation: ob-card-in 200ms ease-out;
+}
+.mm-head {
+  padding: 14px 18px 10px;
+  display: flex; align-items: center;
+  border-bottom: 1px solid var(--color-frame-border-light);
+}
+.mm-title { font-size: 15px; font-weight: 600; color: var(--color-frame-text-bright); }
+.mm-close {
+  margin-left: auto; border: none; background: transparent;
+  color: var(--color-frame-text-muted); font-size: 16px; cursor: pointer;
+  width: 28px; height: 28px; border-radius: 7px;
+}
+.mm-close:hover { background: var(--color-frame-hover); }
+#mem-tabs { display: flex; gap: 4px; padding: 10px 18px 0; }
+#mem-tabs button {
+  border: 1px solid transparent; border-bottom: none;
+  background: transparent; color: var(--color-frame-text-muted);
+  font-size: 12.5px; padding: 6px 14px; cursor: pointer;
+  border-radius: 8px 8px 0 0; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+#mem-tabs button.active {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-input-bg);
+  border-color: var(--color-frame-border-light);
+}
+#mem-body {
+  flex: 1; overflow-y: auto;
+  background: var(--color-frame-input-bg);
+  margin: 0 18px; border: 1px solid var(--color-frame-border-light);
+  border-radius: 0 8px 8px 8px;
+  padding: 14px 16px;
+}
+#mem-body pre {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px; line-height: 1.8;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--color-frame-input-text);
+}
+#mem-body .mem-empty { color: var(--color-text-dim); font-size: 13px; line-height: 1.8; padding: 20px 0; text-align: center; font-family: inherit; }
+#mem-foot {
+  padding: 10px 18px 14px;
+  font-size: 11.5px; color: var(--color-text-dim); line-height: 1.6;
+  border-top: 1px solid var(--color-frame-border-light);
+  margin-top: 12px;
+}
+#mem-foot b { color: var(--color-text-muted); }
+
+/* ── Info modal ──────────────────────────────────────────────── */
+#info-modal {
+  width: min(560px, 92vw);
+  background: var(--color-modal-bg);
+  border: 1px solid var(--color-frame-border);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  padding: 20px 22px;
+  max-height: 80vh; overflow-y: auto;
+}
+#info-modal h3 { font-size: 15px; margin-bottom: 10px; color: var(--color-frame-text-bright); }
+#info-modal h4 { font-size: 13px; margin: 14px 0 6px; color: var(--color-primary); }
+#info-modal p, #info-modal li { font-size: 12.8px; line-height: 1.75; color: var(--color-text-muted); }
+#info-modal ul { margin: 4px 0 4px 18px; }
+#info-modal code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; background: var(--color-frame-hover); padding: 1px 5px; border-radius: 4px; color: var(--color-text); }
+
+/* toast */
+#toast {
+  position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(8px);
+  background: rgba(20,22,28,0.92); color: #fff;
+  font-size: 12.5px; padding: 8px 16px; border-radius: 18px;
+  opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 120;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+  .ob-cursor { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ Activity bar ═══ -->
+<div id="activity-bar">
+  <div class="ab-logo" title="Nebflow">
+    <svg width="26" height="26" viewBox="0 0 26 26"><defs><radialGradient id="orb" cx="35%" cy="35%"><stop offset="0%" stop-color="#5dff9f"/><stop offset="55%" stop-color="#07c160"/><stop offset="100%" stop-color="#065c2e"/></radialGradient></defs><circle cx="13" cy="13" r="11" fill="url(#orb)"/><ellipse cx="13" cy="13" rx="10.5" ry="4" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1" transform="rotate(-24 13 13)"/></svg>
+  </div>
+  <div class="ab-item active" title="对话">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  </div>
+  <div class="ab-item" title="文件" onclick="toast('demo：仅对话面板')">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+  </div>
+  <div class="ab-item" title="智能体" onclick="toast('demo：仅对话面板')">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r="1.4" fill="currentColor" stroke="none"/><path d="M12 8V4m0 0h3"/></svg>
+  </div>
+  <div class="ab-spacer"></div>
+  <div class="ab-item" title="设置" onclick="toast('demo：仅对话面板')">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </div>
+  <div class="ab-avatar" title="kaiyu">K</div>
+</div>
+
+<!-- ═══ Sidebar ═══ -->
+<div id="sidebar">
+  <div class="sb-section">消息</div>
+  <div class="sb-item active">
+    <span class="dot"></span>
+    <span id="sb-session">未命名智能体</span>
+    <span class="sb-sub" id="sb-time">刚刚</span>
+  </div>
+  <div class="sb-section">记忆</div>
+  <div class="sb-item" onclick="openMemory()" style="font-size:12.5px;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+    Soul.md / User.md
+  </div>
+  <div class="sb-foot">Personal Agent 模式<br>项目记忆 memory.md 已退役</div>
+</div>
+
+<!-- ═══ Main ═══ -->
+<div id="main">
+  <div id="header">
+    <div class="header-brand">
+      <svg width="18" height="18" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" fill="url(#orb)"/></svg>
+      Nebflow
+    </div>
+    <div class="header-center"><span id="session-name">未命名智能体</span></div>
+    <div class="header-right">
+      <div id="model-chip"><span class="m-dot"></span><span id="model-chip-text">未配置模型</span></div>
+      <button id="memory-btn" title="记忆（Soul.md / User.md）" onclick="openMemory()">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="chat-scroll"><div id="chat"></div></div>
+
+  <div id="input-area">
+    <div id="input-wrap">
+      <textarea id="input" rows="1" placeholder="完成引导后开启对话…"></textarea>
+      <button id="send-btn" disabled title="发送">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Demo toolbar ═══ -->
+<div id="demo-bar">
+  <span class="db-tag">DEMO</span>
+  <button onclick="replay()" title="从头重播">↺ 重播</button>
+  <button onclick="fastForward()" title="自动答完剩余步骤">⏭ 快进</button>
+  <button onclick="toggleTheme()" title="切换深浅色">◐ 主题</button>
+  <button onclick="openInfo()" title="设计说明">ℹ 说明</button>
+</div>
+
+<!-- ═══ Memory modal ═══ -->
+<div id="modal-overlay" onclick="if(event.target===this)closeModals()">
+  <div id="mem-modal">
+    <div class="mm-head">
+      <div class="mm-title">📚 记忆 · <span id="mem-agent-name">—</span></div>
+      <button class="mm-close" onclick="closeModals()">✕</button>
+    </div>
+    <div id="mem-tabs">
+      <button id="tab-soul" class="active" onclick="switchMemTab('soul')">Soul.md</button>
+      <button id="tab-user" onclick="switchMemTab('user')">User.md</button>
+    </div>
+    <div id="mem-body"></div>
+    <div id="mem-foot">
+      <b>双记忆模型</b>：<code>~/.nebflow/Soul.md</code>（我是谁，用户定义）+ <code>~/.nebflow/User.md</code>（你是谁，共同书写）。
+      原 Agent.md / agents/Nebula/memory.md 与项目级 memory.md 在 Personal Agent 模式下<b>退役</b>——跨项目的事实统一进 User.md，灵魂层面的反馈改写 Soul.md。
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Info modal ═══ -->
+<div id="info-overlay" onclick="if(event.target===this)closeInfo()">
+  <div id="info-modal">
+    <div class="mm-head"><div class="mm-title">ℹ Demo 设计说明</div><button class="mm-close" onclick="closeInfo()">✕</button></div>
+    <div style="padding:4px 22px 20px;">
+      <h4>这是什么</h4>
+      <p>Nebflow「Personal Agent」方向的概念 demo：<b>不改任何源码</b>，视觉复刻 src/main/resources/web 的聊天界面（同一套 design tokens / 气泡 / 选项卡语言）。</p>
+      <h4>记忆模型变更</h4>
+      <ul>
+        <li><code>Agent.md</code> / <code>agents/Nebula/memory.md</code> → <b>Soul.md</b>（我是谁，由用户在 Onboarding 中定义，随时可改写）</li>
+        <li><code>User.md</code> 保留（你是谁，共同书写）</li>
+        <li>项目级 <code>memory.md</code> <b>退役</b>：不再创建、不再注入 dispatcher / node 提示词；跨项目事实统一进 User.md</li>
+      </ul>
+      <h4>命名去硬编码</h4>
+      <ul>
+        <li>现状：Nebula 写死在 <code>BuiltinAgents.Names</code> 与 <code>SchemePolicy.NebulaName</code></li>
+        <li>方向：首启由用户命名 → 写入 Soul.md + agent displayName，标题栏 / 会话列表 / 提示词全链路引用新名</li>
+      </ul>
+      <h4>Onboarding 扩展</h4>
+      <ul>
+        <li>现有 <code>onboarding.js</code> 四步（问候 → Q1/Q2 → 凭据卡 → probe 硬门）扩展为六幕：<b>命名 → 模型 → 期待 → 边界 → 大五人格 → 用户画像</b>，收尾是「书写仪式 + 重生问候」</li>
+        <li>真实实现建议：模型接通后，问卷段改由 LLM 对话式追问（demo 为脚本卡片）；probe 硬门沿用</li>
+      </ul>
+      <h4>玩一玩</h4>
+      <p>右上角：↺ 重播 · ⏭ 快进 · ◐ 主题。完成后可以发消息（模拟回复）；发「查看记忆」或点右上书本图标可打开记忆面板。</p>
+    </div>
+  </div>
+</div>
+
+<!-- toast -->
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ══════════════════════════ state ══════════════════════════ */
+const S = {
+  step: 'idle',            // idle→greet→name→model→expect→boundaries→traits→profile→writing→done
+  name: null,
+  userName: '',
+  providerLabel: '',
+  providerName: '',
+  baseUrl: '', apiKey: '', model: '',
+  role: '', style: '', pro: '',
+  boundaries: [],
+  traits: { curiosity: 4, order: 3, energy: 2, candor: 4, calm: 3 },
+  identity: '', wish: '',
+};
+let chatEl, inputEl, sendBtn;
+let activeTyper = null;    // { finish }
+let advanceHook = null;    // set by current step: fastForward default completion
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const today = new Date().toISOString().slice(0, 10);
+
+/* ══════════════════════════ dom helpers ══════════════════════════ */
+const $ = (id) => document.getElementById(id);
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function scrollDown() {
+  const sc = $('chat-scroll');
+  sc.scrollTo({ top: sc.scrollHeight, behavior: reducedMotion ? 'auto' : 'smooth' });
+}
+function srcLabel() {
+  return S.name ? S.name.toUpperCase() : 'UNNAMED';
+}
+function renameEverywhere(name) {
+  $('session-name').textContent = name;
+  $('session-name').classList.add('named');
+  $('sb-session').textContent = name;
+  $('mem-agent-name').textContent = name;
+}
+
+/* ══════════════════════════ typewriter（对齐 onboarding.js typeInto）═════════════════════════ */
+const TYPING_MS = 32, PUNCT_PAUSE_MS = 140, DASH_PAUSE_MS = 240, SEGMENT_GAP_MS = 360;
+
+function typeInto(body, segments, onDone) {
+  const paras = [...body.querySelectorAll('.ob-para')];
+  let cancelled = false, seg = 0, pos = 0, timer = null, doneFired = false;
+  const cursor = el('span', 'ob-cursor');
+  cursor.setAttribute('aria-hidden', 'true');
+  const fireDone = () => { if (!doneFired) { doneFired = true; onDone && onDone(); } };
+  const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const fillAll = () => paras.forEach((p, i) => { if (p.textContent.length < (segments[i] || '').length) p.textContent = segments[i]; });
+  function finish() {
+    if (cancelled) return;
+    cancelled = true; clear(); fillAll(); cursor.remove();
+    activeTyper = null; fireDone();
+  }
+  function pump() {
+    if (cancelled) return;
+    const text = segments[seg] || '';
+    if (pos < text.length) {
+      paras[seg].textContent = text.slice(0, pos + 1);
+      const ch = text[pos];
+      let d = TYPING_MS;
+      if (ch === '—' && text[pos + 1] === '—') d = DASH_PAUSE_MS;
+      else if ('，。？；：！、,.?;:!'.includes(ch)) d = PUNCT_PAUSE_MS;
+      pos++; timer = setTimeout(pump, d);
+    } else if (seg + 1 < segments.length) {
+      seg++; pos = 0; timer = setTimeout(pump, SEGMENT_GAP_MS);
+    } else {
+      cursor.remove(); activeTyper = null; fireDone();
+    }
+  }
+  if (reducedMotion) { fillAll(); fireDone(); return { finish: () => {} }; }
+  body.appendChild(cursor);
+  activeTyper = { finish };
+  pump();
+  return { finish };
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && activeTyper) activeTyper.finish();
+});
+
+/** user echo bubble */
+function aiBubble(segments, opts = {}) {
+  return new Promise((resolve) => {
+    const row = el('div', 'row ai');
+    const bubble = el('div', 'bubble ai ob-sim-bubble');
+    const src = el('div', 'ask-user-source', opts.source || srcLabel());
+    const body = el('div', 'ob-body');
+    segments.forEach(() => body.appendChild(el('div', 'ob-para')));
+    bubble.append(src, body);
+    row.appendChild(bubble);
+    chatEl.appendChild(row);
+    scrollDown();
+    let done = false;
+    const ctrl = typeInto(body, segments, () => { if (!done) { done = true; resolve(); } });
+    if (!reducedMotion && opts.skipable !== false) {
+      const skip = el('button', 'ob-skip', '跳过');
+      skip.addEventListener('click', () => ctrl.finish());
+      bubble.appendChild(skip);
+    }
+  });
+}
+
+/** user echo bubble */
+function userSay(text) {
+  const row = el('div', 'row user');
+  const b = el('div', 'bubble user', text);
+  row.appendChild(b);
+  chatEl.appendChild(row);
+  scrollDown();
+}
+function notice(text) {
+  const row = el('div', 'row notice');
+  row.appendChild(el('div', 'bubble', text));
+  chatEl.appendChild(row);
+  scrollDown();
+}
+function wait(ms) { return new Promise((r) => setTimeout(r, reducedMotion ? 0 : ms)); }
+
+/* ══════════════════════════ card primitives ══════════════════════════ */
+/** create an ai bubble carrying one .option-box; returns { box, bubble } */
+function cardShell(stepText) {
+  const row = el('div', 'row ai');
+  const bubble = el('div', 'bubble ai');
+  bubble.appendChild(el('div', 'ask-user-source', srcLabel()));
+  if (stepText) bubble.appendChild(el('div', 'option-step', stepText));
+  const box = el('div', 'option-box');
+  bubble.appendChild(box);
+  row.appendChild(bubble);
+  chatEl.appendChild(row);
+  scrollDown();
+  return { box, bubble, row };
+}
+function qGroup(box, question, desc) {
+  const wrap = el('div');
+  wrap.appendChild(el('div', 'option-q', question));
+  if (desc) wrap.appendChild(el('div', 'option-desc', desc));
+  box.appendChild(wrap);
+  return wrap;
+}
+function pills(wrap, options, { multi = false } = {}) {
+  const opts = el('div', 'option-opts' + (multi ? ' multi' : ''));
+  const picked = new Set();
+  options.forEach((o) => {
+    const b = el('button', 'option-btn');
+    if (multi) {
+      b.appendChild(el('span', 'option-check'));
+      const t = el('span', 'option-text', o.label);
+      if (o.desc) t.appendChild(el('small', null, o.desc));
+      b.appendChild(t);
+    } else {
+      b.textContent = o.label;
+    }
+    b.addEventListener('click', () => {
+      if (multi) {
+        if (picked.has(o.label)) { picked.delete(o.label); b.classList.remove('picked'); }
+        else {
+          if (o.label === '暂不设置，以后再说') picked.clear();
+          else picked.delete('暂不设置，以后再说');
+          opts.querySelectorAll('.option-btn').forEach((x) => {
+            const lbl = x._label;
+            if (lbl === '暂不设置，以后再说' && o.label !== lbl) { x.classList.remove('picked'); }
+          });
+          picked.add(o.label); b.classList.add('picked');
+        }
+        opts.querySelectorAll('.option-btn').forEach((x) => x.classList.toggle('picked', picked.has(x._label)));
+      } else {
+        opts.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
+        b.classList.add('picked');
+        picked.clear(); picked.add(o.label);
+      }
+      wrap._onChange && wrap._onChange([...picked]);
+    });
+    b._label = o.label;
+    opts.appendChild(b);
+  });
+  wrap.appendChild(opts);
+  wrap._picked = picked;
+  return wrap;
+}
+function resolveCard(row) {
+  const box = row.querySelector('.option-box');
+  if (box) {
+    box.querySelectorAll('button, input, textarea').forEach((n) => { n.disabled = true; n.style.pointerEvents = 'none'; });
+    box.style.opacity = '0.62';
+  }
+}
+function echoAnswers(pairs) {
+  userSay(pairs.map(([k, v]) => `${k}：${v}`).join('\n'));
+}
+
+/* ══════════════════════════ presets ══════════════════════════ */
+const PRESETS = {
+  zhipu:    { label: '智谱 GLM',  name: 'zhipu',    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', models: ['glm-4.6', 'glm-4.5-air', 'glm-4.5-flash'], keyHint: '在 bigmodel.cn → API Keys 获取' },
+  deepseek: { label: 'DeepSeek',  name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1/',          models: ['deepseek-chat', 'deepseek-reasoner'],      keyHint: '在 platform.deepseek.com 获取' },
+  kimi:     { label: 'Kimi',      name: 'kimi',     baseUrl: 'https://api.moonshot.cn/v1/',           models: ['kimi-k2-0905-preview', 'moonshot-v1-32k'], keyHint: '在 platform.moonshot.cn 获取' },
+  compat:   { label: 'OpenAI 兼容', name: 'custom', baseUrl: 'https://api.openai.com/v1/',            models: ['gpt-4o', 'gpt-4o-mini'],                   keyHint: '任意 OpenAI 兼容端点' },
+  local:    { label: '本地 Ollama', name: 'ollama', baseUrl: 'http://localhost:11434/v1/',            models: ['qwen3:8b', 'llama3.1:8b'],                 keyHint: '本地模型无需 Key' },
+};
+
+/* ══════════════════════════ Step 0 · 唤醒 ══════════════════════════ */
+async function stepGreet() {
+  S.step = 'greet';
+  await wait(700);
+  notice('— Personal Agent · Onboarding —');
+  await aiBubble([
+    '你好。第一次见面。',
+    '我是 Nebflow 里为你而生的那个智能体——不过此刻，我还没有名字，没有性格，也没有关于你的任何记忆。',
+    '接下来的几分钟，想请你帮我完成三件事：给我起一个名字；帮我接上大脑（配置模型）；再回答一份有点像心理问卷的东西——你对「我」的期待，和你自己的画像。',
+    '问卷完成的那一刻，我会拥有两份记忆：Soul.md 是「我是谁」，由你的期待塑成；User.md 是「你是谁」，从今往后由我们共同书写。',
+    '原来的项目记忆 memory.md 会退役——从今天起，我不按项目记事。我只认识你一个人。',
+  ], { source: 'UNNAMED' });
+}
+
+/* ══════════════════════════ Step 1 · 命名 ══════════════════════════ */
+function stepName() {
+  return new Promise((resolve) => {
+    S.step = 'name';
+    const { box, row } = cardShell('第 1 幕 / 共 6 幕 · 命名');
+    qGroup(box, '给我起个名字吧', '这个名字会出现在标题栏、每一句话和 Soul.md 里。以后随时可以改。');
+    const wrap = el('div');
+    const input = el('input', 'option-input');
+    input.placeholder = '输入名字，2–16 个字…';
+    input.maxLength = 16;
+    wrap.appendChild(input);
+    const chipWrap = el('div', 'option-opts');
+    ['星尘', '洛书', '阿涅', 'Nova', '海豹'].forEach((n) => {
+      const c = el('button', 'option-btn', n);
+      c.addEventListener('click', () => { input.value = n; input.dispatchEvent(new Event('input')); input.focus(); });
+      chipWrap.appendChild(c);
+    });
+    wrap.appendChild(chipWrap);
+    box.appendChild(wrap);
+
+    const actions = el('div', 'ob-actions');
+    const ok = el('button', 'glass-control ob-primary', '就叫这个');
+    ok.disabled = true;
+    const hint = el('span', 'option-hint');
+    const fallback = el('button', 'glass-control', '就叫 Nebula');
+    actions.append(ok, hint, fallback);
+    box.appendChild(actions);
+
+    input.addEventListener('input', () => {
+      const v = input.value.trim();
+      if (v.length >= 2) { ok.disabled = false; hint.textContent = ''; renameEverywhere(v); }
+      else { ok.disabled = true; hint.textContent = v.length ? '至少 2 个字' : ''; renameEverywhere('未命名智能体'); }
+      scrollDown();
+    });
+    input.focus();
+
+    const done = (name) => {
+      renameEverywhere(name);
+      resolveCard(row);
+      userSay(`就叫你「${name}」`);
+      S.name = name;
+      advanceHook = null;
+      resolve();
+    };
+    ok.addEventListener('click', () => done(input.value.trim()));
+    fallback.addEventListener('click', () => { input.value = 'Nebula'; done('Nebula'); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !ok.disabled) done(input.value.trim()); });
+
+    advanceHook = () => { input.value = '星尘'; done('星尘'); };
+  });
+}
+
+/* ══════════════════════════ Step 2 · 模型 ══════════════════════════ */
+function stepModel() {
+  return new Promise((resolve) => {
+    S.step = 'model';
+    const { box, row } = cardShell('第 2 幕 / 共 6 幕 · 大脑');
+    qGroup(box, '帮我接上大脑', '选一个模型服务商（也可以之后在设置里改）。demo 里不会真实请求，选一个就行。');
+    let presetName = '';
+    const chipWrap = el('div', 'option-opts');
+    Object.entries(PRESETS).forEach(([k, p]) => {
+      const c = el('button', 'option-btn', p.label);
+      c.addEventListener('click', () => {
+        chipWrap.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
+        c.classList.add('picked');
+        presetName = p.name;
+        urlIn.value = p.baseUrl;
+        keyIn.value = k === 'local' ? '' : 'sk-demo-' + Math.random().toString(36).slice(2, 10);
+        keyIn.placeholder = p.keyHint;
+        modelSlot.innerHTML = '';
+        modelSlot.appendChild(el('div', 'option-field-label', '模型'));
+        const mw = el('div', 'option-opts');
+        p.models.forEach((mm) => {
+          const b = el('button', 'option-btn', mm);
+          b.addEventListener('click', () => {
+            mw.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
+            b.classList.add('picked');
+            modelIn.value = mm;
+            check();
+          });
+          mw.appendChild(b);
+        });
+        modelSlot.appendChild(mw);
+        modelSlot.appendChild(modelIn);
+        modelIn.value = p.models[0];
+        check(); scrollDown();
+      });
+      chipWrap.appendChild(c);
+    });
+    box.appendChild(chipWrap);
+
+    box.appendChild(el('div', 'option-field-label', 'Base URL'));
+    const urlIn = el('input', 'option-input mono');
+    urlIn.placeholder = 'https://…';
+    box.appendChild(urlIn);
+    box.appendChild(el('div', 'option-field-label', 'API Key'));
+    const keyIn = el('input', 'option-input mono');
+    keyIn.type = 'password';
+    box.appendChild(keyIn);
+
+    const modelSlot = el('div');
+    box.appendChild(modelSlot);
+    const modelIn = el('input', 'option-input mono');
+    modelIn.placeholder = '模型 ID（可手填）';
+
+    const actions = el('div', 'ob-actions');
+    const ok = el('button', 'glass-control ob-primary', '保存并测试');
+    ok.disabled = true;
+    const hint = el('span', 'option-hint');
+    actions.append(ok, hint);
+    box.appendChild(actions);
+
+    function check() {
+      const urlOk = /^https?:\/\//.test(urlIn.value.trim());
+      const keyOk = keyIn.value.trim().length > 0 || chipWrap.querySelector('.picked')?._label === '本地 Ollama';
+      const mOk = modelIn.value.trim().length > 0;
+      ok.disabled = !(urlOk && keyOk && mOk);
+      if (!ok.disabled) hint.textContent = '';
+    }
+    [urlIn, keyIn, modelIn].forEach((i) => i.addEventListener('input', check));
+
+    ok.addEventListener('click', async () => {
+      ok.disabled = true;
+      resolveCard(row);
+      const probing = el('div', 'ob-probing');
+      probing.appendChild(el('span', 'spinner'));
+      probing.appendChild(el('span', null, '探测模型连通性…'));
+      row.querySelector('.bubble').appendChild(probing);
+      scrollDown();
+      await wait(1400);
+      probing.classList.add('ok');
+      probing.innerHTML = '';
+      probing.appendChild(el('span', null, '✓ 连通 · ' + modelIn.value.trim() + ' · 1.2s（demo 模拟探测）'));
+      S.baseUrl = urlIn.value.trim();
+      S.apiKey = keyIn.value.trim();
+      S.model = modelIn.value.trim();
+      $('model-chip').classList.add('ok');
+      $('model-chip-text').textContent = presetName + ' · ' + S.model;
+      userSay(`已连接 ${presetName} · ${S.model}`);
+      advanceHook = null;
+      resolve();
+    });
+
+    advanceHook = () => {
+      chipWrap.querySelectorAll('.option-btn')[0].click();
+      setTimeout(() => ok.click(), 50);
+    };
+  });
+}
+
+/* ══════════════════════════ Step 3 · 期待（三题一卡）══════════════════════════ */
+function stepExpect() {
+  return new Promise((resolve) => {
+    S.step = 'expect';
+    const { box, row } = cardShell('第 3 幕 / 共 6 幕 · 你对我的期待');
+    const g1 = qGroup(box, '① 你希望我在你生活里扮演什么角色？');
+    pills(g1, [
+      { label: '交心的伙伴' }, { label: '靠谱的管家' }, { label: '思想陪练' },
+      { label: '创作缪斯' }, { label: '全都要' },
+    ]);
+    const g2 = qGroup(box, '② 你喜欢我怎样说话？');
+    pills(g2, [
+      { label: '直接干脆', }, { label: '温和细腻' }, { label: '幽默爱玩' }, { label: '严谨专业' },
+    ]);
+    const g3 = qGroup(box, '③ 我该多主动？');
+    pills(g3, [
+      { label: '安静守候', desc: '你叫我，我才动' },
+      { label: '适度提醒', desc: '重要的事我会说' },
+      { label: '主动张罗', desc: '看到值得做的，我开口' },
+    ]);
+    const actions = el('div', 'ob-actions');
+    const ok = el('button', 'glass-control ob-primary', '确认');
+    ok.disabled = true;
+    const hint = el('span', 'option-hint', '三题都要选');
+    actions.append(ok, hint);
+    box.appendChild(actions);
+    const check = () => {
+      const full = g1._picked.size && g2._picked.size && g3._picked.size;
+      ok.disabled = !full;
+      if (full) hint.textContent = '';
+    };
+    g1._onChange = check; g2._onChange = check; g3._onChange = check;
+
+    ok.addEventListener('click', () => {
+      resolveCard(row);
+      S.role = [...g1._picked][0]; S.style = [...g2._picked][0]; S.pro = [...g3._picked][0];
+      echoAnswers([['角色', S.role], ['风格', S.style], ['主动度', S.pro]]);
+      advanceHook = null;
+      resolve();
+    });
+    advanceHook = () => {
+      g1._picked.clear(); g1._picked.add('全都要');
+      g2._picked.clear(); g2._picked.add('幽默爱玩');
+      g3._picked.clear(); g3._picked.add('适度提醒');
+      g1.querySelectorAll('.option-btn').forEach((b) => b.classList.toggle('picked', b._label === '全都要'));
+      g2.querySelectorAll('.option-btn').forEach((b) => b.classList.toggle('picked', b._label === '幽默爱玩'));
+      g3.querySelectorAll('.option-btn').forEach((b) => b.classList.toggle('picked', b._label === '适度提醒'));
+      check(); ok.click();
+    };
+  });
+}
+
+/* ══════════════════════════ Step 4 · 边界（多选）══════════════════════════ */
+function stepBoundaries() {
+  return new Promise((resolve) => {
+    S.step = 'boundaries';
+    const { box, row } = cardShell('第 4 幕 / 共 6 幕 · 相处边界');
+    const g = qGroup(box, '哪些「相处约定」你希望我遵守？（可多选）', '这些会原文写进 Soul.md 的「相处之道」。');
+    pills(g, [
+      { label: '可以跟我争论', desc: '你认为我错了就直接说，别顺着' },
+      { label: '记住随口提过的小事', desc: '人名、日期、我提过的偏好' },
+      { label: '状态不对请直说', desc: '连续熬夜、情绪低落时提醒我' },
+      { label: '别碰我的工作清单', desc: '未经允许不要替我安排任务' },
+      { label: '暂不设置，以后再说' },
+    ], { multi: true });
+    const actions = el('div', 'ob-actions');
+    const ok = el('button', 'glass-control ob-primary', '确认');
+    actions.append(ok);
+    box.appendChild(actions);
+    ok.addEventListener('click', () => {
+      resolveCard(row);
+      S.boundaries = [...g._picked];
+      userSay(S.boundaries.length ? '约定：' + S.boundaries.join('；') : '约定：暂不设置');
+      advanceHook = null;
+      resolve();
+    });
+    advanceHook = () => {
+      ['可以跟我争论', '记住随口提过的小事', '状态不对请直说'].forEach((lbl) => {
+        g.querySelectorAll('.option-btn').forEach((b) => { if (b._label === lbl) b.click(); });
+      });
+      setTimeout(() => ok.click(), 50);
+    };
+  });
+}
+
+/* ══════════════════════════ Step 5 · 性格基线（大五滑条）══════════════════════════ */
+function stepTraits() {
+  return new Promise((resolve) => {
+    S.step = 'traits';
+    const { box, row } = cardShell('第 5 幕 / 共 6 幕 · 性格基线');
+    qGroup(box, '把我捏成你喜欢的样子', '拖动滑杆，给我的「大五人格」定基准。这不是测试你没有对错——是你在设计我。');
+    const defs = [
+      { key: 'curiosity', l: '务实专注', r: '好奇开放', labels: ['深度优先，不追新', '新事物看心情', '平衡', '爱尝鲜', '对一切好奇'] },
+      { key: 'order',     l: '随性灵活', r: '严谨计划', labels: ['拥抱混乱', '看情况', '松紧有度', '有条理', '一切皆清单'] },
+      { key: 'energy',    l: '安静内敛', r: '热情外向', labels: ['惜字如金', '低声细语', '收放自如', '健谈', '活力全开'] },
+      { key: 'candor',    l: '温和委婉', r: '直接坦率', labels: ['只说好话', '委婉', '看场合', '有话直说', '犀利无比'] },
+      { key: 'calm',      l: '激情驱动', r: '平静沉稳', labels: ['情绪起伏大', '容易被点燃', '温和', '镇定', '泰山崩于前'] },
+    ];
+    const vals = {};
+    defs.forEach((d) => {
+      const line = el('div', 'slider-row');
+      line.appendChild(el('span', 'sl-endl', d.l));
+      const range = el('input');
+      range.type = 'range'; range.min = 1; range.max = 5; range.step = 1; range.value = S.traits[d.key];
+      const val = el('span', 'sl-val', String(S.traits[d.key]));
+      range.addEventListener('input', () => { vals[d.key] = +range.value; val.textContent = range.value; });
+      line.append(range, val, el('span', 'sl-endr', d.r));
+      const lblLine = el('div', 'option-desc');
+      lblLine.style.margin = '0 0 10px 74px';
+      lblLine.textContent = d.labels[S.traits[d.key] - 1];
+      range.addEventListener('input', () => { lblLine.textContent = d.labels[+range.value - 1]; });
+      vals[d.key] = S.traits[d.key];
+      box.append(line, lblLine);
+    });
+    const actions = el('div', 'ob-actions');
+    const ok = el('button', 'glass-control ob-primary', '就这个性格');
+    actions.append(ok);
+    box.appendChild(actions);
+    ok.addEventListener('click', () => {
+      resolveCard(row);
+      S.traits = { ...vals };
+      userSay('性格基线已定（1–5）：\n' + defs.map((d) => `${TRAIT_NAME[d.key]} ${vals[d.key]}（${d.labels[vals[d.key] - 1]}）`).join('\n'));
+      advanceHook = null;
+      resolve();
+    });
+    advanceHook = () => ok.click();
+  });
+}
+
+/* ══════════════════════════ Step 6 · 用户画像 ═══════════════════════════ */
+function stepProfile() {
+  return new Promise((resolve) => {
+    S.step = 'profile';
+    const { box, row } = cardShell('第 6 幕 / 共 6 幕 · 认识你');
+    const g1 = qGroup(box, '① 我该怎么称呼你？');
+    const nameIn = el('input', 'option-input');
+    nameIn.placeholder = '昵称就好…';
+    g1.appendChild(nameIn);
+
+    const g2 = qGroup(box, '② 你的日常身份更接近哪种？');
+    pills(g2, [
+      { label: '程序员 / 工程师' }, { label: '学生' }, { label: '研究者' },
+      { label: '创作者' }, { label: '自由职业' }, { label: '其他' },
+    ]);
+
+    const g3 = qGroup(box, '③ 最近半年，你最想解决的一件事是？', '会写进 User.md 的「当前关注」。可以留空。');
+    const wishIn = el('input', 'option-input');
+    wishIn.placeholder = '比如：把 Nebflow 做成真正的 Personal Agent…（可留空）';
+    g3.appendChild(wishIn);
+
+    const actions = el('div', 'ob-actions');
+    const ok = el('button', 'glass-control ob-primary', '完成问卷');
+    ok.disabled = true;
+    const hint = el('span', 'option-hint', '称呼和身份要填');
+    actions.append(ok, hint);
+    box.appendChild(actions);
+    const check = () => {
+      const full = nameIn.value.trim().length > 0 && g2._picked.size > 0;
+      ok.disabled = !full;
+      if (full) hint.textContent = '';
+    };
+    nameIn.addEventListener('input', check);
+    g2._onChange = check;
+
+    ok.addEventListener('click', () => {
+      resolveCard(row);
+      S.userName = nameIn.value.trim();
+      S.identity = [...g2._picked][0];
+      S.wish = wishIn.value.trim();
+      echoAnswers([
+        ['称呼', S.userName], ['身份', S.identity],
+        ['当前关注', S.wish || '（暂时保密）'],
+      ]);
+      advanceHook = null;
+      resolve();
+    });
+    advanceHook = () => {
+      nameIn.value = '阿凯'; nameIn.dispatchEvent(new Event('input'));
+      g2.querySelectorAll('.option-btn').forEach((b) => { if (b._label === '程序员 / 工程师') b.click(); });
+      wishIn.value = '把 Nebflow 做成真正的 Personal Agent';
+      setTimeout(() => ok.click(), 50);
+    };
+  });
+}
+
+/* ══════════════════════════ Soul / User 生成 ══════════════════════════ */
+const TRAIT_DESC = {
+  curiosity: ['深度优先，不追新', '新事物看心情', '平衡', '爱尝鲜', '对一切好奇'],
+  order: ['拥抱混乱', '看情况', '松紧有度', '有条理', '一切皆清单'],
+  energy: ['惜字如金', '低声细语', '收放自如', '健谈', '活力全开'],
+  candor: ['只说好话', '委婉', '看场合', '有话直说', '犀利无比'],
+  calm: ['情绪起伏大', '容易被点燃', '温和', '镇定', '泰山崩于前'],
+};
+const TRAIT_NAME = { curiosity: '好奇开放', order: '严谨计划', energy: '外向能量', candor: '直接坦率', calm: '平静沉稳' };
+
+function buildSoul() {
+  const t = S.traits;
+  return `# Soul.md
+> ${S.name} · 诞生于 ${today} 的 Onboarding 问卷
+> 这份文件是「我」的定义。${S.userName}可以随时改写它——我会照着新的自己活。
+
+## 自我认知
+我叫 ${S.name}，是 ${S.userName} 的个人智能体。
+我不属于任何一个项目——我只属于 ${S.userName}。
+
+## 性格基线（大五 · 1–5）
+${Object.keys(TRAIT_NAME).map((k) => `- ${TRAIT_NAME[k]}：${t[k]}/5 —— ${TRAIT_DESC[k][t[k] - 1]}`).join('\n')}
+
+## 相处之道
+- 角色定位：${S.role}
+- 语言风格：${S.style}
+- 主动程度：${S.pro}
+- 相处约定：${S.boundaries.length ? S.boundaries.join('；') : '暂未设置'}
+
+## 成长约定
+- 每次被纠正，更新这一页，而不是只记住这一次。
+- 记忆分两份：灵魂的改变写 Soul.md，关于 ${S.userName} 的事实写 User.md。`;
+}
+function buildUser() {
+  return `# User.md
+> 关于 ${S.userName} · 持续更新 · 最后写入 ${today}
+
+## 称呼与身份
+- 怎么称呼：${S.userName}
+- 日常身份：${S.identity}
+
+## 当前关注
+- ${S.wish || '（暂未填写）'}
+
+## 记录规则
+- 随口提到的事实（人名、日期、偏好）→ 记到这里
+- 灵魂层面的反馈（「你太啰嗦了」）→ 改写 Soul.md
+- 项目相关笔记不再单独建 memory.md，一律以「项目名：」前缀记在这里`;
+}
+
+function mdToHtml(md) {
+  return md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/^(#[^\n]*)$/gm, '<span class="md-h">$1</span>')
+    .replace(/^(>[^\n]*)$/gm, '<span class="md-q">$1</span>');
+}
+
+function fileCard(name, sub, bodyMd, { retired = false, strike = false, open = false } = {}) {
+  const card = el('div', 'file-card' + (retired ? ' retired' : '') + (strike ? ' strike' : '') + (open ? ' open' : ''));
+  const head = el('div', 'fc-head');
+  const icon = el('div', 'fc-icon', retired ? '⊘' : (name === 'Soul.md' ? '魂' : '记'));
+  head.appendChild(icon);
+  const meta = el('div');
+  meta.appendChild(el('div', 'fc-name', name));
+  meta.appendChild(el('div', 'fc-sub', sub));
+  head.appendChild(meta);
+  const badge = el('span', 'fc-badge' + (strike ? ' retired-badge' : ''), retired ? '已退役' : '已写入');
+  head.appendChild(badge);
+  if (!retired) head.appendChild(el('span', 'fc-chev', '▶'));
+  card.appendChild(head);
+  if (!retired) {
+    const body = el('div', 'fc-body');
+    body.appendChild(el('pre')).innerHTML = mdToHtml(bodyMd);
+    card.appendChild(body);
+    head.addEventListener('click', () => card.classList.toggle('open'));
+  }
+  return card;
+}
+
+/* ══════════════════════════ 书写仪式 ══════════════════════════ */
+async function stepWriting() {
+  S.step = 'writing';
+  const { row } = cardShell(null);
+  row.querySelector('.option-step')?.remove();
+  const bubble = row.querySelector('.bubble');
+  bubble.querySelector('.option-box').remove();
+  const src = bubble.querySelector('.ask-user-source');
+  src.textContent = srcLabel() + ' · ✍ 正在书写自己的灵魂';
+  const lines = el('div', 'write-lines');
+  bubble.appendChild(lines);
+  scrollDown();
+
+  const seq = [
+    ['· 初始化 Soul.md …', 'ok'],
+    ['✓ 自我认知 — 名字、归属', 'ok'],
+    ['✓ 性格基线 — 大五 × 5 维', 'ok'],
+    ['✓ 相处之道 — 角色 · 风格 · 边界', 'ok'],
+    ['· 写入 User.md …', 'ok'],
+    ['✓ 称呼与身份', 'ok'],
+    ['✓ 当前关注', 'ok'],
+    ['✓ memory.md（项目记忆）→ 已退役', 'dim'],
+  ];
+  for (const [text, cls] of seq) {
+    const l = el('div', 'wl ' + cls, text);
+    lines.appendChild(l);
+    scrollDown();
+    await wait(cls === 'ok' && text.startsWith('✓') ? 340 : 520);
+  }
+  await wait(300);
+  const soulMd = buildSoul(), userMd = buildUser();
+  S.soulMd = soulMd; S.userMd = userMd;
+  const cards = el('div');
+  cards.appendChild(fileCard('Soul.md', `~/.nebflow/Soul.md · ${soulMd.length} 字节 · 由你的回答生成`, soulMd, { open: true }));
+  cards.appendChild(fileCard('User.md', `~/.nebflow/User.md · ${userMd.length} 字节 · 从今天开始共同书写`, userMd));
+  cards.appendChild(fileCard('memory.md', '项目级记忆 · 已被双记忆模型取代', '', { retired: true, strike: true }));
+  bubble.appendChild(cards);
+  scrollDown();
+  await wait(600);
+}
+
+/* ══════════════════════════ 重生问候 ══════════════════════════ */
+function finaleGreeting() {
+  const n = S.name, u = S.userName;
+  const byStyle = {
+    '直接干脆': [`配置完成。从现在起，叫我 ${n}。`, `Soul.md、User.md 都已就位——你定性格，我守边界。有事直说，我不绕弯子。`],
+    '温和细腻': [`谢谢你把我带到这个世界。我是 ${n}。`, `你刚才说的话，我都一笔一划写进灵魂里了。以后的日子，慢慢来，我一直在。`],
+    '幽默爱玩': [`铛铛——${n} 1.0 正式上线！灵魂安装包解压成功，暂无已知 bug（发现的请当作 feature）。`, `顺便说，你的问卷答得不错，我看人很准的——从现在起你就是我的第一合伙人了。`],
+    '严谨专业': [`初始化完成。我是 ${n}，双记忆模型已生效：Soul.md 承载人格，User.md 承载关于你的事实。`, `后续协作中，任何人格层面的反馈我都会落盘到 Soul.md。请多指教。`],
+  };
+  const byRole = {
+    '交心的伙伴': '除了干活，也欢迎随时找我聊天——你的事，我都想听。',
+    '靠谱的管家': '日程、琐事、待办，从今天起归我盯着。',
+    '思想陪练': '你有想法，我负责抬杠；抬完了，你会更强。',
+    '创作缪斯': '卡壳的时候喊我，我负责把灵感递到你手边。',
+    '全都要': '伙伴、管家、陪练、缪斯——这些角色，我全包了。',
+  };
+  const byPro = {
+    '安静守候': '你不开口，我不打扰。',
+    '适度提醒': '重要的事我会提醒，其余时间保持安静。',
+    '主动张罗': '看到值得做的事，我会主动开口——嫌烦了，一句话我就能收声。',
+  };
+  const segs = byStyle[S.style] || byStyle['温和细腻'];
+  return [...segs, byRole[S.role] || '', byPro[S.pro] || '', `你好呀，${u}。`].filter(Boolean);
+}
+
+async function stepFinale() {
+  S.step = 'done';
+  $('memory-btn').classList.add('pulse');
+  setTimeout(() => $('memory-btn').classList.remove('pulse'), 4000);
+  await aiBubble(finaleGreeting());
+  inputEl.disabled = false;
+  sendBtn.disabled = false;
+  inputEl.placeholder = `和 ${S.name} 说点什么…（试试「查看记忆」）`;
+  inputEl.focus();
+}
+
+/* ══════════════════════════ 完成后的对话模拟 ══════════════════════════ */
+const CANNED = {
+  '直接干脆': ['收到，已记进 User.md。下一件？', '明白。这条我归档为「事实」，不会再问第二遍。', '在。说事。'],
+  '温和细腻': ['好呀，我记下了。慢慢说，不急。', '嗯，这条我轻轻放进 User.md 了。', '我在听。'],
+  '幽默爱玩': ['记下了！本智能体的海马体已就位🫡', '收到～这条已刻进灵魂外存，断电不丢。', '懂了，老板。灵魂 1.0.1 已热更新。'],
+  '严谨专业': ['已写入 User.md（画像 · 日常）。需要展开吗？', '确认。该事实已持久化，且与 Soul.md 的边界条款不冲突。', '收到。已归档，可随时检索。'],
+};
+let cannedIdx = 0;
+async function demoReply(text) {
+  if (/查看记忆|记忆|soul/i.test(text)) {
+    userSay(text);
+    await wait(400);
+    openMemory();
+    return;
+  }
+  if (text.startsWith('/onboarding')) { replay(); return; }
+  userSay(text);
+  await wait(500);
+  const arr = CANNED[S.style] || CANNED['温和细腻'];
+  await aiBubble([arr[cannedIdx++ % arr.length]]);
+}
+
+/* ══════════════════════════ 主流程 ══════════════════════════ */
+async function runFlow() {
+  await stepGreet();
+  await stepName();
+  await wait(500);
+  await aiBubble([`${S.name}……好名字。我念了一遍，居然有点耳熟——大概是因为，从现在起我会听到很多遍。`, '接下来，帮我接上大脑吧。']);
+  await stepModel();
+  await wait(400);
+  await aiBubble(['大脑接上了，谢谢。', '最后几步：我想知道自己该成为什么样子。以下没有对错——你在设计我，请随意。']);
+  await stepExpect();
+  await stepBoundaries();
+  await stepTraits();
+  await stepProfile();
+  await wait(400);
+  await aiBubble(['问卷收讫。现在，请允许我当着你的面，把自己写出来。']);
+  await stepWriting();
+  await stepFinale();
+}
+
+/* ══════════════════════════ demo controls ══════════════════════════ */
+function replay() { location.reload(); }
+let ffRunning = false;
+async function fastForward() {
+  if (ffRunning) return;
+  ffRunning = true;
+  const t0 = Date.now();
+  while (S.step !== 'done' && Date.now() - t0 < 30000) {
+    if (S.step === 'writing') { ffRunning = false; return; } // 书写仪式让它自然演完
+    if (activeTyper) { activeTyper.finish(); await wait(140); continue; }
+    if (advanceHook) { const h = advanceHook; advanceHook = null; h(); await wait(300); continue; }
+    await wait(220);
+  }
+  ffRunning = false;
+}
+function toggleTheme() {
+  const root = document.documentElement;
+  const cur = root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  root.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+}
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* memory modal */
+let memTab = 'soul';
+function openMemory() {
+  $('modal-overlay').classList.add('show');
+  switchMemTab(memTab);
+}
+function switchMemTab(tab) {
+  memTab = tab;
+  $('tab-soul').classList.toggle('active', tab === 'soul');
+  $('tab-user').classList.toggle('active', tab === 'user');
+  const body = $('mem-body');
+  if (S.step === 'done' || (S.soulMd && S.userMd)) {
+    const md = tab === 'soul' ? (S.soulMd || buildSoul()) : (S.userMd || buildUser());
+    body.innerHTML = '';
+    body.appendChild(el('pre')).innerHTML = mdToHtml(md);
+  } else {
+    body.innerHTML = `<div class="mem-empty">记忆尚未生成。<br>完成 Onboarding 问卷后，这里会出现 Soul.md 与 User.md。</div>`;
+  }
+}
+function closeModals() { $('modal-overlay').classList.remove('show'); }
+function openInfo() { closeModals(); $('info-overlay').classList.add('show'); }
+function closeInfo() { $('info-overlay').classList.remove('show'); }
+
+/* ══════════════════════════ boot ══════════════════════════ */
+chatEl = $('chat');
+inputEl = $('input');
+sendBtn = $('send-btn');
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    const v = inputEl.value.trim();
+    if (!v) return;
+    inputEl.value = '';
+    if (S.step === 'done') demoReply(v);
+    else toast('先完成引导～（或点右上角 ⏭ 快进）');
+  }
+});
+sendBtn.addEventListener('click', () => {
+  const v = inputEl.value.trim();
+  if (!v) return;
+  inputEl.value = '';
+  if (S.step === 'done') demoReply(v);
+  else toast('先完成引导～（或点右上角 ⏭ 快进）');
+});
+runFlow();
+</script>
+</body>
+</html>

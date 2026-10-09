@@ -99,8 +99,16 @@ class ProviderRegistry(
                 modelConfig.flatMap(_.modelMaxContext)
               )
               val caps = resolveCapabilities(providerId, modelId, modelConfig)
-              Some(ModelCandidate(providerId, provider, modelId, contextWindow, caps,
-                modelConfig.flatMap(_.modelMaxContext)))
+              Some(
+                ModelCandidate(
+                  providerId,
+                  provider,
+                  modelId,
+                  contextWindow,
+                  caps,
+                  modelConfig.flatMap(_.modelMaxContext)
+                )
+              )
             case None => None // Skip unknown provider
           end match
         catch case _: Exception => None // Skip malformed ref
@@ -116,8 +124,14 @@ class ProviderRegistry(
               val caps = resolveCapabilities(providerId, mc.id, Some(mc))
               // 案② B2 同点（**第三处构造点**，与上面两处同形；卡文只列了 :72/:122，
               // 本处一并收口以免留下「绕过 clamp」的形状——见报告「偏离登记」）：
-              ModelCandidate(providerId, provider, mc.id,
-                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), caps, mc.modelMaxContext)
+              ModelCandidate(
+                providerId,
+                provider,
+                mc.id,
+                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
+                caps,
+                mc.modelMaxContext
+              )
             }
           }
           .flatten
@@ -176,8 +190,7 @@ class ProviderRegistry(
             modelConfig.flatMap(_.modelMaxContext)
           )
           val caps = resolveCapabilities(providerId, modelId, modelConfig)
-          ModelCandidate(providerId, provider, modelId, contextWindow, caps,
-            modelConfig.flatMap(_.modelMaxContext))
+          ModelCandidate(providerId, provider, modelId, contextWindow, caps, modelConfig.flatMap(_.modelMaxContext))
         }
       catch case _: Exception => None
     }
@@ -245,8 +258,14 @@ class ProviderRegistry(
             // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
             // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
             // 「偏离登记」）：
-            ModelCandidate(providerId, provider, mc.id,
-              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), caps, mc.modelMaxContext)
+            ModelCandidate(
+              providerId,
+              provider,
+              mc.id,
+              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
+              caps,
+              mc.modelMaxContext
+            )
           }
       }
       // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）

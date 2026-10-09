@@ -11,7 +11,16 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.{AgentCommand, AgentDef}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ToolCall, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  ToolCall,
+  ThinkingConfig
+}
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 import scala.concurrent.duration.*
@@ -85,6 +94,8 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
             ss.lift(n).getOrElse(Stream.raiseError[IO](new RuntimeException(s"unexpected stream call #$n")))
           }
       }
+
+  end ScriptedLlm
 
   private def toolCall(id: String, name: String, input: JsonObject): Stream[IO, StreamChunk] =
     Stream(StreamChunk.ToolCallChunk(ToolCall(id, name, input)), StreamChunk.Done(None, None))
@@ -193,21 +204,28 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
         IO(nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)) *>
         IO(PathUtil.setDataRoot(originalRoot))
     )
+  end withBatchInFlight
 
   // ── D1 / D2: the batch lands before finalization, and no new turn follows ──
 
-  test("D1/D2: a deferred stop lands the in-flight batch's tool_result BEFORE the actor stops, and no new turn follows") {
+  test(
+    "D1/D2: a deferred stop lands the in-flight batch's tool_result BEFORE the actor stops, and no new turn follows"
+  ) {
     withBatchInFlight("d1") { (system, resources, agent, gate, llm) =>
       for
         // IN-FLIGHT PRECONDITION as a real reading (not a sleep): at this instant the
         // batch has NOT produced its tool_result yet — the gate file does not exist, so
         // the blocked command cannot have returned. Without this the test could pass
         // vacuously (a batch that already finished would take the immediate path).
-        _ <- IO.blocking(assert(!os.exists(gate), "precondition: the gate must not exist, else the batch is not in flight"))
-        preMsgs <- resources.sessionStore.loadMessagesForSession("deferred-wire-d1")
-        preResults = preMsgs.flatMap(_.content.toOption.toList).flatMap(
-          _.collect { case ContentBlock.ToolResult(id, _, _) => id }
+        _ <- IO.blocking(
+          assert(!os.exists(gate), "precondition: the gate must not exist, else the batch is not in flight")
         )
+        preMsgs <- resources.sessionStore.loadMessagesForSession("deferred-wire-d1")
+        preResults = preMsgs
+          .flatMap(_.content.toOption.toList)
+          .flatMap(
+            _.collect { case ContentBlock.ToolResult(id, _, _) => id }
+          )
         _ <- IO(
           assert(
             !preResults.contains("tu-block"),
@@ -219,16 +237,20 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
         // Give the actor time to receive the intent while the batch is still blocked.
         _ <- IO.sleep(200.millis)
         // The precondition must STILL hold at intent time: the batch is in flight.
-        _ <- IO.blocking(assert(!os.exists(gate), "the batch must still be blocked when the deferred intent is recorded"))
+        _ <- IO.blocking(
+          assert(!os.exists(gate), "the batch must still be blocked when the deferred intent is recorded")
+        )
         _ <- IO.blocking(os.write.over(gate, "go"))
         stopped <- awaitTrue(30.seconds)(system.isAlive(agent.path).map(!_))
         msgs <- resources.sessionStore.loadMessagesForSession("deferred-wire-d1")
         calls <- llm.calls.get
       yield
         assert(stopped, "D1: the actor must stop once the in-flight batch has finished (deferred stop honoured)")
-        val toolResults = msgs.flatMap(_.content.toOption.toList).flatMap(
-          _.collect { case ContentBlock.ToolResult(id, content, _) => (id, content) }
-        )
+        val toolResults = msgs
+          .flatMap(_.content.toOption.toList)
+          .flatMap(
+            _.collect { case ContentBlock.ToolResult(id, content, _) => (id, content) }
+          )
         assert(
           toolResults.exists(_._1 == "tu-block"),
           s"D1 VIOLATED — the in-flight batch's tool_result must be persisted BEFORE the actor stops " +
@@ -270,7 +292,8 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
           stopped,
           "D3 VIOLATED — Stop(reason) must keep the historical immediate semantics (this batch must not re-route it through the deferred leg)"
         )
-        val ids = msgs.flatMap(_.content.toOption.toList).flatMap(_.collect { case ContentBlock.ToolResult(id, _, _) => id })
+        val ids =
+          msgs.flatMap(_.content.toOption.toList).flatMap(_.collect { case ContentBlock.ToolResult(id, _, _) => id })
         assert(
           !ids.contains("tu-block"),
           s"D3: the immediate path must drop the un-produced batch (no tool_result persisted), got: $ids"
@@ -290,7 +313,11 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tempRoot / "data")
     val system = ActorSystem("deferred-wire-d4")
     val io = for
-      resources <- SpecResources.mkResources(system, tempRoot, new ScriptedLlm(Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](Nil)))
+      resources <- SpecResources.mkResources(
+        system,
+        tempRoot,
+        new ScriptedLlm(Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](Nil))
+      )
       agent <- system.spawn(
         AgentActor(
           agentDef = AgentDef(name = "IdleProbe", description = "idle probe", tools = List("Read"), systemPrompt = ""),
@@ -308,11 +335,10 @@ class DeferredCancelWireSpec extends CatsEffectSuite:
       _ <- IO.sleep(100.millis)
       _ <- agent ! AgentCommand.Stop()
       stopped <- awaitTrue(20.seconds)(system.isAlive(agent.path).map(!_))
-    yield
-      assert(
-        stopped,
-        "D4 VIOLATED — Stop() with nothing in flight must fall back to the immediate path (a recorded intent no batch will ever honour would park the session forever)"
-      )
+    yield assert(
+      stopped,
+      "D4 VIOLATED — Stop() with nothing in flight must fall back to the immediate path (a recorded intent no batch will ever honour would park the session forever)"
+    )
     io.guarantee(
       system.stopAll.handleErrorWith(_ => IO.unit) *>
         IO(nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)) *>

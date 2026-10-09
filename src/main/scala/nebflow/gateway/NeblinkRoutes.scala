@@ -37,6 +37,12 @@ import scala.concurrent.duration.*
  */
 private[gateway] object NeblinkRoutes:
 
+  /**
+   * 设备面 HMAC 防重放缓存（v2.1 §A.4；进程内 per-device LRU，重启归零——与
+   * ts±90s 窗口分工的诚实边界见 [[nebflow.core.device.NonceCache]]）。
+   */
+  private val peerNonces = new nebflow.core.device.NonceCache(1024)
+
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
 
@@ -58,7 +64,7 @@ private[gateway] object NeblinkRoutes:
       case req @ GET -> Root / "neblink" / "discover" =>
         verifyPeerAccess(req).flatMap {
           case Left(resp) => IO.pure(resp)
-          case Right(ms) =>
+          case Right((ms, req)) =>
             ms.identity.flatMap { id =>
               Ok(
                 Json.obj(
@@ -794,7 +800,7 @@ private[gateway] object NeblinkRoutes:
       case req @ POST -> Root / "neblink" / "remote-exec" =>
         verifyPeerAccess(req).flatMap {
           case Left(resp) => IO.pure(resp)
-          case Right(ms) =>
+          case Right((ms, req)) =>
             req.as[Json].flatMap { body =>
               val hc = body.hcursor
               val action = hc.downField("action").as[String].getOrElse("")
@@ -842,7 +848,7 @@ private[gateway] object NeblinkRoutes:
       case req @ POST -> Root / "neblink" / "update" =>
         verifyPeerAccess(req).flatMap {
           case Left(resp) => IO.pure(resp)
-          case Right(_) =>
+          case Right((_, req)) =>
             req.as[Json].flatMap { body =>
               val beta = body.hcursor.downField("beta").as[Boolean].getOrElse(false)
               logger.info(s"[neblink] Remote update requested (beta=$beta), running install script...") *>
@@ -869,7 +875,7 @@ private[gateway] object NeblinkRoutes:
       case req @ POST -> Root / "neblink" / "transfer" =>
         verifyPeerAccess(req).flatMap {
           case Left(resp) => IO.pure(resp)
-          case Right(ms) =>
+          case Right((ms, req)) =>
             req.as[Json].flatMap { body =>
               val path = body.hcursor.downField("path").as[String].getOrElse("")
               val contentB64 = body.hcursor.downField("content").as[String].getOrElse("")
@@ -889,7 +895,7 @@ private[gateway] object NeblinkRoutes:
       case req @ GET -> Root / "neblink" / "transfer" =>
         verifyPeerAccess(req).flatMap {
           case Left(resp) => IO.pure(resp)
-          case Right(ms) =>
+          case Right((ms, req)) =>
             val path = req.params.getOrElse("path", "")
             if path.isEmpty then BadRequest(Json.obj("error" -> "Missing path parameter".asJson))
             else
@@ -943,7 +949,7 @@ private[gateway] object NeblinkRoutes:
       case req @ POST -> Root / "neblink" / "dropbox" / "transfer" / transferId =>
         verifyPeerAccess(req).flatMap {
           case Left(resp) => IO.pure(resp)
-          case Right(_) =>
+          case Right((_, req)) =>
             sharedResources.dropboxService match
               case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
               case Some(svc) =>
@@ -984,7 +990,7 @@ private[gateway] object NeblinkRoutes:
       case req @ GET -> Root / "neblink" / "dropbox" / "probe" / transferId =>
         verifyPeerAccess(req).flatMap {
           case Left(resp) => IO.pure(resp)
-          case Right(_) =>
+          case Right((_, req)) =>
             sharedResources.dropboxService match
               case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
               case Some(svc) =>
@@ -1165,34 +1171,133 @@ private[gateway] object NeblinkRoutes:
    *
    * The fallback is gated on a private/LAN source IP: a claimed deviceId alone
    * never grants access to internet-sourced requests (P2P-direct is LAN-only).
+   *
+   * ── v2.1 阶段 1（§A.4 HMAC 信任通道，2026-10-09 实施批）────────────────
+   *
+   * IP/网络判据之上叠加**配对 HMAC 判据**（[[nebflow.core.device.DeviceAuthMode]]，
+   * nebflow.json 顶层 `deviceAuth` 键，**热读**——档位切换零重启）：
+   *   - `off`（缺省）= 上文判据逐字节（不读体、不验签——存量零回归）；
+   *   - `audit` = 灰度观察档：带**有效** HMAC 头（已配对 + ts/nonce/常数时间比对
+   *     全过）⇒ 信任升级（配对即信任，IP 判据不设限）；无头/坏签 ⇒ 维持既有 IP
+   *     判据 + 一条 `[deviceAuth]` 审计行（`would 401 under required`——灰度期
+   *     的「收紧会破坏谁」观察面，不拒）；
+   *   - `required` = 收紧档：无有效 HMAC 头一律 401（fail-closed；含已配对但头
+   *     缺失/坏签/重放 nonce 的请求）。
+   *
+   * 判据单点 = [[nebflow.core.device.DeviceHmac.verifyHeaders]]（与发送侧
+   * RemoteExecutor.p2pExecuteAt 同一实现）；nonce 防重放 = 进程内 per-device
+   * LRU（[[nebflow.core.device.NonceCache]]，重启归零——诚实边界与 ts±90s 窗口
+   * 分工见该类文档）。
+   *
+   * 返回类型（实施批语义变更）：`Right` 携带**可能重建的 Request**——HMAC 判据
+   * 需要消费请求体算 SHA-256，消费后按原头重建体流交还调用方（`withBodyStream`
+   * 保头不换 Content-Type；`off` 档零消费、原 req 原样返回）。七个调用点以
+   * `case Right((ms, req))` 解构遮蔽同名形参，后续体零改动。
    */
-  private def verifyPeerAccess(req: Request[IO])(using ctx: RestApiCtx): IO[Either[Response[IO], NeblinkService]] =
+  private def verifyPeerAccess(req: Request[IO])(using
+    ctx: RestApiCtx
+  ): IO[Either[Response[IO], (NeblinkService, Request[IO])]] =
     import ctx.*
+
+    // 既有 IP/网络判据（原体逐字，返回形按新签名包一层 (ms, req)；ms 显式入参——
+    // 本 helper 定义在 neblinkService match 之前，不捕获 case 绑定）。
+    def trustByIp(
+      ms: NeblinkService,
+      req: Request[IO]
+    ): IO[Either[Response[IO], (NeblinkService, Request[IO])]] =
+      val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+      if ms.isTrustedPeer(remoteIp) then IO.pure(Right((ms, req)))
+      else
+        val callerDeviceId =
+          req.headers.get(CIString("x-neblink-device")).map(_.head.value).getOrElse("")
+        isKnownNetworkDevice(ms, callerDeviceId, remoteIp).flatMap {
+          case true =>
+            logger.info(
+              s"Peer $callerDeviceId trusted by device-ID membership (IP $remoteIp not in trusted list)"
+            ) *> IO.pure(Right((ms, req)))
+          case false =>
+            IO.pure(
+              Left(
+                Response[IO](Status.Forbidden)
+                  .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
+              )
+            )
+        }
 
     neblinkService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
       case Some(ms) =>
-        val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-        if ms.isTrustedPeer(remoteIp) then IO.pure(Right(ms))
-        else
-          val callerDeviceId =
-            req.headers.get(CIString("x-neblink-device")).map(_.head.value).getOrElse("")
-          isKnownNetworkDevice(ms, callerDeviceId, remoteIp).flatMap {
-            case true =>
-              logger.info(
-                s"Peer $callerDeviceId trusted by device-ID membership (IP $remoteIp not in trusted list)"
-              ) *> IO.pure(Right(ms))
-            case false =>
-              IO.pure(
-                Left(
-                  Response[IO](Status.Forbidden)
-                    .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
-                )
-              )
-          }
+        IO.blocking(nebflow.core.device.DeviceAuthMode.read).flatMap { mode =>
+          if mode == nebflow.core.device.DeviceAuthMode.Off then trustByIp(ms, req)
+          else
+            val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+            val hdrDevice = req.headers.get(CIString("x-neblink-device")).map(_.head.value).getOrElse("")
+            val hdrTs = req.headers.get(CIString(nebflow.core.device.DeviceHmac.HeaderTs)).map(_.head.value)
+            val hdrNonce = req.headers.get(CIString(nebflow.core.device.DeviceHmac.HeaderNonce)).map(_.head.value)
+            val hdrSig = req.headers.get(CIString(nebflow.core.device.DeviceHmac.HeaderSignature)).map(_.head.value)
+            val reqPath = req.uri.path.toString
+            val reqMethod = req.method.name
 
-        end if
+            def hmacReject(reason: String): IO[Either[Response[IO], (NeblinkService, Request[IO])]] =
+              mode match
+                case nebflow.core.device.DeviceAuthMode.Required =>
+                  logger.warn(
+                    s"[deviceAuth] mode=required hmac=invalid device=$hdrDevice ip=$remoteIp path=$reqMethod $reqPath reason=$reason — 401 (fail-closed)"
+                  ) *> IO.pure(
+                    Left(
+                      Response[IO](Status.Unauthorized)
+                        .withEntity(Json.obj("error" -> s"HMAC verification failed: $reason".asJson))
+                    )
+                  )
+                case _ =>
+                  logger.info(
+                    s"[deviceAuth] mode=audit hmac=invalid device=$hdrDevice ip=$remoteIp path=$reqMethod $reqPath " +
+                      s"reason=$reason — accepted by existing IP criteria (would 401 under required)"
+                  ) *> trustByIp(ms, req)
+
+            def hmacValid(req2: Request[IO]): IO[Either[Response[IO], (NeblinkService, Request[IO])]] =
+              logger.info(
+                s"[deviceAuth] mode=$mode hmac=valid device=$hdrDevice ip=$remoteIp path=$reqMethod $reqPath — trusted by paired signature (IP criteria bypassed)"
+              ) *> IO.pure(Right((ms, req2)))
+
+            if hdrTs.isEmpty && hdrNonce.isEmpty && hdrSig.isEmpty then
+              // 无头：audit = 观察行 + 既有判据；required = fail-closed 401（不读体——判据不需要）。
+              mode match
+                case nebflow.core.device.DeviceAuthMode.Required =>
+                  logger.warn(
+                    s"[deviceAuth] mode=required hmac=absent device=$hdrDevice ip=$remoteIp path=$reqMethod $reqPath — 401 (fail-closed)"
+                  ) *> IO.pure(
+                    Left(
+                      Response[IO](Status.Unauthorized)
+                        .withEntity(Json.obj("error" -> "HMAC verification failed: missing x-neblink-ts/nonce/signature headers".asJson))
+                    )
+                  )
+                case _ =>
+                  logger.info(
+                    s"[deviceAuth] mode=audit hmac=absent device=$hdrDevice ip=$remoteIp path=$reqMethod $reqPath — " +
+                      "accepted by existing IP criteria (would 401 under required)"
+                  ) *> trustByIp(ms, req)
+            else
+              // 带头（或 required 档）：验签需要请求体。读净 → 判据 → 按原头重建体流。
+              req.body.through(fs2.text.utf8.decode).compile.string.flatMap { body =>
+                val req2 = req.withBodyStream(Stream.emits(body.getBytes("UTF-8").toSeq).covary[IO])
+                nebflow.core.device.DeviceRegistry.secretFor(hdrDevice).flatMap {
+                  case None => hmacReject(s"device '$hdrDevice' is not paired (no shared key in devices.json)")
+                  case Some(key) =>
+                    // 纯 Option 判据（match 而非 flatMap——分支返回 IO，两套单组不混）。
+                    // 顺序 = 验签过才占 nonce 位（坏签请求不消耗缓存槽）。
+                    nebflow.core.device.DeviceHmac
+                      .verifyHeaders(key, hdrDevice, hdrTs, hdrNonce, hdrSig, reqMethod, reqPath, body) match
+                      case Some(reason) => hmacReject(reason)
+                      case None =>
+                        hdrNonce match
+                          case Some(n) if !peerNonces.firstSeen(hdrDevice, n) =>
+                            hmacReject("replayed nonce (already seen within the process-local window)")
+                          case _ => hmacValid(req2)
+                }
+              }
+            }
 
     end match
 

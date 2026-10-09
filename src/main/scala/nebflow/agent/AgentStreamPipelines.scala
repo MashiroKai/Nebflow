@@ -42,11 +42,13 @@ object StreamBatching:
     thinking: String = "",
     thinkingCount: Int = 0,
     lastFlushMs: Long = 0L,
-    /** B2: highest block index handed out by this pipeline so far. Carried
+    /**
+     * B2: highest block index handed out by this pipeline so far. Carried
      *  across flushes (never reset by `take`), so every frame emitted by one
      *  round carries a strictly increasing `block`. The pipe is built once per
      *  LLM round, so `block` is the frame's index WITHIN its round — the pair
-     *  (`round`, `block`) is the frame's identity for the whole turn. */
+     *  (`round`, `block`) is the frame's identity for the whole turn.
+     */
     marked: Int = 0
   )
 
@@ -87,10 +89,11 @@ object StreamBatching:
     if isAskMode then
       Json.obj("type" -> "askTextDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
     else if isSubagent then markFrame(AgentStreamEvent.TextDelta(delta).toJson(agentPath, true, None), mark)
-    else markFrame(
-      Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson),
-      mark
-    )
+    else
+      markFrame(
+        Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson),
+        mark
+      )
 
   def thinkingFrame(
     delta: String,
@@ -119,9 +122,11 @@ object StreamBatching:
         mark
       )
 
-  /** Add the B2 block/round identifier to an already-built frame. Absent mark ⇒
+  /**
+   * Add the B2 block/round identifier to an already-built frame. Absent mark ⇒
    *  frame unchanged (wire-compatible: a caller that has no round context yet,
-   *  e.g. an older construction path, emits exactly the pre-B2 bytes). */
+   *  e.g. an older construction path, emits exactly the pre-B2 bytes).
+   */
   private def markFrame(json: Json, mark: Option[FrameMark]): Json =
     mark match
       case None => json
@@ -165,6 +170,7 @@ object StreamBatching:
                 }
                 val p = FlushPayload(thinking, text)
                 (BatchState(lastFlushMs = now, marked = next), Some(p))
+              end if
             }
           }
 
@@ -179,8 +185,7 @@ object StreamBatching:
                 val p =
                   if isText then
                     FlushPayload(None, Some(textFrame(merged, isAskMode, isSubagent, sessionId, agentPath, fm)))
-                  else
-                    FlushPayload(Some(thinkingFrame(merged, isSubagent, sessionId, agentPath, fm)), None)
+                  else FlushPayload(Some(thinkingFrame(merged, isSubagent, sessionId, agentPath, fm)), None)
                 (BatchState(lastFlushMs = now, marked = block), Some(p))
               else
                 val next =

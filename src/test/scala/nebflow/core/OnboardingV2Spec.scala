@@ -63,29 +63,37 @@ class OnboardingV2Spec extends FunSuite:
       }.toMap)
     )
 
-  /** `${pid}.models[]` → the `llm.providers.<pid>.models[]` JSON array (the same
-    *  shape `nebflow.json` holds). Built by hand: `NebflowServiceConfig` carries
-    *  a Decoder only (no Encoder) by design, so the spec writes the wire shape
-    *  explicitly — the same thing the config file on disk contains. */
+  /**
+   * `${pid}.models[]` → the `llm.providers.<pid>.models[]` JSON array (the same
+   *  shape `nebflow.json` holds). Built by hand: `NebflowServiceConfig` carries
+   *  a Decoder only (no Encoder) by design, so the spec writes the wire shape
+   *  explicitly — the same thing the config file on disk contains.
+   */
   private def providerModelsJson(models: List[(String, Int, Option[Int])]): Json =
     Json.arr(models.map { (id, cw, mx) =>
-      Json.obj(
-        "id" -> id.asJson,
-        "contextWindow" -> cw.asJson
-      ).deepMerge(mx.fold(Json.obj())(v => Json.obj("modelMaxContext" -> v.asJson)))
+      Json
+        .obj(
+          "id" -> id.asJson,
+          "contextWindow" -> cw.asJson
+        )
+        .deepMerge(mx.fold(Json.obj())(v => Json.obj("modelMaxContext" -> v.asJson)))
     }*)
 
   private def cfgJson(providers: (String, List[(String, Int, Option[Int])])*): Json =
-    Json.obj("llm" -> Json.obj("providers" -> Json.fromFields(
-      providers.map { (pid, models) =>
-        pid -> Json.obj(
-          "baseUrl" -> "https://example.invalid/v1/".asJson,
-          "apiKey" -> "k".asJson,
-          "protocol" -> "openai".asJson,
-          "models" -> providerModelsJson(models)
+    Json.obj(
+      "llm" -> Json.obj(
+        "providers" -> Json.fromFields(
+          providers.map { (pid, models) =>
+            pid -> Json.obj(
+              "baseUrl" -> "https://example.invalid/v1/".asJson,
+              "apiKey" -> "k".asJson,
+              "protocol" -> "openai".asJson,
+              "models" -> providerModelsJson(models)
+            )
+          }
         )
-      }
-    )))
+      )
+    )
 
   test("models: 列表来自已配置 provider，且 effective = min(configured, modelMaxContext)"):
     val cfg = cfgWith(
@@ -123,7 +131,10 @@ class OnboardingV2Spec extends FunSuite:
     OnboardingModelStep.applySelectionJson(before, "zhipu/glm-4.6", None) match
       case Left(e) => fail(s"应成功，实际 $e")
       case Right(patched) =>
-        assertEquals(patched.as[NebflowServiceConfig].toOption.map(_.llm.providers("zhipu").models.head.contextWindow), Some(128000))
+        assertEquals(
+          patched.as[NebflowServiceConfig].toOption.map(_.llm.providers("zhipu").models.head.contextWindow),
+          Some(128000)
+        )
 
   test("write-back: 未知 provider / 未知 model ⇒ Left，且不静默新建 provider"):
     val json = cfgJson("zhipu" -> List(("glm-4.6", 128000, None)))
@@ -200,8 +211,12 @@ class OnboardingV2Spec extends FunSuite:
     // 用**终局同一写入路径** setState 预置状态：本对象的验收必须走真实写路径
     // （legacy `writeState` 按设计绕过闸门，见 OnboardingService:136-139）。
     assertEquals(OnboardingService.setState(OnboardingService.OnboardingState.Pending).unsafeRunSync().isRight, true)
-    OnboardingService.mergeAnswers(Map("name" -> Json.obj("kind" -> "free".asJson, "value" -> "星尘".asJson))).unsafeRunSync()
-    OnboardingService.mergeAnswers(Map("call" -> Json.obj("kind" -> "skip".asJson, "value" -> "".asJson))).unsafeRunSync()
+    OnboardingService
+      .mergeAnswers(Map("name" -> Json.obj("kind" -> "free".asJson, "value" -> "星尘".asJson)))
+      .unsafeRunSync()
+    OnboardingService
+      .mergeAnswers(Map("call" -> Json.obj("kind" -> "skip".asJson, "value" -> "".asJson)))
+      .unsafeRunSync()
     val answers = OnboardingService.readAnswers().unsafeRunSync()
     assertEquals(answers.keySet, Set("name", "call"), "逐题追加，不整表覆盖")
     assertEquals(OnboardingService.readState().unsafeRunSync(), Some(OnboardingService.OnboardingState.Pending))
@@ -228,7 +243,7 @@ class OnboardingV2Spec extends FunSuite:
     reset()
     val answers = Map(
       "name" -> Json.obj("kind" -> "free".asJson, "value" -> "星尘".asJson),
-      "model" -> Json.obj("kind" -> "model".asJson, "value" -> "zhipu/glm-4.6".asJson),
+      "model" -> Json.obj("kind" -> "model".asJson, "value" -> "zhipu/glm-4.6".asJson)
     )
     OnboardingService.mergeAnswers(answers).unsafeRunSync()
     // ① 无探测 → 拒绝，且 marker 原地不动
@@ -266,7 +281,7 @@ class OnboardingV2Spec extends FunSuite:
       ans("boundaries", "相处约定", "soul", OnboardingArtifacts.Kind.Multi, "可以跟我争论；记住随口提过的小事"),
       ans("temper1", "语气基线", "soul", OnboardingArtifacts.Kind.Choice, "直接坦率"),
       ans("temper2", "做事方式", "soul", OnboardingArtifacts.Kind.Choice, "随性灵活"),
-      ans("identity", "日常身份", "user", OnboardingArtifacts.Kind.Choice, "创作者"),
+      ans("identity", "日常身份", "user", OnboardingArtifacts.Kind.Choice, "创作者")
     )
     val res = OnboardingArtifacts.apply(answers).unsafeRunSync()
     assertEquals(res.soulPath, (home / "Soul.md").toString)
@@ -292,7 +307,14 @@ class OnboardingV2Spec extends FunSuite:
   test("artifacts: 全跳过路径留下结构完整骨架（含 ## 备注），非空壳"):
     reset()
     val skipped = List("name", "call", "model", "role", "style", "pro", "boundaries", "temper1", "temper2", "identity")
-      .map(id => ans(id, id, if id == "call" || id == "identity" then "user" else if id == "model" then "base" else "soul", OnboardingArtifacts.Kind.Skip))
+      .map(id =>
+        ans(
+          id,
+          id,
+          if id == "call" || id == "identity" then "user" else if id == "model" then "base" else "soul",
+          OnboardingArtifacts.Kind.Skip
+        )
+      )
       .toMap
     val res = OnboardingArtifacts.apply(skipped).unsafeRunSync()
     assert(res.allSkipped, "全跳过必须被识别")
@@ -301,8 +323,7 @@ class OnboardingV2Spec extends FunSuite:
       assert(soul.contains(sec), s"Soul.md 缺段 $sec")
     assert(soul.contains("未设置（这一题你跳过了）"), "跳过项逐字段占位")
     val user = os.read(home / "User.md")
-    for sec <- List("## 称呼与身份", "## 你说过的原话", "## 记录规则") do
-      assert(user.contains(sec), s"User.md 缺段 $sec")
+    for sec <- List("## 称呼与身份", "## 你说过的原话", "## 记录规则") do assert(user.contains(sec), s"User.md 缺段 $sec")
     assert(!user.contains("## 当前关注"), "User.md 不得再有「当前关注」段")
     assert(res.soulBytes > 0L && res.userBytes > 0L)
 
@@ -313,7 +334,8 @@ class OnboardingV2Spec extends FunSuite:
     assertEquals(res.agentName, Some("小满"))
     val agentJson = home / "agents" / rootName / "agent.json"
     assert(os.exists(agentJson), "displayName 落既有 agent.json")
-    val dn = io.circe.parser.parse(os.read(agentJson)).toOption.flatMap(_.hcursor.downField("displayName").as[String].toOption)
+    val dn =
+      io.circe.parser.parse(os.read(agentJson)).toOption.flatMap(_.hcursor.downField("displayName").as[String].toOption)
     assertEquals(dn, Some("小满"))
     assertEquals(OnboardingArtifacts.currentDisplayName(), "小满")
     assertEquals(rootName, "Nebula", "🔴 机制键恒为 Nebula（不以参数化之名改判据键）")

@@ -51,6 +51,7 @@ object A1FanoutProbe:
   final class Sink:
     val calls = new java.util.concurrent.atomic.AtomicLong(0)
     val bytes = new java.util.concurrent.atomic.AtomicLong(0)
+
     def onFrame(text: String): Unit =
       calls.incrementAndGet()
       bytes.addAndGet(text.getBytes("UTF-8").length.toLong)
@@ -137,6 +138,7 @@ object A1FanoutProbe:
         c = sink.calls.get()
       yield (c, times)).unsafeRunSync()
       println(f"    leaked_registered_and_unregistered=$leaked%-6d calls_per_broadcast=$calls%6d  ${ms(times)}")
+    end for
 
     // ── 3. fan-out ladder: equal payload, N = 1..16 ─────────────────────────
     println("[3] fan-out ladder (equal payload 93 042 B, serialization must be once)")
@@ -157,6 +159,7 @@ object A1FanoutProbe:
         conns <- hub.connectionCount
       yield (c, fb, conns, times)).unsafeRunSync()
       println(f"    n=$n%-3d calls=$calls%4d frame_bytes=$frameBytes%6d conns=$conns  ${ms(times)}")
+    end for
 
     // ── 4. A2 read point: outbound overflow counters are alive and instance-local ──
     println("[4] outbound stats read point (A2)")

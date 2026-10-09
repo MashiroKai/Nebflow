@@ -37,29 +37,29 @@ object ExecutorRegistry:
 
   /** 单个执行器的静态定义（注册表权威；iconKey = id，前端单点映射）。 */
   final case class ExecutorDef(
-      id: String,
-      displayName: String,
-      /** 逐个探测的可执行名（Windows 自动追加 .exe/.cmd 形态）。 */
-      binNames: List[String],
-      description: String,
-      /** false = nebflow 内置执行器（不需要文件系统检测）。 */
-      external: Boolean,
-      /** false = 仅检测 + 图标占位，delegate 尚不可选（适配器未落地）。 */
-      adapterReady: Boolean
+    id: String,
+    displayName: String,
+    /** 逐个探测的可执行名（Windows 自动追加 .exe/.cmd 形态）。 */
+    binNames: List[String],
+    description: String,
+    /** false = nebflow 内置执行器（不需要文件系统检测）。 */
+    external: Boolean,
+    /** false = 仅检测 + 图标占位，delegate 尚不可选（适配器未落地）。 */
+    adapterReady: Boolean
   )
 
   /** 快照行：静态定义 + 检测结果 + 配置态。 */
   final case class ExecutorState(
-      id: String,
-      displayName: String,
-      iconKey: String,
-      description: String,
-      external: Boolean,
-      adapterReady: Boolean,
-      detected: Boolean,
-      path: Option[String],
-      enabled: Boolean,
-      isDefault: Boolean
+    id: String,
+    displayName: String,
+    iconKey: String,
+    description: String,
+    external: Boolean,
+    adapterReady: Boolean,
+    detected: Boolean,
+    path: Option[String],
+    enabled: Boolean,
+    isDefault: Boolean
   )
 
   object ExecutorState:
@@ -128,10 +128,10 @@ object ExecutorRegistry:
 
   /** 单可执行名的探测核（纯函数，spec 可驱动；PATH 腿 → 前缀腿）。 */
   private[executor] def resolveBinFrom(
-      pathEnv: String,
-      probeDirs: List[String],
-      binName: String,
-      windows: Boolean
+    pathEnv: String,
+    probeDirs: List[String],
+    binName: String,
+    windows: Boolean
   ): Option[String] =
     val names = if windows then List(binName, s"$binName.exe", s"$binName.cmd") else List(binName)
     def scan(dirs: Iterator[String]): Option[String] =
@@ -210,9 +210,9 @@ object ExecutorRegistry:
    * @param pathEnv/probeDirs 检测输入（spec 可注入；生产 = 进程环境）
    */
   def resolveRequested(
-      executorParam: Option[String],
-      pathEnv: String = sys.env.getOrElse("PATH", ""),
-      probeDirs: List[String] = curatedProbeDirs
+    executorParam: Option[String],
+    pathEnv: String = sys.env.getOrElse("PATH", ""),
+    probeDirs: List[String] = curatedProbeDirs
   ): Either[String, ResolvedSelection] =
     val requested = executorParam.map(_.trim).filter(_.nonEmpty).getOrElse(DefaultId)
     if requested == DefaultId then Right(ResolvedSelection.Internal)
@@ -227,6 +227,8 @@ object ExecutorRegistry:
             case None =>
               Left(selectionError(requested, pathEnv, probeDirs, "its CLI binary was not detected on this machine"))
             case Some(bin) => Right(ResolvedSelection.External(d, bin))
+
+  end resolveRequested
 
   /** 显式失败面（不回落）；available 行 = 检测面快照（同 fail-closed 口径）。 */
   private def selectionError(requested: String, pathEnv: String, probeDirs: List[String], why: String): String =
@@ -267,6 +269,7 @@ object ExecutorRegistry:
         isDefault = d.id == dflt
       )
     }
+  end snapshot
 
   def snapshot: List[ExecutorState] = snapshot(sys.env.getOrElse("PATH", ""), curatedProbeDirs)
 
