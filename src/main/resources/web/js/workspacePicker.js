@@ -7,10 +7,20 @@
 //   · explorer.js header "change root" button (pickeruni batch)
 //   · sidebar.js folder context-menu "set project root" (pickeruni batch)
 //
-// API (backward compatible; the last two options are new in pickeruni):
+// API (backward compatible; the last two options are new in pickeruni,
+// `device`/`deviceName` in the ui-device-faces batch 2026-10-10):
 //   openPicker({ sessionId, startPath='~', title, showClear=false,
+//                device, deviceName,
 //                onPick(path), onClear(), onCancel(), onListUnavailable(error) })
 //   closePicker()                        // test/reentry helper → onCancel
+//
+// DEVICE MODE (ui-device-faces 批 · 设计稿 A4): with `device` set the picker browses a
+// REMOTE device's directories — every listing goes over `wsBrowse.list` WITH the
+// `device` key (additive backend leg; scope=browse metadata only). The face is
+// READ-ONLY by design (G.13: the directory must already exist — no mkdir leg, and
+// the goto/search boxes are hidden: `browsePath` has no remote leg, D4 "picker
+// only" still holds). Breadcrumbs are prefixed with a device chip; the foot shows
+// the remote read-only note.
 //
 // Wire contract (existing channels only — zero new backend endpoints):
 //   wsBrowse.list  {path, sessionId}  → wsBrowseList {path, home, entries:string[], error?}
@@ -142,32 +152,45 @@ export function openPicker(opts = {}) {
     // verbatim (2026-09-17 ruling ②-6: no silent swallow — chat.js reveals its
     // free-input fallback face from this callback).
     onListUnavailable: opts.onListUnavailable || (() => {}),
+    // DEVICE MODE (ui-device-faces 批 A4): browse a remote device's dirs read-only.
+    device: opts.device || null,
+    deviceName: opts.deviceName || opts.device || '',
     current: opts.startPath || '~',
     home: '',
     seq: 0, // monotonic request token (staleness guard)
     searchTimer: null,
     teardown: null, // set below: detach the Esc listener + pending debounce
   };
-  const titleText = opts.title || t('workspacePicker.browseTitle');
+  const titleText = opts.title
+    || (ctx.device ? t('workspacePicker.deviceTitle', { device: ctx.deviceName }) : t('workspacePicker.browseTitle'));
 
-  const overlay = document.createElement('div');
-  overlay.className = 'wsp-overlay';
-  overlay.innerHTML =
-    '<div class="wsp-panel" role="dialog" aria-modal="true" aria-label="' + escapeHtml(titleText) + '">' +
-      '<div class="wsp-title"></div>' +
-      '<div class="wsp-goto">' +
+  // Device mode: read-only remote browse — no goto/search boxes (no remote leg on
+  // browsePath; D4 "picker only" — a hand-typed remote path has no authority), the
+  // mkdir button yields its seat to the read-only note.
+  const deviceChrome = ctx.device
+    ? ''
+    : '<div class="wsp-goto">' +
         '<input class="wsp-goto-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.gotoPlaceholder')) + '" />' +
         '<button type="button" class="wsp-goto-btn">' + escapeHtml(t('workspacePicker.go')) + '</button>' +
       '</div>' +
       '<div class="wsp-search">' +
         '<input class="wsp-search-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.searchPlaceholder')) + '" />' +
-      '</div>' +
+      '</div>';
+  const footNote = ctx.device
+    ? '<span class="pick-note">' + escapeHtml(t('workspacePicker.deviceNote')) + '</span>'
+    : '<button type="button" class="wsp-mkdir">+ ' + escapeHtml(t('workspacePicker.newFolder')) + '</button>';
+  const overlay = document.createElement('div');
+  overlay.className = 'wsp-overlay';
+  overlay.innerHTML =
+    '<div class="wsp-panel" role="dialog" aria-modal="true" aria-label="' + escapeHtml(titleText) + '">' +
+      '<div class="wsp-title"></div>' +
+      deviceChrome +
       '<div class="wsp-crumbs"></div>' +
       '<div class="wsp-note" hidden></div>' +
       '<div class="wsp-err" hidden></div>' +
       '<div class="wsp-list"></div>' +
       '<div class="wsp-foot">' +
-        '<button type="button" class="wsp-mkdir">+ ' + escapeHtml(t('workspacePicker.newFolder')) + '</button>' +
+        footNote +
         '<span class="wsp-cur"></span>' +
         '<span class="wsp-foot-btns">' +
           '<button type="button" class="wsp-cancel">' + escapeHtml(t('workspacePicker.cancel')) + '</button>' +
@@ -218,7 +241,8 @@ export function openPicker(opts = {}) {
   /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick')).onclick = () => finish({ type: 'pick', path: ctx.current });
   const clearBtn = /** @type {HTMLElement|null} */ (overlay.querySelector('.wsp-clear'));
   if (clearBtn) clearBtn.onclick = () => finish({ type: 'clear' }); // legacy parity: Clear closes WITHOUT onCancel
-  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-mkdir')).onclick = () => startMkdir();
+  const mkdirBtn = /** @type {HTMLElement|null} */ (overlay.querySelector('.wsp-mkdir'));
+  if (mkdirBtn) mkdirBtn.onclick = () => startMkdir(); // device mode: no mkdir face (read-only remote leg)
 
   function hideErr() { errEl.hidden = true; errEl.innerHTML = ''; }
   function hideNote() { noteEl.hidden = true; noteEl.textContent = ''; }
@@ -229,9 +253,22 @@ export function openPicker(opts = {}) {
     errEl.hidden = false;
   }
 
-  /** Render breadcrumbs (ancestor segments are sapphire links, current is plain text). */
+  /** Render breadcrumbs (ancestor segments are sapphire links, current is plain text).
+   *  Device mode: the chip prefix names the ORIGIN device — the path space is that
+   *  machine's disk, and the chip is the one constant "where am I" cue (设计稿 A4). */
   function renderCrumbs() {
     crumbsEl.innerHTML = '';
+    if (ctx.device) {
+      const chip = document.createElement('span');
+      chip.className = 'path-chip';
+      chip.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>';
+      chip.appendChild(document.createTextNode(ctx.deviceName));
+      chip.title = ctx.deviceName;
+      crumbsEl.appendChild(chip);
+      crumbsEl.appendChild(document.createTextNode(' '));
+    }
     const crumbs = buildCrumbs(ctx.current, ctx.home);
     crumbs.forEach((c, i) => {
       if (i > 0) crumbsEl.appendChild(document.createTextNode(' / '));
@@ -307,19 +344,22 @@ export function openPicker(opts = {}) {
   /** @param {object} res browseResult frame
    *  @returns {boolean} true when the frame may resolve the pending request */
   const echoCurrent = (res) =>
-    (res && typeof res.query === 'string' ? res.query : '') === searchEl.value.trim();
+    (res && typeof res.query === 'string' ? res.query : '') === (searchEl?.value.trim() ?? '');
 
   /**
    * List `path` and render. Channel rule: goto jumps and query-carrying
    * refreshes go over `browsePath` (server filter + cap + typed errors);
    * plain navigation goes over `wsBrowse.list` (complete uncapped listing).
+   * 🔴 device 模式两输入框不渲染（read-only 远端腿）⇒ 引用为 null——必须走
+   *    optional chaining（曾裸 `.value` 在 device 模式首帧即抛 TypeError，
+   *    列表永不渲染 = 静默死端）。
    * @param {string} path
    * @param {{origin?: 'nav'|'goto'|'refresh'}} [opts]
    */
   async function navigate(path, opts = {}) {
     if (openCtx !== ctx) return;
     const origin = opts.origin || 'nav';
-    const query = searchEl.value.trim();
+    const query = searchEl?.value.trim() ?? '';
     const seq = ++ctx.seq;
     hideErr();
     hideNote();
@@ -329,7 +369,12 @@ export function openPicker(opts = {}) {
       // is in flight (error must not wipe what the user was looking at).
       listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.loading')) + '</div>';
     }
-    const res = (origin === 'goto' || query)
+    const res = ctx.device
+      // DEVICE MODE: one channel only — wsBrowse.list with the additive `device`
+      // key (metadata listing; browsePath has no remote leg, goto/search hidden).
+      ? await wsRequest('wsBrowseList', () =>
+          sendWs({ type: 'wsBrowse.list', path, sessionId: ctx.sessionId, device: ctx.device }))
+      : (origin === 'goto' || query)
       ? await wsRequest('browseResult', () => sendWs({ type: 'browsePath', path, query }), echoCurrent)
       : await wsRequest('wsBrowseList', () => sendWs({ type: 'wsBrowse.list', path, sessionId: ctx.sessionId }));
     if (openCtx !== ctx || seq !== ctx.seq) return; // closed or superseded by a newer request
@@ -423,39 +468,42 @@ export function openPicker(opts = {}) {
 
   // ── goto: direct entry. Enter or the Go button jumps to the typed path; the
   // box keeps its text so a wrong path can be corrected instead of retyped. ──
+  // Device mode: the boxes are not rendered (read-only remote leg) — skip binds.
   const gotoTyped = () => {
     const typed = gotoEl.value.trim();
     if (!typed) return;
     navigate(typed, { origin: 'goto' });
   };
-  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-goto-btn')).onclick = gotoTyped;
-  bindImeGuard(gotoEl);
-  gotoEl.addEventListener('keydown', (e) => {
-    if (isImeComposing(e, gotoEl)) return;
-    if (e.key === 'Enter') { e.preventDefault(); gotoTyped(); }
-  });
+  if (gotoEl && searchEl) {
+    /** @type {HTMLElement} */ (overlay.querySelector('.wsp-goto-btn')).onclick = gotoTyped;
+    bindImeGuard(gotoEl);
+    gotoEl.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, gotoEl)) return;
+      if (e.key === 'Enter') { e.preventDefault(); gotoTyped(); }
+    });
 
-  // ── search: server-side filter, 250ms debounce. Clearing the box restores
-  // the full listing (the server treats an empty query as "no filter"). ─────
-  const searchRefresh = () => navigate(ctx.current, { origin: 'refresh' });
-  searchEl.addEventListener('input', () => {
-    if (ctx.searchTimer) clearTimeout(ctx.searchTimer);
-    ctx.searchTimer = setTimeout(() => {
-      ctx.searchTimer = null;
-      searchRefresh();
-    }, 250);
-  });
-  bindImeGuard(searchEl);
-  searchEl.addEventListener('keydown', (e) => {
-    if (isImeComposing(e, searchEl)) return;
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (ctx.searchTimer) { clearTimeout(ctx.searchTimer); ctx.searchTimer = null; }
-      searchRefresh();
-    }
-  });
+    // ── search: server-side filter, 250ms debounce. Clearing the box restores
+    // the full listing (the server treats an empty query as "no filter"). ─────
+    const searchRefresh = () => navigate(ctx.current, { origin: 'refresh' });
+    searchEl.addEventListener('input', () => {
+      if (ctx.searchTimer) clearTimeout(ctx.searchTimer);
+      ctx.searchTimer = setTimeout(() => {
+        ctx.searchTimer = null;
+        searchRefresh();
+      }, 250);
+    });
+    bindImeGuard(searchEl);
+    searchEl.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, searchEl)) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (ctx.searchTimer) { clearTimeout(ctx.searchTimer); ctx.searchTimer = null; }
+        searchRefresh();
+      }
+    });
+  }
 
-  navigate(ctx.current); // first paint (backend expands `~`)
+  navigate(ctx.current); // first paint (backend expands `~`; device mode = remote root list)
 }
 
 /** Close the live dialog (if any) and fire its onCancel — test/reentry helper. */

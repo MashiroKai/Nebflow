@@ -348,6 +348,132 @@
   opacity: 0.6;
 }
 
+/* ── ui-device-faces 批（2026-10-10）面B：文件浏览器远端目录 ─────────────────
+   设计稿 §2（头部 chip 常显 / 远端加载行 spinner / 目录失败错误行+重试链 /
+   单文件取件三态 / 取件失败玻璃浮条）。🔴 零新色值：全走既有 token
+   （--status-warn-icon / --sapphire rgb-triplet 族 / --glass-* / 既有 rgba 字面量族）。
+   材质 = .explorer-selection-bar 同款玻璃（本文件 :193）。 */
+/* 头部设备 chip（`.explorer-title` 旁常显；本机根零元素 = 存量零变化）。 */
+.dev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 7px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire));
+  font: 600 10px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  max-width: 150px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.dev-chip svg { width: 10px; height: 10px; flex: 0 0 auto; }
+.dev-chip .warn-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--status-warn-icon);
+  flex: 0 0 auto;
+}
+.dev-chip.is-offline {
+  background: transparent;
+  border: 1px solid var(--glass-border, var(--color-frame-border));
+  color: var(--color-frame-text-muted);
+}
+/* 远端加载行：sapphire spinner（减动效停转见文件尾降级块）。 */
+.explorer-loading .spin {
+  width: 11px;
+  height: 11px;
+  vertical-align: -1.5px;
+  margin-right: 5px;
+  color: rgb(var(--sapphire));
+  animation: explorerSpin 0.9s linear infinite;
+}
+@keyframes explorerSpin { to { transform: rotate(360deg); } }
+/* 远端目录失败错误行（显式错误 + 重试链；已列元数据行保留在侧——不在此清场）。 */
+.explorer-error { display: flex; align-items: flex-start; gap: 5px; }
+.explorer-error .st-ic { width: 11px; height: 11px; margin-top: 1.5px; flex: 0 0 auto; }
+.explorer-error .retry {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin-left: 7px;
+  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+}
+.explorer-error .retry:hover { text-decoration: underline; }
+/* 单文件取件三态（行内）：loading/failed 行减淡；行尾状态 tag；失败叹号。 */
+.explorer-item[data-pickup] { opacity: 0.55; }
+.explorer-item .pickup-tag {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: rgb(var(--sapphire));
+  opacity: 0.9;
+}
+.explorer-item[data-pickup="failed"] .pickup-tag { color: var(--status-error-icon); }
+.explorer-item .fail-ic { margin-left: auto; flex: 0 0 auto; display: inline-flex; }
+.explorer-item .fail-ic svg { width: 11px; height: 11px; color: var(--status-error-icon); }
+.explorer-item .explorer-icon .spin {
+  width: 12px;
+  height: 12px;
+  color: rgb(var(--sapphire));
+  animation: explorerSpin 0.9s linear infinite;
+}
+/* 取件失败玻璃浮条（#explorer-section 底部单例；selection-bar 同材质族）。
+   🔴 入场动画自持一套 keyframes（explorerBarIn 是 selection-bar 专用的居中平移
+   ——translateX(-50%) 会把本条（left/right 锚定）推出裁剪框，入场帧近乎不可见）。 */
+.explorer-pickup-bar {
+  position: absolute;
+  bottom: 8px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.92));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  border: 1px solid var(--glass-border, var(--color-frame-border));
+  border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  z-index: 100;
+  animation: explorerPickupIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes explorerPickupIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-color-scheme: dark) {
+  .explorer-pickup-bar { background: var(--glass-bg, rgba(28, 31, 39, 0.85)); }
+}
+.explorer-pickup-bar .bar-ic { display: inline-flex; flex: 0 0 auto; }
+.explorer-pickup-bar .bar-ic svg { width: 12px; height: 12px; color: var(--status-error-icon); }
+.explorer-pickup-bar .bar-msg {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--color-frame-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.explorer-pickup-bar .bar-act {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-frame-text);
+  background: transparent;
+  border: 1px solid var(--glass-border, var(--color-frame-border));
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.explorer-pickup-bar .bar-act:hover { background: var(--color-hover, rgba(128, 128, 128, 0.1)); }
+
 /* ===== Agent Badge =====
    `.agent-badge` 的声明已**单源化**到 `sapphire.css`（设计系统标准层，最后加载；
    作者 2026-09-16 决策卡 F1）。本文件原有第二份声明（与 chat.css 同名叠加、静默
@@ -1344,4 +1470,14 @@ body.col-resizing #canvas-panel { transition: none; }
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
+}
+
+/* ── ui-device-faces 批（2026-10-10）：减动效降级（本文件首个 reduce 块）──
+   spinner 停转（加载行/取件行）+ 浮条入场动画关闭；语义不受影响（文本行仍在）。 */
+@media (prefers-reduced-motion: reduce) {
+  .explorer-loading .spin,
+  .explorer-item .explorer-icon .spin {
+    animation: none;
+  }
+  .explorer-pickup-bar { animation-duration: 0.01s; }
 }

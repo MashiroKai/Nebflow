@@ -128,6 +128,7 @@ const PROJECTS_FLOWMAP_FAB = 'proj-flowmap-fab';
 const PROJECT_CREATE_OVERLAY = 'proj-create-overlay';
 const PROJECT_CREATE_DESC_ID = 'proj-create-desc';
 const PROJECT_CREATE_WS_ID = 'proj-create-ws';
+const PROJECT_CREATE_DEV_ID = 'proj-create-dev';
 /** 描述上限（作者已裁③：必填 + 上限 500 字）。计数与校验共用同一度量（码位）。 */
 const PROJECT_CREATE_MAX = 500;
 /** Direct-create reply timeout (ms). The gateway chain is local memory + disk, so
@@ -152,6 +153,7 @@ function closeProjectsCreateDialog(restoreFocus) {
   if (!ctx) return;
   createDialogCtx = null;
   if (ctx.escHandler) window.removeEventListener('keydown', ctx.escHandler, true);
+  if (ctx.devOutsideClose) document.removeEventListener('pointerdown', ctx.devOutsideClose, true);
   ctx.overlay.remove();
   // 触发钮可能已随 DOM 重建脱树 ⇒ 只在仍在文档内时归还焦点（否则 focus() 是 no-op）。
   if (restoreFocus && document.contains(ctx.trigger)) ctx.trigger.focus();
@@ -246,6 +248,22 @@ function openProjectsCreateDialog(trigger) {
         '<span class="proj-create-error" role="alert" hidden></span>' +
         '<span class="proj-create-count"></span>' +
       '</div>' +
+      // ── 存放设备行（ui-device-faces 批 · 设计稿 §1/开放题①）：描述 meter 之下、
+      //    工作区路径之上——设备是路径的定语（先定设备，路径选择器才知道去哪台机器
+      //    浏览；G.13 校验序第一步也是设备解析）。缺省本机 ⇒ 提交帧不带 device 键 =
+      //    机制面缺省腿逐字节。数据源 = /api/neblink/status（self + peers，零新后端面）。──
+      `<label class="proj-create-label" for="${PROJECT_CREATE_DEV_ID}">${esc(t('project.deviceLabel'))}</label>` +
+      '<div class="dev-row">' +
+        `<button type="button" class="dev-btn" id="${PROJECT_CREATE_DEV_ID}" aria-haspopup="listbox" aria-expanded="false">` +
+          '<span class="dev-ic"></span>' +
+          '<span class="dev-nm"></span>' +
+          '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
+        '</button>' +
+        `<span class="dev-note">${esc(t('project.deviceNoteSelf'))}</span>` +
+        // 菜单挂在 .dev-row 内（position:absolute 锚定按钮下方；hidden 属性控显隐）。
+        '<div class="dev-menu" hidden></div>' +
+      '</div>' +
+      '<div class="dev-hintline" hidden></div>' +
       // ── D4 path slot (author 2026-09-24 D4: "use a path picker to choose, rather
       //    than relying on the user typing a path") ──
       // 🔴 A typeable text box is deliberately NOT provided: the path can only be
@@ -275,6 +293,13 @@ function openProjectsCreateDialog(trigger) {
   const submitEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick'));
   const pickEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-pick'));
   const pathEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-path'));
+  // ── 存放设备行（面A）控件引用：pickedDevice = null ⇔ 本机（缺省）。逻辑主体
+  //    （renderDeviceUI/菜单/选中）在 renderPath 定义之后装配（见下方同标注段）。──
+  const devBtn = /** @type {HTMLElement} */ (overlay.querySelector('.dev-btn'));
+  const devNote = /** @type {HTMLElement} */ (overlay.querySelector('.dev-note'));
+  const devMenu = /** @type {HTMLElement} */ (overlay.querySelector('.dev-menu'));
+  const devHint = /** @type {HTMLElement} */ (overlay.querySelector('.dev-hintline'));
+  const wsLabel = /** @type {HTMLElement} */ (overlay.querySelector(`label[for="${PROJECT_CREATE_WS_ID}"]`));
 
   /** Chosen workspace (the single authoritative value; `null` = not chosen). Written
    *  only by the picker — there is no hand-typed input face. */
@@ -294,14 +319,187 @@ function openProjectsCreateDialog(trigger) {
     errorEl.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + esc(msg) + '</span>';
     errorEl.hidden = false;
   };
+  /** 面A A6（远端失败）：错误行升级为「中性正文 + 错误码尾注 + 行内动作链接」。
+   *  动作映射（设计稿 §1.3，机制面四码）：重试恒发（幂等，G.13 重试安全）；
+   *  REMOTE_SCAFFOLD_FAILED → [换一台设备…]（重开设备菜单）；DEVICE_OFFLINE /
+   *  DEVICE_ROUTE_UNAVAILABLE → [换成本机]（回缺省腿重发）；REMOTE_DIR_UNVERIFIED
+   *  → 仅 [重试]（A4 只读浏览器是长期解）。本机失败（device=null）保持既有形态零变化。 */
+  const showErrorResult = (msg, device) => {
+    if (!device) { showError(msg); return; }
+    const m = /\(([A-Z][A-Z0-9_]+)\)\s*$/.exec(msg);
+    const code = m ? m[1] : null;
+    const body = m ? msg.slice(0, m.index).trimEnd() : msg;
+    errorEl.innerHTML = statusIcon('circle-alert', 12, 'st-err');
+    const span = document.createElement('span');
+    span.appendChild(document.createTextNode(body));
+    if (code) {
+      const codeEl = document.createElement('span');
+      codeEl.className = 'err-code';
+      codeEl.textContent = ` (${code})`;
+      span.appendChild(codeEl);
+    }
+    const acts = document.createElement('span');
+    acts.className = 'err-acts';
+    const addAct = (label, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'err-act';
+      b.textContent = label;
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+      acts.appendChild(b);
+    };
+    if (code !== 'DEVICE_ROUTE_UNAVAILABLE') addAct(t('project.createErrRetry'), () => { clearError(); submit(); });
+    if (code === 'REMOTE_SCAFFOLD_FAILED') addAct(t('project.createErrSwitchDevice'), () => { clearError(); openDeviceMenu(); });
+    if (code === 'DEVICE_OFFLINE' || code === 'DEVICE_ROUTE_UNAVAILABLE') {
+      addAct(t('project.createErrSwitchLocal'), () => {
+        clearError();
+        pickedDevice = null;
+        renderDeviceUI();
+        submit();
+      });
+    }
+    if (acts.childNodes.length) span.appendChild(acts);
+    errorEl.appendChild(span);
+    errorEl.hidden = false;
+  };
   const clearError = () => {
     errorEl.hidden = true;
     errorEl.innerHTML = '';
   };
   const renderPath = () => {
-    pathEl.textContent = pickedPath || t('project.createWorkspaceNone');
+    // 面A A3：远端模式路径回显前缀设备 chip（.path-chip，材质 = .project-empty-tag 族）。
+    if (pickedDevice) {
+      pathEl.innerHTML =
+        `<span class="path-chip">${DEV_ICON_REMOTE}${esc(pickedDevice.name)}</span>`;
+      pathEl.appendChild(document.createTextNode(pickedPath || t('project.createWorkspaceNone')));
+    } else {
+      pathEl.textContent = pickedPath || t('project.createWorkspaceNone');
+    }
     pathEl.dataset.picked = pickedPath ? '1' : '0';
   };
+
+  // ── 存放设备行（面A · ui-device-faces 批 2026-10-10）逻辑装配 ────────────────
+  // pickedDevice = null ⇔ 本机（缺省，提交帧零 device 键 = 机制面缺省腿逐字节）；
+  // {id, name} ⇔ 远端（提交帧 additive device=<deviceId>；路径选择改走应用内浏览器
+  // 的 device 腿——原生对话框只能看本机盘）。本段落在 renderPath 之后（TDZ 安全）。
+  /** @type {null | {id: string, name: string}} */
+  let pickedDevice = null;
+  let deviceMenuOpen = false;
+  /** 设备图标（设计稿 A1/A3 两形：本机 = monitor、远端 = hard-drive + sapphire 着色）。 */
+  const DEV_ICON_SELF =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>';
+  const DEV_ICON_REMOTE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>';
+  const DEV_ICON_INFO =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>';
+  const DEV_ICON_CHECK =
+    '<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+  /** 设备行总渲染（btn 形 / label 变体 / pick 钮变体 / 语义提示行 / 路径回显）。 */
+  const renderDeviceUI = () => {
+    const remote = !!pickedDevice;
+    devBtn.classList.toggle('is-remote', remote);
+    const ic = devBtn.querySelector('.dev-ic');
+    if (ic) ic.innerHTML = remote ? DEV_ICON_REMOTE : DEV_ICON_SELF;
+    const nm = devBtn.querySelector('.dev-nm');
+    if (nm) nm.textContent = remote ? pickedDevice.name : t('project.deviceSelf');
+    devBtn.setAttribute('aria-expanded', String(deviceMenuOpen));
+    devNote.hidden = remote || deviceMenuOpen;
+    devNote.textContent = t('project.deviceNoteSelf');
+    wsLabel.textContent = remote
+      ? t('project.createWorkspaceLabelRemote', { device: pickedDevice.name })
+      : t('project.createWorkspaceLabel');
+    pickEl.textContent = remote
+      ? t('project.createWorkspacePickRemote', { device: pickedDevice.name })
+      : t('project.createWorkspacePick');
+    devHint.hidden = !remote;
+    if (remote) {
+      devHint.innerHTML = DEV_ICON_INFO;
+      devHint.appendChild(document.createTextNode(t('project.createDeviceHintline', { device: pickedDevice.name })));
+    } else {
+      devHint.innerHTML = '';
+    }
+    renderPath();
+  };
+
+  /** 选中一台设备。🔴 路径是设备定语：换设备 = 清空已选路径（旧路径属于另一台
+   *  机器的盘，不跨设备复用——回显随之复位，由 renderDeviceUI → renderPath 承担）。 */
+  const selectDevice = (row) => {
+    pickedDevice = row && !row.self ? { id: row.id, name: row.name } : null;
+    pickedPath = null;
+    closeDeviceMenu();
+    renderDeviceUI();
+  };
+
+  const closeDeviceMenu = () => {
+    if (!deviceMenuOpen) return;
+    deviceMenuOpen = false;
+    devMenu.hidden = true;
+    devMenu.innerHTML = '';
+    renderDeviceUI();
+  };
+
+  /** 设备菜单（设计稿 A2）：self 恒在首项 + peers（/api/neblink/status）。行语言 =
+   *  .header-dropdown-menu 既有件（圆点行 + 选中勾）。在线绿点（--color-primary）；
+   *  离线行禁选（灰点 + 「离线」tag + 减淡，disabled 钮）——不给"点了必失败"的按钮；
+   *  竞态兜底 = 后端 DEVICE_OFFLINE fail-closed。 */
+  const openDeviceMenu = () => {
+    deviceMenuOpen = true;
+    devMenu.hidden = false;
+    renderDeviceUI();
+    import('./deviceRoster.js')
+      .then(({ getDeviceRoster }) => getDeviceRoster())
+      .then((roster) => {
+        if (!deviceMenuOpen) return;
+        devMenu.innerHTML = '';
+        const rows = [
+          // self 行显示名恒为本地化「本机（这台 Mac）」（花名册的自身设备名在此是
+          // 噪声——菜单语境 = 「把项目放哪」，首项永远指当前这台机器）。
+          { self: true, id: roster.self?.id || 'self', name: t('project.deviceSelf'), online: true, direct: true },
+          ...roster.peers.map((p) => ({ self: false, id: p.id, name: p.name, online: p.online, direct: p.direct })),
+        ];
+        const currentId = pickedDevice?.id || null;
+        for (const row of rows) {
+          const selected = row.self ? !currentId : currentId === row.id;
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'dev-item' + (selected ? ' active' : '') + (row.online ? '' : ' disabled');
+          if (!row.online) item.disabled = true;
+          item.innerHTML =
+            `<span class="dot${row.online ? '' : ' off'}"></span>` +
+            `<span class="nm">${esc(row.name)}</span>` +
+            `<span class="sub">${row.self ? 'self' : (row.direct ? 'direct' : 'relay')}</span>`;
+          if (selected) item.innerHTML += DEV_ICON_CHECK;
+          else if (!row.online) item.innerHTML += `<span class="off-tag">${esc(t('project.deviceOfflineTag'))}</span>`;
+          if (row.online) item.addEventListener('click', (e) => { e.stopPropagation(); selectDevice(row); });
+          devMenu.appendChild(item);
+        }
+        const foot = document.createElement('div');
+        foot.className = 'dev-menu-foot';
+        foot.textContent = t('project.deviceMenuFoot');
+        devMenu.appendChild(foot);
+      })
+      .catch(() => {
+        // 花名册不可得 = 回落本机单选（现状形态），不弹错误（可继续本机创建）。
+        if (!deviceMenuOpen) return;
+        devMenu.innerHTML = '';
+        selectDevice(null);
+      });
+  };
+
+  devBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (deviceMenuOpen) closeDeviceMenu();
+    else openDeviceMenu();
+  });
+  // 点面板其它区域收菜单（弹层自身保持打开；与 Esc 关层路径互不影响）。
+  const devOutsideClose = (e) => {
+    if (!deviceMenuOpen) return;
+    const tgt = /** @type {Element | null} */ (e.target);
+    if (tgt && (tgt.closest('.dev-menu') || tgt.closest('.dev-btn'))) return;
+    closeDeviceMenu();
+  };
+  document.addEventListener('pointerdown', devOutsideClose, true);
 
   // ── Path picker (D4): REUSE the existing in-app folder browser, no second impl ──
   // The call pattern follows `chat.js`'s dirPicker branch verbatim (dynamic import →
@@ -325,16 +523,34 @@ function openProjectsCreateDialog(trigger) {
       .then(({ openPicker }) => {
         const anchor = document.activeElement;
         overlay.remove(); // detach for now; the element reference (and its listeners/state) is kept
-        openPicker({
-          startPath: pickedPath || '~',
-          onPick: (p) => {
-            pickedPath = p;
-            renderPath();
-            clearError();
-            reattach();
-          },
-          onCancel: () => reattach(),
-        });
+        // 面A A4：远端设备选中 ⇒ 路径选择自动切应用内浏览器的 device 腿（原生对话框
+        // 只能看本机盘）。device 模式 = 只读远端浏览（无 mkdir/手打路径，G.13 目录须
+        // 已存在）；本机照旧同一选择器（缺省腿，零 device 键）。
+        if (pickedDevice) {
+          openPicker({
+            device: pickedDevice.id,
+            deviceName: pickedDevice.name,
+            startPath: pickedPath || '/',
+            onPick: (p) => {
+              pickedPath = p;
+              renderPath();
+              clearError();
+              reattach();
+            },
+            onCancel: () => reattach(),
+          });
+        } else {
+          openPicker({
+            startPath: pickedPath || '~',
+            onPick: (p) => {
+              pickedPath = p;
+              renderPath();
+              clearError();
+              reattach();
+            },
+            onCancel: () => reattach(),
+          });
+        }
         function reattach() {
           document.body.appendChild(overlay);
           const back = /** @type {HTMLElement | null} */ (
@@ -357,9 +573,31 @@ function openProjectsCreateDialog(trigger) {
     if (n > PROJECT_CREATE_MAX) { showError(t('project.createDescTooLong')); return; } // (3) cap 500
     if (!pickedPath) { showError(t('project.createWorkspaceRequired')); return; } // D4 path required
     clearError();
+    const device = pickedDevice; // 提交时刻的设备语义（finish 回调沿用同一读数）
     submitEl.setAttribute('disabled', 'disabled');
     const hint = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-hint'));
-    hint.textContent = t('project.createPending');
+    if (device) {
+      // 面A A5：远端创建中 = spinner + 四步静态说明 chips。🔴 诚实边界：后端目前是
+      // 单帧终态（projectCreateResult），无逐步事件——chips 是静态说明不是实时进度
+      // （真步进 = 二期 projectCreateProgress 广播，本批不新增后端面）。设备/路径
+      // 控件随提交一并禁用（防中途改语义）。
+      devBtn.setAttribute('disabled', 'disabled');
+      pickEl.setAttribute('disabled', 'disabled');
+      hint.innerHTML =
+        '<span class="creating-row">' +
+          '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>' +
+          '<span class="creating-txt"></span>' +
+          '<span class="step"><span class="step-n">1</span><span class="step-t"></span></span><span class="step-sep">→</span>' +
+          '<span class="step"><span class="step-n">2</span><span class="step-t"></span></span><span class="step-sep">→</span>' +
+          '<span class="step"><span class="step-n">3</span><span class="step-t"></span></span><span class="step-sep">→</span>' +
+          '<span class="step"><span class="step-n">4</span><span class="step-t"></span></span>' +
+        '</span>';
+      hint.querySelector('.creating-txt').textContent = t('project.createRemotePending', { device: device.name });
+      const stepNames = [t('project.createStep1'), t('project.createStep2'), t('project.createStep3'), t('project.createStep4')];
+      hint.querySelectorAll('.step-t').forEach((el, i) => { el.textContent = stepNames[i] || ''; });
+    } else {
+      hint.textContent = t('project.createPending');
+    }
     let settled = false;
     const finish = (msg) => {
       if (settled) return;
@@ -374,18 +612,23 @@ function openProjectsCreateDialog(trigger) {
       } else {
         // Failure is surfaced in place: the layer stays open and the entered
         // values are kept, so the user can fix and retry (never a silent swallow).
-        showError(String(msg?.error || t('project.createFailGeneric')));
+        showErrorResult(String(msg?.error || t('project.createFailGeneric')), device);
         hint.textContent = '';
         submitEl.removeAttribute('disabled');
+        devBtn.removeAttribute('disabled');
+        pickEl.removeAttribute('disabled');
       }
     };
     const unsub = onMessage('projectCreateResult', finish);
     const timer = setTimeout(() => finish(null), PROJECT_CREATE_ACK_TIMEOUT_MS);
+    // 面A A6（设计稿 §1.2）：本机提交**不带 device 键**（机制面缺省腿逐字节）；
+    // 远端提交 additive `device` = 设备 id（稳定标识，非显示名）。
     sendWs({
       type: 'projectCreate',
       sessionId: state.activeSessionId,
       workspace: pickedPath,
       description: raw,
+      ...(device ? { device: device.id } : {}),
     });
   };
 
@@ -412,7 +655,8 @@ function openProjectsCreateDialog(trigger) {
   };
   window.addEventListener('keydown', escHandler, true);
 
-  createDialogCtx = { overlay, escHandler, trigger };
+  // devOutsideClose（面A）：层关闭时随层摘除（见 closeProjectsCreateDialog）。
+  createDialogCtx = { overlay, escHandler, trigger, devOutsideClose };
   renderCount();
   renderPath();
   descEl.focus(); // 打开即聚焦描述文本域
@@ -503,6 +747,8 @@ async function renderProjectsInto(scroll) {
   scroll.dataset.projectsState = 'ready';
   // 名单差集 → 按名定点增删（🔴 不再全量 innerHTML 替换：那会吃掉动画，也换掉全部卡节点）。
   reconcileProjectCards(scroll, projects);
+  // 面C：徽标显示名/离线态走花名册异步补写（reconcile 定点建卡后扫一遍）。
+  applyDevBadges(scroll);
   // 摘要**渐进填充**（取证 §F-1 结构性发现）：不再 `Promise.all` 等全部 flow-map 到齐
   // 才写第一笔 DOM——先按名单画全卡（名称/工作区即刻可见），摘要槽走骨架脉冲，
   // 逐项目到齐后就地填入。单项目 flow-map 慢/悬挂只影响它自己的槽（旧实现会把整列
@@ -668,23 +914,80 @@ function renderEmptyState(scroll) {
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(scroll));
 }
 
+// ── 面C · 项目卡设备徽标（ui-device-faces 批 2026-10-10 · 设计稿 §3）────────────
+// 本机项目零徽标（无感缺省——存量行逐字节不变）；远端项目 title 旁一枚 `.dev-badge`：
+// hard-drive 图形 + 设备显示名（花名册异步补写，失败回落 deviceId 直显）；离线设备
+// 追加琥珀点（`.warn-dot`，色 = 既有 --status-warn-icon token）+ `is-offline` 形。
+// 徽标是**只读元数据**显示面：不可点、无行为（入口仍是既有「在文件浏览器中打开」钮，
+// 面C 的行为补全 = 该钮 additive `data-open-device`，见 bindProjectCard）。
+
+/** 行.origin → {device, path} | null（畸形/缺失 = null；设备 id 必须非空字符串）。 */
+function projectOriginOf(row) {
+  const o = row?.origin;
+  if (!o || typeof o !== 'object') return null;
+  const device = typeof o.device === 'string' ? o.device.trim() : '';
+  const path = typeof o.path === 'string' ? o.path : '';
+  return device ? { device, path } : null;
+}
+
+/** hard-drive 图形（与 explorer.js 的 chip 同源描边；此处内联一份避免静态依赖）。 */
+const DEV_BADGE_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>';
+
+/** 徽标 markup（title = device id + origin path 元数据，测试断言 title 含 id）。 */
+function devBadgeHtml(origin) {
+  if (!origin) return '';
+  return `<span class="dev-badge" data-device-id="${esc(origin.device)}" data-origin-path="${esc(origin.path)}">${DEV_BADGE_SVG}<span class="dev-badge-nm">${esc(origin.device)}</span></span>`;
+}
+
+/** 花名册补写（动态 import deviceRoster.js——与 explorer chip 同款异步补名 + 离线态）。
+ *  扫描 scroll 内全部 `.dev-badge`，就绪后定点写显示名 / 琥珀点 / title。 */
+function applyDevBadges(scroll) {
+  if (!scroll) return;
+  import('./deviceRoster.js').then(async ({ resolveDeviceName, isDeviceOnline }) => {
+    const badges = [...scroll.querySelectorAll('.dev-badge[data-device-id]')];
+    await Promise.all(badges.map(async (badge) => {
+      const id = badge.getAttribute('data-device-id') || '';
+      if (!id) return;
+      const [name, online] = await Promise.all([resolveDeviceName(id), isDeviceOnline(id)]);
+      if (!badge.isConnected) return;
+      const nm = badge.querySelector('.dev-badge-nm');
+      if (nm && name) nm.textContent = name;
+      badge.title = t(online === false ? 'project.devBadgeOfflineTitle' : 'project.devBadgeTitle', { device: id, path: badge.getAttribute('data-origin-path') || '' });
+      badge.classList.toggle('is-offline', online === false);
+      const dotNeeded = online === false && !badge.querySelector('.warn-dot');
+      if (dotNeeded) {
+        const dot = document.createElement('span');
+        dot.className = 'warn-dot';
+        badge.prepend(dot);
+      }
+      if (online !== false) badge.querySelector('.warn-dot')?.remove();
+    }));
+  }).catch(() => {}); // 花名册不可用 = 退化为 deviceId 直显（不缓存失败，见 deviceRoster）
+}
+
 /** 单卡模板。摘要槽**初始为骨架态**（渐进填充），title 初始按「摘要未知」处理（可点）；
- *  真实态由 applyCardSummary / applyCardEmptyState 定点写入（不重建节点）。 */
+ *  真实态由 applyCardSummary / applyCardEmptyState 定点写入（不重建节点）。
+ *  面C：origin 在场 ⇒ title 旁插 `.dev-badge`；工作区行 open 钮 additive
+ *  `data-open-device`（bindProjectCard 据此把远端根交给 explorer 的 device 腿）。 */
 function projectCardHtml(p) {
   const name = p.name;
+  const origin = projectOriginOf(p);
+  const badge = devBadgeHtml(origin);
   return `
     <div class="team-card project-card" data-project="${esc(name)}" data-running="0">
       <div class="team-card-header">
         <!-- 入口键（project 域 Flow Map 提示键）已随晨裁②退役照荐落（§3.3 在案）：卡标题
              不再挂「打开 Flow Map」提示（点击改指行为保留——delegate-chain 链视图，#1228 两裁②）。 -->
-        <div class="team-card-title" data-open-flowmap="${esc(name)}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span><span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
+        <div class="team-card-title" data-open-flowmap="${esc(name)}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
       </div>
       <div class="project-fields">
         <div class="project-field" title="${esc(p.workspace)}">
           <span class="project-field-label">${esc(t('project.workspace'))}</span>
           <span class="project-field-value mono">${esc(p.workspace)}</span>
-          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}" title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
+          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${origin ? ` data-open-device="${esc(origin.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
         </div>
         <div class="project-field">
           <span class="project-field-label">${esc(t('project.agentFileLabel'))}</span>
@@ -820,10 +1123,14 @@ function bindProjectCard(card) {
     // 动态 import：projectTab 是 Canvas 标签页模块，静态依赖 explorer 会把
     // 文件树拉进项目面板的首屏加载路径（且 explorer → activityBar → ... 更容易
     // 绕出循环依赖）。
+    // 面C（ui-device-faces）：卡带 `data-open-device` = 远端项目 ⇒ 第二参把 origin
+    // 设备交给 openExplorerAt（explorer 整树同源该设备，listDir/readFile additive
+    // device 键）；本机卡零属性 ⇒ 单参调用，存量语义逐字节。
     const path = e.currentTarget?.getAttribute('data-open-workspace') || '';
     if (!path) return;
+    const dev = e.currentTarget?.getAttribute('data-open-device') || '';
     import('./explorer.js').then(({ openExplorerAt }) => {
-      openExplorerAt(path);
+      openExplorerAt(path, dev || undefined);
       window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
     }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
   });
@@ -951,7 +1258,10 @@ function projectsListScroll() {
 
 /** 事件行 → 卡片行（§D-2 `row` 与 GET /api/projects 行同构，五字段）。
  *  缺 row 时按 `project` 名兜底：仅名字可用也先立卡（摘要槽随后定点填充），
- *  避免「事件到了却因为字段缺失不立卡」这种静默丢帧。 */
+ *  避免「事件到了却因为字段缺失不立卡」这种静默丢帧。
+ *  面C（ui-device-faces 批 2026-10-10）：additive `origin` = {device,path}——远端项目
+ *  的创建落点（后端两出口 additive 补齐：GET /api/projects 行 + projectCreated 帧 row）。
+ *  缺失/畸形 ⇒ null（= 本机项目，零徽标，存量行逐字节）。 */
 function normalizeProjectRow(msg) {
   const name = msg?.project ?? msg?.row?.name;
   if (!name || typeof name !== 'string') return null;
@@ -960,6 +1270,7 @@ function normalizeProjectRow(msg) {
     name,
     workspace: typeof row.workspace === 'string' ? row.workspace : '',
     description: typeof row.description === 'string' ? row.description : '',
+    origin: projectOriginOf(row),
   };
 }
 
@@ -973,6 +1284,10 @@ function onProjectCreatedFrame(msg) {
   if (state === 'empty') { clearPlaceholders(scroll); scroll.dataset.projectsState = 'ready'; }
   insertProjectCard(scroll, row, stableCards(scroll).slice(-1)[0] || null); // 末尾插入（§F-1）
   scroll.dataset.projectCount = String(stableCards(scroll).length);
+  // 摘要渐进填充（与 renderProjectsInto 的 listed 卡同机制）：插卡 = 骨架态起步，
+  // flow-map 到齐后就地写入（未挂载/空闲/运行数）。事件插入卡此前只停在骨架。
+  loadCardSummary(scroll, row.name);
+  applyDevBadges(scroll); // 面C：插卡徽标走花名册异步补名（row.origin 带 device id）
   announceProjects(scroll, t('project.createdAnnounce', { name: row.name }));
 }
 

@@ -91,6 +91,27 @@ export default {
   // semantics as the existing empty-state CTA — filling the value + focusing is the
   // feedback; the key stays reserved for a later enablement). No call site by design.
   'project.createPrefilled': 'Description placed in the input — press send to create.',
+  // === ui-device-faces batch (2026-10-10): face A — "store on device" + face C — project-card device badge ===
+  // Copy aligned with the design doc (/tmp/nebflow-coldstart/general/proto-device-agnostic/
+  // 20261010_002900_neblink-stage1-ui-faces-design.md §1/§3).
+  'project.deviceLabel': 'Store on device',
+  'project.deviceSelf': 'This Mac',
+  'project.deviceNoteSelf': 'The project will be stored on this Mac.',
+  'project.deviceOfflineTag': 'Offline',
+  'project.deviceMenuFoot': 'Devices come from the NebLink network (peers); offline devices are not selectable and appear automatically once online.',
+  'project.createDeviceHintline': 'The project will be stored on {device} and created by that device; this Mac only records a pointer — files are fetched on demand.',
+  'project.createWorkspaceLabelRemote': 'Workspace path (on {device})',
+  'project.createWorkspacePickRemote': 'Choose a path on {device}…',
+  'project.createRemotePending': 'Creating on {device} (a few seconds)',
+  'project.createStep1': 'Verify device',
+  'project.createStep2': 'Verify directory',
+  'project.createStep3': 'Write scaffold',
+  'project.createStep4': 'Register project',
+  'project.createErrRetry': 'Retry',
+  'project.createErrSwitchLocal': 'Use this Mac',
+  'project.createErrSwitchDevice': 'Switch device…',
+  'project.devBadgeTitle': 'Remote project · device {device} · path {path}',
+  'project.devBadgeOfflineTitle': 'Remote project · device {device} (offline) · path {path}',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
@@ -1635,6 +1656,13 @@ export default {
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
   'neblink.cleanupRelogin': 'Clean up and sign in again',
   'neblink.statusDegraded': 'Status read failed (HTTP {status}) — what you see below may be stale',
+  // Pairing-code card (portal MVP E7, 2026-10-10): 6-digit code → POST /api/neblink/enroll.
+  'neblink.pairCodeHint': 'Have a 6-digit pairing code from the portal? Enter it to link this device.',
+  'neblink.pairCodePlaceholder': '6-digit code',
+  'neblink.pairCodeSubmit': 'Link device',
+  'neblink.pairCodeSubmitting': 'Linking…',
+  'neblink.pairCodeInvalid': 'Enter the 6-digit code',
+  'neblink.pairCodeSuccess': 'Device linked',
   // Kicked-offline passive notice (kickold batch, case B, 2026-09-14): STATUS-LINE
   // level only — no banner, no sound (一期口径, User.md:36).
   'neblink.signedOutElsewhere': 'Signed in elsewhere',
@@ -2005,6 +2033,13 @@ export default {
   'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node_report discipline).',
   'explorer.newFile': 'New File',
   'explorer.newFolder': 'New Folder',
+  // === ui-device-faces batch (2026-10-10): face B — remote directories in the file browser ===
+  'explorer.loadingRemote': 'Loading directories on {device}…',
+  'explorer.retry': 'Retry',
+  'explorer.pickupLoading': 'Fetching…',
+  'explorer.pickupFailed': 'Fetch failed',
+  'explorer.pickupClose': 'Close',
+  'explorer.remoteReadonly': 'Remote directories are read-only; write actions are unavailable.',
   'daemons.delete': 'Delete',
   // === Workspace picker card + in-app directory browser (workspace-picker batch) ===
   'workspacePicker.pickTitle': 'Pick Workspace',
@@ -2036,6 +2071,9 @@ export default {
   'workspacePicker.hint.empty': 'Type a path to jump there, or go up one level',
   'workspacePicker.hint.noMatch': 'Clear the search box to restore all; or type a path to jump',
   'workspacePicker.error.invalid': 'Invalid path',
+  // === ui-device-faces batch (2026-10-10): picker device mode (remote leg, read-only) ===
+  'workspacePicker.deviceTitle': 'Choose a directory on {device}',
+  'workspacePicker.deviceNote': 'Remote directories are read-only — the directory must already exist (missing items are reported, never created).',
 
   // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令

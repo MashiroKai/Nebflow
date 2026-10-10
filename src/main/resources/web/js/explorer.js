@@ -35,25 +35,83 @@ injectSelectionHostFns({ getTargetDir, deleteSelected });
  *  Persisted to localStorage so it survives restarts. */
 let explorerRoot = null;
 const EXPLORER_ROOT_KEY = key('explorer_root');
+/**
+ * Explorer root ORIGIN device (ui-device-faces 批 2026-10-10 · 设计稿 §2.1)：远端项目
+ * 「在文件浏览器中打开」以 {path, device} 建根——整棵树同源一设备，所有 listDir /
+ * readFile 都 additive 携带 `device` 键（后端远端腿）；本机根 = null，**零键**（self
+ * 守卫：后端对解析为本机的 device 显式回错）。localStorage 伴生键 additive；旧值
+ * 缺 device = 本机，存量零迁移。
+ */
+let explorerRootDevice = null;
+const EXPLORER_ROOT_DEVICE_KEY = key('explorer_root_device');
 
 function loadPersistedRoot() {
   try {
     const saved = localStorage.getItem(EXPLORER_ROOT_KEY);
-    return saved || null;
+    if (!saved) return null;
+    // 伴生 device 键只在 root 在场时有效（悬挂 device = 视为本机根）。
+    explorerRootDevice = localStorage.getItem(EXPLORER_ROOT_DEVICE_KEY) || null;
+    return saved;
   } catch (_) { return null; }
 }
 
-function persistRoot(path) {
+function persistRoot(path, device = null) {
   explorerRoot = path;
+  explorerRootDevice = path ? (device || null) : null;
   try {
     if (path) localStorage.setItem(EXPLORER_ROOT_KEY, path);
     else localStorage.removeItem(EXPLORER_ROOT_KEY);
+    if (explorerRootDevice) localStorage.setItem(EXPLORER_ROOT_DEVICE_KEY, explorerRootDevice);
+    else localStorage.removeItem(EXPLORER_ROOT_DEVICE_KEY);
   } catch (_) {}
   updateExplorerTitle();
 }
 
+/** hard-drive icon（lucide 同源描边；芯片/徽标两处共用一串 SVG）。 */
+const DEVICE_HD_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>';
+
+/** 头部设备徽标 chip（`.explorer-title` 旁常显；子行零徽标——整树同源）。 */
+function renderExplorerDeviceChip() {
+  const header = document.querySelector('.explorer-header');
+  if (!header) return;
+  let chip = /** @type {HTMLElement | null} */ (header.querySelector('.dev-chip'));
+  if (!explorerRootDevice) {
+    chip?.remove();
+    return;
+  }
+  if (!chip) {
+    chip = document.createElement('span');
+    chip.className = 'dev-chip';
+    const titleEl = header.querySelector('.explorer-title');
+    if (titleEl) titleEl.after(chip);
+    else header.appendChild(chip);
+  }
+  chip.innerHTML = DEVICE_HD_SVG;
+  chip.appendChild(document.createTextNode(explorerRootDevice));
+  chip.title = explorerRootDevice;
+  chip.classList.remove('is-offline');
+  // 显示名 + 离线态异步补写（花名册 60s 内存缓存；失败回落 deviceId 直显）。
+  import('./deviceRoster.js').then(async ({ resolveDeviceName, isDeviceOnline }) => {
+    if (!explorerRootDevice) return;
+    const [name, online] = await Promise.all([resolveDeviceName(explorerRootDevice), isDeviceOnline(explorerRootDevice)]);
+    if (!explorerRootDevice || !chip.isConnected) return;
+    chip.textContent = '';
+    chip.innerHTML = DEVICE_HD_SVG;
+    chip.appendChild(document.createTextNode(name));
+    chip.title = explorerRootDevice;
+    if (online === false) {
+      chip.classList.add('is-offline');
+      const dot = document.createElement('span');
+      dot.className = 'warn-dot';
+      chip.prepend(dot);
+    }
+  }).catch(() => {});
+}
+
 function updateExplorerTitle() {
-  const titleEl = document.querySelector('.explorer-title');
+  const titleEl = /** @type {HTMLElement | null} */ (document.querySelector('.explorer-title'));
   if (!titleEl) return;
   if (explorerRoot) {
     const name = explorerRoot.split('/').pop() || explorerRoot;
@@ -62,6 +120,13 @@ function updateExplorerTitle() {
   } else {
     titleEl.textContent = t('panel.explorer');
     titleEl.title = '';
+  }
+  renderExplorerDeviceChip();
+  // 远端根 = 只读视图（本批只开列目录 + 单文件取件两条腿）：写入口整排摘除。
+  const remote = !!explorerRootDevice;
+  for (const id of ['explorer-new-file-btn', 'explorer-new-folder-btn']) {
+    const btn = document.getElementById(id);
+    if (btn) btn.hidden = remote;
   }
 }
 
@@ -171,6 +236,7 @@ function bindTreeDragMove(tree) {
     const src = dragMoveSrc;
     setDropTarget(null);
     if (dir === null || !isValidDropTarget(src.path, dir)) return;
+    if (refuseRemoteWrite()) return;
     e.preventDefault();
     e.stopPropagation();
     sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
@@ -425,6 +491,7 @@ function confirmImportConflict(name) {
  *  Sequential per top item; same-name items prompt Replace / Keep Both /
  *  Cancel. Refreshes + expands the target dir when done. */
 async function importExternalDrop(dataTransfer, targetDir) {
+  if (refuseRemoteWrite()) return;
   let tops;
   try { tops = collectTopDropItems(dataTransfer); }
   catch (e) { window.__showToast?.(String(e?.message || e), 'error'); return; }
@@ -666,21 +733,138 @@ function loadDir(path, container, depth) {
   if (loadingDirs.has(path)) return;
   loadingDirs.add(path);
 
-  // Loading indicator
+  // Loading indicator. 远端根（面B B2）：「正在从 <设备> 读取…」+ sapphire spinner
+  // （既有 loading 行语言；spinner 在减动效下停转——见 split.css 降级块）。
   const loading = document.createElement('div');
   loading.className = 'explorer-loading';
-  loading.textContent = t('explorer.loading');
+  if (explorerRootDevice) {
+    loading.classList.add('is-remote');
+    loading.innerHTML = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+    loading.appendChild(document.createTextNode(t('explorer.loadingRemote', { device: explorerRootDevice })));
+    // 显示名补写（R-B1「加载行报设备名」）：先以 deviceId 立行（同步、零依赖），
+    // 花名册就绪后就地换文本——行已被应答摘除时零操作（isConnected 守卫）。
+    import('./deviceRoster.js')
+      .then(({ resolveDeviceName }) => resolveDeviceName(explorerRootDevice))
+      .then((name) => {
+        if (!name || !loading.isConnected || !explorerRootDevice) return;
+        if (loading.lastChild && loading.lastChild.nodeType === Node.TEXT_NODE) {
+          loading.replaceChild(
+            document.createTextNode(t('explorer.loadingRemote', { device: name })),
+            loading.lastChild
+          );
+        }
+      })
+      .catch(() => {});
+  } else {
+    loading.textContent = t('explorer.loading');
+  }
   container.appendChild(loading);
 
   // Store container reference for the WS response handler
   const reqId = path || '__root__';
   pendingLoads.set(reqId, { container, depth, path });
 
-  sendWs({ type: 'listDir', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+  // 🔴 self 守卫（设计稿 §2.1）：本机根**不发** device 键（后端对解析为本机的
+  // device 回显错误帧）；只有 remote 根的 listDir 才携带。
+  sendWs({
+    type: 'listDir', sessionId: state.activeSessionId, path, rootPath: explorerRoot,
+    ...(explorerRootDevice ? { device: explorerRootDevice } : {}),
+  });
 }
 
 // Map: reqId → { container, depth, path }
 const pendingLoads = new Map();
+
+/** Row pickup states (面B B4/B5 · ui-device-faces 批): path → true while a remote
+ *  single-file fetch is in flight. The row DOM carries `data-pickup`; the map only
+ *  gates re-entry (a second click on a fetching row must not double-send). */
+const pendingPickups = new Set();
+
+/** 行内取件态三切（loading / failed / 清除）。图标换 spinner、行减淡、行尾标签。 */
+function setPickupState(path, state) {
+  const row = /** @type {HTMLElement | null} */ (document.querySelector(`.explorer-item.explorer-file[data-path="${CSS.escape(path)}"]`));
+  if (!row) return;
+  row.querySelector('.pickup-tag')?.remove();
+  row.querySelector('.fail-ic')?.remove();
+  // 行内图标 = `.explorer-icon`（buildFileNode 的图标 span；曾误写 `.ic` —— 该类
+  // 不在行内任何元素上，spinner 挂载/清理会双双静默 no-op）。
+  row.querySelector('.explorer-icon .spin')?.remove();
+  if (state) {
+    row.dataset.pickup = state;
+  } else {
+    delete row.dataset.pickup;
+    return;
+  }
+  if (state === 'loading') {
+    const icon = row.querySelector('.explorer-icon');
+    if (icon) {
+      const spin = document.createElement('span');
+      spin.innerHTML = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+      icon.prepend(spin.firstChild);
+    }
+    const tag = document.createElement('span');
+    tag.className = 'pickup-tag';
+    tag.textContent = t('explorer.pickupLoading');
+    row.appendChild(tag);
+  } else if (state === 'failed') {
+    const fail = document.createElement('span');
+    fail.className = 'fail-ic';
+    fail.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+    row.appendChild(fail);
+  }
+}
+
+/** 取件失败玻璃浮条（.explorer-selection-bar 同材质族；设计稿 B5）。单例：新失败
+ *  覆盖旧条。[重试] = 重发该文件 readFile；[关闭] = 摘条 + 行复原。 */
+function showPickupFailureBar(path, error) {
+  hidePickupFailureBar();
+  const section = document.getElementById('explorer-section');
+  if (!section) return;
+  const bar = document.createElement('div');
+  bar.className = 'explorer-pickup-bar';
+  const icon = document.createElement('span');
+  icon.className = 'bar-ic';
+  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+  const txt = document.createElement('span');
+  txt.className = 'bar-msg';
+  txt.textContent = error || t('explorer.pickupFailed');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'bar-act';
+  retry.setAttribute('data-pickup-retry', '1');
+  retry.textContent = t('explorer.retry');
+  retry.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hidePickupFailureBar();
+    rowFailState(path, true);
+    openFile(path, path.split('/').pop() || path);
+  });
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'bar-act';
+  close.setAttribute('data-pickup-close', '1');
+  close.textContent = t('explorer.pickupClose');
+  close.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hidePickupFailureBar();
+    rowFailState(path, true);
+  });
+  bar.append(icon, txt, retry, close);
+  section.appendChild(bar);
+}
+
+function hidePickupFailureBar() {
+  document.querySelector('.explorer-pickup-bar')?.remove();
+}
+
+/** 失败行复原（[关闭]/[重试] 共用）：摘失败叹号 + 摘 data-pickup。 */
+function rowFailState(path, clear) {
+  const row = /** @type {HTMLElement | null} */ (document.querySelector(`.explorer-item.explorer-file[data-path="${CSS.escape(path)}"]`));
+  if (row) {
+    row.querySelector('.fail-ic')?.remove();
+    if (clear) delete row.dataset.pickup;
+  }
+}
 
 function openFile(path, fileName, pinned = false) {
   // Update currentDir to the file's parent so "New File" creates in the same folder
@@ -692,9 +876,19 @@ function openFile(path, fileName, pinned = false) {
       setActiveTab(tabId);
       return;
     }
+    // 面B B4：远端根 = 单文件按需取件（direction=get scope=browse），行内 loading 态。
+    // 🔴 同目录其余行不受影响；本机根零态零键（存量逐字节）。
+    const remote = !!explorerRootDevice;
+    if (remote && !pendingPickups.has(path)) {
+      pendingPickups.add(path);
+      setPickupState(path, 'loading');
+    }
     // Request file content — response arrives as 'fileContent' WS message,
     // which triggers 'workspace-open-item' event that canvas.js listens for.
-    sendWs({ type: 'readFile', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+    sendWs({
+      type: 'readFile', sessionId: state.activeSessionId, path, rootPath: explorerRoot,
+      ...(remote ? { device: explorerRootDevice } : {}),
+    });
     // Store pinned flag for the fileContent handler
     pendingPinned.set(path, pinned);
   });
@@ -733,10 +927,39 @@ onMessage('dirListing', (msg) => {
   if (!pending) return;
 
   if (msg.error) {
-    pending.container.innerHTML = `<div class="explorer-error">${msg.error}</div>`;
+    // 面B B3（ui-device-faces 批）：远端目录失败 = **显式错误行 + 重试链**，且已列
+    // 元数据行保留（最后已知清单，不假装不存在）。本机腿维持现状（整容器错误行）。
+    if (!explorerRootDevice) {
+      pending.container.innerHTML = `<div class="explorer-error">${msg.error}</div>`;
+      return;
+    }
+    pending.container.querySelector('.explorer-loading')?.remove();
+    // 头部 chip 琥珀点（--status-warn-icon 载体；设备离线的可感知位）。
+    document.querySelector('.explorer-header .dev-chip')?.classList.add('is-offline');
+    const errRow = document.createElement('div');
+    errRow.className = 'explorer-error';
+    errRow.innerHTML =
+      '<svg class="st-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+    const txt = document.createElement('span');
+    txt.textContent = msg.error || '';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'retry';
+    retry.textContent = t('explorer.retry');
+    retry.addEventListener('click', (e) => {
+      e.stopPropagation();
+      errRow.remove();
+      loadingDirs.delete(msg.path || '');
+      loadDir(pending.path, pending.container, pending.depth);
+    });
+    txt.appendChild(retry);
+    errRow.appendChild(txt);
+    pending.container.prepend(errRow);
     return;
   }
 
+  // 成功腿：摘离线琥珀点（设备回来 = chip 回常态）。
+  document.querySelector('.explorer-header .dev-chip')?.classList.remove('is-offline');
   pending.container.innerHTML = '';
   const entries = msg.entries || [];
   const depth = pending.depth + 1;
@@ -813,6 +1036,15 @@ onMessage('fileContent', (msg) => {
     return;
   }
   if (msg.error) {
+    // 面B B5（ui-device-faces 批）：远端单文件取件失败 —— 失败**绝不静默、绝不换源**
+    // （G.12：离线就是错误，不落本机路径）：行复原为 failed 标记 + 底部玻璃浮条
+    // （可读原因 + [重试][关闭]）。本机腿维持既有「骨架标签」纪律（F3）零变化。
+    if (pendingPickups.has(msg.path)) {
+      pendingPickups.delete(msg.path);
+      setPickupState(msg.path, 'failed');
+      showPickupFailureBar(msg.path, msg.error);
+      return;
+    }
     console.warn('readFile error:', msg.error);
     // F3 (2026-08-30 作者裁定 + 方案 §8.4 F3): readFile 失败不再静默丢弃——保留
     // 「文件不可读」骨架标签（标题 + 提示），让用户可感知而非标签无声消失。
@@ -834,6 +1066,13 @@ onMessage('fileContent', (msg) => {
     return;
   }
   // Open in canvas
+  // 面B B5 成功腿：行复原（摘 loading 态）——既有查看器直开流程原样（文本内联 /
+  // 二进制经 /api/nf-file 取本地 pickup 件，absPath = uploads 白名单子树）。
+  if (pendingPickups.has(msg.path)) {
+    pendingPickups.delete(msg.path);
+    setPickupState(msg.path, null);
+    hidePickupFailureBar();
+  }
   const tabId = `file:${msg.path}`;
   const pinned = pendingPinned.get(msg.path) || false;
   pendingPinned.delete(msg.path);
@@ -984,6 +1223,15 @@ export function initExplorer() {
 
 // ── File operations (create, delete) ──────────────────────────────────
 
+/** 远端根只读闸（ui-device-faces 批 · 面B 边界）：本批只开 listDir 元数据 + 单文件
+ *  取件两条腿；create/delete/move 的 device 腿不存在，放行会把帧落**本机**同形路径
+ *  （G.12 路径错觉 = 静默错写）。显式 toast 拒绝，绝不静默。 */
+function refuseRemoteWrite() {
+  if (!explorerRootDevice) return false;
+  window.__showToast?.(t('explorer.remoteReadonly'), 'error');
+  return true;
+}
+
 /** Determine the directory to create in: the selected/expanded folder, or root. */
 function getTargetDir(forPath) {
   if (!forPath) return '';
@@ -1003,6 +1251,7 @@ function absPathFor(relPath) {
  *  @param {boolean} isDir — true for folder, false for file
  *  @param {string} dirPath — directory to create in (relative to root). Defaults to currentDir. */
 function startCreateNode(isDir, dirPath) {
+  if (refuseRemoteWrite()) return;
   // If no dirPath given, use the last expanded folder (currentDir)
   if (dirPath === undefined) dirPath = currentDir || '';
 
@@ -1089,6 +1338,7 @@ function startCreateNode(isDir, dirPath) {
 
 /** Delete a file or folder. */
 function deleteNode(path) {
+  if (refuseRemoteWrite()) return;
   const name = path.split('/').pop();
   const send = () => sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
   if (typeof window.__showConfirm === 'function') {
@@ -1100,6 +1350,7 @@ function deleteNode(path) {
 
 /** Batch-delete every path in the current selection — one confirm, one WS message. */
 function deleteSelected() {
+  if (refuseRemoteWrite()) return;
   const paths = [...selectedPaths];
   if (!paths.length) return;
   const send = () => sendWs({ type: 'deletePaths', sessionId: state.activeSessionId, paths, rootPath: explorerRoot });
@@ -1286,13 +1537,17 @@ function refreshDirOf(path) {
  * #files-btn click) because the icon toggles the bar CLOSED when Files is
  * already the active panel.
  * @param {string} path — absolute workspace path
+ * @param {string=} device — 远端 origin 设备（ui-device-faces 批 · 面B 入口对偶：
+ *   机制缺省 {self, workspace} 的 UI 对偶；缺省 = 本机根，零 device 键）
  */
-export function openExplorerAt(path) {
+export function openExplorerAt(path, device) {
   if (!path) return;
-  persistRoot(path);
+  persistRoot(path, device || null);
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
+  pendingPickups.clear();
+  hidePickupFailureBar();
   clearSelection();
   showSidePanel('files');
   renderTree();
@@ -1386,6 +1641,16 @@ function syncWatch(immediate = false) {
   clearTimeout(watchSyncTimer);
   watchSyncTimer = setTimeout(() => {
     const rootPath = explorerRoot || '';
+    // 远端根（面B）：watch 面是本机盘语义（对端无订阅腿）——不订阅、只清旧订阅，
+    // 防止把远端根当本机路径挂上本机 watcher（路径错觉防护）。降级重列 = 既有
+    // 慢对账定时器照常（展开即重列 + refreshExpandedDirs）。
+    if (explorerRootDevice) {
+      if (watchRootSent !== undefined) {
+        sendWs({ type: 'watchUnsubscribe', sessionId: state.activeSessionId, rootPath: watchRootSent });
+        watchRootSent = undefined;
+      }
+      return;
+    }
     if (!state.activeSessionId) {
       if (watchRootSent !== undefined) {
         sendWs({ type: 'watchUnsubscribe', sessionId: state.activeSessionId, rootPath: watchRootSent });
