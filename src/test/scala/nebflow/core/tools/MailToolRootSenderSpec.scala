@@ -149,6 +149,92 @@ class MailToolRootSenderSpec extends FunSuite:
         case Right(v) => fail(s"认不出的地址必须显式报错，got: $v")
     finally system.stopAll.unsafeRunSync()
 
+  // ── project: leg is Root-exclusive (the dispatcher-trigger gate) ──────────
+  // The documented address faces grant `project:<name>` to Nebula (root) only;
+  // every other role gets the explicit out-of-face error BEFORE any mount
+  // check or dispatcher trigger runs (no spawn, no revive, no note append).
+
+  private def delegateCtx(system: ActorSystem): ToolContext =
+    ToolContext(
+      projectRoot = tempRoot.toString,
+      sessionId = Some("delegate-ab12cd34"),
+      actorSystem = Some(system)
+    )
+
+  private def dispatcherCtx(system: ActorSystem): ToolContext =
+    ToolContext(
+      projectRoot = tempRoot.toString,
+      sessionId = Some("dispatcher-spec-sid"),
+      isDispatcher = true,
+      actorSystem = Some(system)
+    )
+
+  test("R2: delegate session + project:<name> => explicit out-of-face (no dispatcher trigger)"):
+    val system = ActorSystem(s"mail-r2-del-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      val res = MailTool
+        .call(
+          JsonObject("address" -> Json.fromString("project:p-x"), "message" -> Json.fromString("hi")),
+          delegateCtx(system)
+        )
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(err.message.contains("outside your address face"), s"must be the out-of-face error: ${err.message}")
+          assert(err.message.contains("node:<节点id或名>"), s"must name the delegate face: ${err.message}")
+          assert(!err.message.contains("not mounted"), s"role gate must fire before the mount check: ${err.message}")
+        case Right(v) => fail(s"a delegate mailing project: must be rejected, got: $v")
+    finally system.stopAll.unsafeRunSync()
+
+  test("R2: team sender + project:<name> => explicit out-of-face (no dispatcher trigger)"):
+    val system = ActorSystem(s"mail-r2-team-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      val res = MailTool
+        .call(
+          JsonObject("address" -> Json.fromString("project:p-x"), "message" -> Json.fromString("hi")),
+          rootCtx.copy(actorSystem = Some(system)) // no Nebula agentDef => team-context role
+        )
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(err.message.contains("outside your address face"), s"must be the out-of-face error: ${err.message}")
+          assert(err.message.contains("team/agent"), s"must name the team face: ${err.message}")
+          assert(!err.message.contains("not mounted"), s"role gate must fire before the mount check: ${err.message}")
+        case Right(v) => fail(s"a team sender mailing project: must be rejected, got: $v")
+    finally system.stopAll.unsafeRunSync()
+
+  test("R2: dispatcher + project:<name> => explicit out-of-face (no self-trigger)"):
+    val system = ActorSystem(s"mail-r2-disp-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      val res = MailTool
+        .call(
+          JsonObject("address" -> Json.fromString("project:p-x"), "message" -> Json.fromString("hi")),
+          dispatcherCtx(system)
+        )
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(err.message.contains("outside your address face"), s"must be the out-of-face error: ${err.message}")
+          assert(!err.message.contains("not mounted"), s"role gate must fire before the mount check: ${err.message}")
+        case Right(v) => fail(s"a dispatcher mailing project: must be rejected, got: $v")
+    finally system.stopAll.unsafeRunSync()
+
+  test("R2: Nebula root + project:<name> still reaches the mount check (leg preserved)"):
+    val system = ActorSystem(s"mail-r2-root-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      val res = MailTool
+        .call(
+          JsonObject("address" -> Json.fromString("project:no-such-project-xyz"), "message" -> Json.fromString("hi")),
+          nebulaCtx(system)
+        )
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(err.message.contains("not mounted"), s"root must reach the mount check: ${err.message}")
+          assert(!err.message.contains("outside your address face"), s"root is inside the project: face: ${err.message}")
+        case Right(v) => fail(s"an unmounted project must be an explicit error, got: $v")
+    finally system.stopAll.unsafeRunSync()
+
   // ── root sender + TEAM name: routes to the team Manager ──
 
   test("queue: root sender + TEAM name routes to the team Manager (lead)"):

@@ -163,7 +163,7 @@ test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-t
 
   const panel = page.locator('#task-list');
   await expect(panel).toHaveClass(/has-tasks/);
-  await expect(panel.locator('.task-section-delegates')).toHaveCount(1);
+  await expect(panel.locator('.task-section-nodes')).toHaveCount(1);
   await expect(panel.locator('.task-delegate')).toHaveCount(3);
 
   // #31 nebflow running：编号、标题、图标、运行态三点轨道（修订批九点⑥：flowmap
@@ -213,12 +213,14 @@ test('T3 换源即切（#56 残项 · 晨裁②）：并行一窗摘除——nod
 
   const panel = page.locator('#task-list');
   await expect(panel.locator('.task-delegate')).toHaveCount(2);
-  // 🔴 并行一窗不保留（晨裁② 2026-10-07）：节点行/链行/节点分区零渲染。
-  await expect(panel.locator('.task-chain, .task-node:not(.task-delegate)')).toHaveCount(0);
-  await expect(panel.locator('.task-section-nodes')).toHaveCount(0);
+  // Node frames are only provider refresh triggers — they add no rows of their
+  // own: exactly the two delegate roots render, zero member rows (the fixture
+  // carries no children/chains), and the panel section is the node-row section.
+  await expect(panel.locator('.task-member')).toHaveCount(0);
+  await expect(panel.locator('.task-node')).toHaveCount(2);
+  await expect(panel.locator('.task-section-nodes')).toHaveCount(1);
 
-  // 统计口径归换源批（a60af705d 申报面「delegate 行计数的统计面归换源批」）：
-  // = delegate 行数（键复用 task.statsProgress，语义「{progress} 任务」仍成立）。
+  // Stats = visible row count (roots only here — the fixture has no members).
   await expect(panel.locator('.task-stats')).toHaveText('2 任务');
 
   expect(pageErrors).toEqual([]);
@@ -445,12 +447,12 @@ test('T6 §16 七键逐字钉（zh/en 双语提取比对）＋ fm-node 拆出件
   expect(pageErrors).toEqual([]);
 });
 
-test('T7 S1 树展开（文件夹树批）：行点击=展开/收起纯结构树（解释帧退场）＋折叠记忆跨重渲＋外部行守卫（数据在场也不展开）', async ({ page }) => {
+test('T7 平铺节点行（flowmap 行脸）：子代理行进列表直渲（无展开树）＋行点击跳 L1＋外部行守卫（零穿透点击、openNative 出口保留）', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
   await bootApp(page);
-  // 树批展开守卫 = 树非空（children ∪ flow-step）——#31 补一条子代理夹具才可展开。
+  // Flat face: member rows render inline immediately — no expander interaction.
   await setFixture(page, {
     rows: [row31, row32],
     chains: [chain31, chain32],
@@ -463,37 +465,34 @@ test('T7 S1 树展开（文件夹树批）：行点击=展开/收起纯结构树
 
   const panel = page.locator('#task-list');
   const r31 = panel.locator('.task-delegate[data-task-no="31"]');
-  await expect(r31).toHaveAttribute('aria-expanded', 'false');
-  // 树批 R2：内部行行尾 workflow 钮退役（全行热区，零侧边按钮）。
-  await expect(r31.locator('.task-delegate-btn')).toHaveCount(0);
-
-  // 点行展开：纯结构树（子代理行族）——解释帧退场（R3：spawn/raw 帧不再渲染）。
-  await r31.click();
-  await expect(r31).toHaveAttribute('aria-expanded', 'true');
-  const detail = panel.locator('.task-delegate-detail[data-delegate-detail="31"]');
-  await expect(detail).toHaveCount(1);
-  await expect(detail.locator('.task-delegate-frame-spawn')).toHaveCount(0);
-  await expect(detail.locator('.task-delegate-frame-raw')).toHaveCount(0);
-  await expect(detail.locator('.bgagent-child-row')).toHaveCount(1);
-
-  // 折叠记忆跨重渲（同 batch 纪律）：无关 WS 帧重渲后展开面仍在。
-  await inject(page, {
-    type: 'nodeCreated', project: 'alpha', nodeId: 'n-mem',
-    node: { hasWorktree: false, worktree: null, result: null, retries: 0, id: 'n-mem', name: 'mem-probe', agent: 'Backend', status: 'running', createdAt: T0, startedAt: T0, completedAt: null, ttlLeftSec: null },
-  });
-  await expect(panel.locator('.task-delegate-detail[data-delegate-detail="31"]')).toHaveCount(1);
-  await expect(r31).toHaveAttribute('aria-expanded', 'true');
-
-  // 再点收回。
-  await r31.click();
+  // No expander semantics anywhere: no aria-expanded, no chevron, no detail box.
+  await expect(r31).not.toHaveAttribute('aria-expanded');
+  await expect(panel.locator('.task-tree-chev')).toHaveCount(0);
   await expect(panel.locator('.task-delegate-detail')).toHaveCount(0);
+  // The child row renders flat (no click needed first), badged with its chain.
+  const kid = panel.locator('.task-member[data-node-key="31‖subtask-t7"]');
+  await expect(kid).toHaveCount(1);
+  await expect(kid.locator('.task-node-chain-name')).toHaveText('重构任务面板数据源');
 
-  // S16 守卫：外部行即使链数据在场，点行也零展开（细则腿零接线 fail-closed）；
-  // openNative 出口钮保留（R8 边界）。
+  // Row click = open the delegate's L1 chain view (single dynamic-import seam).
+  await r31.click();
+  const l1 = page.locator('.canvas-tab-pane[data-projects-view="delegate-chain"][data-delegate-mode="task"]');
+  await expect(l1).toHaveCount(1);
+  await expect(l1).toHaveAttribute('data-delegate-key', '31');
+  await page.locator('[data-back-to-tasks]').click();
+  await expect(l1).toHaveCount(0);
+
+  // Member row click also routes to the same L1 view.
+  await kid.click();
+  await expect(page.locator('.canvas-tab-pane[data-projects-view="delegate-chain"][data-delegate-mode="task"]')).toHaveCount(1);
+  await page.locator('[data-back-to-tasks]').click();
+
+  // External-row guard: no click-through even with chain data present;
+  // the open-native exit button stays.
   const r32 = panel.locator('.task-delegate[data-task-no="32"]');
+  await expect(r32).not.toHaveAttribute('role', 'button');
   await r32.click();
-  await expect(panel.locator('.task-delegate-detail')).toHaveCount(0);
-  await expect(r32).not.toHaveAttribute('aria-expanded');
+  await expect(page.locator('.canvas-tab-pane[data-delegate-mode="task"]')).toHaveCount(0);
   await expect(r32.locator('.task-delegate-btn')).toHaveCount(1);
 
   expect(pageErrors).toEqual([]);
@@ -680,9 +679,11 @@ test('T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增
   await page.waitForTimeout(200);
   expect(nativeCalls).toEqual(['POST']);
 
-  // 展开守卫：外部行点行零展开（无 detail、无 aria-expanded）。
+  // Display-only guard: external rows carry no click-through (no role=button,
+  // click opens no L1 pane) — the open-native button is the only exit.
+  await expect(r34).not.toHaveAttribute('role', 'button');
   await r34.click();
-  await expect(page.locator('.task-delegate-detail')).toHaveCount(0);
+  await expect(page.locator('.canvas-tab-pane[data-delegate-mode="task"]')).toHaveCount(0);
 
   expect(pageErrors).toEqual([]);
 });
@@ -843,6 +844,9 @@ test('T13 badge 行×任务行盒模型对齐（ui-train-threefix C·2026-10-07 
 
   await bootApp(page);
   await setFixture(page, { rows: [row31, row32] });
+  // Box-model reads must settle: new rows play the entry animation
+  // (translateX(-12px) → 0, 0.3s) — wait it out before measuring.
+  await page.waitForFunction(() => !document.querySelector('#task-list .task-node-entering'), null, { timeout: 5000 }).catch(() => {});
 
   // 盒模型读数（card-relative）：badge 行（.task-header/.task-stats）文案左缘 ==
   // 任务行（.task-node-text）文案左缘。方程：toggle 20 + header gap 8 + 对齐余量 14

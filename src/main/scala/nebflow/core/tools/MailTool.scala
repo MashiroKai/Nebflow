@@ -840,7 +840,11 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
       val pname = address.stripPrefix(ProjectPrefix).trim
       Some(
         if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
-        else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
+        // The project: leg (dispatcher trigger) is Root-exclusive — the
+        // documented address faces grant it to Nebula only. Every other role
+        // (dispatcher / delegate / team) gets the explicit out-of-face error;
+        // no silent fallback.
+        else if role != SenderRole.Root then IO.pure(Left(outOfFaceError(address, role)))
         else deliverToProject(pname, message, imagePaths, ctx, task)
       )
     else if address == MailTool.RootAgentName then

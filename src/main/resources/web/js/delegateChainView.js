@@ -265,6 +265,10 @@ export function openDelegateChainTask(taskKey, meta = {}, opts = {}) {
 function renderTaskBody(pane, key, opts = {}) {
   const body = pane.querySelector(BODY_SEL);
   if (!body) return;
+  // L1 consumes flow-chain / card-badge rules from the same embedded sheet the
+  // L2 archive face injects — direct L1 entries (task-list rows, project card
+  // titles) never pass through L2, so inject on this path too (idempotent).
+  ensureArchiveCss();
   body.innerHTML = '';
   const chain = getChainByTask(key);
   if (!chain || !Array.isArray(chain.nodes) || chain.nodes.length === 0) {

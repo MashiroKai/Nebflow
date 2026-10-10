@@ -91,6 +91,7 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {string} status            ROW_STATUS 值域
  * @property {boolean} external         外部执行器（executor ≠ nebflow）⇒ S16 粗粒度行
  * @property {string} project           挂载项目名（'' = 默认 general 目录）
+ * @property {number} createdAt         Record.createdAt 透传（epoch ms；0 = 缺键/非数）
  * @property {string} orchestrationMode G1 编排模式（ORCHESTRATION_MODES 值域；'' = 旧盘
  *                                      null/缺键——过渡启发兜底，禁折叠为 single）
  * @property {number|null} archivedAt   G6 归档时间戳 epoch ms（null = 在册未归档）
@@ -188,6 +189,7 @@ export function rowFromRegistry(record, live) {
     status,
     external: executor !== '' && executor !== 'nebflow',
     project: String(r.project || ''),
+    createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0,
     orchestrationMode: String(r.orchestrationMode || ''),
     archivedAt: typeof r.archivedAt === 'number' ? r.archivedAt : null,
     mergeQueue: q ? {
