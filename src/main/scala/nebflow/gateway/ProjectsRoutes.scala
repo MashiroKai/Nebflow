@@ -52,7 +52,15 @@ private[gateway] object ProjectsRoutes:
                       "workspace" -> p.workspace.asJson,
                       "agentFile" -> p.agentFile.asJson,
                       "description" -> p.description.asJson,
-                      "createdAt" -> p.createdAt.asJson
+                      "createdAt" -> p.createdAt.asJson,
+                      // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive
+                      // `origin{device,path}|null`（面C 徽标数据源；键名对齐 project.json
+                      // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
+                      // origin 盘面）= 显式 null。
+                      "origin" -> p.origin
+                        .fold(Json.Null)(o =>
+                          Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)
+                        )
                     )
                   )
                   .asJson

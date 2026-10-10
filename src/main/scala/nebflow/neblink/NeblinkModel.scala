@@ -564,7 +564,18 @@ case class NeblinkConfig(
    * Agent messaging permissions (A2A 一期, spec §7.2): how the
    * SendMessage tool may send on the user's behalf.
    */
-  agentMessaging: AgentMessagingConfig = AgentMessagingConfig()
+  agentMessaging: AgentMessagingConfig = AgentMessagingConfig(),
+  /**
+   * Portal (neblink 网页控制台) base URL — the startup browser-open target
+   * (portal MVP, 2026-10-10). Decoded from THIS file's top level
+   * (`<dataRoot>/neblink/config.json`); 🔴 there is deliberately NO
+   * nebflow.json surface (its neblink block is inert — see the LogtoConfig
+   * doc above). Resolution order lives in `nebflow.gateway.PortalUrl`:
+   * NEBFLOW_PORTAL_URL env > this field > the production default. An empty
+   * string means explicitly OFF (the startup open falls back to the local
+   * localhost UI — dev mode).
+   */
+  portalUrl: Option[String] = None
 ):
   /**
    * Login-chain resolution: an explicit `logto` block wins verbatim; a
@@ -690,7 +701,8 @@ object NeblinkConfig:
         .downField("agentMessaging")
         .as[Option[AgentMessagingConfig]]
         .map(_.getOrElse(AgentMessagingConfig()))
-    yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer, logto, agentMessaging)
+      portalUrl <- c.downField("portalUrl").as[Option[String]]
+    yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer, logto, agentMessaging, portalUrl)
   }
 
   // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would

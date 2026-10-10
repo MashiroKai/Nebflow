@@ -493,8 +493,10 @@ private[gateway] object NeblinkRoutes:
         }
 
       // Enroll device via pairing code — calls the NebLink Server's
-      // /api/device/enroll, receives a long-lived device credential, persists it,
-      // and writes the neblink config so the device joins on next start.
+      // /api/device/enroll, receives a long-lived device credential, and
+      // completes enrollment through NeblinkEnrollment.persist（门户 MVP E6,
+      // 2026-10-10）: config.json 单一权威写面 + discovery 客户端热换 + 隧道复活
+      // + 即时重发现 ⇒ **免重启上线**（旧实现手写 save 块，必须重启才生效）。
       case req @ POST -> Root / "neblink" / "enroll" =>
         if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
         else
@@ -505,62 +507,71 @@ private[gateway] object NeblinkRoutes:
               .toOption
               .flatten
               .map(_.stripSuffix("/"))
-            val pairCodeOpt = body.hcursor.downField("pairCode").as[Option[String]].toOption.flatten
-            (serverOpt, pairCodeOpt) match
-              case (Some(server), Some(pairCode)) =>
+            // 空/空白 pairCode = 未给（6 位码永不为空）
+            val pairCodeOpt = body.hcursor.downField("pairCode").as[Option[String]].toOption.flatten.map(_.trim).filter(_.nonEmpty)
+            pairCodeOpt match
+              case None => BadRequest(Json.obj("error" -> "Missing pairCode".asJson))
+              case Some(pairCode) =>
                 neblinkService match
                   case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
                   case Some(ms) =>
-                    for
-                      identity <- ms.identity
-                      enrollBody = Json
-                        .obj(
-                          "pairCode" -> pairCode.asJson,
-                          "deviceId" -> identity.deviceId.asJson,
-                          "deviceName" -> identity.deviceName.asJson,
-                          "platform" -> identity.platform.asJson
-                        )
-                        .noSpaces
-                      result <- enrollWithServer(server, enrollBody)
-                      resp <- result match
-                        case Right(credJson) =>
-                          val deviceToken = credJson.hcursor.downField("deviceToken").as[String].toOption
-                          val networkId = credJson.hcursor.downField("networkId").as[String].toOption.getOrElse("")
-                          val deviceId =
-                            credJson.hcursor.downField("deviceId").as[String].toOption.getOrElse(identity.deviceId)
-                          deviceToken match
-                            case Some(token) =>
-                              val credential = DeviceCredential(server, networkId, deviceId, token)
-                              val newConfig = NeblinkServerConfig(
-                                url = server,
-                                networkId = networkId,
-                                secret = "",
-                                deviceToken = Some(token)
-                              )
-                              for
-                                _ <- DeviceCredential.save(credential)
-                                current <- NeblinkConfig.load
-                                updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
-                                _ <- NeblinkConfig.save(updated)
-                                // 未走 ApiJson 信封助手:{ok:true,message,networkId} 三键,非 {ok,message} 同形,保持手写(2026-09-25)
-                                r <- Ok(
-                                  Json.obj(
-                                    "ok" -> true.asJson,
-                                    "message" -> "Enrolled. Please restart Nebflow to connect.".asJson,
-                                    "networkId" -> networkId.asJson
-                                  )
+                    // E6 ①: server 解析降序 = 请求显式 > live config > 生产缺省。
+                    // 缺省腿守 案 b① 单点闸（`neblinkServerUrl` →
+                    // `EnrollGuard.prodDefaultTarget`）：隔离 root 拿到 None ⇒ 下方
+                    // 可见 400，绝不静默继承生产缺省。
+                    neblinkServerUrl(serverOpt).flatMap {
+                      case None =>
+                        BadRequest(Json.obj("error" -> EnrollGuard.prodFallbackRefusalReason.asJson))
+                      case Some(server) =>
+                        for
+                          identity <- ms.identity
+                          enrollBody = Json
+                            .obj(
+                              "pairCode" -> pairCode.asJson,
+                              "deviceId" -> identity.deviceId.asJson,
+                              "deviceName" -> identity.deviceName.asJson,
+                              "platform" -> identity.platform.asJson
+                            )
+                            .noSpaces
+                          result <- enrollWithServer(server, enrollBody, explicitUserAction = true)
+                          resp <- result match
+                            case Right(credJson) =>
+                              // E6 ②: 成功腿走 persist（reloginHook=None：配对码腿不带
+                              // Logto 令牌面）。explicitUserAction=true = 配对码提交是
+                              // 用户显式动作 ⇒ 过 EnrollGuard 隔离闸（案 C，stable 安装
+                              // 可入网）+ 解除被踢停摆。
+                              val networkId = credJson.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+                              NeblinkEnrollment
+                                .persist(
+                                  ms,
+                                  server,
+                                  credJson,
+                                  None,
+                                  neblinkDiscovery,
+                                  gatewayPort,
+                                  None,
+                                  explicitUserAction = true
                                 )
-                              yield r
-                            case None =>
-                              BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
-                          end match
-                        case Left(err) =>
-                          BadRequest(Json.obj("error" -> s"Enrollment failed: $err".asJson))
-                    yield resp
+                                .flatMap {
+                                  case Right(_) =>
+                                    // 未走 ApiJson 信封助手:{ok:true,message,networkId} 三键,非 {ok,message} 同形,保持手写(2026-09-25)
+                                    Ok(
+                                      Json.obj(
+                                        "ok" -> true.asJson,
+                                        "message" -> "Enrolled. Connected.".asJson,
+                                        "networkId" -> networkId.asJson
+                                      )
+                                    )
+                                  case Left(err) =>
+                                    // persist 的 Left 通道 = 分类文案（护栏拒绝 / 凭据落盘失败 /
+                                    // server 未发凭据），逐字透出
+                                    BadRequest(Json.obj("error" -> err.asJson))
+                                }
+                            case Left(err) =>
+                              BadRequest(Json.obj("error" -> s"Enrollment failed: $err".asJson))
+                        yield resp
+                    }
                 end match
-              case _ =>
-                BadRequest(Json.obj("error" -> "Missing server or pairCode".asJson))
-            end match
           }
 
       // ===== Device authorization flow (Tailscale-style) =====
@@ -1336,11 +1347,20 @@ private[gateway] object NeblinkRoutes:
    * with the production network (see `EnrollGuard`). Refusal is returned on the
    * error channel (caller renders "Enrollment failed: …") AND logged, so it is
    * never silent; `NEBFLOW_ALLOW_PROD_ENROLL=1` restores the old behaviour.
+   *
+   * `explicitUserAction`（门户 MVP E6, 2026-10-10）: the pairing-code submission
+   * IS a user action (they typed the code) — the route passes true, which lifts
+   * the isolation gate via EnrollGuard's 案 C release (same class as the PKCE
+   * loopback callback). Default false keeps the helper's automatic semantics.
    */
-  private def enrollWithServer(serverUrl: String, body: String)(using ctx: RestApiCtx): IO[Either[String, Json]] =
+  private def enrollWithServer(
+    serverUrl: String,
+    body: String,
+    explicitUserAction: Boolean = false
+  )(using ctx: RestApiCtx): IO[Either[String, Json]] =
     import ctx.*
 
-    nebflow.neblink.EnrollGuard.enrollRefusal(serverUrl) match
+    nebflow.neblink.EnrollGuard.enrollRefusal(serverUrl, explicitUserAction) match
       case Some(reason) =>
         logger.warn(s"enroll refused by the isolation guard: $reason").as(Left(reason))
       case None =>

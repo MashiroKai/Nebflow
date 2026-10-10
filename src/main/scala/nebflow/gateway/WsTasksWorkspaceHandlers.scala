@@ -183,33 +183,96 @@ private[gateway] object WsTasksWorkspaceHandlers:
   ): IO[Unit] =
     import ctx.*
     val hc = parsedJson(text).hcursor
+    // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端①，开放题⑤）：可选 `device` 键
+    // —— 缺省/缺键 = 本机腿逐字节（存量零回归）；对端设备 = 远端**只读**目录列举
+    // （scope=browse 元数据，零字节流动、零 mkdir——G.13 序要求目录已存在）。
+    // 解析复用 WsFileOpsHandlers.resolveBrowseTarget（listDir/readFile 同一单点）。
+    val browseDevice = hc.downField("device").as[String].toOption.map(_.trim).filter(_.nonEmpty)
     hc.downField("path").as[String].toOption.filter(_.nonEmpty) match
       case None => IO.unit
       case Some(raw) =>
-        IO.blocking {
-          scala.util.Try(os.Path(expandTilde(raw), os.Path(sys.props("user.home")))).toOption match
-            case None => (raw, None, List.empty[String], "invalid path")
-            case Some(dir) =>
-              if !os.isDir(dir) then (dir.toString, None, Nil, "not a directory")
-              else
-                // 2026-09-09 作者裁定：默认显示隐藏文件夹（dot 目录不过滤）——
-                // 选目录模式须能进入 ~/.nebflow/projects/（隐藏目录嵌套路径）。
-                val entries = os
-                  .list(dir)
-                  .filter(os.isDir)
-                  .map(_.last)
-                  .toList
-                  .sorted
-                // 根目录无上级（segmentCount==0）；其余经 os.up 规范化
-                val parent = if dir.segmentCount > 0 then Some((dir / os.up).toString) else None
-                (dir.toString, parent, entries, null: String)
-        }.flatMap { case (path, parent, entries, err) =>
-          wsSend(wsBrowseEvent("wsBrowseList", path, parent, entries, Option(err)))
-        }.handleErrorWith { e =>
-          wsSend(wsBrowseEvent("wsBrowseList", raw, None, Nil, Some(e.getMessage)))
-        }
+        browseDevice match
+          case Some(dev) => browseRemoteDirs(ctx, dev, raw, wsSend)
+          case None =>
+            IO.blocking {
+              scala.util.Try(os.Path(expandTilde(raw), os.Path(sys.props("user.home")))).toOption match
+                case None => (raw, None, List.empty[String], "invalid path")
+                case Some(dir) =>
+                  if !os.isDir(dir) then (dir.toString, None, Nil, "not a directory")
+                  else
+                    // 2026-09-09 作者裁定：默认显示隐藏文件夹（dot 目录不过滤）——
+                    // 选目录模式须能进入 ~/.nebflow/projects/（隐藏目录嵌套路径）。
+                    val entries = os
+                      .list(dir)
+                      .filter(os.isDir)
+                      .map(_.last)
+                      .toList
+                      .sorted
+                    // 根目录无上级（segmentCount==0）；其余经 os.up 规范化
+                    val parent = if dir.segmentCount > 0 then Some((dir / os.up).toString) else None
+                    (dir.toString, parent, entries, null: String)
+            }.flatMap { case (path, parent, entries, err) =>
+              wsSend(wsBrowseEvent("wsBrowseList", path, parent, entries, Option(err)))
+            }.handleErrorWith { e =>
+              wsSend(wsBrowseEvent("wsBrowseList", raw, None, Nil, Some(e.getMessage)))
+            }
     end match
   end handleWsBrowseList
+
+  /**
+   * `wsBrowse.list` 远端腿（ui-device-faces 批 2026-10-10）：对端目录**元数据列举**
+   * （direction=list scope=browse——零字节），帧形与本地腿同构 + additive `device`；
+   * **只读面**：仅目录名（选目录模式语义）、无 mkdir 对应腿（G.13 目录须已存在）。
+   * 不带 `home`（远端盘无本机 home 语义——前端面包屑自根展开 + 设备 chip 前缀）。
+   * 任何失败 = 显式 error 帧（fail-closed，G.12：绝不静默落本机）。
+   */
+  private def browseRemoteDirs(
+    ctx: WsDispatchCtx,
+    device: String,
+    raw: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    import ctx.*
+    def frame(entries: List[String], err: Option[String]): io.circe.Json =
+      val fields = scala.collection.mutable.ListBuffer[(String, io.circe.Json)](
+        "type" -> io.circe.Json.fromString("wsBrowseList"),
+        "path" -> io.circe.Json.fromString(raw),
+        "entries" -> io.circe.Json.arr(entries.map(io.circe.Json.fromString)*),
+        "device" -> io.circe.Json.fromString(device)
+      )
+      err.foreach(e => fields += "error" -> io.circe.Json.fromString(e))
+      io.circe.Json.obj(fields.toList*)
+    WsFileOpsHandlers.resolveBrowseTarget(device)(using ctx).flatMap {
+      case Left(err) => wsSend(frame(Nil, Some(err)))
+      case Right(None) =>
+        // 防御分支（与 listDir/readFile 同语义）：self 目标应由调用方去掉 device 键。
+        wsSend(frame(Nil, Some(s"'$device' resolved to this device — re-send without the device key")))
+      case Right(Some(peer)) =>
+        nebflow.core.tools.RemoteExecutor.current match
+          case None =>
+            wsSend(frame(Nil, Some("remote executor not initialized (NebLink disabled?)")))
+          case Some(re) =>
+            re.transferListScoped(peer, raw).flatMap {
+              case Left(err) =>
+                logger.warn(s"wsBrowse.list remote leg failed for ${peer.deviceName}: $err")
+                wsSend(frame(Nil, Some(err)))
+              case Right(json) =>
+                // 选目录模式语义 = 仅目录（本地腿同款 dirs-only），按名排序。
+                val names = json.hcursor.downField("entries").as[List[io.circe.Json]].toOption
+                  .getOrElse(Nil)
+                  .flatMap { e =>
+                    val isDir = e.hcursor.downField("type").as[String].toOption.contains("dir")
+                    val name = e.hcursor.downField("name").as[String].toOption
+                    if isDir then name else None
+                  }
+                  .sorted
+                wsSend(frame(names, None))
+            }
+    }.handleErrorWith { e =>
+      logger.warn(s"wsBrowse.list remote leg failed: ${e.getMessage}")
+      wsSend(frame(Nil, Some(e.getMessage)))
+    }
+  end browseRemoteDirs
 
   private def handleWsBrowseMkdir(
     ctx: WsDispatchCtx,
