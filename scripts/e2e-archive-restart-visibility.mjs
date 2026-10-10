@@ -197,7 +197,7 @@ function start() {
   const cp = readFileSync(CP_FILE, 'utf8').trim();
   const log = join(HOME, 'gateway.log');
   const out = openSync(log, 'a');
-  child = spawn('java', ['-Xmx1g', '-cp', cp, 'nebflow.Main', '--home', HOME, '--port', String(PORT), '--no-browser', 'start'], {
+  child = spawn('java', ['-Xmx1g', '-cp', cp, 'nebflow.Main', '--home', HOME, '--port', String(PORT), '--no-browser', '--foreground', 'start'], {
     cwd: REPO, detached: true, stdio: ['ignore', out, out],
     env: { ...process.env, GATEWAY_PORT: String(PORT), NEBFLOW_GATEWAY_PORT: String(PORT) },
   });
