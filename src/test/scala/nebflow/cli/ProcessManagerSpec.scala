@@ -154,6 +154,43 @@ class ProcessManagerSpec extends FunSuite:
     }
   }
 
+  // ── hard-gate boundary pins (plan §3.2 R2-5 ruling — review 2026-10-10) ─
+  //
+  // The gate is DOUBLE-conditioned by design (spec §4.4 :227 / plan R2-5):
+  // protected port ∧ dev-host command line. The two pins below make the
+  // ruled tradeoff executable instead of silent — they are boundary
+  // documentation, not an endorsement; the absolute-red-line question
+  // ("never stop ANY nebflow on 8080/8097") is an upper-layer ruling,
+  // because absolute gating would permanently brick `nebflow stop` for the
+  // legitimate bare-jar default-port install form (GatewayConfig default
+  // port IS 8080; `java -jar nebflow.jar start` is an install form listed
+  // in StaleProcessGuard's compatibility table).
+
+  test("boundary pin: product-form instance on 8080 without dev-host markers is not hard-gated") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
+      val productCmd = "java -jar /Users/x/.local/bin/nebflow.jar start --port 8080" // no /target/, no GatewayMain
+      val (deps, rec) = stubDeps(readCmd = _ => Some(productCmd), portsOf = _ => List(8080))
+      val out = runStop(ProcessManager.StopOptions(), deps)
+      assert(out.isInstanceOf[ProcessManager.StopOutcome.Stopped], out.toString)
+      assert(rec.destroyed.toList == List(pid))
+    }
+  }
+
+  test("boundary pin: lsof unavailable (port probe fails open) does not block a dev-host-form stop") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
+      val (deps, rec) = stubDeps(readCmd = _ => Some(SbtDevCmd), portsOf = _ => Nil) // lsof missing ⇒ Nil
+      val out = runStop(ProcessManager.StopOptions(), deps)
+      assert(out.isInstanceOf[ProcessManager.StopOutcome.Stopped], out.toString)
+      assert(rec.destroyed.toList == List(pid))
+    }
+  }
+
   test("same dev-host cmdline on an isolated port is NOT hard-gated (double condition)") {
     withTempRoot {
       val pid = selfPid()
