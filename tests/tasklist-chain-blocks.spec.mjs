@@ -163,11 +163,12 @@ test('T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholde
   await expect(headA.locator('.executor-icon-nebflow')).toHaveCount(1);
   await expect(headA.locator('.task-delegate-no')).toHaveText('#41');
   await expect(headA.locator('.task-node-label')).toHaveText('链甲任务');
-  await expect(headA.locator('.task-chain-map-dot')).toHaveCount(5);
-  // Links draw only between ADJACENT dots joined by a real edge (the classic
-  // C1 correction): topological order is root → s1 → audit → scout → s2, and
-  // only the root→s1 pair carries a real edge.
-  await expect(headA.locator('.task-chain-map-link')).toHaveCount(1);
+  // The chain-level jump zone = the progress meta text (minimal face — the
+  // dotmap thumbnail was dropped as noise). role=button + hint title + click
+  // through to L1 is pinned in T6; here: presence + the n/N reading.
+  await expect(headA.locator('.task-chain-jump')).toHaveCount(1);
+  await expect(headA.locator('.task-chain-jump')).toHaveAttribute('role', 'button');
+  await expect(panel.locator('.task-chain-map')).toHaveCount(0); // dotmap retired
   await expect(headA.locator('.task-chain-meta')).toHaveText(/^[12]\/5/); // audit+s1 done ⇒ 2/5
   await expect(headA.locator('.task-node-word')).toHaveText('进行中');
   await expect(headA.locator('.task-node-time')).toHaveCount(1);

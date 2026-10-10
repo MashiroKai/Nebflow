@@ -498,6 +498,9 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-flowmap-host .flowmap-card { flex: 1 1 auto; min-height: 0; }
 /* in-place form: the viewport fills the host (same override as flowmap-view-body) */
 .delegate-flowmap-host .fm-viewport { height: auto; }
+/* Minimal delegate map: the edge-style legend is written for big per-project
+   graphs and is noise at one-chain scale — it does not render here. */
+.delegate-flowmap-host .flowmap-legend { display: none; }
 .delegate-archive-fab {
   position: absolute; top: 12px; right: 14px;
   width: 34px; height: 34px; border-radius: 50%;

@@ -281,7 +281,8 @@ check('chain-blocks H: taskList.css chain-block face present, tree/flat-era face
     const css = switchFiles['css/taskList.css']
       .replace(/^\s*\/\*[\s\S]*?\*\/\s*$/gm, '')  // 整块注释豁免（退役注记）
       .replace(/^\s*\/\/.*$/gm, '');
-    return css.includes('.task-chain-map') && css.includes('.task-chain-member') &&
+    return css.includes('.task-chain-jump') && css.includes('.task-chain-member') &&
+      !css.includes('.task-chain-map') && // 点图面摘除（极简批——头行结构摘要 = 元信息文本）
       css.includes('.task-node-group') &&
       !css.includes('.task-node-chain') &&
       !css.includes('.task-tree-chev') && !css.includes('.task-delegate-detail') &&

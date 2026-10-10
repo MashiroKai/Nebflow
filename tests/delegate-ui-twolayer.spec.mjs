@@ -263,12 +263,9 @@ test('T3 agentflow（R2/R6）：组头徽标=Flow；chain.nodes flow-step 面板
   const head72 = page.locator('#task-list .task-chain-head[data-task-no="72"]');
   await expect(head72).toHaveCount(1);
   // 链块折叠脸：成员行默认缺席（无行内计数徽标——徽标面随平铺脸退役）；
-  // 点图徽标 = 3 点（root + 2 flow-step），链接线只在真实相邻边（root→s1）。
+  // 结构摘要 = 元信息文本（0/3——无一终态），即整链跳转区。
   await expect(page.locator('#task-list .task-chain-member')).toHaveCount(0);
-  await expect(head72.locator('.task-chain-map-dot')).toHaveCount(3);
-  await expect(head72.locator('.task-chain-map-dot.t-design')).toHaveCount(2);
-  // 纯 flow 链：拓扑序 root→s1→s2 全部相邻且均有真实边 ⇒ 两条链接线。
-  await expect(head72.locator('.task-chain-map-link')).toHaveCount(2);
+  await expect(head72.locator('.task-chain-jump .task-chain-meta')).toHaveText(/^0\/3/);
   // 头行点击 = 展开成员行（拓扑序：s1 → s2，深度 1/2，序号 1.1 / 1.1.1）。
   await head72.click();
   await page.waitForFunction(() => !document.querySelector('#task-list .task-node-entering'), null, { timeout: 5000 }).catch(() => {});
@@ -321,11 +318,9 @@ test('T4 星型子代理链块（链结构行脸）：头行折叠默认 + 展�
     renderTaskList([], undefined, sid);
   }, ROOT_SID);
   const head71 = page.locator('#task-list .task-chain-head[data-task-no="71"]');
-  // 折叠默认：成员行缺席；点图 = 4 点（root + 3 子代理，全 impl 型色）。
+  // 折叠默认：成员行缺席；结构摘要 = 元信息文本（1/4——audit 完成）。
   await expect(page.locator('#task-list .task-chain-member')).toHaveCount(0);
-  await expect(head71.locator('.task-chain-map-dot')).toHaveCount(4);
-  await expect(head71.locator('.task-chain-map-dot.t-impl')).toHaveCount(4);
-  await expect(head71.locator('.task-chain-meta')).toHaveText(/^1\/4/); // audit 完成
+  await expect(head71.locator('.task-chain-jump .task-chain-meta')).toHaveText(/^1\/4/);
   // 展开 → 三条子行（拓扑同层：spawn 序），词面 + 静态徽标（首帧终态静默）。
   await head71.click();
   await page.waitForFunction(() => !document.querySelector('#task-list .task-node-entering'), null, { timeout: 5000 }).catch(() => {});

@@ -470,7 +470,7 @@ test('T7 链块折叠（链结构行脸）：成员行默认折叠 + 头行点�
   await expect(panel.locator('.task-chain-member')).toHaveCount(0);
   await expect(r31).toHaveAttribute('aria-expanded', 'false');
   await expect(r31.locator('.task-chain-twisty')).toHaveCount(1);
-  await expect(r31.locator('.task-chain-map')).toHaveCount(1);
+  await expect(r31.locator('.task-chain-jump')).toHaveCount(1); // chain-level L1 jump zone
   await expect(r31.locator('.task-chain-meta')).toHaveText(/^0\/2/);
 
   // Header click = expand (classic chain-row semantics).

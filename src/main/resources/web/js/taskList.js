@@ -455,38 +455,6 @@ function buildTwisty(leaf) {
   return c;
 }
 
-/**
- * Inline topology dotmap (one dot per member in topological order, links only
- * on real edges). Kind colors: subagent child = t-impl, flow-step = t-design;
- * fill state = lifecycle (hollow = not started, filled = done, enlarged filled
- * = running). Width caps with ellipsis — the map is a thumbnail, not a proof.
- */
-function buildChainDotmap(view) {
-  const map = document.createElement('span');
-  map.className = 'task-chain-map';
-  map.setAttribute('aria-hidden', 'true');
-  const list = view.ordered;
-  list.forEach((m, i) => {
-    if (i > 0) {
-      const prevId = String(list[i - 1].id);
-      const id = String(m.id);
-      const fromSet = view.edges && view.edges.adj ? view.edges.adj.get(prevId) : null;
-      if (fromSet && fromSet.has(id)) {
-        const link = document.createElement('span');
-        link.className = 'task-chain-map-link';
-        map.appendChild(link);
-      }
-    }
-    const dot = document.createElement('span');
-    dot.className = `task-chain-map-dot t-${m.kind === 'flow' ? 'design' : 'impl'}`;
-    const st = String(m.status || 'pending');
-    if (st === 'running') dot.classList.add('is-running');
-    else if (st === 'completed' || st === 'failed' || st === 'cancelled') dot.classList.add('is-done');
-    map.appendChild(dot);
-  });
-  return map;
-}
-
 /** Chain progress meta ("done/total" + working count + elapsed) — the classic
  *  collapsed-row reading. Members include the root stub, so total counts the
  *  root too (the chain as a whole). */
@@ -569,18 +537,17 @@ function buildChainHeaderRow(block) {
   }
   row.appendChild(text);
 
-  // Topology dotmap + progress meta (membered chains only) — the chain-level
-  // L1 jump target (classic badge-click analogue: whole-chain fit view).
+  // Progress meta (membered chains only) doubles as the chain-level L1 jump
+  // target (classic badge-click analogue: whole-chain fit view). Minimal face:
+  // text only — the dotmap thumbnail was dropped (noisy at panel scale).
   if (memberCount > 0 && !queued) {
     const jump = document.createElement('span');
     jump.className = 'task-chain-jump';
     jump.setAttribute('role', 'button');
     jump.title = t('flowmap.chain.badgeHint', { chain: title || delegateId });
     jump.setAttribute('aria-label', jump.title);
-    jump.appendChild(buildChainDotmap(block.view));
     const meta = document.createElement('span');
     meta.className = 'task-chain-meta';
-    meta.setAttribute('aria-hidden', 'true');
     meta.textContent = chainProgressMeta(block.view.ordered);
     jump.appendChild(meta);
     const meta0 = rowMetaOf(r);

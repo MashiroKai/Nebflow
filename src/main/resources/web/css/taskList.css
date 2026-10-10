@@ -390,47 +390,15 @@
   border-radius: 6px;
   cursor: pointer;
 }
-.task-chain-jump:hover .task-chain-map { filter: brightness(1.15); }
+.task-chain-jump:hover .task-chain-meta { color: var(--color-text, #000); }
 
-/* Inline topology dotmap: dots in topological order (kind colours), links only
-   on real edges. Hollow = not started; filled = terminal; filled+enlarged =
-   running. Width-capped with clipping — a thumbnail, never a criterion. */
-.task-chain-map {
-  flex: 0 1 auto;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 96px;
-  overflow: hidden;
-  gap: 0;
-}
-.task-chain-map-link {
-  flex: 0 0 auto;
-  width: 4px;
-  height: 1px;
-  background: color-mix(in srgb, var(--color-text-muted, #888) 55%, transparent);
-}
-.task-chain-map-dot {
-  flex: 0 0 auto;
-  width: var(--task-chain-dot-r);
-  height: var(--task-chain-dot-r);
-  border-radius: 50%;
-  box-sizing: content-box;
-  border: 1px solid currentColor;
-  background: transparent;
-}
-.task-chain-map-dot.is-done { background: currentColor; border-color: currentColor; }
-.task-chain-map-dot.is-running {
-  background: currentColor;
-  border-color: currentColor;
-  width: calc(var(--task-chain-dot-r) + 2px);
-  height: calc(var(--task-chain-dot-r) + 2px);
-}
-.task-chain-map-dot.t-dispatcher, .task-chain-dot.t-dispatcher { color: var(--task-node-type-dispatcher); }
-.task-chain-map-dot.t-impl, .task-chain-dot.t-impl { color: var(--task-node-type-impl); }
-.task-chain-map-dot.t-verify, .task-chain-dot.t-verify { color: var(--task-node-type-verify); }
-.task-chain-map-dot.t-sink, .task-chain-dot.t-sink { color: var(--task-node-type-sink); }
-.task-chain-map-dot.t-design, .task-chain-dot.t-design { color: var(--task-node-type-design); }
+/* Kind colors (member rows only — the header dotmap was dropped as noise):
+   values from the :root tokens above, never literals here. */
+.task-chain-dot.t-dispatcher { color: var(--task-node-type-dispatcher); }
+.task-chain-dot.t-impl { color: var(--task-node-type-impl); }
+.task-chain-dot.t-verify { color: var(--task-node-type-verify); }
+.task-chain-dot.t-sink { color: var(--task-node-type-sink); }
+.task-chain-dot.t-design { color: var(--task-node-type-design); }
 
 .task-chain-meta {
   flex: 0 0 auto;
