@@ -123,26 +123,6 @@ const REDUCED_MOTION = typeof matchMedia === 'function' &&
 const ACTIVE_ROW_STATUSES = new Set(['pending', 'running', 'blocked', 'ready-to-merge']);
 
 /**
- * Running-state glyph: the three-dot orbit (same visual language as the
- * flowmap node running state), 12px row rhythm.
- * @returns {HTMLElement} */
-function buildOrbitGlyph() {
-  const g = document.createElement('span');
-  g.className = 'task-node-orbit';
-  g.setAttribute('aria-hidden', 'true');
-  for (let i = 0; i < 3; i++) {
-    const ring = document.createElement('span');
-    ring.className = 'task-node-orbit-ring';
-    ring.style.setProperty('--orbit-phase', `${i * 120}deg`);
-    const dot = document.createElement('span');
-    dot.className = 'task-node-orbit-dot';
-    ring.appendChild(dot);
-    g.appendChild(ring);
-  }
-  return g;
-}
-
-/**
  * Status glyph, shared row language: running = orbit, blocked = amber dot,
  * terminal = solid color dot, wiring|pending = box, unknown = neutral dot
  * (graceful degradation).
@@ -151,8 +131,10 @@ function buildNodeGlyph(st, cls) {
   const g = document.createElement('span');
   g.setAttribute('aria-hidden', 'true');
   if (st === 'running') {
-    g.appendChild(buildOrbitGlyph());
-    g.className = 'task-node-glyph-running';
+    // Classic list running face: the single brand-green spin ring (reads as
+    // "in progress" at 12px — the three-dot orbit collapsed into a cryptic
+    // clover at this scale; the orbit language stays on the map cards).
+    g.className = 'task-node-spin';
   } else if (st === 'blocked') {
     g.className = 'task-node-dot task-node-dot-blocked';
   } else if (st === 'completed' || st === 'failed' || st === 'cancelled') {
@@ -628,10 +610,11 @@ const CROSS_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" st
  *  real frame-over-frame status change (transition=true). */
 function buildMemberMark(st, transition) {
   if (st === 'running') {
+    // Classic member-mark running face: the single spin ring (same language
+    // as the header glyph; the old design used exactly this slot form).
     const spin = document.createElement('span');
-    spin.className = 'task-chain-mark';
+    spin.className = 'task-node-spin task-chain-mark';
     spin.setAttribute('aria-hidden', 'true');
-    spin.appendChild(buildOrbitGlyph());
     return spin;
   }
   if (st !== 'completed' && st !== 'failed') return null;

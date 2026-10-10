@@ -159,7 +159,7 @@ test('T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholde
   const headA = panel.locator('.task-chain-head[data-task-no="41"]');
   await expect(headA.locator('.task-chain-twisty')).toHaveCount(1);
   await expect(headA).toHaveAttribute('aria-expanded', 'false');
-  await expect(headA.locator('.task-node-orbit')).toHaveCount(1);
+  await expect(headA.locator('.task-node-spin')).toHaveCount(1);
   await expect(headA.locator('.executor-icon-nebflow')).toHaveCount(1);
   await expect(headA.locator('.task-delegate-no')).toHaveText('#41');
   await expect(headA.locator('.task-node-label')).toHaveText('链甲任务');
@@ -335,7 +335,7 @@ test('T5 transition motion: running→completed across renders plays the check d
   await expandChain(page, '41');
   const kidRow = page.locator('.task-chain-member[data-node-key="41:subtask-a1"]');
   await expect(kidRow.locator('.task-chain-member-word')).toHaveText('进行中');
-  await expect(kidRow.locator('.task-chain-mark .task-node-orbit')).toHaveCount(1);
+  await expect(kidRow.locator('.task-chain-mark.task-node-spin')).toHaveCount(1);
 
   // Transition frame: the child completes → re-render plays the draw (non-static)
   // and the status word rolls in.

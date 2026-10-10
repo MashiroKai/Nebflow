@@ -172,8 +172,7 @@ test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-t
   await expect(r31.locator('.task-delegate-no')).toHaveText('#31');
   await expect(r31.locator('.task-node-label')).toHaveText('重构任务面板数据源');
   await expect(r31.locator('.executor-icon-nebflow')).toHaveCount(1);
-  await expect(r31.locator('.task-node-orbit')).toHaveCount(1);
-  await expect(r31.locator('.task-node-orbit .task-node-orbit-ring')).toHaveCount(3);
+  await expect(r31.locator('.task-node-spin')).toHaveCount(1); // 运行态 = 单环转动圈（列表尺度经典脸）
   await expect(r31.locator('.task-node-word')).toHaveText('进行中');
   await expect(r31).not.toHaveAttribute('data-external');
   await expect(r31).toHaveAttribute('data-delegate-id', 'delegate-nebflow-aa11');

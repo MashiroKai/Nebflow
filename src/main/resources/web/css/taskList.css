@@ -505,8 +505,8 @@
   animation: task-chain-draw 0.25s 0.1s ease forwards;
 }
 .task-chain-mark-static path { stroke-dashoffset: 0; }
-/* running mark: the orbit mini centres itself in the 12px slot */
-.task-chain-mark .task-node-orbit { width: 12px; height: 12px; }
+/* running mark: the spin ring fills the 12px slot (classic member-mark form) */
+.task-chain-mark.task-node-spin { margin-top: 0; }
 @keyframes task-chain-draw {
   to { stroke-dashoffset: 0; }
 }
@@ -557,40 +557,7 @@
 .task-delegate-btn:disabled { opacity: 0.4; cursor: default; }
 
 
-/* ── delegate-ui 修订批（用户九点④⑥ · 2026-10-09）──────────────────────────
-   ⑥ 运行态三点轨道（.solar-orbit 同语言：3 环 3 点、120° 静止基相位、容器旋转）；
-   ④ 待合并行名次 chip（引擎 G5 mergeQueuePos.position 透传，等宽弱化）。 */
-.task-node-glyph-running {
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-  margin-top: 3px;
-}
-.task-node-orbit {
-  position: relative;
-  width: 12px;
-  height: 12px;
-  animation: task-node-orbit-rot 2.4s linear infinite;
-}
-.task-node-orbit-ring {
-  position: absolute;
-  inset: 0;
-  transform: rotate(var(--orbit-phase, 0deg));
-}
-.task-node-orbit-dot {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 3px;
-  height: 3px;
-  margin-left: -1.5px;
-  border-radius: 50%;
-  background: var(--color-primary, #07c160);
-}
-@keyframes task-node-orbit-rot {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
+/* ── Ready-to-merge queue rank chip (engine G5 mergeQueuePos verbatim) ── */
 .task-delegate-rank {
   flex-shrink: 0;
   padding: 0 5px;
@@ -600,6 +567,4 @@
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
 }
-@media (prefers-reduced-motion: reduce) {
-  .task-node-orbit { animation: none; }
-}
+
