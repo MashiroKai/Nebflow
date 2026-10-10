@@ -116,8 +116,11 @@ private[gateway] object WsFileOpsHandlers:
    *     RemoteExecutor.execute 同族序）；
    *   - `Left` = **显式失败**（NebLink 未启用 / 设备不可解析——G.12 同款
    *     fail-closed：设备不在线就是错误帧，绝不静默落本机）。
+   *
+   * ui-device-faces 批（2026-10-10）起 `wsBrowse.list` 远端腿（面A 远端只读路径
+   * 选择器，WsTasksWorkspaceHandlers）也经本单点解析——同语义、零第二实现。
    */
-  private def resolveBrowseTarget(device: String)(using
+  private[gateway] def resolveBrowseTarget(device: String)(using
     ctx: WsDispatchCtx
   ): IO[Either[String, Option[PeerInfo]]] =
     import ctx.*

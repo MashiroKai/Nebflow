@@ -281,7 +281,9 @@ object ProjectActor:
    * 事件 1（创建成功、已挂载）
    *   type    : "projectCreated"
    *   project : <string>   项目名（= ProjectDef.name）
-   *   row     : { name, workspace, agentFile, description, createdAt }   ← 与 GET /api/projects 行同构
+   *   row     : { name, workspace, agentFile, description, createdAt,
+   *               origin:{device,path}|null }                              ← 与 GET /api/projects 行同构
+   *                        （origin additive：ui-device-faces 批 2026-10-10，面C 徽标）
    *   mounted : <bool>     挂载成功 true；定义就绪但无会话上下文（NodeTools 无 actorSystem
    *                        分支）false
    *
@@ -304,7 +306,11 @@ object ProjectActor:
         "workspace" -> pd.workspace.asJson,
         "agentFile" -> pd.agentFile.asJson,
         "description" -> pd.description.asJson,
-        "createdAt" -> pd.createdAt.asJson
+        "createdAt" -> pd.createdAt.asJson,
+        // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive `origin` 与
+        // GET /api/projects 行同构（面C 徽标定点插卡数据源；本机项目 = null）。
+        "origin" -> pd.origin
+          .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson))
       ),
       "mounted" -> mounted.asJson
     )

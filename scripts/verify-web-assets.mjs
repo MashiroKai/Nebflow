@@ -66,6 +66,8 @@ const EXEMPTIONS = new Map([
  *   vendor/monaco/<deep…>   → /vendor/monaco/<deep…> (multi-segment, manual parse)
  *   vendor/pdfjs/<deep…>    → /vendor/pdfjs/<deep…> (multi-segment, manual parse;
  *                             route added with the PDF viewer, c2c7d9f3)
+ *   vendor/<deep…>          → /vendor/<deep…>     (any other depth: the server's
+ *                             /vendor/ subtree passthrough serves it as-is)
  *   assets/<deep…>          → /assets/<deep…>     (dist mode only, P1 route)
  */
 function toUrl(rel) {
@@ -81,7 +83,9 @@ function toUrl(rel) {
     if (second === 'fonts') return segs.length === 3 ? `/vendor/fonts/${segs[2]}` : null;
     if (second === 'monaco') return segs.length >= 3 ? `/vendor/monaco/${segs.slice(2).join('/')}` : null;
     if (second === 'pdfjs') return segs.length >= 3 ? `/vendor/pdfjs/${segs.slice(2).join('/')}` : null;
-    return null;
+    // Server-side /vendor/ subtree passthrough serves any deeper vendor path,
+    // so any deeper file maps to a URL — no directory list to maintain here.
+    return segs.length >= 3 ? `/vendor/${segs.slice(1).join('/')}` : null;
   }
   return null;
 }

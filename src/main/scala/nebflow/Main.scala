@@ -130,11 +130,16 @@ object Main extends IOApp:
               state = pidFocusState(cfg)
               _ <- state match
                 case Some(url) =>
-                  nebflow.cli.SingleInstanceGuard.focusExisting(
-                    url,
-                    s"pid $pid",
-                    openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                  )
+                  // 门户开门（neblink portal MVP, 2026-10-10）：聚焦目标经 PortalUrl
+                  // 解析（env > config > 生产缺省；回落 = 本地 url 原样）。健康探测
+                  // （probeNebflow）仍打 localhost:port 原样不动。
+                  nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
+                    nebflow.cli.SingleInstanceGuard.focusExisting(
+                      focusTarget,
+                      s"pid $pid",
+                      openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                    )
+                  }
                 case None =>
                   IO.println(s"nebflow is already running (pid: $pid)") *>
                     IO.println("Run 'nebflow stop' to stop it.")
@@ -153,13 +158,16 @@ object Main extends IOApp:
                   case nebflow.cli.SingleInstanceGuard.PortFree =>
                     bootGateway()
                   case nebflow.cli.SingleInstanceGuard.NebflowInstance(url) =>
-                    nebflow.cli.SingleInstanceGuard
-                      .focusExisting(
-                        url,
-                        "same port",
-                        openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                      )
-                      .as(ExitCode.Success)
+                    // 门户开门（同 pid 快道）：聚焦目标换 PortalUrl 解析值；探测原样。
+                    nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
+                      nebflow.cli.SingleInstanceGuard
+                        .focusExisting(
+                          focusTarget,
+                          "same port",
+                          openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                        )
+                        .as(ExitCode.Success)
+                    }
                   case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
                     IO.println(s"ERROR: $detail — nebflow cannot start.") *>
                       IO.println(

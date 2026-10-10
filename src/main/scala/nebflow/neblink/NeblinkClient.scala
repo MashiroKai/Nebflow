@@ -457,7 +457,11 @@ class NeblinkClient(
               "endpoints" -> endpoints.map { e =>
                 Json.obj("address" -> e.address.asJson, "port" -> e.port.asJson, "kind" -> e.kind.asJson)
               }.asJson,
-              "version" -> nebflow.Version.string.asJson
+              "version" -> nebflow.Version.string.asJson,
+              // 门户 MVP E5（2026-10-10）：心跳带网关端口（方案 §7 契约冻结键
+              // `uiPort`，number）——门户用它拼本机控制台地址（不带凭据）。
+              // server 旧版 serde 宽容忽略未知字段，新旧互兼容。
+              "uiPort" -> serverPort.asJson
             )
             .noSpaces
           sendRequest("POST", s"${config.url}/api/device/heartbeat", body, Some(token)).flatMap {

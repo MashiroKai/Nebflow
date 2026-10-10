@@ -3590,6 +3590,17 @@
   color: rgb(91, 127, 191);
 }
 
+/* ── ui-device-faces 批（2026-10-10）面A/A4：选择器 device 模式只读脚注 ─────
+   device 模式下 mkdir 钮让位给只读说明（G.13：目录须已存在）；flex:1 占住
+   .wsp-cur 原来的弹性位。零新色值（--color-frame-text-muted 既有 token）。 */
+.wsp-foot .pick-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-frame-text-muted);
+}
+
 /* ── pickeruni: goto direct-entry row + server-side search row ────────────
    Two rows, one each: the jump (locating action) above the filter (narrowing
    action), full list width, no change to the 520px panel layout. All material

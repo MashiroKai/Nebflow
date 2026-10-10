@@ -72,23 +72,41 @@ class InjectionIntakeContractSpec extends FunSuite:
   private def countLiteral(hay: String, needle: String): Int =
     if needle.isEmpty then 0 else hay.sliding(needle.length).count(_ == needle)
 
-  test("② 置位侧单点：intake 只在腿①（→project）置位，腿②（→node）/腿③（非 project 面）不置位"):
+  test("② 置位侧不变量：intake 只在腿①（→project）置位；node 腿家族一律裸构造、零置位"):
     // mailmodel batch (2026-09-25): the `type` key is retired => mailAttribution's
     // first argument changed from `mailType` to eventType; leg 1 is pinned to "info"
     // (the P0 exemption is now judged on the root injection side via the leading
     // [INTERRUPT] literal).
+    //
+    // 🔴 计数探针 → 语义不变量（S6=C · N1 刀3 · USTC 合并报告申报存量红 2026-10-10，
+    //    三树同红）：node 腿家族从单腿（deliverToNode，脚②原批）扩为三腿
+    //    （+ deliverToScopeNode 委托作用域腿 / deliverToRootNodeRef root→已登记链腿，
+    //    A 线既有形态），三腿共用同一个裸构造点。原「裸调用恰好一处」的计数探针把
+    //    「node 腿家族扩员」误读为置位越界。泛化为三条语义判据（计数只作载体）：
+    //      I1  intake 置位**恰一处** = 腿①（→project）的 IntakeMail 重载；
+    //      I2  node 腿家族（→node 面）共用裸构造、显式零置位——裸调用 ≥1，
+    //          新 node 腿加入使裸计数增长属预期形态，不越界；
+    //      I3  不存在第三种调用形态（既非裸构造也非腿①重载 ⇒ 实参面越界扩张）。
     val leg1Call = "mailAttribution(\"info\", ctx, Some(InjectionAttribution.IntakeMail))"
     val bareCall = "mailAttribution(\"info\", ctx)"
+    val callPrefix = "mailAttribution(\"info\", ctx"
     assertEquals(
       countLiteral(mailTool, leg1Call),
       1,
-      s"`$leg1Call` 必须**恰好一处**（腿① routeToProject）——腿②（node，source='system'⇒标签 System）" +
-        "与腿③（source='mail'⇒标签 Mail）呈现口径不同：在共用构造点统一置位会把节点收件面标签抬成 Mail（越界扩面）"
+      s"`$leg1Call` 必须**恰好一处**（腿① routeToProject）——intake 置位面只许 →project 腿，" +
+        "在共用构造点统一置位会把节点收件面标签抬成 Mail（越界扩面）"
+    )
+    assert(
+      countLiteral(mailTool, bareCall) >= 1,
+      s"`$bareCall`（默认 intake=None）至少一处 —— node 腿家族（deliverToNode / " +
+        "deliverToScopeNode / deliverToRootNodeRef…）共用裸构造；腿②③呈现口径不变：node 收件面" +
+        "标签 System（source='system'），置位缺省 ⇒ 零行为变化"
     )
     assertEquals(
-      countLiteral(mailTool, bareCall),
-      1,
-      s"`$bareCall`（默认 intake=None）必须恰好一处（腿② deliverToNode）——腿① 应用带 IntakeMail 的重载"
+      countLiteral(mailTool, bareCall) + countLiteral(mailTool, leg1Call),
+      countLiteral(mailTool, callPrefix),
+      "出现第三种调用形态（既非裸构造也非腿① IntakeMail 重载）——mailAttribution 实参面越界扩张；" +
+        "node 腿置位必须保持显式不允许（新腿加入须沿用裸构造）"
     )
     assert(
       // 2026-09-30 (mailmodel batch): the first parameter is renamed mailType -> eventType

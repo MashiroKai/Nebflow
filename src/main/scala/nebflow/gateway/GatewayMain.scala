@@ -1641,7 +1641,22 @@ object GatewayMain extends IOApp:
                                                             if GatewayConfig.noBrowser ||
                                                               nebflow.core.HeadlessMode.enabled
                                                             then IO.unit
-                                                            else openBrowser(url)
+                                                            else
+                                                              // 门户开门（neblink portal MVP, 2026-10-10）：
+                                                              // 目标经 PortalUrl 单点解析（env > config >
+                                                              // 生产缺省；NEBFLOW_OPEN_UI=local / config
+                                                              // portalUrl="" 回落 localhost 现状）。:503-505 的
+                                                              // baseUrl/sys.props nebflow.url 原样保留——那是他处
+                                                              // 消费的 sys prop 与本地回落值。deviceId 读失败降级
+                                                              // 为不带参数开门（失败不该把用户拦在本地）。
+                                                              PortalUrl
+                                                                .startupUrl(
+                                                                  deviceId = neblinkService.identity.attempt.map(
+                                                                    _.toOption.map(_.deviceId)
+                                                                  ),
+                                                                  localUrl = url
+                                                                )
+                                                                .flatMap(openBrowser)
                                                           // --- Background init: skills dir, MCP servers ---
                                                           _ <- SkillService
                                                             .ensureDefaults()

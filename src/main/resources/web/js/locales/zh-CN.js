@@ -84,6 +84,27 @@ export default {
   // 提交成功提示：**已登记但本批默认不启用**（沿既有空态 CTA 语义——填进去 + 聚焦
   // 本身就是反馈；键位先留着，日后确无反馈感再启用）。故本文件无该键的调用点。
   'project.createPrefilled': '描述已填入输入框，按发送即可创建。',
+  // === ui-device-faces 批（2026-10-10）：面A 创建项目「存放设备」+ 面C 项目卡设备徽标 ===
+  // 文案逐字对齐设计稿（/tmp/nebflow-coldstart/general/proto-device-agnostic/
+  // 20261010_002900_neblink-stage1-ui-faces-design.md §1/§3）。
+  'project.deviceLabel': '存放设备',
+  'project.deviceSelf': '本机（这台 Mac）',
+  'project.deviceNoteSelf': '项目将存放在本机。',
+  'project.deviceOfflineTag': '离线',
+  'project.deviceMenuFoot': '设备来自 NebLink 网络（peers）；离线设备不可选，上线后自动出现。',
+  'project.createDeviceHintline': '项目将存放在 {device}，由该设备执行；本机只登记指针，文件按需查看。',
+  'project.createWorkspaceLabelRemote': '工作区路径（{device} 上）',
+  'project.createWorkspacePickRemote': '在 {device} 上选择路径…',
+  'project.createRemotePending': '正在 {device} 上创建（约数秒）',
+  'project.createStep1': '校验设备',
+  'project.createStep2': '校验目录',
+  'project.createStep3': '写脚手架',
+  'project.createStep4': '落项目定义',
+  'project.createErrRetry': '重试',
+  'project.createErrSwitchLocal': '换成本机',
+  'project.createErrSwitchDevice': '换一台设备…',
+  'project.devBadgeTitle': '远端项目 · 设备 {device} · 路径 {path}',
+  'project.devBadgeOfflineTitle': '远端项目 · 设备 {device}（离线）· 路径 {path}',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': '运行中…',
   // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案
@@ -1576,6 +1597,13 @@ export default {
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',
   'neblink.statusDegraded': '状态读取失败（HTTP {status}），下面显示的可能不是最新状态',
+  // 配对码卡（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll。
+  'neblink.pairCodeHint': '有门户展示的 6 位配对码？输入即可绑定本机',
+  'neblink.pairCodePlaceholder': '6 位配对码',
+  'neblink.pairCodeSubmit': '绑定设备',
+  'neblink.pairCodeSubmitting': '绑定中…',
+  'neblink.pairCodeInvalid': '请输入 6 位数字配对码',
+  'neblink.pairCodeSuccess': '绑定成功，已入网',
   // 被踢下线被动提示（踢旧批案 B，2026-09-14）：**状态行级**——无横幅、无声音
   // （一期口径见 User.md 第 36 行；代码锚 messages.js「无横幅无提示音」）。
   'neblink.signedOutElsewhere': '已在别处登录',
@@ -1943,6 +1971,14 @@ export default {
   'agentManager.faceNodeHint': 'flow 节点会话收到的系统提示词（node_report 纪律）。',
   'explorer.newFile': '新建文件',
   'explorer.newFolder': '新建文件夹',
+  // === ui-device-faces 批（2026-10-10）：面B 文件浏览器远端目录 ===
+  // 远端根的加载行/取件三态/只读闸；文案对齐设计稿 §2。
+  'explorer.loadingRemote': '正在加载 {device} 的目录…',
+  'explorer.retry': '重试',
+  'explorer.pickupLoading': '取件中…',
+  'explorer.pickupFailed': '取件失败',
+  'explorer.pickupClose': '关闭',
+  'explorer.remoteReadonly': '远端目录只读，写操作不可用。',
   'daemons.delete': '删除',
   // === 工作区选择卡 + 应用内目录浏览器（workspace-picker 批次，2026-09-05） ===
   'workspacePicker.pickTitle': '选择工作区',
@@ -1974,6 +2010,9 @@ export default {
   'workspacePicker.hint.empty': '可输入路径直达该目录，或回到上级',
   'workspacePicker.hint.noMatch': '清空搜索框可恢复全部；也可输入路径直达',
   'workspacePicker.error.invalid': '路径无效',
+  // === ui-device-faces 批（2026-10-10）：选择器 device 模式（远端腿，只读） ===
+  'workspacePicker.deviceTitle': '在 {device} 上选择目录',
+  'workspacePicker.deviceNote': '远端目录只读 — 目录须已存在（缺件即报，不新建）。',
 
   // === 设备会话切服务端数据源，MVP-2（2026-09-15）：设备回执 ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令 ⑤b

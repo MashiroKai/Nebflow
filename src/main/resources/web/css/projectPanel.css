@@ -485,6 +485,217 @@
    (distinguishing it from the "no path selected" placeholder state). */
 .proj-create-path[data-picked="1"] { color: var(--color-text); }
 
+/* ── ui-device-faces 批（2026-10-10）面A：创建弹层「存放设备」行 ──────────────
+   设计稿 §1（A1 按钮/菜单两态、A2 菜单=self+peers、A3 离线禁选、A4 远端选中形）。
+   🔴 零新色值：全走既有 token（--color-frame-hover / --color-primary /
+   --status-warn-icon / --sapphire rgb-triplet 族 / 既有 rgba 字面量族）；材质 =
+   .header-dropdown-menu 同款玻璃（base.css:301）。 */
+.dev-row {
+  position: relative; /* .dev-menu 的锚（absolute 下拉） */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.dev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 10px;
+  background: var(--color-frame-hover);
+  color: var(--color-text);
+  font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.dev-btn:hover { background: var(--glass-control-bg-hover); }
+.dev-btn .dev-ic { display: inline-flex; width: 14px; height: 14px; color: var(--color-frame-text-muted); }
+.dev-btn .dev-ic svg { width: 100%; height: 100%; }
+.dev-btn.is-remote .dev-ic { color: rgb(var(--sapphire)); } /* 远端腿着色（设计稿 A1 远端形） */
+.dev-btn .chev { width: 12px; height: 12px; color: var(--color-frame-text-muted); flex: 0 0 auto; }
+.dev-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.dev-note {
+  font-size: 11.5px;
+  color: var(--color-frame-text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 设备下拉菜单：材质复刻 .header-dropdown-menu（glass bg + blur + 折射线 + 阴影），
+   锚定在按钮下方。列表项语言自绘（圆点行 .dot + 名 .nm + 通道 .sub + 勾 .ck /
+   离线 tag）——不复用 button::before 伪元素（离线行要点位变灰、tag 要占位）。 */
+.dev-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 300;
+  min-width: 300px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  .dev-menu {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+.dev-menu::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
+  pointer-events: none;
+}
+.dev-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-frame-text);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.dev-item:hover { background: var(--color-surface); }
+.dev-item.active { color: var(--color-primary); font-weight: 500; }
+.dev-item .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--color-primary); }
+.dev-item .dot.off { background: var(--color-frame-text-muted); opacity: 0.55; }
+.dev-item .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-item .sub {
+  flex: 0 0 auto;
+  font: 500 10px/1 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  opacity: 0.8;
+}
+.dev-item .ck { width: 14px; height: 14px; margin-left: auto; flex: 0 0 auto; color: var(--color-primary); }
+.dev-item .off-tag {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--color-frame-hover);
+  font: 600 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-frame-text-muted);
+}
+/* 离线行禁选（设计稿 A3）：减淡 + 不可点 + cursor 默认——不给「点了必失败」的按钮。 */
+.dev-item.disabled { opacity: 0.5; cursor: default; }
+.dev-item.disabled:hover { background: transparent; }
+.dev-menu-foot {
+  padding: 6px 10px 4px;
+  border-top: 1px solid var(--glass-border);
+  margin-top: 2px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--color-frame-text-muted);
+}
+/* 远端选中语义提示行（设计稿 A4）：info 图标（--sapphire）+ 一句执行绑定语义。 */
+.dev-hintline {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: -4px 0 14px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-frame-text-muted);
+}
+.dev-hintline svg { width: 12px; height: 12px; margin-top: 2px; flex: 0 0 auto; color: rgb(var(--sapphire)); }
+/* 远端回显 chip（创建弹层路径行 + 选择器面包屑共用一件）：hard-drive 图形 + 设备名，
+   sapphire 着色（与 .dev-btn.is-remote 同族）。 */
+.path-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire));
+  font: 600 11px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  vertical-align: -3px;
+}
+.path-chip svg { width: 11px; height: 11px; flex: 0 0 auto; }
+/* 远端失败错误行升级（设计稿 §1.3）：码尾注（mono 弱化）+ 行内动作链接。 */
+.proj-create-error .err-code {
+  font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+}
+.proj-create-error .err-acts { display: inline-flex; gap: 10px; margin-left: 8px; }
+.proj-create-error .err-act {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: 500 11.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+}
+.proj-create-error .err-act:hover { text-decoration: underline; }
+/* 创建中四步说明（设计稿 §1.2）：spinner + 四枚静态 chips + 步间分隔点。 */
+.creating-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.creating-row .spin {
+  width: 12px; height: 12px; flex: 0 0 auto;
+  color: rgb(var(--sapphire));
+  animation: proj-create-spin 0.9s linear infinite;
+}
+@keyframes proj-create-spin { to { transform: rotate(360deg); } }
+.creating-row .step { display: inline-flex; align-items: center; gap: 4px; }
+.creating-row .step-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px;
+  border-radius: 4px;
+  background: var(--color-frame-hover);
+  font: 600 9px/1 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+}
+.creating-row .step-t { font-size: 11px; color: var(--color-frame-text-dim); }
+.creating-row .step-sep { color: var(--color-frame-text-muted); opacity: 0.55; }
+
+/* ── ui-device-faces 批（2026-10-10）面C：项目卡设备徽标 ─────────────────────
+   title 旁只读元数据 chip（本机项目零徽标 = 存量零变化）；离线 = 琥珀点
+   （--status-warn-icon，base.css 亮 #b45309 / 暗 #ffa83c 两档既有 token）。 */
+.dev-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire));
+  font: 600 10px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.dev-badge svg { width: 10px; height: 10px; flex: 0 0 auto; }
+.dev-badge .dev-badge-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.dev-badge .warn-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--status-warn-icon);
+  flex: 0 0 auto;
+}
+.dev-badge.is-offline { background: transparent; border: 1px solid var(--glass-border); color: var(--color-frame-text-muted); }
+
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：
      「哪张新」= 静态强调环保持 ~2s（JS 置时）+ 屏幕阅读器「新」标记 + 状态行播报；
@@ -506,6 +717,9 @@
   .proj-create-panel { animation-duration: 0.01s; }
   .proj-create-fab { transition-duration: 0.01s; }
   .proj-create-fab:hover { transform: none; }
+  /* ui-device-faces 批：创建中 spinner 停转（语义仍在——四步 chips 静态可读）。 */
+  .creating-row .spin { animation: none; }
+  .dev-btn, .dev-item { transition-duration: 0.01s; }
 }
 
 /* ── delegate-chain 就地视图（S10 per-task 链视图 ＋ S11 结构总视图，

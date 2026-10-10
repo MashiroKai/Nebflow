@@ -46,7 +46,13 @@ ${extraBody || ''}
     page.on('pageerror', (e) => errs.push(String(e)));
     await page.route('**/h.html', (r) => r.fulfill({ contentType: 'text/html', body: pageHtml() }));
     await page.goto(`${BASE}/h.html`);
-    // flag OFF: initOnboarding must produce zero UI
+    // ENABLEMENT ruling 2026-10-04 (Personal Agent batch, onboarding.js
+    // initOnboarding): the flow runs on FIRST START (no marker) and is sealed
+    // only by the S0 marker (`onboarding: 'done' | 'skipped'` => never again).
+    // The old localStorage flag (`nebflow.onboarding.enabled`) is retired —
+    // "sealed" now means the marker, so A1 drives the seal and A2 the first
+    // start. Both sealed calls return BEFORE `started` is set, so A2's
+    // first-start call in the same page still runs the flow.
     await page.evaluate(async () => {
       // onboarding renders through activeView.dom.chat — build the mock view
       const cv = await import('/js/chatView.js');
@@ -55,20 +61,20 @@ ${extraBody || ''}
     });
     let r = await page.evaluate(async () => {
       const m = await import('/js/onboarding.js');
-      m.initOnboarding({ configured: false });
+      m.initOnboarding({ configured: false, onboarding: 'done' });
+      m.initOnboarding({ configured: false, onboarding: 'skipped' });
       await new Promise(r => setTimeout(r, 300));
       return { rows: document.querySelectorAll('#chat .row').length };
     });
-    ok('A1 onboarding sealed: flag off -> zero rows (first run straight to main UI)', r.rows === 0, r);
-    // flag ON: greeting renders (code path intact)
+    ok('A1 onboarding sealed: done/skipped marker -> zero rows (S0 never-again seal; ENABLEMENT 2026-10-04)', r.rows === 0, r);
+    // first start (no marker): greeting renders (code path intact)
     r = await page.evaluate(async () => {
-      localStorage.setItem('nebflow.onboarding.enabled', '1');
       const m = await import('/js/onboarding.js');
       m.initOnboarding({ configured: false });
       await new Promise(r => setTimeout(r, 600));
       return { rows: document.querySelectorAll('#chat .row').length };
     });
-    ok('A2 flag on -> onboarding greeting renders (code intact, re-enable works)', r.rows > 0, r);
+    ok('A2 first start (no marker) -> onboarding greeting renders (ENABLEMENT 2026-10-04: no localStorage gate)', r.rows > 0, r);
     ok('A0 no page errors', errs.length === 0, errs);
     await ctx.close();
   }
@@ -153,7 +159,25 @@ ${extraBody || ''}
       cv.setActiveView(view);
       state.ws = { readyState: 1, send: (s) => out.wires.push(JSON.parse(s)) };
       state.bypassSessions = new Set(); // main.js assigns this at runtime
-      state.safetyModes = state.safetyModes || {};
+      // sessionList-shaped seed (main.js:2172 posture — the real runtime fills
+      // this map from the sessionList frame before any prompt renders): each
+      // known session carries its current per-session mode, and the global
+      // applier mirrors onto exactly these keys.
+      state.safetyModes = { 'sess-c': 'confirm-edits', 'sess-c2': 'confirm-edits' };
+      // permshield S1 (2026-09-13): an upgrade click no longer writes a
+      // session-scoped `state.safetyModes[sid]` — it calls the application-level
+      // applier `state.applyGlobalSafetyMode(mode)` (main.js assigns the real one
+      // at boot; the mock scaffold never boots main.js, same posture as the
+      // state.ws stub above). Stub with the SAME contract as main.js:3596 minus
+      // the DOM half (updateSafetyToggle): validate the mode, mirror it onto the
+      // per-session map (every session = the global value), record the apply.
+      out.globalModeApplied = [];
+      state.applyGlobalSafetyMode = (mode) => {
+        if (!['confirm-edits', 'auto-edits', 'auto-all'].includes(mode)) return false;
+        Object.keys(state.safetyModes).forEach(id => { state.safetyModes[id] = mode; });
+        out.globalModeApplied.push(mode);
+        return true;
+      };
       const labels = (row) => [...row.querySelectorAll('.option-btn')]
         .map(b => b.dataset.label).filter(Boolean); // Other button has no data-label
 
@@ -202,7 +226,9 @@ ${extraBody || ''}
     const denyWire = r.wires.find(w => w.requestId === 'req-5');
     ok('C8 deny path: approved:false and NO upgradeMode key',
       denyWire && denyWire.approved === false && !('upgradeMode' in denyWire), denyWire);
-    ok('C9 optimistic safetyModes mirror updated', r.safetyModes['sess-c'] === 'auto-all', r.safetyModes);
+    ok('C9 optimistic global-mode mirror updated (permshield S1: upgrade click -> applyGlobalSafetyMode -> per-session mirror)',
+      r.safetyModes['sess-c'] === 'auto-all' && r.globalModeApplied.join(',') === 'auto-edits,auto-all',
+      { safetyModes: r.safetyModes, globalModeApplied: r.globalModeApplied });
     ok('C0 no page errors', errs.length === 0, errs);
     // upgrade option styling: sapphire-tinted class present
     const styled = await page.evaluate(async () => {

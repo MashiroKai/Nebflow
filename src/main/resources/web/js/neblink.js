@@ -18,7 +18,6 @@ import { openLocalStore, clear as clearLocalStore } from './localStore.js';
 import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
-import { brand } from './brand.js';
 import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
 import { getKnownAccounts, rememberAccount } from './knownAccounts.js';
 // NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
@@ -349,65 +348,40 @@ export async function refreshNeblink() {
 
 // ---- Pairing flow ----
 
-// 暂时禁用，邮箱注册功能完成后重新启用
-// （已从 main.js 初始化流程中摘除调用，函数代码保留供后期邮箱注册复用）
-/** Check URL for pairing redirect from nebflow.space/connect */
-export function checkPairingRedirect() {
-  const params = new URLSearchParams(window.location.search);
-  const server = params.get('server');
-  const networkId = params.get('networkId');
-  const secret = params.get('secret');
-  // Optional account avatar URL, if nebflow.space includes it on the redirect.
-  const avatar = params.get('avatar');
+// 旧 `checkPairingRedirect`（nebflow.space/connect 重定向 → POST /api/neblink/pair）
+// 已随门户 MVP E7 批（2026-10-10）整体删除：后端从未有 /api/neblink/pair 路由
+// （死路径技术债，方案 §6 偏差 #12 顺手清），main.js 初始化流程亦早已摘除调用。
+// 配对码入网的新家 = 设置面板配对码卡（neblinkSettingsHTML 未登录态）+ submitPairCode。
 
-  if (server && networkId && secret) {
-    // Capture the auth token BEFORE wiping the URL. On the very first load
-    // after the nebflow.space redirect, ws.js connect() (which stores the
-    // ?token= URL param into localStorage) has NOT run yet, so localStorage is
-    // still empty. Read the token from the URL first, fall back to localStorage
-    // (subsequent pairing attempts). The backend /api/neblink/pair route is
-    // guarded by checkAuth, which only accepts Authorization: Bearer or a
-    // ?token= query param — without this header the POST returns Forbidden and
-    // login silently fails ("登陆了都没反应").
-    const token = params.get('token') || getAuthToken();
-    // Clean URL — strip all params (incl. the secret/token) from history.
-    const cleanUrl = window.location.origin + window.location.pathname;
-    window.history.replaceState({}, document.title, cleanUrl);
-
-    // Send pairing config to backend
-    neblinkState.pairing = true;
-    _rerender?.();
-    const pairBody = { server, networkId, secret };
-    if (avatar) pairBody.avatar = avatar;
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    fetch('/api/neblink/pair', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(pairBody)
-    }).then(r => r.json()).then(data => {
-      if (data.ok) {
-        neblinkState.pairing = false;
-        neblinkState.paired = true;
-        neblinkState.pairError = '';
-        showLoginSuccessBanner('登录成功，设备已连接');
-        setTimeout(() => fetchNeblinkStatus().then(() => _rerender?.()), 1500);
-      } else {
-        neblinkState.pairing = false;
-        const err = data.error || '配对失败';
-        neblinkState.pairError = err === 'Unauthorized'
-          ? `认证失败。请从 ${brand.productName} 终端重新打开浏览器页面，然后重试登录。`
-          : err;
-      }
-      _rerender?.();
-    }).catch(e => {
-      neblinkState.pairing = false;
-      neblinkState.pairError = '网络错误: ' + e.message;
-      _rerender?.();
-    });
-    return true;
+/**
+ * 配对码入网（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll。
+ * Body 只带 `pairCode`（可选 `server` 透传，本卡 UI 不出该输入——缺省走后端
+ * 回落链）。成功（200 {ok:true}）后端已完成 persist 热换（免重启）；调用方
+ * 跟一次 refreshNeblink() 即可切已登录视图。失败抛 Error(原始 error 文案)。
+ */
+export async function submitPairCode(pairCode, server) {
+  const token = getAuthToken();
+  const body = { pairCode };
+  if (server) body.server = server;
+  const resp = await fetch('/api/neblink/enroll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify(body)
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data.ok !== true) {
+    const msg = (data && data.error) || `HTTP ${resp.status}`;
+    throw new Error(msg);
   }
-  return false;
+  return data; // {ok, message, networkId}
+}
+
+/** 卡内专用错误行（textContent 写入——错误文案是服务端原文，非信任串）。 */
+function showPairCodeError(message) {
+  const el = document.getElementById('neblink-paircode-error');
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = !message;
 }
 
 // ---- Settings section HTML ----
@@ -485,8 +459,26 @@ export function neblinkSettingsHTML() {
     // 本机凭据面读数（被动来源：坏件在**下一次登录尝试之前**就已经可判读，上游 §4 S4）。
     const issue = (!pairErr && neblinkState.credentialIssue)
       ? `<div class="neblink-error">${escapeHtml(loginFailureText(neblinkState.credentialIssue))}</div>` : '';
+    // 配对码卡（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll
+    // {pairCode}（server 缺省 = 后端回落链：显式 > live config > 生产缺省，E6 ①）。
+    // 成功后端已热换免重启 ⇒ 本卡只管刷新状态切已登录视图。错误行走卡内
+    // 专用行（#neblink-paircode-error，textContent 写入），**不复用** pairError
+    // 全局面——那会把输入框重渲掉，用户码丢失。
+    const pairCard = `
+      <div class="neblink-paircode-card">
+        <div class="neblink-login-hint">${t('neblink.pairCodeHint')}</div>
+        <div class="neblink-paircode-row">
+          <input class="neblink-paircode-input" id="neblink-paircode-input" type="text"
+            inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+            placeholder="${t('neblink.pairCodePlaceholder')}" aria-label="${t('neblink.pairCodePlaceholder')}">
+          <button class="neblink-login-btn neblink-paircode-btn" id="neblink-paircode-btn"
+            type="button">${t('neblink.pairCodeSubmit')}</button>
+        </div>
+        <div class="neblink-error" id="neblink-paircode-error" role="alert" hidden></div>
+      </div>`;
     return `<div class="neblink-login-section">
       <div class="neblink-logged-out-hint">${t('neblink.loggedOutHint')}</div>
+      ${pairCard}
       ${degraded}
       ${pairErr}
       ${issue}
@@ -977,6 +969,41 @@ export function bindNeblinkEvents(rerender) {
     cleanupBtn.addEventListener('click', () => {
       cleanupBtn.disabled = true;
       initiateLogout({ continueToLogin: true });
+    });
+  }
+
+  // 配对码卡提交（门户 MVP E7, 2026-10-10）：6 位数字校验（本地，不发请求）→
+  // submitPairCode → 成功刷新状态切已登录视图；失败错误行卡内可见（输入保留，
+  // 按钮恢复）。错误行走 #neblink-paircode-error（textContent），不走全局
+  // pairError 通道——那会触发重渲把输入框清掉。
+  const pairBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-paircode-btn'));
+  const pairInput = /** @type {HTMLInputElement|null} */ (document.getElementById('neblink-paircode-input'));
+  if (pairBtn && pairInput) {
+    pairBtn.addEventListener('click', async () => {
+      const code = (pairInput.value || '').trim();
+      if (!/^\d{6}$/.test(code)) {
+        showPairCodeError(t('neblink.pairCodeInvalid'));
+        return;
+      }
+      pairBtn.disabled = true;
+      pairBtn.textContent = t('neblink.pairCodeSubmitting');
+      showPairCodeError('');
+      try {
+        await submitPairCode(code);
+        showLoginSuccessBanner(t('neblink.pairCodeSuccess'));
+        await refreshNeblink(); // 后端 persist 热换已完成 ⇒ 重取 status 即切已登录视图
+      } catch (e) {
+        showPairCodeError((e && e.message) || t('neblink.pairCodeInvalid'));
+        // 重渲可能已替换 DOM（如状态拍并发落地）——仅当按钮仍在时恢复。
+        if (pairBtn.isConnected) {
+          pairBtn.disabled = false;
+          pairBtn.textContent = t('neblink.pairCodeSubmit');
+        }
+      }
+    });
+    // 回车提交（输入框单字段卡的既有手感惯例）
+    pairInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); pairBtn.click(); }
     });
   }
 
