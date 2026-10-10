@@ -216,6 +216,38 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
+  test("bodyful POST with ZERO body_frames is rescued by the first-frame backstop (empty body proceeds)"):
+    withBridge(echoApp) { (bridge, fake, _) =>
+      // Contract 2.3 allows "0..n" body_frames: an ingress that sends zero
+      // frames for an empty POST body would park the handler on the channel
+      // forever — the backstop ends it with an empty body instead.
+      bridge.firstBodyFrameTimeout = 400.millis
+      bridge.enqueueFrame(HttpRequest(Rid, "POST", "/api/echo", Vector("x-forwarded-for" -> "203.0.113.9")))
+      for
+        ok <- waitUntil(5.seconds)(IO(httpCycles(fake).contains((Rid, 200))))
+        _ = assert(
+          ok,
+          s"the empty-body POST must complete via the backstop instead of hanging; sent=${sentTexts(fake)}"
+        )
+      yield ()
+    }
+
+  test("mailbox stays live after ws traffic: an unknown-cycle ws_frame does not stall subsequent cycles"):
+    withBridge(echoApp) { (bridge, fake, _) =>
+      // ws handling is a non-blocking inbox offer (per-cycle pump fibers own
+      // the blocking sends) — ws traffic for an unknown cycle must not delay
+      // an unrelated mint cycle behind it.
+      bridge.enqueueFrame(WsFrame("1631a2b0-9c8d-4e7f-8a9b-c0d1e2f3a4b5", "text", "x".getBytes(UTF_8), true))
+      bridge.enqueueFrame(ConsoleTicketMint(Rid, MintId, "logto|user-42", "portal"))
+      for
+        ok <- waitUntil(5.seconds)(IO(sentTexts(fake).exists(_.contains("ConsoleTicketResult"))))
+        _ = assert(
+          ok,
+          s"the mint result must arrive despite preceding ws traffic; sent=${sentTexts(fake)}"
+        )
+      yield ()
+    }
+
   test("response body larger than the chunk constant slices into ordered body_frames (seq 0..n, more=false last)"):
     val big = ("a" * (PortalTunnelBridge.BodyChunkBytes + 10)).getBytes(UTF_8)
     val bigApp: HttpApp[IO] = HttpApp[IO] { _ =>

@@ -208,6 +208,60 @@ class PortalProtoFrontCheckSpec extends CatsEffectSuite:
       }
     }
 
+  // ── Terminal probe leg（判定表 row 1/2/4：终态不停拨、101 清终态）────────
+
+  test("terminal binding does NOT stop dialing: the low-frequency probe reaches a real upgrade and row 4 clears the state"):
+    withFixture { fix =>
+      fix.relayMode = RelayAuthFixtureServer.RelayMode.AcceptIfLive
+      Dispatcher.parallel[IO].use { dispatcher =>
+        for
+          ms <- NeblinkService.create(0, dispatcher)
+          client = mkClient(fix)
+          _ = ms.setRelayClient(Some(client))
+          _ <- client.login(Device, "qa-host", "macos", Nil)
+          _ <- ms.updateConfig(
+            _.copy(
+              enabled = true,
+              neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+            )
+          )
+          // Pre-write the PERSISTED terminal state: this is a restarted host
+          // whose binding was revoked before the restart (the kickParked
+          // lesson — the state must survive, but it must never stop dialing).
+          _ <- IO {
+            os.write.over(
+              PathUtil.dataRoot / "neblink" / "binding-state.json",
+              """{"status":"unbound","updatedAt":1}""",
+              createFolders = true
+            )
+          }
+          faces = new PortalHostFaces(gatewayPort = 1)
+          tunnel = new NeblinkRelayTunnel(
+            ms,
+            () => IO(client.currentSessionToken),
+            portalHost = Some(faces)
+          )(dispatcher)
+          // Test seam: shrink the 10-minute probe cadence to 300ms.
+          _ = tunnel.terminalProbeNap = 300.millis
+          _ = ms.setRelayTunnel(tunnel)
+          fiber <- tunnel.connect().start
+          dialed <- waitUntil(10.seconds)(IO(fix.attemptCount(101) >= 1))
+          _ = assert(
+            dialed,
+            "a terminal-binding host must still DIAL the relay (probe = nap + real upgrade attempt)"
+          )
+          cleared <- waitUntil(10.seconds)(
+            tunnel.portalDeps.fold(IO.pure(false))(_.bindingState.isUnbound.map(!_))
+          )
+          _ = assert(
+            cleared,
+            "judgment-table row 4: the successful upgrade must clear the terminal binding state"
+          )
+          _ <- fiber.cancel *> tunnel.stop()
+        yield ()
+      }
+    }
+
   // ── P1：契约帧校验拒斥 ⇒ 丢帧 + 结构化诊断（不落 W10）──────────────────
 
   test("P1: contract frame failing codec validation drops with the rejection diagnostic"):

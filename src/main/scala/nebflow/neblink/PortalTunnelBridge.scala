@@ -26,13 +26,14 @@ import java.util.concurrent.{ConcurrentHashMap, CompletionStage, TimeUnit}
  * Ordering model: every inbound frame is enqueued as an IO action into an
  * unbounded FIFO mailbox (offers happen on the single relay listener thread,
  * so submission order == wire order) and executed by ONE consumer fiber.
- * That single consumer is what makes the order-sensitive per-requestId
- * protocols correct (body_frame seq, ws_frame stream order) and what
- * serializes outbound sends on the JDK relay socket (`sendText` throws
- * IllegalStateException when the previous send has not completed). Heavy
- * work (the local HTTP app run, the local WS connect) is spawned OFF the
- * mailbox so one slow cycle cannot head-of-line-block the others; each such
- * fiber only sends frames it produced itself, ordered by construction.
+ * The mailbox actions themselves only do O(1) state work — channel
+ * registration, seq checks, queue offers — so the consumer can never be
+ * head-of-line-blocked by a slow socket. All blocking work lives in
+ * dedicated fibers: the per-request HTTP cycle fiber, and the per-cycle WS
+ * pump PAIR (downlink relay→local, uplink local→relay, design 3.3); every
+ * relay-bound send goes through [[RelayFrameSender]]'s per-socket lock, and
+ * per-stream order is preserved by construction (each stream is produced by
+ * exactly one fiber / one FIFO pump).
  *
  * `keep actors out of cats-effect`: this whole face is plain cats-effect IO
  * driven straight off the WS listener thread (a plain queue offer) — no
@@ -65,6 +66,10 @@ private[neblink] final class PortalTunnelBridge(
   private val bodyChannels = new ConcurrentHashMap[String, BodyChannel]
   private val wsCycles = new ConcurrentHashMap[String, WsCycle]
 
+  /** First-body-frame backstop (test seam over [[PortalTunnelBridge.FirstBodyFrameTimeout]]). */
+  @volatile private[neblink] var firstBodyFrameTimeout: scala.concurrent.duration.FiniteDuration =
+    PortalTunnelBridge.FirstBodyFrameTimeout
+
   /**
    * Inbound mailbox. A plain JDK blocking queue (not a cats-effect Queue):
    * offers must land in CALLER order — the single relay listener thread is
@@ -90,9 +95,6 @@ private[neblink] final class PortalTunnelBridge(
   /** Relay-listener entry: enqueue one decoded portal frame (FIFO, single consumer). */
   def enqueueFrame(frame: PortalWireCodec.PortalFrame): Unit =
     mailbox.offer(safeguard(actionFor(frame)))
-
-  private def enqueueRaw(action: IO[Unit]): Unit =
-    mailbox.offer(safeguard(action))
 
   private def safeguard(action: IO[Unit]): IO[Unit] =
     action.handleErrorWith { e =>
@@ -148,7 +150,9 @@ private[neblink] final class PortalTunnelBridge(
               s"portal http_request rejected by the tunnel guard: requestId=${frame.requestId} " +
                 s"envelopeIp=$envelopeIp reason=$reason — answering 429"
             ) *>
-              respondStatus(frame.requestId, 429, "application/json", s"""{"error":"rate_limited","reason":"$reason"}""")
+              // One-shot answer (head + optional body): spawned OFF the mailbox —
+              // the consumer never waits on the relay socket.
+              respondStatus(frame.requestId, 429, "application/json", s"""{"error":"rate_limited","reason":"$reason"}""").start.void
           case None => startHttpCycle(frame)
         }
       case None => startHttpCycle(frame)
@@ -160,7 +164,7 @@ private[neblink] final class PortalTunnelBridge(
           "portal http_request dropped: the lifted HTTP app is not bound " +
             "(bridge wired before gateway server assembly)"
         ) *>
-          respondStatus(frame.requestId, 503, "text/plain", "portal bridge not wired")
+          respondStatus(frame.requestId, 503, "text/plain", "portal bridge not wired").start.void
       case Some(app) =>
         (for
           method <- Method.fromString(frame.method)
@@ -170,7 +174,7 @@ private[neblink] final class PortalTunnelBridge(
             logger.warn(
               s"portal http_request face unparseable locally (requestId=${frame.requestId}): $err"
             ) *>
-              respondStatus(frame.requestId, 502, "text/plain", "unparseable http_request face")
+              respondStatus(frame.requestId, 502, "text/plain", "unparseable http_request face").start.void
           case Right((method, uri)) =>
             // Per-requestId body channel: opened here, INSIDE the mailbox
             // action, so a body_frame arriving right behind the http_request
@@ -192,9 +196,38 @@ private[neblink] final class PortalTunnelBridge(
             // so a dropped cycle (seq disorder / queue overflow / teardown)
             // can CANCEL it — "drop the cycle" must mean no http_response
             // leaves a poisoned request, not a truncated-body 200.
-            runLocalRequest(frame.requestId, app, req).start.flatMap { fiber =>
-              IO(channelOpt.foreach(_.cycle.set(Some(fiber))))
-            }.void
+            val spawn =
+              runLocalRequest(frame.requestId, app, req).start.flatMap { fiber =>
+                IO(channelOpt.foreach(_.cycle.set(Some(fiber))))
+              }.void
+            // Empty-body backstop on bodyful verbs: the contract allows ZERO
+            // body_frames for a request whose body is empty, which would leave
+            // the channel open forever (no End signal — the handler parks on
+            // queue.take and the cycle hangs server-side). The ingress is
+            // expected to send a terminal frame for an empty body (its batch's
+            // obligation); this deadline is the host-side defense. Non-contract
+            // implementation constant (transport backfills belong to T-1/v1.1).
+            channelOpt.fold(spawn)(ch => armFirstBodyDeadline(frame.requestId, ch) *> spawn)
+
+  /**
+   * First-body-frame deadline: if no body_frame at all arrived within the
+   * window, end the channel (the handler proceeds with an empty body) and
+   * drop the registration — late frames then hit the no-open-cycle path.
+   * Idempotent and self-limiting: if the body started flowing (or the cycle
+   * finished first), the guard condition simply fails and the fiber ends.
+   */
+  private def armFirstBodyDeadline(requestId: String, ch: BodyChannel): IO[Unit] =
+    (IO.sleep(firstBodyFrameTimeout) *>
+      IO {
+        !ch.receivedAny.get() && bodyChannels.remove(requestId, ch)
+      }.flatMap { fired =>
+        IO.whenA(fired)(
+          logger.warn(
+            s"portal body backstop fired: no body_frame within ${firstBodyFrameTimeout.toSeconds}s " +
+              s"(requestId=$requestId) — proceeding with an empty body"
+          ) *> ch.queue.tryOffer(BodySignal.End).void
+        )
+      }).start.void
 
   private def runLocalRequest(requestId: String, app: HttpApp[IO], req: Request[IO]): IO[Unit] =
     val headSent = new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -264,6 +297,7 @@ private[neblink] final class PortalTunnelBridge(
           if expected != frame.seq then
             dropBodyCycle(frame.requestId, s"seq out of order (expected=$expected got=${frame.seq})")
           else
+            ch.receivedAny.set(true)
             ch.queue.tryOffer(BodySignal.Data(frame.data)).flatMap {
               case true =>
                 if !frame.more then
@@ -330,15 +364,33 @@ private[neblink] final class PortalTunnelBridge(
 
   // ────────────────────────── WS face ──────────────────────────
 
+  /**
+   * ws_open handling (design 3.3 "每周期 fiber 对"): connect the loopback WS,
+   * register the cycle, start BOTH pump fibers, then queue the open result.
+   * The whole body is spawned OFF the mailbox (connect can take up to the
+   * connect timeout).
+   *
+   * Uplink ordering without buffering: the local listener does NOT request
+   * delivery in `onOpen`; the cycle is ACTIVATED only after the pumps are
+   * running and the ws_open_result sits at the head of the uplink queue —
+   * the JDK therefore delivers no local frame before that, so the relay sees
+   * ws_open_result strictly before any ws_frame of the same cycle.
+   */
   private def handleWsOpen(frame: PortalWireCodec.WsOpen): IO[Unit] =
     val requestId = frame.requestId
     val uri = s"ws://127.0.0.1:${deps.faces.gatewayPort}${frame.path}"
-    connectLocalWs(requestId, uri, frame.subprotocol)
+    val cycle = new WsCycle(requestId)
+    connectLocalWs(uri, frame.subprotocol, cycle)
       .flatMap { local =>
-        IO { wsCycles.put(requestId, WsCycle(local)) } *>
-          sender.send(
-            PortalWireCodec.encode(PortalWireCodec.WsOpenResult(requestId, accepted = true, status = 101))
-          )
+        IO {
+          cycle.local = local
+          wsCycles.put(requestId, cycle)
+        } *>
+          startPumps(cycle) *>
+          IO {
+            cycle.queueOpenResult(accepted = true, status = 101)
+            cycle.activate()
+          }
       }
       .handleErrorWith { e =>
         val status = e match
@@ -348,17 +400,16 @@ private[neblink] final class PortalTunnelBridge(
           s"portal ws_open failed: requestId=$requestId path=${frame.path} " +
             s"error=${NeblinkRelayTunnel.describeErr(e)} — answering accepted=false status=$status"
         ) *>
+          // No cycle was registered, so nothing can follow this frame: a
+          // direct send is safe (we are already off the mailbox).
           sender.send(
             PortalWireCodec.encode(PortalWireCodec.WsOpenResult(requestId, accepted = false, status = status))
           )
       }
-      // Connect can take up to the connect timeout — spawned OFF the mailbox
-      // (the server only sends ws_frame for this cycle after seeing the
-      // ws_open_result, so no ordering hazard).
       .start
       .void
 
-  private def connectLocalWs(requestId: String, uri: String, subprotocol: Option[String]): IO[WebSocket] =
+  private def connectLocalWs(uri: String, subprotocol: Option[String], cycle: WsCycle): IO[WebSocket] =
     IO {
       val client = HttpClient
         .newBuilder()
@@ -367,83 +418,174 @@ private[neblink] final class PortalTunnelBridge(
         .build()
       val builder = client.newWebSocketBuilder()
       subprotocol.foreach(builder.subprotocols(_))
-      builder.buildAsync(URI.create(uri), new LocalWsListener(requestId))
+      builder.buildAsync(URI.create(uri), new LocalWsListener(cycle))
     }.flatMap(cf => IO.fromCompletableFuture(IO(cf)))
 
+  private def startPumps(cycle: WsCycle): IO[Unit] =
+    downPumpLoop(cycle).start.flatMap(f => IO(cycle.downPump.set(Some(f)))) *>
+      upPumpLoop(cycle).start.flatMap(f => IO(cycle.upPump.set(Some(f))))
+
+  /**
+   * Downlink pump (relay → local): drains the cycle's bounded inbox into the
+   * local WS, one bounded send at a time — a stalled local peer stalls ONLY
+   * this cycle's pump (design 3.3 per-cycle fiber pair), never the mailbox.
+   */
+  private def downPumpLoop(cycle: WsCycle): IO[Unit] =
+    IO.interruptible(cycle.toLocal.take()).flatMap {
+      case WsCycle.DownlinkItem.Frame(frame) =>
+        forwardToLocal(cycle, frame).flatMap { ok =>
+          if ok then downPumpLoop(cycle) else IO.unit // forward failure dropped the cycle
+        }
+      case WsCycle.DownlinkItem.LocalClose(code, reason) =>
+        // Server-initiated ws_close: drain-then-close — pending frames went
+        // first, now complete the local close handshake. The local endpoint's
+        // onClose then queues the uplink ws_close echo (close propagates both
+        // ways); the uplink pump exits on that tail marker by itself.
+        IO.blocking {
+          try cycle.local.sendClose(code, reason)
+          catch case _: Exception => ()
+        }.void
+      case WsCycle.DownlinkItem.LocalGone =>
+        // The local endpoint died (onClose/onError): nothing more to forward.
+        IO.unit
+    }
+
+  private def forwardToLocal(cycle: WsCycle, frame: PortalWireCodec.WsFrame): IO[Boolean] =
+    val local = cycle.local
+    if local == null then IO.pure(false)
+    else
+      val fut =
+        if frame.kind == "text" then local.sendText(new String(frame.data, UTF_8), frame.fin)
+        else local.sendBinary(java.nio.ByteBuffer.wrap(frame.data), frame.fin)
+      IO.blocking(fut.get(LocalSendTimeoutSec.toLong, TimeUnit.SECONDS))
+        .as(true)
+        .handleErrorWith { e =>
+          dropWsCycle(cycle, s"local ws send failed (${NeblinkRelayTunnel.describeErr(e)})").as(false)
+        }
+
+  /**
+   * Uplink pump (local → relay): drains the cycle's bounded inbox to the
+   * relay socket (serialized through [[RelayFrameSender]]), preserving the
+   * FIFO the local listener produced. Exits on the RelayClose tail marker
+   * (close propagated up) or on a relay send failure (cycle dropped).
+   */
+  private def upPumpLoop(cycle: WsCycle): IO[Unit] =
+    IO.interruptible(cycle.uplink.take()).flatMap {
+      case WsCycle.UplinkItem.OpenResult(accepted, status) =>
+        sender
+          .send(
+            PortalWireCodec.encode(
+              PortalWireCodec.WsOpenResult(cycle.requestId, accepted, status)
+            )
+          )
+          .flatMap(_ => upPumpLoop(cycle))
+          .handleErrorWith(e => dropWsCycle(cycle, s"uplink open-result send failed (${NeblinkRelayTunnel.describeErr(e)})"))
+      case WsCycle.UplinkItem.Frame(frame) =>
+        sender
+          .send(PortalWireCodec.encode(frame))
+          .flatMap(_ => upPumpLoop(cycle))
+          .handleErrorWith(e => dropWsCycle(cycle, s"uplink frame send failed (${NeblinkRelayTunnel.describeErr(e)})"))
+      case WsCycle.UplinkItem.RelayClose(code, reason) =>
+        sender
+          .send(PortalWireCodec.encode(PortalWireCodec.WsClose(cycle.requestId, code, reason)))
+          .flatMap(_ => cancelPump(cycle.downPump)) // tail: stop the other pump, this one returns
+          .handleErrorWith(_ => IO.unit) // relay socket dying; teardown owns the rest
+    }
+
+  /** Mailbox action for ws_frame: a non-blocking inbox offer — never blocks the consumer. */
   private def feedWsFrame(frame: PortalWireCodec.WsFrame): IO[Unit] =
     Option(wsCycles.get(frame.requestId)) match
       case None =>
         logger.warn(s"portal ws_frame dropped: no open ws cycle requestId=${frame.requestId}")
       case Some(cycle) =>
-        val fut =
-          if frame.kind == "text" then cycle.local.sendText(new String(frame.data, UTF_8), frame.fin)
-          else cycle.local.sendBinary(java.nio.ByteBuffer.wrap(frame.data), frame.fin)
-        IO.blocking(fut.get(LocalSendTimeoutSec.toLong, TimeUnit.SECONDS)).void.handleErrorWith { e =>
-          dropWsCycle(frame.requestId, cycle, s"local ws send failed (${NeblinkRelayTunnel.describeErr(e)})")
-        }
+        if !cycle.toLocal.offer(WsCycle.DownlinkItem.Frame(frame)) then
+          dropWsCycle(cycle, "downlink inbox full (local peer stalled)")
+        else IO.unit
 
+  /** Mailbox action for ws_close: enqueue the drain-then-close marker — never blocks the consumer. */
   private def handleWsClose(frame: PortalWireCodec.WsClose): IO[Unit] =
     Option(wsCycles.remove(frame.requestId)) match
       case None =>
         logger.debug(s"portal ws_close for unknown cycle requestId=${frame.requestId} — ignored")
       case Some(cycle) =>
-        IO.blocking {
-          try cycle.local.sendClose(frame.code, frame.reason)
-          catch case _: Exception => ()
-          ()
-        }
+        if !cycle.toLocal.offer(WsCycle.DownlinkItem.LocalClose(frame.code, frame.reason)) then
+          dropWsCycle(cycle, "downlink inbox full at ws_close")
+        else IO.unit
 
-  private def dropWsCycle(requestId: String, cycle: WsCycle, reason: String): IO[Unit] =
-    logger.warn(s"portal ws cycle dropped: requestId=$requestId reason=$reason")
-    IO { wsCycles.remove(requestId, cycle) } *>
+  private def dropWsCycle(cycle: WsCycle, reason: String): IO[Unit] =
+    logger.warn(s"portal ws cycle dropped: requestId=${cycle.requestId} reason=$reason")
+    cancelPumps(cycle) *>
       IO.blocking {
-        try cycle.local.abort()
-        catch case _: Exception => ()
+        val local = cycle.local
+        if local != null then
+          try local.abort()
+          catch case _: Exception => ()
       }.void
 
-  private def unregisterWsCycle(requestId: String, ws: WebSocket): Unit =
-    wsCycles.remove(requestId, ws)
+  private def cancelPumps(cycle: WsCycle): IO[Unit] =
+    IO {
+      wsCycles.remove(cycle.requestId, cycle)
+      (cycle.downPump.getAndSet(None), cycle.upPump.getAndSet(None))
+    }.flatMap { (down, up) =>
+      down.fold(IO.unit)(_.cancel).void *> up.fold(IO.unit)(_.cancel).void
+    }
+
+  private def cancelPump(ref: java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]]): IO[Unit] =
+    IO(ref.getAndSet(None)).flatMap(_.fold(IO.unit)(_.cancel)).void
 
   /**
-   * JDK listener for the LOCAL side of a ws_open cycle. Every callback
-   * enqueues the uplink frame through the SAME mailbox (single consumer ⇒
-   * uplink order preserved even against concurrent HTTP cycles).
+   * JDK listener for the LOCAL side of a ws_open cycle. Every callback only
+   * OFFERS into the cycle's bounded inboxes (plain Java queue offers — no IO,
+   * no dispatcher, no mailbox): ordering is the queue FIFO, and blocking work
+   * lives in the per-cycle pump fibers, never on the caller.
    */
-  private final class LocalWsListener(val requestId: String) extends WebSocket.Listener:
-    override def onOpen(ws: WebSocket): Unit = ws.request(1)
+  private final class LocalWsListener(val cycle: WsCycle) extends WebSocket.Listener:
+    private val requestId = cycle.requestId
+
+    override def onOpen(ws: WebSocket): Unit =
+      // Activation-gated delivery: do NOT request here. The cycle activates
+      // (request(1)) only after the ws_open_result is queued, pinning the
+      // uplink order result-then-frames without early-frame buffering.
+      ()
 
     override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] =
-      enqueueUplink(PortalWireCodec.WsFrame(requestId, "text", data.toString.getBytes(UTF_8), last))
+      offerUp(
+        WsCycle.UplinkItem.Frame(
+          PortalWireCodec.WsFrame(requestId, "text", data.toString.getBytes(UTF_8), last)
+        )
+      )
       ws.request(1)
       null
 
     override def onBinary(ws: WebSocket, data: java.nio.ByteBuffer, last: Boolean): CompletionStage[?] =
       val bytes = new Array[Byte](data.remaining())
       data.get(bytes)
-      enqueueUplink(PortalWireCodec.WsFrame(requestId, "binary", bytes, last))
+      offerUp(WsCycle.UplinkItem.Frame(PortalWireCodec.WsFrame(requestId, "binary", bytes, last)))
       ws.request(1)
       null
 
     override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
-      unregisterWsCycle(requestId, ws)
-      enqueueRaw(sender.send(PortalWireCodec.encode(PortalWireCodec.WsClose(requestId, statusCode, reason))))
+      // Local endpoint closed: propagate the close UP (tail marker — the uplink
+      // pump drains pending frames first, then sends ws_close and exits) and
+      // stop the downlink pump (nothing more can be forwarded).
+      wsCycles.remove(requestId, cycle)
+      offerUp(WsCycle.UplinkItem.RelayClose(statusCode, reason))
+      cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
       null
 
     override def onError(ws: WebSocket, error: Throwable): Unit =
-      unregisterWsCycle(requestId, ws)
       logger.debugSync(
         s"portal local ws error: requestId=$requestId error=${NeblinkRelayTunnel.describeErr(error)}"
       )
-      enqueueRaw(
-        sender.send(
-          PortalWireCodec.encode(
-            PortalWireCodec.WsClose(requestId, 1011, error.getClass.getSimpleName)
-          )
-        )
-      )
+      wsCycles.remove(requestId, cycle)
+      offerUp(WsCycle.UplinkItem.RelayClose(1011, error.getClass.getSimpleName))
+      cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
 
-    private def enqueueUplink(frame: PortalWireCodec.WsFrame): Unit =
-      enqueueRaw(sender.send(PortalWireCodec.encode(frame)))
+    private def offerUp(item: WsCycle.UplinkItem): Unit =
+      if !cycle.uplink.offer(item) then
+        logger.warnSync(
+          s"portal uplink inbox full: requestId=$requestId — uplink item dropped (relay slower than the local peer)"
+        )
   end LocalWsListener
 
   // ────────────────────────── console ticket mint ──────────────────────────
@@ -475,7 +617,9 @@ private[neblink] final class PortalTunnelBridge(
               }
           }
       }
-    result.flatMap(r => sender.send(PortalWireCodec.encode(r)))
+    // One-shot answer: spawned OFF the mailbox (the consumer never waits on
+    // the relay socket; a single result frame has no ordering dependency).
+    result.flatMap(r => sender.send(PortalWireCodec.encode(r))).start.void
 
   private def mintError(frame: PortalWireCodec.ConsoleTicketMint, error: String): PortalWireCodec.ConsoleTicketResult =
     PortalWireCodec.ConsoleTicketResult(
@@ -516,10 +660,10 @@ private[neblink] final class PortalTunnelBridge(
   // ────────────────────────── teardown ──────────────────────────
 
   /**
-   * Connection-end cleanup: end every open body channel (so the spawned app
-   * fibers finish instead of hanging on `queue.take`) and abort every local
-   * WS (its onClose enqueues the final ws_close, which will fail fast on the
-   * dead relay socket — harmless).
+   * Connection-end cleanup: cancel every open body cycle's app-run fiber,
+   * stop every WS cycle's pump pair, and abort every local WS (its onClose
+   * offers a final close marker whose uplink send will fail fast on the dead
+   * relay socket — harmless).
    */
   def teardown(): IO[Unit] =
     IO {
@@ -536,10 +680,13 @@ private[neblink] final class PortalTunnelBridge(
         list.forEach(out += _)
         out.toList
       drain(channels).traverse_(cancelCycle) *>
+        drain(cycles).traverse_(cancelPumps) *>
         IO {
           drain(cycles).foreach { c =>
-            try c.local.abort()
-            catch case _: Exception => ()
+            val local = c.local
+            if local != null then
+              try local.abort()
+              catch case _: Exception => ()
           }
         }
     }
@@ -578,6 +725,20 @@ private[neblink] object PortalTunnelBridge:
   val LocalConnectTimeoutSec: Int = 10
   val LocalSendTimeoutSec: Int = 5
 
+  /** Per-cycle WS pump inbox depth (downlink and uplink alike). */
+  val WsQueueSlots: Int = 128
+
+  /**
+   * Backstop for a bodyful request that receives ZERO body_frames (contract
+   * 2.3 allows "0..n"; an empty body with no terminal frame from the ingress
+   * would otherwise park the handler on the channel forever). Generous vs
+   * any legitimate first chunk (one ingress slice + one RTT). Non-contract
+   * implementation constant; the ingress-side obligation (send a terminal
+   * frame for an empty body) is registered with its batch.
+   */
+  val FirstBodyFrameTimeout: scala.concurrent.duration.FiniteDuration =
+    scala.concurrent.duration.DurationInt(30).seconds
+
   private val DropRequestHeaderNames: Set[String] =
     Set("transfer-encoding", "connection", "keep-alive", "upgrade")
   private val DropResponseHeaderNames: Set[String] =
@@ -610,7 +771,56 @@ private[neblink] object PortalTunnelBridge:
     val nextSeq: cats.effect.Ref[IO, Int] = cats.effect.Ref.unsafe[IO, Int](0)
     /** The app-run fiber of this cycle (registered after spawn; cancel = drop the cycle). */
     val cycle = new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
+    /** Whether any body_frame arrived — gates the first-frame deadline backstop. */
+    val receivedAny = new java.util.concurrent.atomic.AtomicBoolean(false)
 
-  private[neblink] final case class WsCycle(local: WebSocket)
+  /**
+   * One ws_open cycle (design 3.3 "每周期 fiber 对"): the loopback WebSocket
+   * plus TWO bounded inboxes, each drained by its own pump fiber —
+   * downlink (relay → local) and uplink (local → relay, also carrying the
+   * ws_open_result head and the ws_close tail). A stalled endpoint on either
+   * side stalls only this cycle's pump; the shared mailbox consumer never
+   * waits on a socket.
+   */
+  private[neblink] final class WsCycle(val requestId: String):
+    val toLocal = new java.util.concurrent.LinkedBlockingQueue[WsCycle.DownlinkItem](WsQueueSlots)
+    val uplink = new java.util.concurrent.LinkedBlockingQueue[WsCycle.UplinkItem](WsQueueSlots)
+    val downPump =
+      new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
+    val upPump =
+      new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
+    private val activated = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Filled once the loopback connect completes (before pumps start). */
+    @volatile var local: WebSocket = null
+
+    /** Queue the open result at the head of the uplink (before activation). */
+    def queueOpenResult(accepted: Boolean, status: Int): Unit =
+      uplink.offer(WsCycle.UplinkItem.OpenResult(accepted, status))
+
+    /** Start delivering local frames (after the open result is queued). */
+    def activate(): Unit =
+      if activated.compareAndSet(false, true) then
+        val w = local
+        if w != null then w.request(1)
+  end WsCycle
+
+  object WsCycle:
+    sealed trait DownlinkItem
+    object DownlinkItem:
+      final case class Frame(frame: PortalWireCodec.WsFrame) extends DownlinkItem
+      /** Server-initiated ws_close: drain pending frames, then close the local WS. */
+      final case class LocalClose(code: Int, reason: String) extends DownlinkItem
+      /** The local endpoint is gone; the downlink pump exits. */
+      case object LocalGone extends DownlinkItem
+
+    sealed trait UplinkItem
+    object UplinkItem:
+      /** Head item: the ws_open_result precedes any local frame by construction. */
+      final case class OpenResult(accepted: Boolean, status: Int) extends UplinkItem
+      final case class Frame(frame: PortalWireCodec.WsFrame) extends UplinkItem
+      /** Tail item: propagate the close up to the relay, then the pump exits. */
+      final case class RelayClose(code: Int, reason: String) extends UplinkItem
+  end WsCycle
 
 end PortalTunnelBridge

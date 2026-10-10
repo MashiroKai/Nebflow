@@ -244,10 +244,17 @@ object PortalWireCodec:
           // and the failure shape (error only) are mutually exclusive. The
           // conflict is checked before the iff-completeness checks so a frame
           // carrying both sides reports field_conflict (the frozen negative
-          // vector's verdict).
+          // vector's verdict). BOTH members of the success pair are "present
+          // if and only if the mint succeeded": expiresInSec without ticket
+          // claims success while ticket's absence claims failure — the two
+          // fields contradict each other, so that combo is also a
+          // field_conflict (no frozen vector covers it; the model-side spec
+          // decodes identically so both faces keep agreeing).
           _ <- (ticket.isDefined, expiresInSec.isDefined, error.isDefined) match
             case (true, _, true) | (_, true, true) =>
               Left(Rejection("field_conflict", fields = Some(List("ticket", "error"))))
+            case (false, true, false) =>
+              Left(Rejection("field_conflict", fields = Some(List("ticket", "expiresInSec"))))
             case (true, false, false) =>
               Left(Rejection("missing_required_field", field = Some("expiresInSec")))
             case (false, false, false) =>

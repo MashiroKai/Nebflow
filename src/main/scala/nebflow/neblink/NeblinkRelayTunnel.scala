@@ -112,6 +112,14 @@ final class NeblinkRelayTunnel(
     portalDeps.fold(IO.pure(false))(_.bindingState.isUnbound)
 
   /**
+   * Terminal probe cadence (test seam over [[NeblinkRelayTunnel.TerminalProbeNap]]):
+   * production reads the constant; the terminal-loop spec shortens it so the
+   * dial-while-terminal behavior is observable without a 10-minute wait.
+   */
+  @volatile private[neblink] var terminalProbeNap: scala.concurrent.duration.FiniteDuration =
+    NeblinkRelayTunnel.TerminalProbeNap
+
+  /**
    * Anti-loop counter: consecutive upgrade failures since the last successful
    * connect. Drives shouldHealAuthFailure.
    */
@@ -412,21 +420,24 @@ final class NeblinkRelayTunnel(
 
   /**
    * Terminal-binding probe leg (judgment table rows 1/2, design §3.5): while
-   * the host binding is revoked the tunnel does NOT churn the reconnect
-   * ladder — it probes at a low fixed cadence so that (a) the server-side
-   * binding gate's 401 terminal body keeps confirming the terminal state,
+   * the host binding is revoked the tunnel keeps DIALING — the terminal state
+   * only replaces the fast reconnect ladder with a low fixed cadence. Each
+   * probe is a real upgrade attempt so that (a) the server-side binding
+   * gate's 401 terminal body keeps confirming the terminal state (row 2),
    * and (b) a genuine re-bind (binding row back to bound for this host) is
-   * detected by a successful upgrade, which clears the terminal state
-   * (row 4, in connectOnce). Interruptible by `ensure()`/`stop()` like every
-   * other nap.
+   * detected by the successful upgrade, which clears the terminal state
+   * (row 4, in connectOnce) and puts the loop back on the normal ladder.
+   * Never a sleep-only loop: without a dial, row 4 would be unreachable and
+   * a revoked host would stay dark forever. Interruptible by
+   * `ensure()`/`stop()` like every other nap.
    */
   private def probeWhileTerminal(attempt: Int): IO[Unit] =
     logger
       .debug(
-        s"Relay tunnel: host binding is terminal (revoked) — low-frequency probe every " +
-          s"${NeblinkRelayTunnel.TerminalProbeNap.toSeconds}s until a successful upgrade clears it"
+        s"Relay tunnel: host binding is terminal (revoked) — dialing the relay at a low " +
+          s"cadence (every ${terminalProbeNap.toSeconds}s) until a successful upgrade clears it"
       )
-      .flatMap(_ => nap(NeblinkRelayTunnel.TerminalProbeNap) *> connectLoop(attempt + 1))
+      .flatMap(_ => nap(terminalProbeNap) *> connectConfigured(attempt))
 
   private def connectConfigured(attempt: Int): IO[Unit] =
     // 每拍**只睡一次**（clientconn item 1）：修前是「拍首 delay + 分支 wait」双睡，

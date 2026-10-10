@@ -245,6 +245,18 @@ class PortalWireCodecConformanceSpec extends FunSuite:
       Some(("missing_required_field", Some("proto")))
     )
 
+  test("ConsoleTicketResult: expiresInSec without ticket is a field_conflict (iff on BOTH success fields)"):
+    // No frozen vector covers this combo (contract section 6 gap); both the
+    // production codec and the test-side model reject it identically so the
+    // two faces cannot diverge on it.
+    val frame =
+      """{"type":"ConsoleTicketResult","proto":1,"requestId":"0a1b2c3d-4e5f-4678-9abc-def012345678",""" +
+        """"mintId":"1f2e3d4c-5b6a-4978-8877-6a5b4c3d2e1f","expiresInSec":30}"""
+    assertEquals(
+      PortalWireCodec.decode(frame).swap.toOption.map(r => (r.code, r.fields)),
+      Some(("field_conflict", Some(List("ticket", "expiresInSec"))))
+    )
+
   test("encode always carries proto:1 on the envelope (outbound policy single point)"):
     val frame = PortalWireCodec.WsOpen("0a1b2c3d-4e5f-4678-9abc-def012345678", "/ws?token=abc", None)
     assertEquals(
