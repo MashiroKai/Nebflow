@@ -1,28 +1,32 @@
 // taskList.js — Collapsible task panel (floats above the input area)
 //
-// Panel face = flat flowmap node rows over the delegate plane:
-//   - One row per visible work unit: delegate roots, their star sub-agent
-//     children, and AgentFlow chain nodes (kind 'flow-step'). No inline expand
-//     tree — navigation is click-through, the row anatomy and interaction model
-//     follow the classic flowmap node list.
-//   - Rows are grouped by project with a small uppercase group header, sorted
-//     most-recent-activity first inside each group.
-//   - Row anatomy: status glyph (orbit ring = running, amber dot = blocked,
-//     solid dots = terminal states, box = pending) + executor mark (roots) +
-//     label + chain badge (member rows: same-color dot + short chain title) +
-//     meta line (description / external progress tail) + muted status word +
-//     relative time. Color signal lives on the glyph only; words stay muted.
-//   - Interactions: row click opens the per-task chain view (L1) — flow-step
-//     rows pass an anchor node; the chain badge clicks through to the same L1
-//     view (whole chain). Display-only rows: external executors (they carry the
-//     open-native exit instead) and ready-to-merge rows (queue rank chip only).
+// Panel face = chain blocks over the delegate plane (the classic flowmap-era
+// chain-structure list, re-sourced from the delegate read port):
+//   - One CHAIN BLOCK per live delegate: a header row (the chain's root node)
+//     carrying the status glyph + executor mark + #N + title + topology dotmap
+//     + n/N progress meta + muted status word + relative time, and a fold
+//     twisty when the chain has members. Member rows (sub-agent children and
+//     AgentFlow flow-steps) render nested under the header in topological
+//     order (depth ↑, createdAt ↑, id ↑) with a hierarchical sequence label
+//     carrying depth past the CSS indent cap.
+//   - Fold discipline: chains start collapsed; header click toggles (render-
+//     layer memory Set, refresh resets — same as the classic design). The
+//     dotmap/meta zone clicks through to the chain's L1 flowmap (the chain-
+//     level jump, badge-click analogue); member rows click through to L1 with
+//     the node anchor (camera focus + flash). Leaf roots (no members) click
+//     straight to L1. External executors and ready-to-merge rows stay
+//     display-only (open-native exit / queue rank chip instead).
+//   - Motion: member rows carry the classic transition marks — running spin,
+//     completed check draws itself, failed cross — only on a real frame-over-
+//     frame status change (first paint and same-state frames stay silent);
+//     the chain block pops on first appearance; the status word rolls in on
+//     transition. prefers-reduced-motion lands everything static.
 //   - Data: delegateChainStub.js read port (listDelegateRows / getChainByTask /
-//     listDelegateChildren); the live provider mirror is wired once in main.js
-//     via setSource. Re-render triggers: the provider's
-//     delegate-chain-mirror-updated event + session switch + S16 progress
-//     polling. This file has zero WS knowledge and zero derived second
-//     authorities.
-//   - Header stats = visible row count (key task.statsProgress).
+//     listDelegateChildren); the live provider mirror is wired in main.js.
+//     Re-render triggers: delegate-chain-mirror-updated + session switch + the
+//     S16 progress poll. Zero WS knowledge, zero derived second authorities
+//     (topology edges are rebuilt from per-node declared fields only).
+//   - Header stats = total unit count (roots + members), fold-independent.
 import { t } from './i18n.js';
 import { createIconsIn, onMinuteTick } from './utils.js';
 import state from './state.js';
@@ -35,11 +39,11 @@ import { fetchDelegateOutput, openDelegateNative } from './delegateApi.js';
 import { executorIcon } from './executorIcons.js';
 
 /**
- * Single inline entry to the L1 per-task chain view. Row click / chain badge /
- * flow-step anchor all funnel through here (dynamic import keeps the module
- * graph decoupled).
+ * Single inline entry to the L1 per-task chain view (the delegate flowmap).
+ * Row click / dotmap chain jump / member anchor all funnel through here
+ * (dynamic import keeps the module graph decoupled).
  * @param {string} key @param {any} meta
- * @param {{expandFlow?: boolean, anchorNode?: string}} [opts] */
+ * @param {{anchorNode?: string}} [opts] */
 function openL1(key, meta, opts = {}) {
   import('./delegateChainView.js').then(({ openDelegateChainTask }) => {
     openDelegateChainTask(key, meta, opts);
@@ -90,7 +94,7 @@ function refreshLastActive() {
   const container = document.getElementById('task-list');
   if (!container) return;
   const els = /** @type {NodeListOf<HTMLElement>} */ (
-    container.querySelectorAll('.task-node-time'));
+    container.querySelectorAll('.task-node-time, .task-chain-member-time'));
   els.forEach((el) => {
     const ts = el.dataset.ts;
     if (ts) el.textContent = formatLastActive(ts);
@@ -184,59 +188,213 @@ function delegateRowKey(r) {
   return String((r && (r.taskNo || r.delegateId)) || '');
 }
 
-// ── Chain badge (member rows) ────────────────────────────────────────────
-// Capsule = same-chain color dot + short chain title. The color is a stable
-// hash of the chain key into a fixed palette cycle (same chain always the
-// same color; no order semantics). Click = open the whole chain in L1;
-// does not bubble into the row's own click.
-const CHAIN_COLOR_CYCLE = 5; // pairs with .task-node-chain.c0..c4 in taskList.css
-const CHAIN_NAME_MAX = 12;   // CSS max-width + ellipsis is the final backstop
+// ── Chain topology (ported from the classic chain view) ──────────────────
+// Edges are rebuilt from the members' OWN declared fields (out ∪ deps ∪ in) —
+// this rebuilds per-node declarations, never membership (that authority stays
+// in the engine/read port). Target resolution: id hit, then node-name
+// fallback; unresolvable ⇒ dropped.
 
-/** @param {string} chainKey @returns {number} 0..CHAIN_COLOR_CYCLE-1 (deterministic hash) */
-function chainColorIndex(chainKey) {
-  const s = String(chainKey);
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h % CHAIN_COLOR_CYCLE;
+/** Epoch ms for a member-ish record (createdAt/spawnedAt; ISO tolerated). */
+function memberTs(m) {
+  const raw = m && (m.createdAt ?? m.spawnedAt);
+  if (typeof raw === 'number') return raw;
+  const ms = Date.parse(raw);
+  return isNaN(ms) ? 0 : ms;
 }
 
-/** @param {string} title @returns {string} chain short name (truncated with ellipsis) */
-function chainShortName(title) {
-  const s = String(title || '');
-  return s.length > CHAIN_NAME_MAX ? `${s.slice(0, CHAIN_NAME_MAX)}…` : s;
+/** @param {any[]} members @returns {{ids: Set<string>, adj: Map<string, Set<string>>}} */
+function chainEdgesOf(members) {
+  const list = Array.isArray(members) ? members : [];
+  const ids = new Set(list.map((m) => String(m.id)));
+  const byName = new Map();
+  for (const m of list) {
+    const nm = String(m.name || '');
+    if (nm && !byName.has(nm)) byName.set(nm, String(m.id));
+  }
+  /** @type {Map<string, Set<string>>} */
+  const adj = new Map();
+  for (const id of ids) adj.set(id, new Set());
+  const resolve = (raw) => {
+    const s = String(raw == null ? '' : raw).replace(/^chain:/, '');
+    if (!s) return null;
+    if (ids.has(s)) return s;
+    return byName.get(s) || null;
+  };
+  const link = (from, to) => {
+    if (from == null || to == null || from === to) return;
+    const set = adj.get(from);
+    if (set && !set.has(to)) set.add(to);
+  };
+  for (const m of list) {
+    const self = String(m.id);
+    for (const e of (Array.isArray(m.out) ? m.out : [])) {
+      if (!e || typeof e !== 'object') continue;
+      if (String(e.mode || '') === 'loop' || String(e.to || '') === 'Nebula') continue;
+      link(self, resolve(e.to));
+    }
+    for (const raw of (Array.isArray(m.in) ? m.in : [])) link(resolve(raw), self);
+    for (const raw of (Array.isArray(m.deps) ? m.deps : [])) link(resolve(raw), self);
+  }
+  return { ids, adj };
+}
+
+/** Longest-path depth per member (Kahn sweep). Cycle survivors fall back to 0. */
+function chainDepthsOf(edges) {
+  const indeg = new Map();
+  for (const id of edges.ids) indeg.set(id, 0);
+  for (const [, set] of edges.adj) for (const to of set) indeg.set(to, (indeg.get(to) || 0) + 1);
+  const depth = new Map();
+  const queue = [];
+  for (const id of edges.ids) {
+    if ((indeg.get(id) || 0) === 0) { depth.set(id, 0); queue.push(id); }
+  }
+  for (let i = 0; i < queue.length; i++) {
+    const from = queue[i];
+    for (const to of (edges.adj.get(from) || [])) {
+      depth.set(to, Math.max(depth.get(to) || 0, (depth.get(from) || 0) + 1));
+      indeg.set(to, (indeg.get(to) || 0) - 1);
+      if ((indeg.get(to) || 0) === 0) queue.push(to);
+    }
+  }
+  for (const id of edges.ids) if (!depth.has(id)) depth.set(id, 0);
+  return depth;
+}
+
+/** Topological order — the deterministic three-key sort (depth ↑, ts ↑, id ↑). */
+function chainOrderOf(members, depths) {
+  const list = Array.isArray(members) ? members : [];
+  return [...list].sort((a, b) => {
+    const da = depths.get(String(a.id)) || 0;
+    const db = depths.get(String(b.id)) || 0;
+    if (da !== db) return da - db;
+    const ta = memberTs(a);
+    const tb = memberTs(b);
+    if (ta !== tb) return ta - tb;
+    const ia = String(a.id);
+    const ib = String(b.id);
+    return ia < ib ? -1 : (ia > ib ? 1 : 0);
+  });
+}
+
+/** Hierarchical sequence labels ("1", "1.1", "1.1.2") in topological order. */
+function chainSeqLabels(ordered, depths) {
+  const counters = [];
+  const labels = new Map();
+  for (const m of ordered) {
+    const d = depths.get(String(m.id)) || 0;
+    counters.length = d + 1;
+    for (let i = 0; i <= d; i++) if (!counters[i]) counters[i] = 0;
+    counters[d] += 1;
+    labels.set(String(m.id), counters.slice(0, d + 1).join('.'));
+  }
+  return labels;
+}
+
+/** Chain view model for one block (pure; derived once per render). */
+function chainViewOf(members) {
+  const edges = chainEdgesOf(members);
+  const depths = chainDepthsOf(edges);
+  const ordered = chainOrderOf(members, depths);
+  return { ordered, edges, depths, seqs: chainSeqLabels(ordered, depths) };
+}
+
+// ── Chain collection (delegate rows → chain blocks) ──────────────────────
+
+/**
+ * Members of one delegate chain as topology-shaped records: star children carry
+ * a spawn edge from the root (`in: [rootId]`); flow-steps keep their in-chain
+ * structural deps and entry steps (no in-chain dep) hang off the root — the
+ * same projection the L1 map draws (single mental model, two faces).
+ * The root participates in the topology pass (depth 0) so members layer at 1+.
+ */
+function chainMembersOf(r, chain) {
+  const delegateId = String(r.delegateId || '');
+  const rootId = delegateId || delegateRowKey(r);
+  const rootStub = {
+    id: rootId, name: String(r.title || r.delegateId || ''), status: String(r.status || 'running'),
+    createdAt: r.createdAt, in: [], deps: [], out: [],
+  };
+  const members = [rootStub];
+  const flowIds = new Set();
+  const flowSteps = chain && Array.isArray(chain.nodes)
+    ? chain.nodes.filter((n) => n && n.kind === 'flow-step') : [];
+  for (const n of flowSteps) flowIds.add(String(n.id));
+  for (const c of listDelegateChildren(delegateId)) {
+    const c0 = c && typeof c === 'object' ? c : {};
+    const id = String(c0.taskId || '');
+    if (!id || id === rootId) continue;
+    members.push({
+      id, kind: 'child',
+      name: String(c0.agentName || '') || id,
+      status: childRowStatus(c0.status),
+      description: String(c0.description || c0.prompt || ''),
+      createdAt: typeof c0.spawnedAt === 'number' ? c0.spawnedAt : 0,
+      completedAt: typeof c0.completedAt === 'number' && c0.completedAt > 0 ? c0.completedAt : 0,
+      in: [rootId], deps: [], out: [],
+    });
+  }
+  for (const n of flowSteps) {
+    const id = String(n.id || '');
+    if (!id || id === rootId) continue;
+    const deps = (Array.isArray(n.deps) ? n.deps : [])
+      .map((d) => String(d || '')).filter((d) => flowIds.has(d) && d !== id);
+    members.push({
+      id, kind: 'flow',
+      name: String(n.label || n.id || ''),
+      status: String(n.status || 'pending'),
+      description: String(n.description || ''),
+      createdAt: 0, // the chain projection carries no per-node timestamps
+      in: [], deps: deps.length ? deps : [rootId], out: [],
+    });
+  }
+  return members;
 }
 
 /**
- * Row-level chain badge for member rows (sub-agent children, flow-step nodes).
- * The chain title is the delegate's own title — raw data, not copy. Absent
- * title → no badge (graceful absence, no empty capsule).
- * @param {string} chainKey @param {string} chainTitle
- * @param {any} meta L1 open meta of the owning delegate
- * @returns {HTMLElement|null} */
-function buildChainBadge(chainKey, chainTitle, meta) {
-  const name = String(chainTitle || '');
-  if (!name) return null;
-  const badge = document.createElement('span');
-  badge.className = `task-node-chain c${chainColorIndex(chainKey)}`;
-  badge.dataset.chainId = chainKey;
-  const hint = t('flowmap.chain.badgeHint', { chain: name });
-  badge.title = hint;
-  badge.setAttribute('role', 'button');
-  badge.setAttribute('aria-label', hint);
-  const dot = document.createElement('span');
-  dot.className = 'task-node-chain-dot';
-  dot.setAttribute('aria-hidden', 'true');
-  badge.appendChild(dot);
-  const nameEl = document.createElement('span');
-  nameEl.className = 'task-node-chain-name';
-  nameEl.textContent = chainShortName(name);
-  badge.appendChild(nameEl);
-  badge.addEventListener('click', (e) => {
-    e.stopPropagation(); // badge = locate the chain (the row click locates the unit)
-    openL1(chainKey, meta);
-  });
-  return badge;
+ * Collect the chain blocks from the delegate read port: every live delegate
+ * root plus its members. Order = most-recent root activity first (roots sort
+ * by createdAt; members keep topological order inside their block).
+ * @returns {Array<{key: string, project: string, row: any, members: any[],
+ *          allCount: number,
+ *          view: {ordered: any[], edges: any, depths: Map<string, number>, seqs: Map<string, string>}}>} */
+function collectChains() {
+  const rows = listDelegateRows()
+    .filter((r) => r && ACTIVE_ROW_STATUSES.has(String(r.status)) && r.archivedAt == null);
+  const ts0 = (r) => {
+    const v = typeof r.createdAt === 'number' ? r.createdAt : Date.parse(String(r.createdAt || ''));
+    return Number.isFinite(v) ? v : 0;
+  };
+  rows.sort((a, b) => ts0(b) - ts0(a));
+  return rows.map((r) => {
+    const key = delegateRowKey(r);
+    // External executors carry no platform children/chains — the block is the
+    // root stub alone (leaf header row; stats still count it as one unit).
+    const chain = r.external === true ? null : getChainByTask(key);
+    const members = chainMembersOf(r, chain);
+    // ready-to-merge rows stay display-only (queue rank only): members hidden.
+    const visibleMembers = String(r.status) === 'ready-to-merge'
+      ? members.slice(0, 1)
+      : members;
+    return {
+      key, project: String(r.project || ''), row: r,
+      members: visibleMembers,
+      view: chainViewOf(visibleMembers),
+      allCount: members.length,
+    };
+  }).filter((c) => c.key);
 }
+
+// ── Fold state + frame-diff animation memory (render-layer, refresh resets) ─
+/** Collapsed chain keys (taskNo ‖ delegateId). Default = collapsed (classic
+ *  chain-block semantics); the Set holds no entry for expanded chains… folded
+ *  by default means membership in nothing — so this Set tracks EXPANDED keys. */
+const expandedChains = new Set();
+/** Previous-frame member status / chain presence (transition marks fire only
+ *  on a real status change; first paint and same-state frames stay silent). */
+const memberStatusPrev = new Map();
+const memberStatusNext = new Map();
+const chainSeenPrev = new Set();
+const chainSeenNext = new Set();
 
 // ── Row builders ─────────────────────────────────────────────────────────
 
@@ -286,36 +444,89 @@ function appendMetaSlot(text, metaText) {
   text.appendChild(metaEl);
 }
 
-/** Executor mark slot (roots) / fixed-width placeholder (members) — keeps the
- *  text column aligned across row kinds. */
-function buildIconSlot(html) {
-  const icon = document.createElement('span');
-  icon.className = html ? 'task-delegate-icon' : 'task-delegate-icon task-delegate-icon-empty';
-  icon.setAttribute('aria-hidden', 'true');
-  if (html) icon.innerHTML = html;
-  return icon;
+/** Fold twisty (12px affordance; rotates open via CSS when the block is
+ *  expanded). Leaf roots get an invisible placeholder so every row's text
+ *  column stays aligned (Finder discipline). */
+function buildTwisty(leaf) {
+  const c = document.createElement('span');
+  c.className = 'task-chain-twisty' + (leaf ? ' task-chain-twisty-leaf' : '');
+  c.setAttribute('aria-hidden', 'true');
+  c.innerHTML = '<i data-lucide="chevron-right"></i>';
+  return c;
 }
 
 /**
- * Delegate root row: `[glyph][executor] #N title [word] [rank] [time]`.
- * Click = open the delegate's L1 chain view; display-only for external
- * executors (open-native exit + progress tail instead) and ready-to-merge
- * rows (queue rank chip only).
- * @param {any} r DelegateRow @returns {HTMLElement} */
-function buildRootRow(r) {
-  const row0 = r && typeof r === 'object' ? r : {};
-  const taskNo = String(row0.taskNo == null ? '' : row0.taskNo);
-  const delegateId = String(row0.delegateId || '');
-  const title = String(row0.title || '');
-  const st = String(row0.status || 'running');
+ * Inline topology dotmap (one dot per member in topological order, links only
+ * on real edges). Kind colors: subagent child = t-impl, flow-step = t-design;
+ * fill state = lifecycle (hollow = not started, filled = done, enlarged filled
+ * = running). Width caps with ellipsis — the map is a thumbnail, not a proof.
+ */
+function buildChainDotmap(view) {
+  const map = document.createElement('span');
+  map.className = 'task-chain-map';
+  map.setAttribute('aria-hidden', 'true');
+  const list = view.ordered;
+  list.forEach((m, i) => {
+    if (i > 0) {
+      const prevId = String(list[i - 1].id);
+      const id = String(m.id);
+      const fromSet = view.edges && view.edges.adj ? view.edges.adj.get(prevId) : null;
+      if (fromSet && fromSet.has(id)) {
+        const link = document.createElement('span');
+        link.className = 'task-chain-map-link';
+        map.appendChild(link);
+      }
+    }
+    const dot = document.createElement('span');
+    dot.className = `task-chain-map-dot t-${m.kind === 'flow' ? 'design' : 'impl'}`;
+    const st = String(m.status || 'pending');
+    if (st === 'running') dot.classList.add('is-running');
+    else if (st === 'completed' || st === 'failed' || st === 'cancelled') dot.classList.add('is-done');
+    map.appendChild(dot);
+  });
+  return map;
+}
+
+/** Chain progress meta ("done/total" + working count + elapsed) — the classic
+ *  collapsed-row reading. Members include the root stub, so total counts the
+ *  root too (the chain as a whole). */
+function chainProgressMeta(members) {
+  const list = Array.isArray(members) ? members : [];
+  const done = list.filter((m) => ['completed', 'failed', 'cancelled'].includes(String(m.status))).length;
+  const working = list.filter((m) => String(m.status) === 'running').length;
+  const stamps = list.map(memberTs).filter((v) => v > 0);
+  const bits = [`${done}/${list.length}`];
+  if (working >= 2) bits.push(t('task.chain.activeCount', { n: String(working) }));
+  if (stamps.length) {
+    const mins = Math.max(0, Math.floor((Date.now() - Math.min(...stamps)) / 60_000));
+    bits.push(mins < 1 ? t('task.justNow') : `${mins}m`);
+  }
+  return bits.join(' · ');
+}
+
+/**
+ * Chain header row (the root node): `[twisty][glyph][executor] #N title
+ * [dotmap+meta] [word] [rank] [time] [actions]`.
+ * Click = fold toggle (membered chains) / open L1 (leaf roots); the dotmap+meta
+ * zone = chain-level jump to the L1 map (stopPropagation). External executors
+ * (open-native exit) and ready-to-merge rows (rank chip) stay display-only.
+ * @param {any} block collectChains entry @returns {HTMLElement} */
+function buildChainHeaderRow(block) {
+  const r = block.row;
+  const taskNo = String(r.taskNo == null ? '' : r.taskNo);
+  const delegateId = String(r.delegateId || '');
+  const title = String(r.title || '');
+  const st = String(r.status || 'running');
   const wordKey = DELEGATE_WORD_KEY[st] || '';
-  const external = row0.external === true;
+  const external = r.external === true;
   const queued = st === 'ready-to-merge';
-  const clickable = !external && !queued;
+  const memberCount = block.view.ordered.length - 1; // minus the root stub
+  const openable = !external && !queued && memberCount > 0;
+  const clickable = openable || (!external && !queued); // openable folds; leaf opens L1
 
   const row = document.createElement('div');
-  row.className = 'task-node task-delegate';
-  row.dataset.delegateKey = taskNo || delegateId;
+  row.className = 'task-node task-delegate task-chain-head';
+  row.dataset.delegateKey = block.key;
   row.dataset.taskNo = taskNo;
   row.dataset.delegateId = delegateId;
   row.dataset.delegateStatus = st;
@@ -324,11 +535,18 @@ function buildRootRow(r) {
   row.setAttribute('aria-label', `${labelBits.join(' ')}${wordKey ? ` — ${t(wordKey)}` : ''}`);
   if (clickable) {
     row.setAttribute('role', 'button');
-    row.title = t('delegate.flowmap.title');
+    if (openable) row.setAttribute('aria-expanded', expandedChains.has(block.key) ? 'true' : 'false');
+    row.title = openable ? t('task.chain.rowHint', { chain: title || delegateId, n: String(memberCount) })
+      : t('delegate.flowmap.title');
   }
 
+  row.appendChild(buildTwisty(!openable));
   row.appendChild(buildNodeGlyph(st, NODE_STATUS_CLS[st] || ''));
-  row.appendChild(buildIconSlot(executorIcon(String(row0.executor || ''), 14)));
+  const icon = document.createElement('span');
+  icon.className = 'task-delegate-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = executorIcon(String(r.executor || ''), 14);
+  row.appendChild(icon);
 
   const text = document.createElement('div');
   text.className = 'task-node-text';
@@ -351,13 +569,34 @@ function buildRootRow(r) {
   }
   row.appendChild(text);
 
+  // Topology dotmap + progress meta (membered chains only) — the chain-level
+  // L1 jump target (classic badge-click analogue: whole-chain fit view).
+  if (memberCount > 0 && !queued) {
+    const jump = document.createElement('span');
+    jump.className = 'task-chain-jump';
+    jump.setAttribute('role', 'button');
+    jump.title = t('flowmap.chain.badgeHint', { chain: title || delegateId });
+    jump.setAttribute('aria-label', jump.title);
+    jump.appendChild(buildChainDotmap(block.view));
+    const meta = document.createElement('span');
+    meta.className = 'task-chain-meta';
+    meta.setAttribute('aria-hidden', 'true');
+    meta.textContent = chainProgressMeta(block.view.ordered);
+    jump.appendChild(meta);
+    const meta0 = rowMetaOf(r);
+    jump.addEventListener('click', (e) => {
+      e.stopPropagation(); // chain-level jump ≠ row fold
+      openL1(block.key, meta0);
+    });
+    row.appendChild(jump);
+  }
+
   appendWordSlot(row, wordKey);
 
-  // Ready-to-merge rows show only the queue rank (engine G5 position verbatim;
-  // absent key = no chip, no derivation).
-  if (queued && row0.mergeQueuePos && typeof row0.mergeQueuePos.position === 'number' &&
-      row0.mergeQueuePos.position > 0) {
-    const qp = row0.mergeQueuePos;
+  // Ready-to-merge rows show only the queue rank (engine G5 position verbatim).
+  if (queued && r.mergeQueuePos && typeof r.mergeQueuePos.position === 'number' &&
+      r.mergeQueuePos.position > 0) {
+    const qp = r.mergeQueuePos;
     const rankEl = document.createElement('span');
     rankEl.className = 'task-delegate-rank';
     rankEl.setAttribute('aria-hidden', 'true');
@@ -368,7 +607,7 @@ function buildRootRow(r) {
     row.appendChild(rankEl);
   }
 
-  const createdAt = typeof row0.createdAt === 'number' ? row0.createdAt : Date.parse(String(row0.createdAt || ''));
+  const createdAt = typeof r.createdAt === 'number' ? r.createdAt : Date.parse(String(r.createdAt || ''));
   appendTimeSlot(row, createdAt);
 
   // Trailing action zone: external rows only (S16 open-native exit).
@@ -396,134 +635,158 @@ function buildRootRow(r) {
   }
 
   if (clickable) {
-    const meta = rowMetaOf(row0);
-    const key = delegateRowKey(row0);
+    const meta = rowMetaOf(r);
     row.addEventListener('click', (e) => {
       e.stopPropagation();
-      openL1(key, meta);
+      if (openable) {
+        // Fold toggle (classic chain-row semantics).
+        if (expandedChains.has(block.key)) expandedChains.delete(block.key);
+        else expandedChains.add(block.key);
+        rerenderWithNodes();
+      } else {
+        openL1(block.key, meta);
+      }
     });
   }
   return row;
 }
 
+// ── Member rows (expanded blocks): the classic 22px chain-member language ──
+
+const CHECK_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="5" class="ring"/><path d="M3.6 6.2l1.7 1.7 3.1-3.6" class="tick"/></svg>';
+const CROSS_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="5" class="ring"/><path d="M4.2 4.2l3.6 3.6M7.8 4.2L4.2 7.8" class="tick"/></svg>';
+
+/** Transition motion mark: running = orbit mini, completed = self-drawing
+ *  check, failed = cross; anything else = absent. The draw animates only on a
+ *  real frame-over-frame status change (transition=true). */
+function buildMemberMark(st, transition) {
+  if (st === 'running') {
+    const spin = document.createElement('span');
+    spin.className = 'task-chain-mark';
+    spin.setAttribute('aria-hidden', 'true');
+    spin.appendChild(buildOrbitGlyph());
+    return spin;
+  }
+  if (st !== 'completed' && st !== 'failed') return null;
+  const mark = document.createElement('span');
+  mark.className = 'task-chain-mark' + (st === 'failed' ? ' task-chain-mark-failed' : ' task-chain-mark-done');
+  mark.setAttribute('aria-hidden', 'true');
+  mark.innerHTML = st === 'failed' ? CROSS_SVG : CHECK_SVG;
+  if (REDUCED_MOTION || !transition) mark.classList.add('task-chain-mark-static');
+  return mark;
+}
+
 /**
- * Member row (sub-agent child or flow-step chain node): same row anatomy as a
- * root row minus the executor mark (fixed-width placeholder keeps the text
- * column aligned), plus the chain badge naming the owning delegate chain.
- * Click = open L1; flow-step rows anchor to their node card.
- * @param {{kind: 'child'|'flow', key: string, chainTitle: string, meta: any,
- *          child?: any, node?: any}} item @returns {HTMLElement} */
-function buildMemberRow(item) {
-  const isFlow = item.kind === 'flow';
-  const src = isFlow ? (item.node || {}) : (item.child || {});
-  const rawStatus = String(src.status || 'pending');
-  const st = isFlow ? rawStatus : childRowStatus(rawStatus);
-  const wordKey = DELEGATE_WORD_KEY[st] || '';
-  const labelText = isFlow
-    ? String(src.label || src.id || '')
-    : (String(src.agentName || '') || String(src.taskId || ''));
+ * Expanded member row (22px): sequence label + kind dot + name + status word +
+ * motion mark + relative time (children carry spawn/completion times; flow-step
+ * rows render no time — the chain projection has no per-node timestamps).
+ * Click = the L1 map anchored at this node (camera focus + flash).
+ * @param {any} m member record @param {any} block owning chain block
+ * @returns {HTMLElement} */
+function buildChainMemberRow(m, block) {
+  const st = String(m.status || 'pending');
+  const cls = NODE_STATUS_CLS[st] || '';
+  const id = String(m.id);
+  const depth = block.view.depths.get(id) || 0;
+  const memKey = `${block.key}:${id}`;
+  const prevStatus = memberStatusPrev.get(memKey);
+  const transition = !REDUCED_MOTION && prevStatus !== undefined && prevStatus !== st;
+  if (!REDUCED_MOTION) memberStatusNext.set(memKey, st);
 
   const row = document.createElement('div');
-  row.className = 'task-node task-member';
-  row.dataset.nodeKey = isFlow
-    ? `${item.key}‖flow‖${String(src.id || '')}`
-    : `${item.key}‖${String(src.taskId || '')}`;
+  row.className = 'task-chain-member' + (cls ? ` task-node-${cls}` : '');
+  row.dataset.nodeKey = memKey;
+  row.dataset.delegateId = String(block.row.delegateId || '');
+  row.style.setProperty('--nest', String(depth));
   row.setAttribute('role', 'button');
-  row.setAttribute('aria-label', `${labelText}${wordKey ? ` — ${t(wordKey)}` : ''}`);
+  const wordKey = DELEGATE_WORD_KEY[st];
+  row.setAttribute('aria-label', `${m.name || id}${wordKey ? ` — ${t(wordKey)}` : ''}`);
   row.title = t('delegate.flowmap.title');
 
-  row.appendChild(buildNodeGlyph(st, NODE_STATUS_CLS[st] || ''));
-  row.appendChild(buildIconSlot(''));
+  const seq = document.createElement('span');
+  seq.className = 'task-chain-depth';
+  seq.setAttribute('aria-hidden', 'true');
+  seq.textContent = block.view.seqs.get(id) || String(depth + 1);
+  row.appendChild(seq);
 
-  const text = document.createElement('div');
-  text.className = 'task-node-text';
-  const labelRow = document.createElement('span');
-  labelRow.className = 'task-node-label-row';
+  const dot = document.createElement('span');
+  dot.className = `task-chain-dot t-${m.kind === 'flow' ? 'design' : 'impl'}`;
+  dot.setAttribute('aria-hidden', 'true');
+  row.appendChild(dot);
+
   const label = document.createElement('span');
-  label.className = 'task-node-label';
-  label.textContent = labelText;
-  labelRow.appendChild(label);
-  const badge = buildChainBadge(item.key, item.chainTitle, item.meta);
-  if (badge) labelRow.appendChild(badge);
-  text.appendChild(labelRow);
-  appendMetaSlot(text, isFlow ? src.description : (src.description || src.prompt));
-  row.appendChild(text);
+  label.className = 'task-chain-member-name';
+  label.textContent = m.name || id;
+  if (m.description) row.title = String(m.description); // truncated by CSS; hover carries the full text
+  row.appendChild(label);
 
-  appendWordSlot(row, wordKey);
-
-  if (!isFlow) {
-    const ts = typeof src.completedAt === 'number' && src.completedAt > 0
-      ? src.completedAt
-      : (typeof src.spawnedAt === 'number' ? src.spawnedAt : 0);
-    appendTimeSlot(row, ts);
+  if (wordKey) {
+    const word = document.createElement('span');
+    word.className = 'task-chain-member-word' + (transition ? ' task-chain-roll-in' : '');
+    word.setAttribute('aria-hidden', 'true');
+    word.textContent = t(wordKey);
+    row.appendChild(word);
   }
 
+  const mark = buildMemberMark(st, transition);
+  if (mark) row.appendChild(mark);
+
+  const ms = (typeof m.completedAt === 'number' && m.completedAt > 0) ? m.completedAt : memberTs(m);
+  if (ms > 0) {
+    const time = document.createElement('span');
+    time.className = 'task-chain-member-time';
+    time.setAttribute('aria-hidden', 'true');
+    time.dataset.ts = new Date(ms).toISOString();
+    time.textContent = formatLastActive(time.dataset.ts);
+    row.appendChild(time);
+  }
+
+  const meta = rowMetaOf(block.row);
   row.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (isFlow) openL1(item.key, item.meta, { expandFlow: true, anchorNode: String(src.id || '') });
-    else openL1(item.key, item.meta);
+    openL1(block.key, meta, { anchorNode: id });
   });
   return row;
 }
 
 /**
- * Collect the flat panel item list from the delegate read port: every live
- * delegate root plus its star children and flow-step chain nodes. Sorted
- * most-recent-activity first (stable — equal timestamps keep source order).
- * Timestamp policy (no fabrication): roots carry their record's createdAt,
- * children their completion/spawn time; flow-step nodes carry no timestamp in
- * the chain projection, so they sort on their chain root's activity time
- * (keeps a chain's rows adjacent) and render no time slot of their own.
- * @returns {Array<{kind: string, key: string, project: string, ts: number,
- *          row?: any, child?: any, node?: any, chainTitle: string, meta: any}>} */
-function collectPanelItems() {
-  const rows = listDelegateRows()
-    .filter((r) => r && ACTIVE_ROW_STATUSES.has(String(r.status)) && r.archivedAt == null);
-  /** @type {any[]} */
-  const items = [];
-  for (const r of rows) {
-    const key = delegateRowKey(r);
-    if (!key) continue;
-    const project = String(r.project || '');
-    const meta = rowMetaOf(r);
-    const rootTsRaw = typeof r.createdAt === 'number' ? r.createdAt : Date.parse(String(r.createdAt || ''));
-    const rootTs = Number.isFinite(rootTsRaw) ? rootTsRaw : 0;
-    const chainTitle = String(r.title || r.delegateId || '');
-    items.push({ kind: 'root', key, project, meta, row: r, ts: rootTs, chainTitle });
-    if (r.external === true) continue; // external executors: no platform children / chains
-    for (const c of listDelegateChildren(String(r.delegateId || ''))) {
-      const c0 = c && typeof c === 'object' ? c : {};
-      const ts = typeof c0.completedAt === 'number' && c0.completedAt > 0
-        ? c0.completedAt
-        : (typeof c0.spawnedAt === 'number' ? c0.spawnedAt : 0);
-      items.push({ kind: 'child', key, project, meta, child: c0, ts, chainTitle });
-    }
-    const chain = getChainByTask(key);
-    const flowSteps = chain && Array.isArray(chain.nodes)
-      ? chain.nodes.filter((n) => n && n.kind === 'flow-step') : [];
-    for (const n of flowSteps) {
-      items.push({ kind: 'flow', key, project, meta, node: n, ts: rootTs, chainTitle });
-    }
+ * One chain block: header row + (when expanded) member rows in topological
+ * order. First appearance pops (frame-diff memory; repaints stay silent).
+ * @param {any} block @returns {HTMLElement} */
+function buildChainBlock(block) {
+  const el = document.createElement('div');
+  el.className = 'task-chain-block';
+  const seenKey = `chain:${block.key}`;
+  if (!chainSeenPrev.has(seenKey) && !REDUCED_MOTION) el.classList.add('task-chain-enter');
+  chainSeenNext.add(seenKey);
+  el.appendChild(buildChainHeaderRow(block));
+  if (expandedChains.has(block.key)) {
+    const body = document.createElement('div');
+    body.className = 'task-chain-body';
+    block.view.ordered.forEach((m, i) => {
+      if (i === 0) return; // the root stub is the header row, not a member row
+      body.appendChild(buildChainMemberRow(m, block));
+    });
+    el.appendChild(body);
   }
-  items.sort((a, b) => b.ts - a.ts);
-  return items;
+  return el;
 }
 
 /**
- * Section assembly: group the flat item list by project (small uppercase
- * header per group; the headerless group hosts rows whose record carries no
- * project). Order inside a group follows the global activity sort.
- * @param {any[]} items @returns {HTMLElement|null} */
-function buildNodeSection(items) {
-  if (!items || items.length === 0) return null;
+ * Section assembly: group the chain blocks by project (small uppercase header
+ * per group; the headerless group hosts project-less rows). Group order =
+ * first appearance in the activity-sorted root order.
+ * @param {any[]} chains @returns {HTMLElement|null} */
+function buildNodeSection(chains) {
+  if (!chains || chains.length === 0) return null;
   const section = document.createElement('div');
   section.className = 'task-section task-section-nodes';
   const byProject = new Map();
-  for (const it of items) {
-    if (!byProject.has(it.project)) byProject.set(it.project, []);
-    byProject.get(it.project).push(it);
+  for (const c of chains) {
+    if (!byProject.has(c.project)) byProject.set(c.project, []);
+    byProject.get(c.project).push(c);
   }
-  for (const [project, groupItems] of byProject) {
+  for (const [project, groupChains] of byProject) {
     const group = document.createElement('div');
     group.className = 'task-node-group';
     if (project) {
@@ -532,9 +795,7 @@ function buildNodeSection(items) {
       h.textContent = project;
       group.appendChild(h);
     }
-    for (const it of groupItems) {
-      group.appendChild(it.kind === 'root' ? buildRootRow(it.row) : buildMemberRow(it));
-    }
+    for (const c of groupChains) group.appendChild(buildChainBlock(c));
     section.appendChild(group);
   }
   return section;
@@ -661,8 +922,8 @@ function buildEmpty(label) {
 // ── Main render ──────────────────────────────────────────────────────────
 
 /**
- * Render the task panel = flat flowmap node rows over the delegate plane.
- * The first arg is a retired placeholder (ignored; caller compatibility).
+ * Render the task panel = chain blocks over the delegate plane. The first arg
+ * is a retired placeholder (ignored; caller compatibility).
  * @param {Array} [_tasks]
  * @param {HTMLElement} [container]
  * @param {string} [sessionId] owning session — gates panel visibility
@@ -675,26 +936,37 @@ export function renderTaskList(_tasks, container, sessionId) {
   // Nebula unified panel only; the live provider mirror (REST snapshot fed,
   // WS-trigger-debounced) drives re-renders via delegate-chain-mirror-updated.
   const showRows = sessionShowsNodeEntries(sessionId);
-  const items = showRows ? collectPanelItems() : [];
+  const chains = showRows ? collectChains() : [];
 
-  container.classList.toggle('has-tasks', items.length > 0);
+  // Stats = total unit count (roots + members, fold-independent — the classic
+  // node-count semantics).
+  const unitCount = chains.reduce((n, c) => n + c.allCount, 0);
+
+  container.classList.toggle('has-tasks', chains.length > 0);
   container.classList.toggle('task-ws-down', !state.connected);
-  ensureLastActiveTimer(items.length > 0);
-  if (items.length === 0) {
+  ensureLastActiveTimer(chains.length > 0);
+  if (chains.length === 0) {
     container.innerHTML = '';
     stopDelegateProgressTimer(); // panel collapsed ⇒ the S16 poll stops too
     return;
   }
 
-  redraw(container, items);
+  redraw(container, chains, unitCount);
+  // Frame-diff memory swap (transition marks / first-appearance pop).
+  memberStatusPrev.clear();
+  for (const [k, v] of memberStatusNext) memberStatusPrev.set(k, v);
+  memberStatusNext.clear();
+  chainSeenPrev.clear();
+  for (const k of chainSeenNext) chainSeenPrev.add(k);
+  chainSeenNext.clear();
 }
 
 /** Row keys present in the CURRENT DOM (entry-animation comparison: rows that
  *  already exist do not replay the animation; keys come from data-node-key
- *  (member rows) and data-delegate-key (roots) — one shared comparison set). */
+ *  (member rows) and data-delegate-key (header rows) — one shared set). */
 function collectRowKeys(container) {
   const keys = new Set();
-  container.querySelectorAll('.task-node[data-node-key], .task-delegate[data-delegate-key]')
+  container.querySelectorAll('.task-chain-member[data-node-key], .task-delegate[data-delegate-key]')
     .forEach((el) => {
       const k = /** @type {HTMLElement} */ (el).dataset;
       keys.add(String(k.nodeKey || k.delegateKey || ''));
@@ -702,8 +974,8 @@ function collectRowKeys(container) {
   return keys;
 }
 
-/** @param {any[]} items flat panel items (collectPanelItems output) */
-function redraw(container, items) {
+/** @param {any[]} chains collectChains output @param {number} unitCount */
+function redraw(container, chains, unitCount) {
   // Capture before clearing: entry animation compares the incoming rows
   // against the rows the previous render actually showed.
   const priorKeys = collectRowKeys(container);
@@ -711,7 +983,7 @@ function redraw(container, items) {
   const card = document.createElement('div');
   card.className = 'task-card' + (container.dataset.collapsed === '1' ? ' collapsed' : '');
 
-  // ── Header: toggle + stats (stats = visible row count; key reused) ──
+  // ── Header: toggle + stats (stats = total unit count; key reused) ──
   const header = document.createElement('div');
   header.className = 'task-header';
 
@@ -723,18 +995,18 @@ function redraw(container, items) {
 
   const stats = document.createElement('span');
   stats.className = 'task-stats';
-  stats.textContent = t('task.statsProgress', { progress: items.length });
+  stats.textContent = t('task.statsProgress', { progress: unitCount });
 
   header.appendChild(toggle);
   header.appendChild(stats);
 
-  // ── Body: the node section (sole content zone) ──
+  // ── Body: the chain section (sole content zone) ──
   const body = document.createElement('div');
   body.className = 'task-body';
   const inner = document.createElement('div');
   inner.className = 'task-body-inner';
 
-  const nodesSection = buildNodeSection(items);
+  const nodesSection = buildNodeSection(chains);
   if (nodesSection) inner.appendChild(nodesSection);
 
   body.appendChild(inner);
@@ -756,9 +1028,9 @@ function redraw(container, items) {
 
   // Entry animation for brand-new rows only (comparison against the prior DOM).
   if (!REDUCED_MOTION) {
-    const items2 = /** @type {NodeListOf<HTMLElement>} */ (
-      container.querySelectorAll('.task-node'));
-    items2.forEach((el) => {
+    const items = /** @type {NodeListOf<HTMLElement>} */ (
+      container.querySelectorAll('.task-delegate, .task-chain-member'));
+    items.forEach((el) => {
       const k = /** @type {HTMLElement} */ (el).dataset;
       if (priorKeys.has(String(k.nodeKey || k.delegateKey || ''))) return;
       el.classList.add('task-node-entering');

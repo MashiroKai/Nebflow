@@ -249,11 +249,11 @@ const projectTabCode = codeOnly(switchFiles['js/projectTab.js']);
 // 节点区块数据腿零残留（快照对账/WS 订阅/链控缓存——代码符号形态，注释豁免）。
 check('switchcut H: taskList node snapshot/WS-cache legs absent',
   !/refreshNodeSnapshot|applyNodeWsEvent|nodeCache|chainCache|chainPendingAction|collectNodes\b/.test(taskListCode));
-// 面板行脸 = 平铺 flowmap 节点行（delegate 数据源）：树时代构建器零残留，
-// 行族构建器（链徽标/分组节/平铺收集）在场。
-check('flowmap-rows H: taskList tree-era builders absent, flat-row builders present',
-  !/buildDelegateDetail|buildTreeChevron|delegateTreeOpenable|expandedDelegates|expandedFlowTrees|appendInlineBadges/.test(taskListCode) &&
-  /buildChainBadge|buildNodeSection|collectPanelItems/.test(taskListCode));
+// 面板行脸 = 链块（delegate 数据源）：树时代与平铺时代构建器零残留，
+// 链块构建器（块/头行/成员行/收集/拓扑）在场。
+check('chain-blocks H: taskList tree/flat-era builders absent, chain-block builders present',
+  !/buildDelegateDetail|buildTreeChevron|delegateTreeOpenable|appendInlineBadges|buildChainBadge|collectPanelItems|expandedFlowTrees/.test(taskListCode) &&
+  /buildChainBlock|buildChainHeaderRow|buildChainMemberRow|collectChains|chainEdgesOf/.test(taskListCode));
 // 面板零 WS 知识：帧只当 provider 刷新触发器；面板重渲走镜像事件（换源即切接线）。
 check('switchcut H: taskList has no direct WS subscription (provider-mirror driven)',
   !/from\s+['"]\.\/ws\.js['"]/.test(taskListCode) && !/onMessage\(/.test(taskListCode));
@@ -265,22 +265,25 @@ check('switchcut H: taskList nodeData import shrunk to NODE_STATUS_CLS',
 // 入口键 project.openFlowMap 退役照荐落：零 t() 消费（键值保留在册＝零文案 diff）。
 check('switchcut H: openFlowMap entry key retired (zero t() consumption)',
   !/project\.openFlowMap/.test(taskListCode) && !/project\.openFlowMap/.test(projectTabCode));
-// 统计口径：task.statsProgress 挂可见行数（根行＋成员行——flowmap 行脸面）。
-check('flowmap-rows H: stats = visible row count',
-  /task\.statsProgress', \{ progress: items\.length \}/.test(taskListCode));
+// 统计口径：task.statsProgress 挂总单元数（根＋成员，与折叠态无关——经典
+// 节点计数语义）。
+check('chain-blocks H: stats = total unit count',
+  /task\.statsProgress', \{ progress: unitCount \}/.test(taskListCode));
 // 换源即切接线：provider 镜像刷新完成广播 ↔ 面板监听重渲（零载荷、零帧解读）。
 check('switchcut H: provider mirror event wired (dispatch + panel listener)',
   switchFiles['js/delegateChainProvider.js'].includes("new CustomEvent('delegate-chain-mirror-updated')") &&
   taskListCode.includes("'delegate-chain-mirror-updated'"));
-// CSS 面：flowmap 行脸在场（链徽标胶囊族 + 项目分组族）；树时代面（chevron/
-// 展开详情/行内徽标/子行族/flow 子行）摘除；节点行基样与 delegate 出口面保留。
-check('flowmap-rows H: taskList.css flat-node face present, tree-era face removed',
+// CSS 面：链块族在场（点图/成员行/迁移动效 + 项目分组族）；树时代面（chevron 树/
+// 展开详情/行内徽标/子行族/flow 子行）与平铺时代徽标胶囊摘除；节点行基样与
+// delegate 出口面保留。
+check('chain-blocks H: taskList.css chain-block face present, tree/flat-era faces removed',
   (() => {
     const css = switchFiles['css/taskList.css']
       .replace(/^\s*\/\*[\s\S]*?\*\/\s*$/gm, '')  // 整块注释豁免（退役注记）
       .replace(/^\s*\/\/.*$/gm, '');
-    return !/\.task-chain[-. {]/.test(css) &&
-      css.includes('.task-node-chain') && css.includes('.task-node-group') &&
+    return css.includes('.task-chain-map') && css.includes('.task-chain-member') &&
+      css.includes('.task-node-group') &&
+      !css.includes('.task-node-chain') &&
       !css.includes('.task-tree-chev') && !css.includes('.task-delegate-detail') &&
       !css.includes('.task-kids-badge') && !css.includes('.task-flow-badge') &&
       !css.includes('.task-kids-list') && !css.includes('.bgagent-child-row') &&

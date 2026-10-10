@@ -79,11 +79,11 @@
   color: var(--color-text-muted, #888);
   /* Unified panel spec §3.3: tabular figures for the count pair. */
   font-variant-numeric: tabular-nums;
-  /* Stats line x-alignment with the row text column: grouped rows nest 10px
-     under their group header, so row text x = group indent 10 + glyph 12 +
-     gap 8 + executor mark 14 + gap 8 = 52; header x = toggle 20 + gap 8 +
-     margin 24 = 52. Narrow-screen gap 4 variant in the media query below. */
-  margin-left: 24px;
+  /* Stats line x-alignment with the chain-header text column: grouped rows
+     nest 10px under their group header, so row text x = group indent 10 +
+     twisty 12 + gap 8 + glyph 12 + gap 8 + executor mark 14 + gap 8 = 72;
+     header x = toggle 20 + gap 8 + margin 44 = 72. Narrow variant below. */
+  margin-left: 44px;
 }
 
 /* Collapsed body — use grid-template-rows for smooth height-aware animation */
@@ -230,44 +230,6 @@
   color: var(--color-text, #000);
 }
 
-/* Chain badge: small capsule (same capsule language as .fm-flag-badge /
-   .fm-worktree-badge: radius + translucent tint + colored border text) =
-   same-chain color dot + short chain title. Palette = 5-color cycle (c0..c4)
-   picked by a stable hash of the chain key — all values are existing repo
-   tokens (sapphire / .fm-flag-merge teal / .fm-flag-loop purple / --amber /
-   .solar-node-status.ok green), zero new colors; same chain = same color. */
-.task-node-chain {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  max-width: 92px;
-  padding: 1px 5px;
-  border-radius: 6px;
-  border: 1px solid currentColor;
-  background: color-mix(in srgb, currentColor 12%, transparent);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1.5;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.task-node-chain:hover { background: color-mix(in srgb, currentColor 22%, transparent); }
-.task-node-chain-dot {
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.task-node-chain-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-node-chain.c0 { color: rgb(var(--sapphire, 91 127 191)); }
-.task-node-chain.c1 { color: rgb(45 212 191); }              /* teal (.fm-flag-merge) */
-.task-node-chain.c2 { color: rgb(192 132 252); }             /* purple (.fm-flag-loop) */
-.task-node-chain.c3 { color: rgb(var(--amber, 255 152 0)); } /* amber (.fm-flag-pending) */
-.task-node-chain.c4 { color: #4caf50; }                      /* green (.solar-node-status.ok) */
-
 /* meta = 节点 description（缺失回落 agent 名；project 已由分组头承载——信息减法）。
    窄栏省略号截断，全文由 metaEl.title 悬停承载（沿用既有原生 tooltip 形态）。
    delegate 行复用：S16 外部行进度尾行同槽显示。 */
@@ -332,10 +294,24 @@
   to   { opacity: 1; transform: translateX(0); }
 }
 
-/* ── Icon-button size tokens (consumed by .task-delegate-btn) ── */
+/* ── Chain-block tokens (single source; JS mirrors the numeric ones) ── */
 :root {
-  --task-chain-btn-w: 22px;          /* icon button width */
-  --task-chain-btn-h: 20px;          /* icon button height */
+  --task-chain-btn-w: 22px;          /* icon button width (.task-delegate-btn) */
+  --task-chain-btn-h: 20px;          /* icon button height (.task-delegate-btn) */
+  --task-chain-node-h: 22px;         /* expanded member row height */
+  --task-chain-dot-r: 3px;           /* dotmap dot diameter */
+  /* Member-kind palette: subagent child = impl, flow-step = design (the two
+     kinds the delegate plane carries; the other classic slots stay reserved). */
+  --task-node-type-dispatcher: #8a93a5;
+  --task-node-type-impl: #4a8fd4;
+  --task-node-type-verify: #e0a03c;
+  --task-node-type-sink: #9b6fd4;
+  --task-node-type-design: #3aa8a0;
+  --task-chain-check-dash: 12;       /* check stroke dash length */
+  --task-chain-check-ease: cubic-bezier(.34,1.6,.64,1); /* overshoot bounce easing */
+  --task-chain-roll-ms: 350ms;       /* status-word roll duration */
+  --task-chain-nest-step: 8px;       /* indent step per depth level */
+  --task-chain-nest-cap: 3;          /* indent cap (sequence label carries depth past it) */
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
@@ -355,6 +331,14 @@
   .task-node.task-node-entering {
     animation: none;
   }
+  .task-chain-mark,
+  .task-chain-mark path,
+  .task-chain-roll-in,
+  .task-chain-block.task-chain-enter {
+    animation: none;
+  }
+  .task-chain-mark-static path,
+  .task-chain-mark path { stroke-dashoffset: 0; }
 }
 /* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px. ── */
 @media (max-width: 480px) {
@@ -364,13 +348,218 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* Narrow header gap 4: stats margin = row text column 52 − (toggle 20 +
-       gap 4) = 28 (same equation as the base rule above). */
-    margin-left: 28px;
+    /* Narrow header gap 4: stats margin = row text column 72 − (toggle 20 +
+       gap 4) = 48 (same equation as the base rule above). */
+    margin-left: 48px;
   }
   /* 窄屏收起状态词与相对时间（delegate 行沿用 .task-node-word/-time 同槽） */
   .task-node-word, .task-node-time { display: none; }
 }
+
+/* ── Chain blocks (the classic chain-structure face, delegate-sourced) ──────
+   Block = header row (root node, .task-node.task-chain-head) + expanded member
+   rows (.task-chain-member, 22px). Fold twisty rotates via the header's
+   aria-expanded; leaf headers carry an invisible placeholder (text column
+   alignment discipline). */
+.task-chain-block { margin: 2px 0; }
+
+.task-chain-twisty {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px; /* glyph-row baseline rhythm (same as the 12px glyph slot) */
+  color: var(--color-text-muted, #888);
+  transition: transform 0.15s;
+}
+.task-chain-twisty svg { width: 12px; height: 12px; display: block; }
+.task-chain-head[aria-expanded="true"] .task-chain-twisty { transform: rotate(90deg); }
+.task-chain-twisty-leaf { visibility: hidden; }
+
+/* Chain-level jump zone (dotmap + progress meta): the chain's structure
+   thumbnail — clicks through to the L1 flowmap (whole-chain fit view). */
+.task-chain-jump {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 3px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.task-chain-jump:hover .task-chain-map { filter: brightness(1.15); }
+
+/* Inline topology dotmap: dots in topological order (kind colours), links only
+   on real edges. Hollow = not started; filled = terminal; filled+enlarged =
+   running. Width-capped with clipping — a thumbnail, never a criterion. */
+.task-chain-map {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  gap: 0;
+}
+.task-chain-map-link {
+  flex: 0 0 auto;
+  width: 4px;
+  height: 1px;
+  background: color-mix(in srgb, var(--color-text-muted, #888) 55%, transparent);
+}
+.task-chain-map-dot {
+  flex: 0 0 auto;
+  width: var(--task-chain-dot-r);
+  height: var(--task-chain-dot-r);
+  border-radius: 50%;
+  box-sizing: content-box;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.task-chain-map-dot.is-done { background: currentColor; border-color: currentColor; }
+.task-chain-map-dot.is-running {
+  background: currentColor;
+  border-color: currentColor;
+  width: calc(var(--task-chain-dot-r) + 2px);
+  height: calc(var(--task-chain-dot-r) + 2px);
+}
+.task-chain-map-dot.t-dispatcher, .task-chain-dot.t-dispatcher { color: var(--task-node-type-dispatcher); }
+.task-chain-map-dot.t-impl, .task-chain-dot.t-impl { color: var(--task-node-type-impl); }
+.task-chain-map-dot.t-verify, .task-chain-dot.t-verify { color: var(--task-node-type-verify); }
+.task-chain-map-dot.t-sink, .task-chain-dot.t-sink { color: var(--task-node-type-sink); }
+.task-chain-map-dot.t-design, .task-chain-dot.t-design { color: var(--task-node-type-design); }
+
+.task-chain-meta {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+  white-space: nowrap;
+}
+
+/* ── Expanded member row (22px): sequence label + kind dot + name + word +
+   motion mark + time. Layered indent: base 16px + 8px per depth level, capped
+   at level 3; past the cap the sequence label keeps carrying the depth. ── */
+.task-chain-body { min-width: 0; }
+.task-chain-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--task-chain-node-h);
+  box-sizing: border-box;
+  padding: 0 4px 0 calc(16px + min(var(--nest, 0), var(--task-chain-nest-cap)) * var(--task-chain-nest-step));
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.task-chain-member:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+.task-chain-depth {
+  flex: 0 0 auto;
+  min-width: 24px;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text-muted, #888) 70%, transparent);
+}
+.task-chain-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.task-chain-member-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text, #000);
+}
+.task-chain-member-word {
+  flex: 0 0 auto;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted, #888);
+}
+.task-chain-member-time {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+}
+
+/* ── Transition motion marks (12px, beside the status word): completed =
+   self-drawing check that bounces in, failed = same-geometry red cross,
+   running = the orbit mini. A real frame-over-frame status change is the only
+   animation trigger; first paint and same-state frames land static. ── */
+.task-chain-mark {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+.task-chain-mark svg { width: 12px; height: 12px; display: block; }
+.task-chain-mark circle {
+  fill: none;
+  stroke: var(--color-success, #4caf50);
+  stroke-width: 2;
+}
+.task-chain-mark path {
+  fill: none;
+  stroke: var(--color-success, #4caf50);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: var(--task-chain-check-dash);
+  stroke-dashoffset: var(--task-chain-check-dash);
+}
+.task-chain-mark-failed circle,
+.task-chain-mark-failed path { stroke: var(--status-error-icon, #f44336); }
+.task-chain-mark-failed path { stroke-dasharray: 6; stroke-dashoffset: 6; }
+.task-chain-mark-done:not(.task-chain-mark-static) {
+  animation: task-chain-check-pop 0.4s var(--task-chain-check-ease) forwards;
+}
+.task-chain-mark-done:not(.task-chain-mark-static) path {
+  animation: task-chain-draw 0.25s 0.1s ease forwards;
+}
+.task-chain-mark-failed:not(.task-chain-mark-static) {
+  animation: task-chain-check-pop 0.4s var(--task-chain-check-ease) forwards;
+}
+.task-chain-mark-failed:not(.task-chain-mark-static) path {
+  animation: task-chain-draw 0.25s 0.1s ease forwards;
+}
+.task-chain-mark-static path { stroke-dashoffset: 0; }
+/* running mark: the orbit mini centres itself in the 12px slot */
+.task-chain-mark .task-node-orbit { width: 12px; height: 12px; }
+@keyframes task-chain-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes task-chain-check-pop {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.task-chain-roll-in {
+  animation: task-chain-roll-in var(--task-chain-roll-ms) cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+@keyframes task-chain-roll-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+/* Chain-block first-appearance pop (frame-diff memory — repaints stay silent). */
+@keyframes task-chain-pop {
+  0%   { opacity: 0; transform: translateY(16px) scale(0.82); }
+  60%  { transform: translateY(-2px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+.task-chain-block.task-chain-enter { animation: task-chain-pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
 
 /* ── Delegate row action zone (external rows' open-native exit) ─────────────
    Zero new color values: everything reuses existing tokens (--color-*). The
@@ -399,14 +588,6 @@
 .task-delegate-btn:hover { background: var(--color-frame-hover); color: var(--color-text, #000); }
 .task-delegate-btn:disabled { opacity: 0.4; cursor: default; }
 
-/* Executor mark slot: roots carry the executor mark (auto-sized 14px asset);
-   member rows carry an empty fixed-width placeholder so the text column stays
-   aligned across row kinds. */
-.task-delegate-icon-empty {
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-}
 
 /* ── delegate-ui 修订批（用户九点④⑥ · 2026-10-09）──────────────────────────
    ⑥ 运行态三点轨道（.solar-orbit 同语言：3 环 3 点、120° 静止基相位、容器旋转）；

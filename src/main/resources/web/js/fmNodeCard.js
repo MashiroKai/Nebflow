@@ -225,12 +225,15 @@ export function chainCardHtml(n, pos, originX) {
     }).join('');
   const title = String(n.name || n.id);
   const nodesText = t('flowmap.chain.nodes', { n: String(n.memberCount || 0) });
+  // chainControl === false (scopes without a ChainLedger face, e.g. delegate
+  // chains): the chain-cancel affordance is omitted; the fold chevron stays.
+  const cancelBtn = n.chainControl === false ? '' : chainCancelButtonHtml(n.id);
   return `
     <div class="solar-node fm-node fm-chain-card ${cls}" data-node-id="${esc(String(n.id))}"
          data-chain-card="1" data-chain-id="${esc(String(n.id))}" data-status="${esc(st)}"
          tabindex="0" title="${esc(t('flowmap.chain.cardHint', { chain: title, n: String(n.memberCount || 0) }))}"
          style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
-      <div class="fm-node-head">${statusIcon}<span class="fm-st-word ${esc(cls)}">${esc(t(FM_CHAIN_ST_KEY[st] || 'flowmap.wait'))}</span>${chainCancelButtonHtml(n.id)}<button type="button" class="fm-chain-chev" data-chain-id="${esc(String(n.id))}" aria-expanded="false"
+      <div class="fm-node-head">${statusIcon}<span class="fm-st-word ${esc(cls)}">${esc(t(FM_CHAIN_ST_KEY[st] || 'flowmap.wait'))}</span>${cancelBtn}<button type="button" class="fm-chain-chev" data-chain-id="${esc(String(n.id))}" aria-expanded="false"
                 aria-label="${esc(t('flowmap.chain.expand'))}" title="${esc(t('flowmap.chain.expand'))}">${FM_CHEV_SVG}</button>
       </div>
       <div class="solar-node-label" title="${esc(title)}">${esc(title)}</div>
@@ -289,8 +292,10 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
   // 同款）——**只发 chainId**；判定/执行全在后端。位置在 `chainChev`
   // **之前**：`.fm-chain-chev` 的 `margin-left:auto` 保持既有 chevron 的右端定位不变
   // （既有控件零视觉漂移），取消控件紧贴其左。
+  // chainHead.control === false (scopes without a ChainLedger face): the cancel
+  // button is omitted on the entry card too; the collapse chevron stays.
   const chainChev = n.chainHead
-    ? chainCancelButtonHtml(n.chainHead.id) + `<button type="button" class="fm-chain-chev fm-chain-chev-open" data-chain-id="${esc(String(n.chainHead.id))}"
+    ? (n.chainHead.control === false ? '' : chainCancelButtonHtml(n.chainHead.id)) + `<button type="button" class="fm-chain-chev fm-chain-chev-open" data-chain-id="${esc(String(n.chainHead.id))}"
          aria-expanded="true" aria-label="${esc(t('flowmap.chain.collapse', { chain: String(n.chainHead.title), n: String(n.chainHead.n) }))}"
          title="${esc(t('flowmap.chain.collapse', { chain: String(n.chainHead.title), n: String(n.chainHead.n) }))}">${FM_CHEV_SVG}</button>`
     : '';
