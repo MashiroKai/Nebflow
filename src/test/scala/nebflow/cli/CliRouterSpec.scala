@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpServer
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.shared.PathUtil
 
 import java.io.ByteArrayOutputStream
 import java.net.{InetSocketAddress, ServerSocket}
@@ -241,9 +242,14 @@ class CliRouterSpec extends FunSuite:
     assertEquals(code, 0)
     assert(out.contains("Start the Gateway (same as 'nebflow start')"), out)
     assert(out.contains("Starting / stopping:"), out)
-    assert(out.contains("Global flags: --json, --quiet, --home <dir>, --port <n>, --no-browser"), out)
-    assert(out.contains("Exit codes: 0 ok · 1 error · 2 unreachable/timeout"), out)
-    assert(out.contains("(legacy) same as 'nebflow start'"), out)
+    assert(out.contains("Global flags: --json, --quiet, --home <dir>, --port <n>, --no-browser, --foreground"), out)
+    assert(
+      out.contains("Exit codes: 0 ok · 1 error · 2 unreachable/timeout · 3 not running · 4 abnormal"),
+      out
+    )
+    // pin updated to the current wording ("(alias)" since the product-face
+    // hygiene sweep renamed it; the old "(legacy)" pin was a pre-existing red)
+    assert(out.contains("(alias) same as 'nebflow start'"), out)
   }
 
   test("T5/T6: a parameter line renders the flag pair plus annotations") {
@@ -446,5 +452,65 @@ class CliRouterSpec extends FunSuite:
       prev match
         case Some(v) => sys.props("logback.statusListenerClass") = v
         case None => sys.props.remove("logback.statusListenerClass")
+  }
+
+  // ===== 11. phase 2 daemon batch: stop migration + restart registration =====
+
+  /**
+   * Redirect the data root for the duration of `f` — the stop router path
+   * must never see the real `~/.nebflow/.pid` (a live host instance there
+   * would be probed by the hardened stop face). Empty temp root ⇒ the
+   * deterministic NotRunning branch.
+   */
+  private def withTempRoot(f: => Unit): Unit = withTempDataRoot(f)
+
+  private def withTempDataRoot(f: => Unit): Unit =
+    val original = PathUtil.dataRoot
+    val tmp = os.temp.dir(prefix = "cli-router-stop-spec-")
+    try
+      PathUtil.setDataRoot(tmp)
+      f
+    finally
+      PathUtil.setDataRoot(original)
+      os.remove.all(tmp)
+
+  test("stop and restart are registered and offline") {
+    assertEquals(CommandRegistry.get("stop").map(_.name), Some("stop"))
+    assertEquals(CommandRegistry.get("restart").map(_.name), Some("restart"))
+    assert(CliRouter.isOffline("stop", "run"))
+    assert(CliRouter.isOffline("restart", "run"))
+  }
+
+  test("stop digests --json/--quiet through the router and exits 0 when not running") {
+    withTempDataRoot {
+      // exit codes only: renderResult prints via Predef.println from a compute
+      // thread, which the thread-local Console capture cannot see — the load-
+      // bearing router contract here is the flag partition + zero exit.
+      val (_, code) = runCaptured("stop", "--json")
+      assertEquals(code, 0)
+      val (_, quietCode) = runCaptured("stop", "--quiet")
+      assertEquals(quietCode, 0)
+    }
+  }
+
+  test("stop outcome mapping: NotRunning exits 0 with the plain text face") {
+    withTempRoot {
+      val res = StopCommand.runStop(ProcessManager.StopOptions()).unsafeRunSync()
+      res match
+        case CliResult.Exit(code, output) =>
+          assertEquals(code, 0)
+          assertEquals(output, "nebflow is not running")
+        case other => fail(s"expected Exit, got $other")
+    }
+  }
+
+  test("stop accepts --force/--tree as declared params (no unknown-flag rejection)") {
+    val stopParams = StopCommand.subcommands.head.params.map(_.name).toSet
+    assert(stopParams.contains("force"))
+    assert(stopParams.contains("tree"))
+    assertEquals(
+      CliRouter.parseArgs(List("--force", "--tree"), StopCommand.subcommands.head.params),
+      Right(Map("force" -> "true", "tree" -> "true"), Nil)
+    )
   }
 end CliRouterSpec
