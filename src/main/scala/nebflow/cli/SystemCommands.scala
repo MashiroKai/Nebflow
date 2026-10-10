@@ -168,15 +168,44 @@ object StopCommand extends CliCommand:
   def name = "stop"
   def description = "Stop the running Gateway"
   def subcommands = List(StopRun)
-  def examples = List("nebflow stop")
+  def examples = List("nebflow stop", "nebflow stop --force", "nebflow stop --tree")
 
-  private object StopRun extends CliSubcommand:
+  private[cli] object StopRun extends CliSubcommand:
     def name = "run"
-    def description = "Stop the Gateway"
-    def params = Nil
+    def description = "Stop the Gateway (--force skips the ownership gate; --tree kills an sbt-managed chain)"
+    def params = List(
+      CliParam("force", None, "Skip the ownership gate (identity check, port confirmation and the 8080/8097 dev-host gate always apply)", isFlag = true),
+      CliParam("tree", None, "Stop the whole sbt-managed process chain; degrades to a single-process stop when no sbt ancestor exists", isFlag = true)
+    )
 
     def run(ctx: CliContext): IO[CliResult] =
-      nebflow.cli.ProcessManager.stop().as(CliResult.ok)
+      runStop(stopOptions(ctx))
+
+  /**
+   * StopOutcome → CliResult mapping (piece 4): Stopped/NotRunning exit 0
+   * (not-running is idempotent success), Refused/Failed exit 1. Exposed for
+   * the spec to drive with injected deps — zero real signals there.
+   */
+  private[cli] def runStop(
+      opts: ProcessManager.StopOptions,
+      deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
+  ): IO[CliResult] =
+    ProcessManager.stopHardened(opts, deps).map {
+      case ProcessManager.StopOutcome.NotRunning =>
+        CliResult.Exit(0, "nebflow is not running")
+      case ProcessManager.StopOutcome.Stopped(message) =>
+        CliResult.Exit(0, message)
+      case ProcessManager.StopOutcome.Refused(reason) =>
+        CliResult.Error(reason, 1)
+      case ProcessManager.StopOutcome.Failed(reason) =>
+        CliResult.Error(reason, 1)
+    }
+
+  private[cli] def stopOptions(ctx: CliContext): ProcessManager.StopOptions =
+    ProcessManager.StopOptions(
+      force = ctx.args.get("force").contains("true"),
+      tree = ctx.args.get("tree").contains("true")
+    )
 
 object StatusCommand extends CliCommand:
   def name = "status"
@@ -184,7 +213,7 @@ object StatusCommand extends CliCommand:
   def subcommands = List(StatusCheck)
   def examples = List("nebflow status")
 
-  private object StatusCheck extends CliSubcommand:
+  private[cli] object StatusCheck extends CliSubcommand:
     def name = "check"
     def description = "Check Gateway status"
     def params = Nil
@@ -206,19 +235,46 @@ object StatusCommand extends CliCommand:
             if pidRunning || ours.isDefined then false
             else nebflow.cli.SingleInstanceGuard.connectProbeAccepted(port)
           val running = pidRunning || ours.isDefined
+
+          // Phase 2 (§3.1): ownership sidecar fields — daemon true only for
+          // launcher-started instances; no meta file → null (not false).
+          val meta = PidMeta.read()
+          val startedBy = meta.map(_.startedBy)
+          val mode = meta.flatMap(_.mode)
+          val daemon: Option[Boolean] = startedBy.map(_ == PidMeta.StartedByLauncher)
+
+          // Exit codes: 0 running / 3 not running / 4 abnormal (foreign
+          // occupant). CliResult.Exit keeps the text face prefix-free.
+          val code = if running then 0 else if foreign then 4 else 3
+
           if ctx.json then
-            CliResult.Json(
+            CliResult.Exit(
+              code,
               io.circe.Json.obj(
                 "running" -> running.asJson,
                 "pid" -> pidOpt.asJson,
                 "port" -> port.asJson,
-                "version" -> nebflow.Version.string.asJson
-              )
+                "version" -> nebflow.Version.string.asJson,
+                "daemon" -> daemon.asJson,
+                "startedBy" -> startedBy.asJson,
+                "mode" -> mode.asJson
+              ).spaces2
             )
-          else if pidRunning then CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)")
-          else if ours.isDefined then CliResult.text(s"✓ Gateway running (port: $port, no pid file)")
-          else if foreign then CliResult.text(s"✗ Gateway not running (port $port is in use by another program)")
-          else CliResult.text("✗ Gateway not running")
+          else
+            val head =
+              if pidRunning then s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)"
+              else if ours.isDefined then s"✓ Gateway running (port: $port, no pid file)"
+              else if foreign then s"✗ Gateway not running (port $port is in use by another program)"
+              else "✗ Gateway not running"
+            val metaLines = startedBy match
+              case Some(by) =>
+                List(
+                  s"  started-by: $by" +
+                    mode.fold("")(m => s" ($m)") +
+                    (if daemon.contains(true) then " [daemon]" else "")
+                )
+              case None => Nil
+            CliResult.Exit(code, (head :: metaLines).mkString("\n"))
         }
       }
 

@@ -44,7 +44,10 @@ object CommandRegistry:
       // 未整表重格式化 —— 本件为多段共写面，只增不改是避免同件冲突的唯一形态。
       LoginCommand,
       LogoutCommand,
-      WhoamiCommand
+      WhoamiCommand,
+      // phase 2 daemon 批（2026-10-10）：append-only 新增 restart（stop→start
+      // 编排命令；stop 本体迁回 StopCommand 走既有注册）。
+      RestartCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)
