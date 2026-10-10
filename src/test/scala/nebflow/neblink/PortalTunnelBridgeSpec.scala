@@ -65,6 +65,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
   /** Records every text sent to the "relay"; futures complete immediately. */
   private final class FakeWebSocket extends WebSocket:
     val sent = new ConcurrentLinkedQueue[String]()
+    @volatile var aborted = false
     override def sendText(data: CharSequence, last: Boolean): CompletableFuture[WebSocket] =
       sent.add(data.toString)
       CompletableFuture.completedFuture(this)
@@ -80,7 +81,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     override def getSubprotocol: String  = ""
     override def isOutputClosed: Boolean = false
     override def isInputClosed: Boolean  = false
-    override def abort(): Unit           = ()
+    override def abort(): Unit           = aborted = true
 
   private def sentTexts(fake: FakeWebSocket): List[String] =
     val out = scala.collection.mutable.ListBuffer.empty[String]
@@ -245,6 +246,56 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
           ok,
           s"the mint result must arrive despite preceding ws traffic; sent=${sentTexts(fake)}"
         )
+      yield ()
+    }
+
+  test("pump-failure drop is self-safe: aborts the local WS first, cancels only the OTHER pump"):
+    // The hazard this pins: a pump fiber's failure path used to run a drop
+    // that canceled BOTH pumps — including the caller — with the local
+    // abort() sequenced AFTER the cancels. Under either CE3 self-cancel
+    // semantic the abort could be bypassed, leaking the loopback socket to
+    // the gateway's idle timeout (the cycle had already left the registry,
+    // so the connection teardown sweep could not reach it either).
+    withBridge(echoApp) { (bridge, _, _) =>
+      def mkFlagFiber =
+        for
+          flag <- cats.effect.Ref.of[IO, Boolean](false)
+          fiber <- IO.never[Unit].guaranteeCase(oc => IO.whenA(oc.isCanceled)(flag.set(true))).start
+        yield (flag, fiber)
+      for
+        (downFlag, downFiber) <- mkFlagFiber
+        (upFlag, upFiber) <- mkFlagFiber
+        localFake = new FakeWebSocket
+        cycle = new PortalTunnelBridge.WsCycle("self-drop-down")
+        _ = cycle.local = localFake
+        _ = cycle.downPump.set(Some(downFiber))
+        _ = cycle.upPump.set(Some(upFiber))
+        _ = bridge.wsCycles.put("self-drop-down", cycle)
+        // Downlink pump failure: drop runs to COMPLETION (old code could hang
+        // on self-cancel), aborts the local socket, cancels only the uplink.
+        _ <- bridge.dropFromDownPump(cycle, "unit: downlink send failure")
+        _ = assert(localFake.aborted, "the local WS must be aborted on the pump failure path")
+        _ = assert(!bridge.wsCycles.containsKey("self-drop-down"), "the cycle must leave the registry")
+        upCanceled <- waitUntil(2.seconds)(upFlag.get)
+        _ = assert(upCanceled, "the OTHER pump must be canceled by the failure drop")
+        _ <- IO.sleep(200.millis)
+        downCanceledEarly <- downFlag.get
+        _ = assert(!downCanceledEarly, "a pump's own failure drop must NEVER cancel itself")
+        // Same discipline from the uplink side.
+        localFake2 = new FakeWebSocket
+        cycle2 = new PortalTunnelBridge.WsCycle("self-drop-up")
+        (downFlag2, downFiber2) <- mkFlagFiber
+        _ = cycle2.local = localFake2
+        _ = cycle2.downPump.set(Some(downFiber2))
+        _ = bridge.wsCycles.put("self-drop-up", cycle2)
+        _ <- bridge.dropFromUpPump(cycle2, "unit: uplink send failure")
+        _ = assert(localFake2.aborted, "uplink failure must abort the local WS too")
+        _ <- IO.sleep(200.millis)
+        // cycle2.upPump was never set: nothing to self-cancel — the call must
+        // still have completed (reached this point) and unregistered.
+        _ = assert(!bridge.wsCycles.containsKey("self-drop-up"))
+        // Cleanup the deliberately-uncanceled fibers.
+        _ <- downFiber.cancel *> upFiber.cancel *> downFiber2.cancel
       yield ()
     }
 

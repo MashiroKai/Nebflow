@@ -64,7 +64,8 @@ private[neblink] final class PortalTunnelBridge(
 
   /** Per-connection state: HTTP body channels + local WS cycles, keyed by requestId. */
   private val bodyChannels = new ConcurrentHashMap[String, BodyChannel]
-  private val wsCycles = new ConcurrentHashMap[String, WsCycle]
+  /** Test seam (package-private): the self-safe-drop spec registers cycles here directly. */
+  private[neblink] val wsCycles = new ConcurrentHashMap[String, WsCycle]
 
   /** First-body-frame backstop (test seam over [[PortalTunnelBridge.FirstBodyFrameTimeout]]). */
   @volatile private[neblink] var firstBodyFrameTimeout: scala.concurrent.duration.FiniteDuration =
@@ -460,7 +461,9 @@ private[neblink] final class PortalTunnelBridge(
       IO.blocking(fut.get(LocalSendTimeoutSec.toLong, TimeUnit.SECONDS))
         .as(true)
         .handleErrorWith { e =>
-          dropWsCycle(cycle, s"local ws send failed (${NeblinkRelayTunnel.describeErr(e)})").as(false)
+          // We are ON the downlink pump's own stack: use the self-safe drop
+          // (abort local first, cancel only the OTHER pump, never self).
+          dropFromDownPump(cycle, s"local ws send failed (${NeblinkRelayTunnel.describeErr(e)})").as(false)
         }
 
   /**
@@ -479,12 +482,17 @@ private[neblink] final class PortalTunnelBridge(
             )
           )
           .flatMap(_ => upPumpLoop(cycle))
-          .handleErrorWith(e => dropWsCycle(cycle, s"uplink open-result send failed (${NeblinkRelayTunnel.describeErr(e)})"))
+          .handleErrorWith(e =>
+            // We are ON the uplink pump's own stack: self-safe drop.
+            dropFromUpPump(cycle, s"uplink open-result send failed (${NeblinkRelayTunnel.describeErr(e)})")
+          )
       case WsCycle.UplinkItem.Frame(frame) =>
         sender
           .send(PortalWireCodec.encode(frame))
           .flatMap(_ => upPumpLoop(cycle))
-          .handleErrorWith(e => dropWsCycle(cycle, s"uplink frame send failed (${NeblinkRelayTunnel.describeErr(e)})"))
+          .handleErrorWith(e =>
+            dropFromUpPump(cycle, s"uplink frame send failed (${NeblinkRelayTunnel.describeErr(e)})")
+          )
       case WsCycle.UplinkItem.RelayClose(code, reason) =>
         sender
           .send(PortalWireCodec.encode(PortalWireCodec.WsClose(cycle.requestId, code, reason)))
@@ -512,19 +520,44 @@ private[neblink] final class PortalTunnelBridge(
           dropWsCycle(cycle, "downlink inbox full at ws_close")
         else IO.unit
 
+  /**
+   * EXTERNAL drop (mailbox consumer / teardown-adjacent paths — NOT on a pump
+   * stack): unregister + abort the local WS first + cancel BOTH pumps. Safe
+   * to cancel both because neither fiber is the caller.
+   */
   private def dropWsCycle(cycle: WsCycle, reason: String): IO[Unit] =
     logger.warn(s"portal ws cycle dropped: requestId=${cycle.requestId} reason=$reason")
-    cancelPumps(cycle) *>
-      IO.blocking {
-        val local = cycle.local
-        if local != null then
-          try local.abort()
-          catch case _: Exception => ()
-      }.void
+    IO { wsCycles.remove(cycle.requestId, cycle) } *> abortLocal(cycle) *> cancelPumps(cycle)
+
+  /**
+   * SELF-SAFE drop, called from a pump fiber's OWN failure path: a pump must
+   * never cancel itself — CE3 self-cancel either suspends until the fiber's
+   * own completion (everything sequenced after it in this chain would never
+   * run) or terminates early, and either way the local socket would leak to
+   * the gateway's idle timeout (the cycle is already out of the map, so the
+   * connection teardown sweep cannot reach it either). Hence the order:
+   * unregister → ABORT the local WS → cancel only the OTHER pump; the calling
+   * pump then simply returns and its loop ends.
+   */
+  private[neblink] def dropFromDownPump(cycle: WsCycle, reason: String): IO[Unit] =
+    logger.warn(s"portal ws cycle dropped: requestId=${cycle.requestId} reason=$reason")
+    IO { wsCycles.remove(cycle.requestId, cycle) } *> abortLocal(cycle) *> cancelPump(cycle.upPump)
+
+  private[neblink] def dropFromUpPump(cycle: WsCycle, reason: String): IO[Unit] =
+    logger.warn(s"portal ws cycle dropped: requestId=${cycle.requestId} reason=$reason")
+    IO { wsCycles.remove(cycle.requestId, cycle) } *> abortLocal(cycle) *> cancelPump(cycle.downPump)
+
+  private def abortLocal(cycle: WsCycle): IO[Unit] =
+    IO.blocking {
+      val local = cycle.local
+      if local != null then
+        try local.abort()
+        catch case _: Exception => ()
+    }.void
 
   private def cancelPumps(cycle: WsCycle): IO[Unit] =
     IO {
-      wsCycles.remove(cycle.requestId, cycle)
+      wsCycles.remove(cycle.requestId, cycle) // idempotent two-arg remove
       (cycle.downPump.getAndSet(None), cycle.upPump.getAndSet(None))
     }.flatMap { (down, up) =>
       down.fold(IO.unit)(_.cancel).void *> up.fold(IO.unit)(_.cancel).void
