@@ -340,6 +340,106 @@ class ConnGuardSpec extends CatsEffectSuite:
     assertEquals(ConnGuard.connWarnLine(base.copy(wsTotal = 820), 100L), None)
     assert(ConnGuard.warnLine(base.copy(wsTotal = 820)).isDefined)
 
+  // ── Phase 3a tunnel face（判据⑤：键 = 信封 IP ∧ 环回不豁免 ∧ 阈值拒）─────
+
+  test("tunnel face: per-envelope-IP window admits exactly the cap then rejects"):
+    for
+      g <- guard(ConnGuardConfig(tunnelPerIpCap = 3, tunnelTotalCap = 1000))
+      verdicts <- (1 to 4).toList
+        .traverse(_ => g.observeTunnelRequest("198.51.100.7") *> g.checkTunnel("198.51.100.7"))
+      // A different envelope IP is NOT implicated by another IP's budget.
+      other <- g.observeTunnelRequest("198.51.100.8") *> g.checkTunnel("198.51.100.8")
+      s <- g.snapshot
+    yield
+      assertEquals(verdicts.take(3), List(None, None, None), "exactly the cap is admitted per window")
+      assertEquals(verdicts(3), Some("tunnel-per-ip-cap"), "cap+1 within the window is rejected")
+      assertEquals(other, None, "distinct envelope IPs bucket independently")
+      assertEquals(s.tunnelReqTotal, 5L)
+      assertEquals(s.tunnelRejectedTotal, 1L)
+
+  test("tunnel face: the loopback exemption NEVER applies (envelope value is not a trust root)"):
+    for
+      g <- guard(ConnGuardConfig(tunnelPerIpCap = 2, tunnelTotalCap = 1000))
+      _ <- g.observeTunnelRequest("127.0.0.1")
+      _ <- g.observeTunnelRequest("127.0.0.1")
+      atCap <- g.checkTunnel("127.0.0.1") // exactly the cap: still admitted
+      _ <- g.observeTunnelRequest("127.0.0.1") // cap+1: over budget
+      wsFace <- g.checkWs("127.0.0.1") // WS face: trusted loopback stays admitted
+      tunFace <- g.checkTunnel("127.0.0.1") // tunnel face: same value is REJECTED
+    yield
+      assertEquals(atCap, None, "exactly the cap is admitted (rate budget, not concurrency)")
+      assertEquals(wsFace, None, "the WS face keeps its direct-socket loopback exemption")
+      assertEquals(tunFace, Some("tunnel-per-ip-cap"), "the tunnel face must never exempt loopback")
+
+  test("tunnel face: total cap spans all envelope IPs"):
+    for
+      g <- guard(ConnGuardConfig(tunnelPerIpCap = 100, tunnelTotalCap = 5))
+      verdicts <- (1 to 6).toList.traverse { i =>
+        val ip = s"198.51.100.$i"
+        g.observeTunnelRequest(ip) *> g.checkTunnel(ip)
+      }
+    yield
+      assertEquals(verdicts.take(5), List.fill(5)(None))
+      assertEquals(verdicts(5), Some("tunnel-total-cap"), "the cross-IP total is its own budget")
+
+  test("tunnel face: disabled guard short-circuits (no counting, no rejection)"):
+    for
+      g <- guard(ConnGuardConfig(enabled = false, tunnelPerIpCap = 1, tunnelTotalCap = 1))
+      _ <- g.observeTunnelRequest("198.51.100.7")
+      _ <- g.observeTunnelRequest("198.51.100.7")
+      v <- g.checkTunnel("198.51.100.7")
+      s <- g.snapshot
+    yield
+      assertEquals(v, None)
+      assertEquals(s.tunnelReqTotal, 0L)
+
+  test("tunnel face: bounded by the shared maxTrackedIps slot discipline (global count still exact)"):
+    val cfg = ConnGuardConfig(tunnelPerIpCap = 10, tunnelTotalCap = 100000, maxTrackedIps = 4)
+    for
+      g <- guard(cfg)
+      // Fill the table with ACTIVE WS sessions (never evictable).
+      _ <- (1 to 4).toList.traverse_(i => g.acquireWs(s"9.0.0.$i"))
+      _ <- (1 to 50).toList.traverse_(i => g.observeTunnelRequest(s"198.51.100.$i"))
+      s <- g.snapshot
+    yield
+      assertEquals(s.trackedIps, 4, "the tunnel face must not break the bounded-table invariant")
+      assertEquals(s.tunnelReqTotal, 50L, "the global tunnel count stays exact even when per-IP slots are full")
+
+  test("tunnel face readings surface in snapshotLine (observability)"):
+    val s = ConnGuard.Snapshot(
+      enabled = true,
+      wsTotal = 0,
+      trackedIps = 1,
+      overflowConns = 0,
+      acceptedTotal = 0L,
+      rejectedTotal = 0L,
+      evictedTotal = 0L,
+      reqTotal = 0L,
+      reqUntrackedTotal = 0L,
+      tunnelReqTotal = 7L,
+      tunnelRejectedTotal = 2L,
+      wsPerIpCap = 64,
+      wsTotalCap = 1024,
+      maxTrackedIps = 1024,
+      maxConnections = 4096,
+      warnPct = 80,
+      topWs = Vector.empty,
+      topReq = Vector.empty
+    )
+    assert(ConnGuard.snapshotLine(s).contains("tunnelReq=7"))
+    assert(ConnGuard.snapshotLine(s).contains("tunnelRejected=2"))
+
+  test("fromEnv: tunnel face knobs parse and junk falls back"):
+    val o = ConnGuardConfig.fromEnv {
+      case "GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP" => Some("120")
+      case "GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP"  => Some("1200")
+      case "GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC" => Some("junk")
+      case _                                       => None
+    }
+    assertEquals(o.tunnelPerIpCap, 120)
+    assertEquals(o.tunnelTotalCap, 1200)
+    assertEquals(o.tunnelWindowSec, 60) // junk falls back
+
   test("healthJson exposes both warn calibers and the bounded-table readings"):
     val s = ConnGuard.Snapshot(
       enabled = true,

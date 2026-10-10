@@ -1141,12 +1141,20 @@ object GatewayMain extends IOApp:
                                         // serverUrl 由连接期 live 解析（构造参已移除）；
                                         // stop()（logout）后由 ensureRelayTunnel（enrollment）
                                         // 复活 —— 装配 owner 始终是这里。
+                                        //
+                                        // Phase 3a（portal 隧道）：faces 持有网关端口 + 两个
+                                        // 晚绑定面（提升 HTTP 切片 / conn-guard 隧道端口）——
+                                        // 它们在本方法更深处 withHttpWebSocketApp 装配完成时
+                                        // bind（见「Phase 3a lifted slice」注释）；隧道先建、
+                                        // faces 后填，与 wsRoutesHolder 同款晚绑定形态。
+                                        val portalHostFaces = new nebflow.neblink.PortalHostFaces(cfg.port.value)
                                         val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
                                           neblinkService,
                                           // F1: read the authoritative client live on each reconnect —
                                           // a constructor-time closure kept returning a kicked session.
                                           () => tsDiscovery.currentClient.map(_.flatMap(_.currentSessionToken)),
-                                          friendService = Some(friendService)
+                                          friendService = Some(friendService),
+                                          portalHost = Some(portalHostFaces)
                                         )(dispatcher)
                                         neblinkService.setRelayTunnel(relayTunnel)
                                         dispatcher.unsafeRunAndForget(relayTunnel.connect())
@@ -1382,34 +1390,50 @@ object GatewayMain extends IOApp:
                                                           connGuard = connGuard
                                                         )
 
+                                                        // Phase 3a lifted slice：`Router(...).orNotFound`
+                                                        // 提出为 val —— 桥接层（portal tunnel 的
+                                                        // http_request 面）与服务器共用**同一切片**：
+                                                        //   · 含 GzipMiddleware 的 "/" 静态树压缩（行为
+                                                        //     与直连面完全一致）；
+                                                        //   · 🔴 不含外层 ConnGuard.requestTap —— requestTap
+                                                        //     只计数不拦截，若切片里保留它，隧道请求会被
+                                                        //     requestTap 与桥接层 observeTunnelRequest
+                                                        //     双重计数（污染观测面）；隧道请求由桥接层
+                                                        //     单点计数（信封 IP 键）。
+                                                        val gatewayApp: org.http4s.HttpApp[IO] = Router(
+                                                          "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
+                                                            .presenceWsRoutes(wsb) <+> StaticRoutes
+                                                            .pluginAssetsRoutes(
+                                                              token,
+                                                              // canvas-media Wave1 (OD-2=V-C): the
+                                                              // Trusted-only resolver feeding the
+                                                              // tokenized plugin-asset route.
+                                                              name =>
+                                                                nebflow.core.plugin.PluginRegistry
+                                                                  .scan()
+                                                                  .map(
+                                                                    _.find(p => p.name == name && p.trust.trusted)
+                                                                      .map(p => os.Path(p.dir))
+                                                                  )
+                                                            )),
+                                                          // Logto AC+PKCE loopback callback (RFC 8252) —
+                                                          // root-level, outside /api: the provider's browser
+                                                          // redirect carries no gateway token.
+                                                          "/auth" -> restApiRoutes.authCallbackRoutes,
+                                                          // Static tree only — gzip must never wrap the
+                                                          // "/api" tree (SSE stream, presence WS).
+                                                          "/" -> GzipMiddleware(wsRoutes.routes)
+                                                        ).orNotFound
+                                                        portalHostFaces.bindHttpApp(gatewayApp)
+                                                        portalHostFaces.bindTunnelGuard(
+                                                          nebflow.neblink.PortalHostFaces.TunnelGuard(
+                                                            ip => connGuard.observeTunnelRequest(ip),
+                                                            ip => connGuard.checkTunnel(ip)
+                                                          )
+                                                        )
                                                         // R-1b：请求级 per-IP 观测 tap（§C④-2，只计数不拦截——
                                                         // WS 升级面的准入由各受理点 connGuard.checkWs 把门）。
-                                                        ConnGuard.requestTap(connGuard)(
-                                                          Router(
-                                                            "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
-                                                              .presenceWsRoutes(wsb) <+> StaticRoutes
-                                                              .pluginAssetsRoutes(
-                                                                token,
-                                                                // canvas-media Wave1 (OD-2=V-C): the
-                                                                // Trusted-only resolver feeding the
-                                                                // tokenized plugin-asset route.
-                                                                name =>
-                                                                  nebflow.core.plugin.PluginRegistry
-                                                                    .scan()
-                                                                    .map(
-                                                                      _.find(p => p.name == name && p.trust.trusted)
-                                                                        .map(p => os.Path(p.dir))
-                                                                    )
-                                                              )),
-                                                            // Logto AC+PKCE loopback callback (RFC 8252) —
-                                                            // root-level, outside /api: the provider's browser
-                                                            // redirect carries no gateway token.
-                                                            "/auth" -> restApiRoutes.authCallbackRoutes,
-                                                            // Static tree only — gzip must never wrap the
-                                                            // "/api" tree (SSE stream, presence WS).
-                                                            "/" -> GzipMiddleware(wsRoutes.routes)
-                                                          ).orNotFound
-                                                        )
+                                                        ConnGuard.requestTap(connGuard)(gatewayApp)
                                                       }
                                                       .build
                                                       .use { _ =>

@@ -45,7 +45,13 @@ final case class ConnGuardConfig(
   warnPct: Int = 80,
   maxTrackedIps: Int = 1024,
   snapshotSec: Int = 60,
-  extraTrustedIps: Set[String] = Set.empty
+  extraTrustedIps: Set[String] = Set.empty,
+  /** Tunnel face (phase 3a): per-envelope-IP request budget per window. Implementation constants. */
+  tunnelPerIpCap: Int = 240,
+  /** Tunnel face: cross-IP total request budget per window. */
+  tunnelTotalCap: Int = 2400,
+  /** Tunnel face: fixed-window length. */
+  tunnelWindowSec: Int = 60
 ):
   /** 环回恒在信任名单：本机 web UI / CLI / 健康探针的管理通道不能被限死。 */
   val trustedIps: Set[String] = ConnGuardConfig.DefaultTrustedIps ++ extraTrustedIps
@@ -93,7 +99,10 @@ object ConnGuardConfig:
       warnPct = intEnv("GATEWAY_CONN_GUARD_WARN_PCT", 80, 1),
       maxTrackedIps = intEnv("GATEWAY_CONN_GUARD_MAX_TRACKED_IPS", 1024, 1),
       snapshotSec = intEnv("GATEWAY_CONN_GUARD_SNAPSHOT_SEC", 60, 15),
-      extraTrustedIps = extra
+      extraTrustedIps = extra,
+      tunnelPerIpCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP", 240, 1),
+      tunnelTotalCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP", 2400, 1),
+      tunnelWindowSec = intEnv("GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC", 60, 1)
     )
   end fromEnv
 
@@ -117,7 +126,13 @@ object ConnGuard:
   object WsHandle:
     private[ConnGuard] val empty: WsHandle = WsHandle("", tracked = false)
 
-  final case class IpEntry(wsCount: Int, lastSeenMs: Long, reqTotal: Long = 0L)
+  final case class IpEntry(
+    wsCount: Int,
+    lastSeenMs: Long,
+    reqTotal: Long = 0L,
+    tunnelReqTotal: Long = 0L,
+    tunnelWindowStartMs: Long = 0L
+  )
 
   final case class Snapshot(
     enabled: Boolean,
@@ -134,6 +149,14 @@ object ConnGuard:
      * 使「封顶生效」可观测，而非静默丢计。
      */
     reqUntrackedTotal: Long,
+    /** Tunnel face (phase 3a): tunneled requests counted in the current window. */
+    tunnelReqTotal: Long = 0L,
+    /** Tunnel face: requests rejected with 429 in total. */
+    tunnelRejectedTotal: Long = 0L,
+    /** Tunnel face: per-envelope-IP budget per window. */
+    tunnelPerIpCap: Int = 240,
+    /** Tunnel face: cross-IP total budget per window. */
+    tunnelTotalCap: Int = 2400,
     wsPerIpCap: Int,
     wsTotalCap: Int,
     maxTrackedIps: Int,
@@ -150,11 +173,14 @@ object ConnGuard:
   private[ConnGuard] final case class State(
     perIp: Map[String, IpEntry] = Map.empty,
     overflowConns: Int = 0,
-    acceptedTotal: Long = 0,
-    rejectedTotal: Long = 0,
-    evictedTotal: Long = 0,
-    reqTotal: Long = 0,
-    reqUntrackedTotal: Long = 0
+    acceptedTotal: Long = 0L,
+    rejectedTotal: Long = 0L,
+    evictedTotal: Long = 0L,
+    reqTotal: Long = 0L,
+    reqUntrackedTotal: Long = 0L,
+    tunnelTotalReq: Long = 0L,
+    tunnelWindowStartMs: Long = 0L,
+    tunnelRejectedTotal: Long = 0L
   ):
     def wsTotal: Int = perIp.values.map(_.wsCount).sum + overflowConns
 
@@ -225,7 +251,8 @@ object ConnGuard:
     s"conn-guard snapshot ws=${s.wsTotal}/${s.wsTotalCap} perIpCap=${s.wsPerIpCap} " +
       s"trackedIps=${s.trackedIps}/${s.maxTrackedIps} overflow=${s.overflowConns} " +
       s"accepted=${s.acceptedTotal} rejected=${s.rejectedTotal} reqTotal=${s.reqTotal} " +
-      s"reqUntracked=${s.reqUntrackedTotal} top=[$top]"
+      s"reqUntracked=${s.reqUntrackedTotal} top=[$top] " +
+      s"tunnelReq=${s.tunnelReqTotal} tunnelRejected=${s.tunnelRejectedTotal}"
 
   /** 预警腿①（§C④-5）：WS 会话总量达 warnPct ⇒ 提前处置窗口（不再是静默失联）。 */
   def warnLine(s: Snapshot): Option[String] =
@@ -285,6 +312,12 @@ object ConnGuard:
         "total" -> s.reqTotal.asJson,
         "untrackedTotal" -> s.reqUntrackedTotal.asJson,
         "top" -> topJson(s.topReq)
+      ),
+      "tunnel" -> Json.obj(
+        "reqTotal" -> s.tunnelReqTotal.asJson,
+        "rejectedTotal" -> s.tunnelRejectedTotal.asJson,
+        "perIpCap" -> s.tunnelPerIpCap.asJson,
+        "totalCap" -> s.tunnelTotalCap.asJson
       ),
       "ember" -> Json.obj(
         "idleTimeout" -> ConnGuardConfig.IdleTimeout.toString.asJson,
@@ -413,6 +446,74 @@ class ConnGuard private (
         }
       }
 
+  /**
+   * Tunnel face observe (phase 3a, judgment criterion 5): count one tunneled
+   * request for the ENVELOPE IP — the single-value `x-forwarded-for` the
+   * ingress writes from the trusted proxy-injected X-Real-IP. Never the
+   * ingress socket address (always the proxy container's IP); never a
+   * client-supplied XFF chain (the ingress strips it). Fixed window per IP
+   * and globally (`tunnelWindowSec`); slot creation shares the same bounded
+   * `ensureSlot` discipline as the WS and request faces.
+   */
+  def observeTunnelRequest(ip: String): IO[Unit] =
+    if !config.enabled then IO.unit
+    else
+      IO.realTime.map(_.toMillis).flatMap { now =>
+        val windowMs = config.tunnelWindowSec * 1000L
+        stateRef.update { st =>
+          val st1 =
+            if now - st.tunnelWindowStartMs >= windowMs then
+              st.copy(tunnelWindowStartMs = now, tunnelTotalReq = 0L)
+            else st
+          ensureSlot(st1, ip, now) match
+            case Some(st2) =>
+              val e0 = st2.perIp.getOrElse(ip, IpEntry(0, now))
+              val ipRolled = e0.tunnelWindowStartMs == 0L || now - e0.tunnelWindowStartMs >= windowMs
+              val entry = e0.copy(
+                tunnelWindowStartMs = if ipRolled then now else e0.tunnelWindowStartMs,
+                tunnelReqTotal = if ipRolled then 1L else e0.tunnelReqTotal + 1L,
+                lastSeenMs = now
+              )
+              st2.copy(
+                perIp = st2.perIp.updated(ip, entry),
+                tunnelTotalReq = st1.tunnelTotalReq + 1L
+              )
+            case None =>
+              // Table full with no evictable slot: count globally only.
+              st1.copy(tunnelTotalReq = st1.tunnelTotalReq + 1L)
+        }
+      }
+
+  /**
+   * Tunnel face admission check. `Some(reason)` = over threshold:
+   * `tunnel-total-cap` / `tunnel-per-ip-cap` (the caller answers a 429-shaped
+   * http_response). Exactly `cap` requests per window are admitted (the check
+   * compares strictly above, mirroring a rate budget rather than the WS
+   * concurrency cap).
+   *
+   * 🔴 The loopback exemption NEVER applies on this face — a deliberate
+   * decision, distinct from the WS/request faces: those trust a DIRECT socket
+   * loopback address (a transport-layer fact that cannot be forged); the
+   * tunnel key is an envelope VALUE injected by a trusted proxy, so
+   * 127.0.0.1 in the envelope is not a trust root — a same-machine caller
+   * through the tunnel is a remote user in the authorization model. Residual
+   * self-lockout risk is bounded by the conservative per-kind totals above.
+   */
+  def checkTunnel(ip: String): IO[Option[String]] =
+    if !config.enabled then IO.pure(None)
+    else
+      stateRef.get.flatMap { st =>
+        val reject =
+          if st.tunnelTotalReq > config.tunnelTotalCap then Some("tunnel-total-cap")
+          else if st.perIp.get(ip).exists(_.tunnelReqTotal > config.tunnelPerIpCap) then
+            Some("tunnel-per-ip-cap")
+          else None
+        reject match
+          case Some(reason) =>
+            stateRef.update(s => s.copy(tunnelRejectedTotal = s.tunnelRejectedTotal + 1)).as(Some(reason))
+          case None => IO.pure(None)
+      }
+
   def snapshot: IO[Snapshot] =
     stateRef.get.map { st =>
       val topWs = st.perIp.toVector
@@ -435,6 +536,10 @@ class ConnGuard private (
         evictedTotal = st.evictedTotal,
         reqTotal = st.reqTotal,
         reqUntrackedTotal = st.reqUntrackedTotal,
+        tunnelReqTotal = st.tunnelTotalReq,
+        tunnelRejectedTotal = st.tunnelRejectedTotal,
+        tunnelPerIpCap = config.tunnelPerIpCap,
+        tunnelTotalCap = config.tunnelTotalCap,
         wsPerIpCap = config.wsPerIpCap,
         wsTotalCap = config.wsTotalCap,
         maxTrackedIps = config.maxTrackedIps,
