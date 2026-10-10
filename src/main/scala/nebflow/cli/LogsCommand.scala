@@ -1,6 +1,7 @@
 package nebflow.cli
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 
@@ -21,7 +22,8 @@ object LogsCommand extends CliCommand:
   def examples = List(
     "nebflow logs path",
     "nebflow logs list",
-    "nebflow logs tail -n 100 --grep ERROR"
+    "nebflow logs tail -n 100 --grep ERROR",
+    "nebflow logs --follow"
   )
 
   // ── 取数面常量（纯，供 spec 直测）────────────────────────────────────────
@@ -45,6 +47,102 @@ object LogsCommand extends CliCommand:
 
   /** `logs list` 的条目上限：目录超大时截断并显式标注剩余条数。 */
   private[cli] val MaxListEntries = 500
+
+  // ── --follow（phase 2 daemon 批 §3.3）─────────────────────────────────
+  //
+  // `-f` 已被 `--file` 占用 ⇒ follow 只有长旗、无短旗（对规格字面「-f/--follow」
+  // 的显式偏离，零破坏现有 -f）。路由面（R2-1）：`nebflow logs --follow`（无
+  // tail 子命令）会以 `--follow` 为首 token 走 acceptsLeadingPositional ⇒ 落
+  // head 子命令 LogsPath ⇒ 旗必须同时挂 LogsPath.params 与 LogsTail.params
+  // 两处，共用同一循环。
+
+  /** The follow flag, shared by LogsPath and LogsTail (R2-1: both routes). */
+  private[cli] def followParam: CliParam =
+    CliParam("follow", None, "Keep printing new lines as the log grows (Ctrl+C to exit)", isFlag = true)
+
+  /**
+   * One rotation-aware drain step (pure, spec-driven): read the byte range
+   * `[start, len)` of the file where `start` = `pos`, or 0 when the file
+   * shrank below `pos` (logback rotation = rename + fresh file at size 0 ⇒
+   * reopen from the head). Returns the COMPLETE lines found (a trailing
+   * partial line is held back by advancing the offset only past the last
+   * newline) and the new offset. The active file keeps its name across
+   * rotations (`logback.xml` `<file>` + SizeAndTimeBased policy), so no `%i`
+   * index parsing is ever needed.
+   */
+  private[cli] def drainStep(f: java.io.File, pos: Long): (List[String], Long) =
+    if !f.exists() then (Nil, pos)
+    else
+      val len = f.length()
+      if len == 0L && pos == 0L then (Nil, 0L)
+      else
+        val start = if len < pos then 0L else pos
+        if start >= len then (Nil, len)
+        else
+          val raf = new java.io.RandomAccessFile(f, "r")
+          try
+            raf.seek(start)
+            val data = new Array[Byte]((len - start).toInt)
+            raf.readFully(data)
+            val lastNl = data.lastIndexOf('\n'.toByte)
+            if lastNl == -1 then (Nil, len - data.length) // no complete line yet — hold all back
+            else
+              val text = new String(java.util.Arrays.copyOf(data, lastNl + 1), "UTF-8")
+              val lines =
+                text.split("\n", -1).toList.dropRight(1).map(_.stripSuffix("\r"))
+              (lines, len - (data.length - lastNl - 1))
+          finally raf.close()
+
+  /**
+   * The follow loop: wait for a logs-directory event, drain what appeared on
+   * the watched file, print (after the optional grep filter), repeat. The
+   * event wait is injected (`awaitEvent`) so the spec drives the state
+   * machine without a real WatchService; the real face uses one
+   * WatchService per command watching the DIRECTORY (rotation is a rename —
+   * watching the file itself would go stale). Ends only via cancellation
+   * (Ctrl+C); no exit-code promise is made for that path.
+   */
+  private[cli] def followLoop(
+      dir: os.Path,
+      fileName: String,
+      grep: Option[java.util.regex.Pattern],
+      print: String => IO[Unit],
+      awaitEvent: () => Unit
+  ): IO[Unit] =
+    def loop(pos: Long): IO[Unit] =
+      IO.blocking(awaitEvent()) *>
+        IO.blocking(drainStep((dir / fileName).toIO, pos)).flatMap { case (lines, newPos) =>
+          lines
+            .filter(l => grep.forall(p => p.matcher(l).find()))
+            .traverse_(print) *> loop(newPos)
+        }
+    val start = IO.blocking {
+      val f = (dir / fileName).toIO
+      if f.exists() then f.length() else 0L
+    }
+    start.flatMap(loop)
+
+  /** One WatchService over the logs dir; any event wakes the drain. */
+  private final class WatchAwait(dir: java.nio.file.Path) extends AutoCloseable:
+    private val watcher = java.nio.file.FileSystems.getDefault.newWatchService()
+    dir.register(
+      watcher,
+      java.nio.file.StandardWatchEventKinds.ENTRY_CREATE,
+      java.nio.file.StandardWatchEventKinds.ENTRY_DELETE,
+      java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY
+    )
+    def await(): Unit =
+      val key = watcher.take()
+      key.reset()
+    def close(): Unit =
+      watcher.close()
+
+  /** The production follow face: real directory watch + println. */
+  private def followReal(dir: os.Path, fileName: String, grep: Option[java.util.regex.Pattern]): IO[Unit] =
+    IO.blocking(new WatchAwait(java.nio.file.Paths.get(dir.toString))).flatMap { w =>
+      followLoop(dir, fileName, grep, IO.println, () => w.await())
+        .guarantee(IO.blocking(w.close()))
+    }
 
   /**
    * `--file` 只接受 logs 目录下的**裸文件名**：拒绝路径分隔符 / `..` / 绝对路径
@@ -110,29 +208,45 @@ object LogsCommand extends CliCommand:
 
       end try
 
-  private object LogsPath extends CliSubcommand:
+  private[cli] object LogsPath extends CliSubcommand:
     def name = "path"
-    def description = "Print the active log file path (default)"
-    def params = Nil
+    def description = "Print the active log file path (default; --follow keeps printing new lines)"
+    def params = List(followParam)
 
     def run(ctx: CliContext): IO[CliResult] =
-      IO.blocking {
-        val dir = logsDir(ctx)
-        val file = dir / ActiveLogName
-        if ctx.json then
-          CliResult.Json(
-            Json.obj(
-              "logDir" -> dir.toString.asJson,
-              "activeFile" -> file.toString.asJson,
-              "exists" -> os.exists(file).asJson
+      val follow = ctx.args.get("follow").contains("true")
+      if follow then
+        if ctx.json then IO.pure(CliResult.Error("--follow is a streaming face — no JSON output"))
+        else
+          IO.blocking {
+            val dir = logsDir(ctx)
+            val file = dir / ActiveLogName
+            if !os.exists(file) then Left(s"Log file not found: $file")
+            else Right((dir, tailLines(file.toIO, DefaultTailLines)))
+          }.flatMap {
+            case Left(err) => IO.pure(CliResult.Error(err))
+            case Right((dir, initial)) =>
+              initial.traverse_(IO.println) *>
+                followReal(dir, ActiveLogName, None).as(CliResult.Success)
+          }
+      else
+        IO.blocking {
+          val dir = logsDir(ctx)
+          val file = dir / ActiveLogName
+          if ctx.json then
+            CliResult.Json(
+              Json.obj(
+                "logDir" -> dir.toString.asJson,
+                "activeFile" -> file.toString.asJson,
+                "exists" -> os.exists(file).asJson
+              )
             )
-          )
-        else CliResult.text(file.toString) // 单行：`cat "$(nebflow logs path)"` 可直接用
-      }
+          else CliResult.text(file.toString) // 单行：`cat "$(nebflow logs path)"` 可直接用
+        }
 
   end LogsPath
 
-  private object LogsList extends CliSubcommand:
+  private[cli] object LogsList extends CliSubcommand:
     def name = "list"
     def description = "List log files in the logs directory"
     def params = Nil
@@ -182,55 +296,70 @@ object LogsCommand extends CliCommand:
 
   end LogsList
 
-  private object LogsTail extends CliSubcommand:
+  private[cli] object LogsTail extends CliSubcommand:
     def name = "tail"
-    def description = "Print the last lines of a log file (optionally filtered by --grep)"
+    def description = "Print the last lines of a log file (optionally filtered by --grep; --follow keeps printing)"
 
     def params = List(
       CliParam("lines", Some('n'), "Number of trailing lines", default = Some(DefaultTailLines.toString)),
       CliParam("grep", Some('g'), "Keep only tailed lines matching this regex"),
-      CliParam("file", Some('f'), "Log file name under the logs directory", default = Some(ActiveLogName))
+      CliParam("file", Some('f'), "Log file name under the logs directory", default = Some(ActiveLogName)),
+      followParam
     )
 
     def run(ctx: CliContext): IO[CliResult] =
-      IO.blocking {
-        val dir = logsDir(ctx)
-        val rawFile = ctx.args.get("file").filter(_.nonEmpty).getOrElse(ActiveLogName)
-        val pattern: Either[String, Option[java.util.regex.Pattern]] =
-          ctx.args.get("grep") match
-            case Some(g) => compilePattern(g)
-            case None => Right(None)
-        validateLogFileName(rawFile) match
-          case Left(err) => CliResult.Error(err)
-          case Right(name) =>
-            val target = dir / name
-            if !os.exists(target) then CliResult.Error(s"Log file not found: $target")
-            else if os.isDir(target) then CliResult.Error(s"Not a log file (directory): $target")
-            else
-              pattern match
-                case Left(err) => CliResult.Error(err)
-                case Right(patOpt) =>
-                  val n = ctx.args
-                    .get("lines")
-                    .flatMap(_.toIntOption)
-                    .getOrElse(DefaultTailLines)
-                    .max(1)
-                    .min(MaxTailLines)
-                  val raw = tailLines(target.toIO, n)
-                  val kept = patOpt.fold(raw)(p => raw.filter(l => p.matcher(l).find()))
-                  if ctx.json then
-                    CliResult.Json(
-                      Json.obj(
-                        "file" -> target.toString.asJson,
-                        "lines" -> kept.asJson,
-                        "count" -> kept.size.asJson,
-                        "grep" -> ctx.args.get("grep").asJson
-                      )
-                    )
-                  else CliResult.Text(kept)
-            end if
-        end match
-      }
+      val follow = ctx.args.get("follow").contains("true")
+      if follow && ctx.json then IO.pure(CliResult.Error("--follow is a streaming face — no JSON output"))
+      else
+        IO.blocking {
+          val dir = logsDir(ctx)
+          val rawFile = ctx.args.get("file").filter(_.nonEmpty).getOrElse(ActiveLogName)
+          val pattern: Either[String, Option[java.util.regex.Pattern]] =
+            ctx.args.get("grep") match
+              case Some(g) => compilePattern(g)
+              case None => Right(None)
+          validateLogFileName(rawFile) match
+            case Left(err) => Left(CliResult.Error(err))
+            case Right(name) =>
+              val target = dir / name
+              if !os.exists(target) then Left(CliResult.Error(s"Log file not found: $target"))
+              else if os.isDir(target) then Left(CliResult.Error(s"Not a log file (directory): $target"))
+              else
+                pattern match
+                  case Left(err) => Left(CliResult.Error(err))
+                  case Right(patOpt) =>
+                    val n = ctx.args
+                      .get("lines")
+                      .flatMap(_.toIntOption)
+                      .getOrElse(DefaultTailLines)
+                      .max(1)
+                      .min(MaxTailLines)
+                    val raw = tailLines(target.toIO, n)
+                    val kept = patOpt.fold(raw)(p => raw.filter(l => p.matcher(l).find()))
+                    Right((dir, name, kept, patOpt))
+              end if
+          end match
+        }.flatMap {
+          case Left(errResult) => IO.pure(errResult)
+          case Right((dir, name, kept, patOpt)) =>
+            if follow then
+              // Streaming face: initial tail now, then the watch loop; the
+              // loop only returns via cancellation (Ctrl+C) — Success then.
+              kept.traverse_(IO.println) *>
+                followReal(dir, name, patOpt).as(CliResult.Success)
+            else if ctx.json then
+              IO.pure(
+                CliResult.Json(
+                  Json.obj(
+                    "file" -> ((dir / name).toString).asJson,
+                    "lines" -> kept.asJson,
+                    "count" -> kept.size.asJson,
+                    "grep" -> ctx.args.get("grep").asJson
+                  )
+                )
+              )
+            else IO.pure(CliResult.Text(kept))
+        }
     end run
 
     /**
