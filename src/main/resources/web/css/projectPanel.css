@@ -755,21 +755,6 @@
   background: rgb(var(--sapphire) / 0.06);
 }
 
-.delegate-chain-taskview {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-.delegate-chain-worktree,
-.delegate-chain-verdict {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: var(--color-text-muted);
-}
 .delegate-chain-mono {
   min-width: 0;
   overflow: hidden;
@@ -791,18 +776,9 @@
 /* 卡片流内定位钉（delegate-ui 批 2026-10-08 · R3 聚合分组时实测暴露；两层架构批
    2026-10-09 扩 L1 任务视图）：FLOW_CSS `.solar-node` 的 position:absolute（主图
    画布口径）使 plain 卡全部压在 flex 容器 static position 上彼此叠盖（abspos flex
-   子项 = 「唯一 flex item」静位口径）——链视图卡列表（L2 平铺）与 L1 委托流程图
-   卡列表（根卡/subagent 卡/flow-step 下钻层）改流内定位（relative），分组头/多卡
-   横排才成立；主图画布（无本组祖先）零触碰。 */
-.delegate-chain-list .solar-node.fm-node,
-.delegate-chain-taskview .solar-node.fm-node { position: relative; }
-/* Node cards wired to the node detail layer (chainDetailEntry.js) read as
-   clickable; keyboard focus parity with the main-graph cards. */
-.delegate-chain-list .fm-node.chain-detail-openable { cursor: pointer; }
-.delegate-chain-list .fm-node.chain-detail-openable:focus-visible {
-  outline: 2px solid var(--color-accent, #4c8dff);
-  outline-offset: 2px;
-}
+   子项 = 「唯一 flex item」静位口径）——链视图卡列表（L2 平铺）改流内定位
+   （relative），分组头/多卡横排才成立；主图画布（无本组祖先）零触碰。 */
+.delegate-chain-list .solar-node.fm-node { position: relative; }
 
 /* 候定集/未知帧透传行（只透传不解读：kind + 时刻原文，弱化等宽显示）。 */
 .delegate-chain-frames {

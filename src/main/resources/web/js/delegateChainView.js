@@ -30,57 +30,21 @@ import {
 import { nodeHtml } from './fmNodeCard.js';
 import { executorIcon } from './executorIcons.js';
 import { fetchArchivedDelegates, unarchiveDelegate } from './delegateApi.js';
-// file-diff feature: live GUI entry for the node detail layer (archive FAB +
-// panel + detail with the changed-file diff section) inside this chain view.
-import { attachChainDetailLayer } from './chainDetailEntry.js';
+// L1 map face: the flowmap engine re-driven on delegate data (driver module;
+// camera/edges/detail card/fold animations all engine-side).
+import { renderDelegateFlowMap, dropDelegateMapScope, delegateMapScope } from './delegateFlowMap.js';
 
-// ── delegate/flowmap 两层架构批（2026-10-09 · 规格 §C/§D/§E）──────────────────
-// L1 = delegate 专属流程视图（一期卡列表形态顶位，画布化另批）：根卡 + subagent
-// 调用卡（同名重试聚合并 retry 徽标）+ AgentFlow 链卡（下钻 flow-step 层）；L2 =
-// 平铺照抄 + 三段分组 + 唯一归档面（FAB → 抽屉：流程图/恢复）+ 终态自动归档到
-// 达反馈（徽章脉冲 + toast 带 5s 撤销）。自动记录语义数据源 = G3 children ∪ 链
-// nodes ∪ 行投影（前端组装投影——H.1 缺口 G1 的 P0 臂）；缺写面（G3 无角色/executor）
-// 如实降级不臆造。
+// ── Two-layer delegate architecture ────────────────────────────────────────
+// L1 (per-task view) = the chain's FLOWMAP: the classic engine face (zoom/pan
+// camera, spawn/deps edges, fold chevron on the root card, floating detail
+// card on node click, diff-driven animations) re-driven on delegate data via
+// delegateFlowMap.js. L2 (structure view) = flat tiles + three lifecycle
+// segments + the single archive face (FAB → drawer: open-flowmap / unarchive)
+// + arrival feedback on auto-archive (badge pulse + toast with 5s undo).
+// Data sources = G3 children ∪ chain nodes ∪ row projection via the stub read
+// port; missing writer faces degrade honestly (no fabrication).
 
-/** 子条目 source 数据词归一（九点②同判据；main.js bgChildKindWord 面板同族映射
- *  ——「subtask」UI 标注更名 delegate 语义，数据原文保留在 title）。 */
-function childSourceWord(source) {
-  const s = String(source || '');
-  if (s === 'subtask' || s === 'delegate') return 'Delegate';
-  return s;
-}
 
-/**
- * G3 子代理条目 → 聚合卡载荷（§C 自动记录语义：**同名重试聚合同卡**）。徽标数据
- * 全取 G3：calls = 同名条目集（×N 调用数）、retrySum = Σ retryCount（直和，零派生
- * 估读——G5/G6 红线：无审计数据不显数字）。状态聚合 = 展示级归并（failed 优先、
- * 在跑次之、全终态 completed——词面取 subagents.status.* 既有键）。
- * @param {any[]} kids @returns {Array<{name: string, calls: any[], retrySum: number, status: string}>}
- */
-function aggregateKids(kids) {
-  const byName = new Map();
-  const order = [];
-  for (const c of (Array.isArray(kids) ? kids : [])) {
-    const src = c && typeof c === 'object' ? c : {};
-    const name = String(src.agentName || src.taskId || '');
-    if (!name) continue;
-    if (!byName.has(name)) {
-      byName.set(name, { name, calls: [], retrySum: 0 });
-      order.push(name);
-    }
-    const agg = byName.get(name);
-    agg.calls.push(src);
-    agg.retrySum += typeof src.retryCount === 'number' ? src.retryCount : 0;
-  }
-  return order.map((name) => {
-    const agg = byName.get(name);
-    const statuses = new Set(agg.calls.map((c) => String(c.status || '')));
-    agg.status = statuses.has('failed') ? 'failed'
-      : (statuses.has('running') || statuses.has('restarting')) ? 'running'
-        : 'completed';
-    return agg;
-  });
-}
 
 /** 卡内行内徽标（L2 卡 + L1 根卡共用；与 taskList 行内徽标同件同语义——users+N /
  *  flow+N，缺读数不渲染）。 */
@@ -198,17 +162,27 @@ function openPane(mode, taskKey, summary, opts = {}) {
     pane.dataset.projectsView = 'delegate-chain';
     pane.dataset.delegateMode = mode;
     pane.dataset.delegateKey = String(taskKey || '');
+    // Leaving a task view ⇒ drop that chain's engine-side map caches
+    // (fmByProject/detail store/fold timers live under the delegate scope key).
+    if (pane.dataset.delegateMode === 'task' && pane.dataset.delegateKey) {
+      dropDelegateMapScope(String(pane.dataset.delegateKey));
+    }
     pane.dataset.delegateFrom = String((opts && opts.backTo) || '');
     // 列表页 FAB 属列表视图（projectTab.attachProjectsCreateFab / attachProjectsFlowmapFab
     // 自有视图守卫会摘除；这里整体重建 pane 内 DOM，无残留）。
     const backLabel = opts.backTo === 'structure' ? t('delegate.projectflow.title') : t('delegate.backToTasks');
     const backIcon = opts.backTo === 'structure' ? '<i data-lucide="network"></i>' : '<i data-lucide="arrow-left"></i>';
+    // Nav bar ownership split: .delegate-chain-title carries the chain identity
+    // (this view layer); .flowmap-summary is engine-owned — the map render writes
+    // the classic counts line into it (renderFlowMap single writer). The view
+    // filter toggle self-inserts after the back button (flowMapTab seam).
     pane.innerHTML = `
       <div class="flowmap-nav-bar">
         <button class="flowmap-back-btn" data-back-to-tasks type="button" aria-label="${esc(backLabel)}">
           ${backIcon}<span class="flowmap-back-name">${esc(backLabel)}</span>
         </button>
-        <span class="flowmap-summary flowmap-nav-summary" aria-live="polite">${esc(summary || '')}</span>
+        <span class="delegate-chain-title">${esc(summary || '')}</span>
+        <span class="flowmap-summary flowmap-nav-summary" aria-live="polite"></span>
       </div>
       <div class="${BODY_SEL.slice(1)} delegate-mode-${mode === 'task' ? 'task' : 'structure'}"></div>`;
     pane.querySelector('[data-back-to-tasks]').addEventListener('click', (e) => {
@@ -223,8 +197,8 @@ function openPane(mode, taskKey, summary, opts = {}) {
     createIconsIn(pane);
   } else {
     activeChainPane = pane; // 同视图复用分支同锚（pane 可能被 canvas 重建过）
-    const summaryEl = pane.querySelector('.flowmap-nav-summary');
-    if (summaryEl) summaryEl.textContent = summary || '';
+    const titleEl = pane.querySelector('.delegate-chain-title');
+    if (titleEl) titleEl.textContent = summary || '';
   }
   return pane;
 }
@@ -258,16 +232,23 @@ export function openDelegateChainTask(taskKey, meta = {}, opts = {}) {
   });
 }
 
-/** L1 视图体渲染（两层架构批 · 规格 §C，一期 = 卡列表形态顶位）：根卡 + subagent
- *  调用卡（同名重试聚合 + retry 徽标）+ AgentFlow 链卡（下钻 flow-step 层）。
- *  数据走 getChainByTask + G3 children 读取口（§C 前端组装投影——G1 P0 臂）；
- *  查无链 → fail-soft 态（§16 键 7，点击重试；镜像补拉到达后自动重渲）。 */
+/** L1 body render — the chain's flowmap (engine face on delegate data). Data
+ *  flows from the stub read port (getChainByTask + children via the driver's
+ *  projection); a missing chain ⇒ the fail-soft face (clickable retry; the
+ *  mirror refresh re-renders automatically once the lazy fetch lands). */
 function renderTaskBody(pane, key, opts = {}) {
   const body = pane.querySelector(BODY_SEL);
   if (!body) return;
-  body.innerHTML = '';
+  // L1 consumes flow-chain / card-badge rules from the same embedded sheet the
+  // L2 archive face injects — direct L1 entries (task-list rows, project card
+  // titles) never pass through L2, so inject on this path too (idempotent).
+  ensureArchiveCss();
   const chain = getChainByTask(key);
-  if (!chain || !Array.isArray(chain.nodes) || chain.nodes.length === 0) {
+  // Fail-soft only when the read port has NO chain at all. A chain whose node
+  // projection is empty (pre-spawn record / star delegate with zero flow steps)
+  // still maps: the driver renders the root from the row projection + children.
+  if (!chain) {
+    body.innerHTML = '';
     // fail-soft（FSM loaderr 终态）：行保留（面板不受影响）+ 本态可重试。读口
     // catch→null 同纪律；镜像补拉（provider lazy 拉取——含归档历史键）到达即重渲。
     pane.dataset.delegateTaskSoft = '1';
@@ -282,220 +263,23 @@ function renderTaskBody(pane, key, opts = {}) {
     return;
   }
   delete pane.dataset.delegateTaskSoft;
-  const wrap = document.createElement('div');
-  wrap.className = 'delegate-chain-taskview';
-  // worktree 座行（spawn 投影；数据原文）。
-  if (chain.worktree) {
-    const wt = document.createElement('div');
-    wt.className = 'delegate-chain-worktree';
-    const label = document.createElement('span');
-    label.className = 'delegate-structure-label';
-    label.textContent = t('delegate.worktree'); // §16 键 5
-    const val = document.createElement('span');
-    val.className = 'delegate-chain-mono';
-    const bits = [chain.worktree.branch, chain.worktree.worktree || chain.worktree.cwd,
-      chain.worktree.baseBranch ? `← ${chain.worktree.baseBranch}` : '',
-      ...spawnAllocBits(chain.worktree)].filter(Boolean);
-    val.textContent = bits.join(' · ');
-    val.title = bits.join(' · ');
-    wt.appendChild(label);
-    wt.appendChild(val);
-    wrap.appendChild(wt);
+  // L1 = the chain's flowmap (classic map face, re-driven on delegate data):
+  // root delegate node + sub-agent spawn lines + AgentFlow deps layers, CAD
+  // camera (wheel zoom / drag pan / double-click refit), fold chevron on the
+  // root card, node click = the floating detail card. All rendering lives in
+  // the flowmap engine; the projection comes from delegateFlowMap's read-port
+  // adapter. opts.anchorNode = member-node anchor (task-list flow/child rows)
+  // → camera focus + flash, auto-unfolding the chain when folded.
+  // Host reuse across mirror re-renders keeps the camera state and the diff
+  // baseline (unchanged data ⇒ zero DOM writes, zero replayed animations).
+  let host = body.querySelector('.delegate-flowmap-host');
+  if (!host) {
+    body.innerHTML = '';
+    host = document.createElement('div');
+    host.className = 'delegate-flowmap-host';
+    body.appendChild(host);
   }
-  // 判词行（terminal-verdict 投影：状态词 + reason 数据）。
-  if (chain.verdict) {
-    const v = document.createElement('div');
-    v.className = 'delegate-chain-verdict';
-    const word = rowWord(verdictToStatus(chain.verdict.verdict)) || String(chain.verdict.verdict || '');
-    const bits = [word, chain.verdict.reason || ''].filter(Boolean);
-    v.textContent = bits.join(' — ');
-    wrap.appendChild(v);
-  }
-  const nodes = Array.isArray(chain.nodes) ? chain.nodes : [];
-  // §C 组装投影：链节点三源 = 链 nodes（flow-step 整组/回退 delegate 节点）∪ G3
-  // children ∪ 行投影。根卡优先吃链内 delegate 节点（保留链投影状态/标题权威），
-  // 缺席（作用域图在=nodes 全 flow-step）→ 行投影合成（数据同源，零臆造）。
-  const row = listDelegateRows().find((r) => r && String(r.taskNo || r.delegateId || '') === key) || null;
-  const delegateId = String(chain.delegateId || (row && row.delegateId) || key);
-  const rootFromChain = nodes.find((n) => n && n.kind === 'delegate') || null;
-  const kids = delegateId ? listDelegateChildren(delegateId) : [];
-  const aggKids = aggregateKids(kids);
-  const flowSteps = nodes.filter((n) => n && n.kind === 'flow-step');
-  const rootLabel = rootFromChain
-    ? String(rootFromChain.label || rootFromChain.id || '')
-    : [[row && row.taskNo ? `#${row.taskNo}` : ''], String((row && (row.title || row.delegateId)) || delegateId)]
-        .flat().filter(Boolean).join(' ');
-  const rootStatus = rootFromChain
-    ? String(rootFromChain.status || 'running')
-    : (chain.verdict ? verdictToStatus(chain.verdict.verdict) : String((row && row.status) || 'running'));
-  const rootExecutor = rootFromChain && rootFromChain.executor
-    ? String(rootFromChain.executor)
-    : String((row && row.executor) || '');
-  const kidNames = kids.map((c) => String((c && (c.agentName || c.taskId)) || '')).filter(Boolean);
-  const rootHead = executorHeadHtml(rootExecutor) + cardBadgesHtml({
-    taskNo: String((row && row.taskNo) || ''), delegateId, external: false,
-  });
-  const rootPayload = delegateCardPayload({
-    id: String((rootFromChain && rootFromChain.id) || delegateId),
-    label: rootLabel,
-    status: rootStatus,
-    description: '',
-    executor: rootExecutor,
-    kind: 'delegate',
-  });
-  rootPayload.worktree = chain.worktree ? String(chain.worktree.worktree || chain.worktree.cwd || '') : '';
-  const rootHolder = document.createElement('div');
-  rootHolder.className = 'delegate-chain-card delegate-chain-root';
-  rootHolder.innerHTML = nodeHtml(rootPayload, { x: 0, y: 0, h: 0 }, 0, null, {
-    plain: true,
-    headPrefix: rootHead,
-    subText: 'Delegate', // 数据词不上键（H.4）
-    noDesc: true,
-  });
-  const rootCard = /** @type {HTMLElement} */ (rootHolder.firstElementChild);
-  if (rootCard) {
-    rootCard.dataset.flowPopupCard = '1'; // 点击 = 对话窗（brief/结果全文——九点⑦承载）
-    rootCard.setAttribute('role', 'button');
-    rootCard.title = [rootLabel, kidNames.length ? `${t('delegate.children')} ×${kids.length}` : '']
-      .filter(Boolean).join(' — ');
-    rootCard.addEventListener('click', () => {
-      import('./bgAgentPopup.js').then(({ openStepPopup }) => {
-        openStepPopup(delegateId, rootLabel, String((row && row.title) || ''));
-      }).catch(() => {});
-    });
-    wrap.appendChild(rootCard);
-  }
-  // subagent 调用卡（§C）：同名重试聚合同卡 + retry 徽标（Σ retryCount 数据直和）；
-  // 点击 = 最新调用会话的（净化后）对话窗。角色五色点（impl/verify）随 G3 缺角色
-  // 写面如实缺席（不臆造——P2 画布化批随引擎节点台账评估）。
-  for (const agg of aggKids) {
-    const first = agg.calls[0] || {};
-    const latest = agg.calls[agg.calls.length - 1] || first;
-    const callCount = agg.calls.length;
-    const retryChip = agg.retrySum > 0
-      ? `<span class="delegate-kid-retry" title="${esc(`${t('manage.retry')} ×${agg.retrySum}`)}">retry ×${agg.retrySum}</span>` : '';
-    const callChip = callCount > 1
-      ? `<span class="delegate-kid-calls" title="${esc(`×${callCount}`)}">×${callCount}</span>` : '';
-    const srcWord = childSourceWord(String(first.source || ''));
-    const payload = delegateCardPayload({
-      id: String(first.taskId || ''),
-      label: agg.name,
-      status: agg.status,
-      description: '',
-      executor: '',
-      kind: 'subagent',
-    });
-    const holder = document.createElement('div');
-    holder.className = 'delegate-chain-card delegate-chain-kid';
-    holder.innerHTML = nodeHtml(payload, { x: 0, y: 0, h: 0 }, 0, null, {
-      plain: true,
-      headPrefix: retryChip + callChip,
-      subText: srcWord || 'Subagent', // source 数据词（九点②归一口径）
-      noDesc: true,
-    });
-    const card = /** @type {HTMLElement} */ (holder.firstElementChild);
-    if (card) {
-      card.dataset.flowPopupCard = '1'; // 对话窗承载——file-diff 详情层跳过
-      card.setAttribute('role', 'button');
-      const desc = String(latest.description || latest.prompt || '');
-      if (desc) card.title = desc;
-      card.addEventListener('click', () => {
-        import('./bgAgentPopup.js').then(({ openStepPopup }) => {
-          openStepPopup(String(latest.taskId || ''), agg.name, desc);
-        }).catch(() => {});
-      });
-      wrap.appendChild(card);
-    }
-  }
-  // AgentFlow 链卡（§C）：链小点 + 「链 N 步」同一行（九点③语言）——点开下钻
-  // flow-step 卡层（deps 面板行语言）。单层卡列表形态的下钻 = 就地展开（画布化另批）。
-  // 文件夹树批锚点臂：expandFlow 锚或 anchorNode 命中链内 flow-step ⇒ 打开即展开。
-  const anchorId = String(opts.anchorNode || '');
-  if (flowSteps.length) {
-    const flowOpen = !!opts.expandFlow ||
-      (!!anchorId && flowSteps.some((n) => String((n && n.id) || '') === anchorId));
-    const flowCard = document.createElement('div');
-    flowCard.className = 'delegate-flow-chain';
-    flowCard.dataset.flowChain = '1';
-    const flowBtn = document.createElement('button');
-    flowBtn.type = 'button';
-    flowBtn.className = 'delegate-flow-chain-toggle';
-    flowBtn.setAttribute('aria-expanded', flowOpen ? 'true' : 'false');
-    const chip = document.createElement('span');
-    chip.className = 'delegate-flow-chain-chip';
-    chip.textContent = 'AgentFlow'; // 数据词（面板 flow 行同款，不上键）
-    flowBtn.appendChild(chip);
-    const meta = document.createElement('span');
-    meta.className = 'delegate-chain-meta';
-    meta.dataset.chainMeta = '1';
-    for (const n of flowSteps) {
-      const dot = document.createElement('span');
-      dot.className = `delegate-chain-dot st-${String((n && n.status) || 'pending')}`;
-      dot.title = String((n && (n.label || n.id)) || '');
-      meta.appendChild(dot);
-    }
-    const count = document.createElement('span');
-    count.className = 'delegate-chain-steps';
-    count.textContent = t('delegate.chainSteps', { n: String(flowSteps.length) });
-    meta.appendChild(count);
-    flowBtn.appendChild(meta);
-    const chev = document.createElement('span');
-    chev.className = 'delegate-flow-chain-chev';
-    chev.setAttribute('aria-hidden', 'true');
-    chev.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-    flowBtn.appendChild(chev);
-    flowCard.appendChild(flowBtn);
-    const stepsWrap = document.createElement('div');
-    stepsWrap.className = 'delegate-flow-steps';
-    stepsWrap.hidden = !flowOpen; // 下钻层（flow 行锚点/节点锚/点开才展）
-    for (const n of flowSteps) {
-      const payload = delegateCardPayload(n);
-      const holder = document.createElement('div');
-      holder.className = 'delegate-chain-card';
-      holder.innerHTML = nodeHtml(payload, { x: 0, y: 0, h: 0 }, 0, null, {
-        plain: true,
-        headPrefix: executorHeadHtml(n.executor),
-        subText: String(n.kind || ''),
-        noDesc: true,
-      });
-      const card = holder.firstElementChild;
-      if (card) stepsWrap.appendChild(card);
-    }
-    flowCard.appendChild(stepsWrap);
-    flowBtn.addEventListener('click', () => {
-      const open = stepsWrap.hidden;
-      stepsWrap.hidden = !open;
-      flowBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    });
-    wrap.appendChild(flowCard);
-  } else if (!aggKids.length && rootCard) {
-    // §C ⑤ 空态延伸：单节点 L1 = 根卡 + 一行提示（不画空态插图——零自造数据）。
-    const hint = document.createElement('div');
-    hint.className = 'delegate-flow-empty';
-    hint.textContent = t('delegate.kids.empty');
-    wrap.appendChild(hint);
-  }
-  // 候定集/未知帧透传列表随九点③撤销：「节点下方的文字解释全部删掉」——kind+时刻
-  // 说明行不再入视图（审计面在引擎 ChainStore，读取口 frames 投影保持原样零改动）。
-  body.appendChild(wrap);
-  // file-diff feature (rework): the chain view body hosts the single-source
-  // node detail layer — flow-step cards open .fm-detail (completed nodes mount
-  // their changed-file diff section inside it; 404/no project = the section
-  // silently stays absent). Root/subagent cards carry data-flow-popup-card="1"
-  // (conversation popup is their detail carrier) and are skipped by the layer.
-  attachChainDetailLayer(body, String(pane.dataset.delegateProject || ''), chain.nodes);
-  // 节点锚点（文件夹树批：任务列表 flow 第三层「点具体 Node」跳转锚）——目标卡
-  // 滚入视线 + sapphire 描边短闪（一次性；重渲路径不带锚自然失效）。锚不在链内
-  // （链已换/夹具未装）= 静默缺席，层照开。
-  if (anchorId) {
-    const target = body.querySelector(
-      `.fm-node[data-node-id="${(window.CSS && CSS.escape ? CSS.escape(anchorId) : anchorId)}"]`);
-    if (target) {
-      target.scrollIntoView({ block: 'center' });
-      target.classList.add('delegate-node-anchor');
-      setTimeout(() => target.classList.remove('delegate-node-anchor'), 1800);
-    }
-  }
+  renderDelegateFlowMap(host, key, { highlightNodeId: String(opts.anchorNode || '') });
 }
 
 // ── S11 结构总视图 ───────────────────────────────────────────────────────
@@ -701,6 +485,22 @@ const STRUCT_ARCHIVE_CSS = `
   padding: 14px;
 }
 .delegate-chain-view-body.delegate-mode-structure { padding: 2px 2px 8px; }
+/* Nav identity slot (L1): the chain's #N · title — engine-owned summary counts
+   live in .flowmap-summary next to it (single-writer split, see openPane). */
+.delegate-chain-title {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600; color: var(--color-text); align-self: center;
+}
+/* L1 map face: the engine canvas fills the task body — the body itself stops
+   scrolling (the map viewport owns pan/zoom); the radial signature stays. */
+.delegate-chain-view-body.delegate-mode-task { overflow: hidden; }
+.delegate-flowmap-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.delegate-flowmap-host .flowmap-card { flex: 1 1 auto; min-height: 0; }
+/* in-place form: the viewport fills the host (same override as flowmap-view-body) */
+.delegate-flowmap-host .fm-viewport { height: auto; }
+/* Minimal delegate map: the edge-style legend is written for big per-project
+   graphs and is noise at one-chain scale — it does not render here. */
+.delegate-flowmap-host .flowmap-legend { display: none; }
 .delegate-archive-fab {
   position: absolute; top: 12px; right: 14px;
   width: 34px; height: 34px; border-radius: 50%;
@@ -797,54 +597,6 @@ const STRUCT_ARCHIVE_CSS = `
   border: 1px solid rgb(var(--sapphire) / 0.35);
 }
 .delegate-archive-toast-undo:hover { background: rgb(var(--sapphire) / 0.2); }
-/* L1 subagent 调用卡徽标（§C：retry ×N / ×N calls——G3 数据直和/条目数）。 */
-.delegate-kid-retry, .delegate-kid-calls {
-  flex-shrink: 0; padding: 0 5px; border-radius: 6px;
-  background: var(--color-frame-hover, rgba(128,128,128,0.12));
-  font: 600 9px/15px ui-monospace, SFMono-Regular, monospace;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-muted);
-}
-.delegate-kid-retry { color: rgb(var(--amber, 212 160 48) / 1); }
-/* L1 节点锚点短闪（文件夹树批：任务列表 flow 第三层「点 Node」跳转锚——目标卡
-   sapphire 描边 ~1.8s，零新色值）。 */
-.fm-node.delegate-node-anchor {
-  outline: 1.5px solid rgb(var(--sapphire, 88 166 255) / 0.55);
-  outline-offset: 2px;
-}
-/* L1 AgentFlow 链卡（九点③语言：链小点+「链 N 步」同行）+ 下钻 flow-step 层。 */
-.delegate-flow-chain {
-  align-self: stretch;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 8px 10px;
-  display: flex; flex-direction: column; gap: 8px;
-  background: var(--color-frame-hover, rgba(128,128,128,0.05));
-}
-.delegate-flow-chain-toggle {
-  display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%;
-  padding: 0; border: none; background: transparent; color: inherit;
-  font: inherit; text-align: left; cursor: pointer;
-}
-.delegate-flow-chain-chip {
-  flex-shrink: 0; padding: 0 7px; border-radius: 7px;
-  background: var(--color-frame-hover, rgba(128,128,128,0.12));
-  font: 600 10px/18px ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-text-muted);
-}
-.delegate-flow-chain .delegate-chain-meta { flex: 1 1 auto; min-width: 0; }
-.delegate-flow-chain-chev { flex-shrink: 0; width: 12px; height: 12px; display: inline-flex; color: var(--color-text-muted); transition: transform 0.15s ease; }
-.delegate-flow-chain-chev svg { width: 12px; height: 12px; display: block; }
-.delegate-flow-chain-toggle[aria-expanded="true"] .delegate-flow-chain-chev { transform: rotate(180deg); }
-.delegate-flow-steps {
-  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px;
-  padding: 4px 2px 2px; border-top: 1px dashed var(--color-border);
-}
-.delegate-flow-steps[hidden] { display: none; }
-.delegate-flow-empty {
-  font: 400 11px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text-muted); opacity: 0.8;
-}
 /* L2 卡内子代理/flow 徽标（§D：与 §B 行内徽标同件同语言）。 */
 .delegate-card-kids, .delegate-card-flow {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px;
@@ -1095,12 +847,29 @@ function attachStructureArchive(body) {
 // pane 分流：L1 = fail-soft 态自动重渲（归档历史键 lazy 拉取到达同缝）；L2 = 平铺面
 // 随镜像重渲（终态自动归档卡淡出 / 抽屉「恢复」行回归）。activeChainPane 由
 // openPane 建架时指向（pane 重建零监听堆积；isConnected 守卫兜底）。
+// Projects-tab teardown: an L1 map living in a closing pane loses its scope —
+// drop the engine caches (the tab-closed event fires with the tab id).
+if (typeof document !== 'undefined') {
+  document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
+    const id = (e && e.detail && e.detail.id) || '';
+    if (id !== 'projects') return;
+    const pane = activeChainPane;
+    if (pane && pane.dataset.delegateMode === 'task' && pane.dataset.delegateKey) {
+      dropDelegateMapScope(String(pane.dataset.delegateKey));
+    }
+    activeChainPane = null;
+  });
+}
+
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener('delegate-chain-mirror-updated', () => {
     const pane = activeChainPane;
     if (!pane || !pane.isConnected || pane.dataset.projectsView !== 'delegate-chain') return;
     if (pane.dataset.delegateMode === 'task') {
-      if (pane.dataset.delegateTaskSoft === '1') renderTaskBody(pane, String(pane.dataset.delegateKey || ''));
+      // Map face: re-render on every mirror refresh — the engine's diff path
+      // animates real deltas and leaves an unchanged map byte-identical (zero
+      // DOM churn); the fail-soft face re-tries the read port the same way.
+      renderTaskBody(pane, String(pane.dataset.delegateKey || ''));
     } else if (pane.dataset.delegateMode === 'structure') {
       renderStructureBody(pane);
     }

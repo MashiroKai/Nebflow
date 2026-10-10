@@ -571,6 +571,15 @@ function prefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 
+/** Delegate-scope maps (project keys prefixed `delegate-chain:`) have no
+ *  per-project archive backend face — the delegate plane's archive face lives
+ *  in the L2 structure view's drawer. The float layer is still created (it
+ *  hosts the node detail card), but the archive FAB stays hidden and the
+ *  remote archive fetch is skipped (it would 404 by construction). */
+function isDelegateScope(project) {
+  return String(project || '').startsWith('delegate-chain:');
+}
+
 /**
  * 确保 host 上存在悬浮层并绑定项目上下文（renderFlowMap 全量/增量路径后调用）。
  * host = 就地视图 .flowmap-view-body（自身定位上下文）或 legacy .canvas-tab-pane。
@@ -617,9 +626,13 @@ export function ensureArchiveLayer(host, container, project) {
   }
   ctx.project = project;
   ctx.container = container;
+  // Delegate scopes: archive FAB hidden (the delegate archive face is the L2
+  // drawer); the detail half of the layer is unaffected.
+  ctx.fab.style.display = isDelegateScope(project) ? 'none' : '';
   renderArchiveUi(ctx);
-  // 裁定④：悬浮层创建触发后端归档首拉（每项目一次；失败下渲染重试）
-  if (!storeOf(project).remoteFetched) fetchRemoteChains(project);
+  // 裁定④：悬浮层创建触发后端归档首拉（每项目一次；失败下渲染重试）——delegate
+  // 作用域无 per-project 归档 REST 面（404 构造性）⇒ 跳过。
+  if (!isDelegateScope(project) && !storeOf(project).remoteFetched) fetchRemoteChains(project);
   return ctx;
 }
 

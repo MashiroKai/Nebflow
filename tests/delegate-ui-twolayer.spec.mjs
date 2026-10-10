@@ -252,7 +252,7 @@ test('T3 agentflow（R2/R6）：组头徽标=Flow；chain.nodes flow-step 面板
   // 适配层单 delegate 回退节点（kind=delegate）不入子行层。
   await expect(page.locator('#bgagent-dropdown .bg-task-row')).toHaveCount(3);
 
-  // ── 任务列表（视图①）：S1 expanded flow 单行（§B）→ L1 flow 下钻（§C）──
+  // ── 任务列表（视图①）：flow-step 链节点 = 链块成员行（折叠默认 → 头行展开）──
   // 先收起面板下拉（外点关闭 = 既有 UI 路径）——否则浮层截走任务行的点击。
   await page.mouse.click(10, 300);
   await expect(page.locator('#bgagent-dropdown')).toHaveClass(/hidden/);
@@ -260,52 +260,41 @@ test('T3 agentflow（R2/R6）：组头徽标=Flow；chain.nodes flow-step 面板
     const { renderTaskList } = await import('/js/taskList.js');
     renderTaskList([], undefined, sid);
   }, ROOT_SID);
-  const row72 = page.locator('#task-list .task-delegate[data-task-no="72"]');
-  await expect(row72).toHaveCount(1);
-  // provider 防抖刷（agentStart 注入触发）会整段重建面板 DOM——等尘埃落定再点。
-  await page.waitForTimeout(1500);
-  await expect(row72).toHaveCount(1);
-  // 入场动画（task-node-entering）期间行不稳定——等动画类摘除再点（行点击 = S1 展开）。
+  const head72 = page.locator('#task-list .task-chain-head[data-task-no="72"]');
+  await expect(head72).toHaveCount(1);
+  // 链块折叠脸：成员行默认缺席（无行内计数徽标——徽标面随平铺脸退役）；
+  // 结构摘要 = 元信息文本（0/3——无一终态），即整链跳转区。
+  await expect(page.locator('#task-list .task-chain-member')).toHaveCount(0);
+  await expect(head72.locator('.task-chain-jump .task-chain-meta')).toHaveText(/^0\/3/);
+  // 头行点击 = 展开成员行（拓扑序：s1 → s2，深度 1/2，序号 1.1 / 1.1.1）。
+  await head72.click();
   await page.waitForFunction(() => !document.querySelector('#task-list .task-node-entering'), null, { timeout: 5000 }).catch(() => {});
-  // §B 行内徽标（collapsed）：flow+N（chain.nodes flow-step 计数）；零 children →
-  // users 徽标缺席（零自造数据）。
-  await expect(row72.locator('.task-flow-badge-n')).toHaveText('2');
-  await expect(row72.locator('.task-kids-badge')).toHaveCount(0);
-  await row72.click();
-  const detail = page.locator('#task-list .task-delegate-detail[data-delegate-detail="72"]');
-  await expect(detail).toHaveCount(1);
-  // §B flow 单行（九点③）：flow chip + 链小点图（st-*）+「链 N 步」同一行；
-  // 星型子行族缺席（agentflow 无 children）。
-  const flowRow = detail.locator('.task-flow-row');
-  await expect(flowRow).toHaveCount(1);
-  await expect(flowRow.locator('.task-flow-chip')).toHaveText('flow');
-  const dots = flowRow.locator('.delegate-chain-dot');
-  await expect(dots).toHaveCount(2);
-  await expect(dots.nth(0)).toHaveClass(/st-running/);
-  await expect(dots.nth(0)).toHaveAttribute('title', '步骤一');
-  await expect(dots.nth(1)).toHaveClass(/st-pending/);
-  await expect(dots.nth(1)).toHaveAttribute('title', '步骤二');
-  await expect(flowRow.locator('.delegate-chain-steps')).toHaveText('链 2 步');
-  await expect(detail.locator('.task-kids-list')).toHaveCount(0);
-  // §C flow 行点击 = L1 委托流程图下钻锚点（expandFlow——打开即展开 flow-step 层）。
-  await flowRow.click();
+  const panelSteps = page.locator('#task-list .task-chain-member');
+  await expect(panelSteps).toHaveCount(2);
+  await expect(panelSteps.nth(0).locator('.task-chain-member-name')).toHaveText('步骤一');
+  await expect(panelSteps.nth(0).locator('.task-chain-depth')).toHaveText('1.1');
+  await expect(panelSteps.nth(0).locator('.task-chain-member-word')).toHaveText('进行中');
+  await expect(panelSteps.nth(1).locator('.task-chain-member-name')).toHaveText('步骤二');
+  await expect(panelSteps.nth(1).locator('.task-chain-depth')).toHaveText('1.1.1');
+  // 成员行点击 = L1 地图 + 节点锚定（相机聚焦 + 闪烁）。
+  await panelSteps.nth(0).click();
   const l1 = page.locator('.canvas-tab-pane[data-projects-view="delegate-chain"][data-delegate-mode="task"]');
   await expect(l1).toHaveCount(1);
-  await expect(l1.locator('.flowmap-summary')).toHaveText('#72 · 委托流程图');
-  // L1 形态（§C 一期卡列表）：根卡（链 delegate 节点投影）+ AgentFlow 链卡 +
-  // 展开的 flow-step 下钻层（2 卡）；树批 R7（2026-10-09）：L1 顶栏结构入口钮退役
-  // （入口迁项目面板「项目流程图」圆钮 + 项目卡标题点按）。
-  await expect(l1.locator('.delegate-structure-entry')).toHaveCount(0);
-  await expect(l1.locator('.delegate-chain-taskview .fm-node[data-node-id="delegate-nebflow-w2"]')).toHaveCount(1);
-  const chainToggle = l1.locator('.delegate-flow-chain-toggle');
-  await expect(chainToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(l1.locator('.delegate-flow-steps')).toBeVisible();
-  await expect(l1.locator('.delegate-flow-steps .fm-node[data-node-id="s1"]')).toHaveCount(1);
-  await expect(l1.locator('.delegate-flow-steps .fm-node[data-node-id="s2"]')).toHaveCount(1);
+  await expect(l1).toHaveAttribute('data-delegate-key', '72');
+  await expect(l1.locator('.delegate-chain-title')).toHaveText('#72 · 委托流程图');
+  // 地图结构：root + 2 flow-step 三张卡 + 两边（root→s1 spawn、s1→s2 deps）。
+  await expect(l1.locator('.delegate-flowmap-host .fm-node')).toHaveCount(3);
+  await expect(l1.locator('.delegate-flowmap-host .fm-node[data-node-id="s1"]')).toHaveCount(1);
+  await expect(l1.locator('.delegate-flowmap-host .fm-node[data-node-id="s2"]')).toHaveCount(1);
+  await expect(l1.locator('.delegate-flowmap-host path.fm-edge')).toHaveCount(2);
+  await expect(l1.locator('.fm-node[data-node-id="s1"].fm-node-flash')).toHaveCount(1);
+  // 折叠控件：根卡 chevron 在场（3 成员），无 ChainLedger 取消钮。
+  await expect(l1.locator('.fm-chain-chev')).toHaveCount(1);
+  await expect(l1.locator('.fm-chain-cancel')).toHaveCount(0);
   expect(pageErrors).toEqual([]);
 });
 
-test('T4 S1 expanded 星型（§B WF-02）：行内 users+N 徽标 ＋ 逐子代理行族（状态点/名/状态词/source 词）＋ 子行点击跳 L1 委托流程图（树批 R4 语义平移）', async ({ page }) => {
+test('T4 星型子代理链块（链结构行脸）：头行折叠默认 + 展开见逐子代理成员行（名/状态词/类型点）＋ 成员行点击跳 L1 地图', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
@@ -328,40 +317,31 @@ test('T4 S1 expanded 星型（§B WF-02）：行内 users+N 徽标 ＋ 逐子代
     const { renderTaskList } = await import('/js/taskList.js');
     renderTaskList([], undefined, sid);
   }, ROOT_SID);
+  const head71 = page.locator('#task-list .task-chain-head[data-task-no="71"]');
+  // 折叠默认：成员行缺席；结构摘要 = 元信息文本（1/4——audit 完成）。
+  await expect(page.locator('#task-list .task-chain-member')).toHaveCount(0);
+  await expect(head71.locator('.task-chain-jump .task-chain-meta')).toHaveText(/^1\/4/);
+  // 展开 → 三条子行（拓扑同层：spawn 序），词面 + 静态徽标（首帧终态静默）。
+  await head71.click();
   await page.waitForFunction(() => !document.querySelector('#task-list .task-node-entering'), null, { timeout: 5000 }).catch(() => {});
-  const row71 = page.locator('#task-list .task-delegate[data-task-no="71"]');
-  // §B 行内徽标（collapsed）：users+N（G3 计数 + 名单 title）；flow 徽标缺席
-  // （星型链零 flow-step——零自造数据）。
-  await expect(row71.locator('.task-kids-badge-n')).toHaveText('3');
-  await expect(row71.locator('.task-kids-badge')).toHaveAttribute('title', /×3 — scout, audit, recon/);
-  await expect(row71.locator('.task-flow-badge')).toHaveCount(0);
-  await row71.click();
-  const detail = page.locator('#task-list .task-delegate-detail[data-delegate-detail="71"]');
-  await expect(detail).toHaveCount(1);
-  // §B 逐子代理行族（弹窗星型区下钻语义平移）：状态点+名+状态词+source 词。
-  const kidRows = detail.locator('.task-kids-list .bgagent-child-row');
-  await expect(kidRows).toHaveCount(3);
-  await expect(kidRows.nth(0)).toHaveAttribute('data-child-session', 'subtask-a');
-  await expect(kidRows.nth(0).locator('.bgagent-child-name')).toHaveText('scout');
-  await expect(kidRows.nth(0).locator('.bgagent-child-status')).toHaveText('进行中');
-  // 九点②：source 词面归一 subtask→Delegate（数据原文在 title）。
-  await expect(kidRows.nth(0).locator('.bgagent-child-source')).toHaveText('Delegate');
-  await expect(kidRows.nth(0).locator('.bgagent-child-source')).toHaveAttribute('title', 'subtask');
-  await expect(kidRows.nth(1).locator('.bgagent-child-status')).toHaveText('已完成');
-  await expect(kidRows.nth(2)).toHaveAttribute('data-child-session', 'subagent-c');
-  await expect(kidRows.nth(2).locator('.bgagent-child-source')).toHaveText('subagent'); // 数据词原样
-  // 旧「subagent ×N」单帧与 flow 单行均缺席（星型：子代理已逐行化，链无 flow-step）；
-  // 树批 R3：解释帧族（spawn/verdict/raw）整段退场——树 = 纯结构。
-  await expect(detail.locator('.task-delegate-frame-subagent')).toHaveCount(0);
-  await expect(detail.locator('.task-delegate-frame-spawn')).toHaveCount(0);
-  await expect(detail.locator('.task-delegate-frame-raw')).toHaveCount(0);
-  await expect(detail.locator('.task-flow-row')).toHaveCount(0);
-  // 子行点击 = 树批语义平移（R4）：跳该 delegate 的 L1 委托流程图（树层管导航、
-  // L1 管详情——净化后对话窗入口无损平移到 L1 根卡/子卡点击，任务列表不再开弹窗）。
-  await kidRows.nth(0).click();
+  const kids = page.locator('#task-list .task-chain-member');
+  await expect(kids).toHaveCount(3);
+  // 同层同刻 ⇒ 拓扑三键序退化为 id 升序：subagent-c → subtask-a → subtask-b。
+  await expect(kids.nth(0).locator('.task-chain-member-name')).toHaveText('recon');
+  await expect(kids.nth(0).locator('.task-chain-member-word')).toHaveText('进行中');
+  await expect(kids.nth(1).locator('.task-chain-member-name')).toHaveText('scout');
+  await expect(kids.nth(1).locator('.task-chain-member-word')).toHaveText('进行中');
+  await expect(kids.nth(2).locator('.task-chain-member-name')).toHaveText('audit');
+  await expect(kids.nth(2).locator('.task-chain-member-word')).toHaveText('已完成');
+  await expect(kids.nth(2).locator('.task-chain-mark-static')).toHaveCount(1);
+  // 成员行点击 = L1 地图（锚定该子代理卡）。
+  await kids.nth(1).click();
   const l1 = page.locator('.canvas-tab-pane[data-projects-view="delegate-chain"][data-delegate-mode="task"]');
   await expect(l1).toHaveCount(1);
   await expect(l1).toHaveAttribute('data-delegate-key', '71');
+  await expect(l1.locator('.delegate-flowmap-host .fm-node')).toHaveCount(4); // root + 3 children
+  await expect(l1.locator('.delegate-flowmap-host path.fm-edge')).toHaveCount(3); // root→child ×3
+  await expect(l1.locator('.fm-node[data-node-id="subtask-a"].fm-node-flash')).toHaveCount(1);
   await expect(page.locator('.flow-agent-overlay')).toHaveCount(0);
   expect(pageErrors).toEqual([]);
 });

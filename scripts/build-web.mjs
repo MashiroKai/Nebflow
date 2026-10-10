@@ -41,32 +41,10 @@ const ORPHAN_EXEMPTIONS = new Map([
   // imgpreview decoupled package (eaa9221c9) — friends/group family, flag-sealed; wiring intentionally deferred pending neblink-server attachment DTO leg. Do not delete, do not wire while sealed.
   ['js/attachImagePreview.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
   ['js/attachPreviewField.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
-  // flowmaptab-retire (#1228 两裁② 停用清单面 1): per-project Flow Map view entry
-  // deactivated (projectsView='flow-map' → delegate-chain; projectTab dropped the
-  // render entry). Module intentionally out of the bundle graph; file kept on disk
-  // pending the #1229 per-project REST/WS retirement batch which deletes it together
-  // with the engine face (delegate-chain-stub.spec T6 still source-pins its fmNodeCard
-  // single-source import). Do not re-wire; do not delete early.
-  ['js/flowMapTab.js', 'flowmaptab-retire (#1228 两裁②): per-project view entry deactivated, module disconnected pending #1229 engine-face retirement batch'],
-  // flowmaptab-retire (#1228 两裁② 停用清单面 1 随件): the two FE组件化批次六 sub-modules
-  // (B-side structure; absent from the 9ca39083 side). Both leave the bundle graph with
-  // their host above — kept on disk, untouched, for the same #1229 batch that deletes the
-  // per-project face. 本批（ustc 9ca39083 合流）新增这两条目：A 侧没有这两个文件，故
-  // 不在 A 的 ORPHAN_EXEMPTIONS 内；不豁免则孤儿闸红。二者现状形状不同：
-  //   · collapse.js — flowMapTab.js:55 仍 import 它，而 flowMapTab.js 自己是本表豁免件
-  //     ⇒ 自入口不可达（故「only importer」一说不失实）。
-  //   · badges.js   — 本合流已把 flowMapTab.js 对它的 import 换成 fmNodeCard.js 单源钉
-  //     （flowMapTab.js:53-55 注明）⇒ 全树零 live import，是真孤儿；旧理由文本已与现状
-  //     不符，随本条更正。
-  // Do not re-wire (the badge family is single-sourced in fmNodeCard.js per the T6 pin);
-  // do not delete early.
-  ['js/flowMap/badges.js', 'flowmaptab-retire (#1228 两裁②): flowMapTab.js import dropped by the 9ca39083 merge in favour of the fmNodeCard.js single-source pin ⇒ zero live importers in tree; module kept on disk pending the #1229 batch'],
-  ['js/flowMap/collapse.js', 'flowmaptab-retire (#1228 两裁②): only importer = js/flowMapTab.js (exempt/disconnected); module kept on disk pending the #1229 batch'],
-  // flowmaptab-retire (#1228 两裁② 停用清单面 3): the main.js side-effect import was
-  // removed per the upstream a60af705d declaration (zero reuse in S10/S11 — static
-  // card lists, CSS animation suffices). File kept on disk for the same #1229 batch;
-  // tests/fixtures/orbit-anim-harness.html still imports it directly (orbit-anim.spec).
-  ['js/flowAnim.js', 'flowmaptab-retire (#1228 两裁②): main.js side-effect import removed per upstream zero-reuse declaration; file kept pending #1229 batch (orbit-anim test harness imports it directly)'],
+  // flowMap/badges.js: flowMapTab.js's import was replaced by the fmNodeCard.js
+  // single-source pin ⇒ zero live importers — a true orphan. Do not re-wire (the
+  // badge family is single-sourced in fmNodeCard.js per the T6 pin).
+  ['js/flowMap/badges.js', 'flowmaptab-retire (#1228): flowMapTab.js import dropped in favour of the fmNodeCard.js single-source pin ⇒ zero live importers in tree; module kept on disk pending the #1229 batch'],
   // s14-executor-userface-retire (ui-train-threefix A, 2026-10-07): the last two
   // entry points (sidebar settings panel-entry button + /agents command) left the
   // user faces with their locale keys; the Canvas-tab panel module is intentionally
@@ -74,6 +52,11 @@ const ORPHAN_EXEMPTIONS = new Map([
   // on disk pending the executor-panel deletion batch (same shape as flowMapTab
   // above: do not re-wire; do not delete early).
   ['js/executorsPanel.js', 's14-executor-userface-retire (ui-train-threefix A): settings entry + /agents command removed, module disconnected pending the executor-panel deletion batch'],
+  // tasklist-flowmap batch (2026-10-10): the L1 delegate view switched to the
+  // flowmap engine face (delegateFlowMap.js) — the engine's .fm-detail card is the
+  // node detail layer now (its diff section mounts via flowMapArchive), so this
+  // card-list-era entry shim has zero live importers. Kept on disk, do not re-wire.
+  ['js/chainDetailEntry.js', 'tasklist-flowmap batch (2026-10-10): L1 switched to the flowmap engine face; the fm-detail card supersedes this shim — zero live importers, kept on disk'],
 ]);
 
 // ── 1. Clean output ────────────────────────────────────────────

@@ -312,7 +312,9 @@ class MailAttachSpec extends FunSuite:
     try
       val msg = callErr(
         withArr(qIn("message" -> "hi"), "images", img.toString).add("address", Json.fromString("project:any")),
-        ctx().copy(actorSystem = Some(system))
+        // The project: leg is Root-exclusive; the vision gate is pinned from a
+        // Nebula-root context (the only role still admitted to the leg).
+        ctx(nebulaRoot = true).copy(actorSystem = Some(system))
       )
       assert(msg.contains(MailTool.ErrVisionUnsupportedLeg), s"必须带显式拒码: $msg")
       assert(!msg.contains("is not mounted"), s"拒绝必须发生在挂载判定之前: $msg")
@@ -329,7 +331,9 @@ class MailAttachSpec extends FunSuite:
     assert(node.contains("no project context"), s"既有判定须逐字保留: $node")
     val proj = callErr(
       qIn("address" -> "project:any", "message" -> "hi"),
-      ctx().copy(actorSystem = Some(system))
+      // Root context: the project: leg is Root-exclusive, so the mount check
+      // is reachable only from here.
+      ctx(nebulaRoot = true).copy(actorSystem = Some(system))
     )
     assert(!proj.contains(MailTool.ErrVisionUnsupportedLeg), s"无 images 不得命中本闸: $proj")
     assert(proj.contains("is not mounted"), s"既有判定须逐字保留: $proj")

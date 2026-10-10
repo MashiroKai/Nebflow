@@ -106,6 +106,16 @@ const renderedFmByContainer = new WeakMap();
 /** @type {Map<string, number>} project → 对账拉取定时器 id */
 const reconcileTimers = new Map();
 
+/** Extra pane resolvers for non-legacy map hosts (registration seam). The
+ *  delegate-chain L1 map lives in the projects pane — outside the legacy
+ *  flow-map tab registry — so its driver registers a resolver here; the fold /
+ *  view-filter re-render path consults these entries ({project, container}).
+ *  WS/reconcile paths never see these scope keys (no frames carry them). */
+const extraPaneResolvers = [];
+export function registerFlowMapPaneResolver(fn) {
+  if (typeof fn === 'function' && !extraPaneResolvers.includes(fn)) extraPaneResolvers.push(fn);
+}
+
 // ── 视图过滤（P3 占位治理最小组合前端腿，报告 20260908_flowmap-占位调查与显示优化
 //   提案 P3；作者定案收缩为二态「全部/进行中」）──────────────────────────
 // 纯前端派生过滤：不改任何归档语义/载荷/后端。「进行中」= 隐藏终态与停滞卡
@@ -189,6 +199,15 @@ function holdNoAnim(card) {
 
 /** 以缓存快照重渲打开视图（折叠切换与视图过滤共用；缺 project = 全部项目）。 */
 function rerenderFlowMap(project) {
+  const extra = [];
+  for (const fn of extraPaneResolvers) {
+    try { for (const e of fn() || []) if (e && e.project && e.container) extra.push(e); } catch (_) { /* resolver failure must not break the legacy path */ }
+  }
+  for (const e of extra) {
+    if (project && e.project !== project) continue;
+    const fm = fmByProject.get(e.project);
+    if (fm) renderFlowMap(e.container, visibleFmView(e.project, fm), e.project);
+  }
   for (const { project: p, pane } of openFlowMapPanes()) {
     if (project && p !== project) continue;
     const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
@@ -1166,8 +1185,10 @@ function chainIdOfNode(project, nodeId) {
 }
 
 /** 链卡伪节点（渲染层合成，非 NodePayload）：id=chainId 参与既有 .fm-node 管线；
- *  counts 供计数行、status 供卡面状态词与出边档位（edgeStateOf 语义复用）。 */
-function chainCardNode(cid, title, members) {
+ *  counts 供计数行、status 供卡面状态词与出边档位（edgeStateOf 语义复用）。
+ *  control === false（无 ChainLedger 面的作用域链，如 delegate 链）⇒ 链卡省
+ *  略取消钮（fmNodeCard 消费；缺省 undefined = 既有行为逐字节不变）。 */
+function chainCardNode(cid, title, members, control) {
   /** @type {Record<string, number>} */
   const counts = {};
   for (const k of FM_CHAIN_BUCKETS) counts[k] = 0;
@@ -1186,6 +1207,7 @@ function chainCardNode(cid, title, members) {
   return {
     id: cid, name: title || cid, status: st, chainCard: true, chainId: cid,
     memberCount: members.length, counts, sig,
+    chainControl: control === false ? false : undefined,
   };
 }
 
@@ -1212,9 +1234,9 @@ function foldView(project, fm) {
   const vis = visibleNodes(fm);
   /** @type {Map<string, any>} 可见节点 id → 节点 */
   const byId = new Map(vis.map((n) => [String(n.id), n]));
-  /** @type {Map<string, { title: string, members: any[] }>} chainId → 折叠内容 */
+  /** @type {Map<string, { title: string, members: any[], control: any }>} chainId → 折叠内容 */
   const folded = new Map();
-  /** @type {Map<string, { id: string, title: string, n: number }>} 入口成员 id → 链控件 */
+  /** @type {Map<string, { id: string, title: string, n: number, control: any }>} 入口成员 id → 链控件 */
   const heads = new Map();
   for (const c of chains) {
     const cid = String((c && c.id) || '');
@@ -1223,8 +1245,11 @@ function foldView(project, fm) {
     const members = ids.map((id) => byId.get(String(id))).filter((m) => !!m);
     if (members.length < 2) continue; // ≤1 可见成员：无折叠收益，恒不渲染控件
     const title = String((c && c.title) || cid);
-    if (collapsed.has(cid)) folded.set(cid, { title, members });
-    else heads.set(chainHeadOf(c, members), { id: cid, title, n: members.length });
+    // control 透传（缺省 undefined = 既有面）：无 ChainLedger 面的作用域链（delegate
+    // 链 control:false）折叠卡/入口卡省略取消钮（fmNodeCard 消费）。
+    const control = c && c.control === false ? false : undefined;
+    if (collapsed.has(cid)) folded.set(cid, { title, members, control });
+    else heads.set(chainHeadOf(c, members), { id: cid, title, n: members.length, control });
   }
   if (!folded.size && !heads.size) return fm;
   /** @type {Map<string, string>} 被折叠成员 id → 链卡 id */
@@ -1255,7 +1280,7 @@ function foldView(project, fm) {
     nodes.push(next);
   }
   for (const [cid, f] of folded) {
-    const card = chainCardNode(cid, f.title, f.members);
+    const card = chainCardNode(cid, f.title, f.members, f.control);
     // 链卡资源继承：跨链边（成员 in/deps/out 指向链外可见节点）聚合到卡片上——
     // 布局分层（in/deps 决定上游）与边锚定（in 代理边）均据此成立。
     /** @type {Set<string>} */
@@ -2087,7 +2112,11 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
     container.dataset.fmState = 'loading';
     container.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
   }
-  fetchFlowMap(projectName).then((fm) => {
+  // Data seam (delegate-plane re-drive): opts.fetchView overrides the default
+  // per-project REST fetch with an arbitrary view producer (same fm shape:
+  // {nodes, chains, meta}). The seq/gen staleness guards apply unchanged.
+  const fetcher = typeof opts.fetchView === 'function' ? opts.fetchView : fetchFlowMap;
+  fetcher(projectName).then((fm) => {
     if (seqByProject.get(projectName) !== seq || !container.isConnected) return; // 过期响应丢弃
     if ((genByProject.get(projectName) || 0) !== genAtStart) {
       scheduleReconcile(projectName); // 在途期间有增量落进缓存 → 这份旧了，重拉收敛
@@ -2178,6 +2207,18 @@ function ensureScroll(pane, id) {
 }
 
 // 标签页关闭时清理该项目的状态（不影响项目数据，数据在服务端 flow-map.json）。
+/** Drop all engine-side caches of one scope (tab-close cleanup body, exported for
+ *  non-tab scopes — the delegate-chain map's scope keys never ride flow-map-*
+ *  tab ids, so their lifecycle is owned by the delegate view layer). */
+export function dropFlowMapScope(project) {
+  fmByProject.delete(project);
+  seqByProject.delete(project);
+  genByProject.delete(project);
+  dropStore(project); // 归档 store 随视图生命周期（详情/链上下文数据源）
+  const timer = reconcileTimers.get(project);
+  if (timer) { clearTimeout(timer); reconcileTimers.delete(project); }
+}
+
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
   const id = e.detail?.id || '';
   if (typeof id === 'string' && id.startsWith('flow-map-')) {

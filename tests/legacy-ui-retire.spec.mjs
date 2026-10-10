@@ -218,7 +218,10 @@ test('T4: flowCanvas.js gone from static output; sources carry no legacy symbols
       // 换源即切（#56 残项 · 晨裁②）：节点区块退役——快照/WS 腿与链行构建器零残留
       // （raw 子串断言；本表符号不在任何注释出现，注释层归 legacy-ui-retire.static H 段）。
       'refreshNodeSnapshot', 'applyNodeWsEvent', 'buildChainRow', 'nodeCache', 'chainPendingAction']],
-    ['/css/taskList.css', ['@keyframes task-chain-', '.task-chain-badge', '.task-chain-member']],
+    // 链块族（task-chain-member/map/dotmap/motion keyframes）= 链结构行脸的
+    // 有意恢复面（本批命令）——不在禁表；'.task-chain-badge'（链行状态胶囊）
+    // 仍属退役面（链块头行的状态面 = glyph+词，不恢复胶囊）。
+    ['/css/taskList.css', ['.task-chain-badge']],
     ['/js/ws.js', ["'flowMail'", "'flowStarted'", "'flowNodesAdded'", "'flowProgress'", "'flowCompleted'", "'teamList'", "'treeBranchMounted'", "'treeBranchUnmounted'", "'treeBranchUpdated'"]],
     ['/js/state.js', ['flows:']],
     ['/js/i18n.js', ['legacy-btn', 'teams-btn', 'flows-btn', 'legacy-pop', 'flows-indicator', 'flows.panelTitle', 'activity.teams', 'activity.flows', 'activity.legacy']],
