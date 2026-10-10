@@ -100,13 +100,6 @@ final class NeblinkRelayTunnel(
     )
   }
 
-  /**
-   * The CURRENT connection's portal bridge (one per relay WS connection; the
-   * body channels and local WS cycles it holds die with the connection).
-   * Set in connectOnce after the upgrade, cleared at teardown.
-   */
-  @volatile private var portalBridge: Option[PortalTunnelBridge] = None
-
   /** Judgment-table rows 1/2: the host binding is in the terminal (revoked) state. */
   private def bindingTerminal: IO[Boolean] =
     portalDeps.fold(IO.pure(false))(_.bindingState.isUnbound)
@@ -665,9 +658,12 @@ final class NeblinkRelayTunnel(
   /** Establish a single WS connection; returns when the connection ends. */
   private def connectOnce(id: DeviceIdentity, url: String, token: String): IO[Unit] =
     Deferred[IO, Unit].flatMap { closed =>
+      // One portal face per connection — created BEFORE the socket so the
+      // listener can carry it from the very first frame it delivers.
+      val portalConn = new PortalConnection(dispatcher)
       IO.blocking {
         val wsUri = buildRelayWsUri(url, id)
-        val listener = new RelayWsListener(this, closed, dispatcher)
+        val listener = new RelayWsListener(this, closed, dispatcher, portalConn)
         // HTTP/1.1 pinned (D1). Evidence: this peer is neblink-server behind
         // the SAME Caddy as NeblinkClient — see the canonical note there. The
         // old "avoid HTTP/2 TLS issues with Caddy" wording asserted a cause
@@ -691,11 +687,11 @@ final class NeblinkRelayTunnel(
           .get(10, TimeUnit.SECONDS)
         // Phase 3a: one portal bridge per relay connection — the per-requestId
         // body channels and local WS cycles it holds die with this socket.
-        // (Tiny window before this assignment: frames arriving between the
-        // upgrade completing and this line drop with an explicit
-        // "bridge not wired" WARN; the server never sends portal frames in
-        // that window — they require a mint/binding cycle first.)
-        portalBridge = portalDeps.map(deps => new PortalTunnelBridge(deps, new RelayFrameSender(w)))
+        // (Tiny window before this bind: frames arriving between the upgrade
+        // completing and this line drop with an explicit "bridge not wired"
+        // WARN; the server never sends portal frames in that window — they
+        // require a mint/binding cycle first.)
+        portalDeps.foreach(deps => portalConn.bind(new PortalTunnelBridge(deps, new RelayFrameSender(w))))
         wsRef = Some(w)
         alive.set(true)
         lastPong.set(System.currentTimeMillis())
@@ -726,18 +722,15 @@ final class NeblinkRelayTunnel(
           )
         }
         logger.infoSync(s"Relay tunnel connected: $wsUri")
+        // Self-driven portal lifecycle (staging fix): the mailbox consumer
+        // starts and the teardown arms HERE, through the dispatcher — not off
+        // the connectOnce chain tail, which stalls across reconnect rounds
+        // when the chain runs as a dispatcher task (repro: consumer seconds
+        // late on the first connection, never on the second — every answer
+        // then left through a stale, output-closed sender).
+        portalConn.armLifecycle(closed)
         ()
-      } *> {
-        // Block until WS closes, then tear the portal bridge down (end open
-        // body cycles, abort local WS bridges, stop the mailbox consumer).
-        val waitClosed: IO[Unit] = portalBridge match
-          case Some(bridge) =>
-            bridge.run.start.flatMap { mailboxFiber =>
-              closed.get *> bridge.teardown() *> mailboxFiber.cancel *> IO { portalBridge = None }
-            }
-          case None => closed.get
-        waitClosed
-      } <* IO.blocking {
+      } *> closed.get <* IO.blocking {
           alive.set(false)
           stopHeartbeat()
           wsRef = None
@@ -955,12 +948,13 @@ final class NeblinkRelayTunnel(
   end handleDeviceStatusUpdate
 
   /**
-   * Phase 3a (design §3.1): dispatch one decoded downlink portal frame. The
-   * bridge enqueues into its single-consumer mailbox, so per-requestId
-   * ordering (body_frame seq, ws_frame stream) is preserved from here on.
-   * Called from the WS listener thread — never blocks.
+   * Phase 3a (design §3.1): dispatch one decoded downlink portal frame into
+   * THE CONNECTION'S OWN holder — the listener carries its connection's
+   * [[PortalConnection]], so dispatch can never cross connections (reconnect
+   * rebinding is by construction, not by field discipline). Called from the
+   * WS listener thread — never blocks.
    */
-  private[neblink] def dispatchPortalFrame(frame: PortalWireCodec.PortalFrame): Unit =
+  private[neblink] def dispatchPortalFrame(frame: PortalWireCodec.PortalFrame, conn: PortalConnection): Unit =
     frame match
       case _: PortalWireCodec.MigrationChunk =>
         // Explicit not-implemented case (design §3.1): the migration relay face
@@ -969,13 +963,12 @@ final class NeblinkRelayTunnel(
         // that would misreport contract drift.
         logger.warnSync("MigrationChunk frame dropped: migration relay face is not implemented in this phase")
       case _ =>
-        portalBridge match
-          case Some(bridge) => bridge.enqueueFrame(frame)
-          case None =>
-            logger.warnSync(
-              "portal frame dropped: no portal bridge wired for this connection " +
-                s"branch=P2 type=${frame.getClass.getSimpleName}"
-            )
+        if conn.hasBridge then conn.dispatch(frame)
+        else
+          logger.warnSync(
+            "portal frame dropped: no portal bridge wired for this connection " +
+              s"branch=P2 type=${frame.getClass.getSimpleName}"
+          )
 
   /**
    * Judgment-table row 2 discriminator (design §3.5 / §2.6): a 401 upgrade
@@ -1319,7 +1312,8 @@ end NeblinkRelayTunnel
 private final class RelayWsListener(
   tunnel: NeblinkRelayTunnel,
   closed: cats.effect.Deferred[IO, Unit],
-  dispatcher: Dispatcher[IO]
+  dispatcher: Dispatcher[IO],
+  portalConn: PortalConnection
 ) extends WebSocket.Listener:
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
@@ -1526,7 +1520,7 @@ private final class RelayWsListener(
   private def handlePortalFrame(text: String, json: Json): Unit =
     PortalWireCodec.decodeJson(json) match
       case Right(frame) =>
-        tunnel.dispatchPortalFrame(frame)
+        tunnel.dispatchPortalFrame(frame, portalConn)
       case Left(rej) =>
         logger.warnSync(
           "relay frame dropped: portal contract rejection " +

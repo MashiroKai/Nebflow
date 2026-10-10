@@ -1,7 +1,7 @@
 package nebflow.neblink
 
 import cats.effect.IO
-import cats.effect.std.Queue
+import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.{Chunk, Stream}
@@ -857,3 +857,57 @@ private[neblink] object PortalTunnelBridge:
   end WsCycle
 
 end PortalTunnelBridge
+
+/**
+ * ONE connection's portal face (staging fix, deterministic repro: after a
+ * relay reconnect the tunnel-level mutable bridge field could hold a bridge
+ * whose mailbox consumer was dead or not yet started — frames were offered
+ * into it and vanished silently, and every answer went out through a stale
+ * sender holding the closed socket: `java.io.IOException: Output closed`).
+ *
+ * This holder replaces the shared tunnel field:
+ *  - the LISTENER carries its own connection's holder, so dispatch can never
+ *    cross connections (a new session's frames reach the new bridge/sender
+ *    by construction; the old connection's frames die with the old bridge);
+ *  - the mailbox consumer's lifecycle does NOT hang off the connectOnce
+ *    chain tail (which stalls across reconnect rounds when the chain runs as
+ *    a dispatcher task — the repro showed the consumer starting seconds late
+ *    on the first connection and never on the second). [[armLifecycle]]
+ *    drives start + teardown through the dispatcher instead, the same
+ *    mechanism every other listener-spawned effect already uses.
+ */
+private[neblink] final class PortalConnection(dispatcher: Dispatcher[IO]):
+
+  private val logger = NebflowLogger.forName("nebflow.neblink.relay")
+
+  private val bridgeRef = new java.util.concurrent.atomic.AtomicReference[Option[PortalTunnelBridge]](None)
+  private val consumer =
+    new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
+
+  /** Bind this connection's bridge (connectOnce setup, right after the upgrade). */
+  def bind(bridge: PortalTunnelBridge): Unit = bridgeRef.set(Some(bridge))
+
+  def hasBridge: Boolean = bridgeRef.get.isDefined
+
+  /** Route one decoded frame into THIS connection's bridge (buffered until the consumer starts). */
+  def dispatch(frame: PortalWireCodec.PortalFrame): Unit =
+    bridgeRef.get.foreach(_.enqueueFrame(frame))
+
+  /**
+   * Self-driven lifecycle (called once from the connectOnce setup, on the
+   * socket thread): start the mailbox consumer, then — when the connection's
+   * `closed` latch completes — tear the bridge down and cancel the consumer.
+   * Frames offered before the consumer starts are buffered by the unbounded
+   * mailbox and processed as soon as it runs.
+   */
+  def armLifecycle(closed: cats.effect.Deferred[IO, Unit]): Unit =
+    bridgeRef.get.foreach { bridge =>
+      dispatcher.unsafeRunAndForget(
+        bridge.run.start.flatMap(f => IO(consumer.set(Some(f)))) >>
+          closed.get *> bridge.teardown() *> IO(consumer.getAndSet(None)).flatMap {
+            _.fold(IO.unit)(_.cancel).void
+          }
+      )
+    }
+
+end PortalConnection

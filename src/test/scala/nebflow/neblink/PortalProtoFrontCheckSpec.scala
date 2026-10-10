@@ -6,6 +6,7 @@ import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 
+import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -256,6 +257,91 @@ class PortalProtoFrontCheckSpec extends CatsEffectSuite:
           _ = assert(
             cleared,
             "judgment-table row 4: the successful upgrade must clear the terminal binding state"
+          )
+          _ <- fiber.cancel *> tunnel.stop()
+        yield ()
+      }
+    }
+
+  // ── Reconnect rebinding（staging 活体缺陷：重连后发送面陈旧）────────────
+
+  test("relay reconnect rebinds the portal send face: answers flow on the NEW session"):
+    withFixture { fix =>
+      fix.relayMode = RelayAuthFixtureServer.RelayMode.AcceptIfLive
+      fix.recordClientFrames = true
+      Dispatcher.parallel[IO].use { dispatcher =>
+        for
+          ms <- NeblinkService.create(0, dispatcher)
+          client = mkClient(fix)
+          _ = ms.setRelayClient(Some(client))
+          _ <- client.login(Device, "qa-host", "macos", Nil)
+          _ <- ms.updateConfig(
+            _.copy(
+              enabled = true,
+              neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+            )
+          )
+          faces = new PortalHostFaces(gatewayPort = 1)
+          _ = faces.bindHttpApp(
+            org.http4s.HttpApp[IO] { (_: org.http4s.Request[IO]) =>
+              IO(
+                org.http4s.Response[IO](status = org.http4s.Status.Ok)
+                  .withBodyStream(fs2.Stream.emits("ok".getBytes(UTF_8)))
+              )
+            }
+          )
+          tunnel = new NeblinkRelayTunnel(
+            ms,
+            () => IO(client.currentSessionToken),
+            portalHost = Some(faces)
+          )(dispatcher)
+          _ = ms.setRelayTunnel(tunnel)
+          fiber <- tunnel.connect().start
+          firstUp <- waitUntil(10.seconds)(IO(fix.attemptCount(101) >= 1))
+          _ <- IO(assert(firstUp, "baseline: first relay connection must be up"))
+          // Control arm: a portal cycle on the FIRST connection must answer
+          // (200 from the bound app) — proves the dispatch/send face works
+          // before the reconnect is thrown at it.
+          _ <- IO(
+            fix.sendTextToRelayBig(
+              s"""{"type":"http_request","proto":1,"requestId":"$Rid","method":"GET","path":"/api/x","headers":{}}"""
+            )
+          )
+          preAnswer <- waitUntil(5.seconds)(
+            IO(fix.clientFrames.exists(f => f.contains("http_response") && f.contains(Rid)))
+          )
+          _ <- IO(
+            assert(
+              preAnswer,
+              s"control arm: the first-connection portal cycle must answer; frames=${fix.clientFrames}"
+            )
+          )
+          // Staging shape: the server side hard-closes the relay socket while
+          // the host keeps running (network blip / server restart).
+          _ <- IO(fix.closeAllRelaySockets())
+          reconnected <- waitUntil(30.seconds)(IO(fix.attemptCount(101) >= 2))
+          _ <- IO(
+            assert(reconnected, s"the tunnel must reconnect with a fresh socket (${fix.relayAttempts})")
+          )
+          // A portal http_request on the NEW session must get its answer frame
+          // OUT on the NEW socket — no stale sender (java.io.IOException:
+          // Output closed), no silent drop. The 503 shape is expected and is
+          // itself the proof: no lifted HTTP app is bound in this harness, so
+          // a live send face is the only way this frame exists.
+          sent <- IO(
+            fix.sendTextToRelayBig(
+              s"""{"type":"http_request","proto":1,"requestId":"$Rid","method":"GET","path":"/api/x","headers":{}}"""
+            )
+          )
+          _ <- IO(assert(sent >= 1, "the fixture must have an open relay socket to push into"))
+          answered <- waitUntil(10.seconds)(
+            IO(fix.clientFrames.count(f => f.contains("http_response") && f.contains(Rid)) >= 2)
+          )
+          _ <- IO(
+            assert(
+              answered,
+              s"the post-reconnect portal cycle must answer over the NEW socket; frames=${fix.clientFrames}"
+            )
           )
           _ <- fiber.cancel *> tunnel.stop()
         yield ()
