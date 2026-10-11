@@ -154,6 +154,12 @@ lazy val root = (project in file("."))
         "-XX:HeapDumpPath=.nebflow/logs/jvm/",
         // GC 日志自带上限轮转（5 个文件 × 10M），同样落相对运行时路径。
         "-Xlog:gc*:file=.nebflow/logs/jvm/gc.log:time,uptime:filecount=5,filesize=10M",
+        // phase 2 daemon 批（§1.5 前台豁免）：sbt fork 出的 nebflow.Main 标记为
+        // 前台形态 —— dev/sbt 链保持今日逐字节的前台行为（quit stdin 链 / Ctrl+C /
+        // 进程树形态零变化），产品面（assembly jar）不设此属性 ⇒ 走 daemon 分支。
+        // 刻意加在本裸块 Seq 末尾（同一机制同一路径，零新 scope —— 新开
+        // `(Compile, run) / javaOptions` scope 有委托链断链风险）。
+        "-Dnebflow.start.foreground=true",
       )
     },
 

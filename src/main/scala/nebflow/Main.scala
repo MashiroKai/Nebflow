@@ -8,11 +8,86 @@ import nebflow.shared.{Config, PathUtil}
 
 import scala.util.Try
 
+// ── Dispatch decision core (phase 2 daemon plan §1.1, F-6) ───────────────
+//
+// Pure, IO-free, disk-free: the whole start-path decision tree lives here so
+// the spec can drive the full matrix (flags x commands) without booting a
+// Main. `Main.run` only orchestrates IO per the returned Dispatch.
+
+sealed trait Dispatch
+object Dispatch:
+  /** `--succeed <intent>` on the start path — hot-restart successor boot. */
+  final case class Succeed(intent: os.Path) extends Dispatch
+  /** `--daemon-child` — the spawned gateway JVM booting under strict gating. */
+  case object StrictChild extends Dispatch
+  /** Foreground exemption — today's full start semantics (sbt run / explicit). */
+  case object ForegroundLegacy extends Dispatch
+  /** Classpath-empty (jpackage/bundled) form — no spawn possible, run foreground. */
+  case object ForegroundNoSpawn extends Dispatch
+  /** Default product form — parent launcher spawns the daemon child JVM. */
+  case object Daemon extends Dispatch
+  /** Everything else (incl. `--succeed X status`) goes to the CLI router. */
+  case object CliRoute extends Dispatch
+
+object MainDispatch:
+
+  private val StartModes = Set("start", "-s", "--server")
+
+  /**
+   * The start-path decision. `--succeed` is deliberately NOT top-level: it
+   * only diverts on the start/Nil path (today's structure), so
+   * `nebflow --succeed X status` routes to CliRouter and runs `status`
+   * (R2-2b regression face). Precedence inside the start path: successor
+   * boot > daemon child > foreground > spawnability > daemon.
+   */
+  def decide(
+      cmdArgs: List[String],
+      succeedOpt: Option[os.Path],
+      daemonChild: Boolean,
+      foreground: Boolean,
+      classPathSpawnable: Boolean
+  ): Dispatch =
+    val isStart = cmdArgs match
+      case Nil          => true
+      case head :: _    => StartModes.contains(head)
+    if !isStart then Dispatch.CliRoute
+    else
+      succeedOpt match
+        case Some(intent) => Dispatch.Succeed(intent)
+        case None =>
+          if daemonChild then Dispatch.StrictChild
+          else if foreground then Dispatch.ForegroundLegacy
+          else if !classPathSpawnable then Dispatch.ForegroundNoSpawn
+          else Dispatch.Daemon
+
+  /**
+   * Strict-boot port gate verdict: only PortFree may boot; a nebflow
+   * instance or foreign occupant is a zero-signal refusal (ExitCode.Error).
+   */
+  def decideStrictPort(state: SingleInstanceGuard.PortState): Either[ExitCode, Unit] =
+    state match
+      case SingleInstanceGuard.PortFree => Right(())
+      case _                            => Left(ExitCode.Error)
+
+  /** The refusal text paired with a Left from [[decideStrictPort]]. */
+  def strictRefusalMessage(state: SingleInstanceGuard.PortState, port: Int): Option[String] =
+    state match
+      case SingleInstanceGuard.PortFree => None
+      case SingleInstanceGuard.NebflowInstance(_) =>
+        Some(
+          s"daemon child refused: port $port already served by a nebflow instance — " +
+            "not focusing (no terminal), not killing"
+        )
+      case SingleInstanceGuard.ForeignOccupant(detail) =>
+        Some(s"ERROR: $detail — nebflow cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT).")
+
+end MainDispatch
+
 object Main extends IOApp:
 
   def run(args: List[String]): IO[ExitCode] =
-    // Phase 1: Parse --home and --port global flags before any dispatching
-    val (homeOpt, portOpt, succeedOpt, remaining) = parseGlobalFlags(args)
+    // Phase 1: Parse global flags before any dispatching
+    val (homeOpt, portOpt, succeedOpt, daemonChild, explicitForeground, remaining) = parseGlobalFlags(args)
 
     homeOpt.foreach { h =>
       // 产品侧同源（2026-09-10 作者裁定）：`--home` 决定一切落盘位置，日志同属
@@ -38,45 +113,71 @@ object Main extends IOApp:
     }
     portOpt.foreach(p => GatewayClient.setPort(p))
 
-    // Phase 2: Command dispatching
-    val startModes = Set("start", "-s", "--server")
-    val stopModes = Set("stop")
-    // Filter out display flags for command matching
+    // Foreground determination (phase 2 daemon plan §1.5): sbt forks this
+    // JVM with -Dnebflow.start.foreground=true (build.sbt javaOptions), so
+    // the dev form keeps today's byte-identical foreground behavior; an
+    // explicit --foreground / NEBFLOW_START_FOREGROUND=1 is the operator
+    // escape hatch (still the launcher plane, so stop may manage it).
+    val syspropForeground = sys.props.get("nebflow.start.foreground").contains("true")
+    val envForeground = sys.env.get("NEBFLOW_START_FOREGROUND").contains("1")
+    val foreground = explicitForeground || syspropForeground || envForeground
+    // Meta attribution for foreground boots: sbt-owned when injected by the
+    // build (conservative — stop refuses by default), launcher otherwise.
+    val foregroundStartedBy =
+      if syspropForeground then PidMeta.StartedBySbt else PidMeta.StartedByLauncher
+
+    // Phase 2: Command dispatching (stop migrated back into CliRouter —
+    // its --json/--quiet and exit-code faces are the router's own).
     val cmdArgs = remaining.filterNot(a => a == "--json" || a == "--quiet")
 
-    cmdArgs match
-      case Nil =>
-        // No args → start Gateway (backward compatible)
-        startGateway(succeedOpt)
-      case head :: _ if stopModes.contains(head) =>
-        // stop command
-        ProcessManager.stop().as(ExitCode.Success)
-      case head :: rest if startModes.contains(head) =>
-        // start command — launch Gateway
-        startGateway(succeedOpt)
-      case "help" :: _ =>
+    MainDispatch.decide(cmdArgs, succeedOpt, daemonChild, foreground, DaemonSpawn.classPathSpawnable) match
+      case Dispatch.CliRoute =>
         CliRouter.run(remaining)
-      case _ =>
-        // All other commands go through CLI router
-        CliRouter.run(remaining)
+      case Dispatch.Succeed(intentPath) =>
+        // F-5: first-run config only on the start path — pure query commands
+        // keep zero write side effects.
+        ensureFirstRunConfig() *> succeedGateway(intentPath)
+      case Dispatch.StrictChild =>
+        strictBoot()
+      case Dispatch.ForegroundLegacy =>
+        startGatewayLegacy(foregroundStartedBy)
+      case Dispatch.ForegroundNoSpawn =>
+        // R2-4: jpackage/bundled forms have an empty java.class.path — the
+        // child JVM could not be spawned. Degrade to today's foreground form
+        // (unchanged .app behavior) with a stderr declaration.
+        IO.blocking(
+          System.err.println(
+            "daemon spawn unavailable (empty java.class.path — jpackage/bundled form); running in foreground"
+          )
+        ) *> startGatewayLegacy(PidMeta.StartedByLauncher)
+      case Dispatch.Daemon =>
+        startGatewayDaemon()
 
     end match
 
   end run
 
   /**
-   * Parse --home, --port, --no-browser, --succeed from args, returning
-   * (homeOpt, portOpt, succeedIntentOpt, remainingArgs).
+   * Parse --home, --port, --no-browser, --succeed, --daemon-child,
+   * --foreground from args, returning
+   * (homeOpt, portOpt, succeedIntentOpt, daemonChild, foreground, remainingArgs).
    *
    * --succeed <intentPath>（hot-restart 批设计 §3.3）：热重启后继进场旗标——
    * 仅热重启编排器 spawn 的后继进程携带；普通启动永不出现（普通启动不解析
    * 任何 intent）。
+   *
+   * --daemon-child / --foreground (phase 2): consumed HERE, never leaked into
+   * `remaining` — a leaked flag would hit CliRouter's unknown-flag face.
    */
-  private def parseGlobalFlags(args: List[String]): (Option[String], Option[Int], Option[os.Path], List[String]) =
+  private def parseGlobalFlags(
+      args: List[String]
+  ): (Option[String], Option[Int], Option[os.Path], Boolean, Boolean, List[String]) =
     var home: Option[String] = None
     var port: Option[Int] = None
     var succeed: Option[os.Path] = None
     var noBrowser: Boolean = false
+    var daemonChild: Boolean = false
+    var foreground: Boolean = false
     val remaining = List.newBuilder[String]
     var i = 0
     while i < args.length do
@@ -93,12 +194,18 @@ object Main extends IOApp:
         case "--succeed" if i + 1 < args.length =>
           succeed = Some(os.Path(expandHome(args(i + 1)), os.pwd))
           i += 2
+        case "--daemon-child" =>
+          daemonChild = true
+          i += 1
+        case "--foreground" =>
+          foreground = true
+          i += 1
         case other =>
           remaining += other
           i += 1
     end while
     if noBrowser then GatewayConfig.setNoBrowser(true)
-    (home, port, succeed, remaining.result())
+    (home, port, succeed, daemonChild, foreground, remaining.result())
 
   end parseGlobalFlags
 
@@ -108,77 +215,128 @@ object Main extends IOApp:
     else if path == "~" then sys.props("user.home")
     else path
 
-  private def startGateway(succeedIntent: Option[os.Path] = None): IO[ExitCode] =
-    // Ensure config directory exists (first-run setup)
+  /** Ensure config directory exists (first-run setup; start path only — F-5). */
+  private def ensureFirstRunConfig(): IO[Unit] = IO.blocking {
     val configPath = Config.DefaultConfigPath
     if !os.exists(configPath) then os.write.over(configPath, "{}", createFolders = true)
+  }
 
-    succeedIntent match
-      case Some(intentPath) =>
-        // 热重启后继分流（hot-restart 批设计 §3.3 / §4.2）：必须早于 pid 快路径与
-        // 端口分类闸——否则后继会被「聚焦既有实例」语义劝退（:23-26 裁定语义对
-        // 同一实例的接力后继不适用）。
-        succeedGateway(intentPath)
-      case None =>
-        ProcessManager.readPid() match
-          case Some(pid) if ProcessManager.isRunning(pid) =>
-            // PID fast path (same home). Port-level URL is probed best-effort so
-            // the focus action opens the live instance even when the pid file's
-            // port assumption differs (--port override on the running instance).
-            for
-              cfg <- nebflow.gateway.GatewayConfig.load
-              state = pidFocusState(cfg)
-              _ <- state match
-                case Some(url) =>
-                  // 门户开门（neblink portal MVP, 2026-10-10）：聚焦目标经 PortalUrl
-                  // 解析（env > config > 生产缺省；回落 = 本地 url 原样）。健康探测
-                  // （probeNebflow）仍打 localhost:port 原样不动。
-                  nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
-                    nebflow.cli.SingleInstanceGuard.focusExisting(
-                      focusTarget,
-                      s"pid $pid",
-                      openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                    )
-                  }
-                case None =>
-                  IO.println(s"nebflow is already running (pid: $pid)") *>
-                    IO.println("Run 'nebflow stop' to stop it.")
-            // Focusing an existing instance is a success exit — the desktop
-            // .app relaunch must not look like a crash (stdout is discarded
-            // there; the browser focus is the visible action).
-            yield ExitCode.Success
-          case _ =>
-            // Port-level guard (2026-08-27 hard requirement): the pid file is
-            // per-home and misses cross-home collisions, stale files, and older
-            // builds — the port is the actual contended resource.
-            nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
+  /**
+   * Daemon-child boot (R2-2a): the spawned child JVM carries its OWN strict
+   * port gate — a manual `nebflow --daemon-child --port 8080` against a live
+   * nebflow instance on 8080 must refuse with zero signals, never reach
+   * GatewayMain's ensureSingleInstance kill path. No pid fast path (the
+   * child has no terminal; focusing is meaningless) and no meta/launcher
+   * face — bootGateway writes .pid + meta as the real gateway process.
+   */
+  private def strictBoot(): IO[ExitCode] =
+    ensureFirstRunConfig() *>
+      GatewayConfig.load.flatMap { cfg =>
+        nebflow.cli.SingleInstanceGuard
+          .checkPort(cfg.host.toString, cfg.port.value)
+          .flatMap { state =>
+            MainDispatch.decideStrictPort(state) match
+              case Right(()) =>
+                bootGateway(PidMeta.StartedByLauncher, PidMeta.ModeDaemon)
+              case Left(code) =>
+                val msg = MainDispatch
+                  .strictRefusalMessage(state, cfg.port.value)
+                  .getOrElse("daemon child refused to start")
+                IO.blocking(System.err.println(msg)).as(code)
+          }
+      }
+
+  /**
+   * Focus an already-running instance (pid fast path shared by the legacy
+   * foreground and daemon start faces; .app relaunch relies on the
+   * exit-0-focus semantics — must never look like a crash exit).
+   */
+  private def focusRunningPid(pid: Long): IO[ExitCode] =
+    for
+      cfg <- nebflow.gateway.GatewayConfig.load
+      state = pidFocusState(cfg)
+      _ <- state match
+        case Some(url) =>
+          // 门户开门（neblink portal MVP, 2026-10-10）：聚焦目标经 PortalUrl
+          // 解析（env > config > 生产缺省；回落 = 本地 url 原样）。健康探测
+          // （probeNebflow）仍打 localhost:port 原样不动。
+          nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
+            nebflow.cli.SingleInstanceGuard.focusExisting(
+              focusTarget,
+              s"pid $pid",
+              openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+            )
+          }
+        case None =>
+          IO.println(s"nebflow is already running (pid: $pid)") *>
+            IO.println("Run 'nebflow stop' to stop it.")
+    // Focusing an existing instance is a success exit — the desktop
+    // .app relaunch must not look like a crash (stdout is discarded
+    // there; the browser focus is the visible action).
+    yield ExitCode.Success
+
+  /** Port gate with focus/foreign handling shared by both start faces. */
+  private def portGateThen(onFree: => IO[ExitCode]): IO[ExitCode] =
+    nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
+      nebflow.cli.SingleInstanceGuard
+        .checkPort(cfg.host.toString, cfg.port.value)
+        .flatMap {
+          case nebflow.cli.SingleInstanceGuard.PortFree =>
+            onFree
+          case nebflow.cli.SingleInstanceGuard.NebflowInstance(url) =>
+            // 门户开门（同 pid 快道）：聚焦目标换 PortalUrl 解析值；探测原样。
+            nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
               nebflow.cli.SingleInstanceGuard
-                .checkPort(cfg.host.toString, cfg.port.value)
-                .flatMap {
-                  case nebflow.cli.SingleInstanceGuard.PortFree =>
-                    bootGateway()
-                  case nebflow.cli.SingleInstanceGuard.NebflowInstance(url) =>
-                    // 门户开门（同 pid 快道）：聚焦目标换 PortalUrl 解析值；探测原样。
-                    nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
-                      nebflow.cli.SingleInstanceGuard
-                        .focusExisting(
-                          focusTarget,
-                          "same port",
-                          openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                        )
-                        .as(ExitCode.Success)
-                    }
-                  case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
-                    IO.println(s"ERROR: $detail — nebflow cannot start.") *>
-                      IO.println(
-                        "Stop it, or pick another port (--port / GATEWAY_PORT)."
-                      ) *> IO.pure(ExitCode.Error)
-                }
+                .focusExisting(
+                  focusTarget,
+                  "same port",
+                  openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                )
+                .as(ExitCode.Success)
             }
+          case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
+            IO.println(s"ERROR: $detail — nebflow cannot start.") *>
+              IO.println(
+                "Stop it, or pick another port (--port / GATEWAY_PORT)."
+              ) *> IO.pure(ExitCode.Error)
+        }
+    }
 
-    end match
+  /**
+   * Today's full start semantics (foreground exemption, §1.5): pid fast
+   * path + port gate + foreground bootGateway — preserved byte-for-byte for
+   * the sbt dev chain (build.sbt injects nebflow.start.foreground=true) and
+   * the explicit --foreground / env escape hatches.
+   */
+  private def startGatewayLegacy(metaStartedBy: String): IO[ExitCode] =
+    ensureFirstRunConfig() *>
+      (ProcessManager.readPid() match
+        case Some(pid) if ProcessManager.isRunning(pid) =>
+          focusRunningPid(pid)
+        case _ =>
+          // Port-level guard (2026-08-27 hard requirement): the pid file is
+          // per-home and misses cross-home collisions, stale files, and older
+          // builds — the port is the actual contended resource.
+          portGateThen(bootGateway(metaStartedBy, PidMeta.ModeForeground))
+      )
 
-  end startGateway
+  /**
+   * Default product start face (§1.1): same idempotence (pid fast path
+   * focuses + exit 0) and the same port gate, then the parent launcher
+   * spawns the daemon child and waits for it to serve.
+   */
+  private def startGatewayDaemon(): IO[ExitCode] =
+    ensureFirstRunConfig() *>
+      (ProcessManager.readPid() match
+        case Some(pid) if ProcessManager.isRunning(pid) =>
+          focusRunningPid(pid)
+        case _ =>
+          portGateThen(
+            nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
+              DaemonSpawn.launch(PathUtil.dataRoot, cfg.port.value, GatewayConfig.noBrowser)
+            }
+          )
+      )
 
   /**
    * Hot-restart successor entry (--succeed <intent>, hot-restart 批设计 §3.3):
@@ -235,8 +393,13 @@ object Main extends IOApp:
   private def pidFocusState(cfg: nebflow.gateway.GatewayConfig): Option[String] =
     nebflow.cli.SingleInstanceGuard.checkPortBlocking(cfg.host.toString, cfg.port.value)
 
-  private def bootGateway(): IO[ExitCode] =
+  private def bootGateway(startedBy: String, mode: String): IO[ExitCode] =
     val pid = java.lang.ProcessHandle.current().pid()
+    // Phase 2 (§2.2, F-1): meta writeFresh BEFORE writePid — at this point
+    // `.pid` is absent or stale (the start path focused-and-exited on a live
+    // one), so the writeFresh rule allows it; the self-exemption in the rule
+    // keeps this correct even if the two writes were ever reordered.
+    PidMeta.writeFresh(startedBy, mode)
     ProcessManager.writePid(pid)
     // JVM shutdown hook as backup — ensures PID file cleanup even on SIGINT/SIGTERM
     Runtime.getRuntime.addShutdownHook(new Thread(() => ProcessManager.removePid()))

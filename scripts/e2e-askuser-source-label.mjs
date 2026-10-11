@@ -292,7 +292,7 @@ function startGateway() {
   const child = spawn('java', [
     '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
     '-cp', jar, 'nebflow.Main',
-    '--home', HOME, '--port', String(GATEWAY_PORT), '--no-browser', 'start',
+    '--home', HOME, '--port', String(GATEWAY_PORT), '--no-browser', '--foreground', 'start',
   ], {
     detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NEBFLOW_GATEWAY_PORT: String(GATEWAY_PORT) },

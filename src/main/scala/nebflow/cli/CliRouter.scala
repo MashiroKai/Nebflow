@@ -299,7 +299,11 @@ object CliRouter:
       // CLI 命令补全批（2026-09-20）：本机读数 / 本机取数 —— 网关不在时恰恰是它们
       // 最该可用的时候（health 的网关面与 logs 的取数面都自己探，不靠 ctx.client）。
       "health",
-      "logs"
+      "logs",
+      // phase 2 daemon 批（2026-10-10）：restart 的 stop 段必须在「网关在」时执行、
+      // start 段不依赖 ctx.client —— offline 归类正确（不归类则网关不在时
+      // executeSubcommand 先建 GatewayClient 报错退出，stop 段永远跑不到）。
+      "restart"
     )
 
   private val OfflineSubcommands: Set[(String, String)] = Set(
@@ -351,8 +355,8 @@ object CliRouter:
             IO.println(s"  ${c.name.padTo(16, ' ')}${c.description}")
           }
         } *> IO.println("") *>
-        IO.println("Global flags: --json, --quiet, --home <dir>, --port <n>, --no-browser") *>
-        IO.println("Exit codes: 0 ok · 1 error · 2 unreachable/timeout") *>
+        IO.println("Global flags: --json, --quiet, --home <dir>, --port <n>, --no-browser, --foreground") *>
+        IO.println("Exit codes: 0 ok · 1 error · 2 unreachable/timeout · 3 not running · 4 abnormal") *>
         IO.println("Use 'nebflow <command> --help' for command details")
 
   private def printCommandHelp(cmd: CliCommand, jsonMode: Boolean): IO[Unit] =

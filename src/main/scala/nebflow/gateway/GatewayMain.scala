@@ -30,7 +30,10 @@ import scala.concurrent.duration.*
 object GatewayMain extends IOApp:
   private val logger = NebflowLogger.forName("nebflow.gateway")
 
-  private def pidFilePath = java.nio.file.Paths.get(PathUtil.dataRoot.toString, "nebflow.pid")
+  // Phase 2 daemon plan §2.1: the legacy legacy-named pid file is retired —
+  // the single pid authority is `<dataRoot>/.pid` (cli/ProcessManager), written
+  // by Main.bootGateway for normal boots and by succeedPortGate for hot-
+  // restart successors. The guard logic below is unchanged.
 
   /**
    * Kill stale Nebflow processes before starting — but ONLY verified Nebflow
@@ -40,7 +43,6 @@ object GatewayMain extends IOApp:
    * before it may be destroyed (see [[StaleProcessGuard]] — restart flows
    * still clear their stale instance).
    * A foreign occupant refuses startup loudly; it is NEVER killed.
-   * Falls back to PID file only on Windows.
    */
   private def ensureSingleInstance(port: Int): IO[Unit] =
     IO.blocking {
@@ -62,7 +64,6 @@ object GatewayMain extends IOApp:
                 try ProcessHandle.of(pid).ifPresent(_.destroyForcibly())
                 catch case _: Exception => ()
               Thread.sleep(1000)
-            writePidFile()
           case Left(foreign) =>
             // P0 2026-09-06 (09:07 incident class): a NON-nebflow process
             // holds the port. NEVER destroy it — refuse startup loudly; the
@@ -74,23 +75,8 @@ object GatewayMain extends IOApp:
             logger.error(detail).unsafeRunSync()
             throw new IllegalStateException(detail)
         end match
-      else writePidFile()
       end if
     }
-
-  /**
-   * Write the current PID file (unchanged behavior of the pre-hardening tail
-   * of ensureSingleInstance; reached only when startup is NOT refused).
-   */
-  private def writePidFile(): Unit =
-    val pf = pidFilePath
-    java.nio.file.Files.createDirectories(pf.getParent)
-    java.nio.file.Files.write(
-      pf,
-      ProcessHandle.current.pid.toString.getBytes("UTF-8"),
-      java.nio.file.StandardOpenOption.CREATE,
-      java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
-    )
 
   // ===== 热重启引导闸（hot-restart 批设计 §3.3）=====
 
@@ -198,7 +184,20 @@ object GatewayMain extends IOApp:
                   .void
             }
           ) *>
-          IO.blocking(writePidFile()) *>
+          IO.blocking {
+            // Phase 2 daemon plan §2.2 (F-2): the successor now writes the
+            // unified `.pid` (plus its ownership meta) instead of the retired
+            // legacy-named pid file — same timing as before (old pid confirmed dead,
+            // its removePid hook has completed, no race-delete window), which
+            // also fixes the long-standing "stop/status misreport the
+            // successor as not running" gap: the successor finally HAS a
+            // `.pid` for the stop/status faces to read.
+            nebflow.cli.ProcessManager.writePid(pid)
+            nebflow.cli.PidMeta.writeFresh(
+              nebflow.cli.PidMeta.StartedByLauncher,
+              nebflow.cli.PidMeta.ModeForeground
+            )
+          } *>
           logger.info(s"[hot-restart] port handover confirmed — successor (pid $pid) owns pid file, binding now")
     end match
   end succeedPortGate
