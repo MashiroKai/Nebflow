@@ -228,10 +228,15 @@ class PortalWireContractV1Spec extends FunSuite:
           // Contract 2.11: the success shape (ticket + expiresInSec, no error) and the
           // failure shape (error only) are mutually exclusive. The conflict is checked
           // before the iff-completeness checks so a frame carrying both sides reports
-          // field_conflict (the frozen negative vector's verdict).
+          // field_conflict (the frozen negative vector's verdict). expiresInSec without
+          // ticket contradicts the "present if and only if the mint succeeded" iff on
+          // both fields, so that combo is also a field_conflict — kept identical to the
+          // production codec (PortalWireCodec) so both faces agree on every input.
           _ <- (ticket.isDefined, expiresInSec.isDefined, error.isDefined) match
             case (true, _, true) | (_, true, true) =>
               Left(Rejection("field_conflict", fields = Some(List("ticket", "error"))))
+            case (false, true, false) =>
+              Left(Rejection("field_conflict", fields = Some(List("ticket", "expiresInSec"))))
             case (true, false, false) =>
               Left(Rejection("missing_required_field", field = Some("expiresInSec")))
             case (false, false, false) =>
@@ -581,6 +586,19 @@ class PortalWireContractV1Spec extends FunSuite:
   test("vector ids are unique (each vector registers exactly one munit test)"):
     val ids = entries.map(_.id)
     assertEquals(ids.distinct.size, ids.size, s"duplicate vector ids: $ids")
+
+  test("ConsoleTicketResult: expiresInSec without ticket is a field_conflict (iff on BOTH success fields)"):
+    // Contract 2.11: ticket and expiresInSec are each "present if and only if
+    // the mint succeeded" — one present and the other absent contradicts
+    // itself. No frozen vector covers the combo; this model-side pin keeps the
+    // model and the production codec (PortalWireCodec) provably aligned.
+    val frame =
+      """{"type":"ConsoleTicketResult","proto":1,"requestId":"0a1b2c3d-4e5f-4678-9abc-def012345678",""" +
+        """"mintId":"1f2e3d4c-5b6a-4978-8877-6a5b4c3d2e1f","expiresInSec":30}"""
+    assertEquals(
+      decodeFrame(frame).swap.toOption.map(r => (r.code, r.fields)),
+      Some(("field_conflict", Some(List("ticket", "expiresInSec"))))
+    )
 
   entries.foreach { v =>
     v.wire match

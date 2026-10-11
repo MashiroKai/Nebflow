@@ -59,7 +59,14 @@ final class NeblinkRelayTunnel(
    */
   tokenGetter: () => IO[Option[String]],
   /** A2A 一期（spec §5.1）：friend_event 推送回调（事件去重/未读/补拉在 FriendService）。 */
-  private[neblink] val friendService: Option[FriendService] = None
+  private[neblink] val friendService: Option[FriendService] = None,
+  /**
+   * Phase 3a portal tunnel faces (design §3): late-bound host faces (lifted
+   * HTTP slice + conn-guard tunnel port + gateway port). None = portal frame
+   * consumption is not wired (tests / pre-assembly shapes) — downlink portal
+   * frames then drop with an explicit WARN, never silently.
+   */
+  portalHost: Option[PortalHostFaces] = None
 )(dispatcher: Dispatcher[IO])
     extends RelayTunnelPort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isAlive,RemoteExecutor 选路读数)
   import NeblinkRelayTunnel.{AckOutcome, TunnelAuthStatus, shouldHealAuthFailure}
@@ -77,6 +84,33 @@ final class NeblinkRelayTunnel(
    * the state `relayAvailable = isAlive` cannot express (see authStatus).
    */
   @volatile private var lastAuthRejection: Option[TunnelAuthStatus] = None
+
+  /**
+   * Phase 3a portal dependencies (process-global, owned by the tunnel):
+   * late-bound faces + console ticket store + binding state machine +
+   * live identity. The binding state persists across restarts (unlike the
+   * kick park), so a revoked host stays terminal after a process restart.
+   */
+  private[neblink] val portalDeps: Option[PortalTunnelDeps] = portalHost.map { faces =>
+    new PortalTunnelDeps(
+      faces = faces,
+      consoleTickets = ConsoleTicketStore.unsafeCreate(),
+      bindingState = PortalBindingState.unsafeCreate(),
+      identity = neblinkService.identity
+    )
+  }
+
+  /** Judgment-table rows 1/2: the host binding is in the terminal (revoked) state. */
+  private def bindingTerminal: IO[Boolean] =
+    portalDeps.fold(IO.pure(false))(_.bindingState.isUnbound)
+
+  /**
+   * Terminal probe cadence (test seam over [[NeblinkRelayTunnel.TerminalProbeNap]]):
+   * production reads the constant; the terminal-loop spec shortens it so the
+   * dial-while-terminal behavior is observable without a 10-minute wait.
+   */
+  @volatile private[neblink] var terminalProbeNap: scala.concurrent.duration.FiniteDuration =
+    NeblinkRelayTunnel.TerminalProbeNap
 
   /**
    * Anti-loop counter: consecutive upgrade failures since the last successful
@@ -357,7 +391,11 @@ final class NeblinkRelayTunnel(
       // 流量），与既有「未配置 server URL」分支同族的安静梯子。
       neblinkService.activityEnabled.flatMap {
         case false => idleWhileDisabled(attempt)
-        case true => connectConfigured(attempt)
+        case true =>
+          bindingTerminal.flatMap {
+            case true  => probeWhileTerminal(attempt)
+            case false => connectConfigured(attempt)
+          }
       }
 
   /**
@@ -372,6 +410,27 @@ final class NeblinkRelayTunnel(
         s"Relay tunnel: NebLink is disabled (enabled=false) — no dial, retrying the gate in ${wait.toSeconds}s..."
       )
       .flatMap(_ => nap(wait) *> connectLoop(attempt + 1))
+
+  /**
+   * Terminal-binding probe leg (judgment table rows 1/2, design §3.5): while
+   * the host binding is revoked the tunnel keeps DIALING — the terminal state
+   * only replaces the fast reconnect ladder with a low fixed cadence. Each
+   * probe is a real upgrade attempt so that (a) the server-side binding
+   * gate's 401 terminal body keeps confirming the terminal state (row 2),
+   * and (b) a genuine re-bind (binding row back to bound for this host) is
+   * detected by the successful upgrade, which clears the terminal state
+   * (row 4, in connectOnce) and puts the loop back on the normal ladder.
+   * Never a sleep-only loop: without a dial, row 4 would be unreachable and
+   * a revoked host would stay dark forever. Interruptible by
+   * `ensure()`/`stop()` like every other nap.
+   */
+  private def probeWhileTerminal(attempt: Int): IO[Unit] =
+    logger
+      .debug(
+        s"Relay tunnel: host binding is terminal (revoked) — dialing the relay at a low " +
+          s"cadence (every ${terminalProbeNap.toSeconds}s) until a successful upgrade clears it"
+      )
+      .flatMap(_ => nap(terminalProbeNap) *> connectConfigured(attempt))
 
   private def connectConfigured(attempt: Int): IO[Unit] =
     // 每拍**只睡一次**（clientconn item 1）：修前是「拍首 delay + 分支 wait」双睡，
@@ -487,7 +546,32 @@ final class NeblinkRelayTunnel(
     val streak = authFailStreak.incrementAndGet()
     val nowMs = System.currentTimeMillis()
     val head = s"Relay tunnel upgrade rejected (auth): ${failure.summary}"
-    if !shouldHealAuthFailure(streak, nowMs, lastHealAtMs) then
+    if isTerminalBindingRejection(failure) then
+      // Judgment-table row 2 (design §3.5, authoritative signal): 401 with the
+      // binding-gate terminal body — the BINDING is dead, not the session, so
+      // a re-login is meaningless (and would be a login storm against a state
+      // only the portal can restore). Park in the terminal state (persisted)
+      // and let the low-frequency probe leg carry the reconnects.
+      for
+        _ <- portalDeps.fold(IO.unit)(_.bindingState.markUnbound().void)
+        _ <- IO {
+          lastAuthRejection = Some(
+            TunnelAuthStatus(
+              failure.statusCode.getOrElse(401),
+              nowMs,
+              healAttempted = false,
+              healSucceeded = false,
+              active = true
+            )
+          )
+        }
+        _ <- logger.warn(
+          s"$head — TERMINAL binding rejection (binding_revoked): no session self-heal, " +
+            s"probing every ${NeblinkRelayTunnel.TerminalProbeNap.toSeconds}s until the binding is restored"
+        )
+        _ <- if running.get() then connectLoop(attempt + 1) else IO.unit
+      yield ()
+    else if !shouldHealAuthFailure(streak, nowMs, lastHealAtMs) then
       IO {
         lastAuthRejection = Some(
           TunnelAuthStatus(
@@ -544,6 +628,22 @@ final class NeblinkRelayTunnel(
    * concurrent API 403s and this relay 403 collapse into one login.
    */
   private def healSession(): IO[Boolean] =
+    // Judgment-table row 1 short-circuit (design §3.5): while the host binding
+    // is terminal (revoked), a re-login cannot fix anything — the session is
+    // not what the server is rejecting. Never re-login in the terminal state.
+    bindingTerminal.flatMap {
+      case true =>
+        logger
+          .warn(
+            "Relay tunnel session self-heal SKIPPED: host binding is terminal (revoked) — " +
+              "re-login is pointless until the portal restores the binding"
+          )
+          .as(false)
+      case false =>
+        healSessionLive
+    }
+
+  private def healSessionLive: IO[Boolean] =
     IO(neblinkService.relayClientOpt).flatMap {
       case None =>
         logger.warn("Relay tunnel session self-heal: no live NebLink client — reporting only").as(false)
@@ -558,9 +658,12 @@ final class NeblinkRelayTunnel(
   /** Establish a single WS connection; returns when the connection ends. */
   private def connectOnce(id: DeviceIdentity, url: String, token: String): IO[Unit] =
     Deferred[IO, Unit].flatMap { closed =>
+      // One portal face per connection — created BEFORE the socket so the
+      // listener can carry it from the very first frame it delivers.
+      val portalConn = new PortalConnection(dispatcher)
       IO.blocking {
         val wsUri = buildRelayWsUri(url, id)
-        val listener = new RelayWsListener(this, closed, dispatcher)
+        val listener = new RelayWsListener(this, closed, dispatcher, portalConn)
         // HTTP/1.1 pinned (D1). Evidence: this peer is neblink-server behind
         // the SAME Caddy as NeblinkClient — see the canonical note there. The
         // old "avoid HTTP/2 TLS issues with Caddy" wording asserted a cause
@@ -582,6 +685,13 @@ final class NeblinkRelayTunnel(
           .header("Authorization", s"Bearer $token")
           .buildAsync(URI.create(wsUri), listener)
           .get(10, TimeUnit.SECONDS)
+        // Phase 3a: one portal bridge per relay connection — the per-requestId
+        // body channels and local WS cycles it holds die with this socket.
+        // (Tiny window before this bind: frames arriving between the upgrade
+        // completing and this line drop with an explicit "bridge not wired"
+        // WARN; the server never sends portal frames in that window — they
+        // require a mint/binding cycle first.)
+        portalDeps.foreach(deps => portalConn.bind(new PortalTunnelBridge(deps, new RelayFrameSender(w))))
         wsRef = Some(w)
         alive.set(true)
         lastPong.set(System.currentTimeMillis())
@@ -594,10 +704,33 @@ final class NeblinkRelayTunnel(
         // N3: re-arm the first-line INFO voice — a later outage (e.g. after
         // logout) gets one visible line instead of silence.
         noTokenInfoLogged.set(false)
+        // Judgment-table row 4 (design §3.5): a successful upgrade (101, no
+        // terminal code) clears the terminal binding state and re-enters the
+        // network. Pre-gate caveat: until the server binding gate (design
+        // §2.6) is deployed, an unbound device's upgrade still succeeds, so
+        // the first reconnect clears — deployment-order hard constraint puts
+        // the gate before/with this row.
+        portalDeps.foreach { deps =>
+          dispatcher.unsafeRunAndForget(
+            deps.bindingState.clearTerminal().flatMap { cleared =>
+              IO.whenA(cleared)(
+                logger.info(
+                  "Relay tunnel: successful upgrade cleared the terminal binding state — re-entering the network"
+                )
+              )
+            }
+          )
+        }
         logger.infoSync(s"Relay tunnel connected: $wsUri")
+        // Self-driven portal lifecycle (staging fix): the mailbox consumer
+        // starts and the teardown arms HERE, through the dispatcher — not off
+        // the connectOnce chain tail, which stalls across reconnect rounds
+        // when the chain runs as a dispatcher task (repro: consumer seconds
+        // late on the first connection, never on the second — every answer
+        // then left through a stale, output-closed sender).
+        portalConn.armLifecycle(closed)
         ()
-      } *> closed.get // block until WS closes
-        <* IO.blocking {
+      } *> closed.get <* IO.blocking {
           alive.set(false)
           stopHeartbeat()
           wsRef = None
@@ -608,6 +741,34 @@ final class NeblinkRelayTunnel(
 
   /** Execute a relay_request locally and send the response back over WS. */
   private[neblink] def handleRelayRequest(msg: Json, ws: WebSocket): IO[Unit] =
+    // Design §3.5 (revoked processing): while the host binding is terminal the
+    // relay TOOL face stops serving. The wire shape is unchanged (the frame
+    // still gets exactly one relay_response echoing its requestId) — only the
+    // outcome differs: error, zero local work. Zero-regression: this branch is
+    // reachable only AFTER a terminal state was entered through the new
+    // BindingControl / gate-body paths; a bound host takes the live path
+    // byte-for-byte as before.
+    bindingTerminal.flatMap {
+      case true =>
+        val requestId = msg.hcursor.downField("requestId").as[String].getOrElse("")
+        logger.warn(
+          "Relay request refused: host binding is terminal (revoked) — the relay tool face is retired"
+        ) *> IO.blocking {
+          val resp = Json.obj(
+            "type" -> "relay_response".asJson,
+            "requestId" -> requestId.asJson,
+            "output" -> "".asJson,
+            "error" -> "Host binding revoked: the relay tool face is retired on this host".asJson
+          )
+          try
+            ws.sendText(resp.noSpaces, true)
+            ()
+          catch case _: Exception => ()
+        }
+      case false => handleRelayRequestLive(msg, ws)
+    }
+
+  private def handleRelayRequestLive(msg: Json, ws: WebSocket): IO[Unit] =
     val hc = msg.hcursor
     val requestId = hc.downField("requestId").as[String].getOrElse("")
     val action = hc.downField("action").as[String].getOrElse("")
@@ -667,7 +828,7 @@ final class NeblinkRelayTunnel(
 
     end for
 
-  end handleRelayRequest
+  end handleRelayRequestLive
 
   /** Called by WS listener when pong arrives — refreshes heartbeat liveness. */
   private[neblink] def updateLastPong(): Unit =
@@ -785,6 +946,43 @@ final class NeblinkRelayTunnel(
     if deviceId.isEmpty then logger.debug("DeviceStatusUpdate frame without deviceId — ignored")
     else neblinkService.applyServerPeerStatus(deviceId, online)
   end handleDeviceStatusUpdate
+
+  /**
+   * Phase 3a (design §3.1): dispatch one decoded downlink portal frame into
+   * THE CONNECTION'S OWN holder — the listener carries its connection's
+   * [[PortalConnection]], so dispatch can never cross connections (reconnect
+   * rebinding is by construction, not by field discipline). Called from the
+   * WS listener thread — never blocks.
+   */
+  private[neblink] def dispatchPortalFrame(frame: PortalWireCodec.PortalFrame, conn: PortalConnection): Unit =
+    frame match
+      case _: PortalWireCodec.MigrationChunk =>
+        // Explicit not-implemented case (design §3.1): the migration relay face
+        // belongs to phase 5. Dropped HERE (dispatch level), independent of
+        // bridge wiring, so it never falls into the unknown-type branch —
+        // that would misreport contract drift.
+        logger.warnSync("MigrationChunk frame dropped: migration relay face is not implemented in this phase")
+      case _ =>
+        if conn.hasBridge then conn.dispatch(frame)
+        else
+          logger.warnSync(
+            "portal frame dropped: no portal bridge wired for this connection " +
+              s"branch=P2 type=${frame.getClass.getSimpleName}"
+          )
+
+  /**
+   * Judgment-table row 2 discriminator (design §3.5 / §2.6): a 401 upgrade
+   * rejection whose body carries the binding gate's terminal marker
+   * (`binding_revoked` + `terminal:true`). The body arrives redacted through
+   * [[RelayTunnelDiagnostics]] (the marker strings survive redaction — it only
+   * masks credential-shaped values). Any other 401/403 keeps the
+   * self-healable row-3 behavior.
+   */
+  private def isTerminalBindingRejection(failure: RelayTunnelDiagnostics.UpgradeFailure): Boolean =
+    failure.statusCode.contains(401) && failure.bodySnippet.exists { body =>
+      val b = body.toLowerCase(java.util.Locale.ROOT)
+      b.contains("binding_revoked") && b.matches("(?s).*\"terminal\"\\s*:\\s*true.*")
+    }
 
   // ===== Heartbeat =====
 
@@ -1041,6 +1239,17 @@ object NeblinkRelayTunnel:
     scala.concurrent.duration.DurationInt(30).seconds
 
   /**
+   * Terminal-binding probe cadence (judgment-table rows 1/2, design §3.5):
+   * while the host binding is revoked, the tunnel dials at this low fixed
+   * frequency instead of churning the reconnect ladder — enough for the
+   * server binding gate's 401 terminal body to keep confirming the state and
+   * for a genuine re-bind to be picked up by the next successful upgrade
+   * (row 4). 10 minutes per the design's "10min 低频探测".
+   */
+  private[neblink] val TerminalProbeNap: scala.concurrent.duration.FiniteDuration =
+    scala.concurrent.duration.DurationInt(10).minutes
+
+  /**
    * Anti-loop decision for the auth-rejection self-heal (the F2 obligation:
    * "重登失败不得无界循环"), mirroring `NeblinkClient.reloginAllowed`'s
    * single-shot rule.
@@ -1103,7 +1312,8 @@ end NeblinkRelayTunnel
 private final class RelayWsListener(
   tunnel: NeblinkRelayTunnel,
   closed: cats.effect.Deferred[IO, Unit],
-  dispatcher: Dispatcher[IO]
+  dispatcher: Dispatcher[IO],
+  portalConn: PortalConnection
 ) extends WebSocket.Listener:
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
@@ -1165,11 +1375,25 @@ private final class RelayWsListener(
   /**
    * 完整帧上送路径 —— 修前 `onText` 的既有分支逻辑（`type` 分派 + W9..W12 留痕）
    * **逐字搬运**，唯一变化是载荷来源（`data.toString` → 完整消息字符串；单帧场景下二者
-   * 逐字相同）。🔴 **禁止在本方法内新增/改写分支语义**（本批改动面 = 重组层）。
+   * 逐字相同）。fragreasm 批的「禁止在本方法内新增/改写分支语义」约束随该批收口；
+   * phase 3a（设计 §3.1）在此新增：proto 前置校验（P0）+ 契约帧族分支（P1），
+   * 既有分支（relay_request/ping/pong/friend_event/device_status_update/
+   * disconnect/ack + W10/W11）语义零改动。
    */
   private def handleFrame(ws: WebSocket, text: String): Unit =
     try
       decode[Json](text) match
+        case Right(json) if RelayWsListener.protoTooNew(json) =>
+          // P0（设计 §3.1 proto 校验统一前置）：proto 超过支持版本 ⇒ 对**所有**
+          // 帧族拒收（含 relay_request——host 侧单一入口、无回落路径，故服务端
+          // §2.2 那种「拒后回落被接受」的缝隙在这里构造上不存在）⇒ 丢帧，绝不
+          // 落入下方分派。缺失 ⇒ 宽容（既有族继续走既有解析；新帧族由 P1 的
+          // codec 全量校验补上 missing_required_field）。
+          logger.warnSync(
+            "relay frame dropped: proto unsupported " +
+              f"branch=P0 conversationId=<none> messageId=<none> reason=proto_unsupported " +
+                s"head=${RelayTunnelDiagnostics.redact(text.take(200))}"
+          )
         case Right(json) =>
           json.hcursor.downField("type").as[String].getOrElse("") match
             case "relay_request" =>
@@ -1239,6 +1463,18 @@ private final class RelayWsListener(
               // `message-` 族未命中 = WARN + 审计；其余族 = DEBUG）。本分支**只读**帧，
               // 不改帧形状、不改本端 `sendAck` 的既有发送语义。
               dispatcher.unsafeRunAndForget(DeviceMailAck.handle(json))
+            case "http_request" | "body_frame" | "ws_open" | "ws_frame" | "ws_close" |
+                "ConsoleTicketMint" | "BindingControl" | "MigrationChunk" =>
+              // P1（设计 §3.1）：契约帧族——先过生产 codec（[[PortalWireCodec]]）全量
+              // 校验：帧字段与冻结契约逐字一致；拒码 = conformance vocabulary，
+              // 丢帧 + 结构化诊断（复用既有脱敏面），绝不部分处理、绝不回落 W10
+              // （MigrationChunk 在 codec 侧成功解码后由桥接层按 not-implemented 丢弃，
+              // 不落 unknown_type——那是契约漂移信号，会误报）。
+              handlePortalFrame(text, json)
+            case other @ ("http_response" | "ws_open_result" | "ConsoleTicketResult") =>
+              // 上行契约帧被回授：语义上无需动作（与 ack/relay_response 同族的降噪
+              // 口——只 debug，防 W10 噪声化）。
+              logger.debugSync(s"Relay frame ignored (benign): uplink echo type=$other")
             case other if RelayWsListener.BenignUnknownFrameTypes.contains(other) =>
               // W10（§3.3）的**降噪口**：本端自己会发/回的帧类型（`ack` /
               // `relay_response`）若被回授，语义上无需动作 ⇒ 只留 debug，
@@ -1276,6 +1512,24 @@ private final class RelayWsListener(
         )
   end handleFrame
 
+  /**
+   * P1 dispatch（设计 §3.1）：契约帧族的唯一入口——生产 codec 全量校验后按
+   * 解码帧分派到隧道（隧道再交给当前连接的 portal bridge）。拒码 ⇒ 丢帧 +
+   * 结构化诊断（branch=P1 + 拒码 + 触发字段 + 脱敏帧头），绝不部分处理。
+   */
+  private def handlePortalFrame(text: String, json: Json): Unit =
+    PortalWireCodec.decodeJson(json) match
+      case Right(frame) =>
+        tunnel.dispatchPortalFrame(frame, portalConn)
+      case Left(rej) =>
+        logger.warnSync(
+          "relay frame dropped: portal contract rejection " +
+            f"branch=P1 conversationId=<none> messageId=<none> reason=${rej.code} " +
+              s"field=${rej.field.getOrElse("<none>")} fields=${rej.fields.getOrElse(Nil).mkString(",")} " +
+              s"expected=${rej.expected.getOrElse("-")} allowed=${rej.allowed.getOrElse(Nil).mkString("/")} " +
+              s"head=${RelayTunnelDiagnostics.redact(text.take(200))}"
+        )
+
   override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
     // 有界性腿③（连接终结）：缓冲随连接消亡，不跨连接存活（半成品即弃并计数）。
     reassembler.reset()
@@ -1298,6 +1552,16 @@ object RelayWsListener:
    * 名单之外的未知类型一律 WARN（= 契约漂移信号）。
    */
   private[neblink] val BenignUnknownFrameTypes: Set[String] = Set("ack", "relay_response")
+
+  /**
+   * P0 front check (design §3.1): `proto` present AND above the supported
+   * version. Applies to EVERY frame family. A missing `proto` stays lenient
+   * here (pre-v1 legacy frames); the new contract frames get the strict
+   * `missing_required_field` from the codec at P1. A non-integer `proto`
+   * also stays lenient here — P1's codec rejects it for contract frames.
+   */
+  private[neblink] def protoTooNew(json: Json): Boolean =
+    json.hcursor.downField("proto").as[Int].toOption.exists(_ > PortalWireCodec.SupportedProto)
 
   // ===== 分片重组（fragreasm-impl，2026-09-19）===============================
   //
