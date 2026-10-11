@@ -24,8 +24,9 @@ import scala.concurrent.duration.*
  * HttpApp — no network, no ember. Pins the judgment-relevant behaviors:
  *
  *  - http_request runs the lifted app in-process and answers
- *    http_response + body_frame with canonical proto:1 bytes (empty response
- *    body => ZERO body_frames, contract 2.4 "0..n");
+ *    http_response + body_frame with canonical proto:1 bytes (an empty
+ *    response body still ends the cycle with exactly one empty `more=false`
+ *    terminator — the ingress closes the browser stream on that frame alone);
  *  - the request body streams through the per-requestId channel (seq order,
  *    End semantics; POST echo round-trip; out-of-order seq drops the cycle);
  *  - the response body is sliced at the chunk constant with more=true on all
@@ -186,14 +187,18 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
-  test("empty response body produces ZERO body_frames (contract 2.4: 0..n)"):
+  test("empty response body still terminates the cycle with one empty more=false body_frame"):
     withBridge(HttpApp[IO](_ => IO(Response[IO](status = Status.NoContent)))) { (bridge, fake, _) =>
       bridge.enqueueFrame(HttpRequest(Rid, "GET", "/api/none", Vector("x-forwarded-for" -> "203.0.113.9")))
       for
         ok <- waitUntil(5.seconds)(IO(httpCycles(fake).contains((Rid, 204))))
         _ = assert(ok, s"no http_response; sent=${sentTexts(fake)}")
-        _ <- IO.sleep(200.millis)
-        _ = assert(bodyFrames(fake, Rid).isEmpty, "204 must not be followed by any body_frame")
+        _ <- waitUntil(5.seconds)(IO(bodyFrames(fake, Rid).nonEmpty))
+        frames = bodyFrames(fake, Rid)
+        _ = assertEquals(frames.length, 1, s"expected exactly one terminator; got ${frames.length}")
+        _ = assert(!frames.head.more, "the lone frame must be the more=false terminator")
+        _ = assert(frames.head.data.isEmpty, "the terminator carries no bytes")
+        _ = assertEquals(frames.head.seq, 0)
       yield ()
     }
 

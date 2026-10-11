@@ -252,7 +252,13 @@ private[neblink] final class PortalTunnelBridge(
           )
       }
 
-  /** Response body streaming: seq from 0 (+1 per frame), `more=false` only on the last chunk. */
+  /**
+   * Response body streaming: seq from 0 (+1 per frame), `more=false` only on the last chunk.
+   * An EMPTY body still emits exactly one empty `more=false` terminator — the ingress
+   * aggregator ends the browser's body stream only on a `more=false` frame, so a head-only
+   * cycle (204/303/304) would otherwise park the browser until timeout (staging evidence
+   * 2026-10-11: redemption 303 head arrived, body stream never closed).
+   */
   private def streamResponseBody(requestId: String, body: Stream[IO, Byte]): IO[Unit] =
     for
       seq <- cats.effect.Ref.of[IO, Int](0)
@@ -270,6 +276,12 @@ private[neblink] final class PortalTunnelBridge(
         }
         .compile
         .drain
+      sent <- seq.get
+      _ <- IO.whenA(sent == 0)(
+        sender.send(
+          PortalWireCodec.encode(PortalWireCodec.BodyFrame(requestId, 0, more = false, Array.emptyByteArray))
+        )
+      )
     yield ()
 
   private def registerBodyChannel(requestId: String): BodyChannel =
@@ -357,11 +369,11 @@ private[neblink] final class PortalTunnelBridge(
     sender.send(
       PortalWireCodec.encode(PortalWireCodec.HttpResponse(requestId, status, Vector("content-type" -> contentType)))
     ) *>
-      (if body.isEmpty then IO.unit
-       else
-         sender.send(
-           PortalWireCodec.encode(PortalWireCodec.BodyFrame(requestId, 0, more = false, body.getBytes(UTF_8)))
-         ))
+      // Every cycle ends with a `more=false` frame — empty body included; the
+      // ingress terminates the browser stream on that frame alone.
+      sender.send(
+        PortalWireCodec.encode(PortalWireCodec.BodyFrame(requestId, 0, more = false, body.getBytes(UTF_8)))
+      )
 
   // ────────────────────────── WS face ──────────────────────────
 
