@@ -8,11 +8,11 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.{Arrays, Base64}
 
 /**
- * Portal wire contract v1 conformance — PRODUCTION codec face (phase 3a
- * design section 4.2).
+ * Portal wire contract v1.1 conformance — PRODUCTION codec face (phase 3c
+ * re-freeze; the assertion structure is the phase 3a design section 4.2 one).
  *
  * The test-side model spec (`PortalWireContractV1Spec`) and this spec run the
- * SAME frozen vector file (`src/test/resources/neblink/portal-wire-vectors-v1.json`,
+ * SAME frozen vector file (`src/test/resources/neblink/portal-wire-vectors-v1.1.json`,
  * byte-identical to the neblink-server copy) with the SAME assertion
  * structure — model face and production face cross-checked on identical
  * verdicts, which is exactly what the phase 0.5 criterion demands ("both
@@ -67,7 +67,7 @@ class PortalWireCodecConformanceSpec extends FunSuite:
   )
 
   private lazy val vectorsDoc: Json =
-    val res = "neblink/portal-wire-vectors-v1.json"
+    val res = "neblink/portal-wire-vectors-v1.1.json"
     val in = Option(getClass.getClassLoader.getResourceAsStream(res)).getOrElse(
       fail(s"classpath resource '$res' not found — frozen vector file missing from test classpath")
     )
@@ -125,12 +125,12 @@ class PortalWireCodecConformanceSpec extends FunSuite:
 
   // ────────────────────────── tests ──────────────────────────
 
-  test("production codec pins the frozen contract identity (contract file + version v1)"):
+  test("production codec pins the frozen contract identity (contract file + version v1.1)"):
     val c = vectorsDoc.hcursor
-    assertEquals(cursorString(c, "contract"), "portal-wire-contract-v1.md")
+    assertEquals(cursorString(c, "contract"), "portal-wire-contract-v1.1.md")
     assertEquals(
       cursorString(c, "version"),
-      "v1",
+      "v1.1",
       "any contract change must land as a re-freeze (v1.x) in both repos, not a silent vector edit"
     )
 
@@ -258,7 +258,8 @@ class PortalWireCodecConformanceSpec extends FunSuite:
     )
 
   test("encode always carries proto:1 on the envelope (outbound policy single point)"):
-    val frame = PortalWireCodec.WsOpen("0a1b2c3d-4e5f-4678-9abc-def012345678", "/ws?token=abc", None)
+    val frame =
+      PortalWireCodec.WsOpen("0a1b2c3d-4e5f-4678-9abc-def012345678", "/ws?token=abc", None, None)
     assertEquals(
       PortalWireCodec.encode(frame),
       """{"type":"ws_open","proto":1,"requestId":"0a1b2c3d-4e5f-4678-9abc-def012345678","path":"/ws?token=abc"}"""

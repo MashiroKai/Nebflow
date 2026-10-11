@@ -8,16 +8,17 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.{Arrays, Base64}
 
 /**
- * Portal wire contract v1 conformance spec (phase 0.5 freeze, main-repo half).
+ * Portal wire contract v1.1 conformance spec (phase 3c re-freeze, main-repo half).
  *
- * Source of truth: `src/test/resources/neblink/portal-wire-contract-v1.md` (13-frame wire
- * surface) and its companion vector file `src/test/resources/neblink/portal-wire-vectors-v1.json`.
- * The neblink-server repo holds byte-identical copies of both and runs its own conformance
- * suite against the same vectors; both sides must agree on every verdict.
+ * Source of truth: `src/test/resources/neblink/portal-wire-contract-v1.1.md` (13-frame wire
+ * surface plus the v1.1 optional fields) and its companion vector file
+ * `src/test/resources/neblink/portal-wire-vectors-v1.1.json`. The neblink-server repo holds
+ * byte-identical copies of both and runs its own conformance suite against the same vectors;
+ * both sides must agree on every verdict.
  *
- * This spec models the frozen schema on the test side with circe (the contract explicitly
- * keeps phase 3 / phase 5 implementation task books closed until phase 0.5 closes, so there is
- * no production codec to test against yet). For every vector in the frozen file:
+ * This spec models the frozen schema on the test side with circe, kept structurally identical
+ * to the production codec (`PortalWireCodec`) so the two faces cannot diverge. For every
+ * vector in the frozen file:
  *
  *  - positive: the `json` field-level object decodes cleanly into the frame model; the
  *    canonical serialization produced by the model (schema key order, compact separators,
@@ -29,9 +30,10 @@ import java.util.{Arrays, Base64}
  *    mismatches. The free-text `reason` key is narrative commentary and is deliberately not
  *    asserted (contract section 6 names only the rejection code and the offending field).
  *
- * Two envelope behaviors from contract section 1 are implemented even though the frozen v1
- * vector set does not exercise them: `proto` above the supported version rejects with
- * `proto_unsupported`, and unknown extra keys are ignored (forward compatibility).
+ * Envelope behaviors from contract section 1: `proto` above the supported version rejects
+ * with `proto_unsupported`, and unknown extra keys are ignored (forward compatibility) — the
+ * exact mechanism behind the v1.1 zero-breakage discipline, pinned by the vector-preservation
+ * test below.
  */
 class PortalWireContractV1Spec extends FunSuite:
 
@@ -76,11 +78,16 @@ class PortalWireContractV1Spec extends FunSuite:
   final case class RelayResponse(requestId: String, output: String, error: String) extends PortalFrame
   final case class HttpRequest(requestId: String, method: String, path: String, headers: Headers)
       extends PortalFrame
-  final case class HttpResponse(requestId: String, status: Int, headers: Headers) extends PortalFrame
+  final case class HttpResponse(requestId: String, status: Int, headers: Headers, setCookie: Vector[String])
+      extends PortalFrame
   final case class BodyFrame(requestId: String, seq: Int, more: Boolean, data: Vector[Byte])
       extends PortalFrame
-  final case class WsOpen(requestId: String, path: String, subprotocol: Option[String])
-      extends PortalFrame
+  final case class WsOpen(
+    requestId: String,
+    path: String,
+    subprotocol: Option[String],
+    headers: Option[Headers]
+  ) extends PortalFrame
   final case class WsOpenResult(requestId: String, accepted: Boolean, status: Int) extends PortalFrame
   final case class WsFrame(requestId: String, kind: String, data: Vector[Byte], fin: Boolean)
       extends PortalFrame
@@ -171,12 +178,25 @@ class PortalWireContractV1Spec extends FunSuite:
           requestId <- reqUuid(o, "requestId")
           status <- reqInt(o, "status")
           headers <- req(o, "headers")(jsonHeaders(_, "headers"))
-        yield HttpResponse(requestId, status, headers)
+          setCookie <- opt(o, "setCookie")(jsonStringArray(_, "setCookie"))
+          // Contract 2.4 (v1.1 D8): set-cookie rides the setCookie array only;
+          // both carriers at once is a field_conflict. A lone legacy
+          // `set-cookie` entry in headers stays acceptable (loss-free single
+          // value) — kept identical to the production codec.
+          _ <- Either.cond(
+            !(headers.exists(_._1 == "set-cookie") && setCookie.nonEmpty),
+            (),
+            Rejection("field_conflict", fields = Some(List("headers", "setCookie")))
+          )
+        yield HttpResponse(requestId, status, headers, setCookie.getOrElse(Vector.empty))
 
       case "body_frame" =>
         for
           requestId <- reqUuid(o, "requestId")
           seq <- reqInt(o, "seq")
+          // Contract 2.5: a negative seq is rejected PER FRAME (invalid_format);
+          // kept identical to the production codec.
+          _ <- Either.cond(seq >= 0, (), Rejection("invalid_format", field = Some("seq")))
           more <- reqBool(o, "more")
           data <- req(o, "data")(jsonBase64(_, "data"))
         yield BodyFrame(requestId, seq, more, data)
@@ -186,7 +206,8 @@ class PortalWireContractV1Spec extends FunSuite:
           requestId <- reqUuid(o, "requestId")
           path <- req(o, "path")(jsonAbsolutePath(_, "path"))
           subprotocol <- optString(o, "subprotocol")
-        yield WsOpen(requestId, path, subprotocol)
+          headers <- opt(o, "headers")(jsonHeaders(_, "headers"))
+        yield WsOpen(requestId, path, subprotocol, headers)
 
       case "ws_open_result" =>
         for
@@ -314,7 +335,11 @@ class PortalWireContractV1Spec extends FunSuite:
           "http_response",
           "requestId" -> Some(Json.fromString(fr.requestId)),
           "status" -> Some(Json.fromInt(fr.status)),
-          "headers" -> Some(headersJson(fr.headers))
+          "headers" -> Some(headersJson(fr.headers)),
+          // v1.1 D8: optional, absent omitted (an empty vector is never emitted).
+          "setCookie" -> Option.when(fr.setCookie.nonEmpty)(
+            Json.fromValues(fr.setCookie.map(Json.fromString))
+          )
         )
       case fr: BodyFrame =>
         envelope(
@@ -329,7 +354,10 @@ class PortalWireContractV1Spec extends FunSuite:
           "ws_open",
           "requestId" -> Some(Json.fromString(fr.requestId)),
           "path" -> Some(Json.fromString(fr.path)),
-          "subprotocol" -> fr.subprotocol.map(Json.fromString)
+          "subprotocol" -> fr.subprotocol.map(Json.fromString),
+          // v1.1 D9: schema order places `headers` after `subprotocol`; absent
+          // is encoded by omission (old frames keep their exact bytes).
+          "headers" -> fr.headers.map(headersJson)
         )
       case fr: WsOpenResult =>
         envelope(
@@ -482,6 +510,14 @@ class PortalWireContractV1Spec extends FunSuite:
       }
     }
 
+  /** Contract 2.4 (v1.1 D8): `setCookie` is an array of strings, one per occurrence. */
+  private def jsonStringArray(j: Json, name: String): Either[Rejection, Vector[String]] =
+    j.asArray
+      .toRight(Rejection("type_mismatch", field = Some(name), expected = Some("array")))
+      .flatMap(_.foldLeft[Either[Rejection, Vector[String]]](Right(Vector.empty)) { (acc, el) =>
+        acc.flatMap(vs => jsonString(el, name).map(v => vs :+ v))
+      })
+
   // ────────────────────────── vector harness ──────────────────────────
 
   private final case class VectorEntry(
@@ -494,8 +530,7 @@ class PortalWireContractV1Spec extends FunSuite:
     expect: Option[JsonObject]
   )
 
-  private lazy val vectorsDoc: Json =
-    val res = "neblink/portal-wire-vectors-v1.json"
+  private def parseResource(res: String): Json =
     val in = Option(getClass.getClassLoader.getResourceAsStream(res)).getOrElse(
       fail(s"classpath resource '$res' not found — frozen vector file missing from test classpath")
     )
@@ -503,6 +538,8 @@ class PortalWireContractV1Spec extends FunSuite:
       parse(new String(in.readAllBytes(), UTF_8))
         .fold(e => fail(s"$res is not valid JSON: ${e.getMessage}"), identity)
     finally in.close()
+
+  private lazy val vectorsDoc: Json = parseResource("neblink/portal-wire-vectors-v1.1.json")
 
   private def cursorString(c: HCursor, name: String): String =
     c.get[String](name).fold(e => fail(s"vector field '$name' unreadable: ${e.getMessage}"), identity)
@@ -554,17 +591,32 @@ class PortalWireContractV1Spec extends FunSuite:
 
   // ────────────────────────── tests ──────────────────────────
 
-  test("vector file pins the frozen contract identity (contract file + version v1)"):
+  test("vector file pins the frozen contract identity (contract file + version v1.1)"):
     val c = vectorsDoc.hcursor
     assertEquals(
       cursorString(c, "contract"),
-      "portal-wire-contract-v1.md",
+      "portal-wire-contract-v1.1.md",
       "the vector file must be the companion of the frozen contract copy"
     )
     assertEquals(
       cursorString(c, "version"),
-      "v1",
+      "v1.1",
       "any contract change must land as a re-freeze (v1.x) in both repos, not a silent vector edit"
+    )
+
+  test("the 28 frozen v1 vectors are preserved byte-for-byte at the head of the v1.1 file"):
+    // Contract section 6: the v1 set survives the re-freeze unchanged; v1.1
+    // only APPENDS vectors for the new optional fields and pinned
+    // clarifications (40 total). Comparing canonical per-entry serializations
+    // of both frozen files pins that mechanically.
+    val v1Doc = parseResource("neblink/portal-wire-vectors-v1.json")
+    val v1 = v1Doc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1 vectors unreadable: $e"), identity)
+    assertEquals(v1.length, 28, "the frozen v1 set is 28 vectors")
+    val v11 = vectorsDoc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
+    assertEquals(
+      v11.take(v1.length).map(_.noSpaces),
+      v1.map(_.noSpaces),
+      "the v1.1 re-freeze must preserve the v1 vectors byte-for-byte, in order"
     )
 
   test("every frame in the inventory has at least one positive and one negative vector"):

@@ -16,7 +16,8 @@ import scala.concurrent.duration.*
  * 的 raw-socket fixture），不是 mock 的状态机：
  *
  *  ①opt-A1 通道自愈 —— 僵尸连接（对端不回 pong）时：
- *    · `heartbeat` 在 `LivenessTimeoutMs`(30s) 到点判僵尸 → `abort()`；
+ *    · `heartbeat` 在 `LivenessTimeoutMs`（3c 调心批起 = 9s，3 拍 3s 心跳）到点判僵尸
+ *      → `abort()`；
  *    · `abort()` **不回调 Listener**（JDK 探针 AbortProbe.java 复现）⇒
  *      `closed` 闩永不完成 ⇒ 修前 `connectLoop` 永久停在 `closed.get`；
  *    · 修后 `armZombieLatchWatchdog` 在 `ZombieLatchGrace`(5s) 后补
@@ -24,8 +25,8 @@ import scala.concurrent.duration.*
  *
  *  ①-2 `isAlive` 语义诚实化 —— 僵尸窗口内 `alive.get()` 仍为真（闩没返回），
  *    修前 status 端点因此恒定报「可用」（线上假阳性）。现语义 = 连线上册
- *    **且** 最近 pong 在 30s 窗内 ⇒ 僵尸窗口内必须观测到 `isAlive == false`
- *    且此时**尚未**重连（101 计数仍为 1）。
+ *    **且** 最近 pong 在存活窗（`LivenessTimeoutMs`）内 ⇒ 僵尸窗口内必须观测到
+ *    `isAlive == false` 且此时**尚未**重连（101 计数仍为 1）。
  *
  * 健康路径反证（防「闩提前完成」把抖动掩盖成通过）：fixture `pongReplies=true`
  * 时（= 真服务端 relay.rs 的 Pong 分支）心跳必须一路存活 —— 45s 观察窗内
@@ -165,16 +166,42 @@ class NeblinkRelayTunnelZombieHealSpec extends CatsEffectSuite:
           _ <- tunnel.connect()
           first <- waitUntil(20.seconds)(IO(fix.attemptCount(101) >= 1))
           _ <- IO(assert(first, s"基线连接失败：${fix.relayAttempts}"))
-          // 45s > LivenessTimeoutMs(30s) + 心跳周期(10s)：若 pong 窗口误杀或看门狗
-          // 提前完成闩，这段时间内必然出现第二个 101 或 isAlive 落假。
+          // 45s far exceeds LivenessTimeoutMs(9s) + heartbeat period(3s): if the
+          // pong window ever flipped a live link or the watchdog completed the
+          // latch early, a second 101 or an isAlive=false would show within it.
           samples <- IO.sleep(45.seconds) *> IO(fix.attemptCount(101) -> tunnel.isAlive)
           (n101, aliveAtEnd) = samples
         yield
           assertEquals(n101, 1, s"健康路径不得重连（flap）：101=${n101}")
           assertEquals(aliveAtEnd, true, "健康路径 isAlive 必须恒真（pong 窗口判据不误杀常连）")
-          assert(fix.pongsSent.get() >= 3, s"45s 内应至少应答 4 拍心跳中的 3 拍，实测 ${fix.pongsSent.get()}")
+          // 45s at the 3s cadence is ~15 beats; answering at least 12 of them
+          // (20% scheduler slack) proves the window never false-kills.
+          assert(fix.pongsSent.get() >= 12, s"45s should answer at least 12 of ~15 3s heartbeat beats, got ${fix.pongsSent.get()}")
       }
     }
+  }
+
+  test("liveness retune correlation (phase 3c §7.3): heartbeat 3s under the 6s server miss window; LivenessTimeoutMs = 3 beats > 2x margin") {
+    // The eviction face is three constants that must move as ONE set (plan
+    // §7.3): the server ping interval x missed-pong threshold (= relay.rs
+    // TUNNEL_PING_INTERVAL 3s x TUNNEL_MAX_MISSED_PONGS 2 = a 6s miss window),
+    // this client's heartbeat, and this client's zombie window. The server
+    // constants live in the neblink-server repo; this side pins its own half
+    // of the arithmetic so a drive-by edit of one constant cannot silently
+    // break the margin:
+    //  - the miss window (6s) must stay strictly above the client heartbeat
+    //    (2x margin: any inbound frame resets the server's counter, so one
+    //    delayed heartbeat must not flip a live link offline);
+    //  - the client zombie window must exceed 2x the heartbeat (one lost beat
+    //    plus a full interval of delay still passes) and equals 3 beats — the
+    //    same beats ratio the 30s/10s pairing had before the retune;
+    //  - the zombie window and isAlive stay one shared threshold (no second
+    //    liveness constant).
+    assertEquals(NeblinkRelayTunnel.HeartbeatIntervalSec, 3L, "the client heartbeat must sit at 3s (half of the 6s server miss window)")
+    val heartbeatMs = NeblinkRelayTunnel.HeartbeatIntervalSec * 1000
+    assert(6000L > heartbeatMs, "the 6s server miss window must stay above the client heartbeat (2x margin)")
+    assertEquals(NeblinkRelayTunnel.LivenessTimeoutMs, heartbeatMs * 3, "the zombie window is exactly 3 heartbeat beats")
+    assert(NeblinkRelayTunnel.LivenessTimeoutMs > heartbeatMs * 2, "the zombie window must tolerate one lost beat plus a full interval of delay")
   }
 
 end NeblinkRelayTunnelZombieHealSpec

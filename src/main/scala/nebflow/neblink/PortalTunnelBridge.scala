@@ -50,7 +50,9 @@ import java.util.concurrent.{ConcurrentHashMap, CompletionStage, TimeUnit}
  * WS face (design 3.3): the local endpoint is reached over a real loopback
  * WebSocket (`ws://127.0.0.1:<gatewayPort><path>`; the path may carry a
  * query string — stage A passes `?token=<file token>`, consumed by the local
- * `/ws` handshake's token fallback). Frames pump both ways with kind/fin
+ * `/ws` handshake's token fallback). v1.1: a ws_open `headers` object is
+ * injected into the loopback handshake (the browser session cookie crosses
+ * the bridge; absent keeps the v1 shape). Frames pump both ways with kind/fin
  * mapped 1:1; `ws_close` propagates both ways.
  */
 private[neblink] final class PortalTunnelBridge(
@@ -234,9 +236,10 @@ private[neblink] final class PortalTunnelBridge(
     val headSent = new java.util.concurrent.atomic.AtomicBoolean(false)
     (for
       resp <- app.run(req)
+      (headers, setCookies) = toResponseFaces(resp)
       _ <- sender.send(
         PortalWireCodec.encode(
-          PortalWireCodec.HttpResponse(requestId, resp.status.code, toResponseHeaders(resp))
+          PortalWireCodec.HttpResponse(requestId, resp.status.code, headers, setCookies)
         )
       )
       _ = headSent.set(true)
@@ -349,25 +352,34 @@ private[neblink] final class PortalTunnelBridge(
     }
 
   /**
-   * Response headers as contract 2.4 shape (lowercased name -> single string
-   * value). Multi-valued headers are comma-joined in first-seen order — the
-   * v1 contract carries one string per name, and comma-joining is the
-   * conservative collapse (set-cookie is not a portal-face concern in 3a).
-   * Hop-by-hop artifacts of the in-process call are dropped.
+   * Response head as the contract 2.4 faces: the `headers` object (lowercased
+   * name -> single string value) plus the `setCookie` array.
+   *
+   * Set-Cookie is the one header that must NOT be comma-joined (RFC 6265
+   * cookie attributes can carry commas, and the v1.1 contract forbids joining
+   * it into `headers`): each occurrence is relayed as its OWN `setCookie` array
+   * element, in first-seen order, and never enters `headers` (v1.1 sender
+   * obligation, contract 2.4 D8). Every OTHER multi-valued header keeps the
+   * conservative comma-join (the v1 shape: one string per name). Hop-by-hop
+   * artifacts of the in-process call are dropped.
    */
-  private def toResponseHeaders(resp: Response[IO]): PortalWireCodec.Headers =
+  private def toResponseFaces(resp: Response[IO]): (PortalWireCodec.Headers, Vector[String]) =
     val merged = new scala.collection.mutable.LinkedHashMap[String, String]()
+    val setCookies = new scala.collection.mutable.ArrayBuffer[String]()
     resp.headers.headers.foreach { h =>
       val name = h.name.toString.toLowerCase(java.util.Locale.ROOT)
-      if !DropResponseHeaderNames.contains(name) then
+      if name == "set-cookie" then setCookies += h.value
+      else if !DropResponseHeaderNames.contains(name) then
         merged.update(name, merged.get(name).map(prev => s"$prev, ${h.value}").getOrElse(h.value))
     }
-    merged.toVector
+    (merged.toVector, setCookies.toVector)
 
   /** Standalone status answer (429 / 502 / 503 shapes) with a one-frame plain body. */
   private def respondStatus(requestId: String, status: Int, contentType: String, body: String): IO[Unit] =
     sender.send(
-      PortalWireCodec.encode(PortalWireCodec.HttpResponse(requestId, status, Vector("content-type" -> contentType)))
+      PortalWireCodec.encode(
+        PortalWireCodec.HttpResponse(requestId, status, Vector("content-type" -> contentType), Vector.empty)
+      )
     ) *>
       // Every cycle ends with a `more=false` frame — empty body included; the
       // ingress terminates the browser stream on that frame alone.
@@ -383,6 +395,19 @@ private[neblink] final class PortalTunnelBridge(
    * The whole body is spawned OFF the mailbox (connect can take up to the
    * connect timeout).
    *
+   * v1.1 D9 consumption face (contract 2.6): a `headers` object on the frame
+   * is injected into the loopback handshake request (the browser session
+   * cookie crosses the bridge verbatim — `headers.cookie` hits the local
+   * GatewayAuth session track). Absent `headers` keeps the exact v1 shape.
+   *
+   * ROLLOUT HARD ORDER (contract 2.6, freeze first then send): a host running
+   * the pre-v1.1 codec accepts this frame but SILENTLY DROPS the `headers`
+   * field (unknown extra keys), so the handshake proceeds WITHOUT the bridge
+   * headers and session-cookie crossing silently degrades — the local auth
+   * falls back to its remaining faces and the tunnel WS surface is not
+   * promised available in that window. Tunnel WS sessionization goes live only
+   * after both ends run v1.1 codecs.
+   *
    * Uplink ordering without buffering: the local listener does NOT request
    * delivery in `onOpen`; the cycle is ACTIVATED only after the pumps are
    * running and the ws_open_result sits at the head of the uplink queue —
@@ -393,7 +418,7 @@ private[neblink] final class PortalTunnelBridge(
     val requestId = frame.requestId
     val uri = s"ws://127.0.0.1:${deps.faces.gatewayPort}${frame.path}"
     val cycle = new WsCycle(requestId)
-    connectLocalWs(uri, frame.subprotocol, cycle)
+    connectLocalWs(uri, frame.subprotocol, frame.headers, cycle)
       .flatMap { local =>
         IO {
           cycle.local = local
@@ -422,15 +447,27 @@ private[neblink] final class PortalTunnelBridge(
       .start
       .void
 
-  private def connectLocalWs(uri: String, subprotocol: Option[String], cycle: WsCycle): IO[WebSocket] =
+  private def connectLocalWs(
+    uri: String,
+    subprotocol: Option[String],
+    headers: Option[PortalWireCodec.Headers],
+    cycle: WsCycle
+  ): IO[WebSocket] =
     IO {
       val client = HttpClient
         .newBuilder()
         .version(HttpClient.Version.HTTP_1_1)
+        // Loopback call: a system proxy must never intercept it (same face as
+        // the relay tunnel's client — a proxied environment answered the
+        // loopback ws connect with ConnectException).
+        .proxy(java.net.ProxySelector.of(null))
         .connectTimeout(java.time.Duration.ofSeconds(LocalConnectTimeoutSec))
         .build()
       val builder = client.newWebSocketBuilder()
       subprotocol.foreach(builder.subprotocols(_))
+      headers.foreach(h =>
+        wsHandshakeHeaders(h).foreach { (name, value) => builder.header(name, value) }
+      )
       builder.buildAsync(URI.create(uri), new LocalWsListener(cycle))
     }.flatMap(cf => IO.fromCompletableFuture(IO(cf)))
 
@@ -794,6 +831,32 @@ private[neblink] object PortalTunnelBridge:
     Set("transfer-encoding", "connection", "keep-alive", "upgrade")
   private val DropResponseHeaderNames: Set[String] =
     Set("transfer-encoding", "connection", "keep-alive")
+
+  /**
+   * WS handshake injection discipline (contract 2.6 D9, same delivery face as
+   * the HTTP bridge headers): hop-by-hop and upgrade-owned headers are never
+   * injected — the JDK client owns the upgrade face (`upgrade` / `connection`
+   * / the `sec-websocket-*` family; the subprotocol carrier is the ws_open
+   * `subprotocol` field), and `host` / `content-length` / `origin` describe
+   * the local loopback call, not the browser call being bridged. Everything
+   * else — the `cookie` bridge head in particular — is forwarded verbatim.
+   */
+  private val DropWsHandshakeHeaderNames: Set[String] =
+    DropRequestHeaderNames ++ Set(
+      "host",
+      "content-length",
+      "origin",
+      "sec-websocket-accept",
+      "sec-websocket-extensions",
+      "sec-websocket-key",
+      "sec-websocket-permessage-deflate",
+      "sec-websocket-protocol",
+      "sec-websocket-version"
+    )
+
+  /** Filter a ws_open frame's headers down to the injectable handshake face. */
+  private[neblink] def wsHandshakeHeaders(headers: PortalWireCodec.Headers): Vector[(String, String)] =
+    headers.filterNot(h => DropWsHandshakeHeaderNames.contains(h._1.toLowerCase(java.util.Locale.ROOT)))
 
   /**
    * Verbs that never carry a request body in the portal shape (the ingress

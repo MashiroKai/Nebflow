@@ -242,8 +242,8 @@ final class NeblinkRelayTunnel(
    * `alive` 单点——它只在 `closed.get` 返回之后才被清假（:313-317），而闩在
    * 「abort 不回调 Listener」的僵尸态里永不返回（E3 探针复现）⇒ 通道死了 4 小时
    * 而 `/api/neblink/status` 仍报 `relay.available:true`（E4 假阳性）。
-   * 现语义 = **连线在册 且 最近一次 pong 在 30s 窗口内**——判据与心跳的僵尸
-   * 判据同源（同一个 `LivenessTimeoutMs`，不新增第二个阈值）。消费面：
+   * 现语义 = **连线在册 且 最近一次 pong 在存活窗（`LivenessTimeoutMs`）内**——判据与
+   * 心跳的僵尸判据同源（同一个 `LivenessTimeoutMs`，不新增第二个阈值）。消费面：
    * status 端点的 `relay.available`（含 per-peer reachable 提示）与
    * `RemoteExecutor` 的 P2P/relay 选路（僵尸隧道不再被当作可用 relay）。
    */
@@ -1092,8 +1092,8 @@ final class NeblinkRelayTunnel(
                   armZombieLatchWatchdog(closed)
         catch case _: Exception => ()
       },
-      10,
-      10,
+      NeblinkRelayTunnel.HeartbeatIntervalSec,
+      NeblinkRelayTunnel.HeartbeatIntervalSec,
       TimeUnit.SECONDS
     )
 
@@ -1181,12 +1181,37 @@ object NeblinkRelayTunnel:
           .as(AckOutcome.NoLiveSocket)
 
   /**
-   * Liveness window (①-2 / ①opt-A1，波3 2026-09-12）：pong 超出此窗口 = 连接是
-   * 僵尸。**同一个值**同时供心跳的僵尸判据与 `isAlive` 使用（不新增第二个
-   * 阈值——两处判据若漂移，status 会与自愈动作各说各话）。数值 30s 沿既有心跳
-   * 阈值原样搬移，未改任何既有默认值（H-1）。
+   * Client heartbeat interval in seconds — the relay-link liveness `ping`
+   * cadence (single point; the heartbeat scheduler reads this constant).
+   *
+   * Phase 3c liveness retune (plan §7.3 three-face batch; contract v1.1
+   * section 4 "Heartbeat interval: 3 s"): 10s -> 3s, retuned TOGETHER with the
+   * server-side eviction face (relay.rs `TUNNEL_PING_INTERVAL` 3s x
+   * `TUNNEL_MAX_MISSED_PONGS` 2 = a 6s miss window). The miss window must stay
+   * strictly above the client heartbeat — a 2x margin, so ONE delayed
+   * heartbeat cannot flip a live link offline (any inbound frame resets the
+   * server's missed-pong counter) — and the silent-partition detection line
+   * (2x ping interval + phase 0..1x interval + close propagation = 6..9s)
+   * stays within the 10s close-propagation budget.
    */
-  private[neblink] val LivenessTimeoutMs = 30_000L
+  private[neblink] val HeartbeatIntervalSec: Long = 3L
+
+  /**
+   * Liveness window (①-2 / ①opt-A1, wave 3 2026-09-12): a pong older than
+   * this window means the connection is a zombie. The SAME value feeds both
+   * the heartbeat's zombie judgment and `isAlive` (never a second threshold —
+   * drifting the two would make status and self-heal disagree).
+   *
+   * Phase 3c retune arithmetic (with the 6s server miss window, plan §7.3):
+   * 30s -> 9s = 3 beats of the 3s heartbeat, keeping the previous
+   * three-beats ratio (30s was 3 beats of the 10s heartbeat). The window must
+   * exceed 2x the heartbeat interval so one lost or delayed beat (up to a full
+   * interval late) still passes, and it converges with the server's eviction
+   * line (miss window 6s, detection line 6..9s) so both ends reach the same
+   * "link dead" verdict at the same scale instead of the client reporting a
+   * live link tens of seconds after the server dropped it.
+   */
+  private[neblink] val LivenessTimeoutMs = HeartbeatIntervalSec * 3 * 1000
 
   /**
    * Backoff ceiling of the reconnect ladder (unchanged value — the pre-fix
@@ -1635,10 +1660,15 @@ object RelayWsListener:
   private[neblink] val MaxAssembledFrameChars: Int = 8 * 1024 * 1024
 
   /**
-   * 半成品缓冲的存活上限（🔴 显式设计选择；有界性腿②，**惰性判定**）。
+   * Survival cap for a partially-assembled frame buffer (explicit design
+   * choice; boundedness leg 2, lazily evaluated).
    *
-   * 30 s 的锚 = 本隧道自己的存活窗（`NeblinkRelayTunnel.LivenessTimeoutMs`）：一个
-   * 对端在自身存活窗内都发不完的消息，本端不再为它继续占用缓冲。
+   * The historical anchor was this tunnel's own liveness window
+   * (`NeblinkRelayTunnel.LivenessTimeoutMs`, then 30s). The phase 3c liveness
+   * retune lowered that window to 9s, and THIS constant deliberately keeps its
+   * own 30s value — reassembly patience and link-liveness detection are two
+   * different scales and do not retune together: a message the peer cannot
+   * finish within a liveness-window-scale span stops occupying buffer here.
    */
   private[neblink] val AssemblyDeadlineMs: Long = 30_000L
 
