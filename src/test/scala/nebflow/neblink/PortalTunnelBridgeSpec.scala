@@ -489,4 +489,24 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
+
+  test("mintConsoleTicket gate split: the local break-glass mint is binding-gate EXEMPT in the revoked state while the relay mint stays gated (review pin T-8-1)"):
+    val faces = new PortalHostFaces(gatewayPort = 1)
+    val deps = mkDeps(faces)
+    for
+      _ <- deps.bindingState.markUnbound()
+      local <- deps.mintConsoleTicket(
+        ConsoleTicketStore.LocalAccountSub,
+        ConsoleTicketStore.OriginLocalTicket,
+        enforceBindingGate = false
+      )
+      relay <- deps.mintConsoleTicket(
+        "logto|u-1",
+        ConsoleTicketStore.OriginRelayMint,
+        enforceBindingGate = true
+      )
+    yield
+      assert(local.isRight, s"the escape face must mint in the revoked state, got $local")
+      assertEquals(relay, Left("unbound"))
+
 end PortalTunnelBridgeSpec

@@ -559,6 +559,12 @@ final class RelayAuthFixtureServer extends AutoCloseable:
           relayAttempts.add((401, false))
           respond(out, 401, AuthRejectBody)
           closeQuietly(sock)
+      case RelayMode.TerminalBinding401 =>
+        if live then completeUpgrade(req, sock, out)
+        else
+          relayAttempts.add((401, false))
+          respond(out, 401, """{"error":"binding revoked","reason":"binding_revoked","terminal":true}""")
+          closeQuietly(sock)
       case RelayMode.Server500 =>
         relayAttempts.add((500, false))
         respond(out, 500, """{"error":"relay upstream unavailable"}""")
@@ -775,6 +781,10 @@ object RelayAuthFixtureServer:
 
     /** Always 401 (auth rejection, other spelling). */
     case Auth401
+
+    /** Always 401 with the terminal binding-revocation body (judgment-table
+     *  row 2: the BINDING is dead; the tunnel must park, not re-login). */
+    case TerminalBinding401
 
     /** Always 500 (server/gateway failure) — must NEVER trigger a re-login. */
     case Server500
