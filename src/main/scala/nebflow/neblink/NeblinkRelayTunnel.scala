@@ -967,12 +967,18 @@ final class NeblinkRelayTunnel(
    *
    * Outcome semantics are the SAME three states as [[sendAck]] (read its F3
    * note): `Sent` = the frame was handed to the registered socket with its
-   * output direction open — NOT "the server accepted it". A pre-D6 server
-   * drops an unknown `bind_confirm` type with a warn log and keeps the
-   * tunnel (server `relay_legacy_text` returns true on the parse-error
-   * branch), so shipping the host half first is safe; the caller must treat
-   * `NoLiveSocket` / `SendFailed` as "the code never became pending" and
-   * never display it.
+   * output direction open — NOT "the server accepted it", and NOT "the code
+   * became pending" (no ack exists on this face). ANY server without the
+   * confirmation-staging face drops the unknown `bind_confirm` type with a
+   * warn log and keeps the tunnel (server `relay_legacy_text` returns true
+   * on the parse-error branch): a pre-D6 server, and equally the
+   * intermediate state where the D6 GUARD is live but the staging face is
+   * still deferred (portal wire contract v1.2 §3.3 → phase-5 freeze). The
+   * uplink is wire-safe in every such state, but in them the printed code
+   * can never match — the caller must treat `NoLiveSocket` / `SendFailed`
+   * as "the code never became pending" (never display it), and the CLI copy
+   * names the staging-face dependency instead of promising portal
+   * acceptance.
    */
   def sendBindConfirm(code: String, ttlSec: Long): IO[AckOutcome] =
     val frame = NeblinkRelayTunnel.bindConfirmFrame(code, ttlSec)

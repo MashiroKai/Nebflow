@@ -599,7 +599,11 @@ private[gateway] object NeblinkRoutes:
       // CLI can branch without parsing HTTP error bodies (GatewayClient turns
       // any non-2xx into a thrown message):
       //   - `pending`     — code minted AND the report was handed to a live
-      //     relay socket (`{"kind","code","expiresInSec"}`);
+      //     relay socket (`{"kind","code","expiresInSec"}`). Handed-to-socket
+      //     is all this face knows: server-side staging additionally requires
+      //     the server's confirm-submission face (portal wire contract v1.2
+      //     §3.3, deferred to the phase-5 freeze) — the CLI copy carries that
+      //     dependency instead of promising portal acceptance;
       //   - `offline`     — no live relay tunnel: the confirm-code path needs
       //     the old host ONLINE (plan §8.1①); no code is minted and the CLI
       //     routes the operator to the portal (the guard's 72h grace branch

@@ -8,12 +8,20 @@ import io.circe.syntax.*
  * D6 binding-transfer guard, host face (phase 3c plan §8 component ①):
  *
  *  - `nebflow bind confirm` — run on the OLD host while it is still online:
- *    the gateway mints a 6-digit confirmation code, reports it up the relay
- *    control plane so the server hangs it as the pending confirmation (plan
- *    R-8 recommended flow), and the code is printed here exactly once. The
- *    operator types it into the portal during the re-bind; the server
- *    compares. Re-running the command mints a fresh code and invalidates the
- *    previous one (newest report wins on both ends).
+ *    the gateway mints a 6-digit confirmation code and reports it up the
+ *    relay control plane; the code is printed here exactly once for the
+ *    operator to type into the portal during the re-bind. Re-running the
+ *    command mints a fresh code and invalidates the previous one (newest
+ *    report wins on both ends).
+ *
+ * Honest-delivery boundary (the copy's load-bearing rule): a successful run
+ * means the report frame was handed to a LIVE RELAY SOCKET — nothing on
+ * this face observes whether the server staged the code. Portal acceptance
+ * additionally depends on the server's confirmation-staging face, which the
+ * portal wire contract (v1.2 §3.3) defers to the phase-5 freeze; on any
+ * server without that face the printed code can never match. The `pending`
+ * copy therefore names that dependency and the mismatch fallback explicitly
+ * instead of promising portal acceptance.
  *
  * When the old host has no live relay tunnel, no code is minted: the
  * confirm-code path requires the old host online (plan §8.1①) and the
@@ -64,8 +72,14 @@ private[cli] object BindConfirm extends CliSubcommand:
             List(
               "Binding-transfer confirmation code:",
               code,
-              s"(valid for ${expiresInSec}s. Enter it in the NebLink portal when re-binding the host seat.",
-              "Running this command again mints a new code and invalidates this one.)"
+              s"(valid for ${expiresInSec}s; running this command again invalidates it and mints a new one.)",
+              "Enter this code in the NebLink portal when re-binding the host seat.",
+              "",
+              "Handed to the NebLink server over the relay. Portal acceptance also requires the",
+              "server's confirmation-staging face (phase-5 contract item): if the portal reports",
+              "a mismatch although every digit was typed correctly, that face is not deployed",
+              "yet and no code can be accepted — retry after the server upgrade, or use the",
+              "portal's grace-period path (old host offline beyond the grace window, default 72h)."
             )
           )
       case "offline" =>

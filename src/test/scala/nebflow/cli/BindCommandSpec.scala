@@ -46,6 +46,20 @@ class BindCommandSpec extends FunSuite:
         assert(lines.forall(!_.toLowerCase.contains("token")))
       case other => fail(s"expected Text, got $other")
 
+  test("kind=pending: the copy names the delivery boundary instead of promising acceptance"):
+    // Review round 3: between the guard landing and the phase-5 staging face,
+    // a printed code can never match — the copy must say so, not promise the
+    // portal will take it.
+    val r = BindConfirm.render(body("pending", "code" -> Json.fromString("012345"), "expiresInSec" -> Json.fromLong(900L)))
+    r match
+      case CliResult.Text(lines) =>
+        val joined = lines.mkString("\n")
+        assert(joined.contains("confirmation-staging face"), "the server-side dependency is named")
+        assert(joined.contains("mismatch"), "the observable failure mode at the portal is named")
+        assert(joined.contains("grace-period path"), "the working fallback (grace arm) is named")
+        assert(joined.contains("no code can be accepted"), "the window state is stated, not glossed")
+      case other => fail(s"expected Text, got $other")
+
   test("kind=pending with a missing or malformed code => error (never a guessed success)"):
     assert(BindConfirm.render(body("pending")).isInstanceOf[CliResult.Error])
     assert(
