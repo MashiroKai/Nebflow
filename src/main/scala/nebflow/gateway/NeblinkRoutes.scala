@@ -43,6 +43,16 @@ private[gateway] object NeblinkRoutes:
    */
   private val peerNonces = new nebflow.core.device.NonceCache(1024)
 
+  /**
+   * D6 bind-confirm pending state (phase 3c plan §8 component ①): the
+   * host-side mirror of the last reported confirm code. Process-scoped
+   * singleton (same shape as `peerNonces` — one gateway process = one
+   * store); IN-MEMORY ONLY by design (plan §8: no persistence mandated — a
+   * restart simply ends the pending window, and the server's pending copy is
+   * the compare authority anyway).
+   */
+  private val bindConfirmStore = BindConfirmStore.unsafeCreate()
+
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
 
@@ -572,6 +582,74 @@ private[gateway] object NeblinkRoutes:
                     }
                 end match
           }
+
+      // D6 binding-transfer confirmation mint (phase 3c plan §8 component ①,
+      // R-8 recommended flow): `nebflow bind confirm` (the OLD host's local
+      // operator) asks this face to mint a 6-digit confirm code, report it up
+      // the relay control plane (server hangs the pending confirmation), and
+      // hand it back for one terminal print.
+      //
+      // 🔴 Auth rail = BearerFileOnly (the AuthAdmin verdict, NOT this file's
+      // usual ApiFull gate): the confirm code is an OUT-OF-BAND reading — it
+      // must be displayed on the old host's terminal, never mintable by a
+      // browser session (a relay-minted session that could mint + read the
+      // code here would defeat the whole out-of-band property).
+      //
+      // Every branchable outcome answers 200 + a `kind` discriminator so the
+      // CLI can branch without parsing HTTP error bodies (GatewayClient turns
+      // any non-2xx into a thrown message):
+      //   - `pending`     — code minted AND the report was handed to a live
+      //     relay socket (`{"kind","code","expiresInSec"}`);
+      //   - `offline`     — no live relay tunnel: the confirm-code path needs
+      //     the old host ONLINE (plan §8.1①); no code is minted and the CLI
+      //     routes the operator to the portal (the guard's 72h grace branch
+      //     is server-side — beyond it no code is needed at all);
+      //   - `send_failed` — the tunnel was up but the frame write failed;
+      //     nothing became pending, no code is displayed.
+      // The code value itself is never logged (zero-echo beyond the one CLI
+      // print); `arm` replaces any previous pending code (newest report wins).
+      case req @ POST -> Root / "neblink" / "bind" / "confirm" =>
+        tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.BearerFileOnly)).flatMap {
+          case None => Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+          case Some(_) =>
+            neblinkService match
+              case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+              case Some(ms) =>
+                val code = BindConfirmStore.newCode()
+                NeblinkRelayTunnel
+                  .sendBindConfirmLive(ms.relayTunnelOpt, code, BindConfirmStore.DefaultTtlSec)
+                  .flatMap {
+                    case NeblinkRelayTunnel.AckOutcome.Sent =>
+                      bindConfirmStore.arm(code, BindConfirmStore.DefaultTtlSec).flatMap { pending =>
+                        logger.info(
+                          s"bind confirm code armed and reported over the relay (ttl=${pending.ttlSec}s)"
+                        )
+                        Ok(
+                          Json.obj(
+                            "kind" -> "pending".asJson,
+                            "code" -> pending.code.asJson,
+                            "expiresInSec" -> pending.ttlSec.asJson
+                          )
+                        )
+                      }
+                    case NeblinkRelayTunnel.AckOutcome.NoLiveSocket =>
+                      logger.info("bind confirm refused: no live relay tunnel — the confirm-code path needs the old host online")
+                      Ok(
+                        Json.obj(
+                          "kind" -> "offline".asJson,
+                          "reason" -> "no live relay tunnel to the NebLink server".asJson
+                        )
+                      )
+                    case NeblinkRelayTunnel.AckOutcome.SendFailed(reason) =>
+                      logger.warn(s"bind confirm report failed to send: $reason")
+                      Ok(
+                        Json.obj(
+                          "kind" -> "send_failed".asJson,
+                          "reason" -> reason.asJson
+                        )
+                      )
+                  }
+        }
 
       // ===== Device authorization flow (Tailscale-style) =====
 
